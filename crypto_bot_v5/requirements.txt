@@ -1,0 +1,18 @@
+# Crypto Bot V5 — Dépendances
+ccxt>=4.0.0
+fastapi>=0.110.0
+uvicorn>=0.27.0
+sqlalchemy>=2.0.0
+pydantic>=2.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.11.0
+scikit-learn>=1.3.0
+pyyaml>=6.0
+jinja2>=3.1.0
+python-multipart>=0.0.9
+requests>=2.31.0
+# Optionnels (installer manuellement si besoin) :
+# xgboost>=2.0.0
+# optuna>=3.5.0
+# python-telegram-bot>=20.0
