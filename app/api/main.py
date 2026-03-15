@@ -499,7 +499,9 @@ def daily_stats(days: int = 30):
     try:
         rows = session.query(DailyStats).order_by(DailyStats.date.desc()).limit(days).all()
         return [{"date": r.date, "trades": r.trades, "wins": r.wins,
-                 "pnl": r.pnl, "fees": r.fees, "equity_close": r.equity_close} for r in rows]
+                 "pnl": r.pnl, "fees": r.fees,
+                 "max_dd": r.max_dd, "equity_open": r.equity_open,
+                 "equity_close": r.equity_close} for r in rows]
     finally:
         session.close()
 
@@ -513,9 +515,8 @@ def risk_status():
 @app.post("/api/risk/reset-halt", dependencies=[Depends(verify_api_key)])
 def reset_halt():
     if not trader: raise HTTPException(503, "Trader non initialisé")
-    trader.risk.halted = False
-    trader.risk.halt_reason = ""
-    return {"status": "reset"}
+    trader.risk.reset_halt()
+    return {"status": "reset", "message": "Circuit breaker réinitialisé"}
 
 
 # ═══════════════════════════════════════════════════════════════
