@@ -1,141 +1,24 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>Crypto Bot — Configuration</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-<style>
-/* SHARED SIDEBAR + SHELL CSS */
-:root{
-  --bg:#070a10;--surface:#0c1018;--card:#101520;--card-hover:#141b28;
-  --border:rgba(255,255,255,.07);--border-hi:rgba(255,255,255,.13);
-  --text:#dde6f5;--muted:#5a6e8c;--dim:#2e3f55;
-  --cyan:#22d3ee;--cyan-dim:rgba(34,211,238,.1);
-  --green:#34d399;--green-dim:rgba(52,211,153,.1);
-  --red:#fb7185;--red-dim:rgba(251,113,133,.1);
-  --amber:#fbbf24;--amber-dim:rgba(251,191,36,.1);
-  --purple:#a78bfa;--purple-dim:rgba(167,139,250,.1);
-  --mono:'DM Mono',monospace;--head:'Syne',sans-serif;--body:'Barlow',system-ui,sans-serif;
-  --r:8px;--r-sm:5px;--sidebar-w:220px;--sidebar-w-col:56px;
-}
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-html{height:100%;}
-body{background:var(--bg);color:var(--text);font-family:var(--body);font-size:13px;min-height:100vh;display:flex;overflow-x:hidden;}
-::-webkit-scrollbar{width:4px;height:4px;}
-::-webkit-scrollbar-track{background:transparent;}
-::-webkit-scrollbar-thumb{background:var(--border-hi);border-radius:4px;}
-/* Sidebar */
-#sidebar{width:var(--sidebar-w);flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100vh;position:sticky;top:0;transition:width .2s ease;z-index:100;overflow:hidden;}
-#sidebar.collapsed{width:var(--sidebar-w-col);}
-.sb-logo{height:56px;display:flex;align-items:center;padding:0 16px;gap:10px;border-bottom:1px solid var(--border);flex-shrink:0;}
-.sb-logo-icon{width:28px;height:28px;flex-shrink:0;background:linear-gradient(135deg,var(--cyan),var(--purple));border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px;}
-.sb-logo-text{font-family:var(--head);font-size:.9rem;font-weight:800;color:var(--text);white-space:nowrap;letter-spacing:-.02em;}
-.sb-logo-text span{color:var(--cyan);}
-.sb-nav{flex:1;padding:12px 8px;overflow-y:auto;}
-.sb-group-label{font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);padding:0 8px 6px;white-space:nowrap;overflow:hidden;}
-.collapsed .sb-group-label{opacity:0;}
-.sb-link{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r);color:var(--muted);text-decoration:none;font-size:.82rem;font-weight:500;transition:all .15s;white-space:nowrap;margin-bottom:2px;overflow:hidden;}
-.sb-link:hover{color:var(--text);background:rgba(255,255,255,.04);}
-.sb-link.active{color:var(--cyan);background:var(--cyan-dim);}
-.sb-icon{font-size:16px;flex-shrink:0;width:20px;text-align:center;color:var(--muted);}
-.sb-link.active .sb-icon{color:var(--cyan);}
-.sb-link-label{white-space:nowrap;}
-.sb-footer{padding:12px 8px;border-top:1px solid var(--border);flex-shrink:0;}
-#sb-toggle{display:flex;align-items:center;justify-content:center;width:36px;height:28px;border:none;background:rgba(255,255,255,.04);color:var(--muted);border-radius:var(--r-sm);cursor:pointer;font-size:12px;transition:all .15s;margin-left:auto;}
-#sb-toggle:hover{color:var(--text);background:rgba(255,255,255,.08);}
-/* Main */
-#main{flex:1;min-width:0;display:flex;flex-direction:column;overflow-x:hidden;}
-#topbar{height:56px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:10px;position:sticky;top:0;z-index:50;flex-shrink:0;}
-.topbar-title{font-family:var(--head);font-weight:700;font-size:.95rem;letter-spacing:-.01em;}
-.topbar-sep{flex:1;}
-/* Utility colors */
-.c-cyan{color:var(--cyan);}.c-green{color:var(--green);}.c-red{color:var(--red);}
-.c-amber{color:var(--amber);}.c-purple{color:var(--purple);}.c-muted{color:var(--muted);}
-/* Section header */
-.sec-hdr{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
-.sec-hdr h2{font-family:var(--head);font-size:.7rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);}
-.sec-hdr::after{content:'';flex:1;height:1px;background:var(--border);}
-/* Buttons */
-.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border:none;border-radius:var(--r-sm);cursor:pointer;font-size:.76rem;font-weight:600;font-family:var(--body);white-space:nowrap;transition:all .15s;}
-.btn:hover{filter:brightness(1.1);}
-.btn:disabled{opacity:.3;cursor:not-allowed;filter:none;}
-.btn-start{background:var(--green);color:#03201a;}
-.btn-stop{background:var(--red);color:#fff;}
-.btn-cyan{background:var(--cyan);color:#031218;}
-.btn-purple{background:var(--purple);color:#0a0214;}
-.btn-green{background:var(--green);color:#03201a;}
-.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border-hi);}
-.btn-ghost:hover{color:var(--text);border-color:rgba(255,255,255,.2);}
-.btn-full{width:100%;justify-content:center;}
-/* Cards */
-.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
-.panel-hdr{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;}
-.panel-hdr h3{font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;}
-.panel-body{padding:14px;display:flex;flex-direction:column;gap:12px;}
-/* Form */
-.field{display:flex;flex-direction:column;gap:5px;}
-.field label{font-size:.72rem;color:var(--muted);font-weight:500;}
-.field .hint{font-size:.63rem;color:var(--dim);line-height:1.4;}
-select,input[type=text],input[type=number],input[type=email],input[type=password]{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:var(--r-sm);font-size:.78rem;font-family:var(--body);outline:none;transition:border-color .15s;width:100%;}
-select:focus,input:focus{border-color:var(--cyan);}
-input[type=range]{padding:0;background:transparent;cursor:pointer;accent-color:var(--cyan);}
-/* Toggle */
-.toggle-wrap{display:flex;align-items:center;gap:10px;}
-.toggle{position:relative;width:40px;height:22px;flex-shrink:0;}
-.toggle input{opacity:0;width:0;height:0;}
-.toggle-slider{position:absolute;inset:0;background:var(--border-hi);border-radius:22px;cursor:pointer;transition:.2s;}
-.toggle-slider:before{content:'';position:absolute;width:16px;height:16px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;}
-.toggle input:checked+.toggle-slider{background:var(--green);}
-.toggle input:checked+.toggle-slider:before{transform:translateX(18px);}
-.toggle-lbl{font-size:.8rem;font-weight:500;}
-/* Tags */
-.tag{padding:2px 7px;border-radius:4px;font-size:.62rem;font-weight:700;font-family:var(--body);letter-spacing:.03em;display:inline-block;}
-.tag-long,.tlong{background:var(--green-dim);color:var(--green);}
-.tag-short,.tshort{background:var(--red-dim);color:var(--red);}
-.tag-open{background:var(--cyan-dim);color:var(--cyan);}
-.tag-closed{background:var(--green-dim);color:var(--green);}
-.tag-rej{background:rgba(255,255,255,.04);color:var(--muted);}
-.tag-strat{background:var(--purple-dim);color:var(--purple);}
-/* Table */
-.table-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
-.table-head{padding:12px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);}
-.tscroll{overflow-x:auto;}
-table{width:100%;border-collapse:collapse;}
-th{padding:8px 12px;text-align:left;color:var(--dim);font-weight:600;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:1;white-space:nowrap;}
-th.r{text-align:right;}
-td{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.03);font-family:var(--mono);font-size:.73rem;white-space:nowrap;}
-td.r{text-align:right;}
-tr:last-child td{border-bottom:none;}
-tr:hover td{background:rgba(255,255,255,.02);}
-.empty-row{text-align:center;color:var(--dim);padding:28px 12px;font-size:.77rem;}
-/* Info boxes */
-.info-box{background:var(--cyan-dim);border:1px solid rgba(34,211,238,.2);border-radius:var(--r-sm);padding:9px 14px;font-size:.72rem;color:var(--muted);line-height:1.6;}
-.info-box strong{color:var(--cyan);}
-.warn-box{background:var(--amber-dim);border:1px solid rgba(251,191,36,.2);border-radius:var(--r-sm);padding:9px 14px;font-size:.72rem;color:var(--amber);line-height:1.6;}
-/* Spinner */
-.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--border-hi);border-top-color:var(--cyan);border-radius:50%;animation:sp .7s linear infinite;}
-@keyframes sp{to{transform:rotate(360deg)}}
-/* Toast */
-#toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border-hi);color:var(--text);padding:10px 16px;border-radius:var(--r);font-size:.78rem;opacity:0;z-index:9999;transition:opacity .25s,transform .25s;transform:translateY(8px);pointer-events:none;max-width:320px;border-left:3px solid var(--green);}
-#toast.show{opacity:1;transform:translateY(0);}
-#toast.err{border-left-color:var(--red);}
-.toast{position:fixed;bottom:24px;right:24px;background:var(--card);border:1px solid var(--green);border-radius:var(--r-sm);padding:10px 16px;font-size:.8rem;color:var(--green);z-index:9999;transform:translateY(60px);opacity:0;transition:all .25s;}
-.toast.err{border-color:var(--red);color:var(--red);}
-.toast.show{transform:translateY(0);opacity:1;}
-/* Grid bg */
-.grid-bg::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(34,211,238,.015) 1px,transparent 1px),linear-gradient(90deg,rgba(34,211,238,.015) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0;}
-.grid-bg>*{position:relative;z-index:1;}
+{% extends "base.html" %}
 
+{% block title %} — Configuration{% endblock %}
+
+{% block page_styles %}
+:root{
+  --border2:rgba(255,255,255,.13);
+  --blue:var(--cyan); --blue-dim:var(--cyan-dim);
+  --yellow:var(--amber); --yellow-dim:var(--amber-dim);
+  --orange:#f59e0b;
+  --card2:#0c1018;
+  --sans:var(--body);
+}
+.page{display:contents;}
 /* Config page layout */
-.config-page{min-height:calc(100vh - 56px);}
+.config-page{min-height:calc(100vh - 56px);display:grid;grid-template-columns:260px 1fr;}
 @media(max-width:1000px){.config-page{grid-template-columns:260px 1fr;}}
 @media(max-width:800px){.config-page{grid-template-columns:1fr;}}
-/* Remap old .page grid to config-page */
-.page{display:contents;}
-/* First child of config-page = left column */
+/* Left column */
 .config-page>div:first-child{background:var(--surface);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;position:sticky;top:56px;height:calc(100vh - 56px);}
-.right-col{display:flex;flex-direction:column;gap:12px;overflow-x:visible;min-width:0;}
+.right-col{display:flex;flex-direction:column;gap:12px;overflow-x:visible;min-width:0;padding:14px;}
 /* Strategy cards */
 .strat-grid{display:flex;flex-direction:column;gap:8px;}
 .strat-card{background:#0c1018;border:1px solid var(--border);border-radius:var(--r-sm);padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;transition:border-color .15s;}
@@ -158,7 +41,7 @@ tr:hover td{background:rgba(255,255,255,.02);}
 .params-hdr.open .chevron{transform:rotate(180deg);}
 .params-body{display:none;padding:10px 14px;border-top:1px solid var(--border);}
 .params-body.open{display:block;}
-/* ── Fix: grid layout guarantees param-key is never squished to 0 ── */
+/* Param rows */
 .param-row{
   display:grid;
   grid-template-columns:minmax(120px,1fr) 90px 36px;
@@ -182,55 +65,24 @@ tr:hover td{background:rgba(255,255,255,.02);}
 }
 .param-input:focus{border-color:var(--cyan);outline:none;}
 .param-val{font-size:.62rem;color:var(--dim);text-align:right;white-space:nowrap;}
+/* Buttons */
 .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
-/* Notifications / misc */
 .btn-orange{background:var(--amber);color:#181000;}
-.btn-blue{background:var(--cyan);color:#031218;}
-.btn-green{background:var(--green);color:#03201a;}
-.btn-full{width:100%;justify-content:center;}
+/* Schedule */
 .schedule-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:.73rem;}
 .schedule-key{color:var(--dim);}
 .schedule-val{font-family:var(--mono);color:var(--text);}
-/* Remap old --border2 usage in JS-generated HTML */
-:root{--border2:rgba(255,255,255,.13);}
-
-/* Preserve specific old CSS vars used in JS-generated HTML */
-:root{
-  --blue:var(--cyan); --blue-dim:var(--cyan-dim);
-  --yellow:var(--amber); --yellow-dim:var(--amber-dim);
-  --orange:#f59e0b;
-  --card2:#0c1018;
-  --r:8px; --r-sm:5px;
-  --sans:var(--body); --mono:'DM Mono',monospace;
-}
+/* Section label */
 .sec{font-size:.68rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);padding-bottom:4px;border-bottom:1px solid var(--border);margin-bottom:8px;}
-</style>
-<script>
-  const API_KEY = "{{ api_key }}";
-  function escHtml(s){if(s==null)return "";return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
-  function apiFetch(url,opts={}){if(!opts.headers)opts.headers={};if(API_KEY)opts.headers["X-API-Key"]=API_KEY;return fetch(url,opts);}
-</script>
-</head>
-<body>
+{% endblock %}
 
-<aside id="sidebar">
-  <div class="sb-logo"><div class="sb-logo-icon">&#x26A1;</div><div class="sb-logo-text">Crypto<span>Bot</span></div><button id="sb-toggle" onclick="toggleSidebar()">&#x2039;</button></div>
-  <nav class="sb-nav">
-    <div class="sb-group-label">Trading</div>
-    <a href="/"        class="sb-link"><span class="sb-icon">&#x25C8;</span><span class="sb-link-label">Dashboard Live</span></a>
-    <a href="/scanner" class="sb-link"><span class="sb-icon">&#x25CE;</span><span class="sb-link-label">Scanner</span></a>
-    <div class="sb-group-label" style="margin-top:12px">Outils</div>
-    <a href="/optimizer" class="sb-link"><span class="sb-icon">&#x2B21;</span><span class="sb-link-label">Optimiseur</span></a>
-    <a href="/backtest"  class="sb-link"><span class="sb-icon">&#x21BA;</span><span class="sb-link-label">Backtest</span></a>
-    <a href="/config"    class="sb-link active"><span class="sb-icon">&#x2699;</span><span class="sb-link-label">Configuration</span></a>
-  </nav>
-  <div class="sb-footer"><div class="sb-link" style="cursor:default;font-size:.65rem;color:var(--dim)"><span class="sb-icon" style="font-size:9px">&#x25CF;</span><span class="sb-link-label">v2.0 · API Binance</span></div></div>
-</aside>
+{% block topbar_content %}
+<div class="topbar-title">Configuration</div><div class="topbar-sep"></div>
+{% endblock %}
 
-<div id="main">
-  <header id="topbar"><div class="topbar-title">Configuration</div><div class="topbar-sep"></div></header>
-  <div id="content">
-    <div class="config-page">
+{% block content %}
+<div id="content">
+  <div class="config-page">
 
 <div class="page">
 
@@ -281,7 +133,7 @@ tr:hover td{background:rgba(255,255,255,.02);}
         </div>
         <div id="tf-active-display" style="font-size:.78rem;color:var(--muted);margin-bottom:10px"></div>
         <div class="btn-row">
-          <button class="btn btn-blue btn-full" onclick="applyTimeframes()">
+          <button class="btn btn-cyan btn-full" onclick="applyTimeframes()">
             ✓ Appliquer timeframes
           </button>
         </div>
@@ -465,14 +317,14 @@ tr:hover td{background:rgba(255,255,255,.02);}
         </div>
 
         <div style="display:flex;gap:8px;margin-top:12px">
-          <button class="btn btn-blue" style="flex:1" onclick="applyNotifications()">✓ Sauvegarder</button>
+          <button class="btn btn-cyan" style="flex:1" onclick="applyNotifications()">✓ Sauvegarder</button>
           <button class="btn btn-ghost" onclick="testNotification()">🧪 Tester</button>
         </div>
         <div id="notif-status" style="font-size:.72rem;color:var(--dim)"></div>
       </div>
     </div>
 
-    <!-- Auto-optimisation — Fix #8 : fréquence toujours visible et modifiable -->
+    <!-- Auto-optimisation -->
     <div class="panel">
       <div class="panel-hdr">
         <span style="color:var(--purple)">🔬</span>
@@ -494,7 +346,6 @@ tr:hover td{background:rgba(255,255,255,.02);}
           <span class="toggle-lbl" id="auto-opt-lbl">Auto-optimisation désactivée</span>
         </div>
 
-        <!-- Fix #8 : intervalle toujours visible pour pouvoir le configurer avant d'activer -->
         <div class="field">
           <label>Intervalle entre optimisations (heures)</label>
           <input type="number" id="auto-opt-interval" value="24" min="1" max="168" step="1"/>
@@ -559,7 +410,7 @@ tr:hover td{background:rgba(255,255,255,.02);}
           Les ordres seront exécutés avec votre capital. Redémarrez le bot après changement.
         </div>
 
-        <button class="btn btn-blue btn-full" onclick="applyTrading()">✓ Appliquer</button>
+        <button class="btn btn-cyan btn-full" onclick="applyTrading()">✓ Appliquer</button>
       </div>
     </div>
 
@@ -648,33 +499,22 @@ tr:hover td{background:rgba(255,255,255,.02);}
 
 </div>
 
-    </div>
   </div>
 </div>
+{% endblock %}
 
-<div class="toast" id="toast"></div>
-
-
+{% block body_scripts %}
 <script>
 const $ = id => document.getElementById(id);
 let cfgData = null;
 
-// ── Toast ──────────────────────────────────────────────────────────────────
-function toast(msg, err=false) {
-  const t = $('toast');
-  t.textContent = msg;
-  t.className = 'toast' + (err?' err':'') + ' show';
-  setTimeout(() => t.className = 'toast' + (err?' err':''), 3000);
-}
-
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init() {
   loadNotifications();
-  // Afficher "Chargement..." dans les zones dépendantes
   const stratGrid = $('strat-grid');
   const stratParams = $('strat-params-panels');
-  if (stratGrid) stratGrid.innerHTML = '<div style="color:var(--dim);font-size:.78rem">Chargement…</div>';
-  if (stratParams) stratParams.innerHTML = '<div style="color:var(--dim);font-size:.78rem;padding:8px">Chargement…</div>';
+  if (stratGrid) stratGrid.innerHTML = '<div style="color:var(--dim);font-size:.78rem">Chargement\u2026</div>';
+  if (stratParams) stratParams.innerHTML = '<div style="color:var(--dim);font-size:.78rem;padding:8px">Chargement\u2026</div>';
   try {
     const resp = await fetch('/api/config');
     if (!resp.ok) {
@@ -708,7 +548,6 @@ const STRAT_DESC = {
   ml_dynamic_threshold:  'Seuil dynamique par ML (nécessite entraînement)',
 };
 
-// Score threshold recommandé par stratégie (affiché dans la config params)
 const STRAT_THRESHOLD = {
   fear_momentum:   0.72,
   pullback_trend:  0.65,
@@ -771,14 +610,11 @@ async function applyStrategies() {
       ? `✓ Appliqué · Ajoutées: ${d.added?.join(', ')||'—'} · Retirées: ${d.removed?.join(', ')||'—'}`
       : '✓ Sauvegardé (bot non actif)';
     toast(msg);
-    await init(); // refresh
+    await init();
   } catch(e) { toast('Erreur : ' + e.message, true); }
 }
 
-// ── Auto-optimisation ──────────────────────────────────────────────────────
-
 // ── Timeframes multi-TF ────────────────────────────────────────────────────
-// TFs recommandés (ceux pour lesquels les stratégies sont optimisées)
 const ALL_TFS       = ['5m','15m','1h','1d'];
 const TF_LABELS     = {'5m':'5m ~14j','15m':'15m ~21j','1h':'1h ~62j','1d':'1j ~500j'};
 const TF_STRATEGIES = {
@@ -809,11 +645,9 @@ function renderTimeframes() {
 
 function toggleTfCard(card, tf) {
   const cb = document.getElementById('tf-check-' + tf);
-  // Don't toggle if clicking directly on checkbox
   if (event.target === cb) return;
   cb.checked = !cb.checked;
   updateTfDisplay();
-  // Update card style
   const on = cb.checked;
   card.style.border      = '1px solid ' + (on ? 'rgba(77,159,255,.35)' : 'var(--border)');
   card.style.background  = on ? 'var(--cyan-dim)' : 'var(--surface)';
@@ -845,6 +679,7 @@ async function applyTimeframes() {
   } catch(e) { toast('Erreur : ' + e.message, true); }
 }
 
+// ── Auto-optimisation ──────────────────────────────────────────────────────
 function renderAutoOpt() {
   const enabled  = cfgData._auto_opt_enabled ?? cfgData.optimizer?.enabled ?? false;
   const interval = cfgData._auto_opt_interval_h ?? cfgData.optimizer?.auto_interval_h ?? 24;
@@ -855,8 +690,6 @@ function renderAutoOpt() {
   $('auto-opt-badge').textContent = enabled ? 'ON' : 'OFF';
   $('auto-opt-badge').className = 'strat-badge ' + (enabled ? 'badge-on' : 'badge-off');
   $('auto-opt-lbl').textContent = enabled ? `Auto-optimisation activée (${interval}h)` : 'Auto-optimisation désactivée';
-  $('auto-opt-badge').textContent = enabled ? 'ON' : 'OFF';
-  $('auto-opt-badge').className = 'strat-badge ' + (enabled ? 'badge-on' : 'badge-off');
 
   if (enabled && next_run > 0) {
     const nextDate = new Date(next_run * 1000);
@@ -950,21 +783,17 @@ function renderStratParams() {
   const stratParams = cfgData.strategy_params || {};
   const container  = $('strat-params-panels');
   const PARAM_TYPE = {
-    // int params (step=1)
     ema_fast:1, ema_mid:1, ema_slow:1, ema_trend:1, adx_min:1, cooldown:1,
     period:1, squeeze_bars:1, macd_fast:1, macd_slow:1, macd_signal:1,
     st_period:1, cross_lookback:1, max_leverage:1,
-    // float params (step=0.001)
     pb_zone_pct:0, rsi_pb_low:0, rsi_pb_high:0, vol_min:0, vol_cas_c:0,
     rsi_min_long:0, rsi_max_long:0, rsi_min:0, rsi_max:0,
     st_mult:0, atr_expan_min:0, pen_max_atr:0, body_min_atr:0,
     overext_pct:0, ema200_tol:0, rsi_low:0, rsi_high:0, adx_mean:0,
-    // fear_momentum params
     rsi_fear:0, rsi_greed:0, vol_cap_min:0, atr_max_dip:0,
     ema200_max_dist:0, rr_min:0,
   };
 
-  // Descriptions des paramètres (tooltip)
   const PARAM_DESC = {
     rsi_fear:        "RSI < X = zone de peur (signal d'entrée Fear&Mom)",
     rsi_greed:       'RSI > X = zone de greed (signal short Fear&Mom)',
@@ -979,7 +808,6 @@ function renderStratParams() {
     st_mult:         'Multiplicateur ATR du SuperTrend',
     overext_pct:     "Rejet si prix > X% au-dessus de l'EMA fast",
     ema200_tol:      'Tolérance sous EMA200 avant rejet de tendance',
-    rr_min:          'R:R minimum (reward / risk)',
   };
 
   if (!allStrats.length) {
@@ -1015,7 +843,7 @@ function renderStratParams() {
       <div class="params-body">
         ${rows || '<div style="color:var(--dim);font-size:.75rem">Aucun paramètre configuré (défauts internes utilisés)</div>'}
         ${keys.length ? `<div class="btn-row" style="margin-top:4px">
-          <button class="btn btn-blue" onclick="saveStratParams('${name}')">💾 Sauvegarder ${name}</button>
+          <button class="btn btn-cyan" onclick="saveStratParams('${name}')">💾 Sauvegarder ${name}</button>
         </div>` : ''}
       </div>
     </div>`;
@@ -1037,7 +865,6 @@ async function saveStratParams(name) {
   });
 
   try {
-    // L'API attend strategy en query param et le dict params directement en body JSON
     const r = await apiFetch(`/api/config/strategy-params?strategy=${encodeURIComponent(name)}`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -1056,14 +883,13 @@ async function saveStratParams(name) {
   }
 }
 
+// ── Notifications ──────────────────────────────────────────────────────────
 async function loadNotifications() {
   try {
     const r = await apiFetch('/api/config/notifications').then(r=>r.json());
-    // Telegram
     $('tg-enabled').checked = r.telegram_enabled||false;
     if (r.telegram_bot_token) $('tg-token').value = r.telegram_bot_token;
     if (r.telegram_chat_id)   $('tg-chat').value  = r.telegram_chat_id;
-    // WhatsApp
     $('wa-enabled').checked = r.whatsapp_enabled||false;
     const mode = r.whatsapp_mode || 'callmebot';
     $('wa-mode').value = mode;
@@ -1074,18 +900,15 @@ async function loadNotifications() {
     if (r.twilio_from_number) $('twilio-from').value      = r.twilio_from_number;
     if (r.whatsapp_number)    $('wa-number-twilio').value = r.whatsapp_number;
     onWaModeChange();
-    // Email
     $('email-enabled').checked = r.email_enabled||false;
     if (r.email_smtp)     $('email-smtp').value     = r.email_smtp;
     if (r.email_port)     $('email-port').value     = r.email_port;
     if (r.email_user)     $('email-user').value     = r.email_user;
     if (r.email_password) $('email-password').value = r.email_password;
     if (r.email_to)       $('email-to').value       = r.email_to;
-    // Seuils
     if (r.min_pnl_to_notify)        $('notif-min-pnl').value       = r.min_pnl_to_notify;
     if (r.position_loss_warn_pct)   $('notif-loss-pct').value      = r.position_loss_warn_pct;
     if (r.exchange_error_threshold) $('notif-err-threshold').value = r.exchange_error_threshold;
-    // Evenements
     if (r.events) {
       document.querySelectorAll('.evt-cb').forEach(cb => {
         const key = cb.dataset.evt;
@@ -1151,13 +974,15 @@ async function applyNotifications() {
 }
 
 async function testNotification() {
-  $('notif-status').textContent = 'Envoi en cours…';
+  $('notif-status').textContent = 'Envoi en cours\u2026';
   try {
     const r = await apiFetch('/api/config/notifications/test', {method:'POST'});
     if (r.ok) { $('notif-status').textContent = '\u2713 Message envoy\u00e9 sur tous les canaux actifs !'; }
     else { const e = await r.json(); $('notif-status').textContent = '\u2717 ' + e.detail; }
   } catch(e) { $('notif-status').textContent = '\u2717 ' + e.message; }
 }
+
+// ── Margin ─────────────────────────────────────────────────────────────────
 function onMarginToggle() {
   const en = $('margin-toggle').checked;
   $('margin-cfg').style.display = en ? 'flex' : 'none';
@@ -1173,13 +998,11 @@ async function applyMargin() {
   const alert_lv = parseFloat($('margin-alert').value) || 1.5;
   const borrow   = parseFloat($('margin-borrow-rate').value) || 0.00072;
   try {
-    // Update via trading params + config reload
     const p = new URLSearchParams({
       max_leverage: leverage,
       daily_drawdown_limit: cfgData.trading?.daily_drawdown_limit ?? 0.05,
     });
     await apiFetch('/api/config/trading?' + p, {method:'POST'});
-    // Save margin-specific fields via config/trading endpoint (extended)
     const r = await apiFetch('/api/config/margin?' + new URLSearchParams({
       enabled, mode, leverage, alert_level: alert_lv, borrow_rate_daily: borrow
     }), {method:'POST'});
@@ -1187,7 +1010,6 @@ async function applyMargin() {
       toast(enabled ? `✓ Margin activé — ${mode} ×${leverage}` : '✓ Margin désactivé');
       await init();
     } else {
-      // Fallback: save via config update
       toast('✓ Config sauvegardée — redémarrez le bot pour appliquer', false);
     }
   } catch(e) { toast('Erreur : ' + e.message, true); }
@@ -1196,24 +1018,19 @@ async function applyMargin() {
 init();
 
 // ── Auto-refresh quand l'onglet redevient actif ─────────────────────────────
-// Cas principal : l'utilisateur était sur l'optimiseur, a appliqué des params,
-// revient sur Config → la page se recharge silencieusement pour afficher les
-// nouveaux paramètres sans intervention.
 let _lastFocusRefresh = 0;
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState !== 'visible') return;
   const now = Date.now();
-  if (now - _lastFocusRefresh < 5000) return; // anti-spam : 5s minimum entre 2 refresh
+  if (now - _lastFocusRefresh < 5000) return;
   _lastFocusRefresh = now;
   try {
-    // Recharge silencieuse : compare strategy_params avant/après
     const resp = await fetch('/api/config');
     if (!resp.ok) return;
     const fresh = await resp.json();
     const oldSP = JSON.stringify(cfgData.strategy_params || {});
     const newSP = JSON.stringify(fresh.strategy_params   || {});
     if (oldSP !== newSP) {
-      // Les params ont changé (ex: optimiseur a appliqué)
       cfgData = fresh;
       renderStrategies();
       renderAutoOpt();
@@ -1229,11 +1046,10 @@ document.addEventListener('visibilitychange', async () => {
   try {
     const log = await apiFetch('/api/config/changelog?limit=10').then(r => r.json()).catch(()=>[]);
     if (!log || !log.length) return;
-    // Cherche le tout dernier entry (déjà trié récent en premier)
     const last = log[0];
     if (!last) return;
     const ageMs = Date.now() - new Date(last.timestamp).getTime();
-    if (ageMs > 7200_000) return; // ignorer si > 2h
+    if (ageMs > 7200_000) return;
     const strat   = last.strategy || '?';
     const tf      = last.timeframe ? ` @ ${last.timeframe}` : '';
     const score   = last.oos_score != null ? ` · score OOS: ${(+last.oos_score).toFixed(3)}` : '';
@@ -1259,19 +1075,9 @@ document.addEventListener('visibilitychange', async () => {
         <button onclick="this.closest('div[style]').remove()" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:.8rem;padding:0 4px">✕</button>
       </div>
       ${noChange ? '<span style="color:var(--dim);font-size:.7rem">Aucun paramètre modifié (identiques)</span>' : `<div>${items}</div>`}`;
-    // Chercher le container principal
     const container = document.getElementById('content') || document.querySelector('.main-content') || document.body;
     container.insertBefore(banner, container.firstChild);
   } catch(_) { /* silencieux */ }
 })();
 </script>
-
-<script>
-function toggleSidebar(){
-  var sb=document.getElementById("sidebar"),btn=document.getElementById("sb-toggle");
-  sb.classList.toggle("collapsed");
-  btn.textContent=sb.classList.contains("collapsed")?"›":"‹";
-}
-</script>
-</body>
-</html>
+{% endblock %}
