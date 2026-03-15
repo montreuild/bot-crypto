@@ -19,7 +19,7 @@ Corrections V5 vs V4 :
 """
 import logging
 from typing import Dict, Any
-import pandas as pd
+import polars as pl
 from app.engine.engine import BaseStrategy
 from app.strategies.indicators import (
     rsi as calc_rsi, atr as calc_atr, adx as calc_adx,
@@ -33,11 +33,10 @@ class Strategy(BaseStrategy):
     name = "pullback_trend"
 
     def __init__(self):
-        # Cooldown par symbole : {symbol: last_bar_index}
         self._last_signal: Dict[str, int] = {}
         self._call_count: Dict[str, int] = {}
 
-    def score(self, df: pd.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get("pullback_trend", {})
 
@@ -45,16 +44,15 @@ class Strategy(BaseStrategy):
         ema_mid    = int(p.get("ema_mid",     50))
         ema_slow   = int(p.get("ema_slow",   100))
         ema_trend  = int(p.get("ema_trend",  200))
-        adx_min    = float(p.get("adx_min",   20))     # ↑ 18→20
+        adx_min    = float(p.get("adx_min",   20))
         pb_zone    = float(p.get("pb_zone_pct", 0.005))
         rsi_pb_low = float(p.get("rsi_pb_low",  33))
         rsi_pb_high= float(p.get("rsi_pb_high", 58))
         vol_min    = float(p.get("vol_min",    0.8))
         cooldown   = int(p.get("cooldown",      20))
-        rr_min     = float(p.get("rr_min",     1.5))   # R:R minimum
+        rr_min     = float(p.get("rr_min",     1.5))
 
-        # Identifiant du symbole (via index si absent)
-        sym = symbol or str(df["time"].iloc[-1]) if "time" in df.columns else "default"
+        sym = symbol or str(df["time"][-1]) if "time" in df.columns else "default"
 
         cnt = self._call_count.get(sym, 0) + 1
         self._call_count[sym] = cnt
@@ -63,36 +61,36 @@ class Strategy(BaseStrategy):
         if len(df) < min_bars:
             return self._none()
 
-        close = df["close"].astype(float)
-        high  = df["high"].astype(float)
-        low   = df["low"].astype(float)
+        close = df["close"]
+        high  = df["high"]
+        low   = df["low"]
 
         # ── EMAs ─────────────────────────────────────────────────────────────
-        ef  = close.ewm(span=ema_fast,  adjust=False).mean()
-        em  = close.ewm(span=ema_mid,   adjust=False).mean()
-        es  = close.ewm(span=ema_slow,  adjust=False).mean()
-        et  = close.ewm(span=ema_trend, adjust=False).mean()
+        ef  = close.ewm_mean(span=ema_fast,  adjust=False)
+        em  = close.ewm_mean(span=ema_mid,   adjust=False)
+        es  = close.ewm_mean(span=ema_slow,  adjust=False)
+        et  = close.ewm_mean(span=ema_trend, adjust=False)
 
-        lf  = float(ef.iloc[-1])
-        lm  = float(em.iloc[-1])
-        ls  = float(es.iloc[-1])
-        lt  = float(et.iloc[-1])
-        c0  = float(close.iloc[-1])
-        c1  = float(close.iloc[-2])
+        lf  = float(ef[-1])
+        lm  = float(em[-1])
+        ls  = float(es[-1])
+        lt  = float(et[-1])
+        c0  = float(close[-1])
+        c1  = float(close[-2])
 
-        # ── Indicateurs (pré-calculés si dispo, recalcul sinon — backward-compat) ──
+        # ── Indicateurs ──────────────────────────────────────────────────────
         _rsi_s   = df["_pre_rsi14"] if "_pre_rsi14" in df.columns else calc_rsi(close, 14)
-        rsi_now  = float(_rsi_s.iloc[-1])
-        rsi_prev = float(_rsi_s.iloc[-2])
-        rsi_prev2= float(_rsi_s.iloc[-3])
+        rsi_now  = float(_rsi_s[-1])
+        rsi_prev = float(_rsi_s[-2])
+        rsi_prev2= float(_rsi_s[-3])
         adx_val  = pre_val(df, "_pre_adx14")  or calc_adx(df, 14)
         atr_val  = pre_val(df, "_pre_atr14")  or calc_atr(df, 14)
         if atr_val <= 0:
             return self._none()
 
         vr       = pre_val(df, "_pre_volratio20") or calc_vol(df)
-        vol_prev = float(df["volume"].iloc[-2])
-        vol_now  = float(df["volume"].iloc[-1])
+        vol_prev = float(df["volume"][-2])
+        vol_now  = float(df["volume"][-1])
         struct   = market_structure(high, low)
         htf      = htf_trend(df_htf)
 
@@ -106,43 +104,35 @@ class Strategy(BaseStrategy):
         above_mid  = c0 > lm
         trend_ok   = c0 > lt * 0.96
         adx_ok     = adx_val >= adx_min
-
-        # HTF : si disponible, doit être neutre ou haussier
         htf_ok_long = htf >= 0
 
         if ema_bull and above_mid and adx_ok and trend_ok and htf_ok_long:
 
-            # Détection pullback sur 5 barres (zone ×1.2 — plus stricte qu'avant)
             pb_found = False
             pb_low   = float('inf')
             for k in range(1, 6):
-                c_k   = float(close.iloc[-1 - k])
-                ef_k  = float(ef.iloc[-1 - k])
-                low_k = float(low.iloc[-1 - k])
+                c_k   = float(close[-1 - k])
+                ef_k  = float(ef[-1 - k])
+                low_k = float(low[-1 - k])
                 if abs(c_k - ef_k) / ef_k <= pb_zone * 1.2:
                     pb_found = True
                     pb_low   = min(pb_low, low_k)
 
-            # Rebond confirmé
             price_back  = c0 >= lf * (1 - pb_zone * 0.5)
             bull_bar    = c0 > c1
 
-            # RSI : hausse réelle sur 2 barres consécutives (pas juste flat)
             rsi_rising  = (rsi_now >= rsi_pb_low and
                            rsi_now <= rsi_pb_high + 15 and
-                           rsi_now > rsi_prev and          # hausse barre 0→-1
-                           rsi_prev >= rsi_prev2 - 2)      # pas en chute franche avant
+                           rsi_now > rsi_prev and
+                           rsi_prev >= rsi_prev2 - 2)
 
-            # EMA fast monte
-            ef_slope  = (lf - float(ef.iloc[-4])) / lf * 100
+            ef_slope  = (lf - float(ef[-4])) / lf * 100
             ema_up    = ef_slope > 0
 
-            # Volume : doit être présent ET monter vs barre précédente
             vol_ok    = vr >= vol_min and vol_now >= vol_prev * 0.85
 
             if pb_found and price_back and bull_bar and rsi_rising and ema_up and vol_ok:
 
-                # Stop naturel sous le plus bas du pullback
                 stop_nat  = pb_low - atr_val * 0.3
                 stop_atr  = c0 - atr_val * 2.0
                 stop      = max(stop_nat, stop_atr)
@@ -150,7 +140,6 @@ class Strategy(BaseStrategy):
                 if risk_pts <= 0:
                     return self._none("Stop invalide")
 
-                # Objectif estimé : 2× le pullback depth ou 1.5× le risque
                 pb_depth  = (lf - pb_low) / lf * 100
                 target    = c0 + risk_pts * 2.0
                 rr        = (target - c0) / risk_pts
@@ -158,7 +147,6 @@ class Strategy(BaseStrategy):
                 if rr < rr_min:
                     return self._none(f"R:R {rr:.2f} < {rr_min}")
 
-                # Score
                 adx_b    = min((adx_val - adx_min) / 20, 1.0) * 0.10
                 rsi_b    = max(1.0 - abs(rsi_now - 48) / 22, 0) * 0.07
                 vol_b    = min((vr - vol_min) * 0.05, 0.08)
@@ -166,7 +154,7 @@ class Strategy(BaseStrategy):
                 ema_b    = min((lf - lm) / lm * 300, 0.08)
                 htf_b    = 0.05 if htf > 0 else 0.0
                 struct_b = 0.04 if struct > 0 else 0.0
-                rsi_b2   = 0.03 if rsi_now > rsi_prev + 2 else 0.0  # bonus hausse franche
+                rsi_b2   = 0.03 if rsi_now > rsi_prev + 2 else 0.0
 
                 score = min(0.63 + adx_b + rsi_b + vol_b + pb_b + ema_b + htf_b + struct_b + rsi_b2, 0.94)
 
@@ -210,9 +198,9 @@ class Strategy(BaseStrategy):
             rally_found = False
             rally_high  = 0.0
             for k in range(1, 6):
-                c_k   = float(close.iloc[-1 - k])
-                ef_k  = float(ef.iloc[-1 - k])
-                h_k   = float(high.iloc[-1 - k])
+                c_k   = float(close[-1 - k])
+                ef_k  = float(ef[-1 - k])
+                h_k   = float(high[-1 - k])
                 if abs(c_k - ef_k) / ef_k <= pb_zone * 1.2:
                     rally_found = True
                     rally_high  = max(rally_high, h_k)
@@ -222,7 +210,7 @@ class Strategy(BaseStrategy):
             rsi_falling    = (rsi_now <= (100 - rsi_pb_low) and
                               rsi_now < rsi_prev and
                               rsi_prev <= rsi_prev2 + 2)
-            ef_down        = (lf - float(ef.iloc[-4])) / lf * 100 < 0
+            ef_down        = (lf - float(ef[-4])) / lf * 100 < 0
             vol_ok_s       = vr >= vol_min and vol_now >= vol_prev * 0.85
 
             if rally_found and price_back_s and bear_bar and rsi_falling and ef_down and vol_ok_s:

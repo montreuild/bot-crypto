@@ -13,7 +13,7 @@ import threading
 import time
 from typing import Dict, List, Optional
 
-import pandas as pd
+import polars as pl
 
 from app.engine.engine   import Engine
 from app.engine.backtest import Backtester
@@ -58,7 +58,7 @@ def _update_job(job_id: str, **kwargs):
 #  Baseline (snapshot avant optimisation)
 # ════════════════════════════════════════════════════════════════════════════
 def _run_baseline(strategy_name: str, cfg: dict,
-                  df_oos: pd.DataFrame, symbol: str) -> dict:
+                  df_oos: pl.DataFrame, symbol: str) -> dict:
     try:
         mod = importlib.import_module(f"app.strategies.{strategy_name}")
         eng = Engine()
@@ -109,7 +109,7 @@ class AutoOptimizer:
         self.early_stop_patience = early_stop_patience
 
     # ── Lancement asynchrone ──────────────────────────────────────────────
-    def start_async(self, df_map: Dict[str, pd.DataFrame], symbol: str,
+    def start_async(self, df_map: Dict[str, pl.DataFrame], symbol: str,
                     strategies: List[str] = None,
                     timeframes: List[str] = None,
                     auto_apply: bool = False) -> List[str]:
@@ -139,8 +139,8 @@ class AutoOptimizer:
 
             WARMUP = 210
             split   = max(WARMUP + 100, int(len(df) * 0.65))
-            df_is   = df.iloc[:split].copy().reset_index(drop=True)
-            df_oos  = df.iloc[split:].copy().reset_index(drop=True)
+            df_is   = df[:split]
+            df_oos  = df[split:]
 
             for name in strats:
                 if name in ML_STRATEGIES:
@@ -178,9 +178,9 @@ class AutoOptimizer:
         return job_ids, skipped
 
     def _run_one_job(self, job_id: str, strategy_name: str, timeframe: str,
-                     df_is: pd.DataFrame, df_oos: pd.DataFrame,
+                     df_is: pl.DataFrame, df_oos: pl.DataFrame,
                      symbol: str, auto_apply: bool,
-                     df_full: pd.DataFrame = None, split: int = None):
+                     df_full: pl.DataFrame = None, split: int = None):
         trials_log = []
 
         def on_progress(trial: int, total: int, best_score: float, latest: dict):
@@ -270,7 +270,7 @@ class AutoOptimizer:
             _update_job(job_id, status="error", error=str(e), finished_at=time.time())
 
     # ── Exécution synchrone ───────────────────────────────────────────────
-    def optimize_all(self, df_map: Dict[str, pd.DataFrame], symbol: str,
+    def optimize_all(self, df_map: Dict[str, pl.DataFrame], symbol: str,
                      strategies: List[str] = None,
                      timeframes: List[str] = None) -> Dict[str, dict]:
         """Exécution synchrone bloquante. Préférer start_async() pour l'API."""
@@ -286,8 +286,8 @@ class AutoOptimizer:
                 continue
             WARMUP = 210
             split  = max(WARMUP + 100, int(len(df) * 0.65))
-            df_is  = df.iloc[:split].copy().reset_index(drop=True)
-            df_oos = df.iloc[split:].copy().reset_index(drop=True)
+            df_is  = df[:split]
+            df_oos = df[split:]
 
             for name in strats:
                 if name in ML_STRATEGIES or name not in PARAM_SPACES:

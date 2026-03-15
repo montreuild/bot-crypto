@@ -14,7 +14,7 @@ import logging
 import math
 from typing import List, Dict, Optional, Tuple
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from app.engine.engine import Engine
 from app.core.trailing import TrailingStopManager
@@ -32,36 +32,36 @@ logger = logging.getLogger(__name__)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-def _atr(df: pd.DataFrame, period: int = 14) -> float:
+def _atr(df: pl.DataFrame, period: int = 14) -> float:
     if len(df) < period + 1:
         return 0.0
-    h, l, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
-    tr  = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
-    val = float(tr.rolling(period).mean().iloc[-1])
-    return val if val > 0 else 0.0
+    h      = df["high"]
+    l      = df["low"]
+    c_prev = df["close"].shift(1)
+    tr  = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
+    val = tr.rolling_mean(period)[-1]
+    return float(val) if val is not None and float(val) > 0 else 0.0
 
-def _atr_series(df: pd.DataFrame, period: int = 14) -> np.ndarray:
+def _atr_series(df: pl.DataFrame, period: int = 14) -> np.ndarray:
     """
     ATR vectorisé sur tout le df — O(n) unique, même formule que _atr() (SMA du TR).
     Retourne un numpy array indexable par position de barre.
-    Remplace _atr(window) O(n²) dans la boucle de backtest.
     """
-    h = df["high"].astype(float)
-    l = df["low"].astype(float)
-    c = df["close"].astype(float)
-    c_prev = c.shift(1).fillna(c)
-    tr  = pd.concat([h - l, (h - c_prev).abs(), (l - c_prev).abs()], axis=1).max(axis=1)
-    atr = tr.rolling(period).mean()
-    arr = atr.to_numpy(dtype=float, copy=True)  # copie writable
+    h      = df["high"]
+    l      = df["low"]
+    c_prev = df["close"].shift(1).fill_null(strategy="forward")
+    tr  = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
+    atr = tr.rolling_mean(period)
+    arr = atr.to_numpy(allow_copy=True).astype(float)
     # Remplir les NaN initiaux avec la moyenne cumulative des TR disponibles
-    tr_vals = tr.values.astype(float)
+    tr_vals = tr.to_numpy().astype(float)
     for k in range(len(arr)):
         if np.isnan(arr[k]):
-            arr[k] = float(tr_vals[:k+1].mean())
+            arr[k] = float(tr_vals[:k + 1].mean())
     return arr
 
 def _bar_to_days(tf: str) -> float:
-    m = {"1m":1,"3m":3,"5m":5,"15m":15,"30m":30,"1h":60,"2h":120,"4h":240,"1d":1440}
+    m = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "2h": 120, "4h": 240, "1d": 1440}
     return m.get(tf, 15) / 1440.0
 
 
@@ -78,7 +78,7 @@ class BacktestResult:
         self._compute_metrics()
 
     def _compute_metrics(self):
-        closed = [t for t in self.trades if t.get("status","").startswith("closed")]
+        closed = [t for t in self.trades if t.get("status", "").startswith("closed")]
         pnls   = [t["pnl"] for t in closed]
         fees   = [t.get("fees", 0) for t in closed]
         wins   = [p for p in pnls if p > 0]
@@ -108,13 +108,12 @@ class BacktestResult:
         self.avg_loss = _sf(float(np.mean(losses)), 0.0) if losses else 0.0
 
         self.expectancy = (
-            len(wins)/len(closed)*self.avg_win +
-            len(losses)/len(closed)*self.avg_loss
+            len(wins) / len(closed) * self.avg_win +
+            len(losses) / len(closed) * self.avg_loss
         ) if closed else 0.0
 
         win_sum  = sum(wins)
         loss_sum = abs(sum(losses))
-        # Remplace float("inf") par 999.0 — json.dumps rejette l'infini Python
         self.profit_factor = win_sum / loss_sum if loss_sum > 0 else (999.0 if win_sum > 0 else 0.0)
 
         maes = [t.get("mae", 0) for t in closed if t.get("mae") is not None]
@@ -148,22 +147,21 @@ class BacktestResult:
             _loss_sum = abs(sum(loss_s))
             d["profit_factor"] = round(sum(wins_s) / _loss_sum, 3) if _loss_sum > 0 else (999.0 if wins_s else 0.0)
             d["expectancy"]   = round(
-                len(wins_s)/len(sd_pnls)*d["avg_win"] +
-                len(loss_s)/len(sd_pnls)*d["avg_loss"], 4
+                len(wins_s) / len(sd_pnls) * d["avg_win"] +
+                len(loss_s) / len(sd_pnls) * d["avg_loss"], 4
             ) if sd_pnls else 0.0
             d["total_trades"] = d["trades"]
             d["total_pnl"]    = d["pnl"]
             d["total_fees"]   = d["fees"]
 
-            # Equity curve individuelle
             eq_s  = [self.initial_capital]
             cap   = self.initial_capital
             for t in [x for x in closed if x.get("strategy") == s]:
                 cap += t["pnl"]
                 eq_s.append(round(cap, 4))
-            d["equity_curve"]   = eq_s
-            d["initial_capital"]= self.initial_capital
-            d["final_equity"]   = round(eq_s[-1], 4)
+            d["equity_curve"]    = eq_s
+            d["initial_capital"] = self.initial_capital
+            d["final_equity"]    = round(eq_s[-1], 4)
 
             eq_arr = np.array(eq_s, dtype=float)
             peak_s = np.maximum.accumulate(eq_arr)
@@ -174,7 +172,7 @@ class BacktestResult:
                 d["max_drawdown"] = 0.0
 
             if len(eq_arr) > 1:
-                denom = np.where(eq_arr[:-1] > 0, eq_arr[:-1], 1.0)
+                denom  = np.where(eq_arr[:-1] > 0, eq_arr[:-1], 1.0)
                 rets_s = np.diff(eq_arr) / denom
             else:
                 rets_s = np.array([0.0])
@@ -185,7 +183,6 @@ class BacktestResult:
             else:
                 d["sharpe"] = 0.0
 
-            # Trades complets (avec bar/exit_bar) pour le graphique
             d["trades"] = [t for t in closed if t.get("strategy") == s]
 
     def to_dict(self) -> dict:
@@ -231,15 +228,12 @@ class Backtester:
         tcfg = cfg.get("trading",  {})
 
         self.atr_stop_mult = float(bcfg.get("atr_stop_mult", 2.5))
+        self.atr_tp_mult   = None  # V6 : TP FIXE SUPPRIMÉ
 
-        # V6 : TP FIXE SUPPRIMÉ — trailing dynamique multi-phases
-        self.atr_tp_mult  = None
-
-        # Paramètres des 4 phases du trailing
-        self.trail_wide   = float(bcfg.get("trail_wide",   2.5))   # Phase 1
-        self.trail_normal = float(bcfg.get("trail_normal", 2.0))   # Phase 2 (breakeven)
-        self.trail_lock   = float(bcfg.get("trail_lock",   1.5))   # Phase 3 (lock 60%)
-        self.trail_tight  = float(bcfg.get("trail_tight",  1.0))   # Phase 4 (serré)
+        self.trail_wide   = float(bcfg.get("trail_wide",   2.5))
+        self.trail_normal = float(bcfg.get("trail_normal", 2.0))
+        self.trail_lock   = float(bcfg.get("trail_lock",   1.5))
+        self.trail_tight  = float(bcfg.get("trail_tight",  1.0))
         self.grace_bars   = int(bcfg.get("grace_bars",     4))
         self.breakeven_r  = float(bcfg.get("breakeven_r",  1.2))
         self.lock_r       = float(bcfg.get("lock_r",       2.5))
@@ -255,7 +249,6 @@ class Backtester:
         self.max_notional_pct = float(bcfg.get("max_notional_pct", 0.50))
 
     def _make_trailing(self):
-        """Crée une instance de trailing V6 propre à chaque trade ouvert."""
         return TrailingStopManager(
             mult             = self.trail_wide,
             grace_bars       = self.grace_bars,
@@ -268,46 +261,42 @@ class Backtester:
         )
 
     # ── run ───────────────────────────────────────────────────────────────────
-    def run(self, df: pd.DataFrame, symbol: str = "BTC/USDC") -> "BacktestResult":
+    def run(self, df: pl.DataFrame, symbol: str = "BTC/USDC") -> "BacktestResult":
         capital      = self.cfg["trading"].get("capital", 1000.0)
         risk         = self.cfg["trading"]["risk_per_trade"]
         threshold    = self.cfg["trading"].get("score_threshold", 0.60)
         strat_params = self.cfg.get("strategy_params", {})
         trades       = []
         equity_curve = [capital]
-        timestamps   = [str(df["time"].iloc[0]) if "time" in df.columns else "0"]
+        timestamps   = [str(df["time"][0]) if "time" in df.columns else "0"]
         position     = None
         trade_id     = 0
-        # Warmup adapté : EMA200 a besoin de 210+ barres pour être fiable
         warmup       = 210
 
-        # ── Pré-calculs vectorisés O(n) — évite O(n²) dans la boucle ─────────
-        # 1. Enrichir le df avec indicateurs fixes (RSI/ATR/ADX/MACD/vol) une seule fois
-        #    Les stratégies liront pre_val(df, "_pre_rsi14") au lieu de recalculer O(n)
+        # ── Pré-calculs vectorisés O(n) ───────────────────────────────────────
         from app.strategies.indicators import precompute_df as _precompute
-        df = _precompute(df.copy())          # copy() car on ajoute des colonnes _pre_*
+        df = _precompute(df)
 
-        # 2. Arrays numpy pour accès O(1) aux OHLC — ATR depuis colonne pré-calculée
-        atr_arr   = df["_pre_atr14"].values.astype(float)
-        low_arr   = df["low"].values.astype(float)
-        high_arr  = df["high"].values.astype(float)
-        close_arr = df["close"].values.astype(float)
-        open_arr  = df["open"].values.astype(float)
+        # Arrays numpy pour accès O(1) dans la boucle
+        atr_arr   = df["_pre_atr14"].to_numpy().astype(float)
+        low_arr   = df["low"].to_numpy().astype(float)
+        high_arr  = df["high"].to_numpy().astype(float)
+        close_arr = df["close"].to_numpy().astype(float)
+        open_arr  = df["open"].to_numpy().astype(float)
 
         for i in range(warmup, len(df) - 1):
-            window       = df.iloc[:i + 1]    # vue (pas de copie — stratégies ne modifient pas df)
-            c_high       = high_arr[i]
-            c_low        = low_arr[i]
-            c_open       = open_arr[i]
+            window  = df[:i + 1]
+            c_high  = high_arr[i]
+            c_low   = low_arr[i]
+            c_open  = open_arr[i]
 
-            # ── Gestion de la position ouverte (V6 — trailing multi-phases) ────
+            # ── Gestion de la position ouverte ────────────────────────────────
             if position is not None:
                 side    = position["side"]
                 entry   = position["entry"]
                 stop    = position["stop"]
                 c_close = close_arr[i]
 
-                # MAE / MFE intrabar
                 if side == "long":
                     mae_pts = c_low  - entry
                     mfe_pts = c_high - entry
@@ -318,15 +307,12 @@ class Backtester:
                     position["mae"] = min(position.get("mae", 0.0), mae_pts / entry * 100)
                     position["mfe"] = max(position.get("mfe", 0.0), mfe_pts / entry * 100)
 
-                # ── Stop touché sur le low/high intrabar ─────────────────────
                 stop_hit = (side == "long"  and c_low  <= stop) or \
                            (side == "short" and c_high >= stop)
 
                 if stop_hit:
                     exec_price  = stop * (1 - self.spread_pct) if side == "long" \
                                   else stop * (1 + self.spread_pct)
-
-                    # Phase du trailing au moment de la sortie
                     trail_phase = "unknown"
                     _tr = position.get("_trailing")
                     if _tr and hasattr(_tr, "_dts") and _tr._dts:
@@ -343,7 +329,7 @@ class Backtester:
                     pnl   = gross - fees - borrow_cost
                     capital += pnl
 
-                    ts = str(df["time"].iloc[i]) if "time" in df.columns else str(i)
+                    ts = str(df["time"][i]) if "time" in df.columns else str(i)
                     position.update({
                         "pnl":           round(pnl, 6),
                         "fees":          round(fees, 6),
@@ -358,7 +344,6 @@ class Backtester:
                                                (1 if side == "long" else -1), 3) if entry else 0.0,
                         "duration_bars": bars_held,
                         "fill_pct":      self.partial_fill,
-                        # Fix #14 — exposer l'historique du trailing stop pour le graphique
                         "stop_trail":    position.pop("_stop_trail", []),
                     })
                     position.pop("_trailing", None)
@@ -368,19 +353,17 @@ class Backtester:
                     position = None
 
                 else:
-                    # ── Mise à jour trailing stop V6 ─────────────────────────
-                    atr           = float(atr_arr[i]) or 1e-8
+                    atr_v         = float(atr_arr[i]) or 1e-8
                     bars_held_now = i - position["bar"]
                     _tr           = position.get("_trailing")
-                    # Slices numpy — O(1) au lieu de .tolist() sur une fenêtre croissante
-                    lo20 = low_arr[max(0, i-19):i+1].tolist()
-                    hi20 = high_arr[max(0, i-19):i+1].tolist()
+                    lo20 = low_arr[max(0, i - 19):i + 1].tolist()
+                    hi20 = high_arr[max(0, i - 19):i + 1].tolist()
 
                     if _tr:
                         new_stop = _tr.update_stop(
                             current_price = c_close,
                             current_stop  = stop,
-                            atr           = atr, side = side, entry = entry,
+                            atr           = atr_v, side = side, entry = entry,
                             bars_held     = bars_held_now,
                             recent_lows   = lo20,
                             recent_highs  = hi20,
@@ -388,36 +371,29 @@ class Backtester:
                         position["stop"] = new_stop
                         if hasattr(_tr, "_dts") and _tr._dts:
                             position["trail_phase"] = _tr._dts.phase_name
-                        # Fix #14 — historique trailing stop (1 point sur 3 pour limiter la taille)
                         if i % 3 == 0:
                             position["_stop_trail"].append({"bar": i, "stop": round(new_stop, 6)})
 
-                continue  # Position traitée
+                continue
 
             # ── Cherche un signal ─────────────────────────────────────────────
             signal = self.engine.best_signal(window, strat_params)
             if signal["side"] == "none" or signal["score"] < threshold:
                 continue
 
-            atr = float(atr_arr[i])
-            if atr <= 0:
+            atr_v = float(atr_arr[i])
+            if atr_v <= 0:
                 continue
 
-            # ── Prix d'entrée : open de la barre suivante + spread ───────────
-            exec_price = float(df["open"].iloc[i + 1])
+            exec_price = float(df["open"][i + 1])
             if signal["side"] == "long":
                 exec_price *= (1 + self.spread_pct)
             else:
                 exec_price *= (1 - self.spread_pct)
 
-            # ── Stop initial via trailing V6 ──────────────────────────────
             _trailing = self._make_trailing()
-            stop      = _trailing.initial_stop(exec_price, atr, signal["side"])
+            stop      = _trailing.initial_stop(exec_price, atr_v, signal["side"])
 
-            # V6 : PAS DE TP FIXE — le trailing stop gère tout
-            # Le trailing multi-phases laisse courir les gains sans plafond.
-
-            # ── Sizing : risque fixé en USDC ──────────────────────────────────
             stop_dist    = abs(exec_price - stop)
             risk_amount  = capital * risk
             size         = risk_amount / stop_dist if stop_dist > 0 else 0
@@ -434,7 +410,7 @@ class Backtester:
             entry_fees  = self._fees(exec_price, size, maker=False)
             capital    -= entry_fees
             trade_id   += 1
-            ts = str(df["time"].iloc[i]) if "time" in df.columns else str(i)
+            ts = str(df["time"][i]) if "time" in df.columns else str(i)
 
             position = {
                 "id":           trade_id,
@@ -461,14 +437,12 @@ class Backtester:
                 "indicators":   signal.get("indicators", {}),
                 "mae":          0.0,
                 "mfe":          0.0,
-                # Fix #14 — historique trailing stop pour le graphique
                 "_stop_trail":  [{"bar": i + 1, "stop": round(stop, 6)}],
             }
 
-
-        # ── Clôture forcée en fin de série ───────────────────────────────────
+        # ── Clôture forcée en fin de série ────────────────────────────────────
         if position is not None:
-            last_price  = float(df["close"].iloc[-1])
+            last_price  = float(df["close"][-1])
             fill_size   = position["size"] * self.partial_fill
             fees        = self._fees(last_price, fill_size, maker=True)
             bars_held   = len(df) - 1 - position["bar"]
@@ -478,18 +452,18 @@ class Backtester:
             pnl   = gross - fees - borrow_cost
             capital += pnl
             position.update({
-                "pnl":          round(pnl, 6),
-                "fees":         round(fees, 6),
-                "borrow_cost":  round(borrow_cost, 6),
-                "exit":         round(last_price, 6),
-                "status":       "closed_eod",
-                "exit_bar":     len(df) - 1,
-                "exit_time":    str(df["time"].iloc[-1]) if "time" in df.columns else str(len(df)-1),
-                "exit_reason":  "end_of_data",
-                "pnl_pct":      round((last_price - position["entry"]) / position["entry"] * 100 *
+                "pnl":           round(pnl, 6),
+                "fees":          round(fees, 6),
+                "borrow_cost":   round(borrow_cost, 6),
+                "exit":          round(last_price, 6),
+                "status":        "closed_eod",
+                "exit_bar":      len(df) - 1,
+                "exit_time":     str(df["time"][-1]) if "time" in df.columns else str(len(df) - 1),
+                "exit_reason":   "end_of_data",
+                "pnl_pct":       round((last_price - position["entry"]) / position["entry"] * 100 *
                                        (1 if position["side"] == "long" else -1), 3) if position["entry"] else 0.0,
                 "duration_bars": bars_held,
-                "fill_pct":     self.partial_fill,
+                "fill_pct":      self.partial_fill,
             })
             trades.append(position)
             equity_curve.append(round(capital, 4))
@@ -497,14 +471,14 @@ class Backtester:
         result = BacktestResult(trades, equity_curve, self.initial_capital(self.cfg), timestamps)
         return self._add_buy_and_hold(result, df)
 
-    def _add_buy_and_hold(self, result: "BacktestResult", df: pd.DataFrame) -> "BacktestResult":
+    def _add_buy_and_hold(self, result: "BacktestResult", df: pl.DataFrame) -> "BacktestResult":
         """Calcule le benchmark Buy & Hold sur la même période que le backtest."""
         try:
             warmup = 210
             if len(df) <= warmup:
                 return result
-            first_price = float(df["close"].iloc[warmup])
-            last_price  = float(df["close"].iloc[-1])
+            first_price = float(df["close"][warmup])
+            last_price  = float(df["close"][-1])
             if first_price <= 0:
                 return result
             bnh_pct = (last_price - first_price) / first_price * 100
@@ -533,12 +507,12 @@ class WalkForwardAnalyzer:
         self.cfg     = cfg
         self.n_folds = n_folds
 
-    def run(self, df: pd.DataFrame, symbol: str = "BTC/USDC") -> dict:
+    def run(self, df: pl.DataFrame, symbol: str = "BTC/USDC") -> dict:
         n      = len(df)
         fold_n = n // (self.n_folds + 1)
-        WARMUP = 220  # EMA200 + marge — minimum barres tradeable par fold IS
-        MIN_IS = WARMUP + 50   # IS fold doit avoir 50 barres tradeables après warmup
-        MIN_OOS = 40           # OOS fold minimum pour avoir quelques trades potentiels
+        WARMUP = 220
+        MIN_IS = WARMUP + 50
+        MIN_OOS = 40
         if fold_n < MIN_OOS:
             return {"error": f"Données insuffisantes pour Walk-Forward ({n} barres · min {MIN_OOS * (self.n_folds+1)})"}
         if fold_n < MIN_IS:
@@ -559,20 +533,17 @@ class WalkForwardAnalyzer:
         for k in range(self.n_folds):
             is_end  = fold_n * (k + 1)
             oos_end = min(fold_n * (k + 2), n)
-            df_is   = df.iloc[:is_end].copy().reset_index(drop=True)
-            df_oos  = df.iloc[is_end:oos_end].copy().reset_index(drop=True)
+            df_is   = df[:is_end]
+            df_oos  = df[is_end:oos_end]
             if len(df_oos) < 30:
                 continue
             try:
-                # Créer de nouvelles instances de stratégies par fold pour
-                # éviter la contamination de l'état (_call_count, _last_signal_bar)
                 import importlib as _imp
                 fresh_strats = []
                 for s in self.engine.strategies:
                     mod = _imp.import_module(f"app.strategies.{s.name}")
                     fresh_strats.append(mod.Strategy())
                 eng_is  = Engine(); [eng_is.register(s, silent=True)  for s in fresh_strats]
-                # OOS : nouvelles instances également
                 fresh_strats_oos = []
                 for s in self.engine.strategies:
                     mod = _imp.import_module(f"app.strategies.{s.name}")
@@ -632,7 +603,6 @@ class MonteCarlo:
             dd   = (equity - peak) / np.where(peak > 0, peak, 1) * 100
             max_dds.append(float(dd.min()))
 
-        alpha = 1 - self.confidence
         return {
             "runs":               self.n_runs,
             "confidence":         self.confidence,

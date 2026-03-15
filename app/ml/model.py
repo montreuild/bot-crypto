@@ -11,7 +11,7 @@ import os
 from typing import Optional, Tuple, Dict
 
 import numpy as np
-import pandas as pd
+import polars as pl
 from sklearn.linear_model    import LogisticRegression
 from sklearn.ensemble        import RandomForestClassifier
 from sklearn.preprocessing   import StandardScaler
@@ -57,56 +57,69 @@ class MLPredictor:
                                         min_samples_leaf=5, random_state=42, n_jobs=-1)
         return Pipeline([("scaler", StandardScaler()), ("clf", clf)])
 
-    def train(self, df: pd.DataFrame, regime: str = "all") -> Dict:
+    def train(self, df: pl.DataFrame, regime: str = "all") -> Dict:
         """Entraîne le modèle sur les données historiques."""
         features = extract_features(df, self.window)
-        labels   = build_labels(df["close"].loc[features.index])
-        labels   = labels.loc[features.index].dropna()
-        features = features.loc[labels.index]
+        if len(features) == 0:
+            logger.warning(f"[ML] Pas assez de samples (0/{self.min_samples})")
+            return {"error": "insufficient_data"}
+
+        # features contient les lignes valides (NaN supprimés du début).
+        # On aligne les labels sur les mêmes lignes via offset.
+        offset = len(df) - len(features)
+        close_aligned = df["close"][offset:]
+        labels_raw    = build_labels(close_aligned)
+
+        # Supprimer les NaN de fin (lookahead shift)
+        n_valid  = len(labels_raw.drop_nulls())
+        features = features[:n_valid]
+        labels   = labels_raw[:n_valid]
 
         if len(features) < self.min_samples:
             logger.warning(f"[ML] Pas assez de samples ({len(features)}/{self.min_samples})")
             return {"error": "insufficient_data"}
 
-        X, y = features.values, labels.values
-        pipeline = self.build_pipeline(regime)
+        X = features.to_numpy()
+        y = labels.to_numpy()
+
+        pipeline  = self.build_pipeline(regime)
         cv_scores = cross_val_score(pipeline, X, y, cv=5, scoring="roc_auc")
         pipeline.fit(X, y)
 
         self._regime_models[regime] = pipeline
         if regime == "all":
             self._pipeline = pipeline
-            self._last_feature_cols = list(features.columns)  # pour feature_importance()
+            self._last_feature_cols = features.columns
         self.trained = True
 
         metrics = {
-            "regime":     regime,
-            "samples":    len(X),
-            "cv_auc":     round(float(cv_scores.mean()), 3),
-            "cv_std":     round(float(cv_scores.std()),  3),
-            "features":   list(features.columns),
-            "model":      self.model_name,
+            "regime":   regime,
+            "samples":  len(X),
+            "cv_auc":   round(float(cv_scores.mean()), 3),
+            "cv_std":   round(float(cv_scores.std()),  3),
+            "features": features.columns,
+            "model":    self.model_name,
         }
         logger.info(f"[ML] Entraîné — {self.model_name} | AUC={metrics['cv_auc']:.3f}±{metrics['cv_std']:.3f} | n={len(X)}")
         return metrics
 
-    def predict_proba(self, df: pd.DataFrame, regime: str = "all") -> float:
+    def predict_proba(self, df: pl.DataFrame, regime: str = "all") -> float:
         """Retourne la probabilité d'un mouvement haussier (0-1)."""
         pipeline = self._regime_models.get(regime) or self._pipeline
         if pipeline is None or not self.trained:
             return 0.5
         features = extract_features(df, self.window)
-        if features.empty:
+        if len(features) == 0:
             return 0.5
         try:
-            prob = pipeline.predict_proba(features.values[-1:])
+            prob = pipeline.predict_proba(features.to_numpy()[-1:])
             return float(prob[0, 1])
         except Exception as e:
             logger.error(f"[ML] predict_proba : {e}")
             return 0.5
 
     def blend_signal(self, rule_score: float, rule_side: str,
-                     df: pd.DataFrame, regime: str = "all") -> Tuple[float, str]:
+                     df: pl.DataFrame, regime: str = "all") -> Tuple[float, str]:
         """
         Mélange le signal règle + ML selon blend_weight.
         Si le ML contredit fortement, réduit le score.
@@ -116,7 +129,6 @@ class MLPredictor:
         prob = self.predict_proba(df, regime)
         ml_score = prob if rule_side == "long" else (1 - prob)
         blended  = (1 - self.blend_weight) * rule_score + self.blend_weight * ml_score
-        # Veto si ML très contraire (prob < 0.3 pour long ou > 0.7 pour short)
         veto = (rule_side == "long"  and prob < 0.3) or \
                (rule_side == "short" and prob > 0.7)
         if veto:
@@ -124,12 +136,11 @@ class MLPredictor:
             logger.debug(f"[ML] Veto ML — prob={prob:.2f}, score réduit à {blended:.2f}")
         return round(blended, 3), rule_side
 
-    def amplify_signal(self, base_score: float, df: pd.DataFrame,
+    def amplify_signal(self, base_score: float, df: pl.DataFrame,
                        regime: str = "all") -> float:
         """
         Amplifie ou réduit le score de signal selon la prédiction ML.
         Pondération : 70% score règle + 30% signal ML.
-        Alternative plus légère à blend_signal quand on n'a pas besoin du veto.
         """
         if not self.trained:
             return base_score
@@ -142,9 +153,7 @@ class MLPredictor:
         results_by_regime : {"trending": win_rate_pct, "ranging": …, "volatile": …}
         """
         for regime, win_rate in results_by_regime.items():
-            # Normalise le win_rate [0-100] en poids [0.3, 1.5]
             weight = round(max(0.3, min(1.5, win_rate / 50)), 3)
-            # Entraîner un pipeline dédié pour ce régime si pas encore fait
             if regime not in self._regime_models and self._pipeline:
                 self._regime_models[regime] = self._pipeline
             logger.info(f"[ML] Poids régime '{regime}' mis à jour : {weight}")
@@ -163,11 +172,7 @@ class MLPredictor:
             if clf is None:
                 return {}
             if hasattr(clf, "feature_importances_"):
-                from app.ml.features import extract_features
-                import pandas as _pd
-                dummy = _pd.DataFrame(columns=range(100))  # placeholder
-                # On utilise les noms stockés lors du dernier train
-                imp = clf.feature_importances_
+                imp  = clf.feature_importances_
                 cols = getattr(self, "_last_feature_cols", [f"f{i}" for i in range(len(imp))])
                 return dict(sorted(zip(cols, imp.tolist()), key=lambda x: -x[1]))
         except Exception:
@@ -179,11 +184,9 @@ class MLPredictor:
         os.makedirs("logs", exist_ok=True)
         payload = pickle.dumps({"pipeline": self._pipeline, "regime_models": self._regime_models,
                                 "trained": self.trained})
-        # Signature HMAC-SHA256 avec le secret de l'app (clé fixe locale)
-        # Protège contre la modification du fichier depuis l'extérieur.
         sig = _hmac.new(self._hmac_key(), payload, hashlib.sha256).digest()
         with open(self.model_path, "wb") as f:
-            f.write(sig)          # 32 octets de signature
+            f.write(sig)
             f.write(payload)
 
     def load(self) -> bool:

@@ -12,12 +12,13 @@ Différences clés vs ml_strategy.py :
   - Vérification de la distribution des classes avant entraînement.
 """
 import logging
+import math
 import random
 import warnings
 from typing import Dict, Any, List, Tuple, Optional
 
 import numpy as np
-import pandas as pd
+import polars as pl
 from sklearn.ensemble        import RandomForestClassifier
 from sklearn.linear_model    import LogisticRegression
 from sklearn.preprocessing   import StandardScaler
@@ -31,115 +32,177 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════
 #  Feature Engineering — identique à ml_strategy (avancé)
 # ═══════════════════════════════════════════════════════════════
-def compute_features(df: pd.DataFrame) -> pd.DataFrame:
+def compute_features(df: pl.DataFrame) -> pl.DataFrame:
     """
     Construit 30+ features techniques depuis OHLCV.
     Inclut log-returns, VWAP rolling, micro-structure des bougies,
     divergence RSI/prix — plus robustes que les simples pct_change.
     """
     if len(df) < 100:
-        return pd.DataFrame()
+        return pl.DataFrame()
 
-    close  = df["close"].astype(float)
-    high   = df["high"].astype(float)
-    low    = df["low"].astype(float)
-    volume = df["volume"].astype(float)
-    open_p = df["open"].astype(float)
-    feats  = pd.DataFrame(index=df.index)
+    close  = df["close"]
+    high   = df["high"]
+    low    = df["low"]
+    volume = df["volume"]
+    open_p = df["open"]
 
     # ── Log-Returns (normalisation statistique) ────────────────
-    feats["log_ret_1"]  = np.log(close / close.shift(1).clip(lower=1e-9))
-    feats["log_ret_3"]  = np.log(close / close.shift(3).clip(lower=1e-9))
-    feats["log_ret_5"]  = np.log(close / close.shift(5).clip(lower=1e-9))
-    feats["log_ret_10"] = np.log(close / close.shift(10).clip(lower=1e-9))
-    feats["log_ret_20"] = np.log(close / close.shift(20).clip(lower=1e-9))
+    log_ret_1  = (close / close.shift(1).clip(lower_bound=1e-9)).log(math.e)
+    log_ret_3  = (close / close.shift(3).clip(lower_bound=1e-9)).log(math.e)
+    log_ret_5  = (close / close.shift(5).clip(lower_bound=1e-9)).log(math.e)
+    log_ret_10 = (close / close.shift(10).clip(lower_bound=1e-9)).log(math.e)
+    log_ret_20 = (close / close.shift(20).clip(lower_bound=1e-9)).log(math.e)
 
     # ── Rolling VWAP (Volume Weighted Average Price) ───────────
-    typical_price   = (high + low + close) / 3
-    vwap_20 = (typical_price * volume).rolling(20).sum() / volume.rolling(20).sum().clip(lower=1e-9)
-    vwap_50 = (typical_price * volume).rolling(50).sum() / volume.rolling(50).sum().clip(lower=1e-9)
-    feats["vwap_dist_20"] = (close - vwap_20) / vwap_20.clip(lower=1e-9)
-    feats["vwap_dist_50"] = (close - vwap_50) / vwap_50.clip(lower=1e-9)
+    typical_price = (high + low + close) / 3
+    vwap_20 = ((typical_price * volume).rolling_mean(20) /
+               volume.rolling_mean(20).clip(lower_bound=1e-9))
+    vwap_50 = ((typical_price * volume).rolling_mean(50) /
+               volume.rolling_mean(50).clip(lower_bound=1e-9))
+    vwap_dist_20 = (close - vwap_20) / vwap_20.clip(lower_bound=1e-9)
+    vwap_dist_50 = (close - vwap_50) / vwap_50.clip(lower_bound=1e-9)
 
     # ── Micro-structure : pression intra-bougie ────────────────
     body_size   = (close - open_p).abs()
-    upper_wick  = high - pd.concat([open_p, close], axis=1).max(axis=1)
-    lower_wick  = pd.concat([open_p, close], axis=1).min(axis=1) - low
-    total_range = (high - low).clip(lower=1e-9)
-    feats["body_to_range"]    = body_size   / total_range
-    feats["upper_wick_ratio"] = upper_wick  / total_range
-    feats["lower_wick_ratio"] = lower_wick  / total_range
+    upper_wick  = high - pl.Series(np.maximum(open_p.to_numpy(), close.to_numpy()))
+    lower_wick  = pl.Series(np.minimum(open_p.to_numpy(), close.to_numpy())) - low
+    total_range = (high - low).clip(lower_bound=1e-9)
+    body_to_range    = body_size   / total_range
+    upper_wick_ratio = upper_wick  / total_range
+    lower_wick_ratio = lower_wick  / total_range
 
     # ── RSI & divergence approximative ────────────────────────
-    rsi_14 = _rsi(close, 14)
-    feats["rsi_14"] = rsi_14 / 100.0
-    price_slope     = close.diff(5)
-    rsi_slope       = rsi_14.diff(5)
-    feats["rsi_divergence"] = np.sign(price_slope) * np.sign(rsi_slope)
+    rsi_14_s    = _rsi(close, 14)
+    rsi_14      = rsi_14_s / 100.0
+    price_slope = close.diff(5)
+    rsi_slope   = rsi_14_s.diff(5)
+    rsi_divergence = price_slope.sign() * rsi_slope.sign()
 
     # ── EMAs relatifs au prix ──────────────────────────────────
+    ema_rels = {}
     for s in [8, 13, 21, 50, 100]:
-        ema = close.ewm(span=s, adjust=False).mean()
-        feats[f"ema{s}_rel"] = (close - ema) / close.clip(lower=1e-9)
+        ema = close.ewm_mean(span=s, adjust=False)
+        ema_rels[f"ema{s}_rel"] = (close - ema) / close.clip(lower_bound=1e-9)
 
     # ── Croisements EMA ───────────────────────────────────────
-    ema8  = close.ewm(span=8,  adjust=False).mean()
-    ema21 = close.ewm(span=21, adjust=False).mean()
-    ema50 = close.ewm(span=50, adjust=False).mean()
-    feats["cross_8_21"]  = (ema8  - ema21) / close.clip(lower=1e-9)
-    feats["cross_21_50"] = (ema21 - ema50) / close.clip(lower=1e-9)
+    ema8  = close.ewm_mean(span=8,  adjust=False)
+    ema21 = close.ewm_mean(span=21, adjust=False)
+    ema50 = close.ewm_mean(span=50, adjust=False)
+    cross_8_21  = (ema8  - ema21) / close.clip(lower_bound=1e-9)
+    cross_21_50 = (ema21 - ema50) / close.clip(lower_bound=1e-9)
 
     # ── MACD ──────────────────────────────────────────────────
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
+    ema12 = close.ewm_mean(span=12, adjust=False)
+    ema26 = close.ewm_mean(span=26, adjust=False)
     macd  = ema12 - ema26
-    sig   = macd.ewm(span=9, adjust=False).mean()
-    feats["macd_hist_norm"] = (macd - sig) / close.clip(lower=1e-9)
-    feats["macd_norm"]      = macd / close.clip(lower=1e-9)
+    sig_  = macd.ewm_mean(span=9, adjust=False)
+    macd_hist_norm = (macd - sig_) / close.clip(lower_bound=1e-9)
+    macd_norm      = macd / close.clip(lower_bound=1e-9)
 
     # ── ATR relatif ───────────────────────────────────────────
+    atr_rels = {}
     for period in [7, 14]:
-        feats[f"atr{period}_rel"] = _atr_series(df, period) / close.clip(lower=1e-9)
+        atr_s = _atr_series(df, period)
+        atr_rels[f"atr{period}_rel"] = atr_s / close.clip(lower_bound=1e-9)
 
     # ── Bollinger %B ──────────────────────────────────────────
+    bb_feats = {}
     for period in [10, 20]:
-        sma = close.rolling(period).mean()
-        std = close.rolling(period).std().replace(0, 1e-9)
-        feats[f"bb_pct_{period}"]   = (close - (sma - 2*std)) / (4 * std)
-        feats[f"bb_width_{period}"] = (4 * std) / sma.clip(lower=1e-9)
+        sma = close.rolling_mean(period)
+        std = close.rolling_std(period).clip(lower_bound=1e-9)
+        bb_feats[f"bb_pct_{period}"]   = (close - (sma - 2*std)) / (4 * std)
+        bb_feats[f"bb_width_{period}"] = (4 * std) / sma.clip(lower_bound=1e-9)
 
     # ── Momentum ──────────────────────────────────────────────
-    feats["mom_5"]  = close / close.shift(5).clip(lower=1e-9) - 1
-    feats["mom_20"] = close / close.shift(20).clip(lower=1e-9) - 1
+    mom_5  = close / close.shift(5).clip(lower_bound=1e-9) - 1
+    mom_20 = close / close.shift(20).clip(lower_bound=1e-9) - 1
 
     # ── Volume ────────────────────────────────────────────────
-    vol_ma = volume.rolling(20).mean().clip(lower=1e-9)
-    feats["vol_ratio"]     = volume / vol_ma
-    feats["vol_trend_5"]   = vol_ma.pct_change(5)
-    feats["vol_price_corr"]= close.rolling(10).corr(volume)
+    vol_ma        = volume.rolling_mean(20).clip(lower_bound=1e-9)
+    vol_ratio_s   = volume / vol_ma
+    vol_trend_5   = vol_ma.pct_change(5)
+    # Rolling price-volume correlation via vectorized sliding window
+    c_arr = close.to_numpy()
+    v_arr = volume.to_numpy()
+    win   = 10
+    n     = len(c_arr)
+    corr_arr = np.full(n, np.nan)
+    if n >= win:
+        from numpy.lib.stride_tricks import sliding_window_view
+        c_wins = sliding_window_view(c_arr, win)
+        v_wins = sliding_window_view(v_arr, win)
+        c_mean = c_wins.mean(axis=1)
+        v_mean = v_wins.mean(axis=1)
+        cov    = ((c_wins - c_mean[:, None]) * (v_wins - v_mean[:, None])).mean(axis=1)
+        std_c  = c_wins.std(axis=1)
+        std_v  = v_wins.std(axis=1)
+        valid  = (std_c > 0) & (std_v > 0)
+        corr_valid = np.where(valid, cov / (std_c * std_v + 1e-9), 0.0)
+        corr_arr[win - 1:] = corr_valid
+    vol_price_corr = pl.Series(corr_arr)
 
     # ── Volatilité réalisée ───────────────────────────────────
-    feats["vol_real_5"]  = close.pct_change().rolling(5).std()
-    feats["vol_real_20"] = close.pct_change().rolling(20).std()
-    feats["vol_ratio_rv"]= feats["vol_real_5"] / feats["vol_real_20"].clip(lower=1e-9)
+    ret_pct   = close.pct_change(1)
+    vol_real_5  = ret_pct.rolling_std(5)
+    vol_real_20 = ret_pct.rolling_std(20)
+    vol_ratio_rv = vol_real_5 / vol_real_20.clip(lower_bound=1e-9)
 
     # ── ADX ───────────────────────────────────────────────────
-    feats["adx_14"] = _adx_series(df, 14)
+    adx_14 = _adx_series(df, 14)
 
     # ── High/Low range normalisé ──────────────────────────────
-    feats["hl_range"]  = (high - low) / close.clip(lower=1e-9)
-    feats["close_pos"] = (close - low) / (high - low + 1e-9)
+    hl_range  = (high - low) / close.clip(lower_bound=1e-9)
+    close_pos = (close - low) / (high - low + 1e-9)
 
-    feats.replace([np.inf, -np.inf], np.nan, inplace=True)
-    feats.fillna(0, inplace=True)
-    return feats
+    # ── Assemble feature dict ─────────────────────────────────
+    feat_dict: Dict[str, pl.Series] = {
+        "log_ret_1":        log_ret_1,
+        "log_ret_3":        log_ret_3,
+        "log_ret_5":        log_ret_5,
+        "log_ret_10":       log_ret_10,
+        "log_ret_20":       log_ret_20,
+        "vwap_dist_20":     vwap_dist_20,
+        "vwap_dist_50":     vwap_dist_50,
+        "body_to_range":    body_to_range,
+        "upper_wick_ratio": upper_wick_ratio,
+        "lower_wick_ratio": lower_wick_ratio,
+        "rsi_14":           rsi_14,
+        "rsi_divergence":   rsi_divergence,
+        **ema_rels,
+        "cross_8_21":       cross_8_21,
+        "cross_21_50":      cross_21_50,
+        "macd_hist_norm":   macd_hist_norm,
+        "macd_norm":        macd_norm,
+        **atr_rels,
+        **bb_feats,
+        "mom_5":            mom_5,
+        "mom_20":           mom_20,
+        "vol_ratio":        vol_ratio_s,
+        "vol_trend_5":      vol_trend_5,
+        "vol_price_corr":   vol_price_corr,
+        "vol_real_5":       vol_real_5,
+        "vol_real_20":      vol_real_20,
+        "vol_ratio_rv":     vol_ratio_rv,
+        "adx_14":           adx_14,
+        "hl_range":         hl_range,
+        "close_pos":        close_pos,
+    }
+
+    result = pl.DataFrame(feat_dict)
+    # Replace inf with null, then fill all nulls with 0
+    result = result.with_columns([
+        pl.when(pl.col(c).is_infinite()).then(None).otherwise(pl.col(c)).alias(c)
+        for c in result.columns
+    ]).fill_null(0.0)
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════
 #  Labeling DYNAMIQUE — seuil adaptatif basé sur la volatilité
 # ═══════════════════════════════════════════════════════════════
-def compute_labels(df: pd.DataFrame, lookahead: int = 3,
-                   vol_multiplier: float = 0.6) -> pd.Series:
+def compute_labels(df: pl.DataFrame, lookahead: int = 3,
+                   vol_multiplier: float = 0.6) -> pl.Series:
     """
     Le seuil de hausse n'est pas fixe (ex: +0.2%) mais adaptatif :
       seuil = volatilité_20p * sqrt(lookahead) * vol_multiplier
@@ -147,14 +210,12 @@ def compute_labels(df: pd.DataFrame, lookahead: int = 3,
     Avantage : en range serré le seuil est bas (→ plus de signaux valides),
     en tendance forte il est plus élevé (→ filtre les micro-retours).
     """
-    close = df["close"].astype(float)
-    log_ret = np.log(close / close.shift(1).clip(lower=1e-9))
-    volatility = log_ret.rolling(window=20).std()
-    dynamic_threshold = volatility * np.sqrt(lookahead) * vol_multiplier
-    future = np.log(close.shift(-lookahead) / close.clip(lower=1e-9))
-    labels = (future > dynamic_threshold).astype(int)
-    labels.name = "label"
-    return labels
+    close    = df["close"]
+    log_ret  = (close / close.shift(1).clip(lower_bound=1e-9)).log(math.e)
+    volatility         = log_ret.rolling_std(20)
+    dynamic_threshold  = volatility * math.sqrt(lookahead) * vol_multiplier
+    future = (close.shift(-lookahead) / close.clip(lower_bound=1e-9)).log(math.e)
+    return (future > dynamic_threshold).cast(pl.Int32)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -281,7 +342,7 @@ class MLDynamicThresholdStrategy:
         self._train_idx:    int   = 0
 
     # ── Interface principale ───────────────────────────────────
-    def score(self, df: pd.DataFrame, params: dict = None) -> Dict[str, Any]:
+    def score(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
         """
         Interface compatible Engine v6.
         Applique les params de config si fournis (premier appel).
@@ -294,7 +355,7 @@ class MLDynamicThresholdStrategy:
                         setattr(self, k, v)
         return self._signal(df)
 
-    def _signal(self, df: pd.DataFrame) -> Dict[str, Any]:
+    def _signal(self, df: pl.DataFrame) -> Dict[str, Any]:
         self._call_count += 1
         if len(df) < self.min_train + 20:
             return self._no_signal()
@@ -312,15 +373,19 @@ class MLDynamicThresholdStrategy:
         return self._predict(df)
 
     # ── Entraînement ──────────────────────────────────────────
-    def _fit(self, df: pd.DataFrame) -> None:
+    def _fit(self, df: pl.DataFrame) -> None:
         try:
             feats  = compute_features(df)
             labels = compute_labels(df, self.lookahead, self.vol_multiplier)
 
-            common = feats.index.intersection(labels.dropna().index)
-            valid  = common[:-self.lookahead] if len(common) > self.lookahead else common
-            X      = feats.loc[valid].values
-            y      = labels.loc[valid].values
+            # Position-based alignment:
+            # feats has same length as df (no dropna — filled with 0)
+            # labels has null at last lookahead positions
+            # valid range: [0 : n - 2*lookahead] (extra margin for safety)
+            n       = len(df)
+            n_valid = max(0, n - 2 * self.lookahead)
+            X       = feats[:n_valid].to_numpy()
+            y       = labels[:n_valid].to_numpy()
 
             # Sécurité : deux classes minimum
             if len(np.unique(y)) < 2:
@@ -377,14 +442,14 @@ class MLDynamicThresholdStrategy:
             logger.error(f"[{self.name}] Erreur entraînement : {e}")
 
     # ── Prédiction ────────────────────────────────────────────
-    def _predict(self, df: pd.DataFrame) -> Dict[str, Any]:
+    def _predict(self, df: pl.DataFrame) -> Dict[str, Any]:
         try:
             feats = compute_features(df)
-            if feats.empty:
+            if len(feats) == 0:
                 return self._no_signal()
 
             # Filtre ADX — régime de marché
-            adx_val = float(_adx_series(df, 14).iloc[-1])
+            adx_val = float(_adx_series(df, 14)[-1])
             if adx_val < self.adx_min:
                 return {
                     "score":      0.0,
@@ -395,9 +460,9 @@ class MLDynamicThresholdStrategy:
                     "indicators": {"adx": round(adx_val, 2), "auc": round(self._best_auc, 4)},
                 }
 
-            X_last = feats.iloc[[-1]].values
+            X_last = feats[-1:].to_numpy()
             proba  = float(self._pipeline.predict_proba(X_last)[0, 1])
-            close  = float(df["close"].iloc[-1])
+            close  = float(df["close"][-1])
 
             if proba >= self.proba_long:
                 side  = "long"
@@ -459,32 +524,38 @@ class MLDynamicThresholdStrategy:
 # ═══════════════════════════════════════════════════════════════
 #  Helpers indicateurs (locaux — pas de dépendance circulaire)
 # ═══════════════════════════════════════════════════════════════
-def _rsi(close: pd.Series, period: int) -> pd.Series:
-    delta = close.diff()
-    gain  = delta.clip(lower=0).rolling(period).mean()
-    loss  = (-delta.clip(upper=0)).rolling(period).mean()
-    rs    = gain / loss.replace(0, np.nan)
+def _rsi(close: pl.Series, period: int) -> pl.Series:
+    delta = close.diff(1)
+    gain  = delta.clip(lower_bound=0).rolling_mean(period)
+    loss  = (-delta.clip(upper_bound=0)).rolling_mean(period)
+    rs    = gain / loss.replace(0, None)
     return 100 - 100 / (1 + rs)
 
 
-def _atr_series(df: pd.DataFrame, period: int) -> pd.Series:
-    h, l, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
-    tr = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
-    return tr.rolling(period).mean()
+def _atr_series(df: pl.DataFrame, period: int) -> pl.Series:
+    h, l, c = df["high"], df["low"], df["close"]
+    c_prev = c.shift(1)
+    tr = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
+    return tr.rolling_mean(period)
 
 
-def _adx_series(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    h, l, c  = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
-    tr       = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
-    plus_dm  = (h - h.shift()).clip(lower=0)
-    minus_dm = (l.shift() - l).clip(lower=0)
-    plus_dm [plus_dm  <= minus_dm] = 0
-    minus_dm[minus_dm <= plus_dm ] = 0
-    atr14    = tr.rolling(period).mean().replace(0, np.nan)
-    dip      = 100 * plus_dm.rolling(period).mean()  / atr14
-    dim      = 100 * minus_dm.rolling(period).mean() / atr14
-    dx       = 100 * (dip - dim).abs() / (dip + dim).replace(0, np.nan)
-    return dx.rolling(period).mean().fillna(0)
+def _adx_series(df: pl.DataFrame, period: int = 14) -> pl.Series:
+    h, l, c = df["high"], df["low"], df["close"]
+    c_prev = c.shift(1)
+    tr = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
+    _dm = pl.DataFrame({
+        "pdm": (h - h.shift(1)).clip(lower_bound=0),
+        "mdm": (l.shift(1) - l).clip(lower_bound=0),
+    }).with_columns([
+        pl.when(pl.col("pdm") <= pl.col("mdm")).then(0.0).otherwise(pl.col("pdm")).alias("pdm"),
+        pl.when(pl.col("mdm") <= pl.col("pdm")).then(0.0).otherwise(pl.col("mdm")).alias("mdm"),
+    ])
+    pdm, mdm = _dm["pdm"], _dm["mdm"]
+    atr14    = tr.rolling_mean(period).replace(0, None)
+    dip      = 100 * pdm.rolling_mean(period) / atr14
+    dim      = 100 * mdm.rolling_mean(period) / atr14
+    dx       = 100 * (dip - dim).abs() / (dip + dim).replace(0, None)
+    return dx.rolling_mean(period).fill_null(0.0)
 
 
 # Alias Engine

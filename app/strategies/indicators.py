@@ -1,85 +1,94 @@
 """
 Module d'indicateurs partagé — utilisé par toutes les stratégies.
 Centralise RSI, ADX, ATR, MACD, SuperTrend, structure de marché.
+Bibliothèque principale : Polars (Rust, Arrow, multi-threadé).
+NumPy conservé uniquement pour la boucle séquentielle SuperTrend.
 """
 import numpy as np
-import pandas as pd
+import polars as pl
 from typing import Tuple
 
 
-def rsi(close: pd.Series, period: int = 14) -> pd.Series:
-    d = close.diff()
-    g = d.clip(lower=0).ewm(alpha=1/period, adjust=False).mean()
-    l = (-d.clip(upper=0)).ewm(alpha=1/period, adjust=False).mean()
-    # l=0 means no down days → RSI=100; use tiny value to avoid nan
-    return 100 - 100 / (1 + g / l.replace(0, 1e-10))
+def _true_range(df: pl.DataFrame) -> pl.Series:
+    """True Range vectorisé via Polars max_horizontal."""
+    h = df["high"]
+    l = df["low"]
+    c_prev = df["close"].shift(1)
+    return pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
 
 
-def atr(df: pd.DataFrame, period: int = 14) -> float:
-    h, l, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
-    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
-    v = float(tr.ewm(span=period, adjust=False).mean().iloc[-1])
-    return v if v > 0 else 0.0
+def rsi(close: pl.Series, period: int = 14) -> pl.Series:
+    d = close.diff(1)
+    g = d.clip(lower_bound=0).ewm_mean(alpha=1 / period, adjust=False)
+    dn = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / period, adjust=False)
+    dn_safe = pl.when(dn == 0).then(1e-10).otherwise(dn)
+    return 100 - 100 / (1 + g / dn_safe)
 
 
-def atr_series(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    h, l, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
-    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
-    return tr.ewm(span=period, adjust=False).mean()
+def atr(df: pl.DataFrame, period: int = 14) -> float:
+    tr = _true_range(df)
+    v = tr.ewm_mean(span=period, adjust=False)[-1]
+    return float(v) if v is not None and float(v) > 0 else 0.0
 
 
-def adx(df: pd.DataFrame, period: int = 14) -> float:
+def atr_series(df: pl.DataFrame, period: int = 14) -> pl.Series:
+    return _true_range(df).ewm_mean(span=period, adjust=False)
+
+
+def adx(df: pl.DataFrame, period: int = 14) -> float:
     if len(df) < period * 2:
         return 0.0
-    h, l, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
-    up   = h.diff().clip(lower=0)
-    down = (-l.diff()).clip(lower=0)
-    pdm  = up.where(up > down, 0.0)
-    mdm  = down.where(down > up, 0.0)
-    tr   = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
-    atr_ = tr.ewm(span=period, adjust=False).mean().replace(0, np.nan)
-    dip  = 100 * pdm.ewm(span=period, adjust=False).mean() / atr_
-    dim  = 100 * mdm.ewm(span=period, adjust=False).mean() / atr_
-    dx   = 100 * (dip - dim).abs() / (dip + dim).replace(0, np.nan)
-    v    = float(dx.ewm(span=period, adjust=False).mean().iloc[-1])
-    return v if not np.isnan(v) else 0.0
+    h = df["high"]
+    l = df["low"]
+    up = h.diff(1).clip(lower_bound=0)
+    down = (-l.diff(1)).clip(lower_bound=0)
+    pdm = pl.when(up > down).then(up).otherwise(0.0)
+    mdm = pl.when(down > up).then(down).otherwise(0.0)
+    tr = _true_range(df)
+    atr_ = tr.ewm_mean(span=period, adjust=False)
+    atr_safe = pl.when(atr_ == 0).then(None).otherwise(atr_)
+    dip = 100 * pdm.ewm_mean(span=period, adjust=False) / atr_safe
+    dim = 100 * mdm.ewm_mean(span=period, adjust=False) / atr_safe
+    dip_plus_dim = dip + dim
+    dip_plus_dim_safe = pl.when(dip_plus_dim == 0).then(None).otherwise(dip_plus_dim)
+    dx = 100 * (dip - dim).abs() / dip_plus_dim_safe
+    v = dx.ewm_mean(span=period, adjust=False)[-1]
+    return float(v) if v is not None else 0.0
 
 
-def macd(close: pd.Series, fast: int = 12, slow: int = 26,
-         signal: int = 9) -> Tuple[pd.Series, pd.Series, pd.Series]:
+def macd(close: pl.Series, fast: int = 12, slow: int = 26,
+         signal: int = 9) -> Tuple[pl.Series, pl.Series, pl.Series]:
     """Retourne (macd_line, signal_line, histogram)."""
-    ema_f   = close.ewm(span=fast,   adjust=False).mean()
-    ema_s   = close.ewm(span=slow,   adjust=False).mean()
-    line    = ema_f - ema_s
-    sig     = line.ewm(span=signal,  adjust=False).mean()
-    hist    = line - sig
-    return line, sig, hist
+    ema_f = close.ewm_mean(span=fast, adjust=False)
+    ema_s = close.ewm_mean(span=slow, adjust=False)
+    line = ema_f - ema_s
+    sig = line.ewm_mean(span=signal, adjust=False)
+    return line, sig, line - sig
 
 
-def supertrend(df: pd.DataFrame, period: int = 10,
-               mult: float = 3.0) -> Tuple[pd.Series, pd.Series]:
+def supertrend(df: pl.DataFrame, period: int = 10,
+               mult: float = 3.0) -> Tuple[pl.Series, pl.Series]:
     """
-    Retourne (direction: +1/-1, st_line) — signatures identiques à l'original.
-    Implémentation vectorisée numpy : ~50× plus rapide que .iloc en boucle.
+    Retourne (direction: +1/-1, st_line).
+    Implémentation vectorisée numpy : boucle séquentielle inévitable
+    (upper[i] dépend de upper[i-1]).
     """
-    high  = df["high"].astype(float).values
-    low   = df["low"].astype(float).values
-    close = df["close"].astype(float).values
+    high  = df["high"].to_numpy()
+    low   = df["low"].to_numpy()
+    close = df["close"].to_numpy()
     n     = len(close)
 
-    # True Range vectorisé
-    prev_close        = np.empty(n)
-    prev_close[0]     = close[0]
-    prev_close[1:]    = close[:-1]
+    prev_close     = np.empty(n)
+    prev_close[0]  = close[0]
+    prev_close[1:] = close[:-1]
     tr = np.maximum(high - low,
          np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)))
 
-    # ATR EWM (Wilder — cohérent avec atr())
-    atr_arr       = np.empty(n)
-    atr_arr[0]    = tr[0]
-    alpha         = 2.0 / (period + 1)
+    atr_arr    = np.empty(n)
+    atr_arr[0] = tr[0]
+    alpha      = 2.0 / (period + 1)
     for i in range(1, n):
-        atr_arr[i] = atr_arr[i-1] * (1 - alpha) + tr[i] * alpha
+        atr_arr[i] = atr_arr[i - 1] * (1 - alpha) + tr[i] * alpha
 
     hl2         = (high + low) / 2.0
     upper_basic = hl2 + mult * atr_arr
@@ -89,75 +98,72 @@ def supertrend(df: pd.DataFrame, period: int = 10,
     lower  = lower_basic.copy()
     st     = np.empty(n)
     dir_   = np.ones(n, dtype=np.int8)
-
-    st[0] = lower[0]
+    st[0]  = lower[0]
 
     for i in range(1, n):
-        # Correction bande supérieure
-        upper[i] = upper_basic[i] if (upper_basic[i] < upper[i-1]
-                                       or close[i-1] > upper[i-1]) else upper[i-1]
-        # Correction bande inférieure
-        lower[i] = lower_basic[i] if (lower_basic[i] > lower[i-1]
-                                       or close[i-1] < lower[i-1]) else lower[i-1]
-        # Direction
-        if dir_[i-1] == 1:
+        upper[i] = upper_basic[i] if (upper_basic[i] < upper[i - 1]
+                                       or close[i - 1] > upper[i - 1]) else upper[i - 1]
+        lower[i] = lower_basic[i] if (lower_basic[i] > lower[i - 1]
+                                       or close[i - 1] < lower[i - 1]) else lower[i - 1]
+        if dir_[i - 1] == 1:
             dir_[i] = 1 if close[i] >= lower[i] else -1
         else:
             dir_[i] = -1 if close[i] <= upper[i] else 1
         st[i] = lower[i] if dir_[i] == 1 else upper[i]
 
-    return (pd.Series(dir_.astype(np.float64), index=df.index),
-            pd.Series(st, index=df.index))
+    return pl.Series(dir_.astype(float)), pl.Series(st)
 
 
-def bb_squeeze(close: pd.Series, lookback: int = 15,
+def bb_squeeze(close: pl.Series, lookback: int = 15,
                bb_period: int = 20, quantile: float = 0.30) -> bool:
     if len(close) < bb_period + lookback:
         return False
-    sma   = close.rolling(bb_period).mean()
-    std   = close.rolling(bb_period).std()
-    width = (4 * std / sma.clip(lower=1e-9))
-    cur_w = float(width.iloc[-1])
-    past  = width.iloc[-(lookback + 1):-1].dropna()
-    return len(past) >= 5 and cur_w <= float(past.quantile(quantile))
+    sma   = close.rolling_mean(bb_period)
+    std   = close.rolling_std(bb_period)
+    sma_safe = pl.when(sma < 1e-9).then(1e-9).otherwise(sma)
+    width    = 4 * std / sma_safe
+    cur_w    = width[-1]
+    if cur_w is None:
+        return False
+    past = width[-(lookback + 1):-1].drop_nulls()
+    return len(past) >= 5 and float(cur_w) <= float(past.quantile(quantile))
 
 
-def market_structure(high: pd.Series, low: pd.Series,
+def market_structure(high: pl.Series, low: pl.Series,
                      n_pivots: int = 4, window: int = 5) -> int:
     """
     +1 = HH/HL (uptrend), -1 = LL/LH (downtrend), 0 = neutral.
     """
     if len(high) < n_pivots * window * 2:
         return 0
-    highs = [float(high.iloc[-i*window-1:-i*window+window-1].max()) for i in range(1, n_pivots+1)]
-    lows  = [float(low.iloc[-i*window-1:-i*window+window-1].min())  for i in range(1, n_pivots+1)]
-    hh = sum(1 for i in range(len(highs)-1) if highs[i] > highs[i+1])
-    hl = sum(1 for i in range(len(lows)-1)  if lows[i]  > lows[i+1])
-    ll = sum(1 for i in range(len(highs)-1) if highs[i] < highs[i+1])
-    lh = sum(1 for i in range(len(lows)-1)  if lows[i]  < lows[i+1])
+    highs = [float(high[-i * window - 1:-i * window + window - 1].max()) for i in range(1, n_pivots + 1)]
+    lows  = [float(low[-i * window - 1:-i * window + window - 1].min())  for i in range(1, n_pivots + 1)]
+    hh = sum(1 for i in range(len(highs) - 1) if highs[i] > highs[i + 1])
+    hl = sum(1 for i in range(len(lows) - 1)  if lows[i]  > lows[i + 1])
+    ll = sum(1 for i in range(len(highs) - 1) if highs[i] < highs[i + 1])
+    lh = sum(1 for i in range(len(lows) - 1)  if lows[i]  < lows[i + 1])
     if (hh + hl) >= n_pivots - 1: return 1
     if (ll + lh) >= n_pivots - 1: return -1
     return 0
 
 
-def vol_ratio(df: pd.DataFrame, period: int = 20) -> float:
-    avg = float(df["volume"].rolling(period).mean().iloc[-1])
-    now = float(df["volume"].iloc[-1])
-    return now / max(avg, 1e-9)
+def vol_ratio(df: pl.DataFrame, period: int = 20) -> float:
+    avg = df["volume"].rolling_mean(period)[-1]
+    now = float(df["volume"][-1])
+    return now / max(float(avg) if avg is not None else 1e-9, 1e-9)
 
 
 def htf_trend(df_htf, ema_period: int = 50) -> int:
     """
     Tendance du timeframe supérieur : +1 haussier, -1 baissier, 0 neutre.
-    Utilise EMA50 + pente comme proxy rapide.
     """
     if df_htf is None or len(df_htf) < ema_period + 3:
         return 0
-    c   = df_htf["close"].astype(float)
-    ema = c.ewm(span=ema_period, adjust=False).mean()
-    price_above = float(c.iloc[-1]) > float(ema.iloc[-1])
-    slope_up    = float(ema.iloc[-1]) > float(ema.iloc[-4])
-    if price_above and slope_up:   return 1
+    c   = df_htf["close"]
+    ema = c.ewm_mean(span=ema_period, adjust=False)
+    price_above = float(c[-1]) > float(ema[-1])
+    slope_up    = float(ema[-1]) > float(ema[-4])
+    if price_above and slope_up:        return 1
     if not price_above and not slope_up: return -1
     return 0
 
@@ -166,75 +172,93 @@ def htf_trend(df_htf, ema_period: int = 50) -> int:
 #  Pré-calcul vectorisé — O(n) unique pour accélérer le backtest (~180×)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def precompute_df(df: pd.DataFrame) -> pd.DataFrame:
+def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Enrichit le df avec les colonnes _pre_* calculées une seule fois.
+    Enrichit le df avec les colonnes _pre_* calculées une seule fois via Polars.
     Appelé par Backtester.run() AVANT la boucle barre-par-barre.
-    Les stratégies lisent ces colonnes via pre_val() → O(1) au lieu de O(n).
+    Les stratégies lisent ces colonnes via pre_val() → O(1).
 
-    Indicateurs couverts (spans FIXES — les spans param-driven (EMA21/50/200) ne
-    peuvent pas être pré-calculés car ils varient selon les params de l'optimizer) :
+    Indicateurs couverts :
       _pre_rsi14       RSI(14)
-      _pre_atr14       ATR(14)  — EWM, cohérent avec atr()
+      _pre_atr14       ATR(14)  — EWM
       _pre_adx14       ADX(14)
+      _pre_pdi14       +DI(14)
+      _pre_ndi14       −DI(14)
       _pre_macd_line   MACD line (12,26,9)
       _pre_macd_sig    MACD signal
       _pre_macd_hist   MACD histogram
       _pre_volratio20  volume_ratio(20)
     """
-    c = df["close"].astype(float)
-    h = df["high"].astype(float)
-    l = df["low"].astype(float)
-    v = df["volume"].astype(float)
+    c = df["close"]
+    h = df["high"]
+    l = df["low"]
+    v = df["volume"]
+
+    # True Range (réutilisé pour ATR et ADX)
+    c_prev = c.shift(1)
+    tr = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
 
     # RSI(14)
-    d  = c.diff()
-    g  = d.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
-    dn = (-d.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
-    df["_pre_rsi14"] = 100 - 100 / (1 + g / dn.replace(0, 1e-10))
+    d  = c.diff(1)
+    g  = d.clip(lower_bound=0).ewm_mean(alpha=1 / 14, adjust=False)
+    dn = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / 14, adjust=False)
+    dn_safe = pl.when(dn == 0).then(1e-10).otherwise(dn)
+    pre_rsi14 = 100 - 100 / (1 + g / dn_safe)
 
-    # ATR(14) — EWM pour cohérence avec atr()
-    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
-    df["_pre_atr14"] = tr.ewm(span=14, adjust=False).mean()
+    # ATR(14)
+    pre_atr14 = tr.ewm_mean(span=14, adjust=False)
 
     # ADX(14)
-    up   = h.diff().clip(lower=0)
-    down = (-l.diff()).clip(lower=0)
-    pdm  = up.where(up > down, 0.0)
-    mdm  = down.where(down > up, 0.0)
-    atr_ = tr.ewm(span=14, adjust=False).mean().replace(0, np.nan)
-    dip  = 100 * pdm.ewm(span=14, adjust=False).mean() / atr_
-    dim  = 100 * mdm.ewm(span=14, adjust=False).mean() / atr_
-    dx   = 100 * (dip - dim).abs() / (dip + dim).replace(0, np.nan)
-    df["_pre_adx14"]  = dx.ewm(span=14, adjust=False).mean().fillna(0)
-    df["_pre_pdi14"]  = dip.fillna(0)
-    df["_pre_ndi14"]  = dim.fillna(0)
+    up   = h.diff(1).clip(lower_bound=0)
+    down = (-l.diff(1)).clip(lower_bound=0)
+    pdm  = pl.when(up > down).then(up).otherwise(0.0)
+    mdm  = pl.when(down > up).then(down).otherwise(0.0)
+    atr_safe = pl.when(pre_atr14 == 0).then(None).otherwise(pre_atr14)
+    dip  = 100 * pdm.ewm_mean(span=14, adjust=False) / atr_safe
+    dim  = 100 * mdm.ewm_mean(span=14, adjust=False) / atr_safe
+    dip_plus_dim = dip + dim
+    dip_plus_dim_safe = pl.when(dip_plus_dim == 0).then(None).otherwise(dip_plus_dim)
+    dx   = 100 * (dip - dim).abs() / dip_plus_dim_safe
+    pre_adx14 = dx.ewm_mean(span=14, adjust=False).fill_null(0)
+    pre_pdi14 = dip.fill_null(0)
+    pre_ndi14 = dim.fill_null(0)
 
     # MACD(12,26,9)
-    ema_f = c.ewm(span=12, adjust=False).mean()
-    ema_s = c.ewm(span=26, adjust=False).mean()
+    ema_f = c.ewm_mean(span=12, adjust=False)
+    ema_s = c.ewm_mean(span=26, adjust=False)
     ml    = ema_f - ema_s
-    ms    = ml.ewm(span=9, adjust=False).mean()
-    df["_pre_macd_line"] = ml
-    df["_pre_macd_sig"]  = ms
-    df["_pre_macd_hist"] = ml - ms
+    ms    = ml.ewm_mean(span=9, adjust=False)
+    pre_macd_line = ml
+    pre_macd_sig  = ms
+    pre_macd_hist = ml - ms
 
     # volume_ratio(20)
-    vm = v.rolling(20).mean()
-    df["_pre_volratio20"] = v / vm.clip(lower=1e-9)
+    vm = v.rolling_mean(20)
+    vm_safe = pl.when(vm < 1e-9).then(1e-9).otherwise(vm)
+    pre_volratio20 = v / vm_safe
 
-    return df
+    return df.with_columns([
+        pre_rsi14.alias("_pre_rsi14"),
+        pre_atr14.alias("_pre_atr14"),
+        pre_adx14.alias("_pre_adx14"),
+        pre_pdi14.alias("_pre_pdi14"),
+        pre_ndi14.alias("_pre_ndi14"),
+        pre_macd_line.alias("_pre_macd_line"),
+        pre_macd_sig.alias("_pre_macd_sig"),
+        pre_macd_hist.alias("_pre_macd_hist"),
+        pre_volratio20.alias("_pre_volratio20"),
+    ])
 
 
-def pre_val(df: pd.DataFrame, col: str) -> float:
+def pre_val(df: pl.DataFrame, col: str) -> float:
     """
     Lit la valeur pré-calculée à la dernière ligne si disponible.
-    Retourne None si la colonne n'existe pas ou si la valeur est NaN.
+    Retourne None si la colonne n'existe pas ou si la valeur est nulle.
     Usage :
-        rsi_now = pre_val(df, "_pre_rsi14") or float(rsi(df["close"]).iloc[-1])
+        rsi_now = pre_val(df, "_pre_rsi14") or float(rsi(df["close"])[-1])
     """
     if col in df.columns:
-        v = df[col].iloc[-1]
-        if pd.notna(v):
+        v = df[col][-1]
+        if v is not None:
             return float(v)
     return None

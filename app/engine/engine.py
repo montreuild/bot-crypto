@@ -6,7 +6,7 @@ Le moteur sélectionne le meilleur signal.
 import logging
 from typing import List, Dict, Any, Optional
 
-import pandas as pd
+import polars as pl
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ class BaseStrategy:
     """Interface que toutes les stratégies doivent respecter."""
     name: str = "base"
 
-    def score(self, df: pd.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         """
         df     : OHLCV du timeframe principal
@@ -40,7 +40,7 @@ class Engine:
             logger.info(f"[Engine] Stratégie enregistrée : {strategy.name}")
         self.strategies.append(strategy)
 
-    def best_signal(self, df: pd.DataFrame, params: dict = None,
+    def best_signal(self, df: pl.DataFrame, params: dict = None,
                     symbol: str = "") -> Dict[str, Any]:
         """
         Retourne le signal avec le meilleur score parmi toutes les stratégies.

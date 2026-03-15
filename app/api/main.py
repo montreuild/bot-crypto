@@ -14,7 +14,7 @@ Nouveautés V8 :
 """
 import csv, glob, importlib, io, json, logging, os, time
 from typing import Optional
-import pandas as pd
+import polars as pl
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -139,17 +139,18 @@ def detect_ohlcv_gaps(df, timeframe: str) -> list:
     tf_mins = {"1m":1,"3m":3,"5m":5,"15m":15,"30m":30,
                "1h":60,"4h":240,"1d":1440}
     expected_mins  = tf_mins.get(timeframe, 60)
-    expected_delta = pd.Timedelta(minutes=expected_mins)
+    from datetime import timedelta as _timedelta
+    expected_delta = _timedelta(minutes=expected_mins)
     gaps  = []
-    times = pd.to_datetime(df["time"])
+    times = df["time"]
     for i in range(1, len(times)):
-        delta = times.iloc[i] - times.iloc[i-1]
+        delta = times[i] - times[i-1]
         if delta > expected_delta * 1.5:
             gap_bars = round(delta.total_seconds() / 60 / expected_mins) - 1
             gaps.append({
                 "index":       int(i),
-                "time_before": str(times.iloc[i-1])[:16],
-                "time_after":  str(times.iloc[i])[:16],
+                "time_before": str(times[i-1])[:16],
+                "time_after":  str(times[i])[:16],
                 "gap_bars":    gap_bars,
                 "gap_duration":str(delta),
             })
@@ -698,9 +699,7 @@ def run_backtest(symbol: str = "BTC/USDC", limit: int = 500, timeframe: str = ""
 
         exchange  = _get_bt_exchange(cfg)
         ohlcv_raw = fetch_ohlcv_paged(exchange, symbol, tf, total=limit)
-        df        = pd.DataFrame(ohlcv_raw, columns=["time","open","high","low","close","volume"])
-        df["time"]= pd.to_datetime(df["time"], unit="ms")
-        df.reset_index(drop=True, inplace=True)
+        df = pl.DataFrame(ohlcv_raw, schema=["time","open","high","low","close","volume"], orient="row").with_columns(pl.from_epoch("time", time_unit="ms"))
 
         ohlcv_payload = {
             "time":   [str(t) for t in df["time"].tolist()],
@@ -911,8 +910,7 @@ def optimizer_start(
             fetch_limit  = min(user_limit, TF_BINANCE_MAX.get(tf, 8000))
             fetch_details[tf] = fetch_limit
             ohlcv = fetch_ohlcv_paged(exchange, symbol, tf, total=fetch_limit)
-            df    = pd.DataFrame(ohlcv, columns=["time","open","high","low","close","volume"])
-            df["time"] = pd.to_datetime(df["time"], unit="ms")
+            df = pl.DataFrame(ohlcv, schema=["time","open","high","low","close","volume"], orient="row").with_columns(pl.from_epoch("time", time_unit="ms"))
             if len(df) >= 300:
                 df_map[tf] = df
             else:
@@ -1088,8 +1086,7 @@ def train_ml(symbol: str = "BTC/USDC", limit: int = 2000):
         exchange  = create_exchange(cfg)
         ohlcv_raw = fetch_ohlcv_paged(exchange, symbol,
                                        cfg["trading"].get("timeframe","1h"), total=limit)
-        df  = pd.DataFrame(ohlcv_raw, columns=["time","open","high","low","close","volume"])
-        df["time"] = pd.to_datetime(df["time"], unit="ms")
+        df = pl.DataFrame(ohlcv_raw, schema=["time","open","high","low","close","volume"], orient="row").with_columns(pl.from_epoch("time", time_unit="ms"))
         ml  = MLPredictor(cfg)
         ml.train(df)
         ml.save()
