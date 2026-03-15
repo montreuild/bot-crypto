@@ -208,23 +208,23 @@ def _tpl(name: str, request: Request, extra: dict = None):
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
-    return _tpl("dashboard.html", request)
+    return _tpl("dashboard.html", request, {"active_page": "dashboard"})
 
 @app.get("/backtest", response_class=HTMLResponse)
 def backtest_page(request: Request):
-    return _tpl("backtest.html", request)
+    return _tpl("backtest.html", request, {"active_page": "backtest"})
 
 @app.get("/optimizer", response_class=HTMLResponse)
 def optimizer_page(request: Request):
-    return _tpl("optimizer.html", request)
+    return _tpl("optimizer.html", request, {"active_page": "optimizer"})
 
 @app.get("/config", response_class=HTMLResponse)
 def config_page(request: Request):
-    return _tpl("config.html", request)
+    return _tpl("config.html", request, {"active_page": "config"})
 
 @app.get("/scanner", response_class=HTMLResponse)
 def scanner_page(request: Request):
-    return _tpl("scanner.html", request)
+    return _tpl("scanner.html", request, {"active_page": "scanner"})
 
 
 # ═══════════════════════════════════════════════════════════════
