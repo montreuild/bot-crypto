@@ -702,11 +702,11 @@ def run_backtest(symbol: str = "BTC/USDC", limit: int = 500, timeframe: str = ""
         df = pl.DataFrame(ohlcv_raw, schema=["time","open","high","low","close","volume"], orient="row").with_columns(pl.from_epoch("time", time_unit="ms"))
 
         ohlcv_payload = {
-            "time":   [str(t) for t in df["time"].tolist()],
-            "close":  [round(float(v), 6) for v in df["close"].tolist()],
-            "high":   [round(float(v), 6) for v in df["high"].tolist()],
-            "low":    [round(float(v), 6) for v in df["low"].tolist()],
-            "volume": [round(float(v), 2) for v in df["volume"].tolist()],
+            "time":   [str(t) for t in df["time"].to_list()],
+            "close":  [round(float(v), 6) for v in df["close"].to_list()],
+            "high":   [round(float(v), 6) for v in df["high"].to_list()],
+            "low":    [round(float(v), 6) for v in df["low"].to_list()],
+            "volume": [round(float(v), 2) for v in df["volume"].to_list()],
         }
 
         _ALLOWED_STRATS = _discover_strategies()
@@ -788,8 +788,8 @@ def run_backtest(symbol: str = "BTC/USDC", limit: int = 500, timeframe: str = ""
             "timeframe":       tf,
             "limit":           limit,
             "n_bars":          len(df),
-            "date_from":       str(df["time"].iloc[0])[:16] if len(df) else "",
-            "date_to":         str(df["time"].iloc[-1])[:16] if len(df) else "",
+            "date_from":       str(df["time"][0])[:16] if len(df) else "",
+            "date_to":         str(df["time"][-1])[:16] if len(df) else "",
             "ohlcv":           ohlcv_payload,
             "by_strategy":     by_strategy,
             "score_threshold": cfg["trading"].get("score_threshold", 0.55),
@@ -875,6 +875,11 @@ def optimizer_start(
     early_stop_patience: int  = 0,
 ):
     if not cfg: raise HTTPException(503, "Config non chargée")
+    # Vérifier si des jobs d'optimisation sont encore en cours (threads background)
+    from app.optimizer.auto_optimizer import get_all_jobs as _get_all_jobs
+    _running_jobs = [jid for jid, j in _get_all_jobs().items() if j.get("status") == "running"]
+    if _running_jobs:
+        raise HTTPException(429, f"Une optimisation est déjà en cours ({len(_running_jobs)} job(s) actif(s) : {', '.join(_running_jobs[:3])}).")
     if not _opt_semaphore.acquire(blocking=False):
         raise HTTPException(429, "Une optimisation est déjà en cours.")
     n_trials = max(1,  min(n_trials, 200))
@@ -902,7 +907,8 @@ def optimizer_start(
             "1d": 3000,  # Binance ~2017 → ~2500 bougies dispo max
         }
         df_map   = {}
-        fetch_details = {}  # pour retour API
+        fetch_details = {}   # pour retour API : limit demandée
+        received_counts = {} # pour retour API : bougies effectivement reçues
         for tf in tf_list:
             # limit=0 ou absent → utiliser la valeur recommandée
             user_limit   = limit if limit > 0 else RECOMMENDED_LIMIT.get(tf, 1000)
@@ -911,13 +917,22 @@ def optimizer_start(
             fetch_details[tf] = fetch_limit
             ohlcv = fetch_ohlcv_paged(exchange, symbol, tf, total=fetch_limit)
             df = pl.DataFrame(ohlcv, schema=["time","open","high","low","close","volume"], orient="row").with_columns(pl.from_epoch("time", time_unit="ms"))
+            received_counts[tf] = len(df)
             if len(df) >= 300:
                 df_map[tf] = df
             else:
                 logger.warning(f"[Optimizer] TF={tf} : seulement {len(df)} bougies reçues (min 300), ignoré")
 
         if not df_map:
-            raise HTTPException(400, "Données insuffisantes pour tous les TFs demandés")
+            details = "; ".join(
+                f"{tf}: {received_counts.get(tf, 0)} bougies reçues (min 300)"
+                for tf in tf_list
+            )
+            hint = ""
+            if any(tf == "1d" for tf in tf_list):
+                hint = (f" — Pour le TF '1d', le symbole '{symbol}' dispose peut-être "
+                        f"de peu d'historique sur cet échange. Essayez BTC/USDT.")
+            raise HTTPException(400, f"Données insuffisantes pour tous les TFs demandés. {details}.{hint}")
 
         def _on_apply(strat_name: str, params: dict):
             try:
@@ -942,7 +957,8 @@ def optimizer_start(
                 "method": method, "n_trials": n_trials,
                 "skipped": skipped,
                 "n_jobs_created": len(job_ids),
-                "fetch_details": fetch_details}
+                "fetch_details": fetch_details,
+                "received_bars": received_counts}
     except HTTPException:
         raise
     except Exception as e:
@@ -1044,6 +1060,16 @@ def optimizer_apply(job_id: str, config_path: str = "config.yaml"):
 def optimizer_results():
     """Retourne les résultats d'optimisation classés par (strategy, tf)."""
     if not cfg: raise HTTPException(503, "Config non chargée")
+    # Lire depuis le fichier disque pour avoir les résultats à jour des threads background
+    import yaml as _yaml
+    try:
+        with open("config.yaml") as _f:
+            _disk_cfg = _yaml.safe_load(_f) or {}
+        # Mettre à jour optimizer_results en mémoire si le fichier est plus récent
+        if _disk_cfg.get("optimizer_results"):
+            cfg["optimizer_results"] = _disk_cfg["optimizer_results"]
+    except Exception:
+        pass
     raw     = cfg.get("optimizer_results") or {}
     from app.optimizer.optimizer import get_active_strategies_per_tf
     active  = get_active_strategies_per_tf(cfg)
