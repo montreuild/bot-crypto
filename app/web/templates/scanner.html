@@ -64,7 +64,7 @@
                 <input type="number" id="scan-limit" value="200" min="50" max="1000">
               </div>
               <div style="padding-top:16px">
-                <button class="btn btn-cyan" onclick="runScan()">▶ Scanner</button>
+                <button id="btn-scan" class="btn btn-cyan" onclick="runScan()">▶ Scanner</button>
               </div>
             </div>
             <div id="scan-status" style="font-size:.72rem;color:var(--dim);min-height:16px"></div>
@@ -108,6 +108,7 @@
             RSI ≤ <input id="f-rsi-hi" type="number" value="100" min="0" max="100" onchange="applyFilters()" style="width:50px;padding:3px 6px;font-size:.72rem">
           </label>
           <span style="margin-left:auto;font-size:.72rem;color:var(--dim)" id="filter-count"></span>
+          <button class="btn btn-ghost" onclick="resetFilters()" style="font-size:.7rem;padding:4px 10px">✕ Reset</button>
         </div>
         <div class="panel">
           <div class="panel-hdr">
@@ -156,8 +157,10 @@ function renderConfig(d){
 }
 
 async function runScan(){
+  const btn=document.getElementById('btn-scan');
   const tf=document.getElementById('scan-tf').value,limit=document.getElementById('scan-limit').value;
   const status=document.getElementById('scan-status'),tbody=document.getElementById('scan-tbody');
+  if(btn){btn.disabled=true;btn.textContent='⏳ Scan…';}
   status.innerHTML='<span class="spinner"></span> Scan en cours…';
   tbody.innerHTML='<tr><td colspan="8" class="empty-row"><span class="spinner"></span> Chargement…</td></tr>';
   try{
@@ -165,6 +168,16 @@ async function runScan(){
     scanResults=d.results||[];status.textContent=`${scanResults.length} symboles analysés — TF: ${d.timeframe}`;
     document.getElementById('filter-bar').style.display='';document.getElementById('scan-chips').style.display='flex';applyFilters();
   }catch(e){status.textContent='⚠ Erreur : '+e.message;tbody.innerHTML=`<tr><td colspan="8" class="empty-row">Erreur : ${e.message}</td></tr>`;}
+  finally{if(btn){btn.disabled=false;btn.textContent='▶ Scanner';}}
+}
+
+function resetFilters(){
+  document.getElementById('f-regime').value='';
+  document.getElementById('f-adx').value=0;
+  document.getElementById('f-atr').value=0;
+  document.getElementById('f-rsi-lo').value=0;
+  document.getElementById('f-rsi-hi').value=100;
+  applyFilters();
 }
 
 function applyFilters(){
@@ -190,8 +203,8 @@ function renderScanTable(results){
     const ind=r.indicators||{},adx=+(ind.adx||0),rsi=+(ind.rsi||50),atrPct=+(ind.atr_pct||0),volR=+(ind.vol_ratio||1),vol24=+(r.volume_24h||0);
     const strats=(r.strategies||[]).map(s=>`<span class="tag tag-strat">${s}</span>`).join(' ');
     const regimeClass=r.regime_label?.includes('Trend fort')?'tag-trend':r.regime_label?.includes('modéré')?'tag-trend':r.regime_label?.includes('Range')?'tag-range':r.regime_label?.includes('Panic')?'tag-panic':'tag-neutral';
-    const rsiClr=rsi<35?'#fb7185':rsi>65?'#ffc947':'#34d399';
-    const adxW=Math.min(adx*2,80),vol24M=vol24>=1e9?(vol24/1e9).toFixed(2)+'B':(vol24/1e6).toFixed(0)+'M';
+    const rsiClr=rsi<35?'var(--red)':rsi>65?'var(--amber)':'var(--green)';
+    const adxW=Math.round(adx*0.8),vol24M=vol24>=1e9?(vol24/1e9).toFixed(2)+'B':(vol24/1e6).toFixed(0)+'M';
     return`<tr><td><strong>${r.symbol}</strong></td><td><span class="tag ${regimeClass}">${r.regime_label||'?'}</span></td><td><span style="font-family:var(--mono)">${adx.toFixed(1)}</span><br><span class="adx-bar" style="width:${adxW}px"></span></td><td><span class="rsi-pill" style="background:${rsiClr}22;color:${rsiClr}">${rsi.toFixed(0)}</span></td><td style="font-family:var(--mono);color:${atrPct>3?'var(--amber)':'var(--text)'}">${atrPct.toFixed(2)}%</td><td style="font-family:var(--mono);color:${volR>1.5?'var(--green)':'var(--text)'}">${volR.toFixed(2)}×</td><td style="color:var(--dim)">${vol24M}</td><td>${strats}</td></tr>`;
   }).join('');
 }

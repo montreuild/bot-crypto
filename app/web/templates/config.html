@@ -14,10 +14,10 @@
 .page{display:contents;}
 /* Config page layout */
 .config-page{min-height:calc(100vh - 56px);display:grid;grid-template-columns:260px 1fr;}
-@media(max-width:1000px){.config-page{grid-template-columns:260px 1fr;}}
+@media(max-width:1000px){.config-page{grid-template-columns:210px 1fr;}}
 @media(max-width:800px){.config-page{grid-template-columns:1fr;}}
 /* Left column */
-.config-page>div:first-child{background:var(--surface);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;position:sticky;top:56px;height:calc(100vh - 56px);}
+.config-left{background:var(--surface);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;position:sticky;top:56px;height:calc(100vh - 56px);}
 .right-col{display:flex;flex-direction:column;gap:12px;overflow-x:visible;min-width:0;padding:14px;}
 /* Strategy cards */
 .strat-grid{display:flex;flex-direction:column;gap:8px;}
@@ -74,6 +74,23 @@
 .schedule-val{font-family:var(--mono);color:var(--text);}
 /* Section label */
 .sec{font-size:.68rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);padding-bottom:4px;border-bottom:1px solid var(--border);margin-bottom:8px;}
+/* ── Mobile tabs ── */
+.config-tabs{display:none;background:var(--surface);border-bottom:1px solid var(--border);padding:0 14px;gap:0;flex-shrink:0;}
+.config-tabs .ctab{background:transparent;border:none;border-bottom:2px solid transparent;padding:10px 16px;font-size:.82rem;font-weight:600;color:var(--muted);cursor:pointer;transition:all .15s;white-space:nowrap;}
+.config-tabs .ctab.active{color:var(--cyan);border-bottom-color:var(--cyan);}
+@media(max-width:800px){
+  .config-tabs{display:flex;}
+  .config-left.tab-hidden,.config-right.tab-hidden{display:none!important;}
+  .config-left{position:static!important;height:auto!important;overflow-y:visible!important;}
+}
+/* ── Left panel accordions ── */
+.config-left .panel-hdr{cursor:pointer;user-select:none;position:relative;}
+.config-left .panel-hdr::after{content:'∨';position:absolute;right:14px;top:50%;transform:translateY(-50%);font-size:.65rem;color:var(--dim);transition:transform .2s;}
+.config-left .panel.acc-closed .panel-hdr::after{content:'›';transform:translateY(-50%) rotate(0deg);}
+.config-left .panel.acc-closed .panel-body{display:none;}
+/* ── Dirty (unsaved) indicator ── */
+.dirty-dot{display:none;width:7px;height:7px;border-radius:50%;background:var(--amber);margin-left:6px;flex-shrink:0;animation:pulse 1.5s ease infinite;}
+.dirty .dirty-dot{display:inline-block;}
 {% endblock %}
 
 {% block topbar_content %}
@@ -82,19 +99,23 @@
 
 {% block content %}
 <div id="content">
+  <div class="config-tabs">
+    <button class="ctab active" onclick="switchConfigTab('left')">⚙ Config</button>
+    <button class="ctab" onclick="switchConfigTab('right')">▦ Paramètres</button>
+  </div>
   <div class="config-page">
 
 <div class="page">
 
   <!-- ══ Colonne gauche ══ -->
-  <div>
+  <div class="config-left">
 
     <!-- Stratégies actives -->
     <div class="panel">
-      <div class="panel-hdr">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
         <span style="color:var(--green)">📋</span>
         <h3>Stratégies actives</h3>
-        <span id="strat-count" style="margin-left:auto;font-size:.7rem;color:var(--dim)"></span>
+        <span id="strat-count" style="margin-left:auto;font-size:.7rem;color:var(--dim);padding-right:20px"></span>
       </div>
       <div class="panel-body">
         <div class="info-box">
@@ -106,8 +127,8 @@
           <div style="color:var(--dim);font-size:.78rem">Chargement…</div>
         </div>
         <div class="btn-row">
-          <button class="btn btn-green btn-full" onclick="applyStrategies()">
-            ✓ Appliquer
+          <button id="btn-apply-strat" class="btn btn-green btn-full" onclick="applyStrategies()">
+            ✓ Appliquer<span class="dirty-dot"></span>
           </button>
         </div>
       </div>
@@ -115,10 +136,10 @@
 
     <!-- Timeframes Multi-TF -->
     <div class="panel">
-      <div class="panel-hdr">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
         <span style="color:var(--cyan)">⏱</span>
         <h3>Timeframes actifs</h3>
-        <span id="tf-active-badge" style="margin-left:auto;font-size:.7rem;color:var(--dim)"></span>
+        <span id="tf-active-badge" style="margin-left:auto;font-size:.7rem;color:var(--dim);padding-right:20px"></span>
       </div>
       <div class="panel-body">
         <div class="info-box">
@@ -133,19 +154,19 @@
         </div>
         <div id="tf-active-display" style="font-size:.78rem;color:var(--muted);margin-bottom:10px"></div>
         <div class="btn-row">
-          <button class="btn btn-cyan btn-full" onclick="applyTimeframes()">
-            ✓ Appliquer timeframes
+          <button id="btn-apply-tf" class="btn btn-cyan btn-full" onclick="applyTimeframes()">
+            ✓ Appliquer timeframes<span class="dirty-dot"></span>
           </button>
         </div>
       </div>
     </div>
 
     <!-- Notifications -->
-    <div class="panel">
-      <div class="panel-hdr">
+    <div class="panel acc-closed">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
         <span>🔔</span>
         <h3>Notifications</h3>
-        <span id="notif-badge" class="strat-badge badge-off" style="margin-left:auto">OFF</span>
+        <span id="notif-badge" class="strat-badge badge-off" style="margin-left:auto;margin-right:20px">OFF</span>
       </div>
       <div class="panel-body">
 
@@ -317,7 +338,7 @@
         </div>
 
         <div style="display:flex;gap:8px;margin-top:12px">
-          <button class="btn btn-cyan" style="flex:1" onclick="applyNotifications()">✓ Sauvegarder</button>
+          <button id="btn-apply-notif" class="btn btn-cyan" style="flex:1" onclick="applyNotifications()">✓ Sauvegarder<span class="dirty-dot"></span></button>
           <button class="btn btn-ghost" onclick="testNotification()">🧪 Tester</button>
         </div>
         <div id="notif-status" style="font-size:.72rem;color:var(--dim)"></div>
@@ -325,11 +346,11 @@
     </div>
 
     <!-- Auto-optimisation -->
-    <div class="panel">
-      <div class="panel-hdr">
+    <div class="panel acc-closed">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
         <span style="color:var(--purple)">🔬</span>
         <h3>Auto-optimisation</h3>
-        <span id="auto-opt-badge" class="strat-badge badge-off" style="margin-left:auto">OFF</span>
+        <span id="auto-opt-badge" class="strat-badge badge-off" style="margin-left:auto;margin-right:20px">OFF</span>
       </div>
       <div class="panel-body">
         <div class="info-box">
@@ -356,13 +377,13 @@
           <div id="schedule-rows"></div>
         </div>
 
-        <button class="btn btn-green btn-full" onclick="applyAutoOpt()">✓ Appliquer</button>
+        <button id="btn-apply-autoopt" class="btn btn-green btn-full" onclick="applyAutoOpt()">✓ Appliquer<span class="dirty-dot"></span></button>
       </div>
     </div>
 
     <!-- Paramètres trading globaux -->
-    <div class="panel">
-      <div class="panel-hdr">
+    <div class="panel acc-closed">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
         <span style="color:var(--cyan)">⚙</span>
         <h3>Paramètres trading</h3>
       </div>
@@ -410,16 +431,16 @@
           Les ordres seront exécutés avec votre capital. Redémarrez le bot après changement.
         </div>
 
-        <button class="btn btn-cyan btn-full" onclick="applyTrading()">✓ Appliquer</button>
+        <button id="btn-apply-trading" class="btn btn-cyan btn-full" onclick="applyTrading()">✓ Appliquer<span class="dirty-dot"></span></button>
       </div>
     </div>
 
     <!-- Margin spot -->
-    <div class="panel">
-      <div class="panel-hdr">
+    <div class="panel acc-closed">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
         <span style="color:var(--orange)">📊</span>
         <h3>Margin spot</h3>
-        <span id="margin-badge" class="strat-badge badge-off" style="margin-left:auto">OFF</span>
+        <span id="margin-badge" class="strat-badge badge-off" style="margin-left:auto;margin-right:20px">OFF</span>
       </div>
       <div class="panel-body">
         <div class="warn-box">
@@ -468,20 +489,20 @@
           </div>
         </div>
 
-        <button class="btn btn-orange btn-full" onclick="applyMargin()" style="background:var(--orange);color:#fff">✓ Appliquer</button>
+        <button id="btn-apply-margin" class="btn btn-orange btn-full" onclick="applyMargin()" style="background:var(--orange);color:#fff">✓ Appliquer<span class="dirty-dot"></span></button>
       </div>
     </div>
 
   </div>
 
   <!-- ══ Colonne droite : paramètres par stratégie ══ -->
-  <div class="right-col">
+  <div class="right-col config-right">
     <div class="panel">
       <div class="panel-hdr">
         <span style="color:var(--orange)">🎛</span>
-        <h3>Paramètres par stratégie</h3>
+        <h3>Paramètres par stratégie<span id="right-strat-label" style="color:var(--dim);font-weight:400;font-size:.78rem;margin-left:8px"></span></h3>
         <span style="font-size:.68rem;color:var(--dim);margin-left:auto">
-          Modifiables manuellement · L'optimiseur peut écraser ces valeurs
+          Modifiables · l'optimiseur peut écraser ces valeurs
         </span>
       </div>
       <div style="padding:12px 16px;">
@@ -507,6 +528,42 @@
 <script>
 const $ = id => document.getElementById(id);
 let cfgData = null;
+
+// ── Mobile tabs ────────────────────────────────────────────────────────────
+function switchConfigTab(tab) {
+  const left = document.querySelector('.config-left');
+  const right = document.querySelector('.config-right');
+  const tabs = document.querySelectorAll('.config-tabs .ctab');
+  if (tab === 'left') {
+    left.classList.remove('tab-hidden');
+    right.classList.add('tab-hidden');
+  } else {
+    right.classList.remove('tab-hidden');
+    left.classList.add('tab-hidden');
+  }
+  tabs.forEach((t, i) => t.classList.toggle('active', (tab === 'left') ? i === 0 : i === 1));
+}
+
+// ── Left panel accordions ──────────────────────────────────────────────────
+function toggleLeftAcc(hdr) {
+  const panel = hdr.closest('.panel');
+  panel.classList.toggle('acc-closed');
+}
+
+// ── Dirty tracking ─────────────────────────────────────────────────────────
+function markDirty(btnId) {
+  const btn = document.getElementById(btnId);
+  if (btn) btn.classList.add('dirty');
+}
+function clearDirty(btnId) {
+  const btn = document.getElementById(btnId);
+  if (btn) btn.classList.remove('dirty');
+}
+async function withBtn(btnId, fn) {
+  const btn = document.getElementById(btnId);
+  if (btn) btn.disabled = true;
+  try { await fn(); clearDirty(btnId); } finally { if (btn) btn.disabled = false; }
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init() {
@@ -592,6 +649,7 @@ function toggleStrat(name) {
   const card = $(`sc-${name}`);
   card.classList.toggle('active');
   updateStratCount();
+  markDirty('btn-apply-strat');
 }
 
 function updateStratCount() {
@@ -602,7 +660,7 @@ function updateStratCount() {
 async function applyStrategies() {
   const selected = [...document.querySelectorAll('.strat-card.active')].map(c => c.id.replace('sc-',''));
   if (!selected.length) { toast('Sélectionnez au moins une stratégie', true); return; }
-  try {
+  await withBtn('btn-apply-strat', async () => {
     const r = await apiFetch('/api/config/strategies?enabled=' + encodeURIComponent(selected.join(',')), {method:'POST'});
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || r.statusText);
@@ -611,7 +669,7 @@ async function applyStrategies() {
       : '✓ Sauvegardé (bot non actif)';
     toast(msg);
     await init();
-  } catch(e) { toast('Erreur : ' + e.message, true); }
+  }).catch(e => toast('Erreur : ' + e.message, true));
 }
 
 // ── Timeframes multi-TF ────────────────────────────────────────────────────
@@ -632,9 +690,9 @@ function renderTimeframes() {
   grid.innerHTML = ALL_TFS.map(tf => {
     const isActive = activeTfs.includes(tf);
     const strats   = TF_STRATEGIES[tf] || '';
-    return '<div style="border:1px solid ' + (isActive ? 'rgba(77,159,255,.35)' : 'var(--border)') + ';border-radius:8px;padding:8px 12px;background:' + (isActive ? 'var(--cyan-dim)' : 'var(--surface)') + ';cursor:pointer;min-width:120px" onclick="toggleTfCard(this,\'' + tf + '\')">'
+    return '<div style="border:1px solid ' + (isActive ? 'rgba(77,159,255,.35)' : 'var(--border)') + ';border-radius:8px;padding:8px 12px;background:' + (isActive ? 'var(--cyan-dim)' : 'var(--surface)') + ';cursor:pointer;min-width:120px" onclick="toggleTfCard(this,\'' + tf + '\',event)">'
       + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
-      + '<input type="checkbox" id="tf-check-' + tf + '" ' + (isActive ? 'checked' : '') + ' style="cursor:pointer" onchange="updateTfDisplay()">'
+      + '<input type="checkbox" id="tf-check-' + tf + '" ' + (isActive ? 'checked' : '') + ' style="cursor:pointer" onchange="markDirty(\'btn-apply-tf\');updateTfDisplay()">'
       + '<span style="font-weight:700;color:' + (isActive ? 'var(--cyan)' : 'var(--muted)') + ';font-size:.85rem">' + TF_LABELS[tf] + '</span></div>'
       + '<div style="font-size:.65rem;color:var(--dim);line-height:1.4">' + strats + '</div>'
       + '</div>';
@@ -643,10 +701,11 @@ function renderTimeframes() {
   updateTfDisplay();
 }
 
-function toggleTfCard(card, tf) {
+function toggleTfCard(card, tf, e) {
   const cb = document.getElementById('tf-check-' + tf);
-  if (event.target === cb) return;
+  if (e && e.target === cb) return;
   cb.checked = !cb.checked;
+  markDirty('btn-apply-tf');
   updateTfDisplay();
   const on = cb.checked;
   card.style.border      = '1px solid ' + (on ? 'rgba(77,159,255,.35)' : 'var(--border)');
@@ -670,13 +729,13 @@ function updateTfDisplay() {
 async function applyTimeframes() {
   const selected = ALL_TFS.filter(tf => { const el=document.getElementById('tf-check-' + tf); return el && el.checked; });
   if (!selected.length) { toast('Sélectionnez au moins un timeframe', true); return; }
-  try {
+  await withBtn('btn-apply-tf', async () => {
     const r = await apiFetch('/api/config/timeframes?timeframes=' + encodeURIComponent(selected.join(',')), {method:'POST'});
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || r.statusText);
     toast('Timeframes appliqués : ' + selected.join(', '));
     await init();
-  } catch(e) { toast('Erreur : ' + e.message, true); }
+  }).catch(e => toast('Erreur : ' + e.message, true));
 }
 
 // ── Auto-optimisation ──────────────────────────────────────────────────────
@@ -722,13 +781,13 @@ function onAutoOptToggle() {
 async function applyAutoOpt() {
   const enabled    = $('auto-opt-toggle').checked;
   const interval_h = parseInt($('auto-opt-interval').value) || 24;
-  try {
+  await withBtn('btn-apply-autoopt', async () => {
     const r = await apiFetch(`/api/config/auto-optimizer?enabled=${enabled}&interval_h=${interval_h}`, {method:'POST'});
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || r.statusText);
     toast(enabled ? `✓ Auto-optimisation activée (${interval_h}h)` : '✓ Auto-optimisation désactivée');
     await init();
-  } catch(e) { toast('Erreur : ' + e.message, true); }
+  }).catch(e => toast('Erreur : ' + e.message, true));
 }
 
 // ── Paramètres trading ─────────────────────────────────────────────────────
@@ -767,14 +826,14 @@ async function applyTrading() {
     max_positions:        $('max-pos').value,
     paper_mode:           $('paper-toggle').checked,
   });
-  try {
+  await withBtn('btn-apply-trading', async () => {
     const r = await apiFetch('/api/config/trading?' + params, {method:'POST'});
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || r.statusText);
     const keys = Object.keys(d.changed || {}).join(', ');
     toast(d.trader_updated ? `✓ Appliqué à chaud · ${keys}` : `✓ Sauvegardé · ${keys}`);
     await init();
-  } catch(e) { toast('Erreur : ' + e.message, true); }
+  }).catch(e => toast('Erreur : ' + e.message, true));
 }
 
 // ── Paramètres par stratégie ───────────────────────────────────────────────
@@ -825,6 +884,7 @@ function renderStratParams() {
         <span class="param-key">${k}</span>
         <input class="param-input" type="number" id="p-${name}-${k}"
           value="${params[k]}" step="${isInt?1:0.001}"
+          oninput="markDirty('btn-save-${name}')"
           ${isInt?'':'style="font-size:.72rem"'}/>
         <span class="param-val" style="color:var(--dim);font-size:.65rem">${isInt?'int':'float'}</span>
       </div>`;
@@ -843,7 +903,7 @@ function renderStratParams() {
       <div class="params-body">
         ${rows || '<div style="color:var(--dim);font-size:.75rem">Aucun paramètre configuré (défauts internes utilisés)</div>'}
         ${keys.length ? `<div class="btn-row" style="margin-top:4px">
-          <button class="btn btn-cyan" onclick="saveStratParams('${name}')">💾 Sauvegarder ${name}</button>
+          <button id="btn-save-${name}" class="btn btn-cyan" onclick="saveStratParams('${name}')">💾 Sauvegarder ${name}<span class="dirty-dot"></span></button>
         </div>` : ''}
       </div>
     </div>`;
@@ -853,6 +913,12 @@ function renderStratParams() {
 function toggleParamGroup(hdr) {
   hdr.classList.toggle('open');
   hdr.nextElementSibling.classList.toggle('open');
+  // Update right panel header label with strategy name
+  if (hdr.classList.contains('open')) {
+    const nameEl = hdr.querySelector('.params-hdr-title span:nth-child(2)');
+    const lbl = document.getElementById('right-strat-label');
+    if (lbl && nameEl) lbl.textContent = '— ' + nameEl.textContent.trim();
+  }
 }
 
 async function saveStratParams(name) {
@@ -864,7 +930,7 @@ async function saveStratParams(name) {
     if (el) updated[k] = parseFloat(el.value);
   });
 
-  try {
+  await withBtn(`btn-save-${name}`, async () => {
     const r = await apiFetch(`/api/config/strategy-params?strategy=${encodeURIComponent(name)}`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -878,9 +944,7 @@ async function saveStratParams(name) {
     } else {
       throw new Error(d.detail || 'Erreur API');
     }
-  } catch(e) {
-    toast('Erreur : ' + e.message, true);
-  }
+  }).catch(e => toast('Erreur : ' + e.message, true));
 }
 
 // ── Notifications ──────────────────────────────────────────────────────────
@@ -966,11 +1030,11 @@ async function applyNotifications() {
     exchange_error_threshold: $('notif-err-threshold').value,
     events:                   JSON.stringify(events),
   });
-  try {
+  await withBtn('btn-apply-notif', async () => {
     const r = await apiFetch('/api/config/notifications?' + p, {method:'POST'});
-    if (r.ok) { toast('\u2713 Notifications sauvegard\u00e9es'); onNotifToggle(); }
+    if (r.ok) { toast('✓ Notifications sauvegardées'); onNotifToggle(); }
     else throw new Error((await r.json()).detail);
-  } catch(e) { toast('Erreur : ' + e.message, true); }
+  }).catch(e => toast('Erreur : ' + e.message, true));
 }
 
 async function testNotification() {
@@ -997,7 +1061,7 @@ async function applyMargin() {
   const leverage = parseInt($('margin-leverage').value) || 2;
   const alert_lv = parseFloat($('margin-alert').value) || 1.5;
   const borrow   = parseFloat($('margin-borrow-rate').value) || 0.00072;
-  try {
+  await withBtn('btn-apply-margin', async () => {
     const p = new URLSearchParams({
       max_leverage: leverage,
       daily_drawdown_limit: cfgData.trading?.daily_drawdown_limit ?? 0.05,
@@ -1012,7 +1076,7 @@ async function applyMargin() {
     } else {
       toast('✓ Config sauvegardée — redémarrez le bot pour appliquer', false);
     }
-  } catch(e) { toast('Erreur : ' + e.message, true); }
+  }).catch(e => toast('Erreur : ' + e.message, true));
 }
 
 init();
