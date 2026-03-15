@@ -1,185 +1,311 @@
 """
-Optimisation automatique par stratégie — Random Search.
-Tournée au démarrage ou via API, sauvegarde les meilleurs params en DB.
+AutoOptimizer V8 — Multi-Timeframe.
+
+Nouveautés V8 :
+  - Job_id format : "strategy@tf@symbol" (ex: "trend@1h@BTC/USDC")
+  - Optimise chaque (strategy, tf) sur BTC/USDC comme paire représentative
+  - Persiste dans optimizer_results via save_optimizer_results()
+  - Reload dynamique des stratégies actives dans le LiveTrader
 """
 import importlib
 import logging
-import random
+import threading
 import time
-from copy import deepcopy
-from typing import Dict, List, Any
+from typing import Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 
-from app.engine.engine import Engine
+from app.engine.engine   import Engine
 from app.engine.backtest import Backtester
+from app.optimizer.optimizer import (
+    StrategyOptimizer, PARAM_SPACES, STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT,
+    apply_best_params, save_optimizer_results, get_active_strategies_per_tf
+)
 
 logger = logging.getLogger(__name__)
 
+ML_STRATEGIES = {"ml_strategy", "ml_dynamic_threshold"}
 
-# ── Espaces de recherche par stratégie ─────────────────────────────────────
-PARAM_SPACES: Dict[str, Dict[str, List]] = {
-    "trend": {
-        "ema_fast":       [8, 10, 13, 15, 20, 25],
-        "ema_slow":       [30, 40, 50, 60, 80, 100],
-        "rsi_threshold":  [35, 40, 45, 50, 55],
-        "atr_mult":       [1.0, 1.2, 1.5, 1.8, 2.0, 2.5],
-        "vol_filter":     [True, False],
-    },
-    "breakout": {
-        "period":         [10, 12, 15, 20, 25, 30],
-        "atr_mult":       [1.2, 1.5, 1.8, 2.0, 2.5, 3.0],
-        "confirm_bars":   [1, 2, 3, 4],
-        "trailing":       [True, False],
-    },
-    "supertrend_macd": {
-        "st_period":      [7, 9, 10, 12, 14],
-        "st_mult":        [2.0, 2.5, 3.0, 3.5, 4.0],
-        "macd_fast":      [8, 10, 12, 14, 16],
-        "macd_slow":      [21, 24, 26, 28, 30],
-        "macd_signal":    [7, 9, 11],
-        "vol_mult":       [1.0, 1.1, 1.3, 1.5, 2.0],
-    },
-    "ml_strategy": {
-        "feature_window": [30, 50, 70, 100],
-        "lookahead":      [3, 5, 8, 10],
-        "threshold_up":   [0.002, 0.003, 0.005],
-        "min_confidence": [0.55, 0.60, 0.65, 0.70],
-        "n_estimators":   [100, 200, 300],
-        "max_depth":      [4, 5, 6, 8],
-        "min_samples_leaf": [5, 10, 15, 20],
-    },
-}
+# ════════════════════════════════════════════════════════════════════════════
+#  État global des jobs (thread-safe)
+# ════════════════════════════════════════════════════════════════════════════
+_jobs: Dict[str, dict] = {}
+_jobs_lock = threading.Lock()
 
 
-def _composite_score(res_dict: dict) -> float:
-    """Score composite sur les métriques OOS."""
-    n = res_dict.get("total_trades", 0)
-    if n < 3:
-        return -999.0
-    pf = res_dict.get("profit_factor", 0)
-    if isinstance(pf, str):
-        pf = 5.0
-    pf = min(float(pf), 5.0)
-    wr = res_dict.get("win_rate", 0) / 100
-    sh = res_dict.get("sharpe", 0)
-    exp = res_dict.get("expectancy", 0)
-    dd = abs(res_dict.get("max_drawdown", -100))
-    score = (sh * 0.35 + wr * 0.25 + pf / 5 * 0.20
-             + min(exp, 20) / 20 * 0.10 + max(0, 1 - dd / 50) * 0.10)
-    return round(score, 6)
+def _job_id(strategy: str, timeframe: str, symbol: str) -> str:
+    return f"{strategy}@{timeframe}@{symbol}"
 
 
+def get_job(job_id: str) -> Optional[dict]:
+    with _jobs_lock:
+        return dict(_jobs.get(job_id, {}))
+
+
+def get_all_jobs() -> dict:
+    with _jobs_lock:
+        return {k: dict(v) for k, v in _jobs.items()}
+
+
+def _update_job(job_id: str, **kwargs):
+    with _jobs_lock:
+        if job_id not in _jobs:
+            _jobs[job_id] = {}
+        _jobs[job_id].update(kwargs)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Baseline (snapshot avant optimisation)
+# ════════════════════════════════════════════════════════════════════════════
+def _run_baseline(strategy_name: str, cfg: dict,
+                  df_oos: pd.DataFrame, symbol: str) -> dict:
+    try:
+        mod = importlib.import_module(f"app.strategies.{strategy_name}")
+        eng = Engine()
+        eng.register(mod.Strategy())
+        bt  = Backtester(eng, cfg)
+        res = bt.run(df_oos, symbol).to_dict()
+        return {
+            "trades": res.get("total_trades", 0),
+            "pnl":    round(res.get("total_pnl", 0), 4),
+            "sharpe": round(res.get("sharpe", 0), 3),
+            "wr":     round(res.get("win_rate", 0), 1),
+            "dd":     round(res.get("max_drawdown", 0), 2),
+        }
+    except Exception as e:
+        logger.debug(f"[AutoOpt] baseline {strategy_name} KO : {e}")
+        return {}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  AutoOptimizer
+# ════════════════════════════════════════════════════════════════════════════
 class AutoOptimizer:
     """
-    Optimiseur automatique Random Search pour toutes les stratégies actives.
-    Divise les données en 70% IS / 30% OOS.
+    Optimiseur multi-stratégies × multi-timeframes avec jobs asynchrones.
+
+    Paramètres :
+      cfg             : config.yaml chargé en dict
+      n_trials        : nombre de trials par (strategy, tf)
+      method          : "random" | "bayesian" | "grid"
+      config_path     : chemin vers config.yaml
+      on_apply_callback : callback(strategy_name, params) après application
     """
 
-    def __init__(self, cfg: dict, n_trials: int = 30):
-        self.cfg      = cfg
-        self.n_trials = n_trials
+    def __init__(self, cfg: dict, n_trials: int = 40,
+                 method: str = "bayesian",
+                 config_path: str = "config.yaml",
+                 on_apply_callback=None,
+                 notifier=None,
+                 n_jobs: int = 1,
+                 early_stop_patience: int = 0):
+        self.cfg               = cfg
+        self.n_trials          = n_trials
+        self.method            = method
+        self.config_path       = config_path
+        self.on_apply_callback = on_apply_callback
+        self._notifier         = notifier
+        self.n_jobs            = n_jobs
+        self.early_stop_patience = early_stop_patience
 
-    def optimize_all(self, df: pd.DataFrame, symbol: str,
-                     strategies: List[str] = None) -> Dict[str, dict]:
-        """Lance l'optimisation pour chaque stratégie active."""
-        strats   = strategies or self.cfg["strategies"]["enabled"]
-        results  = {}
-        split    = int(len(df) * 0.70)
-        df_is    = df.iloc[:split].copy()
-        df_oos   = df.iloc[split:].copy()
+    # ── Lancement asynchrone ──────────────────────────────────────────────
+    def start_async(self, df_map: Dict[str, pd.DataFrame], symbol: str,
+                    strategies: List[str] = None,
+                    timeframes: List[str] = None,
+                    auto_apply: bool = False) -> List[str]:
+        """
+        Lance l'optimisation en arrière-plan pour chaque (strategy, tf).
 
-        for name in strats:
-            logger.info(f"[AutoOpt] Début Random Search : {name} ({self.n_trials} trials)")
-            t0 = time.time()
-            try:
-                res = self._optimize_one(name, df_is, df_oos, symbol)
-                results[name] = res
-                elapsed = time.time() - t0
-                logger.info(f"[AutoOpt] {name} terminé en {elapsed:.1f}s "
-                            f"— OOS score={res.get('best_oos_score', 0):.4f} "
-                            f"— params={res.get('best_params')}")
-            except Exception as e:
-                logger.error(f"[AutoOpt] {name} KO : {e}")
-                results[name] = {"error": str(e)}
+        df_map  : { "1h": df_1h, "5m": df_5m, ... } — données par TF
+        symbol  : paire représentative (ex: "BTC/USDC")
+        strategies : liste de stratégies à optimiser (None = toutes dans PARAM_SPACES)
+        timeframes : liste de TFs à optimiser (None = TFs issus de cfg)
+        """
+        strats = strategies or list(PARAM_SPACES.keys())
+        tfs    = timeframes or self.cfg["trading"].get(
+            "timeframes", [self.cfg["trading"].get("timeframe", "1h")]
+        )
+        job_ids  = []
+        skipped  = []   # [(strategy, tf, reason)]
+
+        for tf in tfs:
+            df = df_map.get(tf)
+            if df is None or len(df) < 300:
+                reason = f"données insuffisantes ({len(df) if df is not None else 0} bougies, min 300)"
+                logger.warning(f"[AutoOpt] TF={tf} ignoré — {reason}")
+                for name in strats:
+                    skipped.append({"strategy": name, "timeframe": tf, "reason": reason})
+                continue
+
+            WARMUP = 210
+            split   = max(WARMUP + 100, int(len(df) * 0.65))
+            df_is   = df.iloc[:split].copy().reset_index(drop=True)
+            df_oos  = df.iloc[split:].copy().reset_index(drop=True)
+
+            for name in strats:
+                if name in ML_STRATEGIES:
+                    skipped.append({"strategy": name, "timeframe": tf, "reason": "stratégie ML (non optimisable ici)"})
+                    continue
+                if name not in PARAM_SPACES:
+                    skipped.append({"strategy": name, "timeframe": tf, "reason": "aucun espace de paramètres"})
+                    continue
+
+                # TF non recommandé → avertissement uniquement, pas de blocage
+                recommended_tfs = STRATEGY_TIMEFRAMES.get(name, list(RECOMMENDED_LIMIT.keys()))
+                is_recommended  = tf in recommended_tfs
+
+                jid = _job_id(name, tf, symbol)
+                _update_job(jid,
+                    status="running", strategy=name, timeframe=tf, symbol=symbol,
+                    method=self.method, n_trials=self.n_trials,
+                    progress=0, best_score=-999, trials=[],
+                    result=None, error=None,
+                    started_at=time.time(), finished_at=None,
+                    baseline=_run_baseline(name, self.cfg, df_oos, symbol),
+                    is_recommended=is_recommended,
+                    recommended_tfs=recommended_tfs,
+                )
+                t = threading.Thread(
+                    target=self._run_one_job,
+                    args=(jid, name, tf, df_is, df_oos, symbol, auto_apply, df, split),
+                    daemon=True,
+                )
+                t.start()
+                job_ids.append(jid)
+                rec_str = "" if is_recommended else f" [TF non recommandé pour {name}, recommandé: {', '.join(recommended_tfs)}]"
+                logger.info(f"[AutoOpt] Job lancé : {jid} ({self.method}, {self.n_trials} trials){rec_str}")
+
+        return job_ids, skipped
+
+    def _run_one_job(self, job_id: str, strategy_name: str, timeframe: str,
+                     df_is: pd.DataFrame, df_oos: pd.DataFrame,
+                     symbol: str, auto_apply: bool,
+                     df_full: pd.DataFrame = None, split: int = None):
+        trials_log = []
+
+        def on_progress(trial: int, total: int, best_score: float, latest: dict):
+            trials_log.append({
+                "trial":       trial,
+                "oos_pnl":     latest.get("oos_pnl", 0),
+                "oos_sharpe":  latest.get("oos_sharpe", 0),
+                "final_score": latest.get("final_score", 0),
+                "overfit":     latest.get("overfit", 0),
+            })
+            _update_job(job_id,
+                progress=round(trial / total * 100),
+                trials_done=trial,
+                best_score=round(best_score, 4),
+                trials=trials_log[-50:],
+            )
+
+        try:
+            opt = StrategyOptimizer(
+                strategy_name=strategy_name,
+                cfg=self.cfg,
+                df_is=df_is,
+                df_oos=df_oos,
+                symbol=symbol,
+                progress_callback=on_progress,
+                df_full=df_full,
+                split=split,
+                timeframe=timeframe,
+            )
+
+            if self.method == "bayesian":
+                result = opt.bayesian_search(self.n_trials, n_jobs=self.n_jobs,
+                                             early_stop_patience=self.early_stop_patience)
+            elif self.method == "grid":
+                result = opt.grid_search()
+            else:
+                result = opt.random_search(self.n_trials, n_jobs=self.n_jobs,
+                                           early_stop_patience=self.early_stop_patience)
+
+            applied = False
+            if auto_apply and result.get("best_params") and result.get("best_oos_pnl", 0) > 0:
+                best_params = result["best_params"]
+                oos_score   = result.get("best_oos_score", 0.0)
+                applied = apply_best_params(
+                    strategy_name, best_params, self.config_path,
+                    timeframe=timeframe, oos_score=oos_score
+                )
+                if applied and self.on_apply_callback:
+                    try:
+                        self.on_apply_callback(strategy_name, best_params)
+                    except Exception as _cb_err:
+                        logger.warning(f"[AutoOpt] callback KO: {_cb_err}")
+            elif result.get("best_params"):
+                # Sauvegarder le résultat même sans auto_apply
+                save_optimizer_results(
+                    strategy_name, timeframe,
+                    result["best_params"],
+                    result.get("best_oos_score", 0.0),
+                    self.config_path
+                )
+
+            _update_job(job_id,
+                status="done", progress=100,
+                result=result, applied=applied,
+                finished_at=time.time(),
+            )
+            elapsed = time.time() - get_job(job_id).get("started_at", time.time())
+            logger.info(
+                f"[AutoOpt] {job_id} terminé en {elapsed:.0f}s "
+                f"| OOS score={result.get('best_oos_score', 0):.4f} "
+                f"| PnL={result.get('best_oos_pnl', 0):+.2f} "
+                f"| Applied={applied}"
+            )
+            if self._notifier:
+                try:
+                    self._notifier.notify_optimization_done(
+                        strategy=f"{strategy_name}@{timeframe}",
+                        score_before=result.get("baseline_score", 0),
+                        score_after=result.get("best_oos_score", 0),
+                        applied=applied,
+                    )
+                except Exception as _ne:
+                    logger.debug(f"[AutoOpt] notify KO : {_ne}")
+
+        except Exception as e:
+            logger.error(f"[AutoOpt] {job_id} KO : {e}", exc_info=True)
+            _update_job(job_id, status="error", error=str(e), finished_at=time.time())
+
+    # ── Exécution synchrone ───────────────────────────────────────────────
+    def optimize_all(self, df_map: Dict[str, pd.DataFrame], symbol: str,
+                     strategies: List[str] = None,
+                     timeframes: List[str] = None) -> Dict[str, dict]:
+        """Exécution synchrone bloquante. Préférer start_async() pour l'API."""
+        strats = strategies or list(PARAM_SPACES.keys())
+        tfs    = timeframes or self.cfg["trading"].get(
+            "timeframes", [self.cfg["trading"].get("timeframe", "1h")]
+        )
+        results = {}
+
+        for tf in tfs:
+            df = df_map.get(tf)
+            if df is None or len(df) < 300:
+                continue
+            WARMUP = 210
+            split  = max(WARMUP + 100, int(len(df) * 0.65))
+            df_is  = df.iloc[:split].copy().reset_index(drop=True)
+            df_oos = df.iloc[split:].copy().reset_index(drop=True)
+
+            for name in strats:
+                if name in ML_STRATEGIES or name not in PARAM_SPACES:
+                    continue
+                supported_tfs = STRATEGY_TIMEFRAMES.get(name, list(RECOMMENDED_LIMIT.keys()))
+                if tf not in supported_tfs:
+                    continue
+                key = f"{name}@{tf}"
+                try:
+                    opt = StrategyOptimizer(name, self.cfg, df_is, df_oos,
+                                            symbol=symbol, df_full=df, split=split,
+                                            timeframe=tf)
+                    if self.method == "bayesian":
+                        results[key] = opt.bayesian_search(self.n_trials, n_jobs=self.n_jobs)
+                    elif self.method == "grid":
+                        results[key] = opt.grid_search()
+                    else:
+                        results[key] = opt.random_search(self.n_trials, n_jobs=self.n_jobs)
+                except Exception as e:
+                    results[key] = {"error": str(e)}
         return results
-
-    def _optimize_one(self, strategy_name: str, df_is: pd.DataFrame,
-                      df_oos: pd.DataFrame, symbol: str) -> dict:
-        space = PARAM_SPACES.get(strategy_name, {})
-        if not space:
-            return {"error": f"Espace de paramètres non défini pour {strategy_name}"}
-
-        best_score   = -999.0
-        best_params  = {}
-        best_is_res  = {}
-        best_oos_res = {}
-        all_results  = []
-        rng          = random.Random(int(time.time()) % 10000)
-
-        for trial in range(self.n_trials):
-            # Tirage aléatoire dans l'espace
-            params = {k: rng.choice(v) for k, v in space.items()}
-            try:
-                is_res, oos_res = self._run_trial(strategy_name, params, df_is, df_oos, symbol)
-                oos_score = _composite_score(oos_res)
-                is_score  = _composite_score(is_res)
-                all_results.append({
-                    "trial":     trial + 1,
-                    "params":    params,
-                    "is_score":  round(is_score,  4),
-                    "oos_score": round(oos_score, 4),
-                    "is_trades": is_res.get("total_trades", 0),
-                    "oos_trades":oos_res.get("total_trades", 0),
-                    "oos_wr":    round(oos_res.get("win_rate", 0), 1),
-                    "oos_sharpe":round(oos_res.get("sharpe", 0), 3),
-                    "oos_pnl":   round(oos_res.get("total_pnl", 0), 4),
-                })
-                if oos_score > best_score:
-                    best_score   = oos_score
-                    best_params  = params
-                    best_is_res  = is_res
-                    best_oos_res = oos_res
-                    logger.debug(f"[AutoOpt] {strategy_name} trial {trial+1} "
-                                 f"new best OOS={oos_score:.4f}")
-            except Exception as e:
-                logger.debug(f"[AutoOpt] {strategy_name} trial {trial+1} KO : {e}")
-
-        # Top 5 résultats
-        top5 = sorted(all_results, key=lambda r: -r["oos_score"])[:5]
-
-        return {
-            "strategy":        strategy_name,
-            "n_trials":        self.n_trials,
-            "best_params":     best_params,
-            "best_oos_score":  round(best_score, 4),
-            "best_is_pnl":     round(best_is_res.get("total_pnl", 0), 4),
-            "best_oos_pnl":    round(best_oos_res.get("total_pnl", 0), 4),
-            "best_oos_wr":     round(best_oos_res.get("win_rate", 0), 1),
-            "best_oos_sharpe": round(best_oos_res.get("sharpe", 0), 3),
-            "best_oos_trades": best_oos_res.get("total_trades", 0),
-            "top5":            top5,
-            "all_results":     all_results,
-        }
-
-    def _run_trial(self, name: str, params: dict,
-                   df_is: pd.DataFrame, df_oos: pd.DataFrame,
-                   symbol: str):
-        cfg = deepcopy(self.cfg)
-        cfg.setdefault("strategy_params", {})[name] = params
-
-        # Charger la stratégie
-        mod = importlib.import_module(f"app.strategies.{name}")
-        eng = Engine()
-        if name == "ml_strategy":
-            strat = mod.Strategy(params)
-        else:
-            strat = mod.Strategy()
-        eng.register(strat)
-
-        bt_is  = Backtester(eng, cfg)
-        bt_oos = Backtester(eng, cfg)
-        r_is   = bt_is.run(df_is,  symbol).to_dict()
-        r_oos  = bt_oos.run(df_oos, symbol).to_dict()
-        return r_is, r_oos

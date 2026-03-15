@@ -1,21 +1,25 @@
 """
-Stratégie Trend Following — V4
+Stratégie Trend Following — V5
 
-Lacunes V3 corrigées :
-  - cross_lookback réduit à 6 (évite d'entrer sur un cross vieux de 12h)
-  - Filtre "no-entry zone" : ne pas entrer si prix > 2% au-dessus de l'EMA fast
-    (overextension = mauvais R:R)
-  - EMA200 assouplie : tolérance de 4% sous l'EMA200 (corrections normales BTC)
-  - Condition de continuation durcie : slope_pct relatif à l'ATR (scale-agnostique)
-  - Score base rehaussé : 0.62 (était 0.56), meilleure sélectivité
-  - Short conditions symétriques et cohérentes
-  - ADX computation via EWM (plus stable)
+Corrections V5 vs V4 :
+  - Cooldown par symbole
+  - ADX minimum relevé à 22 (était 18 — trop permissif en range)
+  - Ajout MACD comme filtre momentum : cross ou accélération requis
+  - Filtre overextension réduit à 1.5% (était 2%, trop large)
+  - Volume minimum relevé à 1.0× (était 0.9×)
+  - R:R check avant signal
+  - HTF trend intégré comme bonus/filtre
+  - Score rebasé plus conservateur : 0.60
 """
 import logging
 from typing import Dict, Any
-import numpy as np
 import pandas as pd
 from app.engine.engine import BaseStrategy
+from app.strategies.indicators import (
+    rsi as calc_rsi, atr as calc_atr, adx as calc_adx,
+    macd as calc_macd, vol_ratio as calc_vol,
+    market_structure, htf_trend, pre_val
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,26 +28,29 @@ class Strategy(BaseStrategy):
     name = "trend"
 
     def __init__(self):
-        self._last_signal_bar: int = -999
-        self._call_count: int = 0
+        self._last_signal: Dict[str, int] = {}
+        self._call_count:  Dict[str, int] = {}
 
-    def score(self, df: pd.DataFrame, params: dict = None) -> Dict[str, Any]:
-        self._call_count += 1
+    def score(self, df: pd.DataFrame, params: dict = None,
+              df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get("trend", {})
 
         ema_fast       = int(p.get("ema_fast",       21))
-        ema_slow       = int(p.get("ema_slow",       50))
-        ema_trend      = int(p.get("ema_trend",     200))
-        rsi_low        = float(p.get("rsi_low",      28))   # slightly wider
-        rsi_high       = float(p.get("rsi_high",     74))
-        adx_min        = float(p.get("adx_min",      18))   # abaissé → plus de signaux
-        vol_min        = float(p.get("vol_min",      0.9))  # abaissé
-        cross_lookback = int(p.get("cross_lookback",  6))   # ↓ 12→6 — cross récents seulement
-        cooldown       = int(p.get("cooldown",        20))
-        # Filtre overextension : ne pas entrer si trop loin de l'EMA fast
-        overext_pct    = float(p.get("overext_pct",  0.020)) # 2% max au-dessus EMA
-        # Tolérance EMA200 : permettre corrections (-4%)
-        ema200_tol     = float(p.get("ema200_tol",   0.04))
+        ema_slow       = int(p.get("ema_slow",        50))
+        ema_trend      = int(p.get("ema_trend",      200))
+        adx_min        = float(p.get("adx_min",       22))   # ↑ 18→22
+        vol_min        = float(p.get("vol_min",       1.0))  # ↑ 0.9→1.0
+        cross_lookback = int(p.get("cross_lookback",   6))
+        cooldown       = int(p.get("cooldown",         20))
+        overext_pct    = float(p.get("overext_pct",  0.015)) # ↓ 2%→1.5%
+        ema200_tol     = float(p.get("ema200_tol",   0.035))
+        rsi_low        = float(p.get("rsi_low",       30))
+        rsi_high       = float(p.get("rsi_high",      70))
+        rr_min         = float(p.get("rr_min",        1.5))
+
+        sym = symbol or str(df["time"].iloc[-1]) if "time" in df.columns else "default"
+        cnt = self._call_count.get(sym, 0) + 1
+        self._call_count[sym] = cnt
 
         min_bars = max(ema_trend + 10, 220)
         if len(df) < min_bars:
@@ -63,196 +70,180 @@ class Strategy(BaseStrategy):
         lt    = float(ema_t.iloc[-1])
         c_now = float(close.iloc[-1])
 
-        # ── ATR ───────────────────────────────────────────────────────────────
-        atr = self._atr(df, 14)
-        if atr <= 0:
+        atr_val  = pre_val(df, "_pre_atr14") or calc_atr(df, 14)
+        if atr_val <= 0:
             return self._none()
 
-        # ── RSI ───────────────────────────────────────────────────────────────
-        rsi_now = float(self._rsi(close, 14).iloc[-1])
+        rsi_now  = pre_val(df, "_pre_rsi14") or float(calc_rsi(close, 14).iloc[-1])
+        adx_val  = pre_val(df, "_pre_adx14") or calc_adx(df, 14)
+        vr       = pre_val(df, "_pre_volratio20") or calc_vol(df)
+        struct   = market_structure(high, low)
+        htf      = htf_trend(df_htf)
 
-        # ── ADX ───────────────────────────────────────────────────────────────
-        adx = self._adx(df, 14)
+        # MACD pour confirmation du momentum
+        lh = pre_val(df, "_pre_macd_hist")
+        if lh is None:
+            _, _, hist = calc_macd(close, 12, 26, 9)
+            lh = float(hist.iloc[-1])
+            ph = float(hist.iloc[-2])
+        else:
+            ph_series = df["_pre_macd_hist"]
+            ph = float(ph_series.iloc[-2]) if len(ph_series) > 1 else 0.0
+        macd_bull = lh > 0 and lh >= ph          # positif et monte
+        macd_bear = lh < 0 and lh <= ph          # négatif et baisse
+        macd_x_bull = ph < 0 and lh > 0          # cross zéro haussier
+        macd_x_bear = ph > 0 and lh < 0          # cross zéro baissier
 
-        # ── Volume ────────────────────────────────────────────────────────────
-        vol_avg   = df["volume"].rolling(20).mean().iloc[-1]
-        vol_now   = float(df["volume"].iloc[-1])
-        vol_ratio = float(vol_now / max(vol_avg, 1e-9))
+        # Pente EMA fast normalisée par ATR
+        slope_atr = (lf - float(ema_f.iloc[-4])) / atr_val
 
-        # ── Pente EMA fast — normalisée par ATR (scale-agnostique) ──────────
-        # Précédent : pente en % du prix → dépend du niveau (65k btc = toujours grand)
-        # Nouveau   : pente en ATR → comparable quel que soit le niveau
-        slope_atr = (lf - float(ema_f.iloc[-4])) / atr
-
-        # ── Cross EMA récent (lookback réduit à 6) ──────────────────────────
-        cross_bull = False
-        cross_bear = False
+        # Cross EMA récent
+        cross_bull = cross_bear = False
         for k in range(1, min(cross_lookback + 1, len(df) - 2)):
-            pf = float(ema_f.iloc[-1 - k])
-            ps = float(ema_s.iloc[-1 - k])
+            pf = float(ema_f.iloc[-1-k])
+            ps = float(ema_s.iloc[-1-k])
             if pf <= ps and lf > ls: cross_bull = True; break
             if pf >= ps and lf < ls: cross_bear = True; break
 
-        # ── Filtre overextension : ne pas chasser ──────────────────────────
+        # Overextension (réduit à 1.5%)
         overextended = (
             (lf > ls and (c_now - lf) / lf > overext_pct) or
             (lf < ls and (lf - c_now) / lf > overext_pct)
         )
 
-        # ── Structure de marché ─────────────────────────────────────────────
-        hh_hl = self._check_structure(high, low, n_pivots=4)
-
-        # ── Cooldown ─────────────────────────────────────────────────────────
-        if self._call_count - self._last_signal_bar < cooldown:
-            return self._none(f"Cooldown")
+        if cnt - self._last_signal.get(sym, -999) < cooldown:
+            return self._none("Cooldown")
 
         indicators = {
             "ema_fast": round(lf, 2), "ema_slow": round(ls, 2), "ema200": round(lt, 2),
-            "rsi": round(rsi_now, 1), "adx": round(adx, 1),
-            "vol_ratio": round(vol_ratio, 2), "slope_atr": round(slope_atr, 4),
-            "overextended": overextended, "hh_hl": hh_hl,
+            "rsi": round(rsi_now, 1), "adx": round(adx_val, 1),
+            "vol_ratio": round(vr, 2), "slope_atr": round(slope_atr, 4),
+            "macd_hist": round(lh, 6), "overextended": overextended,
+            "struct": struct, "htf_trend": htf,
         }
 
         # ═══ LONG ════════════════════════════════════════════════════════════
         cond_ema   = lf > ls
-        # EMA200 assouplie : prix peut être jusqu'à 4% sous l'EMA200 (corrections)
         cond_trend = c_now >= lt * (1 - ema200_tol)
-        # Entry : cross récent OU continuation avec pente ATR significative
-        cond_entry = cross_bull or (lf > ls and slope_atr > 0.03)
-        cond_adx   = adx >= adx_min
+        # MACD obligatoire : momentum positif (cross ou accélération)
+        cond_macd  = macd_bull or macd_x_bull
+        # Entry : cross récent OU slope ATR > seuil + MACD confirme
+        cond_entry = cross_bull or (slope_atr > 0.04 and cond_macd)
+        cond_adx   = adx_val >= adx_min
         cond_rsi   = rsi_low <= rsi_now <= rsi_high
-        cond_vol   = vol_ratio >= vol_min
-        # Rejet overextension : pas d'entrée si déjà trop loin de l'EMA
+        cond_vol   = vr >= vol_min
         cond_noext = not overextended
+        htf_ok     = htf >= 0
 
-        if cond_ema and cond_trend and cond_entry and cond_adx and cond_rsi and cond_vol and cond_noext:
-            ema_spread  = (lf - ls) / ls * 100
-            adx_norm    = min((adx - adx_min) / 25, 1.0)
-            rsi_optimal = max(1.0 - abs(rsi_now - 52) / 22, 0)
-            vol_bonus   = min((vol_ratio - vol_min) * 0.04, 0.09)
-            cross_bonus = 0.07 if cross_bull else 0.0
-            struct_bonus = 0.05 if hh_hl > 0 else 0.0
-            slope_bonus  = min(slope_atr * 0.04, 0.07)
+        if all([cond_ema, cond_trend, cond_entry, cond_adx,
+                cond_rsi, cond_vol, cond_noext, cond_macd, htf_ok]):
+
+            # R:R check : stop sous EMA fast, target 2× le risque
+            stop_l  = lf - atr_val * 1.5
+            risk_l  = c_now - stop_l
+            if risk_l <= 0:
+                return self._none("Stop invalide")
+            rr_l = (risk_l * 2.0) / risk_l
+            if rr_l < rr_min:
+                return self._none(f"R:R {rr_l:.2f} < {rr_min}")
+
+            ema_spread   = (lf - ls) / ls * 100
+            adx_norm     = min((adx_val - adx_min) / 20, 1.0)
+            rsi_opt      = max(1.0 - abs(rsi_now - 52) / 20, 0)
+            vol_b        = min((vr - vol_min) * 0.04, 0.08)
+            cross_b      = 0.07 if cross_bull else 0.0
+            macd_x_b     = 0.05 if macd_x_bull else 0.0
+            struct_b     = 0.04 if struct > 0 else 0.0
+            htf_b        = 0.05 if htf > 0 else 0.0
+            slope_b      = min(slope_atr * 0.04, 0.06)
 
             score = min(
-                0.62
-                + min(ema_spread * 4, 0.12)
-                + adx_norm * 0.12
-                + rsi_optimal * 0.07
-                + vol_bonus
-                + cross_bonus
-                + struct_bonus
-                + slope_bonus,
+                0.60
+                + min(ema_spread * 4, 0.10)
+                + adx_norm * 0.10
+                + rsi_opt  * 0.06
+                + vol_b + cross_b + macd_x_b + struct_b + htf_b + slope_b,
                 0.94
             )
-            self._last_signal_bar = self._call_count
+            self._last_signal[sym] = cnt
             return {
                 "score": round(score, 3), "side": "long", "name": self.name,
-                "atr": atr, "indicators": indicators,
+                "atr": atr_val, "stop_hint": round(stop_l, 2),
+                "indicators": indicators,
                 "conditions": [
-                    f"EMA{ema_fast} ({lf:.0f}) > EMA{ema_slow} ({ls:.0f}) ✓",
-                    f"Prix ({c_now:.0f}) ≥ EMA200 ({lt:.0f}) ×{1-ema200_tol:.2f} ✓",
-                    f"ADX {adx:.1f} ≥ {adx_min} ✓",
-                    f"RSI {rsi_now:.0f} ∈ [{rsi_low}-{rsi_high}] ✓",
-                    f"Vol {vol_ratio:.2f}x | Pas overextended ✓",
-                    f"Entry: {'Cross récent' if cross_bull else 'Continuation'} "
-                    f"(slope {slope_atr:+.3f} ATR)",
-                    f"Structure: {'HH/HL ✓' if hh_hl > 0 else 'neutre'}",
+                    f"EMA{ema_fast}({lf:.0f}) > EMA{ema_slow}({ls:.0f}) ✓",
+                    f"Prix({c_now:.0f}) ≥ EMA200({lt:.0f})×{1-ema200_tol:.2f} ✓",
+                    f"MACD hist {ph:+.5f}→{lh:+.5f} {'cross↑' if macd_x_bull else 'bull'} ✓",
+                    f"ADX {adx_val:.0f} ≥ {adx_min} | RSI {rsi_now:.0f} | Vol {vr:.2f}x ✓",
+                    f"HTF: {'haussier' if htf>0 else 'neutre'} | Struct: {'HH/HL ✓' if struct>0 else 'neutre'}",
                 ],
                 "reason": (
                     f"Trend LONG {'cross' if cross_bull else 'cont'} | "
-                    f"ADX={adx:.0f} RSI={rsi_now:.0f} vol={vol_ratio:.1f}x slope={slope_atr:.3f}"
+                    f"MACD {'x↑' if macd_x_bull else 'bull'} | "
+                    f"ADX={adx_val:.0f} RSI={rsi_now:.0f} vol={vr:.1f}x"
                 ),
             }
 
         # ═══ SHORT ═══════════════════════════════════════════════════════════
         cond_ema_s   = lf < ls
         cond_trend_s = c_now <= lt * (1 + ema200_tol)
-        cond_entry_s = cross_bear or (lf < ls and slope_atr < -0.03)
+        cond_macd_s  = macd_bear or macd_x_bear
+        cond_entry_s = cross_bear or (slope_atr < -0.04 and cond_macd_s)
         cond_rsi_s   = (100 - rsi_high) <= rsi_now <= (100 - rsi_low)
         cond_noext_s = not overextended
+        htf_ok_s     = htf <= 0
 
-        if cond_ema_s and cond_trend_s and cond_entry_s and cond_adx and cond_rsi_s and cond_vol and cond_noext_s:
+        if all([cond_ema_s, cond_trend_s, cond_entry_s, cond_adx,
+                cond_rsi_s, cond_vol, cond_noext_s, cond_macd_s, htf_ok_s]):
+
+            stop_s   = lf + atr_val * 1.5
+            risk_s   = stop_s - c_now
+            if risk_s <= 0:
+                return self._none("Stop invalide (short)")
+
             ema_spread_s = (ls - lf) / ls * 100
-            adx_norm_s   = min((adx - adx_min) / 25, 1.0)
-            rsi_opt_s    = max(1.0 - abs(rsi_now - 48) / 22, 0)
-            vol_bonus_s  = min((vol_ratio - vol_min) * 0.04, 0.09)
-            cross_bonus_s = 0.07 if cross_bear else 0.0
-            struct_bonus_s = 0.05 if hh_hl < 0 else 0.0
+            adx_norm_s   = min((adx_val - adx_min) / 20, 1.0)
+            rsi_opt_s    = max(1.0 - abs(rsi_now - 48) / 20, 0)
+            vol_b_s      = min((vr - vol_min) * 0.04, 0.08)
+            cross_b_s    = 0.07 if cross_bear else 0.0
+            macd_x_b_s   = 0.05 if macd_x_bear else 0.0
+            struct_b_s   = 0.04 if struct < 0 else 0.0
+            htf_b_s      = 0.05 if htf < 0 else 0.0
 
             score = min(
-                0.62
-                + min(ema_spread_s * 4, 0.12)
-                + adx_norm_s * 0.12
-                + rsi_opt_s * 0.07
-                + vol_bonus_s
-                + cross_bonus_s
-                + struct_bonus_s,
+                0.60
+                + min(ema_spread_s * 4, 0.10)
+                + adx_norm_s * 0.10
+                + rsi_opt_s  * 0.06
+                + vol_b_s + cross_b_s + macd_x_b_s + struct_b_s + htf_b_s,
                 0.93
             )
-            self._last_signal_bar = self._call_count
+            self._last_signal[sym] = cnt
             return {
                 "score": round(score, 3), "side": "short", "name": self.name,
-                "atr": atr, "indicators": indicators,
+                "atr": atr_val, "stop_hint": round(stop_s, 2),
+                "indicators": indicators,
                 "conditions": [
-                    f"EMA{ema_fast} ({lf:.0f}) < EMA{ema_slow} ({ls:.0f}) ✓",
-                    f"Prix ({c_now:.0f}) ≤ EMA200 ({lt:.0f}) ×{1+ema200_tol:.2f} ✓",
-                    f"ADX {adx:.1f} | RSI {rsi_now:.0f} | Vol {vol_ratio:.2f}x",
+                    f"EMA{ema_fast}({lf:.0f}) < EMA{ema_slow}({ls:.0f}) ✓",
+                    f"MACD hist {lh:+.5f} {'cross↓' if macd_x_bear else 'bear'} ✓",
+                    f"ADX {adx_val:.0f} | RSI {rsi_now:.0f} | Vol {vr:.2f}x ✓",
                 ],
                 "reason": (
                     f"Trend SHORT {'cross' if cross_bear else 'cont'} | "
-                    f"ADX={adx:.0f} RSI={rsi_now:.0f} slope={slope_atr:.3f}"
+                    f"MACD {'x↓' if macd_x_bear else 'bear'} | "
+                    f"ADX={adx_val:.0f} RSI={rsi_now:.0f} vol={vr:.1f}x"
                 ),
             }
 
         missing = []
         if not cond_ema:   missing.append(f"EMA align ✗")
         if not cond_trend: missing.append(f"EMA200 ✗")
-        if not cond_adx:   missing.append(f"ADX {adx:.0f}<{adx_min} ✗")
+        if not cond_macd:  missing.append(f"MACD ✗ ({lh:+.5f})")
+        if not cond_adx:   missing.append(f"ADX {adx_val:.0f}<{adx_min} ✗")
         if not cond_rsi:   missing.append(f"RSI {rsi_now:.0f} ✗")
-        if overextended:   missing.append(f"Overextended ✗")
-        return self._none(" | ".join(missing))
-
-    def _check_structure(self, high: pd.Series, low: pd.Series, n_pivots: int = 4) -> int:
-        if len(high) < n_pivots * 8:
-            return 0
-        window = 5
-        highs = [float(high.iloc[-i*window-1:-i*window+window-1].max())
-                 for i in range(1, n_pivots + 1)]
-        lows  = [float(low.iloc[-i*window-1:-i*window+window-1].min())
-                 for i in range(1, n_pivots + 1)]
-        hh = sum(1 for i in range(len(highs)-1) if highs[i] > highs[i+1])
-        hl = sum(1 for i in range(len(lows)-1)  if lows[i]  > lows[i+1])
-        ll = sum(1 for i in range(len(highs)-1) if highs[i] < highs[i+1])
-        lh = sum(1 for i in range(len(lows)-1)  if lows[i]  < lows[i+1])
-        if (hh + hl) >= n_pivots - 1: return 1
-        if (ll + lh) >= n_pivots - 1: return -1
-        return 0
+        if overextended:   missing.append(f"Overext ✗")
+        if htf < 0 and lf > ls: missing.append(f"HTF baissier ✗")
+        return self._none(" | ".join(missing) or "Conditions non réunies")
 
     def _none(self, reason: str = "") -> dict:
         return {"score": 0, "side": "none", "name": self.name, "reason": reason}
-
-    def _rsi(self, close: pd.Series, period: int = 14) -> pd.Series:
-        d = close.diff()
-        g = d.clip(lower=0).ewm(alpha=1/period, adjust=False).mean()
-        l = (-d.clip(upper=0)).ewm(alpha=1/period, adjust=False).mean()
-        return 100 - (100 / (1 + g / l.replace(0, np.nan)))
-
-    def _adx(self, df: pd.DataFrame, period: int = 14) -> float:
-        if len(df) < period * 2: return 0.0
-        h, l, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
-        up, down = h.diff().clip(lower=0), (-l.diff()).clip(lower=0)
-        pdm = up.where(up > down, 0.0); mdm = down.where(down > up, 0.0)
-        tr  = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
-        atr = tr.ewm(span=period, adjust=False).mean().replace(0, np.nan)
-        dip = 100 * pdm.ewm(span=period, adjust=False).mean() / atr
-        dim = 100 * mdm.ewm(span=period, adjust=False).mean() / atr
-        dx  = 100 * (dip - dim).abs() / (dip + dim).replace(0, np.nan)
-        v   = float(dx.ewm(span=period, adjust=False).mean().iloc[-1])
-        return v if not np.isnan(v) else 0.0
-
-    def _atr(self, df: pd.DataFrame, period: int = 14) -> float:
-        h, l, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
-        tr = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
-        v  = float(tr.rolling(period).mean().iloc[-1])
-        return v if v > 0 else 0.0

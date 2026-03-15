@@ -119,6 +119,18 @@ class TrailingStopManager:
         self._dts = DynamicTrailingStop(**self._kwargs)
         return self._dts.init(entry, atr, side)
 
+    def init_from_stop(self, entry: float, saved_stop: float, side: str):
+        """
+        Réinitialise le trailing stop depuis un stop sauvegardé en BDD (reprise après crash).
+        Reconstruit l'état interne à partir de la distance stop-entry.
+        Le stop sauvegardé est utilisé comme floor — ne peut qu'améliorer.
+        """
+        self._dts = DynamicTrailingStop(**self._kwargs)
+        dist = abs(entry - saved_stop) if saved_stop != entry else self.mult
+        self._dts._initial_stop_dist = max(dist, 1e-9)
+        self._dts._peak_price        = entry  # conservateur : on part du prix d'entrée
+        self._dts._phase             = 0      # recommence en phase GRACE — safe
+
     def update_stop(self, current_price, current_stop, atr, side, entry=None,
                     bars_held=0, recent_lows=None, recent_highs=None):
         if atr <= 0:

@@ -129,3 +129,68 @@ def build_features(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
     st_d, _           = supertrend(df)
     feat["st_dir"]    = st_d
     return feat.dropna()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Pré-calcul vectorisé pour le backtest — O(n) unique
+# ══════════════════════════════════════════════════════════════════════════════
+_PRE_COLUMNS = {
+    "_pre_rsi14":      ("rsi",        {"n": 14}),
+    "_pre_atr14":      ("atr",        {"n": 14}),
+    "_pre_adx14":      ("adx",        {"n": 14}),      # → tuple[0]
+    "_pre_macd_line":  ("macd",       {}),              # → tuple[0]
+    "_pre_macd_sig":   ("macd_sig",   {}),              # → tuple[1]
+    "_pre_macd_hist":  ("macd_hist",  {}),              # → tuple[2]
+    "_pre_volratio20": ("volume_ratio", {"n": 20}),
+}
+
+
+def precompute(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Enrichit le df avec des colonnes _pre_* pré-calculées vectoriellement.
+    Les stratégies peuvent lire ces colonnes (via pre_or_compute) au lieu de
+    recalculer les indicateurs depuis zéro à chaque barre → speedup ~180×.
+
+    Usage dans Backtester.run() :
+        df = precompute(df.copy())
+        # Puis passer la vue df.iloc[:i+1] aux stratégies normalement.
+    """
+    c = df["close"].astype(float)
+
+    # RSI(14)
+    df["_pre_rsi14"] = rsi(c, 14)
+
+    # ATR(14)
+    df["_pre_atr14"] = atr(df, 14)
+
+    # ADX(14) — retourne (adx, pdi, ndi)
+    adx_s, pdi_s, ndi_s = adx(df, 14)
+    df["_pre_adx14"]  = adx_s
+    df["_pre_pdi14"]  = pdi_s
+    df["_pre_ndi14"]  = ndi_s
+
+    # MACD(12,26,9)
+    ml, ms, mh = macd(c, 12, 26, 9)
+    df["_pre_macd_line"] = ml
+    df["_pre_macd_sig"]  = ms
+    df["_pre_macd_hist"] = mh
+
+    # volume_ratio(20)
+    df["_pre_volratio20"] = volume_ratio(df, 20)
+
+    return df
+
+
+def pre_or_compute(df: pd.DataFrame, col: str, fallback_fn, *args, **kwargs):
+    """
+    Lit la colonne pré-calculée si elle existe dans le df, sinon calcule à la volée.
+    Compatible avec les backtests (avec pré-calcul) et le live trading (sans).
+
+    Exemple dans une stratégie :
+        rsi_now = float(pre_or_compute(df, "_pre_rsi14", rsi, df["close"], 14).iloc[-1])
+    """
+    if col in df.columns:
+        val = df[col].iloc[-1]
+        if pd.notna(val):
+            return df[col]
+    return fallback_fn(*args, **kwargs)

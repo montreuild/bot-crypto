@@ -1,20 +1,26 @@
 """
-Module 4 — Optimiseur automatique :
-  - Grid Search
-  - Random Search
-  - Optimisation Bayésienne (via scipy/numpy, sans optuna)
-  - Validation Out-of-Sample
+Optimiseur de Stratégies — V8 (Multi-Timeframe)
+
+Nouveautés V8 :
+  - STRATEGY_TIMEFRAMES : timeframes recommandés par stratégie
+  - RECOMMENDED_LIMIT : nombre de barres optimal par TF
+  - save_optimizer_results() : persiste le classement (strategy, tf) → params + score
+  - apply_best_params() : met à jour strategy_params ET optimizer_results
+  - _composite_score() inchangé
 """
 import logging
 import importlib
 import itertools
 import random
+import time
+import yaml
+import os
 from copy import deepcopy
-from typing import Dict, List, Any, Callable
+from datetime import datetime
+from typing import Dict, List, Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
-from scipy.stats import uniform, randint
 
 from app.engine.engine import Engine
 from app.engine.backtest import Backtester, BacktestResult
@@ -22,182 +28,623 @@ from app.engine.backtest import Backtester, BacktestResult
 logger = logging.getLogger(__name__)
 
 
-def _score(result: BacktestResult) -> float:
-    """Score composite pour comparer les configurations."""
-    if result.total_trades < 5:
-        return -999.0
-    pf  = result.profit_factor if result.profit_factor != float("inf") else 5.0
-    return (result.sharpe * 0.4 +
-            result.win_rate / 100 * 0.3 +
-            min(pf, 5.0) / 5.0 * 0.2 +
-            (1 + result.max_drawdown / 100) * 0.1)
+# ════════════════════════════════════════════════════════════════════════════
+#  Timeframes recommandés par stratégie
+# ════════════════════════════════════════════════════════════════════════════
+STRATEGY_TIMEFRAMES: Dict[str, List[str]] = {
+    # Scalping/court terme : supertrend et breakout réagissent vite aux cassures
+    "supertrend_macd": ["5m", "15m", "1h"],
+    "breakout":        ["5m", "15m", "1h"],
+    # Trend following : besoin de plus de contexte, pas adapté au 5m
+    "trend":           ["1h", "1d"],
+    "pullback_trend":  ["15m", "1h", "1d"],
+    # Fear/momentum : événements macro → 1h/1d idéal
+    "fear_momentum":   ["1h", "1d"],
+}
+
+# Nombre de barres optimal par timeframe (équilibre données/temps)
+RECOMMENDED_LIMIT: Dict[str, int] = {
+    "1m":  2000,   # ~1.4 jours
+    "5m":  4000,   # ~14 jours
+    "15m": 2000,   # ~21 jours
+    "30m": 1500,   # ~31 jours
+    "1h":  1500,   # ~62 jours
+    "4h":   800,   # ~133 jours
+    "1d":  2000,   # ~2000 jours (Binance fournit ~2500 max depuis 2017)
+}
 
 
-class StrategyOptimizer:
-    def __init__(self, strategy_name: str, cfg: dict, df_is: pd.DataFrame,
-                 df_oos: pd.DataFrame, param_space: Dict):
-        self.strategy_name = strategy_name
-        self.cfg           = deepcopy(cfg)
-        self.df_is         = df_is
-        self.df_oos        = df_oos
-        self.param_space   = param_space   # {param: [values]} ou {param: (min, max, type)}
-        self.results: List[Dict] = []
-
-    def _run_with_params(self, params: dict) -> tuple[float, float, dict]:
-        cfg = deepcopy(self.cfg)
-        cfg.setdefault("strategy_params", {})[self.strategy_name] = params
-        mod  = importlib.import_module(f"app.strategies.{self.strategy_name}")
-        eng  = Engine(); eng.register(mod.Strategy())
-        bt   = Backtester(eng, cfg)
-        r_is = bt.run(self.df_is, "BTC/USDC")
-        s_is = _score(r_is)
-        # OOS validation
-        bt2      = Backtester(eng, cfg)
-        r_oos    = bt2.run(self.df_oos, "BTC/USDC")
-        s_oos    = _score(r_oos)
-        summary  = {
-            "params": params, "is_score": round(s_is, 4), "oos_score": round(s_oos, 4),
-            "is_sharpe": round(r_is.sharpe, 3), "oos_sharpe": round(r_oos.sharpe, 3),
-            "is_pnl": round(r_is.total_pnl, 4), "oos_pnl": round(r_oos.total_pnl, 4),
-            "is_wr": round(r_is.win_rate, 2), "oos_wr": round(r_oos.win_rate, 2),
-        }
-        return s_is, s_oos, summary
-
-    def grid_search(self) -> Dict:
-        """Essaie toutes les combinaisons."""
-        keys   = list(self.param_space.keys())
-        values = [self.param_space[k] if isinstance(self.param_space[k], list)
-                  else [self.param_space[k][0]] for k in keys]
-        combos = list(itertools.product(*values))
-        logger.info(f"[Optimizer] Grid Search — {len(combos)} combinaisons")
-        best_score, best_params, best_summary = -999, None, {}
-        for combo in combos:
-            params = dict(zip(keys, combo))
-            try:
-                s_is, s_oos, summary = self._run_with_params(params)
-                self.results.append(summary)
-                if s_oos > best_score:
-                    best_score, best_params, best_summary = s_oos, params, summary
-            except Exception as e:
-                logger.debug(f"[Optimizer] Combo {params} KO : {e}")
-        return {"method": "grid", "best": best_summary, "all": self.results}
-
-    def random_search(self, n_trials: int = 50) -> Dict:
-        """Recherche aléatoire dans l'espace des paramètres."""
-        logger.info(f"[Optimizer] Random Search — {n_trials} essais")
-        best_score, best_summary = -999, {}
-        rng = random.Random(42)
-        for _ in range(n_trials):
-            params = {}
-            for k, space in self.param_space.items():
-                if isinstance(space, list):
-                    params[k] = rng.choice(space)
-                elif isinstance(space, tuple) and len(space) == 3:
-                    lo, hi, typ = space
-                    if typ == "int":
-                        params[k] = rng.randint(int(lo), int(hi))
-                    else:
-                        params[k] = round(rng.uniform(lo, hi), 4)
-            try:
-                s_is, s_oos, summary = self._run_with_params(params)
-                self.results.append(summary)
-                if s_oos > best_score:
-                    best_score, best_summary = s_oos, summary
-            except Exception as e:
-                logger.debug(f"[Optimizer] Trial KO : {e}")
-        return {"method": "random", "best": best_summary, "all": self.results}
-
-    def bayesian_search(self, n_trials: int = 50) -> Dict:
-        """
-        Optimisation Bayésienne simplifiée (GPR sur numpy).
-        En l'absence d'optuna, utilise un UCB exploratoire.
-        """
-        try:
-            return self._bayesian_numpy(n_trials)
-        except Exception as e:
-            logger.warning(f"[Optimizer] Bayesian KO ({e}) — fallback Random Search")
-            return self.random_search(n_trials)
-
-    def _bayesian_numpy(self, n_trials: int) -> Dict:
-        """UCB-based acquisition function (numpy only)."""
-        logger.info(f"[Optimizer] Bayesian (UCB) — {n_trials} essais")
-        keys = list(self.param_space.keys())
-        # Génère un pool de candidats
-        pool = []
-        rng  = random.Random(99)
-        for _ in range(n_trials * 5):
-            p = {}
-            for k, space in self.param_space.items():
-                if isinstance(space, list):
-                    p[k] = rng.choice(space)
-                elif isinstance(space, tuple) and len(space) == 3:
-                    lo, hi, typ = space
-                    p[k] = rng.randint(int(lo),int(hi)) if typ=="int" else round(rng.uniform(lo,hi),4)
-            pool.append(p)
-
-        scores_seen: List[tuple] = []
-        best_score, best_summary = -999, {}
-        # Phase exploration (25% des essais)
-        n_explore = max(5, n_trials // 4)
-        explore   = rng.sample(pool, min(n_explore, len(pool)))
-        for params in explore:
-            try:
-                s_is, s_oos, summary = self._run_with_params(params)
-                scores_seen.append((s_oos, params))
-                self.results.append(summary)
-                if s_oos > best_score:
-                    best_score, best_summary = s_oos, summary
-            except Exception: pass
-
-        # Phase exploitation : favorise les zones proches des meilleurs
-        for _ in range(n_trials - n_explore):
-            if not scores_seen:
-                break
-            # Choisit le candidat le plus "proche" du meilleur connu (perturbation)
-            top = sorted(scores_seen, key=lambda x: -x[0])[:3]
-            base_params = rng.choice(top)[1]
-            params = {}
-            for k, space in self.param_space.items():
-                if isinstance(space, list):
-                    idx = space.index(base_params[k]) if base_params[k] in space else 0
-                    shift = rng.randint(-1, 1)
-                    params[k] = space[max(0, min(len(space)-1, idx+shift))]
-                elif isinstance(space, tuple) and len(space) == 3:
-                    lo, hi, typ = space
-                    noise = (hi - lo) * 0.1
-                    if typ == "int":
-                        params[k] = max(int(lo), min(int(hi), int(base_params[k]) + rng.randint(-2,2)))
-                    else:
-                        params[k] = max(lo, min(hi, round(base_params[k] + rng.uniform(-noise, noise), 4)))
-            try:
-                s_is, s_oos, summary = self._run_with_params(params)
-                scores_seen.append((s_oos, params))
-                self.results.append(summary)
-                if s_oos > best_score:
-                    best_score, best_summary = s_oos, summary
-            except Exception: pass
-
-        return {"method": "bayesian", "best": best_summary, "all": self.results}
-
-
-# Espaces de paramètres par défaut pour chaque stratégie
-DEFAULT_SPACES = {
+# ════════════════════════════════════════════════════════════════════════════
+#  Espaces de paramètres — OPTIMISÉS
+# ════════════════════════════════════════════════════════════════════════════
+PARAM_SPACES: Dict[str, Dict[str, List]] = {
     "trend": {
-        "ema_fast":      [10, 15, 20, 25],
-        "ema_slow":      [40, 50, 60, 100],
-        "rsi_threshold": [40, 45, 50, 55],
-        "atr_mult":      [1.2, 1.5, 1.8, 2.0],
+        "ema_fast":       [13, 21, 34],
+        "ema_slow":       [50, 80],
+        "adx_min":        [20, 22, 25, 28],
+        "rsi_low":        [28, 30, 33],
+        "rsi_high":       [67, 70, 73],
+        "vol_min":        [0.9, 1.0, 1.2],
+        "cross_lookback": [4, 6, 8],
+        "overext_pct":    [0.012, 0.015, 0.020],
+        "ema200_tol":     [0.025, 0.035, 0.045],
+        "cooldown":       [15, 20, 25],
+        "rr_min":         [1.3, 1.5, 2.0],
     },
-    "breakout": {
-        "period":      [10, 15, 20, 25, 30],
-        "atr_mult":    [1.5, 1.8, 2.0, 2.5],
-        "confirm_bars":[1, 2, 3],
+    "pullback_trend": {
+        "ema_fast":       [13, 21, 34],
+        "ema_mid":        [50],
+        "ema_slow":       [100],
+        "adx_min":        [18, 20, 22, 25],
+        "pb_zone_pct":    [0.003, 0.005, 0.007],
+        "rsi_pb_low":     [30, 33, 38],
+        "rsi_pb_high":    [55, 58, 62],
+        "vol_min":        [0.7, 0.8, 1.0],
+        "cooldown":       [15, 20, 25],
+        "rr_min":         [1.3, 1.5, 2.0],
     },
     "supertrend_macd": {
-        "st_period": [7, 10, 14],
-        "st_mult":   [2.0, 3.0, 4.0],
-        "macd_fast": [8, 12, 16],
-        "macd_slow": [21, 26, 30],
-        "vol_mult":  [1.0, 1.3, 1.5, 2.0],
+        "st_period":      [7, 10, 14],
+        "st_mult":        [2.0, 2.5, 3.0],
+        "macd_fast":      [10, 12, 14],
+        "macd_slow":      [24, 26, 28],
+        "macd_signal":    [7, 9, 11],
+        "vol_min":        [1.0, 1.1, 1.3],
+        "rsi_min":        [35, 38, 42],
+        "rsi_max":        [60, 65, 68],
+        "cooldown":       [10, 15, 20],
+        "rr_min":         [1.3, 1.5, 2.0],
+    },
+    "breakout": {
+        "period":         [20, 25, 30, 40],
+        "vol_min":        [1.1, 1.2, 1.5],
+        "atr_expan_min":  [1.05, 1.08, 1.12, 1.20],
+        "pen_max_atr":    [1.5, 2.0, 2.5],
+        "body_min_atr":   [0.30, 0.35, 0.45],
+        "squeeze_bars":   [10, 15, 20],
+        "cooldown":       [15, 20, 25],
+        "rr_min":         [1.3, 1.5, 2.0],
+    },
+    "fear_momentum": {
+        "ema_fast":        [13, 21, 34],
+        "ema_mid":         [50],
+        "rsi_fear":        [35, 38, 42, 45],
+        "rsi_greed":       [58, 62, 65],
+        "vol_cap_min":     [1.5, 1.8, 2.2, 2.5],
+        "atr_max_dip":     [3.0, 4.0, 5.0],
+        "ema200_max_dist": [0.05, 0.08, 0.12],
+        "cooldown":        [15, 18, 22, 25],
+        "rr_min":          [1.4, 1.6, 2.0],
     },
 }
+
+FIXED_PARAMS: Dict[str, Dict[str, Any]] = {
+    "trend": {}, "pullback_trend": {}, "supertrend_macd": {},
+    "breakout": {}, "fear_momentum": {},
+}
+
+GLOBAL_TRADING_PARAMS = {
+    "score_threshold", "risk_per_trade", "capital", "timeframe", "timeframes",
+    "paper_mode", "max_positions", "taker_fee", "maker_fee",
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Score composite
+# ════════════════════════════════════════════════════════════════════════════
+def _composite_score(res: dict, min_trades: int = 2) -> float:
+    n = res.get("total_trades", 0) if isinstance(res, dict) else res.total_trades
+    if n < min_trades:
+        return -999.0
+
+    if isinstance(res, dict):
+        sharpe = res.get("sharpe", 0)
+        wr     = res.get("win_rate", 0) / 100
+        pf     = res.get("profit_factor", 0)
+        pnl    = res.get("total_pnl", 0)
+        dd     = abs(res.get("max_drawdown", -100))
+        exp    = res.get("expectancy", 0)
+        alpha  = res.get("alpha", 0)
+    else:
+        sharpe = res.sharpe
+        wr     = res.win_rate / 100
+        pf     = res.profit_factor
+        pnl    = res.total_pnl
+        dd     = abs(res.max_drawdown)
+        exp    = res.expectancy
+        alpha  = getattr(res, "alpha", 0)
+
+    if isinstance(pf, str):
+        pf = 6.0
+    pf = min(float(pf), 6.0)
+
+    trade_factor = min(n / 10, 1.0)
+    dd_factor    = max(0, 1.0 - dd / 30)
+    pnl_sign     = 1.0 if pnl > 0 else 0.3
+    alpha_norm   = max(min(alpha / 50.0, 1.0), -1.0)
+    alpha_bonus  = alpha_norm * 0.10
+
+    score = (
+        sharpe          * 0.28 +
+        wr              * 0.18 +
+        (pf / 6)        * 0.18 +
+        min(exp, 30) / 30 * 0.08 +
+        dd_factor       * 0.10 +
+        trade_factor    * 0.08 +
+        alpha_bonus     * 1.00
+    ) * pnl_sign
+
+    return round(score, 6)
+
+
+def _overfitting_ratio(is_score: float, oos_score: float) -> float:
+    if oos_score <= -990 or is_score <= -990:
+        return float('nan')
+    if is_score <= 0:
+        return 0.0
+    return round(min(is_score / max(oos_score, 0.01), 10.0), 2)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Persistance des résultats d'optimisation
+# ════════════════════════════════════════════════════════════════════════════
+def save_optimizer_results(strategy_name: str, timeframe: str,
+                           params: dict, oos_score: float,
+                           config_path: str = "config.yaml") -> bool:
+    """
+    Persiste le résultat d'optimisation dans optimizer_results.<strategy>.<tf>.
+    Préserve les autres stratégies/TF existants.
+    """
+    if not os.path.exists(config_path):
+        logger.warning(f"[Optimizer] config_path introuvable : {config_path}")
+        return False
+    try:
+        with open(config_path, "r") as f:
+            cfg = yaml.safe_load(f) or {}
+
+        if "optimizer_results" not in cfg or cfg["optimizer_results"] is None:
+            cfg["optimizer_results"] = {}
+
+        if strategy_name not in cfg["optimizer_results"]:
+            cfg["optimizer_results"][strategy_name] = {}
+
+        cfg["optimizer_results"][strategy_name][timeframe] = {
+            "run_date":  datetime.utcnow().strftime("%Y-%m-%d"),
+            "oos_score": round(float(oos_score), 6),
+            "params":    deepcopy(params),
+        }
+
+        with open(config_path, "w") as f:
+            yaml.dump(cfg, f, allow_unicode=True, sort_keys=False)
+
+        logger.info(f"[Optimizer] Résultat sauvegardé : {strategy_name}@{timeframe} "
+                    f"(score OOS={oos_score:.4f})")
+        return True
+    except Exception as e:
+        logger.error(f"[Optimizer] save_optimizer_results KO : {e}")
+        return False
+
+
+def apply_best_params(strategy_name: str, params: dict,
+                      config_path: str = "config.yaml",
+                      timeframe: str = None,
+                      oos_score: float = 0.0) -> bool:
+    """
+    Met à jour strategy_params.<strategy> dans config.yaml.
+    Si timeframe fourni, sauvegarde aussi dans optimizer_results.
+    Préserve tous les autres paramètres.
+    """
+    if not os.path.exists(config_path):
+        return False
+    try:
+        with open(config_path, "r") as f:
+            cfg = yaml.safe_load(f) or {}
+
+        # Mettre à jour strategy_params
+        if "strategy_params" not in cfg:
+            cfg["strategy_params"] = {}
+        if strategy_name not in cfg["strategy_params"]:
+            cfg["strategy_params"][strategy_name] = {}
+
+        existing = cfg["strategy_params"][strategy_name]
+        for k, v in params.items():
+            if k not in GLOBAL_TRADING_PARAMS:
+                existing[k] = v
+
+        # Mettre à jour optimizer_results si TF fourni
+        if timeframe:
+            if "optimizer_results" not in cfg or cfg["optimizer_results"] is None:
+                cfg["optimizer_results"] = {}
+            if strategy_name not in cfg["optimizer_results"]:
+                cfg["optimizer_results"][strategy_name] = {}
+            cfg["optimizer_results"][strategy_name][timeframe] = {
+                "run_date":  datetime.utcnow().strftime("%Y-%m-%d"),
+                "oos_score": round(float(oos_score), 6),
+                "params":    deepcopy(params),
+            }
+
+        with open(config_path, "w") as f:
+            yaml.dump(cfg, f, allow_unicode=True, sort_keys=False)
+
+        # Enregistrer dans le changelog
+        try:
+            _append_changelog(config_path, strategy_name, timeframe, params, oos_score, existing)
+        except Exception as _cle:
+            logger.debug(f"[Optimizer] changelog KO (non bloquant) : {_cle}")
+
+        logger.info(f"[Optimizer] Params appliqués : {strategy_name}"
+                    + (f"@{timeframe}" if timeframe else ""))
+        return True
+    except Exception as e:
+        logger.error(f"[Optimizer] apply_best_params KO : {e}")
+        return False
+
+
+def _append_changelog(config_path: str, strategy: str, timeframe: str,
+                      new_params: dict, oos_score: float, old_params: dict) -> None:
+    """Ajoute une entrée dans optimizer_changelog.json (max 200 entrées)."""
+    import json
+    changelog_path = os.path.join(os.path.dirname(config_path), "optimizer_changelog.json")
+    entry = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "source":    "optimizer",
+        "strategy":  strategy,
+        "timeframe": timeframe or "",
+        "oos_score": round(float(oos_score), 4),
+        "changed":   {},
+    }
+    for k, v in new_params.items():
+        old_v = old_params.get(k)
+        if old_v != v:
+            entry["changed"][k] = {"before": old_v, "after": v}
+    try:
+        with open(changelog_path, "r") as f:
+            log = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        log = []
+    log.append(entry)
+    log = log[-200:]  # garder les 200 derniers
+    with open(changelog_path, "w") as f:
+        json.dump(log, f, ensure_ascii=False, indent=None, separators=(",", ":"))
+
+
+def get_active_strategies_per_tf(cfg: dict) -> Dict[str, List[dict]]:
+    """
+    Retourne les stratégies actives par TF depuis optimizer_results.
+    Format : { "1h": [{"name": "trend", "params": {...}, "score": 0.82}, ...], ... }
+
+    Fallback : si aucun résultat pour un TF, utilise strategies.enabled avec strategy_params.
+    """
+    timeframes   = cfg["trading"].get("timeframes", [cfg["trading"].get("timeframe", "1h")])
+    top_n        = cfg["trading"].get("top_strategies_per_tf", 2)
+    opt_results  = cfg.get("optimizer_results") or {}
+    strat_params = cfg.get("strategy_params", {})
+    result       = {}
+
+    for tf in timeframes:
+        candidates = []
+        for strat_name, tf_map in opt_results.items():
+            if not isinstance(tf_map, dict):
+                continue
+            if tf in tf_map:
+                entry = tf_map[tf]
+                if isinstance(entry, dict):
+                    score  = entry.get("oos_score", -999)
+                    params = entry.get("params", strat_params.get(strat_name, {}))
+                    candidates.append({
+                        "name":   strat_name,
+                        "params": {strat_name: params},
+                        "score":  score,
+                        "tf":     tf,
+                    })
+
+        # Tri par score OOS décroissant, top N
+        # MIN_VIABLE_SCORE: exclure les stratégies nettement perdantes en OOS
+        # (-0.05 = légèrement négatif acceptable, -0.15 = clairement mauvais)
+        MIN_VIABLE_SCORE = -0.05
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        viable   = [c for c in candidates if c["score"] >= MIN_VIABLE_SCORE]
+        rejected = [c for c in candidates if c["score"] < MIN_VIABLE_SCORE and c["score"] > -999]
+        active   = viable[:top_n]
+
+        if rejected:
+            for r in rejected:
+                logger.warning(
+                    f"[Optimizer] {r['name']}@{tf} exclu du live : "
+                    f"score OOS {r['score']:.4f} < seuil {MIN_VIABLE_SCORE} — "
+                    f"relancez une optimisation pour améliorer."
+                )
+
+        if active:
+            result[tf] = active
+        else:
+            # Fallback : stratégies activées manuellement (sans résultat OOS ou scores trop bas)
+            enabled = cfg["strategies"].get("enabled", [])
+            result[tf] = [
+                {"name": n, "params": {n: strat_params.get(n, {})}, "score": 0.0, "tf": tf}
+                for n in enabled
+            ]
+            reason = "pas de résultats OOS" if not candidates else                      f"tous les scores OOS < {MIN_VIABLE_SCORE} ({', '.join(f"{c['name']}={c['score']:.3f}" for c in candidates[:3])})"
+            logger.info(f"[Optimizer] {tf} : {reason} — "
+                        f"fallback sur stratégies activées : {enabled}")
+
+    return result
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  StrategyOptimizer — classe principale
+# ════════════════════════════════════════════════════════════════════════════
+class StrategyOptimizer:
+    def __init__(self, strategy_name: str, cfg: dict,
+                 df_is: pd.DataFrame, df_oos: pd.DataFrame,
+                 param_space: Dict = None,
+                 progress_callback: Optional[Callable] = None,
+                 symbol: str = "BTC/USDC",
+                 df_full: pd.DataFrame = None,
+                 split: int = None,
+                 timeframe: str = None):
+        self.strategy_name     = strategy_name
+        self.cfg               = deepcopy(cfg)
+        self.df_is             = df_is
+        self.df_oos            = df_oos
+        self.param_space       = param_space or PARAM_SPACES.get(strategy_name, {})
+        self.progress_callback = progress_callback
+        self.symbol            = symbol
+        self.timeframe         = timeframe
+        self.results: List[Dict] = []
+        self.df_full = df_full if df_full is not None else pd.concat([df_is, df_oos], ignore_index=True)
+        self.split   = split   if split   is not None else len(df_is)
+
+    def _load_strategy(self):
+        mod = importlib.import_module(f"app.strategies.{self.strategy_name}")
+        eng = Engine()
+        eng.register(mod.Strategy(), silent=True)  # silence: appelé à chaque trial
+        return eng
+
+    def _eval(self, params: dict) -> dict:
+        eng = self._load_strategy()
+        cfg = deepcopy(self.cfg)
+        cfg.setdefault("strategy_params", {})[self.strategy_name] = params
+        bt  = Backtester(eng, cfg)
+
+        res_is  = bt.run(self.df_is,  self.symbol)
+        res_oos = bt.run(self.df_oos, self.symbol)
+
+        is_score  = _composite_score(res_is)
+        oos_score = _composite_score(res_oos)
+        overfit   = _overfitting_ratio(is_score, oos_score)
+
+        return {
+            "params":      params,
+            "is_score":    is_score,
+            "oos_score":   oos_score,
+            "overfit":     overfit,
+            "is_pnl":      res_is.total_pnl,
+            "oos_pnl":     res_oos.total_pnl,
+            "is_sharpe":   res_is.sharpe,
+            "oos_sharpe":  res_oos.sharpe,
+            "is_trades":   res_is.total_trades,
+            "oos_trades":  res_oos.total_trades,
+            "is_wr":       res_is.win_rate,
+            "oos_wr":      res_oos.win_rate,
+            "oos_dd":      res_oos.max_drawdown,
+        }
+
+    def _penalized_score(self, r: dict) -> float:
+        """Score final pénalisé si surapprentissage détecté."""
+        oos = r["oos_score"]
+        ovf = r.get("overfit", 1.0)
+        if np.isnan(ovf):
+            return oos
+        if ovf > 2.5:
+            return oos * (2.5 / ovf)
+        return oos
+
+    def random_search(self, n_trials: int = 40, n_jobs: int = 1,
+                      early_stop_patience: int = 0) -> dict:
+        if not self.param_space:
+            return {"error": f"Aucun espace de params pour {self.strategy_name}"}
+
+        best_score = -999
+        no_improve = 0
+
+        for i in range(n_trials):
+            params = {k: random.choice(v) for k, v in self.param_space.items()}
+            r = self._eval(params)
+            score = self._penalized_score(r)
+            r["final_score"] = score
+            self.results.append(r)
+
+            if score > best_score:
+                best_score = score
+                no_improve = 0
+            else:
+                no_improve += 1
+
+            if self.progress_callback:
+                self.progress_callback(i + 1, n_trials, best_score, {
+                    "oos_pnl":     r["oos_pnl"],
+                    "oos_sharpe":  r["oos_sharpe"],
+                    "final_score": score,
+                    "overfit":     r.get("overfit", 1.0),
+                })
+            if early_stop_patience > 0 and no_improve >= early_stop_patience:
+                logger.info(f"[Optimizer] Early stop à trial {i+1}/{n_trials}")
+                break
+
+        return self._best_result()
+
+    def bayesian_search(self, n_trials: int = 40, n_jobs: int = 1,
+                        early_stop_patience: int = 0) -> dict:
+        if not self.param_space:
+            return {"error": f"Aucun espace de params pour {self.strategy_name}"}
+
+        n_explore = max(8, n_trials // 3)
+        n_exploit = n_trials - n_explore
+
+        # Phase exploration : random
+        self._run_parallel(n_explore, n_trials, trial_offset=0,
+                           sampler=lambda: {k: random.choice(v) for k, v in self.param_space.items()},
+                           n_jobs=n_jobs)
+
+        # Phase exploitation : gaussian autour du meilleur
+        if self.results and n_exploit > 0:
+            best = max(self.results, key=self._penalized_score)
+            no_improve = 0
+            best_score = self._penalized_score(best)
+
+            for i in range(n_exploit):
+                trial_idx = n_explore + i
+                params = self._perturb(best["params"])
+                r = self._eval(params)
+                score = self._penalized_score(r)
+                r["final_score"] = score
+                self.results.append(r)
+
+                if score > best_score:
+                    best_score = score
+                    best = r
+                    no_improve = 0
+                else:
+                    no_improve += 1
+
+                if self.progress_callback:
+                    self.progress_callback(trial_idx + 1, n_trials, best_score, {
+                        "oos_pnl":     r["oos_pnl"],
+                        "oos_sharpe":  r["oos_sharpe"],
+                        "final_score": score,
+                        "overfit":     r.get("overfit", 1.0),
+                    })
+                if early_stop_patience > 0 and no_improve >= early_stop_patience:
+                    logger.info(f"[Bayesian] Early stop exploit trial {i+1}/{n_exploit}")
+                    break
+
+        return self._best_result()
+
+    def _run_parallel(self, n: int, n_total: int, trial_offset: int = 0,
+                      sampler=None, n_jobs: int = 1):
+        if sampler is None:
+            sampler = lambda: {k: random.choice(v) for k, v in self.param_space.items()}
+
+        if n_jobs <= 1:
+            best_so_far = -999
+            for i in range(n):
+                r = self._eval(sampler())
+                score = self._penalized_score(r)
+                r["final_score"] = score
+                self.results.append(r)
+                if score > best_so_far:
+                    best_so_far = score
+                if self.progress_callback:
+                    self.progress_callback(trial_offset + i + 1, n_total, best_so_far, {
+                        "oos_pnl":     r["oos_pnl"],
+                        "oos_sharpe":  r["oos_sharpe"],
+                        "final_score": score,
+                        "overfit":     r.get("overfit", 1.0),
+                    })
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            param_list = [sampler() for _ in range(n)]
+            futures_map = {}
+            best_so_far = -999
+            with ThreadPoolExecutor(max_workers=n_jobs) as exe:
+                for idx, p in enumerate(param_list):
+                    f = exe.submit(self._eval, p)
+                    futures_map[f] = idx
+                done_count = 0
+                for fut in as_completed(futures_map):
+                    done_count += 1
+                    r = fut.result()
+                    score = self._penalized_score(r)
+                    r["final_score"] = score
+                    self.results.append(r)
+                    if score > best_so_far:
+                        best_so_far = score
+                    if self.progress_callback:
+                        self.progress_callback(trial_offset + done_count, n_total, best_so_far, {
+                            "oos_pnl":     r["oos_pnl"],
+                            "oos_sharpe":  r["oos_sharpe"],
+                            "final_score": score,
+                            "overfit":     r.get("overfit", 1.0),
+                        })
+
+    def _perturb(self, params: dict) -> dict:
+        """Perturbation légère d'un jeu de params pour l'exploitation."""
+        new_params = deepcopy(params)
+        keys = list(self.param_space.keys())
+        if not keys:
+            return new_params
+        n_perturb = max(1, len(keys) // 3)
+        for k in random.sample(keys, min(n_perturb, len(keys))):
+            options = self.param_space[k]
+            if len(options) > 1:
+                curr_idx = options.index(params[k]) if params[k] in options else 0
+                offsets  = [-1, 0, 1]
+                new_idx  = curr_idx + random.choice(offsets)
+                new_idx  = max(0, min(len(options) - 1, new_idx))
+                new_params[k] = options[new_idx]
+        return new_params
+
+    def grid_search(self) -> dict:
+        if not self.param_space:
+            return {"error": "Pas d'espace de params"}
+        keys = list(self.param_space.keys())
+        vals = list(self.param_space.values())
+        combos = list(itertools.product(*vals))
+        n_total = len(combos)
+        logger.info(f"[Optimizer] Grid search : {n_total} combinaisons")
+
+        for i, combo in enumerate(combos):
+            params = dict(zip(keys, combo))
+            r = self._eval(params)
+            score = self._penalized_score(r)
+            r["final_score"] = score
+            self.results.append(r)
+            if self.progress_callback:
+                best_now = max(self._penalized_score(x) for x in self.results)
+                self.progress_callback(i + 1, n_total, best_now, {
+                    "oos_pnl":    r["oos_pnl"],
+                    "oos_sharpe": r["oos_sharpe"],
+                    "final_score": score,
+                    "overfit":    r.get("overfit", 1.0),
+                })
+        return self._best_result()
+
+    def _best_result(self) -> dict:
+        if not self.results:
+            return {"error": "Aucun trial complété"}
+        best = max(self.results, key=self._penalized_score)
+        # Top 5 par score final
+        sorted_results = sorted(self.results, key=self._penalized_score, reverse=True)
+        top5 = [
+            {
+                "is_score":    round(r["is_score"], 4),
+                "oos_score":   round(r["oos_score"], 4),
+                "final_score": round(self._penalized_score(r), 4),
+                "oos_pnl":     round(r["oos_pnl"], 2),
+                "oos_wr":      round(r.get("oos_wr", 0.0), 1),
+                "oos_dd":      round(r.get("oos_dd", 0.0), 2),
+                "overfit":     round(r.get("overfit", 1.0), 2),
+            }
+            for r in sorted_results[:5]
+        ]
+        return {
+            "strategy":       self.strategy_name,
+            "timeframe":      self.timeframe,
+            "symbol":         self.symbol,
+            "best_params":    best["params"],
+            "best_is_score":  best["is_score"],
+            "best_oos_score": self._penalized_score(best),
+            "best_is_pnl":    best["is_pnl"],
+            "best_oos_pnl":   best["oos_pnl"],
+            "best_is_sharpe": best["is_sharpe"],
+            "best_oos_sharpe":best["oos_sharpe"],
+            "best_is_trades": best["is_trades"],
+            "best_oos_trades":best["oos_trades"],
+            "best_oos_wr":    round(best.get("oos_wr", 0.0), 1),
+            "best_is_wr":     round(best.get("is_wr", 0.0), 1),
+            "best_oos_dd":    round(best.get("oos_dd", 0.0), 2),
+            "overfit":        best.get("overfit", 1.0),
+            "n_trials":       len(self.results),
+            "top5":           top5,
+        }

@@ -1,0 +1,1277 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Crypto Bot — Configuration</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+/* SHARED SIDEBAR + SHELL CSS */
+:root{
+  --bg:#070a10;--surface:#0c1018;--card:#101520;--card-hover:#141b28;
+  --border:rgba(255,255,255,.07);--border-hi:rgba(255,255,255,.13);
+  --text:#dde6f5;--muted:#5a6e8c;--dim:#2e3f55;
+  --cyan:#22d3ee;--cyan-dim:rgba(34,211,238,.1);
+  --green:#34d399;--green-dim:rgba(52,211,153,.1);
+  --red:#fb7185;--red-dim:rgba(251,113,133,.1);
+  --amber:#fbbf24;--amber-dim:rgba(251,191,36,.1);
+  --purple:#a78bfa;--purple-dim:rgba(167,139,250,.1);
+  --mono:'DM Mono',monospace;--head:'Syne',sans-serif;--body:'Barlow',system-ui,sans-serif;
+  --r:8px;--r-sm:5px;--sidebar-w:220px;--sidebar-w-col:56px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{height:100%;}
+body{background:var(--bg);color:var(--text);font-family:var(--body);font-size:13px;min-height:100vh;display:flex;overflow-x:hidden;}
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--border-hi);border-radius:4px;}
+/* Sidebar */
+#sidebar{width:var(--sidebar-w);flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100vh;position:sticky;top:0;transition:width .2s ease;z-index:100;overflow:hidden;}
+#sidebar.collapsed{width:var(--sidebar-w-col);}
+.sb-logo{height:56px;display:flex;align-items:center;padding:0 16px;gap:10px;border-bottom:1px solid var(--border);flex-shrink:0;}
+.sb-logo-icon{width:28px;height:28px;flex-shrink:0;background:linear-gradient(135deg,var(--cyan),var(--purple));border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px;}
+.sb-logo-text{font-family:var(--head);font-size:.9rem;font-weight:800;color:var(--text);white-space:nowrap;letter-spacing:-.02em;}
+.sb-logo-text span{color:var(--cyan);}
+.sb-nav{flex:1;padding:12px 8px;overflow-y:auto;}
+.sb-group-label{font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);padding:0 8px 6px;white-space:nowrap;overflow:hidden;}
+.collapsed .sb-group-label{opacity:0;}
+.sb-link{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r);color:var(--muted);text-decoration:none;font-size:.82rem;font-weight:500;transition:all .15s;white-space:nowrap;margin-bottom:2px;overflow:hidden;}
+.sb-link:hover{color:var(--text);background:rgba(255,255,255,.04);}
+.sb-link.active{color:var(--cyan);background:var(--cyan-dim);}
+.sb-icon{font-size:16px;flex-shrink:0;width:20px;text-align:center;color:var(--muted);}
+.sb-link.active .sb-icon{color:var(--cyan);}
+.sb-link-label{white-space:nowrap;}
+.sb-footer{padding:12px 8px;border-top:1px solid var(--border);flex-shrink:0;}
+#sb-toggle{display:flex;align-items:center;justify-content:center;width:36px;height:28px;border:none;background:rgba(255,255,255,.04);color:var(--muted);border-radius:var(--r-sm);cursor:pointer;font-size:12px;transition:all .15s;margin-left:auto;}
+#sb-toggle:hover{color:var(--text);background:rgba(255,255,255,.08);}
+/* Main */
+#main{flex:1;min-width:0;display:flex;flex-direction:column;overflow-x:hidden;}
+#topbar{height:56px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:10px;position:sticky;top:0;z-index:50;flex-shrink:0;}
+.topbar-title{font-family:var(--head);font-weight:700;font-size:.95rem;letter-spacing:-.01em;}
+.topbar-sep{flex:1;}
+/* Utility colors */
+.c-cyan{color:var(--cyan);}.c-green{color:var(--green);}.c-red{color:var(--red);}
+.c-amber{color:var(--amber);}.c-purple{color:var(--purple);}.c-muted{color:var(--muted);}
+/* Section header */
+.sec-hdr{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.sec-hdr h2{font-family:var(--head);font-size:.7rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);}
+.sec-hdr::after{content:'';flex:1;height:1px;background:var(--border);}
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border:none;border-radius:var(--r-sm);cursor:pointer;font-size:.76rem;font-weight:600;font-family:var(--body);white-space:nowrap;transition:all .15s;}
+.btn:hover{filter:brightness(1.1);}
+.btn:disabled{opacity:.3;cursor:not-allowed;filter:none;}
+.btn-start{background:var(--green);color:#03201a;}
+.btn-stop{background:var(--red);color:#fff;}
+.btn-cyan{background:var(--cyan);color:#031218;}
+.btn-purple{background:var(--purple);color:#0a0214;}
+.btn-green{background:var(--green);color:#03201a;}
+.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border-hi);}
+.btn-ghost:hover{color:var(--text);border-color:rgba(255,255,255,.2);}
+.btn-full{width:100%;justify-content:center;}
+/* Cards */
+.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
+.panel-hdr{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;}
+.panel-hdr h3{font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;}
+.panel-body{padding:14px;display:flex;flex-direction:column;gap:12px;}
+/* Form */
+.field{display:flex;flex-direction:column;gap:5px;}
+.field label{font-size:.72rem;color:var(--muted);font-weight:500;}
+.field .hint{font-size:.63rem;color:var(--dim);line-height:1.4;}
+select,input[type=text],input[type=number],input[type=email],input[type=password]{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:var(--r-sm);font-size:.78rem;font-family:var(--body);outline:none;transition:border-color .15s;width:100%;}
+select:focus,input:focus{border-color:var(--cyan);}
+input[type=range]{padding:0;background:transparent;cursor:pointer;accent-color:var(--cyan);}
+/* Toggle */
+.toggle-wrap{display:flex;align-items:center;gap:10px;}
+.toggle{position:relative;width:40px;height:22px;flex-shrink:0;}
+.toggle input{opacity:0;width:0;height:0;}
+.toggle-slider{position:absolute;inset:0;background:var(--border-hi);border-radius:22px;cursor:pointer;transition:.2s;}
+.toggle-slider:before{content:'';position:absolute;width:16px;height:16px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;}
+.toggle input:checked+.toggle-slider{background:var(--green);}
+.toggle input:checked+.toggle-slider:before{transform:translateX(18px);}
+.toggle-lbl{font-size:.8rem;font-weight:500;}
+/* Tags */
+.tag{padding:2px 7px;border-radius:4px;font-size:.62rem;font-weight:700;font-family:var(--body);letter-spacing:.03em;display:inline-block;}
+.tag-long,.tlong{background:var(--green-dim);color:var(--green);}
+.tag-short,.tshort{background:var(--red-dim);color:var(--red);}
+.tag-open{background:var(--cyan-dim);color:var(--cyan);}
+.tag-closed{background:var(--green-dim);color:var(--green);}
+.tag-rej{background:rgba(255,255,255,.04);color:var(--muted);}
+.tag-strat{background:var(--purple-dim);color:var(--purple);}
+/* Table */
+.table-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
+.table-head{padding:12px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);}
+.tscroll{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;}
+th{padding:8px 12px;text-align:left;color:var(--dim);font-weight:600;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:1;white-space:nowrap;}
+th.r{text-align:right;}
+td{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.03);font-family:var(--mono);font-size:.73rem;white-space:nowrap;}
+td.r{text-align:right;}
+tr:last-child td{border-bottom:none;}
+tr:hover td{background:rgba(255,255,255,.02);}
+.empty-row{text-align:center;color:var(--dim);padding:28px 12px;font-size:.77rem;}
+/* Info boxes */
+.info-box{background:var(--cyan-dim);border:1px solid rgba(34,211,238,.2);border-radius:var(--r-sm);padding:9px 14px;font-size:.72rem;color:var(--muted);line-height:1.6;}
+.info-box strong{color:var(--cyan);}
+.warn-box{background:var(--amber-dim);border:1px solid rgba(251,191,36,.2);border-radius:var(--r-sm);padding:9px 14px;font-size:.72rem;color:var(--amber);line-height:1.6;}
+/* Spinner */
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--border-hi);border-top-color:var(--cyan);border-radius:50%;animation:sp .7s linear infinite;}
+@keyframes sp{to{transform:rotate(360deg)}}
+/* Toast */
+#toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border-hi);color:var(--text);padding:10px 16px;border-radius:var(--r);font-size:.78rem;opacity:0;z-index:9999;transition:opacity .25s,transform .25s;transform:translateY(8px);pointer-events:none;max-width:320px;border-left:3px solid var(--green);}
+#toast.show{opacity:1;transform:translateY(0);}
+#toast.err{border-left-color:var(--red);}
+.toast{position:fixed;bottom:24px;right:24px;background:var(--card);border:1px solid var(--green);border-radius:var(--r-sm);padding:10px 16px;font-size:.8rem;color:var(--green);z-index:9999;transform:translateY(60px);opacity:0;transition:all .25s;}
+.toast.err{border-color:var(--red);color:var(--red);}
+.toast.show{transform:translateY(0);opacity:1;}
+/* Grid bg */
+.grid-bg::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(34,211,238,.015) 1px,transparent 1px),linear-gradient(90deg,rgba(34,211,238,.015) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0;}
+.grid-bg>*{position:relative;z-index:1;}
+
+/* Config page layout */
+.config-page{min-height:calc(100vh - 56px);}
+@media(max-width:1000px){.config-page{grid-template-columns:260px 1fr;}}
+@media(max-width:800px){.config-page{grid-template-columns:1fr;}}
+/* Remap old .page grid to config-page */
+.page{display:contents;}
+/* First child of config-page = left column */
+.config-page>div:first-child{background:var(--surface);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;position:sticky;top:56px;height:calc(100vh - 56px);}
+.right-col{display:flex;flex-direction:column;gap:12px;overflow-x:visible;min-width:0;}
+/* Strategy cards */
+.strat-grid{display:flex;flex-direction:column;gap:8px;}
+.strat-card{background:#0c1018;border:1px solid var(--border);border-radius:var(--r-sm);padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;transition:border-color .15s;}
+.strat-card:hover{border-color:var(--border-hi);}
+.strat-card.active{border-color:var(--green);background:rgba(52,211,153,.04);}
+.strat-info{display:flex;flex-direction:column;gap:2px;flex:1;}
+.strat-name{font-weight:600;font-size:.82rem;font-family:var(--mono);}
+.strat-meta{font-size:.65rem;color:var(--dim);}
+.strat-badge{font-size:.62rem;font-weight:700;padding:2px 7px;border-radius:20px;white-space:nowrap;}
+.badge-on{background:var(--green-dim);color:var(--green);border:1px solid var(--green);}
+.badge-off{background:rgba(255,255,255,.04);color:var(--muted);border:1px solid var(--border-hi);}
+.badge-warn{background:var(--amber-dim);color:var(--amber);border:1px solid var(--amber);}
+/* Param groups */
+.params-group{background:#0c1018;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:8px;}
+.params-hdr{padding:10px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;transition:background .15s;}
+.params-hdr:hover{background:rgba(255,255,255,.02);}
+.params-hdr.open{background:rgba(255,255,255,.02);}
+.params-hdr-title{display:flex;align-items:center;gap:8px;font-size:.8rem;font-weight:600;}
+.chevron{color:var(--dim);font-size:.8rem;transition:transform .2s;}
+.params-hdr.open .chevron{transform:rotate(180deg);}
+.params-body{display:none;padding:10px 14px;border-top:1px solid var(--border);}
+.params-body.open{display:block;}
+/* ── Fix: grid layout guarantees param-key is never squished to 0 ── */
+.param-row{
+  display:grid;
+  grid-template-columns:minmax(120px,1fr) 90px 36px;
+  align-items:center;
+  gap:8px;
+  padding:5px 0;
+  border-bottom:1px solid rgba(255,255,255,.03);
+  min-width:0;
+}
+.param-row:last-of-type{border-bottom:none;}
+.param-key{
+  font-family:var(--mono);font-size:.72rem;color:var(--muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  min-width:0;
+}
+.param-input{
+  width:100%;padding:4px 7px;font-size:.72rem;
+  background:var(--surface);border:1px solid var(--border);
+  color:var(--text);border-radius:4px;font-family:var(--mono);
+  box-sizing:border-box;
+}
+.param-input:focus{border-color:var(--cyan);outline:none;}
+.param-val{font-size:.62rem;color:var(--dim);text-align:right;white-space:nowrap;}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
+/* Notifications / misc */
+.btn-orange{background:var(--amber);color:#181000;}
+.btn-blue{background:var(--cyan);color:#031218;}
+.btn-green{background:var(--green);color:#03201a;}
+.btn-full{width:100%;justify-content:center;}
+.schedule-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:.73rem;}
+.schedule-key{color:var(--dim);}
+.schedule-val{font-family:var(--mono);color:var(--text);}
+/* Remap old --border2 usage in JS-generated HTML */
+:root{--border2:rgba(255,255,255,.13);}
+
+/* Preserve specific old CSS vars used in JS-generated HTML */
+:root{
+  --blue:var(--cyan); --blue-dim:var(--cyan-dim);
+  --yellow:var(--amber); --yellow-dim:var(--amber-dim);
+  --orange:#f59e0b;
+  --card2:#0c1018;
+  --r:8px; --r-sm:5px;
+  --sans:var(--body); --mono:'DM Mono',monospace;
+}
+.sec{font-size:.68rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);padding-bottom:4px;border-bottom:1px solid var(--border);margin-bottom:8px;}
+</style>
+<script>
+  const API_KEY = "{{ api_key }}";
+  function escHtml(s){if(s==null)return "";return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
+  function apiFetch(url,opts={}){if(!opts.headers)opts.headers={};if(API_KEY)opts.headers["X-API-Key"]=API_KEY;return fetch(url,opts);}
+</script>
+</head>
+<body>
+
+<aside id="sidebar">
+  <div class="sb-logo"><div class="sb-logo-icon">&#x26A1;</div><div class="sb-logo-text">Crypto<span>Bot</span></div><button id="sb-toggle" onclick="toggleSidebar()">&#x2039;</button></div>
+  <nav class="sb-nav">
+    <div class="sb-group-label">Trading</div>
+    <a href="/"        class="sb-link"><span class="sb-icon">&#x25C8;</span><span class="sb-link-label">Dashboard Live</span></a>
+    <a href="/scanner" class="sb-link"><span class="sb-icon">&#x25CE;</span><span class="sb-link-label">Scanner</span></a>
+    <div class="sb-group-label" style="margin-top:12px">Outils</div>
+    <a href="/optimizer" class="sb-link"><span class="sb-icon">&#x2B21;</span><span class="sb-link-label">Optimiseur</span></a>
+    <a href="/backtest"  class="sb-link"><span class="sb-icon">&#x21BA;</span><span class="sb-link-label">Backtest</span></a>
+    <a href="/config"    class="sb-link active"><span class="sb-icon">&#x2699;</span><span class="sb-link-label">Configuration</span></a>
+  </nav>
+  <div class="sb-footer"><div class="sb-link" style="cursor:default;font-size:.65rem;color:var(--dim)"><span class="sb-icon" style="font-size:9px">&#x25CF;</span><span class="sb-link-label">v2.0 · API Binance</span></div></div>
+</aside>
+
+<div id="main">
+  <header id="topbar"><div class="topbar-title">Configuration</div><div class="topbar-sep"></div></header>
+  <div id="content">
+    <div class="config-page">
+
+<div class="page">
+
+  <!-- ══ Colonne gauche ══ -->
+  <div>
+
+    <!-- Stratégies actives -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span style="color:var(--green)">📋</span>
+        <h3>Stratégies actives</h3>
+        <span id="strat-count" style="margin-left:auto;font-size:.7rem;color:var(--dim)"></span>
+      </div>
+      <div class="panel-body">
+        <div class="info-box">
+          Les changements sont <strong>appliqués à chaud</strong> au bot si il tourne,
+          et sauvegardés dans <code>config.yaml</code>.<br>
+          Les positions ouvertes sur une stratégie désactivée restent ouvertes jusqu'à leur clôture.
+        </div>
+        <div class="strat-grid" id="strat-grid">
+          <div style="color:var(--dim);font-size:.78rem">Chargement…</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-green btn-full" onclick="applyStrategies()">
+            ✓ Appliquer
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Timeframes Multi-TF -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span style="color:var(--cyan)">⏱</span>
+        <h3>Timeframes actifs</h3>
+        <span id="tf-active-badge" style="margin-left:auto;font-size:.7rem;color:var(--dim)"></span>
+      </div>
+      <div class="panel-body">
+        <div class="info-box">
+          Chaque TF actif est scanné à chaque cycle. L'optimiseur identifie
+          les <strong>2 meilleures stratégies OOS</strong> pour chacun.<br>
+          Sans résultat d'optimisation → fallback sur les stratégies activées manuellement.<br>
+          <span style="color:var(--amber)">⚠ Plusieurs TFs = plus de cycles réseau.
+          Recommandé : <strong>1h seul</strong> pour commencer, puis ajouter après optimisation.</span>
+        </div>
+        <div id="tf-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+          <div style="color:var(--dim);font-size:.78rem">Chargement…</div>
+        </div>
+        <div id="tf-active-display" style="font-size:.78rem;color:var(--muted);margin-bottom:10px"></div>
+        <div class="btn-row">
+          <button class="btn btn-blue btn-full" onclick="applyTimeframes()">
+            ✓ Appliquer timeframes
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notifications -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span>🔔</span>
+        <h3>Notifications</h3>
+        <span id="notif-badge" class="strat-badge badge-off" style="margin-left:auto">OFF</span>
+      </div>
+      <div class="panel-body">
+
+        <!-- Telegram -->
+        <div class="sec">Telegram</div>
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="tg-enabled" onchange="onNotifToggle()"/>
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="toggle-lbl" id="tg-lbl">Désactivé</span>
+        </div>
+        <div id="tg-cfg" style="display:none;flex-direction:column;gap:8px">
+          <div class="field">
+            <label>Token du bot <a href="https://t.me/BotFather" target="_blank" style="color:var(--cyan);font-size:.7rem">(@BotFather)</a></label>
+            <input type="text" id="tg-token" placeholder="1234567890:AAH..." style="font-family:var(--mono);font-size:.75rem"/>
+            <span class="hint">Obtenez-le via @BotFather → /newbot</span>
+          </div>
+          <div class="field">
+            <label>Chat ID <a href="https://t.me/userinfobot" target="_blank" style="color:var(--cyan);font-size:.7rem">(via @userinfobot)</a></label>
+            <input type="text" id="tg-chat" placeholder="-1001234567890"/>
+            <span class="hint">Parlez à @userinfobot pour obtenir votre ID</span>
+          </div>
+        </div>
+
+        <!-- WhatsApp -->
+        <div class="sec">WhatsApp</div>
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="wa-enabled" onchange="onNotifToggle()"/>
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="toggle-lbl" id="wa-lbl">Désactivé</span>
+        </div>
+        <div id="wa-cfg" style="display:none;flex-direction:column;gap:8px">
+          <div class="field">
+            <label>Mode</label>
+            <select id="wa-mode" onchange="onWaModeChange()" style="background:var(--surface2);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 8px">
+              <option value="callmebot">CallMeBot (gratuit)</option>
+              <option value="twilio">Twilio (officiel)</option>
+            </select>
+          </div>
+          <!-- CallMeBot -->
+          <div id="wa-callmebot-cfg" style="display:flex;flex-direction:column;gap:8px">
+            <div class="field">
+              <label>API Key CallMeBot</label>
+              <input type="text" id="wa-token" placeholder="XXXXXXXX"/>
+              <span class="hint">Envoyez "I allow callmebot…" au +34 644 63 43 51</span>
+            </div>
+            <div class="field">
+              <label>Numéro WhatsApp</label>
+              <input type="text" id="wa-number" placeholder="+33612345678"/>
+            </div>
+          </div>
+          <!-- Twilio -->
+          <div id="wa-twilio-cfg" style="display:none;flex-direction:column;gap:8px">
+            <div class="field">
+              <label>Account SID</label>
+              <input type="text" id="twilio-sid" placeholder="ACxxxxxxxxxxxxxxxx" style="font-family:var(--mono);font-size:.75rem"/>
+            </div>
+            <div class="field">
+              <label>Auth Token</label>
+              <input type="password" id="twilio-auth" placeholder="••••••••"/>
+            </div>
+            <div class="field">
+              <label>From (numéro Twilio WhatsApp)</label>
+              <input type="text" id="twilio-from" placeholder="whatsapp:+14155238886"/>
+              <span class="hint">Format : whatsapp:+1XXXXXXXXXX</span>
+            </div>
+            <div class="field">
+              <label>To (votre numéro)</label>
+              <input type="text" id="wa-number-twilio" placeholder="+33612345678"/>
+            </div>
+          </div>
+        </div>
+
+        <!-- Email -->
+        <div class="sec">Email <span style="font-size:.65rem;color:var(--muted);text-transform:none">(SMTP)</span></div>
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="email-enabled" onchange="onNotifToggle()"/>
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="toggle-lbl" id="email-lbl">Désactivé</span>
+        </div>
+        <div id="email-cfg" style="display:none;flex-direction:column;gap:8px">
+          <div class="field">
+            <label>Serveur SMTP</label>
+            <input type="text" id="email-smtp" placeholder="smtp.gmail.com" value="smtp.gmail.com"/>
+            <span class="hint">Gmail : smtp.gmail.com · Port 587 (STARTTLS)</span>
+          </div>
+          <div class="field">
+            <label>Port</label>
+            <input type="number" id="email-port" value="587" min="1" max="65535"/>
+          </div>
+          <div class="field">
+            <label>Adresse expéditeur</label>
+            <input type="email" id="email-user" placeholder="monbot@gmail.com"/>
+          </div>
+          <div class="field">
+            <label>Mot de passe / App Password</label>
+            <input type="password" id="email-password" placeholder="••••••••"/>
+            <span class="hint">Gmail : créez un <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--cyan)">App Password</a></span>
+          </div>
+          <div class="field">
+            <label>Destinataire</label>
+            <input type="email" id="email-to" placeholder="moi@example.com"/>
+            <span class="hint">Laisser vide pour utiliser l'adresse expéditeur</span>
+          </div>
+        </div>
+
+        <!-- Seuils d'alerte -->
+        <div class="sec">Seuils d'alerte</div>
+        <div class="field">
+          <label>PnL minimum pour notifier (USDC)</label>
+          <input type="number" id="notif-min-pnl" min="0" max="1000" step="0.5" value="5"/>
+          <span class="hint">Ignorer les petits trades sous ce seuil</span>
+        </div>
+        <div class="field">
+          <label>Alerte perte non réalisée (%)</label>
+          <input type="number" id="notif-loss-pct" min="1" max="20" step="0.5" value="5"/>
+          <span class="hint">Notification si une position perd plus de X%</span>
+        </div>
+        <div class="field">
+          <label>Erreurs exchange avant alerte</label>
+          <input type="number" id="notif-err-threshold" min="1" max="20" step="1" value="3"/>
+          <span class="hint">Nombre d'erreurs consécutives avant notification</span>
+        </div>
+
+        <!-- Filtrage d'événements -->
+        <div class="sec">Événements notifiés</div>
+        <div id="events-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:.78rem">
+          <label class="toggle-wrap" style="gap:8px;cursor:pointer">
+            <input type="checkbox" class="evt-cb" data-evt="on_trade_open" checked/>
+            <span>Ouverture position</span>
+          </label>
+          <label class="toggle-wrap" style="gap:8px;cursor:pointer">
+            <input type="checkbox" class="evt-cb" data-evt="on_trade_close" checked/>
+            <span>Clôture position</span>
+          </label>
+          <label class="toggle-wrap" style="gap:8px;cursor:pointer">
+            <input type="checkbox" class="evt-cb" data-evt="on_circuit_breaker" checked/>
+            <span>Circuit breaker 🚨</span>
+          </label>
+          <label class="toggle-wrap" style="gap:8px;cursor:pointer">
+            <input type="checkbox" class="evt-cb" data-evt="on_dd_warning" checked/>
+            <span>Alerte drawdown</span>
+          </label>
+          <label class="toggle-wrap" style="gap:8px;cursor:pointer">
+            <input type="checkbox" class="evt-cb" data-evt="on_position_loss" checked/>
+            <span>Perte non réalisée</span>
+          </label>
+          <label class="toggle-wrap" style="gap:8px;cursor:pointer">
+            <input type="checkbox" class="evt-cb" data-evt="on_exchange_error" checked/>
+            <span>Erreurs exchange</span>
+          </label>
+          <label class="toggle-wrap" style="gap:8px;cursor:pointer">
+            <input type="checkbox" class="evt-cb" data-evt="on_status_report" checked/>
+            <span>Rapport périodique</span>
+          </label>
+          <label class="toggle-wrap" style="gap:8px;cursor:pointer">
+            <input type="checkbox" class="evt-cb" data-evt="on_optimization" checked/>
+            <span>Optimisation terminée</span>
+          </label>
+          <label class="toggle-wrap" style="gap:8px;cursor:pointer">
+            <input type="checkbox" class="evt-cb" data-evt="on_start_stop" checked/>
+            <span>Démarrage / Arrêt</span>
+          </label>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn btn-blue" style="flex:1" onclick="applyNotifications()">✓ Sauvegarder</button>
+          <button class="btn btn-ghost" onclick="testNotification()">🧪 Tester</button>
+        </div>
+        <div id="notif-status" style="font-size:.72rem;color:var(--dim)"></div>
+      </div>
+    </div>
+
+    <!-- Auto-optimisation — Fix #8 : fréquence toujours visible et modifiable -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span style="color:var(--purple)">🔬</span>
+        <h3>Auto-optimisation</h3>
+        <span id="auto-opt-badge" class="strat-badge badge-off" style="margin-left:auto">OFF</span>
+      </div>
+      <div class="panel-body">
+        <div class="info-box">
+          Lance automatiquement l'optimiseur en arrière-plan sur un intervalle défini.
+          Les meilleurs paramètres sont appliqués dans <code>config.yaml</code>
+          uniquement si le PnL OOS est <strong>positif</strong> (protection anti-overfit).
+        </div>
+
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="auto-opt-toggle" onchange="onAutoOptToggle()"/>
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="toggle-lbl" id="auto-opt-lbl">Auto-optimisation désactivée</span>
+        </div>
+
+        <!-- Fix #8 : intervalle toujours visible pour pouvoir le configurer avant d'activer -->
+        <div class="field">
+          <label>Intervalle entre optimisations (heures)</label>
+          <input type="number" id="auto-opt-interval" value="24" min="1" max="168" step="1"/>
+          <span class="hint">1h min · 168h max (1 semaine) · Recommandé : 24h</span>
+        </div>
+        <div id="auto-opt-schedule" style="display:none">
+          <div class="sec">Planification</div>
+          <div id="schedule-rows"></div>
+        </div>
+
+        <button class="btn btn-green btn-full" onclick="applyAutoOpt()">✓ Appliquer</button>
+      </div>
+    </div>
+
+    <!-- Paramètres trading globaux -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span style="color:var(--cyan)">⚙</span>
+        <h3>Paramètres trading</h3>
+      </div>
+      <div class="panel-body">
+        <div class="warn-box">
+          ⚠ Ces paramètres ne sont <strong>jamais modifiés par l'optimiseur</strong>.
+          Ils s'appliquent à toutes les stratégies.
+        </div>
+
+        <div class="field">
+          <label>Score threshold <span id="thr-display" style="color:var(--cyan);font-family:var(--mono)"></span></label>
+          <input type="range" id="score-thr" min="0.4" max="0.9" step="0.01"
+            oninput="document.getElementById('thr-display').textContent=this.value"/>
+          <span class="hint">Seuil minimum pour entrer en position (0.4 – 0.9)</span>
+        </div>
+
+        <div class="field">
+          <label>Risque par trade (%)</label>
+          <input type="number" id="risk-per-trade" min="0.1" max="5" step="0.1"
+            placeholder="1.0"/>
+          <span class="hint">Pourcentage du capital risqué par position</span>
+        </div>
+
+        <div class="field">
+          <label>Limite drawdown journalier (%)</label>
+          <input type="number" id="daily-dd" min="1" max="20" step="0.5"
+            placeholder="5"/>
+          <span class="hint">Au-delà : circuit breaker activé jusqu'à Reset CB</span>
+        </div>
+
+        <div class="field">
+          <label>Positions max simultanées</label>
+          <input type="number" id="max-pos" min="1" max="20" step="1" placeholder="5"/>
+        </div>
+
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="paper-toggle"/>
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="toggle-lbl">Mode Paper (simulation)</span>
+        </div>
+        <div id="paper-warn" class="warn-box" style="display:none">
+          ⚠ Désactiver le paper mode active le <strong>LIVE TRADING RÉEL</strong>.
+          Les ordres seront exécutés avec votre capital. Redémarrez le bot après changement.
+        </div>
+
+        <button class="btn btn-blue btn-full" onclick="applyTrading()">✓ Appliquer</button>
+      </div>
+    </div>
+
+    <!-- Margin spot -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span style="color:var(--orange)">📊</span>
+        <h3>Margin spot</h3>
+        <span id="margin-badge" class="strat-badge badge-off" style="margin-left:auto">OFF</span>
+      </div>
+      <div class="panel-body">
+        <div class="warn-box">
+          ⚠ Le margin trading implique un <strong>risque de liquidation</strong>.
+          Si le Margin Level descend sous <strong>1.10</strong>, Binance liquide automatiquement vos positions.
+          Commencez avec <strong>isolated</strong> et levier ×2 maximum.
+        </div>
+
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="margin-toggle" onchange="onMarginToggle()"/>
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="toggle-lbl" id="margin-lbl">Margin désactivé (spot pur)</span>
+        </div>
+
+        <div id="margin-cfg" style="display:none;flex-direction:column;gap:10px;">
+          <div class="field">
+            <label>Mode margin</label>
+            <select id="margin-mode">
+              <option value="isolated">Isolated — risque limité à chaque position (recommandé)</option>
+              <option value="cross">Cross — toute la balance comme garantie (⚠ risque total)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Levier max</label>
+            <input type="number" id="margin-leverage" min="1" max="5" step="1" value="2"/>
+            <span class="hint">1 = pas de levier · 2 = doublement de l'exposition · 5 = max isolated Binance</span>
+          </div>
+          <div class="field">
+            <label>Alerte margin level</label>
+            <input type="number" id="margin-alert" min="1.1" max="3" step="0.1" value="1.5"/>
+            <span class="hint">Notification si le level descend sous ce seuil · Liquidation à 1.10</span>
+          </div>
+          <div class="field">
+            <label>Taux d'emprunt journalier</label>
+            <input type="number" id="margin-borrow-rate" min="0.0001" max="0.005" step="0.0001" value="0.00072"/>
+            <span class="hint">0.00072 = 0.072%/jour ≈ 26%/an (taux Binance standard USDC) · Vérifiez sur binance.com/fr/margin-data</span>
+          </div>
+          <div class="info-box">
+            <strong>Comment activer sur Binance :</strong><br>
+            1. Compte Binance → Portefeuille → Margin → Ouvrir compte margin<br>
+            2. Activer isolated margin sur chaque paire souhaitée<br>
+            3. Transférer des USDC sur votre compte margin<br>
+            4. Activer ici et redémarrer le bot
+          </div>
+        </div>
+
+        <button class="btn btn-orange btn-full" onclick="applyMargin()" style="background:var(--orange);color:#fff">✓ Appliquer</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══ Colonne droite : paramètres par stratégie ══ -->
+  <div class="right-col">
+    <div class="panel">
+      <div class="panel-hdr">
+        <span style="color:var(--orange)">🎛</span>
+        <h3>Paramètres par stratégie</h3>
+        <span style="font-size:.68rem;color:var(--dim);margin-left:auto">
+          Modifiables manuellement · L'optimiseur peut écraser ces valeurs
+        </span>
+      </div>
+      <div style="padding:12px 16px;">
+        <div class="info-box" style="margin-bottom:12px">
+          Ces paramètres correspondent à <code>strategy_params</code> dans <code>config.yaml</code>.
+          Modifiez et cliquez <strong>Sauvegarder</strong> pour mettre à jour le fichier.
+          Le backtest utilisera les nouvelles valeurs immédiatement.
+        </div>
+        <div id="strat-params-panels">
+          <div style="color:var(--dim);font-size:.78rem;padding:8px">Chargement…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+
+<script>
+const $ = id => document.getElementById(id);
+let cfgData = null;
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+function toast(msg, err=false) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast' + (err?' err':'') + ' show';
+  setTimeout(() => t.className = 'toast' + (err?' err':''), 3000);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+async function init() {
+  loadNotifications();
+  // Afficher "Chargement..." dans les zones dépendantes
+  const stratGrid = $('strat-grid');
+  const stratParams = $('strat-params-panels');
+  if (stratGrid) stratGrid.innerHTML = '<div style="color:var(--dim);font-size:.78rem">Chargement…</div>';
+  if (stratParams) stratParams.innerHTML = '<div style="color:var(--dim);font-size:.78rem;padding:8px">Chargement…</div>';
+  try {
+    const resp = await fetch('/api/config');
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => resp.statusText);
+      throw new Error(`HTTP ${resp.status} — ${txt}`);
+    }
+    cfgData = await resp.json();
+    renderStrategies();
+    renderAutoOpt();
+    renderTradingParams();
+    renderStratParams();
+    renderTimeframes();
+  } catch(e) {
+    const errMsg = `<div style="color:var(--red);font-size:.78rem;padding:8px">
+      ⚠ Impossible de charger la config : <code>${e.message}</code><br>
+      <span style="color:var(--dim);font-size:.7rem">Le bot n'est peut-être pas démarré. Lancez <code>python main.py web</code> puis rechargez.</span>
+    </div>`;
+    if (stratGrid) stratGrid.innerHTML = errMsg;
+    if (stratParams) stratParams.innerHTML = errMsg;
+    toast('Erreur de chargement : ' + e.message, true);
+  }
+}
+
+// ── Stratégies ─────────────────────────────────────────────────────────────
+const STRAT_DESC = {
+  pullback_trend:        'EMA trend following avec entrée sur pullback',
+  breakout:              'Cassure de range avec confirmation volume/ATR',
+  trend:                 'EMA cross + ADX + MACD + filtre EMA200',
+  supertrend_macd:       'Confluence SuperTrend + MACD (3 cas)',
+  fear_momentum:         '⭐ Fear & Momentum — optimisée pour battre le B&H (threshold conseillé : 0.72)',
+  ml_dynamic_threshold:  'Seuil dynamique par ML (nécessite entraînement)',
+};
+
+// Score threshold recommandé par stratégie (affiché dans la config params)
+const STRAT_THRESHOLD = {
+  fear_momentum:   0.72,
+  pullback_trend:  0.65,
+  supertrend_macd: 0.65,
+  breakout:        0.62,
+  trend:           0.62,
+};
+
+function renderStrategies() {
+  const all      = cfgData.all_strategies || [];
+  const enabled  = new Set(cfgData.strategies?.enabled || []);
+  const live     = new Set(cfgData._active_strategies || []);
+  const botRunning = cfgData._active_strategies !== undefined;
+  const grid     = $('strat-grid');
+  $('strat-count').textContent = `${enabled.size} / ${all.length} actives`;
+
+  grid.innerHTML = all.map(name => {
+    const isEnabled = enabled.has(name);
+    const isLive    = live.has(name);
+    const borderClass = isEnabled ? 'active' : '';
+    let badge;
+    if (botRunning) {
+      if (isLive)         badge = '<span class="strat-badge badge-on">● Live</span>';
+      else if (isEnabled) badge = '<span class="strat-badge badge-warn">⏸ En attente</span>';
+      else                badge = '<span class="strat-badge badge-off">○ Inactive</span>';
+    } else {
+      badge = isEnabled
+        ? '<span class="strat-badge badge-warn">⏸ En config</span>'
+        : '<span class="strat-badge badge-off">○ Inactive</span>';
+    }
+    return `<div class="strat-card ${borderClass}" id="sc-${name}" onclick="toggleStrat('${name}')">
+      <div class="strat-info">
+        <div class="strat-name">${name}</div>
+        <div class="strat-meta">${STRAT_DESC[name] || '—'}</div>
+      </div>
+      ${badge}
+    </div>`;
+  }).join('');
+}
+
+function toggleStrat(name) {
+  const card = $(`sc-${name}`);
+  card.classList.toggle('active');
+  updateStratCount();
+}
+
+function updateStratCount() {
+  const sel = [...document.querySelectorAll('.strat-card.active')].map(c => c.id.replace('sc-',''));
+  $('strat-count').textContent = `${sel.length} / ${(cfgData.all_strategies||[]).length} sélectionnées`;
+}
+
+async function applyStrategies() {
+  const selected = [...document.querySelectorAll('.strat-card.active')].map(c => c.id.replace('sc-',''));
+  if (!selected.length) { toast('Sélectionnez au moins une stratégie', true); return; }
+  try {
+    const r = await apiFetch('/api/config/strategies?enabled=' + encodeURIComponent(selected.join(',')), {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    const msg = d.trader_updated
+      ? `✓ Appliqué · Ajoutées: ${d.added?.join(', ')||'—'} · Retirées: ${d.removed?.join(', ')||'—'}`
+      : '✓ Sauvegardé (bot non actif)';
+    toast(msg);
+    await init(); // refresh
+  } catch(e) { toast('Erreur : ' + e.message, true); }
+}
+
+// ── Auto-optimisation ──────────────────────────────────────────────────────
+
+// ── Timeframes multi-TF ────────────────────────────────────────────────────
+// TFs recommandés (ceux pour lesquels les stratégies sont optimisées)
+const ALL_TFS       = ['5m','15m','1h','1d'];
+const TF_LABELS     = {'5m':'5m ~14j','15m':'15m ~21j','1h':'1h ~62j','1d':'1j ~500j'};
+const TF_STRATEGIES = {
+  '5m':  'supertrend_macd · breakout',
+  '15m': 'supertrend_macd · breakout · pullback_trend',
+  '1h':  'toutes',
+  '1d':  'trend · pullback_trend · fear_momentum',
+};
+
+function renderTimeframes() {
+  const activeTfs   = cfgData.trading?.timeframes || [cfgData.trading?.timeframe || '1h'];
+  const activePerTf = cfgData._active_per_tf || {};
+  const grid = document.getElementById('tf-grid');
+  if (!grid) return;
+  grid.innerHTML = ALL_TFS.map(tf => {
+    const isActive = activeTfs.includes(tf);
+    const strats   = TF_STRATEGIES[tf] || '';
+    return '<div style="border:1px solid ' + (isActive ? 'rgba(77,159,255,.35)' : 'var(--border)') + ';border-radius:8px;padding:8px 12px;background:' + (isActive ? 'var(--cyan-dim)' : 'var(--surface)') + ';cursor:pointer;min-width:120px" onclick="toggleTfCard(this,\'' + tf + '\')">'
+      + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
+      + '<input type="checkbox" id="tf-check-' + tf + '" ' + (isActive ? 'checked' : '') + ' style="cursor:pointer" onchange="updateTfDisplay()">'
+      + '<span style="font-weight:700;color:' + (isActive ? 'var(--cyan)' : 'var(--muted)') + ';font-size:.85rem">' + TF_LABELS[tf] + '</span></div>'
+      + '<div style="font-size:.65rem;color:var(--dim);line-height:1.4">' + strats + '</div>'
+      + '</div>';
+  }).join('');
+  document.getElementById('tf-active-badge').textContent = activeTfs.length + ' actif(s)';
+  updateTfDisplay();
+}
+
+function toggleTfCard(card, tf) {
+  const cb = document.getElementById('tf-check-' + tf);
+  // Don't toggle if clicking directly on checkbox
+  if (event.target === cb) return;
+  cb.checked = !cb.checked;
+  updateTfDisplay();
+  // Update card style
+  const on = cb.checked;
+  card.style.border      = '1px solid ' + (on ? 'rgba(77,159,255,.35)' : 'var(--border)');
+  card.style.background  = on ? 'var(--cyan-dim)' : 'var(--surface)';
+  card.querySelector('span').style.color = on ? 'var(--cyan)' : 'var(--muted)';
+}
+
+function updateTfDisplay() {
+  const selected = ALL_TFS.filter(tf => { const el=document.getElementById('tf-check-' + tf); return el && el.checked; });
+  const activePerTf = cfgData._active_per_tf || {};
+  const display = document.getElementById('tf-active-display');
+  if (!display) return;
+  if (!selected.length) { display.textContent = 'Aucun TF sélectionné'; return; }
+  display.innerHTML = selected.map(tf => {
+    const strats = activePerTf[tf] || [];
+    const stratHtml = strats.length ? strats.map(s => '<span style="background:var(--cyan-dim);color:var(--cyan);padding:1px 6px;border-radius:4px;font-size:.75rem">' + s + '</span>').join(' ') : '<span style="color:var(--dim);font-size:.75rem">pas encore optimisé</span>';
+    return '<span style="font-weight:600;color:var(--cyan)">' + tf + '</span> → ' + stratHtml;
+  }).join('  ');
+}
+
+async function applyTimeframes() {
+  const selected = ALL_TFS.filter(tf => { const el=document.getElementById('tf-check-' + tf); return el && el.checked; });
+  if (!selected.length) { toast('Sélectionnez au moins un timeframe', true); return; }
+  try {
+    const r = await apiFetch('/api/config/timeframes?timeframes=' + encodeURIComponent(selected.join(',')), {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    toast('Timeframes appliqués : ' + selected.join(', '));
+    await init();
+  } catch(e) { toast('Erreur : ' + e.message, true); }
+}
+
+function renderAutoOpt() {
+  const enabled  = cfgData._auto_opt_enabled ?? cfgData.optimizer?.enabled ?? false;
+  const interval = cfgData._auto_opt_interval_h ?? cfgData.optimizer?.auto_interval_h ?? 24;
+  const next_run = cfgData._auto_opt_next_run ?? 0;
+
+  $('auto-opt-toggle').checked = enabled;
+  $('auto-opt-interval').value = interval;
+  $('auto-opt-badge').textContent = enabled ? 'ON' : 'OFF';
+  $('auto-opt-badge').className = 'strat-badge ' + (enabled ? 'badge-on' : 'badge-off');
+  $('auto-opt-lbl').textContent = enabled ? `Auto-optimisation activée (${interval}h)` : 'Auto-optimisation désactivée';
+  $('auto-opt-badge').textContent = enabled ? 'ON' : 'OFF';
+  $('auto-opt-badge').className = 'strat-badge ' + (enabled ? 'badge-on' : 'badge-off');
+
+  if (enabled && next_run > 0) {
+    const nextDate = new Date(next_run * 1000);
+    $('auto-opt-schedule').style.display = '';
+    $('schedule-rows').innerHTML = `
+      <div class="schedule-row">
+        <span class="schedule-key">Prochain run</span>
+        <span class="schedule-val">${nextDate.toLocaleString('fr-FR')}</span>
+      </div>
+      <div class="schedule-row">
+        <span class="schedule-key">Intervalle</span>
+        <span class="schedule-val">Toutes les ${interval}h</span>
+      </div>
+      <div class="schedule-row">
+        <span class="schedule-key">Application auto</span>
+        <span class="schedule-val" style="color:var(--green)">Si PnL OOS &gt; 0</span>
+      </div>`;
+  } else {
+    $('auto-opt-schedule').style.display = 'none';
+  }
+}
+
+function onAutoOptToggle() {
+  const en = $('auto-opt-toggle').checked;
+  $('auto-opt-badge').textContent = en ? 'ON' : 'OFF';
+  $('auto-opt-badge').className = 'strat-badge ' + (en ? 'badge-on' : 'badge-off');
+  $('auto-opt-lbl').textContent = en ? 'Auto-optimisation activée' : 'Auto-optimisation désactivée';
+}
+
+async function applyAutoOpt() {
+  const enabled    = $('auto-opt-toggle').checked;
+  const interval_h = parseInt($('auto-opt-interval').value) || 24;
+  try {
+    const r = await apiFetch(`/api/config/auto-optimizer?enabled=${enabled}&interval_h=${interval_h}`, {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    toast(enabled ? `✓ Auto-optimisation activée (${interval_h}h)` : '✓ Auto-optimisation désactivée');
+    await init();
+  } catch(e) { toast('Erreur : ' + e.message, true); }
+}
+
+// ── Paramètres trading ─────────────────────────────────────────────────────
+function renderTradingParams() {
+  const t = cfgData.trading || {};
+  $('score-thr').value     = t.score_threshold ?? 0.55;
+  $('thr-display').textContent = t.score_threshold ?? 0.55;
+  $('risk-per-trade').value = ((t.risk_per_trade ?? 0.01) * 100).toFixed(1);
+  $('daily-dd').value       = ((t.daily_drawdown_limit ?? 0.05) * 100).toFixed(1);
+  $('max-pos').value        = t.max_positions ?? 5;
+  $('paper-toggle').checked = t.paper_mode ?? true;
+  $('paper-warn').style.display = (t.paper_mode === false) ? '' : 'none';
+  $('paper-toggle').addEventListener('change', () => {
+    $('paper-warn').style.display = !$('paper-toggle').checked ? '' : 'none';
+  });
+  // Margin
+  const marginEnabled = cfgData.exchange?.margin || false;
+  $('margin-toggle').checked = marginEnabled;
+  if (cfgData.trading?.margin_mode) $('margin-mode').value = cfgData.trading.margin_mode;
+  if (cfgData.trading?.max_leverage) $('margin-leverage').value = cfgData.trading.max_leverage;
+  if (cfgData.trading?.margin_level_alert) $('margin-alert').value = cfgData.trading.margin_level_alert;
+  if (cfgData.trading?.borrow_rate_daily) $('margin-borrow-rate').value = cfgData.trading.borrow_rate_daily;
+  $('margin-badge').textContent = marginEnabled ? 'ON' : 'OFF';
+  $('margin-badge').className = 'strat-badge ' + (marginEnabled ? 'badge-on' : 'badge-off');
+  $('margin-cfg').style.display = marginEnabled ? 'flex' : 'none';
+  $('margin-lbl').textContent = marginEnabled
+    ? `Margin activé (${cfgData.trading?.margin_mode||'isolated'})`
+    : 'Margin désactivé (spot pur)';
+}
+
+async function applyTrading() {
+  const params = new URLSearchParams({
+    score_threshold:      $('score-thr').value,
+    risk_per_trade:       (parseFloat($('risk-per-trade').value) / 100).toFixed(4),
+    daily_drawdown_limit: (parseFloat($('daily-dd').value) / 100).toFixed(4),
+    max_positions:        $('max-pos').value,
+    paper_mode:           $('paper-toggle').checked,
+  });
+  try {
+    const r = await apiFetch('/api/config/trading?' + params, {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    const keys = Object.keys(d.changed || {}).join(', ');
+    toast(d.trader_updated ? `✓ Appliqué à chaud · ${keys}` : `✓ Sauvegardé · ${keys}`);
+    await init();
+  } catch(e) { toast('Erreur : ' + e.message, true); }
+}
+
+// ── Paramètres par stratégie ───────────────────────────────────────────────
+function renderStratParams() {
+  const allStrats  = cfgData.all_strategies || [];
+  const stratParams = cfgData.strategy_params || {};
+  const container  = $('strat-params-panels');
+  const PARAM_TYPE = {
+    // int params (step=1)
+    ema_fast:1, ema_mid:1, ema_slow:1, ema_trend:1, adx_min:1, cooldown:1,
+    period:1, squeeze_bars:1, macd_fast:1, macd_slow:1, macd_signal:1,
+    st_period:1, cross_lookback:1, max_leverage:1,
+    // float params (step=0.001)
+    pb_zone_pct:0, rsi_pb_low:0, rsi_pb_high:0, vol_min:0, vol_cas_c:0,
+    rsi_min_long:0, rsi_max_long:0, rsi_min:0, rsi_max:0,
+    st_mult:0, atr_expan_min:0, pen_max_atr:0, body_min_atr:0,
+    overext_pct:0, ema200_tol:0, rsi_low:0, rsi_high:0, adx_mean:0,
+    // fear_momentum params
+    rsi_fear:0, rsi_greed:0, vol_cap_min:0, atr_max_dip:0,
+    ema200_max_dist:0, rr_min:0,
+  };
+
+  // Descriptions des paramètres (tooltip)
+  const PARAM_DESC = {
+    rsi_fear:        "RSI < X = zone de peur (signal d'entrée Fear&Mom)",
+    rsi_greed:       'RSI > X = zone de greed (signal short Fear&Mom)',
+    vol_cap_min:     "Volume minimum d'une bougie de capitulation (×moy20)",
+    atr_max_dip:     'Profondeur max du dip autorisée (×ATR) — filtre crash',
+    ema200_max_dist: 'Distance max sous EMA200 (0.08 = 8%) avant rejet',
+    rr_min:          'R:R minimum pour valider le signal',
+    pb_zone_pct:     "Zone de pullback autour de l'EMA fast (±%)",
+    adx_min:         'ADX minimum pour confirmer la tendance',
+    vol_min:         'Volume minimum (× moyenne 20 barres)',
+    cooldown:        'Barres minimum entre 2 signaux sur la même paire',
+    st_mult:         'Multiplicateur ATR du SuperTrend',
+    overext_pct:     "Rejet si prix > X% au-dessus de l'EMA fast",
+    ema200_tol:      'Tolérance sous EMA200 avant rejet de tendance',
+    rr_min:          'R:R minimum (reward / risk)',
+  };
+
+  if (!allStrats.length) {
+    container.innerHTML = '<div style="color:var(--dim);padding:8px">Aucune stratégie trouvée</div>';
+    return;
+  }
+
+  container.innerHTML = allStrats.map(name => {
+    const params = stratParams[name] || {};
+    const keys   = Object.keys(params);
+    const rows   = keys.map(k => {
+      const isInt  = PARAM_TYPE[k] === 1;
+      const desc   = PARAM_DESC[k] ? `title="${PARAM_DESC[k]}"` : '';
+      return `<div class="param-row" ${desc} style="cursor:${PARAM_DESC[k]?'help':'default'}">
+        <span class="param-key">${k}</span>
+        <input class="param-input" type="number" id="p-${name}-${k}"
+          value="${params[k]}" step="${isInt?1:0.001}"
+          ${isInt?'':'style="font-size:.72rem"'}/>
+        <span class="param-val" style="color:var(--dim);font-size:.65rem">${isInt?'int':'float'}</span>
+      </div>`;
+    }).join('');
+
+    return `<div class="params-group">
+      <div class="params-hdr" onclick="toggleParamGroup(this)">
+        <span class="params-hdr-title">
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--cyan);display:inline-block"></span>
+          ${name}
+          <span style="font-size:.65rem;font-family:var(--mono);color:var(--dim)">${keys.length} params</span>
+          ${STRAT_THRESHOLD[name] ? `<span style="font-size:.62rem;background:rgba(255,200,0,.15);color:#f0c040;border:1px solid rgba(255,200,0,.3);border-radius:4px;padding:1px 6px;margin-left:6px">threshold conseillé : ${STRAT_THRESHOLD[name]}</span>` : ''}
+        </span>
+        <span class="chevron">▾</span>
+      </div>
+      <div class="params-body">
+        ${rows || '<div style="color:var(--dim);font-size:.75rem">Aucun paramètre configuré (défauts internes utilisés)</div>'}
+        ${keys.length ? `<div class="btn-row" style="margin-top:4px">
+          <button class="btn btn-blue" onclick="saveStratParams('${name}')">💾 Sauvegarder ${name}</button>
+        </div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleParamGroup(hdr) {
+  hdr.classList.toggle('open');
+  hdr.nextElementSibling.classList.toggle('open');
+}
+
+async function saveStratParams(name) {
+  const params = cfgData.strategy_params?.[name] || {};
+  const keys   = Object.keys(params);
+  const updated = {};
+  keys.forEach(k => {
+    const el = $(`p-${name}-${k}`);
+    if (el) updated[k] = parseFloat(el.value);
+  });
+
+  try {
+    // L'API attend strategy en query param et le dict params directement en body JSON
+    const r = await apiFetch(`/api/config/strategy-params?strategy=${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(updated)
+    });
+    const d = await r.json();
+    if (r.ok) {
+      toast(`✓ ${name} sauvegardé`);
+      cfgData.strategy_params = cfgData.strategy_params || {};
+      cfgData.strategy_params[name] = updated;
+    } else {
+      throw new Error(d.detail || 'Erreur API');
+    }
+  } catch(e) {
+    toast('Erreur : ' + e.message, true);
+  }
+}
+
+async function loadNotifications() {
+  try {
+    const r = await apiFetch('/api/config/notifications').then(r=>r.json());
+    // Telegram
+    $('tg-enabled').checked = r.telegram_enabled||false;
+    if (r.telegram_bot_token) $('tg-token').value = r.telegram_bot_token;
+    if (r.telegram_chat_id)   $('tg-chat').value  = r.telegram_chat_id;
+    // WhatsApp
+    $('wa-enabled').checked = r.whatsapp_enabled||false;
+    const mode = r.whatsapp_mode || 'callmebot';
+    $('wa-mode').value = mode;
+    if (r.whatsapp_token)     $('wa-token').value         = r.whatsapp_token;
+    if (r.whatsapp_number)    $('wa-number').value        = r.whatsapp_number;
+    if (r.twilio_account_sid) $('twilio-sid').value       = r.twilio_account_sid;
+    if (r.twilio_auth_token)  $('twilio-auth').value      = r.twilio_auth_token;
+    if (r.twilio_from_number) $('twilio-from').value      = r.twilio_from_number;
+    if (r.whatsapp_number)    $('wa-number-twilio').value = r.whatsapp_number;
+    onWaModeChange();
+    // Email
+    $('email-enabled').checked = r.email_enabled||false;
+    if (r.email_smtp)     $('email-smtp').value     = r.email_smtp;
+    if (r.email_port)     $('email-port').value     = r.email_port;
+    if (r.email_user)     $('email-user').value     = r.email_user;
+    if (r.email_password) $('email-password').value = r.email_password;
+    if (r.email_to)       $('email-to').value       = r.email_to;
+    // Seuils
+    if (r.min_pnl_to_notify)        $('notif-min-pnl').value       = r.min_pnl_to_notify;
+    if (r.position_loss_warn_pct)   $('notif-loss-pct').value      = r.position_loss_warn_pct;
+    if (r.exchange_error_threshold) $('notif-err-threshold').value = r.exchange_error_threshold;
+    // Evenements
+    if (r.events) {
+      document.querySelectorAll('.evt-cb').forEach(cb => {
+        const key = cb.dataset.evt;
+        if (key in r.events) cb.checked = r.events[key];
+      });
+    }
+    onNotifToggle();
+  } catch(e) {}
+}
+
+function onWaModeChange() {
+  const isTwilio = $('wa-mode').value === 'twilio';
+  $('wa-callmebot-cfg').style.display = isTwilio ? 'none'  : 'flex';
+  $('wa-twilio-cfg').style.display    = isTwilio ? 'flex'  : 'none';
+}
+
+function onNotifToggle() {
+  const tg    = $('tg-enabled').checked;
+  const wa    = $('wa-enabled').checked;
+  const email = $('email-enabled').checked;
+  $('tg-cfg').style.display    = tg    ? 'flex' : 'none';
+  $('wa-cfg').style.display    = wa    ? 'flex' : 'none';
+  $('email-cfg').style.display = email ? 'flex' : 'none';
+  $('tg-lbl').textContent    = tg    ? 'Activ\u00e9' : 'D\u00e9sactiv\u00e9';
+  $('wa-lbl').textContent    = wa    ? 'Activ\u00e9' : 'D\u00e9sactiv\u00e9';
+  $('email-lbl').textContent = email ? 'Activ\u00e9' : 'D\u00e9sactiv\u00e9';
+  const any = tg || wa || email;
+  $('notif-badge').textContent = any ? 'ON' : 'OFF';
+  $('notif-badge').className = 'strat-badge ' + (any ? 'badge-on' : 'badge-off');
+}
+
+async function applyNotifications() {
+  const events = {};
+  document.querySelectorAll('.evt-cb').forEach(cb => { events[cb.dataset.evt] = cb.checked; });
+  const isTwilio = $('wa-mode').value === 'twilio';
+  const p = new URLSearchParams({
+    telegram_enabled:         $('tg-enabled').checked,
+    telegram_bot_token:       $('tg-token').value,
+    telegram_chat_id:         $('tg-chat').value,
+    whatsapp_enabled:         $('wa-enabled').checked,
+    whatsapp_token:           $('wa-token').value,
+    whatsapp_number:          isTwilio ? $('wa-number-twilio').value : $('wa-number').value,
+    whatsapp_mode:            $('wa-mode').value,
+    twilio_account_sid:       $('twilio-sid').value,
+    twilio_auth_token:        $('twilio-auth').value,
+    twilio_from_number:       $('twilio-from').value,
+    email_enabled:            $('email-enabled').checked,
+    email_smtp:               $('email-smtp').value,
+    email_port:               $('email-port').value,
+    email_user:               $('email-user').value,
+    email_password:           $('email-password').value,
+    email_to:                 $('email-to').value,
+    min_pnl_to_notify:        $('notif-min-pnl').value,
+    position_loss_warn_pct:   $('notif-loss-pct').value,
+    exchange_error_threshold: $('notif-err-threshold').value,
+    events:                   JSON.stringify(events),
+  });
+  try {
+    const r = await apiFetch('/api/config/notifications?' + p, {method:'POST'});
+    if (r.ok) { toast('\u2713 Notifications sauvegard\u00e9es'); onNotifToggle(); }
+    else throw new Error((await r.json()).detail);
+  } catch(e) { toast('Erreur : ' + e.message, true); }
+}
+
+async function testNotification() {
+  $('notif-status').textContent = 'Envoi en cours…';
+  try {
+    const r = await apiFetch('/api/config/notifications/test', {method:'POST'});
+    if (r.ok) { $('notif-status').textContent = '\u2713 Message envoy\u00e9 sur tous les canaux actifs !'; }
+    else { const e = await r.json(); $('notif-status').textContent = '\u2717 ' + e.detail; }
+  } catch(e) { $('notif-status').textContent = '\u2717 ' + e.message; }
+}
+function onMarginToggle() {
+  const en = $('margin-toggle').checked;
+  $('margin-cfg').style.display = en ? 'flex' : 'none';
+  $('margin-badge').textContent = en ? 'ON' : 'OFF';
+  $('margin-badge').className = 'strat-badge ' + (en ? 'badge-on' : 'badge-off');
+  $('margin-lbl').textContent = en ? 'Margin activé' : 'Margin désactivé (spot pur)';
+}
+
+async function applyMargin() {
+  const enabled  = $('margin-toggle').checked;
+  const mode     = $('margin-mode').value;
+  const leverage = parseInt($('margin-leverage').value) || 2;
+  const alert_lv = parseFloat($('margin-alert').value) || 1.5;
+  const borrow   = parseFloat($('margin-borrow-rate').value) || 0.00072;
+  try {
+    // Update via trading params + config reload
+    const p = new URLSearchParams({
+      max_leverage: leverage,
+      daily_drawdown_limit: cfgData.trading?.daily_drawdown_limit ?? 0.05,
+    });
+    await apiFetch('/api/config/trading?' + p, {method:'POST'});
+    // Save margin-specific fields via config/trading endpoint (extended)
+    const r = await apiFetch('/api/config/margin?' + new URLSearchParams({
+      enabled, mode, leverage, alert_level: alert_lv, borrow_rate_daily: borrow
+    }), {method:'POST'});
+    if (r.ok) {
+      toast(enabled ? `✓ Margin activé — ${mode} ×${leverage}` : '✓ Margin désactivé');
+      await init();
+    } else {
+      // Fallback: save via config update
+      toast('✓ Config sauvegardée — redémarrez le bot pour appliquer', false);
+    }
+  } catch(e) { toast('Erreur : ' + e.message, true); }
+}
+
+init();
+
+// ── Auto-refresh quand l'onglet redevient actif ─────────────────────────────
+// Cas principal : l'utilisateur était sur l'optimiseur, a appliqué des params,
+// revient sur Config → la page se recharge silencieusement pour afficher les
+// nouveaux paramètres sans intervention.
+let _lastFocusRefresh = 0;
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible') return;
+  const now = Date.now();
+  if (now - _lastFocusRefresh < 5000) return; // anti-spam : 5s minimum entre 2 refresh
+  _lastFocusRefresh = now;
+  try {
+    // Recharge silencieuse : compare strategy_params avant/après
+    const resp = await fetch('/api/config');
+    if (!resp.ok) return;
+    const fresh = await resp.json();
+    const oldSP = JSON.stringify(cfgData.strategy_params || {});
+    const newSP = JSON.stringify(fresh.strategy_params   || {});
+    if (oldSP !== newSP) {
+      // Les params ont changé (ex: optimiseur a appliqué)
+      cfgData = fresh;
+      renderStrategies();
+      renderAutoOpt();
+      renderTradingParams();
+      renderStratParams();
+      toast('↩ Paramètres mis à jour par l\'optimiseur — affichage actualisé', false);
+    }
+  } catch(_) { /* silencieux */ }
+});
+
+// ── Changelog : bannière du dernier apply optimiseur ─────────────────────
+(async () => {
+  try {
+    const log = await apiFetch('/api/config/changelog?limit=10').then(r => r.json()).catch(()=>[]);
+    if (!log || !log.length) return;
+    // Cherche le tout dernier entry (déjà trié récent en premier)
+    const last = log[0];
+    if (!last) return;
+    const ageMs = Date.now() - new Date(last.timestamp).getTime();
+    if (ageMs > 7200_000) return; // ignorer si > 2h
+    const strat   = last.strategy || '?';
+    const tf      = last.timeframe ? ` @ ${last.timeframe}` : '';
+    const score   = last.oos_score != null ? ` · score OOS: ${(+last.oos_score).toFixed(3)}` : '';
+    const changed = Object.entries(last.changed || {});
+    const t = new Date(last.timestamp);
+    const ts = isNaN(t) ? '' : t.toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const items = changed.map(([k, v]) =>
+      `<span style="font-family:var(--mono);font-size:.64rem;display:inline-block;
+        background:rgba(34,211,238,.08);color:var(--cyan);
+        padding:2px 7px;border-radius:3px;border:1px solid rgba(34,211,238,.2);margin:2px 2px 0 0">
+        ${escHtml(k)}: <span style="color:var(--muted)">${v.before??'—'}</span> → <strong>${v.after}</strong>
+      </span>`
+    ).join('');
+    const noChange = !changed.length;
+    const banner = document.createElement('div');
+    banner.style.cssText = `background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.2);
+      border-radius:var(--r-sm);padding:9px 14px;font-size:.72rem;color:var(--cyan);
+      display:flex;flex-direction:column;gap:5px;margin-bottom:8px`;
+    banner.innerHTML =
+      `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-weight:700">🔬 Optimiseur a appliqué des params — ${escHtml(strat)}${escHtml(tf)}${escHtml(score)}</span>
+        <span style="color:var(--dim);font-size:.65rem;margin-left:auto">${ts}</span>
+        <button onclick="this.closest('div[style]').remove()" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:.8rem;padding:0 4px">✕</button>
+      </div>
+      ${noChange ? '<span style="color:var(--dim);font-size:.7rem">Aucun paramètre modifié (identiques)</span>' : `<div>${items}</div>`}`;
+    // Chercher le container principal
+    const container = document.getElementById('content') || document.querySelector('.main-content') || document.body;
+    container.insertBefore(banner, container.firstChild);
+  } catch(_) { /* silencieux */ }
+})();
+</script>
+
+<script>
+function toggleSidebar(){
+  var sb=document.getElementById("sidebar"),btn=document.getElementById("sb-toggle");
+  sb.classList.toggle("collapsed");
+  btn.textContent=sb.classList.contains("collapsed")?"›":"‹";
+}
+</script>
+</body>
+</html>

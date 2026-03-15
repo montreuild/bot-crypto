@@ -11,12 +11,22 @@ Améliorations :
   - Slippage asymétrique : stop market = prix défavorable
 """
 import logging
+import math
 from typing import List, Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 
 from app.engine.engine import Engine
 from app.core.trailing import TrailingStopManager
+
+
+def _sf(v, fallback=None):
+    """Safe float : convertit nan/inf en fallback pour JSON."""
+    try:
+        f = float(v)
+        return fallback if (math.isnan(f) or math.isinf(f)) else f
+    except (TypeError, ValueError):
+        return fallback
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +39,26 @@ def _atr(df: pd.DataFrame, period: int = 14) -> float:
     tr  = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
     val = float(tr.rolling(period).mean().iloc[-1])
     return val if val > 0 else 0.0
+
+def _atr_series(df: pd.DataFrame, period: int = 14) -> np.ndarray:
+    """
+    ATR vectorisé sur tout le df — O(n) unique, même formule que _atr() (SMA du TR).
+    Retourne un numpy array indexable par position de barre.
+    Remplace _atr(window) O(n²) dans la boucle de backtest.
+    """
+    h = df["high"].astype(float)
+    l = df["low"].astype(float)
+    c = df["close"].astype(float)
+    c_prev = c.shift(1).fillna(c)
+    tr  = pd.concat([h - l, (h - c_prev).abs(), (l - c_prev).abs()], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean()
+    arr = atr.to_numpy(dtype=float, copy=True)  # copie writable
+    # Remplir les NaN initiaux avec la moyenne cumulative des TR disponibles
+    tr_vals = tr.values.astype(float)
+    for k in range(len(arr)):
+        if np.isnan(arr[k]):
+            arr[k] = float(tr_vals[:k+1].mean())
+    return arr
 
 def _bar_to_days(tf: str) -> float:
     m = {"1m":1,"3m":3,"5m":5,"15m":15,"30m":30,"1h":60,"2h":120,"4h":240,"1d":1440}
@@ -63,17 +93,19 @@ class BacktestResult:
         eq = np.array(self.equity_curve, dtype=float)
         if len(eq) > 1:
             peak              = np.maximum.accumulate(eq)
-            drawdowns         = (eq - peak) / np.where(peak > 0, peak, 1) * 100
-            self.max_drawdown = float(drawdowns.min())
-            returns           = np.diff(eq) / np.where(eq[:-1] > 0, eq[:-1], 1)
-            std               = returns.std()
-            self.sharpe       = float(returns.mean() / std * np.sqrt(252)) if std > 0 else 0.0
+            drawdowns         = (eq - peak) / np.where(peak > 0, peak, 1.0) * 100
+            self.max_drawdown = _sf(float(drawdowns.min()), 0.0)
+            returns           = np.diff(eq) / np.where(eq[:-1] > 0, eq[:-1], 1.0)
+            std               = float(returns.std())
+            ann_factor        = np.sqrt(max(len(returns), 1))
+            raw_sharpe        = float(returns.mean() / std * ann_factor) if std > 0 else 0.0
+            self.sharpe       = _sf(raw_sharpe, 0.0)
         else:
             self.max_drawdown = 0.0
             self.sharpe       = 0.0
 
-        self.avg_win  = float(np.mean(wins))   if wins   else 0.0
-        self.avg_loss = float(np.mean(losses)) if losses else 0.0
+        self.avg_win  = _sf(float(np.mean(wins)),   0.0) if wins   else 0.0
+        self.avg_loss = _sf(float(np.mean(losses)), 0.0) if losses else 0.0
 
         self.expectancy = (
             len(wins)/len(closed)*self.avg_win +
@@ -82,12 +114,13 @@ class BacktestResult:
 
         win_sum  = sum(wins)
         loss_sum = abs(sum(losses))
-        self.profit_factor = win_sum / loss_sum if loss_sum > 0 else float("inf")
+        # Remplace float("inf") par 999.0 — json.dumps rejette l'infini Python
+        self.profit_factor = win_sum / loss_sum if loss_sum > 0 else (999.0 if win_sum > 0 else 0.0)
 
         maes = [t.get("mae", 0) for t in closed if t.get("mae") is not None]
         mfes = [t.get("mfe", 0) for t in closed if t.get("mfe") is not None]
-        self.avg_mae = float(np.mean(maes)) if maes else 0.0
-        self.avg_mfe = float(np.mean(mfes)) if mfes else 0.0
+        self.avg_mae = _sf(float(np.mean(maes)), 0.0) if maes else 0.0
+        self.avg_mfe = _sf(float(np.mean(mfes)), 0.0) if mfes else 0.0
 
         # ── Métriques par stratégie ───────────────────────────────────────────
         self.by_strategy: Dict[str, dict] = {}
@@ -107,16 +140,17 @@ class BacktestResult:
             wins_s  = [p for p in sd_pnls if p > 0]
             loss_s  = [p for p in sd_pnls if p <= 0]
 
-            d["win_rate"]     = round(d["wins"] / d["trades"] * 100, 1) if d["trades"] else 0
+            d["win_rate"]     = round(d["wins"] / d["trades"] * 100, 1) if d["trades"] else 0.0
             d["pnl"]          = round(d["pnl"], 4)
             d["fees"]         = round(d["fees"], 4)
-            d["avg_win"]      = round(float(np.mean(wins_s)), 4) if wins_s else 0
-            d["avg_loss"]     = round(float(np.mean(loss_s)), 4) if loss_s else 0
-            d["profit_factor"]= round(sum(wins_s) / abs(sum(loss_s)), 3) if loss_s and sum(loss_s) else "∞"
+            d["avg_win"]      = round(_sf(float(np.mean(wins_s)), 0.0), 4) if wins_s else 0.0
+            d["avg_loss"]     = round(_sf(float(np.mean(loss_s)), 0.0), 4) if loss_s else 0.0
+            _loss_sum = abs(sum(loss_s))
+            d["profit_factor"] = round(sum(wins_s) / _loss_sum, 3) if _loss_sum > 0 else (999.0 if wins_s else 0.0)
             d["expectancy"]   = round(
                 len(wins_s)/len(sd_pnls)*d["avg_win"] +
                 len(loss_s)/len(sd_pnls)*d["avg_loss"], 4
-            ) if sd_pnls else 0
+            ) if sd_pnls else 0.0
             d["total_trades"] = d["trades"]
             d["total_pnl"]    = d["pnl"]
             d["total_fees"]   = d["fees"]
@@ -131,37 +165,54 @@ class BacktestResult:
             d["initial_capital"]= self.initial_capital
             d["final_equity"]   = round(eq_s[-1], 4)
 
-            eq_arr  = np.array(eq_s)
-            peak_s  = np.maximum.accumulate(eq_arr)
-            dd_arr  = (eq_arr - peak_s) / np.where(peak_s > 0, peak_s, 1) * 100
-            d["max_drawdown"] = round(float(dd_arr.min()), 2) if len(eq_arr) > 1 else 0
+            eq_arr = np.array(eq_s, dtype=float)
+            peak_s = np.maximum.accumulate(eq_arr)
+            if len(eq_arr) > 1:
+                dd_arr = (eq_arr - peak_s) / np.where(peak_s > 0, peak_s, 1.0) * 100
+                d["max_drawdown"] = round(_sf(float(dd_arr.min()), 0.0), 2)
+            else:
+                d["max_drawdown"] = 0.0
 
-            rets_s  = np.diff(eq_arr) / np.where(eq_arr[:-1] > 0, eq_arr[:-1], 1) if len(eq_arr) > 1 else np.array([0])
-            d["sharpe"] = round(float(rets_s.mean() / rets_s.std() * np.sqrt(252)), 3) if rets_s.std() > 0 else 0
+            if len(eq_arr) > 1:
+                denom = np.where(eq_arr[:-1] > 0, eq_arr[:-1], 1.0)
+                rets_s = np.diff(eq_arr) / denom
+            else:
+                rets_s = np.array([0.0])
+            ann_s  = np.sqrt(max(len(rets_s), 1))
+            std_s  = float(rets_s.std())
+            if std_s > 0:
+                d["sharpe"] = round(_sf(float(rets_s.mean() / std_s * ann_s), 0.0), 3)
+            else:
+                d["sharpe"] = 0.0
 
             # Trades complets (avec bar/exit_bar) pour le graphique
             d["trades"] = [t for t in closed if t.get("strategy") == s]
 
     def to_dict(self) -> dict:
+        pf = self.profit_factor
+        pf_safe = round(min(pf, 999.0), 3) if math.isfinite(pf) else 999.0
         return {
-            "initial_capital": self.initial_capital,
-            "final_equity":    round(self.final_equity, 4),
-            "total_pnl":       round(self.total_pnl, 4),
-            "total_fees":      round(self.total_fees, 4),
-            "total_trades":    self.total_trades,
-            "win_rate":        round(self.win_rate, 2),
-            "max_drawdown":    round(self.max_drawdown, 2),
-            "sharpe":          round(self.sharpe, 3),
-            "expectancy":      round(self.expectancy, 4),
-            "avg_mae":         round(self.avg_mae, 4),
-            "avg_mfe":         round(self.avg_mfe, 4),
-            "avg_win":         round(self.avg_win, 4),
-            "avg_loss":        round(self.avg_loss, 4),
-            "profit_factor":   round(self.profit_factor, 3) if self.profit_factor != float("inf") else "∞",
-            "equity_curve":    [round(e, 4) for e in self.equity_curve],
-            "timestamps":      self.timestamps,
-            "by_strategy":     self.by_strategy,
-            "trades":          self.trades,
+            "initial_capital":    self.initial_capital,
+            "final_equity":       round(_sf(self.final_equity, 0.0), 4),
+            "total_pnl":          round(_sf(self.total_pnl, 0.0), 4),
+            "total_fees":         round(_sf(self.total_fees, 0.0), 4),
+            "total_trades":       self.total_trades,
+            "win_rate":           round(_sf(self.win_rate, 0.0), 2),
+            "max_drawdown":       round(_sf(self.max_drawdown, 0.0), 2),
+            "sharpe":             round(_sf(self.sharpe, 0.0), 3),
+            "expectancy":         round(_sf(self.expectancy, 0.0), 4),
+            "avg_mae":            round(_sf(self.avg_mae, 0.0), 4),
+            "avg_mfe":            round(_sf(self.avg_mfe, 0.0), 4),
+            "avg_win":            round(_sf(self.avg_win, 0.0), 4),
+            "avg_loss":           round(_sf(self.avg_loss, 0.0), 4),
+            "profit_factor":      pf_safe,
+            "buy_and_hold_pnl":   round(_sf(getattr(self, "buy_and_hold_pnl", 0), 0.0), 4),
+            "buy_and_hold_pct":   round(_sf(getattr(self, "buy_and_hold_pct", 0), 0.0), 3),
+            "alpha":              round(_sf(getattr(self, "alpha", 0), 0.0), 4),
+            "equity_curve":       [round(_sf(e, 0.0), 4) for e in self.equity_curve],
+            "timestamps":         self.timestamps,
+            "by_strategy":        self.by_strategy,
+            "trades":             self.trades,
         }
 
 
@@ -230,27 +281,42 @@ class Backtester:
         # Warmup adapté : EMA200 a besoin de 210+ barres pour être fiable
         warmup       = 210
 
+        # ── Pré-calculs vectorisés O(n) — évite O(n²) dans la boucle ─────────
+        # 1. Enrichir le df avec indicateurs fixes (RSI/ATR/ADX/MACD/vol) une seule fois
+        #    Les stratégies liront pre_val(df, "_pre_rsi14") au lieu de recalculer O(n)
+        from app.strategies.indicators import precompute_df as _precompute
+        df = _precompute(df.copy())          # copy() car on ajoute des colonnes _pre_*
+
+        # 2. Arrays numpy pour accès O(1) aux OHLC — ATR depuis colonne pré-calculée
+        atr_arr   = df["_pre_atr14"].values.astype(float)
+        low_arr   = df["low"].values.astype(float)
+        high_arr  = df["high"].values.astype(float)
+        close_arr = df["close"].values.astype(float)
+        open_arr  = df["open"].values.astype(float)
+
         for i in range(warmup, len(df) - 1):
-            window       = df.iloc[:i + 1].copy()
-            current_bar  = df.iloc[i]
-            c_high       = float(current_bar["high"])
-            c_low        = float(current_bar["low"])
-            c_open       = float(current_bar["open"])
+            window       = df.iloc[:i + 1]    # vue (pas de copie — stratégies ne modifient pas df)
+            c_high       = high_arr[i]
+            c_low        = low_arr[i]
+            c_open       = open_arr[i]
 
             # ── Gestion de la position ouverte (V6 — trailing multi-phases) ────
             if position is not None:
                 side    = position["side"]
                 entry   = position["entry"]
                 stop    = position["stop"]
-                c_close = float(current_bar["close"])
+                c_close = close_arr[i]
 
                 # MAE / MFE intrabar
                 if side == "long":
-                    position["mae"] = min(position.get("mae", 0.0), c_low  - entry)
-                    position["mfe"] = max(position.get("mfe", 0.0), c_high - entry)
+                    mae_pts = c_low  - entry
+                    mfe_pts = c_high - entry
                 else:
-                    position["mae"] = min(position.get("mae", 0.0), entry - c_high)
-                    position["mfe"] = max(position.get("mfe", 0.0), entry - c_low)
+                    mae_pts = entry - c_high
+                    mfe_pts = entry - c_low
+                if entry > 0:
+                    position["mae"] = min(position.get("mae", 0.0), mae_pts / entry * 100)
+                    position["mfe"] = max(position.get("mfe", 0.0), mfe_pts / entry * 100)
 
                 # ── Stop touché sur le low/high intrabar ─────────────────────
                 stop_hit = (side == "long"  and c_low  <= stop) or \
@@ -289,9 +355,11 @@ class Backtester:
                         "exit_reason":   "trailing_stop",
                         "trail_phase":   trail_phase,
                         "pnl_pct":       round((exec_price - entry) / entry * 100 *
-                                               (1 if side == "long" else -1), 3),
+                                               (1 if side == "long" else -1), 3) if entry else 0.0,
                         "duration_bars": bars_held,
                         "fill_pct":      self.partial_fill,
+                        # Fix #14 — exposer l'historique du trailing stop pour le graphique
+                        "stop_trail":    position.pop("_stop_trail", []),
                     })
                     position.pop("_trailing", None)
                     trades.append(position)
@@ -301,13 +369,12 @@ class Backtester:
 
                 else:
                     # ── Mise à jour trailing stop V6 ─────────────────────────
-                    atr           = _atr(window)
+                    atr           = float(atr_arr[i]) or 1e-8
                     bars_held_now = i - position["bar"]
                     _tr           = position.get("_trailing")
-                    recent_lows   = window["low"].iloc[-20:].tolist()
-                    recent_highs  = window["high"].iloc[-20:].tolist()
-                    ema_fast_val  = float(
-                        window["close"].ewm(span=21, adjust=False).mean().iloc[-1])
+                    # Slices numpy — O(1) au lieu de .tolist() sur une fenêtre croissante
+                    lo20 = low_arr[max(0, i-19):i+1].tolist()
+                    hi20 = high_arr[max(0, i-19):i+1].tolist()
 
                     if _tr:
                         new_stop = _tr.update_stop(
@@ -315,12 +382,15 @@ class Backtester:
                             current_stop  = stop,
                             atr           = atr, side = side, entry = entry,
                             bars_held     = bars_held_now,
-                            recent_lows   = recent_lows,
-                            recent_highs  = recent_highs,
+                            recent_lows   = lo20,
+                            recent_highs  = hi20,
                         )
                         position["stop"] = new_stop
                         if hasattr(_tr, "_dts") and _tr._dts:
                             position["trail_phase"] = _tr._dts.phase_name
+                        # Fix #14 — historique trailing stop (1 point sur 3 pour limiter la taille)
+                        if i % 3 == 0:
+                            position["_stop_trail"].append({"bar": i, "stop": round(new_stop, 6)})
 
                 continue  # Position traitée
 
@@ -329,7 +399,7 @@ class Backtester:
             if signal["side"] == "none" or signal["score"] < threshold:
                 continue
 
-            atr = _atr(window)
+            atr = float(atr_arr[i])
             if atr <= 0:
                 continue
 
@@ -391,6 +461,8 @@ class Backtester:
                 "indicators":   signal.get("indicators", {}),
                 "mae":          0.0,
                 "mfe":          0.0,
+                # Fix #14 — historique trailing stop pour le graphique
+                "_stop_trail":  [{"bar": i + 1, "stop": round(stop, 6)}],
             }
 
 
@@ -415,14 +487,34 @@ class Backtester:
                 "exit_time":    str(df["time"].iloc[-1]) if "time" in df.columns else str(len(df)-1),
                 "exit_reason":  "end_of_data",
                 "pnl_pct":      round((last_price - position["entry"]) / position["entry"] * 100 *
-                                       (1 if position["side"] == "long" else -1), 3),
+                                       (1 if position["side"] == "long" else -1), 3) if position["entry"] else 0.0,
                 "duration_bars": bars_held,
                 "fill_pct":     self.partial_fill,
             })
             trades.append(position)
             equity_curve.append(round(capital, 4))
 
-        return BacktestResult(trades, equity_curve, self.initial_capital(self.cfg), timestamps)
+        result = BacktestResult(trades, equity_curve, self.initial_capital(self.cfg), timestamps)
+        return self._add_buy_and_hold(result, df)
+
+    def _add_buy_and_hold(self, result: "BacktestResult", df: pd.DataFrame) -> "BacktestResult":
+        """Calcule le benchmark Buy & Hold sur la même période que le backtest."""
+        try:
+            warmup = 210
+            if len(df) <= warmup:
+                return result
+            first_price = float(df["close"].iloc[warmup])
+            last_price  = float(df["close"].iloc[-1])
+            if first_price <= 0:
+                return result
+            bnh_pct = (last_price - first_price) / first_price * 100
+            bnh_pnl = result.initial_capital * bnh_pct / 100
+            result.buy_and_hold_pnl = round(bnh_pnl, 4)
+            result.buy_and_hold_pct = round(bnh_pct, 3)
+            result.alpha            = round(result.total_pnl - bnh_pnl, 4)
+        except Exception as e:
+            logger.debug(f"[BnH] Calcul benchmark KO : {e}")
+        return result
 
     def initial_capital(self, cfg: dict) -> float:
         return cfg["trading"].get("capital", 1000.0)
@@ -444,8 +536,22 @@ class WalkForwardAnalyzer:
     def run(self, df: pd.DataFrame, symbol: str = "BTC/USDC") -> dict:
         n      = len(df)
         fold_n = n // (self.n_folds + 1)
-        if fold_n < 60:
-            return {"error": "Données insuffisantes pour Walk-Forward"}
+        WARMUP = 220  # EMA200 + marge — minimum barres tradeable par fold IS
+        MIN_IS = WARMUP + 50   # IS fold doit avoir 50 barres tradeables après warmup
+        MIN_OOS = 40           # OOS fold minimum pour avoir quelques trades potentiels
+        if fold_n < MIN_OOS:
+            return {"error": f"Données insuffisantes pour Walk-Forward ({n} barres · min {MIN_OOS * (self.n_folds+1)})"}
+        if fold_n < MIN_IS:
+            return {
+                "error": (
+                    f"IS trop court pour les stratégies EMA ({fold_n} barres/fold · "
+                    f"min {MIN_IS} requis). Augmentez les bougies à ≥{MIN_IS * (self.n_folds+1)} "
+                    f"ou réduisez les folds."
+                ),
+                "n_bars": n,
+                "fold_n": fold_n,
+                "min_required": MIN_IS * (self.n_folds + 1),
+            }
 
         in_sample_results  = []
         out_sample_results = []
@@ -458,14 +564,29 @@ class WalkForwardAnalyzer:
             if len(df_oos) < 30:
                 continue
             try:
-                bt_is  = Backtester(self.engine, self.cfg)
-                bt_oos = Backtester(self.engine, self.cfg)
+                # Créer de nouvelles instances de stratégies par fold pour
+                # éviter la contamination de l'état (_call_count, _last_signal_bar)
+                import importlib as _imp
+                fresh_strats = []
+                for s in self.engine.strategies:
+                    mod = _imp.import_module(f"app.strategies.{s.name}")
+                    fresh_strats.append(mod.Strategy())
+                eng_is  = Engine(); [eng_is.register(s, silent=True)  for s in fresh_strats]
+                # OOS : nouvelles instances également
+                fresh_strats_oos = []
+                for s in self.engine.strategies:
+                    mod = _imp.import_module(f"app.strategies.{s.name}")
+                    fresh_strats_oos.append(mod.Strategy())
+                eng_oos = Engine(); [eng_oos.register(s, silent=True) for s in fresh_strats_oos]
+
+                bt_is  = Backtester(eng_is,  self.cfg)
+                bt_oos = Backtester(eng_oos, self.cfg)
                 r_is   = bt_is.run(df_is,  symbol).to_dict()
                 r_oos  = bt_oos.run(df_oos, symbol).to_dict()
                 in_sample_results.append(r_is)
                 out_sample_results.append(r_oos)
             except Exception as e:
-                logger.error(f"[WF] Fold {k} : {e}")
+                logger.error(f"[WF] Fold {k} : {e}", exc_info=True)
 
         if not out_sample_results:
             return {"error": "Aucun fold OOS valide"}
@@ -476,9 +597,9 @@ class WalkForwardAnalyzer:
 
         return {
             "n_folds":        len(out_sample_results),
-            "avg_oos_pnl":    round(float(np.mean(oos_pnl)),    4),
-            "avg_oos_sharpe": round(float(np.mean(oos_sharpe)), 3),
-            "avg_oos_wr":     round(float(np.mean(oos_wr)),     2),
+            "avg_oos_pnl":    round(_sf(float(np.mean(oos_pnl)),    0.0), 4),
+            "avg_oos_sharpe": round(_sf(float(np.mean(oos_sharpe)), 0.0), 3),
+            "avg_oos_wr":     round(_sf(float(np.mean(oos_wr)),     0.0), 2),
             "consistency":    round(sum(1 for p in oos_pnl if p > 0) / len(oos_pnl) * 100, 1),
             "in_sample":      in_sample_results,
             "out_of_sample":  out_sample_results,
@@ -515,10 +636,10 @@ class MonteCarlo:
         return {
             "runs":               self.n_runs,
             "confidence":         self.confidence,
-            "final_equity_mean":  round(float(np.mean(finals)),  2),
-            "final_equity_p5":    round(float(np.percentile(finals, 5)),  2),
-            "final_equity_p95":   round(float(np.percentile(finals, 95)), 2),
-            "max_dd_p95":         round(abs(float(np.percentile(max_dds, 95))), 2),
+            "final_equity_mean":  round(_sf(float(np.mean(finals)),  0.0), 2),
+            "final_equity_p5":    round(_sf(float(np.percentile(finals,  5)),  0.0), 2),
+            "final_equity_p95":   round(_sf(float(np.percentile(finals, 95)),  0.0), 2),
+            "max_dd_p95":         round(_sf(abs(float(np.percentile(max_dds, 95))), 0.0), 2),
             "prob_profit":        round(sum(1 for f in finals if f > initial_capital) / self.n_runs * 100, 1),
             "prob_ruin_10pct":    round(sum(1 for d in max_dds if d < -10) / self.n_runs * 100, 1),
         }

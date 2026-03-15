@@ -1,0 +1,478 @@
+"""
+Stratégie Fear & Momentum — V1
+
+Objectif : maximiser l'alpha vs Buy & Hold sur crypto.
+
+Principe fondamental :
+  Le B&H gagne parce qu'il est exposé 100% du temps.
+  Pour le battre : entrer sur des dips de haute probabilité dans des tendances
+  confirmées, et éviter les marchés baissiers / neutres.
+
+Setup "Fear in Trend" (LONG) :
+  Le marché est en tendance haussière structurelle (3 timeframes),
+  mais il vient de créer un épisode de PEUR (sell-off rapide, RSI oversold,
+  volume de capitulation) → probabilité de rebond élevée.
+  On achète quand la peur commence à SE DISSIPER (premier signe de stabilisation).
+
+Setup "Greed Exhaustion" (SHORT) :
+  Inverse : tendance baissière + rallye de dead-cat sur faible volume + RSI overbought
+  → vente du rebond.
+
+Signaux DISTINCTIFS vs les autres stratégies :
+  1. Volume de capitulation : on cherche une bougie avec volume > 2× la moyenne
+     ET corps baissier (sell-off = vendeurs épuisés)
+  2. RSI divergence haussière : prix fait un bas, mais RSI fait un bas MOINS bas
+     que le précédent (les vendeurs s'épuisent)
+  3. Marteau / Doji sur support : la mèche basse dépasse le support,
+     mais la clôture revient au-dessus (rejection du bas)
+  4. EMA200 encore intacte : correction ≤ 8% sous EMA200 max (on reste dans le trend)
+  5. Momentum recovery : le MACD histogramme remonte (divergence de momentum)
+  6. Régime de volatilité favorable : ATR en contraction avant le dip
+     (faible volatilité avant = le dip est une opportunité, pas un renversement)
+
+Score différencié :
+  - Chaque signal additionnel monte le score de 0.06-0.10
+  - Score plancher = 0.65 (setup Fear de base)
+  - Score plafond  = 0.95 (6/6 signaux)
+  - Threshold recommandé : 0.72 (exige 2-3 signaux)
+
+Sortie (stop_hint) :
+  - Stop sous le plus bas du dip (naturel, invalide le setup si touché)
+  - Minimum 1× ATR sous le prix d'entrée
+"""
+import logging
+from typing import Dict, Any
+import numpy as np
+import pandas as pd
+from app.engine.engine import BaseStrategy
+from app.strategies.indicators import (
+    rsi as calc_rsi,
+    atr as calc_atr,
+    atr_series as calc_atr_series,
+    macd as calc_macd,
+    vol_ratio as calc_vol,
+    adx as calc_adx,
+    market_structure,
+    htf_trend,
+    pre_val,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class Strategy(BaseStrategy):
+    name = "fear_momentum"
+
+    def __init__(self):
+        self._last_signal: Dict[str, int] = {}
+        self._call_count:  Dict[str, int] = {}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    def score(self, df: pd.DataFrame, params: dict = None,
+              df_htf=None, symbol: str = "") -> Dict[str, Any]:
+        p = (params or {}).get("fear_momentum", {})
+
+        ema_fast    = int(p.get("ema_fast",        21))
+        ema_trend   = int(p.get("ema_trend",       200))
+        ema_mid     = int(p.get("ema_mid",          50))
+        rsi_fear    = float(p.get("rsi_fear",       42))   # RSI < X → zone de peur
+        rsi_greed   = float(p.get("rsi_greed",      62))   # RSI > X → zone de greed
+        vol_cap_min = float(p.get("vol_cap_min",   1.8))   # volume bougie capitulation
+        atr_max_dip = float(p.get("atr_max_dip",   4.0))   # dip max en × ATR (filtre crashes)
+        cooldown    = int(p.get("cooldown",          18))
+        rr_min      = float(p.get("rr_min",         1.6))
+        ema200_max_dist = float(p.get("ema200_max_dist", 0.08))  # correction max sous EMA200
+
+        sym = symbol or str(df["time"].iloc[-1]) if "time" in df.columns else "default"
+        cnt = self._call_count.get(sym, 0) + 1
+        self._call_count[sym] = cnt
+
+        min_bars = max(ema_trend + 10, 240)
+        if len(df) < min_bars:
+            return self._none()
+
+        close  = df["close"].astype(float)
+        high   = df["high"].astype(float)
+        low    = df["low"].astype(float)
+        open_  = df["open"].astype(float)
+        volume = df["volume"].astype(float)
+
+        # ── Calculs de base ──────────────────────────────────────────────────
+        ef   = close.ewm(span=ema_fast,  adjust=False).mean()
+        em   = close.ewm(span=ema_mid,   adjust=False).mean()
+        et   = close.ewm(span=ema_trend, adjust=False).mean()
+
+        c0   = float(close.iloc[-1])
+        c1   = float(close.iloc[-2])
+        c2   = float(close.iloc[-3])
+        h0   = float(high.iloc[-1])
+        l0   = float(low.iloc[-1])
+        o0   = float(open_.iloc[-1])
+        lf   = float(ef.iloc[-1])
+        lm   = float(em.iloc[-1])
+        lt   = float(et.iloc[-1])
+
+        atr_val   = pre_val(df, "_pre_atr14") or calc_atr(df, 14)
+        if atr_val <= 0:
+            return self._none()
+
+        # ATR series : colonne pré-calculée si dispo, sinon recalcul
+        atr_s     = df["_pre_atr14"] if "_pre_atr14" in df.columns else calc_atr_series(df, 14)
+        _rsi_s    = df["_pre_rsi14"] if "_pre_rsi14" in df.columns else calc_rsi(close, 14)
+        rsi0      = float(_rsi_s.iloc[-1])
+        rsi1      = float(_rsi_s.iloc[-2])
+        rsi2      = float(_rsi_s.iloc[-3])
+        rsi3      = float(_rsi_s.iloc[-4])
+
+        vr        = pre_val(df, "_pre_volratio20") or calc_vol(df)
+        adx_val   = pre_val(df, "_pre_adx14")      or calc_adx(df, 14)
+        htf       = htf_trend(df_htf)
+        struct    = market_structure(high, low)
+
+        # MACD : pré-calculé si dispo
+        mh0 = pre_val(df, "_pre_macd_hist")
+        if mh0 is None:
+            _, _, macd_hist = calc_macd(close, 12, 26, 9)
+            mh0 = float(macd_hist.iloc[-1])
+            mh1 = float(macd_hist.iloc[-2])
+            mh2 = float(macd_hist.iloc[-3])
+        else:
+            _mhist = df["_pre_macd_hist"]
+            mh1 = float(_mhist.iloc[-2])
+            mh2 = float(_mhist.iloc[-3])
+
+        vol_avg  = float(volume.rolling(20).mean().iloc[-1])
+
+        # ── Cooldown ─────────────────────────────────────────────────────────
+        if cnt - self._last_signal.get(sym, -999) < cooldown:
+            return self._none(f"Cooldown {cnt - self._last_signal.get(sym,0)}/{cooldown}")
+
+        # ═══════════════════════════════════════════════════════════════════════
+        #  LONG — Fear in Uptrend
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # ── Condition 0 : Tendance haussière structurelle ────────────────────
+        # EMA21 > EMA50 (tendance intermédiaire OK)
+        # Prix dans les 8% autour de EMA200 (en correction, pas en crash)
+        trend_bull  = lf > lm and c0 >= lt * (1 - ema200_max_dist)
+        # HTF doit être au moins neutre (on ne combat pas la tendance supérieure)
+        htf_ok      = htf >= 0
+
+        if not (trend_bull and htf_ok):
+            # Tentative short side (cherche greed exhaustion)
+            pass  # handled below
+        else:
+            # ── Identifier le dip récent (5 dernières barres) ─────────────────
+            # Le prix doit avoir baissé d'au moins 1× ATR depuis un récent haut
+            recent_high = float(high.iloc[-6:-1].max())
+            dip_depth   = (recent_high - c0) / atr_val
+
+            # Trop petit : pas un vrai dip (juste du bruit)
+            # Trop grand  : potentiel renversement, pas un dip sain
+            dip_valid = 0.8 <= dip_depth <= atr_max_dip
+
+            if dip_valid:
+
+                # ── Signal 1 : RSI Fear Zone + Recovery ─────────────────────
+                # RSI est tombé en zone de peur (<rsi_fear) ET commence à remonter
+                rsi_was_in_fear = min(rsi1, rsi2, rsi3) < rsi_fear
+                rsi_recovering  = rsi0 > rsi1 and rsi0 > rsi_fear * 0.85
+                sig1 = rsi_was_in_fear and rsi_recovering
+
+                # ── Signal 2 : Volume Capitulation ───────────────────────────
+                # Une des 3 dernières bougies a eu un volume de capitulation
+                # (volume > vol_cap_min× avec corps baissier = vendeurs épuisés)
+                cap_found = False
+                for k in range(1, 4):
+                    v_k  = float(volume.iloc[-1 - k])
+                    o_k  = float(open_.iloc[-1 - k])
+                    c_k  = float(close.iloc[-1 - k])
+                    bearish_body = c_k < o_k
+                    if (v_k / max(vol_avg, 1e-9) >= vol_cap_min) and bearish_body:
+                        cap_found = True
+                        break
+                sig2 = cap_found
+
+                # ── Signal 3 : Marteau / Pinbar sur support ──────────────────
+                # Mèche basse longue : le bas descend mais la clôture remonte
+                # = rejet du bas = acheteurs ont absorbé la vente
+                body      = abs(c0 - o0)
+                lower_wick = min(o0, c0) - l0
+                upper_wick = h0 - max(o0, c0)
+                hammer = (lower_wick >= body * 1.5       # mèche basse > 1.5× le corps
+                          and lower_wick >= upper_wick * 2  # mèche basse dominante
+                          and c0 >= o0)                      # bougie verte (force)
+                # Alternative : doji sur support (incertitude après une baisse)
+                doji = body < atr_val * 0.25 and lower_wick >= atr_val * 0.4
+                sig3 = hammer or doji
+
+                # ── Signal 4 : Divergence RSI Haussière ──────────────────────
+                # Prix fait un bas plus bas, mais RSI fait un bas moins bas
+                # = les vendeurs perdent de la force
+                prev_low = float(low.iloc[-6:-2].min())
+                if l0 < prev_low:
+                    prev_rsi_low = float(_rsi_s.iloc[-6:-2].min())
+                    rsi_div_bull = rsi0 > prev_rsi_low  # RSI ne fait pas un nouveau bas
+                else:
+                    rsi_div_bull = False
+                sig4 = rsi_div_bull
+
+                # ── Signal 5 : MACD Divergence / Recovery ────────────────────
+                # Histogramme MACD commence à remonter depuis un creux
+                # (même si encore négatif : le momentum baissier ralentit)
+                macd_floor  = mh0 > mh1 and mh0 > mh2    # remonte depuis le bas
+                macd_x_bull = mh1 < 0 and mh0 > 0        # cross zéro haussier (fort)
+                sig5 = macd_floor or macd_x_bull
+
+                # ── Signal 6 : ATR Contraction avant le dip ──────────────────
+                # Le dip survient après une période de faible volatilité
+                # = le marché s'est compressé avant → le dip est sain, pas panique
+                atr_before_dip  = float(atr_s.iloc[-8:-3].mean())
+                atr_recent      = float(atr_s.iloc[-3:-1].mean())
+                # ATR récent n'est pas explosif (< 2× l'ATR pré-dip)
+                atr_not_exploding = atr_recent < atr_before_dip * 2.2
+                sig6 = atr_not_exploding
+
+                # ── Signal 7 : Structure de marché intacte ───────────────────
+                # Le marché fait toujours des HH/HL (trend intact)
+                sig7 = struct > 0
+
+                # ── Signal 8 : Prix revient au-dessus du support EMA ─────────
+                # La bougie courante clôture AU-DESSUS de l'EMA fast
+                # = le niveau a tenu, les acheteurs reprennent le contrôle
+                price_reclaim = c0 >= lf * 0.998  # dans les 0.2% de l'EMA fast
+                sig8 = price_reclaim
+
+                # ── Comptage des signaux et score ─────────────────────────────
+                signals_long = [sig1, sig2, sig3, sig4, sig5, sig6, sig7, sig8]
+                n_sig = sum(signals_long)
+
+                # Minimum 3 signaux sur 8 pour un setup de base
+                # (les stratégies concurrentes n'en demandent qu'un seul)
+                if n_sig < 3:
+                    reasons = []
+                    if not sig1: reasons.append(f"RSI pas en zone peur ({rsi0:.0f})")
+                    if not sig2: reasons.append("Pas de capitulation")
+                    if not sig3: reasons.append("Pas de marteau/doji")
+                    if not sig4: reasons.append("Pas de divergence RSI")
+                    if not sig5: reasons.append(f"MACD pas en recovery ({mh0:+.5f})")
+                    return self._none(f"Seulement {n_sig}/8 signaux: " + " | ".join(reasons[:2]))
+
+                # Signaux premium : forte probabilité supplémentaire
+                premium = (sig1 and sig2)    # peur + capitulation = combo classique
+                or_premium2 = (sig4 and sig5) # divergence double = signal fort
+
+                # ── R:R check ────────────────────────────────────────────────
+                # Stop sous le plus bas du dip (invalide le setup)
+                dip_low   = float(low.iloc[-6:].min())
+                stop_long = dip_low - atr_val * 0.25
+                risk      = c0 - stop_long
+                if risk <= 0:
+                    return self._none("Stop invalide")
+
+                # Target = 1× le mouvement qui précédait la correction
+                # (retour vers le récent haut = objectif naturel)
+                target   = recent_high
+                reward   = target - c0
+                rr       = reward / risk if risk > 0 else 0
+
+                if rr < rr_min:
+                    return self._none(f"R:R {rr:.2f} < {rr_min} (target={target:.0f} stop={stop_long:.0f})")
+
+                # ── Score ─────────────────────────────────────────────────────
+                base       = 0.65
+
+                # Bonus par signal présent (pondérés par importance)
+                sig_scores = {
+                    sig1: 0.08,   # RSI fear + recovery — critique
+                    sig2: 0.07,   # Volume capitulation — critique
+                    sig3: 0.06,   # Marteau/doji — important
+                    sig4: 0.07,   # Divergence RSI — important
+                    sig5: 0.06,   # MACD recovery — important
+                    sig6: 0.03,   # ATR contraction — contextuel
+                    sig7: 0.04,   # Structure marché — contextuel
+                    sig8: 0.04,   # Prix reclaim EMA — contextuel
+                }
+                sig_bonus = sum(v for s, v in sig_scores.items() if s)
+
+                # Bonus R:R (meilleur R:R = signal plus fort)
+                rr_bonus   = min((rr - rr_min) * 0.03, 0.08)
+
+                # Bonus ADX : tendance confirmée
+                adx_bonus  = 0.04 if adx_val >= 22 else 0.0
+
+                # Bonus HTF : tendance supérieure confirme
+                htf_bonus  = 0.04 if htf > 0 else 0.0
+
+                # Malus si très proche de l'EMA200 (zone de danger)
+                ema200_dist = (c0 - lt) / lt
+                dist_malus  = -0.05 if ema200_dist < -0.03 else 0.0
+
+                score = min(base + sig_bonus + rr_bonus + adx_bonus + htf_bonus + dist_malus, 0.95)
+
+                self._last_signal[sym] = cnt
+                return {
+                    "score":      round(score, 3),
+                    "side":       "long",
+                    "name":       self.name,
+                    "atr":        atr_val,
+                    "stop_hint":  round(stop_long, 2),
+                    "indicators": {
+                        "rsi":          round(rsi0, 1),
+                        "rsi_prev":     round(rsi1, 1),
+                        "ema_fast":     round(lf, 2),
+                        "ema_mid":      round(lm, 2),
+                        "ema200":       round(lt, 2),
+                        "adx":          round(adx_val, 1),
+                        "vol_ratio":    round(vr, 2),
+                        "macd_hist":    round(mh0, 6),
+                        "dip_depth_atr":round(dip_depth, 2),
+                        "n_signals":    n_sig,
+                        "rr":           round(rr, 2),
+                        "htf_trend":    htf,
+                        "struct":       struct,
+                        "hammer":       hammer,
+                        "cap_found":    cap_found,
+                        "rsi_div":      sig4,
+                    },
+                    "conditions": [
+                        f"Tendance haussière : EMA{ema_fast}({lf:.0f}) > EMA50({lm:.0f}) ✓",
+                        f"Dip {dip_depth:.1f}× ATR depuis {recent_high:.0f} ✓",
+                        f"Signaux actifs {n_sig}/8 : "
+                        + ", ".join(filter(None, [
+                            "RSI fear↑" if sig1 else "",
+                            "Cap." if sig2 else "",
+                            "Marteau" if hammer else ("Doji" if doji else ""),
+                            "RSI div" if sig4 else "",
+                            "MACD↑" if sig5 else "",
+                            "ATR OK" if sig6 else "",
+                            "HH/HL" if sig7 else "",
+                            "Reclaim" if sig8 else "",
+                        ])),
+                        f"R:R {rr:.2f} ({c0:.0f} → {target:.0f}, stop {stop_long:.0f}) ✓",
+                        f"HTF: {'haussier' if htf>0 else 'neutre'} | ADX {adx_val:.0f}",
+                    ],
+                    "reason": (
+                        f"Fear&Mom LONG {n_sig}/8 sigs — dip {dip_depth:.1f}×ATR "
+                        f"RSI={rsi0:.0f}↑ R:R={rr:.2f} "
+                        f"{'cap+' if sig2 else ''}{'div+' if sig4 else ''}{'MACD+' if sig5 else ''}"
+                    ),
+                }
+
+        # ═══════════════════════════════════════════════════════════════════════
+        #  SHORT — Greed Exhaustion (Dead-cat bounce)
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # Tendance baissière structurelle
+        trend_bear  = lf < lm and c0 <= lt * 1.08
+        htf_ok_s    = htf <= 0
+
+        if trend_bear and htf_ok_s:
+            # Rally récent dans une tendance baissière
+            recent_low   = float(low.iloc[-6:-1].min())
+            rally_height = (c0 - recent_low) / atr_val
+            rally_valid  = 0.8 <= rally_height <= 4.0
+
+            if rally_valid:
+                # Inverse des signaux longs
+                rsi_was_greedy = max(rsi1, rsi2, rsi3) > (100 - rsi_fear)
+                rsi_topping    = rsi0 < rsi1 and rsi0 < rsi_greed * 1.1
+                sig1_s = rsi_was_greedy and rsi_topping
+
+                # Volume faible sur le rally (no conviction = dead-cat)
+                low_vol_rally = vr < 1.0
+                sig2_s = low_vol_rally
+
+                # Shooting star / Doji haut
+                body_s       = abs(c0 - o0)
+                upper_wick_s = h0 - max(o0, c0)
+                lower_wick_s = min(o0, c0) - l0
+                shoot_star   = (upper_wick_s >= body_s * 1.5
+                                and upper_wick_s >= lower_wick_s * 2
+                                and c0 <= o0)
+                sig3_s = shoot_star
+
+                # RSI divergence baissière
+                prev_high_price = float(high.iloc[-6:-2].max())
+                if h0 > prev_high_price:
+                    prev_rsi_high = float(_rsi_s.iloc[-6:-2].max())
+                    sig4_s = rsi0 < prev_rsi_high
+                else:
+                    sig4_s = False
+
+                # MACD commence à baisser
+                sig5_s = (mh0 < mh1 and mh0 < mh2) or (mh1 > 0 and mh0 < 0)
+
+                sig6_s = struct < 0  # LL/LH structure
+
+                n_sig_s = sum([sig1_s, sig2_s, sig3_s, sig4_s, sig5_s, sig6_s])
+
+                if n_sig_s >= 2:
+                    # ── Filtre anti-short en zone de survente ──────────────────
+                    # Ne pas shorter si RSI déjà en zone de peur (< rsi_fear) :
+                    # on est trop tard dans la jambe baissière, risque de squeeze élevé.
+                    if rsi0 < rsi_fear:
+                        return self._none(
+                            f"RSI oversold ({rsi0:.0f} < {rsi_fear}) — short interdit "
+                            f"(risque squeeze, entrée trop tardive dans la jambe)"
+                        )
+                    # Ne pas shorter si MACD histogramme remonte depuis un bas (divergence) :
+                    # le momentum baissier s'essouffle, le rebond est probable.
+                    if mh0 > mh1 and mh0 > -5:
+                        return self._none(
+                            f"MACD divergence haussière ({mh0:+.5f} > {mh1:+.5f}) — short interdit"
+                        )
+                    rally_high_s = float(high.iloc[-6:].max())
+                    stop_short   = rally_high_s + atr_val * 0.25
+                    risk_s       = stop_short - c0
+                    if risk_s <= 0:
+                        return self._none("Stop invalide (short)")
+
+                    target_s = recent_low
+                    reward_s = c0 - target_s
+                    rr_s     = reward_s / risk_s if risk_s > 0 else 0
+                    if rr_s < rr_min:
+                        return self._none(f"R:R short {rr_s:.2f} < {rr_min}")
+
+                    base_s    = 0.63
+                    sig_b_s   = (0.08*sig1_s + 0.06*sig2_s + 0.07*sig3_s +
+                                 0.07*sig4_s + 0.06*sig5_s + 0.04*sig6_s)
+                    rr_b_s    = min((rr_s - rr_min) * 0.03, 0.06)
+                    htf_b_s   = 0.04 if htf < 0 else 0.0
+
+                    score_s = min(base_s + sig_b_s + rr_b_s + htf_b_s, 0.93)
+
+                    self._last_signal[sym] = cnt
+                    return {
+                        "score":      round(score_s, 3),
+                        "side":       "short",
+                        "name":       self.name,
+                        "atr":        atr_val,
+                        "stop_hint":  round(stop_short, 2),
+                        "indicators": {
+                            "rsi":       round(rsi0, 1),
+                            "ema_fast":  round(lf, 2),
+                            "ema200":    round(lt, 2),
+                            "adx":       round(adx_val, 1),
+                            "vol_ratio": round(vr, 2),
+                            "n_signals": n_sig_s,
+                            "rr":        round(rr_s, 2),
+                        },
+                        "conditions": [
+                            f"Tendance baissière : EMA{ema_fast}({lf:.0f}) < EMA50({lm:.0f}) ✓",
+                            f"Rally {rally_height:.1f}× ATR — {n_sig_s}/6 signaux d'exhaustion ✓",
+                            f"R:R {rr_s:.2f} ✓",
+                        ],
+                        "reason": (
+                            f"Fear&Mom SHORT {n_sig_s}/6 sigs — rally {rally_height:.1f}×ATR "
+                            f"RSI={rsi0:.0f}↓ R:R={rr_s:.2f}"
+                        ),
+                    }
+
+        return self._none(
+            f"trend={'bull' if trend_bull else 'bear' if trend_bear else 'neutre'} "
+            f"RSI={rsi0:.0f} htf={htf} struct={struct}"
+        )
+
+    def _none(self, reason: str = "") -> dict:
+        return {"score": 0, "side": "none", "name": self.name, "reason": reason}

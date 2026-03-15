@@ -1,27 +1,14 @@
 backtest:
-  atr_stop_mult: 2.5
-  breakeven_r: 1.2
-  grace_bars: 4
   latency_ms: 50
-  lock_r: 2.5
-  lock_ratio: 0.6
-  max_notional_pct: 0.5
   monte_carlo_runs: 200
   partial_fill_pct: 0.95
   spread_pct: 0.0005
-  tight_r: 4.0
-  trail_lock: 1.5
-  trail_normal: 2.0
-  trail_tight: 1.0
-  trail_wide: 2.5
-  use_swing: true
   walk_forward_folds: 5
 database:
-  url: sqlite:///crypto_bot_v5.db
+  url: sqlite:///trades.db
 exchange:
-  api_key: YOUR_KEY
-  api_secret: YOUR_SECRET
-  futures: false
+  api_key: ${BINANCE_API_KEY}
+  api_secret: ${BINANCE_API_SECRET}
   margin: false
   name: binance
 logging:
@@ -30,27 +17,43 @@ logging:
   level: INFO
   log_file: logs/bot.log
   max_bytes: 10485760
-ml:
-  blend_weight: 0.3
-  enabled: true
-  feature_window: 50
-  min_samples: 150
-  model: random_forest
-  retrain_interval: 3600
 notifications:
+  dd_warning_ratio: 0.8
+  email_enabled: false
+  email_password: ''
+  email_port: 587
+  email_smtp: smtp.gmail.com
+  email_to: ''
+  email_user: ''
+  events:
+    on_circuit_breaker: true
+    on_dd_warning: true
+    on_exchange_error: true
+    on_optimization: true
+    on_position_loss: true
+    on_start_stop: true
+    on_status_report: true
+    on_trade_close: true
+    on_trade_open: true
+  exchange_error_threshold: 3
   min_pnl_to_notify: 5.0
-  telegram_bot_token: YOUR_BOT_TOKEN
-  telegram_chat_id: YOUR_CHAT_ID
+  position_loss_warn_pct: 5.0
+  telegram_bot_token: ''
+  telegram_chat_id: ''
   telegram_enabled: false
+  twilio_account_sid: ''
+  twilio_auth_token: ''
+  twilio_from_number: ''
   whatsapp_enabled: false
-  whatsapp_number: YOUR_PHONE
-  whatsapp_token: YOUR_TOKEN
+  whatsapp_mode: callmebot
+  whatsapp_number: ''
+  whatsapp_token: ''
 optimizer:
-  auto_apply: false
-  enabled: true
-  method: random
-  n_trials: 30
-  out_of_sample_ratio: 0.3
+  enabled: false
+  method: bayesian
+  n_trials: 40
+  out_of_sample_ratio: 0.35
+  timeframes: []
 scanner:
   dynamic_scan: false
   symbols:
@@ -59,97 +62,180 @@ scanner:
   - SOL/USDC
   - BNB/USDC
   - XRP/USDC
-  - ADA/USDC
-  - AVAX/USDC
-  - DOT/USDC
   top_n: 20
+  opportunity_scan:
+    min_vol_24h_m: 10
+    min_atr_pct: 1.0
+    max_atr_pct: 10.0
+    top_n: 15
 strategies:
   enabled:
   - trend
-  - breakout
   - supertrend_macd
-  - pullback_trend
-  plugin_path: app/strategies
 strategy_params:
   breakout:
     atr_expan_min: 1.05
-    atr_mult: 2.0
-    body_min_atr: 0.3
+    body_min_atr: 0.25
     cooldown: 20
-    ema_mid: 50
-    ema_trend: 200
     pen_max_atr: 2.0
     period: 30
     squeeze_bars: 15
-    vol_min: 1.1
-  ml_strategy:
-    lookahead: 3
-    min_train: 150
-    model_type: random_forest
-    n_trials: 15
-    proba_long: 0.6
-    proba_short: 0.4
-    retrain_every: 50
-    threshold: 0.002
+    vol_min: 1.0
+    rr_min: 1.5
+  fear_momentum:
+    atr_max_dip: 3.0
+    cooldown: 15
+    ema200_max_dist: 0.08
+    rr_min: 2.0
+    rsi_fear: 45
+    rsi_greed: 62
+    vol_cap_min: 1.8
+    ema_fast: 13
+    ema_mid: 50
   pullback_trend:
     adx_min: 18
-    cooldown: 25
-    ema_fast: 21
+    cooldown: 15
+    ema_fast: 13
     ema_mid: 50
     ema_slow: 100
     ema_trend: 200
-    pb_zone_pct: 0.005
-    rsi_pb_high: 55
-    rsi_pb_low: 35
-    vol_min: 0.9
+    pb_zone_pct: 0.003
+    rsi_pb_high: 58
+    rsi_pb_low: 38
+    vol_min: 0.7
+    rr_min: 1.5
   supertrend_macd:
     cooldown: 15
     ema_mid: 50
     ema_trend: 200
-    macd_fast: 12
+    macd_fast: 10
     macd_signal: 9
-    macd_slow: 26
-    rsi_max_long: 72
-    rsi_min_long: 30
-    st_mult: 2.5
-    st_period: 10
-    vol_cas_c: 1.1
+    macd_slow: 28
+    st_mult: 2.0
+    st_period: 7
     vol_min: 1.0
+    rsi_min: 38
+    rsi_max: 65
+    rr_min: 1.3
   trend:
-    adx_min: 18
-    cooldown: 20
-    cross_lookback: 6
-    ema200_tol: 0.04
-    ema_fast: 21
-    ema_slow: 50
+    adx_min: 22
+    cooldown: 15
+    cross_lookback: 4
+    ema200_tol: 0.025
+    ema_fast: 13
+    ema_slow: 80
     ema_trend: 200
     overext_pct: 0.02
-    rsi_high: 74
-    rsi_low: 28
+    rr_min: 1.5
+    rsi_high: 67
+    rsi_low: 30
     vol_min: 0.9
 trading:
-  borrow_rate_daily: 0.0002
-  capital: 1000.0
+  borrow_rate_daily: 0.00072
+  capital: 1000
   daily_drawdown_limit: 0.05
-  enabled: true
   latency_ms: 50
   maker_fee: 0.0004
+  margin_level_alert: 1.5
+  margin_mode: isolated
   max_drawdown_global: 0.2
-  max_leverage: 3
+  max_leverage: 1
   max_longs: 3
   max_positions: 5
   max_shorts: 3
   max_trades_per_minute: 3
   min_volume_usdc_24h: 5000000
   paper_mode: true
+  reentry_cooldown_bars: 3
   risk_per_trade: 0.01
   scan_interval: 60
-  score_threshold: 0.6
+  score_threshold: 0.55
   spread_pct: 0.0005
   taker_fee: 0.001
+  timeframes:
+  - 5m
+  - 15m
+  - 1h
+  - 1d
   timeframe: 1h
+  top_strategies_per_tf: 2
 web:
   api_key: ''
-  host: 127.0.0.1
+  host: 0.0.0.0
   port: 8000
   refresh_interval: 5
+optimizer_results:
+  trend:
+    1h:
+      run_date: '2026-03-14'
+      oos_score: -0.145407
+      params:
+        ema_fast: 34
+        ema_slow: 80
+        adx_min: 28
+        rsi_low: 33
+        rsi_high: 67
+        vol_min: 0.9
+        cross_lookback: 8
+        overext_pct: 0.02
+        ema200_tol: 0.025
+        cooldown: 15
+        rr_min: 1.3
+  pullback_trend:
+    1h:
+      run_date: '2026-03-14'
+      oos_score: -0.148019
+      params:
+        ema_fast: 21
+        ema_mid: 50
+        ema_slow: 100
+        adx_min: 20
+        pb_zone_pct: 0.003
+        rsi_pb_low: 38
+        rsi_pb_high: 62
+        vol_min: 0.8
+        cooldown: 25
+        rr_min: 1.5
+    15m:
+      run_date: '2026-03-14'
+      oos_score: 0.028431
+      params:
+        ema_fast: 13
+        ema_mid: 50
+        ema_slow: 100
+        adx_min: 25
+        pb_zone_pct: 0.003
+        rsi_pb_low: 38
+        rsi_pb_high: 62
+        vol_min: 1.0
+        cooldown: 25
+        rr_min: 1.3
+  supertrend_macd:
+    1h:
+      run_date: '2026-03-14'
+      oos_score: -0.010956
+      params:
+        st_period: 10
+        st_mult: 2.0
+        macd_fast: 10
+        macd_slow: 24
+        macd_signal: 9
+        vol_min: 1.1
+        rsi_min: 42
+        rsi_max: 60
+        cooldown: 10
+        rr_min: 1.5
+  fear_momentum:
+    1h:
+      run_date: '2026-03-14'
+      oos_score: 0.040181
+      params:
+        ema_fast: 13
+        ema_mid: 50
+        rsi_fear: 42
+        rsi_greed: 65
+        vol_cap_min: 1.5
+        atr_max_dip: 3.0
+        ema200_max_dist: 0.12
+        cooldown: 25
+        rr_min: 1.6

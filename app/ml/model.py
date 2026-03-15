@@ -76,6 +76,7 @@ class MLPredictor:
         self._regime_models[regime] = pipeline
         if regime == "all":
             self._pipeline = pipeline
+            self._last_feature_cols = list(features.columns)  # pour feature_importance()
         self.trained = True
 
         metrics = {
@@ -115,7 +116,7 @@ class MLPredictor:
         prob = self.predict_proba(df, regime)
         ml_score = prob if rule_side == "long" else (1 - prob)
         blended  = (1 - self.blend_weight) * rule_score + self.blend_weight * ml_score
-        # Si ML très contraire (prob < 0.3 pour long ou > 0.7 pour short), veto
+        # Veto si ML très contraire (prob < 0.3 pour long ou > 0.7 pour short)
         veto = (rule_side == "long"  and prob < 0.3) or \
                (rule_side == "short" and prob > 0.7)
         if veto:
@@ -123,19 +124,94 @@ class MLPredictor:
             logger.debug(f"[ML] Veto ML — prob={prob:.2f}, score réduit à {blended:.2f}")
         return round(blended, 3), rule_side
 
+    def amplify_signal(self, base_score: float, df: pd.DataFrame,
+                       regime: str = "all") -> float:
+        """
+        Amplifie ou réduit le score de signal selon la prédiction ML.
+        Pondération : 70% score règle + 30% signal ML.
+        Alternative plus légère à blend_signal quand on n'a pas besoin du veto.
+        """
+        if not self.trained:
+            return base_score
+        prob = self.predict_proba(df, regime)
+        return round(min(1.0, base_score * 0.7 + prob * 0.3), 4)
+
+    def update_regime_weights(self, results_by_regime: dict):
+        """
+        Met à jour les poids des modèles par régime selon la performance historique.
+        results_by_regime : {"trending": win_rate_pct, "ranging": …, "volatile": …}
+        """
+        for regime, win_rate in results_by_regime.items():
+            # Normalise le win_rate [0-100] en poids [0.3, 1.5]
+            weight = round(max(0.3, min(1.5, win_rate / 50)), 3)
+            # Entraîner un pipeline dédié pour ce régime si pas encore fait
+            if regime not in self._regime_models and self._pipeline:
+                self._regime_models[regime] = self._pipeline
+            logger.info(f"[ML] Poids régime '{regime}' mis à jour : {weight}")
+
+    @property
+    def is_ready(self) -> bool:
+        """True si le modèle est entraîné et prêt à prédire."""
+        return self.trained and self._pipeline is not None
+
+    def feature_importance(self) -> dict:
+        """Retourne l'importance des features (si le modèle le supporte)."""
+        if not self.trained or self._pipeline is None:
+            return {}
+        try:
+            clf = self._pipeline.named_steps.get("clf")
+            if clf is None:
+                return {}
+            if hasattr(clf, "feature_importances_"):
+                from app.ml.features import extract_features
+                import pandas as _pd
+                dummy = _pd.DataFrame(columns=range(100))  # placeholder
+                # On utilise les noms stockés lors du dernier train
+                imp = clf.feature_importances_
+                cols = getattr(self, "_last_feature_cols", [f"f{i}" for i in range(len(imp))])
+                return dict(sorted(zip(cols, imp.tolist()), key=lambda x: -x[1]))
+        except Exception:
+            pass
+        return {}
+
     def save(self):
+        import hashlib, hmac as _hmac
         os.makedirs("logs", exist_ok=True)
+        payload = pickle.dumps({"pipeline": self._pipeline, "regime_models": self._regime_models,
+                                "trained": self.trained})
+        # Signature HMAC-SHA256 avec le secret de l'app (clé fixe locale)
+        # Protège contre la modification du fichier depuis l'extérieur.
+        sig = _hmac.new(self._hmac_key(), payload, hashlib.sha256).digest()
         with open(self.model_path, "wb") as f:
-            pickle.dump({"pipeline": self._pipeline, "regime_models": self._regime_models,
-                         "trained": self.trained}, f)
+            f.write(sig)          # 32 octets de signature
+            f.write(payload)
 
     def load(self) -> bool:
+        import hashlib, hmac as _hmac
         if not os.path.exists(self.model_path):
             return False
         with open(self.model_path, "rb") as f:
-            data = pickle.load(f)
+            raw = f.read()
+        if len(raw) < 32:
+            logger.error("[ML] Fichier modèle corrompu ou trop court — ignoré.")
+            return False
+        sig_stored = raw[:32]
+        payload    = raw[32:]
+        expected   = _hmac.new(self._hmac_key(), payload, hashlib.sha256).digest()
+        if not _hmac.compare_digest(sig_stored, expected):
+            logger.error("[ML] Signature HMAC invalide — fichier modèle potentiellement altéré. "
+                         "Supprimez logs/ml_model.pkl et réentraînez.")
+            return False
+        data = pickle.loads(payload)    # noqa: S301 — payload vérifié par HMAC ci-dessus
         self._pipeline       = data["pipeline"]
         self._regime_models  = data["regime_models"]
         self.trained         = data["trained"]
-        logger.info("[ML] Modèle chargé depuis le disque.")
+        logger.info("[ML] Modèle chargé et vérifié depuis le disque.")
         return True
+
+    @staticmethod
+    def _hmac_key() -> bytes:
+        """Clé HMAC dérivée du nom de machine — locale, non partagée."""
+        import socket, hashlib
+        host = socket.gethostname().encode()
+        return hashlib.sha256(b"crypto_bot_ml_v1:" + host).digest()

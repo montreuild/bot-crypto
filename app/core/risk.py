@@ -26,7 +26,10 @@ class RiskManager:
         self.max_shorts          = t.get("max_shorts", 3)
         self.max_trades_per_min  = t.get("max_trades_per_minute", 3)
         self.max_leverage        = t.get("max_leverage", 1)
+        self.max_notional_pct    = float(cfg.get("backtest", {}).get("max_notional_pct", 0.20))
         self.base_risk           = t.get("risk_per_trade", 0.01)
+        self._dd_warn_ratio      = cfg.get("notifications", {}).get("dd_warning_ratio", 0.80)
+        self._notifier           = None  # attaché par LiveTrader via attach_notifier()
 
         # Equity tracking
         self.equity            = self.initial_capital
@@ -57,16 +60,31 @@ class RiskManager:
     def _check_circuit_breakers(self):
         # Drawdown journalier
         daily_dd = (self.daily_start - self.equity) / max(self.daily_start, 1)
+        warn_threshold = self.daily_dd_limit * self._dd_warn_ratio
+        # Pré-alerte (ex: 80% du seuil)
+        if daily_dd >= warn_threshold and not self.halted:
+            self._trigger_dd_warning(daily_dd)
         if daily_dd >= self.daily_dd_limit and not self.halted:
-            self.halted     = True
+            self.halted      = True
             self.halt_reason = f"Circuit breaker : DD journalier {daily_dd:.1%} ≥ {self.daily_dd_limit:.1%}"
             logger.critical(f"🔴 HALT — {self.halt_reason}")
         # Drawdown global
         global_dd = (self.peak_equity - self.equity) / max(self.peak_equity, 1)
         if global_dd >= self.global_dd_limit and not self.halted:
-            self.halted     = True
+            self.halted      = True
             self.halt_reason = f"Circuit breaker : DD global {global_dd:.1%} ≥ {self.global_dd_limit:.1%}"
             logger.critical(f"🔴 HALT — {self.halt_reason}")
+
+    def _trigger_dd_warning(self, daily_dd: float):
+        """Délégué au notifier si disponible."""
+        if hasattr(self, "_notifier") and self._notifier:
+            self._notifier.notify_dd_warning(
+                daily_dd * 100, self.daily_dd_limit * 100
+            )
+
+    def attach_notifier(self, notifier) -> None:
+        """Attache un Notifier pour les alertes de risque."""
+        self._notifier = notifier
 
     def reset_halt(self):
         """Réinitialisation manuelle du circuit breaker."""
@@ -86,12 +104,26 @@ class RiskManager:
             factor = 1.0
         return self.base_risk * factor
 
-    def compute_size(self, entry: float, atr: float) -> tuple[float, float]:
-        """Calcule la taille de position (units) et le notionnel."""
+    def compute_size(self, entry: float, atr: float,
+                     score: float = 1.0, threshold: float = 0.60) -> tuple:
+        """
+        Calcule la taille de position (units) et le notionnel.
+        Le sizing est modulé par le score du signal :
+          - score = threshold (0.60) → 50% de la taille max
+          - score = 1.0             → 100% de la taille max
+        Formule linéaire : factor = 0.5 + 0.5 * (score - threshold) / (1 - threshold)
+        """
         risk_amount  = self.equity * self.compute_risk()
         size         = risk_amount / max(atr, 1e-8)
         notional     = size * entry
-        max_notional = self.equity * 0.20
+        max_notional = self.equity * self.max_notional_pct
+
+        # Modulation par le score
+        score_range = max(1.0 - threshold, 1e-9)
+        score_factor = 0.5 + 0.5 * min(max(score - threshold, 0) / score_range, 1.0)
+        size     *= score_factor
+        notional  = size * entry
+
         if notional > max_notional:
             size     = max_notional / entry
             notional = max_notional

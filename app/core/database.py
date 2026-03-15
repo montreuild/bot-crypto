@@ -84,12 +84,103 @@ class OptimizerResult(Base):
     oos_score  = Column(Float)   # out-of-sample score
 
 
-def init_db(url: str):
+class OpenPosition(Base):
+    """
+    Positions ouvertes persistées en BDD.
+    Permet au bot de les récupérer après un crash / redémarrage.
+    """
+    __tablename__ = "open_positions"
+    id           = Column(String(100), primary_key=True)   # "{symbol}::{strategy}"
+    symbol       = Column(String(20),  nullable=False)
+    side         = Column(String(10),  nullable=False)
+    strategy     = Column(String(50))
+    score        = Column(Float)
+    entry        = Column(Float,       nullable=False)
+    stop         = Column(Float,       nullable=False)
+    size         = Column(Float,       nullable=False)
+    notional     = Column(Float)
+    leverage     = Column(Float,       default=1.0)
+    open_time    = Column(Float,       nullable=False)   # timestamp Unix
+    fees         = Column(Float,       default=0.0)
+    order_id     = Column(String(100), default="")
+    reason       = Column(Text,        default="")
+    __table_args__ = (
+        Index("ix_open_positions_symbol", "symbol"),
+    )
+
+
+def init_db(url: str = "sqlite:///crypto_bot.db"):
+    """Initialise la base de données et retourne (engine, SessionLocal)."""
     engine     = create_engine(url, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     logger.info(f"[DB] Connecté : {url}")
     return engine, SessionLocal
+
+
+def persist_open_position(session: Session, pos: dict) -> None:
+    """Sauvegarde ou met à jour une position ouverte en BDD."""
+    existing = session.get(OpenPosition, pos["id"])
+    if existing:
+        existing.stop     = pos["stop"]
+        existing.fees     = pos.get("fees", 0.0)
+        existing.notional = pos.get("notional", 0.0)
+    else:
+        rec = OpenPosition(
+            id        = pos["id"],
+            symbol    = pos["symbol"],
+            side      = pos["side"],
+            strategy  = pos.get("strategy", ""),
+            score     = pos.get("score", 0.0),
+            entry     = pos["entry"],
+            stop      = pos["stop"],
+            size      = pos["size"],
+            notional  = pos.get("notional", 0.0),
+            leverage  = pos.get("leverage", 1.0),
+            open_time = pos.get("open_time", 0.0),
+            fees      = pos.get("fees", 0.0),
+            order_id  = pos.get("order_id", ""),
+            reason    = pos.get("reason", ""),
+        )
+        session.add(rec)
+    session.commit()
+
+
+def delete_open_position(session: Session, pos_id: str) -> None:
+    """Supprime une position de la table open_positions (appelé à la clôture)."""
+    rec = session.get(OpenPosition, pos_id)
+    if rec:
+        session.delete(rec)
+        session.commit()
+
+
+def load_open_positions(session: Session) -> List[dict]:
+    """
+    Charge les positions ouvertes depuis la BDD (appelé au démarrage).
+    Retourne une liste de dicts compatibles avec live_trader.open_positions.
+    """
+    rows = session.query(OpenPosition).all()
+    result = []
+    for r in rows:
+        result.append({
+            "id":        r.id,
+            "symbol":    r.symbol,
+            "side":      r.side,
+            "strategy":  r.strategy,
+            "score":     r.score,
+            "entry":     r.entry,
+            "stop":      r.stop,
+            "size":      r.size,
+            "notional":  r.notional,
+            "leverage":  r.leverage,
+            "open_time": r.open_time,
+            "fees":      r.fees,
+            "order_id":  r.order_id,
+            "reason":    r.reason,
+            "pnl":       0.0,
+            "_trailing": None,   # sera réinitialisé dans live_trader
+        })
+    return result
 
 
 def save_trade(session: Session, t: dict):
@@ -117,11 +208,13 @@ def update_daily_stats(session: Session, date_str: str, pnl: float, win: bool,
                        fees: float, equity: float):
     row = session.query(DailyStats).filter(DailyStats.date == date_str).first()
     if not row:
-        row = DailyStats(date=date_str, equity_open=equity)
+        row = DailyStats(date=date_str, trades=0, wins=0, pnl=0.0,
+                         fees=0.0, equity_open=equity, equity_close=equity)
         session.add(row)
-    row.trades     += 1
-    row.wins       += 1 if win else 0
-    row.pnl        = round((row.pnl or 0) + pnl, 6)
-    row.fees       = round((row.fees or 0) + fees, 6)
+    # Fix #2 — protection NoneType si colonnes NULL en DB (migration ancienne version)
+    row.trades      = (row.trades  or 0) + 1
+    row.wins        = (row.wins    or 0) + (1 if win else 0)
+    row.pnl         = round((row.pnl   or 0.0) + pnl,  6)
+    row.fees        = round((row.fees  or 0.0) + fees, 6)
     row.equity_close = equity
     session.commit()

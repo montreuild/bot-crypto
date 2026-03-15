@@ -1,10 +1,11 @@
 """
-Crypto Bot V5 — Point d'entrée principal.
+Crypto Bot V7 — Point d'entrée principal.
 """
 import argparse
 import importlib
 import logging
 import sys
+import threading
 
 import pandas as pd
 import uvicorn
@@ -18,18 +19,21 @@ from app.api.main       import app as fastapi_app, init_app
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Crypto Bot V5")
-    p.add_argument("--config",      default="config.yaml", help="Fichier de config")
-    p.add_argument("--backtest",    metavar="SYMBOL",       help="Lancer un backtest CLI")
-    p.add_argument("--timeframe",   default="",             help="Timeframe (défaut=config)")
-    p.add_argument("--limit",       type=int, default=500,  help="Nombre de bougies")
-    p.add_argument("--walk-forward",action="store_true",    help="Activer Walk-Forward")
-    p.add_argument("--monte-carlo", action="store_true",    help="Activer Monte-Carlo")
-    p.add_argument("--optimize",    metavar="STRATEGY",     help="Optimiser une stratégie")
-    p.add_argument("--opt-method",  default="bayesian",     help="grid|random|bayesian")
-    p.add_argument("--scan",        action="store_true",    help="Scanner les marchés")
-    p.add_argument("--live",        action="store_true",    help="Démarrer le live trading")
-    p.add_argument("--web",         action="store_true",    help="Lancer le serveur web seul")
+    p = argparse.ArgumentParser(description="Crypto Bot V7")
+    p.add_argument("--config",       default="config.yaml", help="Fichier de config")
+    p.add_argument("--backtest",     metavar="SYMBOL",       help="Lancer un backtest CLI")
+    p.add_argument("--timeframe",    default="",             help="Timeframe (défaut=config)")
+    p.add_argument("--limit",        type=int, default=500,  help="Nombre de bougies")
+    p.add_argument("--walk-forward", action="store_true",    help="Activer Walk-Forward")
+    p.add_argument("--monte-carlo",  action="store_true",    help="Activer Monte-Carlo")
+    p.add_argument("--optimize",     metavar="STRATEGY",     help="Optimiser une stratégie")
+    p.add_argument("--opt-method",   default="bayesian",     help="grid|random|bayesian")
+    p.add_argument("--scan",         action="store_true",    help="Scanner les marchés")
+    p.add_argument("--live",         action="store_true",    help="Démarrer le live trading")
+    p.add_argument("--paper",        action="store_true",    help="Forcer le mode paper trading")
+    p.add_argument("--web",          action="store_true",    help="Serveur web seul (sans bot)")
+    p.add_argument("--host",         default=None,           help="Adresse d'écoute (écrase config)")
+    p.add_argument("--port",         type=int, default=None, help="Port du serveur web (écrase config)")
     return p.parse_args()
 
 
@@ -45,10 +49,10 @@ def run_backtest_cli(cfg, args):
     df   = pd.DataFrame(raw, columns=["time","open","high","low","close","volume"])
     df["time"] = pd.to_datetime(df["time"], unit="ms")
 
-    mc_runner = MonteCarlo(n_runs=cfg.get("backtest",{}).get("monte_carlo_runs",200)) if args.monte_carlo else None
+    mc_runner = MonteCarlo(n_runs=cfg.get("backtest",{}).get("monte_carlo_runs", 200)) if args.monte_carlo else None
 
     for name in cfg["strategies"]["enabled"]:
-        print(f"\n  ── Stratégie : {name}")
+        print(f"\n  -- Stratégie : {name}")
         mod = importlib.import_module(f"app.strategies.{name}")
         eng = Engine(); eng.register(mod.Strategy())
         bt  = Backtester(eng, cfg)
@@ -66,7 +70,7 @@ def run_backtest_cli(cfg, args):
         print(f"  Profit Fct : {d['profit_factor']}")
 
         if args.walk_forward and len(df) >= 200:
-            print(f"\n  Walk-Forward ({cfg.get('backtest',{}).get('walk_forward_folds',5)} folds)…")
+            print(f"\n  Walk-Forward ({cfg.get('backtest',{}).get('walk_forward_folds', 5)} folds)...")
             wf  = WalkForwardAnalyzer(eng, cfg)
             wfr = wf.run(df, symbol)
             print(f"  OOS PnL moy   : {wfr['avg_oos_pnl']:+.4f}")
@@ -75,10 +79,10 @@ def run_backtest_cli(cfg, args):
             print(f"  Consistance   : {wfr['consistency']:.0f}% des folds OOS profitables")
 
         if mc_runner and d.get("trades"):
-            print(f"\n  Monte-Carlo ({cfg.get('backtest',{}).get('monte_carlo_runs',200)} runs)…")
+            print(f"\n  Monte-Carlo ({cfg.get('backtest',{}).get('monte_carlo_runs', 200)} runs)...")
             mc  = mc_runner.run(d["trades"], cfg["trading"]["capital"])
             print(f"  Equity moy.   : ${mc['final_equity_mean']:.2f}")
-            print(f"  Equity p5-p95 : ${mc['final_equity_p5']:.2f} — ${mc['final_equity_p95']:.2f}")
+            print(f"  Equity p5-p95 : ${mc['final_equity_p5']:.2f} -- ${mc['final_equity_p95']:.2f}")
             print(f"  DD max p95    : {mc['max_dd_p95']:.2f}%")
             print(f"  Prob profit   : {mc['prob_profit']:.1f}%")
             print(f"  Prob ruine -10%:{mc['prob_ruin_10pct']:.1f}%")
@@ -93,16 +97,16 @@ def run_optimizer_cli(cfg, args):
     tf       = cfg["trading"]["timeframe"]
     raw      = exchange.fetch_ohlcv("BTC/USDC", tf, limit=1000)
     df       = pd.DataFrame(raw, columns=["time","open","high","low","close","volume"])
-    df["time"]= pd.to_datetime(df["time"], unit="ms")
+    df["time"] = pd.to_datetime(df["time"], unit="ms")
     split    = int(len(df) * 0.7)
     opt      = StrategyOptimizer(strategy, cfg, df.iloc[:split], df.iloc[split:],
                                   DEFAULT_SPACES.get(strategy, {}))
     method = args.opt_method
-    if method == "grid":     result = opt.grid_search()
+    if method == "grid":       result = opt.grid_search()
     elif method == "bayesian": result = opt.bayesian_search(30)
-    else:                    result = opt.random_search(30)
+    else:                      result = opt.random_search(30)
     best = result.get("best", {})
-    print(f"\n  Meilleurs paramètres ({method}) :")
+    print(f"\n  Meilleurs parametres ({method}) :")
     print(f"  Params   : {best.get('params')}")
     print(f"  IS score : {best.get('is_score')}")
     print(f"  OOS score: {best.get('oos_score')}")
@@ -111,6 +115,10 @@ def run_optimizer_cli(cfg, args):
 def main():
     args = parse_args()
     cfg  = load_config(args.config)
+
+    if args.paper:
+        cfg["trading"]["paper_mode"] = True
+
     setup_logging(cfg)
     logger = logging.getLogger("bot")
 
@@ -127,33 +135,40 @@ def main():
         from app.scanner.scanner import MarketScanner
         scanner = MarketScanner(exchange, cfg)
         results = scanner.screen(cfg["trading"]["timeframe"])
-        print(f"\n  {len(results)} paires scannées :")
-        for r in sorted(results, key=lambda x: x.get("indicators",{}).get("adx",0), reverse=True)[:10]:
-            ind = r.get("indicators",{})
+        print(f"\n  {len(results)} paires scannees :")
+        for r in sorted(results, key=lambda x: x.get("indicators", {}).get("adx", 0), reverse=True)[:10]:
+            ind = r.get("indicators", {})
             print(f"  {r['symbol']:15} ADX={ind.get('adx',0):.1f} RSI={ind.get('rsi',0):.1f} "
-                  f"Régime={r['regime']:6} Vol24h=${r['volume_24h']/1e6:.1f}M")
+                  f"Regime={r['regime']:6} Vol24h=${r['volume_24h']/1e6:.1f}M")
         return
 
-    # Mode live ou web
+    # Mode live / paper / web
     trader = None
-    if args.live:
-        from app.live.live_trader import LiveTrader
-        exchange = create_exchange(cfg)
-        trader   = LiveTrader(cfg, exchange)
+
+    if not args.web:
+        try:
+            from app.live.live_trader import LiveTrader
+            exchange = create_exchange(cfg)
+            trader   = LiveTrader(cfg, exchange)
+        except Exception as e:
+            logger.warning(f"Impossible d'initialiser le trader ({e}) -- serveur web seul.")
+            trader = None
 
     init_app(cfg, trader)
 
     web_cfg = cfg.get("web", {})
-    host    = web_cfg.get("host", "127.0.0.1")
-    port    = int(web_cfg.get("port", 8000))
+    host    = args.host or web_cfg.get("host", "127.0.0.1")
+    port    = args.port or int(web_cfg.get("port", 8000))
 
-    if args.live and trader:
-        import threading
+    if trader:
         t = threading.Thread(target=trader.start, daemon=True)
         t.start()
-        logger.info(f"[Main] Live trading démarré — Dashboard: http://{host}:{port}")
+        mode = "PAPER" if cfg["trading"].get("paper_mode", True) else "LIVE"
+        logger.info(f"[Main] Trading demarre ({mode}) -- Dashboard : http://{host}:{port}")
+    else:
+        logger.info(f"[Main] Serveur web seul -- http://{host}:{port}")
 
-    logger.info(f"[Main] Serveur web : http://{host}:{port}")
+    print(f"\n  Crypto Bot V7 -- http://{host}:{port}\n")
     uvicorn.run(fastapi_app, host=host, port=port, log_level="warning")
 
 

@@ -1,22 +1,26 @@
 """
-Stratégie Breakout Donchian — V4
+Stratégie Breakout Donchian — V5
 
-Lacunes V3 corrigées :
-  - period : 20 → 30 (canal 30h = breakout plus significatif, moins de faux)
-  - pen_max_atr : 1.2 → 2.0 (stopper les gros mouvements n'a pas de sens)
-  - atr_expan_min : 1.20 → 1.05 (seuil plus réaliste, était trop rarement atteint)
-  - Confirmation body : la bougie de breakout doit avoir un corps > 0.4×ATR
-    (filtre les breakouts en "mèche" qui souvent retracent)
-  - Filtre tendance plus nuancé : EMA200 requis pour longs mais 
-    EMA50 accepté si prix reste structurellement haussier
-  - vol_min abaissé à 1.1 (était 1.3, trop sélectif la nuit/weekend)
-  - Nouveau bonus : breakout > 1 close précédente (confirmation structurelle)
+Corrections V5 vs V4 :
+  - Cooldown par symbole
+  - quality ≥ 2 requis (était ≥ 1 — trop permissif)
+  - trend_bull strict : prix > EMA200 ET > EMA50 (plus de OR)
+    Exception : EMA200 à ±3% accepté si EMA50 bien au-dessus
+  - Ajout filtre MACD : momentum positif requis à la cassure
+  - Confirmation 2 barres : les 2 précédentes dans la même direction
+  - Volume MONTE sur la bougie de breakout (vol_now > vol_prev)
+  - ATR expansion obligatoire (pas optionnelle)
+  - R:R check : stop sous le canal Donchian brisé
+  - HTF trend comme filtre supplémentaire
 """
 import logging
 from typing import Dict, Any
-import numpy as np
 import pandas as pd
 from app.engine.engine import BaseStrategy
+from app.strategies.indicators import (
+    atr_series as calc_atr_series, macd as calc_macd,
+    vol_ratio as calc_vol, bb_squeeze as calc_squeeze, htf_trend, pre_val
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,24 +29,28 @@ class Strategy(BaseStrategy):
     name = "breakout"
 
     def __init__(self):
-        self._last_signal_bar: int = -999
-        self._call_count: int = 0
+        self._last_signal: Dict[str, int] = {}
+        self._call_count:  Dict[str, int] = {}
 
-    def score(self, df: pd.DataFrame, params: dict = None) -> Dict[str, Any]:
-        self._call_count += 1
+    def score(self, df: pd.DataFrame, params: dict = None,
+              df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get("breakout", {})
 
-        period        = int(p.get("period",          30))   # ↑ 20→30
+        period        = int(p.get("period",          30))
         atr_mult      = float(p.get("atr_mult",      2.0))
-        vol_min       = float(p.get("vol_min",       1.1))  # ↓ 1.3→1.1
+        vol_min       = float(p.get("vol_min",       1.2))   # ↑ 1.1→1.2
         squeeze_bars  = int(p.get("squeeze_bars",    15))
         cooldown      = int(p.get("cooldown",         20))
         ema_trend     = int(p.get("ema_trend",       200))
         ema_mid       = int(p.get("ema_mid",          50))
-        atr_expan_min = float(p.get("atr_expan_min", 1.05)) # ↓ 1.20→1.05
-        pen_max_atr   = float(p.get("pen_max_atr",   2.0))  # ↑ 1.2→2.0
-        # Minimum body de la bougie de breakout (en fraction d'ATR)
-        body_min_atr  = float(p.get("body_min_atr",  0.30)) # nouveau
+        atr_expan_min = float(p.get("atr_expan_min", 1.08))  # ↑ 1.05→1.08 obligatoire
+        pen_max_atr   = float(p.get("pen_max_atr",   2.0))
+        body_min_atr  = float(p.get("body_min_atr",  0.35))  # ↑ 0.30→0.35
+        rr_min        = float(p.get("rr_min",        1.5))
+
+        sym = symbol or str(df["time"].iloc[-1]) if "time" in df.columns else "default"
+        cnt = self._call_count.get(sym, 0) + 1
+        self._call_count[sym] = cnt
 
         min_bars = max(ema_trend + 5, period + squeeze_bars + 25)
         if len(df) < min_bars:
@@ -53,7 +61,7 @@ class Strategy(BaseStrategy):
         low    = df["low"].astype(float)
         open_  = df["open"].astype(float)
 
-        # ── Tendance de fond ──────────────────────────────────────────────────
+        # ── Tendance fond ────────────────────────────────────────────────────
         ema_t = close.ewm(span=ema_trend, adjust=False).mean()
         ema_m = close.ewm(span=ema_mid,   adjust=False).mean()
         lt    = float(ema_t.iloc[-1])
@@ -61,151 +69,181 @@ class Strategy(BaseStrategy):
         c_now = float(close.iloc[-1])
         o_now = float(open_.iloc[-1])
 
-        # Tendance haussière si au-dessus de l'EMA200 ou de l'EMA50 (backup)
-        trend_bull = c_now > lt or (c_now > lm and c_now > lt * 0.97)
-        trend_bear = c_now < lt or (c_now < lm and c_now < lt * 1.03)
+        # Tendance stricte : les deux EMAs doivent être du bon côté
+        trend_bull = c_now > lt and c_now > lm        # strict
+        trend_bear = c_now < lt and c_now < lm        # strict
+        # Souplesse pour corrections profondes : -3% sous EMA200 ok si EMA50 valide
+        trend_bull_soft = (c_now > lt * 0.97 and c_now > lm * 1.01)
+        trend_bear_soft = (c_now < lt * 1.03 and c_now < lm * 0.99)
 
-        # ── Canal Donchian (exclu barre courante) ──────────────────────────────
+        # ── Canal Donchian ───────────────────────────────────────────────────
         highest = float(high.iloc[-(period + 1):-1].max())
         lowest  = float(low.iloc[-(period + 1):-1].min())
 
-        # ── ATR ────────────────────────────────────────────────────────────────
-        atr_series = self._atr_series(df, 14)
-        atr_now    = float(atr_series.iloc[-1])
+        # ── ATR — série pré-calculée si dispo ────────────────────────────────
+        atr_s    = df["_pre_atr14"] if "_pre_atr14" in df.columns else calc_atr_series(df, 14)
+        atr_now  = float(atr_s.iloc[-1])
         if atr_now <= 0:
             return self._none()
 
-        # ── Corps de la bougie de breakout ─────────────────────────────────────
-        body = abs(c_now - o_now)
+        body    = abs(c_now - o_now)
         body_ok = body >= atr_now * body_min_atr
 
-        # ── Expansion ATR ──────────────────────────────────────────────────────
-        atr_prev      = float(atr_series.iloc[-(squeeze_bars + 1):-1].mean())
-        atr_ratio     = atr_now / max(atr_prev, 1e-9)
-        vol_expanding = atr_ratio >= atr_expan_min
+        # ATR expansion obligatoire
+        atr_prev  = float(atr_s.iloc[-(squeeze_bars+1):-1].mean())
+        atr_ratio = atr_now / max(atr_prev, 1e-9)
+        expanding = atr_ratio >= atr_expan_min
 
-        # ── Squeeze Bollinger ─────────────────────────────────────────────────
-        bb_squeeze = self._bb_squeeze(close, squeeze_bars)
+        # Squeeze
+        squeeze = calc_squeeze(close, squeeze_bars)
 
-        # ── Volume ────────────────────────────────────────────────────────────
-        vol_avg   = df["volume"].rolling(20).mean().iloc[-1]
-        vol_now   = float(df["volume"].iloc[-1])
-        vol_ratio = vol_now / max(vol_avg, 1e-9)
+        # Volume
+        vr       = pre_val(df, "_pre_volratio20") or calc_vol(df)
+        vol_prev = float(df["volume"].iloc[-2])
+        vol_now  = float(df["volume"].iloc[-1])
+        vol_rising = vol_now > vol_prev * 1.05   # volume monte sur la cassure
 
-        # ── Confirmation par barre précédente ─────────────────────────────────
-        # La barre n-1 doit être dans la même direction (pas un spike isolé)
-        c1 = float(close.iloc[-2])
-        prev_bullish = c1 > float(close.iloc[-3])
-        prev_bearish = c1 < float(close.iloc[-3])
+        # MACD momentum
+        lh = pre_val(df, "_pre_macd_hist")
+        if lh is None:
+            _, _, hist = calc_macd(close, 12, 26, 9)
+            lh = float(hist.iloc[-1])
+            ph = float(hist.iloc[-2])
+        else:
+            ph = float(df["_pre_macd_hist"].iloc[-2])
+        macd_bull = lh > 0
+        macd_bear = lh < 0
+        macd_accel_bull = lh > ph
+        macd_accel_bear = lh < ph
 
-        # ── Cooldown ─────────────────────────────────────────────────────────
-        if self._call_count - self._last_signal_bar < cooldown:
+        # HTF
+        htf = htf_trend(df_htf)
+
+        # Confirmation 2 barres précédentes dans la même direction
+        c1, c2, c3 = float(close.iloc[-2]), float(close.iloc[-3]), float(close.iloc[-4])
+        prev2_bullish = c1 > c3   # n-1 et n-2 toutes deux haussières
+        prev2_bearish = c1 < c3
+
+        if cnt - self._last_signal.get(sym, -999) < cooldown:
             return self._none("Cooldown")
 
         indicators = {
             "donchian_high": round(highest, 2), "donchian_low": round(lowest, 2),
             "ema200": round(lt, 2), "ema50": round(lm, 2), "atr": round(atr_now, 2),
-            "atr_ratio": round(atr_ratio, 3), "vol_ratio": round(vol_ratio, 2),
-            "bb_squeeze": bb_squeeze, "body_atr": round(body / atr_now, 3),
+            "atr_ratio": round(atr_ratio, 3), "vol_ratio": round(vr, 2),
+            "bb_squeeze": squeeze, "body_atr": round(body / atr_now, 3),
+            "macd_hist": round(lh, 6), "htf_trend": htf,
         }
 
-        # ── LONG breakout ─────────────────────────────────────────────────────
-        if c_now > highest and trend_bull and vol_ratio >= vol_min:
+        # ── LONG breakout ────────────────────────────────────────────────────
+        if c_now > highest and (trend_bull or trend_bull_soft) and vr >= vol_min:
             penetration = (c_now - highest) / atr_now
             if penetration > pen_max_atr:
-                return self._none(f"Breakout épuisé {penetration:.2f}x ATR")
-
+                return self._none(f"Épuisé {penetration:.2f}x ATR")
             if not body_ok:
-                return self._none(f"Corps trop petit {body/atr_now:.2f}x ATR (min {body_min_atr})")
+                return self._none(f"Corps {body/atr_now:.2f}x ATR < {body_min_atr}")
+            if not expanding:
+                return self._none(f"ATR pas en expansion ({atr_ratio:.2f}x < {atr_expan_min}x)")
+            if not macd_bull:
+                return self._none(f"MACD négatif ({lh:+.5f})")
+            if htf < 0:
+                return self._none("HTF baissier — breakout contre tendance")
 
-            quality = 0
-            if vol_expanding: quality += 1
-            if bb_squeeze:    quality += 1
-            if penetration > 0.1: quality += 1
-            if prev_bullish:      quality += 1  # confirmation barre précédente
+            # Quality score (minimum 2 sur 4)
+            quality = sum([
+                squeeze,            # compression avant cassure
+                penetration > 0.15, # cassure significative
+                prev2_bullish,      # confirmation 2 barres
+                vol_rising,         # volume monte
+            ])
+            if quality < 2:
+                return self._none(f"Qualité {quality}/4 < 2")
 
-            if quality < 1:
-                return self._none("Qualité insuffisante (0/4)")
+            # R:R : stop sous le canal Donchian
+            stop_l  = highest - atr_now * atr_mult
+            risk_l  = c_now - stop_l
+            if risk_l <= 0:
+                return self._none("Stop invalide")
+            if (risk_l * 2.0) / risk_l < rr_min:
+                return self._none(f"R:R insuffisant")
 
-            vol_factor  = min((vol_ratio - vol_min) / 2.5, 0.12)
-            pen_factor  = min(penetration * 0.05, 0.08)
-            qual_bonus  = quality * 0.04
-            score = min(0.60 + vol_factor + pen_factor + qual_bonus, 0.93)
+            vol_f     = min((vr - vol_min) / 2.0, 0.10)
+            pen_f     = min(penetration * 0.05, 0.08)
+            qual_b    = quality * 0.04
+            macd_b    = 0.04 if macd_accel_bull else 0.0
+            htf_b     = 0.04 if htf > 0 else 0.0
+            trend_b   = 0.04 if trend_bull else 0.0
 
-            self._last_signal_bar = self._call_count
+            score = min(0.62 + vol_f + pen_f + qual_b + macd_b + htf_b + trend_b, 0.94)
+            self._last_signal[sym] = cnt
             return {
                 "score": round(score, 3), "side": "long", "name": self.name,
-                "atr": atr_now, "indicators": indicators,
+                "atr": atr_now, "stop_hint": round(stop_l, 2),
+                "indicators": indicators,
                 "conditions": [
                     f"Close {c_now:.0f} > Donchian{period}H {highest:.0f} ✓",
-                    f"Tendance fond haussière (EMA200={lt:.0f}) ✓",
-                    f"Volume {vol_ratio:.2f}x (min {vol_min}x) ✓",
-                    f"ATR ratio {atr_ratio:.2f}x | BB squeeze: {'✓' if bb_squeeze else '✗'}",
-                    f"Corps bougie {body/atr_now:.2f}x ATR ✓",
-                    f"Pénétration {penetration:.2f}x ATR | Qualité {quality}/4",
+                    f"Tendance: EMA200={lt:.0f} EMA50={lm:.0f} ✓",
+                    f"Vol {vr:.2f}x ↑ | ATR expansion {atr_ratio:.2f}x ✓",
+                    f"MACD {lh:+.5f} positif ✓ | Corps {body/atr_now:.2f}x ATR ✓",
+                    f"Qualité {quality}/4 | Pénétration {penetration:.2f}x ATR",
                 ],
                 "reason": (
-                    f"Breakout LONG D{period} "
-                    f"pén={penetration:.2f} vol={vol_ratio:.1f}x q={quality}/4"
+                    f"Breakout LONG D{period} pén={penetration:.2f} "
+                    f"vol={vr:.1f}x q={quality}/4 MACD={lh:+.5f}"
                 ),
             }
 
-        # ── SHORT breakout ────────────────────────────────────────────────────
-        if c_now < lowest and trend_bear and vol_ratio >= vol_min:
+        # ── SHORT breakout ───────────────────────────────────────────────────
+        if c_now < lowest and (trend_bear or trend_bear_soft) and vr >= vol_min:
             penetration = (lowest - c_now) / atr_now
             if penetration > pen_max_atr:
-                return self._none(f"Breakout épuisé {penetration:.2f}x ATR")
-
+                return self._none(f"Épuisé {penetration:.2f}x ATR")
             if not body_ok:
-                return self._none(f"Corps trop petit {body/atr_now:.2f}x ATR")
+                return self._none(f"Corps {body/atr_now:.2f}x ATR < {body_min_atr}")
+            if not expanding:
+                return self._none(f"ATR pas en expansion ({atr_ratio:.2f}x)")
+            if not macd_bear:
+                return self._none(f"MACD positif ({lh:+.5f})")
+            if htf > 0:
+                return self._none("HTF haussier — breakout contre tendance")
 
-            quality = 0
-            if vol_expanding: quality += 1
-            if bb_squeeze:    quality += 1
-            if penetration > 0.1: quality += 1
-            if prev_bearish:      quality += 1
+            quality = sum([squeeze, penetration > 0.15, prev2_bearish, vol_rising])
+            if quality < 2:
+                return self._none(f"Qualité {quality}/4 < 2")
 
-            if quality < 1:
-                return self._none("Qualité insuffisante")
+            stop_s  = lowest + atr_now * atr_mult
+            risk_s  = stop_s - c_now
+            if risk_s <= 0:
+                return self._none("Stop invalide")
 
-            vol_factor = min((vol_ratio - vol_min) / 2.5, 0.12)
-            pen_factor = min(penetration * 0.05, 0.08)
-            qual_bonus = quality * 0.04
-            score = min(0.60 + vol_factor + pen_factor + qual_bonus, 0.92)
+            vol_f   = min((vr - vol_min) / 2.0, 0.10)
+            pen_f   = min(penetration * 0.05, 0.08)
+            qual_b  = quality * 0.04
+            macd_b  = 0.04 if macd_accel_bear else 0.0
+            htf_b   = 0.04 if htf < 0 else 0.0
 
-            self._last_signal_bar = self._call_count
+            score = min(0.62 + vol_f + pen_f + qual_b + macd_b + htf_b, 0.93)
+            self._last_signal[sym] = cnt
             return {
                 "score": round(score, 3), "side": "short", "name": self.name,
-                "atr": atr_now, "indicators": indicators,
+                "atr": atr_now, "stop_hint": round(stop_s, 2),
+                "indicators": indicators,
                 "conditions": [
                     f"Close {c_now:.0f} < Donchian{period}L {lowest:.0f} ✓",
-                    f"Tendance fond baissière (EMA200={lt:.0f}) ✓",
-                    f"Volume {vol_ratio:.2f}x | ATR {atr_ratio:.2f}x | q={quality}/4",
+                    f"Vol {vr:.2f}x | ATR {atr_ratio:.2f}x | q={quality}/4 ✓",
+                    f"MACD {lh:+.5f} négatif ✓ | Corps {body/atr_now:.2f}x ATR ✓",
                 ],
-                "reason": f"Breakout SHORT D{period} pén={penetration:.2f} vol={vol_ratio:.1f}x q={quality}/4",
+                "reason": (
+                    f"Breakout SHORT D{period} pén={penetration:.2f} "
+                    f"vol={vr:.1f}x q={quality}/4"
+                ),
             }
 
         return self._none(
-            f"Close {c_now:.0f} vs [{lowest:.0f}-{highest:.0f}] | "
-            f"trend={'bull' if trend_bull else 'bear'} | vol {vol_ratio:.1f}x"
+            f"Close {c_now:.0f} ∉ [{lowest:.0f}–{highest:.0f}] | "
+            f"trend={'bull' if trend_bull else 'bear' if trend_bear else '?'} | "
+            f"vol {vr:.1f}x | MACD {lh:+.5f}"
         )
-
-    def _bb_squeeze(self, close: pd.Series, lookback: int = 15) -> bool:
-        if len(close) < lookback + 20:
-            return False
-        sma  = close.rolling(20).mean()
-        std  = close.rolling(20).std()
-        bb_width    = (4 * std / sma.clip(lower=1e-9))
-        cur_w       = float(bb_width.iloc[-1])
-        past_widths = bb_width.iloc[-(lookback + 1):-1].dropna()
-        if len(past_widths) < 5:
-            return False
-        return cur_w <= float(past_widths.quantile(0.30))
 
     def _none(self, reason: str = "") -> dict:
         return {"score": 0, "side": "none", "name": self.name, "reason": reason}
-
-    def _atr_series(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
-        h, l, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
-        tr = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
-        return tr.rolling(period).mean()

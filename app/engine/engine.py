@@ -15,8 +15,12 @@ class BaseStrategy:
     """Interface que toutes les stratégies doivent respecter."""
     name: str = "base"
 
-    def score(self, df: pd.DataFrame, params: dict = None) -> Dict[str, Any]:
+    def score(self, df: pd.DataFrame, params: dict = None,
+              df_htf=None, symbol: str = "") -> Dict[str, Any]:
         """
+        df     : OHLCV du timeframe principal
+        df_htf : OHLCV du timeframe supérieur — peut être None
+        symbol : nom de la paire (ex: "BTC/USDC") — utilisé pour le cooldown
         Analyse le DataFrame OHLCV et retourne un signal.
         Retourne : {"score": float [0-1], "side": "long"|"short"|"none", "name": str}
         """
@@ -27,11 +31,17 @@ class Engine:
     def __init__(self):
         self.strategies: List[BaseStrategy] = []
 
-    def register(self, strategy: BaseStrategy):
-        logger.info(f"[Engine] Stratégie enregistrée : {strategy.name}")
+    def register(self, strategy: BaseStrategy, silent: bool = False):
+        # Garde contre les doublons (même nom)
+        if any(s.name == strategy.name for s in self.strategies):
+            logger.warning(f"[Engine] Doublon ignoré : {strategy.name}")
+            return
+        if not silent:
+            logger.info(f"[Engine] Stratégie enregistrée : {strategy.name}")
         self.strategies.append(strategy)
 
-    def best_signal(self, df: pd.DataFrame, params: dict = None) -> Dict[str, Any]:
+    def best_signal(self, df: pd.DataFrame, params: dict = None,
+                    symbol: str = "") -> Dict[str, Any]:
         """
         Retourne le signal avec le meilleur score parmi toutes les stratégies.
         Si aucun signal, retourne {"score": 0, "side": "none", "name": ""}.
@@ -42,7 +52,7 @@ class Engine:
         best = {"score": 0.0, "side": "none", "name": ""}
         for strat in self.strategies:
             try:
-                result = strat.score(df, params)
+                result = strat.score(df, params, symbol=symbol)
                 if not isinstance(result, dict):
                     continue
                 if result.get("score", 0) > best["score"]:
@@ -50,14 +60,3 @@ class Engine:
             except Exception as e:
                 logger.error(f"[Engine] Erreur dans stratégie {strat.name} : {e}")
         return best
-
-    def all_signals(self, df: pd.DataFrame, params: dict = None) -> List[Dict[str, Any]]:
-        """Retourne les signaux de toutes les stratégies (pour debug/backtest)."""
-        signals = []
-        for strat in self.strategies:
-            try:
-                signals.append(strat.score(df, params))
-            except Exception as e:
-                logger.error(f"[Engine] Erreur {strat.name} : {e}")
-                signals.append({"score": 0, "side": "none", "name": strat.name, "error": str(e)})
-        return signals
