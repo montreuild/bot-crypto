@@ -15,7 +15,7 @@ Corrections V5 vs V4 :
 """
 import logging
 from typing import Dict, Any
-import pandas as pd
+import polars as pl
 from app.engine.engine import BaseStrategy
 from app.strategies.indicators import (
     atr_series as calc_atr_series, macd as calc_macd,
@@ -32,7 +32,7 @@ class Strategy(BaseStrategy):
         self._last_signal: Dict[str, int] = {}
         self._call_count:  Dict[str, int] = {}
 
-    def score(self, df: pd.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get("breakout", {})
 
@@ -48,7 +48,7 @@ class Strategy(BaseStrategy):
         body_min_atr  = float(p.get("body_min_atr",  0.35))  # ↑ 0.30→0.35
         rr_min        = float(p.get("rr_min",        1.5))
 
-        sym = symbol or str(df["time"].iloc[-1]) if "time" in df.columns else "default"
+        sym = symbol or str(df["time"][-1]) if "time" in df.columns else "default"
         cnt = self._call_count.get(sym, 0) + 1
         self._call_count[sym] = cnt
 
@@ -56,18 +56,18 @@ class Strategy(BaseStrategy):
         if len(df) < min_bars:
             return self._none()
 
-        close  = df["close"].astype(float)
-        high   = df["high"].astype(float)
-        low    = df["low"].astype(float)
-        open_  = df["open"].astype(float)
+        close  = df["close"]
+        high   = df["high"]
+        low    = df["low"]
+        open_  = df["open"]
 
         # ── Tendance fond ────────────────────────────────────────────────────
-        ema_t = close.ewm(span=ema_trend, adjust=False).mean()
-        ema_m = close.ewm(span=ema_mid,   adjust=False).mean()
-        lt    = float(ema_t.iloc[-1])
-        lm    = float(ema_m.iloc[-1])
-        c_now = float(close.iloc[-1])
-        o_now = float(open_.iloc[-1])
+        ema_t = close.ewm_mean(span=ema_trend, adjust=False)
+        ema_m = close.ewm_mean(span=ema_mid,   adjust=False)
+        lt    = float(ema_t[-1])
+        lm    = float(ema_m[-1])
+        c_now = float(close[-1])
+        o_now = float(open_[-1])
 
         # Tendance stricte : les deux EMAs doivent être du bon côté
         trend_bull = c_now > lt and c_now > lm        # strict
@@ -77,12 +77,12 @@ class Strategy(BaseStrategy):
         trend_bear_soft = (c_now < lt * 1.03 and c_now < lm * 0.99)
 
         # ── Canal Donchian ───────────────────────────────────────────────────
-        highest = float(high.iloc[-(period + 1):-1].max())
-        lowest  = float(low.iloc[-(period + 1):-1].min())
+        highest = float(high[-(period + 1):-1].max())
+        lowest  = float(low[-(period + 1):-1].min())
 
         # ── ATR — série pré-calculée si dispo ────────────────────────────────
         atr_s    = df["_pre_atr14"] if "_pre_atr14" in df.columns else calc_atr_series(df, 14)
-        atr_now  = float(atr_s.iloc[-1])
+        atr_now  = float(atr_s[-1])
         if atr_now <= 0:
             return self._none()
 
@@ -90,7 +90,7 @@ class Strategy(BaseStrategy):
         body_ok = body >= atr_now * body_min_atr
 
         # ATR expansion obligatoire
-        atr_prev  = float(atr_s.iloc[-(squeeze_bars+1):-1].mean())
+        atr_prev  = float(atr_s[-(squeeze_bars + 1):-1].mean())
         atr_ratio = atr_now / max(atr_prev, 1e-9)
         expanding = atr_ratio >= atr_expan_min
 
@@ -99,18 +99,18 @@ class Strategy(BaseStrategy):
 
         # Volume
         vr       = pre_val(df, "_pre_volratio20") or calc_vol(df)
-        vol_prev = float(df["volume"].iloc[-2])
-        vol_now  = float(df["volume"].iloc[-1])
+        vol_prev = float(df["volume"][-2])
+        vol_now  = float(df["volume"][-1])
         vol_rising = vol_now > vol_prev * 1.05   # volume monte sur la cassure
 
         # MACD momentum
         lh = pre_val(df, "_pre_macd_hist")
         if lh is None:
             _, _, hist = calc_macd(close, 12, 26, 9)
-            lh = float(hist.iloc[-1])
-            ph = float(hist.iloc[-2])
+            lh = float(hist[-1])
+            ph = float(hist[-2])
         else:
-            ph = float(df["_pre_macd_hist"].iloc[-2])
+            ph = float(df["_pre_macd_hist"][-2])
         macd_bull = lh > 0
         macd_bear = lh < 0
         macd_accel_bull = lh > ph
@@ -120,7 +120,7 @@ class Strategy(BaseStrategy):
         htf = htf_trend(df_htf)
 
         # Confirmation 2 barres précédentes dans la même direction
-        c1, c2, c3 = float(close.iloc[-2]), float(close.iloc[-3]), float(close.iloc[-4])
+        c1, c2, c3 = float(close[-2]), float(close[-3]), float(close[-4])
         prev2_bullish = c1 > c3   # n-1 et n-2 toutes deux haussières
         prev2_bearish = c1 < c3
 

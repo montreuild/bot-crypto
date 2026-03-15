@@ -13,7 +13,7 @@ Corrections V5 vs V4 :
 """
 import logging
 from typing import Dict, Any
-import pandas as pd
+import polars as pl
 from app.engine.engine import BaseStrategy
 from app.strategies.indicators import (
     rsi as calc_rsi, atr as calc_atr, adx as calc_adx,
@@ -31,24 +31,24 @@ class Strategy(BaseStrategy):
         self._last_signal: Dict[str, int] = {}
         self._call_count:  Dict[str, int] = {}
 
-    def score(self, df: pd.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get("trend", {})
 
         ema_fast       = int(p.get("ema_fast",       21))
         ema_slow       = int(p.get("ema_slow",        50))
         ema_trend      = int(p.get("ema_trend",      200))
-        adx_min        = float(p.get("adx_min",       22))   # ↑ 18→22
-        vol_min        = float(p.get("vol_min",       1.0))  # ↑ 0.9→1.0
+        adx_min        = float(p.get("adx_min",       22))
+        vol_min        = float(p.get("vol_min",       1.0))
         cross_lookback = int(p.get("cross_lookback",   6))
         cooldown       = int(p.get("cooldown",         20))
-        overext_pct    = float(p.get("overext_pct",  0.015)) # ↓ 2%→1.5%
+        overext_pct    = float(p.get("overext_pct",  0.015))
         ema200_tol     = float(p.get("ema200_tol",   0.035))
         rsi_low        = float(p.get("rsi_low",       30))
         rsi_high       = float(p.get("rsi_high",      70))
         rr_min         = float(p.get("rr_min",        1.5))
 
-        sym = symbol or str(df["time"].iloc[-1]) if "time" in df.columns else "default"
+        sym = symbol or str(df["time"][-1]) if "time" in df.columns else "default"
         cnt = self._call_count.get(sym, 0) + 1
         self._call_count[sym] = cnt
 
@@ -56,25 +56,25 @@ class Strategy(BaseStrategy):
         if len(df) < min_bars:
             return self._none()
 
-        close = df["close"].astype(float)
-        high  = df["high"].astype(float)
-        low   = df["low"].astype(float)
+        close = df["close"]
+        high  = df["high"]
+        low   = df["low"]
 
         # ── EMAs ─────────────────────────────────────────────────────────────
-        ema_f = close.ewm(span=ema_fast,  adjust=False).mean()
-        ema_s = close.ewm(span=ema_slow,  adjust=False).mean()
-        ema_t = close.ewm(span=ema_trend, adjust=False).mean()
+        ema_f = close.ewm_mean(span=ema_fast,  adjust=False)
+        ema_s = close.ewm_mean(span=ema_slow,  adjust=False)
+        ema_t = close.ewm_mean(span=ema_trend, adjust=False)
 
-        lf    = float(ema_f.iloc[-1])
-        ls    = float(ema_s.iloc[-1])
-        lt    = float(ema_t.iloc[-1])
-        c_now = float(close.iloc[-1])
+        lf    = float(ema_f[-1])
+        ls    = float(ema_s[-1])
+        lt    = float(ema_t[-1])
+        c_now = float(close[-1])
 
         atr_val  = pre_val(df, "_pre_atr14") or calc_atr(df, 14)
         if atr_val <= 0:
             return self._none()
 
-        rsi_now  = pre_val(df, "_pre_rsi14") or float(calc_rsi(close, 14).iloc[-1])
+        rsi_now  = pre_val(df, "_pre_rsi14") or float(calc_rsi(close, 14)[-1])
         adx_val  = pre_val(df, "_pre_adx14") or calc_adx(df, 14)
         vr       = pre_val(df, "_pre_volratio20") or calc_vol(df)
         struct   = market_structure(high, low)
@@ -84,28 +84,28 @@ class Strategy(BaseStrategy):
         lh = pre_val(df, "_pre_macd_hist")
         if lh is None:
             _, _, hist = calc_macd(close, 12, 26, 9)
-            lh = float(hist.iloc[-1])
-            ph = float(hist.iloc[-2])
+            lh = float(hist[-1])
+            ph = float(hist[-2])
         else:
             ph_series = df["_pre_macd_hist"]
-            ph = float(ph_series.iloc[-2]) if len(ph_series) > 1 else 0.0
-        macd_bull = lh > 0 and lh >= ph          # positif et monte
-        macd_bear = lh < 0 and lh <= ph          # négatif et baisse
-        macd_x_bull = ph < 0 and lh > 0          # cross zéro haussier
-        macd_x_bear = ph > 0 and lh < 0          # cross zéro baissier
+            ph = float(ph_series[-2]) if len(ph_series) > 1 else 0.0
+        macd_bull = lh > 0 and lh >= ph
+        macd_bear = lh < 0 and lh <= ph
+        macd_x_bull = ph < 0 and lh > 0
+        macd_x_bear = ph > 0 and lh < 0
 
         # Pente EMA fast normalisée par ATR
-        slope_atr = (lf - float(ema_f.iloc[-4])) / atr_val
+        slope_atr = (lf - float(ema_f[-4])) / atr_val
 
         # Cross EMA récent
         cross_bull = cross_bear = False
         for k in range(1, min(cross_lookback + 1, len(df) - 2)):
-            pf = float(ema_f.iloc[-1-k])
-            ps = float(ema_s.iloc[-1-k])
+            pf = float(ema_f[-1 - k])
+            ps = float(ema_s[-1 - k])
             if pf <= ps and lf > ls: cross_bull = True; break
             if pf >= ps and lf < ls: cross_bear = True; break
 
-        # Overextension (réduit à 1.5%)
+        # Overextension
         overextended = (
             (lf > ls and (c_now - lf) / lf > overext_pct) or
             (lf < ls and (lf - c_now) / lf > overext_pct)
@@ -125,9 +125,7 @@ class Strategy(BaseStrategy):
         # ═══ LONG ════════════════════════════════════════════════════════════
         cond_ema   = lf > ls
         cond_trend = c_now >= lt * (1 - ema200_tol)
-        # MACD obligatoire : momentum positif (cross ou accélération)
         cond_macd  = macd_bull or macd_x_bull
-        # Entry : cross récent OU slope ATR > seuil + MACD confirme
         cond_entry = cross_bull or (slope_atr > 0.04 and cond_macd)
         cond_adx   = adx_val >= adx_min
         cond_rsi   = rsi_low <= rsi_now <= rsi_high
@@ -138,7 +136,6 @@ class Strategy(BaseStrategy):
         if all([cond_ema, cond_trend, cond_entry, cond_adx,
                 cond_rsi, cond_vol, cond_noext, cond_macd, htf_ok]):
 
-            # R:R check : stop sous EMA fast, target 2× le risque
             stop_l  = lf - atr_val * 1.5
             risk_l  = c_now - stop_l
             if risk_l <= 0:

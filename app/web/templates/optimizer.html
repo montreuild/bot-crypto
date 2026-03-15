@@ -1,133 +1,8 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>Crypto Bot — Optimiseur</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<style>
-/* SHARED SIDEBAR + SHELL CSS */
-:root{
-  --bg:#070a10;--surface:#0c1018;--card:#101520;--card-hover:#141b28;
-  --border:rgba(255,255,255,.07);--border-hi:rgba(255,255,255,.13);
-  --text:#dde6f5;--muted:#5a6e8c;--dim:#2e3f55;
-  --cyan:#22d3ee;--cyan-dim:rgba(34,211,238,.1);
-  --green:#34d399;--green-dim:rgba(52,211,153,.1);
-  --red:#fb7185;--red-dim:rgba(251,113,133,.1);
-  --amber:#fbbf24;--amber-dim:rgba(251,191,36,.1);
-  --purple:#a78bfa;--purple-dim:rgba(167,139,250,.1);
-  --mono:'DM Mono',monospace;--head:'Syne',sans-serif;--body:'Barlow',system-ui,sans-serif;
-  --r:8px;--r-sm:5px;--sidebar-w:220px;--sidebar-w-col:56px;
-}
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-html{height:100%;}
-body{background:var(--bg);color:var(--text);font-family:var(--body);font-size:13px;min-height:100vh;display:flex;overflow-x:hidden;}
-::-webkit-scrollbar{width:4px;height:4px;}
-::-webkit-scrollbar-track{background:transparent;}
-::-webkit-scrollbar-thumb{background:var(--border-hi);border-radius:4px;}
-/* Sidebar */
-#sidebar{width:var(--sidebar-w);flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100vh;position:sticky;top:0;transition:width .2s ease;z-index:100;overflow:hidden;}
-#sidebar.collapsed{width:var(--sidebar-w-col);}
-.sb-logo{height:56px;display:flex;align-items:center;padding:0 16px;gap:10px;border-bottom:1px solid var(--border);flex-shrink:0;}
-.sb-logo-icon{width:28px;height:28px;flex-shrink:0;background:linear-gradient(135deg,var(--cyan),var(--purple));border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px;}
-.sb-logo-text{font-family:var(--head);font-size:.9rem;font-weight:800;color:var(--text);white-space:nowrap;letter-spacing:-.02em;}
-.sb-logo-text span{color:var(--cyan);}
-.sb-nav{flex:1;padding:12px 8px;overflow-y:auto;}
-.sb-group-label{font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);padding:0 8px 6px;white-space:nowrap;overflow:hidden;}
-.collapsed .sb-group-label{opacity:0;}
-.sb-link{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r);color:var(--muted);text-decoration:none;font-size:.82rem;font-weight:500;transition:all .15s;white-space:nowrap;margin-bottom:2px;overflow:hidden;}
-.sb-link:hover{color:var(--text);background:rgba(255,255,255,.04);}
-.sb-link.active{color:var(--cyan);background:var(--cyan-dim);}
-.sb-icon{font-size:16px;flex-shrink:0;width:20px;text-align:center;color:var(--muted);}
-.sb-link.active .sb-icon{color:var(--cyan);}
-.sb-link-label{white-space:nowrap;}
-.sb-footer{padding:12px 8px;border-top:1px solid var(--border);flex-shrink:0;}
-#sb-toggle{display:flex;align-items:center;justify-content:center;width:36px;height:28px;border:none;background:rgba(255,255,255,.04);color:var(--muted);border-radius:var(--r-sm);cursor:pointer;font-size:12px;transition:all .15s;margin-left:auto;}
-#sb-toggle:hover{color:var(--text);background:rgba(255,255,255,.08);}
-/* Main */
-#main{flex:1;min-width:0;display:flex;flex-direction:column;overflow-x:hidden;}
-#topbar{height:56px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:10px;position:sticky;top:0;z-index:50;flex-shrink:0;}
-.topbar-title{font-family:var(--head);font-weight:700;font-size:.95rem;letter-spacing:-.01em;}
-.topbar-sep{flex:1;}
-/* Utility colors */
-.c-cyan{color:var(--cyan);}.c-green{color:var(--green);}.c-red{color:var(--red);}
-.c-amber{color:var(--amber);}.c-purple{color:var(--purple);}.c-muted{color:var(--muted);}
-/* Section header */
-.sec-hdr{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
-.sec-hdr h2{font-family:var(--head);font-size:.7rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);}
-.sec-hdr::after{content:'';flex:1;height:1px;background:var(--border);}
-/* Buttons */
-.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border:none;border-radius:var(--r-sm);cursor:pointer;font-size:.76rem;font-weight:600;font-family:var(--body);white-space:nowrap;transition:all .15s;}
-.btn:hover{filter:brightness(1.1);}
-.btn:disabled{opacity:.3;cursor:not-allowed;filter:none;}
-.btn-start{background:var(--green);color:#03201a;}
-.btn-stop{background:var(--red);color:#fff;}
-.btn-cyan{background:var(--cyan);color:#031218;}
-.btn-purple{background:var(--purple);color:#0a0214;}
-.btn-green{background:var(--green);color:#03201a;}
-.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border-hi);}
-.btn-ghost:hover{color:var(--text);border-color:rgba(255,255,255,.2);}
-.btn-full{width:100%;justify-content:center;}
-/* Cards */
-.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
-.panel-hdr{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;}
-.panel-hdr h3{font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;}
-.panel-body{padding:14px;display:flex;flex-direction:column;gap:12px;}
-/* Form */
-.field{display:flex;flex-direction:column;gap:5px;}
-.field label{font-size:.72rem;color:var(--muted);font-weight:500;}
-.field .hint{font-size:.63rem;color:var(--dim);line-height:1.4;}
-select,input[type=text],input[type=number],input[type=email],input[type=password]{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:var(--r-sm);font-size:.78rem;font-family:var(--body);outline:none;transition:border-color .15s;width:100%;}
-select:focus,input:focus{border-color:var(--cyan);}
-input[type=range]{padding:0;background:transparent;cursor:pointer;accent-color:var(--cyan);}
-/* Toggle */
-.toggle-wrap{display:flex;align-items:center;gap:10px;}
-.toggle{position:relative;width:40px;height:22px;flex-shrink:0;}
-.toggle input{opacity:0;width:0;height:0;}
-.toggle-slider{position:absolute;inset:0;background:var(--border-hi);border-radius:22px;cursor:pointer;transition:.2s;}
-.toggle-slider:before{content:'';position:absolute;width:16px;height:16px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;}
-.toggle input:checked+.toggle-slider{background:var(--green);}
-.toggle input:checked+.toggle-slider:before{transform:translateX(18px);}
-.toggle-lbl{font-size:.8rem;font-weight:500;}
-/* Tags */
-.tag{padding:2px 7px;border-radius:4px;font-size:.62rem;font-weight:700;font-family:var(--body);letter-spacing:.03em;display:inline-block;}
-.tag-long,.tlong{background:var(--green-dim);color:var(--green);}
-.tag-short,.tshort{background:var(--red-dim);color:var(--red);}
-.tag-open{background:var(--cyan-dim);color:var(--cyan);}
-.tag-closed{background:var(--green-dim);color:var(--green);}
-.tag-rej{background:rgba(255,255,255,.04);color:var(--muted);}
-.tag-strat{background:var(--purple-dim);color:var(--purple);}
-/* Table */
-.table-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
-.table-head{padding:12px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);}
-.tscroll{overflow-x:auto;}
-table{width:100%;border-collapse:collapse;}
-th{padding:8px 12px;text-align:left;color:var(--dim);font-weight:600;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:1;white-space:nowrap;}
-th.r{text-align:right;}
-td{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.03);font-family:var(--mono);font-size:.73rem;white-space:nowrap;}
-td.r{text-align:right;}
-tr:last-child td{border-bottom:none;}
-tr:hover td{background:rgba(255,255,255,.02);}
-.empty-row{text-align:center;color:var(--dim);padding:28px 12px;font-size:.77rem;}
-/* Info boxes */
-.info-box{background:var(--cyan-dim);border:1px solid rgba(34,211,238,.2);border-radius:var(--r-sm);padding:9px 14px;font-size:.72rem;color:var(--muted);line-height:1.6;}
-.info-box strong{color:var(--cyan);}
-.warn-box{background:var(--amber-dim);border:1px solid rgba(251,191,36,.2);border-radius:var(--r-sm);padding:9px 14px;font-size:.72rem;color:var(--amber);line-height:1.6;}
-/* Spinner */
-.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--border-hi);border-top-color:var(--cyan);border-radius:50%;animation:sp .7s linear infinite;}
-@keyframes sp{to{transform:rotate(360deg)}}
-/* Toast */
-#toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border-hi);color:var(--text);padding:10px 16px;border-radius:var(--r);font-size:.78rem;opacity:0;z-index:9999;transition:opacity .25s,transform .25s;transform:translateY(8px);pointer-events:none;max-width:320px;border-left:3px solid var(--green);}
-#toast.show{opacity:1;transform:translateY(0);}
-#toast.err{border-left-color:var(--red);}
-.toast{position:fixed;bottom:24px;right:24px;background:var(--card);border:1px solid var(--green);border-radius:var(--r-sm);padding:10px 16px;font-size:.8rem;color:var(--green);z-index:9999;transform:translateY(60px);opacity:0;transition:all .25s;}
-.toast.err{border-color:var(--red);color:var(--red);}
-.toast.show{transform:translateY(0);opacity:1;}
-/* Grid bg */
-.grid-bg::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(34,211,238,.015) 1px,transparent 1px),linear-gradient(90deg,rgba(34,211,238,.015) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0;}
-.grid-bg>*{position:relative;z-index:1;}
+{% extends "base.html" %}
 
+{% block title %} — Optimiseur{% endblock %}
+
+{% block page_styles %}
 .opt-page{display:grid;grid-template-columns:300px 1fr;gap:0;min-height:calc(100vh - 56px);}
 @media(max-width:960px){.opt-page{grid-template-columns:1fr;}}
 .opt-left{background:var(--surface);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;position:sticky;top:56px;height:calc(100vh - 56px);}
@@ -139,8 +14,6 @@ tr:hover td{background:rgba(255,255,255,.02);}
 .checkbox-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
 .checkbox-row input[type=checkbox]{width:14px;height:14px;accent-color:var(--cyan);cursor:pointer;}
 .checkbox-row label{font-size:.78rem;color:var(--text);cursor:pointer;}
-.btn-purple{background:var(--purple);color:#0a0214;}
-.btn-green{background:var(--green);color:#03201a;}
 /* Param space */
 .param-space{margin-top:10px;}
 .ps-strat{margin-bottom:8px;}
@@ -152,9 +25,10 @@ tr:hover td{background:rgba(255,255,255,.02);}
 .ps-param{background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.2);color:var(--muted);padding:2px 7px;border-radius:3px;font-size:.62rem;font-family:var(--mono);}
 .ps-param.fixed{background:var(--amber-dim);border-color:rgba(251,191,36,.2);color:var(--amber);}
 .ps-param.global{background:var(--cyan-dim);border-color:rgba(34,211,238,.2);color:var(--cyan);}
-/* Jobs */
+/* Section label */
 .sec-label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px;}
 .sec-label::after{content:'';flex:1;height:1px;background:var(--border);}
+/* Jobs */
 .job-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;transition:border-color .2s;margin-bottom:12px;}
 .job-card.running{border-color:rgba(34,211,238,.4);}
 .job-card.done{border-color:rgba(52,211,153,.3);}
@@ -167,23 +41,28 @@ tr:hover td{background:rgba(255,255,255,.02);}
 .js-done{background:var(--green-dim);color:var(--green);}
 .js-error{background:var(--red-dim);color:var(--red);}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+/* Progress */
 .progress-wrap{margin:8px 0;}
 .progress-bg{background:var(--border);border-radius:4px;height:7px;overflow:hidden;}
 .progress-fill{height:100%;border-radius:4px;transition:width .4s ease;background:linear-gradient(90deg,var(--cyan),var(--purple));}
 .progress-done{background:linear-gradient(90deg,var(--green),#00b87a)!important;}
 .progress-lbl{display:flex;justify-content:space-between;font-size:.64rem;color:var(--dim);font-family:var(--mono);margin-top:3px;}
+/* Metrics */
 .metrics-row{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:10px;}
 @media(max-width:700px){.metrics-row{grid-template-columns:repeat(3,1fr);}}
 .metric-box{background:#0c1018;border:1px solid var(--border);border-radius:var(--r-sm);padding:9px;text-align:center;}
 .metric-lbl{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;}
 .metric-val{font-size:.88rem;font-weight:700;font-family:var(--mono);}
+/* Before/After */
 .ba-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;}
 .ba-box{background:#0c1018;border:1px solid var(--border);border-radius:var(--r-sm);padding:10px;}
 .ba-title{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;font-weight:700;}
 .ba-row{display:flex;justify-content:space-between;font-size:.73rem;margin-bottom:3px;font-family:var(--mono);}
 .ba-key{color:var(--dim);}
+/* Params block */
 .params-block{background:#070b12;border:1px solid var(--border);border-radius:var(--r-sm);padding:10px;margin-top:10px;font-size:.71rem;font-family:var(--mono);line-height:1.9;color:var(--muted);word-break:break-all;}
 .params-block .pk{color:var(--cyan);}.params-block .pv{color:var(--green);}
+/* Top 5 */
 .top5-wrap{margin-top:10px;overflow-x:auto;}
 .top5-table{width:100%;border-collapse:collapse;font-size:.71rem;min-width:600px;}
 .top5-table th{padding:6px 9px;text-align:right;color:var(--dim);border-bottom:1px solid var(--border);font-size:.62rem;text-transform:uppercase;}
@@ -192,117 +71,100 @@ tr:hover td{background:rgba(255,255,255,.02);}
 .top5-table td:first-child{text-align:center;color:var(--dim);}
 .top5-table tr:hover td{background:rgba(255,255,255,.015);}
 .top5-best td{background:rgba(52,211,153,.04)!important;}
+/* Apply row */
 .apply-row{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;}
 .apply-note{font-size:.68rem;color:var(--dim);}
+/* Empty state */
 .empty-state{text-align:center;padding:48px 24px;color:var(--dim);}
 .empty-state p{font-size:.82rem;margin-top:8px;}
-.warn-box{background:var(--amber-dim);border:1px solid rgba(251,191,36,.25);border-radius:var(--r-sm);padding:10px 12px;font-size:.72rem;color:var(--amber);margin-top:8px;line-height:1.6;}
+/* Color helpers */
 .clr-green{color:var(--green);}.clr-red{color:var(--red);}.clr-muted{color:var(--muted);}
 .clr-yellow{color:var(--amber);}.clr-blue{color:var(--cyan);}
+{% endblock %}
 
-</style>
-<script>
-  const API_KEY = "{{ api_key }}";
-  function escHtml(s){if(s==null)return "";return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
-  function apiFetch(url,opts={}){if(!opts.headers)opts.headers={};if(API_KEY)opts.headers["X-API-Key"]=API_KEY;return fetch(url,opts);}
-</script>
-</head>
-<body>
+{% block topbar_content %}
+<div class="topbar-title">Optimiseur</div><div class="topbar-sep"></div>
+{% endblock %}
 
-<aside id="sidebar">
-  <div class="sb-logo"><div class="sb-logo-icon">&#x26A1;</div><div class="sb-logo-text">Crypto<span>Bot</span></div><button id="sb-toggle" onclick="toggleSidebar()">&#x2039;</button></div>
-  <nav class="sb-nav">
-    <div class="sb-group-label">Trading</div>
-    <a href="/"        class="sb-link"><span class="sb-icon">&#x25C8;</span><span class="sb-link-label">Dashboard Live</span></a>
-    <a href="/scanner" class="sb-link"><span class="sb-icon">&#x25CE;</span><span class="sb-link-label">Scanner</span></a>
-    <div class="sb-group-label" style="margin-top:12px">Outils</div>
-    <a href="/optimizer" class="sb-link active"><span class="sb-icon">&#x2B21;</span><span class="sb-link-label">Optimiseur</span></a>
-    <a href="/backtest"  class="sb-link"><span class="sb-icon">&#x21BA;</span><span class="sb-link-label">Backtest</span></a>
-    <a href="/config"    class="sb-link"><span class="sb-icon">&#x2699;</span><span class="sb-link-label">Configuration</span></a>
-  </nav>
-  <div class="sb-footer"><div class="sb-link" style="cursor:default;font-size:.65rem;color:var(--dim)"><span class="sb-icon" style="font-size:9px">&#x25CF;</span><span class="sb-link-label">v2.0 · API Binance</span></div></div>
-</aside>
+{% block content %}
+<div id="content">
+  <div class="opt-page">
 
-<div id="main">
-  <header id="topbar"><div class="topbar-title">Optimiseur</div><div class="topbar-sep"></div></header>
-  <div id="content">
-    <div class="opt-page">
-
-      <!-- Left config panel -->
-      <div class="opt-left">
-        <div class="config-panel">
-          <div class="panel">
-            <div class="panel-hdr"><span style="color:var(--purple)">&#x2B21;</span><h3>Configuration</h3></div>
-            <div class="panel-body">
-              <div class="form-row">
-                <label class="form-lbl">Strategies a optimiser<span class="hint">Laisser vide = toutes</span></label>
-                <div id="strat-checks" style="display:flex;flex-direction:column;gap:6px;margin-top:4px"></div>
-              </div>
-              <div class="form-row"><label class="form-lbl">Paire</label><input type="text" id="opt-symbol" value="BTC/USDC"/></div>
-              <div class="form-row"><label class="form-lbl">Methode</label>
-                <select id="opt-method">
-                  <option value="bayesian">Bayesian UCB (recommande)</option>
-                  <option value="random">Random Search (rapide)</option>
-                  <option value="grid">Grid Search (exhaustif)</option>
-                </select>
-              </div>
-              <div class="form-row"><label class="form-lbl">Nombre de trials<span class="hint">Bayesian: 30-60 · Random: 40-80 · Grid: auto</span></label><input type="number" id="opt-trials" value="40" min="10" max="200"/></div>
-              <div class="form-row"><label class="form-lbl">Workers paralleles<span class="hint">1 = sequentiel · 2-4 = parallele</span></label>
-                <select id="opt-njobs"><option value="1">1 (sequentiel)</option><option value="2">2 workers</option><option value="4" selected>4 workers (ARM A1)</option><option value="-1">Tous les CPU</option></select>
-              </div>
-              <div class="form-row"><label class="form-lbl">Early stopping<span class="hint">Arret si pas d'amelioration apres N trials (0=off)</span></label><input type="number" id="opt-early-stop" value="0" min="0" max="50"/></div>
-              <div class="form-row"><label class="form-lbl">Timeframes<span class="hint">Cochez les TFs voulus</span></label><div id="tf-checks" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div></div>
-              <div id="preview-matrix" style="margin-bottom:10px;background:rgba(0,0,0,.25);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px"></div>
-              <div class="form-row">
-                <label class="form-lbl">Bougies par TF (split IS/OOS 65/35)
-                  <span class="hint" id="lim-hint">Saisissez une valeur pour voir le détail IS/OOS</span>
-                </label>
-                <input type="number" id="opt-limit" value="1500" min="300" max="8000" oninput="updateLimHint()" onchange="updateLimHint()"/>
-              </div>
-              <div class="checkbox-row"><input type="checkbox" id="opt-apply"/><label for="opt-apply">Appliquer automatiquement les meilleurs params</label></div>
-              <button class="btn btn-purple btn-full" onclick="startOpt()">&#x25B6; Lancer l'optimisation</button>
+    <!-- Left config panel -->
+    <div class="opt-left">
+      <div class="config-panel">
+        <div class="panel">
+          <div class="panel-hdr"><span style="color:var(--purple)">&#x2B21;</span><h3>Configuration</h3></div>
+          <div class="panel-body">
+            <div class="form-row">
+              <label class="form-lbl">Strategies a optimiser<span class="hint">Laisser vide = toutes</span></label>
+              <div id="strat-checks" style="display:flex;flex-direction:column;gap:6px;margin-top:4px"></div>
             </div>
+            <div class="form-row"><label class="form-lbl">Paire</label><input type="text" id="opt-symbol" value="BTC/USDC"/></div>
+            <div class="form-row"><label class="form-lbl">Methode</label>
+              <select id="opt-method">
+                <option value="bayesian">Bayesian UCB (recommande)</option>
+                <option value="random">Random Search (rapide)</option>
+                <option value="grid">Grid Search (exhaustif)</option>
+              </select>
+            </div>
+            <div class="form-row"><label class="form-lbl">Nombre de trials<span class="hint">Bayesian: 30-60 · Random: 40-80 · Grid: auto</span></label><input type="number" id="opt-trials" value="40" min="10" max="200"/></div>
+            <div class="form-row"><label class="form-lbl">Workers paralleles<span class="hint">1 = sequentiel · 2-4 = parallele</span></label>
+              <select id="opt-njobs"><option value="1">1 (sequentiel)</option><option value="2">2 workers</option><option value="4" selected>4 workers (ARM A1)</option><option value="-1">Tous les CPU</option></select>
+            </div>
+            <div class="form-row"><label class="form-lbl">Early stopping<span class="hint">Arret si pas d'amelioration apres N trials (0=off)</span></label><input type="number" id="opt-early-stop" value="0" min="0" max="50"/></div>
+            <div class="form-row"><label class="form-lbl">Timeframes<span class="hint">Cochez les TFs voulus</span></label><div id="tf-checks" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div></div>
+            <div id="preview-matrix" style="margin-bottom:10px;background:rgba(0,0,0,.25);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px"></div>
+            <div class="form-row">
+              <label class="form-lbl">Bougies par TF (split IS/OOS 65/35)
+                <span class="hint" id="lim-hint">Saisissez une valeur pour voir le détail IS/OOS</span>
+              </label>
+              <input type="number" id="opt-limit" value="1500" min="300" max="8000" oninput="updateLimHint()" onchange="updateLimHint()"/>
+            </div>
+            <div class="checkbox-row"><input type="checkbox" id="opt-apply"/><label for="opt-apply">Appliquer automatiquement les meilleurs params</label></div>
+            <button class="btn btn-purple btn-full" onclick="startOpt()">&#x25B6; Lancer l'optimisation</button>
           </div>
+        </div>
 
-          <div class="panel">
-            <div class="panel-hdr"><span style="color:var(--muted)">&#x1F4CB;</span><h3>Parametres par strategie</h3></div>
-            <div class="panel-body">
-              <div style="font-size:.66rem;color:var(--dim);margin-bottom:8px">
-                <span class="ps-badge">Optimise</span>
-                <span class="ps-fixed-badge" style="margin-left:4px">Fixe</span>
-                <span class="ps-global-badge" style="margin-left:4px">Global trading</span>
-              </div>
-              <div id="param-space-view">Chargement...</div>
-              <div style="margin-top:10px;padding:8px;background:rgba(34,211,238,.05);border:1px solid rgba(34,211,238,.15);border-radius:var(--r-sm)">
-                <div style="font-size:.65rem;color:var(--cyan);font-weight:700;margin-bottom:4px">Parametres globaux</div>
-                <div style="font-size:.63rem;color:var(--dim);line-height:1.6">
-                  <code style="color:var(--cyan)">score_threshold</code>, <code style="color:var(--cyan)">risk_per_trade</code>, <code style="color:var(--cyan)">capital</code> sont dans <code>config[trading]</code> et ne sont <strong>jamais</strong> modifies par l'optimiseur.
-                </div>
+        <div class="panel">
+          <div class="panel-hdr"><span style="color:var(--muted)">&#x1F4CB;</span><h3>Parametres par strategie</h3></div>
+          <div class="panel-body">
+            <div style="font-size:.66rem;color:var(--dim);margin-bottom:8px">
+              <span class="ps-badge">Optimise</span>
+              <span class="ps-fixed-badge" style="margin-left:4px">Fixe</span>
+              <span class="ps-global-badge" style="margin-left:4px">Global trading</span>
+            </div>
+            <div id="param-space-view">Chargement...</div>
+            <div style="margin-top:10px;padding:8px;background:rgba(34,211,238,.05);border:1px solid rgba(34,211,238,.15);border-radius:var(--r-sm)">
+              <div style="font-size:.65rem;color:var(--cyan);font-weight:700;margin-bottom:4px">Parametres globaux</div>
+              <div style="font-size:.63rem;color:var(--dim);line-height:1.6">
+                <code style="color:var(--cyan)">score_threshold</code>, <code style="color:var(--cyan)">risk_per_trade</code>, <code style="color:var(--cyan)">capital</code> sont dans <code>config[trading]</code> et ne sont <strong>jamais</strong> modifies par l'optimiseur.
               </div>
             </div>
           </div>
         </div>
       </div>
-
-      <!-- Right main panel -->
-      <div class="opt-right">
-        <div>
-          <div class="sec-label">Jobs en cours et termines</div>
-          <div id="jobs-container">
-            <div class="empty-state"><div style="font-size:2rem">&#x2B21;</div><p>Aucun job d'optimisation. Configurez une strategie et lancez.</p></div>
-          </div>
-        </div>
-        <div style="margin-top:8px">
-          <div class="sec-label">Classement OOS par TF <button onclick="loadOptResults()" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:.7rem;margin-left:4px">&#x21BA;</button></div>
-          <div id="opt-results-container"><div style="color:var(--dim);font-size:.78rem;padding:8px">Chargement...</div></div>
-        </div>
-      </div>
-
     </div>
+
+    <!-- Right main panel -->
+    <div class="opt-right">
+      <div>
+        <div class="sec-label">Jobs en cours et termines</div>
+        <div id="jobs-container">
+          <div class="empty-state"><div style="font-size:2rem">&#x2B21;</div><p>Aucun job d'optimisation. Configurez une strategie et lancez.</p></div>
+        </div>
+      </div>
+      <div style="margin-top:8px">
+        <div class="sec-label">Classement OOS par TF <button onclick="loadOptResults()" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:.7rem;margin-left:4px">&#x21BA;</button></div>
+        <div id="opt-results-container"><div style="color:var(--dim);font-size:.78rem;padding:8px">Chargement...</div></div>
+      </div>
+    </div>
+
   </div>
 </div>
+{% endblock %}
 
-
+{% block body_scripts %}
 <script>
 const $ = id => document.getElementById(id);
 let pollInterval = null;
@@ -863,7 +725,7 @@ function renderOptResults(d) {
   entries.sort((a, b) => (b.oos_score||0) - (a.oos_score||0));
 
   if (!entries.length) {
-    container.innerHTML = '<div style="color:var(--dim);font-size:.78rem;padding:8px">Aucun résultat d'optimisation. Lancez une optimisation avec auto-apply pour voir les résultats ici.</div>';
+    container.innerHTML = '<div style="color:var(--dim);font-size:.78rem;padding:8px">Aucun résultat d\'optimisation. Lancez une optimisation avec auto-apply pour voir les résultats ici.</div>';
     return;
   }
   // Ajouter légende score seuil
@@ -901,13 +763,4 @@ init();
 loadOptResults();
 setInterval(refreshJobs, 5000);
 </script>
-
-<script>
-function toggleSidebar(){
-  var sb=document.getElementById("sidebar"),btn=document.getElementById("sb-toggle");
-  sb.classList.toggle("collapsed");
-  btn.textContent=sb.classList.contains("collapsed")?"›":"‹";
-}
-</script>
-</body>
-</html>
+{% endblock %}

@@ -1,7 +1,7 @@
 """Scanner multi-actifs USDC — détecte les opportunités sur plusieurs paires."""
 import logging
 from typing import List, Dict, Any
-import pandas as pd
+import polars as pl
 from app.core.indicators import detect_regime, adx_val, volume_ratio
 from app.core.exchange import RobustExchange
 from app.engine.engine import Engine
@@ -37,14 +37,18 @@ class Scanner:
 
     def _scan_pair(self, symbol: str, limit: int) -> Dict[str, Any]:
         ohlcv = self.exchange.fetch_ohlcv(symbol, self.tf, limit=limit)
-        df    = pd.DataFrame(ohlcv, columns=["time","open","high","low","close","volume"])
-        df["time"] = pd.to_datetime(df["time"], unit="ms")
+        df = pl.DataFrame(
+            ohlcv,
+            schema=["time", "open", "high", "low", "close", "volume"],
+            orient="row",
+        )
+        df = df.with_columns(pl.from_epoch("time", time_unit="ms"))
         if len(df) < 60:
             return None
 
         regime  = detect_regime(df.tail(50))
         adx_v   = adx_val(df.tail(30))
-        vol_r   = float(volume_ratio(df.tail(20), 20).iloc[-1] if len(df)>=20 else 0)
+        vol_r   = float(volume_ratio(df.tail(20), 20)[-1]) if len(df) >= 20 else 0.0
 
         # Filtre ADX et volume
         if adx_v < self.min_adx and regime["regime"] == "trending":
@@ -53,24 +57,27 @@ class Scanner:
             return None
 
         signal = self.engine.best_signal(df, regime=regime, params=self.params)
-        if signal.get("side","none") == "none" or signal.get("score",0) < self.thresh:
+        if signal.get("side", "none") == "none" or signal.get("score", 0) < self.thresh:
             return None
 
         return {
-            "symbol":   symbol,
-            "side":     signal["side"],
-            "score":    signal["score"],
-            "strategy": signal.get("name",""),
-            "regime":   regime["regime"],
-            "adx":      round(adx_v, 2),
+            "symbol":    symbol,
+            "side":      signal["side"],
+            "score":     signal["score"],
+            "strategy":  signal.get("name", ""),
+            "regime":    regime["regime"],
+            "adx":       round(adx_v, 2),
             "vol_ratio": round(vol_r, 3),
-            "price":    float(df["close"].iloc[-1]),
-            "reason":   signal.get("reason",""),
+            "price":     float(df["close"][-1]),
+            "reason":    signal.get("reason", ""),
         }
 
-    def get_ohlcv_df(self, symbol: str, limit: int = 500) -> pd.DataFrame:
+    def get_ohlcv_df(self, symbol: str, limit: int = 500) -> pl.DataFrame:
         """Retourne un DataFrame OHLCV propre pour une paire."""
         ohlcv = self.exchange.fetch_ohlcv(symbol, self.tf, limit=limit)
-        df    = pd.DataFrame(ohlcv, columns=["time","open","high","low","close","volume"])
-        df["time"] = pd.to_datetime(df["time"], unit="ms")
-        return df
+        df = pl.DataFrame(
+            ohlcv,
+            schema=["time", "open", "high", "low", "close", "volume"],
+            orient="row",
+        )
+        return df.with_columns(pl.from_epoch("time", time_unit="ms"))

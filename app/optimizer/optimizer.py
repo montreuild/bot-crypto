@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Callable, Optional
 
 import numpy as np
-import pandas as pd
+import polars as pl
 
 from app.engine.engine import Engine
 from app.engine.backtest import Backtester, BacktestResult
@@ -376,11 +376,11 @@ def get_active_strategies_per_tf(cfg: dict) -> Dict[str, List[dict]]:
 # ════════════════════════════════════════════════════════════════════════════
 class StrategyOptimizer:
     def __init__(self, strategy_name: str, cfg: dict,
-                 df_is: pd.DataFrame, df_oos: pd.DataFrame,
+                 df_is: pl.DataFrame, df_oos: pl.DataFrame,
                  param_space: Dict = None,
                  progress_callback: Optional[Callable] = None,
                  symbol: str = "BTC/USDC",
-                 df_full: pd.DataFrame = None,
+                 df_full: pl.DataFrame = None,
                  split: int = None,
                  timeframe: str = None):
         self.strategy_name     = strategy_name
@@ -392,7 +392,7 @@ class StrategyOptimizer:
         self.symbol            = symbol
         self.timeframe         = timeframe
         self.results: List[Dict] = []
-        self.df_full = df_full if df_full is not None else pd.concat([df_is, df_oos], ignore_index=True)
+        self.df_full = df_full if df_full is not None else pl.concat([df_is, df_oos])
         self.split   = split   if split   is not None else len(df_is)
 
     def _load_strategy(self):

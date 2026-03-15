@@ -14,7 +14,7 @@ Corrections V5 vs V4 :
 """
 import logging
 from typing import Dict, Any
-import pandas as pd
+import polars as pl
 from app.engine.engine import BaseStrategy
 from app.strategies.indicators import (
     rsi as calc_rsi, atr as calc_atr, macd as calc_macd,
@@ -31,7 +31,7 @@ class Strategy(BaseStrategy):
         self._last_signal: Dict[str, int] = {}
         self._call_count:  Dict[str, int] = {}
 
-    def score(self, df: pd.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get("supertrend_macd", {})
 
@@ -40,15 +40,15 @@ class Strategy(BaseStrategy):
         macd_fast    = int(p.get("macd_fast",     12))
         macd_slow    = int(p.get("macd_slow",     26))
         macd_sig_s   = int(p.get("macd_signal",   9))
-        vol_min      = float(p.get("vol_min",      1.1))    # ↑ 1.0→1.1
+        vol_min      = float(p.get("vol_min",      1.1))
         cooldown     = int(p.get("cooldown",       15))
         ema_trend    = int(p.get("ema_trend",     200))
         ema_mid_p    = int(p.get("ema_mid",        50))
-        rsi_min      = float(p.get("rsi_min",      38))     # ↑ 30→38
-        rsi_max      = float(p.get("rsi_max",      65))     # ↓ 72→65
+        rsi_min      = float(p.get("rsi_min",      38))
+        rsi_max      = float(p.get("rsi_max",      65))
         rr_min       = float(p.get("rr_min",       1.5))
 
-        sym = symbol or str(df["time"].iloc[-1]) if "time" in df.columns else "default"
+        sym = symbol or str(df["time"][-1]) if "time" in df.columns else "default"
         cnt = self._call_count.get(sym, 0) + 1
         self._call_count[sym] = cnt
 
@@ -56,54 +56,52 @@ class Strategy(BaseStrategy):
         if len(df) < min_bars:
             return self._none()
 
-        close = df["close"].astype(float)
-        high  = df["high"].astype(float)
-        low   = df["low"].astype(float)
+        close = df["close"]
+        high  = df["high"]
+        low   = df["low"]
 
         # ── EMAs ─────────────────────────────────────────────────────────────
-        ema_t   = close.ewm(span=ema_trend, adjust=False).mean()
-        ema_mid = close.ewm(span=ema_mid_p, adjust=False).mean()
-        lt      = float(ema_t.iloc[-1])
-        lm      = float(ema_mid.iloc[-1])
-        c_now   = float(close.iloc[-1])
+        ema_t   = close.ewm_mean(span=ema_trend, adjust=False)
+        ema_mid = close.ewm_mean(span=ema_mid_p, adjust=False)
+        lt      = float(ema_t[-1])
+        lm      = float(ema_mid[-1])
+        c_now   = float(close[-1])
 
-        # Tendance fond plus stricte (±2.5% max)
         trend_bull = c_now >= lt * 0.975 and c_now >= lm * 0.99
         trend_bear = c_now <= lt * 1.025 and c_now <= lm * 1.01
 
         # ── SuperTrend ────────────────────────────────────────────────────────
         direction, st_line = calc_supertrend(df, st_period, st_mult)
-        last_dir  = int(direction.iloc[-1])
-        prev_dir  = int(direction.iloc[-2])
+        last_dir  = int(direction[-1])
+        prev_dir  = int(direction[-2])
         st_bull   = last_dir == 1
         st_bear   = last_dir == -1
         st_x_up   = prev_dir == -1 and last_dir == 1
         st_x_down = prev_dir == 1  and last_dir == -1
-        st_val    = float(st_line.iloc[-1])
+        st_val    = float(st_line[-1])
 
-        # ── MACD — pré-calculé seulement si params par défaut (12,26,9) ──────
+        # ── MACD ──────────────────────────────────────────────────────────────
         _macd_default = (macd_fast == 12 and macd_slow == 26 and macd_sig_s == 9)
         if _macd_default and "_pre_macd_hist" in df.columns:
             _mhist = df["_pre_macd_hist"]
-            lh  = float(_mhist.iloc[-1])
-            ph  = float(_mhist.iloc[-2])
-            p2h = float(_mhist.iloc[-3])
+            lh  = float(_mhist[-1])
+            ph  = float(_mhist[-2])
+            p2h = float(_mhist[-3])
         else:
             _, _, hist = calc_macd(close, macd_fast, macd_slow, macd_sig_s)
-            lh  = float(hist.iloc[-1])
-            ph  = float(hist.iloc[-2])
-            p2h = float(hist.iloc[-3])
+            lh  = float(hist[-1])
+            ph  = float(hist[-2])
+            p2h = float(hist[-3])
 
-        # Conditions MACD strictes : croissant depuis 2 barres
-        macd_x_bull   = ph < 0 and lh > 0                     # cross haussier
-        macd_x_bear   = ph > 0 and lh < 0                     # cross baissier
-        macd_accel2_bull = lh > 0 and lh > ph and ph > p2h    # accélération 2 barres ↑
-        macd_accel2_bear = lh < 0 and lh < ph and ph < p2h    # accélération 2 barres ↓
-        macd_cont_bull   = lh > 0 and lh >= ph                # positif et stable+
-        macd_cont_bear   = lh < 0 and lh <= ph                # négatif et stable-
+        macd_x_bull   = ph < 0 and lh > 0
+        macd_x_bear   = ph > 0 and lh < 0
+        macd_accel2_bull = lh > 0 and lh > ph and ph > p2h
+        macd_accel2_bear = lh < 0 and lh < ph and ph < p2h
+        macd_cont_bull   = lh > 0 and lh >= ph
+        macd_cont_bear   = lh < 0 and lh <= ph
 
         # ── RSI / Volume / ATR / HTF ─────────────────────────────────────────
-        rsi_now = pre_val(df, "_pre_rsi14") or float(calc_rsi(close, 14).iloc[-1])
+        rsi_now = pre_val(df, "_pre_rsi14") or float(calc_rsi(close, 14)[-1])
         vr      = pre_val(df, "_pre_volratio20") or calc_vol(df)
         atr_val = pre_val(df, "_pre_atr14")      or calc_atr(df, 14)
         htf     = htf_trend(df_htf)
@@ -129,22 +127,15 @@ class Strategy(BaseStrategy):
         # ═══ LONG ═════════════════════════════════════════════════════════════
         rsi_ok = rsi_min <= rsi_now <= rsi_max
 
-        # Cas A : ST cross haussier + MACD positif/croissant — le plus fort
         long_A = st_x_up and (macd_cont_bull or macd_x_bull) and trend_bull
-
-        # Cas B : ST bull + MACD cross ou accélération 2 barres
         long_B = st_bull and not st_x_up and (macd_x_bull or macd_accel2_bull) and trend_bull
-
-        # Cas C : ST bull + continuation MACD forte + volume élevé
         long_C = (st_bull and macd_accel2_bull and
                   vr >= vol_min * 1.2 and trend_bull)
 
-        # HTF filtre : pas de long si HTF clairement baissier
         htf_ok_long = htf >= 0
 
         if (long_A or long_B or long_C) and vr >= vol_min and rsi_ok and htf_ok_long:
 
-            # R:R : stop sous le SuperTrend line
             stop_l = st_val - atr_val * 0.3
             risk_l = c_now - stop_l
             if risk_l <= 0:
@@ -161,7 +152,7 @@ class Strategy(BaseStrategy):
 
             vol_b   = min((vr - vol_min) * 0.04, 0.08)
             macd_b  = 0.05 if macd_x_bull else (0.03 if macd_accel2_bull else 0.0)
-            rsi_b   = 0.04 if 42 <= rsi_now <= 58 else 0.0   # zone idéale
+            rsi_b   = 0.04 if 42 <= rsi_now <= 58 else 0.0
             htf_b   = 0.04 if htf > 0 else 0.0
             trend_b = 0.03 if (trend_bull and c_now > lt) else 0.0
 

@@ -42,8 +42,7 @@ Sortie (stop_hint) :
 """
 import logging
 from typing import Dict, Any
-import numpy as np
-import pandas as pd
+import polars as pl
 from app.engine.engine import BaseStrategy
 from app.strategies.indicators import (
     rsi as calc_rsi,
@@ -68,7 +67,7 @@ class Strategy(BaseStrategy):
         self._call_count:  Dict[str, int] = {}
 
     # ─────────────────────────────────────────────────────────────────────────
-    def score(self, df: pd.DataFrame, params: dict = None,
+    def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get("fear_momentum", {})
 
@@ -83,7 +82,7 @@ class Strategy(BaseStrategy):
         rr_min      = float(p.get("rr_min",         1.6))
         ema200_max_dist = float(p.get("ema200_max_dist", 0.08))  # correction max sous EMA200
 
-        sym = symbol or str(df["time"].iloc[-1]) if "time" in df.columns else "default"
+        sym = symbol or str(df["time"][-1]) if "time" in df.columns else "default"
         cnt = self._call_count.get(sym, 0) + 1
         self._call_count[sym] = cnt
 
@@ -91,26 +90,26 @@ class Strategy(BaseStrategy):
         if len(df) < min_bars:
             return self._none()
 
-        close  = df["close"].astype(float)
-        high   = df["high"].astype(float)
-        low    = df["low"].astype(float)
-        open_  = df["open"].astype(float)
-        volume = df["volume"].astype(float)
+        close  = df["close"]
+        high   = df["high"]
+        low    = df["low"]
+        open_  = df["open"]
+        volume = df["volume"]
 
         # ── Calculs de base ──────────────────────────────────────────────────
-        ef   = close.ewm(span=ema_fast,  adjust=False).mean()
-        em   = close.ewm(span=ema_mid,   adjust=False).mean()
-        et   = close.ewm(span=ema_trend, adjust=False).mean()
+        ef   = close.ewm_mean(span=ema_fast,  adjust=False)
+        em   = close.ewm_mean(span=ema_mid,   adjust=False)
+        et   = close.ewm_mean(span=ema_trend, adjust=False)
 
-        c0   = float(close.iloc[-1])
-        c1   = float(close.iloc[-2])
-        c2   = float(close.iloc[-3])
-        h0   = float(high.iloc[-1])
-        l0   = float(low.iloc[-1])
-        o0   = float(open_.iloc[-1])
-        lf   = float(ef.iloc[-1])
-        lm   = float(em.iloc[-1])
-        lt   = float(et.iloc[-1])
+        c0   = float(close[-1])
+        c1   = float(close[-2])
+        c2   = float(close[-3])
+        h0   = float(high[-1])
+        l0   = float(low[-1])
+        o0   = float(open_[-1])
+        lf   = float(ef[-1])
+        lm   = float(em[-1])
+        lt   = float(et[-1])
 
         atr_val   = pre_val(df, "_pre_atr14") or calc_atr(df, 14)
         if atr_val <= 0:
@@ -119,10 +118,10 @@ class Strategy(BaseStrategy):
         # ATR series : colonne pré-calculée si dispo, sinon recalcul
         atr_s     = df["_pre_atr14"] if "_pre_atr14" in df.columns else calc_atr_series(df, 14)
         _rsi_s    = df["_pre_rsi14"] if "_pre_rsi14" in df.columns else calc_rsi(close, 14)
-        rsi0      = float(_rsi_s.iloc[-1])
-        rsi1      = float(_rsi_s.iloc[-2])
-        rsi2      = float(_rsi_s.iloc[-3])
-        rsi3      = float(_rsi_s.iloc[-4])
+        rsi0      = float(_rsi_s[-1])
+        rsi1      = float(_rsi_s[-2])
+        rsi2      = float(_rsi_s[-3])
+        rsi3      = float(_rsi_s[-4])
 
         vr        = pre_val(df, "_pre_volratio20") or calc_vol(df)
         adx_val   = pre_val(df, "_pre_adx14")      or calc_adx(df, 14)
@@ -133,15 +132,15 @@ class Strategy(BaseStrategy):
         mh0 = pre_val(df, "_pre_macd_hist")
         if mh0 is None:
             _, _, macd_hist = calc_macd(close, 12, 26, 9)
-            mh0 = float(macd_hist.iloc[-1])
-            mh1 = float(macd_hist.iloc[-2])
-            mh2 = float(macd_hist.iloc[-3])
+            mh0 = float(macd_hist[-1])
+            mh1 = float(macd_hist[-2])
+            mh2 = float(macd_hist[-3])
         else:
             _mhist = df["_pre_macd_hist"]
-            mh1 = float(_mhist.iloc[-2])
-            mh2 = float(_mhist.iloc[-3])
+            mh1 = float(_mhist[-2])
+            mh2 = float(_mhist[-3])
 
-        vol_avg  = float(volume.rolling(20).mean().iloc[-1])
+        vol_avg  = float(volume.rolling_mean(20)[-1])
 
         # ── Cooldown ─────────────────────────────────────────────────────────
         if cnt - self._last_signal.get(sym, -999) < cooldown:
@@ -164,7 +163,7 @@ class Strategy(BaseStrategy):
         else:
             # ── Identifier le dip récent (5 dernières barres) ─────────────────
             # Le prix doit avoir baissé d'au moins 1× ATR depuis un récent haut
-            recent_high = float(high.iloc[-6:-1].max())
+            recent_high = float(high[-6:-1].max())
             dip_depth   = (recent_high - c0) / atr_val
 
             # Trop petit : pas un vrai dip (juste du bruit)
@@ -184,9 +183,9 @@ class Strategy(BaseStrategy):
                 # (volume > vol_cap_min× avec corps baissier = vendeurs épuisés)
                 cap_found = False
                 for k in range(1, 4):
-                    v_k  = float(volume.iloc[-1 - k])
-                    o_k  = float(open_.iloc[-1 - k])
-                    c_k  = float(close.iloc[-1 - k])
+                    v_k  = float(volume[-1 - k])
+                    o_k  = float(open_[-1 - k])
+                    c_k  = float(close[-1 - k])
                     bearish_body = c_k < o_k
                     if (v_k / max(vol_avg, 1e-9) >= vol_cap_min) and bearish_body:
                         cap_found = True
@@ -209,9 +208,9 @@ class Strategy(BaseStrategy):
                 # ── Signal 4 : Divergence RSI Haussière ──────────────────────
                 # Prix fait un bas plus bas, mais RSI fait un bas moins bas
                 # = les vendeurs perdent de la force
-                prev_low = float(low.iloc[-6:-2].min())
+                prev_low = float(low[-6:-2].min())
                 if l0 < prev_low:
-                    prev_rsi_low = float(_rsi_s.iloc[-6:-2].min())
+                    prev_rsi_low = float(_rsi_s[-6:-2].min())
                     rsi_div_bull = rsi0 > prev_rsi_low  # RSI ne fait pas un nouveau bas
                 else:
                     rsi_div_bull = False
@@ -227,8 +226,8 @@ class Strategy(BaseStrategy):
                 # ── Signal 6 : ATR Contraction avant le dip ──────────────────
                 # Le dip survient après une période de faible volatilité
                 # = le marché s'est compressé avant → le dip est sain, pas panique
-                atr_before_dip  = float(atr_s.iloc[-8:-3].mean())
-                atr_recent      = float(atr_s.iloc[-3:-1].mean())
+                atr_before_dip  = float(atr_s[-8:-3].mean())
+                atr_recent      = float(atr_s[-3:-1].mean())
                 # ATR récent n'est pas explosif (< 2× l'ATR pré-dip)
                 atr_not_exploding = atr_recent < atr_before_dip * 2.2
                 sig6 = atr_not_exploding
@@ -264,7 +263,7 @@ class Strategy(BaseStrategy):
 
                 # ── R:R check ────────────────────────────────────────────────
                 # Stop sous le plus bas du dip (invalide le setup)
-                dip_low   = float(low.iloc[-6:].min())
+                dip_low   = float(low[-6:].min())
                 stop_long = dip_low - atr_val * 0.25
                 risk      = c0 - stop_long
                 if risk <= 0:
@@ -369,7 +368,7 @@ class Strategy(BaseStrategy):
 
         if trend_bear and htf_ok_s:
             # Rally récent dans une tendance baissière
-            recent_low   = float(low.iloc[-6:-1].min())
+            recent_low   = float(low[-6:-1].min())
             rally_height = (c0 - recent_low) / atr_val
             rally_valid  = 0.8 <= rally_height <= 4.0
 
@@ -393,9 +392,9 @@ class Strategy(BaseStrategy):
                 sig3_s = shoot_star
 
                 # RSI divergence baissière
-                prev_high_price = float(high.iloc[-6:-2].max())
+                prev_high_price = float(high[-6:-2].max())
                 if h0 > prev_high_price:
-                    prev_rsi_high = float(_rsi_s.iloc[-6:-2].max())
+                    prev_rsi_high = float(_rsi_s[-6:-2].max())
                     sig4_s = rsi0 < prev_rsi_high
                 else:
                     sig4_s = False
@@ -422,7 +421,7 @@ class Strategy(BaseStrategy):
                         return self._none(
                             f"MACD divergence haussière ({mh0:+.5f} > {mh1:+.5f}) — short interdit"
                         )
-                    rally_high_s = float(high.iloc[-6:].max())
+                    rally_high_s = float(high[-6:].max())
                     stop_short   = rally_high_s + atr_val * 0.25
                     risk_s       = stop_short - c0
                     if risk_s <= 0:

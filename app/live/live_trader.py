@@ -39,7 +39,7 @@ def _sanitize(obj):
         return _safe_float(obj)
     return obj
 
-import pandas as pd
+import polars as pl
 
 from app.core.exchange       import RobustExchange
 from app.core.risk           import RiskManager
@@ -174,7 +174,7 @@ class LiveTrader:
         self._exchange_errors: Dict[str, int] = {}
 
         # Cache OHLCV multi-TF : (symbol, tf) → (timestamp, df)
-        self._ohlcv_cache: Dict[Tuple[str, str], Tuple[float, pd.DataFrame]] = {}
+        self._ohlcv_cache: Dict[Tuple[str, str], Tuple[float, pl.DataFrame]] = {}
 
         # Cache ATR par symbole (pour _manage_position)
         self._atr_cache: Dict[str, tuple] = {}
@@ -406,7 +406,7 @@ class LiveTrader:
             self._send_status_report()
 
     # ── Cache OHLCV multi-TF ───────────────────────────────────────────────
-    def _get_ohlcv(self, symbol: str, tf: str) -> Optional[pd.DataFrame]:
+    def _get_ohlcv(self, symbol: str, tf: str) -> Optional[pl.DataFrame]:
         """
         Retourne le DataFrame OHLCV pour (symbol, tf), avec cache TTL.
         Applique aussi le filtre "nouvelle bougie" pour éviter les recalculs.
@@ -433,9 +433,9 @@ class LiveTrader:
 
         # Filtre "nouvelle bougie"
         try:
-            last_ts_raw = df["time"].iloc[-1]
+            last_ts_raw = df["time"][-1]
             last_ts = int(last_ts_raw.timestamp() * 1000) if hasattr(last_ts_raw, "timestamp") \
-                      else int(pd.Timestamp(last_ts_raw).timestamp() * 1000)
+                      else int(last_ts_raw) if isinstance(last_ts_raw, (int, float)) else 0
             prev_ts = self._last_candle_ts.get(key, 0)
             if last_ts == prev_ts and not self.open_positions:
                 logger.debug(f"[Filtre] {symbol}/{tf} : même bougie — skip")
@@ -462,7 +462,7 @@ class LiveTrader:
         return df
 
     # ── Scan par stratégie ─────────────────────────────────────────────────
-    def _scan_symbol_strategy(self, symbol: str, df: pd.DataFrame,
+    def _scan_symbol_strategy(self, symbol: str, df: pl.DataFrame,
                                strategy, params: dict, tf: str):
         try:
             signal = strategy.score(df, params, symbol=symbol)
@@ -829,7 +829,7 @@ class LiveTrader:
             dfs = [self.scanner.fetch_ohlcv(s, self.tf, 1000) for s in symbols]
             dfs = [d for d in dfs if d is not None and len(d) >= self.cfg["ml"]["min_samples"]]
             if dfs:
-                df_combined = pd.concat(dfs, ignore_index=True)
+                df_combined = pl.concat(dfs)
                 self.ml.train(df_combined)
                 self.ml.save()
         except Exception as e:

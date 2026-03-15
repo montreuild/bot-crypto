@@ -9,9 +9,10 @@ Nouveautés V8 :
   - _compute_adx() plus robuste
 """
 import logging
+import math
 from typing import List, Dict, Optional, Tuple
 import numpy as np
-import pandas as pd
+import polars as pl
 
 logger = logging.getLogger(__name__)
 
@@ -60,29 +61,30 @@ class MarketScanner:
         ranked = sorted(usdc.items(), key=lambda x: x[1].get("quoteVolume", 0), reverse=True)
         return [s for s, _ in ranked[:top_n]]
 
-    def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500) -> Optional[pd.DataFrame]:
+    def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500) -> Optional[pl.DataFrame]:
         try:
             raw = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
             if not raw or len(raw) < 50:
                 return None
-            df = pd.DataFrame(raw, columns=["time","open","high","low","close","volume"])
-            df["time"] = pd.to_datetime(df["time"], unit="ms")
-            df = df[df["volume"] > 0].copy()
-            df = df[df["close"] > 0].copy()
-            df.dropna(inplace=True)
-            df.reset_index(drop=True, inplace=True)
+            df = pl.DataFrame(
+                raw,
+                schema=["time", "open", "high", "low", "close", "volume"],
+                orient="row",
+            )
+            df = df.with_columns(pl.from_epoch("time", time_unit="ms"))
+            df = df.filter((pl.col("volume") > 0) & (pl.col("close") > 0)).drop_nulls()
             return df
         except Exception as e:
             logger.error(f"[Scanner] fetch_ohlcv {symbol}/{timeframe} : {e}")
             return None
 
-    def detect_regime(self, df: pd.DataFrame) -> str:
+    def detect_regime(self, df: pl.DataFrame) -> str:
         if len(df) < 30:
             return "unknown"
         adx = _compute_adx(df, 14)
         return "trend" if adx >= 25 else "range"
 
-    def compute_indicators(self, df: pd.DataFrame) -> Dict:
+    def compute_indicators(self, df: pl.DataFrame) -> Dict:
         close  = df["close"]
         high   = df["high"]
         low    = df["low"]
@@ -91,42 +93,42 @@ class MarketScanner:
         if n < 60:
             return {}
 
-        ema20  = close.ewm(span=20, adjust=False).mean().iloc[-1]
-        ema50  = close.ewm(span=50, adjust=False).mean().iloc[-1]
-        ema200 = close.ewm(span=200, adjust=False).mean().iloc[-1] if n >= 200 else None
+        ema20  = float(close.ewm_mean(span=20, adjust=False)[-1])
+        ema50  = float(close.ewm_mean(span=50, adjust=False)[-1])
+        ema200 = float(close.ewm_mean(span=200, adjust=False)[-1]) if n >= 200 else None
         rsi    = _compute_rsi(close, 14)
         atr    = _compute_atr(df, 14)
-        last_close = float(close.iloc[-1])
+        last_close = float(close[-1])
         atr_pct = round(atr / last_close * 100, 3) if last_close > 0 else 0.0
 
-        vol_ma20  = volume.rolling(20).mean().iloc[-1]
-        vol_ratio = float(volume.iloc[-1] / vol_ma20) if vol_ma20 > 0 else 1.0
+        vol_ma20  = float(volume.rolling_mean(20)[-1])
+        vol_ratio = float(volume[-1] / vol_ma20) if vol_ma20 > 0 else 1.0
 
-        ema12 = close.ewm(span=12, adjust=False).mean()
-        ema26 = close.ewm(span=26, adjust=False).mean()
-        macd  = ema12 - ema26
-        signal= macd.ewm(span=9, adjust=False).mean()
-        hist  = macd - signal
+        ema12  = close.ewm_mean(span=12, adjust=False)
+        ema26  = close.ewm_mean(span=26, adjust=False)
+        macd   = ema12 - ema26
+        signal = macd.ewm_mean(span=9, adjust=False)
+        hist   = macd - signal
 
-        sma20  = close.rolling(20).mean()
-        std20  = close.rolling(20).std()
-        bb_up  = (sma20 + 2 * std20).iloc[-1]
-        bb_dn  = (sma20 - 2 * std20).iloc[-1]
-        bb_mid = sma20.iloc[-1]
+        sma20  = close.rolling_mean(20)
+        std20  = close.rolling_std(20)
+        bb_up  = float((sma20 + 2 * std20)[-1])
+        bb_dn  = float((sma20 - 2 * std20)[-1])
+        bb_mid = float(sma20[-1])
 
         adx = _compute_adx(df, 14)
 
         return {
-            "ema20":      round(float(ema20), 6),
-            "ema50":      round(float(ema50), 6),
-            "ema200":     round(float(ema200), 6) if ema200 is not None else None,
+            "ema20":      round(ema20, 6),
+            "ema50":      round(ema50, 6),
+            "ema200":     round(ema200, 6) if ema200 is not None else None,
             "rsi":        round(rsi, 2),
             "atr":        round(atr, 6),
             "atr_pct":    atr_pct,
             "vol_ratio":  round(vol_ratio, 3),
-            "macd":       round(float(macd.iloc[-1]), 6),
-            "macd_signal":round(float(signal.iloc[-1]), 6),
-            "macd_hist":  round(float(hist.iloc[-1]), 6),
+            "macd":       round(float(macd[-1]), 6),
+            "macd_signal":round(float(signal[-1]), 6),
+            "macd_hist":  round(float(hist[-1]), 6),
             "bb_upper":   round(bb_up, 6),
             "bb_lower":   round(bb_dn, 6),
             "bb_mid":     round(bb_mid, 6),
@@ -230,42 +232,48 @@ def recommend_strategy(adx: float, atr_pct: float) -> Tuple[str, List[str]]:
         return "Neutre", ["supertrend_macd", "breakout"]
 
 
-def _compute_rsi(close: pd.Series, period: int = 14) -> float:
-    delta = close.diff()
-    gain  = delta.clip(lower=0).rolling(period).mean()
-    loss  = (-delta.clip(upper=0)).rolling(period).mean()
-    rs    = gain / loss.replace(0, np.nan)
+def _compute_rsi(close: pl.Series, period: int = 14) -> float:
+    delta = close.diff(1)
+    gain  = delta.clip(lower_bound=0).rolling_mean(period)
+    loss  = (-delta.clip(upper_bound=0)).rolling_mean(period)
+    rs    = gain / loss.replace(0, None)
     rsi   = 100 - (100 / (1 + rs))
-    val   = float(rsi.iloc[-1])
-    return val if not np.isnan(val) else 50.0
+    val   = float(rsi[-1])
+    return val if not math.isnan(val) else 50.0
 
 
-def _compute_atr(df: pd.DataFrame, period: int = 14) -> float:
+def _compute_atr(df: pl.DataFrame, period: int = 14) -> float:
     h, l, c = df["high"], df["low"], df["close"]
-    tr  = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
-    val = float(tr.rolling(period).mean().iloc[-1])
+    c_prev = c.shift(1)
+    tr  = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
+    val = float(tr.rolling_mean(period)[-1])
     return val if val > 0 else 0.0
 
 
-def _compute_adx(df: pd.DataFrame, period: int = 14) -> float:
+def _compute_adx(df: pl.DataFrame, period: int = 14) -> float:
     if len(df) < period + 1:
         return 0.0
     h, l, c = df["high"], df["low"], df["close"]
-    tr    = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
-    plus  = (h - h.shift()).clip(lower=0)
-    minus = (l.shift() - l).clip(lower=0)
-    plus[plus < minus]   = 0
-    minus[minus <= plus] = 0
-    atr14   = tr.rolling(period).mean()
-    di_plus = 100 * plus.rolling(period).mean() / atr14.replace(0, np.nan)
-    di_minus= 100 * minus.rolling(period).mean() / atr14.replace(0, np.nan)
-    dx      = 100 * (di_plus - di_minus).abs() / (di_plus + di_minus).replace(0, np.nan)
-    adx     = dx.rolling(period).mean()
-    val     = float(adx.iloc[-1])
-    return val if not np.isnan(val) else 0.0
+    c_prev = c.shift(1)
+    tr = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
+    _dm = pl.DataFrame({
+        "plus":  (h - h.shift(1)).clip(lower_bound=0),
+        "minus": (l.shift(1) - l).clip(lower_bound=0),
+    }).with_columns([
+        pl.when(pl.col("plus") < pl.col("minus")).then(0.0).otherwise(pl.col("plus")).alias("plus"),
+        pl.when(pl.col("minus") <= pl.col("plus")).then(0.0).otherwise(pl.col("minus")).alias("minus"),
+    ])
+    plus, minus = _dm["plus"], _dm["minus"]
+    atr14    = tr.rolling_mean(period).replace(0, None)
+    di_plus  = 100 * plus.rolling_mean(period)  / atr14
+    di_minus = 100 * minus.rolling_mean(period) / atr14
+    dx       = 100 * (di_plus - di_minus).abs() / (di_plus + di_minus).replace(0, None)
+    adx      = dx.rolling_mean(period)
+    val      = float(adx[-1])
+    return val if not math.isnan(val) else 0.0
 
 
-def _estimate_volume_24h(df: pd.DataFrame, timeframe: str) -> float:
+def _estimate_volume_24h(df: pl.DataFrame, timeframe: str) -> float:
     tf_mins = {"1m":1,"3m":3,"5m":5,"15m":15,"30m":30,
                "1h":60,"2h":120,"4h":240,"1d":1440}
     mins    = tf_mins.get(timeframe, 15)

@@ -25,8 +25,9 @@ python-multipart>=0.0.12
 ccxt>=4.3.0
 
 # ── Data / Calcul ─────────────────────────────────────────────
-# numpy 2.x est supporté par Python 3.12 et compatible pandas 2.2+
-pandas>=2.2.0
+# Polars : bibliothèque principale (Rust, Arrow, multi-threadé, 5–50× plus rapide que Pandas)
+polars>=1.0.0
+# NumPy : conservé pour le hot loop du backtest (indexation O(1)) et l'interface scikit-learn
 numpy>=2.0.0
 pyyaml>=6.0.2
 

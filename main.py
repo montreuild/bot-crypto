@@ -7,7 +7,7 @@ import logging
 import sys
 import threading
 
-import pandas as pd
+import polars as pl
 import uvicorn
 
 from app.core.config   import load_config
@@ -46,8 +46,7 @@ def run_backtest_cli(cfg, args):
 
     exchange = create_exchange(cfg)
     raw  = exchange.fetch_ohlcv(symbol, tf, limit=args.limit)
-    df   = pd.DataFrame(raw, columns=["time","open","high","low","close","volume"])
-    df["time"] = pd.to_datetime(df["time"], unit="ms")
+    df = pl.DataFrame(raw, schema=["time","open","high","low","close","volume"], orient="row").with_columns(pl.from_epoch("time", time_unit="ms"))
 
     mc_runner = MonteCarlo(n_runs=cfg.get("backtest",{}).get("monte_carlo_runs", 200)) if args.monte_carlo else None
 
@@ -96,10 +95,9 @@ def run_optimizer_cli(cfg, args):
     exchange = create_exchange(cfg)
     tf       = cfg["trading"]["timeframe"]
     raw      = exchange.fetch_ohlcv("BTC/USDC", tf, limit=1000)
-    df       = pd.DataFrame(raw, columns=["time","open","high","low","close","volume"])
-    df["time"] = pd.to_datetime(df["time"], unit="ms")
+    df = pl.DataFrame(raw, schema=["time","open","high","low","close","volume"], orient="row").with_columns(pl.from_epoch("time", time_unit="ms"))
     split    = int(len(df) * 0.7)
-    opt      = StrategyOptimizer(strategy, cfg, df.iloc[:split], df.iloc[split:],
+    opt      = StrategyOptimizer(strategy, cfg, df[:split], df[split:],
                                   DEFAULT_SPACES.get(strategy, {}))
     method = args.opt_method
     if method == "grid":       result = opt.grid_search()
