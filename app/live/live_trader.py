@@ -61,6 +61,12 @@ _OHLCV_TTL = {
     "1h": 600, "4h": 2400, "1d": 14400,
 }
 
+# Timeframe supérieur (HTF) pour chaque TF — utilisé pour le filtre de tendance
+_HTF_MAP = {
+    "1m": "15m", "3m": "30m", "5m": "1h", "15m": "4h",
+    "30m": "4h", "1h": "4h",  "2h": "1d", "4h": "1d", "1d": "1d",
+}
+
 
 def _merge_params(base: dict, optimized: dict) -> dict:
     """
@@ -464,8 +470,11 @@ class LiveTrader:
     # ── Scan par stratégie ─────────────────────────────────────────────────
     def _scan_symbol_strategy(self, symbol: str, df: pl.DataFrame,
                                strategy, params: dict, tf: str):
+        htf = _HTF_MAP.get(tf)
+        # Pas de HTF pour 1d (déjà le TF le plus haut) → df_htf = None → htf_trend = 0 (neutre)
+        df_htf = self._get_ohlcv(symbol, htf) if htf and htf != tf else None
         try:
-            signal = strategy.score(df, params, symbol=symbol)
+            signal = strategy.score(df, params, df_htf=df_htf, symbol=symbol)
         except Exception as e:
             logger.error(f"[Scan] {strategy.name}/{symbol}/{tf} score KO : {e}")
             return
@@ -1052,6 +1061,7 @@ class LiveTrader:
             "last_symbols_scanned": self.last_symbols_scanned,
             **risk,
             "circuit_breaker_active": risk.get("halted", False),
+            "circuit_breaker_reason": risk.get("halt_reason", ""),
             "signal_log":           list(reversed(list(self.signal_log)))[:50],
             "margin_enabled":       self._margin_enabled,
             "margin_level":         self._margin_level,

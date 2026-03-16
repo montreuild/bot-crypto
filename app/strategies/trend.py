@@ -145,7 +145,9 @@ class Strategy(BaseStrategy):
             risk_l  = c_now - stop_l
             if risk_l <= 0:
                 return self._none("Stop invalide")
-            rr_l = (risk_l * 2.0) / risk_l
+            target_l = float(high[-20:].max())
+            reward_l = max(target_l - c_now, 0.0)
+            rr_l = reward_l / risk_l if risk_l > 0 else 0.0
             if rr_l < rr_min:
                 return self._none(f"R:R {rr_l:.2f} < {rr_min}")
 
@@ -202,6 +204,11 @@ class Strategy(BaseStrategy):
             risk_s   = stop_s - c_now
             if risk_s <= 0:
                 return self._none("Stop invalide (short)")
+            target_s = float(low[-20:].min())
+            reward_s = max(c_now - target_s, 0.0)
+            rr_s = reward_s / risk_s if risk_s > 0 else 0.0
+            if rr_s < rr_min:
+                return self._none(f"R:R short {rr_s:.2f} < {rr_min}")
 
             ema_spread_s = (ls - lf) / ls * 100
             adx_norm_s   = min((adx_val - adx_min) / 20, 1.0)

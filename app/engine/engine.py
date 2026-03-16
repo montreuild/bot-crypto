@@ -49,7 +49,7 @@ class Engine:
         self.strategies.append(strategy)
 
     def best_signal(self, df: pl.DataFrame, params: dict = None,
-                    symbol: str = "") -> Dict[str, Any]:
+                    df_htf=None, symbol: str = "") -> Dict[str, Any]:
         """
         Retourne le signal avec le meilleur score parmi toutes les stratégies.
         Si aucun signal, retourne {"score": 0, "side": "none", "name": ""}.
@@ -60,7 +60,7 @@ class Engine:
         best = {"score": 0.0, "side": "none", "name": ""}
         for strat in self.strategies:
             try:
-                result = strat.score(df, params, symbol=symbol)
+                result = strat.score(df, params, df_htf=df_htf, symbol=symbol)
                 if not isinstance(result, dict):
                     continue
                 if result.get("score", 0) > best["score"]:

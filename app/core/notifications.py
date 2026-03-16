@@ -112,7 +112,9 @@ class Notifier:
         entry   = trade.get("entry", 0)
         exit_   = trade.get("exit", 0)
         side    = trade.get("side", "?").upper()
-        pnl_pct = round((exit_ - entry) / max(entry, 1e-9) * 100 * (1 if side == "LONG" else -1), 2)
+        pnl_pct = trade.get("pnl_pct")
+        if pnl_pct is None:
+            pnl_pct = round((exit_ - entry) / max(entry, 1e-9) * 100 * (1 if side == "LONG" else -1), 2)
         self.send(
             f"{emoji} *Trade clôturé*\n"
             f"Pair      : `{trade.get('symbol','?')}`\n"

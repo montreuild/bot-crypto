@@ -252,17 +252,19 @@ def get_status(request: Request):
         else:
             # Bot non démarré — valeurs par défaut pour le dashboard
             base.update({
-                "total_pnl":      0.0,
-                "total_pnl_pct":  0.0,
-                "total_trades":   0,
-                "win_rate":       0.0,
-                "profit_factor":  0.0,
-                "total_fees":     0.0,
-                "best_trade":     0.0,
-                "positions":      [],
-                "by_strategy":    {},
-                "signal_log":     [],
-                "active_per_tf":  {},
+                "total_pnl":              0.0,
+                "total_pnl_pct":          0.0,
+                "total_trades":           0,
+                "win_rate":               0.0,
+                "profit_factor":          0.0,
+                "total_fees":             0.0,
+                "best_trade":             0.0,
+                "positions":              [],
+                "by_strategy":            {},
+                "signal_log":             [],
+                "active_per_tf":          {},
+                "circuit_breaker_active": False,
+                "circuit_breaker_reason": "",
             })
     return base
 

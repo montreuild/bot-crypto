@@ -106,13 +106,18 @@ def extract_features(df: pl.DataFrame, window: int = 50) -> pl.DataFrame:
         "mom10":     mom10,
         "mom20":     mom20,
         "vol_real":  vol_real,
-    }).drop_nulls()
+    })
 
-    # Remplacer inf/-inf par 0
-    return result.with_columns([
+    # Remplacer inf/-inf et NaN/null par 0 sans supprimer de lignes intermédiaires
+    # (drop_nulls() pourrait supprimer des lignes hors de la fenêtre de warmup,
+    # rompant l'alignement temporel avec les labels)
+    result = result.with_columns([
         pl.when(pl.col(c).is_infinite()).then(pl.lit(0.0)).otherwise(pl.col(c)).alias(c)
         for c in result.columns
-    ])
+    ]).fill_nan(0.0).fill_null(0.0)
+
+    # Supprimer uniquement la fenêtre de warmup (début — indicators non fiables)
+    return result[window:]
 
 
 def build_labels(df_close: pl.Series, lookahead: int = 5,

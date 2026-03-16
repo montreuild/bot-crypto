@@ -53,7 +53,7 @@
 <div class="topbar-title">Dashboard Live</div>
 <div class="topbar-sep"></div>
 <div class="topbar-right">
-  <span id="cb-badge" class="cb-pill">⚡ Circuit Breaker</span>
+  <span id="cb-badge" class="cb-pill" title="" aria-label="Circuit Breaker actif">⚡ Circuit Breaker</span>
   <span id="status-badge" class="status-pill stopped"><span class="status-dot"></span><span id="status-label">Arrêté</span></span>
   <span id="mode-badge" class="mode-pill paper">Paper</span>
   <span id="ts" style="font-family:var(--mono);font-size:.68rem;color:var(--dim)"></span>
@@ -231,7 +231,8 @@ function renderStatus(s){
   sb.querySelector('.status-dot').className='status-dot'+(running?' pulse':'');
   $('status-label').textContent=running?'Running':'Arrêté';
   const mb=$('mode-badge');mb.textContent=s.paper_mode?'📄 Paper':'⚡ Live';mb.className='mode-pill '+(s.paper_mode?'paper':'live');
-  $('cb-badge').style.display=s.circuit_breaker_active?'':'none';
+  const cbBadge=$('cb-badge');cbBadge.style.display=s.circuit_breaker_active?'':'none';
+  if(s.circuit_breaker_active){cbBadge.title=s.circuit_breaker_reason||'Circuit Breaker actif';cbBadge.setAttribute('aria-label',s.circuit_breaker_reason||'Circuit Breaker actif');}
   $('btn-start').disabled=running;$('btn-stop').disabled=!running;
   const cap=s.capital??s.equity??0;$('s-capital').textContent=fmtUSDC(cap);
   const pnl=s.total_pnl??0;$('s-pnl').textContent=fmtSign(pnl);$('s-pnl').className='hero-val '+clrC(pnl);

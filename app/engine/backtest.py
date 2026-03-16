@@ -97,7 +97,7 @@ class BacktestResult:
             self.max_drawdown = _sf(float(drawdowns.min()), 0.0)
             returns           = np.diff(eq) / np.where(eq[:-1] > 0, eq[:-1], 1.0)
             std               = float(returns.std())
-            ann_factor        = np.sqrt(max(len(returns), 1))
+            ann_factor        = np.sqrt(252)   # facteur journalier standard
             raw_sharpe        = float(returns.mean() / std * ann_factor) if std > 0 else 0.0
             self.sharpe       = _sf(raw_sharpe, 0.0)
         else:
@@ -176,7 +176,7 @@ class BacktestResult:
                 rets_s = np.diff(eq_arr) / denom
             else:
                 rets_s = np.array([0.0])
-            ann_s  = np.sqrt(max(len(rets_s), 1))
+            ann_s  = np.sqrt(252)   # facteur journalier standard
             std_s  = float(rets_s.std())
             if std_s > 0:
                 d["sharpe"] = round(_sf(float(rets_s.mean() / std_s * ann_s), 0.0), 3)
