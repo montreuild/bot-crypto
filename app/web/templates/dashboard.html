@@ -265,7 +265,7 @@ function renderPositions(positions){
     const upnl=p.upnl??0,entry=p.entry??0,upct=entry>0?(upnl/(entry*(p.size??0))*100):0;
     const heldMin=p.open_time?Math.floor((Date.now()/1000-p.open_time)/60):0;
     const heldStr=heldMin>60?`${Math.floor(heldMin/60)}h${heldMin%60}m`:`${heldMin}m`;
-    return`<div class="pos-item"><div><div class="pos-sym">${p.symbol??'—'}<span class="tag tag-${p.side}">${(p.side||'').toUpperCase()}</span><span style="font-size:.62rem;color:var(--muted)">${p.strategy??''}</span>${p.timeframe?`<span style="font-size:.62rem;color:var(--cyan);font-family:var(--mono)">${p.timeframe}</span>`:''}</div><div class="pos-meta">Entrée: <strong>${fmtPrice(entry)}</strong> · Stop: ${fmtPrice(p.stop??0)} · ${p.size??0} u · Score: ${(p.score??0).toFixed(2)} · ${heldStr}</div></div><div><div class="pos-pnl ${clrC(upnl)}">${fmtSign(upnl)}</div><div class="pos-pct">${fmtSign(upct,'%')}</div></div></div>`;
+    return`<div class="pos-item"><div><div class="pos-sym">${escHtml(p.symbol??'—')}<span class="tag tag-${escHtml(p.side)}">${escHtml((p.side||'').toUpperCase())}</span><span style="font-size:.62rem;color:var(--muted)">${escHtml(p.strategy??'')}</span>${p.timeframe?`<span style="font-size:.62rem;color:var(--cyan);font-family:var(--mono)">${escHtml(p.timeframe)}</span>`:''}</div><div class="pos-meta">Entrée: <strong>${fmtPrice(entry)}</strong> · Stop: ${fmtPrice(p.stop??0)} · ${p.size??0} u · Score: ${(p.score??0).toFixed(2)} · ${heldStr}</div></div><div><div class="pos-pnl ${clrC(upnl)}">${fmtSign(upnl)}</div><div class="pos-pct">${fmtSign(upct,'%')}</div></div></div>`;
   }).join('');
 }
 
@@ -274,7 +274,7 @@ function renderTrades(trades){
   if(!trades.length){tbody.innerHTML='<tr><td colspan="7" class="empty-row">Aucun trade</td></tr>';return;}
   tbody.innerHTML=trades.slice(0,25).map(t=>{
     const pnl=t.pnl??0,d=new Date(t.time),ds=isNaN(d)?'—':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
-    return`<tr><td style="color:var(--muted)">${ds}</td><td style="font-weight:600">${t.symbol??'—'}</td><td><span class="tag tag-${t.side}">${(t.side||'').toUpperCase()}</span></td><td><span class="tag tag-strat">${t.strategy??'—'}</span></td><td>${fmtPrice(t.entry??0)}</td><td>${fmtPrice(t.exit??0)}</td><td class="r ${clrC(pnl)}" style="font-weight:600">${fmtSign(pnl)}</td></tr>`;
+    return`<tr><td style="color:var(--muted)">${ds}</td><td style="font-weight:600">${escHtml(t.symbol??'—')}</td><td><span class="tag tag-${escHtml(t.side)}">${escHtml((t.side||'').toUpperCase())}</span></td><td><span class="tag tag-strat">${escHtml(t.strategy??'—')}</span></td><td>${fmtPrice(t.entry??0)}</td><td>${fmtPrice(t.exit??0)}</td><td class="r ${clrC(pnl)}" style="font-weight:600">${fmtSign(pnl)}</td></tr>`;
   }).join('');
   /* PnL histogram */
   const recent=trades.slice(-30);

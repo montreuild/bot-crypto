@@ -160,7 +160,6 @@ class RiskManager:
 
     # ── Positions ────────────────────────────────────────────────────────────
     def register_open(self, position: dict):
-        key = f"{position['symbol']}_{position['side']}"
         self.open_positions[position["id"]] = position
 
     def register_close(self, position_id: str):

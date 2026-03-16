@@ -2,7 +2,7 @@
 Notifications multi-canaux : Telegram, WhatsApp, Email.
 
 Architecture :
-  - File d'attente dédiée + thread worker unique (pas de spawn par message)
+  - Envoi synchrone direct (pas de thread worker dédié)
   - Filtrage d'événements configurable (on_trade_open, on_trade_close, …)
   - Niveau "critical" pour les alertes urgentes
   - Anti-spam intégré (halt, dd_warning)
@@ -10,9 +10,7 @@ Architecture :
   - WhatsApp via CallMeBot (gratuit) ou Twilio (officiel)
 """
 import logging
-import queue
 import smtplib
-import threading
 from email.mime.text import MIMEText
 
 logger = logging.getLogger(__name__)
@@ -75,11 +73,6 @@ class Notifier:
 
         self._dd_warn_sent = False
         self._halt_sent    = False
-
-        self._q    = queue.Queue(maxsize=200)
-        self._stop = threading.Event()
-        self._t    = threading.Thread(target=self._worker, daemon=True, name="notifier")
-        self._t.start()
 
         active = []
         if self.telegram_enabled: active.append("Telegram")
@@ -242,22 +235,10 @@ class Notifier:
         )
 
     def stop(self):
-        self._q.join()
-        self._stop.set()
-        self._t.join(timeout=5)
+        """Arrêt propre du notifier (compat API, aucune action requise)."""
+        pass
 
     # ── Internals ─────────────────────────────────────────────────────────────
-
-    def _worker(self):
-        while not self._stop.is_set():
-            try:
-                item = self._q.get(timeout=1.0)
-                self._dispatch(item["text"], item.get("level", "info"))
-                self._q.task_done()
-            except queue.Empty:
-                continue
-            except Exception as e:
-                logger.error(f"[Notifier] Worker : {e}")
 
     def _dispatch(self, message: str, level: str = "info"):
         self._send_all(message)

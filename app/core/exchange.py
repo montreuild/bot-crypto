@@ -21,13 +21,11 @@ def with_retry(fn: Callable) -> Callable:
     def wrapper(self_or_first, *args, **kwargs) -> Any:
         # Permet d'utiliser le décorateur sur méthodes ET fonctions libres
         instance = self_or_first if isinstance(self_or_first, RobustExchange) else None
-        call_args = (self_or_first,) + args if instance is None else args
 
         delay = BASE_DELAY
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                result = fn(self_or_first, *args, **kwargs) if instance is None \
-                         else fn(self_or_first, *args, **kwargs)
+                result = fn(self_or_first, *args, **kwargs)
                 # Succès → reset compteur d'erreurs consécutives
                 if instance is not None:
                     instance._consecutive_errors = 0

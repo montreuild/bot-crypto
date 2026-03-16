@@ -201,11 +201,11 @@ function renderScanTable(results){
   if(!results.length){document.getElementById('scan-tbody').innerHTML='<tr><td colspan="8" class="empty-row">Aucun résultat correspondant aux filtres.</td></tr>';return;}
   document.getElementById('scan-tbody').innerHTML=results.map(r=>{
     const ind=r.indicators||{},adx=+(ind.adx||0),rsi=+(ind.rsi||50),atrPct=+(ind.atr_pct||0),volR=+(ind.vol_ratio||1),vol24=+(r.volume_24h||0);
-    const strats=(r.strategies||[]).map(s=>`<span class="tag tag-strat">${s}</span>`).join(' ');
+    const strats=(r.strategies||[]).map(s=>`<span class="tag tag-strat">${escHtml(s)}</span>`).join(' ');
     const regimeClass=r.regime_label?.includes('Trend fort')?'tag-trend':r.regime_label?.includes('modéré')?'tag-trend':r.regime_label?.includes('Range')?'tag-range':r.regime_label?.includes('Panic')?'tag-panic':'tag-neutral';
     const rsiClr=rsi<35?'var(--red)':rsi>65?'var(--amber)':'var(--green)';
     const adxW=Math.round(adx*0.8),vol24M=vol24>=1e9?(vol24/1e9).toFixed(2)+'B':(vol24/1e6).toFixed(0)+'M';
-    return`<tr><td><strong>${r.symbol}</strong></td><td><span class="tag ${regimeClass}">${r.regime_label||'?'}</span></td><td><span style="font-family:var(--mono)">${adx.toFixed(1)}</span><br><span class="adx-bar" style="width:${adxW}px"></span></td><td><span class="rsi-pill" style="background:${rsiClr}22;color:${rsiClr}">${rsi.toFixed(0)}</span></td><td style="font-family:var(--mono);color:${atrPct>3?'var(--amber)':'var(--text)'}">${atrPct.toFixed(2)}%</td><td style="font-family:var(--mono);color:${volR>1.5?'var(--green)':'var(--text)'}">${volR.toFixed(2)}×</td><td style="color:var(--dim)">${vol24M}</td><td>${strats}</td></tr>`;
+    return`<tr><td><strong>${escHtml(r.symbol)}</strong></td><td><span class="tag ${regimeClass}">${escHtml(r.regime_label||'?')}</span></td><td><span style="font-family:var(--mono)">${adx.toFixed(1)}</span><br><span class="adx-bar" style="width:${adxW}px"></span></td><td><span class="rsi-pill" style="background:${rsiClr}22;color:${rsiClr}">${rsi.toFixed(0)}</span></td><td style="font-family:var(--mono);color:${atrPct>3?'var(--amber)':'var(--text)'}">${atrPct.toFixed(2)}%</td><td style="font-family:var(--mono);color:${volR>1.5?'var(--green)':'var(--text)'}">${volR.toFixed(2)}×</td><td style="color:var(--dim)">${vol24M}</td><td>${strats}</td></tr>`;
   }).join('');
 }
 
@@ -222,8 +222,8 @@ function renderOpportunities(opps){
   document.getElementById('opp-list').innerHTML=opps.map(o=>{
     const ind=o.indicators||{},scoreW=Math.round((o.score||0)*100);
     const regClr=o.regime_label?.includes('Trend')?'var(--green)':o.regime_label?.includes('Range')?'var(--amber)':o.regime_label?.includes('Panic')?'var(--red)':'var(--muted)';
-    const strats=(o.strategies||[]).map(s=>`<span class="tag tag-strat">${s}</span>`).join(' ');
-    return`<div class="opp-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div class="opp-sym">${o.symbol}</div><div style="font-size:.75rem;font-weight:700;color:var(--cyan)">${scoreW}%</div></div><div class="opp-score-bar" style="width:${scoreW}%"></div><div style="font-size:.75rem;color:${regClr};margin-bottom:4px">${o.regime_label||'?'}</div><div class="opp-meta"><span>ADX <strong>${(ind.adx||0).toFixed(1)}</strong></span><span>RSI <strong>${(ind.rsi||0).toFixed(0)}</strong></span><span>ATR% <strong>${(ind.atr_pct||0).toFixed(2)}</strong></span><span>Vol <strong>${((o.volume_24h||0)/1e6).toFixed(0)}M</strong></span></div><div style="margin-top:6px">${strats}</div></div>`;
+    const strats=(o.strategies||[]).map(s=>`<span class="tag tag-strat">${escHtml(s)}</span>`).join(' ');
+    return`<div class="opp-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div class="opp-sym">${escHtml(o.symbol)}</div><div style="font-size:.75rem;font-weight:700;color:var(--cyan)">${scoreW}%</div></div><div class="opp-score-bar" style="width:${scoreW}%"></div><div style="font-size:.75rem;color:${regClr};margin-bottom:4px">${escHtml(o.regime_label||'?')}</div><div class="opp-meta"><span>ADX <strong>${(ind.adx||0).toFixed(1)}</strong></span><span>RSI <strong>${(ind.rsi||0).toFixed(0)}</strong></span><span>ATR% <strong>${(ind.atr_pct||0).toFixed(2)}</strong></span><span>Vol <strong>${((o.volume_24h||0)/1e6).toFixed(0)}M</strong></span></div><div style="margin-top:6px">${strats}</div></div>`;
   }).join('');
 }
 

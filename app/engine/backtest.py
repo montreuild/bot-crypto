@@ -464,7 +464,9 @@ class Backtester:
                                        (1 if position["side"] == "long" else -1), 3) if position["entry"] else 0.0,
                 "duration_bars": bars_held,
                 "fill_pct":      self.partial_fill,
+                "stop_trail":    position.pop("_stop_trail", []),
             })
+            position.pop("_trailing", None)
             trades.append(position)
             equity_curve.append(round(capital, 4))
 

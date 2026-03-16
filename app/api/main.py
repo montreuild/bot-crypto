@@ -516,6 +516,8 @@ def risk_status():
 def reset_halt():
     if not trader: raise HTTPException(503, "Trader non initialisé")
     trader.risk.reset_halt()
+    trader.notif.reset_halt_notification()
+    trader.notif.reset_dd_warning()
     return {"status": "reset", "message": "Circuit breaker réinitialisé"}
 
 
