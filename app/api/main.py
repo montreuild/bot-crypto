@@ -870,7 +870,7 @@ def optimizer_start(
     timeframes:          str  = "",    # CSV ex: "5m,1h" — vide = TFs de la config
     method:              str  = "bayesian",
     n_trials:            int  = 40,
-    limit:               int  = 1500,
+    limit:               int  = 0,
     auto_apply:          bool = False,
     n_jobs:              int  = 1,
     early_stop_patience: int  = 0,
@@ -884,7 +884,8 @@ def optimizer_start(
     if not _opt_semaphore.acquire(blocking=False):
         raise HTTPException(429, "Une optimisation est déjà en cours.")
     n_trials = max(1,  min(n_trials, 200))
-    limit    = max(100, min(limit, 50000))
+    if limit > 0:
+        limit = max(100, min(limit, 50000))
 
     try:
         from app.optimizer.auto_optimizer import AutoOptimizer
@@ -901,39 +902,30 @@ def optimizer_start(
         strats  = [s for s in strats if s in PARAM_SPACES and s in allowed]
 
         exchange = create_exchange(cfg)
-        # Limites réelles Binance par TF (ce que l'échange peut fournir au maximum)
-        TF_BINANCE_MAX = {
-            "1m": 3000, "3m": 3000, "5m": 8000, "15m": 8000,
-            "30m": 8000, "1h": 8000, "2h": 8000, "4h": 8000,
-            "1d": 3000,  # Binance ~2017 → ~2500 bougies dispo max
-        }
         df_map   = {}
         fetch_details = {}   # pour retour API : limit demandée
         received_counts = {} # pour retour API : bougies effectivement reçues
         for tf in tf_list:
-            # limit=0 ou absent → utiliser la valeur recommandée
-            user_limit   = limit if limit > 0 else RECOMMENDED_LIMIT.get(tf, 1000)
-            # Plafonner à ce que Binance peut réellement fournir
-            fetch_limit  = min(user_limit, TF_BINANCE_MAX.get(tf, 8000))
+            # limit=0 → utiliser la valeur recommandée par TF ; l'échange retourne naturellement
+            # ce qui est disponible sans plafond artificiel
+            fetch_limit = limit if limit > 0 else RECOMMENDED_LIMIT.get(tf, 1000)
             fetch_details[tf] = fetch_limit
             ohlcv = fetch_ohlcv_paged(exchange, symbol, tf, total=fetch_limit)
             df = pl.DataFrame(ohlcv, schema=["time","open","high","low","close","volume"], orient="row").with_columns(pl.from_epoch("time", time_unit="ms"))
             received_counts[tf] = len(df)
-            if len(df) >= 300:
+            if len(df) > 0:
                 df_map[tf] = df
+                if len(df) < fetch_limit:
+                    logger.info(f"[Optimizer] TF={tf} : {len(df)} bougies reçues (demandées: {fetch_limit}) — l'auto-optimizer validera par stratégie")
             else:
-                logger.warning(f"[Optimizer] TF={tf} : seulement {len(df)} bougies reçues (min 300), ignoré")
+                logger.warning(f"[Optimizer] TF={tf} : aucune bougie reçue, ignoré")
 
         if not df_map:
             details = "; ".join(
-                f"{tf}: {received_counts.get(tf, 0)} bougies reçues (min 300)"
+                f"{tf}: {received_counts.get(tf, 0)} bougies reçues"
                 for tf in tf_list
             )
-            hint = ""
-            if any(tf == "1d" for tf in tf_list):
-                hint = (f" — Pour le TF '1d', le symbole '{symbol}' dispose peut-être "
-                        f"de peu d'historique sur cet échange. Essayez BTC/USDT.")
-            raise HTTPException(400, f"Données insuffisantes pour tous les TFs demandés. {details}.{hint}")
+            raise HTTPException(400, f"Aucune donnée reçue pour les TFs demandés. {details}.")
 
         def _on_apply(strat_name: str, params: dict):
             try:

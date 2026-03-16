@@ -31,6 +31,14 @@ class Strategy(BaseStrategy):
         self._last_signal: Dict[str, int] = {}
         self._call_count:  Dict[str, int] = {}
 
+    def min_bars_required(self, params: dict = None) -> int:
+        p = (params or {}).get("supertrend_macd", {})
+        ema_trend  = int(p.get("ema_trend",   200))
+        macd_slow  = int(p.get("macd_slow",    26))
+        macd_sig_s = int(p.get("macd_signal",   9))
+        st_period  = int(p.get("st_period",    10))
+        return max(ema_trend + 5, macd_slow + macd_sig_s + st_period + 15, 220)
+
     def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get("supertrend_macd", {})
@@ -54,7 +62,7 @@ class Strategy(BaseStrategy):
 
         min_bars = max(ema_trend + 5, macd_slow + macd_sig_s + st_period + 15, 220)
         if len(df) < min_bars:
-            return self._none()
+            return self._none(f"EMA{ema_trend} requiert {min_bars} bougies min, {len(df)} disponibles")
 
         close = df["close"]
         high  = df["high"]

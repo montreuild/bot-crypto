@@ -15,6 +15,14 @@ class BaseStrategy:
     """Interface que toutes les stratégies doivent respecter."""
     name: str = "base"
 
+    def min_bars_required(self, params: dict = None) -> int:
+        """
+        Retourne le nombre minimum de bougies requis pour que la stratégie
+        puisse calculer ses indicateurs de manière fiable.
+        Chaque stratégie surcharge cette méthode selon ses propres besoins.
+        """
+        return 50
+
     def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         """

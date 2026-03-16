@@ -928,9 +928,9 @@ class LiveTrader:
             tfs    = self.timeframes
             df_map = {}
             for tf in tfs:
-                limit = min(RECOMMENDED_LIMIT.get(tf, 500), 2000)
+                limit = RECOMMENDED_LIMIT.get(tf, 500)
                 df    = self.scanner.fetch_ohlcv(symbol, tf, limit=limit)
-                if df is not None and len(df) >= 300:
+                if df is not None and len(df) > 0:
                     df_map[tf] = df
 
             if not df_map:
