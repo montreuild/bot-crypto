@@ -93,13 +93,8 @@ class Notifier:
     # ── Interface publique ────────────────────────────────────────────────────
 
     def send(self, message: str, async_: bool = True, level: str = "info"):
-        if async_:
-            try:
-                self._q.put_nowait({"text": message, "level": level})
-            except queue.Full:
-                logger.warning("[Notifier] File pleine — message ignoré.")
-        else:
-            self._dispatch(message, level)
+        # async_ kept for backward compatibility; sending is always synchronous
+        self._dispatch(message, level)
 
     def notify_trade_open(self, pos: dict):
         """Notification à l'ouverture d'une position."""
@@ -265,11 +260,18 @@ class Notifier:
                 logger.error(f"[Notifier] Worker : {e}")
 
     def _dispatch(self, message: str, level: str = "info"):
-        plain = message.replace("*", "").replace("`", "").replace("_", "")
-        self._telegram(message)
-        self._whatsapp(plain)
+        self._send_all(message)
         if self.email_enabled or level == "critical":
-            self._email(plain, level)
+            self._email(self._strip_markdown(message), level)
+
+    def _send_all(self, message: str):
+        """Central dispatch to all active channels. Override in tests to capture messages."""
+        self._telegram(message)
+        self._whatsapp(self._strip_markdown(message))
+
+    @staticmethod
+    def _strip_markdown(text: str) -> str:
+        return text.replace("*", "").replace("`", "").replace("_", "")
 
     def _telegram(self, text: str):
         if not self.telegram_enabled or not _HAS_REQUESTS: return
