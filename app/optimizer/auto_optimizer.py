@@ -9,6 +9,7 @@ Nouveautés V8 :
 """
 import importlib
 import logging
+import math
 import threading
 import time
 from typing import Dict, List, Optional
@@ -130,17 +131,12 @@ class AutoOptimizer:
 
         for tf in tfs:
             df = df_map.get(tf)
-            if df is None or len(df) < 300:
-                reason = f"données insuffisantes ({len(df) if df is not None else 0} bougies, min 300)"
-                logger.warning(f"[AutoOpt] TF={tf} ignoré — {reason}")
-                for name in strats:
-                    skipped.append({"strategy": name, "timeframe": tf, "reason": reason})
-                continue
+            n_available = len(df) if df is not None else 0
 
             WARMUP = 210
-            split   = max(WARMUP + 100, int(len(df) * 0.65))
-            df_is   = df[:split]
-            df_oos  = df[split:]
+            split  = max(WARMUP + 100, int(n_available * 0.65)) if n_available > 0 else 0
+            df_is  = df[:split]  if df is not None else None
+            df_oos = df[split:]  if df is not None else None
 
             for name in strats:
                 if name in ML_STRATEGIES:
@@ -148,6 +144,24 @@ class AutoOptimizer:
                     continue
                 if name not in PARAM_SPACES:
                     skipped.append({"strategy": name, "timeframe": tf, "reason": "aucun espace de paramètres"})
+                    continue
+
+                # Vérifier si les données sont suffisantes pour cette stratégie
+                try:
+                    mod = importlib.import_module(f"app.strategies.{name}")
+                    min_bars = mod.Strategy().min_bars_required()
+                except Exception:
+                    min_bars = 220  # fallback conservateur
+
+                min_total = math.ceil(min_bars / 0.35)  # OOS (35%) doit avoir min_bars bougies
+                if n_available < min_total:
+                    reason = (
+                        f"bougies insuffisantes — {n_available} disponibles, "
+                        f"{min_total} requises pour '{name}' sur {tf} "
+                        f"(indicateurs requièrent {min_bars} bougies min dans la plage OOS)"
+                    )
+                    logger.warning(f"[AutoOpt] TF={tf} ignoré pour '{name}' — {reason}")
+                    skipped.append({"strategy": name, "timeframe": tf, "reason": reason})
                     continue
 
                 # TF non recommandé → avertissement uniquement, pas de blocage
