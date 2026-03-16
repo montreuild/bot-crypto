@@ -598,7 +598,7 @@ function renderJobCard(id, job) {
     applyHtml = `<div class="apply-row">
       ${applied
         ? `<span style="color:var(--green);font-size:.75rem;font-weight:700">✓ Paramètres appliqués dans config.yaml</span>`
-        : `<button class="btn btn-green" onclick="applyJob('${id}')">✓ Appliquer dans config.yaml</button>
+        : `<button class="btn btn-green" onclick="applyJob('${id}',event)">✓ Appliquer dans config.yaml</button>
            <span class="apply-note">Écrase uniquement les params optimisés — les autres sont préservés</span>`
       }
     </div>`;
@@ -652,8 +652,9 @@ function baRow(label, val, cls='') {
   return `<div class="ba-row"><span class="ba-key">${label}</span><span class="${cls}">${val}</span></div>`;
 }
 
-async function applyJob(jobId) {
-  const btn = event.target;
+async function applyJob(jobId, e) {
+  const btn = e ? e.target : null;
+  if (!btn) return;
   btn.disabled = true;
   btn.textContent = '⏳ Application…';
   try {
