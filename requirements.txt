@@ -44,4 +44,9 @@ requests>=2.32.0
 
 # ── Développement / Debug (optionnel) ─────────────────────────
 pytest>=8.2.0
-httpx>=0.27.0          # Pour tester l'API FastAPI
+pytest-cov>=5.0.0          # Couverture de code
+pytest-benchmark>=4.0.0    # Performance testing
+httpx>=0.27.0              # Pour tester l'API FastAPI
+black>=24.0.0              # Formatage code
+flake8>=7.0.0              # Linting
+mypy>=1.8.0                # Type checking

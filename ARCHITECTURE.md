@@ -1,0 +1,482 @@
+# 🏗️ Architecture Crypto Bot V9
+
+Vue d'ensemble technique, patterns de design et flux de données.
+
+---
+
+## 📋 Vue d'ensemble
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   Interface Web (FastAPI)                   │
+│  Dashboard | Backtest | Optimizer | Scanner | Config        │
+└────────────────────┬────────────────────────────────────────┘
+                     │ HTTP/WebSocket
+                     ▼
+         ┌───────────────────────────┐
+         │  API Routes (FastAPI)     │
+         │  - /api/status            │
+         │  - /api/backtest          │
+         │  - /api/optimize/*        │
+         │  - /api/scanner/*         │
+         └────────┬───────────┬──────┘
+                  │           │
+        ┌─────────▼──┐   ┌────▼──────────┐
+        │   Engine   │   │  DB + Cache   │
+        │ (Signals)  │   │  (SQLAlchemy) │
+        └─────────┬──┘   └───────────────┘
+                  │
+        ┌─────────▼──────────────────┐
+        │  Trading (Live/Paper)      │
+        │  - LiveTrader              │
+        │  - Risk Management         │
+        │  - Trailing Stop           │
+        └─────────┬──────────────────┘
+                  │
+        ┌─────────▼──────────────────┐
+        │  Exchange (CCXT)           │
+        │  - Binance, Kraken, etc    │
+        └────────────────────────────┘
+```
+
+---
+
+## 🔄 Flux de données
+
+### Démarrage (main.py)
+
+```
+1. parse_args() 
+   └─> load_config() [YAML]
+2. setup_logging()
+3. Route mode :
+   - Backtest CLI    : Backtester.run()
+   - Optimizer CLI   : StrategyOptimizer.search()
+   - Scanner CLI     : MarketScanner.screen()
+   - Trading normal  : LiveTrader.start() (thread daemon) + FastAPI server
+4. uvicorn.run() → API + Web
+```
+
+### Trading Live (LiveTrader thread)
+
+```
+while trader.running:
+  1. Fetch OHLCV (exchange)
+  2. For each strategy:
+     - Engine.signal()
+     - Check risk (circuit breaker, margin)
+  3. Execute trades
+  4. Update DB
+  5. Emit notifications
+  6. Sleep(scan_interval)
+```
+
+### Backtest (Backtester)
+
+```
+Backtester(engine, cfg)
+  ├─> Load OHLCV from CCXT
+  ├─> Polars DataFrame processing
+  ├─> For each candle:
+  │    └─> Engine.signal()
+  │        └─> Update equity
+  │        └─> Record trades
+  └─> Results (by_strategy stats)
+```
+
+---
+
+## 🗂️ Modules clés
+
+### `app/core/config.py`
+
+**Responsabilité** : Charger et valider la configuration YAML
+
+```python
+load_config(path)
+  ├─> yaml.safe_load()
+  ├─> Validation schema
+  └─> Return dict config
+```
+
+**Points importants** :
+- ✅ Lecture YAML sécurisée
+- ✅ Validation des valeurs numériques, énums
+- ❌ NE PAS charger secrets depuis code → variables d'env
+
+---
+
+### `app/core/database.py`
+
+**Responsabilité** : ORM SQLAlchemy, gestion des trades et stats
+
+**Modèles** :
+- `Trade` — Chaque trade exécuté
+- `DailyStats` — Aggégation journalière (PnL, DD, etc)
+
+**Bonnes pratiques** :
+- ✅ Connection pooling
+- ✅ Transactions ACID
+- ❌ NE PAS faire N+1 queries
+
+---
+
+### `app/engine/engine.py`
+
+**Responsabilité** : Moteur de signaux central
+
+```python
+class Engine:
+    def register(self, strategy: BaseStrategy)
+    def signal(self, ohlcv_row) -> Signal
+       ├─> Check pre-conditions
+       ├─> strategy.analyze()
+       ├─> Risk filtering
+       └─> Return Signal(side, size, stop, reason)
+```
+
+**Points clés** :
+- ✅ Single responsibility (signaux uniquement, pas d'execution)
+- ✅ Pluggable stratégies
+- ❌ NE PAS faire appels réseau dans signal()
+
+---
+
+### `app/live/live_trader.py`
+
+**Responsabilité** : Boucle de trading live/paper
+
+```python
+class LiveTrader:
+    def start(self):
+        while self.running:
+            1. Scan markets
+            2. Generate signals
+            3. Manage positions
+            4. Execute orders
+            5. Update stats
+            6. Sleep(interval)
+```
+
+**Thread-safety** :
+- ✅ Locks pour config reload
+- ✅ Queue pour commandes de stop/start
+- ❌ NE PAS modifier config sans lock
+
+---
+
+### `app/optimizer/optimizer.py`
+
+**Responsabilité** : Optimisation paramètres (Grid/Random/Bayesian)
+
+```
+StrategyOptimizer(strategy, cfg, df_train, df_test, param_space)
+  ├─> grid_search()    [Brute force]
+  ├─> random_search()  [Monte Carlo]
+  └─> bayesian_search()[UCB + GP]
+      └─> Compute IS/OOS score
+          └─> Detect overfitting
+```
+
+**Caching** :
+- ✅ In-memory cache des backtests (~5s par run)
+- ✅ Invalidate quand config change
+- ❌ NE PAS cacher trop agressivement
+
+---
+
+### `app/api/main.py`
+
+**Responsabilité** : Routes FastAPI, orchestration
+
+```
+@app.get("/api/status")         [Public, no auth]
+@app.get("/api/trades")         [Auth required]
+@app.post("/api/backtest")      [Auth required]
+@app.post("/api/optimize/start" [Auth required]
+@app.get("/api/optimize/stream" [SSE]
+```
+
+**Patterns** :
+- ✅ CleanJSONResponse (NaN/Inf sanitization)
+- ✅ Semaphores (limite concurrent backtests/optimizations)
+- ✅ Dependency injection (verify_api_key)
+- ❌ NE PAS bloquer le thread API
+
+---
+
+## 🔐 Sécurité
+
+### API Key
+
+```yaml
+web:
+  api_key: "your-secret-key"  # Ajouter à config.yaml
+```
+
+**Endpoints non-autentifiés** :
+- `GET /api/status` (info publique, sans détails sensibles)
+
+**Endpoints autentifiés** :
+- Tous les `/api/config/*`
+- Tous les `/api/bot/*`
+- `/api/trades`, `/api/backtest`, `/api/optimize/*`
+
+### CORS
+
+⚠️ **Actuellement permissif pour dev** :
+```python
+allow_origins=["http://localhost", "http://127.0.0.1", ...]
+```
+
+**Production** : Adapter à votre domaine
+```python
+allow_origins=["https://yourdomain.com"]
+```
+
+### Injection YAML
+
+❌ **DANGEREUX** :
+```python
+yaml.dump(disk_cfg)  # Si params non validés
+```
+
+✅ **Sûr** :
+```python
+allowed_strats = _discover_strategies()
+if strategy not in allowed_strats:
+    raise HTTPException(400, "Stratégie inconnue")
+```
+
+---
+
+## 🚀 Performance
+
+### Caching stratégies découvertes
+
+```python
+_discover_strategies()  # TTL 300s
+  └─> glob.glob() sur app/strategies/*.py
+```
+
+**Optimization** :
+```python
+@cache(ttl=300)  # Nouveau en V9
+def _discover_strategies():
+    ...
+```
+
+### Index DB
+
+```sql
+CREATE INDEX idx_trades_symbol_strategy ON trades(symbol, strategy);
+CREATE INDEX idx_trades_time ON trades(time DESC);
+```
+
+**Impact** : -300ms sur `/api/trades` avec 100k+ trades
+
+### Pagination
+
+```python
+def list_trades(limit: int = 100, offset: int = 0):
+    trades = session.query(Trade).offset(offset).limit(limit).all()
+```
+
+---
+
+## 🔄 Threading Model
+
+```
+┌────────────────────────────────────────┐
+│  Main Thread (FastAPI/uvicorn)         │
+│  - Handle HTTP requests                │
+│  - Serve pages                         │
+└────────────────────────────────────────┘
+         ▲
+         │ Queue(config_changes)
+         │
+┌────────▼────────────────────────────────┐
+│  LiveTrader Thread (Daemon)             │
+│  - Scan markets                         │
+│  - Manage positions                     │
+│  - Execute trades                       │
+└────────────────────────────────────────┘
+```
+
+**Synchronization** :
+- ✅ Lock pour config reload
+- ✅ Semaphore pour backtest/optimizer exclusivity
+- ❌ NE PAS lock trop longtemps
+
+---
+
+## 📊 Patterns de design
+
+### Dependency Injection
+
+```python
+# app/api/main.py
+async def verify_api_key(request: Request):
+    ...
+
+@app.get("/api/trades", dependencies=[Depends(verify_api_key)])
+def list_trades():
+    ...
+```
+
+### Strategy Pattern
+
+```python
+class BaseStrategy:
+    def analyze(self, ohlcv) -> Signal
+    
+class TrendStrategy(BaseStrategy):
+    def analyze(self, ohlcv) -> Signal
+        # Implémentation spécifique
+```
+
+### Observer Pattern (Notifications)
+
+```python
+notifier = Notifier(cfg)
+trader.risk.attach_notifier(notifier)  # Circuit breaker → notifications
+```
+
+### Factory Pattern (Exchange)
+
+```python
+create_exchange(cfg)
+  └─> ccxt.binance(), ccxt.kraken(), etc
+```
+
+---
+
+## 🔧 Configuration à chaud
+
+### Stratégies
+
+```
+POST /api/config/strategies?enabled=pullback_trend,breakout
+  ├─> cfg["strategies"]["enabled"] = [...]
+  ├─> trader.reload_strategies(...)  [if trader running]
+  └─> Save config.yaml
+```
+
+### Timeframes
+
+```
+POST /api/config/timeframes?timeframes=5m,1h,4h
+  ├─> cfg["trading"]["timeframes"] = [...]
+  ├─> trader.tf = "5m"
+  ├─> trader._build_active_per_tf()
+  └─> Save config.yaml
+```
+
+**Attention** : Changement de TF peut créer des NaN dans buffer historique
+
+### Paramètres trading
+
+```
+POST /api/config/trading?score_threshold=0.6&risk_per_trade=0.02
+  ├─> cfg["trading"][key] = value
+  ├─> Propagate à trader si running
+  └─> Save config.yaml
+```
+
+---
+
+## 📈 Monitoring
+
+### Structured Logging
+
+```python
+logger.info("[Main] Trading démarré", extra={
+    "mode": "PAPER",
+    "capital": 1000,
+    "strategies": ["pullback_trend"]
+})
+```
+
+### Health Check Endpoint
+
+```python
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "db": db_ok,
+        "exchange": exchange_ok,
+        "trader": trader.running if trader else None
+    }
+```
+
+---
+
+## 🐛 Debugging
+
+### Enable Debug Logging
+
+```python
+# app/core/logger.py
+if cfg.get("debug"):
+    logging.getLogger().setLevel(logging.DEBUG)
+```
+
+### Trace API Calls
+
+```bash
+# Voir tous les appels CCXT
+export CCXT_DEBUG=1
+python main.py
+```
+
+---
+
+## 🚀 Déploiement
+
+### Systemd Service
+
+```ini
+[Unit]
+Description=Crypto Bot V9
+After=network.target
+
+[Service]
+Type=simple
+User=cryptobot
+WorkingDirectory=/opt/crypto_bot
+ExecStart=/opt/crypto_bot/.venv/bin/python main.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Docker
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY . .
+CMD ["python", "main.py"]
+```
+
+---
+
+## 📝 Checklist avant production
+
+- [ ] CORS configuré pour domaine prod
+- [ ] `api_key` défini (sinon API ouverte)
+- [ ] `paper_mode: false` si live réel
+- [ ] Backup DB mis en place
+- [ ] Logging à la journée (logs/)
+- [ ] Monitoring health check en place
+- [ ] Rate limiting sur API
+- [ ] HTTPS/SSL activé
+- [ ] Secrets en env vars, pas en config.yaml
+
+---
+
+**Architecture Crypto Bot V9** — Bien pensée, scalable, et testable 🏗️

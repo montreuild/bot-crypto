@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from app.core.config    import load_config
 from app.core.exchange  import create_exchange
@@ -98,8 +99,21 @@ class CleanJSONResponse(JSONResponse):
             separators=(",", ":"),
         ).encode("utf-8")
 
-app = FastAPI(title="Crypto Bot V8", version="8.0.0", docs_url=None, redoc_url=None,
-              default_response_class=CleanJSONResponse)
+app = FastAPI(
+    title="Crypto Bot V8",
+    version="8.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+    description=(
+        "API de trading algorithmique multi-stratégies. "
+        "Tous les endpoints protégés exigent l'en-tête `X-API-Key`."
+    ),
+    default_response_class=CleanJSONResponse,
+)
+
+# Compression gzip automatique pour toutes les réponses JSON ≥ 500 bytes
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 app.add_middleware(
     CORSMiddleware,
@@ -252,17 +266,24 @@ def get_status(request: Request):
         else:
             # Bot non démarré — valeurs par défaut pour le dashboard
             base.update({
-                "total_pnl":      0.0,
-                "total_pnl_pct":  0.0,
-                "total_trades":   0,
-                "win_rate":       0.0,
-                "profit_factor":  0.0,
-                "total_fees":     0.0,
-                "best_trade":     0.0,
-                "positions":      [],
-                "by_strategy":    {},
-                "signal_log":     [],
-                "active_per_tf":  {},
+                "total_pnl":              0.0,
+                "total_pnl_pct":          0.0,
+                "total_trades":           0,
+                "win_rate":               0.0,
+                "profit_factor":          0.0,
+                "total_fees":             0.0,
+                "best_trade":             0.0,
+                "positions":              [],
+                "by_strategy":            {},
+                "signal_log":             [],
+                "active_per_tf":          {},
+                "circuit_breaker_active": False,
+                "circuit_breaker_reason": "",
+                "daily_pnl_pct":          0.0,
+                "global_dd_pct":          0.0,
+                "current_risk":           round(cfg["trading"].get("risk_per_trade", 0.01) * 100, 2),
+                "daily_dd_limit":         cfg["trading"].get("daily_drawdown_limit", 0.05),
+                "global_dd_limit":        cfg["trading"].get("max_drawdown_global", 0.20),
             })
     return base
 
@@ -461,15 +482,22 @@ def backtest_settings():
 #  API — TRADES & STATS
 # ═══════════════════════════════════════════════════════════════
 @app.get("/api/trades", dependencies=[Depends(verify_api_key)])
-def list_trades(limit: int = 100, symbol: str = None, strategy: str = None):
+def list_trades(limit: int = 100, offset: int = 0, symbol: str = None, strategy: str = None):
+    """Retourne les trades paginés. Paramètres : limit, offset, symbol, strategy."""
     if not SessionLocal: raise HTTPException(503, "DB non initialisée")
     session = SessionLocal()
     try:
         trades = get_trades(session, limit=limit, symbol=symbol, strategy=strategy)
-        return [{"id": t.id, "time": str(t.time), "symbol": t.symbol, "side": t.side,
-                 "strategy": t.strategy, "entry": t.entry, "exit": t.exit_price,
-                 "pnl": t.pnl, "pnl_pct": t.pnl_pct, "fees": t.fees,
-                 "status": t.status, "score": t.score, "reason": t.reason} for t in trades]
+        page = trades[offset:offset + limit] if offset else trades
+        return {
+            "total": len(trades),
+            "offset": offset,
+            "limit": limit,
+            "trades": [{"id": t.id, "time": str(t.time), "symbol": t.symbol, "side": t.side,
+                         "strategy": t.strategy, "entry": t.entry, "exit": t.exit_price,
+                         "pnl": t.pnl, "pnl_pct": t.pnl_pct, "fees": t.fees,
+                         "status": t.status, "score": t.score, "reason": t.reason} for t in page],
+        }
     finally:
         session.close()
 
@@ -516,6 +544,8 @@ def risk_status():
 def reset_halt():
     if not trader: raise HTTPException(503, "Trader non initialisé")
     trader.risk.reset_halt()
+    trader.notif.reset_halt_notification()
+    trader.notif.reset_dd_warning()
     return {"status": "reset", "message": "Circuit breaker réinitialisé"}
 
 

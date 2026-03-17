@@ -2,6 +2,8 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<meta name="description" content="Crypto Bot — tableau de bord de trading algorithmique multi-stratégies"/>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%E2%9A%A1%3C/text%3E%3C/svg%3E"/>
 <title>Crypto Bot{% block title %}{% endblock %}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet"/>
@@ -170,46 +172,46 @@ const API_KEY="{{api_key}}";
 function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function apiFetch(url,opts={}){if(!opts.headers)opts.headers={};if(API_KEY)opts.headers["X-API-Key"]=API_KEY;return fetch(url,opts);}
 function toggleSidebar(){
-  const sb=document.getElementById('sidebar'),btn=document.getElementById('sb-toggle'),ov=document.getElementById('sb-overlay');
+  const sb=document.getElementById('sidebar'),btn=document.getElementById('sb-toggle'),ov=document.getElementById('sb-overlay'),mobileBtn=document.getElementById('sb-mobile-btn');
   const isMobile=window.innerWidth<=768;
-  if(isMobile){sb.classList.toggle('sb-open');if(ov)ov.style.display=sb.classList.contains('sb-open')?'block':'none';}
-  else{sb.classList.toggle('collapsed');if(btn)btn.textContent=sb.classList.contains('collapsed')?'›':'‹';}
+  if(isMobile){sb.classList.toggle('sb-open');const isOpen=sb.classList.contains('sb-open');if(ov)ov.style.display=isOpen?'block':'none';if(btn)btn.setAttribute('aria-expanded',isOpen);if(mobileBtn)mobileBtn.setAttribute('aria-expanded',isOpen);}
+  else{sb.classList.toggle('collapsed');const isExpanded=!sb.classList.contains('collapsed');if(btn){btn.textContent=isExpanded?'‹':'›';btn.setAttribute('aria-expanded',isExpanded);}}
 }
 function toast(msg,err=false){const t=document.getElementById('toast');t.textContent=msg;t.className='show'+(err?' err':'');setTimeout(()=>{t.className='';},3200);}
 </script>
 </head>
 <body>
-<aside id="sidebar">
+<aside id="sidebar" role="complementary" aria-label="Navigation principale">
   <div class="sb-logo">
-    <div class="sb-logo-icon">⚡</div>
+    <div class="sb-logo-icon" aria-hidden="true">⚡</div>
     <div class="sb-logo-text">Crypto<span>Bot</span></div>
-    <button id="sb-toggle" onclick="toggleSidebar()" title="Réduire">‹</button>
+    <button id="sb-toggle" onclick="toggleSidebar()" title="Réduire la barre latérale" aria-expanded="true" aria-controls="sidebar">‹</button>
   </div>
-  <nav class="sb-nav">
-    <div class="sb-group-label">Trading</div>
-    <a href="/"        class="sb-link {% if active_page=='dashboard' %}active{% endif %}"><span class="sb-icon">◈</span><span class="sb-lbl">Dashboard Live</span></a>
-    <a href="/scanner" class="sb-link {% if active_page=='scanner' %}active{% endif %}"><span class="sb-icon">◎</span><span class="sb-lbl">Scanner</span></a>
-    <div class="sb-group-label" style="margin-top:12px">Outils</div>
-    <a href="/optimizer" class="sb-link {% if active_page=='optimizer' %}active{% endif %}"><span class="sb-icon">⬡</span><span class="sb-lbl">Optimiseur</span></a>
-    <a href="/backtest"  class="sb-link {% if active_page=='backtest'  %}active{% endif %}"><span class="sb-icon">↺</span><span class="sb-lbl">Backtest</span></a>
-    <a href="/config"    class="sb-link {% if active_page=='config'    %}active{% endif %}"><span class="sb-icon">⚙</span><span class="sb-lbl">Configuration</span></a>
+  <nav class="sb-nav" role="navigation" aria-label="Menu principal">
+    <div class="sb-group-label" role="presentation">Trading</div>
+    <a href="/"        class="sb-link {% if active_page=='dashboard' %}active{% endif %}" aria-label="Dashboard Live" {% if active_page=='dashboard' %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">◈</span><span class="sb-lbl">Dashboard Live</span></a>
+    <a href="/scanner" class="sb-link {% if active_page=='scanner' %}active{% endif %}" aria-label="Scanner de marché" {% if active_page=='scanner' %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">◎</span><span class="sb-lbl">Scanner</span></a>
+    <div class="sb-group-label" style="margin-top:12px" role="presentation">Outils</div>
+    <a href="/optimizer" class="sb-link {% if active_page=='optimizer' %}active{% endif %}" aria-label="Optimiseur de stratégies" {% if active_page=='optimizer' %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">⬡</span><span class="sb-lbl">Optimiseur</span></a>
+    <a href="/backtest"  class="sb-link {% if active_page=='backtest'  %}active{% endif %}" aria-label="Backtest" {% if active_page=='backtest' %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">↺</span><span class="sb-lbl">Backtest</span></a>
+    <a href="/config"    class="sb-link {% if active_page=='config'    %}active{% endif %}" aria-label="Configuration" {% if active_page=='config' %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">⚙</span><span class="sb-lbl">Configuration</span></a>
   </nav>
   <div class="sb-footer">
-    <div class="sb-link" style="cursor:default;font-size:.65rem;color:var(--dim)">
+    <div class="sb-link" style="cursor:default;font-size:.65rem;color:var(--dim)" aria-hidden="true">
       <span class="sb-icon" style="font-size:9px">●</span>
       <span class="sb-lbl">v2.0 · API Binance</span>
     </div>
   </div>
 </aside>
-<div id="sb-overlay" onclick="toggleSidebar()"></div>
+<div id="sb-overlay" onclick="toggleSidebar()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSidebar();}" role="button" aria-label="Fermer le menu" tabindex="0"></div>
 <div id="main">
   <header id="topbar">
-    <button id="sb-mobile-btn" onclick="toggleSidebar()" title="Menu">☰</button>
+    <button id="sb-mobile-btn" onclick="toggleSidebar()" title="Ouvrir le menu" aria-expanded="false" aria-controls="sidebar" aria-label="Ouvrir le menu de navigation">☰</button>
     {% block topbar_content %}{% endblock %}
   </header>
   {% block content %}{% endblock %}
 </div>
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 {% block modals %}{% endblock %}
 {% block body_scripts %}{% endblock %}
 </body>
