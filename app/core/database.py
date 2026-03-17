@@ -42,6 +42,7 @@ class Trade(Base):
         Index("ix_trades_symbol", "symbol"),
         Index("ix_trades_strategy", "strategy"),
         Index("ix_trades_time", "time"),
+        Index("ix_trades_symbol_strategy", "symbol", "strategy"),
     )
 
 

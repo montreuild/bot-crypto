@@ -1,7 +1,7 @@
 """
-API FastAPI — V8 (Multi-Timeframe)
+API FastAPI — V9 (Multi-Timeframe)
 
-Nouveautés V8 :
+Nouveautés V9 :
   - Pages web : scanner.html ajoutée, liens nav mis à jour
   - /api/status   : active_per_tf dans la réponse
   - /api/config   : timeframes + optimizer_results exposés
@@ -10,10 +10,13 @@ Nouveautés V8 :
   - /api/optimize/results GET : résultats classés par (strategy, tf)
   - /api/scanner/opportunities GET
   - /api/scanner/config GET
+  - /health : vérification de l'état du service
   - Sécurité : whitelist stratégies, aucune injection module possible
+  - Cache TTL sur la découverte de stratégies
+  - Lock threading sur les écritures config.yaml
 """
 import csv, glob, importlib, io, json, logging, os, time
-from typing import Optional
+from typing import Any, Optional
 import polars as pl
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
@@ -28,7 +31,7 @@ import threading as _threading
 import math as _math
 
 
-def _clean(obj):
+def _clean(obj: Any) -> Any:
     """Sanitise récursivement pour la sérialisation JSON :
     - float NaN  → None
     - float ±Inf → ±1e308
@@ -56,11 +59,17 @@ def _clean(obj):
 
 logger = logging.getLogger(__name__)
 
-# ── Sémaphores ───────────────────────────────────────────────────────────
+# ── Sémaphores & verrous ──────────────────────────────────────────────────
 _bt_exchange      = None
 _bt_exchange_lock = _threading.Lock()
 _bt_semaphore     = _threading.Semaphore(1)
 _opt_semaphore    = _threading.Semaphore(1)
+_config_write_lock = _threading.Lock()  # Protège les écritures concurrentes sur config.yaml
+
+# ── Cache stratégies ──────────────────────────────────────────────────────
+_strategies_cache: frozenset | None = None
+_strategies_cache_ts: float = 0.0
+_STRATEGIES_CACHE_TTL: float = 60.0  # secondes
 
 def _get_bt_exchange(cfg: dict):
     global _bt_exchange
@@ -100,8 +109,8 @@ class CleanJSONResponse(JSONResponse):
         ).encode("utf-8")
 
 app = FastAPI(
-    title="Crypto Bot V8",
-    version="8.0.0",
+    title="Crypto Bot V9",
+    version="9.0.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
@@ -199,15 +208,41 @@ def fetch_ohlcv_paged(exchange, symbol: str, timeframe: str, total: int = 1000) 
 
 
 def _discover_strategies() -> frozenset:
-    """Retourne les noms de stratégies valides sur disque (whitelist)."""
+    """Retourne les noms de stratégies valides sur disque (whitelist).
+    Résultat mis en cache 60 secondes pour éviter des lectures disque répétées.
+    """
+    global _strategies_cache, _strategies_cache_ts
+    now = time.monotonic()
+    if _strategies_cache is not None and (now - _strategies_cache_ts) < _STRATEGIES_CACHE_TTL:
+        return _strategies_cache
     strat_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
     _EXCLUDED = {"indicators", "base"}
-    return frozenset(
+    result = frozenset(
         os.path.splitext(os.path.basename(f))[0]
         for f in glob.glob(os.path.join(strat_dir, "*.py"))
         if not os.path.basename(f).startswith("__")
         and os.path.splitext(os.path.basename(f))[0] not in _EXCLUDED
     )
+    _strategies_cache = result
+    _strategies_cache_ts = now
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════
+#  HEALTH CHECK
+# ═══════════════════════════════════════════════════════════════
+@app.get("/health")
+def health_check():
+    """Vérification de l'état du service (pas d'auth requise)."""
+    db_ok = SessionLocal is not None
+    exchange_ok = cfg is not None
+    return {
+        "status":      "ok" if (db_ok and exchange_ok) else "degraded",
+        "version":     "9.0.0",
+        "db":          db_ok,
+        "exchange":    exchange_ok,
+        "trader":      trader is not None and getattr(trader, "running", False),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -257,7 +292,7 @@ def get_status(request: Request):
         "timeframe":  cfg["trading"].get("timeframe", "1h"),
         "timeframes": cfg["trading"].get("timeframes", [cfg["trading"].get("timeframe", "1h")]),
         "strategies": cfg["strategies"]["enabled"],
-        "version":    "8.0.0",
+        "version":    "9.0.0",
     }
     if authenticated:
         base["capital"] = trader.capital_display if trader else cfg["trading"]["capital"]
@@ -325,11 +360,12 @@ def update_strategies(enabled: str = ""):
         result.update(reload_result)
     try:
         import yaml as _yaml
-        with open("config.yaml", "r", encoding="utf-8") as f:
-            disk_cfg = _yaml.safe_load(f) or {}
-        disk_cfg.setdefault("strategies", {})["enabled"] = strat_list
-        with open("config.yaml", "w", encoding="utf-8") as f:
-            _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        with _config_write_lock:
+            with open("config.yaml", "r", encoding="utf-8") as f:
+                disk_cfg = _yaml.safe_load(f) or {}
+            disk_cfg.setdefault("strategies", {})["enabled"] = strat_list
+            with open("config.yaml", "w", encoding="utf-8") as f:
+                _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         result["saved_to_disk"] = True
     except Exception as e:
         result["save_error"] = str(e)
@@ -361,12 +397,13 @@ def update_timeframes(timeframes: str = "1h"):
                                      for tf, v in trader._active_per_tf.items()}
     try:
         import yaml as _yaml
-        with open("config.yaml", "r", encoding="utf-8") as f:
-            disk_cfg = _yaml.safe_load(f) or {}
-        disk_cfg.setdefault("trading", {})["timeframes"] = tf_list
-        disk_cfg["trading"]["timeframe"] = tf_list[0]
-        with open("config.yaml", "w", encoding="utf-8") as f:
-            _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        with _config_write_lock:
+            with open("config.yaml", "r", encoding="utf-8") as f:
+                disk_cfg = _yaml.safe_load(f) or {}
+            disk_cfg.setdefault("trading", {})["timeframes"] = tf_list
+            disk_cfg["trading"]["timeframe"] = tf_list[0]
+            with open("config.yaml", "w", encoding="utf-8") as f:
+                _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         result["saved_to_disk"] = True
     except Exception as e:
         result["save_error"] = str(e)
@@ -382,12 +419,13 @@ def update_auto_optimizer(enabled: bool = False, interval_h: int = 24):
         trader.set_auto_optimizer(enabled, interval_h)
     try:
         import yaml as _yaml
-        with open("config.yaml", "r", encoding="utf-8") as f:
-            disk_cfg = _yaml.safe_load(f) or {}
-        disk_cfg.setdefault("optimizer", {})["enabled"]        = enabled
-        disk_cfg["optimizer"]["auto_interval_h"]                = interval_h
-        with open("config.yaml", "w", encoding="utf-8") as f:
-            _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        with _config_write_lock:
+            with open("config.yaml", "r", encoding="utf-8") as f:
+                disk_cfg = _yaml.safe_load(f) or {}
+            disk_cfg.setdefault("optimizer", {})["enabled"]        = enabled
+            disk_cfg["optimizer"]["auto_interval_h"]                = interval_h
+            with open("config.yaml", "w", encoding="utf-8") as f:
+                _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         saved = True
     except Exception as e:
         saved = False
@@ -425,11 +463,12 @@ def update_trading_params(
                     trader.threshold = val
     try:
         import yaml as _yaml
-        with open("config.yaml", "r", encoding="utf-8") as f:
-            disk_cfg = _yaml.safe_load(f) or {}
-        disk_cfg.setdefault("trading", {}).update(changed)
-        with open("config.yaml", "w", encoding="utf-8") as f:
-            _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        with _config_write_lock:
+            with open("config.yaml", "r", encoding="utf-8") as f:
+                disk_cfg = _yaml.safe_load(f) or {}
+            disk_cfg.setdefault("trading", {}).update(changed)
+            with open("config.yaml", "w", encoding="utf-8") as f:
+                _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         saved = True
     except Exception as e:
         saved = False
@@ -447,11 +486,12 @@ def update_strategy_params(strategy: str, params: dict):
         trader.strat_params = cfg["strategy_params"]
     try:
         import yaml as _yaml
-        with open("config.yaml", "r", encoding="utf-8") as f:
-            disk_cfg = _yaml.safe_load(f) or {}
-        disk_cfg.setdefault("strategy_params", {})[strategy] = params
-        with open("config.yaml", "w", encoding="utf-8") as f:
-            _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        with _config_write_lock:
+            with open("config.yaml", "r", encoding="utf-8") as f:
+                disk_cfg = _yaml.safe_load(f) or {}
+            disk_cfg.setdefault("strategy_params", {})[strategy] = params
+            with open("config.yaml", "w", encoding="utf-8") as f:
+                _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         return {"saved": True, "strategy": strategy, "params": params}
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -503,10 +543,13 @@ def list_trades(limit: int = 100, offset: int = 0, symbol: str = None, strategy:
 
 
 @app.get("/api/trades/export", dependencies=[Depends(verify_api_key)])
-def export_trades():
+def export_trades(limit: int = 10000):
+    """Export CSV des trades. limit = nombre max de trades (défaut 10 000, max 50 000)."""
+    if not SessionLocal: raise HTTPException(503, "DB non initialisée")
+    export_limit = max(1, min(limit, 50000))
     session = SessionLocal()
     try:
-        trades = get_trades(session, limit=50000)
+        trades = get_trades(session, limit=export_limit)
         out = io.StringIO()
         w   = csv.writer(out)
         w.writerow(["id","time","symbol","side","strategy","entry","exit","pnl","fees","status"])
@@ -633,17 +676,18 @@ def update_notifications_config(
         trader.risk.attach_notifier(trader.notif)
     try:
         import yaml as _yaml
-        with open("config.yaml", "r", encoding="utf-8") as f:
-            disk_cfg = _yaml.safe_load(f) or {}
-        disk_cfg.setdefault("notifications", {}).update({
-            k: v for k, v in changed.items() if "password" not in k and "token" not in k
-        })
-        # secrets non loggés dans config.yaml — écriture directe uniquement si fournis
-        for k in ["telegram_bot_token","whatsapp_token","email_password"]:
-            if k in changed:
-                disk_cfg["notifications"][k] = changed[k]
-        with open("config.yaml", "w", encoding="utf-8") as f:
-            _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        with _config_write_lock:
+            with open("config.yaml", "r", encoding="utf-8") as f:
+                disk_cfg = _yaml.safe_load(f) or {}
+            disk_cfg.setdefault("notifications", {}).update({
+                k: v for k, v in changed.items() if "password" not in k and "token" not in k
+            })
+            # secrets non loggés dans config.yaml — écriture directe uniquement si fournis
+            for k in ["telegram_bot_token","whatsapp_token","email_password"]:
+                if k in changed:
+                    disk_cfg["notifications"][k] = changed[k]
+            with open("config.yaml", "w", encoding="utf-8") as f:
+                _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         saved = True
     except Exception as e:
         saved = False
@@ -653,7 +697,7 @@ def update_notifications_config(
 @app.post("/api/config/notifications/test", dependencies=[Depends(verify_api_key)])
 def test_notification():
     if not trader: raise HTTPException(503, "Trader non initialisé")
-    trader.notif.send("🔔 Test de notification depuis le bot V8", async_=False)
+    trader.notif.send("🔔 Test de notification depuis le bot V9", async_=False)
     return {"status": "sent"}
 
 
@@ -669,13 +713,14 @@ def update_margin_config(
     if max_leverage is not None:cfg["trading"]["max_leverage"]  = max_leverage
     try:
         import yaml as _yaml
-        with open("config.yaml", "r", encoding="utf-8") as f:
-            disk_cfg = _yaml.safe_load(f) or {}
-        if margin is not None:      disk_cfg.setdefault("exchange", {})["margin"]      = margin
-        if margin_mode is not None: disk_cfg.setdefault("trading", {})["margin_mode"]  = margin_mode
-        if max_leverage is not None:disk_cfg.setdefault("trading", {})["max_leverage"] = max_leverage
-        with open("config.yaml", "w", encoding="utf-8") as f:
-            _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        with _config_write_lock:
+            with open("config.yaml", "r", encoding="utf-8") as f:
+                disk_cfg = _yaml.safe_load(f) or {}
+            if margin is not None:      disk_cfg.setdefault("exchange", {})["margin"]      = margin
+            if margin_mode is not None: disk_cfg.setdefault("trading", {})["margin_mode"]  = margin_mode
+            if max_leverage is not None:disk_cfg.setdefault("trading", {})["max_leverage"] = max_leverage
+            with open("config.yaml", "w", encoding="utf-8") as f:
+                _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         saved = True
     except Exception as e:
         saved = False
@@ -1010,7 +1055,7 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
 
 
 # ═══════════════════════════════════════════════════════════════
-#  API — OPTIMISEUR V8
+#  API — OPTIMISEUR V9
 # ═══════════════════════════════════════════════════════════════
 @app.post("/api/optimize/start", dependencies=[Depends(verify_api_key)])
 def optimizer_start(

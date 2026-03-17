@@ -136,7 +136,9 @@ python main.py --config my_config.yaml
 | `--optimize STRAT` | Optimiser une stratégie |
 | `--opt-method METHOD` | Méthode d'optimisation: `grid`, `random`, `bayesian` (défaut: bayesian) |
 | `--scan` | Scanner les marchés |
+| `--live` | Forcer le mode live réel (désactive paper mode) |
 | `--paper` | Forcer le mode paper trading |
+| `--web` | Démarrer le serveur web seul (sans démarrer le bot de trading) |
 | `--config PATH` | Fichier config alternatif |
 | `--host IP` | Adresse d'écoute (défaut: `127.0.0.1`) |
 | `--port N` | Port du serveur (défaut: `8000`) |
