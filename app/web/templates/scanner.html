@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %} — Scanner{% endblock %}
 
+{% block extra_head %}
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+{% endblock %}
+
 {% block page_styles %}
 .scanner-main{max-width:1400px;margin:0 auto;padding:16px;}
 .grid-2{display:grid;grid-template-columns:340px 1fr;gap:16px;align-items:start;}
@@ -42,6 +46,12 @@
 .topbar-breadcrumb a{color:var(--muted);text-decoration:none;transition:color .15s;}
 .topbar-breadcrumb a:hover{color:var(--cyan);}
 .topbar-breadcrumb .sep{color:var(--dim);}
+/* Chart */
+.chart-wrap{position:relative;width:100%;}
+.chart-tf-btn{background:transparent;border:1px solid var(--border);color:var(--dim);padding:3px 9px;border-radius:4px;font-size:.72rem;cursor:pointer;transition:all .12s;font-family:var(--body);}
+.chart-tf-btn:hover{color:var(--text);border-color:var(--border-hi);}
+.chart-tf-btn.active{background:var(--cyan-dim);border-color:rgba(34,211,238,.4);color:var(--cyan);}
+.chart-sub-lbl{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--dim);padding:6px 8px 2px;}
 {% endblock %}
 
 {% block topbar_content %}
@@ -154,6 +164,42 @@
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Graphique paire ─────────────────────────────────────────── -->
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-hdr">
+        📈 Graphique
+        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap">
+          <input id="chart-symbol" type="text" value="BTC/USDC"
+                 style="width:110px;padding:4px 8px;font-size:.75rem"
+                 placeholder="ex: BTC/USDC" aria-label="Paire"
+                 onkeydown="if(event.key==='Enter')loadChart()">
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            <button class="chart-tf-btn" onclick="setChartTf('1m')">1m</button>
+            <button class="chart-tf-btn" onclick="setChartTf('5m')">5m</button>
+            <button class="chart-tf-btn" onclick="setChartTf('15m')">15m</button>
+            <button class="chart-tf-btn" onclick="setChartTf('30m')">30m</button>
+            <button class="chart-tf-btn active" id="chart-tf-1h" onclick="setChartTf('1h')">1h</button>
+            <button class="chart-tf-btn" onclick="setChartTf('4h')">4h</button>
+            <button class="chart-tf-btn" onclick="setChartTf('1d')">1d</button>
+          </div>
+          <button class="btn btn-cyan btn-sm" onclick="loadChart()" aria-label="Charger le graphique">⟳ Charger</button>
+        </div>
+      </div>
+      <div class="panel-body" style="gap:0;padding:0">
+        <div id="chart-status" style="padding:8px 14px;font-size:.72rem;color:var(--dim);min-height:20px"></div>
+        <div style="padding:0 8px">
+          <div class="chart-sub-lbl">OHLCV — <span id="chart-title-lbl">BTC/USDC · 1h</span></div>
+          <div class="chart-wrap" id="chart-price" style="height:300px"></div>
+          <div class="chart-sub-lbl" style="margin-top:4px">Volume</div>
+          <div class="chart-wrap" id="chart-volume" style="height:80px"></div>
+          <div class="chart-sub-lbl" style="margin-top:4px">RSI (14)</div>
+          <div class="chart-wrap" id="chart-rsi" style="height:90px"></div>
+          <div class="chart-sub-lbl" style="margin-top:4px">MACD (12,26,9)</div>
+          <div class="chart-wrap" id="chart-macd" style="height:90px;margin-bottom:8px"></div>
         </div>
       </div>
     </div>
@@ -327,5 +373,150 @@ renderWatchlist();
 loadConfig();
 loadOpenPositions();
 document.getElementById('opp-list').innerHTML='<div class="empty" style="color:var(--dim)">Cliquez sur <strong style="color:var(--text)">↺ Refresh</strong> pour charger les opportunités.</div>';
+
+// ── Graphique Scanner ───────────────────────────────────────────────────
+let chartTf = '1h';
+let tvPriceChart = null, tvVolChart = null, tvRsiChart = null, tvMacdChart = null;
+
+const CHART_TV = {
+  layout: {background:{type:'solid',color:'transparent'}, textColor:'#5a7099'},
+  grid: {vertLines:{color:'rgba(30,45,69,.4)'}, horzLines:{color:'rgba(30,45,69,.4)'}},
+  crosshair: {mode: LightweightCharts.CrosshairMode.Normal},
+  rightPriceScale: {borderColor:'rgba(255,255,255,.06)', scaleMargins:{top:.06,bottom:.06}},
+  timeScale: {borderColor:'rgba(255,255,255,.06)', visible:true, timeVisible:true},
+  handleScale: {axisPressedMouseMove:{time:true,price:true}},
+  handleScroll: true,
+};
+
+function _mkChart(elId, h, extraOpts){
+  const el = document.getElementById(elId);
+  if(!el) return null;
+  const c = LightweightCharts.createChart(el, {...CHART_TV, ...extraOpts, height:h, width:el.offsetWidth||800});
+  new ResizeObserver(()=>c.applyOptions({width:el.offsetWidth})).observe(el);
+  return c;
+}
+
+function _destroyCharts(){
+  [tvPriceChart, tvVolChart, tvRsiChart, tvMacdChart].forEach(c=>{try{if(c)c.remove();}catch(_){}});
+  tvPriceChart=tvVolChart=tvRsiChart=tvMacdChart=null;
+}
+
+function setChartTf(tf){
+  chartTf = tf;
+  document.querySelectorAll('.chart-tf-btn').forEach(b=>b.classList.toggle('active', b.textContent===tf));
+  loadChart();
+}
+
+async function loadChart(){
+  const sym = (document.getElementById('chart-symbol').value||'BTC/USDC').trim();
+  const statusEl = document.getElementById('chart-status');
+  statusEl.innerHTML = '<span class="spinner"></span> Chargement…';
+  _destroyCharts();
+  try{
+    const r = await apiFetch(`/api/scanner/chart?symbol=${encodeURIComponent(sym)}&timeframe=${chartTf}&limit=300`);
+    if(!r.ok){const e=await r.json();throw new Error(e.detail||r.statusText);}
+    const d = await r.json();
+    statusEl.textContent = `${d.n_bars} bougies · ${d.symbol} · ${d.timeframe}`;
+    document.getElementById('chart-title-lbl').textContent = `${d.symbol} · ${d.timeframe}`;
+    _renderChart(d);
+  }catch(e){
+    statusEl.textContent = '⚠ ' + e.message;
+  }
+}
+
+function _renderChart(d){
+  const candles = d.candles || [];
+  const ind = d.indicators || {};
+
+  // ── Price (candlestick + EMAs + BB) ──────────────────────────────────
+  tvPriceChart = _mkChart('chart-price', 300, {timeScale:{borderColor:'rgba(255,255,255,.06)',visible:true,timeVisible:true}});
+  if(!tvPriceChart) return;
+
+  const candleSeries = tvPriceChart.addCandlestickSeries({
+    upColor:'#34d399', downColor:'#fb7185',
+    borderUpColor:'#34d399', borderDownColor:'#fb7185',
+    wickUpColor:'#34d399', wickDownColor:'#fb7185',
+  });
+  candleSeries.setData(candles.map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));
+
+  // Bollinger Bands
+  const bbUpS  = tvPriceChart.addLineSeries({color:'rgba(77,159,255,.45)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
+  const bbMidS = tvPriceChart.addLineSeries({color:'rgba(77,159,255,.3)', lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
+  const bbDnS  = tvPriceChart.addLineSeries({color:'rgba(77,159,255,.45)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
+  if(ind.bb_upper?.length) bbUpS.setData(ind.bb_upper);
+  if(ind.bb_mid?.length)   bbMidS.setData(ind.bb_mid);
+  if(ind.bb_lower?.length) bbDnS.setData(ind.bb_lower);
+
+  // EMAs
+  const ema20S  = tvPriceChart.addLineSeries({color:'#22d3ee',lineWidth:1.5,priceLineVisible:false,lastValueVisible:true,title:'EMA20'});
+  const ema50S  = tvPriceChart.addLineSeries({color:'#fbbf24',lineWidth:1.5,priceLineVisible:false,lastValueVisible:true,title:'EMA50'});
+  const ema200S = tvPriceChart.addLineSeries({color:'#a78bfa',lineWidth:1.5,priceLineVisible:false,lastValueVisible:true,title:'EMA200'});
+  if(ind.ema20?.length)  ema20S.setData(ind.ema20);
+  if(ind.ema50?.length)  ema50S.setData(ind.ema50);
+  if(ind.ema200?.length) ema200S.setData(ind.ema200);
+
+  tvPriceChart.timeScale().fitContent();
+
+  // ── Volume ────────────────────────────────────────────────────────────
+  tvVolChart = _mkChart('chart-volume', 80, {
+    rightPriceScale:{scaleMargins:{top:.1,bottom:.0}},
+    timeScale:{visible:false},
+  });
+  if(tvVolChart && ind.volume?.length){
+    const volS = tvVolChart.addHistogramSeries({priceLineVisible:false,lastValueVisible:false});
+    volS.setData(ind.volume);
+    tvVolChart.timeScale().fitContent();
+    // Sync scrolling
+    tvPriceChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(r)tvVolChart.timeScale().setVisibleLogicalRange(r);});
+    tvVolChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(r)tvPriceChart.timeScale().setVisibleLogicalRange(r);});
+  }
+
+  // ── RSI ───────────────────────────────────────────────────────────────
+  tvRsiChart = _mkChart('chart-rsi', 90, {
+    rightPriceScale:{scaleMargins:{top:.1,bottom:.1}},
+    timeScale:{visible:false},
+  });
+  if(tvRsiChart && ind.rsi?.length){
+    const rsiS = tvRsiChart.addLineSeries({color:'#fbbf24',lineWidth:1.5,priceLineVisible:false,lastValueVisible:true});
+    rsiS.setData(ind.rsi);
+    // Overbought/oversold reference lines
+    const ob = tvRsiChart.addLineSeries({color:'rgba(251,113,133,.5)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dotted,priceLineVisible:false,lastValueVisible:false});
+    const os = tvRsiChart.addLineSeries({color:'rgba(52,211,153,.5)', lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dotted,priceLineVisible:false,lastValueVisible:false});
+    const rsiTimes = ind.rsi.map(p=>p.time);
+    if(rsiTimes.length){
+      ob.setData(rsiTimes.map(t=>({time:t,value:70})));
+      os.setData(rsiTimes.map(t=>({time:t,value:30})));
+    }
+    tvRsiChart.timeScale().fitContent();
+    tvPriceChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(r)tvRsiChart.timeScale().setVisibleLogicalRange(r);});
+    tvRsiChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(r)tvPriceChart.timeScale().setVisibleLogicalRange(r);});
+  }
+
+  // ── MACD ──────────────────────────────────────────────────────────────
+  tvMacdChart = _mkChart('chart-macd', 90, {
+    rightPriceScale:{scaleMargins:{top:.1,bottom:.1}},
+    timeScale:{visible:true,timeVisible:true},
+  });
+  if(tvMacdChart){
+    if(ind.macd_hist?.length){
+      const histS = tvMacdChart.addHistogramSeries({priceLineVisible:false,lastValueVisible:false});
+      histS.setData(ind.macd_hist.map(p=>({...p,color:p.value>=0?'rgba(52,211,153,.6)':'rgba(251,113,133,.6)'})));
+    }
+    if(ind.macd?.length){
+      const macdS = tvMacdChart.addLineSeries({color:'#22d3ee',lineWidth:1.5,priceLineVisible:false,lastValueVisible:true,title:'MACD'});
+      macdS.setData(ind.macd);
+    }
+    if(ind.macd_signal?.length){
+      const sigS = tvMacdChart.addLineSeries({color:'#fb7185',lineWidth:1.2,priceLineVisible:false,lastValueVisible:true,title:'Signal'});
+      sigS.setData(ind.macd_signal);
+    }
+    tvMacdChart.timeScale().fitContent();
+    tvPriceChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(r)tvMacdChart.timeScale().setVisibleLogicalRange(r);});
+    tvMacdChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(r)tvPriceChart.timeScale().setVisibleLogicalRange(r);});
+  }
+}
+
+// Auto-load chart on page init
+loadChart();
 </script>
 {% endblock %}

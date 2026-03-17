@@ -890,6 +890,123 @@ def scanner_opportunities(timeframe: str = None, limit: int = 200):
         raise HTTPException(500, str(e))
 
 
+@app.get("/api/scanner/chart", dependencies=[Depends(verify_api_key)])
+def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 300):
+    """Retourne les bougies OHLCV + séries indicateurs pour le graphique du scanner."""
+    if not cfg: raise HTTPException(503, "Config non chargée")
+    import math as _m
+    import numpy as np
+    try:
+        exchange = create_exchange(cfg)
+        scanner  = MarketScanner(exchange, cfg)
+        df       = scanner.fetch_ohlcv(symbol, timeframe, limit)
+        if df is None:
+            raise HTTPException(404, f"Données non disponibles pour {symbol}/{timeframe}")
+
+        n     = len(df)
+        times = df["time"].dt.epoch(time_unit="s").to_list()
+        close = df["close"]
+        high  = df["high"]
+        low   = df["low"]
+
+        # ── Bougies ──────────────────────────────────────────────────────
+        candles = [
+            {
+                "time":   int(times[i]),
+                "open":   round(float(df["open"][i]), 8),
+                "high":   round(float(high[i]), 8),
+                "low":    round(float(low[i]), 8),
+                "close":  round(float(close[i]), 8),
+                "volume": round(float(df["volume"][i]), 4),
+            }
+            for i in range(n)
+        ]
+
+        # ── Séries indicateurs ────────────────────────────────────────────
+        ema20_s  = close.ewm_mean(span=20,  adjust=False).to_list()
+        ema50_s  = close.ewm_mean(span=50,  adjust=False).to_list()
+        ema200_s = close.ewm_mean(span=200, adjust=False).to_list() if n >= 200 else [None] * n
+
+        sma20_s  = close.rolling_mean(20).to_list()
+        std20_s  = close.rolling_std(20).to_list()
+
+        ema12_s = close.ewm_mean(span=12, adjust=False)
+        ema26_s = close.ewm_mean(span=26, adjust=False)
+        macd_s  = (ema12_s - ema26_s).to_list()
+        sig_s   = (ema12_s - ema26_s).ewm_mean(span=9, adjust=False).to_list()
+
+        delta  = close.diff(1)
+        gain   = delta.clip(lower_bound=0).rolling_mean(14).to_list()
+        loss   = (-delta.clip(upper_bound=0)).rolling_mean(14).to_list()
+
+        def _safe(v):
+            if v is None: return None
+            try:
+                f = float(v)
+                return None if _m.isnan(f) or _m.isinf(f) else f
+            except Exception:
+                return None
+
+        def _line(series, decimals=6):
+            return [
+                {"time": int(times[i]), "value": round(_safe(series[i]), decimals)}
+                for i in range(n)
+                if _safe(series[i]) is not None
+            ]
+
+        def _rsi_series():
+            out = []
+            for i in range(n):
+                g, l = _safe(gain[i]), _safe(loss[i])
+                if g is None or l is None:
+                    continue
+                rs  = g / l if l > 0 else 0.0
+                rsi = 100 - (100 / (1 + rs))
+                if not _m.isnan(rsi):
+                    out.append({"time": int(times[i]), "value": round(rsi, 2)})
+            return out
+
+        bb_up  = [_safe(sma20_s[i]) + 2 * _safe(std20_s[i])
+                  if _safe(sma20_s[i]) is not None and _safe(std20_s[i]) is not None
+                  else None for i in range(n)]
+        bb_dn  = [_safe(sma20_s[i]) - 2 * _safe(std20_s[i])
+                  if _safe(sma20_s[i]) is not None and _safe(std20_s[i]) is not None
+                  else None for i in range(n)]
+
+        hist_s = [(_safe(macd_s[i]) - _safe(sig_s[i]))
+                  if _safe(macd_s[i]) is not None and _safe(sig_s[i]) is not None
+                  else None for i in range(n)]
+
+        indicators = {
+            "ema20":       _line(ema20_s),
+            "ema50":       _line(ema50_s),
+            "ema200":      _line(ema200_s),
+            "bb_upper":    _line(bb_up),
+            "bb_mid":      _line(sma20_s),
+            "bb_lower":    _line(bb_dn),
+            "macd":        _line(macd_s),
+            "macd_signal": _line(sig_s),
+            "macd_hist":   _line(hist_s),
+            "rsi":         _rsi_series(),
+            "volume":      [{"time": int(times[i]), "value": round(float(df["volume"][i]), 4),
+                             "color": "rgba(52,211,153,.4)" if float(close[i]) >= float(df["open"][i]) else "rgba(251,113,133,.4)"}
+                            for i in range(n)],
+        }
+
+        return JSONResponse(content=_clean({
+            "symbol":    symbol,
+            "timeframe": timeframe,
+            "n_bars":    n,
+            "candles":   candles,
+            "indicators": indicators,
+        }))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[API] scanner/chart : {e}", exc_info=True)
+        raise HTTPException(500, str(e))
+
+
 # ═══════════════════════════════════════════════════════════════
 #  API — OPTIMISEUR V8
 # ═══════════════════════════════════════════════════════════════
