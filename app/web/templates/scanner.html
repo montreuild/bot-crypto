@@ -31,11 +31,27 @@
 .stat-chip{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:.78rem;flex:1;min-width:100px;}
 .chip-lbl{color:var(--dim);font-size:.68rem;margin-bottom:3px;}
 .chip-val{font-weight:700;font-size:.92rem;}
+/* Watchlist */
+.wl-pill{display:inline-flex;align-items:center;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:3px 8px;font-size:.72rem;cursor:pointer;transition:all .15s;}
+.wl-pill:hover{border-color:var(--cyan);color:var(--cyan);}
+.wl-pill.active{background:var(--cyan-dim);border-color:var(--cyan);color:var(--cyan);}
+/* Position badge */
+.pos-badge{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0;animation:pulse 1.5s ease infinite;margin-left:2px;title:"Position ouverte";}
+/* Breadcrumb */
+.topbar-breadcrumb{display:flex;align-items:center;gap:6px;font-size:.72rem;color:var(--dim);}
+.topbar-breadcrumb a{color:var(--muted);text-decoration:none;transition:color .15s;}
+.topbar-breadcrumb a:hover{color:var(--cyan);}
+.topbar-breadcrumb .sep{color:var(--dim);}
 {% endblock %}
 
 {% block topbar_content %}
-<div class="topbar-title">Scanner de marché</div>
+<div class="topbar-title">Scanner</div>
 <div class="topbar-sep"></div>
+<div class="topbar-breadcrumb" aria-label="Navigation contextuelle">
+  <a href="/" aria-label="Retour au Dashboard">← Dashboard</a>
+  <span class="sep">/</span>
+  <span>Scanner de marché</span>
+</div>
 {% endblock %}
 
 {% block content %}
@@ -52,22 +68,32 @@
           <div class="panel-body">
             <div class="form-row">
               <div style="flex:1">
-                <label class="form-lbl">Timeframe</label>
-                <select id="scan-tf">
+                <label class="form-lbl" for="scan-tf">Timeframe</label>
+                <select id="scan-tf" onchange="saveFilters()">
                   <option>1m</option><option>5m</option><option>15m</option>
                   <option>30m</option><option value="1h" selected>1h</option>
                   <option>2h</option><option>4h</option><option>1d</option>
                 </select>
               </div>
               <div style="flex:1">
-                <label class="form-lbl">Barres</label>
-                <input type="number" id="scan-limit" value="200" min="50" max="1000">
+                <label class="form-lbl" for="scan-limit">Barres</label>
+                <input type="number" id="scan-limit" value="200" min="50" max="1000" onchange="saveFilters()">
               </div>
               <div style="padding-top:16px">
                 <button id="btn-scan" class="btn btn-cyan" onclick="runScan()">▶ Scanner</button>
               </div>
             </div>
             <div id="scan-status" style="font-size:.72rem;color:var(--dim);min-height:16px"></div>
+          </div>
+        </div>
+        <!-- Watchlist -->
+        <div class="panel" style="margin-top:16px">
+          <div class="panel-hdr">
+            ⭐ Watchlist
+            <button class="btn btn-sm btn-outline" style="margin-left:auto;font-size:.68rem" onclick="clearWatchlist()">✕ Vider</button>
+          </div>
+          <div class="panel-body" id="watchlist-container" style="min-height:36px;flex-direction:row;flex-wrap:wrap;gap:6px">
+            <div class="empty" style="padding:10px;width:100%">Cliquez sur ⭐ dans les résultats pour ajouter.</div>
           </div>
         </div>
         <div class="panel" style="margin-top:16px">
@@ -86,7 +112,7 @@
           <span class="filter-lbl">Filtres :</span>
           <label style="font-size:.75rem;display:flex;align-items:center;gap:4px;color:var(--muted)">
             Régime :
-            <select id="f-regime" onchange="applyFilters()" style="width:auto;padding:4px 8px;font-size:.72rem">
+            <select id="f-regime" onchange="applyFilters();saveFilters();" style="width:auto;padding:4px 8px;font-size:.72rem">
               <option value="">Tous</option>
               <option value="Trend fort">Trend fort</option>
               <option value="Trend modéré">Trend modéré</option>
@@ -96,16 +122,16 @@
             </select>
           </label>
           <label style="font-size:.75rem;display:flex;align-items:center;gap:4px;color:var(--muted)">
-            ADX ≥ <input id="f-adx" type="number" value="0" min="0" max="100" onchange="applyFilters()" style="width:50px;padding:3px 6px;font-size:.72rem">
+            ADX ≥ <input id="f-adx" type="number" value="0" min="0" max="100" onchange="applyFilters();saveFilters();" style="width:50px;padding:3px 6px;font-size:.72rem">
           </label>
           <label style="font-size:.75rem;display:flex;align-items:center;gap:4px;color:var(--muted)">
-            ATR% ≥ <input id="f-atr" type="number" value="0" min="0" step="0.1" onchange="applyFilters()" style="width:55px;padding:3px 6px;font-size:.72rem">
+            ATR% ≥ <input id="f-atr" type="number" value="0" min="0" step="0.1" onchange="applyFilters();saveFilters();" style="width:55px;padding:3px 6px;font-size:.72rem">
           </label>
           <label style="font-size:.75rem;display:flex;align-items:center;gap:4px;color:var(--muted)">
-            RSI ≥ <input id="f-rsi-lo" type="number" value="0" min="0" max="100" onchange="applyFilters()" style="width:50px;padding:3px 6px;font-size:.72rem">
+            RSI ≥ <input id="f-rsi-lo" type="number" value="0" min="0" max="100" onchange="applyFilters();saveFilters();" style="width:50px;padding:3px 6px;font-size:.72rem">
           </label>
           <label style="font-size:.75rem;display:flex;align-items:center;gap:4px;color:var(--muted)">
-            RSI ≤ <input id="f-rsi-hi" type="number" value="100" min="0" max="100" onchange="applyFilters()" style="width:50px;padding:3px 6px;font-size:.72rem">
+            RSI ≤ <input id="f-rsi-hi" type="number" value="100" min="0" max="100" onchange="applyFilters();saveFilters();" style="width:50px;padding:3px 6px;font-size:.72rem">
           </label>
           <span style="margin-left:auto;font-size:.72rem;color:var(--dim)" id="filter-count"></span>
           <button class="btn btn-ghost" onclick="resetFilters()" style="font-size:.7rem;padding:4px 10px">✕ Reset</button>
@@ -119,12 +145,12 @@
             <table>
               <thead>
                 <tr>
-                  <th>Paire</th><th>Régime</th><th>ADX</th><th>RSI</th>
+                  <th></th><th>Paire</th><th>Régime</th><th>ADX</th><th>RSI</th>
                   <th>ATR%</th><th>Vol ratio</th><th>Vol 24h</th><th>Stratégies</th>
                 </tr>
               </thead>
               <tbody id="scan-tbody">
-                <tr><td colspan="8" class="empty-row">Lancez un scan pour voir les résultats.</td></tr>
+                <tr><td colspan="9" class="empty-row">Lancez un scan pour voir les résultats.</td></tr>
               </tbody>
             </table>
           </div>
@@ -137,14 +163,66 @@
 
 {% block body_scripts %}
 <script>
-let scanResults=[];
+const LS_FILTERS = 'scanner_filters_v1';
+const LS_WATCHLIST = 'scanner_watchlist_v1';
+let scanResults = [];
+let openPositionSymbols = new Set();
 
+// ── Filter persistence ──────────────────────────────────────────────────
+function saveFilters(){
+  try{localStorage.setItem(LS_FILTERS,JSON.stringify({
+    tf:   document.getElementById('scan-tf').value,
+    limit:document.getElementById('scan-limit').value,
+    regime:document.getElementById('f-regime').value,
+    adx:  document.getElementById('f-adx').value,
+    atr:  document.getElementById('f-atr').value,
+    rsiLo:document.getElementById('f-rsi-lo').value,
+    rsiHi:document.getElementById('f-rsi-hi').value,
+  }));}catch(_){}
+}
+function restoreFilters(){
+  try{
+    const d=JSON.parse(localStorage.getItem(LS_FILTERS)||'{}');
+    if(d.tf)   document.getElementById('scan-tf').value=d.tf;
+    if(d.limit)document.getElementById('scan-limit').value=d.limit;
+    if(d.regime!==undefined)document.getElementById('f-regime').value=d.regime;
+    if(d.adx  !==undefined)document.getElementById('f-adx').value=d.adx;
+    if(d.atr  !==undefined)document.getElementById('f-atr').value=d.atr;
+    if(d.rsiLo!==undefined)document.getElementById('f-rsi-lo').value=d.rsiLo;
+    if(d.rsiHi!==undefined)document.getElementById('f-rsi-hi').value=d.rsiHi;
+  }catch(_){}
+}
+
+// ── Watchlist ───────────────────────────────────────────────────────────
+function getWatchlist(){try{return JSON.parse(localStorage.getItem(LS_WATCHLIST)||'[]');}catch(_){return[];}}
+function saveWatchlist(wl){try{localStorage.setItem(LS_WATCHLIST,JSON.stringify(wl));}catch(_){}}
+function toggleWatchlist(sym){
+  let wl=getWatchlist();
+  if(wl.includes(sym))wl=wl.filter(s=>s!==sym);else wl.push(sym);
+  saveWatchlist(wl);renderWatchlist();applyFilters();
+}
+function clearWatchlist(){saveWatchlist([]);renderWatchlist();applyFilters();}
+function renderWatchlist(){
+  const wl=getWatchlist();
+  const el=document.getElementById('watchlist-container');
+  if(!wl.length){el.innerHTML='<div class="empty" style="padding:10px;width:100%">Cliquez sur ⭐ dans les résultats pour ajouter.</div>';return;}
+  el.innerHTML=wl.map(s=>`<span class="wl-pill active" onclick="toggleWatchlist('${escHtml(s)}')" title="Retirer de la watchlist">${escHtml(s)} ✕</span>`).join('');
+}
+
+// ── Open positions (for badge) ──────────────────────────────────────────
+async function loadOpenPositions(){
+  try{
+    const r=await fetch('/api/status');const d=await r.json();
+    openPositionSymbols=new Set((d.positions||[]).map(p=>p.symbol?.replace('/','').toLowerCase()));
+  }catch(_){}
+}
+
+// ── Config display ──────────────────────────────────────────────────────
 async function loadConfig(){
   try{
     const r=await apiFetch('/api/scanner/config');const d=await r.json();renderConfig(d);
   }catch(e){document.getElementById('config-display').innerHTML='<div class="empty">Erreur chargement config</div>';}
 }
-
 function renderConfig(d){
   const scfg=d.scanner||{},tfs=(d.timeframes||['1h']).join(', '),activePerTf=d.active_per_tf||{};
   let html='';
@@ -156,30 +234,33 @@ function renderConfig(d){
   document.getElementById('config-display').innerHTML=html;
 }
 
+// ── Scan ────────────────────────────────────────────────────────────────
 async function runScan(){
   const btn=document.getElementById('btn-scan');
   const tf=document.getElementById('scan-tf').value,limit=document.getElementById('scan-limit').value;
   const status=document.getElementById('scan-status'),tbody=document.getElementById('scan-tbody');
   if(btn){btn.disabled=true;btn.textContent='⏳ Scan…';}
   status.innerHTML='<span class="spinner"></span> Scan en cours…';
-  tbody.innerHTML='<tr><td colspan="8" class="empty-row"><span class="spinner"></span> Chargement…</td></tr>';
+  tbody.innerHTML='<tr><td colspan="9" class="empty-row"><span class="spinner"></span> Chargement…</td></tr>';
+  await loadOpenPositions();
   try{
     const r=await apiFetch(`/api/scanner?timeframe=${tf}&limit=${limit}`);const d=await r.json();
     scanResults=d.results||[];status.textContent=`${scanResults.length} symboles analysés — TF: ${d.timeframe}`;
-    document.getElementById('filter-bar').style.display='';document.getElementById('scan-chips').style.display='flex';applyFilters();
-  }catch(e){status.textContent='⚠ Erreur : '+e.message;tbody.innerHTML=`<tr><td colspan="8" class="empty-row">Erreur : ${e.message}</td></tr>`;}
+    document.getElementById('filter-bar').style.display='';document.getElementById('scan-chips').style.display='flex';
+    applyFilters();saveFilters();
+  }catch(e){status.textContent='⚠ Erreur : '+e.message;tbody.innerHTML=`<tr><td colspan="9" class="empty-row">Erreur : ${e.message}</td></tr>`;}
   finally{if(btn){btn.disabled=false;btn.textContent='▶ Scanner';}}
 }
 
+// ── Filters ─────────────────────────────────────────────────────────────
 function resetFilters(){
   document.getElementById('f-regime').value='';
   document.getElementById('f-adx').value=0;
   document.getElementById('f-atr').value=0;
   document.getElementById('f-rsi-lo').value=0;
   document.getElementById('f-rsi-hi').value=100;
-  applyFilters();
+  applyFilters();saveFilters();
 }
-
 function applyFilters(){
   const regime=document.getElementById('f-regime').value,minAdx=parseFloat(document.getElementById('f-adx').value)||0,minAtr=parseFloat(document.getElementById('f-atr').value)||0,minRsi=parseFloat(document.getElementById('f-rsi-lo').value)||0,maxRsi=parseFloat(document.getElementById('f-rsi-hi').value)||100;
   const filtered=scanResults.filter(r=>{const ind=r.indicators||{};if(regime&&r.regime_label!==regime)return false;if(ind.adx<minAdx)return false;if(ind.atr_pct<minAtr)return false;if(ind.rsi<minRsi||ind.rsi>maxRsi)return false;return true;});
@@ -188,27 +269,38 @@ function applyFilters(){
   renderScanTable(filtered);renderChips(filtered);
 }
 
+// ── Chips ───────────────────────────────────────────────────────────────
 function renderChips(results){
   const chips=document.getElementById('scan-chips');
   if(!results.length){chips.innerHTML='';return;}
   const avgAdx=(results.reduce((s,r)=>s+(r.indicators?.adx||0),0)/results.length).toFixed(1);
   const avgRsi=(results.reduce((s,r)=>s+(r.indicators?.rsi||0),0)/results.length).toFixed(1);
   const avgAtr=(results.reduce((s,r)=>s+(r.indicators?.atr_pct||0),0)/results.length).toFixed(2);
-  chips.innerHTML=[['ADX moy.',avgAdx,'var(--cyan)'],['RSI moy.',avgRsi,'var(--amber)'],['ATR% moy.',avgAtr+'%','var(--green)'],['Paires',results.length,'var(--muted)']].map(([lbl,val,clr])=>`<div class="stat-chip"><div class="chip-lbl">${lbl}</div><div class="chip-val" style="color:${clr}">${val}</div></div>`).join('');
+  const wlCount=results.filter(r=>getWatchlist().includes(r.symbol)).length;
+  chips.innerHTML=[['ADX moy.',avgAdx,'var(--cyan)'],['RSI moy.',avgRsi,'var(--amber)'],['ATR% moy.',avgAtr+'%','var(--green)'],['Paires',results.length,'var(--muted)'],['Watchlist',wlCount||'—','var(--purple)']].map(([lbl,val,clr])=>`<div class="stat-chip"><div class="chip-lbl">${lbl}</div><div class="chip-val" style="color:${clr}">${val}</div></div>`).join('');
 }
 
+// ── Scan table (with position badge + watchlist star) ───────────────────
 function renderScanTable(results){
-  if(!results.length){document.getElementById('scan-tbody').innerHTML='<tr><td colspan="8" class="empty-row">Aucun résultat correspondant aux filtres.</td></tr>';return;}
+  if(!results.length){document.getElementById('scan-tbody').innerHTML='<tr><td colspan="9" class="empty-row">Aucun résultat correspondant aux filtres.</td></tr>';return;}
+  const wl=getWatchlist();
   document.getElementById('scan-tbody').innerHTML=results.map(r=>{
     const ind=r.indicators||{},adx=+(ind.adx||0),rsi=+(ind.rsi||50),atrPct=+(ind.atr_pct||0),volR=+(ind.vol_ratio||1),vol24=+(r.volume_24h||0);
     const strats=(r.strategies||[]).map(s=>`<span class="tag tag-strat">${escHtml(s)}</span>`).join(' ');
     const regimeClass=r.regime_label?.includes('Trend fort')?'tag-trend':r.regime_label?.includes('modéré')?'tag-trend':r.regime_label?.includes('Range')?'tag-range':r.regime_label?.includes('Panic')?'tag-panic':'tag-neutral';
     const rsiClr=rsi<35?'var(--red)':rsi>65?'var(--amber)':'var(--green)';
     const adxW=Math.round(adx*0.8),vol24M=vol24>=1e9?(vol24/1e9).toFixed(2)+'B':(vol24/1e6).toFixed(0)+'M';
-    return`<tr><td><strong>${escHtml(r.symbol)}</strong></td><td><span class="tag ${regimeClass}">${escHtml(r.regime_label||'?')}</span></td><td><span style="font-family:var(--mono)">${adx.toFixed(1)}</span><br><span class="adx-bar" style="width:${adxW}px"></span></td><td><span class="rsi-pill" style="background:${rsiClr}22;color:${rsiClr}">${rsi.toFixed(0)}</span></td><td style="font-family:var(--mono);color:${atrPct>3?'var(--amber)':'var(--text)'}">${atrPct.toFixed(2)}%</td><td style="font-family:var(--mono);color:${volR>1.5?'var(--green)':'var(--text)'}">${volR.toFixed(2)}×</td><td style="color:var(--dim)">${vol24M}</td><td>${strats}</td></tr>`;
+    // position badge: compare normalised symbol ("btcusdc")
+    const symNorm=(r.symbol||'').replace('/','').toLowerCase();
+    const hasPos=openPositionSymbols.has(symNorm);
+    const posBadge=hasPos?'<span class="pos-badge" title="Position ouverte"></span>':'';
+    const inWl=wl.includes(r.symbol);
+    const starBtn=`<button onclick="toggleWatchlist('${escHtml(r.symbol)}')" style="background:none;border:none;cursor:pointer;font-size:.85rem;color:${inWl?'var(--amber)':'var(--dim)'};padding:0 4px" title="${inWl?'Retirer':'Ajouter'} watchlist" aria-label="${inWl?'Retirer de':'Ajouter à'} la watchlist">${inWl?'★':'☆'}</button>`;
+    return`<tr><td style="padding:6px 8px">${starBtn}</td><td><strong>${escHtml(r.symbol)}</strong>${posBadge}</td><td><span class="tag ${regimeClass}">${escHtml(r.regime_label||'?')}</span></td><td><span style="font-family:var(--mono)">${adx.toFixed(1)}</span><br><span class="adx-bar" style="width:${adxW}px"></span></td><td><span class="rsi-pill" style="background:${rsiClr}22;color:${rsiClr}">${rsi.toFixed(0)}</span></td><td style="font-family:var(--mono);color:${atrPct>3?'var(--amber)':'var(--text)'}">${atrPct.toFixed(2)}%</td><td style="font-family:var(--mono);color:${volR>1.5?'var(--green)':'var(--text)'}">${volR.toFixed(2)}×</td><td style="color:var(--dim)">${vol24M}</td><td>${strats}</td></tr>`;
   }).join('');
 }
 
+// ── Opportunities ───────────────────────────────────────────────────────
 async function loadOpportunities(){
   const tf=document.getElementById('scan-tf').value;
   document.getElementById('opp-list').innerHTML='<div class="empty"><span class="spinner"></span></div>';
@@ -216,18 +308,24 @@ async function loadOpportunities(){
     const r=await apiFetch(`/api/scanner/opportunities?timeframe=${tf}`);const d=await r.json();renderOpportunities(d.opportunities||[]);
   }catch(e){document.getElementById('opp-list').innerHTML=`<div class="empty">⚠ ${e.message}</div>`;}
 }
-
 function renderOpportunities(opps){
   if(!opps.length){document.getElementById('opp-list').innerHTML='<div class="empty">Aucune opportunité trouvée.<br>Essayez avec des filtres moins restrictifs.</div>';return;}
   document.getElementById('opp-list').innerHTML=opps.map(o=>{
     const ind=o.indicators||{},scoreW=Math.round((o.score||0)*100);
     const regClr=o.regime_label?.includes('Trend')?'var(--green)':o.regime_label?.includes('Range')?'var(--amber)':o.regime_label?.includes('Panic')?'var(--red)':'var(--muted)';
     const strats=(o.strategies||[]).map(s=>`<span class="tag tag-strat">${escHtml(s)}</span>`).join(' ');
-    return`<div class="opp-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div class="opp-sym">${escHtml(o.symbol)}</div><div style="font-size:.75rem;font-weight:700;color:var(--cyan)">${scoreW}%</div></div><div class="opp-score-bar" style="width:${scoreW}%"></div><div style="font-size:.75rem;color:${regClr};margin-bottom:4px">${escHtml(o.regime_label||'?')}</div><div class="opp-meta"><span>ADX <strong>${(ind.adx||0).toFixed(1)}</strong></span><span>RSI <strong>${(ind.rsi||0).toFixed(0)}</strong></span><span>ATR% <strong>${(ind.atr_pct||0).toFixed(2)}</strong></span><span>Vol <strong>${((o.volume_24h||0)/1e6).toFixed(0)}M</strong></span></div><div style="margin-top:6px">${strats}</div></div>`;
+    const symNorm=(o.symbol||'').replace('/','').toLowerCase();
+    const hasPos=openPositionSymbols.has(symNorm);
+    const posBadge=hasPos?'<span class="pos-badge" title="Position ouverte"></span>':'';
+    return`<div class="opp-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div class="opp-sym">${escHtml(o.symbol)}${posBadge}</div><div style="font-size:.75rem;font-weight:700;color:var(--cyan)">${scoreW}%</div></div><div class="opp-score-bar" style="width:${scoreW}%"></div><div style="font-size:.75rem;color:${regClr};margin-bottom:4px">${escHtml(o.regime_label||'?')}</div><div class="opp-meta"><span>ADX <strong>${(ind.adx||0).toFixed(1)}</strong></span><span>RSI <strong>${(ind.rsi||0).toFixed(0)}</strong></span><span>ATR% <strong>${(ind.atr_pct||0).toFixed(2)}</strong></span><span>Vol <strong>${((o.volume_24h||0)/1e6).toFixed(0)}M</strong></span></div><div style="margin-top:6px">${strats}</div></div>`;
   }).join('');
 }
 
+// ── Init ────────────────────────────────────────────────────────────────
+restoreFilters();
+renderWatchlist();
 loadConfig();
+loadOpenPositions();
 document.getElementById('opp-list').innerHTML='<div class="empty" style="color:var(--dim)">Cliquez sur <strong style="color:var(--text)">↺ Refresh</strong> pour charger les opportunités.</div>';
 </script>
 {% endblock %}
