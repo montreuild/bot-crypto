@@ -59,7 +59,7 @@ class RiskManager:
 
     def _check_circuit_breakers(self):
         # Drawdown journalier
-        daily_dd = (self.daily_start - self.equity) / max(self.daily_start, 1)
+        daily_dd = (self.daily_start - self.equity) / max(self.daily_start, 1e-9)
         warn_threshold = self.daily_dd_limit * self._dd_warn_ratio
         # Pré-alerte (ex: 80% du seuil)
         if daily_dd >= warn_threshold and not self.halted:
@@ -69,7 +69,7 @@ class RiskManager:
             self.halt_reason = f"Circuit breaker : DD journalier {daily_dd:.1%} ≥ {self.daily_dd_limit:.1%}"
             logger.critical(f"🔴 HALT — {self.halt_reason}")
         # Drawdown global
-        global_dd = (self.peak_equity - self.equity) / max(self.peak_equity, 1)
+        global_dd = (self.peak_equity - self.equity) / max(self.peak_equity, 1e-9)
         if global_dd >= self.global_dd_limit and not self.halted:
             self.halted      = True
             self.halt_reason = f"Circuit breaker : DD global {global_dd:.1%} ≥ {self.global_dd_limit:.1%}"
@@ -95,7 +95,7 @@ class RiskManager:
     # ── Position sizing ──────────────────────────────────────────────────────
     def compute_risk(self) -> float:
         """Risk-per-trade dynamique : réduit linéairement en cas de drawdown."""
-        dd = (self.peak_equity - self.equity) / max(self.peak_equity, 1)
+        dd = (self.peak_equity - self.equity) / max(self.peak_equity, 1e-9)
         if dd > 0.10:
             factor = 0.5                  # réduit de moitié au-delà de 10% DD
         elif dd > 0.05:
@@ -131,7 +131,7 @@ class RiskManager:
 
     def compute_leverage(self, notional: float) -> float:
         """Levier effectif plafonné au max configuré."""
-        lev = notional / max(self.equity, 1)
+        lev = notional / max(self.equity, 1e-9)
         return min(lev, self.max_leverage)
 
     # ── Vérifications avant entrée ───────────────────────────────────────────
@@ -175,11 +175,11 @@ class RiskManager:
     # ── Stats ────────────────────────────────────────────────────────────────
     @property
     def daily_pnl_pct(self) -> float:
-        return (self.equity - self.daily_start) / max(self.daily_start, 1)
+        return (self.equity - self.daily_start) / max(self.daily_start, 1e-9)
 
     @property
     def global_dd_pct(self) -> float:
-        return (self.peak_equity - self.equity) / max(self.peak_equity, 1)
+        return (self.peak_equity - self.equity) / max(self.peak_equity, 1e-9)
 
     def status_dict(self) -> dict:
         return {

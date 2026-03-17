@@ -154,6 +154,8 @@ async def verify_api_key(request: Request):
     if not key: return
     token = request.headers.get("X-API-Key") or request.query_params.get("api_key")
     if token != key:
+        client_host = getattr(request.client, "host", "unknown") if request.client else "unknown"
+        logger.warning(f"[Auth] Clé API invalide depuis {client_host} — {request.method} {request.url.path}")
         raise HTTPException(status_code=403, detail="Clé API invalide")
 
 
@@ -525,12 +527,18 @@ def backtest_settings():
 def list_trades(limit: int = 100, offset: int = 0, symbol: str = None, strategy: str = None):
     """Retourne les trades paginés. Paramètres : limit, offset, symbol, strategy."""
     if not SessionLocal: raise HTTPException(503, "DB non initialisée")
+    limit  = max(1, min(limit, 1000))   # borne supérieure raisonnable
+    offset = max(0, offset)
     session = SessionLocal()
     try:
-        trades = get_trades(session, limit=limit, symbol=symbol, strategy=strategy)
-        page = trades[offset:offset + limit] if offset else trades
+        from app.core.database import Trade as _Trade
+        q = session.query(_Trade)
+        if symbol:   q = q.filter(_Trade.symbol   == symbol)
+        if strategy: q = q.filter(_Trade.strategy == strategy)
+        total = q.count()                            # compte total réel (sans limite)
+        page  = q.order_by(_Trade.time.desc()).offset(offset).limit(limit).all()
         return {
-            "total": len(trades),
+            "total": total,
             "offset": offset,
             "limit": limit,
             "trades": [{"id": t.id, "time": str(t.time), "symbol": t.symbol, "side": t.side,

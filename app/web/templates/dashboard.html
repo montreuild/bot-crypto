@@ -246,6 +246,16 @@
     <button class="modal-btn modal-btn-cancel"  onclick="document.getElementById('stop-modal').style.display='none'">Annuler</button>
   </div>
 </div>
+<div id="cb-reset-modal" class="modal-overlay">
+  <div class="modal-box">
+    <h3>↺ Réinitialiser le Circuit Breaker</h3>
+    <p>Le circuit breaker protège contre les pertes excessives.<br/>
+    Le réinitialiser va <strong>relancer le trading</strong> immédiatement.<br/>
+    Êtes-vous sûr de vouloir continuer ?</p>
+    <button class="modal-btn modal-btn-danger" onclick="_doResetCB()">⚡ Oui, relancer le trading</button>
+    <button class="modal-btn modal-btn-cancel" onclick="document.getElementById('cb-reset-modal').style.display='none'">Annuler</button>
+  </div>
+</div>
 {% endblock %}
 
 {% block body_scripts %}
@@ -529,7 +539,20 @@ async function _doStop(closePositions){
     btn.disabled=false;
   }
 }
-async function resetCB(){try{await apiFetch('/api/risk/reset-halt',{method:'POST'});toast('Circuit breaker réinitialisé');refresh();}catch(e){toast('Erreur: '+e.message,true);}}
+async function resetCB(){
+  /* Ouvre un modal de confirmation avant de réinitialiser le circuit breaker */
+  document.getElementById('cb-reset-modal').style.display='flex';
+  document.getElementById('cb-reset-modal').querySelector('.modal-btn-danger')?.focus();
+}
+async function _doResetCB(){
+  document.getElementById('cb-reset-modal').style.display='none';
+  try{
+    const r=await apiFetch('/api/risk/reset-halt',{method:'POST'});
+    if(!r.ok){const d=await r.json().catch(()=>({}));toast('Erreur: '+(d.detail||r.status),true);return;}
+    toast('Circuit breaker réinitialisé ✓');
+    refresh();
+  }catch(e){toast('Erreur: '+e.message,true);}
+}
 async function exportCSV(){
   const btn=document.querySelector('[onclick="exportCSV()"]'),limit=$('export-limit')?.value??'99999';
   if(btn){btn.disabled=true;btn.textContent='↻ Export…';}

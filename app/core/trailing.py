@@ -126,7 +126,11 @@ class TrailingStopManager:
         Le stop sauvegardé est utilisé comme floor — ne peut qu'améliorer.
         """
         self._dts = DynamicTrailingStop(**self._kwargs)
-        dist = abs(entry - saved_stop) if saved_stop != entry else self.mult
+        # Utilise la distance réelle stop-entry.
+        # Si stop == entry (breakeven), fallback à 1% du prix d'entrée pour avoir un
+        # _initial_stop_dist cohérent avec les multiplicateurs ATR (évite peak_r infini ou nul).
+        raw_dist = abs(entry - saved_stop)
+        dist = raw_dist if raw_dist > 0 else max(entry * 0.01, 1e-9)
         self._dts._initial_stop_dist = max(dist, 1e-9)
         self._dts._peak_price        = entry  # conservateur : on part du prix d'entrée
         self._dts._phase             = 0      # recommence en phase GRACE — safe

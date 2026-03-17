@@ -209,9 +209,15 @@ class LiveTrader:
     # ── Chargement des stratégies ─────────────────────────────────────────
     def _load_all_strategies(self):
         """Charge toutes les stratégies disponibles dans PARAM_SPACES + enabled."""
+        import re as _re
         from app.optimizer.optimizer import PARAM_SPACES
         to_load = set(PARAM_SPACES.keys()) | set(self.cfg["strategies"].get("enabled", []))
         for name in to_load:
+            # Validation du nom : lettres minuscules, chiffres et underscores uniquement.
+            # Protège contre l'injection de modules arbitraires via le fichier de config.
+            if not _re.match(r'^[a-z][a-z0-9_]*$', name):
+                logger.warning(f"[LiveTrader] Nom de stratégie invalide ignoré : {name!r}")
+                continue
             try:
                 mod = importlib.import_module(f"app.strategies.{name}")
                 strat = mod.Strategy()
@@ -655,9 +661,9 @@ class LiveTrader:
                 _sess.close()
 
         if pos["side"] == "long":
-            unreal_pct = (price - pos["entry"]) / pos["entry"] * 100
+            unreal_pct = (price - pos["entry"]) / pos["entry"] * 100 if pos["entry"] > 0 else 0.0
         else:
-            unreal_pct = (pos["entry"] - price) / pos["entry"] * 100
+            unreal_pct = (pos["entry"] - price) / pos["entry"] * 100 if pos["entry"] > 0 else 0.0
 
         if pos_id not in self._loss_notified:
             self.notif.notify_position_loss(symbol, pos.get("strategy",""), pos["side"], unreal_pct)
@@ -752,8 +758,11 @@ class LiveTrader:
             ticker = self._safe_ticker(pos["symbol"])
             if ticker:
                 price = ticker.get("last", pos["entry"])
-                upnl  = (price - pos["entry"]) / pos["entry"] * 100 if pos["side"] == "long" \
-                        else (pos["entry"] - price) / pos["entry"] * 100
+                if pos["entry"] > 0:
+                    upnl  = (price - pos["entry"]) / pos["entry"] * 100 if pos["side"] == "long" \
+                            else (pos["entry"] - price) / pos["entry"] * 100
+                else:
+                    upnl = 0.0
                 positions_detail.append({
                     "symbol":         pos["symbol"],
                     "side":           pos["side"],
