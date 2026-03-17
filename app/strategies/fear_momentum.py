@@ -308,11 +308,19 @@ class Strategy(BaseStrategy):
                 # Bonus HTF : tendance supérieure confirme
                 htf_bonus  = 0.04 if htf > 0 else 0.0
 
+                # Bonus premium : combos de signaux forts
+                premium_bonus  = 0.05 if premium else 0.0      # peur + capitulation
+                premium2_bonus = 0.04 if or_premium2 else 0.0  # divergence double
+
                 # Malus si très proche de l'EMA200 (zone de danger)
                 ema200_dist = (c0 - lt) / lt
                 dist_malus  = -0.05 if ema200_dist < -0.03 else 0.0
 
-                score = min(base + sig_bonus + rr_bonus + adx_bonus + htf_bonus + dist_malus, 0.95)
+                score = min(
+                    base + sig_bonus + rr_bonus + adx_bonus + htf_bonus
+                    + premium_bonus + premium2_bonus + dist_malus,
+                    0.95
+                )
 
                 self._last_signal[sym] = cnt
                 return {

@@ -226,7 +226,10 @@ class Strategy(BaseStrategy):
                 risk_s     = stop_s - c0
                 if risk_s <= 0:
                     return self._none("Stop invalide (short)")
-                rr_s = (risk_s * 2.0) / risk_s
+                target_s = c0 - risk_s * 2.0
+                rr_s     = (c0 - target_s) / risk_s
+                if rr_s < rr_min:
+                    return self._none(f"R:R short {rr_s:.2f} < {rr_min}")
 
                 adx_b    = min((adx_val - adx_min) / 20, 1.0) * 0.10
                 rsi_b    = max(1.0 - abs(rsi_now - 52) / 22, 0) * 0.07

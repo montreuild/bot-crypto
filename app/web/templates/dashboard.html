@@ -47,13 +47,25 @@
 .pos-pnl{font-family:var(--mono);font-weight:600;font-size:.88rem;text-align:right;}
 .pos-pct{font-size:.64rem;color:var(--dim);text-align:right;font-family:var(--mono);}
 .signal-filter{display:flex;align-items:center;gap:5px;font-size:.71rem;color:var(--muted);cursor:pointer;margin-left:auto;}
+/* ── Risk gauges ── */
+.risk-gauge-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;}
+.risk-gauges-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+@media(max-width:600px){.risk-gauges-grid{grid-template-columns:1fr;}}
+.gauge-lbl{font-size:.65rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;}
+.gauge-track{height:8px;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden;position:relative;}
+.gauge-fill{height:100%;border-radius:4px;transition:width .5s ease,background .5s;}
+.gauge-sub{font-size:.63rem;color:var(--dim);margin-top:4px;display:flex;justify-content:space-between;}
+/* ── TF pills in topbar ── */
+.tf-pill{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:10px;font-size:.65rem;font-weight:700;font-family:var(--mono);background:var(--cyan-dim);color:var(--cyan);border:1px solid rgba(34,211,238,.2);}
+.tf-pill-wrap{display:flex;gap:4px;align-items:center;flex-wrap:wrap;}
 {% endblock %}
 
 {% block topbar_content %}
 <div class="topbar-title">Dashboard Live</div>
+<div id="topbar-tf-pills" class="tf-pill-wrap" style="display:none;margin-left:12px" aria-label="Timeframes actifs"></div>
 <div class="topbar-sep"></div>
 <div class="topbar-right">
-  <span id="cb-badge" class="cb-pill">⚡ Circuit Breaker</span>
+  <span id="cb-badge" class="cb-pill" title="" aria-label="Circuit Breaker actif">⚡ Circuit Breaker</span>
   <span id="status-badge" class="status-pill stopped"><span class="status-dot"></span><span id="status-label">Arrêté</span></span>
   <span id="mode-badge" class="mode-pill paper">Paper</span>
   <span id="ts" style="font-family:var(--mono);font-size:.68rem;color:var(--dim)"></span>
@@ -96,6 +108,53 @@
       <div class="meta-card"><div class="meta-lbl">Frais cumulés</div><div class="meta-val c-red" id="s-fees">—</div><div class="meta-sub">USDC</div></div>
       <div class="meta-card"><div class="meta-lbl">Meilleur trade</div><div class="meta-val c-green" id="s-best">—</div><div class="meta-sub">USDC</div></div>
       <div class="meta-card" id="margin-card" style="display:none"><div class="meta-lbl">Margin Level</div><div class="meta-val" id="s-margin-level">—</div><div class="meta-sub" id="s-margin-sub">—</div></div>
+    </div>
+  </div>
+
+  <!-- ── Risk gauges ── -->
+  <div id="risk-gauges-section">
+    <div class="sec-hdr"><h2>Risque</h2></div>
+    <div class="risk-gauges-grid">
+      <div class="risk-gauge-card" role="region" aria-label="Drawdown journalier">
+        <div class="gauge-lbl">
+          <span>📉 DD Journalier</span>
+          <span id="g-daily-val" style="font-family:var(--mono);font-size:.75rem;color:var(--text)">—</span>
+        </div>
+        <div class="gauge-track" role="progressbar" aria-label="Drawdown journalier" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" id="g-daily-track">
+          <div class="gauge-fill" id="g-daily-fill" style="width:0%;background:var(--green)"></div>
+        </div>
+        <div class="gauge-sub"><span id="g-daily-sub" style="color:var(--dim)">0% / limite</span><span id="g-daily-limit" style="color:var(--dim)">—</span></div>
+      </div>
+      <div class="risk-gauge-card" role="region" aria-label="Drawdown global">
+        <div class="gauge-lbl">
+          <span>📉 DD Global</span>
+          <span id="g-global-val" style="font-family:var(--mono);font-size:.75rem;color:var(--text)">—</span>
+        </div>
+        <div class="gauge-track" role="progressbar" aria-label="Drawdown global" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" id="g-global-track">
+          <div class="gauge-fill" id="g-global-fill" style="width:0%;background:var(--green)"></div>
+        </div>
+        <div class="gauge-sub"><span id="g-global-sub" style="color:var(--dim)">0% / limite</span><span id="g-global-limit" style="color:var(--dim)">—</span></div>
+      </div>
+      <div class="risk-gauge-card" role="region" aria-label="Risque par trade">
+        <div class="gauge-lbl">
+          <span>⚖ Risque/trade</span>
+          <span id="g-risk-val" style="font-family:var(--mono);font-size:.75rem;color:var(--cyan)">—</span>
+        </div>
+        <div class="gauge-track">
+          <div class="gauge-fill" id="g-risk-fill" style="width:0%;background:var(--cyan)"></div>
+        </div>
+        <div class="gauge-sub"><span style="color:var(--dim)">% capital exposé par trade</span><span id="g-risk-limit" style="color:var(--dim)">—</span></div>
+      </div>
+      <div class="risk-gauge-card" role="region" aria-label="PnL journalier">
+        <div class="gauge-lbl">
+          <span>💰 PnL Journalier</span>
+          <span id="g-dpnl-val" style="font-family:var(--mono);font-size:.75rem" class="c-green">—</span>
+        </div>
+        <div class="gauge-track">
+          <div class="gauge-fill" id="g-dpnl-fill" style="width:0%;background:var(--green)"></div>
+        </div>
+        <div class="gauge-sub"><span style="color:var(--dim)">Variation depuis l'ouverture de session</span></div>
+      </div>
     </div>
   </div>
 
@@ -212,11 +271,12 @@ let _lastSignalLog=[];
 /* ── Main refresh ── */
 async function refresh(){
   try{
-    const[status,trades,daily]=await Promise.all([
+    const[status,tradesResp,daily]=await Promise.all([
       fetch('/api/status').then(r=>r.json()).catch(()=>null),
-      apiFetch('/api/trades?limit=30').then(r=>r.json()).catch(()=>[]),
+      apiFetch('/api/trades?limit=30').then(r=>r.json()).catch(()=>({})),
       apiFetch('/api/stats/daily?days=30').then(r=>r.json()).catch(()=>[])
     ]);
+    const trades=Array.isArray(tradesResp)?tradesResp:(tradesResp?.trades??[]);
     if(status)renderStatus(status);
     renderTrades(trades);
     renderEquity(daily,trades);
@@ -231,7 +291,8 @@ function renderStatus(s){
   sb.querySelector('.status-dot').className='status-dot'+(running?' pulse':'');
   $('status-label').textContent=running?'Running':'Arrêté';
   const mb=$('mode-badge');mb.textContent=s.paper_mode?'📄 Paper':'⚡ Live';mb.className='mode-pill '+(s.paper_mode?'paper':'live');
-  $('cb-badge').style.display=s.circuit_breaker_active?'':'none';
+  const cbBadge=$('cb-badge');cbBadge.style.display=s.circuit_breaker_active?'':'none';
+  if(s.circuit_breaker_active){cbBadge.title=s.circuit_breaker_reason||'Circuit Breaker actif';cbBadge.setAttribute('aria-label',s.circuit_breaker_reason||'Circuit Breaker actif');}
   $('btn-start').disabled=running;$('btn-stop').disabled=!running;
   const cap=s.capital??s.equity??0;$('s-capital').textContent=fmtUSDC(cap);
   const pnl=s.total_pnl??0;$('s-pnl').textContent=fmtSign(pnl);$('s-pnl').className='hero-val '+clrC(pnl);
@@ -256,6 +317,53 @@ function renderStatus(s){
     const t=new Date(s.last_scan_time),hhmm=t.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),pairs=s.last_symbols_scanned||[];
     $('scan-time').textContent=`Scan : ${hhmm}`;$('scan-pairs').textContent=`${pairs.length} paire${pairs.length>1?'s':''} · ${pairs.slice(0,6).join(', ')}${pairs.length>6?'…':''}`;$('scan-info').style.display='';
   }else{$('scan-info').style.display='none';}
+  renderRiskGauges(s);
+  renderTopbarTFPills(s.active_per_tf);
+}
+
+function renderRiskGauges(s){
+  const dailyPnlPct = s.daily_pnl_pct??0;          // % (e.g. -1.2 = -1.2%)
+  const globalDdPct = s.global_dd_pct??0;           // % (e.g. 3.5 = 3.5%)
+  const currentRisk = s.current_risk??s.risk_per_trade??1; // % per trade
+  // Daily DD gauge (uses absolute value — drawdown is displayed as negative)
+  const dailyPct = Math.abs(Math.min(dailyPnlPct,0)); // 0–5 typically
+  const dailyLimit = s.daily_dd_limit!=null ? s.daily_dd_limit*100 : 5;
+  const dailyRatio = Math.min(dailyPct/Math.max(dailyLimit,0.01)*100,100);
+  const dailyClr = dailyRatio>80?'var(--red)':dailyRatio>50?'var(--amber)':'var(--green)';
+  $('g-daily-fill').style.width=dailyRatio+'%';$('g-daily-fill').style.background=dailyClr;
+  $('g-daily-val').textContent=(dailyPnlPct>=0?'+':'')+dailyPnlPct.toFixed(2)+'%';
+  $('g-daily-val').style.color=dailyPnlPct>=0?'var(--green)':'var(--red)';
+  $('g-daily-sub').textContent=dailyPct.toFixed(2)+'% / limite';
+  $('g-daily-limit').textContent=dailyLimit.toFixed(1)+'%';
+  $('g-daily-track').setAttribute('aria-valuenow',Math.round(dailyRatio));
+  // Global DD gauge
+  const globalLimit = s.global_dd_limit!=null ? s.global_dd_limit*100 : 20;
+  const globalRatio = Math.min(globalDdPct/Math.max(globalLimit,0.01)*100,100);
+  const globalClr = globalRatio>80?'var(--red)':globalRatio>50?'var(--amber)':'var(--green)';
+  $('g-global-fill').style.width=globalRatio+'%';$('g-global-fill').style.background=globalClr;
+  $('g-global-val').textContent=globalDdPct.toFixed(2)+'%';
+  $('g-global-val').style.color=globalRatio>50?'var(--amber)':'var(--muted)';
+  $('g-global-sub').textContent=globalDdPct.toFixed(2)+'% / limite';
+  $('g-global-limit').textContent=globalLimit.toFixed(1)+'%';
+  $('g-global-track').setAttribute('aria-valuenow',Math.round(globalRatio));
+  // Risk per trade gauge (base 3%)
+  const riskPct = currentRisk;
+  $('g-risk-fill').style.width=Math.min(riskPct/3*100,100)+'%';
+  $('g-risk-val').textContent=riskPct.toFixed(2)+'%';
+  $('g-risk-limit').textContent='base 3%';
+  // Daily PnL gauge
+  const dpnl=s.daily_pnl_pct??0;
+  const dpnlAbs=Math.min(Math.abs(dpnl)/5*100,100);
+  $('g-dpnl-fill').style.width=dpnlAbs+'%';$('g-dpnl-fill').style.background=dpnl>=0?'var(--green)':'var(--red)';
+  $('g-dpnl-val').textContent=(dpnl>=0?'+':'')+dpnl.toFixed(2)+'%';
+  $('g-dpnl-val').className=dpnl>=0?'c-green':'c-red';
+}
+
+function renderTopbarTFPills(active){
+  const wrap=$('topbar-tf-pills');
+  if(!active||!Object.keys(active).length){wrap.style.display='none';return;}
+  wrap.style.display='flex';
+  wrap.innerHTML=Object.keys(active).map(tf=>`<span class="tf-pill" title="${active[tf].join(', ')}">${escHtml(tf)}</span>`).join('');
 }
 
 function renderPositions(positions){
@@ -265,7 +373,7 @@ function renderPositions(positions){
     const upnl=p.upnl??0,entry=p.entry??0,upct=entry>0?(upnl/(entry*(p.size??0))*100):0;
     const heldMin=p.open_time?Math.floor((Date.now()/1000-p.open_time)/60):0;
     const heldStr=heldMin>60?`${Math.floor(heldMin/60)}h${heldMin%60}m`:`${heldMin}m`;
-    return`<div class="pos-item"><div><div class="pos-sym">${p.symbol??'—'}<span class="tag tag-${p.side}">${(p.side||'').toUpperCase()}</span><span style="font-size:.62rem;color:var(--muted)">${p.strategy??''}</span>${p.timeframe?`<span style="font-size:.62rem;color:var(--cyan);font-family:var(--mono)">${p.timeframe}</span>`:''}</div><div class="pos-meta">Entrée: <strong>${fmtPrice(entry)}</strong> · Stop: ${fmtPrice(p.stop??0)} · ${p.size??0} u · Score: ${(p.score??0).toFixed(2)} · ${heldStr}</div></div><div><div class="pos-pnl ${clrC(upnl)}">${fmtSign(upnl)}</div><div class="pos-pct">${fmtSign(upct,'%')}</div></div></div>`;
+    return`<div class="pos-item"><div><div class="pos-sym">${escHtml(p.symbol??'—')}<span class="tag tag-${escHtml(p.side)}">${escHtml((p.side||'').toUpperCase())}</span><span style="font-size:.62rem;color:var(--muted)">${escHtml(p.strategy??'')}</span>${p.timeframe?`<span style="font-size:.62rem;color:var(--cyan);font-family:var(--mono)">${escHtml(p.timeframe)}</span>`:''}</div><div class="pos-meta">Entrée: <strong>${fmtPrice(entry)}</strong> · Stop: ${fmtPrice(p.stop??0)} · ${p.size??0} u · Score: ${(p.score??0).toFixed(2)} · ${heldStr}</div></div><div><div class="pos-pnl ${clrC(upnl)}">${fmtSign(upnl)}</div><div class="pos-pct">${fmtSign(upct,'%')}</div></div></div>`;
   }).join('');
 }
 
@@ -274,7 +382,7 @@ function renderTrades(trades){
   if(!trades.length){tbody.innerHTML='<tr><td colspan="7" class="empty-row">Aucun trade</td></tr>';return;}
   tbody.innerHTML=trades.slice(0,25).map(t=>{
     const pnl=t.pnl??0,d=new Date(t.time),ds=isNaN(d)?'—':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
-    return`<tr><td style="color:var(--muted)">${ds}</td><td style="font-weight:600">${t.symbol??'—'}</td><td><span class="tag tag-${t.side}">${(t.side||'').toUpperCase()}</span></td><td><span class="tag tag-strat">${t.strategy??'—'}</span></td><td>${fmtPrice(t.entry??0)}</td><td>${fmtPrice(t.exit??0)}</td><td class="r ${clrC(pnl)}" style="font-weight:600">${fmtSign(pnl)}</td></tr>`;
+    return`<tr><td style="color:var(--muted)">${ds}</td><td style="font-weight:600">${escHtml(t.symbol??'—')}</td><td><span class="tag tag-${escHtml(t.side)}">${escHtml((t.side||'').toUpperCase())}</span></td><td><span class="tag tag-strat">${escHtml(t.strategy??'—')}</span></td><td>${fmtPrice(t.entry??0)}</td><td>${fmtPrice(t.exit??0)}</td><td class="r ${clrC(pnl)}" style="font-weight:600">${fmtSign(pnl)}</td></tr>`;
   }).join('');
   /* PnL histogram */
   const recent=trades.slice(-30);

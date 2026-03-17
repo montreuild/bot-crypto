@@ -531,24 +531,29 @@ function renderJobCard(id, job) {
 
   let metricsHtml = '';
   if (hasResult) {
+    const overfitScore = +(result.overfit||0);
+    const overfitWarning = overfitScore > 2
+      ? `<span title="⚠ Overfit élevé (${overfitScore.toFixed(2)}) : les paramètres optimisés peuvent ne pas se généraliser hors-échantillon. Considérez d'augmenter out_of_sample_ratio ou de réduire n_trials." style="cursor:help;font-size:.65rem;color:var(--amber);margin-left:4px">⚠ overfit</span>`
+      : `<span title="Ratio IS/OOS acceptable (${overfitScore.toFixed(2)} ≤ 2). Les paramètres devraient bien se généraliser." style="cursor:help;font-size:.65rem;color:var(--green);margin-left:4px">✓ OK</span>`;
     const m = [
-      ['PnL OOS', fmtSign(result.best_oos_pnl||0), clr(result.best_oos_pnl||0)],
-      ['Win Rate', (result.best_oos_wr||0).toFixed(1)+'%', clr((result.best_oos_wr||0)-50)],
-      ['Sharpe',   (result.best_oos_sharpe||0).toFixed(2), clr(result.best_oos_sharpe||0)],
-      ['Trades',   result.best_oos_trades||0, 'clr-muted'],
-      ['Overfit',  result.overfit == null ? 'N/A' : (+(result.overfit||0)).toFixed(2),
-                   (+(result.overfit||0)) > 2 ? 'clr-red' : 'clr-green'],
+      ['PnL OOS', fmtSign(result.best_oos_pnl||0), clr(result.best_oos_pnl||0), ''],
+      ['Win Rate', (result.best_oos_wr||0).toFixed(1)+'%', clr((result.best_oos_wr||0)-50), ''],
+      ['Sharpe',   (result.best_oos_sharpe||0).toFixed(2), clr(result.best_oos_sharpe||0), ''],
+      ['Trades',   result.best_oos_trades||0, 'clr-muted', ''],
+      ['Overfit',  result.overfit == null ? 'N/A' : overfitScore.toFixed(2),
+                   overfitScore > 2 ? 'clr-red' : 'clr-green', overfitWarning],
     ];
-    metricsHtml = `<div class="metrics-row">${m.map(([l,v,c])=>
-      `<div class="metric-box"><div class="metric-lbl">${l}</div><div class="metric-val ${c}">${v}</div></div>`
+    metricsHtml = `<div class="metrics-row">${m.map(([l,v,c,extra])=>
+      `<div class="metric-box"><div class="metric-lbl">${l}${extra}</div><div class="metric-val ${c}">${v}</div></div>`
     ).join('')}</div>`;
   }
 
   let baHtml = '';
   if (hasResult && (baseline.pnl !== undefined)) {
+    const baselineSrc = job.baseline_source || 'backtest OOS';
     baHtml = `<div class="ba-grid">
       <div class="ba-box">
-        <div class="ba-title">⬅ Avant optimisation (OOS)</div>
+        <div class="ba-title">⬅ Avant optimisation <span style="color:var(--dim);font-size:.6rem;font-weight:400">(${escHtml(baselineSrc)})</span></div>
         ${baRow('Trades', baseline.trades??'-')}
         ${baRow('PnL', fmtSign(baseline.pnl??0), clr(baseline.pnl??0))}
         ${baRow('Sharpe', (baseline.sharpe??0).toFixed(2))}

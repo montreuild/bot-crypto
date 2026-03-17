@@ -160,7 +160,6 @@ class RiskManager:
 
     # ── Positions ────────────────────────────────────────────────────────────
     def register_open(self, position: dict):
-        key = f"{position['symbol']}_{position['side']}"
         self.open_positions[position["id"]] = position
 
     def register_close(self, position_id: str):
@@ -192,6 +191,8 @@ class RiskManager:
             "halted": self.halted,
             "halt_reason": self.halt_reason,
             "current_risk": round(self.compute_risk() * 100, 2),
+            "daily_dd_limit": round(self.daily_dd_limit, 4),
+            "global_dd_limit": round(self.global_dd_limit, 4),
         }
 
     @staticmethod

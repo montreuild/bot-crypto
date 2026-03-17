@@ -64,9 +64,10 @@ class MLPredictor:
             logger.warning(f"[ML] Pas assez de samples (0/{self.min_samples})")
             return {"error": "insufficient_data"}
 
-        # features contient les lignes valides (NaN supprimés du début).
-        # On aligne les labels sur les mêmes lignes via offset.
-        offset = len(df) - len(features)
+        # extract_features supprime exactement `window` lignes du début (warmup).
+        # L'offset est donc exact — garantit un alignement temporel correct
+        # entre features[i] et le prix df["close"][window + i].
+        offset = self.window
         close_aligned = df["close"][offset:]
         labels_raw    = build_labels(close_aligned)
 

@@ -2,7 +2,7 @@
 Notifications multi-canaux : Telegram, WhatsApp, Email.
 
 Architecture :
-  - File d'attente dédiée + thread worker unique (pas de spawn par message)
+  - Envoi synchrone direct (pas de thread worker dédié)
   - Filtrage d'événements configurable (on_trade_open, on_trade_close, …)
   - Niveau "critical" pour les alertes urgentes
   - Anti-spam intégré (halt, dd_warning)
@@ -10,9 +10,7 @@ Architecture :
   - WhatsApp via CallMeBot (gratuit) ou Twilio (officiel)
 """
 import logging
-import queue
 import smtplib
-import threading
 from email.mime.text import MIMEText
 
 logger = logging.getLogger(__name__)
@@ -76,11 +74,6 @@ class Notifier:
         self._dd_warn_sent = False
         self._halt_sent    = False
 
-        self._q    = queue.Queue(maxsize=200)
-        self._stop = threading.Event()
-        self._t    = threading.Thread(target=self._worker, daemon=True, name="notifier")
-        self._t.start()
-
         active = []
         if self.telegram_enabled: active.append("Telegram")
         if self.whatsapp_enabled: active.append(f"WhatsApp({self.whatsapp_mode})")
@@ -93,13 +86,8 @@ class Notifier:
     # ── Interface publique ────────────────────────────────────────────────────
 
     def send(self, message: str, async_: bool = True, level: str = "info"):
-        if async_:
-            try:
-                self._q.put_nowait({"text": message, "level": level})
-            except queue.Full:
-                logger.warning("[Notifier] File pleine — message ignoré.")
-        else:
-            self._dispatch(message, level)
+        # async_ kept for backward compatibility; sending is always synchronous
+        self._dispatch(message, level)
 
     def notify_trade_open(self, pos: dict):
         """Notification à l'ouverture d'une position."""
@@ -124,7 +112,9 @@ class Notifier:
         entry   = trade.get("entry", 0)
         exit_   = trade.get("exit", 0)
         side    = trade.get("side", "?").upper()
-        pnl_pct = round((exit_ - entry) / max(entry, 1e-9) * 100 * (1 if side == "LONG" else -1), 2)
+        pnl_pct = trade.get("pnl_pct")
+        if pnl_pct is None:
+            pnl_pct = round((exit_ - entry) / max(entry, 1e-9) * 100 * (1 if side == "LONG" else -1), 2)
         self.send(
             f"{emoji} *Trade clôturé*\n"
             f"Pair      : `{trade.get('symbol','?')}`\n"
@@ -247,29 +237,24 @@ class Notifier:
         )
 
     def stop(self):
-        self._q.join()
-        self._stop.set()
-        self._t.join(timeout=5)
+        """Arrêt propre du notifier (compat API, aucune action requise)."""
+        pass
 
     # ── Internals ─────────────────────────────────────────────────────────────
 
-    def _worker(self):
-        while not self._stop.is_set():
-            try:
-                item = self._q.get(timeout=1.0)
-                self._dispatch(item["text"], item.get("level", "info"))
-                self._q.task_done()
-            except queue.Empty:
-                continue
-            except Exception as e:
-                logger.error(f"[Notifier] Worker : {e}")
-
     def _dispatch(self, message: str, level: str = "info"):
-        plain = message.replace("*", "").replace("`", "").replace("_", "")
-        self._telegram(message)
-        self._whatsapp(plain)
+        self._send_all(message)
         if self.email_enabled or level == "critical":
-            self._email(plain, level)
+            self._email(self._strip_markdown(message), level)
+
+    def _send_all(self, message: str):
+        """Central dispatch to all active channels. Override in tests to capture messages."""
+        self._telegram(message)
+        self._whatsapp(self._strip_markdown(message))
+
+    @staticmethod
+    def _strip_markdown(text: str) -> str:
+        return text.replace("*", "").replace("`", "").replace("_", "")
 
     def _telegram(self, text: str):
         if not self.telegram_enabled or not _HAS_REQUESTS: return

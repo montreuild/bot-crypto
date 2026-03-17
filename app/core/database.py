@@ -90,7 +90,7 @@ class OpenPosition(Base):
     Permet au bot de les récupérer après un crash / redémarrage.
     """
     __tablename__ = "open_positions"
-    id           = Column(String(100), primary_key=True)   # "{symbol}::{strategy}"
+    id           = Column(String(100), primary_key=True)   # "{symbol}::{strategy}::{tf}"
     symbol       = Column(String(20),  nullable=False)
     side         = Column(String(10),  nullable=False)
     strategy     = Column(String(50))

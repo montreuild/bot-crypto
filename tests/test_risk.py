@@ -109,7 +109,7 @@ class TestRiskManager:
         rm = RiskManager(_cfg(capital=1000))
         # ATR très petit → size serait énorme, doit être plafonné
         size, notional = rm.compute_size(entry=100, atr=0.001)
-        assert notional <= pytest.approx(1000 * 0.20, rel=1e-3)
+        assert notional <= 1000 * 0.20 + 1e-6
 
     def test_daily_pnl_pct_positive(self):
         rm = RiskManager(_cfg(capital=1000))

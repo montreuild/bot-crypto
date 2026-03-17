@@ -148,8 +148,11 @@ class Strategy(BaseStrategy):
             risk_l = c_now - stop_l
             if risk_l <= 0:
                 return self._none("Stop invalide")
-            if (risk_l * 2.0) / risk_l < rr_min:
-                return self._none("R:R insuffisant")
+            target_l = float(high[-20:].max())
+            reward_l = max(target_l - c_now, 0.0)
+            rr_l = reward_l / risk_l if risk_l > 0 else 0.0
+            if rr_l < rr_min:
+                return self._none(f"R:R {rr_l:.2f} < {rr_min}")
 
             if long_A:
                 base = 0.73; tag = "ST cross↑ + MACD"
