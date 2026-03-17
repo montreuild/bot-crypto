@@ -1,5 +1,5 @@
 """
-Crypto Bot V7 — Point d'entrée principal.
+Crypto Bot V9 — Point d'entrée principal.
 """
 import argparse
 import importlib
@@ -19,7 +19,7 @@ from app.api.main       import app as fastapi_app, init_app
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Crypto Bot V7")
+    p = argparse.ArgumentParser(description="Crypto Bot V9")
     p.add_argument("--config",       default="config.yaml", help="Fichier de config")
     p.add_argument("--backtest",     metavar="SYMBOL",       help="Lancer un backtest CLI")
     p.add_argument("--timeframe",    default="",             help="Timeframe (défaut=config)")
@@ -29,9 +29,9 @@ def parse_args():
     p.add_argument("--optimize",     metavar="STRATEGY",     help="Optimiser une stratégie")
     p.add_argument("--opt-method",   default="bayesian",     help="grid|random|bayesian")
     p.add_argument("--scan",         action="store_true",    help="Scanner les marchés")
-    p.add_argument("--live",         action="store_true",    help="Démarrer le live trading")
+    p.add_argument("--live",         action="store_true",    help="Démarrer en mode live réel (désactive paper mode)")
     p.add_argument("--paper",        action="store_true",    help="Forcer le mode paper trading")
-    p.add_argument("--web",          action="store_true",    help="Serveur web seul (sans bot)")
+    p.add_argument("--web",          action="store_true",    help="Serveur web seul (sans démarrer le bot de trading)")
     p.add_argument("--host",         default=None,           help="Adresse d'écoute (écrase config)")
     p.add_argument("--port",         type=int, default=None, help="Port du serveur web (écrase config)")
     return p.parse_args()
@@ -114,7 +114,10 @@ def main():
     args = parse_args()
     cfg  = load_config(args.config)
 
-    if args.paper:
+    if args.live:
+        # --live force le mode réel (désactive paper trading)
+        cfg["trading"]["paper_mode"] = False
+    elif args.paper:
         cfg["trading"]["paper_mode"] = True
 
     setup_logging(cfg)
@@ -149,7 +152,11 @@ def main():
             exchange = create_exchange(cfg)
             trader   = LiveTrader(cfg, exchange)
         except Exception as e:
-            logger.warning(f"Impossible d'initialiser le trader ({e}) -- serveur web seul.")
+            logger.error(
+                f"[Main] Erreur initialisation LiveTrader : {e} "
+                f"-- démarrage en mode serveur web seul.",
+                exc_info=True,
+            )
             trader = None
 
     init_app(cfg, trader)
@@ -166,7 +173,7 @@ def main():
     else:
         logger.info(f"[Main] Serveur web seul -- http://{host}:{port}")
 
-    print(f"\n  Crypto Bot V7 -- http://{host}:{port}\n")
+    print(f"\n  Crypto Bot V9 -- http://{host}:{port}\n")
     uvicorn.run(fastapi_app, host=host, port=port, log_level="warning")
 
 

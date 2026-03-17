@@ -13,7 +13,8 @@
 #content{padding:18px 20px;display:flex;flex-direction:column;gap:18px;flex:1;}
 .hero-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
 @media(max-width:900px){.hero-grid{grid-template-columns:repeat(2,1fr);}}
-@media(max-width:560px){.hero-grid{grid-template-columns:1fr;}}
+@media(max-width:560px){.hero-grid{grid-template-columns:1fr 1fr;}}
+@media(max-width:380px){.hero-grid{grid-template-columns:1fr;}}
 .hero-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;position:relative;overflow:hidden;transition:border-color .2s,transform .15s;}
 .hero-card:hover{border-color:var(--border-hi);transform:translateY(-1px);}
 .hero-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
@@ -47,6 +48,14 @@
 .pos-pnl{font-family:var(--mono);font-weight:600;font-size:.88rem;text-align:right;}
 .pos-pct{font-size:.64rem;color:var(--dim);text-align:right;font-family:var(--mono);}
 .signal-filter{display:flex;align-items:center;gap:5px;font-size:.71rem;color:var(--muted);cursor:pointer;margin-left:auto;}
+/* ── Last updated indicator ── */
+#last-updated{font-family:var(--mono);font-size:.65rem;color:var(--dim);display:flex;align-items:center;gap:4px;white-space:nowrap;}
+#last-updated .latency{color:var(--muted);}
+#last-updated .latency.slow{color:var(--amber);}
+#last-updated .latency.error{color:var(--red);}
+/* ── API error banner ── */
+#api-error-bar{display:none;background:var(--red-dim);border:1px solid rgba(251,113,133,.25);border-radius:var(--r);padding:8px 16px;font-size:.75rem;color:var(--red);margin:0 20px 0;align-items:center;gap:8px;}
+#api-error-bar button{background:transparent;border:none;color:var(--red);cursor:pointer;font-size:.9rem;margin-left:auto;padding:0 4px;}
 /* ── Risk gauges ── */
 .risk-gauge-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;}
 .risk-gauges-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
@@ -65,14 +74,21 @@
 <div id="topbar-tf-pills" class="tf-pill-wrap" style="display:none;margin-left:12px" aria-label="Timeframes actifs"></div>
 <div class="topbar-sep"></div>
 <div class="topbar-right">
-  <span id="cb-badge" class="cb-pill" title="" aria-label="Circuit Breaker actif">⚡ Circuit Breaker</span>
+  <div id="last-updated" title="Dernière mise à jour et latence API">
+    <span id="ts" style="color:var(--dim)">—</span>
+    <span class="latency" id="api-latency"></span>
+  </div>
+  <span id="cb-badge" class="cb-pill" title="" aria-label="Circuit Breaker actif">&#9889; Circuit Breaker</span>
   <span id="status-badge" class="status-pill stopped"><span class="status-dot"></span><span id="status-label">Arrêté</span></span>
   <span id="mode-badge" class="mode-pill paper">Paper</span>
-  <span id="ts" style="font-family:var(--mono);font-size:.68rem;color:var(--dim)"></span>
 </div>
 {% endblock %}
 
 {% block content %}
+<div id="api-error-bar" role="alert" aria-live="assertive">
+  <span id="api-error-msg"></span>
+  <button onclick="hideApiError()" aria-label="Fermer le message d'erreur">&#x2715;</button>
+</div>
 <div id="ctrlbar">
   <button id="btn-start" class="btn btn-start" onclick="startBot()">▶ Démarrer</button>
   <button id="btn-stop"  class="btn btn-stop"  onclick="stopBot()">⏹ Arrêter</button>
@@ -245,10 +261,15 @@ const TV_BASE = {
   timeScale:{borderColor:'rgba(255,255,255,.06)',visible:false},
   handleScale:false,handleScroll:false,
 };
+let _chartResizeDebounce=null;
+function _onChartResize(chart,el){
+  clearTimeout(_chartResizeDebounce);
+  _chartResizeDebounce=setTimeout(()=>chart.applyOptions({width:el.offsetWidth}),100);
+}
 function mkChart(id,h=130){
   const el=$(id);
   const c=LightweightCharts.createChart(el,{...TV_BASE,height:h,width:el.offsetWidth||el.clientWidth||200});
-  new ResizeObserver(()=>c.applyOptions({width:el.offsetWidth})).observe(el);
+  new ResizeObserver(()=>_onChartResize(c,el)).observe(el);
   return c;
 }
 
@@ -267,22 +288,64 @@ function initCharts(){
 
 /* ── State ── */
 let _lastSignalLog=[];
+let _apiErrorCount=0;
+
+function showApiError(msg){
+  const bar=$('api-error-bar');const msgEl=$('api-error-msg');
+  if(bar&&msgEl){msgEl.textContent=msg;bar.style.display='flex';}
+}
+function hideApiError(){const bar=$('api-error-bar');if(bar)bar.style.display='none';_apiErrorCount=0;}
 
 /* ── Main refresh ── */
 async function refresh(){
+  const t0=performance.now();
   try{
-    const[status,tradesResp,daily]=await Promise.all([
-      fetch('/api/status').then(r=>r.json()).catch(()=>null),
-      apiFetch('/api/trades?limit=30').then(r=>r.json()).catch(()=>({})),
-      apiFetch('/api/stats/daily?days=30').then(r=>r.json()).catch(()=>[])
+    const[statusResp,tradesResp,dailyResp]=await Promise.all([
+      fetch('/api/status'),
+      apiFetch('/api/trades?limit=30'),
+      apiFetch('/api/stats/daily?days=30')
     ]);
-    const trades=Array.isArray(tradesResp)?tradesResp:(tradesResp?.trades??[]);
+
+    const latencyMs=Math.round(performance.now()-t0);
+    const latEl=$('api-latency');
+    if(latEl){
+      latEl.textContent=latencyMs+'ms';
+      let latCls='latency';
+      if(latencyMs>5000)latCls+=' error';
+      else if(latencyMs>2000)latCls+=' slow';
+      latEl.className=latCls;
+    }
+
+    let status=null,tradesData={},daily=[];
+    const errors=[];
+
+    if(statusResp.ok){status=await statusResp.json();}
+    else{errors.push(`Status: HTTP ${statusResp.status}`);}
+
+    if(tradesResp.ok){tradesData=await tradesResp.json();}
+    else{errors.push(`Trades: HTTP ${tradesResp.status}`);}
+
+    if(dailyResp.ok){daily=await dailyResp.json();}
+    else{errors.push(`Stats: HTTP ${dailyResp.status}`);}
+
+    if(errors.length){
+      _apiErrorCount++;
+      if(_apiErrorCount>=2)showApiError('Erreurs API : '+errors.join(', '));
+    }else{
+      hideApiError();
+    }
+
+    const trades=Array.isArray(tradesData)?tradesData:(tradesData?.trades??[]);
     if(status)renderStatus(status);
     renderTrades(trades);
     renderEquity(daily,trades);
     if(status)renderSignals(status.signal_log||[]);
-    $('ts').textContent=new Date().toLocaleTimeString('fr-FR');
-  }catch(e){console.warn('Refresh error',e);}
+    $('ts').textContent=new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }catch(e){
+    _apiErrorCount++;
+    if(_apiErrorCount>=2)showApiError('Erreur de connexion au serveur : '+e.message);
+    console.warn('Refresh error',e);
+  }
 }
 
 function renderStatus(s){
@@ -431,9 +494,41 @@ function renderSignals(log){
   }).join('');
 }
 
-async function startBot(){$('btn-start').disabled=true;try{await apiFetch('/api/bot/start',{method:'POST'});toast('Bot démarré ✓');refresh();}catch{$('btn-start').disabled=false;}}
-async function stopBot(){const nOpen=parseInt($('s-pos')?.textContent??'0')||0;if(nOpen>0){$('stop-modal-count').textContent=nOpen;$('stop-modal').style.display='flex';}else{await _doStop(false);}}
-async function _doStop(closePositions){$('stop-modal').style.display='none';$('btn-stop').disabled=true;try{const r=await apiFetch(`/api/bot/stop?close_positions=${closePositions}`,{method:'POST'}),d=await r.json();if(closePositions&&d.positions_closed>0)toast(`Bot arrêté — ${d.positions_closed} position(s) clôturée(s) ✓`);else if(!closePositions&&d.positions_kept>0)toast(`Bot arrêté — ${d.positions_kept} position(s) conservée(s)`);else toast('Bot arrêté ✓');refresh();}catch(e){toast('Erreur: '+e.message,true);$('btn-stop').disabled=false;}}
+async function startBot(){
+  const btn=$('btn-start');
+  btn.disabled=true;
+  btn.innerHTML='<span class="spin" aria-hidden="true"></span> Démarrage…';
+  try{
+    const r=await apiFetch('/api/bot/start',{method:'POST'});
+    if(!r.ok){const d=await r.json().catch(()=>({}));toast('Erreur: '+(d.detail||r.status),true);return;}
+    toast('Bot démarré ✓');
+    refresh();
+  }catch(e){
+    toast('Erreur: '+e.message,true);
+  }finally{
+    btn.innerHTML='▶ Démarrer';
+    btn.disabled=false;
+  }
+}
+async function stopBot(){const nOpen=parseInt($('s-pos')?.textContent??'0')||0;if(nOpen>0){$('stop-modal-count').textContent=nOpen;$('stop-modal').style.display='flex';$('stop-modal').querySelector('[class*=modal-btn]')?.focus();}else{await _doStop(false);}}
+async function _doStop(closePositions){
+  $('stop-modal').style.display='none';
+  const btn=$('btn-stop');
+  btn.disabled=true;
+  btn.innerHTML='<span class="spin" aria-hidden="true"></span> Arrêt…';
+  try{
+    const r=await apiFetch(`/api/bot/stop?close_positions=${closePositions}`,{method:'POST'});
+    const d=await r.json().catch(()=>({}));
+    if(closePositions&&d.positions_closed>0)toast(`Bot arrêté — ${d.positions_closed} position(s) clôturée(s) ✓`);
+    else if(!closePositions&&d.positions_kept>0)toast(`Bot arrêté — ${d.positions_kept} position(s) conservée(s)`);
+    else toast('Bot arrêté ✓');
+    refresh();
+  }catch(e){toast('Erreur: '+e.message,true);}
+  finally{
+    btn.innerHTML='⏹ Arrêter';
+    btn.disabled=false;
+  }
+}
 async function resetCB(){try{await apiFetch('/api/risk/reset-halt',{method:'POST'});toast('Circuit breaker réinitialisé');refresh();}catch(e){toast('Erreur: '+e.message,true);}}
 async function exportCSV(){
   const btn=document.querySelector('[onclick="exportCSV()"]'),limit=$('export-limit')?.value??'99999';
@@ -454,8 +549,17 @@ function fmtSign(v,unit=''){const n=+(v||0);return(n>=0?'+':'')+n.toFixed(2)+uni
 function fmtPrice(v){const n=+(v||0);return n>=100?n.toFixed(2):n.toFixed(4);}
 function clrC(v){return v>0?'c-green':v<0?'c-red':'c-muted';}
 
+/* ── Keyboard: Escape closes modals ── */
+document.addEventListener('keydown',function(e){
+  if(e.key==='Escape'){
+    document.querySelectorAll('.modal-overlay').forEach(m=>{
+      if(m.style.display==='flex'){m.style.display='none';}
+    });
+  }
+});
+
 initCharts();
 refresh();
-setInterval(refresh,10000);
+setInterval(refresh,15000);
 </script>
 {% endblock %}
