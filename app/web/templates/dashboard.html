@@ -541,8 +541,10 @@ async function _doStop(closePositions){
 }
 async function resetCB(){
   /* Ouvre un modal de confirmation avant de réinitialiser le circuit breaker */
-  document.getElementById('cb-reset-modal').style.display='flex';
-  document.getElementById('cb-reset-modal').querySelector('.modal-btn-danger')?.focus();
+  const modal = document.getElementById('cb-reset-modal');
+  modal.style.display='flex';
+  const firstBtn = modal.querySelector('.modal-btn-danger');
+  if(firstBtn) firstBtn.focus();
 }
 async function _doResetCB(){
   document.getElementById('cb-reset-modal').style.display='none';

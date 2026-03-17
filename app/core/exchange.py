@@ -166,7 +166,10 @@ class RobustExchange:
     def __getattr__(self, name): return getattr(self._ex, name)
 
 
-# Exchanges supportés (whitelist de sécurité — évite getattr sur des noms arbitraires)
+# Supported exchanges (security whitelist — prevents arbitrary ccxt attribute access
+# via a maliciously crafted config.yaml).
+# To add a new exchange: verify it is supported by ccxt, tested against the bot's
+# API layer (RobustExchange), and add its ccxt id (lowercase) to this set.
 _ALLOWED_EXCHANGES: frozenset = frozenset([
     "binance", "binanceus", "binanceusdm", "binancecoinm",
     "bybit", "okx", "kraken", "kucoin", "coinbase", "coinbasepro",

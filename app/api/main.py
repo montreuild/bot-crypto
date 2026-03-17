@@ -527,7 +527,7 @@ def backtest_settings():
 def list_trades(limit: int = 100, offset: int = 0, symbol: str = None, strategy: str = None):
     """Retourne les trades paginés. Paramètres : limit, offset, symbol, strategy."""
     if not SessionLocal: raise HTTPException(503, "DB non initialisée")
-    limit  = max(1, min(limit, 1000))   # borne supérieure raisonnable
+    limit  = max(1, min(limit, 1000))   # reasonable upper bound per page
     offset = max(0, offset)
     session = SessionLocal()
     try:
