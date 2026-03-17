@@ -466,9 +466,6 @@ function _renderChart(d){
     const volS = tvVolChart.addHistogramSeries({priceLineVisible:false,lastValueVisible:false});
     volS.setData(ind.volume);
     tvVolChart.timeScale().fitContent();
-    // Sync scrolling
-    tvPriceChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(r)tvVolChart.timeScale().setVisibleLogicalRange(r);});
-    tvVolChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(r)tvPriceChart.timeScale().setVisibleLogicalRange(r);});
   }
 
   // ── RSI ───────────────────────────────────────────────────────────────
@@ -488,8 +485,6 @@ function _renderChart(d){
       os.setData(rsiTimes.map(t=>({time:t,value:30})));
     }
     tvRsiChart.timeScale().fitContent();
-    tvPriceChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(r)tvRsiChart.timeScale().setVisibleLogicalRange(r);});
-    tvRsiChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(r)tvPriceChart.timeScale().setVisibleLogicalRange(r);});
   }
 
   // ── MACD ──────────────────────────────────────────────────────────────
@@ -511,9 +506,26 @@ function _renderChart(d){
       sigS.setData(ind.macd_signal);
     }
     tvMacdChart.timeScale().fitContent();
-    tvPriceChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(r)tvMacdChart.timeScale().setVisibleLogicalRange(r);});
-    tvMacdChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(r)tvPriceChart.timeScale().setVisibleLogicalRange(r);});
   }
+
+  // ── Sync all sub-charts with price chart (one-way + guard flag) ───────
+  let _syncing = false;
+  const _subCharts = [tvVolChart, tvRsiChart, tvMacdChart].filter(Boolean);
+  tvPriceChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{
+    if(_syncing||!r) return;
+    _syncing=true;
+    _subCharts.forEach(c=>{try{c.timeScale().setVisibleLogicalRange(r);}catch(_){}});
+    _syncing=false;
+  });
+  _subCharts.forEach(sub=>{
+    sub.timeScale().subscribeVisibleLogicalRangeChange(r=>{
+      if(_syncing||!r) return;
+      _syncing=true;
+      tvPriceChart.timeScale().setVisibleLogicalRange(r);
+      _subCharts.forEach(c=>{if(c!==sub){try{c.timeScale().setVisibleLogicalRange(r);}catch(_){}}});
+      _syncing=false;
+    });
+  });
 }
 
 // Auto-load chart on page init

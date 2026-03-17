@@ -895,7 +895,6 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
     """Retourne les bougies OHLCV + séries indicateurs pour le graphique du scanner."""
     if not cfg: raise HTTPException(503, "Config non chargée")
     import math as _m
-    import numpy as np
     try:
         exchange = create_exchange(cfg)
         scanner  = MarketScanner(exchange, cfg)
@@ -960,8 +959,11 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
                 g, l = _safe(gain[i]), _safe(loss[i])
                 if g is None or l is None:
                     continue
-                rs  = g / l if l > 0 else 0.0
-                rsi = 100 - (100 / (1 + rs))
+                if l == 0.0:
+                    rsi = 100.0
+                else:
+                    rs  = g / l
+                    rsi = 100 - (100 / (1 + rs))
                 if not _m.isnan(rsi):
                     out.append({"time": int(times[i]), "value": round(rsi, 2)})
             return out
