@@ -15,6 +15,11 @@ from typing import Dict, Optional
 logger = logging.getLogger(__name__)
 
 
+def _safe_div(numerator: float, denominator: float) -> float:
+    """Division protégée contre la division par zéro (ex: capital très faible)."""
+    return numerator / max(denominator, 1e-9)
+
+
 class RiskManager:
     def __init__(self, cfg: dict):
         t = cfg["trading"]
@@ -59,7 +64,7 @@ class RiskManager:
 
     def _check_circuit_breakers(self):
         # Drawdown journalier
-        daily_dd = (self.daily_start - self.equity) / max(self.daily_start, 1)
+        daily_dd = _safe_div(self.daily_start - self.equity, self.daily_start)
         warn_threshold = self.daily_dd_limit * self._dd_warn_ratio
         # Pré-alerte (ex: 80% du seuil)
         if daily_dd >= warn_threshold and not self.halted:
@@ -69,7 +74,7 @@ class RiskManager:
             self.halt_reason = f"Circuit breaker : DD journalier {daily_dd:.1%} ≥ {self.daily_dd_limit:.1%}"
             logger.critical(f"🔴 HALT — {self.halt_reason}")
         # Drawdown global
-        global_dd = (self.peak_equity - self.equity) / max(self.peak_equity, 1)
+        global_dd = _safe_div(self.peak_equity - self.equity, self.peak_equity)
         if global_dd >= self.global_dd_limit and not self.halted:
             self.halted      = True
             self.halt_reason = f"Circuit breaker : DD global {global_dd:.1%} ≥ {self.global_dd_limit:.1%}"
@@ -95,7 +100,7 @@ class RiskManager:
     # ── Position sizing ──────────────────────────────────────────────────────
     def compute_risk(self) -> float:
         """Risk-per-trade dynamique : réduit linéairement en cas de drawdown."""
-        dd = (self.peak_equity - self.equity) / max(self.peak_equity, 1)
+        dd = _safe_div(self.peak_equity - self.equity, self.peak_equity)
         if dd > 0.10:
             factor = 0.5                  # réduit de moitié au-delà de 10% DD
         elif dd > 0.05:
@@ -131,7 +136,7 @@ class RiskManager:
 
     def compute_leverage(self, notional: float) -> float:
         """Levier effectif plafonné au max configuré."""
-        lev = notional / max(self.equity, 1)
+        lev = _safe_div(notional, self.equity)
         return min(lev, self.max_leverage)
 
     # ── Vérifications avant entrée ───────────────────────────────────────────
@@ -175,11 +180,11 @@ class RiskManager:
     # ── Stats ────────────────────────────────────────────────────────────────
     @property
     def daily_pnl_pct(self) -> float:
-        return (self.equity - self.daily_start) / max(self.daily_start, 1)
+        return _safe_div(self.equity - self.daily_start, self.daily_start)
 
     @property
     def global_dd_pct(self) -> float:
-        return (self.peak_equity - self.equity) / max(self.peak_equity, 1)
+        return _safe_div(self.peak_equity - self.equity, self.peak_equity)
 
     def status_dict(self) -> dict:
         return {

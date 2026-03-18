@@ -98,6 +98,14 @@ def _merge_params(base: dict, optimized: dict) -> dict:
     return merged
 
 
+def _calc_unreal_pct(side: str, entry: float, price: float) -> float:
+    """Calcule le % de PnL non réalisé d'une position (protégé division par zéro)."""
+    if entry <= 0:
+        return 0.0
+    return (price - entry) / entry * 100 if side == "long" \
+           else (entry - price) / entry * 100
+
+
 class LiveTrader:
     def __init__(self, cfg: dict, exchange: RobustExchange):
         self.cfg      = cfg
@@ -209,9 +217,15 @@ class LiveTrader:
     # ── Chargement des stratégies ─────────────────────────────────────────
     def _load_all_strategies(self):
         """Charge toutes les stratégies disponibles dans PARAM_SPACES + enabled."""
+        import re as _re
         from app.optimizer.optimizer import PARAM_SPACES
         to_load = set(PARAM_SPACES.keys()) | set(self.cfg["strategies"].get("enabled", []))
         for name in to_load:
+            # Validation du nom : lettres minuscules, chiffres et underscores uniquement.
+            # Protège contre l'injection de modules arbitraires via le fichier de config.
+            if not _re.match(r'^[a-z][a-z0-9_]*$', name):
+                logger.warning(f"[LiveTrader] Nom de stratégie invalide ignoré : {name!r}")
+                continue
             try:
                 mod = importlib.import_module(f"app.strategies.{name}")
                 strat = mod.Strategy()
@@ -654,16 +668,12 @@ class LiveTrader:
             finally:
                 _sess.close()
 
-        if pos["side"] == "long":
-            unreal_pct = (price - pos["entry"]) / pos["entry"] * 100
-        else:
-            unreal_pct = (pos["entry"] - price) / pos["entry"] * 100
-
         if pos_id not in self._loss_notified:
+            unreal_pct = _calc_unreal_pct(pos["side"], pos["entry"], price)
             self.notif.notify_position_loss(symbol, pos.get("strategy",""), pos["side"], unreal_pct)
             if unreal_pct < -self.notif._loss_warn_pct:
                 self._loss_notified.add(pos_id)
-        elif unreal_pct >= 0:
+        elif _calc_unreal_pct(pos["side"], pos["entry"], price) >= 0:
             self._loss_notified.discard(pos_id)
 
         if trailing.is_triggered(price, new_stop, pos["side"]):
@@ -752,8 +762,7 @@ class LiveTrader:
             ticker = self._safe_ticker(pos["symbol"])
             if ticker:
                 price = ticker.get("last", pos["entry"])
-                upnl  = (price - pos["entry"]) / pos["entry"] * 100 if pos["side"] == "long" \
-                        else (pos["entry"] - price) / pos["entry"] * 100
+                upnl  = _calc_unreal_pct(pos["side"], pos["entry"], price)
                 positions_detail.append({
                     "symbol":         pos["symbol"],
                     "side":           pos["side"],

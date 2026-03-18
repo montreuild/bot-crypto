@@ -144,7 +144,11 @@ def persist_open_position(session: Session, pos: dict) -> None:
             reason    = pos.get("reason", ""),
         )
         session.add(rec)
-    session.commit()
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
 
 
 def delete_open_position(session: Session, pos_id: str) -> None:
@@ -152,7 +156,11 @@ def delete_open_position(session: Session, pos_id: str) -> None:
     rec = session.get(OpenPosition, pos_id)
     if rec:
         session.delete(rec)
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
 
 
 def load_open_positions(session: Session) -> List[dict]:
@@ -194,7 +202,12 @@ def save_trade(session: Session, t: dict):
         status=t.get("status"), duration_bars=t.get("duration_bars"),
         timeframe=t.get("timeframe"), reason=t.get("reason",""), tags=t.get("tags"),
     )
-    session.add(rec); session.commit()
+    try:
+        session.add(rec)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     return rec
 
 
@@ -218,4 +231,8 @@ def update_daily_stats(session: Session, date_str: str, pnl: float, win: bool,
     row.pnl         = round((row.pnl   or 0.0) + pnl,  6)
     row.fees        = round((row.fees  or 0.0) + fees, 6)
     row.equity_close = equity
-    session.commit()
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise

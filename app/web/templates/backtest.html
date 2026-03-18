@@ -228,6 +228,8 @@ let fsTvChart=null;
 let sortKey='id',sortAsc=false,tradeFilter='all',pg=1;
 let expanded=new Set();
 const PG=20;
+// Regex for valid trading pair symbols (e.g. BTC/USDC, ETH/BTC)
+const SYMBOL_PATTERN = /^[A-Z0-9]+\/[A-Z0-9]+$/;
 
 const STRAT_THRESHOLD={'fear_momentum':0.72,'pullback_trend':0.65,'supertrend_macd':0.65,'breakout':0.62,'trend':0.62};
 const STRAT_DESC_BT={'fear_momentum':'⭐ Fear & Momentum','pullback_trend':'Pullback Trend EMA','breakout':'Breakout Donchian','trend':'Trend EMA+MACD','supertrend_macd':'SuperTrend+MACD'};
@@ -313,9 +315,17 @@ function logAdd(msg,cls=''){
 
 // ── Run ──
 async function run(){
-  const sym=document.getElementById('i-sym').value.trim().toUpperCase()||'BTC/USDC';
+  const sym=(document.getElementById('i-sym').value||'').trim().toUpperCase()||'BTC/USDC';
   const tf=document.getElementById('i-tf').value;
-  const lim=document.getElementById('i-lim').value;
+  const limRaw=parseInt(document.getElementById('i-lim').value)||500;
+  const lim=Math.max(100, Math.min(50000, limRaw));
+  if(lim!==limRaw){document.getElementById('i-lim').value=lim;}
+  // Validation du symbole (format simple : BASE/QUOTE)
+  if(!SYMBOL_PATTERN.test(sym)){
+    toast('Format de paire invalide. Utilisez ex: BTC/USDC',true);
+    document.getElementById('msg').textContent='❌ Format de paire invalide (ex: BTC/USDC)';
+    return;
+  }
   const wf=document.getElementById('i-wf').checked;
   const mc=document.getElementById('i-mc').checked;
   const selStrats=[...document.querySelectorAll('#strat-checks input:checked')].map(i=>i.id.replace('sc-',''));

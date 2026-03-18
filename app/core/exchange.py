@@ -166,8 +166,24 @@ class RobustExchange:
     def __getattr__(self, name): return getattr(self._ex, name)
 
 
+# Supported exchanges (security whitelist — prevents arbitrary ccxt attribute access
+# via a maliciously crafted config.yaml).
+# To add a new exchange: verify it is supported by ccxt, tested against the bot's
+# API layer (RobustExchange), and add its ccxt id (lowercase) to this set.
+_ALLOWED_EXCHANGES: frozenset = frozenset([
+    "binance", "binanceus", "binanceusdm", "binancecoinm",
+    "bybit", "okx", "kraken", "kucoin", "coinbase", "coinbasepro",
+    "gateio", "huobi", "htx", "mexc", "bitfinex", "bitmex",
+])
+
+
 def create_exchange(cfg: dict) -> RobustExchange:
     name = cfg["exchange"]["name"].lower()
+    if name not in _ALLOWED_EXCHANGES:
+        raise ValueError(
+            f"Exchange non autorisé : '{name}'. "
+            f"Autorisés : {', '.join(sorted(_ALLOWED_EXCHANGES))}"
+        )
     klass = getattr(ccxt, name, None)
     if klass is None:
         raise ValueError(f"Exchange non supporté par ccxt : {name}")

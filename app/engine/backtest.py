@@ -53,11 +53,12 @@ def _atr_series(df: pl.DataFrame, period: int = 14) -> np.ndarray:
     tr  = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
     atr = tr.rolling_mean(period)
     arr = atr.to_numpy(allow_copy=True).astype(float)
-    # Remplir les NaN initiaux avec la moyenne cumulative des TR disponibles
+    # Remplir les NaN initiaux avec la moyenne cumulative des TR disponibles (O(n) vectorisé)
     tr_vals = tr.to_numpy().astype(float)
-    for k in range(len(arr)):
-        if np.isnan(arr[k]):
-            arr[k] = float(tr_vals[:k + 1].mean())
+    nan_mask = np.isnan(arr)
+    if nan_mask.any():
+        cum_mean = np.cumsum(tr_vals) / np.arange(1, len(tr_vals) + 1)
+        arr = np.where(nan_mask, cum_mean, arr)
     return arr
 
 def _bar_to_days(tf: str) -> float:
@@ -318,7 +319,9 @@ class Backtester:
                     if _tr and hasattr(_tr, "_dts") and _tr._dts:
                         trail_phase = _tr._dts.phase_name
 
-                    fill_size   = position["size"] * self.partial_fill
+                    # position["size"] est déjà la taille post-partial_fill (appliquée à l'entrée).
+                    # Ne pas appliquer partial_fill une seconde fois à la sortie.
+                    fill_size   = position["size"]
                     fees        = self._fees(exec_price, fill_size, maker=False)
                     bars_held   = i - position["bar"]
                     days_held   = bars_held * _bar_to_days(
@@ -443,7 +446,9 @@ class Backtester:
         # ── Clôture forcée en fin de série ────────────────────────────────────
         if position is not None:
             last_price  = float(df["close"][-1])
-            fill_size   = position["size"] * self.partial_fill
+            # position["size"] est déjà la taille post-partial_fill (appliquée à l'entrée).
+            # Ne pas appliquer partial_fill une seconde fois à la sortie finale.
+            fill_size   = position["size"]
             fees        = self._fees(last_price, fill_size, maker=True)
             bars_held   = len(df) - 1 - position["bar"]
             days_held   = bars_held * _bar_to_days(self.cfg["trading"].get("timeframe", "1h"))
