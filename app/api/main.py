@@ -815,7 +815,7 @@ def run_backtest(symbol: str = "BTC/USDC", limit: int = 500, timeframe: str = ""
                 mod = importlib.import_module(f"app.strategies.{name}")
                 eng = Engine(); eng.register(mod.Strategy(), silent=True)
                 bt  = Backtester(eng, cfg)
-                res = bt.run(df, symbol)
+                res = bt.run(df, symbol, timeframe=tf)
                 d   = res.to_dict()
                 strat_key  = next(iter(res.by_strategy.keys()), name) if res.by_strategy else name
                 strat_data = res.by_strategy.get(strat_key, {})

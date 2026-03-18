@@ -92,11 +92,7 @@ class RobustExchange:
             if "defaultType" in original_opts:
                 opts["options"] = {"defaultType": original_opts["defaultType"]}
             new_ex = self._ex_class(opts)
-            if self.paper and hasattr(new_ex, "set_sandbox_mode"):
-                try:
-                    new_ex.set_sandbox_mode(True)
-                except Exception:
-                    pass
+            # Pas de set_sandbox_mode ici — voir commentaire dans create_exchange
             self._ex = new_ex
             self._consecutive_errors = 0
             logger.info("[Exchange] ✅ Session TCP réinitialisée avec succès.")
@@ -202,7 +198,15 @@ def create_exchange(cfg: dict) -> RobustExchange:
         opts["apiKey"] = api_key
         opts["secret"] = api_secret
     ex = klass(opts)
-    if paper and hasattr(ex, "set_sandbox_mode"):
+    # NE PAS activer set_sandbox_mode pour le paper trading :
+    # - set_sandbox_mode(True) redirige vers testnet.binance.vision qui n'a que ~43 jours
+    #   de données historiques — inutilisable pour backtest et optimisation.
+    # - Le paper trading est déjà simulé localement dans RobustExchange.create_order()
+    #   et cancel_order() sans jamais envoyer d'ordres réels.
+    # - Pour utiliser le vrai testnet Binance, ajouter exchange.use_sandbox: true
+    #   dans config.yaml (comportement opt-in, pas automatique).
+    use_sandbox = cfg["exchange"].get("use_sandbox", False)
+    if use_sandbox and hasattr(ex, "set_sandbox_mode"):
         try: ex.set_sandbox_mode(True)
         except Exception: pass
     margin      = cfg["exchange"].get("margin", False) or cfg["trading"].get("margin_mode") is not None

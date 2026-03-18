@@ -74,6 +74,13 @@
 /* Apply row */
 .apply-row{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;}
 .apply-note{font-size:.68rem;color:var(--dim);}
+/* Collapsible job cards */
+.job-summary{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;padding:2px 0;}
+.job-summary:hover .job-title{color:var(--cyan);}
+.job-toggle{font-size:.72rem;color:var(--dim);margin-left:auto;padding:2px 6px;border-radius:3px;background:rgba(255,255,255,.04);border:1px solid var(--border);cursor:pointer;white-space:nowrap;}
+.job-details{margin-top:10px;}
+.job-group-hdr{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:600;margin:10px 0 6px;display:flex;align-items:center;gap:8px;}
+.job-group-hdr::after{content:'';flex:1;height:1px;background:var(--border);}
 /* Empty state */
 .empty-state{text-align:center;padding:48px 24px;color:var(--dim);}
 .empty-state p{font-size:.82rem;margin-top:8px;}
@@ -204,6 +211,7 @@ const TF_INFO = {
   '5m':  {label:'5m',  def:4000,  max:8000, note:'~14j · max ~8000'},
   '15m': {label:'15m', def:2000,  max:8000, note:'~21j · max ~8000'},
   '1h':  {label:'1h',  def:1500,  max:8000, note:'~62j · max ~8000'},
+  '4h':  {label:'4h',  def:800,   max:2000, note:'~133j · max ~2000'},
   '1d':  {label:'1d',  def:2000,  max:3000, note:'~2000j · max ~2500'},
 };
 
@@ -234,7 +242,7 @@ function toggleTfCheck(lbl, tf) {
 }
 
 // ── IS/OOS hint dynamique ─────────────────────────────────────────────────
-const TF_MINS = {'5m':5,'15m':15,'1h':60,'1d':1440};
+const TF_MINS = {'5m':5,'15m':15,'1h':60,'4h':240,'1d':1440};
 function updateLimHint() {
   const el    = document.getElementById('lim-hint');
   const input = document.getElementById('opt-limit');
@@ -254,7 +262,7 @@ function updateLimHint() {
     return;
   }
 
-  const TF_MAX = {'5m':8000,'15m':8000,'1h':8000,'1d':3000};
+  const TF_MAX = {'5m':8000,'15m':8000,'1h':8000,'4h':2000,'1d':3000};
   const parts = checkedTfs.map(tf => {
     const mins    = TF_MINS[tf] || 60;
     const tfMax   = TF_MAX[tf] || 8000;
@@ -416,7 +424,17 @@ function renderSpaces(spaces) {
 }
 
 // ── Start optimization ───────────────────────────────────────────────────
+let _optRunning = false;
+function _setOptBtn(running) {
+  _optRunning = running;
+  const btn = document.querySelector('.btn-purple.btn-full');
+  if (!btn) return;
+  btn.disabled = running;
+  btn.textContent = running ? '⏳ Optimisation en cours…' : '▶ Lancer l\'optimisation';
+}
+
 async function startOpt() {
+  if (_optRunning) return;
   const checked = [...document.querySelectorAll('#strat-checks input:checked:not(:disabled)')]
                     .map(i => i.id.replace('sc-',''));
   if (!checked.length) { alert('Sélectionnez au moins une stratégie.'); return; }
@@ -442,9 +460,10 @@ async function startOpt() {
     n_jobs:              $('opt-njobs').value,
     early_stop_patience: $('opt-early-stop').value,
   });
+  _setOptBtn(true);
   try {
     const r = await apiFetch('/api/optimize/start?' + params, {method:'POST'});
-    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    if (!r.ok) { _setOptBtn(false); throw new Error((await r.json()).detail || r.statusText); }
     const d = await r.json();
     const nJobs   = d.job_ids?.length || 0;
     const skipped = d.skipped || [];
@@ -460,7 +479,7 @@ async function startOpt() {
     // Afficher les bougies réellement téléchargées par TF
     const detailEntries = Object.entries(fetchDetails);
     if (detailEntries.length) {
-      const TF_MAX_UI = {'5m':8000,'15m':8000,'1h':8000,'1d':3000};
+      const TF_MAX_UI = {'5m':8000,'15m':8000,'1h':8000,'4h':2000,'1d':3000};
       html += `<div style="font-size:.68rem;color:var(--dim);margin:4px 0">`;
       detailEntries.forEach(([tf, bars]) => {
         const tfMax = TF_MAX_UI[tf] || 8000;
@@ -487,7 +506,7 @@ async function startOpt() {
     msg.innerHTML = html;
     document.querySelector('.btn-purple.btn-full')?.insertAdjacentElement('afterend', msg);
     setTimeout(() => msg.remove(), 10000);
-  } catch(e) { alert('Erreur: ' + e.message); }
+  } catch(e) { _setOptBtn(false); alert('Erreur: ' + e.message); }
 }
 
 // ── Polling ──────────────────────────────────────────────────────────────
@@ -500,13 +519,25 @@ async function refreshJobs() {
   try {
     const r = await apiFetch('/api/optimize/status');
     const jobs = await r.json();
+    _lastJobs = jobs;
+    // Auto-expand newly completed jobs
+    Object.entries(jobs).forEach(([id, j]) => {
+      if (j.status === 'done' && !_expandedJobs.has('_seen_' + id)) {
+        _expandedJobs.add(id);
+        _expandedJobs.add('_seen_' + id);
+      }
+    });
     renderJobs(jobs);
     const anyRunning = Object.values(jobs).some(j => j.status === 'running');
     if (!anyRunning && pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    if (!anyRunning) _setOptBtn(false);
   } catch(e) {}
 }
 
 // ── Render jobs ──────────────────────────────────────────────────────────
+// Track which job cards are expanded (persisted across refreshes)
+const _expandedJobs = new Set();
+
 function renderJobs(jobs) {
   const entries = Object.entries(jobs);
   if (!entries.length) {
@@ -517,10 +548,53 @@ function renderJobs(jobs) {
   }
   // Most recent first
   entries.sort((a,b) => (b[1].started_at||0) - (a[1].started_at||0));
-  $('jobs-container').innerHTML = entries.map(([id, job]) => renderJobCard(id, job)).join('');
+
+  const running = entries.filter(([,j]) => j.status === 'running');
+  const done    = entries.filter(([,j]) => j.status === 'done');
+  const errored = entries.filter(([,j]) => j.status === 'error');
+
+  // Auto-expand running jobs and recently finished ones
+  running.forEach(([id]) => _expandedJobs.add(id));
+
+  let html = '';
+
+  if (running.length) {
+    html += `<div class="job-group-hdr">En cours (${running.length})</div>`;
+    html += running.map(([id,job]) => renderJobCard(id, job, true)).join('');
+  }
+  if (errored.length) {
+    html += `<div class="job-group-hdr" style="color:var(--red)">Erreurs (${errored.length})</div>`;
+    html += errored.map(([id,job]) => renderJobCard(id, job, _expandedJobs.has(id))).join('');
+  }
+  if (done.length) {
+    const nExpanded = done.filter(([id]) => _expandedJobs.has(id)).length;
+    html += `<div class="job-group-hdr">Terminés (${done.length})
+      <button onclick="toggleAllDone()" style="font-size:.62rem;background:transparent;border:1px solid var(--border);color:var(--dim);padding:2px 7px;border-radius:3px;cursor:pointer;text-transform:none;letter-spacing:0">
+        ${nExpanded === done.length ? '⊟ Réduire tout' : '⊞ Tout ouvrir'}
+      </button>
+    </div>`;
+    html += done.map(([id,job]) => renderJobCard(id, job, _expandedJobs.has(id))).join('');
+  }
+
+  $('jobs-container').innerHTML = html;
 }
 
-function renderJobCard(id, job) {
+function toggleAllDone() {
+  const jobs = Object.entries(_lastJobs || {}).filter(([,j]) => j.status === 'done');
+  const allExpanded = jobs.every(([id]) => _expandedJobs.has(id));
+  jobs.forEach(([id]) => allExpanded ? _expandedJobs.delete(id) : _expandedJobs.add(id));
+  renderJobs(_lastJobs || {});
+}
+
+function toggleJobCard(id) {
+  if (_expandedJobs.has(id)) _expandedJobs.delete(id);
+  else _expandedJobs.add(id);
+  renderJobs(_lastJobs || {});
+}
+
+let _lastJobs = {};
+
+function renderJobCard(id, job, expanded = false) {
   const st = job.status || 'pending';
   const stLabel = {running:'⟳ En cours',done:'✓ Terminé',error:'✗ Erreur',pending:'… En attente'}[st] || st;
   const prog = job.progress || 0;
@@ -622,34 +696,46 @@ function renderJobCard(id, job) {
     </div>`;
   }
 
-  return `<div class="job-card ${st}" style="margin-bottom:12px">
-    <div class="job-top">
-      <div>
-        <div class="job-title">
-          ${job.strategy || id}
+  const bestPnlStr = hasResult ? fmtSign(result.best_oos_pnl||0) : '';
+  const bestPnlClr = hasResult ? clr(result.best_oos_pnl||0) : '';
+  const scoreStr   = hasResult ? (result.best_oos_score||0).toFixed(3) : (job.best_score||0).toFixed(3);
+
+  const summaryContent = `
+    <div class="job-summary" onclick="toggleJobCard('${id}')">
+      <div style="flex:1;min-width:0">
+        <div class="job-title" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span>${job.strategy || id}</span>
           <span style="color:var(--cyan);font-size:.8rem">@${job.timeframe||'?'}</span>
           ${job.is_recommended === false
-            ? `<span style="background:var(--amber-dim);color:var(--amber);font-size:.6rem;padding:1px 5px;border-radius:3px;margin-left:4px" title="TF non recommandé pour cette stratégie (recommandé : ${(job.recommended_tfs||[]).join(', ')})">⚠ TF non rec.</span>`
+            ? `<span style="background:var(--amber-dim);color:var(--amber);font-size:.6rem;padding:1px 5px;border-radius:3px" title="TF non recommandé — recommandé : ${(job.recommended_tfs||[]).join(', ')}">⚠</span>`
             : ''}
+          <span class="job-status js-${st}" style="font-size:.62rem">${stLabel}</span>
+          ${hasResult ? `<span class="${bestPnlClr}" style="font-family:var(--mono);font-size:.75rem">${bestPnlStr}</span>
+            <span style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">score: ${scoreStr}</span>` : ''}
+          ${job.applied ? `<span style="color:var(--green);font-size:.65rem">✓ appliqué</span>` : ''}
         </div>
-        <div class="job-meta">${job.symbol||'—'} · ${job.method||'—'} · ${job.n_trials||'?'} trials</div>
+        <div class="progress-wrap" style="margin:5px 0 0">
+          <div class="progress-bg" style="height:4px"><div class="progress-fill ${st==='done'?'progress-done':''}" style="width:${prog}%"></div></div>
+        </div>
       </div>
-      <span class="job-status js-${st}">${stLabel}</span>
-    </div>
-    <div class="progress-wrap">
-      <div class="progress-bg"><div class="progress-fill ${st==='done'?'progress-done':''}" style="width:${prog}%"></div></div>
-      <div class="progress-lbl">
-        <span>${job.trials_done||0} / ${job.n_trials||'?'} trials</span>
-        <span>Best score: ${(job.best_score||0).toFixed(3)}</span>
-      </div>
-    </div>
-    ${st==='error' ? `<div style="color:var(--red);font-size:.73rem;margin-top:6px">${job.error||'Erreur inconnue'}</div>` : ''}
-    ${metricsHtml}
-    ${warnHtml}
-    ${baHtml}
-    ${hasResult ? `<div style="margin-top:10px;font-size:.68rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Meilleurs paramètres</div>${paramsHtml}` : ''}
-    ${top5Html}
-    ${applyHtml}
+      <span class="job-toggle">${expanded ? '⊟' : '⊞'}</span>
+    </div>`;
+
+  const detailsContent = expanded ? `
+    <div class="job-details">
+      <div class="job-meta" style="margin-bottom:8px">${job.symbol||'—'} · ${job.method||'—'} · ${job.trials_done||0}/${job.n_trials||'?'} trials · Best: ${(job.best_score||0).toFixed(3)}</div>
+      ${st==='error' ? `<div style="color:var(--red);font-size:.73rem;margin-bottom:6px">${job.error||'Erreur inconnue'}</div>` : ''}
+      ${metricsHtml}
+      ${warnHtml}
+      ${baHtml}
+      ${hasResult ? `<div style="margin-top:10px;font-size:.68rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Meilleurs paramètres</div>${paramsHtml}` : ''}
+      ${top5Html}
+      ${applyHtml}
+    </div>` : '';
+
+  return `<div class="job-card ${st}" style="margin-bottom:8px">
+    ${summaryContent}
+    ${detailsContent}
   </div>`;
 }
 
@@ -722,47 +808,102 @@ function renderOptResults(d) {
   const activeTf  = d.active_per_tf  || {};
   const container = document.getElementById('opt-results-container');
 
-  const entries = [];
-  for (const [strat, tfMap] of Object.entries(byStratTf)) {
-    for (const [tf, entry] of Object.entries(tfMap)) {
-      entries.push({ strat, tf, ...entry });
-    }
-  }
-  entries.sort((a, b) => (b.oos_score||0) - (a.oos_score||0));
-
-  if (!entries.length) {
+  if (!Object.keys(byStratTf).length) {
     container.innerHTML = '<div style="color:var(--dim);font-size:.78rem;padding:8px">Aucun résultat d\'optimisation. Lancez une optimisation avec auto-apply pour voir les résultats ici.</div>';
     return;
   }
-  // Ajouter légende score seuil
-  const legend = document.createElement('div');
-  legend.style.cssText = 'font-size:.65rem;color:var(--dim);padding:4px 8px 8px;display:flex;gap:12px;flex-wrap:wrap';
-  legend.innerHTML = '<span>Score OOS : <span style="color:var(--green)">≥ 0.0</span> = bon · <span style="color:var(--amber)">-0.05 à 0</span> = limite · <span style="color:var(--red)">&lt; -0.05</span> = exclu du live</span>';
-  container.appendChild(legend);
 
-  const rows = entries.map(e => {
-    const isActive = (activeTf[e.tf] || []).includes(e.strat);
-    const score = e.oos_score || 0;
-    const scoreClr = score >= 0.0 ? 'var(--green)' : score >= -0.05 ? 'var(--amber)' : 'var(--red)';
-    const scoreExcluded = score < -0.05;
-    const params = e.params || {};
-    const paramStr = Object.entries(params).slice(0,4).map(([k,v]) =>
-      `<span style="color:var(--dim)">${k}</span>=<span style="color:var(--text)">${v}</span>`
-    ).join('  ');
-    return `<div style="background:var(--card);border:1px solid ${isActive?'rgba(77,159,255,.3)':'var(--border)'};border-radius:8px;padding:10px 14px;margin-bottom:6px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <span style="font-weight:700;font-size:.88rem">${e.strat}</span>
-        <span style="color:var(--cyan);font-family:var(--mono);font-size:.75rem">@${e.tf}</span>
-        ${isActive ? '<span style="background:var(--green-dim);color:var(--green);font-size:.65rem;padding:2px 6px;border-radius:4px;font-weight:700">● ACTIF</span>' : ''}
-        ${scoreExcluded ? '<span style="background:var(--red-dim);color:var(--red);font-size:.65rem;padding:2px 6px;border-radius:4px;font-weight:700" title="Score < -0.05 : exclu du live">✗ EXCLU</span>' : ''}
-        <span style="margin-left:auto;font-weight:700;color:${scoreClr};font-family:var(--mono)">${score.toFixed(3)}</span>
-        <span style="font-size:.7rem;color:var(--dim)">${e.run_date||''}</span>
-      </div>
-      <div style="font-size:.72rem;font-family:'JetBrains Mono',monospace;color:var(--muted);flex-wrap:wrap;line-height:1.8">${paramStr}</div>
-    </div>`;
-  }).join('');
+  // Collect all TFs and strategies
+  const allTfs = [...new Set(Object.values(byStratTf).flatMap(m => Object.keys(m)))].sort((a,b) => {
+    const order = ['1m','3m','5m','15m','30m','1h','2h','4h','1d'];
+    return order.indexOf(a) - order.indexOf(b);
+  });
+  const allStrats = Object.keys(byStratTf).sort();
 
-  container.innerHTML = rows;
+  if (!allTfs.length) {
+    container.innerHTML = '<div style="color:var(--dim);font-size:.78rem;padding:8px">Aucun résultat.</div>';
+    return;
+  }
+
+  // Legend
+  let html = `<div style="font-size:.63rem;color:var(--dim);padding:4px 0 8px;display:flex;gap:12px;flex-wrap:wrap">
+    <span>Score OOS : <span style="color:var(--green)">≥ 0.0</span> = bon &nbsp;
+    <span style="color:var(--amber)">-0.05 à 0</span> = limite &nbsp;
+    <span style="color:var(--red)">&lt; -0.05</span> = exclu</span>
+  </div>`;
+
+  // Column-per-TF layout
+  const colW = Math.max(140, Math.floor(100 / allTfs.length));
+  html += `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:${allTfs.length * 160 + 120}px">
+    <thead><tr>
+      <th style="padding:6px 10px;text-align:left;font-size:.63rem;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap">Stratégie</th>
+      ${allTfs.map(tf => {
+        const active = activeTf[tf] || [];
+        return `<th style="padding:6px 10px;text-align:center;font-size:.63rem;color:var(--cyan);text-transform:uppercase;border-bottom:1px solid var(--border);font-family:var(--mono)">
+          ${tf}
+          ${active.length ? `<div style="font-size:.58rem;color:var(--green);font-weight:400">${active.length} actif${active.length>1?'s':''}</div>` : ''}
+        </th>`;
+      }).join('')}
+    </tr></thead>
+    <tbody>
+      ${allStrats.map(strat => {
+        const cells = allTfs.map(tf => {
+          const entry = byStratTf[strat]?.[tf];
+          if (!entry) return `<td style="padding:6px 10px;text-align:center;color:var(--border)">—</td>`;
+          const score = entry.oos_score || 0;
+          const scoreClr = score >= 0.0 ? 'var(--green)' : score >= -0.05 ? 'var(--amber)' : 'var(--red)';
+          const isActive = (activeTf[tf] || []).includes(strat);
+          const isExcluded = score < -0.05;
+          return `<td style="padding:6px 10px;text-align:center;${isActive?'background:rgba(52,211,153,.04)':''}">
+            <div style="font-weight:700;font-family:var(--mono);font-size:.82rem;color:${scoreClr}">${score.toFixed(3)}</div>
+            <div style="font-size:.6rem;color:var(--dim);margin-top:1px">${entry.run_date||''}</div>
+            ${isActive ? '<div style="font-size:.58rem;color:var(--green);font-weight:700">● ACTIF</div>' : ''}
+            ${isExcluded ? '<div style="font-size:.58rem;color:var(--red)">✗ EXCLU</div>' : ''}
+          </td>`;
+        }).join('');
+        return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
+          <td style="padding:6px 10px;font-family:var(--mono);font-size:.76rem;font-weight:600;white-space:nowrap;color:var(--text)">${strat}</td>
+          ${cells}
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table></div>`;
+
+  // TOP per TF section
+  html += `<div style="margin-top:16px">
+    <div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px">
+      TOP par Timeframe<span style="flex:1;height:1px;background:var(--border);display:block"></span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+    ${allTfs.map(tf => {
+      const entries = allStrats
+        .filter(s => byStratTf[s]?.[tf])
+        .map(s => ({ strat: s, ...byStratTf[s][tf] }))
+        .sort((a,b) => (b.oos_score||0) - (a.oos_score||0))
+        .slice(0, 5);
+      if (!entries.length) return '';
+      const activList = activeTf[tf] || [];
+      return `<div style="flex:1;min-width:180px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px">
+        <div style="font-size:.7rem;color:var(--cyan);font-weight:700;font-family:var(--mono);margin-bottom:8px">TOP ${tf}</div>
+        ${entries.map((e,i) => {
+          const score = e.oos_score || 0;
+          const scoreClr = score >= 0.0 ? 'var(--green)' : score >= -0.05 ? 'var(--amber)' : 'var(--red)';
+          const isActive = activList.includes(e.strat);
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+            <div>
+              <span style="font-size:.7rem;color:var(--dim);margin-right:4px">#${i+1}</span>
+              <span style="font-family:var(--mono);font-size:.73rem;font-weight:${isActive?700:400};color:${isActive?'var(--text)':'var(--muted)'}">${e.strat}</span>
+              ${isActive ? '<span style="color:var(--green);font-size:.6rem;margin-left:3px">●</span>' : ''}
+            </div>
+            <span style="font-family:var(--mono);font-size:.75rem;font-weight:700;color:${scoreClr}">${score.toFixed(3)}</span>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }).join('')}
+    </div>
+  </div>`;
+
+  container.innerHTML = html;
 }
 
 init();
