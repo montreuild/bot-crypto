@@ -4,6 +4,67 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [10.0.0] - 2026-03-18
+
+### ✨ Nouvelles fonctionnalités
+
+- **Fichier indicateurs unifié** : Fusion de `app/core/indicators.py` et `app/strategies/indicators.py`
+  en un seul module source-of-truth. `app/strategies/indicators.py` devient un shim de ré-export
+  (~20 lignes) — aucune stratégie ne nécessite de modification.
+- **`__version__ = "10.0.0"`** dans `app/core/indicators.py` pour traçabilité programmatique.
+
+### ⚡ Performance — Portage maximum vers Polars
+
+Toutes les fonctions d'indicateurs sont désormais en Polars pur ; NumPy est limité à la seule
+boucle séquentielle du SuperTrend (dépendance `upper[i] = f(upper[i-1])` incontournable).
+
+| Fonction | Avant (v9) | Après (v10) |
+|---|---|---|
+| `_true_range` | `np.maximum` + 3 × `to_numpy()` | `pl.max_horizontal` dans DataFrame temporaire |
+| `rsi` | `to_numpy()` + `np.where` + `pl.Series(arr)` | `.clip(lower_bound=1e-10)` pur Polars |
+| `adx` | 6 × round-trip numpy, `np.where`, `pl.Series(arr)` | Multiplication booléenne `(up > dn).cast(Float64)` + `.clip()` |
+| `supertrend` | TR/ATR calculés en numpy + boucle | TR/ATR via `_true_range()` Polars ; boucle seule en numpy |
+| `precompute_df` | `np.maximum` + `pl.when(Series)` mélangé | Entièrement Polars Series + `.clip()` |
+
+### 🐛 Corrections de bugs
+
+- **`precompute_df`** : `pl.when(Series)` retournait un `Expr` mélangé à des `Series`, source
+  d'ambiguïtés lors de l'évaluation dans `with_columns`. Remplacé par des opérations Series pures.
+- **`rsi`** (standalone) : La conversion numpy masquait les `None` initiaux ; la version Polars
+  les propage correctement.
+
+### 📚 Documentation
+
+- **`app/core/indicators.py`** : En-tête de module avec changelog détaillé des changements v10.
+- **`CHANGELOG.md`** : Ce fichier — entrée v10.
+- **`README.md`** : Référence mise à jour vers V10.
+
+### 🗄️ Structure
+
+```
+app/
+├── core/
+│   └── indicators.py    ← SOURCE UNIQUE — v10.0.0 (tous indicateurs ici)
+└── strategies/
+    └── indicators.py    ← SHIM de ré-export uniquement (ne pas modifier)
+```
+
+### ⚡ Migration depuis V9
+
+```python
+# Ancien code (V9) — importait depuis deux modules selon le contexte :
+from app.core.indicators import detect_regime, adx_val, volume_ratio
+from app.strategies.indicators import rsi, atr, adx, pre_val
+
+# Nouveau code (V10) — un seul module source :
+from app.core.indicators import detect_regime, adx_val, volume_ratio, rsi, atr_val, pre_val
+
+# La rétrocompatibilité via app.strategies.indicators est maintenue
+# (le shim ré-exporte tout, aucun changement requis dans les stratégies existantes)
+```
+
+---
+
 ## [9.0.0] - 2026-03-16
 
 ### ✨ Nouvelles fonctionnalités

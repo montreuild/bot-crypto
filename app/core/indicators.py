@@ -1,14 +1,34 @@
 """Bibliothèque d'indicateurs techniques — source unique pour stratégies et moteur.
 
-Fusionne app/core/indicators.py et app/strategies/indicators.py en un seul module.
-app/strategies/indicators.py est désormais un shim de ré-export vers ce fichier.
+Version : 10.0.0
+
+Historique des changements (v10)
+─────────────────────────────────
+v10.0.0 (2026-03-18)
+  • Fusion définitive de app/core/indicators.py et app/strategies/indicators.py.
+    app/strategies/indicators.py est désormais un simple shim de ré-export.
+  • Portage maximum vers Polars (Arrow/Rust) — NumPy limité à la seule boucle
+    séquentielle du SuperTrend (dépendance incontournable i → i-1).
+  • _true_range : np.maximum remplacé par pl.max_horizontal (zéro round-trip).
+  • rsi         : division sécurisée via .clip(lower_bound=1e-10) au lieu de
+                  np.where (Series pure, pas de Expr mélangé).
+  • adx         : conditionnels pdm/ndm via multiplication booléenne Polars
+                  (up * (up > dn).cast(pl.Float64)) ; divisions sécurisées via
+                  .clip(lower_bound=1e-10) ; zéro round-trip numpy.
+  • supertrend  : TR/ATR calculés par _true_range() (Polars) ; seule la boucle
+                  upper/lower/direction reste en numpy (état séquentiel requis).
+  • precompute_df : entièrement Polars — suppression des np.maximum et pl.when
+                    mélangés à des Series ; toutes les divisions sécurisées par clip.
+  • Ajout de __version__ pour traçabilité programmatique.
 
 Bibliothèque principale : Polars (Rust, Arrow, multi-threadé).
-NumPy conservé pour les boucles séquentielles (SuperTrend) et la division sécurisée.
+NumPy conservé uniquement pour la boucle séquentielle SuperTrend.
 """
 import numpy as np
 import polars as pl
 from typing import Tuple
+
+__version__ = "10.0.0"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -16,17 +36,22 @@ from typing import Tuple
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _true_range(df: pl.DataFrame) -> pl.Series:
-    """True Range vectorisé. Le null du shift(1) est remplacé par close[0] pour
-    éviter la propagation de NaN dans ewm_mean (comportement polars)."""
+    """True Range vectorisé — pur Polars, zéro round-trip numpy.
+
+    TR = max(H−L, |H−C_prev|, |L−C_prev|)
+    Le null du shift(1) est remplacé par close[0] : tr[0] = H[0]−L[0].
+    """
     h      = df["high"]
     l      = df["low"]
-    # fill_null : la première barre n'a pas de clôture précédente → on utilise
-    # la clôture courante (tr[0] = high[0] - low[0], sans distorsion).
     c_prev = df["close"].shift(1).fill_null(df["close"][0])
-    return pl.Series(np.maximum(
-        (h - l).to_numpy(),
-        np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy()),
-    ))
+    hl     = h - l
+    hcp    = (h - c_prev).abs()
+    lcp    = (l - c_prev).abs()
+    return (
+        pl.DataFrame({"hl": hl, "hcp": hcp, "lcp": lcp})
+        .select(pl.max_horizontal("hl", "hcp", "lcp"))
+        .to_series()
+    )
 
 
 def ema(s: pl.Series, n: int) -> pl.Series:
@@ -42,13 +67,17 @@ def sma(s: pl.Series, n: int) -> pl.Series:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def rsi(close: pl.Series, period: int = 14) -> pl.Series:
-    """RSI(period). Division sécurisée via numpy pour éviter qu'un pl.when
-    retourne un Expr non subscriptable (comportement polars ≥ 1.x)."""
-    d     = close.diff(1)
-    g_np  = d.clip(lower_bound=0).ewm_mean(alpha=1 / period, adjust=False).to_numpy()
-    dn_np = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / period, adjust=False).to_numpy()
-    dn_safe = np.where(dn_np == 0, 1e-10, dn_np)
-    return pl.Series(100 - 100 / (1 + g_np / dn_safe))
+    """RSI(period) — pur Polars.
+
+    Division sécurisée via .clip(lower_bound=1e-10) : l (pertes EWM) est
+    toujours ≥ 0 (issu de -diff.clip(upper=0)), donc clip ne distord pas
+    les valeurs normales ; seul le zéro exact est déplacé à 1e-10.
+    """
+    d      = close.diff(1)
+    g      = d.clip(lower_bound=0).ewm_mean(alpha=1 / period, adjust=False)
+    l      = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / period, adjust=False)
+    l_safe = l.clip(lower_bound=1e-10)
+    return 100 - (100 / (1 + g / l_safe))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -118,32 +147,33 @@ def atr_val(df: pl.DataFrame, n: int = 14) -> float:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def adx(df: pl.DataFrame, n: int = 14) -> Tuple[pl.Series, pl.Series, pl.Series]:
-    """ADX(n) — retourne (adx_line, +DI, −DI) comme Series complètes.
-    Utilisé par detect_regime() et build_features()."""
+    """ADX(n) — pur Polars, retourne (adx_line, +DI, −DI) comme Series complètes.
+
+    Conditionnels pdm/ndm via multiplication booléenne (zéro round-trip numpy) :
+      pdm = up   si up > dn, sinon 0  →  up  * (up > dn).cast(Float64)
+      ndm = dn   si dn > up, sinon 0  →  dn  * (dn > up).cast(Float64)
+    Divisions sécurisées via .clip(lower_bound=1e-10).
+    """
     if len(df) < n * 2:
         z = pl.Series([0.0] * len(df))
         return z, z, z
-    h   = df["high"]
-    l   = df["low"]
-    up  = h.diff(1).clip(lower_bound=0)
-    dn  = (-l.diff(1)).clip(lower_bound=0)
-    # numpy pour éviter pl.when → Expr
-    up_np  = up.to_numpy()
-    dn_np  = dn.to_numpy()
-    pdm_np = np.where(up_np > dn_np, up_np, 0.0)
-    ndm_np = np.where(dn_np > up_np, dn_np, 0.0)
+    h    = df["high"]
+    l    = df["low"]
+    up   = h.diff(1).clip(lower_bound=0)
+    dn   = (-l.diff(1)).clip(lower_bound=0)
+    pdm  = up  * (up > dn).cast(pl.Float64)
+    ndm  = dn  * (dn > up).cast(pl.Float64)
 
-    atr14    = _true_range(df).ewm_mean(span=n, adjust=False).to_numpy()
-    atr_safe = np.where(atr14 == 0, 1e-10, atr14)
+    atr14    = _true_range(df).ewm_mean(span=n, adjust=False)
+    atr_safe = atr14.clip(lower_bound=1e-10)
 
-    pdi_np = 100 * pl.Series(pdm_np).ewm_mean(span=n, adjust=False).to_numpy() / atr_safe
-    ndi_np = 100 * pl.Series(ndm_np).ewm_mean(span=n, adjust=False).to_numpy() / atr_safe
-    sum_di = pdi_np + ndi_np
-    sum_safe = np.where(sum_di == 0, 1e-10, sum_di)
-    dx_np  = 100 * np.abs(pdi_np - ndi_np) / sum_safe
+    pdi     = 100 * pdm.ewm_mean(span=n, adjust=False) / atr_safe
+    ndi     = 100 * ndm.ewm_mean(span=n, adjust=False) / atr_safe
+    sum_di  = (pdi + ndi).clip(lower_bound=1e-10)
+    dx      = 100 * (pdi - ndi).abs() / sum_di
 
-    adx_line = pl.Series(dx_np).ewm_mean(span=n, adjust=False).fill_null(0)
-    return adx_line, pl.Series(pdi_np).fill_null(0), pl.Series(ndi_np).fill_null(0)
+    adx_line = dx.ewm_mean(span=n, adjust=False).fill_null(0)
+    return adx_line, pdi.fill_null(0), ndi.fill_null(0)
 
 
 def adx_val(df: pl.DataFrame, n: int = 14) -> float:
@@ -189,23 +219,18 @@ def donchian(df: pl.DataFrame, n: int = 20) -> Tuple[pl.Series, pl.Series]:
 def supertrend(df: pl.DataFrame, period: int = 10,
                mult: float = 3.0) -> Tuple[pl.Series, pl.Series]:
     """Retourne (direction: +1/-1, st_line).
-    Boucle numpy conservée (dépendance séquentielle incontournable)."""
+
+    TR et ATR calculés par _true_range() (Polars) ; seule la boucle
+    upper/lower/direction reste en numpy — dépendance séquentielle
+    incontournable (upper[i] dépend de upper[i-1]).
+    """
+    # TR et ATR via Polars (pas de round-trip sur cette partie)
+    atr_arr = _true_range(df).ewm_mean(span=period, adjust=False).to_numpy()
+
     high  = df["high"].to_numpy()
     low   = df["low"].to_numpy()
     close = df["close"].to_numpy()
     n     = len(close)
-
-    prev_close     = np.empty(n)
-    prev_close[0]  = close[0]
-    prev_close[1:] = close[:-1]
-    tr = np.maximum(high - low,
-         np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)))
-
-    atr_arr    = np.empty(n)
-    atr_arr[0] = tr[0]
-    alpha      = 2.0 / (period + 1)
-    for i in range(1, n):
-        atr_arr[i] = atr_arr[i - 1] * (1 - alpha) + tr[i] * alpha
 
     hl2         = (high + low) / 2.0
     upper_basic = hl2 + mult * atr_arr
@@ -481,41 +506,37 @@ def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
       _pre_macd_sig    MACD signal
       _pre_macd_hist   MACD histogram
       _pre_volratio20  volume_ratio(20)
+
+    Entièrement Polars (v10) — zéro round-trip numpy.
     """
     c = df["close"]
     h = df["high"]
     l = df["low"]
     v = df["volume"]
 
-    # True Range (réutilisé pour ATR et ADX)
-    c_prev = c.shift(1).fill_null(c[0])
-    tr = pl.Series(np.maximum(
-        (h - l).to_numpy(),
-        np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy()),
-    ))
+    # True Range — via _true_range (pur Polars, pl.max_horizontal)
+    tr = _true_range(df)
 
-    # RSI(14)
-    d  = c.diff(1)
-    g  = d.clip(lower_bound=0).ewm_mean(alpha=1 / 14, adjust=False)
-    dn = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / 14, adjust=False)
-    # pl.when() est OK dans with_columns (retourne un Expr accepté par Polars)
-    dn_safe   = pl.when(dn == 0).then(1e-10).otherwise(dn)
+    # RSI(14) — clip(lower_bound) pour division sécurisée (pas de pl.when)
+    d         = c.diff(1)
+    g         = d.clip(lower_bound=0).ewm_mean(alpha=1 / 14, adjust=False)
+    dn        = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / 14, adjust=False)
+    dn_safe   = dn.clip(lower_bound=1e-10)
     pre_rsi14 = 100 - 100 / (1 + g / dn_safe)
 
     # ATR(14)
     pre_atr14 = tr.ewm_mean(span=14, adjust=False)
 
-    # ADX(14)
-    up   = h.diff(1).clip(lower_bound=0)
-    down = (-l.diff(1)).clip(lower_bound=0)
-    pdm  = pl.when(up > down).then(up).otherwise(0.0)
-    ndm  = pl.when(down > up).then(down).otherwise(0.0)
-    atr_safe = pl.when(pre_atr14 == 0).then(None).otherwise(pre_atr14)
-    dip  = 100 * pdm.ewm_mean(span=14, adjust=False) / atr_safe
-    dim  = 100 * ndm.ewm_mean(span=14, adjust=False) / atr_safe
-    dip_plus_dim      = dip + dim
-    dip_plus_dim_safe = pl.when(dip_plus_dim == 0).then(None).otherwise(dip_plus_dim)
-    dx   = 100 * (dip - dim).abs() / dip_plus_dim_safe
+    # ADX(14) — multiplication booléenne, clip pour division sécurisée
+    up       = h.diff(1).clip(lower_bound=0)
+    down     = (-l.diff(1)).clip(lower_bound=0)
+    pdm      = up   * (up > down).cast(pl.Float64)
+    ndm      = down * (down > up).cast(pl.Float64)
+    atr_safe = pre_atr14.clip(lower_bound=1e-10)
+    dip      = 100 * pdm.ewm_mean(span=14, adjust=False) / atr_safe
+    dim      = 100 * ndm.ewm_mean(span=14, adjust=False) / atr_safe
+    sum_di   = (dip + dim).clip(lower_bound=1e-10)
+    dx       = 100 * (dip - dim).abs() / sum_di
 
     # MACD(12,26,9)
     ema_f = c.ewm_mean(span=12, adjust=False)
@@ -523,9 +544,9 @@ def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
     ml    = ema_f - ema_s
     ms    = ml.ewm_mean(span=9, adjust=False)
 
-    # volume_ratio(20)
+    # volume_ratio(20) — clip pour division sécurisée
     vm     = v.rolling_mean(20)
-    vm_safe = pl.when(vm < 1e-9).then(1e-9).otherwise(vm)
+    vm_safe = vm.clip(lower_bound=1e-9)
 
     return df.with_columns([
         pre_rsi14.alias("_pre_rsi14"),
