@@ -235,7 +235,11 @@ class AutoOptimizer:
                                            early_stop_patience=self.early_stop_patience)
 
             applied = False
-            if auto_apply and result.get("best_params") and result.get("best_oos_pnl", 0) > 0:
+            oos_trades = result.get("best_oos_trades", 0)
+            if (auto_apply
+                    and result.get("best_params")
+                    and result.get("best_oos_pnl", 0) > 0
+                    and oos_trades >= 3):   # min 3 trades OOS pour être statistiquement crédible
                 best_params = result["best_params"]
                 oos_score   = result.get("best_oos_score", 0.0)
                 applied = apply_best_params(

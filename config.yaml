@@ -11,6 +11,10 @@ exchange:
   api_secret: ${BINANCE_API_SECRET}
   margin: false
   name: binance
+  # use_sandbox: false  # Mettre true UNIQUEMENT pour utiliser testnet.binance.vision
+  #   Attention : le testnet a ~43 jours de données historiques seulement.
+  #   Le paper trading (paper_mode: true) simule les ordres localement — le sandbox
+  #   n'est pas nécessaire pour du paper trading.
 logging:
   backup_count: 5
   debug: false
@@ -75,6 +79,33 @@ strategies:
   - multi_tf_sr
   - composite_score
   - fft_spectral
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GESTION DES PARAMÈTRES : deux niveaux complémentaires
+#
+#   strategy_params  (ci-dessous)
+#     └─ Paramètres de BASE par stratégie, toutes TF confondues.
+#        Utilisés comme fallback quand aucune optimisation n'existe pour un TF.
+#        Modifiables manuellement ou via l'UI Configuration.
+#        Le backtest et le live trading s'en servent comme point de départ.
+#
+#   optimizer_results  (en bas de fichier)
+#     └─ Paramètres OPTIMISÉS par stratégie ET par timeframe (strategy → tf → params).
+#        Générés automatiquement par l'optimiseur (auto-apply ou bouton "Appliquer").
+#        Prioritaires sur strategy_params pour le TF correspondant :
+#          - Live trader  : _merge_params() superpose optimizer_results sur strategy_params
+#          - Backtest     : Backtester.run(timeframe=tf) fait la même fusion
+#        Score OOS stocké pour le classement (>= 0.0 = viable, < -0.05 = exclu du live).
+#
+#   Règle pratique :
+#     • Après une optimisation, ne pas éditer strategy_params manuellement :
+#       l'optimiseur écrit dans optimizer_results ET met à jour strategy_params
+#       comme snapshot du dernier apply.
+#     • Pour forcer des params sur un TF spécifique sans relancer l'optimiseur,
+#       éditer directement optimizer_results.<strategie>.<tf>.params.
+#     • Pour réinitialiser une stratégie à ses valeurs par défaut :
+#       supprimer son entrée dans optimizer_results et ajuster strategy_params.
+# ─────────────────────────────────────────────────────────────────────────────
 strategy_params:
   breakout:
     atr_expan_min: 1.05
@@ -204,12 +235,32 @@ trading:
   - 1h
   - 1d
   timeframe: 1h
-  top_strategies_per_tf: 2
+  top_strategies_per_tf: 2   # Nb de stratégies actives par TF (depuis optimizer_results)
 web:
   api_key: ''
   host: 0.0.0.0
   port: 8000
   refresh_interval: 5
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RÉSULTATS D'OPTIMISATION  (géré automatiquement — ne pas éditer à la main)
+#
+#   Structure : optimizer_results.<strategie>.<timeframe>
+#     run_date  : date du dernier run d'optimisation
+#     oos_score : score composite Out-of-Sample (critère de sélection)
+#                   >=  0.0  → viable pour le live trading
+#                   >= -0.05 → borderline (surveillé)
+#                   <  -0.05 → exclu du live (top_strategies_per_tf l'ignore)
+#     params    : meilleurs paramètres trouvés pour ce TF
+#                 Prioritaires sur strategy_params pour le TF correspondant.
+#
+#   Ces données sont utilisées par :
+#     • get_active_strategies_per_tf() → sélection des stratégies actives en live
+#     • Backtester.run(timeframe=tf)   → backtest avec les bons params per-TF
+#     • UI Optimiseur → classement OOS, colonne par TF
+#
+#   Historique des changements : voir optimizer_changelog.json
+# ─────────────────────────────────────────────────────────────────────────────
 optimizer_results:
   trend:
     1h:
