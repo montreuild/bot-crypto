@@ -11,10 +11,6 @@ exchange:
   api_secret: ${BINANCE_API_SECRET}
   margin: false
   name: binance
-  # use_sandbox: false  # Mettre true UNIQUEMENT pour utiliser testnet.binance.vision
-  #   Attention : le testnet a ~43 jours de données historiques seulement.
-  #   Le paper trading (paper_mode: true) simule les ordres localement — le sandbox
-  #   n'est pas nécessaire pour du paper trading.
 logging:
   backup_count: 5
   debug: false
