@@ -1,4 +1,4 @@
-# 🏗️ Architecture Crypto Bot V9
+# 🏗️ Architecture Crypto Bot V10
 
 Vue d'ensemble technique, patterns de design et flux de données.
 
@@ -438,7 +438,7 @@ python main.py
 
 ```ini
 [Unit]
-Description=Crypto Bot V9
+Description=Crypto Bot V10
 After=network.target
 
 [Service]
@@ -479,4 +479,4 @@ CMD ["python", "main.py"]
 
 ---
 
-**Architecture Crypto Bot V9** — Bien pensée, scalable, et testable 🏗️
+**Architecture Crypto Bot V10** — Bien pensée, scalable, et testable 🏗️

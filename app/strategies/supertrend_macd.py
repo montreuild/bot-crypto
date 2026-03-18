@@ -13,11 +13,11 @@ Corrections V5 vs V4 :
   - Tendance fond stricte (± 2.5% EMA200 max)
 """
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
-from app.strategies.indicators import (
-    rsi as calc_rsi, atr as calc_atr, macd as calc_macd,
+from app.core.indicators import (
+    rsi as calc_rsi, atr_val as calc_atr, macd as calc_macd,
     supertrend as calc_supertrend, vol_ratio as calc_vol, htf_trend, pre_val
 )
 
@@ -26,6 +26,23 @@ logger = logging.getLogger(__name__)
 
 class Strategy(BaseStrategy):
     name = "supertrend_macd"
+
+    timeframes: List[str] = ["5m", "15m", "1h"]
+
+    param_space: Dict[str, List] = {
+        "st_period":      [7, 10, 14],
+        "st_mult":        [2.0, 2.5, 3.0],
+        "macd_fast":      [10, 12, 14],
+        "macd_slow":      [24, 26, 28],
+        "macd_signal":    [7, 9, 11],
+        "vol_min":        [1.0, 1.1, 1.3],
+        "rsi_min":        [35, 38, 42],
+        "rsi_max":        [60, 65, 68],
+        "cooldown":       [10, 15, 20],
+        "rr_min":         [1.3, 1.5, 2.0],
+    }
+
+    fixed_params: Dict[str, Any] = {}
 
     def __init__(self):
         self._last_signal: Dict[str, int] = {}

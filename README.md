@@ -1,4 +1,4 @@
-# ⚡ Crypto Bot V9
+# ⚡ Crypto Bot V10
 
 Bot de trading algorithmique multi-stratégies avec interface web, backtest avancé et optimiseur de paramètres.
 
@@ -26,7 +26,7 @@ Bot de trading algorithmique multi-stratégies avec interface web, backtest avan
 
 ```bash
 # 1. Cloner / décompresser le projet
-cd crypto_bot_v9
+cd crypto_bot_v10
 
 # 2. Créer un environnement virtuel Python 3.12
 python3.12 -m venv .venv
@@ -223,7 +223,7 @@ strategies:
 ## 📁 Architecture du projet
 
 ```
-crypto_bot_v9/
+crypto_bot_v10/
 ├── main.py                          ← Point d'entrée (CLI)
 ├── config.yaml                      ← Configuration principale
 ├── requirements.txt                 ← Dépendances Python 3.12
@@ -239,7 +239,7 @@ crypto_bot_v9/
 ├── app/
 │   ├── __init__.py
 │   ├── api/
-│   │   └── main.py                 ← Routes FastAPI (v9)
+│   │   └── main.py                 ← Routes FastAPI (v10)
 │   ├── core/
 │   │   ├── config.py               ← Chargement config YAML
 │   │   ├── logger.py               ← Setup logging structuré
@@ -331,7 +331,7 @@ Voir [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) pour plus de détails.
 ## 📖 Documentation complète
 
 - [**ARCHITECTURE.md**](ARCHITECTURE.md) — Vue d'ensemble technique
-- [**CHANGELOG.md**](CHANGELOG.md) — Historique V7 → V8 → V9
+- [**CHANGELOG.md**](CHANGELOG.md) — Historique V7 → V8 → V9 → V10
 - [**CONTRIBUTING.md**](CONTRIBUTING.md) — Contribution au projet
 - [**docs/SETUP.md**](docs/SETUP.md) — Installation détaillée par OS
 - [**docs/API.md**](docs/API.md) — Documentation API complète
@@ -353,4 +353,4 @@ MIT License (voir LICENSE file)
 
 ---
 
-**Crypto Bot V9** — Bon trading ! 🚀
+**Crypto Bot V10** — Bon trading ! 🚀

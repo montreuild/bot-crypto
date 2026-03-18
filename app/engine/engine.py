@@ -15,6 +15,14 @@ class BaseStrategy:
     """Interface que toutes les stratégies doivent respecter."""
     name: str = "base"
 
+    # ── Métadonnées d'optimisation (surchargées par chaque stratégie) ──────
+    # timeframes   : TFs recommandés pour l'optimisation (ex: ["1h", "1d"])
+    # param_space  : espace de recherche {param: [valeurs]} pour l'optimiseur
+    # fixed_params : paramètres fixes (non optimisables), ex: {"ema_trend": 200}
+    timeframes:   List[str] = []
+    param_space:  Dict[str, List] = {}
+    fixed_params: Dict[str, Any]  = {}
+
     def min_bars_required(self, params: dict = None) -> int:
         """
         Retourne le nombre minimum de bougies requis pour que la stratégie

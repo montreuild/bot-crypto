@@ -41,16 +41,16 @@ Sortie (stop_hint) :
   - Minimum 1× ATR sous le prix d'entrée
 """
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
-from app.strategies.indicators import (
+from app.core.indicators import (
     rsi as calc_rsi,
-    atr as calc_atr,
+    atr_val as calc_atr,
     atr_series as calc_atr_series,
     macd as calc_macd,
     vol_ratio as calc_vol,
-    adx as calc_adx,
+    adx_val as calc_adx,
     market_structure,
     htf_trend,
     pre_val,
@@ -61,6 +61,22 @@ logger = logging.getLogger(__name__)
 
 class Strategy(BaseStrategy):
     name = "fear_momentum"
+
+    timeframes: List[str] = ["1h", "1d"]
+
+    param_space: Dict[str, List] = {
+        "ema_fast":        [13, 21, 34],
+        "ema_mid":         [50],
+        "rsi_fear":        [35, 38, 42, 45],
+        "rsi_greed":       [58, 62, 65],
+        "vol_cap_min":     [1.5, 1.8, 2.2, 2.5],
+        "atr_max_dip":     [3.0, 4.0, 5.0],
+        "ema200_max_dist": [0.05, 0.08, 0.12],
+        "cooldown":        [15, 18, 22, 25],
+        "rr_min":          [1.4, 1.6, 2.0],
+    }
+
+    fixed_params: Dict[str, Any] = {}
 
     def __init__(self):
         self._last_signal: Dict[str, int] = {}

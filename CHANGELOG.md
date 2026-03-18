@@ -4,6 +4,107 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [11.0.0] - 2026-03-18
+
+### ✨ Nouvelles fonctionnalités
+
+- **Découverte automatique des stratégies** (`app/strategies/registry.py`) :
+  Chaque stratégie porte ses propres métadonnées d'optimisation en attributs de classe.
+  L'optimiseur les découvre automatiquement — aucun fichier central à modifier
+  pour ajouter une nouvelle stratégie.
+
+### 🏗️ Refactorisation (optimizer.py)
+
+- `STRATEGY_TIMEFRAMES`, `PARAM_SPACES`, `FIXED_PARAMS` ne sont plus codés en dur
+  dans `optimizer.py`. Ces dicts sont construits dynamiquement par le registre.
+- Chaque `Strategy` déclare maintenant directement :
+  - `timeframes`   : `List[str]` — TFs recommandés pour l'optimisation
+  - `param_space`  : `Dict[str, List]` — espace de recherche des hyperparamètres
+  - `fixed_params` : `Dict[str, Any]` — paramètres fixes (non optimisables)
+- `BaseStrategy` expose ces attributs avec des valeurs par défaut vides.
+- `RECOMMENDED_LIMIT` (config globale par TF) reste dans `optimizer.py`.
+- Rétrocompatibilité totale : tous les imports existants fonctionnent.
+
+### 🔧 Impact pour ajouter une nouvelle stratégie
+
+**Avant (V10)** : 4 fichiers à modifier (stratégie + optimizer.py + config.yaml + doc).
+
+**Après (V11)** : 1 seul fichier :
+```python
+# app/strategies/ma_nouvelle_strategie.py
+class Strategy(BaseStrategy):
+    name         = "ma_nouvelle_strategie"
+    timeframes   = ["1h", "4h"]
+    param_space  = {"period": [10, 20, 30], "rr_min": [1.3, 1.5, 2.0]}
+    fixed_params = {}
+    # ... min_bars_required(), score() ...
+```
+L'optimiseur, l'API et le live trader la détectent automatiquement.
+
+---
+
+## [10.0.0] - 2026-03-18
+
+### ✨ Nouvelles fonctionnalités
+
+- **Fichier indicateurs unifié** : `app/strategies/indicators.py` est **supprimé**.
+  `app/core/indicators.py` est le seul et unique module d'indicateurs. Toutes les stratégies,
+  le moteur et le live trader importent directement depuis `app.core.indicators`.
+- **`__version__ = "10.0.0"`** dans `app/core/indicators.py` pour traçabilité programmatique.
+
+### ⚡ Performance — Portage maximum vers Polars
+
+Toutes les fonctions d'indicateurs sont désormais en Polars pur ; NumPy est limité à la seule
+boucle séquentielle du SuperTrend (dépendance `upper[i] = f(upper[i-1])` incontournable).
+
+| Fonction | Avant (v9) | Après (v10) |
+|---|---|---|
+| `_true_range` | `np.maximum` + 3 × `to_numpy()` | `pl.max_horizontal` dans DataFrame temporaire |
+| `rsi` | `to_numpy()` + `np.where` + `pl.Series(arr)` | `.clip(lower_bound=1e-10)` pur Polars |
+| `adx` | 6 × round-trip numpy, `np.where`, `pl.Series(arr)` | Multiplication booléenne `(up > dn).cast(Float64)` + `.clip()` |
+| `supertrend` | TR/ATR calculés en numpy + boucle | TR/ATR via `_true_range()` Polars ; boucle seule en numpy |
+| `precompute_df` | `np.maximum` + `pl.when(Series)` mélangé | Entièrement Polars Series + `.clip()` |
+
+### 🐛 Corrections de bugs
+
+- **`precompute_df`** : `pl.when(Series)` retournait un `Expr` mélangé à des `Series`, source
+  d'ambiguïtés lors de l'évaluation dans `with_columns`. Remplacé par des opérations Series pures.
+- **`rsi`** (standalone) : La conversion numpy masquait les `None` initiaux ; la version Polars
+  les propage correctement.
+
+### 📚 Documentation
+
+- **`app/core/indicators.py`** : En-tête de module avec changelog détaillé des changements v10.
+- **`CHANGELOG.md`** : Ce fichier — entrée v10.
+- **`README.md`** : Référence mise à jour vers V10.
+
+### 🗄️ Structure
+
+```
+app/
+└── core/
+    └── indicators.py    ← SOURCE UNIQUE — v10.0.0 (tous indicateurs ici)
+                           app/strategies/indicators.py SUPPRIMÉ
+```
+
+### ⚡ Migration depuis V9
+
+```python
+# Ancien code (V9) — importait depuis deux modules selon le contexte :
+from app.core.indicators import detect_regime, adx_val, volume_ratio
+from app.strategies.indicators import rsi, atr, adx, pre_val
+
+# Nouveau code (V10) — un seul module source :
+from app.core.indicators import detect_regime, adx_val, volume_ratio, rsi, atr_val, pre_val
+
+# app/strategies/indicators.py est supprimé — importer directement depuis app.core.indicators
+# Exemple de mapping des alias courants :
+#   atr_val as calc_atr     (remplace : atr as calc_atr du shim)
+#   adx_val as calc_adx     (remplace : adx as calc_adx du shim)
+```
+
+---
+
 ## [9.0.0] - 2026-03-16
 
 ### ✨ Nouvelles fonctionnalités

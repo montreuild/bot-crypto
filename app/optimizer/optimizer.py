@@ -1,9 +1,12 @@
 """
-Optimiseur de Stratégies — V8 (Multi-Timeframe)
+Optimiseur de Stratégies — V9 (Auto-découverte des stratégies)
 
-Nouveautés V8 :
-  - STRATEGY_TIMEFRAMES : timeframes recommandés par stratégie
-  - RECOMMENDED_LIMIT : nombre de barres optimal par TF
+Nouveautés V9 :
+  - STRATEGY_TIMEFRAMES, PARAM_SPACES, FIXED_PARAMS sont construits
+    automatiquement via app.strategies.registry (découverte des attributs
+    de classe de chaque Strategy : timeframes, param_space, fixed_params).
+  - Ajouter une nouvelle stratégie ne nécessite plus de modifier ce fichier.
+  - RECOMMENDED_LIMIT : nombre de barres optimal par TF (config globale TF, inchangé)
   - save_optimizer_results() : persiste le classement (strategy, tf) → params + score
   - apply_best_params() : met à jour strategy_params ET optimizer_results
   - _composite_score() inchangé
@@ -24,27 +27,24 @@ import polars as pl
 
 from app.engine.engine import Engine
 from app.engine.backtest import Backtester, BacktestResult
+from app.strategies.registry import (
+    get_strategy_timeframes,
+    get_param_spaces,
+    get_fixed_params,
+)
 
 logger = logging.getLogger(__name__)
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  Timeframes recommandés par stratégie
+#  Métadonnées des stratégies — auto-découvertes via app.strategies.registry
+#  (plus de dicts codés en dur ici : chaque stratégie porte ses propres métadonnées)
 # ════════════════════════════════════════════════════════════════════════════
-STRATEGY_TIMEFRAMES: Dict[str, List[str]] = {
-    # Scalping/court terme : supertrend et breakout réagissent vite aux cassures
-    "supertrend_macd": ["5m", "15m", "1h"],
-    "breakout":        ["5m", "15m", "1h"],
-    # Trend following : besoin de plus de contexte, pas adapté au 5m
-    "trend":           ["1h", "1d"],
-    "pullback_trend":  ["15m", "1h", "1d"],
-    # Fear/momentum : événements macro → 1h/1d idéal
-    "fear_momentum":   ["1h", "1d"],
-    # Multi-TF S/R : niveaux nécessitent contexte moyen terme
-    "multi_tf_sr":     ["15m", "1h", "4h"],
-}
+STRATEGY_TIMEFRAMES: Dict[str, List[str]] = get_strategy_timeframes()
+PARAM_SPACES:        Dict[str, Dict[str, List]] = get_param_spaces()
+FIXED_PARAMS:        Dict[str, Dict[str, Any]]  = get_fixed_params()
 
-# Nombre de barres optimal par timeframe (équilibre données/temps)
+# Nombre de barres optimal par timeframe (config globale TF, non liée à une stratégie)
 RECOMMENDED_LIMIT: Dict[str, int] = {
     "1m":  2000,   # ~1.4 jours
     "5m":  4000,   # ~14 jours
@@ -53,89 +53,6 @@ RECOMMENDED_LIMIT: Dict[str, int] = {
     "1h":  1500,   # ~62 jours
     "4h":   800,   # ~133 jours
     "1d":  2000,   # ~2000 jours (Binance fournit ~2500 max depuis 2017)
-}
-
-
-# ════════════════════════════════════════════════════════════════════════════
-#  Espaces de paramètres — OPTIMISÉS
-# ════════════════════════════════════════════════════════════════════════════
-PARAM_SPACES: Dict[str, Dict[str, List]] = {
-    "trend": {
-        "ema_fast":       [13, 21, 34],
-        "ema_slow":       [50, 80],
-        "adx_min":        [20, 22, 25, 28],
-        "rsi_low":        [28, 30, 33],
-        "rsi_high":       [67, 70, 73],
-        "vol_min":        [0.9, 1.0, 1.2],
-        "cross_lookback": [4, 6, 8],
-        "overext_pct":    [0.012, 0.015, 0.020],
-        "ema200_tol":     [0.025, 0.035, 0.045],
-        "cooldown":       [15, 20, 25],
-        "rr_min":         [1.3, 1.5, 2.0],
-    },
-    "pullback_trend": {
-        "ema_fast":       [13, 21, 34],
-        "ema_mid":        [50],
-        "ema_slow":       [100],
-        "adx_min":        [18, 20, 22, 25],
-        "pb_zone_pct":    [0.003, 0.005, 0.007],
-        "rsi_pb_low":     [30, 33, 38],
-        "rsi_pb_high":    [55, 58, 62],
-        "vol_min":        [0.7, 0.8, 1.0],
-        "cooldown":       [15, 20, 25],
-        "rr_min":         [1.3, 1.5, 2.0],
-    },
-    "supertrend_macd": {
-        "st_period":      [7, 10, 14],
-        "st_mult":        [2.0, 2.5, 3.0],
-        "macd_fast":      [10, 12, 14],
-        "macd_slow":      [24, 26, 28],
-        "macd_signal":    [7, 9, 11],
-        "vol_min":        [1.0, 1.1, 1.3],
-        "rsi_min":        [35, 38, 42],
-        "rsi_max":        [60, 65, 68],
-        "cooldown":       [10, 15, 20],
-        "rr_min":         [1.3, 1.5, 2.0],
-    },
-    "breakout": {
-        "period":         [20, 25, 30, 40],
-        "vol_min":        [1.1, 1.2, 1.5],
-        "atr_expan_min":  [1.05, 1.08, 1.12, 1.20],
-        "pen_max_atr":    [1.5, 2.0, 2.5],
-        "body_min_atr":   [0.30, 0.35, 0.45],
-        "squeeze_bars":   [10, 15, 20],
-        "cooldown":       [15, 20, 25],
-        "rr_min":         [1.3, 1.5, 2.0],
-    },
-    "fear_momentum": {
-        "ema_fast":        [13, 21, 34],
-        "ema_mid":         [50],
-        "rsi_fear":        [35, 38, 42, 45],
-        "rsi_greed":       [58, 62, 65],
-        "vol_cap_min":     [1.5, 1.8, 2.2, 2.5],
-        "atr_max_dip":     [3.0, 4.0, 5.0],
-        "ema200_max_dist": [0.05, 0.08, 0.12],
-        "cooldown":        [15, 18, 22, 25],
-        "rr_min":          [1.4, 1.6, 2.0],
-    },
-    "multi_tf_sr": {
-        "sr_window":        [3, 5, 7],
-        "sr_lookback":      [100, 150, 200],
-        "sr_cluster_pct":   [0.003, 0.005, 0.008],
-        "sr_min_touches":   [1, 2],
-        "sr_proximity_atr": [0.8, 1.0, 1.5, 2.0],
-        "adx_min":          [18, 20, 25],
-        "rsi_low":          [30, 35, 40],
-        "rsi_high":         [60, 65, 70],
-        "vol_min":          [0.7, 0.8, 1.0],
-        "cooldown":         [10, 15, 20],
-        "rr_min":           [1.3, 1.5, 2.0],
-    },
-}
-
-FIXED_PARAMS: Dict[str, Dict[str, Any]] = {
-    "trend": {}, "pullback_trend": {}, "supertrend_macd": {},
-    "breakout": {}, "fear_momentum": {}, "multi_tf_sr": {},
 }
 
 GLOBAL_TRADING_PARAMS = {

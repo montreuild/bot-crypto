@@ -275,7 +275,7 @@ class Backtester:
         warmup       = 210
 
         # ── Pré-calculs vectorisés O(n) ───────────────────────────────────────
-        from app.strategies.indicators import precompute_df as _precompute
+        from app.core.indicators import precompute_df as _precompute
         df = _precompute(df)
 
         # Arrays numpy pour accès O(1) dans la boucle

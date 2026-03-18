@@ -31,15 +31,15 @@ Paramètres optimisables :
   rr_min           : ratio risque/récompense minimum
 """
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import polars as pl
 
 from app.engine.engine import BaseStrategy
-from app.strategies.indicators import (
+from app.core.indicators import (
     rsi as calc_rsi,
-    atr as calc_atr,
-    adx as calc_adx,
+    atr_val as calc_atr,
+    adx_val as calc_adx,
     macd as calc_macd,
     vol_ratio as calc_vol,
     htf_trend,
@@ -54,6 +54,24 @@ logger = logging.getLogger(__name__)
 
 class Strategy(BaseStrategy):
     name = "multi_tf_sr"
+
+    timeframes: List[str] = ["15m", "1h", "4h"]
+
+    param_space: Dict[str, List] = {
+        "sr_window":        [3, 5, 7],
+        "sr_lookback":      [100, 150, 200],
+        "sr_cluster_pct":   [0.003, 0.005, 0.008],
+        "sr_min_touches":   [1, 2],
+        "sr_proximity_atr": [0.8, 1.0, 1.5, 2.0],
+        "adx_min":          [18, 20, 25],
+        "rsi_low":          [30, 35, 40],
+        "rsi_high":         [60, 65, 70],
+        "vol_min":          [0.7, 0.8, 1.0],
+        "cooldown":         [10, 15, 20],
+        "rr_min":           [1.3, 1.5, 2.0],
+    }
+
+    fixed_params: Dict[str, Any] = {}
 
     def __init__(self):
         self._last_signal: Dict[str, int] = {}
