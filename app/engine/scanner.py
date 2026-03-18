@@ -4,6 +4,7 @@ from typing import List, Dict, Any
 import polars as pl
 from app.core.indicators import detect_regime, adx_val, volume_ratio
 from app.core.exchange import RobustExchange
+from app.core.candle_store import get_store
 from app.engine.engine import Engine
 
 logger = logging.getLogger(__name__)
@@ -36,14 +37,8 @@ class Scanner:
         return opportunities
 
     def _scan_pair(self, symbol: str, limit: int) -> Dict[str, Any]:
-        ohlcv = self.exchange.fetch_ohlcv(symbol, self.tf, limit=limit)
-        df = pl.DataFrame(
-            ohlcv,
-            schema=["time", "open", "high", "low", "close", "volume"],
-            orient="row",
-        )
-        df = df.with_columns(pl.from_epoch("time", time_unit="ms"))
-        if len(df) < 60:
+        df = get_store().fetch(self.exchange, symbol, self.tf, total=limit)
+        if df is None or len(df) < 60:
             return None
 
         regime  = detect_regime(df.tail(50))
@@ -74,10 +69,4 @@ class Scanner:
 
     def get_ohlcv_df(self, symbol: str, limit: int = 500) -> pl.DataFrame:
         """Retourne un DataFrame OHLCV propre pour une paire."""
-        ohlcv = self.exchange.fetch_ohlcv(symbol, self.tf, limit=limit)
-        df = pl.DataFrame(
-            ohlcv,
-            schema=["time", "open", "high", "low", "close", "volume"],
-            orient="row",
-        )
-        return df.with_columns(pl.from_epoch("time", time_unit="ms"))
+        return get_store().fetch(self.exchange, symbol, self.tf, total=limit)

@@ -1,19 +1,11 @@
 """
-API FastAPI — V9 (Multi-Timeframe)
+API FastAPI — V11 (Multi-Timeframe + CandleStore)
 
-Nouveautés V9 :
-  - Pages web : scanner.html ajoutée, liens nav mis à jour
-  - /api/status   : active_per_tf dans la réponse
-  - /api/config   : timeframes + optimizer_results exposés
-  - /api/config/timeframes POST : changement des TFs à chaud
-  - /api/optimize/start  : accepte maintenant plusieurs TFs
-  - /api/optimize/results GET : résultats classés par (strategy, tf)
-  - /api/scanner/opportunities GET
-  - /api/scanner/config GET
-  - /health : vérification de l'état du service
-  - Sécurité : whitelist stratégies, aucune injection module possible
-  - Cache TTL sur la découverte de stratégies
-  - Lock threading sur les écritures config.yaml
+Nouveautés V11 :
+  - CandleStore : données OHLCV persistées en Parquet par paire/TF
+  - /api/candles/stats GET : statistiques du cache local
+  - Backtest, optimizer et ML training utilisent le cache local
+    → moins de requêtes exchange, historique accumulé automatiquement
 """
 import csv, glob, importlib, io, json, logging, os, time
 from typing import Any, Optional
@@ -25,8 +17,9 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from app.core.config    import load_config
-from app.core.exchange  import create_exchange
+from app.core.config       import load_config
+from app.core.exchange     import create_exchange
+from app.core.candle_store import get_store
 import threading as _threading
 import math as _math
 
@@ -781,9 +774,10 @@ def run_backtest(symbol: str = "BTC/USDC", limit: int = 500, timeframe: str = ""
         if tf == "1d":
             limit = min(limit, 5000)
 
-        exchange  = _get_bt_exchange(cfg)
-        ohlcv_raw = fetch_ohlcv_paged(exchange, symbol, tf, total=limit)
-        df = pl.DataFrame(ohlcv_raw, schema=["time","open","high","low","close","volume"], orient="row").with_columns(pl.from_epoch("time", time_unit="ms"))
+        exchange = _get_bt_exchange(cfg)
+        df       = get_store().fetch(exchange, symbol, tf, total=limit)
+        if df is None or len(df) == 0:
+            raise HTTPException(400, f"Aucune donnée disponible pour {symbol}/{tf}")
 
         ohlcv_payload = {
             "time":   [str(t) for t in df["time"].to_list()],
@@ -1112,13 +1106,13 @@ def optimizer_start(
             # ce qui est disponible sans plafond artificiel
             fetch_limit = limit if limit > 0 else RECOMMENDED_LIMIT.get(tf, 1000)
             fetch_details[tf] = fetch_limit
-            ohlcv = fetch_ohlcv_paged(exchange, symbol, tf, total=fetch_limit)
-            df = pl.DataFrame(ohlcv, schema=["time","open","high","low","close","volume"], orient="row").with_columns(pl.from_epoch("time", time_unit="ms"))
-            received_counts[tf] = len(df)
-            if len(df) > 0:
+            df = get_store().fetch(exchange, symbol, tf, total=fetch_limit)
+            n_received = len(df) if df is not None else 0
+            received_counts[tf] = n_received
+            if df is not None and n_received > 0:
                 df_map[tf] = df
-                if len(df) < fetch_limit:
-                    logger.info(f"[Optimizer] TF={tf} : {len(df)} bougies reçues (demandées: {fetch_limit}) — l'auto-optimizer validera par stratégie")
+                if n_received < fetch_limit:
+                    logger.info(f"[Optimizer] TF={tf} : {n_received} bougies reçues (demandées: {fetch_limit}) — l'auto-optimizer validera par stratégie")
             else:
                 logger.warning(f"[Optimizer] TF={tf} : aucune bougie reçue, ignoré")
 
@@ -1304,16 +1298,26 @@ def train_ml(symbol: str = "BTC/USDC", limit: int = 2000):
         raise HTTPException(400, "ML désactivé dans la config")
     try:
         from app.ml.model import MLPredictor
-        exchange  = create_exchange(cfg)
-        ohlcv_raw = fetch_ohlcv_paged(exchange, symbol,
-                                       cfg["trading"].get("timeframe","1h"), total=limit)
-        df = pl.DataFrame(ohlcv_raw, schema=["time","open","high","low","close","volume"], orient="row").with_columns(pl.from_epoch("time", time_unit="ms"))
+        exchange = create_exchange(cfg)
+        ml_tf    = cfg["trading"].get("timeframe", "1h")
+        df       = get_store().fetch(exchange, symbol, ml_tf, total=limit)
+        if df is None or len(df) == 0:
+            raise HTTPException(400, f"Aucune donnée disponible pour {symbol}/{ml_tf}")
         ml  = MLPredictor(cfg)
         ml.train(df)
         ml.save()
         return {"status": "trained", "samples": len(df)}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  API — CandleStore
+# ═══════════════════════════════════════════════════════════════
+@app.get("/api/candles/stats", dependencies=[Depends(verify_api_key)])
+def candles_stats():
+    """Retourne les statistiques du cache Parquet local (toutes paires/TFs stockés)."""
+    return {"store": get_store().all_stats()}
 
 
 @app.get("/api/ml/strategy-info", dependencies=[Depends(verify_api_key)])

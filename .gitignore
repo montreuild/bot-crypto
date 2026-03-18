@@ -14,3 +14,6 @@ venv/
 *.db
 .pytest_cache/
 .mypy_cache/
+
+# CandleStore — données OHLCV locales (Parquet)
+data/ohlcv/

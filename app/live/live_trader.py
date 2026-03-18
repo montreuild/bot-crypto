@@ -1,13 +1,11 @@
 """
-LiveTrader V8 — Multi-Timeframe
+LiveTrader V11 — Multi-Timeframe + CandleStore
 
-Nouveautés V8 :
-  - Cache OHLCV par (symbol, timeframe) : un seul fetch par (symbole, TF) par cycle
-  - Stratégies actives par TF issues de optimizer_results (top 2 OOS)
-  - Clé position : "{symbol}::{strategy}::{tf}" — même stratégie peut trader plusieurs TF
-  - _build_active_per_tf() : reconstruit la liste active depuis optimizer_results
-  - reload_active_strategies() : rechargement à chaud après une optimisation
-  - Suppression de l'HTF séparé (chaque stratégie est sur son propre TF)
+Nouveautés V11 :
+  - Toutes les données OHLCV passent par CandleStore (Parquet persistant)
+  - Fetch incrémental : seules les nouvelles bougies sont récupérées à chaque cycle
+  - Historique accumulé : backtest, optimizer, paper mode, retrain ML bénéficient
+    des données stockées localement sans re-fetcher depuis l'exchange
 """
 import importlib
 import logging

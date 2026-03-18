@@ -1,18 +1,18 @@
 """
-Scanner V8 — Multi-Timeframe
+Scanner V11 — Multi-Timeframe + CandleStore
 
-Nouveautés V8 :
-  - recommend_strategy() : UI uniquement (information, pas de décision trading)
-  - opportunity_scan() : score vol+ATR, filtres config
-  - compute_indicators() enrichi avec atr_pct
-  - screen() enrichi avec regime_label et strategies
-  - _compute_adx() plus robuste
+Nouveautés V11 :
+  - fetch_ohlcv() utilise CandleStore : persistence Parquet par paire/TF
+  - Fetch incrémental : seules les nouvelles bougies sont récupérées depuis l'exchange
+  - Historique accumulé automatiquement (backtest, optimizer, paper, live)
 """
 import logging
 import math
 from typing import List, Dict, Optional, Tuple
 import numpy as np
 import polars as pl
+
+from app.core.candle_store import get_store
 
 logger = logging.getLogger(__name__)
 
@@ -62,17 +62,14 @@ class MarketScanner:
         return [s for s, _ in ranked[:top_n]]
 
     def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500) -> Optional[pl.DataFrame]:
+        """
+        Retourne `limit` bougies pour (symbol, timeframe).
+        Utilise CandleStore : fetch incrémental + persistence Parquet.
+        """
         try:
-            raw = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-            if not raw or len(raw) < 50:
+            df = get_store().fetch(self.exchange, symbol, timeframe, total=limit)
+            if df is None or len(df) < 50:
                 return None
-            df = pl.DataFrame(
-                raw,
-                schema=["time", "open", "high", "low", "close", "volume"],
-                orient="row",
-            )
-            df = df.with_columns(pl.from_epoch("time", time_unit="ms"))
-            df = df.filter((pl.col("volume") > 0) & (pl.col("close") > 0)).drop_nulls()
             return df
         except Exception as e:
             logger.error(f"[Scanner] fetch_ohlcv {symbol}/{timeframe} : {e}")
