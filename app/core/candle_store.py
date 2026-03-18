@@ -249,7 +249,10 @@ class CandleStore:
     def _load(self, path: Path) -> pl.DataFrame:
         if path.exists():
             try:
-                return pl.read_parquet(path)
+                df = pl.read_parquet(path)
+                if df["time"].dtype != pl.Datetime("ms"):
+                    df = df.with_columns(pl.col("time").cast(pl.Datetime("ms")))
+                return df
             except Exception as e:
                 logger.warning(f"[CandleStore] Fichier corrompu {path} — re-fetch : {e}")
         return pl.DataFrame(schema=_OHLCV_SCHEMA)
@@ -269,7 +272,7 @@ class CandleStore:
                 schema=["time", "open", "high", "low", "close", "volume"],
                 orient="row",
             )
-            .with_columns(pl.from_epoch("time", time_unit="ms"))
+            .with_columns(pl.from_epoch("time", time_unit="ms").cast(pl.Datetime("ms")))
         )
 
 
