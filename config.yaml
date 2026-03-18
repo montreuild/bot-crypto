@@ -72,6 +72,7 @@ strategies:
   enabled:
   - trend
   - supertrend_macd
+  - multi_tf_sr
 strategy_params:
   breakout:
     atr_expan_min: 1.05
@@ -117,6 +118,18 @@ strategy_params:
     rsi_min: 38
     rsi_max: 65
     rr_min: 1.3
+  multi_tf_sr:
+    sr_window: 5
+    sr_lookback: 150
+    sr_cluster_pct: 0.005
+    sr_min_touches: 1
+    sr_proximity_atr: 1.0
+    adx_min: 20
+    rsi_low: 35
+    rsi_high: 65
+    vol_min: 0.8
+    cooldown: 15
+    rr_min: 1.5
   trend:
     adx_min: 22
     cooldown: 15
