@@ -41,7 +41,7 @@
 .cc{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;}
 .cc.full{grid-column:1/-1}
 .ct{font-size:.63rem;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;font-weight:600;}
-.ch-wrap{height:160px;position:relative;}
+.ch-wrap{height:160px;position:relative;overflow:hidden;}
 .price-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;}
 .cmp{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
 .cmp-s{overflow-x:auto;}
@@ -462,7 +462,7 @@ function buildPanel(name){
     <div class="cc"><div class="ct">Equity Curve</div><div class="ch-wrap" id="ch-eq"></div></div>
     <div class="cc"><div class="ct">PnL par trade</div><div class="ch-wrap" id="ch-pnl"></div></div>
     <div class="cc"><div class="ct">PnL cumulé</div><div class="ch-wrap" id="ch-cum"></div></div>
-    <div class="cc"><div class="ct">Score vs PnL</div><canvas id="ch-sc" style="width:100%;height:160px"></canvas></div>
+    <div class="cc"><div class="ct">Score vs PnL</div><div class="ch-wrap"><canvas id="ch-sc"></canvas></div></div>
   </div>`;
   let wfHTML='';
   if(sd.walk_forward&&!sd.walk_forward.error&&(sd.walk_forward.n_folds??0)>0){
