@@ -21,8 +21,8 @@ import logging
 from typing import Dict, Any
 import polars as pl
 from app.engine.engine import BaseStrategy
-from app.strategies.indicators import (
-    rsi as calc_rsi, atr as calc_atr, adx as calc_adx,
+from app.core.indicators import (
+    rsi as calc_rsi, atr_val as calc_atr, adx_val as calc_adx,
     vol_ratio as calc_vol, market_structure, htf_trend, pre_val
 )
 

@@ -40,8 +40,8 @@ import numpy as np
 import polars as pl
 
 from app.engine.engine import BaseStrategy
-from app.strategies.indicators import (
-    atr as calc_atr,
+from app.core.indicators import (
+    atr_val as calc_atr,
     pre_val,
     support_resistance_levels,
     nearest_support,

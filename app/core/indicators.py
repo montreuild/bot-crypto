@@ -6,7 +6,8 @@ Historique des changements (v10)
 ─────────────────────────────────
 v10.0.0 (2026-03-18)
   • Fusion définitive de app/core/indicators.py et app/strategies/indicators.py.
-    app/strategies/indicators.py est désormais un simple shim de ré-export.
+    app/strategies/indicators.py est supprimé ; toutes les stratégies importent
+    directement depuis ce module.
   • Portage maximum vers Polars (Arrow/Rust) — NumPy limité à la seule boucle
     séquentielle du SuperTrend (dépendance incontournable i → i-1).
   • _true_range : np.maximum remplacé par pl.max_horizontal (zéro round-trip).

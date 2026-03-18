@@ -56,9 +56,9 @@ import numpy as np
 import polars as pl
 
 from app.engine.engine import BaseStrategy
-from app.strategies.indicators import (
+from app.core.indicators import (
     rsi as calc_rsi,
-    atr as calc_atr,
+    atr_val as calc_atr,
     macd as calc_macd,
     vol_ratio as calc_vol,
     htf_trend,

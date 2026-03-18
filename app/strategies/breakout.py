@@ -17,7 +17,7 @@ import logging
 from typing import Dict, Any
 import polars as pl
 from app.engine.engine import BaseStrategy
-from app.strategies.indicators import (
+from app.core.indicators import (
     atr_series as calc_atr_series, macd as calc_macd,
     vol_ratio as calc_vol, bb_squeeze as calc_squeeze, htf_trend, pre_val
 )

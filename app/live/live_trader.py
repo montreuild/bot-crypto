@@ -51,7 +51,7 @@ from app.core.trailing       import TrailingStopManager
 from app.engine.engine       import Engine
 from app.scanner.scanner     import MarketScanner, _compute_atr
 from app.optimizer.optimizer import get_active_strategies_per_tf, RECOMMENDED_LIMIT
-from app.strategies.indicators import precompute_df
+from app.core.indicators import precompute_df
 
 logger = logging.getLogger(__name__)
 

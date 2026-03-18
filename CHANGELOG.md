@@ -8,9 +8,9 @@ Historique des versions du Crypto Bot.
 
 ### ✨ Nouvelles fonctionnalités
 
-- **Fichier indicateurs unifié** : Fusion de `app/core/indicators.py` et `app/strategies/indicators.py`
-  en un seul module source-of-truth. `app/strategies/indicators.py` devient un shim de ré-export
-  (~20 lignes) — aucune stratégie ne nécessite de modification.
+- **Fichier indicateurs unifié** : `app/strategies/indicators.py` est **supprimé**.
+  `app/core/indicators.py` est le seul et unique module d'indicateurs. Toutes les stratégies,
+  le moteur et le live trader importent directement depuis `app.core.indicators`.
 - **`__version__ = "10.0.0"`** dans `app/core/indicators.py` pour traçabilité programmatique.
 
 ### ⚡ Performance — Portage maximum vers Polars
@@ -43,10 +43,9 @@ boucle séquentielle du SuperTrend (dépendance `upper[i] = f(upper[i-1])` incon
 
 ```
 app/
-├── core/
-│   └── indicators.py    ← SOURCE UNIQUE — v10.0.0 (tous indicateurs ici)
-└── strategies/
-    └── indicators.py    ← SHIM de ré-export uniquement (ne pas modifier)
+└── core/
+    └── indicators.py    ← SOURCE UNIQUE — v10.0.0 (tous indicateurs ici)
+                           app/strategies/indicators.py SUPPRIMÉ
 ```
 
 ### ⚡ Migration depuis V9
@@ -59,8 +58,10 @@ from app.strategies.indicators import rsi, atr, adx, pre_val
 # Nouveau code (V10) — un seul module source :
 from app.core.indicators import detect_regime, adx_val, volume_ratio, rsi, atr_val, pre_val
 
-# La rétrocompatibilité via app.strategies.indicators est maintenue
-# (le shim ré-exporte tout, aucun changement requis dans les stratégies existantes)
+# app/strategies/indicators.py est supprimé — importer directement depuis app.core.indicators
+# Exemple de mapping des alias courants :
+#   atr_val as calc_atr     (remplace : atr as calc_atr du shim)
+#   adx_val as calc_adx     (remplace : adx as calc_adx du shim)
 ```
 
 ---
