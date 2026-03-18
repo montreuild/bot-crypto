@@ -1,17 +1,27 @@
-"""Bibliothèque d'indicateurs techniques + détection de régime de marché.
+"""Bibliothèque d'indicateurs techniques — source unique pour stratégies et moteur.
+
+Fusionne app/core/indicators.py et app/strategies/indicators.py en un seul module.
+app/strategies/indicators.py est désormais un shim de ré-export vers ce fichier.
+
 Bibliothèque principale : Polars (Rust, Arrow, multi-threadé).
-NumPy conservé uniquement pour la boucle séquentielle SuperTrend.
+NumPy conservé pour les boucles séquentielles (SuperTrend) et la division sécurisée.
 """
 import numpy as np
 import polars as pl
 from typing import Tuple
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  Primitives
+# ══════════════════════════════════════════════════════════════════════════════
+
 def _true_range(df: pl.DataFrame) -> pl.Series:
     """True Range vectorisé. Le null du shift(1) est remplacé par close[0] pour
     éviter la propagation de NaN dans ewm_mean (comportement polars)."""
     h      = df["high"]
     l      = df["low"]
+    # fill_null : la première barre n'a pas de clôture précédente → on utilise
+    # la clôture courante (tr[0] = high[0] - low[0], sans distorsion).
     c_prev = df["close"].shift(1).fill_null(df["close"][0])
     return pl.Series(np.maximum(
         (h - l).to_numpy(),
@@ -27,121 +37,281 @@ def sma(s: pl.Series, n: int) -> pl.Series:
     return s.rolling_mean(n)
 
 
-def rsi(close: pl.Series, n: int = 14) -> pl.Series:
-    d  = close.diff(1)
-    g  = d.clip(lower_bound=0).ewm_mean(alpha=1 / n, adjust=False)
-    l  = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / n, adjust=False)
-    l_safe = pl.when(l == 0).then(pl.lit(None)).otherwise(l)
-    return 100 - (100 / (1 + g / l_safe))
+# ══════════════════════════════════════════════════════════════════════════════
+#  RSI
+# ══════════════════════════════════════════════════════════════════════════════
+
+def rsi(close: pl.Series, period: int = 14) -> pl.Series:
+    """RSI(period). Division sécurisée via numpy pour éviter qu'un pl.when
+    retourne un Expr non subscriptable (comportement polars ≥ 1.x)."""
+    d     = close.diff(1)
+    g_np  = d.clip(lower_bound=0).ewm_mean(alpha=1 / period, adjust=False).to_numpy()
+    dn_np = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / period, adjust=False).to_numpy()
+    dn_safe = np.where(dn_np == 0, 1e-10, dn_np)
+    return pl.Series(100 - 100 / (1 + g_np / dn_safe))
 
 
-def macd(close: pl.Series, fast=12, slow=26, signal=9) -> Tuple[pl.Series, pl.Series, pl.Series]:
+# ══════════════════════════════════════════════════════════════════════════════
+#  MACD
+# ══════════════════════════════════════════════════════════════════════════════
+
+def macd(close: pl.Series, fast: int = 12, slow: int = 26,
+         signal: int = 9) -> Tuple[pl.Series, pl.Series, pl.Series]:
+    """Retourne (macd_line, signal_line, histogram)."""
     line = ema(close, fast) - ema(close, slow)
     sig  = ema(line, signal)
     return line, sig, line - sig
 
 
-def bollinger(close: pl.Series, n=20, std=2.0) -> Tuple[pl.Series, pl.Series, pl.Series]:
+# ══════════════════════════════════════════════════════════════════════════════
+#  Bollinger Bands
+# ══════════════════════════════════════════════════════════════════════════════
+
+def bollinger(close: pl.Series, n: int = 20,
+              std: float = 2.0) -> Tuple[pl.Series, pl.Series, pl.Series]:
+    """Retourne (upper, mid, lower)."""
     mid   = sma(close, n)
     sigma = close.rolling_std(n)
     return mid + std * sigma, mid, mid - std * sigma
 
 
-def atr(df: pl.DataFrame, n=14) -> pl.Series:
+def bb_squeeze(close: pl.Series, lookback: int = 15,
+               bb_period: int = 20, quantile: float = 0.30) -> bool:
+    """True si les bandes de Bollinger sont en squeeze (compression de volatilité)."""
+    if len(close) < bb_period + lookback:
+        return False
+    _sma     = close.rolling_mean(bb_period)
+    _std     = close.rolling_std(bb_period)
+    # clip évite pl.when qui retourne un Expr (non subscriptable)
+    sma_safe = _sma.clip(lower_bound=1e-9)
+    width    = 4 * _std / sma_safe
+    cur_w    = width[-1]
+    if cur_w is None:
+        return False
+    past = width[-(lookback + 1):-1].drop_nulls()
+    return len(past) >= 5 and float(cur_w) <= float(past.quantile(quantile))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ATR  — deux variantes : Series (pour build_features) et scalaire (stratégies)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def atr(df: pl.DataFrame, n: int = 14) -> pl.Series:
+    """ATR(n) — retourne une Series complète (compatible build_features)."""
     return _true_range(df).ewm_mean(span=n, adjust=False)
 
 
-def atr_val(df: pl.DataFrame, n=14) -> float:
+def atr_series(df: pl.DataFrame, period: int = 14) -> pl.Series:
+    """Alias explicite pour atr() → pl.Series."""
+    return _true_range(df).ewm_mean(span=period, adjust=False)
+
+
+def atr_val(df: pl.DataFrame, n: int = 14) -> float:
+    """ATR(n) — retourne le scalaire de la dernière barre (usage live/stratégies)."""
     v = atr(df, n)[-1]
     return float(v) if v is not None and float(v) > 0 else 0.0
 
 
-def adx(df: pl.DataFrame, n=14) -> Tuple[pl.Series, pl.Series, pl.Series]:
+# ══════════════════════════════════════════════════════════════════════════════
+#  ADX  — deux variantes : tuple Series (pour detect_regime/build_features)
+#          et scalaire (stratégies)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def adx(df: pl.DataFrame, n: int = 14) -> Tuple[pl.Series, pl.Series, pl.Series]:
+    """ADX(n) — retourne (adx_line, +DI, −DI) comme Series complètes.
+    Utilisé par detect_regime() et build_features()."""
     if len(df) < n * 2:
         z = pl.Series([0.0] * len(df))
         return z, z, z
-    h = df["high"]
-    l = df["low"]
+    h   = df["high"]
+    l   = df["low"]
     up  = h.diff(1).clip(lower_bound=0)
     dn  = (-l.diff(1)).clip(lower_bound=0)
-    pdm = pl.when(up > dn).then(up).otherwise(0.0)
-    ndm = pl.when(dn > up).then(dn).otherwise(0.0)
-    atr14     = _true_range(df).ewm_mean(span=n, adjust=False)
-    atr14_safe = pl.when(atr14 == 0).then(pl.lit(None)).otherwise(atr14)
-    pdi  = 100 * pdm.ewm_mean(span=n, adjust=False) / atr14_safe
-    ndi  = 100 * ndm.ewm_mean(span=n, adjust=False) / atr14_safe
-    sum_di = pdi + ndi
-    sum_di_safe = pl.when(sum_di == 0).then(pl.lit(None)).otherwise(sum_di)
-    dx   = 100 * (pdi - ndi).abs() / sum_di_safe
-    return (dx.ewm_mean(span=n, adjust=False).fill_null(0),
-            pdi.fill_null(0),
-            ndi.fill_null(0))
+    # numpy pour éviter pl.when → Expr
+    up_np  = up.to_numpy()
+    dn_np  = dn.to_numpy()
+    pdm_np = np.where(up_np > dn_np, up_np, 0.0)
+    ndm_np = np.where(dn_np > up_np, dn_np, 0.0)
+
+    atr14    = _true_range(df).ewm_mean(span=n, adjust=False).to_numpy()
+    atr_safe = np.where(atr14 == 0, 1e-10, atr14)
+
+    pdi_np = 100 * pl.Series(pdm_np).ewm_mean(span=n, adjust=False).to_numpy() / atr_safe
+    ndi_np = 100 * pl.Series(ndm_np).ewm_mean(span=n, adjust=False).to_numpy() / atr_safe
+    sum_di = pdi_np + ndi_np
+    sum_safe = np.where(sum_di == 0, 1e-10, sum_di)
+    dx_np  = 100 * np.abs(pdi_np - ndi_np) / sum_safe
+
+    adx_line = pl.Series(dx_np).ewm_mean(span=n, adjust=False).fill_null(0)
+    return adx_line, pl.Series(pdi_np).fill_null(0), pl.Series(ndi_np).fill_null(0)
 
 
-def adx_val(df: pl.DataFrame, n=14) -> float:
+def adx_val(df: pl.DataFrame, n: int = 14) -> float:
+    """ADX(n) — retourne le scalaire de la dernière barre (usage live/scanner/stratégies)."""
     v = adx(df, n)[0][-1]
     return float(v) if v is not None else 0.0
 
 
-def supertrend(df: pl.DataFrame, n=10, mult=3.0) -> Tuple[pl.Series, pl.Series]:
-    """Retourne (direction 1=bull/-1=bear, niveau).
-    Boucle numpy conservée (dépendance séquentielle incontournable).
-    """
-    close = df["close"].to_numpy()
-    high  = df["high"].to_numpy()
-    low   = df["low"].to_numpy()
-    size  = len(close)
+# ══════════════════════════════════════════════════════════════════════════════
+#  Volume
+# ══════════════════════════════════════════════════════════════════════════════
 
-    prev        = np.empty(size)
-    prev[0]     = close[0]
-    prev[1:]    = close[:-1]
-    tr   = np.maximum(high - low,
-           np.maximum(np.abs(high - prev), np.abs(low - prev)))
-    atr_s = pl.Series(tr).ewm_mean(span=n, adjust=False).to_numpy()
-
-    hl2   = (high + low) / 2.0
-    ub    = hl2 + mult * atr_s
-    lb    = hl2 - mult * atr_s
-
-    final_ub = ub.copy()
-    final_lb = lb.copy()
-    st  = np.empty(size)
-    di  = np.ones(size, dtype=np.int8)
-    st[0] = lb[0]
-
-    for i in range(1, size):
-        fu = ub[i] if ub[i] < final_ub[i - 1] or close[i - 1] > final_ub[i - 1] else final_ub[i - 1]
-        fl = lb[i] if lb[i] > final_lb[i - 1] or close[i - 1] < final_lb[i - 1] else final_lb[i - 1]
-        final_ub[i] = fu
-        final_lb[i] = fl
-        if st[i - 1] == final_ub[i - 1]:
-            di[i] = -1 if close[i] > fu else 1
-        else:
-            di[i] =  1 if close[i] < fl else -1
-        st[i] = fl if di[i] == 1 else fu
-
-    dir_mapped = pl.Series([-1 if x == 1 else 1 for x in di], dtype=pl.Float64)
-    return dir_mapped, pl.Series(st)
-
-
-def volume_ratio(df: pl.DataFrame, n=20) -> pl.Series:
-    avg = df["volume"].rolling_mean(n)
-    avg_safe = pl.when(avg == 0).then(pl.lit(None)).otherwise(avg)
+def volume_ratio(df: pl.DataFrame, n: int = 20) -> pl.Series:
+    """Volume / SMA(volume, n) — retourne une Series (compatible scanner/build_features)."""
+    avg     = df["volume"].rolling_mean(n)
+    avg_safe = avg.clip(lower_bound=1e-9)
     return df["volume"] / avg_safe
+
+
+def vol_ratio(df: pl.DataFrame, period: int = 20) -> float:
+    """Volume ratio — retourne le scalaire de la dernière barre (usage stratégies)."""
+    avg = df["volume"].rolling_mean(period)[-1]
+    now = float(df["volume"][-1])
+    return now / max(float(avg) if avg is not None else 1e-9, 1e-9)
 
 
 def obv(df: pl.DataFrame) -> pl.Series:
     return (df["close"].diff(1).sign() * df["volume"]).cum_sum()
 
 
-def donchian(df: pl.DataFrame, n=20) -> Tuple[pl.Series, pl.Series]:
+# ══════════════════════════════════════════════════════════════════════════════
+#  Donchian
+# ══════════════════════════════════════════════════════════════════════════════
+
+def donchian(df: pl.DataFrame, n: int = 20) -> Tuple[pl.Series, pl.Series]:
     return df["high"].rolling_max(n), df["low"].rolling_min(n)
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SuperTrend
+# ══════════════════════════════════════════════════════════════════════════════
+
+def supertrend(df: pl.DataFrame, period: int = 10,
+               mult: float = 3.0) -> Tuple[pl.Series, pl.Series]:
+    """Retourne (direction: +1/-1, st_line).
+    Boucle numpy conservée (dépendance séquentielle incontournable)."""
+    high  = df["high"].to_numpy()
+    low   = df["low"].to_numpy()
+    close = df["close"].to_numpy()
+    n     = len(close)
+
+    prev_close     = np.empty(n)
+    prev_close[0]  = close[0]
+    prev_close[1:] = close[:-1]
+    tr = np.maximum(high - low,
+         np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)))
+
+    atr_arr    = np.empty(n)
+    atr_arr[0] = tr[0]
+    alpha      = 2.0 / (period + 1)
+    for i in range(1, n):
+        atr_arr[i] = atr_arr[i - 1] * (1 - alpha) + tr[i] * alpha
+
+    hl2         = (high + low) / 2.0
+    upper_basic = hl2 + mult * atr_arr
+    lower_basic = hl2 - mult * atr_arr
+
+    upper  = upper_basic.copy()
+    lower  = lower_basic.copy()
+    st     = np.empty(n)
+    dir_   = np.ones(n, dtype=np.int8)
+    st[0]  = lower[0]
+
+    for i in range(1, n):
+        upper[i] = upper_basic[i] if (upper_basic[i] < upper[i - 1]
+                                       or close[i - 1] > upper[i - 1]) else upper[i - 1]
+        lower[i] = lower_basic[i] if (lower_basic[i] > lower[i - 1]
+                                       or close[i - 1] < lower[i - 1]) else lower[i - 1]
+        if dir_[i - 1] == 1:
+            dir_[i] = 1 if close[i] >= lower[i] else -1
+        else:
+            dir_[i] = -1 if close[i] <= upper[i] else 1
+        st[i] = lower[i] if dir_[i] == 1 else upper[i]
+
+    return pl.Series(dir_.astype(float)), pl.Series(st)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Stochastique
+# ══════════════════════════════════════════════════════════════════════════════
+
+def stochastic(df: pl.DataFrame, k_period: int = 14,
+               d_period: int = 3) -> Tuple[float, float]:
+    """Oscillateur Stochastique — K% et D%.
+
+    K% = (Close − LowestLow_k) / (HighestHigh_k − LowestLow_k) × 100
+    D% = SMA(K%, d_period)
+
+    Retourne (K_val, D_val) — scalaires flottants.
+    Retourne (50.0, 50.0) si données insuffisantes.
+    """
+    if len(df) < k_period + d_period:
+        return 50.0, 50.0
+
+    close        = df["close"]
+    high         = df["high"]
+    low          = df["low"]
+    lowest_low   = low.rolling_min(k_period)
+    highest_high = high.rolling_max(k_period)
+    hl_range     = highest_high - lowest_low
+    # clip évite pl.when qui retourne un Expr (non subscriptable)
+    hl_safe      = hl_range.clip(lower_bound=1e-10)
+    k_series     = (close - lowest_low) / hl_safe * 100.0
+    d_series     = k_series.rolling_mean(d_period)
+
+    k_val = float(k_series[-1]) if k_series[-1] is not None else 50.0
+    d_val = float(d_series[-1]) if d_series[-1] is not None else 50.0
+    return max(0.0, min(100.0, k_val)), max(0.0, min(100.0, d_val))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Structure de marché & HTF
+# ══════════════════════════════════════════════════════════════════════════════
+
+def market_structure(high: pl.Series, low: pl.Series,
+                     n_pivots: int = 4, window: int = 5) -> int:
+    """+1 = HH/HL (uptrend), −1 = LL/LH (downtrend), 0 = neutral."""
+    if len(high) < n_pivots * window * 2:
+        return 0
+    highs = [float(high[-i * window - 1:-i * window + window - 1].max())
+             for i in range(1, n_pivots + 1)]
+    lows  = [float(low[-i * window - 1:-i * window + window - 1].min())
+             for i in range(1, n_pivots + 1)]
+    hh = sum(1 for i in range(len(highs) - 1) if highs[i] > highs[i + 1])
+    hl = sum(1 for i in range(len(lows) - 1)  if lows[i]  > lows[i + 1])
+    ll = sum(1 for i in range(len(highs) - 1) if highs[i] < highs[i + 1])
+    lh = sum(1 for i in range(len(lows) - 1)  if lows[i]  < lows[i + 1])
+    if (hh + hl) >= n_pivots - 1:
+        return 1
+    if (ll + lh) >= n_pivots - 1:
+        return -1
+    return 0
+
+
+def htf_trend(df_htf, ema_period: int = 50) -> int:
+    """Tendance du timeframe supérieur : +1 haussier, −1 baissier, 0 neutre."""
+    if df_htf is None or len(df_htf) < ema_period + 3:
+        return 0
+    c        = df_htf["close"]
+    ema_line = c.ewm_mean(span=ema_period, adjust=False)
+    price_above = float(c[-1]) > float(ema_line[-1])
+    slope_up    = float(ema_line[-1]) > float(ema_line[-4])
+    if price_above and slope_up:
+        return 1
+    if not price_above and not slope_up:
+        return -1
+    return 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Détection de régime
+# ══════════════════════════════════════════════════════════════════════════════
 
 def detect_regime(df: pl.DataFrame) -> dict:
     """Classifie le marché : trending | ranging | volatile."""
     if len(df) < 30:
-        return {"regime": "unknown", "adx": 0, "atr_pct": 0, "confidence": 0, "trend_dir": "flat"}
+        return {"regime": "unknown", "adx": 0, "atr_pct": 0,
+                "confidence": 0, "trend_dir": "flat"}
     adx_s, _, _ = adx(df, 14)
     adx_l  = float(adx_s[-1]) if adx_s[-1] is not None else 0.0
     atr_l  = atr_val(df, 14)
@@ -160,17 +330,21 @@ def detect_regime(df: pl.DataFrame) -> dict:
             "confidence": round(conf, 3), "trend_dir": tdir}
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  Features ML
+# ══════════════════════════════════════════════════════════════════════════════
+
 def build_features(df: pl.DataFrame, window: int = 20) -> pl.DataFrame:
     """Features ML depuis OHLCV."""
     if len(df) < window + 10:
         return pl.DataFrame()
-    close = df["close"]
+    close      = df["close"]
     adx_s, pdi, ndi = adx(df, 14)
-    atr14 = atr(df, 14)
+    atr14      = atr(df, 14)
     ml, ms, mh = macd(close)
     bb_u, _, bb_l = bollinger(close)
-    vr = volume_ratio(df, 20)
-    st_d, _ = supertrend(df)
+    vr         = volume_ratio(df, 20)
+    st_d, _    = supertrend(df)
 
     result = pl.DataFrame({
         "ret1":      close.pct_change(1),
@@ -192,20 +366,128 @@ def build_features(df: pl.DataFrame, window: int = 20) -> pl.DataFrame:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Pré-calcul vectorisé pour le backtest — O(n) unique
+#  Support / Résistance — détection via pivots swing
 # ══════════════════════════════════════════════════════════════════════════════
 
-def precompute(df: pl.DataFrame) -> pl.DataFrame:
+def support_resistance_levels(
+    df: pl.DataFrame,
+    window: int = 5,
+    cluster_pct: float = 0.005,
+    min_touches: int = 1,
+    max_levels: int = 6,
+    lookback: int = 150,
+) -> dict:
+    """Détecte supports et résistances via pivots swing (hauts/bas locaux).
+
+    Un pivot haut (résistance candidate) : high[i] = max(high[i-w:i+w+1])
+    Un pivot bas  (support candidate)    : low[i]  = min(low[i-w:i+w+1])
+
+    Les pivots proches (< cluster_pct × prix) sont fusionnés en une seule zone.
+    La "force" d'un niveau = nombre de pivots fusionnés (nombre de touches).
+
+    Args:
+        window       : Fenêtre de chaque côté pour valider un pivot (barres)
+        cluster_pct  : Distance relative max pour fusionner deux niveaux (ex: 0.005 = 0.5 %)
+        min_touches  : Force minimum pour retenir un niveau
+        max_levels   : Nombre max de niveaux retournés par côté
+        lookback     : Nombre de bougies analysées (les plus récentes)
+
+    Returns:
+        {
+            "supports":    [{"price": float, "strength": int}, ...],
+            "resistances": [{"price": float, "strength": int}, ...],
+        }
     """
-    Enrichit le df avec des colonnes _pre_* pré-calculées vectoriellement via Polars.
-    Les stratégies peuvent lire ces colonnes (via pre_or_compute) au lieu de
-    recalculer les indicateurs depuis zéro → speedup ~180×.
+    n = len(df)
+    if n < window * 2 + 5:
+        return {"supports": [], "resistances": []}
+
+    start = max(0, n - lookback)
+    high  = df["high"][start:].to_numpy()
+    low   = df["low"][start:].to_numpy()
+    close = df["close"][start:].to_numpy()
+    m     = len(high)
+
+    res_pivots: list[float] = []
+    for i in range(window, m - window):
+        if high[i] == max(high[i - window:i + window + 1]):
+            res_pivots.append(float(high[i]))
+
+    sup_pivots: list[float] = []
+    for i in range(window, m - window):
+        if low[i] == min(low[i - window:i + window + 1]):
+            sup_pivots.append(float(low[i]))
+
+    def _cluster(prices: list[float], tol: float) -> list[tuple[float, int]]:
+        if not prices:
+            return []
+        prices = sorted(prices)
+        clusters: list[list[float]] = [[prices[0]]]
+        for p in prices[1:]:
+            ref = clusters[-1][0]
+            if ref > 0 and (p - ref) / ref <= tol:
+                clusters[-1].append(p)
+            else:
+                clusters.append([p])
+        return [(sum(c) / len(c), len(c)) for c in clusters]
+
+    res_clusters = _cluster(res_pivots, cluster_pct)
+    sup_clusters = _cluster(sup_pivots, cluster_pct)
+    price_now    = float(close[-1])
+
+    supports = sorted(
+        [{"price": round(p, 8), "strength": t}
+         for p, t in sup_clusters if p < price_now and t >= min_touches],
+        key=lambda x: -x["price"],
+    )[:max_levels]
+
+    resistances = sorted(
+        [{"price": round(p, 8), "strength": t}
+         for p, t in res_clusters if p > price_now and t >= min_touches],
+        key=lambda x: x["price"],
+    )[:max_levels]
+
+    return {"supports": supports, "resistances": resistances}
+
+
+def nearest_support(price: float, levels: list) -> float | None:
+    """Retourne le support le plus proche en-dessous du prix courant."""
+    candidates = [lv["price"] for lv in levels if lv["price"] < price]
+    return max(candidates) if candidates else None
+
+
+def nearest_resistance(price: float, levels: list) -> float | None:
+    """Retourne la résistance la plus proche au-dessus du prix courant."""
+    candidates = [lv["price"] for lv in levels if lv["price"] > price]
+    return min(candidates) if candidates else None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Pré-calcul vectorisé — O(n) unique pour accélérer le backtest (~180×)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
+    """Enrichit le df avec les colonnes _pre_* calculées une seule fois via Polars.
+    Appelé par Backtester.run() AVANT la boucle barre-par-barre.
+    Les stratégies lisent ces colonnes via pre_val() → O(1).
+
+    Colonnes ajoutées :
+      _pre_rsi14       RSI(14)
+      _pre_atr14       ATR(14)  — EWM
+      _pre_adx14       ADX(14)
+      _pre_pdi14       +DI(14)
+      _pre_ndi14       −DI(14)
+      _pre_macd_line   MACD line (12,26,9)
+      _pre_macd_sig    MACD signal
+      _pre_macd_hist   MACD histogram
+      _pre_volratio20  volume_ratio(20)
     """
     c = df["close"]
     h = df["high"]
     l = df["low"]
     v = df["volume"]
 
+    # True Range (réutilisé pour ATR et ADX)
     c_prev = c.shift(1).fill_null(c[0])
     tr = pl.Series(np.maximum(
         (h - l).to_numpy(),
@@ -216,7 +498,8 @@ def precompute(df: pl.DataFrame) -> pl.DataFrame:
     d  = c.diff(1)
     g  = d.clip(lower_bound=0).ewm_mean(alpha=1 / 14, adjust=False)
     dn = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / 14, adjust=False)
-    dn_safe = pl.when(dn == 0).then(pl.lit(None)).otherwise(dn)
+    # pl.when() est OK dans with_columns (retourne un Expr accepté par Polars)
+    dn_safe   = pl.when(dn == 0).then(1e-10).otherwise(dn)
     pre_rsi14 = 100 - 100 / (1 + g / dn_safe)
 
     # ATR(14)
@@ -227,12 +510,12 @@ def precompute(df: pl.DataFrame) -> pl.DataFrame:
     down = (-l.diff(1)).clip(lower_bound=0)
     pdm  = pl.when(up > down).then(up).otherwise(0.0)
     ndm  = pl.when(down > up).then(down).otherwise(0.0)
-    atr_safe = pl.when(pre_atr14 == 0).then(pl.lit(None)).otherwise(pre_atr14)
-    pdi  = 100 * pdm.ewm_mean(span=14, adjust=False) / atr_safe
-    ndi_ = 100 * ndm.ewm_mean(span=14, adjust=False) / atr_safe
-    sum_di = pdi + ndi_
-    sum_safe = pl.when(sum_di == 0).then(pl.lit(None)).otherwise(sum_di)
-    dx   = 100 * (pdi - ndi_).abs() / sum_safe
+    atr_safe = pl.when(pre_atr14 == 0).then(None).otherwise(pre_atr14)
+    dip  = 100 * pdm.ewm_mean(span=14, adjust=False) / atr_safe
+    dim  = 100 * ndm.ewm_mean(span=14, adjust=False) / atr_safe
+    dip_plus_dim      = dip + dim
+    dip_plus_dim_safe = pl.when(dip_plus_dim == 0).then(None).otherwise(dip_plus_dim)
+    dx   = 100 * (dip - dim).abs() / dip_plus_dim_safe
 
     # MACD(12,26,9)
     ema_f = c.ewm_mean(span=12, adjust=False)
@@ -241,15 +524,15 @@ def precompute(df: pl.DataFrame) -> pl.DataFrame:
     ms    = ml.ewm_mean(span=9, adjust=False)
 
     # volume_ratio(20)
-    vm = v.rolling_mean(20)
-    vm_safe = pl.when(vm < 1e-9).then(pl.lit(1e-9)).otherwise(vm)
+    vm     = v.rolling_mean(20)
+    vm_safe = pl.when(vm < 1e-9).then(1e-9).otherwise(vm)
 
     return df.with_columns([
         pre_rsi14.alias("_pre_rsi14"),
         pre_atr14.alias("_pre_atr14"),
         dx.ewm_mean(span=14, adjust=False).fill_null(0).alias("_pre_adx14"),
-        pdi.fill_null(0).alias("_pre_pdi14"),
-        ndi_.fill_null(0).alias("_pre_ndi14"),
+        dip.fill_null(0).alias("_pre_pdi14"),
+        dim.fill_null(0).alias("_pre_ndi14"),
         ml.alias("_pre_macd_line"),
         ms.alias("_pre_macd_sig"),
         (ml - ms).alias("_pre_macd_hist"),
@@ -257,9 +540,26 @@ def precompute(df: pl.DataFrame) -> pl.DataFrame:
     ])
 
 
-def pre_or_compute(df: pl.DataFrame, col: str, fallback_fn, *args, **kwargs):
+# Alias pour la compatibilité avec l'ancien app/core/indicators.precompute
+precompute = precompute_df
+
+
+def pre_val(df: pl.DataFrame, col: str) -> float | None:
+    """Lit la valeur pré-calculée à la dernière ligne si disponible.
+    Retourne None si la colonne n'existe pas ou si la valeur est nulle.
+
+    Usage :
+        rsi_now = pre_val(df, "_pre_rsi14") or float(rsi(df["close"])[-1])
     """
-    Lit la colonne pré-calculée si elle existe dans le df, sinon calcule à la volée.
+    if col in df.columns:
+        v = df[col][-1]
+        if v is not None:
+            return float(v)
+    return None
+
+
+def pre_or_compute(df: pl.DataFrame, col: str, fallback_fn, *args, **kwargs):
+    """Lit la colonne pré-calculée si elle existe dans le df, sinon calcule à la volée.
     Compatible avec les backtests (avec pré-calcul) et le live trading (sans).
     """
     if col in df.columns:
