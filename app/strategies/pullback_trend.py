@@ -18,7 +18,7 @@ Corrections V5 vs V4 :
   - Structure de marché HH/HL comme bonus de score
 """
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
 from app.core.indicators import (
@@ -31,6 +31,23 @@ logger = logging.getLogger(__name__)
 
 class Strategy(BaseStrategy):
     name = "pullback_trend"
+
+    timeframes: List[str] = ["15m", "1h", "1d"]
+
+    param_space: Dict[str, List] = {
+        "ema_fast":       [13, 21, 34],
+        "ema_mid":        [50],
+        "ema_slow":       [100],
+        "adx_min":        [18, 20, 22, 25],
+        "pb_zone_pct":    [0.003, 0.005, 0.007],
+        "rsi_pb_low":     [30, 33, 38],
+        "rsi_pb_high":    [55, 58, 62],
+        "vol_min":        [0.7, 0.8, 1.0],
+        "cooldown":       [15, 20, 25],
+        "rr_min":         [1.3, 1.5, 2.0],
+    }
+
+    fixed_params: Dict[str, Any] = {}
 
     def __init__(self):
         self._last_signal: Dict[str, int] = {}

@@ -12,7 +12,7 @@ Corrections V5 vs V4 :
   - Score rebasé plus conservateur : 0.60
 """
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
 from app.core.indicators import (
@@ -26,6 +26,24 @@ logger = logging.getLogger(__name__)
 
 class Strategy(BaseStrategy):
     name = "trend"
+
+    timeframes: List[str] = ["1h", "1d"]
+
+    param_space: Dict[str, List] = {
+        "ema_fast":       [13, 21, 34],
+        "ema_slow":       [50, 80],
+        "adx_min":        [20, 22, 25, 28],
+        "rsi_low":        [28, 30, 33],
+        "rsi_high":       [67, 70, 73],
+        "vol_min":        [0.9, 1.0, 1.2],
+        "cross_lookback": [4, 6, 8],
+        "overext_pct":    [0.012, 0.015, 0.020],
+        "ema200_tol":     [0.025, 0.035, 0.045],
+        "cooldown":       [15, 20, 25],
+        "rr_min":         [1.3, 1.5, 2.0],
+    }
+
+    fixed_params: Dict[str, Any] = {}
 
     def __init__(self):
         self._last_signal: Dict[str, int] = {}

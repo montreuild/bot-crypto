@@ -34,7 +34,7 @@ Paramètres optimisables :
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import numpy as np
 import polars as pl
@@ -178,6 +178,20 @@ def _fft_direction(
 
 class Strategy(BaseStrategy):
     name = "fft_spectral"
+
+    timeframes: List[str] = ["4h", "1d"]
+
+    param_space: Dict[str, List] = {
+        "fft_min_period":  [5, 7, 10],
+        "fft_max_period":  [100, 150, 200],
+        "fft_top_n":       [7, 10, 15],
+        "min_confidence":  [0.15, 0.20, 0.25, 0.30],
+        "min_bars":        [150, 180, 250],
+        "cooldown":        [20, 30, 40],
+        "rr_min":          [1.3, 1.5, 2.0],
+    }
+
+    fixed_params: Dict[str, Any] = {}
 
     def __init__(self):
         self._last_signal: Dict[str, int] = {}

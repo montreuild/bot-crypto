@@ -14,7 +14,7 @@ Corrections V5 vs V4 :
   - HTF trend comme filtre supplémentaire
 """
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
 from app.core.indicators import (
@@ -27,6 +27,21 @@ logger = logging.getLogger(__name__)
 
 class Strategy(BaseStrategy):
     name = "breakout"
+
+    timeframes: List[str] = ["5m", "15m", "1h"]
+
+    param_space: Dict[str, List] = {
+        "period":         [20, 25, 30, 40],
+        "vol_min":        [1.1, 1.2, 1.5],
+        "atr_expan_min":  [1.05, 1.08, 1.12, 1.20],
+        "pen_max_atr":    [1.5, 2.0, 2.5],
+        "body_min_atr":   [0.30, 0.35, 0.45],
+        "squeeze_bars":   [10, 15, 20],
+        "cooldown":       [15, 20, 25],
+        "rr_min":         [1.3, 1.5, 2.0],
+    }
+
+    fixed_params: Dict[str, Any] = {}
 
     def __init__(self):
         self._last_signal: Dict[str, int] = {}

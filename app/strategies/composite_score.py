@@ -50,7 +50,7 @@ Paramètres optimisables :
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import numpy as np
 import polars as pl
@@ -254,6 +254,24 @@ def _conditions_short(
 
 class Strategy(BaseStrategy):
     name = "composite_score"
+
+    timeframes: List[str] = ["1h", "4h", "1d"]
+
+    param_space: Dict[str, List] = {
+        "ema_fast":              [13, 20, 21],
+        "ema_slow":              [50, 80],
+        "score_long_threshold":  [55, 60, 65],
+        "score_short_threshold": [35, 40, 45],
+        "sr_lookback":           [120, 180, 240],
+        "sr_cluster_pct":        [0.010, 0.018, 0.025],
+        "use_fft":               [True, False],
+        "fft_min_period":        [5, 7],
+        "fft_max_period":        [100, 150],
+        "cooldown":              [10, 15, 20],
+        "rr_min":                [1.3, 1.5, 2.0],
+    }
+
+    fixed_params: Dict[str, Any] = {}
 
     def __init__(self):
         self._last_signal: Dict[str, int] = {}

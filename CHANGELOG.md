@@ -4,6 +4,45 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [11.0.0] - 2026-03-18
+
+### ✨ Nouvelles fonctionnalités
+
+- **Découverte automatique des stratégies** (`app/strategies/registry.py`) :
+  Chaque stratégie porte ses propres métadonnées d'optimisation en attributs de classe.
+  L'optimiseur les découvre automatiquement — aucun fichier central à modifier
+  pour ajouter une nouvelle stratégie.
+
+### 🏗️ Refactorisation (optimizer.py)
+
+- `STRATEGY_TIMEFRAMES`, `PARAM_SPACES`, `FIXED_PARAMS` ne sont plus codés en dur
+  dans `optimizer.py`. Ces dicts sont construits dynamiquement par le registre.
+- Chaque `Strategy` déclare maintenant directement :
+  - `timeframes`   : `List[str]` — TFs recommandés pour l'optimisation
+  - `param_space`  : `Dict[str, List]` — espace de recherche des hyperparamètres
+  - `fixed_params` : `Dict[str, Any]` — paramètres fixes (non optimisables)
+- `BaseStrategy` expose ces attributs avec des valeurs par défaut vides.
+- `RECOMMENDED_LIMIT` (config globale par TF) reste dans `optimizer.py`.
+- Rétrocompatibilité totale : tous les imports existants fonctionnent.
+
+### 🔧 Impact pour ajouter une nouvelle stratégie
+
+**Avant (V10)** : 4 fichiers à modifier (stratégie + optimizer.py + config.yaml + doc).
+
+**Après (V11)** : 1 seul fichier :
+```python
+# app/strategies/ma_nouvelle_strategie.py
+class Strategy(BaseStrategy):
+    name         = "ma_nouvelle_strategie"
+    timeframes   = ["1h", "4h"]
+    param_space  = {"period": [10, 20, 30], "rr_min": [1.3, 1.5, 2.0]}
+    fixed_params = {}
+    # ... min_bars_required(), score() ...
+```
+L'optimiseur, l'API et le live trader la détectent automatiquement.
+
+---
+
 ## [10.0.0] - 2026-03-18
 
 ### ✨ Nouvelles fonctionnalités
