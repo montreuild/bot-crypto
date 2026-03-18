@@ -33,15 +33,19 @@ logger = logging.getLogger(__name__)
 # ════════════════════════════════════════════════════════════════════════════
 STRATEGY_TIMEFRAMES: Dict[str, List[str]] = {
     # Scalping/court terme : supertrend et breakout réagissent vite aux cassures
-    "supertrend_macd": ["5m", "15m", "1h"],
-    "breakout":        ["5m", "15m", "1h"],
+    "supertrend_macd":  ["5m", "15m", "1h"],
+    "breakout":         ["5m", "15m", "1h"],
     # Trend following : besoin de plus de contexte, pas adapté au 5m
-    "trend":           ["1h", "1d"],
-    "pullback_trend":  ["15m", "1h", "1d"],
+    "trend":            ["1h", "1d"],
+    "pullback_trend":   ["15m", "1h", "1d"],
     # Fear/momentum : événements macro → 1h/1d idéal
-    "fear_momentum":   ["1h", "1d"],
+    "fear_momentum":    ["1h", "1d"],
     # Multi-TF S/R : niveaux nécessitent contexte moyen terme
-    "multi_tf_sr":     ["15m", "1h", "4h"],
+    "multi_tf_sr":      ["15m", "1h", "4h"],
+    # Score composite : indicateurs classiques + FFT → moyen/long terme
+    "composite_score":  ["1h", "4h", "1d"],
+    # FFT spectral : cycles dominants → données journalières idéales
+    "fft_spectral":     ["4h", "1d"],
 }
 
 # Nombre de barres optimal par timeframe (équilibre données/temps)
@@ -131,11 +135,34 @@ PARAM_SPACES: Dict[str, Dict[str, List]] = {
         "cooldown":         [10, 15, 20],
         "rr_min":           [1.3, 1.5, 2.0],
     },
+    "composite_score": {
+        "ema_fast":              [13, 20, 21],
+        "ema_slow":              [50, 80],
+        "score_long_threshold":  [55, 60, 65],
+        "score_short_threshold": [35, 40, 45],
+        "sr_lookback":           [120, 180, 240],
+        "sr_cluster_pct":        [0.010, 0.018, 0.025],
+        "use_fft":               [True, False],
+        "fft_min_period":        [5, 7],
+        "fft_max_period":        [100, 150],
+        "cooldown":              [10, 15, 20],
+        "rr_min":                [1.3, 1.5, 2.0],
+    },
+    "fft_spectral": {
+        "fft_min_period":  [5, 7, 10],
+        "fft_max_period":  [100, 150, 200],
+        "fft_top_n":       [7, 10, 15],
+        "min_confidence":  [0.15, 0.20, 0.25, 0.30],
+        "min_bars":        [150, 180, 250],
+        "cooldown":        [20, 30, 40],
+        "rr_min":          [1.3, 1.5, 2.0],
+    },
 }
 
 FIXED_PARAMS: Dict[str, Dict[str, Any]] = {
     "trend": {}, "pullback_trend": {}, "supertrend_macd": {},
     "breakout": {}, "fear_momentum": {}, "multi_tf_sr": {},
+    "composite_score": {}, "fft_spectral": {},
 }
 
 GLOBAL_TRADING_PARAMS = {

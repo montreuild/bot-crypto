@@ -10,19 +10,26 @@ from typing import Tuple
 
 
 def _true_range(df: pl.DataFrame) -> pl.Series:
-    """True Range vectorisé via Polars max_horizontal."""
-    h = df["high"]
-    l = df["low"]
-    c_prev = df["close"].shift(1)
-    return pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
+    """True Range vectorisé. Le null du shift(1) est remplacé par close[0] pour
+    éviter la propagation de NaN dans ewm_mean (comportement polars)."""
+    h      = df["high"]
+    l      = df["low"]
+    # fill_null : la première barre n'a pas de clôture précédente → on utilise
+    # la clôture courante (tr[0] = high[0] - low[0], sans distorsion).
+    c_prev = df["close"].shift(1).fill_null(df["close"][0])
+    return pl.Series(np.maximum(
+        (h - l).to_numpy(),
+        np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy()),
+    ))
 
 
 def rsi(close: pl.Series, period: int = 14) -> pl.Series:
-    d = close.diff(1)
-    g = d.clip(lower_bound=0).ewm_mean(alpha=1 / period, adjust=False)
-    dn = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / period, adjust=False)
-    dn_safe = pl.when(dn == 0).then(1e-10).otherwise(dn)
-    return 100 - 100 / (1 + g / dn_safe)
+    d     = close.diff(1)
+    g_np  = d.clip(lower_bound=0).ewm_mean(alpha=1 / period, adjust=False).to_numpy()
+    dn_np = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / period, adjust=False).to_numpy()
+    # Division sécurisée via numpy pour éviter qu'un pl.when retourne un Expr
+    dn_safe = np.where(dn_np == 0, 1e-10, dn_np)
+    return pl.Series(100 - 100 / (1 + g_np / dn_safe))
 
 
 def atr(df: pl.DataFrame, period: int = 14) -> float:
@@ -38,22 +45,26 @@ def atr_series(df: pl.DataFrame, period: int = 14) -> pl.Series:
 def adx(df: pl.DataFrame, period: int = 14) -> float:
     if len(df) < period * 2:
         return 0.0
-    h = df["high"]
-    l = df["low"]
-    up = h.diff(1).clip(lower_bound=0)
-    down = (-l.diff(1)).clip(lower_bound=0)
-    pdm = pl.when(up > down).then(up).otherwise(0.0)
-    mdm = pl.when(down > up).then(down).otherwise(0.0)
-    tr = _true_range(df)
-    atr_ = tr.ewm_mean(span=period, adjust=False)
-    atr_safe = pl.when(atr_ == 0).then(None).otherwise(atr_)
-    dip = 100 * pdm.ewm_mean(span=period, adjust=False) / atr_safe
-    dim = 100 * mdm.ewm_mean(span=period, adjust=False) / atr_safe
-    dip_plus_dim = dip + dim
-    dip_plus_dim_safe = pl.when(dip_plus_dim == 0).then(None).otherwise(dip_plus_dim)
-    dx = 100 * (dip - dim).abs() / dip_plus_dim_safe
-    v = dx.ewm_mean(span=period, adjust=False)[-1]
-    return float(v) if v is not None else 0.0
+    h    = df["high"].to_numpy()
+    l    = df["low"].to_numpy()
+    tr   = _true_range(df).to_numpy()
+
+    up   = np.maximum(np.diff(h, prepend=h[0]), 0)
+    down = np.maximum(-np.diff(l, prepend=l[0]), 0)
+    pdm  = np.where(up > down, up, 0.0)
+    mdm  = np.where(down > up, down, 0.0)
+
+    atr_s = pl.Series(tr).ewm_mean(span=period, adjust=False).to_numpy()
+    atr_s = np.where(atr_s == 0, 1e-10, atr_s)
+
+    dip   = 100 * pl.Series(pdm).ewm_mean(span=period, adjust=False).to_numpy() / atr_s
+    dim   = 100 * pl.Series(mdm).ewm_mean(span=period, adjust=False).to_numpy() / atr_s
+    sum_d = dip + dim
+    sum_d = np.where(sum_d == 0, 1e-10, sum_d)
+    dx    = 100 * np.abs(dip - dim) / sum_d
+
+    v = pl.Series(dx).ewm_mean(span=period, adjust=False)[-1]
+    return float(v) if v is not None and not np.isnan(float(v)) else 0.0
 
 
 def macd(close: pl.Series, fast: int = 12, slow: int = 26,
@@ -118,9 +129,10 @@ def bb_squeeze(close: pl.Series, lookback: int = 15,
                bb_period: int = 20, quantile: float = 0.30) -> bool:
     if len(close) < bb_period + lookback:
         return False
-    sma   = close.rolling_mean(bb_period)
-    std   = close.rolling_std(bb_period)
-    sma_safe = pl.when(sma < 1e-9).then(1e-9).otherwise(sma)
+    sma      = close.rolling_mean(bb_period)
+    std      = close.rolling_std(bb_period)
+    # clip évite pl.when qui retourne un Expr (non subscriptable)
+    sma_safe = sma.clip(lower_bound=1e-9)
     width    = 4 * std / sma_safe
     cur_w    = width[-1]
     if cur_w is None:
@@ -195,8 +207,11 @@ def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
     v = df["volume"]
 
     # True Range (réutilisé pour ATR et ADX)
-    c_prev = c.shift(1)
-    tr = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
+    c_prev = c.shift(1).fill_null(c[0])
+    tr = pl.Series(np.maximum(
+        (h - l).to_numpy(),
+        np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy()),
+    ))
 
     # RSI(14)
     d  = c.diff(1)
@@ -366,3 +381,42 @@ def nearest_resistance(price: float, levels: list) -> float | None:
     """Retourne la résistance la plus proche au-dessus du prix courant."""
     candidates = [l["price"] for l in levels if l["price"] > price]
     return min(candidates) if candidates else None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Stochastique (K%, D%)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def stochastic(df: pl.DataFrame, k_period: int = 14, d_period: int = 3) -> tuple:
+    """
+    Oscillateur Stochastique — K% et D%.
+
+    K% = (Close - LowestLow_k) / (HighestHigh_k - LowestLow_k) × 100
+    D% = SMA(K%, d_period)
+
+    Retourne (K_val, D_val) — scalaires flottants.
+    Retourne (50.0, 50.0) si données insuffisantes.
+    """
+    if len(df) < k_period + d_period:
+        return 50.0, 50.0
+
+    close         = df["close"]
+    high          = df["high"]
+    low           = df["low"]
+
+    lowest_low    = low.rolling_min(k_period)
+    highest_high  = high.rolling_max(k_period)
+    hl_range      = highest_high - lowest_low
+    # clip évite la division par zéro sans créer d'Expr lazy (pl.when retournerait un Expr)
+    hl_safe       = hl_range.clip(lower_bound=1e-10)
+
+    k_series = (close - lowest_low) / hl_safe * 100.0
+    d_series = k_series.rolling_mean(d_period)
+
+    k_val = float(k_series[-1]) if k_series[-1] is not None else 50.0
+    d_val = float(d_series[-1]) if d_series[-1] is not None else 50.0
+
+    # Clip to [0, 100] — guard against float precision drift
+    k_val = max(0.0, min(100.0, k_val))
+    d_val = max(0.0, min(100.0, d_val))
+    return k_val, d_val

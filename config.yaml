@@ -73,6 +73,8 @@ strategies:
   - trend
   - supertrend_macd
   - multi_tf_sr
+  - composite_score
+  - fft_spectral
 strategy_params:
   breakout:
     atr_expan_min: 1.05
@@ -143,6 +145,37 @@ strategy_params:
     rsi_high: 67
     rsi_low: 30
     vol_min: 0.9
+  composite_score:
+    ema_fast: 20
+    ema_slow: 50
+    rsi_period: 14
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    bb_period: 20
+    bb_std: 2.0
+    stoch_k_period: 14
+    stoch_d_period: 3
+    sr_window: 5
+    sr_lookback: 180
+    sr_cluster_pct: 0.018
+    use_fft: true
+    fft_min_period: 5
+    fft_max_period: 150
+    fft_top_n: 10
+    score_long_threshold: 60
+    score_short_threshold: 40
+    cooldown: 15
+    rr_min: 1.5
+    min_bars: 200
+  fft_spectral:
+    fft_min_period: 5
+    fft_max_period: 150
+    fft_top_n: 10
+    min_confidence: 0.20
+    min_bars: 180
+    cooldown: 30
+    rr_min: 1.5
 trading:
   borrow_rate_daily: 0.00072
   capital: 1000

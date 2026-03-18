@@ -8,11 +8,15 @@ from typing import Tuple
 
 
 def _true_range(df: pl.DataFrame) -> pl.Series:
-    """True Range vectorisé via Polars max_horizontal."""
+    """True Range vectorisé. Le null du shift(1) est remplacé par close[0] pour
+    éviter la propagation de NaN dans ewm_mean (comportement polars)."""
     h      = df["high"]
     l      = df["low"]
-    c_prev = df["close"].shift(1)
-    return pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
+    c_prev = df["close"].shift(1).fill_null(df["close"][0])
+    return pl.Series(np.maximum(
+        (h - l).to_numpy(),
+        np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy()),
+    ))
 
 
 def ema(s: pl.Series, n: int) -> pl.Series:
@@ -202,8 +206,11 @@ def precompute(df: pl.DataFrame) -> pl.DataFrame:
     l = df["low"]
     v = df["volume"]
 
-    c_prev = c.shift(1)
-    tr = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
+    c_prev = c.shift(1).fill_null(c[0])
+    tr = pl.Series(np.maximum(
+        (h - l).to_numpy(),
+        np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy()),
+    ))
 
     # RSI(14)
     d  = c.diff(1)
