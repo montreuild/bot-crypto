@@ -1,5 +1,5 @@
 """
-Crypto Bot V9 — Point d'entrée principal.
+Crypto Bot V11 — Point d'entrée principal.
 """
 import argparse
 import importlib
@@ -10,12 +10,13 @@ import threading
 import polars as pl
 import uvicorn
 
-from app.core.config   import load_config
-from app.core.logger   import setup_logging
-from app.core.exchange import create_exchange
-from app.engine.engine import Engine
-from app.engine.backtest import Backtester, WalkForwardAnalyzer, MonteCarlo
-from app.api.main       import app as fastapi_app, init_app
+from app.core.config        import load_config
+from app.core.logger        import setup_logging
+from app.core.exchange      import create_exchange
+from app.core.candle_store  import get_store
+from app.engine.engine      import Engine
+from app.engine.backtest    import Backtester, WalkForwardAnalyzer, MonteCarlo
+from app.api.main           import app as fastapi_app, init_app
 
 
 def parse_args():
@@ -45,8 +46,10 @@ def run_backtest_cli(cfg, args):
     print(f"{'='*60}")
 
     exchange = create_exchange(cfg)
-    raw  = exchange.fetch_ohlcv(symbol, tf, limit=args.limit)
-    df = pl.DataFrame(raw, schema=["time","open","high","low","close","volume"], orient="row").with_columns(pl.from_epoch("time", time_unit="ms"))
+    df = get_store().fetch(exchange, symbol, tf, total=args.limit)
+    if df is None or len(df) == 0:
+        print(f"  Erreur : aucune donnée disponible pour {symbol}/{tf}")
+        return
 
     mc_runner = MonteCarlo(n_runs=cfg.get("backtest",{}).get("monte_carlo_runs", 200)) if args.monte_carlo else None
 
@@ -94,8 +97,10 @@ def run_optimizer_cli(cfg, args):
     strategy = args.optimize
     exchange = create_exchange(cfg)
     tf       = cfg["trading"]["timeframe"]
-    raw      = exchange.fetch_ohlcv("BTC/USDC", tf, limit=1000)
-    df = pl.DataFrame(raw, schema=["time","open","high","low","close","volume"], orient="row").with_columns(pl.from_epoch("time", time_unit="ms"))
+    df       = get_store().fetch(exchange, "BTC/USDC", tf, total=1000)
+    if df is None or len(df) == 0:
+        print(f"  Erreur : aucune donnée disponible pour BTC/USDC/{tf}")
+        return
     split    = int(len(df) * 0.7)
     opt      = StrategyOptimizer(strategy, cfg, df[:split], df[split:],
                                   DEFAULT_SPACES.get(strategy, {}))
