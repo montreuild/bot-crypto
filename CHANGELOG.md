@@ -8,10 +8,59 @@ Historique des versions du Crypto Bot.
 
 ### ✨ Nouvelles fonctionnalités
 
-- **Découverte automatique des stratégies** (`app/strategies/registry.py`) :
-  Chaque stratégie porte ses propres métadonnées d'optimisation en attributs de classe.
-  L'optimiseur les découvre automatiquement — aucun fichier central à modifier
-  pour ajouter une nouvelle stratégie.
+#### CandleStore — Stockage Parquet persistant des bougies OHLCV
+
+Nouveau module `app/core/candle_store.py` qui centralise tous les accès aux données OHLCV.
+
+**Architecture :**
+```
+data/
+└── ohlcv/
+    ├── BTC_USDC/
+    │   ├── 1h.parquet    (~80 KB pour 2 000 bougies)
+    │   ├── 4h.parquet
+    │   └── 1d.parquet
+    ├── ETH_USDC/
+    │   └── ...
+    └── ...
+```
+
+**Principe de fetch :**
+```
+1er démarrage   → fetch complet depuis l'exchange (paginé si > 1 000 bougies)
+                  → persistence Parquet (compression zstd)
+
+Cycles suivants → lecture Parquet locale (< 5 ms)
+                  → fetch incrémental : uniquement les nouvelles bougies
+                  → merge + déduplication + persistence
+```
+
+**Couverture complète — tous les callers :**
+
+| Module | Avant | Après |
+|--------|-------|-------|
+| `MarketScanner.fetch_ohlcv()` | `exchange.fetch_ohlcv` direct | `CandleStore.fetch()` |
+| `engine.Scanner._scan_pair()` | `exchange.fetch_ohlcv` direct | `CandleStore.fetch()` |
+| `engine.Scanner.get_ohlcv_df()` | `exchange.fetch_ohlcv` direct | `CandleStore.fetch()` |
+| `API /api/backtest` | `fetch_ohlcv_paged()` | `CandleStore.fetch()` |
+| `API /api/optimize/start` | `fetch_ohlcv_paged()` | `CandleStore.fetch()` |
+| `API /api/ml/train` | `fetch_ohlcv_paged()` | `CandleStore.fetch()` |
+| `CLI --backtest` | `exchange.fetch_ohlcv` direct | `CandleStore.fetch()` |
+| `CLI --optimize` | `exchange.fetch_ohlcv` direct | `CandleStore.fetch()` |
+| LiveTrader (tous les cas) | via `scanner.fetch_ohlcv` | via `MarketScanner` → store |
+
+**Bénéfices :**
+- Indépendance exchange : backtest, optimizer, ML training utilisent le cache local
+- Historique croissant automatiquement à chaque cycle live
+- Aucune nouvelle dépendance (`polars` supporte Parquet nativement via PyArrow)
+- Thread-safe : verrou par fichier (live trader multi-thread)
+- Nouveau endpoint `GET /api/candles/stats` pour inspecter le cache
+
+#### Découverte automatique des stratégies (`app/strategies/registry.py`)
+
+Chaque stratégie porte ses propres métadonnées d'optimisation en attributs de classe.
+L'optimiseur les découvre automatiquement — aucun fichier central à modifier
+pour ajouter une nouvelle stratégie.
 
 ### 🏗️ Refactorisation (optimizer.py)
 
@@ -40,6 +89,21 @@ class Strategy(BaseStrategy):
     # ... min_bars_required(), score() ...
 ```
 L'optimiseur, l'API et le live trader la détectent automatiquement.
+
+### 🗄️ Structure V11
+
+```
+app/
+└── core/
+    ├── candle_store.py    ← NOUVEAU — stockage Parquet OHLCV
+    ├── indicators.py
+    ├── database.py
+    └── exchange.py
+
+data/
+└── ohlcv/                 ← NOUVEAU — données Parquet (gitignore)
+    └── {SYMBOL}/{TF}.parquet
+```
 
 ---
 

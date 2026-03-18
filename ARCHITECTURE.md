@@ -1,4 +1,4 @@
-# 🏗️ Architecture Crypto Bot V10
+# 🏗️ Architecture Crypto Bot V11
 
 Vue d'ensemble technique, patterns de design et flux de données.
 
@@ -19,6 +19,7 @@ Vue d'ensemble technique, patterns de design et flux de données.
          │  - /api/backtest          │
          │  - /api/optimize/*        │
          │  - /api/scanner/*         │
+         │  - /api/candles/stats     │
          └────────┬───────────┬──────┘
                   │           │
         ┌─────────▼──┐   ┌────▼──────────┐
@@ -33,9 +34,11 @@ Vue d'ensemble technique, patterns de design et flux de données.
         │  - Trailing Stop           │
         └─────────┬──────────────────┘
                   │
-        ┌─────────▼──────────────────┐
-        │  Exchange (CCXT)           │
-        │  - Binance, Kraken, etc    │
+        ┌─────────▼──────────────────┐        ┌──────────────────────┐
+        │  CandleStore (Parquet)     │◄───────│  Exchange (CCXT)     │
+        │  - data/ohlcv/{sym}/{tf}   │        │  - Binance, Kraken…  │
+        │  - Fetch incrémental       │        └──────────────────────┘
+        │  - Thread-safe             │
         └────────────────────────────┘
 ```
 
@@ -61,7 +64,10 @@ Vue d'ensemble technique, patterns de design et flux de données.
 
 ```
 while trader.running:
-  1. Fetch OHLCV (exchange)
+  1. scanner.fetch_ohlcv(symbol, tf)
+       └─> CandleStore.fetch()
+             ├─> Lecture Parquet local (< 5 ms)
+             └─> Fetch incrémental exchange (nouvelles bougies seulement)
   2. For each strategy:
      - Engine.signal()
      - Check risk (circuit breaker, margin)
@@ -75,13 +81,37 @@ while trader.running:
 
 ```
 Backtester(engine, cfg)
-  ├─> Load OHLCV from CCXT
+  ├─> CandleStore.fetch()        ← V11 : depuis le cache local si disponible
+  │     ├─> Lecture Parquet      (instantané si déjà fetché par le live trader)
+  │     └─> Fetch exchange       (uniquement si nouvelles bougies)
   ├─> Polars DataFrame processing
   ├─> For each candle:
   │    └─> Engine.signal()
   │        └─> Update equity
   │        └─> Record trades
   └─> Results (by_strategy stats)
+```
+
+### CandleStore — Flux de données V11
+
+```
+1er fetch (symbol, tf inconnu)
+  CandleStore.fetch(exchange, "BTC/USDC", "1h", 1500)
+    ├─> _load()              → DataFrame vide (fichier inexistant)
+    ├─> _fetch_full()        → 1500 bougies paginées depuis Binance
+    ├─> merge + filtre
+    └─> _save()              → data/ohlcv/BTC_USDC/1h.parquet
+
+Fetch suivant (même jour)
+  CandleStore.fetch(exchange, "BTC/USDC", "1h", 1500)
+    ├─> _load()              → 1500 bougies depuis Parquet (< 5 ms)
+    ├─> _fetch_incremental() → 2 nouvelles bougies depuis last_ts
+    ├─> merge + dédup
+    └─> _save()              → 1502 bougies persistées
+
+Après 30 jours de live trading
+  data/ohlcv/BTC_USDC/1h.parquet → 720+ bougies accumulées automatiquement
+  Optimizer reçoit 30 jours d'historique réel sans appel paginé
 ```
 
 ---
@@ -103,6 +133,34 @@ load_config(path)
 - ✅ Lecture YAML sécurisée
 - ✅ Validation des valeurs numériques, énums
 - ❌ NE PAS charger secrets depuis code → variables d'env
+
+---
+
+### `app/core/candle_store.py` ← V11
+
+**Responsabilité** : Stockage Parquet persistant des bougies OHLCV
+
+```python
+class CandleStore:
+    def fetch(exchange, symbol, tf, total) -> pl.DataFrame
+        ├─> _load(path)              # Parquet local
+        ├─> _fetch_incremental()     # ou _fetch_full() si vide
+        ├─> merge + unique + sort + filter
+        └─> _save(path)              # zstd compression
+
+get_store() -> CandleStore           # Singleton thread-safe
+```
+
+**Stockage** :
+```
+data/ohlcv/{SYMBOL}/{TF}.parquet
+  Exemple : data/ohlcv/BTC_USDC/1h.parquet
+  Taille   : ~80 KB pour 2 000 bougies (zstd)
+  Lecture  : < 5 ms (Polars natif)
+```
+
+**Thread-safety** : verrou par fichier via `_get_file_lock(path)` — indispensable
+pour le live trader qui appelle `fetch_ohlcv` depuis plusieurs threads.
 
 ---
 
@@ -479,4 +537,4 @@ CMD ["python", "main.py"]
 
 ---
 
-**Architecture Crypto Bot V10** — Bien pensée, scalable, et testable 🏗️
+**Architecture Crypto Bot V11** — Bien pensée, scalable, et testable 🏗️
