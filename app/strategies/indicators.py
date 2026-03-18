@@ -262,3 +262,107 @@ def pre_val(df: pl.DataFrame, col: str) -> float:
         if v is not None:
             return float(v)
     return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Support / Résistance — détection via pivots swing
+# ══════════════════════════════════════════════════════════════════════════════
+
+def support_resistance_levels(
+    df: pl.DataFrame,
+    window: int = 5,
+    cluster_pct: float = 0.005,
+    min_touches: int = 1,
+    max_levels: int = 6,
+    lookback: int = 150,
+) -> dict:
+    """
+    Détecte supports et résistances via pivots swing (hauts/bas locaux).
+
+    Un pivot haut (résistance candidate) : high[i] = max(high[i-w:i+w+1])
+    Un pivot bas  (support candidate)    : low[i]  = min(low[i-w:i+w+1])
+
+    Les pivots proches (< cluster_pct × prix) sont fusionnés en une seule zone.
+    La "force" d'un niveau = nombre de pivots fusionnés (nombre de touches).
+
+    Args:
+        window       : Fenêtre de chaque côté pour valider un pivot (barres)
+        cluster_pct  : Distance relative max pour fusionner deux niveaux (ex: 0.005 = 0.5%)
+        min_touches  : Force minimum pour retenir un niveau
+        max_levels   : Nombre max de niveaux retournés par côté
+        lookback     : Nombre de bougies analysées (les plus récentes)
+
+    Returns:
+        {
+            "supports":    [{"price": float, "strength": int}, ...],  # triés décroissant (plus proche en premier)
+            "resistances": [{"price": float, "strength": int}, ...],  # triés croissant
+        }
+    """
+    n = len(df)
+    if n < window * 2 + 5:
+        return {"supports": [], "resistances": []}
+
+    start = max(0, n - lookback)
+    high  = df["high"][start:].to_numpy()
+    low   = df["low"][start:].to_numpy()
+    close = df["close"][start:].to_numpy()
+    m     = len(high)
+
+    # Pivots hauts → résistances potentielles
+    res_pivots: list[float] = []
+    for i in range(window, m - window):
+        if high[i] == max(high[i - window:i + window + 1]):
+            res_pivots.append(float(high[i]))
+
+    # Pivots bas → supports potentiels
+    sup_pivots: list[float] = []
+    for i in range(window, m - window):
+        if low[i] == min(low[i - window:i + window + 1]):
+            sup_pivots.append(float(low[i]))
+
+    def _cluster(prices: list[float], tol: float) -> list[tuple[float, int]]:
+        """Groupe les prix proches et retourne (prix_moyen, nombre_de_touches)."""
+        if not prices:
+            return []
+        prices = sorted(prices)
+        clusters: list[list[float]] = [[prices[0]]]
+        for p in prices[1:]:
+            ref = clusters[-1][0]
+            if ref > 0 and (p - ref) / ref <= tol:
+                clusters[-1].append(p)
+            else:
+                clusters.append([p])
+        return [(sum(c) / len(c), len(c)) for c in clusters]
+
+    res_clusters = _cluster(res_pivots, cluster_pct)
+    sup_clusters = _cluster(sup_pivots, cluster_pct)
+
+    price_now = float(close[-1])
+
+    # Supports : en-dessous du prix courant, triés décroissant (plus proche en premier)
+    supports = sorted(
+        [{"price": round(p, 8), "strength": t} for p, t in sup_clusters
+         if p < price_now and t >= min_touches],
+        key=lambda x: -x["price"]
+    )[:max_levels]
+
+    # Résistances : au-dessus du prix courant, triées croissant (plus proche en premier)
+    resistances = sorted(
+        [{"price": round(p, 8), "strength": t} for p, t in res_clusters
+         if p > price_now and t >= min_touches],
+        key=lambda x: x["price"]
+    )[:max_levels]
+
+    return {"supports": supports, "resistances": resistances}
+
+
+def nearest_support(price: float, levels: list) -> float | None:
+    """Retourne le support le plus proche en-dessous du prix courant."""
+    candidates = [l["price"] for l in levels if l["price"] < price]
+    return max(candidates) if candidates else None
+
+
+def nearest_resistance(price: float, levels: list) -> float | None:
+    """Retourne la résistance la plus proche au-dessus du prix courant."""
+    candidates = [l["price"] for l in levels if l["price"] > price]
+    return min(candidates) if candidates else None

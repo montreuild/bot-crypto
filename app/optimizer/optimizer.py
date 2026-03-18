@@ -40,6 +40,8 @@ STRATEGY_TIMEFRAMES: Dict[str, List[str]] = {
     "pullback_trend":  ["15m", "1h", "1d"],
     # Fear/momentum : événements macro → 1h/1d idéal
     "fear_momentum":   ["1h", "1d"],
+    # Multi-TF S/R : niveaux nécessitent contexte moyen terme
+    "multi_tf_sr":     ["15m", "1h", "4h"],
 }
 
 # Nombre de barres optimal par timeframe (équilibre données/temps)
@@ -116,11 +118,24 @@ PARAM_SPACES: Dict[str, Dict[str, List]] = {
         "cooldown":        [15, 18, 22, 25],
         "rr_min":          [1.4, 1.6, 2.0],
     },
+    "multi_tf_sr": {
+        "sr_window":        [3, 5, 7],
+        "sr_lookback":      [100, 150, 200],
+        "sr_cluster_pct":   [0.003, 0.005, 0.008],
+        "sr_min_touches":   [1, 2],
+        "sr_proximity_atr": [0.8, 1.0, 1.5, 2.0],
+        "adx_min":          [18, 20, 25],
+        "rsi_low":          [30, 35, 40],
+        "rsi_high":         [60, 65, 70],
+        "vol_min":          [0.7, 0.8, 1.0],
+        "cooldown":         [10, 15, 20],
+        "rr_min":           [1.3, 1.5, 2.0],
+    },
 }
 
 FIXED_PARAMS: Dict[str, Dict[str, Any]] = {
     "trend": {}, "pullback_trend": {}, "supertrend_macd": {},
-    "breakout": {}, "fear_momentum": {},
+    "breakout": {}, "fear_momentum": {}, "multi_tf_sr": {},
 }
 
 GLOBAL_TRADING_PARAMS = {
