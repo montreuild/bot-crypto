@@ -117,6 +117,37 @@ class CandleStore:
                     f"→ {len(df_cached)} stockées"
                 )
 
+            # Si le cache est insuffisant, tenter de récupérer des bougies historiques plus anciennes
+            if len(df_cached) < total:
+                missing   = total - len(df_cached)
+                first_ms  = int(df_cached["time"].min().timestamp() * 1000) if len(df_cached) > 0 else None
+                logger.info(
+                    f"[CandleStore] {symbol}/{tf} — cache insuffisant "
+                    f"({len(df_cached)}/{total} bougies) — "
+                    f"tentative de récupération de {missing} bougies historiques"
+                )
+                old_raw = self._fetch_historical(exchange, symbol, tf, first_ms, missing)
+                if old_raw:
+                    df_old    = self._raw_to_df(old_raw)
+                    df_merged = (
+                        pl.concat([df_cached, df_old])
+                        .unique("time")
+                        .sort("time")
+                        .filter((pl.col("volume") > 0) & (pl.col("close") > 0))
+                        .drop_nulls()
+                    )
+                    self._save(path, df_merged)
+                    df_cached = df_merged
+                    logger.info(
+                        f"[CandleStore] {symbol}/{tf} : +{len(old_raw)} bougies historiques "
+                        f"→ {len(df_cached)} stockées au total"
+                    )
+                else:
+                    logger.info(
+                        f"[CandleStore] {symbol}/{tf} — aucune bougie historique supplémentaire "
+                        f"disponible sur l'exchange (cache : {len(df_cached)} bougies)"
+                    )
+
         if len(df_cached) == 0:
             return None
 
@@ -185,6 +216,60 @@ class CandleStore:
             since = batch[-1][0] + 1
             if len(batch) < LIMIT:
                 break  # Dernière page — pas besoin de continuer
+            time.sleep(rate_sleep)
+
+        all_raw.sort(key=lambda x: x[0])
+        return all_raw
+
+    def _fetch_historical(self, exchange, symbol: str, tf: str,
+                          before_ms: Optional[int], needed: int) -> List[list]:
+        """
+        Fetch des bougies historiques antérieures à before_ms.
+        Utilisé quand le cache est insuffisant pour couvrir `needed` bougies supplémentaires.
+        Pagine en arrière depuis before_ms jusqu'à obtenir `needed` bougies ou épuiser l'exchange.
+        """
+        LIMIT      = 1000
+        rate_sleep = getattr(exchange, "rateLimit", 1200) / 1000
+
+        try:
+            tf_ms = exchange.parse_timeframe(tf) * 1000
+        except Exception:
+            tf_ms = 3_600_000  # fallback 1h en ms
+
+        # Point de départ : assez loin dans le passé pour couvrir les bougies manquantes
+        if before_ms is not None:
+            since = before_ms - needed * tf_ms
+        else:
+            since = exchange.milliseconds() - needed * tf_ms
+
+        all_raw = []
+        seen_ts = set()
+
+        while len(all_raw) < needed:
+            try:
+                batch = exchange.fetch_ohlcv(symbol, tf, since=since, limit=LIMIT)
+            except Exception as e:
+                logger.warning(f"[CandleStore] fetch_historical {symbol}/{tf} : {e}")
+                break
+
+            if not batch:
+                break
+
+            added = 0
+            for c in batch:
+                # Garder uniquement les bougies antérieures au cache existant
+                if before_ms is None or c[0] < before_ms:
+                    if c[0] not in seen_ts:
+                        seen_ts.add(c[0])
+                        all_raw.append(c)
+                        added += 1
+
+            if added == 0:
+                break
+
+            since = batch[-1][0] + 1
+            if len(batch) < LIMIT:
+                break  # Dernière page disponible sur l'exchange
             time.sleep(rate_sleep)
 
         all_raw.sort(key=lambda x: x[0])
