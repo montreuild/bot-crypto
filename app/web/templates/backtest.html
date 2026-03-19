@@ -169,16 +169,8 @@
       <div id="loader"><div class="spin" style="width:26px;height:26px;border-width:2px;margin:0 auto 10px"></div>Calcul en cours...</div>
       <div id="results" style="display:none;flex-direction:column;gap:12px"></div>
 
-      <div style="margin-top:18px">
-        <div class="sec-hdr"><h2>Historique des params optimisés</h2></div>
-        <div class="table-card">
-          <div class="tscroll"><table>
-            <thead><tr>
-              <th>Date</th><th>Stratégie</th><th>TF</th><th>Paramètres modifiés</th><th class="r">Score OOS</th>
-            </tr></thead>
-            <tbody id="changelog-body"><tr><td colspan="5" class="empty-row">Chargement…</td></tr></tbody>
-          </table></div>
-        </div>
+      <div style="margin-top:12px;padding:8px 12px;background:var(--cyan-dim);border:1px solid rgba(34,211,238,.15);border-radius:var(--r-sm);font-size:.72rem;color:var(--muted)">
+        📋 L'historique des paramètres optimisés est disponible dans <a href="/audit" style="color:var(--cyan);text-decoration:none;font-weight:600">Audit →</a>
       </div>
     </div>
   </div>
@@ -404,7 +396,17 @@ function renderResults(){
       </span>
       <button onclick="openFullscreen()" title="Plein écran" style="margin-left:auto;background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 9px;border-radius:var(--r-sm);cursor:pointer;font-size:.7rem;transition:all .15s">⤢ Plein écran</button>
     </div>
-    <div class="price-wrap"><div id="price-chart-wrap" style="height:300px;position:relative"></div></div>`;
+    <div class="price-wrap">
+      <div id="price-chart-wrap" style="height:300px;position:relative"></div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;padding:6px 10px 2px;font-size:.65rem;color:var(--dim);border-top:1px solid var(--border)">
+        <span>📍 Légende :</span>
+        <span><span style="color:#ffd166;font-size:.85rem">▲</span> Entrée Long</span>
+        <span><span style="color:#ffd166;font-size:.85rem">▼</span> Entrée Short</span>
+        <span><span style="color:#34d399;font-size:.9rem">●</span> Sortie gain</span>
+        <span><span style="color:#fb7185;font-size:.9rem">●</span> Sortie perte</span>
+        <span><span style="display:inline-block;width:18px;height:2px;background:rgba(251,191,36,.6);vertical-align:middle;border-top:1px dashed rgba(251,191,36,.6)"></span> Stop initial</span>
+      </div>
+    </div>`;
   res.appendChild(priceDiv);
   const panelsDiv=document.createElement('div');panelsDiv.id='panels';
   res.appendChild(panelsDiv);
@@ -427,6 +429,12 @@ function switchTab(s){
   });
   killSecondary();buildPrice();
   document.querySelectorAll('[id^="panel-"]').forEach(el=>{el.style.display=el.id===`panel-${s}`?'':'none';});
+  // Rebuild sub-charts for the newly visible panel
+  const sd=btData?.by_strategy?.[s];
+  if(sd&&!sd.error){
+    const closed=(sd.trades||[]).filter(t=>t.status!=='open');
+    buildEq(closed,SC(s),sd);buildPnl(closed,SC(s));buildCum(closed,SC(s));buildSc(closed);
+  }
 }
 
 // ── Panel builder ──
@@ -557,7 +565,7 @@ function buildPrice(){
   tvPriceS=tvPrice.addLineSeries({color:'#4d9fff',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false});
   const lineData=ohlcv.close.map((v,i)=>({time:toSec(ohlcv.time[i])||(i+1),value:v})).filter(d=>d.time>0);
   tvPriceS.setData(lineData);
-  // Markers
+  // Markers (entry + exit)
   const timeMap={};ohlcv.time.forEach((t,i)=>{timeMap[i]=toSec(t)||(i+1);});
   const markers=[];
   trades.forEach(t=>{
@@ -567,6 +575,18 @@ function buildPrice(){
   });
   markers.sort((a,b)=>a.time-b.time);
   tvPriceS.setMarkers(markers);
+  // Stop lines — one dashed line per trade from entry to exit
+  trades.forEach(t=>{
+    const bi=parseInt(t.bar),ei=parseInt(t.exit_bar);
+    const stopVal=t.stop;
+    if(isNaN(bi)||isNaN(ei)||stopVal==null||!isFinite(stopVal)) return;
+    const t0=timeMap[bi],t1=timeMap[ei];
+    if(!t0||!t1||t0>=t1) return;
+    try{
+      const stopS=tvPrice.addLineSeries({color:'rgba(251,191,36,.5)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
+      stopS.setData([{time:t0,value:stopVal},{time:t1,value:stopVal}]);
+    }catch(_){}
+  });
   tvPrice.timeScale().fitContent();
 }
 
@@ -703,20 +723,5 @@ function exportPDF(){
   const win=window.open('','_blank');if(win){win.document.write(html);win.document.close();}else alert('Autorisez les popups pour générer le PDF.');
 }
 
-// ── Changelog ──
-async function loadChangelog(){
-  const el=document.getElementById('changelog-body');if(!el)return;
-  try{
-    const rows=await apiFetch('/api/config/changelog?limit=50').then(r=>r.json()).catch(()=>[]);
-    if(!rows||!rows.length){el.innerHTML='<tr><td colspan="5" class="empty-row">Aucun changement enregistré.</td></tr>';return;}
-    el.innerHTML=rows.map(r=>{
-      const t=new Date(r.timestamp),ts=isNaN(t)?(r.timestamp||'—'):t.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'2-digit'})+' '+t.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
-      const changes=Object.entries(r.changed||{}).map(([k,v])=>`<span style="display:inline-block;margin:1px 3px 1px 0;font-size:.66rem;font-family:var(--mono);background:var(--card);border:1px solid var(--border);border-radius:3px;padding:1px 6px"><strong style="color:var(--text)">${escHtml(k)}</strong><span style="color:var(--dim)"> ${v.before??'—'}</span><span style="color:var(--muted)"> → </span><strong style="color:var(--cyan)">${v.after}</strong></span>`).join('');
-      const scoreVal=r.oos_score!=null?(+(r.oos_score)).toFixed(3):'—',scoreClr=r.oos_score>0.4?'var(--green)':r.oos_score>0.1?'var(--amber)':'var(--red)';
-      return`<tr><td style="color:var(--dim);font-size:.7rem;white-space:nowrap;font-family:var(--mono)">${ts}</td><td><span class="tag tag-strat">${escHtml(r.strategy||'—')}</span></td><td style="font-family:var(--mono);font-size:.72rem;color:var(--cyan)">${escHtml(r.timeframe||'—')}</td><td>${!Object.keys(r.changed||{}).length?'<span style="color:var(--dim);font-size:.7rem">Aucun changement</span>':changes}</td><td style="text-align:right;font-family:var(--mono);font-size:.75rem;font-weight:700;color:${scoreClr}">${scoreVal}</td></tr>`;
-    }).join('');
-  }catch(e){el.innerHTML=`<tr><td colspan="5" class="empty-row" style="color:var(--red)">Erreur : ${escHtml(e.message)}</td></tr>`;}
-}
-loadChangelog();
 </script>
 {% endblock %}

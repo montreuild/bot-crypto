@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %} — Audit{% endblock %}
+
+{% block page_styles %}
+.audit-main{max-width:1200px;margin:0 auto;padding:20px 16px;}
+{% endblock %}
+
+{% block topbar_content %}
+<div class="topbar-title">Audit</div>
+<div class="topbar-sep"></div>
+{% endblock %}
+
+{% block content %}
+<div id="content">
+  <div class="audit-main">
+
+    <!-- Historique des paramètres optimisés -->
+    <div class="sec-hdr"><h2>Historique des paramètres optimisés</h2></div>
+    <div class="table-card">
+      <div class="tscroll"><table>
+        <thead><tr>
+          <th>Date</th><th>Stratégie</th><th>TF</th><th>Paramètres modifiés</th><th class="r">Score OOS</th>
+        </tr></thead>
+        <tbody id="changelog-body"><tr><td colspan="5" class="empty-row">Chargement…</td></tr></tbody>
+      </table></div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block body_scripts %}
+<script>
+async function loadChangelog(){
+  const el=document.getElementById('changelog-body');if(!el)return;
+  try{
+    const rows=await apiFetch('/api/config/changelog?limit=100').then(r=>r.json()).catch(()=>[]);
+    if(!rows||!rows.length){el.innerHTML='<tr><td colspan="5" class="empty-row">Aucun changement enregistré.</td></tr>';return;}
+    el.innerHTML=rows.map(r=>{
+      const t=new Date(r.timestamp),ts=isNaN(t)?(r.timestamp||'—'):t.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'2-digit'})+' '+t.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+      const changes=Object.entries(r.changed||{}).map(([k,v])=>`<span style="display:inline-block;margin:1px 3px 1px 0;font-size:.66rem;font-family:var(--mono);background:var(--card);border:1px solid var(--border);border-radius:3px;padding:1px 6px"><strong style="color:var(--text)">${escHtml(k)}</strong><span style="color:var(--dim)"> ${v.before??'—'}</span><span style="color:var(--muted)"> → </span><strong style="color:var(--cyan)">${v.after}</strong></span>`).join('');
+      const scoreVal=r.oos_score!=null?(+(r.oos_score)).toFixed(3):'—',scoreClr=r.oos_score>0.4?'var(--green)':r.oos_score>0.1?'var(--amber)':'var(--red)';
+      return`<tr><td style="color:var(--dim);font-size:.7rem;white-space:nowrap;font-family:var(--mono)">${ts}</td><td><span class="tag tag-strat">${escHtml(r.strategy||'—')}</span></td><td style="font-family:var(--mono);font-size:.72rem;color:var(--cyan)">${escHtml(r.timeframe||'—')}</td><td>${!Object.keys(r.changed||{}).length?'<span style="color:var(--dim);font-size:.7rem">Aucun changement</span>':changes}</td><td style="text-align:right;font-family:var(--mono);font-size:.75rem;font-weight:700;color:${scoreClr}">${scoreVal}</td></tr>`;
+    }).join('');
+  }catch(e){el.innerHTML=`<tr><td colspan="5" class="empty-row" style="color:var(--red)">Erreur : ${escHtml(e.message)}</td></tr>`;}
+}
+loadChangelog();
+</script>
+{% endblock %}
