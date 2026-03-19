@@ -342,7 +342,7 @@ class MLDynamicThresholdStrategy:
         self._train_idx:    int   = 0
 
     # ── Interface principale ───────────────────────────────────
-    def score(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
+    def score(self, df: pl.DataFrame, params: dict = None, df_htf=None, symbol: str = "") -> Dict[str, Any]:
         """
         Interface compatible Engine v6.
         Applique les params de config si fournis (premier appel).
