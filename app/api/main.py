@@ -1260,6 +1260,31 @@ def optimizer_apply(job_id: str, config_path: str = "config.yaml"):
             "params": best, "trader_updated": trader_updated}
 
 
+@app.post("/api/optimize/cancel", dependencies=[Depends(verify_api_key)])
+def optimizer_cancel(job_id: str):
+    """Annule un job d'optimisation en cours."""
+    from app.optimizer.auto_optimizer import get_job, cancel_job
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, f"Job '{job_id}' introuvable")
+    if job.get("status") != "running":
+        raise HTTPException(400, f"Le job n'est pas en cours (statut: {job.get('status')})")
+    cancel_job(job_id)
+    return {"status": "cancelling", "job_id": job_id}
+
+
+@app.delete("/api/optimize/job", dependencies=[Depends(verify_api_key)])
+def optimizer_delete_job(job_id: str):
+    """Supprime un job terminé, annulé ou en erreur."""
+    from app.optimizer.auto_optimizer import get_job, delete_job
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, f"Job '{job_id}' introuvable")
+    if not delete_job(job_id):
+        raise HTTPException(400, "Impossible de supprimer un job en cours d'exécution")
+    return {"status": "deleted", "job_id": job_id}
+
+
 @app.get("/api/optimize/results")
 def optimizer_results():
     """Retourne les résultats d'optimisation classés par (strategy, tf)."""

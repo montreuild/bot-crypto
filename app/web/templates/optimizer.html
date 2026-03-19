@@ -40,6 +40,7 @@
 .js-running{background:var(--cyan-dim);color:var(--cyan);animation:pulse .8s ease infinite;}
 .js-done{background:var(--green-dim);color:var(--green);}
 .js-error{background:var(--red-dim);color:var(--red);}
+.js-cancelled{background:var(--amber-dim);color:var(--amber);}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
 /* Progress */
 .progress-wrap{margin:8px 0;}
@@ -84,6 +85,17 @@
 /* Empty state */
 .empty-state{text-align:center;padding:48px 24px;color:var(--dim);}
 .empty-state p{font-size:.82rem;margin-top:8px;}
+/* Job action buttons */
+.job-actions{display:flex;gap:5px;flex-shrink:0;align-items:center;}
+.job-action-btn{font-size:.65rem;padding:3px 8px;border-radius:3px;border:1px solid;cursor:pointer;transition:all .15s;line-height:1.4;}
+.job-action-btn:disabled{opacity:.5;cursor:default;}
+.btn-cancel-job{background:transparent;border-color:rgba(251,113,133,.4);color:var(--red);}
+.btn-cancel-job:hover:not(:disabled){background:var(--red-dim);}
+.btn-delete-job{background:transparent;border-color:var(--border);color:var(--dim);}
+.btn-delete-job:hover:not(:disabled){border-color:rgba(251,113,133,.4);color:var(--red);}
+/* Launch loading */
+.opt-loading{display:flex;align-items:center;gap:10px;padding:14px;background:var(--card);border:1px solid rgba(34,211,238,.2);border-radius:var(--r);font-size:.78rem;color:var(--cyan);margin-bottom:12px;}
+.opt-loading .spin{width:16px;height:16px;border-width:2px;flex-shrink:0;}
 /* Color helpers */
 .clr-green{color:var(--green);}.clr-red{color:var(--red);}.clr-muted{color:var(--muted);}
 .clr-yellow{color:var(--amber);}.clr-blue{color:var(--cyan);}
@@ -457,8 +469,15 @@ async function startOpt() {
     early_stop_patience: $('opt-early-stop').value,
   });
   _setOptBtn(true);
+  // Show immediate loading feedback while candles are being fetched
+  const loadingEl = document.createElement('div');
+  loadingEl.className = 'opt-loading';
+  loadingEl.innerHTML = '<span class="spin"></span><span>Récupération des bougies en cours…</span>';
+  const jobsContainer = $('jobs-container');
+  if (jobsContainer) jobsContainer.prepend(loadingEl);
   try {
     const r = await apiFetch('/api/optimize/start?' + params, {method:'POST'});
+    loadingEl.remove();
     if (!r.ok) { _setOptBtn(false); throw new Error((await r.json()).detail || r.statusText); }
     const d = await r.json();
     const nJobs   = d.job_ids?.length || 0;
@@ -502,7 +521,7 @@ async function startOpt() {
     msg.innerHTML = html;
     document.querySelector('.btn-purple.btn-full')?.insertAdjacentElement('afterend', msg);
     setTimeout(() => msg.remove(), 10000);
-  } catch(e) { _setOptBtn(false); alert('Erreur: ' + e.message); }
+  } catch(e) { loadingEl.remove(); _setOptBtn(false); alert('Erreur: ' + e.message); }
 }
 
 // ── Polling ──────────────────────────────────────────────────────────────
@@ -545,9 +564,10 @@ function renderJobs(jobs) {
   // Most recent first
   entries.sort((a,b) => (b[1].started_at||0) - (a[1].started_at||0));
 
-  const running = entries.filter(([,j]) => j.status === 'running');
-  const done    = entries.filter(([,j]) => j.status === 'done');
-  const errored = entries.filter(([,j]) => j.status === 'error');
+  const running   = entries.filter(([,j]) => j.status === 'running');
+  const done      = entries.filter(([,j]) => j.status === 'done');
+  const errored   = entries.filter(([,j]) => j.status === 'error');
+  const cancelled = entries.filter(([,j]) => j.status === 'cancelled');
 
   // Auto-expand running jobs and recently finished ones
   running.forEach(([id]) => _expandedJobs.add(id));
@@ -561,6 +581,10 @@ function renderJobs(jobs) {
   if (errored.length) {
     html += `<div class="job-group-hdr" style="color:var(--red)">Erreurs (${errored.length})</div>`;
     html += errored.map(([id,job]) => renderJobCard(id, job, _expandedJobs.has(id))).join('');
+  }
+  if (cancelled.length) {
+    html += `<div class="job-group-hdr" style="color:var(--amber)">Annulés (${cancelled.length})</div>`;
+    html += cancelled.map(([id,job]) => renderJobCard(id, job, _expandedJobs.has(id))).join('');
   }
   if (done.length) {
     const nExpanded = done.filter(([id]) => _expandedJobs.has(id)).length;
@@ -592,7 +616,7 @@ let _lastJobs = {};
 
 function renderJobCard(id, job, expanded = false) {
   const st = job.status || 'pending';
-  const stLabel = {running:'⟳ En cours',done:'✓ Terminé',error:'✗ Erreur',pending:'… En attente'}[st] || st;
+  const stLabel = {running:'⟳ En cours',done:'✓ Terminé',error:'✗ Erreur',cancelled:'⊘ Annulé',pending:'… En attente'}[st] || st;
   const prog = job.progress || 0;
   const result = job.result || {};
   const best = result.best_params || {};
@@ -697,9 +721,13 @@ function renderJobCard(id, job, expanded = false) {
   const bestPnlClr = hasResult ? clr(result.best_oos_pnl||0) : '';
   const scoreStr   = hasResult ? (result.best_oos_score||0).toFixed(3) : (job.best_score||0).toFixed(3);
 
+  const actionBtns = st === 'running'
+    ? `<button class="job-action-btn btn-cancel-job" onclick="cancelJob('${escHtml(id)}',event)" title="Annuler ce job">✕ Annuler</button>`
+    : `<button class="job-action-btn btn-delete-job" onclick="deleteJob('${escHtml(id)}',event)" title="Supprimer ce job">🗑</button>`;
+
   const summaryContent = `
-    <div class="job-summary" onclick="toggleJobCard('${id}')">
-      <div style="flex:1;min-width:0">
+    <div style="display:flex;align-items:flex-start;gap:6px">
+      <div style="flex:1;min-width:0;cursor:pointer" onclick="toggleJobCard('${id}')">
         <div class="job-title" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
           <span>${job.strategy || id}</span>
           <span style="color:var(--cyan);font-size:.8rem">@${job.timeframe||'?'}</span>
@@ -715,7 +743,10 @@ function renderJobCard(id, job, expanded = false) {
           <div class="progress-bg" style="height:4px"><div class="progress-fill ${st==='done'?'progress-done':''}" style="width:${prog}%"></div></div>
         </div>
       </div>
-      <span class="job-toggle">${expanded ? '⊟' : '⊞'}</span>
+      <div class="job-actions">
+        ${actionBtns}
+        <span class="job-toggle" onclick="toggleJobCard('${id}')" style="cursor:pointer">${expanded ? '⊟' : '⊞'}</span>
+      </div>
     </div>`;
 
   const detailsContent = expanded ? `
@@ -757,6 +788,39 @@ async function applyJob(jobId, e) {
     btn.disabled = false;
     btn.textContent = '✓ Appliquer dans config.yaml';
     alert('Erreur: ' + e.message);
+  }
+}
+
+async function cancelJob(jobId, e) {
+  const btn = e ? e.target : null;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳…'; }
+  try {
+    const r = await apiFetch(`/api/optimize/cancel?job_id=${encodeURIComponent(jobId)}`, {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    toast('Job annulé');
+    refreshJobs();
+  } catch(err) {
+    if (btn) { btn.disabled = false; btn.textContent = '✕ Annuler'; }
+    toast('Erreur: ' + err.message, true);
+  }
+}
+
+async function deleteJob(jobId, e) {
+  const btn = e ? e.target : null;
+  if (btn) { btn.disabled = true; }
+  try {
+    const r = await apiFetch(`/api/optimize/job?job_id=${encodeURIComponent(jobId)}`, {method:'DELETE'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    // Remove from local cache immediately
+    if (_lastJobs) delete _lastJobs[jobId];
+    _expandedJobs.delete(jobId);
+    renderJobs(_lastJobs || {});
+    toast('Job supprimé');
+  } catch(err) {
+    if (btn) { btn.disabled = false; }
+    toast('Erreur: ' + err.message, true);
   }
 }
 
