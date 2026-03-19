@@ -151,7 +151,10 @@
         <label class="chk-lbl"><input type="checkbox" id="i-mc"/>Monte-Carlo</label>
       </div>
       <div class="sb-divider"></div>
-      <button class="btn btn-cyan btn-full" id="btn-run" style="font-size:.83rem;padding:9px">&#x25B6; Lancer le backtest</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-cyan" id="btn-run" style="font-size:.83rem;padding:9px;flex:1">&#x25B6; Lancer le backtest</button>
+        <button class="btn btn-stop" id="btn-cancel-bt" onclick="cancelBacktest()" style="display:none;font-size:.83rem;padding:9px" title="Annuler le backtest en cours">&#x25A0; Annuler</button>
+      </div>
       <div style="display:flex;gap:6px">
         <button class="btn btn-ghost" id="btn-exp" disabled onclick="exportJSON()" style="flex:1;font-size:.72rem">&#x2193; JSON</button>
         <button class="btn btn-ghost" id="btn-pdf" disabled onclick="exportPDF()" style="flex:1;font-size:.72rem">&#x2193; PDF</button>
@@ -303,6 +306,7 @@ function logAdd(msg,cls=''){
 }
 
 // ── Run ──
+let _btAbort = null;
 async function run(){
   const sym=(document.getElementById('i-sym').value||'').trim().toUpperCase()||'BTC/USDC';
   const tf=document.getElementById('i-tf').value;
@@ -319,6 +323,7 @@ async function run(){
   const mc=document.getElementById('i-mc').checked;
   const selStrats=[...document.querySelectorAll('#strat-checks input:checked')].map(i=>i.id.replace('sc-',''));
   document.getElementById('btn-run').disabled=true;
+  document.getElementById('btn-cancel-bt').style.display='';
   document.getElementById('btn-exp').disabled=true;
   document.getElementById('msg').textContent='';
   document.getElementById('loader').style.display='block';
@@ -338,9 +343,10 @@ async function run(){
   if(mc){dynSteps.push([cursor,'Monte-Carlo : simulation des scénarios…']);cursor+=500;for(let i=1;i<=4;i++){dynSteps.push([cursor,`  ↳ MC runs ${(i-1)*50+1}–${Math.min(i*50,200)} / 200…`,'log-run']);cursor+=Math.round(timePerStrat*.3*nStrats/4);}dynSteps.push([cursor,'Monte-Carlo : calcul des percentiles P5/P50/P95…']);cursor+=500;}
   dynSteps.push([cursor,'Assemblage final & sérialisation JSON…']);
   const timers=[...steps,...dynSteps].map(([d,m,c])=>setTimeout(()=>logAdd(m,c),d));
+  _btAbort = new AbortController();
   try{
     const stratsParam=selStrats.length?`&strategies=${encodeURIComponent(selStrats.join(','))}`:'';
-    const r=await apiFetch(`/api/backtest?symbol=${encodeURIComponent(sym)}&limit=${lim}&timeframe=${tf}&walk_forward=${wf}&monte_carlo=${mc}${stratsParam}`,{method:'POST'});
+    const r=await apiFetch(`/api/backtest?symbol=${encodeURIComponent(sym)}&limit=${lim}&timeframe=${tf}&walk_forward=${wf}&monte_carlo=${mc}${stratsParam}`,{method:'POST',signal:_btAbort.signal});
     timers.forEach(t=>clearTimeout(t));
     if(!r.ok){const e=await r.json();throw new Error(e.detail||r.statusText);}
     btData=await r.json();
@@ -359,9 +365,24 @@ async function run(){
     renderResults();
   }catch(e){
     timers.forEach(t=>clearTimeout(t));
-    const msg=e.message.includes('429')||e.message.toLowerCase().includes('cours')?'⏳ Un backtest est déjà en cours, patientez…':'❌ '+e.message;
-    logAdd(msg,'log-err');document.getElementById('msg').textContent=msg;
-  }finally{document.getElementById('btn-run').disabled=false;document.getElementById('btn-pdf').disabled=!btData;document.getElementById('loader').style.display='none';}
+    if(e.name==='AbortError'){
+      logAdd('⊘ Backtest annulé','log-warn');
+      document.getElementById('msg').textContent='⊘ Backtest annulé';
+    } else {
+      const msg=e.message.includes('429')||e.message.toLowerCase().includes('cours')?'⏳ Un backtest est déjà en cours, patientez…':'❌ '+e.message;
+      logAdd(msg,'log-err');document.getElementById('msg').textContent=msg;
+    }
+  }finally{
+    _btAbort=null;
+    document.getElementById('btn-run').disabled=false;
+    document.getElementById('btn-cancel-bt').style.display='none';
+    document.getElementById('btn-pdf').disabled=!btData;
+    document.getElementById('loader').style.display='none';
+  }
+}
+
+function cancelBacktest(){
+  if(_btAbort){_btAbort.abort();}
 }
 
 // ── Render results ──

@@ -32,6 +32,7 @@ ML_STRATEGIES = {"ml_strategy", "ml_dynamic_threshold"}
 # ════════════════════════════════════════════════════════════════════════════
 _jobs: Dict[str, dict] = {}
 _jobs_lock = threading.Lock()
+_cancel_flags: Dict[str, threading.Event] = {}
 
 
 def _job_id(strategy: str, timeframe: str, symbol: str) -> str:
@@ -53,6 +54,31 @@ def _update_job(job_id: str, **kwargs):
         if job_id not in _jobs:
             _jobs[job_id] = {}
         _jobs[job_id].update(kwargs)
+
+
+def cancel_job(job_id: str) -> bool:
+    """Signal a running job to stop. Returns True if the job was running."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if not job or job.get("status") != "running":
+            return False
+    event = _cancel_flags.get(job_id)
+    if event:
+        event.set()
+    return True
+
+
+def delete_job(job_id: str) -> bool:
+    """Remove a job from the registry (only if not running). Returns True if deleted."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if not job:
+            return False
+        if job.get("status") == "running":
+            return False
+        del _jobs[job_id]
+        _cancel_flags.pop(job_id, None)
+        return True
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -169,6 +195,9 @@ class AutoOptimizer:
                 is_recommended  = tf in recommended_tfs
 
                 jid = _job_id(name, tf, symbol)
+                cancel_event = threading.Event()
+                with _jobs_lock:
+                    _cancel_flags[jid] = cancel_event
                 _update_job(jid,
                     status="running", strategy=name, timeframe=tf, symbol=symbol,
                     method=self.method, n_trials=self.n_trials,
@@ -197,7 +226,11 @@ class AutoOptimizer:
                      df_full: pl.DataFrame = None, split: int = None):
         trials_log = []
 
+        cancel_event = _cancel_flags.get(job_id)
+
         def on_progress(trial: int, total: int, best_score: float, latest: dict):
+            if cancel_event and cancel_event.is_set():
+                raise InterruptedError(f"Job {job_id} annulé par l'utilisateur")
             trials_log.append({
                 "trial":       trial,
                 "oos_pnl":     latest.get("oos_pnl", 0),
@@ -283,6 +316,9 @@ class AutoOptimizer:
                 except Exception as _ne:
                     logger.debug(f"[AutoOpt] notify KO : {_ne}")
 
+        except InterruptedError:
+            logger.info(f"[AutoOpt] {job_id} annulé par l'utilisateur")
+            _update_job(job_id, status="cancelled", finished_at=time.time())
         except Exception as e:
             logger.error(f"[AutoOpt] {job_id} KO : {e}", exc_info=True)
             _update_job(job_id, status="error", error=str(e), finished_at=time.time())
