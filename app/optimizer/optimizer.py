@@ -32,7 +32,7 @@ import polars as pl
 
 from app.engine.engine import Engine
 from app.engine.backtest import Backtester, BacktestResult
-from app.strategies.registry import (
+from app.engine.registry import (
     get_strategy_timeframes,
     get_param_spaces,
     get_fixed_params,

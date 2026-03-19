@@ -270,6 +270,10 @@ def config_page(request: Request):
 def scanner_page(request: Request):
     return _tpl("scanner.html", request, {"active_page": "scanner"})
 
+@app.get("/audit", response_class=HTMLResponse)
+def audit_page(request: Request):
+    return _tpl("audit.html", request, {"active_page": "audit"})
+
 
 # ═══════════════════════════════════════════════════════════════
 #  API — STATUS & CONFIG
@@ -971,6 +975,8 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
         # ── Séries indicateurs ────────────────────────────────────────────
         ema20_s  = close.ewm_mean(span=20,  adjust=False).to_list()
         ema50_s  = close.ewm_mean(span=50,  adjust=False).to_list()
+        ema100_s = close.ewm_mean(span=100, adjust=False).to_list() if n >= 50  else [None] * n
+        ema150_s = close.ewm_mean(span=150, adjust=False).to_list() if n >= 75  else [None] * n
         ema200_s = close.ewm_mean(span=200, adjust=False).to_list() if n >= 200 else [None] * n
 
         sma20_s  = close.rolling_mean(20).to_list()
@@ -1029,6 +1035,8 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
         indicators = {
             "ema20":       _line(ema20_s),
             "ema50":       _line(ema50_s),
+            "ema100":      _line(ema100_s),
+            "ema150":      _line(ema150_s),
             "ema200":      _line(ema200_s),
             "bb_upper":    _line(bb_up),
             "bb_mid":      _line(sma20_s),

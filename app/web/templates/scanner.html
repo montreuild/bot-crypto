@@ -96,16 +96,6 @@
             <div id="scan-status" style="font-size:.72rem;color:var(--dim);min-height:16px"></div>
           </div>
         </div>
-        <!-- Watchlist -->
-        <div class="panel" style="margin-top:16px">
-          <div class="panel-hdr">
-            ⭐ Watchlist
-            <button class="btn btn-sm btn-outline" style="margin-left:auto;font-size:.68rem" onclick="clearWatchlist()">✕ Vider</button>
-          </div>
-          <div class="panel-body" id="watchlist-container" style="min-height:36px;flex-direction:row;flex-wrap:wrap;gap:6px">
-            <div class="empty" style="padding:10px;width:100%">Cliquez sur ⭐ dans les résultats pour ajouter.</div>
-          </div>
-        </div>
         <div class="panel" style="margin-top:16px">
           <div class="panel-hdr">
             🎯 Opportunités
@@ -155,12 +145,12 @@
             <table>
               <thead>
                 <tr>
-                  <th></th><th>Paire</th><th>Régime</th><th>ADX</th><th>RSI</th>
+                  <th>Paire</th><th>Régime</th><th>ADX</th><th>RSI</th>
                   <th>ATR%</th><th>Vol ratio</th><th>Vol 24h</th><th>Stratégies</th>
                 </tr>
               </thead>
               <tbody id="scan-tbody">
-                <tr><td colspan="9" class="empty-row">Lancez un scan pour voir les résultats.</td></tr>
+                <tr><td colspan="8" class="empty-row">Lancez un scan pour voir les résultats.</td></tr>
               </tbody>
             </table>
           </div>
@@ -189,6 +179,17 @@
           <button class="btn btn-cyan btn-sm" onclick="loadChart()" aria-label="Charger le graphique">⟳ Charger</button>
         </div>
       </div>
+      <!-- Sélecteur d'indicateurs -->
+      <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:14px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:.68rem;color:var(--dim);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Indicateurs :</span>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema20"  checked onchange="toggleIndicator('ema20')"  style="accent-color:var(--cyan)"> EMA 20</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema50"  checked onchange="toggleIndicator('ema50')"  style="accent-color:#fbbf24"> EMA 50</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema100" onchange="toggleIndicator('ema100')" style="accent-color:#34d399"> EMA 100</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema150" onchange="toggleIndicator('ema150')" style="accent-color:#fb7185"> EMA 150</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema200" checked onchange="toggleIndicator('ema200')" style="accent-color:#a78bfa"> EMA 200</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-bb"     checked onchange="toggleIndicator('bb')"     style="accent-color:rgba(77,159,255,.8)"> Bollinger</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-sr"           onchange="toggleIndicator('sr')"     style="accent-color:#ffd166"> Sup/Rés</label>
+      </div>
       <div class="panel-body" style="gap:0;padding:0">
         <div id="chart-status" style="padding:8px 14px;font-size:.72rem;color:var(--dim);min-height:20px"></div>
         <div style="padding:0 8px">
@@ -203,6 +204,18 @@
         </div>
       </div>
     </div>
+
+    <!-- ── Prédictions par stratégie ───────────────────────────────── -->
+    <div class="panel" id="pred-panel" style="margin-top:16px;display:none">
+      <div class="panel-hdr">
+        🧠 Prédictions des stratégies
+        <span id="pred-sym-lbl" style="margin-left:6px;font-size:.72rem;color:var(--cyan)"></span>
+        <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="loadPredictions()">↺ Refresh</button>
+      </div>
+      <div class="panel-body" id="pred-body">
+        <div class="empty">Chargez un graphique pour voir les prédictions.</div>
+      </div>
+    </div>
   </div>
 </div>
 {% endblock %}
@@ -210,7 +223,6 @@
 {% block body_scripts %}
 <script>
 const LS_FILTERS = 'scanner_filters_v1';
-const LS_WATCHLIST = 'scanner_watchlist_v1';
 let scanResults = [];
 let openPositionSymbols = new Set();
 
@@ -237,22 +249,6 @@ function restoreFilters(){
     if(d.rsiLo!==undefined)document.getElementById('f-rsi-lo').value=d.rsiLo;
     if(d.rsiHi!==undefined)document.getElementById('f-rsi-hi').value=d.rsiHi;
   }catch(_){}
-}
-
-// ── Watchlist ───────────────────────────────────────────────────────────
-function getWatchlist(){try{return JSON.parse(localStorage.getItem(LS_WATCHLIST)||'[]');}catch(_){return[];}}
-function saveWatchlist(wl){try{localStorage.setItem(LS_WATCHLIST,JSON.stringify(wl));}catch(_){}}
-function toggleWatchlist(sym){
-  let wl=getWatchlist();
-  if(wl.includes(sym))wl=wl.filter(s=>s!==sym);else wl.push(sym);
-  saveWatchlist(wl);renderWatchlist();applyFilters();
-}
-function clearWatchlist(){saveWatchlist([]);renderWatchlist();applyFilters();}
-function renderWatchlist(){
-  const wl=getWatchlist();
-  const el=document.getElementById('watchlist-container');
-  if(!wl.length){el.innerHTML='<div class="empty" style="padding:10px;width:100%">Cliquez sur ⭐ dans les résultats pour ajouter.</div>';return;}
-  el.innerHTML=wl.map(s=>`<span class="wl-pill active" onclick="toggleWatchlist('${escHtml(s)}')" title="Retirer de la watchlist">${escHtml(s)} ✕</span>`).join('');
 }
 
 // ── Open positions (for badge) ──────────────────────────────────────────
@@ -326,24 +322,36 @@ function renderChips(results){
   chips.innerHTML=[['ADX moy.',avgAdx,'var(--cyan)'],['RSI moy.',avgRsi,'var(--amber)'],['ATR% moy.',avgAtr+'%','var(--green)'],['Paires',results.length,'var(--muted)'],['Watchlist',wlCount||'—','var(--purple)']].map(([lbl,val,clr])=>`<div class="stat-chip"><div class="chip-lbl">${lbl}</div><div class="chip-val" style="color:${clr}">${val}</div></div>`).join('');
 }
 
-// ── Scan table (with position badge + watchlist star) ───────────────────
+// ── Scan table ──────────────────────────────────────────────────────────
 function renderScanTable(results){
-  if(!results.length){document.getElementById('scan-tbody').innerHTML='<tr><td colspan="9" class="empty-row">Aucun résultat correspondant aux filtres.</td></tr>';return;}
-  const wl=getWatchlist();
+  if(!results.length){document.getElementById('scan-tbody').innerHTML='<tr><td colspan="8" class="empty-row">Aucun résultat correspondant aux filtres.</td></tr>';return;}
   document.getElementById('scan-tbody').innerHTML=results.map(r=>{
     const ind=r.indicators||{},adx=+(ind.adx||0),rsi=+(ind.rsi||50),atrPct=+(ind.atr_pct||0),volR=+(ind.vol_ratio||1),vol24=+(r.volume_24h||0);
     const strats=(r.strategies||[]).map(s=>`<span class="tag tag-strat">${escHtml(s)}</span>`).join(' ');
     const regimeClass=r.regime_label?.includes('Trend fort')?'tag-trend':r.regime_label?.includes('modéré')?'tag-trend':r.regime_label?.includes('Range')?'tag-range':r.regime_label?.includes('Panic')?'tag-panic':'tag-neutral';
     const rsiClr=rsi<35?'var(--red)':rsi>65?'var(--amber)':'var(--green)';
     const adxW=Math.round(adx*0.8),vol24M=vol24>=1e9?(vol24/1e9).toFixed(2)+'B':(vol24/1e6).toFixed(0)+'M';
-    // position badge: compare normalised symbol ("btcusdc")
     const symNorm=(r.symbol||'').replace('/','').toLowerCase();
     const hasPos=openPositionSymbols.has(symNorm);
     const posBadge=hasPos?'<span class="pos-badge" title="Position ouverte"></span>':'';
-    const inWl=wl.includes(r.symbol);
-    const starBtn=`<button onclick="toggleWatchlist('${escHtml(r.symbol)}')" style="background:none;border:none;cursor:pointer;font-size:.85rem;color:${inWl?'var(--amber)':'var(--dim)'};padding:0 4px" title="${inWl?'Retirer':'Ajouter'} watchlist" aria-label="${inWl?'Retirer de':'Ajouter à'} la watchlist">${inWl?'★':'☆'}</button>`;
-    return`<tr><td style="padding:6px 8px">${starBtn}</td><td><strong>${escHtml(r.symbol)}</strong>${posBadge}</td><td><span class="tag ${regimeClass}">${escHtml(r.regime_label||'?')}</span></td><td><span style="font-family:var(--mono)">${adx.toFixed(1)}</span><br><span class="adx-bar" style="width:${adxW}px"></span></td><td><span class="rsi-pill" style="background:${rsiClr}22;color:${rsiClr}">${rsi.toFixed(0)}</span></td><td style="font-family:var(--mono);color:${atrPct>3?'var(--amber)':'var(--text)'}">${atrPct.toFixed(2)}%</td><td style="font-family:var(--mono);color:${volR>1.5?'var(--green)':'var(--text)'}">${volR.toFixed(2)}×</td><td style="color:var(--dim)">${vol24M}</td><td>${strats}</td></tr>`;
+    // Click on row loads the chart for this pair
+    const sym=escHtml(r.symbol);
+    return`<tr style="cursor:pointer" onclick="loadChartFor('${sym}')" title="Cliquer pour afficher le graphique">
+      <td><strong>${sym}</strong>${posBadge}</td>
+      <td><span class="tag ${regimeClass}">${escHtml(r.regime_label||'?')}</span></td>
+      <td><span style="font-family:var(--mono)">${adx.toFixed(1)}</span><br><span class="adx-bar" style="width:${adxW}px"></span></td>
+      <td><span class="rsi-pill" style="background:${rsiClr}22;color:${rsiClr}">${rsi.toFixed(0)}</span></td>
+      <td style="font-family:var(--mono);color:${atrPct>3?'var(--amber)':'var(--text)'}">${atrPct.toFixed(2)}%</td>
+      <td style="font-family:var(--mono);color:${volR>1.5?'var(--green)':'var(--text)'}">${volR.toFixed(2)}×</td>
+      <td style="color:var(--dim)">${vol24M}</td>
+      <td>${strats}</td>
+    </tr>`;
   }).join('');
+}
+function loadChartFor(sym){
+  document.getElementById('chart-symbol').value=sym;
+  loadChart();
+  document.getElementById('chart-price').scrollIntoView({behavior:'smooth',block:'start'});
 }
 
 // ── Opportunities ───────────────────────────────────────────────────────
@@ -369,7 +377,6 @@ function renderOpportunities(opps){
 
 // ── Init ────────────────────────────────────────────────────────────────
 restoreFilters();
-renderWatchlist();
 loadConfig();
 loadOpenPositions();
 document.getElementById('opp-list').innerHTML='<div class="empty" style="color:var(--dim)">Cliquez sur <strong style="color:var(--text)">↺ Refresh</strong> pour charger les opportunités.</div>';
@@ -377,6 +384,10 @@ document.getElementById('opp-list').innerHTML='<div class="empty" style="color:v
 // ── Graphique Scanner ───────────────────────────────────────────────────
 let chartTf = '1h';
 let tvPriceChart = null, tvVolChart = null, tvRsiChart = null, tvMacdChart = null;
+// Series refs for indicator toggles
+let _seriesMap = {};
+// Resize observers to disconnect on destroy
+let _resizeObservers = [];
 
 const CHART_TV = {
   layout: {background:{type:'solid',color:'transparent'}, textColor:'#5a7099'},
@@ -391,14 +402,23 @@ const CHART_TV = {
 function _mkChart(elId, h, extraOpts){
   const el = document.getElementById(elId);
   if(!el) return null;
+  // Clear any previous chart DOM content before creating
+  el.innerHTML = '';
   const c = LightweightCharts.createChart(el, {...CHART_TV, ...extraOpts, height:h, width:el.offsetWidth||800});
-  new ResizeObserver(()=>c.applyOptions({width:el.offsetWidth})).observe(el);
+  const ro = new ResizeObserver(()=>{try{c.applyOptions({width:el.offsetWidth});}catch(_){}});
+  ro.observe(el);
+  _resizeObservers.push(ro);
   return c;
 }
 
 function _destroyCharts(){
+  // Disconnect all resize observers first
+  _resizeObservers.forEach(ro=>{try{ro.disconnect();}catch(_){}});
+  _resizeObservers = [];
+  // Remove charts
   [tvPriceChart, tvVolChart, tvRsiChart, tvMacdChart].forEach(c=>{try{if(c)c.remove();}catch(_){}});
   tvPriceChart=tvVolChart=tvRsiChart=tvMacdChart=null;
+  _seriesMap = {};
 }
 
 function setChartTf(tf){
@@ -419,14 +439,63 @@ async function loadChart(){
     statusEl.textContent = `${d.n_bars} bougies · ${d.symbol} · ${d.timeframe}`;
     document.getElementById('chart-title-lbl').textContent = `${d.symbol} · ${d.timeframe}`;
     _renderChart(d);
+    // Show predictions panel
+    document.getElementById('pred-panel').style.display='';
+    document.getElementById('pred-sym-lbl').textContent=`— ${sym} · ${chartTf}`;
+    loadPredictions();
   }catch(e){
     statusEl.textContent = '⚠ ' + e.message;
   }
 }
 
+function toggleIndicator(name){
+  const checked = document.getElementById('tog-'+name)?.checked;
+  if(name==='bb'){
+    ['bb_up','bb_mid','bb_dn'].forEach(k=>{
+      try{if(_seriesMap[k])_seriesMap[k].applyOptions({visible:!!checked});}catch(_){}
+    });
+  } else if(name==='sr'){
+    ['sr_res','sr_sup'].forEach(k=>{
+      try{if(_seriesMap[k])_seriesMap[k].applyOptions({visible:!!checked});}catch(_){}
+    });
+  } else {
+    try{if(_seriesMap[name])_seriesMap[name].applyOptions({visible:!!checked});}catch(_){}
+  }
+}
+
+function _pivotSR(candles, lookback=10){
+  // Simple pivot-based support/resistance using local maxima/minima
+  const res=[], sup=[];
+  for(let i=lookback; i<candles.length-lookback; i++){
+    const c=candles[i];
+    let isHigh=true, isLow=true;
+    for(let j=i-lookback; j<=i+lookback; j++){
+      if(j===i) continue;
+      if(candles[j].high>=c.high) isHigh=false;
+      if(candles[j].low<=c.low)  isLow=false;
+    }
+    if(isHigh) res.push(c.high);
+    if(isLow)  sup.push(c.low);
+  }
+  // Cluster nearby levels (within 0.5%)
+  const cluster=(arr)=>{
+    const sorted=[...arr].sort((a,b)=>a-b);
+    const out=[];
+    for(let i=0;i<sorted.length;i++){
+      if(!out.length||sorted[i]/out[out.length-1]>1.005) out.push(sorted[i]);
+    }
+    return out;
+  };
+  return {resistance:cluster(res).slice(-5), support:cluster(sup).slice(0,5)};
+}
+
 function _renderChart(d){
   const candles = d.candles || [];
   const ind = d.indicators || {};
+  if(!candles.length) return;
+
+  const firstTime = candles[0].time;
+  const lastTime  = candles[candles.length-1].time;
 
   // ── Price (candlestick + EMAs + BB) ──────────────────────────────────
   tvPriceChart = _mkChart('chart-price', 300, {timeScale:{borderColor:'rgba(255,255,255,.06)',visible:true,timeVisible:true}});
@@ -440,20 +509,41 @@ function _renderChart(d){
   candleSeries.setData(candles.map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));
 
   // Bollinger Bands
-  const bbUpS  = tvPriceChart.addLineSeries({color:'rgba(77,159,255,.45)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
-  const bbMidS = tvPriceChart.addLineSeries({color:'rgba(77,159,255,.3)', lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
-  const bbDnS  = tvPriceChart.addLineSeries({color:'rgba(77,159,255,.45)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
+  const bbVisible = document.getElementById('tog-bb')?.checked!==false;
+  const bbUpS  = tvPriceChart.addLineSeries({color:'rgba(77,159,255,.45)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false,visible:bbVisible});
+  const bbMidS = tvPriceChart.addLineSeries({color:'rgba(77,159,255,.3)', lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false,visible:bbVisible});
+  const bbDnS  = tvPriceChart.addLineSeries({color:'rgba(77,159,255,.45)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false,visible:bbVisible});
   if(ind.bb_upper?.length) bbUpS.setData(ind.bb_upper);
   if(ind.bb_mid?.length)   bbMidS.setData(ind.bb_mid);
   if(ind.bb_lower?.length) bbDnS.setData(ind.bb_lower);
+  _seriesMap.bb_up=bbUpS; _seriesMap.bb_mid=bbMidS; _seriesMap.bb_dn=bbDnS;
 
-  // EMAs
-  const ema20S  = tvPriceChart.addLineSeries({color:'#22d3ee',lineWidth:1.5,priceLineVisible:false,lastValueVisible:true,title:'EMA20'});
-  const ema50S  = tvPriceChart.addLineSeries({color:'#fbbf24',lineWidth:1.5,priceLineVisible:false,lastValueVisible:true,title:'EMA50'});
-  const ema200S = tvPriceChart.addLineSeries({color:'#a78bfa',lineWidth:1.5,priceLineVisible:false,lastValueVisible:true,title:'EMA200'});
-  if(ind.ema20?.length)  ema20S.setData(ind.ema20);
-  if(ind.ema50?.length)  ema50S.setData(ind.ema50);
-  if(ind.ema200?.length) ema200S.setData(ind.ema200);
+  // EMAs — togglable
+  const mkEma=(key,color,width,title)=>{
+    const vis=document.getElementById('tog-'+key)?.checked!==false;
+    const s=tvPriceChart.addLineSeries({color,lineWidth:width,priceLineVisible:false,lastValueVisible:true,title,visible:vis});
+    if(ind[key]?.length) s.setData(ind[key]);
+    _seriesMap[key]=s;
+  };
+  mkEma('ema20', '#22d3ee', 1.5, 'EMA20');
+  mkEma('ema50', '#fbbf24', 1.5, 'EMA50');
+  mkEma('ema100','#34d399', 1,   'EMA100');
+  mkEma('ema150','#fb7185', 1,   'EMA150');
+  mkEma('ema200','#a78bfa', 1.5, 'EMA200');
+
+  // Support / Resistance pivot lines
+  const srVisible = document.getElementById('tog-sr')?.checked===true;
+  const {resistance, support} = _pivotSR(candles);
+  const _addPriceLine=(chart,price,color)=>{
+    const s=chart.addLineSeries({color,lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dotted,priceLineVisible:false,lastValueVisible:false,visible:srVisible});
+    s.setData([{time:firstTime,value:price},{time:lastTime,value:price}]);
+    return s;
+  };
+  const srResSeries = resistance.map(p=>_addPriceLine(tvPriceChart,p,'rgba(251,113,133,.6)'));
+  const srSupSeries = support.map(p=>_addPriceLine(tvPriceChart,p,'rgba(52,211,153,.6)'));
+  // Group for toggle
+  _seriesMap.sr_res = {applyOptions:(o)=>srResSeries.forEach(s=>{try{s.applyOptions(o);}catch(_){}})};
+  _seriesMap.sr_sup = {applyOptions:(o)=>srSupSeries.forEach(s=>{try{s.applyOptions(o);}catch(_){}})};
 
   tvPriceChart.timeScale().fitContent();
 
@@ -470,20 +560,17 @@ function _renderChart(d){
 
   // ── RSI ───────────────────────────────────────────────────────────────
   tvRsiChart = _mkChart('chart-rsi', 90, {
-    rightPriceScale:{scaleMargins:{top:.1,bottom:.1}},
+    rightPriceScale:{scaleMargins:{top:.1,bottom:.1},autoScale:true},
     timeScale:{visible:false},
   });
   if(tvRsiChart && ind.rsi?.length){
     const rsiS = tvRsiChart.addLineSeries({color:'#fbbf24',lineWidth:1.5,priceLineVisible:false,lastValueVisible:true});
     rsiS.setData(ind.rsi);
-    // Overbought/oversold reference lines
+    // Reference lines use full candle time range so they align with price chart
     const ob = tvRsiChart.addLineSeries({color:'rgba(251,113,133,.5)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dotted,priceLineVisible:false,lastValueVisible:false});
     const os = tvRsiChart.addLineSeries({color:'rgba(52,211,153,.5)', lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dotted,priceLineVisible:false,lastValueVisible:false});
-    const rsiTimes = ind.rsi.map(p=>p.time);
-    if(rsiTimes.length){
-      ob.setData(rsiTimes.map(t=>({time:t,value:70})));
-      os.setData(rsiTimes.map(t=>({time:t,value:30})));
-    }
+    ob.setData([{time:firstTime,value:70},{time:lastTime,value:70}]);
+    os.setData([{time:firstTime,value:30},{time:lastTime,value:30}]);
     tvRsiChart.timeScale().fitContent();
   }
 
@@ -508,24 +595,78 @@ function _renderChart(d){
     tvMacdChart.timeScale().fitContent();
   }
 
-  // ── Sync all sub-charts with price chart (one-way + guard flag) ───────
+  // ── Sync sub-charts to price chart via TIME range (fixes RSI offset) ─
   let _syncing = false;
   const _subCharts = [tvVolChart, tvRsiChart, tvMacdChart].filter(Boolean);
-  tvPriceChart.timeScale().subscribeVisibleLogicalRangeChange(r=>{
-    if(_syncing||!r) return;
+
+  tvPriceChart.timeScale().subscribeVisibleTimeRangeChange(range=>{
+    if(_syncing||!range) return;
     _syncing=true;
-    _subCharts.forEach(c=>{try{c.timeScale().setVisibleLogicalRange(r);}catch(_){}});
+    _subCharts.forEach(c=>{try{c.timeScale().setVisibleRange(range);}catch(_){}});
     _syncing=false;
   });
   _subCharts.forEach(sub=>{
-    sub.timeScale().subscribeVisibleLogicalRangeChange(r=>{
-      if(_syncing||!r) return;
+    sub.timeScale().subscribeVisibleTimeRangeChange(range=>{
+      if(_syncing||!range) return;
       _syncing=true;
-      tvPriceChart.timeScale().setVisibleLogicalRange(r);
-      _subCharts.forEach(c=>{if(c!==sub){try{c.timeScale().setVisibleLogicalRange(r);}catch(_){}}});
+      try{tvPriceChart.timeScale().setVisibleRange(range);}catch(_){}
+      _subCharts.forEach(c=>{if(c!==sub){try{c.timeScale().setVisibleRange(range);}catch(_){}}});
       _syncing=false;
     });
   });
+}
+
+// ── Prédictions des stratégies ──────────────────────────────────────────
+async function loadPredictions(){
+  const sym = (document.getElementById('chart-symbol').value||'BTC/USDC').trim();
+  const body = document.getElementById('pred-body');
+  if(!body) return;
+  body.innerHTML = '<div class="empty"><span class="spinner"></span> Analyse en cours…</div>';
+  try{
+    const r = await apiFetch(`/api/scanner?timeframe=${chartTf}&limit=200`);
+    if(!r.ok) throw new Error(r.statusText);
+    const d = await r.json();
+    const item = (d.results||[]).find(x=>x.symbol===sym);
+    if(!item){
+      body.innerHTML='<div class="empty">Aucune donnée de stratégie pour cette paire / ce timeframe.<br>Lancez un scan pour mettre à jour.</div>';
+      return;
+    }
+    const strats = item.strategies || [];
+    const allStrats = item.all_strategy_scores || {};
+    if(!strats.length && !Object.keys(allStrats).length){
+      body.innerHTML='<div class="empty">Aucune stratégie active sur cette paire.</div>';
+      return;
+    }
+    // Build cards
+    const cards = Object.entries(allStrats).map(([name,info])=>{
+      const score=+(info.score||0),side=info.side||'none',active=strats.includes(name);
+      const sideClr=side==='long'?'var(--green)':side==='short'?'var(--red)':'var(--dim)';
+      const sideTag=side==='long'?'<span class="tag tag-long">LONG</span>':side==='short'?'<span class="tag tag-short">SHORT</span>':'<span class="tag tag-rej">—</span>';
+      const scoreW=Math.round(score*100);
+      const activeTag=active?'<span style="font-size:.62rem;color:var(--green);margin-left:4px">● actif</span>':'';
+      return`<div style="background:var(--card);border:1px solid ${active?'rgba(34,211,238,.25)':'var(--border)'};border-radius:var(--r-sm);padding:10px 12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-weight:600;font-family:var(--mono);font-size:.78rem">${escHtml(name)}${activeTag}</span>
+          ${sideTag}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:4px;background:var(--border);border-radius:2px">
+            <div style="width:${scoreW}%;height:100%;border-radius:2px;background:${sideClr};transition:width .3s"></div>
+          </div>
+          <span style="font-size:.72rem;font-family:var(--mono);color:${sideClr};min-width:32px;text-align:right">${scoreW}%</span>
+        </div>
+        ${info.reason?`<div style="font-size:.67rem;color:var(--dim);margin-top:5px;line-height:1.4">${escHtml(info.reason)}</div>`:''}
+      </div>`;
+    });
+    if(cards.length){
+      body.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px">${cards.join('')}</div>`;
+    } else {
+      // Fall back to just listing active strategies
+      body.innerHTML=`<div class="empty">Données détaillées non disponibles. Stratégies actives : ${strats.map(s=>`<span class="tag tag-strat">${escHtml(s)}</span>`).join(' ')||'aucune'}</div>`;
+    }
+  }catch(e){
+    body.innerHTML=`<div class="empty">⚠ ${escHtml(e.message)}</div>`;
+  }
 }
 
 // Auto-load chart on page init

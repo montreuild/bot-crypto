@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %} — Audit{% endblock %}
+
+{% block page_styles %}
+.audit-main{max-width:1200px;margin:0 auto;padding:20px 16px;}
+.sec-hdr{margin-bottom:10px;display:flex;align-items:center;gap:10px;}
+.sec-hdr h2{font-size:.85rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:0;}
+.sec-hdr-line{flex:1;height:1px;background:var(--border);}
+.audit-section{margin-bottom:28px;}
+{% endblock %}
+
+{% block topbar_content %}
+<div class="topbar-title">Audit</div>
+<div class="topbar-sep"></div>
+{% endblock %}
+
+{% block content %}
+<div id="content">
+  <div class="audit-main">
+
+    <!-- TOP par Timeframe & Classement OOS par TF -->
+    <div class="audit-section">
+      <div class="sec-hdr"><h2>TOP par Timeframe</h2><span class="sec-hdr-line"></span>
+        <button onclick="loadOptResults()" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:.7rem">&#x21BA;</button>
+      </div>
+      <div id="opt-results-container"><div style="color:var(--dim);font-size:.78rem;padding:8px">Chargement…</div></div>
+    </div>
+
+    <!-- Historique des paramètres optimisés -->
+    <div class="audit-section">
+      <div class="sec-hdr"><h2>Historique des paramètres optimisés</h2><span class="sec-hdr-line"></span></div>
+      <div class="table-card">
+        <div class="tscroll"><table>
+          <thead><tr>
+            <th>Date</th><th>Stratégie</th><th>TF</th><th>Paramètres modifiés</th><th class="r">Score OOS</th>
+          </tr></thead>
+          <tbody id="changelog-body"><tr><td colspan="5" class="empty-row">Chargement…</td></tr></tbody>
+        </table></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block body_scripts %}
+<script>
+async function loadOptResults() {
+  try {
+    const r = await apiFetch('/api/optimize/results');
+    const d = await r.json();
+    renderOptResults(d);
+  } catch(e) {
+    document.getElementById('opt-results-container').innerHTML =
+      `<div style="color:var(--red);font-size:.75rem">Erreur : ${e.message}</div>`;
+  }
+}
+
+function renderOptResults(d) {
+  const byStratTf = d.by_strategy_tf || {};
+  const activeTf  = d.active_per_tf  || {};
+  const container = document.getElementById('opt-results-container');
+
+  if (!Object.keys(byStratTf).length) {
+    container.innerHTML = '<div style="color:var(--dim);font-size:.78rem;padding:8px">Aucun résultat d\'optimisation. Lancez une optimisation avec auto-apply pour voir les résultats ici.</div>';
+    return;
+  }
+
+  const allTfs = [...new Set(Object.values(byStratTf).flatMap(m => Object.keys(m)))].sort((a,b) => {
+    const order = ['1m','3m','5m','15m','30m','1h','2h','4h','1d'];
+    return order.indexOf(a) - order.indexOf(b);
+  });
+  const allStrats = Object.keys(byStratTf).sort();
+
+  if (!allTfs.length) {
+    container.innerHTML = '<div style="color:var(--dim);font-size:.78rem;padding:8px">Aucun résultat.</div>';
+    return;
+  }
+
+  let html = `<div style="font-size:.63rem;color:var(--dim);padding:4px 0 8px;display:flex;gap:12px;flex-wrap:wrap">
+    <span>Score OOS : <span style="color:var(--green)">≥ 0.0</span> = bon &nbsp;
+    <span style="color:var(--amber)">-0.05 à 0</span> = limite &nbsp;
+    <span style="color:var(--red)">&lt; -0.05</span> = exclu</span>
+  </div>`;
+
+  // TOP per TF cards
+  html += `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+  ${allTfs.map(tf => {
+    const entries = allStrats
+      .filter(s => byStratTf[s]?.[tf])
+      .map(s => ({ strat: s, ...byStratTf[s][tf] }))
+      .sort((a,b) => (b.oos_score||0) - (a.oos_score||0))
+      .slice(0, 5);
+    if (!entries.length) return '';
+    const activList = activeTf[tf] || [];
+    return `<div style="flex:1;min-width:180px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px">
+      <div style="font-size:.7rem;color:var(--cyan);font-weight:700;font-family:var(--mono);margin-bottom:8px">TOP ${tf}</div>
+      ${entries.map((e,i) => {
+        const score = e.oos_score || 0;
+        const scoreClr = score >= 0.0 ? 'var(--green)' : score >= -0.05 ? 'var(--amber)' : 'var(--red)';
+        const isActive = activList.includes(e.strat);
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+          <div>
+            <span style="font-size:.7rem;color:var(--dim);margin-right:4px">#${i+1}</span>
+            <span style="font-family:var(--mono);font-size:.73rem;font-weight:${isActive?700:400};color:${isActive?'var(--text)':'var(--muted)'}">${e.strat}</span>
+            ${isActive ? '<span style="color:var(--green);font-size:.6rem;margin-left:3px">●</span>' : ''}
+          </div>
+          <span style="font-family:var(--mono);font-size:.75rem;font-weight:700;color:${scoreClr}">${score.toFixed(3)}</span>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }).join('')}
+  </div>`;
+
+  // Classement OOS table
+  html += `<div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:600;margin-bottom:8px">Classement OOS par TF</div>`;
+  html += `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:${allTfs.length * 160 + 120}px">
+    <thead><tr>
+      <th style="padding:6px 10px;text-align:left;font-size:.63rem;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap">Stratégie</th>
+      ${allTfs.map(tf => {
+        const active = activeTf[tf] || [];
+        return `<th style="padding:6px 10px;text-align:center;font-size:.63rem;color:var(--cyan);text-transform:uppercase;border-bottom:1px solid var(--border);font-family:var(--mono)">
+          ${tf}
+          ${active.length ? `<div style="font-size:.58rem;color:var(--green);font-weight:400">${active.length} actif${active.length>1?'s':''}</div>` : ''}
+        </th>`;
+      }).join('')}
+    </tr></thead>
+    <tbody>
+      ${allStrats.map(strat => {
+        const cells = allTfs.map(tf => {
+          const entry = byStratTf[strat]?.[tf];
+          if (!entry) return `<td style="padding:6px 10px;text-align:center;color:var(--border)">—</td>`;
+          const score = entry.oos_score || 0;
+          const scoreClr = score >= 0.0 ? 'var(--green)' : score >= -0.05 ? 'var(--amber)' : 'var(--red)';
+          const isActive = (activeTf[tf] || []).includes(strat);
+          const isExcluded = score < -0.05;
+          return `<td style="padding:6px 10px;text-align:center;${isActive?'background:rgba(52,211,153,.04)':''}">
+            <div style="font-weight:700;font-family:var(--mono);font-size:.82rem;color:${scoreClr}">${score.toFixed(3)}</div>
+            <div style="font-size:.6rem;color:var(--dim);margin-top:1px">${entry.run_date||''}</div>
+            ${isActive ? '<div style="font-size:.58rem;color:var(--green);font-weight:700">● ACTIF</div>' : ''}
+            ${isExcluded ? '<div style="font-size:.58rem;color:var(--red)">✗ EXCLU</div>' : ''}
+          </td>`;
+        }).join('');
+        return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
+          <td style="padding:6px 10px;font-family:var(--mono);font-size:.76rem;font-weight:600;white-space:nowrap;color:var(--text)">${strat}</td>
+          ${cells}
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table></div>`;
+
+  container.innerHTML = html;
+}
+
+async function loadChangelog(){
+  const el=document.getElementById('changelog-body');if(!el)return;
+  try{
+    const rows=await apiFetch('/api/config/changelog?limit=100').then(r=>r.json()).catch(()=>[]);
+    if(!rows||!rows.length){el.innerHTML='<tr><td colspan="5" class="empty-row">Aucun changement enregistré.</td></tr>';return;}
+    el.innerHTML=rows.map(r=>{
+      const t=new Date(r.timestamp),ts=isNaN(t)?(r.timestamp||'—'):t.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'2-digit'})+' '+t.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+      const changes=Object.entries(r.changed||{}).map(([k,v])=>`<span style="display:inline-block;margin:1px 3px 1px 0;font-size:.66rem;font-family:var(--mono);background:var(--card);border:1px solid var(--border);border-radius:3px;padding:1px 6px"><strong style="color:var(--text)">${escHtml(k)}</strong><span style="color:var(--dim)"> ${v.before??'—'}</span><span style="color:var(--muted)"> → </span><strong style="color:var(--cyan)">${v.after}</strong></span>`).join('');
+      const scoreVal=r.oos_score!=null?(+(r.oos_score)).toFixed(3):'—',scoreClr=r.oos_score>0.4?'var(--green)':r.oos_score>0.1?'var(--amber)':'var(--red)';
+      return`<tr><td style="color:var(--dim);font-size:.7rem;white-space:nowrap;font-family:var(--mono)">${ts}</td><td><span class="tag tag-strat">${escHtml(r.strategy||'—')}</span></td><td style="font-family:var(--mono);font-size:.72rem;color:var(--cyan)">${escHtml(r.timeframe||'—')}</td><td>${!Object.keys(r.changed||{}).length?'<span style="color:var(--dim);font-size:.7rem">Aucun changement</span>':changes}</td><td style="text-align:right;font-family:var(--mono);font-size:.75rem;font-weight:700;color:${scoreClr}">${scoreVal}</td></tr>`;
+    }).join('');
+  }catch(e){el.innerHTML=`<tr><td colspan="5" class="empty-row" style="color:var(--red)">Erreur : ${escHtml(e.message)}</td></tr>`;}
+}
+loadOptResults();
+loadChangelog();
+</script>
+{% endblock %}

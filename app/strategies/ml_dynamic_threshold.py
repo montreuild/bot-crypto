@@ -385,7 +385,8 @@ class MLDynamicThresholdStrategy:
             n       = len(df)
             n_valid = max(0, n - 2 * self.lookahead)
             X       = feats[:n_valid].to_numpy()
-            y       = labels[:n_valid].to_numpy()
+            # fill_null(0) évite les NaN qui transforment Int32→float64 en numpy
+            y       = labels[:n_valid].fill_null(0).to_numpy().astype(np.int64)
 
             # Sécurité : deux classes minimum
             if len(np.unique(y)) < 2:
