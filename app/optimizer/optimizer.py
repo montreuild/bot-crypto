@@ -131,46 +131,51 @@ def _eval_worker(args: tuple) -> dict:
     Utilise polars IPC pour déséraliser les DataFrames efficacement.
     """
     strategy_name, cfg_yaml, df_is_ipc, df_oos_ipc, symbol, params = args
-    import yaml as _yaml
-    import importlib as _imp
-    import polars as _pl
-    from copy import deepcopy as _dp
-    from app.engine.engine import Engine as _Engine
-    from app.engine.backtest import Backtester as _Backtester
+    try:
+        import yaml as _yaml
+        import importlib as _imp
+        import polars as _pl
+        from copy import deepcopy as _dp
+        from app.engine.engine import Engine as _Engine
+        from app.engine.backtest import Backtester as _Backtester
 
-    _cfg = _yaml.safe_load(cfg_yaml)
-    _df_is  = _pl.read_ipc(io.BytesIO(df_is_ipc))
-    _df_oos = _pl.read_ipc(io.BytesIO(df_oos_ipc))
+        _cfg = _yaml.safe_load(cfg_yaml)
+        _df_is  = _pl.read_ipc(io.BytesIO(df_is_ipc))
+        _df_oos = _pl.read_ipc(io.BytesIO(df_oos_ipc))
 
-    _mod = _imp.import_module(f"app.strategies.{strategy_name}")
-    _eng = _Engine()
-    _eng.register(_mod.Strategy(), silent=True)
-    _cfg_copy = _dp(_cfg)
-    _cfg_copy.setdefault("strategy_params", {})[strategy_name] = params
-    _bt = _Backtester(_eng, _cfg_copy)
+        _mod = _imp.import_module(f"app.strategies.{strategy_name}")
+        _eng = _Engine()
+        _eng.register(_mod.Strategy(), silent=True)
+        _cfg_copy = _dp(_cfg)
+        _cfg_copy.setdefault("strategy_params", {})[strategy_name] = params
+        _bt = _Backtester(_eng, _cfg_copy)
 
-    _res_is  = _bt.run(_df_is,  symbol)
-    _res_oos = _bt.run(_df_oos, symbol)
+        _res_is  = _bt.run(_df_is,  symbol)
+        _res_oos = _bt.run(_df_oos, symbol)
 
-    _is_score  = _composite_score(_res_is)
-    _oos_score = _composite_score(_res_oos)
-    _overfit   = _overfitting_ratio(_is_score, _oos_score)
+        _is_score  = _composite_score(_res_is)
+        _oos_score = _composite_score(_res_oos)
+        _overfit   = _overfitting_ratio(_is_score, _oos_score)
 
-    return {
-        "params":     params,
-        "is_score":   _is_score,
-        "oos_score":  _oos_score,
-        "overfit":    _overfit,
-        "is_pnl":     _res_is.total_pnl,
-        "oos_pnl":    _res_oos.total_pnl,
-        "is_sharpe":  _res_is.sharpe,
-        "oos_sharpe": _res_oos.sharpe,
-        "is_trades":  _res_is.total_trades,
-        "oos_trades": _res_oos.total_trades,
-        "is_wr":      _res_is.win_rate,
-        "oos_wr":     _res_oos.win_rate,
-        "oos_dd":     _res_oos.max_drawdown,
-    }
+        return {
+            "params":     params,
+            "is_score":   _is_score,
+            "oos_score":  _oos_score,
+            "overfit":    _overfit,
+            "is_pnl":     _res_is.total_pnl,
+            "oos_pnl":    _res_oos.total_pnl,
+            "is_sharpe":  _res_is.sharpe,
+            "oos_sharpe": _res_oos.sharpe,
+            "is_trades":  _res_is.total_trades,
+            "oos_trades": _res_oos.total_trades,
+            "is_wr":      _res_is.win_rate,
+            "oos_wr":     _res_oos.win_rate,
+            "oos_dd":     _res_oos.max_drawdown,
+        }
+    except Exception as _exc:
+        # Retourner une erreur sérialisable plutôt que de laisser le process crasher,
+        # ce qui évite les BrokenProcessPool et les processus orphelins.
+        return {"error": str(_exc), "params": params}
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -585,16 +590,27 @@ class StrategyOptimizer:
             ]
 
             # spawn : évite les problèmes de fork avec les threads FastAPI
+            # Plafonnement à cpu_count-1 pour laisser un cœur au process principal
+            import os as _os
+            _cpu = _os.cpu_count() or 1
+            _safe_jobs = max(1, min(n_jobs, max(1, _cpu - 1)))
+            _worker_timeout = 300  # 5 min max par évaluation
             ctx = _mp.get_context("spawn")
             with concurrent.futures.ProcessPoolExecutor(
-                    max_workers=n_jobs, mp_context=ctx) as exe:
+                    max_workers=_safe_jobs, mp_context=ctx) as exe:
                 futures_map = {exe.submit(_eval_worker, a): i for i, a in enumerate(worker_args)}
                 for fut in concurrent.futures.as_completed(futures_map):
                     done_count += 1
                     try:
-                        r = fut.result()
+                        r = fut.result(timeout=_worker_timeout)
+                    except concurrent.futures.TimeoutError:
+                        logger.warning("[Optimizer] worker timeout (>%ds), ignoré", _worker_timeout)
+                        continue
                     except Exception as _e:
                         logger.warning(f"[Optimizer] worker KO : {_e}")
+                        continue
+                    if "error" in r:
+                        logger.warning("[Optimizer] worker erreur : %s", r["error"])
                         continue
                     score = self._penalized_score(r)
                     r["final_score"] = score

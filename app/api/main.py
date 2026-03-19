@@ -1082,10 +1082,13 @@ def optimizer_start(
     n_trials = max(1,  min(n_trials, 200))
     if limit > 0:
         limit = max(100, min(limit, 50000))
-    # n_jobs=0 → utiliser tous les CPUs disponibles
+    # n_jobs=0 → utiliser tous les CPUs disponibles, plafonné à cpu_count-1
+    import os as _os
+    _cpu_count = _os.cpu_count() or 1
     if n_jobs <= 0:
-        import os as _os
-        n_jobs = _os.cpu_count() or 1
+        n_jobs = max(1, _cpu_count - 1)
+    else:
+        n_jobs = min(n_jobs, max(1, _cpu_count - 1))
 
     try:
         from app.optimizer.auto_optimizer import AutoOptimizer
