@@ -33,8 +33,6 @@ def _build_registry() -> tuple:
     fixed_params_map: Dict[str, Dict[str, Any]]  = {}
 
     for _, module_name, _ in pkgutil.iter_modules(_strategies_pkg.__path__):
-        if module_name == "registry":
-            continue
         try:
             mod = importlib.import_module(f"app.strategies.{module_name}")
         except Exception as exc:

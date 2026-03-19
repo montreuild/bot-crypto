@@ -211,7 +211,7 @@ def _discover_strategies() -> frozenset:
     if _strategies_cache is not None and (now - _strategies_cache_ts) < _STRATEGIES_CACHE_TTL:
         return _strategies_cache
     strat_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
-    _EXCLUDED = {"indicators", "base", "registry"}
+    _EXCLUDED = {"indicators", "base"}
     result = frozenset(
         os.path.splitext(os.path.basename(f))[0]
         for f in glob.glob(os.path.join(strat_dir, "*.py"))

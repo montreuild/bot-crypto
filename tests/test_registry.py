@@ -6,7 +6,7 @@ import sys, os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.strategies.registry import (
+from app.engine.registry import (
     get_param_spaces,
     get_strategy_timeframes,
     get_fixed_params,
