@@ -19,6 +19,7 @@ import threading
 import time
 import yaml
 import os
+import io
 from copy import deepcopy
 from datetime import datetime
 from typing import Dict, List, Any, Callable, Optional
@@ -119,6 +120,57 @@ def _overfitting_ratio(is_score: float, oos_score: float) -> float:
     if is_score <= 0:
         return 0.0
     return round(min(is_score / max(oos_score, 0.01), 10.0), 2)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Worker standalone pour ProcessPoolExecutor (picklable — niveau module)
+# ════════════════════════════════════════════════════════════════════════════
+def _eval_worker(args: tuple) -> dict:
+    """
+    Évalue un jeu de paramètres dans un processus séparé.
+    Utilise polars IPC pour déséraliser les DataFrames efficacement.
+    """
+    strategy_name, cfg_yaml, df_is_ipc, df_oos_ipc, symbol, params = args
+    import yaml as _yaml
+    import importlib as _imp
+    import polars as _pl
+    from copy import deepcopy as _dp
+    from app.engine.engine import Engine as _Engine
+    from app.engine.backtest import Backtester as _Backtester
+
+    _cfg = _yaml.safe_load(cfg_yaml)
+    _df_is  = _pl.read_ipc(io.BytesIO(df_is_ipc))
+    _df_oos = _pl.read_ipc(io.BytesIO(df_oos_ipc))
+
+    _mod = _imp.import_module(f"app.strategies.{strategy_name}")
+    _eng = _Engine()
+    _eng.register(_mod.Strategy(), silent=True)
+    _cfg_copy = _dp(_cfg)
+    _cfg_copy.setdefault("strategy_params", {})[strategy_name] = params
+    _bt = _Backtester(_eng, _cfg_copy)
+
+    _res_is  = _bt.run(_df_is,  symbol)
+    _res_oos = _bt.run(_df_oos, symbol)
+
+    _is_score  = _composite_score(_res_is)
+    _oos_score = _composite_score(_res_oos)
+    _overfit   = _overfitting_ratio(_is_score, _oos_score)
+
+    return {
+        "params":     params,
+        "is_score":   _is_score,
+        "oos_score":  _oos_score,
+        "overfit":    _overfit,
+        "is_pnl":     _res_is.total_pnl,
+        "oos_pnl":    _res_oos.total_pnl,
+        "is_sharpe":  _res_is.sharpe,
+        "oos_sharpe": _res_oos.sharpe,
+        "is_trades":  _res_is.total_trades,
+        "oos_trades": _res_oos.total_trades,
+        "is_wr":      _res_is.win_rate,
+        "oos_wr":     _res_oos.win_rate,
+        "oos_dd":     _res_oos.max_drawdown,
+    }
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -513,18 +565,37 @@ class StrategyOptimizer:
                         "overfit":     r.get("overfit", 1.0),
                     })
         else:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
+            # ProcessPoolExecutor pour parallélisme CPU réel (contourne le GIL)
+            import multiprocessing as _mp
+            import concurrent.futures
+            import yaml as _yaml
+
             param_list = [sampler() for _ in range(n)]
-            futures_map = {}
             best_so_far = -999
-            with ThreadPoolExecutor(max_workers=n_jobs) as exe:
-                for idx, p in enumerate(param_list):
-                    f = exe.submit(self._eval, p)
-                    futures_map[f] = idx
-                done_count = 0
-                for fut in as_completed(futures_map):
+            done_count  = 0
+
+            # Sérialisation des DataFrames via IPC (efficace, évite copie mémoire)
+            _buf_is = io.BytesIO(); self.df_is.write_ipc(_buf_is);  df_is_ipc  = _buf_is.getvalue()
+            _buf_oos = io.BytesIO(); self.df_oos.write_ipc(_buf_oos); df_oos_ipc = _buf_oos.getvalue()
+            cfg_yaml = _yaml.dump(self.cfg)
+
+            worker_args = [
+                (self.strategy_name, cfg_yaml, df_is_ipc, df_oos_ipc, self.symbol, p)
+                for p in param_list
+            ]
+
+            # spawn : évite les problèmes de fork avec les threads FastAPI
+            ctx = _mp.get_context("spawn")
+            with concurrent.futures.ProcessPoolExecutor(
+                    max_workers=n_jobs, mp_context=ctx) as exe:
+                futures_map = {exe.submit(_eval_worker, a): i for i, a in enumerate(worker_args)}
+                for fut in concurrent.futures.as_completed(futures_map):
                     done_count += 1
-                    r = fut.result()
+                    try:
+                        r = fut.result()
+                    except Exception as _e:
+                        logger.warning(f"[Optimizer] worker KO : {_e}")
+                        continue
                     score = self._penalized_score(r)
                     r["final_score"] = score
                     self.results.append(r)

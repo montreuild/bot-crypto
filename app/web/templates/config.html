@@ -12,13 +12,11 @@
   --sans:var(--body);
 }
 .page{display:contents;}
-/* Config page layout */
-.config-page{min-height:calc(100vh - 56px);display:grid;grid-template-columns:260px 1fr;}
-@media(max-width:1000px){.config-page{grid-template-columns:210px 1fr;}}
-@media(max-width:800px){.config-page{grid-template-columns:1fr;}}
+/* Config page layout — single column */
+.config-page{min-height:calc(100vh - 56px);display:flex;flex-direction:column;}
 /* Left column */
-.config-left{background:var(--surface);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;position:sticky;top:56px;height:calc(100vh - 56px);}
-.right-col{display:flex;flex-direction:column;gap:12px;overflow-x:visible;min-width:0;padding:14px;}
+.config-left{background:var(--surface);border-bottom:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:12px;}
+.right-col{display:flex;flex-direction:column;gap:12px;min-width:0;padding:14px;}
 /* Strategy cards */
 .strat-grid{display:flex;flex-direction:column;gap:8px;}
 .strat-card{background:#0c1018;border:1px solid var(--border);border-radius:var(--r-sm);padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;transition:border-color .15s;}
@@ -74,15 +72,8 @@
 .schedule-val{font-family:var(--mono);color:var(--text);}
 /* Section label */
 .sec{font-size:.68rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);padding-bottom:4px;border-bottom:1px solid var(--border);margin-bottom:8px;}
-/* ── Mobile tabs ── */
-.config-tabs{display:none;background:var(--surface);border-bottom:1px solid var(--border);padding:0 14px;gap:0;flex-shrink:0;}
-.config-tabs .ctab{background:transparent;border:none;border-bottom:2px solid transparent;padding:10px 16px;font-size:.82rem;font-weight:600;color:var(--muted);cursor:pointer;transition:all .15s;white-space:nowrap;}
-.config-tabs .ctab.active{color:var(--cyan);border-bottom-color:var(--cyan);}
-@media(max-width:800px){
-  .config-tabs{display:flex;}
-  .config-left.tab-hidden,.config-right.tab-hidden{display:none!important;}
-  .config-left{position:static!important;height:auto!important;overflow-y:visible!important;}
-}
+/* ── Mobile tabs (hidden — single column layout) ── */
+.config-tabs{display:none;}
 /* ── Left panel accordions ── */
 .config-left .panel-hdr{cursor:pointer;user-select:none;position:relative;}
 .config-left .panel-hdr::after{content:'∨';position:absolute;right:14px;top:50%;transform:translateY(-50%);font-size:.65rem;color:var(--dim);transition:transform .2s;}
@@ -826,14 +817,18 @@ async function applyTrading() {
     max_positions:        $('max-pos').value,
     paper_mode:           $('paper-toggle').checked,
   });
+  const btn = $('btn-apply-trading');
+  const origText = btn ? btn.innerHTML : '';
+  if (btn) btn.innerHTML = '⏳ Application…';
   await withBtn('btn-apply-trading', async () => {
     const r = await apiFetch('/api/config/trading?' + params, {method:'POST'});
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || r.statusText);
     const keys = Object.keys(d.changed || {}).join(', ');
-    toast(d.trader_updated ? `✓ Appliqué à chaud · ${keys}` : `✓ Sauvegardé · ${keys}`);
+    toast(d.trader_updated ? `✓ Appliqué à chaud dans config.yaml · ${keys}` : `✓ Paramètres appliqués dans config.yaml · ${keys}`);
     await init();
   }).catch(e => toast('Erreur : ' + e.message, true));
+  if (btn) btn.innerHTML = origText;
 }
 
 // ── Paramètres par stratégie ───────────────────────────────────────────────
@@ -902,8 +897,11 @@ function renderStratParams() {
       </div>
       <div class="params-body">
         ${rows || '<div style="color:var(--dim);font-size:.75rem">Aucun paramètre configuré (défauts internes utilisés)</div>'}
-        ${keys.length ? `<div class="btn-row" style="margin-top:4px">
-          <button id="btn-save-${name}" class="btn btn-cyan" onclick="saveStratParams('${name}')">💾 Sauvegarder ${name}<span class="dirty-dot"></span></button>
+        ${keys.length ? `<div style="margin-top:4px">
+          <div class="btn-row">
+            <button id="btn-save-${name}" class="btn btn-cyan" onclick="saveStratParams('${name}')">💾 Sauvegarder ${name}<span class="dirty-dot"></span></button>
+          </div>
+          <div id="save-status-${name}" style="display:none;font-size:.72rem;color:var(--green);margin-top:6px;font-weight:600">✓ Paramètres appliqués dans config.yaml</div>
         </div>` : ''}
       </div>
     </div>`;
@@ -930,6 +928,9 @@ async function saveStratParams(name) {
     if (el) updated[k] = parseFloat(el.value);
   });
 
+  const btn = document.getElementById(`btn-save-${name}`);
+  const origText = btn ? btn.innerHTML : '';
+  if (btn) btn.innerHTML = '⏳ Application…';
   await withBtn(`btn-save-${name}`, async () => {
     const r = await apiFetch(`/api/config/strategy-params?strategy=${encodeURIComponent(name)}`, {
       method: 'POST',
@@ -938,13 +939,19 @@ async function saveStratParams(name) {
     });
     const d = await r.json();
     if (r.ok) {
-      toast(`✓ ${name} sauvegardé`);
+      toast(`✓ ${name} sauvegardé dans config.yaml`);
       cfgData.strategy_params = cfgData.strategy_params || {};
       cfgData.strategy_params[name] = updated;
+      const statusEl = document.getElementById(`save-status-${name}`);
+      if (statusEl) {
+        statusEl.style.display = 'block';
+        setTimeout(() => { statusEl.style.display = 'none'; }, 6000);
+      }
     } else {
       throw new Error(d.detail || 'Erreur API');
     }
   }).catch(e => toast('Erreur : ' + e.message, true));
+  if (btn) btn.innerHTML = origText;
 }
 
 // ── Notifications ──────────────────────────────────────────────────────────
