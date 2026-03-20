@@ -206,6 +206,7 @@ trading:
   - 5m
   - 15m
   - 1h
+  - 4h
   - 1d
   timeframe: 1h
   top_strategies_per_tf: 2
