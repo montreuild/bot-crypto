@@ -70,110 +70,87 @@ scanner:
     top_n: 15
 strategies:
   enabled:
-  - trend
-  - supertrend_macd
-  - multi_tf_sr
+  - breakout
   - composite_score
+  - fear_momentum
   - fft_spectral
-
-# ─────────────────────────────────────────────────────────────────────────────
-# GESTION DES PARAMÈTRES : deux niveaux complémentaires
-#
-#   strategy_params  (ci-dessous)
-#     └─ Paramètres de BASE par stratégie, toutes TF confondues.
-#        Utilisés comme fallback quand aucune optimisation n'existe pour un TF.
-#        Modifiables manuellement ou via l'UI Configuration.
-#        Le backtest et le live trading s'en servent comme point de départ.
-#
-#   optimizer_results  (en bas de fichier)
-#     └─ Paramètres OPTIMISÉS par stratégie ET par timeframe (strategy → tf → params).
-#        Générés automatiquement par l'optimiseur (auto-apply ou bouton "Appliquer").
-#        Prioritaires sur strategy_params pour le TF correspondant :
-#          - Live trader  : _merge_params() superpose optimizer_results sur strategy_params
-#          - Backtest     : Backtester.run(timeframe=tf) fait la même fusion
-#        Score OOS stocké pour le classement (>= 0.0 = viable, < -0.05 = exclu du live).
-#
-#   Règle pratique :
-#     • Après une optimisation, ne pas éditer strategy_params manuellement :
-#       l'optimiseur écrit dans optimizer_results ET met à jour strategy_params
-#       comme snapshot du dernier apply.
-#     • Pour forcer des params sur un TF spécifique sans relancer l'optimiseur,
-#       éditer directement optimizer_results.<strategie>.<tf>.params.
-#     • Pour réinitialiser une stratégie à ses valeurs par défaut :
-#       supprimer son entrée dans optimizer_results et ajuster strategy_params.
-# ─────────────────────────────────────────────────────────────────────────────
+  - multi_tf_sr
+  - pullback_trend
+  - registry
+  - supertrend_macd
+  - trend
 strategy_params:
   breakout:
-    atr_expan_min: 1.05
-    body_min_atr: 0.25
+    atr_expan_min: 1.12
+    body_min_atr: 0.45
     cooldown: 20
-    pen_max_atr: 2.0
-    period: 30
-    squeeze_bars: 15
-    vol_min: 1.0
-    rr_min: 1.5
+    pen_max_atr: 2.5
+    period: 25
+    squeeze_bars: 20
+    vol_min: 1.2
+    rr_min: 1.3
   fear_momentum:
-    atr_max_dip: 3.0
-    cooldown: 15
+    atr_max_dip: 5.0
+    cooldown: 25
     ema200_max_dist: 0.08
-    rr_min: 2.0
-    rsi_fear: 45
-    rsi_greed: 62
-    vol_cap_min: 1.8
+    rr_min: 1.4
+    rsi_fear: 35
+    rsi_greed: 65
+    vol_cap_min: 1.5
     ema_fast: 13
     ema_mid: 50
   pullback_trend:
-    adx_min: 18
-    cooldown: 15
-    ema_fast: 13
+    adx_min: 25
+    cooldown: 20
+    ema_fast: 21
     ema_mid: 50
     ema_slow: 100
     ema_trend: 200
     pb_zone_pct: 0.003
-    rsi_pb_high: 58
+    rsi_pb_high: 62
     rsi_pb_low: 38
-    vol_min: 0.7
-    rr_min: 1.5
+    vol_min: 1.0
+    rr_min: 2.0
   supertrend_macd:
     cooldown: 15
     ema_mid: 50
     ema_trend: 200
-    macd_fast: 10
+    macd_fast: 14
     macd_signal: 9
-    macd_slow: 28
-    st_mult: 2.0
-    st_period: 7
-    vol_min: 1.0
+    macd_slow: 24
+    st_mult: 3.0
+    st_period: 10
+    vol_min: 1.1
     rsi_min: 38
-    rsi_max: 65
+    rsi_max: 60
     rr_min: 1.3
   multi_tf_sr:
     sr_window: 5
-    sr_lookback: 150
+    sr_lookback: 100
     sr_cluster_pct: 0.005
-    sr_min_touches: 1
+    sr_min_touches: 2
     sr_proximity_atr: 1.0
-    adx_min: 20
+    adx_min: 25
     rsi_low: 35
-    rsi_high: 65
-    vol_min: 0.8
-    cooldown: 15
-    rr_min: 1.5
+    rsi_high: 60
+    vol_min: 1.0
+    cooldown: 20
+    rr_min: 1.3
   trend:
-    adx_min: 22
+    adx_min: 28
     cooldown: 15
-    cross_lookback: 4
-    ema200_tol: 0.025
-    ema_fast: 13
-    ema_slow: 80
+    cross_lookback: 8
+    ema200_tol: 0.035
+    ema_fast: 21
+    ema_slow: 50
     ema_trend: 200
     overext_pct: 0.02
     rr_min: 1.5
-    rsi_high: 67
+    rsi_high: 73
     rsi_low: 30
-    vol_min: 0.9
+    vol_min: 1.2
   composite_score:
-    ema_fast: 20
+    ema_fast: 21
     ema_slow: 50
     rsi_period: 14
     macd_fast: 12
@@ -184,23 +161,23 @@ strategy_params:
     stoch_k_period: 14
     stoch_d_period: 3
     sr_window: 5
-    sr_lookback: 180
+    sr_lookback: 240
     sr_cluster_pct: 0.018
-    use_fft: true
-    fft_min_period: 5
+    use_fft: false
+    fft_min_period: 7
     fft_max_period: 150
     fft_top_n: 10
-    score_long_threshold: 60
-    score_short_threshold: 40
-    cooldown: 15
+    score_long_threshold: 65
+    score_short_threshold: 35
+    cooldown: 20
     rr_min: 1.5
     min_bars: 200
   fft_spectral:
     fft_min_period: 5
-    fft_max_period: 150
+    fft_max_period: 200
     fft_top_n: 10
-    min_confidence: 0.20
-    min_bars: 180
+    min_confidence: 0.25
+    min_bars: 150
     cooldown: 30
     rr_min: 1.5
 trading:
@@ -231,69 +208,109 @@ trading:
   - 1h
   - 1d
   timeframe: 1h
-  top_strategies_per_tf: 2   # Nb de stratégies actives par TF (depuis optimizer_results)
+  top_strategies_per_tf: 2
 web:
   api_key: ''
   host: 0.0.0.0
   port: 8000
   refresh_interval: 5
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RÉSULTATS D'OPTIMISATION  (géré automatiquement — ne pas éditer à la main)
-#
-#   Structure : optimizer_results.<strategie>.<timeframe>
-#     run_date  : date du dernier run d'optimisation
-#     oos_score : score composite Out-of-Sample (critère de sélection)
-#                   >=  0.0  → viable pour le live trading
-#                   >= -0.05 → borderline (surveillé)
-#                   <  -0.05 → exclu du live (top_strategies_per_tf l'ignore)
-#     params    : meilleurs paramètres trouvés pour ce TF
-#                 Prioritaires sur strategy_params pour le TF correspondant.
-#
-#   Ces données sont utilisées par :
-#     • get_active_strategies_per_tf() → sélection des stratégies actives en live
-#     • Backtester.run(timeframe=tf)   → backtest avec les bons params per-TF
-#     • UI Optimiseur → classement OOS, colonne par TF
-#
-#   Historique des changements : voir optimizer_changelog.json
-# ─────────────────────────────────────────────────────────────────────────────
 optimizer_results:
   trend:
     1h:
-      run_date: '2026-03-14'
-      oos_score: -0.145407
+      run_date: '2026-03-19'
+      oos_score: 0.206722
+      params:
+        ema_fast: 34
+        ema_slow: 80
+        adx_min: 22
+        rsi_low: 28
+        rsi_high: 67
+        vol_min: 0.9
+        cross_lookback: 6
+        overext_pct: 0.012
+        ema200_tol: 0.035
+        cooldown: 15
+        rr_min: 1.5
+    1d:
+      run_date: '2026-03-19'
+      oos_score: -999.0
+      params:
+        ema_fast: 21
+        ema_slow: 80
+        adx_min: 22
+        rsi_low: 28
+        rsi_high: 70
+        vol_min: 0.9
+        cross_lookback: 4
+        overext_pct: 0.012
+        ema200_tol: 0.045
+        cooldown: 25
+        rr_min: 2.0
+    5m:
+      run_date: '2026-03-19'
+      oos_score: -0.615177
+      params:
+        ema_fast: 21
+        ema_slow: 80
+        adx_min: 22
+        rsi_low: 33
+        rsi_high: 73
+        vol_min: 1.2
+        cross_lookback: 6
+        overext_pct: 0.012
+        ema200_tol: 0.035
+        cooldown: 15
+        rr_min: 1.5
+    4h:
+      run_date: '2026-03-19'
+      oos_score: 2.557127
       params:
         ema_fast: 34
         ema_slow: 80
         adx_min: 28
         rsi_low: 33
         rsi_high: 67
-        vol_min: 0.9
-        cross_lookback: 8
-        overext_pct: 0.02
-        ema200_tol: 0.025
-        cooldown: 15
-        rr_min: 1.3
-  pullback_trend:
-    1h:
-      run_date: '2026-03-14'
-      oos_score: -0.148019
+        vol_min: 1.0
+        cross_lookback: 6
+        overext_pct: 0.015
+        ema200_tol: 0.035
+        cooldown: 25
+        rr_min: 2.0
+    15m:
+      run_date: '2026-03-19'
+      oos_score: -0.017102
       params:
         ema_fast: 21
+        ema_slow: 50
+        adx_min: 28
+        rsi_low: 30
+        rsi_high: 73
+        vol_min: 1.2
+        cross_lookback: 8
+        overext_pct: 0.02
+        ema200_tol: 0.035
+        cooldown: 15
+        rr_min: 1.5
+  pullback_trend:
+    1h:
+      run_date: '2026-03-19'
+      oos_score: 0.452139
+      params:
+        ema_fast: 34
         ema_mid: 50
         ema_slow: 100
-        adx_min: 20
-        pb_zone_pct: 0.003
+        adx_min: 25
+        pb_zone_pct: 0.005
         rsi_pb_low: 38
-        rsi_pb_high: 62
+        rsi_pb_high: 55
         vol_min: 0.8
-        cooldown: 25
-        rr_min: 1.5
+        cooldown: 15
+        rr_min: 2.0
     15m:
-      run_date: '2026-03-14'
-      oos_score: 0.028431
+      run_date: '2026-03-19'
+      oos_score: -0.056239
       params:
-        ema_fast: 13
+        ema_fast: 21
         ema_mid: 50
         ema_slow: 100
         adx_min: 25
@@ -301,7 +318,49 @@ optimizer_results:
         rsi_pb_low: 38
         rsi_pb_high: 62
         vol_min: 1.0
+        cooldown: 20
+        rr_min: 2.0
+    1d:
+      run_date: '2026-03-19'
+      oos_score: 1.811122
+      params:
+        ema_fast: 34
+        ema_mid: 50
+        ema_slow: 100
+        adx_min: 25
+        pb_zone_pct: 0.007
+        rsi_pb_low: 30
+        rsi_pb_high: 62
+        vol_min: 1.0
         cooldown: 25
+        rr_min: 1.3
+    4h:
+      run_date: '2026-03-19'
+      oos_score: 1.222181
+      params:
+        ema_fast: 34
+        ema_mid: 50
+        ema_slow: 100
+        adx_min: 25
+        pb_zone_pct: 0.003
+        rsi_pb_low: 38
+        rsi_pb_high: 62
+        vol_min: 0.7
+        cooldown: 15
+        rr_min: 1.5
+    5m:
+      run_date: '2026-03-19'
+      oos_score: -0.608997
+      params:
+        ema_fast: 13
+        ema_mid: 50
+        ema_slow: 100
+        adx_min: 22
+        pb_zone_pct: 0.005
+        rsi_pb_low: 30
+        rsi_pb_high: 55
+        vol_min: 0.7
+        cooldown: 20
         rr_min: 1.3
   supertrend_macd:
     1h:
@@ -318,17 +377,352 @@ optimizer_results:
         rsi_max: 60
         cooldown: 10
         rr_min: 1.5
+    1d:
+      run_date: '2026-03-19'
+      oos_score: 2.062251
+      params:
+        st_period: 10
+        st_mult: 3.0
+        macd_fast: 14
+        macd_slow: 24
+        macd_signal: 9
+        vol_min: 1.1
+        rsi_min: 38
+        rsi_max: 60
+        cooldown: 15
+        rr_min: 1.3
   fear_momentum:
     1h:
-      run_date: '2026-03-14'
-      oos_score: 0.040181
+      run_date: '2026-03-19'
+      oos_score: -0.019478
+      params:
+        ema_fast: 13
+        ema_mid: 50
+        rsi_fear: 35
+        rsi_greed: 65
+        vol_cap_min: 1.5
+        atr_max_dip: 5.0
+        ema200_max_dist: 0.08
+        cooldown: 25
+        rr_min: 1.4
+    1d:
+      run_date: '2026-03-19'
+      oos_score: 1.742598
+      params:
+        ema_fast: 21
+        ema_mid: 50
+        rsi_fear: 42
+        rsi_greed: 58
+        vol_cap_min: 1.5
+        atr_max_dip: 3.0
+        ema200_max_dist: 0.08
+        cooldown: 18
+        rr_min: 1.6
+    4h:
+      run_date: '2026-03-19'
+      oos_score: 0.132191
+      params:
+        ema_fast: 21
+        ema_mid: 50
+        rsi_fear: 38
+        rsi_greed: 65
+        vol_cap_min: 1.8
+        atr_max_dip: 5.0
+        ema200_max_dist: 0.12
+        cooldown: 25
+        rr_min: 1.6
+    5m:
+      run_date: '2026-03-19'
+      oos_score: -0.569265
       params:
         ema_fast: 13
         ema_mid: 50
         rsi_fear: 42
-        rsi_greed: 65
-        vol_cap_min: 1.5
+        rsi_greed: 62
+        vol_cap_min: 1.8
         atr_max_dip: 3.0
         ema200_max_dist: 0.12
+        cooldown: 18
+        rr_min: 1.4
+    15m:
+      run_date: '2026-03-19'
+      oos_score: -0.116898
+      params:
+        ema_fast: 13
+        ema_mid: 50
+        rsi_fear: 45
+        rsi_greed: 65
+        vol_cap_min: 2.5
+        atr_max_dip: 3.0
+        ema200_max_dist: 0.05
         cooldown: 25
         rr_min: 1.6
+  breakout:
+    1d:
+      run_date: '2026-03-18'
+      oos_score: 2.846942
+      params:
+        period: 40
+        vol_min: 1.1
+        atr_expan_min: 1.2
+        pen_max_atr: 2.5
+        body_min_atr: 0.45
+        squeeze_bars: 20
+        cooldown: 15
+        rr_min: 1.5
+    4h:
+      run_date: '2026-03-18'
+      oos_score: 1.337271
+      params:
+        period: 20
+        vol_min: 1.1
+        atr_expan_min: 1.2
+        pen_max_atr: 2.5
+        body_min_atr: 0.45
+        squeeze_bars: 20
+        cooldown: 20
+        rr_min: 1.3
+    15m:
+      run_date: '2026-03-19'
+      oos_score: 0.087984
+      params:
+        period: 40
+        vol_min: 1.5
+        atr_expan_min: 1.05
+        pen_max_atr: 1.5
+        body_min_atr: 0.35
+        squeeze_bars: 15
+        cooldown: 20
+        rr_min: 1.5
+    5m:
+      run_date: '2026-03-19'
+      oos_score: -0.369665
+      params:
+        period: 25
+        vol_min: 1.2
+        atr_expan_min: 1.12
+        pen_max_atr: 2.5
+        body_min_atr: 0.45
+        squeeze_bars: 20
+        cooldown: 20
+        rr_min: 1.3
+    1h:
+      run_date: '2026-03-19'
+      oos_score: 1.430383
+      params:
+        period: 30
+        vol_min: 1.1
+        atr_expan_min: 1.2
+        pen_max_atr: 1.5
+        body_min_atr: 0.3
+        squeeze_bars: 15
+        cooldown: 20
+        rr_min: 2.0
+  composite_score:
+    1d:
+      run_date: '2026-03-18'
+      oos_score: 3.033242
+      params:
+        ema_fast: 20
+        ema_slow: 80
+        score_long_threshold: 60
+        score_short_threshold: 45
+        sr_lookback: 240
+        sr_cluster_pct: 0.025
+        use_fft: true
+        fft_min_period: 7
+        fft_max_period: 150
+        cooldown: 10
+        rr_min: 2.0
+    4h:
+      run_date: '2026-03-18'
+      oos_score: 0.668414
+      params:
+        ema_fast: 21
+        ema_slow: 80
+        score_long_threshold: 60
+        score_short_threshold: 40
+        sr_lookback: 180
+        sr_cluster_pct: 0.025
+        use_fft: false
+        fft_min_period: 5
+        fft_max_period: 150
+        cooldown: 20
+        rr_min: 1.5
+    5m:
+      run_date: '2026-03-19'
+      oos_score: -0.350965
+      params:
+        ema_fast: 21
+        ema_slow: 50
+        score_long_threshold: 65
+        score_short_threshold: 35
+        sr_lookback: 240
+        sr_cluster_pct: 0.018
+        use_fft: false
+        fft_min_period: 7
+        fft_max_period: 150
+        cooldown: 20
+        rr_min: 1.5
+    15m:
+      run_date: '2026-03-19'
+      oos_score: -0.078253
+      params:
+        ema_fast: 21
+        ema_slow: 80
+        score_long_threshold: 65
+        score_short_threshold: 45
+        sr_lookback: 240
+        sr_cluster_pct: 0.025
+        use_fft: true
+        fft_min_period: 7
+        fft_max_period: 150
+        cooldown: 10
+        rr_min: 1.3
+    1h:
+      run_date: '2026-03-19'
+      oos_score: -0.026926
+      params:
+        ema_fast: 13
+        ema_slow: 50
+        score_long_threshold: 65
+        score_short_threshold: 35
+        sr_lookback: 180
+        sr_cluster_pct: 0.018
+        use_fft: true
+        fft_min_period: 7
+        fft_max_period: 150
+        cooldown: 10
+        rr_min: 2.0
+  fft_spectral:
+    1d:
+      run_date: '2026-03-19'
+      oos_score: 1.38096
+      params:
+        fft_min_period: 10
+        fft_max_period: 150
+        fft_top_n: 15
+        min_confidence: 0.3
+        min_bars: 250
+        cooldown: 30
+        rr_min: 2.0
+    15m:
+      run_date: '2026-03-19'
+      oos_score: -0.076226
+      params:
+        fft_min_period: 10
+        fft_max_period: 100
+        fft_top_n: 10
+        min_confidence: 0.2
+        min_bars: 250
+        cooldown: 30
+        rr_min: 1.3
+    4h:
+      run_date: '2026-03-19'
+      oos_score: 0.651977
+      params:
+        fft_min_period: 10
+        fft_max_period: 150
+        fft_top_n: 7
+        min_confidence: 0.25
+        min_bars: 250
+        cooldown: 20
+        rr_min: 2.0
+    5m:
+      run_date: '2026-03-19'
+      oos_score: -0.547646
+      params:
+        fft_min_period: 5
+        fft_max_period: 200
+        fft_top_n: 10
+        min_confidence: 0.25
+        min_bars: 150
+        cooldown: 30
+        rr_min: 1.5
+    1h:
+      run_date: '2026-03-19'
+      oos_score: -0.009301
+      params:
+        fft_min_period: 7
+        fft_max_period: 150
+        fft_top_n: 15
+        min_confidence: 0.15
+        min_bars: 180
+        cooldown: 40
+        rr_min: 1.5
+  multi_tf_sr:
+    1d:
+      run_date: '2026-03-19'
+      oos_score: 11.067275
+      params:
+        sr_window: 5
+        sr_lookback: 100
+        sr_cluster_pct: 0.008
+        sr_min_touches: 2
+        sr_proximity_atr: 1.0
+        adx_min: 25
+        rsi_low: 40
+        rsi_high: 70
+        vol_min: 0.8
+        cooldown: 20
+        rr_min: 1.5
+    1h:
+      run_date: '2026-03-19'
+      oos_score: 0.510373
+      params:
+        sr_window: 3
+        sr_lookback: 200
+        sr_cluster_pct: 0.005
+        sr_min_touches: 1
+        sr_proximity_atr: 1.5
+        adx_min: 18
+        rsi_low: 40
+        rsi_high: 60
+        vol_min: 1.0
+        cooldown: 20
+        rr_min: 1.5
+    4h:
+      run_date: '2026-03-19'
+      oos_score: 1.104531
+      params:
+        sr_window: 5
+        sr_lookback: 200
+        sr_cluster_pct: 0.008
+        sr_min_touches: 2
+        sr_proximity_atr: 1.0
+        adx_min: 20
+        rsi_low: 35
+        rsi_high: 60
+        vol_min: 0.8
+        cooldown: 20
+        rr_min: 1.5
+    15m:
+      run_date: '2026-03-19'
+      oos_score: -0.051467
+      params:
+        sr_window: 3
+        sr_lookback: 100
+        sr_cluster_pct: 0.008
+        sr_min_touches: 1
+        sr_proximity_atr: 0.8
+        adx_min: 25
+        rsi_low: 35
+        rsi_high: 70
+        vol_min: 0.8
+        cooldown: 10
+        rr_min: 1.3
+    5m:
+      run_date: '2026-03-19'
+      oos_score: -0.113542
+      params:
+        sr_window: 5
+        sr_lookback: 100
+        sr_cluster_pct: 0.005
+        sr_min_touches: 2
+        sr_proximity_atr: 1.0
+        adx_min: 25
+        rsi_low: 35
+        rsi_high: 60
+        vol_min: 1.0
+        cooldown: 20
+        rr_min: 1.3
