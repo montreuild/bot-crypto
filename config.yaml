@@ -53,7 +53,6 @@ optimizer:
   method: bayesian
   n_trials: 40
   out_of_sample_ratio: 0.35
-  timeframes: []
 scanner:
   dynamic_scan: false
   symbols:
@@ -76,7 +75,6 @@ strategies:
   - fft_spectral
   - multi_tf_sr
   - pullback_trend
-  - registry
   - supertrend_macd
   - trend
 strategy_params:

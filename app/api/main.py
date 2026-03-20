@@ -211,7 +211,9 @@ def _discover_strategies() -> frozenset:
     if _strategies_cache is not None and (now - _strategies_cache_ts) < _STRATEGIES_CACHE_TTL:
         return _strategies_cache
     strat_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
-    _EXCLUDED = {"indicators", "base"}
+    # ml_strategy est un module helper sans classe Strategy — il ne peut pas être utilisé
+    # directement comme stratégie de backtest ou de trading
+    _EXCLUDED = {"indicators", "base", "ml_strategy"}
     result = frozenset(
         os.path.splitext(os.path.basename(f))[0]
         for f in glob.glob(os.path.join(strat_dir, "*.py"))
