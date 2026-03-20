@@ -264,6 +264,13 @@ class Backtester:
     # ── run ───────────────────────────────────────────────────────────────────
     def run(self, df: pl.DataFrame, symbol: str = "BTC/USDC",
             timeframe: str = None) -> "BacktestResult":
+        # Réinitialise les stratégies ML pour garantir un backtest déterministe
+        # (pas de fuite d'état entre deux appels run() sur le même Backtester).
+        from app.engine.engine import BaseStrategyML
+        for strat in self.engine.strategies:
+            if isinstance(strat, BaseStrategyML):
+                strat.reset_model()
+
         capital      = self.cfg["trading"].get("capital", 1000.0)
         risk         = self.cfg["trading"]["risk_per_trade"]
         threshold    = self.cfg["trading"].get("score_threshold", 0.60)

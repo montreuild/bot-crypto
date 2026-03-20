@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 
 import polars as pl
 
-from app.engine.engine   import Engine
+from app.engine.engine   import Engine, BaseStrategyML
 from app.engine.backtest import Backtester
 from app.optimizer.optimizer import (
     StrategyOptimizer, PARAM_SPACES, STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT,
@@ -25,7 +25,15 @@ from app.optimizer.optimizer import (
 
 logger = logging.getLogger(__name__)
 
-ML_STRATEGIES = {"ml_dynamic_threshold"}
+
+def _is_ml_strategy(name: str) -> bool:
+    """Retourne True si la stratégie hérite de BaseStrategyML.
+    Évite de maintenir un set magique de noms — la détection est structurelle."""
+    try:
+        mod = importlib.import_module(f"app.strategies.{name}")
+        return issubclass(mod.Strategy, BaseStrategyML)
+    except Exception:
+        return False
 
 # ════════════════════════════════════════════════════════════════════════════
 #  État global des jobs (thread-safe)
@@ -165,7 +173,7 @@ class AutoOptimizer:
             df_oos = df[split:]  if df is not None else None
 
             for name in strats:
-                if name in ML_STRATEGIES:
+                if _is_ml_strategy(name):
                     skipped.append({"strategy": name, "timeframe": tf, "reason": "stratégie ML (non optimisable ici)"})
                     continue
                 if name not in PARAM_SPACES:
@@ -344,7 +352,7 @@ class AutoOptimizer:
             df_oos = df[split:]
 
             for name in strats:
-                if name in ML_STRATEGIES or name not in PARAM_SPACES:
+                if _is_ml_strategy(name) or name not in PARAM_SPACES:
                     continue
                 supported_tfs = STRATEGY_TIMEFRAMES.get(name, list(RECOMMENDED_LIMIT.keys()))
                 if tf not in supported_tfs:

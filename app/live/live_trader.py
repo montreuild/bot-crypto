@@ -138,6 +138,7 @@ class LiveTrader:
         self.engine = Engine()
         self._loaded_strategies: Dict[str, object] = {}
         self._load_all_strategies()
+        self._load_ml_models()
 
         # Stratégies actives par TF (depuis optimizer_results)
         self._active_per_tf: Dict[str, List[dict]] = {}
@@ -165,7 +166,9 @@ class LiveTrader:
         self._capital_lock    = threading.Lock()
         self.running          = False
         self.cycle_count      = 0
-        self._ml_retrain_at   = 0
+        self._ml_retrain_at        = 0
+        # Réentraînement périodique des stratégies BaseStrategyML (par nom)
+        self._ml_strat_retrain_at: Dict[str, float] = {}
         self.capital_display  = cfg["trading"]["capital"]
         self.last_scan_time   = None
         self.last_symbols_scanned = []
@@ -275,6 +278,7 @@ class LiveTrader:
                         self._recover_after_gap(gap_secs)
                         _last_successful_cycle = time.time()
                 self._maybe_retrain_ml()
+                self._maybe_retrain_ml_strategies()
                 self._maybe_auto_optimize()
                 self._purge_counter += 1
                 if self._purge_counter >= self._purge_every_n:
@@ -850,6 +854,74 @@ class LiveTrader:
                 self.ml.save()
         except Exception as e:
             logger.error(f"[ML] Réentraînement KO : {e}")
+
+    def _load_ml_models(self):
+        """
+        Au démarrage : charge les modèles persistés sur disque pour toutes les
+        stratégies BaseStrategyML et active le mode géré-extern (pas de réentraînement
+        inline bloquant dans la boucle de trading).
+        """
+        from app.engine.engine import BaseStrategyML
+        import os
+        for name, strat in self._loaded_strategies.items():
+            if not isinstance(strat, BaseStrategyML):
+                continue
+            strat.managed_externally = True
+            tf = strat.timeframes[0] if strat.timeframes else self.tf
+            model_path = os.path.join(strat.model_dir, f"{name}_{tf}.pkl")
+            if strat.load_model(model_path):
+                logger.info(f"[ML-Strategy] {name} : modèle chargé depuis {model_path}")
+            else:
+                logger.info(f"[ML-Strategy] {name} : pas de modèle persisté — sera entraîné au 1er cycle périodique")
+
+    def _maybe_retrain_ml_strategies(self):
+        """
+        Déclenche le réentraînement périodique des stratégies BaseStrategyML
+        en arrière-plan (même pattern que _maybe_auto_optimize).
+        Fréquence : strat.retrain_interval_h (défaut 6h), configurable via
+        strategy_params.<name>.retrain_interval_h dans config.yaml.
+        """
+        from app.engine.engine import BaseStrategyML
+        now = time.time()
+        for name, strat in self._loaded_strategies.items():
+            if not isinstance(strat, BaseStrategyML):
+                continue
+            # Fréquence : depuis config ou depuis l'attribut de classe
+            sp = self.strat_params.get(name, {})
+            interval_h = float(sp.get("retrain_interval_h", strat.retrain_interval_h))
+            interval   = interval_h * 3600
+            if now < self._ml_strat_retrain_at.get(name, 0):
+                continue
+            self._ml_strat_retrain_at[name] = now + interval
+            tf = strat.timeframes[0] if strat.timeframes else self.tf
+            logger.info(f"[ML-Strategy] Planification réentraînement {name} (TF={tf}, interval={interval_h}h)")
+            threading.Thread(
+                target=self._retrain_ml_strat_thread,
+                args=(name, strat, self.strat_params, tf),
+                daemon=True,
+            ).start()
+
+    def _retrain_ml_strat_thread(self, name: str, strat, params: dict, tf: str):
+        """Réentraîne une stratégie ML en arrière-plan et persiste le modèle."""
+        logger.info(f"[ML-Strategy] Réentraînement {name}/{tf} en arrière-plan…")
+        try:
+            import os
+            symbols = self.scanner.get_symbols()
+            # Préférer BTC comme paire de référence (la plus liquide / données les plus riches)
+            symbol = next((s for s in symbols if "BTC" in s), symbols[0] if symbols else None)
+            if not symbol:
+                logger.warning(f"[ML-Strategy] {name} : aucun symbole disponible")
+                return
+            df = self.scanner.fetch_ohlcv(symbol, tf, 1000)
+            if df is None or len(df) < strat.min_bars_required(params):
+                logger.warning(f"[ML-Strategy] {name} : données insuffisantes pour {symbol}/{tf}")
+                return
+            strat.fit(df, params)
+            model_path = os.path.join(strat.model_dir, f"{name}_{tf}.pkl")
+            strat.save_model(model_path)
+            logger.info(f"[ML-Strategy] {name} réentraîné et sauvegardé → {model_path}")
+        except Exception as e:
+            logger.error(f"[ML-Strategy] Réentraînement {name} KO : {e}")
 
     def _sync_margin_account(self):
         try:
