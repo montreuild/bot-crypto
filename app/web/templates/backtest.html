@@ -423,6 +423,7 @@ function renderResults(){
         <span><span style="color:#34d399;font-size:.9rem">●</span> Sortie gain</span>
         <span><span style="color:#fb7185;font-size:.9rem">●</span> Sortie perte</span>
         <span><span style="display:inline-block;width:18px;height:2px;background:rgba(251,191,36,.6);vertical-align:middle;border-top:1px dashed rgba(251,191,36,.6)"></span> Stop initial</span>
+        <span><span style="display:inline-block;width:18px;height:2px;background:rgba(167,139,250,.7);vertical-align:middle"></span> Stop trailing</span>
       </div>
     </div>`;
   res.appendChild(priceDiv);
@@ -450,8 +451,9 @@ function switchTab(s){
   // Rebuild sub-charts for the newly visible panel
   const sd=btData?.by_strategy?.[s];
   if(sd&&!sd.error){
+    const sid=s.replace(/[^a-z0-9_]/gi,'_');
     const closed=(sd.trades||[]).filter(t=>t.status!=='open');
-    buildEq(closed,SC(s),sd);buildPnl(closed,SC(s));buildCum(closed,SC(s));buildSc(closed);
+    buildEq(closed,SC(s),sd,sid);buildPnl(closed,SC(s),sid);buildCum(closed,SC(s),sid);buildSc(closed,sid);
   }
 }
 
@@ -484,11 +486,12 @@ function buildPanel(name){
     ${bnh!==null?kpi('Buy & Hold',bnh>=0?`+${fN(bnh,2)} USDC`:fN(bnh,2)+' USDC',bnhPct!==null?`${bnhPct>=0?'+':''}${bnhPct.toFixed(2)}%`:'',bnh>=0?'pos':'neg',c):''}
     ${alpha!==null?kpi('Alpha',alpha>=0?`+${fN(alpha,2)} USDC`:fN(alpha,2)+' USDC','vs Buy & Hold',alphaClass,c):''}
   </div></div>`;
+  const sid=name.replace(/[^a-z0-9_]/gi,'_');
   const chartsHTML=`<div class="cg">
-    <div class="cc"><div class="ct">Equity Curve</div><div class="ch-wrap" id="ch-eq"></div></div>
-    <div class="cc"><div class="ct">PnL par trade</div><div class="ch-wrap" id="ch-pnl"></div></div>
-    <div class="cc"><div class="ct">PnL cumulé</div><div class="ch-wrap" id="ch-cum"></div></div>
-    <div class="cc"><div class="ct">Score vs PnL</div><div class="ch-wrap"><canvas id="ch-sc"></canvas></div></div>
+    <div class="cc"><div class="ct">Equity Curve</div><div class="ch-wrap" id="ch-eq-${sid}"></div></div>
+    <div class="cc"><div class="ct">PnL par trade</div><div class="ch-wrap" id="ch-pnl-${sid}"></div></div>
+    <div class="cc"><div class="ct">PnL cumulé</div><div class="ch-wrap" id="ch-cum-${sid}"></div></div>
+    <div class="cc"><div class="ct">Score vs PnL</div><div class="ch-wrap"><canvas id="ch-sc-${sid}"></canvas></div></div>
   </div>`;
   let wfHTML='';
   if(sd.walk_forward&&!sd.walk_forward.error&&(sd.walk_forward.n_folds??0)>0){
@@ -513,18 +516,19 @@ function buildPanel(name){
     const trades=sd.trades||[],inds=trades[0]?.indicators||{};
     mlHTML=`<div class="ml-panel"><div class="ml-title">🧠 Stratégie ML — ${inds.model||'random_forest'}</div><div class="ml-grid">${mkpi('AUC cross-val',fN(inds.auc,4),'var(--purple)')}${mkpi('Nb features',inds.n_features||'—','var(--purple)')}${mkpi('Lookahead',inds.lookahead||'—','var(--purple)')}${mkpi('Proba haussière',inds.proba_up?fN(inds.proba_up,3):'—','var(--purple)')}</div></div>`;
   }
-  div.innerHTML=`<div style="display:flex;flex-direction:column;gap:10px">${kpiHTML}${chartsHTML}${wfHTML}${mcHTML}${mlHTML}<div id="ttable"></div></div>`;
+  div.innerHTML=`<div style="display:flex;flex-direction:column;gap:10px">${kpiHTML}${chartsHTML}${wfHTML}${mcHTML}${mlHTML}<div id="ttable-${sid}"></div></div>`;
   const closed=(sd.trades||[]).filter(t=>t.status!=='open');
-  buildEq(closed,c,sd);buildPnl(closed,c);buildCum(closed,c);buildSc(closed);buildTrades(sd);
+  buildEq(closed,c,sd,sid);buildPnl(closed,c,sid);buildCum(closed,c,sid);buildSc(closed,sid);buildTrades(sd,sid);
 }
 
 function kpi(l,v,s,cls,bc){return`<div class="kpi" style="border-top-color:${bc||'var(--cyan)'}"><div class="l">${l}</div><div class="v ${cls||''}">${v}</div><div class="s">${s||''}</div></div>`;}
 function mkpi(l,v,col='var(--amber)'){return`<div class="ml-kpi"><div class="l">${l}</div><div class="v" style="color:${col}">${v}</div></div>`;}
 
 // ── TradingView charts ──
-function buildEq(closed,c,sd){
+function buildEq(closed,c,sd,sid){
   if(tvEq){try{tvEq.remove();}catch(e){}tvEq=null;}
-  const el=document.getElementById('ch-eq');if(!el)return;
+  const elId=sid?`ch-eq-${sid}`:'ch-eq';
+  const el=document.getElementById(elId);if(!el)return;
   const ic=sd.initial_capital??1000;
   const eq=sd.equity_curve||[ic,...closed.map((_,i)=>{let s=ic;for(let j=0;j<=i;j++)s+=closed[j].pnl||0;return s;})];
   tvEq=mkTV(el,160);tvEqS=tvEq.addAreaSeries({lineColor:c,topColor:c+'20',bottomColor:c+'00',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false});
@@ -538,25 +542,28 @@ function buildEq(closed,c,sd){
   tvEq.timeScale().fitContent();
 }
 
-function buildPnl(closed){
+function buildPnl(closed,c,sid){
   if(tvPnl){try{tvPnl.remove();}catch(e){}tvPnl=null;}
-  const el=document.getElementById('ch-pnl');if(!el)return;
+  const elId=sid?`ch-pnl-${sid}`:'ch-pnl';
+  const el=document.getElementById(elId);if(!el)return;
   tvPnl=mkTV(el,160);tvPnlS=tvPnl.addHistogramSeries({priceLineVisible:false,lastValueVisible:false});
   const data=closed.map((t,i)=>{const v=t.pnl||0;return{time:i+1,value:+v.toFixed(4),color:v>=0?'rgba(52,211,153,.6)':'rgba(251,113,133,.6)'};});
   if(data.length)tvPnlS.setData(data),tvPnl.timeScale().fitContent();
 }
 
-function buildCum(closed,c){
+function buildCum(closed,c,sid){
   if(tvCum){try{tvCum.remove();}catch(e){}tvCum=null;}
-  const el=document.getElementById('ch-cum');if(!el)return;
+  const elId=sid?`ch-cum-${sid}`:'ch-cum';
+  const el=document.getElementById(elId);if(!el)return;
   tvCum=mkTV(el,160);tvCumS=tvCum.addAreaSeries({lineColor:c,topColor:c+'18',bottomColor:c+'00',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false});
   let cum=0;const data=closed.map((t,i)=>{cum+=t.pnl||0;return{time:i+1,value:+cum.toFixed(4)};});
   if(data.length)tvCumS.setData(data),tvCum.timeScale().fitContent();
 }
 
-function buildSc(closed){
+function buildSc(closed,sid){
   if(scChart){scChart.destroy();scChart=null;}
-  const el=document.getElementById('ch-sc');if(!el)return;
+  const elId=sid?`ch-sc-${sid}`:'ch-sc';
+  const el=document.getElementById(elId);if(!el)return;
   scChart=new Chart(el,{type:'scatter',
     data:{datasets:[{data:closed.map(t=>({x:t.score,y:t.pnl||0})),backgroundColor:closed.map(t=>(t.pnl||0)>=0?'rgba(52,211,153,.65)':'rgba(251,113,133,.65)'),pointRadius:5}]},
     options:{...scBase,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>`Score:${ctx.raw.x}  PnL:${fN(ctx.raw.y,4)}`}}},scales:{x:{title:{display:true,text:'Score',color:'#5a7099',font:{size:9}},ticks:T,grid:G,min:0,max:1},y:{ticks:T,grid:G,position:'right'}}}});
@@ -593,17 +600,39 @@ function buildPrice(){
   });
   markers.sort((a,b)=>a.time-b.time);
   tvPriceS.setMarkers(markers);
-  // Stop lines — one dashed line per trade from entry to exit
+  // Stop lines — initial stop (dashed) + trailing stop evolution (solid purple)
   trades.forEach(t=>{
     const bi=parseInt(t.bar),ei=parseInt(t.exit_bar);
-    const stopVal=t.stop;
-    if(isNaN(bi)||isNaN(ei)||stopVal==null||!isFinite(stopVal)) return;
+    if(isNaN(bi)||isNaN(ei)) return;
     const t0=timeMap[bi],t1=timeMap[ei];
     if(!t0||!t1||t0>=t1) return;
+
+    // Initial stop line (dashed amber): entry bar → first trail update or exit
+    const initialStop=t.stop;
+    const trail=Array.isArray(t.stop_trail)?t.stop_trail.filter(s=>s&&s.bar!=null&&s.stop!=null):[];
+    // Filter trail points within the trade range
+    const trailInRange=trail.filter(s=>{const b=parseInt(s.bar);return!isNaN(b)&&b>=bi&&b<=ei&&timeMap[b];});
+
     try{
-      const stopS=tvPrice.addLineSeries({color:'rgba(251,191,36,.5)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
-      stopS.setData([{time:t0,value:stopVal},{time:t1,value:stopVal}]);
+      // Draw initial stop (flat dashed) from entry to first trailing update (or exit)
+      const firstTrailTime=trailInRange.length>0?timeMap[parseInt(trailInRange[0].bar)]:t1;
+      if(initialStop!=null&&isFinite(initialStop)&&firstTrailTime){
+        const stopS=tvPrice.addLineSeries({color:'rgba(251,191,36,.5)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
+        stopS.setData([{time:t0,value:initialStop},{time:firstTrailTime,value:initialStop}]);
+      }
     }catch(_){}
+
+    // Trailing stop evolution (solid purple segments)
+    if(trailInRange.length>=2){
+      try{
+        const trailData=trailInRange.map(s=>({time:timeMap[parseInt(s.bar)],value:s.stop}));
+        // Extend last trail point to exit bar
+        const lastPt=trailData[trailData.length-1];
+        if(lastPt.time<t1) trailData.push({time:t1,value:lastPt.value});
+        const trailS=tvPrice.addLineSeries({color:'rgba(167,139,250,.75)',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false});
+        trailS.setData(trailData);
+      }catch(_){}
+    }
   });
   tvPrice.timeScale().fitContent();
 }
@@ -622,7 +651,8 @@ function buildCmp(){
 }
 
 // ── Trades table ──
-function buildTrades(sd){
+function buildTrades(sd,sid){
+  const ttableId=sid?`ttable-${sid}`:'ttable';
   const all=(sd.trades||[]).filter(t=>t.status!=='open');
   const fil=all.filter(t=>{if(tradeFilter==='long')return t.side==='long';if(tradeFilter==='short')return t.side==='short';if(tradeFilter==='win')return(t.pnl||0)>0;if(tradeFilter==='loss')return(t.pnl||0)<=0;return true;});
   fil.sort((a,b)=>{let av=a[sortKey],bv=b[sortKey];if(typeof av==='string'){av=av.toLowerCase();bv=(bv||'').toLowerCase();}av=av??-Infinity;bv=bv??-Infinity;return sortAsc?(av>bv?1:-1):(av<bv?1:-1);});
@@ -649,7 +679,7 @@ function buildTrades(sd){
     </tr>${op?`<tr class="drow"><td colspan="11"><div class="dbg">${detail(t)}</div></td></tr>`:''}`;
   }).join('');
   const pgH=pages>1?`<div class="pg">${Array.from({length:pages},(_,i)=>i+1).map(p=>`<button class="pgb ${p===pg?'on':''}" onclick="goPg(${p})">${p}</button>`).join('')}</div>`:''
-  document.getElementById('ttable').innerHTML=`
+  document.getElementById(ttableId).innerHTML=`
     <div class="tcard">
       <div class="tth">
         <h3>${fil.length} trade${fil.length!==1?'s':''} — ${activeStrat}</h3>

@@ -25,7 +25,7 @@ from app.optimizer.optimizer import (
 
 logger = logging.getLogger(__name__)
 
-ML_STRATEGIES = {"ml_strategy", "ml_dynamic_threshold"}
+ML_STRATEGIES = {"ml_dynamic_threshold"}
 
 # ════════════════════════════════════════════════════════════════════════════
 #  État global des jobs (thread-safe)

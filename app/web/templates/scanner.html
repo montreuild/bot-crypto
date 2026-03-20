@@ -80,7 +80,7 @@
               <div style="flex:1">
                 <label class="form-lbl" for="scan-tf">Timeframe</label>
                 <select id="scan-tf" onchange="saveFilters()">
-                  <option>1m</option><option>5m</option><option>15m</option>
+                  <option>1m</option><option>3m</option><option>5m</option><option>15m</option>
                   <option>30m</option><option value="1h" selected>1h</option>
                   <option>2h</option><option>4h</option><option>1d</option>
                 </select>
@@ -262,7 +262,9 @@ async function loadOpenPositions(){
 // ── Config display ──────────────────────────────────────────────────────
 async function loadConfig(){
   try{
-    const r=await apiFetch('/api/scanner/config');const d=await r.json();renderConfig(d);
+    const r=await apiFetch('/api/scanner/config');const d=await r.json();
+    _scannerCfg=d;
+    renderConfig(d);
   }catch(e){document.getElementById('config-display').innerHTML='<div class="empty">Erreur chargement config</div>';}
 }
 function renderConfig(d){
@@ -311,6 +313,13 @@ function applyFilters(){
   renderScanTable(filtered);renderChips(filtered);
 }
 
+// ── Watchlist ────────────────────────────────────────────────────────────
+let _scannerCfg = null;
+function getWatchlist(){
+  // Retourne les symboles de la watchlist depuis la config du scanner
+  return (_scannerCfg?.scanner?.symbols) || [];
+}
+
 // ── Chips ───────────────────────────────────────────────────────────────
 function renderChips(results){
   const chips=document.getElementById('scan-chips');
@@ -318,7 +327,8 @@ function renderChips(results){
   const avgAdx=(results.reduce((s,r)=>s+(r.indicators?.adx||0),0)/results.length).toFixed(1);
   const avgRsi=(results.reduce((s,r)=>s+(r.indicators?.rsi||0),0)/results.length).toFixed(1);
   const avgAtr=(results.reduce((s,r)=>s+(r.indicators?.atr_pct||0),0)/results.length).toFixed(2);
-  const wlCount=results.filter(r=>getWatchlist().includes(r.symbol)).length;
+  const wl=getWatchlist();
+  const wlCount=wl.length?results.filter(r=>wl.includes(r.symbol)).length:results.length;
   chips.innerHTML=[['ADX moy.',avgAdx,'var(--cyan)'],['RSI moy.',avgRsi,'var(--amber)'],['ATR% moy.',avgAtr+'%','var(--green)'],['Paires',results.length,'var(--muted)'],['Watchlist',wlCount||'—','var(--purple)']].map(([lbl,val,clr])=>`<div class="stat-chip"><div class="chip-lbl">${lbl}</div><div class="chip-val" style="color:${clr}">${val}</div></div>`).join('');
 }
 
@@ -521,7 +531,8 @@ function _renderChart(d){
   // EMAs — togglable
   const mkEma=(key,color,width,title)=>{
     const vis=document.getElementById('tog-'+key)?.checked!==false;
-    const s=tvPriceChart.addLineSeries({color,lineWidth:width,priceLineVisible:false,lastValueVisible:true,title,visible:vis});
+    // lastValueVisible:false pour éviter que les étiquettes cachent les derniers signaux
+    const s=tvPriceChart.addLineSeries({color,lineWidth:width,priceLineVisible:false,lastValueVisible:false,title,visible:vis});
     if(ind[key]?.length) s.setData(ind[key]);
     _seriesMap[key]=s;
   };
@@ -623,47 +634,49 @@ async function loadPredictions(){
   if(!body) return;
   body.innerHTML = '<div class="empty"><span class="spinner"></span> Analyse en cours…</div>';
   try{
-    const r = await apiFetch(`/api/scanner?timeframe=${chartTf}&limit=200`);
-    if(!r.ok) throw new Error(r.statusText);
-    const d = await r.json();
-    const item = (d.results||[]).find(x=>x.symbol===sym);
+    // Chercher d'abord dans les résultats de scan déjà chargés
+    let item = scanResults.find(x=>x.symbol===sym);
+
+    // Si pas dans les résultats locaux, lancer un scan ciblé
     if(!item){
-      body.innerHTML='<div class="empty">Aucune donnée de stratégie pour cette paire / ce timeframe.<br>Lancez un scan pour mettre à jour.</div>';
+      const r = await apiFetch(`/api/scanner?timeframe=${chartTf}&limit=200`);
+      if(!r.ok) throw new Error(r.statusText);
+      const d = await r.json();
+      item = (d.results||[]).find(x=>x.symbol===sym);
+    }
+
+    if(!item){
+      body.innerHTML=`<div class="empty">Aucune donnée pour <strong>${escHtml(sym)}</strong> sur ce timeframe.<br>Vérifiez que la paire est dans la liste du scanner.</div>`;
       return;
     }
+
     const strats = item.strategies || [];
-    const allStrats = item.all_strategy_scores || {};
-    if(!strats.length && !Object.keys(allStrats).length){
-      body.innerHTML='<div class="empty">Aucune stratégie active sur cette paire.</div>';
+    const regime = item.regime_label || '—';
+    const ind    = item.indicators || {};
+
+    if(!strats.length){
+      body.innerHTML='<div class="empty">Aucune stratégie recommandée pour ce régime.</div>';
       return;
     }
-    // Build cards
-    const cards = Object.entries(allStrats).map(([name,info])=>{
-      const score=+(info.score||0),side=info.side||'none',active=strats.includes(name);
-      const sideClr=side==='long'?'var(--green)':side==='short'?'var(--red)':'var(--dim)';
-      const sideTag=side==='long'?'<span class="tag tag-long">LONG</span>':side==='short'?'<span class="tag tag-short">SHORT</span>':'<span class="tag tag-rej">—</span>';
-      const scoreW=Math.round(score*100);
-      const activeTag=active?'<span style="font-size:.62rem;color:var(--green);margin-left:4px">● actif</span>':'';
-      return`<div style="background:var(--card);border:1px solid ${active?'rgba(34,211,238,.25)':'var(--border)'};border-radius:var(--r-sm);padding:10px 12px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+
+    // Afficher les stratégies recommandées pour le régime détecté
+    const activePerTf = _scannerCfg?.active_per_tf || {};
+    const activeTfStrats = Object.values(activePerTf).flat();
+    const cards = strats.map(name=>{
+      const isActive = activeTfStrats.includes(name);
+      const activeTag = isActive ? '<span style="font-size:.62rem;color:var(--green);margin-left:4px">● actif</span>' : '';
+      return`<div style="background:var(--card);border:1px solid ${isActive?'rgba(34,211,238,.25)':'var(--border)'};border-radius:var(--r-sm);padding:10px 12px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
           <span style="font-weight:600;font-family:var(--mono);font-size:.78rem">${escHtml(name)}${activeTag}</span>
-          ${sideTag}
+          <span class="tag tag-strat" style="font-size:.65rem">${escHtml(regime)}</span>
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <div style="flex:1;height:4px;background:var(--border);border-radius:2px">
-            <div style="width:${scoreW}%;height:100%;border-radius:2px;background:${sideClr};transition:width .3s"></div>
-          </div>
-          <span style="font-size:.72rem;font-family:var(--mono);color:${sideClr};min-width:32px;text-align:right">${scoreW}%</span>
+        <div style="font-size:.67rem;color:var(--dim);margin-top:5px">
+          ADX ${(ind.adx||0).toFixed(1)} · ATR% ${(ind.atr_pct||0).toFixed(2)} · RSI ${(ind.rsi||0).toFixed(0)}
         </div>
-        ${info.reason?`<div style="font-size:.67rem;color:var(--dim);margin-top:5px;line-height:1.4">${escHtml(info.reason)}</div>`:''}
       </div>`;
     });
-    if(cards.length){
-      body.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px">${cards.join('')}</div>`;
-    } else {
-      // Fall back to just listing active strategies
-      body.innerHTML=`<div class="empty">Données détaillées non disponibles. Stratégies actives : ${strats.map(s=>`<span class="tag tag-strat">${escHtml(s)}</span>`).join(' ')||'aucune'}</div>`;
-    }
+    body.innerHTML=`<div style="margin-bottom:8px;font-size:.72rem;color:var(--dim)">Régime détecté : <strong style="color:var(--text)">${escHtml(regime)}</strong> · Stratégies recommandées :</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">${cards.join('')}</div>`;
   }catch(e){
     body.innerHTML=`<div class="empty">⚠ ${escHtml(e.message)}</div>`;
   }

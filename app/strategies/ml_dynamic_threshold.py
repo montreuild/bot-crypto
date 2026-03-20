@@ -26,6 +26,8 @@ from sklearn.model_selection import cross_val_score, TimeSeriesSplit
 from sklearn.pipeline        import Pipeline
 from sklearn.exceptions      import UndefinedMetricWarning
 
+from app.engine.engine import BaseStrategy
+
 logger = logging.getLogger(__name__)
 
 
@@ -304,13 +306,40 @@ def _build_pipeline(model_type: str, params: dict) -> Pipeline:
 # ═══════════════════════════════════════════════════════════════
 #  Classe Strategy — interface compatible moteur v6
 # ═══════════════════════════════════════════════════════════════
-class MLDynamicThresholdStrategy:
+class MLDynamicThresholdStrategy(BaseStrategy):
     """
     Stratégie ML à seuil dynamique.
     Interface identique aux autres stratégies v6 : méthode score() retourne
     un dict {score, side, name, reason, conditions, indicators}.
+
+    L'optimisation classique (auto_optimizer) est intentionnellement désactivée
+    pour cette stratégie (ML_STRATEGIES dans auto_optimizer.py) car elle gère
+    son propre random search interne à chaque _fit().
+    Les outer-params ci-dessous sont utilisables via strategy_params dans config.yaml.
     """
     name = "ml_dynamic_threshold"
+
+    timeframes: List[str] = ["5m", "15m", "1h"]
+
+    param_space: Dict[str, List] = {
+        "model_type":     ["random_forest", "logistic_regression"],
+        "lookahead":      [2, 3, 5],
+        "vol_multiplier": [0.4, 0.6, 0.8],
+        "adx_min":        [15.0, 20.0, 25.0],
+        "proba_long":     [0.55, 0.60, 0.65],
+        "proba_short":    [0.35, 0.40, 0.45],
+    }
+
+    fixed_params: Dict[str, Any] = {
+        "n_trials":      15,
+        "min_train":     150,
+        "retrain_every": 50,
+    }
+
+    def min_bars_required(self, params: dict = None) -> int:
+        p = (params or {}).get(self.name, {})
+        min_train = int(p.get("min_train", self.fixed_params["min_train"]))
+        return min_train + 50
 
     def __init__(self,
                  model_type:     str   = "random_forest",

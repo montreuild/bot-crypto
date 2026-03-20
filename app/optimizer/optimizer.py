@@ -384,16 +384,25 @@ def get_active_strategies_per_tf(cfg: dict) -> Dict[str, List[dict]]:
 
         if active:
             result[tf] = active
-        else:
-            # Fallback : stratégies activées manuellement (sans résultat OOS ou scores trop bas)
+        elif not candidates:
+            # Fallback uniquement si aucun résultat d'optimisation n'existe pour ce TF
+            # (stratégies jamais optimisées) — pas de fallback si tous les scores sont négatifs
             enabled = cfg["strategies"].get("enabled", [])
             result[tf] = [
                 {"name": n, "params": {n: strat_params.get(n, {})}, "score": 0.0, "tf": tf}
                 for n in enabled
             ]
-            reason = "pas de résultats OOS" if not candidates else                      f"tous les scores OOS < {MIN_VIABLE_SCORE} ({', '.join(f"{c['name']}={c['score']:.3f}" for c in candidates[:3])})"
-            logger.info(f"[Optimizer] {tf} : {reason} — "
+            logger.info(f"[Optimizer] {tf} : aucun résultat OOS — "
                         f"fallback sur stratégies activées : {enabled}")
+        else:
+            # Tous les candidats ont un score OOS sous le seuil → aucune stratégie active sur ce TF
+            scores_str = ', '.join(f"{c['name']}={c['score']:.3f}" for c in candidates[:5])
+            logger.warning(
+                f"[Optimizer] {tf} : tous les scores OOS < {MIN_VIABLE_SCORE} "
+                f"({scores_str}) — aucune stratégie active sur ce TF. "
+                f"Relancez l'optimiseur pour améliorer les scores."
+            )
+            result[tf] = []
 
     return result
 
