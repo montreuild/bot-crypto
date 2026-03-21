@@ -20,7 +20,7 @@ Corrections V5 vs V4 :
 import logging
 from typing import Dict, Any, List
 import polars as pl
-from app.engine.engine import BaseStrategy
+from app.strategies.base import StrategyBase
 from app.core.indicators import (
     rsi as calc_rsi, atr_val as calc_atr, adx_val as calc_adx,
     vol_ratio as calc_vol, market_structure, htf_trend, pre_val
@@ -29,7 +29,7 @@ from app.core.indicators import (
 logger = logging.getLogger(__name__)
 
 
-class Strategy(BaseStrategy):
+class Strategy(StrategyBase):
     name = "pullback_trend"
 
     timeframes: List[str] = ["15m", "1h", "1d"]
@@ -48,10 +48,6 @@ class Strategy(BaseStrategy):
     }
 
     fixed_params: Dict[str, Any] = {}
-
-    def __init__(self):
-        self._last_signal: Dict[str, int] = {}
-        self._call_count: Dict[str, int] = {}
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get("pullback_trend", {})
@@ -288,6 +284,3 @@ class Strategy(BaseStrategy):
             f"EMA={'bull' if ema_bull else 'bear' if ema_bear else 'neutre'} "
             f"ADX={adx_val:.0f} RSI={rsi_now:.0f} vol={vr:.1f}x htf={htf}"
         )
-
-    def _none(self, reason: str = "") -> dict:
-        return {"score": 0, "side": "none", "name": self.name, "reason": reason}

@@ -16,7 +16,7 @@ Corrections V5 vs V4 :
 import logging
 from typing import Dict, Any, List
 import polars as pl
-from app.engine.engine import BaseStrategy
+from app.strategies.base import StrategyBase
 from app.core.indicators import (
     atr_series as calc_atr_series, macd as calc_macd,
     vol_ratio as calc_vol, bb_squeeze as calc_squeeze, htf_trend, pre_val
@@ -25,7 +25,7 @@ from app.core.indicators import (
 logger = logging.getLogger(__name__)
 
 
-class Strategy(BaseStrategy):
+class Strategy(StrategyBase):
     name = "breakout"
 
     timeframes: List[str] = ["5m", "15m", "1h"]
@@ -42,10 +42,6 @@ class Strategy(BaseStrategy):
     }
 
     fixed_params: Dict[str, Any] = {}
-
-    def __init__(self):
-        self._last_signal: Dict[str, int] = {}
-        self._call_count:  Dict[str, int] = {}
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get("breakout", {})
@@ -274,6 +270,3 @@ class Strategy(BaseStrategy):
             f"trend={'bull' if trend_bull else 'bear' if trend_bear else '?'} | "
             f"vol {vr:.1f}x | MACD {lh:+.5f}"
         )
-
-    def _none(self, reason: str = "") -> dict:
-        return {"score": 0, "side": "none", "name": self.name, "reason": reason}

@@ -15,7 +15,7 @@ Corrections V5 vs V4 :
 import logging
 from typing import Dict, Any, List
 import polars as pl
-from app.engine.engine import BaseStrategy
+from app.strategies.base import StrategyBase
 from app.core.indicators import (
     rsi as calc_rsi, atr_val as calc_atr, macd as calc_macd,
     supertrend as calc_supertrend, vol_ratio as calc_vol, htf_trend, pre_val
@@ -24,7 +24,7 @@ from app.core.indicators import (
 logger = logging.getLogger(__name__)
 
 
-class Strategy(BaseStrategy):
+class Strategy(StrategyBase):
     name = "supertrend_macd"
 
     timeframes: List[str] = ["5m", "15m", "1h"]
@@ -43,10 +43,6 @@ class Strategy(BaseStrategy):
     }
 
     fixed_params: Dict[str, Any] = {}
-
-    def __init__(self):
-        self._last_signal: Dict[str, int] = {}
-        self._call_count:  Dict[str, int] = {}
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get("supertrend_macd", {})
@@ -252,6 +248,3 @@ class Strategy(BaseStrategy):
         if vr < vol_min: reasons.append(f"Vol {vr:.1f}x < {vol_min}x")
         if htf < 0 and st_bull: reasons.append("HTF baissier")
         return self._none(" | ".join(reasons) or "Conditions non réunies")
-
-    def _none(self, reason: str = "") -> dict:
-        return {"score": 0, "side": "none", "name": self.name, "reason": reason}

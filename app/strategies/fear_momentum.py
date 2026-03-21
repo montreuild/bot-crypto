@@ -43,7 +43,7 @@ Sortie (stop_hint) :
 import logging
 from typing import Dict, Any, List
 import polars as pl
-from app.engine.engine import BaseStrategy
+from app.strategies.base import StrategyBase
 from app.core.indicators import (
     rsi as calc_rsi,
     atr_val as calc_atr,
@@ -59,7 +59,7 @@ from app.core.indicators import (
 logger = logging.getLogger(__name__)
 
 
-class Strategy(BaseStrategy):
+class Strategy(StrategyBase):
     name = "fear_momentum"
 
     timeframes: List[str] = ["1h", "1d"]
@@ -77,10 +77,6 @@ class Strategy(BaseStrategy):
     }
 
     fixed_params: Dict[str, Any] = {}
-
-    def __init__(self):
-        self._last_signal: Dict[str, int] = {}
-        self._call_count:  Dict[str, int] = {}
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get("fear_momentum", {})
@@ -501,6 +497,3 @@ class Strategy(BaseStrategy):
             f"trend={'bull' if trend_bull else 'bear' if trend_bear else 'neutre'} "
             f"RSI={rsi0:.0f} htf={htf} struct={struct}"
         )
-
-    def _none(self, reason: str = "") -> dict:
-        return {"score": 0, "side": "none", "name": self.name, "reason": reason}

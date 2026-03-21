@@ -29,6 +29,12 @@ from sklearn.pipeline        import Pipeline
 from sklearn.exceptions      import UndefinedMetricWarning
 
 from app.engine.engine import BaseStrategyML
+from app.core.indicators import (
+    rsi as _rsi_ind,
+    atr_series as _atr_series_ind,
+    adx as _adx_ind,
+    adx_val as _adx_val_ind,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +83,7 @@ def compute_features(df: pl.DataFrame) -> pl.DataFrame:
     lower_wick_ratio = lower_wick  / total_range
 
     # ── RSI & divergence approximative ────────────────────────
-    rsi_14_s    = _rsi(close, 14)
+    rsi_14_s    = _rsi_ind(close, 14)
     rsi_14      = rsi_14_s / 100.0
     price_slope = close.diff(5)
     rsi_slope   = rsi_14_s.diff(5)
@@ -107,7 +113,7 @@ def compute_features(df: pl.DataFrame) -> pl.DataFrame:
     # ── ATR relatif ───────────────────────────────────────────
     atr_rels = {}
     for period in [7, 14]:
-        atr_s = _atr_series(df, period)
+        atr_s = _atr_series_ind(df, period)
         atr_rels[f"atr{period}_rel"] = atr_s / close.clip(lower_bound=1e-9)
 
     # ── Bollinger %B ──────────────────────────────────────────
@@ -153,7 +159,7 @@ def compute_features(df: pl.DataFrame) -> pl.DataFrame:
     vol_ratio_rv = vol_real_5 / vol_real_20.clip(lower_bound=1e-9)
 
     # ── ADX ───────────────────────────────────────────────────
-    adx_14 = _adx_series(df, 14)
+    adx_14 = _adx_ind(df, 14)[0]  # Series complète : tuple (adx, +DI, −DI)[0]
 
     # ── High/Low range normalisé ──────────────────────────────
     hl_range  = (high - low) / close.clip(lower_bound=1e-9)
@@ -496,7 +502,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 return self._no_signal()
 
             # Filtre ADX — régime de marché
-            adx_val = float(_adx_series(df, 14)[-1])
+            adx_val = _adx_val_ind(df, 14)
             if adx_val < self.adx_min:
                 return {
                     "score":      0.0,
@@ -636,44 +642,6 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
     @property
     def is_trained(self) -> bool:
         return self._trained
-
-
-# ═══════════════════════════════════════════════════════════════
-#  Helpers indicateurs (locaux — pas de dépendance circulaire)
-# ═══════════════════════════════════════════════════════════════
-def _rsi(close: pl.Series, period: int) -> pl.Series:
-    delta = close.diff(1)
-    gain  = delta.clip(lower_bound=0).rolling_mean(period)
-    loss  = (-delta.clip(upper_bound=0)).rolling_mean(period)
-    rs    = gain / loss.replace(0, None)
-    return 100 - 100 / (1 + rs)
-
-
-def _atr_series(df: pl.DataFrame, period: int) -> pl.Series:
-    h, l, c = df["high"], df["low"], df["close"]
-    c_prev = c.shift(1)
-    tr = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
-    return tr.rolling_mean(period)
-
-
-def _adx_series(df: pl.DataFrame, period: int = 14) -> pl.Series:
-    h, l, c = df["high"], df["low"], df["close"]
-    c_prev = c.shift(1)
-    tr = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
-    _dm = pl.DataFrame({
-        "pdm": (h - h.shift(1)).clip(lower_bound=0),
-        "mdm": (l.shift(1) - l).clip(lower_bound=0),
-    }).with_columns([
-        pl.when(pl.col("pdm") <= pl.col("mdm")).then(0.0).otherwise(pl.col("pdm")).alias("pdm"),
-        pl.when(pl.col("mdm") <= pl.col("pdm")).then(0.0).otherwise(pl.col("mdm")).alias("mdm"),
-    ])
-    pdm, mdm = _dm["pdm"], _dm["mdm"]
-    atr14    = tr.rolling_mean(period).replace(0, None)
-    dip      = 100 * pdm.rolling_mean(period) / atr14
-    dim      = 100 * mdm.rolling_mean(period) / atr14
-    dx       = 100 * (dip - dim).abs() / (dip + dim).replace(0, None)
-    return dx.rolling_mean(period).fill_null(0.0)
-
 
 # Alias Engine
 class Strategy(MLDynamicThresholdStrategy):
