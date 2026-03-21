@@ -177,7 +177,7 @@
             <button class="chart-tf-btn" onclick="setChartTf('4h')">4h</button>
             <button class="chart-tf-btn" onclick="setChartTf('1d')">1d</button>
           </div>
-          <button id="chart-type-btn" class="btn btn-sm btn-outline" onclick="toggleChartType()" title="Basculer entre bougies et courbe de prix">🕯 Bougies</button>
+          <button id="chart-type-btn" class="btn btn-sm btn-outline" onclick="toggleChartType()" title="Basculer entre bougies et courbe de prix">📈 Courbe</button>
           <button class="btn btn-cyan btn-sm" onclick="loadChart()" aria-label="Charger le graphique">⟳ Charger</button>
         </div>
       </div>
@@ -410,7 +410,7 @@ const _tzOffset = -new Date().getTimezoneOffset() * 60;
 function toggleChartType(){
   chartType = chartType === 'candles' ? 'line' : 'candles';
   const btn = document.getElementById('chart-type-btn');
-  if(btn) btn.textContent = chartType === 'candles' ? '🕯 Bougies' : '📈 Courbe';
+  if(btn) btn.textContent = chartType === 'candles' ? '📈 Courbe' : '🕯 Bougies';
   if(_lastChartData) _renderChart(_lastChartData);
 }
 
@@ -683,15 +683,20 @@ async function loadPredictions(){
     const regimeLabel = scanItem?.regime_label || '';
 
     const cards = signals.map(sig=>{
+      const activeBadge = sig.active
+        ? `<span style="background:rgba(99,179,237,.18);color:#63b3ed;font-size:.58rem;font-weight:700;padding:1px 5px;border-radius:3px;vertical-align:middle" title="Stratégie active dans la config">● Actif</span>`
+        : '';
       if(sig.skipped){
-        return`<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;opacity:.6">
-          <div style="font-weight:600;font-family:var(--mono);font-size:.78rem;color:var(--purple)">${escHtml(sig.strategy)}</div>
-          <div style="font-size:.67rem;color:var(--dim);margin-top:4px">🧠 ML — nécessite entraînement</div>
+        return`<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;opacity:.65">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <span style="font-weight:600;font-family:var(--mono);font-size:.78rem;color:var(--purple)">${escHtml(sig.strategy)}</span>
+            ${activeBadge}
+          </div>
+          <div style="font-size:.67rem;color:var(--dim)">🧠 ML — ${escHtml(sig.reason||'aucun modèle disponible')}</div>
         </div>`;
       }
       const side = sig.side || 'none';
       const score = sig.score ?? 0;
-      const scoreW = Math.round(score * 100);
       let sideColor, sideIcon, sideTxt;
       if(side === 'long'){
         sideColor='var(--green)'; sideIcon='▲'; sideTxt='HAUSSE';
@@ -709,7 +714,10 @@ async function loadPredictions(){
           : `<span style="background:rgba(90,112,153,.15);color:var(--dim);font-size:.62rem;font-weight:700;padding:2px 7px;border-radius:3px">⬜ Aucun signal</span>`;
       return`<div style="background:var(--card);border:1px solid ${side!=='none'?sideColor+'44':'var(--border)'};border-radius:var(--r-sm);padding:10px 12px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
-          <span style="font-weight:600;font-family:var(--mono);font-size:.78rem">${escHtml(sig.strategy)}</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-weight:600;font-family:var(--mono);font-size:.78rem">${escHtml(sig.strategy)}</span>
+            ${activeBadge}
+          </div>
           ${signalBadge}
         </div>
         <div style="display:flex;align-items:center;gap:8px">
@@ -721,16 +729,16 @@ async function loadPredictions(){
       </div>`;
     });
 
-    const nBuy  = signals.filter(s=>s.side==='long').length;
-    const nSell = signals.filter(s=>s.side==='short').length;
-    const nNone = signals.filter(s=>s.side==='none'&&!s.skipped).length;
-    const nMl   = signals.filter(s=>s.skipped).length;
+    const nBuy     = signals.filter(s=>s.side==='long'&&!s.skipped).length;
+    const nSell    = signals.filter(s=>s.side==='short'&&!s.skipped).length;
+    const nNone    = signals.filter(s=>s.side==='none'&&!s.skipped).length;
+    const nSkipped = signals.filter(s=>s.skipped).length;
 
     const summary = `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px;font-size:.72rem">
-      <span>${signals.length} stratégie(s) exécutée(s)</span>
+      <span>${signals.length} stratégie(s)</span>
       ${nBuy  ? `<span style="color:var(--green)">▲ ${nBuy} achat</span>` : ''}
       ${nSell ? `<span style="color:var(--red)">▼ ${nSell} vente</span>` : ''}
-      <span style="color:var(--dim)">${nNone} neutre · ${nMl} ML (non exécuté)</span>
+      <span style="color:var(--dim)">${nNone} neutre${nSkipped ? ` · ${nSkipped} ML sans modèle` : ''}</span>
       ${regimeLabel ? `<span style="color:var(--muted)">Régime : <strong>${escHtml(regimeLabel)}</strong></span>` : ''}
     </div>`;
 

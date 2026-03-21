@@ -215,9 +215,11 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
 @router.get("/api/scanner/signals", dependencies=[Depends(verify_api_key)])
 def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 300):
     """
-    Exécute toutes les stratégies non-ML actives sur le symbole donné et retourne
+    Exécute toutes les stratégies découvertes sur le symbole donné et retourne
     leurs signaux (side: long/short/none, score, reason).
-    Les stratégies ML sont exclues car elles nécessitent un entraînement préalable.
+    Les stratégies ML tentent de charger un modèle pré-entraîné ; si aucun modèle
+    n'est disponible, elles sont marquées skipped=True.
+    Les stratégies présentes dans la config enabled sont marquées active=True.
     """
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
@@ -229,28 +231,33 @@ def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int 
         if df is None:
             raise HTTPException(404, f"Données non disponibles pour {symbol}/{tf}")
 
-        enabled   = state.cfg["strategies"].get("enabled", [])
-        allowed   = _discover_strategies()
-        strats    = [s for s in enabled if s in allowed]
+        enabled_set = set(state.cfg["strategies"].get("enabled", []))
+        strats      = sorted(_discover_strategies())
 
         signals = []
         for name in strats:
+            is_active = name in enabled_set
             try:
                 mod = importlib.import_module(f"app.strategies.{name}")
                 cls = getattr(mod, "Strategy", None)
                 if cls is None:
                     continue
-                # Skip ML strategies — they require model training
-                if issubclass(cls, BaseStrategyML):
-                    signals.append({
-                        "strategy": name,
-                        "side":     "ml",
-                        "score":    None,
-                        "reason":   "Stratégie ML — nécessite un entraînement préalable",
-                        "skipped":  True,
-                    })
-                    continue
-                inst   = cls()
+                inst = cls()
+                # ML strategies: try to load a pre-trained model; skip if none available
+                if isinstance(inst, BaseStrategyML):
+                    model_path = f"{inst.model_dir}/{name}_{tf}.pkl"
+                    if not inst.load_model(model_path):
+                        signals.append({
+                            "strategy": name,
+                            "side":     "none",
+                            "score":    None,
+                            "reason":   "Aucun modèle entraîné — lancez un backtest ou l'optimiseur",
+                            "skipped":  True,
+                            "active":   is_active,
+                        })
+                        continue
+                    # Model loaded — run inference only (managed_externally disables inline training)
+                    inst.managed_externally = True
                 result = inst.score(df, state.cfg.get("strategy_params", {}))
                 side   = result.get("side", "none")
                 score  = result.get("score", 0.0)
@@ -261,6 +268,7 @@ def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int 
                     "score":    round(float(score), 3) if score is not None else 0.0,
                     "reason":   reason,
                     "skipped":  False,
+                    "active":   is_active,
                 })
             except Exception as e:
                 signals.append({
@@ -269,6 +277,7 @@ def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int 
                     "score":    0.0,
                     "reason":   f"Erreur : {e}",
                     "skipped":  False,
+                    "active":   is_active,
                 })
 
         return JSONResponse(content=_clean({
