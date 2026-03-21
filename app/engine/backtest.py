@@ -222,12 +222,19 @@ class Backtester:
     """
     Backtester V6 — Trailing stop dynamique multi-phases, sans TP fixe.
     Le TP fixe est supprimé. Les gains courent jusqu'au retournement naturel.
+
+    use_pretrained_ml : si True (défaut), les stratégies BaseStrategyML chargent
+      leur modèle pré-entraîné depuis models/{name}_{tf}.pkl et n'effectuent aucun
+      réentraînement inline. Si False (mode optimiseur / walk-forward), elles
+      repartent de zéro et se réentraînent barre par barre.
     """
     def __init__(self, engine: Engine, cfg: dict,
-                 cancel_event: Optional[threading.Event] = None):
-        self.engine         = engine
-        self.cfg            = cfg
-        self._cancel_event  = cancel_event
+                 cancel_event: Optional[threading.Event] = None,
+                 use_pretrained_ml: bool = True):
+        self.engine             = engine
+        self.cfg                = cfg
+        self._cancel_event      = cancel_event
+        self.use_pretrained_ml  = use_pretrained_ml
         bcfg = cfg.get("backtest", {})
         tcfg = cfg.get("trading",  {})
 
@@ -267,12 +274,24 @@ class Backtester:
     # ── run ───────────────────────────────────────────────────────────────────
     def run(self, df: pl.DataFrame, symbol: str = "BTC/USDC",
             timeframe: str = None) -> "BacktestResult":
-        # Réinitialise les stratégies ML pour garantir un backtest déterministe
-        # (pas de fuite d'état entre deux appels run() sur le même Backtester).
+        import os
         from app.engine.engine import BaseStrategyML
         for strat in self.engine.strategies:
-            if isinstance(strat, BaseStrategyML):
-                strat.reset_model()
+            if not isinstance(strat, BaseStrategyML):
+                continue
+            strat.reset_model()
+            if self.use_pretrained_ml and timeframe:
+                # Backtest standard : utilise le modèle pré-entraîné du timeframe.
+                # Pas de réentraînement inline → rapide et déterministe.
+                path = os.path.join(strat.model_dir, f"{strat.name}_{timeframe}.pkl")
+                if strat.load_model(path):
+                    strat.managed_externally = True
+                    logger.debug(f"[Backtest] ML '{strat.name}' : modèle {timeframe} chargé")
+                else:
+                    logger.info(
+                        f"[Backtest] ML '{strat.name}' : aucun modèle pour {timeframe} "
+                        "— entraînement inline activé (lancez d'abord un cycle live ou l'optimiseur)"
+                    )
 
         capital      = self.cfg["trading"].get("capital", 1000.0)
         risk         = self.cfg["trading"]["risk_per_trade"]

@@ -126,7 +126,12 @@ class MLStrategyTrainer:
     # ── Helpers ────────────────────────────────────────────────────────────
     @staticmethod
     def _tf(strat, default_tf: str) -> str:
-        return (getattr(strat, "timeframes", None) or [default_tf])[0]
+        # Utilise le timeframe configuré (default_tf) en priorité.
+        # Si la stratégie ne le supporte pas, repli sur son premier TF déclaré.
+        supported = getattr(strat, "timeframes", None) or []
+        if not supported or default_tf in supported:
+            return default_tf
+        return supported[0]
 
     @staticmethod
     def _model_path(strat, name: str, tf: str) -> str:

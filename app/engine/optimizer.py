@@ -130,7 +130,7 @@ def _eval_worker(args: tuple) -> dict:
     Évalue un jeu de paramètres dans un processus séparé.
     Utilise polars IPC pour déséraliser les DataFrames efficacement.
     """
-    strategy_name, cfg_yaml, df_is_ipc, df_oos_ipc, symbol, params = args
+    strategy_name, cfg_yaml, df_is_ipc, df_oos_ipc, symbol, params, timeframe = args
     try:
         import yaml as _yaml
         import importlib as _imp
@@ -148,10 +148,10 @@ def _eval_worker(args: tuple) -> dict:
         _eng.register(_mod.Strategy(), silent=True)
         _cfg_copy = _dp(_cfg)
         _cfg_copy.setdefault("strategy_params", {})[strategy_name] = params
-        _bt = _Backtester(_eng, _cfg_copy)
+        _bt = _Backtester(_eng, _cfg_copy, use_pretrained_ml=False)
 
-        _res_is  = _bt.run(_df_is,  symbol)
-        _res_oos = _bt.run(_df_oos, symbol)
+        _res_is  = _bt.run(_df_is,  symbol, timeframe=timeframe)
+        _res_oos = _bt.run(_df_oos, symbol, timeframe=timeframe)
 
         _is_score  = _composite_score(_res_is)
         _oos_score = _composite_score(_res_oos)
@@ -443,10 +443,12 @@ class StrategyOptimizer:
         eng = self._load_strategy()
         cfg = deepcopy(self.cfg)
         cfg.setdefault("strategy_params", {})[self.strategy_name] = params
-        bt  = Backtester(eng, cfg, cancel_event=self._cancel_event)
+        # use_pretrained_ml=False : l'optimiseur évalue le comportement réel de la ML
+        # avec réentraînement inline (walk-forward), sans charger de modèle pré-existant.
+        bt  = Backtester(eng, cfg, cancel_event=self._cancel_event, use_pretrained_ml=False)
 
-        res_is  = bt.run(self.df_is,  self.symbol)
-        res_oos = bt.run(self.df_oos, self.symbol)
+        res_is  = bt.run(self.df_is,  self.symbol, timeframe=self.timeframe)
+        res_oos = bt.run(self.df_oos, self.symbol, timeframe=self.timeframe)
 
         is_score  = _composite_score(res_is)
         oos_score = _composite_score(res_oos)
@@ -596,7 +598,7 @@ class StrategyOptimizer:
             cfg_yaml = _yaml.dump(self.cfg)
 
             worker_args = [
-                (self.strategy_name, cfg_yaml, df_is_ipc, df_oos_ipc, self.symbol, p)
+                (self.strategy_name, cfg_yaml, df_is_ipc, df_oos_ipc, self.symbol, p, self.timeframe)
                 for p in param_list
             ]
 
