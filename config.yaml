@@ -75,6 +75,7 @@ strategies:
   - fft_spectral
   - multi_tf_sr
   - pullback_trend
+  - signal_consensus
   - supertrend_macd
   - trend
 strategy_params:
@@ -178,6 +179,10 @@ strategy_params:
     min_bars: 150
     cooldown: 30
     rr_min: 1.5
+  signal_consensus:
+    min_consensus: 2
+    score_threshold: 0.55
+    consensus_bonus: 0.02
 trading:
   borrow_rate_daily: 0.00072
   capital: 1000

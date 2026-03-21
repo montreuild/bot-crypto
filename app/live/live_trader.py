@@ -137,7 +137,7 @@ class LiveTrader(PositionMixin):
         # Chargement des modèles ML persistés — réentraînement géré par _auto_opt_thread
         from app.ml.trainer import MLStrategyTrainer
         self._ml_trainer = MLStrategyTrainer(cfg)
-        self._ml_trainer.load_models(self._loaded_strategies, self.tf)
+        self._ml_trainer.load_models(self._loaded_strategies, self.timeframes)
 
         # Stratégies actives par TF (depuis optimizer_results)
         self._active_per_tf: Dict[str, List[dict]] = {}
@@ -732,7 +732,7 @@ class LiveTrader(PositionMixin):
     def _auto_opt_thread(self, run_optimization: bool = True):
         try:
             # Réentraînement des stratégies ML dont l'intervalle est écoulé
-            self._ml_trainer.retrain_due(self._loaded_strategies, self.scanner, self.tf)
+            self._ml_trainer.retrain_due(self._loaded_strategies, self.scanner, self.timeframes)
 
             if not run_optimization:
                 return
