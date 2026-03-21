@@ -343,7 +343,7 @@ Brief description.
 
 1. **Profiler** (voir où le temps est dépensé)
    ```bash
-   python -m cProfile -s cumtime main.py --backtest BTC/USDC
+   python -m cProfile -s cumtime cli.py --backtest BTC/USDC
    ````
 
 2. **Mesurer avant/après**

@@ -46,7 +46,7 @@ Vue d'ensemble technique, patterns de design et flux de données.
 
 ## 🔄 Flux de données
 
-### Démarrage (main.py)
+### Démarrage (cli.py)
 
 ```
 1. parse_args() 
@@ -485,7 +485,7 @@ if cfg.get("debug"):
 ```bash
 # Voir tous les appels CCXT
 export CCXT_DEBUG=1
-python main.py
+python cli.py
 ```
 
 ---
@@ -503,7 +503,7 @@ After=network.target
 Type=simple
 User=cryptobot
 WorkingDirectory=/opt/crypto_bot
-ExecStart=/opt/crypto_bot/.venv/bin/python main.py
+ExecStart=/opt/crypto_bot/.venv/bin/python cli.py
 Restart=on-failure
 
 [Install]
@@ -518,7 +518,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY . .
-CMD ["python", "main.py"]
+CMD ["python", "cli.py"]
 ```
 
 ---
