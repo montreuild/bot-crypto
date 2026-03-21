@@ -13,7 +13,9 @@ Différences clés vs ml_strategy.py :
 """
 import logging
 import math
+import os
 import random
+import threading
 import warnings
 from typing import Dict, Any, List, Tuple, Optional
 
@@ -26,7 +28,7 @@ from sklearn.model_selection import cross_val_score, TimeSeriesSplit
 from sklearn.pipeline        import Pipeline
 from sklearn.exceptions      import UndefinedMetricWarning
 
-from app.engine.engine import BaseStrategy
+from app.engine.engine import BaseStrategyML
 
 logger = logging.getLogger(__name__)
 
@@ -306,18 +308,25 @@ def _build_pipeline(model_type: str, params: dict) -> Pipeline:
 # ═══════════════════════════════════════════════════════════════
 #  Classe Strategy — interface compatible moteur v6
 # ═══════════════════════════════════════════════════════════════
-class MLDynamicThresholdStrategy(BaseStrategy):
+class MLDynamicThresholdStrategy(BaseStrategyML):
     """
     Stratégie ML à seuil dynamique.
     Interface identique aux autres stratégies v6 : méthode score() retourne
     un dict {score, side, name, reason, conditions, indicators}.
 
-    L'optimisation classique (auto_optimizer) est intentionnellement désactivée
-    pour cette stratégie (ML_STRATEGIES dans auto_optimizer.py) car elle gère
-    son propre random search interne à chaque _fit().
+    Hérite de BaseStrategyML → exclue automatiquement de l'auto_optimizer
+    (elle gère son propre random search interne à chaque fit()).
     Les outer-params ci-dessous sont utilisables via strategy_params dans config.yaml.
+
+    Modes de réentraînement :
+    - managed_externally=False (défaut, backtest) : réentraînement inline toutes les
+      `retrain_every` itérations, dans le thread courant.
+    - managed_externally=True (live) : le LiveTrader planifie fit() en arrière-plan ;
+      score() utilise le modèle existant sans bloquer la boucle de trading.
     """
     name = "ml_dynamic_threshold"
+    retrain_interval_h: int = 6
+    model_dir: str = "models"
 
     timeframes: List[str] = ["5m", "15m", "1h"]
 
@@ -369,6 +378,11 @@ class MLDynamicThresholdStrategy(BaseStrategy):
         self._best_params:  dict  = {}
         self._feature_cols: List[str] = []
         self._train_idx:    int   = 0
+        # Thread-safety : protège les lectures/écritures du modèle lors du
+        # réentraînement en arrière-plan (live managed_externally=True).
+        self._model_lock:   threading.RLock = threading.RLock()
+        # Mis à True par le LiveTrader pour désactiver le réentraînement inline.
+        self.managed_externally: bool = False
 
     # ── Interface principale ───────────────────────────────────
     def score(self, df: pl.DataFrame, params: dict = None, df_htf=None, symbol: str = "") -> Dict[str, Any]:
@@ -389,11 +403,13 @@ class MLDynamicThresholdStrategy(BaseStrategy):
         if len(df) < self.min_train + 20:
             return self._no_signal()
 
-        needs_train = (
-            not self._trained or
-            self._call_count % self.retrain_every == 0
-        )
-        if needs_train:
+        if not self._trained:
+            # Premier appel : entraînement initial synchrone (backtest ou live
+            # avant le premier cycle du réentraîneur périodique).
+            self._fit(df)
+        elif not self.managed_externally and self._call_count % self.retrain_every == 0:
+            # Mode backtest : réentraînement inline périodique pour simuler
+            # la dérive du marché. Désactivé en live (géré en arrière-plan).
             self._fit(df)
 
         if not self._trained:
@@ -440,12 +456,13 @@ class MLDynamicThresholdStrategy(BaseStrategy):
             pipeline = _build_pipeline(self.model_type, best_p)
             pipeline.fit(X, y)
 
-            self._pipeline     = pipeline
-            self._best_params  = best_p
-            self._best_auc     = best_auc
-            self._feature_cols = list(feats.columns)
-            self._trained      = True
-            self._train_idx    = len(df)
+            with self._model_lock:
+                self._pipeline     = pipeline
+                self._best_params  = best_p
+                self._best_auc     = best_auc
+                self._feature_cols = list(feats.columns)
+                self._trained      = True
+                self._train_idx    = len(df)
 
             # ── Validation IS/OOS — détection sur-apprentissage ───────────
             try:
@@ -491,7 +508,8 @@ class MLDynamicThresholdStrategy(BaseStrategy):
                 }
 
             X_last = feats[-1:].to_numpy()
-            proba  = float(self._pipeline.predict_proba(X_last)[0, 1])
+            with self._model_lock:
+                proba = float(self._pipeline.predict_proba(X_last)[0, 1])
             close  = float(df["close"][-1])
 
             if proba >= self.proba_long:
@@ -549,6 +567,75 @@ class MLDynamicThresholdStrategy(BaseStrategy):
             "conditions": [],
             "indicators": {},
         }
+
+    # ── Contrat BaseStrategyML ─────────────────────────────────────────────
+
+    def fit(self, df: pl.DataFrame, params: dict = None) -> None:
+        """Entraîne le modèle (appelé par le réentraîneur périodique du LiveTrader)."""
+        if params:
+            p = params.get(self.name, {})
+            for k, v in p.items():
+                if hasattr(self, k):
+                    setattr(self, k, v)
+        self._fit(df)
+
+    def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
+        """Génère un signal sans réentraîner (modèle déjà chargé en mémoire)."""
+        return self._predict(df)
+
+    def save_model(self, path: str) -> None:
+        """Persiste le modèle entraîné sur disque via joblib."""
+        if not self._trained or self._pipeline is None:
+            return
+        try:
+            import joblib
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with self._model_lock:
+                payload = {
+                    "pipeline":     self._pipeline,
+                    "best_params":  self._best_params,
+                    "best_auc":     self._best_auc,
+                    "feature_cols": self._feature_cols,
+                    "model_type":   self.model_type,
+                }
+            joblib.dump(payload, path)
+            logger.info(f"[{self.name}] Modèle sauvegardé → {path}")
+        except Exception as e:
+            logger.warning(f"[{self.name}] Sauvegarde modèle KO : {e}")
+
+    def load_model(self, path: str) -> bool:
+        """Charge un modèle persisté depuis le disque. Retourne True si réussi."""
+        if not os.path.exists(path):
+            return False
+        try:
+            import joblib
+            data = joblib.load(path)
+            with self._model_lock:
+                self._pipeline     = data["pipeline"]
+                self._best_params  = data.get("best_params", {})
+                self._best_auc     = data.get("best_auc", 0.0)
+                self._feature_cols = data.get("feature_cols", [])
+                self._trained      = True
+            logger.info(f"[{self.name}] Modèle chargé depuis {path} (AUC={self._best_auc:.4f})")
+            return True
+        except Exception as e:
+            logger.warning(f"[{self.name}] Chargement modèle KO : {e}")
+            return False
+
+    def reset_model(self) -> None:
+        """Réinitialise l'état du modèle (walk-forward backtest, tests)."""
+        with self._model_lock:
+            self._pipeline     = None
+            self._trained      = False
+            self._call_count   = 0
+            self._best_auc     = 0.0
+            self._best_params  = {}
+            self._feature_cols = []
+            self._train_idx    = 0
+
+    @property
+    def is_trained(self) -> bool:
+        return self._trained
 
 
 # ═══════════════════════════════════════════════════════════════

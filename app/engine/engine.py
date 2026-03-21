@@ -43,6 +43,58 @@ class BaseStrategy:
         raise NotImplementedError
 
 
+class BaseStrategyML(BaseStrategy):
+    """
+    Classe de base pour les stratégies basées sur un modèle ML.
+
+    Distingue les stratégies ML des stratégies classiques dans tout le bot :
+    - auto_optimizer : exclusion automatique (gèrent leur propre optimisation interne)
+    - live_trader    : entraînement périodique en arrière-plan + persistance du modèle
+    - backtest       : reset_model() disponible pour le walk-forward
+
+    Contrat à implémenter :
+      fit(df, params)          → entraîne le modèle sur les données historiques
+      predict(df, params)      → génère un signal sans ré-entraîner
+      save_model(path)         → persiste le modèle (joblib)
+      load_model(path) → bool  → charge un modèle depuis le disque
+      reset_model()            → réinitialise l'état (nouveau walk-forward fold)
+      is_trained (property)    → True si un modèle est disponible
+
+    Paramètre de classe :
+      retrain_interval_h : fréquence d'entraînement périodique en live (défaut : 6h)
+      model_dir          : répertoire de persistance des modèles (défaut : "models")
+
+    Flag d'instance :
+      managed_externally : si True, le _signal() interne ne réentraîne pas inline ;
+                           c'est le LiveTrader qui planifie les réentraînements.
+                           Mis à True automatiquement au démarrage du LiveTrader.
+    """
+    retrain_interval_h: int = 6
+    model_dir: str = "models"
+
+    def fit(self, df: pl.DataFrame, params: dict = None) -> None:
+        """Entraîne le modèle sur df avec les paramètres fournis."""
+        raise NotImplementedError
+
+    def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
+        """Retourne un signal en utilisant le modèle déjà entraîné."""
+        raise NotImplementedError
+
+    def save_model(self, path: str) -> None:
+        """Persiste le modèle entraîné sur disque (implémentation optionnelle)."""
+
+    def load_model(self, path: str) -> bool:
+        """Charge un modèle depuis le disque. Retourne True si réussi."""
+        return False
+
+    def reset_model(self) -> None:
+        """Réinitialise l'état du modèle (utilisé par le walk-forward backtest)."""
+
+    @property
+    def is_trained(self) -> bool:
+        return False
+
+
 class Engine:
     def __init__(self):
         self.strategies: List[BaseStrategy] = []
