@@ -89,7 +89,7 @@ trading:
 ### Mode recommandé : Trading + Interface Web
 
 ```bash
-python main.py
+python cli.py
 ```
 
 Lance automatiquement :
@@ -100,28 +100,28 @@ Lance automatiquement :
 
 ```bash
 # Forcer le mode paper trading (ignore config.yaml)
-python main.py --paper
+python cli.py --paper
 
 # Backtest CLI
-python main.py --backtest BTC/USDC --timeframe 1h --limit 500
+python cli.py --backtest BTC/USDC --timeframe 1h --limit 500
 
 # Backtest avec Walk-Forward Analysis
-python main.py --backtest BTC/USDC --walk-forward
+python cli.py --backtest BTC/USDC --walk-forward
 
 # Backtest avec Monte-Carlo
-python main.py --backtest BTC/USDC --monte-carlo
+python cli.py --backtest BTC/USDC --monte-carlo
 
 # Optimiser une stratégie
-python main.py --optimize pullback_trend --opt-method bayesian
+python cli.py --optimize pullback_trend --opt-method bayesian
 
 # Scanner les marchés
-python main.py --scan
+python cli.py --scan
 
 # Port personnalisé
-python main.py --port 9000
+python cli.py --port 9000
 
 # Config fichier alternatif
-python main.py --config my_config.yaml
+python cli.py --config my_config.yaml
 ```
 
 ### Arguments disponibles
@@ -224,7 +224,7 @@ strategies:
 
 ```
 crypto_bot_v10/
-├── main.py                          ← Point d'entrée (CLI)
+├── cli.py                          ← Point d'entrée (CLI)
 ├── config.yaml                      ← Configuration principale
 ├── requirements.txt                 ← Dépendances Python 3.12
 ├── README.md                        ← Ce fichier

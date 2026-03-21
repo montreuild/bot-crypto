@@ -81,7 +81,7 @@ def _get_bt_exchange(cfg: dict):
 from app.core.database   import init_db, get_trades, DailyStats
 from app.engine.engine   import Engine
 from app.engine.backtest import Backtester, WalkForwardAnalyzer, MonteCarlo
-from app.scanner.scanner import MarketScanner
+from app.engine.scanner  import MarketScanner
 
 
 # ── Globals ───────────────────────────────────────────────────────────────
@@ -327,7 +327,7 @@ def get_config():
     safe = {k: v for k, v in cfg.items() if k not in ("exchange", "notifications")}
     safe["exchange"]      = {"name": cfg["exchange"]["name"]}
     safe["all_strategies"]= all_strats
-    from app.optimizer.optimizer import STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT
+    from app.engine.optimizer import STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT
     safe["strategy_timeframes"] = STRATEGY_TIMEFRAMES
     safe["recommended_limits"]  = RECOMMENDED_LIMIT
     if trader:
@@ -906,7 +906,7 @@ def run_scanner(timeframe: str = None, limit: int = 200):
 def scanner_config():
     """Retourne la configuration active du scanner."""
     if not cfg: raise HTTPException(503, "Config non chargée")
-    from app.optimizer.optimizer import STRATEGY_TIMEFRAMES
+    from app.engine.optimizer import STRATEGY_TIMEFRAMES
     # active_per_tf depuis le trader si dispo, sinon depuis la config statique
     if trader:
         active_per_tf = {tf: [s["name"] for s in v]
@@ -1079,7 +1079,7 @@ def optimizer_start(
 ):
     if not cfg: raise HTTPException(503, "Config non chargée")
     # Vérifier si des jobs d'optimisation sont encore en cours (threads background)
-    from app.optimizer.auto_optimizer import get_all_jobs as _get_all_jobs
+    from app.engine.auto_optimizer import get_all_jobs as _get_all_jobs
     _running_jobs = [jid for jid, j in _get_all_jobs().items() if j.get("status") == "running"]
     if _running_jobs:
         raise HTTPException(429, f"Une optimisation est déjà en cours ({len(_running_jobs)} job(s) actif(s) : {', '.join(_running_jobs[:3])}).")
@@ -1097,8 +1097,8 @@ def optimizer_start(
         n_jobs = min(n_jobs, max(1, _cpu_count - 1))
 
     try:
-        from app.optimizer.auto_optimizer import AutoOptimizer
-        from app.optimizer.optimizer import PARAM_SPACES, RECOMMENDED_LIMIT
+        from app.engine.auto_optimizer import AutoOptimizer
+        from app.engine.optimizer import PARAM_SPACES, RECOMMENDED_LIMIT
 
         # Timeframes à optimiser
         tf_list = [t.strip() for t in timeframes.split(",") if t.strip()] if timeframes.strip() else \
@@ -1172,7 +1172,7 @@ def optimizer_start(
 
 @app.get("/api/optimize/status")
 def optimizer_status(job_id: str = ""):
-    from app.optimizer.auto_optimizer import get_job, get_all_jobs
+    from app.engine.auto_optimizer import get_job, get_all_jobs
     if job_id:
         job = get_job(job_id)
         if not job: raise HTTPException(404, f"Job '{job_id}' introuvable")
@@ -1182,7 +1182,7 @@ def optimizer_status(job_id: str = ""):
 
 @app.get("/api/optimize/stream")
 async def optimizer_stream(job_id: str):
-    from app.optimizer.auto_optimizer import get_job
+    from app.engine.auto_optimizer import get_job
     import asyncio
 
     async def event_generator():
@@ -1223,8 +1223,8 @@ async def optimizer_stream(job_id: str):
 
 @app.post("/api/optimize/apply", dependencies=[Depends(verify_api_key)])
 def optimizer_apply(job_id: str, config_path: str = "config.yaml"):
-    from app.optimizer.auto_optimizer import get_job
-    from app.optimizer.optimizer import apply_best_params
+    from app.engine.auto_optimizer import get_job
+    from app.engine.optimizer import apply_best_params
     from app.core.config import load_config as _reload_cfg
     job = get_job(job_id)
     if not job: raise HTTPException(404, f"Job '{job_id}' introuvable")
@@ -1261,7 +1261,7 @@ def optimizer_apply(job_id: str, config_path: str = "config.yaml"):
 @app.post("/api/optimize/cancel", dependencies=[Depends(verify_api_key)])
 def optimizer_cancel(job_id: str):
     """Annule un job d'optimisation en cours."""
-    from app.optimizer.auto_optimizer import get_job, cancel_job
+    from app.engine.auto_optimizer import get_job, cancel_job
     job = get_job(job_id)
     if not job:
         raise HTTPException(404, f"Job '{job_id}' introuvable")
@@ -1274,7 +1274,7 @@ def optimizer_cancel(job_id: str):
 @app.delete("/api/optimize/job", dependencies=[Depends(verify_api_key)])
 def optimizer_delete_job(job_id: str):
     """Supprime un job terminé, annulé ou en erreur."""
-    from app.optimizer.auto_optimizer import get_job, delete_job
+    from app.engine.auto_optimizer import get_job, delete_job
     job = get_job(job_id)
     if not job:
         raise HTTPException(404, f"Job '{job_id}' introuvable")
@@ -1298,7 +1298,7 @@ def optimizer_results():
     except Exception:
         pass
     raw     = cfg.get("optimizer_results") or {}
-    from app.optimizer.optimizer import get_active_strategies_per_tf
+    from app.engine.optimizer import get_active_strategies_per_tf
     active  = get_active_strategies_per_tf(cfg)
     result  = {}
     for strat, tf_map in raw.items():
@@ -1315,7 +1315,7 @@ def optimizer_results():
 
 @app.get("/api/optimize/spaces")
 def optimizer_spaces():
-    from app.optimizer.optimizer import PARAM_SPACES, STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT
+    from app.engine.optimizer import PARAM_SPACES, STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT
     return {
         strat: {
             "params":     {k: v for k, v in space.items()},

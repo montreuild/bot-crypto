@@ -578,7 +578,7 @@ async function init() {
   } catch(e) {
     const errMsg = `<div style="color:var(--red);font-size:.78rem;padding:8px">
       ⚠ Impossible de charger la config : <code>${e.message}</code><br>
-      <span style="color:var(--dim);font-size:.7rem">Le bot n'est peut-être pas démarré. Lancez <code>python main.py web</code> puis rechargez.</span>
+      <span style="color:var(--dim);font-size:.7rem">Le bot n'est peut-être pas démarré. Lancez <code>python cli.py web</code> puis rechargez.</span>
     </div>`;
     if (stratGrid) stratGrid.innerHTML = errMsg;
     if (stratParams) stratParams.innerHTML = errMsg;

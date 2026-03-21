@@ -47,9 +47,9 @@ from app.core.database       import (init_db, save_trade, update_daily_stats,
 from app.core.notifications  import Notifier
 from app.core.trailing       import TrailingStopManager
 from app.engine.engine       import Engine
-from app.scanner.scanner     import MarketScanner, _compute_atr
-from app.optimizer.optimizer import get_active_strategies_per_tf, RECOMMENDED_LIMIT
-from app.core.indicators import precompute_df
+from app.engine.scanner      import MarketScanner
+from app.engine.optimizer    import get_active_strategies_per_tf, RECOMMENDED_LIMIT
+from app.core.indicators     import precompute_df, atr_val as _compute_atr
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ class LiveTrader:
     def _load_all_strategies(self):
         """Charge toutes les stratégies disponibles dans PARAM_SPACES + enabled."""
         import re as _re
-        from app.optimizer.optimizer import PARAM_SPACES
+        from app.engine.optimizer import PARAM_SPACES
         to_load = set(PARAM_SPACES.keys()) | set(self.cfg["strategies"].get("enabled", []))
         for name in to_load:
             # Validation du nom : lettres minuscules, chiffres et underscores uniquement.
@@ -919,7 +919,7 @@ class LiveTrader:
         self._exchange_errors = {s: v for s, v in self._exchange_errors.items() if s in active_symbols}
         # Jobs optimisation terminés > 24h
         try:
-            from app.optimizer.auto_optimizer import _jobs, _jobs_lock
+            from app.engine.auto_optimizer import _jobs, _jobs_lock
             cutoff_jobs = now - 86400
             with _jobs_lock:
                 to_del_jobs = [
@@ -952,7 +952,7 @@ class LiveTrader:
             if not run_optimization:
                 return
 
-            from app.optimizer.auto_optimizer import AutoOptimizer
+            from app.engine.auto_optimizer import AutoOptimizer
             symbol = "BTC/USDC"  # paire représentative
             tfs    = self.timeframes
             df_map = {}

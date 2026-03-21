@@ -14,7 +14,7 @@ Usage :
 Callers :
   - MarketScanner.fetch_ohlcv()     → live trader, scanner, paper mode
   - API /backtest, /optimize/start, /ml/train
-  - CLI main.py --backtest, --optimize
+  - CLI cli.py --backtest, --optimize
 """
 
 import logging

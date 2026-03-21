@@ -245,15 +245,15 @@ git pull origin main
 # 2. Maj config.yaml (aucun changement requis)
 
 # 3. Redémarrer
-python main.py
+python cli.py
 
 # CLI anciens arguments ? Ils sont supprimés :
-python main.py --web      ❌ Erreur (avant: web-only)
-python main.py --live     ❌ Erreur (argument inexistant)
+python cli.py --web      ❌ Erreur (avant: web-only)
+python cli.py --live     ❌ Erreur (argument inexistant)
 
 # Nouveau comportement :
-python main.py            ✅ Démarrer bot + web (live ou paper selon config)
-python main.py --paper    ✅ Forcer paper trading
+python cli.py            ✅ Démarrer bot + web (live ou paper selon config)
+python cli.py --paper    ✅ Forcer paper trading
 ```
 
 ---

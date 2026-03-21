@@ -161,7 +161,7 @@ pip install -r requirements.txt
 ```bash
 cd /opt/crypto_bot
 source .venv/bin/activate
-python main.py --live --paper
+python cli.py --live --paper
 
 # Vérifier que le dashboard répond
 curl http://localhost:8000/api/status
@@ -387,7 +387,7 @@ Modifier ces lignes dans le fichier :
 
 ```ini
 Description=Crypto Trading Bot — 5m
-ExecStart=/usr/bin/python3 main.py --config config-5m-live.yaml --live
+ExecStart=/usr/bin/python3 cli.py --config config-5m-live.yaml --live
 StandardOutput=append:/opt/crypto_bot/logs/bot_5m.log
 StandardError=append:/opt/crypto_bot/logs/bot_5m.log
 ```
@@ -572,10 +572,10 @@ sudo systemctl start crypto-bot
 
 ```bash
 # Consommation mémoire/CPU du bot
-ps aux | grep "main.py"
+ps aux | grep "cli.py"
 
 # Vue en temps réel
-htop -p $(pgrep -f "main.py")
+htop -p $(pgrep -f "cli.py")
 
 # Taille de la base de données
 ls -lh /opt/crypto_bot/trades.db
@@ -591,19 +591,19 @@ cd /opt/crypto_bot
 source .venv/bin/activate
 
 # Backtest rapide
-python main.py --backtest BTC/USDC --timeframe 1h --limit 500
+python cli.py --backtest BTC/USDC --timeframe 1h --limit 500
 
 # Backtest avec Walk-Forward + Monte Carlo
-python main.py --backtest BTC/USDC --walk-forward --monte-carlo --limit 1000
+python cli.py --backtest BTC/USDC --walk-forward --monte-carlo --limit 1000
 
 # Optimisation CLI (bloquant)
-python main.py --optimize trend --opt-method bayesian
+python cli.py --optimize trend --opt-method bayesian
 
 # Scanner les marchés
-python main.py --scan
+python cli.py --scan
 
 # Mode paper trading seul (sans serveur web)
-python main.py --live --paper
+python cli.py --live --paper
 ```
 
 ### Rotation des logs
@@ -644,7 +644,7 @@ Internet
 │                         │ HTTP local                             │
 │  ┌──────────────────────▼───────────────────────────────────┐   │
 │  │  crypto-bot.service (systemd)                             │   │
-│  │  python3 main.py --live                                   │   │
+│  │  python3 cli.py --live                                   │   │
 │  │  ┌────────────────┐  ┌──────────────┐  ┌──────────────┐ │   │
 │  │  │  LiveTrader     │  │  FastAPI :8000│  │  AutoOpt     │ │   │
 │  │  │  · Scanner      │  │  Dashboard   │  │  · Bayesian  │ │   │

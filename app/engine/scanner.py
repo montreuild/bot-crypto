@@ -1,72 +1,240 @@
-"""Scanner multi-actifs USDC — détecte les opportunités sur plusieurs paires."""
+"""
+Scanner V11 — Multi-Timeframe + CandleStore
+
+Nouveautés V11 :
+  - fetch_ohlcv() utilise CandleStore : persistence Parquet par paire/TF
+  - Fetch incrémental : seules les nouvelles bougies sont récupérées depuis l'exchange
+  - Historique accumulé automatiquement (backtest, optimizer, paper, live)
+"""
 import logging
-from typing import List, Dict, Any
+import math
+from typing import List, Dict, Optional, Tuple
+
 import polars as pl
-from app.core.indicators import detect_regime, adx_val, volume_ratio
-from app.core.exchange import RobustExchange
+
 from app.core.candle_store import get_store
-from app.engine.engine import Engine
+from app.core.indicators import rsi as ind_rsi, atr_val, adx_val
 
 logger = logging.getLogger(__name__)
 
 
-class Scanner:
-    def __init__(self, exchange: RobustExchange, engine: Engine, cfg: dict):
+class MarketScanner:
+    def __init__(self, exchange, cfg: dict):
         self.exchange = exchange
-        self.engine   = engine
         self.cfg      = cfg
-        self.pairs    = cfg["scanner"]["pairs"]
-        self.tf       = cfg["trading"]["timeframe"]
-        self.min_adx  = cfg["scanner"].get("min_adx", 20)
-        self.min_vol  = cfg["scanner"].get("min_volume_ratio", 0.8)
-        self.thresh   = cfg["trading"].get("score_threshold", 0.55)
-        self.params   = cfg.get("strategy_params", {})
+        self.scfg     = cfg.get("scanner", {})
+        self.min_vol  = cfg["trading"].get("min_volume_usdc_24h", 5_000_000)
 
-    def scan(self, limit: int = 200) -> List[Dict[str, Any]]:
-        """Scanne toutes les paires et retourne les opportunités filtrées."""
-        opportunities = []
-        for pair in self.pairs:
+    def get_symbols(self) -> List[str]:
+        symbols = self.scfg.get("symbols", ["BTC/USDC", "ETH/USDC"])
+        if self.scfg.get("dynamic_scan"):
             try:
-                result = self._scan_pair(pair, limit)
-                if result:
-                    opportunities.append(result)
+                return self._dynamic_symbols(self.scfg.get("top_n", 20))
             except Exception as e:
-                logger.warning(f"[Scanner] Erreur {pair}: {e}")
-        opportunities.sort(key=lambda x: x["score"], reverse=True)
-        logger.info(f"[Scanner] {len(opportunities)}/{len(self.pairs)} paires avec signal")
-        return opportunities
+                logger.warning(f"[Scanner] Scan dynamique KO : {e}, liste statique utilisée")
+        if self.scfg.get("volume_filter", False):
+            try:
+                symbols = self._filter_by_volume(symbols)
+            except Exception as e:
+                logger.warning(f"[Scanner] Filtre volume KO : {e}")
+        return symbols
 
-    def _scan_pair(self, symbol: str, limit: int) -> Dict[str, Any]:
-        df = get_store().fetch(self.exchange, symbol, self.tf, total=limit)
-        if df is None or len(df) < 60:
+    def _filter_by_volume(self, symbols: List[str]) -> List[str]:
+        tickers = self.exchange.fetch_tickers(symbols)
+        ranked  = []
+        for sym in symbols:
+            t   = tickers.get(sym, {})
+            vol = t.get("quoteVolume") or 0.0
+            if vol >= self.min_vol:
+                ranked.append((sym, vol))
+        ranked.sort(key=lambda x: x[1], reverse=True)
+        top_n = self.scfg.get("vol_rank_top_n", 0)
+        if top_n and top_n > 0:
+            ranked = ranked[:top_n]
+        filtered = [s for s, _ in ranked]
+        logger.info(f"[Scanner] Filtre volume : {len(filtered)}/{len(symbols)} symboles retenus")
+        return filtered if filtered else symbols
+
+    def _dynamic_symbols(self, top_n: int) -> List[str]:
+        tickers = self.exchange.fetch_tickers()
+        usdc = {s: t for s, t in tickers.items()
+                if s.endswith("/USDC") and (t.get("quoteVolume") or 0) >= self.min_vol}
+        ranked = sorted(usdc.items(), key=lambda x: x[1].get("quoteVolume", 0), reverse=True)
+        return [s for s, _ in ranked[:top_n]]
+
+    def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500) -> Optional[pl.DataFrame]:
+        """
+        Retourne `limit` bougies pour (symbol, timeframe).
+        Utilise CandleStore : fetch incrémental + persistence Parquet.
+        """
+        try:
+            df = get_store().fetch(self.exchange, symbol, timeframe, total=limit)
+            if df is None or len(df) < 50:
+                return None
+            return df
+        except Exception as e:
+            logger.error(f"[Scanner] fetch_ohlcv {symbol}/{timeframe} : {e}")
             return None
 
-        regime  = detect_regime(df.tail(50))
-        adx_v   = adx_val(df.tail(30))
-        vol_r   = float(volume_ratio(df.tail(20), 20)[-1]) if len(df) >= 20 else 0.0
+    def detect_regime(self, df: pl.DataFrame) -> str:
+        if len(df) < 30:
+            return "unknown"
+        adx = adx_val(df, 14)
+        return "trend" if adx >= 25 else "range"
 
-        # Filtre ADX et volume
-        if adx_v < self.min_adx and regime["regime"] == "trending":
-            return None
-        if vol_r < self.min_vol:
-            return None
+    def compute_indicators(self, df: pl.DataFrame) -> Dict:
+        close  = df["close"]
+        volume = df["volume"]
+        n      = len(df)
+        if n < 60:
+            return {}
 
-        signal = self.engine.best_signal(df, regime=regime, params=self.params)
-        if signal.get("side", "none") == "none" or signal.get("score", 0) < self.thresh:
-            return None
+        ema20  = float(close.ewm_mean(span=20, adjust=False)[-1])
+        ema50  = float(close.ewm_mean(span=50, adjust=False)[-1])
+        ema200 = float(close.ewm_mean(span=200, adjust=False)[-1]) if n >= 200 else None
+
+        rsi_s  = ind_rsi(close, 14)[-1]
+        rsi_v  = float(rsi_s) if rsi_s is not None and not math.isnan(float(rsi_s)) else 50.0
+
+        atr    = atr_val(df, 14)
+        last_close = float(close[-1])
+        atr_pct = round(atr / last_close * 100, 3) if last_close > 0 else 0.0
+
+        vol_ma20  = float(volume.rolling_mean(20)[-1])
+        vol_ratio = float(volume[-1] / vol_ma20) if vol_ma20 > 0 else 1.0
+
+        ema12  = close.ewm_mean(span=12, adjust=False)
+        ema26  = close.ewm_mean(span=26, adjust=False)
+        macd   = ema12 - ema26
+        signal = macd.ewm_mean(span=9, adjust=False)
+        hist   = macd - signal
+
+        sma20  = close.rolling_mean(20)
+        std20  = close.rolling_std(20)
+        bb_up  = float((sma20 + 2 * std20)[-1])
+        bb_dn  = float((sma20 - 2 * std20)[-1])
+        bb_mid = float(sma20[-1])
+
+        adx = adx_val(df, 14)
 
         return {
-            "symbol":    symbol,
-            "side":      signal["side"],
-            "score":     signal["score"],
-            "strategy":  signal.get("name", ""),
-            "regime":    regime["regime"],
-            "adx":       round(adx_v, 2),
-            "vol_ratio": round(vol_r, 3),
-            "price":     float(df["close"][-1]),
-            "reason":    signal.get("reason", ""),
+            "ema20":      round(ema20, 6),
+            "ema50":      round(ema50, 6),
+            "ema200":     round(ema200, 6) if ema200 is not None else None,
+            "rsi":        round(rsi_v, 2),
+            "atr":        round(atr, 6),
+            "atr_pct":    atr_pct,
+            "vol_ratio":  round(vol_ratio, 3),
+            "macd":       round(float(macd[-1]), 6),
+            "macd_signal":round(float(signal[-1]), 6),
+            "macd_hist":  round(float(hist[-1]), 6),
+            "bb_upper":   round(bb_up, 6),
+            "bb_lower":   round(bb_dn, 6),
+            "bb_mid":     round(bb_mid, 6),
+            "adx":        round(adx, 2),
+            "regime":     "trend" if adx >= 25 else "range",
+            "close":      round(last_close, 6),
         }
 
-    def get_ohlcv_df(self, symbol: str, limit: int = 500) -> pl.DataFrame:
-        """Retourne un DataFrame OHLCV propre pour une paire."""
-        return get_store().fetch(self.exchange, symbol, self.tf, total=limit)
+    def screen(self, timeframe: str, limit: int = 500) -> List[Dict]:
+        results = []
+        for symbol in self.get_symbols():
+            df = self.fetch_ohlcv(symbol, timeframe, limit)
+            if df is None:
+                continue
+            try:
+                indicators = self.compute_indicators(df)
+                volume_24h = _estimate_volume_24h(df, timeframe)
+                if volume_24h < self.min_vol:
+                    continue
+                adx    = indicators.get("adx", 0)
+                atr_pct= indicators.get("atr_pct", 0)
+                regime_label, strategies = recommend_strategy(adx, atr_pct)
+                results.append({
+                    "symbol":       symbol,
+                    "indicators":   indicators,
+                    "volume_24h":   volume_24h,
+                    "regime":       indicators.get("regime", "unknown"),
+                    "regime_label": regime_label,
+                    "strategies":   strategies,
+                    "bars":         len(df),
+                })
+            except Exception as e:
+                logger.error(f"[Scanner] screen {symbol} : {e}")
+        return results
+
+    def opportunity_scan(self, timeframe: str = "1h") -> List[Dict]:
+        """
+        Scanne les opportunités selon score combiné vol + ATR%.
+        Retourne les meilleures paires triées par score décroissant.
+        """
+        ocfg     = self.scfg.get("opportunity_scan", {})
+        min_vol  = float(ocfg.get("min_vol_24h_m", 10)) * 1e6
+        min_atr  = float(ocfg.get("min_atr_pct", 1.0))
+        max_atr  = float(ocfg.get("max_atr_pct", 10.0))
+        top_n    = int(ocfg.get("top_n", 15))
+
+        raw = []
+        for symbol in self.get_symbols():
+            df = self.fetch_ohlcv(symbol, timeframe, limit=200)
+            if df is None:
+                continue
+            try:
+                indicators = self.compute_indicators(df)
+                vol_24h    = _estimate_volume_24h(df, timeframe)
+                atr_pct    = indicators.get("atr_pct", 0)
+                if vol_24h < min_vol:
+                    continue
+                if not (min_atr <= atr_pct <= max_atr):
+                    continue
+                raw.append({"symbol": symbol, "indicators": indicators, "volume_24h": vol_24h})
+            except Exception as e:
+                logger.debug(f"[OpScan] {symbol} : {e}")
+
+        if not raw:
+            return []
+
+        # Rang normalisé : 40% volume + 60% ATR%
+        vols = [r["volume_24h"] for r in raw]
+        atrs = [r["indicators"].get("atr_pct", 0) for r in raw]
+        max_vol = max(vols) or 1
+        max_atr_v = max(atrs) or 1
+
+        for r in raw:
+            vol_rank = r["volume_24h"] / max_vol
+            atr_rank = r["indicators"].get("atr_pct", 0) / max_atr_v
+            r["score"] = round(0.40 * vol_rank + 0.60 * atr_rank, 4)
+            adx = r["indicators"].get("adx", 0)
+            ap  = r["indicators"].get("atr_pct", 0)
+            r["regime_label"], r["strategies"] = recommend_strategy(adx, ap)
+
+        raw.sort(key=lambda x: x["score"], reverse=True)
+        return raw[:top_n]
+
+
+# ── Fonctions utilitaires ──────────────────────────────────────────────────
+
+def recommend_strategy(adx: float, atr_pct: float) -> Tuple[str, List[str]]:
+    """
+    Retourne (label_regime, stratégies_recommandées) pour l'affichage UI.
+    Usage informatif uniquement — les stratégies filtrent elles-mêmes leur régime.
+    """
+    if adx < 22 and atr_pct > 4.0:
+        return "Panic/Spike", ["fear_momentum"]
+    elif adx >= 25 and atr_pct >= 1.5:
+        return "Trend fort", ["supertrend_macd", "trend"]
+    elif 18 <= adx < 25 and atr_pct >= 0.8:
+        return "Trend modéré", ["pullback_trend", "trend"]
+    elif adx < 18:
+        return "Range", ["breakout"]
+    else:
+        return "Neutre", ["supertrend_macd", "breakout"]
+
+
+def _estimate_volume_24h(df: pl.DataFrame, timeframe: str) -> float:
+    tf_mins = {"1m":1,"3m":3,"5m":5,"15m":15,"30m":30,
+               "1h":60,"2h":120,"4h":240,"1d":1440}
+    mins    = tf_mins.get(timeframe, 15)
+    bars_24 = int(1440 / mins)
+    slice_  = df.tail(min(bars_24, len(df)))
+    return float((slice_["close"] * slice_["volume"]).sum())
