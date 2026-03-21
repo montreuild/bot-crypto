@@ -236,8 +236,9 @@ PARAM_SPACE_RF = {
 
 PARAM_SPACE_LR = {
     "clf__C":            [0.1, 1.0, 10.0],
-    "clf__solver":       ["liblinear"],
+    "clf__solver":       ["lbfgs", "saga"],
     "clf__class_weight": [None, "balanced"],
+    "clf__multi_class":  ["auto"],
 }
 
 
