@@ -1365,5 +1365,26 @@ def ml_strategy_info():
     ready   = False
     if trader and trader.ml:
         ready = trader.ml.is_ready
+
+    strategies_info: dict = {}
+    if trader:
+        from app.engine.engine import BaseStrategyML
+        ml_trainer = getattr(trader, "_ml_trainer", None)
+        loaded     = getattr(trader, "_loaded_strategies", {})
+        for name, strat in loaded.items():
+            if not isinstance(strat, BaseStrategyML):
+                continue
+            next_retrain = None
+            if ml_trainer:
+                ts = ml_trainer._retrain_at.get(name)
+                if ts is not None:
+                    next_retrain = int(ts)
+            strategies_info[name] = {
+                "is_trained":    strat.is_trained,
+                "best_auc":      round(float(getattr(strat, "_best_auc", 0.0)), 4),
+                "next_retrain_at": next_retrain,
+            }
+
     return {"enabled": enabled, "ready": ready,
-            "config": cfg.get("ml", {})}
+            "config": cfg.get("ml", {}),
+            "strategies": strategies_info}
