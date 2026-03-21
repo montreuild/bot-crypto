@@ -1,4 +1,4 @@
-# Crypto Bot V9 — Guide de Déploiement Oracle Cloud Free Tier
+# Crypto Bot V11 — Guide de Déploiement Oracle Cloud Free Tier
 
 > **Stack** : Python 3.10+ · FastAPI · SQLite · systemd · nginx · Let's Encrypt  
 > **Cible** : Oracle Cloud Always Free — VM.Standard.A1.Flex (ARM, 4 vCPU / 24 GB RAM)  

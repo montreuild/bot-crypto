@@ -341,7 +341,7 @@ def update_notifications_config(
 def test_notification():
     if not state.trader:
         raise HTTPException(503, "Trader non initialisé")
-    state.trader.notif.send("🔔 Test de notification depuis le bot V9", async_=False)
+    state.trader.notif.send("🔔 Test de notification depuis le bot V11", async_=False)
     return {"status": "sent"}
 
 

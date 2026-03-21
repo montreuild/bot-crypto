@@ -1,7 +1,7 @@
 """
-Optimiseur de Stratégies — V9 (Auto-découverte des stratégies)
+Optimiseur de Stratégies — V11 (Auto-découverte des stratégies)
 
-Nouveautés V9 :
+Nouveautés V11 :
   - STRATEGY_TIMEFRAMES, PARAM_SPACES, FIXED_PARAMS sont construits
     automatiquement via app.strategies.registry (découverte des attributs
     de classe de chaque Strategy : timeframes, param_space, fixed_params).

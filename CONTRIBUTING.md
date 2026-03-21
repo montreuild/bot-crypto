@@ -1,6 +1,6 @@
 # 🤝 Guide de contribution
 
-Comment contribuer au Crypto Bot V9 et maintenir la qualité du code.
+Comment contribuer au Crypto Bot V11 et maintenir la qualité du code.
 
 ---
 
@@ -332,7 +332,7 @@ Brief description.
 
 - OS: Ubuntu 24.04
 - Python: 3.12.0
-- Bot Version: 9.0.0
+- Bot Version: 11.0.0
 ```
 
 ---
@@ -425,6 +425,6 @@ print(f"Temps : {time.time() - t0:.2f}s")
 
 ---
 
-**Merci de contribuer au Crypto Bot V9 !** 🙌
+**Merci de contribuer au Crypto Bot V11 !** 🙌
 
 Tes contributions rendent ce projet meilleur chaque jour.
