@@ -259,7 +259,14 @@ def random_search_hyperparams(
     """
     rng          = random.Random(seed)
     space        = PARAM_SPACE_RF if model_type == "random_forest" else PARAM_SPACE_LR
-    actual_folds = min(cv_folds, 5)
+
+    # Adapt folds to data: with TimeSeriesSplit the smallest train fold is n/(n_splits+1).
+    # If that fold lacks minority class samples, cross_val_score returns all-NaN scores.
+    # Limit folds so each fold has at least 3 minority-class samples in training.
+    min_class_count = int(np.bincount(y.astype(int)).min()) if len(y) > 0 else 0
+    max_folds_by_class = max(2, min_class_count // 3)
+    max_folds_by_size  = max(2, len(y) // 20)
+    actual_folds = min(cv_folds, 5, max_folds_by_class, max_folds_by_size)
     if actual_folds < 2:
         return {}, 0.0, []
 
