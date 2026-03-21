@@ -23,6 +23,12 @@ class BaseStrategy:
     param_space:  Dict[str, List] = {}
     fixed_params: Dict[str, Any]  = {}
 
+    def __init__(self) -> None:
+        # Cooldown par symbole : dernière barre où un signal a été émis
+        self._last_signal: Dict[str, int] = {}
+        # Compteur d'appels par symbole (position dans la série temporelle)
+        self._call_count:  Dict[str, int] = {}
+
     def min_bars_required(self, params: dict = None) -> int:
         """
         Retourne le nombre minimum de bougies requis pour que la stratégie
@@ -41,6 +47,10 @@ class BaseStrategy:
         Retourne : {"score": float [0-1], "side": "long"|"short"|"none", "name": str}
         """
         raise NotImplementedError
+
+    def _none(self, reason: str = "") -> Dict[str, Any]:
+        """Signal nul standardisé (aucune position à prendre)."""
+        return {"score": 0, "side": "none", "name": self.name, "reason": reason}
 
 
 class BaseStrategyML(BaseStrategy):

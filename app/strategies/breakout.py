@@ -16,7 +16,7 @@ Corrections V5 vs V4 :
 import logging
 from typing import Dict, Any, List
 import polars as pl
-from app.strategies.base import StrategyBase
+from app.engine.engine import BaseStrategy
 from app.core.indicators import (
     atr_series as calc_atr_series, macd as calc_macd,
     vol_ratio as calc_vol, bb_squeeze as calc_squeeze, htf_trend, pre_val
@@ -25,7 +25,7 @@ from app.core.indicators import (
 logger = logging.getLogger(__name__)
 
 
-class Strategy(StrategyBase):
+class Strategy(BaseStrategy):
     name = "breakout"
 
     timeframes: List[str] = ["5m", "15m", "1h"]

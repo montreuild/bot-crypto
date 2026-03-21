@@ -35,7 +35,7 @@ from typing import Dict, Any, List
 
 import polars as pl
 
-from app.strategies.base import StrategyBase
+from app.engine.engine import BaseStrategy
 from app.core.indicators import (
     rsi as calc_rsi,
     atr_val as calc_atr,
@@ -52,7 +52,7 @@ from app.core.indicators import (
 logger = logging.getLogger(__name__)
 
 
-class Strategy(StrategyBase):
+class Strategy(BaseStrategy):
     name = "multi_tf_sr"
 
     timeframes: List[str] = ["15m", "1h", "4h"]

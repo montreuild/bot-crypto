@@ -54,7 +54,7 @@ from typing import Dict, Any, List
 
 import polars as pl
 
-from app.strategies.base import StrategyBase
+from app.engine.engine import BaseStrategy
 from app.strategies.utils import fft_direction as _fft_direction
 from app.core.indicators import (
     rsi as calc_rsi,
@@ -137,7 +137,7 @@ def _conditions_short(
 #  Stratégie
 # ══════════════════════════════════════════════════════════════════════════════
 
-class Strategy(StrategyBase):
+class Strategy(BaseStrategy):
     name = "composite_score"
 
     timeframes: List[str] = ["1h", "4h", "1d"]

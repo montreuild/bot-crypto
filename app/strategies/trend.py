@@ -14,7 +14,7 @@ Corrections V5 vs V4 :
 import logging
 from typing import Dict, Any, List
 import polars as pl
-from app.strategies.base import StrategyBase
+from app.engine.engine import BaseStrategy
 from app.core.indicators import (
     rsi as calc_rsi, atr_val as calc_atr, adx_val as calc_adx,
     macd as calc_macd, vol_ratio as calc_vol,
@@ -24,7 +24,7 @@ from app.core.indicators import (
 logger = logging.getLogger(__name__)
 
 
-class Strategy(StrategyBase):
+class Strategy(BaseStrategy):
     name = "trend"
 
     timeframes: List[str] = ["1h", "1d"]

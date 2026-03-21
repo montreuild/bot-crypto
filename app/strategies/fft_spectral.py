@@ -38,7 +38,7 @@ from typing import Dict, Any, List
 
 import polars as pl
 
-from app.strategies.base import StrategyBase
+from app.engine.engine import BaseStrategy
 from app.strategies.utils import fft_direction as _fft_direction
 from app.core.indicators import (
     atr_val as calc_atr,
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 #  Stratégie
 # ══════════════════════════════════════════════════════════════════════════════
 
-class Strategy(StrategyBase):
+class Strategy(BaseStrategy):
     name = "fft_spectral"
 
     timeframes: List[str] = ["4h", "1d"]

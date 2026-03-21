@@ -43,7 +43,7 @@ Sortie (stop_hint) :
 import logging
 from typing import Dict, Any, List
 import polars as pl
-from app.strategies.base import StrategyBase
+from app.engine.engine import BaseStrategy
 from app.core.indicators import (
     rsi as calc_rsi,
     atr_val as calc_atr,
@@ -59,7 +59,7 @@ from app.core.indicators import (
 logger = logging.getLogger(__name__)
 
 
-class Strategy(StrategyBase):
+class Strategy(BaseStrategy):
     name = "fear_momentum"
 
     timeframes: List[str] = ["1h", "1d"]
