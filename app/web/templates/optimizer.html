@@ -170,7 +170,7 @@
       <div>
         <div class="sec-label">Jobs en cours et termines</div>
         <div id="jobs-container">
-          <div class="empty-state"><div style="font-size:2rem">&#x2B21;</div><p>Aucun job d'optimisation. Configurez une strategie et lancez.</p></div>
+          <div class="empty-state"><div class="spin" style="width:20px;height:20px;border-width:2px;margin:0 auto 8px"></div><p>Chargement des jobs…</p></div>
         </div>
       </div>
     </div>
@@ -298,10 +298,14 @@ function renderStratChecks(spaces, stratTfs) {
   }
   el.innerHTML = Object.keys(spaces).map(s => {
     const tfs = (stratTfs[s] || []).join(', ') || 'tous';
+    const isML = s.startsWith('ml_');
+    const mlBadge = isML
+      ? `<span style="background:var(--purple-dim);color:var(--purple);font-size:.6rem;padding:1px 5px;border-radius:3px;margin-left:4px" title="Stratégie ML — chaque trial entraîne un modèle (lent). Utilisez un petit nombre de trials (5-15).">🧠 ML</span>`
+      : '';
     return `<div class="checkbox-row" style="margin-bottom:0;align-items:flex-start">
       <input type="checkbox" id="sc-${s}" checked onchange="updateStratCompatibility()"/>
       <div>
-        <label for="sc-${s}" style="font-family:var(--mono);font-size:.78rem;font-weight:600">${s}</label>
+        <label for="sc-${s}" style="font-family:var(--mono);font-size:.78rem;font-weight:600">${s}</label>${mlBadge}
         <span id="sc-tfs-${s}" style="font-size:.65rem;color:var(--cyan);margin-left:6px">${tfs}</span>
       </div>
     </div>`;
@@ -534,6 +538,12 @@ async function refreshJobs() {
   try {
     const r = await apiFetch('/api/optimize/status');
     const jobs = await r.json();
+    // Preserve locally-applied state (server doesn't persist it in job state)
+    if (_lastJobs) {
+      Object.entries(_lastJobs).forEach(([id, j]) => {
+        if (j.applied && jobs[id]) jobs[id].applied = true;
+      });
+    }
     _lastJobs = jobs;
     // Auto-expand newly completed jobs
     Object.entries(jobs).forEach(([id, j]) => {
@@ -798,7 +808,7 @@ async function cancelJob(jobId, e) {
     const r = await apiFetch(`/api/optimize/cancel?job_id=${encodeURIComponent(jobId)}`, {method:'POST'});
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || r.statusText);
-    toast('Job annulé');
+    toast('Signal d\'annulation envoyé — arrêt en cours…');
     refreshJobs();
   } catch(err) {
     if (btn) { btn.disabled = false; btn.textContent = '✕ Annuler'; }

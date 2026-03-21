@@ -173,9 +173,6 @@ class AutoOptimizer:
             df_oos = df[split:]  if df is not None else None
 
             for name in strats:
-                if _is_ml_strategy(name):
-                    skipped.append({"strategy": name, "timeframe": tf, "reason": "stratégie ML (non optimisable ici)"})
-                    continue
                 if name not in PARAM_SPACES:
                     skipped.append({"strategy": name, "timeframe": tf, "reason": "aucun espace de paramètres"})
                     continue
@@ -264,6 +261,7 @@ class AutoOptimizer:
                 df_full=df_full,
                 split=split,
                 timeframe=timeframe,
+                cancel_event=cancel_event,
             )
 
             if self.method == "bayesian":
@@ -352,7 +350,7 @@ class AutoOptimizer:
             df_oos = df[split:]
 
             for name in strats:
-                if _is_ml_strategy(name) or name not in PARAM_SPACES:
+                if name not in PARAM_SPACES:
                     continue
                 supported_tfs = STRATEGY_TIMEFRAMES.get(name, list(RECOMMENDED_LIMIT.keys()))
                 if tf not in supported_tfs:

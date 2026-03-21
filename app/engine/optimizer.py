@@ -418,7 +418,8 @@ class StrategyOptimizer:
                  symbol: str = "BTC/USDC",
                  df_full: pl.DataFrame = None,
                  split: int = None,
-                 timeframe: str = None):
+                 timeframe: str = None,
+                 cancel_event: Optional[threading.Event] = None):
         self.strategy_name     = strategy_name
         self.cfg               = deepcopy(cfg)
         self.df_is             = df_is
@@ -427,6 +428,7 @@ class StrategyOptimizer:
         self.progress_callback = progress_callback
         self.symbol            = symbol
         self.timeframe         = timeframe
+        self._cancel_event     = cancel_event
         self.results: List[Dict] = []
         self.df_full = df_full if df_full is not None else pl.concat([df_is, df_oos])
         self.split   = split   if split   is not None else len(df_is)
@@ -441,7 +443,7 @@ class StrategyOptimizer:
         eng = self._load_strategy()
         cfg = deepcopy(self.cfg)
         cfg.setdefault("strategy_params", {})[self.strategy_name] = params
-        bt  = Backtester(eng, cfg)
+        bt  = Backtester(eng, cfg, cancel_event=self._cancel_event)
 
         res_is  = bt.run(self.df_is,  self.symbol)
         res_oos = bt.run(self.df_oos, self.symbol)

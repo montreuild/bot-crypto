@@ -12,6 +12,7 @@ Améliorations :
 """
 import logging
 import math
+import threading
 from typing import List, Dict, Optional, Tuple
 import numpy as np
 import polars as pl
@@ -222,9 +223,11 @@ class Backtester:
     Backtester V6 — Trailing stop dynamique multi-phases, sans TP fixe.
     Le TP fixe est supprimé. Les gains courent jusqu'au retournement naturel.
     """
-    def __init__(self, engine: Engine, cfg: dict):
-        self.engine = engine
-        self.cfg    = cfg
+    def __init__(self, engine: Engine, cfg: dict,
+                 cancel_event: Optional[threading.Event] = None):
+        self.engine         = engine
+        self.cfg            = cfg
+        self._cancel_event  = cancel_event
         bcfg = cfg.get("backtest", {})
         tcfg = cfg.get("trading",  {})
 
@@ -317,6 +320,8 @@ class Backtester:
         open_arr  = df["open"].to_numpy().astype(float)
 
         for i in range(warmup, len(df) - 1):
+            if self._cancel_event is not None and i % 100 == 0 and self._cancel_event.is_set():
+                raise InterruptedError("Backtest annulé")
             window  = df[:i + 1]
             c_high  = high_arr[i]
             c_low   = low_arr[i]

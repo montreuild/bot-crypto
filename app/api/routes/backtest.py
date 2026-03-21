@@ -23,6 +23,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.post("/api/backtest/cancel", dependencies=[Depends(verify_api_key)])
+def cancel_backtest():
+    """Annule le backtest en cours en levant le signal d'arrêt."""
+    state._bt_cancel_event.set()
+    return {"status": "cancelling"}
+
+
+
 @router.post("/api/backtest", dependencies=[Depends(verify_api_key)])
 def run_backtest(
     symbol:       str  = "BTC/USDC",
@@ -36,6 +44,7 @@ def run_backtest(
         raise HTTPException(503, "Config non chargée")
     if not state._bt_semaphore.acquire(blocking=False):
         raise HTTPException(429, "Un backtest est déjà en cours.")
+    state._bt_cancel_event.clear()
     try:
         from app.core.config import load_config as _reload_cfg
         try:
@@ -55,6 +64,7 @@ def run_backtest(
 
         ohlcv_payload = {
             "time":   [str(t) for t in df["time"].to_list()],
+            "open":   [round(float(v), 6) for v in df["open"].to_list()],
             "close":  [round(float(v), 6) for v in df["close"].to_list()],
             "high":   [round(float(v), 6) for v in df["high"].to_list()],
             "low":    [round(float(v), 6) for v in df["low"].to_list()],
@@ -86,10 +96,16 @@ def run_backtest(
 
         def _run_one(name: str) -> tuple:
             try:
-                mod = importlib.import_module(f"app.strategies.{name}")
+                if state._bt_cancel_event.is_set():
+                    return name, {"error": "Backtest annulé", "trades": []}
+                mod  = importlib.import_module(f"app.strategies.{name}")
+                inst = mod.Strategy()
+                # Pass cancel event to ML strategies so they can abort training
+                if hasattr(inst, '_cancel_event'):
+                    inst._cancel_event = state._bt_cancel_event
                 eng = Engine()
-                eng.register(mod.Strategy(), silent=True)
-                bt  = Backtester(eng, state.cfg)
+                eng.register(inst, silent=True)
+                bt  = Backtester(eng, state.cfg, cancel_event=state._bt_cancel_event)
                 res = bt.run(df, symbol, timeframe=tf)
                 d   = res.to_dict()
                 strat_key  = next(iter(res.by_strategy.keys()), name) if res.by_strategy else name
@@ -128,6 +144,8 @@ def run_backtest(
                     )
                     entry["monte_carlo"] = mc.run(all_trades, state.cfg["trading"]["capital"])
                 return name, entry
+            except InterruptedError:
+                return name, {"error": "Backtest annulé", "trades": []}
             except Exception as e:
                 logger.error(f"[API] Backtest {name} : {e}", exc_info=True)
                 return name, {"error": str(e), "trades": []}
@@ -135,6 +153,11 @@ def run_backtest(
         with ThreadPoolExecutor(max_workers=min(len(strats_to_run), 4)) as pool:
             futures = {pool.submit(_run_one, n): n for n in strats_to_run}
             for fut in as_completed(futures):
+                if state._bt_cancel_event.is_set():
+                    # Cancel remaining futures
+                    for f in futures:
+                        f.cancel()
+                    raise HTTPException(499, "Backtest annulé par l'utilisateur")
                 name, result = fut.result()
                 by_strategy[name] = result
 
