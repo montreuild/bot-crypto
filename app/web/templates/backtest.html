@@ -211,6 +211,7 @@ function updateLimHint(){
 
 // ── State ──
 let btData=null,activeStrat=null;
+let btChartType='line'; // 'line' | 'candles'
 let tvPrice=null,tvPriceS=null;
 let tvEq=null,tvEqS=null;
 let tvPnl=null,tvPnlS=null;
@@ -383,6 +384,8 @@ async function run(){
 
 function cancelBacktest(){
   if(_btAbort){_btAbort.abort();}
+  // Also signal the server to stop (important for ML strategy training)
+  apiFetch('/api/backtest/cancel',{method:'POST'}).catch(()=>{});
 }
 
 // ── Render results ──
@@ -412,7 +415,8 @@ function renderResults(){
         <span id="price-label" style="color:var(--cyan);margin-left:6px;font-size:.65rem"></span>
         <span id="price-title" style="color:var(--text);margin-left:6px;font-size:.65rem"></span>
       </span>
-      <button onclick="openFullscreen()" title="Plein écran" style="margin-left:auto;background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 9px;border-radius:var(--r-sm);cursor:pointer;font-size:.7rem;transition:all .15s">⤢ Plein écran</button>
+      <button id="bt-chart-type-btn" onclick="toggleBtChartType()" title="Basculer entre courbe et bougies" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 9px;border-radius:var(--r-sm);cursor:pointer;font-size:.7rem;transition:all .15s;margin-left:auto">📈 Courbe</button>
+      <button onclick="openFullscreen()" title="Plein écran" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 9px;border-radius:var(--r-sm);cursor:pointer;font-size:.7rem;transition:all .15s">⤢ Plein écran</button>
     </div>
     <div class="price-wrap">
       <div id="price-chart-wrap" style="height:300px;position:relative"></div>
@@ -512,9 +516,9 @@ function buildPanel(name){
     mcHTML=`<div class="opt-panel"><div class="opt-title">🎲 Monte-Carlo (${m.runs} runs, IC ${(m.confidence*100).toFixed(0)}%)</div><div class="ml-grid">${mkpi('Prob. profit',fN(m.prob_profit,1)+'%',m.prob_profit>=60?'var(--green)':'var(--amber)')}${mkpi('Equity p5','$'+fN(p5,2))}${mkpi('Equity p95','$'+fN(p95,2))}${mkpi('DD max p95',fN(m.max_dd_p95,2)+'%')}</div>${mcWarn}</div>`;
   }
   let mlHTML='';
-  if(name==='ml'||name==='ML'||(sd.trades&&sd.trades[0]?.indicators?.model)){
+  if(name==='ml'||name==='ML'||(sd.trades&&sd.trades[0]?.indicators?.model)||name.startsWith('ml_')){
     const trades=sd.trades||[],inds=trades[0]?.indicators||{};
-    mlHTML=`<div class="ml-panel"><div class="ml-title">🧠 Stratégie ML — ${inds.model||'random_forest'}</div><div class="ml-grid">${mkpi('AUC cross-val',fN(inds.auc,4),'var(--purple)')}${mkpi('Nb features',inds.n_features||'—','var(--purple)')}${mkpi('Lookahead',inds.lookahead||'—','var(--purple)')}${mkpi('Proba haussière',inds.proba_up?fN(inds.proba_up,3):'—','var(--purple)')}</div></div>`;
+    mlHTML=`<div class="ml-panel"><div class="ml-title">🧠 Stratégie ML — ${inds.model||'random_forest'}</div><div class="ml-grid">${mkpi('AUC cross-val',fN(inds.auc,4),'var(--purple)')}${mkpi('Nb features',inds.n_features||'—','var(--purple)')}${mkpi('Lookahead',inds.lookahead||'—','var(--purple)')}${mkpi('Proba haussière',inds.proba_up?fN(inds.proba_up,3):'—','var(--purple)')}</div><div style="font-size:.68rem;color:var(--dim);padding:6px 8px;background:rgba(167,139,250,.06);border-radius:var(--r-sm);border:1px solid rgba(167,139,250,.15)">ℹ️ Le modèle ML est <strong style="color:var(--purple)">réentraîné périodiquement</strong> durant le backtest (tous les <code>retrain_every</code> appels) pour simuler la dérive du marché. Cela allonge le temps de calcul et améliore le réalisme des résultats.</div></div>`;
   }
   div.innerHTML=`<div style="display:flex;flex-direction:column;gap:10px">${kpiHTML}${chartsHTML}${wfHTML}${mcHTML}${mlHTML}<div id="ttable-${sid}"></div></div>`;
   const closed=(sd.trades||[]).filter(t=>t.status!=='open');
@@ -569,6 +573,14 @@ function buildSc(closed,sid){
     options:{...scBase,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>`Score:${ctx.raw.x}  PnL:${fN(ctx.raw.y,4)}`}}},scales:{x:{title:{display:true,text:'Score',color:'#5a7099',font:{size:9}},ticks:T,grid:G,min:0,max:1},y:{ticks:T,grid:G,position:'right'}}}});
 }
 
+// ── Chart type toggle ──
+function toggleBtChartType(){
+  btChartType = btChartType === 'line' ? 'candles' : 'line';
+  const btn = document.getElementById('bt-chart-type-btn');
+  if(btn) btn.textContent = btChartType === 'line' ? '📈 Courbe' : '🕯 Bougies';
+  buildPrice();
+}
+
 // ── Price chart (TradingView) ──
 function buildPrice(){
   if(tvPrice){try{tvPrice.remove();}catch(e){}tvPrice=null;}
@@ -587,11 +599,26 @@ function buildPrice(){
     handleScroll:true,
   });
   new ResizeObserver(()=>tvPrice.applyOptions({width:el.offsetWidth})).observe(el);
-  tvPriceS=tvPrice.addLineSeries({color:'#4d9fff',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false});
-  const lineData=ohlcv.close.map((v,i)=>({time:toSec(ohlcv.time[i])||(i+1),value:v})).filter(d=>d.time>0);
-  tvPriceS.setData(lineData);
+  const times = ohlcv.close.map((_,i)=>toSec(ohlcv.time[i])||(i+1));
+  if(btChartType === 'candles' && ohlcv.open){
+    tvPriceS = tvPrice.addCandlestickSeries({
+      upColor:'#34d399', downColor:'#fb7185',
+      borderUpColor:'#34d399', borderDownColor:'#fb7185',
+      wickUpColor:'#34d399', wickDownColor:'#fb7185',
+      priceLineVisible:false, lastValueVisible:false,
+    });
+    const candleData = ohlcv.close.map((v,i)=>({
+      time:times[i], open:ohlcv.open[i], high:ohlcv.high[i],
+      low:ohlcv.low[i], close:v,
+    })).filter(d=>d.time>0);
+    tvPriceS.setData(candleData);
+  } else {
+    tvPriceS=tvPrice.addLineSeries({color:'#4d9fff',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false});
+    const lineData=ohlcv.close.map((v,i)=>({time:times[i],value:v})).filter(d=>d.time>0);
+    tvPriceS.setData(lineData);
+  }
   // Markers (entry + exit)
-  const timeMap={};ohlcv.time.forEach((t,i)=>{timeMap[i]=toSec(t)||(i+1);});
+  const timeMap={};times.forEach((t,i)=>{timeMap[i]=t;});
   const markers=[];
   trades.forEach(t=>{
     const bi=parseInt(t.bar),ei=parseInt(t.exit_bar),isLong=t.side==='long',isWin=(t.pnl||0)>=0;

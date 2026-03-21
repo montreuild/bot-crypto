@@ -6,7 +6,9 @@ Endpoints :
   GET /api/scanner/config
   GET /api/scanner/opportunities
   GET /api/scanner/chart
+  GET /api/scanner/signals
 """
+import importlib
 import logging
 import math
 
@@ -14,8 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.api import state
-from app.api.helpers import verify_api_key, _clean
+from app.api.helpers import verify_api_key, _clean, _discover_strategies
 from app.core.exchange import create_exchange
+from app.engine.engine import Engine, BaseStrategyML
 from app.engine.scanner import MarketScanner
 
 logger = logging.getLogger(__name__)
@@ -206,4 +209,75 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
         raise
     except Exception as e:
         logger.error(f"[API] scanner/chart : {e}", exc_info=True)
+        raise HTTPException(500, str(e))
+
+
+@router.get("/api/scanner/signals", dependencies=[Depends(verify_api_key)])
+def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 300):
+    """
+    Exécute toutes les stratégies non-ML actives sur le symbole donné et retourne
+    leurs signaux (side: long/short/none, score, reason).
+    Les stratégies ML sont exclues car elles nécessitent un entraînement préalable.
+    """
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    try:
+        exchange = create_exchange(state.cfg)
+        scanner  = MarketScanner(exchange, state.cfg)
+        tf       = timeframe or state.cfg["trading"].get("timeframe", "1h")
+        df       = scanner.fetch_ohlcv(symbol, tf, limit)
+        if df is None:
+            raise HTTPException(404, f"Données non disponibles pour {symbol}/{tf}")
+
+        enabled   = state.cfg["strategies"].get("enabled", [])
+        allowed   = _discover_strategies()
+        strats    = [s for s in enabled if s in allowed]
+
+        signals = []
+        for name in strats:
+            try:
+                mod = importlib.import_module(f"app.strategies.{name}")
+                cls = getattr(mod, "Strategy", None)
+                if cls is None:
+                    continue
+                # Skip ML strategies — they require model training
+                if issubclass(cls, BaseStrategyML):
+                    signals.append({
+                        "strategy": name,
+                        "side":     "ml",
+                        "score":    None,
+                        "reason":   "Stratégie ML — nécessite un entraînement préalable",
+                        "skipped":  True,
+                    })
+                    continue
+                inst   = cls()
+                result = inst.score(df, state.cfg.get("strategy_params", {}))
+                side   = result.get("side", "none")
+                score  = result.get("score", 0.0)
+                reason = result.get("reason", "")
+                signals.append({
+                    "strategy": name,
+                    "side":     side,
+                    "score":    round(float(score), 3) if score is not None else 0.0,
+                    "reason":   reason,
+                    "skipped":  False,
+                })
+            except Exception as e:
+                signals.append({
+                    "strategy": name,
+                    "side":     "none",
+                    "score":    0.0,
+                    "reason":   f"Erreur : {e}",
+                    "skipped":  False,
+                })
+
+        return JSONResponse(content=_clean({
+            "symbol":    symbol,
+            "timeframe": tf,
+            "signals":   signals,
+        }))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[API] scanner/signals : {e}", exc_info=True)
         raise HTTPException(500, str(e))

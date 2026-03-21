@@ -248,6 +248,7 @@ def random_search_hyperparams(
     n_trials: int = 20,
     cv_folds: int = 5,
     seed: int = 42,
+    cancel_event=None,
 ) -> Tuple[dict, float, List[dict]]:
     """
     Random Search avec TimeSeriesSplit.
@@ -265,11 +266,14 @@ def random_search_hyperparams(
     best_score  = -1.0
     all_results: List[dict] = []
 
-    logger.info(f"[MLDynThreshold] Random Search — {n_trials} essais, modèle={model_type}")
+    logger.info(f"[ml_dynamic_threshold] Random Search — {n_trials} essais, modèle={model_type}")
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
         for trial in range(n_trials):
+            if cancel_event is not None and cancel_event.is_set():
+                logger.info("[ml_dynamic_threshold] Entraînement interrompu (annulation backtest)")
+                break
             params = {k: rng.choice(v) for k, v in space.items()}
             try:
                 pipeline = _build_pipeline(model_type, params)
@@ -286,13 +290,13 @@ def random_search_hyperparams(
                 if mean_auc > best_score:
                     best_score, best_params = mean_auc, params
                     logger.info(
-                        f"  [Trial {trial+1:02d}] Nouveau meilleur AUC={mean_auc:.4f}"
+                        f"  [ml_dynamic_threshold][Trial {trial+1:02d}] Nouveau meilleur AUC={mean_auc:.4f}"
                         f"±{std_auc:.4f} | {params}"
                     )
             except Exception as e:
                 logger.debug(f"  [Trial {trial+1:02d}] KO : {e}")
 
-    logger.info(f"[MLDynThreshold] Meilleur AUC={best_score:.4f} | {best_params}")
+    logger.info(f"[ml_dynamic_threshold] Meilleur AUC={best_score:.4f} | {best_params}")
     all_results.sort(key=lambda x: -x["auc"])
     return best_params, best_score, all_results
 
@@ -384,6 +388,8 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         self._model_lock:   threading.RLock = threading.RLock()
         # Mis à True par le LiveTrader pour désactiver le réentraînement inline.
         self.managed_externally: bool = False
+        # Signal d'annulation (positionné par le backtest runner pour arrêter proprement).
+        self._cancel_event: Optional[threading.Event] = None
 
     # ── Interface principale ───────────────────────────────────
     def score(self, df: pl.DataFrame, params: dict = None, df_htf=None, symbol: str = "") -> Dict[str, Any]:
@@ -401,6 +407,8 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
 
     def _signal(self, df: pl.DataFrame) -> Dict[str, Any]:
         self._call_count += 1
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            return self._no_signal()
         if len(df) < self.min_train + 20:
             return self._no_signal()
 
@@ -452,7 +460,8 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 return
 
             best_p, best_auc, _ = random_search_hyperparams(
-                X, y, self.model_type, self.n_trials
+                X, y, self.model_type, self.n_trials,
+                cancel_event=self._cancel_event,
             )
             pipeline = _build_pipeline(self.model_type, best_p)
             pipeline.fit(X, y)

@@ -99,6 +99,7 @@
         <div class="panel" style="margin-top:16px">
           <div class="panel-hdr">
             🎯 Opportunités
+            <span id="opp-help-btn" title="Les Opportunités sont les paires avec le meilleur potentiel de mouvement selon un score combiné : 40% volume 24h + 60% ATR%. Ce sont les paires les plus volatiles et liquides du moment, candidates à un trade." style="cursor:help;font-size:.72rem;color:var(--dim);margin-left:4px;border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">?</span>
             <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="loadOpportunities()">↺ Refresh</button>
           </div>
           <div class="panel-body" id="opp-list">
@@ -176,6 +177,7 @@
             <button class="chart-tf-btn" onclick="setChartTf('4h')">4h</button>
             <button class="chart-tf-btn" onclick="setChartTf('1d')">1d</button>
           </div>
+          <button id="chart-type-btn" class="btn btn-sm btn-outline" onclick="toggleChartType()" title="Basculer entre bougies et courbe de prix">🕯 Bougies</button>
           <button class="btn btn-cyan btn-sm" onclick="loadChart()" aria-label="Charger le graphique">⟳ Charger</button>
         </div>
       </div>
@@ -184,8 +186,8 @@
         <span style="font-size:.68rem;color:var(--dim);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Indicateurs :</span>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema20"  checked onchange="toggleIndicator('ema20')"  style="accent-color:var(--cyan)"> EMA 20</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema50"  checked onchange="toggleIndicator('ema50')"  style="accent-color:#fbbf24"> EMA 50</label>
-        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema100" onchange="toggleIndicator('ema100')" style="accent-color:#34d399"> EMA 100</label>
-        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema150" onchange="toggleIndicator('ema150')" style="accent-color:#fb7185"> EMA 150</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema100" checked onchange="toggleIndicator('ema100')" style="accent-color:#34d399"> EMA 100</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema150" checked onchange="toggleIndicator('ema150')" style="accent-color:#fb7185"> EMA 150</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema200" checked onchange="toggleIndicator('ema200')" style="accent-color:#a78bfa"> EMA 200</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-bb"     checked onchange="toggleIndicator('bb')"     style="accent-color:rgba(77,159,255,.8)"> Bollinger</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-sr"           onchange="toggleIndicator('sr')"     style="accent-color:#ffd166"> Sup/Rés</label>
@@ -393,11 +395,24 @@ document.getElementById('opp-list').innerHTML='<div class="empty" style="color:v
 
 // ── Graphique Scanner ───────────────────────────────────────────────────
 let chartTf = '1h';
+let chartType = 'candles'; // 'candles' | 'line'
 let tvPriceChart = null, tvVolChart = null, tvRsiChart = null, tvMacdChart = null;
 // Series refs for indicator toggles
 let _seriesMap = {};
 // Resize observers to disconnect on destroy
 let _resizeObservers = [];
+// Last loaded chart data
+let _lastChartData = null;
+
+// Local timezone offset in seconds (positive for UTC+N)
+const _tzOffset = -new Date().getTimezoneOffset() * 60;
+
+function toggleChartType(){
+  chartType = chartType === 'candles' ? 'line' : 'candles';
+  const btn = document.getElementById('chart-type-btn');
+  if(btn) btn.textContent = chartType === 'candles' ? '🕯 Bougies' : '📈 Courbe';
+  if(_lastChartData) _renderChart(_lastChartData);
+}
 
 const CHART_TV = {
   layout: {background:{type:'solid',color:'transparent'}, textColor:'#5a7099'},
@@ -446,6 +461,17 @@ async function loadChart(){
     const r = await apiFetch(`/api/scanner/chart?symbol=${encodeURIComponent(sym)}&timeframe=${chartTf}&limit=300`);
     if(!r.ok){const e=await r.json();throw new Error(e.detail||r.statusText);}
     const d = await r.json();
+    // Apply local timezone offset to all timestamps
+    const tzOff = _tzOffset;
+    if(tzOff !== 0){
+      if(d.candles) d.candles = d.candles.map(c=>({...c, time: c.time + tzOff}));
+      const ind = d.indicators || {};
+      ['ema20','ema50','ema100','ema150','ema200','bb_upper','bb_mid','bb_lower',
+       'macd','macd_signal','macd_hist','rsi','volume'].forEach(k=>{
+        if(ind[k]) ind[k] = ind[k].map(p=>({...p, time: p.time + tzOff}));
+      });
+    }
+    _lastChartData = d;
     statusEl.textContent = `${d.n_bars} bougies · ${d.symbol} · ${d.timeframe}`;
     document.getElementById('chart-title-lbl').textContent = `${d.symbol} · ${d.timeframe}`;
     _renderChart(d);
@@ -511,12 +537,21 @@ function _renderChart(d){
   tvPriceChart = _mkChart('chart-price', 300, {timeScale:{borderColor:'rgba(255,255,255,.06)',visible:true,timeVisible:true}});
   if(!tvPriceChart) return;
 
-  const candleSeries = tvPriceChart.addCandlestickSeries({
-    upColor:'#34d399', downColor:'#fb7185',
-    borderUpColor:'#34d399', borderDownColor:'#fb7185',
-    wickUpColor:'#34d399', wickDownColor:'#fb7185',
-  });
-  candleSeries.setData(candles.map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));
+  let priceSeries;
+  if(chartType === 'line'){
+    priceSeries = tvPriceChart.addLineSeries({
+      color:'#22d3ee', lineWidth:2,
+      priceLineVisible:false, lastValueVisible:true,
+    });
+    priceSeries.setData(candles.map(c=>({time:c.time, value:c.close})));
+  } else {
+    priceSeries = tvPriceChart.addCandlestickSeries({
+      upColor:'#34d399', downColor:'#fb7185',
+      borderUpColor:'#34d399', borderDownColor:'#fb7185',
+      wickUpColor:'#34d399', wickDownColor:'#fb7185',
+    });
+    priceSeries.setData(candles.map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));
+  }
 
   // Bollinger Bands
   const bbVisible = document.getElementById('tog-bb')?.checked!==false;
@@ -528,19 +563,18 @@ function _renderChart(d){
   if(ind.bb_lower?.length) bbDnS.setData(ind.bb_lower);
   _seriesMap.bb_up=bbUpS; _seriesMap.bb_mid=bbMidS; _seriesMap.bb_dn=bbDnS;
 
-  // EMAs — togglable
-  const mkEma=(key,color,width,title)=>{
+  // EMAs — togglable, valeurs visibles sur l'axe, sans label textuel
+  const mkEma=(key,color,width)=>{
     const vis=document.getElementById('tog-'+key)?.checked!==false;
-    // lastValueVisible:false pour éviter que les étiquettes cachent les derniers signaux
-    const s=tvPriceChart.addLineSeries({color,lineWidth:width,priceLineVisible:false,lastValueVisible:false,title,visible:vis});
+    const s=tvPriceChart.addLineSeries({color,lineWidth:width,priceLineVisible:false,lastValueVisible:true,title:'',visible:vis});
     if(ind[key]?.length) s.setData(ind[key]);
     _seriesMap[key]=s;
   };
-  mkEma('ema20', '#22d3ee', 1.5, 'EMA20');
-  mkEma('ema50', '#fbbf24', 1.5, 'EMA50');
-  mkEma('ema100','#34d399', 1,   'EMA100');
-  mkEma('ema150','#fb7185', 1,   'EMA150');
-  mkEma('ema200','#a78bfa', 1.5, 'EMA200');
+  mkEma('ema20', '#22d3ee', 1.5);
+  mkEma('ema50', '#fbbf24', 1.5);
+  mkEma('ema100','#34d399', 1);
+  mkEma('ema150','#fb7185', 1);
+  mkEma('ema200','#a78bfa', 1.5);
 
   // Support / Resistance pivot lines
   const srVisible = document.getElementById('tog-sr')?.checked===true;
@@ -596,11 +630,11 @@ function _renderChart(d){
       histS.setData(ind.macd_hist.map(p=>({...p,color:p.value>=0?'rgba(52,211,153,.6)':'rgba(251,113,133,.6)'})));
     }
     if(ind.macd?.length){
-      const macdS = tvMacdChart.addLineSeries({color:'#22d3ee',lineWidth:1.5,priceLineVisible:false,lastValueVisible:true,title:'MACD'});
+      const macdS = tvMacdChart.addLineSeries({color:'#22d3ee',lineWidth:1.5,priceLineVisible:false,lastValueVisible:true,title:''});
       macdS.setData(ind.macd);
     }
     if(ind.macd_signal?.length){
-      const sigS = tvMacdChart.addLineSeries({color:'#fb7185',lineWidth:1.2,priceLineVisible:false,lastValueVisible:true,title:'Signal'});
+      const sigS = tvMacdChart.addLineSeries({color:'#fb7185',lineWidth:1.2,priceLineVisible:false,lastValueVisible:true,title:''});
       sigS.setData(ind.macd_signal);
     }
     tvMacdChart.timeScale().fitContent();
@@ -632,51 +666,75 @@ async function loadPredictions(){
   const sym = (document.getElementById('chart-symbol').value||'BTC/USDC').trim();
   const body = document.getElementById('pred-body');
   if(!body) return;
-  body.innerHTML = '<div class="empty"><span class="spinner"></span> Analyse en cours…</div>';
+  body.innerHTML = '<div class="empty"><span class="spinner"></span> Exécution des stratégies en cours…</div>';
   try{
-    // Chercher d'abord dans les résultats de scan déjà chargés
-    let item = scanResults.find(x=>x.symbol===sym);
+    const r = await apiFetch(`/api/scanner/signals?symbol=${encodeURIComponent(sym)}&timeframe=${chartTf}&limit=300`);
+    if(!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const d = await r.json();
+    const signals = d.signals || [];
 
-    // Si pas dans les résultats locaux, lancer un scan ciblé
-    if(!item){
-      const r = await apiFetch(`/api/scanner?timeframe=${chartTf}&limit=200`);
-      if(!r.ok) throw new Error(r.statusText);
-      const d = await r.json();
-      item = (d.results||[]).find(x=>x.symbol===sym);
-    }
-
-    if(!item){
-      body.innerHTML=`<div class="empty">Aucune donnée pour <strong>${escHtml(sym)}</strong> sur ce timeframe.<br>Vérifiez que la paire est dans la liste du scanner.</div>`;
+    if(!signals.length){
+      body.innerHTML='<div class="empty">Aucune stratégie active configurée.</div>';
       return;
     }
 
-    const strats = item.strategies || [];
-    const regime = item.regime_label || '—';
-    const ind    = item.indicators || {};
+    // Rechercher régime depuis les résultats de scan (si disponibles)
+    const scanItem = scanResults.find(x=>x.symbol===sym);
+    const regimeLabel = scanItem?.regime_label || '';
 
-    if(!strats.length){
-      body.innerHTML='<div class="empty">Aucune stratégie recommandée pour ce régime.</div>';
-      return;
-    }
-
-    // Afficher les stratégies recommandées pour le régime détecté
-    const activePerTf = _scannerCfg?.active_per_tf || {};
-    const activeTfStrats = Object.values(activePerTf).flat();
-    const cards = strats.map(name=>{
-      const isActive = activeTfStrats.includes(name);
-      const activeTag = isActive ? '<span style="font-size:.62rem;color:var(--green);margin-left:4px">● actif</span>' : '';
-      return`<div style="background:var(--card);border:1px solid ${isActive?'rgba(34,211,238,.25)':'var(--border)'};border-radius:var(--r-sm);padding:10px 12px">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <span style="font-weight:600;font-family:var(--mono);font-size:.78rem">${escHtml(name)}${activeTag}</span>
-          <span class="tag tag-strat" style="font-size:.65rem">${escHtml(regime)}</span>
+    const cards = signals.map(sig=>{
+      if(sig.skipped){
+        return`<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;opacity:.6">
+          <div style="font-weight:600;font-family:var(--mono);font-size:.78rem;color:var(--purple)">${escHtml(sig.strategy)}</div>
+          <div style="font-size:.67rem;color:var(--dim);margin-top:4px">🧠 ML — nécessite entraînement</div>
+        </div>`;
+      }
+      const side = sig.side || 'none';
+      const score = sig.score ?? 0;
+      const scoreW = Math.round(score * 100);
+      let sideColor, sideIcon, sideTxt;
+      if(side === 'long'){
+        sideColor='var(--green)'; sideIcon='▲'; sideTxt='HAUSSE';
+      } else if(side === 'short'){
+        sideColor='var(--red)'; sideIcon='▼'; sideTxt='BAISSE';
+      } else {
+        sideColor='var(--dim)'; sideIcon='—'; sideTxt='NEUTRE';
+      }
+      const isBuy = side === 'long';
+      const isSell = side === 'short';
+      const signalBadge = isBuy
+        ? `<span style="background:rgba(52,211,153,.2);color:var(--green);font-size:.62rem;font-weight:700;padding:2px 7px;border-radius:3px">🟢 Achat</span>`
+        : isSell
+          ? `<span style="background:rgba(251,113,133,.2);color:var(--red);font-size:.62rem;font-weight:700;padding:2px 7px;border-radius:3px">🔴 Vente</span>`
+          : `<span style="background:rgba(90,112,153,.15);color:var(--dim);font-size:.62rem;font-weight:700;padding:2px 7px;border-radius:3px">⬜ Aucun signal</span>`;
+      return`<div style="background:var(--card);border:1px solid ${side!=='none'?sideColor+'44':'var(--border)'};border-radius:var(--r-sm);padding:10px 12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+          <span style="font-weight:600;font-family:var(--mono);font-size:.78rem">${escHtml(sig.strategy)}</span>
+          ${signalBadge}
         </div>
-        <div style="font-size:.67rem;color:var(--dim);margin-top:5px">
-          ADX ${(ind.adx||0).toFixed(1)} · ATR% ${(ind.atr_pct||0).toFixed(2)} · RSI ${(ind.rsi||0).toFixed(0)}
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:1.1rem;color:${sideColor};font-weight:700">${sideIcon}</span>
+          <span style="font-size:.82rem;color:${sideColor};font-weight:700">${sideTxt}</span>
+          ${side!=='none'?`<span style="font-size:.68rem;color:var(--dim);font-family:var(--mono)">score: ${(score).toFixed(2)}</span>`:''}
         </div>
+        ${sig.reason?`<div style="font-size:.65rem;color:var(--dim);margin-top:4px;line-height:1.4">${escHtml(sig.reason.slice(0,120))}${sig.reason.length>120?'…':''}</div>`:''}
       </div>`;
     });
-    body.innerHTML=`<div style="margin-bottom:8px;font-size:.72rem;color:var(--dim)">Régime détecté : <strong style="color:var(--text)">${escHtml(regime)}</strong> · Stratégies recommandées :</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">${cards.join('')}</div>`;
+
+    const nBuy  = signals.filter(s=>s.side==='long').length;
+    const nSell = signals.filter(s=>s.side==='short').length;
+    const nNone = signals.filter(s=>s.side==='none'&&!s.skipped).length;
+    const nMl   = signals.filter(s=>s.skipped).length;
+
+    const summary = `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px;font-size:.72rem">
+      <span>${signals.length} stratégie(s) exécutée(s)</span>
+      ${nBuy  ? `<span style="color:var(--green)">▲ ${nBuy} achat</span>` : ''}
+      ${nSell ? `<span style="color:var(--red)">▼ ${nSell} vente</span>` : ''}
+      <span style="color:var(--dim)">${nNone} neutre · ${nMl} ML (non exécuté)</span>
+      ${regimeLabel ? `<span style="color:var(--muted)">Régime : <strong>${escHtml(regimeLabel)}</strong></span>` : ''}
+    </div>`;
+
+    body.innerHTML = summary + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px">${cards.join('')}</div>`;
   }catch(e){
     body.innerHTML=`<div class="empty">⚠ ${escHtml(e.message)}</div>`;
   }
