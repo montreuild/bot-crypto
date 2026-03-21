@@ -139,8 +139,8 @@ class LiveTrader:
         self._loaded_strategies: Dict[str, object] = {}
         self._load_all_strategies()
 
-        # Entraînement périodique des stratégies BaseStrategyML (délégué à l'optimizer)
-        from app.optimizer.auto_optimizer import MLStrategyTrainer
+        # Chargement des modèles ML persistés — réentraînement géré par _auto_opt_thread
+        from app.ml.trainer import MLStrategyTrainer
         self._ml_trainer = MLStrategyTrainer(cfg)
         self._ml_trainer.load_models(self._loaded_strategies, self.tf)
 
@@ -280,7 +280,6 @@ class LiveTrader:
                         self._recover_after_gap(gap_secs)
                         _last_successful_cycle = time.time()
                 self._maybe_retrain_ml()
-                self._ml_trainer.maybe_retrain(self._loaded_strategies, self.scanner, self.tf)
                 self._maybe_auto_optimize()
                 self._purge_counter += 1
                 if self._purge_counter >= self._purge_every_n:
@@ -935,16 +934,24 @@ class LiveTrader:
         logger.debug(f"[Purge] Mémoire nettoyée. OHLCV cache : {len(self._ohlcv_cache)} entrées.")
 
     def _maybe_auto_optimize(self):
-        if not self._auto_opt_enabled:
+        now     = time.time()
+        opt_due = self._auto_opt_enabled and now >= self._auto_opt_next_run
+        ml_due  = self._ml_trainer.any_due(self._loaded_strategies)
+        if not opt_due and not ml_due:
             return
-        if time.time() < self._auto_opt_next_run:
-            return
-        self._auto_opt_next_run = time.time() + self._auto_opt_interval
-        logger.info("[AutoOpt] Démarrage optimisation planifiée…")
-        threading.Thread(target=self._auto_opt_thread, daemon=True).start()
+        if opt_due:
+            self._auto_opt_next_run = now + self._auto_opt_interval
+            logger.info("[AutoOpt] Démarrage optimisation planifiée…")
+        threading.Thread(target=self._auto_opt_thread, args=(opt_due,), daemon=True).start()
 
-    def _auto_opt_thread(self):
+    def _auto_opt_thread(self, run_optimization: bool = True):
         try:
+            # Réentraînement des stratégies ML dont l'intervalle est écoulé
+            self._ml_trainer.retrain_due(self._loaded_strategies, self.scanner, self.tf)
+
+            if not run_optimization:
+                return
+
             from app.optimizer.auto_optimizer import AutoOptimizer
             symbol = "BTC/USDC"  # paire représentative
             tfs    = self.timeframes
