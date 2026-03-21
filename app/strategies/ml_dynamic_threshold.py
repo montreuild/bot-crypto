@@ -1,5 +1,5 @@
 """
-Stratégie ML à seuil dynamique — V6
+Stratégie ML à seuil dynamique — V7 (multi-timeframe)
 
 Différences clés vs ml_strategy.py :
   - Labels DYNAMIQUES : le seuil de hausse/baisse s'adapte à la volatilité
@@ -10,6 +10,8 @@ Différences clés vs ml_strategy.py :
   - Correction robuste UndefinedMetricWarning via np.nanmean sur les folds
     mono-classe (problème fréquent sur petits datasets crypto).
   - Vérification de la distribution des classes avant entraînement.
+  - Multi-TF : stocke un pipeline distinct par timeframe détecté automatiquement.
+    Un seul objet Strategy gère 5m, 15m, 1h… en parallèle.
 """
 import logging
 import math
@@ -312,7 +314,39 @@ def _build_pipeline(model_type: str, params: dict) -> Pipeline:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Classe Strategy — interface compatible moteur v6
+#  Détection automatique du timeframe depuis un DataFrame OHLCV
+# ═══════════════════════════════════════════════════════════════
+_SECS_TO_TF: Dict[int, str] = {
+    60: "1m", 180: "3m", 300: "5m", 900: "15m",
+    1800: "30m", 3600: "1h", 14400: "4h", 86400: "1d",
+}
+
+def _detect_tf(df: pl.DataFrame) -> str:
+    """Infère le timeframe depuis l'intervalle médian entre les barres."""
+    if "time" not in df.columns or len(df) < 2:
+        return "unknown"
+    try:
+        t_int = df["time"].cast(pl.Int64).to_numpy()
+        median_diff = int(np.median(np.diff(t_int)))
+        # Polars Datetime est en microsecondes ; millisecondes ou secondes sinon
+        if median_diff > 1_000_000_000:
+            secs = median_diff // 1_000_000_000   # nanosecondes
+        elif median_diff > 1_000_000:
+            secs = median_diff // 1_000_000        # microsecondes (polars défaut)
+        elif median_diff > 1_000:
+            secs = median_diff // 1_000            # millisecondes
+        else:
+            secs = median_diff                     # déjà en secondes
+        closest = min(_SECS_TO_TF, key=lambda k: abs(k - secs))
+        if abs(closest - secs) <= max(closest * 0.15, 5):
+            return _SECS_TO_TF[closest]
+        return f"custom_{secs}s"
+    except Exception:
+        return "unknown"
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Classe Strategy — interface compatible moteur v7
 # ═══════════════════════════════════════════════════════════════
 class MLDynamicThresholdStrategy(BaseStrategyML):
     """
@@ -377,13 +411,20 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         self.min_train      = min_train
         self.retrain_every  = retrain_every
 
-        self._pipeline:     Optional[Pipeline] = None
-        self._trained:      bool  = False
-        self._call_count:   int   = 0
-        self._best_auc:     float = 0.0
-        self._best_params:  dict  = {}
+        # ── Stockage multi-TF : un pipeline distinct par timeframe ──────────
+        # Clé : TF détecté (ex: "5m", "1h"). Valeur : sklearn Pipeline entraîné.
+        self._pipelines:        Dict[str, Any]       = {}   # tf → Pipeline
+        self._best_auc_per_tf:  Dict[str, float]     = {}   # tf → AUC
+        self._best_params_per_tf: Dict[str, dict]    = {}   # tf → hyperparams
+        self._feature_cols_per_tf: Dict[str, List]   = {}   # tf → feature names
+        self._call_count_per_tf: Dict[str, int]      = {}   # tf → appels
+        self._trained_tfs:      set                  = set()
+
+        # Compatibilité rétrograde : _best_auc reflète le dernier TF entraîné
+        self._best_auc:     float    = 0.0
+        self._best_params:  dict     = {}
         self._feature_cols: List[str] = []
-        self._train_idx:    int   = 0
+
         # Thread-safety : protège les lectures/écritures du modèle lors du
         # réentraînement en arrière-plan (live managed_externally=True).
         self._model_lock:   threading.RLock = threading.RLock()
@@ -395,40 +436,45 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
     # ── Interface principale ───────────────────────────────────
     def score(self, df: pl.DataFrame, params: dict = None, df_htf=None, symbol: str = "") -> Dict[str, Any]:
         """
-        Interface compatible Engine v6.
-        Applique les params de config si fournis (premier appel).
+        Interface compatible Engine v7 (multi-TF).
+        Applique les params de config si aucun TF n'est encore entraîné.
         """
         if params:
             p = params.get(self.name, {})
-            if p and not self._trained:
+            if p and not self._trained_tfs:
                 for k, v in p.items():
                     if hasattr(self, k):
                         setattr(self, k, v)
         return self._signal(df)
 
     def _signal(self, df: pl.DataFrame) -> Dict[str, Any]:
-        self._call_count += 1
         if self._cancel_event is not None and self._cancel_event.is_set():
             return self._no_signal()
         if len(df) < self.min_train + 20:
             return self._no_signal()
 
-        if not self._trained:
-            # Premier appel : entraînement initial synchrone (backtest ou live
-            # avant le premier cycle du réentraîneur périodique).
-            self._fit(df)
-        elif not self.managed_externally and self._call_count % self.retrain_every == 0:
-            # Mode backtest : réentraînement inline périodique pour simuler
-            # la dérive du marché. Désactivé en live (géré en arrière-plan).
-            self._fit(df)
+        tf = _detect_tf(df)
+        cnt = self._call_count_per_tf.get(tf, 0) + 1
+        self._call_count_per_tf[tf] = cnt
 
-        if not self._trained:
+        if tf not in self._trained_tfs:
+            if self.managed_externally:
+                # En live : le trainer gère l'entraînement en arrière-plan.
+                # Retourner no_signal tant que le modèle n'est pas prêt pour ce TF.
+                return self._no_signal()
+            # Mode backtest / fallback : premier entraînement synchrone pour ce TF.
+            self._fit(df, tf)
+        elif not self.managed_externally and cnt % self.retrain_every == 0:
+            # Backtest walk-forward : réentraînement périodique par TF.
+            self._fit(df, tf)
+
+        if tf not in self._trained_tfs:
             return self._no_signal()
 
-        return self._predict(df)
+        return self._predict(df, tf)
 
     # ── Entraînement ──────────────────────────────────────────
-    def _fit(self, df: pl.DataFrame) -> None:
+    def _fit(self, df: pl.DataFrame, tf: str = "") -> None:
         try:
             feats  = compute_features(df)
             labels = compute_labels(df, self.lookahead, self.vol_multiplier)
@@ -476,14 +522,18 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
 
             pipeline = _build_pipeline(self.model_type, best_p)
             pipeline.fit(X, y)
+            tf = tf or _detect_tf(df)
 
             with self._model_lock:
-                self._pipeline     = pipeline
-                self._best_params  = best_p
+                self._pipelines[tf]          = pipeline
+                self._best_params_per_tf[tf] = best_p
+                self._best_auc_per_tf[tf]    = best_auc
+                self._feature_cols_per_tf[tf] = list(feats.columns)
+                self._trained_tfs.add(tf)
+                # Compat rétrograde (logs du trainer, etc.)
                 self._best_auc     = best_auc
+                self._best_params  = best_p
                 self._feature_cols = list(feats.columns)
-                self._trained      = True
-                self._train_idx    = len(df)
 
             # ── Validation IS/OOS — détection sur-apprentissage ───────────
             try:
@@ -497,20 +547,21 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                     ratio     = best_auc / max(oos_auc, 1e-9)
                     status    = "✅ robuste" if ratio < 1.3 else "⚠️ surapprentissage probable"
                     logger.info(
-                        f"[{self.name}] IS AUC={best_auc:.4f} | OOS AUC={oos_auc:.4f} "
+                        f"[{self.name}/{tf}] IS AUC={best_auc:.4f} | OOS AUC={oos_auc:.4f} "
                         f"| Ratio IS/OOS={ratio:.2f} — {status}"
                     )
             except Exception as oe:
-                logger.debug(f"[{self.name}] IS/OOS check KO : {oe}")
+                logger.debug(f"[{self.name}/{tf}] IS/OOS check KO : {oe}")
 
             logger.info(
-                f"[{self.name}] Modèle entraîné — AUC={best_auc:.4f} | n={len(X)}"
+                f"[{self.name}/{tf}] Modèle entraîné — AUC={best_auc:.4f} | n={len(X)}"
             )
         except Exception as e:
             logger.error(f"[{self.name}] Erreur entraînement : {e}")
 
     # ── Prédiction ────────────────────────────────────────────
-    def _predict(self, df: pl.DataFrame) -> Dict[str, Any]:
+    def _predict(self, df: pl.DataFrame, tf: str = "") -> Dict[str, Any]:
+        tf = tf or _detect_tf(df)
         try:
             feats = compute_features(df)
             if len(feats) == 0:
@@ -518,19 +569,23 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
 
             # Filtre ADX — régime de marché
             adx_val = float(_adx(df, 14)[0][-1])
+            auc_tf  = self._best_auc_per_tf.get(tf, self._best_auc)
             if adx_val < self.adx_min:
                 return {
                     "score":      0.0,
                     "side":       "none",
                     "name":       self.name,
-                    "reason":     f"Filtre régime : ADX={adx_val:.1f} < {self.adx_min}",
+                    "reason":     f"Filtre régime : ADX={adx_val:.1f} < {self.adx_min} [{tf}]",
                     "conditions": [f"ADX insuffisant ({adx_val:.1f})"],
-                    "indicators": {"adx": round(adx_val, 2), "auc": round(self._best_auc, 4)},
+                    "indicators": {"adx": round(adx_val, 2), "auc": round(auc_tf, 4), "tf": tf},
                 }
 
             X_last = feats[-1:].to_numpy()
             with self._model_lock:
-                proba = float(self._pipeline.predict_proba(X_last)[0, 1])
+                pipeline = self._pipelines.get(tf)
+            if pipeline is None:
+                return self._no_signal()
+            proba  = float(pipeline.predict_proba(X_last)[0, 1])
             close  = float(df["close"][-1])
 
             if proba >= self.proba_long:
@@ -547,9 +602,10 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             indicators = {
                 "proba_up":      round(proba, 4),
                 "model":         self.model_type,
-                "auc":           round(self._best_auc, 4),
+                "auc":           round(auc_tf, 4),
                 "adx":           round(adx_val, 2),
-                "n_features":    len(self._feature_cols),
+                "tf":            tf,
+                "n_features":    len(self._feature_cols_per_tf.get(tf, self._feature_cols)),
                 "lookahead":     self.lookahead,
                 "vol_multiplier":self.vol_multiplier,
                 "close":         close,
@@ -560,13 +616,13 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 "side":       side,
                 "name":       self.name,
                 "reason":     (
-                    f"ML-DynThreshold {self.model_type} — proba_up={proba:.3f} "
+                    f"ML-DynThreshold {self.model_type}/{tf} — proba_up={proba:.3f} "
                     f"(long≥{self.proba_long}, short≤{self.proba_short}, ADX={adx_val:.1f})"
                 ),
                 "conditions": [
                     f"Proba hausse : {proba:.3f}",
-                    f"Modèle : {self.model_type}",
-                    f"AUC cross-val : {self._best_auc:.4f}",
+                    f"Modèle : {self.model_type} [{tf}]",
+                    f"AUC cross-val : {auc_tf:.4f}",
                     f"Lookahead : {self.lookahead} bougies",
                     f"Seuil dynamique (vol_mult={self.vol_multiplier})",
                     f"ADX : {adx_val:.1f}",
@@ -592,71 +648,84 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
     # ── Contrat BaseStrategyML ─────────────────────────────────────────────
 
     def fit(self, df: pl.DataFrame, params: dict = None) -> None:
-        """Entraîne le modèle (appelé par le réentraîneur périodique du LiveTrader)."""
+        """Entraîne le modèle pour le TF détecté depuis df (appelé par MLStrategyTrainer)."""
         if params:
             p = params.get(self.name, {})
             for k, v in p.items():
                 if hasattr(self, k):
                     setattr(self, k, v)
-        self._fit(df)
+        tf = _detect_tf(df)
+        self._fit(df, tf)
 
     def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
         """Génère un signal sans réentraîner (modèle déjà chargé en mémoire)."""
         return self._predict(df)
 
     def save_model(self, path: str) -> None:
-        """Persiste le modèle entraîné sur disque via joblib."""
-        if not self._trained or self._pipeline is None:
+        """Persiste le modèle du TF encodé dans le chemin (ex: models/{name}_{tf}.pkl)."""
+        # Extrait le TF depuis le nom de fichier : "ml_dynamic_threshold_1h.pkl" → "1h"
+        tf = os.path.basename(path).rsplit("_", 1)[-1].split(".")[0]
+        with self._model_lock:
+            pipeline = self._pipelines.get(tf)
+        if pipeline is None:
+            logger.debug(f"[{self.name}] save_model: aucun pipeline pour {tf}, skip")
             return
         try:
             import joblib
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            with self._model_lock:
-                payload = {
-                    "pipeline":     self._pipeline,
-                    "best_params":  self._best_params,
-                    "best_auc":     self._best_auc,
-                    "feature_cols": self._feature_cols,
-                    "model_type":   self.model_type,
-                }
+            payload = {
+                "pipeline":     pipeline,
+                "best_params":  self._best_params_per_tf.get(tf, {}),
+                "best_auc":     self._best_auc_per_tf.get(tf, 0.0),
+                "feature_cols": self._feature_cols_per_tf.get(tf, []),
+                "model_type":   self.model_type,
+            }
             joblib.dump(payload, path)
-            logger.info(f"[{self.name}] Modèle sauvegardé → {path}")
+            logger.info(f"[{self.name}/{tf}] Modèle sauvegardé → {path}")
         except Exception as e:
-            logger.warning(f"[{self.name}] Sauvegarde modèle KO : {e}")
+            logger.warning(f"[{self.name}/{tf}] Sauvegarde modèle KO : {e}")
 
     def load_model(self, path: str) -> bool:
-        """Charge un modèle persisté depuis le disque. Retourne True si réussi."""
+        """Charge le modèle et l'enregistre sous le TF encodé dans le chemin."""
         if not os.path.exists(path):
             return False
+        tf = os.path.basename(path).rsplit("_", 1)[-1].split(".")[0]
         try:
             import joblib
             data = joblib.load(path)
+            auc  = data.get("best_auc", 0.0)
             with self._model_lock:
-                self._pipeline     = data["pipeline"]
+                self._pipelines[tf]           = data["pipeline"]
+                self._best_params_per_tf[tf]  = data.get("best_params", {})
+                self._best_auc_per_tf[tf]     = auc
+                self._feature_cols_per_tf[tf] = data.get("feature_cols", [])
+                self._trained_tfs.add(tf)
+                # Compat rétrograde
+                self._best_auc     = auc
                 self._best_params  = data.get("best_params", {})
-                self._best_auc     = data.get("best_auc", 0.0)
                 self._feature_cols = data.get("feature_cols", [])
-                self._trained      = True
-            logger.info(f"[{self.name}] Modèle chargé depuis {path} (AUC={self._best_auc:.4f})")
+            logger.info(f"[{self.name}/{tf}] Modèle chargé depuis {path} (AUC={auc:.4f})")
             return True
         except Exception as e:
-            logger.warning(f"[{self.name}] Chargement modèle KO : {e}")
+            logger.warning(f"[{self.name}/{tf}] Chargement modèle KO : {e}")
             return False
 
     def reset_model(self) -> None:
-        """Réinitialise l'état du modèle (walk-forward backtest, tests)."""
+        """Réinitialise tous les modèles (walk-forward backtest, tests)."""
         with self._model_lock:
-            self._pipeline     = None
-            self._trained      = False
-            self._call_count   = 0
+            self._pipelines.clear()
+            self._best_auc_per_tf.clear()
+            self._best_params_per_tf.clear()
+            self._feature_cols_per_tf.clear()
+            self._call_count_per_tf.clear()
+            self._trained_tfs.clear()
             self._best_auc     = 0.0
             self._best_params  = {}
             self._feature_cols = []
-            self._train_idx    = 0
 
     @property
     def is_trained(self) -> bool:
-        return self._trained
+        return len(self._trained_tfs) > 0
 
 
 # Alias Engine
