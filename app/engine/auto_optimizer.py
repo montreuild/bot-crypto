@@ -261,6 +261,7 @@ class AutoOptimizer:
                 df_full=df_full,
                 split=split,
                 timeframe=timeframe,
+                cancel_event=cancel_event,
             )
 
             if self.method == "bayesian":

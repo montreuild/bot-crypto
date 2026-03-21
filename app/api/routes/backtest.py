@@ -105,7 +105,7 @@ def run_backtest(
                     inst._cancel_event = state._bt_cancel_event
                 eng = Engine()
                 eng.register(inst, silent=True)
-                bt  = Backtester(eng, state.cfg)
+                bt  = Backtester(eng, state.cfg, cancel_event=state._bt_cancel_event)
                 res = bt.run(df, symbol, timeframe=tf)
                 d   = res.to_dict()
                 strat_key  = next(iter(res.by_strategy.keys()), name) if res.by_strategy else name
@@ -144,6 +144,8 @@ def run_backtest(
                     )
                     entry["monte_carlo"] = mc.run(all_trades, state.cfg["trading"]["capital"])
                 return name, entry
+            except InterruptedError:
+                return name, {"error": "Backtest annulé", "trades": []}
             except Exception as e:
                 logger.error(f"[API] Backtest {name} : {e}", exc_info=True)
                 return name, {"error": str(e), "trades": []}
