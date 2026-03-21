@@ -496,7 +496,7 @@ python cli.py
 
 ```ini
 [Unit]
-Description=Crypto Bot V10
+Description=Crypto Bot V11
 After=network.target
 
 [Service]

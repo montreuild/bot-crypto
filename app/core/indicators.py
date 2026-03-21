@@ -1,26 +1,7 @@
 """Bibliothèque d'indicateurs techniques — source unique pour stratégies et moteur.
 
-Version : 10.0.0
-
-Historique des changements (v10)
-─────────────────────────────────
-v10.0.0 (2026-03-18)
-  • Fusion définitive de app/core/indicators.py et app/strategies/indicators.py.
-    app/strategies/indicators.py est supprimé ; toutes les stratégies importent
-    directement depuis ce module.
-  • Portage maximum vers Polars (Arrow/Rust) — NumPy limité à la seule boucle
-    séquentielle du SuperTrend (dépendance incontournable i → i-1).
-  • _true_range : np.maximum remplacé par pl.max_horizontal (zéro round-trip).
-  • rsi         : division sécurisée via .clip(lower_bound=1e-10) au lieu de
-                  np.where (Series pure, pas de Expr mélangé).
-  • adx         : conditionnels pdm/ndm via multiplication booléenne Polars
-                  (up * (up > dn).cast(pl.Float64)) ; divisions sécurisées via
-                  .clip(lower_bound=1e-10) ; zéro round-trip numpy.
-  • supertrend  : TR/ATR calculés par _true_range() (Polars) ; seule la boucle
-                  upper/lower/direction reste en numpy (état séquentiel requis).
-  • precompute_df : entièrement Polars — suppression des np.maximum et pl.when
-                    mélangés à des Series ; toutes les divisions sécurisées par clip.
-  • Ajout de __version__ pour traçabilité programmatique.
+Source unique : toutes les stratégies, le moteur et le live trader importent
+directement depuis ce module. Voir CHANGELOG.md pour l'historique des versions.
 
 Bibliothèque principale : Polars (Rust, Arrow, multi-threadé).
 NumPy conservé uniquement pour la boucle séquentielle SuperTrend.
@@ -28,8 +9,6 @@ NumPy conservé uniquement pour la boucle séquentielle SuperTrend.
 import numpy as np
 import polars as pl
 from typing import Tuple
-
-__version__ = "10.0.0"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -508,7 +487,7 @@ def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
       _pre_macd_hist   MACD histogram
       _pre_volratio20  volume_ratio(20)
 
-    Entièrement Polars (v10) — zéro round-trip numpy.
+    Entièrement Polars — zéro round-trip numpy.
     """
     c = df["close"]
     h = df["high"]

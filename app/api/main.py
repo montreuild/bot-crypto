@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 
 # ── Application ────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Crypto Bot V9",
-    version="9.0.0",
+    title="Crypto Bot V11",
+    version="11.0.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
@@ -83,7 +83,7 @@ def health_check():
     exchange_ok = state.cfg is not None
     return {
         "status":   "ok" if (db_ok and exchange_ok) else "degraded",
-        "version":  "9.0.0",
+        "version":  "11.0.0",
         "db":       db_ok,
         "exchange": exchange_ok,
         "trader":   state.trader is not None and getattr(state.trader, "running", False),
@@ -140,7 +140,7 @@ def get_status(request: Request):
             "timeframes", [state.cfg["trading"].get("timeframe", "1h")]
         ),
         "strategies": state.cfg["strategies"]["enabled"],
-        "version":    "9.0.0",
+        "version":    "11.0.0",
     }
     if authenticated:
         base["capital"] = (state.trader.capital_display

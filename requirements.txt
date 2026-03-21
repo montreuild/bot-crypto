@@ -1,5 +1,5 @@
 # ================================================================
-#  Crypto Bot V9 - Python Dependencies
+#  Crypto Bot V11 - Python Dependencies
 #  !! Python 3.12 REQUIRED !!
 #
 #  Installation on Ubuntu 22.04 (Python 3.10 by default):

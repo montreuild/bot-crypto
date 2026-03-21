@@ -20,7 +20,7 @@ from app.api.main           import app as fastapi_app, init_app
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Crypto Bot V9")
+    p = argparse.ArgumentParser(description="Crypto Bot V11")
     p.add_argument("--config",       default="config.yaml", help="Fichier de config")
     p.add_argument("--backtest",     metavar="SYMBOL",       help="Lancer un backtest CLI")
     p.add_argument("--timeframe",    default="",             help="Timeframe (défaut=config)")
@@ -178,7 +178,7 @@ def main():
     else:
         logger.info(f"[Main] Serveur web seul -- http://{host}:{port}")
 
-    print(f"\n  Crypto Bot V9 -- http://{host}:{port}\n")
+    print(f"\n  Crypto Bot V11 -- http://{host}:{port}\n")
     uvicorn.run(fastapi_app, host=host, port=port, log_level="warning")
 
 
