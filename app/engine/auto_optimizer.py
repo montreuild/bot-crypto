@@ -18,7 +18,7 @@ import polars as pl
 
 from app.engine.engine   import Engine, BaseStrategyML
 from app.engine.backtest import Backtester
-from app.optimizer.optimizer import (
+from app.engine.optimizer import (
     StrategyOptimizer, PARAM_SPACES, STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT,
     apply_best_params, save_optimizer_results, get_active_strategies_per_tf
 )

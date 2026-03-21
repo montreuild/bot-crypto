@@ -93,7 +93,7 @@ def run_backtest_cli(cfg, args):
 
 
 def run_optimizer_cli(cfg, args):
-    from app.optimizer.optimizer import StrategyOptimizer, DEFAULT_SPACES
+    from app.engine.optimizer import StrategyOptimizer, DEFAULT_SPACES
     strategy = args.optimize
     exchange = create_exchange(cfg)
     tf       = cfg["trading"]["timeframe"]
@@ -138,7 +138,7 @@ def main():
 
     if args.scan:
         exchange = create_exchange(cfg)
-        from app.scanner.scanner import MarketScanner
+        from app.engine.scanner import MarketScanner
         scanner = MarketScanner(exchange, cfg)
         results = scanner.screen(cfg["trading"]["timeframe"])
         print(f"\n  {len(results)} paires scannees :")
