@@ -485,10 +485,6 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 self._trained      = True
                 self._train_idx    = len(df)
 
-            # Sauvegarde automatique du modèle après entraînement
-            model_path = os.path.join(self.model_dir, f"{self.name}_{self.model_type}.joblib")
-            self.save_model(model_path)
-
             # ── Validation IS/OOS — détection sur-apprentissage ───────────
             try:
                 split = int(len(X) * 0.8)
