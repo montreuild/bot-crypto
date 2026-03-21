@@ -195,9 +195,9 @@ def compute_features(df: pl.DataFrame) -> pl.DataFrame:
     }
 
     result = pl.DataFrame(feat_dict)
-    # Replace inf with null, then fill all nulls with 0
+    # Replace NaN and inf with null, then fill all nulls with 0
     result = result.with_columns([
-        pl.when(pl.col(c).is_infinite()).then(None).otherwise(pl.col(c)).alias(c)
+        pl.when(pl.col(c).is_nan() | pl.col(c).is_infinite()).then(None).otherwise(pl.col(c)).alias(c)
         for c in result.columns
     ]).fill_null(0.0)
     return result
@@ -236,7 +236,6 @@ PARAM_SPACE_RF = {
 
 PARAM_SPACE_LR = {
     "clf__C":            [0.1, 1.0, 10.0],
-    "clf__penalty":      ["l2"],
     "clf__solver":       ["liblinear"],
     "clf__class_weight": [None, "balanced"],
 }
@@ -270,6 +269,7 @@ def random_search_hyperparams(
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
+        warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
         for trial in range(n_trials):
             if cancel_event is not None and cancel_event.is_set():
                 logger.info("[ml_dynamic_threshold] Entraînement interrompu (annulation backtest)")
@@ -279,7 +279,7 @@ def random_search_hyperparams(
                 pipeline = _build_pipeline(model_type, params)
                 scores   = cross_val_score(
                     pipeline, X, y, cv=tscv,
-                    scoring="roc_auc", n_jobs=-1,
+                    scoring="roc_auc", n_jobs=1,  # n_jobs=1 pour ne pas bloquer l'annulation
                     error_score=np.nan,   # NaN sur fold mono-classe au lieu de crash
                 )
                 if np.isnan(scores).all():
@@ -463,6 +463,16 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 X, y, self.model_type, self.n_trials,
                 cancel_event=self._cancel_event,
             )
+
+            # Ne pas continuer si annulé après le random search
+            if self._cancel_event is not None and self._cancel_event.is_set():
+                logger.info(f"[{self.name}] Entraînement annulé après random search")
+                return
+
+            if not best_p:
+                logger.warning(f"[{self.name}] Aucun essai valide — entraînement ignoré")
+                return
+
             pipeline = _build_pipeline(self.model_type, best_p)
             pipeline.fit(X, y)
 
@@ -473,6 +483,10 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 self._feature_cols = list(feats.columns)
                 self._trained      = True
                 self._train_idx    = len(df)
+
+            # Sauvegarde automatique du modèle après entraînement
+            model_path = os.path.join(self.model_dir, f"{self.name}_{self.model_type}.joblib")
+            self.save_model(model_path)
 
             # ── Validation IS/OOS — détection sur-apprentissage ───────────
             try:
