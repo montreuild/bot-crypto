@@ -280,6 +280,7 @@ class Backtester:
             if not isinstance(strat, BaseStrategyML):
                 continue
             strat.reset_model()
+            strat._cancel_event = self._cancel_event
             if self.use_pretrained_ml and timeframe:
                 # Backtest standard : utilise le modèle pré-entraîné du timeframe.
                 # Pas de réentraînement inline → rapide et déterministe.
