@@ -1,16 +1,15 @@
 """
-Stratégie SuperTrend + MACD — V5
+Stratégie SuperTrend + MACD — V6
 
-Corrections V5 vs V4 :
-  - Cooldown par symbole
-  - RSI zone resserrée [38-65] (était [30-72] — achetait des extrêmes)
-  - Cas D supprimé (bruité et redondant avec continuation)
-  - Cas simplifié en 3 : A (ST cross), B (ST + MACD cross), C (continuation forte)
-  - MACD : exige histogramme croissant depuis 2 barres (pas juste positif)
-  - Volume minimum 1.1× pour tous les cas (était 1.0×)
-  - R:R check : stop sous le SuperTrend line
-  - HTF filtre : pas de long si HTF baissier, pas de short si HTF haussier
-  - Tendance fond stricte (± 2.5% EMA200 max)
+Corrections V6 vs V5 :
+  - param_space réduit à 5 paramètres clés : st_period, st_mult, macd_fast, macd_slow, vol_min
+    → 3^5 = 243 combinaisons (vs 59 049 en V5) — optimisation ~240× plus rapide
+  - Paramètres secondaires déplacés en fixed_params : rsi, cooldown, rr_min, macd_signal, tp_mult
+  - Target corrigé : forward-looking via atr_val × tp_mult (au lieu de high[-20:].max() biaisé passé)
+  - Stop simplifié : st_val directement (ligne SuperTrend = stop naturel, sans offset 0.3 ATR bruité)
+  - Conditions simplifiées : 2 cas long/short bien distincts (cross + continuation)
+  - RSI zone élargie légèrement [35-68] pour générer suffisamment de trades en backtest
+  - Trend filter assoupli : ±3% EMA200 (était ±2.5%) pour réduire les faux rejets
 """
 import logging
 from typing import Dict, Any, List
@@ -29,20 +28,25 @@ class Strategy(BaseStrategy):
 
     timeframes: List[str] = ["5m", "15m", "1h"]
 
+    # 5 paramètres × 3 valeurs = 243 combinaisons
     param_space: Dict[str, List] = {
-        "st_period":      [7, 10, 14],
-        "st_mult":        [2.0, 2.5, 3.0],
-        "macd_fast":      [10, 12, 14],
-        "macd_slow":      [24, 26, 28],
-        "macd_signal":    [7, 9, 11],
-        "vol_min":        [1.0, 1.1, 1.3],
-        "rsi_min":        [35, 38, 42],
-        "rsi_max":        [60, 65, 68],
-        "cooldown":       [10, 15, 20],
-        "rr_min":         [1.3, 1.5, 2.0],
+        "st_period":  [7, 10, 14],
+        "st_mult":    [2.0, 2.5, 3.0],
+        "macd_fast":  [10, 12, 14],
+        "macd_slow":  [24, 26, 28],
+        "vol_min":    [1.0, 1.1, 1.3],
     }
 
-    fixed_params: Dict[str, Any] = {}
+    fixed_params: Dict[str, Any] = {
+        "macd_signal": 9,
+        "rsi_min":     35,
+        "rsi_max":     68,
+        "cooldown":    12,
+        "rr_min":      1.3,
+        "tp_mult":     2.0,   # target = atr × tp_mult
+        "ema_trend":   200,
+        "ema_mid":     50,
+    }
 
     def __init__(self):
         self._last_signal: Dict[str, int] = {}
@@ -60,18 +64,22 @@ class Strategy(BaseStrategy):
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get("supertrend_macd", {})
 
-        st_period    = int(p.get("st_period",     10))
-        st_mult      = float(p.get("st_mult",      2.5))
-        macd_fast    = int(p.get("macd_fast",     12))
-        macd_slow    = int(p.get("macd_slow",     26))
-        macd_sig_s   = int(p.get("macd_signal",   9))
-        vol_min      = float(p.get("vol_min",      1.1))
-        cooldown     = int(p.get("cooldown",       15))
-        ema_trend    = int(p.get("ema_trend",     200))
-        ema_mid_p    = int(p.get("ema_mid",        50))
-        rsi_min      = float(p.get("rsi_min",      38))
-        rsi_max      = float(p.get("rsi_max",      65))
-        rr_min       = float(p.get("rr_min",       1.5))
+        # Paramètres optimisables
+        st_period  = int(p.get("st_period",     10))
+        st_mult    = float(p.get("st_mult",      2.5))
+        macd_fast  = int(p.get("macd_fast",     12))
+        macd_slow  = int(p.get("macd_slow",     26))
+        vol_min    = float(p.get("vol_min",      1.1))
+
+        # Paramètres fixes
+        macd_sig_s = int(p.get("macd_signal",    9))
+        rsi_min    = float(p.get("rsi_min",      35))
+        rsi_max    = float(p.get("rsi_max",      68))
+        cooldown   = int(p.get("cooldown",       12))
+        rr_min     = float(p.get("rr_min",       1.3))
+        tp_mult    = float(p.get("tp_mult",      2.0))
+        ema_trend  = int(p.get("ema_trend",     200))
+        ema_mid_p  = int(p.get("ema_mid",        50))
 
         sym = symbol or str(df["time"][-1]) if "time" in df.columns else "default"
         cnt = self._call_count.get(sym, 0) + 1
@@ -92,8 +100,8 @@ class Strategy(BaseStrategy):
         lm      = float(ema_mid[-1])
         c_now   = float(close[-1])
 
-        trend_bull = c_now >= lt * 0.975 and c_now >= lm * 0.99
-        trend_bear = c_now <= lt * 1.025 and c_now <= lm * 1.01
+        trend_bull = c_now >= lt * 0.970 and c_now >= lm * 0.985
+        trend_bear = c_now <= lt * 1.030 and c_now <= lm * 1.015
 
         # ── SuperTrend ────────────────────────────────────────────────────────
         direction, st_line = calc_supertrend(df, st_period, st_mult)
@@ -118,12 +126,10 @@ class Strategy(BaseStrategy):
             ph  = float(hist[-2])
             p2h = float(hist[-3])
 
-        macd_x_bull   = ph < 0 and lh > 0
-        macd_x_bear   = ph > 0 and lh < 0
-        macd_accel2_bull = lh > 0 and lh > ph and ph > p2h
-        macd_accel2_bear = lh < 0 and lh < ph and ph < p2h
-        macd_cont_bull   = lh > 0 and lh >= ph
-        macd_cont_bear   = lh < 0 and lh <= ph
+        macd_x_bull      = ph < 0 and lh > 0
+        macd_x_bear      = ph > 0 and lh < 0
+        macd_accel_bull  = lh > 0 and lh > ph
+        macd_accel_bear  = lh < 0 and lh < ph
 
         # ── RSI / Volume / ATR / HTF ─────────────────────────────────────────
         rsi_now = pre_val(df, "_pre_rsi14") or float(calc_rsi(close, 14)[-1])
@@ -149,42 +155,42 @@ class Strategy(BaseStrategy):
             "atr":        round(atr_val, 2), "htf_trend": htf,
         }
 
+        rsi_ok   = rsi_min <= rsi_now <= rsi_max
+        htf_ok_l = htf >= 0
+        htf_ok_s = htf <= 0
+
         # ═══ LONG ═════════════════════════════════════════════════════════════
-        rsi_ok = rsi_min <= rsi_now <= rsi_max
+        # Cas A : ST vient de passer haussier + MACD en momentum positif
+        long_A = st_x_up and (macd_x_bull or macd_accel_bull) and trend_bull
+        # Cas B : ST haussier continu + MACD cross ou accélération + volume
+        long_B = st_bull and not st_x_up and (macd_x_bull or (lh > 0 and lh > ph and ph > p2h)) and trend_bull
 
-        long_A = st_x_up and (macd_cont_bull or macd_x_bull) and trend_bull
-        long_B = st_bull and not st_x_up and (macd_x_bull or macd_accel2_bull) and trend_bull
-        long_C = (st_bull and macd_accel2_bull and
-                  vr >= vol_min * 1.2 and trend_bull)
-
-        htf_ok_long = htf >= 0
-
-        if (long_A or long_B or long_C) and vr >= vol_min and rsi_ok and htf_ok_long:
-
-            stop_l = st_val - atr_val * 0.3
+        if (long_A or long_B) and vr >= vol_min and rsi_ok and htf_ok_l:
+            # Stop : ligne SuperTrend (stop naturel)
+            stop_l = st_val
             risk_l = c_now - stop_l
             if risk_l <= 0:
                 return self._none("Stop invalide")
-            target_l = float(high[-20:].max())
-            reward_l = max(target_l - c_now, 0.0)
-            rr_l = reward_l / risk_l if risk_l > 0 else 0.0
+
+            # Target forward : atr × tp_mult
+            target_l = c_now + atr_val * tp_mult
+            reward_l = target_l - c_now
+            rr_l = reward_l / risk_l
+
             if rr_l < rr_min:
                 return self._none(f"R:R {rr_l:.2f} < {rr_min}")
 
             if long_A:
-                base = 0.73; tag = "ST cross↑ + MACD"
-            elif long_B:
-                base = 0.67; tag = "ST bull + MACD cross/accel×2"
+                base = 0.72; tag = "ST cross↑ + MACD"
             else:
-                base = 0.63; tag = "ST bull + MACD accel forte"
+                base = 0.65; tag = "ST bull + MACD accel"
 
             vol_b   = min((vr - vol_min) * 0.04, 0.08)
-            macd_b  = 0.05 if macd_x_bull else (0.03 if macd_accel2_bull else 0.0)
-            rsi_b   = 0.04 if 42 <= rsi_now <= 58 else 0.0
+            macd_b  = 0.05 if macd_x_bull else 0.02
+            rsi_b   = 0.03 if 40 <= rsi_now <= 60 else 0.0
             htf_b   = 0.04 if htf > 0 else 0.0
-            trend_b = 0.03 if (trend_bull and c_now > lt) else 0.0
 
-            score = min(base + vol_b + macd_b + rsi_b + htf_b + trend_b, 0.94)
+            score = min(base + vol_b + macd_b + rsi_b + htf_b, 0.93)
 
             self._last_signal[sym] = cnt
             return {
@@ -194,42 +200,46 @@ class Strategy(BaseStrategy):
                 "conditions": [
                     f"SuperTrend: {'CROSS↑' if st_x_up else 'BULL'} @ {st_val:.0f} ✓",
                     f"MACD hist: {p2h:+.5f}→{ph:+.5f}→{lh:+.5f} "
-                    f"({'cross↑' if macd_x_bull else 'accel×2' if macd_accel2_bull else 'pos'}) ✓",
+                    f"({'cross↑' if macd_x_bull else 'accel'}) ✓",
                     f"RSI {rsi_now:.0f} ∈ [{rsi_min:.0f}–{rsi_max:.0f}] ✓",
                     f"Vol {vr:.2f}x ✓ | HTF {'haussier' if htf>0 else 'neutre'} ✓",
+                    f"R:R {rr_l:.2f} (stop@ST={stop_l:.0f}, tp+{tp_mult}×ATR) ✓",
                     f"Fond: EMA200={'✓' if c_now>lt else '~'} EMA50={'✓' if c_now>lm else '~'}",
                 ],
-                "reason": f"{tag} | RSI={rsi_now:.0f} vol={vr:.1f}x htf={htf}",
+                "reason": f"{tag} | RSI={rsi_now:.0f} vol={vr:.1f}x htf={htf} RR={rr_l:.2f}",
             }
 
         # ═══ SHORT ════════════════════════════════════════════════════════════
-        rsi_ok_s  = (100 - rsi_max) <= rsi_now <= (100 - rsi_min)
-        htf_ok_s  = htf <= 0
+        # RSI miroir pour les shorts (zone symétrique)
+        rsi_ok_s = (100 - rsi_max) <= rsi_now <= (100 - rsi_min)
 
-        short_A = st_x_down and (macd_cont_bear or macd_x_bear) and trend_bear
-        short_B = st_bear and not st_x_down and (macd_x_bear or macd_accel2_bear) and trend_bear
-        short_C = st_bear and macd_accel2_bear and vr >= vol_min * 1.2 and trend_bear
+        short_A = st_x_down and (macd_x_bear or macd_accel_bear) and trend_bear
+        short_B = st_bear and not st_x_down and (macd_x_bear or (lh < 0 and lh < ph and ph < p2h)) and trend_bear
 
-        if (short_A or short_B or short_C) and vr >= vol_min and rsi_ok_s and htf_ok_s:
-
-            stop_s = st_val + atr_val * 0.3
+        if (short_A or short_B) and vr >= vol_min and rsi_ok_s and htf_ok_s:
+            stop_s = st_val
             risk_s = stop_s - c_now
             if risk_s <= 0:
                 return self._none("Stop invalide (short)")
 
+            target_s = c_now - atr_val * tp_mult
+            reward_s = c_now - target_s
+            rr_s = reward_s / risk_s
+
+            if rr_s < rr_min:
+                return self._none(f"R:R {rr_s:.2f} < {rr_min} (short)")
+
             if short_A:
-                base = 0.72; tag = "ST cross↓ + MACD"
-            elif short_B:
-                base = 0.66; tag = "ST bear + MACD cross/accel×2"
+                base = 0.71; tag = "ST cross↓ + MACD"
             else:
-                base = 0.62; tag = "ST bear + MACD accel forte"
+                base = 0.64; tag = "ST bear + MACD accel"
 
             vol_b  = min((vr - vol_min) * 0.04, 0.08)
-            macd_b = 0.05 if macd_x_bear else (0.03 if macd_accel2_bear else 0.0)
-            rsi_b  = 0.04 if 42 <= rsi_now <= 58 else 0.0
+            macd_b = 0.05 if macd_x_bear else 0.02
+            rsi_b  = 0.03 if 40 <= rsi_now <= 60 else 0.0
             htf_b  = 0.04 if htf < 0 else 0.0
 
-            score = min(base + vol_b + macd_b + rsi_b + htf_b, 0.93)
+            score = min(base + vol_b + macd_b + rsi_b + htf_b, 0.92)
 
             self._last_signal[sym] = cnt
             return {
@@ -240,15 +250,16 @@ class Strategy(BaseStrategy):
                     f"SuperTrend: {'CROSS↓' if st_x_down else 'BEAR'} @ {st_val:.0f} ✓",
                     f"MACD hist: {p2h:+.5f}→{ph:+.5f}→{lh:+.5f} ✓",
                     f"RSI {rsi_now:.0f} | Vol {vr:.2f}x | HTF {'baissier' if htf<0 else 'neutre'} ✓",
+                    f"R:R {rr_s:.2f} (stop@ST={stop_s:.0f}, tp-{tp_mult}×ATR) ✓",
                 ],
-                "reason": f"{tag} | RSI={rsi_now:.0f} vol={vr:.1f}x htf={htf}",
+                "reason": f"{tag} | RSI={rsi_now:.0f} vol={vr:.1f}x htf={htf} RR={rr_s:.2f}",
             }
 
         reasons = []
-        if not (st_bull or st_x_up): reasons.append(f"ST {'bear' if st_bear else '?'}")
-        if not (macd_cont_bull or macd_x_bull or macd_accel2_bull):
+        if not (st_bull or st_x_up):   reasons.append(f"ST {'bear' if st_bear else '?'}")
+        if not (macd_x_bull or macd_accel_bull):
             reasons.append(f"MACD {lh:+.5f}")
-        if not rsi_ok:  reasons.append(f"RSI {rsi_now:.0f} hors [{rsi_min:.0f}–{rsi_max:.0f}]")
+        if not rsi_ok:   reasons.append(f"RSI {rsi_now:.0f} hors [{rsi_min:.0f}–{rsi_max:.0f}]")
         if vr < vol_min: reasons.append(f"Vol {vr:.1f}x < {vol_min}x")
         if htf < 0 and st_bull: reasons.append("HTF baissier")
         return self._none(" | ".join(reasons) or "Conditions non réunies")
