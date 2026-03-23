@@ -154,6 +154,7 @@ def update_trading_params(
     risk_per_trade:       float = None,
     max_positions:        int   = None,
     paper_mode:           bool  = None,
+    paper_slippage:       float = None,
     daily_drawdown_limit: float = None,
 ):
     if not state.cfg:
@@ -164,6 +165,7 @@ def update_trading_params(
         "risk_per_trade":       risk_per_trade,
         "max_positions":        max_positions,
         "paper_mode":           paper_mode,
+        "paper_slippage":       paper_slippage,
         "daily_drawdown_limit": daily_drawdown_limit,
     }
     for key, val in mapping.items():

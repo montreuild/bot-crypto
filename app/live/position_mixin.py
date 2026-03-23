@@ -69,10 +69,18 @@ class PositionMixin:
             except Exception:
                 exec_price = price
 
+        # Slippage adverse en paper mode (achat plus cher)
+        if self.cfg["trading"].get("paper_mode"):
+            slip = self.cfg["trading"].get("paper_slippage", 0.001)
+            exec_price *= (1 + slip) if signal["side"] == "long" else (1 - slip)
+
         fee_rate = self.cfg["trading"].get("taker_fee", 0.001)
         fees     = exec_price * size * fee_rate
         with self._capital_lock:
-            self.capital_display -= fees
+            if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
+                self._paper_base -= fees
+            else:
+                self.capital_display -= fees
 
         strat_name = signal.get("name", "")
         pos = {
@@ -208,6 +216,10 @@ class PositionMixin:
             pos["symbol"], "market", close_side, pos["size"]
         )
         exec_price  = order.get("price") or exit_price
+        # Slippage adverse en paper mode (vente moins chère)
+        if self.cfg["trading"].get("paper_mode"):
+            slip = self.cfg["trading"].get("paper_slippage", 0.001)
+            exec_price *= (1 - slip) if pos["side"] == "long" else (1 + slip)
         fee_rate    = self.cfg["trading"].get("taker_fee", 0.001)
         fees        = exec_price * pos["size"] * fee_rate
         hours_held  = (time.time() - pos["open_time"]) / 3600
@@ -221,7 +233,10 @@ class PositionMixin:
         )
         pnl = gross - fees - borrow_cost
         with self._capital_lock:
-            self.capital_display += pnl
+            if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
+                self._paper_base += pnl
+            else:
+                self.capital_display += pnl
         self.risk.update_equity(self.capital_display)
         self.risk.register_close(pos_id)
 
