@@ -1,7 +1,9 @@
 """
-Module 3 — Gestion du risque & portfolio :
+Module Gestion du risque & portfolio :
   - Risk-per-trade dynamique (réduit en drawdown)
   - Circuit breaker journalier + global
+  - Circuit breakers par slot (strategy::tf) : consecutive losses, daily DD, win rate
+  - Volatility brake : ATR BTC > seuil → tailles ×0.5
   - Anti-spam (max trades/min)
   - Gestion levier et exposition max
   - Hedge detection
@@ -9,15 +11,41 @@ Module 3 — Gestion du risque & portfolio :
 import logging
 import time
 from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
 def _safe_div(numerator: float, denominator: float) -> float:
-    """Division protégée contre la division par zéro (ex: capital très faible)."""
     return numerator / max(denominator, 1e-9)
+
+
+# ── Circuit breaker par slot ───────────────────────────────────────────────
+
+@dataclass
+class SlotRiskState:
+    slot_key: str
+    consecutive_losses: int = 0
+    last_trades: deque = field(default_factory=lambda: deque(maxlen=15))
+    daily_pnl: float = 0.0
+    day_key: str = ""
+    paused_until: float = 0.0    # timestamp Unix
+    pause_reason: str = ""
+
+    def is_paused(self) -> bool:
+        return time.time() < self.paused_until
+
+    def win_rate(self) -> float:
+        trades = list(self.last_trades)
+        if not trades:
+            return 1.0
+        return sum(1 for w in trades if w) / len(trades)
+
+    def reset_pause(self):
+        self.paused_until = 0.0
+        self.pause_reason = ""
 
 
 class RiskManager:
@@ -34,13 +62,21 @@ class RiskManager:
         self.max_notional_pct    = float(cfg.get("backtest", {}).get("max_notional_pct", 0.20))
         self.base_risk           = t.get("risk_per_trade", 0.01)
         self._dd_warn_ratio      = cfg.get("notifications", {}).get("dd_warning_ratio", 0.80)
-        self._notifier           = None  # attaché par LiveTrader via attach_notifier()
+        self._notifier           = None
+
+        # Config circuit breakers slot (avec valeurs par défaut)
+        _risk_cfg = cfg.get("risk", {})
+        self._consec_loss_limit    = int(_risk_cfg.get("consecutive_loss_limit", 3))
+        self._slot_daily_dd_limit  = float(_risk_cfg.get("slot_daily_dd_limit", 0.03))
+        self._win_rate_floor       = float(_risk_cfg.get("win_rate_floor", 0.30))
+        self._consec_pause_secs    = int(_risk_cfg.get("consecutive_pause_secs", 1800))  # 30 min
+        self._volatility_threshold = float(_risk_cfg.get("volatility_threshold", 0.05))  # 5% ATR BTC
 
         # Equity tracking
-        self.equity            = self.initial_capital
-        self.peak_equity       = self.initial_capital
-        self.daily_start       = self.initial_capital
-        self.day_key: str      = self._today()
+        self.equity        = self.initial_capital
+        self.peak_equity   = self.initial_capital
+        self.daily_start   = self.initial_capital
+        self.day_key: str  = self._today()
 
         # Positions ouvertes
         self.open_positions: Dict[str, dict] = {}
@@ -48,61 +84,175 @@ class RiskManager:
         # Anti-spam
         self._trade_times: deque = deque()
 
-        # Flags
-        self.halted         = False
-        self.halt_reason    = ""
+        # Flags globaux
+        self.halted      = False
+        self.halt_reason = ""
 
-    # ── Equity ──────────────────────────────────────────────────────────────
+        # Circuit breakers par slot
+        self.slot_states: Dict[str, SlotRiskState] = {}
+
+        # Volatility brake
+        self.volatility_brake_active: bool  = False
+        self.volatility_brake_factor: float = 1.0  # 0.5 si actif
+
+    # ── Equity ────────────────────────────────────────────────────────────
     def update_equity(self, new_equity: float):
-        self.equity = new_equity
+        self.equity      = new_equity
         self.peak_equity = max(self.peak_equity, new_equity)
-        today = self._today()
-        if today != self.day_key:          # nouveau jour
+        today            = self._today()
+        if today != self.day_key:
             self.daily_start = new_equity
             self.day_key     = today
+            self._reset_slot_daily_pnl()
         self._check_circuit_breakers()
 
+    def _reset_slot_daily_pnl(self):
+        today = self._today()
+        for state in self.slot_states.values():
+            if state.day_key != today:
+                state.daily_pnl = 0.0
+                state.day_key   = today
+                # Lever la pause "daily DD" si nouveau jour
+                if "DD journalier" in state.pause_reason:
+                    state.reset_pause()
+
     def _check_circuit_breakers(self):
-        # Drawdown journalier
         daily_dd = _safe_div(self.daily_start - self.equity, self.daily_start)
         warn_threshold = self.daily_dd_limit * self._dd_warn_ratio
-        # Pré-alerte (ex: 80% du seuil)
         if daily_dd >= warn_threshold and not self.halted:
             self._trigger_dd_warning(daily_dd)
         if daily_dd >= self.daily_dd_limit and not self.halted:
             self.halted      = True
-            self.halt_reason = f"Circuit breaker : DD journalier {daily_dd:.1%} ≥ {self.daily_dd_limit:.1%}"
-            logger.critical(f"🔴 HALT — {self.halt_reason}")
-        # Drawdown global
+            self.halt_reason = f"CB global : DD journalier {daily_dd:.1%} ≥ {self.daily_dd_limit:.1%}"
+            logger.critical(f"HALT — {self.halt_reason}")
+
         global_dd = _safe_div(self.peak_equity - self.equity, self.peak_equity)
         if global_dd >= self.global_dd_limit and not self.halted:
             self.halted      = True
-            self.halt_reason = f"Circuit breaker : DD global {global_dd:.1%} ≥ {self.global_dd_limit:.1%}"
-            logger.critical(f"🔴 HALT — {self.halt_reason}")
+            self.halt_reason = f"CB global : DD global {global_dd:.1%} ≥ {self.global_dd_limit:.1%}"
+            logger.critical(f"HALT — {self.halt_reason}")
 
     def _trigger_dd_warning(self, daily_dd: float):
-        """Délégué au notifier si disponible."""
-        if hasattr(self, "_notifier") and self._notifier:
-            self._notifier.notify_dd_warning(
-                daily_dd * 100, self.daily_dd_limit * 100
-            )
+        if self._notifier:
+            self._notifier.notify_dd_warning(daily_dd * 100, self.daily_dd_limit * 100)
 
     def attach_notifier(self, notifier) -> None:
-        """Attache un Notifier pour les alertes de risque."""
         self._notifier = notifier
 
     def reset_halt(self):
-        """Réinitialisation manuelle du circuit breaker."""
-        self.halted     = False
+        self.halted      = False
         self.halt_reason = ""
-        logger.warning("[Risk] Circuit breaker réinitialisé manuellement.")
+        logger.warning("[Risk] Circuit breaker global réinitialisé manuellement.")
 
-    # ── Position sizing ──────────────────────────────────────────────────────
+    # ── Circuit breakers par slot ──────────────────────────────────────────
+    def _get_slot_state(self, slot_key: str) -> SlotRiskState:
+        if slot_key not in self.slot_states:
+            self.slot_states[slot_key] = SlotRiskState(slot_key=slot_key, day_key=self._today())
+        return self.slot_states[slot_key]
+
+    def can_slot_trade(self, slot_key: str) -> tuple[bool, str]:
+        """Vérifie les circuit breakers propres à un slot."""
+        state = self._get_slot_state(slot_key)
+        if state.is_paused():
+            remaining = int(state.paused_until - time.time())
+            return False, f"Slot {slot_key} pausé ({state.pause_reason}) — {remaining}s restantes"
+        return True, ""
+
+    def update_slot_result(self, slot_key: str, pnl: float, won: bool):
+        """
+        Met à jour l'état de risque d'un slot après clôture d'une position.
+        Déclenche les circuit breakers si les seuils sont atteints.
+        """
+        state = self._get_slot_state(slot_key)
+
+        # Mise à jour daily P&L slot
+        today = self._today()
+        if state.day_key != today:
+            state.daily_pnl = 0.0
+            state.day_key   = today
+        state.daily_pnl += pnl
+
+        # Mise à jour historique trades
+        state.last_trades.append(won)
+
+        # Mise à jour consecutive losses
+        if won:
+            state.consecutive_losses = 0
+        else:
+            state.consecutive_losses += 1
+
+        # CB 1 : pertes consécutives
+        if state.consecutive_losses >= self._consec_loss_limit and not state.is_paused():
+            state.paused_until = time.time() + self._consec_pause_secs
+            state.pause_reason = f"{state.consecutive_losses} pertes consécutives"
+            logger.warning(
+                f"[Risk] CB slot {slot_key} — {state.pause_reason} → pause {self._consec_pause_secs//60} min"
+            )
+            if self._notifier:
+                self._notifier.send(
+                    f"⚠️ CB slot *{slot_key}* — {state.pause_reason}\nPause {self._consec_pause_secs//60} min.",
+                    async_=True
+                )
+
+        # CB 2 : DD journalier du slot
+        slot_dd_pct = _safe_div(-state.daily_pnl, max(self.equity, 1.0))
+        if slot_dd_pct >= self._slot_daily_dd_limit and not state.is_paused():
+            # Pause jusqu'à minuit UTC
+            midnight = datetime.now(timezone.utc).replace(
+                hour=23, minute=59, second=59, microsecond=0
+            )
+            state.paused_until = midnight.timestamp()
+            state.pause_reason = f"DD journalier {slot_dd_pct:.1%} ≥ {self._slot_daily_dd_limit:.1%}"
+            logger.warning(f"[Risk] CB slot {slot_key} — {state.pause_reason} → pause jusqu'à minuit")
+            if self._notifier:
+                self._notifier.send(
+                    f"⚠️ CB slot *{slot_key}* — {state.pause_reason}\nPause jusqu'à minuit UTC.",
+                    async_=True
+                )
+
+        # CB 3 : win rate plancher (sur les 15 derniers trades)
+        if len(state.last_trades) >= 15:
+            wr = state.win_rate()
+            if wr < self._win_rate_floor and not state.is_paused():
+                state.paused_until = time.time() + 86400  # 24h
+                state.pause_reason = f"Win rate {wr:.0%} < {self._win_rate_floor:.0%} (15 trades)"
+                logger.warning(f"[Risk] CB slot {slot_key} — {state.pause_reason} → pause 24h")
+                if self._notifier:
+                    self._notifier.send(
+                        f"⚠️ CB slot *{slot_key}* — {state.pause_reason}\nPause 24h.",
+                        async_=True
+                    )
+
+    def reset_slot_pause(self, slot_key: str):
+        """Réinitialisation manuelle d'une pause de slot."""
+        state = self._get_slot_state(slot_key)
+        state.reset_pause()
+        logger.warning(f"[Risk] Pause slot {slot_key} réinitialisée manuellement.")
+
+    # ── Volatility brake ───────────────────────────────────────────────────
+    def update_volatility(self, btc_atr_pct: float):
+        """
+        Met à jour le volatility brake.
+        btc_atr_pct = ATR BTC 1h exprimé en % du prix (ex: 0.04 = 4%).
+        Si > seuil configuré : tailles × 0.5.
+        """
+        was_active = self.volatility_brake_active
+        self.volatility_brake_active = btc_atr_pct > self._volatility_threshold
+        self.volatility_brake_factor = 0.5 if self.volatility_brake_active else 1.0
+
+        if self.volatility_brake_active and not was_active:
+            logger.warning(
+                f"[Risk] Volatility brake ACTIF — ATR BTC {btc_atr_pct:.1%} > {self._volatility_threshold:.1%}"
+                " → tailles ×0.5"
+            )
+        elif not self.volatility_brake_active and was_active:
+            logger.info("[Risk] Volatility brake désactivé.")
+
+    # ── Position sizing ────────────────────────────────────────────────────
     def compute_risk(self) -> float:
-        """Risk-per-trade dynamique : réduit linéairement en cas de drawdown."""
         dd = _safe_div(self.peak_equity - self.equity, self.peak_equity)
         if dd > 0.10:
-            factor = 0.5                  # réduit de moitié au-delà de 10% DD
+            factor = 0.5
         elif dd > 0.05:
             factor = 0.75
         else:
@@ -112,11 +262,8 @@ class RiskManager:
     def compute_size(self, entry: float, atr: float,
                      score: float = 1.0, threshold: float = 0.60) -> tuple:
         """
-        Calcule la taille de position (units) et le notionnel.
-        Le sizing est modulé par le score du signal :
-          - score = threshold (0.60) → 50% de la taille max
-          - score = 1.0             → 100% de la taille max
-        Formule linéaire : factor = 0.5 + 0.5 * (score - threshold) / (1 - threshold)
+        Calcule la taille de position et le notionnel.
+        Intègre le volatility_brake_factor (×0.5 si actif).
         """
         risk_amount  = self.equity * self.compute_risk()
         size         = risk_amount / max(atr, 1e-8)
@@ -124,22 +271,24 @@ class RiskManager:
         max_notional = self.equity * self.max_notional_pct
 
         # Modulation par le score
-        score_range = max(1.0 - threshold, 1e-9)
+        score_range  = max(1.0 - threshold, 1e-9)
         score_factor = 0.5 + 0.5 * min(max(score - threshold, 0) / score_range, 1.0)
-        size     *= score_factor
-        notional  = size * entry
+        size        *= score_factor
 
+        # Volatility brake
+        size *= self.volatility_brake_factor
+
+        notional = size * entry
         if notional > max_notional:
             size     = max_notional / entry
             notional = max_notional
         return round(size, 6), round(notional, 4)
 
     def compute_leverage(self, notional: float) -> float:
-        """Levier effectif plafonné au max configuré."""
         lev = _safe_div(notional, self.equity)
         return min(lev, self.max_leverage)
 
-    # ── Vérifications avant entrée ───────────────────────────────────────────
+    # ── Vérifications avant entrée ─────────────────────────────────────────
     def can_trade(self, side: str) -> tuple[bool, str]:
         if self.halted:
             return False, self.halt_reason
@@ -163,7 +312,7 @@ class RiskManager:
         self._trade_times.append(now)
         return True
 
-    # ── Positions ────────────────────────────────────────────────────────────
+    # ── Positions ──────────────────────────────────────────────────────────
     def register_open(self, position: dict):
         self.open_positions[position["id"]] = position
 
@@ -171,13 +320,12 @@ class RiskManager:
         self.open_positions.pop(position_id, None)
 
     def has_hedge(self, symbol: str) -> bool:
-        """Vérifie si le bot est hedgé (long + short sur même symbole)."""
         positions_for_symbol = [p for p in self.open_positions.values()
-                                if p.get("symbol") == symbol]
+                                 if p.get("symbol") == symbol]
         sides = {p["side"] for p in positions_for_symbol}
         return "long" in sides and "short" in sides
 
-    # ── Stats ────────────────────────────────────────────────────────────────
+    # ── Stats pour l'API ───────────────────────────────────────────────────
     @property
     def daily_pnl_pct(self) -> float:
         return _safe_div(self.equity - self.daily_start, self.daily_start)
@@ -188,17 +336,78 @@ class RiskManager:
 
     def status_dict(self) -> dict:
         return {
-            "equity": round(self.equity, 4),
-            "peak_equity": round(self.peak_equity, 4),
-            "daily_pnl_pct": round(self.daily_pnl_pct * 100, 2),
-            "global_dd_pct": round(self.global_dd_pct * 100, 2),
-            "open_positions": len(self.open_positions),
-            "halted": self.halted,
-            "halt_reason": self.halt_reason,
-            "current_risk": round(self.compute_risk() * 100, 2),
-            "daily_dd_limit": round(self.daily_dd_limit, 4),
-            "global_dd_limit": round(self.global_dd_limit, 4),
+            "equity":              round(self.equity, 4),
+            "peak_equity":         round(self.peak_equity, 4),
+            "daily_pnl_pct":       round(self.daily_pnl_pct * 100, 2),
+            "global_dd_pct":       round(self.global_dd_pct * 100, 2),
+            "open_positions":      len(self.open_positions),
+            "halted":              self.halted,
+            "halt_reason":         self.halt_reason,
+            "current_risk":        round(self.compute_risk() * 100, 2),
+            "daily_dd_limit":      round(self.daily_dd_limit, 4),
+            "global_dd_limit":     round(self.global_dd_limit, 4),
+            "volatility_brake":    self.volatility_brake_active,
+            "volatility_factor":   self.volatility_brake_factor,
         }
+
+    def get_slot_states(self) -> List[dict]:
+        """Retourne l'état CB de tous les slots pour l'API."""
+        result = []
+        for key, state in self.slot_states.items():
+            result.append({
+                "slot_key":           key,
+                "paused":             state.is_paused(),
+                "pause_reason":       state.pause_reason if state.is_paused() else "",
+                "paused_until":       (
+                    datetime.fromtimestamp(state.paused_until, tz=timezone.utc).isoformat()
+                    if state.is_paused() else None
+                ),
+                "consecutive_losses": state.consecutive_losses,
+                "win_rate_15t":       round(state.win_rate() * 100, 1),
+                "daily_pnl":          round(state.daily_pnl, 4),
+                "total_trades_seen":  len(state.last_trades),
+            })
+        return result
+
+    def get_circuit_breakers_status(self) -> List[dict]:
+        """Retourne le statut de tous les CBs (global + slots)."""
+        cbs = [
+            {
+                "name":    "daily_drawdown",
+                "scope":   "global",
+                "active":  self.halted and "journalier" in self.halt_reason,
+                "value":   round(self.daily_pnl_pct * 100, 2),
+                "limit":   round(self.daily_dd_limit * 100, 1),
+                "reason":  self.halt_reason if self.halted else "",
+            },
+            {
+                "name":    "global_drawdown",
+                "scope":   "global",
+                "active":  self.halted and "global" in self.halt_reason,
+                "value":   round(self.global_dd_pct * 100, 2),
+                "limit":   round(self.global_dd_limit * 100, 1),
+                "reason":  self.halt_reason if self.halted else "",
+            },
+            {
+                "name":    "volatility_brake",
+                "scope":   "global",
+                "active":  self.volatility_brake_active,
+                "value":   None,
+                "limit":   round(self._volatility_threshold * 100, 1),
+                "reason":  "Tailles ×0.5 (volatilité BTC élevée)" if self.volatility_brake_active else "",
+            },
+        ]
+        for state in self.slot_states.values():
+            if state.is_paused():
+                cbs.append({
+                    "name":   f"slot_pause::{state.slot_key}",
+                    "scope":  f"slot:{state.slot_key}",
+                    "active": True,
+                    "value":  None,
+                    "limit":  None,
+                    "reason": state.pause_reason,
+                })
+        return cbs
 
     @staticmethod
     def _today() -> str:

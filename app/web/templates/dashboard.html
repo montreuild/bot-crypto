@@ -8,6 +8,19 @@
 {% block page_styles %}
 .cb-pill{padding:4px 10px;border-radius:20px;font-size:.7rem;font-weight:600;color:var(--red);border:1px solid rgba(251,113,133,.4);background:var(--red-dim);animation:blink-pill .9s ease infinite;display:none;}
 @keyframes blink-pill{0%,100%{opacity:1}50%{opacity:.4}}
+/* ── Allocation slots ── */
+.alloc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;}
+.alloc-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;}
+.alloc-card.paused{border-color:rgba(251,113,133,.4);background:var(--red-dim);}
+.alloc-slot{font-family:var(--mono);font-size:.78rem;font-weight:600;color:var(--cyan);margin-bottom:4px;}
+.alloc-meta{font-size:.63rem;color:var(--muted);margin-bottom:5px;}
+.alloc-track{height:5px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden;}
+.alloc-fill{height:100%;border-radius:3px;transition:width .4s;}
+.alloc-nums{display:flex;justify-content:space-between;font-size:.62rem;color:var(--dim);font-family:var(--mono);margin-top:3px;}
+.alloc-cb{font-size:.63rem;color:var(--red);margin-top:3px;}
+/* ── Volatility brake indicator ── */
+.vol-brake{display:none;background:var(--amber-dim);border:1px solid rgba(251,191,36,.3);border-radius:var(--r-sm);padding:6px 12px;font-size:.72rem;color:var(--amber);align-items:center;gap:6px;}
+.vol-brake.active{display:flex;}
 #ctrlbar{background:var(--surface);border-bottom:1px solid var(--border);padding:8px 20px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
 .ctrl-select{background:var(--surface);color:var(--muted);border:1px solid var(--border-hi);border-radius:var(--r-sm);padding:5px 8px;font-size:.74rem;cursor:pointer;}
 #content{padding:18px 20px;display:flex;flex-direction:column;gap:18px;flex:1;}
@@ -174,6 +187,17 @@
     </div>
   </div>
 
+  <!-- ── Volatility brake ── -->
+  <div id="vol-brake-bar" class="vol-brake" style="margin:0" role="alert">
+    ⚡ Volatility Brake ACTIF — Tailles ×0.5 (volatilité BTC élevée)
+  </div>
+
+  <!-- ── Allocation par slot ── -->
+  <div>
+    <div class="sec-hdr"><h2>Allocation par slot</h2></div>
+    <div id="alloc-grid" class="alloc-grid"></div>
+  </div>
+
   <div>
     <div class="sec-hdr"><h2>Analytics</h2></div>
     <div class="charts-row">
@@ -227,10 +251,10 @@
     </div>
     <div class="table-card"><div class="tscroll"><table>
       <thead><tr>
-        <th>Heure</th><th>Paire</th><th>Dir.</th><th>Stratégie</th><th>TF</th>
+        <th>Heure</th><th>Paire</th><th>Dir.</th><th>Slot</th>
         <th class="r">Score</th><th class="r">Seuil</th><th>Statut</th><th>Raison</th>
       </tr></thead>
-      <tbody id="signals-tbody"><tr><td colspan="9" class="empty-row">En attente de signaux…</td></tr></tbody>
+      <tbody id="signals-tbody"><tr><td colspan="8" class="empty-row">En attente de signaux…</td></tr></tbody>
     </table></div></div>
   </div>
 </div>
@@ -377,6 +401,10 @@ function renderStatus(s){
   const pos=s.positions??[];$('s-pos').textContent=pos.length;$('pos-count').textContent=pos.length?`${pos.length} position${pos.length>1?'s':''}`:''
   renderPositions(pos);renderStratPerf(s.by_strategy??{});
   if(s.active_per_tf)renderActiveTF(s.active_per_tf);
+  renderCapitalAllocation(s.capital_allocation||[], s.slot_states||[]);
+  // Volatility brake banner
+  const vb=$('vol-brake-bar');
+  if(vb){vb.classList.toggle('active',!!s.volatility_brake);}
   if(s.margin_enabled){
     $('margin-card').style.display='';
     const ml=s.margin_level,mlEl=$('s-margin-level');
@@ -487,6 +515,28 @@ function renderStratPerf(byStrat){
   }).join('');
 }
 
+function renderCapitalAllocation(slots, slotStates){
+  const grid=$('alloc-grid');
+  if(!grid)return;
+  if(!slots||!slots.length){grid.innerHTML='<span style="color:var(--dim);font-size:.75rem">Aucun slot actif</span>';return;}
+  // Map pause state by slot_key
+  const paused={};
+  (slotStates||[]).forEach(s=>{if(s.paused)paused[s.slot_key]={reason:s.pause_reason};});
+  grid.innerHTML=slots.map(s=>{
+    const usedPct=s.used_pct??0,isPaused=!!paused[s.slot_key];
+    const fillClr=isPaused?'var(--red)':usedPct>80?'var(--amber)':'var(--cyan)';
+    const slotLabel=s.strategy.charAt(0).toUpperCase()+s.strategy.slice(1)+' '+s.tf;
+    const pnlStr=s.weekly_pnl!=null?((s.weekly_pnl>=0?'+':'')+s.weekly_pnl.toFixed(2)+' 7j'):'';
+    return`<div class="alloc-card${isPaused?' paused':''}">
+      <div class="alloc-slot">${escHtml(slotLabel)}</div>
+      <div class="alloc-meta">Budget: <strong style="color:var(--text)">${s.budget_pct??'—'}%</strong> · ${s.budget_usdc??'—'} USDC${pnlStr?` · <span class="${s.weekly_pnl>=0?'c-green':'c-red'}">${pnlStr}</span>`:''}${s.weekly_trades?' · '+s.weekly_trades+'T':''}</div>
+      <div class="alloc-track"><div class="alloc-fill" style="width:${Math.min(usedPct,100)}%;background:${fillClr}"></div></div>
+      <div class="alloc-nums"><span>${(s.used_notional??0).toFixed(1)} USDC utilisé</span><span>${usedPct.toFixed(0)}%</span></div>
+      ${isPaused?`<div class="alloc-cb">⏸ ${escHtml(paused[s.slot_key].reason)}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
 function renderActiveTF(active){
   const el=$('active-tf-box'),tfs=Object.entries(active);
   if(!tfs.length){el.style.display='none';return;}
@@ -500,7 +550,8 @@ function renderSignals(log){
   if(!rows.length){tbody.innerHTML='<tr><td colspan="9" class="empty-row">Aucun signal depuis le démarrage</td></tr>';return;}
   tbody.innerHTML=rows.map(s=>{
     const t=new Date(s.time),ts=isNaN(t)?'—':t.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),isOpen=s.status==='opened',isClosed=s.status==='closed',statusCls=isOpen?'tag-open':isClosed?'tag-closed':'tag-rej',statusLbl=isOpen?'● OUVERT':isClosed?'✓ CLÔTURÉ':'○ rejeté',scoreClr=s.score>=s.threshold?'var(--green)':'var(--red)';
-    return`<tr><td style="color:var(--muted);font-family:var(--mono)">${ts}</td><td style="font-weight:600">${s.symbol??'—'}</td><td><span class="tag tag-${s.side??''}">${(s.side||'').toUpperCase()}</span></td><td><span class="tag tag-strat">${s.strategy??'—'}</span></td><td style="font-family:var(--mono);color:var(--cyan);font-size:.7rem">${s.timeframe??'—'}</td><td class="r" style="font-family:var(--mono);color:${scoreClr};font-weight:600">${(s.score??0).toFixed(3)}</td><td class="r" style="font-family:var(--mono);color:var(--dim)">${(s.threshold??0).toFixed(2)}</td><td><span class="tag ${statusCls}">${statusLbl}</span></td><td style="color:var(--dim);font-size:.68rem">${escHtml(s.reason)}</td></tr>`;
+    const slotLabel=s.strategy&&s.timeframe?(s.strategy.charAt(0).toUpperCase()+s.strategy.slice(1)+' '+s.timeframe):(s.strategy??'—');
+    return`<tr><td style="color:var(--muted);font-family:var(--mono)">${ts}</td><td style="font-weight:600">${s.symbol??'—'}</td><td><span class="tag tag-${s.side??''}">${(s.side||'').toUpperCase()}</span></td><td><span class="tag tag-strat">${escHtml(slotLabel)}</span></td><td class="r" style="font-family:var(--mono);color:${scoreClr};font-weight:600">${(s.score??0).toFixed(3)}</td><td class="r" style="font-family:var(--mono);color:var(--dim)">${(s.threshold??0).toFixed(2)}</td><td><span class="tag ${statusCls}">${statusLbl}</span></td><td style="color:var(--dim);font-size:.68rem">${escHtml(s.reason)}</td></tr>`;
   }).join('');
 }
 

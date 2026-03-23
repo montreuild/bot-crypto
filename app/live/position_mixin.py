@@ -224,6 +224,15 @@ class PositionMixin:
             self.capital_display += pnl
         self.risk.update_equity(self.capital_display)
         self.risk.register_close(pos_id)
+
+        # Mise à jour circuit breakers par slot
+        slot_key = f"{pos.get('strategy', '')}::{pos.get('timeframe', self.tf)}"
+        self.risk.update_slot_result(slot_key, pnl, pnl > 0)
+
+        # Libération du budget du slot
+        if hasattr(self, "allocator"):
+            self.allocator.register_close(slot_key, pos.get("notional", 0), pnl)
+
         _sess = self.SessionLocal()
         try:
             delete_open_position(_sess, pos_id)
