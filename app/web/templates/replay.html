@@ -388,26 +388,283 @@ function logAdd(type, msg) {
   log.scrollTop = log.scrollHeight;
 }
 
-// ── Placeholder pour initReplay() — étape 2 ─────────────────────────────────
+// ── Moteur de replay ─────────────────────────────────────────────────────────
+let allCandles  = [];    // [{time, timeUnix, open, high, low, close, volume}]
+let currentBar  = 0;     // Index de la bougie courante (0 = non encore affichée)
+let totalBars   = 0;
+let isPlaying   = false;
+let speed       = 1;     // multiplicateur de vitesse
+let _timer      = null;  // handle setInterval
+let _chart      = null;  // instance LightweightCharts
+let _series     = null;  // CandlestickSeries
+
+// ms entre chaque bougie selon la vitesse (0 = pas de délai)
+const SPEED_MS = { 0.5: 800, 1: 400, 2: 200, 5: 80, 10: 40, 20: 20, 0: 0 };
+
+// ── Options du graphique ──────────────────────────────────────────────────────
+const TV_OPTS = {
+  layout:      { background: { color: '#060b13' }, textColor: '#5a6e8c' },
+  grid:        { vertLines: { color: 'rgba(255,255,255,.04)' }, horzLines: { color: 'rgba(255,255,255,.04)' } },
+  crosshair:   { mode: 1 },
+  rightPriceScale: { borderColor: 'rgba(255,255,255,.07)' },
+  timeScale:   { borderColor: 'rgba(255,255,255,.07)', timeVisible: true, secondsVisible: false },
+  handleScroll: true,
+  handleScale:  true,
+};
+
+// ── Initialisation du replay ─────────────────────────────────────────────────
 function initReplay() {
-  // Rempli à l'étape 2
-  const n = rpData ? rpData.n_bars : 0;
-  document.getElementById('s-bars').textContent   = n.toLocaleString('fr-FR');
-  document.getElementById('s-period').textContent = rpData
-    ? `${rpData.date_from?.slice(0,10)} → ${rpData.date_to?.slice(0,10)}`
-    : '—';
+  const ohlcv = rpData.ohlcv;
+  totalBars   = ohlcv.time.length;
+  currentBar  = 0;
+
+  // Construire le tableau de bougies (conversion timestamp → secondes Unix)
+  allCandles = ohlcv.time.map((t, i) => {
+    const d = new Date(t);
+    return {
+      time:     Math.floor(d.getTime() / 1000),
+      open:     ohlcv.open[i],
+      high:     ohlcv.high[i],
+      low:      ohlcv.low[i],
+      close:    ohlcv.close[i],
+      volume:   ohlcv.volume ? ohlcv.volume[i] : 0,
+      isoTime:  t,
+    };
+  });
+
+  // Créer (ou recréer) le graphique
+  const wrap = document.getElementById('rp-chart-wrap');
+  const el   = document.getElementById('rp-chart');
+  el.innerHTML = '';
+  if (_chart) { try { _chart.remove(); } catch(e) {} }
+
+  _chart  = LightweightCharts.createChart(el, {
+    ...TV_OPTS,
+    width:  wrap.clientWidth,
+    height: wrap.clientHeight,
+  });
+  _series = _chart.addCandlestickSeries({
+    upColor:          '#34d399',
+    downColor:        '#fb7185',
+    borderUpColor:    '#34d399',
+    borderDownColor:  '#fb7185',
+    wickUpColor:      '#34d399',
+    wickDownColor:    '#fb7185',
+  });
+
+  // Resize observer
+  if (window._rpResizeObs) window._rpResizeObs.disconnect();
+  window._rpResizeObs = new ResizeObserver(() => {
+    if (_chart) _chart.applyOptions({ width: wrap.clientWidth, height: wrap.clientHeight });
+  });
+  window._rpResizeObs.observe(wrap);
+
+  // Crosshair hover → mise à jour de l'info OHLCV
+  _chart.subscribeCrosshairMove(p => {
+    if (p.seriesData && p.seriesData.size > 0) {
+      const d = p.seriesData.get(_series);
+      if (d) updateCandleInfo(d);
+    }
+  });
+
+  // Statistiques sidebar
+  document.getElementById('s-bars').textContent   = totalBars.toLocaleString('fr-FR');
+  document.getElementById('s-period').textContent =
+    `${rpData.date_from?.slice(0,10)} → ${rpData.date_to?.slice(0,10)}`;
   document.getElementById('stats-divider').style.display = '';
-  document.getElementById('rp-stats').style.display = '';
-  logAdd('ok', 'Données prêtes — moteur de replay bientôt disponible (étape 2).');
+  document.getElementById('rp-stats').style.display      = '';
+
+  // Topbar info
+  const ti = document.getElementById('rp-topbar-info');
+  ti.textContent = `${rpData.symbol}  ·  ${rpData.timeframe}  ·  ${totalBars.toLocaleString('fr-FR')} bougies`;
+  ti.style.display = '';
+
+  // Afficher la première bougie immédiatement
+  _series.setData([]);
+  setSpeed(speed);       // applique le bon bouton actif
+  updateProgress();
+  logAdd('ok', `Graphique prêt — appuyez sur ▶ ou [Espace] pour démarrer.`);
 }
 
-// ── Placeholder fonctions animation ─────────────────────────────────────────
-function togglePlay() {}
-function step(n) {}
-function seekTo(pos) {}
-function setSpeed(s) {
-  document.querySelectorAll('.spd').forEach(b => b.classList.toggle('on', +b.dataset.spd === s));
+// ── Boucle d'animation ────────────────────────────────────────────────────────
+function tick() {
+  if (currentBar >= totalBars) {
+    pause();
+    logAdd('ok', 'Fin du replay.');
+    return;
+  }
+  const c = allCandles[currentBar];
+  _series.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
+  updateCandleInfo(c);
+  currentBar++;
+  updateProgress();
+
+  // En mode MAX, continuer en boucle tight (requestAnimationFrame)
+  if (speed === 0 && isPlaying) {
+    // Ajouter par batch de 50 pour ne pas bloquer l'UI
+    let batch = 50;
+    while (batch-- > 0 && currentBar < totalBars) {
+      const cc = allCandles[currentBar];
+      _series.update({ time: cc.time, open: cc.open, high: cc.high, low: cc.low, close: cc.close });
+      currentBar++;
+    }
+    updateProgress();
+    if (currentBar < totalBars) {
+      _timer = requestAnimationFrame(tick);
+    } else {
+      isPlaying = false;
+      updatePlayBtn();
+      logAdd('ok', 'Fin du replay.');
+    }
+    return;
+  }
 }
-function onKey(e) {}
+
+function startTimer() {
+  stopTimer();
+  if (speed === 0) {
+    _timer = requestAnimationFrame(tick);
+  } else {
+    const ms = SPEED_MS[speed] ?? 400;
+    _timer = setInterval(tick, ms);
+  }
+}
+
+function stopTimer() {
+  if (_timer !== null) {
+    if (speed === 0) cancelAnimationFrame(_timer);
+    else             clearInterval(_timer);
+    _timer = null;
+  }
+}
+
+// ── Contrôles ─────────────────────────────────────────────────────────────────
+function togglePlay() {
+  if (!_series) return;
+  isPlaying ? pause() : play();
+}
+
+function play() {
+  if (currentBar >= totalBars) seekTo(0);
+  isPlaying = true;
+  updatePlayBtn();
+  startTimer();
+}
+
+function pause() {
+  isPlaying = false;
+  updatePlayBtn();
+  stopTimer();
+}
+
+function step(n) {
+  if (!_series) return;
+  pause();
+  const target = Math.max(0, Math.min(totalBars, currentBar + n));
+  // Reconstruire jusqu'à target
+  const fromBar = Math.min(currentBar, target);
+  const toBar   = Math.max(currentBar, target);
+  if (n > 0) {
+    // Avancer : ajouter les bougies manquantes
+    for (let i = currentBar; i < target && i < totalBars; i++) {
+      const c = allCandles[i];
+      _series.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
+    }
+    currentBar = Math.min(target, totalBars);
+  } else {
+    // Reculer : reconstruire depuis 0 jusqu'à target
+    seekTo(target);
+    return;
+  }
+  if (currentBar > 0) updateCandleInfo(allCandles[currentBar - 1]);
+  updateProgress();
+}
+
+function seekTo(pos) {
+  if (!_series || totalBars === 0) return;
+  pause();
+  const target = pos < 0 ? totalBars : Math.max(0, Math.min(pos, totalBars));
+  _series.setData([]);
+  // Reconstruire jusqu'à target
+  const batch = [];
+  for (let i = 0; i < target; i++) {
+    const c = allCandles[i];
+    batch.push({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
+  }
+  if (batch.length) _series.setData(batch);
+  currentBar = target;
+  if (currentBar > 0) updateCandleInfo(allCandles[currentBar - 1]);
+  updateProgress();
+}
+
+function setSpeed(s) {
+  const wasPLaying = isPlaying;
+  if (wasPLaying) stopTimer();
+  speed = s;
+  document.querySelectorAll('.spd').forEach(b =>
+    b.classList.toggle('on', parseFloat(b.dataset.spd) === s)
+  );
+  if (wasPLaying) startTimer();
+}
+
+// ── Mise à jour UI ────────────────────────────────────────────────────────────
+function updatePlayBtn() {
+  const btn = document.getElementById('btn-play');
+  btn.textContent = isPlaying ? '⏸' : '▶';
+  btn.title = isPlaying ? 'Pause (Espace)' : 'Play (Espace)';
+}
+
+function updateProgress() {
+  const pct = totalBars > 0 ? (currentBar / totalBars) * 100 : 0;
+  document.getElementById('prog-fill').style.width  = `${pct}%`;
+  document.getElementById('prog-thumb').style.left  = `${pct}%`;
+  const posText = `${currentBar.toLocaleString('fr-FR')} / ${totalBars.toLocaleString('fr-FR')}`;
+  document.getElementById('ctrl-pos').textContent    = posText;
+  document.getElementById('rp-pos-badge').textContent = posText;
+}
+
+function updateCandleInfo(c) {
+  const fmt = v => v != null ? (+v).toLocaleString('fr-FR', {maximumFractionDigits: 8}) : '—';
+  document.getElementById('ci-o').textContent = fmt(c.open);
+  document.getElementById('ci-h').textContent = fmt(c.high);
+  document.getElementById('ci-l').textContent = fmt(c.low);
+  document.getElementById('ci-c').textContent = fmt(c.close);
+  document.getElementById('ci-v').textContent = c.volume != null ? fmt(c.volume) : '—';
+}
+
+// ── Scrub sur la barre de progression ────────────────────────────────────────
+(function initScrub() {
+  let scrubbing = false;
+  const track = document.getElementById('prog-track');
+  function scrubPos(e) {
+    const rect = track.getBoundingClientRect();
+    const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    seekTo(Math.round(pct * totalBars));
+  }
+  track.addEventListener('mousedown',  e => { scrubbing = true; scrubPos(e); });
+  document.addEventListener('mousemove', e => { if (scrubbing) scrubPos(e); });
+  document.addEventListener('mouseup',   () => { scrubbing = false; });
+  // Touch
+  track.addEventListener('touchstart', e => { scrubbing = true; scrubPos(e.touches[0]); }, {passive:true});
+  document.addEventListener('touchmove', e => { if (scrubbing) scrubPos(e.touches[0]); }, {passive:true});
+  document.addEventListener('touchend',  () => { scrubbing = false; });
+})();
+
+// ── Raccourcis clavier ────────────────────────────────────────────────────────
+function onKey(e) {
+  if (!_series) return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  switch(e.key) {
+    case ' ':        e.preventDefault(); togglePlay(); break;
+    case 'ArrowRight': e.preventDefault(); step(e.shiftKey ? 10 : 1); break;
+    case 'ArrowLeft':  e.preventDefault(); step(e.shiftKey ? -10 : -1); break;
+    case 'Home':     e.preventDefault(); seekTo(0); break;
+    case 'End':      e.preventDefault(); seekTo(-1); break;
+    case '1':        setSpeed(1); break;
+    case '2':        setSpeed(2); break;
+    case '5':        setSpeed(5); break;
+    case '0':        setSpeed(0); break;
+  }
+}
 </script>
 {% endblock %}
