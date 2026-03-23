@@ -69,6 +69,11 @@
 .spd.on{background:var(--cyan-dim);border-color:rgba(34,211,238,.4);color:var(--cyan);}
 .ctrl-pos{font-size:.68rem;font-family:var(--mono);color:var(--dim);margin-left:8px;white-space:nowrap;}
 
+/* ── Log sidebar (couleurs) ── */
+.log-line{display:flex;gap:6px;line-height:1.4;}
+.log-ts{color:rgba(255,255,255,.2);flex-shrink:0;}
+.log-ok{color:var(--green);}.log-run{color:var(--cyan);}.log-warn{color:var(--amber);}.log-err{color:var(--red);}
+
 /* ── Signal log ── */
 #rp-sig-log{display:none;background:var(--surface);border-top:1px solid var(--border);max-height:110px;overflow-y:auto;flex-shrink:0;}
 .sig-log-hdr{padding:5px 14px;font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--border);}
@@ -320,9 +325,12 @@ async function loadData() {
 
   _abortCtrl = new AbortController();
   try {
-    const stratParam = strat ? encodeURIComponent(strat) : '';
+    // Si pas d'overlay → on passe quand même une stratégie pour ne pas déclencher
+    // tous les backtests. On utilise la première stratégie dispo ou 'none'.
+    const firstStrat = document.getElementById('i-strat').options[1]?.value || '';
+    const stratForApi = strat || firstStrat;
     const url = `/api/backtest?symbol=${encodeURIComponent(sym)}&limit=${limit}&timeframe=${tf}` +
-                (strat ? `&strategies=${stratParam}` : '');
+                (stratForApi ? `&strategies=${encodeURIComponent(stratForApi)}` : '');
 
     logAdd('run', 'Connexion à l\'API…');
     const r = await apiFetch(url, { method: 'POST', signal: _abortCtrl.signal });
@@ -427,8 +435,9 @@ function initReplay() {
   currentBar  = 0;
 
   // Construire le tableau de bougies (conversion timestamp → secondes Unix)
+  // Normalise "2025-01-15 12:00:00" → "2025-01-15T12:00:00" pour compatibilité multi-navigateurs
   allCandles = ohlcv.time.map((t, i) => {
-    const d = new Date(t);
+    const d = new Date(t.replace(' ', 'T'));
     return {
       time:     Math.floor(d.getTime() / 1000),
       open:     ohlcv.open[i],
@@ -446,10 +455,13 @@ function initReplay() {
   el.innerHTML = '';
   if (_chart) { try { _chart.remove(); } catch(e) {} }
 
+  // Forcer un reflow pour obtenir les vraies dimensions (évite clientWidth=0)
+  const chartW_px = wrap.offsetWidth  || wrap.clientWidth  || 800;
+  const chartH_px = wrap.offsetHeight || wrap.clientHeight || 500;
   _chart  = LightweightCharts.createChart(el, {
     ...TV_OPTS,
-    width:  wrap.clientWidth,
-    height: wrap.clientHeight,
+    width:  chartW_px,
+    height: chartH_px,
   });
   _series = _chart.addCandlestickSeries({
     upColor:          '#34d399',
@@ -620,23 +632,16 @@ function step(n) {
   if (!_series) return;
   pause();
   const target = Math.max(0, Math.min(totalBars, currentBar + n));
-  // Reconstruire jusqu'à target
-  const fromBar = Math.min(currentBar, target);
-  const toBar   = Math.max(currentBar, target);
   if (n > 0) {
-    // Avancer : ajouter les bougies manquantes
-    for (let i = currentBar; i < target && i < totalBars; i++) {
-      const c = allCandles[i];
-      _series.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
+    // Avancer : passe par tickOne() pour déclencher markers + stats live
+    while (currentBar < target && currentBar < totalBars) {
+      tickOne();
     }
-    currentBar = Math.min(target, totalBars);
+    updateProgress();
   } else {
-    // Reculer : reconstruire depuis 0 jusqu'à target
+    // Reculer : reconstruction complète depuis 0
     seekTo(target);
-    return;
   }
-  if (currentBar > 0) updateCandleInfo(allCandles[currentBar - 1]);
-  updateProgress();
 }
 
 function seekTo(pos) {
@@ -675,13 +680,13 @@ function seekTo(pos) {
 }
 
 function setSpeed(s) {
-  const wasPLaying = isPlaying;
-  if (wasPLaying) stopTimer();
+  const wasPlaying = isPlaying;
+  if (wasPlaying) stopTimer();
   speed = s;
   document.querySelectorAll('.spd').forEach(b =>
     b.classList.toggle('on', parseFloat(b.dataset.spd) === s)
   );
-  if (wasPLaying) startTimer();
+  if (wasPlaying) startTimer();
 }
 
 // ── Mise à jour UI ────────────────────────────────────────────────────────────
