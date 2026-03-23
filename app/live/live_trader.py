@@ -43,16 +43,18 @@ def _sanitize(obj):
 
 import polars as pl
 
-from app.core.exchange       import RobustExchange
-from app.core.risk           import RiskManager
-from app.core.database       import init_db, load_open_positions
-from app.core.notifications  import Notifier
-from app.core.trailing       import TrailingStopManager
-from app.engine.engine       import Engine
-from app.engine.scanner      import MarketScanner
-from app.engine.optimizer    import get_active_strategies_per_tf, RECOMMENDED_LIMIT
-from app.core.indicators     import precompute_df, atr_val as _compute_atr
-from app.live.position_mixin import PositionMixin, _calc_unreal_pct
+from app.core.exchange           import RobustExchange
+from app.core.risk               import RiskManager
+from app.core.database           import init_db, load_open_positions
+from app.core.notifications      import Notifier
+from app.core.trailing           import TrailingStopManager
+from app.engine.engine           import Engine
+from app.engine.scanner          import MarketScanner
+from app.engine.optimizer        import get_active_strategies_per_tf, RECOMMENDED_LIMIT
+from app.core.indicators         import precompute_df, atr_val as _compute_atr
+from app.live.position_mixin     import PositionMixin, _calc_unreal_pct
+from app.live.capital_allocator  import CapitalAllocator
+from app.live.signal_pipeline    import SignalPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +209,22 @@ class LiveTrader(PositionMixin):
         self._purge_every_n = 200
         self._purge_counter = 0
 
+        # Capital allocator (budgets par slot strategy::tf)
+        self.allocator = CapitalAllocator(
+            capital=self.capital_display,
+            active_per_tf=self._active_per_tf,
+        )
+
+        # Signal pipeline (collecte + ranking)
+        self.pipeline = SignalPipeline(
+            loaded_strategies=self._loaded_strategies,
+            cfg=cfg,
+            scanner=self.scanner,
+        )
+
+        # Timestamp dernier cycle de rééquilibrage budgets
+        self._last_day_key: str = ""
+
         logger.info(
             f"[LiveTrader] Démarré — Paper={cfg['trading']['paper_mode']} "
             f"| TFs configurés={self.timeframes}"
@@ -248,6 +266,10 @@ class LiveTrader(PositionMixin):
     def reload_active_strategies(self):
         """Rechargement à chaud après optimisation (appelé par l'API)."""
         self._build_active_per_tf()
+        if hasattr(self, "allocator"):
+            self.allocator.rebuild_slots(self._active_per_tf)
+        if hasattr(self, "pipeline"):
+            self.pipeline.update_strategies(self._loaded_strategies)
         logger.info("[LiveTrader] Stratégies actives rechargées depuis optimizer_results")
 
     # ── Boucle principale ──────────────────────────────────────────────────
@@ -356,11 +378,14 @@ class LiveTrader(PositionMixin):
         n_pos = len(self.open_positions)
         logger.info(f"[Cycle {self.cycle_count}] Scan — {n_pos} position(s) ouvertes")
 
+        # 1. Sanity checks globaux
         if self.risk.halted:
             logger.warning(f"[Cycle] HALTED — {self.risk.halt_reason}")
             return
 
         self.risk.update_equity(self.capital_display)
+        self.allocator.update_equity(self.capital_display)
+
         if self.risk.halted:
             self.notif.notify_halt(
                 self.risk.halt_reason,
@@ -369,52 +394,111 @@ class LiveTrader(PositionMixin):
             )
             return
 
-        if self.risk.day_key != getattr(self, "_last_day_key", ""):
+        if self.risk.day_key != self._last_day_key:
             self._last_day_key = self.risk.day_key
             self.notif.reset_dd_warning()
 
-        # 1. Gérer les positions ouvertes
+        # 2. Volatility brake (ATR BTC/USDC 1h)
+        self._update_volatility_brake()
+
+        # 3. Gérer les positions ouvertes
         for pos_id in list(self.open_positions.keys()):
             try:
                 self._manage_position(pos_id)
             except Exception as e:
                 logger.error(f"[Cycle] Erreur gestion position {pos_id} : {e}", exc_info=True)
 
-        # 2. Scanner : pour chaque (TF, symbol, strategy)
+        # 4. Pipeline signaux : collecte + ranking
         symbols = self.scanner.get_symbols()
         self.last_scan_time       = datetime.now(timezone.utc)
         self.last_symbols_scanned = list(symbols)
 
-        for tf, strat_entries in self._active_per_tf.items():
-            if not strat_entries:
+        try:
+            signals = self.pipeline.collect(
+                symbols=symbols,
+                active_per_tf=self._active_per_tf,
+                ohlcv_fn=self._get_ohlcv,
+                open_positions=self.open_positions,
+                cooldowns=self._cooldown,
+                signal_log=self.signal_log,
+                ml=self.ml,
+            )
+        except Exception as e:
+            logger.error(f"[Cycle] Erreur pipeline signaux : {e}", exc_info=True)
+            signals = []
+
+        # 5. Exécution des signaux rankés
+        for sig in signals:
+            slot_key = sig.slot_key
+            pos_key  = f"{sig.symbol}::{sig.strategy}::{sig.tf}"
+            if pos_key in self.open_positions:
                 continue
-            for symbol in symbols:
-                # Cooldown après stop-loss
-                if time.time() < self._cooldown.get(symbol, 0):
-                    continue
-                # Fetch OHLCV pour ce (symbol, tf) — mis en cache
-                df = self._get_ohlcv(symbol, tf)
-                if df is None:
-                    continue
 
-                for entry in strat_entries:
-                    strat_name = entry["name"]
-                    strategy   = self._loaded_strategies.get(strat_name)
-                    if strategy is None:
-                        continue
-                    pos_key = f"{symbol}::{strat_name}::{tf}"
-                    if pos_key in self.open_positions:
-                        continue
-                    # Params effectifs : base = strat_params cfg (tous les paramètres),
-                    # écrasés par les params optimisés de cet entry si disponibles.
-                    # Garantit que les stratégies reçoivent toujours un dict complet et typé.
-                    effective_params = _merge_params(self.strat_params, entry.get("params", {}))
-                    try:
-                        self._scan_symbol_strategy(symbol, df, strategy, effective_params, tf)
-                    except Exception as e:
-                        logger.error(f"[Cycle] Erreur scan {symbol}/{strat_name}/{tf} : {e}", exc_info=True)
+            # Vérifications dans l'ordre : global, slot, corrélation, budget
+            ok_global, reason_global = self.risk.can_trade(sig.side)
+            if not ok_global:
+                logger.debug(f"[Cycle] {sig.symbol}/{slot_key} rejeté (global: {reason_global})")
+                self.signal_log.append({
+                    "time": datetime.now(timezone.utc).isoformat(),
+                    "symbol": sig.symbol, "strategy": sig.strategy,
+                    "side": sig.side, "score": round(sig.score, 3),
+                    "threshold": round(self._strat_thresholds.get(sig.strategy, self.threshold), 3),
+                    "timeframe": sig.tf, "status": "rejected", "reason": f"risk: {reason_global}",
+                })
+                continue
 
-        # 3. Synchro solde + rapport
+            ok_slot, reason_slot = self.risk.can_slot_trade(slot_key)
+            if not ok_slot:
+                logger.debug(f"[Cycle] {sig.symbol}/{slot_key} rejeté (slot CB: {reason_slot})")
+                self.signal_log.append({
+                    "time": datetime.now(timezone.utc).isoformat(),
+                    "symbol": sig.symbol, "strategy": sig.strategy,
+                    "side": sig.side, "score": round(sig.score, 3),
+                    "threshold": round(self._strat_thresholds.get(sig.strategy, self.threshold), 3),
+                    "timeframe": sig.tf, "status": "rejected", "reason": f"slot_cb: {reason_slot}",
+                })
+                continue
+
+            ok_corr, reason_corr = self.allocator.check_correlation(sig.side, self.open_positions)
+            if not ok_corr:
+                logger.debug(f"[Cycle] {sig.symbol}/{slot_key} rejeté (corrélation: {reason_corr})")
+                continue
+
+            # Prix et taille
+            ticker = self._safe_ticker(sig.symbol)
+            if ticker is None:
+                continue
+            price = ticker.get("last", 0)
+            if price <= 0:
+                continue
+
+            strat_threshold = self._strat_thresholds.get(sig.strategy, self.threshold)
+            atr   = sig.atr if sig.atr > 0 else _compute_atr(self._get_ohlcv(sig.symbol, sig.tf) or pl.DataFrame())
+            size, notional = self.risk.compute_size(price, atr, score=sig.score, threshold=strat_threshold)
+            leverage       = self.risk.compute_leverage(notional)
+
+            ok_budget, reason_budget = self.allocator.can_allocate(slot_key, notional)
+            if not ok_budget:
+                logger.debug(f"[Cycle] {sig.symbol}/{slot_key} rejeté (budget: {reason_budget})")
+                self.signal_log.append({
+                    "time": datetime.now(timezone.utc).isoformat(),
+                    "symbol": sig.symbol, "strategy": sig.strategy,
+                    "side": sig.side, "score": round(sig.score, 3),
+                    "threshold": round(strat_threshold, 3),
+                    "timeframe": sig.tf, "status": "rejected", "reason": f"budget: {reason_budget}",
+                })
+                continue
+
+            if not self._pre_execution_check(sig.symbol, sig.side, size, price, notional):
+                continue
+
+            self._open_position(
+                pos_key, sig.symbol, sig.to_signal_dict(),
+                price, size, notional, atr, leverage, sig.tf
+            )
+            self.allocator.register_open(slot_key, notional)
+
+        # 6. Synchro solde + rapport
         if self._margin_enabled and time.time() >= self._margin_next_sync:
             self._sync_margin_account()
             self._margin_next_sync = time.time() + 60
@@ -422,6 +506,9 @@ class LiveTrader(PositionMixin):
             self._sync_spot_balance()
         if self.cycle_count % 10 == 0:
             self._send_status_report()
+
+        # 7. Rééquilibrage hebdomadaire des budgets
+        self.allocator.rebalance_if_due()
 
     # ── Cache OHLCV multi-TF ───────────────────────────────────────────────
     def _get_ohlcv(self, symbol: str, tf: str) -> Optional[pl.DataFrame]:
@@ -479,7 +566,22 @@ class LiveTrader(PositionMixin):
         self._ohlcv_cache[key] = (time.time(), df)
         return df
 
-    # ── Scan par stratégie ─────────────────────────────────────────────────
+    # ── Volatility brake ───────────────────────────────────────────────────
+    def _update_volatility_brake(self):
+        """Calcule l'ATR BTC/USDC 1h et met à jour le volatility brake."""
+        try:
+            btc_symbol = "BTC/USDC"
+            df_btc = self._get_ohlcv(btc_symbol, "1h")
+            if df_btc is not None and len(df_btc) > 10:
+                atr   = _compute_atr(df_btc)
+                price = float(df_btc["close"][-1])
+                if price > 0 and atr > 0:
+                    atr_pct = atr / price
+                    self.risk.update_volatility(atr_pct)
+        except Exception as e:
+            logger.debug(f"[VolBrake] Calcul ATR BTC KO : {e}")
+
+    # ── Scan par stratégie (conservé pour compatibilité tests / appels directs) ──
     def _scan_symbol_strategy(self, symbol: str, df: pl.DataFrame,
                                strategy, params: dict, tf: str):
         htf = _HTF_MAP.get(tf)
@@ -796,6 +898,10 @@ class LiveTrader(PositionMixin):
 
         self.cfg["strategies"]["enabled"] = list(target)
         self._build_active_per_tf()  # recalcule
+        if hasattr(self, "allocator"):
+            self.allocator.rebuild_slots(self._active_per_tf)
+        if hasattr(self, "pipeline"):
+            self.pipeline.update_strategies(self._loaded_strategies)
         return {"added": added, "removed": removed, "errors": errors,
                 "active_per_tf": {tf: [s["name"] for s in v] for tf, v in self._active_per_tf.items()}}
 
@@ -846,6 +952,11 @@ class LiveTrader(PositionMixin):
             "margin_interest":      round(self._margin_interest, 4),
             "margin_mode":          self.cfg["trading"].get("margin_mode", "isolated")
                                     if self._margin_enabled else None,
+            # Nouveaux champs
+            "capital_allocation":   self.allocator.get_status(),
+            "circuit_breakers":     self.risk.get_circuit_breakers_status(),
+            "slot_states":          self.risk.get_slot_states(),
+            "volatility_brake":     self.risk.volatility_brake_active,
         })
 
     def _load_db_stats(self) -> dict:

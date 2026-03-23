@@ -123,6 +123,14 @@ def scanner_page(request: Request):
 def audit_page(request: Request):
     return _tpl("audit.html", request, {"active_page": "audit"})
 
+@app.get("/trades", response_class=HTMLResponse)
+def trades_page(request: Request):
+    return _tpl("trades.html", request, {"active_page": "trades"})
+
+@app.get("/strategies", response_class=HTMLResponse)
+def strategies_page(request: Request):
+    return _tpl("strategies.html", request, {"active_page": "strategies"})
+
 
 # ── Status (pas dans un router pour garder l'accès à state.cfg direct) ────
 @app.get("/api/status")
@@ -167,8 +175,12 @@ def get_status(request: Request):
                 "current_risk":  round(
                     state.cfg["trading"].get("risk_per_trade", 0.01) * 100, 2
                 ),
-                "daily_dd_limit":  state.cfg["trading"].get("daily_drawdown_limit", 0.05),
-                "global_dd_limit": state.cfg["trading"].get("max_drawdown_global", 0.20),
+                "daily_dd_limit":    state.cfg["trading"].get("daily_drawdown_limit", 0.05),
+                "global_dd_limit":   state.cfg["trading"].get("max_drawdown_global", 0.20),
+                "capital_allocation": [],
+                "circuit_breakers":   [],
+                "slot_states":        {},
+                "volatility_brake":   False,
             })
     return base
 

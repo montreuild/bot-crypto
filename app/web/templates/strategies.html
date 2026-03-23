@@ -1,0 +1,340 @@
+{% extends "base.html" %}
+{% block title %} — Stratégies{% endblock %}
+
+{% block page_styles %}
+#content{padding:18px 20px;display:flex;flex-direction:column;gap:18px;flex:1;}
+/* Layout colonnes par TF */
+.tf-columns{display:flex;gap:12px;overflow-x:auto;align-items:flex-start;padding-bottom:8px;}
+.tf-col{min-width:200px;max-width:240px;flex-shrink:0;}
+.tf-col-header{font-family:var(--mono);font-size:.72rem;font-weight:700;color:var(--cyan);padding:6px 10px;background:var(--cyan-dim);border:1px solid rgba(34,211,238,.2);border-radius:var(--r-sm);margin-bottom:8px;text-align:center;letter-spacing:.06em;}
+/* Cards slot */
+.slot-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:8px;cursor:pointer;transition:border-color .15s,transform .1s;position:relative;}
+.slot-card:hover{border-color:var(--border-hi);transform:translateY(-1px);}
+.slot-card.selected{border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan) inset;}
+.slot-card.paused{border-color:rgba(251,113,133,.4);}
+.slot-card.disabled-card{opacity:.5;}
+.slot-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+.slot-name{font-family:var(--head);font-size:.85rem;font-weight:700;color:var(--text);}
+.slot-toggle{display:flex;align-items:center;gap:5px;}
+.slot-on{color:var(--green);font-size:.65rem;font-weight:700;}
+.slot-off{color:var(--muted);font-size:.65rem;font-weight:700;}
+.slot-metrics{display:grid;grid-template-columns:1fr 1fr;gap:3px 8px;margin-bottom:6px;}
+.slot-m{font-size:.65rem;color:var(--muted);}
+.slot-m strong{color:var(--text);font-family:var(--mono);}
+.slot-budget-track{height:4px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden;margin-bottom:3px;}
+.slot-budget-fill{height:100%;border-radius:2px;background:var(--cyan);transition:width .4s;}
+.slot-budget-meta{font-size:.62rem;color:var(--dim);font-family:var(--mono);display:flex;justify-content:space-between;}
+.slot-cb{font-size:.63rem;color:var(--red);margin-top:4px;display:flex;align-items:center;gap:4px;}
+.slot-actions{display:flex;gap:4px;margin-top:8px;}
+.slot-actions .btn{font-size:.66rem;padding:3px 8px;}
+/* Panel latéral */
+.detail-panel{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px;min-width:280px;max-width:340px;flex-shrink:0;position:sticky;top:74px;max-height:calc(100vh - 90px);overflow-y:auto;}
+.detail-close{float:right;background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:0 2px;line-height:1;}
+.detail-close:hover{color:var(--text);}
+.detail-slot{font-family:var(--head);font-size:1rem;font-weight:700;color:var(--cyan);margin-bottom:10px;}
+.detail-section{margin-bottom:12px;}
+.detail-section-title{font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:6px;}
+.param-row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.03);font-size:.72rem;}
+.param-key{color:var(--muted);}
+.param-val{font-family:var(--mono);color:var(--text);}
+.trade-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.03);font-size:.7rem;}
+/* Layout principal */
+.main-layout{display:flex;gap:16px;align-items:flex-start;}
+.main-left{flex:1;min-width:0;}
+#detail-panel{display:none;}
+/* Volatility badge */
+.vol-badge{display:none;background:var(--amber-dim);border:1px solid rgba(251,191,36,.3);color:var(--amber);font-size:.7rem;font-weight:600;padding:4px 10px;border-radius:var(--r-sm);}
+.vol-badge.active{display:inline-flex;align-items:center;gap:5px;}
+{% endblock %}
+
+{% block topbar_content %}
+<div class="topbar-title">Stratégies</div>
+<div class="topbar-sep"></div>
+<div class="topbar-right">
+  <span id="vol-badge" class="vol-badge">⚡ Volatility Brake ×0.5</span>
+  <button class="btn btn-ghost" onclick="load()">↺ Actualiser</button>
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content">
+
+  <div id="cb-alert" style="display:none;background:var(--red-dim);border:1px solid rgba(251,113,133,.25);border-radius:var(--r);padding:8px 16px;font-size:.75rem;color:var(--red)"></div>
+
+  <div class="main-layout">
+    <div class="main-left">
+      <div class="sec-hdr"><h2>Slots actifs par timeframe</h2></div>
+      <div id="tf-columns" class="tf-columns">
+        <div style="color:var(--dim);font-size:.8rem">Chargement…</div>
+      </div>
+    </div>
+    <div id="detail-panel" class="detail-panel" role="complementary" aria-label="Détail slot">
+      <button class="detail-close" onclick="closeDetail()" aria-label="Fermer le détail">✕</button>
+      <div id="dp-slot" class="detail-slot">—</div>
+
+      <div class="detail-section">
+        <div class="detail-section-title">Performance</div>
+        <div id="dp-perf"></div>
+      </div>
+
+      <div class="detail-section">
+        <div class="detail-section-title">Paramètres optimisés</div>
+        <div id="dp-params"></div>
+      </div>
+
+      <div class="detail-section">
+        <div class="detail-section-title">Derniers trades</div>
+        <div id="dp-trades"></div>
+      </div>
+
+      <div style="margin-top:12px;display:flex;flex-direction:column;gap:6px">
+        <button id="dp-btn-opt" class="btn btn-cyan btn-full" onclick="launchOptimizer()">⬡ Optimiser</button>
+        <button id="dp-btn-reset" class="btn btn-ghost btn-full" onclick="resetSlotCB()" style="display:none">↺ Réinitialiser CB</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Modal reset CB -->
+<div id="reset-modal" class="modal-overlay">
+  <div class="modal-box">
+    <h3>↺ Réinitialiser le slot</h3>
+    <p>Lever la pause du slot <strong id="rm-slot"></strong> ?<br/>Le trading reprendra immédiatement sur ce slot.</p>
+    <button class="modal-btn modal-btn-danger" onclick="_doResetSlot()">⚡ Oui, reprendre</button>
+    <button class="modal-btn modal-btn-cancel" onclick="$('reset-modal').style.display='none'">Annuler</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block modals %}{% endblock %}
+
+{% block body_scripts %}
+<script>
+const $=id=>document.getElementById(id);
+let _status=null, _allocation=[], _slotStates=[], _auditResults=[], _selectedSlot=null;
+let _resetTarget='';
+
+function clrC(v){return v>0?'c-green':v<0?'c-red':'c-muted';}
+function fmtS(v){const n=+(v||0);return(n>=0?'+':'')+n.toFixed(2);}
+
+/* ── Build columns ── */
+function buildColumns(){
+  if(!_status)return;
+  const activeTF=_status.active_per_tf||{};
+  const alloc=_allocation||[];
+  const states=_slotStates||[];
+
+  // Group by TF
+  const tfs=Object.keys(activeTF).sort();
+  if(!tfs.length){$('tf-columns').innerHTML='<span style="color:var(--dim)">Aucun slot actif — lancez une optimisation.</span>';return;}
+
+  // Build pause map
+  const pauseMap={};states.forEach(s=>{if(s.paused)pauseMap[s.slot_key]=s.pause_reason;});
+
+  // Build alloc map
+  const allocMap={};alloc.forEach(a=>allocMap[a.slot_key]=a);
+
+  const html=tfs.map(tf=>{
+    const entries=activeTF[tf]||[];
+    const cards=entries.map(strat=>{
+      const slotKey=strat+'::'+tf;
+      const slotLabel=strat.charAt(0).toUpperCase()+strat.slice(1)+' '+tf;
+      const a=allocMap[slotKey]||{};
+      const isPaused=!!pauseMap[slotKey];
+      const byStrat=_status.by_strategy||{};
+      const sd=byStrat[strat]||{};
+      const wr=(sd.win_rate||0).toFixed(1);
+      const pnl=(sd.total_pnl||0);
+      const trades=sd.total_trades||0;
+      const pf=(sd.profit_factor||0).toFixed(2);
+      const budgetPct=a.budget_pct||0;
+      const usedPct=a.used_pct||0;
+
+      // OOS score from audit
+      const aud=_auditResults.find(r=>r.slot_key===slotKey);
+      const oosStr=aud?`<span style="font-size:.6rem;color:var(--dim)">OOS: <strong style="color:var(--text);font-family:var(--mono)">${aud.oos_score.toFixed(3)}</strong> <span style="color:var(--dim)">${aud.run_date||''}</span></span>`:'';
+
+      const cbStr=isPaused?`<div class="slot-cb">⏸ ${escHtml(pauseMap[slotKey])}</div>`:'';
+
+      return`<div class="slot-card${isPaused?' paused':''}" id="card-${escHtml(slotKey)}" onclick="selectSlot('${escHtml(slotKey)}','${escHtml(strat)}','${escHtml(tf)}')" tabindex="0" role="button" aria-label="Slot ${slotLabel}">
+        <div class="slot-header">
+          <div class="slot-name">${escHtml(slotLabel)}</div>
+          <span class="slot-on">● ON</span>
+        </div>
+        <div class="slot-metrics">
+          <div class="slot-m">WR: <strong class="${clrC(+wr-50)}">${wr}%</strong></div>
+          <div class="slot-m">Trades: <strong>${trades}</strong></div>
+          <div class="slot-m">PnL: <strong class="${clrC(pnl)}">${fmtS(pnl)}</strong></div>
+          <div class="slot-m">PF: <strong class="${clrC(+pf-1)}">${pf}</strong></div>
+        </div>
+        ${oosStr}
+        <div style="margin-top:6px">
+          <div class="slot-budget-track"><div class="slot-budget-fill" style="width:${Math.min(usedPct,100)}%;background:${isPaused?'var(--red)':usedPct>80?'var(--amber)':'var(--cyan)'}"></div></div>
+          <div class="slot-budget-meta"><span>Budget: ${budgetPct}%</span><span>${(a.used_notional||0).toFixed(1)} USDC utilisé</span></div>
+        </div>
+        ${cbStr}
+      </div>`;
+    }).join('');
+
+    return`<div class="tf-col">
+      <div class="tf-col-header">${escHtml(tf)}</div>
+      ${cards||'<div style="color:var(--dim);font-size:.73rem;padding:6px 0">Aucun slot</div>'}
+    </div>`;
+  }).join('');
+
+  $('tf-columns').innerHTML=html;
+}
+
+/* ── Select slot ── */
+async function selectSlot(slotKey, strategy, tf){
+  _selectedSlot=slotKey;
+  // Update card selection
+  document.querySelectorAll('.slot-card').forEach(c=>c.classList.remove('selected'));
+  const card=$('card-'+slotKey);
+  if(card)card.classList.add('selected');
+
+  const panel=$('detail-panel');
+  panel.style.display='';
+
+  const slotLabel=strategy.charAt(0).toUpperCase()+strategy.slice(1)+' '+tf;
+  $('dp-slot').textContent=slotLabel;
+  $('dp-perf').innerHTML='<span style="color:var(--dim)">Chargement…</span>';
+  $('dp-params').innerHTML='<span style="color:var(--dim)">Chargement…</span>';
+  $('dp-trades').innerHTML='<span style="color:var(--dim)">Chargement…</span>';
+
+  // CB reset button
+  const isPaused=_slotStates.some(s=>s.slot_key===slotKey&&s.paused);
+  $('dp-btn-reset').style.display=isPaused?'':'none';
+
+  try{
+    const r=await apiFetch(`/api/strategy/${encodeURIComponent(slotKey)}/performance`);
+    if(!r.ok){$('dp-perf').innerHTML='<span style="color:var(--red)">Erreur chargement</span>';return;}
+    const d=await r.json();
+    renderDetailPerf(d);
+    renderDetailParams(strategy, tf);
+    renderDetailTrades(d.recent_trades||[]);
+  }catch(e){$('dp-perf').innerHTML='<span style="color:var(--red)">'+escHtml(e.message)+'</span>';}
+}
+
+function renderDetailPerf(d){
+  const pnl=d.total_pnl||0,wr=d.win_rate||0,pf=d.profit_factor||0,sh=d.sharpe||0,dd=d.max_drawdown||0;
+  $('dp-perf').innerHTML=`
+    <div class="param-row"><span class="param-key">Trades</span><span class="param-val">${d.total_trades||0}</span></div>
+    <div class="param-row"><span class="param-key">Win Rate</span><span class="param-val ${clrC(wr-50)}">${wr.toFixed(1)}%</span></div>
+    <div class="param-row"><span class="param-key">PnL total</span><span class="param-val ${clrC(pnl)}">${fmtS(pnl)} USDC</span></div>
+    <div class="param-row"><span class="param-key">Profit Factor</span><span class="param-val ${clrC(pf-1)}">${pf.toFixed(2)}</span></div>
+    <div class="param-row"><span class="param-key">Sharpe</span><span class="param-val ${clrC(sh)}">${sh.toFixed(2)}</span></div>
+    <div class="param-row" style="border:none"><span class="param-key">Max DD</span><span class="param-val ${dd>10?'c-red':'c-muted'}">${dd.toFixed(1)}%</span></div>
+  `;
+  // CB state
+  const st=d.slot_state;
+  if(st&&st.paused){
+    $('dp-perf').innerHTML+=`<div style="margin-top:6px;background:var(--red-dim);border:1px solid rgba(251,113,133,.2);border-radius:var(--r-sm);padding:6px 8px;font-size:.7rem;color:var(--red)">⏸ ${escHtml(st.pause_reason)}</div>`;
+    $('dp-btn-reset').style.display='';
+  }else{$('dp-btn-reset').style.display='none';}
+}
+
+function renderDetailParams(strategy, tf){
+  // Get from audit results
+  const aud=_auditResults.find(r=>r.strategy===strategy&&r.tf===tf);
+  if(!aud||!aud.params||!Object.keys(aud.params).length){
+    $('dp-params').innerHTML='<span style="color:var(--dim);font-size:.73rem">Optimisation non effectuée</span>';
+    return;
+  }
+  const html=Object.entries(aud.params).map(([k,v])=>`<div class="param-row"><span class="param-key">${escHtml(k)}</span><span class="param-val">${escHtml(String(v))}</span></div>`).join('');
+  $('dp-params').innerHTML=html+`<div style="margin-top:4px;font-size:.62rem;color:var(--dim)">OOS: ${(aud.oos_score||0).toFixed(4)} · ${aud.run_date||''}</div>`;
+}
+
+function renderDetailTrades(trades){
+  if(!trades.length){$('dp-trades').innerHTML='<span style="color:var(--dim);font-size:.73rem">Aucun trade</span>';return;}
+  $('dp-trades').innerHTML=trades.slice(0,10).map(t=>{
+    const pnl=+(t.pnl||0),d=new Date(t.time||'');
+    const ds=isNaN(d)?'—':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'});
+    return`<div class="trade-row"><span style="color:var(--muted)">${ds} <span class="tag tag-${t.side}" style="font-size:.6rem">${(t.side||'').toUpperCase()}</span></span><span style="font-family:var(--mono);font-size:.71rem" class="${clrC(pnl)}">${fmtS(pnl)}</span></div>`;
+  }).join('');
+}
+
+function closeDetail(){
+  $('detail-panel').style.display='none';
+  document.querySelectorAll('.slot-card').forEach(c=>c.classList.remove('selected'));
+  _selectedSlot=null;
+}
+
+/* ── Optimizer ── */
+function launchOptimizer(){
+  if(!_selectedSlot)return;
+  const parts=_selectedSlot.split('::');
+  const strat=parts[0]||'';
+  window.location.href=`/optimizer?strategy=${encodeURIComponent(strat)}`;
+}
+
+/* ── Reset CB slot ── */
+function resetSlotCB(){
+  if(!_selectedSlot)return;
+  _resetTarget=_selectedSlot;
+  $('rm-slot').textContent=_selectedSlot;
+  $('reset-modal').style.display='flex';
+}
+async function _doResetSlot(){
+  $('reset-modal').style.display='none';
+  try{
+    const r=await apiFetch(`/api/circuit-breakers/reset/${encodeURIComponent(_resetTarget)}`,{method:'POST'});
+    if(!r.ok){toast('Erreur reset CB',true);return;}
+    toast('CB slot réinitialisé ✓');
+    await load();
+    if(_selectedSlot){
+      const parts=_selectedSlot.split('::');
+      if(parts.length===2)await selectSlot(_selectedSlot,parts[0],parts[1]);
+    }
+  }catch(e){toast('Erreur: '+e.message,true);}
+}
+
+/* ── CB alert bar ── */
+function renderCBAlerts(){
+  const paused=_slotStates.filter(s=>s.paused);
+  const alert=$('cb-alert');
+  if(!paused.length&&!_status?.circuit_breaker_active){alert.style.display='none';return;}
+  const msgs=[];
+  if(_status?.circuit_breaker_active)msgs.push(`⛔ Circuit Breaker GLOBAL : ${escHtml(_status.circuit_breaker_reason)}`);
+  paused.forEach(s=>msgs.push(`⏸ Slot <strong>${escHtml(s.slot_key)}</strong> pausé : ${escHtml(s.pause_reason)}`));
+  alert.style.display='';
+  alert.innerHTML=msgs.join('<br>');
+}
+
+/* ── Main load ── */
+async function load(){
+  try{
+    const [stRes,alRes,auRes]=await Promise.all([
+      apiFetch('/api/status'),
+      apiFetch('/api/capital-allocation'),
+      apiFetch('/api/audit/results'),
+    ]);
+    _status=stRes.ok?await stRes.json():null;
+    const alData=alRes.ok?await alRes.json():{slots:[]};
+    const auData=auRes.ok?await auRes.json():{results:[]};
+    _allocation=alData.slots||[];
+    _auditResults=auData.results||[];
+    _slotStates=_status?.slot_states||[];
+
+    // Volatility brake badge
+    $('vol-badge').classList.toggle('active',!!_status?.volatility_brake);
+
+    renderCBAlerts();
+    buildColumns();
+
+    // Re-select if a slot was open
+    if(_selectedSlot){
+      const parts=_selectedSlot.split('::');
+      if(parts.length===2)await selectSlot(_selectedSlot,parts[0],parts[1]);
+    }
+  }catch(e){console.error('Load error',e);}
+}
+
+/* Keyboard: escape closes detail */
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDetail();document.querySelectorAll('.modal-overlay').forEach(m=>{if(m.style.display==='flex')m.style.display='none';});}});
+
+load();
+setInterval(load,30000);
+</script>
+{% endblock %}

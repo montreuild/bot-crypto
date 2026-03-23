@@ -7,6 +7,7 @@ Endpoints :
   POST /api/config/timeframes
   POST /api/config/auto-optimizer
   POST /api/config/trading
+  POST /api/config/risk
   POST /api/config/strategy-params
   GET  /api/backtest/settings
   GET  /api/config/changelog
@@ -178,6 +179,44 @@ def update_trading_params(
                     state.trader.threshold = val
     try:
         _save_yaml(lambda d: d.setdefault("trading", {}).update(changed))
+        saved = True
+    except Exception:
+        saved = False
+    return {"changed": changed, "saved_to_disk": saved,
+            "trader_updated": state.trader is not None}
+
+
+# ── POST /api/config/risk ─────────────────────────────────────────────────
+
+@router.post("/api/config/risk", dependencies=[Depends(verify_api_key)])
+def update_risk_config(
+    consecutive_loss_limit:  int   = None,
+    slot_daily_dd_limit:     float = None,
+    win_rate_floor:          float = None,
+    volatility_threshold:    float = None,
+    consecutive_pause_secs:  int   = None,
+):
+    """Met à jour la configuration des circuit breakers par slot."""
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    changed = {}
+    mapping = {
+        "consecutive_loss_limit":  consecutive_loss_limit,
+        "slot_daily_dd_limit":     slot_daily_dd_limit,
+        "win_rate_floor":          win_rate_floor,
+        "volatility_threshold":    volatility_threshold,
+        "consecutive_pause_secs":  consecutive_pause_secs,
+    }
+    for key, val in mapping.items():
+        if val is not None:
+            state.cfg.setdefault("risk", {})[key] = val
+            changed[key] = val
+            # Apply à chaud sur le RiskManager
+            if state.trader and hasattr(state.trader.risk, f"_{key}"):
+                setattr(state.trader.risk, f"_{key}", val)
+
+    try:
+        _save_yaml(lambda d: d.setdefault("risk", {}).update(changed))
         saved = True
     except Exception:
         saved = False

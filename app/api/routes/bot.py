@@ -1,9 +1,10 @@
 """
-Routes contrôle du bot (démarrage / arrêt).
+Routes contrôle du bot (démarrage / arrêt / gestion CBs).
 
 Endpoints :
   POST /api/bot/start
   POST /api/bot/stop
+  POST /api/circuit-breakers/reset/{slot_key}
 """
 import threading as _threading
 import logging
@@ -39,4 +40,20 @@ def bot_stop(close_positions: bool = False):
         "close_positions":  close_positions,
         "positions_closed": n_open if close_positions else 0,
         "positions_kept":   n_open if not close_positions else 0,
+    }
+
+
+@router.post("/api/circuit-breakers/reset/{slot_key:path}", dependencies=[Depends(verify_api_key)])
+def reset_slot_circuit_breaker(slot_key: str):
+    """
+    Réinitialise manuellement la pause d'un slot.
+    slot_key format: "trend::1h" (encodé en URL)
+    """
+    if not state.trader:
+        raise HTTPException(503, "Trader non initialisé")
+    state.trader.risk.reset_slot_pause(slot_key)
+    return {
+        "status":   "reset",
+        "slot_key": slot_key,
+        "message":  f"Pause du slot '{slot_key}' réinitialisée",
     }

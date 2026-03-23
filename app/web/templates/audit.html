@@ -47,9 +47,31 @@
 <script>
 async function loadOptResults() {
   try {
-    const r = await apiFetch('/api/optimize/results');
-    const d = await r.json();
-    renderOptResults(d);
+    const [auditR, cfgR] = await Promise.all([
+      apiFetch('/api/audit/results'),
+      apiFetch('/api/config'),
+    ]);
+    const audit = await auditR.json();
+    const cfg   = await cfgR.json();
+
+    // Rebuild byStratTf from flat results list
+    const byStratTf = {};
+    for (const entry of (audit.results || [])) {
+      if (!byStratTf[entry.strategy]) byStratTf[entry.strategy] = {};
+      byStratTf[entry.strategy][entry.tf] = {
+        oos_score: entry.oos_score,
+        run_date:  entry.run_date,
+        params:    entry.params || {},
+      };
+    }
+
+    // Build activeTf from cfg._active_per_tf (strategy names per TF)
+    const activeTf = {};
+    for (const [tf, slots] of Object.entries(cfg._active_per_tf || {})) {
+      activeTf[tf] = slots;
+    }
+
+    renderOptResults({ by_strategy_tf: byStratTf, active_per_tf: activeTf });
   } catch(e) {
     document.getElementById('opt-results-container').innerHTML =
       `<div style="color:var(--red);font-size:.75rem">Erreur : ${e.message}</div>`;
