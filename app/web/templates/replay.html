@@ -7,11 +7,11 @@
 
 {% block page_styles %}
 /* ── Layout ── */
-.rp-layout{display:grid;grid-template-columns:240px 1fr;min-height:calc(100vh - 56px);}
-@media(max-width:860px){.rp-layout{grid-template-columns:1fr;}}
+.rp-layout{display:grid;grid-template-columns:240px 1fr;height:calc(100vh - 56px);overflow:hidden;}
+@media(max-width:860px){.rp-layout{grid-template-columns:1fr;height:auto;overflow:visible;}}
 
 /* ── Sidebar ── */
-.rp-sb{background:var(--surface);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;position:sticky;top:56px;height:calc(100vh - 56px);}
+.rp-sb{background:var(--surface);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;height:100%;}
 .sb-section{display:flex;flex-direction:column;gap:8px;}
 .sb-label{font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);padding-bottom:5px;border-bottom:1px solid var(--border);margin-bottom:2px;}
 .sb-field{display:flex;flex-direction:column;gap:4px;}
@@ -23,7 +23,7 @@
 .sb-stat-val{font-size:.73rem;font-family:var(--mono);font-weight:600;}
 
 /* ── Main area ── */
-.rp-main{display:flex;flex-direction:column;min-width:0;background:var(--bg);}
+.rp-main{display:flex;flex-direction:column;min-width:0;background:var(--bg);height:100%;overflow:hidden;}
 
 /* ── Welcome card ── */
 #rp-welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:40px 24px;gap:16px;text-align:center;}
@@ -42,8 +42,8 @@
 .loader-msg{font-size:.82rem;color:var(--muted);}
 
 /* ── Chart wrapper ── */
-#rp-chart-wrap{position:relative;flex:1;min-height:0;background:#060b13;display:none;}
-#rp-chart{width:100%;height:100%;}
+#rp-chart-wrap{position:relative;flex:1;min-height:0;background:#060b13;display:none;overflow:hidden;}
+#rp-chart{width:100%;height:100%;position:absolute;inset:0;}
 #rp-candle-info{position:absolute;top:10px;left:10px;background:rgba(6,11,19,.8);border:1px solid var(--border);border-radius:var(--r-sm);padding:5px 10px;font-family:var(--mono);font-size:.68rem;color:var(--muted);pointer-events:none;display:flex;gap:10px;flex-wrap:wrap;backdrop-filter:blur(4px);}
 .ci-item{display:flex;gap:4px;}
 .ci-lbl{color:var(--dim);}
@@ -389,7 +389,7 @@ function logAdd(type, msg) {
 }
 
 // ── Moteur de replay ─────────────────────────────────────────────────────────
-let allCandles  = [];    // [{time, timeUnix, open, high, low, close, volume}]
+let allCandles  = [];    // [{time, open, high, low, close, volume, isoTime}]
 let currentBar  = 0;     // Index de la bougie courante (0 = non encore affichée)
 let totalBars   = 0;
 let isPlaying   = false;
@@ -397,6 +397,14 @@ let speed       = 1;     // multiplicateur de vitesse
 let _timer      = null;  // handle setInterval
 let _chart      = null;  // instance LightweightCharts
 let _series     = null;  // CandlestickSeries
+
+// ── Overlay stratégie ─────────────────────────────────────────────────────────
+let barToEntry  = {};    // barIdx → [trade]  (entrées)
+let barToExit   = {};    // barIdx → [trade]  (sorties/clôtures)
+let _markers    = [];    // markers TradingView actifs
+let _livePnl    = 0;
+let _liveTrades = 0;
+let _liveWins   = 0;
 
 // ms entre chaque bougie selon la vitesse (0 = pas de délai)
 const SPEED_MS = { 0.5: 800, 1: 400, 2: 200, 5: 80, 10: 40, 20: 20, 0: 0 };
@@ -479,9 +487,42 @@ function initReplay() {
   ti.textContent = `${rpData.symbol}  ·  ${rpData.timeframe}  ·  ${totalBars.toLocaleString('fr-FR')} bougies`;
   ti.style.display = '';
 
+  // ── Overlay stratégie ──────────────────────────────────────────────────
+  barToEntry  = {}; barToExit = {}; _markers = [];
+  _livePnl = 0; _liveTrades = 0; _liveWins = 0;
+  document.getElementById('sig-list').innerHTML = '';
+  document.getElementById('rp-sig-log').style.display = 'none';
+  document.getElementById('s-trades-row').style.display = 'none';
+  document.getElementById('s-wr-row').style.display = 'none';
+  document.getElementById('s-pnl-row').style.display = 'none';
+
+  const stratName = document.getElementById('i-strat').value;
+  if (stratName && rpData.by_strategy && rpData.by_strategy[stratName]) {
+    const sd     = rpData.by_strategy[stratName];
+    const trades = (sd.trades || []).filter(t => t.status === 'closed' || t.exit_bar != null);
+    trades.forEach(t => {
+      if (t.bar != null) {
+        barToEntry[t.bar] = barToEntry[t.bar] || [];
+        barToEntry[t.bar].push(t);
+      }
+      if (t.exit_bar != null) {
+        barToExit[t.exit_bar] = barToExit[t.exit_bar] || [];
+        barToExit[t.exit_bar].push(t);
+      }
+    });
+    if (trades.length > 0) {
+      document.getElementById('rp-sig-log').style.display = '';
+      document.getElementById('s-trades-row').style.display = '';
+      document.getElementById('s-wr-row').style.display = '';
+      document.getElementById('s-pnl-row').style.display = '';
+      updateLiveStats();
+      logAdd('ok', `${trades.length} trade(s) détecté(s) pour « ${stratName} »`);
+    }
+  }
+
   // Afficher la première bougie immédiatement
   _series.setData([]);
-  setSpeed(speed);       // applique le bon bouton actif
+  setSpeed(speed);
   updateProgress();
   logAdd('ok', `Graphique prêt — appuyez sur ▶ ou [Espace] pour démarrer.`);
 }
@@ -493,20 +534,12 @@ function tick() {
     logAdd('ok', 'Fin du replay.');
     return;
   }
-  const c = allCandles[currentBar];
-  _series.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
-  updateCandleInfo(c);
-  currentBar++;
-  updateProgress();
 
-  // En mode MAX, continuer en boucle tight (requestAnimationFrame)
   if (speed === 0 && isPlaying) {
-    // Ajouter par batch de 50 pour ne pas bloquer l'UI
-    let batch = 50;
+    // Mode MAX — batch de 100 par frame pour fluidité
+    let batch = 100;
     while (batch-- > 0 && currentBar < totalBars) {
-      const cc = allCandles[currentBar];
-      _series.update({ time: cc.time, open: cc.open, high: cc.high, low: cc.low, close: cc.close });
-      currentBar++;
+      tickOne();
     }
     updateProgress();
     if (currentBar < totalBars) {
@@ -518,6 +551,32 @@ function tick() {
     }
     return;
   }
+
+  tickOne();
+  updateProgress();
+}
+
+function tickOne() {
+  const c = allCandles[currentBar];
+  _series.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
+  updateCandleInfo(c);
+  // Markers : entrées à ce bar
+  if (barToEntry[currentBar]) {
+    barToEntry[currentBar].forEach(t => pushMarker(t, 'entry'));
+  }
+  // Markers : sorties à ce bar
+  if (barToExit[currentBar]) {
+    barToExit[currentBar].forEach(t => {
+      pushMarker(t, 'exit');
+      addSigRow(t);
+      _liveTrades++;
+      if (t.pnl > 0) _liveWins++;
+      _livePnl += (t.pnl || 0);
+      updateLiveStats();
+    });
+    _series.setMarkers(_markers);  // flush après les sorties
+  }
+  currentBar++;
 }
 
 function startTimer() {
@@ -584,14 +643,32 @@ function seekTo(pos) {
   if (!_series || totalBars === 0) return;
   pause();
   const target = pos < 0 ? totalBars : Math.max(0, Math.min(pos, totalBars));
+
+  // Reconstruire les bougies
   _series.setData([]);
-  // Reconstruire jusqu'à target
   const batch = [];
   for (let i = 0; i < target; i++) {
     const c = allCandles[i];
     batch.push({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
   }
   if (batch.length) _series.setData(batch);
+
+  // Reconstruire les markers et stats live
+  _markers = []; _livePnl = 0; _liveTrades = 0; _liveWins = 0;
+  document.getElementById('sig-list').innerHTML = '';
+  for (let i = 0; i < target; i++) {
+    if (barToEntry[i]) barToEntry[i].forEach(t => pushMarker(t, 'entry', false));
+    if (barToExit[i])  barToExit[i].forEach(t => {
+      pushMarker(t, 'exit', false);
+      addSigRow(t);
+      _liveTrades++;
+      if (t.pnl > 0) _liveWins++;
+      _livePnl += (t.pnl || 0);
+    });
+  }
+  if (_markers.length) _series.setMarkers(_markers);
+  updateLiveStats();
+
   currentBar = target;
   if (currentBar > 0) updateCandleInfo(allCandles[currentBar - 1]);
   updateProgress();
@@ -655,16 +732,79 @@ function onKey(e) {
   if (!_series) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   switch(e.key) {
-    case ' ':        e.preventDefault(); togglePlay(); break;
+    case ' ':          e.preventDefault(); togglePlay(); break;
     case 'ArrowRight': e.preventDefault(); step(e.shiftKey ? 10 : 1); break;
     case 'ArrowLeft':  e.preventDefault(); step(e.shiftKey ? -10 : -1); break;
-    case 'Home':     e.preventDefault(); seekTo(0); break;
-    case 'End':      e.preventDefault(); seekTo(-1); break;
-    case '1':        setSpeed(1); break;
-    case '2':        setSpeed(2); break;
-    case '5':        setSpeed(5); break;
-    case '0':        setSpeed(0); break;
+    case 'Home':       e.preventDefault(); seekTo(0); break;
+    case 'End':        e.preventDefault(); seekTo(-1); break;
+    case '1':          setSpeed(1); break;
+    case '2':          setSpeed(2); break;
+    case '5':          setSpeed(5); break;
+    case '0':          setSpeed(0); break;
   }
+}
+
+// ── Helpers markers ───────────────────────────────────────────────────────────
+function pushMarker(t, type, flush=true) {
+  const barIdx = type === 'entry' ? t.bar : t.exit_bar;
+  if (barIdx == null || barIdx >= allCandles.length) return;
+  const c = allCandles[barIdx];
+  if (!c) return;
+  const isLong = t.side === 'long';
+
+  if (type === 'entry') {
+    _markers.push({
+      time:     c.time,
+      position: isLong ? 'belowBar' : 'aboveBar',
+      color:    isLong ? '#34d399'  : '#fb7185',
+      shape:    isLong ? 'arrowUp'  : 'arrowDown',
+      text:     isLong ? '▲'        : '▼',
+    });
+  } else {
+    const won = (t.pnl || 0) >= 0;
+    _markers.push({
+      time:     c.time,
+      position: isLong ? 'aboveBar' : 'belowBar',
+      color:    won ? '#34d399' : '#fb7185',
+      shape:    'circle',
+      text:     won ? '✓' : '✗',
+    });
+  }
+  // TradingView exige des markers triés par temps
+  _markers.sort((a, b) => a.time - b.time);
+  if (flush) _series.setMarkers(_markers);
+}
+
+// ── Signal log ────────────────────────────────────────────────────────────────
+function addSigRow(t) {
+  const list = document.getElementById('sig-list');
+  const pnl  = t.pnl || 0;
+  const won  = pnl >= 0;
+  const dir  = t.side === 'long'
+    ? '<span class="tag tag-long">LONG</span>'
+    : '<span class="tag tag-short">SHORT</span>';
+  const pnlStr = `${won ? '+' : ''}${pnl.toFixed(2)}`;
+  const dt = t.exit_time ? String(t.exit_time).slice(0,16) : '—';
+  const row = document.createElement('div');
+  row.className = 'sig-row';
+  row.innerHTML =
+    `<span class="sig-time">${escHtml(dt)}</span>` +
+    `<span class="sig-dir">${dir}</span>` +
+    `<span class="sig-price">${t.exit != null ? (+t.exit).toLocaleString('fr-FR', {maximumFractionDigits:4}) : '—'}</span>` +
+    `<span class="sig-pnl" style="color:${won ? 'var(--green)' : 'var(--red)'}">${pnlStr}</span>`;
+  list.insertBefore(row, list.firstChild);  // plus récent en haut
+}
+
+// ── Stats live ────────────────────────────────────────────────────────────────
+function updateLiveStats() {
+  const wr = _liveTrades > 0 ? (_liveWins / _liveTrades * 100).toFixed(1) : '—';
+  document.getElementById('s-trades').textContent = _liveTrades || '0';
+  document.getElementById('s-wr').textContent     = _liveTrades > 0 ? `${wr}%` : '—';
+  const pnlEl = document.getElementById('s-pnl');
+  pnlEl.textContent  = _liveTrades > 0
+    ? `${_livePnl >= 0 ? '+' : ''}${_livePnl.toFixed(2)}`
+    : '—';
+  pnlEl.style.color  = _livePnl >= 0 ? 'var(--green)' : 'var(--red)';
 }
 </script>
 {% endblock %}
