@@ -27,7 +27,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from app.api import state
 from app.api.helpers import CleanJSONResponse
-from app.api.routes import config, trades, backtest, scanner, optimizer, bot, ml
+from app.api.routes import config, trades, backtest, scanner, optimizer, bot, ml, replay
 from app.core.database import init_db
 
 logger = logging.getLogger(__name__)
@@ -131,6 +131,10 @@ def trades_page(request: Request):
 def strategies_page(request: Request):
     return _tpl("strategies.html", request, {"active_page": "strategies"})
 
+@app.get("/replay", response_class=HTMLResponse)
+def replay_page(request: Request):
+    return _tpl("replay.html", request, {"active_page": "replay"})
+
 
 # ── Status (pas dans un router pour garder l'accès à state.cfg direct) ────
 @app.get("/api/status")
@@ -193,3 +197,4 @@ app.include_router(scanner.router)
 app.include_router(optimizer.router)
 app.include_router(bot.router)
 app.include_router(ml.router)
+app.include_router(replay.router)
