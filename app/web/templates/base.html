@@ -173,6 +173,27 @@ tr:hover td{background:rgba(255,255,255,.02);}
   .panel,.table-card,.hero-card,.meta-card,.chart-card{border:1px solid #ccc;break-inside:avoid;}
   a{color:inherit;text-decoration:none;}
 }
+/* ── Couleurs utilitaires ── */
+.pos{color:var(--green)}.neg{color:var(--red)}.neu{color:var(--cyan)}.war{color:var(--amber)}
+.clr-green{color:var(--green);}.clr-red{color:var(--red);}.clr-muted{color:var(--muted);}
+.clr-yellow{color:var(--amber);}.clr-blue{color:var(--cyan);}
+/* ── Composants sidebar (partagés backtest / replay / etc.) ── */
+.sb-section{display:flex;flex-direction:column;gap:8px;}
+.sb-label{font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);padding-bottom:5px;border-bottom:1px solid var(--border);margin-bottom:2px;}
+.sb-field{display:flex;flex-direction:column;gap:4px;}
+.sb-field label{font-size:.72rem;color:var(--muted);}
+.sb-hint{font-size:.62rem;color:var(--dim);line-height:1.4;}
+.sb-divider{height:1px;background:var(--border);margin:3px 0;}
+.sb-quick-btns{display:flex;gap:4px;flex-wrap:wrap;}
+.sb-quick-btns .btn{padding:4px 8px;font-size:.67rem;flex:1;}
+.sb-checks{display:flex;flex-direction:column;gap:6px;}
+.chk-lbl{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.78rem;color:var(--muted);}
+.chk-lbl input[type=checkbox]{width:13px;height:13px;accent-color:var(--cyan);}
+.chk-lbl:hover{color:var(--text);}
+/* ── Log panel (partagé backtest / replay) ── */
+.log-line{display:flex;gap:6px;line-height:1.4;}
+.log-ts{color:var(--border-hi);flex-shrink:0;}
+.log-ok{color:var(--green);}.log-run{color:var(--cyan);}.log-warn{color:var(--amber);}.log-err{color:var(--red);}
 {% block page_styles %}{% endblock %}
 </style>
 <script>

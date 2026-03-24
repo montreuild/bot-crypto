@@ -41,7 +41,6 @@
 .js-done{background:var(--green-dim);color:var(--green);}
 .js-error{background:var(--red-dim);color:var(--red);}
 .js-cancelled{background:var(--amber-dim);color:var(--amber);}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
 /* Progress */
 .progress-wrap{margin:8px 0;}
 .progress-bg{background:var(--border);border-radius:4px;height:7px;overflow:hidden;}
@@ -96,9 +95,6 @@
 /* Launch loading */
 .opt-loading{display:flex;align-items:center;gap:10px;padding:14px;background:var(--card);border:1px solid rgba(34,211,238,.2);border-radius:var(--r);font-size:.78rem;color:var(--cyan);margin-bottom:12px;}
 .opt-loading .spin{width:16px;height:16px;border-width:2px;flex-shrink:0;}
-/* Color helpers */
-.clr-green{color:var(--green);}.clr-red{color:var(--red);}.clr-muted{color:var(--muted);}
-.clr-yellow{color:var(--amber);}.clr-blue{color:var(--cyan);}
 {% endblock %}
 
 {% block topbar_content %}

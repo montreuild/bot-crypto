@@ -12,12 +12,6 @@
 
 /* ── Sidebar ── */
 .rp-sb{background:var(--surface);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;height:100%;}
-.sb-section{display:flex;flex-direction:column;gap:8px;}
-.sb-label{font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);padding-bottom:5px;border-bottom:1px solid var(--border);margin-bottom:2px;}
-.sb-field{display:flex;flex-direction:column;gap:4px;}
-.sb-field label{font-size:.72rem;color:var(--muted);}
-.sb-hint{font-size:.62rem;color:var(--dim);line-height:1.4;}
-.sb-divider{height:1px;background:var(--border);margin:4px 0;}
 .sb-stat{display:flex;justify-content:space-between;align-items:center;padding:4px 0;}
 .sb-stat-lbl{font-size:.68rem;color:var(--muted);}
 .sb-stat-val{font-size:.73rem;font-family:var(--mono);font-weight:600;}
@@ -68,11 +62,6 @@
 .spd:hover{color:var(--text);border-color:var(--border-hi);}
 .spd.on{background:var(--cyan-dim);border-color:rgba(34,211,238,.4);color:var(--cyan);}
 .ctrl-pos{font-size:.68rem;font-family:var(--mono);color:var(--dim);margin-left:8px;white-space:nowrap;}
-
-/* ── Log sidebar (couleurs) ── */
-.log-line{display:flex;gap:6px;line-height:1.4;}
-.log-ts{color:rgba(255,255,255,.2);flex-shrink:0;}
-.log-ok{color:var(--green);}.log-run{color:var(--cyan);}.log-warn{color:var(--amber);}.log-err{color:var(--red);}
 
 /* ── Signal log ── */
 #rp-sig-log{display:none;background:var(--surface);border-top:1px solid var(--border);max-height:110px;overflow-y:auto;flex-shrink:0;}
