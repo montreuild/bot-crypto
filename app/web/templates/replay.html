@@ -1,0 +1,804 @@
+{% extends "base.html" %}
+{% block title %} — Replay{% endblock %}
+
+{% block extra_head %}
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+{% endblock %}
+
+{% block page_styles %}
+/* ── Layout ── */
+.rp-layout{display:grid;grid-template-columns:240px 1fr;height:calc(100vh - 56px);overflow:hidden;}
+@media(max-width:860px){.rp-layout{grid-template-columns:1fr;height:auto;overflow:visible;}}
+
+/* ── Sidebar ── */
+.rp-sb{background:var(--surface);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;height:100%;}
+.sb-stat{display:flex;justify-content:space-between;align-items:center;padding:4px 0;}
+.sb-stat-lbl{font-size:.68rem;color:var(--muted);}
+.sb-stat-val{font-size:.73rem;font-family:var(--mono);font-weight:600;}
+
+/* ── Main area ── */
+.rp-main{display:flex;flex-direction:column;min-width:0;background:var(--bg);height:100%;overflow:hidden;}
+
+/* ── Welcome card ── */
+#rp-welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;padding:40px 24px;gap:16px;text-align:center;}
+.welcome-icon{font-size:2.5rem;opacity:.4;}
+.welcome-title{font-family:var(--head);font-size:1.1rem;font-weight:700;color:var(--text);}
+.welcome-sub{font-size:.82rem;color:var(--muted);max-width:380px;line-height:1.6;}
+.welcome-tips{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:440px;width:100%;margin-top:8px;}
+.tip-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;text-align:left;}
+.tip-icon{font-size:.95rem;margin-bottom:4px;}
+.tip-title{font-size:.72rem;font-weight:700;color:var(--text);margin-bottom:2px;}
+.tip-desc{font-size:.65rem;color:var(--muted);line-height:1.4;}
+
+/* ── Loading ── */
+#rp-loader{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:12px;padding:40px;}
+.loader-spin{width:32px;height:32px;border:3px solid var(--border-hi);border-top-color:var(--cyan);border-radius:50%;animation:sp .7s linear infinite;}
+.loader-msg{font-size:.82rem;color:var(--muted);}
+
+/* ── Chart wrapper ── */
+#rp-chart-wrap{position:relative;flex:1;min-height:0;background:#060b13;display:none;overflow:hidden;}
+#rp-chart{width:100%;height:100%;position:absolute;inset:0;}
+#rp-candle-info{position:absolute;top:10px;left:10px;background:rgba(6,11,19,.8);border:1px solid var(--border);border-radius:var(--r-sm);padding:5px 10px;font-family:var(--mono);font-size:.68rem;color:var(--muted);pointer-events:none;display:flex;gap:10px;flex-wrap:wrap;backdrop-filter:blur(4px);}
+.ci-item{display:flex;gap:4px;}
+.ci-lbl{color:var(--dim);}
+.ci-val{color:var(--text);}
+#rp-pos-badge{position:absolute;top:10px;right:10px;background:rgba(6,11,19,.85);border:1px solid var(--border);border-radius:var(--r-sm);padding:5px 10px;font-size:.7rem;font-family:var(--mono);color:var(--dim);pointer-events:none;backdrop-filter:blur(4px);}
+
+/* ── Controls bar ── */
+#rp-controls{display:none;flex-direction:column;gap:0;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0;}
+.ctrl-progress{padding:8px 14px 0;}
+.prog-track{width:100%;height:4px;background:var(--border-hi);border-radius:4px;cursor:pointer;position:relative;}
+.prog-fill{height:100%;background:var(--cyan);border-radius:4px;transition:width .05s linear;pointer-events:none;}
+.prog-thumb{position:absolute;top:50%;width:10px;height:10px;background:var(--cyan);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;box-shadow:0 0 0 2px rgba(34,211,238,.25);}
+.ctrl-row{display:flex;align-items:center;gap:6px;padding:8px 14px;}
+.ctrl-btns{display:flex;gap:4px;align-items:center;}
+.ctrl-btn{background:transparent;border:1px solid var(--border-hi);color:var(--muted);width:30px;height:28px;border-radius:var(--r-sm);cursor:pointer;font-size:.78rem;display:flex;align-items:center;justify-content:center;transition:all .12s;}
+.ctrl-btn:hover{color:var(--text);border-color:rgba(255,255,255,.2);}
+.ctrl-btn.play-btn{width:36px;height:36px;background:var(--cyan);color:#031218;border-color:var(--cyan);font-size:1rem;}
+.ctrl-btn.play-btn:hover{filter:brightness(1.1);}
+.ctrl-sep{width:1px;height:20px;background:var(--border);margin:0 4px;}
+.speed-btns{display:flex;gap:3px;margin-left:auto;}
+.spd{background:transparent;border:1px solid var(--border);color:var(--dim);padding:3px 8px;border-radius:3px;font-size:.67rem;font-weight:600;cursor:pointer;font-family:var(--mono);transition:all .12s;}
+.spd:hover{color:var(--text);border-color:var(--border-hi);}
+.spd.on{background:var(--cyan-dim);border-color:rgba(34,211,238,.4);color:var(--cyan);}
+.ctrl-pos{font-size:.68rem;font-family:var(--mono);color:var(--dim);margin-left:8px;white-space:nowrap;}
+
+/* ── Signal log ── */
+#rp-sig-log{display:none;background:var(--surface);border-top:1px solid var(--border);max-height:110px;overflow-y:auto;flex-shrink:0;}
+.sig-log-hdr{padding:5px 14px;font-size:.6rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--border);}
+.sig-list{display:flex;flex-direction:column;}
+.sig-row{display:flex;align-items:center;gap:8px;padding:4px 14px;border-bottom:1px solid rgba(255,255,255,.03);font-size:.7rem;font-family:var(--mono);}
+.sig-row:last-child{border-bottom:none;}
+.sig-time{color:var(--dim);font-size:.65rem;flex-shrink:0;}
+.sig-dir{flex-shrink:0;}
+.sig-price{color:var(--text);}
+.sig-pnl{margin-left:auto;font-weight:600;}
+{% endblock %}
+
+{% block topbar_content %}
+<div class="topbar-title">Replay Bougies</div>
+<div class="topbar-sep"></div>
+<div id="rp-topbar-info" style="display:none;font-size:.72rem;color:var(--muted);font-family:var(--mono);"></div>
+{% endblock %}
+
+{% block content %}
+<div class="rp-layout">
+
+  <!-- ── Sidebar ──────────────────────────────────────────────── -->
+  <aside class="rp-sb">
+
+    <div class="sb-section">
+      <div class="sb-label">Données</div>
+      <div class="sb-field">
+        <label>Paire</label>
+        <input type="text" id="i-sym" value="BTC/USDC" autocomplete="off" spellcheck="false" placeholder="BTC/USDC"/>
+      </div>
+      <div class="sb-field">
+        <label>Timeframe</label>
+        <select id="i-tf">
+          <option value="1m">1 minute</option>
+          <option value="5m">5 minutes</option>
+          <option value="15m">15 minutes</option>
+          <option value="30m">30 minutes</option>
+          <option value="1h" selected>1 heure</option>
+          <option value="4h">4 heures</option>
+          <option value="1d">1 jour</option>
+        </select>
+      </div>
+      <div class="sb-field">
+        <label>Période — <span id="months-lbl" style="color:var(--cyan)">6 mois</span></label>
+        <input type="range" id="i-months" min="1" max="24" value="6" step="1" style="width:100%"/>
+        <div class="sb-hint" id="bars-hint">≈ 4 320 bougies</div>
+      </div>
+    </div>
+
+    <div class="sb-divider"></div>
+
+    <div class="sb-section">
+      <div class="sb-label">Stratégie (overlay)</div>
+      <div class="sb-field">
+        <label>Signaux à afficher</label>
+        <select id="i-strat">
+          <option value="">— Aucun overlay —</option>
+        </select>
+      </div>
+      <div class="sb-hint">Les entrées/sorties apparaissent sous forme de marqueurs sur le graphique.</div>
+    </div>
+
+    <div class="sb-divider"></div>
+
+    <button class="btn btn-cyan btn-full" id="btn-load" onclick="loadData()">▶ Charger</button>
+    <button class="btn btn-stop btn-full" id="btn-cancel" style="display:none" onclick="cancelLoad()">■ Annuler</button>
+
+    <div id="rp-log" style="background:#050810;border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;font-size:.67rem;font-family:var(--mono);color:var(--dim);max-height:110px;overflow-y:auto;display:none;flex-direction:column;gap:2px;"></div>
+
+    <div class="sb-divider" id="stats-divider" style="display:none"></div>
+
+    <!-- Stats panel (shown after load) -->
+    <div id="rp-stats" style="display:none">
+      <div class="sb-label">Résumé session</div>
+      <div class="sb-stat"><span class="sb-stat-lbl">Bougies</span><span class="sb-stat-val" id="s-bars">—</span></div>
+      <div class="sb-stat"><span class="sb-stat-lbl">Période</span><span class="sb-stat-val" id="s-period">—</span></div>
+      <div class="sb-stat" id="s-trades-row" style="display:none"><span class="sb-stat-lbl">Trades</span><span class="sb-stat-val" id="s-trades">—</span></div>
+      <div class="sb-stat" id="s-wr-row" style="display:none"><span class="sb-stat-lbl">Win Rate</span><span class="sb-stat-val" id="s-wr">—</span></div>
+      <div class="sb-stat" id="s-pnl-row" style="display:none"><span class="sb-stat-lbl">PnL total</span><span class="sb-stat-val" id="s-pnl">—</span></div>
+    </div>
+
+  </aside>
+
+  <!-- ── Main ─────────────────────────────────────────────────── -->
+  <div class="rp-main">
+
+    <!-- Welcome -->
+    <div id="rp-welcome">
+      <div class="welcome-icon">▶</div>
+      <div class="welcome-title">Replay de bougies</div>
+      <div class="welcome-sub">Regardez défiler l'historique de marché bougie par bougie, à la vitesse de votre choix. Superposez les signaux d'une stratégie pour visualiser ses entrées et sorties en temps réel.</div>
+      <div class="welcome-tips">
+        <div class="tip-card">
+          <div class="tip-icon">⚡</div>
+          <div class="tip-title">Vitesse variable</div>
+          <div class="tip-desc">De 0.5x (lent) à MAX (instantané) — ajustable pendant la lecture.</div>
+        </div>
+        <div class="tip-card">
+          <div class="tip-icon">◎</div>
+          <div class="tip-title">Overlay stratégie</div>
+          <div class="tip-desc">Visualisez les signaux buy/sell de n'importe quelle stratégie en overlay.</div>
+        </div>
+        <div class="tip-card">
+          <div class="tip-icon">◀▶</div>
+          <div class="tip-title">Contrôle total</div>
+          <div class="tip-desc">Play, pause, pas à pas, scrub direct sur la barre de progression.</div>
+        </div>
+        <div class="tip-card">
+          <div class="tip-icon">↺</div>
+          <div class="tip-title">Multi-timeframe</div>
+          <div class="tip-desc">De 1 minute à 1 jour, jusqu'à 24 mois d'historique.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loader -->
+    <div id="rp-loader">
+      <div class="loader-spin"></div>
+      <div class="loader-msg" id="rp-loader-msg">Chargement des données…</div>
+    </div>
+
+    <!-- Chart (hidden until loaded) -->
+    <div id="rp-chart-wrap">
+      <div id="rp-chart"></div>
+      <div id="rp-candle-info">
+        <div class="ci-item"><span class="ci-lbl">O</span><span class="ci-val" id="ci-o">—</span></div>
+        <div class="ci-item"><span class="ci-lbl">H</span><span class="ci-val" id="ci-h">—</span></div>
+        <div class="ci-item"><span class="ci-lbl">L</span><span class="ci-val" id="ci-l">—</span></div>
+        <div class="ci-item"><span class="ci-lbl">C</span><span class="ci-val" id="ci-c">—</span></div>
+        <div class="ci-item"><span class="ci-lbl">V</span><span class="ci-val" id="ci-v">—</span></div>
+      </div>
+      <div id="rp-pos-badge">0 / 0</div>
+    </div>
+
+    <!-- Playback controls (hidden until loaded) -->
+    <div id="rp-controls">
+      <div class="ctrl-progress">
+        <div class="prog-track" id="prog-track">
+          <div class="prog-fill" id="prog-fill" style="width:0%"></div>
+          <div class="prog-thumb" id="prog-thumb" style="left:0%"></div>
+        </div>
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-btns">
+          <button class="ctrl-btn" title="Début (Home)" onclick="seekTo(0)">⏮</button>
+          <button class="ctrl-btn" title="-10 bougies" onclick="step(-10)">◀◀</button>
+          <button class="ctrl-btn" title="-1 bougie" onclick="step(-1)">◀</button>
+          <button class="ctrl-btn play-btn" id="btn-play" title="Play / Pause (Espace)" onclick="togglePlay()">▶</button>
+          <button class="ctrl-btn" title="+1 bougie" onclick="step(1)">▶</button>
+          <button class="ctrl-btn" title="+10 bougies" onclick="step(10)">▶▶</button>
+          <button class="ctrl-btn" title="Fin (End)" onclick="seekTo(-1)">⏭</button>
+        </div>
+        <div class="ctrl-sep"></div>
+        <div class="speed-btns" id="speed-btns">
+          <button class="spd" data-spd="0.5" onclick="setSpeed(0.5)">0.5×</button>
+          <button class="spd on" data-spd="1" onclick="setSpeed(1)">1×</button>
+          <button class="spd" data-spd="2" onclick="setSpeed(2)">2×</button>
+          <button class="spd" data-spd="5" onclick="setSpeed(5)">5×</button>
+          <button class="spd" data-spd="10" onclick="setSpeed(10)">10×</button>
+          <button class="spd" data-spd="20" onclick="setSpeed(20)">20×</button>
+          <button class="spd" data-spd="0" onclick="setSpeed(0)">MAX</button>
+        </div>
+        <div class="ctrl-pos" id="ctrl-pos">0 / 0</div>
+      </div>
+    </div>
+
+    <!-- Signal log (hidden until overlay loaded) -->
+    <div id="rp-sig-log">
+      <div class="sig-log-hdr">Signaux détectés</div>
+      <div class="sig-list" id="sig-list"></div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block body_scripts %}
+<script>
+// ── État ─────────────────────────────────────────────────────────────────────
+let _abortCtrl  = null;   // AbortController pour annuler le fetch
+let rpData      = null;   // Réponse complète de /api/backtest
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+(async function init() {
+  // Charger les stratégies disponibles
+  try {
+    const r = await apiFetch('/api/status');
+    if (r.ok) {
+      const d = await r.json();
+      const sel = document.getElementById('i-strat');
+      (d.strategies || []).forEach(s => {
+        const o = document.createElement('option');
+        o.value = o.textContent = s;
+        sel.appendChild(o);
+      });
+      // Préselectionner la première stratégie si dispo
+      if (d.strategies && d.strategies.length > 0) sel.value = d.strategies[0];
+
+      // Préselectionner le timeframe de la config
+      if (d.timeframe) {
+        const tf = document.getElementById('i-tf');
+        if ([...tf.options].some(o => o.value === d.timeframe)) tf.value = d.timeframe;
+      }
+    }
+  } catch(e) { /* silencieux */ }
+
+  // Mise à jour de l'estimation bougies
+  updateBarsHint();
+  document.getElementById('i-months').addEventListener('input', updateBarsHint);
+  document.getElementById('i-tf').addEventListener('change', updateBarsHint);
+
+  // Raccourcis clavier (actifs seulement quand chargé)
+  document.addEventListener('keydown', onKey);
+})();
+
+const TF_MINS = {
+  '1m':1,'3m':3,'5m':5,'15m':15,'30m':30,
+  '1h':60,'2h':120,'4h':240,'6h':360,'1d':1440
+};
+
+function updateBarsHint() {
+  const months = +document.getElementById('i-months').value;
+  const tf     = document.getElementById('i-tf').value;
+  document.getElementById('months-lbl').textContent =
+    months === 1 ? '1 mois' : `${months} mois`;
+  const bars = Math.round(months * 30 * 24 * 60 / (TF_MINS[tf] || 60));
+  document.getElementById('bars-hint').textContent =
+    `≈ ${bars.toLocaleString('fr-FR')} bougies`;
+}
+
+// ── Chargement des données ───────────────────────────────────────────────────
+async function loadData() {
+  const sym    = document.getElementById('i-sym').value.trim().toUpperCase();
+  const tf     = document.getElementById('i-tf').value;
+  const months = +document.getElementById('i-months').value;
+  const strat  = document.getElementById('i-strat').value;
+  const limit  = Math.min(50000, Math.max(100,
+    Math.round(months * 30 * 24 * 60 / (TF_MINS[tf] || 60))
+  ));
+
+  if (!/^[A-Z0-9]+\/[A-Z0-9]+$/.test(sym)) {
+    toast('Format de paire invalide (ex: BTC/USDC)', true); return;
+  }
+
+  // UI : état chargement
+  setUiState('loading');
+  logAdd('run', `Chargement ${sym} / ${tf} — ${months} mois (≈${limit} bougies)…`);
+  if (strat) logAdd('run', `Stratégie overlay : ${strat}`);
+
+  _abortCtrl = new AbortController();
+  try {
+    // Si pas d'overlay → on passe quand même une stratégie pour ne pas déclencher
+    // tous les backtests. On utilise la première stratégie dispo ou 'none'.
+    const firstStrat = document.getElementById('i-strat').options[1]?.value || '';
+    const stratForApi = strat || firstStrat;
+    const url = `/api/backtest?symbol=${encodeURIComponent(sym)}&limit=${limit}&timeframe=${tf}` +
+                (stratForApi ? `&strategies=${encodeURIComponent(stratForApi)}` : '');
+
+    logAdd('run', 'Connexion à l\'API…');
+    const r = await apiFetch(url, { method: 'POST', signal: _abortCtrl.signal });
+
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      throw new Error(e.detail || `HTTP ${r.status}`);
+    }
+    rpData = await r.json();
+    logAdd('ok', `${rpData.n_bars} bougies reçues — ${rpData.date_from} → ${rpData.date_to}`);
+    if (rpData.gaps_warning) logAdd('warn', rpData.gaps_warning);
+
+    setUiState('ready');
+    initReplay();
+
+  } catch(e) {
+    if (e.name === 'AbortError') {
+      logAdd('warn', 'Chargement annulé.');
+      setUiState('welcome');
+    } else {
+      logAdd('err', `Erreur : ${e.message}`);
+      toast(e.message, true);
+      setUiState('welcome');
+    }
+  }
+}
+
+function cancelLoad() {
+  if (_abortCtrl) _abortCtrl.abort();
+}
+
+// ── Gestion des états UI ────────────────────────────────────────────────────
+function setUiState(state) {
+  const welcome  = document.getElementById('rp-welcome');
+  const loader   = document.getElementById('rp-loader');
+  const chartW   = document.getElementById('rp-chart-wrap');
+  const controls = document.getElementById('rp-controls');
+  const sigLog   = document.getElementById('rp-sig-log');
+  const log      = document.getElementById('rp-log');
+  const btnLoad  = document.getElementById('btn-load');
+  const btnCancel= document.getElementById('btn-cancel');
+
+  welcome.style.display  = state === 'welcome'  ? 'flex' : 'none';
+  loader.style.display   = state === 'loading'  ? 'flex' : 'none';
+  chartW.style.display   = state === 'ready'    ? 'block': 'none';
+  controls.style.display = state === 'ready'    ? 'flex' : 'none';
+  btnLoad.style.display  = state !== 'loading'  ? ''     : 'none';
+  btnCancel.style.display= state === 'loading'  ? ''     : 'none';
+  log.style.display      = state !== 'welcome'  ? 'flex' : 'none';
+}
+
+// ── Log sidebar ──────────────────────────────────────────────────────────────
+function logAdd(type, msg) {
+  const log = document.getElementById('rp-log');
+  log.style.display = 'flex';
+  const now = new Date();
+  const ts  = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+  const cls = {ok:'log-ok', run:'log-run', warn:'log-warn', err:'log-err'}[type] || '';
+  const row = document.createElement('div');
+  row.className = 'log-line';
+  row.innerHTML = `<span class="log-ts">${ts}</span><span class="${cls}">${escHtml(msg)}</span>`;
+  log.appendChild(row);
+  log.scrollTop = log.scrollHeight;
+}
+
+// ── Moteur de replay ─────────────────────────────────────────────────────────
+let allCandles  = [];    // [{time, open, high, low, close, volume, isoTime}]
+let currentBar  = 0;     // Index de la bougie courante (0 = non encore affichée)
+let totalBars   = 0;
+let isPlaying   = false;
+let speed       = 1;     // multiplicateur de vitesse
+let _timer      = null;  // handle setInterval
+let _chart      = null;  // instance LightweightCharts
+let _series     = null;  // CandlestickSeries
+
+// ── Overlay stratégie ─────────────────────────────────────────────────────────
+let barToEntry  = {};    // barIdx → [trade]  (entrées)
+let barToExit   = {};    // barIdx → [trade]  (sorties/clôtures)
+let _markers    = [];    // markers TradingView actifs
+let _livePnl    = 0;
+let _liveTrades = 0;
+let _liveWins   = 0;
+
+// ms entre chaque bougie selon la vitesse (0 = pas de délai)
+const SPEED_MS = { 0.5: 800, 1: 400, 2: 200, 5: 80, 10: 40, 20: 20, 0: 0 };
+
+// ── Options du graphique ──────────────────────────────────────────────────────
+const TV_OPTS = {
+  layout:      { background: { color: '#060b13' }, textColor: '#5a6e8c' },
+  grid:        { vertLines: { color: 'rgba(255,255,255,.04)' }, horzLines: { color: 'rgba(255,255,255,.04)' } },
+  crosshair:   { mode: 1 },
+  rightPriceScale: { borderColor: 'rgba(255,255,255,.07)' },
+  timeScale:   { borderColor: 'rgba(255,255,255,.07)', timeVisible: true, secondsVisible: false },
+  handleScroll: true,
+  handleScale:  true,
+};
+
+// ── Initialisation du replay ─────────────────────────────────────────────────
+function initReplay() {
+  const ohlcv = rpData.ohlcv;
+  totalBars   = ohlcv.time.length;
+  currentBar  = 0;
+
+  // Construire le tableau de bougies (conversion timestamp → secondes Unix)
+  // Normalise "2025-01-15 12:00:00" → "2025-01-15T12:00:00" pour compatibilité multi-navigateurs
+  allCandles = ohlcv.time.map((t, i) => {
+    const d = new Date(t.replace(' ', 'T'));
+    return {
+      time:     Math.floor(d.getTime() / 1000),
+      open:     ohlcv.open[i],
+      high:     ohlcv.high[i],
+      low:      ohlcv.low[i],
+      close:    ohlcv.close[i],
+      volume:   ohlcv.volume ? ohlcv.volume[i] : 0,
+      isoTime:  t,
+    };
+  });
+
+  // Créer (ou recréer) le graphique
+  const wrap = document.getElementById('rp-chart-wrap');
+  const el   = document.getElementById('rp-chart');
+  el.innerHTML = '';
+  if (_chart) { try { _chart.remove(); } catch(e) {} }
+
+  // Forcer un reflow pour obtenir les vraies dimensions (évite clientWidth=0)
+  const chartW_px = wrap.offsetWidth  || wrap.clientWidth  || 800;
+  const chartH_px = wrap.offsetHeight || wrap.clientHeight || 500;
+  _chart  = LightweightCharts.createChart(el, {
+    ...TV_OPTS,
+    width:  chartW_px,
+    height: chartH_px,
+  });
+  _series = _chart.addCandlestickSeries({
+    upColor:          '#34d399',
+    downColor:        '#fb7185',
+    borderUpColor:    '#34d399',
+    borderDownColor:  '#fb7185',
+    wickUpColor:      '#34d399',
+    wickDownColor:    '#fb7185',
+  });
+
+  // Resize observer
+  if (window._rpResizeObs) window._rpResizeObs.disconnect();
+  window._rpResizeObs = new ResizeObserver(() => {
+    if (_chart) _chart.applyOptions({ width: wrap.clientWidth, height: wrap.clientHeight });
+  });
+  window._rpResizeObs.observe(wrap);
+
+  // Crosshair hover → mise à jour de l'info OHLCV
+  _chart.subscribeCrosshairMove(p => {
+    if (p.seriesData && p.seriesData.size > 0) {
+      const d = p.seriesData.get(_series);
+      if (d) updateCandleInfo(d);
+    }
+  });
+
+  // Statistiques sidebar
+  document.getElementById('s-bars').textContent   = totalBars.toLocaleString('fr-FR');
+  document.getElementById('s-period').textContent =
+    `${rpData.date_from?.slice(0,10)} → ${rpData.date_to?.slice(0,10)}`;
+  document.getElementById('stats-divider').style.display = '';
+  document.getElementById('rp-stats').style.display      = '';
+
+  // Topbar info
+  const ti = document.getElementById('rp-topbar-info');
+  ti.textContent = `${rpData.symbol}  ·  ${rpData.timeframe}  ·  ${totalBars.toLocaleString('fr-FR')} bougies`;
+  ti.style.display = '';
+
+  // ── Overlay stratégie ──────────────────────────────────────────────────
+  barToEntry  = {}; barToExit = {}; _markers = [];
+  _livePnl = 0; _liveTrades = 0; _liveWins = 0;
+  document.getElementById('sig-list').innerHTML = '';
+  document.getElementById('rp-sig-log').style.display = 'none';
+  document.getElementById('s-trades-row').style.display = 'none';
+  document.getElementById('s-wr-row').style.display = 'none';
+  document.getElementById('s-pnl-row').style.display = 'none';
+
+  const stratName = document.getElementById('i-strat').value;
+  if (stratName && rpData.by_strategy && rpData.by_strategy[stratName]) {
+    const sd     = rpData.by_strategy[stratName];
+    const trades = (sd.trades || []).filter(t => t.status === 'closed' || t.exit_bar != null);
+    trades.forEach(t => {
+      if (t.bar != null) {
+        barToEntry[t.bar] = barToEntry[t.bar] || [];
+        barToEntry[t.bar].push(t);
+      }
+      if (t.exit_bar != null) {
+        barToExit[t.exit_bar] = barToExit[t.exit_bar] || [];
+        barToExit[t.exit_bar].push(t);
+      }
+    });
+    if (trades.length > 0) {
+      document.getElementById('rp-sig-log').style.display = '';
+      document.getElementById('s-trades-row').style.display = '';
+      document.getElementById('s-wr-row').style.display = '';
+      document.getElementById('s-pnl-row').style.display = '';
+      updateLiveStats();
+      logAdd('ok', `${trades.length} trade(s) détecté(s) pour « ${stratName} »`);
+    }
+  }
+
+  // Afficher la première bougie immédiatement
+  _series.setData([]);
+  setSpeed(speed);
+  updateProgress();
+  logAdd('ok', `Graphique prêt — appuyez sur ▶ ou [Espace] pour démarrer.`);
+}
+
+// ── Boucle d'animation ────────────────────────────────────────────────────────
+function tick() {
+  if (currentBar >= totalBars) {
+    pause();
+    logAdd('ok', 'Fin du replay.');
+    return;
+  }
+
+  if (speed === 0 && isPlaying) {
+    // Mode MAX — batch de 100 par frame pour fluidité
+    let batch = 100;
+    while (batch-- > 0 && currentBar < totalBars) {
+      tickOne();
+    }
+    updateProgress();
+    if (currentBar < totalBars) {
+      _timer = requestAnimationFrame(tick);
+    } else {
+      isPlaying = false;
+      updatePlayBtn();
+      logAdd('ok', 'Fin du replay.');
+    }
+    return;
+  }
+
+  tickOne();
+  updateProgress();
+}
+
+function tickOne() {
+  const c = allCandles[currentBar];
+  _series.update({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
+  updateCandleInfo(c);
+  // Markers : entrées à ce bar
+  if (barToEntry[currentBar]) {
+    barToEntry[currentBar].forEach(t => pushMarker(t, 'entry'));
+  }
+  // Markers : sorties à ce bar
+  if (barToExit[currentBar]) {
+    barToExit[currentBar].forEach(t => {
+      pushMarker(t, 'exit');
+      addSigRow(t);
+      _liveTrades++;
+      if (t.pnl > 0) _liveWins++;
+      _livePnl += (t.pnl || 0);
+      updateLiveStats();
+    });
+    _series.setMarkers(_markers);  // flush après les sorties
+  }
+  currentBar++;
+}
+
+function startTimer() {
+  stopTimer();
+  if (speed === 0) {
+    _timer = requestAnimationFrame(tick);
+  } else {
+    const ms = SPEED_MS[speed] ?? 400;
+    _timer = setInterval(tick, ms);
+  }
+}
+
+function stopTimer() {
+  if (_timer !== null) {
+    if (speed === 0) cancelAnimationFrame(_timer);
+    else             clearInterval(_timer);
+    _timer = null;
+  }
+}
+
+// ── Contrôles ─────────────────────────────────────────────────────────────────
+function togglePlay() {
+  if (!_series) return;
+  isPlaying ? pause() : play();
+}
+
+function play() {
+  if (currentBar >= totalBars) seekTo(0);
+  isPlaying = true;
+  updatePlayBtn();
+  startTimer();
+}
+
+function pause() {
+  isPlaying = false;
+  updatePlayBtn();
+  stopTimer();
+}
+
+function step(n) {
+  if (!_series) return;
+  pause();
+  const target = Math.max(0, Math.min(totalBars, currentBar + n));
+  if (n > 0) {
+    // Avancer : passe par tickOne() pour déclencher markers + stats live
+    while (currentBar < target && currentBar < totalBars) {
+      tickOne();
+    }
+    updateProgress();
+  } else {
+    // Reculer : reconstruction complète depuis 0
+    seekTo(target);
+  }
+}
+
+function seekTo(pos) {
+  if (!_series || totalBars === 0) return;
+  pause();
+  const target = pos < 0 ? totalBars : Math.max(0, Math.min(pos, totalBars));
+
+  // Reconstruire les bougies
+  _series.setData([]);
+  const batch = [];
+  for (let i = 0; i < target; i++) {
+    const c = allCandles[i];
+    batch.push({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close });
+  }
+  if (batch.length) _series.setData(batch);
+
+  // Reconstruire les markers et stats live
+  _markers = []; _livePnl = 0; _liveTrades = 0; _liveWins = 0;
+  document.getElementById('sig-list').innerHTML = '';
+  for (let i = 0; i < target; i++) {
+    if (barToEntry[i]) barToEntry[i].forEach(t => pushMarker(t, 'entry', false));
+    if (barToExit[i])  barToExit[i].forEach(t => {
+      pushMarker(t, 'exit', false);
+      addSigRow(t);
+      _liveTrades++;
+      if (t.pnl > 0) _liveWins++;
+      _livePnl += (t.pnl || 0);
+    });
+  }
+  if (_markers.length) _series.setMarkers(_markers);
+  updateLiveStats();
+
+  currentBar = target;
+  if (currentBar > 0) updateCandleInfo(allCandles[currentBar - 1]);
+  updateProgress();
+}
+
+function setSpeed(s) {
+  const wasPlaying = isPlaying;
+  if (wasPlaying) stopTimer();
+  speed = s;
+  document.querySelectorAll('.spd').forEach(b =>
+    b.classList.toggle('on', parseFloat(b.dataset.spd) === s)
+  );
+  if (wasPlaying) startTimer();
+}
+
+// ── Mise à jour UI ────────────────────────────────────────────────────────────
+function updatePlayBtn() {
+  const btn = document.getElementById('btn-play');
+  btn.textContent = isPlaying ? '⏸' : '▶';
+  btn.title = isPlaying ? 'Pause (Espace)' : 'Play (Espace)';
+}
+
+function updateProgress() {
+  const pct = totalBars > 0 ? (currentBar / totalBars) * 100 : 0;
+  document.getElementById('prog-fill').style.width  = `${pct}%`;
+  document.getElementById('prog-thumb').style.left  = `${pct}%`;
+  const posText = `${currentBar.toLocaleString('fr-FR')} / ${totalBars.toLocaleString('fr-FR')}`;
+  document.getElementById('ctrl-pos').textContent    = posText;
+  document.getElementById('rp-pos-badge').textContent = posText;
+}
+
+function updateCandleInfo(c) {
+  const fmt = v => v != null ? (+v).toLocaleString('fr-FR', {maximumFractionDigits: 8}) : '—';
+  document.getElementById('ci-o').textContent = fmt(c.open);
+  document.getElementById('ci-h').textContent = fmt(c.high);
+  document.getElementById('ci-l').textContent = fmt(c.low);
+  document.getElementById('ci-c').textContent = fmt(c.close);
+  document.getElementById('ci-v').textContent = c.volume != null ? fmt(c.volume) : '—';
+}
+
+// ── Scrub sur la barre de progression ────────────────────────────────────────
+(function initScrub() {
+  let scrubbing = false;
+  const track = document.getElementById('prog-track');
+  function scrubPos(e) {
+    const rect = track.getBoundingClientRect();
+    const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    seekTo(Math.round(pct * totalBars));
+  }
+  track.addEventListener('mousedown',  e => { scrubbing = true; scrubPos(e); });
+  document.addEventListener('mousemove', e => { if (scrubbing) scrubPos(e); });
+  document.addEventListener('mouseup',   () => { scrubbing = false; });
+  // Touch
+  track.addEventListener('touchstart', e => { scrubbing = true; scrubPos(e.touches[0]); }, {passive:true});
+  document.addEventListener('touchmove', e => { if (scrubbing) scrubPos(e.touches[0]); }, {passive:true});
+  document.addEventListener('touchend',  () => { scrubbing = false; });
+})();
+
+// ── Raccourcis clavier ────────────────────────────────────────────────────────
+function onKey(e) {
+  if (!_series) return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  switch(e.key) {
+    case ' ':          e.preventDefault(); togglePlay(); break;
+    case 'ArrowRight': e.preventDefault(); step(e.shiftKey ? 10 : 1); break;
+    case 'ArrowLeft':  e.preventDefault(); step(e.shiftKey ? -10 : -1); break;
+    case 'Home':       e.preventDefault(); seekTo(0); break;
+    case 'End':        e.preventDefault(); seekTo(-1); break;
+    case '1':          setSpeed(1); break;
+    case '2':          setSpeed(2); break;
+    case '5':          setSpeed(5); break;
+    case '0':          setSpeed(0); break;
+  }
+}
+
+// ── Helpers markers ───────────────────────────────────────────────────────────
+function pushMarker(t, type, flush=true) {
+  const barIdx = type === 'entry' ? t.bar : t.exit_bar;
+  if (barIdx == null || barIdx >= allCandles.length) return;
+  const c = allCandles[barIdx];
+  if (!c) return;
+  const isLong = t.side === 'long';
+
+  if (type === 'entry') {
+    _markers.push({
+      time:     c.time,
+      position: isLong ? 'belowBar' : 'aboveBar',
+      color:    isLong ? '#34d399'  : '#fb7185',
+      shape:    isLong ? 'arrowUp'  : 'arrowDown',
+      text:     isLong ? '▲'        : '▼',
+    });
+  } else {
+    const won = (t.pnl || 0) >= 0;
+    _markers.push({
+      time:     c.time,
+      position: isLong ? 'aboveBar' : 'belowBar',
+      color:    won ? '#34d399' : '#fb7185',
+      shape:    'circle',
+      text:     won ? '✓' : '✗',
+    });
+  }
+  // TradingView exige des markers triés par temps
+  _markers.sort((a, b) => a.time - b.time);
+  if (flush) _series.setMarkers(_markers);
+}
+
+// ── Signal log ────────────────────────────────────────────────────────────────
+function addSigRow(t) {
+  const list = document.getElementById('sig-list');
+  const pnl  = t.pnl || 0;
+  const won  = pnl >= 0;
+  const dir  = t.side === 'long'
+    ? '<span class="tag tag-long">LONG</span>'
+    : '<span class="tag tag-short">SHORT</span>';
+  const pnlStr = `${won ? '+' : ''}${pnl.toFixed(2)}`;
+  const dt = t.exit_time ? String(t.exit_time).slice(0,16) : '—';
+  const row = document.createElement('div');
+  row.className = 'sig-row';
+  row.innerHTML =
+    `<span class="sig-time">${escHtml(dt)}</span>` +
+    `<span class="sig-dir">${dir}</span>` +
+    `<span class="sig-price">${t.exit != null ? (+t.exit).toLocaleString('fr-FR', {maximumFractionDigits:4}) : '—'}</span>` +
+    `<span class="sig-pnl" style="color:${won ? 'var(--green)' : 'var(--red)'}">${pnlStr}</span>`;
+  list.insertBefore(row, list.firstChild);  // plus récent en haut
+}
+
+// ── Stats live ────────────────────────────────────────────────────────────────
+function updateLiveStats() {
+  const wr = _liveTrades > 0 ? (_liveWins / _liveTrades * 100).toFixed(1) : '—';
+  document.getElementById('s-trades').textContent = _liveTrades || '0';
+  document.getElementById('s-wr').textContent     = _liveTrades > 0 ? `${wr}%` : '—';
+  const pnlEl = document.getElementById('s-pnl');
+  pnlEl.textContent  = _liveTrades > 0
+    ? `${_livePnl >= 0 ? '+' : ''}${_livePnl.toFixed(2)}`
+    : '—';
+  pnlEl.style.color  = _livePnl >= 0 ? 'var(--green)' : 'var(--red)';
+}
+</script>
+{% endblock %}

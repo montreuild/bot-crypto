@@ -19,12 +19,27 @@ from app.engine.backtest    import Backtester, WalkForwardAnalyzer, MonteCarlo
 from app.api.main           import app as fastapi_app, init_app
 
 
+# Nombre de minutes par timeframe — utilisé pour convertir des mois en nombre de bougies
+_TF_MINUTES = {
+    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+    "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480, "12h": 720, "1d": 1440,
+}
+
+def _months_to_limit(months: float, tf: str) -> int:
+    """Convertit un nombre de mois en nombre de bougies pour un timeframe donné."""
+    minutes_per_bar = _TF_MINUTES.get(tf, 60)
+    total_minutes   = months * 30 * 24 * 60
+    return max(100, int(total_minutes / minutes_per_bar))
+
+
 def parse_args():
     p = argparse.ArgumentParser(description="Crypto Bot V11")
     p.add_argument("--config",       default="config.yaml", help="Fichier de config")
     p.add_argument("--backtest",     metavar="SYMBOL",       help="Lancer un backtest CLI")
     p.add_argument("--timeframe",    default="",             help="Timeframe (défaut=config)")
-    p.add_argument("--limit",        type=int, default=500,  help="Nombre de bougies")
+    p.add_argument("--timeframes",   default="",             help="Multi-timeframes séparés par virgule (ex: 1h,4h,1d)")
+    p.add_argument("--limit",        type=int, default=0,    help="Nombre de bougies (prioritaire sur --months)")
+    p.add_argument("--months",       type=float, default=6.0,help="Période en mois (défaut=6, converti en bougies par TF)")
     p.add_argument("--walk-forward", action="store_true",    help="Activer Walk-Forward")
     p.add_argument("--monte-carlo",  action="store_true",    help="Activer Monte-Carlo")
     p.add_argument("--optimize",     metavar="STRATEGY",     help="Optimiser une stratégie")
@@ -38,20 +53,30 @@ def parse_args():
     return p.parse_args()
 
 
-def run_backtest_cli(cfg, args):
-    symbol = args.backtest
-    tf     = args.timeframe or cfg["trading"]["timeframe"]
+def _run_backtest_one_tf(cfg, args, exchange, symbol: str, tf: str,
+                         mc_runner, summary_rows: list) -> None:
+    """Exécute le backtest pour un symbol/tf et affiche les résultats."""
+    # Calcul du nombre de bougies
+    if args.limit > 0:
+        total = args.limit
+        period_label = f"{total} bougies"
+    else:
+        total = _months_to_limit(args.months, tf)
+        period_label = f"{args.months:.0f} mois (~{total} bougies)"
+
     print(f"\n{'='*60}")
-    print(f"  BACKTEST : {symbol} | TF={tf} | {args.limit} bougies")
+    print(f"  BACKTEST : {symbol} | TF={tf} | {period_label}")
     print(f"{'='*60}")
 
-    exchange = create_exchange(cfg)
-    df = get_store().fetch(exchange, symbol, tf, total=args.limit)
+    df = get_store().fetch(exchange, symbol, tf, total=total)
     if df is None or len(df) == 0:
         print(f"  Erreur : aucune donnée disponible pour {symbol}/{tf}")
         return
 
-    mc_runner = MonteCarlo(n_runs=cfg.get("backtest",{}).get("monte_carlo_runs", 200)) if args.monte_carlo else None
+    actual_bars = len(df)
+    date_from   = str(df["time"].min())[:10] if actual_bars > 0 else "?"
+    date_to     = str(df["time"].max())[:10] if actual_bars > 0 else "?"
+    print(f"  Données   : {actual_bars} bougies du {date_from} au {date_to}")
 
     for name in cfg["strategies"]["enabled"]:
         print(f"\n  -- Stratégie : {name}")
@@ -66,12 +91,17 @@ def run_backtest_cli(cfg, args):
         print(f"  Frais      : -{d['total_fees']:.4f} USDC")
         print(f"  Sharpe     : {d['sharpe']:.3f}")
         print(f"  Expectancy : {d['expectancy']:+.4f}")
-        print(f"  MAE moy.   : {d['avg_mae']:.4f}")
-        print(f"  MFE moy.   : {d['avg_mfe']:.4f}")
         print(f"  Max DD     : {d['max_drawdown']:.2f}%")
         print(f"  Profit Fct : {d['profit_factor']}")
 
-        if args.walk_forward and len(df) >= 200:
+        summary_rows.append({
+            "tf": tf, "strategy": name,
+            "trades": d["total_trades"], "wr": d["win_rate"],
+            "pnl": d["total_pnl"], "sharpe": d["sharpe"],
+            "dd": d["max_drawdown"], "pf": d["profit_factor"],
+        })
+
+        if args.walk_forward and actual_bars >= 200:
             print(f"\n  Walk-Forward ({cfg.get('backtest',{}).get('walk_forward_folds', 5)} folds)...")
             wf  = WalkForwardAnalyzer(eng, cfg)
             wfr = wf.run(df, symbol)
@@ -89,7 +119,39 @@ def run_backtest_cli(cfg, args):
             print(f"  Prob profit   : {mc['prob_profit']:.1f}%")
             print(f"  Prob ruine -10%:{mc['prob_ruin_10pct']:.1f}%")
 
-    print(f"\n{'='*60}\n")
+
+def run_backtest_cli(cfg, args):
+    symbol = args.backtest
+
+    # Résolution des timeframes à tester
+    if args.timeframes:
+        timeframes = [t.strip() for t in args.timeframes.split(",") if t.strip()]
+    elif args.timeframe:
+        timeframes = [args.timeframe]
+    else:
+        timeframes = [cfg["trading"]["timeframe"]]
+
+    exchange  = create_exchange(cfg)
+    mc_runner = MonteCarlo(n_runs=cfg.get("backtest",{}).get("monte_carlo_runs", 200)) if args.monte_carlo else None
+    summary_rows: list = []
+
+    for tf in timeframes:
+        _run_backtest_one_tf(cfg, args, exchange, symbol, tf, mc_runner, summary_rows)
+
+    # Tableau récapitulatif multi-TF
+    if len(timeframes) > 1 and summary_rows:
+        print(f"\n{'='*80}")
+        print(f"  RECAP MULTI-TIMEFRAME : {symbol}")
+        print(f"{'='*80}")
+        print(f"  {'TF':<6} {'Stratégie':<25} {'Trades':>6} {'WR%':>6} {'PnL':>10} {'Sharpe':>7} {'DD%':>7} {'PF':>6}")
+        print(f"  {'-'*75}")
+        for r in summary_rows:
+            pnl_str = f"{r['pnl']:+.2f}"
+            pf_str  = f"{r['pf']:.2f}" if isinstance(r['pf'], float) else str(r['pf'])
+            print(f"  {r['tf']:<6} {r['strategy']:<25} {r['trades']:>6} "
+                  f"{r['wr']:>5.1f}% {pnl_str:>10} {r['sharpe']:>7.3f} "
+                  f"{r['dd']:>6.2f}% {pf_str:>6}")
+        print(f"{'='*80}\n")
 
 
 def run_optimizer_cli(cfg, args):

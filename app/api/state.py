@@ -18,6 +18,8 @@ _bt_semaphore      = threading.Semaphore(1)   # un seul backtest à la fois
 _opt_semaphore     = threading.Semaphore(1)   # un seul démarrage optimizer à la fois
 _config_write_lock = threading.Lock()         # écritures concurrentes sur config.yaml
 _bt_cancel_event   = threading.Event()        # signal d'arrêt pour le backtest en cours
+_rp_semaphore      = threading.Semaphore(1)   # un seul replay à la fois
+_rp_cancel_event   = threading.Event()        # signal d'arrêt pour le replay en cours
 
 # ── Cache découverte stratégies ────────────────────────────────────────────
 _strategies_cache:    frozenset | None = None
