@@ -1,28 +1,4 @@
-"""
-API FastAPI — V12 (Paper Mode réaliste — slippage, capital settled, persistence)
-
-Nouveautés V12 :
-  - Paper mode réaliste : slippage adverse appliqué à chaque fill (paper_slippage, défaut 0.1 %)
-  - Suivi capital settled (_paper_base) séparé du capital_display (PnL non réalisé exclu du sizing)
-  - Restauration du capital settled au redémarrage depuis la dernière DailyStats.equity_close
-  - Blocage d'entrée en paper si capital disponible (settled − notionals verrouillés) insuffisant
-  - Nouveau paramètre paper_slippage dans l'API config et l'interface web
-
-Nouveautés V11 :
-  - CandleStore : données OHLCV persistées en Parquet par paire/TF
-  - /api/candles/stats GET : statistiques du cache local
-  - Backtest, optimizer et ML training utilisent le cache local
-    → moins de requêtes exchange, historique accumulé automatiquement
-
-Structure des routes :
-  api/routes/config.py    — /api/config, /api/config/*
-  api/routes/trades.py    — /api/trades, /api/stats, /api/risk
-  api/routes/backtest.py  — /api/backtest
-  api/routes/scanner.py   — /api/scanner, /api/scanner/*
-  api/routes/optimizer.py — /api/optimize/*
-  api/routes/bot.py       — /api/bot/start, /api/bot/stop
-  api/routes/ml.py        — /api/ml/*, /api/candles/stats
-"""
+"""API FastAPI du Crypto Bot — point d'entrée, middlewares, pages web et status."""
 import logging
 import os
 
@@ -41,15 +17,11 @@ logger = logging.getLogger(__name__)
 
 # ── Application ────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Crypto Bot V12",
-    version="12.0.0",
+    title="Crypto Bot",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
-    description=(
-        "API de trading algorithmique multi-stratégies. "
-        "Tous les endpoints protégés exigent l'en-tête `X-API-Key`."
-    ),
+    description="API de trading algorithmique multi-stratégies. Tous les endpoints protégés exigent `X-API-Key`.",
     default_response_class=CleanJSONResponse,
 )
 
@@ -76,7 +48,7 @@ except Exception:
 
 # ── Initialisation ─────────────────────────────────────────────────────────
 def init_app(config: dict, live_trader=None):
-    """Appelé au démarrage pour injecter la config et le trader dans l'état partagé."""
+    """Injecte la config et le trader dans l'état partagé au démarrage."""
     state.cfg    = config
     state.trader = live_trader
     _, state.SessionLocal = init_db(config["database"]["url"])
@@ -85,12 +57,11 @@ def init_app(config: dict, live_trader=None):
 # ── Health check (sans auth) ───────────────────────────────────────────────
 @app.get("/health")
 def health_check():
-    """Vérification de l'état du service (pas d'auth requise)."""
+    """Santé du service (pas d'auth requise)."""
     db_ok       = state.SessionLocal is not None
     exchange_ok = state.cfg is not None
     return {
         "status":   "ok" if (db_ok and exchange_ok) else "degraded",
-        "version":  "12.0.0",
         "db":       db_ok,
         "exchange": exchange_ok,
         "trader":   state.trader is not None and getattr(state.trader, "running", False),
@@ -143,7 +114,7 @@ def replay_page(request: Request):
     return _tpl("replay.html", request, {"active_page": "replay"})
 
 
-# ── Status (pas dans un router pour garder l'accès à state.cfg direct) ────
+# ── Status (accès direct à state.cfg, hors router) ────────────────────────
 @app.get("/api/status")
 def get_status(request: Request):
     if not state.cfg:
@@ -159,7 +130,6 @@ def get_status(request: Request):
             "timeframes", [state.cfg["trading"].get("timeframe", "1h")]
         ),
         "strategies": state.cfg["strategies"]["enabled"],
-        "version":    "12.0.0",
     }
     if authenticated:
         base["capital"] = (state.trader.capital_display
