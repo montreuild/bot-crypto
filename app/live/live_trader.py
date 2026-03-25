@@ -169,6 +169,7 @@ class LiveTrader(PositionMixin):
         self.cycle_count      = 0
         self._ml_retrain_at        = 0
         self.capital_display  = cfg["trading"]["capital"]
+        self._paper_base      = self._restore_paper_base(cfg["trading"]["capital"])  # settled equity paper
         self.last_scan_time   = None
         self.last_symbols_scanned = []
 
@@ -499,10 +500,12 @@ class LiveTrader(PositionMixin):
             self.allocator.register_open(slot_key, notional)
 
         # 6. Synchro solde + rapport
-        if self._margin_enabled and time.time() >= self._margin_next_sync:
+        if self.cfg["trading"].get("paper_mode"):
+            self._sync_paper_balance()
+        elif self._margin_enabled and time.time() >= self._margin_next_sync:
             self._sync_margin_account()
             self._margin_next_sync = time.time() + 60
-        elif not self.cfg["trading"].get("paper_mode") and self.cycle_count % 10 == 0:
+        elif self.cycle_count % 10 == 0:
             self._sync_spot_balance()
         if self.cycle_count % 10 == 0:
             self._send_status_report()
@@ -674,6 +677,15 @@ class LiveTrader(PositionMixin):
     def _pre_execution_check(self, symbol: str, side: str, size: float,
                               price: float, notional: float) -> bool:
         if self.cfg["trading"].get("paper_mode"):
+            # Vérification capital disponible simulé
+            locked = sum(p.get("notional", 0) for p in self.open_positions.values())
+            available = self._paper_base - locked
+            if notional > available:
+                logger.warning(
+                    f"[Paper] {symbol} : capital simulé insuffisant "
+                    f"(dispo={available:.2f} < notional={notional:.2f})"
+                )
+                return False
             return True
         if self.capital_display < notional * 0.05:
             logger.warning(f"[PreCheck] {symbol} : capital insuffisant")
@@ -760,6 +772,41 @@ class LiveTrader(PositionMixin):
                     self.risk.update_equity(free_usdc)
         except Exception as e:
             logger.warning(f"[MARGIN] sync KO : {e}")
+
+    def _restore_paper_base(self, initial: float) -> float:
+        """Restaure le capital settled paper depuis la dernière equity_close en BDD."""
+        if not self.cfg["trading"].get("paper_mode"):
+            return initial
+        try:
+            from app.core.database import DailyStats
+            sess = self.SessionLocal()
+            try:
+                last = sess.query(DailyStats).order_by(DailyStats.date.desc()).first()
+                if last and last.equity_close and last.equity_close > 0:
+                    logger.info(f"[Paper] Capital settled restauré : {last.equity_close:.2f} (date={last.date})")
+                    return float(last.equity_close)
+            finally:
+                sess.close()
+        except Exception as e:
+            logger.warning(f"[Paper] Impossible de restaurer capital settled : {e}")
+        return initial
+
+    def _sync_paper_balance(self):
+        """Paper mode : capital_display = equity settled + PnL non réalisé des positions ouvertes."""
+        unrealized = 0.0
+        for pos in self.open_positions.values():
+            ticker = self._safe_ticker(pos["symbol"])
+            if ticker:
+                price = ticker.get("last", pos["entry"])
+                if pos["side"] == "long":
+                    unrealized += (price - pos["entry"]) * pos["size"]
+                else:
+                    unrealized += (pos["entry"] - price) * pos["size"]
+        total = self._paper_base + unrealized
+        with self._capital_lock:
+            self.capital_display = round(total, 4)
+        self.risk.update_equity(self.capital_display)
+        self.allocator.update_equity(self.capital_display)
 
     def _sync_spot_balance(self):
         try:

@@ -417,6 +417,11 @@
           </label>
           <span class="toggle-lbl">Mode Paper (simulation)</span>
         </div>
+        <div class="field-row" id="paper-slippage-row">
+          <label class="field-lbl">Slippage paper <span class="field-unit">%</span></label>
+          <input type="number" id="paper-slippage" min="0" max="1" step="0.01" placeholder="0.10"
+                 title="Glissement de prix adverse simulé sur chaque fill (0.1% = réaliste pour marché orders crypto)"/>
+        </div>
         <div id="paper-warn" class="warn-box" style="display:none">
           ⚠ Désactiver le paper mode active le <strong>LIVE TRADING RÉEL</strong>.
           Les ordres seront exécutés avec votre capital. Redémarrez le bot après changement.
@@ -834,6 +839,7 @@ function renderTradingParams() {
   $('daily-dd').value       = ((t.daily_drawdown_limit ?? 0.05) * 100).toFixed(1);
   $('max-pos').value        = t.max_positions ?? 5;
   $('paper-toggle').checked = t.paper_mode ?? true;
+  $('paper-slippage').value = +((t.paper_slippage ?? 0.001) * 100).toFixed(2);
   $('paper-warn').style.display = (t.paper_mode === false) ? '' : 'none';
   $('paper-toggle').addEventListener('change', () => {
     $('paper-warn').style.display = !$('paper-toggle').checked ? '' : 'none';
@@ -886,6 +892,7 @@ async function applyTrading() {
     daily_drawdown_limit: (parseFloat($('daily-dd').value) / 100).toFixed(4),
     max_positions:        $('max-pos').value,
     paper_mode:           $('paper-toggle').checked,
+    paper_slippage:       (parseFloat($('paper-slippage').value) / 100).toFixed(4),
   });
   const btn = $('btn-apply-trading');
   const origText = btn ? btn.innerHTML : '';

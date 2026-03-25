@@ -33,7 +33,7 @@ DEFAULTS = {
         "max_trades_per_minute": 3, "min_volume_usdc_24h": 5_000_000,
         "taker_fee": 0.001, "maker_fee": 0.0004, "borrow_rate_daily": 0.0002,
         "max_leverage": 1, "max_drawdown_global": 0.20, "spread_pct": 0.0005,
-        "latency_ms": 50,
+        "latency_ms": 50, "paper_slippage": 0.001,
     },
     "backtest": {
         "spread_pct": 0.0005, "latency_ms": 50, "partial_fill_pct": 0.95,
