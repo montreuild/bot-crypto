@@ -1,14 +1,6 @@
 """
-CapitalAllocator — Allocation du capital par slot (stratégie × timeframe).
-
-Chaque slot "strategy::tf" (ex: "trend::1h", "breakout::4h") est une entité
-indépendante avec son propre budget, son exposition courante et son historique P&L.
-
-Règles :
-  - Allocation initiale : 100% / N slots (parts égales)
-  - Cap dur : 30% max par slot
-  - Rééquilibrage hebdomadaire (lundi 00:00 UTC) basé sur profit_factor 7j
-  - Corrélation : ≥75% même sens → bloquer nouvelles entrées ce sens
+CapitalAllocator — allocation du capital par slot (strategy::tf).
+Rééquilibrage hebdomadaire basé sur profit_factor, cap 30% par slot.
 """
 import logging
 import time

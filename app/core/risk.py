@@ -1,12 +1,6 @@
 """
-Module Gestion du risque & portfolio :
-  - Risk-per-trade dynamique (réduit en drawdown)
-  - Circuit breaker journalier + global
-  - Circuit breakers par slot (strategy::tf) : consecutive losses, daily DD, win rate
-  - Volatility brake : ATR BTC > seuil → tailles ×0.5
-  - Anti-spam (max trades/min)
-  - Gestion levier et exposition max
-  - Hedge detection
+Gestion du risque et du portfolio :
+circuit breakers global et par slot, sizing, volatility brake, anti-spam.
 """
 import logging
 import time
@@ -159,29 +153,22 @@ class RiskManager:
         return True, ""
 
     def update_slot_result(self, slot_key: str, pnl: float, won: bool):
-        """
-        Met à jour l'état de risque d'un slot après clôture d'une position.
-        Déclenche les circuit breakers si les seuils sont atteints.
-        """
+        """Met à jour l'état de risque d'un slot après clôture et déclenche les CBs si besoin."""
         state = self._get_slot_state(slot_key)
 
-        # Mise à jour daily P&L slot
         today = self._today()
         if state.day_key != today:
             state.daily_pnl = 0.0
             state.day_key   = today
         state.daily_pnl += pnl
-
-        # Mise à jour historique trades
         state.last_trades.append(won)
 
-        # Mise à jour consecutive losses
         if won:
             state.consecutive_losses = 0
         else:
             state.consecutive_losses += 1
 
-        # CB 1 : pertes consécutives
+        # CB : pertes consécutives
         if state.consecutive_losses >= self._consec_loss_limit and not state.is_paused():
             state.paused_until = time.time() + self._consec_pause_secs
             state.pause_reason = f"{state.consecutive_losses} pertes consécutives"
@@ -194,10 +181,9 @@ class RiskManager:
                     async_=True
                 )
 
-        # CB 2 : DD journalier du slot
+        # CB : DD journalier du slot
         slot_dd_pct = _safe_div(-state.daily_pnl, max(self.equity, 1.0))
         if slot_dd_pct >= self._slot_daily_dd_limit and not state.is_paused():
-            # Pause jusqu'à minuit UTC
             midnight = datetime.now(timezone.utc).replace(
                 hour=23, minute=59, second=59, microsecond=0
             )
@@ -210,11 +196,11 @@ class RiskManager:
                     async_=True
                 )
 
-        # CB 3 : win rate plancher (sur les 15 derniers trades)
+        # CB : win rate plancher (15 derniers trades)
         if len(state.last_trades) >= 15:
             wr = state.win_rate()
             if wr < self._win_rate_floor and not state.is_paused():
-                state.paused_until = time.time() + 86400  # 24h
+                state.paused_until = time.time() + 86400
                 state.pause_reason = f"Win rate {wr:.0%} < {self._win_rate_floor:.0%} (15 trades)"
                 logger.warning(f"[Risk] CB slot {slot_key} — {state.pause_reason} → pause 24h")
                 if self._notifier:
@@ -231,11 +217,7 @@ class RiskManager:
 
     # ── Volatility brake ───────────────────────────────────────────────────
     def update_volatility(self, btc_atr_pct: float):
-        """
-        Met à jour le volatility brake.
-        btc_atr_pct = ATR BTC 1h exprimé en % du prix (ex: 0.04 = 4%).
-        Si > seuil configuré : tailles × 0.5.
-        """
+        """Met à jour le volatility brake (ATR BTC en % du prix). Tailles ×0.5 si actif."""
         was_active = self.volatility_brake_active
         self.volatility_brake_active = btc_atr_pct > self._volatility_threshold
         self.volatility_brake_factor = 0.5 if self.volatility_brake_active else 1.0
@@ -261,22 +243,15 @@ class RiskManager:
 
     def compute_size(self, entry: float, atr: float,
                      score: float = 1.0, threshold: float = 0.60) -> tuple:
-        """
-        Calcule la taille de position et le notionnel.
-        Intègre le volatility_brake_factor (×0.5 si actif).
-        """
+        """Calcule taille et notionnel, en intégrant score_factor et volatility_brake."""
         risk_amount  = self.equity * self.compute_risk()
         size         = risk_amount / max(atr, 1e-8)
         notional     = size * entry
         max_notional = self.equity * self.max_notional_pct
 
-        # Modulation par le score
         score_range  = max(1.0 - threshold, 1e-9)
         score_factor = 0.5 + 0.5 * min(max(score - threshold, 0) / score_range, 1.0)
-        size        *= score_factor
-
-        # Volatility brake
-        size *= self.volatility_brake_factor
+        size        *= score_factor * self.volatility_brake_factor
 
         notional = size * entry
         if notional > max_notional:

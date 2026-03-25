@@ -1,16 +1,5 @@
-"""
-Stratégie SuperTrend + MACD — V6
+"""Stratégie SuperTrend + MACD — confirmation de tendance avec cross et continuation."""
 
-Corrections V6 vs V5 :
-  - param_space réduit à 5 paramètres clés : st_period, st_mult, macd_fast, macd_slow, vol_min
-    → 3^5 = 243 combinaisons (vs 59 049 en V5) — optimisation ~240× plus rapide
-  - Paramètres secondaires déplacés en fixed_params : rsi, cooldown, rr_min, macd_signal, tp_mult
-  - Target corrigé : forward-looking via atr_val × tp_mult (au lieu de high[-20:].max() biaisé passé)
-  - Stop simplifié : st_val directement (ligne SuperTrend = stop naturel, sans offset 0.3 ATR bruité)
-  - Conditions simplifiées : 2 cas long/short bien distincts (cross + continuation)
-  - RSI zone élargie légèrement [35-68] pour générer suffisamment de trades en backtest
-  - Trend filter assoupli : ±3% EMA200 (était ±2.5%) pour réduire les faux rejets
-"""
 import logging
 from typing import Dict, Any, List
 import polars as pl

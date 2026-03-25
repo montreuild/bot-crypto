@@ -1,16 +1,5 @@
-"""
-Stratégie Trend Following — V5
+"""Stratégie Trend Following — tendance EMA + ADX + MACD avec filtres volume et R:R."""
 
-Corrections V5 vs V4 :
-  - Cooldown par symbole
-  - ADX minimum relevé à 22 (était 18 — trop permissif en range)
-  - Ajout MACD comme filtre momentum : cross ou accélération requis
-  - Filtre overextension réduit à 1.5% (était 2%, trop large)
-  - Volume minimum relevé à 1.0× (était 0.9×)
-  - R:R check avant signal
-  - HTF trend intégré comme bonus/filtre
-  - Score rebasé plus conservateur : 0.60
-"""
 import logging
 from typing import Dict, Any, List
 import polars as pl

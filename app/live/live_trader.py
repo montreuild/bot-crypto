@@ -1,16 +1,4 @@
-"""
-LiveTrader V11 — Multi-Timeframe + CandleStore
-
-Nouveautés V11 :
-  - Toutes les données OHLCV passent par CandleStore (Parquet persistant)
-  - Fetch incrémental : seules les nouvelles bougies sont récupérées à chaque cycle
-  - Historique accumulé : backtest, optimizer, paper mode, retrain ML bénéficient
-    des données stockées localement sans re-fetcher depuis l'exchange
-
-Structure :
-  live/position_mixin.py  — cycle de vie des positions (_open/_manage/_close/_serialize)
-  live/live_trader.py     — boucle principale, cache OHLCV, scan, ML, auto-opt, status
-"""
+"""LiveTrader — boucle principale, cache OHLCV via CandleStore, scan multi-TF, ML, auto-opt."""
 import importlib
 import logging
 import math

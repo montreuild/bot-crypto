@@ -1,13 +1,4 @@
-"""
-Routes scanner de marché — screen, opportunités, et graphique OHLCV + indicateurs.
-
-Endpoints :
-  GET /api/scanner
-  GET /api/scanner/config
-  GET /api/scanner/opportunities
-  GET /api/scanner/chart
-  GET /api/scanner/signals
-"""
+"""Routes scanner — screen, opportunités, graphique OHLCV et signaux."""
 import importlib
 import logging
 import math
@@ -80,7 +71,7 @@ def scanner_opportunities(timeframe: str = None, limit: int = 200):
 
 @router.get("/api/scanner/chart", dependencies=[Depends(verify_api_key)])
 def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 300):
-    """Retourne les bougies OHLCV + séries indicateurs pour le graphique du scanner."""
+    """Retourne bougies OHLCV + séries indicateurs pour le graphique scanner."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     try:
@@ -108,7 +99,7 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
             for i in range(n)
         ]
 
-        # ── Indicateurs ───────────────────────────────────────────────────
+        # Indicateurs
         ema20_s  = close.ewm_mean(span=20,  adjust=False).to_list()
         ema50_s  = close.ewm_mean(span=50,  adjust=False).to_list()
         ema100_s = close.ewm_mean(span=100, adjust=False).to_list() if n >= 50  else [None] * n
@@ -214,13 +205,7 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
 
 @router.get("/api/scanner/signals", dependencies=[Depends(verify_api_key)])
 def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 300):
-    """
-    Exécute toutes les stratégies découvertes sur le symbole donné et retourne
-    leurs signaux (side: long/short/none, score, reason).
-    Les stratégies ML tentent de charger un modèle pré-entraîné ; si aucun modèle
-    n'est disponible, elles sont marquées skipped=True.
-    Les stratégies présentes dans la config enabled sont marquées active=True.
-    """
+    """Exécute toutes les stratégies sur le symbole et retourne leurs signaux."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     try:
@@ -243,7 +228,7 @@ def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int 
                 if cls is None:
                     continue
                 inst = cls()
-                # ML strategies: try to load a pre-trained model; skip if none available
+                # Stratégies ML : charger un modèle pré-entraîné ou marquer skipped
                 if isinstance(inst, BaseStrategyML):
                     model_path = f"{inst.model_dir}/{name}_{tf}.pkl"
                     if not inst.load_model(model_path):
@@ -256,7 +241,7 @@ def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int 
                             "active":   is_active,
                         })
                         continue
-                    # Model loaded — run inference only (managed_externally disables inline training)
+                    # Modèle chargé — inférence seulement (pas de réentraînement inline)
                     inst.managed_externally = True
                 result = inst.score(df, state.cfg.get("strategy_params", {}))
                 side   = result.get("side", "none")

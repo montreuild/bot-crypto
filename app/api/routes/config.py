@@ -1,21 +1,4 @@
-"""
-Routes de configuration — gestion de config.yaml via l'API.
-
-Endpoints :
-  GET  /api/config
-  POST /api/config/strategies
-  POST /api/config/timeframes
-  POST /api/config/auto-optimizer
-  POST /api/config/trading
-  POST /api/config/risk
-  POST /api/config/strategy-params
-  GET  /api/backtest/settings
-  GET  /api/config/changelog
-  GET  /api/config/notifications
-  POST /api/config/notifications
-  POST /api/config/notifications/test
-  POST /api/config/margin
-"""
+"""Routes configuration — lecture et mise à jour de config.yaml via l'API."""
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -28,7 +11,7 @@ router = APIRouter()
 
 
 def _save_yaml(updates_fn):
-    """Applique updates_fn(disk_cfg) puis réécrit config.yaml de façon thread-safe."""
+    """Applique updates_fn(disk_cfg) et réécrit config.yaml (thread-safe)."""
     import yaml as _yaml
     with state._config_write_lock:
         with open("config.yaml", "r", encoding="utf-8") as f:
@@ -91,7 +74,7 @@ def update_strategies(enabled: str = ""):
 
 @router.post("/api/config/timeframes", dependencies=[Depends(verify_api_key)])
 def update_timeframes(timeframes: str = "1h"):
-    """Met à jour les timeframes actifs. timeframes = CSV ex: '5m,1h,4h'"""
+    """Met à jour les timeframes actifs (CSV, ex: '5m,1h,4h')."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     allowed_tfs = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
@@ -213,7 +196,7 @@ def update_risk_config(
         if val is not None:
             state.cfg.setdefault("risk", {})[key] = val
             changed[key] = val
-            # Apply à chaud sur le RiskManager
+            # Applique à chaud sur le RiskManager
             if state.trader and hasattr(state.trader.risk, f"_{key}"):
                 setattr(state.trader.risk, f"_{key}", val)
 
@@ -382,7 +365,7 @@ def update_notifications_config(
 def test_notification():
     if not state.trader:
         raise HTTPException(503, "Trader non initialisé")
-    state.trader.notif.send("🔔 Test de notification depuis le bot V11", async_=False)
+    state.trader.notif.send("🔔 Test de notification depuis le bot", async_=False)
     return {"status": "sent"}
 
 

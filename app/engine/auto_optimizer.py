@@ -1,12 +1,4 @@
-"""
-AutoOptimizer V8 — Multi-Timeframe.
-
-Nouveautés V8 :
-  - Job_id format : "strategy@tf@symbol" (ex: "trend@1h@BTC/USDC")
-  - Optimise chaque (strategy, tf) sur BTC/USDC comme paire représentative
-  - Persiste dans optimizer_results via save_optimizer_results()
-  - Reload dynamique des stratégies actives dans le LiveTrader
-"""
+"""AutoOptimizer — optimisation asynchrone multi-timeframe par jobs (strategy@tf@symbol)."""
 import importlib
 import logging
 import math
@@ -27,8 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def _is_ml_strategy(name: str) -> bool:
-    """Retourne True si la stratégie hérite de BaseStrategyML.
-    Évite de maintenir un set magique de noms — la détection est structurelle."""
+    """Retourne True si la stratégie hérite de BaseStrategyML (détection structurelle)."""
     try:
         mod = importlib.import_module(f"app.strategies.{name}")
         return issubclass(mod.Strategy, BaseStrategyML)

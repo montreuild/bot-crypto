@@ -1,17 +1,4 @@
-"""
-Routes trades, statistiques et gestion du risque.
-
-Endpoints :
-  GET  /api/trades
-  GET  /api/trades/export
-  GET  /api/stats/daily
-  GET  /api/risk
-  POST /api/risk/reset-halt
-  GET  /api/capital-allocation
-  GET  /api/circuit-breakers
-  GET  /api/audit/results
-  GET  /api/strategy/{slot_key}/performance
-"""
+"""Routes trades, statistiques journalières et risque."""
 import csv
 import io
 import logging
@@ -29,7 +16,7 @@ router = APIRouter()
 @router.get("/api/trades", dependencies=[Depends(verify_api_key)])
 def list_trades(limit: int = 100, offset: int = 0,
                 symbol: str = None, strategy: str = None):
-    """Retourne les trades paginés. Paramètres : limit, offset, symbol, strategy."""
+    """Retourne les trades paginés avec filtres optionnels symbol/strategy."""
     if not state.SessionLocal:
         raise HTTPException(503, "DB non initialisée")
     limit  = max(1, min(limit, 1000))
@@ -60,7 +47,7 @@ def list_trades(limit: int = 100, offset: int = 0,
 
 @router.get("/api/trades/export", dependencies=[Depends(verify_api_key)])
 def export_trades(limit: int = 10000):
-    """Export CSV des trades. limit = nombre max de trades (défaut 10 000, max 50 000)."""
+    """Export CSV des trades (max 50 000)."""
     if not state.SessionLocal:
         raise HTTPException(503, "DB non initialisée")
     export_limit = max(1, min(limit, 50000))
@@ -173,10 +160,7 @@ def audit_results():
 
 @router.get("/api/strategy/{slot_key:path}/performance", dependencies=[Depends(verify_api_key)])
 def strategy_performance(slot_key: str):
-    """
-    Retourne les stats détaillées pour un slot strategy::tf.
-    slot_key format: "trend::1h" → encodé en URL comme "trend::1h"
-    """
+    """Stats détaillées pour un slot strategy::tf (ex: trend::1h)."""
     if not state.SessionLocal:
         raise HTTPException(503, "DB non initialisée")
 
@@ -218,7 +202,6 @@ def strategy_performance(slot_key: str):
                 peak = _np.maximum.accumulate(eq)
                 max_dd = round(float(_np.min((eq - peak) / (peak + 1e-9) * 100)), 2)
 
-        # CB state si trader actif
         slot_state = None
         if state.trader:
             for s in state.trader.risk.get_slot_states():

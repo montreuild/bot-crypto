@@ -1,16 +1,4 @@
-"""
-Routes optimiseur — démarrage, suivi, application et gestion des jobs.
-
-Endpoints :
-  POST   /api/optimize/start
-  GET    /api/optimize/status
-  GET    /api/optimize/stream  (Server-Sent Events)
-  POST   /api/optimize/apply
-  POST   /api/optimize/cancel
-  DELETE /api/optimize/job
-  GET    /api/optimize/results
-  GET    /api/optimize/spaces
-"""
+"""Routes optimiseur — démarrage, suivi, application et gestion des jobs."""
 import json
 import logging
 import os

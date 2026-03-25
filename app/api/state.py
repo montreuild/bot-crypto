@@ -1,9 +1,4 @@
-"""
-État partagé de l'API — évite les imports circulaires.
-
-Ces variables sont initialisées à None et peuplées par init_app().
-Les routes accèdent à l'état via `from app.api import state` puis `state.cfg`.
-"""
+"""État partagé de l'API — variables initialisées par init_app(), accédées via `state.cfg`."""
 import threading
 
 # ── Runtime state ──────────────────────────────────────────────────────────

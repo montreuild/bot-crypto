@@ -1,53 +1,5 @@
-"""
-Stratégie Score Composite — Documentation complète
+"""Stratégie Score Composite — scoring multi-indicateurs (EMA, RSI, MACD, BB, S/R, Fibonacci)."""
 
-Modèle de scoring qui combine :
-  - EMA(20/50)          : Tendance structurelle (prix > EMA20 > EMA50 = uptrend)
-  - RSI(14)             : Momentum relatif (survendu/suracheté)
-  - MACD(12, 26, 9)     : Momentum de tendance (croisement / accélération)
-  - Bandes de Bollinger(20, 2) : Volatilité et mean reversion
-  - Stochastique(14, 3) : Oscillateur de momentum court terme
-  - Supports/Résistances : Niveaux clés via pivots (clustering 1.8 %)
-  - Fibonacci            : Zones de retracement dynamiques
-  - Analyse FFT          : Cycles spectraux (optionnel)
-
-Score brut 0–100 (base neutre = 50) :
-  RSI < 30         → +20  |  RSI > 70         → −20
-  RSI < 40         → +10  |  RSI > 60         → −10
-  MACD cross ↑     → +15  |  MACD cross ↓     → −15
-  MACD hist > 0    → +7   |  MACD hist < 0    → −7
-  Prix < BB basse  → +15  |  Prix > BB haute  → −15
-  BB Squeeze       → +5
-  EMA haussier     → +10  |  EMA baissier     → −10
-  Stoch K < 20     → +8   |  Stoch K > 80     → −8
-  FFT haussier     → +10  |  FFT baissier     → −10  (si use_fft=True)
-  S/R proche sup   → +5   |  S/R proche rés   → −5
-  Fibonacci sup    → +5   |  Fibonacci rés    → −5
-
-Interprétation :
-  ≥ 75 → ACHAT FORT  (side=long,  score ≥ 0.67)
-  60–74→ ACHAT       (side=long,  score 0.55–0.67)
-  40–59→ NEUTRE      (side=none)
-  25–39→ VENTE       (side=short, score 0.55–0.67)
-  < 25 → VENTE FORTE (side=short, score ≥ 0.67)
-
-Normalisation 0-1 :
-  long  : 0.55 + (raw − score_long_threshold)  / (100 − score_long_threshold)  × 0.39
-  short : 0.55 + (score_short_threshold − raw)  / score_short_threshold         × 0.39
-  → Min = 0.55 (seuil de trading), Max = 0.94
-
-Paramètres optimisables :
-  ema_fast / ema_slow           : périodes des EMA de tendance
-  rsi_period                    : période RSI
-  macd_fast / macd_slow / macd_signal : paramètres MACD
-  bb_period / bb_std            : Bollinger Bands
-  stoch_k_period / stoch_d_period : Stochastique
-  sr_window / sr_lookback / sr_cluster_pct : Support/Résistance
-  use_fft / fft_min_period / fft_max_period / fft_top_n : analyse FFT
-  score_long_threshold          : seuil minimal pour ACHAT (défaut 60)
-  score_short_threshold         : seuil maximal pour VENTE (défaut 40)
-  cooldown / rr_min / min_bars  : gestion du signal
-"""
 
 import logging
 from typing import Dict, Any, List

@@ -1,7 +1,4 @@
-"""
-Helpers partagés de l'API : sanitisation JSON, auth, découverte des stratégies,
-fetch OHLCV paginé, détection de gaps.
-"""
+"""Helpers partagés de l'API : sanitisation JSON, auth, découverte stratégies, OHLCV."""
 import glob
 import json
 import logging
@@ -21,12 +18,7 @@ logger = logging.getLogger(__name__)
 # ── Sanitisation JSON ──────────────────────────────────────────────────────
 
 def _clean(obj: Any) -> Any:
-    """Sanitise récursivement pour la sérialisation JSON :
-    - float NaN  → None
-    - float ±Inf → ±1e308
-    - clés privées (_xxx) → ignorées (ex: _trailing, _stop_trail)
-    - objets Python non-sérialisables (TrailingStopManager…) → None
-    """
+    """Sanitise récursivement pour JSON : NaN→None, ±Inf→±1e308, clés privées ignorées."""
     if isinstance(obj, float):
         if math.isnan(obj):
             return None
@@ -47,8 +39,7 @@ def _clean(obj: Any) -> Any:
 
 
 class CleanJSONResponse(JSONResponse):
-    """JSONResponse qui neutralise automatiquement les float NaN/Inf
-    sur TOUTES les réponses de l'API, sans toucher chaque endpoint."""
+    """JSONResponse qui neutralise les float NaN/Inf sur toutes les réponses."""
     def render(self, content) -> bytes:
         return json.dumps(
             _clean(content),
@@ -95,9 +86,7 @@ def _get_bt_exchange(cfg: dict):
 # ── Découverte des stratégies ──────────────────────────────────────────────
 
 def _discover_strategies() -> frozenset:
-    """Retourne les noms de stratégies valides sur disque (whitelist).
-    Résultat mis en cache 60 secondes pour éviter des lectures disque répétées.
-    """
+    """Retourne les noms de stratégies valides sur disque (cache 60 s)."""
     now = time.monotonic()
     if (state._strategies_cache is not None
             and (now - state._strategies_cache_ts) < state._STRATEGIES_CACHE_TTL):

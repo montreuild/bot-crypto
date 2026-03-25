@@ -1,11 +1,4 @@
-"""Bibliothèque d'indicateurs techniques — source unique pour stratégies et moteur.
-
-Source unique : toutes les stratégies, le moteur et le live trader importent
-directement depuis ce module. Voir CHANGELOG.md pour l'historique des versions.
-
-Bibliothèque principale : Polars (Rust, Arrow, multi-threadé).
-NumPy conservé uniquement pour la boucle séquentielle SuperTrend.
-"""
+"""Indicateurs techniques — source unique pour stratégies et moteur. Basé sur Polars."""
 import numpy as np
 import polars as pl
 from typing import Tuple
@@ -16,11 +9,7 @@ from typing import Tuple
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _true_range(df: pl.DataFrame) -> pl.Series:
-    """True Range vectorisé — pur Polars, zéro round-trip numpy.
-
-    TR = max(H−L, |H−C_prev|, |L−C_prev|)
-    Le null du shift(1) est remplacé par close[0] : tr[0] = H[0]−L[0].
-    """
+    """True Range vectorisé : TR = max(H−L, |H−C_prev|, |L−C_prev|)."""
     h      = df["high"]
     l      = df["low"]
     c_prev = df["close"].shift(1).fill_null(df["close"][0])
@@ -47,12 +36,7 @@ def sma(s: pl.Series, n: int) -> pl.Series:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def rsi(close: pl.Series, period: int = 14) -> pl.Series:
-    """RSI(period) — pur Polars.
-
-    Division sécurisée via .clip(lower_bound=1e-10) : l (pertes EWM) est
-    toujours ≥ 0 (issu de -diff.clip(upper=0)), donc clip ne distord pas
-    les valeurs normales ; seul le zéro exact est déplacé à 1e-10.
-    """
+    """RSI(period) pur Polars — division sécurisée via clip lower_bound=1e-10."""
     d      = close.diff(1)
     g      = d.clip(lower_bound=0).ewm_mean(alpha=1 / period, adjust=False)
     l      = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / period, adjust=False)

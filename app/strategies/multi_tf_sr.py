@@ -1,35 +1,5 @@
-"""
-Stratégie Multi-Timeframe Support/Résistance — V1
+"""Stratégie Multi-Timeframe Support/Résistance — entrées sur niveaux S/R avec filtre HTF."""
 
-Logique :
-  1. Identifie les niveaux de S/R via pivots swing sur le TF courant
-  2. Détecte également les S/R sur le HTF (timeframe supérieur) pour la confluence
-  3. Filtre la direction avec la tendance HTF (htf_trend)
-  4. Entre en trade lorsque le prix est proche d'un niveau S/R avec confirmation :
-       LONG  : rebond sur support   (HTF haussier ou neutre)
-       SHORT : rejet sur résistance (HTF baissier ou neutre)
-  5. Stop placé au-delà du niveau S/R (+/- 0.5 ATR de marge)
-  6. Target sur le prochain niveau S/R opposé (ou R:R minimum si absent)
-
-Avantages vs stratégies existantes :
-  - Les stops sont ancrés sur des niveaux de marché réels (non arbitraires)
-  - La confluence HTF réduit les faux signaux
-  - La "force" d'un niveau (nombre de touches) booste le score
-  - Compatible avec le système de pré-calcul existant (_pre_* colonnes)
-  - Aucune modification du moteur, de l'API ou du live trader nécessaire
-
-Paramètres optimisables :
-  sr_window        : fenêtre pivot (barres de chaque côté)
-  sr_lookback      : historique analysé pour les S/R
-  sr_cluster_pct   : tolérance de clustering (%)
-  sr_min_touches   : force minimum pour retenir un niveau
-  sr_proximity_atr : distance max au S/R en multiples d'ATR
-  adx_min          : ADX minimum (filtre trend)
-  rsi_low/rsi_high : plage RSI autorisée
-  vol_min          : ratio volume minimum
-  cooldown         : barres d'attente entre deux signaux
-  rr_min           : ratio risque/récompense minimum
-"""
 import logging
 from typing import Dict, Any, List
 

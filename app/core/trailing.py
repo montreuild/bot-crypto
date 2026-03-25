@@ -1,17 +1,7 @@
 """
-Trailing Stop Dynamique Multi-Phases -- V6 (sans TP fixe)
-
-Philosophie : le TP fixe plafonne les tendances fortes. On le supprime.
-Le trailing dynamique gere seul les sorties via 5 phases irreversibles.
-
-  Phase 0 GRACE     : stop fixe pendant grace_bars barres
-  Phase 1 WIDE      : trail 2.5xATR, survit aux pullbacks normaux
-  Phase 2 BREAKEVEN : stop >= entree + buffer, risque zero garanti
-  Phase 3 LOCK      : verrouille 60pct du profit max, trail 1.5xATR
-  Phase 4 TIGHT     : trail 1.0xATR, capture jusqu au retournement final
-
-La phase ne peut que monter (jamais regresser).
-Le stop ne peut que s ameliorer (ratchet strict).
+Trailing Stop Dynamique Multi-Phases (sans TP fixe).
+5 phases irréversibles : GRACE → WIDE → BREAKEVEN → LOCK → TIGHT.
+Le stop ne peut qu'améliorer (ratchet strict), la phase ne peut que monter.
 """
 from __future__ import annotations
 
@@ -102,7 +92,7 @@ class DynamicTrailingStop:
 
 
 class TrailingStopManager:
-    """Interface compatible V5 -- delegue a DynamicTrailingStop."""
+    """Interface simplifiée vers DynamicTrailingStop."""
 
     def __init__(self, mult=2.5, grace_bars=4, breakeven_r=1.2, trail_tight_mult=1.0,
                  lock_r=2.5, tight_r=4.0, lock_ratio=0.60, use_swing=True):
@@ -120,23 +110,15 @@ class TrailingStopManager:
         return self._dts.init(entry, atr, side)
 
     def init_from_stop(self, entry: float, saved_stop: float, side: str):
-        """
-        Réinitialise le trailing stop depuis un stop sauvegardé en BDD (reprise après crash).
-        Reconstruit l'état interne à partir de la distance stop-entry.
-        Le stop sauvegardé est utilisé comme floor — ne peut qu'améliorer.
-        """
+        """Réinitialise depuis un stop sauvegardé en BDD (reprise après crash)."""
         self._dts = DynamicTrailingStop(**self._kwargs)
-        # Utilise la distance réelle stop-entry.
-        # Si stop == entry (breakeven), fallback à 1% du prix d'entrée : valeur
-        # représentative d'un ATR typique (≈ 1% du prix) qui évite un peak_r
-        # quasi-infini avec _initial_stop_dist ≈ 0, ou un _initial_stop_dist
-        # non dimensionnel si on utilisait le multiplicateur ATR brut (ex: 2.5).
-        _FALLBACK_STOP_PCT = 0.01   # 1 % du prix d'entrée comme distance par défaut
+        # Fallback si stop == entry : 1% du prix comme distance (évite peak_r infini)
+        _FALLBACK_STOP_PCT = 0.01
         raw_dist = abs(entry - saved_stop)
         dist = raw_dist if raw_dist > 0 else max(entry * _FALLBACK_STOP_PCT, 1e-9)
         self._dts._initial_stop_dist = max(dist, 1e-9)
-        self._dts._peak_price        = entry  # conservateur : on part du prix d'entrée
-        self._dts._phase             = 0      # recommence en phase GRACE — safe
+        self._dts._peak_price        = entry
+        self._dts._phase             = 0
 
     def update_stop(self, current_price, current_stop, atr, side, entry=None,
                     bars_held=0, recent_lows=None, recent_highs=None):

@@ -86,10 +86,7 @@ class OptimizerResult(Base):
 
 
 class OpenPosition(Base):
-    """
-    Positions ouvertes persistées en BDD.
-    Permet au bot de les récupérer après un crash / redémarrage.
-    """
+    """Position ouverte persistée en BDD (récupérée après crash/redémarrage)."""
     __tablename__ = "open_positions"
     id           = Column(String(100), primary_key=True)   # "{symbol}::{strategy}::{tf}"
     symbol       = Column(String(20),  nullable=False)
@@ -164,10 +161,7 @@ def delete_open_position(session: Session, pos_id: str) -> None:
 
 
 def load_open_positions(session: Session) -> List[dict]:
-    """
-    Charge les positions ouvertes depuis la BDD (appelé au démarrage).
-    Retourne une liste de dicts compatibles avec live_trader.open_positions.
-    """
+    """Charge les positions ouvertes depuis la BDD au démarrage."""
     rows = session.query(OpenPosition).all()
     result = []
     for r in rows:
@@ -225,7 +219,7 @@ def update_daily_stats(session: Session, date_str: str, pnl: float, win: bool,
         row = DailyStats(date=date_str, trades=0, wins=0, pnl=0.0,
                          fees=0.0, equity_open=equity, equity_close=equity)
         session.add(row)
-    # Fix #2 — protection NoneType si colonnes NULL en DB (migration ancienne version)
+    # Protection NoneType si colonnes NULL en DB (migration depuis version antérieure)
     row.trades      = (row.trades  or 0) + 1
     row.wins        = (row.wins    or 0) + (1 if win else 0)
     row.pnl         = round((row.pnl   or 0.0) + pnl,  6)

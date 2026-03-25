@@ -1,9 +1,4 @@
-"""
-Route backtest — exécution d'un backtest sur un ou plusieurs stratégies.
-
-Endpoints :
-  POST /api/backtest
-"""
+"""Route backtest — POST /api/backtest."""
 import importlib
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed

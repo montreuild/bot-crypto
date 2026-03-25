@@ -1,29 +1,5 @@
-"""
-Stratégie Signal Consensus — Meta-stratégie combinant toutes les stratégies non-ML
+"""Stratégie Signal Consensus — vote pondéré de toutes les stratégies rule-based."""
 
-Principe :
-  Instancie chaque stratégie individuelle (rule-based), récupère leurs signaux,
-  puis agrège via un vote pondéré pour produire un signal de consensus.
-
-Pondération par stratégie :
-  composite_score  : 1.5  (agrège déjà plusieurs indicateurs — signal de référence)
-  trend            : 1.2  (trend following éprouvé, fiable sur tendances claires)
-  fear_momentum    : 1.2  (setups haute conviction — rebond sur capitulation)
-  multi_tf_sr      : 1.1  (confluence multi-timeframe Support/Résistance)
-  supertrend_macd  : 1.0  (confirmation tendance via SuperTrend + MACD)
-  breakout         : 1.0  (rupture Donchian + expansion ATR)
-  pullback_trend   : 1.0  (entrée en pullback dans la tendance)
-  fft_spectral     : 0.8  (cycles spectraux — expérimental, poids réduit)
-
-Agrégation :
-  - Chaque stratégie vote long ou short avec son score × son poids
-  - Votes long et short sont séparés
-  - Minimum de consensus requis (défaut : 2 stratégies dans la même direction)
-  - Score final = moyenne pondérée + bonus de convergence (+0.02 par strat supplémentaire)
-  - Toit du score : 0.95
-
-Raison : la raison détaille le vote de chaque sous-stratégie pour la transparence.
-"""
 
 import importlib
 import logging
