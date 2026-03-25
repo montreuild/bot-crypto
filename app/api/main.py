@@ -1,5 +1,12 @@
 """
-API FastAPI — V11 (Multi-Timeframe + CandleStore)
+API FastAPI — V12 (Paper Mode réaliste — slippage, capital settled, persistence)
+
+Nouveautés V12 :
+  - Paper mode réaliste : slippage adverse appliqué à chaque fill (paper_slippage, défaut 0.1 %)
+  - Suivi capital settled (_paper_base) séparé du capital_display (PnL non réalisé exclu du sizing)
+  - Restauration du capital settled au redémarrage depuis la dernière DailyStats.equity_close
+  - Blocage d'entrée en paper si capital disponible (settled − notionals verrouillés) insuffisant
+  - Nouveau paramètre paper_slippage dans l'API config et l'interface web
 
 Nouveautés V11 :
   - CandleStore : données OHLCV persistées en Parquet par paire/TF
@@ -34,8 +41,8 @@ logger = logging.getLogger(__name__)
 
 # ── Application ────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Crypto Bot V11",
-    version="11.0.0",
+    title="Crypto Bot V12",
+    version="12.0.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
@@ -83,7 +90,7 @@ def health_check():
     exchange_ok = state.cfg is not None
     return {
         "status":   "ok" if (db_ok and exchange_ok) else "degraded",
-        "version":  "11.0.0",
+        "version":  "12.0.0",
         "db":       db_ok,
         "exchange": exchange_ok,
         "trader":   state.trader is not None and getattr(state.trader, "running", False),
@@ -152,7 +159,7 @@ def get_status(request: Request):
             "timeframes", [state.cfg["trading"].get("timeframe", "1h")]
         ),
         "strategies": state.cfg["strategies"]["enabled"],
-        "version":    "11.0.0",
+        "version":    "12.0.0",
     }
     if authenticated:
         base["capital"] = (state.trader.capital_display

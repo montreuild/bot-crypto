@@ -1,4 +1,4 @@
-# 🏗️ Architecture Crypto Bot V11
+# 🏗️ Architecture Crypto Bot V12
 
 Vue d'ensemble technique, patterns de design et flux de données.
 
@@ -81,7 +81,7 @@ while trader.running:
 
 ```
 Backtester(engine, cfg)
-  ├─> CandleStore.fetch()        ← V11 : depuis le cache local si disponible
+  ├─> CandleStore.fetch()        ← V12 : depuis le cache local si disponible
   │     ├─> Lecture Parquet      (instantané si déjà fetché par le live trader)
   │     └─> Fetch exchange       (uniquement si nouvelles bougies)
   ├─> Polars DataFrame processing
@@ -92,7 +92,7 @@ Backtester(engine, cfg)
   └─> Results (by_strategy stats)
 ```
 
-### CandleStore — Flux de données V11
+### CandleStore — Flux de données V12
 
 ```
 1er fetch (symbol, tf inconnu)
@@ -496,7 +496,7 @@ python cli.py
 
 ```ini
 [Unit]
-Description=Crypto Bot V11
+Description=Crypto Bot V12
 After=network.target
 
 [Service]
@@ -537,4 +537,4 @@ CMD ["python", "cli.py"]
 
 ---
 
-**Architecture Crypto Bot V11** — Bien pensée, scalable, et testable 🏗️
+**Architecture Crypto Bot V12** — Bien pensée, scalable, et testable 🏗️
