@@ -64,6 +64,10 @@ def get_config():
 
 @router.post("/api/config/strategies", dependencies=[Depends(verify_api_key)])
 def update_strategies(enabled: str = ""):
+    """
+    Active/désactive des stratégies en écrivant `enabled: true/false`
+    dans chaque fichier strategies/{name}.yaml.
+    """
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     strat_list = [s.strip() for s in enabled.split(",") if s.strip()]
@@ -73,17 +77,27 @@ def update_strategies(enabled: str = ""):
     invalid = [s for s in strat_list if s not in allowed]
     if invalid:
         raise HTTPException(400, f"Stratégie(s) inconnue(s) : {', '.join(invalid)}")
+
     state.cfg["strategies"]["enabled"] = strat_list
     result = {"config_updated": True, "strategies": strat_list, "trader_updated": False}
+
     if state.trader:
         reload_result = state.trader.reload_strategies(strat_list)
         result["trader_updated"] = True
         result.update(reload_result)
-    try:
-        _save_yaml(lambda d: d.setdefault("strategies", {}).__setitem__("enabled", strat_list))
-        result["saved_to_disk"] = True
-    except Exception as e:
-        result["save_error"] = str(e)
+
+    # Écriture de enabled: true/false dans chaque fichier strategies/
+    errors = []
+    for name in allowed:
+        try:
+            _save_strategy_yaml(name, lambda data, _n=name: data.update(
+                {"enabled": _n in strat_list}
+            ))
+        except Exception as e:
+            errors.append(f"{name}: {e}")
+    result["saved_to_disk"] = len(errors) == 0
+    if errors:
+        result["save_errors"] = errors
     return result
 
 

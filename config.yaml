@@ -48,18 +48,6 @@ risk:
   consecutive_pause_secs: 1800
   volatility_threshold: 0.05
 
-strategies:
-  enabled:
-    - breakout
-    - composite_score
-    - fear_momentum
-    - fft_spectral
-    - multi_tf_sr
-    - pullback_trend
-    - signal_consensus
-    - supertrend_macd
-    - trend
-
 scanner:
   dynamic_scan: false
   symbols:

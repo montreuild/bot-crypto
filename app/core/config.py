@@ -67,19 +67,25 @@ def _expand_env(value: Any) -> Any:
     return value
 
 
-def _load_strategy_configs(strategies_dir: str) -> Tuple[dict, dict]:
+def _load_strategy_configs(strategies_dir: str) -> Tuple[dict, dict, list]:
     """
     Charge tous les *.yaml dans strategies_dir et retourne :
-      (strategy_params, optimizer_results)
-    Chaque fichier doit avoir la structure :
+      (strategy_params, optimizer_results, enabled_strategies)
+
+    Chaque fichier a la structure :
+      enabled: true          # optionnel — true par défaut ; mettre false pour désactiver
       params: {...}
       optimizer_results: {tf: {run_date, oos_score, params}}
+
+    Une stratégie est active si et seulement si son fichier existe
+    et que `enabled` n'est pas explicitement à false.
     """
     strategy_params:    dict = {}
     optimizer_results:  dict = {}
+    enabled_strategies: list = []
     sdir = Path(strategies_dir)
     if not sdir.is_dir():
-        return strategy_params, optimizer_results
+        return strategy_params, optimizer_results, enabled_strategies
 
     for f in sorted(sdir.glob("*.yaml")):
         name = f.stem
@@ -93,14 +99,18 @@ def _load_strategy_configs(strategies_dir: str) -> Tuple[dict, dict]:
                 strategy_params[name] = data["params"]
             if "optimizer_results" in data and isinstance(data["optimizer_results"], dict):
                 optimizer_results[name] = data["optimizer_results"]
+            # Activée par défaut ; `enabled: false` pour désactiver sans supprimer le fichier
+            if data.get("enabled", True):
+                enabled_strategies.append(name)
         except Exception as e:
             logger.warning(f"[Config] Erreur lecture {f} : {e}")
 
     logger.debug(
-        f"[Config] strategies/ : {len(strategy_params)} stratégies chargées "
-        f"({', '.join(sorted(strategy_params))})"
+        f"[Config] strategies/ : {len(enabled_strategies)} actives / "
+        f"{len(strategy_params)} chargées "
+        f"({', '.join(enabled_strategies)})"
     )
-    return strategy_params, optimizer_results
+    return strategy_params, optimizer_results, enabled_strategies
 
 
 def strategy_file_path(strategy_name: str, config_path: str = "config.yaml") -> str:
@@ -123,13 +133,16 @@ def load_config(path: str = "config.yaml") -> dict:
 
     # ── Chargement des configs de stratégies (strategies/*.yaml) ─────────────
     strategies_dir = os.path.join(os.path.dirname(os.path.abspath(path)), "strategies")
-    strat_params, opt_results = _load_strategy_configs(strategies_dir)
+    strat_params, opt_results, enabled_strategies = _load_strategy_configs(strategies_dir)
+
+    # Liste des stratégies activées : dérivée des fichiers strategies/
+    # (plus de strategies.enabled dans config.yaml)
+    cfg.setdefault("strategies", {})["enabled"] = enabled_strategies
 
     # Merge strategy_params : le fichier stratégie est prioritaire sur config.yaml
     merged_params = dict(cfg.get("strategy_params", {}))
     for name, params in strat_params.items():
         if name in merged_params:
-            # Fusion : les valeurs du fichier stratégie écrasent config.yaml
             merged_params[name] = {**merged_params[name], **params}
         else:
             merged_params[name] = dict(params)
