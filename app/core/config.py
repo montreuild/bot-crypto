@@ -119,6 +119,44 @@ def strategy_file_path(strategy_name: str, config_path: str = "config.yaml") -> 
     return os.path.join(config_dir, "strategies", f"{strategy_name}.yaml")
 
 
+def _bootstrap_strategy_files(strategies_dir: str) -> None:
+    """
+    Crée un fichier YAML minimal pour chaque stratégie Python sans fichier YAML existant.
+    Appelé avant _load_strategy_configs pour garantir la cohérence .py ↔ .yaml.
+
+    Une stratégie est éligible si elle expose une classe Strategy avec param_space.
+    Le fichier créé contient uniquement optimizer_results: {} — la stratégie est
+    active par défaut et sera enrichie par l'optimiseur lors de sa première exécution.
+    """
+    try:
+        import pkgutil
+        import importlib
+        import app.strategies as _strat_pkg
+    except ImportError:
+        return
+
+    sdir = Path(strategies_dir)
+    sdir.mkdir(parents=True, exist_ok=True)
+
+    for _, module_name, _ in pkgutil.iter_modules(_strat_pkg.__path__):
+        yaml_path = sdir / f"{module_name}.yaml"
+        if yaml_path.exists():
+            continue
+        try:
+            mod = importlib.import_module(f"app.strategies.{module_name}")
+            cls = getattr(mod, "Strategy", None)
+            if cls is None or not getattr(cls, "param_space", None):
+                continue
+            with open(yaml_path, "w", encoding="utf-8") as f:
+                yaml.dump(
+                    {"optimizer_results": {}},
+                    f, allow_unicode=True, sort_keys=False,
+                )
+            logger.info(f"[Config] YAML créé automatiquement : strategies/{module_name}.yaml")
+        except Exception as exc:
+            logger.debug(f"[Config] Bootstrap {module_name} ignoré : {exc}")
+
+
 def load_config(path: str = "config.yaml") -> dict:
     if not os.path.exists(path):
         raise FileNotFoundError(f"Fichier de configuration introuvable : {path}")
@@ -133,6 +171,7 @@ def load_config(path: str = "config.yaml") -> dict:
 
     # ── Chargement des configs de stratégies (strategies/*.yaml) ─────────────
     strategies_dir = os.path.join(os.path.dirname(os.path.abspath(path)), "strategies")
+    _bootstrap_strategy_files(strategies_dir)
     strat_params, opt_results, enabled_strategies = _load_strategy_configs(strategies_dir)
 
     # Liste des stratégies activées : dérivée des fichiers strategies/
