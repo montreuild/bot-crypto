@@ -26,6 +26,32 @@ def _is_ml_strategy(name: str) -> bool:
     except Exception:
         return False
 
+
+def _save_ml_model_post_opt(strategy_name: str, best_params: dict,
+                             df_full: pl.DataFrame, timeframe: str) -> None:
+    """
+    Après optimisation ML : entraîne un modèle final avec les meilleurs paramètres
+    sur l'ensemble des données et le persiste en .pkl.
+    Appelé dans un thread daemon — ne bloque pas le reporting du job.
+    """
+    import os
+    try:
+        mod   = importlib.import_module(f"app.strategies.{strategy_name}")
+        strat = mod.Strategy()
+        for k, v in best_params.items():
+            if hasattr(strat, k):
+                setattr(strat, k, v)
+        strat._fit(df_full, timeframe)
+        if timeframe not in strat._trained_tfs:
+            logger.warning(f"[AutoOpt] ML post-opt : entraînement KO pour {strategy_name}/{timeframe}")
+            return
+        path = os.path.join(strat.model_dir, f"{strategy_name}_{timeframe}.pkl")
+        os.makedirs(strat.model_dir, exist_ok=True)
+        strat.save_model(path)
+        logger.info(f"[AutoOpt] Modèle ML sauvegardé après optimisation → {path}")
+    except Exception as e:
+        logger.warning(f"[AutoOpt] Sauvegarde modèle ML post-opt KO ({strategy_name}/{timeframe}): {e}")
+
 # ════════════════════════════════════════════════════════════════════════════
 #  État global des jobs (thread-safe)
 # ════════════════════════════════════════════════════════════════════════════
@@ -289,6 +315,11 @@ class AutoOptimizer:
                     result.get("best_oos_score", 0.0),
                     self.config_path
                 )
+
+            # Pour les stratégies ML : entraîner un modèle final avec les meilleurs params
+            # sur l'ensemble complet des données et le persister sur disque.
+            if result.get("best_params") and _is_ml_strategy(strategy_name) and df_full is not None:
+                _save_ml_model_post_opt(strategy_name, result["best_params"], df_full, timeframe)
 
             _update_job(job_id,
                 status="done", progress=100,

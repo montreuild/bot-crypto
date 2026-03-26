@@ -404,6 +404,8 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         self.n_trials       = n_trials
         self.min_train      = min_train
         self.retrain_every  = retrain_every
+        # TFs désactivés manuellement (ex: ["1h"] pour désactiver seulement le 1h).
+        self.disabled_timeframes: List[str] = []
 
         # ── Stockage multi-TF : un pipeline distinct par timeframe ──────────
         # Clé : TF détecté (ex: "5m", "1h"). Valeur : sklearn Pipeline entraîné.
@@ -432,13 +434,18 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         """
         Interface compatible Engine v7 (multi-TF).
         Applique les params de config si aucun TF n'est encore entraîné.
+        disabled_timeframes est relu à chaque appel pour refléter les changements à chaud.
         """
         if params:
             p = params.get(self.name, {})
-            if p and not self._trained_tfs:
-                for k, v in p.items():
-                    if hasattr(self, k):
-                        setattr(self, k, v)
+            if p:
+                # disabled_timeframes est appliqué à chaque appel (hot-reload).
+                if "disabled_timeframes" in p:
+                    self.disabled_timeframes = list(p["disabled_timeframes"])
+                if not self._trained_tfs:
+                    for k, v in p.items():
+                        if k != "disabled_timeframes" and hasattr(self, k):
+                            setattr(self, k, v)
         return self._signal(df)
 
     def _signal(self, df: pl.DataFrame) -> Dict[str, Any]:
@@ -448,6 +455,8 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             return self._no_signal()
 
         tf = _detect_tf(df)
+        if self.disabled_timeframes and tf in self.disabled_timeframes:
+            return self._no_signal()
         cnt = self._call_count_per_tf.get(tf, 0) + 1
         self._call_count_per_tf[tf] = cnt
 

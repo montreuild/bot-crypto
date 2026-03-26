@@ -230,6 +230,62 @@ def update_strategy_params(strategy: str, params: dict):
         raise HTTPException(500, str(e))
 
 
+# ── POST /api/config/strategy-timeframe ──────────────────────────────────
+
+@router.post("/api/config/strategy-timeframe", dependencies=[Depends(verify_api_key)])
+def toggle_strategy_timeframe(strategy: str, timeframe: str, enabled: bool = True):
+    """
+    Active ou désactive une stratégie sur un timeframe spécifique.
+    Fonctionne via strategy_params[strategy]["disabled_timeframes"].
+    Appliqué à chaud sur le trader si disponible.
+    """
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    allowed = _discover_strategies()
+    if strategy not in allowed:
+        raise HTTPException(400, f"Stratégie inconnue : {strategy}")
+    allowed_tfs = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
+    if timeframe not in allowed_tfs:
+        raise HTTPException(400, f"Timeframe invalide : {timeframe}")
+
+    sp = state.cfg.setdefault("strategy_params", {}).setdefault(strategy, {})
+    disabled: list = list(sp.get("disabled_timeframes", []))
+
+    if enabled:
+        disabled = [tf for tf in disabled if tf != timeframe]
+    else:
+        if timeframe not in disabled:
+            disabled.append(timeframe)
+
+    sp["disabled_timeframes"] = disabled
+
+    # Propagation à chaud sur la stratégie chargée
+    trader_updated = False
+    if state.trader:
+        strat_obj = getattr(state.trader, "_loaded_strategies", {}).get(strategy)
+        if strat_obj and hasattr(strat_obj, "disabled_timeframes"):
+            strat_obj.disabled_timeframes = list(disabled)
+            trader_updated = True
+
+    try:
+        def _upd(d):
+            d.setdefault("strategy_params", {}).setdefault(strategy, {})["disabled_timeframes"] = disabled
+        _save_yaml(_upd)
+        saved = True
+    except Exception as e:
+        saved = False
+        logger.warning(f"[config/strategy-timeframe] save KO: {e}")
+
+    return {
+        "strategy":           strategy,
+        "timeframe":          timeframe,
+        "enabled":            enabled,
+        "disabled_timeframes": disabled,
+        "trader_updated":     trader_updated,
+        "saved_to_disk":      saved,
+    }
+
+
 # ── GET /api/backtest/settings ────────────────────────────────────────────
 
 @router.get("/api/backtest/settings")
