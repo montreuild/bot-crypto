@@ -1,11 +1,16 @@
 """
 Chargement et validation de la configuration.
 Les valeurs ${VAR} dans le YAML sont substituées par les variables d'environnement.
+
+Structure des fichiers :
+  config.yaml         — configuration système (exchange, trading, backtest…)
+  strategies/*.yaml   — paramètres et résultats d'optimisation par stratégie
 """
 import logging
 import os
 import re
-from typing import Any
+from pathlib import Path
+from typing import Any, Tuple
 
 import yaml
 
@@ -62,6 +67,48 @@ def _expand_env(value: Any) -> Any:
     return value
 
 
+def _load_strategy_configs(strategies_dir: str) -> Tuple[dict, dict]:
+    """
+    Charge tous les *.yaml dans strategies_dir et retourne :
+      (strategy_params, optimizer_results)
+    Chaque fichier doit avoir la structure :
+      params: {...}
+      optimizer_results: {tf: {run_date, oos_score, params}}
+    """
+    strategy_params:    dict = {}
+    optimizer_results:  dict = {}
+    sdir = Path(strategies_dir)
+    if not sdir.is_dir():
+        return strategy_params, optimizer_results
+
+    for f in sorted(sdir.glob("*.yaml")):
+        name = f.stem
+        try:
+            with open(f, "r", encoding="utf-8") as fp:
+                data = yaml.safe_load(fp) or {}
+            if not isinstance(data, dict):
+                logger.warning(f"[Config] {f} invalide — ignoré")
+                continue
+            if "params" in data and isinstance(data["params"], dict):
+                strategy_params[name] = data["params"]
+            if "optimizer_results" in data and isinstance(data["optimizer_results"], dict):
+                optimizer_results[name] = data["optimizer_results"]
+        except Exception as e:
+            logger.warning(f"[Config] Erreur lecture {f} : {e}")
+
+    logger.debug(
+        f"[Config] strategies/ : {len(strategy_params)} stratégies chargées "
+        f"({', '.join(sorted(strategy_params))})"
+    )
+    return strategy_params, optimizer_results
+
+
+def strategy_file_path(strategy_name: str, config_path: str = "config.yaml") -> str:
+    """Retourne le chemin du fichier YAML d'une stratégie (strategies/{name}.yaml)."""
+    config_dir = os.path.dirname(os.path.abspath(config_path))
+    return os.path.join(config_dir, "strategies", f"{strategy_name}.yaml")
+
+
 def load_config(path: str = "config.yaml") -> dict:
     if not os.path.exists(path):
         raise FileNotFoundError(f"Fichier de configuration introuvable : {path}")
@@ -73,6 +120,29 @@ def load_config(path: str = "config.yaml") -> dict:
         raise ValueError("Le fichier config.yaml est vide ou invalide.")
 
     cfg = _expand_env(cfg)
+
+    # ── Chargement des configs de stratégies (strategies/*.yaml) ─────────────
+    strategies_dir = os.path.join(os.path.dirname(os.path.abspath(path)), "strategies")
+    strat_params, opt_results = _load_strategy_configs(strategies_dir)
+
+    # Merge strategy_params : le fichier stratégie est prioritaire sur config.yaml
+    merged_params = dict(cfg.get("strategy_params", {}))
+    for name, params in strat_params.items():
+        if name in merged_params:
+            # Fusion : les valeurs du fichier stratégie écrasent config.yaml
+            merged_params[name] = {**merged_params[name], **params}
+        else:
+            merged_params[name] = dict(params)
+    cfg["strategy_params"] = merged_params
+
+    # Merge optimizer_results : idem, fichier stratégie prioritaire
+    merged_opt = dict(cfg.get("optimizer_results", {}))
+    for name, results in opt_results.items():
+        if name in merged_opt:
+            merged_opt[name] = {**merged_opt[name], **results}
+        else:
+            merged_opt[name] = dict(results)
+    cfg["optimizer_results"] = merged_opt
 
     for section, defaults in DEFAULTS.items():
         if section not in cfg:

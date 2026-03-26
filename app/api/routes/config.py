@@ -21,6 +21,23 @@ def _save_yaml(updates_fn):
             _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
+def _save_strategy_yaml(strategy_name: str, updates_fn):
+    """
+    Applique updates_fn(data) et réécrit strategies/{strategy_name}.yaml (thread-safe).
+    Crée le fichier s'il n'existe pas.
+    """
+    import yaml as _yaml
+    from app.engine.optimizer import _strategy_file_path, _load_strategy_file
+    import os as _os
+    strat_path = _strategy_file_path(strategy_name)
+    with state._config_write_lock:
+        data = _load_strategy_file(strat_path)
+        updates_fn(data)
+        _os.makedirs(_os.path.dirname(strat_path), exist_ok=True)
+        with open(strat_path, "w", encoding="utf-8") as f:
+            _yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
 # ── GET /api/config ────────────────────────────────────────────────────────
 
 @router.get("/api/config")
@@ -222,10 +239,11 @@ def update_strategy_params(strategy: str, params: dict):
     if state.trader:
         state.trader.strat_params = state.cfg["strategy_params"]
     try:
-        def _upd(d):
-            d.setdefault("strategy_params", {})[strategy] = params
-        _save_yaml(_upd)
-        return {"saved": True, "strategy": strategy, "params": params}
+        def _upd(data):
+            data["params"] = params
+        _save_strategy_yaml(strategy, _upd)
+        return {"saved": True, "strategy": strategy, "params": params,
+                "file": f"strategies/{strategy}.yaml"}
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -268,9 +286,9 @@ def toggle_strategy_timeframe(strategy: str, timeframe: str, enabled: bool = Tru
             trader_updated = True
 
     try:
-        def _upd(d):
-            d.setdefault("strategy_params", {}).setdefault(strategy, {})["disabled_timeframes"] = disabled
-        _save_yaml(_upd)
+        def _upd(data):
+            data.setdefault("params", {})["disabled_timeframes"] = disabled
+        _save_strategy_yaml(strategy, _upd)
         saved = True
     except Exception as e:
         saved = False
