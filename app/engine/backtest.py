@@ -302,7 +302,21 @@ class Backtester:
         timestamps   = [str(df["time"][0]) if "time" in df.columns else "0"]
         position     = None
         trade_id     = 0
-        warmup       = 210
+
+        # Warmup dynamique : prend le max parmi les stratégies actives.
+        # Chaque stratégie peut déclarer `warmup_bars` (attribut de classe ou d'instance).
+        # Valeur minimale garantie : 210 barres (couvre EMA200 + ADX + ATR14).
+        _MIN_WARMUP = 210
+        warmup = _MIN_WARMUP
+        for _s in self.engine.strategies:
+            _wb = getattr(_s, "warmup_bars", None) or getattr(_s, "min_bars", None)
+            if _wb is not None:
+                try:
+                    warmup = max(warmup, int(_wb))
+                except (TypeError, ValueError):
+                    pass
+        if warmup > _MIN_WARMUP:
+            logger.debug(f"[Backtest] Warmup dynamique : {warmup} barres")
 
         # ── Pré-calculs vectorisés O(n) ───────────────────────────────────────
         from app.core.indicators import precompute_df as _precompute

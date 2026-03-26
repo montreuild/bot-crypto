@@ -1,11 +1,16 @@
 """
 Chargement et validation de la configuration.
 Les valeurs ${VAR} dans le YAML sont substituées par les variables d'environnement.
+
+Structure des fichiers :
+  config.yaml         — configuration système (exchange, trading, backtest…)
+  strategies/*.yaml   — paramètres et résultats d'optimisation par stratégie
 """
 import logging
 import os
 import re
-from typing import Any
+from pathlib import Path
+from typing import Any, Tuple
 
 import yaml
 
@@ -62,6 +67,96 @@ def _expand_env(value: Any) -> Any:
     return value
 
 
+def _load_strategy_configs(strategies_dir: str) -> Tuple[dict, dict, list]:
+    """
+    Charge tous les *.yaml dans strategies_dir et retourne :
+      (strategy_params, optimizer_results, enabled_strategies)
+
+    Chaque fichier a la structure :
+      enabled: true          # optionnel — true par défaut ; mettre false pour désactiver
+      params: {...}
+      optimizer_results: {tf: {run_date, oos_score, params}}
+
+    Une stratégie est active si et seulement si son fichier existe
+    et que `enabled` n'est pas explicitement à false.
+    """
+    strategy_params:    dict = {}
+    optimizer_results:  dict = {}
+    enabled_strategies: list = []
+    sdir = Path(strategies_dir)
+    if not sdir.is_dir():
+        return strategy_params, optimizer_results, enabled_strategies
+
+    for f in sorted(sdir.glob("*.yaml")):
+        name = f.stem
+        try:
+            with open(f, "r", encoding="utf-8") as fp:
+                data = yaml.safe_load(fp) or {}
+            if not isinstance(data, dict):
+                logger.warning(f"[Config] {f} invalide — ignoré")
+                continue
+            if "params" in data and isinstance(data["params"], dict):
+                strategy_params[name] = data["params"]
+            if "optimizer_results" in data and isinstance(data["optimizer_results"], dict):
+                optimizer_results[name] = data["optimizer_results"]
+            # Activée par défaut ; `enabled: false` pour désactiver sans supprimer le fichier
+            if data.get("enabled", True):
+                enabled_strategies.append(name)
+        except Exception as e:
+            logger.warning(f"[Config] Erreur lecture {f} : {e}")
+
+    logger.debug(
+        f"[Config] strategies/ : {len(enabled_strategies)} actives / "
+        f"{len(strategy_params)} chargées "
+        f"({', '.join(enabled_strategies)})"
+    )
+    return strategy_params, optimizer_results, enabled_strategies
+
+
+def strategy_file_path(strategy_name: str, config_path: str = "config.yaml") -> str:
+    """Retourne le chemin du fichier YAML d'une stratégie (strategies/{name}.yaml)."""
+    config_dir = os.path.dirname(os.path.abspath(config_path))
+    return os.path.join(config_dir, "strategies", f"{strategy_name}.yaml")
+
+
+def _bootstrap_strategy_files(strategies_dir: str) -> None:
+    """
+    Crée un fichier YAML minimal pour chaque stratégie Python sans fichier YAML existant.
+    Appelé avant _load_strategy_configs pour garantir la cohérence .py ↔ .yaml.
+
+    Une stratégie est éligible si elle expose une classe Strategy avec param_space.
+    Le fichier créé contient uniquement optimizer_results: {} — la stratégie est
+    active par défaut et sera enrichie par l'optimiseur lors de sa première exécution.
+    """
+    try:
+        import pkgutil
+        import importlib
+        import app.strategies as _strat_pkg
+    except ImportError:
+        return
+
+    sdir = Path(strategies_dir)
+    sdir.mkdir(parents=True, exist_ok=True)
+
+    for _, module_name, _ in pkgutil.iter_modules(_strat_pkg.__path__):
+        yaml_path = sdir / f"{module_name}.yaml"
+        if yaml_path.exists():
+            continue
+        try:
+            mod = importlib.import_module(f"app.strategies.{module_name}")
+            cls = getattr(mod, "Strategy", None)
+            if cls is None or not getattr(cls, "param_space", None):
+                continue
+            with open(yaml_path, "w", encoding="utf-8") as f:
+                yaml.dump(
+                    {"optimizer_results": {}},
+                    f, allow_unicode=True, sort_keys=False,
+                )
+            logger.info(f"[Config] YAML créé automatiquement : strategies/{module_name}.yaml")
+        except Exception as exc:
+            logger.debug(f"[Config] Bootstrap {module_name} ignoré : {exc}")
+
+
 def load_config(path: str = "config.yaml") -> dict:
     if not os.path.exists(path):
         raise FileNotFoundError(f"Fichier de configuration introuvable : {path}")
@@ -73,6 +168,33 @@ def load_config(path: str = "config.yaml") -> dict:
         raise ValueError("Le fichier config.yaml est vide ou invalide.")
 
     cfg = _expand_env(cfg)
+
+    # ── Chargement des configs de stratégies (strategies/*.yaml) ─────────────
+    strategies_dir = os.path.join(os.path.dirname(os.path.abspath(path)), "strategies")
+    _bootstrap_strategy_files(strategies_dir)
+    strat_params, opt_results, enabled_strategies = _load_strategy_configs(strategies_dir)
+
+    # Liste des stratégies activées : dérivée des fichiers strategies/
+    # (plus de strategies.enabled dans config.yaml)
+    cfg.setdefault("strategies", {})["enabled"] = enabled_strategies
+
+    # Merge strategy_params : le fichier stratégie est prioritaire sur config.yaml
+    merged_params = dict(cfg.get("strategy_params", {}))
+    for name, params in strat_params.items():
+        if name in merged_params:
+            merged_params[name] = {**merged_params[name], **params}
+        else:
+            merged_params[name] = dict(params)
+    cfg["strategy_params"] = merged_params
+
+    # Merge optimizer_results : idem, fichier stratégie prioritaire
+    merged_opt = dict(cfg.get("optimizer_results", {}))
+    for name, results in opt_results.items():
+        if name in merged_opt:
+            merged_opt[name] = {**merged_opt[name], **results}
+        else:
+            merged_opt[name] = dict(results)
+    cfg["optimizer_results"] = merged_opt
 
     for section, defaults in DEFAULTS.items():
         if section not in cfg:

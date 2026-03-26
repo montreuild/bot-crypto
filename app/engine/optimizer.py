@@ -12,7 +12,7 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Dict, List, Any, Callable, Optional
 
-# Lock global pour protéger les écritures concurrentes dans config.yaml
+# Lock global pour protéger les écritures concurrentes dans les fichiers YAML
 _config_write_lock = threading.Lock()
 
 import numpy as np
@@ -159,57 +159,74 @@ def _eval_worker(args: tuple) -> dict:
         return {"error": str(_exc), "params": params}
 
 
-# ── Persistance des résultats d'optimisation ──
+# ── Persistance des résultats d'optimisation ──────────────────────────────────
+
 def _resolve_config_path(config_path: str) -> str:
-    """Résout le chemin du fichier config en chemin absolu."""
+    """Résout le chemin du fichier config principal en chemin absolu."""
     if os.path.isabs(config_path):
         return config_path
-    # Essayer depuis le CWD d'abord, puis depuis le répertoire du module
     cwd_path = os.path.abspath(config_path)
     if os.path.exists(cwd_path):
         return cwd_path
-    return cwd_path  # retourner quand même, l'erreur sera levée plus tard
+    return cwd_path
+
+
+def _strategy_file_path(strategy_name: str, config_path: str = "config.yaml") -> str:
+    """Retourne le chemin absolu de strategies/{strategy_name}.yaml."""
+    config_dir = os.path.dirname(os.path.abspath(_resolve_config_path(config_path)))
+    return os.path.join(config_dir, "strategies", f"{strategy_name}.yaml")
+
+
+def _load_strategy_file(strat_path: str) -> dict:
+    """Charge un fichier stratégie YAML ; retourne {} si absent ou vide."""
+    if not os.path.exists(strat_path):
+        return {}
+    try:
+        with open(strat_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        logger.warning(f"[Optimizer] Lecture {strat_path} KO : {e}")
+        return {}
+
+
+def _write_strategy_file(strat_path: str, data: dict) -> None:
+    """Écrit un fichier stratégie YAML avec un commentaire d'en-tête."""
+    os.makedirs(os.path.dirname(strat_path), exist_ok=True)
+    with open(strat_path, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
 
 
 def save_optimizer_results(strategy_name: str, timeframe: str,
                            params: dict, oos_score: float,
                            config_path: str = "config.yaml") -> bool:
     """
-    Persiste le résultat d'optimisation dans optimizer_results.<strategy>.<tf>.
-    Préserve les autres stratégies/TF existants. Thread-safe via _config_write_lock.
+    Persiste le résultat d'optimisation dans strategies/{strategy_name}.yaml.
+    Préserve les autres timeframes existants. Thread-safe via _config_write_lock.
     """
-    abs_path = _resolve_config_path(config_path)
-    if not os.path.exists(abs_path):
-        logger.warning(f"[Optimizer] config_path introuvable : {abs_path}")
-        return False
+    strat_path = _strategy_file_path(strategy_name, config_path)
     try:
         with _config_write_lock:
-            with open(abs_path, "r") as f:
-                cfg = yaml.safe_load(f) or {}
-
-            if "optimizer_results" not in cfg or cfg["optimizer_results"] is None:
-                cfg["optimizer_results"] = {}
-
-            if strategy_name not in cfg["optimizer_results"]:
-                cfg["optimizer_results"][strategy_name] = {}
-
-            cfg["optimizer_results"][strategy_name][timeframe] = {
+            data = _load_strategy_file(strat_path)
+            data.setdefault("optimizer_results", {})[timeframe] = {
                 "run_date":  datetime.utcnow().strftime("%Y-%m-%d"),
                 "oos_score": round(float(oos_score), 6),
                 "params":    deepcopy(params),
             }
+            _write_strategy_file(strat_path, data)
 
-            with open(abs_path, "w") as f:
-                yaml.dump(cfg, f, allow_unicode=True, sort_keys=False)
-
-        # Enregistrer dans le changelog (hors lock pour ne pas bloquer)
         try:
-            _append_changelog(abs_path, strategy_name, timeframe, params, oos_score, {})
+            _append_changelog(
+                _resolve_config_path(config_path),
+                strategy_name, timeframe, params, oos_score, {}
+            )
         except Exception as _cle:
             logger.debug(f"[Optimizer] changelog KO (non bloquant) : {_cle}")
 
-        logger.info(f"[Optimizer] Résultat sauvegardé : {strategy_name}@{timeframe} "
-                    f"(score OOS={oos_score:.4f})")
+        logger.info(
+            f"[Optimizer] Résultat sauvegardé → strategies/{strategy_name}.yaml "
+            f"[{timeframe}] score OOS={oos_score:.4f}"
+        )
         return True
     except Exception as e:
         logger.error(f"[Optimizer] save_optimizer_results KO : {e}")
@@ -221,59 +238,46 @@ def apply_best_params(strategy_name: str, params: dict,
                       timeframe: str = None,
                       oos_score: float = 0.0) -> bool:
     """
-    Met à jour strategy_params.<strategy> dans config.yaml.
-    Si timeframe fourni, sauvegarde aussi dans optimizer_results.
-    Préserve tous les autres paramètres. Thread-safe via _config_write_lock.
+    Met à jour params et optimizer_results dans strategies/{strategy_name}.yaml.
+    Préserve tous les autres timeframes/paramètres. Thread-safe via _config_write_lock.
     """
-    abs_path = _resolve_config_path(config_path)
-    if not os.path.exists(abs_path):
-        return False
+    strat_path = _strategy_file_path(strategy_name, config_path)
     old_params_snapshot = {}
     try:
         with _config_write_lock:
-            with open(abs_path, "r") as f:
-                cfg = yaml.safe_load(f) or {}
+            data = _load_strategy_file(strat_path)
 
-            # Snapshot des anciens params pour le changelog
-            old_params_snapshot = deepcopy(
-                cfg.get("strategy_params", {}).get(strategy_name, {})
-            )
+            # Snapshot pour le changelog
+            old_params_snapshot = deepcopy(data.get("params", {}))
 
-            # Mettre à jour strategy_params
-            if "strategy_params" not in cfg:
-                cfg["strategy_params"] = {}
-            if strategy_name not in cfg["strategy_params"]:
-                cfg["strategy_params"][strategy_name] = {}
-
-            existing = cfg["strategy_params"][strategy_name]
+            # Mettre à jour les params par défaut (hors params globaux)
+            existing = data.setdefault("params", {})
             for k, v in params.items():
                 if k not in GLOBAL_TRADING_PARAMS:
                     existing[k] = v
 
             # Mettre à jour optimizer_results si TF fourni
             if timeframe:
-                if "optimizer_results" not in cfg or cfg["optimizer_results"] is None:
-                    cfg["optimizer_results"] = {}
-                if strategy_name not in cfg["optimizer_results"]:
-                    cfg["optimizer_results"][strategy_name] = {}
-                cfg["optimizer_results"][strategy_name][timeframe] = {
+                data.setdefault("optimizer_results", {})[timeframe] = {
                     "run_date":  datetime.utcnow().strftime("%Y-%m-%d"),
                     "oos_score": round(float(oos_score), 6),
                     "params":    deepcopy(params),
                 }
 
-            with open(abs_path, "w") as f:
-                yaml.dump(cfg, f, allow_unicode=True, sort_keys=False)
+            _write_strategy_file(strat_path, data)
 
-        # Enregistrer dans le changelog (hors lock)
         try:
-            _append_changelog(abs_path, strategy_name, timeframe, params,
-                              oos_score, old_params_snapshot)
+            _append_changelog(
+                _resolve_config_path(config_path),
+                strategy_name, timeframe, params, oos_score, old_params_snapshot
+            )
         except Exception as _cle:
             logger.debug(f"[Optimizer] changelog KO (non bloquant) : {_cle}")
 
-        logger.info(f"[Optimizer] Params appliqués : {strategy_name}"
-                    + (f"@{timeframe}" if timeframe else ""))
+        logger.info(
+            f"[Optimizer] Params appliqués → strategies/{strategy_name}.yaml"
+            + (f" [{timeframe}]" if timeframe else "")
+        )
         return True
     except Exception as e:
         logger.error(f"[Optimizer] apply_best_params KO : {e}")

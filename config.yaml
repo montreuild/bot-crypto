@@ -1,732 +1,134 @@
-backtest:
-  latency_ms: 50
-  monte_carlo_runs: 200
-  partial_fill_pct: 0.95
-  spread_pct: 0.0005
-  walk_forward_folds: 5
-database:
-  url: sqlite:///trades.db
+# ──────────────────────────────────────────────────────────────────────────────
+# Configuration principale du bot
+# Les paramètres et résultats d'optimisation des stratégies sont dans strategies/
+# ──────────────────────────────────────────────────────────────────────────────
+
 exchange:
+  name: binance
   api_key: ${BINANCE_API_KEY}
   api_secret: ${BINANCE_API_SECRET}
   margin: false
-  name: binance
-logging:
-  backup_count: 5
-  debug: false
-  level: INFO
-  log_file: logs/bot.log
-  max_bytes: 10485760
-notifications:
-  dd_warning_ratio: 0.8
-  email_enabled: false
-  email_password: ''
-  email_port: 587
-  email_smtp: smtp.gmail.com
-  email_to: ''
-  email_user: ''
-  events:
-    on_circuit_breaker: true
-    on_dd_warning: true
-    on_exchange_error: true
-    on_optimization: true
-    on_position_loss: true
-    on_start_stop: true
-    on_status_report: true
-    on_trade_close: true
-    on_trade_open: true
-  exchange_error_threshold: 3
-  min_pnl_to_notify: 5.0
-  position_loss_warn_pct: 5.0
-  telegram_bot_token: ''
-  telegram_chat_id: ''
-  telegram_enabled: false
-  twilio_account_sid: ''
-  twilio_auth_token: ''
-  twilio_from_number: ''
-  whatsapp_enabled: false
-  whatsapp_mode: callmebot
-  whatsapp_number: ''
-  whatsapp_token: ''
-optimizer:
-  enabled: false
-  method: bayesian
-  n_trials: 40
-  out_of_sample_ratio: 0.35
+
+trading:
+  capital: 1000
+  paper_mode: true
+  timeframe: 1h
+  timeframes:
+    - 5m
+    - 15m
+    - 1h
+    - 4h
+    - 1d
+  scan_interval: 60
+  score_threshold: 0.55
+  risk_per_trade: 0.01
+  max_positions: 5
+  max_longs: 3
+  max_shorts: 3
+  max_leverage: 1
+  max_trades_per_minute: 3
+  daily_drawdown_limit: 0.05
+  max_drawdown_global: 0.2
+  min_volume_usdc_24h: 5000000
+  taker_fee: 0.001
+  maker_fee: 0.0004
+  spread_pct: 0.0005
+  latency_ms: 50
+  borrow_rate_daily: 0.00072
+  borrow_periods_per_day: 3
+  margin_mode: isolated
+  margin_level_alert: 1.5
+  reentry_cooldown_bars: 3
+  top_strategies_per_tf: 2
+
+risk:
+  consecutive_loss_limit: 3
+  slot_daily_dd_limit: 0.03
+  win_rate_floor: 0.30
+  consecutive_pause_secs: 1800
+  volatility_threshold: 0.05
+
 scanner:
   dynamic_scan: false
   symbols:
-  - BTC/USDC
-  - ETH/USDC
-  - SOL/USDC
-  - BNB/USDC
-  - XRP/USDC
+    - BTC/USDC
+    - ETH/USDC
+    - SOL/USDC
+    - BNB/USDC
+    - XRP/USDC
   top_n: 20
+  symbols_cache_ttl: 300
   opportunity_scan:
     min_vol_24h_m: 10
     min_atr_pct: 1.0
     max_atr_pct: 10.0
     top_n: 15
-strategies:
-  enabled:
-  - breakout
-  - composite_score
-  - fear_momentum
-  - fft_spectral
-  - multi_tf_sr
-  - pullback_trend
-  - signal_consensus
-  - supertrend_macd
-  - trend
-strategy_params:
-  breakout:
-    atr_expan_min: 1.12
-    body_min_atr: 0.45
-    cooldown: 20
-    pen_max_atr: 2.5
-    period: 25
-    squeeze_bars: 20
-    vol_min: 1.2
-    rr_min: 1.3
-  fear_momentum:
-    atr_max_dip: 5.0
-    cooldown: 25
-    ema200_max_dist: 0.08
-    rr_min: 1.4
-    rsi_fear: 35
-    rsi_greed: 65
-    vol_cap_min: 1.5
-    ema_fast: 13
-    ema_mid: 50
-  pullback_trend:
-    adx_min: 25
-    cooldown: 20
-    ema_fast: 21
-    ema_mid: 50
-    ema_slow: 100
-    ema_trend: 200
-    pb_zone_pct: 0.003
-    rsi_pb_high: 62
-    rsi_pb_low: 38
-    vol_min: 1.0
-    rr_min: 2.0
-  supertrend_macd:
-    cooldown: 15
-    ema_mid: 50
-    ema_trend: 200
-    macd_fast: 14
-    macd_signal: 9
-    macd_slow: 24
-    st_mult: 3.0
-    st_period: 10
-    vol_min: 1.1
-    rsi_min: 38
-    rsi_max: 60
-    rr_min: 1.3
-  multi_tf_sr:
-    sr_window: 5
-    sr_lookback: 100
-    sr_cluster_pct: 0.005
-    sr_min_touches: 2
-    sr_proximity_atr: 1.0
-    adx_min: 25
-    rsi_low: 35
-    rsi_high: 60
-    vol_min: 1.0
-    cooldown: 20
-    rr_min: 1.3
-  trend:
-    adx_min: 28
-    cooldown: 15
-    cross_lookback: 8
-    ema200_tol: 0.035
-    ema_fast: 21
-    ema_slow: 50
-    ema_trend: 200
-    overext_pct: 0.02
-    rr_min: 1.5
-    rsi_high: 73
-    rsi_low: 30
-    vol_min: 1.2
-  composite_score:
-    ema_fast: 21
-    ema_slow: 50
-    rsi_period: 14
-    macd_fast: 12
-    macd_slow: 26
-    macd_signal: 9
-    bb_period: 20
-    bb_std: 2.0
-    stoch_k_period: 14
-    stoch_d_period: 3
-    sr_window: 5
-    sr_lookback: 240
-    sr_cluster_pct: 0.018
-    use_fft: false
-    fft_min_period: 7
-    fft_max_period: 150
-    fft_top_n: 10
-    score_long_threshold: 65
-    score_short_threshold: 35
-    cooldown: 20
-    rr_min: 1.5
-    min_bars: 200
-  fft_spectral:
-    fft_min_period: 5
-    fft_max_period: 200
-    fft_top_n: 10
-    min_confidence: 0.25
-    min_bars: 150
-    cooldown: 30
-    rr_min: 1.5
-  signal_consensus:
-    min_consensus: 2
-    score_threshold: 0.55
-    consensus_bonus: 0.02
-trading:
-  borrow_rate_daily: 0.00072
-  capital: 1000
-  daily_drawdown_limit: 0.05
-  latency_ms: 50
-  maker_fee: 0.0004
-  margin_level_alert: 1.5
-  margin_mode: isolated
-  max_drawdown_global: 0.2
-  max_leverage: 1
-  max_longs: 3
-  max_positions: 5
-  max_shorts: 3
-  max_trades_per_minute: 3
-  min_volume_usdc_24h: 5000000
-  paper_mode: true
-  reentry_cooldown_bars: 3
-  risk_per_trade: 0.01
-  scan_interval: 60
-  score_threshold: 0.55
+
+backtest:
   spread_pct: 0.0005
-  taker_fee: 0.001
-  timeframes:
-  - 5m
-  - 15m
-  - 1h
-  - 4h
-  - 1d
-  timeframe: 1h
-  top_strategies_per_tf: 2
+  latency_ms: 50
+  partial_fill_pct: 0.95
+  monte_carlo_runs: 200
+  walk_forward_folds: 5
+
+optimizer:
+  enabled: false
+  method: bayesian
+  n_trials: 40
+  out_of_sample_ratio: 0.35
+
+ml:
+  enabled: false
+  model: random_forest
+  blend_weight: 0.3
+  min_samples: 200
+  feature_window: 50
+  retrain_interval: 3600
+
+database:
+  url: sqlite:///trades.db
+
+logging:
+  level: INFO
+  debug: false
+  log_file: logs/bot.log
+  max_bytes: 10485760
+  backup_count: 5
+
 web:
-  api_key: ''
   host: 0.0.0.0
   port: 8000
   refresh_interval: 5
-optimizer_results:
-  trend:
-    1h:
-      run_date: '2026-03-19'
-      oos_score: 0.206722
-      params:
-        ema_fast: 34
-        ema_slow: 80
-        adx_min: 22
-        rsi_low: 28
-        rsi_high: 67
-        vol_min: 0.9
-        cross_lookback: 6
-        overext_pct: 0.012
-        ema200_tol: 0.035
-        cooldown: 15
-        rr_min: 1.5
-    1d:
-      run_date: '2026-03-19'
-      oos_score: -999.0
-      params:
-        ema_fast: 21
-        ema_slow: 80
-        adx_min: 22
-        rsi_low: 28
-        rsi_high: 70
-        vol_min: 0.9
-        cross_lookback: 4
-        overext_pct: 0.012
-        ema200_tol: 0.045
-        cooldown: 25
-        rr_min: 2.0
-    5m:
-      run_date: '2026-03-19'
-      oos_score: -0.615177
-      params:
-        ema_fast: 21
-        ema_slow: 80
-        adx_min: 22
-        rsi_low: 33
-        rsi_high: 73
-        vol_min: 1.2
-        cross_lookback: 6
-        overext_pct: 0.012
-        ema200_tol: 0.035
-        cooldown: 15
-        rr_min: 1.5
-    4h:
-      run_date: '2026-03-19'
-      oos_score: 2.557127
-      params:
-        ema_fast: 34
-        ema_slow: 80
-        adx_min: 28
-        rsi_low: 33
-        rsi_high: 67
-        vol_min: 1.0
-        cross_lookback: 6
-        overext_pct: 0.015
-        ema200_tol: 0.035
-        cooldown: 25
-        rr_min: 2.0
-    15m:
-      run_date: '2026-03-19'
-      oos_score: -0.017102
-      params:
-        ema_fast: 21
-        ema_slow: 50
-        adx_min: 28
-        rsi_low: 30
-        rsi_high: 73
-        vol_min: 1.2
-        cross_lookback: 8
-        overext_pct: 0.02
-        ema200_tol: 0.035
-        cooldown: 15
-        rr_min: 1.5
-  pullback_trend:
-    1h:
-      run_date: '2026-03-19'
-      oos_score: 0.452139
-      params:
-        ema_fast: 34
-        ema_mid: 50
-        ema_slow: 100
-        adx_min: 25
-        pb_zone_pct: 0.005
-        rsi_pb_low: 38
-        rsi_pb_high: 55
-        vol_min: 0.8
-        cooldown: 15
-        rr_min: 2.0
-    15m:
-      run_date: '2026-03-19'
-      oos_score: -0.056239
-      params:
-        ema_fast: 21
-        ema_mid: 50
-        ema_slow: 100
-        adx_min: 25
-        pb_zone_pct: 0.003
-        rsi_pb_low: 38
-        rsi_pb_high: 62
-        vol_min: 1.0
-        cooldown: 20
-        rr_min: 2.0
-    1d:
-      run_date: '2026-03-19'
-      oos_score: 1.811122
-      params:
-        ema_fast: 34
-        ema_mid: 50
-        ema_slow: 100
-        adx_min: 25
-        pb_zone_pct: 0.007
-        rsi_pb_low: 30
-        rsi_pb_high: 62
-        vol_min: 1.0
-        cooldown: 25
-        rr_min: 1.3
-    4h:
-      run_date: '2026-03-19'
-      oos_score: 1.222181
-      params:
-        ema_fast: 34
-        ema_mid: 50
-        ema_slow: 100
-        adx_min: 25
-        pb_zone_pct: 0.003
-        rsi_pb_low: 38
-        rsi_pb_high: 62
-        vol_min: 0.7
-        cooldown: 15
-        rr_min: 1.5
-    5m:
-      run_date: '2026-03-19'
-      oos_score: -0.608997
-      params:
-        ema_fast: 13
-        ema_mid: 50
-        ema_slow: 100
-        adx_min: 22
-        pb_zone_pct: 0.005
-        rsi_pb_low: 30
-        rsi_pb_high: 55
-        vol_min: 0.7
-        cooldown: 20
-        rr_min: 1.3
-  supertrend_macd:
-    1h:
-      run_date: '2026-03-14'
-      oos_score: -0.010956
-      params:
-        st_period: 10
-        st_mult: 2.0
-        macd_fast: 10
-        macd_slow: 24
-        macd_signal: 9
-        vol_min: 1.1
-        rsi_min: 42
-        rsi_max: 60
-        cooldown: 10
-        rr_min: 1.5
-    1d:
-      run_date: '2026-03-19'
-      oos_score: 2.062251
-      params:
-        st_period: 10
-        st_mult: 3.0
-        macd_fast: 14
-        macd_slow: 24
-        macd_signal: 9
-        vol_min: 1.1
-        rsi_min: 38
-        rsi_max: 60
-        cooldown: 15
-        rr_min: 1.3
-  fear_momentum:
-    1h:
-      run_date: '2026-03-19'
-      oos_score: -0.019478
-      params:
-        ema_fast: 13
-        ema_mid: 50
-        rsi_fear: 35
-        rsi_greed: 65
-        vol_cap_min: 1.5
-        atr_max_dip: 5.0
-        ema200_max_dist: 0.08
-        cooldown: 25
-        rr_min: 1.4
-    1d:
-      run_date: '2026-03-19'
-      oos_score: 1.742598
-      params:
-        ema_fast: 21
-        ema_mid: 50
-        rsi_fear: 42
-        rsi_greed: 58
-        vol_cap_min: 1.5
-        atr_max_dip: 3.0
-        ema200_max_dist: 0.08
-        cooldown: 18
-        rr_min: 1.6
-    4h:
-      run_date: '2026-03-19'
-      oos_score: 0.132191
-      params:
-        ema_fast: 21
-        ema_mid: 50
-        rsi_fear: 38
-        rsi_greed: 65
-        vol_cap_min: 1.8
-        atr_max_dip: 5.0
-        ema200_max_dist: 0.12
-        cooldown: 25
-        rr_min: 1.6
-    5m:
-      run_date: '2026-03-19'
-      oos_score: -0.569265
-      params:
-        ema_fast: 13
-        ema_mid: 50
-        rsi_fear: 42
-        rsi_greed: 62
-        vol_cap_min: 1.8
-        atr_max_dip: 3.0
-        ema200_max_dist: 0.12
-        cooldown: 18
-        rr_min: 1.4
-    15m:
-      run_date: '2026-03-19'
-      oos_score: -0.116898
-      params:
-        ema_fast: 13
-        ema_mid: 50
-        rsi_fear: 45
-        rsi_greed: 65
-        vol_cap_min: 2.5
-        atr_max_dip: 3.0
-        ema200_max_dist: 0.05
-        cooldown: 25
-        rr_min: 1.6
-  breakout:
-    1d:
-      run_date: '2026-03-18'
-      oos_score: 2.846942
-      params:
-        period: 40
-        vol_min: 1.1
-        atr_expan_min: 1.2
-        pen_max_atr: 2.5
-        body_min_atr: 0.45
-        squeeze_bars: 20
-        cooldown: 15
-        rr_min: 1.5
-    4h:
-      run_date: '2026-03-18'
-      oos_score: 1.337271
-      params:
-        period: 20
-        vol_min: 1.1
-        atr_expan_min: 1.2
-        pen_max_atr: 2.5
-        body_min_atr: 0.45
-        squeeze_bars: 20
-        cooldown: 20
-        rr_min: 1.3
-    15m:
-      run_date: '2026-03-19'
-      oos_score: 0.087984
-      params:
-        period: 40
-        vol_min: 1.5
-        atr_expan_min: 1.05
-        pen_max_atr: 1.5
-        body_min_atr: 0.35
-        squeeze_bars: 15
-        cooldown: 20
-        rr_min: 1.5
-    5m:
-      run_date: '2026-03-19'
-      oos_score: -0.369665
-      params:
-        period: 25
-        vol_min: 1.2
-        atr_expan_min: 1.12
-        pen_max_atr: 2.5
-        body_min_atr: 0.45
-        squeeze_bars: 20
-        cooldown: 20
-        rr_min: 1.3
-    1h:
-      run_date: '2026-03-19'
-      oos_score: 1.430383
-      params:
-        period: 30
-        vol_min: 1.1
-        atr_expan_min: 1.2
-        pen_max_atr: 1.5
-        body_min_atr: 0.3
-        squeeze_bars: 15
-        cooldown: 20
-        rr_min: 2.0
-  composite_score:
-    1d:
-      run_date: '2026-03-18'
-      oos_score: 3.033242
-      params:
-        ema_fast: 20
-        ema_slow: 80
-        score_long_threshold: 60
-        score_short_threshold: 45
-        sr_lookback: 240
-        sr_cluster_pct: 0.025
-        use_fft: true
-        fft_min_period: 7
-        fft_max_period: 150
-        cooldown: 10
-        rr_min: 2.0
-    4h:
-      run_date: '2026-03-18'
-      oos_score: 0.668414
-      params:
-        ema_fast: 21
-        ema_slow: 80
-        score_long_threshold: 60
-        score_short_threshold: 40
-        sr_lookback: 180
-        sr_cluster_pct: 0.025
-        use_fft: false
-        fft_min_period: 5
-        fft_max_period: 150
-        cooldown: 20
-        rr_min: 1.5
-    5m:
-      run_date: '2026-03-19'
-      oos_score: -0.350965
-      params:
-        ema_fast: 21
-        ema_slow: 50
-        score_long_threshold: 65
-        score_short_threshold: 35
-        sr_lookback: 240
-        sr_cluster_pct: 0.018
-        use_fft: false
-        fft_min_period: 7
-        fft_max_period: 150
-        cooldown: 20
-        rr_min: 1.5
-    15m:
-      run_date: '2026-03-19'
-      oos_score: -0.078253
-      params:
-        ema_fast: 21
-        ema_slow: 80
-        score_long_threshold: 65
-        score_short_threshold: 45
-        sr_lookback: 240
-        sr_cluster_pct: 0.025
-        use_fft: true
-        fft_min_period: 7
-        fft_max_period: 150
-        cooldown: 10
-        rr_min: 1.3
-    1h:
-      run_date: '2026-03-19'
-      oos_score: -0.026926
-      params:
-        ema_fast: 13
-        ema_slow: 50
-        score_long_threshold: 65
-        score_short_threshold: 35
-        sr_lookback: 180
-        sr_cluster_pct: 0.018
-        use_fft: true
-        fft_min_period: 7
-        fft_max_period: 150
-        cooldown: 10
-        rr_min: 2.0
-  fft_spectral:
-    1d:
-      run_date: '2026-03-19'
-      oos_score: 1.38096
-      params:
-        fft_min_period: 10
-        fft_max_period: 150
-        fft_top_n: 15
-        min_confidence: 0.3
-        min_bars: 250
-        cooldown: 30
-        rr_min: 2.0
-    15m:
-      run_date: '2026-03-19'
-      oos_score: -0.076226
-      params:
-        fft_min_period: 10
-        fft_max_period: 100
-        fft_top_n: 10
-        min_confidence: 0.2
-        min_bars: 250
-        cooldown: 30
-        rr_min: 1.3
-    4h:
-      run_date: '2026-03-19'
-      oos_score: 0.651977
-      params:
-        fft_min_period: 10
-        fft_max_period: 150
-        fft_top_n: 7
-        min_confidence: 0.25
-        min_bars: 250
-        cooldown: 20
-        rr_min: 2.0
-    5m:
-      run_date: '2026-03-19'
-      oos_score: -0.547646
-      params:
-        fft_min_period: 5
-        fft_max_period: 200
-        fft_top_n: 10
-        min_confidence: 0.25
-        min_bars: 150
-        cooldown: 30
-        rr_min: 1.5
-    1h:
-      run_date: '2026-03-19'
-      oos_score: -0.009301
-      params:
-        fft_min_period: 7
-        fft_max_period: 150
-        fft_top_n: 15
-        min_confidence: 0.15
-        min_bars: 180
-        cooldown: 40
-        rr_min: 1.5
-  multi_tf_sr:
-    1d:
-      run_date: '2026-03-19'
-      oos_score: 11.067275
-      params:
-        sr_window: 5
-        sr_lookback: 100
-        sr_cluster_pct: 0.008
-        sr_min_touches: 2
-        sr_proximity_atr: 1.0
-        adx_min: 25
-        rsi_low: 40
-        rsi_high: 70
-        vol_min: 0.8
-        cooldown: 20
-        rr_min: 1.5
-    1h:
-      run_date: '2026-03-19'
-      oos_score: 0.510373
-      params:
-        sr_window: 3
-        sr_lookback: 200
-        sr_cluster_pct: 0.005
-        sr_min_touches: 1
-        sr_proximity_atr: 1.5
-        adx_min: 18
-        rsi_low: 40
-        rsi_high: 60
-        vol_min: 1.0
-        cooldown: 20
-        rr_min: 1.5
-    4h:
-      run_date: '2026-03-19'
-      oos_score: 1.104531
-      params:
-        sr_window: 5
-        sr_lookback: 200
-        sr_cluster_pct: 0.008
-        sr_min_touches: 2
-        sr_proximity_atr: 1.0
-        adx_min: 20
-        rsi_low: 35
-        rsi_high: 60
-        vol_min: 0.8
-        cooldown: 20
-        rr_min: 1.5
-    15m:
-      run_date: '2026-03-19'
-      oos_score: -0.051467
-      params:
-        sr_window: 3
-        sr_lookback: 100
-        sr_cluster_pct: 0.008
-        sr_min_touches: 1
-        sr_proximity_atr: 0.8
-        adx_min: 25
-        rsi_low: 35
-        rsi_high: 70
-        vol_min: 0.8
-        cooldown: 10
-        rr_min: 1.3
-    5m:
-      run_date: '2026-03-19'
-      oos_score: -0.113542
-      params:
-        sr_window: 5
-        sr_lookback: 100
-        sr_cluster_pct: 0.005
-        sr_min_touches: 2
-        sr_proximity_atr: 1.0
-        adx_min: 25
-        rsi_low: 35
-        rsi_high: 60
-        vol_min: 1.0
-        cooldown: 20
-        rr_min: 1.3
+  api_key: ''
+
+notifications:
+  telegram_enabled: false
+  telegram_bot_token: ''
+  telegram_chat_id: ''
+  whatsapp_enabled: false
+  whatsapp_mode: callmebot
+  whatsapp_number: ''
+  whatsapp_token: ''
+  twilio_account_sid: ''
+  twilio_auth_token: ''
+  twilio_from_number: ''
+  email_enabled: false
+  email_smtp: smtp.gmail.com
+  email_port: 587
+  email_user: ''
+  email_password: ''
+  email_to: ''
+  min_pnl_to_notify: 5.0
+  position_loss_warn_pct: 5.0
+  exchange_error_threshold: 3
+  dd_warning_ratio: 0.8
+  events:
+    on_trade_open: true
+    on_trade_close: true
+    on_circuit_breaker: true
+    on_dd_warning: true
+    on_position_loss: true
+    on_exchange_error: true
+    on_status_report: true
+    on_optimization: true
+    on_start_stop: true

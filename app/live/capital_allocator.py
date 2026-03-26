@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 # Cap maximum par slot (30% du capital)
 _MAX_SLOT_PCT = 0.30
 
+# Nombre minimal de trades pour ajuster le budget d'un slot (évite la surpondération sur petit échantillon)
+_MIN_TRADES_FOR_REBALANCE = 5
+
 
 @dataclass
 class SlotBudget:
@@ -178,8 +181,17 @@ class CapitalAllocator:
         logger.info(f"[Allocator] Rééquilibrage hebdomadaire — PF : {pfs}")
 
         # Appliquer les multiplicateurs
+        # Un slot avec moins de _MIN_TRADES_FOR_REBALANCE trades n'est pas ajusté :
+        # l'échantillon est trop petit pour être statistiquement significatif.
         new_budgets: Dict[str, float] = {}
         for key, slot in self._slots.items():
+            if slot.weekly_trades < _MIN_TRADES_FOR_REBALANCE:
+                logger.debug(
+                    f"[Allocator] Slot {key} ignoré pour rééquilibrage "
+                    f"({slot.weekly_trades} trades < {_MIN_TRADES_FOR_REBALANCE} min)"
+                )
+                new_budgets[key] = slot.budget_pct  # conserver budget actuel
+                continue
             pf = pfs[key]
             if pf > 1.5:
                 mult = 1.3

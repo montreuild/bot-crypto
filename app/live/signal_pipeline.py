@@ -13,8 +13,19 @@ logger = logging.getLogger(__name__)
 
 # Timeframe supérieur (HTF) pour le filtre de tendance
 _HTF_MAP = {
-    "1m": "15m", "3m": "30m", "5m": "1h", "15m": "4h",
-    "30m": "4h", "1h": "4h",  "2h": "1d", "4h": "1d", "1d": "1d",
+    "1m":  "15m",
+    "3m":  "30m",
+    "5m":  "1h",
+    "6m":  "1h",
+    "15m": "4h",
+    "30m": "4h",
+    "1h":  "4h",
+    "2h":  "1d",
+    "4h":  "1d",
+    "6h":  "1d",
+    "8h":  "1d",
+    "12h": "1d",
+    "1d":  "1d",
 }
 
 

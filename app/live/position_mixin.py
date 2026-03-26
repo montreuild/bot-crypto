@@ -55,7 +55,12 @@ class PositionMixin:
             try:
                 filled = self.exchange.fetch_order(order.get("id", ""), symbol)
                 exec_price = filled.get("average") or filled.get("price") or price
-            except Exception:
+            except Exception as _fe:
+                logger.warning(
+                    f"[OPEN] {symbol} — fetch_order KO ({_fe}), "
+                    f"utilisation du prix ticker pré-exécution {price:.6f} "
+                    f"(PnL et stops peuvent être légèrement décalés)"
+                )
                 exec_price = price
 
         # Slippage adverse en paper mode (achat plus cher)
@@ -212,8 +217,13 @@ class PositionMixin:
         fee_rate    = self.cfg["trading"].get("taker_fee", 0.001)
         fees        = exec_price * pos["size"] * fee_rate
         hours_held  = (time.time() - pos["open_time"]) / 3600
-        hourly_rate = self.cfg["trading"].get("borrow_rate_daily", 0.0002) / 24
-        borrow_cost = pos["notional"] * hourly_rate * hours_held
+        # Binance Margin facture 3× par jour → taux par période = daily_rate / 3
+        # Intérêt composé : (1 + r_period)^n_periods - 1
+        daily_rate  = self.cfg["trading"].get("borrow_rate_daily", 0.0002)
+        periods_per_day = self.cfg["trading"].get("borrow_periods_per_day", 3)
+        r_period    = daily_rate / periods_per_day
+        n_periods   = hours_held * periods_per_day / 24
+        borrow_cost = pos["notional"] * ((1 + r_period) ** n_periods - 1)
         self._margin_interest += borrow_cost
 
         gross = (

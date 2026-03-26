@@ -1,0 +1,97 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : Trend (EMA cross + ADX + filtre EMA200)
+# ──────────────────────────────────────────────────────────────────────────────
+# params     : paramètres par défaut, éditables manuellement
+# optimizer_results : mis à jour automatiquement après chaque optimisation
+# ──────────────────────────────────────────────────────────────────────────────
+
+params:
+  adx_min: 28
+  cooldown: 15
+  cross_lookback: 8
+  ema200_tol: 0.035
+  ema_fast: 21
+  ema_slow: 50
+  ema_trend: 200
+  overext_pct: 0.02
+  rr_min: 1.5
+  rsi_high: 73
+  rsi_low: 30
+  vol_min: 1.2
+
+optimizer_results:
+  1h:
+    run_date: '2026-03-19'
+    oos_score: 0.206722
+    params:
+      ema_fast: 34
+      ema_slow: 80
+      adx_min: 22
+      rsi_low: 28
+      rsi_high: 67
+      vol_min: 0.9
+      cross_lookback: 6
+      overext_pct: 0.012
+      ema200_tol: 0.035
+      cooldown: 15
+      rr_min: 1.5
+  4h:
+    run_date: '2026-03-19'
+    oos_score: 2.557127
+    params:
+      ema_fast: 34
+      ema_slow: 80
+      adx_min: 28
+      rsi_low: 33
+      rsi_high: 67
+      vol_min: 1.0
+      cross_lookback: 6
+      overext_pct: 0.015
+      ema200_tol: 0.035
+      cooldown: 25
+      rr_min: 2.0
+  15m:
+    run_date: '2026-03-19'
+    oos_score: -0.017102
+    params:
+      ema_fast: 21
+      ema_slow: 50
+      adx_min: 28
+      rsi_low: 30
+      rsi_high: 73
+      vol_min: 1.2
+      cross_lookback: 8
+      overext_pct: 0.02
+      ema200_tol: 0.035
+      cooldown: 15
+      rr_min: 1.5
+  5m:
+    run_date: '2026-03-19'
+    oos_score: -0.615177
+    params:
+      ema_fast: 21
+      ema_slow: 80
+      adx_min: 22
+      rsi_low: 33
+      rsi_high: 73
+      vol_min: 1.2
+      cross_lookback: 6
+      overext_pct: 0.012
+      ema200_tol: 0.035
+      cooldown: 15
+      rr_min: 1.5
+  1d:
+    run_date: '2026-03-19'
+    oos_score: -999.0
+    params:
+      ema_fast: 21
+      ema_slow: 80
+      adx_min: 22
+      rsi_low: 28
+      rsi_high: 70
+      vol_min: 0.9
+      cross_lookback: 4
+      overext_pct: 0.012
+      ema200_tol: 0.045
+      cooldown: 25
+      rr_min: 2.0

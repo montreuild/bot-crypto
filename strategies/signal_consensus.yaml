@@ -1,0 +1,10 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : Signal Consensus (vote majoritaire entre stratégies actives)
+# ──────────────────────────────────────────────────────────────────────────────
+
+params:
+  min_consensus: 2
+  score_threshold: 0.55
+  consensus_bonus: 0.02
+
+optimizer_results: {}
