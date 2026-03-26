@@ -133,13 +133,6 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self._auto_opt_interval = int(cfg.get("optimizer", {}).get("auto_interval_h", 24)) * 3600
         self._auto_opt_next_run = 0
 
-        # Cache liste de symboles (évite fetch_tickers à chaque cycle)
-        self._symbols_cache: Optional[List[str]] = None
-        self._symbols_cache_ts: float = 0.0
-        self._symbols_cache_ttl: float = float(
-            cfg.get("scanner", {}).get("symbols_cache_ttl", 300)
-        )
-
         # Re-entry cooldown par symbole
         self._cooldown: Dict[str, float] = {}
 
@@ -396,18 +389,12 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 )
 
         # 4. Pipeline signaux : collecte + ranking
-        # Cache la liste de symboles pour éviter un appel exchange à chaque cycle
-        now_ts = time.time()
-        if (self._symbols_cache is None
-                or (now_ts - self._symbols_cache_ts) > self._symbols_cache_ttl):
-            try:
-                self._symbols_cache    = self.scanner.get_symbols()
-                self._symbols_cache_ts = now_ts
-            except Exception as _sc_err:
-                logger.warning(f"[Cycle] get_symbols KO : {_sc_err}")
-                if self._symbols_cache is None:
-                    return
-        symbols = self._symbols_cache
+        _symbols_ttl = float(self.cfg.get("scanner", {}).get("symbols_cache_ttl", 300))
+        try:
+            symbols = self.scanner.get_symbols(ttl=_symbols_ttl)
+        except Exception as _sc_err:
+            logger.warning(f"[Cycle] get_symbols KO : {_sc_err}")
+            return
         self.last_scan_time       = datetime.now(timezone.utc)
         self.last_symbols_scanned = list(symbols)
 
@@ -486,10 +473,10 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 continue
 
             strat_threshold = self._strat_thresholds.get(sig.strategy, self.threshold)
-            atr = (sig.atr if sig.atr > 0
-                   else _compute_atr(
-                       self._get_ohlcv(sig.symbol, sig.tf) or pl.DataFrame()
-                   ))
+            # ATR déjà calculé par OHLCVCache.get() lors du scan — pas besoin de recalculer
+            atr = sig.atr if sig.atr > 0 else (
+                self.ohlcv_cache.get_cached_atr(sig.symbol) or 0.0
+            )
             size, notional = self.risk.compute_size(
                 price, atr, score=sig.score, threshold=strat_threshold
             )

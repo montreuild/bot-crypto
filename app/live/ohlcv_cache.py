@@ -151,16 +151,19 @@ class OHLCVCache:
 
     def update_volatility_brake(self) -> None:
         """
-        Calcule l'ATR BTC/USDC 1h et met à jour le volatility brake du RiskManager.
-        Appel idempotent — utilise le cache interne si disponible.
+        Met à jour le volatility brake du RiskManager depuis l'ATR BTC/USDC 1h.
+
+        `get()` ayant déjà mis l'ATR en cache lors du fetch, on le réutilise
+        directement plutôt que de le recalculer.
         """
         try:
             df_btc = self.get("BTC/USDC", "1h")
-            if df_btc is not None and len(df_btc) > 10:
-                atr   = _compute_atr(df_btc)
-                price = float(df_btc["close"][-1])
-                if price > 0 and atr > 0:
-                    self._risk.update_volatility(atr / price)
+            if df_btc is None or len(df_btc) <= 10:
+                return
+            price = float(df_btc["close"][-1])
+            atr   = self.get_cached_atr("BTC/USDC")  # déjà calculé dans get()
+            if price > 0 and atr and atr > 0:
+                self._risk.update_volatility(atr / price)
         except Exception as e:
             logger.debug(f"[OHLCVCache] volatility brake KO : {e}")
 

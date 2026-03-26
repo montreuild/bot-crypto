@@ -1,6 +1,7 @@
 """Scanner de marché — screen des paires, fetch OHLCV via CandleStore (Parquet persistant)."""
 import logging
 import math
+import time
 from typing import List, Dict, Optional, Tuple
 
 import polars as pl
@@ -17,8 +18,23 @@ class MarketScanner:
         self.cfg      = cfg
         self.scfg     = cfg.get("scanner", {})
         self.min_vol  = cfg["trading"].get("min_volume_usdc_24h", 5_000_000)
+        self._symbols_cache: Optional[List[str]] = None
+        self._symbols_cache_ts: float = 0.0
 
-    def get_symbols(self) -> List[str]:
+    def get_symbols(self, ttl: float = 0.0) -> List[str]:
+        """
+        Retourne la liste des symboles à trader.
+
+        Parameters
+        ----------
+        ttl : float
+            Si > 0, met en cache le résultat pendant ``ttl`` secondes.
+            Évite un appel exchange par cycle dans la boucle live.
+        """
+        if ttl > 0 and self._symbols_cache is not None:
+            if (time.time() - self._symbols_cache_ts) < ttl:
+                return self._symbols_cache
+
         symbols = self.scfg.get("symbols", ["BTC/USDC", "ETH/USDC"])
         if self.scfg.get("dynamic_scan"):
             try:
@@ -30,6 +46,9 @@ class MarketScanner:
                 symbols = self._filter_by_volume(symbols)
             except Exception as e:
                 logger.warning(f"[Scanner] Filtre volume KO : {e}")
+        if ttl > 0:
+            self._symbols_cache    = symbols
+            self._symbols_cache_ts = time.time()
         return symbols
 
     def _filter_by_volume(self, symbols: List[str]) -> List[str]:
