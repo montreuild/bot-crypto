@@ -54,8 +54,19 @@ _OHLCV_TTL = {
 
 # Timeframe supérieur (HTF) pour chaque TF — utilisé pour le filtre de tendance
 _HTF_MAP = {
-    "1m": "15m", "3m": "30m", "5m": "1h", "15m": "4h",
-    "30m": "4h", "1h": "4h",  "2h": "1d", "4h": "1d", "1d": "1d",
+    "1m":  "15m",
+    "3m":  "30m",
+    "5m":  "1h",
+    "6m":  "1h",
+    "15m": "4h",
+    "30m": "4h",
+    "1h":  "4h",
+    "2h":  "1d",
+    "4h":  "1d",
+    "6h":  "1d",
+    "8h":  "1d",
+    "12h": "1d",
+    "1d":  "1d",
 }
 
 
@@ -153,6 +164,7 @@ class LiveTrader(PositionMixin):
         # ── State ──────────────────────────────────────────────────────────
         self.open_positions: Dict[str, dict] = {}
         self._capital_lock    = threading.Lock()
+        self._ml_lock         = threading.Lock()   # protège self.ml pendant le réentraînement
         self.running          = False
         self.cycle_count      = 0
         self._ml_retrain_at        = 0
@@ -175,6 +187,13 @@ class LiveTrader(PositionMixin):
         self._auto_opt_next_run = 0
 
         self._exchange_errors: Dict[str, int] = {}
+
+        # Cache liste de symboles (évite fetch_tickers à chaque cycle en mode dynamic_scan)
+        self._symbols_cache: Optional[List[str]] = None
+        self._symbols_cache_ts: float = 0.0
+        self._symbols_cache_ttl: float = float(
+            cfg.get("scanner", {}).get("symbols_cache_ttl", 300)
+        )
 
         # Cache OHLCV multi-TF : (symbol, tf) → (timestamp, df)
         self._ohlcv_cache: Dict[Tuple[str, str], Tuple[float, pl.DataFrame]] = {}
@@ -312,13 +331,36 @@ class LiveTrader(PositionMixin):
                 async_=False
             )
             for pos_id in list(self.open_positions.keys()):
-                try:
-                    pos    = self.open_positions.get(pos_id)
-                    ticker = self._safe_ticker(pos["symbol"]) if pos else None
-                    price  = ticker.get("last", pos["entry"]) if ticker else pos["entry"]
-                    self._close_position(pos_id, price)
-                except Exception as e:
-                    logger.error(f"[Stop] Impossible de clôturer {pos_id} : {e}")
+                _max_retries = 3
+                for _attempt in range(_max_retries):
+                    try:
+                        pos    = self.open_positions.get(pos_id)
+                        if not pos:
+                            break
+                        ticker = self._safe_ticker(pos["symbol"])
+                        price  = ticker.get("last", pos["entry"]) if ticker else pos["entry"]
+                        self._close_position(pos_id, price)
+                        break
+                    except Exception as e:
+                        wait = 2 ** _attempt
+                        logger.error(
+                            f"[Stop] Clôture {pos_id} KO (tentative {_attempt+1}/{_max_retries}) : {e}"
+                            + (f" — nouvelle tentative dans {wait}s" if _attempt < _max_retries - 1 else "")
+                        )
+                        if _attempt < _max_retries - 1:
+                            time.sleep(wait)
+                        else:
+                            logger.critical(
+                                f"[Stop] ⚠️ Position {pos_id} ({pos.get('symbol','?')}) "
+                                f"NON clôturée après {_max_retries} tentatives — "
+                                f"vérifiez manuellement sur l'exchange."
+                            )
+                            self.notif.send(
+                                f"⚠️ *Clôture échouée au shutdown*\n"
+                                f"Position `{pos_id}` non clôturée — "
+                                f"vérifiez sur l'exchange.",
+                                async_=False
+                            )
         elif self.open_positions:
             n    = len(self.open_positions)
             syms = ", ".join(p["symbol"] for p in self.open_positions.values())
@@ -341,8 +383,48 @@ class LiveTrader(PositionMixin):
             return
         n = len(positions)
         logger.warning(f"[Reprise] {n} position(s) trouvée(s) en BDD — restauration...")
+
+        # En mode live, vérifier que les positions existent réellement sur l'exchange
+        exchange_symbols_with_pos: set = set()
+        if not self.cfg["trading"].get("paper_mode"):
+            try:
+                ex_positions = self.exchange.fetch_positions() or []
+                for ep in ex_positions:
+                    contracts = float(ep.get("contracts") or ep.get("size") or 0)
+                    if contracts > 0:
+                        exchange_symbols_with_pos.add(ep.get("symbol", ""))
+                logger.info(
+                    f"[Reprise] {len(exchange_symbols_with_pos)} position(s) active(s) "
+                    f"sur l'exchange : {exchange_symbols_with_pos}"
+                )
+            except Exception as _ep_err:
+                logger.warning(
+                    f"[Reprise] Impossible de vérifier les positions exchange : {_ep_err} "
+                    f"— toutes les positions BDD seront restaurées."
+                )
+                exchange_symbols_with_pos = None  # type: ignore
+
         for pos in positions:
-            pos_id   = pos["id"]
+            pos_id  = pos["id"]
+            symbol  = pos["symbol"]
+
+            # Si on a pu récupérer les positions exchange, écarter les positions fantômes
+            if (exchange_symbols_with_pos is not None
+                    and not self.cfg["trading"].get("paper_mode")
+                    and symbol not in exchange_symbols_with_pos):
+                logger.warning(
+                    f"[Reprise] Position {pos_id} ({symbol}) absente de l'exchange "
+                    f"— ignorée (probablement clôturée hors-bot)."
+                )
+                # Nettoyage BDD
+                _sess = self.SessionLocal()
+                try:
+                    from app.core.database import delete_open_position
+                    delete_open_position(_sess, pos_id)
+                finally:
+                    _sess.close()
+                continue
+
             trailing = TrailingStopManager(**self._trailing_cfg)
             trailing.init_from_stop(pos["entry"], pos["stop"], pos["side"])
             pos["_trailing"] = trailing
@@ -398,10 +480,23 @@ class LiveTrader(PositionMixin):
                 logger.error(f"[Cycle] Erreur gestion position {pos_id} : {e}", exc_info=True)
 
         # 4. Pipeline signaux : collecte + ranking
-        symbols = self.scanner.get_symbols()
+        # Cache la liste de symboles pour éviter un appel exchange à chaque cycle
+        now_ts = time.time()
+        if (self._symbols_cache is None
+                or (now_ts - self._symbols_cache_ts) > self._symbols_cache_ttl):
+            try:
+                self._symbols_cache    = self.scanner.get_symbols()
+                self._symbols_cache_ts = now_ts
+            except Exception as _sc_err:
+                logger.warning(f"[Cycle] get_symbols KO : {_sc_err}")
+                if self._symbols_cache is None:
+                    return  # pas de cache fallback disponible
+        symbols = self._symbols_cache
         self.last_scan_time       = datetime.now(timezone.utc)
         self.last_symbols_scanned = list(symbols)
 
+        with self._ml_lock:
+            ml_ref = self.ml
         try:
             signals = self.pipeline.collect(
                 symbols=symbols,
@@ -410,7 +505,7 @@ class LiveTrader(PositionMixin):
                 open_positions=self.open_positions,
                 cooldowns=self._cooldown,
                 signal_log=self.signal_log,
-                ml=self.ml,
+                ml=ml_ref,
             )
         except Exception as e:
             logger.error(f"[Cycle] Erreur pipeline signaux : {e}", exc_info=True)
@@ -600,9 +695,11 @@ class LiveTrader(PositionMixin):
             })
             return
 
-        if self.ml and self.ml.is_ready:
+        with self._ml_lock:
+            ml_ref = self.ml
+        if ml_ref and ml_ref.is_ready:
             regime = self.scanner.detect_regime(df)
-            score, side = self.ml.blend_signal(signal["score"], signal["side"], df, regime)
+            score, side = ml_ref.blend_signal(signal["score"], signal["side"], df, regime)
             if score < strat_threshold:
                 return
             signal["score"] = score
@@ -738,8 +835,13 @@ class LiveTrader(PositionMixin):
             dfs = [d for d in dfs if d is not None and len(d) >= self.cfg["ml"]["min_samples"]]
             if dfs:
                 df_combined = pl.concat(dfs)
-                self.ml.train(df_combined)
-                self.ml.save()
+                # Entraînement hors lock (CPU-bound, peut prendre du temps)
+                new_model = self.ml.__class__(self.cfg)
+                new_model.train(df_combined)
+                new_model.save()
+                # Remplacement atomique sous lock
+                with self._ml_lock:
+                    self.ml = new_model
         except Exception as e:
             logger.error(f"[ML] Réentraînement KO : {e}")
 

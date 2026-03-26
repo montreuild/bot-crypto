@@ -1,6 +1,8 @@
-"""Notifications multi-canaux : Telegram, WhatsApp, Email. Envoi synchrone avec anti-spam."""
+"""Notifications multi-canaux : Telegram, WhatsApp, Email. Envoi asynchrone via queue."""
 import logging
+import queue
 import smtplib
+import threading
 from email.mime.text import MIMEText
 
 logger = logging.getLogger(__name__)
@@ -73,11 +75,25 @@ class Notifier:
             self.telegram_enabled = self.whatsapp_enabled = False
         logger.info(f"[Notifier] Canaux actifs : {active or ['aucun']}")
 
+        # Queue pour les envois asynchrones — évite de bloquer le thread principal
+        self._async_queue: queue.Queue = queue.Queue(maxsize=200)
+        self._async_worker = threading.Thread(
+            target=self._async_dispatch_loop, daemon=True, name="notif-worker"
+        )
+        self._async_worker.start()
+
     # ── Interface publique ────────────────────────────────────────────────────
 
     def send(self, message: str, async_: bool = True, level: str = "info"):
-        # async_ kept for backward compatibility; sending is always synchronous
-        self._dispatch(message, level)
+        if async_:
+            try:
+                self._async_queue.put_nowait((message, level))
+            except queue.Full:
+                # Queue saturée : envoi synchrone pour ne pas perdre les messages critiques
+                logger.warning("[Notifier] Queue async saturée — envoi synchrone")
+                self._dispatch(message, level)
+        else:
+            self._dispatch(message, level)
 
     def notify_trade_open(self, pos: dict):
         if not self._events.get("on_trade_open"): return
@@ -225,10 +241,27 @@ class Notifier:
         )
 
     def stop(self):
-        """Arrêt propre du notifier (compat API, aucune action requise)."""
-        pass
+        """Arrêt propre : vide la queue et stoppe le worker."""
+        try:
+            self._async_queue.put_nowait(None)   # signal d'arrêt
+        except queue.Full:
+            pass
 
     # ── Internals ─────────────────────────────────────────────────────────────
+
+    def _async_dispatch_loop(self):
+        """Worker daemon qui consomme la queue et envoie les notifications."""
+        while True:
+            try:
+                item = self._async_queue.get(timeout=5)
+                if item is None:   # signal d'arrêt
+                    break
+                message, level = item
+                self._dispatch(message, level)
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"[Notifier] Worker async KO : {e}")
 
     def _dispatch(self, message: str, level: str = "info"):
         self._send_all(message)
