@@ -1,12 +1,6 @@
 """
-Chargement et validation stricte de la configuration au démarrage.
-Lève une ValueError claire si des champs obligatoires sont manquants.
-
-Les valeurs de la forme ${VAR_NAME} ou $VAR_NAME dans le YAML sont
-automatiquement substituées par les variables d'environnement correspondantes.
-Exemple dans config.yaml :
-    api_key: "${BINANCE_API_KEY}"
-    api_secret: "${BINANCE_API_SECRET}"
+Chargement et validation de la configuration.
+Les valeurs ${VAR} dans le YAML sont substituées par les variables d'environnement.
 """
 import logging
 import os
@@ -78,17 +72,14 @@ def load_config(path: str = "config.yaml") -> dict:
     if not isinstance(cfg, dict):
         raise ValueError("Le fichier config.yaml est vide ou invalide.")
 
-    # Substitution des variables d'environnement (ex: ${BINANCE_API_KEY})
     cfg = _expand_env(cfg)
 
-    # Applique les défauts
     for section, defaults in DEFAULTS.items():
         if section not in cfg:
             cfg[section] = {}
         for k, v in defaults.items():
             cfg[section].setdefault(k, v)
 
-    # Validation des champs requis
     errors = []
     for section, field in REQUIRED_FIELDS:
         val = cfg.get(section, {}).get(field)
@@ -97,14 +88,13 @@ def load_config(path: str = "config.yaml") -> dict:
     if errors:
         raise ValueError("Configuration invalide :\n" + "\n".join(errors))
 
-    # Avertissements sécurité
     api_key = cfg.get("exchange", {}).get("api_key", "")
     if api_key in ("", "YOUR_KEY"):
         logger.warning("⚠ Clés API exchange non configurées — mode backtest uniquement.")
     if not cfg["trading"].get("paper_mode"):
         logger.warning("🔴 LIVE TRADING ACTIVÉ — vérifiez bien vos paramètres !")
 
-    # Compatibilité multi-TF : injecter strategies.enabled depuis timeframes si absent
+    # Compatibilité multi-TF
     if "timeframes" in cfg and cfg["timeframes"]:
         all_strats = []
         for tf_cfg in cfg["timeframes"].values():
@@ -112,10 +102,8 @@ def load_config(path: str = "config.yaml") -> dict:
         if "strategies" not in cfg:
             cfg["strategies"] = {}
         cfg["strategies"].setdefault("enabled", list(dict.fromkeys(all_strats)))
-        # TF de référence = premier TF listé (rétrocompat)
         cfg["trading"].setdefault("timeframe", next(iter(cfg["timeframes"])))
     else:
-        # Mode mono-TF classique : injecter une entrée timeframes minimale
         tf = cfg["trading"].get("timeframe", "1h")
         strats = cfg.get("strategies", {}).get("enabled", [])
         cfg.setdefault("timeframes", {tf: {

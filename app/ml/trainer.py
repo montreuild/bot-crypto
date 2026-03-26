@@ -1,20 +1,4 @@
-"""
-MLStrategyTrainer — helper de cycle de vie des modèles ML en production.
-
-Responsabilités :
-  - load_models()   : charge les modèles persistés au démarrage pour chaque
-                      (stratégie, timeframe) configuré. Active managed_externally
-                      sur chaque stratégie BaseStrategyML.
-  - any_due()       : indique si au moins un réentraînement (stratégie × TF) est prévu.
-  - retrain_due()   : lance le réentraînement des paires (stratégie, TF) dont
-                      l'intervalle est écoulé (threads daemon, non-bloquant).
-
-Multi-TF : chaque paire (nom_stratégie, timeframe) est gérée indépendamment.
-  - Un modèle distinct par TF : models/{nom}_{tf}.pkl
-  - Un timer de réentraînement distinct : _retrain_at["{nom}@{tf}"]
-  - L'intervalle peut être ajusté par TF via config.yaml :
-      strategy_params.<nom>.retrain_interval_h  (défaut : strat.retrain_interval_h)
-"""
+"""MLStrategyTrainer — gestion du cycle de vie des modèles ML (chargement, scheduling, réentraînement)."""
 import logging
 import os
 import threading
@@ -25,16 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class MLStrategyTrainer:
-    """
-    Gère le cycle de vie des modèles BaseStrategyML entre les sessions.
-
-    Instancié une fois par LiveTrader.__init__ ; partagé avec _auto_opt_thread.
-    La logique de scheduling (quand lancer le thread) est dans live_trader ;
-    la logique de QUOI entraîner et COMMENT est ici.
-
-    Configurable via config.yaml :
-      strategy_params.<name>.retrain_interval_h  (défaut : strat.retrain_interval_h)
-    """
+    """Gère le cycle de vie des modèles BaseStrategyML (chargement, scheduling, réentraînement)."""
 
     def __init__(self, cfg: dict):
         self.cfg = cfg
@@ -43,14 +18,7 @@ class MLStrategyTrainer:
 
     # ── Démarrage ─────────────────────────────────────────────────────────
     def load_models(self, strategies: dict, timeframes) -> None:
-        """
-        Pour chaque stratégie BaseStrategyML × chaque timeframe configuré :
-          - Charge le modèle persisté models/{nom}_{tf}.pkl
-          - Active managed_externally=True (désactive le réentraînement inline)
-          - Planifie le premier réentraînement
-
-        timeframes : str (compat) ou List[str]
-        """
+        """Charge les modèles persistés et active managed_externally pour chaque (stratégie, TF)."""
         from app.engine.engine import BaseStrategyML
         if isinstance(timeframes, str):
             timeframes = [timeframes]

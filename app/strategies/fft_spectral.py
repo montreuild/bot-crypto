@@ -1,37 +1,5 @@
-"""
-Stratégie FFT Spectrale — Analyse spectrale pure
+"""Stratégie FFT Spectrale — cycles dominants par analyse fréquentielle des prix."""
 
-Logique :
-  1. Détrending logarithmique des prix (retrait de la tendance long terme)
-  2. Fenêtre de Hanning (anti spectral leakage — évite les artefacts de bord)
-  3. FFT via l'algorithme de Cooley-Tukey (numpy.fft.rfft)
-  4. Extraction des cycles dominants dans [fft_min_period, fft_max_period] barres
-  5. Phase de chaque cycle → direction anticipée (+1 montée, −1 descente)
-  6. Signal directionnel pondéré par l'énergie spectrale de chaque cycle
-
-Interprétation des cycles :
-  - Période : durée du cycle en barres (jours si TF=1d, heures si TF=1h…)
-  - Poids spectral (%) : part de la variance totale expliquée par ce cycle
-  - Phase / jours avant retournement : estimation du prochain point de retournement
-
-Score bot 0-1 :
-  score = 0.55 + confidence × 0.39   (max 0.94)
-  confidence = |avg_signal_pondéré| ∈ [0, 1]
-
-Signal généré seulement si :
-  - direction ≠ 0  (signal pondéré suffisamment directionnel)
-  - confidence ≥ min_confidence
-  - R:R ≥ rr_min
-
-Paramètres optimisables :
-  fft_min_period   : période minimale retenue (barres, défaut 5)
-  fft_max_period   : période maximale retenue (barres, défaut 150)
-  fft_top_n        : nombre de cycles extraits (défaut 10)
-  min_confidence   : seuil de confiance pour émettre un signal (défaut 0.20)
-  min_bars         : nombre minimum de bougies requises (défaut 180)
-  cooldown         : barres d'attente entre deux signaux (défaut 30)
-  rr_min           : ratio risque/récompense minimum (défaut 1.5)
-"""
 
 import logging
 from typing import Dict, Any, List

@@ -1,10 +1,4 @@
-"""
-Route replay — rejeu multi-timeframe sur N mois pour validation du paper mode.
-
-Endpoints :
-  POST /api/replay         — lance le replay
-  POST /api/replay/cancel  — annule le replay en cours
-"""
+"""Route replay — rejeu multi-timeframe sur N mois pour validation."""
 import importlib
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -30,7 +24,7 @@ _TF_MINUTES = {
 
 
 def _months_to_bars(months: float, tf: str) -> int:
-    """Convertit un nombre de mois en nombre de bougies selon le timeframe."""
+    """Convertit N mois en nombre de bougies selon le timeframe."""
     mins_per_bar = _TF_MINUTES.get(tf, 60)
     return max(100, int(months * 30 * 24 * 60 / mins_per_bar))
 
@@ -51,17 +45,7 @@ def run_replay(
     walk_forward: bool  = False,
     monte_carlo:  bool  = False,
 ):
-    """
-    Lance un rejeu des bougies sur N mois pour plusieurs timeframes.
-
-    Args:
-        symbol:       Paire de trading (ex: BTC/USDC)
-        months:       Période à rejouer en mois (0.5–24)
-        timeframes:   Timeframes séparés par virgule (ex: 1h,4h,1d)
-        strategies:   Stratégies séparées par virgule (vide = toutes activées)
-        walk_forward: Activer l'analyse Walk-Forward
-        monte_carlo:  Activer la simulation Monte-Carlo
-    """
+    """Lance un rejeu des bougies sur N mois pour plusieurs timeframes."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     if not state._rp_semaphore.acquire(blocking=False):
@@ -78,13 +62,11 @@ def run_replay(
 
         months = max(0.5, min(float(months), 24.0))
 
-        # Timeframes valides
         tfs_raw   = [t.strip() for t in timeframes.split(",") if t.strip()]
         valid_tfs = [tf for tf in tfs_raw if tf in _TF_MINUTES]
         if not valid_tfs:
             raise HTTPException(400, "Aucun timeframe valide (ex: 1h,4h,1d)")
 
-        # Stratégies à tester
         _ALLOWED = _discover_strategies()
         strats_raw = (
             [s.strip() for s in strategies.split(",") if s.strip()]
@@ -197,7 +179,6 @@ def run_replay(
                     name, result = fut.result()
                     by_strategy[name] = result
 
-                    # Entrée dans le tableau cross-TF
                     if "error" not in result and result.get("total_trades", 0) > 0:
                         cap = result.get("initial_capital", 1) or 1
                         cross_tf_summary.append({
@@ -233,7 +214,6 @@ def run_replay(
                 "gaps_warning": gaps_warning,
             }
 
-        # Tri par PnL décroissant
         cross_tf_summary.sort(key=lambda x: x["pnl"], reverse=True)
 
         payload = {

@@ -1,15 +1,4 @@
-"""
-PositionMixin — cycle de vie des positions pour LiveTrader.
-
-Regroupe les méthodes privées de gestion de position :
-  _open_position      Ouverture : ordre, calcul frais, persistance BDD
-  _manage_position    Suivi : trailing stop, gap detection, notifications perte
-  _close_position     Clôture : ordre, PnL, BDD, cooldown, notifications
-  _serialize_position Sérialisation vers dict JSON (pour /api/status)
-
-Ces méthodes accèdent aux attributs de l'instance LiveTrader via `self` —
-le pattern mixin Python garantit la résolution au runtime.
-"""
+"""PositionMixin — cycle de vie des positions (ouverture, suivi, clôture) pour LiveTrader."""
 import logging
 import time
 from datetime import datetime, timezone
@@ -29,7 +18,7 @@ _TF_SECS = {
 
 
 def _calc_unreal_pct(side: str, entry: float, price: float) -> float:
-    """Calcule le % de PnL non réalisé d'une position (protégé division par zéro)."""
+    """PnL non réalisé en % (protégé division par zéro)."""
     if entry <= 0:
         return 0.0
     return (price - entry) / entry * 100 if side == "long" \

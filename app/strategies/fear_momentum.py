@@ -1,45 +1,4 @@
-"""
-Stratégie Fear & Momentum — V1
-
-Objectif : maximiser l'alpha vs Buy & Hold sur crypto.
-
-Principe fondamental :
-  Le B&H gagne parce qu'il est exposé 100% du temps.
-  Pour le battre : entrer sur des dips de haute probabilité dans des tendances
-  confirmées, et éviter les marchés baissiers / neutres.
-
-Setup "Fear in Trend" (LONG) :
-  Le marché est en tendance haussière structurelle (3 timeframes),
-  mais il vient de créer un épisode de PEUR (sell-off rapide, RSI oversold,
-  volume de capitulation) → probabilité de rebond élevée.
-  On achète quand la peur commence à SE DISSIPER (premier signe de stabilisation).
-
-Setup "Greed Exhaustion" (SHORT) :
-  Inverse : tendance baissière + rallye de dead-cat sur faible volume + RSI overbought
-  → vente du rebond.
-
-Signaux DISTINCTIFS vs les autres stratégies :
-  1. Volume de capitulation : on cherche une bougie avec volume > 2× la moyenne
-     ET corps baissier (sell-off = vendeurs épuisés)
-  2. RSI divergence haussière : prix fait un bas, mais RSI fait un bas MOINS bas
-     que le précédent (les vendeurs s'épuisent)
-  3. Marteau / Doji sur support : la mèche basse dépasse le support,
-     mais la clôture revient au-dessus (rejection du bas)
-  4. EMA200 encore intacte : correction ≤ 8% sous EMA200 max (on reste dans le trend)
-  5. Momentum recovery : le MACD histogramme remonte (divergence de momentum)
-  6. Régime de volatilité favorable : ATR en contraction avant le dip
-     (faible volatilité avant = le dip est une opportunité, pas un renversement)
-
-Score différencié :
-  - Chaque signal additionnel monte le score de 0.06-0.10
-  - Score plancher = 0.65 (setup Fear de base)
-  - Score plafond  = 0.95 (6/6 signaux)
-  - Threshold recommandé : 0.72 (exige 2-3 signaux)
-
-Sortie (stop_hint) :
-  - Stop sous le plus bas du dip (naturel, invalide le setup si touché)
-  - Minimum 1× ATR sous le prix d'entrée
-"""
+"""Stratégie Fear & Momentum — rebond sur dips en tendance haussière, short sur exhaustion."""
 import logging
 from typing import Dict, Any, List
 import polars as pl

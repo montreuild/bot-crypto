@@ -4,6 +4,53 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [12.0.0] - 2026-03-25
+
+### ✨ Nouvelles fonctionnalités
+
+#### Paper mode réaliste — slippage, capital settled, persistence
+
+Amélioration majeure du mode simulation pour des résultats plus proches du trading réel.
+
+**Slippage adverse :**
+- Nouveau paramètre `paper_slippage` (défaut `0.001` = 0,1 %) dans `config.yaml` et l'API
+- Chaque fill applique un slippage défavorable : les achats se font plus cher, les ventes moins cher
+- Configurable via l'interface web (section *Paramètres de trading*)
+
+**Suivi capital settled (`_paper_base`) :**
+- Le capital settled (equity réalisée) est tracé séparément du `capital_display`
+- Le PnL non réalisé des positions ouvertes est exclu du sizing du risque
+- `capital_display = settled + PnL non réalisé` (synchronisé à chaque cycle paper)
+
+**Persistence entre sessions :**
+- `_restore_paper_base()` restaure le capital settled depuis la dernière `DailyStats.equity_close` en BDD
+- Pas de remise à zéro du capital entre redémarrages en paper mode
+
+**Protection capital insuffisant :**
+- `_pre_execution_check()` en paper mode bloque une entrée si le capital disponible
+  (`settled − notionals verrouillés`) est inférieur au notional demandé
+
+### 🔧 Fichiers modifiés
+
+| Fichier | Changement |
+|---------|------------|
+| `app/core/config.py` | `paper_slippage: 0.001` ajouté aux defaults |
+| `app/live/live_trader.py` | `_paper_base`, `_restore_paper_base()`, `_sync_paper_balance()`, `_pre_execution_check()` |
+| `app/live/position_mixin.py` | Slippage appliqué aux fills paper |
+| `app/api/routes/config.py` | `paper_slippage` exposé dans l'API de configuration |
+| `app/web/templates/config.html` | Champ *Paper slippage %* dans l'interface |
+
+### 🗄️ Structure V12
+
+```
+app/
+└── live/
+    ├── live_trader.py     ← _paper_base, _restore_paper_base, _sync_paper_balance
+    └── position_mixin.py  ← slippage adverse sur fills paper
+```
+
+---
+
 ## [11.0.0] - 2026-03-18
 
 ### ✨ Nouvelles fonctionnalités

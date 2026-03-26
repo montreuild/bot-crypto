@@ -1,15 +1,4 @@
-"""
-Backtest Engine Pro — V2
-
-Améliorations :
-  - Stop loss vérifié sur HIGH/LOW intrabar (réaliste) + open de la barre suivante
-  - Trailing stop dynamique par stratégie (pas global)
-  - ATR mult configurable par stratégie
-  - Score threshold plus strict (configurable)
-  - Profit target optionnel (take profit fixe en % ou ATR mult)
-  - Warmup adapté à la stratégie (EMA200 = 210 barres minimum)
-  - Slippage asymétrique : stop market = prix défavorable
-"""
+"""Backtester, WalkForwardAnalyzer et MonteCarlo. Stop vérifié intrabar, trailing dynamique."""
 import logging
 import math
 import threading
@@ -44,10 +33,7 @@ def _atr(df: pl.DataFrame, period: int = 14) -> float:
     return float(val) if val is not None and float(val) > 0 else 0.0
 
 def _atr_series(df: pl.DataFrame, period: int = 14) -> np.ndarray:
-    """
-    ATR vectorisé sur tout le df — O(n) unique, même formule que _atr() (SMA du TR).
-    Retourne un numpy array indexable par position de barre.
-    """
+    """ATR vectorisé sur tout le df — même formule que _atr() (SMA du TR)."""
     h      = df["high"]
     l      = df["low"]
     c_prev = df["close"].shift(1).fill_null(strategy="forward")
@@ -67,9 +53,7 @@ def _bar_to_days(tf: str) -> float:
     return m.get(tf, 15) / 1440.0
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  BacktestResult
-# ══════════════════════════════════════════════════════════════════════════════
+# ── BacktestResult ──
 class BacktestResult:
     def __init__(self, trades: List[dict], equity_curve: List[float],
                  initial_capital: float, timestamps: List[str] = None):
@@ -215,18 +199,10 @@ class BacktestResult:
         }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Backtester V2
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Backtester ──
 class Backtester:
-    """
-    Backtester V6 — Trailing stop dynamique multi-phases, sans TP fixe.
-    Le TP fixe est supprimé. Les gains courent jusqu'au retournement naturel.
-
-    use_pretrained_ml : si True (défaut), les stratégies BaseStrategyML chargent
-      leur modèle pré-entraîné depuis models/{name}_{tf}.pkl et n'effectuent aucun
-      réentraînement inline. Si False (mode optimiseur / walk-forward), elles
-      repartent de zéro et se réentraînent barre par barre.
+    """Backtester trailing stop multi-phases, sans TP fixe.
+    use_pretrained_ml=False force le réentraînement inline (walk-forward/optimiseur).
     """
     def __init__(self, engine: Engine, cfg: dict,
                  cancel_event: Optional[threading.Event] = None,
@@ -239,7 +215,7 @@ class Backtester:
         tcfg = cfg.get("trading",  {})
 
         self.atr_stop_mult = float(bcfg.get("atr_stop_mult", 2.5))
-        self.atr_tp_mult   = None  # V6 : TP FIXE SUPPRIMÉ
+        self.atr_tp_mult   = None  # TP fixe supprimé — trailing gère les sorties
 
         self.trail_wide   = float(bcfg.get("trail_wide",   2.5))
         self.trail_normal = float(bcfg.get("trail_normal", 2.0))
@@ -561,9 +537,7 @@ class Backtester:
         return price * size * rate
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Walk-Forward
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Walk-Forward ──
 class WalkForwardAnalyzer:
     def __init__(self, engine: Engine, cfg: dict, n_folds: int = 5):
         self.engine  = engine
@@ -640,9 +614,7 @@ class WalkForwardAnalyzer:
         }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Monte-Carlo
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Monte-Carlo ──
 class MonteCarlo:
     def __init__(self, n_runs: int = 200, confidence: float = 0.95):
         self.n_runs    = n_runs

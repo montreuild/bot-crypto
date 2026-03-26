@@ -1,14 +1,4 @@
-"""
-Notifications multi-canaux : Telegram, WhatsApp, Email.
-
-Architecture :
-  - Envoi synchrone direct (pas de thread worker dédié)
-  - Filtrage d'événements configurable (on_trade_open, on_trade_close, …)
-  - Niveau "critical" pour les alertes urgentes
-  - Anti-spam intégré (halt, dd_warning)
-  - Email SMTP optionnel (nouveau)
-  - WhatsApp via CallMeBot (gratuit) ou Twilio (officiel)
-"""
+"""Notifications multi-canaux : Telegram, WhatsApp, Email. Envoi synchrone avec anti-spam."""
 import logging
 import smtplib
 from email.mime.text import MIMEText
@@ -90,7 +80,6 @@ class Notifier:
         self._dispatch(message, level)
 
     def notify_trade_open(self, pos: dict):
-        """Notification à l'ouverture d'une position."""
         if not self._events.get("on_trade_open"): return
         side  = pos.get("side", "?")
         emoji = "🟢" if side == "long" else "🔴"
@@ -104,7 +93,6 @@ class Notifier:
         )
 
     def notify_trade(self, trade: dict):
-        """Notification à la clôture (filtrée par min_pnl)."""
         if not self._events.get("on_trade_close"): return
         pnl = trade.get("pnl") or 0
         if abs(pnl) < self.min_pnl: return

@@ -1,11 +1,4 @@
-"""
-Scanner V11 — Multi-Timeframe + CandleStore
-
-Nouveautés V11 :
-  - fetch_ohlcv() utilise CandleStore : persistence Parquet par paire/TF
-  - Fetch incrémental : seules les nouvelles bougies sont récupérées depuis l'exchange
-  - Historique accumulé automatiquement (backtest, optimizer, paper, live)
-"""
+"""Scanner de marché — screen des paires, fetch OHLCV via CandleStore (Parquet persistant)."""
 import logging
 import math
 from typing import List, Dict, Optional, Tuple

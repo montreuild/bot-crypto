@@ -1,9 +1,4 @@
-"""
-SignalPipeline — Collecte, scoring et ranking des signaux de trading.
-
-Extrait la logique de scan de LiveTrader pour une meilleure séparation des responsabilités.
-Chaque signal est associé à un slot "strategy::tf".
-"""
+"""SignalPipeline — collecte, scoring et ranking des signaux par slot strategy::tf."""
 import logging
 import time
 from dataclasses import dataclass, field

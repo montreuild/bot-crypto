@@ -1,7 +1,4 @@
-"""
-Client exchange CCXT avec retry exponentiel, fallback et monitoring.
-V2 : reconnexion complète de session après coupure prolongée.
-"""
+"""Client exchange CCXT avec retry exponentiel et reconnexion de session."""
 import logging, time, functools
 from typing import Callable, Any, Optional
 import ccxt
@@ -78,7 +75,7 @@ class RobustExchange:
         self._last_reconnect_at   = 0.0 # timestamp du dernier reset
 
     def _reconnect(self):
-        """Recrée une session TCP fraîche. Appelé automatiquement après N erreurs consécutives."""
+        """Recrée une session TCP fraîche après N erreurs consécutives."""
         now = time.time()
         if now - self._last_reconnect_at < 60:  # anti-spam : max 1 reset/60s
             return
@@ -162,10 +159,7 @@ class RobustExchange:
     def __getattr__(self, name): return getattr(self._ex, name)
 
 
-# Supported exchanges (security whitelist — prevents arbitrary ccxt attribute access
-# via a maliciously crafted config.yaml).
-# To add a new exchange: verify it is supported by ccxt, tested against the bot's
-# API layer (RobustExchange), and add its ccxt id (lowercase) to this set.
+# Exchanges autorisés (whitelist sécurité — empêche l'accès arbitraire aux attributs ccxt)
 _ALLOWED_EXCHANGES: frozenset = frozenset([
     "binance", "binanceus", "binanceusdm", "binancecoinm",
     "bybit", "okx", "kraken", "kucoin", "coinbase", "coinbasepro",
@@ -198,9 +192,7 @@ def create_exchange(cfg: dict) -> RobustExchange:
         opts["apiKey"] = api_key
         opts["secret"] = api_secret
     ex = klass(opts)
-    # set_sandbox_mode n'est jamais activé : le testnet redirige toutes les requêtes
-    # (y compris fetch_ohlcv) vers testnet.binance.vision (~43 jours d'historique).
-    # Le paper trading est intégralement simulé localement par RobustExchange.
+    # set_sandbox_mode non activé : le paper trading est simulé localement par RobustExchange.
     margin      = cfg["exchange"].get("margin", False) or cfg["trading"].get("margin_mode") is not None
     margin_mode = cfg["trading"].get("margin_mode", "isolated")  # "isolated" | "cross"
     return RobustExchange(ex, paper=paper, margin=margin, margin_mode=margin_mode)

@@ -1,16 +1,4 @@
-"""
-Optimiseur de Stratégies — V11 (Auto-découverte des stratégies)
-
-Nouveautés V11 :
-  - STRATEGY_TIMEFRAMES, PARAM_SPACES, FIXED_PARAMS sont construits
-    automatiquement via app.strategies.registry (découverte des attributs
-    de classe de chaque Strategy : timeframes, param_space, fixed_params).
-  - Ajouter une nouvelle stratégie ne nécessite plus de modifier ce fichier.
-  - RECOMMENDED_LIMIT : nombre de barres optimal par TF (config globale TF, inchangé)
-  - save_optimizer_results() : persiste le classement (strategy, tf) → params + score
-  - apply_best_params() : met à jour strategy_params ET optimizer_results
-  - _composite_score() inchangé
-"""
+"""Optimiseur de stratégies — auto-découverte des espaces de paramètres via le registre."""
 import logging
 import importlib
 import itertools
@@ -41,15 +29,12 @@ from app.engine.registry import (
 logger = logging.getLogger(__name__)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  Métadonnées des stratégies — auto-découvertes via app.strategies.registry
-#  (plus de dicts codés en dur ici : chaque stratégie porte ses propres métadonnées)
-# ════════════════════════════════════════════════════════════════════════════
+# Métadonnées auto-découvertes via app.strategies.registry
 STRATEGY_TIMEFRAMES: Dict[str, List[str]] = get_strategy_timeframes()
 PARAM_SPACES:        Dict[str, Dict[str, List]] = get_param_spaces()
 FIXED_PARAMS:        Dict[str, Dict[str, Any]]  = get_fixed_params()
 
-# Nombre de barres optimal par timeframe (config globale TF, non liée à une stratégie)
+# Barres recommandées par timeframe
 RECOMMENDED_LIMIT: Dict[str, int] = {
     "1m":  2000,   # ~1.4 jours
     "5m":  4000,   # ~14 jours
@@ -66,9 +51,7 @@ GLOBAL_TRADING_PARAMS = {
 }
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  Score composite
-# ════════════════════════════════════════════════════════════════════════════
+# ── Score composite ──
 def _composite_score(res: dict, min_trades: int = 2) -> float:
     n = res.get("total_trades", 0) if isinstance(res, dict) else res.total_trades
     if n < min_trades:
@@ -122,9 +105,7 @@ def _overfitting_ratio(is_score: float, oos_score: float) -> float:
     return round(min(is_score / max(oos_score, 0.01), 10.0), 2)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  Worker standalone pour ProcessPoolExecutor (picklable — niveau module)
-# ════════════════════════════════════════════════════════════════════════════
+# ── Worker standalone pour ProcessPoolExecutor (picklable — niveau module) ──
 def _eval_worker(args: tuple) -> dict:
     """
     Évalue un jeu de paramètres dans un processus séparé.
@@ -178,9 +159,7 @@ def _eval_worker(args: tuple) -> dict:
         return {"error": str(_exc), "params": params}
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  Persistance des résultats d'optimisation
-# ════════════════════════════════════════════════════════════════════════════
+# ── Persistance des résultats d'optimisation ──
 def _resolve_config_path(config_path: str) -> str:
     """Résout le chemin du fichier config en chemin absolu."""
     if os.path.isabs(config_path):
@@ -407,9 +386,7 @@ def get_active_strategies_per_tf(cfg: dict) -> Dict[str, List[dict]]:
     return result
 
 
-# ════════════════════════════════════════════════════════════════════════════
-#  StrategyOptimizer — classe principale
-# ════════════════════════════════════════════════════════════════════════════
+# ── StrategyOptimizer — classe principale ──
 class StrategyOptimizer:
     def __init__(self, strategy_name: str, cfg: dict,
                  df_is: pl.DataFrame, df_oos: pl.DataFrame,

@@ -1,18 +1,4 @@
-"""
-Stratégie Breakout Donchian — V5
-
-Corrections V5 vs V4 :
-  - Cooldown par symbole
-  - quality ≥ 2 requis (était ≥ 1 — trop permissif)
-  - trend_bull strict : prix > EMA200 ET > EMA50 (plus de OR)
-    Exception : EMA200 à ±3% accepté si EMA50 bien au-dessus
-  - Ajout filtre MACD : momentum positif requis à la cassure
-  - Confirmation 2 barres : les 2 précédentes dans la même direction
-  - Volume MONTE sur la bougie de breakout (vol_now > vol_prev)
-  - ATR expansion obligatoire (pas optionnelle)
-  - R:R check : stop sous le canal Donchian brisé
-  - HTF trend comme filtre supplémentaire
-"""
+"""Stratégie Breakout Donchian — cassure de canal avec confirmations ATR, MACD et volume."""
 import logging
 from typing import Dict, Any, List
 import polars as pl

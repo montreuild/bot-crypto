@@ -1,22 +1,5 @@
-"""
-Stratégie Pullback Trend — V5
+"""Stratégie Pullback Trend — entrée en pullback vers EMA fast dans une tendance confirmée."""
 
-Principe : ne jamais chasser le marché.
-  1. Tendance claire (EMA structure + ADX + structure HH/HL)
-  2. Pullback sain vers EMA fast (repli mesuré)
-  3. Rebond confirmé (bougie + RSI en hausse réelle + volume de rebond)
-  4. Confirmation HTF optionnelle
-
-Corrections V5 vs V4 :
-  - Cooldown par symbole (plus partagé entre paires)
-  - RSI recovery : exige hausse réelle sur 2 barres (rsi_now > rsi_prev > rsi_prev2)
-  - pb_zone détection réduite à ×1.2 (était ×2.0, trop large)
-  - Volume rebond : vol_ratio > vol_min ET vol_now > vol_prev (monte)
-  - Vérification R:R minimum avant émission du signal
-  - HTF filter intégré proprement
-  - ADX minimum relevé à 20 (était 18)
-  - Structure de marché HH/HL comme bonus de score
-"""
 import logging
 from typing import Dict, Any, List
 import polars as pl

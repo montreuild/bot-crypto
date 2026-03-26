@@ -1,20 +1,6 @@
 """
-CandleStore V1 — Stockage Parquet persistant des bougies OHLCV.
-
-Architecture :
-  - Un fichier Parquet par (symbol, timeframe) : data/ohlcv/{symbol}/{tf}.parquet
-  - Fetch incrémental : seules les bougies manquantes sont récupérées
-  - Thread-safe : verrou par fichier pour les accès concurrents (live trader multi-thread)
-  - Transparent : retourne un pl.DataFrame identique à MarketScanner.fetch_ohlcv()
-
-Usage :
-    from app.core.candle_store import get_store
-    df = get_store().fetch(exchange, "BTC/USDC", "1h", total=500)
-
-Callers :
-  - MarketScanner.fetch_ohlcv()     → live trader, scanner, paper mode
-  - API /backtest, /optimize/start, /ml/train
-  - CLI cli.py --backtest, --optimize
+CandleStore — stockage Parquet persistant des bougies OHLCV par (symbol, timeframe).
+Fetch incrémental, thread-safe, retourne un pl.DataFrame identique à MarketScanner.
 """
 
 import logging
@@ -55,14 +41,7 @@ def _get_file_lock(path: Path) -> threading.Lock:
 class CandleStore:
     """
     Stockage Parquet persistant des bougies OHLCV.
-
-    Stratégie de fetch :
-      1. Chargement du cache Parquet local (lecture instantanée)
-      2. Si cache non vide → fetch incrémental depuis la dernière ts connue
-         Si cache vide    → fetch complet paginé (premier démarrage)
-      3. Merge + déduplication + filtre (volume > 0, close > 0) + tri
-      4. Persistance Parquet (compression zstd)
-      5. Retour des `total` dernières bougies
+    Stratégie : cache local → fetch incrémental → merge+déduplique → persistance.
     """
 
     def __init__(self, base_dir: str = "data/ohlcv"):
@@ -73,19 +52,7 @@ class CandleStore:
 
     def fetch(self, exchange, symbol: str, tf: str,
               total: int) -> Optional[pl.DataFrame]:
-        """
-        Retourne `total` bougies pour (symbol, tf) en combinant cache local + exchange.
-
-        Args:
-            exchange : instance RobustExchange (ccxt wrappé)
-            symbol   : ex. "BTC/USDC"
-            tf       : ex. "1h"
-            total    : nombre de bougies souhaitées
-
-        Returns:
-            pl.DataFrame colonnes [time, open, high, low, close, volume]
-            ou None si aucune donnée disponible.
-        """
+        """Retourne `total` bougies pour (symbol, tf) depuis cache local + exchange."""
         path = self._path(symbol, tf)
         lock = _get_file_lock(path)
 
@@ -184,10 +151,7 @@ class CandleStore:
 
     def _fetch_incremental(self, exchange, symbol: str, tf: str,
                            since_ms: int) -> List[list]:
-        """
-        Fetch uniquement les bougies depuis since_ms.
-        Pagine jusqu'à 10 pages de 1000 si nécessaire (ex: redémarrage après 10 jours).
-        """
+        """Fetch uniquement les bougies depuis since_ms, pagine jusqu'à 10 pages."""
         LIMIT      = 1000
         all_raw    = []
         seen_ts    = set()
@@ -215,7 +179,7 @@ class CandleStore:
                 break
             since = batch[-1][0] + 1
             if len(batch) < LIMIT:
-                break  # Dernière page — pas besoin de continuer
+                break
             time.sleep(rate_sleep)
 
         all_raw.sort(key=lambda x: x[0])
@@ -223,11 +187,7 @@ class CandleStore:
 
     def _fetch_historical(self, exchange, symbol: str, tf: str,
                           before_ms: Optional[int], needed: int) -> List[list]:
-        """
-        Fetch des bougies historiques antérieures à before_ms.
-        Utilisé quand le cache est insuffisant pour couvrir `needed` bougies supplémentaires.
-        Pagine en arrière depuis before_ms jusqu'à obtenir `needed` bougies ou épuiser l'exchange.
-        """
+        """Fetch des bougies antérieures à before_ms pour compléter le cache."""
         LIMIT      = 1000
         rate_sleep = getattr(exchange, "rateLimit", 1200) / 1000
 
@@ -269,7 +229,7 @@ class CandleStore:
 
             since = batch[-1][0] + 1
             if len(batch) < LIMIT:
-                break  # Dernière page disponible sur l'exchange
+                break
             time.sleep(rate_sleep)
 
         all_raw.sort(key=lambda x: x[0])
@@ -277,10 +237,7 @@ class CandleStore:
 
     def _fetch_full(self, exchange, symbol: str, tf: str,
                     total: int) -> List[list]:
-        """
-        Fetch complet paginé — utilisé uniquement pour le premier chargement.
-        Réimplémente la logique de fetch_ohlcv_paged sans dépendance circulaire.
-        """
+        """Fetch complet paginé — premier chargement uniquement."""
         LIMIT      = 1000
         rate_sleep = getattr(exchange, "rateLimit", 1200) / 1000
 
@@ -368,10 +325,7 @@ _store_lock    = threading.Lock()
 
 
 def get_store(base_dir: str = "data/ohlcv") -> CandleStore:
-    """
-    Retourne l'instance singleton du CandleStore.
-    Thread-safe, lazy init.
-    """
+    """Retourne le singleton CandleStore (lazy init, thread-safe)."""
     global _default_store
     if _default_store is None:
         with _store_lock:

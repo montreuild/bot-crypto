@@ -1,21 +1,4 @@
-"""Registre des stratégies — découverte automatique.
-
-Principe :
-  Chaque stratégie dans app/strategies/<name>.py déclare ses métadonnées
-  d'optimisation directement dans la classe Strategy :
-
-      class Strategy(BaseStrategy):
-          name         = "ma_strategie"
-          timeframes   = ["1h", "4h"]          # TFs recommandés
-          param_space  = {"ema_fast": [13, 21]} # espace de recherche
-          fixed_params = {}                     # paramètres fixes
-
-  Ce module parcourt automatiquement tous les fichiers du package et
-  construit les dictionnaires utilisés par l'optimiseur.
-
-Ajouter une nouvelle stratégie = créer app/strategies/<name>.py.
-Aucune modification de optimizer.py ou d'un autre fichier central n'est requise.
-"""
+"""Registre des stratégies — découverte automatique des métadonnées d'optimisation."""
 import importlib
 import pkgutil
 import logging

@@ -1,18 +1,5 @@
-"""
-Stratégie ML à seuil dynamique — V7 (multi-timeframe)
+"""Stratégie ML à seuil dynamique — labels adaptatifs à la volatilité, filtre régime ADX."""
 
-Différences clés vs ml_strategy.py :
-  - Labels DYNAMIQUES : le seuil de hausse/baisse s'adapte à la volatilité
-    réalisée du marché (ATR/écart-type sur 20 périodes * sqrt(lookahead)).
-    Évite les faux signaux en range serré et les signaux trop tardifs en trend fort.
-  - Filtre de régime ADX : bloque le modèle si le marché est trop plat.
-  - Double modèle : Random Forest ou Logistic Regression au choix.
-  - Correction robuste UndefinedMetricWarning via np.nanmean sur les folds
-    mono-classe (problème fréquent sur petits datasets crypto).
-  - Vérification de la distribution des classes avant entraînement.
-  - Multi-TF : stocke un pipeline distinct par timeframe détecté automatiquement.
-    Un seul objet Strategy gère 5m, 15m, 1h… en parallèle.
-"""
 import logging
 import math
 import os

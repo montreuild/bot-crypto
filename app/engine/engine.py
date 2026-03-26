@@ -1,8 +1,4 @@
-"""
-Moteur multi-stratégies avec scoring.
-Chaque stratégie retourne un dict {"score": float, "side": str, "name": str}.
-Le moteur sélectionne le meilleur signal.
-"""
+"""Moteur multi-stratégies avec scoring — chaque stratégie retourne un dict signal."""
 import logging
 from typing import List, Dict, Any, Optional
 
@@ -15,59 +11,26 @@ class BaseStrategy:
     """Interface que toutes les stratégies doivent respecter."""
     name: str = "base"
 
-    # ── Métadonnées d'optimisation (surchargées par chaque stratégie) ──────
-    # timeframes   : TFs recommandés pour l'optimisation (ex: ["1h", "1d"])
-    # param_space  : espace de recherche {param: [valeurs]} pour l'optimiseur
-    # fixed_params : paramètres fixes (non optimisables), ex: {"ema_trend": 200}
+    # Métadonnées d'optimisation (surchargées par chaque stratégie)
     timeframes:   List[str] = []
     param_space:  Dict[str, List] = {}
     fixed_params: Dict[str, Any]  = {}
 
     def min_bars_required(self, params: dict = None) -> int:
-        """
-        Retourne le nombre minimum de bougies requis pour que la stratégie
-        puisse calculer ses indicateurs de manière fiable.
-        Chaque stratégie surcharge cette méthode selon ses propres besoins.
-        """
+        """Nombre minimum de bougies requis pour calculer les indicateurs."""
         return 50
 
     def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
-        """
-        df     : OHLCV du timeframe principal
-        df_htf : OHLCV du timeframe supérieur — peut être None
-        symbol : nom de la paire (ex: "BTC/USDC") — utilisé pour le cooldown
-        Analyse le DataFrame OHLCV et retourne un signal.
-        Retourne : {"score": float [0-1], "side": "long"|"short"|"none", "name": str}
-        """
+        """Retourne {"score": float [0-1], "side": "long"|"short"|"none", "name": str}."""
         raise NotImplementedError
 
 
 class BaseStrategyML(BaseStrategy):
     """
-    Classe de base pour les stratégies basées sur un modèle ML.
-
-    Distingue les stratégies ML des stratégies classiques dans tout le bot :
-    - auto_optimizer : exclusion automatique (gèrent leur propre optimisation interne)
-    - live_trader    : entraînement périodique en arrière-plan + persistance du modèle
-    - backtest       : reset_model() disponible pour le walk-forward
-
-    Contrat à implémenter :
-      fit(df, params)          → entraîne le modèle sur les données historiques
-      predict(df, params)      → génère un signal sans ré-entraîner
-      save_model(path)         → persiste le modèle (joblib)
-      load_model(path) → bool  → charge un modèle depuis le disque
-      reset_model()            → réinitialise l'état (nouveau walk-forward fold)
-      is_trained (property)    → True si un modèle est disponible
-
-    Paramètre de classe :
-      retrain_interval_h : fréquence d'entraînement périodique en live (défaut : 6h)
-      model_dir          : répertoire de persistance des modèles (défaut : "models")
-
-    Flag d'instance :
-      managed_externally : si True, le _signal() interne ne réentraîne pas inline ;
-                           c'est le LiveTrader qui planifie les réentraînements.
-                           Mis à True automatiquement au démarrage du LiveTrader.
+    Classe de base pour les stratégies ML.
+    Distingue les stratégies ML (entraînement périodique, persistance modèle)
+    des stratégies classiques. managed_externally=True désactive le réentraînement inline.
     """
     retrain_interval_h: int = 6
     model_dir: str = "models"

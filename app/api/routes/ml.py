@@ -1,11 +1,4 @@
-"""
-Routes ML et CandleStore.
-
-Endpoints :
-  POST /api/ml/train
-  GET  /api/ml/strategy-info
-  GET  /api/candles/stats
-"""
+"""Routes ML et candles — entraînement et stats du cache Parquet."""
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException

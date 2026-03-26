@@ -1,18 +1,11 @@
-"""
-Module 5 — Features ML : extraction depuis OHLCV pour modèles prédictifs.
-Bibliothèque principale : Polars (Rust, Arrow, multi-threadé).
-"""
+"""Extraction de features techniques depuis OHLCV pour les modèles ML (Polars)."""
 import numpy as np
 import polars as pl
 from typing import Tuple
 
 
 def extract_features(df: pl.DataFrame, window: int = 50) -> pl.DataFrame:
-    """
-    Extrait les features techniques pour le ML via Polars lazy evaluation.
-    Retourne un pl.DataFrame avec une ligne par bougie (à partir de `window`).
-    Appelants ML : utiliser .to_numpy() pour scikit-learn.
-    """
+    """Extrait les features techniques pour le ML (Polars lazy). Retourne une ligne par bougie."""
     if len(df) < window + 1:
         return pl.DataFrame()
 

@@ -1,10 +1,4 @@
-"""
-Module 5 — Modèles ML prédictifs :
-  - Logistic Regression
-  - Random Forest
-  - XGBoost (optionnel, import conditionnel)
-Pondération des signaux ML selon régime de marché.
-"""
+"""Modèles ML prédictifs : Logistic Regression, Random Forest, XGBoost (optionnel)."""
 import logging
 import pickle
 import os
