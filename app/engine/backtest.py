@@ -21,33 +21,6 @@ def _sf(v, fallback=None):
 logger = logging.getLogger(__name__)
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
-def _atr(df: pl.DataFrame, period: int = 14) -> float:
-    if len(df) < period + 1:
-        return 0.0
-    h      = df["high"]
-    l      = df["low"]
-    c_prev = df["close"].shift(1)
-    tr  = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
-    val = tr.rolling_mean(period)[-1]
-    return float(val) if val is not None and float(val) > 0 else 0.0
-
-def _atr_series(df: pl.DataFrame, period: int = 14) -> np.ndarray:
-    """ATR vectorisé sur tout le df — même formule que _atr() (SMA du TR)."""
-    h      = df["high"]
-    l      = df["low"]
-    c_prev = df["close"].shift(1).fill_null(strategy="forward")
-    tr  = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
-    atr = tr.rolling_mean(period)
-    arr = atr.to_numpy(allow_copy=True).astype(float)
-    # Remplir les NaN initiaux avec la moyenne cumulative des TR disponibles (O(n) vectorisé)
-    tr_vals = tr.to_numpy().astype(float)
-    nan_mask = np.isnan(arr)
-    if nan_mask.any():
-        cum_mean = np.cumsum(tr_vals) / np.arange(1, len(tr_vals) + 1)
-        arr = np.where(nan_mask, cum_mean, arr)
-    return arr
-
 def _bar_to_days(tf: str) -> float:
     m = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "2h": 120, "4h": 240, "1d": 1440}
     return m.get(tf, 15) / 1440.0
