@@ -57,8 +57,8 @@ async def verify_api_key(request: Request):
     key = state.cfg["web"].get("api_key", "") if state.cfg else ""
     if not key:
         return
-    token = request.headers.get("X-API-Key") or request.query_params.get("api_key")
-    if not token or not hmac.compare_digest(token, key):
+    token = request.headers.get("X-API-Key") or request.query_params.get("api_key") or ""
+    if not hmac.compare_digest(token, key):
         client_host = getattr(request.client, "host", "unknown") if request.client else "unknown"
         logger.warning(
             f"[Auth] Clé API invalide depuis {client_host} — "

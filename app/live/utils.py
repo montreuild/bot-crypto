@@ -106,11 +106,8 @@ def resolve_strategy_params(cfg: dict, timeframe: str = None) -> dict:
             for k, v in opt_p.items():
                 if k in _GLOBAL_PARAM_KEYS or v is None:
                     continue
-                try:
-                    if isinstance(v, float) and math.isnan(v):
-                        continue
-                except (TypeError, ValueError):
-                    pass
+                if isinstance(v, float) and math.isnan(v):
+                    continue
                 base[k] = v
             strat_params[strat_name] = base
 
