@@ -7,31 +7,8 @@ live_trader, signal_pipeline et ohlcv_cache, évitant les imports circulaires.
 import math
 from typing import Dict
 
-
-# ---------------------------------------------------------------------------
-# Sérialisation JSON sûre
-# ---------------------------------------------------------------------------
-
-def _safe_float(v, fallback=None):
-    """Convertit nan/inf en fallback pour garantir la sérialisation JSON."""
-    try:
-        f = float(v)
-        if math.isnan(f) or math.isinf(f):
-            return fallback
-        return f
-    except (TypeError, ValueError):
-        return fallback
-
-
-def _sanitize(obj):
-    """Parcourt récursivement un dict/list et remplace les float nan/inf par None."""
-    if isinstance(obj, dict):
-        return {k: _sanitize(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_sanitize(v) for v in obj]
-    if isinstance(obj, float):
-        return _safe_float(obj)
-    return obj
+from app.core.sanitize import safe_float as _safe_float   # noqa: F401 — re-export
+from app.core.sanitize import sanitize as _sanitize        # noqa: F401 — re-export
 
 
 # ---------------------------------------------------------------------------

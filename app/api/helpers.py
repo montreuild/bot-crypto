@@ -1,54 +1,19 @@
-"""Helpers partagés de l'API : sanitisation JSON, auth, découverte stratégies, OHLCV."""
+"""Helpers partagés de l'API : auth, découverte stratégies, OHLCV."""
 import glob
 import hmac
-import json
 import logging
-import math
 import os
 import time
-from typing import Any
 
 from fastapi import HTTPException, Request
-from fastapi.responses import JSONResponse
 
 from app.api import state
+from app.core.sanitize import (                          # noqa: F401 — re-export
+    clean_for_json as _clean,
+    CleanJSONResponse,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# ── Sanitisation JSON ──────────────────────────────────────────────────────
-
-def _clean(obj: Any) -> Any:
-    """Sanitise récursivement pour JSON : NaN→None, ±Inf→±1e308, clés privées ignorées."""
-    if isinstance(obj, float):
-        if math.isnan(obj):
-            return None
-        if math.isinf(obj):
-            return 1e308 if obj > 0 else -1e308
-        return obj
-    if isinstance(obj, dict):
-        return {k: _clean(v) for k, v in obj.items() if not str(k).startswith("_")}
-    if isinstance(obj, list):
-        return [_clean(v) for v in obj]
-    if isinstance(obj, (int, str, bool, type(None))):
-        return obj
-    try:
-        json.dumps(obj)
-        return obj
-    except (TypeError, ValueError):
-        return None
-
-
-class CleanJSONResponse(JSONResponse):
-    """JSONResponse qui neutralise les float NaN/Inf sur toutes les réponses."""
-    def render(self, content) -> bytes:
-        return json.dumps(
-            _clean(content),
-            ensure_ascii=False,
-            allow_nan=False,
-            indent=None,
-            separators=(",", ":"),
-        ).encode("utf-8")
 
 
 # ── Auth ───────────────────────────────────────────────────────────────────
