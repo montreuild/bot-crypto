@@ -543,6 +543,22 @@ def pre_val(df: pl.DataFrame, col: str) -> float | None:
     return None
 
 
+def detect_regime(df: pl.DataFrame, adx_threshold: float = 25.0) -> str:
+    """
+    Détecte le régime de marché à partir de l'ADX(14).
+
+    Retourne ``"trend"`` si ADX >= adx_threshold, ``"range"`` sinon,
+    ou ``"unknown"`` si le DataFrame est trop court.
+
+    Utilisé par SignalPipeline (ML blending) et MarketScanner (screen/UI).
+    Extrait ici pour éviter que SignalPipeline dépende de MarketScanner.
+    """
+    if len(df) < 30:
+        return "unknown"
+    adx = adx_val(df, 14)
+    return "trend" if adx >= adx_threshold else "range"
+
+
 def pre_or_compute(df: pl.DataFrame, col: str, fallback_fn, *args, **kwargs):
     """Lit la colonne pré-calculée si elle existe dans le df, sinon calcule à la volée.
     Compatible avec les backtests (avec pré-calcul) et le live trading (sans).
