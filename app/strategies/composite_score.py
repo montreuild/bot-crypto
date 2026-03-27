@@ -287,8 +287,9 @@ class Strategy(BaseStrategy):
             return self._none("ATR invalide")
 
         # ── EMA(20) et EMA(50) ────────────────────────────────────────────────
-        ema20    = float(close.ewm_mean(span=ema_fast, adjust=False)[-1])
-        ema50    = float(close.ewm_mean(span=ema_slow, adjust=False)[-1])
+        _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
+        ema20    = pre_val(df, _ema_map.get(ema_fast, "")) or float(close.ewm_mean(span=ema_fast, adjust=False)[-1])
+        ema50    = pre_val(df, _ema_map.get(ema_slow, "")) or float(close.ewm_mean(span=ema_slow, adjust=False)[-1])
         ema_bull = c_now > ema20 > ema50
         ema_bear = c_now < ema20 < ema50
 

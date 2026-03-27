@@ -4,7 +4,7 @@ import logging
 from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
-from app.core.indicators import market_structure, htf_trend
+from app.core.indicators import market_structure, htf_trend, pre_val
 
 logger = logging.getLogger(__name__)
 
@@ -68,15 +68,14 @@ class Strategy(BaseStrategy):
         low   = df["low"]
 
         # ── EMAs ─────────────────────────────────────────────────────────────
-        ef  = close.ewm_mean(span=ema_fast,  adjust=False)
-        em  = close.ewm_mean(span=ema_mid,   adjust=False)
-        es  = close.ewm_mean(span=ema_slow,  adjust=False)
-        et  = close.ewm_mean(span=ema_trend, adjust=False)
+        _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
+        _ema_col_f = _ema_map.get(ema_fast)
+        ef  = df[_ema_col_f] if (_ema_col_f and _ema_col_f in df.columns) else close.ewm_mean(span=ema_fast, adjust=False)
 
         lf  = float(ef[-1])
-        lm  = float(em[-1])
-        ls  = float(es[-1])
-        lt  = float(et[-1])
+        lm  = pre_val(df, _ema_map.get(ema_mid, ""))   or float(close.ewm_mean(span=ema_mid,   adjust=False)[-1])
+        ls  = pre_val(df, _ema_map.get(ema_slow, ""))  or float(close.ewm_mean(span=ema_slow,  adjust=False)[-1])
+        lt  = pre_val(df, _ema_map.get(ema_trend, "")) or float(close.ewm_mean(span=ema_trend, adjust=False)[-1])
         c0  = float(close[-1])
         c1  = float(close[-2])
 

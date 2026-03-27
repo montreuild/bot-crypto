@@ -77,9 +77,10 @@ class Strategy(BaseStrategy):
         volume = df["volume"]
 
         # ── Calculs de base ──────────────────────────────────────────────────
-        ef   = close.ewm_mean(span=ema_fast,  adjust=False)
-        em   = close.ewm_mean(span=ema_mid,   adjust=False)
-        et   = close.ewm_mean(span=ema_trend, adjust=False)
+        _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
+        lf   = pre_val(df, _ema_map.get(ema_fast, ""))  or float(close.ewm_mean(span=ema_fast,  adjust=False)[-1])
+        lm   = pre_val(df, _ema_map.get(ema_mid, ""))   or float(close.ewm_mean(span=ema_mid,   adjust=False)[-1])
+        lt   = pre_val(df, _ema_map.get(ema_trend, "")) or float(close.ewm_mean(span=ema_trend, adjust=False)[-1])
 
         c0   = float(close[-1])
         c1   = float(close[-2])
@@ -87,9 +88,6 @@ class Strategy(BaseStrategy):
         h0   = float(high[-1])
         l0   = float(low[-1])
         o0   = float(open_[-1])
-        lf   = float(ef[-1])
-        lm   = float(em[-1])
-        lt   = float(et[-1])
 
         atr_val   = pre_val(df, "_pre_atr14") or calc_atr(df, 14)
         if atr_val <= 0:

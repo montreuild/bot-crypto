@@ -4,7 +4,7 @@ import logging
 from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
-from app.core.indicators import macd as calc_macd, supertrend as calc_supertrend, htf_trend
+from app.core.indicators import macd as calc_macd, supertrend as calc_supertrend, htf_trend, pre_val
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +80,9 @@ class Strategy(BaseStrategy):
         low   = df["low"]
 
         # ── EMAs ─────────────────────────────────────────────────────────────
-        ema_t   = close.ewm_mean(span=ema_trend, adjust=False)
-        ema_mid = close.ewm_mean(span=ema_mid_p, adjust=False)
-        lt      = float(ema_t[-1])
-        lm      = float(ema_mid[-1])
+        _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
+        lt      = pre_val(df, _ema_map.get(ema_trend, "")) or float(close.ewm_mean(span=ema_trend, adjust=False)[-1])
+        lm      = pre_val(df, _ema_map.get(ema_mid_p, "")) or float(close.ewm_mean(span=ema_mid_p, adjust=False)[-1])
         c_now   = float(close[-1])
 
         trend_bull = c_now >= lt * 0.970 and c_now >= lm * 0.985

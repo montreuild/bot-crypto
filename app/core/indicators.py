@@ -470,6 +470,9 @@ def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
       _pre_macd_sig    MACD signal
       _pre_macd_hist   MACD histogram
       _pre_volratio20  volume_ratio(20)
+      _pre_ema20       EMA(20)
+      _pre_ema50       EMA(50)
+      _pre_ema200      EMA(200)
 
     Entièrement Polars — zéro round-trip numpy.
     """
@@ -512,6 +515,11 @@ def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
     vm     = v.rolling_mean(20)
     vm_safe = vm.clip(lower_bound=1e-9)
 
+    # EMAs standard (20, 50, 200)
+    pre_ema20  = c.ewm_mean(span=20,  adjust=False)
+    pre_ema50  = c.ewm_mean(span=50,  adjust=False)
+    pre_ema200 = c.ewm_mean(span=200, adjust=False)
+
     return df.with_columns([
         pre_rsi14.alias("_pre_rsi14"),
         pre_atr14.alias("_pre_atr14"),
@@ -522,6 +530,9 @@ def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
         ms.alias("_pre_macd_sig"),
         (ml - ms).alias("_pre_macd_hist"),
         (v / vm_safe).alias("_pre_volratio20"),
+        pre_ema20.alias("_pre_ema20"),
+        pre_ema50.alias("_pre_ema50"),
+        pre_ema200.alias("_pre_ema200"),
     ])
 
 
