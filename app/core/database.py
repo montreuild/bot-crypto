@@ -2,6 +2,7 @@
 Base de données SQLite étendue — trades, métriques journalières, signaux, params optimizer.
 """
 import logging
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
@@ -114,6 +115,24 @@ def init_db(url: str = "sqlite:///crypto_bot.db"):
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     logger.info(f"[DB] Connecté : {url}")
     return engine, SessionLocal
+
+
+@contextmanager
+def session_scope(SessionLocal):
+    """Context manager garantissant la fermeture de la session en toutes circonstances.
+
+    Les fonctions de database.py (persist_open_position, save_trade, etc.) gèrent
+    elles-mêmes commit/rollback — session_scope se contente de fermer proprement.
+
+    Usage :
+        with session_scope(self.SessionLocal) as sess:
+            persist_open_position(sess, pos)
+    """
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 def persist_open_position(session: Session, pos: dict) -> None:

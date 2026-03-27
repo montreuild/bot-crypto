@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from app.core.trailing import TrailingStopManager
 from app.core.database import (save_trade, update_daily_stats,
                                 persist_open_position, delete_open_position,
-                                load_open_positions)
+                                load_open_positions, session_scope)
 from app.core.indicators import atr_val as _compute_atr
 
 logger = logging.getLogger(__name__)
@@ -57,11 +57,8 @@ class PositionMixin:
         En mode live, vérifie que chaque position existe réellement sur l'exchange
         pour éviter de gérer des "positions fantômes".
         """
-        session = self.SessionLocal()
-        try:
+        with session_scope(self.SessionLocal) as session:
             positions = load_open_positions(session)
-        finally:
-            session.close()
         if not positions:
             return
         n = len(positions)
@@ -99,11 +96,8 @@ class PositionMixin:
                     f"[Reprise] Position {pos_id} ({symbol}) absente de l'exchange "
                     f"— ignorée (probablement clôturée hors-bot)."
                 )
-                _sess = self.SessionLocal()
-                try:
+                with session_scope(self.SessionLocal) as _sess:
                     delete_open_position(_sess, pos_id)
-                finally:
-                    _sess.close()
                 continue
 
             trailing = TrailingStopManager(**self._trailing_cfg)
@@ -186,11 +180,8 @@ class PositionMixin:
         }
         self.open_positions[pos_key] = pos
         self.risk.register_open(pos)
-        _sess = self.SessionLocal()
-        try:
+        with session_scope(self.SessionLocal) as _sess:
             persist_open_position(_sess, pos)
-        finally:
-            _sess.close()
 
         strat_threshold = self._strat_thresholds.get(strat_name, self.threshold)
         self.signal_log.append({
@@ -273,11 +264,8 @@ class PositionMixin:
         )
         if new_stop != pos["stop"]:
             pos["stop"] = new_stop
-            _sess = self.SessionLocal()
-            try:
+            with session_scope(self.SessionLocal) as _sess:
                 persist_open_position(_sess, pos)
-            finally:
-                _sess.close()
 
         # Notification perte non réalisée
         if pos_id not in self._loss_notified:
@@ -345,11 +333,8 @@ class PositionMixin:
         if hasattr(self, "allocator"):
             self.allocator.register_close(slot_key, pos.get("notional", 0), pnl)
 
-        _sess = self.SessionLocal()
-        try:
+        with session_scope(self.SessionLocal) as _sess:
             delete_open_position(_sess, pos_id)
-        finally:
-            _sess.close()
         self._loss_notified.discard(pos_id)
 
         pnl_pct    = round(pnl / pos["notional"] * 100, 4) if pos.get("notional", 0) > 0 else 0.0
@@ -386,16 +371,13 @@ class PositionMixin:
             "reason":    "stop" if pnl < 0 else "trailing",
         })
 
-        session = self.SessionLocal()
-        try:
+        with session_scope(self.SessionLocal) as session:
             save_trade(session, trade)
             update_daily_stats(
                 session,
                 datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                 pnl, pnl > 0, fees, self.capital_display
             )
-        finally:
-            session.close()
 
         if "stop" in str(pos.get("reason", "")).lower() or pnl < 0:
             cooldown_secs = (

@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api import state
 from app.api.helpers import verify_api_key
+from app.core.database import session_scope
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -21,8 +22,7 @@ def list_trades(limit: int = 100, offset: int = 0,
         raise HTTPException(503, "DB non initialisée")
     limit  = max(1, min(limit, 1000))
     offset = max(0, offset)
-    session = state.SessionLocal()
-    try:
+    with session_scope(state.SessionLocal) as session:
         from app.core.database import Trade as _Trade
         q = session.query(_Trade)
         if symbol:   q = q.filter(_Trade.symbol   == symbol)
@@ -41,8 +41,6 @@ def list_trades(limit: int = 100, offset: int = 0,
                 for t in page
             ],
         }
-    finally:
-        session.close()
 
 
 @router.get("/api/trades/export", dependencies=[Depends(verify_api_key)])
@@ -51,8 +49,7 @@ def export_trades(limit: int = 10000):
     if not state.SessionLocal:
         raise HTTPException(503, "DB non initialisée")
     export_limit = max(1, min(limit, 50000))
-    session = state.SessionLocal()
-    try:
+    with session_scope(state.SessionLocal) as session:
         from app.core.database import get_trades
         trades = get_trades(session, limit=export_limit)
         out = io.StringIO()
@@ -68,16 +65,13 @@ def export_trades(limit: int = 10000):
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=trades.csv"},
         )
-    finally:
-        session.close()
 
 
 @router.get("/api/stats/daily", dependencies=[Depends(verify_api_key)])
 def daily_stats(days: int = 30):
     if not state.SessionLocal:
         return []
-    session = state.SessionLocal()
-    try:
+    with session_scope(state.SessionLocal) as session:
         from app.core.database import DailyStats
         rows = (session.query(DailyStats)
                 .order_by(DailyStats.date.desc())
@@ -87,8 +81,6 @@ def daily_stats(days: int = 30):
                  "max_dd": r.max_dd, "equity_open": r.equity_open,
                  "equity_close": r.equity_close}
                 for r in rows]
-    finally:
-        session.close()
 
 
 @router.get("/api/risk", dependencies=[Depends(verify_api_key)])
@@ -169,8 +161,7 @@ def strategy_performance(slot_key: str):
         raise HTTPException(400, "Format slot_key invalide. Attendu: strategy::tf (ex: trend::1h)")
 
     strategy_name, tf = parts[0], parts[1]
-    session = state.SessionLocal()
-    try:
+    with session_scope(state.SessionLocal) as session:
         from app.core.database import Trade as _Trade
         q = (session.query(_Trade)
              .filter(_Trade.strategy == strategy_name)
@@ -228,5 +219,3 @@ def strategy_performance(slot_key: str):
                 for t in trades_raw[:20]
             ],
         }
-    finally:
-        session.close()

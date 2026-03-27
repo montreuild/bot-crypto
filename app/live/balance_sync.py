@@ -32,9 +32,8 @@ class BalanceSyncMixin:
         if not self.cfg["trading"].get("paper_mode"):
             return initial
         try:
-            from app.core.database import DailyStats
-            sess = self.SessionLocal()
-            try:
+            from app.core.database import DailyStats, session_scope
+            with session_scope(self.SessionLocal) as sess:
                 last = sess.query(DailyStats).order_by(DailyStats.date.desc()).first()
                 if last and last.equity_close and last.equity_close > 0:
                     logger.info(
@@ -42,8 +41,6 @@ class BalanceSyncMixin:
                         f"{last.equity_close:.2f} (date={last.date})"
                     )
                     return float(last.equity_close)
-            finally:
-                sess.close()
         except Exception as e:
             logger.warning(f"[Paper] Impossible de restaurer capital settled : {e}")
         return initial
