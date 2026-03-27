@@ -3,10 +3,7 @@ import logging
 from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
-from app.core.indicators import (
-    atr_series as calc_atr_series, macd as calc_macd,
-    vol_ratio as calc_vol, bb_squeeze as calc_squeeze, htf_trend, pre_val
-)
+from app.core.indicators import bb_squeeze as calc_squeeze, htf_trend
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +85,9 @@ class Strategy(BaseStrategy):
         highest = float(high[-(period + 1):-1].max())
         lowest  = float(low[-(period + 1):-1].min())
 
-        # ── ATR — série pré-calculée si dispo ────────────────────────────────
-        atr_s    = df["_pre_atr14"] if "_pre_atr14" in df.columns else calc_atr_series(df, 14)
-        atr_now  = float(atr_s[-1])
+        # ── ATR — série pré-calculée ─────────────────────────────────────────
+        atr_s   = df["_pre_atr14"]
+        atr_now = float(atr_s[-1])
         if atr_now <= 0:
             return self._none()
 
@@ -106,19 +103,14 @@ class Strategy(BaseStrategy):
         squeeze = calc_squeeze(close, squeeze_bars)
 
         # Volume
-        vr       = pre_val(df, "_pre_volratio20") or calc_vol(df)
+        vr = float(df["_pre_volratio20"][-1])
         vol_prev = float(df["volume"][-2])
         vol_now  = float(df["volume"][-1])
         vol_rising = vol_now > vol_prev * 1.05   # volume monte sur la cassure
 
         # MACD momentum
-        lh = pre_val(df, "_pre_macd_hist")
-        if lh is None:
-            _, _, hist = calc_macd(close, 12, 26, 9)
-            lh = float(hist[-1])
-            ph = float(hist[-2])
-        else:
-            ph = float(df["_pre_macd_hist"][-2])
+        lh = float(df["_pre_macd_hist"][-1])
+        ph = float(df["_pre_macd_hist"][-2])
         macd_bull = lh > 0
         macd_bear = lh < 0
         macd_accel_bull = lh > ph

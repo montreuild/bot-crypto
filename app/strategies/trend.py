@@ -4,11 +4,7 @@ import logging
 from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
-from app.core.indicators import (
-    rsi as calc_rsi, atr_val as calc_atr, adx_val as calc_adx,
-    macd as calc_macd, vol_ratio as calc_vol,
-    market_structure, htf_trend, pre_val
-)
+from app.core.indicators import market_structure, htf_trend
 
 logger = logging.getLogger(__name__)
 
@@ -82,25 +78,19 @@ class Strategy(BaseStrategy):
         lt    = float(ema_t[-1])
         c_now = float(close[-1])
 
-        atr_val  = pre_val(df, "_pre_atr14") or calc_atr(df, 14)
+        atr_val = float(df["_pre_atr14"][-1])
         if atr_val <= 0:
             return self._none()
 
-        rsi_now  = pre_val(df, "_pre_rsi14") or float(calc_rsi(close, 14)[-1])
-        adx_val  = pre_val(df, "_pre_adx14") or calc_adx(df, 14)
-        vr       = pre_val(df, "_pre_volratio20") or calc_vol(df)
-        struct   = market_structure(high, low)
-        htf      = htf_trend(df_htf)
+        rsi_now = float(df["_pre_rsi14"][-1])
+        adx_val = float(df["_pre_adx14"][-1])
+        vr      = float(df["_pre_volratio20"][-1])
+        struct  = market_structure(high, low)
+        htf     = htf_trend(df_htf)
 
         # MACD pour confirmation du momentum
-        lh = pre_val(df, "_pre_macd_hist")
-        if lh is None:
-            _, _, hist = calc_macd(close, 12, 26, 9)
-            lh = float(hist[-1])
-            ph = float(hist[-2])
-        else:
-            ph_series = df["_pre_macd_hist"]
-            ph = float(ph_series[-2]) if len(ph_series) > 1 else 0.0
+        lh = float(df["_pre_macd_hist"][-1])
+        ph = float(df["_pre_macd_hist"][-2]) if len(df) > 1 else 0.0
         macd_bull = lh > 0 and lh >= ph
         macd_bear = lh < 0 and lh <= ph
         macd_x_bull = ph < 0 and lh > 0
