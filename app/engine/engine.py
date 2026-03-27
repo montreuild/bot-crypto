@@ -72,10 +72,14 @@ class Engine:
         self.strategies.append(strategy)
 
     def best_signal(self, df: pl.DataFrame, params: dict = None,
-                    df_htf=None, symbol: str = "") -> Dict[str, Any]:
+                    df_htf=None, symbol: str = "",
+                    threshold: float = 0.0) -> Dict[str, Any]:
         """
         Retourne le signal avec le meilleur score parmi toutes les stratégies.
-        Si aucun signal, retourne {"score": 0, "side": "none", "name": ""}.
+
+        Applique le seuil global ``threshold`` ET les seuils par stratégie
+        définis dans ``params[strat.name]["score_threshold"]``.
+        Si aucun signal ne passe, retourne {"score": 0, "side": "none", "name": ""}.
         """
         if df is None or len(df) < 2:
             return {"score": 0, "side": "none", "name": ""}
@@ -86,8 +90,14 @@ class Engine:
                 result = strat.score(df, params, df_htf=df_htf, symbol=symbol)
                 if not isinstance(result, dict):
                     continue
-                if result.get("score", 0) > best["score"]:
-                    best = result
+                score = result.get("score", 0)
+                # Seuil par stratégie (prioritaire) ou seuil global
+                strat_threshold = float(
+                    (params or {}).get(strat.name, {}).get("score_threshold", threshold)
+                )
+                if score <= best["score"] or score < strat_threshold:
+                    continue
+                best = result
             except Exception as e:
                 logger.error(f"[Engine] Erreur dans stratégie {strat.name} : {e}")
         return best

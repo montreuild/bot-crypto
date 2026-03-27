@@ -426,8 +426,8 @@ class Backtester:
                 continue
 
             # ── Cherche un signal ─────────────────────────────────────────────
-            signal = self.engine.best_signal(window, strat_params)
-            if signal["side"] == "none" or signal["score"] < threshold:
+            signal = self.engine.best_signal(window, strat_params, threshold=threshold)
+            if signal["side"] == "none":
                 continue
 
             atr_v = float(atr_arr[i])
