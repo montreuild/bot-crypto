@@ -7,7 +7,7 @@ from typing import Callable, Dict, List, Optional
 
 import polars as pl
 
-from app.core.indicators import atr_val as _compute_atr
+from app.core.indicators import atr_val as _compute_atr, detect_regime
 from app.live.utils import _HTF_MAP, _merge_params
 
 logger = logging.getLogger(__name__)
@@ -52,10 +52,10 @@ class SignalPipeline:
         # signals est trié par score décroissant, dédupliqué par (symbol, side)
     """
 
-    def __init__(self, loaded_strategies: Dict[str, object], cfg: dict, scanner):
+    def __init__(self, loaded_strategies: Dict[str, object], cfg: dict, exchange):
         self._strategies   = loaded_strategies
         self._cfg          = cfg
-        self._scanner      = scanner
+        self._exchange     = exchange
         self._threshold    = cfg["trading"]["score_threshold"]
         self._strat_thresholds: Dict[str, float] = {}
         sp = cfg.get("strategy_params", {})
@@ -166,7 +166,7 @@ class SignalPipeline:
         # ML blending
         if ml and ml.is_ready:
             try:
-                regime = self._scanner.detect_regime(df)
+                regime = detect_regime(df)
                 score, side = ml.blend_signal(score, signal["side"], df, regime)
                 if score < threshold:
                     return None
@@ -178,7 +178,7 @@ class SignalPipeline:
         atr   = _compute_atr(df)
         price = 0.0
         try:
-            ticker = self._scanner.exchange.fetch_ticker(symbol) if hasattr(self._scanner, "exchange") else None
+            ticker = self._exchange.fetch_ticker(symbol)
             if ticker:
                 price = float(ticker.get("last", 0))
         except Exception:

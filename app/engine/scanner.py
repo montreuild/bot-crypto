@@ -7,7 +7,7 @@ from typing import List, Dict, Optional, Tuple
 import polars as pl
 
 from app.core.candle_store import get_store
-from app.core.indicators import rsi as ind_rsi, atr_val, adx_val
+from app.core.indicators import rsi as ind_rsi, atr_val, adx_val, detect_regime
 
 logger = logging.getLogger(__name__)
 
@@ -89,10 +89,8 @@ class MarketScanner:
             return None
 
     def detect_regime(self, df: pl.DataFrame) -> str:
-        if len(df) < 30:
-            return "unknown"
-        adx = adx_val(df, 14)
-        return "trend" if adx >= 25 else "range"
+        """Délègue à indicators.detect_regime — source unique de vérité."""
+        return detect_regime(df)
 
     def compute_indicators(self, df: pl.DataFrame) -> Dict:
         close  = df["close"]

@@ -21,7 +21,7 @@ import polars as pl
 
 from app.core.database           import init_db
 from app.core.exchange           import RobustExchange
-from app.core.indicators         import atr_val as _compute_atr
+from app.core.indicators         import atr_val as _compute_atr, detect_regime
 from app.core.notifications      import Notifier
 from app.core.risk               import RiskManager
 from app.engine.engine           import Engine
@@ -147,7 +147,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
 
         # ── Objets composés ────────────────────────────────────────────────
         self.ohlcv_cache = OHLCVCache(
-            scanner=self.scanner, cfg=cfg,
+            exchange=self.exchange, cfg=cfg,
             notif=self.notif, risk=self.risk
         )
         self.allocator = CapitalAllocator(
@@ -157,7 +157,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self.pipeline = SignalPipeline(
             loaded_strategies=self._loaded_strategies,
             cfg=cfg,
-            scanner=self.scanner,
+            exchange=self.exchange,
         )
 
         self._last_day_key: str = ""
@@ -569,7 +569,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         with self._ml_lock:
             ml_ref = self.ml
         if ml_ref and ml_ref.is_ready:
-            regime = self.scanner.detect_regime(df)
+            regime = detect_regime(df)
             score, side = ml_ref.blend_signal(signal["score"], signal["side"], df, regime)
             if score < strat_threshold:
                 return

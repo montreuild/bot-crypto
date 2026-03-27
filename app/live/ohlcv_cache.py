@@ -10,12 +10,15 @@ Responsabilités :
   - Volatility brake (ATR BTC/USDC → RiskManager)
   - Purge périodique des entrées expirées
 
+Indépendant de MarketScanner : appelle CandleStore directement via l'exchange,
+comme le fait scanner.fetch_ohlcv() — sans passer par la couche engine.
+
 Usage dans LiveTrader :
-    self.ohlcv_cache = OHLCVCache(scanner=self.scanner, cfg=cfg,
+    self.ohlcv_cache = OHLCVCache(exchange=self.exchange, cfg=cfg,
                                    notif=self.notif, risk=self.risk)
     df  = self.ohlcv_cache.get("BTC/USDC", "1h", open_positions)
     atr = self.ohlcv_cache.get_cached_atr("BTC/USDC")
-    self.ohlcv_cache.update_volatility_brake(self.risk)
+    self.ohlcv_cache.update_volatility_brake()
     self.ohlcv_cache.purge(active_symbols)
 """
 import logging
@@ -24,6 +27,7 @@ from typing import Dict, Optional, Tuple
 
 import polars as pl
 
+from app.core.candle_store import get_store
 from app.core.indicators import precompute_df, atr_val as _compute_atr
 from app.engine.optimizer import RECOMMENDED_LIMIT
 
@@ -40,19 +44,21 @@ class OHLCVCache:
     """
     Cache OHLCV multi-TF in-memory avec gestion du cycle de vie complet.
 
+    Dépend directement de l'exchange (via CandleStore) — indépendant de MarketScanner.
+
     Paramètres
     ----------
-    scanner  : MarketScanner — utilisé pour fetch_ohlcv
+    exchange : RobustExchange — passé à CandleStore pour les fetches
     cfg      : dict config globale
     notif    : Notifier — pour notify_exchange_error
     risk     : RiskManager — pour update_volatility dans update_volatility_brake
     """
 
-    def __init__(self, scanner, cfg: dict, notif, risk):
-        self._scanner = scanner
-        self._cfg     = cfg
-        self._notif   = notif
-        self._risk    = risk
+    def __init__(self, exchange, cfg: dict, notif, risk):
+        self._exchange = exchange
+        self._cfg      = cfg
+        self._notif    = notif
+        self._risk     = risk
 
         # (symbol, tf) → (timestamp_fetch, DataFrame)
         self._ohlcv_cache: Dict[Tuple[str, str], Tuple[float, pl.DataFrame]] = {}
@@ -89,9 +95,12 @@ class OHLCVCache:
         if cached and (time.time() - cached[0]) < ttl:
             return cached[1]
 
-        limit = RECOMMENDED_LIMIT.get(tf, 500)
-        fetch_limit = min(limit, 500)
-        df = self._scanner.fetch_ohlcv(symbol, tf, limit=fetch_limit)
+        fetch_limit = min(RECOMMENDED_LIMIT.get(tf, 500), 500)
+        try:
+            df = get_store().fetch(self._exchange, symbol, tf, total=fetch_limit)
+        except Exception as _fe:
+            logger.error(f"[OHLCVCache] fetch {symbol}/{tf} : {_fe}")
+            df = None
         if df is None or len(df) < 220:
             self._exchange_errors[symbol] = self._exchange_errors.get(symbol, 0) + 1
             self._notif.notify_exchange_error(
