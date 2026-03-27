@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
-from app.core.indicators import bb_squeeze as calc_squeeze, htf_trend
+from app.core.indicators import bb_squeeze as calc_squeeze, htf_trend, pre_val
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +67,9 @@ class Strategy(BaseStrategy):
         open_  = df["open"]
 
         # ── Tendance fond ────────────────────────────────────────────────────
-        ema_t = close.ewm_mean(span=ema_trend, adjust=False)
-        ema_m = close.ewm_mean(span=ema_mid,   adjust=False)
-        lt    = float(ema_t[-1])
-        lm    = float(ema_m[-1])
+        _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
+        lt = pre_val(df, _ema_map.get(ema_trend, "")) or float(close.ewm_mean(span=ema_trend, adjust=False)[-1])
+        lm = pre_val(df, _ema_map.get(ema_mid, ""))   or float(close.ewm_mean(span=ema_mid,   adjust=False)[-1])
         c_now = float(close[-1])
         o_now = float(open_[-1])
 

@@ -111,6 +111,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
 
         # ── État interne ───────────────────────────────────────────────────
         self.open_positions: Dict[str, dict] = {}
+        self._positions_lock  = threading.Lock()
         self._capital_lock    = threading.Lock()
         self._ml_lock         = threading.Lock()
         self.running          = False

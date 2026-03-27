@@ -1,53 +1,19 @@
-"""Helpers partagés de l'API : sanitisation JSON, auth, découverte stratégies, OHLCV."""
+"""Helpers partagés de l'API : auth, découverte stratégies, OHLCV."""
 import glob
-import json
+import hmac
 import logging
-import math
 import os
 import time
-from typing import Any
 
 from fastapi import HTTPException, Request
-from fastapi.responses import JSONResponse
 
 from app.api import state
+from app.core.sanitize import (                          # noqa: F401 — re-export
+    clean_for_json as _clean,
+    CleanJSONResponse,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# ── Sanitisation JSON ──────────────────────────────────────────────────────
-
-def _clean(obj: Any) -> Any:
-    """Sanitise récursivement pour JSON : NaN→None, ±Inf→±1e308, clés privées ignorées."""
-    if isinstance(obj, float):
-        if math.isnan(obj):
-            return None
-        if math.isinf(obj):
-            return 1e308 if obj > 0 else -1e308
-        return obj
-    if isinstance(obj, dict):
-        return {k: _clean(v) for k, v in obj.items() if not str(k).startswith("_")}
-    if isinstance(obj, list):
-        return [_clean(v) for v in obj]
-    if isinstance(obj, (int, str, bool, type(None))):
-        return obj
-    try:
-        json.dumps(obj)
-        return obj
-    except (TypeError, ValueError):
-        return None
-
-
-class CleanJSONResponse(JSONResponse):
-    """JSONResponse qui neutralise les float NaN/Inf sur toutes les réponses."""
-    def render(self, content) -> bytes:
-        return json.dumps(
-            _clean(content),
-            ensure_ascii=False,
-            allow_nan=False,
-            indent=None,
-            separators=(",", ":"),
-        ).encode("utf-8")
 
 
 # ── Auth ───────────────────────────────────────────────────────────────────
@@ -56,8 +22,8 @@ async def verify_api_key(request: Request):
     key = state.cfg["web"].get("api_key", "") if state.cfg else ""
     if not key:
         return
-    token = request.headers.get("X-API-Key") or request.query_params.get("api_key")
-    if token != key:
+    token = request.headers.get("X-API-Key") or request.query_params.get("api_key") or ""
+    if not hmac.compare_digest(token, key):
         client_host = getattr(request.client, "host", "unknown") if request.client else "unknown"
         logger.warning(
             f"[Auth] Clé API invalide depuis {client_host} — "
@@ -71,15 +37,8 @@ async def verify_api_key(request: Request):
 def _get_bt_exchange(cfg: dict):
     with state._bt_exchange_lock:
         if state._bt_exchange is None:
-            from app.core.exchange import RobustExchange, create_exchange
-            import ccxt as _ccxt
-            name  = cfg["exchange"]["name"].lower()
-            klass = getattr(_ccxt, name, None)
-            if klass is None:
-                state._bt_exchange = create_exchange(cfg)
-            else:
-                ex = klass({"enableRateLimit": True})
-                state._bt_exchange = RobustExchange(ex, paper=True)
+            from app.core.exchange import create_exchange
+            state._bt_exchange = create_exchange(cfg)
         return state._bt_exchange
 
 
@@ -126,29 +85,3 @@ def detect_ohlcv_gaps(df, timeframe: str) -> list:
     return gaps
 
 
-def fetch_ohlcv_paged(exchange, symbol: str, timeframe: str, total: int = 1000) -> list:
-    import time as _time
-    BINANCE_LIMIT = 1000
-    if total <= BINANCE_LIMIT:
-        return exchange.fetch_ohlcv(symbol, timeframe, limit=total)
-    tf_ms     = exchange.parse_timeframe(timeframe) * 1000
-    since     = exchange.milliseconds() - total * tf_ms
-    all_ohlcv = []
-    seen_ts   = set()
-    while len(all_ohlcv) < total:
-        batch = exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=BINANCE_LIMIT)
-        if not batch:
-            break
-        added = 0
-        for candle in batch:
-            ts = candle[0]
-            if ts not in seen_ts:
-                seen_ts.add(ts)
-                all_ohlcv.append(candle)
-                added += 1
-        if added == 0:
-            break
-        since = batch[-1][0] + 1
-        _time.sleep(exchange.rateLimit / 1000)
-    all_ohlcv.sort(key=lambda x: x[0])
-    return all_ohlcv[-total:]

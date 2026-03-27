@@ -110,10 +110,10 @@ class MarketScanner:
         if n < 60:
             return {}
 
-        # EMAs affichage — non incluses dans precompute_df
-        ema20  = float(close.ewm_mean(span=20, adjust=False)[-1])
-        ema50  = float(close.ewm_mean(span=50, adjust=False)[-1])
-        ema200 = float(close.ewm_mean(span=200, adjust=False)[-1]) if n >= 200 else None
+        # EMAs — colonnes pré-calculées par precompute_df
+        ema20  = float(df["_pre_ema20"][-1])
+        ema50  = float(df["_pre_ema50"][-1])
+        ema200 = float(df["_pre_ema200"][-1]) if n >= 200 else None
 
         last_close = float(close[-1])
 
