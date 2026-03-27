@@ -103,7 +103,8 @@ class PositionMixin:
             trailing = TrailingStopManager(**self._trailing_cfg)
             trailing.init_from_stop(pos["entry"], pos["stop"], pos["side"])
             pos["_trailing"] = trailing
-            self.open_positions[pos_id] = pos
+            with self._positions_lock:
+                self.open_positions[pos_id] = pos
             self.risk.register_open(pos)
             logger.info(
                 f"  [Reprise] {pos['side'].upper()} {pos['symbol']} "
@@ -178,7 +179,8 @@ class PositionMixin:
             "order_id":  order.get("id", ""),
             "_trailing": trailing,
         }
-        self.open_positions[pos_key] = pos
+        with self._positions_lock:
+            self.open_positions[pos_key] = pos
         self.risk.register_open(pos)
         with session_scope(self.SessionLocal) as _sess:
             persist_open_position(_sess, pos)
@@ -284,7 +286,8 @@ class PositionMixin:
     # ── Clôture ───────────────────────────────────────────────────────────
 
     def _close_position(self, pos_id: str, exit_price: float) -> None:
-        pos = self.open_positions.pop(pos_id, None)
+        with self._positions_lock:
+            pos = self.open_positions.pop(pos_id, None)
         if not pos:
             return
         close_side = "sell" if pos["side"] == "long" else "buy"

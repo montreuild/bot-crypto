@@ -557,14 +557,3 @@ def detect_regime(df: pl.DataFrame, adx_threshold: float = 25.0) -> str:
         return "unknown"
     adx = adx_val(df, 14)
     return "trend" if adx >= adx_threshold else "range"
-
-
-def pre_or_compute(df: pl.DataFrame, col: str, fallback_fn, *args, **kwargs):
-    """Lit la colonne pré-calculée si elle existe dans le df, sinon calcule à la volée.
-    Compatible avec les backtests (avec pré-calcul) et le live trading (sans).
-    """
-    if col in df.columns:
-        v = df[col][-1]
-        if v is not None:
-            return df[col]
-    return fallback_fn(*args, **kwargs)
