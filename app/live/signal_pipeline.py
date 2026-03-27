@@ -7,7 +7,7 @@ from typing import Callable, Dict, List, Optional
 
 import polars as pl
 
-from app.core.indicators import atr_val as _compute_atr, detect_regime
+from app.core.indicators import detect_regime
 from app.live.utils import _HTF_MAP, _merge_params
 
 logger = logging.getLogger(__name__)
@@ -175,7 +175,7 @@ class SignalPipeline:
             except Exception as e:
                 logger.debug(f"[Pipeline] ML blend KO {strat_name}/{symbol} : {e}")
 
-        atr   = _compute_atr(df)
+        atr   = float(df["_pre_atr14"][-1]) if "_pre_atr14" in df.columns else 0.0
         price = 0.0
         try:
             ticker = self._exchange.fetch_ticker(symbol)

@@ -66,6 +66,51 @@ def _merge_params(base: dict, optimized: dict) -> dict:
     return merged
 
 
+# Clés globales à ne jamais écraser par les résultats de l'optimiseur
+_GLOBAL_PARAM_KEYS = frozenset({
+    "score_threshold", "risk_per_trade", "capital", "timeframe", "timeframes",
+    "paper_mode", "max_positions", "taker_fee", "maker_fee",
+})
+
+
+def resolve_strategy_params(cfg: dict, timeframe: str = None) -> dict:
+    """
+    Construit le dict de paramètres de stratégie en superposant les résultats
+    de l'optimiseur (optimizer_results) sur les params de base (strategy_params).
+
+    Utilisé par Backtester.run() et LiveTrader pour garantir que les deux
+    chemins de code utilisent exactement la même logique de résolution.
+
+    Précédence : strategy_params (base) < optimizer_results[strat][tf] (optimisé)
+    Les clés globales (_GLOBAL_PARAM_KEYS) ne sont jamais écrasées par l'optimiseur.
+
+    Parameters
+    ----------
+    cfg       : dict config globale (doit contenir "strategy_params")
+    timeframe : str ou None — si fourni, superpose les résultats optimizer_results[strat][tf]
+    """
+    strat_params = dict(cfg.get("strategy_params", {}))
+
+    if timeframe:
+        opt_results = cfg.get("optimizer_results") or {}
+        for strat_name, tf_map in opt_results.items():
+            if not isinstance(tf_map, dict):
+                continue
+            tf_entry = tf_map.get(timeframe)
+            if not isinstance(tf_entry, dict):
+                continue
+            opt_p = tf_entry.get("params", {})
+            if not opt_p:
+                continue
+            base = dict(strat_params.get(strat_name, {}))
+            for k, v in opt_p.items():
+                if k not in _GLOBAL_PARAM_KEYS and v is not None:
+                    base[k] = v
+            strat_params[strat_name] = base
+
+    return strat_params
+
+
 # ---------------------------------------------------------------------------
 # Mapping timeframe → higher timeframe (filtre de tendance HTF)
 # Source unique de vérité — importé par live_trader et signal_pipeline.

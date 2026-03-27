@@ -8,6 +8,7 @@ import polars as pl
 
 from app.engine.engine import Engine
 from app.core.trailing import TrailingStopManager
+from app.live.utils import resolve_strategy_params
 
 
 def _sf(v, fallback=None):
@@ -20,33 +21,6 @@ def _sf(v, fallback=None):
 
 logger = logging.getLogger(__name__)
 
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
-def _atr(df: pl.DataFrame, period: int = 14) -> float:
-    if len(df) < period + 1:
-        return 0.0
-    h      = df["high"]
-    l      = df["low"]
-    c_prev = df["close"].shift(1)
-    tr  = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
-    val = tr.rolling_mean(period)[-1]
-    return float(val) if val is not None and float(val) > 0 else 0.0
-
-def _atr_series(df: pl.DataFrame, period: int = 14) -> np.ndarray:
-    """ATR vectorisé sur tout le df — même formule que _atr() (SMA du TR)."""
-    h      = df["high"]
-    l      = df["low"]
-    c_prev = df["close"].shift(1).fill_null(strategy="forward")
-    tr  = pl.Series(np.maximum((h - l).to_numpy(), np.maximum((h - c_prev).abs().to_numpy(), (l - c_prev).abs().to_numpy())))
-    atr = tr.rolling_mean(period)
-    arr = atr.to_numpy(allow_copy=True).astype(float)
-    # Remplir les NaN initiaux avec la moyenne cumulative des TR disponibles (O(n) vectorisé)
-    tr_vals = tr.to_numpy().astype(float)
-    nan_mask = np.isnan(arr)
-    if nan_mask.any():
-        cum_mean = np.cumsum(tr_vals) / np.arange(1, len(tr_vals) + 1)
-        arr = np.where(nan_mask, cum_mean, arr)
-    return arr
 
 def _bar_to_days(tf: str) -> float:
     m = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "2h": 120, "4h": 240, "1d": 1440}
@@ -273,30 +247,10 @@ class Backtester:
         capital      = self.cfg["trading"].get("capital", 1000.0)
         risk         = self.cfg["trading"]["risk_per_trade"]
         threshold    = self.cfg["trading"].get("score_threshold", 0.60)
-        strat_params = self.cfg.get("strategy_params", {})
 
-        # Si un timeframe est fourni, superposer les params optimisés per-TF
-        # (depuis optimizer_results) sur les strategy_params de base.
-        # Cela garantit que le backtest utilise les mêmes params que le live trader.
-        if timeframe:
-            _GLOBAL = {"score_threshold","risk_per_trade","capital","timeframe","timeframes",
-                       "paper_mode","max_positions","taker_fee","maker_fee"}
-            opt_results = self.cfg.get("optimizer_results") or {}
-            strat_params = dict(strat_params)  # copie locale
-            for strat_name, tf_map in opt_results.items():
-                if not isinstance(tf_map, dict):
-                    continue
-                tf_entry = tf_map.get(timeframe)
-                if not isinstance(tf_entry, dict):
-                    continue
-                opt_p = tf_entry.get("params", {})
-                if not opt_p:
-                    continue
-                base = dict(strat_params.get(strat_name, {}))
-                for k, v in opt_p.items():
-                    if k not in _GLOBAL and v is not None:
-                        base[k] = v
-                strat_params[strat_name] = base
+        # Résolution des paramètres : base (strategy_params) + overlay optimizer_results
+        # via la même logique que le live trader — garantit la cohérence backtest/live.
+        strat_params = resolve_strategy_params(self.cfg, timeframe)
         trades       = []
         equity_curve = [capital]
         timestamps   = [str(df["time"][0]) if "time" in df.columns else "0"]
@@ -426,8 +380,8 @@ class Backtester:
                 continue
 
             # ── Cherche un signal ─────────────────────────────────────────────
-            signal = self.engine.best_signal(window, strat_params)
-            if signal["side"] == "none" or signal["score"] < threshold:
+            signal = self.engine.best_signal(window, strat_params, threshold=threshold)
+            if signal["side"] == "none":
                 continue
 
             atr_v = float(atr_arr[i])

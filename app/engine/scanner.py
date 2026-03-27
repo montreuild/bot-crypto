@@ -7,7 +7,7 @@ from typing import List, Dict, Optional, Tuple
 import polars as pl
 
 from app.core.candle_store import get_store
-from app.core.indicators import rsi as ind_rsi, atr_val, adx_val, detect_regime
+from app.core.indicators import precompute_df, detect_regime
 
 logger = logging.getLogger(__name__)
 
@@ -76,14 +76,17 @@ class MarketScanner:
 
     def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500) -> Optional[pl.DataFrame]:
         """
-        Retourne `limit` bougies pour (symbol, timeframe).
+        Retourne `limit` bougies pour (symbol, timeframe), avec indicateurs pré-calculés.
         Utilise CandleStore : fetch incrémental + persistence Parquet.
+        Les colonnes _pre_* (RSI, ATR, ADX, MACD, vol_ratio) sont ajoutées via
+        precompute_df() pour que compute_indicators() lise directement ces colonnes
+        sans recalculer.
         """
         try:
             df = get_store().fetch(self.exchange, symbol, timeframe, total=limit)
             if df is None or len(df) < 50:
                 return None
-            return df
+            return precompute_df(df)
         except Exception as e:
             logger.error(f"[Scanner] fetch_ohlcv {symbol}/{timeframe} : {e}")
             return None
@@ -93,57 +96,62 @@ class MarketScanner:
         return detect_regime(df)
 
     def compute_indicators(self, df: pl.DataFrame) -> Dict:
+        """
+        Calcule les indicateurs pour l'affichage UI/scanner.
+
+        Lit les colonnes _pre_* ajoutées par fetch_ohlcv() (via precompute_df)
+        pour RSI, ATR, ADX, MACD et vol_ratio — évite tout recalcul redondant.
+        Seules les EMAs 20/50/200 et les Bandes de Bollinger sont calculées ici
+        car elles ne font pas partie du pré-calcul partagé.
+        """
         close  = df["close"]
         volume = df["volume"]
         n      = len(df)
         if n < 60:
             return {}
 
+        # EMAs affichage — non incluses dans precompute_df
         ema20  = float(close.ewm_mean(span=20, adjust=False)[-1])
         ema50  = float(close.ewm_mean(span=50, adjust=False)[-1])
         ema200 = float(close.ewm_mean(span=200, adjust=False)[-1]) if n >= 200 else None
 
-        rsi_s  = ind_rsi(close, 14)[-1]
-        rsi_v  = float(rsi_s) if rsi_s is not None and not math.isnan(float(rsi_s)) else 50.0
-
-        atr    = atr_val(df, 14)
         last_close = float(close[-1])
+
+        # Indicateurs pré-calculés par fetch_ohlcv()
+        rsi_v     = float(df["_pre_rsi14"][-1])
+        atr       = float(df["_pre_atr14"][-1])
+        adx       = float(df["_pre_adx14"][-1])
+        vol_ratio = float(df["_pre_volratio20"][-1])
+        macd_line = float(df["_pre_macd_line"][-1])
+        macd_sig  = float(df["_pre_macd_sig"][-1])
+        macd_hist = float(df["_pre_macd_hist"][-1])
+
         atr_pct = round(atr / last_close * 100, 3) if last_close > 0 else 0.0
 
-        vol_ma20  = float(volume.rolling_mean(20)[-1])
-        vol_ratio = float(volume[-1] / vol_ma20) if vol_ma20 > 0 else 1.0
-
-        ema12  = close.ewm_mean(span=12, adjust=False)
-        ema26  = close.ewm_mean(span=26, adjust=False)
-        macd   = ema12 - ema26
-        signal = macd.ewm_mean(span=9, adjust=False)
-        hist   = macd - signal
-
+        # Bandes de Bollinger — non incluses dans precompute_df
         sma20  = close.rolling_mean(20)
         std20  = close.rolling_std(20)
         bb_up  = float((sma20 + 2 * std20)[-1])
         bb_dn  = float((sma20 - 2 * std20)[-1])
         bb_mid = float(sma20[-1])
 
-        adx = adx_val(df, 14)
-
         return {
-            "ema20":      round(ema20, 6),
-            "ema50":      round(ema50, 6),
-            "ema200":     round(ema200, 6) if ema200 is not None else None,
-            "rsi":        round(rsi_v, 2),
-            "atr":        round(atr, 6),
-            "atr_pct":    atr_pct,
-            "vol_ratio":  round(vol_ratio, 3),
-            "macd":       round(float(macd[-1]), 6),
-            "macd_signal":round(float(signal[-1]), 6),
-            "macd_hist":  round(float(hist[-1]), 6),
-            "bb_upper":   round(bb_up, 6),
-            "bb_lower":   round(bb_dn, 6),
-            "bb_mid":     round(bb_mid, 6),
-            "adx":        round(adx, 2),
-            "regime":     "trend" if adx >= 25 else "range",
-            "close":      round(last_close, 6),
+            "ema20":       round(ema20, 6),
+            "ema50":       round(ema50, 6),
+            "ema200":      round(ema200, 6) if ema200 is not None else None,
+            "rsi":         round(rsi_v, 2),
+            "atr":         round(atr, 6),
+            "atr_pct":     atr_pct,
+            "vol_ratio":   round(vol_ratio, 3),
+            "macd":        round(macd_line, 6),
+            "macd_signal": round(macd_sig, 6),
+            "macd_hist":   round(macd_hist, 6),
+            "bb_upper":    round(bb_up, 6),
+            "bb_lower":    round(bb_dn, 6),
+            "bb_mid":      round(bb_mid, 6),
+            "adx":         round(adx, 2),
+            "regime":      "trend" if adx >= 25 else "range",
+            "close":       round(last_close, 6),
         }
 
     def screen(self, timeframe: str, limit: int = 500) -> List[Dict]:

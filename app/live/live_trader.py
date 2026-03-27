@@ -851,9 +851,8 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         gross_win = 0.0;  gross_loss = 0.0
         by_strategy: dict = {}
         try:
-            _sess = self.SessionLocal()
-            try:
-                from app.core.database import get_trades as _gt
+            from app.core.database import get_trades as _gt, session_scope
+            with session_scope(self.SessionLocal) as _sess:
                 for t in _gt(_sess, limit=10000):
                     p   = float(t.pnl or 0)
                     fee = float(t.fees or 0)
@@ -879,8 +878,6 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                     by_strategy[sname]["pnls"].append(p)
                     if p > 0:
                         by_strategy[sname]["wins"] += 1
-            finally:
-                _sess.close()
         except Exception:
             pass
 

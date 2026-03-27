@@ -4,10 +4,7 @@ import logging
 from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
-from app.core.indicators import (
-    rsi as calc_rsi, atr_val as calc_atr, macd as calc_macd,
-    supertrend as calc_supertrend, vol_ratio as calc_vol, htf_trend, pre_val
-)
+from app.core.indicators import macd as calc_macd, supertrend as calc_supertrend, htf_trend
 
 logger = logging.getLogger(__name__)
 
@@ -103,12 +100,13 @@ class Strategy(BaseStrategy):
         st_val    = float(st_line[-1])
 
         # ── MACD ──────────────────────────────────────────────────────────────
+        # Utilise les colonnes pré-calculées pour les params par défaut (12,26,9) ;
+        # recalcule si l'optimiseur utilise des params différents.
         _macd_default = (macd_fast == 12 and macd_slow == 26 and macd_sig_s == 9)
-        if _macd_default and "_pre_macd_hist" in df.columns:
-            _mhist = df["_pre_macd_hist"]
-            lh  = float(_mhist[-1])
-            ph  = float(_mhist[-2])
-            p2h = float(_mhist[-3])
+        if _macd_default:
+            lh  = float(df["_pre_macd_hist"][-1])
+            ph  = float(df["_pre_macd_hist"][-2])
+            p2h = float(df["_pre_macd_hist"][-3])
         else:
             _, _, hist = calc_macd(close, macd_fast, macd_slow, macd_sig_s)
             lh  = float(hist[-1])
@@ -121,9 +119,9 @@ class Strategy(BaseStrategy):
         macd_accel_bear  = lh < 0 and lh < ph
 
         # ── RSI / Volume / ATR / HTF ─────────────────────────────────────────
-        rsi_now = pre_val(df, "_pre_rsi14") or float(calc_rsi(close, 14)[-1])
-        vr      = pre_val(df, "_pre_volratio20") or calc_vol(df)
-        atr_val = pre_val(df, "_pre_atr14")      or calc_atr(df, 14)
+        rsi_now = float(df["_pre_rsi14"][-1])
+        vr      = float(df["_pre_volratio20"][-1])
+        atr_val = float(df["_pre_atr14"][-1])
         htf     = htf_trend(df_htf)
 
         if atr_val <= 0:

@@ -4,10 +4,7 @@ import logging
 from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
-from app.core.indicators import (
-    rsi as calc_rsi, atr_val as calc_atr, adx_val as calc_adx,
-    vol_ratio as calc_vol, market_structure, htf_trend, pre_val
-)
+from app.core.indicators import market_structure, htf_trend
 
 logger = logging.getLogger(__name__)
 
@@ -84,16 +81,16 @@ class Strategy(BaseStrategy):
         c1  = float(close[-2])
 
         # ── Indicateurs ──────────────────────────────────────────────────────
-        _rsi_s   = df["_pre_rsi14"] if "_pre_rsi14" in df.columns else calc_rsi(close, 14)
-        rsi_now  = float(_rsi_s[-1])
-        rsi_prev = float(_rsi_s[-2])
-        rsi_prev2= float(_rsi_s[-3])
-        adx_val  = pre_val(df, "_pre_adx14")  or calc_adx(df, 14)
-        atr_val  = pre_val(df, "_pre_atr14")  or calc_atr(df, 14)
+        _rsi_s    = df["_pre_rsi14"]
+        rsi_now   = float(_rsi_s[-1])
+        rsi_prev  = float(_rsi_s[-2])
+        rsi_prev2 = float(_rsi_s[-3])
+        adx_val   = float(df["_pre_adx14"][-1])
+        atr_val   = float(df["_pre_atr14"][-1])
         if atr_val <= 0:
             return self._none()
 
-        vr       = pre_val(df, "_pre_volratio20") or calc_vol(df)
+        vr = float(df["_pre_volratio20"][-1])
         vol_prev = float(df["volume"][-2])
         vol_now  = float(df["volume"][-1])
         struct   = market_structure(high, low)
