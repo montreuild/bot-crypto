@@ -2,25 +2,30 @@
 {% block title %} — Audit{% endblock %}
 
 {% block page_styles %}
-.audit-main{max-width:1200px;margin:0 auto;padding:20px 16px;}
-.sec-hdr{margin-bottom:10px;display:flex;align-items:center;gap:10px;}
-.sec-hdr h2{font-size:.85rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:0;}
+.audit-main{max-width:1300px;margin:0 auto;padding:24px 20px 32px;}
+.sec-hdr{margin-bottom:12px;display:flex;align-items:center;gap:10px;}
+.sec-hdr h2{font-size:.9rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text);margin:0;}
 .sec-hdr-line{flex:1;height:1px;background:var(--border);}
-.audit-section{margin-bottom:28px;}
+.audit-section{margin-bottom:32px;}
+.audit-intro{font-size:.76rem;color:var(--muted);line-height:1.6;margin-bottom:24px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);}
 {% endblock %}
 
 {% block topbar_content %}
 <div class="topbar-title">Audit OOS</div>
 <div class="topbar-sep"></div>
 <div class="topbar-right">
-  <button class="btn btn-ghost" id="export-btn" onclick="exportAudit()">↓ Export CSV</button>
-  <button class="btn btn-ghost" id="refresh-btn" onclick="refreshAll()">↺ Actualiser</button>
+  <button class="btn btn-ghost btn-sm" id="export-btn" onclick="exportAudit()">↓ Export CSV</button>
+  <button class="btn btn-cyan btn-sm" id="refresh-btn" onclick="refreshAll()">↺ Actualiser</button>
 </div>
 {% endblock %}
 
 {% block content %}
-<div id="content">
+<div id="content" class="fade-in">
   <div class="audit-main">
+
+    <div class="audit-intro">
+      Vue d'ensemble des résultats d'optimisation Out-of-Sample (OOS) par stratégie et timeframe. Les scores positifs indiquent une bonne généralisation ; les scores négatifs signalent un sur-apprentissage potentiel.
+    </div>
 
     <!-- TOP par Timeframe & Classement OOS par TF -->
     <div class="audit-section">
@@ -34,7 +39,7 @@
     <div class="audit-section">
       <div class="sec-hdr"><h2>Historique des paramètres optimisés</h2><span class="sec-hdr-line"></span></div>
       <div class="table-card">
-        <div class="tscroll"><table>
+        <div class="tscroll"><table class="table-striped">
           <thead><tr>
             <th>Date</th><th>Stratégie</th><th>TF</th><th>Paramètres modifiés</th><th class="r">Score OOS</th>
           </tr></thead>

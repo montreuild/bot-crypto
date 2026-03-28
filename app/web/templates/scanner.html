@@ -24,17 +24,18 @@
 .tag-neutral{background:var(--purple-dim);color:var(--purple);}
 .adx-bar{display:inline-block;height:6px;border-radius:3px;background:var(--cyan);vertical-align:middle;min-width:2px;}
 .rsi-pill{padding:2px 6px;border-radius:10px;font-size:.7rem;font-weight:600;}
-.opp-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:8px;}
+.opp-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:8px;transition:border-color .2s ease,box-shadow .2s ease;}
+.opp-card:hover{border-color:var(--border-hi);box-shadow:0 2px 8px rgba(0,0,0,.15);}
 .opp-sym{font-weight:700;font-size:.95rem;margin-bottom:4px;}
 .opp-score-bar{height:4px;border-radius:2px;background:linear-gradient(90deg,var(--cyan),var(--green));margin:6px 0;}
 .opp-meta{font-size:.72rem;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap;}
 .filter-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;padding:10px 14px;background:var(--card);border-radius:var(--r-sm);border:1px solid var(--border);}
-.filter-lbl{font-size:.72rem;color:var(--dim);font-weight:600;}
+.filter-lbl{font-size:.72rem;color:var(--muted);font-weight:600;}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--cyan);border-radius:50%;animation:sp .7s linear infinite;}
 .empty{text-align:center;color:var(--dim);padding:30px;font-size:.8rem;}
 .stat-chip{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:.78rem;flex:1;min-width:100px;}
-.chip-lbl{color:var(--dim);font-size:.68rem;margin-bottom:3px;}
-.chip-val{font-weight:700;font-size:.92rem;}
+.chip-lbl{color:var(--muted);font-size:.68rem;margin-bottom:3px;}
+.chip-val{font-weight:700;font-size:.92rem;font-family:var(--mono);}
 /* Watchlist */
 .wl-pill{display:inline-flex;align-items:center;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:3px 8px;font-size:.72rem;cursor:pointer;transition:all .15s;}
 .wl-pill:hover{border-color:var(--cyan);color:var(--cyan);}
@@ -48,10 +49,10 @@
 .topbar-breadcrumb .sep{color:var(--dim);}
 /* Chart */
 .chart-wrap{position:relative;width:100%;}
-.chart-tf-btn{background:transparent;border:1px solid var(--border);color:var(--dim);padding:3px 9px;border-radius:4px;font-size:.72rem;cursor:pointer;transition:all .12s;font-family:var(--body);}
-.chart-tf-btn:hover{color:var(--text);border-color:var(--border-hi);}
+.chart-tf-btn{background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 9px;border-radius:4px;font-size:.72rem;cursor:pointer;transition:all .12s;font-family:var(--body);font-weight:600;}
+.chart-tf-btn:hover{color:var(--text);border-color:var(--border-hi);background:rgba(255,255,255,.03);}
 .chart-tf-btn.active{background:var(--cyan-dim);border-color:rgba(34,211,238,.4);color:var(--cyan);}
-.chart-sub-lbl{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--dim);padding:6px 8px 2px;}
+.chart-sub-lbl{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:6px 8px 2px;}
 {% endblock %}
 
 {% block topbar_content %}
@@ -65,7 +66,7 @@
 {% endblock %}
 
 {% block content %}
-<div id="content">
+<div id="content" class="fade-in">
   <div class="scanner-main">
     <div class="grid-2">
       <div>
@@ -143,7 +144,7 @@
             <span id="scan-count" style="margin-left:auto;font-size:.72rem;color:var(--dim)"></span>
           </div>
           <div style="overflow-x:auto">
-            <table>
+            <table class="table-striped">
               <thead>
                 <tr>
                   <th>Paire</th><th>Régime</th><th>ADX</th><th>RSI</th>
