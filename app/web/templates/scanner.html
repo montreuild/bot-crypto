@@ -368,7 +368,7 @@ function renderScanTable(results){
     if(typeof av==='string') return scanSortAsc?av.localeCompare(bv):bv.localeCompare(av);
     return scanSortAsc?av-bv:bv-av;
   });
-  // Update sort arrows
+  // Update sort arrows — keys match column data attributes in renderScanTable thead
   ['symbol','regime','adx','rsi','atr_pct','vol_ratio','volume_24h'].forEach(k=>{
     const el=document.getElementById('sa-'+k);
     if(!el)return;

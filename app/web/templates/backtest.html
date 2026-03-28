@@ -350,7 +350,7 @@ async function run(){
     const pct=Math.min(95,elapsed/totalEstMs*100);
     if(barFill)barFill.style.width=pct.toFixed(0)+'%';
     const rem=Math.max(0,(totalEstMs-elapsed)/1000);
-    if(etaEl)etaEl.textContent=rem>60?`~${Math.round(rem/60)}min restant`:`~${Math.round(rem)}s restant`;
+    if(etaEl)etaEl.textContent=rem>60?`~${Math.round(rem/60)}min restant (estimé)`:`~${Math.round(rem)}s restant (estimé)`;
   },400);
   const timers=[...steps,...dynSteps].map(([d,m,c])=>setTimeout(()=>logAdd(m,c),d));
   _btAbort = new AbortController();

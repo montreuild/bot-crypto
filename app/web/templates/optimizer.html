@@ -524,7 +524,7 @@ async function startOpt() {
     msg.innerHTML = html;
     document.querySelector('.btn-purple.btn-full')?.insertAdjacentElement('afterend', msg);
     setTimeout(() => msg.remove(), 10000);
-  } catch(e) { loadingEl.remove(); _setOptBtn(false); toast('Erreur : ' + e.message, true); }
+  } catch(e) { loadingEl.remove(); _setOptBtn(false); toast('Erreur: ' + e.message, true); }
 }
 
 // ── Polling ──────────────────────────────────────────────────────────────
