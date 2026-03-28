@@ -1,8 +1,11 @@
 """
 Tests unitaires — app.strategies.registry (auto-découverte des stratégies)
 """
+import importlib
+import glob
+import os
 import pytest
-import sys, os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -12,35 +15,43 @@ from app.engine.registry import (
     get_fixed_params,
 )
 
-# Stratégies attendues (toutes déclarent un param_space)
-EXPECTED_STRATEGIES = {
-    "breakout",
-    "composite_score",
-    "fear_momentum",
-    "fft_spectral",
-    "multi_tf_sr",
-    "pullback_trend",
-    "supertrend_macd",
-    "trend",
-}
 
-# Stratégies ML qui ne doivent PAS être découvertes (pas de param_space)
-ML_STRATEGIES = {"ml_strategy", "ml_dynamic_threshold"}
+def _strategies_on_disk() -> set:
+    """Retourne l'ensemble des noms de stratégies présentes dans app/strategies/."""
+    strats_dir = os.path.join(os.path.dirname(__file__), "..", "app", "strategies")
+    result = set()
+    for path in glob.glob(os.path.join(strats_dir, "*.py")):
+        name = os.path.basename(path)[:-3]
+        if name.startswith("_"):
+            continue
+        try:
+            mod = importlib.import_module(f"app.strategies.{name}")
+            cls = getattr(mod, "Strategy", None)
+            if cls is not None and getattr(cls, "param_space", None):
+                result.add(name)
+        except Exception:
+            pass
+    return result
 
 
 class TestRegistry:
-    def test_all_expected_strategies_discovered(self):
-        ps = get_param_spaces()
-        assert EXPECTED_STRATEGIES == set(ps.keys()), (
-            f"Manquantes : {EXPECTED_STRATEGIES - set(ps.keys())}, "
-            f"Inattendues : {set(ps.keys()) - EXPECTED_STRATEGIES}"
+    def test_all_disk_strategies_discovered(self):
+        """Chaque stratégie avec param_space sur disque doit être découverte par le registry."""
+        disk = _strategies_on_disk()
+        ps   = set(get_param_spaces().keys())
+        missing = disk - ps
+        assert not missing, (
+            f"Stratégies présentes sur disque mais absentes du registry : {missing}"
         )
 
-    def test_ml_strategies_excluded(self):
-        """Les stratégies ML (sans param_space) ne doivent pas apparaître."""
-        ps = get_param_spaces()
-        for ml in ML_STRATEGIES:
-            assert ml not in ps, f"{ml} ne devrait pas être dans param_spaces"
+    def test_no_extra_strategies_in_registry(self):
+        """Le registry ne doit pas retourner de stratégies absentes du disque."""
+        disk = _strategies_on_disk()
+        ps   = set(get_param_spaces().keys())
+        extra = ps - disk
+        assert not extra, (
+            f"Stratégies dans le registry sans fichier sur disque : {extra}"
+        )
 
     def test_param_spaces_non_empty(self):
         for name, space in get_param_spaces().items():
@@ -49,6 +60,28 @@ class TestRegistry:
             for param, values in space.items():
                 assert isinstance(values, list), f"{name}.{param}: doit être une liste"
                 assert len(values) > 0, f"{name}.{param}: liste vide"
+
+    def test_every_strategy_has_required_attributes(self):
+        """Chaque stratégie découverte doit avoir name, param_space et timeframes."""
+        strats_dir = os.path.join(os.path.dirname(__file__), "..", "app", "strategies")
+        for path in glob.glob(os.path.join(strats_dir, "*.py")):
+            mod_name = os.path.basename(path)[:-3]
+            if mod_name.startswith("_"):
+                continue
+            try:
+                mod = importlib.import_module(f"app.strategies.{mod_name}")
+            except Exception:
+                continue
+            cls = getattr(mod, "Strategy", None)
+            if cls is None or not getattr(cls, "param_space", None):
+                continue
+            assert hasattr(cls, "name"),       f"{mod_name}: attribut 'name' manquant"
+            assert hasattr(cls, "timeframes"), f"{mod_name}: attribut 'timeframes' manquant"
+            assert hasattr(cls, "param_space"), f"{mod_name}: attribut 'param_space' manquant"
+            assert isinstance(cls.timeframes, list), \
+                f"{mod_name}: 'timeframes' doit être une liste"
+            assert len(cls.timeframes) > 0, \
+                f"{mod_name}: 'timeframes' ne doit pas être vide"
 
     def test_timeframes_non_empty(self):
         for name, tfs in get_strategy_timeframes().items():

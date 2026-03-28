@@ -85,7 +85,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
 
         # Chargement des modèles ML persistés
         from app.ml.trainer import MLStrategyTrainer
-        self._ml_trainer = MLStrategyTrainer(cfg)
+        self._ml_trainer = MLStrategyTrainer(cfg, ml_lock=self._ml_lock)
         self._ml_trainer.load_models(self._loaded_strategies, self.timeframes)
 
         # Stratégies actives par TF (depuis optimizer_results)
@@ -154,6 +154,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self.allocator = CapitalAllocator(
             capital=self.capital_display,
             active_per_tf=self._active_per_tf,
+            cfg=cfg,
         )
         self.pipeline = SignalPipeline(
             loaded_strategies=self._loaded_strategies,
@@ -458,7 +459,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 continue
 
             ok_corr, reason_corr = self.allocator.check_correlation(
-                sig.side, self.open_positions
+                sig.side, self.open_positions, symbol=sig.symbol
             )
             if not ok_corr:
                 logger.debug(
@@ -728,11 +729,18 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             if dfs:
                 df_combined = pl.concat(dfs)
                 new_model   = self.ml.__class__(self.cfg)
+                # Train general model
                 new_model.train(df_combined)
+                # Train per-regime models using regime detection
+                for regime_name in ("trending", "ranging", "volatile"):
+                    try:
+                        new_model.train(df_combined, regime=regime_name)
+                    except Exception as _re:
+                        logger.debug(f"[ML] Entraînement régime '{regime_name}' KO : {_re}")
                 new_model.save()
                 with self._ml_lock:
                     self.ml = new_model
-                logger.info("[ML] Prédicteur réentraîné avec succès.")
+                logger.info("[ML] Prédicteur réentraîné avec succès (+ modèles par régime).")
         except Exception as e:
             logger.error(f"[ML] Réentraînement KO : {e}")
 

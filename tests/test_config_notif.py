@@ -77,19 +77,20 @@ class TestNotifier:
         assert not n.whatsapp_enabled
 
     def test_notify_trade_below_min_pnl_no_send(self):
-        """Aucun envoi si PnL < min_pnl."""
+        """Aucun envoi si PnL < min_pnl : notify_trade retourne avant d'appeler send()."""
         n = Notifier(_notif_cfg(min_pnl=10.0))
         sent = []
-        n._send_all = lambda msg: sent.append(msg)
+        n.send = lambda msg, **kwargs: sent.append(msg)
         n.notify_trade({"pnl": 3.0, "symbol": "BTC/USDC", "side": "long",
                         "strategy": "test", "entry": 100, "exit": 103,
                         "fees": 0.1, "score": 0.7})
         assert len(sent) == 0
 
     def test_notify_trade_above_min_pnl_sends(self):
+        """Un trade avec PnL ≥ min_pnl doit déclencher send() avec le symbole."""
         n = Notifier(_notif_cfg(min_pnl=5.0))
         sent = []
-        n._send_all = lambda msg: sent.append(msg)
+        n.send = lambda msg, **kwargs: sent.append(msg)
         n.notify_trade({"pnl": 20.0, "symbol": "BTC/USDC", "side": "long",
                         "strategy": "test", "entry": 100, "exit": 120,
                         "fees": 0.2, "score": 0.8})
@@ -97,49 +98,72 @@ class TestNotifier:
         assert "BTC/USDC" in sent[0]
 
     def test_dd_warning_anti_spam(self):
+        """Deux appels consécutifs à notify_dd_warning ne doivent envoyer qu'un seul message."""
         n = Notifier(_notif_cfg())
         sent = []
-        n._send_all = lambda msg: sent.append(msg)
+        n.send = lambda msg, **kwargs: sent.append(msg)
         n.notify_dd_warning(4.5, 5.0)
-        n.notify_dd_warning(4.8, 5.0)  # 2ème appel → ignoré
+        n.notify_dd_warning(4.8, 5.0)  # 2ème appel → ignoré (anti-spam)
         assert len(sent) == 1
 
     def test_dd_warning_reset(self):
+        """Après reset_dd_warning(), un nouvel appel à notify_dd_warning doit envoyer."""
         n = Notifier(_notif_cfg())
         sent = []
-        n._send_all = lambda msg: sent.append(msg)
+        n.send = lambda msg, **kwargs: sent.append(msg)
         n.notify_dd_warning(4.5, 5.0)
         n.reset_dd_warning()
         n.notify_dd_warning(4.5, 5.0)  # doit passer après reset
         assert len(sent) == 2
 
     def test_halt_anti_spam(self):
+        """Deux appels à notify_halt ne doivent envoyer qu'un seul message (anti-spam)."""
         n = Notifier(_notif_cfg())
         sent = []
-        n._send_all = lambda msg: sent.append(msg)
+        n.send = lambda msg, **kwargs: sent.append(msg)
         n.notify_halt("Circuit breaker", equity=900, dd_pct=10.0)
         n.notify_halt("Circuit breaker", equity=900, dd_pct=10.0)
         assert len(sent) == 1
 
     def test_exchange_error_threshold(self):
+        """Envoi uniquement quand le compteur d'erreurs atteint exactement le seuil (3)."""
         n = Notifier(_notif_cfg())
         sent = []
-        n._send_all = lambda msg: sent.append(msg)
+        n.send = lambda msg, **kwargs: sent.append(msg)
         n.notify_exchange_error("BTC/USDC", "timeout", 1)   # pas encore
         n.notify_exchange_error("BTC/USDC", "timeout", 2)   # pas encore
         n.notify_exchange_error("BTC/USDC", "timeout", 3)   # seuil atteint → envoi
         assert len(sent) == 1
 
-    def test_position_loss_no_alert_if_above_threshold(self):
+    def test_exchange_error_above_threshold_no_extra(self):
+        """Pas d'envoi supplémentaire si le compteur dépasse le seuil."""
         n = Notifier(_notif_cfg())
         sent = []
-        n._send_all = lambda msg: sent.append(msg)
-        n.notify_position_loss("BTC/USDC", "trend", "long", -2.0)  # -2% < seuil de 5%
+        n.send = lambda msg, **kwargs: sent.append(msg)
+        n.notify_exchange_error("BTC/USDC", "timeout", 3)   # seuil → envoi
+        n.notify_exchange_error("BTC/USDC", "timeout", 4)   # au-dessus → ignoré
+        assert len(sent) == 1
+
+    def test_position_loss_no_alert_if_above_threshold(self):
+        """Pas d'alerte si la perte est inférieure au seuil (-2% < 5%)."""
+        n = Notifier(_notif_cfg())
+        sent = []
+        n.send = lambda msg, **kwargs: sent.append(msg)
+        n.notify_position_loss("BTC/USDC", "trend", "long", -2.0)
         assert len(sent) == 0
 
     def test_position_loss_alert_if_below_threshold(self):
+        """Alerte envoyée si la perte dépasse le seuil (-8% > 5%)."""
         n = Notifier(_notif_cfg())
         sent = []
-        n._send_all = lambda msg: sent.append(msg)
-        n.notify_position_loss("BTC/USDC", "trend", "long", -8.0)  # -8% > seuil de 5%
+        n.send = lambda msg, **kwargs: sent.append(msg)
+        n.notify_position_loss("BTC/USDC", "trend", "long", -8.0)
         assert len(sent) == 1
+
+    def test_position_loss_no_alert_on_gain(self):
+        """Aucune alerte si la position est en gain."""
+        n = Notifier(_notif_cfg())
+        sent = []
+        n.send = lambda msg, **kwargs: sent.append(msg)
+        n.notify_position_loss("BTC/USDC", "trend", "long", 3.0)  # gain
+        assert len(sent) == 0

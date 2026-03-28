@@ -92,7 +92,8 @@ class Strategy(BaseStrategy):
         vr = float(df["_pre_volratio20"][-1])
         vol_prev = float(df["volume"][-2])
         vol_now  = float(df["volume"][-1])
-        struct   = market_structure(high, low)
+        ms_window = int(p.get("market_struct_window", 5))
+        struct   = market_structure(high, low, window=ms_window)
         htf      = htf_trend(df_htf)
 
         # ── Cooldown par symbole ──────────────────────────────────────────────

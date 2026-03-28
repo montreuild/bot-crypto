@@ -9,7 +9,7 @@ import polars as pl
 from sklearn.linear_model    import LogisticRegression
 from sklearn.ensemble        import RandomForestClassifier
 from sklearn.preprocessing   import StandardScaler
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, TimeSeriesSplit
 from sklearn.pipeline        import Pipeline
 
 from app.ml.features import extract_features, build_labels
@@ -33,6 +33,7 @@ class MLPredictor:
         self.blend_weight = ml.get("blend_weight", 0.3)
         self.min_samples  = ml.get("min_samples", 200)
         self.window       = ml.get("feature_window", 50)
+        self.confidence_threshold = ml.get("confidence_threshold", 0.55)
         self.trained      = False
         self.model_path   = "logs/ml_model.pkl"
         self._pipeline: Optional[Pipeline] = None
@@ -48,7 +49,8 @@ class MLPredictor:
                                     eval_metric="logloss", random_state=42)
         else:
             clf = RandomForestClassifier(n_estimators=200, max_depth=6,
-                                        min_samples_leaf=5, random_state=42, n_jobs=-1)
+                                        min_samples_leaf=5, random_state=42, n_jobs=-1,
+                                        class_weight="balanced")
         return Pipeline([("scaler", StandardScaler()), ("clf", clf)])
 
     def train(self, df: pl.DataFrame, regime: str = "all") -> Dict:
@@ -78,7 +80,9 @@ class MLPredictor:
         y = labels.to_numpy()
 
         pipeline  = self.build_pipeline(regime)
-        cv_scores = cross_val_score(pipeline, X, y, cv=5, scoring="roc_auc")
+        # TimeSeriesSplit prevents temporal leakage (future data in train folds)
+        tscv = TimeSeriesSplit(n_splits=5)
+        cv_scores = cross_val_score(pipeline, X, y, cv=tscv, scoring="roc_auc")
         pipeline.fit(X, y)
 
         self._regime_models[regime] = pipeline
@@ -113,17 +117,32 @@ class MLPredictor:
             logger.error(f"[ML] predict_proba : {e}")
             return 0.5
 
+    def _effective_blend_weight(self, ml_confidence: float) -> float:
+        """Compute the effective blend weight adjusted for ML confidence.
+
+        ml_confidence is normalised to [0, 1] (0 = 50/50 prediction, 1 = certain).
+        Below confidence_threshold the weight is scaled down proportionally.
+        A small floor (0.01) prevents division-by-zero when threshold == 0.5.
+        """
+        threshold_margin = max(self.confidence_threshold - 0.5, 0.01)
+        return self.blend_weight * min(1.0, ml_confidence / threshold_margin)
+
     def blend_signal(self, rule_score: float, rule_side: str,
                      df: pl.DataFrame, regime: str = "all") -> Tuple[float, str]:
         """
         Mélange le signal règle + ML selon blend_weight.
         Si le ML contredit fortement, réduit le score.
+        Prefers regime-specific model when available.
         """
         if not self.trained:
             return rule_score, rule_side
+        # Use regime-specific model if available, fallback to general
         prob = self.predict_proba(df, regime)
         ml_score = prob if rule_side == "long" else (1 - prob)
-        blended  = (1 - self.blend_weight) * rule_score + self.blend_weight * ml_score
+        # Confidence check: if ML is not confident enough, reduce its weight
+        ml_confidence = abs(prob - 0.5) * 2  # 0.0 = no confidence, 1.0 = max confidence
+        effective_weight = self._effective_blend_weight(ml_confidence)
+        blended  = (1 - effective_weight) * rule_score + effective_weight * ml_score
         veto = (rule_side == "long"  and prob < 0.3) or \
                (rule_side == "short" and prob > 0.7)
         if veto:

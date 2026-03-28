@@ -1,7 +1,10 @@
 """Indicateurs techniques — source unique pour stratégies et moteur. Basé sur Polars."""
+import logging
 import numpy as np
 import polars as pl
 from typing import Tuple
+
+_log = logging.getLogger(__name__)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -187,37 +190,48 @@ def supertrend(df: pl.DataFrame, period: int = 10,
     TR et ATR calculés par _true_range() (Polars) ; seule la boucle
     upper/lower/direction reste en numpy — dépendance séquentielle
     incontournable (upper[i] dépend de upper[i-1]).
+    Optimized: pre-shift close array and use contiguous float64 arrays.
     """
     # TR et ATR via Polars (pas de round-trip sur cette partie)
-    atr_arr = _true_range(df).ewm_mean(span=period, adjust=False).to_numpy()
+    atr_arr = _true_range(df).ewm_mean(span=period, adjust=False).to_numpy().astype(np.float64)
 
-    high  = df["high"].to_numpy()
-    low   = df["low"].to_numpy()
-    close = df["close"].to_numpy()
+    high  = df["high"].to_numpy().astype(np.float64)
+    low   = df["low"].to_numpy().astype(np.float64)
+    close = df["close"].to_numpy().astype(np.float64)
     n     = len(close)
 
-    hl2         = (high + low) / 2.0
+    hl2         = (high + low) * 0.5
     upper_basic = hl2 + mult * atr_arr
     lower_basic = hl2 - mult * atr_arr
 
     upper  = upper_basic.copy()
     lower  = lower_basic.copy()
-    st     = np.empty(n)
+    st     = np.empty(n, dtype=np.float64)
     dir_   = np.ones(n, dtype=np.int8)
     st[0]  = lower[0]
 
+    # Pre-shift for cache-friendly access in the hot loop
+    close_prev = np.empty(n, dtype=np.float64)
+    close_prev[0] = close[0]
+    close_prev[1:] = close[:-1]
+
     for i in range(1, n):
-        upper[i] = upper_basic[i] if (upper_basic[i] < upper[i - 1]
-                                       or close[i - 1] > upper[i - 1]) else upper[i - 1]
-        lower[i] = lower_basic[i] if (lower_basic[i] > lower[i - 1]
-                                       or close[i - 1] < lower[i - 1]) else lower[i - 1]
+        cp = close_prev[i]
+        if upper_basic[i] < upper[i - 1] or cp > upper[i - 1]:
+            upper[i] = upper_basic[i]
+        else:
+            upper[i] = upper[i - 1]
+        if lower_basic[i] > lower[i - 1] or cp < lower[i - 1]:
+            lower[i] = lower_basic[i]
+        else:
+            lower[i] = lower[i - 1]
         if dir_[i - 1] == 1:
             dir_[i] = 1 if close[i] >= lower[i] else -1
         else:
             dir_[i] = -1 if close[i] <= upper[i] else 1
         st[i] = lower[i] if dir_[i] == 1 else upper[i]
 
-    return pl.Series(dir_.astype(float)), pl.Series(st)
+    return pl.Series(dir_.astype(np.float64)), pl.Series(st)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -296,8 +310,15 @@ def htf_trend(df_htf, ema_period: int = 50) -> int:
 #  Détection de régime
 # ══════════════════════════════════════════════════════════════════════════════
 
-def detect_regime(df: pl.DataFrame) -> dict:
-    """Classifie le marché : trending | ranging | volatile."""
+def detect_regime_full(df: pl.DataFrame,
+                      adx_trend_threshold: float = 25.0,
+                      atr_volatile_threshold: float = 3.0) -> dict:
+    """Classifie le marché : trending | ranging | volatile.
+
+    Args:
+        adx_trend_threshold: ADX above this = trending (default 25)
+        atr_volatile_threshold: ATR% above this = volatile (default 3.0%)
+    """
     if len(df) < 30:
         return {"regime": "unknown", "adx": 0, "atr_pct": 0,
                 "confidence": 0, "trend_dir": "flat"}
@@ -309,10 +330,10 @@ def detect_regime(df: pl.DataFrame) -> dict:
     ema20  = float(ema(df["close"], 20)[-1])
     ema50  = float(ema(df["close"], 50)[-1])
     tdir   = "up" if ema20 > ema50 else "down"
-    if atr_p > 3.0:
+    if atr_p > atr_volatile_threshold:
         regime, conf = "volatile", min(atr_p / 5, 1.0)
-    elif adx_l >= 25:
-        regime, conf = "trending", min((adx_l - 25) / 50, 1.0)
+    elif adx_l >= adx_trend_threshold:
+        regime, conf = "trending", min((adx_l - adx_trend_threshold) / 50, 1.0)
     else:
         regime, conf = "ranging",  max(0, 1 - (adx_l - 15) / 10)
     return {"regime": regime, "adx": round(adx_l, 2), "atr_pct": round(atr_p, 3),
@@ -368,24 +389,17 @@ def support_resistance_levels(
 ) -> dict:
     """Détecte supports et résistances via pivots swing (hauts/bas locaux).
 
-    Un pivot haut (résistance candidate) : high[i] = max(high[i-w:i+w+1])
-    Un pivot bas  (support candidate)    : low[i]  = min(low[i-w:i+w+1])
-
-    Les pivots proches (< cluster_pct × prix) sont fusionnés en une seule zone.
-    La "force" d'un niveau = nombre de pivots fusionnés (nombre de touches).
+    Optimized: uses numpy argmax/argmin on rolling windows instead of Python loops.
 
     Args:
         window       : Fenêtre de chaque côté pour valider un pivot (barres)
-        cluster_pct  : Distance relative max pour fusionner deux niveaux (ex: 0.005 = 0.5 %)
+        cluster_pct  : Distance relative max pour fusionner deux niveaux
         min_touches  : Force minimum pour retenir un niveau
         max_levels   : Nombre max de niveaux retournés par côté
         lookback     : Nombre de bougies analysées (les plus récentes)
 
     Returns:
-        {
-            "supports":    [{"price": float, "strength": int}, ...],
-            "resistances": [{"price": float, "strength": int}, ...],
-        }
+        {"supports": [...], "resistances": [...]}
     """
     n = len(df)
     if n < window * 2 + 5:
@@ -397,15 +411,27 @@ def support_resistance_levels(
     close = df["close"][start:].to_numpy()
     m     = len(high)
 
-    res_pivots: list[float] = []
-    for i in range(window, m - window):
-        if high[i] == max(high[i - window:i + window + 1]):
-            res_pivots.append(float(high[i]))
+    # Vectorized pivot detection using rolling max/min
+    from numpy.lib.stride_tricks import sliding_window_view
+    win_size = 2 * window + 1
 
-    sup_pivots: list[float] = []
-    for i in range(window, m - window):
-        if low[i] == min(low[i - window:i + window + 1]):
-            sup_pivots.append(float(low[i]))
+    if m < win_size:
+        return {"supports": [], "resistances": []}
+
+    high_wins = sliding_window_view(high, win_size)
+    low_wins  = sliding_window_view(low, win_size)
+
+    # Pivot high: center element is the max of its window
+    high_center = high[window:m - window]
+    high_max    = high_wins.max(axis=1)
+    res_mask    = high_center == high_max
+    res_pivots  = high_center[res_mask].tolist()
+
+    # Pivot low: center element is the min of its window
+    low_center = low[window:m - window]
+    low_min    = low_wins.min(axis=1)
+    sup_mask   = low_center == low_min
+    sup_pivots = low_center[sup_mask].tolist()
 
     def _cluster(prices: list[float], tol: float) -> list[tuple[float, int]]:
         if not prices:
@@ -543,14 +569,20 @@ precompute = precompute_df
 def pre_val(df: pl.DataFrame, col: str) -> float | None:
     """Lit la valeur pré-calculée à la dernière ligne si disponible.
     Retourne None si la colonne n'existe pas ou si la valeur est nulle.
+    Logue un avertissement si la colonne n'existe pas (fallback vers recalcul on-demand).
 
     Usage :
         rsi_now = pre_val(df, "_pre_rsi14") or float(rsi(df["close"])[-1])
     """
-    if col in df.columns:
+    if col and col in df.columns:
         v = df[col][-1]
         if v is not None:
             return float(v)
+    elif col:
+        _log.debug(
+            f"[indicators] Colonne pré-calculée '{col}' absente — "
+            f"fallback on-demand (precompute_df() non appliqué ?)"
+        )
     return None
 
 
@@ -560,6 +592,9 @@ def detect_regime(df: pl.DataFrame, adx_threshold: float = 25.0) -> str:
 
     Retourne ``"trend"`` si ADX >= adx_threshold, ``"range"`` sinon,
     ou ``"unknown"`` si le DataFrame est trop court.
+
+    For detailed regime detection (trending/ranging/volatile with confidence),
+    use detect_regime_full() instead.
 
     Utilisé par SignalPipeline (ML blending) et MarketScanner (screen/UI).
     Extrait ici pour éviter que SignalPipeline dépende de MarketScanner.

@@ -50,8 +50,8 @@ class Strategy(BaseStrategy):
     timeframes: List[str] = ["5m", "15m", "1h", "4h", "1d"]
 
     param_space: Dict[str, List] = {
-        "min_consensus":   [2, 3, 4],
-        "score_threshold": [0.50, 0.55, 0.60],
+        "min_consensus":   [1, 2, 3],
+        "score_threshold": [0.45, 0.50, 0.55],
         "consensus_bonus": [0.01, 0.02, 0.03],
     }
 

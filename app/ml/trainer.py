@@ -11,8 +11,9 @@ logger = logging.getLogger(__name__)
 class MLStrategyTrainer:
     """Gère le cycle de vie des modèles BaseStrategyML (chargement, scheduling, réentraînement)."""
 
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, ml_lock: threading.Lock = None):
         self.cfg = cfg
+        self._ml_lock = ml_lock or threading.Lock()
         # Clé : "{name}@{tf}" — timer indépendant par (stratégie, timeframe)
         self._retrain_at: Dict[str, float] = {}
 
@@ -101,8 +102,10 @@ class MLStrategyTrainer:
             if df is None or len(df) < strat.min_bars_required(strat_params):
                 logger.warning(f"[MLTrainer] {name}/{tf} : données insuffisantes ({symbol}/{tf})")
                 return
-            strat.fit(df, strat_params)
-            strat.save_model(self._model_path(strat, name, tf))
+            # Acquire lock to prevent race condition with main thread inference
+            with self._ml_lock:
+                strat.fit(df, strat_params)
+                strat.save_model(self._model_path(strat, name, tf))
             logger.info(f"[MLTrainer] {name}/{tf} réentraîné — AUC={strat._best_auc_per_tf.get(tf, 0):.4f}")
         except Exception as e:
             logger.error(f"[MLTrainer] Réentraînement {name}/{tf} KO : {e}")

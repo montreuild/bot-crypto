@@ -62,7 +62,7 @@ class RiskManager:
         _risk_cfg = cfg.get("risk", {})
         self._consec_loss_limit    = int(_risk_cfg.get("consecutive_loss_limit", 3))
         self._slot_daily_dd_limit  = float(_risk_cfg.get("slot_daily_dd_limit", 0.03))
-        self._win_rate_floor       = float(_risk_cfg.get("win_rate_floor", 0.30))
+        self._win_rate_floor       = float(_risk_cfg.get("win_rate_floor", 0.25))
         self._consec_pause_secs    = int(_risk_cfg.get("consecutive_pause_secs", 1800))  # 30 min
         self._volatility_threshold = float(_risk_cfg.get("volatility_threshold", 0.05))  # 5% ATR BTC
 
@@ -105,6 +105,7 @@ class RiskManager:
         for state in self.slot_states.values():
             if state.day_key != today:
                 state.daily_pnl = 0.0
+                state.consecutive_losses = 0
                 state.day_key   = today
                 # Lever la pause "daily DD" si nouveau jour
                 if "DD journalier" in state.pause_reason:
@@ -184,10 +185,12 @@ class RiskManager:
         # CB : DD journalier du slot
         slot_dd_pct = _safe_div(-state.daily_pnl, max(self.equity, 1.0))
         if slot_dd_pct >= self._slot_daily_dd_limit and not state.is_paused():
-            midnight = datetime.now(timezone.utc).replace(
-                hour=23, minute=59, second=59, microsecond=0
-            )
-            state.paused_until = midnight.timestamp()
+            # Use tomorrow 00:00:00 UTC to avoid race condition at midnight
+            from datetime import timedelta
+            tomorrow = (datetime.now(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            ) + timedelta(days=1))
+            state.paused_until = tomorrow.timestamp()
             state.pause_reason = f"DD journalier {slot_dd_pct:.1%} ≥ {self._slot_daily_dd_limit:.1%}"
             logger.warning(f"[Risk] CB slot {slot_key} — {state.pause_reason} → pause jusqu'à minuit")
             if self._notifier:

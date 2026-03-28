@@ -201,13 +201,17 @@ def compute_labels(df: pl.DataFrame, lookahead: int = 3,
     Le seuil de hausse n'est pas fixe (ex: +0.2%) mais adaptatif :
       seuil = volatilité_20p * sqrt(lookahead) * vol_multiplier
 
+    Le seuil est décalé d'une barre (shift(1)) pour éviter le lookahead bias :
+    le seuil à la barre t n'utilise que la volatilité calculée jusqu'à t-1.
+
     Avantage : en range serré le seuil est bas (→ plus de signaux valides),
     en tendance forte il est plus élevé (→ filtre les micro-retours).
     """
     close    = df["close"]
     log_ret  = (close / close.shift(1).clip(lower_bound=1e-9)).log(math.e)
     volatility         = log_ret.rolling_std(20)
-    dynamic_threshold  = volatility * math.sqrt(lookahead) * vol_multiplier
+    # Shift threshold by 1 bar to prevent current-bar information leaking into labels
+    dynamic_threshold  = volatility.shift(1) * math.sqrt(lookahead) * vol_multiplier
     future = (close.shift(-lookahead) / close.clip(lower_bound=1e-9)).log(math.e)
     return (future > dynamic_threshold).cast(pl.Int32)
 
