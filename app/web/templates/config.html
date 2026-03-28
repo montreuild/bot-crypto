@@ -145,7 +145,7 @@
 .config-left .panel.acc-closed .panel-body{display:none;}
 
 /* ── 6. Dirty (unsaved) indicator ── */
-@keyframes dirtyPulse{0%,100%{opacity:1;transform:scale(1);box-shadow:0 0 0 0 rgba(251,191,36,.4);}50%{opacity:.7;transform:scale(.85);box-shadow:0 0 0 4px rgba(251,191,36,0);}}
+@keyframes dirtyPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.5;transform:scale(.85);}}
 .dirty-dot{display:none;width:7px;height:7px;border-radius:50%;background:var(--amber);margin-left:6px;flex-shrink:0;animation:dirtyPulse 1.8s ease infinite;}
 .dirty .dirty-dot{display:inline-block;}
 
@@ -158,7 +158,7 @@
 {% endblock %}
 
 {% block content %}
-<div id="content">
+<div id="content" class="fade-in">
   <div class="config-tabs">
     <button class="ctab active" onclick="switchConfigTab('left')">⚙ Config</button>
     <button class="ctab" onclick="switchConfigTab('right')">▦ Paramètres</button>

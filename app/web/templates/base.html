@@ -226,6 +226,7 @@ a:focus-visible,.sb-link:focus-visible,.toggle input:focus-visible+.toggle-slide
 /* ── Animation utilities ── */
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
 .fade-in{animation:fadeIn .3s ease both;}
+@media(prefers-reduced-motion:reduce){.fade-in{animation:none;}}
 {% block page_styles %}{% endblock %}
 </style>
 <script>
