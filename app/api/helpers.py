@@ -18,15 +18,22 @@ logger = logging.getLogger(__name__)
 
 # ── Auth ───────────────────────────────────────────────────────────────────
 
+def _extract_client_ip(request: Request) -> str:
+    """Extrait l'IP client depuis X-Forwarded-For ou request.client."""
+    forwarded_for = request.headers.get("x-forwarded-for", "").strip()
+    if forwarded_for:
+        real_ip = forwarded_for.split(",")[0].strip()
+        if real_ip:
+            return real_ip
+    return getattr(request.client, "host", "unknown") if request.client else "unknown"
+
+
 async def verify_api_key(request: Request):
-    key = state.cfg["web"].get("api_key", "") if state.cfg else ""
+    key = (state.cfg or {}).get("web", {}).get("api_key", "")
     if not key:
         # When no API key is configured, only allow requests from localhost.
         # Also honour X-Forwarded-For so reverse-proxy deployments are handled correctly.
-        forwarded_for = request.headers.get("x-forwarded-for", "")
-        real_ip = forwarded_for.split(",")[0].strip() if forwarded_for else ""
-        direct_host = getattr(request.client, "host", "unknown") if request.client else "unknown"
-        client_host = real_ip or direct_host
+        client_host = _extract_client_ip(request)
         if client_host not in ("127.0.0.1", "localhost", "::1"):
             logger.warning(
                 f"[Auth] Accès refusé depuis {client_host} — "
@@ -38,11 +45,10 @@ async def verify_api_key(request: Request):
             )
         return
     token = request.headers.get("X-API-Key") or request.query_params.get("api_key") or ""
+    if not token or len(token) > 256:
+        raise HTTPException(status_code=403, detail="Clé API invalide")
     if not hmac.compare_digest(token, key):
-        forwarded_for = request.headers.get("x-forwarded-for", "")
-        real_ip = forwarded_for.split(",")[0].strip() if forwarded_for else ""
-        direct_host = getattr(request.client, "host", "unknown") if request.client else "unknown"
-        client_host = real_ip or direct_host
+        client_host = _extract_client_ip(request)
         logger.warning(
             f"[Auth] Clé API invalide depuis {client_host} — "
             f"{request.method} {request.url.path}"

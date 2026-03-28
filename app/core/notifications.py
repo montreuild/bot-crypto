@@ -281,11 +281,13 @@ class Notifier:
         if not self.telegram_enabled or not _HAS_REQUESTS: return
         if not self.telegram_token or not self.telegram_chat_id: return
         try:
-            _requests.post(
+            resp = _requests.post(
                 f"https://api.telegram.org/bot{self.telegram_token}/sendMessage",
                 json={"chat_id": self.telegram_chat_id, "text": text, "parse_mode": "Markdown"},
                 timeout=10
             )
+            if resp.status_code >= 400:
+                logger.warning(f"[Notifier] Telegram HTTP {resp.status_code} : {resp.text[:200]}")
         except Exception as e:
             logger.error(f"[Notifier] Telegram KO : {e}")
 
@@ -297,9 +299,11 @@ class Notifier:
                     body=text, from_=self._twilio_from, to=self.whatsapp_number
                 )
             else:
-                _requests.get("https://api.callmebot.com/whatsapp.php", params={
+                resp = _requests.get("https://api.callmebot.com/whatsapp.php", params={
                     "phone": self.whatsapp_number, "text": text, "apikey": self.whatsapp_token
                 }, timeout=10)
+                if resp.status_code >= 400:
+                    logger.warning(f"[Notifier] WhatsApp HTTP {resp.status_code}")
         except Exception as e:
             logger.warning(f"[Notifier] WhatsApp KO : {e}")
 
@@ -316,5 +320,7 @@ class Notifier:
                 s.starttls()
                 s.login(self._email_user, self._email_password)
                 s.send_message(m)
+        except smtplib.SMTPException as e:
+            logger.warning(f"[Notifier] Email SMTP erreur : {e}")
         except Exception as e:
             logger.warning(f"[Notifier] Email KO : {e}")
