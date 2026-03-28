@@ -47,8 +47,12 @@
 .topbar-breadcrumb a{color:var(--muted);text-decoration:none;transition:color .15s;}
 .topbar-breadcrumb a:hover{color:var(--cyan);}
 .topbar-breadcrumb .sep{color:var(--dim);}
-/* Chart */
-.chart-wrap{position:relative;width:100%;}
+/* Sort indicators on scanner table */
+.scan-th{cursor:pointer;user-select:none;white-space:nowrap;}
+.scan-th:hover{color:var(--text);}
+.scan-th.sorted{color:var(--cyan);}
+.scan-th .sort-arrow{font-size:.65rem;margin-left:3px;opacity:.7;}
+
 .chart-tf-btn{background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 9px;border-radius:4px;font-size:.72rem;cursor:pointer;transition:all .12s;font-family:var(--body);font-weight:600;}
 .chart-tf-btn:hover{color:var(--text);border-color:var(--border-hi);background:rgba(255,255,255,.03);}
 .chart-tf-btn.active{background:var(--cyan-dim);border-color:rgba(34,211,238,.4);color:var(--cyan);}
@@ -147,8 +151,14 @@
             <table class="table-striped">
               <thead>
                 <tr>
-                  <th>Paire</th><th>Régime</th><th>ADX</th><th>RSI</th>
-                  <th>ATR%</th><th>Vol ratio</th><th>Vol 24h</th><th>Stratégies</th>
+                  <th class="scan-th" onclick="scanSort('symbol')">Paire<span class="sort-arrow" id="sa-symbol"></span></th>
+                  <th class="scan-th" onclick="scanSort('regime')">Régime<span class="sort-arrow" id="sa-regime"></span></th>
+                  <th class="scan-th" onclick="scanSort('adx')">ADX<span class="sort-arrow" id="sa-adx"></span></th>
+                  <th class="scan-th" onclick="scanSort('rsi')">RSI<span class="sort-arrow" id="sa-rsi"></span></th>
+                  <th class="scan-th" onclick="scanSort('atr_pct')">ATR%<span class="sort-arrow" id="sa-atr_pct"></span></th>
+                  <th class="scan-th" onclick="scanSort('vol_ratio')">Vol ratio<span class="sort-arrow" id="sa-vol_ratio"></span></th>
+                  <th class="scan-th" onclick="scanSort('volume_24h')">Vol 24h<span class="sort-arrow" id="sa-volume_24h"></span></th>
+                  <th>Stratégies</th>
                 </tr>
               </thead>
               <tbody id="scan-tbody">
@@ -197,13 +207,13 @@
         <div id="chart-status" style="padding:8px 14px;font-size:.72rem;color:var(--dim);min-height:20px"></div>
         <div style="padding:0 8px">
           <div class="chart-sub-lbl">OHLCV — <span id="chart-title-lbl">BTC/USDC · 1h</span></div>
-          <div class="chart-wrap" id="chart-price" style="height:300px"></div>
+          <div class="chart-wrap" id="chart-price" style="height:300px" role="img" aria-label="Graphique de prix OHLCV"></div>
           <div class="chart-sub-lbl" style="margin-top:4px">Volume</div>
-          <div class="chart-wrap" id="chart-volume" style="height:80px"></div>
+          <div class="chart-wrap" id="chart-volume" style="height:80px" role="img" aria-label="Volume de trading"></div>
           <div class="chart-sub-lbl" style="margin-top:4px">RSI (14)</div>
-          <div class="chart-wrap" id="chart-rsi" style="height:90px"></div>
+          <div class="chart-wrap" id="chart-rsi" style="height:90px" role="img" aria-label="Indicateur RSI (14 périodes)"></div>
           <div class="chart-sub-lbl" style="margin-top:4px">MACD (12,26,9)</div>
-          <div class="chart-wrap" id="chart-macd" style="height:90px;margin-bottom:8px"></div>
+          <div class="chart-wrap" id="chart-macd" style="height:90px;margin-bottom:8px" role="img" aria-label="Indicateur MACD (12,26,9)"></div>
         </div>
       </div>
     </div>
@@ -228,6 +238,15 @@
 const LS_FILTERS = 'scanner_filters_v1';
 let scanResults = [];
 let openPositionSymbols = new Set();
+let scanSortKey = 'symbol', scanSortAsc = true;
+
+function scanSort(key) {
+  if (scanSortKey === key) { scanSortAsc = !scanSortAsc; }
+  else { scanSortKey = key; scanSortAsc = key === 'symbol'; }
+  const filtered = _lastFilteredResults || scanResults;
+  renderScanTable(filtered);
+}
+let _lastFilteredResults = null;
 
 // ── Filter persistence ──────────────────────────────────────────────────
 function saveFilters(){
@@ -313,6 +332,7 @@ function applyFilters(){
   const filtered=scanResults.filter(r=>{const ind=r.indicators||{};if(regime&&r.regime_label!==regime)return false;if(ind.adx<minAdx)return false;if(ind.atr_pct<minAtr)return false;if(ind.rsi<minRsi||ind.rsi>maxRsi)return false;return true;});
   document.getElementById('filter-count').textContent=`${filtered.length} / ${scanResults.length} paires`;
   document.getElementById('scan-count').textContent=`${filtered.length} résultats`;
+  _lastFilteredResults = filtered;
   renderScanTable(filtered);renderChips(filtered);
 }
 
@@ -338,7 +358,25 @@ function renderChips(results){
 // ── Scan table ──────────────────────────────────────────────────────────
 function renderScanTable(results){
   if(!results.length){document.getElementById('scan-tbody').innerHTML='<tr><td colspan="8" class="empty-row">Aucun résultat correspondant aux filtres.</td></tr>';return;}
-  document.getElementById('scan-tbody').innerHTML=results.map(r=>{
+  // Apply sorting
+  const sorted=[...results].sort((a,b)=>{
+    let av,bv;
+    if(scanSortKey==='symbol'){av=a.symbol||'';bv=b.symbol||'';}
+    else if(scanSortKey==='regime'){av=a.regime_label||'';bv=b.regime_label||'';}
+    else if(scanSortKey==='volume_24h'){av=a.volume_24h||0;bv=b.volume_24h||0;}
+    else{av=(a.indicators||{})[scanSortKey]||0;bv=(b.indicators||{})[scanSortKey]||0;}
+    if(typeof av==='string') return scanSortAsc?av.localeCompare(bv):bv.localeCompare(av);
+    return scanSortAsc?av-bv:bv-av;
+  });
+  // Update sort arrows
+  ['symbol','regime','adx','rsi','atr_pct','vol_ratio','volume_24h'].forEach(k=>{
+    const el=document.getElementById('sa-'+k);
+    if(!el)return;
+    const th=el.closest('th');
+    if(scanSortKey===k){el.textContent=scanSortAsc?' ↑':' ↓';if(th)th.classList.add('sorted');}
+    else{el.textContent='';if(th)th.classList.remove('sorted');}
+  });
+  document.getElementById('scan-tbody').innerHTML=sorted.map(r=>{
     const ind=r.indicators||{},adx=+(ind.adx||0),rsi=+(ind.rsi||50),atrPct=+(ind.atr_pct||0),volR=+(ind.vol_ratio||1),vol24=+(r.volume_24h||0);
     const strats=(r.strategies||[]).map(s=>`<span class="tag tag-strat">${escHtml(s)}</span>`).join(' ');
     const regimeClass=r.regime_label?.includes('Trend fort')?'tag-trend':r.regime_label?.includes('modéré')?'tag-trend':r.regime_label?.includes('Range')?'tag-range':r.regime_label?.includes('Panic')?'tag-panic':'tag-neutral';

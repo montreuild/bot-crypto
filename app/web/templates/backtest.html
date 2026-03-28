@@ -12,6 +12,10 @@
 .bt-sidebar{background:var(--surface);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:10px;overflow-y:auto;position:sticky;top:56px;height:calc(100vh - 56px);}
 .bt-main{padding:14px 16px;display:flex;flex-direction:column;gap:12px;overflow-x:hidden;}
 #loader{display:none;text-align:center;padding:40px;color:var(--dim);}
+#loader-progress{margin:10px auto 0;max-width:300px;}
+#loader-bar-bg{height:5px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;margin-bottom:6px;}
+#loader-bar-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--cyan),var(--purple));transition:width .5s ease;}
+#loader-eta{font-size:.65rem;color:var(--dim);font-family:var(--mono);}
 .sec{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:600;padding-left:6px;border-left:2px solid var(--cyan);margin-bottom:7px;}
 .tabs{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px;}
 .tab{padding:5px 14px;border-radius:var(--r-sm);border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:.78rem;font-weight:600;transition:all .15s;display:flex;align-items:center;gap:5px;font-family:var(--body);}
@@ -156,7 +160,12 @@
         Les clés API ne sont nécessaires que pour le <strong>live trading</strong>.
         Jusqu'à <strong>50 000 bougies</strong> saisissables librement.
       </div>
-      <div id="loader"><div class="spin" style="width:26px;height:26px;border-width:2px;margin:0 auto 10px"></div>Calcul en cours...</div>
+      <div id="loader"><div class="spin" style="width:26px;height:26px;border-width:2px;margin:0 auto 10px"></div>Calcul en cours...
+        <div id="loader-progress">
+          <div id="loader-bar-bg"><div id="loader-bar-fill" style="width:0%"></div></div>
+          <div id="loader-eta"></div>
+        </div>
+      </div>
       <div id="results" style="display:none;flex-direction:column;gap:12px"></div>
 
     </div>
@@ -314,6 +323,10 @@ async function run(){
   document.getElementById('btn-cancel-bt').style.display='';
   document.getElementById('btn-exp').disabled=true;
   document.getElementById('msg').textContent='';
+  const barFill=document.getElementById('loader-bar-fill');
+  const etaEl=document.getElementById('loader-eta');
+  if(barFill){barFill.style.width='0%';barFill.style.background='linear-gradient(90deg,var(--cyan),var(--purple))';}
+  if(etaEl)etaEl.textContent='Estimation en cours…';
   document.getElementById('loader').style.display='block';
   document.getElementById('results').style.display='none';
   killAll();
@@ -330,6 +343,15 @@ async function run(){
   if(wf){dynSteps.push([cursor,'Walk-Forward : découpage des folds…']);cursor+=1000;for(let f=1;f<=5;f++){(selStrats.length?selStrats:['?']).forEach(s=>{dynSteps.push([cursor,`  ↳ WF fold ${f}/5 · ${s}…`,'log-run']);cursor+=Math.round(timePerStrat/5*.8);});}}
   if(mc){dynSteps.push([cursor,'Monte-Carlo : simulation des scénarios…']);cursor+=500;for(let i=1;i<=4;i++){dynSteps.push([cursor,`  ↳ MC runs ${(i-1)*50+1}–${Math.min(i*50,200)} / 200…`,'log-run']);cursor+=Math.round(timePerStrat*.3*nStrats/4);}dynSteps.push([cursor,'Monte-Carlo : calcul des percentiles P5/P50/P95…']);cursor+=500;}
   dynSteps.push([cursor,'Assemblage final & sérialisation JSON…']);
+  const totalEstMs=cursor+1000;
+  // Progress bar update — runs every 400ms until request completes
+  const progInterval=setInterval(()=>{
+    const elapsed=Date.now()-t0;
+    const pct=Math.min(95,elapsed/totalEstMs*100);
+    if(barFill)barFill.style.width=pct.toFixed(0)+'%';
+    const rem=Math.max(0,(totalEstMs-elapsed)/1000);
+    if(etaEl)etaEl.textContent=rem>60?`~${Math.round(rem/60)}min restant`:`~${Math.round(rem)}s restant`;
+  },400);
   const timers=[...steps,...dynSteps].map(([d,m,c])=>setTimeout(()=>logAdd(m,c),d));
   _btAbort = new AbortController();
   try{
@@ -361,6 +383,9 @@ async function run(){
       logAdd(msg,'log-err');document.getElementById('msg').textContent=msg;
     }
   }finally{
+    clearInterval(progInterval);
+    if(barFill){barFill.style.width='100%';barFill.style.background='var(--green)';}
+    if(etaEl)etaEl.textContent='';
     _btAbort=null;
     document.getElementById('btn-run').disabled=false;
     document.getElementById('btn-cancel-bt').style.display='none';
@@ -406,7 +431,7 @@ function renderResults(){
       <button onclick="openFullscreen()" title="Plein écran" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 9px;border-radius:var(--r-sm);cursor:pointer;font-size:.7rem;transition:all .15s">⤢ Plein écran</button>
     </div>
     <div class="price-wrap">
-      <div id="price-chart-wrap" style="height:300px;position:relative"></div>
+      <div id="price-chart-wrap" style="height:300px;position:relative" role="img" aria-label="Graphique de prix avec signaux"></div>
       <div style="display:flex;gap:14px;flex-wrap:wrap;padding:6px 10px 2px;font-size:.65rem;color:var(--dim);border-top:1px solid var(--border)">
         <span>📍 Légende :</span>
         <span><span style="color:#ffd166;font-size:.85rem">▲</span> Entrée Long</span>
@@ -479,10 +504,10 @@ function buildPanel(name){
   </div></div>`;
   const sid=name.replace(/[^a-z0-9_]/gi,'_');
   const chartsHTML=`<div class="cg">
-    <div class="cc"><div class="ct">Equity Curve</div><div class="ch-wrap" id="ch-eq-${sid}"></div></div>
-    <div class="cc"><div class="ct">PnL par trade</div><div class="ch-wrap" id="ch-pnl-${sid}"></div></div>
-    <div class="cc"><div class="ct">PnL cumulé</div><div class="ch-wrap" id="ch-cum-${sid}"></div></div>
-    <div class="cc"><div class="ct">Score vs PnL</div><div class="ch-wrap"><canvas id="ch-sc-${sid}"></canvas></div></div>
+    <div class="cc"><div class="ct">Equity Curve</div><div class="ch-wrap" id="ch-eq-${sid}" role="img" aria-label="Courbe d'équité — ${name}"></div></div>
+    <div class="cc"><div class="ct">PnL par trade</div><div class="ch-wrap" id="ch-pnl-${sid}" role="img" aria-label="PnL par trade — ${name}"></div></div>
+    <div class="cc"><div class="ct">PnL cumulé</div><div class="ch-wrap" id="ch-cum-${sid}" role="img" aria-label="PnL cumulé — ${name}"></div></div>
+    <div class="cc"><div class="ct">Score vs PnL</div><div class="ch-wrap"><canvas id="ch-sc-${sid}" role="img" aria-label="Score vs PnL — ${name}"></canvas></div></div>
   </div>`;
   let wfHTML='';
   if(sd.walk_forward&&!sd.walk_forward.error&&(sd.walk_forward.n_folds??0)>0){
@@ -692,7 +717,7 @@ function buildTrades(sd,sid){
       <td><button class="xb" onclick="xrow(${t.id??0})">${op?'▲':'▼'}</button></td>
     </tr>${op?`<tr class="drow"><td colspan="11"><div class="dbg">${detail(t)}</div></td></tr>`:''}`;
   }).join('');
-  const pgH=pages>1?`<div class="pg">${Array.from({length:pages},(_,i)=>i+1).map(p=>`<button class="pgb ${p===pg?'on':''}" onclick="goPg(${p})">${p}</button>`).join('')}</div>`:''
+  const pgH=pages>1?`<div class="pg">${Array.from({length:pages},(_,i)=>i+1).map(p=>`<button class="pgb ${p===pg?'on':''}" onclick="goPg(${p})">${p}</button>`).join('')}<span style="font-size:.65rem;color:var(--dim);font-family:var(--mono);padding:0 6px;align-self:center">Page ${pg} de ${pages}</span></div>`:''
   document.getElementById(ttableId).innerHTML=`
     <div class="tcard">
       <div class="tth">

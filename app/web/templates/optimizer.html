@@ -448,13 +448,13 @@ async function startOpt() {
   if (_optRunning) return;
   const checked = [...document.querySelectorAll('#strat-checks input:checked:not(:disabled)')]
                     .map(i => i.id.replace('sc-',''));
-  if (!checked.length) { alert('Sélectionnez au moins une stratégie.'); return; }
+  if (!checked.length) { toast('Sélectionnez au moins une stratégie.', true); return; }
 
   const selectedTfs = Object.keys(TF_INFO).filter(tf => {
     const cb = document.getElementById('tfc-' + tf);
     return cb && cb.checked;
   });
-  if (!selectedTfs.length) { alert('Sélectionnez au moins un timeframe.'); return; }
+  if (!selectedTfs.length) { toast('Sélectionnez au moins un timeframe.', true); return; }
 
   const userLimit = parseInt($('opt-limit').value) || 1500;
   // Pas de cap artificiel côté UI — le backend plafonne à ce que Binance peut fournir
@@ -524,7 +524,7 @@ async function startOpt() {
     msg.innerHTML = html;
     document.querySelector('.btn-purple.btn-full')?.insertAdjacentElement('afterend', msg);
     setTimeout(() => msg.remove(), 10000);
-  } catch(e) { loadingEl.remove(); _setOptBtn(false); alert('Erreur: ' + e.message); }
+  } catch(e) { loadingEl.remove(); _setOptBtn(false); toast('Erreur : ' + e.message, true); }
 }
 
 // ── Polling ──────────────────────────────────────────────────────────────
