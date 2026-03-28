@@ -266,6 +266,11 @@ class Strategy(BaseStrategy):
         score_short_thr  = float(p.get("score_short_threshold", 40.0))
         min_bars         = max(int(p.get("min_bars",         200)), 60)
 
+        if ema_fast >= ema_slow:
+            return self._none(f"ema_fast ({ema_fast}) doit être < ema_slow ({ema_slow})")
+        if macd_fast >= macd_slow_p:
+            return self._none(f"macd_fast ({macd_fast}) doit être < macd_slow ({macd_slow_p})")
+
         sym = symbol or "default"
         cnt = self._call_count.get(sym, 0) + 1
         self._call_count[sym] = cnt

@@ -70,6 +70,9 @@ class Strategy(BaseStrategy):
         cooldown         = int(p.get("cooldown",         15))
         rr_min           = float(p.get("rr_min",          1.5))
 
+        if rsi_low >= rsi_high:
+            return self._none(f"rsi_low ({rsi_low}) doit être < rsi_high ({rsi_high})")
+
         sym = symbol or "default"
         cnt = self._call_count.get(sym, 0) + 1
         self._call_count[sym] = cnt

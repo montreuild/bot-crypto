@@ -63,6 +63,9 @@ class Strategy(BaseStrategy):
         rsi_max    = float(p.get("rsi_max",      68))
         cooldown   = int(p.get("cooldown",       12))
         rr_min     = float(p.get("rr_min",       1.3))
+
+        if macd_fast >= macd_slow:
+            return self._none(f"macd_fast ({macd_fast}) doit être < macd_slow ({macd_slow})")
         tp_mult    = float(p.get("tp_mult",      2.0))
         ema_trend  = int(p.get("ema_trend",     200))
         ema_mid_p  = int(p.get("ema_mid",        50))
