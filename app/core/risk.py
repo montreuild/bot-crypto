@@ -105,6 +105,7 @@ class RiskManager:
         for state in self.slot_states.values():
             if state.day_key != today:
                 state.daily_pnl = 0.0
+                state.consecutive_losses = 0
                 state.day_key   = today
                 # Lever la pause "daily DD" si nouveau jour
                 if "DD journalier" in state.pause_reason:
@@ -184,10 +185,12 @@ class RiskManager:
         # CB : DD journalier du slot
         slot_dd_pct = _safe_div(-state.daily_pnl, max(self.equity, 1.0))
         if slot_dd_pct >= self._slot_daily_dd_limit and not state.is_paused():
-            midnight = datetime.now(timezone.utc).replace(
-                hour=23, minute=59, second=59, microsecond=0
-            )
-            state.paused_until = midnight.timestamp()
+            # Use tomorrow 00:00:00 UTC to avoid race condition at midnight
+            from datetime import timedelta
+            tomorrow = (datetime.now(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            ) + timedelta(days=1))
+            state.paused_until = tomorrow.timestamp()
             state.pause_reason = f"DD journalier {slot_dd_pct:.1%} ≥ {self._slot_daily_dd_limit:.1%}"
             logger.warning(f"[Risk] CB slot {slot_key} — {state.pause_reason} → pause jusqu'à minuit")
             if self._notifier:
