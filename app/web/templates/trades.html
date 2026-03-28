@@ -33,6 +33,12 @@
 .stat-val{font-family:var(--mono);font-size:1.05rem;font-weight:600;}
 /* Pagination */
 .pagination{display:flex;gap:5px;align-items:center;justify-content:center;font-size:.75rem;}
+.pg-info{font-size:.72rem;color:var(--muted);font-family:var(--mono);padding:0 6px;}
+/* Sortable table headers */
+th.sortable{cursor:pointer;user-select:none;}
+th.sortable:hover{color:var(--text);}
+th.sort-asc::after{content:' ↑';color:var(--cyan);}
+th.sort-desc::after{content:' ↓';color:var(--cyan);}
 .pg-btn{padding:6px 12px;border:1px solid var(--border-hi);border-radius:var(--r-sm);background:transparent;color:var(--muted);cursor:pointer;font-family:var(--body);font-size:.76rem;transition:all .18s ease;min-width:32px;text-align:center;}
 .pg-btn:hover:not(:disabled):not(.active){color:var(--text);border-color:rgba(255,255,255,.2);background:rgba(255,255,255,.03);}
 .pg-btn.active{background:var(--cyan);color:#031218;border-color:var(--cyan);font-weight:700;}
@@ -104,15 +110,16 @@
         <select class="filter-input" id="f-side" onchange="applyFilters()"><option value="">Direction</option><option value="long">Long</option><option value="short">Short</option></select>
       </div>
       <span id="filter-count" style="font-size:.72rem;color:var(--muted);margin-left:auto;font-family:var(--mono)"></span>
+      <button class="btn-clear-filters" id="btn-clear-filters" onclick="clearFilters()" style="display:none" title="Effacer les filtres">✕ Effacer filtres</button>
     </div>
     <div class="table-card">
       <div class="tscroll"><table class="table-striped trades-table">
         <thead><tr>
-          <th>Date</th><th>Paire</th><th>Dir.</th><th>Slot</th>
-          <th class="r">Entrée</th><th class="r">Sortie</th>
-          <th class="r">PnL</th><th class="r">%</th><th class="r">Score</th><th>Raison</th>
+          <th class="sortable" onclick="sortBy('time')">Date</th><th class="sortable" onclick="sortBy('symbol')">Paire</th><th>Dir.</th><th>Slot</th>
+          <th class="r sortable" onclick="sortBy('entry')">Entrée</th><th class="r sortable" onclick="sortBy('exit')">Sortie</th>
+          <th class="r sortable" onclick="sortBy('pnl')">PnL</th><th class="r sortable" onclick="sortBy('pnl_pct')">%</th><th class="r sortable" onclick="sortBy('score')">Score</th><th>Raison</th>
         </tr></thead>
-        <tbody id="trades-tbody"><tr><td colspan="10" class="empty-row">Chargement…</td></tr></tbody>
+        <tbody id="trades-tbody"><tr><td colspan="10" class="empty-row"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div><div class="skeleton skeleton-line w40"></div></td></tr></tbody>
       </table></div>
     </div>
     <div class="pagination" id="pagination" style="margin-top:12px"></div>
@@ -126,7 +133,7 @@
           <th>Slot</th><th class="r">Trades</th><th class="r">Win Rate</th>
           <th class="r">PnL</th><th class="r">P. Factor</th><th class="r">Sharpe</th><th class="r">Max DD</th>
         </tr></thead>
-        <tbody id="slot-tbody"><tr><td colspan="7" class="empty-row">Chargement…</td></tr></tbody>
+        <tbody id="slot-tbody"><tr><td colspan="7" class="empty-row"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div></td></tr></tbody>
       </table></div>
     </div>
   </div>
@@ -139,7 +146,7 @@
           <th>Paire</th><th class="r">Trades</th><th class="r">Win Rate</th>
           <th class="r">PnL</th><th class="r">Meilleur</th><th class="r">Pire</th>
         </tr></thead>
-        <tbody id="symbol-tbody"><tr><td colspan="6" class="empty-row">Chargement…</td></tr></tbody>
+        <tbody id="symbol-tbody"><tr><td colspan="6" class="empty-row"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div></td></tr></tbody>
       </table></div>
     </div>
   </div>
@@ -159,6 +166,7 @@ function initCharts(){tvEq=mkChart('equityChart');tvEqS=tvEq.addAreaSeries({line
 let _allTrades=[], _filtered=[], _status=null;
 let _page=0; const PAGE=50;
 let _activeTab='all';
+let _sortCol='time', _sortDir=-1; // -1=desc, 1=asc
 
 function clrC(v){return v>0?'c-green':v<0?'c-red':'c-muted';}
 function fmtS(v,u=''){const n=+(v||0);return(n>=0?'+':'')+n.toFixed(2)+u;}
@@ -174,6 +182,32 @@ function switchTab(tab,btn){
   $('tab-symbol').style.display=tab==='symbol'?'':'none';
 }
 
+/* ── Sort ── */
+function sortBy(col){
+  if(_sortCol===col)_sortDir*=-1; else{_sortCol=col;_sortDir=-1;}
+  applySort();
+  updateSortHeaders();
+  _page=0;
+  renderTradesTable();
+}
+function applySort(){
+  const dir=_sortDir;
+  _filtered.sort((a,b)=>{
+    let av=a[_sortCol]??'', bv=b[_sortCol]??'';
+    if(_sortCol==='time'){av=new Date(av).getTime()||0;bv=new Date(bv).getTime()||0;}
+    else if(typeof av==='string')av=av.toLowerCase(),bv=(bv||'').toLowerCase();
+    else{av=+(av||0);bv=+(bv||0);}
+    return av<bv?-dir:av>bv?dir:0;
+  });
+}
+function updateSortHeaders(){
+  document.querySelectorAll('th.sortable').forEach(th=>{
+    th.classList.remove('sort-asc','sort-desc');
+    const col=th.getAttribute('onclick')?.match(/sortBy\('(\w+)'\)/)?.[1];
+    if(col===_sortCol)th.classList.add(_sortDir>0?'sort-asc':'sort-desc');
+  });
+}
+
 /* ── Filters ── */
 function applyFilters(){
   const sym=($('f-symbol')?.value||'').toLowerCase();
@@ -187,8 +221,18 @@ function applyFilters(){
     return true;
   });
   _page=0;
+  applySort();
   renderTradesTable();
   $('filter-count').textContent=_filtered.length+' trade'+(+_filtered.length!==1?'s':'');
+  const hasFilter=sym||slot||side;
+  const clearBtn=$('btn-clear-filters');
+  if(clearBtn)clearBtn.style.display=hasFilter?'':'none';
+}
+function clearFilters(){
+  if($('f-symbol'))$('f-symbol').value='';
+  if($('f-slot'))$('f-slot').value='';
+  if($('f-side'))$('f-side').value='';
+  applyFilters();
 }
 
 function renderTradesTable(){
@@ -202,6 +246,7 @@ function renderTradesTable(){
     const slotLbl=strat!=='—'&&tf?(strat.charAt(0).toUpperCase()+strat.slice(1)+' '+tf):strat;
     return`<tr><td style="color:var(--muted)">${ds}</td><td style="font-weight:600">${escHtml(t.symbol||'—')}</td><td><span class="tag tag-${t.side}">${(t.side||'').toUpperCase()}</span></td><td><span class="tag tag-strat">${escHtml(slotLbl)}</span></td><td class="r">${fmtP(t.entry)}</td><td class="r">${fmtP(t.exit)}</td><td class="r ${clrC(pnl)} pnl-bold">${fmtS(pnl)}</td><td class="r ${clrC(pnl)}">${fmtS(+(t.pnl_pct||0),'%')}</td><td class="r" style="color:var(--muted)">${(+(t.score||0)).toFixed(2)}</td><td style="color:var(--dim);font-size:.68rem">${escHtml(t.reason||'')}</td></tr>`;
   }).join('');
+  updateSortHeaders();
   renderPagination();
 }
 
@@ -215,6 +260,7 @@ function renderPagination(){
   for(let i=start;i<end;i++)html+=`<button class="pg-btn${i===_page?' active':''}" onclick="goPage(${i})">${i+1}</button>`;
   if(end<pages)html+=`${end<pages-1?'<span style="color:var(--dim)">…</span>':''}<button class="pg-btn" onclick="goPage(${pages-1})">${pages}</button>`;
   html+=`<button class="pg-btn" onclick="goPage(${_page+1})" ${_page>=pages-1?'disabled':''}>›</button>`;
+  html+=`<span class="pg-info">Page ${_page+1} de ${pages}</span>`;
   pg.innerHTML=html;
 }
 function goPage(p){_page=p;renderTradesTable();window.scrollTo(0,0);}

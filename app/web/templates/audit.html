@@ -32,7 +32,7 @@
       <div class="sec-hdr"><h2>TOP par Timeframe</h2><span class="sec-hdr-line"></span>
         <button onclick="loadOptResults()" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:.7rem">&#x21BA;</button>
       </div>
-      <div id="opt-results-container"><div style="color:var(--dim);font-size:.78rem;padding:8px">Chargement…</div></div>
+      <div id="opt-results-container"><div class="skeleton skeleton-line w80" style="margin:8px"></div><div class="skeleton skeleton-line w60" style="margin:8px"></div></div>
     </div>
 
     <!-- Historique des paramètres optimisés -->
@@ -43,7 +43,7 @@
           <thead><tr>
             <th>Date</th><th>Stratégie</th><th>TF</th><th>Paramètres modifiés</th><th class="r">Score OOS</th>
           </tr></thead>
-          <tbody id="changelog-body"><tr><td colspan="5" class="empty-row">Chargement…</td></tr></tbody>
+          <tbody id="changelog-body"><tr><td colspan="5" class="empty-row"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div></td></tr></tbody>
         </table></div>
       </div>
     </div>
