@@ -5,7 +5,7 @@ Rééquilibrage configurable (daily/weekly) basé sur profit_factor.
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -293,7 +293,6 @@ class CapitalAllocator:
     @staticmethod
     def _next_midnight_ts() -> float:
         """Prochain minuit UTC."""
-        from datetime import timedelta
         now = datetime.now(timezone.utc)
         tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
         return tomorrow.timestamp()
