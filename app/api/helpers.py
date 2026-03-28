@@ -45,7 +45,7 @@ async def verify_api_key(request: Request):
             )
         return
     token = request.headers.get("X-API-Key") or request.query_params.get("api_key") or ""
-    if not token or len(token) > 256:
+    if len(token) > 256:
         raise HTTPException(status_code=403, detail="Clé API invalide")
     if not hmac.compare_digest(token, key):
         client_host = _extract_client_ip(request)
