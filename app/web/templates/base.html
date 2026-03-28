@@ -217,19 +217,20 @@ function toast(msg,err=false){const t=document.getElementById('toast');t.textCon
     <button id="sb-toggle" onclick="toggleSidebar()" title="Réduire la barre latérale" aria-expanded="true" aria-controls="sidebar">‹</button>
   </div>
   <nav class="sb-nav" role="navigation" aria-label="Menu principal">
-    <div class="sb-group-label" role="presentation">Live</div>
+    <div class="sb-group-label" role="presentation">Trading</div>
     <a href="/"           class="sb-link {% if active_page=='dashboard'  %}active{% endif %}" aria-label="Command Center" {% if active_page=='dashboard'  %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">◈</span><span class="sb-lbl">Command Center</span></a>
+    <a href="/strategies" class="sb-link {% if active_page=='strategies' %}active{% endif %}" aria-label="Gestion des Slots" {% if active_page=='strategies' %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">◑</span><span class="sb-lbl">Slots & Stratégies</span></a>
     <a href="/trades"     class="sb-link {% if active_page=='trades'     %}active{% endif %}" aria-label="Trades" {% if active_page=='trades'     %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">▣</span><span class="sb-lbl">Trades</span></a>
-    <div class="sb-group-label" style="margin-top:12px" role="presentation">Recherche</div>
+    <div class="sb-group-label" style="margin-top:12px" role="presentation">Analyse</div>
     <a href="/scanner"    class="sb-link {% if active_page=='scanner'    %}active{% endif %}" aria-label="Scanner de marché" {% if active_page=='scanner'    %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">◎</span><span class="sb-lbl">Scanner</span></a>
     <a href="/backtest"   class="sb-link {% if active_page=='backtest'   %}active{% endif %}" aria-label="Backtest" {% if active_page=='backtest'   %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">↺</span><span class="sb-lbl">Backtest</span></a>
     <a href="/replay"     class="sb-link {% if active_page=='replay'     %}active{% endif %}" aria-label="Replay Bougies" {% if active_page=='replay'     %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">▶</span><span class="sb-lbl">Replay</span></a>
+    <div class="sb-group-label" style="margin-top:12px" role="presentation">Optimisation</div>
     <a href="/optimizer"  class="sb-link {% if active_page=='optimizer'  %}active{% endif %}" aria-label="Optimiseur de stratégies" {% if active_page=='optimizer'  %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">⬡</span><span class="sb-lbl">Optimiseur</span></a>
-    <div class="sb-group-label" style="margin-top:12px" role="presentation">Gestion</div>
-    <a href="/strategies" class="sb-link {% if active_page=='strategies' %}active{% endif %}" aria-label="Stratégies" {% if active_page=='strategies' %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">◑</span><span class="sb-lbl">Stratégies</span></a>
+    <a href="/audit"      class="sb-link {% if active_page=='audit'      %}active{% endif %}" aria-label="Audit OOS" {% if active_page=='audit'      %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">📋</span><span class="sb-lbl">Audit OOS</span></a>
     <a href="/ml"         class="sb-link {% if active_page=='ml'         %}active{% endif %}" aria-label="Machine Learning" {% if active_page=='ml'         %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">⬡</span><span class="sb-lbl">ML</span></a>
+    <div class="sb-group-label" style="margin-top:12px" role="presentation">Système</div>
     <a href="/config"     class="sb-link {% if active_page=='config'     %}active{% endif %}" aria-label="Configuration" {% if active_page=='config'     %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">⚙</span><span class="sb-lbl">Configuration</span></a>
-    <a href="/audit"      class="sb-link {% if active_page=='audit'      %}active{% endif %}" aria-label="Audit" {% if active_page=='audit'      %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">📋</span><span class="sb-lbl">Audit</span></a>
   </nav>
   <div class="sb-footer">
     <div class="sb-link" style="cursor:default;font-size:.65rem;color:var(--dim)" aria-hidden="true">
