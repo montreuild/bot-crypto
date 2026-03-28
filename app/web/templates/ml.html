@@ -209,8 +209,7 @@ async function trainML(){
   if(rawLim<200||rawLim>10000){
     limitInput.closest('.field')?.classList.add('has-error');
     limitInput.value=lim;
-    // keep error visible briefly, then clear once corrected
-    setTimeout(()=>limitInput.closest('.field')?.classList.remove('has-error'),2500);
+    limitInput.addEventListener('input',function _fix(){limitInput.closest('.field')?.classList.remove('has-error');limitInput.removeEventListener('input',_fix);},{once:true});
   }
   btn.disabled=true;btn.innerHTML=BTN_TRAIN_BUSY;
   $('train-result').textContent='';
