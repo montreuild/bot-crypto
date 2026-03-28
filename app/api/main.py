@@ -135,6 +135,10 @@ def strategies_page(request: Request):
 def replay_page(request: Request):
     return _tpl("replay.html", request, {"active_page": "replay"})
 
+@app.get("/ml", response_class=HTMLResponse)
+def ml_page(request: Request):
+    return _tpl("ml.html", request, {"active_page": "ml"})
+
 
 # ── Status (accès direct à state.cfg, hors router) ────────────────────────
 @app.get("/api/status")

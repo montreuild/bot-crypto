@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block title %} — Machine Learning{% endblock %}
+
+{% block page_styles %}
+#content{padding:18px 20px;display:flex;flex-direction:column;gap:18px;flex:1;max-width:1200px;}
+/* ── Status banner ── */
+.ml-status-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+/* ── Strategy cards ── */
+.strat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;}
+.strat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;transition:border-color .2s;}
+.strat-card.trained{border-color:rgba(52,211,153,.3);}
+.strat-card.untrained{border-color:rgba(251,191,36,.25);}
+.strat-name{font-family:var(--head);font-size:.85rem;font-weight:700;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+.strat-badge{font-size:.6rem;font-weight:700;padding:2px 6px;border-radius:4px;}
+.strat-badge.ok{background:var(--green-dim);color:var(--green);}
+.strat-badge.nok{background:var(--amber-dim);color:var(--amber);}
+.strat-metric{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:.72rem;}
+.strat-metric:last-of-type{border-bottom:none;}
+.strat-key{color:var(--muted);}
+.strat-val{font-family:var(--mono);color:var(--text);}
+/* ── Candle stats ── */
+.candle-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;}
+.candle-cell{background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;}
+.candle-pair{font-family:var(--mono);font-size:.78rem;font-weight:700;color:var(--cyan);margin-bottom:4px;}
+.candle-meta{font-size:.63rem;color:var(--muted);line-height:1.6;}
+/* ── Train form ── */
+.train-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;}
+.train-row .field{min-width:140px;}
+{% endblock %}
+
+{% block topbar_content %}
+<div class="topbar-title">Machine Learning</div>
+<div class="topbar-sep"></div>
+<div class="topbar-right">
+  <button class="btn btn-ghost" onclick="load()">↺ Actualiser</button>
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content">
+
+  <!-- Status banner -->
+  <div class="panel">
+    <div class="panel-hdr"><h3>État ML</h3></div>
+    <div class="panel-body">
+      <div class="ml-status-bar">
+        <div>
+          <div style="font-size:.63rem;color:var(--muted);margin-bottom:3px">Module ML</div>
+          <span id="ml-enabled-badge" class="status-pill stopped"><span class="status-dot"></span><span id="ml-enabled-lbl">—</span></span>
+        </div>
+        <div>
+          <div style="font-size:.63rem;color:var(--muted);margin-bottom:3px">Prêt</div>
+          <span id="ml-ready-badge" class="status-pill stopped"><span class="status-dot"></span><span id="ml-ready-lbl">—</span></span>
+        </div>
+        <div id="ml-config-box" style="flex:1;min-width:180px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 12px;font-size:.72rem;color:var(--muted);line-height:1.8;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Train section -->
+  <div class="panel">
+    <div class="panel-hdr"><h3>Entraînement</h3></div>
+    <div class="panel-body">
+      <div class="train-row">
+        <div class="field">
+          <label>Paire</label>
+          <input type="text" id="train-symbol" value="BTC/USDC" style="width:130px"/>
+        </div>
+        <div class="field">
+          <label>Bougies</label>
+          <input type="number" id="train-limit" value="2000" min="200" max="10000" style="width:100px"/>
+        </div>
+        <button id="train-btn" class="btn btn-cyan" onclick="trainML()">⬡ Entraîner</button>
+      </div>
+      <div id="train-result" style="font-size:.75rem;color:var(--muted);margin-top:4px;font-family:var(--mono)"></div>
+      <div class="info-box">
+        <strong>Note :</strong> L'entraînement utilise le Parquet local si disponible, sinon télécharge depuis l'exchange. Durée typique : 10–60 secondes.
+      </div>
+    </div>
+  </div>
+
+  <!-- Per-strategy ML status -->
+  <div>
+    <div class="sec-hdr"><h2>Stratégies ML</h2></div>
+    <div id="strat-grid" class="strat-grid">
+      <div style="color:var(--dim);font-size:.78rem">Chargement…</div>
+    </div>
+  </div>
+
+  <!-- Candle store stats -->
+  <div>
+    <div class="sec-hdr"><h2>Cache de bougies (Parquet)</h2></div>
+    <div id="candle-info" style="font-size:.72rem;color:var(--muted);margin-bottom:8px"></div>
+    <div id="candle-grid" class="candle-grid">
+      <div style="color:var(--dim);font-size:.78rem">Chargement…</div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block body_scripts %}
+<script>
+const $=id=>document.getElementById(id);
+const AUTO_REFRESH_MS=60000;
+const BTN_TRAIN_IDLE='⬡ Entraîner';
+const BTN_TRAIN_BUSY='<span class="spin"></span> Entraînement…';
+
+/* ── Helpers ── */
+function fmtTs(ts){
+  if(!ts)return'—';
+  const d=new Date(ts*1000);
+  return isNaN(d)?'—':d.toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function clrAuc(v){return v>=0.6?'c-green':v>=0.5?'c-amber':'c-red';}
+
+/* ── ML status ── */
+function renderMLStatus(d){
+  const enabled=d.enabled===true;
+  const ready=d.ready===true;
+  const enabledBadge=$('ml-enabled-badge'),readyBadge=$('ml-ready-badge');
+  enabledBadge.className='status-pill '+(enabled?'running':'stopped');
+  $('ml-enabled-lbl').textContent=enabled?'Activé':'Désactivé';
+  readyBadge.className='status-pill '+(ready?'running':'stopped');
+  $('ml-ready-lbl').textContent=ready?'Prêt':'Non prêt';
+
+  const cfg=d.config||{};
+  const keys=['lookahead','threshold','min_train_samples','retrain_interval_h'];
+  $('ml-config-box').innerHTML=keys.filter(k=>cfg[k]!=null).map(k=>`<span><span style="color:var(--dim)">${escHtml(k)}</span> <strong style="color:var(--text);font-family:var(--mono)">${escHtml(String(cfg[k]))}</strong></span>`).join(' &nbsp;·&nbsp; ')||'<span style="color:var(--dim)">Config par défaut</span>';
+}
+
+/* ── Per-strategy cards ── */
+function renderStratCards(strategies){
+  const grid=$('strat-grid');
+  const entries=Object.entries(strategies||{});
+  if(!entries.length){grid.innerHTML='<div style="color:var(--dim);font-size:.78rem">Aucune stratégie ML chargée (bot arrêté ou ML désactivé).</div>';return;}
+
+  grid.innerHTML=entries.map(([name,s])=>{
+    const trained=s.is_trained===true;
+    const auc=+(s.best_auc||0);
+    const aucStr=auc>0?auc.toFixed(4):'—';
+    const next=s.next_retrain_at?fmtTs(s.next_retrain_at):'—';
+    return`<div class="strat-card ${trained?'trained':'untrained'}">
+      <div class="strat-name">
+        ${escHtml(name)}
+        <span class="strat-badge ${trained?'ok':'nok'}">${trained?'✓ Entraîné':'⚠ Non entraîné'}</span>
+      </div>
+      <div class="strat-metric"><span class="strat-key">Meilleur AUC</span><span class="strat-val ${auc>0?clrAuc(auc):''}">${aucStr}</span></div>
+      <div class="strat-metric"><span class="strat-key">Prochain entraînement</span><span class="strat-val" style="font-size:.68rem">${escHtml(next)}</span></div>
+    </div>`;
+  }).join('');
+}
+
+/* ── Candle stats ── */
+function renderCandleStats(store){
+  const entries=Object.entries(store||{});
+  $('candle-info').textContent=entries.length?`${entries.length} paire${entries.length>1?'s':''}/TF en cache`:'Aucune donnée en cache.';
+
+  if(!entries.length){$('candle-grid').innerHTML='<div style="color:var(--dim);font-size:.78rem">Aucune bougie en cache Parquet.</div>';return;}
+
+  // Sort by count desc
+  entries.sort((a,b)=>(b[1].count||0)-(a[1].count||0));
+
+  $('candle-grid').innerHTML=entries.map(([key,s])=>{
+    const parts=key.split('/');
+    const pair=(parts[0]||key)+' <span style="color:var(--muted)">/</span> '+(parts[1]||'');
+    const first=s.first?new Date(s.first).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'2-digit'}):'—';
+    const last=s.last?new Date(s.last).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'2-digit'}):'—';
+    const sizeMb=s.size_bytes?(s.size_bytes/1024/1024).toFixed(2)+'&nbsp;MB':'—';
+    return`<div class="candle-cell">
+      <div class="candle-pair">${pair}</div>
+      <div class="candle-meta">
+        <strong style="color:var(--text);font-family:var(--mono)">${(s.count||0).toLocaleString()}</strong> bougies<br>
+        ${first} → ${last}<br>
+        Taille : ${sizeMb}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ── Train ── */
+async function trainML(){
+  const btn=$('train-btn');
+  const sym=($('train-symbol')?.value||'BTC/USDC').trim();
+  const lim=Math.max(200,Math.min(10000,+(($('train-limit')?.value)||2000)));
+  btn.disabled=true;btn.innerHTML=BTN_TRAIN_BUSY;
+  $('train-result').textContent='';
+  try{
+    const r=await apiFetch(`/api/ml/train?symbol=${encodeURIComponent(sym)}&limit=${lim}`,{method:'POST'});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||'Erreur inconnue');
+    $('train-result').textContent=`✓ Modèle entraîné — ${d.samples||0} échantillons`;
+    $('train-result').style.color='var(--green)';
+    toast('Entraînement terminé ✓');
+    await loadMLInfo();
+  }catch(e){
+    $('train-result').textContent='✗ '+e.message;
+    $('train-result').style.color='var(--red)';
+    toast('Erreur entraînement : '+e.message,true);
+  }finally{btn.disabled=false;btn.innerHTML=BTN_TRAIN_IDLE;}
+}
+
+/* ── Load ML info ── */
+async function loadMLInfo(){
+  try{
+    const r=await apiFetch('/api/ml/strategy-info');
+    if(!r.ok)return;
+    const d=await r.json();
+    renderMLStatus(d);
+    renderStratCards(d.strategies||{});
+  }catch(e){console.error('[ML] strategy-info',e);}
+}
+
+/* ── Load candle stats ── */
+async function loadCandleStats(){
+  try{
+    const r=await apiFetch('/api/candles/stats');
+    if(!r.ok)return;
+    const d=await r.json();
+    renderCandleStats(d.store||{});
+  }catch(e){console.error('[ML] candle stats',e);}
+}
+
+/* ── Main load ── */
+async function load(){
+  await Promise.all([loadMLInfo(),loadCandleStats()]);
+}
+
+load();
+setInterval(load,AUTO_REFRESH_MS);
+</script>
+{% endblock %}
