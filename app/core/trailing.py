@@ -75,9 +75,15 @@ class DynamicTrailingStop:
                 sw = max(recent_highs[-self.swing_lookback:]) + atr * 0.3
                 if sw < new_stop and sw > current_price + atr * 0.8:
                     new_stop = sw
+        # Clamp: stop must never cross current price (prevents immediate trigger)
         if side == "long":
+            max_stop = current_price - atr * 0.1
+            new_stop = min(new_stop, max_stop)
             return max(current_stop, new_stop), phase, names[phase]
-        return min(current_stop, new_stop), phase, names[phase]
+        else:
+            min_stop = current_price + atr * 0.1
+            new_stop = max(new_stop, min_stop)
+            return min(current_stop, new_stop), phase, names[phase]
 
     def is_triggered(self, price, stop, side):
         return price <= stop if side == "long" else price >= stop
