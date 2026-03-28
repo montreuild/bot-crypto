@@ -1,6 +1,6 @@
 """
 CapitalAllocator — allocation du capital par slot (strategy::tf).
-Rééquilibrage hebdomadaire basé sur profit_factor, cap 30% par slot.
+Rééquilibrage configurable (daily/weekly) basé sur profit_factor.
 """
 import logging
 import time
@@ -10,11 +10,12 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Cap maximum par slot (30% du capital)
-_MAX_SLOT_PCT = 0.30
-
-# Nombre minimal de trades pour ajuster le budget d'un slot (évite la surpondération sur petit échantillon)
-_MIN_TRADES_FOR_REBALANCE = 5
+# Defaults (can be overridden via config)
+_DEFAULT_MAX_SLOT_PCT = 0.50
+_DEFAULT_MIN_TRADES_FOR_REBALANCE = 3
+_DEFAULT_REBALANCE_INTERVAL = "weekly"  # "daily" or "weekly"
+_DEFAULT_MAX_SYMBOL_EXPOSURE_PCT = 0.25  # max 25% of capital on a single symbol
+_DEFAULT_MAX_PYRAMIDING = 2  # max positions per symbol (pyramiding)
 
 
 @dataclass
@@ -46,10 +47,17 @@ class CapitalAllocator:
         allocator.rebalance_if_due()
     """
 
-    def __init__(self, capital: float, active_per_tf: Dict[str, List[dict]]):
+    def __init__(self, capital: float, active_per_tf: Dict[str, List[dict]],
+                 cfg: dict = None):
         self.capital = capital
+        alloc_cfg = (cfg or {}).get("capital_allocator", {})
+        self._max_slot_pct = float(alloc_cfg.get("max_slot_pct", _DEFAULT_MAX_SLOT_PCT))
+        self._min_trades_for_rebalance = int(alloc_cfg.get("min_trades_for_rebalance", _DEFAULT_MIN_TRADES_FOR_REBALANCE))
+        self._rebalance_interval = alloc_cfg.get("rebalance_interval", _DEFAULT_REBALANCE_INTERVAL)
+        self._max_symbol_exposure_pct = float(alloc_cfg.get("max_symbol_exposure_pct", _DEFAULT_MAX_SYMBOL_EXPOSURE_PCT))
+        self._max_pyramiding = int(alloc_cfg.get("max_pyramiding", _DEFAULT_MAX_PYRAMIDING))
         self._slots: Dict[str, SlotBudget] = {}
-        self._rebalance_next: float = self._next_monday_ts()
+        self._rebalance_next: float = self._next_rebalance_ts()
         self.rebuild_slots(active_per_tf)
 
     # ── Construction des slots ─────────────────────────────────────────────
@@ -93,7 +101,7 @@ class CapitalAllocator:
         n = len(self._slots)
         if n == 0:
             return
-        per_slot = min(1.0 / n, _MAX_SLOT_PCT)
+        per_slot = min(1.0 / n, self._max_slot_pct)
         for slot in self._slots.values():
             slot.budget_pct = round(per_slot, 4)
 
@@ -134,10 +142,11 @@ class CapitalAllocator:
             else:
                 slot.weekly_gross_loss = round(slot.weekly_gross_loss + abs(pnl), 6)
 
-    def check_correlation(self, side: str, open_positions: dict) -> tuple[bool, str]:
+    def check_correlation(self, side: str, open_positions: dict,
+                          symbol: str = "") -> tuple[bool, str]:
         """
         Vérifie si ≥75% des positions ouvertes sont dans le même sens.
-        Si oui, bloque les nouvelles entrées de ce sens.
+        Also checks max symbol exposure and pyramiding limits.
         """
         if not open_positions:
             return True, ""
@@ -148,6 +157,28 @@ class CapitalAllocator:
             return False, (
                 f"Corrélation trop élevée : {same}/{total} positions sont {side} ({ratio:.0%} ≥ 75%)"
             )
+        # Max exposure per symbol
+        if symbol:
+            symbol_notional = sum(
+                p.get("notional", 0) for p in open_positions.values()
+                if p.get("symbol") == symbol
+            )
+            max_symbol = self.capital * self._max_symbol_exposure_pct
+            if symbol_notional >= max_symbol:
+                return False, (
+                    f"Exposition symbole {symbol} max atteinte "
+                    f"({symbol_notional:.0f}/{max_symbol:.0f} USDC)"
+                )
+            # Pyramiding limit
+            symbol_count = sum(
+                1 for p in open_positions.values()
+                if p.get("symbol") == symbol
+            )
+            if symbol_count >= self._max_pyramiding:
+                return False, (
+                    f"Pyramiding max atteint pour {symbol} "
+                    f"({symbol_count}/{self._max_pyramiding})"
+                )
         return True, ""
 
     # ── Sync capital ───────────────────────────────────────────────────────
@@ -158,7 +189,7 @@ class CapitalAllocator:
     def rebalance_if_due(self):
         if time.time() < self._rebalance_next:
             return
-        self._rebalance_next = self._next_monday_ts()
+        self._rebalance_next = self._next_rebalance_ts()
         self._rebalance()
 
     def _rebalance(self):
@@ -185,10 +216,10 @@ class CapitalAllocator:
         # l'échantillon est trop petit pour être statistiquement significatif.
         new_budgets: Dict[str, float] = {}
         for key, slot in self._slots.items():
-            if slot.weekly_trades < _MIN_TRADES_FOR_REBALANCE:
+            if slot.weekly_trades < self._min_trades_for_rebalance:
                 logger.debug(
                     f"[Allocator] Slot {key} ignoré pour rééquilibrage "
-                    f"({slot.weekly_trades} trades < {_MIN_TRADES_FOR_REBALANCE} min)"
+                    f"({slot.weekly_trades} trades < {self._min_trades_for_rebalance} min)"
                 )
                 new_budgets[key] = slot.budget_pct  # conserver budget actuel
                 continue
@@ -206,7 +237,7 @@ class CapitalAllocator:
         if total > 0:
             factor = 1.0 / total
             for key in new_budgets:
-                new_budgets[key] = min(new_budgets[key] * factor, _MAX_SLOT_PCT)
+                new_budgets[key] = min(new_budgets[key] * factor, self._max_slot_pct)
 
         # Renormaliser après cap
         total2 = sum(new_budgets.values())
@@ -253,6 +284,20 @@ class CapitalAllocator:
         ]
 
     # ── Utilitaires ────────────────────────────────────────────────────────
+    def _next_rebalance_ts(self) -> float:
+        """Next rebalance timestamp based on configured interval."""
+        if self._rebalance_interval == "daily":
+            return self._next_midnight_ts()
+        return self._next_monday_ts()
+
+    @staticmethod
+    def _next_midnight_ts() -> float:
+        """Prochain minuit UTC."""
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        return tomorrow.timestamp()
+
     @staticmethod
     def _next_monday_ts() -> float:
         """Prochain lundi à 00:00 UTC."""

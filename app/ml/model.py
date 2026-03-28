@@ -33,6 +33,7 @@ class MLPredictor:
         self.blend_weight = ml.get("blend_weight", 0.3)
         self.min_samples  = ml.get("min_samples", 200)
         self.window       = ml.get("feature_window", 50)
+        self.confidence_threshold = ml.get("confidence_threshold", 0.55)
         self.trained      = False
         self.model_path   = "logs/ml_model.pkl"
         self._pipeline: Optional[Pipeline] = None
@@ -48,7 +49,8 @@ class MLPredictor:
                                     eval_metric="logloss", random_state=42)
         else:
             clf = RandomForestClassifier(n_estimators=200, max_depth=6,
-                                        min_samples_leaf=5, random_state=42, n_jobs=-1)
+                                        min_samples_leaf=5, random_state=42, n_jobs=-1,
+                                        class_weight="balanced")
         return Pipeline([("scaler", StandardScaler()), ("clf", clf)])
 
     def train(self, df: pl.DataFrame, regime: str = "all") -> Dict:
@@ -120,12 +122,17 @@ class MLPredictor:
         """
         Mélange le signal règle + ML selon blend_weight.
         Si le ML contredit fortement, réduit le score.
+        Prefers regime-specific model when available.
         """
         if not self.trained:
             return rule_score, rule_side
+        # Use regime-specific model if available, fallback to general
         prob = self.predict_proba(df, regime)
         ml_score = prob if rule_side == "long" else (1 - prob)
-        blended  = (1 - self.blend_weight) * rule_score + self.blend_weight * ml_score
+        # Confidence check: if ML is not confident enough, reduce its weight
+        ml_confidence = abs(prob - 0.5) * 2  # 0.0 = no confidence, 1.0 = max confidence
+        effective_weight = self.blend_weight * min(1.0, ml_confidence / max(self.confidence_threshold - 0.5, 0.01))
+        blended  = (1 - effective_weight) * rule_score + effective_weight * ml_score
         veto = (rule_side == "long"  and prob < 0.3) or \
                (rule_side == "short" and prob > 0.7)
         if veto:

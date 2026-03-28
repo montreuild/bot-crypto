@@ -85,10 +85,18 @@ ml:
   blend_weight: 0.3
   min_samples: 200
   feature_window: 50
+  confidence_threshold: 0.55
   retrain_interval: 3600
 
 database:
   url: sqlite:///trades.db
+
+capital_allocator:
+  max_slot_pct: 0.50
+  min_trades_for_rebalance: 3
+  rebalance_interval: daily
+  max_symbol_exposure_pct: 0.25
+  max_pyramiding: 2
 
 logging:
   level: INFO
