@@ -77,7 +77,7 @@ class TestRegistry:
                 continue
             assert hasattr(cls, "name"),       f"{mod_name}: attribut 'name' manquant"
             assert hasattr(cls, "timeframes"), f"{mod_name}: attribut 'timeframes' manquant"
-            assert hasattr(cls, "param_space"),f"{mod_name}: attribut 'param_space' manquant"
+            assert hasattr(cls, "param_space"), f"{mod_name}: attribut 'param_space' manquant"
             assert isinstance(cls.timeframes, list), \
                 f"{mod_name}: 'timeframes' doit être une liste"
             assert len(cls.timeframes) > 0, \

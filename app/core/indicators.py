@@ -1,7 +1,10 @@
 """Indicateurs techniques — source unique pour stratégies et moteur. Basé sur Polars."""
+import logging
 import numpy as np
 import polars as pl
 from typing import Tuple
+
+_log = logging.getLogger(__name__)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -576,8 +579,6 @@ def pre_val(df: pl.DataFrame, col: str) -> float | None:
         if v is not None:
             return float(v)
     elif col:
-        import logging as _logging
-        _log = _logging.getLogger(__name__)
         _log.debug(
             f"[indicators] Colonne pré-calculée '{col}' absente — "
             f"fallback on-demand (precompute_df() non appliqué ?)"

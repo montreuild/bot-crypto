@@ -117,6 +117,16 @@ class MLPredictor:
             logger.error(f"[ML] predict_proba : {e}")
             return 0.5
 
+    def _effective_blend_weight(self, ml_confidence: float) -> float:
+        """Compute the effective blend weight adjusted for ML confidence.
+
+        ml_confidence is normalised to [0, 1] (0 = 50/50 prediction, 1 = certain).
+        Below confidence_threshold the weight is scaled down proportionally.
+        A small floor (0.01) prevents division-by-zero when threshold == 0.5.
+        """
+        threshold_margin = max(self.confidence_threshold - 0.5, 0.01)
+        return self.blend_weight * min(1.0, ml_confidence / threshold_margin)
+
     def blend_signal(self, rule_score: float, rule_side: str,
                      df: pl.DataFrame, regime: str = "all") -> Tuple[float, str]:
         """
@@ -131,7 +141,7 @@ class MLPredictor:
         ml_score = prob if rule_side == "long" else (1 - prob)
         # Confidence check: if ML is not confident enough, reduce its weight
         ml_confidence = abs(prob - 0.5) * 2  # 0.0 = no confidence, 1.0 = max confidence
-        effective_weight = self.blend_weight * min(1.0, ml_confidence / max(self.confidence_threshold - 0.5, 0.01))
+        effective_weight = self._effective_blend_weight(ml_confidence)
         blended  = (1 - effective_weight) * rule_score + effective_weight * ml_score
         veto = (rule_side == "long"  and prob < 0.3) or \
                (rule_side == "short" and prob > 0.7)
