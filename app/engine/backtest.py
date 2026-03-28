@@ -27,14 +27,24 @@ def _bar_to_days(tf: str) -> float:
     return m.get(tf, 15) / 1440.0
 
 
+def _bars_per_year(tf: str) -> float:
+    """Number of bars in a trading year for the given timeframe."""
+    m = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "2h": 120, "4h": 240, "1d": 1440}
+    minutes = m.get(tf, 60)
+    # Crypto markets trade 365 days/year, 24h/day
+    return 365 * 24 * 60 / minutes
+
+
 # ── BacktestResult ──
 class BacktestResult:
     def __init__(self, trades: List[dict], equity_curve: List[float],
-                 initial_capital: float, timestamps: List[str] = None):
+                 initial_capital: float, timestamps: List[str] = None,
+                 timeframe: str = "1d"):
         self.trades          = trades
         self.equity_curve    = equity_curve
         self.initial_capital = initial_capital
         self.timestamps      = timestamps or []
+        self._timeframe      = timeframe
         self._compute_metrics()
 
     def _compute_metrics(self):
@@ -57,7 +67,8 @@ class BacktestResult:
             self.max_drawdown = _sf(float(drawdowns.min()), 0.0)
             returns           = np.diff(eq) / np.where(eq[:-1] > 0, eq[:-1], 1.0)
             std               = float(returns.std())
-            ann_factor        = np.sqrt(252)   # facteur journalier standard
+            # Annualization factor based on timeframe (crypto: 365×24h)
+            ann_factor        = np.sqrt(_bars_per_year(self._timeframe))
             raw_sharpe        = float(returns.mean() / std * ann_factor) if std > 0 else 0.0
             self.sharpe       = _sf(raw_sharpe, 0.0)
         else:
@@ -136,7 +147,7 @@ class BacktestResult:
                 rets_s = np.diff(eq_arr) / denom
             else:
                 rets_s = np.array([0.0])
-            ann_s  = np.sqrt(252)   # facteur journalier standard
+            ann_s  = np.sqrt(_bars_per_year(self._timeframe))
             std_s  = float(rets_s.std())
             if std_s > 0:
                 d["sharpe"] = round(_sf(float(rets_s.mean() / std_s * ann_s), 0.0), 3)
@@ -475,7 +486,8 @@ class Backtester:
             trades.append(position)
             equity_curve.append(round(capital, 4))
 
-        result = BacktestResult(trades, equity_curve, self.initial_capital(self.cfg), timestamps)
+        _tf = timeframe or self.cfg["trading"].get("timeframe", "1h")
+        result = BacktestResult(trades, equity_curve, self.initial_capital(self.cfg), timestamps, timeframe=_tf)
         return self._add_buy_and_hold(result, df)
 
     def _add_buy_and_hold(self, result: "BacktestResult", df: pl.DataFrame) -> "BacktestResult":
