@@ -114,7 +114,7 @@
       </div>
       <div>
         <div id="scan-chips" style="display:none;flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
-        <div class="filter-bar" id="filter-bar" style="display:none">
+        <div class="filter-bar" id="filter-bar">
           <span class="filter-lbl">Filtres :</span>
           <label style="font-size:.75rem;display:flex;align-items:center;gap:4px;color:var(--muted)">
             Régime :
@@ -312,7 +312,7 @@ async function runScan(){
   try{
     const r=await apiFetch(`/api/scanner?timeframe=${tf}&limit=${limit}`);const d=await r.json();
     scanResults=d.results||[];status.textContent=`${scanResults.length} symboles analysés — TF: ${d.timeframe}`;
-    document.getElementById('filter-bar').style.display='';document.getElementById('scan-chips').style.display='flex';
+    document.getElementById('scan-chips').style.display='flex';
     applyFilters();saveFilters();
   }catch(e){status.textContent='⚠ Erreur : '+e.message;tbody.innerHTML=`<tr><td colspan="9" class="empty-row">Erreur : ${e.message}</td></tr>`;}
   finally{if(btn){btn.disabled=false;btn.textContent='▶ Scanner';}}

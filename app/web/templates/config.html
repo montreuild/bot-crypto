@@ -235,7 +235,7 @@
         <div class="sec">Telegram</div>
         <div class="toggle-wrap">
           <label class="toggle">
-            <input type="checkbox" id="tg-enabled" onchange="onNotifToggle()"/>
+            <input type="checkbox" id="tg-enabled" onchange="onNotifToggle();markDirty('btn-apply-notif')"/>
             <span class="toggle-slider"></span>
           </label>
           <span class="toggle-lbl" id="tg-lbl">Désactivé</span>
@@ -243,12 +243,12 @@
         <div id="tg-cfg" style="display:none;flex-direction:column;gap:8px">
           <div class="field">
             <label>Token du bot <a href="https://t.me/BotFather" target="_blank" style="color:var(--cyan);font-size:.7rem">(@BotFather)</a></label>
-            <input type="text" id="tg-token" placeholder="1234567890:AAH..." style="font-family:var(--mono);font-size:.75rem"/>
+            <input type="text" id="tg-token" placeholder="1234567890:AAH..." style="font-family:var(--mono);font-size:.75rem" oninput="markDirty('btn-apply-notif')"/>
             <span class="hint">Obtenez-le via @BotFather → /newbot</span>
           </div>
           <div class="field">
             <label>Chat ID <a href="https://t.me/userinfobot" target="_blank" style="color:var(--cyan);font-size:.7rem">(via @userinfobot)</a></label>
-            <input type="text" id="tg-chat" placeholder="-1001234567890"/>
+            <input type="text" id="tg-chat" placeholder="-1001234567890" oninput="markDirty('btn-apply-notif')"/>
             <span class="hint">Parlez à @userinfobot pour obtenir votre ID</span>
           </div>
         </div>
@@ -257,7 +257,7 @@
         <div class="sec">WhatsApp</div>
         <div class="toggle-wrap">
           <label class="toggle">
-            <input type="checkbox" id="wa-enabled" onchange="onNotifToggle()"/>
+            <input type="checkbox" id="wa-enabled" onchange="onNotifToggle();markDirty('btn-apply-notif')"/>
             <span class="toggle-slider"></span>
           </label>
           <span class="toggle-lbl" id="wa-lbl">Désactivé</span>
@@ -265,7 +265,7 @@
         <div id="wa-cfg" style="display:none;flex-direction:column;gap:8px">
           <div class="field">
             <label>Mode</label>
-            <select id="wa-mode" onchange="onWaModeChange()" style="background:var(--surface2);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 8px">
+            <select id="wa-mode" onchange="onWaModeChange();markDirty('btn-apply-notif')" style="background:var(--surface2);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 8px">
               <option value="callmebot">CallMeBot (gratuit)</option>
               <option value="twilio">Twilio (officiel)</option>
             </select>
@@ -274,32 +274,32 @@
           <div id="wa-callmebot-cfg" style="display:flex;flex-direction:column;gap:8px">
             <div class="field">
               <label>API Key CallMeBot</label>
-              <input type="text" id="wa-token" placeholder="XXXXXXXX"/>
+              <input type="text" id="wa-token" placeholder="XXXXXXXX" oninput="markDirty('btn-apply-notif')"/>
               <span class="hint">Envoyez "I allow callmebot…" au +34 644 63 43 51</span>
             </div>
             <div class="field">
               <label>Numéro WhatsApp</label>
-              <input type="text" id="wa-number" placeholder="+33612345678"/>
+              <input type="text" id="wa-number" placeholder="+33612345678" oninput="markDirty('btn-apply-notif')"/>
             </div>
           </div>
           <!-- Twilio -->
           <div id="wa-twilio-cfg" style="display:none;flex-direction:column;gap:8px">
             <div class="field">
               <label>Account SID</label>
-              <input type="text" id="twilio-sid" placeholder="ACxxxxxxxxxxxxxxxx" style="font-family:var(--mono);font-size:.75rem"/>
+              <input type="text" id="twilio-sid" placeholder="ACxxxxxxxxxxxxxxxx" style="font-family:var(--mono);font-size:.75rem" oninput="markDirty('btn-apply-notif')"/>
             </div>
             <div class="field">
               <label>Auth Token</label>
-              <input type="password" id="twilio-auth" placeholder="••••••••"/>
+              <input type="password" id="twilio-auth" placeholder="••••••••" oninput="markDirty('btn-apply-notif')"/>
             </div>
             <div class="field">
               <label>From (numéro Twilio WhatsApp)</label>
-              <input type="text" id="twilio-from" placeholder="whatsapp:+14155238886"/>
+              <input type="text" id="twilio-from" placeholder="whatsapp:+14155238886" oninput="markDirty('btn-apply-notif')"/>
               <span class="hint">Format : whatsapp:+1XXXXXXXXXX</span>
             </div>
             <div class="field">
               <label>To (votre numéro)</label>
-              <input type="text" id="wa-number-twilio" placeholder="+33612345678"/>
+              <input type="text" id="wa-number-twilio" placeholder="+33612345678" oninput="markDirty('btn-apply-notif')"/>
             </div>
           </div>
         </div>
@@ -308,7 +308,7 @@
         <div class="sec">Email <span style="font-size:.65rem;color:var(--muted);text-transform:none">(SMTP)</span></div>
         <div class="toggle-wrap">
           <label class="toggle">
-            <input type="checkbox" id="email-enabled" onchange="onNotifToggle()"/>
+            <input type="checkbox" id="email-enabled" onchange="onNotifToggle();markDirty('btn-apply-notif')"/>
             <span class="toggle-slider"></span>
           </label>
           <span class="toggle-lbl" id="email-lbl">Désactivé</span>
@@ -316,25 +316,25 @@
         <div id="email-cfg" style="display:none;flex-direction:column;gap:8px">
           <div class="field">
             <label>Serveur SMTP</label>
-            <input type="text" id="email-smtp" placeholder="smtp.gmail.com" value="smtp.gmail.com"/>
+            <input type="text" id="email-smtp" placeholder="smtp.gmail.com" value="smtp.gmail.com" oninput="markDirty('btn-apply-notif')"/>
             <span class="hint">Gmail : smtp.gmail.com · Port 587 (STARTTLS)</span>
           </div>
           <div class="field">
             <label>Port</label>
-            <input type="number" id="email-port" value="587" min="1" max="65535"/>
+            <input type="number" id="email-port" value="587" min="1" max="65535" oninput="markDirty('btn-apply-notif')"/>
           </div>
           <div class="field">
             <label>Adresse expéditeur</label>
-            <input type="email" id="email-user" placeholder="monbot@gmail.com"/>
+            <input type="email" id="email-user" placeholder="monbot@gmail.com" oninput="markDirty('btn-apply-notif')"/>
           </div>
           <div class="field">
             <label>Mot de passe / App Password</label>
-            <input type="password" id="email-password" placeholder="••••••••"/>
+            <input type="password" id="email-password" placeholder="••••••••" oninput="markDirty('btn-apply-notif')"/>
             <span class="hint">Gmail : créez un <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--cyan)">App Password</a></span>
           </div>
           <div class="field">
             <label>Destinataire</label>
-            <input type="email" id="email-to" placeholder="moi@example.com"/>
+            <input type="email" id="email-to" placeholder="moi@example.com" oninput="markDirty('btn-apply-notif')"/>
             <span class="hint">Laisser vide pour utiliser l'adresse expéditeur</span>
           </div>
         </div>
@@ -343,23 +343,23 @@
         <div class="sec">Seuils d'alerte</div>
         <div class="field">
           <label>PnL minimum pour notifier (USDC)</label>
-          <input type="number" id="notif-min-pnl" min="0" max="1000" step="0.5" value="5"/>
+          <input type="number" id="notif-min-pnl" min="0" max="1000" step="0.5" value="5" oninput="markDirty('btn-apply-notif')"/>
           <span class="hint">Ignorer les petits trades sous ce seuil</span>
         </div>
         <div class="field">
           <label>Alerte perte non réalisée (%)</label>
-          <input type="number" id="notif-loss-pct" min="1" max="20" step="0.5" value="5"/>
+          <input type="number" id="notif-loss-pct" min="1" max="20" step="0.5" value="5" oninput="markDirty('btn-apply-notif')"/>
           <span class="hint">Notification si une position perd plus de X%</span>
         </div>
         <div class="field">
           <label>Erreurs exchange avant alerte</label>
-          <input type="number" id="notif-err-threshold" min="1" max="20" step="1" value="3"/>
+          <input type="number" id="notif-err-threshold" min="1" max="20" step="1" value="3" oninput="markDirty('btn-apply-notif')"/>
           <span class="hint">Nombre d'erreurs consécutives avant notification</span>
         </div>
 
         <!-- Filtrage d'événements -->
         <div class="sec">Événements notifiés</div>
-        <div id="events-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:.78rem">
+        <div id="events-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:.78rem" onchange="markDirty('btn-apply-notif')">
           <label class="toggle-wrap" style="gap:8px;cursor:pointer">
             <input type="checkbox" class="evt-cb" data-evt="on_trade_open" checked/>
             <span>Ouverture position</span>
