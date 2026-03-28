@@ -64,7 +64,8 @@ async def https_redirect(request: Request, call_next):
 try:
     _tpl_path = os.path.join(os.path.dirname(__file__), "..", "web", "templates")
     templates = Jinja2Templates(directory=_tpl_path)
-except Exception:
+except Exception as e:
+    logger.warning(f"[API] Chargement templates KO : {e}")
     templates = None
 
 

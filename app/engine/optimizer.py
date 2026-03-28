@@ -308,13 +308,13 @@ def _append_changelog(config_path: str, strategy: str, timeframe: str,
             entry["changed"][k] = {"before": old_v, "after": v}
     with _changelog_lock:
         try:
-            with open(changelog_path, "r") as f:
+            with open(changelog_path, "r", encoding="utf-8") as f:
                 log = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             log = []
         log.append(entry)
         log = log[-200:]  # garder les 200 derniers
-        with open(changelog_path, "w") as f:
+        with open(changelog_path, "w", encoding="utf-8") as f:
             json.dump(log, f, ensure_ascii=False, indent=2)
 
 

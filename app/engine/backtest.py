@@ -22,15 +22,20 @@ def _sf(v, fallback=None):
 logger = logging.getLogger(__name__)
 
 
+# Timeframe → minutes mapping (crypto markets: 365 days/year, 24h/day)
+_TF_MINUTES = {
+    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+    "1h": 60, "2h": 120, "4h": 240, "1d": 1440,
+}
+
+
 def _bar_to_days(tf: str) -> float:
-    m = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "2h": 120, "4h": 240, "1d": 1440}
-    return m.get(tf, 15) / 1440.0
+    return _TF_MINUTES.get(tf, 15) / 1440.0
 
 
 def _bars_per_year(tf: str) -> float:
     """Number of bars in a trading year for the given timeframe."""
-    m = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "2h": 120, "4h": 240, "1d": 1440}
-    minutes = m.get(tf, 60)
+    minutes = _TF_MINUTES.get(tf, 60)
     # Crypto markets trade 365 days/year, 24h/day
     return 365 * 24 * 60 / minutes
 

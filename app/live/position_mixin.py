@@ -436,8 +436,8 @@ class PositionMixin:
                     (price - pos["entry"]) * pos["size"] if pos["side"] == "long"
                     else (pos["entry"] - price) * pos["size"]
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[PositionMixin] upnl {pos.get('symbol', '?')} : {e}")
         return {
             "id":        pos.get("id", ""),
             "symbol":    pos.get("symbol", ""),

@@ -685,8 +685,8 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 ]
                 for jid in stale:
                     del _jobs[jid]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[LiveTrader] nettoyage jobs auto-opt : {e}")
 
     # ── Rapport de statut ──────────────────────────────────────────────────
 
@@ -887,8 +887,8 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                     by_strategy[sname]["pnls"].append(p)
                     if p > 0:
                         by_strategy[sname]["wins"] += 1
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[LiveTrader] agrégation trades : {e}")
 
         win_rate = round(wins / total_trades * 100, 1) if total_trades > 0 else 0.0
         pf = (round(gross_win / gross_loss, 3) if gross_loss > 0

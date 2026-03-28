@@ -98,8 +98,8 @@ def optimizer_start(
             try:
                 from app.core.config import load_config as _rl
                 state.cfg.update(_rl("config.yaml"))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[optimizer/on_apply] rechargement config KO : {e}")
             if state.trader:
                 state.trader.strat_params = state.cfg.get("strategy_params", {})
                 state.trader.reload_active_strategies()
@@ -262,12 +262,12 @@ def optimizer_results():
         raise HTTPException(503, "Config non chargée")
     import yaml as _yaml
     try:
-        with open("config.yaml") as _f:
+        with open("config.yaml", encoding="utf-8") as _f:
             _disk_cfg = _yaml.safe_load(_f) or {}
         if _disk_cfg.get("optimizer_results"):
             state.cfg["optimizer_results"] = _disk_cfg["optimizer_results"]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[optimizer/results] lecture config disque KO : {e}")
     raw    = state.cfg.get("optimizer_results") or {}
     from app.engine.optimizer import get_active_strategies_per_tf
     active = get_active_strategies_per_tf(state.cfg)

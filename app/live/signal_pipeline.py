@@ -181,8 +181,8 @@ class SignalPipeline:
             ticker = self._exchange.fetch_ticker(symbol)
             if ticker:
                 price = float(ticker.get("last", 0))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[SignalPipeline] fetch_ticker {symbol} : {e}")
 
         return Signal(
             symbol=symbol,

@@ -189,8 +189,8 @@ class MLPredictor:
                 imp  = clf.feature_importances_
                 cols = getattr(self, "_last_feature_cols", [f"f{i}" for i in range(len(imp))])
                 return dict(sorted(zip(cols, imp.tolist()), key=lambda x: -x[1]))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[MLPredictor] feature_importances : {e}")
         return {}
 
     def save(self):

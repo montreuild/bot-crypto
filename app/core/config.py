@@ -115,6 +115,8 @@ def _load_strategy_configs(strategies_dir: str) -> Tuple[dict, dict, list]:
 
 def strategy_file_path(strategy_name: str, config_path: str = "config.yaml") -> str:
     """Retourne le chemin du fichier YAML d'une stratégie (strategies/{name}.yaml)."""
+    if not strategy_name or "/" in strategy_name or "\\" in strategy_name or ".." in strategy_name:
+        raise ValueError(f"Nom de stratégie invalide : {strategy_name}")
     config_dir = os.path.dirname(os.path.abspath(config_path))
     return os.path.join(config_dir, "strategies", f"{strategy_name}.yaml")
 
