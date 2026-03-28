@@ -85,7 +85,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
 
         # Chargement des modèles ML persistés
         from app.ml.trainer import MLStrategyTrainer
-        self._ml_trainer = MLStrategyTrainer(cfg)
+        self._ml_trainer = MLStrategyTrainer(cfg, ml_lock=self._ml_lock)
         self._ml_trainer.load_models(self._loaded_strategies, self.timeframes)
 
         # Stratégies actives par TF (depuis optimizer_results)
