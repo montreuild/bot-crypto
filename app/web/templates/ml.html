@@ -5,27 +5,31 @@
 #content{padding:18px 20px;display:flex;flex-direction:column;gap:18px;flex:1;max-width:1200px;}
 /* ── Status banner ── */
 .ml-status-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.ml-status-bar>div{padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);}
 /* ── Strategy cards ── */
-.strat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;}
-.strat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;transition:border-color .2s;}
-.strat-card.trained{border-color:rgba(52,211,153,.3);}
-.strat-card.untrained{border-color:rgba(251,191,36,.25);}
-.strat-name{font-family:var(--head);font-size:.85rem;font-weight:700;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+.strat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;}
+.strat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;transition:border-color .2s;border-left:3px solid var(--border);}
+.strat-card.trained{border-color:rgba(52,211,153,.3);border-left-color:var(--green);}
+.strat-card.untrained{border-color:rgba(251,191,36,.25);border-left-color:var(--amber);}
+.strat-name{font-family:var(--head);font-size:.88rem;font-weight:700;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:6px;}
 .strat-badge{font-size:.6rem;font-weight:700;padding:2px 6px;border-radius:4px;}
 .strat-badge.ok{background:var(--green-dim);color:var(--green);}
 .strat-badge.nok{background:var(--amber-dim);color:var(--amber);}
-.strat-metric{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:.72rem;}
+.strat-metric{display:flex;justify-content:space-between;padding:5px 2px;border-bottom:1px solid rgba(255,255,255,.04);font-size:.72rem;border-radius:var(--r-sm);transition:background .15s;}
+.strat-metric:hover{background:rgba(255,255,255,.02);}
 .strat-metric:last-of-type{border-bottom:none;}
 .strat-key{color:var(--muted);}
 .strat-val{font-family:var(--mono);color:var(--text);}
 /* ── Candle stats ── */
 .candle-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;}
-.candle-cell{background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;}
-.candle-pair{font-family:var(--mono);font-size:.78rem;font-weight:700;color:var(--cyan);margin-bottom:4px;}
+.candle-cell{background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:12px 14px;transition:border-color .2s,background .2s;}
+.candle-cell:hover{border-color:var(--border-hi);background:var(--surface);}
+.candle-pair{font-family:var(--mono);font-size:.82rem;font-weight:700;color:var(--cyan);margin-bottom:4px;}
 .candle-meta{font-size:.63rem;color:var(--muted);line-height:1.6;}
 /* ── Train form ── */
 .train-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;}
 .train-row .field{min-width:140px;}
+.train-row .btn-cyan{padding:8px 18px;font-size:.78rem;font-weight:700;}
 {% endblock %}
 
 {% block topbar_content %}
@@ -37,7 +41,7 @@
 {% endblock %}
 
 {% block content %}
-<div id="content">
+<div id="content" class="fade-in">
 
   <!-- Status banner -->
   <div class="panel">
