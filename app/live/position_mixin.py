@@ -100,6 +100,36 @@ class PositionMixin:
                     delete_open_position(_sess, pos_id)
                 continue
 
+            # Validate entry price is sane
+            if pos.get("entry", 0) <= 0:
+                logger.warning(
+                    f"[Reprise] Position {pos_id} ({symbol}) a un prix d'entrée invalide "
+                    f"({pos.get('entry')}) — supprimée."
+                )
+                with session_scope(self.SessionLocal) as _sess:
+                    delete_open_position(_sess, pos_id)
+                continue
+
+            # Validate stop is not already breached (if we can get a ticker)
+            try:
+                ticker = self.exchange.fetch_ticker(symbol) if hasattr(self, 'exchange') else None
+                if ticker:
+                    last_price = ticker.get("last", 0)
+                    side = pos.get("side", "long")
+                    if last_price > 0:
+                        stop_breached = (
+                            (side == "long" and last_price <= pos.get("stop", 0))
+                            or (side == "short" and last_price >= pos.get("stop", 0))
+                        )
+                        if stop_breached:
+                            logger.warning(
+                                f"[Reprise] Position {pos_id} ({symbol}) stop déjà franchi "
+                                f"(prix={last_price:.4f}, stop={pos['stop']:.4f}) "
+                                f"— sera clôturée au prochain cycle."
+                            )
+            except Exception as _tk_err:
+                logger.debug(f"[Reprise] Impossible de vérifier le prix de {symbol} : {_tk_err}")
+
             trailing = TrailingStopManager(**self._trailing_cfg)
             trailing.init_from_stop(pos["entry"], pos["stop"], pos["side"])
             pos["_trailing"] = trailing
