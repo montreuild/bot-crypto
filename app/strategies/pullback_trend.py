@@ -54,6 +54,9 @@ class Strategy(BaseStrategy):
         cooldown   = int(p.get("cooldown",      20))
         rr_min     = float(p.get("rr_min",     1.5))
 
+        if not (ema_fast < ema_mid < ema_slow):
+            return self._none(f"EMAs doivent être ordonnées : fast({ema_fast}) < mid({ema_mid}) < slow({ema_slow})")
+
         sym = symbol or str(df["time"][-1]) if "time" in df.columns else "default"
 
         cnt = self._call_count.get(sym, 0) + 1

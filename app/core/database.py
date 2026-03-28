@@ -137,6 +137,10 @@ def session_scope(SessionLocal):
 
 def persist_open_position(session: Session, pos: dict) -> None:
     """Sauvegarde ou met à jour une position ouverte en BDD."""
+    _required = ("id", "symbol", "side", "entry", "stop", "size")
+    missing = [k for k in _required if k not in pos]
+    if missing:
+        raise KeyError(f"persist_open_position: clés manquantes {missing}")
     existing = session.get(OpenPosition, pos["id"])
     if existing:
         existing.stop     = pos["stop"]
@@ -162,7 +166,8 @@ def persist_open_position(session: Session, pos: dict) -> None:
         session.add(rec)
     try:
         session.commit()
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[DB] persist_open_position commit KO : {e}")
         session.rollback()
         raise
 
@@ -174,7 +179,8 @@ def delete_open_position(session: Session, pos_id: str) -> None:
         session.delete(rec)
         try:
             session.commit()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[DB] delete_open_position commit KO : {e}")
             session.rollback()
             raise
 

@@ -124,8 +124,8 @@ class OHLCVCache:
                 logger.debug(f"[OHLCVCache] {symbol}/{tf} : même bougie — skip")
                 return None
             self._last_candle_ts[key] = last_ts
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[OHLCVCache] vérif bougie {symbol}/{tf} : {e}")
 
         # Mise à jour cache ATR (TF primaire, utilisé par _manage_position)
         atr = _compute_atr(df)

@@ -56,6 +56,9 @@ class Strategy(BaseStrategy):
         rsi_high       = float(p.get("rsi_high",      70))
         rr_min         = float(p.get("rr_min",        1.5))
 
+        if ema_fast >= ema_slow:
+            return self._none(f"ema_fast ({ema_fast}) doit être < ema_slow ({ema_slow})")
+
         sym = symbol or str(df["time"][-1]) if "time" in df.columns else "default"
         cnt = self._call_count.get(sym, 0) + 1
         self._call_count[sym] = cnt

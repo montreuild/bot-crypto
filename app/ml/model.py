@@ -79,6 +79,15 @@ class MLPredictor:
         X = features.to_numpy()
         y = labels.to_numpy()
 
+        # Vérification de l'équilibre des classes
+        unique, counts = np.unique(y, return_counts=True)
+        if len(unique) < 2:
+            logger.warning(f"[ML] Données mono-classe ({dict(zip(unique, counts))}) — entraînement ignoré")
+            return {"error": "single_class", "class_distribution": dict(zip(unique.tolist(), counts.tolist()))}
+        minority_ratio = counts.min() / counts.sum()
+        if minority_ratio < 0.05:
+            logger.warning(f"[ML] Déséquilibre sévère : minorité {minority_ratio:.1%} — résultats potentiellement biaisés")
+
         pipeline  = self.build_pipeline(regime)
         # TimeSeriesSplit prevents temporal leakage (future data in train folds)
         tscv = TimeSeriesSplit(n_splits=5)
@@ -189,8 +198,8 @@ class MLPredictor:
                 imp  = clf.feature_importances_
                 cols = getattr(self, "_last_feature_cols", [f"f{i}" for i in range(len(imp))])
                 return dict(sorted(zip(cols, imp.tolist()), key=lambda x: -x[1]))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[MLPredictor] feature_importances : {e}")
         return {}
 
     def save(self):

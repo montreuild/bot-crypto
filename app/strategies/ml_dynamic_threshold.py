@@ -339,7 +339,8 @@ def _detect_tf(df: pl.DataFrame) -> str:
         if abs(closest - secs) <= max(closest * 0.15, 5):
             return _SECS_TO_TF[closest]
         return f"custom_{secs}s"
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[MLDynThreshold] infer timeframe KO : {e}")
         return "unknown"
 
 

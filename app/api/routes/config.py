@@ -154,7 +154,8 @@ def update_auto_optimizer(enabled: bool = False, interval_h: int = 24):
             d["optimizer"]["auto_interval_h"]               = interval_h
         _save_yaml(_upd)
         saved = True
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[config/auto-optimizer] sauvegarde YAML KO : {e}")
         saved = False
     return {"enabled": enabled, "interval_h": interval_h,
             "trader_updated": state.trader is not None, "saved_to_disk": saved}
@@ -173,6 +174,17 @@ def update_trading_params(
 ):
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
+    # ── Validation des bornes ──
+    if score_threshold is not None and not (0.0 < score_threshold < 1.0):
+        raise HTTPException(400, "score_threshold doit être entre 0 et 1 (exclus)")
+    if risk_per_trade is not None and not (0.0 < risk_per_trade <= 0.5):
+        raise HTTPException(400, "risk_per_trade doit être entre 0 (exclus) et 0.5")
+    if max_positions is not None and not (1 <= max_positions <= 50):
+        raise HTTPException(400, "max_positions doit être entre 1 et 50")
+    if paper_slippage is not None and not (0.0 <= paper_slippage <= 0.05):
+        raise HTTPException(400, "paper_slippage doit être entre 0 et 0.05 (5%)")
+    if daily_drawdown_limit is not None and not (0.0 < daily_drawdown_limit <= 0.5):
+        raise HTTPException(400, "daily_drawdown_limit doit être entre 0 (exclus) et 0.5")
     changed = {}
     mapping = {
         "score_threshold":      score_threshold,
@@ -196,7 +208,8 @@ def update_trading_params(
     try:
         _save_yaml(lambda d: d.setdefault("trading", {}).update(changed))
         saved = True
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[config/trading] sauvegarde YAML KO : {e}")
         saved = False
     return {"changed": changed, "saved_to_disk": saved,
             "trader_updated": state.trader is not None}
@@ -215,6 +228,17 @@ def update_risk_config(
     """Met à jour la configuration des circuit breakers par slot."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
+    # ── Validation des bornes ──
+    if consecutive_loss_limit is not None and not (1 <= consecutive_loss_limit <= 20):
+        raise HTTPException(400, "consecutive_loss_limit doit être entre 1 et 20")
+    if slot_daily_dd_limit is not None and not (0.0 < slot_daily_dd_limit <= 0.5):
+        raise HTTPException(400, "slot_daily_dd_limit doit être entre 0 (exclus) et 0.5")
+    if win_rate_floor is not None and not (0.0 <= win_rate_floor <= 1.0):
+        raise HTTPException(400, "win_rate_floor doit être entre 0 et 1")
+    if volatility_threshold is not None and not (0.0 < volatility_threshold <= 1.0):
+        raise HTTPException(400, "volatility_threshold doit être entre 0 (exclus) et 1.0")
+    if consecutive_pause_secs is not None and not (60 <= consecutive_pause_secs <= 86400):
+        raise HTTPException(400, "consecutive_pause_secs doit être entre 60 et 86400 (1 min — 24h)")
     changed = {}
     mapping = {
         "consecutive_loss_limit":  consecutive_loss_limit,
@@ -234,7 +258,8 @@ def update_risk_config(
     try:
         _save_yaml(lambda d: d.setdefault("risk", {}).update(changed))
         saved = True
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[config/risk] sauvegarde YAML KO : {e}")
         saved = False
     return {"changed": changed, "saved_to_disk": saved,
             "trader_updated": state.trader is not None}
@@ -354,7 +379,7 @@ def get_changelog(limit: int = 50):
         "optimizer_changelog.json"
     )
     try:
-        with open(changelog_path, "r") as f:
+        with open(changelog_path, "r", encoding="utf-8") as f:
             log = _json.load(f)
         log = list(reversed(log))[:max(1, min(limit, 500))]
         return log
@@ -442,7 +467,8 @@ def update_notifications_config(
                     n[k] = changed[k]
         _save_yaml(_upd)
         saved = True
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[config/notifications] sauvegarde YAML KO : {e}")
         saved = False
     return {"changed": list(changed.keys()), "saved_to_disk": saved}
 
@@ -467,6 +493,10 @@ def update_margin_config(
 ):
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
+    if margin_mode is not None and margin_mode not in ("isolated", "cross"):
+        raise HTTPException(400, "margin_mode doit être 'isolated' ou 'cross'")
+    if max_leverage is not None and not (1 <= max_leverage <= 125):
+        raise HTTPException(400, "max_leverage doit être entre 1 et 125")
     if margin is not None:
         state.cfg["exchange"]["margin"]      = margin
     if margin_mode is not None:
@@ -483,6 +513,7 @@ def update_margin_config(
                 d.setdefault("trading", {})["max_leverage"] = max_leverage
         _save_yaml(_upd)
         saved = True
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[config/margin] sauvegarde YAML KO : {e}")
         saved = False
     return {"saved_to_disk": saved}

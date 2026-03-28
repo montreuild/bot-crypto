@@ -13,6 +13,7 @@ automatiquement par systemd.
 import os
 import sys
 import subprocess
+import logging
 import yaml
 import requests
 import time
@@ -21,6 +22,14 @@ CONFIG_PATH  = "/opt/crypto_bot/config.yaml"
 LOG_PATH     = "/opt/crypto_bot/logs/bot.log"
 BOT_NAME     = "Crypto Bot"
 MAX_LOG_TAIL = 20          # nombre de lignes de log à inclure dans l'alerte
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    stream=sys.stderr,
+)
+
+logger = logging.getLogger("notify-crash")
 
 # ── Variables systemd ─────────────────────────────────────────────────────
 # Disponibles uniquement quand appelé depuis ExecStopPost
@@ -36,10 +45,10 @@ if exit_code == "exited" and exit_status == "0":
 
 def read_config() -> dict:
     try:
-        with open(CONFIG_PATH, "r") as f:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except Exception as e:
-        print(f"[notify-crash] Impossible de lire config.yaml : {e}", file=sys.stderr)
+        logger.error(f"Impossible de lire config.yaml : {e}")
         return {}
 
 
@@ -51,7 +60,8 @@ def tail_log(n: int = MAX_LOG_TAIL) -> str:
             capture_output=True, text=True, timeout=5
         )
         return result.stdout.strip()
-    except Exception:
+    except Exception as e:
+        logger.warning(f"tail_log KO : {e}")
         return "(log inaccessible)"
 
 
@@ -63,7 +73,8 @@ def get_restart_count() -> str:
             capture_output=True, text=True, timeout=5
         )
         return result.stdout.strip().replace("NRestarts=", "") or "?"
-    except Exception:
+    except Exception as e:
+        logger.warning(f"get_restart_count KO : {e}")
         return "?"
 
 
@@ -77,7 +88,7 @@ def send_telegram(token: str, chat_id: str, message: str) -> bool:
         )
         return resp.status_code == 200
     except Exception as e:
-        print(f"[notify-crash] Telegram KO : {e}", file=sys.stderr)
+        logger.error(f"Telegram KO : {e}")
         return False
 
 
@@ -91,7 +102,7 @@ def send_whatsapp(token: str, number: str, message: str) -> bool:
         )
         return resp.status_code == 200
     except Exception as e:
-        print(f"[notify-crash] WhatsApp KO : {e}", file=sys.stderr)
+        logger.error(f"WhatsApp KO : {e}")
         return False
 
 
@@ -107,7 +118,7 @@ def main():
     wa_number  = notif.get("whatsapp_number", "")
 
     if not tg_enabled and not wa_enabled:
-        print("[notify-crash] Aucun canal activé, pas de notification.", file=sys.stderr)
+        logger.info("Aucun canal activé, pas de notification.")
         sys.exit(0)
 
     log_tail    = tail_log()
@@ -127,7 +138,7 @@ def main():
 
     if tg_enabled and tg_token and tg_chat:
         ok = send_telegram(tg_token, tg_chat, message)
-        print(f"[notify-crash] Telegram : {'✅ envoyé' if ok else '❌ échec'}")
+        logger.info(f"Telegram : {'✅ envoyé' if ok else '❌ échec'}")
 
     if wa_enabled and wa_token and wa_number:
         # WhatsApp (callmebot) ne supporte pas le Markdown → version simplifiée
@@ -140,7 +151,7 @@ def main():
             f"Log:\n{log_tail[-400:]}"
         )
         ok = send_whatsapp(wa_token, wa_number, msg_plain)
-        print(f"[notify-crash] WhatsApp : {'✅ envoyé' if ok else '❌ échec'}")
+        logger.info(f"WhatsApp : {'✅ envoyé' if ok else '❌ échec'}")
 
 
 if __name__ == "__main__":

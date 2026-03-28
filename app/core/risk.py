@@ -91,6 +91,12 @@ class RiskManager:
 
     # ── Equity ────────────────────────────────────────────────────────────
     def update_equity(self, new_equity: float):
+        if new_equity < 0:
+            logger.critical(f"[Risk] Equity négative ({new_equity:.2f}) — circuit breaker déclenché")
+            self.halted = True
+            self.halt_reason = f"Equity négative : {new_equity:.2f}"
+            self.equity = 0.0
+            return
         self.equity      = new_equity
         self.peak_equity = max(self.peak_equity, new_equity)
         today            = self._today()

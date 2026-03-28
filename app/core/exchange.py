@@ -81,7 +81,7 @@ class RobustExchange:
             return
         self._last_reconnect_at = now
         try:
-            opts = {"enableRateLimit": True}
+            opts = {"enableRateLimit": True, "timeout": 30000}
             if hasattr(self._ex, "apiKey") and self._ex.apiKey:
                 opts["apiKey"] = self._ex.apiKey
                 opts["secret"] = self._ex.secret

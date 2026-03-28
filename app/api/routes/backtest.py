@@ -44,8 +44,8 @@ def run_backtest(
         from app.core.config import load_config as _reload_cfg
         try:
             state.cfg.update(_reload_cfg("config.yaml"))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[backtest] rechargement config KO : {e}")
 
         tf    = timeframe.strip() or state.cfg["trading"].get("timeframe", "1h")
         limit = max(100, min(limit, 50000))

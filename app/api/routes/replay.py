@@ -57,8 +57,8 @@ def run_replay(
         try:
             from app.core.config import load_config as _reload
             state.cfg.update(_reload("config.yaml"))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[replay] rechargement config KO : {e}")
 
         months = max(0.5, min(float(months), 24.0))
 

@@ -115,6 +115,8 @@ def _load_strategy_configs(strategies_dir: str) -> Tuple[dict, dict, list]:
 
 def strategy_file_path(strategy_name: str, config_path: str = "config.yaml") -> str:
     """Retourne le chemin du fichier YAML d'une stratégie (strategies/{name}.yaml)."""
+    if not strategy_name or "/" in strategy_name or "\\" in strategy_name or ".." in strategy_name:
+        raise ValueError(f"Nom de stratégie invalide : {strategy_name}")
     config_dir = os.path.dirname(os.path.abspath(config_path))
     return os.path.join(config_dir, "strategies", f"{strategy_name}.yaml")
 
@@ -210,6 +212,18 @@ def load_config(path: str = "config.yaml") -> dict:
     if errors:
         raise ValueError("Configuration invalide :\n" + "\n".join(errors))
 
+    # Validation numérique des paramètres critiques
+    t = cfg["trading"]
+    try:
+        t["capital"]        = float(t["capital"])
+        t["risk_per_trade"] = float(t["risk_per_trade"])
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"Valeur numérique invalide dans [trading] : {e}")
+    if t["capital"] <= 0:
+        raise ValueError(f"[trading].capital doit être > 0 (valeur : {t['capital']})")
+    if not (0 < t["risk_per_trade"] <= 1):
+        raise ValueError(f"[trading].risk_per_trade doit être entre 0 et 1 (valeur : {t['risk_per_trade']})")
+
     api_key = cfg.get("exchange", {}).get("api_key", "")
     if api_key in ("", "YOUR_KEY"):
         logger.warning("⚠ Clés API exchange non configurées — mode backtest uniquement.")
@@ -217,6 +231,7 @@ def load_config(path: str = "config.yaml") -> dict:
         logger.warning("🔴 LIVE TRADING ACTIVÉ — vérifiez bien vos paramètres !")
 
     # Compatibilité multi-TF
+    _VALID_TIMEFRAMES = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
     if "timeframes" in cfg and cfg["timeframes"]:
         all_strats = []
         for tf_cfg in cfg["timeframes"].values():
@@ -227,6 +242,8 @@ def load_config(path: str = "config.yaml") -> dict:
         cfg["trading"].setdefault("timeframe", next(iter(cfg["timeframes"])))
     else:
         tf = cfg["trading"].get("timeframe", "1h")
+        if tf not in _VALID_TIMEFRAMES:
+            logger.warning(f"[Config] Timeframe '{tf}' non standard — valides : {sorted(_VALID_TIMEFRAMES)}")
         strats = cfg.get("strategies", {}).get("enabled", [])
         cfg.setdefault("timeframes", {tf: {
             "strategies": strats,
