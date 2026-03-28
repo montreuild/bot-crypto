@@ -9,7 +9,7 @@ import polars as pl
 from sklearn.linear_model    import LogisticRegression
 from sklearn.ensemble        import RandomForestClassifier
 from sklearn.preprocessing   import StandardScaler
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, TimeSeriesSplit
 from sklearn.pipeline        import Pipeline
 
 from app.ml.features import extract_features, build_labels
@@ -78,7 +78,9 @@ class MLPredictor:
         y = labels.to_numpy()
 
         pipeline  = self.build_pipeline(regime)
-        cv_scores = cross_val_score(pipeline, X, y, cv=5, scoring="roc_auc")
+        # TimeSeriesSplit prevents temporal leakage (future data in train folds)
+        tscv = TimeSeriesSplit(n_splits=5)
+        cv_scores = cross_val_score(pipeline, X, y, cv=tscv, scoring="roc_auc")
         pipeline.fit(X, y)
 
         self._regime_models[regime] = pipeline
