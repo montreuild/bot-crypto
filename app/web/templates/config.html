@@ -1234,6 +1234,20 @@ async function applyMargin() {
 
 init();
 
+// ── Unsaved-changes guard + keyboard shortcuts ───────────────────────────────
+function _hasDirty(){return document.querySelector('.dirty')!==null;}
+window.addEventListener('beforeunload', e=>{
+  if(_hasDirty()){e.preventDefault();e.returnValue='';}
+});
+document.addEventListener('keydown', e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key==='s'){
+    e.preventDefault();
+    // Save the first visible dirty button
+    const btn=document.querySelector('button.dirty:not(:disabled)');
+    if(btn)btn.click();
+  }
+});
+
 // ── Auto-refresh quand l'onglet redevient actif ─────────────────────────────
 let _lastFocusRefresh = 0;
 document.addEventListener('visibilitychange', async () => {
