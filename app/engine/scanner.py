@@ -155,20 +155,23 @@ class MarketScanner:
         }
 
     def screen(self, timeframe: str, limit: int = 500) -> List[Dict]:
-        results = []
-        for symbol in self.get_symbols():
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        symbols = self.get_symbols()
+        max_workers = min(len(symbols), int(self.scfg.get("scan_workers", 4)))
+
+        def _process(symbol: str) -> Optional[Dict]:
             df = self.fetch_ohlcv(symbol, timeframe, limit)
             if df is None:
-                continue
+                return None
             try:
                 indicators = self.compute_indicators(df)
                 volume_24h = _estimate_volume_24h(df, timeframe)
                 if volume_24h < self.min_vol:
-                    continue
-                adx    = indicators.get("adx", 0)
-                atr_pct= indicators.get("atr_pct", 0)
+                    return None
+                adx     = indicators.get("adx", 0)
+                atr_pct = indicators.get("atr_pct", 0)
                 regime_label, strategies = recommend_strategy(adx, atr_pct)
-                results.append({
+                return {
                     "symbol":       symbol,
                     "indicators":   indicators,
                     "volume_24h":   volume_24h,
@@ -176,9 +179,18 @@ class MarketScanner:
                     "regime_label": regime_label,
                     "strategies":   strategies,
                     "bars":         len(df),
-                })
+                }
             except Exception as e:
                 logger.error(f"[Scanner] screen {symbol} : {e}")
+                return None
+
+        results = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_process, s): s for s in symbols}
+            for f in as_completed(futures):
+                r = f.result()
+                if r is not None:
+                    results.append(r)
         return results
 
     def opportunity_scan(self, timeframe: str = "1h") -> List[Dict]:

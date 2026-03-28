@@ -206,7 +206,8 @@ class Strategy(BaseStrategy):
             return self._none("ATR invalide")
 
         # ── Analyse FFT ───────────────────────────────────────────────────────
-        prices_np = close.to_numpy().astype(float)
+        fft_max_bars = int(p.get("fft_max_bars", 500))
+        prices_np = close.tail(min(len(close), fft_max_bars)).to_numpy().astype(float)
         fft       = _fft_direction(prices_np, fft_min_period, fft_max_period, fft_top_n)
 
         direction  = fft["direction"]
