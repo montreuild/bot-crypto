@@ -6,34 +6,50 @@
 {% endblock %}
 
 {% block page_styles %}
-#content{padding:18px 20px;display:flex;flex-direction:column;gap:18px;flex:1;}
+#content{padding:var(--sp-lg) 20px;display:flex;flex-direction:column;gap:var(--sp-lg);flex:1;}
 /* Onglets */
 .tabs{display:flex;gap:2px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:3px;width:fit-content;}
-.tab{padding:6px 16px;border-radius:calc(var(--r) - 2px);font-size:.76rem;font-weight:600;cursor:pointer;color:var(--muted);border:none;background:transparent;transition:all .15s;font-family:var(--body);}
+.tab{padding:9px 18px;border-radius:calc(var(--r) - 2px);font-size:.76rem;font-weight:600;cursor:pointer;color:var(--muted);border:none;background:transparent;transition:all .18s ease;font-family:var(--body);position:relative;}
 .tab.active{background:var(--card);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.3);}
-.tab:hover:not(.active){color:var(--text);}
+.tab.active::after{content:'';position:absolute;bottom:2px;left:20%;right:20%;height:2px;background:var(--cyan);border-radius:2px;}
+.tab:hover:not(.active){color:var(--text);background:rgba(255,255,255,.03);}
 /* Filters */
 .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
-.filter-input{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:var(--r-sm);font-size:.76rem;font-family:var(--body);outline:none;width:140px;}
-.filter-input:focus{border-color:var(--cyan);}
+.filter-input{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--r-sm);font-size:.76rem;font-family:var(--body);outline:none;width:140px;transition:border-color .2s ease,box-shadow .2s ease;}
+.filter-input:focus{border-color:var(--cyan);box-shadow:0 0 0 2px rgba(34,211,238,.1);}
+.filter-input#f-symbol{width:160px;}
+.filter-bar-wrap{background:rgba(255,255,255,.015);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
 /* Stats bar */
-.stats-bar{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;}
-.stat-cell{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;}
-.stat-lbl{font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:3px;}
-.stat-val{font-family:var(--mono);font-size:.95rem;font-weight:500;}
+.stats-bar{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;}
+.stat-cell{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;position:relative;overflow:hidden;}
+.stat-cell::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;border-radius:var(--r) var(--r) 0 0;}
+.stat-cell:nth-child(1)::before{background:var(--cyan);}
+.stat-cell:nth-child(2)::before{background:var(--green);}
+.stat-cell:nth-child(3)::before{background:var(--amber);}
+.stat-cell:nth-child(4)::before{background:var(--purple);}
+.stat-cell:nth-child(5)::before{background:var(--red);}
+.stat-cell:nth-child(6)::before{background:var(--green);}
+.stat-lbl{font-size:.64rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:4px;}
+.stat-val{font-family:var(--mono);font-size:1.05rem;font-weight:600;}
 /* Pagination */
-.pagination{display:flex;gap:4px;align-items:center;justify-content:center;font-size:.75rem;}
-.pg-btn{padding:4px 10px;border:1px solid var(--border-hi);border-radius:var(--r-sm);background:transparent;color:var(--muted);cursor:pointer;font-family:var(--body);font-size:.74rem;transition:all .15s;}
-.pg-btn:hover{color:var(--text);border-color:rgba(255,255,255,.2);}
-.pg-btn.active{background:var(--cyan);color:#031218;border-color:var(--cyan);}
+.pagination{display:flex;gap:5px;align-items:center;justify-content:center;font-size:.75rem;}
+.pg-btn{padding:6px 12px;border:1px solid var(--border-hi);border-radius:var(--r-sm);background:transparent;color:var(--muted);cursor:pointer;font-family:var(--body);font-size:.76rem;transition:all .18s ease;min-width:32px;text-align:center;}
+.pg-btn:hover:not(:disabled):not(.active){color:var(--text);border-color:rgba(255,255,255,.2);background:rgba(255,255,255,.03);}
+.pg-btn.active{background:var(--cyan);color:#031218;border-color:var(--cyan);font-weight:700;}
 .pg-btn:disabled{opacity:.35;cursor:not-allowed;}
 /* Chart */
-.chart-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;}
-.chart-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
-.chart-title{font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);}
+.chart-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;}
+.chart-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border);}
+.chart-title{font-size:.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);}
 .chart-wrap{height:140px;position:relative;}
-.charts-row{display:grid;grid-template-columns:2fr 1fr;gap:10px;}
+.charts-row{display:grid;grid-template-columns:2fr 1fr;gap:12px;}
 @media(max-width:700px){.charts-row{grid-template-columns:1fr;}}
+/* Trade table enhancements */
+.trades-table tr:hover td{background:rgba(255,255,255,.04);}
+.pnl-bold{font-weight:700;}
+/* Slot/symbol comparison tables */
+.comparison-table tr:first-child td{background:rgba(52,211,153,.04);}
+.comparison-table tr:hover td{background:rgba(255,255,255,.04);}
 /* Comparison table */
 .slot-row-paused td{color:var(--red);}
 {% endblock %}
@@ -48,7 +64,7 @@
 {% endblock %}
 
 {% block content %}
-<div id="content">
+<div id="content" class="fade-in">
 
   <!-- Stats bar -->
   <div class="stats-bar">
@@ -81,7 +97,7 @@
 
   <!-- Panel: Tous les trades -->
   <div id="tab-all">
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+    <div class="filter-bar-wrap">
       <div class="filters">
         <input class="filter-input" id="f-symbol" placeholder="Paire…" oninput="applyFilters()"/>
         <select class="filter-input" id="f-slot" onchange="applyFilters()"><option value="">Tous les slots</option></select>
@@ -90,7 +106,7 @@
       <span id="filter-count" style="font-size:.72rem;color:var(--muted);margin-left:auto;font-family:var(--mono)"></span>
     </div>
     <div class="table-card">
-      <div class="tscroll"><table>
+      <div class="tscroll"><table class="table-striped trades-table">
         <thead><tr>
           <th>Date</th><th>Paire</th><th>Dir.</th><th>Slot</th>
           <th class="r">Entrée</th><th class="r">Sortie</th>
@@ -99,13 +115,13 @@
         <tbody id="trades-tbody"><tr><td colspan="10" class="empty-row">Chargement…</td></tr></tbody>
       </table></div>
     </div>
-    <div class="pagination" id="pagination" style="margin-top:10px"></div>
+    <div class="pagination" id="pagination" style="margin-top:12px"></div>
   </div>
 
   <!-- Panel: Par slot -->
   <div id="tab-slot" style="display:none">
     <div class="table-card">
-      <div class="tscroll"><table>
+      <div class="tscroll"><table class="table-striped comparison-table">
         <thead><tr>
           <th>Slot</th><th class="r">Trades</th><th class="r">Win Rate</th>
           <th class="r">PnL</th><th class="r">P. Factor</th><th class="r">Sharpe</th><th class="r">Max DD</th>
@@ -118,7 +134,7 @@
   <!-- Panel: Par paire -->
   <div id="tab-symbol" style="display:none">
     <div class="table-card">
-      <div class="tscroll"><table>
+      <div class="tscroll"><table class="table-striped comparison-table">
         <thead><tr>
           <th>Paire</th><th class="r">Trades</th><th class="r">Win Rate</th>
           <th class="r">PnL</th><th class="r">Meilleur</th><th class="r">Pire</th>
@@ -184,7 +200,7 @@ function renderTradesTable(){
     const pnl=+(t.pnl||0),d=new Date(t.time),ds=isNaN(d)?'—':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
     const strat=t.strategy||'—', tf=t.timeframe||'';
     const slotLbl=strat!=='—'&&tf?(strat.charAt(0).toUpperCase()+strat.slice(1)+' '+tf):strat;
-    return`<tr><td style="color:var(--muted)">${ds}</td><td style="font-weight:600">${escHtml(t.symbol||'—')}</td><td><span class="tag tag-${t.side}">${(t.side||'').toUpperCase()}</span></td><td><span class="tag tag-strat">${escHtml(slotLbl)}</span></td><td class="r">${fmtP(t.entry)}</td><td class="r">${fmtP(t.exit)}</td><td class="r ${clrC(pnl)}" style="font-weight:600">${fmtS(pnl)}</td><td class="r ${clrC(pnl)}">${fmtS(+(t.pnl_pct||0),'%')}</td><td class="r" style="color:var(--muted)">${(+(t.score||0)).toFixed(2)}</td><td style="color:var(--dim);font-size:.68rem">${escHtml(t.reason||'')}</td></tr>`;
+    return`<tr><td style="color:var(--muted)">${ds}</td><td style="font-weight:600">${escHtml(t.symbol||'—')}</td><td><span class="tag tag-${t.side}">${(t.side||'').toUpperCase()}</span></td><td><span class="tag tag-strat">${escHtml(slotLbl)}</span></td><td class="r">${fmtP(t.entry)}</td><td class="r">${fmtP(t.exit)}</td><td class="r ${clrC(pnl)} pnl-bold">${fmtS(pnl)}</td><td class="r ${clrC(pnl)}">${fmtS(+(t.pnl_pct||0),'%')}</td><td class="r" style="color:var(--muted)">${(+(t.score||0)).toFixed(2)}</td><td style="color:var(--dim);font-size:.68rem">${escHtml(t.reason||'')}</td></tr>`;
   }).join('');
   renderPagination();
 }
