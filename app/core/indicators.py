@@ -307,9 +307,9 @@ def htf_trend(df_htf, ema_period: int = 50) -> int:
 #  Détection de régime
 # ══════════════════════════════════════════════════════════════════════════════
 
-def detect_regime(df: pl.DataFrame,
-                  adx_trend_threshold: float = 25.0,
-                  atr_volatile_threshold: float = 3.0) -> dict:
+def detect_regime_full(df: pl.DataFrame,
+                      adx_trend_threshold: float = 25.0,
+                      atr_volatile_threshold: float = 3.0) -> dict:
     """Classifie le marché : trending | ranging | volatile.
 
     Args:
@@ -591,6 +591,9 @@ def detect_regime(df: pl.DataFrame, adx_threshold: float = 25.0) -> str:
 
     Retourne ``"trend"`` si ADX >= adx_threshold, ``"range"`` sinon,
     ou ``"unknown"`` si le DataFrame est trop court.
+
+    For detailed regime detection (trending/ranging/volatile with confidence),
+    use detect_regime_full() instead.
 
     Utilisé par SignalPipeline (ML blending) et MarketScanner (screen/UI).
     Extrait ici pour éviter que SignalPipeline dépende de MarketScanner.
