@@ -543,14 +543,22 @@ precompute = precompute_df
 def pre_val(df: pl.DataFrame, col: str) -> float | None:
     """Lit la valeur pré-calculée à la dernière ligne si disponible.
     Retourne None si la colonne n'existe pas ou si la valeur est nulle.
+    Logue un avertissement si la colonne n'existe pas (fallback vers recalcul on-demand).
 
     Usage :
         rsi_now = pre_val(df, "_pre_rsi14") or float(rsi(df["close"])[-1])
     """
-    if col in df.columns:
+    if col and col in df.columns:
         v = df[col][-1]
         if v is not None:
             return float(v)
+    elif col:
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+        _log.debug(
+            f"[indicators] Colonne pré-calculée '{col}' absente — "
+            f"fallback on-demand (precompute_df() non appliqué ?)"
+        )
     return None
 
 
