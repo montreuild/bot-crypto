@@ -296,8 +296,15 @@ def htf_trend(df_htf, ema_period: int = 50) -> int:
 #  Détection de régime
 # ══════════════════════════════════════════════════════════════════════════════
 
-def detect_regime(df: pl.DataFrame) -> dict:
-    """Classifie le marché : trending | ranging | volatile."""
+def detect_regime(df: pl.DataFrame,
+                  adx_trend_threshold: float = 25.0,
+                  atr_volatile_threshold: float = 3.0) -> dict:
+    """Classifie le marché : trending | ranging | volatile.
+
+    Args:
+        adx_trend_threshold: ADX above this = trending (default 25)
+        atr_volatile_threshold: ATR% above this = volatile (default 3.0%)
+    """
     if len(df) < 30:
         return {"regime": "unknown", "adx": 0, "atr_pct": 0,
                 "confidence": 0, "trend_dir": "flat"}
@@ -309,10 +316,10 @@ def detect_regime(df: pl.DataFrame) -> dict:
     ema20  = float(ema(df["close"], 20)[-1])
     ema50  = float(ema(df["close"], 50)[-1])
     tdir   = "up" if ema20 > ema50 else "down"
-    if atr_p > 3.0:
+    if atr_p > atr_volatile_threshold:
         regime, conf = "volatile", min(atr_p / 5, 1.0)
-    elif adx_l >= 25:
-        regime, conf = "trending", min((adx_l - 25) / 50, 1.0)
+    elif adx_l >= adx_trend_threshold:
+        regime, conf = "trending", min((adx_l - adx_trend_threshold) / 50, 1.0)
     else:
         regime, conf = "ranging",  max(0, 1 - (adx_l - 15) / 10)
     return {"regime": regime, "adx": round(adx_l, 2), "atr_pct": round(atr_p, 3),

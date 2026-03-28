@@ -87,7 +87,8 @@ class Strategy(BaseStrategy):
         rsi_now = float(df["_pre_rsi14"][-1])
         adx_val = float(df["_pre_adx14"][-1])
         vr      = float(df["_pre_volratio20"][-1])
-        struct  = market_structure(high, low)
+        ms_window = int(p.get("market_struct_window", 5))
+        struct  = market_structure(high, low, window=ms_window)
         htf     = htf_trend(df_htf)
 
         # MACD pour confirmation du momentum

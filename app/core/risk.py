@@ -62,7 +62,7 @@ class RiskManager:
         _risk_cfg = cfg.get("risk", {})
         self._consec_loss_limit    = int(_risk_cfg.get("consecutive_loss_limit", 3))
         self._slot_daily_dd_limit  = float(_risk_cfg.get("slot_daily_dd_limit", 0.03))
-        self._win_rate_floor       = float(_risk_cfg.get("win_rate_floor", 0.30))
+        self._win_rate_floor       = float(_risk_cfg.get("win_rate_floor", 0.25))
         self._consec_pause_secs    = int(_risk_cfg.get("consecutive_pause_secs", 1800))  # 30 min
         self._volatility_threshold = float(_risk_cfg.get("volatility_threshold", 0.05))  # 5% ATR BTC
 

@@ -44,9 +44,11 @@ trading:
 risk:
   consecutive_loss_limit: 3
   slot_daily_dd_limit: 0.03
-  win_rate_floor: 0.30
+  win_rate_floor: 0.25
   consecutive_pause_secs: 1800
   volatility_threshold: 0.05
+  adx_trend_threshold: 25.0
+  atr_volatile_threshold: 3.0
 
 scanner:
   dynamic_scan: false

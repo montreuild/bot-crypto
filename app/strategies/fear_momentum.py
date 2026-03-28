@@ -104,7 +104,8 @@ class Strategy(BaseStrategy):
         vr        = pre_val(df, "_pre_volratio20") or calc_vol(df)
         adx_val   = pre_val(df, "_pre_adx14")      or calc_adx(df, 14)
         htf       = htf_trend(df_htf)
-        struct    = market_structure(high, low)
+        ms_window = int(p.get("market_struct_window", 5))
+        struct    = market_structure(high, low, window=ms_window)
 
         # MACD : pré-calculé si dispo
         mh0 = pre_val(df, "_pre_macd_hist")
