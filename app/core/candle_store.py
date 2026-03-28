@@ -193,7 +193,8 @@ class CandleStore:
 
         try:
             tf_ms = exchange.parse_timeframe(tf) * 1000
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[CandleStore] parse_timeframe '{tf}' KO : {e} — fallback 1h")
             tf_ms = 3_600_000  # fallback 1h en ms
 
         # Point de départ : assez loin dans le passé pour couvrir les bougies manquantes
@@ -250,7 +251,8 @@ class CandleStore:
 
         try:
             tf_ms = exchange.parse_timeframe(tf) * 1000
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[CandleStore] parse_timeframe '{tf}' KO : {e} — fallback 1h")
             tf_ms = 3_600_000  # fallback 1h en ms
 
         since   = exchange.milliseconds() - total * tf_ms
