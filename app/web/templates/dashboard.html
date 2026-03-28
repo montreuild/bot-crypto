@@ -10,7 +10,8 @@
 @keyframes blink-pill{0%,100%{opacity:1}50%{opacity:.4}}
 /* ── Allocation slots ── */
 .alloc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;}
-.alloc-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;}
+.alloc-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;cursor:pointer;transition:border-color .15s,transform .1s,box-shadow .15s;}
+.alloc-card:hover{border-color:var(--border-hi);transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.15);}
 .alloc-card.paused{border-color:rgba(251,113,133,.4);background:var(--red-dim);}
 .alloc-slot{font-family:var(--mono);font-size:.78rem;font-weight:600;color:var(--cyan);margin-bottom:4px;}
 .alloc-meta{font-size:.63rem;color:var(--muted);margin-bottom:5px;}
@@ -115,6 +116,7 @@
   <span id="scan-info" style="display:none;font-size:.7rem;color:var(--muted);font-family:var(--mono)">
     <span id="scan-time"></span> · <span id="scan-pairs"></span>
   </span>
+  <span id="health-badge" style="display:none;font-size:.65rem;font-family:var(--mono);padding:3px 8px;border-radius:12px;border:1px solid var(--green);color:var(--green);background:var(--green-dim)">● Système OK</span>
 </div>
 <div id="content" class="grid-bg">
   <div id="margin-warn" style="display:none;background:var(--red-dim);border:1px solid rgba(251,113,133,.25);border-radius:var(--r);padding:10px 16px;font-size:.78rem;color:var(--red)"></div>
@@ -194,7 +196,7 @@
 
   <!-- ── Allocation par slot ── -->
   <div>
-    <div class="sec-hdr"><h2>Allocation par slot</h2></div>
+    <div class="sec-hdr"><h2>Allocation par slot</h2><a href="/strategies" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Gérer les slots →</a></div>
     <div id="alloc-grid" class="alloc-grid"></div>
   </div>
 
@@ -217,7 +219,7 @@
   </div>
 
   <div>
-    <div class="sec-hdr"><h2>Performance par stratégie</h2></div>
+    <div class="sec-hdr"><h2>Performance par stratégie</h2><a href="/strategies" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Détail par slot →</a></div>
     <div class="table-card"><div class="tscroll"><table>
       <thead><tr>
         <th>Stratégie</th><th class="r">Trades</th><th class="r">Win Rate</th>
@@ -527,7 +529,7 @@ function renderCapitalAllocation(slots, slotStates){
     const fillClr=isPaused?'var(--red)':usedPct>80?'var(--amber)':'var(--cyan)';
     const slotLabel=s.strategy.charAt(0).toUpperCase()+s.strategy.slice(1)+' '+s.tf;
     const pnlStr=s.weekly_pnl!=null?((s.weekly_pnl>=0?'+':'')+s.weekly_pnl.toFixed(2)+' 7j'):'';
-    return`<div class="alloc-card${isPaused?' paused':''}">
+    return`<div class="alloc-card${isPaused?' paused':''}" onclick="window.location.href='/strategies?slot=${encodeURIComponent(s.slot_key||'')}'" title="Cliquez pour gérer ce slot">
       <div class="alloc-slot">${escHtml(slotLabel)}</div>
       <div class="alloc-meta">Budget: <strong style="color:var(--text)">${s.budget_pct??'—'}%</strong> · ${s.budget_usdc??'—'} USDC${pnlStr?` · <span class="${s.weekly_pnl>=0?'c-green':'c-red'}">${pnlStr}</span>`:''}${s.weekly_trades?' · '+s.weekly_trades+'T':''}</div>
       <div class="alloc-track"><div class="alloc-fill" style="width:${Math.min(usedPct,100)}%;background:${fillClr}"></div></div>
@@ -637,5 +639,20 @@ document.addEventListener('keydown',function(e){
 initCharts();
 refresh();
 setInterval(refresh,15000);
+/* ── Health check ── */
+async function checkHealth(){
+  try{
+    const r=await fetch('/health');
+    const hb=$('health-badge');
+    if(!hb)return;
+    if(r.ok){hb.style.display='';hb.textContent='● Système OK';hb.style.color='var(--green)';hb.style.borderColor='var(--green)';hb.style.background='var(--green-dim)';}
+    else{hb.style.display='';hb.textContent='⚠ Dégradé';hb.style.color='var(--amber)';hb.style.borderColor='var(--amber)';hb.style.background='var(--amber-dim)';}
+  }catch(e){
+    const hb=$('health-badge');
+    if(hb){hb.style.display='';hb.textContent='✗ Hors ligne';hb.style.color='var(--red)';hb.style.borderColor='var(--red)';hb.style.background='var(--red-dim)';}
+  }
+}
+checkHealth();
+setInterval(checkHealth,60000);
 </script>
 {% endblock %}

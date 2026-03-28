@@ -10,8 +10,12 @@
 {% endblock %}
 
 {% block topbar_content %}
-<div class="topbar-title">Audit</div>
+<div class="topbar-title">Audit OOS</div>
 <div class="topbar-sep"></div>
+<div class="topbar-right">
+  <button class="btn btn-ghost" id="export-btn" onclick="exportAudit()">↓ Export CSV</button>
+  <button class="btn btn-ghost" id="refresh-btn" onclick="refreshAll()">↺ Actualiser</button>
+</div>
 {% endblock %}
 
 {% block content %}
@@ -189,5 +193,37 @@ async function loadChangelog(){
 }
 loadOptResults();
 loadChangelog();
+
+async function refreshAll(){
+  const btn=document.getElementById('refresh-btn');
+  if(btn){btn.disabled=true;btn.textContent='↻ Chargement…';}
+  try{await Promise.all([loadOptResults(),loadChangelog()]);}
+  finally{if(btn){btn.disabled=false;btn.textContent='↺ Actualiser';}}
+}
+
+function exportAudit(){
+  try{
+    const rows=[];
+    const container=document.getElementById('opt-results-container');
+    const table=container?.querySelector('table');
+    if(!table){toast('Aucune donnée à exporter',true);return;}
+    const headers=[],tbody=table.querySelector('tbody');
+    table.querySelectorAll('thead th').forEach(th=>headers.push(th.textContent.trim()));
+    rows.push(headers.join(','));
+    if(tbody){
+      tbody.querySelectorAll('tr').forEach(tr=>{
+        const cells=[];
+        tr.querySelectorAll('td').forEach(td=>cells.push('"'+td.textContent.trim().replace(/"/g,'""')+'"'));
+        if(cells.length)rows.push(cells.join(','));
+      });
+    }
+    const blob=new Blob([rows.join('\n')],{type:'text/csv'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download='audit_oos_'+new Date().toISOString().slice(0,10)+'.csv';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+    toast('Export CSV téléchargé ✓');
+  }catch(e){toast('Erreur export: '+e.message,true);}
+}
 </script>
 {% endblock %}
