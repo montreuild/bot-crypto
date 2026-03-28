@@ -110,6 +110,7 @@ th.sort-desc::after{content:' ↓';color:var(--cyan);}
         <select class="filter-input" id="f-side" onchange="applyFilters()"><option value="">Direction</option><option value="long">Long</option><option value="short">Short</option></select>
       </div>
       <span id="filter-count" style="font-size:.72rem;color:var(--muted);margin-left:auto;font-family:var(--mono)"></span>
+      <button class="btn-clear-filters" id="btn-clear-filters" onclick="clearFilters()" style="display:none" title="Effacer les filtres">✕ Effacer filtres</button>
     </div>
     <div class="table-card">
       <div class="tscroll"><table class="table-striped trades-table">
@@ -118,7 +119,7 @@ th.sort-desc::after{content:' ↓';color:var(--cyan);}
           <th class="r sortable" onclick="sortBy('entry')">Entrée</th><th class="r sortable" onclick="sortBy('exit')">Sortie</th>
           <th class="r sortable" onclick="sortBy('pnl')">PnL</th><th class="r sortable" onclick="sortBy('pnl_pct')">%</th><th class="r sortable" onclick="sortBy('score')">Score</th><th>Raison</th>
         </tr></thead>
-        <tbody id="trades-tbody"><tr><td colspan="10" class="empty-row">Chargement…</td></tr></tbody>
+        <tbody id="trades-tbody"><tr><td colspan="10" class="empty-row"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div><div class="skeleton skeleton-line w40"></div></td></tr></tbody>
       </table></div>
     </div>
     <div class="pagination" id="pagination" style="margin-top:12px"></div>
@@ -132,7 +133,7 @@ th.sort-desc::after{content:' ↓';color:var(--cyan);}
           <th>Slot</th><th class="r">Trades</th><th class="r">Win Rate</th>
           <th class="r">PnL</th><th class="r">P. Factor</th><th class="r">Sharpe</th><th class="r">Max DD</th>
         </tr></thead>
-        <tbody id="slot-tbody"><tr><td colspan="7" class="empty-row">Chargement…</td></tr></tbody>
+        <tbody id="slot-tbody"><tr><td colspan="7" class="empty-row"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div></td></tr></tbody>
       </table></div>
     </div>
   </div>
@@ -145,7 +146,7 @@ th.sort-desc::after{content:' ↓';color:var(--cyan);}
           <th>Paire</th><th class="r">Trades</th><th class="r">Win Rate</th>
           <th class="r">PnL</th><th class="r">Meilleur</th><th class="r">Pire</th>
         </tr></thead>
-        <tbody id="symbol-tbody"><tr><td colspan="6" class="empty-row">Chargement…</td></tr></tbody>
+        <tbody id="symbol-tbody"><tr><td colspan="6" class="empty-row"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div></td></tr></tbody>
       </table></div>
     </div>
   </div>
@@ -223,6 +224,15 @@ function applyFilters(){
   applySort();
   renderTradesTable();
   $('filter-count').textContent=_filtered.length+' trade'+(+_filtered.length!==1?'s':'');
+  const hasFilter=sym||slot||side;
+  const clearBtn=$('btn-clear-filters');
+  if(clearBtn)clearBtn.style.display=hasFilter?'':'none';
+}
+function clearFilters(){
+  if($('f-symbol'))$('f-symbol').value='';
+  if($('f-slot'))$('f-slot').value='';
+  if($('f-side'))$('f-side').value='';
+  applyFilters();
 }
 
 function renderTradesTable(){

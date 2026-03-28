@@ -30,6 +30,7 @@
 .filter-chip.active-red{background:var(--red-dim);color:var(--red);border-color:rgba(251,113,133,.3);}
 /* Layout colonnes par TF */
 .tf-columns{display:flex;gap:12px;overflow-x:auto;align-items:flex-start;padding-bottom:8px;}
+@media(max-width:768px){.tf-columns{flex-direction:column;overflow-x:visible;}.tf-col{min-width:100%!important;max-width:100%!important;}}
 .tf-col{min-width:220px;max-width:260px;flex-shrink:0;}
 .tf-col-header{font-family:var(--mono);font-size:.72rem;font-weight:700;color:var(--cyan);padding:10px 12px;background:var(--cyan-dim);border:1px solid rgba(34,211,238,.2);border-radius:var(--r-sm);margin-bottom:8px;text-align:center;letter-spacing:.06em;display:flex;justify-content:space-between;align-items:center;}
 .tf-col-header::before{content:'◷' / '';margin-right:4px;font-size:.8rem;opacity:.7;}
@@ -149,7 +150,8 @@
   <div class="main-layout">
     <div class="main-left">
       <div id="tf-columns" class="tf-columns">
-        <div style="color:var(--dim);font-size:.8rem">Chargement…</div>
+        <div class="skeleton skeleton-card" style="width:220px"></div>
+        <div class="skeleton skeleton-card" style="width:220px"></div>
       </div>
     </div>
 
@@ -453,9 +455,9 @@ async function selectSlot(slotKey, strategy, tf){
   const slotLabel=strategy.charAt(0).toUpperCase()+strategy.slice(1)+' '+tf;
   $('dp-slot').textContent=slotLabel;
   $('dp-slot-key').textContent=slotKey;
-  $('dp-perf').innerHTML='<span style="color:var(--dim)">Chargement…</span>';
-  $('dp-params').innerHTML='<span style="color:var(--dim)">Chargement…</span>';
-  $('dp-trades').innerHTML='<span style="color:var(--dim)">Chargement…</span>';
+  $('dp-perf').innerHTML='<div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div>';
+  $('dp-params').innerHTML='<div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div>';
+  $('dp-trades').innerHTML='<div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div>';
   $('dp-perf-bar-wrap').style.display='none';
   $('dp-cb-section').style.display='none';
 

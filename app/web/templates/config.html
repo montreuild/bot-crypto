@@ -184,7 +184,7 @@
           Les positions ouvertes sur une stratégie désactivée restent ouvertes jusqu'à leur clôture.
         </div>
         <div class="strat-grid" id="strat-grid">
-          <div style="color:var(--dim);font-size:.78rem">Chargement…</div>
+          <div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div>
         </div>
         <div class="btn-row">
           <button id="btn-apply-strat" class="btn btn-green btn-full" onclick="applyStrategies()">
@@ -210,7 +210,8 @@
           Recommandé : <strong>1h seul</strong> pour commencer, puis ajouter après optimisation.</span>
         </div>
         <div id="tf-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
-          <div style="color:var(--dim);font-size:.78rem">Chargement…</div>
+          <div class="skeleton skeleton-line w80" style="height:40px;width:130px"></div>
+          <div class="skeleton skeleton-line w60" style="height:40px;width:130px"></div>
         </div>
         <div id="tf-active-display" style="font-size:.78rem;color:var(--muted);margin-bottom:10px"></div>
         <div class="btn-row">
@@ -461,22 +462,25 @@
         </div>
 
         <div class="field">
-          <label>Risque par trade (%)</label>
+          <label>Risque par trade (%) <span class="help-tip" data-tip="Pourcentage du capital total risqué sur chaque position. 1% = conservateur, 2-3% = modéré, >3% = agressif">?</span></label>
           <input type="number" id="risk-per-trade" min="0.1" max="5" step="0.1"
-            placeholder="1.0"/>
-          <span class="hint">Pourcentage du capital risqué par position</span>
+            placeholder="1.0" onblur="validateField(this,0.1,5)"/>
+          <span class="hint">Pourcentage du capital risqué par position (0.1 – 5%)</span>
+          <span class="field-error-msg" id="risk-per-trade-err">Valeur entre 0.1 et 5</span>
         </div>
 
         <div class="field">
-          <label>Limite drawdown journalier (%)</label>
+          <label>Limite drawdown journalier (%) <span class="help-tip" data-tip="Perte maximale tolérée sur une journée. Au-delà, le circuit breaker arrête le trading.">?</span></label>
           <input type="number" id="daily-dd" min="1" max="20" step="0.5"
-            placeholder="5"/>
-          <span class="hint">Au-delà : circuit breaker activé jusqu'à Reset CB</span>
+            placeholder="5" onblur="validateField(this,1,20)"/>
+          <span class="hint">Au-delà : circuit breaker activé jusqu'à Reset CB (1 – 20%)</span>
+          <span class="field-error-msg" id="daily-dd-err">Valeur entre 1 et 20</span>
         </div>
 
         <div class="field">
-          <label>Positions max simultanées</label>
-          <input type="number" id="max-pos" min="1" max="20" step="1" placeholder="5"/>
+          <label>Positions max simultanées <span class="help-tip" data-tip="Nombre maximal de positions ouvertes en même temps. Réduit le risque de corrélation.">?</span></label>
+          <input type="number" id="max-pos" min="1" max="20" step="1" placeholder="5" onblur="validateField(this,1,20)"/>
+          <span class="field-error-msg" id="max-pos-err">Valeur entre 1 et 20</span>
         </div>
 
         <div class="toggle-wrap">
@@ -513,32 +517,37 @@
         </div>
 
         <div class="field">
-          <label>Pertes consécutives max</label>
-          <input type="number" id="cb-consec-loss" min="1" max="10" step="1" placeholder="3"/>
+          <label>Pertes consécutives max <span class="help-tip" data-tip="Nombre de trades perdants à la suite avant que le slot soit mis en pause automatiquement.">?</span></label>
+          <input type="number" id="cb-consec-loss" min="1" max="10" step="1" placeholder="3" onblur="validateField(this,1,10)"/>
           <span class="hint">Pause le slot 30 min après N pertes consécutives</span>
+          <span class="field-error-msg" id="cb-consec-loss-err">Valeur entre 1 et 10</span>
         </div>
 
         <div class="field">
-          <label>DD journalier max par slot (%)</label>
-          <input type="number" id="cb-slot-dd" min="0.5" max="10" step="0.5" placeholder="3"/>
+          <label>DD journalier max par slot (%) <span class="help-tip" data-tip="Drawdown journalier maximal autorisé par slot individuel. Protège chaque stratégie indépendamment.">?</span></label>
+          <input type="number" id="cb-slot-dd" min="0.5" max="10" step="0.5" placeholder="3" onblur="validateField(this,0.5,10)"/>
           <span class="hint">Pause le slot jusqu'à minuit UTC si dépassé</span>
+          <span class="field-error-msg" id="cb-slot-dd-err">Valeur entre 0.5 et 10</span>
         </div>
 
         <div class="field">
-          <label>Win rate plancher (%)</label>
-          <input type="number" id="cb-wr-floor" min="10" max="60" step="5" placeholder="30"/>
+          <label>Win rate plancher (%) <span class="help-tip" data-tip="Si le taux de réussite tombe sous ce seuil sur les 15 derniers trades, le slot est mis en pause 24h.">?</span></label>
+          <input type="number" id="cb-wr-floor" min="10" max="60" step="5" placeholder="30" onblur="validateField(this,10,60)"/>
           <span class="hint">Pause 24h si WR tombe sous ce seuil sur les 15 derniers trades</span>
+          <span class="field-error-msg" id="cb-wr-floor-err">Valeur entre 10 et 60</span>
         </div>
 
         <div class="field">
-          <label>Seuil volatilité BTC ATR 1h (%)</label>
-          <input type="number" id="cb-vol-threshold" min="1" max="15" step="0.5" placeholder="5"/>
+          <label>Seuil volatilité BTC ATR 1h (%) <span class="help-tip" data-tip="Si l'ATR de BTC/USDC 1h dépasse ce seuil, les tailles de position sont réduites de moitié.">?</span></label>
+          <input type="number" id="cb-vol-threshold" min="1" max="15" step="0.5" placeholder="5" onblur="validateField(this,1,15)"/>
           <span class="hint">Si ATR BTC/USDC 1h > ce seuil : tailles × 0.5 (pas de halt)</span>
+          <span class="field-error-msg" id="cb-vol-threshold-err">Valeur entre 1 et 15</span>
         </div>
 
         <div class="field">
-          <label>Durée pause pertes consécutives (min)</label>
-          <input type="number" id="cb-consec-pause" min="5" max="240" step="5" placeholder="30"/>
+          <label>Durée pause pertes consécutives (min) <span class="help-tip" data-tip="Temps en minutes pendant lequel le slot est mis en pause après avoir atteint la limite de pertes consécutives.">?</span></label>
+          <input type="number" id="cb-consec-pause" min="5" max="240" step="5" placeholder="30" onblur="validateField(this,5,240)"/>
+          <span class="field-error-msg" id="cb-consec-pause-err">Valeur entre 5 et 240</span>
         </div>
 
         <button id="btn-apply-cb" class="btn btn-full" style="background:var(--red);color:#fff" onclick="applyCBConfig()">✓ Appliquer CBs<span class="dirty-dot"></span></button>
@@ -622,7 +631,8 @@
           Le backtest utilisera les nouvelles valeurs immédiatement.
         </div>
         <div id="strat-params-panels">
-          <div style="color:var(--dim);font-size:.78rem;padding:8px">Chargement…</div>
+          <div class="skeleton skeleton-line w80" style="margin:8px"></div>
+          <div class="skeleton skeleton-line w60" style="margin:8px"></div>
         </div>
       </div>
     </div>
@@ -675,13 +685,43 @@ async function withBtn(btnId, fn) {
   try { await fn(); clearDirty(btnId); } finally { if (btn) btn.disabled = false; }
 }
 
+// ── Field validation ───────────────────────────────────────────────────────
+function validateField(input, min, max) {
+  const v = parseFloat(input.value);
+  const errEl = document.getElementById(input.id + '-err');
+  if (isNaN(v) || v < min || v > max) {
+    input.classList.add('field-error');
+    if (errEl) errEl.classList.add('visible');
+    return false;
+  }
+  input.classList.remove('field-error');
+  if (errEl) errEl.classList.remove('visible');
+  return true;
+}
+function validateAllTrading() {
+  let ok = true;
+  ok = validateField($('risk-per-trade'), 0.1, 5) && ok;
+  ok = validateField($('daily-dd'), 1, 20) && ok;
+  ok = validateField($('max-pos'), 1, 20) && ok;
+  return ok;
+}
+function validateAllCB() {
+  let ok = true;
+  ok = validateField($('cb-consec-loss'), 1, 10) && ok;
+  ok = validateField($('cb-slot-dd'), 0.5, 10) && ok;
+  ok = validateField($('cb-wr-floor'), 10, 60) && ok;
+  ok = validateField($('cb-vol-threshold'), 1, 15) && ok;
+  ok = validateField($('cb-consec-pause'), 5, 240) && ok;
+  return ok;
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init() {
   loadNotifications();
   const stratGrid = $('strat-grid');
   const stratParams = $('strat-params-panels');
-  if (stratGrid) stratGrid.innerHTML = '<div style="color:var(--dim);font-size:.78rem">Chargement\u2026</div>';
-  if (stratParams) stratParams.innerHTML = '<div style="color:var(--dim);font-size:.78rem;padding:8px">Chargement\u2026</div>';
+  if (stratGrid) stratGrid.innerHTML = '<div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div>';
+  if (stratParams) stratParams.innerHTML = '<div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div><div class="skeleton skeleton-line w40"></div>';
   try {
     const resp = await fetch('/api/config');
     if (!resp.ok) {
@@ -938,6 +978,7 @@ function renderCBConfig() {
 }
 
 async function applyCBConfig() {
+  if (!validateAllCB()) { toast('Corrigez les erreurs de validation', true); return; }
   const params = new URLSearchParams({
     consecutive_loss_limit:  $('cb-consec-loss').value,
     slot_daily_dd_limit:     (parseFloat($('cb-slot-dd').value) / 100).toFixed(4),
@@ -955,6 +996,7 @@ async function applyCBConfig() {
 }
 
 async function applyTrading() {
+  if (!validateAllTrading()) { toast('Corrigez les erreurs de validation', true); return; }
   const params = new URLSearchParams({
     score_threshold:      $('score-thr').value,
     risk_per_trade:       (parseFloat($('risk-per-trade').value) / 100).toFixed(4),

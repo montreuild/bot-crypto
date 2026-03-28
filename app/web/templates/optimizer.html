@@ -152,7 +152,7 @@
               <span class="ps-fixed-badge" style="margin-left:4px">Fixe</span>
               <span class="ps-global-badge" style="margin-left:4px">Global trading</span>
             </div>
-            <div id="param-space-view">Chargement...</div>
+            <div id="param-space-view"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div></div>
             <div style="margin-top:10px;padding:8px;background:rgba(34,211,238,.05);border:1px solid rgba(34,211,238,.15);border-radius:var(--r-sm)">
               <div style="font-size:.65rem;color:var(--cyan);font-weight:700;margin-bottom:4px">Parametres globaux</div>
               <div style="font-size:.63rem;color:var(--dim);line-height:1.6">
@@ -622,6 +622,20 @@ function toggleJobCard(id) {
 }
 
 let _lastJobs = {};
+let _jobStartTimes = {};
+
+function _estimateETA(job) {
+  const id = job.job_id || job.id || '';
+  const prog = job.progress || 0;
+  if (prog <= 0) return '';
+  if (!_jobStartTimes[id]) _jobStartTimes[id] = Date.now();
+  const elapsed = (Date.now() - _jobStartTimes[id]) / 1000;
+  if (elapsed < 5) return '';
+  const total = elapsed / (prog / 100);
+  const remaining = Math.max(0, total - elapsed);
+  if (remaining < 60) return '~' + Math.round(remaining) + 's restant';
+  return '~' + Math.round(remaining / 60) + 'min restant';
+}
 
 function renderJobCard(id, job, expanded = false) {
   const st = job.status || 'pending';
@@ -750,6 +764,7 @@ function renderJobCard(id, job, expanded = false) {
         </div>
         <div class="progress-wrap" style="margin:5px 0 0">
           <div class="progress-bg" style="height:4px"><div class="progress-fill ${st==='done'?'progress-done':''}" style="width:${prog}%"></div></div>
+          ${st==='running'&&prog>0?`<div class="progress-lbl"><span>${prog.toFixed(0)}%</span><span>${_estimateETA(job)}</span></div>`:''}
         </div>
       </div>
       <div class="job-actions">

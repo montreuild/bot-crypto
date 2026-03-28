@@ -226,7 +226,27 @@ a:focus-visible,.sb-link:focus-visible,.toggle input:focus-visible+.toggle-slide
 /* ── Animation utilities ── */
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
 .fade-in{animation:fadeIn .3s ease both;}
-@media(prefers-reduced-motion:reduce){.fade-in{animation:none;}}
+@media(prefers-reduced-motion:reduce){.fade-in{animation:none;}.skeleton{animation:none;}}
+/* ── Skeleton loaders ── */
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+.skeleton{background:linear-gradient(90deg,rgba(255,255,255,.04) 25%,rgba(255,255,255,.08) 50%,rgba(255,255,255,.04) 75%);background-size:200% 100%;animation:shimmer 1.5s ease-in-out infinite;border-radius:var(--r-sm);min-height:16px;}
+.skeleton-line{height:14px;margin-bottom:8px;border-radius:3px;}
+.skeleton-line.w60{width:60%;}.skeleton-line.w80{width:80%;}.skeleton-line.w40{width:40%;}
+.skeleton-card{height:80px;border-radius:var(--r);margin-bottom:8px;}
+.skeleton-row{display:flex;gap:10px;margin-bottom:10px;}
+.skeleton-row .skeleton{flex:1;}
+/* ── Validation styles ── */
+.field-error{border-color:var(--red)!important;box-shadow:0 0 0 2px rgba(251,113,133,.15)!important;}
+.field-error-msg{font-size:.64rem;color:var(--red);margin-top:3px;display:none;}
+.field-error-msg.visible{display:block;}
+/* ── Help tooltip ── */
+.help-tip{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:rgba(255,255,255,.06);color:var(--dim);font-size:.6rem;font-weight:700;cursor:help;margin-left:4px;position:relative;border:1px solid var(--border);flex-shrink:0;vertical-align:middle;}
+.help-tip:hover{background:var(--cyan-dim);color:var(--cyan);border-color:rgba(34,211,238,.3);}
+.help-tip::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border-hi);color:var(--text);padding:6px 10px;border-radius:var(--r-sm);font-size:.68rem;font-weight:400;white-space:normal;width:max-content;max-width:240px;line-height:1.5;box-shadow:0 4px 12px rgba(0,0,0,.35);pointer-events:none;opacity:0;transition:opacity .15s;z-index:100;}
+.help-tip:hover::after{opacity:1;}
+/* ── Clear filters button ── */
+.btn-clear-filters{font-size:.68rem;color:var(--muted);background:transparent;border:1px solid var(--border);padding:4px 10px;border-radius:var(--r-sm);cursor:pointer;transition:all .15s;}
+.btn-clear-filters:hover{color:var(--text);border-color:var(--border-hi);background:rgba(255,255,255,.03);}
 {% block page_styles %}{% endblock %}
 </style>
 <script>
@@ -240,6 +260,10 @@ function toggleSidebar(){
   else{sb.classList.toggle('collapsed');const isExpanded=!sb.classList.contains('collapsed');if(btn){btn.textContent=isExpanded?'‹':'›';btn.setAttribute('aria-expanded',isExpanded);}}
 }
 function toast(msg,err=false){const t=document.getElementById('toast');t.textContent=msg;t.className='show'+(err?' err':'');setTimeout(()=>{t.className='';},3200);}
+/* ── Escape key closes modals ── */
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){document.querySelectorAll('.modal-overlay').forEach(m=>{if(m.style.display!=='none'&&getComputedStyle(m).display!=='none')m.style.display='none';});}});
+/* ── Skeleton loader helper ── */
+function showSkeleton(el,lines){if(!el)return;let h='';for(let i=0;i<(lines||3);i++){const w=['w80','w60','w40'][i%3];h+=`<div class="skeleton skeleton-line ${w}"></div>`;}el.innerHTML=h;}
 </script>
 </head>
 <body>

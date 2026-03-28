@@ -30,9 +30,10 @@
 #content{padding:18px 20px;display:flex;flex-direction:column;gap:18px;flex:1;}
 .hero-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
 @media(max-width:900px){.hero-grid{grid-template-columns:repeat(2,1fr);}}
-@media(max-width:560px){.hero-grid{grid-template-columns:1fr 1fr;}}
-@media(max-width:380px){.hero-grid{grid-template-columns:1fr;}}
+@media(max-width:560px){.hero-grid{grid-template-columns:1fr 1fr;gap:8px;}}
+@media(max-width:380px){.hero-grid{grid-template-columns:1fr 1fr;gap:6px;}}
 .hero-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;position:relative;overflow:hidden;transition:border-color .2s,transform .15s;}
+@media(max-width:380px){.hero-card{padding:12px 14px;}.hero-val{font-size:1.4rem!important;}}
 .hero-card:hover{border-color:var(--border-hi);transform:translateY(-1px);}
 .hero-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;border-radius:var(--r) var(--r) 0 0;}
 .hero-card.c-cyan::before{background:linear-gradient(90deg,var(--cyan),rgba(34,211,238,.3));}
@@ -55,6 +56,7 @@
 .chart-title{font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);}
 .chart-meta{font-size:.65rem;color:var(--dim);font-family:var(--mono);}
 .chart-wrap{height:130px;position:relative;}
+@media(max-width:640px){.chart-wrap{height:100px;}}
 .tscroll{overflow-x:auto;max-height:300px;overflow-y:auto;}
 .activity-row{display:grid;grid-template-columns:1fr 1.6fr;gap:10px;}
 @media(max-width:780px){.activity-row{grid-template-columns:1fr;}}
@@ -207,7 +209,7 @@
   <!-- ── Allocation par slot ── -->
   <div>
     <div class="sec-hdr"><h2>Allocation par slot</h2><a href="/strategies" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Gérer les slots →</a></div>
-    <div id="alloc-grid" class="alloc-grid"></div>
+    <div id="alloc-grid" class="alloc-grid"><div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div></div>
   </div>
 
   <div>
