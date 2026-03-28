@@ -3,10 +3,13 @@ import logging
 import os
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.api import state
 from app.api.helpers import CleanJSONResponse
@@ -14,6 +17,9 @@ from app.api.routes import config, trades, backtest, scanner, optimizer, bot, ml
 from app.core.database import init_db
 
 logger = logging.getLogger(__name__)
+
+# ── Rate limiter ───────────────────────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 # ── Application ────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -24,6 +30,9 @@ app = FastAPI(
     description="API de trading algorithmique multi-stratégies. Tous les endpoints protégés exigent `X-API-Key`.",
     default_response_class=CleanJSONResponse,
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(
@@ -37,6 +46,19 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["X-API-Key", "Content-Type"],
 )
+
+
+# ── HTTPS redirect (if configured) ────────────────────────────────────────
+@app.middleware("http")
+async def https_redirect(request: Request, call_next):
+    """Redirect HTTP to HTTPS in production if FORCE_HTTPS env var is set."""
+    if os.environ.get("FORCE_HTTPS", "").lower() in ("1", "true", "yes"):
+        proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+        if proto == "http":
+            url = request.url.replace(scheme="https")
+            from starlette.responses import RedirectResponse
+            return RedirectResponse(url=str(url), status_code=301)
+    return await call_next(request)
 
 # ── Templates ──────────────────────────────────────────────────────────────
 try:

@@ -21,6 +21,17 @@ logger = logging.getLogger(__name__)
 async def verify_api_key(request: Request):
     key = state.cfg["web"].get("api_key", "") if state.cfg else ""
     if not key:
+        # When no API key is configured, only allow requests from localhost
+        client_host = getattr(request.client, "host", "unknown") if request.client else "unknown"
+        if client_host not in ("127.0.0.1", "localhost", "::1"):
+            logger.warning(
+                f"[Auth] Accès refusé depuis {client_host} — "
+                f"aucune clé API configurée et requête non-locale"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="API key required for remote access. Set web.api_key in config.yaml."
+            )
         return
     token = request.headers.get("X-API-Key") or request.query_params.get("api_key") or ""
     if not hmac.compare_digest(token, key):
