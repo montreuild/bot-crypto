@@ -235,7 +235,6 @@ let _currentFilter='all', _allSlotData=[];
 
 function clrC(v){return v>0?'c-green':v<0?'c-red':'c-muted';}
 function fmtS(v){const n=+(v||0);return(n>=0?'+':'')+n.toFixed(2);}
-function fmtP(v){const n=+(v||0);return n>=100?n.toFixed(2):n.toFixed(4);}
 
 /* ── Build summary stats ── */
 function buildSummary(){
@@ -407,7 +406,7 @@ function renderSlotCard(s){
     <div class="slot-header">
       <div class="slot-name">${escHtml(slotLabel)}</div>
       <label class="mini-toggle" title="${s.isDisabled?'Activer':'Désactiver'} ce slot" onclick="event.stopPropagation()">
-        <input type="checkbox" ${s.isDisabled?'':'checked'} onchange="confirmToggle('${escHtml(s.strat)}','${escHtml(s.tf)}',this.checked);event.stopPropagation()"/>
+        <input type="checkbox" ${s.isDisabled?'':'checked'} onchange="confirmToggle('${escHtml(s.strat)}','${escHtml(s.tf)}',this.checked)"/>
         <span class="mini-toggle-slider"></span>
       </label>
     </div>
@@ -520,7 +519,7 @@ function renderDetailTrades(trades){
   if(!trades.length){$('dp-trades').innerHTML='<span style="color:var(--dim);font-size:.73rem">Aucun trade enregistré</span>';return;}
   $('dp-trades').innerHTML=trades.slice(0,15).map(t=>{
     const pnl=+(t.pnl||0),d=new Date(t.time||'');
-    const ds=isNaN(d)?'—':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+    const ds=isNaN(d)?'—':d.toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
     return`<div class="trade-row">
       <span style="color:var(--muted);font-size:.66rem">${ds} <span class="tag tag-${t.side}" style="font-size:.58rem">${(t.side||'').toUpperCase()}</span></span>
       <span style="display:flex;flex-direction:column;align-items:flex-end">

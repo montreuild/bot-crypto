@@ -645,7 +645,7 @@ async function checkHealth(){
     const r=await fetch('/health');
     const hb=$('health-badge');
     if(!hb)return;
-    if(r.ok){const d=await r.json();hb.style.display='';hb.textContent='● Système OK';hb.style.color='var(--green)';hb.style.borderColor='var(--green)';hb.style.background='var(--green-dim)';}
+    if(r.ok){hb.style.display='';hb.textContent='● Système OK';hb.style.color='var(--green)';hb.style.borderColor='var(--green)';hb.style.background='var(--green-dim)';}
     else{hb.style.display='';hb.textContent='⚠ Dégradé';hb.style.color='var(--amber)';hb.style.borderColor='var(--amber)';hb.style.background='var(--amber-dim)';}
   }catch(e){
     const hb=$('health-badge');
