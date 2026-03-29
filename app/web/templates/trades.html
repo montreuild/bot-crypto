@@ -18,7 +18,7 @@
 .filter-input{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--r-sm);font-size:.76rem;font-family:var(--body);outline:none;width:140px;transition:border-color .2s ease,box-shadow .2s ease;}
 .filter-input:focus{border-color:var(--cyan);box-shadow:0 0 0 2px rgba(34,211,238,.1);}
 .filter-input#f-symbol{width:160px;}
-.filter-bar-wrap{background:rgba(255,255,255,.015);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.filter-bar-wrap{background:rgba(255,255,255,.015);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:64px;z-index:14;backdrop-filter:blur(8px);}
 /* Stats bar */
 .stats-bar{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;}
 .stat-cell{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;position:relative;overflow:hidden;}
@@ -50,6 +50,11 @@ th.sort-desc::after{content:' ↓';color:var(--cyan);}
 .chart-wrap{height:140px;position:relative;}
 .charts-row{display:grid;grid-template-columns:2fr 1fr;gap:12px;}
 @media(max-width:700px){.charts-row{grid-template-columns:1fr;}}
+@media(max-width:700px){
+  .filter-bar-wrap{top:60px;padding:10px 12px;}
+  .filters{width:100%;}
+  .filter-input,.filter-input#f-symbol{width:100%;}
+}
 /* Trade table enhancements */
 .trades-table tr:hover td{background:rgba(255,255,255,.04);}
 .pnl-bold{font-weight:700;}
@@ -103,7 +108,7 @@ th.sort-desc::after{content:' ↓';color:var(--cyan);}
 
   <!-- Panel: Tous les trades -->
   <div id="tab-all">
-    <div class="filter-bar-wrap">
+    <div class="filter-bar-wrap" role="region" aria-label="Filtres des trades">
       <div class="filters">
         <input class="filter-input" id="f-symbol" placeholder="Paire…" oninput="applyFilters()"/>
         <select class="filter-input" id="f-slot" onchange="applyFilters()"><option value="">Tous les slots</option></select>
@@ -115,9 +120,9 @@ th.sort-desc::after{content:' ↓';color:var(--cyan);}
     <div class="table-card">
       <div class="tscroll"><table class="table-striped trades-table">
         <thead><tr>
-          <th class="sortable" onclick="sortBy('time')">Date</th><th class="sortable" onclick="sortBy('symbol')">Paire</th><th>Dir.</th><th>Slot</th>
-          <th class="r sortable" onclick="sortBy('entry')">Entrée</th><th class="r sortable" onclick="sortBy('exit')">Sortie</th>
-          <th class="r sortable" onclick="sortBy('pnl')">PnL</th><th class="r sortable" onclick="sortBy('pnl_pct')">%</th><th class="r sortable" onclick="sortBy('score')">Score</th><th>Raison</th>
+          <th class="sortable" onclick="sortBy('time')" scope="col" aria-sort="descending">Date</th><th class="sortable" onclick="sortBy('symbol')" scope="col" aria-sort="none">Paire</th><th scope="col">Dir.</th><th scope="col">Slot</th>
+          <th class="r sortable" onclick="sortBy('entry')" scope="col" aria-sort="none">Entrée</th><th class="r sortable" onclick="sortBy('exit')" scope="col" aria-sort="none">Sortie</th>
+          <th class="r sortable" onclick="sortBy('pnl')" scope="col" aria-sort="none">PnL</th><th class="r sortable" onclick="sortBy('pnl_pct')" scope="col" aria-sort="none">%</th><th class="r sortable" onclick="sortBy('score')" scope="col" aria-sort="none">Score</th><th scope="col">Raison</th>
         </tr></thead>
         <tbody id="trades-tbody"><tr><td colspan="10" class="empty-row"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div><div class="skeleton skeleton-line w40"></div></td></tr></tbody>
       </table></div>
@@ -203,8 +208,12 @@ function applySort(){
 function updateSortHeaders(){
   document.querySelectorAll('th.sortable').forEach(th=>{
     th.classList.remove('sort-asc','sort-desc');
+    th.setAttribute('aria-sort','none');
     const col=th.getAttribute('onclick')?.match(/sortBy\('(\w+)'\)/)?.[1];
-    if(col===_sortCol)th.classList.add(_sortDir>0?'sort-asc':'sort-desc');
+    if(col===_sortCol){
+      th.classList.add(_sortDir>0?'sort-asc':'sort-desc');
+      th.setAttribute('aria-sort',_sortDir>0?'ascending':'descending');
+    }
   });
 }
 
