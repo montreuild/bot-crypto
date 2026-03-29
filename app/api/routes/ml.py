@@ -16,8 +16,6 @@ router = APIRouter()
 def train_ml(symbol: str = "BTC/USDC", limit: int = 2000):
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
-    if not state.cfg.get("ml", {}).get("enabled"):
-        raise HTTPException(400, "ML désactivé dans la config")
     try:
         from app.ml.model import MLPredictor
         exchange = create_exchange(state.cfg)

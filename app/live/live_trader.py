@@ -83,6 +83,9 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self._loaded_strategies: Dict[str, object] = {}
         self._load_all_strategies()
 
+        # _ml_lock doit être initialisé avant MLStrategyTrainer
+        self._ml_lock = threading.Lock()
+
         # Chargement des modèles ML persistés
         from app.ml.trainer import MLStrategyTrainer
         self._ml_trainer = MLStrategyTrainer(cfg, ml_lock=self._ml_lock)
@@ -113,7 +116,6 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self.open_positions: Dict[str, dict] = {}
         self._positions_lock  = threading.Lock()
         self._capital_lock    = threading.Lock()
-        self._ml_lock         = threading.Lock()
         self.running          = False
         self.cycle_count      = 0
         self._ml_retrain_at   = 0
