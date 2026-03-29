@@ -11,6 +11,10 @@
   --card2:#0c1018;
   --sans:var(--body);
 }
+[data-theme="light"]{
+  --card2:var(--card);
+  --border2:rgba(0,0,0,.15);
+}
 .page{display:contents;}
 
 /* ── 8. Config page layout ── */
@@ -25,7 +29,7 @@
 /* ── 1. Strategy cards ── */
 .strat-grid{display:flex;flex-direction:column;gap:8px;}
 .strat-card{
-  background:#0c1018;border:1px solid var(--border);border-radius:var(--r-sm);
+  background:var(--card2);border:1px solid var(--border);border-radius:var(--r-sm);
   padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;
   cursor:pointer;transition:border-color .2s,background .2s,box-shadow .2s;
   border-left:3px solid var(--dim);
@@ -41,11 +45,13 @@
 .badge-warn{background:var(--amber-dim);color:var(--amber);border:1px solid var(--amber);}
 
 /* ── 10. Param groups ── */
-.params-group{background:#0c1018;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:10px;transition:border-color .2s;}
+.params-group{background:var(--card2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:10px;transition:border-color .2s;}
 .params-group:hover{border-color:var(--border-hi);}
 .params-hdr{padding:12px 16px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;transition:background .2s;}
 .params-hdr:hover{background:rgba(255,255,255,.035);}
 .params-hdr.open{background:rgba(255,255,255,.025);border-bottom:1px solid var(--border);}
+[data-theme="light"] .params-hdr:hover{background:rgba(0,0,0,.04);}
+[data-theme="light"] .params-hdr.open{background:rgba(0,0,0,.03);}
 .params-hdr-title{display:flex;align-items:center;gap:8px;font-size:.82rem;font-weight:600;color:var(--text);}
 .chevron{color:var(--muted);font-size:.8rem;transition:transform .3s cubic-bezier(.4,0,.2,1);}
 .params-hdr.open .chevron{transform:rotate(180deg);}
@@ -65,6 +71,7 @@
   transition:background .15s;
 }
 .param-row:hover{background:rgba(255,255,255,.02);}
+[data-theme="light"] .param-row:hover{background:rgba(0,0,0,.03);}
 .param-row:last-of-type{border-bottom:none;}
 .param-key{
   font-family:var(--mono);font-size:.73rem;color:var(--text);
@@ -159,6 +166,7 @@
 /* ── 2. Left panel accordions — smoother chevron ── */
 .config-left .panel-hdr{cursor:pointer;user-select:none;position:relative;transition:background .2s;}
 .config-left .panel-hdr:hover{background:rgba(255,255,255,.025);}
+[data-theme="light"] .config-left .panel-hdr:hover{background:rgba(0,0,0,.04);}
 .config-left .panel-hdr::after{
   content:'▾';position:absolute;right:14px;top:50%;
   transform:translateY(-50%) rotate(0deg);
@@ -176,6 +184,13 @@
 
 /* ── 8. Fade-in for content area ── */
 #content{animation:fadeIn .35s ease both;}
+
+/* ── Light theme overrides ── */
+[data-theme="light"] .strat-card:hover{background:rgba(0,0,0,.02);}
+[data-theme="light"] .badge-off{background:rgba(0,0,0,.04);}
+[data-theme="light"] .param-row{border-bottom:1px solid rgba(0,0,0,.06);}
+[data-theme="light"] .schedule-row:hover{background:rgba(0,0,0,.03);}
+[data-theme="light"] .panel-body>#tg-cfg,[data-theme="light"] .panel-body>#wa-cfg,[data-theme="light"] .panel-body>#email-cfg{background:rgba(0,0,0,.025);}
 {% endblock %}
 
 {% block topbar_content %}

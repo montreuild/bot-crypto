@@ -51,17 +51,17 @@
 /* Metrics */
 .metrics-row{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:10px;}
 @media(max-width:700px){.metrics-row{grid-template-columns:repeat(3,1fr);}}
-.metric-box{background:#0c1018;border:1px solid var(--border);border-radius:var(--r-sm);padding:9px;text-align:center;}
+.metric-box{background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:9px;text-align:center;}
 .metric-lbl{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;}
 .metric-val{font-size:.88rem;font-weight:700;font-family:var(--mono);letter-spacing:-.01em;}
 /* Before/After */
 .ba-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;}
-.ba-box{background:#0c1018;border:1px solid var(--border);border-radius:var(--r-sm);padding:10px;}
+.ba-box{background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px;}
 .ba-title{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;font-weight:700;}
 .ba-row{display:flex;justify-content:space-between;font-size:.73rem;margin-bottom:3px;font-family:var(--mono);}
 .ba-key{color:var(--muted);}
 /* Params block */
-.params-block{background:#070b12;border:1px solid var(--border);border-radius:var(--r-sm);padding:10px;margin-top:10px;font-size:.71rem;font-family:var(--mono);line-height:1.9;color:var(--muted);word-break:break-all;}
+.params-block{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px;margin-top:10px;font-size:.71rem;font-family:var(--mono);line-height:1.9;color:var(--muted);word-break:break-all;}
 .params-block .pk{color:var(--cyan);}.params-block .pv{color:var(--green);}
 /* Top 5 */
 .top5-wrap{margin-top:10px;overflow-x:auto;}
@@ -295,16 +295,12 @@ function renderStratChecks(spaces, stratTfs) {
     el.innerHTML = '<div style="color:var(--red);font-size:.75rem">Erreur chargement stratégies</div>';
     return;
   }
-  el.innerHTML = Object.keys(spaces).map(s => {
+  el.innerHTML = Object.keys(spaces).filter(s => !s.startsWith('ml_')).map(s => {
     const tfs = (stratTfs[s] || []).join(', ') || 'tous';
-    const isML = s.startsWith('ml_');
-    const mlBadge = isML
-      ? `<span style="background:var(--purple-dim);color:var(--purple);font-size:.6rem;padding:1px 5px;border-radius:3px;margin-left:4px" title="Stratégie ML — chaque trial entraîne un modèle (lent). Utilisez un petit nombre de trials (5-15).">🧠 ML</span>`
-      : '';
     return `<div class="checkbox-row" style="margin-bottom:0;align-items:flex-start">
       <input type="checkbox" id="sc-${s}" checked onchange="updateStratCompatibility()"/>
       <div>
-        <label for="sc-${s}" style="font-family:var(--mono);font-size:.78rem;font-weight:600">${s}</label>${mlBadge}
+        <label for="sc-${s}" style="font-family:var(--mono);font-size:.78rem;font-weight:600">${s}</label>
         <span id="sc-tfs-${s}" style="font-size:.65rem;color:var(--cyan);margin-left:6px">${tfs}</span>
       </div>
     </div>`;
@@ -410,6 +406,7 @@ function renderSpaces(spaces) {
   const globalNote = ['score_threshold','risk_per_trade','capital','timeframe','paper_mode'];
   let html = '';
   for (const [name, info] of Object.entries(spaces)) {
+    if (name.startsWith('ml_')) continue;
     // info.params est un objet {param: [valeurs]}
     const params = info.params || {};
     const paramKeys = Object.keys(params);

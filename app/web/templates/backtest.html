@@ -68,7 +68,7 @@
 @media(max-width:540px){.dbg{grid-template-columns:1fr}}
 .dh{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px;margin-top:10px;font-weight:600;}
 .dh:first-child{margin-top:0;}
-.rbox{background:#070b12;border:1px solid var(--border);border-radius:4px;padding:7px 9px;font-size:.71rem;color:var(--muted);}
+.rbox{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:7px 9px;font-size:.71rem;color:var(--muted);}
 .clist{list-style:none;display:flex;flex-direction:column;gap:2px;}
 .clist li{font-size:.7rem;color:var(--muted);padding:2px 0;border-bottom:1px solid rgba(255,255,255,.04);}
 .clist li::before{content:"\2713 ";color:var(--green);}
@@ -83,12 +83,12 @@
 .ml-panel{background:var(--card);border:1px solid rgba(167,139,250,.3);border-radius:var(--r);padding:14px;border-left:3px solid var(--purple);}
 .ml-title{font-size:.76rem;font-weight:700;color:var(--purple);margin-bottom:10px;}
 .ml-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px;}
-.ml-kpi{background:#0c1018;border:1px solid var(--border);border-radius:var(--r-sm);padding:9px 11px;}
+.ml-kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:9px 11px;}
 .ml-kpi .l{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;font-weight:600;}
 .ml-kpi .v{font-size:.92rem;font-weight:700;color:var(--purple);font-family:var(--mono);}
 .opt-panel{background:var(--card);border:1px solid rgba(251,191,36,.2);border-radius:var(--r);padding:12px;border-left:3px solid var(--amber);}
 .opt-title{font-size:.76rem;font-weight:700;color:var(--amber);margin-bottom:10px;}
-#bt-log{background:#050810;border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;font-size:.67rem;font-family:var(--mono);color:var(--dim);max-height:140px;overflow-y:auto;display:none;flex-direction:column;gap:2px;}
+#bt-log{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;font-size:.67rem;font-family:var(--mono);color:var(--dim);max-height:140px;overflow-y:auto;display:none;flex-direction:column;gap:2px;}
 .tt{width:100%;border-collapse:collapse;font-size:.71rem;}
 .tt th,.tt td{padding:5px 8px;border-bottom:1px solid rgba(255,255,255,.04);}
 .tt th{color:var(--muted);font-weight:600;font-size:.6rem;text-transform:uppercase;}
@@ -534,7 +534,10 @@ function buildPanel(name){
   }
   div.innerHTML=`<div style="display:flex;flex-direction:column;gap:10px">${kpiHTML}${chartsHTML}${wfHTML}${mcHTML}${mlHTML}<div id="ttable-${sid}"></div></div>`;
   const closed=(sd.trades||[]).filter(t=>t.status!=='open');
-  buildEq(closed,c,sd,sid);buildPnl(closed,c,sid);buildCum(closed,c,sid);buildSc(closed,sid);buildTrades(sd,sid);
+  if(name===activeStrat){
+    buildEq(closed,c,sd,sid);buildPnl(closed,c,sid);buildCum(closed,c,sid);buildSc(closed,sid);
+  }
+  buildTrades(sd,sid);
 }
 
 function kpi(l,v,s,cls,bc){return`<div class="kpi" style="border-top-color:${bc||'var(--cyan)'}"><div class="l">${l}</div><div class="v ${cls||''}">${v}</div><div class="s">${s||''}</div></div>`;}
