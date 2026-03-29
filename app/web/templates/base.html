@@ -13,7 +13,7 @@
 :root{
   --bg:#070a10;--surface:#0c1018;--card:#101520;
   --border:rgba(255,255,255,.07);--border-hi:rgba(255,255,255,.13);
-  --text:#dde6f5;--muted:#5a6e8c;--dim:#2e3f55;
+  --text:#dde6f5;--muted:#7a9cba;--dim:#506a80;
   --cyan:#22d3ee;--cyan-dim:rgba(34,211,238,.1);
   --green:#34d399;--green-dim:rgba(52,211,153,.1);
   --red:#fb7185;--red-dim:rgba(251,113,133,.1);
@@ -251,7 +251,7 @@ a:focus-visible,.sb-link:focus-visible,.toggle input:focus-visible+.toggle-slide
 [data-theme="light"]{
   --bg:#f4f6f9;--surface:#ffffff;--card:#eef1f6;
   --border:rgba(0,0,0,.1);--border-hi:rgba(0,0,0,.2);
-  --text:#0f172a;--muted:#4b6280;--dim:#8fa3b8;
+  --text:#0f172a;--muted:#2d4f6a;--dim:#4e6d87;
   --cyan:#0284c7;--cyan-dim:rgba(2,132,199,.1);
   --green:#059669;--green-dim:rgba(5,150,105,.1);
   --red:#dc2626;--red-dim:rgba(220,38,38,.1);
@@ -325,7 +325,7 @@ function showSkeleton(el,lines){if(!el)return;let h='';for(let i=0;i<(lines||3);
     <a href="/replay"     class="sb-link {% if active_page=='replay'     %}active{% endif %}" aria-label="Replay Bougies" {% if active_page=='replay'     %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">▶</span><span class="sb-lbl">Replay</span></a>
     <div class="sb-group-label" style="margin-top:12px" role="presentation">Optimisation</div>
     <a href="/optimizer"  class="sb-link {% if active_page=='optimizer'  %}active{% endif %}" aria-label="Optimiseur de stratégies" {% if active_page=='optimizer'  %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">⬡</span><span class="sb-lbl">Optimiseur</span></a>
-    <a href="/ml"         class="sb-link {% if active_page=='ml'         %}active{% endif %}" aria-label="Optimisateur ML" {% if active_page=='ml'         %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">🧠</span><span class="sb-lbl">Optimisateur ML</span></a>
+    <a href="/ml"         class="sb-link {% if active_page=='ml'         %}active{% endif %}" aria-label="Optimiseur ML" {% if active_page=='ml'         %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">🧠</span><span class="sb-lbl">Optimiseur ML</span></a>
     <a href="/audit"      class="sb-link {% if active_page=='audit'      %}active{% endif %}" aria-label="Audit OOS" {% if active_page=='audit'      %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">📋</span><span class="sb-lbl">Audit OOS</span></a>
     <div class="sb-group-label" style="margin-top:12px" role="presentation">Système</div>
     <a href="/config"     class="sb-link {% if active_page=='config'     %}active{% endif %}" aria-label="Configuration" {% if active_page=='config'     %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">⚙</span><span class="sb-lbl">Configuration</span></a>

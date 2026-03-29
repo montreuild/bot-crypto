@@ -121,6 +121,8 @@
 
   <!-- CB / Global alert bar -->
   <div id="cb-alert" style="display:none;background:var(--red-dim);border:1px solid rgba(251,113,133,.25);border-radius:var(--r);padding:10px 16px;font-size:.75rem;color:var(--red)"></div>
+  <!-- Bot stopped notice -->
+  <div id="bot-stopped-notice" style="display:none;background:var(--amber-dim);border:1px solid rgba(251,191,36,.25);border-radius:var(--r);padding:10px 16px;font-size:.75rem;color:var(--amber)">⚠ Bot arrêté — les données de performance ne sont pas disponibles. Les slots affichés correspondent à la configuration enregistrée.</div>
 
   <!-- Summary stats -->
   <div>
@@ -258,7 +260,34 @@ function fmtS(v){const n=+(v||0);return(n>=0?'+':'')+n.toFixed(2);}
 
 /* ── Build summary stats ── */
 function buildSummary(){
-  if(!_status)return;
+  if(!_status){
+    // Bot arrêté : afficher ce qu'on peut depuis la config
+    if(_config){
+      const strats=_config.strategies||[];
+      const tfs=_config.timeframes||[];
+      const sp=_config.strategy_params||{};
+      const disabledMap={};
+      for(const[s,p]of Object.entries(sp)){(p.disabled_timeframes||[]).forEach(tf=>{disabledMap[s+'::'+tf]=true;});}
+      let total=0;
+      for(const s of strats)for(const tf of tfs)if(!disabledMap[s+'::'+tf])total++;
+      $('sum-active').textContent=total;
+      $('sum-active-sub').textContent=tfs.length+' timeframe'+(tfs.length>1?'s':'');
+      $('slot-count-badge').textContent=total+' slots · '+tfs.length+' TFs';
+    } else {
+      $('sum-active').textContent='—';
+      $('sum-active-sub').textContent='—';
+      $('slot-count-badge').textContent='';
+    }
+    $('sum-pnl').textContent='—';$('sum-pnl').className='summary-val c-muted';
+    $('sum-pnl-sub').textContent='bot arrêté';
+    $('sum-wr').textContent='—';$('sum-wr').className='summary-val c-muted';
+    $('sum-wr-sub').textContent='bot arrêté';
+    $('sum-paused').textContent='—';$('sum-paused').className='summary-val c-muted';
+    $('sum-paused-sub').textContent='bot arrêté';
+    const totalCap=(_allocation||[]).reduce((a,s)=>a+(s.budget_usdc||0),0);
+    $('sum-capital').textContent=totalCap>0?totalCap.toFixed(0):'—';
+    return;
+  }
   const activeTF=_status.active_per_tf||{};
   const byStrat=_status.by_strategy||{};
   const alloc=_allocation||[];
@@ -319,16 +348,9 @@ function sortSlots(){
 
 /* ── Build slot data ── */
 function collectSlotData(){
-  if(!_status)return[];
-  const activeTF=_status.active_per_tf||{};
-  const alloc=_allocation||[];
-  const states=_slotStates||[];
-  const byStrat=_status.by_strategy||{};
+  if(!_status&&!_config)return[];
 
-  const pauseMap={};states.forEach(s=>{if(s.paused)pauseMap[s.slot_key]=s.pause_reason;});
-  const allocMap={};alloc.forEach(a=>allocMap[a.slot_key]=a);
-
-  // Get disabled timeframes from config
+  // Build disabled map from config
   const disabledMap={};
   if(_config){
     const sp=_config.strategy_params||{};
@@ -337,6 +359,39 @@ function collectSlotData(){
       dt.forEach(tf=>{disabledMap[strat+'::'+tf]=true;});
     }
   }
+
+  const alloc=_allocation||[];
+  const allocMap={};alloc.forEach(a=>allocMap[a.slot_key]=a);
+
+  if(!_status){
+    // Bot arrêté : construire les slots depuis la config
+    const strats=_config.strategies||[];
+    const tfs=(_config.timeframes||[]).slice().sort();
+    const slots=[];
+    for(const tf of tfs){
+      for(const strat of strats){
+        const slotKey=strat+'::'+tf;
+        const isDisabled=!!disabledMap[slotKey];
+        const a=allocMap[slotKey]||{};
+        slots.push({
+          slotKey,strat,tf,
+          wr:0,trades:0,pnl:0,pf:0,
+          budgetPct:a.budget_pct||0,usedPct:a.used_pct||0,
+          usedNotional:a.used_notional||0,budgetUsdc:a.budget_usdc||0,
+          isPaused:false,isDisabled,
+          pauseReason:'',oos:null,oosDate:'',
+        });
+      }
+    }
+    _allSlotData=slots;
+    return slots;
+  }
+
+  const activeTF=_status.active_per_tf||{};
+  const states=_slotStates||[];
+  const byStrat=_status.by_strategy||{};
+
+  const pauseMap={};states.forEach(s=>{if(s.paused)pauseMap[s.slot_key]=s.pause_reason;});
 
   const slots=[];
   const tfs=Object.keys(activeTF).sort();
@@ -368,7 +423,7 @@ function collectSlotData(){
 
 /* ── Build columns ── */
 function buildColumns(){
-  if(!_status)return;
+  if(!_status&&!_config)return;
   let slots=collectSlotData();
 
   // Apply search filter
@@ -389,7 +444,8 @@ function buildColumns(){
   else if(sort==='trades')slots.sort((a,b)=>b.trades-a.trades);
 
   if(!slots.length){
-    $('tf-columns').innerHTML='<span style="color:var(--dim);font-size:.78rem;padding:12px">'+(_currentFilter!=='all'?'Aucun slot correspondant à ce filtre.':'Aucun slot actif — lancez une optimisation.')+'</span>';
+    const emptyMsg=_currentFilter!=='all'?'Aucun slot correspondant à ce filtre.':(_status?'Aucun slot actif — lancez une optimisation.':'Aucun slot configuré.');
+    $('tf-columns').innerHTML='<span style="color:var(--dim);font-size:.78rem;padding:12px">'+emptyMsg+'</span>';
     return;
   }
 
@@ -651,6 +707,8 @@ async function load(){
 
     // Volatility brake badge
     $('vol-badge').classList.toggle('active',!!_status?.volatility_brake);
+    // Bot stopped notice
+    $('bot-stopped-notice').style.display=_status?'none':'';
 
     buildSummary();
     renderCBAlerts();
