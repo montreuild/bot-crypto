@@ -276,7 +276,7 @@ function formatScanEta(ms){
   if (secs < 60) return `~${secs}s restant`;
   const mins = Math.floor(secs / 60);
   const rem = secs % 60;
-  const remSuffix = rem ? ` ${`${rem}`.padStart(2,'0')}s` : '';
+  const remSuffix = rem ? ` ${rem.toString().padStart(2,'0')}s` : '';
   return `~${mins}min${remSuffix} restant`;
 }
 function getScanTableColspan(){
@@ -303,8 +303,10 @@ function startScanProgress(){
   setScanProgress(SCAN_PROGRESS_START_PCT, 'Préparation…');
   _scanProgressTimer = setInterval(() => {
     const elapsed = Date.now() - _scanStartedAt;
-    const pct = Math.min(SCAN_PROGRESS_MAX_PCT, SCAN_PROGRESS_START_PCT + (elapsed / _scanExpectedMs) * SCAN_PROGRESS_RANGE_PCT);
-    setScanProgress(pct, pct < 20 ? 'Collecte des données…' : formatScanEta(Math.max(0, _scanExpectedMs - elapsed)));
+    const progressRatio = elapsed / _scanExpectedMs;
+    const pct = Math.min(SCAN_PROGRESS_MAX_PCT, SCAN_PROGRESS_START_PCT + progressRatio * SCAN_PROGRESS_RANGE_PCT);
+    const label = pct < 20 ? 'Collecte des données…' : formatScanEta(Math.max(0, _scanExpectedMs - elapsed));
+    setScanProgress(pct, label);
   }, 250);
 }
 function finishScanProgress(ok){
