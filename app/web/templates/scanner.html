@@ -276,7 +276,8 @@ function formatScanEta(ms){
   if (secs < 60) return `~${secs}s restant`;
   const mins = Math.floor(secs / 60);
   const rem = secs % 60;
-  return `~${mins}min${rem ? ` ${`${rem}`.padStart(2,'0')}s` : ''} restant`;
+  const remLabel = rem ? ` ${rem.toString().padStart(2,'0')}s` : '';
+  return `~${mins}min${remLabel} restant`;
 }
 function getScanTableColspan(){
   const table = document.getElementById('scan-tbody')?.closest('table');
@@ -289,7 +290,8 @@ function setScanProgress(pct, label, state='running'){
   const etaEl = document.getElementById('scan-progress-eta');
   if (!wrap || !fill || !pctEl || !etaEl) return;
   const safePct = Math.max(0, Math.min(100, pct));
-  wrap.className = `scan-progress show${state==='done'?' done':state==='err'?' err':''}`;
+  const stateClass = state === 'done' ? ' done' : state === 'err' ? ' err' : '';
+  wrap.className = 'scan-progress show' + stateClass;
   wrap.setAttribute('aria-valuenow', String(Math.round(safePct)));
   fill.style.width = `${safePct}%`;
   pctEl.textContent = `${Math.round(safePct)}%`;
