@@ -673,6 +673,7 @@
 {% block body_scripts %}
 <script>
 const $ = id => document.getElementById(id);
+const CONFIG_MOBILE_BREAKPOINT = 980;
 let cfgData = null;
 
 // ── Mobile tabs ────────────────────────────────────────────────────────────
@@ -693,7 +694,7 @@ function syncConfigLayout() {
   const left = document.querySelector('.config-left');
   const right = document.querySelector('.config-right');
   if (!left || !right) return;
-  if (window.innerWidth <= 980) {
+  if (window.innerWidth <= CONFIG_MOBILE_BREAKPOINT) {
     if (!left.classList.contains('tab-hidden') && !right.classList.contains('tab-hidden')) {
       switchConfigTab('left');
     }
