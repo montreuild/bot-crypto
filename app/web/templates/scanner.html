@@ -29,13 +29,22 @@
 .opp-sym{font-weight:700;font-size:.95rem;margin-bottom:4px;}
 .opp-score-bar{height:4px;border-radius:2px;background:linear-gradient(90deg,var(--cyan),var(--green));margin:6px 0;}
 .opp-meta{font-size:.72rem;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap;}
-.filter-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;padding:10px 14px;background:var(--card);border-radius:var(--r-sm);border:1px solid var(--border);}
+.filter-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;padding:10px 14px;background:var(--card);border-radius:var(--r-sm);border:1px solid var(--border);position:sticky;top:64px;z-index:14;backdrop-filter:blur(8px);}
 .filter-lbl{font-size:.72rem;color:var(--muted);font-weight:600;}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--cyan);border-radius:50%;animation:sp .7s linear infinite;}
 .empty{text-align:center;color:var(--dim);padding:30px;font-size:.8rem;}
 .stat-chip{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:.78rem;flex:1;min-width:100px;}
 .chip-lbl{color:var(--muted);font-size:.68rem;margin-bottom:3px;}
 .chip-val{font-weight:700;font-size:.92rem;font-family:var(--mono);}
+.scan-progress{display:none;margin-top:10px;padding:10px 12px;background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:var(--r-sm);}
+.scan-progress.show{display:block;}
+.scan-progress.done{border-color:rgba(52,211,153,.25);}
+.scan-progress.err{border-color:rgba(251,113,133,.3);}
+.scan-progress-bar{height:6px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;}
+.scan-progress-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--cyan),var(--purple));transition:width .2s linear;}
+.scan-progress.done .scan-progress-fill{background:linear-gradient(90deg,var(--green),var(--cyan));}
+.scan-progress.err .scan-progress-fill{background:linear-gradient(90deg,var(--red),var(--amber));}
+.scan-progress-meta{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:.68rem;color:var(--muted);font-family:var(--mono);}
 /* Watchlist */
 .wl-pill{display:inline-flex;align-items:center;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:3px 8px;font-size:.72rem;cursor:pointer;transition:all .15s;}
 .wl-pill:hover{border-color:var(--cyan);color:var(--cyan);}
@@ -57,6 +66,7 @@
 .chart-tf-btn:hover{color:var(--text);border-color:var(--border-hi);background:rgba(255,255,255,.03);}
 .chart-tf-btn.active{background:var(--cyan-dim);border-color:rgba(34,211,238,.4);color:var(--cyan);}
 .chart-sub-lbl{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:6px 8px 2px;}
+@media(max-width:700px){.filter-bar{top:60px;padding:10px 12px;}}
 {% endblock %}
 
 {% block topbar_content %}
@@ -98,7 +108,11 @@
                 <button id="btn-scan" class="btn btn-cyan" onclick="runScan()">▶ Scanner</button>
               </div>
             </div>
-            <div id="scan-status" style="font-size:.72rem;color:var(--dim);min-height:16px"></div>
+            <div id="scan-status" style="font-size:.72rem;color:var(--dim);min-height:16px" aria-live="polite"></div>
+            <div id="scan-progress" class="scan-progress" role="progressbar" aria-label="Progression du scan" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="scan-progress-bar"><div id="scan-progress-fill" class="scan-progress-fill"></div></div>
+              <div class="scan-progress-meta"><span id="scan-progress-pct">0%</span><span id="scan-progress-eta">—</span></div>
+            </div>
           </div>
         </div>
         <div class="panel" style="margin-top:16px">
@@ -114,7 +128,7 @@
       </div>
       <div>
         <div id="scan-chips" style="display:none;flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
-        <div class="filter-bar" id="filter-bar">
+        <div class="filter-bar" id="filter-bar" role="region" aria-label="Filtres du scanner">
           <span class="filter-lbl">Filtres :</span>
           <label style="font-size:.75rem;display:flex;align-items:center;gap:4px;color:var(--muted)">
             Régime :
@@ -151,14 +165,14 @@
             <table class="table-striped">
               <thead>
                 <tr>
-                  <th class="scan-th" onclick="scanSort('symbol')">Paire<span class="sort-arrow" id="sa-symbol"></span></th>
-                  <th class="scan-th" onclick="scanSort('regime')">Régime<span class="sort-arrow" id="sa-regime"></span></th>
-                  <th class="scan-th" onclick="scanSort('adx')">ADX<span class="sort-arrow" id="sa-adx"></span></th>
-                  <th class="scan-th" onclick="scanSort('rsi')">RSI<span class="sort-arrow" id="sa-rsi"></span></th>
-                  <th class="scan-th" onclick="scanSort('atr_pct')">ATR%<span class="sort-arrow" id="sa-atr_pct"></span></th>
-                  <th class="scan-th" onclick="scanSort('vol_ratio')">Vol ratio<span class="sort-arrow" id="sa-vol_ratio"></span></th>
-                  <th class="scan-th" onclick="scanSort('volume_24h')">Vol 24h<span class="sort-arrow" id="sa-volume_24h"></span></th>
-                  <th>Stratégies</th>
+                  <th class="scan-th" onclick="scanSort('symbol')" scope="col" aria-sort="none">Paire<span class="sort-arrow" id="sa-symbol"></span></th>
+                  <th class="scan-th" onclick="scanSort('regime')" scope="col" aria-sort="none">Régime<span class="sort-arrow" id="sa-regime"></span></th>
+                  <th class="scan-th" onclick="scanSort('adx')" scope="col" aria-sort="none">ADX<span class="sort-arrow" id="sa-adx"></span></th>
+                  <th class="scan-th" onclick="scanSort('rsi')" scope="col" aria-sort="none">RSI<span class="sort-arrow" id="sa-rsi"></span></th>
+                  <th class="scan-th" onclick="scanSort('atr_pct')" scope="col" aria-sort="none">ATR%<span class="sort-arrow" id="sa-atr_pct"></span></th>
+                  <th class="scan-th" onclick="scanSort('vol_ratio')" scope="col" aria-sort="none">Vol ratio<span class="sort-arrow" id="sa-vol_ratio"></span></th>
+                  <th class="scan-th" onclick="scanSort('volume_24h')" scope="col" aria-sort="none">Vol 24h<span class="sort-arrow" id="sa-volume_24h"></span></th>
+                  <th scope="col">Stratégies</th>
                 </tr>
               </thead>
               <tbody id="scan-tbody">
@@ -239,6 +253,15 @@ const LS_FILTERS = 'scanner_filters_v1';
 let scanResults = [];
 let openPositionSymbols = new Set();
 let scanSortKey = 'symbol', scanSortAsc = true;
+const SCAN_PROGRESS_START_PCT = 8;
+const SCAN_PROGRESS_MAX_PCT = 92;
+const SCAN_PROGRESS_RANGE_PCT = SCAN_PROGRESS_MAX_PCT - SCAN_PROGRESS_START_PCT;
+const SCAN_EXPECTED_MIN_MS = 4000;
+const SCAN_EXPECTED_MAX_MS = 45000;
+const SCAN_EXPECTED_GROWTH = 1.15;
+let _scanProgressTimer = null;
+let _scanStartedAt = 0;
+let _scanExpectedMs = 12000;
 
 function scanSort(key) {
   if (scanSortKey === key) { scanSortAsc = !scanSortAsc; }
@@ -247,6 +270,54 @@ function scanSort(key) {
   renderScanTable(filtered);
 }
 let _lastFilteredResults = null;
+
+function formatScanEta(ms){
+  const secs = Math.max(0, Math.ceil(ms / 1000));
+  if (secs < 60) return `~${secs}s restant`;
+  const mins = Math.floor(secs / 60);
+  const rem = secs % 60;
+  const remSuffix = rem ? ` ${rem.toString().padStart(2,'0')}s` : '';
+  return `~${mins}min${remSuffix} restant`;
+}
+function getScanTableColspan(){
+  const table = document.getElementById('scan-tbody')?.closest('table');
+  return table ? table.querySelectorAll('thead th').length : 8;
+}
+function setScanProgress(pct, label, state='running'){
+  const wrap = document.getElementById('scan-progress');
+  const fill = document.getElementById('scan-progress-fill');
+  const pctEl = document.getElementById('scan-progress-pct');
+  const etaEl = document.getElementById('scan-progress-eta');
+  if (!wrap || !fill || !pctEl || !etaEl) return;
+  const safePct = Math.max(0, Math.min(100, pct));
+  const stateClass = state === 'done' ? ' done' : state === 'err' ? ' err' : '';
+  wrap.className = 'scan-progress show' + stateClass;
+  wrap.setAttribute('aria-valuenow', String(Math.round(safePct)));
+  fill.style.width = `${safePct}%`;
+  pctEl.textContent = `${Math.round(safePct)}%`;
+  etaEl.textContent = label || 'Préparation…';
+}
+function startScanProgress(){
+  clearInterval(_scanProgressTimer);
+  _scanStartedAt = Date.now();
+  setScanProgress(SCAN_PROGRESS_START_PCT, 'Préparation…');
+  _scanProgressTimer = setInterval(() => {
+    const elapsed = Date.now() - _scanStartedAt;
+    const progressRatio = elapsed / _scanExpectedMs;
+    const pct = Math.min(SCAN_PROGRESS_MAX_PCT, SCAN_PROGRESS_START_PCT + progressRatio * SCAN_PROGRESS_RANGE_PCT);
+    const label = pct < 20 ? 'Collecte des données…' : formatScanEta(Math.max(0, _scanExpectedMs - elapsed));
+    setScanProgress(pct, label);
+  }, 250);
+}
+function finishScanProgress(ok){
+  clearInterval(_scanProgressTimer);
+  _scanProgressTimer = null;
+  if (_scanStartedAt) {
+    const elapsed = Date.now() - _scanStartedAt;
+    _scanExpectedMs = Math.min(SCAN_EXPECTED_MAX_MS, Math.max(SCAN_EXPECTED_MIN_MS, Math.round(elapsed * SCAN_EXPECTED_GROWTH)));
+  }
+  setScanProgress(100, ok ? 'Terminé' : 'Erreur', ok ? 'done' : 'err');
+}
 
 // ── Filter persistence ──────────────────────────────────────────────────
 function saveFilters(){
@@ -305,16 +376,25 @@ async function runScan(){
   const btn=document.getElementById('btn-scan');
   const tf=document.getElementById('scan-tf').value,limit=document.getElementById('scan-limit').value;
   const status=document.getElementById('scan-status'),tbody=document.getElementById('scan-tbody');
+  const colspan = getScanTableColspan();
   if(btn){btn.disabled=true;btn.textContent='⏳ Scan…';}
+  startScanProgress();
   status.innerHTML='<span class="spinner"></span> Scan en cours…';
-  tbody.innerHTML='<tr><td colspan="9" class="empty-row"><span class="spinner"></span> Chargement…</td></tr>';
+  tbody.innerHTML=`<tr><td colspan="${colspan}" class="empty-row"><span class="spinner"></span> Chargement…</td></tr>`;
   await loadOpenPositions();
   try{
     const r=await apiFetch(`/api/scanner?timeframe=${tf}&limit=${limit}`);const d=await r.json();
-    scanResults=d.results||[];status.textContent=`${scanResults.length} symboles analysés — TF: ${d.timeframe}`;
+    scanResults=d.results||[];
+    finishScanProgress(true);
+    const elapsed=((Date.now()-_scanStartedAt)/1000).toFixed(1);
+    status.textContent=`${scanResults.length} symboles analysés — TF: ${d.timeframe} · ${elapsed}s`;
     document.getElementById('scan-chips').style.display='flex';
     applyFilters();saveFilters();
-  }catch(e){status.textContent='⚠ Erreur : '+e.message;tbody.innerHTML=`<tr><td colspan="9" class="empty-row">Erreur : ${e.message}</td></tr>`;}
+  }catch(e){
+    finishScanProgress(false);
+    status.textContent='⚠ Erreur : '+e.message;
+    tbody.innerHTML=`<tr><td colspan="${colspan}" class="empty-row">Erreur : ${e.message}</td></tr>`;
+  }
   finally{if(btn){btn.disabled=false;btn.textContent='▶ Scanner';}}
 }
 
@@ -373,8 +453,18 @@ function renderScanTable(results){
     const el=document.getElementById('sa-'+k);
     if(!el)return;
     const th=el.closest('th');
-    if(scanSortKey===k){el.textContent=scanSortAsc?' ↑':' ↓';if(th)th.classList.add('sorted');}
-    else{el.textContent='';if(th)th.classList.remove('sorted');}
+    if (th) th.setAttribute('aria-sort','none');
+    if(scanSortKey===k){
+      el.textContent=scanSortAsc?' ↑':' ↓';
+      if(th){
+        th.classList.add('sorted');
+        th.setAttribute('aria-sort',scanSortAsc?'ascending':'descending');
+      }
+    }
+    else{
+      el.textContent='';
+      if(th)th.classList.remove('sorted');
+    }
   });
   document.getElementById('scan-tbody').innerHTML=sorted.map(r=>{
     const ind=r.indicators||{},adx=+(ind.adx||0),rsi=+(ind.rsi||50),atrPct=+(ind.atr_pct||0),volR=+(ind.vol_ratio||1),vol24=+(r.volume_24h||0);

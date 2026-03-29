@@ -19,7 +19,7 @@
 .summary-val{font-family:var(--mono);font-size:1.4rem;font-weight:600;line-height:1;letter-spacing:-.02em;}
 .summary-sub{font-size:.63rem;color:var(--dim);font-family:var(--mono);margin-top:4px;}
 /* ── Search & filter bar ── */
-.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;position:sticky;top:64px;z-index:14;background:var(--bg);padding:4px 0 10px;backdrop-filter:blur(8px);}
 .search-wrap{position:relative;display:flex;align-items:center;}
 .search-wrap::before{content:'🔍' / '';position:absolute;left:10px;font-size:.72rem;color:var(--dim);pointer-events:none;line-height:1;}
 .search-input{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:9px 12px 9px 30px;border-radius:var(--r-sm);font-size:.78rem;font-family:var(--body);outline:none;transition:border-color .15s,box-shadow .15s;width:260px;}
@@ -30,7 +30,13 @@
 .filter-chip.active-red{background:var(--red-dim);color:var(--red);border-color:rgba(251,113,133,.3);}
 /* Layout colonnes par TF */
 .tf-columns{display:flex;gap:12px;overflow-x:auto;align-items:flex-start;padding-bottom:8px;}
-@media(max-width:768px){.tf-columns{flex-direction:column;overflow-x:visible;}.tf-col{min-width:100%!important;max-width:100%!important;}}
+@media(max-width:768px){
+  .toolbar{top:60px;}
+  .toolbar .search-wrap,.toolbar #sort-select{width:100%;}
+  .search-input,.toolbar #sort-select{width:100%!important;}
+  .tf-columns{flex-direction:column;overflow-x:visible;}
+  .tf-col{min-width:100%!important;max-width:100%!important;}
+}
 .tf-col{min-width:220px;max-width:260px;flex-shrink:0;}
 .tf-col-header{font-family:var(--mono);font-size:.72rem;font-weight:700;color:var(--cyan);padding:10px 12px;background:var(--cyan-dim);border:1px solid rgba(34,211,238,.2);border-radius:var(--r-sm);margin-bottom:8px;text-align:center;letter-spacing:.06em;display:flex;justify-content:space-between;align-items:center;}
 .tf-col-header::before{content:'◷' / '';margin-right:4px;font-size:.8rem;opacity:.7;}

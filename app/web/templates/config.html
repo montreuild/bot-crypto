@@ -130,6 +130,31 @@
 
 /* ── Mobile tabs (hidden — single column layout) ── */
 .config-tabs{display:none;}
+.ctab{
+  flex:1;border:1px solid var(--border);background:var(--surface);color:var(--muted);
+  border-radius:var(--r-sm);padding:10px 12px;font-size:.76rem;font-weight:700;
+  cursor:pointer;transition:var(--transition);font-family:var(--body);
+}
+.ctab:hover{color:var(--text);border-color:var(--border-hi);}
+.ctab.active{background:var(--cyan-dim);color:var(--cyan);border-color:rgba(34,211,238,.3);}
+.tab-hidden{display:none !important;}
+
+@media(max-width:980px){
+  .config-tabs{
+    display:flex;gap:8px;position:sticky;top:64px;z-index:14;
+    padding:8px 0 12px;background:var(--bg);
+  }
+  .config-left,.right-col{padding:var(--sp-md);}
+  .right-col{border-left:none;border-top:1px solid var(--border);}
+  #events-grid{grid-template-columns:1fr !important;}
+  .field-row{flex-direction:column;align-items:stretch;}
+  .field-lbl{white-space:normal;}
+  .param-row{grid-template-columns:1fr;gap:6px;}
+  .param-val{text-align:left;}
+}
+@media(max-width:700px){
+  #tf-grid{grid-template-columns:repeat(auto-fit,minmax(108px,1fr)) !important;}
+}
 
 /* ── 2. Left panel accordions — smoother chevron ── */
 .config-left .panel-hdr{cursor:pointer;user-select:none;position:relative;transition:background .2s;}
@@ -648,6 +673,7 @@
 {% block body_scripts %}
 <script>
 const $ = id => document.getElementById(id);
+const CONFIG_MOBILE_BREAKPOINT = 980;
 let cfgData = null;
 
 // ── Mobile tabs ────────────────────────────────────────────────────────────
@@ -664,6 +690,21 @@ function switchConfigTab(tab) {
   }
   tabs.forEach((t, i) => t.classList.toggle('active', (tab === 'left') ? i === 0 : i === 1));
 }
+function syncConfigLayout() {
+  const left = document.querySelector('.config-left');
+  const right = document.querySelector('.config-right');
+  const tabs = document.querySelectorAll('.config-tabs .ctab');
+  if (!left || !right) return;
+  if (window.innerWidth <= CONFIG_MOBILE_BREAKPOINT) {
+    const rightActive = tabs[1]?.classList.contains('active');
+    switchConfigTab(rightActive ? 'right' : 'left');
+    return;
+  }
+  left.classList.remove('tab-hidden');
+  right.classList.remove('tab-hidden');
+}
+window.addEventListener('resize', syncConfigLayout);
+document.addEventListener('DOMContentLoaded', syncConfigLayout);
 
 // ── Left panel accordions ──────────────────────────────────────────────────
 function toggleLeftAcc(hdr) {
