@@ -253,6 +253,12 @@ const LS_FILTERS = 'scanner_filters_v1';
 let scanResults = [];
 let openPositionSymbols = new Set();
 let scanSortKey = 'symbol', scanSortAsc = true;
+const SCAN_PROGRESS_START_PCT = 8;
+const SCAN_PROGRESS_MAX_PCT = 92;
+const SCAN_PROGRESS_RANGE_PCT = SCAN_PROGRESS_MAX_PCT - SCAN_PROGRESS_START_PCT;
+const SCAN_EXPECTED_MIN_MS = 4000;
+const SCAN_EXPECTED_MAX_MS = 45000;
+const SCAN_EXPECTED_GROWTH = 1.15;
 let _scanProgressTimer = null;
 let _scanStartedAt = 0;
 let _scanExpectedMs = 12000;
@@ -270,7 +276,11 @@ function formatScanEta(ms){
   if (secs < 60) return `~${secs}s restant`;
   const mins = Math.floor(secs / 60);
   const rem = secs % 60;
-  return `~${mins}min${rem ? ` ${String(rem).padStart(2,'0')}s` : ''} restant`;
+  return `~${mins}min${rem ? ` ${`${rem}`.padStart(2,'0')}s` : ''} restant`;
+}
+function getScanTableColspan(){
+  const table = document.getElementById('scan-tbody')?.closest('table');
+  return table ? table.querySelectorAll('thead th').length : 8;
 }
 function setScanProgress(pct, label, state='running'){
   const wrap = document.getElementById('scan-progress');
@@ -288,10 +298,10 @@ function setScanProgress(pct, label, state='running'){
 function startScanProgress(){
   clearInterval(_scanProgressTimer);
   _scanStartedAt = Date.now();
-  setScanProgress(8, 'Préparation…');
+  setScanProgress(SCAN_PROGRESS_START_PCT, 'Préparation…');
   _scanProgressTimer = setInterval(() => {
     const elapsed = Date.now() - _scanStartedAt;
-    const pct = Math.min(92, 8 + (elapsed / _scanExpectedMs) * 84);
+    const pct = Math.min(SCAN_PROGRESS_MAX_PCT, SCAN_PROGRESS_START_PCT + (elapsed / _scanExpectedMs) * SCAN_PROGRESS_RANGE_PCT);
     setScanProgress(pct, pct < 20 ? 'Collecte des données…' : formatScanEta(Math.max(0, _scanExpectedMs - elapsed)));
   }, 250);
 }
@@ -300,7 +310,7 @@ function finishScanProgress(ok){
   _scanProgressTimer = null;
   if (_scanStartedAt) {
     const elapsed = Date.now() - _scanStartedAt;
-    _scanExpectedMs = Math.min(45000, Math.max(4000, Math.round(elapsed * 1.15)));
+    _scanExpectedMs = Math.min(SCAN_EXPECTED_MAX_MS, Math.max(SCAN_EXPECTED_MIN_MS, Math.round(elapsed * SCAN_EXPECTED_GROWTH)));
   }
   setScanProgress(100, ok ? 'Terminé' : 'Erreur', ok ? 'done' : 'err');
 }
@@ -362,10 +372,11 @@ async function runScan(){
   const btn=document.getElementById('btn-scan');
   const tf=document.getElementById('scan-tf').value,limit=document.getElementById('scan-limit').value;
   const status=document.getElementById('scan-status'),tbody=document.getElementById('scan-tbody');
+  const colspan = getScanTableColspan();
   if(btn){btn.disabled=true;btn.textContent='⏳ Scan…';}
   startScanProgress();
   status.innerHTML='<span class="spinner"></span> Scan en cours…';
-  tbody.innerHTML='<tr><td colspan="8" class="empty-row"><span class="spinner"></span> Chargement…</td></tr>';
+  tbody.innerHTML=`<tr><td colspan="${colspan}" class="empty-row"><span class="spinner"></span> Chargement…</td></tr>`;
   await loadOpenPositions();
   try{
     const r=await apiFetch(`/api/scanner?timeframe=${tf}&limit=${limit}`);const d=await r.json();
@@ -378,7 +389,7 @@ async function runScan(){
   }catch(e){
     finishScanProgress(false);
     status.textContent='⚠ Erreur : '+e.message;
-    tbody.innerHTML=`<tr><td colspan="8" class="empty-row">Erreur : ${e.message}</td></tr>`;
+    tbody.innerHTML=`<tr><td colspan="${colspan}" class="empty-row">Erreur : ${e.message}</td></tr>`;
   }
   finally{if(btn){btn.disabled=false;btn.textContent='▶ Scanner';}}
 }
