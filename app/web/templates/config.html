@@ -695,9 +695,8 @@ function syncConfigLayout() {
   const right = document.querySelector('.config-right');
   if (!left || !right) return;
   if (window.innerWidth <= CONFIG_MOBILE_BREAKPOINT) {
-    if (!left.classList.contains('tab-hidden') && !right.classList.contains('tab-hidden')) {
-      switchConfigTab('left');
-    }
+    if (left.classList.contains('tab-hidden') || right.classList.contains('tab-hidden')) return;
+    switchConfigTab('left');
     return;
   }
   left.classList.remove('tab-hidden');
