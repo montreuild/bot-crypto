@@ -693,10 +693,11 @@ function switchConfigTab(tab) {
 function syncConfigLayout() {
   const left = document.querySelector('.config-left');
   const right = document.querySelector('.config-right');
+  const tabs = document.querySelectorAll('.config-tabs .ctab');
   if (!left || !right) return;
   if (window.innerWidth <= CONFIG_MOBILE_BREAKPOINT) {
-    if (left.classList.contains('tab-hidden') || right.classList.contains('tab-hidden')) return;
-    switchConfigTab('left');
+    const rightActive = tabs[1]?.classList.contains('active');
+    switchConfigTab(rightActive ? 'right' : 'left');
     return;
   }
   left.classList.remove('tab-hidden');
