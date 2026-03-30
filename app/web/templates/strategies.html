@@ -112,6 +112,7 @@
 <div class="topbar-right">
   <span id="vol-badge" class="vol-badge">⚡ Volatility Brake ×0.5</span>
   <span id="slot-count-badge" style="font-size:.7rem;font-family:var(--mono);color:var(--dim)"></span>
+  <button id="btn-auto-realloc" class="btn btn-ghost" onclick="toggleAutoRealloc()" title="Activer/désactiver la réallocation automatique" style="font-size:.7rem">↻ Réalloc auto</button>
   <button class="btn btn-ghost" onclick="load()">↺ Actualiser</button>
 </div>
 {% endblock %}
@@ -198,6 +199,16 @@
         <div id="dp-params"></div>
       </div>
 
+      <!-- Budget allocation -->
+      <div class="detail-section">
+        <div class="detail-section-title">Budget alloué</div>
+        <div id="dp-budget-wrap" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span id="dp-budget-pct" style="font-family:var(--mono);font-size:.88rem;font-weight:700;color:var(--cyan)">—</span>
+          <span style="font-size:.65rem;color:var(--dim)">du capital</span>
+          <button class="btn btn-ghost" style="font-size:.65rem;padding:2px 8px;margin-left:auto" onclick="openBudgetModal()">✎ Modifier</button>
+        </div>
+      </div>
+
       <!-- Recent trades -->
       <div class="detail-section">
         <div class="detail-section-title">Derniers trades</div>
@@ -243,9 +254,23 @@
     <button class="modal-btn modal-btn-cancel" onclick="$('toggle-modal').style.display='none'">Annuler</button>
   </div>
 </div>
-{% endblock %}
 
-{% block modals %}{% endblock %}
+<!-- Modal budget -->
+<div id="budget-modal" class="modal-overlay">
+  <div class="modal-box">
+    <h3>Budget du slot</h3>
+    <p>Définir le budget alloué pour <strong id="bm-slot"></strong></p>
+    <div style="display:flex;align-items:center;gap:8px;margin:12px 0">
+      <input type="number" id="bm-pct" min="1" max="100" step="1" style="width:80px;font-size:1rem;text-align:center"/>
+      <span style="font-size:.9rem;color:var(--muted)">% du capital</span>
+    </div>
+    <p style="font-size:.68rem;color:var(--dim)">La réallocation automatique peut remplacer cette valeur lors du prochain rééquilibrage.</p>
+    <button class="modal-btn modal-btn-primary" onclick="_doBudget()">✓ Appliquer</button>
+    <button class="modal-btn modal-btn-cancel" onclick="$('budget-modal').style.display='none'">Annuler</button>
+  </div>
+</div>
+
+{% endblock %}
 
 {% block body_scripts %}
 <script>
@@ -263,8 +288,8 @@ function buildSummary(){
   if(!_status){
     // Bot arrêté : afficher ce qu'on peut depuis la config
     if(_config){
-      const strats=_config.strategies||[];
-      const tfs=_config.timeframes||[];
+      const strats=(_config.strategies?.enabled)||[];
+      const tfs=_config.trading?.timeframes||[];
       const sp=_config.strategy_params||{};
       const disabledMap={};
       for(const[s,p]of Object.entries(sp)){(p.disabled_timeframes||[]).forEach(tf=>{disabledMap[s+'::'+tf]=true;});}
@@ -346,6 +371,10 @@ function sortSlots(){
   buildColumns();
 }
 
+/* ── TF sort order by duration ── */
+const TF_ORDER={'1m':0,'3m':1,'5m':2,'15m':3,'30m':4,'1h':5,'2h':6,'4h':7,'8h':8,'12h':9,'1d':10,'3d':11,'1w':12};
+function tfSort(a,b){return(TF_ORDER[a]??99)-(TF_ORDER[b]??99);}
+
 /* ── Build slot data ── */
 function collectSlotData(){
   if(!_status&&!_config)return[];
@@ -365,8 +394,8 @@ function collectSlotData(){
 
   if(!_status){
     // Bot arrêté : construire les slots depuis la config
-    const strats=_config.strategies||[];
-    const tfs=(_config.timeframes||[]).slice().sort();
+    const strats=(_config.strategies?.enabled)||[];
+    const tfs=(_config.trading?.timeframes||[]).slice().sort(tfSort);
     const slots=[];
     for(const tf of tfs){
       for(const strat of strats){
@@ -393,12 +422,14 @@ function collectSlotData(){
 
   const pauseMap={};states.forEach(s=>{if(s.paused)pauseMap[s.slot_key]=s.pause_reason;});
 
+  const seenKeys=new Set();
   const slots=[];
-  const tfs=Object.keys(activeTF).sort();
-  for(const tf of tfs){
+  const activeTfs=Object.keys(activeTF).sort(tfSort);
+  for(const tf of activeTfs){
     const entries=activeTF[tf]||[];
     for(const strat of entries){
       const slotKey=strat+'::'+tf;
+      seenKeys.add(slotKey);
       const a=allocMap[slotKey]||{};
       const isPaused=!!pauseMap[slotKey];
       const isDisabled=!!disabledMap[slotKey];
@@ -417,6 +448,60 @@ function collectSlotData(){
       });
     }
   }
+
+  // Ajouter les slots en pause non visibles dans activeTF
+  states.forEach(s=>{
+    if(!s.paused)return;
+    const slotKey=s.slot_key;
+    if(seenKeys.has(slotKey))return;
+    const parts=slotKey.split('::');
+    if(parts.length!==2)return;
+    const[strat,tf]=parts;
+    seenKeys.add(slotKey);
+    const a=allocMap[slotKey]||{};
+    const sd=byStrat[strat]||{};
+    const aud=_auditResults.find(r=>r.slot_key===slotKey);
+    slots.push({
+      slotKey,strat,tf,
+      wr:sd.win_rate||0,trades:sd.total_trades||0,
+      pnl:sd.total_pnl||0,pf:sd.profit_factor||0,
+      budgetPct:a.budget_pct||0,usedPct:a.used_pct||0,
+      usedNotional:a.used_notional||0,budgetUsdc:a.budget_usdc||0,
+      isPaused:true,isDisabled:false,
+      pauseReason:s.pause_reason||'',
+      oos:aud?aud.oos_score:null,
+      oosDate:aud?aud.run_date:'',
+    });
+  });
+
+  // Ajouter les slots désactivés depuis la config
+  if(_config){
+    const cfgStrats=(_config.strategies?.enabled)||[];
+    const cfgTfs=_config.trading?.timeframes||[];
+    for(const tf of cfgTfs){
+      for(const strat of cfgStrats){
+        const slotKey=strat+'::'+tf;
+        if(seenKeys.has(slotKey))continue;
+        if(!disabledMap[slotKey])continue;
+        seenKeys.add(slotKey);
+        const a=allocMap[slotKey]||{};
+        const sd=byStrat[strat]||{};
+        const aud=_auditResults.find(r=>r.slot_key===slotKey);
+        slots.push({
+          slotKey,strat,tf,
+          wr:sd.win_rate||0,trades:sd.total_trades||0,
+          pnl:sd.total_pnl||0,pf:sd.profit_factor||0,
+          budgetPct:a.budget_pct||0,usedPct:a.used_pct||0,
+          usedNotional:a.used_notional||0,budgetUsdc:a.budget_usdc||0,
+          isPaused:false,isDisabled:true,
+          pauseReason:'',
+          oos:aud?aud.oos_score:null,
+          oosDate:aud?aud.run_date:'',
+        });
+      }
+    }
+  }
+
   _allSlotData=slots;
   return slots;
 }
@@ -450,10 +535,10 @@ function buildColumns(){
   }
 
   if(sort==='tf'){
-    // Group by TF (default view)
+    // Group by TF (default view) — tri par durée
     const grouped={};
     slots.forEach(s=>{if(!grouped[s.tf])grouped[s.tf]=[];grouped[s.tf].push(s);});
-    const tfs=Object.keys(grouped).sort();
+    const tfs=Object.keys(grouped).sort(tfSort);
 
     $('tf-columns').innerHTML=tfs.map(tf=>{
       const tfSlots=grouped[tf];
@@ -529,6 +614,10 @@ async function selectSlot(slotKey, strategy, tf){
   const toggleBtn=$('dp-btn-toggle');
   toggleBtn.textContent=isDisabled?'● Activer ce slot':'○ Désactiver ce slot';
   toggleBtn.className='btn '+(isDisabled?'btn-green':'btn-ghost');
+
+  // Budget display
+  const budgetPct=slotData?.budgetPct||0;
+  $('dp-budget-pct').textContent=(budgetPct*100).toFixed(1)+'%';
 
   // CB reset button
   const isPaused=_slotStates.some(s=>s.slot_key===slotKey&&s.paused);
@@ -688,6 +777,51 @@ function renderCBAlerts(){
   alert.innerHTML=msgs.join('<br>');
 }
 
+/* ── Budget modal ── */
+let _budgetTarget='';
+function openBudgetModal(){
+  if(!_selectedSlot)return;
+  _budgetTarget=_selectedSlot;
+  $('bm-slot').textContent=_selectedSlot;
+  const slotData=_allSlotData.find(s=>s.slotKey===_selectedSlot);
+  const pct=Math.round((slotData?.budgetPct||0)*100)||1;
+  $('bm-pct').value=pct;
+  $('budget-modal').style.display='flex';
+}
+async function _doBudget(){
+  $('budget-modal').style.display='none';
+  const pct=Math.max(1,Math.min(100,parseInt($('bm-pct').value)||1));
+  try{
+    const r=await apiFetch(`/api/capital-allocation/set-budget?slot_key=${encodeURIComponent(_budgetTarget)}&budget_pct=${pct/100}`,{method:'POST'});
+    if(!r.ok){const d=await r.json().catch(()=>({}));toast('Erreur: '+(d.detail||r.status),true);return;}
+    toast(`Budget ${_budgetTarget} → ${pct}% ✓`);
+    await load();
+    if(_selectedSlot)await selectSlot(_selectedSlot,_selectedStrategy,_selectedTf);
+  }catch(e){toast('Erreur: '+e.message,true);}
+}
+
+/* ── Auto-reallocation toggle ── */
+let _autoRealloc=true;
+function updateAutoReallocBtn(){
+  const btn=$('btn-auto-realloc');
+  if(!btn)return;
+  const interval=_config?.capital_allocator?.rebalance_interval||'daily';
+  const isNever=interval==='never';
+  btn.textContent=isNever?'↻ Réalloc auto OFF':'↻ Réalloc auto ON';
+  btn.style.borderColor=isNever?'rgba(251,191,36,.4)':'rgba(52,211,153,.3)';
+  btn.style.color=isNever?'var(--amber)':'var(--green)';
+}
+async function toggleAutoRealloc(){
+  const interval=_config?.capital_allocator?.rebalance_interval||'daily';
+  const newInterval=interval==='never'?'daily':'never';
+  try{
+    const r=await apiFetch(`/api/config/capital-allocator?rebalance_interval=${encodeURIComponent(newInterval)}`,{method:'POST'});
+    if(!r.ok){const d=await r.json().catch(()=>({}));toast('Erreur: '+(d.detail||r.status),true);return;}
+    toast(newInterval==='never'?'Réallocation automatique désactivée':'Réallocation automatique activée ✓');
+    await load();
+  }catch(e){toast('Erreur: '+e.message,true);}
+}
+
 /* ── Main load ── */
 async function load(){
   try{
@@ -710,6 +844,7 @@ async function load(){
     // Bot stopped notice
     $('bot-stopped-notice').style.display=_status?'none':'';
 
+    updateAutoReallocBtn();
     buildSummary();
     renderCBAlerts();
     buildColumns();

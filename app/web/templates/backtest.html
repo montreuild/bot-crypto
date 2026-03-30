@@ -88,7 +88,7 @@
 .ml-kpi .v{font-size:.92rem;font-weight:700;color:var(--purple);font-family:var(--mono);}
 .opt-panel{background:var(--card);border:1px solid rgba(251,191,36,.2);border-radius:var(--r);padding:12px;border-left:3px solid var(--amber);}
 .opt-title{font-size:.76rem;font-weight:700;color:var(--amber);margin-bottom:10px;}
-#bt-log{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;font-size:.67rem;font-family:var(--mono);color:var(--dim);max-height:140px;overflow-y:auto;display:none;flex-direction:column;gap:2px;}
+#bt-log{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;font-size:.67rem;font-family:var(--mono);color:var(--dim);min-height:80px;max-height:220px;overflow-y:auto;display:none;flex-direction:column;gap:2px;resize:vertical;}
 .tt{width:100%;border-collapse:collapse;font-size:.71rem;}
 .tt th,.tt td{padding:5px 8px;border-bottom:1px solid rgba(255,255,255,.04);}
 .tt th{color:var(--muted);font-weight:600;font-size:.6rem;text-transform:uppercase;}
@@ -599,12 +599,15 @@ function toggleBtChartType(){
 // ── Price chart (TradingView) ──
 function buildPrice(){
   if(tvPrice){try{tvPrice.remove();}catch(e){}tvPrice=null;}
-  if(!btData||!activeStrat)return;
-  const ohlcv=btData.ohlcv,n=ohlcv.close.length;if(!n)return;
+  if(!btData||!activeStrat||!btData.ohlcv)return;
+  const ohlcv=btData.ohlcv;
+  if(!ohlcv.close||!ohlcv.close.length)return;
+  const n=ohlcv.close.length;
   const c=SC(activeStrat),sd=btData.by_strategy[activeStrat];
   const trades=(sd?.trades||[]).filter(t=>t.status&&!t.status.startsWith('open')&&t.bar!=null&&t.exit_bar!=null);
   const dateRng=btData.date_from&&btData.date_to?` · ${btData.date_from.slice(0,10)} → ${btData.date_to.slice(0,10)}`:'';
-  document.getElementById('price-title').textContent=`${btData.symbol||''} · ${btData.timeframe||''} · ${n} bougies${dateRng}`;
+  const sym=btData.symbol||'';
+  document.getElementById('price-title').textContent=`${sym} · ${btData.timeframe||''} · ${n} bougies${dateRng}`;
   document.getElementById('price-label').textContent=`— ${activeStrat}`;
   const el=document.getElementById('price-chart-wrap');
   tvPrice=LightweightCharts.createChart(el,{

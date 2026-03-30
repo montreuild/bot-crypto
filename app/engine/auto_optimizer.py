@@ -291,22 +291,63 @@ class AutoOptimizer:
                                            early_stop_patience=self.early_stop_patience)
 
             applied = False
-            oos_trades = result.get("best_oos_trades", 0)
-            if (auto_apply
-                    and result.get("best_params")
-                    and result.get("best_oos_pnl", 0) > 0
-                    and oos_trades >= 3):   # min 3 trades OOS pour être statistiquement crédible
+            oos_trades   = result.get("best_oos_trades", 0)
+            best_oos_pnl = result.get("best_oos_pnl", 0)
+            best_oos_score = result.get("best_oos_score", 0.0)
+
+            # Récupérer le baseline pour comparer avant d'appliquer
+            _baseline      = get_job(job_id).get("baseline", {})
+            baseline_pnl   = _baseline.get("pnl", float("-inf"))
+            baseline_wr    = _baseline.get("wr", 0)
+            baseline_sharpe = _baseline.get("sharpe", 0)
+            best_oos_wr    = result.get("best_oos_wr", 0)
+            best_oos_sharpe = result.get("best_oos_sharpe", 0)
+
+            # Un paramétrage n'est appliqué que s'il est meilleur que le baseline
+            # sur au moins 2 critères parmi : PnL, Win Rate, Sharpe
+            def _beats_baseline() -> bool:
+                if oos_trades < 3:
+                    return False
+                if best_oos_pnl <= 0:
+                    return False
+                improvements = sum([
+                    best_oos_pnl    > baseline_pnl,
+                    best_oos_wr     > baseline_wr,
+                    best_oos_sharpe > baseline_sharpe,
+                ])
+                return improvements >= 2
+
+            if auto_apply and result.get("best_params") and _beats_baseline():
                 best_params = result["best_params"]
-                oos_score   = result.get("best_oos_score", 0.0)
                 applied = apply_best_params(
                     strategy_name, best_params, self.config_path,
-                    timeframe=timeframe, oos_score=oos_score
+                    timeframe=timeframe, oos_score=best_oos_score
                 )
                 if applied and self.on_apply_callback:
                     try:
                         self.on_apply_callback(strategy_name, best_params)
                     except Exception as _cb_err:
                         logger.warning(f"[AutoOpt] callback KO: {_cb_err}")
+                if not applied:
+                    logger.info(
+                        f"[AutoOpt] {job_id} : résultat non appliqué car pas meilleur que le baseline "
+                        f"(OOS PnL={best_oos_pnl:+.2f} vs baseline={baseline_pnl:+.2f}, "
+                        f"WR={best_oos_wr:.1f}% vs {baseline_wr:.1f}%, "
+                        f"Sharpe={best_oos_sharpe:.2f} vs {baseline_sharpe:.2f})"
+                    )
+            elif auto_apply and result.get("best_params") and not _beats_baseline():
+                logger.info(
+                    f"[AutoOpt] {job_id} : application refusée — résultat inférieur au baseline "
+                    f"(OOS PnL={best_oos_pnl:+.2f} vs baseline={baseline_pnl:+.2f}, "
+                    f"WR={best_oos_wr:.1f}% vs {baseline_wr:.1f}%, "
+                    f"Sharpe={best_oos_sharpe:.2f} vs {baseline_sharpe:.2f})"
+                )
+                save_optimizer_results(
+                    strategy_name, timeframe,
+                    result["best_params"],
+                    best_oos_score,
+                    self.config_path
+                )
             elif result.get("best_params"):
                 # Sauvegarder le résultat même sans auto_apply
                 save_optimizer_results(

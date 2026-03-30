@@ -74,6 +74,16 @@
           <input type="text" id="train-symbol" value="BTC/USDC" style="width:130px"/>
         </div>
         <div class="field">
+          <label>Timeframe</label>
+          <select id="train-tf" style="width:90px">
+            <option value="5m">5m</option>
+            <option value="15m">15m</option>
+            <option value="1h" selected>1h</option>
+            <option value="4h">4h</option>
+            <option value="1d">1d</option>
+          </select>
+        </div>
+        <div class="field">
           <label>Bougies</label>
           <input type="number" id="train-limit" value="2000" min="200" max="10000" style="width:100px" oninput="validateLimit(this)"/>
           <span class="field-error" id="limit-error">Valeur entre 200 et 10 000</span>
@@ -203,6 +213,7 @@ function validateLimit(input){
 async function trainML(){
   const btn=$('train-btn');
   const sym=($('train-symbol')?.value||'BTC/USDC').trim();
+  const tf=($('train-tf')?.value||'1h').trim();
   const limitInput=$('train-limit');
   const rawLim=+(limitInput?.value||2000);
   const lim=Math.max(200,Math.min(10000,rawLim));
@@ -214,10 +225,10 @@ async function trainML(){
   btn.disabled=true;btn.innerHTML=BTN_TRAIN_BUSY;
   $('train-result').textContent='';
   try{
-    const r=await apiFetch(`/api/ml/train?symbol=${encodeURIComponent(sym)}&limit=${lim}`,{method:'POST'});
+    const r=await apiFetch(`/api/ml/train?symbol=${encodeURIComponent(sym)}&limit=${lim}&timeframe=${encodeURIComponent(tf)}`,{method:'POST'});
     const d=await r.json();
     if(!r.ok)throw new Error(d.detail||'Erreur inconnue');
-    $('train-result').textContent=`✓ Modèle entraîné — ${d.samples||0} échantillons`;
+    $('train-result').textContent=`✓ Modèle entraîné — ${d.samples||0} échantillons · TF ${d.timeframe||tf}`;
     $('train-result').style.color='var(--green)';
     toast('Entraînement terminé ✓');
     await loadMLInfo();

@@ -283,6 +283,39 @@ class CapitalAllocator:
             for s in self._slots.values()
         ]
 
+    def set_slot_budget(self, slot_key: str, budget_pct: float) -> bool:
+        """
+        Définit manuellement le budget d'un slot (en fraction du capital, ex: 0.25 = 25%).
+        Renormalise ensuite les autres slots pour que la somme reste ≤ 100%.
+        Retourne True si le slot a été trouvé et modifié.
+        """
+        if slot_key not in self._slots:
+            return False
+        budget_pct = max(0.01, min(self._max_slot_pct, round(float(budget_pct), 4)))
+        self._slots[slot_key].budget_pct = budget_pct
+        # Renormaliser : si la somme > 1.0, réduire proportionnellement les autres slots
+        total = sum(s.budget_pct for s in self._slots.values())
+        if total > 1.0:
+            factor = (1.0 - budget_pct) / max((total - budget_pct), 0.001)
+            for key, slot in self._slots.items():
+                if key != slot_key:
+                    slot.budget_pct = round(slot.budget_pct * factor, 4)
+        logger.info(
+            f"[Allocator] Budget {slot_key} → {budget_pct:.0%} (manuel) "
+            + ", ".join(f"{k}={v.budget_pct:.0%}" for k, v in self._slots.items())
+        )
+        return True
+
+    def set_rebalance_interval(self, interval: str) -> None:
+        """Met à jour l'intervalle de rééquilibrage ('daily', 'weekly' ou 'never')."""
+        self._rebalance_interval = interval
+        if interval != "never":
+            self._rebalance_next = self._next_rebalance_ts()
+
+    def set_max_slot_pct(self, pct: float) -> None:
+        """Met à jour le pourcentage maximum par slot."""
+        self._max_slot_pct = float(pct)
+
     # ── Utilitaires ────────────────────────────────────────────────────────
     def _next_rebalance_ts(self) -> float:
         """Next rebalance timestamp based on configured interval."""
