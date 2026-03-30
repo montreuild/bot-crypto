@@ -20,19 +20,18 @@
 .strat-metric:last-of-type{border-bottom:none;}
 .strat-key{color:var(--muted);}
 .strat-val{font-family:var(--mono);color:var(--text);}
-/* ── Candle stats ── */
-.candle-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;}
-.candle-cell{background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:12px 14px;transition:border-color .2s,background .2s;}
-.candle-cell:hover{border-color:var(--border-hi);background:var(--surface);}
-.candle-pair{font-family:var(--mono);font-size:.82rem;font-weight:700;color:var(--cyan);margin-bottom:4px;}
-.candle-meta{font-size:.63rem;color:var(--muted);line-height:1.6;}
 /* ── Train form ── */
 .train-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;}
-.train-row .field{min-width:140px;}
+.train-row .field{min-width:120px;}
 .train-row .btn-cyan{padding:8px 18px;font-size:.78rem;font-weight:700;}
 .field-error{font-size:.65rem;color:var(--red);margin-top:2px;display:none;}
 .field.has-error input{border-color:var(--red)!important;}
 .field.has-error .field-error{display:block;}
+/* ── Train result metrics ── */
+.train-metrics{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;}
+.train-metric-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 12px;font-size:.72rem;min-width:100px;}
+.train-metric-lbl{color:var(--muted);margin-bottom:3px;font-size:.64rem;text-transform:uppercase;letter-spacing:.06em;}
+.train-metric-val{font-family:var(--mono);font-size:.88rem;font-weight:700;}
 {% endblock %}
 
 {% block topbar_content %}
@@ -76,12 +75,12 @@
         <div class="field">
           <label>Timeframe</label>
           <select id="train-tf" style="width:90px">
-            <option value="5m">5m</option>
-            <option value="15m">15m</option>
             <option value="1h" selected>1h</option>
-            <option value="4h">4h</option>
-            <option value="1d">1d</option>
           </select>
+        </div>
+        <div class="field">
+          <label>Stratégie</label>
+          <input type="text" id="train-strategy" value="ml_manual" style="width:130px" placeholder="ex: ml_manual"/>
         </div>
         <div class="field">
           <label>Bougies</label>
@@ -91,9 +90,7 @@
         <button id="train-btn" class="btn btn-cyan" onclick="trainML()">⬡ Entraîner</button>
       </div>
       <div id="train-result" style="font-size:.75rem;color:var(--muted);margin-top:4px;font-family:var(--mono)"></div>
-      <div class="info-box">
-        <strong>Note :</strong> L'entraînement utilise le Parquet local si disponible, sinon télécharge depuis l'exchange. Durée typique : 10–60 secondes.
-      </div>
+      <div id="train-metrics" class="train-metrics" style="display:none"></div>
     </div>
   </div>
 
@@ -102,15 +99,6 @@
     <div class="sec-hdr"><h2>Stratégies ML</h2><a href="/config" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">⚙ Configurer ML →</a></div>
     <div id="strat-grid" class="strat-grid">
       <div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div>
-    </div>
-  </div>
-
-  <!-- Candle store stats -->
-  <div>
-    <div class="sec-hdr"><h2>Cache de bougies (Parquet)</h2></div>
-    <div id="candle-info" style="font-size:.72rem;color:var(--muted);margin-bottom:8px"></div>
-    <div id="candle-grid" class="candle-grid">
-      <div class="skeleton skeleton-card"></div>
     </div>
   </div>
 
@@ -131,6 +119,22 @@ function fmtTs(ts){
   return isNaN(d)?'—':d.toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
 }
 function clrAuc(v){return v>=0.6?'c-green':v>=0.5?'c-amber':'c-red';}
+function clrOos(v){return v>0.1?'c-green':v>0?'c-amber':'c-red';}
+
+/* ── Load timeframes from config ── */
+async function loadTimeframes(){
+  try{
+    const r=await apiFetch('/api/config');
+    if(!r.ok)return;
+    const d=await r.json();
+    const tfs=(d.trading?.timeframes)||[d.trading?.timeframe||'1h'];
+    const sel=$('train-tf');
+    if(!sel)return;
+    const current=sel.value;
+    sel.innerHTML=tfs.map(tf=>`<option value="${escHtml(tf)}"${tf===current?' selected':''}>${escHtml(tf)}</option>`).join('');
+    if(!tfs.includes(current)&&tfs.length)sel.value=tfs[0];
+  }catch(e){console.debug('[ML] loadTimeframes',e);}
+}
 
 /* ── ML status ── */
 function renderMLStatus(d){
@@ -169,37 +173,6 @@ function renderStratCards(strategies){
   }).join('');
 }
 
-/* ── Candle stats ── */
-function renderCandleStats(store){
-  const entries=Object.entries(store||{});
-  const totalMb=(entries.reduce((s,[,v])=>s+(v.size_bytes||0),0)/1024/1024).toFixed(2);
-  const summary=entries.length
-    ?`${entries.length} paire${entries.length>1?'s':''}/TF en cache · <strong style="color:var(--text)">${totalMb}&nbsp;MB</strong>`
-    :'Aucune donnée en cache.';
-  $('candle-info').innerHTML=summary;
-
-  if(!entries.length){$('candle-grid').innerHTML='<div style="color:var(--dim);font-size:.78rem">Aucune bougie en cache Parquet.</div>';return;}
-
-  // Sort by count desc
-  entries.sort((a,b)=>(b[1].count||0)-(a[1].count||0));
-
-  $('candle-grid').innerHTML=entries.map(([key,s])=>{
-    const parts=key.split('/');
-    const pair=(parts[0]||key)+' <span style="color:var(--muted)">/</span> '+(parts[1]||'');
-    const first=s.first?new Date(s.first).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'2-digit'}):'—';
-    const last=s.last?new Date(s.last).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'2-digit'}):'—';
-    const sizeMb=s.size_bytes?(s.size_bytes/1024/1024).toFixed(2)+'&nbsp;MB':'—';
-    return`<div class="candle-cell">
-      <div class="candle-pair">${pair}</div>
-      <div class="candle-meta">
-        <strong style="color:var(--text);font-family:var(--mono)">${(s.count||0).toLocaleString()}</strong> bougies<br>
-        ${first} → ${last}<br>
-        Taille : ${sizeMb}
-      </div>
-    </div>`;
-  }).join('');
-}
-
 /* ── Validate limit input ── */
 function validateLimit(input){
   const v=+input.value;
@@ -209,11 +182,32 @@ function validateLimit(input){
   else{field.classList.remove('has-error');}
 }
 
+/* ── Render training result metrics ── */
+function renderTrainMetrics(d){
+  const wrap=$('train-metrics');
+  if(!wrap)return;
+  const oos=d.oos_score??null;
+  const auc=d.cv_auc??null;
+  const std=d.cv_std??null;
+  const samples=d.samples??null;
+  const model=d.model??null;
+  const cards=[
+    auc!=null?`<div class="train-metric-card"><div class="train-metric-lbl">AUC (CV)</div><div class="train-metric-val ${clrAuc(auc)}">${auc.toFixed(3)}</div></div>`:null,
+    std!=null?`<div class="train-metric-card"><div class="train-metric-lbl">Écart-type CV</div><div class="train-metric-val">±${std.toFixed(3)}</div></div>`:null,
+    oos!=null?`<div class="train-metric-card"><div class="train-metric-lbl">Score OOS</div><div class="train-metric-val ${clrOos(oos)}">${oos>=0?'+':''}${oos.toFixed(3)}</div></div>`:null,
+    samples!=null?`<div class="train-metric-card"><div class="train-metric-lbl">Échantillons</div><div class="train-metric-val">${samples.toLocaleString()}</div></div>`:null,
+    model?`<div class="train-metric-card"><div class="train-metric-lbl">Modèle</div><div class="train-metric-val" style="font-size:.72rem">${escHtml(model)}</div></div>`:null,
+  ].filter(Boolean);
+  if(cards.length){wrap.innerHTML=cards.join('');wrap.style.display='flex';}
+  else{wrap.style.display='none';}
+}
+
 /* ── Train ── */
 async function trainML(){
   const btn=$('train-btn');
   const sym=($('train-symbol')?.value||'BTC/USDC').trim();
   const tf=($('train-tf')?.value||'1h').trim();
+  const strategy=($('train-strategy')?.value||'ml_manual').trim().replace(/[^a-zA-Z0-9_-]/g,'_')||'ml_manual';
   const limitInput=$('train-limit');
   const rawLim=+(limitInput?.value||2000);
   const lim=Math.max(200,Math.min(10000,rawLim));
@@ -224,12 +218,15 @@ async function trainML(){
   }
   btn.disabled=true;btn.innerHTML=BTN_TRAIN_BUSY;
   $('train-result').textContent='';
+  $('train-metrics').style.display='none';
   try{
-    const r=await apiFetch(`/api/ml/train?symbol=${encodeURIComponent(sym)}&limit=${lim}&timeframe=${encodeURIComponent(tf)}`,{method:'POST'});
+    const r=await apiFetch(`/api/ml/train?symbol=${encodeURIComponent(sym)}&limit=${lim}&timeframe=${encodeURIComponent(tf)}&strategy=${encodeURIComponent(strategy)}`,{method:'POST'});
     const d=await r.json();
     if(!r.ok)throw new Error(d.detail||'Erreur inconnue');
-    $('train-result').textContent=`✓ Modèle entraîné — ${d.samples||0} échantillons · TF ${d.timeframe||tf}`;
+    const modelPath=d.model_path?` · 💾 ${escHtml(d.model_path)}`:'';
+    $('train-result').innerHTML=`✓ Modèle entraîné — ${d.samples||0} échantillons · TF ${escHtml(d.timeframe||tf)}${modelPath}`;
     $('train-result').style.color='var(--green)';
+    renderTrainMetrics(d);
     toast('Entraînement terminé ✓');
     await loadMLInfo();
   }catch(e){
@@ -250,21 +247,12 @@ async function loadMLInfo(){
   }catch(e){console.error('[ML] strategy-info',e);}
 }
 
-/* ── Load candle stats ── */
-async function loadCandleStats(){
-  try{
-    const r=await apiFetch('/api/candles/stats');
-    if(!r.ok)return;
-    const d=await r.json();
-    renderCandleStats(d.store||{});
-  }catch(e){console.error('[ML] candle stats',e);}
-}
-
 /* ── Main load ── */
 async function load(){
-  await Promise.all([loadMLInfo(),loadCandleStats()]);
+  await loadMLInfo();
 }
 
+loadTimeframes();
 load();
 setInterval(load,AUTO_REFRESH_MS);
 </script>

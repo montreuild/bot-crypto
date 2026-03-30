@@ -112,6 +112,7 @@
 <div class="topbar-right">
   <span id="vol-badge" class="vol-badge">⚡ Volatility Brake ×0.5</span>
   <span id="slot-count-badge" style="font-size:.7rem;font-family:var(--mono);color:var(--dim)"></span>
+  <button id="btn-auto-opt" class="btn btn-ghost" onclick="toggleAutoOpt()" title="Activer/désactiver l'optimisateur automatique" style="font-size:.7rem">⬡ Auto-opt</button>
   <button id="btn-auto-realloc" class="btn btn-ghost" onclick="toggleAutoRealloc()" title="Activer/désactiver la réallocation automatique" style="font-size:.7rem">↻ Réalloc auto</button>
   <button class="btn btn-ghost" onclick="load()">↺ Actualiser</button>
 </div>
@@ -283,9 +284,12 @@ let _currentFilter='all', _allSlotData=[];
 function clrC(v){return v>0?'c-green':v<0?'c-red':'c-muted';}
 function fmtS(v){const n=+(v||0);return(n>=0?'+':'')+n.toFixed(2);}
 
+/* ── Bot running check ── */
+function isBotRunning(){return _status&&_status.status==='running';}
+
 /* ── Build summary stats ── */
 function buildSummary(){
-  if(!_status){
+  if(!isBotRunning()){
     // Bot arrêté : afficher ce qu'on peut depuis la config
     if(_config){
       const strats=(_config.strategies?.enabled)||[];
@@ -392,23 +396,27 @@ function collectSlotData(){
   const alloc=_allocation||[];
   const allocMap={};alloc.forEach(a=>allocMap[a.slot_key]=a);
 
-  if(!_status){
+  if(!isBotRunning()){
     // Bot arrêté : construire les slots depuis la config
-    const strats=(_config.strategies?.enabled)||[];
-    const tfs=(_config.trading?.timeframes||[]).slice().sort(tfSort);
+    const strats=(_config?.strategies?.enabled)||[];
+    const tfs=((_config?.trading?.timeframes)||[]).slice().sort(tfSort);
     const slots=[];
     for(const tf of tfs){
       for(const strat of strats){
         const slotKey=strat+'::'+tf;
         const isDisabled=!!disabledMap[slotKey];
         const a=allocMap[slotKey]||{};
+        // Look up saved custom budget from config
+        const cfgBudgets=_config?.capital_allocator?.slot_budgets||{};
+        const savedPct=cfgBudgets[slotKey]!=null?+(cfgBudgets[slotKey]*100).toFixed(1):0;
+        const aud=_auditResults.find(r=>r.slot_key===slotKey);
         slots.push({
           slotKey,strat,tf,
           wr:0,trades:0,pnl:0,pf:0,
-          budgetPct:a.budget_pct||0,usedPct:a.used_pct||0,
+          budgetPct:a.budget_pct||savedPct,usedPct:a.used_pct||0,
           usedNotional:a.used_notional||0,budgetUsdc:a.budget_usdc||0,
           isPaused:false,isDisabled,
-          pauseReason:'',oos:null,oosDate:'',
+          pauseReason:'',oos:aud?aud.oos_score:null,oosDate:aud?aud.run_date:'',
         });
       }
     }
@@ -615,9 +623,9 @@ async function selectSlot(slotKey, strategy, tf){
   toggleBtn.textContent=isDisabled?'● Activer ce slot':'○ Désactiver ce slot';
   toggleBtn.className='btn '+(isDisabled?'btn-green':'btn-ghost');
 
-  // Budget display
+  // Budget display (budgetPct is already a percentage value, e.g. 25.0 = 25%)
   const budgetPct=slotData?.budgetPct||0;
-  $('dp-budget-pct').textContent=(budgetPct*100).toFixed(1)+'%';
+  $('dp-budget-pct').textContent=budgetPct.toFixed(1)+'%';
 
   // CB reset button
   const isPaused=_slotStates.some(s=>s.slot_key===slotKey&&s.paused);
@@ -784,7 +792,8 @@ function openBudgetModal(){
   _budgetTarget=_selectedSlot;
   $('bm-slot').textContent=_selectedSlot;
   const slotData=_allSlotData.find(s=>s.slotKey===_selectedSlot);
-  const pct=Math.round((slotData?.budgetPct||0)*100)||1;
+  // budgetPct is already a percentage value (e.g. 25.0 = 25%)
+  const pct=Math.round(slotData?.budgetPct||0)||1;
   $('bm-pct').value=pct;
   $('budget-modal').style.display='flex';
 }
@@ -797,6 +806,32 @@ async function _doBudget(){
     toast(`Budget ${_budgetTarget} → ${pct}% ✓`);
     await load();
     if(_selectedSlot)await selectSlot(_selectedSlot,_selectedStrategy,_selectedTf);
+  }catch(e){toast('Erreur: '+e.message,true);}
+}
+
+/* ── Auto-optimizer toggle ── */
+function _getAutoOptState(){
+  return{
+    enabled: _status?._auto_opt_enabled??_config?.optimizer?.enabled??false,
+    interval: _status?._auto_opt_interval_h??_config?.optimizer?.auto_interval_h??24,
+  };
+}
+function updateAutoOptBtn(){
+  const btn=$('btn-auto-opt');
+  if(!btn)return;
+  const {enabled,interval}=_getAutoOptState();
+  btn.textContent=enabled?`⬡ Auto-opt ON (${interval}h)`:'⬡ Auto-opt OFF';
+  btn.style.borderColor=enabled?'rgba(52,211,153,.3)':'rgba(251,191,36,.4)';
+  btn.style.color=enabled?'var(--green)':'var(--amber)';
+}
+async function toggleAutoOpt(){
+  const {enabled,interval}=_getAutoOptState();
+  const newEnabled=!enabled;
+  try{
+    const r=await apiFetch(`/api/config/auto-optimizer?enabled=${newEnabled}&interval_h=${interval}`,{method:'POST'});
+    if(!r.ok){const d=await r.json().catch(()=>({}));toast('Erreur: '+(d.detail||r.status),true);return;}
+    toast(newEnabled?'Optimisateur automatique activé ✓':'Optimisateur automatique désactivé');
+    await load();
   }catch(e){toast('Erreur: '+e.message,true);}
 }
 
@@ -837,13 +872,15 @@ async function load(){
     _config=cfgRes.ok?await cfgRes.json():null;
     _allocation=alData.slots||[];
     _auditResults=auData.results||[];
-    _slotStates=_status?.slot_states||[];
+    // slot_states is a list when bot is running, [] when idle
+    _slotStates=Array.isArray(_status?.slot_states)?_status.slot_states:[];
 
     // Volatility brake badge
     $('vol-badge').classList.toggle('active',!!_status?.volatility_brake);
-    // Bot stopped notice
-    $('bot-stopped-notice').style.display=_status?'none':'';
+    // Bot stopped notice — show when bot is not running
+    $('bot-stopped-notice').style.display=isBotRunning()?'none':'';
 
+    updateAutoOptBtn();
     updateAutoReallocBtn();
     buildSummary();
     renderCBAlerts();

@@ -114,18 +114,36 @@ def capital_allocation():
 @router.post("/api/capital-allocation/set-budget", dependencies=[Depends(verify_api_key)])
 def set_slot_budget(slot_key: str, budget_pct: float):
     """Définit manuellement le budget d'un slot (budget_pct en fraction, ex: 0.25 = 25%)."""
-    if not state.trader:
-        raise HTTPException(503, "Trader non initialisé")
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
     if budget_pct <= 0 or budget_pct > 1:
         raise HTTPException(400, "budget_pct doit être entre 0 et 1 (ex: 0.25 = 25%)")
-    ok = state.trader.allocator.set_slot_budget(slot_key, budget_pct)
-    if not ok:
-        raise HTTPException(404, f"Slot '{slot_key}' introuvable")
+
+    rounded = round(budget_pct, 4)
+
+    # Persist to config.yaml so the allocation survives restarts
+    state.cfg.setdefault("capital_allocator", {}).setdefault("slot_budgets", {})[slot_key] = rounded
+    try:
+        from app.api.routes.config import _save_yaml
+        def _upd(d):
+            d.setdefault("capital_allocator", {}).setdefault("slot_budgets", {})[slot_key] = rounded
+        _save_yaml(_upd)
+    except Exception as e:
+        logger.warning(f"[capital-allocation] sauvegarde YAML KO : {e}")
+
+    # Apply to live allocator if bot is running
+    slots_status = []
+    if state.trader:
+        ok = state.trader.allocator.set_slot_budget(slot_key, budget_pct)
+        if not ok:
+            raise HTTPException(404, f"Slot '{slot_key}' introuvable")
+        slots_status = state.trader.allocator.get_status()
+
     return {
-        "status": "updated",
-        "slot_key": slot_key,
+        "status":     "updated",
+        "slot_key":   slot_key,
         "budget_pct": round(budget_pct * 100, 1),
-        "slots": state.trader.allocator.get_status(),
+        "slots":      slots_status,
     }
 
 
