@@ -13,20 +13,20 @@ router = APIRouter()
 
 
 @router.post("/api/ml/train", dependencies=[Depends(verify_api_key)])
-def train_ml(symbol: str = "BTC/USDC", limit: int = 2000):
+def train_ml(symbol: str = "BTC/USDC", limit: int = 2000, timeframe: str = ""):
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     try:
         from app.ml.model import MLPredictor
         exchange = create_exchange(state.cfg)
-        ml_tf    = state.cfg["trading"].get("timeframe", "1h")
+        ml_tf    = timeframe.strip() if timeframe.strip() else state.cfg["trading"].get("timeframe", "1h")
         df       = get_store().fetch(exchange, symbol, ml_tf, total=limit)
         if df is None or len(df) == 0:
             raise HTTPException(400, f"Aucune donnée disponible pour {symbol}/{ml_tf}")
         ml = MLPredictor(state.cfg)
         ml.train(df)
         ml.save()
-        return {"status": "trained", "samples": len(df)}
+        return {"status": "trained", "samples": len(df), "timeframe": ml_tf}
     except HTTPException:
         raise
     except Exception as e:

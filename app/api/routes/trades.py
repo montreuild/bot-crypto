@@ -111,6 +111,24 @@ def capital_allocation():
     }
 
 
+@router.post("/api/capital-allocation/set-budget", dependencies=[Depends(verify_api_key)])
+def set_slot_budget(slot_key: str, budget_pct: float):
+    """Définit manuellement le budget d'un slot (budget_pct en fraction, ex: 0.25 = 25%)."""
+    if not state.trader:
+        raise HTTPException(503, "Trader non initialisé")
+    if budget_pct <= 0 or budget_pct > 1:
+        raise HTTPException(400, "budget_pct doit être entre 0 et 1 (ex: 0.25 = 25%)")
+    ok = state.trader.allocator.set_slot_budget(slot_key, budget_pct)
+    if not ok:
+        raise HTTPException(404, f"Slot '{slot_key}' introuvable")
+    return {
+        "status": "updated",
+        "slot_key": slot_key,
+        "budget_pct": round(budget_pct * 100, 1),
+        "slots": state.trader.allocator.get_status(),
+    }
+
+
 @router.get("/api/circuit-breakers", dependencies=[Depends(verify_api_key)])
 def circuit_breakers():
     """Retourne l'état de tous les circuit breakers (globaux + par slot)."""

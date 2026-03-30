@@ -4,6 +4,14 @@ import polars as pl
 from typing import Tuple
 
 
+def _safe_series(s: pl.Series, fill: float = 1.0) -> pl.Series:
+    """Remplace les zéros par `fill` dans une Series (évite les divisions par zéro).
+    Utilise numpy pour éviter de passer des Expr à pl.DataFrame()."""
+    arr = s.to_numpy(allow_copy=True).astype(float)
+    arr[arr == 0] = fill
+    return pl.Series(arr)
+
+
 def extract_features(df: pl.DataFrame, window: int = 50) -> pl.DataFrame:
     """Extrait les features techniques pour le ML (Polars lazy). Retourne une ligne par bougie."""
     if len(df) < window + 1:
@@ -17,13 +25,13 @@ def extract_features(df: pl.DataFrame, window: int = 50) -> pl.DataFrame:
     # Prix normalisés (z-score glissant)
     close_roll_mean = close.rolling_mean(window)
     close_roll_std  = close.rolling_std(window)
-    close_roll_std_safe = pl.when(close_roll_std == 0).then(pl.lit(1.0)).otherwise(close_roll_std)
+    close_roll_std_safe = _safe_series(close_roll_std)
     close_z = (close - close_roll_mean) / close_roll_std_safe
 
     range_  = high - low
     range_mean = range_.rolling_mean(window)
     range_std  = range_.rolling_std(window)
-    range_std_safe = pl.when(range_std == 0).then(pl.lit(1.0)).otherwise(range_std)
+    range_std_safe = _safe_series(range_std)
     range_z = (range_ - range_mean) / range_std_safe
 
     # Returns
@@ -44,7 +52,7 @@ def extract_features(df: pl.DataFrame, window: int = 50) -> pl.DataFrame:
     delta = close.diff(1)
     gain  = delta.clip(lower_bound=0).rolling_mean(14)
     loss  = (-delta.clip(upper_bound=0)).rolling_mean(14)
-    loss_safe = pl.when(loss == 0).then(pl.lit(None)).otherwise(loss)
+    loss_safe = _safe_series(loss, fill=float("nan"))
     rsi_raw = 100 - 100 / (1 + gain / loss_safe)
     rsi_feat = rsi_raw / 100  # normalisé [0,1]
 
@@ -64,12 +72,12 @@ def extract_features(df: pl.DataFrame, window: int = 50) -> pl.DataFrame:
     # Bollinger %B
     sma20 = close.rolling_mean(20)
     std20 = close.rolling_std(20)
-    std20_safe = pl.when(std20 == 0).then(pl.lit(1.0)).otherwise(std20)
+    std20_safe = _safe_series(std20)
     bb_pct = (close - (sma20 - 2 * std20)) / (4 * std20_safe)
 
     # Volume ratio
     vol_ma   = volume.rolling_mean(20)
-    vol_ma_safe = pl.when(vol_ma == 0).then(pl.lit(1.0)).otherwise(vol_ma)
+    vol_ma_safe = _safe_series(vol_ma)
     vol_ratio = volume / vol_ma_safe
     vol_trend = vol_ma.pct_change(5)
 

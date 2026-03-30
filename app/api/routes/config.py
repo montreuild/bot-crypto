@@ -517,3 +517,48 @@ def update_margin_config(
         logger.warning(f"[config/margin] sauvegarde YAML KO : {e}")
         saved = False
     return {"saved_to_disk": saved}
+
+
+# ── POST /api/config/capital-allocator ─────────────────────────────────────
+
+@router.post("/api/config/capital-allocator", dependencies=[Depends(verify_api_key)])
+def update_capital_allocator_config(
+    rebalance_interval: str = None,
+    max_slot_pct: float = None,
+):
+    """
+    Met à jour la configuration du capital allocator.
+    rebalance_interval: 'daily', 'weekly' ou 'never'
+    max_slot_pct: fraction max par slot (0.0-1.0)
+    """
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    valid_intervals = ("daily", "weekly", "never")
+    if rebalance_interval is not None and rebalance_interval not in valid_intervals:
+        raise HTTPException(400, f"rebalance_interval doit être parmi : {valid_intervals}")
+    if max_slot_pct is not None and not (0.0 < max_slot_pct <= 1.0):
+        raise HTTPException(400, "max_slot_pct doit être entre 0.01 et 1.0")
+
+    state.cfg.setdefault("capital_allocator", {})
+    if rebalance_interval is not None:
+        state.cfg["capital_allocator"]["rebalance_interval"] = rebalance_interval
+        if state.trader and state.trader.allocator:
+            state.trader.allocator.set_rebalance_interval(rebalance_interval)
+    if max_slot_pct is not None:
+        state.cfg["capital_allocator"]["max_slot_pct"] = max_slot_pct
+        if state.trader and state.trader.allocator:
+            state.trader.allocator.set_max_slot_pct(max_slot_pct)
+
+    try:
+        def _upd(d):
+            d.setdefault("capital_allocator", {})
+            if rebalance_interval is not None:
+                d["capital_allocator"]["rebalance_interval"] = rebalance_interval
+            if max_slot_pct is not None:
+                d["capital_allocator"]["max_slot_pct"] = max_slot_pct
+        _save_yaml(_upd)
+        saved = True
+    except Exception as e:
+        logger.warning(f"[config/capital-allocator] sauvegarde YAML KO : {e}")
+        saved = False
+    return {"saved_to_disk": saved, "capital_allocator": state.cfg["capital_allocator"]}
