@@ -1,6 +1,10 @@
 """
 CapitalAllocator — allocation du capital par slot (strategy::tf).
-Rééquilibrage configurable (daily/weekly) basé sur profit_factor.
+
+Modes d'allocation :
+  - equal       : répartition égale entre tous les slots actifs
+  - manual      : budgets définis manuellement par l'utilisateur
+  - performance : rééquilibrage automatique basé sur le profit_factor
 """
 import logging
 import time
@@ -16,6 +20,7 @@ _DEFAULT_MIN_TRADES_FOR_REBALANCE = 3
 _DEFAULT_REBALANCE_INTERVAL = "weekly"  # "daily" or "weekly"
 _DEFAULT_MAX_SYMBOL_EXPOSURE_PCT = 0.25  # max 25% of capital on a single symbol
 _DEFAULT_MAX_PYRAMIDING = 2  # max positions per symbol (pyramiding)
+_VALID_MODES = ("equal", "manual", "performance")
 
 
 @dataclass
@@ -23,6 +28,7 @@ class SlotBudget:
     slot_key: str           # "trend::1h"
     strategy: str           # "trend"
     tf: str                 # "1h"
+    enabled: bool           # slot activé/désactivé
     budget_pct: float       # 0.25 → 25% du capital
     used_notional: float    # exposition courante en USDC
     weekly_pnl: float       # P&L 7 derniers jours pour le rééquilibrage
@@ -35,6 +41,11 @@ class SlotBudget:
 class CapitalAllocator:
     """
     Gère l'allocation du capital par slot strategy::tf.
+
+    Trois modes d'allocation :
+      - equal       : 100% répartis équitablement (par défaut)
+      - manual      : budgets fixés par l'utilisateur, normalisés à 100%
+      - performance : rééquilibrage automatique basé sur le profit_factor
 
     Usage dans LiveTrader :
         allocator = CapitalAllocator(capital=1000, active_per_tf=self._active_per_tf)
@@ -56,9 +67,13 @@ class CapitalAllocator:
         self._rebalance_interval = alloc_cfg.get("rebalance_interval", _DEFAULT_REBALANCE_INTERVAL)
         self._max_symbol_exposure_pct = float(alloc_cfg.get("max_symbol_exposure_pct", _DEFAULT_MAX_SYMBOL_EXPOSURE_PCT))
         self._max_pyramiding = int(alloc_cfg.get("max_pyramiding", _DEFAULT_MAX_PYRAMIDING))
+        self._mode: str = alloc_cfg.get("mode", "equal")
+        if self._mode not in _VALID_MODES:
+            self._mode = "equal"
         self._custom_budgets: Dict[str, float] = {
             k: float(v) for k, v in alloc_cfg.get("slot_budgets", {}).items()
         }
+        self._disabled_slots: set = set(alloc_cfg.get("disabled_slots", []))
         self._slots: Dict[str, SlotBudget] = {}
         self._rebalance_next: float = self._next_rebalance_ts()
         self.rebuild_slots(active_per_tf)
@@ -81,6 +96,7 @@ class CapitalAllocator:
                 if key not in self._slots:
                     self._slots[key] = SlotBudget(
                         slot_key=key, strategy=name, tf=tf,
+                        enabled=key not in self._disabled_slots,
                         budget_pct=0.0,
                         used_notional=0.0,
                         weekly_pnl=0.0, weekly_wins=0,
@@ -93,26 +109,88 @@ class CapitalAllocator:
             if key not in new_keys:
                 del self._slots[key]
 
-        self._equalize_budgets()
-
-        # Restaurer les allocations personnalisées persistées
-        for key, pct in self._custom_budgets.items():
-            if key in self._slots:
-                self._slots[key].budget_pct = max(0.01, min(self._max_slot_pct, pct))
+        self._apply_mode()
 
         logger.info(
-            f"[Allocator] {len(self._slots)} slots : "
-            + ", ".join(f"{k}={v.budget_pct:.0%}" for k, v in self._slots.items())
+            f"[Allocator] {len(self._slots)} slots (mode={self._mode}) : "
+            + ", ".join(
+                f"{k}={'OFF' if not v.enabled else f'{v.budget_pct:.0%}'}"
+                for k, v in self._slots.items()
+            )
         )
 
+    def _apply_mode(self):
+        """Applique le mode d'allocation actuel aux budgets des slots."""
+        if self._mode == "manual":
+            self._apply_manual_budgets()
+        else:
+            # equal et performance : commencer par une distribution égale
+            self._equalize_budgets()
+            # En mode manual, les custom budgets sont appliqués dans _apply_manual_budgets
+            # Pour equal/performance, on restaure quand même les custom budgets persistés
+            if self._mode == "performance":
+                for key, pct in self._custom_budgets.items():
+                    if key in self._slots and self._slots[key].enabled:
+                        self._slots[key].budget_pct = max(0.01, min(self._max_slot_pct, pct))
+
     def _equalize_budgets(self):
-        """Distribue 100% équitablement entre les slots, en respectant le cap."""
-        n = len(self._slots)
+        """Distribue 100% équitablement entre les slots actifs, en respectant le cap."""
+        active = [s for s in self._slots.values() if s.enabled]
+        n = len(active)
         if n == 0:
             return
         per_slot = min(1.0 / n, self._max_slot_pct)
         for slot in self._slots.values():
-            slot.budget_pct = round(per_slot, 4)
+            slot.budget_pct = round(per_slot, 4) if slot.enabled else 0.0
+
+    def _apply_manual_budgets(self):
+        """Applique les budgets manuels. Slots sans budget explicite reçoivent une part égale du reste."""
+        active = [s for s in self._slots.values() if s.enabled]
+        if not active:
+            for s in self._slots.values():
+                s.budget_pct = 0.0
+            return
+
+        # Désactiver les slots non actifs
+        for s in self._slots.values():
+            if not s.enabled:
+                s.budget_pct = 0.0
+
+        # Appliquer les budgets custom
+        used = 0.0
+        unset_keys = []
+        for s in active:
+            if s.slot_key in self._custom_budgets:
+                pct = max(0.01, min(self._max_slot_pct, self._custom_budgets[s.slot_key]))
+                s.budget_pct = round(pct, 4)
+                used += s.budget_pct
+            else:
+                unset_keys.append(s.slot_key)
+
+        # Distribuer le reste aux slots sans budget manuel
+        remaining = max(0.0, 1.0 - used)
+        if unset_keys:
+            per_unset = min(remaining / len(unset_keys), self._max_slot_pct)
+            for key in unset_keys:
+                self._slots[key].budget_pct = round(per_unset, 4)
+
+        # Si la somme > 1.0, normaliser proportionnellement
+        self._normalize_budgets()
+
+    def _normalize_budgets(self):
+        """Normalise les budgets pour que la somme des slots actifs = 100%."""
+        active = [s for s in self._slots.values() if s.enabled]
+        total = sum(s.budget_pct for s in active)
+        if total > 0 and abs(total - 1.0) > 0.001:
+            factor = 1.0 / total
+            for s in active:
+                s.budget_pct = round(min(s.budget_pct * factor, self._max_slot_pct), 4)
+            # Renormaliser après cap
+            total2 = sum(s.budget_pct for s in active)
+            if total2 > 0 and abs(total2 - 1.0) > 0.001:
+                factor2 = 1.0 / total2
+                for s in active:
+                    s.budget_pct = round(s.budget_pct * factor2, 4)
 
     # ── Allocation ─────────────────────────────────────────────────────────
     def can_allocate(self, slot_key: str, notional: float) -> tuple[bool, str]:
@@ -123,6 +201,8 @@ class CapitalAllocator:
         slot = self._slots.get(slot_key)
         if slot is None:
             return False, f"Slot '{slot_key}' inconnu"
+        if not slot.enabled:
+            return False, f"Slot '{slot_key}' désactivé"
 
         max_exposure = self.capital * slot.budget_pct
         if slot.used_notional + notional > max_exposure * 1.05:  # tolérance 5%
@@ -194,12 +274,23 @@ class CapitalAllocator:
     def update_equity(self, capital: float):
         self.capital = capital
 
-    # ── Rééquilibrage hebdomadaire ─────────────────────────────────────────
+    # ── Rééquilibrage ──────────────────────────────────────────────────────
     def rebalance_if_due(self):
+        if self._mode != "performance":
+            return
         if time.time() < self._rebalance_next:
             return
         self._rebalance_next = self._next_rebalance_ts()
         self._rebalance()
+
+    def force_rebalance(self):
+        """Force un rééquilibrage immédiat (appelé via API)."""
+        if self._mode == "performance":
+            self._rebalance()
+        elif self._mode == "equal":
+            self._equalize_budgets()
+        # En mode manual, on ne rééquilibre pas automatiquement
+        logger.info(f"[Allocator] Rééquilibrage forcé (mode={self._mode})")
 
     def _rebalance(self):
         """
@@ -209,7 +300,8 @@ class CapitalAllocator:
           - Autres → budget × 1.0
         Normalise pour que la somme = 100%, puis applique le cap.
         """
-        if not self._slots:
+        active = [s for s in self._slots.values() if s.enabled]
+        if not active:
             return
 
         def _profit_factor(slot: SlotBudget) -> float:
@@ -217,20 +309,18 @@ class CapitalAllocator:
                 return slot.weekly_gross_win / slot.weekly_gross_loss
             return 1.0 if slot.weekly_gross_win == 0 else 2.0
 
-        pfs = {k: _profit_factor(v) for k, v in self._slots.items()}
-        logger.info(f"[Allocator] Rééquilibrage hebdomadaire — PF : {pfs}")
+        pfs = {s.slot_key: _profit_factor(s) for s in active}
+        logger.info(f"[Allocator] Rééquilibrage — PF : {pfs}")
 
-        # Appliquer les multiplicateurs
-        # Un slot avec moins de _MIN_TRADES_FOR_REBALANCE trades n'est pas ajusté :
-        # l'échantillon est trop petit pour être statistiquement significatif.
         new_budgets: Dict[str, float] = {}
-        for key, slot in self._slots.items():
+        for slot in active:
+            key = slot.slot_key
             if slot.weekly_trades < self._min_trades_for_rebalance:
                 logger.debug(
                     f"[Allocator] Slot {key} ignoré pour rééquilibrage "
                     f"({slot.weekly_trades} trades < {self._min_trades_for_rebalance} min)"
                 )
-                new_budgets[key] = slot.budget_pct  # conserver budget actuel
+                new_budgets[key] = slot.budget_pct
                 continue
             pf = pfs[key]
             if pf > 1.5:
@@ -256,8 +346,9 @@ class CapitalAllocator:
                 new_budgets[key] = round(new_budgets[key] * factor2, 4)
 
         # Appliquer + reset stats hebdo
-        for key, slot in self._slots.items():
-            slot.budget_pct = new_budgets.get(key, slot.budget_pct)
+        for slot in self._slots.values():
+            if slot.enabled:
+                slot.budget_pct = new_budgets.get(slot.slot_key, slot.budget_pct)
             slot.weekly_pnl = 0.0
             slot.weekly_wins = 0
             slot.weekly_trades = 0
@@ -266,8 +357,45 @@ class CapitalAllocator:
 
         logger.info(
             "[Allocator] Nouveaux budgets : "
-            + ", ".join(f"{k}={v.budget_pct:.0%}" for k, v in self._slots.items())
+            + ", ".join(
+                f"{k}={'OFF' if not v.enabled else f'{v.budget_pct:.0%}'}"
+                for k, v in self._slots.items()
+            )
         )
+
+    # ── Toggle slot ────────────────────────────────────────────────────────
+    def set_slot_enabled(self, slot_key: str, enabled: bool) -> bool:
+        """Active ou désactive un slot. Recalcule les budgets après toggle."""
+        slot = self._slots.get(slot_key)
+        if slot is None:
+            return False
+        slot.enabled = enabled
+        if enabled:
+            self._disabled_slots.discard(slot_key)
+        else:
+            self._disabled_slots.add(slot_key)
+            slot.budget_pct = 0.0
+        self._apply_mode()
+        logger.info(f"[Allocator] Slot {slot_key} → {'activé' if enabled else 'désactivé'}")
+        return True
+
+    # ── Mode ───────────────────────────────────────────────────────────────
+    def set_mode(self, mode: str) -> bool:
+        """Change le mode d'allocation ('equal', 'manual', 'performance')."""
+        if mode not in _VALID_MODES:
+            return False
+        self._mode = mode
+        self._apply_mode()
+        logger.info(f"[Allocator] Mode changé → {mode}")
+        return True
+
+    @property
+    def mode(self) -> str:
+        return self._mode
+
+    @property
+    def disabled_slots(self) -> list:
+        return sorted(self._disabled_slots)
 
     # ── Statut pour l'API ──────────────────────────────────────────────────
     def get_status(self) -> List[dict]:
@@ -276,6 +404,7 @@ class CapitalAllocator:
                 "slot_key":      s.slot_key,
                 "strategy":      s.strategy,
                 "tf":            s.tf,
+                "enabled":       s.enabled,
                 "budget_pct":    round(s.budget_pct * 100, 1),
                 "budget_usdc":   round(self.capital * s.budget_pct, 2),
                 "used_notional": round(s.used_notional, 2),
@@ -292,6 +421,19 @@ class CapitalAllocator:
             for s in self._slots.values()
         ]
 
+    def get_config(self) -> dict:
+        """Retourne la configuration courante de l'allocateur."""
+        return {
+            "mode":                   self._mode,
+            "max_slot_pct":           round(self._max_slot_pct * 100, 1),
+            "rebalance_interval":     self._rebalance_interval,
+            "min_trades_for_rebalance": self._min_trades_for_rebalance,
+            "max_symbol_exposure_pct": round(self._max_symbol_exposure_pct * 100, 1),
+            "max_pyramiding":         self._max_pyramiding,
+            "disabled_slots":         sorted(self._disabled_slots),
+            "custom_budgets":         {k: round(v * 100, 1) for k, v in self._custom_budgets.items()},
+        }
+
     def set_slot_budget(self, slot_key: str, budget_pct: float) -> bool:
         """
         Définit manuellement le budget d'un slot (en fraction du capital, ex: 0.25 = 25%).
@@ -304,15 +446,15 @@ class CapitalAllocator:
         self._slots[slot_key].budget_pct = budget_pct
         self._custom_budgets[slot_key] = budget_pct
         # Renormaliser : si la somme > 1.0, réduire proportionnellement les autres slots
-        total = sum(s.budget_pct for s in self._slots.values())
+        total = sum(s.budget_pct for s in self._slots.values() if s.enabled)
         if total > 1.0:
             factor = (1.0 - budget_pct) / max((total - budget_pct), 0.001)
             for key, slot in self._slots.items():
-                if key != slot_key:
+                if key != slot_key and slot.enabled:
                     slot.budget_pct = round(slot.budget_pct * factor, 4)
         logger.info(
             f"[Allocator] Budget {slot_key} → {budget_pct:.0%} (manuel) "
-            + ", ".join(f"{k}={v.budget_pct:.0%}" for k, v in self._slots.items())
+            + ", ".join(f"{k}={v.budget_pct:.0%}" for k, v in self._slots.items() if v.enabled)
         )
         return True
 
@@ -347,13 +489,6 @@ class CapitalAllocator:
         days_ahead = 7 - now.weekday()  # weekday: 0=lundi
         if days_ahead == 7:
             days_ahead = 0              # on est lundi → prochain lundi dans 7j
-        # Si aujourd'hui lundi et pas encore passé minuit, c'est aujourd'hui
-        next_monday = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        next_monday = next_monday.replace(
-            day=now.day + days_ahead if days_ahead > 0 else now.day + 7
-        )
-        # Utiliser timedelta pour éviter les débordements de jour
-        from datetime import timedelta
         delta_days = days_ahead if days_ahead > 0 else 7
         next_monday = (
             now.replace(hour=0, minute=0, second=0, microsecond=0)

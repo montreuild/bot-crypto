@@ -523,16 +523,21 @@ def update_margin_config(
 
 @router.post("/api/config/capital-allocator", dependencies=[Depends(verify_api_key)])
 def update_capital_allocator_config(
+    mode: str = None,
     rebalance_interval: str = None,
     max_slot_pct: float = None,
 ):
     """
     Met à jour la configuration du capital allocator.
+    mode: 'equal', 'manual' ou 'performance'
     rebalance_interval: 'daily', 'weekly' ou 'never'
     max_slot_pct: fraction max par slot (0.0-1.0)
     """
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
+    valid_modes = ("equal", "manual", "performance")
+    if mode is not None and mode not in valid_modes:
+        raise HTTPException(400, f"mode doit être parmi : {valid_modes}")
     valid_intervals = ("daily", "weekly", "never")
     if rebalance_interval is not None and rebalance_interval not in valid_intervals:
         raise HTTPException(400, f"rebalance_interval doit être parmi : {valid_intervals}")
@@ -540,6 +545,10 @@ def update_capital_allocator_config(
         raise HTTPException(400, "max_slot_pct doit être entre 0.01 et 1.0")
 
     state.cfg.setdefault("capital_allocator", {})
+    if mode is not None:
+        state.cfg["capital_allocator"]["mode"] = mode
+        if state.trader and state.trader.allocator:
+            state.trader.allocator.set_mode(mode)
     if rebalance_interval is not None:
         state.cfg["capital_allocator"]["rebalance_interval"] = rebalance_interval
         if state.trader and state.trader.allocator:
@@ -552,6 +561,8 @@ def update_capital_allocator_config(
     try:
         def _upd(d):
             d.setdefault("capital_allocator", {})
+            if mode is not None:
+                d["capital_allocator"]["mode"] = mode
             if rebalance_interval is not None:
                 d["capital_allocator"]["rebalance_interval"] = rebalance_interval
             if max_slot_pct is not None:

@@ -92,11 +92,14 @@ database:
   url: sqlite:///trades.db
 
 capital_allocator:
+  mode: equal                  # equal | manual | performance
   max_slot_pct: 0.50
   min_trades_for_rebalance: 3
   rebalance_interval: daily
   max_symbol_exposure_pct: 0.25
   max_pyramiding: 2
+  disabled_slots: []
+  slot_budgets: {}
 
 logging:
   level: INFO
