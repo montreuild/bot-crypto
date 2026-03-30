@@ -2,258 +2,857 @@
 {% block title %} — Optimiseur ML{% endblock %}
 
 {% block page_styles %}
-#content{padding:18px 20px;display:flex;flex-direction:column;gap:18px;flex:1;max-width:1200px;}
-/* ── Status banner ── */
-.ml-status-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
-.ml-status-bar>div{padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);}
-/* ── Strategy cards ── */
-.strat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;}
-.strat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;transition:border-color .2s;border-left:3px solid var(--border);}
-.strat-card.trained{border-color:rgba(52,211,153,.3);border-left-color:var(--green);}
-.strat-card.untrained{border-color:rgba(251,191,36,.25);border-left-color:var(--amber);}
-.strat-name{font-family:var(--head);font-size:.88rem;font-weight:700;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:6px;}
-.strat-badge{font-size:.6rem;font-weight:700;padding:2px 6px;border-radius:4px;}
-.strat-badge.ok{background:var(--green-dim);color:var(--green);}
-.strat-badge.nok{background:var(--amber-dim);color:var(--amber);}
-.strat-metric{display:flex;justify-content:space-between;padding:5px 2px;border-bottom:1px solid rgba(255,255,255,.04);font-size:.72rem;border-radius:var(--r-sm);transition:background .15s;}
-.strat-metric:hover{background:rgba(255,255,255,.02);}
-.strat-metric:last-of-type{border-bottom:none;}
-.strat-key{color:var(--muted);}
-.strat-val{font-family:var(--mono);color:var(--text);}
-/* ── Train form ── */
-.train-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;}
-.train-row .field{min-width:120px;}
-.train-row .btn-cyan{padding:8px 18px;font-size:.78rem;font-weight:700;}
-.field-error{font-size:.65rem;color:var(--red);margin-top:2px;display:none;}
-.field.has-error input{border-color:var(--red)!important;}
-.field.has-error .field-error{display:block;}
-/* ── Train result metrics ── */
-.train-metrics{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;}
-.train-metric-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 12px;font-size:.72rem;min-width:100px;}
-.train-metric-lbl{color:var(--muted);margin-bottom:3px;font-size:.64rem;text-transform:uppercase;letter-spacing:.06em;}
-.train-metric-val{font-family:var(--mono);font-size:.88rem;font-weight:700;}
+.opt-page{display:grid;grid-template-columns:300px 1fr;gap:0;min-height:calc(100vh - 56px);}
+@media(max-width:960px){.opt-page{grid-template-columns:1fr;}}
+.opt-left{background:var(--surface);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;position:sticky;top:56px;height:calc(100vh - 56px);}
+.opt-right{padding:14px 16px;display:flex;flex-direction:column;gap:14px;overflow-x:hidden;}
+.config-panel{display:flex;flex-direction:column;gap:12px;}
+.form-row{margin-bottom:10px;}.form-row:last-child{margin-bottom:0;}
+.form-lbl{display:block;font-size:.66rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin-bottom:5px;}
+.form-lbl .hint{display:block;font-weight:400;text-transform:none;letter-spacing:0;font-size:.62rem;color:var(--dim);margin-top:2px;}
+.checkbox-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.checkbox-row input[type=checkbox]{width:14px;height:14px;accent-color:var(--cyan);cursor:pointer;}
+.checkbox-row label{font-size:.78rem;color:var(--text);cursor:pointer;}
+/* Param space */
+.param-space{margin-top:10px;}
+.ps-strat{margin-bottom:8px;}
+.ps-name{font-size:.7rem;color:var(--cyan);font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px;display:flex;align-items:center;gap:6px;}
+.ps-badge{background:var(--cyan-dim);color:var(--cyan);padding:1px 6px;border-radius:3px;font-size:.62rem;}
+.ps-fixed-badge{background:var(--amber-dim);color:var(--amber);padding:1px 6px;border-radius:3px;font-size:.62rem;}
+.ps-params{display:flex;flex-wrap:wrap;gap:3px;}
+.ps-param{background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.2);color:var(--muted);padding:2px 7px;border-radius:3px;font-size:.62rem;font-family:var(--mono);}
+.ps-param.fixed{background:var(--amber-dim);border-color:rgba(251,191,36,.2);color:var(--amber);}
+/* Section label */
+.sec-label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px;}
+.sec-label::after{content:'';flex:1;height:1px;background:var(--border);}
+/* Jobs */
+.job-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;transition:border-color .2s,box-shadow .2s;margin-bottom:12px;}
+.job-card:hover{border-color:var(--border-hi);box-shadow:0 2px 8px rgba(0,0,0,.15);}
+.job-card.running{border-color:rgba(34,211,238,.4);}
+.job-card.done{border-color:rgba(52,211,153,.3);}
+.job-card.error{border-color:rgba(251,113,133,.3);}
+.job-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px;}
+.job-title{font-size:.88rem;font-weight:700;}
+.job-meta{font-size:.68rem;color:var(--muted);font-family:var(--mono);}
+.job-status{font-size:.68rem;font-weight:700;padding:3px 9px;border-radius:20px;white-space:nowrap;}
+.js-running{background:var(--cyan-dim);color:var(--cyan);animation:pulse .8s ease infinite;}
+.js-done{background:var(--green-dim);color:var(--green);}
+.js-error{background:var(--red-dim);color:var(--red);}
+.js-cancelled{background:var(--amber-dim);color:var(--amber);}
+/* Progress */
+.progress-wrap{margin:8px 0;}
+.progress-bg{background:var(--border);border-radius:4px;height:7px;overflow:hidden;}
+.progress-fill{height:100%;border-radius:4px;transition:width .4s ease;background:linear-gradient(90deg,var(--cyan),var(--green));}
+.progress-done{background:linear-gradient(90deg,var(--green),#00b87a)!important;}
+.progress-lbl{display:flex;justify-content:space-between;font-size:.64rem;color:var(--muted);font-family:var(--mono);margin-top:3px;}
+/* Metrics */
+.metrics-row{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:10px;}
+@media(max-width:700px){.metrics-row{grid-template-columns:repeat(3,1fr);}}
+.metric-box{background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:9px;text-align:center;}
+.metric-lbl{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;}
+.metric-val{font-size:.88rem;font-weight:700;font-family:var(--mono);letter-spacing:-.01em;}
+/* Before/After */
+.ba-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;}
+.ba-box{background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px;}
+.ba-title{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;font-weight:700;}
+.ba-row{display:flex;justify-content:space-between;font-size:.73rem;margin-bottom:3px;font-family:var(--mono);}
+.ba-key{color:var(--muted);}
+/* Params block */
+.params-block{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:10px;margin-top:10px;font-size:.71rem;font-family:var(--mono);line-height:1.9;color:var(--muted);word-break:break-all;}
+.params-block .pk{color:var(--cyan);}.params-block .pv{color:var(--green);}
+/* Top 5 */
+.top5-wrap{margin-top:10px;overflow-x:auto;}
+.top5-table{width:100%;border-collapse:collapse;font-size:.71rem;min-width:600px;}
+.top5-table th{padding:6px 9px;text-align:right;color:var(--muted);border-bottom:1px solid var(--border);font-size:.62rem;text-transform:uppercase;}
+.top5-table th:first-child{text-align:center;}
+.top5-table td{padding:6px 9px;border-bottom:1px solid rgba(255,255,255,.04);text-align:right;font-family:var(--mono);}
+.top5-table td:first-child{text-align:center;color:var(--dim);}
+.top5-table tr:hover td{background:rgba(255,255,255,.015);}
+.top5-table tbody tr:nth-child(even) td{background:rgba(255,255,255,.015);}
+.top5-table tbody tr:nth-child(even):hover td{background:rgba(255,255,255,.03);}
+.top5-best td{background:rgba(52,211,153,.04)!important;}
+/* Apply row */
+.apply-row{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;}
+.apply-note{font-size:.68rem;color:var(--dim);}
+/* Collapsible job cards */
+.job-summary{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;padding:2px 0;}
+.job-summary:hover .job-title{color:var(--cyan);}
+.job-toggle{font-size:.72rem;color:var(--dim);margin-left:auto;padding:2px 6px;border-radius:3px;background:rgba(255,255,255,.04);border:1px solid var(--border);cursor:pointer;white-space:nowrap;}
+.job-details{margin-top:10px;}
+.job-group-hdr{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:600;margin:10px 0 6px;display:flex;align-items:center;gap:8px;}
+.job-group-hdr::after{content:'';flex:1;height:1px;background:var(--border);}
+/* Empty state */
+.empty-state{text-align:center;padding:48px 24px;color:var(--dim);}
+.empty-state p{font-size:.82rem;margin-top:8px;}
+/* Job action buttons */
+.job-actions{display:flex;gap:5px;flex-shrink:0;align-items:center;}
+.job-action-btn{font-size:.65rem;padding:3px 8px;border-radius:3px;border:1px solid;cursor:pointer;transition:all .15s;line-height:1.4;}
+.job-action-btn:disabled{opacity:.5;cursor:default;}
+.btn-cancel-job{background:transparent;border-color:rgba(251,113,133,.4);color:var(--red);}
+.btn-cancel-job:hover:not(:disabled){background:var(--red-dim);}
+.btn-delete-job{background:transparent;border-color:var(--border);color:var(--dim);}
+.btn-delete-job:hover:not(:disabled){border-color:rgba(251,113,133,.4);color:var(--red);}
+/* Launch loading */
+.opt-loading{display:flex;align-items:center;gap:10px;padding:14px;background:var(--card);border:1px solid rgba(34,211,238,.2);border-radius:var(--r);font-size:.78rem;color:var(--cyan);margin-bottom:12px;}
+.opt-loading .spin{width:16px;height:16px;border-width:2px;flex-shrink:0;}
+/* ML status row */
+.ml-info-row{display:flex;justify-content:space-between;font-size:.72rem;padding:4px 2px;border-bottom:1px solid rgba(255,255,255,.04);}
+.ml-info-row:last-of-type{border-bottom:none;}
+.ml-info-key{color:var(--muted);}
+.ml-info-val{font-family:var(--mono);}
 {% endblock %}
 
 {% block topbar_content %}
-<div class="topbar-title">Optimiseur ML</div>
-<div class="topbar-sep"></div>
-<div class="topbar-right">
-  <button class="btn btn-ghost" onclick="load()">↺ Actualiser</button>
-</div>
+<div class="topbar-title">Optimiseur ML</div><div class="topbar-sep"></div>
 {% endblock %}
 
 {% block content %}
 <div id="content" class="fade-in">
+  <div class="opt-page">
 
-  <!-- Status banner -->
-  <div class="panel">
-    <div class="panel-hdr"><h3>État ML</h3></div>
-    <div class="panel-body">
-      <div class="ml-status-bar">
-        <div>
-          <div style="font-size:.63rem;color:var(--muted);margin-bottom:3px">Module ML</div>
-          <span id="ml-enabled-badge" class="status-pill stopped"><span class="status-dot"></span><span id="ml-enabled-lbl">—</span></span>
+    <!-- Left config panel -->
+    <div class="opt-left">
+      <div class="config-panel">
+        <div class="panel">
+          <div class="panel-hdr"><span style="color:var(--cyan)">⬡</span><h3>Configuration ML</h3></div>
+          <div class="panel-body">
+            <div class="form-row">
+              <label class="form-lbl">Stratégies ML à optimiser<span class="hint">Laisser vide = toutes</span></label>
+              <div id="strat-checks" style="display:flex;flex-direction:column;gap:6px;margin-top:4px"></div>
+            </div>
+            <div class="form-row"><label class="form-lbl">Paire</label><input type="text" id="opt-symbol" value="BTC/USDC"/></div>
+            <div class="form-row"><label class="form-lbl">Méthode</label>
+              <select id="opt-method">
+                <option value="bayesian">Bayesian UCB (recommandé)</option>
+                <option value="random">Random Search (rapide)</option>
+                <option value="grid">Grid Search (exhaustif)</option>
+              </select>
+            </div>
+            <div class="form-row"><label class="form-lbl">Nombre de trials<span class="hint">Bayesian: 20-40 · Random: 30-60 · Grid: auto</span></label><input type="number" id="opt-trials" value="30" min="10" max="200"/></div>
+            <div class="form-row"><label class="form-lbl">Workers parallèles<span class="hint">1 = séquentiel · 2-4 = parallèle</span></label>
+              <select id="opt-njobs"><option value="1">1 (séquentiel)</option><option value="2">2 workers</option><option value="4" selected>4 workers</option><option value="-1">Tous les CPU</option></select>
+            </div>
+            <div class="form-row"><label class="form-lbl">Early stopping<span class="hint">Arrêt si pas d'amélioration après N trials (0=off)</span></label><input type="number" id="opt-early-stop" value="0" min="0" max="50"/></div>
+            <div class="form-row"><label class="form-lbl">Timeframes<span class="hint">Cochez les TFs voulus</span></label><div id="tf-checks" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div></div>
+            <div id="preview-matrix" style="margin-bottom:10px;background:rgba(0,0,0,.25);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px"></div>
+            <div class="form-row">
+              <label class="form-lbl">Bougies par TF (split IS/OOS 65/35)
+                <span class="hint" id="lim-hint">Saisissez une valeur pour voir le détail IS/OOS</span>
+              </label>
+              <input type="number" id="opt-limit" value="1500" min="300" max="8000" oninput="updateLimHint()" onchange="updateLimHint()"/>
+            </div>
+            <div class="checkbox-row"><input type="checkbox" id="opt-apply"/><label for="opt-apply">Appliquer automatiquement les meilleurs params + entraîner le modèle</label></div>
+            <button class="btn btn-cyan btn-full" onclick="startOpt()">⬡ Lancer l'optimisation ML</button>
+          </div>
         </div>
-        <div>
-          <div style="font-size:.63rem;color:var(--muted);margin-bottom:3px">Prêt</div>
-          <span id="ml-ready-badge" class="status-pill stopped"><span class="status-dot"></span><span id="ml-ready-lbl">—</span></span>
+
+        <div class="panel">
+          <div class="panel-hdr"><span style="color:var(--muted)">📋</span><h3>Paramètres par stratégie</h3></div>
+          <div class="panel-body">
+            <div style="font-size:.66rem;color:var(--dim);margin-bottom:8px">
+              <span class="ps-badge">Optimisé</span>
+              <span class="ps-fixed-badge" style="margin-left:4px">Fixe</span>
+            </div>
+            <div id="param-space-view"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div></div>
+          </div>
         </div>
-        <div id="ml-config-box" style="flex:1;min-width:180px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 12px;font-size:.72rem;color:var(--muted);line-height:1.8;"></div>
+
+        <div class="panel">
+          <div class="panel-hdr"><span style="color:var(--muted)">●</span><h3>État ML</h3></div>
+          <div class="panel-body">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+              <span id="ml-enabled-badge" class="status-pill stopped"><span class="status-dot"></span><span id="ml-enabled-lbl">—</span></span>
+              <span id="ml-ready-badge" class="status-pill stopped"><span class="status-dot"></span><span id="ml-ready-lbl">—</span></span>
+            </div>
+            <div id="ml-strat-info"></div>
+            <a href="/config" style="font-size:.68rem;color:var(--cyan);text-decoration:none;font-weight:600;margin-top:8px;display:inline-block">⚙ Configurer ML →</a>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- Train section -->
-  <div class="panel">
-    <div class="panel-hdr"><h3>Entraînement</h3></div>
-    <div class="panel-body">
-      <div class="train-row">
-        <div class="field">
-          <label>Paire</label>
-          <input type="text" id="train-symbol" value="BTC/USDC" style="width:130px"/>
+    <!-- Right main panel -->
+    <div class="opt-right">
+      <div>
+        <div class="sec-label">Jobs ML en cours et terminés</div>
+        <div id="jobs-container">
+          <div class="empty-state"><div class="spin" style="width:20px;height:20px;border-width:2px;margin:0 auto 8px"></div><p>Chargement des jobs…</p></div>
         </div>
-        <div class="field">
-          <label>Timeframe</label>
-          <select id="train-tf" style="width:90px">
-            <option value="1h" selected>1h</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Stratégie</label>
-          <input type="text" id="train-strategy" value="ml_manual" style="width:130px" placeholder="ex: ml_manual"/>
-        </div>
-        <div class="field">
-          <label>Bougies</label>
-          <input type="number" id="train-limit" value="2000" min="200" max="10000" style="width:100px" oninput="validateLimit(this)"/>
-          <span class="field-error" id="limit-error">Valeur entre 200 et 10 000</span>
-        </div>
-        <button id="train-btn" class="btn btn-cyan" onclick="trainML()">⬡ Entraîner</button>
       </div>
-      <div id="train-result" style="font-size:.75rem;color:var(--muted);margin-top:4px;font-family:var(--mono)"></div>
-      <div id="train-metrics" class="train-metrics" style="display:none"></div>
     </div>
-  </div>
 
-  <!-- Per-strategy ML status -->
-  <div>
-    <div class="sec-hdr"><h2>Stratégies ML</h2><a href="/config" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">⚙ Configurer ML →</a></div>
-    <div id="strat-grid" class="strat-grid">
-      <div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div>
-    </div>
   </div>
-
 </div>
 {% endblock %}
 
 {% block body_scripts %}
 <script>
-const $=id=>document.getElementById(id);
-const AUTO_REFRESH_MS=60000;
-const BTN_TRAIN_IDLE='⬡ Entraîner';
-const BTN_TRAIN_BUSY='<span class="spin"></span> Entraînement…';
+const $ = id => document.getElementById(id);
+let pollInterval = null;
+let activeJobIds = [];
 
-/* ── Helpers ── */
-function fmtTs(ts){
-  if(!ts)return'—';
-  const d=new Date(ts*1000);
-  return isNaN(d)?'—':d.toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-}
-function clrAuc(v){return v>=0.6?'c-green':v>=0.5?'c-amber':'c-red';}
-function clrOos(v){return v>0.1?'c-green':v>0?'c-amber':'c-red';}
-
-/* ── Load timeframes from config ── */
-async function loadTimeframes(){
-  try{
-    const r=await apiFetch('/api/config');
-    if(!r.ok)return;
-    const d=await r.json();
-    const tfs=(d.trading?.timeframes)||[d.trading?.timeframe||'1h'];
-    const sel=$('train-tf');
-    if(!sel)return;
-    const current=sel.value;
-    sel.innerHTML=tfs.map(tf=>`<option value="${escHtml(tf)}"${tf===current?' selected':''}>${escHtml(tf)}</option>`).join('');
-    if(!tfs.includes(current)&&tfs.length)sel.value=tfs[0];
-  }catch(e){console.debug('[ML] loadTimeframes',e);}
+// ── Init ─────────────────────────────────────────────────────────────────
+async function init() {
+  await loadSpaces();
+  await refreshJobs();
+  loadMLInfo();
 }
 
-/* ── ML status ── */
-function renderMLStatus(d){
-  const enabled=d.enabled===true;
-  const ready=d.ready===true;
-  const enabledBadge=$('ml-enabled-badge'),readyBadge=$('ml-ready-badge');
-  enabledBadge.className='status-pill '+(enabled?'running':'stopped');
-  $('ml-enabled-lbl').textContent=enabled?'Activé':'Désactivé';
-  readyBadge.className='status-pill '+(ready?'running':'stopped');
-  $('ml-ready-lbl').textContent=ready?'Prêt':'Non prêt';
+async function loadSpaces() {
+  try {
+    let activeTfs = ['1h'];
+    let stratTfs  = {};
+    try {
+      const s = await apiFetch('/api/config').then(r => r.json());
+      activeTfs = s.trading?.timeframes || [s.trading?.timeframe || '1h'];
+      stratTfs  = s.strategy_timeframes || {};
+    } catch(_) {}
 
-  const cfg=d.config||{};
-  const keys=['lookahead','threshold','min_train_samples','retrain_interval_h'];
-  $('ml-config-box').innerHTML=keys.filter(k=>cfg[k]!=null).map(k=>`<span><span style="color:var(--dim)">${escHtml(k)}</span> <strong style="color:var(--text);font-family:var(--mono)">${escHtml(String(cfg[k]))}</strong></span>`).join(' &nbsp;·&nbsp; ')||'<span style="color:var(--dim)">Config par défaut</span>';
+    const r      = await apiFetch('/api/optimize/spaces');
+    const spaces = await r.json();
+    // Filtrer uniquement les stratégies ML (préfixe ml_)
+    const mlSpaces = Object.fromEntries(Object.entries(spaces).filter(([k]) => k.startsWith('ml_')));
+
+    renderTfChecks(activeTfs);
+    renderStratChecks(mlSpaces, stratTfs);
+    renderSpaces(mlSpaces);
+    updateLimHint();
+  } catch(e) {
+    document.getElementById('param-space-view').textContent = 'Erreur de chargement : ' + e.message;
+  }
 }
 
-/* ── Per-strategy cards ── */
-function renderStratCards(strategies){
-  const grid=$('strat-grid');
-  const entries=Object.entries(strategies||{});
-  if(!entries.length){grid.innerHTML='<div style="color:var(--dim);font-size:.78rem">Aucune stratégie ML chargée (bot arrêté ou ML désactivé).</div>';return;}
+// Timeframe checkboxes
+const TF_INFO = {
+  '5m':  {label:'5m',  def:4000,  max:8000, note:'~14j · max ~8000'},
+  '15m': {label:'15m', def:2000,  max:8000, note:'~21j · max ~8000'},
+  '1h':  {label:'1h',  def:1500,  max:8000, note:'~62j · max ~8000'},
+  '4h':  {label:'4h',  def:800,   max:2000, note:'~133j · max ~2000'},
+  '1d':  {label:'1d',  def:2000,  max:3000, note:'~2000j · max ~2500'},
+};
 
-  grid.innerHTML=entries.map(([name,s])=>{
-    const trained=s.is_trained===true;
-    const auc=+(s.best_auc||0);
-    const aucStr=auc>0?auc.toFixed(4):'—';
-    const next=s.next_retrain_at?fmtTs(s.next_retrain_at):'—';
-    return`<div class="strat-card ${trained?'trained':'untrained'}">
-      <div class="strat-name">
-        ${escHtml(name)}
-        <span class="strat-badge ${trained?'ok':'nok'}">${trained?'✓ Entraîné':'⚠ Non entraîné'}</span>
-      </div>
-      <div class="strat-metric"><span class="strat-key">Meilleur AUC</span><span class="strat-val ${auc>0?clrAuc(auc):''}">${aucStr}</span></div>
-      <div class="strat-metric"><span class="strat-key">Prochain entraînement</span><span class="strat-val" style="font-size:.68rem">${escHtml(next)}</span></div>
-    </div>`;
+function renderTfChecks(activeTfs) {
+  const el = document.getElementById('tf-checks');
+  el.innerHTML = Object.entries(TF_INFO).map(([tf, info]) => {
+    const checked = activeTfs.includes(tf);
+    return `<label style="cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+        padding:5px 10px;border-radius:6px;border:1px solid ${checked?'rgba(34,211,238,.4)':'var(--border)'};
+        background:${checked?'var(--cyan-dim)':'transparent'};transition:.15s"
+        onclick="toggleTfCheck(this,'${tf}')">
+      <input type="checkbox" id="tfc-${tf}" ${checked?'checked':''} style="display:none">
+      <span style="font-weight:700;color:${checked?'var(--cyan)':'var(--muted)'}">${info.label}</span>
+      <span style="font-size:.65rem;color:var(--dim)">${info.note}</span>
+    </label>`;
   }).join('');
 }
 
-/* ── Validate limit input ── */
-function validateLimit(input){
-  const v=+input.value;
-  const field=input.closest('.field');
-  if(!field)return;
-  if(v<200||v>10000){field.classList.add('has-error');}
-  else{field.classList.remove('has-error');}
+function toggleTfCheck(lbl, tf) {
+  const cb = document.getElementById('tfc-' + tf);
+  cb.checked = !cb.checked;
+  const on = cb.checked;
+  lbl.style.borderColor  = on ? 'rgba(34,211,238,.4)' : 'var(--border)';
+  lbl.style.background   = on ? 'var(--cyan-dim)'     : 'transparent';
+  lbl.querySelector('span').style.color = on ? 'var(--cyan)' : 'var(--muted)';
+  updateStratCompatibility();
+  updateLimHint();
 }
 
-/* ── Render training result metrics ── */
-function renderTrainMetrics(d){
-  const wrap=$('train-metrics');
-  if(!wrap)return;
-  const oos=d.oos_score??null;
-  const auc=d.cv_auc??null;
-  const std=d.cv_std??null;
-  const samples=d.samples??null;
-  const model=d.model??null;
-  const cards=[
-    auc!=null?`<div class="train-metric-card"><div class="train-metric-lbl">AUC (CV)</div><div class="train-metric-val ${clrAuc(auc)}">${auc.toFixed(3)}</div></div>`:null,
-    std!=null?`<div class="train-metric-card"><div class="train-metric-lbl">Écart-type CV</div><div class="train-metric-val">±${std.toFixed(3)}</div></div>`:null,
-    oos!=null?`<div class="train-metric-card"><div class="train-metric-lbl">Score OOS</div><div class="train-metric-val ${clrOos(oos)}">${oos>=0?'+':''}${oos.toFixed(3)}</div></div>`:null,
-    samples!=null?`<div class="train-metric-card"><div class="train-metric-lbl">Échantillons</div><div class="train-metric-val">${samples.toLocaleString()}</div></div>`:null,
-    model?`<div class="train-metric-card"><div class="train-metric-lbl">Modèle</div><div class="train-metric-val" style="font-size:.72rem">${escHtml(model)}</div></div>`:null,
-  ].filter(Boolean);
-  if(cards.length){wrap.innerHTML=cards.join('');wrap.style.display='flex';}
-  else{wrap.style.display='none';}
-}
-
-/* ── Train ── */
-async function trainML(){
-  const btn=$('train-btn');
-  const sym=($('train-symbol')?.value||'BTC/USDC').trim();
-  const tf=($('train-tf')?.value||'1h').trim();
-  const strategy=($('train-strategy')?.value||'ml_manual').trim().replace(/[^a-zA-Z0-9_-]/g,'_')||'ml_manual';
-  const limitInput=$('train-limit');
-  const rawLim=+(limitInput?.value||2000);
-  const lim=Math.max(200,Math.min(10000,rawLim));
-  if(rawLim<200||rawLim>10000){
-    limitInput.closest('.field')?.classList.add('has-error');
-    limitInput.value=lim;
-    limitInput.addEventListener('input',function _fix(){limitInput.closest('.field')?.classList.remove('has-error');limitInput.removeEventListener('input',_fix);},{once:true});
+// IS/OOS hint dynamique
+const TF_MINS = {'5m':5,'15m':15,'1h':60,'4h':240,'1d':1440};
+function updateLimHint() {
+  const el    = document.getElementById('lim-hint');
+  const input = document.getElementById('opt-limit');
+  if (!el || !input) return;
+  const total = Math.max(300, Math.min(8000, parseInt(input.value) || 1500));
+  const is_n  = Math.round(total * 0.65);
+  const oos_n = total - is_n;
+  const checkedTfs = Object.keys(TF_INFO).filter(tf => {
+    const cb = document.getElementById('tfc-' + tf);
+    return cb && cb.checked;
+  });
+  if (!checkedTfs.length) {
+    el.textContent = `${is_n} IS / ${oos_n} OOS (sélectionnez un TF)`;
+    return;
   }
-  btn.disabled=true;btn.innerHTML=BTN_TRAIN_BUSY;
-  $('train-result').textContent='';
-  $('train-metrics').style.display='none';
-  try{
-    const r=await apiFetch(`/api/ml/train?symbol=${encodeURIComponent(sym)}&limit=${lim}&timeframe=${encodeURIComponent(tf)}&strategy=${encodeURIComponent(strategy)}`,{method:'POST'});
-    const d=await r.json();
-    if(!r.ok)throw new Error(d.detail||'Erreur inconnue');
-    const modelPath=d.model_path?` · 💾 ${escHtml(d.model_path)}`:'';
-    $('train-result').innerHTML=`✓ Modèle entraîné — ${d.samples||0} échantillons · TF ${escHtml(d.timeframe||tf)}${modelPath}`;
-    $('train-result').style.color='var(--green)';
-    renderTrainMetrics(d);
-    toast('Entraînement terminé ✓');
-    await loadMLInfo();
-  }catch(e){
-    $('train-result').textContent='✗ '+e.message;
-    $('train-result').style.color='var(--red)';
-    toast('Erreur entraînement : '+e.message,true);
-  }finally{btn.disabled=false;btn.innerHTML=BTN_TRAIN_IDLE;}
+  const TF_MAX = {'5m':8000,'15m':8000,'1h':8000,'4h':2000,'1d':3000};
+  const parts = checkedTfs.map(tf => {
+    const mins    = TF_MINS[tf] || 60;
+    const tfMax   = TF_MAX[tf] || 8000;
+    const actual  = Math.min(total, tfMax);
+    const is_act  = Math.round(actual * 0.65);
+    const oos_act = actual - is_act;
+    const isDays  = Math.round(is_act  * mins / 1440);
+    const oosDays = Math.round(oos_act * mins / 1440);
+    const capNote = total > tfMax
+      ? `<span style="color:var(--amber)"> (max Binance: ${tfMax})</span>`
+      : '';
+    return `${tf} → IS ${is_act} (~${isDays}j) · OOS ${oos_act} (~${oosDays}j)${capNote}`;
+  });
+  el.innerHTML = parts.join('<br>');
 }
 
-/* ── Load ML info ── */
-async function loadMLInfo(){
-  try{
-    const r=await apiFetch('/api/ml/strategy-info');
-    if(!r.ok)return;
-    const d=await r.json();
-    renderMLStatus(d);
-    renderStratCards(d.strategies||{});
-  }catch(e){console.error('[ML] strategy-info',e);}
+let _stratTfs = {};
+function renderStratChecks(spaces, stratTfs) {
+  _stratTfs = stratTfs;
+  const el = document.getElementById('strat-checks');
+  if (!spaces || !Object.keys(spaces).length) {
+    el.innerHTML = '<div style="color:var(--amber);font-size:.75rem">Aucune stratégie ML avec espace de paramètres détectée.</div>';
+    return;
+  }
+  el.innerHTML = Object.keys(spaces).map(s => {
+    const tfs = (stratTfs[s] || []).join(', ') || 'tous';
+    return `<div class="checkbox-row" style="margin-bottom:0;align-items:flex-start">
+      <input type="checkbox" id="sc-${s}" checked onchange="updateStratCompatibility()"/>
+      <div>
+        <label for="sc-${s}" style="font-family:var(--mono);font-size:.78rem;font-weight:600">${s}</label>
+        <span id="sc-tfs-${s}" style="font-size:.65rem;color:var(--cyan);margin-left:6px">${tfs}</span>
+      </div>
+    </div>`;
+  }).join('');
+  updateStratCompatibility();
 }
 
-/* ── Main load ── */
-async function load(){
-  await loadMLInfo();
+function updateStratCompatibility() {
+  const selectedTfs = Object.keys(TF_INFO).filter(tf => {
+    const cb = document.getElementById('tfc-' + tf);
+    return cb && cb.checked;
+  });
+  Object.keys(_stratTfs).forEach(s => {
+    const cb    = document.getElementById('sc-' + s);
+    const badge = document.getElementById('sc-tfs-' + s);
+    if (!cb || !badge) return;
+    const recTfs   = _stratTfs[s] || [];
+    const willRun  = selectedTfs.filter(tf => recTfs.length === 0 || recTfs.includes(tf));
+    const nonRec   = selectedTfs.filter(tf => recTfs.length > 0 && !recTfs.includes(tf));
+    if (nonRec.length && willRun.length) {
+      badge.innerHTML = willRun.map(tf => `<span style="color:var(--cyan)">${tf}</span>`).join(' ')
+        + ' + ' + nonRec.map(tf => `<span style="color:var(--amber)" title="TF non recommandé">⚠${tf}</span>`).join(' ');
+    } else if (willRun.length) {
+      badge.innerHTML = willRun.map(tf => `<span style="color:var(--cyan)">${tf}</span>`).join(' ');
+    } else {
+      badge.innerHTML = recTfs.map(tf => `<span style="color:var(--dim)">${tf}</span>`).join(' ');
+    }
+    badge.title = recTfs.length ? `TFs recommandés : ${recTfs.join(', ')}` : 'Compatible avec tous les TFs';
+    cb.disabled = false;
+    if (cb.parentElement) cb.parentElement.style.opacity = '1';
+  });
+  updatePreviewMatrix(selectedTfs);
 }
 
-loadTimeframes();
-load();
-setInterval(load,AUTO_REFRESH_MS);
+function updatePreviewMatrix(selectedTfs) {
+  const el = document.getElementById('preview-matrix');
+  if (!el) return;
+  const strats = [...document.querySelectorAll('#strat-checks input[type=checkbox]')]
+    .filter(cb => !cb.id.startsWith('tfc-'))
+    .map(cb => cb.id.replace('sc-', ''));
+  if (!strats.length || !selectedTfs.length) { el.innerHTML = ''; return; }
+
+  const tfCols = selectedTfs.map(tf =>
+    `<th style="padding:4px 8px;font-size:.6rem;color:var(--dim);text-align:center">${tf}</th>`
+  ).join('');
+  const rows = strats.map(s => {
+    const cb = document.getElementById('sc-' + s);
+    const isChecked = cb && cb.checked;
+    const recTfs = _stratTfs[s] || [];
+    const cols = selectedTfs.map(tf => {
+      const isRec = recTfs.length === 0 || recTfs.includes(tf);
+      if (!isChecked) return `<td style="text-align:center;padding:3px 8px;color:var(--dim)">—</td>`;
+      return `<td style="text-align:center;padding:3px 8px">
+        <span style="font-size:.7rem;${isRec?'color:var(--green)':'color:var(--amber)'}"
+              title="${isRec?'TF recommandé':'TF non recommandé'}">${isRec?'✓':'⚠'}</span></td>`;
+    }).join('');
+    return `<tr>
+      <td style="padding:3px 8px;font-family:var(--mono);font-size:.7rem;color:${isChecked?'var(--text)':'var(--dim)'};white-space:nowrap">${s}</td>
+      ${cols}
+    </tr>`;
+  }).join('');
+  const totalJobs = strats.filter(s => { const cb = document.getElementById('sc-' + s); return cb && cb.checked; })
+    .reduce((acc) => acc + selectedTfs.length, 0);
+  el.innerHTML = `
+    <div style="font-size:.63rem;color:var(--dim);margin-bottom:5px;display:flex;justify-content:space-between">
+      <span>Jobs qui seront lancés</span><span style="color:var(--cyan)">${totalJobs} job(s)</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table style="border-collapse:collapse;width:100%">
+        <thead><tr><th style="padding:4px 8px;font-size:.6rem;color:var(--dim);text-align:left">Stratégie</th>${tfCols}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div style="font-size:.61rem;color:var(--dim);margin-top:4px">
+      <span style="color:var(--green)">✓</span> recommandé &nbsp;
+      <span style="color:var(--amber)">⚠</span> non recommandé (lancé quand même)
+    </div>`;
+}
+
+function renderSpaces(spaces) {
+  let html = '';
+  for (const [name, info] of Object.entries(spaces)) {
+    const params = info.params || {};
+    const paramKeys = Object.keys(params);
+    const fixedKeys = Object.keys(info.fixed || {});
+    const tfs = (info.timeframes || []).join(', ') || 'tous';
+    html += `<div class="ps-strat">
+      <div class="ps-name">
+        <span>${name}</span>
+        <span class="ps-badge">${paramKeys.length} params</span>
+        <span style="font-size:.65rem;color:var(--cyan);margin-left:4px">${tfs}</span>
+      </div>
+      <div class="ps-params">
+        ${paramKeys.map(p => `<span class="ps-param">${p}</span>`).join('')}
+        ${fixedKeys.map(p => `<span class="ps-param fixed">${p}</span>`).join('')}
+      </div>
+    </div>`;
+  }
+  if (!html) html = '<div style="color:var(--dim);font-size:.75rem">Aucune stratégie ML détectée.</div>';
+  document.getElementById('param-space-view').innerHTML = html;
+}
+
+// ── Start optimization ───────────────────────────────────────────────────
+let _optRunning = false;
+function _setOptBtn(running) {
+  _optRunning = running;
+  const btn = document.querySelector('.btn-cyan.btn-full');
+  if (!btn) return;
+  btn.disabled = running;
+  btn.textContent = running ? '⏳ Optimisation ML en cours…' : '⬡ Lancer l\'optimisation ML';
+}
+
+async function startOpt() {
+  if (_optRunning) return;
+  const checked = [...document.querySelectorAll('#strat-checks input:checked:not(:disabled)')]
+                    .map(i => i.id.replace('sc-',''));
+  if (!checked.length) { toast('Sélectionnez au moins une stratégie ML.', true); return; }
+
+  const selectedTfs = Object.keys(TF_INFO).filter(tf => {
+    const cb = document.getElementById('tfc-' + tf);
+    return cb && cb.checked;
+  });
+  if (!selectedTfs.length) { toast('Sélectionnez au moins un timeframe.', true); return; }
+
+  const lim = parseInt($('opt-limit').value) || 1500;
+
+  const params = new URLSearchParams({
+    symbol:              $('opt-symbol').value.trim() || 'BTC/USDC',
+    strategies:          checked.join(','),
+    method:              $('opt-method').value,
+    n_trials:            $('opt-trials').value,
+    limit:               lim,
+    timeframes:          selectedTfs.join(','),
+    auto_apply:          $('opt-apply').checked,
+    n_jobs:              $('opt-njobs').value,
+    early_stop_patience: $('opt-early-stop').value,
+  });
+  _setOptBtn(true);
+  const loadingEl = document.createElement('div');
+  loadingEl.className = 'opt-loading';
+  loadingEl.innerHTML = '<span class="spin"></span><span>Récupération des bougies en cours…</span>';
+  const jobsContainer = $('jobs-container');
+  if (jobsContainer) jobsContainer.prepend(loadingEl);
+  try {
+    const r = await apiFetch('/api/optimize/start?' + params, {method:'POST'});
+    loadingEl.remove();
+    if (!r.ok) { _setOptBtn(false); throw new Error((await r.json()).detail || r.statusText); }
+    const d = await r.json();
+    const nJobs   = d.job_ids?.length || 0;
+    const skipped = d.skipped || [];
+    activeJobIds  = [...activeJobIds, ...(d.job_ids||[])];
+    startPolling();
+    refreshJobs();
+
+    const msg = document.createElement('div');
+    msg.style.cssText = 'margin-top:8px;font-size:.73rem';
+    const fetchDetails = d.fetch_details || {};
+    let html = `<div style="color:var(--green);font-weight:700;margin-bottom:4px">✓ ${nJobs} job(s) ML lancé(s)</div>`;
+    const detailEntries = Object.entries(fetchDetails);
+    if (detailEntries.length) {
+      const TF_MAX_UI = {'5m':8000,'15m':8000,'1h':8000,'4h':2000,'1d':3000};
+      html += `<div style="font-size:.68rem;color:var(--dim);margin:4px 0">`;
+      detailEntries.forEach(([tf, bars]) => {
+        const tfMax = TF_MAX_UI[tf] || 8000;
+        const capped = bars < lim && bars >= tfMax;
+        html += `<span style="margin-right:10px">${tf}: <strong style="color:var(--text)">${bars}</strong> bougies`;
+        if (capped) html += ` <span style="color:var(--amber)">(max Binance)</span>`;
+        html += `</span>`;
+      });
+      html += `</div>`;
+    }
+    if (skipped.length) {
+      const uniq = {};
+      skipped.forEach(({strategy, timeframe, reason}) => {
+        const k = `${strategy}@${timeframe}`;
+        if (!uniq[k]) uniq[k] = reason;
+      });
+      html += `<div style="color:var(--amber);margin-top:4px;font-size:.68rem">
+        <strong>⚠ ${skipped.length} combinaison(s) ignorée(s) :</strong><br>`;
+      Object.entries(uniq).forEach(([k, r]) => {
+        html += `<span style="color:var(--dim)">${k}</span> — ${r}<br>`;
+      });
+      html += '</div>';
+    }
+    msg.innerHTML = html;
+    document.querySelector('.btn-cyan.btn-full')?.insertAdjacentElement('afterend', msg);
+    setTimeout(() => msg.remove(), 10000);
+  } catch(e) { loadingEl.remove(); _setOptBtn(false); toast('Erreur: ' + e.message, true); }
+}
+
+// ── Polling ──────────────────────────────────────────────────────────────
+function startPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(refreshJobs, 2500);
+}
+
+async function refreshJobs() {
+  try {
+    const r = await apiFetch('/api/optimize/status');
+    const allJobs = await r.json();
+    // Filtrer uniquement les jobs ML (stratégies préfixées ml_)
+    const jobs = Object.fromEntries(
+      Object.entries(allJobs).filter(([, j]) => (j.strategy || '').startsWith('ml_'))
+    );
+    if (_lastJobs) {
+      Object.entries(_lastJobs).forEach(([id, j]) => {
+        if (j.applied && jobs[id]) jobs[id].applied = true;
+      });
+    }
+    _lastJobs = jobs;
+    Object.entries(jobs).forEach(([id, j]) => {
+      if (j.status === 'done' && !_expandedJobs.has('_seen_' + id)) {
+        _expandedJobs.add(id);
+        _expandedJobs.add('_seen_' + id);
+      }
+    });
+    renderJobs(jobs);
+    const anyRunning = Object.values(jobs).some(j => j.status === 'running');
+    if (!anyRunning && pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    if (!anyRunning) _setOptBtn(false);
+  } catch(e) {}
+}
+
+// ── Render jobs ──────────────────────────────────────────────────────────
+const _expandedJobs = new Set();
+
+function renderJobs(jobs) {
+  const entries = Object.entries(jobs);
+  if (!entries.length) {
+    $('jobs-container').innerHTML = `<div class="empty-state">
+      <div style="font-size:2rem">⬡</div>
+      <p>Aucun job ML. Configurez et lancez une optimisation ML.</p></div>`;
+    return;
+  }
+  entries.sort((a,b) => (b[1].started_at||0) - (a[1].started_at||0));
+  const running   = entries.filter(([,j]) => j.status === 'running');
+  const done      = entries.filter(([,j]) => j.status === 'done');
+  const errored   = entries.filter(([,j]) => j.status === 'error');
+  const cancelled = entries.filter(([,j]) => j.status === 'cancelled');
+  running.forEach(([id]) => _expandedJobs.add(id));
+  let html = '';
+  if (running.length) {
+    html += `<div class="job-group-hdr">En cours (${running.length})</div>`;
+    html += running.map(([id,job]) => renderJobCard(id, job, true)).join('');
+  }
+  if (errored.length) {
+    html += `<div class="job-group-hdr" style="color:var(--red)">Erreurs (${errored.length})</div>`;
+    html += errored.map(([id,job]) => renderJobCard(id, job, _expandedJobs.has(id))).join('');
+  }
+  if (cancelled.length) {
+    html += `<div class="job-group-hdr" style="color:var(--amber)">Annulés (${cancelled.length})</div>`;
+    html += cancelled.map(([id,job]) => renderJobCard(id, job, _expandedJobs.has(id))).join('');
+  }
+  if (done.length) {
+    const nExpanded = done.filter(([id]) => _expandedJobs.has(id)).length;
+    html += `<div class="job-group-hdr">Terminés (${done.length})
+      <button onclick="toggleAllDone()" style="font-size:.62rem;background:transparent;border:1px solid var(--border);color:var(--dim);padding:2px 7px;border-radius:3px;cursor:pointer;text-transform:none;letter-spacing:0">
+        ${nExpanded === done.length ? '⊟ Réduire tout' : '⊞ Tout ouvrir'}
+      </button>
+    </div>`;
+    html += done.map(([id,job]) => renderJobCard(id, job, _expandedJobs.has(id))).join('');
+  }
+  $('jobs-container').innerHTML = html;
+}
+
+function toggleAllDone() {
+  const jobs = Object.entries(_lastJobs || {}).filter(([,j]) => j.status === 'done');
+  const allExpanded = jobs.every(([id]) => _expandedJobs.has(id));
+  jobs.forEach(([id]) => allExpanded ? _expandedJobs.delete(id) : _expandedJobs.add(id));
+  renderJobs(_lastJobs || {});
+}
+
+function toggleJobCard(id) {
+  if (_expandedJobs.has(id)) _expandedJobs.delete(id);
+  else _expandedJobs.add(id);
+  renderJobs(_lastJobs || {});
+}
+
+let _lastJobs = {};
+let _jobStartTimes = {};
+
+function _estimateETA(job) {
+  const id = job.job_id || job.id || '';
+  const prog = job.progress || 0;
+  if (prog <= 0) return '';
+  if (!_jobStartTimes[id]) _jobStartTimes[id] = Date.now();
+  const elapsed = (Date.now() - _jobStartTimes[id]) / 1000;
+  if (elapsed < 5) return '';
+  const total = elapsed / (prog / 100);
+  const remaining = Math.max(0, total - elapsed);
+  if (remaining < 60) return '~' + Math.round(remaining) + 's restant';
+  return '~' + Math.round(remaining / 60) + 'min restant';
+}
+
+function renderJobCard(id, job, expanded = false) {
+  const st = job.status || 'pending';
+  const stLabel = {running:'⟳ En cours',done:'✓ Terminé',error:'✗ Erreur',cancelled:'⊘ Annulé',pending:'… En attente'}[st] || st;
+  const prog = job.progress || 0;
+  const result = job.result || {};
+  const best = result.best_params || {};
+  const hasResult = st === 'done' && Object.keys(best).length;
+  const baseline = job.baseline || {};
+
+  let metricsHtml = '';
+  if (hasResult) {
+    const overfitScore = +(result.overfit||0);
+    const overfitWarning = overfitScore > 2
+      ? `<span title="⚠ Overfit élevé (${overfitScore.toFixed(2)})" style="cursor:help;font-size:.65rem;color:var(--amber);margin-left:4px">⚠ overfit</span>`
+      : `<span title="Ratio IS/OOS acceptable (${overfitScore.toFixed(2)} ≤ 2)" style="cursor:help;font-size:.65rem;color:var(--green);margin-left:4px">✓ OK</span>`;
+    const m = [
+      ['PnL OOS', fmtSign(result.best_oos_pnl||0), clr(result.best_oos_pnl||0), ''],
+      ['Win Rate', (result.best_oos_wr||0).toFixed(1)+'%', clr((result.best_oos_wr||0)-50), ''],
+      ['Sharpe',   (result.best_oos_sharpe||0).toFixed(2), clr(result.best_oos_sharpe||0), ''],
+      ['Trades',   result.best_oos_trades||0, 'clr-muted', ''],
+      ['Overfit',  result.overfit == null ? 'N/A' : overfitScore.toFixed(2),
+                   overfitScore > 2 ? 'clr-red' : 'clr-green', overfitWarning],
+    ];
+    metricsHtml = `<div class="metrics-row">${m.map(([l,v,c,extra])=>
+      `<div class="metric-box"><div class="metric-lbl">${l}${extra}</div><div class="metric-val ${c}">${v}</div></div>`
+    ).join('')}</div>`;
+  }
+
+  let baHtml = '';
+  if (hasResult && baseline.pnl !== undefined) {
+    baHtml = `<div class="ba-grid">
+      <div class="ba-box">
+        <div class="ba-title">⬅ Avant optimisation</div>
+        ${baRow('Trades', baseline.trades??'-')}
+        ${baRow('PnL', fmtSign(baseline.pnl??0), clr(baseline.pnl??0))}
+        ${baRow('Sharpe', (baseline.sharpe??0).toFixed(2))}
+        ${baRow('Win Rate', (baseline.wr??0).toFixed(1)+'%')}
+        ${baRow('Drawdown', (baseline.dd??0).toFixed(1)+'%', (baseline.dd||0)>15?'clr-red':'clr-muted')}
+      </div>
+      <div class="ba-box">
+        <div class="ba-title">➡ Après optimisation (OOS)</div>
+        ${baRow('Trades', result.best_oos_trades??'-')}
+        ${baRow('PnL', fmtSign(result.best_oos_pnl??0), clr(result.best_oos_pnl??0))}
+        ${baRow('Sharpe', (result.best_oos_sharpe??0).toFixed(2))}
+        ${baRow('Win Rate', (result.best_oos_wr??0).toFixed(1)+'%', clr((result.best_oos_wr||0)-50))}
+        ${baRow('Drawdown', (result.best_oos_dd??0).toFixed(1)+'%', (result.best_oos_dd||0)>15?'clr-red':'clr-muted')}
+      </div>
+    </div>`;
+  }
+
+  let paramsHtml = '';
+  if (hasResult) {
+    paramsHtml = `<div class="params-block">${Object.entries(best).map(([k,v])=>
+      `<span class="pk">${k}</span>: <span class="pv">${v}</span>\n`
+    ).join('')}</div>`;
+  }
+
+  let top5Html = '';
+  if (hasResult && result.top5?.length) {
+    top5Html = `<div class="top5-wrap">
+      <table class="top5-table"><thead><tr>
+        <th>#</th><th>IS Score</th><th>OOS Score</th><th>Final</th>
+        <th>OOS PnL</th><th>OOS WR</th><th>OOS DD</th><th>Overfit</th>
+      </tr></thead><tbody>${result.top5.map((r,i)=>`
+      <tr class="${i===0?'top5-best':''}">
+        <td>${i===0?'🏆':i+1}</td>
+        <td>${(r.is_score??0).toFixed(3)}</td>
+        <td class="${clr(r.oos_score??0)}">${(r.oos_score??0).toFixed(3)}</td>
+        <td class="${clr(r.final_score??0)}">${(r.final_score??0).toFixed(3)}</td>
+        <td class="${clr(r.oos_pnl??0)}">${fmtSign(r.oos_pnl??0)}</td>
+        <td>${(r.oos_wr??0).toFixed(1)}%</td>
+        <td class="${(r.oos_dd??0)>10?'clr-red':'clr-muted'}">${(r.oos_dd??0).toFixed(1)}%</td>
+        <td class="${(r.overfit??0)>2?'clr-red':'clr-green'}">${r.overfit==null?'N/A':(r.overfit).toFixed(2)}</td>
+      </tr>`).join('')}</tbody></table>
+    </div>`;
+  }
+
+  let applyHtml = '';
+  if (hasResult) {
+    const applied = job.applied;
+    applyHtml = `<div class="apply-row">
+      ${applied
+        ? `<span style="color:var(--green);font-size:.75rem;font-weight:700">✓ Paramètres appliqués dans config.yaml</span>`
+        : `<button class="btn btn-green" onclick="applyJob('${id}',event)">✓ Appliquer dans config.yaml</button>
+           <span class="apply-note">Écrase uniquement les params optimisés — le modèle ML est sauvegardé automatiquement</span>`
+      }
+    </div>`;
+  }
+
+  let warnHtml = '';
+  const oos_score_val = +(result.best_oos_score ?? result.best_oos_pnl ?? -999);
+  if (hasResult && (result.best_oos_trades||0) < 3) {
+    warnHtml += `<div class="warn-box">⚠ Seulement ${result.best_oos_trades||0} trades sur la période OOS. Augmentez le nombre de bougies.</div>`;
+  }
+  if (hasResult && oos_score_val < -0.05 && oos_score_val > -999) {
+    warnHtml += `<div class="warn-box" style="border-color:rgba(251,113,133,.4);background:var(--red-dim);color:var(--red)">
+      🚫 Score OOS <strong>${oos_score_val.toFixed(3)}</strong> — stratégie potentiellement peu performante.
+    </div>`;
+  }
+
+  const bestPnlStr = hasResult ? fmtSign(result.best_oos_pnl||0) : '';
+  const bestPnlClr = hasResult ? clr(result.best_oos_pnl||0) : '';
+  const scoreStr   = hasResult ? (result.best_oos_score||0).toFixed(3) : (job.best_score||0).toFixed(3);
+
+  const actionBtns = st === 'running'
+    ? `<button class="job-action-btn btn-cancel-job" onclick="cancelJob('${escHtml(id)}',event)" title="Annuler ce job">✕ Annuler</button>`
+    : `<button class="job-action-btn btn-delete-job" onclick="deleteJob('${escHtml(id)}',event)" title="Supprimer ce job">🗑</button>`;
+
+  const summaryContent = `
+    <div style="display:flex;align-items:flex-start;gap:6px">
+      <div style="flex:1;min-width:0;cursor:pointer" onclick="toggleJobCard('${id}')">
+        <div class="job-title" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span>${job.strategy || id}</span>
+          <span style="color:var(--cyan);font-size:.8rem">@${job.timeframe||'?'}</span>
+          ${job.is_recommended === false
+            ? `<span style="background:var(--amber-dim);color:var(--amber);font-size:.6rem;padding:1px 5px;border-radius:3px" title="TF non recommandé — recommandé : ${(job.recommended_tfs||[]).join(', ')}">⚠</span>`
+            : ''}
+          <span class="job-status js-${st}" style="font-size:.62rem">${stLabel}</span>
+          ${hasResult ? `<span class="${bestPnlClr}" style="font-family:var(--mono);font-size:.75rem">${bestPnlStr}</span>
+            <span style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">score: ${scoreStr}</span>` : ''}
+          ${job.applied ? `<span style="color:var(--green);font-size:.65rem">✓ appliqué</span>` : ''}
+        </div>
+        <div class="progress-wrap" style="margin:5px 0 0">
+          <div class="progress-bg" style="height:4px"><div class="progress-fill ${st==='done'?'progress-done':''}" style="width:${prog}%"></div></div>
+          ${st==='running'&&prog>0?`<div class="progress-lbl"><span>${prog.toFixed(0)}%</span><span>${_estimateETA(job)}</span></div>`:''}
+        </div>
+      </div>
+      <div class="job-actions">
+        ${actionBtns}
+        <span class="job-toggle" onclick="toggleJobCard('${id}')" style="cursor:pointer">${expanded ? '⊟' : '⊞'}</span>
+      </div>
+    </div>`;
+
+  const detailsContent = expanded ? `
+    <div class="job-details">
+      <div class="job-meta" style="margin-bottom:8px">${job.symbol||'—'} · ${job.method||'—'} · ${job.trials_done||0}/${job.n_trials||'?'} trials · Best: ${(job.best_score||0).toFixed(3)}</div>
+      ${st==='error' ? `<div style="color:var(--red);font-size:.73rem;margin-bottom:6px">${job.error||'Erreur inconnue'}</div>` : ''}
+      ${metricsHtml}
+      ${warnHtml}
+      ${baHtml}
+      ${hasResult ? `<div style="margin-top:10px;font-size:.68rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Meilleurs paramètres ML</div>${paramsHtml}` : ''}
+      ${top5Html}
+      ${applyHtml}
+    </div>` : '';
+
+  return `<div class="job-card ${st}" style="margin-bottom:8px">
+    ${summaryContent}
+    ${detailsContent}
+  </div>`;
+}
+
+function baRow(label, val, cls='') {
+  return `<div class="ba-row"><span class="ba-key">${label}</span><span class="${cls}">${val}</span></div>`;
+}
+
+async function applyJob(jobId, e) {
+  const btn = e ? e.target : null;
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ Application…';
+  try {
+    const r = await apiFetch(`/api/optimize/apply?job_id=${encodeURIComponent(jobId)}`, {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    if (_lastJobs[jobId]) _lastJobs[jobId].applied = true;
+    refreshJobs();
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = '✓ Appliquer dans config.yaml';
+    alert('Erreur: ' + e.message);
+  }
+}
+
+async function cancelJob(jobId, e) {
+  const btn = e ? e.target : null;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳…'; }
+  try {
+    const r = await apiFetch(`/api/optimize/cancel?job_id=${encodeURIComponent(jobId)}`, {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    toast('Signal d\'annulation envoyé — arrêt en cours…');
+    refreshJobs();
+  } catch(err) {
+    if (btn) { btn.disabled = false; btn.textContent = '✕ Annuler'; }
+    toast('Erreur: ' + err.message, true);
+  }
+}
+
+async function deleteJob(jobId, e) {
+  const btn = e ? e.target : null;
+  if (btn) { btn.disabled = true; }
+  try {
+    const r = await apiFetch(`/api/optimize/job?job_id=${encodeURIComponent(jobId)}`, {method:'DELETE'});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    if (_lastJobs) delete _lastJobs[jobId];
+    _expandedJobs.delete(jobId);
+    renderJobs(_lastJobs || {});
+    toast('Job supprimé');
+  } catch(err) {
+    if (btn) { btn.disabled = false; }
+    toast('Erreur: ' + err.message, true);
+  }
+}
+
+// ── ML Status ─────────────────────────────────────────────────────────────
+function fmtTs(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
+  return isNaN(d) ? '—' : d.toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function clrAuc(v) { return v >= 0.6 ? 'clr-green' : v >= 0.5 ? 'clr-muted' : 'clr-red'; }
+
+async function loadMLInfo() {
+  try {
+    const r = await apiFetch('/api/ml/strategy-info');
+    if (!r.ok) return;
+    const d = await r.json();
+    const enabled = d.enabled === true;
+    const ready   = d.ready   === true;
+    const eb = $('ml-enabled-badge'), rb = $('ml-ready-badge');
+    if (eb) { eb.className = 'status-pill ' + (enabled ? 'running' : 'stopped'); $('ml-enabled-lbl').textContent = enabled ? 'ML activé' : 'ML désactivé'; }
+    if (rb) { rb.className = 'status-pill ' + (ready   ? 'running' : 'stopped'); $('ml-ready-lbl').textContent   = ready   ? 'Prêt'       : 'Non prêt'; }
+
+    const infoEl = $('ml-strat-info');
+    if (!infoEl) return;
+    const entries = Object.entries(d.strategies || {});
+    if (!entries.length) {
+      infoEl.innerHTML = '<div style="color:var(--dim);font-size:.73rem">Aucune stratégie ML chargée (bot arrêté).</div>';
+      return;
+    }
+    infoEl.innerHTML = entries.map(([name, s]) => {
+      const trained = s.is_trained === true;
+      const auc = +(s.best_auc || 0);
+      const next = s.next_retrain_at ? fmtTs(s.next_retrain_at) : '—';
+      return `<div style="background:var(--surface);border:1px solid ${trained?'rgba(52,211,153,.3)':'rgba(251,191,36,.25)'};border-left:3px solid ${trained?'var(--green)':'var(--amber)'};border-radius:var(--r-sm);padding:8px 10px;margin-bottom:6px">
+        <div style="font-family:var(--mono);font-size:.75rem;font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:6px">
+          ${escHtml(name)}
+          <span style="font-size:.6rem;padding:1px 5px;border-radius:3px;background:${trained?'var(--green-dim)':'var(--amber-dim)'};color:${trained?'var(--green)':'var(--amber)'}">${trained?'✓ Entraîné':'⚠ Non entraîné'}</span>
+        </div>
+        <div class="ml-info-row"><span class="ml-info-key">Meilleur AUC</span><span class="ml-info-val ${auc>0?clrAuc(auc):''}">${auc>0?auc.toFixed(4):'—'}</span></div>
+        <div class="ml-info-row"><span class="ml-info-key">Prochain entraîn.</span><span class="ml-info-val" style="font-size:.68rem">${escHtml(next)}</span></div>
+      </div>`;
+    }).join('');
+  } catch(e) { console.debug('[ML] strategy-info', e); }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function fmtSign(v, unit='') { const n=+(v||0); return (n>=0?'+':'')+n.toFixed(2)+unit; }
+function clr(v) { return v>0?'clr-green':v<0?'clr-red':'clr-muted'; }
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+init();
+setInterval(refreshJobs, 5000);
+setInterval(loadMLInfo, 60000);
 </script>
 {% endblock %}

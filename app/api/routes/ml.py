@@ -17,7 +17,7 @@ _MODELS_DIR = "models"
 
 @router.post("/api/ml/train", dependencies=[Depends(verify_api_key)])
 def train_ml(symbol: str = "BTC/USDC", limit: int = 2000, timeframe: str = "",
-             strategy: str = "ml_manual"):
+             strategy: str = "ml_default"):
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     # Validate strategy name with whitelist (prevent path traversal)
