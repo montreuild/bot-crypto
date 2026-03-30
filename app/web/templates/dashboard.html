@@ -13,6 +13,7 @@
 .alloc-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;cursor:pointer;transition:border-color .15s,transform .18s ease,box-shadow .18s ease;}
 .alloc-card:hover{border-color:var(--border-hi);transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,0,0,.2);}
 .alloc-card.paused{border-color:rgba(251,113,133,.4);background:var(--red-dim);}
+.alloc-card.disabled{opacity:.45;border-style:dashed;}
 .alloc-slot{font-family:var(--mono);font-size:.84rem;font-weight:700;color:var(--cyan);margin-bottom:5px;letter-spacing:.01em;}
 .alloc-meta{font-size:.63rem;color:var(--muted);margin-bottom:5px;}
 .alloc-track{height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;}
@@ -208,7 +209,7 @@
 
   <!-- ── Allocation par slot ── -->
   <div>
-    <div class="sec-hdr"><h2>Allocation par slot</h2><a href="/strategies" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Gérer les slots →</a></div>
+    <div class="sec-hdr"><h2>Allocation par slot</h2><a href="/slots" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Gérer les slots →</a></div>
     <div id="alloc-grid" class="alloc-grid"><div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div></div>
   </div>
 
@@ -231,7 +232,7 @@
   </div>
 
   <div>
-    <div class="sec-hdr"><h2>Performance par stratégie</h2><a href="/strategies" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Détail par slot →</a></div>
+    <div class="sec-hdr"><h2>Performance par stratégie</h2><a href="/slots" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Détail par slot →</a></div>
     <div class="table-card"><div class="tscroll"><table>
       <thead><tr>
         <th>Stratégie</th><th class="r">Trades</th><th class="r">Win Rate</th>
@@ -537,12 +538,13 @@ function renderCapitalAllocation(slots, slotStates){
   const paused={};
   (slotStates||[]).forEach(s=>{if(s.paused)paused[s.slot_key]={reason:s.pause_reason};});
   grid.innerHTML=slots.map(s=>{
+    const isOff=s.enabled===false;
     const usedPct=s.used_pct??0,isPaused=!!paused[s.slot_key];
-    const fillClr=isPaused?'var(--red)':usedPct>80?'var(--amber)':'var(--cyan)';
+    const fillClr=isOff?'var(--dim)':isPaused?'var(--red)':usedPct>80?'var(--amber)':'var(--cyan)';
     const slotLabel=s.strategy.charAt(0).toUpperCase()+s.strategy.slice(1)+' '+s.tf;
     const pnlStr=s.weekly_pnl!=null?((s.weekly_pnl>=0?'+':'')+s.weekly_pnl.toFixed(2)+' 7j'):'';
-    return`<div class="alloc-card${isPaused?' paused':''}" onclick="window.location.href='/strategies?slot=${encodeURIComponent(s.slot_key||'')}'" title="Cliquez pour gérer ce slot">
-      <div class="alloc-slot">${escHtml(slotLabel)}</div>
+    return`<div class="alloc-card${isPaused?' paused':''}${isOff?' disabled':''}" onclick="window.location.href='/slots'" title="Cliquez pour gérer ce slot">
+      <div class="alloc-slot">${escHtml(slotLabel)}${isOff?' <span style="color:var(--dim);font-size:.65rem">OFF</span>':''}</div>
       <div class="alloc-meta">Budget: <strong style="color:var(--text)">${s.budget_pct??'—'}%</strong> · ${s.budget_usdc??'—'} USDC${pnlStr?` · <span class="${s.weekly_pnl>=0?'c-green':'c-red'}">${pnlStr}</span>`:''}${s.weekly_trades?' · '+s.weekly_trades+'T':''}</div>
       <div class="alloc-track"><div class="alloc-fill" style="width:${Math.min(usedPct,100)}%;background:${fillClr}"></div></div>
       <div class="alloc-nums"><span>${(s.used_notional??0).toFixed(1)} USDC utilisé</span><span>${usedPct.toFixed(0)}%</span></div>

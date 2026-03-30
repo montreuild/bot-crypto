@@ -111,7 +111,31 @@ def capital_allocation():
     }
 
 
-@router.post("/api/capital-allocation/set-budget", dependencies=[Depends(verify_api_key)])
+# ── Gestion des slots ─────────────────────────────────────────────────────
+
+@router.get("/api/slots", dependencies=[Depends(verify_api_key)])
+def list_slots():
+    """Retourne tous les slots avec état complet (budget, CB, performance)."""
+    if not state.trader:
+        raise HTTPException(503, "Trader non initialisé")
+    slots = state.trader.allocator.get_status()
+    slot_states = {s["slot_key"]: s for s in state.trader.risk.get_slot_states()}
+    alloc_config = state.trader.allocator.get_config()
+    for s in slots:
+        cb = slot_states.get(s["slot_key"], {})
+        s["paused"] = cb.get("paused", False)
+        s["pause_reason"] = cb.get("pause_reason", "")
+        s["consecutive_losses"] = cb.get("consecutive_losses", 0)
+        s["win_rate_15t"] = cb.get("win_rate_15t", 100.0)
+        s["daily_pnl"] = cb.get("daily_pnl", 0.0)
+    return {
+        "capital": round(state.trader.capital_display, 2),
+        "config":  alloc_config,
+        "slots":   slots,
+    }
+
+
+@router.post("/api/slots/{slot_key:path}/budget", dependencies=[Depends(verify_api_key)])
 def set_slot_budget(slot_key: str, budget_pct: float):
     """Définit manuellement le budget d'un slot (budget_pct en fraction, ex: 0.25 = 25%)."""
     if not state.cfg:
@@ -129,7 +153,7 @@ def set_slot_budget(slot_key: str, budget_pct: float):
             d.setdefault("capital_allocator", {}).setdefault("slot_budgets", {})[slot_key] = rounded
         _save_yaml(_upd)
     except Exception as e:
-        logger.warning(f"[capital-allocation] sauvegarde YAML KO : {e}")
+        logger.warning(f"[slots] sauvegarde YAML KO : {e}")
 
     # Apply to live allocator if bot is running
     slots_status = []
@@ -145,6 +169,67 @@ def set_slot_budget(slot_key: str, budget_pct: float):
         "budget_pct": round(budget_pct * 100, 1),
         "slots":      slots_status,
     }
+
+
+@router.post("/api/slots/{slot_key:path}/toggle", dependencies=[Depends(verify_api_key)])
+def toggle_slot(slot_key: str, enabled: bool = True):
+    """Active ou désactive un slot."""
+    if not state.trader:
+        raise HTTPException(503, "Trader non initialisé")
+    ok = state.trader.allocator.set_slot_enabled(slot_key, enabled)
+    if not ok:
+        raise HTTPException(404, f"Slot '{slot_key}' introuvable")
+
+    # Persist disabled_slots to config.yaml
+    disabled = state.trader.allocator.disabled_slots
+    state.cfg.setdefault("capital_allocator", {})["disabled_slots"] = disabled
+    try:
+        from app.api.routes.config import _save_yaml
+        _save_yaml(lambda d: d.setdefault("capital_allocator", {}).update(
+            {"disabled_slots": disabled}
+        ))
+    except Exception as e:
+        logger.warning(f"[slots] sauvegarde YAML KO : {e}")
+
+    return {
+        "status":   "toggled",
+        "slot_key": slot_key,
+        "enabled":  enabled,
+        "slots":    state.trader.allocator.get_status(),
+    }
+
+
+@router.post("/api/slots/{slot_key:path}/reset", dependencies=[Depends(verify_api_key)])
+def reset_slot(slot_key: str):
+    """Réinitialise le circuit breaker d'un slot."""
+    if not state.trader:
+        raise HTTPException(503, "Trader non initialisé")
+    state.trader.risk.reset_slot_pause(slot_key)
+    return {
+        "status":   "reset",
+        "slot_key": slot_key,
+        "message":  f"Pause du slot '{slot_key}' réinitialisée",
+    }
+
+
+@router.post("/api/slots/rebalance", dependencies=[Depends(verify_api_key)])
+def force_rebalance():
+    """Force un rééquilibrage immédiat des budgets des slots."""
+    if not state.trader:
+        raise HTTPException(503, "Trader non initialisé")
+    state.trader.allocator.force_rebalance()
+    return {
+        "status": "rebalanced",
+        "slots":  state.trader.allocator.get_status(),
+    }
+
+
+# ── Ancien endpoint conservé pour compatibilité ──
+
+@router.post("/api/capital-allocation/set-budget", dependencies=[Depends(verify_api_key)])
+def set_slot_budget_legacy(slot_key: str, budget_pct: float):
+    """Ancien endpoint — redirige vers /api/slots/{slot_key}/budget."""
+    return set_slot_budget(slot_key, budget_pct)
 
 
 @router.get("/api/circuit-breakers", dependencies=[Depends(verify_api_key)])

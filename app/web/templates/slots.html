@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+
+{% block title %} — Slots & Allocation{% endblock %}
+
+{% block page_styles %}
+<style>
+/* ── Slot page layout ── */
+.slot-page{padding:16px 20px;max-width:1100px;margin:0 auto;}
+.slot-page h1{font-family:var(--head);font-size:var(--fs-xl);margin:0 0 4px 0;letter-spacing:-.01em;}
+.slot-page .subtitle{font-size:var(--fs-sm);color:var(--muted);margin-bottom:16px;}
+
+/* ── Config bar ── */
+.slot-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px;padding:12px 14px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);}
+.slot-bar label{font-size:.72rem;color:var(--muted);font-weight:600;}
+.slot-bar select,.slot-bar input[type=number]{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:var(--r-sm);padding:5px 8px;font-size:.76rem;font-family:var(--mono);}
+.slot-bar select:focus,.slot-bar input[type=number]:focus{border-color:var(--cyan);outline:none;}
+.slot-bar .bar-sep{width:1px;height:24px;background:var(--border);margin:0 4px;}
+.slot-bar .bar-info{font-size:.68rem;color:var(--dim);font-family:var(--mono);}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 14px;border:none;border-radius:var(--r-sm);font-size:.74rem;font-weight:600;cursor:pointer;transition:background .15s,opacity .15s;font-family:var(--body);}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+.btn-cyan{background:var(--cyan);color:#111;}
+.btn-cyan:hover:not(:disabled){background:color-mix(in srgb,var(--cyan) 85%,#fff);}
+.btn-amber{background:var(--amber);color:#111;}
+.btn-amber:hover:not(:disabled){background:color-mix(in srgb,var(--amber) 85%,#fff);}
+.btn-sm{padding:4px 10px;font-size:.68rem;}
+.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--text);}
+.btn-ghost:hover:not(:disabled){border-color:var(--cyan);color:var(--cyan);}
+
+/* ── Slot grid ── */
+.slot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:20px;}
+.slot-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;transition:border-color .15s,box-shadow .18s;}
+.slot-card:hover{border-color:var(--border-hi);box-shadow:0 4px 12px rgba(0,0,0,.15);}
+.slot-card.disabled{opacity:.5;border-style:dashed;}
+.slot-card.paused{border-color:rgba(251,113,133,.4);background:var(--red-dim);}
+.slot-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.slot-name{font-family:var(--mono);font-size:.88rem;font-weight:700;color:var(--cyan);}
+.slot-card.disabled .slot-name{color:var(--dim);}
+.slot-badge{font-size:.6rem;padding:2px 6px;border-radius:3px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;}
+.badge-on{background:rgba(74,222,128,.15);color:var(--green);}
+.badge-off{background:rgba(255,255,255,.06);color:var(--dim);}
+.badge-paused{background:rgba(251,113,133,.15);color:var(--red);}
+
+/* ── Stats inside card ── */
+.slot-stats{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-bottom:10px;}
+.slot-stat{font-size:.68rem;color:var(--muted);}
+.slot-stat strong{color:var(--text);font-family:var(--mono);}
+
+/* ── Budget slider ── */
+.slot-budget-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.slot-budget-row input[type=range]{flex:1;accent-color:var(--cyan);height:6px;cursor:pointer;}
+.slot-budget-row .budget-val{font-family:var(--mono);font-size:.74rem;min-width:42px;text-align:right;color:var(--text);font-weight:600;}
+
+/* ── Progress bar ── */
+.slot-track{height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;margin-bottom:6px;}
+.slot-fill{height:100%;border-radius:3px;transition:width .4s;}
+
+/* ── Action row ── */
+.slot-actions{display:flex;gap:6px;flex-wrap:wrap;}
+
+/* ── CB info ── */
+.slot-cb{font-size:.66rem;color:var(--red);margin-top:6px;padding:4px 8px;background:rgba(251,113,133,.08);border-radius:var(--r-sm);}
+
+/* ── Empty state ── */
+.empty-state{text-align:center;padding:40px 20px;color:var(--dim);font-size:.85rem;}
+.empty-state .icon{font-size:2rem;margin-bottom:8px;}
+
+/* ── Loading ── */
+.loading-spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--dim);border-top-color:var(--cyan);border-radius:50%;animation:spin .6s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="slot-page">
+  <h1>◑ Slots & Allocation</h1>
+  <p class="subtitle">Gérez l'allocation du capital par slot (stratégie × timeframe). Chaque slot contrôle un budget indépendant.</p>
+
+  <!-- ── Config bar ── -->
+  <div class="slot-bar" id="slot-bar">
+    <label for="mode-select">Mode</label>
+    <select id="mode-select" onchange="changeMode(this.value)">
+      <option value="equal">Égal</option>
+      <option value="manual">Manuel</option>
+      <option value="performance">Performance</option>
+    </select>
+    <div class="bar-sep"></div>
+    <label for="max-pct">Max/slot</label>
+    <input type="number" id="max-pct" min="5" max="100" step="5" style="width:60px" onchange="changeMaxPct(this.value)"/>
+    <span style="font-size:.68rem;color:var(--dim)">%</span>
+    <div class="bar-sep"></div>
+    <label for="rebal-select">Rééquilibrage</label>
+    <select id="rebal-select" onchange="changeRebalance(this.value)">
+      <option value="daily">Quotidien</option>
+      <option value="weekly">Hebdomadaire</option>
+      <option value="never">Désactivé</option>
+    </select>
+    <div class="bar-sep"></div>
+    <button class="btn btn-amber btn-sm" onclick="forceRebalance()" id="btn-rebalance" title="Forcer le rééquilibrage maintenant">↻ Rééquilibrer</button>
+    <div style="margin-left:auto" class="bar-info" id="capital-info">—</div>
+  </div>
+
+  <!-- ── Slot grid ── -->
+  <div id="slot-grid" class="slot-grid">
+    <div class="empty-state"><div class="icon">⏳</div>Chargement des slots…</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block body_scripts %}
+<script>
+const $=id=>document.getElementById(id);
+
+let _slots=[], _config={}, _capital=0;
+
+async function loadSlots(){
+  try{
+    const r=await apiFetch('/api/slots');
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
+    const d=await r.json();
+    _slots=d.slots||[];
+    _config=d.config||{};
+    _capital=d.capital||0;
+    renderConfig();
+    renderSlots();
+  }catch(e){
+    $('slot-grid').innerHTML=`<div class="empty-state"><div class="icon">⚠️</div>Erreur : ${escHtml(e.message)}<br><span style="font-size:.72rem;color:var(--dim)">Le bot doit être initialisé pour afficher les slots.</span></div>`;
+  }
+}
+
+function renderConfig(){
+  const modeEl=$('mode-select');
+  if(modeEl)modeEl.value=_config.mode||'equal';
+  const maxEl=$('max-pct');
+  if(maxEl)maxEl.value=_config.max_slot_pct||50;
+  const rebalEl=$('rebal-select');
+  if(rebalEl)rebalEl.value=_config.rebalance_interval||'daily';
+  const infoEl=$('capital-info');
+  if(infoEl)infoEl.textContent=`Capital: ${_capital.toFixed(0)} USDC · ${_slots.length} slot${_slots.length>1?'s':''}`;
+}
+
+function renderSlots(){
+  const grid=$('slot-grid');
+  if(!_slots.length){
+    grid.innerHTML='<div class="empty-state"><div class="icon">◑</div>Aucun slot actif.<br><span style="font-size:.72rem;color:var(--dim)">Activez des stratégies et des timeframes dans la configuration.</span></div>';
+    return;
+  }
+  const isManual=(_config.mode==='manual');
+  grid.innerHTML=_slots.map(s=>{
+    const isOff=s.enabled===false;
+    const isPaused=!!s.paused;
+    const usedPct=s.used_pct??0;
+    const fillClr=isOff?'var(--dim)':isPaused?'var(--red)':usedPct>80?'var(--amber)':'var(--cyan)';
+    const label=s.strategy.charAt(0).toUpperCase()+s.strategy.slice(1)+' · '+s.tf;
+    const badge=isOff?'<span class="slot-badge badge-off">OFF</span>'
+               :isPaused?'<span class="slot-badge badge-paused">Pausé</span>'
+               :'<span class="slot-badge badge-on">Actif</span>';
+    const pnlClr=s.weekly_pnl>=0?'var(--green)':'var(--red)';
+    const pnlStr=(s.weekly_pnl>=0?'+':'')+s.weekly_pnl.toFixed(2);
+    const wrStr=s.weekly_trades>0?(s.weekly_wins/s.weekly_trades*100).toFixed(0)+'%':'—';
+    const maxPct=_config.max_slot_pct||50;
+
+    return`<div class="slot-card${isOff?' disabled':''}${isPaused?' paused':''}" data-key="${escHtml(s.slot_key)}">
+      <div class="slot-hdr">
+        <span class="slot-name">${escHtml(label)}</span>
+        ${badge}
+      </div>
+      <div class="slot-stats">
+        <div class="slot-stat">Budget: <strong>${s.budget_pct.toFixed(1)}%</strong></div>
+        <div class="slot-stat">USDC: <strong>${s.budget_usdc.toFixed(0)}</strong></div>
+        <div class="slot-stat">Utilisé: <strong>${(s.used_notional??0).toFixed(1)}</strong></div>
+        <div class="slot-stat">P&L 7j: <strong style="color:${pnlClr}">${pnlStr}</strong></div>
+        <div class="slot-stat">Trades 7j: <strong>${s.weekly_trades}</strong></div>
+        <div class="slot-stat">WR 7j: <strong>${wrStr}</strong></div>
+        ${isPaused?`<div class="slot-stat" style="grid-column:1/-1">Pertes consécutives: <strong>${s.consecutive_losses??0}</strong></div>`:''}
+      </div>
+      <div class="slot-budget-row">
+        <input type="range" min="1" max="${maxPct}" step="1" value="${Math.round(s.budget_pct)}"
+               onchange="setBudget('${escHtml(s.slot_key)}',this.value)"
+               oninput="this.nextElementSibling.textContent=this.value+'%'"
+               ${isOff||!isManual?'disabled':''}
+               title="${isManual?'Ajuster le budget':'Passez en mode Manuel pour ajuster les budgets'}"/>
+        <span class="budget-val">${Math.round(s.budget_pct)}%</span>
+      </div>
+      <div class="slot-track"><div class="slot-fill" style="width:${Math.min(usedPct,100)}%;background:${fillClr}"></div></div>
+      <div class="slot-actions">
+        <button class="btn btn-ghost btn-sm" onclick="toggleSlot('${escHtml(s.slot_key)}',${isOff?'true':'false'})">${isOff?'✓ Activer':'✕ Désactiver'}</button>
+        ${isPaused?`<button class="btn btn-ghost btn-sm" onclick="resetCB('${escHtml(s.slot_key)}')" style="border-color:var(--red);color:var(--red)">↻ Reset CB</button>`:''}
+      </div>
+      ${isPaused?`<div class="slot-cb">⏸ ${escHtml(s.pause_reason||'Pausé')}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
+// ── Actions ──
+
+async function changeMode(mode){
+  try{
+    const r=await apiFetch('/api/config/capital-allocator?mode='+encodeURIComponent(mode),{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
+    toast('✓ Mode changé : '+mode);
+    await loadSlots();
+  }catch(e){toast('Erreur : '+e.message,true);}
+}
+
+async function changeMaxPct(val){
+  const pct=parseFloat(val);
+  if(isNaN(pct)||pct<5||pct>100){toast('Valeur entre 5 et 100',true);return;}
+  try{
+    const r=await apiFetch('/api/config/capital-allocator?max_slot_pct='+(pct/100).toFixed(4),{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
+    toast('✓ Max par slot : '+pct+'%');
+    await loadSlots();
+  }catch(e){toast('Erreur : '+e.message,true);}
+}
+
+async function changeRebalance(val){
+  try{
+    const r=await apiFetch('/api/config/capital-allocator?rebalance_interval='+encodeURIComponent(val),{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
+    toast('✓ Rééquilibrage : '+val);
+  }catch(e){toast('Erreur : '+e.message,true);}
+}
+
+async function forceRebalance(){
+  const btn=$('btn-rebalance');
+  if(btn)btn.disabled=true;
+  try{
+    const r=await apiFetch('/api/slots/rebalance',{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
+    toast('✓ Rééquilibrage forcé');
+    await loadSlots();
+  }catch(e){toast('Erreur : '+e.message,true);}
+  finally{if(btn)btn.disabled=false;}
+}
+
+async function setBudget(slotKey,pctInt){
+  const pct=parseInt(pctInt,10)/100;
+  try{
+    const r=await apiFetch('/api/slots/'+encodeURIComponent(slotKey)+'/budget?budget_pct='+pct.toFixed(4),{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
+    toast('✓ Budget '+slotKey+' → '+pctInt+'%');
+    await loadSlots();
+  }catch(e){toast('Erreur : '+e.message,true);}
+}
+
+async function toggleSlot(slotKey,enable){
+  try{
+    const r=await apiFetch('/api/slots/'+encodeURIComponent(slotKey)+'/toggle?enabled='+enable,{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
+    toast('✓ Slot '+(enable?'activé':'désactivé'));
+    await loadSlots();
+  }catch(e){toast('Erreur : '+e.message,true);}
+}
+
+async function resetCB(slotKey){
+  try{
+    const r=await apiFetch('/api/slots/'+encodeURIComponent(slotKey)+'/reset',{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
+    toast('✓ CB réinitialisé pour '+slotKey);
+    await loadSlots();
+  }catch(e){toast('Erreur : '+e.message,true);}
+}
+
+// ── Init ──
+loadSlots();
+setInterval(loadSlots,10000);
+</script>
+{% endblock %}
