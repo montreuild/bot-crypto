@@ -187,7 +187,7 @@ def get_status(request: Request):
                 "global_dd_limit":   state.cfg["trading"].get("max_drawdown_global", 0.20),
                 "capital_allocation": [],
                 "circuit_breakers":   [],
-                "slot_states":        {},
+                "slot_states":        [],
                 "volatility_brake":   False,
             })
     return base

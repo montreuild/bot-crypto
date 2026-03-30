@@ -56,6 +56,9 @@ class CapitalAllocator:
         self._rebalance_interval = alloc_cfg.get("rebalance_interval", _DEFAULT_REBALANCE_INTERVAL)
         self._max_symbol_exposure_pct = float(alloc_cfg.get("max_symbol_exposure_pct", _DEFAULT_MAX_SYMBOL_EXPOSURE_PCT))
         self._max_pyramiding = int(alloc_cfg.get("max_pyramiding", _DEFAULT_MAX_PYRAMIDING))
+        self._custom_budgets: Dict[str, float] = {
+            k: float(v) for k, v in alloc_cfg.get("slot_budgets", {}).items()
+        }
         self._slots: Dict[str, SlotBudget] = {}
         self._rebalance_next: float = self._next_rebalance_ts()
         self.rebuild_slots(active_per_tf)
@@ -91,6 +94,12 @@ class CapitalAllocator:
                 del self._slots[key]
 
         self._equalize_budgets()
+
+        # Restaurer les allocations personnalisées persistées
+        for key, pct in self._custom_budgets.items():
+            if key in self._slots:
+                self._slots[key].budget_pct = max(0.01, min(self._max_slot_pct, pct))
+
         logger.info(
             f"[Allocator] {len(self._slots)} slots : "
             + ", ".join(f"{k}={v.budget_pct:.0%}" for k, v in self._slots.items())
@@ -293,6 +302,7 @@ class CapitalAllocator:
             return False
         budget_pct = max(0.01, min(self._max_slot_pct, round(float(budget_pct), 4)))
         self._slots[slot_key].budget_pct = budget_pct
+        self._custom_budgets[slot_key] = budget_pct
         # Renormaliser : si la somme > 1.0, réduire proportionnellement les autres slots
         total = sum(s.budget_pct for s in self._slots.values())
         if total > 1.0:
