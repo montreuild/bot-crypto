@@ -10,7 +10,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,8 @@ class CapitalAllocator:
         self._disabled_slots: set = set(alloc_cfg.get("disabled_slots", []))
         self._slots: Dict[str, SlotBudget] = {}
         self._rebalance_next: float = self._next_rebalance_ts()
+        # Callback optionnel appelé après chaque _apply_mode() : persist_fn(budgets: dict)
+        self._persist_callback: Optional[Callable[[dict], None]] = None
         self.rebuild_slots(active_per_tf)
 
     # ── Construction des slots ─────────────────────────────────────────────
@@ -119,6 +121,13 @@ class CapitalAllocator:
             )
         )
 
+    def set_persist_callback(self, callback: Callable[[dict], None]) -> None:
+        """
+        Enregistre un callback appelé après chaque _apply_mode() pour persister les budgets.
+        callback(budgets: dict) où budgets = {slot_key: budget_pct} pour les slots actifs.
+        """
+        self._persist_callback = callback
+
     def _apply_mode(self):
         """Applique le mode d'allocation actuel aux budgets des slots."""
         if self._mode == "manual":
@@ -132,6 +141,13 @@ class CapitalAllocator:
                 for key, pct in self._custom_budgets.items():
                     if key in self._slots and self._slots[key].enabled:
                         self._slots[key].budget_pct = max(0.01, min(self._max_slot_pct, pct))
+        # Persister les budgets calculés si un callback est enregistré
+        if self._persist_callback is not None:
+            budgets = {k: round(v.budget_pct, 4) for k, v in self._slots.items() if v.enabled}
+            try:
+                self._persist_callback(budgets)
+            except Exception as e:
+                logger.warning(f"[Allocator] Persistance budgets KO : {e}")
 
     def _equalize_budgets(self):
         """Distribue 100% équitablement entre les slots actifs, en respectant le cap."""
@@ -193,16 +209,26 @@ class CapitalAllocator:
                     s.budget_pct = round(s.budget_pct * factor2, 4)
 
     # ── Allocation ─────────────────────────────────────────────────────────
-    def can_allocate(self, slot_key: str, notional: float) -> tuple[bool, str]:
+    def is_slot_enabled(self, slot_key: str) -> tuple[bool, str]:
         """
-        Vérifie si le slot peut prendre une nouvelle position du montant notionnel.
-        Retourne (ok, reason).
+        Vérifie si le slot est activé (enabled/disabled).
+        Retourne (ok, reason). Indépendant de la logique budget.
         """
         slot = self._slots.get(slot_key)
         if slot is None:
             return False, f"Slot '{slot_key}' inconnu"
         if not slot.enabled:
             return False, f"Slot '{slot_key}' désactivé"
+        return True, ""
+
+    def can_allocate(self, slot_key: str, notional: float) -> tuple[bool, str]:
+        """
+        Vérifie si le slot dispose du budget nécessaire pour une nouvelle position.
+        Retourne (ok, reason). Ne vérifie PAS l'état enabled/disabled (voir is_slot_enabled).
+        """
+        slot = self._slots.get(slot_key)
+        if slot is None:
+            return False, f"Slot '{slot_key}' inconnu"
 
         max_exposure = self.capital * slot.budget_pct
         if slot.used_notional + notional > max_exposure * 1.05:  # tolérance 5%
@@ -363,9 +389,20 @@ class CapitalAllocator:
             )
         )
 
+        # Persister les budgets recalculés si un callback est enregistré
+        if self._persist_callback is not None:
+            budgets = {k: round(v.budget_pct, 4) for k, v in self._slots.items() if v.enabled}
+            try:
+                self._persist_callback(budgets)
+            except Exception as e:
+                logger.warning(f"[Allocator] Persistance budgets (rebalance) KO : {e}")
+
     # ── Toggle slot ────────────────────────────────────────────────────────
     def set_slot_enabled(self, slot_key: str, enabled: bool) -> bool:
-        """Active ou désactive un slot. Recalcule les budgets après toggle."""
+        """
+        Active ou désactive un slot. Recalcule les budgets après toggle.
+        Le budget est géré indépendamment via _apply_mode().
+        """
         slot = self._slots.get(slot_key)
         if slot is None:
             return False
@@ -374,7 +411,6 @@ class CapitalAllocator:
             self._disabled_slots.discard(slot_key)
         else:
             self._disabled_slots.add(slot_key)
-            slot.budget_pct = 0.0
         self._apply_mode()
         logger.info(f"[Allocator] Slot {slot_key} → {'activé' if enabled else 'désactivé'}")
         return True

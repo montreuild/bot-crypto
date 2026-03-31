@@ -158,6 +158,8 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             active_per_tf=self._active_per_tf,
             cfg=cfg,
         )
+        # Enregistrer le callback de persistance des budgets
+        self.allocator.set_persist_callback(self._persist_allocator_budgets)
         self.pipeline = SignalPipeline(
             loaded_strategies=self._loaded_strategies,
             cfg=cfg,
@@ -425,50 +427,10 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             if pos_key in self.open_positions:
                 continue
 
-            # Vérifications dans l'ordre : global → slot → corrélation → budget
-            ok_global, reason_global = self.risk.can_trade(sig.side)
-            if not ok_global:
-                logger.debug(
-                    f"[Cycle] {sig.symbol}/{slot_key} rejeté (global: {reason_global})"
-                )
-                self.signal_log.append({
-                    "time": datetime.now(timezone.utc).isoformat(),
-                    "symbol": sig.symbol, "strategy": sig.strategy,
-                    "side": sig.side, "score": round(sig.score, 3),
-                    "threshold": round(
-                        self._strat_thresholds.get(sig.strategy, self.threshold), 3
-                    ),
-                    "timeframe": sig.tf, "status": "rejected",
-                    "reason": f"risk: {reason_global}",
-                })
-                continue
-
-            ok_slot, reason_slot = self.risk.can_slot_trade(slot_key)
-            if not ok_slot:
-                logger.debug(
-                    f"[Cycle] {sig.symbol}/{slot_key} rejeté (slot CB: {reason_slot})"
-                )
-                self.signal_log.append({
-                    "time": datetime.now(timezone.utc).isoformat(),
-                    "symbol": sig.symbol, "strategy": sig.strategy,
-                    "side": sig.side, "score": round(sig.score, 3),
-                    "threshold": round(
-                        self._strat_thresholds.get(sig.strategy, self.threshold), 3
-                    ),
-                    "timeframe": sig.tf, "status": "rejected",
-                    "reason": f"slot_cb: {reason_slot}",
-                })
-                continue
-
-            ok_corr, reason_corr = self.allocator.check_correlation(
-                sig.side, self.open_positions, symbol=sig.symbol
+            strat_threshold = self._strat_thresholds.get(sig.strategy, self.threshold)
+            atr = sig.atr if sig.atr > 0 else (
+                self.ohlcv_cache.get_cached_atr(sig.symbol) or 0.0
             )
-            if not ok_corr:
-                logger.debug(
-                    f"[Cycle] {sig.symbol}/{slot_key} rejeté (corrélation: {reason_corr})"
-                )
-                continue
-
             ticker = self._safe_ticker(sig.symbol)
             if ticker is None:
                 continue
@@ -476,39 +438,19 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             if price <= 0:
                 continue
 
-            strat_threshold = self._strat_thresholds.get(sig.strategy, self.threshold)
-            # ATR déjà calculé par OHLCVCache.get() lors du scan — pas besoin de recalculer
-            atr = sig.atr if sig.atr > 0 else (
-                self.ohlcv_cache.get_cached_atr(sig.symbol) or 0.0
+            self._try_open_from_signal(
+                pos_key=pos_key,
+                symbol=sig.symbol,
+                strategy_name=sig.strategy,
+                side=sig.side,
+                score=sig.score,
+                strat_threshold=strat_threshold,
+                tf=sig.tf,
+                slot_key=slot_key,
+                signal_dict=sig.to_signal_dict(),
+                atr=atr,
+                price=price,
             )
-            size, notional = self.risk.compute_size(
-                price, atr, score=sig.score, threshold=strat_threshold
-            )
-            leverage = self.risk.compute_leverage(notional)
-
-            ok_budget, reason_budget = self.allocator.can_allocate(slot_key, notional)
-            if not ok_budget:
-                logger.debug(
-                    f"[Cycle] {sig.symbol}/{slot_key} rejeté (budget: {reason_budget})"
-                )
-                self.signal_log.append({
-                    "time": datetime.now(timezone.utc).isoformat(),
-                    "symbol": sig.symbol, "strategy": sig.strategy,
-                    "side": sig.side, "score": round(sig.score, 3),
-                    "threshold": round(strat_threshold, 3),
-                    "timeframe": sig.tf, "status": "rejected",
-                    "reason": f"budget: {reason_budget}",
-                })
-                continue
-
-            if not self._pre_execution_check(sig.symbol, sig.side, size, price, notional):
-                continue
-
-            self._open_position(
-                pos_key, sig.symbol, sig.to_signal_dict(),
-                price, size, notional, atr, leverage, sig.tf
-            )
-            self.allocator.register_open(slot_key, notional)
 
         # 6. Synchro solde + rapport périodique
         if self.cfg["trading"].get("paper_mode"):
@@ -545,6 +487,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         Exécute une stratégie sur un symbole/TF et ouvre une position si le signal
         passe tous les filtres. Conservé pour les appels directs et les tests unitaires ;
         la boucle principale utilise SignalPipeline.collect().
+        Applique le même chemin de gating que _cycle() via _try_open_from_signal().
         """
         htf    = _HTF_MAP.get(tf)
         df_htf = self._get_ohlcv(symbol, htf) if htf and htf != tf else None
@@ -579,20 +522,6 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 return
             signal["score"] = score
 
-        can, reason = self.risk.can_trade(signal["side"])
-        if not can:
-            logger.debug(f"[Scan] {symbol}/{strategy.name}/{tf} : rejeté ({reason})")
-            self.signal_log.append({
-                "time":      datetime.now(timezone.utc).isoformat(),
-                "symbol":    symbol, "strategy": strategy.name,
-                "side":      signal.get("side", "?"),
-                "score":     round(float(signal.get("score", 0)), 3),
-                "threshold": round(float(strat_threshold), 3),
-                "timeframe": tf, "status": "rejected",
-                "reason":    f"risk: {reason}",
-            })
-            return
-
         ticker = self._safe_ticker(symbol)
         if ticker is None:
             return
@@ -600,21 +529,134 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         if price <= 0:
             return
 
-        atr  = _compute_atr(df)
-        size, notional = self.risk.compute_size(
-            price, atr, score=signal["score"], threshold=strat_threshold
-        )
-        leverage = self.risk.compute_leverage(notional)
-
-        if not self._pre_execution_check(symbol, signal["side"], size, price, notional):
+        atr = _compute_atr(df)
+        slot_key = f"{strategy.name}::{tf}"
+        pos_key  = f"{symbol}::{strategy.name}::{tf}"
+        if pos_key in self.open_positions:
             return
 
-        pos_key = f"{symbol}::{strategy.name}::{tf}"
-        self._open_position(
-            pos_key, symbol, signal, price, size, notional, atr, leverage, tf
+        self._try_open_from_signal(
+            pos_key=pos_key,
+            symbol=symbol,
+            strategy_name=strategy.name,
+            side=signal["side"],
+            score=float(signal.get("score", 0)),
+            strat_threshold=strat_threshold,
+            tf=tf,
+            slot_key=slot_key,
+            signal_dict=signal,
+            atr=atr,
+            price=price,
         )
 
     # ── Utilitaires ────────────────────────────────────────────────────────
+
+    def _persist_allocator_budgets(self, budgets: dict) -> None:
+        """
+        Callback de persistance appelé par CapitalAllocator après chaque _apply_mode().
+        Met à jour capital_allocator.slot_budgets dans state.cfg et config.yaml.
+        """
+        try:
+            from app.api import state as _api_state
+            if _api_state.cfg is not None:
+                _api_state.cfg.setdefault("capital_allocator", {})["slot_budgets"] = budgets
+                try:
+                    from app.api.routes.config import _save_yaml
+                    def _upd(d):
+                        d.setdefault("capital_allocator", {})["slot_budgets"] = budgets
+                    _save_yaml(_upd)
+                except Exception as e:
+                    logger.warning(f"[LiveTrader] Persistance YAML budgets KO : {e}")
+        except Exception as e:
+            logger.debug(f"[LiveTrader] _persist_allocator_budgets : {e}")
+
+    def persist_allocator_state(self) -> None:
+        """
+        Persiste manuellement l'état complet de l'allocateur (budgets + disabled_slots)
+        dans config.yaml. Utile après des modifications batch ou un redémarrage.
+        """
+        budgets = {
+            k: round(v.budget_pct, 4)
+            for k, v in self.allocator._slots.items()
+            if v.enabled
+        }
+        self._persist_allocator_budgets(budgets)
+
+    # ── Ouverture de position (chemin unique) ──────────────────────────────
+
+    def _try_open_from_signal(
+        self,
+        pos_key: str,
+        symbol: str,
+        strategy_name: str,
+        side: str,
+        score: float,
+        strat_threshold: float,
+        tf: str,
+        slot_key: str,
+        signal_dict: dict,
+        atr: float,
+        price: float,
+    ) -> bool:
+        """
+        Chemin unique d'ouverture de position.
+        Applique dans l'ordre : global risk → slot enabled → slot CB → corrélation →
+        sizing → budget → pre_execution_check → ouverture.
+        Retourne True si la position a été ouverte, False sinon.
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        def _reject(tag: str, reason: str) -> bool:
+            logger.debug(f"[Trade] {symbol}/{slot_key} rejeté ({tag}: {reason})")
+            self.signal_log.append({
+                "time": now_iso, "symbol": symbol, "strategy": strategy_name,
+                "side": side, "score": round(score, 3),
+                "threshold": round(strat_threshold, 3),
+                "timeframe": tf, "status": "rejected",
+                "reason": f"{tag}: {reason}",
+            })
+            return False
+
+        # 1. Risque global
+        ok_global, reason_global = self.risk.can_trade(side)
+        if not ok_global:
+            return _reject("risk", reason_global)
+
+        # 2. Slot activé/désactivé (statut indépendant du budget)
+        ok_enabled, reason_enabled = self.allocator.is_slot_enabled(slot_key)
+        if not ok_enabled:
+            return _reject("slot_disabled", reason_enabled)
+
+        # 3. Slot circuit breaker (pause)
+        ok_slot, reason_slot = self.risk.can_slot_trade(slot_key)
+        if not ok_slot:
+            return _reject("slot_cb", reason_slot)
+
+        # 4. Corrélation/exposition
+        ok_corr, reason_corr = self.allocator.check_correlation(
+            side, self.open_positions, symbol=symbol
+        )
+        if not ok_corr:
+            logger.debug(f"[Trade] {symbol}/{slot_key} rejeté (corrélation: {reason_corr})")
+            return False
+
+        # 5. Sizing
+        size, notional = self.risk.compute_size(price, atr, score=score, threshold=strat_threshold)
+        leverage = self.risk.compute_leverage(notional)
+
+        # 6. Budget
+        ok_budget, reason_budget = self.allocator.can_allocate(slot_key, notional)
+        if not ok_budget:
+            return _reject("budget", reason_budget)
+
+        # 7. Pre-execution check (ordres réels)
+        if not self._pre_execution_check(symbol, side, size, price, notional):
+            return False
+
+        # 8. Ouverture + enregistrement budget
+        self._open_position(pos_key, symbol, signal_dict, price, size, notional, atr, leverage, tf)
+        self.allocator.register_open(slot_key, notional)
+        return True
 
     def _safe_ticker(self, symbol: str) -> Optional[dict]:
         try:
