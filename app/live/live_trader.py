@@ -562,9 +562,9 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 _api_state.cfg.setdefault("capital_allocator", {})["slot_budgets"] = budgets
                 try:
                     from app.api.routes.config import _save_yaml
-                    _save_yaml(lambda d: d.setdefault("capital_allocator", {}).update(
-                        {"slot_budgets": budgets}
-                    ))
+                    def _upd(d):
+                        d.setdefault("capital_allocator", {})["slot_budgets"] = budgets
+                    _save_yaml(_upd)
                 except Exception as e:
                     logger.warning(f"[LiveTrader] Persistance YAML budgets KO : {e}")
         except Exception as e:

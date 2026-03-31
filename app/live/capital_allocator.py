@@ -10,7 +10,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ class CapitalAllocator:
         self._slots: Dict[str, SlotBudget] = {}
         self._rebalance_next: float = self._next_rebalance_ts()
         # Callback optionnel appelé après chaque _apply_mode() : persist_fn(budgets: dict)
-        self._persist_callback: Optional[object] = None
+        self._persist_callback: Optional[Callable[[dict], None]] = None
         self.rebuild_slots(active_per_tf)
 
     # ── Construction des slots ─────────────────────────────────────────────
@@ -121,7 +121,7 @@ class CapitalAllocator:
             )
         )
 
-    def set_persist_callback(self, callback) -> None:
+    def set_persist_callback(self, callback: Callable[[dict], None]) -> None:
         """
         Enregistre un callback appelé après chaque _apply_mode() pour persister les budgets.
         callback(budgets: dict) où budgets = {slot_key: budget_pct} pour les slots actifs.

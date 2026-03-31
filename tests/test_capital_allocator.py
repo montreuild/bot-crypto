@@ -147,10 +147,12 @@ class TestSlotEnabled:
         # Slot activé avec budget disponible → OK
         ok, reason = alloc.can_allocate("trend::1h", 100)
         assert ok is True
-        # Manipuler directement pour tester l'indépendance :
-        # remettre budget > 0 pour un slot désactivé
+        # Manipuler directement budget_pct pour tester l'indépendance sémantique :
+        # un slot désactivé avec budget > 0 doit passer can_allocate mais échouer is_slot_enabled.
+        # (_apply_mode() remet normalement budget à 0 pour les slots désactivés, mais on
+        #  teste ici que can_allocate() ne lit pas enabled — seulement budget.)
         alloc.set_slot_enabled("trend::1h", False)
-        alloc._slots["trend::1h"].budget_pct = 0.50  # forcer budget non nul
+        alloc._slots["trend::1h"].budget_pct = 0.50  # forcer budget non nul pour le test
         ok_budget, reason_budget = alloc.can_allocate("trend::1h", 100)
         # can_allocate doit passer car budget est disponible
         assert ok_budget is True
@@ -520,5 +522,6 @@ class TestPersistCallback:
         alloc = CapitalAllocator(1000, _active_per_tf(), _cfg())
         alloc.set_persist_callback(lambda b: persisted.update(b))
         alloc.set_mode("equal")
-        total = sum(persisted.values()) * 100
-        assert total == pytest.approx(100.0, abs=2.0)
+        # Les valeurs persistées sont des fractions (ex: 0.25 = 25%)
+        total = sum(persisted.values())
+        assert total == pytest.approx(1.0, abs=0.02)
