@@ -116,9 +116,47 @@ class TestSlotEnabled:
     def test_disabled_slot_cannot_allocate(self):
         alloc = CapitalAllocator(1000, _active_per_tf(), _cfg())
         alloc.set_slot_enabled("trend::1h", False)
+        # Le slot désactivé a budget_pct=0 (recalculé par _apply_mode)
+        # can_allocate() échoue sur le budget (pas sur enabled)
         ok, reason = alloc.can_allocate("trend::1h", 100)
         assert ok is False
+        assert "épuisé" in reason  # raison budget, pas "désactivé"
+
+    def test_is_slot_enabled_enabled(self):
+        alloc = CapitalAllocator(1000, _active_per_tf(), _cfg())
+        ok, reason = alloc.is_slot_enabled("trend::1h")
+        assert ok is True
+        assert reason == ""
+
+    def test_is_slot_enabled_disabled(self):
+        alloc = CapitalAllocator(1000, _active_per_tf(), _cfg())
+        alloc.set_slot_enabled("trend::1h", False)
+        ok, reason = alloc.is_slot_enabled("trend::1h")
+        assert ok is False
         assert "désactivé" in reason
+
+    def test_is_slot_enabled_unknown(self):
+        alloc = CapitalAllocator(1000, _active_per_tf(), _cfg())
+        ok, reason = alloc.is_slot_enabled("unknown::1h")
+        assert ok is False
+        assert "inconnu" in reason
+
+    def test_can_allocate_independent_of_enabled(self):
+        """can_allocate() vérifie uniquement le budget, pas le statut enabled."""
+        alloc = CapitalAllocator(1000, _active_per_tf(), _cfg())
+        # Slot activé avec budget disponible → OK
+        ok, reason = alloc.can_allocate("trend::1h", 100)
+        assert ok is True
+        # Manipuler directement pour tester l'indépendance :
+        # remettre budget > 0 pour un slot désactivé
+        alloc.set_slot_enabled("trend::1h", False)
+        alloc._slots["trend::1h"].budget_pct = 0.50  # forcer budget non nul
+        ok_budget, reason_budget = alloc.can_allocate("trend::1h", 100)
+        # can_allocate doit passer car budget est disponible
+        assert ok_budget is True
+        # Mais is_slot_enabled doit échouer
+        ok_status, _ = alloc.is_slot_enabled("trend::1h")
+        assert ok_status is False
 
     def test_disabled_slots_list(self):
         alloc = CapitalAllocator(1000, _active_per_tf(), _cfg())
@@ -424,3 +462,63 @@ class TestGetStatus:
             assert "weekly_trades" in s
             assert "weekly_wins" in s
             assert "next_rebalance" in s
+
+
+class TestPersistCallback:
+    def test_callback_called_on_apply_mode(self):
+        """Le callback doit être appelé lors de rebuild_slots/_apply_mode."""
+        persisted = {}
+
+        def my_callback(budgets):
+            persisted.update(budgets)
+
+        # Le callback doit être enregistré avant rebuild_slots (ou set_mode, etc.)
+        alloc = CapitalAllocator(1000, _active_per_tf(), _cfg())
+        alloc.set_persist_callback(my_callback)
+        alloc.set_mode("equal")  # déclenche _apply_mode → callback
+        assert len(persisted) > 0
+        # Seuls les slots actifs sont persistés
+        for key, pct in persisted.items():
+            assert pct > 0.0
+
+    def test_callback_called_on_toggle(self):
+        """Le callback doit être appelé lors d'un toggle enabled/disabled."""
+        calls = []
+        alloc = CapitalAllocator(1000, _active_per_tf(), _cfg())
+        alloc.set_persist_callback(lambda b: calls.append(dict(b)))
+        alloc.set_slot_enabled("trend::1h", False)
+        assert len(calls) >= 1
+        # Le slot désactivé ne doit pas apparaître dans les budgets persistés
+        last = calls[-1]
+        assert "trend::1h" not in last
+
+    def test_callback_called_on_rebalance(self):
+        """Le callback doit être appelé lors du rééquilibrage performance."""
+        calls = []
+        alloc = CapitalAllocator(1000, _active_per_tf(), _cfg(mode="performance"))
+        alloc.set_persist_callback(lambda b: calls.append(dict(b)))
+        for _ in range(5):
+            alloc.register_close("trend::1h", 0, pnl=10.0)
+        n_before = len(calls)
+        alloc.force_rebalance()
+        assert len(calls) > n_before
+
+    def test_callback_exception_does_not_crash(self):
+        """Une exception dans le callback ne doit pas faire crasher l'allocateur."""
+        def bad_callback(budgets):
+            raise RuntimeError("Erreur test")
+
+        alloc = CapitalAllocator(1000, _active_per_tf(), _cfg())
+        alloc.set_persist_callback(bad_callback)
+        # Ne doit pas lever d'exception
+        alloc.set_mode("equal")
+        assert alloc.mode == "equal"
+
+    def test_budgets_normalized_on_persist(self):
+        """Les budgets persistés doivent totaliser ~100% pour les slots actifs."""
+        persisted = {}
+        alloc = CapitalAllocator(1000, _active_per_tf(), _cfg())
+        alloc.set_persist_callback(lambda b: persisted.update(b))
+        alloc.set_mode("equal")
+        total = sum(persisted.values()) * 100
+        assert total == pytest.approx(100.0, abs=2.0)
