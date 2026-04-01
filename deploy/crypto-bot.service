@@ -27,7 +27,7 @@ Group=ubuntu
 WorkingDirectory=/opt/crypto_bot
 
 # ── Commandes — utilise EXCLUSIVEMENT le venv Python 3.12 ───
-ExecStart=/opt/crypto_bot/.venv/bin/python cli.py --live
+ExecStart=/opt/crypto_bot/.venv/bin/python cli.py
 ExecStop=/bin/kill -TERM $MAINPID
 
 # ── Notification de crash ────────────────────────────────────
