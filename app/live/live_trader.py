@@ -129,6 +129,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self._margin_level    = None
         self._margin_interest = 0.0
         self._margin_next_sync= 0
+        self._balance_detail  = None   # {free, used, total, borrowed}
 
         self.signal_log: deque = deque(maxlen=100)
 
@@ -891,6 +892,8 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             "margin_interest":      round(self._margin_interest, 4),
             "margin_mode":          self.cfg["trading"].get("margin_mode", "isolated")
                                     if self._margin_enabled else None,
+            "balance_detail":       self._balance_detail,
+            "paper_mode":           self.cfg["trading"].get("paper_mode", True),
             "capital_allocation":   self.allocator.get_status(),
             "circuit_breakers":     self.risk.get_circuit_breakers_status(),
             "slot_states":          self.risk.get_slot_states(),

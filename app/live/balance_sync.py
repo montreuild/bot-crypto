@@ -75,12 +75,8 @@ class BalanceSyncMixin:
         capital_display en y ajoutant le PnL non réalisé.
         """
         try:
-            bal  = self.exchange.fetch_balance()
-            free = float(
-                bal.get("USDC", {}).get("free", 0)
-                or bal.get("USDT", {}).get("free", 0)
-                or 0
-            )
+            detail = self.exchange.fetch_balance_detail()
+            free   = detail["free"]
             if free > 0:
                 unrealized = 0.0
                 for pos in self.open_positions.values():
@@ -94,6 +90,7 @@ class BalanceSyncMixin:
                 total = free + unrealized
                 with self._capital_lock:
                     self.capital_display = round(total, 4)
+                self._balance_detail = detail
                 self.risk.update_equity(self.capital_display)
         except Exception as e:
             logger.warning(f"[Spot Sync] KO : {e}")
@@ -116,11 +113,12 @@ class BalanceSyncMixin:
                         f"⚠ MARGIN LEVEL CRITIQUE : {ml_:.3f}", async_=True
                     )
             if not self.cfg["trading"].get("paper_mode"):
-                free_usdc = self.exchange.fetch_margin_balance_usdc()
-                if free_usdc > 0:
+                detail = self.exchange.fetch_balance_detail()
+                if detail["free"] > 0:
                     with self._capital_lock:
-                        self.capital_display = free_usdc
-                    self.risk.update_equity(free_usdc)
+                        self.capital_display = detail["free"]
+                    self._balance_detail = detail
+                    self.risk.update_equity(detail["free"])
         except Exception as e:
             logger.warning(f"[MARGIN] sync KO : {e}")
 
