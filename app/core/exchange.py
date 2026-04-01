@@ -151,6 +151,46 @@ class RobustExchange:
                      bal.get("USDT", {}).get("free", 0))
 
     @with_retry
+    def fetch_balance_detail(self) -> dict:
+        """Retourne le détail du solde USDC/USDT : free, used, total, borrowed.
+
+        En mode spot  : free = disponible, used = engagé en ordres ouverts.
+        En mode margin: idem + borrowed = montant emprunté sur le compte margin.
+        """
+        if self.paper:
+            return {"free": 0.0, "used": 0.0, "total": 0.0, "borrowed": 0.0}
+        params = {"type": "margin"} if self.margin else {}
+        bal    = self._ex.fetch_balance(params)
+        usdc   = bal["USDC"] if "USDC" in bal else bal.get("USDT") or {}
+        free   = float(usdc.get("free",  0) or 0)
+        used   = float(usdc.get("used",  0) or 0)
+        total  = float(usdc.get("total", 0) or 0)
+
+        borrowed = 0.0
+        if self.margin:
+            try:
+                if self.margin_mode == "cross":
+                    acct = self._ex.fetch_cross_margin_account()
+                    for a in (acct.get("userAssets") or []):
+                        if a.get("asset") in ("USDC", "USDT"):
+                            borrowed += float(a.get("borrowed", 0) or 0)
+                else:
+                    acct = self._ex.fetch_isolated_margin_account()
+                    for asset in (acct.get("assets") or []):
+                        qa = asset.get("quoteAsset") or {}
+                        if qa.get("asset") in ("USDC", "USDT"):
+                            borrowed += float(qa.get("borrowed", 0) or 0)
+            except Exception as e:
+                logger.debug(f"[Balance] Emprunts non récupérés : {e}")
+
+        return {
+            "free":     round(free, 4),
+            "used":     round(used, 4),
+            "total":    round(total, 4),
+            "borrowed": round(borrowed, 4),
+        }
+
+    @with_retry
     def fetch_order(self, order_id, symbol):
         if self.paper: return {"id": order_id, "status": "closed"}
         return self._ex.fetch_order(order_id, symbol)

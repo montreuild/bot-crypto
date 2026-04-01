@@ -145,6 +145,21 @@
     </div>
   </div>
 
+  <!-- ── Fonds Binance (live uniquement) ── -->
+  <div id="balance-section" style="display:none">
+    <div class="sec-hdr">
+      <h2>Fonds Binance</h2>
+      <span id="balance-mode-badge" style="font-size:.68rem;font-family:var(--mono);padding:2px 10px;border-radius:10px;border:1px solid var(--border);color:var(--dim)">—</span>
+      <a href="/config" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Configurer →</a>
+    </div>
+    <div class="meta-grid">
+      <div class="meta-card"><div class="meta-lbl">Disponible</div><div class="meta-val c-cyan" id="b-free">—</div><div class="meta-sub">USDC free</div></div>
+      <div class="meta-card"><div class="meta-lbl">Engagé</div><div class="meta-val c-amber" id="b-used">—</div><div class="meta-sub">ordres ouverts</div></div>
+      <div class="meta-card"><div class="meta-lbl">Total wallet</div><div class="meta-val" id="b-total">—</div><div class="meta-sub">USDC</div></div>
+      <div class="meta-card" id="b-borrowed-card" style="display:none"><div class="meta-lbl">Emprunté</div><div class="meta-val c-red" id="b-borrowed">—</div><div class="meta-sub">margin borrow</div></div>
+    </div>
+  </div>
+
   <div>
     <div class="meta-grid">
       <div class="meta-card"><div class="meta-lbl">Trades fermés</div><div class="meta-val c-cyan" id="s-trades">—</div><div class="meta-sub">total</div></div>
@@ -437,6 +452,25 @@ function renderStatus(s){
   const mw=$('margin-warn');
   if(s.margin_enabled&&s.margin_level!=null&&s.margin_level<1.3){mw.style.display='';mw.textContent=`⚠ MARGIN LEVEL CRITIQUE : ${s.margin_level?.toFixed(3)} — Risque de liquidation !`;}
   else{mw.style.display='none';}
+  // Fonds Binance (live uniquement)
+  const bsec=$('balance-section'),bd=s.balance_detail;
+  if(!s.paper_mode&&bd){
+    bsec.style.display='';
+    $('b-free').textContent=fmtUSDC(bd.free);
+    $('b-used').textContent=fmtUSDC(bd.used);
+    $('b-total').textContent=fmtUSDC(bd.total);
+    const bmb=$('balance-mode-badge');
+    if(s.margin_enabled){
+      const MODE_LABELS={'cross':'⊕ Cross Margin','isolated':'◎ Isolated Margin'};
+      const modeLabel=MODE_LABELS[s.margin_mode]||(s.margin_mode?`◎ ${s.margin_mode}`:'◎ Margin');
+      bmb.textContent=modeLabel;bmb.style.color='var(--amber)';bmb.style.borderColor='rgba(251,191,36,.4)';
+      $('b-borrowed-card').style.display='';
+      $('b-borrowed').textContent=fmtUSDC(bd.borrowed);
+    }else{
+      bmb.textContent='◇ Spot';bmb.style.color='var(--dim)';bmb.style.borderColor='var(--border)';
+      $('b-borrowed-card').style.display='none';
+    }
+  }else{bsec.style.display='none';}
   if(running&&s.last_scan_time){
     const t=new Date(s.last_scan_time),hhmm=t.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),pairs=s.last_symbols_scanned||[];
     $('scan-time').textContent=`Scan : ${hhmm}`;$('scan-pairs').textContent=`${pairs.length} paire${pairs.length>1?'s':''} · ${pairs.slice(0,6).join(', ')}${pairs.length>6?'…':''}`;$('scan-info').style.display='';
