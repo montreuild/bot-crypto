@@ -101,7 +101,7 @@
   </div>
   <span id="cb-badge" class="cb-pill" title="" aria-label="Circuit Breaker actif">&#9889; Circuit Breaker</span>
   <span id="status-badge" class="status-pill stopped"><span class="status-dot"></span><span id="status-label">Arrêté</span></span>
-  <span id="mode-badge" class="mode-pill paper">Paper</span>
+  <span id="mode-badge" class="mode-pill paper" onclick="toggleMode()" role="button" title="Cliquer pour basculer le mode Paper / Live" style="cursor:pointer">Paper</span>
 </div>
 {% endblock %}
 
@@ -293,6 +293,14 @@
     Êtes-vous sûr de vouloir continuer ?</p>
     <button class="modal-btn modal-btn-danger" onclick="_doResetCB()">⚡ Oui, relancer le trading</button>
     <button class="modal-btn modal-btn-cancel" onclick="document.getElementById('cb-reset-modal').style.display='none'">Annuler</button>
+  </div>
+</div>
+<div id="mode-modal" class="modal-overlay">
+  <div class="modal-box">
+    <h3 id="mode-modal-title">Changer de mode</h3>
+    <p id="mode-modal-msg"></p>
+    <button class="modal-btn" id="mode-modal-confirm" onclick="_doToggleMode()"></button>
+    <button class="modal-btn modal-btn-cancel" onclick="document.getElementById('mode-modal').style.display='none'">Annuler</button>
   </div>
 </div>
 {% endblock %}
@@ -621,6 +629,41 @@ async function _doResetCB(){
     toast('Circuit breaker réinitialisé ✓');
     refresh();
   }catch(e){toast('Erreur: '+e.message,true);}
+}
+let _pendingPaperMode=null;
+function toggleMode(){
+  const isPaper=$('mode-badge').classList.contains('paper');
+  _pendingPaperMode=!isPaper;
+  const btn=$('mode-modal-confirm');
+  if(_pendingPaperMode===false){
+    $('mode-modal-title').textContent='⚡ Passer en mode LIVE';
+    $('mode-modal-msg').innerHTML='⚠️ <strong>ATTENTION — TRADING RÉEL</strong><br/>Les ordres seront exécutés avec votre capital réel. Vérifiez que vos clés API échange sont configurées.<br/><br/>Confirmer le passage en mode LIVE ?';
+    btn.className='modal-btn modal-btn-danger';
+    btn.textContent='⚡ Oui, passer en LIVE';
+  }else{
+    $('mode-modal-title').textContent='📄 Passer en mode Paper';
+    $('mode-modal-msg').innerHTML='Basculer en mode <strong>simulation</strong>. Aucun ordre réel ne sera envoyé à l\'échange.';
+    btn.className='modal-btn modal-btn-primary';
+    btn.textContent='📄 Oui, passer en Paper';
+  }
+  $('mode-modal').style.display='flex';
+  btn.focus();
+}
+async function _doToggleMode(){
+  $('mode-modal').style.display='none';
+  const mb=$('mode-badge');
+  mb.style.opacity='0.5';
+  try{
+    const r=await apiFetch(`/api/config/trading?paper_mode=${_pendingPaperMode}`,{method:'POST'});
+    if(!r.ok){const d=await r.json().catch(()=>({}));toast('Erreur: '+(d.detail||r.status),true);return;}
+    const d=await r.json().catch(()=>({}));
+    const newMode=d.changed?.paper_mode??_pendingPaperMode;
+    mb.textContent=newMode?'📄 Paper':'⚡ Live';
+    mb.className='mode-pill '+(newMode?'paper':'live');
+    toast(newMode?'📄 Mode Paper activé ✓':'⚡ Mode LIVE activé — ordres réels actifs !');
+    refresh();
+  }catch(e){toast('Erreur changement de mode : '+e.message,true);}
+  finally{mb.style.opacity='';}
 }
 async function exportCSV(){
   const btn=document.querySelector('[onclick="exportCSV()"]'),limit=$('export-limit')?.value??'99999';
