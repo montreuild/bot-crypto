@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %} — Slots & Allocation{% endblock %}
+{% block title %} — Slots{% endblock %}
 
 {% block page_styles %}
 <style>
@@ -8,6 +8,27 @@
 .slot-page{padding:16px 20px;max-width:1100px;margin:0 auto;}
 .slot-page h1{font-family:var(--head);font-size:var(--fs-xl);margin:0 0 4px 0;letter-spacing:-.01em;}
 .slot-page .subtitle{font-size:var(--fs-sm);color:var(--muted);margin-bottom:16px;}
+
+/* ── Summary hero ── */
+.summary-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px;}
+@media(max-width:900px){.summary-grid{grid-template-columns:repeat(3,1fr);}}
+@media(max-width:560px){.summary-grid{grid-template-columns:repeat(2,1fr);}}
+.summary-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden;transition:border-color var(--transition),box-shadow var(--transition);}
+.summary-card:hover{border-color:var(--border-hi);box-shadow:0 2px 10px rgba(0,0,0,.12);}
+.summary-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;}
+.summary-card.sc-cyan::before{background:linear-gradient(90deg,var(--cyan),rgba(34,211,238,.3));}
+.summary-card.sc-green::before{background:linear-gradient(90deg,var(--green),rgba(74,222,128,.3));}
+.summary-card.sc-red::before{background:linear-gradient(90deg,var(--red),rgba(251,113,133,.3));}
+.summary-card.sc-amber::before{background:linear-gradient(90deg,var(--amber),rgba(251,191,36,.3));}
+.summary-card.sc-purple::before{background:linear-gradient(90deg,var(--purple),rgba(168,85,247,.3));}
+.summary-lbl{font-size:.64rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;}
+.summary-val{font-family:var(--mono);font-size:1.4rem;font-weight:600;line-height:1;letter-spacing:-.02em;}
+.summary-sub{font-size:.63rem;color:var(--dim);font-family:var(--mono);margin-top:4px;}
+
+/* ── Section header ── */
+.sec-hdr{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.sec-hdr h2{font-family:var(--head);font-size:.88rem;font-weight:700;margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.sec-hdr::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent);}
 
 /* ── Config bar ── */
 .slot-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px;padding:12px 14px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);}
@@ -27,7 +48,7 @@
 .btn-ghost:hover:not(:disabled){border-color:var(--cyan);color:var(--cyan);}
 
 /* ── Slot grid ── */
-.slot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:20px;}
+.slot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:12px;margin-bottom:20px;}
 .slot-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;transition:border-color .15s,box-shadow .18s;}
 .slot-card:hover{border-color:var(--border-hi);box-shadow:0 4px 12px rgba(0,0,0,.15);}
 .slot-card.disabled{opacity:.5;border-style:dashed;}
@@ -41,18 +62,31 @@
 .badge-paused{background:rgba(251,113,133,.15);color:var(--red);}
 
 /* ── Stats inside card ── */
-.slot-stats{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-bottom:10px;}
+.slot-stats{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-bottom:8px;}
 .slot-stat{font-size:.68rem;color:var(--muted);}
 .slot-stat strong{color:var(--text);font-family:var(--mono);}
 
-/* ── Budget slider ── */
-.slot-budget-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+/* ── Since activation section ── */
+.slot-since{margin-bottom:8px;padding:6px 8px;background:rgba(255,255,255,.02);border-radius:var(--r-sm);border:1px solid rgba(255,255,255,.04);}
+.slot-since-title{font-size:.58rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--dim);margin-bottom:4px;}
+.slot-since-grid{display:grid;grid-template-columns:1fr 1fr;gap:3px 12px;}
+.slot-since-item{font-size:.66rem;color:var(--muted);}
+.slot-since-item strong{color:var(--text);font-family:var(--mono);}
+.slot-since-item--wide{grid-column:1/-1;}
+
+/* ── OOS row ── */
+.slot-oos{font-size:.63rem;color:var(--dim);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;padding:3px 6px;background:rgba(255,255,255,.02);border-radius:var(--r-sm);}
+
+/* ── Budget slider (allocation) ── */
+.slot-budget-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;}
 .slot-budget-row input[type=range]{flex:1;accent-color:var(--cyan);height:6px;cursor:pointer;}
 .slot-budget-row .budget-val{font-family:var(--mono);font-size:.74rem;min-width:42px;text-align:right;color:var(--text);font-weight:600;}
+.slot-alloc-label{font-size:.6rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--dim);margin-bottom:3px;}
 
-/* ── Progress bar ── */
-.slot-track{height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;margin-bottom:6px;}
+/* ── Progress bar (allocation track) ── */
+.slot-track{height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;margin-bottom:3px;}
 .slot-fill{height:100%;border-radius:3px;transition:width .4s;}
+.slot-track-hint{font-size:.58rem;color:var(--dim);margin-bottom:6px;display:flex;justify-content:space-between;}
 
 /* ── Action row ── */
 .slot-actions{display:flex;gap:6px;flex-wrap:wrap;}
@@ -67,13 +101,62 @@
 /* ── Loading ── */
 .loading-spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--dim);border-top-color:var(--cyan);border-radius:50%;animation:spin .6s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Color helpers ── */
+.c-green{color:var(--green)!important;}
+.c-red{color:var(--red)!important;}
+.c-amber{color:var(--amber)!important;}
+.c-cyan{color:var(--cyan)!important;}
+.c-purple{color:var(--purple)!important;}
+.c-muted{color:var(--muted)!important;}
 </style>
+{% endblock %}
+
+{% block topbar_content %}
+<div class="topbar-title">Slots</div>
+<div class="topbar-sep"></div>
+<div class="topbar-right">
+  <span id="slot-count-badge" style="font-size:.7rem;font-family:var(--mono);color:var(--dim)"></span>
+  <button id="btn-auto-opt" class="btn btn-ghost" onclick="toggleAutoOpt()" title="Activer/désactiver l'optimisateur automatique" style="font-size:.7rem">⬡ Auto-opt OFF</button>
+  <button id="btn-auto-realloc" class="btn btn-ghost" onclick="toggleAutoRealloc()" title="Activer/désactiver la réallocation automatique" style="font-size:.7rem">↻ Réalloc auto OFF</button>
+  <button class="btn btn-ghost" onclick="loadSlots()" style="font-size:.7rem">↺ Actualiser</button>
+</div>
 {% endblock %}
 
 {% block content %}
 <div class="slot-page">
-  <h1>◑ Slots & Allocation</h1>
-  <p class="subtitle">Gérez l'allocation du capital par slot (stratégie × timeframe). Chaque slot contrôle un budget indépendant.</p>
+
+  <!-- ── Vue d'ensemble ── -->
+  <div>
+    <div class="sec-hdr"><h2>Vue d'ensemble</h2></div>
+    <div class="summary-grid">
+      <div class="summary-card sc-cyan">
+        <div class="summary-lbl">Slots actifs</div>
+        <div class="summary-val c-cyan" id="sum-active">—</div>
+        <div class="summary-sub" id="sum-active-sub">—</div>
+      </div>
+      <div class="summary-card sc-green">
+        <div class="summary-lbl">PnL total slots</div>
+        <div class="summary-val" id="sum-pnl">—</div>
+        <div class="summary-sub" id="sum-pnl-sub">tous les slots</div>
+      </div>
+      <div class="summary-card sc-amber">
+        <div class="summary-lbl">Win Rate moyen</div>
+        <div class="summary-val" id="sum-wr">—</div>
+        <div class="summary-sub" id="sum-wr-sub">—</div>
+      </div>
+      <div class="summary-card sc-red">
+        <div class="summary-lbl">Slots en pause</div>
+        <div class="summary-val" id="sum-paused">0</div>
+        <div class="summary-sub" id="sum-paused-sub">aucun slot en pause</div>
+      </div>
+      <div class="summary-card sc-purple">
+        <div class="summary-lbl">Capital alloué</div>
+        <div class="summary-val c-purple" id="sum-capital">—</div>
+        <div class="summary-sub">USDC</div>
+      </div>
+    </div>
+  </div>
 
   <!-- ── Config bar ── -->
   <div class="slot-bar" id="slot-bar">
@@ -100,9 +183,13 @@
   </div>
 
   <!-- ── Slot grid ── -->
-  <div id="slot-grid" class="slot-grid">
-    <div class="empty-state"><div class="icon">⏳</div>Chargement des slots…</div>
+  <div>
+    <div class="sec-hdr"><h2>Slots</h2></div>
+    <div id="slot-grid" class="slot-grid">
+      <div class="empty-state"><div class="icon">⏳</div>Chargement des slots…</div>
+    </div>
   </div>
+
 </div>
 {% endblock %}
 
@@ -111,16 +198,148 @@
 const $=id=>document.getElementById(id);
 
 let _slots=[], _config={}, _capital=0;
+let _status=null, _auditResults=[], _cfg=null;
 
+function clrC(v){return v>0?'c-green':v<0?'c-red':'c-muted';}
+function fmtS(v){const n=+(v||0);return(n>=0?'+':'')+n.toFixed(2);}
+
+/* ── Bot running check ── */
+function isBotRunning(){return _status&&_status.status==='running';}
+
+/* ── Summary stats ── */
+function buildSummary(){
+  if(!isBotRunning()){
+    if(_cfg){
+      const strats=(_cfg.strategies?.enabled)||[];
+      const tfs=_cfg.trading?.timeframes||[];
+      const sp=_cfg.strategy_params||{};
+      const disabledMap={};
+      for(const[s,p]of Object.entries(sp)){(p.disabled_timeframes||[]).forEach(tf=>{disabledMap[s+'::'+tf]=true;});}
+      let total=0;
+      for(const s of strats)for(const tf of tfs)if(!disabledMap[s+'::'+tf])total++;
+      $('sum-active').textContent=total;
+      $('sum-active-sub').textContent=tfs.length+' timeframe'+(tfs.length>1?'s':'');
+      $('slot-count-badge').textContent=total+' slots · '+tfs.length+' TFs';
+    } else {
+      $('sum-active').textContent='—';
+      $('sum-active-sub').textContent='—';
+      $('slot-count-badge').textContent='';
+    }
+    $('sum-pnl').textContent='—';$('sum-pnl').className='summary-val c-muted';
+    $('sum-pnl-sub').textContent='bot arrêté';
+    $('sum-wr').textContent='—';$('sum-wr').className='summary-val c-muted';
+    $('sum-wr-sub').textContent='bot arrêté';
+    $('sum-paused').textContent='—';$('sum-paused').className='summary-val c-muted';
+    $('sum-paused-sub').textContent='bot arrêté';
+    const totalCap=(_slots||[]).reduce((a,s)=>a+(s.budget_usdc||0),0);
+    $('sum-capital').textContent=totalCap>0?totalCap.toFixed(0):(_capital>0?_capital.toFixed(0):'—');
+    return;
+  }
+  const activeTF=_status.active_per_tf||{};
+  const byStrat=_status.by_strategy||{};
+  const paused=Array.isArray(_status.slot_states)?_status.slot_states.filter(s=>s.paused):[];
+
+  let totalSlots=0, totalTFs=0;
+  for(const tf of Object.keys(activeTF)){
+    totalSlots+=(activeTF[tf]||[]).length;
+    totalTFs++;
+  }
+  $('sum-active').textContent=totalSlots;
+  $('sum-active-sub').textContent=totalTFs+' timeframe'+(totalTFs>1?'s':'');
+  $('slot-count-badge').textContent=totalSlots+' slots · '+totalTFs+' TFs';
+
+  let totalPnl=0,totalWr=0,totalTrades=0,stratCount=0;
+  for(const[,s]of Object.entries(byStrat)){
+    totalPnl+=(s.total_pnl||0);
+    totalWr+=(s.win_rate||0);
+    totalTrades+=(s.total_trades||0);
+    stratCount++;
+  }
+  const avgWr=stratCount?totalWr/stratCount:0;
+  $('sum-pnl').textContent=fmtS(totalPnl)+' USDC';
+  $('sum-pnl').className='summary-val '+clrC(totalPnl);
+  $('sum-pnl-sub').textContent=totalTrades+' trades au total';
+  $('sum-wr').textContent=avgWr.toFixed(1)+'%';
+  $('sum-wr').className='summary-val '+clrC(avgWr-50);
+  $('sum-wr-sub').textContent='moyenne '+stratCount+' stratégies';
+  $('sum-paused').textContent=paused.length;
+  $('sum-paused').className='summary-val '+(paused.length>0?'c-red':'c-green');
+  $('sum-paused-sub').textContent=paused.length?paused.map(s=>s.slot_key).join(', '):'aucun slot en pause';
+  const totalCap=(_slots||[]).reduce((a,s)=>a+(s.budget_usdc||0),0);
+  $('sum-capital').textContent=totalCap>0?totalCap.toFixed(0):(_capital>0?_capital.toFixed(0):'—');
+}
+
+/* ── Auto-opt button ── */
+function _getAutoOptState(){
+  return{
+    enabled:_status?._auto_opt_enabled??_cfg?.optimizer?.enabled??false,
+    interval:_status?._auto_opt_interval_h??_cfg?.optimizer?.auto_interval_h??24,
+  };
+}
+function updateAutoOptBtn(){
+  const btn=$('btn-auto-opt');
+  if(!btn)return;
+  const{enabled,interval}=_getAutoOptState();
+  btn.textContent=enabled?`⬡ Auto-opt ON (${interval}h)`:'⬡ Auto-opt OFF';
+  btn.style.borderColor=enabled?'rgba(52,211,153,.3)':'rgba(251,191,36,.4)';
+  btn.style.color=enabled?'var(--green)':'var(--amber)';
+}
+async function toggleAutoOpt(){
+  const{enabled,interval}=_getAutoOptState();
+  try{
+    const r=await apiFetch(`/api/config/auto-optimizer?enabled=${!enabled}&interval_h=${interval}`,{method:'POST'});
+    if(!r.ok){const d=await r.json().catch(()=>({}));toast('Erreur: '+(d.detail||r.status),true);return;}
+    toast(!enabled?'Optimisateur automatique activé ✓':'Optimisateur automatique désactivé');
+    await loadSlots();
+  }catch(e){toast('Erreur: '+e.message,true);}
+}
+
+/* ── Auto-realloc button ── */
+function updateAutoReallocBtn(){
+  const btn=$('btn-auto-realloc');
+  if(!btn)return;
+  const interval=_config?.rebalance_interval||'daily';
+  const isNever=interval==='never';
+  btn.textContent=isNever?'↻ Réalloc auto OFF':'↻ Réalloc auto ON';
+  btn.style.borderColor=isNever?'rgba(251,191,36,.4)':'rgba(52,211,153,.3)';
+  btn.style.color=isNever?'var(--amber)':'var(--green)';
+}
+async function toggleAutoRealloc(){
+  const interval=_config?.rebalance_interval||'daily';
+  const newInterval=interval==='never'?'daily':'never';
+  try{
+    const r=await apiFetch(`/api/config/capital-allocator?rebalance_interval=${encodeURIComponent(newInterval)}`,{method:'POST'});
+    if(!r.ok){const d=await r.json().catch(()=>({}));toast('Erreur: '+(d.detail||r.status),true);return;}
+    toast(newInterval==='never'?'Réallocation automatique désactivée':'Réallocation automatique activée ✓');
+    await loadSlots();
+  }catch(e){toast('Erreur: '+e.message,true);}
+}
+
+/* ── Load all data ── */
 async function loadSlots(){
   try{
-    const r=await apiFetch('/api/slots');
-    if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
-    const d=await r.json();
+    const [slotsRes, statusRes, auditRes, cfgRes] = await Promise.all([
+      apiFetch('/api/slots'),
+      apiFetch('/api/status').catch(()=>null),
+      apiFetch('/api/audit/results').catch(()=>null),
+      apiFetch('/api/config').catch(()=>null),
+    ]);
+
+    if(!slotsRes.ok)throw new Error((await slotsRes.json()).detail||slotsRes.statusText);
+    const d=await slotsRes.json();
     _slots=d.slots||[];
     _config=d.config||{};
     _capital=d.capital||0;
+
+    _status=statusRes&&statusRes.ok?await statusRes.json():null;
+    const auData=auditRes&&auditRes.ok?await auditRes.json():{results:[]};
+    _auditResults=auData.results||[];
+    _cfg=cfgRes&&cfgRes.ok?await cfgRes.json():null;
+
     renderConfig();
+    buildSummary();
+    updateAutoOptBtn();
+    updateAutoReallocBtn();
     renderSlots();
   }catch(e){
     $('slot-grid').innerHTML=`<div class="empty-state"><div class="icon">⚠️</div>Erreur : ${escHtml(e.message)}<br><span style="font-size:.72rem;color:var(--dim)">Le bot doit être initialisé pour afficher les slots.</span></div>`;
@@ -145,6 +364,8 @@ function renderSlots(){
     return;
   }
   const isManual=(_config.mode==='manual');
+  const byStrat=_status?.by_strategy||{};
+
   grid.innerHTML=_slots.map(s=>{
     const isOff=s.enabled===false;
     const isPaused=!!s.paused;
@@ -158,6 +379,26 @@ function renderSlots(){
     const pnlStr=(s.weekly_pnl>=0?'+':'')+s.weekly_pnl.toFixed(2);
     const wrStr=s.weekly_trades>0?(s.weekly_wins/s.weekly_trades*100).toFixed(0)+'%':'—';
     const maxPct=_config.max_slot_pct||50;
+
+    // All-time stats from /api/status by_strategy
+    const stData=byStrat[s.strategy]||{};
+    const totalTrades=stData.total_trades??0;
+    const totalPnl=stData.total_pnl??null;
+    const totalWr=stData.win_rate??null;
+    const totalPnlStr=totalPnl!=null?(totalPnl>=0?'+':'')+totalPnl.toFixed(2)+' USDC':'—';
+    const totalPnlClr=totalPnl!=null?(totalPnl>0?'var(--green)':totalPnl<0?'var(--red)':'var(--muted)'):'var(--muted)';
+    const totalWrStr=totalWr!=null?totalWr.toFixed(1)+'%':'—';
+    const totalWrClr=totalWr!=null?(totalWr>50?'var(--green)':totalWr<40?'var(--red)':'var(--amber)'):'var(--muted)';
+
+    // OOS from audit results
+    const aud=_auditResults.find(r=>r.slot_key===s.slot_key||( r.strategy===s.strategy&&r.tf===s.tf));
+    const oosScore=aud?.oos_score??null;
+    const oosDate=aud?.run_date||'';
+    const oosColor=oosScore!=null?(oosScore>=0?'var(--green)':oosScore>=-0.05?'var(--amber)':'var(--red)'):'var(--dim)';
+    const oosHtml=`<div class="slot-oos">
+      <span>OOS: <strong style="color:${oosColor};font-family:var(--mono)">${oosScore!=null?oosScore.toFixed(3):'—'}</strong></span>
+      <span style="color:var(--dim)">${escHtml(oosDate)||'—'}</span>
+    </div>`;
 
     return`<div class="slot-card${isOff?' disabled':''}${isPaused?' paused':''}" data-key="${escHtml(s.slot_key)}">
       <div class="slot-hdr">
@@ -173,15 +414,31 @@ function renderSlots(){
         <div class="slot-stat">WR 7j: <strong>${wrStr}</strong></div>
         ${isPaused?`<div class="slot-stat" style="grid-column:1/-1">Pertes consécutives: <strong>${s.consecutive_losses??0}</strong></div>`:''}
       </div>
+      <div class="slot-since">
+        <div class="slot-since-title">Depuis l'activation</div>
+        <div class="slot-since-grid">
+          <div class="slot-since-item">Trades: <strong>${totalTrades}</strong></div>
+          <div class="slot-since-item">WR: <strong style="color:${totalWrClr}">${totalWrStr}</strong></div>
+          <div class="slot-since-item slot-since-item--wide">P&L: <strong style="color:${totalPnlClr}">${totalPnlStr}</strong></div>
+        </div>
+      </div>
+      ${oosHtml}
+      <div class="slot-alloc-label">Allocation — part du capital alloué à ce slot</div>
       <div class="slot-budget-row">
         <input type="range" min="1" max="${maxPct}" step="1" value="${Math.round(s.budget_pct)}"
                onchange="setBudget('${escHtml(s.slot_key)}',this.value)"
                oninput="this.nextElementSibling.textContent=this.value+'%'"
                ${isOff||!isManual?'disabled':''}
-               title="${isManual?'Ajuster le budget':'Passez en mode Manuel pour ajuster les budgets'}"/>
+               title="${isManual?'Ajuster la part du capital allouée à ce slot':'Passez en mode Manuel pour ajuster les allocations'}"/>
         <span class="budget-val">${Math.round(s.budget_pct)}%</span>
       </div>
-      <div class="slot-track"><div class="slot-fill" style="width:${Math.min(usedPct,100)}%;background:${fillClr}"></div></div>
+      <div class="slot-track" title="Fraction du budget alloué actuellement utilisée en positions ouvertes">
+        <div class="slot-fill" style="width:${Math.min(usedPct,100)}%;background:${fillClr}"></div>
+      </div>
+      <div class="slot-track-hint">
+        <span>Capital alloué à ce slot</span>
+        <span>En position: ${usedPct.toFixed(0)}%</span>
+      </div>
       <div class="slot-actions">
         <button class="btn btn-ghost btn-sm" onclick="toggleSlot('${escHtml(s.slot_key)}',${isOff?'true':'false'})">${isOff?'✓ Activer':'✕ Désactiver'}</button>
         ${isPaused?`<button class="btn btn-ghost btn-sm" onclick="resetCB('${escHtml(s.slot_key)}')" style="border-color:var(--red);color:var(--red)">↻ Reset CB</button>`:''}
@@ -218,6 +475,7 @@ async function changeRebalance(val){
     const r=await apiFetch('/api/config/capital-allocator?rebalance_interval='+encodeURIComponent(val),{method:'POST'});
     if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
     toast('✓ Rééquilibrage : '+val);
+    await loadSlots();
   }catch(e){toast('Erreur : '+e.message,true);}
 }
 
@@ -263,6 +521,6 @@ async function resetCB(slotKey){
 
 // ── Init ──
 loadSlots();
-setInterval(loadSlots,10000);
+setInterval(loadSlots,30000);
 </script>
 {% endblock %}

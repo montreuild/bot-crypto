@@ -141,10 +141,6 @@ def audit_page(request: Request):
 def trades_page(request: Request):
     return _tpl("trades.html", request, {"active_page": "trades"})
 
-@app.get("/strategies", response_class=HTMLResponse)
-def strategies_page(request: Request):
-    return _tpl("strategies.html", request, {"active_page": "strategies"})
-
 @app.get("/slots", response_class=HTMLResponse)
 def slots_page(request: Request):
     return _tpl("slots.html", request, {"active_page": "slots"})
