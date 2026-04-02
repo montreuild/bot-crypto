@@ -1,6 +1,7 @@
 """SignalPipeline — collecte, scoring et ranking des signaux par slot strategy::tf."""
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
@@ -58,6 +59,7 @@ class SignalPipeline:
         self._exchange     = exchange
         self._threshold    = cfg["trading"]["score_threshold"]
         self._strat_thresholds: Dict[str, float] = {}
+        self._score_timeout = float(cfg.get("trading", {}).get("signal_score_timeout", 5))
         sp = cfg.get("strategy_params", {})
         for name in loaded_strategies:
             self._strat_thresholds[name] = float(
@@ -140,7 +142,19 @@ class SignalPipeline:
                 self._cfg.get("strategy_params", {}),
                 entry.get("params", {})
             )
-            signal = strategy.score(df, params, df_htf=df_htf, symbol=symbol)
+            with ThreadPoolExecutor(max_workers=1) as _pool:
+                future = _pool.submit(strategy.score, df, params,
+                                      df_htf=df_htf, symbol=symbol)
+                try:
+                    signal = future.result(timeout=self._score_timeout)
+                except FuturesTimeoutError:
+                    # Note : le thread sous-jacent continue jusqu'à sa fin naturelle ;
+                    # le résultat est simplement ignoré (pas de ressources partagées modifiées).
+                    logger.error(
+                        f"[Pipeline] {strat_name}/{symbol}/{tf} score timeout "
+                        f"({self._score_timeout}s) — signal ignoré"
+                    )
+                    return None
         except Exception as e:
             logger.error(f"[Pipeline] {strat_name}/{symbol}/{tf} score KO : {e}")
             return None

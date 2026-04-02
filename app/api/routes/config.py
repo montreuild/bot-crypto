@@ -1,5 +1,6 @@
 """Routes configuration — lecture et mise à jour de config.yaml via l'API."""
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -40,7 +41,7 @@ def _save_strategy_yaml(strategy_name: str, updates_fn):
 
 # ── GET /api/config ────────────────────────────────────────────────────────
 
-@router.get("/api/config")
+@router.get("/api/config", dependencies=[Depends(verify_api_key)])
 def get_config():
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
@@ -284,10 +285,9 @@ def update_strategy_params(strategy: str, params: dict):
         return {"saved": True, "strategy": strategy, "params": params,
                 "file": f"strategies/{strategy}.yaml"}
     except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-# ── POST /api/config/strategy-timeframe ──────────────────────────────────
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} config/strategy-params : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
 
 @router.post("/api/config/strategy-timeframe", dependencies=[Depends(verify_api_key)])
 def toggle_strategy_timeframe(strategy: str, timeframe: str, enabled: bool = True):

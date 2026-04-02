@@ -2,6 +2,7 @@
 import csv
 import io
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -12,6 +13,13 @@ from app.core.database import session_scope
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_SLOT_KEY_RE = re.compile(r'^[a-z_][a-z0-9_]*::[0-9a-z]+$')
+
+
+def _validate_slot_key(slot_key: str) -> None:
+    if not _SLOT_KEY_RE.match(slot_key):
+        raise HTTPException(400, "Format slot_key invalide")
 
 
 @router.get("/api/trades", dependencies=[Depends(verify_api_key)])
@@ -138,6 +146,7 @@ def list_slots():
 @router.post("/api/slots/{slot_key:path}/budget", dependencies=[Depends(verify_api_key)])
 def set_slot_budget(slot_key: str, budget_pct: float):
     """Définit manuellement le budget d'un slot (budget_pct en fraction, ex: 0.25 = 25%)."""
+    _validate_slot_key(slot_key)
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     if budget_pct <= 0 or budget_pct > 1:
@@ -174,6 +183,7 @@ def set_slot_budget(slot_key: str, budget_pct: float):
 @router.post("/api/slots/{slot_key:path}/toggle", dependencies=[Depends(verify_api_key)])
 def toggle_slot(slot_key: str, enabled: bool = True):
     """Active ou désactive un slot."""
+    _validate_slot_key(slot_key)
     if not state.trader:
         raise HTTPException(503, "Trader non initialisé")
     ok = state.trader.allocator.set_slot_enabled(slot_key, enabled)
@@ -202,6 +212,7 @@ def toggle_slot(slot_key: str, enabled: bool = True):
 @router.post("/api/slots/{slot_key:path}/reset", dependencies=[Depends(verify_api_key)])
 def reset_slot(slot_key: str):
     """Réinitialise le circuit breaker d'un slot."""
+    _validate_slot_key(slot_key)
     if not state.trader:
         raise HTTPException(503, "Trader non initialisé")
     state.trader.risk.reset_slot_pause(slot_key)

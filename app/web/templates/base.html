@@ -269,9 +269,9 @@ a:focus-visible,.sb-link:focus-visible,.toggle input:focus-visible+.toggle-slide
 {% block page_styles %}{% endblock %}
 </style>
 <script>
-const API_KEY="{{api_key}}";
 function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
-function apiFetch(url,opts={}){if(!opts.headers)opts.headers={};if(API_KEY)opts.headers["X-API-Key"]=API_KEY;return fetch(url,opts);}
+function safeSide(v){const s=(v||'').toLowerCase();return['buy','sell','long','short'].includes(s)?s:'';}
+function apiFetch(url,opts={}){if(!opts.headers)opts.headers={};opts.credentials='include';return fetch(url,opts);}
 function toggleSidebar(){
   const sb=document.getElementById('sidebar'),btn=document.getElementById('sb-toggle'),ov=document.getElementById('sb-overlay'),mobileBtn=document.getElementById('sb-mobile-btn');
   const isMobile=window.innerWidth<=768;

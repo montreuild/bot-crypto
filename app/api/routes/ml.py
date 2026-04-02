@@ -1,6 +1,7 @@
 """Routes ML — entraînement et informations sur les modèles."""
 import logging
 import os
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -96,7 +97,9 @@ def train_ml(symbol: str = "BTC/USDC", limit: int = 2000, timeframe: str = "",
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, str(e))
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} ml/train : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
 @router.get("/api/ml/strategy-info", dependencies=[Depends(verify_api_key)])

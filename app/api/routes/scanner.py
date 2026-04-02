@@ -2,6 +2,7 @@
 import importlib
 import logging
 import math
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -27,7 +28,9 @@ def run_scanner(timeframe: str = None, limit: int = 200):
         results  = scanner.screen(tf, limit)
         return {"timeframe": tf, "symbols_scanned": len(results), "results": results}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} scanner : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
 @router.get("/api/scanner/config", dependencies=[Depends(verify_api_key)])
@@ -66,7 +69,9 @@ def scanner_opportunities(timeframe: str = None, limit: int = 200):
         results  = scanner.opportunity_scan(tf)
         return {"timeframe": tf, "count": len(results), "opportunities": results}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} scanner/opportunities : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
 @router.get("/api/scanner/chart", dependencies=[Depends(verify_api_key)])
@@ -199,8 +204,9 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[API] scanner/chart : {e}", exc_info=True)
-        raise HTTPException(500, str(e))
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} scanner/chart : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
 @router.get("/api/scanner/signals", dependencies=[Depends(verify_api_key)])
@@ -273,5 +279,6 @@ def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[API] scanner/signals : {e}", exc_info=True)
-        raise HTTPException(500, str(e))
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} scanner/signals : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")

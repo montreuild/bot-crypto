@@ -654,8 +654,22 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         if not self._pre_execution_check(symbol, side, size, price, notional):
             return False
 
-        # 8. Ouverture + enregistrement budget
-        self._open_position(pos_key, symbol, signal_dict, price, size, notional, atr, leverage, tf)
+        # 8. Vérification atomique + ouverture (protège contre les races concurrentes)
+        with self._positions_lock:
+            if pos_key in self.open_positions:
+                return False
+            max_pos = self.cfg["trading"].get("max_positions", 5)
+            if len(self.open_positions) >= max_pos:
+                return _reject("risk", f"Max positions ({max_pos}) atteint")
+            # Réserve le slot avant de relâcher le verrou
+            self.open_positions[pos_key] = {"_reserved": True}
+
+        try:
+            self._open_position(pos_key, symbol, signal_dict, price, size, notional, atr, leverage, tf)
+        except Exception:
+            with self._positions_lock:
+                self.open_positions.pop(pos_key, None)
+            raise
         self.allocator.register_open(slot_key, notional)
         return True
 

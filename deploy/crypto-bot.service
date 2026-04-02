@@ -40,8 +40,10 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 # ── Ressources (ARM A1 : 4 vCPU / 24 GB) ───────────────────
-MemoryLimit=19G
+MemoryMax=2G
+CPUQuota=80%
 CPUWeight=200
+LimitNOFILE=65535
 
 # ── Journalisation ──────────────────────────────────────────
 StandardOutput=append:/opt/crypto_bot/logs/bot.log
