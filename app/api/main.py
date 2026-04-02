@@ -100,12 +100,14 @@ def _tpl(name: str, request: Request, extra: dict = None):
         resp = HTMLResponse(f"<h1>{name}</h1>")
     api_key = state.cfg["web"].get("api_key", "") if state.cfg else ""
     if api_key:
+        # honour X-Forwarded-Proto for reverse-proxy deployments
+        proto = request.headers.get("x-forwarded-proto", request.url.scheme)
         resp.set_cookie(
             key="api_key",
             value=api_key,
             httponly=True,
             samesite="strict",
-            secure=request.url.scheme == "https",
+            secure=proto == "https",
         )
     return resp
 

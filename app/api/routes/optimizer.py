@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -130,8 +131,9 @@ def optimizer_start(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[API] optimizer/start : {e}", exc_info=True)
-        raise HTTPException(500, str(e))
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} optimizer/start : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
     finally:
         state._opt_semaphore.release()
 

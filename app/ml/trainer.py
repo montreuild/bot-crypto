@@ -3,6 +3,7 @@ import logging
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Dict, List
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,9 @@ class MLStrategyTrainer:
     def __init__(self, cfg: dict, ml_lock: threading.Lock = None):
         self.cfg = cfg
         self._ml_lock = ml_lock or threading.Lock()
+        self._retrain_timeout = float(
+            cfg.get("ml", {}).get("retrain_timeout_secs", 300)
+        )
         # Clé : "{name}@{tf}" — timer indépendant par (stratégie, timeframe)
         self._retrain_at: Dict[str, float] = {}
 
@@ -81,11 +85,31 @@ class MLStrategyTrainer:
                     continue
                 self._retrain_at[key] = now + interval_h * 3600
                 logger.info(f"[MLTrainer] Réentraînement planifié : {name}/{tf} (intervalle={interval_h}h)")
+                timeout = self._retrain_timeout
                 threading.Thread(
-                    target=self._retrain_thread,
-                    args=(name, strat, strat_params, tf, scanner),
+                    target=self._retrain_with_timeout,
+                    args=(name, strat, strat_params, tf, scanner, timeout),
                     daemon=True,
                 ).start()
+
+    def _retrain_with_timeout(self, name: str, strat, strat_params: dict,
+                               tf: str, scanner, timeout: float) -> None:
+        """Lance _retrain_thread dans un executor et applique un timeout.
+
+        Note : en cas de timeout, le thread sous-jacent continue jusqu'à la fin
+        de l'opération en cours (fit/IO) puis se termine ; _ml_lock sera relâché
+        normalement. Le résultat est simplement ignoré.
+        """
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(self._retrain_thread, name, strat, strat_params, tf, scanner)
+            try:
+                future.result(timeout=timeout)
+            except FuturesTimeoutError:
+                logger.error(
+                    f"[MLTrainer] Réentraînement {name}/{tf} timeout ({timeout}s) — annulé"
+                )
+            except Exception as e:
+                logger.error(f"[MLTrainer] Réentraînement {name}/{tf} KO : {e}")
 
     # ── Thread interne ─────────────────────────────────────────────────────
     def _retrain_thread(self, name: str, strat, strat_params: dict,

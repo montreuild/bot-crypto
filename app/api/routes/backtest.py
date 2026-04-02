@@ -1,6 +1,7 @@
 """Route backtest — POST /api/backtest."""
 import importlib
 import logging
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -182,7 +183,8 @@ def run_backtest(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[API] Backtest error : {e}", exc_info=True)
-        raise HTTPException(500, str(e))
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} backtest : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
     finally:
         state._bt_semaphore.release()

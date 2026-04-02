@@ -1,6 +1,7 @@
 """Route replay — rejeu multi-timeframe sur N mois pour validation."""
 import importlib
 import logging
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -229,7 +230,8 @@ def run_replay(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[Replay] Erreur : {e}", exc_info=True)
-        raise HTTPException(500, str(e))
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} replay : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
     finally:
         state._rp_semaphore.release()

@@ -11,6 +11,7 @@ Les variables d'environnement MAINPID, EXIT_CODE, EXIT_STATUS sont injectées
 automatiquement par systemd.
 """
 import os
+import re
 import sys
 import subprocess
 import logging
@@ -53,16 +54,33 @@ def read_config() -> dict:
 
 
 def tail_log(n: int = MAX_LOG_TAIL) -> str:
-    """Retourne les N dernières lignes du log."""
+    """Retourne les N dernières lignes du log, après sanitisation des données sensibles."""
     try:
         result = subprocess.run(
             ["tail", "-n", str(n), LOG_PATH],
             capture_output=True, text=True, timeout=5
         )
-        return result.stdout.strip()
+        return _sanitize_log(result.stdout.strip())
     except Exception as e:
         logger.warning(f"tail_log KO : {e}")
         return "(log inaccessible)"
+
+
+# Patterns pouvant contenir des secrets (clés API, tokens, mots de passe)
+_SECRET_PATTERNS = [
+    # Valeurs de paramètres/headers contenant des tokens/clés (au moins 8 caractères)
+    (re.compile(r'((?:api[_-]?key|token|secret|password|passwd|Authorization)[=:\s]+)[^\s,\]"]{8,}',
+                re.IGNORECASE), r'\1[REDACTED]'),
+    # Hex strings longues précédées d'un contexte de clé (API key / secret patterns)
+    (re.compile(r'(?<=[=:\s])([0-9a-fA-F]{40,})\b'), '[REDACTED_HEX]'),
+]
+
+
+def _sanitize_log(text: str) -> str:
+    """Supprime les fragments de secrets potentiels des lignes de log."""
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
 
 
 def get_restart_count() -> str:
