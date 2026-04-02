@@ -1,4 +1,5 @@
 """API FastAPI du Crypto Bot — point d'entrée, middlewares, pages web et status."""
+import hmac
 import logging
 import os
 
@@ -163,8 +164,8 @@ def get_status(request: Request):
     if not state.cfg:
         return {"status": "not_started"}
     api_key_cfg  = state.cfg["web"].get("api_key", "")
-    token        = request.headers.get("X-API-Key") or request.query_params.get("api_key")
-    authenticated = not api_key_cfg or token == api_key_cfg
+    token        = request.headers.get("X-API-Key") or request.cookies.get("api_key") or ""
+    authenticated = not api_key_cfg or hmac.compare_digest(token, api_key_cfg)
     base = {
         "status":     "running" if (state.trader and state.trader.running) else "idle",
         "paper_mode": state.cfg["trading"].get("paper_mode", True),

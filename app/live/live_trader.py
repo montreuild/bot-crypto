@@ -14,6 +14,7 @@ import logging
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -776,7 +777,29 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         if time.time() < self._ml_retrain_at:
             return
         self._ml_retrain_at = time.time() + interval
-        threading.Thread(target=self._retrain_ml_thread, daemon=True).start()
+        timeout = float(self.cfg.get("ml", {}).get("blend_train_timeout_secs", 300))
+        threading.Thread(
+            target=self._retrain_ml_with_timeout, args=(timeout,), daemon=True
+        ).start()
+
+    def _retrain_ml_with_timeout(self, timeout: float) -> None:
+        """Lance _retrain_ml_thread dans un executor et applique un timeout.
+
+        Note : en cas de timeout, le thread sous-jacent continue jusqu'à la fin
+        de l'opération en cours (fit/IO) puis se termine naturellement.
+        Le résultat est simplement ignoré — aucune ressource partagée n'est
+        corrompue car _ml_lock est acquis/relâché dans _retrain_ml_thread.
+        """
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(self._retrain_ml_thread)
+            try:
+                future.result(timeout=timeout)
+            except FuturesTimeoutError:
+                logger.error(
+                    f"[ML] Réentraînement prédicteur timeout ({timeout}s) — annulé"
+                )
+            except Exception as e:
+                logger.error(f"[ML] Réentraînement prédicteur KO : {e}")
 
     def _retrain_ml_thread(self) -> None:
         logger.info("[ML] Réentraînement prédicteur en arrière-plan…")
