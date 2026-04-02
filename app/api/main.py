@@ -93,11 +93,21 @@ def health_check():
 
 # ── Pages web ──────────────────────────────────────────────────────────────
 def _tpl(name: str, request: Request, extra: dict = None):
-    api_key = state.cfg["web"].get("api_key", "") if state.cfg else ""
-    ctx = {"request": request, "api_key": api_key, **(extra or {})}
+    ctx = {"request": request, **(extra or {})}
     if templates:
-        return templates.TemplateResponse(name, ctx)
-    return HTMLResponse(f"<h1>{name}</h1>")
+        resp = templates.TemplateResponse(name, ctx)
+    else:
+        resp = HTMLResponse(f"<h1>{name}</h1>")
+    api_key = state.cfg["web"].get("api_key", "") if state.cfg else ""
+    if api_key:
+        resp.set_cookie(
+            key="api_key",
+            value=api_key,
+            httponly=True,
+            samesite="strict",
+            secure=request.url.scheme == "https",
+        )
+    return resp
 
 
 @app.get("/", response_class=HTMLResponse)

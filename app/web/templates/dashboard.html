@@ -531,7 +531,7 @@ function renderPositions(positions){
     const upnl=p.upnl??0,entry=p.entry??0,upct=entry>0?(upnl/(entry*(p.size??0))*100):0;
     const heldMin=p.open_time?Math.floor((Date.now()/1000-p.open_time)/60):0;
     const heldStr=heldMin>60?`${Math.floor(heldMin/60)}h${heldMin%60}m`:`${heldMin}m`;
-    return`<div class="pos-item"><div><div class="pos-sym">${escHtml(p.symbol??'—')}<span class="tag tag-${escHtml(p.side)}">${escHtml((p.side||'').toUpperCase())}</span><span style="font-size:.62rem;color:var(--muted)">${escHtml(p.strategy??'')}</span>${p.timeframe?`<span style="font-size:.62rem;color:var(--cyan);font-family:var(--mono)">${escHtml(p.timeframe)}</span>`:''}</div><div class="pos-meta">Entrée: <strong>${fmtPrice(entry)}</strong> · Stop: ${fmtPrice(p.stop??0)} · ${p.size??0} u · Score: ${(p.score??0).toFixed(2)} · ${heldStr}</div></div><div><div class="pos-pnl ${clrC(upnl)}">${fmtSign(upnl)}</div><div class="pos-pct">${fmtSign(upct,'%')}</div></div></div>`;
+    return`<div class="pos-item"><div><div class="pos-sym">${escHtml(p.symbol??'—')}<span class="tag tag-${safeSide(p.side)}">${escHtml((p.side||'').toUpperCase())}</span><span style="font-size:.62rem;color:var(--muted)">${escHtml(p.strategy??'')}</span>${p.timeframe?`<span style="font-size:.62rem;color:var(--cyan);font-family:var(--mono)">${escHtml(p.timeframe)}</span>`:''}</div><div class="pos-meta">Entrée: <strong>${fmtPrice(entry)}</strong> · Stop: ${fmtPrice(p.stop??0)} · ${p.size??0} u · Score: ${(p.score??0).toFixed(2)} · ${heldStr}</div></div><div><div class="pos-pnl ${clrC(upnl)}">${fmtSign(upnl)}</div><div class="pos-pct">${fmtSign(upct,'%')}</div></div></div>`;
   }).join('');
 }
 
@@ -540,7 +540,7 @@ function renderTrades(trades){
   if(!trades.length){tbody.innerHTML='<tr><td colspan="7" class="empty-row">Aucun trade</td></tr>';return;}
   tbody.innerHTML=trades.slice(0,25).map(t=>{
     const pnl=t.pnl??0,d=new Date(t.time),ds=isNaN(d)?'—':d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
-    return`<tr><td style="color:var(--muted)">${ds}</td><td style="font-weight:600">${escHtml(t.symbol??'—')}</td><td><span class="tag tag-${escHtml(t.side)}">${escHtml((t.side||'').toUpperCase())}</span></td><td><span class="tag tag-strat">${escHtml(t.strategy??'—')}</span></td><td>${fmtPrice(t.entry??0)}</td><td>${fmtPrice(t.exit??0)}</td><td class="r ${clrC(pnl)}" style="font-weight:600">${fmtSign(pnl)}</td></tr>`;
+    return`<tr><td style="color:var(--muted)">${ds}</td><td style="font-weight:600">${escHtml(t.symbol??'—')}</td><td><span class="tag tag-${safeSide(t.side)}">${escHtml((t.side||'').toUpperCase())}</span></td><td><span class="tag tag-strat">${escHtml(t.strategy??'—')}</span></td><td>${fmtPrice(t.entry??0)}</td><td>${fmtPrice(t.exit??0)}</td><td class="r ${clrC(pnl)}" style="font-weight:600">${fmtSign(pnl)}</td></tr>`;
   }).join('');
   /* PnL histogram */
   const recent=trades.slice(-30);
@@ -568,7 +568,7 @@ function renderStratPerf(byStrat){
   if(!rows.length){tbody.innerHTML='<tr><td colspan="7" class="empty-row">Aucune donnée stratégie</td></tr>';return;}
   tbody.innerHTML=rows.map(([name,s])=>{
     const pnl=s.total_pnl??0,wr=s.win_rate??0,pf=s.profit_factor??0,sh=s.sharpe??0,dd=s.max_drawdown??0;
-    return`<tr><td><span class="tag tag-strat">${name}</span></td><td class="r">${s.total_trades??0}</td><td class="r ${clrC(wr-50)}">${wr.toFixed(1)}%</td><td class="r ${clrC(pnl)}" style="font-weight:600">${fmtSign(pnl)}</td><td class="r ${clrC(pf-1)}">${typeof pf==='number'?pf.toFixed(2):pf}</td><td class="r ${clrC(sh)}">${sh.toFixed(2)}</td><td class="r ${dd>10?'c-red':'c-muted'}">${dd.toFixed(1)}%</td></tr>`;
+    return`<tr><td><span class="tag tag-strat">${escHtml(name)}</span></td><td class="r">${s.total_trades??0}</td><td class="r ${clrC(wr-50)}">${wr.toFixed(1)}%</td><td class="r ${clrC(pnl)}" style="font-weight:600">${fmtSign(pnl)}</td><td class="r ${clrC(pf-1)}">${typeof pf==='number'?pf.toFixed(2):pf}</td><td class="r ${clrC(sh)}">${sh.toFixed(2)}</td><td class="r ${dd>10?'c-red':'c-muted'}">${dd.toFixed(1)}%</td></tr>`;
   }).join('');
 }
 
@@ -599,7 +599,7 @@ function renderActiveTF(active){
   const el=$('active-tf-box'),tfs=Object.entries(active);
   if(!tfs.length){el.style.display='none';return;}
   el.style.display='flex';
-  el.innerHTML='<span style="color:var(--muted);margin-right:8px;font-size:.72rem;font-weight:600">Stratégies actives :</span>'+tfs.map(([tf,strats])=>`<span style="color:var(--cyan);font-family:var(--mono);font-size:.72rem;font-weight:600;margin-right:4px">${tf}</span>`+strats.map(s=>`<span class="tag tag-strat" style="margin:0 2px">${s}</span>`).join('')).join('<span style="color:var(--dim);margin:0 6px">·</span>');
+  el.innerHTML='<span style="color:var(--muted);margin-right:8px;font-size:.72rem;font-weight:600">Stratégies actives :</span>'+tfs.map(([tf,strats])=>`<span style="color:var(--cyan);font-family:var(--mono);font-size:.72rem;font-weight:600;margin-right:4px">${escHtml(tf)}</span>`+strats.map(s=>`<span class="tag tag-strat" style="margin:0 2px">${escHtml(s)}</span>`).join('')).join('<span style="color:var(--dim);margin:0 6px">·</span>');
 }
 
 function renderSignals(log){
@@ -609,7 +609,7 @@ function renderSignals(log){
   tbody.innerHTML=rows.map(s=>{
     const t=new Date(s.time),ts=isNaN(t)?'—':t.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),isOpen=s.status==='opened',isClosed=s.status==='closed',statusCls=isOpen?'tag-open':isClosed?'tag-closed':'tag-rej',statusLbl=isOpen?'● OUVERT':isClosed?'✓ CLÔTURÉ':'○ rejeté',scoreClr=s.score>=s.threshold?'var(--green)':'var(--red)';
     const slotLabel=s.strategy&&s.timeframe?(s.strategy.charAt(0).toUpperCase()+s.strategy.slice(1)+' '+s.timeframe):(s.strategy??'—');
-    return`<tr><td style="color:var(--muted);font-family:var(--mono)">${ts}</td><td style="font-weight:600">${s.symbol??'—'}</td><td><span class="tag tag-${s.side??''}">${(s.side||'').toUpperCase()}</span></td><td><span class="tag tag-strat">${escHtml(slotLabel)}</span></td><td class="r" style="font-family:var(--mono);color:${scoreClr};font-weight:600">${(s.score??0).toFixed(3)}</td><td class="r" style="font-family:var(--mono);color:var(--dim)">${(s.threshold??0).toFixed(2)}</td><td><span class="tag ${statusCls}">${statusLbl}</span></td><td style="color:var(--dim);font-size:.68rem">${escHtml(s.reason)}</td></tr>`;
+    return`<tr><td style="color:var(--muted);font-family:var(--mono)">${ts}</td><td style="font-weight:600">${escHtml(s.symbol??'—')}</td><td><span class="tag tag-${safeSide(s.side)}">${escHtml((s.side||'').toUpperCase())}</span></td><td><span class="tag tag-strat">${escHtml(slotLabel)}</span></td><td class="r" style="font-family:var(--mono);color:${scoreClr};font-weight:600">${(s.score??0).toFixed(3)}</td><td class="r" style="font-family:var(--mono);color:var(--dim)">${(s.threshold??0).toFixed(2)}</td><td><span class="tag ${statusCls}">${statusLbl}</span></td><td style="color:var(--dim);font-size:.68rem">${escHtml(s.reason)}</td></tr>`;
   }).join('');
 }
 

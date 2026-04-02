@@ -44,7 +44,7 @@ async def verify_api_key(request: Request):
                 detail="API key required for remote access. Set web.api_key in config.yaml."
             )
         return
-    token = request.headers.get("X-API-Key") or request.query_params.get("api_key") or ""
+    token = request.headers.get("X-API-Key") or request.cookies.get("api_key") or ""
     if len(token) > 256:
         raise HTTPException(status_code=403, detail="Clé API invalide")
     if not hmac.compare_digest(token, key):

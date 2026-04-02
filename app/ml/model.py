@@ -1,9 +1,10 @@
 """Modèles ML prédictifs : Logistic Regression, Random Forest, XGBoost (optionnel)."""
 import logging
-import pickle
+import io
 import os
 from typing import Optional, Tuple, Dict
 
+import joblib
 import numpy as np
 import polars as pl
 from sklearn.linear_model    import LogisticRegression
@@ -35,7 +36,7 @@ class MLPredictor:
         self.window       = ml.get("feature_window", 50)
         self.confidence_threshold = ml.get("confidence_threshold", 0.55)
         self.trained      = False
-        self.model_path   = "logs/ml_model.pkl"
+        self.model_path   = "logs/ml_model.joblib"
         self._pipeline: Optional[Pipeline] = None
         self._regime_models: Dict[str, Pipeline] = {}
 
@@ -205,8 +206,10 @@ class MLPredictor:
     def save(self):
         import hashlib, hmac as _hmac
         os.makedirs("logs", exist_ok=True)
-        payload = pickle.dumps({"pipeline": self._pipeline, "regime_models": self._regime_models,
-                                "trained": self.trained})
+        buf = io.BytesIO()
+        joblib.dump({"pipeline": self._pipeline, "regime_models": self._regime_models,
+                     "trained": self.trained}, buf)
+        payload = buf.getvalue()
         sig = _hmac.new(self._hmac_key(), payload, hashlib.sha256).digest()
         with open(self.model_path, "wb") as f:
             f.write(sig)
@@ -226,9 +229,9 @@ class MLPredictor:
         expected   = _hmac.new(self._hmac_key(), payload, hashlib.sha256).digest()
         if not _hmac.compare_digest(sig_stored, expected):
             logger.error("[ML] Signature HMAC invalide — fichier modèle potentiellement altéré. "
-                         "Supprimez logs/ml_model.pkl et réentraînez.")
+                         "Supprimez logs/ml_model.joblib et réentraînez.")
             return False
-        data = pickle.loads(payload)    # noqa: S301 — payload vérifié par HMAC ci-dessus
+        data = joblib.load(io.BytesIO(payload))
         self._pipeline       = data["pipeline"]
         self._regime_models  = data["regime_models"]
         self.trained         = data["trained"]
