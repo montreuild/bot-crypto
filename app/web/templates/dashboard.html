@@ -133,7 +133,6 @@
 </div>
 <div id="content" class="grid-bg fade-in">
   <div id="margin-warn" style="display:none;background:var(--red-dim);border:1px solid rgba(251,113,133,.25);border-radius:var(--r);padding:10px 16px;font-size:.78rem;color:var(--red)"></div>
-  <div id="active-tf-box" style="display:none;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 16px;font-size:.78rem;flex-wrap:wrap;gap:4px;align-items:center"></div>
 
   <div>
     <div class="sec-hdr"><h2>Portefeuille</h2></div>
@@ -193,16 +192,6 @@
           <div class="gauge-fill" id="g-global-fill" style="width:0%;background:var(--green)"></div>
         </div>
         <div class="gauge-sub"><span id="g-global-sub" style="color:var(--dim)">0% / limite</span><span id="g-global-limit" style="color:var(--dim)">—</span></div>
-      </div>
-      <div class="risk-gauge-card" role="region" aria-label="Risque par trade">
-        <div class="gauge-lbl">
-          <span>⚖ Risque/trade</span>
-          <span id="g-risk-val" style="font-family:var(--mono);font-size:.75rem;color:var(--cyan)">—</span>
-        </div>
-        <div class="gauge-track">
-          <div class="gauge-fill" id="g-risk-fill" style="width:0%;background:var(--cyan)"></div>
-        </div>
-        <div class="gauge-sub"><span style="color:var(--dim)">% capital exposé par trade</span><span id="g-risk-limit" style="color:var(--dim)">—</span></div>
       </div>
       <div class="risk-gauge-card" role="region" aria-label="PnL journalier">
         <div class="gauge-lbl">
@@ -438,7 +427,6 @@ function renderStatus(s){
   $('s-best').textContent=fmtUSDC(s.best_trade??0);
   const pos=s.positions??[];$('s-pos').textContent=pos.length;$('pos-count').textContent=pos.length?`${pos.length} position${pos.length>1?'s':''}`:''
   renderPositions(pos);renderStratPerf(s.by_strategy??{});
-  if(s.active_per_tf)renderActiveTF(s.active_per_tf);
   renderCapitalAllocation(s.capital_allocation||[], s.slot_states||[]);
   // Volatility brake banner
   const vb=$('vol-brake-bar');
@@ -482,7 +470,6 @@ function renderStatus(s){
 function renderRiskGauges(s){
   const dailyPnlPct = s.daily_pnl_pct??0;          // % (e.g. -1.2 = -1.2%)
   const globalDdPct = s.global_dd_pct??0;           // % (e.g. 3.5 = 3.5%)
-  const currentRisk = s.current_risk??s.risk_per_trade??1; // % per trade
   // Daily DD gauge (uses absolute value — drawdown is displayed as negative)
   const dailyPct = Math.abs(Math.min(dailyPnlPct,0)); // 0–5 typically
   const dailyLimit = s.daily_dd_limit!=null ? s.daily_dd_limit*100 : 5;
@@ -504,11 +491,6 @@ function renderRiskGauges(s){
   $('g-global-sub').textContent=globalDdPct.toFixed(2)+'% / limite';
   $('g-global-limit').textContent=globalLimit.toFixed(1)+'%';
   $('g-global-track').setAttribute('aria-valuenow',Math.round(globalRatio));
-  // Risk per trade gauge (base 3%)
-  const riskPct = currentRisk;
-  $('g-risk-fill').style.width=Math.min(riskPct/3*100,100)+'%';
-  $('g-risk-val').textContent=riskPct.toFixed(2)+'%';
-  $('g-risk-limit').textContent='base 3%';
   // Daily PnL gauge
   const dpnl=s.daily_pnl_pct??0;
   const dpnlAbs=Math.min(Math.abs(dpnl)/5*100,100);
@@ -593,13 +575,6 @@ function renderCapitalAllocation(slots, slotStates){
       ${isPaused?`<div class="alloc-cb">⏸ ${escHtml(paused[s.slot_key].reason)}</div>`:''}
     </div>`;
   }).join('');
-}
-
-function renderActiveTF(active){
-  const el=$('active-tf-box'),tfs=Object.entries(active);
-  if(!tfs.length){el.style.display='none';return;}
-  el.style.display='flex';
-  el.innerHTML='<span style="color:var(--muted);margin-right:8px;font-size:.72rem;font-weight:600">Stratégies actives :</span>'+tfs.map(([tf,strats])=>`<span style="color:var(--cyan);font-family:var(--mono);font-size:.72rem;font-weight:600;margin-right:4px">${escHtml(tf)}</span>`+strats.map(s=>`<span class="tag tag-strat" style="margin:0 2px">${escHtml(s)}</span>`).join('')).join('<span style="color:var(--dim);margin:0 6px">·</span>');
 }
 
 function renderSignals(log){

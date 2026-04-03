@@ -369,10 +369,12 @@ function renderSlots(){
   grid.innerHTML=_slots.map(s=>{
     const isOff=s.enabled===false;
     const isPaused=!!s.paused;
+    const isExcluded=!!s.excluded_by_optimizer;
     const usedPct=s.used_pct??0;
-    const fillClr=isOff?'var(--dim)':isPaused?'var(--red)':usedPct>80?'var(--amber)':'var(--cyan)';
+    const fillClr=isOff||isExcluded?'var(--dim)':isPaused?'var(--red)':usedPct>80?'var(--amber)':'var(--cyan)';
     const label=s.strategy.charAt(0).toUpperCase()+s.strategy.slice(1)+' · '+s.tf;
-    const badge=isOff?'<span class="slot-badge badge-off">OFF</span>'
+    const badge=isExcluded?'<span class="slot-badge badge-off">Exclu</span>'
+               :isOff?'<span class="slot-badge badge-off">OFF</span>'
                :isPaused?'<span class="slot-badge badge-paused">Pausé</span>'
                :'<span class="slot-badge badge-on">Actif</span>';
     const pnlClr=s.weekly_pnl>=0?'var(--green)':'var(--red)';
@@ -400,11 +402,12 @@ function renderSlots(){
       <span style="color:var(--dim)">${escHtml(oosDate)||'—'}</span>
     </div>`;
 
-    return`<div class="slot-card${isOff?' disabled':''}${isPaused?' paused':''}" data-key="${escHtml(s.slot_key)}">
+    return`<div class="slot-card${isOff||isExcluded?' disabled':''}${isPaused?' paused':''}" data-key="${escHtml(s.slot_key)}">
       <div class="slot-hdr">
         <span class="slot-name">${escHtml(label)}</span>
         ${badge}
       </div>
+      ${isExcluded?`<div class="slot-cb" style="background:rgba(168,85,247,.08);color:var(--purple);border-color:rgba(168,85,247,.2)">⚠ Score OOS insuffisant — relancez l'optimiseur</div>`:''}
       <div class="slot-stats">
         <div class="slot-stat">Budget: <strong>${s.budget_pct.toFixed(1)}%</strong></div>
         <div class="slot-stat">USDC: <strong>${s.budget_usdc.toFixed(0)}</strong></div>
