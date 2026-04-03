@@ -121,11 +121,92 @@ def capital_allocation():
 
 # ── Gestion des slots ─────────────────────────────────────────────────────
 
+def _build_slots_from_cfg(cfg: dict) -> tuple[list, dict]:
+    """
+    Construit la liste de slots et la config allocateur depuis la configuration
+    (utilisé quand le trader n'est pas actif).
+    Retourne (slots, alloc_config) au même format que get_status() / get_config().
+    """
+    alloc_cfg = cfg.get("capital_allocator", {})
+    capital = float(cfg.get("trading", {}).get("capital", 0))
+    strategies = cfg.get("strategies", {}).get("enabled", [])
+    timeframes = cfg.get("trading", {}).get("timeframes",
+                    [cfg.get("trading", {}).get("timeframe", "1h")])
+    disabled_slots = set(alloc_cfg.get("disabled_slots", []))
+    slot_budgets = {k: float(v) for k, v in alloc_cfg.get("slot_budgets", {}).items()}
+    mode = alloc_cfg.get("mode", "equal")
+    max_slot_pct = float(alloc_cfg.get("max_slot_pct", 0.50))
+
+    # Construire tous les slots (stratégie × timeframe)
+    all_keys = [f"{name}::{tf}" for name in strategies for tf in timeframes]
+    enabled_keys = [k for k in all_keys if k not in disabled_slots]
+    n_enabled = len(enabled_keys)
+
+    # Calcul du budget par slot
+    def _compute_budget(key: str, is_enabled: bool) -> float:
+        if not is_enabled:
+            return 0.0
+        if mode == "manual" and key in slot_budgets:
+            return min(slot_budgets[key], max_slot_pct)
+        if n_enabled > 0:
+            return min(1.0 / n_enabled, max_slot_pct)
+        return 0.0
+
+    slots = []
+    for name in strategies:
+        for tf in timeframes:
+            key = f"{name}::{tf}"
+            is_enabled = key not in disabled_slots
+            bpct = _compute_budget(key, is_enabled)
+            slots.append({
+                "slot_key":          key,
+                "strategy":          name,
+                "tf":                tf,
+                "enabled":           is_enabled,
+                "budget_pct":        round(bpct * 100, 1),
+                "budget_usdc":       round(capital * bpct, 2),
+                "used_notional":     0.0,
+                "used_pct":          0.0,
+                "weekly_pnl":        0.0,
+                "weekly_trades":     0,
+                "weekly_wins":       0,
+                "next_rebalance":    "—",
+                "paused":            False,
+                "pause_reason":      "",
+                "consecutive_losses": 0,
+                "win_rate_15t":      100.0,
+                "daily_pnl":         0.0,
+            })
+
+    alloc_config = {
+        "mode":                     mode,
+        "max_slot_pct":             round(max_slot_pct * 100, 1),
+        "rebalance_interval":       alloc_cfg.get("rebalance_interval", "daily"),
+        "min_trades_for_rebalance": int(alloc_cfg.get("min_trades_for_rebalance", 3)),
+        "max_symbol_exposure_pct":  round(float(alloc_cfg.get("max_symbol_exposure_pct", 0.25)) * 100, 1),
+        "max_pyramiding":           int(alloc_cfg.get("max_pyramiding", 2)),
+        "disabled_slots":           sorted(disabled_slots),
+        "custom_budgets":           {k: round(v * 100, 1) for k, v in slot_budgets.items()},
+    }
+
+    return slots, alloc_config
+
+
 @router.get("/api/slots", dependencies=[Depends(verify_api_key)])
 def list_slots():
     """Retourne tous les slots avec état complet (budget, CB, performance)."""
     if not state.trader:
-        raise HTTPException(503, "Trader non initialisé")
+        # Fallback : construire les slots depuis la config quand le bot n'est pas actif
+        if not state.cfg:
+            raise HTTPException(503, "Configuration non chargée")
+        slots, alloc_config = _build_slots_from_cfg(state.cfg)
+        capital = float(state.cfg.get("trading", {}).get("capital", 0))
+        return {
+            "capital": capital,
+            "config":  alloc_config,
+            "slots":   slots,
+        }
+
     slots = state.trader.allocator.get_status()
     slot_states = {s["slot_key"]: s for s in state.trader.risk.get_slot_states()}
     alloc_config = state.trader.allocator.get_config()
@@ -184,8 +265,35 @@ def set_slot_budget(slot_key: str, budget_pct: float):
 def toggle_slot(slot_key: str, enabled: bool = True):
     """Active ou désactive un slot."""
     _validate_slot_key(slot_key)
+
     if not state.trader:
-        raise HTTPException(503, "Trader non initialisé")
+        # Fallback : persister uniquement dans la config quand le bot n'est pas actif
+        if not state.cfg:
+            raise HTTPException(503, "Configuration non chargée")
+        alloc = state.cfg.setdefault("capital_allocator", {})
+        disabled = list(alloc.get("disabled_slots", []))
+        if enabled:
+            disabled = [k for k in disabled if k != slot_key]
+        else:
+            if slot_key not in disabled:
+                disabled.append(slot_key)
+        disabled = sorted(disabled)
+        alloc["disabled_slots"] = disabled
+        try:
+            from app.api.routes.config import _save_yaml
+            _save_yaml(lambda d: d.setdefault("capital_allocator", {}).update(
+                {"disabled_slots": disabled}
+            ))
+        except Exception as e:
+            logger.warning(f"[slots] sauvegarde YAML KO : {e}")
+        slots, _ = _build_slots_from_cfg(state.cfg)
+        return {
+            "status":   "toggled",
+            "slot_key": slot_key,
+            "enabled":  enabled,
+            "slots":    slots,
+        }
+
     ok = state.trader.allocator.set_slot_enabled(slot_key, enabled)
     if not ok:
         raise HTTPException(404, f"Slot '{slot_key}' introuvable")
