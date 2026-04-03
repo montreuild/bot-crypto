@@ -217,6 +217,17 @@ def list_slots():
         s["consecutive_losses"] = cb.get("consecutive_losses", 0)
         s["win_rate_15t"] = cb.get("win_rate_15t", 100.0)
         s["daily_pnl"] = cb.get("daily_pnl", 0.0)
+
+    # Compléter avec les slots issus de la config qui ne sont pas dans l'allocateur
+    # (ex: stratégies exclues par le filtre OOS de l'optimiseur)
+    if state.cfg:
+        existing_keys = {s["slot_key"] for s in slots}
+        cfg_slots, _ = _build_slots_from_cfg(state.cfg)
+        for s in cfg_slots:
+            if s["slot_key"] not in existing_keys:
+                s["excluded_by_optimizer"] = True
+                slots.append(s)
+
     return {
         "capital": round(state.trader.capital_display, 2),
         "config":  alloc_config,

@@ -283,7 +283,7 @@ function renderSlotTable(byStrat){
   rows.sort((a,b)=>(b[1].total_pnl||0)-(a[1].total_pnl||0));
   tbody.innerHTML=rows.map(([name,s])=>{
     const pnl=s.total_pnl||0,wr=s.win_rate||0,pf=s.profit_factor||0;
-    return`<tr style="cursor:pointer" onclick="window.location.href='/strategies?slot=${encodeURIComponent(name)}'" title="Cliquez pour voir le détail du slot"><td><span class="tag tag-strat">${escHtml(name)}</span></td><td class="r">${s.total_trades||0}</td><td class="r ${clrC(wr-50)}">${wr.toFixed(1)}%</td><td class="r ${clrC(pnl)}" style="font-weight:600">${fmtS(pnl)}</td><td class="r ${clrC(pf-1)}">${typeof pf==='number'?pf.toFixed(2):pf}</td><td class="r ${clrC(s.sharpe||0)}">${(s.sharpe||0).toFixed(2)}</td><td class="r ${(s.max_drawdown||0)>10?'c-red':'c-muted'}">${(s.max_drawdown||0).toFixed(1)}%</td></tr>`;
+    return`<tr><td><span class="tag tag-strat">${escHtml(name)}</span></td><td class="r">${s.total_trades||0}</td><td class="r ${clrC(wr-50)}">${wr.toFixed(1)}%</td><td class="r ${clrC(pnl)}" style="font-weight:600">${fmtS(pnl)}</td><td class="r ${clrC(pf-1)}">${typeof pf==='number'?pf.toFixed(2):pf}</td><td class="r ${clrC(s.sharpe||0)}">${(s.sharpe||0).toFixed(2)}</td><td class="r ${(s.max_drawdown||0)>10?'c-red':'c-muted'}">${(s.max_drawdown||0).toFixed(1)}%</td></tr>`;
   }).join('');
 }
 
