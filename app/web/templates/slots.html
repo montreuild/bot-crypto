@@ -49,6 +49,12 @@
 
 /* ── Slot grid ── */
 .slot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:12px;margin-bottom:20px;}
+
+/* ── Timeframe columns view ── */
+.slot-tf-cols{display:flex;gap:14px;overflow-x:auto;padding-bottom:8px;margin-bottom:20px;align-items:flex-start;}
+.slot-tf-col{flex:0 0 auto;min-width:270px;max-width:310px;}
+.tf-col-header{font-family:var(--mono);font-size:.78rem;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.06em;padding:6px 10px;background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.2);border-radius:var(--r-sm);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;}
+.tf-col-header .tf-count{font-size:.65rem;color:var(--dim);font-weight:400;}
 .slot-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;transition:border-color .15s,box-shadow .18s;}
 .slot-card:hover{border-color:var(--border-hi);box-shadow:0 4px 12px rgba(0,0,0,.15);}
 .slot-card.disabled{opacity:.5;border-style:dashed;}
@@ -179,6 +185,22 @@
     </select>
     <div class="bar-sep"></div>
     <button class="btn btn-amber btn-sm" onclick="forceRebalance()" id="btn-rebalance" title="Forcer le rééquilibrage maintenant">↻ Rééquilibrer</button>
+    <div class="bar-sep"></div>
+    <label for="sort-select">Trier</label>
+    <select id="sort-select" onchange="changeSortBy(this.value)">
+      <option value="name">Nom</option>
+      <option value="tf">Timeframe</option>
+      <option value="pnl">P&amp;L 7j</option>
+      <option value="wr">WR 7j</option>
+      <option value="budget">Budget %</option>
+      <option value="oos">Score OOS</option>
+    </select>
+    <div class="bar-sep"></div>
+    <label for="view-select">Vue</label>
+    <select id="view-select" onchange="changeViewMode(this.value)">
+      <option value="grid">Grille</option>
+      <option value="columns">Par timeframe</option>
+    </select>
     <div style="margin-left:auto" class="bar-info" id="capital-info">—</div>
   </div>
 
@@ -199,6 +221,10 @@ const $=id=>document.getElementById(id);
 
 let _slots=[], _config={}, _capital=0;
 let _status=null, _auditResults=[], _cfg=null;
+let _sortBy='name', _viewMode='grid';
+
+const TF_ORDER=Object.freeze(['1m','3m','5m','15m','30m','1h','2h','4h','6h','8h','12h','1d','3d','1w','1M']);
+function tfRank(tf){const i=TF_ORDER.indexOf(tf);return i<0?999:i;}
 
 function clrC(v){return v>0?'c-green':v<0?'c-red':'c-muted';}
 function fmtS(v){const n=+(v||0);return(n>=0?'+':'')+n.toFixed(2);}
@@ -353,102 +379,144 @@ function renderConfig(){
   if(maxEl)maxEl.value=_config.max_slot_pct||50;
   const rebalEl=$('rebal-select');
   if(rebalEl)rebalEl.value=_config.rebalance_interval||'daily';
+  const sortEl=$('sort-select');
+  if(sortEl)sortEl.value=_sortBy;
+  const viewEl=$('view-select');
+  if(viewEl)viewEl.value=_viewMode;
   const infoEl=$('capital-info');
   if(infoEl)infoEl.textContent=`Capital: ${_capital.toFixed(0)} USDC · ${_slots.length} slot${_slots.length>1?'s':''}`;
 }
 
-function renderSlots(){
-  const grid=$('slot-grid');
-  if(!_slots.length){
-    grid.innerHTML='<div class="empty-state"><div class="icon">◑</div>Aucun slot actif.<br><span style="font-size:.72rem;color:var(--dim)">Activez des stratégies et des timeframes dans la configuration.</span></div>';
-    return;
+function changeSortBy(val){_sortBy=val;renderSlots();}
+function changeViewMode(val){_viewMode=val;renderSlots();}
+
+function _slotSortValue(s){
+  if(_sortBy==='tf') return tfRank(s.tf);
+  if(_sortBy==='pnl') return -(s.weekly_pnl??0);
+  if(_sortBy==='wr') return -(s.weekly_trades>0?s.weekly_wins/s.weekly_trades:0);
+  if(_sortBy==='budget') return -(s.budget_pct??0);
+  if(_sortBy==='oos'){
+    const aud=_auditResults.find(r=>r.slot_key===s.slot_key||(r.strategy===s.strategy&&r.tf===s.tf));
+    return aud?.oos_score!=null?-(aud.oos_score):Number.MAX_SAFE_INTEGER;
   }
+  // name: strategy then tf rank
+  return s.strategy+String(tfRank(s.tf)).padStart(4,'0');
+}
+
+function _buildSlotCard(s){
   const isManual=(_config.mode==='manual');
   const byStrat=_status?.by_strategy||{};
+  const isOff=s.enabled===false;
+  const isPaused=!!s.paused;
+  const isExcluded=!!s.excluded_by_optimizer;
+  const usedPct=s.used_pct??0;
+  const fillClr=isOff||isExcluded?'var(--dim)':isPaused?'var(--red)':usedPct>80?'var(--amber)':'var(--cyan)';
+  const label=s.strategy.charAt(0).toUpperCase()+s.strategy.slice(1)+' · '+s.tf;
+  const badge=isExcluded?'<span class="slot-badge badge-off">Exclu</span>'
+             :isOff?'<span class="slot-badge badge-off">OFF</span>'
+             :isPaused?'<span class="slot-badge badge-paused">Pausé</span>'
+             :'<span class="slot-badge badge-on">Actif</span>';
+  const pnlClr=s.weekly_pnl>=0?'var(--green)':'var(--red)';
+  const pnlStr=(s.weekly_pnl>=0?'+':'')+s.weekly_pnl.toFixed(2);
+  const wrStr=s.weekly_trades>0?(s.weekly_wins/s.weekly_trades*100).toFixed(0)+'%':'—';
+  const maxPct=_config.max_slot_pct||50;
+  const stData=byStrat[s.strategy]||{};
+  const totalTrades=stData.total_trades??0;
+  const totalPnl=stData.total_pnl??null;
+  const totalWr=stData.win_rate??null;
+  const totalPnlStr=totalPnl!=null?(totalPnl>=0?'+':'')+totalPnl.toFixed(2)+' USDC':'—';
+  const totalPnlClr=totalPnl!=null?(totalPnl>0?'var(--green)':totalPnl<0?'var(--red)':'var(--muted)'):'var(--muted)';
+  const totalWrStr=totalWr!=null?totalWr.toFixed(1)+'%':'—';
+  const totalWrClr=totalWr!=null?(totalWr>50?'var(--green)':totalWr<40?'var(--red)':'var(--amber)'):'var(--muted)';
+  const aud=_auditResults.find(r=>r.slot_key===s.slot_key||(r.strategy===s.strategy&&r.tf===s.tf));
+  const oosScore=aud?.oos_score??null;
+  const oosDate=aud?.run_date||'';
+  const oosColor=oosScore!=null?(oosScore>=0?'var(--green)':oosScore>=-0.05?'var(--amber)':'var(--red)'):'var(--dim)';
+  const oosHtml=`<div class="slot-oos">
+    <span>OOS: <strong style="color:${oosColor};font-family:var(--mono)">${oosScore!=null?oosScore.toFixed(3):'—'}</strong></span>
+    <span style="color:var(--dim)">${escHtml(oosDate)||'—'}</span>
+  </div>`;
+  return`<div class="slot-card${isOff||isExcluded?' disabled':''}${isPaused?' paused':''}" data-key="${escHtml(s.slot_key)}">
+    <div class="slot-hdr">
+      <span class="slot-name">${escHtml(label)}</span>
+      ${badge}
+    </div>
+    ${isExcluded?`<div class="slot-cb" style="background:rgba(168,85,247,.08);color:var(--purple);border-color:rgba(168,85,247,.2)">⚠ Score OOS insuffisant — relancez l'optimiseur</div>`:''}
+    <div class="slot-stats">
+      <div class="slot-stat">Budget: <strong>${s.budget_pct.toFixed(1)}%</strong></div>
+      <div class="slot-stat">USDC: <strong>${s.budget_usdc.toFixed(0)}</strong></div>
+      <div class="slot-stat">Utilisé: <strong>${(s.used_notional??0).toFixed(1)}</strong></div>
+      <div class="slot-stat">P&L 7j: <strong style="color:${pnlClr}">${pnlStr}</strong></div>
+      <div class="slot-stat">Trades 7j: <strong>${s.weekly_trades}</strong></div>
+      <div class="slot-stat">WR 7j: <strong>${wrStr}</strong></div>
+      ${isPaused?`<div class="slot-stat" style="grid-column:1/-1">Pertes consécutives: <strong>${s.consecutive_losses??0}</strong></div>`:''}
+    </div>
+    <div class="slot-since">
+      <div class="slot-since-title">Depuis l'activation</div>
+      <div class="slot-since-grid">
+        <div class="slot-since-item">Trades: <strong>${totalTrades}</strong></div>
+        <div class="slot-since-item">WR: <strong style="color:${totalWrClr}">${totalWrStr}</strong></div>
+        <div class="slot-since-item slot-since-item--wide">P&L: <strong style="color:${totalPnlClr}">${totalPnlStr}</strong></div>
+      </div>
+    </div>
+    ${oosHtml}
+    <div class="slot-alloc-label">Allocation — part du capital alloué à ce slot</div>
+    <div class="slot-budget-row">
+      <input type="range" min="1" max="${maxPct}" step="1" value="${Math.round(s.budget_pct)}"
+             onchange="setBudget('${escHtml(s.slot_key)}',this.value)"
+             oninput="this.nextElementSibling.textContent=this.value+'%'"
+             ${isOff||!isManual?'disabled':''}
+             title="${isManual?'Ajuster la part du capital allouée à ce slot':'Passez en mode Manuel pour ajuster les allocations'}"/>
+      <span class="budget-val">${Math.round(s.budget_pct)}%</span>
+    </div>
+    <div class="slot-track" title="Fraction du budget alloué actuellement utilisée en positions ouvertes">
+      <div class="slot-fill" style="width:${Math.min(usedPct,100)}%;background:${fillClr}"></div>
+    </div>
+    <div class="slot-track-hint">
+      <span>Capital alloué à ce slot</span>
+      <span>En position: ${usedPct.toFixed(0)}%</span>
+    </div>
+    <div class="slot-actions">
+      <button class="btn btn-ghost btn-sm" onclick="toggleSlot('${escHtml(s.slot_key)}',${isOff?'true':'false'})">${isOff?'✓ Activer':'✕ Désactiver'}</button>
+      ${isPaused?`<button class="btn btn-ghost btn-sm" onclick="resetCB('${escHtml(s.slot_key)}')" style="border-color:var(--red);color:var(--red)">↻ Reset CB</button>`:''}
+    </div>
+    ${isPaused?`<div class="slot-cb">⏸ ${escHtml(s.pause_reason||'Pausé')}</div>`:''}
+  </div>`;
+}
 
-  grid.innerHTML=_slots.map(s=>{
-    const isOff=s.enabled===false;
-    const isPaused=!!s.paused;
-    const isExcluded=!!s.excluded_by_optimizer;
-    const usedPct=s.used_pct??0;
-    const fillClr=isOff||isExcluded?'var(--dim)':isPaused?'var(--red)':usedPct>80?'var(--amber)':'var(--cyan)';
-    const label=s.strategy.charAt(0).toUpperCase()+s.strategy.slice(1)+' · '+s.tf;
-    const badge=isExcluded?'<span class="slot-badge badge-off">Exclu</span>'
-               :isOff?'<span class="slot-badge badge-off">OFF</span>'
-               :isPaused?'<span class="slot-badge badge-paused">Pausé</span>'
-               :'<span class="slot-badge badge-on">Actif</span>';
-    const pnlClr=s.weekly_pnl>=0?'var(--green)':'var(--red)';
-    const pnlStr=(s.weekly_pnl>=0?'+':'')+s.weekly_pnl.toFixed(2);
-    const wrStr=s.weekly_trades>0?(s.weekly_wins/s.weekly_trades*100).toFixed(0)+'%':'—';
-    const maxPct=_config.max_slot_pct||50;
+function renderSlots(){
+  const container=$('slot-grid');
+  if(!_slots.length){
+    container.className='slot-grid';
+    container.innerHTML='<div class="empty-state"><div class="icon">◑</div>Aucun slot actif.<br><span style="font-size:.72rem;color:var(--dim)">Activez des stratégies et des timeframes dans la configuration.</span></div>';
+    return;
+  }
 
-    // All-time stats from /api/status by_strategy
-    const stData=byStrat[s.strategy]||{};
-    const totalTrades=stData.total_trades??0;
-    const totalPnl=stData.total_pnl??null;
-    const totalWr=stData.win_rate??null;
-    const totalPnlStr=totalPnl!=null?(totalPnl>=0?'+':'')+totalPnl.toFixed(2)+' USDC':'—';
-    const totalPnlClr=totalPnl!=null?(totalPnl>0?'var(--green)':totalPnl<0?'var(--red)':'var(--muted)'):'var(--muted)';
-    const totalWrStr=totalWr!=null?totalWr.toFixed(1)+'%':'—';
-    const totalWrClr=totalWr!=null?(totalWr>50?'var(--green)':totalWr<40?'var(--red)':'var(--amber)'):'var(--muted)';
+  const sorted=[..._slots].sort((a,b)=>{
+    const va=_slotSortValue(a), vb=_slotSortValue(b);
+    return va<vb?-1:va>vb?1:0;
+  });
 
-    // OOS from audit results
-    const aud=_auditResults.find(r=>r.slot_key===s.slot_key||( r.strategy===s.strategy&&r.tf===s.tf));
-    const oosScore=aud?.oos_score??null;
-    const oosDate=aud?.run_date||'';
-    const oosColor=oosScore!=null?(oosScore>=0?'var(--green)':oosScore>=-0.05?'var(--amber)':'var(--red)'):'var(--dim)';
-    const oosHtml=`<div class="slot-oos">
-      <span>OOS: <strong style="color:${oosColor};font-family:var(--mono)">${oosScore!=null?oosScore.toFixed(3):'—'}</strong></span>
-      <span style="color:var(--dim)">${escHtml(oosDate)||'—'}</span>
-    </div>`;
-
-    return`<div class="slot-card${isOff||isExcluded?' disabled':''}${isPaused?' paused':''}" data-key="${escHtml(s.slot_key)}">
-      <div class="slot-hdr">
-        <span class="slot-name">${escHtml(label)}</span>
-        ${badge}
-      </div>
-      ${isExcluded?`<div class="slot-cb" style="background:rgba(168,85,247,.08);color:var(--purple);border-color:rgba(168,85,247,.2)">⚠ Score OOS insuffisant — relancez l'optimiseur</div>`:''}
-      <div class="slot-stats">
-        <div class="slot-stat">Budget: <strong>${s.budget_pct.toFixed(1)}%</strong></div>
-        <div class="slot-stat">USDC: <strong>${s.budget_usdc.toFixed(0)}</strong></div>
-        <div class="slot-stat">Utilisé: <strong>${(s.used_notional??0).toFixed(1)}</strong></div>
-        <div class="slot-stat">P&L 7j: <strong style="color:${pnlClr}">${pnlStr}</strong></div>
-        <div class="slot-stat">Trades 7j: <strong>${s.weekly_trades}</strong></div>
-        <div class="slot-stat">WR 7j: <strong>${wrStr}</strong></div>
-        ${isPaused?`<div class="slot-stat" style="grid-column:1/-1">Pertes consécutives: <strong>${s.consecutive_losses??0}</strong></div>`:''}
-      </div>
-      <div class="slot-since">
-        <div class="slot-since-title">Depuis l'activation</div>
-        <div class="slot-since-grid">
-          <div class="slot-since-item">Trades: <strong>${totalTrades}</strong></div>
-          <div class="slot-since-item">WR: <strong style="color:${totalWrClr}">${totalWrStr}</strong></div>
-          <div class="slot-since-item slot-since-item--wide">P&L: <strong style="color:${totalPnlClr}">${totalPnlStr}</strong></div>
-        </div>
-      </div>
-      ${oosHtml}
-      <div class="slot-alloc-label">Allocation — part du capital alloué à ce slot</div>
-      <div class="slot-budget-row">
-        <input type="range" min="1" max="${maxPct}" step="1" value="${Math.round(s.budget_pct)}"
-               onchange="setBudget('${escHtml(s.slot_key)}',this.value)"
-               oninput="this.nextElementSibling.textContent=this.value+'%'"
-               ${isOff||!isManual?'disabled':''}
-               title="${isManual?'Ajuster la part du capital allouée à ce slot':'Passez en mode Manuel pour ajuster les allocations'}"/>
-        <span class="budget-val">${Math.round(s.budget_pct)}%</span>
-      </div>
-      <div class="slot-track" title="Fraction du budget alloué actuellement utilisée en positions ouvertes">
-        <div class="slot-fill" style="width:${Math.min(usedPct,100)}%;background:${fillClr}"></div>
-      </div>
-      <div class="slot-track-hint">
-        <span>Capital alloué à ce slot</span>
-        <span>En position: ${usedPct.toFixed(0)}%</span>
-      </div>
-      <div class="slot-actions">
-        <button class="btn btn-ghost btn-sm" onclick="toggleSlot('${escHtml(s.slot_key)}',${isOff?'true':'false'})">${isOff?'✓ Activer':'✕ Désactiver'}</button>
-        ${isPaused?`<button class="btn btn-ghost btn-sm" onclick="resetCB('${escHtml(s.slot_key)}')" style="border-color:var(--red);color:var(--red)">↻ Reset CB</button>`:''}
-      </div>
-      ${isPaused?`<div class="slot-cb">⏸ ${escHtml(s.pause_reason||'Pausé')}</div>`:''}
-    </div>`;
-  }).join('');
+  if(_viewMode==='columns'){
+    container.className='slot-tf-cols';
+    // Group by timeframe, preserving TF_ORDER
+    const byTf={};
+    for(const s of sorted){
+      if(!byTf[s.tf])byTf[s.tf]=[];
+      byTf[s.tf].push(s);
+    }
+    const tfs=Object.keys(byTf).sort((a,b)=>tfRank(a)-tfRank(b));
+    container.innerHTML=tfs.map(tf=>{
+      const cards=byTf[tf].map(s=>_buildSlotCard(s)).join('');
+      return`<div class="slot-tf-col">
+        <div class="tf-col-header">${escHtml(tf)}<span class="tf-count">${byTf[tf].length} slot${byTf[tf].length>1?'s':''}</span></div>
+        ${cards}
+      </div>`;
+    }).join('');
+  } else {
+    container.className='slot-grid';
+    container.innerHTML=sorted.map(s=>_buildSlotCard(s)).join('');
+  }
 }
 
 // ── Actions ──
