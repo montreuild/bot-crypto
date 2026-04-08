@@ -190,10 +190,10 @@
     </div>
   </div>
 
-  <!-- ── Vue et tri des slots ── -->
+  <!-- ── Slot grid ── -->
   <div>
-    <div class="sec-hdr"><h2>Affichage des slots</h2></div>
-    <div class="slot-bar" id="slot-display-bar">
+    <div class="sec-hdr"><h2>Slots</h2></div>
+    <div class="slot-bar" id="slot-display-bar" style="margin-bottom:12px">
       <label for="sort-select">Trier</label>
       <select id="sort-select" onchange="changeSortBy(this.value)">
         <option value="name">Nom</option>
@@ -203,20 +203,9 @@
         <option value="budget">Budget %</option>
         <option value="oos">Score OOS</option>
       </select>
-      <div class="bar-sep"></div>
-      <label for="view-select">Vue</label>
-      <select id="view-select" onchange="changeViewMode(this.value)">
-      <option value="grid">Grille</option>
-        <option value="columns">Par timeframe</option>
-      </select>
       <div style="margin-left:auto" class="bar-info" id="capital-info">—</div>
     </div>
-  </div>
-
-  <!-- ── Slot grid ── -->
-  <div>
-    <div class="sec-hdr"><h2>Slots</h2></div>
-    <div id="slot-grid" class="slot-grid">
+    <div id="slot-grid" class="slot-tf-cols">
       <div class="empty-state"><div class="icon">⏳</div>Chargement des slots…</div>
     </div>
   </div>
@@ -230,7 +219,7 @@ const $=id=>document.getElementById(id);
 
 let _slots=[], _config={}, _capital=0;
 let _status=null, _auditResults=[], _cfg=null;
-let _sortBy='name', _viewMode='grid';
+let _sortBy='name';
 
 const TF_ORDER=Object.freeze(['1m','3m','5m','15m','30m','1h','2h','4h','6h','8h','12h','1d','3d','1w','1M']);
 function tfRank(tf){const i=TF_ORDER.indexOf(tf);return i<0?999:i;}
@@ -390,14 +379,11 @@ function renderConfig(){
   if(rebalEl)rebalEl.value=_config.rebalance_interval||'daily';
   const sortEl=$('sort-select');
   if(sortEl)sortEl.value=_sortBy;
-  const viewEl=$('view-select');
-  if(viewEl)viewEl.value=_viewMode;
   const infoEl=$('capital-info');
   if(infoEl)infoEl.textContent=`Capital: ${_capital.toFixed(0)} USDC · ${_slots.length} slot${_slots.length>1?'s':''}`;
 }
 
 function changeSortBy(val){_sortBy=val;renderSlots();}
-function changeViewMode(val){_viewMode=val;renderSlots();}
 
 function _slotSortValue(s){
   if(_sortBy==='tf') return tfRank(s.tf);
@@ -496,7 +482,7 @@ function _buildSlotCard(s){
 function renderSlots(){
   const container=$('slot-grid');
   if(!_slots.length){
-    container.className='slot-grid';
+    container.className='slot-tf-cols';
     container.innerHTML='<div class="empty-state"><div class="icon">◑</div>Aucun slot actif.<br><span style="font-size:.72rem;color:var(--dim)">Activez des stratégies et des timeframes dans la configuration.</span></div>';
     return;
   }
@@ -506,26 +492,21 @@ function renderSlots(){
     return va<vb?-1:va>vb?1:0;
   });
 
-  if(_viewMode==='columns'){
-    container.className='slot-tf-cols';
-    // Group by timeframe, preserving TF_ORDER
-    const byTf={};
-    for(const s of sorted){
-      if(!byTf[s.tf])byTf[s.tf]=[];
-      byTf[s.tf].push(s);
-    }
-    const tfs=Object.keys(byTf).sort((a,b)=>tfRank(a)-tfRank(b));
-    container.innerHTML=tfs.map(tf=>{
-      const cards=byTf[tf].map(s=>_buildSlotCard(s)).join('');
-      return`<div class="slot-tf-col">
-        <div class="tf-col-header">${escHtml(tf)}<span class="tf-count">${byTf[tf].length} slot${byTf[tf].length>1?'s':''}</span></div>
-        ${cards}
-      </div>`;
-    }).join('');
-  } else {
-    container.className='slot-grid';
-    container.innerHTML=sorted.map(s=>_buildSlotCard(s)).join('');
+  container.className='slot-tf-cols';
+  // Group by timeframe, preserving TF_ORDER
+  const byTf={};
+  for(const s of sorted){
+    if(!byTf[s.tf])byTf[s.tf]=[];
+    byTf[s.tf].push(s);
   }
+  const tfs=Object.keys(byTf).sort((a,b)=>tfRank(a)-tfRank(b));
+  container.innerHTML=tfs.map(tf=>{
+    const cards=byTf[tf].map(s=>_buildSlotCard(s)).join('');
+    return`<div class="slot-tf-col">
+      <div class="tf-col-header">${escHtml(tf)}<span class="tf-count">${byTf[tf].length} slot${byTf[tf].length>1?'s':''}</span></div>
+      ${cards}
+    </div>`;
+  }).join('');
 }
 
 // ── Actions ──
