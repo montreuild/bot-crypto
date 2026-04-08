@@ -447,7 +447,7 @@ function renderResults(){
   res.appendChild(panelsDiv);
   buildCmp();
   strats.forEach(s=>buildPanel(s));
-  buildPrice();
+  requestAnimationFrame(buildPrice);
 }
 
 function switchTab(s){
@@ -470,6 +470,7 @@ function switchTab(s){
     const sid=s.replace(/[^a-z0-9_]/gi,'_');
     const closed=(sd.trades||[]).filter(t=>t.status!=='open');
     buildEq(closed,SC(s),sd,sid);buildPnl(closed,SC(s),sid);buildCum(closed,SC(s),sid);buildSc(closed,sid);
+    buildTrades(sd,sid);
   }
 }
 
@@ -535,7 +536,12 @@ function buildPanel(name){
   div.innerHTML=`<div style="display:flex;flex-direction:column;gap:10px">${kpiHTML}${chartsHTML}${wfHTML}${mcHTML}${mlHTML}<div id="ttable-${sid}"></div></div>`;
   const closed=(sd.trades||[]).filter(t=>t.status!=='open');
   if(name===activeStrat){
-    buildEq(closed,c,sd,sid);buildPnl(closed,c,sid);buildCum(closed,c,sid);buildSc(closed,sid);
+    requestAnimationFrame(()=>{
+      try{buildEq(closed,c,sd,sid);}catch(e){console.warn('[bt] buildEq',e);}
+      try{buildPnl(closed,c,sid);}catch(e){console.warn('[bt] buildPnl',e);}
+      try{buildCum(closed,c,sid);}catch(e){console.warn('[bt] buildCum',e);}
+      try{buildSc(closed,sid);}catch(e){console.warn('[bt] buildSc',e);}
+    });
   }
   buildTrades(sd,sid);
 }
@@ -743,10 +749,10 @@ function detail(t){
   return`<div><div><div class="dh">Raison du signal</div><div class="rbox">${t.reason||'Non disponible'}</div><div class="dh">Conditions</div><ul class="clist">${conds||'<li style="color:var(--dim)">Non disponible</li>'}</ul></div><div><div class="dh">Indicateurs au signal</div><div class="ig">${inds||'<div style="color:var(--dim)">N/D</div>'}</div><div class="dh">Détails</div><div class="ig"><div class="ir"><span class="ik">Notionnel</span><span>$${fN(t.notional,2)}</span></div><div class="ir"><span class="ik">Taille</span><span>${fN(t.size,4)}</span></div><div class="ir"><span class="ik">Stop initial</span><span>${fN(t.stop,4)}</span></div><div class="ir"><span class="ik">Bar entrée</span><span>${t.bar??'—'}</span></div><div class="ir"><span class="ik">Bar sortie</span><span>${t.exit_bar??'—'}</span></div><div class="ir"><span class="ik">Statut</span><span>${t.status}</span></div></div></div></div>`;
 }
 
-function setFil(f){tradeFilter=f;pg=1;expanded.clear();buildTrades(btData.by_strategy[activeStrat]);}
-function tsort(k){sortKey===k?sortAsc=!sortAsc:(sortKey=k,sortAsc=true);buildTrades(btData.by_strategy[activeStrat]);}
-function xrow(id){expanded.has(id)?expanded.delete(id):expanded.add(id);buildTrades(btData.by_strategy[activeStrat]);}
-function goPg(p){pg=p;expanded.clear();buildTrades(btData.by_strategy[activeStrat]);}
+function setFil(f){tradeFilter=f;pg=1;expanded.clear();const _sid=activeStrat.replace(/[^a-z0-9_]/gi,'_');buildTrades(btData.by_strategy[activeStrat],_sid);}
+function tsort(k){sortKey===k?sortAsc=!sortAsc:(sortKey=k,sortAsc=true);const _sid=activeStrat.replace(/[^a-z0-9_]/gi,'_');buildTrades(btData.by_strategy[activeStrat],_sid);}
+function xrow(id){expanded.has(id)?expanded.delete(id):expanded.add(id);const _sid=activeStrat.replace(/[^a-z0-9_]/gi,'_');buildTrades(btData.by_strategy[activeStrat],_sid);}
+function goPg(p){pg=p;expanded.clear();const _sid=activeStrat.replace(/[^a-z0-9_]/gi,'_');buildTrades(btData.by_strategy[activeStrat],_sid);}
 function setLim(n){document.getElementById('i-lim').value=n;updateLimHint();}
 function killAll(){[tvPrice,tvEq,tvPnl,tvCum,fsTvChart].forEach(c=>{try{if(c)c.remove();}catch(e){}});tvPrice=tvEq=tvPnl=tvCum=fsTvChart=null;if(scChart){scChart.destroy();scChart=null;}}
 function killSecondary(){[tvEq,tvPnl,tvCum,fsTvChart].forEach(c=>{try{if(c)c.remove();}catch(e){}});tvEq=tvPnl=tvCum=fsTvChart=null;if(scChart){scChart.destroy();scChart=null;}}
