@@ -164,44 +164,53 @@
     </div>
   </div>
 
-  <!-- ── Config bar ── -->
-  <div class="slot-bar" id="slot-bar">
-    <label for="mode-select">Mode</label>
-    <select id="mode-select" onchange="changeMode(this.value)">
-      <option value="equal">Égal</option>
-      <option value="manual">Manuel</option>
-      <option value="performance">Performance</option>
-    </select>
-    <div class="bar-sep"></div>
-    <label for="max-pct">Max/slot</label>
-    <input type="number" id="max-pct" min="5" max="100" step="5" style="width:60px" onchange="changeMaxPct(this.value)"/>
-    <span style="font-size:.68rem;color:var(--dim)">%</span>
-    <div class="bar-sep"></div>
-    <label for="rebal-select">Rééquilibrage</label>
-    <select id="rebal-select" onchange="changeRebalance(this.value)">
-      <option value="daily">Quotidien</option>
-      <option value="weekly">Hebdomadaire</option>
-      <option value="never">Désactivé</option>
-    </select>
-    <div class="bar-sep"></div>
-    <button class="btn btn-amber btn-sm" onclick="forceRebalance()" id="btn-rebalance" title="Forcer le rééquilibrage maintenant">↻ Rééquilibrer</button>
-    <div class="bar-sep"></div>
-    <label for="sort-select">Trier</label>
-    <select id="sort-select" onchange="changeSortBy(this.value)">
-      <option value="name">Nom</option>
-      <option value="tf">Timeframe</option>
-      <option value="pnl">P&amp;L 7j</option>
-      <option value="wr">WR 7j</option>
-      <option value="budget">Budget %</option>
-      <option value="oos">Score OOS</option>
-    </select>
-    <div class="bar-sep"></div>
-    <label for="view-select">Vue</label>
-    <select id="view-select" onchange="changeViewMode(this.value)">
+  <!-- ── Paramétrage de l'allocation ── -->
+  <div>
+    <div class="sec-hdr"><h2>Paramétrage de l'allocation</h2></div>
+    <div class="slot-bar" id="slot-bar">
+      <label for="mode-select">Mode</label>
+      <select id="mode-select" onchange="changeMode(this.value)">
+        <option value="equal">Égal</option>
+        <option value="manual">Manuel</option>
+        <option value="performance">Performance</option>
+      </select>
+      <div class="bar-sep"></div>
+      <label for="max-pct">Max/slot</label>
+      <input type="number" id="max-pct" min="5" max="100" step="5" style="width:60px" onchange="changeMaxPct(this.value)"/>
+      <span style="font-size:.68rem;color:var(--dim)">%</span>
+      <div class="bar-sep"></div>
+      <label for="rebal-select">Rééquilibrage</label>
+      <select id="rebal-select" onchange="changeRebalance(this.value)">
+        <option value="daily">Quotidien</option>
+        <option value="weekly">Hebdomadaire</option>
+        <option value="never">Désactivé</option>
+      </select>
+      <div class="bar-sep"></div>
+      <button class="btn btn-amber btn-sm" onclick="forceRebalance()" id="btn-rebalance" title="Forcer le rééquilibrage maintenant">↻ Rééquilibrer</button>
+    </div>
+  </div>
+
+  <!-- ── Vue et tri des slots ── -->
+  <div>
+    <div class="sec-hdr"><h2>Affichage des slots</h2></div>
+    <div class="slot-bar" id="slot-display-bar">
+      <label for="sort-select">Trier</label>
+      <select id="sort-select" onchange="changeSortBy(this.value)">
+        <option value="name">Nom</option>
+        <option value="tf">Timeframe</option>
+        <option value="pnl">P&amp;L 7j</option>
+        <option value="wr">WR 7j</option>
+        <option value="budget">Budget %</option>
+        <option value="oos">Score OOS</option>
+      </select>
+      <div class="bar-sep"></div>
+      <label for="view-select">Vue</label>
+      <select id="view-select" onchange="changeViewMode(this.value)">
       <option value="grid">Grille</option>
-      <option value="columns">Par timeframe</option>
-    </select>
-    <div style="margin-left:auto" class="bar-info" id="capital-info">—</div>
+        <option value="columns">Par timeframe</option>
+      </select>
+      <div style="margin-left:auto" class="bar-info" id="capital-info">—</div>
+    </div>
   </div>
 
   <!-- ── Slot grid ── -->
