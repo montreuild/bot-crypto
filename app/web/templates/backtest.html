@@ -536,11 +536,12 @@ function buildPanel(name){
   div.innerHTML=`<div style="display:flex;flex-direction:column;gap:10px">${kpiHTML}${chartsHTML}${wfHTML}${mcHTML}${mlHTML}<div id="ttable-${sid}"></div></div>`;
   const closed=(sd.trades||[]).filter(t=>t.status!=='open');
   if(name===activeStrat){
+    const _tryChart=(fn,...args)=>{try{fn(...args);}catch(e){console.warn('[bt]',fn.name,e);}};
     requestAnimationFrame(()=>{
-      try{buildEq(closed,c,sd,sid);}catch(e){console.warn('[bt] buildEq',e);}
-      try{buildPnl(closed,c,sid);}catch(e){console.warn('[bt] buildPnl',e);}
-      try{buildCum(closed,c,sid);}catch(e){console.warn('[bt] buildCum',e);}
-      try{buildSc(closed,sid);}catch(e){console.warn('[bt] buildSc',e);}
+      _tryChart(buildEq,closed,c,sd,sid);
+      _tryChart(buildPnl,closed,c,sid);
+      _tryChart(buildCum,closed,c,sid);
+      _tryChart(buildSc,closed,sid);
     });
   }
   buildTrades(sd,sid);

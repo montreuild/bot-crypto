@@ -800,7 +800,7 @@ async function loadPredictions(){
     // Fetch signals and audit results in parallel
     const [sigRes, auditRes] = await Promise.all([
       apiFetch(`/api/scanner/signals?symbol=${encodeURIComponent(sym)}&timeframe=${chartTf}&limit=300`),
-      apiFetch('/api/audit/results').catch(()=>null),
+      apiFetch('/api/audit/results').catch(e=>{console.warn('[scanner] audit fetch failed',e);return null;}),
     ]);
     if(!sigRes.ok) throw new Error((await sigRes.json()).detail || sigRes.statusText);
     const d = await sigRes.json();
