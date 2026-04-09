@@ -46,7 +46,7 @@ class Strategy(BaseStrategy):
         cooldown    = int(p.get("cooldown",      15))
         rr_min      = float(p.get("rr_min",      2.0))
 
-        sym = symbol or (str(df["time"][-1]) if "time" in df.columns else "default")
+        sym = symbol or "default"
 
         cnt = self._call_count.get(sym, 0) + 1
         self._call_count[sym] = cnt
