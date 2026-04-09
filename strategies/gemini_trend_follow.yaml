@@ -1,0 +1,17 @@
+# ─────────────────────────────────────────────────────────
+# Stratégie : Gemini Trend Follow
+# Timeframe par défaut : 15m
+# Logique : EMA200 filtre tendance + RSI pullback oversold/overbought
+#           + ATR pour SL dynamique + trailing sans TP fixe
+# ─────────────────────────────────────────────────────────
+
+params:
+  ema_trend: 200
+  rsi_period: 14
+  rsi_os: 30
+  rsi_ob: 70
+  atr_sl_mult: 1.5
+  cooldown: 15
+  rr_min: 2.0
+
+optimizer_results: {}
