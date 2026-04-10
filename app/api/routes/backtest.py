@@ -4,7 +4,6 @@ import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import polars as pl
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -60,7 +59,7 @@ def run_backtest(
             raise HTTPException(400, f"Aucune donnée disponible pour {symbol}/{tf}")
 
         ohlcv_payload = {
-            "time":   (df["time"].cast(pl.Int64) // 1000).to_list(),
+            "time":   df["time"].dt.epoch(time_unit="s").to_list(),
             "open":   [round(float(v), 6) for v in df["open"].to_list()],
             "close":  [round(float(v), 6) for v in df["close"].to_list()],
             "high":   [round(float(v), 6) for v in df["high"].to_list()],

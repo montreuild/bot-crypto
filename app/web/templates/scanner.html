@@ -533,9 +533,6 @@ let _resizeObservers = [];
 // Last loaded chart data
 let _lastChartData = null;
 
-// Local timezone offset in seconds (positive for UTC+N)
-const _tzOffset = -new Date().getTimezoneOffset() * 60;
-
 function toggleChartType(){
   chartType = chartType === 'candles' ? 'line' : 'candles';
   const btn = document.getElementById('chart-type-btn');
@@ -590,16 +587,6 @@ async function loadChart(){
     const r = await apiFetch(`/api/scanner/chart?symbol=${encodeURIComponent(sym)}&timeframe=${chartTf}&limit=300`);
     if(!r.ok){const e=await r.json();throw new Error(e.detail||r.statusText);}
     const d = await r.json();
-    // Apply local timezone offset to all timestamps
-    const tzOff = _tzOffset;
-    if(tzOff !== 0){
-      if(d.candles) d.candles = d.candles.map(c=>({...c, time: c.time + tzOff}));
-      const ind = d.indicators || {};
-      ['ema20','ema50','ema100','ema150','ema200','bb_upper','bb_mid','bb_lower',
-       'macd','macd_signal','macd_hist','rsi','volume'].forEach(k=>{
-        if(ind[k]) ind[k] = ind[k].map(p=>({...p, time: p.time + tzOff}));
-      });
-    }
     _lastChartData = d;
     statusEl.textContent = `${d.n_bars} bougies · ${d.symbol} · ${d.timeframe}`;
     document.getElementById('chart-title-lbl').textContent = `${d.symbol} · ${d.timeframe}`;
