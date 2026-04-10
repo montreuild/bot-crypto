@@ -427,6 +427,7 @@ function initReplay() {
 
   // Construire le tableau de bougies (conversion timestamp → secondes Unix)
   // Supporte à la fois les entiers Unix (secondes/ms) et les chaînes ISO 8601
+  // Les données OHLCV sont toujours en UTC (données exchange), le suffixe 'Z' est correct.
   allCandles = ohlcv.time.map((t, i) => {
     let sec;
     if(typeof t === 'number'){
