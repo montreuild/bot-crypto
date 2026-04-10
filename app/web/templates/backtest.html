@@ -242,8 +242,27 @@ function mkTV(el,h=160,opts={}){
 }
 function toSec(t){
   if(typeof t==='number')return t>1e10?Math.floor(t/1000):t;
-  if(typeof t==='string')return Math.floor(new Date(t).getTime()/1000);
+  if(typeof t==='string'){
+    // Normalise "YYYY-MM-DD HH:MM:SS[.f]" → ISO 8601 UTC for cross-browser compatibility
+    // All OHLCV data from the exchange is stored as UTC, so 'Z' suffix is correct.
+    const iso=t.length>=10&&t[10]===' '?t.slice(0,19).replace(' ','T')+'Z':t;
+    const ms=new Date(iso).getTime();
+    return isNaN(ms)?0:Math.floor(ms/1000);
+  }
   return 0;
+}
+
+// Construit un tableau de données pour LightweightCharts en dédupliquant et filtrant les timestamps invalides
+function _mkChartData(items){
+  const seen=new Set();
+  const out=items.filter(d=>{
+    if(!d.time||isNaN(d.time))return false;
+    for(const k in d){if(k!=='time'&&d[k]==null)return false;}
+    if(seen.has(d.time))return false;
+    seen.add(d.time);return true;
+  });
+  out.sort((a,b)=>a.time-b.time);
+  return out;
 }
 
 // ── Chart.js defaults (scatter only) ──
@@ -624,7 +643,7 @@ function buildPrice(){
     handleScale:{axisPressedMouseMove:{time:true,price:true}},
     handleScroll:true,
   });
-  new ResizeObserver(()=>tvPrice.applyOptions({width:el.offsetWidth})).observe(el);
+  new ResizeObserver(()=>tvPrice.applyOptions({width:el.offsetWidth||800})).observe(el);
   const times = ohlcv.close.map((_,i)=>toSec(ohlcv.time[i])||(i+1));
   if(btChartType === 'candles' && ohlcv.open){
     tvPriceS = tvPrice.addCandlestickSeries({
@@ -633,15 +652,14 @@ function buildPrice(){
       wickUpColor:'#34d399', wickDownColor:'#fb7185',
       priceLineVisible:false, lastValueVisible:false,
     });
-    const candleData = ohlcv.close.map((v,i)=>({
-      time:times[i], open:ohlcv.open[i], high:ohlcv.high[i],
-      low:ohlcv.low[i], close:v,
-    })).filter(d=>d.time>0);
-    tvPriceS.setData(candleData);
+    const candleData = _mkChartData(ohlcv.close.map((v,i)=>({
+      time:times[i], open:ohlcv.open[i], high:ohlcv.high[i], low:ohlcv.low[i], close:v,
+    })));
+    try{tvPriceS.setData(candleData);}catch(e){console.error('[bt] candleData setData:',e);return;}
   } else {
     tvPriceS=tvPrice.addLineSeries({color:'#4d9fff',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false});
-    const lineData=ohlcv.close.map((v,i)=>({time:times[i],value:v})).filter(d=>d.time>0);
-    tvPriceS.setData(lineData);
+    const lineData = _mkChartData(ohlcv.close.map((v,i)=>({time:times[i],value:v})));
+    try{tvPriceS.setData(lineData);}catch(e){console.error('[bt] lineData setData:',e);return;}
   }
   // Markers (entry + exit)
   const timeMap={};times.forEach((t,i)=>{timeMap[i]=t;});
@@ -652,7 +670,7 @@ function buildPrice(){
     if(!isNaN(ei)&&ei>=0&&ei<n&&timeMap[ei])markers.push({time:timeMap[ei],position:isLong?'aboveBar':'belowBar',color:isWin?'#34d399':'#fb7185',shape:'circle',text:''});
   });
   markers.sort((a,b)=>a.time-b.time);
-  tvPriceS.setMarkers(markers);
+  try{tvPriceS.setMarkers(markers);}catch(e){console.error('[bt] setMarkers:',e);}
   // Stop lines — initial stop (dashed) + trailing stop evolution (solid purple)
   trades.forEach(t=>{
     const bi=parseInt(t.bar),ei=parseInt(t.exit_bar);
@@ -773,11 +791,11 @@ function openFullscreen(){
       timeScale:{borderColor:'rgba(255,255,255,.06)',visible:true,timeVisible:true},
       handleScale:true,handleScroll:true,
     });
-    new ResizeObserver(()=>{if(fsTvChart)fsTvChart.applyOptions({width:el.offsetWidth,height:el.offsetHeight});}).observe(el);
+    new ResizeObserver(()=>{if(fsTvChart)fsTvChart.applyOptions({width:el.offsetWidth||window.innerWidth,height:el.offsetHeight||600});}).observe(el);
     const s=fsTvChart.addLineSeries({color:'#4d9fff',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false});
     const timeMap={};ohlcv.time.forEach((t,i)=>{timeMap[i]=toSec(t)||(i+1);});
-    const lineData=ohlcv.close.map((v,i)=>({time:timeMap[i],value:v})).filter(d=>d.time>0);
-    s.setData(lineData);
+    const lineData=_mkChartData(ohlcv.close.map((v,i)=>({time:timeMap[i],value:v})));
+    try{s.setData(lineData);}catch(e){console.error('[bt] fs setData:',e);return;}
     // Same markers as main chart
     const sd=btData.by_strategy[activeStrat];
     const trades=(sd?.trades||[]).filter(t=>t.status&&!t.status.startsWith('open')&&t.bar!=null&&t.exit_bar!=null);
@@ -788,7 +806,7 @@ function openFullscreen(){
       if(!isNaN(ei)&&ei>=0&&ei<n&&timeMap[ei])markers.push({time:timeMap[ei],position:isLong?'aboveBar':'belowBar',color:isWin?'#34d399':'#fb7185',shape:'circle',text:''});
     });
     markers.sort((a,b)=>a.time-b.time);
-    s.setMarkers(markers);
+    try{s.setMarkers(markers);}catch(e){console.error('[bt] fs setMarkers:',e);}
     fsTvChart.timeScale().fitContent();
     document.getElementById('fs-title').textContent=`${btData.symbol||''} · ${btData.timeframe||''} · ${activeStrat} — ${n} bougies (zoom/pan natif)`;
   }));

@@ -426,11 +426,19 @@ function initReplay() {
   currentBar  = 0;
 
   // Construire le tableau de bougies (conversion timestamp → secondes Unix)
-  // Normalise "2025-01-15 12:00:00" → "2025-01-15T12:00:00" pour compatibilité multi-navigateurs
+  // Supporte à la fois les entiers Unix (secondes/ms) et les chaînes ISO 8601
+  // Les données OHLCV sont toujours en UTC (données exchange), le suffixe 'Z' est correct.
   allCandles = ohlcv.time.map((t, i) => {
-    const d = new Date(t.replace(' ', 'T'));
+    let sec;
+    if(typeof t === 'number'){
+      sec = t > 1e10 ? Math.floor(t / 1000) : t;
+    } else {
+      const iso = typeof t === 'string' && t.length >= 10 && t[10] === ' ' ? t.slice(0, 19).replace(' ', 'T') + 'Z' : String(t);
+      const ms = new Date(iso).getTime();
+      sec = isNaN(ms) ? 0 : Math.floor(ms / 1000);
+    }
     return {
-      time:     Math.floor(d.getTime() / 1000),
+      time:     sec,
       open:     ohlcv.open[i],
       high:     ohlcv.high[i],
       low:      ohlcv.low[i],

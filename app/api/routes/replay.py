@@ -102,7 +102,7 @@ def run_replay(
             date_to      = str(df["time"][-1])[:16]
 
             ohlcv_payload = {
-                "time":   [str(t) for t in df["time"].to_list()],
+                "time":   df["time"].dt.epoch(time_unit="s").to_list(),
                 "close":  [round(float(v), 6) for v in df["close"].to_list()],
                 "open":   [round(float(v), 6) for v in df["open"].to_list()],
                 "high":   [round(float(v), 6) for v in df["high"].to_list()],
