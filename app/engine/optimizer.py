@@ -152,6 +152,7 @@ def _eval_worker(args: tuple) -> dict:
             "is_wr":      _res_is.win_rate,
             "oos_wr":     _res_oos.win_rate,
             "oos_dd":     _res_oos.max_drawdown,
+            "oos_alpha":  getattr(_res_oos, "alpha", None),
         }
     except Exception as _exc:
         # Retourner une erreur sérialisable plutôt que de laisser le process crasher,
@@ -695,6 +696,7 @@ class StrategyOptimizer:
             "best_oos_wr":    round(best.get("oos_wr", 0.0), 1),
             "best_is_wr":     round(best.get("is_wr", 0.0), 1),
             "best_oos_dd":    round(best.get("oos_dd", 0.0), 2),
+            "best_oos_alpha": round(best["oos_alpha"], 4) if best.get("oos_alpha") is not None else None,
             "overfit":        best.get("overfit", 1.0),
             "n_trials":       len(self.results),
             "top5":           top5,
