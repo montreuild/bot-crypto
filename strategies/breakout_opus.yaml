@@ -1,0 +1,18 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : Breakout Opus
+# ──────────────────────────────────────────────────────────────────────────────
+# Cassure du canal Donchian(20) confirmée par flip de l'histogramme MACD(12,26,9).
+# Stop-loss = 1×ATR, Take-profit = 3×ATR (ratio R:R = 1:3).
+# Sortie sur signal opposé : gérée nativement par le moteur.
+
+params:
+  period: 20
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  sl_atr: 1.0
+  tp_atr: 3.0
+  cooldown: 5
+  atr_period: 14
+
+optimizer_results: {}
