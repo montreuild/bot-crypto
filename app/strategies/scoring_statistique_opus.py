@@ -1,18 +1,15 @@
 """Stratégie Scoring Statistique Opus — scoring d'amplitude et de direction par régime.
 
-Basée sur les conclusions du rapport statistique V4 (50 000 bougies BTC/USDC) :
-- Amplitude (AUC OOS 0.75 sur 15m) : prédire si un mouvement significatif aura lieu
-  → features clés : ATR_pct, vol_std_20, range_size, BB_width (effet GARCH)
-- Direction (AUC OOS 0.87 en Trend Down) : prédire le sens du mouvement
-  → conditionné par régime : efficace surtout en Trend Down
-- Régime 4 classes (ADX + alignement SMA20/50/100/200)
-- Filtre horaire : 13h-17h UTC = session US, taux d'événements ×2
+Basée sur le rapport statistique V4 (50 000 bougies BTC/USDC) :
+- Amplitude (AUC OOS 0.75 sur 15m) : ATR%, vol_std20, range_size, wicks
+- Direction (AUC OOS 0.87 en Trend Down) : body direction (#1 feature), RSI velocity,
+  structure de mèches, MACD, conditionné par régime
+- Régime 4 classes : ADX + alignement SMA20/50/100/200
 
-CALIBRATION : les features de volatilité sont **normalisées par leur moyenne
-mobile 100 barres** afin que les scores soient TF-indépendants (sinon le
-threshold absolu doit changer entre 15m, 30m et 1h).
+Performance : toutes les features sont précompilées dans _pre_* (precompute_df),
+score() ne fait que des lookups O(1) — zéro calcul de série à chaque barre.
 
-Règle de décision (rapport §6.4) :
+Règle de décision (rapport §6.5) :
 - Trend Down : amp ≥ 0.45 ET |dir - 0.5| ≥ 0.08 → taille pleine
 - Range/Choppy : amp ≥ 0.55 ET |dir - 0.5| ≥ 0.12 → demi-taille
 - Trend Up : pas de trade (AUC direction ≈ 0.50)
@@ -28,7 +25,6 @@ from app.core.indicators import pre_val
 
 logger = logging.getLogger(__name__)
 
-# ── Constantes régime ────────────────────────────────────────────────────────
 REGIME_RANGE    = 0
 REGIME_TREND_UP = 1
 REGIME_TREND_DN = 2
@@ -41,16 +37,15 @@ REGIME_LABELS = {
     REGIME_CHOPPY:   "Choppy",
 }
 
-# Amplitude médiane observée par régime (rapport §3.5, en %)
+# Amplitude médiane observée par régime (rapport §6.4, en %)
 REGIME_AMP_MEDIAN = {
-    REGIME_RANGE:    0.66,
-    REGIME_TREND_UP: 0.69,
-    REGIME_TREND_DN: 0.78,
-    REGIME_CHOPPY:   0.72,
+    REGIME_RANGE:    0.60,
+    REGIME_TREND_UP: 0.63,
+    REGIME_TREND_DN: 0.69,
+    REGIME_CHOPPY:   0.65,
 }
 
 
-# ── Fonctions de scoring scalaires ──────────────────────────────────────────
 def _sig(z: float) -> float:
     return 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, z))))
 
@@ -58,7 +53,7 @@ def _sig(z: float) -> float:
 def _detect_regime(adx: float, sma20: float, sma50: float,
                    sma100: float, sma200: float,
                    adx_threshold: float = 20.0) -> int:
-    """Détection du régime (4 classes) : ADX + alignement SMA."""
+    """Régime par règles ADX + alignement SMA (rapport §6.1)."""
     if adx < adx_threshold:
         return REGIME_RANGE
     if sma20 > sma50 > sma100 > sma200:
@@ -68,54 +63,61 @@ def _detect_regime(adx: float, sma20: float, sma50: float,
     return REGIME_CHOPPY
 
 
-def _proba_amplitude(atr_ratio: float, vs_ratio: float, rs_ratio: float,
-                     bb_ratio: float) -> float:
-    """Probabilité heuristique d'occurrence d'un événement (rapport §6.1).
+def _proba_amplitude(atr_r: float, vs_r: float, rs_r: float,
+                     wick_total: float) -> float:
+    """P(événement) — rapport §6.2, top features LightGBM.
 
-    Les ratios sont normalisés par la moyenne mobile 100 barres
-    → le score est TF-indépendant. Ratio = 1.0 = volatilité typique.
+    Poids calibrés sur importances : ATR(250) > vol_std(180) > range(120) > wicks(40).
+    Ratios /mean100 → TF-indépendant.
     """
     z = (-0.5
-         + 1.5 * (atr_ratio - 1.0)
-         + 1.0 * (rs_ratio  - 1.0)
-         + 0.8 * (vs_ratio  - 1.0)
-         + 0.5 * (bb_ratio  - 1.0))
+         + 1.5 * (atr_r       - 1.0)   # ATR% ratio (dominant)
+         + 1.1 * (vs_r        - 1.0)   # vol_std20 ratio
+         + 0.7 * (rs_r        - 1.0)   # range ratio
+         + 0.3 * wick_total)            # activité mèches (wick_total = lower+upper)
     return _sig(z)
 
 
-def _proba_direction(rsi: float, lower_wick_r: float, upper_wick_r: float,
-                     close_pos: float, macd_hist_norm: float,
-                     vol_ratio: float, regime: int) -> float:
-    """Probabilité directionnelle P(hausse) — rapport §6.2-6.3.
+def _proba_direction(rsi: float, rsi_vel6: float, body: float,
+                     lower_wick: float, upper_wick: float,
+                     macd_hist_norm: float, vol_ratio: float,
+                     regime: int) -> float:
+    """P(hausse) conditionné par régime — rapport §6.3.
 
-    AUC attendu par régime :
-    - Trend Down : ~0.87 (biais baissier + rebond oversold)
-    - Range : 0.50-0.70
-    - Choppy : 0.58-0.60
-    - Trend Up : ~0.50 (pas de signal fiable)
+    Features clés (importance LightGBM) :
+      body (#1, 404)       : direction du corps de bougie signé
+      rsi_vel6 (#3, 377)   : vélocité RSI sur 6 barres
+      wick structure        : lower_wick (#2, 395 amplitude, key dir), upper_wick
+      macd_hist_norm        : dynamique MACD
+
+    AUC attendu : Trend Down ~0.87, Choppy ~0.58, Range ~0.50-0.70, Trend Up ~0.50.
     """
-    rsi_n  = (50.0 - rsi) / 25.0
-    wick_n = lower_wick_r * 3.0 - upper_wick_r * 2.0
-    pos_n  = (0.5 - close_pos) * 2.0
-    macd_n = math.copysign(min(abs(macd_hist_norm) * 500.0, 1.5), macd_hist_norm)
-    vol_n  = min(max(vol_ratio - 1.0, 0.0), 1.0) * 0.3
+    # Normalisation
+    body_n     =  body * 15.0                              # (close-open)/close signé
+    rsi_n      = (50.0 - rsi) / 25.0                      # RSI level (oversold > 0)
+    rsi_vel_n  = -rsi_vel6 / 10.0                         # vélocité (RSI chute → bounce)
+    wick_n     =  lower_wick * 3.0 - upper_wick * 2.0     # mèches
+    macd_n     =  math.copysign(min(abs(macd_hist_norm) * 500.0, 1.5), macd_hist_norm)
+    vol_n      =  min(max(vol_ratio - 1.0, 0.0), 1.0) * 0.3
 
     if regime == REGIME_TREND_DN:
+        # Biais baissier fort, capte rebonds oversold (rapport : AUC 0.87)
         z = (-2.0
-             + rsi_n  * 2.5
-             + wick_n * 2.0
-             + pos_n  * 1.0
-             + macd_n * 0.6
+             + body_n    * 1.5
+             + rsi_n     * 1.2
+             + rsi_vel_n * 1.2
+             + wick_n    * 1.8
+             + macd_n    * 0.6
              + vol_n)
     elif regime == REGIME_RANGE:
-        z = (rsi_n * 0.8 + wick_n * 1.0
-             + pos_n * 1.5 + macd_n * 1.0 + vol_n)
+        z = (body_n * 1.2 + rsi_n * 0.8 + wick_n * 1.0
+             + macd_n * 1.0 + rsi_vel_n * 0.5 + vol_n)
     elif regime == REGIME_CHOPPY:
-        z = (rsi_n * 1.0 + wick_n * 1.5
-             + pos_n * 0.8 + macd_n * 1.2 + vol_n)
-    else:
-        z = (rsi_n * 0.4 + wick_n * 0.4
-             + pos_n * 0.4 + macd_n * 0.4 + vol_n)
+        z = (body_n * 1.0 + rsi_n * 0.8 + wick_n * 1.2
+             + macd_n * 1.0 + rsi_vel_n * 0.6 + vol_n)
+    else:  # Trend Up — formule neutre (pas de trade, mais calcul pour affichage)
+        z = (body_n * 0.4 + rsi_n * 0.4 + wick_n * 0.4
+             + macd_n * 0.4 + rsi_vel_n * 0.3 + vol_n)
 
     return _sig(z)
 
@@ -140,7 +142,6 @@ def _hour_multiplier(df: pl.DataFrame) -> float:
         return 0.5
 
 
-# ── Classe Strategy ──────────────────────────────────────────────────────────
 class Strategy(BaseStrategy):
     name = "scoring_statistique_opus"
 
@@ -162,7 +163,7 @@ class Strategy(BaseStrategy):
         self._last_signal: Dict[str, int] = {}
 
     def min_bars_required(self, params: dict = None) -> int:
-        return 215  # SMA200 + marge pour rolling 100
+        return 215
 
     def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
@@ -182,83 +183,51 @@ class Strategy(BaseStrategy):
         if len(df) < self.min_bars_required(params):
             return self._none(f"Données insuffisantes ({len(df)})")
 
-        close = df["close"]
-        high  = df["high"]
-        low   = df["low"]
-        open_ = df["open"]
-
-        c_now = float(close[-1])
+        # ── Scalaires O(1) depuis colonnes précompilées ───────────────────
+        c_now = float(df["close"][-1] or 0.0)
         if c_now <= 0:
             return self._none("Prix invalide")
 
-        # ── Indicateurs précompilés ──────────────────────────────────────
-        atr_now  = pre_val(df, "_pre_atr14") or 0.0
-        rsi_now  = pre_val(df, "_pre_rsi14") or 50.0
-        adx_now  = pre_val(df, "_pre_adx14") or 0.0
+        atr_now  = pre_val(df, "_pre_atr14")     or 0.0
+        rsi_now  = pre_val(df, "_pre_rsi14")     or 50.0
+        adx_now  = pre_val(df, "_pre_adx14")     or 0.0
         macd_h   = pre_val(df, "_pre_macd_hist") or 0.0
         vr       = pre_val(df, "_pre_volratio20") or 1.0
 
         if atr_now <= 0:
             return self._none("ATR invalide")
 
-        # ── Features (ratios par moyenne mobile 100 → TF-indépendant) ────
-        if "_pre_atr14" not in df.columns:
-            return self._none("Pre-compute manquant")
+        # Features amplitude (ratios TF-indépendants)
+        atr_r  = pre_val(df, "_pre_atr_pct_r")   or 1.0
+        vs_r   = pre_val(df, "_pre_volstd20_r")  or 1.0
+        rs_r   = pre_val(df, "_pre_range_r")     or 1.0
 
-        atr_pct_s = df["_pre_atr14"] / close.clip(lower_bound=1e-9)
+        # Features direction
+        body        = pre_val(df, "_pre_body")        or 0.0
+        upper_wick  = pre_val(df, "_pre_upper_wick")  or 0.0
+        lower_wick  = pre_val(df, "_pre_lower_wick")  or 0.0
+        rsi_vel6    = pre_val(df, "_pre_rsi_vel6")    or 0.0
+        macd_h_norm = macd_h / max(c_now, 1e-9)
+        wick_total  = lower_wick + upper_wick
 
-        log_rets = (close / close.shift(1).clip(lower_bound=1e-9)).log(2.718281828)
-        vol_std_s = log_rets.rolling_std(20).fill_null(0)
-        range_s   = (high - low) / close.clip(lower_bound=1e-9)
-        std20     = close.rolling_std(20)
-        sma20_s   = close.rolling_mean(20)
-        bb_width_s = (4.0 * std20) / sma20_s.clip(lower_bound=1e-9)
-
-        def _ratio(series: pl.Series) -> float:
-            now_v = series[-1]
-            if now_v is None:
-                return 1.0
-            now = float(now_v)
-            tail = series.tail(100).drop_nulls()
-            if len(tail) == 0:
-                return 1.0
-            mean = float(tail.mean() or 0.0)
-            return now / max(mean, 1e-9)
-
-        atr_ratio = _ratio(atr_pct_s)
-        vs_ratio  = _ratio(vol_std_s)
-        rs_ratio  = _ratio(range_s)
-        bb_ratio  = _ratio(bb_width_s)
-
-        # ── SMAs pour régime ──────────────────────────────────────────────
-        sma20_v  = float(sma20_s[-1]                 or c_now)
-        sma50_v  = float(close.rolling_mean(50)[-1]  or c_now)
-        sma100_v = float(close.rolling_mean(100)[-1] or c_now)
-        sma200_v = float(close.rolling_mean(200)[-1] or c_now)
-
-        # ── Structure de bougie ──────────────────────────────────────────
-        c_v = float(close[-1]); o_v = float(open_[-1])
-        h_v = float(high[-1]);  l_v = float(low[-1])
-        t_rng = max(h_v - l_v, 1e-9)
-        bt = max(c_v, o_v); bb = min(c_v, o_v)
-        upper_wick_r = (h_v - bt) / t_rng
-        lower_wick_r = (bb - l_v) / t_rng
-        close_pos    = (c_v - l_v) / t_rng
-        macd_hist_norm = macd_h / c_now
+        # SMAs pour régime (rapport §6.1 : SMA20/50/100/200)
+        # Fallback sur EMA si _pre_sma* absent (compatibilité ancienne version)
+        sma20  = pre_val(df, "_pre_sma20")  or pre_val(df, "_pre_ema20")  or c_now
+        sma50  = pre_val(df, "_pre_sma50")  or pre_val(df, "_pre_ema50")  or c_now
+        sma100 = pre_val(df, "_pre_sma100") or c_now
+        sma200 = pre_val(df, "_pre_sma200") or pre_val(df, "_pre_ema200") or c_now
 
         # ── Régime + scores ───────────────────────────────────────────────
-        regime = _detect_regime(adx_now, sma20_v, sma50_v, sma100_v, sma200_v,
-                                adx_threshold)
+        regime     = _detect_regime(adx_now, sma20, sma50, sma100, sma200, adx_threshold)
         regime_lbl = REGIME_LABELS[regime]
 
-        proba_amp = _proba_amplitude(atr_ratio, vs_ratio, rs_ratio, bb_ratio)
-        proba_dir = _proba_direction(rsi_now, lower_wick_r, upper_wick_r,
-                                     close_pos, macd_hist_norm, vr, regime)
-        dir_dist = abs(proba_dir - 0.5)
-
+        proba_amp = _proba_amplitude(atr_r, vs_r, rs_r, wick_total)
+        proba_dir = _proba_direction(rsi_now, rsi_vel6, body, lower_wick, upper_wick,
+                                     macd_h_norm, vr, regime)
+        dir_dist  = abs(proba_dir - 0.5)
         hour_mult = _hour_multiplier(df)
 
-        # ── Règle de décision par régime ─────────────────────────────────
+        # ── Règle de décision par régime (rapport §6.5) ──────────────────
         if regime == REGIME_TREND_UP:
             return self._none(
                 f"Trend Up — pas d'edge (AUC≈0.50) | amp={proba_amp:.2f} dir={proba_dir:.2f}",
@@ -266,38 +235,36 @@ class Strategy(BaseStrategy):
             )
 
         if regime == REGIME_TREND_DN:
-            amp_ok   = proba_amp >= amp_thresh_td
-            dir_ok   = dir_dist  >= dir_dist_td
-            size_fac = 1.0
+            amp_thresh = amp_thresh_td
+            dir_thresh = dir_dist_td
+            size_fac   = 1.0
         else:
-            amp_ok   = proba_amp >= amp_thresh_oth
-            dir_ok   = dir_dist  >= dir_dist_oth
-            size_fac = 0.5
+            amp_thresh = amp_thresh_oth
+            dir_thresh = dir_dist_oth
+            size_fac   = 0.5
 
-        if not amp_ok:
+        if proba_amp < amp_thresh:
             return self._none(
-                f"P(événement)={proba_amp:.2f} < seuil | {regime_lbl}",
+                f"P(événement)={proba_amp:.2f} < {amp_thresh:.2f} | {regime_lbl}",
                 proba_amp=proba_amp, proba_dir=proba_dir, regime=regime,
             )
-        if not dir_ok:
+        if dir_dist < dir_thresh:
             return self._none(
-                f"|P(dir)-0.5|={dir_dist:.2f} < seuil | {regime_lbl}",
+                f"|P(dir)-0.5|={dir_dist:.2f} < {dir_thresh:.2f} | {regime_lbl}",
                 proba_amp=proba_amp, proba_dir=proba_dir, regime=regime,
             )
 
         side = "long" if proba_dir > 0.5 else "short"
 
-        # ── Stop / Take Profit (rapport §6.6) ─────────────────────────────
+        # ── Stop / Take Profit (rapport §6.6 : SL=1.5×ATR, TP=1.0×ATR) ─
         if side == "long":
             stop   = c_now - 1.5 * atr_now
             target = c_now + 1.0 * atr_now
-            risk   = max(c_now - stop, 1e-9)
-            rr     = (target - c_now) / risk
+            rr     = (target - c_now) / max(c_now - stop, 1e-9)
         else:
             stop   = c_now + 1.5 * atr_now
             target = c_now - 1.0 * atr_now
-            risk   = max(stop - c_now, 1e-9)
-            rr     = (c_now - target) / risk
+            rr     = (c_now - target) / max(stop - c_now, 1e-9)
 
         if rr < rr_min:
             return self._none(
@@ -305,23 +272,15 @@ class Strategy(BaseStrategy):
                 proba_amp=proba_amp, proba_dir=proba_dir, regime=regime,
             )
 
-        # ── Score composite ───────────────────────────────────────────────
-        amp_med = REGIME_AMP_MEDIAN[regime] / 100.0
+        # ── Score composite (rapport §6.5) ────────────────────────────────
+        amp_med   = REGIME_AMP_MEDIAN[regime] / 100.0
         score_raw = proba_amp * dir_dist * 2.0 * amp_med * 100.0
-        score = 0.50 + min(score_raw * 0.45, 0.44)
-        score *= (size_fac * 0.5 + 0.5)
-        score *= (hour_mult * 0.3 + 0.7)
-        score = round(min(score, 0.94), 3)
+        score     = 0.50 + min(score_raw * 0.45, 0.44)
+        score    *= (size_fac * 0.5 + 0.5)
+        score    *= (hour_mult * 0.3 + 0.7)
+        score     = round(min(score, 0.94), 3)
 
         self._last_signal[sym] = cnt
-
-        conditions = [
-            f"Régime : {regime_lbl} (ADX={adx_now:.0f})",
-            f"P(événement) = {proba_amp:.2f} ≥ {amp_thresh_td if regime==REGIME_TREND_DN else amp_thresh_oth:.2f} ✓",
-            f"P(direction) = {proba_dir:.2f} → |dist|={dir_dist:.2f} ≥ {dir_dist_td if regime==REGIME_TREND_DN else dir_dist_oth:.2f} ✓",
-            f"{'Pleine taille' if size_fac==1.0 else 'Demi-taille'} | Heure ×{hour_mult:.1f}",
-            f"R:R = {rr:.2f}",
-        ]
 
         return {
             "score":      score,
@@ -334,21 +293,27 @@ class Strategy(BaseStrategy):
             "regime":     regime,
             "regime_lbl": regime_lbl,
             "indicators": {
-                "adx":          round(adx_now, 1),
-                "rsi":          round(rsi_now, 1),
-                "atr_ratio":    round(atr_ratio, 3),
-                "rs_ratio":     round(rs_ratio,  3),
-                "vs_ratio":     round(vs_ratio,  3),
-                "bb_ratio":     round(bb_ratio,  3),
-                "upper_wick_r": round(upper_wick_r, 3),
-                "lower_wick_r": round(lower_wick_r, 3),
-                "close_pos":    round(close_pos, 3),
-                "hour_mult":    hour_mult,
-                "size_factor":  size_fac,
-                "sma20":        round(sma20_v, 2),
-                "sma200":       round(sma200_v, 2),
+                "adx":         round(adx_now, 1),
+                "rsi":         round(rsi_now, 1),
+                "rsi_vel6":    round(rsi_vel6, 2),
+                "body":        round(body, 4),
+                "atr_r":       round(atr_r, 3),
+                "rs_r":        round(rs_r, 3),
+                "vs_r":        round(vs_r, 3),
+                "upper_wick":  round(upper_wick, 3),
+                "lower_wick":  round(lower_wick, 3),
+                "hour_mult":   hour_mult,
+                "size_factor": size_fac,
+                "sma20":       round(sma20, 2),
+                "sma200":      round(sma200, 2),
             },
-            "conditions": conditions,
+            "conditions": [
+                f"Régime : {regime_lbl} (ADX={adx_now:.0f})",
+                f"P(événement) = {proba_amp:.2f} ≥ {amp_thresh:.2f} ✓",
+                f"P(direction) = {proba_dir:.2f} → |dist|={dir_dist:.2f} ≥ {dir_thresh:.2f} ✓",
+                f"body={body:.3f} RSI={rsi_now:.0f} vel6={rsi_vel6:+.1f}",
+                f"{'Pleine taille' if size_fac == 1.0 else 'Demi-taille'} | Heure ×{hour_mult:.1f} | R:R={rr:.2f}",
+            ],
             "reason": (
                 f"Opus {side.upper()} | {regime_lbl} | "
                 f"amp={proba_amp:.2f} dir={proba_dir:.2f} "
