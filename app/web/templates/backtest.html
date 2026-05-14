@@ -711,8 +711,8 @@ function buildPrice(){
 // ── Comparison table ──
 function buildCmp(){
   const strats=Object.keys(btData.by_strategy||{});if(strats.length<2)return;
-  const mets=['total_trades','win_rate','total_pnl','max_drawdown','sharpe','expectancy','profit_factor','avg_win','avg_loss'];
-  const lbl={total_trades:'Trades',win_rate:'Win Rate',total_pnl:'PnL net',max_drawdown:'Max DD',sharpe:'Sharpe',expectancy:'Expectancy',profit_factor:'Profit Factor',avg_win:'Gain moy.',avg_loss:'Perte moy.'};
+  const mets=['total_trades','win_rate','total_pnl','max_drawdown','sharpe','expectancy','profit_factor','avg_win','avg_loss','alpha'];
+  const lbl={total_trades:'Trades',win_rate:'Win Rate',total_pnl:'PnL net',max_drawdown:'Max DD',sharpe:'Sharpe',expectancy:'Expectancy',profit_factor:'Profit Factor',avg_win:'Gain moy.',avg_loss:'Perte moy.',alpha:'Alpha'};
   const fmt=(m,v)=>{if(v==null)return'—';const n=Number(v);if(['win_rate','max_drawdown'].includes(m))return`${n.toFixed(1)}%`;if(['sharpe','profit_factor'].includes(m))return n.toFixed(3);if(m==='total_trades')return`${n}`;return(n>=0?'+':'')+n.toFixed(4);};
   const isBest=(m,v)=>{const vs=strats.map(s=>parseFloat(btData.by_strategy[s]?.[m])||0);return m==='max_drawdown'?v===Math.max(...vs):v===Math.max(...vs);};
   const cl=(m,v)=>{const n=Number(v);if(m==='max_drawdown')return n<-10?'neg':'war';if(m==='win_rate')return n>=50?'pos':'neg';if(['sharpe','expectancy'].includes(m))return n>=0?'pos':'neg';if(m==='profit_factor')return n>=1.5?'pos':n>=1?'war':'neg';return n>=0?'pos':'neg';};

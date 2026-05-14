@@ -123,6 +123,7 @@ def _run_baseline(strategy_name: str, cfg: dict,
             "sharpe": round(res.get("sharpe", 0), 3),
             "wr":     round(res.get("win_rate", 0), 1),
             "dd":     round(res.get("max_drawdown", 0), 2),
+            "alpha":  round(res["alpha"], 4) if res.get("alpha") is not None else None,
         }
     except Exception as e:
         logger.debug(f"[AutoOpt] baseline {strategy_name} KO : {e}")

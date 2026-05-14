@@ -673,6 +673,7 @@ function renderJobCard(id, job, expanded = false) {
         ${baRow('Sharpe', (baseline.sharpe??0).toFixed(2))}
         ${baRow('Win Rate', (baseline.wr??0).toFixed(1)+'%')}
         ${baRow('Drawdown', (baseline.dd??0).toFixed(1)+'%', (baseline.dd||0)>15?'clr-red':'clr-muted')}
+        ${baseline.alpha!=null?baRow('Alpha', fmtSign(baseline.alpha), clr(baseline.alpha)):''}
       </div>
       <div class="ba-box">
         <div class="ba-title">➡ Après optimisation (OOS)</div>
@@ -681,6 +682,7 @@ function renderJobCard(id, job, expanded = false) {
         ${baRow('Sharpe', (result.best_oos_sharpe??0).toFixed(2))}
         ${baRow('Win Rate', (result.best_oos_wr??0).toFixed(1)+'%', clr((result.best_oos_wr||0)-50))}
         ${baRow('Drawdown', (result.best_oos_dd??0).toFixed(1)+'%', (result.best_oos_dd||0)>15?'clr-red':'clr-muted')}
+        ${result.best_oos_alpha!=null?baRow('Alpha', fmtSign(result.best_oos_alpha), clr(result.best_oos_alpha)):''}
       </div>
     </div>`;
   }
