@@ -63,58 +63,69 @@ def _detect_regime(adx: float, sma20: float, sma50: float,
 
 
 def _proba_amplitude(atr_r: float, vs_r: float, rs_r: float,
-                     wick_total: float) -> float:
-    """P(événement) — rapport §6.2. Poids alignés sur importances LightGBM."""
+                     body_abs_r: float, wick_total: float) -> float:
+    """P(événement) — rapport §6.2. Poids proportionnels aux coefficients du rapport."""
     z = (-0.5
-         + 1.5 * (atr_r    - 1.0)
-         + 1.1 * (vs_r     - 1.0)
-         + 0.7 * (rs_r     - 1.0)
-         + 0.3 * wick_total)
+         + 1.50 * (atr_r      - 1.0)
+         + 1.08 * (vs_r       - 1.0)
+         + 0.72 * (rs_r       - 1.0)
+         + 0.36 * (body_abs_r - 1.0)
+         + 0.24 * wick_total)
     return _sig(z)
 
 
-def _proba_direction(rsi: float, rsi_vel6: float, body: float,
+def _proba_direction(rsi: float, rsi_vel6: float, rsi_vel12: float,
+                     rsi_accel: float, body: float,
                      lower_wick: float, upper_wick: float,
-                     macd_hist_norm: float, vol_ratio: float,
-                     regime: int) -> float:
+                     macd_hist_d1: float, range_pos20: float,
+                     vol_ratio: float, regime: int) -> float:
     """P(hausse) conditionné par régime.
 
     Trend Up : formule miroir (+2.0 biais haussier)
     → RSI dip (< 50) → achat du dip en uptrend ✓
     → RSI overbought (> 70) → rsi_n négatif → prudence ✓
     → Shooting star (upper wick élevé) → réduit wick_n → signal d'alerte ✓
-    → Hammer (lower wick élevé) → renforce le signal long ✓
+
+    Toutes les features viennent de precompute_df → O(1).
     """
-    body_n     =  body * 15.0
-    rsi_n      = (50.0 - rsi) / 25.0
-    rsi_vel_n  = -rsi_vel6 / 10.0
-    wick_n     =  lower_wick * 3.0 - upper_wick * 2.0
-    macd_n     =  math.copysign(min(abs(macd_hist_norm) * 500.0, 1.5), macd_hist_norm)
-    vol_n      =  min(max(vol_ratio - 1.0, 0.0), 1.0) * 0.3
+    body_n      =  body * 15.0
+    rsi_n       = (50.0 - rsi) / 25.0
+    rsi_vel_n   = -rsi_vel6 / 10.0
+    rsi_vel12_n = -rsi_vel12 / 15.0
+    rsi_acc_n   = -rsi_accel / 5.0
+    wick_n      =  lower_wick * 3.0 - upper_wick * 2.0
+    macd_vel_n  =  math.copysign(min(abs(macd_hist_d1) * 2000.0, 1.5), macd_hist_d1)
+    rpos_n      = (0.5 - range_pos20) * 2.0
+    vol_n       =  min(max(vol_ratio - 1.0, 0.0), 1.0) * 0.3
 
     if regime == REGIME_TREND_UP:
-        # Formule miroir : biais haussier +2.0
         z = (+2.0
-             + body_n    * 1.5
-             + rsi_n     * 1.2
-             + rsi_vel_n * 1.2
-             + wick_n    * 1.8
-             + macd_n    * 0.6
+             + body_n      * 1.5
+             + rsi_n       * 1.0
+             + rsi_vel_n   * 1.0
+             + rsi_vel12_n * 0.8
+             + rsi_acc_n   * 0.6
+             + wick_n      * 1.8
+             + macd_vel_n  * 0.8
+             + rpos_n      * 0.6
              + vol_n)
     elif regime == REGIME_TREND_DN:
         z = (-2.0
-             + body_n    * 1.5
-             + rsi_n     * 1.2
-             + rsi_vel_n * 1.2
-             + wick_n    * 1.8
-             + macd_n    * 0.6
+             + body_n      * 1.5
+             + rsi_n       * 1.0
+             + rsi_vel_n   * 1.0
+             + rsi_vel12_n * 0.8
+             + rsi_acc_n   * 0.6
+             + wick_n      * 1.8
+             + macd_vel_n  * 0.8
+             + rpos_n      * 0.6
              + vol_n)
     elif regime == REGIME_RANGE:
         z = (body_n * 1.2 + rsi_n * 0.8 + wick_n * 1.0
-             + macd_n * 1.0 + rsi_vel_n * 0.5 + vol_n)
+             + macd_vel_n * 0.8 + rsi_vel_n * 0.5 + rpos_n * 0.8 + vol_n)
     else:  # Choppy
         z = (body_n * 1.0 + rsi_n * 0.8 + wick_n * 1.2
-             + macd_n * 1.0 + rsi_vel_n * 0.6 + vol_n)
+             + macd_vel_n * 0.8 + rsi_vel_n * 0.6 + rpos_n * 0.5 + vol_n)
 
     return _sig(z)
 
@@ -197,16 +208,20 @@ class Strategy(BaseStrategy):
         if atr_now <= 0:
             return self._none("ATR invalide")
 
-        atr_r  = pre_val(df, "_pre_atr_pct_r")   or 1.0
-        vs_r   = pre_val(df, "_pre_volstd20_r")  or 1.0
-        rs_r   = pre_val(df, "_pre_range_r")     or 1.0
+        atr_r       = pre_val(df, "_pre_atr_pct_r")   or 1.0
+        vs_r        = pre_val(df, "_pre_volstd20_r")  or 1.0
+        rs_r        = pre_val(df, "_pre_range_r")     or 1.0
+        body_abs_r  = pre_val(df, "_pre_body_abs_r")  or 1.0
 
-        body        = pre_val(df, "_pre_body")        or 0.0
-        upper_wick  = pre_val(df, "_pre_upper_wick")  or 0.0
-        lower_wick  = pre_val(df, "_pre_lower_wick")  or 0.0
-        rsi_vel6    = pre_val(df, "_pre_rsi_vel6")    or 0.0
-        macd_h_norm = macd_h / max(c_now, 1e-9)
-        wick_total  = lower_wick + upper_wick
+        body         = pre_val(df, "_pre_body")          or 0.0
+        upper_wick   = pre_val(df, "_pre_upper_wick")    or 0.0
+        lower_wick   = pre_val(df, "_pre_lower_wick")    or 0.0
+        rsi_vel6     = pre_val(df, "_pre_rsi_vel6")      or 0.0
+        rsi_vel12    = pre_val(df, "_pre_rsi_vel12")     or 0.0
+        rsi_accel    = pre_val(df, "_pre_rsi_accel")     or 0.0
+        macd_hist_d1 = pre_val(df, "_pre_macd_hist_d1") or 0.0
+        range_pos20  = pre_val(df, "_pre_range_pos20")  or 0.5
+        wick_total   = lower_wick + upper_wick
 
         sma20  = pre_val(df, "_pre_sma20")  or pre_val(df, "_pre_ema20")  or c_now
         sma50  = pre_val(df, "_pre_sma50")  or pre_val(df, "_pre_ema50")  or c_now
@@ -217,9 +232,10 @@ class Strategy(BaseStrategy):
         regime     = _detect_regime(adx_now, sma20, sma50, sma100, sma200, adx_threshold)
         regime_lbl = REGIME_LABELS[regime]
 
-        proba_amp = _proba_amplitude(atr_r, vs_r, rs_r, wick_total)
-        proba_dir = _proba_direction(rsi_now, rsi_vel6, body, lower_wick, upper_wick,
-                                     macd_h_norm, vr, regime)
+        proba_amp = _proba_amplitude(atr_r, vs_r, rs_r, body_abs_r, wick_total)
+        proba_dir = _proba_direction(rsi_now, rsi_vel6, rsi_vel12, rsi_accel,
+                                     body, lower_wick, upper_wick,
+                                     macd_hist_d1, range_pos20, vr, regime)
         dir_dist  = abs(proba_dir - 0.5)
         hour_mult = _hour_multiplier(df)
 

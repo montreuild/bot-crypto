@@ -576,8 +576,23 @@ def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
     pre_upper_wick  = (h - body_top) / t_range                  # mèche haute [0-1]
     pre_lower_wick  = (body_bot - l) / t_range                  # mèche basse [0-1]
 
-    # RSI velocity 6 barres (rapport §6.3 top feature direction)
-    pre_rsi_vel6 = (pre_rsi14 - pre_rsi14.shift(6)).fill_null(0)
+    # Corps de bougie absolu (amplitude formula rapport §6.2 : poids 60/250)
+    pre_body_abs   = (c - o).abs() / c_safe
+    pre_body_abs_r = pre_body_abs / _rm100(pre_body_abs)
+
+    # RSI velocity lag6 + lag12 + accélération (rapport §6.3 features direction)
+    pre_rsi_vel6  = (pre_rsi14 - pre_rsi14.shift(6)).fill_null(0)
+    pre_rsi_vel12 = (pre_rsi14 - pre_rsi14.shift(12)).fill_null(0)
+    pre_rsi_accel = (pre_rsi_vel6 - pre_rsi_vel6.shift(6)).fill_null(0)
+
+    # MACD hist velocity (rapport §6.3 : MACD_hist_d1, pas le niveau)
+    macd_hist_full = ml - ms
+    pre_macd_hist_d1 = (macd_hist_full - macd_hist_full.shift(1)).fill_null(0)
+
+    # Position dans la range 20 barres [0-1] (rapport §6.3 : range_pos_20)
+    roll_min20 = c.rolling_min(20)
+    roll_max20 = c.rolling_max(20)
+    pre_range_pos20 = ((c - roll_min20) / (roll_max20 - roll_min20).clip(lower_bound=1e-9)).fill_null(0.5)
 
     return df.with_columns([
         pre_rsi14.alias("_pre_rsi14"),
@@ -602,9 +617,14 @@ def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
         pre_range_r.alias("_pre_range_r"),
         pre_volstd20_r.alias("_pre_volstd20_r"),
         pre_body.alias("_pre_body"),
+        pre_body_abs_r.alias("_pre_body_abs_r"),
         pre_upper_wick.alias("_pre_upper_wick"),
         pre_lower_wick.alias("_pre_lower_wick"),
         pre_rsi_vel6.alias("_pre_rsi_vel6"),
+        pre_rsi_vel12.alias("_pre_rsi_vel12"),
+        pre_rsi_accel.alias("_pre_rsi_accel"),
+        pre_macd_hist_d1.alias("_pre_macd_hist_d1"),
+        pre_range_pos20.alias("_pre_range_pos20"),
     ])
 
 
