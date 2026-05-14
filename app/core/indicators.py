@@ -625,6 +625,12 @@ def compute_v4_scoring_series(df: pl.DataFrame,
     std20_c = close.rolling_std(20)
     bb_width_s = (4.0 * std20_c) / sma20_c.clip(lower_bound=1e-9)
 
+    # ── Ratios par moyenne mobile 100 (TF-indépendant) ────────────────────
+    atr_pct_ratio_s    = atr_pct_s    / atr_pct_s.rolling_mean(100).clip(lower_bound=1e-9)
+    vol_std20_ratio_s  = vol_std20_s  / vol_std20_s.rolling_mean(100).clip(lower_bound=1e-9)
+    range_size_ratio_s = range_size_s / range_size_s.rolling_mean(100).clip(lower_bound=1e-9)
+    bb_width_ratio_s   = bb_width_s   / bb_width_s.rolling_mean(100).clip(lower_bound=1e-9)
+
     # ── SMAs pour détection de régime ────────────────────────────────────
     sma20_s  = sma20_c
     sma50_s  = close.rolling_mean(50)
@@ -675,10 +681,11 @@ def compute_v4_scoring_series(df: pl.DataFrame,
 
     # ── Conversion en numpy ───────────────────────────────────────────────
     def _to_np(s): return s.to_numpy().astype(np.float64)
-    atr_pct_arr    = _to_np(atr_pct_s)
-    vol_std20_arr  = np.nan_to_num(_to_np(vol_std20_s),  nan=0.0)
-    range_size_arr = _to_np(range_size_s)
-    bb_width_arr   = np.nan_to_num(_to_np(bb_width_s),   nan=0.0)
+    atr_pct_arr      = _to_np(atr_pct_s)
+    atr_ratio_arr    = np.nan_to_num(_to_np(atr_pct_ratio_s),    nan=1.0)
+    vs_ratio_arr     = np.nan_to_num(_to_np(vol_std20_ratio_s),  nan=1.0)
+    rs_ratio_arr     = np.nan_to_num(_to_np(range_size_ratio_s), nan=1.0)
+    bb_ratio_arr     = np.nan_to_num(_to_np(bb_width_ratio_s),   nan=1.0)
     sma20_arr      = _to_np(sma20_s)
     sma50_arr      = _to_np(sma50_s)
     sma100_arr     = _to_np(sma100_s)
@@ -699,19 +706,13 @@ def compute_v4_scoring_series(df: pl.DataFrame,
     # ── Scores vectorisés ─────────────────────────────────────────────────
     def _sigmoid(z): return 1.0 / (1.0 + np.exp(-np.clip(z, -20, 20)))
 
-    # Amplitude : heuristique GARCH avec lags (rapport V4 §6.1)
-    atr_lag1  = np.roll(atr_pct_arr,    1); atr_lag1[0]    = atr_lag1[1]
-    atr_lag3  = np.roll(atr_pct_arr,    3); atr_lag3[:3]   = atr_lag3[3]
-    vs_lag1   = np.roll(vol_std20_arr,  1); vs_lag1[0]     = vs_lag1[1]
-    vs_lag3   = np.roll(vol_std20_arr,  3); vs_lag3[:3]    = vs_lag3[3]
-    rs_lag1   = np.roll(range_size_arr, 1); rs_lag1[0]     = rs_lag1[1]
-    bw_lag1   = np.roll(bb_width_arr,   1); bw_lag1[0]     = bw_lag1[1]
-
-    z_amp = (-3.5
-             + 200 * atr_lag1  + 80 * atr_lag3
-             + 60  * vs_lag1   + 30 * vs_lag3
-             + 90  * rs_lag1
-             + 35  * bw_lag1)
+    # Amplitude : heuristique GARCH normalisée par rolling 100 (TF-indépendant)
+    # Formule identique à la stratégie scoring_statistique_opus._proba_amplitude
+    z_amp = (-0.5
+             + 1.5 * (atr_ratio_arr - 1.0)
+             + 1.0 * (rs_ratio_arr  - 1.0)
+             + 0.8 * (vs_ratio_arr  - 1.0)
+             + 0.5 * (bb_ratio_arr  - 1.0))
     proba_amp_arr = _sigmoid(z_amp)
 
     # Direction : régime-conditionnel (rapport V4 §6.2-6.3)
@@ -745,11 +746,12 @@ def compute_v4_scoring_series(df: pl.DataFrame,
 
     proba_dir_arr = _sigmoid(z_dir)
 
-    # ── Masque de validité (besoin de SMA200 = 200 barres) ───────────────
+    # ── Masque de validité (besoin de SMA200 + rolling 100 sur ratios) ──
     valid = np.ones(n, dtype=bool)
     valid[:200] = False
     nan_mask = (np.isnan(atr_pct_arr) | np.isnan(sma200_arr)
-                | np.isnan(adx_arr) | (atr_pct_arr <= 0))
+                | np.isnan(adx_arr) | (atr_pct_arr <= 0)
+                | np.isnan(atr_ratio_arr))
     valid[nan_mask] = False
 
     # ── Assemblage des séries de sortie ──────────────────────────────────
