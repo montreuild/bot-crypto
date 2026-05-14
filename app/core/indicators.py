@@ -546,6 +546,39 @@ def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
     pre_ema50  = c.ewm_mean(span=50,  adjust=False)
     pre_ema200 = c.ewm_mean(span=200, adjust=False)
 
+    # SMAs (régime rapport V4 : SMA20/50/100/200)
+    pre_sma20  = c.rolling_mean(20)
+    pre_sma50  = c.rolling_mean(50)
+    pre_sma100 = c.rolling_mean(100)
+    pre_sma200 = c.rolling_mean(200)
+
+    # ── Features scoring Opus (calculées une fois, lues en O(1) dans score()) ──
+    c_safe = c.clip(lower_bound=1e-9)
+    o      = df["open"]
+
+    # ATR% + range + vol_std20 (volatilité)
+    pre_atr_pct   = pre_atr14 / c_safe
+    pre_range     = (h - l) / c_safe
+    log_ret       = (c / c.shift(1).fill_null(c).clip(lower_bound=1e-9)).log(2.718281828)
+    pre_volstd20  = log_ret.rolling_std(20).fill_null(0)
+
+    # Ratios normalisés /mean100 → TF-indépendants (rapport §6.2, calibration)
+    _rm100 = lambda s: s.rolling_mean(100).clip(lower_bound=1e-9)
+    pre_atr_pct_r  = pre_atr_pct  / _rm100(pre_atr_pct)
+    pre_range_r    = pre_range     / _rm100(pre_range)
+    pre_volstd20_r = pre_volstd20  / _rm100(pre_volstd20)
+
+    # Structure de bougie (rapport §6.3 — body #1 feature, wicks importants)
+    t_range    = (h - l).clip(lower_bound=1e-9)
+    body_top   = pl.max_horizontal(c, o)
+    body_bot   = pl.min_horizontal(c, o)
+    pre_body        = (c - o) / c_safe                          # direction corps signé
+    pre_upper_wick  = (h - body_top) / t_range                  # mèche haute [0-1]
+    pre_lower_wick  = (body_bot - l) / t_range                  # mèche basse [0-1]
+
+    # RSI velocity 6 barres (rapport §6.3 top feature direction)
+    pre_rsi_vel6 = (pre_rsi14 - pre_rsi14.shift(6)).fill_null(0)
+
     return df.with_columns([
         pre_rsi14.alias("_pre_rsi14"),
         pre_atr14.alias("_pre_atr14"),
@@ -559,6 +592,19 @@ def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
         pre_ema20.alias("_pre_ema20"),
         pre_ema50.alias("_pre_ema50"),
         pre_ema200.alias("_pre_ema200"),
+        # SMAs régime
+        pre_sma20.alias("_pre_sma20"),
+        pre_sma50.alias("_pre_sma50"),
+        pre_sma100.alias("_pre_sma100"),
+        pre_sma200.alias("_pre_sma200"),
+        # Features scoring Opus
+        pre_atr_pct_r.alias("_pre_atr_pct_r"),
+        pre_range_r.alias("_pre_range_r"),
+        pre_volstd20_r.alias("_pre_volstd20_r"),
+        pre_body.alias("_pre_body"),
+        pre_upper_wick.alias("_pre_upper_wick"),
+        pre_lower_wick.alias("_pre_lower_wick"),
+        pre_rsi_vel6.alias("_pre_rsi_vel6"),
     ])
 
 
