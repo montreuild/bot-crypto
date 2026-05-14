@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.api import state
 from app.api.helpers import verify_api_key, _clean, _discover_strategies
 from app.core.exchange import create_exchange
+from app.core.indicators import compute_v4_scoring_series
 from app.engine.engine import Engine, BaseStrategyML
 from app.engine.scanner import MarketScanner
 
@@ -193,6 +194,18 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
                 for i in range(n)
             ],
         }
+
+        # ── Scores V4 (amplitude, direction, régime) ──────────────────────
+        try:
+            v4_scoring = compute_v4_scoring_series(df)
+            indicators["proba_amp"] = v4_scoring.get("proba_amp", [])
+            indicators["proba_dir"] = v4_scoring.get("proba_dir", [])
+            indicators["regime_v4"] = v4_scoring.get("regime_v4", [])
+        except Exception as _v4_err:
+            logger.warning(f"[API] V4 scoring series KO : {_v4_err}")
+            indicators["proba_amp"] = []
+            indicators["proba_dir"] = []
+            indicators["regime_v4"] = []
 
         return JSONResponse(content=_clean({
             "symbol":     symbol,
