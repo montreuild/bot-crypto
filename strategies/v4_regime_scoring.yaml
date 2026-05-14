@@ -1,0 +1,39 @@
+params:
+  adx_threshold: 20
+  amp_thresh_td: 0.50
+  amp_thresh_other: 0.60
+  dir_dist_td: 0.10
+  dir_dist_other: 0.15
+  rr_min: 1.2
+
+optimizer_results:
+  15m:
+    run_date: "2026-05-14"
+    oos_score: 0.0
+    params:
+      adx_threshold: 20
+      amp_thresh_td: 0.50
+      amp_thresh_other: 0.60
+      dir_dist_td: 0.10
+      dir_dist_other: 0.15
+      rr_min: 1.2
+  30m:
+    run_date: "2026-05-14"
+    oos_score: 0.0
+    params:
+      adx_threshold: 20
+      amp_thresh_td: 0.50
+      amp_thresh_other: 0.60
+      dir_dist_td: 0.10
+      dir_dist_other: 0.15
+      rr_min: 1.2
+  1h:
+    run_date: "2026-05-14"
+    oos_score: 0.0
+    params:
+      adx_threshold: 20
+      amp_thresh_td: 0.50
+      amp_thresh_other: 0.60
+      dir_dist_td: 0.10
+      dir_dist_other: 0.15
+      rr_min: 1.2

@@ -216,6 +216,7 @@
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema200" checked onchange="toggleIndicator('ema200')" style="accent-color:#a78bfa"> EMA 200</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-bb"     checked onchange="toggleIndicator('bb')"     style="accent-color:rgba(77,159,255,.8)"> Bollinger</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-sr"           onchange="toggleIndicator('sr')"     style="accent-color:#ffd166"> Sup/Rés</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-v4score" checked onchange="toggleIndicator('v4score')" style="accent-color:#c084fc"> Score V4</label>
       </div>
       <div class="panel-body" style="gap:0;padding:0">
         <div id="chart-status" style="padding:8px 14px;font-size:.72rem;color:var(--dim);min-height:20px"></div>
@@ -227,7 +228,17 @@
           <div class="chart-sub-lbl" style="margin-top:4px">RSI (14)</div>
           <div class="chart-wrap" id="chart-rsi" style="height:90px" role="img" aria-label="Indicateur RSI (14 périodes)"></div>
           <div class="chart-sub-lbl" style="margin-top:4px">MACD (12,26,9)</div>
-          <div class="chart-wrap" id="chart-macd" style="height:90px;margin-bottom:8px" role="img" aria-label="Indicateur MACD (12,26,9)"></div>
+          <div class="chart-wrap" id="chart-macd" style="height:90px" role="img" aria-label="Indicateur MACD (12,26,9)"></div>
+          <div id="v4score-panel">
+            <div class="chart-sub-lbl" style="margin-top:4px;display:flex;align-items:center;gap:12px">
+              <span>Score V4 — Amplitude &amp; Direction</span>
+              <span style="color:var(--cyan);font-size:.62rem">━ P(événement)</span>
+              <span style="color:#fbbf24;font-size:.62rem">━ P(hausse)</span>
+              <span style="color:rgba(255,255,255,.3);font-size:.62rem">· · · 50%</span>
+              <span style="font-size:.6rem;color:var(--dim);margin-left:4px">Régime : <span style="color:rgba(52,211,153,.8)">▌</span>TrendUp <span style="color:rgba(251,113,133,.8)">▌</span>TrendDn <span style="color:rgba(90,112,153,.8)">▌</span>Range <span style="color:rgba(251,191,36,.8)">▌</span>Choppy</span>
+            </div>
+            <div class="chart-wrap" id="chart-scoring" style="height:120px;margin-bottom:8px" role="img" aria-label="Scores V4 : probabilité d'amplitude et de direction"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -525,7 +536,7 @@ document.getElementById('opp-list').innerHTML='<div class="empty" style="color:v
 // ── Graphique Scanner ───────────────────────────────────────────────────
 let chartTf = '1h';
 let chartType = 'candles'; // 'candles' | 'line'
-let tvPriceChart = null, tvVolChart = null, tvRsiChart = null, tvMacdChart = null;
+let tvPriceChart = null, tvVolChart = null, tvRsiChart = null, tvMacdChart = null, tvScoringChart = null;
 // Series refs for indicator toggles
 let _seriesMap = {};
 // Resize observers to disconnect on destroy
@@ -567,8 +578,8 @@ function _destroyCharts(){
   _resizeObservers.forEach(ro=>{try{ro.disconnect();}catch(_){}});
   _resizeObservers = [];
   // Remove charts
-  [tvPriceChart, tvVolChart, tvRsiChart, tvMacdChart].forEach(c=>{try{if(c)c.remove();}catch(_){}});
-  tvPriceChart=tvVolChart=tvRsiChart=tvMacdChart=null;
+  [tvPriceChart, tvVolChart, tvRsiChart, tvMacdChart, tvScoringChart].forEach(c=>{try{if(c)c.remove();}catch(_){}});
+  tvPriceChart=tvVolChart=tvRsiChart=tvMacdChart=tvScoringChart=null;
   _seriesMap = {};
 }
 
@@ -608,6 +619,12 @@ function toggleIndicator(name){
     });
   } else if(name==='sr'){
     ['sr_res','sr_sup'].forEach(k=>{
+      try{if(_seriesMap[k])_seriesMap[k].applyOptions({visible:!!checked});}catch(_){}
+    });
+  } else if(name==='v4score'){
+    const panel = document.getElementById('v4score-panel');
+    if(panel) panel.style.display = checked ? '' : 'none';
+    ['scoring_amp','scoring_dir','scoring_reg','scoring_ref50','scoring_ref60','scoring_ref40'].forEach(k=>{
       try{if(_seriesMap[k])_seriesMap[k].applyOptions({visible:!!checked});}catch(_){}
     });
   } else {
@@ -756,9 +773,82 @@ function _renderChart(d){
     tvMacdChart.timeScale().fitContent();
   }
 
+  // ── Scoring V4 (amplitude, direction, régime) ─────────────────────────
+  const v4Visible = document.getElementById('tog-v4score')?.checked !== false;
+  tvScoringChart = _mkChart('chart-scoring', 120, {
+    rightPriceScale:{scaleMargins:{top:.06,bottom:.15},autoScale:false,
+                     mode:LightweightCharts.PriceScaleMode.Normal},
+    timeScale:{visible:false},
+  });
+  if(tvScoringChart){
+    tvScoringChart.applyOptions({
+      rightPriceScale:{minimum:0, maximum:1},
+    });
+
+    const _addRefLine=(val,color)=>{
+      const s=tvScoringChart.addLineSeries({
+        color,lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dotted,
+        priceLineVisible:false,lastValueVisible:false,visible:v4Visible,
+      });
+      s.setData([{time:firstTime,value:val},{time:lastTime,value:val}]);
+      return s;
+    };
+    _seriesMap.scoring_ref50 = _addRefLine(0.50,'rgba(255,255,255,.22)');  // 50%
+    _seriesMap.scoring_ref60 = _addRefLine(0.60,'rgba(34,211,238,.18)');   // seuil amp Trend Down
+    _seriesMap.scoring_ref40 = _addRefLine(0.40,'rgba(251,191,36,.15)');   // seuil dir bas
+
+    // Régime : histogramme coloré au bas du panneau (valeur fixe 0.05)
+    const REGIME_COLORS = {
+      0:'rgba(90,112,153,.55)',   // Range: bleu-gris
+      1:'rgba(52,211,153,.55)',   // Trend Up: vert
+      2:'rgba(251,113,133,.55)',  // Trend Down: rouge
+      3:'rgba(251,191,36,.55)',   // Choppy: ambre
+    };
+    if(ind.regime_v4?.length){
+      const regS = tvScoringChart.addHistogramSeries({
+        priceLineVisible:false,lastValueVisible:false,visible:v4Visible,
+        priceFormat:{type:'price',precision:2},
+      });
+      regS.setData(ind.regime_v4.map(p=>({
+        time:p.time, value:0.048,
+        color:REGIME_COLORS[p.value]||'rgba(90,112,153,.4)',
+      })));
+      _seriesMap.scoring_reg = regS;
+    }
+
+    // Amplitude probability (cyan)
+    if(ind.proba_amp?.length){
+      const ampS = tvScoringChart.addLineSeries({
+        color:'#22d3ee',lineWidth:1.5,
+        priceLineVisible:false,lastValueVisible:true,title:'Amp',
+        visible:v4Visible,
+        crosshairMarkerVisible:true,crosshairMarkerRadius:3,
+      });
+      ampS.setData(ind.proba_amp);
+      _seriesMap.scoring_amp = ampS;
+    }
+
+    // Direction probability (amber)
+    if(ind.proba_dir?.length){
+      const dirS = tvScoringChart.addLineSeries({
+        color:'#fbbf24',lineWidth:1.5,
+        priceLineVisible:false,lastValueVisible:true,title:'Dir',
+        visible:v4Visible,
+        crosshairMarkerVisible:true,crosshairMarkerRadius:3,
+      });
+      dirS.setData(ind.proba_dir);
+      _seriesMap.scoring_dir = dirS;
+    }
+
+    tvScoringChart.timeScale().fitContent();
+  }
+  // Masquer le panneau si la checkbox est décochée
+  const v4panel = document.getElementById('v4score-panel');
+  if(v4panel) v4panel.style.display = v4Visible ? '' : 'none';
+
   // ── Sync sub-charts to price chart via TIME range (fixes RSI offset) ─
   let _syncing = false;
-  const _subCharts = [tvVolChart, tvRsiChart, tvMacdChart].filter(Boolean);
+  const _subCharts = [tvVolChart, tvRsiChart, tvMacdChart, tvScoringChart].filter(Boolean);
 
   tvPriceChart.timeScale().subscribeVisibleTimeRangeChange(range=>{
     if(_syncing||!range) return;
