@@ -295,7 +295,7 @@ function renderStratChecks(spaces, stratTfs) {
     el.innerHTML = '<div style="color:var(--red);font-size:.75rem">Erreur chargement stratégies</div>';
     return;
   }
-  el.innerHTML = Object.keys(spaces).filter(s => !s.startsWith('ml_')).map(s => {
+  el.innerHTML = Object.keys(spaces).filter(s => !s.startsWith('ml_') && !spaces[s].is_ml).map(s => {
     const tfs = (stratTfs[s] || []).join(', ') || 'tous';
     return `<div class="checkbox-row" style="margin-bottom:0;align-items:flex-start">
       <input type="checkbox" id="sc-${s}" checked onchange="updateStratCompatibility()"/>
