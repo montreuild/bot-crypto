@@ -185,13 +185,22 @@ class Strategy(BaseStrategy):
         p = (params or {}).get(self.name, {})
 
         adx_threshold  = float(p.get("adx_threshold",    20.0))
-        amp_thresh_tu  = float(p.get("amp_thresh_tu",    0.45))
-        amp_thresh_td  = float(p.get("amp_thresh_td",    0.45))
-        amp_thresh_oth = float(p.get("amp_thresh_other", 0.55))
+        amp_thresh_tu  = float(p.get("amp_thresh_tu",    0.50))
+        amp_thresh_td  = float(p.get("amp_thresh_td",    0.50))
+        amp_thresh_oth = float(p.get("amp_thresh_other", 0.60))
         dir_dist_tu    = float(p.get("dir_dist_tu",      0.20))
-        dir_dist_td    = float(p.get("dir_dist_td",      0.08))
-        dir_dist_oth   = float(p.get("dir_dist_other",   0.12))
+        dir_dist_td    = float(p.get("dir_dist_td",      0.10))
+        dir_dist_oth   = float(p.get("dir_dist_other",   0.15))
         rr_min         = float(p.get("rr_min",           0.6))
+
+        trail_override = {
+            "trail_wide":  float(p.get("trail_wide",  1.0)),
+            "grace_bars":  int(p.get("grace_bars",    2)),
+            "breakeven_r": float(p.get("breakeven_r", 0.6)),
+            "lock_r":      float(p.get("lock_r",      1.5)),
+            "tight_r":     float(p.get("tight_r",     2.5)),
+            "trail_tight": float(p.get("trail_tight", 0.5)),
+        }
 
         sym = symbol or "default"
         cnt = self._call_count.get(sym, 0) + 1
@@ -302,11 +311,12 @@ class Strategy(BaseStrategy):
         size_lbl = "Pleine" if size_fac == 1.0 else ("3/4" if size_fac == 0.75 else "1/2")
 
         return {
-            "score":      score,
-            "side":       side,
-            "name":       self.name,
-            "atr":        atr_now,
-            "stop_hint":  round(stop, 2),
+            "score":         score,
+            "side":          side,
+            "name":          self.name,
+            "atr":           atr_now,
+            "stop_hint":     round(stop, 2),
+            "trail_override": trail_override,
             "proba_amp":  round(proba_amp, 3),
             "proba_dir":  round(proba_dir, 3),
             "regime":     regime,

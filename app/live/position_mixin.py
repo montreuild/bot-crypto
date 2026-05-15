@@ -46,6 +46,26 @@ def _calc_unreal_pct(side: str, entry: float, price: float) -> float:
            else (entry - price) / entry * 100
 
 
+def _apply_trail_override(base_cfg: dict, override: dict) -> dict:
+    """Fusionne la config trailing globale avec un trail_override signal/position.
+
+    Les clés d'override utilisent les noms du signal (trail_wide, trail_tight…)
+    tandis que _trailing_cfg utilise mult / trail_tight_mult.
+    """
+    if not override:
+        return base_cfg
+    merged = dict(base_cfg)
+    if "trail_wide"  in override: merged["mult"]             = float(override["trail_wide"])
+    if "trail_tight" in override: merged["trail_tight_mult"] = float(override["trail_tight"])
+    if "grace_bars"  in override: merged["grace_bars"]       = int(override["grace_bars"])
+    if "breakeven_r" in override: merged["breakeven_r"]      = float(override["breakeven_r"])
+    if "lock_r"      in override: merged["lock_r"]           = float(override["lock_r"])
+    if "tight_r"     in override: merged["tight_r"]          = float(override["tight_r"])
+    if "lock_ratio"  in override: merged["lock_ratio"]       = float(override["lock_ratio"])
+    if "use_swing"   in override: merged["use_swing"]        = bool(override["use_swing"])
+    return merged
+
+
 class PositionMixin:
 
     # ── Restauration au démarrage ──────────────────────────────────────────
@@ -130,7 +150,8 @@ class PositionMixin:
             except Exception as _tk_err:
                 logger.debug(f"[Reprise] Impossible de vérifier le prix de {symbol} : {_tk_err}")
 
-            trailing = TrailingStopManager(**self._trailing_cfg)
+            trail_cfg = _apply_trail_override(self._trailing_cfg, pos.get("trail_override"))
+            trailing = TrailingStopManager(**trail_cfg)
             trailing.init_from_stop(pos["entry"], pos["stop"], pos["side"])
             pos["_trailing"] = trailing
             with self._positions_lock:
@@ -157,7 +178,9 @@ class PositionMixin:
     def _open_position(self, pos_key: str, symbol: str, signal: dict,
                        price: float, size: float, notional: float,
                        atr: float, leverage: float, tf: str) -> None:
-        trailing  = TrailingStopManager(**self._trailing_cfg)
+        trail_override = signal.get("trail_override") or {}
+        trail_cfg = _apply_trail_override(self._trailing_cfg, trail_override)
+        trailing  = TrailingStopManager(**trail_cfg)
         stop      = trailing.initial_stop(price, atr, signal["side"])
         order     = self.exchange.create_order(
             symbol, "market", signal["side"], size,
@@ -191,23 +214,24 @@ class PositionMixin:
 
         strat_name = signal.get("name", "")
         pos = {
-            "id":        pos_key,
-            "symbol":    symbol,
-            "side":      signal["side"],
-            "strategy":  strat_name,
-            "timeframe": tf,
-            "score":     signal.get("score", 0),
-            "entry":     exec_price,
-            "stop":      stop,
-            "size":      size,
-            "notional":  notional,
-            "leverage":  leverage,
-            "open_time": time.time(),
-            "fees":      fees,
-            "pnl":       0.0,
-            "reason":    signal.get("reason", ""),
-            "order_id":  order.get("id", ""),
-            "_trailing": trailing,
+            "id":             pos_key,
+            "symbol":         symbol,
+            "side":           signal["side"],
+            "strategy":       strat_name,
+            "timeframe":      tf,
+            "score":          signal.get("score", 0),
+            "entry":          exec_price,
+            "stop":           stop,
+            "size":           size,
+            "notional":       notional,
+            "leverage":       leverage,
+            "open_time":      time.time(),
+            "fees":           fees,
+            "pnl":            0.0,
+            "reason":         signal.get("reason", ""),
+            "order_id":       order.get("id", ""),
+            "trail_override": trail_override or None,
+            "_trailing":      trailing,
         }
         with self._positions_lock:
             self.open_positions[pos_key] = pos
@@ -287,7 +311,8 @@ class PositionMixin:
         bars_held    = int((time.time() - pos["open_time"]) / _pos_tf_secs)
         trailing     = pos.get("_trailing")
         if trailing is None:
-            trailing       = TrailingStopManager(**self._trailing_cfg)
+            trail_cfg        = _apply_trail_override(self._trailing_cfg, pos.get("trail_override"))
+            trailing         = TrailingStopManager(**trail_cfg)
             pos["_trailing"] = trailing
 
         new_stop = trailing.update_stop(

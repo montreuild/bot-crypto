@@ -1,0 +1,36 @@
+params:
+  adx_threshold: 20
+  # Probabilité minimale pour générer un signal (distance à 0.5)
+  # 0.55 = LightGBM doit être ≥ 55% certain de la direction
+  min_prob: 0.55
+  # Réentraînement toutes les N barres (walk-forward léger)
+  retrain_every: 300
+  # Barres d'historique utilisées pour l'entraînement
+  warmup_bars: 400
+  score_threshold: 0.55
+
+optimizer_results:
+  15m:
+    run_date: "2026-05-15"
+    oos_score: null  # À remplir après premier backtest
+    params:
+      adx_threshold: 20
+      min_prob: 0.55
+      retrain_every: 300
+      warmup_bars: 400
+  30m:
+    run_date: "2026-05-15"
+    oos_score: null
+    params:
+      adx_threshold: 20
+      min_prob: 0.55
+      retrain_every: 300
+      warmup_bars: 400
+  1h:
+    run_date: "2026-05-15"
+    oos_score: null
+    params:
+      adx_threshold: 20
+      min_prob: 0.58
+      retrain_every: 200
+      warmup_bars: 500

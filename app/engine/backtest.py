@@ -225,16 +225,17 @@ class Backtester:
         self.partial_fill = bcfg.get("partial_fill_pct",  0.95)
         self.max_notional_pct = float(bcfg.get("max_notional_pct", 0.50))
 
-    def _make_trailing(self):
+    def _make_trailing(self, override: dict = None):
+        ov = override or {}
         return TrailingStopManager(
-            mult             = self.trail_wide,
-            grace_bars       = self.grace_bars,
-            breakeven_r      = self.breakeven_r,
-            trail_tight_mult = self.trail_tight,
-            lock_r           = self.lock_r,
-            tight_r          = self.tight_r,
-            lock_ratio       = self.lock_ratio,
-            use_swing        = self.use_swing,
+            mult             = float(ov.get("trail_wide",   self.trail_wide)),
+            grace_bars       = int(ov.get("grace_bars",     self.grace_bars)),
+            breakeven_r      = float(ov.get("breakeven_r",  self.breakeven_r)),
+            trail_tight_mult = float(ov.get("trail_tight",  self.trail_tight)),
+            lock_r           = float(ov.get("lock_r",       self.lock_r)),
+            tight_r          = float(ov.get("tight_r",      self.tight_r)),
+            lock_ratio       = float(ov.get("lock_ratio",   self.lock_ratio)),
+            use_swing        = bool(ov.get("use_swing",     self.use_swing)),
         )
 
     # ── run ───────────────────────────────────────────────────────────────────
@@ -410,7 +411,7 @@ class Backtester:
             else:
                 exec_price *= (1 - self.spread_pct)
 
-            _trailing = self._make_trailing()
+            _trailing = self._make_trailing(signal.get("trail_override"))
             stop      = _trailing.initial_stop(exec_price, atr_v, signal["side"])
 
             stop_dist    = abs(exec_price - stop)
