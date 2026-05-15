@@ -1,0 +1,85 @@
+params:
+  adx_threshold: 20
+  # Trend Down (rapport §6.4 — régime favorable, AUC dir 0.87)
+  amp_thresh_td: 0.50
+  dir_dist_td: 0.10
+  # Trend Up (V5: ajout — rapport déconseille, on tente avec seuils stricts)
+  amp_thresh_tu: 0.60
+  dir_dist_tu: 0.18
+  # Range / Choppy
+  amp_thresh_other: 0.60
+  dir_dist_other: 0.15
+  amp_top_pct: 0.30
+  # Exploitation du clustering (rapport §3.1 : 50-70% des événements en grappes)
+  max_hold_bars: 8        # garde jusqu'à 8 barres si clustering continue
+  trail_wide: 1.5         # SL initial = 1.5×ATR (rapport §6.6)
+  grace_bars: 2
+  breakeven_r: 0.5        # breakeven dès 0.5×ATR profit
+  lock_r: 1.5
+  tight_r: 2.5
+  trail_tight: 0.5
+  warmup_bars: 2000
+  retrain_every: 800
+  score_threshold: 0.55
+
+optimizer_results:
+  15m:
+    run_date: "2026-05-15"
+    oos_score: null
+    params:
+      adx_threshold: 20
+      amp_thresh_td: 0.50
+      dir_dist_td: 0.10
+      amp_thresh_tu: 0.60
+      dir_dist_tu: 0.18
+      amp_thresh_other: 0.60
+      dir_dist_other: 0.15
+      amp_top_pct: 0.30
+      max_hold_bars: 6       # 15m: clustering plus court (50%)
+      trail_wide: 1.5
+      breakeven_r: 0.5
+      lock_r: 1.5
+      tight_r: 2.5
+      trail_tight: 0.5
+      warmup_bars: 2000
+      retrain_every: 800
+  30m:
+    run_date: "2026-05-15"
+    oos_score: null
+    params:
+      adx_threshold: 20
+      amp_thresh_td: 0.50
+      dir_dist_td: 0.10
+      amp_thresh_tu: 0.60
+      dir_dist_tu: 0.18
+      amp_thresh_other: 0.60
+      dir_dist_other: 0.15
+      amp_top_pct: 0.30
+      max_hold_bars: 8       # 30m: clustering moyen (60%)
+      trail_wide: 1.5
+      breakeven_r: 0.5
+      lock_r: 1.5
+      tight_r: 2.5
+      trail_tight: 0.5
+      warmup_bars: 2000
+      retrain_every: 800
+  1h:
+    run_date: "2026-05-15"
+    oos_score: null
+    params:
+      adx_threshold: 20
+      amp_thresh_td: 0.50
+      dir_dist_td: 0.10
+      amp_thresh_tu: 0.60
+      dir_dist_tu: 0.18
+      amp_thresh_other: 0.65
+      dir_dist_other: 0.18
+      amp_top_pct: 0.30
+      max_hold_bars: 12      # 1h: clustering plus long (70%)
+      trail_wide: 1.8
+      breakeven_r: 0.6
+      lock_r: 2.0
+      tight_r: 3.0
+      trail_tight: 0.6
+      warmup_bars: 2000
+      retrain_every: 800
