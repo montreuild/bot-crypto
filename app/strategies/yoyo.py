@@ -4,7 +4,10 @@ Règle d'entrée :
   - LONG  : close[i-1] > open[i-1]  ET  close[i] > open[i]   (2 vertes)
   - SHORT : close[i-1] < open[i-1]  ET  close[i] < open[i]   (2 rouges)
 
-Stop loss dynamique ATR (serré, adapté 1h).
+Stop loss très serré : open de la dernière bougie.
+  - LONG  : SL = open[i] — si on retombe sous l'open, la continuation est morte
+  - SHORT : SL = open[i] — si on remonte au-dessus, idem
+Soit le mouvement se poursuit, soit on coupe immédiatement.
 """
 
 import logging
@@ -22,10 +25,8 @@ class Strategy(BaseStrategy):
     name = "yoyo"
 
     param_space: Dict[str, Any] = {
-        "atr_mult_sl":    [0.8, 1.0, 1.2, 1.5, 1.8],
-        "min_body_pct":   [0.0, 0.001, 0.002, 0.003],
-        "atr_filter":     [0.0, 0.001, 0.002, 0.003],
-        "score_threshold":[0.55, 0.60, 0.65],
+        "sl_buffer_pct":   [0.0, 0.0005, 0.001, 0.002],  # marge sous/au-dessus de l'open
+        "score_threshold": [0.55, 0.60, 0.65],
     }
 
     fixed_params: Dict[str, Any] = {}
@@ -33,9 +34,7 @@ class Strategy(BaseStrategy):
     def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get(self.name, {})
-        atr_mult_sl    = float(p.get("atr_mult_sl",  1.2))
-        min_body_pct   = float(p.get("min_body_pct", 0.001))
-        atr_filter     = float(p.get("atr_filter",   0.001))
+        sl_buffer_pct = float(p.get("sl_buffer_pct", 0.0005))
 
         if len(df) < 3:
             return self._none("Données insuffisantes")
@@ -46,22 +45,11 @@ class Strategy(BaseStrategy):
         o_prev = float(df["open"][-2])
         atr_v  = pre_val(df, "_pre_atr14") or 0.0
 
-        if c_now <= 0 or atr_v <= 0:
-            return self._none("ATR ou prix invalide")
-
-        # Filtre volatilité minimale — évite les barres plates
-        if atr_filter > 0 and atr_v / c_now < atr_filter:
-            return self._none(f"ATR trop faible ({atr_v/c_now:.4%} < {atr_filter:.4%})")
+        if c_now <= 0:
+            return self._none("Prix invalide")
 
         body_now  = c_now  - o_now
         body_prev = c_prev - o_prev
-
-        # Filtre taille de corps : évite les doji
-        if min_body_pct > 0:
-            if abs(body_now)  / c_now  < min_body_pct:
-                return self._none("Corps barre actuelle trop petit")
-            if abs(body_prev) / c_prev < min_body_pct:
-                return self._none("Corps barre précédente trop petit")
 
         green_now  = body_now  > 0
         green_prev = body_prev > 0
@@ -70,17 +58,15 @@ class Strategy(BaseStrategy):
 
         if green_now and green_prev:
             side = "long"
-            stop = c_now - atr_mult_sl * atr_v
-            # Force du signal : amplitude des deux corps / ATR
-            strength = (body_now + body_prev) / atr_v
+            stop = o_now * (1.0 - sl_buffer_pct)
+            strength = (body_now + body_prev) / max(atr_v, 1e-9) if atr_v > 0 else 1.0
         elif red_now and red_prev:
             side = "short"
-            stop = c_now + atr_mult_sl * atr_v
-            strength = (abs(body_now) + abs(body_prev)) / atr_v
+            stop = o_now * (1.0 + sl_buffer_pct)
+            strength = (abs(body_now) + abs(body_prev)) / max(atr_v, 1e-9) if atr_v > 0 else 1.0
         else:
             return self._none("Pas de pattern 2-bougies consécutives")
 
-        # Score [0.55 – 0.94], bonus confiance issu de la force des corps
         score = round(min(0.55 + strength * 0.05, 0.94), 3)
 
         return {
@@ -92,16 +78,21 @@ class Strategy(BaseStrategy):
             "indicators": {
                 "body_now":   round(body_now, 4),
                 "body_prev":  round(body_prev, 4),
+                "open_now":   round(o_now, 4),
                 "atr":        round(atr_v, 4),
                 "strength":   round(strength, 3),
             },
             "conditions": [
                 f"Bougie N-1 : {'verte' if green_prev else 'rouge'} (corps {body_prev:+.2f})",
                 f"Bougie N   : {'verte' if green_now  else 'rouge'} (corps {body_now:+.2f})",
-                f"ATR={atr_v:.2f} | SL={atr_mult_sl:.1f}×ATR",
+                f"SL = open[N] ({o_now:.2f}) {'-' if side == 'long' else '+'} {sl_buffer_pct:.2%}",
                 f"Force signal : {strength:.2f}×ATR",
             ],
-            "reason": f"Yoyo {side.upper()} | 2 bougies {'vertes' if side == 'long' else 'rouges'} | force={strength:.2f}",
+            "reason": (
+                f"Yoyo {side.upper()} | 2 bougies "
+                f"{'vertes' if side == 'long' else 'rouges'} | "
+                f"SL={stop:.2f} (open±{sl_buffer_pct:.2%})"
+            ),
         }
 
     def _none(self, reason: str = "") -> dict:
