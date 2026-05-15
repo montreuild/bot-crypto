@@ -1,14 +1,15 @@
 params:
   adx_threshold: 20
-  # Trend Down (rapport §6.4 — régime favorable, AUC dir 0.87)
-  amp_thresh_td: 0.50
-  dir_dist_td: 0.10
-  # Trend Up (V5: ajout — rapport déconseille, on tente avec seuils stricts)
-  amp_thresh_tu: 0.60
-  dir_dist_tu: 0.18
+  # Trend Down — seuils assouplis : AUC réelle ~0.55-0.65 sur petits datasets
+  # (le 0.87 du rapport suppose 50 000 bougies). Sans assouplissement = 0 trade.
+  amp_thresh_td: 0.40
+  dir_dist_td: 0.05
+  # Trend Up (V5: ajout)
+  amp_thresh_tu: 0.55
+  dir_dist_tu: 0.12
   # Range / Choppy
-  amp_thresh_other: 0.60
-  dir_dist_other: 0.15
+  amp_thresh_other: 0.50
+  dir_dist_other: 0.08
   amp_top_pct: 0.30
   # Exploitation du clustering (rapport §3.1 : 50-70% des événements en grappes)
   max_hold_bars: 8        # garde jusqu'à 8 barres si clustering continue

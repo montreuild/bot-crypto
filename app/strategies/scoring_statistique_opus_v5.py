@@ -193,15 +193,15 @@ class Strategy(BaseStrategyML):
 
     param_space: Dict[str, Any] = {
         "adx_threshold":     [15, 20, 25],
-        # Trend Down — seuils du rapport §6.4
-        "amp_thresh_td":     [0.45, 0.50, 0.55],
-        "dir_dist_td":       [0.08, 0.10, 0.12],
+        # Trend Down — seuils élargis vers le bas (AUC réelle < 0.87 sur petit dataset)
+        "amp_thresh_td":     [0.35, 0.40, 0.45, 0.50, 0.55],
+        "dir_dist_td":       [0.03, 0.05, 0.08, 0.10, 0.12],
         # Trend Up — seuils stricts (rapport déconseille mais on tente)
-        "amp_thresh_tu":     [0.55, 0.60, 0.65],
-        "dir_dist_tu":       [0.15, 0.18, 0.20],
-        # Range/Choppy — seuils du rapport §6.4
-        "amp_thresh_other":  [0.55, 0.60, 0.65],
-        "dir_dist_other":    [0.12, 0.15, 0.18],
+        "amp_thresh_tu":     [0.45, 0.55, 0.60, 0.65],
+        "dir_dist_tu":       [0.08, 0.12, 0.15, 0.18, 0.20],
+        # Range/Choppy
+        "amp_thresh_other":  [0.40, 0.50, 0.55, 0.60, 0.65],
+        "dir_dist_other":    [0.05, 0.08, 0.12, 0.15, 0.18],
         "amp_top_pct":       [0.25, 0.30, 0.35],
         # Exploitation clustering
         "max_hold_bars":     [4, 6, 8, 12],
