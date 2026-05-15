@@ -109,13 +109,16 @@ class Strategy(BaseStrategyML):
     fixed_params: Dict[str, Any] = {}
 
     def __init__(self):
-        self._models:   Dict[str, Any] = {}   # tf → lgbm.Booster
-        self._scalers:  Dict[str, Any] = {}   # tf → sklearn.StandardScaler
-        self._trained:  set = set()
-        self._lock      = threading.Lock()
-        self._call_cnt: Dict[str, int] = {}
-        self._last_retrain: Dict[str, int] = {}
+        self._models:         Dict[str, Any] = {}   # tf_key → lgbm.Booster
+        self._scalers:        Dict[str, Any] = {}   # tf_key → sklearn.StandardScaler
+        self._trained_tfs:    set = set()           # timeframes entraînés (interface auto_optimizer)
+        self._lock            = threading.Lock()
+        self._call_cnt:       Dict[str, int] = {}
+        self._last_retrain:   Dict[str, int] = {}
         self._managed_externally = False
+        # Compatibilité API ML (routes/ml.py lit _best_auc et _best_auc_per_tf)
+        self._best_auc:        float            = 0.0
+        self._best_auc_per_tf: Dict[str, float] = {}
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get(self.name, {})
@@ -123,7 +126,7 @@ class Strategy(BaseStrategyML):
 
     @property
     def is_trained(self) -> bool:
-        return bool(self._trained)
+        return bool(self._trained_tfs)
 
     @property
     def managed_externally(self) -> bool:
@@ -137,15 +140,21 @@ class Strategy(BaseStrategyML):
         with self._lock:
             self._models.clear()
             self._scalers.clear()
-            self._trained.clear()
+            self._trained_tfs.clear()
+            self._best_auc_per_tf.clear()
             self._last_retrain.clear()
             self._managed_externally = False
+            self._best_auc = 0.0
 
     def fit(self, df: pl.DataFrame, params: dict = None) -> None:
-        """Entraîne le modèle LightGBM sur df."""
+        """Entraîne le modèle LightGBM sur df (interface BaseStrategyML publique)."""
         p             = (params or {}).get(self.name, {})
         adx_threshold = float(p.get("adx_threshold", 20.0))
-        tf_key        = "fit"
+        self._fit(df, adx_threshold=adx_threshold)
+
+    def _fit(self, df: pl.DataFrame, timeframe: str = "", adx_threshold: float = 20.0) -> None:
+        """Interface attendue par auto_optimizer (_fit + _trained_tfs)."""
+        tf_key = timeframe or "default"
         self._train(df, tf_key, adx_threshold)
 
     def _train(self, df: pl.DataFrame, tf_key: str, adx_threshold: float) -> bool:
@@ -242,14 +251,15 @@ class Strategy(BaseStrategyML):
             logger.warning(f"[V3] Entraînement échoué : {e}")
             return False
 
+        auc = booster.best_score.get("valid_0", {}).get("auc", 0.0)
         with self._lock:
-            self._models[tf_key]  = booster
-            self._scalers[tf_key] = scaler
-            self._trained.add(tf_key)
+            self._models[tf_key]           = booster
+            self._scalers[tf_key]          = scaler
+            self._trained_tfs.add(tf_key)
+            self._best_auc_per_tf[tf_key]  = auc
+            self._best_auc                 = auc  # reflète le dernier TF entraîné
 
-        n_bars = len(X_f)
-        auc    = booster.best_score.get("valid_0", {}).get("auc", 0.0)
-        logger.info(f"[V3] {tf_key} entraîné : {n_bars} barres | AUC={auc:.3f}")
+        logger.info(f"[V3] {tf_key} entraîné : {len(X_f)} barres | AUC={auc:.3f}")
         return True
 
     def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
@@ -261,11 +271,12 @@ class Strategy(BaseStrategyML):
         with self._lock:
             booster = self._models.get(tf_key)
             scaler  = self._scalers.get(tf_key)
+            auc     = self._best_auc_per_tf.get(tf_key, 0.0)
         if booster is None:
             return
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         joblib.dump({"booster": booster, "scaler": scaler,
-                     "feature_cols": _FEATURE_COLS}, path)
+                     "feature_cols": _FEATURE_COLS, "best_auc": auc}, path)
 
     def load_model(self, path: str) -> bool:
         if not os.path.exists(path):
@@ -274,11 +285,14 @@ class Strategy(BaseStrategyML):
         try:
             import joblib
             data = joblib.load(path)
+            auc  = float(data.get("best_auc", 0.0))
             with self._lock:
-                self._models[tf_key]  = data["booster"]
-                self._scalers[tf_key] = data["scaler"]
-                self._trained.add(tf_key)
-            logger.info(f"[V3] Modèle chargé depuis {path}")
+                self._models[tf_key]          = data["booster"]
+                self._scalers[tf_key]         = data["scaler"]
+                self._trained_tfs.add(tf_key)
+                self._best_auc_per_tf[tf_key] = auc
+                self._best_auc                = auc
+            logger.info(f"[V3] Modèle chargé depuis {path} (AUC={auc:.3f})")
             return True
         except Exception as e:
             logger.warning(f"[V3] Chargement échoué {path}: {e}")
@@ -306,7 +320,7 @@ class Strategy(BaseStrategyML):
 
         # ── Entraînement initial ou réentraînement périodique ──────────────
         last = self._last_retrain.get(tf_key, 0)
-        need_train = (tf_key not in self._trained) or (cnt - last >= retrain_every)
+        need_train = (tf_key not in self._trained_tfs) or (cnt - last >= retrain_every)
 
         if need_train and not self._managed_externally:
             # Entraîner sur les `warmup_bars * 2` dernières barres disponibles
@@ -316,7 +330,7 @@ class Strategy(BaseStrategyML):
             if ok:
                 self._last_retrain[tf_key] = cnt
 
-        if tf_key not in self._trained:
+        if tf_key not in self._trained_tfs:
             return self._none("Modèle non encore entraîné")
 
         # ── Régime courant ─────────────────────────────────────────────────

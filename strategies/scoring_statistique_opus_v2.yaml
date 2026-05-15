@@ -10,15 +10,9 @@ params:
   amp_thresh_other: 0.60
   dir_dist_other: 0.15
   rr_min: 0.6
-  # Trailing stop serré — cible mouvements courts >0.4% (rapide décision)
-  # trail_wide=1.0×ATR vs défaut 2.5×ATR (stop ~3× plus serré à l'entrée)
-  # breakeven_r=0.6 : breakeven dès 0.6×ATR de profit (au lieu de 1.2×)
-  trail_wide: 1.0
-  grace_bars: 2
-  breakeven_r: 0.6
-  lock_r: 1.5
-  tight_r: 2.5
-  trail_tight: 0.5
+  # Trailing stop — identique aux paramètres globaux par défaut.
+  # Surcharge possible par timeframe dans optimizer_results ci-dessous.
+  # (trail_wide=2.5 est le défaut engine — ne pas mettre < 1.5 sur 15m : trop de bruit)
 
 optimizer_results:
   15m:
@@ -33,12 +27,13 @@ optimizer_results:
       dir_dist_td: 0.10
       dir_dist_other: 0.15
       rr_min: 0.6
-      trail_wide: 1.0
-      grace_bars: 2
-      breakeven_r: 0.6
-      lock_r: 1.5
-      tight_r: 2.5
-      trail_tight: 0.5
+      # 15m : beaucoup de bruit → trailing plus large, breakeven tardif
+      trail_wide: 2.0
+      grace_bars: 3
+      breakeven_r: 1.0
+      lock_r: 2.0
+      tight_r: 3.5
+      trail_tight: 0.8
   30m:
     run_date: "2026-05-14"
     oos_score: 0.66
@@ -51,12 +46,13 @@ optimizer_results:
       dir_dist_td: 0.10
       dir_dist_other: 0.15
       rr_min: 0.6
-      trail_wide: 1.0
+      # 30m : équilibre entre rapidité et bruit — cible mouvements >0.4%
+      trail_wide: 1.5
       grace_bars: 2
-      breakeven_r: 0.6
-      lock_r: 1.5
-      tight_r: 2.5
-      trail_tight: 0.5
+      breakeven_r: 0.8
+      lock_r: 1.8
+      tight_r: 3.0
+      trail_tight: 0.6
   1h:
     run_date: "2026-05-14"
     oos_score: 0.65
@@ -69,9 +65,10 @@ optimizer_results:
       dir_dist_td: 0.10
       dir_dist_other: 0.15
       rr_min: 0.6
-      trail_wide: 1.2
+      # 1h : mouvements plus longs → trailing un peu plus serré qu'engine défaut
+      trail_wide: 1.8
       grace_bars: 2
-      breakeven_r: 0.7
-      lock_r: 1.8
-      tight_r: 3.0
-      trail_tight: 0.6
+      breakeven_r: 0.9
+      lock_r: 2.0
+      tight_r: 3.5
+      trail_tight: 0.7
