@@ -74,7 +74,9 @@ class Strategy(BaseStrategy):
             "side":      side,
             "name":      self.name,
             "atr":       atr_v,
-            "stop_hint": round(stop, 2),
+            # Stop initial = open de la dernière bougie ± buffer (le trailing
+            # manager prend le relais après pour sécuriser les gains)
+            "stop_hint": round(stop, 6),
             "indicators": {
                 "body_now":   round(body_now, 4),
                 "body_prev":  round(body_prev, 4),
@@ -85,13 +87,13 @@ class Strategy(BaseStrategy):
             "conditions": [
                 f"Bougie N-1 : {'verte' if green_prev else 'rouge'} (corps {body_prev:+.2f})",
                 f"Bougie N   : {'verte' if green_now  else 'rouge'} (corps {body_now:+.2f})",
-                f"SL = open[N] ({o_now:.2f}) {'-' if side == 'long' else '+'} {sl_buffer_pct:.2%}",
+                f"SL = open[N] ({o_now:.2f}) ± {sl_buffer_pct:.2%} → {stop:.2f}",
                 f"Force signal : {strength:.2f}×ATR",
             ],
             "reason": (
                 f"Yoyo {side.upper()} | 2 bougies "
                 f"{'vertes' if side == 'long' else 'rouges'} | "
-                f"SL={stop:.2f} (open±{sl_buffer_pct:.2%})"
+                f"SL fixe={stop:.2f}"
             ),
         }
 

@@ -306,7 +306,7 @@ def _build_pipeline(model_type: str, params: dict) -> Pipeline:
     if model_type == "random_forest":
         clf = RandomForestClassifier(random_state=42, **clf_params)
     else:
-        clf = LogisticRegression(random_state=42, **clf_params)
+        clf = LogisticRegression(random_state=42, max_iter=2000, solver="saga", **clf_params)
     return Pipeline([("scaler", StandardScaler()), ("clf", clf)])
 
 

@@ -453,7 +453,12 @@ class Backtester:
                 exec_price *= (1 - self.spread_pct)
 
             _trailing = self._make_trailing(signal.get("trail_override"))
-            stop      = _trailing.initial_stop(exec_price, atr_v, signal["side"])
+            # Si la stratégie fournit un stop_hint, on l'utilise comme stop initial
+            # (le trailing manager prend le relais ensuite pour sécuriser les gains).
+            if signal.get("stop_hint") is not None:
+                stop = float(signal["stop_hint"])
+            else:
+                stop = _trailing.initial_stop(exec_price, atr_v, signal["side"])
 
             stop_dist    = abs(exec_price - stop)
             risk_amount  = capital * risk
