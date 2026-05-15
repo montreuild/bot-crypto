@@ -287,11 +287,13 @@ def optimizer_results():
 @router.get("/api/optimize/spaces")
 def optimizer_spaces():
     from app.engine.optimizer import PARAM_SPACES, STRATEGY_TIMEFRAMES
+    from app.engine.auto_optimizer import _is_ml_strategy
     return {
         strat: {
             "params":     {k: v for k, v in space.items()},
             "timeframes": STRATEGY_TIMEFRAMES.get(strat, []),
             "n_combos":   1,
+            "is_ml":      _is_ml_strategy(strat),
         }
         for strat, space in PARAM_SPACES.items()
     }

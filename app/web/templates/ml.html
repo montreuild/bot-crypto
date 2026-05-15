@@ -210,8 +210,9 @@ async function loadSpaces() {
 
     const r      = await apiFetch('/api/optimize/spaces');
     const spaces = await r.json();
-    // Filtrer uniquement les stratégies ML (préfixe ml_)
-    const mlSpaces = Object.fromEntries(Object.entries(spaces).filter(([k]) => k.startsWith('ml_')));
+    // Filtrer les stratégies ML : préfixe ml_ OU flag is_ml=true (ex: scoring_statistique_opus_v3)
+    const mlSpaces = Object.fromEntries(Object.entries(spaces).filter(([k, v]) => k.startsWith('ml_') || v.is_ml));
+    window._mlStratNames = Object.keys(mlSpaces);
 
     renderTfChecks(activeTfs);
     renderStratChecks(mlSpaces, stratTfs);
@@ -505,9 +506,12 @@ async function refreshJobs() {
   try {
     const r = await apiFetch('/api/optimize/status');
     const allJobs = await r.json();
-    // Filtrer uniquement les jobs ML (stratégies préfixées ml_)
+    // Filtrer les jobs ML : préfixe ml_ OU stratégies is_ml connues (via _mlStratNames)
     const jobs = Object.fromEntries(
-      Object.entries(allJobs).filter(([, j]) => (j.strategy || '').startsWith('ml_'))
+      Object.entries(allJobs).filter(([, j]) => {
+        const s = j.strategy || '';
+        return s.startsWith('ml_') || (window._mlStratNames || []).includes(s);
+      })
     );
     if (_lastJobs) {
       Object.entries(_lastJobs).forEach(([id, j]) => {
