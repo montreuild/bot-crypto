@@ -52,12 +52,18 @@ def _sig(z: float) -> float:
 
 def _detect_regime(adx: float, sma20: float, sma50: float,
                    sma100: float, sma200: float,
+                   pdi: float = 0.0, ndi: float = 0.0,
                    adx_threshold: float = 20.0) -> int:
+    """Régime avec confirmation DI : SMAs alignées ET direction cohérente.
+
+    Sans DI, ~40% des barres 'Trend Down' ont +DI > -DI (marché en récupération)
+    → shorts perdants. Avec DI, ces barres passent en Choppy (formule équilibrée).
+    """
     if adx < adx_threshold:
         return REGIME_RANGE
-    if sma20 > sma50 > sma100 > sma200:
+    if sma20 > sma50 > sma100 > sma200 and pdi > ndi:
         return REGIME_TREND_UP
-    if sma20 < sma50 < sma100 < sma200:
+    if sma20 < sma50 < sma100 < sma200 and ndi > pdi:
         return REGIME_TREND_DN
     return REGIME_CHOPPY
 
@@ -227,9 +233,12 @@ class Strategy(BaseStrategy):
         sma50  = pre_val(df, "_pre_sma50")  or pre_val(df, "_pre_ema50")  or c_now
         sma100 = pre_val(df, "_pre_sma100") or c_now
         sma200 = pre_val(df, "_pre_sma200") or pre_val(df, "_pre_ema200") or c_now
+        pdi    = pre_val(df, "_pre_pdi14")  or 0.0
+        ndi    = pre_val(df, "_pre_ndi14")  or 0.0
 
         # ── Régime + scores ───────────────────────────────────────────────
-        regime     = _detect_regime(adx_now, sma20, sma50, sma100, sma200, adx_threshold)
+        regime     = _detect_regime(adx_now, sma20, sma50, sma100, sma200,
+                                    pdi, ndi, adx_threshold)
         regime_lbl = REGIME_LABELS[regime]
 
         proba_amp = _proba_amplitude(atr_r, vs_r, rs_r, body_abs_r, wick_total)
