@@ -1,0 +1,53 @@
+params:
+  # Seuils §6.4 du rapport — Trend Down (régime favorable, AUC dir 0.87)
+  adx_threshold: 20
+  amp_thresh_td: 0.50      # P(événement) ≥ 0.50 en Trend Down
+  dir_dist_td: 0.10        # |P(hausse) - 0.5| ≥ 0.10 en Trend Down
+  # Range/Choppy : seuils stricts + taille réduite (§6.4)
+  amp_thresh_other: 0.60
+  dir_dist_other: 0.15
+  # Quantile de coupure pour labéliser "événement" (§4.1)
+  # 0.30 = top 30% des amplitudes = baseline événement du rapport
+  amp_top_pct: 0.30
+  # Walk-forward : retrain toutes les retrain_every barres
+  warmup_bars: 2000
+  retrain_every: 800
+  score_threshold: 0.55
+
+optimizer_results:
+  15m:
+    run_date: "2026-05-15"
+    oos_score: null  # À remplir via Optimiseur ML (cible AUC dir ≈ 0.87 sur Trend Down)
+    params:
+      adx_threshold: 20
+      amp_thresh_td: 0.50
+      dir_dist_td: 0.10
+      amp_thresh_other: 0.60
+      dir_dist_other: 0.15
+      amp_top_pct: 0.30
+      warmup_bars: 2000
+      retrain_every: 800
+  30m:
+    run_date: "2026-05-15"
+    oos_score: null
+    params:
+      adx_threshold: 20
+      amp_thresh_td: 0.50
+      dir_dist_td: 0.10
+      amp_thresh_other: 0.60
+      dir_dist_other: 0.15
+      amp_top_pct: 0.30
+      warmup_bars: 2000
+      retrain_every: 800
+  1h:
+    run_date: "2026-05-15"
+    oos_score: null
+    params:
+      adx_threshold: 20
+      amp_thresh_td: 0.50
+      dir_dist_td: 0.10
+      amp_thresh_other: 0.60
+      dir_dist_other: 0.15
+      amp_top_pct: 0.30
+      warmup_bars: 2000
+      retrain_every: 800
