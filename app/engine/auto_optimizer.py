@@ -35,13 +35,25 @@ def _save_ml_model_post_opt(strategy_name: str, best_params: dict,
     Appelé dans un thread daemon — ne bloque pas le reporting du job.
     """
     import os
+    import inspect
     try:
+        # df_full peut être brut (sans colonnes _pre_*) — l'engine précompute
+        # à chaque run(), mais ici on appelle _fit directement.
+        from app.core.indicators import precompute_df
+        if "_pre_atr14" not in df_full.columns:
+            df_full = precompute_df(df_full)
+
         mod   = importlib.import_module(f"app.strategies.{strategy_name}")
         strat = mod.Strategy()
         for k, v in best_params.items():
             if hasattr(strat, k):
                 setattr(strat, k, v)
-        strat._fit(df_full, timeframe)
+
+        # Filtre best_params pour ne passer que les kwargs supportés par _fit
+        sig = inspect.signature(strat._fit)
+        fit_kwargs = {k: v for k, v in best_params.items() if k in sig.parameters}
+        strat._fit(df_full, timeframe, **fit_kwargs)
+
         if timeframe not in strat._trained_tfs:
             logger.warning(f"[AutoOpt] ML post-opt : entraînement KO pour {strategy_name}/{timeframe}")
             return
