@@ -325,8 +325,49 @@ class Backtester:
                     position["mae"] = min(position.get("mae", 0.0), mae_pts / entry * 100)
                     position["mfe"] = max(position.get("mfe", 0.0), mfe_pts / entry * 100)
 
+                # ── Sortie temporelle (exit_after_bars) — prioritaire sur trailing
+                # Utilisée par les stratégies type rapport V4 : sortie à la clôture
+                # de la barre suivante, sans SL/TP (mesure pure du signal directionnel).
+                exit_after = position.get("exit_after_bars")
+                time_exit  = (exit_after is not None
+                              and (i - position["bar"]) >= int(exit_after))
+
                 stop_hit = (side == "long"  and c_low  <= stop) or \
                            (side == "short" and c_high >= stop)
+
+                if time_exit and not stop_hit:
+                    exec_price = c_close
+                    fill_size  = position["size"]
+                    fees       = self._fees(exec_price, fill_size, maker=True)
+                    bars_held  = i - position["bar"]
+                    days_held  = bars_held * _bar_to_days(
+                        self.cfg["trading"].get("timeframe", "1h"))
+                    borrow_cost = position["notional"] * self.borrow_rate * days_held
+                    gross = (exec_price - entry) * fill_size * (1 if side == "long" else -1)
+                    pnl   = gross - fees - borrow_cost
+                    capital += pnl
+                    ts = str(df["time"][i]) if "time" in df.columns else str(i)
+                    position.update({
+                        "pnl":           round(pnl, 6),
+                        "fees":          round(fees, 6),
+                        "borrow_cost":   round(borrow_cost, 6),
+                        "exit":          round(exec_price, 6),
+                        "status":        "closed",
+                        "exit_bar":      i,
+                        "exit_time":     ts,
+                        "exit_reason":   "exit_after_bars",
+                        "pnl_pct":       round((exec_price - entry) / entry * 100 *
+                                               (1 if side == "long" else -1), 3) if entry else 0.0,
+                        "duration_bars": bars_held,
+                        "fill_pct":      self.partial_fill,
+                        "stop_trail":    position.pop("_stop_trail", []),
+                    })
+                    position.pop("_trailing", None)
+                    trades.append(position)
+                    equity_curve.append(round(capital, 4))
+                    timestamps.append(ts)
+                    position = None
+                    continue
 
                 if stop_hit:
                     exec_price  = stop * (1 - self.spread_pct) if side == "long" \
@@ -433,15 +474,16 @@ class Backtester:
             ts = str(df["time"][i]) if "time" in df.columns else str(i)
 
             position = {
-                "id":           trade_id,
-                "symbol":       symbol,
-                "side":         signal["side"],
-                "strategy":     signal.get("name", ""),
-                "score":        round(signal.get("score", 0), 3),
-                "entry":        round(exec_price, 6),
-                "stop":         round(stop, 6),
-                "take_profit":  None,
-                "size":         round(size, 6),
+                "id":              trade_id,
+                "symbol":          symbol,
+                "side":            signal["side"],
+                "strategy":        signal.get("name", ""),
+                "score":           round(signal.get("score", 0), 3),
+                "entry":           round(exec_price, 6),
+                "stop":            round(stop, 6),
+                "take_profit":     None,
+                "exit_after_bars": signal.get("exit_after_bars"),
+                "size":            round(size, 6),
                 "notional":     round(notional, 4),
                 "bar":          i + 1,
                 "entry_time":   ts,
