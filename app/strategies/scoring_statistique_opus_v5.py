@@ -91,15 +91,15 @@ def _detect_regime(adx: float, sma20: float, sma50: float,
 
 
 def _bb_width(close: np.ndarray, period: int = 20) -> np.ndarray:
+    from numpy.lib.stride_tricks import sliding_window_view
     n = len(close)
     out = np.zeros(n, dtype=np.float32)
     if n < period:
         return out
-    for i in range(period - 1, n):
-        window = close[i - period + 1:i + 1]
-        sma = window.mean()
-        std = window.std()
-        out[i] = (4.0 * std) / max(sma, 1e-9)
+    windows = sliding_window_view(close.astype(np.float64), period)
+    sma = windows.mean(axis=1)
+    std = windows.std(axis=1)
+    out[period - 1:] = (4.0 * std / np.maximum(sma, 1e-9)).astype(np.float32)
     return out
 
 
@@ -121,9 +121,11 @@ def _build_features(df: pl.DataFrame, adx_threshold: float = 20.0) -> Optional[n
 
     close = df["close"].cast(pl.Float32).to_numpy()
     bb_w  = _bb_width(close, 20)
+    from numpy.lib.stride_tricks import sliding_window_view
     bb_rank = np.zeros(n, dtype=np.float32)
-    for i in range(100, n):
-        bb_rank[i] = (bb_w[i] > bb_w[i - 100:i]).sum() / 100.0
+    if n >= 101:
+        windows = sliding_window_view(bb_w, 100)          # (n-99, 100)
+        bb_rank[100:] = (bb_w[100:, np.newaxis] > windows[:n - 100]).sum(axis=1) / 100.0
     for lag in _LAGS:
         cols.append(np.concatenate([np.zeros(lag, dtype=np.float32), bb_w[:-lag]]))
         cols.append(np.concatenate([np.zeros(lag, dtype=np.float32), bb_rank[:-lag]]))
@@ -146,11 +148,12 @@ def _build_features(df: pl.DataFrame, adx_threshold: float = 20.0) -> Optional[n
         pdi_a = df["_pre_pdi14"].to_numpy().astype(np.float32)
         ndi_a = df["_pre_ndi14"].to_numpy().astype(np.float32)
 
-        regimes = np.array([
-            _detect_regime(adx_a[i], s20[i], s50[i], s100[i], s200[i],
-                           pdi_a[i], ndi_a[i], adx_threshold)
-            for i in range(n)
-        ], dtype=np.float32)
+        is_range = adx_a < adx_threshold
+        is_tu    = (~is_range) & (s20 > s50) & (s50 > s100) & (s100 > s200) & (pdi_a > ndi_a)
+        is_td    = (~is_range) & (~is_tu) & (s20 < s50) & (s50 < s100) & (s100 < s200) & (ndi_a > pdi_a)
+        regimes  = np.where(is_range, REGIME_RANGE,
+                   np.where(is_tu, REGIME_TREND_UP,
+                   np.where(is_td, REGIME_TREND_DN, REGIME_CHOPPY))).astype(np.float32)
         s200_safe = np.where(s200 > 0, s200, 1.0)
         cols.append(regimes / 3.0)
         cols.append((pdi_a - ndi_a) / 50.0)
@@ -311,7 +314,7 @@ class Strategy(BaseStrategyML):
             "verbosity":         -1,
             "n_jobs":            1,
         }
-        callbacks = [lgb.early_stopping(30, verbose=False), lgb.log_evaluation(-1)]
+        callbacks = [lgb.early_stopping(40, verbose=False), lgb.log_evaluation(-1)]
 
         # Modèle amplitude
         ds_train_amp = lgb.Dataset(X_s[:split],  label=y_amp[:split])
@@ -320,7 +323,7 @@ class Strategy(BaseStrategyML):
             booster_amp = lgb.train(
                 {**params_lgb,
                  "scale_pos_weight": (y_amp[:split] == 0).sum() / max((y_amp[:split] == 1).sum(), 1)},
-                ds_train_amp, num_boost_round=500,
+                ds_train_amp, num_boost_round=300,
                 valid_sets=[ds_valid_amp], callbacks=callbacks,
             )
         except Exception as e:
@@ -336,7 +339,7 @@ class Strategy(BaseStrategyML):
             booster_dir = lgb.train(
                 {**params_lgb,
                  "scale_pos_weight": (y_dir[:split] == 0).sum() / max((y_dir[:split] == 1).sum(), 1)},
-                ds_train_dir, num_boost_round=500,
+                ds_train_dir, num_boost_round=300,
                 valid_sets=[ds_valid_dir], callbacks=callbacks,
             )
         except Exception as e:
