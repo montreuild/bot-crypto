@@ -340,7 +340,7 @@ def get_active_strategies_per_tf(cfg: dict) -> Dict[str, List[dict]]:
             if tf in tf_map:
                 entry = tf_map[tf]
                 if isinstance(entry, dict):
-                    score  = entry.get("oos_score", -999)
+                    score  = entry.get("oos_score") if entry.get("oos_score") is not None else -999
                     params = entry.get("params", strat_params.get(strat_name, {}))
                     candidates.append({
                         "name":   strat_name,
