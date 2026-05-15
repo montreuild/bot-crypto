@@ -70,14 +70,13 @@ class Strategy(BaseStrategy):
         score = round(min(0.55 + strength * 0.05, 0.94), 3)
 
         return {
-            "score":          score,
-            "side":           side,
-            "name":           self.name,
-            "atr":            atr_v,
-            "stop_hint":      round(stop, 6),
-            # Stop fixe sur l'open : ni trailing ni bouger le stop après l'entrée
-            "use_stop_hint":  True,
-            "no_trail":       True,
+            "score":     score,
+            "side":      side,
+            "name":      self.name,
+            "atr":       atr_v,
+            # Stop initial = open de la dernière bougie ± buffer (le trailing
+            # manager prend le relais après pour sécuriser les gains)
+            "stop_hint": round(stop, 6),
             "indicators": {
                 "body_now":   round(body_now, 4),
                 "body_prev":  round(body_prev, 4),

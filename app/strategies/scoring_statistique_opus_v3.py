@@ -510,10 +510,8 @@ class Strategy(BaseStrategyML):
         else:
             size_fac = 0.5   # Choppy
 
-        # Score : base 0.55 (garantit le passage du score_threshold) + bonus confiance
-        # La décision de trader a déjà été prise par les filtres ML (dist_from_50 / min_prob).
-        # size_fac gère la taille de position, pas la décision.
-        score = round(min(0.55 + dist_from_50 * 2.0 * 0.39, 0.94), 3)
+        # Score : distance à 0.5 × factor de taille
+        score = round(min(0.50 + dist_from_50 * 2.2, 0.94) * (size_fac * 0.4 + 0.6), 3)
 
         stop     = (c_now - 1.5 * atr_v) if side == "long" else (c_now + 1.5 * atr_v)
         rsi_v    = pre_val(df, "_pre_rsi14")     or 50.0
