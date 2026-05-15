@@ -10,6 +10,15 @@ params:
   amp_thresh_other: 0.60
   dir_dist_other: 0.15
   rr_min: 0.6
+  # Trailing stop serré — cible mouvements courts >0.4% (rapide décision)
+  # trail_wide=1.0×ATR vs défaut 2.5×ATR (stop ~3× plus serré à l'entrée)
+  # breakeven_r=0.6 : breakeven dès 0.6×ATR de profit (au lieu de 1.2×)
+  trail_wide: 1.0
+  grace_bars: 2
+  breakeven_r: 0.6
+  lock_r: 1.5
+  tight_r: 2.5
+  trail_tight: 0.5
 
 optimizer_results:
   15m:
@@ -24,6 +33,12 @@ optimizer_results:
       dir_dist_td: 0.10
       dir_dist_other: 0.15
       rr_min: 0.6
+      trail_wide: 1.0
+      grace_bars: 2
+      breakeven_r: 0.6
+      lock_r: 1.5
+      tight_r: 2.5
+      trail_tight: 0.5
   30m:
     run_date: "2026-05-14"
     oos_score: 0.66
@@ -36,6 +51,12 @@ optimizer_results:
       dir_dist_td: 0.10
       dir_dist_other: 0.15
       rr_min: 0.6
+      trail_wide: 1.0
+      grace_bars: 2
+      breakeven_r: 0.6
+      lock_r: 1.5
+      tight_r: 2.5
+      trail_tight: 0.5
   1h:
     run_date: "2026-05-14"
     oos_score: 0.65
@@ -48,3 +69,9 @@ optimizer_results:
       dir_dist_td: 0.10
       dir_dist_other: 0.15
       rr_min: 0.6
+      trail_wide: 1.2
+      grace_bars: 2
+      breakeven_r: 0.7
+      lock_r: 1.8
+      tight_r: 3.0
+      trail_tight: 0.6
