@@ -1,7 +1,7 @@
 params:
-  atr_mult_sl: 1.2         # SL à 1.2×ATR — serré pour 1h
-  min_body_pct: 0.001      # corps minimum 0.1% du prix (filtre doji)
-  atr_filter: 0.001        # ATR/prix >= 0.1% (filtre marchés plats)
+  # SL = open de la dernière bougie ± buffer. Très serré : si le mouvement
+  # ne se poursuit pas immédiatement, on coupe.
+  sl_buffer_pct: 0.0005   # 0.05% sous/au-dessus de l'open
   score_threshold: 0.55
 
 optimizer_results:
@@ -9,23 +9,17 @@ optimizer_results:
     run_date: "2026-05-15"
     oos_score: null
     params:
-      atr_mult_sl: 1.0
-      min_body_pct: 0.001
-      atr_filter: 0.001
+      sl_buffer_pct: 0.001
       score_threshold: 0.55
   30m:
     run_date: "2026-05-15"
     oos_score: null
     params:
-      atr_mult_sl: 1.2
-      min_body_pct: 0.001
-      atr_filter: 0.001
+      sl_buffer_pct: 0.0005
       score_threshold: 0.55
   1h:
     run_date: "2026-05-15"
     oos_score: null
     params:
-      atr_mult_sl: 1.2
-      min_body_pct: 0.002
-      atr_filter: 0.001
+      sl_buffer_pct: 0.0005
       score_threshold: 0.55
