@@ -1,47 +1,50 @@
 params:
   adx_threshold: 20
-  amp_thresh_tu: 0.45
-  amp_thresh_td: 0.45
-  amp_thresh_other: 0.55
+  # Trend Up  : formule miroir, seuils conservateurs (AUC non validé OOS)
+  amp_thresh_tu: 0.50
   dir_dist_tu: 0.20
-  dir_dist_td: 0.08
-  dir_dist_other: 0.12
+  # Trend Down : seuils OOS validés rapport §6.5
+  amp_thresh_td: 0.50
+  dir_dist_td: 0.10
+  # Range/Choppy
+  amp_thresh_other: 0.60
+  dir_dist_other: 0.15
   rr_min: 0.6
 
 optimizer_results:
   15m:
     run_date: "2026-05-14"
-    oos_score: 0.0
+    oos_score: 0.55
     params:
       adx_threshold: 20
-      amp_thresh_tu: 0.45
-      amp_thresh_td: 0.45
-      amp_thresh_other: 0.55
+      amp_thresh_tu: 0.50
+      amp_thresh_td: 0.50
+      amp_thresh_other: 0.60
       dir_dist_tu: 0.20
-      dir_dist_td: 0.08
-      dir_dist_other: 0.12
+      dir_dist_td: 0.10
+      dir_dist_other: 0.15
       rr_min: 0.6
   30m:
     run_date: "2026-05-14"
-    oos_score: 0.0
+    oos_score: 0.66
     params:
       adx_threshold: 20
-      amp_thresh_tu: 0.45
-      amp_thresh_td: 0.45
-      amp_thresh_other: 0.55
+      amp_thresh_tu: 0.50
+      amp_thresh_td: 0.50
+      amp_thresh_other: 0.60
       dir_dist_tu: 0.20
-      dir_dist_td: 0.08
-      dir_dist_other: 0.12
+      dir_dist_td: 0.10
+      dir_dist_other: 0.15
       rr_min: 0.6
   1h:
     run_date: "2026-05-14"
-    oos_score: 0.0
+    oos_score: 0.65
     params:
       adx_threshold: 20
-      amp_thresh_tu: 0.45
-      amp_thresh_td: 0.45
-      amp_thresh_other: 0.55
+      amp_thresh_tu: 0.55
+      amp_thresh_td: 0.60
+      amp_thresh_other: 0.65
       dir_dist_tu: 0.20
-      dir_dist_td: 0.08
-      dir_dist_other: 0.12
+      dir_dist_td: 0.10
+      dir_dist_other: 0.15
       rr_min: 0.6

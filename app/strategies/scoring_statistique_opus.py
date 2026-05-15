@@ -64,60 +64,72 @@ def _detect_regime(adx: float, sma20: float, sma50: float,
 
 
 def _proba_amplitude(atr_r: float, vs_r: float, rs_r: float,
-                     wick_total: float) -> float:
-    """P(événement) — rapport §6.2, top features LightGBM.
+                     body_abs_r: float, wick_total: float) -> float:
+    """P(événement) — rapport §6.2, heuristique calibrée sur top features LightGBM.
 
-    Poids calibrés sur importances : ATR(250) > vol_std(180) > range(120) > wicks(40).
-    Ratios /mean100 → TF-indépendant.
+    Poids relatifs issus des coefficients du rapport (base ATR=250) :
+      ATR_pct(250) > vol_std20(180) > range(120) > body_abs(60) > wicks(40).
+    Ratios /mean100 → TF-indépendant (15m/30m/1h même seuils).
     """
     z = (-0.5
-         + 1.5 * (atr_r       - 1.0)   # ATR% ratio (dominant)
-         + 1.1 * (vs_r        - 1.0)   # vol_std20 ratio
-         + 0.7 * (rs_r        - 1.0)   # range ratio
-         + 0.3 * wick_total)            # activité mèches (wick_total = lower+upper)
+         + 1.50 * (atr_r     - 1.0)   # ATR% (dominant, coeff 250)
+         + 1.08 * (vs_r      - 1.0)   # vol_std20 (coeff 180)
+         + 0.72 * (rs_r      - 1.0)   # range_size (coeff 120)
+         + 0.36 * (body_abs_r - 1.0)  # body_abs (coeff 60, manquait avant)
+         + 0.24 * wick_total)          # wicks lower+upper (coeff 40)
     return _sig(z)
 
 
-def _proba_direction(rsi: float, rsi_vel6: float, body: float,
+def _proba_direction(rsi: float, rsi_vel6: float, rsi_vel12: float,
+                     rsi_accel: float, body: float,
                      lower_wick: float, upper_wick: float,
-                     macd_hist_norm: float, vol_ratio: float,
-                     regime: int) -> float:
+                     macd_hist_d1: float, range_pos20: float,
+                     vol_ratio: float, regime: int) -> float:
     """P(hausse) conditionné par régime — rapport §6.3.
 
-    Features clés (importance LightGBM) :
-      body (#1, 404)       : direction du corps de bougie signé
-      rsi_vel6 (#3, 377)   : vélocité RSI sur 6 barres
-      wick structure        : lower_wick (#2, 395 amplitude, key dir), upper_wick
-      macd_hist_norm        : dynamique MACD
+    Features du rapport (top LightGBM importance) :
+      body         (#1, 404) : direction corps de bougie (close-open)/close
+      lower_wick   (#2, 395) : mèche basse = rejet / oversold
+      rsi_vel6     (#3, 377) : vélocité RSI 6 barres
+      rsi_vel12    (#4, 377) : vélocité RSI 12 barres
+      rsi_accel           : accélération RSI (2nd dérivée)
+      macd_hist_d1        : vélocité MACD hist (non le niveau)
+      range_pos20         : position close dans range 20 barres [0=bas, 1=haut]
+      upper_wick          : mèche haute = rejet / overbought
 
-    AUC attendu : Trend Down ~0.87, Choppy ~0.58, Range ~0.50-0.70, Trend Up ~0.50.
+    AUC attendu : Trend Down ~0.87, Choppy ~0.58, Range ~0.50-0.70.
     """
-    # Normalisation
-    body_n     =  body * 15.0                              # (close-open)/close signé
-    rsi_n      = (50.0 - rsi) / 25.0                      # RSI level (oversold > 0)
-    rsi_vel_n  = -rsi_vel6 / 10.0                         # vélocité (RSI chute → bounce)
-    wick_n     =  lower_wick * 3.0 - upper_wick * 2.0     # mèches
-    macd_n     =  math.copysign(min(abs(macd_hist_norm) * 500.0, 1.5), macd_hist_norm)
-    vol_n      =  min(max(vol_ratio - 1.0, 0.0), 1.0) * 0.3
+    body_n      =  body * 15.0
+    rsi_n       = (50.0 - rsi) / 25.0
+    rsi_vel_n   = -rsi_vel6 / 10.0                         # RSI chute → bounce signal
+    rsi_vel12_n = -rsi_vel12 / 15.0                        # vélocité plus longue
+    rsi_acc_n   = -rsi_accel / 5.0                         # accélération (survendu)
+    wick_n      =  lower_wick * 3.0 - upper_wick * 2.0
+    macd_vel_n  =  math.copysign(min(abs(macd_hist_d1) * 2000.0, 1.5), macd_hist_d1)
+    rpos_n      = (0.5 - range_pos20) * 2.0                # bas de range → haussier
+    vol_n       =  min(max(vol_ratio - 1.0, 0.0), 1.0) * 0.3
 
     if regime == REGIME_TREND_DN:
-        # Biais baissier fort, capte rebonds oversold (rapport : AUC 0.87)
+        # Biais baissier -2.0, capte rebonds oversold (rapport AUC 0.87)
         z = (-2.0
-             + body_n    * 1.5
-             + rsi_n     * 1.2
-             + rsi_vel_n * 1.2
-             + wick_n    * 1.8
-             + macd_n    * 0.6
+             + body_n      * 1.5
+             + rsi_n       * 1.0
+             + rsi_vel_n   * 1.0
+             + rsi_vel12_n * 0.8
+             + rsi_acc_n   * 0.6
+             + wick_n      * 1.8
+             + macd_vel_n  * 0.8
+             + rpos_n      * 0.6
              + vol_n)
     elif regime == REGIME_RANGE:
         z = (body_n * 1.2 + rsi_n * 0.8 + wick_n * 1.0
-             + macd_n * 1.0 + rsi_vel_n * 0.5 + vol_n)
+             + macd_vel_n * 0.8 + rsi_vel_n * 0.5 + rpos_n * 0.8 + vol_n)
     elif regime == REGIME_CHOPPY:
         z = (body_n * 1.0 + rsi_n * 0.8 + wick_n * 1.2
-             + macd_n * 1.0 + rsi_vel_n * 0.6 + vol_n)
-    else:  # Trend Up — formule neutre (pas de trade, mais calcul pour affichage)
+             + macd_vel_n * 0.8 + rsi_vel_n * 0.6 + rpos_n * 0.5 + vol_n)
+    else:  # Trend Up — formule neutre (pas de trade, calcul pour affichage)
         z = (body_n * 0.4 + rsi_n * 0.4 + wick_n * 0.4
-             + macd_n * 0.4 + rsi_vel_n * 0.3 + vol_n)
+             + macd_vel_n * 0.3 + rsi_vel_n * 0.3 + vol_n)
 
     return _sig(z)
 
@@ -197,18 +209,22 @@ class Strategy(BaseStrategy):
         if atr_now <= 0:
             return self._none("ATR invalide")
 
-        # Features amplitude (ratios TF-indépendants)
-        atr_r  = pre_val(df, "_pre_atr_pct_r")   or 1.0
-        vs_r   = pre_val(df, "_pre_volstd20_r")  or 1.0
-        rs_r   = pre_val(df, "_pre_range_r")     or 1.0
+        # Features amplitude (ratios TF-indépendants, rapport §6.2)
+        atr_r       = pre_val(df, "_pre_atr_pct_r")   or 1.0
+        vs_r        = pre_val(df, "_pre_volstd20_r")  or 1.0
+        rs_r        = pre_val(df, "_pre_range_r")     or 1.0
+        body_abs_r  = pre_val(df, "_pre_body_abs_r")  or 1.0   # manquait (poids 60/250)
 
-        # Features direction
-        body        = pre_val(df, "_pre_body")        or 0.0
-        upper_wick  = pre_val(df, "_pre_upper_wick")  or 0.0
-        lower_wick  = pre_val(df, "_pre_lower_wick")  or 0.0
-        rsi_vel6    = pre_val(df, "_pre_rsi_vel6")    or 0.0
-        macd_h_norm = macd_h / max(c_now, 1e-9)
-        wick_total  = lower_wick + upper_wick
+        # Features direction (rapport §6.3)
+        body         = pre_val(df, "_pre_body")          or 0.0
+        upper_wick   = pre_val(df, "_pre_upper_wick")    or 0.0
+        lower_wick   = pre_val(df, "_pre_lower_wick")    or 0.0
+        rsi_vel6     = pre_val(df, "_pre_rsi_vel6")      or 0.0
+        rsi_vel12    = pre_val(df, "_pre_rsi_vel12")     or 0.0
+        rsi_accel    = pre_val(df, "_pre_rsi_accel")     or 0.0
+        macd_hist_d1 = pre_val(df, "_pre_macd_hist_d1") or 0.0  # vélocité MACD
+        range_pos20  = pre_val(df, "_pre_range_pos20")  or 0.5
+        wick_total   = lower_wick + upper_wick
 
         # SMAs pour régime (rapport §6.1 : SMA20/50/100/200)
         # Fallback sur EMA si _pre_sma* absent (compatibilité ancienne version)
@@ -221,9 +237,10 @@ class Strategy(BaseStrategy):
         regime     = _detect_regime(adx_now, sma20, sma50, sma100, sma200, adx_threshold)
         regime_lbl = REGIME_LABELS[regime]
 
-        proba_amp = _proba_amplitude(atr_r, vs_r, rs_r, wick_total)
-        proba_dir = _proba_direction(rsi_now, rsi_vel6, body, lower_wick, upper_wick,
-                                     macd_h_norm, vr, regime)
+        proba_amp = _proba_amplitude(atr_r, vs_r, rs_r, body_abs_r, wick_total)
+        proba_dir = _proba_direction(rsi_now, rsi_vel6, rsi_vel12, rsi_accel,
+                                     body, lower_wick, upper_wick,
+                                     macd_hist_d1, range_pos20, vr, regime)
         dir_dist  = abs(proba_dir - 0.5)
         hour_mult = _hour_multiplier(df)
 
