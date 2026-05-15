@@ -420,7 +420,7 @@ class Backtester:
                     lo20 = low_arr[max(0, i - 19):i + 1].tolist()
                     hi20 = high_arr[max(0, i - 19):i + 1].tolist()
 
-                    if _tr:
+                    if _tr and not position.get("no_trail"):
                         new_stop = _tr.update_stop(
                             current_price = c_close,
                             current_stop  = stop,
@@ -453,7 +453,10 @@ class Backtester:
                 exec_price *= (1 - self.spread_pct)
 
             _trailing = self._make_trailing(signal.get("trail_override"))
-            stop      = _trailing.initial_stop(exec_price, atr_v, signal["side"])
+            if signal.get("use_stop_hint") and signal.get("stop_hint"):
+                stop = float(signal["stop_hint"])
+            else:
+                stop = _trailing.initial_stop(exec_price, atr_v, signal["side"])
 
             stop_dist    = abs(exec_price - stop)
             risk_amount  = capital * risk
@@ -494,6 +497,7 @@ class Backtester:
                 "exit":         None,
                 "trail_phase":  "grace",
                 "_trailing":    _trailing,
+                "no_trail":     bool(signal.get("no_trail", False)),
                 "reason":       signal.get("reason", ""),
                 "conditions":   signal.get("conditions", []),
                 "indicators":   signal.get("indicators", {}),

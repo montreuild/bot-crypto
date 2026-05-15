@@ -403,10 +403,11 @@ class Strategy(BaseStrategyML):
             auc  = float(data.get("best_auc", 0.0))
             meta = data.get("train_meta", {})
             with self._lock:
-                self._models[tf_key]          = data["booster"]
-                self._scalers[tf_key]         = data["scaler"]
-                self._trained_tfs.add(tf_key)
-                self._best_auc_per_tf[tf_key] = auc
+                for key in (tf_key, "default"):
+                    self._models[key]          = data["booster"]
+                    self._scalers[key]         = data["scaler"]
+                    self._best_auc_per_tf[key] = auc
+                    self._trained_tfs.add(key)
                 self._best_auc                = auc
                 self._train_meta[tf_key]      = meta
             logger.info(f"[V3] Modèle chargé depuis {path} (AUC={auc:.3f})")

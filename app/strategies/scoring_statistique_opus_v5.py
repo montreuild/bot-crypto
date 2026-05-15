@@ -399,13 +399,14 @@ class Strategy(BaseStrategyML):
             import joblib
             data = joblib.load(path)
             with self._lock:
-                self._amp_models[tf_key]      = data["amp_model"]
-                self._dir_models[tf_key]      = data["dir_model"]
-                self._scalers[tf_key]         = data["scaler"]
-                self._trained_tfs.add(tf_key)
-                self._best_auc_per_tf[tf_key] = float(data.get("best_auc", 0.0))
-                self._best_auc                = float(data.get("best_auc", 0.0))
-                self._train_meta[tf_key]      = data.get("train_meta", {})
+                for key in (tf_key, "default"):
+                    self._amp_models[key]      = data["amp_model"]
+                    self._dir_models[key]      = data["dir_model"]
+                    self._scalers[key]         = data["scaler"]
+                    self._best_auc_per_tf[key] = float(data.get("best_auc", 0.0))
+                    self._train_meta[key]      = data.get("train_meta", {})
+                    self._trained_tfs.add(key)
+                self._best_auc = float(data.get("best_auc", 0.0))
             logger.info(f"[V5] Modèles chargés depuis {path}")
             return True
         except Exception as e:
@@ -539,7 +540,6 @@ class Strategy(BaseStrategyML):
         hour_fac = _hour_multiplier(hour)
         size_fac *= hour_fac
 
-        # Score : base 0.55 garantie — la décision ML a déjà passé les filtres.
         confidence = dir_dist * 2.0
         score      = round(min(0.55 + p_event * confidence * 0.39, 0.94), 3)
 
