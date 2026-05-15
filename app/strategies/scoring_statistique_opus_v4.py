@@ -561,11 +561,11 @@ class Strategy(BaseStrategyML):
         hour_fac = _hour_multiplier(hour)
         size_fac *= hour_fac
 
-        # Score Kelly-like : confiance × confiance amplitude × multiplicateurs
-        # (sigmoide pour normaliser dans [0, 0.94])
-        confidence = dir_dist * 2.0      # 0 à 1 (à dist_dist=0.5, conf=1)
-        score = 0.50 + min(p_event * confidence * 0.50, 0.44)
-        score = round(score * (size_fac * 0.4 + 0.6), 3)
+        # Score : base 0.55 garantie (le filtre ML a déjà décidé de trader).
+        # La confiance ajoute jusqu'à 0.39 bonus. size_fac ne dégrade pas le score
+        # (il gère la taille de position, pas la décision d'entrée).
+        confidence = dir_dist * 2.0      # 0 à 1
+        score = round(min(0.55 + p_event * confidence * 0.39, 0.94), 3)
 
         meta    = self._train_meta.get(tf_key, {})
         auc_amp = meta.get("auc_amp", 0.0)

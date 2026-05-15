@@ -539,10 +539,9 @@ class Strategy(BaseStrategyML):
         hour_fac = _hour_multiplier(hour)
         size_fac *= hour_fac
 
-        # Score
+        # Score : base 0.55 garantie — la décision ML a déjà passé les filtres.
         confidence = dir_dist * 2.0
-        score      = 0.50 + min(p_event * confidence * 0.50, 0.44)
-        score      = round(score * (size_fac * 0.4 + 0.6), 3)
+        score      = round(min(0.55 + p_event * confidence * 0.39, 0.94), 3)
 
         meta    = self._train_meta.get(tf_key, {})
         auc_amp = meta.get("auc_amp", 0.0)
