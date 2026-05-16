@@ -314,8 +314,6 @@ class Strategy(BaseStrategyML):
             "verbosity":         -1,
             "n_jobs":            1,
         }
-        callbacks = [lgb.early_stopping(40, verbose=False), lgb.log_evaluation(-1)]
-
         # Modèle amplitude
         ds_train_amp = lgb.Dataset(X_s[:split],  label=y_amp[:split])
         ds_valid_amp = lgb.Dataset(X_s[split:n], label=y_amp[split:n], reference=ds_train_amp)
@@ -324,7 +322,8 @@ class Strategy(BaseStrategyML):
                 {**params_lgb,
                  "scale_pos_weight": (y_amp[:split] == 0).sum() / max((y_amp[:split] == 1).sum(), 1)},
                 ds_train_amp, num_boost_round=300,
-                valid_sets=[ds_valid_amp], callbacks=callbacks,
+                valid_sets=[ds_valid_amp],
+                callbacks=[lgb.early_stopping(40, verbose=False), lgb.log_evaluation(-1)],
             )
         except Exception as e:
             logger.warning(f"[V5] Amp échoué : {e}")
@@ -340,7 +339,8 @@ class Strategy(BaseStrategyML):
                 {**params_lgb,
                  "scale_pos_weight": (y_dir[:split] == 0).sum() / max((y_dir[:split] == 1).sum(), 1)},
                 ds_train_dir, num_boost_round=300,
-                valid_sets=[ds_valid_dir], callbacks=callbacks,
+                valid_sets=[ds_valid_dir],
+                callbacks=[lgb.early_stopping(40, verbose=False), lgb.log_evaluation(-1)],
             )
         except Exception as e:
             logger.warning(f"[V5] Dir échoué : {e}")
