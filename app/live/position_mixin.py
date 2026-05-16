@@ -178,10 +178,35 @@ class PositionMixin:
     def _open_position(self, pos_key: str, symbol: str, signal: dict,
                        price: float, size: float, notional: float,
                        atr: float, leverage: float, tf: str) -> None:
-        trail_override = signal.get("trail_override") or {}
-        trail_cfg = _apply_trail_override(self._trailing_cfg, trail_override)
-        trailing  = TrailingStopManager(**trail_cfg)
-        stop      = trailing.initial_stop(price, atr, signal["side"])
+        trail_override   = signal.get("trail_override") or {}
+        disable_trailing = bool(signal.get("disable_trailing", False))
+        trail_cfg        = _apply_trail_override(self._trailing_cfg, trail_override)
+        trailing         = TrailingStopManager(**trail_cfg)
+        # Stop initial : priorité au multiplicateur ATR (calé sur le prix exécuté),
+        # sinon stop_hint absolu, sinon le trailing manager.
+        if signal.get("sl_atr_mult") is not None:
+            _sl_mult = float(signal["sl_atr_mult"])
+            stop = (price - _sl_mult * atr) if signal["side"] == "long" \
+                   else (price + _sl_mult * atr)
+            trailing.init_from_stop(price, stop, signal["side"])
+        elif signal.get("stop_hint") is not None:
+            stop = float(signal["stop_hint"])
+            # On initialise le trailing (peak / distance) pour qu'il puisse
+            # reprendre la main si disable_trailing passe à False en cours de route.
+            trailing.init_from_stop(price, stop, signal["side"])
+        else:
+            stop = trailing.initial_stop(price, atr, signal["side"])
+
+        # Take-profit fixe optionnel — multiplicateur prioritaire pour rester
+        # cohérent avec le prix d'exécution réel (robuste aux slippages).
+        if signal.get("tp_atr_mult") is not None:
+            _tp_mult = float(signal["tp_atr_mult"])
+            take_profit = (price + _tp_mult * atr) if signal["side"] == "long" \
+                          else (price - _tp_mult * atr)
+        elif signal.get("tp_hint") is not None:
+            take_profit = float(signal["tp_hint"])
+        else:
+            take_profit = None
         order     = self.exchange.create_order(
             symbol, "market", signal["side"], size,
             params={"leverage": int(leverage)}
@@ -231,6 +256,8 @@ class PositionMixin:
             "reason":         signal.get("reason", ""),
             "order_id":       order.get("id", ""),
             "trail_override": trail_override or None,
+            "disable_trailing": disable_trailing,
+            "take_profit":    take_profit,
             "_trailing":      trailing,
         }
         with self._positions_lock:
@@ -307,6 +334,18 @@ class PositionMixin:
             self._close_position(pos_id, price)
             return
 
+        # ── Take-profit fixe (vérifié sur ticker, en complément du SL) ────────
+        tp_val = pos.get("take_profit")
+        if tp_val is not None:
+            tp_hit = (pos["side"] == "long"  and price >= tp_val) or \
+                     (pos["side"] == "short" and price <= tp_val)
+            if tp_hit:
+                logger.info(
+                    f"[TP] {symbol} {pos['side']} TP={tp_val:.4f} touché @ {price:.4f}"
+                )
+                self._close_position(pos_id, tp_val)
+                return
+
         _pos_tf_secs = _TF_SECS.get(pos.get("timeframe", "1h"), 3600)
         bars_held    = int((time.time() - pos["open_time"]) / _pos_tf_secs)
         trailing     = pos.get("_trailing")
@@ -315,14 +354,18 @@ class PositionMixin:
             trailing         = TrailingStopManager(**trail_cfg)
             pos["_trailing"] = trailing
 
-        new_stop = trailing.update_stop(
-            price, pos["stop"], atr, pos["side"],
-            entry=pos.get("entry"), bars_held=bars_held
-        )
-        if new_stop != pos["stop"]:
-            pos["stop"] = new_stop
-            with session_scope(self.SessionLocal) as _sess:
-                persist_open_position(_sess, pos)
+        # Trailing désactivé : le stop reste figé à sa valeur initiale.
+        if pos.get("disable_trailing"):
+            new_stop = pos["stop"]
+        else:
+            new_stop = trailing.update_stop(
+                price, pos["stop"], atr, pos["side"],
+                entry=pos.get("entry"), bars_held=bars_held
+            )
+            if new_stop != pos["stop"]:
+                pos["stop"] = new_stop
+                with session_scope(self.SessionLocal) as _sess:
+                    persist_open_position(_sess, pos)
 
         # Notification perte non réalisée
         if pos_id not in self._loss_notified:

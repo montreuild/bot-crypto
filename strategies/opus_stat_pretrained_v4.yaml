@@ -1,18 +1,31 @@
 params:
-  # Seuils de décision — les seuls leviers d'optimisation, les modèles étant figés.
-  # Régime Trend Down (favorable, AUC dir 0.87 sur le rapport V4)
+  # ── Seuils de décision (réplique des seuils par défaut du bot V4 standalone) ──
+  # Régime Trend Down (favorable — AUC dir 0.87 sur le rapport V4)
   thresh_amp_td: 0.50      # P(événement) ≥ 0.50 pour valider en TD
   thresh_dir_td: 0.10      # |P(hausse) - 0.5| ≥ 0.10 pour valider en TD
-  # Régime Range / Choppy : on durcit + on réduit la taille (cf. _detect_regime)
+  # Régime Range / Choppy : seuils plus stricts + taille réduite
   thresh_amp_other: 0.55
   thresh_dir_other: 0.13
-  # Détection de régime (réplique V4)
-  adx_threshold: 20
-  # Gestion du risque — TP via trailing manager, SL fixe = sl_atr_mult × ATR14
+  adx_threshold: 20        # ADX < 20 → Range
+
+  # ── Filtre temporel (activé par défaut, comme le bot V4 standalone) ──
+  # ACTIVE_HOURS_UTC = 13–20 (session US) ; ACTIVE_DAYS = Lun–Ven
+  enable_hour_filter: true
+  active_hours_utc: [13, 14, 15, 16, 17, 18, 19, 20]
+  active_days: [0, 1, 2, 3, 4]
+
+  # ── Gestion du stop / take-profit ──
+  # SL fixe = entry ∓ sl_atr_mult × ATR14 (jamais déplacé si trailing désactivé)
   sl_atr_mult: 1.5
+  # TP fixe = entry ± tp_atr_mult × ATR14, vérifié intrabar
+  use_fixed_tp: true
   tp_atr_mult: 1.0
-  # Sortie temporelle (filet de sécurité — clustering V4 §3.1)
+  # Trailing désactivé par défaut : le SL reste figé jusqu'au TP ou au SL
+  disable_trailing: true
+  # Sortie temporelle désactivée par défaut (filet optionnel)
+  use_exit_after_bars: false
   max_hold_bars: 4
+
   # Filtrage des signaux par l'engine
   score_threshold: 0.55
 
@@ -27,7 +40,6 @@ optimizer_results:
       thresh_dir_other: 0.13
       sl_atr_mult: 1.5
       tp_atr_mult: 1.0
-      max_hold_bars: 4
   30m:
     run_date: null
     oos_score: null
@@ -38,7 +50,6 @@ optimizer_results:
       thresh_dir_other: 0.13
       sl_atr_mult: 1.5
       tp_atr_mult: 1.0
-      max_hold_bars: 4
   1h:
     run_date: null
     oos_score: null
@@ -49,4 +60,3 @@ optimizer_results:
       thresh_dir_other: 0.13
       sl_atr_mult: 1.5
       tp_atr_mult: 1.0
-      max_hold_bars: 4

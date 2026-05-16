@@ -438,6 +438,28 @@ def _prepare_row(features_df: pd.DataFrame,
 # ─────────────────────────────────────────────────────────────────────────────
 # Conversion polars → pandas pour le sous-ensemble utile au FeatureBuilder
 # ─────────────────────────────────────────────────────────────────────────────
+def _last_bar_hour_dow(df: pl.DataFrame) -> tuple:
+    """Renvoie ``(hour_utc, weekday)`` de la dernière barre, ou ``(None, None)``."""
+    if "time" not in df.columns or len(df) == 0:
+        return None, None
+    ts = df["time"][-1]
+    try:
+        if hasattr(ts, "hour") and hasattr(ts, "weekday"):
+            return int(ts.hour), int(ts.weekday())
+    except Exception:
+        pass
+    # Fallback : timestamp numérique (epoch s ou ms)
+    try:
+        import datetime as _dt
+        raw = float(ts)
+        if raw > 1e12:
+            raw /= 1000.0
+        d = _dt.datetime.utcfromtimestamp(raw)
+        return d.hour, d.weekday()
+    except Exception:
+        return None, None
+
+
 def _to_pandas_window(df: pl.DataFrame, n: int = 260) -> pd.DataFrame:
     """Retourne les `n` dernières lignes en pandas avec les seules colonnes OHLCV+time."""
     cols = [c for c in ("time", "open", "high", "low", "close", "volume") if c in df.columns]
@@ -475,6 +497,16 @@ class Strategy(BaseStrategyML):
         "max_hold_bars":    [1, 2, 4, 6, 8],
     }
     fixed_params: Dict[str, Any] = {}
+
+    # Valeurs par défaut des flags de comportement V4 — surchargeables via YAML.
+    _DEFAULTS = {
+        "enable_hour_filter":  True,
+        "active_hours_utc":    list(range(13, 21)),   # 13h–20h UTC (session US)
+        "active_days":         [0, 1, 2, 3, 4],       # Lun-Ven
+        "use_fixed_tp":        True,                  # TP fixe = tp_atr_mult × ATR
+        "disable_trailing":    True,                  # SL fixe, pas de trailing
+        "use_exit_after_bars": False,                 # pas de sortie temporelle
+    }
 
     # Intervalle de réentraînement énorme — la stratégie ne se réentraîne jamais
     # mais on laisse le MLStrategyTrainer planifier un cycle factice par sécurité.
@@ -587,6 +619,27 @@ class Strategy(BaseStrategyML):
         max_hold_bars    = int(p.get("max_hold_bars",      4))
         adx_threshold    = float(p.get("adx_threshold",    20.0))
 
+        # Flags de comportement V4 (défauts dans _DEFAULTS, surchargés par YAML)
+        enable_hour_filter  = bool(p.get("enable_hour_filter",  self._DEFAULTS["enable_hour_filter"]))
+        active_hours_utc    = list(p.get("active_hours_utc",    self._DEFAULTS["active_hours_utc"]))
+        active_days         = list(p.get("active_days",         self._DEFAULTS["active_days"]))
+        use_fixed_tp        = bool(p.get("use_fixed_tp",        self._DEFAULTS["use_fixed_tp"]))
+        disable_trailing    = bool(p.get("disable_trailing",    self._DEFAULTS["disable_trailing"]))
+        use_exit_after_bars = bool(p.get("use_exit_after_bars", self._DEFAULTS["use_exit_after_bars"]))
+
+        # 0. Filtre temporel (session US par défaut, désactivable via YAML).
+        if enable_hour_filter:
+            hour, dow = _last_bar_hour_dow(df)
+            if hour is not None and dow is not None:
+                if dow not in active_days:
+                    return self._none(
+                        f"Hors jours actifs (weekday={dow}, autorisés={active_days})"
+                    )
+                if hour not in active_hours_utc:
+                    return self._none(
+                        f"Hors session ({hour}h UTC, autorisées={active_hours_utc})"
+                    )
+
         # 1. Détection du TF — indispensable pour choisir le bon modèle.
         tf = _detect_timeframe(df)
         if tf not in _SUPPORTED_TFS:
@@ -656,66 +709,84 @@ class Strategy(BaseStrategyML):
 
         side = "long" if p_up > 0.5 else "short"
 
-        # 7. Stop loss initial (1.5×ATR) — le trailing manager du backtester
-        # reprend ensuite la main pour sécuriser les gains (équivalent du TP V4).
-        if side == "long":
-            stop_init = c_now - sl_atr_mult * atr_v
-        else:
-            stop_init = c_now + sl_atr_mult * atr_v
-
+        # 7. Stop loss / take-profit — on envoie les MULTIPLICATEURS d'ATR (pas
+        # les prix absolus) pour que l'engine les calcule à partir de exec_price
+        # (le prix réellement exécuté à la barre suivante). Évite les inversions
+        # de direction sur les gaps close→open.
         confidence = dir_dist * 2.0
         score_val  = round(min(0.55 + p_event * confidence * 0.39, 0.94), 3)
+        meta       = self._train_meta.get(tf, {})
 
-        meta = self._train_meta.get(tf, {})
-
-        return {
-            "score":           score_val,
-            "side":            side,
-            "name":            self.name,
-            "atr":             atr_v,
-            "stop_hint":       round(stop_init, 2),
-            # Sortie temporelle si trailing n'a pas été touché (cluster V4 §3.1).
-            "exit_after_bars": max_hold_bars,
-            # Trailing rapide : on cherche le ~1×ATR de TP V4
-            "trail_override": {
+        # Construction du signal — payload conditionnel selon les flags V4.
+        sig: Dict[str, Any] = {
+            "score":            score_val,
+            "side":             side,
+            "name":             self.name,
+            "atr":              atr_v,
+            "sl_atr_mult":      sl_atr_mult,
+            "disable_trailing": disable_trailing,
+            "p_event":          round(p_event, 4),
+            "p_up":             round(p_up, 4),
+            "regime":           regime,
+            "regime_lbl":       regime_lbl,
+            "tf_detected":      tf,
+        }
+        # TP fixe (V4 standalone) — optionnel
+        if use_fixed_tp:
+            sig["tp_atr_mult"] = tp_atr_mult
+        # Sortie temporelle (filet de sécurité) — optionnel
+        if use_exit_after_bars:
+            sig["exit_after_bars"] = max_hold_bars
+        # Trailing override : injecté seulement si trailing actif.
+        if not disable_trailing:
+            sig["trail_override"] = {
                 "trail_wide":  max(1.0, sl_atr_mult),
                 "trail_tight": max(0.5, tp_atr_mult * 0.5),
                 "breakeven_r": 0.8,
                 "lock_r":      max(1.0, tp_atr_mult),
                 "tight_r":     max(1.5, tp_atr_mult * 1.5),
                 "grace_bars":  1,
-            },
-            "p_event":    round(p_event, 4),
-            "p_up":       round(p_up, 4),
-            "regime":     regime,
-            "regime_lbl": regime_lbl,
-            "tf_detected": tf,
-            "indicators": {
-                "adx":         round(adx_v, 1),
-                "rsi":         round(float(last.get("RSI_14", 50.0) or 50.0), 1),
-                "p_event":     round(p_event, 4),
-                "p_up":        round(p_up, 4),
-                "dir_dist":    round(dir_dist, 4),
-                "size_factor": size_fac,
-                "sl_mult":     sl_atr_mult,
-                "tp_mult":     tp_atr_mult,
-                "auc_amp":     meta.get("auc_amp", 0.0),
-                "auc_dir":     meta.get("auc_dir", 0.0),
-            },
-            "conditions": [
-                f"Modèle pré-entraîné V4 / {tf} (aucun ré-entraînement)",
-                f"Régime : {regime_lbl} (ADX={adx_v:.0f}) — autorisé ✓",
-                f"P(événement)={p_event:.2f} ≥ {amp_thresh:.2f} ✓",
-                f"P(hausse)={p_up:.2f} → |dist|={dir_dist:.2f} ≥ {dir_thresh:.2f} ✓",
-                f"SL initial = entry ∓ {sl_atr_mult:.1f}×ATR | TP cible {tp_atr_mult:.1f}×ATR via trailing",
-                f"Sortie : trailing + max {max_hold_bars} barres",
-                f"AUC OOS V4 : amp={meta.get('auc_amp', 0):.2f} / dir={meta.get('auc_dir', 0):.2f}",
-            ],
-            "reason": (
-                f"OpusV4-PT {side.upper()} | {regime_lbl} | tf={tf} | "
-                f"P(event)={p_event:.2f} P(up)={p_up:.2f}"
-            ),
+            }
+
+        # Lignes de diagnostic — décrivent la configuration effective des sorties.
+        exit_desc = []
+        exit_desc.append(f"SL fixe = entry ∓ {sl_atr_mult:.2f}×ATR")
+        if use_fixed_tp:
+            exit_desc.append(f"TP fixe = entry ± {tp_atr_mult:.2f}×ATR")
+        if not disable_trailing:
+            exit_desc.append("trailing actif")
+        else:
+            exit_desc.append("trailing désactivé")
+        if use_exit_after_bars:
+            exit_desc.append(f"sortie après {max_hold_bars} barres max")
+
+        sig["indicators"] = {
+            "adx":              round(adx_v, 1),
+            "rsi":              round(float(last.get("RSI_14", 50.0) or 50.0), 1),
+            "p_event":          round(p_event, 4),
+            "p_up":             round(p_up, 4),
+            "dir_dist":         round(dir_dist, 4),
+            "size_factor":      size_fac,
+            "sl_mult":          sl_atr_mult,
+            "tp_mult":          tp_atr_mult if use_fixed_tp else None,
+            "use_fixed_tp":     use_fixed_tp,
+            "disable_trailing": disable_trailing,
+            "auc_amp":          meta.get("auc_amp", 0.0),
+            "auc_dir":          meta.get("auc_dir", 0.0),
         }
+        sig["conditions"] = [
+            f"Modèle pré-entraîné V4 / {tf} (aucun ré-entraînement)",
+            f"Régime : {regime_lbl} (ADX={adx_v:.0f}) — autorisé ✓",
+            f"P(événement)={p_event:.2f} ≥ {amp_thresh:.2f} ✓",
+            f"P(hausse)={p_up:.2f} → |dist|={dir_dist:.2f} ≥ {dir_thresh:.2f} ✓",
+            f"Sortie : {' + '.join(exit_desc)}",
+            f"AUC OOS V4 : amp={meta.get('auc_amp', 0):.2f} / dir={meta.get('auc_dir', 0):.2f}",
+        ]
+        sig["reason"] = (
+            f"OpusV4-PT {side.upper()} | {regime_lbl} | tf={tf} | "
+            f"P(event)={p_event:.2f} P(up)={p_up:.2f}"
+        )
+        return sig
 
     # ── Helpers ────────────────────────────────────────────────────────────
     def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:

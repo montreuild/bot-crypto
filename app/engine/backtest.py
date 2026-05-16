@@ -335,7 +335,16 @@ class Backtester:
                 stop_hit = (side == "long"  and c_low  <= stop) or \
                            (side == "short" and c_high >= stop)
 
-                if time_exit and not stop_hit:
+                # ── Take-profit fixe (intrabar) — optionnel via signal["tp_hint"]
+                # Vérifié seulement si stop NON touché (priorité conservative au stop
+                # en cas d'ambiguïté intrabar high/low).
+                tp_val = position.get("take_profit")
+                tp_hit = False
+                if tp_val is not None and not stop_hit:
+                    tp_hit = (side == "long"  and c_high >= tp_val) or \
+                             (side == "short" and c_low  <= tp_val)
+
+                if time_exit and not stop_hit and not tp_hit:
                     exec_price = c_close
                     fill_size  = position["size"]
                     fees       = self._fees(exec_price, fill_size, maker=True)
@@ -356,6 +365,44 @@ class Backtester:
                         "exit_bar":      i,
                         "exit_time":     ts,
                         "exit_reason":   "exit_after_bars",
+                        "pnl_pct":       round((exec_price - entry) / entry * 100 *
+                                               (1 if side == "long" else -1), 3) if entry else 0.0,
+                        "duration_bars": bars_held,
+                        "fill_pct":      self.partial_fill,
+                        "stop_trail":    position.pop("_stop_trail", []),
+                    })
+                    position.pop("_trailing", None)
+                    trades.append(position)
+                    equity_curve.append(round(capital, 4))
+                    timestamps.append(ts)
+                    position = None
+                    continue
+
+                if tp_hit:
+                    # TP fixe touché : sortie au prix TP (avec spread défavorable côté maker)
+                    exec_price  = tp_val * (1 - self.spread_pct) if side == "long" \
+                                  else tp_val * (1 + self.spread_pct)
+                    fill_size   = position["size"]
+                    fees        = self._fees(exec_price, fill_size, maker=True)
+                    bars_held   = i - position["bar"]
+                    days_held   = bars_held * _bar_to_days(
+                        self.cfg["trading"].get("timeframe", "1h"))
+                    borrow_cost = position["notional"] * self.borrow_rate * days_held
+
+                    gross = (exec_price - entry) * fill_size * (1 if side == "long" else -1)
+                    pnl   = gross - fees - borrow_cost
+                    capital += pnl
+
+                    ts = str(df["time"][i]) if "time" in df.columns else str(i)
+                    position.update({
+                        "pnl":           round(pnl, 6),
+                        "fees":          round(fees, 6),
+                        "borrow_cost":   round(borrow_cost, 6),
+                        "exit":          round(exec_price, 6),
+                        "status":        "closed",
+                        "exit_bar":      i,
+                        "exit_time":     ts,
+                        "exit_reason":   "take_profit",
                         "pnl_pct":       round((exec_price - entry) / entry * 100 *
                                                (1 if side == "long" else -1), 3) if entry else 0.0,
                         "duration_bars": bars_held,
@@ -399,7 +446,8 @@ class Backtester:
                         "status":        "closed",
                         "exit_bar":      i,
                         "exit_time":     ts,
-                        "exit_reason":   "trailing_stop",
+                        "exit_reason":   ("stop_loss" if position.get("disable_trailing")
+                                           else "trailing_stop"),
                         "trail_phase":   trail_phase,
                         "pnl_pct":       round((exec_price - entry) / entry * 100 *
                                                (1 if side == "long" else -1), 3) if entry else 0.0,
@@ -416,7 +464,10 @@ class Backtester:
                 else:
                     atr_v         = float(atr_arr[i]) or 1e-8
                     bars_held_now = i - position["bar"]
-                    _tr           = position.get("_trailing")
+                    # Skip trailing si désactivé via signal["disable_trailing"]=True :
+                    # le stop reste fixe (V4 standalone style : SL = entry ∓ 1.5×ATR).
+                    _tr           = (None if position.get("disable_trailing")
+                                     else position.get("_trailing"))
                     lo20 = low_arr[max(0, i - 19):i + 1].tolist()
                     hi20 = high_arr[max(0, i - 19):i + 1].tolist()
 
@@ -453,12 +504,29 @@ class Backtester:
                 exec_price *= (1 - self.spread_pct)
 
             _trailing = self._make_trailing(signal.get("trail_override"))
-            # Si la stratégie fournit un stop_hint, on l'utilise comme stop initial
-            # (le trailing manager prend le relais ensuite pour sécuriser les gains).
-            if signal.get("stop_hint") is not None:
+            # Stop initial : priorité au multiplicateur ATR (calé sur exec_price,
+            # robuste aux gaps close→open) ; sinon stop_hint absolu ; sinon trailing.
+            if signal.get("sl_atr_mult") is not None:
+                _sl_mult = float(signal["sl_atr_mult"])
+                stop = (exec_price - _sl_mult * atr_v) if signal["side"] == "long" \
+                       else (exec_price + _sl_mult * atr_v)
+            elif signal.get("stop_hint") is not None:
                 stop = float(signal["stop_hint"])
             else:
                 stop = _trailing.initial_stop(exec_price, atr_v, signal["side"])
+
+            # TP fixe optionnel : priorité au multiplicateur ATR (calé sur exec_price),
+            # sinon tp_hint absolu fourni par la stratégie.
+            if signal.get("tp_atr_mult") is not None:
+                _tp_mult = float(signal["tp_atr_mult"])
+                tp_init = (exec_price + _tp_mult * atr_v) if signal["side"] == "long" \
+                          else (exec_price - _tp_mult * atr_v)
+            elif signal.get("tp_hint") is not None:
+                tp_init = float(signal["tp_hint"])
+            else:
+                tp_init = None
+
+            disable_trailing = bool(signal.get("disable_trailing", False))
 
             stop_dist    = abs(exec_price - stop)
             risk_amount  = capital * risk
@@ -486,8 +554,9 @@ class Backtester:
                 "score":           round(signal.get("score", 0), 3),
                 "entry":           round(exec_price, 6),
                 "stop":            round(stop, 6),
-                "take_profit":     None,
+                "take_profit":     round(tp_init, 6) if tp_init is not None else None,
                 "exit_after_bars": signal.get("exit_after_bars"),
+                "disable_trailing": disable_trailing,
                 "size":            round(size, 6),
                 "notional":     round(notional, 4),
                 "bar":          i + 1,
