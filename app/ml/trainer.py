@@ -16,7 +16,7 @@ class MLStrategyTrainer:
         self.cfg = cfg
         self._ml_lock = ml_lock or threading.Lock()
         self._retrain_timeout = float(
-            cfg.get("ml", {}).get("retrain_timeout_secs", 300)
+            cfg.get("trading", {}).get("ml_retrain_timeout_secs", 300)
         )
         # Clé : "{name}@{tf}" — timer indépendant par (stratégie, timeframe)
         self._retrain_at: Dict[str, float] = {}

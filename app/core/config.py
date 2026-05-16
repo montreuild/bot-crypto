@@ -38,8 +38,6 @@ DEFAULTS = {
         "spread_pct": 0.0005, "latency_ms": 50, "partial_fill_pct": 0.95,
         "monte_carlo_runs": 200, "walk_forward_folds": 5,
     },
-    "ml":        {"enabled": False, "model": "random_forest", "blend_weight": 0.3,
-                  "min_samples": 200, "feature_window": 50},
     "optimizer": {"enabled": False, "method": "bayesian", "n_trials": 50, "out_of_sample_ratio": 0.3},
     "logging":   {"level": "INFO", "debug": False, "max_bytes": 10_485_760, "backup_count": 5,
                   "log_file": "logs/bot.log"},

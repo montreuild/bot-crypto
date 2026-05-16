@@ -160,12 +160,7 @@
         <div class="panel">
           <div class="panel-hdr"><span style="color:var(--muted)">●</span><h3>État ML</h3></div>
           <div class="panel-body">
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-              <span id="ml-enabled-badge" class="status-pill stopped"><span class="status-dot"></span><span id="ml-enabled-lbl">—</span></span>
-              <span id="ml-ready-badge" class="status-pill stopped"><span class="status-dot"></span><span id="ml-ready-lbl">—</span></span>
-            </div>
             <div id="ml-strat-info"></div>
-            <a href="/config" style="font-size:.68rem;color:var(--cyan);text-decoration:none;font-weight:600;margin-top:8px;display:inline-block">⚙ Configurer ML →</a>
           </div>
         </div>
       </div>
@@ -821,11 +816,6 @@ async function loadMLInfo() {
     const r = await apiFetch('/api/ml/strategy-info');
     if (!r.ok) return;
     const d = await r.json();
-    const enabled = d.enabled === true;
-    const ready   = d.ready   === true;
-    const eb = $('ml-enabled-badge'), rb = $('ml-ready-badge');
-    if (eb) { eb.className = 'status-pill ' + (enabled ? 'running' : 'stopped'); $('ml-enabled-lbl').textContent = enabled ? 'ML activé' : 'ML désactivé'; }
-    if (rb) { rb.className = 'status-pill ' + (ready   ? 'running' : 'stopped'); $('ml-ready-lbl').textContent   = ready   ? 'Prêt'       : 'Non prêt'; }
 
     const infoEl = $('ml-strat-info');
     if (!infoEl) return;

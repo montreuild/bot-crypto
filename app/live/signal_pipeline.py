@@ -8,7 +8,6 @@ from typing import Callable, Dict, List, Optional
 
 import polars as pl
 
-from app.core.indicators import detect_regime
 from app.live.utils import _HTF_MAP, _merge_params
 
 logger = logging.getLogger(__name__)
@@ -48,7 +47,7 @@ class SignalPipeline:
     Usage :
         pipeline = SignalPipeline(loaded_strategies, cfg, scanner)
         signals = pipeline.collect(
-            symbols, active_per_tf, ohlcv_fn, open_positions, cooldowns, ml
+            symbols, active_per_tf, ohlcv_fn, open_positions, cooldowns
         )
         # signals est trié par score décroissant, dédupliqué par (symbol, side)
     """
@@ -82,8 +81,7 @@ class SignalPipeline:
                 ohlcv_fn: Callable[[str, str], Optional[pl.DataFrame]],
                 open_positions: dict,
                 cooldowns: dict,
-                signal_log,
-                ml=None) -> List[Signal]:
+                signal_log) -> List[Signal]:
         """
         Collecte tous les signaux valides pour les (symbol, tf, strategy) actifs.
         Retourne les signaux rankés (tri décroissant par score).
@@ -119,7 +117,7 @@ class SignalPipeline:
                         continue
 
                     sig = self._score_symbol_slot(
-                        symbol, df, df_htf, strategy, entry, tf, slot_key, signal_log, ml
+                        symbol, df, df_htf, strategy, entry, tf, slot_key, signal_log
                     )
                     if sig is not None:
                         raw.append(sig)
@@ -134,8 +132,7 @@ class SignalPipeline:
                            entry: dict,
                            tf: str,
                            slot_key: str,
-                           signal_log,
-                           ml=None) -> Optional[Signal]:
+                           signal_log) -> Optional[Signal]:
         strat_name = entry.get("name", "")
         try:
             params = _merge_params(
@@ -176,18 +173,6 @@ class SignalPipeline:
                 "reason":    f"score {score:.2f} < threshold {threshold:.2f}",
             })
             return None
-
-        # ML blending
-        if ml and ml.is_ready:
-            try:
-                regime = detect_regime(df)
-                score, side = ml.blend_signal(score, signal["side"], df, regime)
-                if score < threshold:
-                    return None
-                signal["score"] = score
-                signal["side"]  = side
-            except Exception as e:
-                logger.debug(f"[Pipeline] ML blend KO {strat_name}/{symbol} : {e}")
 
         atr   = float(df["_pre_atr14"][-1]) if "_pre_atr14" in df.columns else 0.0
         price = 0.0

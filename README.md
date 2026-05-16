@@ -267,9 +267,7 @@ crypto_bot_v12/
 │   ├── live/
 │   │   └── live_trader.py          ← Boucle live/paper trading
 │   ├── ml/
-│   │   ├── model.py                ← MLPredictor (RandomForest/LogisticRegression)
-│   │   ├── features.py             ← Feature engineering
-│   │   └── predictor.py            ← Wrapper prediction
+│   │   └── trainer.py              ← MLStrategyTrainer (cycle de vie BaseStrategyML)
 │   ├── utils/
 │   │   ├── serializers.py          ← Fonctions sérialisation JSON
 │   │   └── cache.py                ← Caching stratégies découvertes

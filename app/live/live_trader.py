@@ -14,7 +14,6 @@ import logging
 import threading
 import time
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -22,7 +21,7 @@ import polars as pl
 
 from app.core.database           import init_db
 from app.core.exchange           import RobustExchange
-from app.core.indicators         import atr_val as _compute_atr, detect_regime
+from app.core.indicators         import atr_val as _compute_atr
 from app.core.notifications      import Notifier
 from app.core.risk               import RiskManager
 from app.engine.engine           import Engine
@@ -102,24 +101,12 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             sp = self.strat_params.get(name, {})
             self._strat_thresholds[name] = float(sp.get("score_threshold", self.threshold))
 
-        # ── ML prédicteur (blending de signal) ────────────────────────────
-        self.ml = None
-        if cfg.get("ml", {}).get("enabled"):
-            try:
-                from app.ml.model import MLPredictor
-                self.ml = MLPredictor(cfg)
-                if not self.ml.load():
-                    logger.info("[LiveTrader] Modèle ML non trouvé — sera entraîné au 1er cycle.")
-            except Exception as e:
-                logger.warning(f"[LiveTrader] ML non chargé : {e}")
-
         # ── État interne ───────────────────────────────────────────────────
         self.open_positions: Dict[str, dict] = {}
         self._positions_lock  = threading.Lock()
         self._capital_lock    = threading.Lock()
         self.running          = False
         self.cycle_count      = 0
-        self._ml_retrain_at   = 0
         self.capital_display  = cfg["trading"]["capital"]
         self._paper_base      = self._restore_paper_base(cfg["trading"]["capital"])
         self.last_scan_time   = None
@@ -286,7 +273,6 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                         )
                         self._recover_after_gap(gap_secs)
                         _last_successful_cycle = time.time()
-                self._maybe_retrain_ml()
                 self._maybe_auto_optimize()
                 self._purge_counter += 1
                 if self._purge_counter >= self._purge_every_n:
@@ -406,8 +392,6 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self.last_scan_time       = datetime.now(timezone.utc)
         self.last_symbols_scanned = list(symbols)
 
-        with self._ml_lock:
-            ml_ref = self.ml
         try:
             signals = self.pipeline.collect(
                 symbols=symbols,
@@ -416,7 +400,6 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 open_positions=self.open_positions,
                 cooldowns=self._cooldown,
                 signal_log=self.signal_log,
-                ml=ml_ref,
             )
         except Exception as e:
             logger.error(f"[Cycle] Erreur pipeline signaux : {e}", exc_info=True)
@@ -514,15 +497,6 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 "reason":    f"score {score:.2f} < threshold {strat_threshold:.2f}",
             })
             return
-
-        with self._ml_lock:
-            ml_ref = self.ml
-        if ml_ref and ml_ref.is_ready:
-            regime = detect_regime(df)
-            score, side = ml_ref.blend_signal(signal["score"], signal["side"], df, regime)
-            if score < strat_threshold:
-                return
-            signal["score"] = score
 
         ticker = self._safe_ticker(symbol)
         if ticker is None:
@@ -767,64 +741,6 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         status = self.risk.status_dict()
         status["positions_detail"] = positions_detail
         self.notif.notify_status(status)
-
-    # ── ML — réentraînement du prédicteur (blending) ──────────────────────
-
-    def _maybe_retrain_ml(self) -> None:
-        if not self.ml:
-            return
-        interval = self.cfg.get("ml", {}).get("retrain_interval", 3600)
-        if time.time() < self._ml_retrain_at:
-            return
-        self._ml_retrain_at = time.time() + interval
-        timeout = float(self.cfg.get("ml", {}).get("blend_train_timeout_secs", 300))
-        threading.Thread(
-            target=self._retrain_ml_with_timeout, args=(timeout,), daemon=True
-        ).start()
-
-    def _retrain_ml_with_timeout(self, timeout: float) -> None:
-        """Lance _retrain_ml_thread dans un executor et applique un timeout.
-
-        Note : en cas de timeout, le thread sous-jacent continue jusqu'à la fin
-        de l'opération en cours (fit/IO) puis se termine naturellement.
-        Le résultat est simplement ignoré — aucune ressource partagée n'est
-        corrompue car _ml_lock est acquis/relâché dans _retrain_ml_thread.
-        """
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(self._retrain_ml_thread)
-            try:
-                future.result(timeout=timeout)
-            except FuturesTimeoutError:
-                logger.error(
-                    f"[ML] Réentraînement prédicteur timeout ({timeout}s) — annulé"
-                )
-            except Exception as e:
-                logger.error(f"[ML] Réentraînement prédicteur KO : {e}")
-
-    def _retrain_ml_thread(self) -> None:
-        logger.info("[ML] Réentraînement prédicteur en arrière-plan…")
-        try:
-            symbols = self.scanner.get_symbols()
-            dfs = [self.scanner.fetch_ohlcv(s, self.tf, 1000) for s in symbols]
-            dfs = [d for d in dfs if d is not None
-                   and len(d) >= self.cfg["ml"]["min_samples"]]
-            if dfs:
-                df_combined = pl.concat(dfs)
-                new_model   = self.ml.__class__(self.cfg)
-                # Train general model
-                new_model.train(df_combined)
-                # Train per-regime models using regime detection
-                for regime_name in ("trending", "ranging", "volatile"):
-                    try:
-                        new_model.train(df_combined, regime=regime_name)
-                    except Exception as _re:
-                        logger.debug(f"[ML] Entraînement régime '{regime_name}' KO : {_re}")
-                new_model.save()
-                with self._ml_lock:
-                    self.ml = new_model
-                logger.info("[ML] Prédicteur réentraîné avec succès (+ modèles par régime).")
-        except Exception as e:
-            logger.error(f"[ML] Réentraînement KO : {e}")
 
     # ── Auto-optimisation planifiée ───────────────────────────────────────
 
