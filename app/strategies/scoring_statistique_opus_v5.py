@@ -207,8 +207,8 @@ class Strategy(BaseStrategyML):
         "max_hold_bars":     [4, 6, 8, 12],
         "trail_wide":        [1.0, 1.5, 2.0],
         "breakeven_r":       [0.4, 0.5, 0.7],
-        "warmup_bars":       [1500, 2000, 3000],
-        "retrain_every":     [500, 800, 1500],
+        "warmup_bars":       [500, 800, 1000],
+        "retrain_every":     [300, 500, 800],
     }
 
     fixed_params: Dict[str, Any] = {}
@@ -228,7 +228,7 @@ class Strategy(BaseStrategyML):
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get(self.name, {})
-        return int(p.get("warmup_bars", 2000)) + max(_LAGS) + 20
+        return int(p.get("warmup_bars", 800)) + max(_LAGS) + 20
 
     @property
     def is_trained(self) -> bool:
@@ -429,8 +429,8 @@ class Strategy(BaseStrategyML):
         amp_thresh_oth = float(p.get("amp_thresh_other", 0.60))
         dir_dist_oth   = float(p.get("dir_dist_other",   0.15))
         amp_top_pct    = float(p.get("amp_top_pct",      0.30))
-        warmup_bars    = int(p.get("warmup_bars",        2000))
-        retrain_every  = int(p.get("retrain_every",      800))
+        warmup_bars    = int(p.get("warmup_bars",          800))
+        retrain_every  = int(p.get("retrain_every",       300))
         # Exploitation clustering (§3.1)
         max_hold_bars  = int(p.get("max_hold_bars",      8))
         trail_wide     = float(p.get("trail_wide",       1.5))

@@ -216,8 +216,8 @@ class Strategy(BaseStrategyML):
         "amp_thresh_other":  [0.55, 0.60, 0.65],
         "dir_dist_other":    [0.12, 0.15, 0.18],
         "amp_top_pct":       [0.25, 0.30, 0.35],
-        "warmup_bars":       [1000, 2000, 3000],
-        "retrain_every":     [500, 800, 1500],
+        "warmup_bars":       [500, 800, 1000],
+        "retrain_every":     [300, 500, 800],
     }
 
     fixed_params: Dict[str, Any] = {}
@@ -238,7 +238,7 @@ class Strategy(BaseStrategyML):
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get(self.name, {})
-        return int(p.get("warmup_bars", 2000)) + max(_LAGS) + 20
+        return int(p.get("warmup_bars", 800)) + max(_LAGS) + 20
 
     @property
     def is_trained(self) -> bool:
@@ -458,8 +458,8 @@ class Strategy(BaseStrategyML):
         amp_thresh_oth = float(p.get("amp_thresh_other", 0.60))
         dir_dist_oth   = float(p.get("dir_dist_other",   0.15))
         amp_top_pct    = float(p.get("amp_top_pct",      0.30))
-        warmup_bars    = int(p.get("warmup_bars",        2000))
-        retrain_every  = int(p.get("retrain_every",      800))
+        warmup_bars    = int(p.get("warmup_bars",          800))
+        retrain_every  = int(p.get("retrain_every",       300))
 
         if len(df) < self.min_bars_required(params):
             return self._none(f"Données insuffisantes ({len(df)})")
