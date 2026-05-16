@@ -19,7 +19,7 @@ from typing import Any, Dict
 import polars as pl
 
 from app.engine.engine import BaseStrategy
-from app.core.indicators import pre_val
+from app.core.indicators import pre_val, htf_trend
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +77,17 @@ class Strategy(BaseStrategy):
         red_now    = body_now  < 0
         red_prev   = body_prev < 0
 
+        htf = htf_trend(df_htf)
+
         if green_now and green_prev:
+            if htf < 0:
+                return self._none("HTF baissier — LONG contre-tendance rejeté")
             side = "long"
             stop = o_now * (1.0 - sl_buffer_pct)
             strength = (body_now + body_prev) / max(atr_v, 1e-9) if atr_v > 0 else 1.0
         elif red_now and red_prev:
+            if htf > 0:
+                return self._none("HTF haussier — SHORT contre-tendance rejeté")
             side = "short"
             stop = o_now * (1.0 + sl_buffer_pct)
             strength = (abs(body_now) + abs(body_prev)) / max(atr_v, 1e-9) if atr_v > 0 else 1.0
@@ -107,11 +113,13 @@ class Strategy(BaseStrategy):
                 "open_now":        round(o_now, 4),
                 "atr":             round(atr_v, 4),
                 "strength":        round(strength, 3),
+                "htf_trend":       htf,
             },
             "conditions": [
                 f"Bougie N-1 : {'verte' if green_prev else 'rouge'} (corps {body_prev:+.2f}, ratio {body_ratio_prev:.0%})",
                 f"Bougie N   : {'verte' if green_now  else 'rouge'} (corps {body_now:+.2f}, ratio {body_ratio_now:.0%})",
                 f"Filtre doji : ratio min {doji_ratio:.0%} — OK",
+                f"Tendance HTF : {'+1 haussier' if htf > 0 else '-1 baissier' if htf < 0 else '0 neutre'} — alignée ✓",
                 f"SL = open[N] ({o_now:.2f}) ± {sl_buffer_pct:.2%} → {stop:.2f}",
                 f"Force signal : {strength:.2f}×ATR",
             ],
