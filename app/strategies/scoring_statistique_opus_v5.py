@@ -540,8 +540,9 @@ class Strategy(BaseStrategyML):
         hour_fac = _hour_multiplier(hour)
         size_fac *= hour_fac
 
-        confidence = dir_dist * 2.0
-        score      = round(min(0.55 + p_event * confidence * 0.39, 0.94), 3)
+        # Formule additive (inspirée V3) : fonctionne avec AUC_dir 0.52-0.65
+        # L'ancienne formule multiplicative nécessitait AUC_dir ≥ 0.87 (rapport 50k barres)
+        score = round(min(0.50 + dir_dist * 3.0 + (p_event - 0.5) * 0.50, 0.94), 3)
 
         meta    = self._train_meta.get(tf_key, {})
         auc_amp = meta.get("auc_amp", 0.0)
