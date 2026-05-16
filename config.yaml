@@ -79,15 +79,6 @@ optimizer:
   n_trials: 40
   out_of_sample_ratio: 0.35
 
-ml:
-  enabled: false
-  model: random_forest
-  blend_weight: 0.3
-  min_samples: 200
-  feature_window: 50
-  confidence_threshold: 0.55
-  retrain_interval: 3600
-
 database:
   url: sqlite:///trades.db
 

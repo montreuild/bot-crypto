@@ -2,6 +2,7 @@ params:
   # SL = open de la dernière bougie ± buffer. Très serré : si le mouvement
   # ne se poursuit pas immédiatement, on coupe.
   sl_buffer_pct: 0.0005   # 0.05% sous/au-dessus de l'open
+  doji_ratio: 0.15        # corps min = 15% du range total (filtre doji)
   score_threshold: 0.55
 
 optimizer_results:
