@@ -4,6 +4,9 @@ Règle d'entrée :
   - LONG  : close[i-1] > open[i-1]  ET  close[i] > open[i]   (2 vertes)
   - SHORT : close[i-1] < open[i-1]  ET  close[i] < open[i]   (2 rouges)
 
+Filtre doji : corps < doji_ratio × range total → bougie rejetée.
+  - Évite les signaux sur chandeliers indécis où la direction n'est pas franche.
+
 Stop loss très serré : open de la dernière bougie.
   - LONG  : SL = open[i] — si on retombe sous l'open, la continuation est morte
   - SHORT : SL = open[i] — si on remonte au-dessus, idem
@@ -25,7 +28,8 @@ class Strategy(BaseStrategy):
     name = "yoyo"
 
     param_space: Dict[str, Any] = {
-        "sl_buffer_pct":   [0.0, 0.0005, 0.001, 0.002],  # marge sous/au-dessus de l'open
+        "sl_buffer_pct":   [0.0, 0.0005, 0.001, 0.002],
+        "doji_ratio":      [0.1, 0.15, 0.2, 0.25],  # corps min en % du range total
         "score_threshold": [0.55, 0.60, 0.65],
     }
 
@@ -35,14 +39,19 @@ class Strategy(BaseStrategy):
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get(self.name, {})
         sl_buffer_pct = float(p.get("sl_buffer_pct", 0.0005))
+        doji_ratio    = float(p.get("doji_ratio", 0.15))
 
         if len(df) < 3:
             return self._none("Données insuffisantes")
 
         c_now  = float(df["close"][-1])
         o_now  = float(df["open"][-1])
+        h_now  = float(df["high"][-1])
+        l_now  = float(df["low"][-1])
         c_prev = float(df["close"][-2])
         o_prev = float(df["open"][-2])
+        h_prev = float(df["high"][-2])
+        l_prev = float(df["low"][-2])
         atr_v  = pre_val(df, "_pre_atr14") or 0.0
 
         if c_now <= 0:
@@ -50,6 +59,18 @@ class Strategy(BaseStrategy):
 
         body_now  = c_now  - o_now
         body_prev = c_prev - o_prev
+        range_now  = h_now  - l_now
+        range_prev = h_prev - l_prev
+
+        # Filtre doji : corps trop petit = bougie indécise
+        if range_now > 0 and abs(body_now) / range_now < doji_ratio:
+            return self._none(
+                f"Doji N : corps {abs(body_now):.4f} < {doji_ratio:.0%}×range {range_now:.4f}"
+            )
+        if range_prev > 0 and abs(body_prev) / range_prev < doji_ratio:
+            return self._none(
+                f"Doji N-1 : corps {abs(body_prev):.4f} < {doji_ratio:.0%}×range {range_prev:.4f}"
+            )
 
         green_now  = body_now  > 0
         green_prev = body_prev > 0
@@ -69,31 +90,36 @@ class Strategy(BaseStrategy):
 
         score = round(min(0.55 + strength * 0.05, 0.94), 3)
 
+        body_ratio_now  = abs(body_now)  / range_now  if range_now  > 0 else 1.0
+        body_ratio_prev = abs(body_prev) / range_prev if range_prev > 0 else 1.0
+
         return {
             "score":     score,
             "side":      side,
             "name":      self.name,
             "atr":       atr_v,
-            # Stop initial = open de la dernière bougie ± buffer (le trailing
-            # manager prend le relais après pour sécuriser les gains)
             "stop_hint": round(stop, 6),
             "indicators": {
-                "body_now":   round(body_now, 4),
-                "body_prev":  round(body_prev, 4),
-                "open_now":   round(o_now, 4),
-                "atr":        round(atr_v, 4),
-                "strength":   round(strength, 3),
+                "body_now":        round(body_now, 4),
+                "body_prev":       round(body_prev, 4),
+                "body_ratio_now":  round(body_ratio_now, 3),
+                "body_ratio_prev": round(body_ratio_prev, 3),
+                "open_now":        round(o_now, 4),
+                "atr":             round(atr_v, 4),
+                "strength":        round(strength, 3),
             },
             "conditions": [
-                f"Bougie N-1 : {'verte' if green_prev else 'rouge'} (corps {body_prev:+.2f})",
-                f"Bougie N   : {'verte' if green_now  else 'rouge'} (corps {body_now:+.2f})",
+                f"Bougie N-1 : {'verte' if green_prev else 'rouge'} (corps {body_prev:+.2f}, ratio {body_ratio_prev:.0%})",
+                f"Bougie N   : {'verte' if green_now  else 'rouge'} (corps {body_now:+.2f}, ratio {body_ratio_now:.0%})",
+                f"Filtre doji : ratio min {doji_ratio:.0%} — OK",
                 f"SL = open[N] ({o_now:.2f}) ± {sl_buffer_pct:.2%} → {stop:.2f}",
                 f"Force signal : {strength:.2f}×ATR",
             ],
             "reason": (
                 f"Yoyo {side.upper()} | 2 bougies "
                 f"{'vertes' if side == 'long' else 'rouges'} | "
-                f"SL fixe={stop:.2f}"
+                f"ratio corps {body_ratio_now:.0%}/{body_ratio_prev:.0%} | "
+                f"SL={stop:.2f}"
             ),
         }
 
