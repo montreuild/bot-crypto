@@ -1,9 +1,9 @@
 params:
-  # ── Seuils de décision (réplique des seuils par défaut du bot V4 standalone) ──
+  # ── Seuils de décision (réplique des seuils du bot V4 standalone §6.4) ──
   # Régime Trend Down (favorable — AUC dir 0.87 sur le rapport V4)
   thresh_amp_td: 0.50      # P(événement) ≥ 0.50 pour valider en TD
   thresh_dir_td: 0.10      # |P(hausse) - 0.5| ≥ 0.10 pour valider en TD
-  # Régime Range / Choppy : seuils plus stricts + taille réduite
+  # Régime Range / Choppy : seuils plus stricts
   thresh_amp_other: 0.55
   thresh_dir_other: 0.13
   adx_threshold: 20        # ADX < 20 → Range
@@ -14,17 +14,28 @@ params:
   active_hours_utc: [13, 14, 15, 16, 17, 18, 19, 20]
   active_days: [0, 1, 2, 3, 4]
 
-  # ── Gestion du stop / take-profit ──
-  # SL fixe = entry ∓ sl_atr_mult × ATR14 (jamais déplacé si trailing désactivé)
-  sl_atr_mult: 1.5
-  # TP fixe = entry ± tp_atr_mult × ATR14, vérifié intrabar
+  # ── Stop loss / take-profit (reproduit risk.py V4) ──
+  # Multiplicateurs ATR par régime — Trend Down plus large car mouvements
+  # plus violents (§risk.py V4 : tp_mults={2: 1.2, others: 1.0}, sl_mults={2: 1.8, others: 1.5})
+  sl_atr_mult_td: 1.8
+  sl_atr_mult_other: 1.5
+  tp_atr_mult_td: 1.2
+  tp_atr_mult_other: 1.0
+  # TP fixe (intrabar) — désactivable
   use_fixed_tp: true
-  tp_atr_mult: 1.0
   # Trailing désactivé par défaut : le SL reste figé jusqu'au TP ou au SL
   disable_trailing: true
   # Sortie temporelle désactivée par défaut (filet optionnel)
   use_exit_after_bars: false
   max_hold_bars: 4
+
+  # ── Sizing demi-Kelly (reproduit risk.py V4) ──
+  # V4 standalone : size = capital × risk_pct × max(confidence, min_conf)
+  # avec confidence = |P_up - 0.5| × 2 ∈ [0, 1].
+  # Le facteur émis ∈ [0, 1] multiplie le sizing engine standard.
+  use_kelly_sizing: true
+  kelly_size_other: 0.5    # Range/Choppy : taille de base ×0.5 vs Trend Down
+  min_confidence: 0.2      # plancher pour éviter taille nulle quand dist faible
 
   # Filtrage des signaux par l'engine
   score_threshold: 0.55
@@ -38,8 +49,10 @@ optimizer_results:
       thresh_dir_td: 0.10
       thresh_amp_other: 0.55
       thresh_dir_other: 0.13
-      sl_atr_mult: 1.5
-      tp_atr_mult: 1.0
+      sl_atr_mult_td: 1.8
+      sl_atr_mult_other: 1.5
+      tp_atr_mult_td: 1.2
+      tp_atr_mult_other: 1.0
   30m:
     run_date: null
     oos_score: null
@@ -48,8 +61,10 @@ optimizer_results:
       thresh_dir_td: 0.10
       thresh_amp_other: 0.55
       thresh_dir_other: 0.13
-      sl_atr_mult: 1.5
-      tp_atr_mult: 1.0
+      sl_atr_mult_td: 1.8
+      sl_atr_mult_other: 1.5
+      tp_atr_mult_td: 1.2
+      tp_atr_mult_other: 1.0
   1h:
     run_date: null
     oos_score: null
@@ -58,5 +73,7 @@ optimizer_results:
       thresh_dir_td: 0.10
       thresh_amp_other: 0.55
       thresh_dir_other: 0.13
-      sl_atr_mult: 1.5
-      tp_atr_mult: 1.0
+      sl_atr_mult_td: 1.8
+      sl_atr_mult_other: 1.5
+      tp_atr_mult_td: 1.2
+      tp_atr_mult_other: 1.0

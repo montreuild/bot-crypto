@@ -487,25 +487,40 @@ class Strategy(BaseStrategyML):
     timeframes: List[str] = list(_SUPPORTED_TFS)
 
     # Seuls les seuils de décision sont optimisables — les modèles sont figés.
+    # SL/TP per régime : reproduit risk.py (tp_mults / sl_mults) du bot V4.
     param_space: Dict[str, Any] = {
         "thresh_amp_td":    [0.40, 0.45, 0.50, 0.55, 0.60],
         "thresh_dir_td":    [0.05, 0.08, 0.10, 0.12, 0.15],
         "thresh_amp_other": [0.50, 0.55, 0.60, 0.65, 0.70],
         "thresh_dir_other": [0.10, 0.13, 0.15, 0.18, 0.20],
-        "sl_atr_mult":      [1.0, 1.25, 1.5, 1.75, 2.0],
-        "tp_atr_mult":      [0.8, 1.0, 1.2, 1.5],
-        "max_hold_bars":    [1, 2, 4, 6, 8],
+        "sl_atr_mult_td":    [1.5, 1.75, 1.8, 2.0, 2.25],
+        "sl_atr_mult_other": [1.0, 1.25, 1.5, 1.75],
+        "tp_atr_mult_td":    [1.0, 1.2, 1.4, 1.6],
+        "tp_atr_mult_other": [0.8, 1.0, 1.2, 1.4],
+        "max_hold_bars":     [1, 2, 4, 6, 8],
     }
     fixed_params: Dict[str, Any] = {}
 
     # Valeurs par défaut des flags de comportement V4 — surchargeables via YAML.
+    # Multiplicateurs SL/TP par régime alignés sur risk.py du bot V4 :
+    #   Trend Down : SL=1.8×ATR, TP=1.2×ATR (mouvements plus violents)
+    #   Range/Choppy : SL=1.5×ATR, TP=1.0×ATR
     _DEFAULTS = {
         "enable_hour_filter":  True,
-        "active_hours_utc":    list(range(13, 21)),   # 13h–20h UTC (session US)
+        "active_hours_utc":    list(range(13, 21)),   # 13h-20h UTC (session US)
         "active_days":         [0, 1, 2, 3, 4],       # Lun-Ven
         "use_fixed_tp":        True,                  # TP fixe = tp_atr_mult × ATR
         "disable_trailing":    True,                  # SL fixe, pas de trailing
         "use_exit_after_bars": False,                 # pas de sortie temporelle
+        # SL/TP par régime (risk.py V4)
+        "sl_atr_mult_td":      1.8,
+        "sl_atr_mult_other":   1.5,
+        "tp_atr_mult_td":      1.2,
+        "tp_atr_mult_other":   1.0,
+        # Demi-Kelly via confidence (rapport V4 §6.6)
+        "use_kelly_sizing":    True,
+        "kelly_size_other":    0.5,                   # Range/Choppy : taille ×0.5
+        "min_confidence":      0.2,                   # plancher pour éviter taille nulle
     }
 
     # Intervalle de réentraînement énorme — la stratégie ne se réentraîne jamais
@@ -585,6 +600,10 @@ class Strategy(BaseStrategyML):
         return self._ensure_loaded()
 
     # ── Prédictions ────────────────────────────────────────────────────────
+    # Reproduction de l'API ModelEngine du bot V4 standalone : on expose deux
+    # méthodes publiques explicites (predict_amplitude / predict_direction) qui
+    # délèguent au cœur générique _predict(target). Les NaN/Inf sont imputés
+    # via les médianes du set d'entraînement (cf. v4_medians.json).
     def _predict(self, features_df: pd.DataFrame, tf: str,
                  target: str) -> Optional[float]:
         key = (tf, target, "single")
@@ -600,6 +619,14 @@ class Strategy(BaseStrategyML):
             logger.warning(f"[OpusV4-PT] Prédiction {key} KO : {e}")
             return None
 
+    def predict_amplitude(self, features_df: pd.DataFrame, tf: str) -> Optional[float]:
+        """P(événement |return_{t+1}| > seuil) pour le timeframe donné."""
+        return self._predict(features_df, tf, "amp")
+
+    def predict_direction(self, features_df: pd.DataFrame, tf: str) -> Optional[float]:
+        """P(hausse à t+1) pour le timeframe donné."""
+        return self._predict(features_df, tf, "dir")
+
     # ── Cœur du signal ─────────────────────────────────────────────────────
     def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
@@ -614,10 +641,24 @@ class Strategy(BaseStrategyML):
         thresh_dir_td    = float(p.get("thresh_dir_td",    0.10))
         thresh_amp_other = float(p.get("thresh_amp_other", 0.55))
         thresh_dir_other = float(p.get("thresh_dir_other", 0.13))
-        sl_atr_mult      = float(p.get("sl_atr_mult",      1.5))
-        tp_atr_mult      = float(p.get("tp_atr_mult",      1.0))
-        max_hold_bars    = int(p.get("max_hold_bars",      4))
         adx_threshold    = float(p.get("adx_threshold",    20.0))
+        max_hold_bars    = int(p.get("max_hold_bars",      4))
+
+        # Multiplicateurs SL/TP par régime (reproduit risk.py V4) ────────────
+        sl_atr_mult_td    = float(p.get("sl_atr_mult_td",    self._DEFAULTS["sl_atr_mult_td"]))
+        sl_atr_mult_other = float(p.get("sl_atr_mult_other", self._DEFAULTS["sl_atr_mult_other"]))
+        tp_atr_mult_td    = float(p.get("tp_atr_mult_td",    self._DEFAULTS["tp_atr_mult_td"]))
+        tp_atr_mult_other = float(p.get("tp_atr_mult_other", self._DEFAULTS["tp_atr_mult_other"]))
+        # Rétro-compat avec l'ancienne API mono-régime
+        if "sl_atr_mult" in p:
+            sl_atr_mult_td = sl_atr_mult_other = float(p["sl_atr_mult"])
+        if "tp_atr_mult" in p:
+            tp_atr_mult_td = tp_atr_mult_other = float(p["tp_atr_mult"])
+
+        # Demi-Kelly (reproduit risk.py V4 : size = capital × risk × confidence)
+        use_kelly_sizing = bool(p.get("use_kelly_sizing", self._DEFAULTS["use_kelly_sizing"]))
+        kelly_size_other = float(p.get("kelly_size_other", self._DEFAULTS["kelly_size_other"]))
+        min_confidence   = float(p.get("min_confidence",   self._DEFAULTS["min_confidence"]))
 
         # Flags de comportement V4 (défauts dans _DEFAULTS, surchargés par YAML)
         enable_hour_filter  = bool(p.get("enable_hour_filter",  self._DEFAULTS["enable_hour_filter"]))
@@ -690,11 +731,16 @@ class Strategy(BaseStrategyML):
             return self._none(f"Modèle {tf} indisponible")
         dir_dist = abs(p_up - 0.5)
 
-        # 6. Règle de décision (réplique exacte du bot V4).
+        # 6. Règle de décision (réplique exacte du bot V4) — seuils + mults SL/TP
+        # + facteur de taille de base par régime.
         if regime == REGIME_TREND_DN:
-            amp_thresh, dir_thresh, size_fac = thresh_amp_td, thresh_dir_td, 1.0
+            amp_thresh, dir_thresh = thresh_amp_td, thresh_dir_td
+            sl_atr_mult, tp_atr_mult = sl_atr_mult_td, tp_atr_mult_td
+            regime_size_fac = 1.0
         else:  # Range ou Choppy
-            amp_thresh, dir_thresh, size_fac = thresh_amp_other, thresh_dir_other, 0.5
+            amp_thresh, dir_thresh = thresh_amp_other, thresh_dir_other
+            sl_atr_mult, tp_atr_mult = sl_atr_mult_other, tp_atr_mult_other
+            regime_size_fac = kelly_size_other
 
         if p_event < amp_thresh:
             return self._none(
@@ -717,6 +763,16 @@ class Strategy(BaseStrategyML):
         score_val  = round(min(0.55 + p_event * confidence * 0.39, 0.94), 3)
         meta       = self._train_meta.get(tf, {})
 
+        # ── Sizing demi-Kelly (reproduit risk.py V4) ──────────────────────────
+        # V4 standalone : size = capital × risk_pct × max(confidence, min_conf)
+        # On expose un facteur ∈ [0, 1] que l'engine multiplie sur le sizing
+        # standard (basé sur stop_dist en backtest ou ATR en live).
+        if use_kelly_sizing:
+            size_factor = regime_size_fac * max(confidence, min_confidence)
+            size_factor = min(1.0, max(0.0, size_factor))
+        else:
+            size_factor = regime_size_fac
+
         # Construction du signal — payload conditionnel selon les flags V4.
         sig: Dict[str, Any] = {
             "score":            score_val,
@@ -724,6 +780,7 @@ class Strategy(BaseStrategyML):
             "name":             self.name,
             "atr":              atr_v,
             "sl_atr_mult":      sl_atr_mult,
+            "size_factor":      round(size_factor, 4),
             "disable_trailing": disable_trailing,
             "p_event":          round(p_event, 4),
             "p_up":             round(p_up, 4),
@@ -766,10 +823,13 @@ class Strategy(BaseStrategyML):
             "p_event":          round(p_event, 4),
             "p_up":             round(p_up, 4),
             "dir_dist":         round(dir_dist, 4),
-            "size_factor":      size_fac,
+            "confidence":       round(confidence, 4),
+            "size_factor":      round(size_factor, 4),
+            "regime_size_fac":  regime_size_fac,
             "sl_mult":          sl_atr_mult,
             "tp_mult":          tp_atr_mult if use_fixed_tp else None,
             "use_fixed_tp":     use_fixed_tp,
+            "use_kelly_sizing": use_kelly_sizing,
             "disable_trailing": disable_trailing,
             "auc_amp":          meta.get("auc_amp", 0.0),
             "auc_dir":          meta.get("auc_dir", 0.0),
@@ -779,6 +839,10 @@ class Strategy(BaseStrategyML):
             f"Régime : {regime_lbl} (ADX={adx_v:.0f}) — autorisé ✓",
             f"P(événement)={p_event:.2f} ≥ {amp_thresh:.2f} ✓",
             f"P(hausse)={p_up:.2f} → |dist|={dir_dist:.2f} ≥ {dir_thresh:.2f} ✓",
+            f"Risque : SL {sl_atr_mult:.2f}×ATR | TP {tp_atr_mult:.2f}×ATR (régime {regime_lbl})",
+            f"Sizing : régime ×{regime_size_fac:.2f} × confidence {confidence:.2f} "
+            f"= size_factor {size_factor:.2f}" if use_kelly_sizing
+            else f"Sizing : ×{regime_size_fac:.2f} (Kelly désactivé)",
             f"Sortie : {' + '.join(exit_desc)}",
             f"AUC OOS V4 : amp={meta.get('auc_amp', 0):.2f} / dir={meta.get('auc_dir', 0):.2f}",
         ]

@@ -617,7 +617,10 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             return False
 
         # 5. Sizing
-        size, notional = self.risk.compute_size(price, atr, score=score, threshold=strat_threshold)
+        size, notional = self.risk.compute_size(
+            price, atr, score=score, threshold=strat_threshold,
+            size_factor=float(signal.get("size_factor", 1.0)),
+        )
         leverage = self.risk.compute_leverage(notional)
 
         # 6. Budget

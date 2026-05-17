@@ -539,6 +539,13 @@ class Backtester:
             if notional < 1.0 or size <= 0:
                 continue
 
+            # Size factor (demi-Kelly côté stratégie — ex. ×confidence) :
+            # appliqué après le cap notional pour permettre à la stratégie de
+            # réduire la taille sans buter sur max_notional_pct.
+            size_factor = float(signal.get("size_factor", 1.0))
+            size_factor = max(0.0, min(size_factor, 1.0))
+            size       *= size_factor
+
             size       *= self.partial_fill
             notional    = size * exec_price
             entry_fees  = self._fees(exec_price, size, maker=False)
