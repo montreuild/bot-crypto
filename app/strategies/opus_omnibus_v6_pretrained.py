@@ -24,15 +24,15 @@ Reproduit le pipeline V6.1 du fichier `23_v6_1_final.py` :
 
   - Filtre horaire : 13h-20h UTC (session US), comme V4.
 
-Limitations vs V6.1 source :
+Portage V6.1 complet :
   - **Sorties anticipées** (``should_exit_early`` : changement de régime,
-    inversion p_dir pendant la position) ne sont pas portées. L'engine
-    bot-crypto ne fournit pas de hook pour clore une position ouverte depuis
-    la stratégie. Le filet de sécurité ``max_bars`` reste actif via
-    ``exit_after_bars``, et le SL fixe limite la perte.
-  - **Cooldown / loss streak / daily limit** : déjà gérés au niveau du
-    ``RiskManager`` du bot (clés ``consecutive_loss_limit``,
-    ``reentry_cooldown_bars``, etc.).
+    inversion p_dir pendant la position) implémentées via le hook
+    ``check_early_exit`` de ``BaseStrategy`` (appelé par ``Backtester`` et
+    ``position_mixin`` à chaque barre).
+  - **Cooldown / loss streak / daily limit** : gérés par le ``RiskManager``
+    du bot (``consecutive_loss_limit``, ``reentry_cooldown_bars``,
+    ``max_trades_per_day``). Les valeurs V6.1 sont les défauts dans
+    ``config.yaml``.
 """
 
 import logging
@@ -185,6 +185,40 @@ def _evaluate_setup(setup: Dict[str, Any],
     if setup["dir_min"] is not None and p_up <= float(setup["dir_min"]):
         return False
     return True
+
+
+def _check_early_exit_v6(setup_name: str, regime: int, p_up: float,
+                         dir_inv_short: float = 0.55,
+                         dir_inv_long: float = 0.45,
+                         dir_drop_range: float = 0.40) -> Optional[str]:
+    """Réplique exacte de ``should_exit_early`` du fichier V6.1.
+
+    Conditions par setup :
+      SHORT_TD            : régime ≠ TD          → 'regime_exit_TD'
+                            p_dir > dir_inv_short → 'p_dir_inversion'
+      SHORT_CHOPPY        : régime ≠ Choppy     → 'regime_exit_choppy'
+                            p_dir > dir_inv_short → 'p_dir_inversion'
+      LONG_CHOPPY         : régime ≠ Choppy     → 'regime_exit_choppy'
+                            p_dir < dir_inv_long  → 'p_dir_inversion'
+      LONG_EXIT_TD        : régime = TD         → 'back_to_TD'
+      LONG_RANGE_STRICT   : régime = TD         → 'regime_to_TD'
+                            p_dir < dir_drop_range → 'p_dir_drop'
+    """
+    if setup_name == "SHORT_TD":
+        if regime != REGIME_TREND_DN:    return "regime_exit_TD"
+        if p_up > dir_inv_short:         return "p_dir_inversion"
+    elif setup_name == "SHORT_CHOPPY":
+        if regime != REGIME_CHOPPY:      return "regime_exit_choppy"
+        if p_up > dir_inv_short:         return "p_dir_inversion"
+    elif setup_name == "LONG_CHOPPY":
+        if regime != REGIME_CHOPPY:      return "regime_exit_choppy"
+        if p_up < dir_inv_long:          return "p_dir_inversion"
+    elif setup_name == "LONG_EXIT_TD":
+        if regime == REGIME_TREND_DN:    return "back_to_TD"
+    elif setup_name == "LONG_RANGE_STRICT":
+        if regime == REGIME_TREND_DN:    return "regime_to_TD"
+        if p_up < dir_drop_range:        return "p_dir_drop"
+    return None
 
 
 def _select_setup(setups: List[Dict[str, Any]],
@@ -473,6 +507,64 @@ class Strategy(BaseStrategyML):
 
     def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
         return self.score(df, params)
+
+    # ── Sortie anticipée V6.1 ──────────────────────────────────────────────
+    def check_early_exit(self, df: pl.DataFrame, position: dict,
+                         params: dict = None) -> Optional[str]:
+        """Implémente ``should_exit_early`` du fichier V6.1 : recalcule le
+        régime + p_dir à la barre courante et détermine si le setup ayant
+        ouvert la position est devenu invalide."""
+        # 1. Identifier le setup d'origine
+        setup_name = position.get("setup")
+        if not setup_name:
+            ind = position.get("indicators") or {}
+            setup_name = ind.get("setup")
+        if not setup_name:
+            return None
+
+        if not self._ensure_loaded():
+            return None
+        if df is None or len(df) < self.min_bars_required():
+            return None
+
+        p = (params or {}).get(self.name, {})
+        adx_threshold = float(p.get("adx_threshold", self._DEFAULTS["adx_threshold"]))
+        dir_inv_short  = float(p.get("early_exit_dir_inv_short",  0.55))
+        dir_inv_long   = float(p.get("early_exit_dir_inv_long",   0.45))
+        dir_drop_range = float(p.get("early_exit_dir_drop_range", 0.40))
+
+        # 2. Détection TF
+        tf = _detect_timeframe(df)
+        if tf not in _SUPPORTED_TFS:
+            return None
+
+        # 3. Recalculer features + régime + p_dir à la barre courante
+        try:
+            pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required() + 20))
+            features = self._FEATURE_BUILDER.build(pdf)
+            if features is None or len(features) == 0:
+                return None
+            last_row = features.iloc[-1]
+            regime = _classify_regime(
+                float(last_row.get("ADX", 0.0) or 0.0),
+                int(last_row.get("MM_bullish_align", 0) or 0),
+                int(last_row.get("MM_bearish_align", 0) or 0),
+                adx_threshold,
+            )
+            p_up = self.predict_direction(features, tf)
+            if p_up is None:
+                return None
+        except Exception as e:
+            logger.warning(f"[OmnibusV6-PT] check_early_exit recompute KO : {e}")
+            return None
+
+        # 4. Décision basée sur le setup
+        return _check_early_exit_v6(
+            setup_name, regime, p_up,
+            dir_inv_short=dir_inv_short,
+            dir_inv_long=dir_inv_long,
+            dir_drop_range=dir_drop_range,
+        )
 
     def _none(self, reason: str = "", p_event: float = 0.0, p_up: float = 0.5,
               regime: int = -1) -> dict:

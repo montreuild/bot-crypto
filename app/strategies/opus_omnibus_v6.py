@@ -10,11 +10,9 @@ dans ``opus_stat_retrained_v4`` (FeatureBuilder V4 complet, labels amp/dir,
 split 80/20, deux LightGBM par TF, médianes d'imputation), puis remplace
 la règle de décision par le sélecteur 5-setups V6.1.
 
-Limitations V6.1 → bot-crypto :
-  - Pas de "sorties anticipées" pilotées par la stratégie (l'engine ne fournit
-    pas ce hook). ``max_bars`` par setup → ``exit_after_bars`` ; SL fixe par
-    setup → ``sl_atr_mult`` ; TP fixe → ``tp_atr_mult``.
-  - Cooldown / loss streak / daily limit : gérés par le ``RiskManager`` du bot.
+Portage V6.1 complet (idem ``opus_omnibus_v6_pretrained``) :
+  - Sorties anticipées via le hook ``check_early_exit``.
+  - Cooldown / loss streak / daily limit : ``RiskManager`` du bot.
 """
 
 import logging
@@ -35,6 +33,7 @@ from app.strategies.opus_omnibus_v6_pretrained import (
     _DEFAULT_SETUPS, _SETUP_NAMES,
     _apply_setup_overrides, _select_setup,
     _regime_history_from_features, _exit_td_window_active,
+    _check_early_exit_v6, _classify_regime,
     _EXIT_TD_WINDOW_BARS,
 )
 
@@ -90,6 +89,55 @@ class Strategy(_OpusRetrained):
         "disable_trailing":    True,   # V6.1 → SL fixe
         "use_fixed_tp":        True,
     }
+
+    # ── Sortie anticipée V6.1 (réplique de should_exit_early) ──────────────
+    def check_early_exit(self, df: pl.DataFrame, position: dict,
+                         params: dict = None) -> Optional[str]:
+        setup_name = position.get("setup")
+        if not setup_name:
+            ind = position.get("indicators") or {}
+            setup_name = ind.get("setup")
+        if not setup_name:
+            return None
+
+        if df is None or len(df) < self.min_bars_required(params):
+            return None
+
+        p = (params or {}).get(self.name, {})
+        adx_threshold  = float(p.get("adx_threshold", self._DEFAULTS["adx_threshold"]))
+        dir_inv_short  = float(p.get("early_exit_dir_inv_short",  0.55))
+        dir_inv_long   = float(p.get("early_exit_dir_inv_long",   0.45))
+        dir_drop_range = float(p.get("early_exit_dir_drop_range", 0.40))
+
+        tf = _detect_timeframe(df)
+        if tf not in _SUPPORTED_TFS or tf not in self._trained_tfs:
+            return None
+
+        try:
+            pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required(params)))
+            features = self._FEATURE_BUILDER.build(pdf)
+            if features is None or len(features) == 0:
+                return None
+            last_row = features.iloc[-1]
+            regime = _classify_regime(
+                float(last_row.get("ADX", 0.0) or 0.0),
+                int(last_row.get("MM_bullish_align", 0) or 0),
+                int(last_row.get("MM_bearish_align", 0) or 0),
+                adx_threshold,
+            )
+            p_up = self.predict_direction(features, tf)
+            if p_up is None:
+                return None
+        except Exception as e:
+            logger.warning(f"[OmnibusV6-RT] check_early_exit recompute KO : {e}")
+            return None
+
+        return _check_early_exit_v6(
+            setup_name, regime, p_up,
+            dir_inv_short=dir_inv_short,
+            dir_inv_long=dir_inv_long,
+            dir_drop_range=dir_drop_range,
+        )
 
     # ── Score (remplace la règle V4 par le sélecteur 5-setups V6.1) ────────
     def score(self, df: pl.DataFrame, params: dict = None,
