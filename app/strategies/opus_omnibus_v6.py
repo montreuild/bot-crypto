@@ -15,21 +15,24 @@ import os
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-import pandas as pd
 import polars as pl
 
-from app.core.indicators import pre_val
-from app.strategies.opus_stat_pretrained_v4 import (
-    _FeatureBuilder, _detect_timeframe, _last_bar_hour_dow, _to_pandas_window,
-    REGIME_LABELS, REGIME_TREND_DN,
+from app.core.indicators import build_v4_features, pre_val
+from app.strategies.opus_stat_retrained_v4 import (
+    Strategy as _OpusRetrained,
+    _window_polars,
 )
-from app.strategies.opus_stat_retrained_v4 import Strategy as _OpusRetrained
-from app.strategies.opus_omnibus_v6_pretrained import (
-    _DEFAULT_SETUPS, _SETUP_NAMES,
-    _apply_setup_overrides, _select_setup,
-    _regime_history_from_features, _exit_td_window_active,
-    _check_early_exit_v6, _classify_regime,
-    _EXIT_TD_WINDOW_BARS,
+from app.strategies.opus_v4_common import (
+    detect_timeframe as _detect_timeframe,
+    last_bar_hour_dow as _last_bar_hour_dow,
+    classify_regime as _classify_regime,
+    regime_history_from_features as _regime_history_from_features,
+    exit_td_window_active as _exit_td_window_active,
+    apply_setup_overrides as _apply_setup_overrides,
+    select_setup as _select_setup,
+    check_early_exit_v7 as _check_early_exit_v6,
+    EXIT_TD_WINDOW_BARS as _EXIT_TD_WINDOW_BARS,
+    REGIME_LABELS, REGIME_TREND_DN,
 )
 
 logger = logging.getLogger(__name__)
@@ -116,22 +119,23 @@ class Strategy(_OpusRetrained):
             return None
 
         try:
-            pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required(params)))
-            features = self._FEATURE_BUILDER.build(pdf)
+            features = build_v4_features(
+                _window_polars(df, n=max(260, self.min_bars_required(params)))
+            )
             if features is None or len(features) == 0:
                 return None
-            last_row = features.iloc[-1]
+            last_row = features.row(-1, named=True)
             regime = _classify_regime(
-                float(last_row.get("ADX", 0.0) or 0.0),
-                int(last_row.get("MM_bullish_align", 0) or 0),
-                int(last_row.get("MM_bearish_align", 0) or 0),
+                float(last_row.get("ADX") or 0.0),
+                int(last_row.get("MM_bullish_align") or 0),
+                int(last_row.get("MM_bearish_align") or 0),
                 adx_threshold,
             )
             p_up = self.predict_direction(features, tf)
             if p_up is None:
                 return None
         except Exception as e:
-            logger.warning(f"[OmnibusV6-RT] check_early_exit recompute KO : {e}")
+            logger.warning(f"[OmnibusV7-RT] check_early_exit recompute KO : {e}")
             return None
 
         return _check_early_exit_v6(
@@ -194,13 +198,14 @@ class Strategy(_OpusRetrained):
             return self._none("Modèle pas encore entraîné (warmup en cours)")
 
         # 4. Features + ATR
-        pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required(params)))
-        features = self._FEATURE_BUILDER.build(pdf)
+        features = build_v4_features(
+            _window_polars(df, n=max(260, self.min_bars_required(params)))
+        )
         if features is None or len(features) == 0:
             return self._none("Construction des features V4 impossible")
 
-        last_row = features.iloc[-1]
-        atr_v    = float(last_row.get("ATR_14", 0.0) or 0.0)
+        last_row = features.row(-1, named=True)
+        atr_v    = float(last_row.get("ATR_14") or 0.0)
         if not np.isfinite(atr_v) or atr_v <= 0:
             atr_v = float(pre_val(df, "_pre_atr14") or 0.0)
         c_now    = float(df["close"][-1] or 0.0)
@@ -266,8 +271,8 @@ class Strategy(_OpusRetrained):
             sig["tp_atr_mult"] = tp_atr_mult
 
         sig["indicators"] = {
-            "adx":              round(float(last_row.get("ADX", 0.0) or 0.0), 1),
-            "rsi":              round(float(last_row.get("RSI_14", 50.0) or 50.0), 1),
+            "adx":              round(float(last_row.get("ADX") or 0.0), 1),
+            "rsi":              round(float(last_row.get("RSI_14") or 50.0), 1),
             "p_event":          round(p_event, 4),
             "p_up":             round(p_up, 4),
             "regime":           regime,

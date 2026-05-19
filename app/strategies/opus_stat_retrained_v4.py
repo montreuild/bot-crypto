@@ -1,26 +1,23 @@
-"""Stratégie Opus Stat Retrained V4 — pipeline V4 entraîné inline.
+"""Stratégie Opus Stat Retrained V4 — pipeline V4 entraîné inline (polars/numpy).
 
 Variante de ``opus_stat_pretrained_v4`` qui **entraîne son propre modèle**
 (comme n'importe quelle autre stratégie ML du bot) au lieu de charger le pkl
-embarqué. Reproduit fidèlement la méthodologie qui a produit ``v4_models.pkl``
-dans le rapport V4 :
+embarqué. Reproduit la méthodologie V4 :
 
-  1. Construction des features via le ``_FeatureBuilder`` V4 (~100 indicateurs
-     × lags 1/3/6/12) — réutilisé via import depuis ``opus_stat_pretrained_v4``.
+  1. Features V4 via ``build_v4_features`` d'``app.core.indicators`` (réécriture
+     polars/numpy du ``_FeatureBuilder`` pandas — équivalence numérique vérifiée
+     ≤ 5e-6 sur toutes les colonnes vs la version pandas de référence).
   2. Labellisation :
        - amplitude : ``|return_t+1| > quantile(amp_top_pct)`` (event detection)
        - direction : ``return_t+1 > 0``
   3. Split chronologique 80/20.
-  4. Deux LightGBM séparés (amp + dir) entraînés en pure mode booster
-     ``binary``, métrique ``auc``, early-stopping 40 rounds.
-  5. Imputation des NaN par les médianes du **train** (stockées avec le pkl).
-  6. Persistance par TF via ``save_model`` / ``load_model`` (un fichier par TF).
-  7. Walk-forward : réentraînement périodique inline géré par le
-     ``MLStrategyTrainer`` (intervalle ``retrain_interval_h``).
+  4. Deux LightGBM séparés (amp + dir) entraînés en booster ``binary``,
+     métrique ``auc``, early-stopping 40 rounds.
+  5. Imputation des NaN par les médianes du **train**.
+  6. Persistance par TF via ``save_model`` / ``load_model``.
+  7. Walk-forward : réentraînement périodique inline.
 
-Tout le reste (filtre temporel, multiplicateurs SL/TP par régime, sizing
-demi-Kelly, routing régime, désactivation trailing, TP fixe…) est identique
-à la version pré-entraînée — la stratégie y délègue via héritage léger.
+Pas de dépendance pandas — uniquement polars + numpy.
 """
 
 import logging
@@ -29,16 +26,17 @@ import threading
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-import pandas as pd
 import polars as pl
 
 from app.engine.engine import BaseStrategyML
-from app.core.indicators import pre_val
-from app.strategies.opus_stat_pretrained_v4 import (
-    _FeatureBuilder,
-    _detect_timeframe,
-    _last_bar_hour_dow,
-    _to_pandas_window,
+from app.core.indicators import (
+    build_v4_features,
+    select_v4_feature_columns,
+    pre_val,
+)
+from app.strategies.opus_v4_common import (
+    detect_timeframe as _detect_timeframe,
+    last_bar_hour_dow as _last_bar_hour_dow,
     REGIME_RANGE, REGIME_TREND_UP, REGIME_TREND_DN, REGIME_CHOPPY,
     REGIME_LABELS,
 )
@@ -47,43 +45,11 @@ logger = logging.getLogger(__name__)
 
 _SUPPORTED_TFS = ("15m", "30m", "1h")
 
-# Colonnes du DataFrame produit par FeatureBuilder qu'on **exclut** des features.
-# (raw OHLCV + dérivés non-stationnaires utilisés uniquement pour le calcul)
-_EXCLUDED_COLS = {
-    "time", "open", "high", "low", "close", "volume",
-    "log_ret", "OBV",
-    # raw MM (on garde leurs dist_/slope_) — non-stationnaires
-    "SMA_20", "SMA_50", "SMA_100", "SMA_200",
-    "EMA_20", "EMA_50", "EMA_100", "EMA_200",
-    "EMA_9", "EMA_21",
-    "high_20", "low_20", "high_50", "low_50", "high_100", "low_100",
-    # ATR_14 reste car déjà normalisé via ATR_pct
-    "ATR_14",
-}
 
-
-def _select_feature_columns(features_df: pd.DataFrame) -> List[str]:
-    """Retourne la liste des colonnes utilisables comme features (numériques,
-    stationnaires, hors OHLCV/MM brutes)."""
-    cols: List[str] = []
-    for c in features_df.columns:
-        if c in _EXCLUDED_COLS:
-            continue
-        s = features_df[c]
-        if pd.api.types.is_numeric_dtype(s):
-            cols.append(c)
-    return cols
-
-
-def _impute_with_medians(X: pd.DataFrame, medians: Dict[str, float]) -> np.ndarray:
-    """Remplace NaN/Inf par les médianes du train (fallback 0.0)."""
-    arr = X.to_numpy(dtype=np.float64, copy=True)
-    if not np.isfinite(arr).all():
-        for j, col in enumerate(X.columns):
-            mask = ~np.isfinite(arr[:, j])
-            if mask.any():
-                arr[mask, j] = float(medians.get(col, 0.0))
-    return arr
+def _window_polars(df: pl.DataFrame, n: int = 260) -> pl.DataFrame:
+    """Retourne les ``n`` dernières lignes en polars avec colonnes OHLCV+time."""
+    cols = [c for c in ("time", "open", "high", "low", "close", "volume") if c in df.columns]
+    return df.select(cols).tail(n)
 
 
 class Strategy(BaseStrategyML):
@@ -139,9 +105,6 @@ class Strategy(BaseStrategyML):
         "num_leaves":          31,
         "learning_rate":       0.03,
     }
-
-    # Réutilise le pipeline de features du pré-entraîné.
-    _FEATURE_BUILDER = _FeatureBuilder()
 
     # Intervalle de réentraînement par défaut côté MLStrategyTrainer.
     retrain_interval_h: int = 6
@@ -271,35 +234,34 @@ class Strategy(BaseStrategyML):
         num_leaves    = int(params.get("num_leaves",      self._DEFAULTS["num_leaves"]))
         learning_rate = float(params.get("learning_rate", self._DEFAULTS["learning_rate"]))
 
-        # 1. Conversion polars→pandas + construction des features V4
-        n_keep = max(2200, len(df))   # garde toute la fenêtre pour le train
-        pdf    = _to_pandas_window(df, n=n_keep)
-        feats  = self._FEATURE_BUILDER.build(pdf)
+        # 1. Features V4 polars (entièrement vectorisé sur la fenêtre dispo)
+        n_keep = max(2200, len(df))
+        feats  = build_v4_features(_window_polars(df, n=n_keep))
         if feats is None or len(feats) < 250:
             logger.warning(f"[OpusV4-RT] {tf_key} : données insuffisantes pour entraîner")
             return False
 
         # 2. Sélection des colonnes features (numériques, stationnaires)
-        feature_cols = _select_feature_columns(feats)
+        feature_cols = select_v4_feature_columns(feats)
         if not feature_cols:
             logger.warning(f"[OpusV4-RT] {tf_key} : aucune feature exploitable")
             return False
 
         # 3. Labels — réplique exacte de la méthodologie V4
-        close   = feats["close"].to_numpy(dtype=np.float64)
-        n       = len(close) - 1
+        close = feats["close"].to_numpy().astype(np.float64)
+        n     = len(close) - 1
         if n < 200:
             logger.warning(f"[OpusV4-RT] {tf_key} : pas assez de barres labélisables")
             return False
-        ret_t1   = (close[1:] - close[:n]) / np.maximum(close[:n], 1e-9)
-        abs_ret  = np.abs(ret_t1)
-        # Quantile coupure : top amp_top_pct → label "événement"
-        amp_thr  = float(np.quantile(abs_ret, 1.0 - amp_top_pct))
-        y_amp    = (abs_ret >= amp_thr).astype(np.int8)
-        y_dir    = (ret_t1 > 0).astype(np.int8)
+        ret_t1  = (close[1:] - close[:n]) / np.maximum(close[:n], 1e-9)
+        abs_ret = np.abs(ret_t1)
+        amp_thr = float(np.quantile(abs_ret, 1.0 - amp_top_pct))
+        y_amp   = (abs_ret >= amp_thr).astype(np.int8)
+        y_dir   = (ret_t1 > 0).astype(np.int8)
 
         # 4. Matrice de features (alignée sur n = len-1)
-        X_df = feats.iloc[:n][feature_cols].copy()
+        feats_train = feats.head(n)
+        X_train_np = feats_train.select(feature_cols).to_numpy().astype(np.float64)
 
         # 5. Split chronologique 80/20
         split = max(int(n * 0.8), 100)
@@ -309,13 +271,28 @@ class Strategy(BaseStrategyML):
             return False
 
         # 6. Médianes du TRAIN pour imputation cohérente live/test
-        medians = {
-            c: float(np.nanmedian(X_df[c].iloc[:split].to_numpy(dtype=np.float64)))
-            for c in feature_cols
-        }
-        # Imputation
-        X_imp_train = _impute_with_medians(X_df.iloc[:split], medians)
-        X_imp_valid = _impute_with_medians(X_df.iloc[split:n], medians)
+        medians: Dict[str, float] = {}
+        for j, col in enumerate(feature_cols):
+            col_train = X_train_np[:split, j]
+            finite_mask = np.isfinite(col_train)
+            if finite_mask.any():
+                medians[col] = float(np.median(col_train[finite_mask]))
+            else:
+                medians[col] = 0.0
+
+        # Imputation NaN/Inf via les médianes
+        X_imp_train = X_train_np[:split].copy()
+        X_imp_valid = X_train_np[split:n].copy()
+        if not np.isfinite(X_imp_train).all():
+            for j, col in enumerate(feature_cols):
+                mask = ~np.isfinite(X_imp_train[:, j])
+                if mask.any():
+                    X_imp_train[mask, j] = medians[col]
+        if not np.isfinite(X_imp_valid).all():
+            for j, col in enumerate(feature_cols):
+                mask = ~np.isfinite(X_imp_valid[:, j])
+                if mask.any():
+                    X_imp_valid[mask, j] = medians[col]
 
         # 7. Entraînement LightGBM (paramètres alignés sur 13_v4_models.py)
         common = dict(
@@ -328,8 +305,9 @@ class Strategy(BaseStrategyML):
         callbacks = [lgb.early_stopping(40, verbose=False), lgb.log_evaluation(-1)]
 
         # ── Modèle amplitude ───────────────────────────────────────────────
-        ds_train_amp = lgb.Dataset(X_imp_train, label=y_amp[:split])
-        ds_valid_amp = lgb.Dataset(X_imp_valid, label=y_amp[split:n], reference=ds_train_amp)
+        ds_train_amp = lgb.Dataset(X_imp_train, label=y_amp[:split], feature_name=feature_cols)
+        ds_valid_amp = lgb.Dataset(X_imp_valid, label=y_amp[split:n], reference=ds_train_amp,
+                                   feature_name=feature_cols)
         try:
             booster_amp = lgb.train(
                 {**common, "scale_pos_weight":
@@ -345,8 +323,9 @@ class Strategy(BaseStrategyML):
         auc_amp = booster_amp.best_score.get("valid_0", {}).get("auc", 0.0)
 
         # ── Modèle direction ───────────────────────────────────────────────
-        ds_train_dir = lgb.Dataset(X_imp_train, label=y_dir[:split])
-        ds_valid_dir = lgb.Dataset(X_imp_valid, label=y_dir[split:n], reference=ds_train_dir)
+        ds_train_dir = lgb.Dataset(X_imp_train, label=y_dir[:split], feature_name=feature_cols)
+        ds_valid_dir = lgb.Dataset(X_imp_valid, label=y_dir[split:n], reference=ds_train_dir,
+                                   feature_name=feature_cols)
         try:
             booster_dir = lgb.train(
                 {**common, "scale_pos_weight":
@@ -389,7 +368,7 @@ class Strategy(BaseStrategyML):
         return True
 
     # ── Prédictions (API V4) ───────────────────────────────────────────────
-    def _predict(self, features_df: pd.DataFrame, tf: str, target: str) -> Optional[float]:
+    def _predict(self, features_df: pl.DataFrame, tf: str, target: str) -> Optional[float]:
         with self._lock:
             model_map = self._amp_models if target == "amp" else self._dir_models
             booster   = model_map.get(tf)
@@ -398,22 +377,31 @@ class Strategy(BaseStrategyML):
         if booster is None or not feat_cols:
             return None
         try:
-            missing = [c for c in feat_cols if c not in features_df.columns]
-            if missing:
-                # Ajoute des colonnes manquantes (cas de col absente) à NaN puis impute.
-                for c in missing:
-                    features_df[c] = np.nan
-            X_row = features_df.iloc[-1:][feat_cols]
-            X_arr = _impute_with_medians(X_row, medians)
+            # Colonnes manquantes : remplies par les médianes (fallback 0.0)
+            present  = set(features_df.columns)
+            row_last = features_df.tail(1)
+            row_data = {}
+            for c in feat_cols:
+                if c in present:
+                    v = row_last[c][0]
+                    row_data[c] = float(v) if v is not None else medians.get(c, 0.0)
+                else:
+                    row_data[c] = medians.get(c, 0.0)
+            X_arr = np.array([[row_data[c] for c in feat_cols]], dtype=np.float64)
+            # NaN/Inf → médiane
+            if not np.isfinite(X_arr).all():
+                for j, c in enumerate(feat_cols):
+                    if not np.isfinite(X_arr[0, j]):
+                        X_arr[0, j] = float(medians.get(c, 0.0))
             return float(booster.predict(X_arr)[0])
         except Exception as e:
             logger.warning(f"[OpusV4-RT] Prédiction {tf}/{target} KO : {e}")
             return None
 
-    def predict_amplitude(self, features_df: pd.DataFrame, tf: str) -> Optional[float]:
+    def predict_amplitude(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
         return self._predict(features_df, tf, "amp")
 
-    def predict_direction(self, features_df: pd.DataFrame, tf: str) -> Optional[float]:
+    def predict_direction(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
         return self._predict(features_df, tf, "dir")
 
     def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
@@ -491,13 +479,12 @@ class Strategy(BaseStrategyML):
             return self._none("Modèle pas encore entraîné (warmup en cours)")
 
         # 3. Construction des features sur la fenêtre récente
-        pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required(params)))
-        features = self._FEATURE_BUILDER.build(pdf)
+        features = build_v4_features(_window_polars(df, n=max(260, self.min_bars_required(params))))
         if features is None or len(features) == 0:
             return self._none("Construction des features V4 impossible")
 
-        last_row = features.iloc[-1]
-        atr_v = float(last_row.get("ATR_14", 0.0) or 0.0)
+        last_row = features.row(-1, named=True)
+        atr_v = float(last_row.get("ATR_14") or 0.0)
         if not np.isfinite(atr_v) or atr_v <= 0:
             atr_v = float(pre_val(df, "_pre_atr14") or 0.0)
         c_now = float(df["close"][-1] or 0.0)
@@ -505,9 +492,9 @@ class Strategy(BaseStrategyML):
             return self._none("Prix ou ATR invalide")
 
         # 4. Régime (réplique exacte de la logique V4)
-        adx_v = float(last_row.get("ADX", 0.0) or 0.0)
-        bull  = int(last_row.get("MM_bullish_align", 0) or 0)
-        bear  = int(last_row.get("MM_bearish_align", 0) or 0)
+        adx_v = float(last_row.get("ADX") or 0.0)
+        bull  = int(last_row.get("MM_bullish_align") or 0)
+        bear  = int(last_row.get("MM_bearish_align") or 0)
         if adx_v < adx_threshold:
             regime = REGIME_RANGE
         elif bull == 1:
@@ -602,7 +589,7 @@ class Strategy(BaseStrategyML):
 
         sig["indicators"] = {
             "adx":              round(adx_v, 1),
-            "rsi":              round(float(last_row.get("RSI_14", 50.0) or 50.0), 1),
+            "rsi":              round(float(last_row.get("RSI_14") or 50.0), 1),
             "p_event":          round(p_event, 4),
             "p_up":             round(p_up, 4),
             "dir_dist":         round(dir_dist, 4),
