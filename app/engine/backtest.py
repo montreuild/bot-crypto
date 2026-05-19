@@ -2,6 +2,7 @@
 import logging
 import math
 import threading
+import time
 from typing import List, Dict, Optional, Tuple
 import numpy as np
 import polars as pl
@@ -270,6 +271,37 @@ class Backtester:
                         f"[Backtest] ML '{strat.name}' : aucun modèle pour {timeframe} "
                         "— entraînement inline activé (lancez d'abord un cycle live ou l'optimiseur)"
                     )
+            # ── Pré-calcul des features (optionnel, par stratégie) ───────────
+            # Les stratégies à features lourdes exposent un hook
+            # ``prepare_for_backtest(df)`` qui construit toutes leurs features
+            # sur la fenêtre complète, en une seule passe. Ensuite ``score()``
+            # lit la dernière ligne du cache au lieu de rebuild.
+            #
+            # Stratégies actuellement instrumentées (voir leur ``__init__`` /
+            # ``prepare_for_backtest`` pour les détails de cache) :
+            #   - opus_stat_pretrained_v4     (pandas, ~462 features)
+            #   - opus_stat_retrained_v4      (polars, ~462 features)
+            #   - opus_omnibus_v7_pretrained  (pandas, ~462 features)
+            #   - opus_omnibus_v7             (polars, ~462 features)
+            #   - scoring_statistique_opus_v4 (numpy, ~48 features, cache par adx_thr)
+            #   - scoring_statistique_opus_v5 (numpy, ~48 features, cache par adx_thr)
+            #   - ml_dynamic_threshold        (polars, ~30 features)
+            #
+            # Ce hook est invoqué par TOUS les chemins qui passent par
+            # ``Backtester.run`` — y compris donc les workers d'optimisation
+            # (``app.engine.optimizer._eval_worker``), les folds Walk-Forward
+            # (``WalkForwardAnalyzer.run``) et le replay live
+            # (``app.api.routes.replay``). Chaque trial subprocess en
+            # bénéficie automatiquement (build × 1 puis ~N-1 lookups O(1) par
+            # barre du backtest), sans modification supplémentaire.
+            prep = getattr(strat, "prepare_for_backtest", None)
+            if callable(prep):
+                try:
+                    prep(df)
+                except Exception as e:
+                    logger.warning(
+                        f"[Backtest] prepare_for_backtest('{strat.name}') KO : {e}"
+                    )
 
         capital      = self.cfg["trading"].get("capital", 1000.0)
         risk         = self.cfg["trading"]["risk_per_trade"]
@@ -310,9 +342,29 @@ class Backtester:
         close_arr = df["close"].to_numpy().astype(float)
         open_arr  = df["open"].to_numpy().astype(float)
 
+        total_bars = len(df) - 1 - warmup
+        _t_loop    = time.time()
+        logger.info(
+            f"[Backtest] {symbol} {timeframe or '?'} : démarrage boucle — "
+            f"{total_bars} barres à parcourir (warmup={warmup}, total={len(df)})"
+        )
         for i in range(warmup, len(df) - 1):
-            if self._cancel_event is not None and i % 100 == 0 and self._cancel_event.is_set():
-                raise InterruptedError("Backtest annulé")
+            if i % 100 == 0:
+                if self._cancel_event is not None and self._cancel_event.is_set():
+                    raise InterruptedError("Backtest annulé")
+                # Log de progression toutes les 500 barres (≈ visibilité utilisateur
+                # sans noyer les logs sur des backtests courts).
+                if total_bars > 1000 and i % 500 == 0 and i > warmup:
+                    done = i - warmup
+                    pct  = 100.0 * done / max(total_bars, 1)
+                    rate = done / max(time.time() - _t_loop, 0.001)
+                    eta  = (total_bars - done) / max(rate, 0.001)
+                    logger.info(
+                        f"[Backtest] {symbol} {timeframe or '?'} : "
+                        f"{done}/{total_bars} barres ({pct:.0f}%) — "
+                        f"{rate:.0f} bars/s, ETA {eta:.0f}s, "
+                        f"{len(trades)} trades, capital={capital:.2f}"
+                    )
             window  = df[:i + 1]
             c_high  = high_arr[i]
             c_low   = low_arr[i]
@@ -642,7 +694,16 @@ class Backtester:
                 "reason":       signal.get("reason", ""),
                 "conditions":   signal.get("conditions", []),
                 "indicators":   signal.get("indicators", {}),
-                "setup":        signal.get("setup"),
+                # Champs V7 / V4 — utilisés pour les colonnes 'Sortie' et 'Setup'
+                # du tableau de trades et pour les statistiques par exit_reason.
+                "setup":           signal.get("setup"),
+                "setup_priority":  signal.get("setup_priority"),
+                "regime":          signal.get("regime"),
+                "regime_lbl":      signal.get("regime_lbl"),
+                "sl_atr_mult":     signal.get("sl_atr_mult"),
+                "tp_atr_mult":     signal.get("tp_atr_mult"),
+                "size_factor":     signal.get("size_factor"),
+                "tf_detected":     signal.get("tf_detected"),
                 "mae":          0.0,
                 "mfe":          0.0,
                 "_stop_trail":  [{"bar": i + 1, "stop": round(stop, 6)}],

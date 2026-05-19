@@ -432,6 +432,36 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         self.managed_externally: bool = False
         # Signal d'annulation (positionné par le backtest runner pour arrêter proprement).
         self._cancel_event: Optional[threading.Event] = None
+        # Cache backtest : voir prepare_for_backtest.
+        self._bt_features: Optional[pl.DataFrame] = None
+        self._bt_features_len: int = 0
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Pré-calcule les ~30 features pour toute la fenêtre du backtest.
+
+        Sans ce cache, ``compute_features`` est appelé à chaque ``score()``,
+        soit ~5000 rebuilds redondants sur un backtest long (rolling VWAP,
+        log-returns, divergences RSI/prix, micro-structure des bougies…).
+        """
+        try:
+            feats = compute_features(df)
+            if feats is not None and len(feats) > 0:
+                self._bt_features = feats
+                self._bt_features_len = len(df)
+                logger.info(
+                    f"[MLDynThr] backtest : features pré-calculées sur "
+                    f"{self._bt_features_len} bougies ({len(feats.columns)} colonnes)"
+                )
+        except Exception as e:
+            logger.warning(f"[MLDynThr] prepare_for_backtest KO : {e}")
+            self._bt_features = None
+            self._bt_features_len = 0
+
+    def _get_or_build_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Cache-aware wrapper autour de ``compute_features``."""
+        if self._bt_features is not None and len(df) <= self._bt_features_len:
+            return self._bt_features.head(len(df))
+        return compute_features(df)
 
     # ── Interface principale ───────────────────────────────────
     def score(self, df: pl.DataFrame, params: dict = None, df_htf=None, symbol: str = "") -> Dict[str, Any]:
@@ -570,7 +600,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
     def _predict(self, df: pl.DataFrame, tf: str = "") -> Dict[str, Any]:
         tf = tf or _detect_tf(df)
         try:
-            feats = compute_features(df)
+            feats = self._get_or_build_features(df)
             if len(feats) == 0:
                 return self._no_signal()
 
@@ -729,6 +759,9 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             self._best_auc     = 0.0
             self._best_params  = {}
             self._feature_cols = []
+        # Invalide le cache de features (un nouveau backtest peut suivre).
+        self._bt_features = None
+        self._bt_features_len = 0
 
     @property
     def is_trained(self) -> bool:

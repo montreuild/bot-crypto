@@ -1,9 +1,9 @@
 """Stratégie Opus Omnibus V7 (entraîné inline) — 6 setups sur modèles V4 entraînés.
 
-Variante de ``opus_omnibus_v6_pretrained`` qui **entraîne son propre modèle**
+Variante de ``opus_omnibus_v7_pretrained`` qui **entraîne son propre modèle**
 au lieu de charger le pkl V4 embarqué. Conserve la logique V7 des 6 setups.
 
-Améliorations V7 (idem ``opus_omnibus_v6_pretrained``) :
+Améliorations V7 (idem ``opus_omnibus_v7_pretrained``) :
   - Nouveau setup SHORT_TD_HIGH (priorité 0, amp≥0.60, p_dir<0.30, size×1.5).
   - LONG_CHOPPY raffiné : p_dir>0.58, TP/SL serrés, max_bars=5.
   - SHORT_CHOPPY durci : p_dir<0.42, TP élargi.
@@ -621,7 +621,7 @@ class Strategy(BaseStrategyML):
     entraînés inline (mêmes paramètres LightGBM que ``opus_stat_retrained_v4``,
     mais code dupliqué pour rester autonome)."""
 
-    name      = "opus_omnibus_v6"
+    name      = "opus_omnibus_v7"
     model_dir = "models"
 
     timeframes: List[str] = list(_SUPPORTED_TFS)
@@ -691,6 +691,28 @@ class Strategy(BaseStrategyML):
         self._best_auc_per_tf: Dict[str, float] = {}
         self._train_meta:      Dict[str, dict]  = {}
         self._cancel_event = None
+        # Cache backtest : voir prepare_for_backtest.
+        self._bt_features: Optional[pl.DataFrame] = None
+        self._bt_features_len: int = 0
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Pré-calcule les features V4 (polars) pour toute la fenêtre.
+
+        Évite ~5000 rebuilds redondants dans la boucle backtest.
+        """
+        try:
+            feats = _build_features(_window_polars(df, n=len(df)))
+            self._bt_features = feats
+            self._bt_features_len = len(df) if feats is not None else 0
+            logger.info(
+                f"[OmnibusV7-RT] backtest : features pré-calculées sur "
+                f"{self._bt_features_len} bougies "
+                f"({(len(feats.columns) if feats is not None else 0)} colonnes)"
+            )
+        except Exception as e:
+            logger.warning(f"[OmnibusV7-RT] prepare_for_backtest KO : {e}")
+            self._bt_features = None
+            self._bt_features_len = 0
 
     # ── Cycle de vie ML ────────────────────────────────────────────────────
     @property
@@ -722,6 +744,8 @@ class Strategy(BaseStrategyML):
             self._last_retrain.clear()
             self._managed_externally = False
             self._best_auc = 0.0
+        self._bt_features = None
+        self._bt_features_len = 0
         gc.collect()
 
     # ── Persistance par TF ─────────────────────────────────────────────────
@@ -969,9 +993,13 @@ class Strategy(BaseStrategyML):
             return None
 
         try:
-            features = _build_features(
-                _window_polars(df, n=max(260, self.min_bars_required(params)))
-            )
+            # Fast-path backtest : features pré-calculées.
+            if self._bt_features is not None and len(df) <= self._bt_features_len:
+                features = self._bt_features.head(len(df))
+            else:
+                features = _build_features(
+                    _window_polars(df, n=max(260, self.min_bars_required(params)))
+                )
             if features is None or len(features) == 0:
                 return None
             last_row = features.row(-1, named=True)
@@ -1044,7 +1072,11 @@ class Strategy(BaseStrategyML):
         if tf not in self._trained_tfs:
             return self._none("Modèle pas encore entraîné (warmup en cours)")
 
-        features = _build_features(_window_polars(df, n=max(260, self.min_bars_required(params))))
+        # Fast-path backtest : features pré-calculées une fois.
+        if self._bt_features is not None and len(df) <= self._bt_features_len:
+            features = self._bt_features.head(len(df))
+        else:
+            features = _build_features(_window_polars(df, n=max(260, self.min_bars_required(params))))
         if features is None or len(features) == 0:
             return self._none("Construction des features V4 impossible")
 

@@ -235,6 +235,53 @@ class Strategy(BaseStrategyML):
         self._best_auc:        float            = 0.0
         self._best_auc_per_tf: Dict[str, float] = {}
         self._train_meta:      Dict[str, dict]  = {}
+        # Cache backtest : voir prepare_for_backtest. Clé = ``adx_threshold``
+        # car ``_build_features`` dépend de ce paramètre pour le régime.
+        self._bt_features_cache: Dict[float, np.ndarray] = {}
+        self._bt_features_len: int = 0
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Pré-calcule les features sur toute la fenêtre du backtest.
+
+        ``_build_features`` est appelé à chaque ``score()`` sur un slice de
+        250 bougies — soit ~5000 rebuilds redondants sur un backtest long.
+        On cache le tableau X complet par valeur de ``adx_threshold`` (seul
+        paramètre qui influence le calcul des features de régime).
+        """
+        try:
+            # On reconstruit le cache pour la(les) valeur(s) ``adx_threshold``
+            # du config courant. Les trials suivants ré-appelleront prep avec
+            # leur propre seuil — le cache croît mais reste borné par les
+            # valeurs distinctes (~3 dans le param_space).
+            self._bt_features_cache.clear()
+            self._bt_features_len = len(df)
+            logger.info(
+                f"[OpusV4-Stat] backtest : cache features prêt sur {len(df)} bougies "
+                f"(rebuild paresseux par valeur d'adx_threshold)"
+            )
+        except Exception as e:
+            logger.warning(f"[OpusV4-Stat] prepare_for_backtest KO : {e}")
+            self._bt_features_cache.clear()
+            self._bt_features_len = 0
+
+    def _get_or_build_features(self, df: pl.DataFrame,
+                               adx_threshold: float) -> Optional[np.ndarray]:
+        """Retourne ``X[:len(df)]`` depuis le cache, en construisant ``X`` sur
+        la fenêtre complète au premier accès pour chaque ``adx_threshold``."""
+        if self._bt_features_len == 0 or len(df) > self._bt_features_len:
+            # Pas en mode backtest cached ou DataFrame plus long que prévu :
+            # fallback au build classique (sur le slice de 250 barres).
+            feat_window = df.slice(max(0, len(df) - 250), min(250, len(df)))
+            return _build_features(feat_window, adx_threshold)
+        key = round(float(adx_threshold), 6)
+        X = self._bt_features_cache.get(key)
+        if X is None:
+            # Premier accès pour ce seuil : build sur la fenêtre complète.
+            X = _build_features(df.head(self._bt_features_len), adx_threshold)
+            if X is None:
+                return None
+            self._bt_features_cache[key] = X
+        return X[: len(df)]
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get(self.name, {})
@@ -263,6 +310,8 @@ class Strategy(BaseStrategyML):
             self._last_retrain.clear()
             self._managed_externally = False
             self._best_auc = 0.0
+        self._bt_features_cache.clear()
+        self._bt_features_len = 0
 
     def fit(self, df: pl.DataFrame, params: dict = None) -> None:
         p             = (params or {}).get(self.name, {})
@@ -507,10 +556,9 @@ class Strategy(BaseStrategyML):
             )
 
         # ── Prédictions LightGBM ───────────────────────────────────────────
-        # Construction des features sur les 250 dernières barres (couvre lag max 12 + BB rank 100),
-        # puis extraction de la dernière ligne. Indispensable car les lags nécessitent un historique.
-        feat_window = df.slice(max(0, len(df) - 250), min(250, len(df)))
-        X_full = _build_features(feat_window, adx_threshold)
+        # Construction des features — utilise le cache pré-calculé en backtest
+        # (gain ~50×) ou rebuild local sur 250 barres en live.
+        X_full = self._get_or_build_features(df, adx_threshold)
         if X_full is None or len(X_full) == 0:
             return self._none("Features manquantes")
         X_last = X_full[-1:]  # dernière ligne uniquement

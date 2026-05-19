@@ -216,7 +216,6 @@
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema200" checked onchange="toggleIndicator('ema200')" style="accent-color:#a78bfa"> EMA 200</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-bb"     checked onchange="toggleIndicator('bb')"     style="accent-color:rgba(77,159,255,.8)"> Bollinger</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-sr"           onchange="toggleIndicator('sr')"     style="accent-color:#ffd166"> Sup/Rés</label>
-        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-v4score" checked onchange="toggleIndicator('v4score')" style="accent-color:#c084fc"> Score V4</label>
       </div>
       <div class="panel-body" style="gap:0;padding:0">
         <div id="chart-status" style="padding:8px 14px;font-size:.72rem;color:var(--dim);min-height:20px"></div>
@@ -229,17 +228,6 @@
           <div class="chart-wrap" id="chart-rsi" style="height:90px" role="img" aria-label="Indicateur RSI (14 périodes)"></div>
           <div class="chart-sub-lbl" style="margin-top:4px">MACD (12,26,9)</div>
           <div class="chart-wrap" id="chart-macd" style="height:90px" role="img" aria-label="Indicateur MACD (12,26,9)"></div>
-          <div id="v4score-panel">
-            <div class="chart-sub-lbl" style="margin-top:4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-              <span style="font-weight:700">Scoring Statistique Opus</span>
-              <span style="color:var(--cyan);font-size:.62rem" title="Probabilité qu'un mouvement significatif ait lieu sur la prochaine bougie (filtre de volatilité)">━ Volatilité attendue</span>
-              <span style="color:#fbbf24;font-size:.62rem" title="Probabilité que le prochain mouvement soit haussier — &gt;58% = signal ACHAT, &lt;42% = signal VENTE">━ Sens : ↑hausse (&gt;50%) / ↓baisse (&lt;50%)</span>
-              <span style="color:rgba(255,255,255,.3);font-size:.62rem">· · · seuils décision</span>
-              <span style="font-size:.6rem;color:var(--dim);margin-left:auto">Régime : <span style="color:rgba(52,211,153,.9)">▌Trend Up</span> · <span style="color:rgba(251,113,133,.9)">▌Trend Down ★</span> · <span style="color:rgba(90,112,153,.9)">▌Range</span> · <span style="color:rgba(251,191,36,.9)">▌Choppy</span></span>
-              <span title="Comment lire ce graphique" style="cursor:help;font-size:.7rem;color:var(--dim);border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center" onclick="alert('Comment trader avec ces courbes :\n\n1️⃣ FILTRE — Cyan (Volatilité attendue) > 50%\n   → Le marché va probablement bouger. Sous 50%, on reste à l\'écart.\n\n2️⃣ DIRECTION — Ambre (Sens du marché)\n   • Au-dessus de 58-60% → signal ACHAT (long)\n   • En dessous de 40-42% → signal VENTE (short)\n   • Entre 42-58% → indécis, pas de trade\n\n3️⃣ RÉGIME (bande colorée en bas)\n   • 🔴 Trend Down : seuils relâchés, AUC 0.87 — meilleur régime\n   • 🔵 Range / 🟡 Choppy : seuils stricts, demi-taille\n   • 🟢 Trend Up : NE PAS TRADER (pas d\'edge directionnel)\n\nLa stratégie ne déclenche un trade QUE si volatilité ET direction passent le seuil simultanément, hors Trend Up.')">?</span>
-            </div>
-            <div class="chart-wrap" id="chart-scoring" style="height:120px;margin-bottom:8px" role="img" aria-label="Scoring Statistique Opus : volatilité attendue et sens du marché"></div>
-          </div>
         </div>
       </div>
     </div>
@@ -537,7 +525,7 @@ document.getElementById('opp-list').innerHTML='<div class="empty" style="color:v
 // ── Graphique Scanner ───────────────────────────────────────────────────
 let chartTf = '1h';
 let chartType = 'candles'; // 'candles' | 'line'
-let tvPriceChart = null, tvVolChart = null, tvRsiChart = null, tvMacdChart = null, tvScoringChart = null;
+let tvPriceChart = null, tvVolChart = null, tvRsiChart = null, tvMacdChart = null;
 // Series refs for indicator toggles
 let _seriesMap = {};
 // Resize observers to disconnect on destroy
@@ -579,8 +567,8 @@ function _destroyCharts(){
   _resizeObservers.forEach(ro=>{try{ro.disconnect();}catch(_){}});
   _resizeObservers = [];
   // Remove charts
-  [tvPriceChart, tvVolChart, tvRsiChart, tvMacdChart, tvScoringChart].forEach(c=>{try{if(c)c.remove();}catch(_){}});
-  tvPriceChart=tvVolChart=tvRsiChart=tvMacdChart=tvScoringChart=null;
+  [tvPriceChart, tvVolChart, tvRsiChart, tvMacdChart].forEach(c=>{try{if(c)c.remove();}catch(_){}});
+  tvPriceChart=tvVolChart=tvRsiChart=tvMacdChart=null;
   _seriesMap = {};
 }
 
@@ -620,12 +608,6 @@ function toggleIndicator(name){
     });
   } else if(name==='sr'){
     ['sr_res','sr_sup'].forEach(k=>{
-      try{if(_seriesMap[k])_seriesMap[k].applyOptions({visible:!!checked});}catch(_){}
-    });
-  } else if(name==='v4score'){
-    const panel = document.getElementById('v4score-panel');
-    if(panel) panel.style.display = checked ? '' : 'none';
-    ['scoring_amp','scoring_dir','scoring_reg','scoring_ref50','scoring_ref60','scoring_ref40'].forEach(k=>{
       try{if(_seriesMap[k])_seriesMap[k].applyOptions({visible:!!checked});}catch(_){}
     });
   } else {
@@ -774,99 +756,9 @@ function _renderChart(d){
     tvMacdChart.timeScale().fitContent();
   }
 
-  // ── Scoring V4 (amplitude, direction, régime) ─────────────────────────
-  const v4Visible = document.getElementById('tog-v4score')?.checked !== false;
-  tvScoringChart = _mkChart('chart-scoring', 120, {
-    rightPriceScale:{scaleMargins:{top:.06,bottom:.15},autoScale:false,
-                     mode:LightweightCharts.PriceScaleMode.Normal},
-    timeScale:{visible:false},
-  });
-  if(tvScoringChart){
-    tvScoringChart.applyOptions({
-      rightPriceScale:{minimum:0, maximum:1},
-    });
-
-    const _addRefLine=(val,color)=>{
-      const s=tvScoringChart.addLineSeries({
-        color,lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dotted,
-        priceLineVisible:false,lastValueVisible:false,visible:v4Visible,
-      });
-      s.setData([{time:firstTime,value:val},{time:lastTime,value:val}]);
-      return s;
-    };
-    _seriesMap.scoring_ref50 = _addRefLine(0.50,'rgba(255,255,255,.35)');  // baseline 50%
-    _seriesMap.scoring_ref60 = _addRefLine(0.58,'rgba(52,211,153,.30)');   // seuil ACHAT direction
-    _seriesMap.scoring_ref40 = _addRefLine(0.42,'rgba(251,113,133,.30)');  // seuil VENTE direction
-    _seriesMap.scoring_refAmp = _addRefLine(0.55,'rgba(34,211,238,.20)');  // seuil filtre volatilité
-
-    // Régime : histogramme coloré au bas du panneau (valeur fixe 0.05)
-    const REGIME_COLORS = {
-      0:'rgba(90,112,153,.55)',   // Range: bleu-gris
-      1:'rgba(52,211,153,.55)',   // Trend Up: vert
-      2:'rgba(251,113,133,.55)',  // Trend Down: rouge
-      3:'rgba(251,191,36,.55)',   // Choppy: ambre
-    };
-    if(ind.regime_v4?.length){
-      const regS = tvScoringChart.addHistogramSeries({
-        priceLineVisible:false,lastValueVisible:false,visible:v4Visible,
-        priceFormat:{type:'price',precision:2},
-      });
-      regS.setData(ind.regime_v4.map(p=>({
-        time:p.time, value:0.048,
-        color:REGIME_COLORS[p.value]||'rgba(90,112,153,.4)',
-      })));
-      _seriesMap.scoring_reg = regS;
-    }
-
-    // Amplitude probability (cyan)
-    if(ind.proba_amp?.length){
-      const ampS = tvScoringChart.addLineSeries({
-        color:'#22d3ee',lineWidth:1.5,
-        priceLineVisible:false,lastValueVisible:true,title:'Amp',
-        visible:v4Visible,
-        crosshairMarkerVisible:true,crosshairMarkerRadius:3,
-      });
-      ampS.setData(ind.proba_amp);
-      _seriesMap.scoring_amp = ampS;
-    }
-
-    // Direction probability — baseline series colorée (vert > 50%, rouge < 50%)
-    if(ind.proba_dir?.length){
-      let dirS;
-      try {
-        dirS = tvScoringChart.addBaselineSeries({
-          baseValue:{type:'price',price:0.5},
-          topLineColor:'rgba(52,211,153,.95)',
-          topFillColor1:'rgba(52,211,153,.35)',
-          topFillColor2:'rgba(52,211,153,.05)',
-          bottomLineColor:'rgba(251,113,133,.95)',
-          bottomFillColor1:'rgba(251,113,133,.05)',
-          bottomFillColor2:'rgba(251,113,133,.35)',
-          lineWidth:2,
-          priceLineVisible:false,lastValueVisible:true,title:'Sens',
-          visible:v4Visible,
-        });
-      } catch(_) {
-        // Fallback : line series si BaselineSeries indisponible
-        dirS = tvScoringChart.addLineSeries({
-          color:'#fbbf24',lineWidth:1.5,
-          priceLineVisible:false,lastValueVisible:true,title:'Sens',
-          visible:v4Visible,
-        });
-      }
-      dirS.setData(ind.proba_dir);
-      _seriesMap.scoring_dir = dirS;
-    }
-
-    tvScoringChart.timeScale().fitContent();
-  }
-  // Masquer le panneau si la checkbox est décochée
-  const v4panel = document.getElementById('v4score-panel');
-  if(v4panel) v4panel.style.display = v4Visible ? '' : 'none';
-
   // ── Sync sub-charts to price chart via TIME range (fixes RSI offset) ─
   let _syncing = false;
-  const _subCharts = [tvVolChart, tvRsiChart, tvMacdChart, tvScoringChart].filter(Boolean);
+  const _subCharts = [tvVolChart, tvRsiChart, tvMacdChart].filter(Boolean);
 
   tvPriceChart.timeScale().subscribeVisibleTimeRangeChange(range=>{
     if(_syncing||!range) return;
@@ -961,6 +853,51 @@ async function loadPredictions(){
         ? 'rgba(251,191,36,.5)'
         : side!=='none' ? sideColor+'44' : 'var(--border)';
       const cardBg = isBestOpt ? 'background:rgba(251,191,36,.04);' : '';
+      // Bloc V7 enrichi : régime / setup / probas / SL / TP / sortie.
+      // Affiché uniquement si la stratégie expose ces champs (omnibus_v7 et stat_v4).
+      const fmtPct = v => (v==null) ? '—' : (v*100).toFixed(1)+'%';
+      const fmtNum = (v, nd=2) => (v==null) ? '—' : Number(v).toFixed(nd);
+      let v7Block = '';
+      const hasV7 = sig.p_event != null || sig.p_up != null || sig.setup;
+      if(hasV7 && side !== 'none'){
+        const setupChip = sig.setup
+          ? `<span style="background:rgba(124,77,255,.18);color:#c084fc;font-size:.62rem;font-weight:700;padding:1px 6px;border-radius:3px" title="Setup V7 retenu (priorité ${sig.setup_priority ?? '?'})">${escHtml(sig.setup)}</span>`
+          : '';
+        const regChip = sig.regime_lbl
+          ? `<span style="background:rgba(34,211,238,.12);color:var(--cyan);font-size:.62rem;font-weight:700;padding:1px 6px;border-radius:3px" title="Régime de marché courant">${escHtml(sig.regime_lbl)}</span>`
+          : '';
+        const expTd = sig.exit_td_active
+          ? `<span style="background:rgba(251,191,36,.15);color:var(--amber);font-size:.58rem;font-weight:700;padding:1px 5px;border-radius:3px" title="Fenêtre de sortie après Trend Down active">exit_td</span>`
+          : '';
+        // Ligne probas
+        const pe = fmtPct(sig.p_event);
+        const pu = fmtPct(sig.p_up);
+        const probas = `<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:.66rem;font-family:var(--mono);margin-top:4px">
+          <span title="Probabilité qu'un mouvement significatif ait lieu sur la prochaine bougie">P(évt)=<strong style="color:var(--cyan)">${pe}</strong></span>
+          <span title="Probabilité que le prochain mouvement soit haussier">P(↑)=<strong style="color:${sig.p_up!=null && sig.p_up>0.5?'var(--green)':'var(--red)'}">${pu}</strong></span>
+          ${sig.indicators?.adx!=null?`<span title="ADX(14) courant">ADX=<strong>${fmtNum(sig.indicators.adx,1)}</strong></span>`:''}
+          ${sig.indicators?.rsi!=null?`<span title="RSI(14) courant">RSI=<strong>${fmtNum(sig.indicators.rsi,1)}</strong></span>`:''}
+        </div>`;
+        // Ligne sortie / sizing
+        const sortieParts = [];
+        if(sig.sl_atr_mult != null) sortieParts.push(`SL ${fmtNum(sig.sl_atr_mult)}×ATR`);
+        if(sig.tp_atr_mult != null) sortieParts.push(`TP ${fmtNum(sig.tp_atr_mult)}×ATR`);
+        if(sig.exit_after_bars != null) sortieParts.push(`max ${sig.exit_after_bars} bougies`);
+        if(sig.size_factor != null && sig.size_factor !== 1.0) sortieParts.push(`size×${fmtNum(sig.size_factor)}`);
+        const sortie = sortieParts.length
+          ? `<div style="font-size:.62rem;color:var(--muted);font-family:var(--mono);margin-top:3px">${sortieParts.join(' · ')}</div>`
+          : '';
+        // Ligne perf modèle (AUC)
+        const aucs = (sig.indicators?.auc_amp != null && sig.indicators?.auc_dir != null)
+          ? `<div style="font-size:.6rem;color:var(--dim);font-family:var(--mono);margin-top:3px">Modèle ${sig.tf_detected ?? ''} · AUC amp=${fmtNum(sig.indicators.auc_amp,3)} dir=${fmtNum(sig.indicators.auc_dir,3)} · ${sig.indicators.n_features ?? '?'} features</div>`
+          : '';
+        v7Block = `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px">${setupChip}${regChip}${expTd}</div>${probas}${sortie}${aucs}`;
+      } else if(sig.regime_lbl && side === 'none' && sig.p_event != null){
+        // Pour les V7 qui ne déclenchent pas : afficher quand même régime + probas
+        v7Block = `<div style="font-size:.62rem;color:var(--dim);font-family:var(--mono);margin-top:4px">
+          ${escHtml(sig.regime_lbl)} · P(évt)=${fmtPct(sig.p_event)} · P(↑)=${fmtPct(sig.p_up)}
+        </div>`;
+      }
       return`<div style="${cardBg}border:1px solid ${cardBorder};border-radius:var(--r-sm);padding:10px 12px${isBestOpt?';box-shadow:0 0 0 1px rgba(251,191,36,.2)':''}">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -974,7 +911,8 @@ async function loadPredictions(){
           <span style="font-size:.82rem;color:${sideColor};font-weight:700">${sideTxt}</span>
           ${side!=='none'?`<span style="font-size:.68rem;color:var(--dim);font-family:var(--mono)">score: ${(score).toFixed(2)}</span>`:''}
         </div>
-        ${sig.reason?`<div style="font-size:.65rem;color:var(--dim);margin-top:4px;line-height:1.4">${escHtml(sig.reason.slice(0,120))}${sig.reason.length>120?'…':''}</div>`:''}
+        ${v7Block}
+        ${sig.reason?`<div style="font-size:.65rem;color:var(--dim);margin-top:4px;line-height:1.4">${escHtml(sig.reason.slice(0,140))}${sig.reason.length>140?'…':''}</div>`:''}
       </div>`;
     });
 

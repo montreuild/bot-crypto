@@ -114,7 +114,14 @@ class MLStrategyTrainer:
     # ── Thread interne ─────────────────────────────────────────────────────
     def _retrain_thread(self, name: str, strat, strat_params: dict,
                         tf: str, scanner) -> None:
-        """Fetch OHLCV → fit → save_model pour un TF donné (thread daemon)."""
+        """Fetch OHLCV → fit → save_model pour un TF donné (thread daemon).
+
+        Le nombre de bougies demandé à ``scanner.fetch_ohlcv`` est calculé pour
+        couvrir ``strat.min_bars_required`` + une marge raisonnable (jusqu'à
+        ``2× warmup`` côté V4 retrained pour avoir un signal d'entraînement utile).
+        Les logs détaillent la fenêtre demandée vs reçue, ce qui rend explicite
+        l'origine d'un échec « données insuffisantes ».
+        """
         logger.info(f"[MLTrainer] Début réentraînement {name}/{tf}…")
         try:
             symbols = scanner.get_symbols()
@@ -122,15 +129,35 @@ class MLStrategyTrainer:
             if not symbol:
                 logger.warning(f"[MLTrainer] {name}/{tf} : aucun symbole disponible")
                 return
-            df = scanner.fetch_ohlcv(symbol, tf, 1000)
-            if df is None or len(df) < strat.min_bars_required(strat_params):
-                logger.warning(f"[MLTrainer] {name}/{tf} : données insuffisantes ({symbol}/{tf})")
+
+            need = int(strat.min_bars_required(strat_params))
+            # Marge raisonnable au-dessus du minimum (≥ 2× warmup pour les V4).
+            fetch_n = max(need + 200, 2 * need, 1000)
+            logger.info(
+                f"[MLTrainer] {name}/{tf} : fetch {symbol} — demande {fetch_n} bougies "
+                f"(min requis = {need})"
+            )
+            df = scanner.fetch_ohlcv(symbol, tf, fetch_n)
+            got = 0 if df is None else len(df)
+            if df is None or got < need:
+                logger.warning(
+                    f"[MLTrainer] {name}/{tf} : données insuffisantes pour {symbol} — "
+                    f"reçu {got} bougies, requis ≥{need} "
+                    f"(le store local a-t-il un historique suffisant ? "
+                    f"sinon laissez tourner le live un moment avant de réentraîner)"
+                )
                 return
+            logger.info(
+                f"[MLTrainer] {name}/{tf} : {got} bougies dispo pour {symbol} — fit en cours…"
+            )
             # Acquire lock to prevent race condition with main thread inference
             with self._ml_lock:
                 strat.fit(df, strat_params)
                 strat.save_model(self._model_path(strat, name, tf))
-            logger.info(f"[MLTrainer] {name}/{tf} réentraîné — AUC={strat._best_auc_per_tf.get(tf, 0):.4f}")
+            logger.info(
+                f"[MLTrainer] {name}/{tf} réentraîné — "
+                f"AUC={strat._best_auc_per_tf.get(tf, 0):.4f}"
+            )
         except Exception as e:
             logger.error(f"[MLTrainer] Réentraînement {name}/{tf} KO : {e}")
 

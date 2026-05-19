@@ -26,6 +26,21 @@ def cancel_backtest():
     return {"status": "cancelling"}
 
 
+@router.get("/api/backtest/status", dependencies=[Depends(verify_api_key)])
+def backtest_status():
+    """Indique si un backtest est en cours côté serveur.
+
+    Utilisé par l'UI au chargement de la page pour désactiver le bouton 'Lancer'
+    si un backtest tourne déjà (ex. après reload pendant un long backtest).
+    """
+    # Le sémaphore est libre = pas de backtest en cours ; on l'acquiert puis on
+    # le relâche aussitôt — le pattern évite une race avec ``run_backtest``.
+    running = not state._bt_semaphore.acquire(blocking=False)
+    if not running:
+        state._bt_semaphore.release()
+    return {"running": running}
+
+
 
 @router.post("/api/backtest", dependencies=[Depends(verify_api_key)])
 def run_backtest(
