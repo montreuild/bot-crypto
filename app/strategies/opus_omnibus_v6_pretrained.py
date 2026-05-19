@@ -1,38 +1,26 @@
-"""Stratégie Opus Omnibus V6 (pré-entraîné) — système 5 setups sur modèle V4.
+"""Stratégie Opus Omnibus V7 (pré-entraîné) — système 6 setups sur modèle V4.
 
-Reproduit le pipeline V6.1 du fichier `23_v6_1_final.py` :
+Améliore V6.1 avec les changements du fichier ``24_v7_improved.py`` :
 
   - Réutilise les modèles V4 pré-entraînés (mêmes pkl + médianes que
     ``opus_stat_pretrained_v4``).
-  - Au lieu d'une règle unique (V4) ou de seuils par régime, V6.1 combine
-    **5 setups complémentaires** avec priorités :
+  - 6 setups complémentaires avec priorités (V7) :
 
+      Priority 0  SHORT_TD_HIGH       reg=Trend Down,    p_amp≥0.60, p_dir<0.30  size×1.5
       Priority 1  SHORT_TD            reg=Trend Down,    p_amp≥0.50, p_dir<0.40
-      Priority 2  SHORT_CHOPPY        reg=Choppy,        p_amp≥0.50, p_dir<0.45
-      Priority 2  LONG_CHOPPY         reg=Choppy,        p_amp≥0.50, p_dir>0.55
+      Priority 2  LONG_CHOPPY         reg=Choppy,        p_amp≥0.50, p_dir>0.58  (V7: +0.03)
+      Priority 2  SHORT_CHOPPY        reg=Choppy,        p_amp≥0.50, p_dir<0.42  (V7: −0.03)
       Priority 3  LONG_EXIT_TD        exit_td_window,    reg≠TD,     p_amp≥0.40
       Priority 4  LONG_RANGE_STRICT   reg=Range,         p_amp≥0.60, p_dir>0.60
 
-    Le setup retenu pour une bougie donnée est celui de plus petite priorité
-    parmi ceux dont les conditions sont satisfaites.
+  - V7 TP/SL LONG_CHOPPY : tp_mult=0.9 sl_mult=1.2 max_bars=5 (plus serré)
+  - V7 TP SHORT_CHOPPY    : tp_mult=1.2 (élargi pour capturer plus de mouvement)
+  - V7 early exit LONG_CHOPPY assoupli : sort seulement si p_dir<0.40 OU régime=TD
+    (V6.1 sortait sur tout changement de régime depuis Choppy)
 
-  - Chaque setup a son propre couple ``tp_mult`` / ``sl_mult`` (multiplicateurs
-    ATR appliqués au prix d'exécution) et son ``max_bars`` (sortie temporelle).
-
-  - ``exit_td_window`` : fenêtre de 3 bougies à partir du moment où le régime
-    Trend Down se termine — permet de capter le rebond technique.
-
-  - Filtre horaire : 13h-20h UTC (session US), comme V4.
-
-Portage V6.1 complet :
-  - **Sorties anticipées** (``should_exit_early`` : changement de régime,
-    inversion p_dir pendant la position) implémentées via le hook
-    ``check_early_exit`` de ``BaseStrategy`` (appelé par ``Backtester`` et
-    ``position_mixin`` à chaque barre).
-  - **Cooldown / loss streak / daily limit** : gérés par le ``RiskManager``
-    du bot (``consecutive_loss_limit``, ``reentry_cooldown_bars``,
-    ``max_trades_per_day``). Les valeurs V6.1 sont les défauts dans
-    ``config.yaml``.
+  - Filtre horaire : 13h-20h UTC (session US).
+  - Sorties anticipées via ``check_early_exit``.
+  - Cooldown / loss streak / daily limit : ``RiskManager`` du bot.
 """
 
 import logging
@@ -67,36 +55,44 @@ _EXIT_TD_WINDOW_BARS = 3   # fenêtre LONG_EXIT_TD (bougies)
 # Définition des 5 setups OMNIBUS V6.1 — valeurs par défaut, surchargeables YAML
 # ─────────────────────────────────────────────────────────────────────────────
 _DEFAULT_SETUPS: Tuple[Dict[str, Any], ...] = (
+    # V7 : nouveau setup haute conviction (n=7, 100% down sur OOS)
+    {
+        "name": "SHORT_TD_HIGH", "priority": 0, "direction": -1, "enabled": True,
+        "regime": REGIME_TREND_DN, "needs_exit_td_window": False,
+        "amp_min": 0.60, "dir_max": 0.30, "dir_min": None,
+        "tp_mult": 1.4,  "sl_mult": 1.6,  "max_bars": 8,  "size_factor": 1.5,
+    },
     {
         "name": "SHORT_TD",     "priority": 1, "direction": -1, "enabled": True,
         "regime": REGIME_TREND_DN, "needs_exit_td_window": False,
         "amp_min": 0.50, "dir_max": 0.40, "dir_min": None,
-        "tp_mult": 1.2,  "sl_mult": 1.6,  "max_bars": 8,
+        "tp_mult": 1.2,  "sl_mult": 1.6,  "max_bars": 8,  "size_factor": 1.0,
     },
-    {
-        "name": "SHORT_CHOPPY", "priority": 2, "direction": -1, "enabled": True,
-        "regime": REGIME_CHOPPY, "needs_exit_td_window": False,
-        "amp_min": 0.50, "dir_max": 0.45, "dir_min": None,
-        "tp_mult": 1.0,  "sl_mult": 1.4,  "max_bars": 6,
-    },
+    # V7 : p_dir>0.58 (était 0.55), TP/SL serrés, max_bars=5
     {
         "name": "LONG_CHOPPY",  "priority": 2, "direction":  1, "enabled": True,
         "regime": REGIME_CHOPPY, "needs_exit_td_window": False,
-        "amp_min": 0.50, "dir_max": None, "dir_min": 0.55,
-        "tp_mult": 1.0,  "sl_mult": 1.4,  "max_bars": 6,
+        "amp_min": 0.50, "dir_max": None, "dir_min": 0.58,
+        "tp_mult": 0.9,  "sl_mult": 1.2,  "max_bars": 5,  "size_factor": 1.0,
+    },
+    # V7 : p_dir<0.42 (était 0.45), TP élargi à 1.2
+    {
+        "name": "SHORT_CHOPPY", "priority": 2, "direction": -1, "enabled": True,
+        "regime": REGIME_CHOPPY, "needs_exit_td_window": False,
+        "amp_min": 0.50, "dir_max": 0.42, "dir_min": None,
+        "tp_mult": 1.2,  "sl_mult": 1.4,  "max_bars": 6,  "size_factor": 1.0,
     },
     {
         "name": "LONG_EXIT_TD", "priority": 3, "direction":  1, "enabled": True,
         "regime": None,  "needs_exit_td_window": True,
-        # Particularité : régime ≠ Trend Down (la fenêtre s'ouvre quand on sort de TD)
         "amp_min": 0.40, "dir_max": None, "dir_min": None,
-        "tp_mult": 1.2,  "sl_mult": 1.5,  "max_bars": 8,
+        "tp_mult": 1.2,  "sl_mult": 1.5,  "max_bars": 8,  "size_factor": 1.0,
     },
     {
         "name": "LONG_RANGE_STRICT", "priority": 4, "direction":  1, "enabled": True,
         "regime": REGIME_RANGE, "needs_exit_td_window": False,
         "amp_min": 0.60, "dir_max": None, "dir_min": 0.60,
-        "tp_mult": 0.8,  "sl_mult": 1.2,  "max_bars": 6,
+        "tp_mult": 0.8,  "sl_mult": 1.2,  "max_bars": 6,  "size_factor": 1.0,
     },
 )
 _SETUP_NAMES = tuple(s["name"] for s in _DEFAULT_SETUPS)
@@ -153,7 +149,7 @@ def _apply_setup_overrides(p: Dict[str, Any]) -> List[Dict[str, Any]]:
         s = dict(src)
         prefix = f"setup_{s['name'].lower()}_"
         for field in ("priority", "direction", "amp_min", "dir_max", "dir_min",
-                      "tp_mult", "sl_mult", "max_bars", "enabled"):
+                      "tp_mult", "sl_mult", "max_bars", "enabled", "size_factor"):
             key = prefix + field
             if key in p and p[key] is not None:
                 s[field] = p[key]
@@ -189,30 +185,34 @@ def _evaluate_setup(setup: Dict[str, Any],
 
 def _check_early_exit_v6(setup_name: str, regime: int, p_up: float,
                          dir_inv_short: float = 0.55,
-                         dir_inv_long: float = 0.45,
+                         dir_inv_long: float = 0.40,
                          dir_drop_range: float = 0.40) -> Optional[str]:
-    """Réplique exacte de ``should_exit_early`` du fichier V6.1.
+    """Sorties anticipées V7 (amélioration de V6.1).
 
     Conditions par setup :
+      SHORT_TD_HIGH       : régime ≠ TD          → 'regime_exit_TD'
+                            p_dir > dir_inv_short → 'p_dir_inversion'
       SHORT_TD            : régime ≠ TD          → 'regime_exit_TD'
                             p_dir > dir_inv_short → 'p_dir_inversion'
-      SHORT_CHOPPY        : régime ≠ Choppy     → 'regime_exit_choppy'
-                            p_dir > dir_inv_short → 'p_dir_inversion'
-      LONG_CHOPPY         : régime ≠ Choppy     → 'regime_exit_choppy'
-                            p_dir < dir_inv_long  → 'p_dir_inversion'
-      LONG_EXIT_TD        : régime = TD         → 'back_to_TD'
-      LONG_RANGE_STRICT   : régime = TD         → 'regime_to_TD'
+      SHORT_CHOPPY        : régime ≠ Choppy      → 'regime_exit_choppy'
+                            p_dir > 0.58          → 'p_dir_inversion'  (V7: seuil durci)
+      LONG_CHOPPY (V7)    : p_dir < dir_inv_long  → 'p_dir_drop'       (seuil 0.40)
+                            régime = TD           → 'to_TD'
+                            (V6.1 sortait sur tout changement de régime depuis Choppy)
+      LONG_EXIT_TD        : régime = TD           → 'back_to_TD'
+      LONG_RANGE_STRICT   : régime = TD           → 'regime_to_TD'
                             p_dir < dir_drop_range → 'p_dir_drop'
     """
-    if setup_name == "SHORT_TD":
+    if setup_name in ("SHORT_TD_HIGH", "SHORT_TD"):
         if regime != REGIME_TREND_DN:    return "regime_exit_TD"
         if p_up > dir_inv_short:         return "p_dir_inversion"
     elif setup_name == "SHORT_CHOPPY":
         if regime != REGIME_CHOPPY:      return "regime_exit_choppy"
-        if p_up > dir_inv_short:         return "p_dir_inversion"
+        if p_up > 0.58:                  return "p_dir_inversion"
     elif setup_name == "LONG_CHOPPY":
-        if regime != REGIME_CHOPPY:      return "regime_exit_choppy"
-        if p_up < dir_inv_long:          return "p_dir_inversion"
+        # V7 : assoupli — sort seulement si p_dir s'effondre OU retour TD
+        if p_up < dir_inv_long:          return "p_dir_drop"
+        if regime == REGIME_TREND_DN:    return "to_TD"
     elif setup_name == "LONG_EXIT_TD":
         if regime == REGIME_TREND_DN:    return "back_to_TD"
     elif setup_name == "LONG_RANGE_STRICT":
@@ -235,7 +235,7 @@ def _select_setup(setups: List[Dict[str, Any]],
 # Stratégie
 # ─────────────────────────────────────────────────────────────────────────────
 class Strategy(BaseStrategyML):
-    """V6.1 OMNIBUS — 5 setups avec routing par priorité, sur modèles V4 pkl."""
+    """V7 OMNIBUS — 6 setups avec routing par priorité, sur modèles V4 pkl."""
 
     name      = "opus_omnibus_v6_pretrained"
     # Dossier de la pkl V4 — pas d'écriture car les modèles sont figés.
@@ -245,16 +245,24 @@ class Strategy(BaseStrategyML):
 
     # Seuils optimisables — sous-ensemble des paramètres setup les plus impactants
     param_space: Dict[str, Any] = {
+        # SHORT_TD_HIGH (V7)
+        "setup_short_td_high_amp_min":    [0.55, 0.60, 0.65],
+        "setup_short_td_high_dir_max":    [0.25, 0.30, 0.35],
+        # SHORT_TD
         "setup_short_td_amp_min":         [0.45, 0.50, 0.55],
         "setup_short_td_dir_max":         [0.35, 0.40, 0.45],
         "setup_short_td_tp_mult":         [1.0, 1.2, 1.4],
         "setup_short_td_sl_mult":         [1.4, 1.6, 1.8],
+        # SHORT_CHOPPY (V7 : seuil durci)
         "setup_short_choppy_amp_min":     [0.45, 0.50, 0.55],
-        "setup_short_choppy_dir_max":     [0.40, 0.45, 0.50],
+        "setup_short_choppy_dir_max":     [0.38, 0.42, 0.46],
+        # LONG_CHOPPY (V7 : seuil raffiné)
         "setup_long_choppy_amp_min":      [0.45, 0.50, 0.55],
-        "setup_long_choppy_dir_min":      [0.50, 0.55, 0.60],
+        "setup_long_choppy_dir_min":      [0.55, 0.58, 0.62],
+        # LONG_EXIT_TD
         "setup_long_exit_td_amp_min":     [0.35, 0.40, 0.45],
         "setup_long_exit_td_max_bars":    [4, 6, 8, 10],
+        # LONG_RANGE_STRICT
         "setup_long_range_strict_amp_min":[0.55, 0.60, 0.65],
         "setup_long_range_strict_dir_min":[0.55, 0.60, 0.65],
         "exit_td_window_bars":            [2, 3, 4],
@@ -448,6 +456,8 @@ class Strategy(BaseStrategyML):
 
         meta = self._train_meta.get(tf, {})
 
+        size_factor = float(setup.get("size_factor", 1.0))
+
         sig: Dict[str, Any] = {
             "score":            score_val,
             "side":             side,
@@ -455,8 +465,8 @@ class Strategy(BaseStrategyML):
             "atr":              atr_v,
             "sl_atr_mult":      sl_atr_mult,
             "disable_trailing": disable_trailing,
-            "size_factor":      1.0,    # V6.1 = taille fixe % capital, pas de Kelly
-            "exit_after_bars":  max_bars,  # max_bars du setup = filet de sécurité temporel
+            "size_factor":      size_factor,
+            "exit_after_bars":  max_bars,
             "p_event":          round(p_event, 4),
             "p_up":             round(p_up, 4),
             "regime":           regime,
@@ -486,7 +496,7 @@ class Strategy(BaseStrategyML):
             "auc_dir":          meta.get("auc_dir", 0.0),
         }
         sig["conditions"] = [
-            f"Setup V6.1 retenu : {setup['name']} (priorité {setup['priority']})",
+            f"Setup V7 retenu : {setup['name']} (priorité {setup['priority']})",
             f"Régime : {regime_lbl} | exit_td_window={exit_td_active}",
             f"P(événement)={p_event:.2f} ≥ {setup['amp_min']:.2f} ✓",
             (f"P(hausse)={p_up:.2f} < {setup['dir_max']:.2f} ✓"
@@ -500,7 +510,7 @@ class Strategy(BaseStrategyML):
             f"dir={meta.get('auc_dir', 0):.2f}",
         ]
         sig["reason"] = (
-            f"OmnibusV6-PT {setup['name']} {side.upper()} | {regime_lbl} | tf={tf} | "
+            f"OmnibusV7-PT {setup['name']} {side.upper()} | {regime_lbl} | tf={tf} | "
             f"P(event)={p_event:.2f} P(up)={p_up:.2f}"
         )
         return sig

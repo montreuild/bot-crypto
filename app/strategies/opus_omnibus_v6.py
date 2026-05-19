@@ -1,18 +1,13 @@
-"""Stratégie Opus Omnibus V6 (entraîné inline) — V6.1 sur modèles V4 entraînés.
+"""Stratégie Opus Omnibus V7 (entraîné inline) — 6 setups sur modèles V4 entraînés.
 
 Variante de ``opus_omnibus_v6_pretrained`` qui **entraîne son propre modèle**
-au lieu de charger le pkl V4 embarqué. Conserve strictement la logique V6.1
-des 5 setups (priorités, TP/SL/max_bars par setup, ``exit_td_window``,
-filtre horaire) — seul l'origine des modèles change.
+au lieu de charger le pkl V4 embarqué. Conserve la logique V7 des 6 setups.
 
-Concrètement la stratégie hérite de l'entraînement V4 inline déjà implémenté
-dans ``opus_stat_retrained_v4`` (FeatureBuilder V4 complet, labels amp/dir,
-split 80/20, deux LightGBM par TF, médianes d'imputation), puis remplace
-la règle de décision par le sélecteur 5-setups V6.1.
-
-Portage V6.1 complet (idem ``opus_omnibus_v6_pretrained``) :
-  - Sorties anticipées via le hook ``check_early_exit``.
-  - Cooldown / loss streak / daily limit : ``RiskManager`` du bot.
+Améliorations V7 (idem ``opus_omnibus_v6_pretrained``) :
+  - Nouveau setup SHORT_TD_HIGH (priorité 0, amp≥0.60, p_dir<0.30, size×1.5).
+  - LONG_CHOPPY raffiné : p_dir>0.58, TP/SL serrés, max_bars=5.
+  - SHORT_CHOPPY durci : p_dir<0.42, TP élargi.
+  - Early exit LONG_CHOPPY assoupli : sort si p_dir<0.40 OU régime=TD.
 """
 
 import logging
@@ -43,7 +38,7 @@ _SUPPORTED_TFS = ("15m", "30m", "1h")
 
 
 class Strategy(_OpusRetrained):
-    """V6.1 OMNIBUS — 5 setups avec routing par priorité, sur modèles V4
+    """V7 OMNIBUS — 6 setups avec routing par priorité, sur modèles V4
     entraînés inline (même pipeline LightGBM que ``opus_stat_retrained_v4``)."""
 
     name      = "opus_omnibus_v6"
@@ -53,17 +48,24 @@ class Strategy(_OpusRetrained):
 
     # Espaces d'optimisation : seuils V6.1 setups + hyperparams d'entraînement V4
     param_space: Dict[str, Any] = {
-        # Setups V6.1
+        # SHORT_TD_HIGH (V7)
+        "setup_short_td_high_amp_min":    [0.55, 0.60, 0.65],
+        "setup_short_td_high_dir_max":    [0.25, 0.30, 0.35],
+        # SHORT_TD
         "setup_short_td_amp_min":         [0.45, 0.50, 0.55],
         "setup_short_td_dir_max":         [0.35, 0.40, 0.45],
         "setup_short_td_tp_mult":         [1.0, 1.2, 1.4],
         "setup_short_td_sl_mult":         [1.4, 1.6, 1.8],
+        # SHORT_CHOPPY (V7 : seuil durci)
         "setup_short_choppy_amp_min":     [0.45, 0.50, 0.55],
-        "setup_short_choppy_dir_max":     [0.40, 0.45, 0.50],
+        "setup_short_choppy_dir_max":     [0.38, 0.42, 0.46],
+        # LONG_CHOPPY (V7 : seuil raffiné)
         "setup_long_choppy_amp_min":      [0.45, 0.50, 0.55],
-        "setup_long_choppy_dir_min":      [0.50, 0.55, 0.60],
+        "setup_long_choppy_dir_min":      [0.55, 0.58, 0.62],
+        # LONG_EXIT_TD
         "setup_long_exit_td_amp_min":     [0.35, 0.40, 0.45],
         "setup_long_exit_td_max_bars":    [4, 6, 8, 10],
+        # LONG_RANGE_STRICT
         "setup_long_range_strict_amp_min":[0.55, 0.60, 0.65],
         "setup_long_range_strict_dir_min":[0.55, 0.60, 0.65],
         "exit_td_window_bars":            [2, 3, 4],
@@ -234,6 +236,7 @@ class Strategy(_OpusRetrained):
         sl_atr_mult = float(setup["sl_mult"])
         tp_atr_mult = float(setup["tp_mult"])
         max_bars    = int(setup["max_bars"])
+        size_factor = float(setup.get("size_factor", 1.0))
 
         priority_bonus = (5 - int(setup["priority"])) * 0.04
         confidence     = abs(p_up - 0.5) * 2.0
@@ -248,7 +251,7 @@ class Strategy(_OpusRetrained):
             "atr":              atr_v,
             "sl_atr_mult":      sl_atr_mult,
             "disable_trailing": disable_trailing,
-            "size_factor":      1.0,
+            "size_factor":      size_factor,
             "exit_after_bars":  max_bars,
             "p_event":          round(p_event, 4),
             "p_up":             round(p_up, 4),
@@ -280,7 +283,7 @@ class Strategy(_OpusRetrained):
             "n_features":       meta.get("n_features", 0),
         }
         sig["conditions"] = [
-            f"Setup V6.1 retenu : {setup['name']} (priorité {setup['priority']})",
+            f"Setup V7 retenu : {setup['name']} (priorité {setup['priority']})",
             f"Régime : {regime_lbl} | exit_td_window={exit_td_active}",
             f"P(événement)={p_event:.2f} ≥ {setup['amp_min']:.2f} ✓",
             (f"P(hausse)={p_up:.2f} < {setup['dir_max']:.2f} ✓"
@@ -294,7 +297,7 @@ class Strategy(_OpusRetrained):
             f"AUC amp={meta.get('auc_amp', 0):.2f} dir={meta.get('auc_dir', 0):.2f})",
         ]
         sig["reason"] = (
-            f"OmnibusV6-RT {setup['name']} {side.upper()} | {regime_lbl} | tf={tf} | "
+            f"OmnibusV7-RT {setup['name']} {side.upper()} | {regime_lbl} | tf={tf} | "
             f"P(event)={p_event:.2f} P(up)={p_up:.2f}"
         )
         return sig
