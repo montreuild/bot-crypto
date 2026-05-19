@@ -199,154 +199,165 @@ class _FeatureBuilder:
         return pd.Series(result, index=above.index)
 
     def build(self, raw_df: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """Construit le DataFrame de features V4 sans fragmentation.
+
+        Accumule toutes les colonnes dans un ``dict`` puis fait un ``pd.concat``
+        unique à la fin (au lieu de 200+ insertions ``d["col"] = ...`` qui
+        provoquaient ``PerformanceWarning: DataFrame is highly fragmented``).
+        """
         if len(raw_df) < 210:
             return None
 
-        # Tri stable + reset d'index pour les opérations rolling
         if "time" in raw_df.columns:
-            d = raw_df.sort_values("time").reset_index(drop=True)
+            d_raw = raw_df.sort_values("time").reset_index(drop=True)
         else:
-            d = raw_df.reset_index(drop=True)
-        c, h, l, v, o = d["close"], d["high"], d["low"], d["volume"], d["open"]
+            d_raw = raw_df.reset_index(drop=True)
+        c = d_raw["close"]; h = d_raw["high"]; l = d_raw["low"]
+        v = d_raw["volume"]; o = d_raw["open"]
 
-        # Rendements
-        d["ret"]       = c.pct_change()
-        d["ret_intra"] = (c - o) / o
-        d["log_ret"]   = np.log(c / c.shift(1))
+        # Accumulateur unique — évite la fragmentation pandas.
+        f: dict = {}
 
-        # MM
+        # 1. Rendements
+        f["ret"]       = c.pct_change()
+        f["ret_intra"] = (c - o) / o
+        f["log_ret"]   = np.log(c / c.shift(1))
+
+        # 2. MMs + distances + slopes
         for n in (20, 50, 100, 200):
-            d[f"SMA_{n}"]      = c.rolling(n).mean()
-            d[f"EMA_{n}"]      = c.ewm(span=n, adjust=False).mean()
-            d[f"dist_SMA{n}"]  = (c - d[f"SMA_{n}"]) / d[f"SMA_{n}"]
-            d[f"dist_EMA{n}"]  = (c - d[f"EMA_{n}"]) / d[f"EMA_{n}"]
-            d[f"slope_SMA{n}"] = self._slope(d[f"SMA_{n}"], min(n, 20)) / c
+            f[f"SMA_{n}"]      = c.rolling(n).mean()
+            f[f"EMA_{n}"]      = c.ewm(span=n, adjust=False).mean()
+            f[f"dist_SMA{n}"]  = (c - f[f"SMA_{n}"]) / f[f"SMA_{n}"]
+            f[f"dist_EMA{n}"]  = (c - f[f"EMA_{n}"]) / f[f"EMA_{n}"]
+            f[f"slope_SMA{n}"] = self._slope(f[f"SMA_{n}"], min(n, 20)) / c
 
-        d["MM_bullish_align"] = (
-            (d["SMA_20"]  > d["SMA_50"])  &
-            (d["SMA_50"]  > d["SMA_100"]) &
-            (d["SMA_100"] > d["SMA_200"])
+        f["MM_bullish_align"] = (
+            (f["SMA_20"]  > f["SMA_50"])  &
+            (f["SMA_50"]  > f["SMA_100"]) &
+            (f["SMA_100"] > f["SMA_200"])
         ).astype(int)
-        d["MM_bearish_align"] = (
-            (d["SMA_20"]  < d["SMA_50"])  &
-            (d["SMA_50"]  < d["SMA_100"]) &
-            (d["SMA_100"] < d["SMA_200"])
+        f["MM_bearish_align"] = (
+            (f["SMA_20"]  < f["SMA_50"])  &
+            (f["SMA_50"]  < f["SMA_100"]) &
+            (f["SMA_100"] < f["SMA_200"])
         ).astype(int)
-        d["EMA_9"]  = c.ewm(span=9,  adjust=False).mean()
-        d["EMA_21"] = c.ewm(span=21, adjust=False).mean()
+        f["EMA_9"]  = c.ewm(span=9,  adjust=False).mean()
+        f["EMA_21"] = c.ewm(span=21, adjust=False).mean()
 
         # Croisements
-        d["cross_9_21"]   = self._bars_since_cross(d["EMA_9"],  d["EMA_21"])
-        d["cross_20_50"]  = self._bars_since_cross(d["SMA_20"], d["SMA_50"])
-        d["cross_50_100"] = self._bars_since_cross(d["SMA_50"], d["SMA_100"])
-        d["cross_50_200"] = self._bars_since_cross(d["SMA_50"], d["SMA_200"])
+        f["cross_9_21"]   = self._bars_since_cross(f["EMA_9"],  f["EMA_21"])
+        f["cross_20_50"]  = self._bars_since_cross(f["SMA_20"], f["SMA_50"])
+        f["cross_50_100"] = self._bars_since_cross(f["SMA_50"], f["SMA_100"])
+        f["cross_50_200"] = self._bars_since_cross(f["SMA_50"], f["SMA_200"])
 
-        # Momentum
+        # 3. Momentum
         for n in (7, 14, 21):
-            d[f"RSI_{n}"] = self._rsi(c, n)
-            d[f"ROC_{n}"] = c.pct_change(n) * 100
+            f[f"RSI_{n}"] = self._rsi(c, n)
+            f[f"ROC_{n}"] = c.pct_change(n) * 100
 
-        d["RSI_14_d1"]    = d["RSI_14"].diff()
-        d["RSI_14_d3"]    = d["RSI_14"].diff(3)
-        d["RSI_14_accel"] = d["RSI_14_d1"].diff()
-        d["RSI_oversold"]   = (d["RSI_14"] < 30).astype(int)
-        d["RSI_overbought"] = (d["RSI_14"] > 70).astype(int)
+        f["RSI_14_d1"]    = f["RSI_14"].diff()
+        f["RSI_14_d3"]    = f["RSI_14"].diff(3)
+        f["RSI_14_accel"] = f["RSI_14_d1"].diff()
+        f["RSI_oversold"]   = (f["RSI_14"] < 30).astype(int)
+        f["RSI_overbought"] = (f["RSI_14"] > 70).astype(int)
 
-        rhp = c.rolling(14).max();  rhr = d["RSI_14"].rolling(14).max()
-        d["bear_div"] = ((c == rhp) & (d["RSI_14"] < rhr * 0.97)).astype(int)
-        rlp = c.rolling(14).min();  rlr = d["RSI_14"].rolling(14).min()
-        d["bull_div"] = ((c == rlp) & (d["RSI_14"] > rlr * 1.03)).astype(int)
+        rhp = c.rolling(14).max();  rhr = f["RSI_14"].rolling(14).max()
+        f["bear_div"] = ((c == rhp) & (f["RSI_14"] < rhr * 0.97)).astype(int)
+        rlp = c.rolling(14).min();  rlr = f["RSI_14"].rolling(14).min()
+        f["bull_div"] = ((c == rlp) & (f["RSI_14"] > rlr * 1.03)).astype(int)
 
         green = (c > o).astype(int)
-        d["green_ratio_10"] = green.rolling(10).mean()
-        d["green_ratio_20"] = green.rolling(20).mean()
-        d["accel_5"]        = d["ret"].rolling(5).mean().diff(5)
+        f["green_ratio_10"] = green.rolling(10).mean()
+        f["green_ratio_20"] = green.rolling(20).mean()
+        f["accel_5"]        = f["ret"].rolling(5).mean().diff(5)
 
-        # MACD
-        m, s, hist = self._macd(c)
-        d["MACD"] = m
-        d["MACD_signal"] = s
-        d["MACD_hist"] = hist
-        d["MACD_hist_d1"]      = hist.diff()
-        d["MACD_hist_d3"]      = hist.diff(3)
-        d["MACD_above_signal"] = (m > s).astype(int)
-        d["MACD_zero_cross"]   = (np.sign(m) - np.sign(m.shift(1))).fillna(0)
+        # 4. MACD
+        m, sgn, hist = self._macd(c)
+        f["MACD"]              = m
+        f["MACD_signal"]       = sgn
+        f["MACD_hist"]         = hist
+        f["MACD_hist_d1"]      = hist.diff()
+        f["MACD_hist_d3"]      = hist.diff(3)
+        f["MACD_above_signal"] = (m > sgn).astype(int)
+        f["MACD_zero_cross"]   = (np.sign(m) - np.sign(m.shift(1))).fillna(0)
 
-        # Breakout
+        # 5. Breakout
         for n in (20, 50, 100):
-            d[f"high_{n}"]       = h.rolling(n).max().shift(1)
-            d[f"low_{n}"]        = l.rolling(n).min().shift(1)
-            d[f"break_high_{n}"] = (c > d[f"high_{n}"]).astype(int)
-            d[f"break_low_{n}"]  = (c < d[f"low_{n}"]).astype(int)
-            d[f"dist_high_{n}"]  = (c - d[f"high_{n}"]) / d[f"high_{n}"]
-            d[f"dist_low_{n}"]   = (c - d[f"low_{n}"]) / d[f"low_{n}"]
-            rng = d[f"high_{n}"] - d[f"low_{n}"]
-            d[f"range_pos_{n}"]  = (c - d[f"low_{n}"]) / rng.replace(0, np.nan)
+            f[f"high_{n}"]       = h.rolling(n).max().shift(1)
+            f[f"low_{n}"]        = l.rolling(n).min().shift(1)
+            f[f"break_high_{n}"] = (c > f[f"high_{n}"]).astype(int)
+            f[f"break_low_{n}"]  = (c < f[f"low_{n}"]).astype(int)
+            f[f"dist_high_{n}"]  = (c - f[f"high_{n}"]) / f[f"high_{n}"]
+            f[f"dist_low_{n}"]   = (c - f[f"low_{n}"]) / f[f"low_{n}"]
+            rng = f[f"high_{n}"] - f[f"low_{n}"]
+            f[f"range_pos_{n}"]  = (c - f[f"low_{n}"]) / rng.replace(0, np.nan)
 
-        d["false_break_high_20"] = (
-            (h.rolling(3).max().shift(1) > d["high_20"].shift(2)) & (c < d["high_20"])
+        f["false_break_high_20"] = (
+            (h.rolling(3).max().shift(1) > f["high_20"].shift(2)) & (c < f["high_20"])
         ).astype(int)
-        d["false_break_low_20"] = (
-            (l.rolling(3).min().shift(1) < d["low_20"].shift(2)) & (c > d["low_20"])
+        f["false_break_low_20"] = (
+            (l.rolling(3).min().shift(1) < f["low_20"].shift(2)) & (c > f["low_20"])
         ).astype(int)
 
-        # Bollinger
+        # 6. Bollinger
         bb_ma, bb_up, bb_lo = self._bollinger(c)
-        d["BB_width"]         = (bb_up - bb_lo) / bb_ma
-        d["BB_pos"]           = (c - bb_lo) / (bb_up - bb_lo).replace(0, np.nan)
-        d["BB_width_rank100"] = d["BB_width"].rolling(100).rank(pct=True)
-        d["BB_squeeze"]       = (d["BB_width_rank100"] < 0.2).astype(int)
-        d["BB_expansion"]     = (d["BB_width"] > d["BB_width"].shift(5) * 1.2).astype(int)
+        f["BB_width"]         = (bb_up - bb_lo) / bb_ma
+        f["BB_pos"]           = (c - bb_lo) / (bb_up - bb_lo).replace(0, np.nan)
+        f["BB_width_rank100"] = f["BB_width"].rolling(100).rank(pct=True)
+        f["BB_squeeze"]       = (f["BB_width_rank100"] < 0.2).astype(int)
+        f["BB_expansion"]     = (f["BB_width"] > f["BB_width"].shift(5) * 1.2).astype(int)
 
-        # Pullback
-        d["pullback_to_sma20"]    = (d["SMA_20"] - c) / c
-        big = d["ret"].rolling(5).sum()
-        d["pullback_after_rally"] = ((big.shift(3) > 0.01)  & (d["ret"].rolling(3).sum() < 0)).astype(int)
-        d["bounce_after_drop"]    = ((big.shift(3) < -0.01) & (d["ret"].rolling(3).sum() > 0)).astype(int)
+        # 7. Pullback
+        f["pullback_to_sma20"]    = (f["SMA_20"] - c) / c
+        big = f["ret"].rolling(5).sum()
+        f["pullback_after_rally"] = ((big.shift(3) > 0.01)  & (f["ret"].rolling(3).sum() < 0)).astype(int)
+        f["bounce_after_drop"]    = ((big.shift(3) < -0.01) & (f["ret"].rolling(3).sum() > 0)).astype(int)
         sh = h.rolling(50).max(); sl_s = l.rolling(50).min()
-        d["fib_pos"] = (c - sl_s) / (sh - sl_s).replace(0, np.nan)
+        f["fib_pos"] = (c - sl_s) / (sh - sl_s).replace(0, np.nan)
 
-        # ADX / régime
+        # 8. ADX / régime
         adxv, pdi, mdi = self._adx(h, l, c)
-        d["ADX"] = adxv
-        d["DI_plus"] = pdi
-        d["DI_minus"] = mdi
-        d["DI_diff"]           = pdi - mdi
-        d["trend_strong"]      = (adxv > 25).astype(int)
-        d["trend_very_strong"] = (adxv > 40).astype(int)
-        strong = (adxv > 25).astype(int)
+        f["ADX"]               = adxv
+        f["DI_plus"]           = pdi
+        f["DI_minus"]          = mdi
+        f["DI_diff"]           = pdi - mdi
+        f["trend_strong"]      = (adxv > 25).astype(int)
+        f["trend_very_strong"] = (adxv > 40).astype(int)
+        strong = f["trend_strong"]
         grp = (strong != strong.shift()).cumsum()
-        d["trend_duration"] = strong.groupby(grp).cumsum()
-        d["hurst_100"] = d["log_ret"].rolling(100).apply(
+        f["trend_duration"] = strong.groupby(grp).cumsum()
+        f["hurst_100"] = f["log_ret"].rolling(100).apply(
             lambda x: self._hurst_rs(np.asarray(x)), raw=True
         )
 
-        # Volatilité / volume
-        d["ATR_14"]       = self._atr(h, l, c, 14)
-        d["ATR_pct"]      = d["ATR_14"] / c
-        d["vol_std_20"]   = d["ret"].rolling(20).std()
-        d["vol_ratio"]    = v / v.rolling(20).mean()
-        d["vol_ratio_50"] = v / v.rolling(50).mean()
-        d["OBV"]          = (np.sign(c.diff()).fillna(0) * v).cumsum()
-        d["OBV_slope"]    = self._slope(d["OBV"], 10) / v.rolling(10).mean()
+        # 9. Volatilité / volume
+        f["ATR_14"]       = self._atr(h, l, c, 14)
+        f["ATR_pct"]      = f["ATR_14"] / c
+        f["vol_std_20"]   = f["ret"].rolling(20).std()
+        f["vol_ratio"]    = v / v.rolling(20).mean()
+        f["vol_ratio_50"] = v / v.rolling(50).mean()
+        f["OBV"]          = (np.sign(c.diff()).fillna(0) * v).cumsum()
+        f["OBV_slope"]    = self._slope(f["OBV"], 10) / v.rolling(10).mean()
 
-        # Bougie
-        d["body"]        = (c - o) / o
-        d["body_abs"]    = d["body"].abs()
-        d["upper_wick"]  = (h - d[["open", "close"]].max(axis=1)) / o
-        d["lower_wick"]  = (d[["open", "close"]].min(axis=1) - l) / o
-        d["range_size"]  = (h - l) / o
-        d["doji"]        = (d["body_abs"] < 0.001).astype(int)
-        d["three_green"] = ((c > o) & (c.shift() > o.shift()) & (c.shift(2) > o.shift(2))).astype(int)
-        d["three_red"]   = ((c < o) & (c.shift() < o.shift()) & (c.shift(2) < o.shift(2))).astype(int)
+        # 10. Bougie
+        max_oc = pd.concat([o, c], axis=1).max(axis=1)
+        min_oc = pd.concat([o, c], axis=1).min(axis=1)
+        f["body"]        = (c - o) / o
+        f["body_abs"]    = f["body"].abs()
+        f["upper_wick"]  = (h - max_oc) / o
+        f["lower_wick"]  = (min_oc - l) / o
+        f["range_size"]  = (h - l) / o
+        f["doji"]        = (f["body_abs"] < 0.001).astype(int)
+        f["three_green"] = ((c > o) & (c.shift() > o.shift()) & (c.shift(2) > o.shift(2))).astype(int)
+        f["three_red"]   = ((c < o) & (c.shift() < o.shift()) & (c.shift(2) < o.shift(2))).astype(int)
 
-        # Interactions
-        d["RSI_x_ADX"]   = d["RSI_14"] * d["ADX"]
-        d["BBpos_x_ADX"] = d["BB_pos"] * d["ADX"]
-        d["vol_x_break"] = d["vol_ratio"] * (d["break_high_20"] + d["break_low_20"])
+        # 11. Interactions
+        f["RSI_x_ADX"]   = f["RSI_14"] * f["ADX"]
+        f["BBpos_x_ADX"] = f["BB_pos"] * f["ADX"]
+        f["vol_x_break"] = f["vol_ratio"] * (f["break_high_20"] + f["break_low_20"])
 
-        # Lags 1/3/6/12 — reproduit exactement ``add_lags()`` du pipeline V4
-        continuous_feats = [
+        # 12. Lags 1/3/6/12
+        continuous_feats = (
             "dist_SMA20", "dist_SMA50", "dist_SMA100", "dist_SMA200",
             "dist_EMA20", "dist_EMA50", "slope_SMA20", "slope_SMA50", "slope_SMA100",
             "cross_9_21", "cross_20_50", "cross_50_100", "cross_50_200",
@@ -360,8 +371,8 @@ class _FeatureBuilder:
             "ATR_pct", "vol_std_20", "vol_ratio", "vol_ratio_50", "OBV_slope",
             "body", "body_abs", "upper_wick", "lower_wick", "range_size",
             "RSI_x_ADX", "BBpos_x_ADX",
-        ]
-        binary_feats = [
+        )
+        binary_feats = (
             "MM_bullish_align", "MM_bearish_align", "RSI_oversold", "RSI_overbought",
             "bear_div", "bull_div", "MACD_above_signal",
             "break_high_20", "break_low_20", "break_high_50", "break_low_50",
@@ -369,16 +380,15 @@ class _FeatureBuilder:
             "false_break_high_20", "false_break_low_20", "BB_squeeze", "BB_expansion",
             "pullback_after_rally", "bounce_after_drop", "trend_strong", "trend_very_strong",
             "doji", "three_green", "three_red", "MACD_zero_cross", "vol_x_break",
-        ]
-        new_cols = {}
+        )
         for feat in continuous_feats + binary_feats:
-            if feat not in d.columns:
+            if feat not in f:
                 continue
             for lag in (1, 3, 6, 12):
-                new_cols[f"{feat}_lag{lag}"] = d[feat].shift(lag)
-        d = pd.concat([d, pd.DataFrame(new_cols, index=d.index)], axis=1)
-        # Défragmentation finale — évite les PerformanceWarning de pandas.
-        return d.copy()
+                f[f"{feat}_lag{lag}"] = f[feat].shift(lag)
+
+        # Construction du DataFrame final en UNE seule opération.
+        return pd.concat([d_raw, pd.DataFrame(f, index=d_raw.index)], axis=1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
