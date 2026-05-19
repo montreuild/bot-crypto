@@ -730,14 +730,19 @@ function buildTrades(sd,sid){
   const pages=Math.ceil(fil.length/PG)||1;if(pg>pages)pg=1;
   const slice=fil.slice((pg-1)*PG,pg*PG);
   const th=(k,l)=>`<th class="${sortKey===k?'sorted':''}" onclick="tsort('${k}')">${l}${sortKey===k?(sortAsc?' ↑':' ↓'):''}</th>`;
+  // Affiche la colonne "Setup" uniquement si au moins un trade en expose un.
+  const hasSetup = all.some(t => t.setup);
+  const nCols = hasSetup ? 12 : 11;
   const rows=slice.map(t=>{
     const w=(t.pnl||0)>=0,op=expanded.has(t.id);
     return`<tr>
       <td style="color:var(--dim)">${t.id??'—'}</td>
       <td><span class="tag ${t.side==='long'?'tlong':'tshort'}">${(t.side||'').toUpperCase()}</span></td>
+      ${hasSetup?`<td style="font-size:.66rem;color:var(--purple);font-family:var(--mono)">${t.setup||'—'}</td>`:''}
       <td style="color:var(--dim);font-size:.66rem">${(t.entry_time||'').substring(0,16)}</td>
       <td>${fN(t.entry,4)}</td><td>${fN(t.exit,4)}</td>
       <td style="color:var(--dim)">${t.duration_bars??'—'}</td>
+      <td>${exitReasonBadge(t.exit_reason)}</td>
       <td><div style="display:flex;align-items:center;gap:3px">
         <div style="width:30px;height:3px;background:var(--border);border-radius:2px">
           <div style="width:${Math.round((t.score||0)*100)}%;height:100%;border-radius:2px;background:${(t.score||0)>=.7?'#34d399':(t.score||0)>=.55?'#ffd166':'#5a7099'}"></div></div>
@@ -747,7 +752,7 @@ function buildTrades(sd,sid){
       <td class="${w?'pos':'neg'}">${w?'+':''}${fN(t.pnl_pct,2)}%</td>
       <td style="color:var(--amber);font-size:.66rem">−${fN(t.fees,4)}</td>
       <td><button class="xb" onclick="xrow(${t.id??0})">${op?'▲':'▼'}</button></td>
-    </tr>${op?`<tr class="drow"><td colspan="11"><div class="dbg">${detail(t)}</div></td></tr>`:''}`;
+    </tr>${op?`<tr class="drow"><td colspan="${nCols}"><div class="dbg">${detail(t)}</div></td></tr>`:''}`;
   }).join('');
   const pgH=pages>1?`<div class="pg">${Array.from({length:pages},(_,i)=>i+1).map(p=>`<button class="pgb ${p===pg?'on':''}" onclick="goPg(${p})">${p}</button>`).join('')}<span style="font-size:.65rem;color:var(--dim);font-family:var(--mono);padding:0 6px;align-self:center">Page ${pg} de ${pages}</span></div>`:''
   document.getElementById(ttableId).innerHTML=`
@@ -757,16 +762,50 @@ function buildTrades(sd,sid){
         <div class="fils">${['all','long','short','win','loss'].map(f=>`<button class="fil ${tradeFilter===f?'on':''}" onclick="setFil('${f}')">${f==='all'?'Tous':f==='win'?'✅ Gains':f==='loss'?'🔴 Pertes':f.charAt(0).toUpperCase()+f.slice(1)}</button>`).join('')}</div>
       </div>
       <div class="tsc"><table>
-        <thead><tr>${th('id','#')}${th('side','Dir.')}${th('entry_time','Entrée')}${th('entry','Prix E.')}${th('exit','Prix S.')}${th('duration_bars','Dur.')}${th('score','Score')}${th('pnl','PnL')}${th('pnl_pct','%')}<th>Frais</th><th></th></tr></thead>
-        <tbody>${rows||'<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--dim)">Aucun trade</td></tr>'}</tbody>
+        <thead><tr>${th('id','#')}${th('side','Dir.')}${hasSetup?th('setup','Setup'):''}${th('entry_time','Entrée')}${th('entry','Prix E.')}${th('exit','Prix S.')}${th('duration_bars','Dur.')}${th('exit_reason','Sortie')}${th('score','Score')}${th('pnl','PnL')}${th('pnl_pct','%')}<th>Frais</th><th></th></tr></thead>
+        <tbody>${rows||`<tr><td colspan="${nCols}" style="text-align:center;padding:24px;color:var(--dim)">Aucun trade</td></tr>`}</tbody>
       </table></div>${pgH}
     </div>`;
 }
 
+// Badge coloré pour ``exit_reason`` — couvre SL/TP/timeout/end + sorties V7
+// pilotées par la stratégie (regime_exit_TD, p_dir_inversion, to_TD…).
+function exitReasonBadge(reason){
+  if(!reason) return '<span style="color:var(--dim);font-size:.66rem">—</span>';
+  const meta = {
+    'take_profit'     : ['#34d399', '🎯', 'Take Profit'],
+    'stop_loss'       : ['#fb7185', '🛑', 'Stop Loss'],
+    'trailing_stop'   : ['#a78bfa', '⤵',  'Trailing Stop'],
+    'exit_after_bars' : ['#22d3ee', '⏱',  'Sortie temporelle'],
+    'end_of_data'     : ['#5a7099', '⏹',  'Fin des données'],
+  };
+  // Sorties V7 (changement de régime / inversion de signal)
+  if(reason in meta){
+    const [c, ic, lbl] = meta[reason];
+    return `<span style="background:${c}22;color:${c};font-size:.6rem;font-weight:700;padding:2px 6px;border-radius:3px;font-family:var(--mono)" title="${lbl}">${ic} ${reason}</span>`;
+  }
+  // Sortie pilotée par stratégie (V7) — texte libre
+  return `<span style="background:rgba(196,132,252,.15);color:#c084fc;font-size:.6rem;font-weight:700;padding:2px 6px;border-radius:3px;font-family:var(--mono)" title="Sortie anticipée pilotée par la stratégie">🚪 ${escHtmlBt(reason)}</span>`;
+}
+
+function escHtmlBt(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
 function detail(t){
   const conds=(t.conditions||[]).map(c=>`<li>${c}</li>`).join('');
   const inds=Object.entries(t.indicators||{}).map(([k,v])=>`<div class="ir"><span class="ik">${k}</span><span>${typeof v==='number'?Number(v).toFixed(6):v}</span></div>`).join('');
-  return`<div><div><div class="dh">Raison du signal</div><div class="rbox">${t.reason||'Non disponible'}</div><div class="dh">Conditions</div><ul class="clist">${conds||'<li style="color:var(--dim)">Non disponible</li>'}</ul></div><div><div class="dh">Indicateurs au signal</div><div class="ig">${inds||'<div style="color:var(--dim)">N/D</div>'}</div><div class="dh">Détails</div><div class="ig"><div class="ir"><span class="ik">Notionnel</span><span>$${fN(t.notional,2)}</span></div><div class="ir"><span class="ik">Taille</span><span>${fN(t.size,4)}</span></div><div class="ir"><span class="ik">Stop initial</span><span>${fN(t.stop,4)}</span></div><div class="ir"><span class="ik">Bar entrée</span><span>${t.bar??'—'}</span></div><div class="ir"><span class="ik">Bar sortie</span><span>${t.exit_bar??'—'}</span></div><div class="ir"><span class="ik">Statut</span><span>${t.status}</span></div></div></div></div>`;
+  // Détails sortie / position — expose les paramètres V7 quand présents.
+  const sortieRows = [];
+  sortieRows.push(`<div class="ir"><span class="ik">Raison sortie</span><span>${t.exit_reason ? exitReasonBadge(t.exit_reason) : '<span style="color:var(--dim)">—</span>'}</span></div>`);
+  if(t.setup) sortieRows.push(`<div class="ir"><span class="ik">Setup V7</span><span style="color:var(--purple);font-family:var(--mono)">${escHtmlBt(t.setup)}</span></div>`);
+  if(t.regime_lbl) sortieRows.push(`<div class="ir"><span class="ik">Régime entrée</span><span>${escHtmlBt(t.regime_lbl)}</span></div>`);
+  if(t.take_profit != null) sortieRows.push(`<div class="ir"><span class="ik">TP fixé</span><span>${fN(t.take_profit,4)}</span></div>`);
+  if(t.sl_atr_mult != null) sortieRows.push(`<div class="ir"><span class="ik">SL (×ATR)</span><span>${fN(t.sl_atr_mult,2)}</span></div>`);
+  if(t.tp_atr_mult != null) sortieRows.push(`<div class="ir"><span class="ik">TP (×ATR)</span><span>${fN(t.tp_atr_mult,2)}</span></div>`);
+  if(t.exit_after_bars != null) sortieRows.push(`<div class="ir"><span class="ik">Sortie après</span><span>${t.exit_after_bars} bougies</span></div>`);
+  if(t.size_factor != null && t.size_factor !== 1) sortieRows.push(`<div class="ir"><span class="ik">Size factor</span><span>×${fN(t.size_factor,3)}</span></div>`);
+  if(t.disable_trailing === false) sortieRows.push(`<div class="ir"><span class="ik">Trailing</span><span style="color:var(--green)">actif</span></div>`);
+  if(t.disable_trailing === true)  sortieRows.push(`<div class="ir"><span class="ik">Trailing</span><span style="color:var(--dim)">désactivé (SL fixe)</span></div>`);
+  return`<div><div><div class="dh">Raison du signal</div><div class="rbox">${t.reason||'Non disponible'}</div><div class="dh">Conditions</div><ul class="clist">${conds||'<li style="color:var(--dim)">Non disponible</li>'}</ul></div><div><div class="dh">Indicateurs au signal</div><div class="ig">${inds||'<div style="color:var(--dim)">N/D</div>'}</div><div class="dh">Sortie & sizing</div><div class="ig">${sortieRows.join('')}</div><div class="dh">Détails position</div><div class="ig"><div class="ir"><span class="ik">Notionnel</span><span>$${fN(t.notional,2)}</span></div><div class="ir"><span class="ik">Taille</span><span>${fN(t.size,4)}</span></div><div class="ir"><span class="ik">Stop initial</span><span>${fN(t.stop,4)}</span></div><div class="ir"><span class="ik">Bar entrée</span><span>${t.bar??'—'}</span></div><div class="ir"><span class="ik">Bar sortie</span><span>${t.exit_bar??'—'}</span></div><div class="ir"><span class="ik">Statut</span><span>${t.status}</span></div></div></div></div>`;
 }
 
 function setFil(f){tradeFilter=f;pg=1;expanded.clear();const _sid=activeStrat.replace(/[^a-z0-9_]/gi,'_');buildTrades(btData.by_strategy[activeStrat],_sid);}

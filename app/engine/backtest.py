@@ -663,7 +663,16 @@ class Backtester:
                 "reason":       signal.get("reason", ""),
                 "conditions":   signal.get("conditions", []),
                 "indicators":   signal.get("indicators", {}),
-                "setup":        signal.get("setup"),
+                # Champs V7 / V4 — utilisés pour les colonnes 'Sortie' et 'Setup'
+                # du tableau de trades et pour les statistiques par exit_reason.
+                "setup":           signal.get("setup"),
+                "setup_priority":  signal.get("setup_priority"),
+                "regime":          signal.get("regime"),
+                "regime_lbl":      signal.get("regime_lbl"),
+                "sl_atr_mult":     signal.get("sl_atr_mult"),
+                "tp_atr_mult":     signal.get("tp_atr_mult"),
+                "size_factor":     signal.get("size_factor"),
+                "tf_detected":     signal.get("tf_detected"),
                 "mae":          0.0,
                 "mfe":          0.0,
                 "_stop_trail":  [{"bar": i + 1, "stop": round(stop, 6)}],
