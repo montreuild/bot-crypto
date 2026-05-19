@@ -258,6 +258,9 @@ class PositionMixin:
             "trail_override": trail_override or None,
             "disable_trailing": disable_trailing,
             "take_profit":    take_profit,
+            # Indicators + setup conservés pour les hooks (check_early_exit V6.1)
+            "indicators":     signal.get("indicators") or {},
+            "setup":          signal.get("setup"),
             "_trailing":      trailing,
         }
         with self._positions_lock:
@@ -345,6 +348,37 @@ class PositionMixin:
                 )
                 self._close_position(pos_id, tp_val)
                 return
+
+        # ── Sortie anticipée pilotée par la stratégie (check_early_exit) ───
+        # Permet à la stratégie de clore une position sur changement de régime,
+        # inversion du signal directionnel, etc. (V6.1 should_exit_early).
+        # Évaluée APRÈS gap/TP mais AVANT trailing : si la stratégie demande la
+        # sortie, on l'honore immédiatement au prix ticker courant.
+        strat_name = pos.get("strategy", "")
+        strat = self._loaded_strategies.get(strat_name) if strat_name else None
+        if strat is not None and hasattr(strat, "check_early_exit"):
+            df_ee = self.ohlcv_cache.get(symbol, pos_tf, self.open_positions)
+            if df_ee is None:
+                try:
+                    df_ee = self.scanner.fetch_ohlcv(symbol, pos_tf, limit=300)
+                except Exception:
+                    df_ee = None
+            if df_ee is not None and len(df_ee) > 50:
+                try:
+                    early_reason = strat.check_early_exit(df_ee, pos, self.strat_params)
+                except Exception as _ee:
+                    logger.warning(
+                        f"[EarlyExit] {strat_name} KO sur {symbol} : {_ee}"
+                    )
+                    early_reason = None
+                if early_reason:
+                    pos["reason"] = str(early_reason)
+                    logger.info(
+                        f"[EarlyExit] {symbol} {pos['side']} clôture sur "
+                        f"'{early_reason}' (stratégie {strat_name})"
+                    )
+                    self._close_position(pos_id, price)
+                    return
 
         _pos_tf_secs = _TF_SECS.get(pos.get("timeframe", "1h"), 3600)
         bars_held    = int((time.time() - pos["open_time"]) / _pos_tf_secs)

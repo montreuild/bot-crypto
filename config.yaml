@@ -38,14 +38,15 @@ trading:
   borrow_periods_per_day: 3
   margin_mode: isolated
   margin_level_alert: 1.5
-  reentry_cooldown_bars: 3
+  reentry_cooldown_bars: 2          # V6.1 : 2 bougies de cooldown après une perte
   top_strategies_per_tf: 2
 
 risk:
-  consecutive_loss_limit: 3
+  consecutive_loss_limit: 3          # V6.1 : max_losses = 3 pertes consécutives
+  consecutive_pause_secs: 1800       # V6.1 : cooldown × 2 (~30 min, ajustable)
   slot_daily_dd_limit: 0.03
   win_rate_floor: 0.25
-  consecutive_pause_secs: 1800
+  max_trades_per_day: 5              # V6.1 : daily.get(dk, 0) >= 5 → skip
   volatility_threshold: 0.05
   adx_trend_threshold: 25.0
   atr_volatile_threshold: 3.0

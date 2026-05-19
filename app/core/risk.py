@@ -24,6 +24,7 @@ class SlotRiskState:
     consecutive_losses: int = 0
     last_trades: deque = field(default_factory=lambda: deque(maxlen=15))
     daily_pnl: float = 0.0
+    daily_trades: int = 0           # V6.1 : nb de trades ouverts sur le slot ce jour
     day_key: str = ""
     paused_until: float = 0.0    # timestamp Unix
     pause_reason: str = ""
@@ -65,6 +66,8 @@ class RiskManager:
         self._win_rate_floor       = float(_risk_cfg.get("win_rate_floor", 0.25))
         self._consec_pause_secs    = int(_risk_cfg.get("consecutive_pause_secs", 1800))  # 30 min
         self._volatility_threshold = float(_risk_cfg.get("volatility_threshold", 0.05))  # 5% ATR BTC
+        # V6.1 : limite de trades par jour par slot (0 = désactivé)
+        self._max_trades_per_day   = int(_risk_cfg.get("max_trades_per_day", 0))
 
         # Equity tracking
         self.equity        = self.initial_capital
@@ -111,10 +114,12 @@ class RiskManager:
         for state in self.slot_states.values():
             if state.day_key != today:
                 state.daily_pnl = 0.0
+                state.daily_trades = 0
                 state.consecutive_losses = 0
                 state.day_key   = today
-                # Lever la pause "daily DD" si nouveau jour
-                if "DD journalier" in state.pause_reason:
+                # Lever la pause "daily DD" et "daily trades" si nouveau jour
+                if ("DD journalier" in state.pause_reason or
+                        "trades/jour" in state.pause_reason):
                     state.reset_pause()
 
     def _check_circuit_breakers(self):
@@ -154,10 +159,32 @@ class RiskManager:
     def can_slot_trade(self, slot_key: str) -> tuple[bool, str]:
         """Vérifie les circuit breakers propres à un slot."""
         state = self._get_slot_state(slot_key)
+        # Garantie : nouveau jour → reset compteurs
+        today = self._today()
+        if state.day_key != today:
+            state.daily_pnl = 0.0
+            state.daily_trades = 0
+            state.day_key = today
         if state.is_paused():
             remaining = int(state.paused_until - time.time())
             return False, f"Slot {slot_key} pausé ({state.pause_reason}) — {remaining}s restantes"
+        # V6.1 : limite trades/jour par slot
+        if self._max_trades_per_day > 0 and state.daily_trades >= self._max_trades_per_day:
+            return False, (
+                f"Slot {slot_key} : limite quotidienne atteinte "
+                f"({state.daily_trades}/{self._max_trades_per_day} trades)"
+            )
         return True, ""
+
+    def register_slot_open(self, slot_key: str) -> None:
+        """Incrémente le compteur de trades du slot (appelé à l'ouverture)."""
+        state = self._get_slot_state(slot_key)
+        today = self._today()
+        if state.day_key != today:
+            state.daily_pnl = 0.0
+            state.daily_trades = 0
+            state.day_key = today
+        state.daily_trades += 1
 
     def update_slot_result(self, slot_key: str, pnl: float, won: bool):
         """Met à jour l'état de risque d'un slot après clôture et déclenche les CBs si besoin."""
@@ -306,6 +333,11 @@ class RiskManager:
     # ── Positions ──────────────────────────────────────────────────────────
     def register_open(self, position: dict):
         self.open_positions[position["id"]] = position
+        # V6.1 : incrémente le compteur quotidien du slot
+        strat = position.get("strategy", "")
+        tf    = position.get("timeframe", "")
+        if strat and tf:
+            self.register_slot_open(f"{strat}::{tf}")
 
     def register_close(self, position_id: str):
         self.open_positions.pop(position_id, None)

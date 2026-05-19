@@ -225,6 +225,16 @@ class Backtester:
         self.partial_fill = bcfg.get("partial_fill_pct",  0.95)
         self.max_notional_pct = float(bcfg.get("max_notional_pct", 0.50))
 
+    def _find_strategy(self, name: str):
+        """Récupère l'instance Strategy par son nom (pour les hooks comme
+        ``check_early_exit``). Retourne None si introuvable."""
+        if not name:
+            return None
+        for s in self.engine.strategies:
+            if getattr(s, "name", None) == name:
+                return s
+        return None
+
     def _make_trailing(self, override: dict = None):
         ov = override or {}
         return TrailingStopManager(
@@ -335,6 +345,25 @@ class Backtester:
                 stop_hit = (side == "long"  and c_low  <= stop) or \
                            (side == "short" and c_high >= stop)
 
+                # ── Sortie anticipée pilotée par la stratégie ────────────────
+                # Hook BaseStrategy.check_early_exit : permet à la stratégie de
+                # clore la position sur changement de régime, inversion du signal,
+                # ou toute autre condition recalculée à chaque barre (V6.1).
+                # Non priorisée sur le SL : si SL touché intrabar, on respecte le SL.
+                early_exit_reason = None
+                if not stop_hit and not time_exit:
+                    strat = self._find_strategy(position.get("strategy", ""))
+                    if strat is not None:
+                        try:
+                            early_exit_reason = strat.check_early_exit(
+                                window, position, strat_params
+                            )
+                        except Exception as _ee:
+                            logger.warning(
+                                f"[Backtest] check_early_exit({position.get('strategy', '')}) "
+                                f"KO : {_ee}"
+                            )
+
                 # ── Take-profit fixe (intrabar) — optionnel via signal["tp_hint"]
                 # Vérifié seulement si stop NON touché (priorité conservative au stop
                 # en cas d'ambiguïté intrabar high/low).
@@ -343,6 +372,41 @@ class Backtester:
                 if tp_val is not None and not stop_hit:
                     tp_hit = (side == "long"  and c_high >= tp_val) or \
                              (side == "short" and c_low  <= tp_val)
+
+                # ── Sortie anticipée stratégie (avant TP/timeout) ─────────────
+                if early_exit_reason and not stop_hit and not tp_hit:
+                    exec_price = c_close
+                    fill_size  = position["size"]
+                    fees       = self._fees(exec_price, fill_size, maker=True)
+                    bars_held  = i - position["bar"]
+                    days_held  = bars_held * _bar_to_days(
+                        self.cfg["trading"].get("timeframe", "1h"))
+                    borrow_cost = position["notional"] * self.borrow_rate * days_held
+                    gross = (exec_price - entry) * fill_size * (1 if side == "long" else -1)
+                    pnl   = gross - fees - borrow_cost
+                    capital += pnl
+                    ts = str(df["time"][i]) if "time" in df.columns else str(i)
+                    position.update({
+                        "pnl":           round(pnl, 6),
+                        "fees":          round(fees, 6),
+                        "borrow_cost":   round(borrow_cost, 6),
+                        "exit":          round(exec_price, 6),
+                        "status":        "closed",
+                        "exit_bar":      i,
+                        "exit_time":     ts,
+                        "exit_reason":   str(early_exit_reason),
+                        "pnl_pct":       round((exec_price - entry) / entry * 100 *
+                                               (1 if side == "long" else -1), 3) if entry else 0.0,
+                        "duration_bars": bars_held,
+                        "fill_pct":      self.partial_fill,
+                        "stop_trail":    position.pop("_stop_trail", []),
+                    })
+                    position.pop("_trailing", None)
+                    trades.append(position)
+                    equity_curve.append(round(capital, 4))
+                    timestamps.append(ts)
+                    position = None
+                    continue
 
                 if time_exit and not stop_hit and not tp_hit:
                     exec_price = c_close
@@ -578,6 +642,7 @@ class Backtester:
                 "reason":       signal.get("reason", ""),
                 "conditions":   signal.get("conditions", []),
                 "indicators":   signal.get("indicators", {}),
+                "setup":        signal.get("setup"),
                 "mae":          0.0,
                 "mfe":          0.0,
                 "_stop_trail":  [{"bar": i + 1, "stop": round(stop, 6)}],

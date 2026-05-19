@@ -1,6 +1,6 @@
 """Moteur multi-stratégies avec scoring — chaque stratégie retourne un dict signal."""
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional  # noqa: F401
 
 import polars as pl
 
@@ -24,6 +24,21 @@ class BaseStrategy:
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         """Retourne {"score": float [0-1], "side": "long"|"short"|"none", "name": str}."""
         raise NotImplementedError
+
+    def check_early_exit(self, df: pl.DataFrame, position: dict,
+                         params: dict = None) -> Optional[str]:
+        """Hook optionnel : la stratégie peut demander la sortie anticipée d'une
+        position déjà ouverte (ex. changement de régime, inversion du signal
+        directionnel). Appelé par l'engine de backtest et le live à chaque cycle
+        après la barre courante, **avant** la vérification SL/TP.
+
+        Retourne :
+          - ``None`` si la position doit rester ouverte (comportement par défaut)
+          - une chaîne (raison de sortie, ex. ``"regime_exit_TD"``) sinon : la
+            position sera clôturée immédiatement au prix de clôture courant et
+            ``exit_reason`` sera renseigné avec cette chaîne.
+        """
+        return None
 
 
 class BaseStrategyML(BaseStrategy):
