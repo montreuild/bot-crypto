@@ -271,6 +271,31 @@ const G={color:'rgba(30,45,69,.5)'};
 const scBase={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:T,grid:G},y:{ticks:T,grid:G,position:'right'}}};
 
 // ── Init ──
+// Vérifie périodiquement si un backtest tourne côté serveur — désactive
+// le bouton 'Lancer' tant qu'un backtest est en cours (cas typique : on
+// recharge la page pendant un long backtest, le bouton serait actif sinon).
+async function _syncBacktestRunState(){
+  try{
+    const r = await apiFetch('/api/backtest/status');
+    if(!r.ok) return;
+    const {running} = await r.json();
+    const btn  = document.getElementById('btn-run');
+    const canc = document.getElementById('btn-cancel-bt');
+    const msg  = document.getElementById('msg');
+    if(running){
+      if(btn) btn.disabled = true;
+      if(canc) canc.style.display = '';
+      if(msg && !msg.textContent) msg.textContent = '⏳ Un backtest est déjà en cours côté serveur.';
+    } else {
+      if(btn) btn.disabled = false;
+      // canc/msg : laissés tels quels (le client peut être au milieu d'un run)
+    }
+  }catch(_){}
+}
+// Sync immédiat puis toutes les 5s tant que la page est ouverte.
+_syncBacktestRunState();
+setInterval(_syncBacktestRunState, 5000);
+
 (async()=>{
   try{
     const s=await apiFetch('/api/backtest/settings').then(r=>r.json());

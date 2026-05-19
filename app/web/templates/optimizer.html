@@ -551,7 +551,11 @@ async function refreshJobs() {
     renderJobs(jobs);
     const anyRunning = Object.values(jobs).some(j => j.status === 'running');
     if (!anyRunning && pollInterval) { clearInterval(pollInterval); pollInterval = null; }
-    if (!anyRunning) _setOptBtn(false);
+    // Synchronise avec l'état serveur (reload pendant un job, autre onglet…).
+    _setOptBtn(anyRunning);
+    if (anyRunning && !pollInterval) {
+      startPolling();
+    }
   } catch(e) {}
 }
 
