@@ -271,11 +271,29 @@ class Backtester:
                         f"[Backtest] ML '{strat.name}' : aucun modèle pour {timeframe} "
                         "— entraînement inline activé (lancez d'abord un cycle live ou l'optimiseur)"
                     )
-            # ── Pré-calcul des features (optionnel, dépend de la stratégie) ───
-            # Les stratégies qui en bénéficient (V4 pretrained / omnibus_v7
-            # pretrained) reconstruisent une centaine d'indicateurs à chaque
-            # appel de score() ; pré-calculer une fois divise par ~100 le temps
-            # total du backtest. Les stratégies sans hook ne sont pas affectées.
+            # ── Pré-calcul des features (optionnel, par stratégie) ───────────
+            # Les stratégies à features lourdes exposent un hook
+            # ``prepare_for_backtest(df)`` qui construit toutes leurs features
+            # sur la fenêtre complète, en une seule passe. Ensuite ``score()``
+            # lit la dernière ligne du cache au lieu de rebuild.
+            #
+            # Stratégies actuellement instrumentées (voir leur ``__init__`` /
+            # ``prepare_for_backtest`` pour les détails de cache) :
+            #   - opus_stat_pretrained_v4     (pandas, ~462 features)
+            #   - opus_stat_retrained_v4      (polars, ~462 features)
+            #   - opus_omnibus_v7_pretrained  (pandas, ~462 features)
+            #   - opus_omnibus_v7             (polars, ~462 features)
+            #   - scoring_statistique_opus_v4 (numpy, ~48 features, cache par adx_thr)
+            #   - scoring_statistique_opus_v5 (numpy, ~48 features, cache par adx_thr)
+            #   - ml_dynamic_threshold        (polars, ~30 features)
+            #
+            # Ce hook est invoqué par TOUS les chemins qui passent par
+            # ``Backtester.run`` — y compris donc les workers d'optimisation
+            # (``app.engine.optimizer._eval_worker``), les folds Walk-Forward
+            # (``WalkForwardAnalyzer.run``) et le replay live
+            # (``app.api.routes.replay``). Chaque trial subprocess en
+            # bénéficie automatiquement (build × 1 puis ~N-1 lookups O(1) par
+            # barre du backtest), sans modification supplémentaire.
             prep = getattr(strat, "prepare_for_backtest", None)
             if callable(prep):
                 try:
