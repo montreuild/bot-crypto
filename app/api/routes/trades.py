@@ -389,12 +389,18 @@ def audit_results():
         for tf, data in tfs.items():
             if not isinstance(data, dict):
                 continue
+            # ``oos_score`` peut être absent / None (run échoué ou en cours)
+            raw_score = data.get("oos_score")
+            try:
+                oos_score = round(float(raw_score), 4) if raw_score is not None else 0.0
+            except (TypeError, ValueError):
+                oos_score = 0.0
             rows.append({
                 "strategy":  strategy,
                 "tf":        tf,
                 "slot_key":  f"{strategy}::{tf}",
                 "run_date":  data.get("run_date", ""),
-                "oos_score": round(float(data.get("oos_score", 0)), 4),
+                "oos_score": oos_score,
                 "params":    data.get("params", {}),
             })
     rows.sort(key=lambda r: r["oos_score"], reverse=True)
