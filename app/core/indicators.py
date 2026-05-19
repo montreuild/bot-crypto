@@ -2,7 +2,7 @@
 import logging
 import numpy as np
 import polars as pl
-from typing import Tuple
+from typing import Tuple, Optional, List
 
 _log = logging.getLogger(__name__)
 
@@ -854,3 +854,509 @@ def detect_regime(df: pl.DataFrame, adx_threshold: float = 25.0) -> str:
         return "unknown"
     adx = adx_val(df, 14)
     return "trend" if adx >= adx_threshold else "range"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  V4 FeatureBuilder — réimplémentation polars/numpy du ``_FeatureBuilder``
+#  pandas de ``opus_stat_pretrained_v4`` (lui-même port du pipeline V4
+#  ``11_v4_datasets.py``). Utilisé par ``opus_stat_retrained_v4`` et
+#  ``opus_omnibus_v6`` (entraînement inline → pas de contrainte d'égalité
+#  numérique exacte avec le pkl pré-entraîné, seuls les noms / l'ordre des
+#  features et la logique de calcul doivent rester proches de V4).
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _ewm_alpha_np(arr: np.ndarray, alpha: float) -> np.ndarray:
+    """EWM avec ``adjust=False`` sur numpy, équivalent ``.ewm(alpha, adjust=False).mean()``.
+
+    Comportement NaN : propagé (résultat NaN tant que la série d'entrée l'est),
+    initialisation au premier non-NaN.
+    """
+    out = np.full_like(arr, np.nan, dtype=np.float64)
+    initialized = False
+    prev = 0.0
+    for i in range(len(arr)):
+        v = arr[i]
+        if np.isnan(v):
+            out[i] = np.nan
+            continue
+        if not initialized:
+            prev = v
+            initialized = True
+        else:
+            prev = alpha * v + (1.0 - alpha) * prev
+        out[i] = prev
+    return out
+
+
+def _bars_since_cross_np(sf: np.ndarray, ss: np.ndarray) -> np.ndarray:
+    """Bougies depuis le dernier croisement de ``sf`` et ``ss``.
+
+    Valeur positive = ``sf`` au-dessus depuis n barres, négative = en-dessous.
+    """
+    n = len(sf)
+    above = (sf > ss).astype(np.int8)
+    diff_above = np.zeros(n, dtype=np.int8)
+    diff_above[1:] = above[1:] - above[:-1]
+    out = np.full(n, np.nan, dtype=np.float64)
+    last_idx, last_dir = -1, 0
+    for i in range(n):
+        if diff_above[i] != 0:
+            last_idx, last_dir = i, int(diff_above[i])
+        if last_idx >= 0:
+            out[i] = last_dir * (i - last_idx)
+    return out
+
+
+def _slope_rolling_np(arr: np.ndarray, window: int) -> np.ndarray:
+    """``np.polyfit`` pente d'ordre 1 sur fenêtre glissante."""
+    n = len(arr)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if window <= 1 or n < window:
+        return out
+    x = np.arange(window, dtype=np.float64)
+    for i in range(window - 1, n):
+        y = arr[i - window + 1 : i + 1]
+        if np.any(np.isnan(y)):
+            continue
+        out[i] = np.polyfit(x, y, 1)[0]
+    return out
+
+
+def _hurst_rs(arr: np.ndarray, max_lag: int = 20) -> float:
+    """Exposant de Hurst via méthode R/S (copié de ``_FeatureBuilder._hurst_rs``)."""
+    arr = arr[~np.isnan(arr)]
+    if len(arr) < max_lag + 5:
+        return np.nan
+    tau = []
+    for lag in range(2, max_lag):
+        diff = arr[lag:] - arr[:-lag]
+        if len(diff) < 2 or np.std(diff) == 0:
+            continue
+        tau.append(np.sqrt(np.std(diff)))
+    if len(tau) < 5:
+        return np.nan
+    try:
+        poly = np.polyfit(np.log(np.arange(2, 2 + len(tau))), np.log(tau), 1)
+        return float(poly[0] * 2.0)
+    except Exception:
+        return np.nan
+
+
+def _hurst_rolling_np(arr: np.ndarray, window: int = 100) -> np.ndarray:
+    n = len(arr)
+    out = np.full(n, np.nan, dtype=np.float64)
+    for i in range(window - 1, n):
+        out[i] = _hurst_rs(arr[i - window + 1 : i + 1])
+    return out
+
+
+def _rank_pct_rolling_np(arr: np.ndarray, window: int) -> np.ndarray:
+    """Rang percentile glissant — équivalent ``pd.Series.rolling(n).rank(pct=True)``
+    avec ``method='average'``."""
+    n = len(arr)
+    out = np.full(n, np.nan, dtype=np.float64)
+    for i in range(window - 1, n):
+        w = arr[i - window + 1 : i + 1]
+        if np.any(np.isnan(w)):
+            continue
+        last = w[-1]
+        rank_avg = (np.sum(w < last) + np.sum(w <= last) + 1) / 2.0
+        out[i] = rank_avg / window
+    return out
+
+
+def build_v4_features(raw_df: pl.DataFrame) -> Optional[pl.DataFrame]:
+    """Construit le DataFrame de features V4 (~100 indicateurs × lags 1/3/6/12).
+
+    Réplique fidèle (en polars/numpy) du ``_FeatureBuilder`` pandas de
+    ``opus_stat_pretrained_v4``. Renvoie ``None`` si moins de 210 barres.
+
+    Notes d'équivalence avec le pipeline pandas V4 :
+      - RSI/ATR/ADX utilisent ``ewm_mean(alpha=1/n, adjust=False)`` (et non
+        ``span=n``) pour correspondre à V4.
+      - Les opérations imperatives (bars_since_cross, hurst, rank percentile)
+        passent par des fallbacks numpy.
+      - Les types booléens sont castés en ``Int8`` (V4 utilisait ``int``).
+    """
+    if raw_df is None or len(raw_df) < 210:
+        return None
+
+    df = raw_df
+    if "time" in df.columns:
+        df = df.sort("time")
+    cast_cols = [
+        pl.col(c).cast(pl.Float64) for c in ("open", "high", "low", "close", "volume")
+        if c in df.columns
+    ]
+    if cast_cols:
+        df = df.with_columns(cast_cols)
+
+    # 1. Rendements
+    df = df.with_columns([
+        pl.col("close").pct_change().alias("ret"),
+        ((pl.col("close") - pl.col("open")) / pl.col("open")).alias("ret_intra"),
+        (pl.col("close") / pl.col("close").shift(1)).log().alias("log_ret"),
+    ])
+
+    # 2. MMs
+    mm_exprs = []
+    for n in (20, 50, 100, 200):
+        mm_exprs.append(pl.col("close").rolling_mean(n).alias(f"SMA_{n}"))
+        mm_exprs.append(pl.col("close").ewm_mean(span=n, adjust=False).alias(f"EMA_{n}"))
+    df = df.with_columns(mm_exprs)
+
+    dist_exprs = []
+    for n in (20, 50, 100, 200):
+        dist_exprs += [
+            ((pl.col("close") - pl.col(f"SMA_{n}")) / pl.col(f"SMA_{n}")).alias(f"dist_SMA{n}"),
+            ((pl.col("close") - pl.col(f"EMA_{n}")) / pl.col(f"EMA_{n}")).alias(f"dist_EMA{n}"),
+        ]
+    df = df.with_columns(dist_exprs)
+
+    # Slopes (rolling polyfit) — normalisées par close
+    close_np = df["close"].to_numpy()
+    slope_cols = {}
+    for n in (20, 50, 100, 200):
+        sma_np = df[f"SMA_{n}"].to_numpy()
+        sl = _slope_rolling_np(sma_np, min(n, 20))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            slope_cols[f"slope_SMA{n}"] = np.where(close_np != 0, sl / close_np, np.nan)
+    df = df.with_columns([pl.Series(k, v) for k, v in slope_cols.items()])
+
+    # Alignements MM + EMA 9/21
+    df = df.with_columns([
+        ((pl.col("SMA_20") > pl.col("SMA_50")) &
+         (pl.col("SMA_50") > pl.col("SMA_100")) &
+         (pl.col("SMA_100") > pl.col("SMA_200"))).cast(pl.Int8).alias("MM_bullish_align"),
+        ((pl.col("SMA_20") < pl.col("SMA_50")) &
+         (pl.col("SMA_50") < pl.col("SMA_100")) &
+         (pl.col("SMA_100") < pl.col("SMA_200"))).cast(pl.Int8).alias("MM_bearish_align"),
+        pl.col("close").ewm_mean(span=9,  adjust=False).alias("EMA_9"),
+        pl.col("close").ewm_mean(span=21, adjust=False).alias("EMA_21"),
+    ])
+
+    # Croisements MM
+    cross_outs = {}
+    for fast, slow, name in [
+        ("EMA_9",  "EMA_21",  "cross_9_21"),
+        ("SMA_20", "SMA_50",  "cross_20_50"),
+        ("SMA_50", "SMA_100", "cross_50_100"),
+        ("SMA_50", "SMA_200", "cross_50_200"),
+    ]:
+        cross_outs[name] = _bars_since_cross_np(df[fast].to_numpy(), df[slow].to_numpy())
+    df = df.with_columns([pl.Series(k, v) for k, v in cross_outs.items()])
+
+    # 3. Momentum — RSI/ROC (V4 utilise alpha=1/n pour RSI)
+    rsi_roc_exprs = []
+    for n in (7, 14, 21):
+        delta = pl.col("close").diff()
+        gain  = pl.when(delta > 0).then(delta).otherwise(0.0).ewm_mean(alpha=1.0 / n, adjust=False)
+        loss  = pl.when(delta < 0).then(-delta).otherwise(0.0).ewm_mean(alpha=1.0 / n, adjust=False)
+        rs    = gain / pl.when(loss == 0).then(None).otherwise(loss)
+        rsi_roc_exprs.append((100 - (100 / (1 + rs))).alias(f"RSI_{n}"))
+        rsi_roc_exprs.append((pl.col("close").pct_change(n) * 100).alias(f"ROC_{n}"))
+    df = df.with_columns(rsi_roc_exprs)
+
+    df = df.with_columns([
+        pl.col("RSI_14").diff().alias("RSI_14_d1"),
+        pl.col("RSI_14").diff(3).alias("RSI_14_d3"),
+        (pl.col("RSI_14") < 30).cast(pl.Int8).alias("RSI_oversold"),
+        (pl.col("RSI_14") > 70).cast(pl.Int8).alias("RSI_overbought"),
+    ])
+    df = df.with_columns([
+        pl.col("RSI_14_d1").diff().alias("RSI_14_accel"),
+    ])
+
+    # Divergences (V4 : pic prix vs pic RSI sur 14 bars)
+    df = df.with_columns([
+        ((pl.col("close") == pl.col("close").rolling_max(14)) &
+         (pl.col("RSI_14") < pl.col("RSI_14").rolling_max(14) * 0.97)
+        ).cast(pl.Int8).alias("bear_div"),
+        ((pl.col("close") == pl.col("close").rolling_min(14)) &
+         (pl.col("RSI_14") > pl.col("RSI_14").rolling_min(14) * 1.03)
+        ).cast(pl.Int8).alias("bull_div"),
+    ])
+
+    # Green ratio / accélération
+    green = (pl.col("close") > pl.col("open")).cast(pl.Int8)
+    df = df.with_columns([
+        green.cast(pl.Float64).rolling_mean(10).alias("green_ratio_10"),
+        green.cast(pl.Float64).rolling_mean(20).alias("green_ratio_20"),
+        pl.col("ret").rolling_mean(5).diff(5).alias("accel_5"),
+    ])
+
+    # 4. MACD
+    df = df.with_columns([
+        (pl.col("close").ewm_mean(span=12, adjust=False) -
+         pl.col("close").ewm_mean(span=26, adjust=False)).alias("MACD"),
+    ])
+    df = df.with_columns([
+        pl.col("MACD").ewm_mean(span=9, adjust=False).alias("MACD_signal"),
+    ])
+    df = df.with_columns([
+        (pl.col("MACD") - pl.col("MACD_signal")).alias("MACD_hist"),
+        (pl.col("MACD") > pl.col("MACD_signal")).cast(pl.Int8).alias("MACD_above_signal"),
+        (pl.col("MACD").sign() - pl.col("MACD").shift(1).sign()).fill_null(0).alias("MACD_zero_cross"),
+    ])
+    df = df.with_columns([
+        pl.col("MACD_hist").diff().alias("MACD_hist_d1"),
+        pl.col("MACD_hist").diff(3).alias("MACD_hist_d3"),
+    ])
+
+    # 5. Breakouts
+    breakout_exprs = []
+    for n in (20, 50, 100):
+        h_n = pl.col("high").rolling_max(n).shift(1)
+        l_n = pl.col("low").rolling_min(n).shift(1)
+        rng = h_n - l_n
+        breakout_exprs += [
+            h_n.alias(f"high_{n}"),
+            l_n.alias(f"low_{n}"),
+            (pl.col("close") > h_n).cast(pl.Int8).alias(f"break_high_{n}"),
+            (pl.col("close") < l_n).cast(pl.Int8).alias(f"break_low_{n}"),
+            ((pl.col("close") - h_n) / h_n).alias(f"dist_high_{n}"),
+            ((pl.col("close") - l_n) / l_n).alias(f"dist_low_{n}"),
+            ((pl.col("close") - l_n) / pl.when(rng == 0).then(None).otherwise(rng)
+            ).alias(f"range_pos_{n}"),
+        ]
+    df = df.with_columns(breakout_exprs)
+
+    df = df.with_columns([
+        ((pl.col("high").rolling_max(3).shift(1) > pl.col("high_20").shift(2)) &
+         (pl.col("close") < pl.col("high_20"))
+        ).cast(pl.Int8).alias("false_break_high_20"),
+        ((pl.col("low").rolling_min(3).shift(1) < pl.col("low_20").shift(2)) &
+         (pl.col("close") > pl.col("low_20"))
+        ).cast(pl.Int8).alias("false_break_low_20"),
+    ])
+
+    # 6. Bollinger
+    df = df.with_columns([
+        pl.col("close").rolling_mean(20).alias("_bb_ma"),
+        pl.col("close").rolling_std(20).alias("_bb_sd"),
+    ])
+    df = df.with_columns([
+        (pl.col("_bb_ma") + 2.0 * pl.col("_bb_sd")).alias("_bb_up"),
+        (pl.col("_bb_ma") - 2.0 * pl.col("_bb_sd")).alias("_bb_lo"),
+    ])
+    df = df.with_columns([
+        ((pl.col("_bb_up") - pl.col("_bb_lo")) / pl.col("_bb_ma")).alias("BB_width"),
+        ((pl.col("close") - pl.col("_bb_lo")) /
+         pl.when((pl.col("_bb_up") - pl.col("_bb_lo")) == 0).then(None)
+         .otherwise(pl.col("_bb_up") - pl.col("_bb_lo"))
+        ).alias("BB_pos"),
+    ])
+    bb_rank_np = _rank_pct_rolling_np(df["BB_width"].to_numpy(), 100)
+    df = df.with_columns(pl.Series("BB_width_rank100", bb_rank_np))
+    df = df.with_columns([
+        (pl.col("BB_width_rank100") < 0.2).cast(pl.Int8).alias("BB_squeeze"),
+        (pl.col("BB_width") > pl.col("BB_width").shift(5) * 1.2).cast(pl.Int8).alias("BB_expansion"),
+    ])
+
+    # 7. Pullback
+    df = df.with_columns([
+        ((pl.col("SMA_20") - pl.col("close")) / pl.col("close")).alias("pullback_to_sma20"),
+        pl.col("ret").rolling_sum(5).alias("_big"),
+    ])
+    df = df.with_columns([
+        ((pl.col("_big").shift(3) > 0.01) &
+         (pl.col("ret").rolling_sum(3) < 0)
+        ).cast(pl.Int8).alias("pullback_after_rally"),
+        ((pl.col("_big").shift(3) < -0.01) &
+         (pl.col("ret").rolling_sum(3) > 0)
+        ).cast(pl.Int8).alias("bounce_after_drop"),
+    ])
+    sh = pl.col("high").rolling_max(50)
+    sl_e = pl.col("low").rolling_min(50)
+    df = df.with_columns([
+        ((pl.col("close") - sl_e) /
+         pl.when((sh - sl_e) == 0).then(None).otherwise(sh - sl_e)
+        ).alias("fib_pos"),
+    ])
+
+    # 8. ADX (V4 : alpha=1/n)
+    h_np = df["high"].to_numpy()
+    l_np = df["low"].to_numpy()
+    c_np = df["close"].to_numpy()
+    n_adx = 14
+    a_adx = 1.0 / n_adx
+    up = np.empty_like(h_np); up[:] = np.nan; up[1:] = h_np[1:] - h_np[:-1]
+    dn = np.empty_like(l_np); dn[:] = np.nan; dn[1:] = -(l_np[1:] - l_np[:-1])
+    plus_dm  = np.where((up > dn) & (up > 0), up, 0.0)
+    minus_dm = np.where((dn > up) & (dn > 0), dn, 0.0)
+    c_prev = np.concatenate(([np.nan], c_np[:-1]))
+    tr = np.maximum.reduce([h_np - l_np, np.abs(h_np - c_prev), np.abs(l_np - c_prev)])
+    atr_np = _ewm_alpha_np(tr, a_adx)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        pdi_np = 100.0 * _ewm_alpha_np(plus_dm,  a_adx) / atr_np
+        mdi_np = 100.0 * _ewm_alpha_np(minus_dm, a_adx) / atr_np
+        dx = 100.0 * np.abs(pdi_np - mdi_np) / np.where(pdi_np + mdi_np == 0, np.nan, pdi_np + mdi_np)
+    adx_np = _ewm_alpha_np(dx, a_adx)
+    df = df.with_columns([
+        pl.Series("ADX",     adx_np),
+        pl.Series("DI_plus", pdi_np),
+        pl.Series("DI_minus", mdi_np),
+        pl.Series("ATR_14",  atr_np),
+    ])
+    df = df.with_columns([
+        (pl.col("DI_plus") - pl.col("DI_minus")).alias("DI_diff"),
+        (pl.col("ADX") > 25).cast(pl.Int8).alias("trend_strong"),
+        (pl.col("ADX") > 40).cast(pl.Int8).alias("trend_very_strong"),
+    ])
+
+    # trend_duration : strong.groupby(grp).cumsum() où grp incrémente à chaque changement
+    strong = df["trend_strong"].to_numpy().astype(np.int64)
+    if len(strong) > 0:
+        shifted = np.concatenate(([0], strong[:-1]))
+        grp = np.cumsum((strong != shifted).astype(np.int64))
+        td = np.zeros(len(strong), dtype=np.int64)
+        cur_grp = grp[0] if len(grp) > 0 else 0
+        running = 0
+        for i in range(len(strong)):
+            if grp[i] != cur_grp:
+                cur_grp = grp[i]
+                running = 0
+            running += int(strong[i])
+            td[i] = running
+    else:
+        td = np.zeros(0, dtype=np.int64)
+    df = df.with_columns(pl.Series("trend_duration", td))
+
+    # Hurst 100 (rolling polyfit log-log)
+    hurst_np = _hurst_rolling_np(df["log_ret"].to_numpy(), 100)
+    df = df.with_columns(pl.Series("hurst_100", hurst_np))
+
+    # 9. Volatilité / Volume
+    df = df.with_columns([
+        (pl.col("ATR_14") / pl.col("close")).alias("ATR_pct"),
+        pl.col("ret").rolling_std(20).alias("vol_std_20"),
+        (pl.col("volume") / pl.col("volume").rolling_mean(20)).alias("vol_ratio"),
+        (pl.col("volume") / pl.col("volume").rolling_mean(50)).alias("vol_ratio_50"),
+    ])
+
+    # OBV + OBV slope
+    obv_np = (
+        df["close"].diff().sign().fill_null(0).cast(pl.Float64) * df["volume"]
+    ).cum_sum().to_numpy()
+    df = df.with_columns(pl.Series("OBV", obv_np))
+    vol_mean_10 = df.select(pl.col("volume").rolling_mean(10))["volume"].to_numpy()
+    obv_slope = _slope_rolling_np(obv_np, 10)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        obv_slope_norm = np.where(vol_mean_10 != 0, obv_slope / vol_mean_10, np.nan)
+    df = df.with_columns(pl.Series("OBV_slope", obv_slope_norm))
+
+    # 10. Bougie
+    df = df.with_columns([
+        ((pl.col("close") - pl.col("open")) / pl.col("open")).alias("body"),
+        pl.max_horizontal([pl.col("open"), pl.col("close")]).alias("_max_oc"),
+        pl.min_horizontal([pl.col("open"), pl.col("close")]).alias("_min_oc"),
+    ])
+    df = df.with_columns([
+        pl.col("body").abs().alias("body_abs"),
+        ((pl.col("high") - pl.col("_max_oc")) / pl.col("open")).alias("upper_wick"),
+        ((pl.col("_min_oc") - pl.col("low")) / pl.col("open")).alias("lower_wick"),
+        ((pl.col("high") - pl.col("low")) / pl.col("open")).alias("range_size"),
+    ])
+    df = df.with_columns([
+        (pl.col("body_abs") < 0.001).cast(pl.Int8).alias("doji"),
+        ((pl.col("close") > pl.col("open")) &
+         (pl.col("close").shift(1) > pl.col("open").shift(1)) &
+         (pl.col("close").shift(2) > pl.col("open").shift(2))
+        ).cast(pl.Int8).alias("three_green"),
+        ((pl.col("close") < pl.col("open")) &
+         (pl.col("close").shift(1) < pl.col("open").shift(1)) &
+         (pl.col("close").shift(2) < pl.col("open").shift(2))
+        ).cast(pl.Int8).alias("three_red"),
+    ])
+
+    # 11. Interactions
+    df = df.with_columns([
+        (pl.col("RSI_14") * pl.col("ADX")).alias("RSI_x_ADX"),
+        (pl.col("BB_pos") * pl.col("ADX")).alias("BBpos_x_ADX"),
+        (pl.col("vol_ratio") * (pl.col("break_high_20") + pl.col("break_low_20"))
+        ).alias("vol_x_break"),
+    ])
+
+    # Colonnes intermédiaires
+    helpers = ["_bb_ma", "_bb_sd", "_bb_up", "_bb_lo", "_big", "_max_oc", "_min_oc"]
+    df = df.drop([c for c in helpers if c in df.columns])
+
+    # 12. Lags 1/3/6/12
+    continuous_feats = [
+        "dist_SMA20", "dist_SMA50", "dist_SMA100", "dist_SMA200",
+        "dist_EMA20", "dist_EMA50", "slope_SMA20", "slope_SMA50", "slope_SMA100",
+        "cross_9_21", "cross_20_50", "cross_50_100", "cross_50_200",
+        "RSI_7", "RSI_14", "RSI_21", "RSI_14_d1", "RSI_14_d3", "RSI_14_accel",
+        "ROC_7", "ROC_14", "ROC_21", "green_ratio_10", "green_ratio_20", "accel_5",
+        "MACD", "MACD_signal", "MACD_hist", "MACD_hist_d1", "MACD_hist_d3",
+        "dist_high_20", "dist_low_20", "dist_high_50", "dist_low_50",
+        "range_pos_20", "range_pos_50", "range_pos_100",
+        "BB_width", "BB_pos", "BB_width_rank100", "pullback_to_sma20", "fib_pos",
+        "ADX", "DI_plus", "DI_minus", "DI_diff", "trend_duration", "hurst_100",
+        "ATR_pct", "vol_std_20", "vol_ratio", "vol_ratio_50", "OBV_slope",
+        "body", "body_abs", "upper_wick", "lower_wick", "range_size",
+        "RSI_x_ADX", "BBpos_x_ADX",
+    ]
+    binary_feats = [
+        "MM_bullish_align", "MM_bearish_align", "RSI_oversold", "RSI_overbought",
+        "bear_div", "bull_div", "MACD_above_signal",
+        "break_high_20", "break_low_20", "break_high_50", "break_low_50",
+        "break_high_100", "break_low_100",
+        "false_break_high_20", "false_break_low_20", "BB_squeeze", "BB_expansion",
+        "pullback_after_rally", "bounce_after_drop", "trend_strong", "trend_very_strong",
+        "doji", "three_green", "three_red", "MACD_zero_cross", "vol_x_break",
+    ]
+    lag_exprs = []
+    for feat in continuous_feats + binary_feats:
+        if feat in df.columns:
+            for lag in (1, 3, 6, 12):
+                lag_exprs.append(pl.col(feat).shift(lag).alias(f"{feat}_lag{lag}"))
+    if lag_exprs:
+        df = df.with_columns(lag_exprs)
+
+    return df
+
+
+# Colonnes à exclure du jeu de features (raw OHLCV + MMs brutes non-stationnaires)
+_V4_EXCLUDED_COLS = frozenset({
+    "time", "open", "high", "low", "close", "volume",
+    "log_ret", "OBV",
+    "SMA_20", "SMA_50", "SMA_100", "SMA_200",
+    "EMA_20", "EMA_50", "EMA_100", "EMA_200",
+    "EMA_9", "EMA_21",
+    "high_20", "low_20", "high_50", "low_50", "high_100", "low_100",
+    "ATR_14",
+})
+
+
+def select_v4_feature_columns(features_df: pl.DataFrame) -> List[str]:
+    """Renvoie la liste des colonnes utilisables comme features (numériques,
+    stationnaires, hors OHLCV/MM brutes). Équivalent polars du
+    ``_select_feature_columns`` pandas."""
+    out: List[str] = []
+    numeric_dtypes = (
+        pl.Float32, pl.Float64,
+        pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+        pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
+    )
+    for c, dtype in features_df.schema.items():
+        if c in _V4_EXCLUDED_COLS:
+            continue
+        if dtype in numeric_dtypes:
+            out.append(c)
+    return out
+
+
+def impute_v4_with_medians(features_df: pl.DataFrame, feature_cols: List[str],
+                           medians: dict) -> np.ndarray:
+    """Sélectionne ``feature_cols`` du DataFrame polars, convertit en numpy,
+    remplace NaN/Inf par les médianes du train (fallback 0.0). Sortie shape
+    (n_rows, n_features) en float64.
+    """
+    arr = features_df.select(feature_cols).to_numpy().astype(np.float64, copy=True)
+    if not np.isfinite(arr).all():
+        for j, col in enumerate(feature_cols):
+            mask = ~np.isfinite(arr[:, j])
+            if mask.any():
+                arr[mask, j] = float(medians.get(col, 0.0))
+    return arr
