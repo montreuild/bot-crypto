@@ -225,6 +225,41 @@ class Strategy(BaseStrategyML):
         self._best_auc:        float            = 0.0
         self._best_auc_per_tf: Dict[str, float] = {}
         self._train_meta:      Dict[str, dict]  = {}
+        # Cache backtest : voir scoring_statistique_opus_v4 pour la motivation.
+        self._bt_features_cache: Dict[float, np.ndarray] = {}
+        self._bt_features_len: int = 0
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Pré-calcule les features pour toute la fenêtre du backtest.
+
+        Le cache est lazy par ``adx_threshold`` (paramètre qui influence le
+        calcul du régime). En optim, chaque valeur distincte d'``adx_threshold``
+        ne déclenche qu'un seul build.
+        """
+        try:
+            self._bt_features_cache.clear()
+            self._bt_features_len = len(df)
+            logger.info(
+                f"[OpusV5-Stat] backtest : cache features prêt sur {len(df)} bougies"
+            )
+        except Exception as e:
+            logger.warning(f"[OpusV5-Stat] prepare_for_backtest KO : {e}")
+            self._bt_features_cache.clear()
+            self._bt_features_len = 0
+
+    def _get_or_build_features(self, df: pl.DataFrame,
+                               adx_threshold: float) -> Optional[np.ndarray]:
+        if self._bt_features_len == 0 or len(df) > self._bt_features_len:
+            feat_window = df.slice(max(0, len(df) - 250), min(250, len(df)))
+            return _build_features(feat_window, adx_threshold)
+        key = round(float(adx_threshold), 6)
+        X = self._bt_features_cache.get(key)
+        if X is None:
+            X = _build_features(df.head(self._bt_features_len), adx_threshold)
+            if X is None:
+                return None
+            self._bt_features_cache[key] = X
+        return X[: len(df)]
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get(self.name, {})
@@ -253,6 +288,8 @@ class Strategy(BaseStrategyML):
             self._last_retrain.clear()
             self._managed_externally = False
             self._best_auc = 0.0
+        self._bt_features_cache.clear()
+        self._bt_features_len = 0
 
     def fit(self, df: pl.DataFrame, params: dict = None) -> None:
         p             = (params or {}).get(self.name, {})
@@ -479,8 +516,7 @@ class Strategy(BaseStrategyML):
         regime_lbl = REGIME_LABELS[regime]
 
         # ── Prédictions ────────────────────────────────────────────────────
-        feat_window = df.slice(max(0, len(df) - 250), min(250, len(df)))
-        X_full = _build_features(feat_window, adx_threshold)
+        X_full = self._get_or_build_features(df, adx_threshold)
         if X_full is None or len(X_full) == 0:
             return self._none("Features manquantes")
         X_last = X_full[-1:]
