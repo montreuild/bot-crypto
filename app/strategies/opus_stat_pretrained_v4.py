@@ -399,15 +399,32 @@ _PRETRAINED_LOCK = threading.Lock()
 
 
 def _load_pretrained() -> tuple:
-    """Charge (une seule fois par process) le pkl + le JSON de médianes."""
+    """Charge (une seule fois par process) le pkl + le JSON de médianes.
+
+    Supprime le ``InconsistentVersionWarning`` de scikit-learn pendant le
+    ``pickle.load`` : le pkl a été produit sous une version récente de sklearn
+    (1.8+) mais le bot tourne sur 1.5 ; pour les objets sérialisés (LabelEncoder,
+    LightGBM booster wrappers) la compatibilité ascendante est garantie pour
+    notre usage (predict_proba seulement, pas de fit). Le warning polluait
+    chaque appel et masquait des messages utiles.
+    """
     with _PRETRAINED_LOCK:
         if _PRETRAINED_CACHE["models"] is None:
             if not os.path.exists(_MODELS_PATH) or not os.path.exists(_MEDIANS_PATH):
                 raise FileNotFoundError(
                     f"Artefacts V4 introuvables — vérifiez {_DATA_DIR}"
                 )
-            with open(_MODELS_PATH, "rb") as f:
-                models = pickle.load(f)
+            import warnings as _w
+            try:
+                from sklearn.exceptions import InconsistentVersionWarning as _IVW
+                _SK_FILTER = ("ignore", None, _IVW)
+            except ImportError:
+                _SK_FILTER = None
+            with _w.catch_warnings():
+                if _SK_FILTER is not None:
+                    _w.simplefilter("ignore", _SK_FILTER[2])
+                with open(_MODELS_PATH, "rb") as f:
+                    models = pickle.load(f)
             with open(_MEDIANS_PATH, "r", encoding="utf-8") as f:
                 raw = json.load(f)
             medians: Dict[tuple, Dict[str, float]] = {}

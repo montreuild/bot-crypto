@@ -2,6 +2,17 @@
 import hmac
 import logging
 import os
+import warnings
+
+# Supprime le ``InconsistentVersionWarning`` sklearn émis quand un pkl produit
+# avec sklearn 1.8+ (LabelEncoder, MinMaxScaler…) est chargé sous 1.5. La
+# compatibilité predict-only est OK pour nos modèles ; le warning polluait
+# chaque chargement de pkl (V4 pretrained, optimizer, etc.).
+try:
+    from sklearn.exceptions import InconsistentVersionWarning as _IVW
+    warnings.simplefilter("ignore", _IVW)
+except ImportError:
+    pass
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
