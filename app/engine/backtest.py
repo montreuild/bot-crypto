@@ -2,6 +2,7 @@
 import logging
 import math
 import threading
+import time
 from typing import List, Dict, Optional, Tuple
 import numpy as np
 import polars as pl
@@ -310,9 +311,29 @@ class Backtester:
         close_arr = df["close"].to_numpy().astype(float)
         open_arr  = df["open"].to_numpy().astype(float)
 
+        total_bars = len(df) - 1 - warmup
+        _t_loop    = time.time()
+        logger.info(
+            f"[Backtest] {symbol} {timeframe or '?'} : démarrage boucle — "
+            f"{total_bars} barres à parcourir (warmup={warmup}, total={len(df)})"
+        )
         for i in range(warmup, len(df) - 1):
-            if self._cancel_event is not None and i % 100 == 0 and self._cancel_event.is_set():
-                raise InterruptedError("Backtest annulé")
+            if i % 100 == 0:
+                if self._cancel_event is not None and self._cancel_event.is_set():
+                    raise InterruptedError("Backtest annulé")
+                # Log de progression toutes les 500 barres (≈ visibilité utilisateur
+                # sans noyer les logs sur des backtests courts).
+                if total_bars > 1000 and i % 500 == 0 and i > warmup:
+                    done = i - warmup
+                    pct  = 100.0 * done / max(total_bars, 1)
+                    rate = done / max(time.time() - _t_loop, 0.001)
+                    eta  = (total_bars - done) / max(rate, 0.001)
+                    logger.info(
+                        f"[Backtest] {symbol} {timeframe or '?'} : "
+                        f"{done}/{total_bars} barres ({pct:.0f}%) — "
+                        f"{rate:.0f} bars/s, ETA {eta:.0f}s, "
+                        f"{len(trades)} trades, capital={capital:.2f}"
+                    )
             window  = df[:i + 1]
             c_high  = high_arr[i]
             c_low   = low_arr[i]
