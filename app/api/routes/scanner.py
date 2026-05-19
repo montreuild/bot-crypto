@@ -10,7 +10,6 @@ from fastapi.responses import JSONResponse
 from app.api import state
 from app.api.helpers import verify_api_key, _clean, _discover_strategies
 from app.core.exchange import create_exchange
-from app.core.indicators import compute_v4_scoring_series
 from app.engine.engine import Engine, BaseStrategyML
 from app.engine.scanner import MarketScanner
 
@@ -195,18 +194,6 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
             ],
         }
 
-        # ── Scores V4 (amplitude, direction, régime) ──────────────────────
-        try:
-            v4_scoring = compute_v4_scoring_series(df)
-            indicators["proba_amp"] = v4_scoring.get("proba_amp", [])
-            indicators["proba_dir"] = v4_scoring.get("proba_dir", [])
-            indicators["regime_v4"] = v4_scoring.get("regime_v4", [])
-        except Exception as _v4_err:
-            logger.warning(f"[API] V4 scoring series KO : {_v4_err}")
-            indicators["proba_amp"] = []
-            indicators["proba_dir"] = []
-            indicators["regime_v4"] = []
-
         return JSONResponse(content=_clean({
             "symbol":     symbol,
             "timeframe":  timeframe,
@@ -266,13 +253,37 @@ def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int 
                 side   = result.get("side", "none")
                 score  = result.get("score", 0.0)
                 reason = result.get("reason", "")
+                # Détails exposés pour les stratégies V7 (omnibus / stat-V4) :
+                # setup, régime, probas, paramètres de sortie. Tout est optionnel —
+                # une stratégie classique renverra simplement None côté UI.
+                def _num(v, nd=3):
+                    try: return round(float(v), nd) if v is not None else None
+                    except (TypeError, ValueError): return None
                 signals.append({
-                    "strategy": name,
-                    "side":     side,
-                    "score":    round(float(score), 3) if score is not None else 0.0,
-                    "reason":   reason,
-                    "skipped":  False,
-                    "active":   is_active,
+                    "strategy":   name,
+                    "side":       side,
+                    "score":      _num(score) or 0.0,
+                    "reason":     reason,
+                    "skipped":    False,
+                    "active":     is_active,
+                    # Détails V7 (optionnels)
+                    "setup":          result.get("setup"),
+                    "setup_priority": result.get("setup_priority"),
+                    "regime_lbl":     result.get("regime_lbl"),
+                    "p_event":        _num(result.get("p_event"), 3),
+                    "p_up":           _num(result.get("p_up"),    3),
+                    "sl_atr_mult":    _num(result.get("sl_atr_mult"), 2),
+                    "tp_atr_mult":    _num(result.get("tp_atr_mult"), 2),
+                    "exit_after_bars":result.get("exit_after_bars"),
+                    "size_factor":    _num(result.get("size_factor"), 3),
+                    "tf_detected":    result.get("tf_detected"),
+                    "exit_td_active": result.get("exit_td_active"),
+                    "indicators":     {
+                        # Sous-ensemble lisible — pas l'intégralité (auc, etc.)
+                        k: result.get("indicators", {}).get(k)
+                        for k in ("adx", "rsi", "auc_amp", "auc_dir", "n_features")
+                        if result.get("indicators", {}).get(k) is not None
+                    } or None,
                 })
             except Exception as e:
                 signals.append({
