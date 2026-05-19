@@ -183,7 +183,7 @@ def _evaluate_setup(setup: Dict[str, Any],
     return True
 
 
-def _check_early_exit_v6(setup_name: str, regime: int, p_up: float,
+def _check_early_exit_v7(setup_name: str, regime: int, p_up: float,
                          dir_inv_short: float = 0.55,
                          dir_inv_long: float = 0.40,
                          dir_drop_range: float = 0.40) -> Optional[str]:
@@ -237,7 +237,7 @@ def _select_setup(setups: List[Dict[str, Any]],
 class Strategy(BaseStrategyML):
     """V7 OMNIBUS — 6 setups avec routing par priorité, sur modèles V4 pkl."""
 
-    name      = "opus_omnibus_v6_pretrained"
+    name      = "opus_omnibus_v7_pretrained"
     # Dossier de la pkl V4 — pas d'écriture car les modèles sont figés.
     model_dir = os.path.join(os.path.dirname(__file__), "opus_stat_pretrained_v4_data")
 
@@ -313,7 +313,7 @@ class Strategy(BaseStrategyML):
                     }
             return True
         except Exception as e:
-            logger.error(f"[OmnibusV6-PT] Chargement modèles V4 KO : {e}")
+            logger.error(f"[OmnibusV7-PT] Chargement modèles V4 KO : {e}")
             return False
 
     @property
@@ -356,7 +356,7 @@ class Strategy(BaseStrategyML):
             X          = _prepare_row(features_df, feat_names, medians)
             return float(entry["model"].predict_proba(X)[0, 1])
         except Exception as e:
-            logger.warning(f"[OmnibusV6-PT] Prédiction {key} KO : {e}")
+            logger.warning(f"[OmnibusV7-PT] Prédiction {key} KO : {e}")
             return None
 
     def predict_amplitude(self, features_df: pd.DataFrame, tf: str) -> Optional[float]:
@@ -565,11 +565,11 @@ class Strategy(BaseStrategyML):
             if p_up is None:
                 return None
         except Exception as e:
-            logger.warning(f"[OmnibusV6-PT] check_early_exit recompute KO : {e}")
+            logger.warning(f"[OmnibusV7-PT] check_early_exit recompute KO : {e}")
             return None
 
         # 4. Décision basée sur le setup
-        return _check_early_exit_v6(
+        return _check_early_exit_v7(
             setup_name, regime, p_up,
             dir_inv_short=dir_inv_short,
             dir_inv_long=dir_inv_long,

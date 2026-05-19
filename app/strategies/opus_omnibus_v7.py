@@ -1,9 +1,9 @@
 """Stratégie Opus Omnibus V7 (entraîné inline) — 6 setups sur modèles V4 entraînés.
 
-Variante de ``opus_omnibus_v6_pretrained`` qui **entraîne son propre modèle**
+Variante de ``opus_omnibus_v7_pretrained`` qui **entraîne son propre modèle**
 au lieu de charger le pkl V4 embarqué. Conserve la logique V7 des 6 setups.
 
-Améliorations V7 (idem ``opus_omnibus_v6_pretrained``) :
+Améliorations V7 (idem ``opus_omnibus_v7_pretrained``) :
   - Nouveau setup SHORT_TD_HIGH (priorité 0, amp≥0.60, p_dir<0.30, size×1.5).
   - LONG_CHOPPY raffiné : p_dir>0.58, TP/SL serrés, max_bars=5.
   - SHORT_CHOPPY durci : p_dir<0.42, TP élargi.
@@ -621,7 +621,7 @@ class Strategy(BaseStrategyML):
     entraînés inline (mêmes paramètres LightGBM que ``opus_stat_retrained_v4``,
     mais code dupliqué pour rester autonome)."""
 
-    name      = "opus_omnibus_v6"
+    name      = "opus_omnibus_v7"
     model_dir = "models"
 
     timeframes: List[str] = list(_SUPPORTED_TFS)
