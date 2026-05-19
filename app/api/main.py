@@ -46,6 +46,29 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+# ── Filet de sécurité : capture toutes les exceptions non gérées ──────────
+# Sans ce handler, une exception dans une route (ex. ``TypeError`` à cause
+# d'un ``oos_score=None``) remonte à travers la middleware Starlette et
+# se transforme en ``ExceptionGroup: unhandled errors in a TaskGroup``
+# moche dans les logs serveur, sans message HTTP propre côté client.
+@app.exception_handler(Exception)
+async def _global_exception_handler(request: Request, exc: Exception):
+    """Loggue l'exception puis retourne un JSON 500 propre (sans stacktrace)."""
+    logger.error(
+        f"[API] Exception non gérée {request.method} {request.url.path} : "
+        f"{type(exc).__name__}: {exc}",
+        exc_info=True,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"Erreur interne : {type(exc).__name__}",
+            "path":   request.url.path,
+        },
+    )
+
+
 app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(
     CORSMiddleware,
