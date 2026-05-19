@@ -553,6 +553,31 @@ class Strategy(BaseStrategyML):
         self._best_auc_per_tf: Dict[str, float] = {}
         self._train_meta:      Dict[str, dict]  = {}
         self._cancel_event = None
+        # Cache backtest : voir prepare_for_backtest.
+        self._bt_features: Optional[pl.DataFrame] = None
+        self._bt_features_len: int = 0
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Pré-calcule les features V4 (polars) pour toute la fenêtre.
+
+        Le scoring n'a besoin que de la dernière ligne, mais ``_build_features``
+        produit ~462 colonnes sur toute la fenêtre. Sans cache, on rebuild à
+        chaque barre du backtest. Avec cache, un seul build pour toute la
+        fenêtre, puis ``features.head(len(df))`` dans la boucle.
+        """
+        try:
+            feats = _build_features(_window_polars(df, n=len(df)))
+            self._bt_features = feats
+            self._bt_features_len = len(df) if feats is not None else 0
+            logger.info(
+                f"[OpusV4-RT] backtest : features pré-calculées sur "
+                f"{self._bt_features_len} bougies "
+                f"({(len(feats.columns) if feats is not None else 0)} colonnes)"
+            )
+        except Exception as e:
+            logger.warning(f"[OpusV4-RT] prepare_for_backtest KO : {e}")
+            self._bt_features = None
+            self._bt_features_len = 0
 
     # ── Cycle de vie ML ────────────────────────────────────────────────────
     @property
@@ -584,6 +609,8 @@ class Strategy(BaseStrategyML):
             self._last_retrain.clear()
             self._managed_externally = False
             self._best_auc = 0.0
+        self._bt_features = None
+        self._bt_features_len = 0
         gc.collect()
 
     # ── Persistance par TF ─────────────────────────────────────────────────
@@ -884,7 +911,11 @@ class Strategy(BaseStrategyML):
         if tf not in self._trained_tfs:
             return self._none("Modèle pas encore entraîné (warmup en cours)")
 
-        features = _build_features(_window_polars(df, n=max(260, self.min_bars_required(params))))
+        # Fast-path backtest : features pré-calculées une fois.
+        if self._bt_features is not None and len(df) <= self._bt_features_len:
+            features = self._bt_features.head(len(df))
+        else:
+            features = _build_features(_window_polars(df, n=max(260, self.min_bars_required(params))))
         if features is None or len(features) == 0:
             return self._none("Construction des features V4 impossible")
 

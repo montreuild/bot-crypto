@@ -271,6 +271,19 @@ class Backtester:
                         f"[Backtest] ML '{strat.name}' : aucun modèle pour {timeframe} "
                         "— entraînement inline activé (lancez d'abord un cycle live ou l'optimiseur)"
                     )
+            # ── Pré-calcul des features (optionnel, dépend de la stratégie) ───
+            # Les stratégies qui en bénéficient (V4 pretrained / omnibus_v7
+            # pretrained) reconstruisent une centaine d'indicateurs à chaque
+            # appel de score() ; pré-calculer une fois divise par ~100 le temps
+            # total du backtest. Les stratégies sans hook ne sont pas affectées.
+            prep = getattr(strat, "prepare_for_backtest", None)
+            if callable(prep):
+                try:
+                    prep(df)
+                except Exception as e:
+                    logger.warning(
+                        f"[Backtest] prepare_for_backtest('{strat.name}') KO : {e}"
+                    )
 
         capital      = self.cfg["trading"].get("capital", 1000.0)
         risk         = self.cfg["trading"]["risk_per_trade"]

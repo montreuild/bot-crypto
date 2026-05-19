@@ -566,7 +566,38 @@ class Strategy(BaseStrategyML):
         self._best_auc            = 0.0
         self._best_auc_per_tf:   Dict[str, float] = {}
         self._train_meta:        Dict[str, dict]  = {}
+        # Cache backtest : features V4 pré-calculées sur toute la fenêtre.
+        # Évite de rebuild les ~462 colonnes à chaque barre du backtest
+        # (gain x100 sur les backtests longs).
+        self._bt_features_pdf: Optional[pd.DataFrame] = None
+        self._bt_features_len: int = 0
         self._ensure_loaded()
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Pré-calcule les features V4 pour TOUTE la fenêtre du backtest.
+
+        Appelé une fois par ``Backtester.run`` avant la boucle bar-par-bar.
+        Sans ce cache, ``score()`` reconstruit ~462 features à chaque appel
+        (≈ 50 ms × ~5000 barres = > 4 min par stratégie). Avec ce cache,
+        coût constant : un seul ``_FeatureBuilder.build`` sur toute la
+        fenêtre, puis lookup ``iloc[:i+1]`` dans la boucle.
+        """
+        try:
+            cols = [c for c in ("time", "open", "high", "low", "close", "volume")
+                    if c in df.columns]
+            pdf = df.select(cols).to_pandas()
+            feats = self._FEATURE_BUILDER.build(pdf)
+            self._bt_features_pdf = feats
+            self._bt_features_len = len(df) if feats is not None else 0
+            logger.info(
+                f"[OpusV4-PT] backtest : features pré-calculées sur "
+                f"{self._bt_features_len} bougies "
+                f"({(feats.shape[1] if feats is not None else 0)} colonnes)"
+            )
+        except Exception as e:
+            logger.warning(f"[OpusV4-PT] prepare_for_backtest KO : {e}")
+            self._bt_features_pdf = None
+            self._bt_features_len = 0
 
     # ── Cycle de vie ML ────────────────────────────────────────────────────
     def _ensure_loaded(self) -> bool:
@@ -611,8 +642,10 @@ class Strategy(BaseStrategyML):
         return 230
 
     def reset_model(self) -> None:
-        # Les modèles sont figés — on ne les efface jamais.
-        return
+        # Les modèles sont figés — on ne les efface jamais. En revanche on
+        # vide le cache de features (réinitialisé entre deux backtests).
+        self._bt_features_pdf = None
+        self._bt_features_len = 0
 
     def fit(self, df: pl.DataFrame, params: dict = None) -> None:
         # Pas d'entraînement : on s'assure simplement que le pkl est chargé.
@@ -715,9 +748,13 @@ class Strategy(BaseStrategyML):
                 f"Timeframe non supporté (détecté={tf}, attendus={_SUPPORTED_TFS})"
             )
 
-        # 2. Conversion polars → pandas + construction des features V4.
-        pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required() + 20))
-        features = self._FEATURE_BUILDER.build(pdf)
+        # 2. Construction des features V4 — fast-path backtest si pré-calculé.
+        features = None
+        if self._bt_features_pdf is not None and len(df) <= self._bt_features_len:
+            features = self._bt_features_pdf.iloc[: len(df)]
+        else:
+            pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required() + 20))
+            features = self._FEATURE_BUILDER.build(pdf)
         if features is None or len(features) == 0:
             return self._none("Construction des features V4 impossible")
 

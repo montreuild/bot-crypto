@@ -291,7 +291,33 @@ class Strategy(BaseStrategyML):
         self._best_auc            = 0.0
         self._best_auc_per_tf: Dict[str, float] = {}
         self._train_meta:      Dict[str, dict]  = {}
+        # Cache backtest : voir opus_stat_pretrained_v4 pour la motivation.
+        self._bt_features_pdf = None
+        self._bt_features_len = 0
         self._ensure_loaded()
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Pré-calcule les features V4 pour toute la fenêtre de backtest.
+
+        Évite ~5000 appels redondants à ``_FeatureBuilder.build()`` (gain ~100×
+        sur les backtests longs).
+        """
+        try:
+            cols = [c for c in ("time", "open", "high", "low", "close", "volume")
+                    if c in df.columns]
+            pdf = df.select(cols).to_pandas()
+            feats = self._FEATURE_BUILDER.build(pdf)
+            self._bt_features_pdf = feats
+            self._bt_features_len = len(df) if feats is not None else 0
+            logger.info(
+                f"[OmnibusV7-PT] backtest : features pré-calculées sur "
+                f"{self._bt_features_len} bougies "
+                f"({(feats.shape[1] if feats is not None else 0)} colonnes)"
+            )
+        except Exception as e:
+            logger.warning(f"[OmnibusV7-PT] prepare_for_backtest KO : {e}")
+            self._bt_features_pdf = None
+            self._bt_features_len = 0
 
     # ── Cycle de vie ML ────────────────────────────────────────────────────
     def _ensure_loaded(self) -> bool:
@@ -332,7 +358,10 @@ class Strategy(BaseStrategyML):
         return 230  # FeatureBuilder a besoin de 210 + marge lags
 
     def reset_model(self) -> None:
-        return  # figé
+        # Modèles figés, mais on réinitialise le cache de features
+        # (réutilisé entre deux backtests sur des fenêtres différentes).
+        self._bt_features_pdf = None
+        self._bt_features_len = 0
 
     def fit(self, df: pl.DataFrame, params: dict = None) -> None:
         self._ensure_loaded()
@@ -403,9 +432,12 @@ class Strategy(BaseStrategyML):
                 f"Timeframe non supporté (détecté={tf}, attendus={_SUPPORTED_TFS})"
             )
 
-        # 3. Features V4
-        pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required() + 20))
-        features = self._FEATURE_BUILDER.build(pdf)
+        # 3. Features V4 — fast-path backtest si pré-calculé.
+        if self._bt_features_pdf is not None and len(df) <= self._bt_features_len:
+            features = self._bt_features_pdf.iloc[: len(df)]
+        else:
+            pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required() + 20))
+            features = self._FEATURE_BUILDER.build(pdf)
         if features is None or len(features) == 0:
             return self._none("Construction des features V4 impossible")
 
@@ -550,8 +582,11 @@ class Strategy(BaseStrategyML):
 
         # 3. Recalculer features + régime + p_dir à la barre courante
         try:
-            pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required() + 20))
-            features = self._FEATURE_BUILDER.build(pdf)
+            if self._bt_features_pdf is not None and len(df) <= self._bt_features_len:
+                features = self._bt_features_pdf.iloc[: len(df)]
+            else:
+                pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required() + 20))
+                features = self._FEATURE_BUILDER.build(pdf)
             if features is None or len(features) == 0:
                 return None
             last_row = features.iloc[-1]
