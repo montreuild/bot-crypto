@@ -658,8 +658,10 @@ class Backtester:
             # Size factor (demi-Kelly côté stratégie — ex. ×confidence) :
             # appliqué après le cap notional pour permettre à la stratégie de
             # réduire la taille sans buter sur max_notional_pct.
+            # Cap haut à 2.0 : autorise les boosts type V7 SHORT_TD_HIGH (×1.5)
+            # tout en gardant max_notional_pct comme garde-fou de risque global.
             size_factor = float(signal.get("size_factor", 1.0))
-            size_factor = max(0.0, min(size_factor, 1.0))
+            size_factor = max(0.0, min(size_factor, 2.0))
             size       *= size_factor
 
             size       *= self.partial_fill
