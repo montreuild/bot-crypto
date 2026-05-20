@@ -4,6 +4,7 @@ import logging
 import math
 import uuid
 
+import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -206,6 +207,173 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
     except Exception as e:
         err_id = uuid.uuid4()
         logger.error(f"[API] Erreur {err_id} scanner/chart : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
+
+
+@router.get("/api/scanner/v7_series", dependencies=[Depends(verify_api_key)])
+def scanner_v7_series(symbol: str = "BTC/USDC", timeframe: str = "1h",
+                      limit: int = 300):
+    """Séries V7 par bougie pour le graphique scanner.
+
+    Calcule, sur la fenêtre OHLCV demandée, les probabilités V4 (``p_event`` /
+    ``p_up``) et le setup V7 sélectionné par bougie, en réutilisant le pkl
+    pré-entraîné partagé avec ``opus_omnibus_v7_pretrained``. Renvoie des
+    séries alignées sur les ``time`` du graphique scanner et la liste des
+    bougies déclenchant un setup (pour markers).
+    """
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    try:
+        # Imports paresseux : évite de charger pandas/lightgbm tant qu'on ne
+        # demande pas explicitement le sous-graphique V7.
+        from app.strategies.opus_stat_pretrained_v4 import (
+            _FeatureBuilder,
+            _load_pretrained,
+            _to_pandas_window,
+            _detect_timeframe,
+        )
+        from app.strategies.opus_omnibus_v7_pretrained import (
+            _DEFAULT_SETUPS,
+            _classify_regime,
+            _evaluate_setup,
+            _exit_td_window_active,
+            REGIME_LABELS,
+            _EXIT_TD_WINDOW_BARS,
+        )
+
+        exchange = create_exchange(state.cfg)
+        scanner  = MarketScanner(exchange, state.cfg)
+        tf       = timeframe or state.cfg["trading"].get("timeframe", "1h")
+
+        # Le FeatureBuilder V4 a besoin de ≥210 bougies d'historique. On
+        # fetch limit + 260 puis on coupe pour renvoyer ``limit`` valeurs max.
+        fetch_n = max(limit + 260, 460)
+        df = scanner.fetch_ohlcv(symbol, tf, fetch_n)
+        if df is None or len(df) < 230:
+            raise HTTPException(404, f"Données insuffisantes pour {symbol}/{tf}")
+
+        tf_detected = _detect_timeframe(df)
+        if tf_detected not in ("15m", "30m", "1h"):
+            return JSONResponse(content={
+                "symbol":     symbol,
+                "timeframe":  tf,
+                "supported":  False,
+                "reason":     f"Timeframe {tf_detected} non supporté par V7",
+                "p_event":    [],
+                "p_up":       [],
+                "setups":     [],
+            })
+
+        # 1. Features V4 sur toute la fenêtre (vectorisé)
+        pdf   = _to_pandas_window(df, n=len(df))
+        feats = _FeatureBuilder().build(pdf)
+        if feats is None or len(feats) == 0:
+            raise HTTPException(500, "Construction des features V4 impossible")
+
+        # 2. Modèles pré-entraînés + médianes
+        models, medians_all = _load_pretrained()
+        amp_entry = models.get((tf_detected, "amp", "single"))
+        dir_entry = models.get((tf_detected, "dir", "single"))
+        if amp_entry is None or dir_entry is None:
+            raise HTTPException(503, f"Modèles V4 indisponibles pour {tf_detected}")
+
+        def _batch_predict(entry: dict, target: str) -> np.ndarray:
+            feat_names = list(entry["features"])
+            med = medians_all.get((tf_detected, target), {})
+            X = feats.reindex(columns=feat_names).copy()
+            X = X.replace([np.inf, -np.inf], np.nan)
+            for col in feat_names:
+                X[col] = X[col].fillna(med.get(col, 0.0))
+            return entry["model"].predict_proba(X.values)[:, 1]
+
+        p_amp = _batch_predict(amp_entry, "amp")
+        p_up  = _batch_predict(dir_entry, "dir")
+
+        # 3. Régime par bougie + fenêtre exit-TD glissante
+        adx_arr  = feats["ADX"].fillna(0.0).to_numpy()
+        bull_arr = feats["MM_bullish_align"].fillna(0).astype(int).to_numpy()
+        bear_arr = feats["MM_bearish_align"].fillna(0).astype(int).to_numpy()
+        n_feats  = len(feats)
+        regimes  = [
+            _classify_regime(float(adx_arr[i]), int(bull_arr[i]),
+                             int(bear_arr[i]), 20.0)
+            for i in range(n_feats)
+        ]
+
+        setups_def = sorted(
+            [dict(s) for s in _DEFAULT_SETUPS], key=lambda s: s["priority"]
+        )
+        win = _EXIT_TD_WINDOW_BARS
+
+        setup_at: list = [None] * n_feats
+        side_at:  list = [None] * n_feats
+        for i in range(n_feats):
+            regime_hist = regimes[max(0, i - win - 1): i + 1]
+            exit_td = _exit_td_window_active(regime_hist, win)
+            for s in setups_def:
+                if _evaluate_setup(s, regimes[i],
+                                   float(p_amp[i]), float(p_up[i]), exit_td):
+                    setup_at[i] = s["name"]
+                    side_at[i]  = "long" if s["direction"] == 1 else "short"
+                    break
+
+        # 4. Garde uniquement les `limit` dernières bougies pour rester aligné
+        # avec ``/api/scanner/chart``.
+        times = df["time"].dt.epoch(time_unit="s").to_list()
+        start = max(0, len(df) - limit)
+
+        def _ok(v):
+            try:
+                f = float(v)
+                return not (math.isnan(f) or math.isinf(f))
+            except Exception:
+                return False
+
+        p_event_series = [
+            {"time": int(times[i]), "value": round(float(p_amp[i]), 4)}
+            for i in range(start, n_feats) if _ok(p_amp[i])
+        ]
+        p_up_series = [
+            {"time": int(times[i]), "value": round(float(p_up[i]), 4)}
+            for i in range(start, n_feats) if _ok(p_up[i])
+        ]
+
+        # 5. Markers = bougies où un setup s'arme (avec dédup sur séquences
+        # consécutives identiques pour ne pas saturer le graphique).
+        setup_markers: list = []
+        last_seen = None
+        for i in range(start, n_feats):
+            name = setup_at[i]
+            if name is None:
+                last_seen = None
+                continue
+            if name == last_seen:
+                continue
+            last_seen = name
+            setup_markers.append({
+                "time":       int(times[i]),
+                "setup":      name,
+                "side":       side_at[i],
+                "p_event":    round(float(p_amp[i]), 4),
+                "p_up":       round(float(p_up[i]), 4),
+                "regime_lbl": REGIME_LABELS.get(regimes[i], "?"),
+            })
+
+        return JSONResponse(content=_clean({
+            "symbol":      symbol,
+            "timeframe":   tf_detected,
+            "supported":   True,
+            "n_bars":      len(p_up_series),
+            "p_event":     p_event_series,
+            "p_up":        p_up_series,
+            "setups":      setup_markers,
+            "n_setups":    len(setup_markers),
+        }))
+    except HTTPException:
+        raise
+    except Exception as e:
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} scanner/v7_series : {e}", exc_info=True)
         raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
