@@ -216,6 +216,7 @@
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema200" checked onchange="toggleIndicator('ema200')" style="accent-color:#a78bfa"> EMA 200</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-bb"     checked onchange="toggleIndicator('bb')"     style="accent-color:rgba(77,159,255,.8)"> Bollinger</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-sr"           onchange="toggleIndicator('sr')"     style="accent-color:#ffd166"> Sup/Rés</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer" title="Sous-graphique V7 : probabilités p(amp), p(up) et markers des setups (LONG_CHOPPY, SHORT_TD, …)"><input type="checkbox" id="tog-v7" checked onchange="toggleV7()" style="accent-color:#c084fc"> V7 (p_amp / p_up + setups)</label>
       </div>
       <div class="panel-body" style="gap:0;padding:0">
         <div id="chart-status" style="padding:8px 14px;font-size:.72rem;color:var(--dim);min-height:20px"></div>
@@ -228,6 +229,15 @@
           <div class="chart-wrap" id="chart-rsi" style="height:90px" role="img" aria-label="Indicateur RSI (14 périodes)"></div>
           <div class="chart-sub-lbl" style="margin-top:4px">MACD (12,26,9)</div>
           <div class="chart-wrap" id="chart-macd" style="height:90px" role="img" aria-label="Indicateur MACD (12,26,9)"></div>
+          <div id="v7-block">
+            <div class="chart-sub-lbl" style="margin-top:4px">
+              V7 — Probabilités <span style="color:#c084fc">p(amplitude)</span> /
+              <span style="color:#22d3ee">p(hausse)</span>
+              <span id="v7-status" style="margin-left:8px;color:var(--dim);font-weight:400"></span>
+            </div>
+            <div class="chart-wrap" id="chart-v7" style="height:100px" role="img" aria-label="Probabilités V7 (p_amp, p_up)"></div>
+            <div id="v7-legend" style="padding:4px 12px;font-size:.66rem;color:var(--dim);display:flex;gap:10px;flex-wrap:wrap"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -525,7 +535,8 @@ document.getElementById('opp-list').innerHTML='<div class="empty" style="color:v
 // ── Graphique Scanner ───────────────────────────────────────────────────
 let chartTf = '1h';
 let chartType = 'candles'; // 'candles' | 'line'
-let tvPriceChart = null, tvVolChart = null, tvRsiChart = null, tvMacdChart = null;
+let tvPriceChart = null, tvVolChart = null, tvRsiChart = null, tvMacdChart = null, tvV7Chart = null;
+let _v7PriceSeries = null;  // série principale du chart-price (pour markers V7)
 // Series refs for indicator toggles
 let _seriesMap = {};
 // Resize observers to disconnect on destroy
@@ -567,8 +578,9 @@ function _destroyCharts(){
   _resizeObservers.forEach(ro=>{try{ro.disconnect();}catch(_){}});
   _resizeObservers = [];
   // Remove charts
-  [tvPriceChart, tvVolChart, tvRsiChart, tvMacdChart].forEach(c=>{try{if(c)c.remove();}catch(_){}});
-  tvPriceChart=tvVolChart=tvRsiChart=tvMacdChart=null;
+  [tvPriceChart, tvVolChart, tvRsiChart, tvMacdChart, tvV7Chart].forEach(c=>{try{if(c)c.remove();}catch(_){}});
+  tvPriceChart=tvVolChart=tvRsiChart=tvMacdChart=tvV7Chart=null;
+  _v7PriceSeries = null;
   _seriesMap = {};
 }
 
@@ -668,6 +680,7 @@ function _renderChart(d){
     });
     priceSeries.setData(candles.map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));
   }
+  _v7PriceSeries = priceSeries;
 
   // Bollinger Bands
   const bbVisible = document.getElementById('tog-bb')?.checked!==false;
@@ -756,9 +769,32 @@ function _renderChart(d){
     tvMacdChart.timeScale().fitContent();
   }
 
+  // ── V7 sub-chart : créé vide ici, peuplé via loadV7Series() ──────────
+  const v7Visible = document.getElementById('tog-v7')?.checked !== false;
+  document.getElementById('v7-block').style.display = v7Visible ? '' : 'none';
+  if(v7Visible){
+    tvV7Chart = _mkChart('chart-v7', 100, {
+      rightPriceScale:{scaleMargins:{top:.1,bottom:.1},autoScale:false,
+                       mode:LightweightCharts.PriceScaleMode.Normal},
+      timeScale:{visible:false},
+    });
+    if(tvV7Chart){
+      // Lignes de référence : 0.5 (neutre), seuils communs amp/dir
+      const _ref = (val,color)=>{
+        const s=tvV7Chart.addLineSeries({color,lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dotted,
+                                         priceLineVisible:false,lastValueVisible:false});
+        s.setData([{time:firstTime,value:val},{time:lastTime,value:val}]);
+      };
+      _ref(0.5,'rgba(200,200,200,.4)');
+      _ref(0.58,'rgba(34,211,238,.3)');   // p_dir LONG_CHOPPY
+      _ref(0.42,'rgba(251,113,133,.3)');  // p_dir SHORT_CHOPPY
+    }
+    loadV7Series();
+  }
+
   // ── Sync sub-charts to price chart via TIME range (fixes RSI offset) ─
   let _syncing = false;
-  const _subCharts = [tvVolChart, tvRsiChart, tvMacdChart].filter(Boolean);
+  const _subCharts = [tvVolChart, tvRsiChart, tvMacdChart, tvV7Chart].filter(Boolean);
 
   tvPriceChart.timeScale().subscribeVisibleTimeRangeChange(range=>{
     if(_syncing||!range) return;
@@ -775,6 +811,110 @@ function _renderChart(d){
       _syncing=false;
     });
   });
+}
+
+// ── V7 sub-chart (p_amp / p_up + markers setups) ────────────────────────
+const V7_SETUP_COLORS = {
+  SHORT_TD_HIGH:    '#7f1d1d',
+  SHORT_TD:         '#dc2626',
+  LONG_CHOPPY:      '#10b981',
+  SHORT_CHOPPY:     '#ef4444',
+  LONG_EXIT_TD:     '#22c55e',
+  LONG_RANGE_STRICT:'#3b82f6',
+};
+
+function toggleV7(){
+  const checked = document.getElementById('tog-v7')?.checked;
+  const blk = document.getElementById('v7-block');
+  if(blk) blk.style.display = checked ? '' : 'none';
+  // Clear markers on price chart if hidden
+  if(!checked && _v7PriceSeries){
+    try{ _v7PriceSeries.setMarkers([]); }catch(_){}
+  }
+  // Re-render the whole chart to (re)create or destroy the V7 sub-chart
+  if(_lastChartData){ _renderChart(_lastChartData); }
+}
+
+async function loadV7Series(){
+  const status = document.getElementById('v7-status');
+  const legend = document.getElementById('v7-legend');
+  if(status) status.textContent = '⏳ calcul des probas V7…';
+  const sym = (document.getElementById('chart-symbol').value||'BTC/USDC').trim();
+  try{
+    const r = await apiFetch(
+      `/api/scanner/v7_series?symbol=${encodeURIComponent(sym)}&timeframe=${chartTf}&limit=300`
+    );
+    if(!r.ok){
+      const e = await r.json().catch(()=>({}));
+      throw new Error(e.detail || r.statusText);
+    }
+    const d = await r.json();
+    if(!d.supported){
+      if(status) status.textContent = `— V7 non disponible (${d.reason||'TF non supporté'})`;
+      if(_v7PriceSeries){ try{ _v7PriceSeries.setMarkers([]); }catch(_){} }
+      if(legend) legend.innerHTML = '';
+      return;
+    }
+
+    // Séries probas sur le sous-graphique
+    if(tvV7Chart){
+      const pAmpS = tvV7Chart.addLineSeries({
+        color:'#c084fc', lineWidth:1.5,
+        priceLineVisible:false, lastValueVisible:true, title:'p_amp',
+      });
+      const pUpS  = tvV7Chart.addLineSeries({
+        color:'#22d3ee', lineWidth:1.5,
+        priceLineVisible:false, lastValueVisible:true, title:'p_up',
+      });
+      if(d.p_event?.length) pAmpS.setData(d.p_event);
+      if(d.p_up?.length)    pUpS.setData(d.p_up);
+      try{
+        tvV7Chart.priceScale('right').applyOptions({
+          autoScale:false,
+          // borne 0..1 stable, on s'aligne avec la plage des probas
+        });
+      }catch(_){}
+      tvV7Chart.timeScale().fitContent();
+    }
+
+    // Markers sur le price chart : un par setup déclenché.
+    if(_v7PriceSeries && Array.isArray(d.setups)){
+      const markers = d.setups.map(s=>{
+        const isLong = s.side === 'long';
+        return {
+          time: s.time,
+          position: isLong ? 'belowBar' : 'aboveBar',
+          color: V7_SETUP_COLORS[s.setup] || (isLong ? '#34d399' : '#fb7185'),
+          shape: isLong ? 'arrowUp' : 'arrowDown',
+          text:  s.setup,
+        };
+      });
+      try{ _v7PriceSeries.setMarkers(markers); }catch(_){}
+    }
+
+    // Légende des setups détectés
+    if(legend){
+      const counts = {};
+      (d.setups||[]).forEach(s=>{counts[s.setup]=(counts[s.setup]||0)+1;});
+      const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+      const last = (d.setups||[])[ (d.setups||[]).length-1 ];
+      const lastTxt = last
+        ? ` · dernier : <strong style="color:${V7_SETUP_COLORS[last.setup]||'#c084fc'}">${escHtml(last.setup)}</strong>
+           (p_amp ${(last.p_event*100).toFixed(0)}%, p_up ${(last.p_up*100).toFixed(0)}%, ${escHtml(last.regime_lbl||'?')})`
+        : '';
+      legend.innerHTML =
+        `<span><strong>${d.n_bars||0}</strong> bougies · <strong>${d.n_setups||0}</strong> setups armés${lastTxt}</span>` +
+        entries.map(([k,n])=>
+          `<span style="display:inline-flex;align-items:center;gap:4px">
+             <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${V7_SETUP_COLORS[k]||'#888'}"></span>
+             ${escHtml(k)} <strong>×${n}</strong>
+           </span>`).join('');
+    }
+    if(status) status.textContent = `${d.timeframe} · ${d.n_bars||0} pts · ${d.n_setups||0} setups`;
+  }catch(e){
+    if(status) status.textContent = '⚠ ' + e.message;
+    if(legend) legend.innerHTML = '';
+  }
 }
 
 // ── Prédictions des stratégies ──────────────────────────────────────────
