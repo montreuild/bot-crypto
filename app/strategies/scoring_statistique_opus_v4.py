@@ -239,6 +239,13 @@ class Strategy(BaseStrategyML):
         # car ``_build_features`` dépend de ce paramètre pour le régime.
         self._bt_features_cache: Dict[float, np.ndarray] = {}
         self._bt_features_len: int = 0
+        # Diagnostic : compteurs et accumulateurs pour comprendre pourquoi
+        # 0 trade peut survenir en backtest (échec training silencieux vs
+        # seuils trop stricts). Loggés périodiquement dans score().
+        self._diag_predictions: List[Tuple[float, float, int]] = []   # (p_event, p_up, regime)
+        self._diag_rejects:     Dict[str, int]                 = {}
+        self._diag_signals:     int                            = 0
+        self._diag_last_dump:   int                            = 0
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         """Pré-calcule les features sur toute la fenêtre du backtest.
@@ -312,6 +319,35 @@ class Strategy(BaseStrategyML):
             self._best_auc = 0.0
         self._bt_features_cache.clear()
         self._bt_features_len = 0
+        self._diag_predictions.clear()
+        self._diag_rejects.clear()
+        self._diag_signals   = 0
+        self._diag_last_dump = 0
+
+    def _diag_record_reject(self, reason: str) -> None:
+        self._diag_rejects[reason] = self._diag_rejects.get(reason, 0) + 1
+
+    def _diag_dump_if_due(self, cnt: int, interval: int = 1000) -> None:
+        """Logge périodiquement la distribution p_event/p_up + rejets."""
+        if cnt - self._diag_last_dump < interval:
+            return
+        self._diag_last_dump = cnt
+        if not self._diag_predictions:
+            logger.info(
+                f"[V4-diag] {cnt} appels — 0 prédiction (rejets : {dict(self._diag_rejects)})"
+            )
+            return
+        arr     = np.asarray(self._diag_predictions, dtype=np.float64)
+        p_event = arr[:, 0]
+        p_up    = arr[:, 1]
+        dist_up = np.abs(p_up - 0.5)
+        logger.info(
+            f"[V4-diag] {cnt} appels | {len(arr)} prédictions | signaux={self._diag_signals} | "
+            f"p_event μ={p_event.mean():.3f} med={np.median(p_event):.3f} "
+            f"p90={np.quantile(p_event, 0.9):.3f} max={p_event.max():.3f} | "
+            f"|p_up-0.5| μ={dist_up.mean():.3f} p90={np.quantile(dist_up, 0.9):.3f} "
+            f"max={dist_up.max():.3f} | rejets={dict(self._diag_rejects)}"
+        )
 
     def fit(self, df: pl.DataFrame, params: dict = None) -> None:
         p             = (params or {}).get(self.name, {})
@@ -344,10 +380,16 @@ class Strategy(BaseStrategyML):
             return False
 
         if len(df) < 200:
+            logger.warning(f"[V4] {tf_key} : training annulé — df trop court ({len(df)} < 200)")
             return False
 
         X = _build_features(df, adx_threshold)
         if X is None:
+            missing = [c for c in _AMP_BASE_COLS + _DIR_BASE_COLS if c not in df.columns]
+            logger.warning(
+                f"[V4] {tf_key} : training annulé — _build_features=None "
+                f"(colonnes _pre_* manquantes : {missing})"
+            )
             return False
 
         close   = df["close"].cast(pl.Float64).to_numpy()
@@ -529,6 +571,8 @@ class Strategy(BaseStrategyML):
                 self._last_retrain[tf_key] = cnt
 
         if tf_key not in self._trained_tfs:
+            self._diag_record_reject("non_entraine")
+            self._diag_dump_if_due(cnt)
             return self._none("Modèle non encore entraîné (warmup en cours)")
 
         # ── État courant ───────────────────────────────────────────────────
@@ -550,6 +594,8 @@ class Strategy(BaseStrategyML):
 
         # ── Filtre régime (§6.4) : Trend Up = NE PAS TRADER ────────────────
         if regime == REGIME_TREND_UP:
+            self._diag_record_reject("regime_trend_up")
+            self._diag_dump_if_due(cnt)
             return self._none(
                 f"Trend Up — AUC dir ≈ 0.50, pas d'edge (§6.4)",
                 regime=regime,
@@ -560,6 +606,8 @@ class Strategy(BaseStrategyML):
         # (gain ~50×) ou rebuild local sur 250 barres en live.
         X_full = self._get_or_build_features(df, adx_threshold)
         if X_full is None or len(X_full) == 0:
+            self._diag_record_reject("features_manquantes")
+            self._diag_dump_if_due(cnt)
             return self._none("Features manquantes")
         X_last = X_full[-1:]  # dernière ligne uniquement
 
@@ -569,6 +617,8 @@ class Strategy(BaseStrategyML):
             scaler  = self._scalers.get(tf_key)
 
         if amp_m is None or dir_m is None or scaler is None:
+            self._diag_record_reject("modele_indispo")
+            self._diag_dump_if_due(cnt)
             return self._none("Modèle indisponible")
 
         try:
@@ -577,8 +627,12 @@ class Strategy(BaseStrategyML):
             p_up    = float(dir_m.predict(X_s)[0])
         except Exception as e:
             logger.warning(f"[V4] Prédiction : {e}")
+            self._diag_record_reject("erreur_predict")
+            self._diag_dump_if_due(cnt)
             return self._none("Erreur prédiction")
 
+        # Prédiction réussie : on l'enregistre pour la distribution.
+        self._diag_predictions.append((p_event, p_up, regime))
         dir_dist = abs(p_up - 0.5)
 
         # ── Règle de décision (§6.4) ───────────────────────────────────────
@@ -592,16 +646,24 @@ class Strategy(BaseStrategyML):
             size_fac   = 0.5
 
         if p_event < amp_thresh:
+            self._diag_record_reject(f"amp_lt_{amp_thresh:.2f}_{regime_lbl}")
+            self._diag_dump_if_due(cnt)
             return self._none(
                 f"P(événement)={p_event:.2f} < {amp_thresh:.2f} | {regime_lbl}",
                 p_event=p_event, p_up=p_up, regime=regime,
             )
 
         if dir_dist < dir_thresh:
+            self._diag_record_reject(f"dir_lt_{dir_thresh:.2f}_{regime_lbl}")
+            self._diag_dump_if_due(cnt)
             return self._none(
                 f"|P(hausse)-0.5|={dir_dist:.2f} < {dir_thresh:.2f} | {regime_lbl}",
                 p_event=p_event, p_up=p_up, regime=regime,
             )
+
+        # Signal valide : on incrémente le compteur de signaux.
+        self._diag_signals += 1
+        self._diag_dump_if_due(cnt)
 
         side = "long" if p_up > 0.5 else "short"
 

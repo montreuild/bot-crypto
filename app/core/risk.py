@@ -283,8 +283,9 @@ class RiskManager:
         """Calcule taille et notionnel, en intégrant score_factor et volatility_brake.
 
         ``size_factor`` (optionnel) est un facteur multiplicatif fourni par la
-        stratégie (par ex. demi-Kelly : ×confidence). Borné [0, 1] et appliqué
-        après le facteur score interne et le frein de volatilité.
+        stratégie (par ex. demi-Kelly : ×confidence ; ou boost setup V7 ×1.5).
+        Borné [0, 2] et appliqué après le facteur score interne et le frein
+        de volatilité. ``max_notional_pct`` reste la garde-fou de risque global.
         """
         risk_amount  = self.equity * self.compute_risk()
         size         = risk_amount / max(atr, 1e-8)
@@ -293,7 +294,7 @@ class RiskManager:
 
         score_range  = max(1.0 - threshold, 1e-9)
         score_internal_factor = 0.5 + 0.5 * min(max(score - threshold, 0) / score_range, 1.0)
-        sf           = max(0.0, min(float(size_factor), 1.0))
+        sf           = max(0.0, min(float(size_factor), 2.0))
         size        *= score_internal_factor * self.volatility_brake_factor * sf
 
         notional = size * entry
