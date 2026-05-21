@@ -775,3 +775,26 @@ def rolling_rank_pct(s: pl.Series, window: int) -> pl.Series:
         out[i] = rank_avg / window
     return pl.Series(out)
 
+
+def bearish_excess_series(df: pl.DataFrame, rsi_period: int = 14,
+                          rsi_threshold: float = 38.0,
+                          sma_period: int = 20,
+                          price_dev_pct: float = 1.5) -> pl.Series:
+    """Excès baissier vectorisé — True si au moins une condition est remplie :
+      1. 2+ bougies rouges consécutives (close < open sur les 2 dernières barres)
+      2. RSI(rsi_period) < rsi_threshold
+      3. Prix > price_dev_pct% en-dessous de SMA(sma_period)
+    Conçu pour le scanner batch (vectorisé, zéro boucle Python).
+    """
+    close = df["close"]
+    open_ = df["open"]
+    red = (close < open_).cast(pl.Int8)
+    red_prev = red.shift(1).fill_null(0)
+    consec_red = (red & red_prev).cast(pl.Boolean)
+    rsi_s = rsi(close, rsi_period)
+    rsi_excess = rsi_s < rsi_threshold
+    sma_s = sma(close, sma_period)
+    sma_safe = sma_s.clip(lower_bound=1e-9)
+    price_below = close < sma_safe * (1.0 - price_dev_pct / 100.0)
+    return (consec_red | rsi_excess | price_below).fill_null(False)
+
