@@ -1,24 +1,27 @@
 """Stratégie Opus Omnibus V8 — SIGNAL_UP : rebond après excès baissier.
 
-Hérite de V7 (pré-entraîné) et ajoute le setup SIGNAL_UP long principal :
+V8 = V7 intégral + SIGNAL_UP comme setup long prioritaire.
 
-  - SIGNAL_UP : rebond après excès baissier vectorisé (RSI<38, 2+ rouges,
-    prix<SMA20-1.5%). WR 73% après frais sur 1h · n=56 · 3.5 mois ·
-    ret net +0.43%/trade.
-  - LONG_CHOPPY confluence : quand SIGNAL_UP + LONG_CHOPPY simultanés →
-    size_factor→1.5 (WR 67%, ret +0.61%/trade).
-  - LONG_CHOPPY et LONG_EXIT_TD désactivés comme setups autonomes
-    (SIGNAL_UP prend le relais, mieux).
+Règle de priorité :
+  - Quand bearish_excess=True ET p_dir>0.60 → SIGNAL_UP gagne (priorité -1, la plus haute).
+    Cela "upgrade" une entrée LONG_CHOPPY/LONG_EXIT_TD/LONG_RANGE_STRICT avec confirmation
+    d'excès baissier. En régime Trend Up, SIGNAL_UP ouvre des trades que V7 n'ouvrait pas.
+  - Quand bearish_excess=False → les setups V7 (LONG_CHOPPY, LONG_EXIT_TD…) fonctionnent
+    exactement comme en V7. Le compte de trades V8 ≥ V7.
+
+  - SIGNAL_UP confluence : SIGNAL_UP en régime Choppy + p_dir>0.58 → size_factor×1.5.
 
 Réutilise les modèles V4 pré-entraînés (même pkl + médianes que
 ``opus_stat_pretrained_v4``).
 
 Setups V8 (par priorité) :
-  Priority 0  SHORT_TD_HIGH       reg=Trend Down,  p_amp≥0.60, p_dir<0.30  size×1.5
-  Priority 1  SHORT_TD            reg=Trend Down,  p_amp≥0.50, p_dir<0.40
-  Priority 2  SHORT_CHOPPY        reg=Choppy,      p_amp≥0.50, p_dir<0.42
-  Priority 3  SIGNAL_UP           tout régime,     p_amp≥0.50, p_dir>0.60, excès baissier requis
-  Priority 4  LONG_RANGE_STRICT   reg=Range,       p_amp≥0.60, p_dir>0.60
+  Priority -1  SIGNAL_UP           tout régime,     p_amp≥0.50, p_dir>0.60, excès baissier requis
+  Priority  0  SHORT_TD_HIGH       reg=Trend Down,  p_amp≥0.60, p_dir<0.30  size×1.5
+  Priority  1  SHORT_TD            reg=Trend Down,  p_amp≥0.50, p_dir<0.40
+  Priority  2  LONG_CHOPPY         reg=Choppy,      p_amp≥0.50, p_dir>0.58  (identique V7)
+  Priority  2  SHORT_CHOPPY        reg=Choppy,      p_amp≥0.50, p_dir<0.42
+  Priority  3  LONG_EXIT_TD        exit_td_window,  reg≠TD,     p_amp≥0.40  (identique V7)
+  Priority  4  LONG_RANGE_STRICT   reg=Range,       p_amp≥0.60, p_dir>0.60
 """
 
 import logging
@@ -53,7 +56,17 @@ _EXIT_TD_WINDOW_BARS = 3   # fenêtre LONG_EXIT_TD (bougies)
 # Définition des 5 setups OMNIBUS V8 — valeurs par défaut, surchargeables YAML
 # ─────────────────────────────────────────────────────────────────────────────
 _DEFAULT_SETUPS: Tuple[Dict[str, Any], ...] = (
-    # V7: SHORT setups inchangés
+    # V8 : SIGNAL_UP — priorité -1 → gagne sur tout quand excès baissier confirmé.
+    # En Choppy + p_dir>0.58 → confluence : size_factor×1.5.
+    {
+        "name": "SIGNAL_UP", "priority": -1, "direction": 1, "enabled": True,
+        "regime": None,  # tout régime
+        "needs_exit_td_window": False,
+        "needs_bearish_excess": True,
+        "amp_min": 0.50, "dir_max": None, "dir_min": 0.60,
+        "tp_mult": 1.0, "sl_mult": 1.3, "max_bars": 6, "size_factor": 1.0,
+    },
+    # V7 setups — inchangés, identiques à opus_omnibus_v7_pretrained
     {
         "name": "SHORT_TD_HIGH", "priority": 0, "direction": -1, "enabled": True,
         "regime": REGIME_TREND_DN, "needs_exit_td_window": False,
@@ -69,32 +82,26 @@ _DEFAULT_SETUPS: Tuple[Dict[str, Any], ...] = (
         "tp_mult": 1.2, "sl_mult": 1.6, "max_bars": 8, "size_factor": 1.0,
     },
     {
+        "name": "LONG_CHOPPY", "priority": 2, "direction": 1, "enabled": True,
+        "regime": REGIME_CHOPPY, "needs_exit_td_window": False,
+        "needs_bearish_excess": False,
+        "amp_min": 0.50, "dir_max": None, "dir_min": 0.58,
+        "tp_mult": 0.9, "sl_mult": 1.2, "max_bars": 5, "size_factor": 1.0,
+    },
+    {
         "name": "SHORT_CHOPPY", "priority": 2, "direction": -1, "enabled": True,
         "regime": REGIME_CHOPPY, "needs_exit_td_window": False,
         "needs_bearish_excess": False,
         "amp_min": 0.50, "dir_max": 0.42, "dir_min": None,
         "tp_mult": 1.2, "sl_mult": 1.4, "max_bars": 6, "size_factor": 1.0,
     },
-    # V8 : SIGNAL_UP — setup long principal (rebond après excès baissier)
-    # WR 73% après frais sur 1h · n=56 · 3.5 mois · ret net +0.43%/trade
     {
-        "name": "SIGNAL_UP", "priority": 3, "direction": 1, "enabled": True,
-        "regime": None,  # Tout régime
-        "needs_exit_td_window": False,
-        "needs_bearish_excess": True,  # Condition V8 : excès baissier requis
-        "amp_min": 0.50, "dir_max": None, "dir_min": 0.60,
-        "tp_mult": 1.0, "sl_mult": 1.3, "max_bars": 6, "size_factor": 1.0,
+        "name": "LONG_EXIT_TD", "priority": 3, "direction": 1, "enabled": True,
+        "regime": None, "needs_exit_td_window": True,
+        "needs_bearish_excess": False,
+        "amp_min": 0.40, "dir_max": None, "dir_min": None,
+        "tp_mult": 1.2, "sl_mult": 1.5, "max_bars": 8, "size_factor": 1.0,
     },
-    # V8 : LONG_CHOPPY redéfini comme confluence de SIGNAL_UP
-    # Désactivé comme setup autonome — quand SIGNAL_UP + LONG_CHOPPY simultanés :
-    # size_factor→1.5 (WR 67%, ret +0.61%/trade)
-    # {
-    #     "name": "LONG_CHOPPY", "priority": 2, ...
-    # }
-    # V8 : LONG_EXIT_TD désactivé — SIGNAL_UP prend le relais (mieux)
-    # {
-    #     "name": "LONG_EXIT_TD", "priority": 3, ...
-    # }
     {
         "name": "LONG_RANGE_STRICT", "priority": 4, "direction": 1, "enabled": True,
         "regime": REGIME_RANGE, "needs_exit_td_window": False,
@@ -198,30 +205,37 @@ def _check_early_exit_v7(setup_name: str, regime: int, p_up: float,
                          dir_inv_short: float = 0.55,
                          dir_inv_long: float = 0.40,
                          dir_drop_range: float = 0.40) -> Optional[str]:
-    """Sorties anticipées V8 (hérite de V7, ajoute SIGNAL_UP).
+    """Sorties anticipées V8 — identique V7 + SIGNAL_UP.
 
     Conditions par setup :
+      SIGNAL_UP (V8)      : p_dir < dir_inv_long    → 'p_dir_drop'
+                            régime = TD             → 'to_TD'
       SHORT_TD_HIGH       : régime ≠ TD             → 'regime_exit_TD'
                             p_dir > dir_inv_short   → 'p_dir_inversion'
       SHORT_TD            : régime ≠ TD             → 'regime_exit_TD'
                             p_dir > dir_inv_short   → 'p_dir_inversion'
+      LONG_CHOPPY (V7)    : p_dir < dir_inv_long    → 'p_dir_drop'
+                            régime = TD             → 'to_TD'
       SHORT_CHOPPY        : régime ≠ Choppy         → 'regime_exit_choppy'
                             p_dir > 0.58            → 'p_dir_inversion'
-      SIGNAL_UP (V8)      : p_dir < dir_inv_long    → 'p_dir_drop'      (inversion forte)
-                            régime = TD             → 'to_TD'           (excès baissier qui s'aggrave)
+      LONG_EXIT_TD (V7)   : régime = TD             → 'back_to_TD'
       LONG_RANGE_STRICT   : régime = TD             → 'regime_to_TD'
                             p_dir < dir_drop_range  → 'p_dir_drop'
     """
-    if setup_name in ("SHORT_TD_HIGH", "SHORT_TD"):
+    if setup_name == "SIGNAL_UP":
+        if p_up < dir_inv_long:          return "p_dir_drop"
+        if regime == REGIME_TREND_DN:    return "to_TD"
+    elif setup_name in ("SHORT_TD_HIGH", "SHORT_TD"):
         if regime != REGIME_TREND_DN:    return "regime_exit_TD"
         if p_up > dir_inv_short:         return "p_dir_inversion"
+    elif setup_name == "LONG_CHOPPY":
+        if p_up < dir_inv_long:          return "p_dir_drop"
+        if regime == REGIME_TREND_DN:    return "to_TD"
     elif setup_name == "SHORT_CHOPPY":
         if regime != REGIME_CHOPPY:      return "regime_exit_choppy"
         if p_up > 0.58:                  return "p_dir_inversion"
-    elif setup_name == "SIGNAL_UP":
-        # Le rebond échoue : soit p_dir s'effondre, soit le marché continue de plonger
-        if p_up < dir_inv_long:          return "p_dir_drop"
-        if regime == REGIME_TREND_DN:    return "to_TD"
+    elif setup_name == "LONG_EXIT_TD":
+        if regime == REGIME_TREND_DN:    return "back_to_TD"
     elif setup_name == "LONG_RANGE_STRICT":
         if regime == REGIME_TREND_DN:    return "regime_to_TD"
         if p_up < dir_drop_range:        return "p_dir_drop"
@@ -253,23 +267,26 @@ class Strategy(BaseStrategyML):
 
     # Seuils optimisables — sous-ensemble des paramètres setup les plus impactants
     param_space: Dict[str, Any] = {
-        # SHORT_TD_HIGH (V7)
-        "setup_short_td_high_amp_min":    [0.55, 0.60, 0.65],
-        "setup_short_td_high_dir_max":    [0.25, 0.30, 0.35],
-        # SHORT_TD
-        "setup_short_td_amp_min":         [0.45, 0.50, 0.55],
-        "setup_short_td_dir_max":         [0.35, 0.40, 0.45],
-        "setup_short_td_tp_mult":         [1.0, 1.2, 1.4],
-        "setup_short_td_sl_mult":         [1.4, 1.6, 1.8],
-        # SHORT_CHOPPY
-        "setup_short_choppy_amp_min":     [0.45, 0.50, 0.55],
-        "setup_short_choppy_dir_max":     [0.38, 0.42, 0.46],
-        # SIGNAL_UP (V8)
+        # SIGNAL_UP (V8 — priorité -1)
         "setup_signal_up_amp_min":        [0.45, 0.50, 0.55],
         "setup_signal_up_dir_min":        [0.55, 0.60, 0.65],
         "setup_signal_up_tp_mult":        [0.8, 1.0, 1.2],
         "setup_signal_up_sl_mult":        [1.1, 1.3, 1.5],
-        # LONG_RANGE_STRICT
+        # SHORT_TD_HIGH (V7)
+        "setup_short_td_high_amp_min":    [0.55, 0.60, 0.65],
+        "setup_short_td_high_dir_max":    [0.25, 0.30, 0.35],
+        # SHORT_TD (V7)
+        "setup_short_td_amp_min":         [0.45, 0.50, 0.55],
+        "setup_short_td_dir_max":         [0.35, 0.40, 0.45],
+        "setup_short_td_tp_mult":         [1.0, 1.2, 1.4],
+        "setup_short_td_sl_mult":         [1.4, 1.6, 1.8],
+        # LONG_CHOPPY (V7 — identique)
+        "setup_long_choppy_amp_min":      [0.45, 0.50, 0.55],
+        "setup_long_choppy_dir_min":      [0.55, 0.58, 0.62],
+        # SHORT_CHOPPY (V7)
+        "setup_short_choppy_amp_min":     [0.45, 0.50, 0.55],
+        "setup_short_choppy_dir_max":     [0.38, 0.42, 0.46],
+        # LONG_RANGE_STRICT (V7)
         "setup_long_range_strict_amp_min":[0.55, 0.60, 0.65],
         "setup_long_range_strict_dir_min":[0.55, 0.60, 0.65],
         "exit_td_window_bars":            [2, 3, 4],
@@ -285,8 +302,8 @@ class Strategy(BaseStrategyML):
         "disable_trailing":    True,
         "use_fixed_tp":        True,
         # V8 : seuils de détection de l'excès baissier (configurables YAML)
-        "bearish_excess_rsi_threshold": 42.0,   # RSI < X (défaut 42 vs spec 38)
-        "bearish_excess_sma_pct":        1.0,   # prix > X% sous SMA20 (défaut 1.0 vs spec 1.5)
+        "bearish_excess_rsi_threshold": 38.0,   # RSI < X (spec originale)
+        "bearish_excess_sma_pct":        1.5,   # prix > X% sous SMA20 (spec originale)
     }
 
     _FEATURE_BUILDER = _FeatureBuilder()
@@ -469,8 +486,8 @@ class Strategy(BaseStrategyML):
             return self._none(f"Modèle {tf} indisponible")
 
         # === V8 : Excès baissier (calcul O(1), pas de to_numpy global) ===
-        be_rsi_thr = float(p.get("bearish_excess_rsi_threshold", 42.0))
-        be_sma_pct = float(p.get("bearish_excess_sma_pct", 1.0))
+        be_rsi_thr = float(p.get("bearish_excess_rsi_threshold", 38.0))
+        be_sma_pct = float(p.get("bearish_excess_sma_pct", 1.5))
 
         # 1. 2+ bougies rouges consécutives — indexation directe Polars
         if len(df) >= 2:
@@ -519,7 +536,7 @@ class Strategy(BaseStrategyML):
         max_bars    = int(setup["max_bars"])
 
         # Score = note de confiance (utilisé par l'engine pour ordonner les signaux)
-        priority_bonus = (5 - int(setup["priority"])) * 0.04
+        priority_bonus = max(0, 4 - int(setup["priority"])) * 0.04
         confidence     = abs(p_up - 0.5) * 2.0
         score_val      = round(min(0.55 + p_event * confidence * 0.30 + priority_bonus, 0.94), 3)
 
