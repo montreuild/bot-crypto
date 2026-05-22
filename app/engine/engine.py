@@ -88,31 +88,64 @@ class Engine:
 
     def best_signal(self, df: pl.DataFrame, params: dict = None,
                     df_htf=None, symbol: str = "",
-                    threshold: float = 0.0) -> Dict[str, Any]:
+                    threshold: float = 0.0,
+                    stats: Optional[Dict[str, Dict[str, int]]] = None) -> Dict[str, Any]:
         """
         Retourne le signal avec le meilleur score parmi toutes les stratégies.
 
         Applique le seuil global ``threshold`` ET les seuils par stratégie
         définis dans ``params[strat.name]["score_threshold"]``.
         Si aucun signal ne passe, retourne {"score": 0, "side": "none", "name": ""}.
+
+        Si ``stats`` est fourni (dict), il est incrémenté en place pour le
+        diagnostic du backtest. Pour chaque stratégie :
+          - evaluated       : appels score() réussis
+          - none            : side == "none" ou score <= 0
+          - proposed        : un signal directionnel a été émis (score > 0)
+          - below_threshold : signal émis mais sous le seuil (rejeté)
+          - above_threshold : signal émis et >= seuil (candidat retenu)
+          - errors          : exceptions levées par la stratégie
         """
         if df is None or len(df) < 2:
             return {"score": 0, "side": "none", "name": ""}
 
         best = {"score": 0.0, "side": "none", "name": ""}
         for strat in self.strategies:
+            sd = None
+            if stats is not None:
+                sd = stats.setdefault(strat.name, {
+                    "evaluated": 0, "none": 0, "proposed": 0,
+                    "below_threshold": 0, "above_threshold": 0, "errors": 0,
+                })
             try:
                 result = strat.score(df, params, df_htf=df_htf, symbol=symbol)
                 if not isinstance(result, dict):
                     continue
+                if sd is not None:
+                    sd["evaluated"] += 1
                 score = result.get("score", 0)
+                side  = result.get("side", "none")
+                if side == "none" or score <= 0:
+                    if sd is not None:
+                        sd["none"] += 1
+                    continue
+                if sd is not None:
+                    sd["proposed"] += 1
                 # Seuil par stratégie (prioritaire) ou seuil global
                 strat_threshold = float(
                     (params or {}).get(strat.name, {}).get("score_threshold", threshold)
                 )
-                if score <= best["score"] or score < strat_threshold:
+                if score < strat_threshold:
+                    if sd is not None:
+                        sd["below_threshold"] += 1
+                    continue
+                if sd is not None:
+                    sd["above_threshold"] += 1
+                if score <= best["score"]:
                     continue
                 best = result
             except Exception as e:
+                if sd is not None:
+                    sd["errors"] += 1
                 logger.error(f"[Engine] Erreur dans stratégie {strat.name} : {e}")
         return best
