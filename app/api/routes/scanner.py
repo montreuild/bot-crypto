@@ -377,6 +377,178 @@ def scanner_v7_series(symbol: str = "BTC/USDC", timeframe: str = "1h",
         raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
+@router.get("/api/scanner/v8_series", dependencies=[Depends(verify_api_key)])
+def scanner_v8_series(symbol: str = "BTC/USDC", timeframe: str = "1h",
+                      limit: int = 300):
+    """Séries V8 par bougie — p_event/p_up + SIGNAL_UP + setups V8.
+
+    Calcule l'excès baissier vectorisé par bougie (RSI<38, 2+ rouges, prix<SMA20-1.5%)
+    et évalue les setups V8 (SIGNAL_UP principal, SHORT_TD_HIGH/TD/CHOPPY, LONG_RANGE_STRICT).
+    LONG_CHOPPY apparaît comme "confluence" quand SIGNAL_UP + LONG_CHOPPY simultanés.
+    """
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    try:
+        from app.strategies.opus_stat_pretrained_v4 import (
+            _FeatureBuilder,
+            _load_pretrained,
+            _to_pandas_window,
+            _detect_timeframe,
+        )
+        from app.strategies.opus_omnibus_v8 import (
+            _DEFAULT_SETUPS,
+            _classify_regime,
+            _evaluate_setup,
+            REGIME_LABELS,
+            REGIME_CHOPPY,
+        )
+        from app.core.indicators import bearish_excess_series
+
+        exchange = create_exchange(state.cfg)
+        scanner  = MarketScanner(exchange, state.cfg)
+        tf       = timeframe or state.cfg["trading"].get("timeframe", "1h")
+
+        fetch_n = max(limit + 260, 460)
+        df = scanner.fetch_ohlcv(symbol, tf, fetch_n)
+        if df is None or len(df) < 230:
+            raise HTTPException(404, f"Données insuffisantes pour {symbol}/{tf}")
+
+        tf_detected = _detect_timeframe(df)
+        if tf_detected not in ("15m", "30m", "1h"):
+            return JSONResponse(content={
+                "symbol": symbol, "timeframe": tf, "supported": False,
+                "reason": f"Timeframe {tf_detected} non supporté par V8",
+                "p_event": [], "p_up": [], "setups": [], "bearish_excess": [],
+            })
+
+        # 1. Features V4
+        pdf   = _to_pandas_window(df, n=len(df))
+        feats = _FeatureBuilder().build(pdf)
+        if feats is None or len(feats) == 0:
+            raise HTTPException(500, "Construction des features V4 impossible")
+
+        # 2. Prédictions batch
+        models, medians_all = _load_pretrained()
+        amp_entry = models.get((tf_detected, "amp", "single"))
+        dir_entry = models.get((tf_detected, "dir", "single"))
+        if amp_entry is None or dir_entry is None:
+            raise HTTPException(503, f"Modèles V4 indisponibles pour {tf_detected}")
+
+        def _batch_predict(entry: dict, target: str) -> np.ndarray:
+            feat_names = list(entry["features"])
+            med = medians_all.get((tf_detected, target), {})
+            X = feats.reindex(columns=feat_names).copy()
+            X = X.replace([np.inf, -np.inf], np.nan)
+            for col in feat_names:
+                X[col] = X[col].fillna(med.get(col, 0.0))
+            return entry["model"].predict_proba(X.values)[:, 1]
+
+        p_amp = _batch_predict(amp_entry, "amp")
+        p_up  = _batch_predict(dir_entry, "dir")
+
+        # 3. Régime par bougie
+        adx_arr  = feats["ADX"].fillna(0.0).to_numpy()
+        bull_arr = feats["MM_bullish_align"].fillna(0).astype(int).to_numpy()
+        bear_arr = feats["MM_bearish_align"].fillna(0).astype(int).to_numpy()
+        n_feats  = len(feats)
+        regimes  = [
+            _classify_regime(float(adx_arr[i]), int(bull_arr[i]),
+                             int(bear_arr[i]), 20.0)
+            for i in range(n_feats)
+        ]
+
+        # 4. Excès baissier vectorisé
+        be_series = bearish_excess_series(df).to_numpy().astype(bool)
+        # Align with feats length (feats may be shorter than df due to feature window)
+        be_offset = len(df) - n_feats
+        be_aligned = be_series[be_offset:] if be_offset > 0 else be_series[:n_feats]
+
+        # 5. Setups V8 par bougie
+        setups_def = sorted([dict(s) for s in _DEFAULT_SETUPS], key=lambda s: s["priority"])
+
+        setup_at: list = [None] * n_feats
+        side_at:  list = [None] * n_feats
+        confluence_at: list = [False] * n_feats
+        for i in range(n_feats):
+            be_val = bool(be_aligned[i]) if i < len(be_aligned) else False
+            for s in setups_def:
+                if _evaluate_setup(s, regimes[i], float(p_amp[i]), float(p_up[i]),
+                                   False, be_val):
+                    setup_at[i] = s["name"]
+                    side_at[i]  = "long" if s["direction"] == 1 else "short"
+                    # Check LONG_CHOPPY confluence for SIGNAL_UP
+                    if s["name"] == "SIGNAL_UP" and regimes[i] == REGIME_CHOPPY and p_up[i] > 0.58 and p_amp[i] > 0.50:
+                        confluence_at[i] = True
+                    break
+
+        # 6. Dernières `limit` bougies alignées
+        times = df["time"].dt.epoch(time_unit="s").to_list()
+        start = max(0, len(df) - limit)
+
+        def _ok(v):
+            try:
+                f = float(v)
+                return not (math.isnan(f) or math.isinf(f))
+            except Exception:
+                return False
+
+        p_event_series = [
+            {"time": int(times[i]), "value": round(float(p_amp[i]), 4)}
+            for i in range(start, n_feats) if _ok(p_amp[i])
+        ]
+        p_up_series = [
+            {"time": int(times[i]), "value": round(float(p_up[i]), 4)}
+            for i in range(start, n_feats) if _ok(p_up[i])
+        ]
+
+        # Bearish excess series (for visualization)
+        be_vis = [
+            {"time": int(times[i]), "value": 1.0 if (i < len(be_aligned) and be_aligned[i]) else 0.0}
+            for i in range(start, n_feats)
+        ]
+
+        # 7. Markers
+        setup_markers: list = []
+        last_seen = None
+        for i in range(start, n_feats):
+            name = setup_at[i]
+            if name is None:
+                last_seen = None
+                continue
+            if name == last_seen and not confluence_at[i]:
+                continue
+            last_seen = name
+            be_val = bool(be_aligned[i]) if i < len(be_aligned) else False
+            setup_markers.append({
+                "time":         int(times[i]),
+                "setup":        name,
+                "side":         side_at[i],
+                "p_event":      round(float(p_amp[i]), 4),
+                "p_up":         round(float(p_up[i]), 4),
+                "regime_lbl":   REGIME_LABELS.get(regimes[i], "?"),
+                "bearish_excess": be_val,
+                "confluence":   bool(confluence_at[i]),
+            })
+
+        return JSONResponse(content=_clean({
+            "symbol":        symbol,
+            "timeframe":     tf_detected,
+            "supported":     True,
+            "n_bars":        len(p_up_series),
+            "p_event":       p_event_series,
+            "p_up":          p_up_series,
+            "bearish_excess": be_vis,
+            "setups":        setup_markers,
+            "n_setups":      len(setup_markers),
+        }))
+    except HTTPException:
+        raise
+    except Exception as e:
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} scanner/v8_series : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
+
+
 @router.get("/api/scanner/signals", dependencies=[Depends(verify_api_key)])
 def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 300):
     """Exécute toutes les stratégies sur le symbole et retourne leurs signaux."""

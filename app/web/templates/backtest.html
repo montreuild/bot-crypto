@@ -149,6 +149,7 @@
       <div style="display:flex;gap:6px">
         <button class="btn btn-ghost" id="btn-exp" disabled onclick="exportJSON()" style="flex:1;font-size:.72rem">&#x2193; JSON</button>
         <button class="btn btn-ghost" id="btn-pdf" disabled onclick="exportPDF()" style="flex:1;font-size:.72rem">&#x2193; PDF</button>
+        <button class="btn btn-ghost" id="btn-csv" disabled onclick="exportCSV()" style="flex:1;font-size:.72rem">&#x2193; CSV</button>
       </div>
       <span id="msg" style="font-size:.68rem;color:var(--muted);font-family:var(--mono);word-break:break-word;line-height:1.4"></span>
       <div id="bt-log"></div>
@@ -326,6 +327,7 @@ setInterval(_syncBacktestRunState, 5000);
       btData=JSON.parse(saved);
       document.getElementById('btn-exp').disabled=false;
       document.getElementById('btn-pdf').disabled=false;
+      document.getElementById('btn-csv').disabled=false;
       const nStrats=Object.keys(btData.by_strategy||{}).length;
       document.getElementById('msg').textContent=`↩ Résultat restauré · ${btData.n_bars||'?'} bougies · ${nStrats} strat.`;
       const logEl=document.getElementById('bt-log');
@@ -414,7 +416,7 @@ async function run(){
       logAdd(`  ${n} : ${sd.total_trades||0} trades · WR ${wr.toFixed(0)}% · PnL ${sign}${pnl.toFixed(2)} USDC`,pnl>=0?'log-ok':'log-warn');
     });
     document.getElementById('msg').textContent=`✓ ${btData.n_bars} bougies · ${nS} strat. · ${elapsed}s`;
-    document.getElementById('btn-exp').disabled=false;document.getElementById('btn-pdf').disabled=false;
+    document.getElementById('btn-exp').disabled=false;document.getElementById('btn-pdf').disabled=false;document.getElementById('btn-csv').disabled=false;
     try{sessionStorage.setItem('bt_data',JSON.stringify(btData));}catch(_){}
     renderResults();
   }catch(e){
@@ -434,6 +436,7 @@ async function run(){
     document.getElementById('btn-run').disabled=false;
     document.getElementById('btn-cancel-bt').style.display='none';
     document.getElementById('btn-pdf').disabled=!btData;
+    document.getElementById('btn-csv').disabled=!btData;
     document.getElementById('loader').style.display='none';
   }
 }
@@ -780,7 +783,131 @@ function buildTrades(sd,sid){
     </tr>${op?`<tr class="drow"><td colspan="${nCols}"><div class="dbg">${detail(t)}</div></td></tr>`:''}`;
   }).join('');
   const pgH=pages>1?`<div class="pg">${Array.from({length:pages},(_,i)=>i+1).map(p=>`<button class="pgb ${p===pg?'on':''}" onclick="goPg(${p})">${p}</button>`).join('')}<span style="font-size:.65rem;color:var(--dim);font-family:var(--mono);padding:0 6px;align-self:center">Page ${pg} de ${pages}</span></div>`:''
-  document.getElementById(ttableId).innerHTML=`
+  // ── Compute stats from closed trades ──
+  const closedTrades = (sd.trades || []).filter(t => t.status !== 'open');
+  const longTrades = closedTrades.filter(t => t.side === 'long');
+  const shortTrades = closedTrades.filter(t => t.side === 'short');
+  const winTrades = closedTrades.filter(t => (t.pnl || 0) > 0);
+  const lossTrades = closedTrades.filter(t => (t.pnl || 0) <= 0);
+  const longWins = longTrades.filter(t => (t.pnl || 0) > 0);
+  const shortWins = shortTrades.filter(t => (t.pnl || 0) > 0);
+  const avgWin = winTrades.length ? winTrades.reduce((s,t)=>s+(t.pnl||0),0)/winTrades.length : null;
+  const avgLoss = lossTrades.length ? lossTrades.reduce((s,t)=>s+(t.pnl||0),0)/lossTrades.length : null;
+  const wrLong = longTrades.length ? (longWins.length/longTrades.length*100) : null;
+  const wrShort = shortTrades.length ? (shortWins.length/shortTrades.length*100) : null;
+
+  // By setup (only if at least one trade has a setup)
+  const hasSetupData = closedTrades.some(t => t.setup);
+  const bySetup = {};
+  if (hasSetupData) {
+    closedTrades.forEach(t => {
+      const key = t.setup || '—';
+      if (!bySetup[key]) bySetup[key] = { n: 0, wins: 0, pnl: 0 };
+      bySetup[key].n++;
+      if ((t.pnl || 0) > 0) bySetup[key].wins++;
+      bySetup[key].pnl += (t.pnl || 0);
+    });
+  }
+
+  // By exit reason
+  const byExit = {};
+  closedTrades.forEach(t => {
+    const key = t.exit_reason || '—';
+    if (!byExit[key]) byExit[key] = { n: 0, wins: 0, pnl: 0 };
+    byExit[key].n++;
+    if ((t.pnl || 0) > 0) byExit[key].wins++;
+    byExit[key].pnl += (t.pnl || 0);
+  });
+
+  // ── Build stats panel HTML ──
+  const chipStyle = (label, val, color='var(--text)') =>
+    `<div style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:7px 10px;min-width:90px">
+      <div style="font-size:.57rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:3px">${label}</div>
+      <div style="font-size:.88rem;font-weight:700;font-family:var(--mono);color:${color}">${val}</div>
+    </div>`;
+
+  const statsChips = [
+    chipStyle('Long', longTrades.length, 'var(--cyan)'),
+    chipStyle('Short', shortTrades.length, '#fb7185'),
+    chipStyle('WR Long', wrLong !== null ? wrLong.toFixed(1)+'%' : '—', wrLong !== null && wrLong >= 50 ? 'var(--green)' : 'var(--red)'),
+    chipStyle('WR Short', wrShort !== null ? wrShort.toFixed(1)+'%' : '—', wrShort !== null && wrShort >= 50 ? 'var(--green)' : 'var(--red)'),
+    chipStyle('Avg Win', avgWin !== null ? '+'+avgWin.toFixed(2) : '—', 'var(--green)'),
+    chipStyle('Avg Loss', avgLoss !== null ? avgLoss.toFixed(2) : '—', 'var(--red)'),
+  ].join('');
+
+  const miniTblStyle = `width:100%;border-collapse:collapse;font-size:.71rem;`;
+  const miniThStyle = `padding:5px 8px;text-align:left;color:var(--muted);border-bottom:1px solid var(--border);font-weight:600;font-size:.6rem;text-transform:uppercase;`;
+  const miniTdStyle = `padding:5px 8px;border-bottom:1px solid rgba(255,255,255,.04);font-family:var(--mono);`;
+  const miniTdLastStyle = `padding:5px 8px;font-family:var(--mono);`;
+
+  let setupTableHtml = '';
+  if (hasSetupData && Object.keys(bySetup).length) {
+    const setupRows = Object.entries(bySetup).sort((a,b)=>b[1].pnl-a[1].pnl).map(([k,v],i,arr)=>{
+      const wr = (v.wins/v.n*100).toFixed(1);
+      const pnlColor = v.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      const tdS = i < arr.length-1 ? miniTdStyle : miniTdLastStyle;
+      return `<tr>
+        <td style="${tdS}color:var(--purple)">${escHtmlBt(k)}</td>
+        <td style="${tdS}text-align:right">${v.n}</td>
+        <td style="${tdS}text-align:right;color:${parseFloat(wr)>=50?'var(--green)':'var(--red)'}">${wr}%</td>
+        <td style="${tdS}text-align:right;color:${pnlColor}">${v.pnl>=0?'+':''}${v.pnl.toFixed(2)}</td>
+      </tr>`;
+    }).join('');
+    setupTableHtml = `
+      <div style="margin-top:10px">
+        <div style="font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:6px">Par setup</div>
+        <div style="overflow-x:auto;border:1px solid var(--border);border-radius:4px">
+          <table style="${miniTblStyle}">
+            <thead><tr>
+              <th style="${miniThStyle}">Setup</th>
+              <th style="${miniThStyle}text-align:right">N</th>
+              <th style="${miniThStyle}text-align:right">WR%</th>
+              <th style="${miniThStyle}text-align:right">PnL total</th>
+            </tr></thead>
+            <tbody>${setupRows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  let exitTableHtml = '';
+  if (Object.keys(byExit).length) {
+    const exitRows = Object.entries(byExit).sort((a,b)=>b[1].n-a[1].n).map(([k,v],i,arr)=>{
+      const wr = (v.wins/v.n*100).toFixed(1);
+      const pnlColor = v.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      const tdS = i < arr.length-1 ? miniTdStyle : miniTdLastStyle;
+      return `<tr>
+        <td style="${tdS}color:var(--cyan);font-size:.67rem">${escHtmlBt(k)}</td>
+        <td style="${tdS}text-align:right">${v.n}</td>
+        <td style="${tdS}text-align:right;color:${parseFloat(wr)>=50?'var(--green)':'var(--red)'}">${wr}%</td>
+        <td style="${tdS}text-align:right;color:${pnlColor}">${v.pnl>=0?'+':''}${v.pnl.toFixed(2)}</td>
+      </tr>`;
+    }).join('');
+    exitTableHtml = `
+      <div style="margin-top:10px">
+        <div style="font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:6px">Par raison de sortie</div>
+        <div style="overflow-x:auto;border:1px solid var(--border);border-radius:4px">
+          <table style="${miniTblStyle}">
+            <thead><tr>
+              <th style="${miniThStyle}">Sortie</th>
+              <th style="${miniThStyle}text-align:right">N</th>
+              <th style="${miniThStyle}text-align:right">WR%</th>
+              <th style="${miniThStyle}text-align:right">PnL total</th>
+            </tr></thead>
+            <tbody>${exitRows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  const statsPanel = closedTrades.length ? `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px">
+      <div style="font-size:.63rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;font-weight:600">📊 Statistiques des trades</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;margin-bottom:4px">${statsChips}</div>
+      ${setupTableHtml}${exitTableHtml}
+    </div>` : '';
+
+  document.getElementById(ttableId).innerHTML= statsPanel + `
     <div class="tcard">
       <div class="tth">
         <h3>${fil.length} trade${fil.length!==1?'s':''} — ${activeStrat}</h3>
@@ -891,6 +1018,36 @@ function exportJSON(){
   const b=new Blob([JSON.stringify(btData,null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(b);
   a.download=`backtest_${(btData.symbol||'').replace('/','_')}_${btData.timeframe||''}_${Date.now()}.json`;a.click();
+}
+
+// ── Export CSV ──
+function exportCSV() {
+  if (!btData || !activeStrat) return;
+  const sd = btData.by_strategy[activeStrat];
+  if (!sd || !sd.trades) return;
+  const trades = sd.trades.filter(t => t.status !== 'open');
+
+  const headers = ['id','side','setup','entry_time','exit_time','entry','exit','duration_bars',
+                   'exit_reason','score','pnl','pnl_pct','fees','sl_atr_mult','tp_atr_mult',
+                   'exit_after_bars','size_factor','regime_lbl','bearish_excess'];
+
+  const rows = trades.map(t => headers.map(h => {
+    const v = t[h];
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'number') return v.toString();
+    if (typeof v === 'boolean') return v ? '1' : '0';
+    const s = String(v);
+    return s.includes(',') || s.includes('"') || s.includes('\n')
+      ? '"' + s.replace(/"/g, '""') + '"'
+      : s;
+  }));
+
+  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const b = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(b);
+  a.download = `trades_${(btData.symbol||'').replace('/','_')}_${btData.timeframe||''}_${activeStrat}_${Date.now()}.csv`;
+  a.click();
 }
 
 // ── Export PDF ──
