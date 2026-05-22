@@ -155,7 +155,8 @@ def _apply_setup_overrides(p: Dict[str, Any]) -> List[Dict[str, Any]]:
         s = dict(src)
         prefix = f"setup_{s['name'].lower()}_"
         for field in ("priority", "direction", "amp_min", "dir_max", "dir_min",
-                      "tp_mult", "sl_mult", "max_bars", "enabled", "size_factor"):
+                      "tp_mult", "sl_mult", "max_bars", "enabled", "size_factor",
+                      "needs_bearish_excess"):
             key = prefix + field
             if key in p and p[key] is not None:
                 s[field] = p[key]
@@ -200,16 +201,16 @@ def _check_early_exit_v7(setup_name: str, regime: int, p_up: float,
     """Sorties anticipées V8 (hérite de V7, ajoute SIGNAL_UP).
 
     Conditions par setup :
-      SHORT_TD_HIGH       : régime ≠ TD          → 'regime_exit_TD'
-                            p_dir > dir_inv_short → 'p_dir_inversion'
-      SHORT_TD            : régime ≠ TD          → 'regime_exit_TD'
-                            p_dir > dir_inv_short → 'p_dir_inversion'
-      SHORT_CHOPPY        : régime ≠ Choppy      → 'regime_exit_choppy'
-                            p_dir > 0.58          → 'p_dir_inversion'
-      SIGNAL_UP (V8)      : p_dir < dir_inv_long  → 'p_dir_drop'
-                            p_dir < 0.45          → 'p_dir_weak'
-      LONG_RANGE_STRICT   : régime = TD           → 'regime_to_TD'
-                            p_dir < dir_drop_range → 'p_dir_drop'
+      SHORT_TD_HIGH       : régime ≠ TD             → 'regime_exit_TD'
+                            p_dir > dir_inv_short   → 'p_dir_inversion'
+      SHORT_TD            : régime ≠ TD             → 'regime_exit_TD'
+                            p_dir > dir_inv_short   → 'p_dir_inversion'
+      SHORT_CHOPPY        : régime ≠ Choppy         → 'regime_exit_choppy'
+                            p_dir > 0.58            → 'p_dir_inversion'
+      SIGNAL_UP (V8)      : p_dir < dir_inv_long    → 'p_dir_drop'      (inversion forte)
+                            régime = TD             → 'to_TD'           (excès baissier qui s'aggrave)
+      LONG_RANGE_STRICT   : régime = TD             → 'regime_to_TD'
+                            p_dir < dir_drop_range  → 'p_dir_drop'
     """
     if setup_name in ("SHORT_TD_HIGH", "SHORT_TD"):
         if regime != REGIME_TREND_DN:    return "regime_exit_TD"
@@ -218,8 +219,9 @@ def _check_early_exit_v7(setup_name: str, regime: int, p_up: float,
         if regime != REGIME_CHOPPY:      return "regime_exit_choppy"
         if p_up > 0.58:                  return "p_dir_inversion"
     elif setup_name == "SIGNAL_UP":
+        # Le rebond échoue : soit p_dir s'effondre, soit le marché continue de plonger
         if p_up < dir_inv_long:          return "p_dir_drop"
-        if p_up < 0.45:                  return "p_dir_weak"
+        if regime == REGIME_TREND_DN:    return "to_TD"
     elif setup_name == "LONG_RANGE_STRICT":
         if regime == REGIME_TREND_DN:    return "regime_to_TD"
         if p_up < dir_drop_range:        return "p_dir_drop"
@@ -463,21 +465,21 @@ class Strategy(BaseStrategyML):
         if p_event is None or p_up is None:
             return self._none(f"Modèle {tf} indisponible")
 
-        # === V8 : Excès baissier ===
-        close_arr = df["close"].to_numpy()
-        open_arr = df["open"].to_numpy()
-
-        # 1. 2+ bougies rouges consécutives
-        if len(close_arr) >= 2:
-            consec_red = bool(close_arr[-1] < open_arr[-1] and close_arr[-2] < open_arr[-2])
+        # === V8 : Excès baissier (calcul O(1), pas de to_numpy global) ===
+        # 1. 2+ bougies rouges consécutives — indexation directe Polars
+        if len(df) >= 2:
+            consec_red = bool(
+                float(df["close"][-1]) < float(df["open"][-1]) and
+                float(df["close"][-2]) < float(df["open"][-2])
+            )
         else:
             consec_red = False
 
-        # 2. RSI(14) < 38
+        # 2. RSI(14) < 38 — lit le RSI déjà calculé dans les features
         rsi_v = float(last_row.get("RSI_14", 50.0) or 50.0)
         rsi_excess = rsi_v < 38.0
 
-        # 3. Prix > 1.5% sous SMA(20)
+        # 3. Prix > 1.5% sous SMA(20) — fallback on-demand si precompute absent
         sma20_v = float(pre_val(df, "_pre_sma20") or 0.0)
         if sma20_v <= 0 and len(df) >= 20:
             sma20_v = float(df["close"].rolling_mean(20)[-1] or 0.0)
@@ -495,12 +497,13 @@ class Strategy(BaseStrategyML):
                 p_event=p_event, p_up=p_up, regime=regime,
             )
 
-        # V8 : LONG_CHOPPY confluence — si SIGNAL_UP + conditions LONG_CHOPPY → size×1.5
+        # V8 : LONG_CHOPPY confluence — si SIGNAL_UP + conditions LONG_CHOPPY
+        # → multiplie le size_factor par 1.5 (préserve un éventuel override YAML)
         long_choppy_confluence = False
         if setup["name"] == "SIGNAL_UP":
             if (regime == REGIME_CHOPPY and p_up > 0.58 and p_event > 0.50):
-                setup = dict(setup)  # mutable copy
-                setup["size_factor"] = 1.5
+                setup = dict(setup)  # mutable copy avant mutation
+                setup["size_factor"] = float(setup.get("size_factor", 1.0)) * 1.5
                 long_choppy_confluence = True
 
         # 7. Construction du signal — mults TP/SL/max_bars du setup retenu
