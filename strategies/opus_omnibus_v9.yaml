@@ -1,0 +1,119 @@
+params:
+  # ── Filtre temporel (session US, Lun-Ven) ──
+  enable_hour_filter: true
+  active_hours_utc: [13, 14, 15, 16, 17, 18, 19, 20]
+  active_days: [0, 1, 2, 3, 4]
+
+  adx_threshold: 20
+  exit_td_window_bars: 3
+
+  # ── Gestion exit ──
+  disable_trailing: true
+  use_fixed_tp: true
+
+  # ── Excès baissier (SIGNAL_UP) ──
+  bearish_excess_rsi_threshold: 38.0
+  bearish_excess_sma_pct: 1.5
+
+  # ── Setup -1 : SIGNAL_UP (excès baissier, prioritaire) ──
+  setup_signal_up_enabled: true
+  setup_signal_up_priority: -1
+  setup_signal_up_amp_min: 0.50
+  setup_signal_up_dir_min: 0.60
+  setup_signal_up_tp_mult: 1.0
+  setup_signal_up_sl_mult: 1.3
+  setup_signal_up_max_bars: 6
+
+  # ── Setup 0 : SHORT_TD_HIGH (V8 best — WR 95.7%) ──
+  setup_short_td_high_enabled: true
+  setup_short_td_high_priority: 0
+  setup_short_td_high_amp_min: 0.60
+  setup_short_td_high_dir_max: 0.30
+  setup_short_td_high_tp_mult: 1.4
+  setup_short_td_high_sl_mult: 1.6
+  setup_short_td_high_max_bars: 8
+  setup_short_td_high_size_factor: 1.5
+
+  # ── Setup 1 : SHORT_TD (V9 resserré — V8 WR 54.5%) ──
+  setup_short_td_enabled: true
+  setup_short_td_priority: 1
+  setup_short_td_amp_min: 0.55          # V8 : 0.50
+  setup_short_td_dir_max: 0.35          # V8 : 0.40
+  setup_short_td_tp_mult: 1.2
+  setup_short_td_sl_mult: 1.6
+  setup_short_td_max_bars: 8
+
+  # ── Setup 2a : LONG_CHOPPY ──
+  setup_long_choppy_enabled: true
+  setup_long_choppy_priority: 2
+  setup_long_choppy_amp_min: 0.50
+  setup_long_choppy_dir_min: 0.58
+  setup_long_choppy_tp_mult: 0.9
+  setup_long_choppy_sl_mult: 1.2
+  setup_long_choppy_max_bars: 5
+
+  # ── Setup 2b : SHORT_CHOPPY ──
+  setup_short_choppy_enabled: true
+  setup_short_choppy_priority: 2
+  setup_short_choppy_amp_min: 0.50
+  setup_short_choppy_dir_max: 0.42
+  setup_short_choppy_tp_mult: 1.2
+  setup_short_choppy_sl_mult: 1.4
+  setup_short_choppy_max_bars: 6
+
+  # ── Setup 3 : LONG_TU (V9 nouveau — couvre REGIME_TREND_UP) ──
+  setup_long_tu_enabled: true
+  setup_long_tu_priority: 3
+  setup_long_tu_amp_min: 0.45
+  setup_long_tu_dir_min: 0.55
+  setup_long_tu_tp_mult: 1.4
+  setup_long_tu_sl_mult: 1.4
+  setup_long_tu_max_bars: 10
+
+  # ── Setup 4 : LONG_PULLBACK_TU (V9 nouveau — pullback en uptrend) ──
+  setup_long_pullback_tu_enabled: true
+  setup_long_pullback_tu_priority: 4
+  setup_long_pullback_tu_amp_min: 0.40
+  setup_long_pullback_tu_dir_min: 0.55
+  setup_long_pullback_tu_needs_rsi_below: 50.0
+  setup_long_pullback_tu_tp_mult: 1.2
+  setup_long_pullback_tu_sl_mult: 1.2
+  setup_long_pullback_tu_max_bars: 8
+
+  # ── Setup 5 : LONG_EXIT_TD (V9 resserré — V8 amp_min 0.40) ──
+  setup_long_exit_td_enabled: true
+  setup_long_exit_td_priority: 5
+  setup_long_exit_td_amp_min: 0.50      # V8 : 0.40
+  setup_long_exit_td_tp_mult: 1.2
+  setup_long_exit_td_sl_mult: 1.5
+  setup_long_exit_td_max_bars: 8
+
+  # ── Setup 6 : LONG_RANGE_STRICT ──
+  setup_long_range_strict_enabled: true
+  setup_long_range_strict_priority: 6
+  setup_long_range_strict_amp_min: 0.60
+  setup_long_range_strict_dir_min: 0.60
+  setup_long_range_strict_tp_mult: 0.8
+  setup_long_range_strict_sl_mult: 1.2
+  setup_long_range_strict_max_bars: 6
+
+  # ── Early exit thresholds ──
+  early_exit_dir_inv_short: 0.55
+  early_exit_dir_inv_long: 0.42
+  early_exit_dir_drop_range: 0.40
+
+  score_threshold: 0.55
+
+optimizer_results:
+  15m:
+    run_date: null
+    oos_score: null
+    params: {}
+  30m:
+    run_date: null
+    oos_score: null
+    params: {}
+  1h:
+    run_date: null
+    oos_score: null
+    params: {}
