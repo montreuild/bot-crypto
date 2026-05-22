@@ -187,6 +187,7 @@ class BacktestResult:
             "timestamps":         self.timestamps,
             "by_strategy":        self.by_strategy,
             "trades":             self.trades,
+            "diagnostics":        getattr(self, "diagnostics", None),
         }
 
 
@@ -316,6 +317,29 @@ class Backtester:
         position     = None
         trade_id     = 0
 
+        # ── Diagnostics ──────────────────────────────────────────────────────
+        # Compteurs alimentés à chaque barre pour répondre à la question
+        # « pourquoi mon backtest s'arrête de trader ? ». Exposés dans le
+        # dict retourné par to_dict() sous la clé ``diagnostics``.
+        diag = {
+            "bars_total":            0,   # barres parcourues après warmup
+            "bars_in_position":      0,   # barres passées avec une position ouverte
+            "bars_seeking_signal":   0,   # barres sans position (recherche active)
+            "signal_calls":          0,   # appels à best_signal() (= bars_seeking_signal)
+            "signal_accepted":       0,   # un signal a été retenu et a tenté d'ouvrir un trade
+            "rejected_atr_zero":     0,   # ATR <= 0 → trade refusé
+            "rejected_notional":     0,   # notional < 1.0 ou size <= 0 → trade refusé
+            "trades_opened":         0,
+            "trades_closed":         0,
+            "last_signal_bar":       None,
+            "last_trade_bar":        None,
+            "max_bars_no_signal":    0,   # plus longue séquence sans signal accepté
+            "max_bars_in_position":  0,   # plus longue position détenue
+        }
+        per_strategy_stats: Dict[str, Dict[str, int]] = {}
+        _bars_since_signal     = 0
+        _bars_current_position = 0
+
         # Warmup dynamique : prend le max parmi les stratégies actives.
         # Chaque stratégie peut déclarer `warmup_bars` (attribut de classe ou d'instance).
         # Valeur minimale garantie : 210 barres (couvre EMA200 + ADX + ATR14).
@@ -349,6 +373,8 @@ class Backtester:
             f"{total_bars} barres à parcourir (warmup={warmup}, total={len(df)})"
         )
         for i in range(warmup, len(df) - 1):
+            diag["bars_total"] += 1
+            _had_position_at_start = position is not None
             if i % 100 == 0:
                 if self._cancel_event is not None and self._cancel_event.is_set():
                     raise InterruptedError("Backtest annulé")
@@ -359,11 +385,16 @@ class Backtester:
                     pct  = 100.0 * done / max(total_bars, 1)
                     rate = done / max(time.time() - _t_loop, 0.001)
                     eta  = (total_bars - done) / max(rate, 0.001)
+                    in_pos_pct = 100.0 * diag["bars_in_position"] / max(diag["bars_total"], 1)
                     logger.info(
                         f"[Backtest] {symbol} {timeframe or '?'} : "
                         f"{done}/{total_bars} barres ({pct:.0f}%) — "
                         f"{rate:.0f} bars/s, ETA {eta:.0f}s, "
-                        f"{len(trades)} trades, capital={capital:.2f}"
+                        f"{len(trades)} trades, capital={capital:.2f} "
+                        f"· {in_pos_pct:.0f}% en position · "
+                        f"sig_acc={diag['signal_accepted']} "
+                        f"rej_notional={diag['rejected_notional']} "
+                        f"rej_atr={diag['rejected_atr_zero']}"
                     )
             window  = df[:i + 1]
             c_high  = high_arr[i]
@@ -372,6 +403,8 @@ class Backtester:
 
             # ── Gestion de la position ouverte ────────────────────────────────
             if position is not None:
+                diag["bars_in_position"] += 1
+                _bars_current_position += 1
                 side    = position["side"]
                 entry   = position["entry"]
                 stop    = position["stop"]
@@ -605,12 +638,38 @@ class Backtester:
                 continue
 
             # ── Cherche un signal ─────────────────────────────────────────────
-            signal = self.engine.best_signal(window, strat_params, threshold=threshold)
+            diag["bars_seeking_signal"] += 1
+            diag["signal_calls"] += 1
+            # Détecte la sortie de position survenue plus haut dans cette barre
+            # (close → position == None ici) : actualise les max et reset le compteur.
+            if _had_position_at_start:
+                diag["trades_closed"] += 1
+                if _bars_current_position > diag["max_bars_in_position"]:
+                    diag["max_bars_in_position"] = _bars_current_position
+                _bars_current_position = 0
+
+            signal = self.engine.best_signal(
+                window, strat_params, threshold=threshold,
+                stats=per_strategy_stats,
+            )
             if signal["side"] == "none":
+                _bars_since_signal += 1
+                if _bars_since_signal > diag["max_bars_no_signal"]:
+                    diag["max_bars_no_signal"] = _bars_since_signal
                 continue
+
+            diag["signal_accepted"] += 1
+            diag["last_signal_bar"] = i
+            _bars_since_signal = 0
+            logger.debug(
+                f"[Backtest] bar {i} : signal accepté — {signal.get('name')} "
+                f"{signal.get('side')} score={signal.get('score', 0):.3f}"
+            )
 
             atr_v = float(atr_arr[i])
             if atr_v <= 0:
+                diag["rejected_atr_zero"] += 1
+                logger.debug(f"[Backtest] bar {i} : trade rejeté (ATR<=0)")
                 continue
 
             exec_price = float(df["open"][i + 1])
@@ -653,6 +712,11 @@ class Backtester:
                 size     = max_notional / exec_price
                 notional = max_notional
             if notional < 1.0 or size <= 0:
+                diag["rejected_notional"] += 1
+                logger.debug(
+                    f"[Backtest] bar {i} : trade rejeté "
+                    f"(notional={notional:.4f} size={size:.6f} capital={capital:.2f})"
+                )
                 continue
 
             # Size factor (demi-Kelly côté stratégie — ex. ×confidence) :
@@ -710,6 +774,9 @@ class Backtester:
                 "mfe":          0.0,
                 "_stop_trail":  [{"bar": i + 1, "stop": round(stop, 6)}],
             }
+            diag["trades_opened"] += 1
+            diag["last_trade_bar"] = i
+            _bars_current_position = 0
 
         # ── Clôture forcée en fin de série ────────────────────────────────────
         if position is not None:
@@ -743,8 +810,41 @@ class Backtester:
             trades.append(position)
             equity_curve.append(round(capital, 4))
 
+        # Finalise les compteurs de fin de boucle
+        if position is not None and _bars_current_position > diag["max_bars_in_position"]:
+            diag["max_bars_in_position"] = _bars_current_position
+        diag["per_strategy"] = per_strategy_stats
+
+        # Récap final — visible en INFO pour diagnostiquer un backtest qui
+        # « s'arrête de trader » : ratio temps en position, signaux générés,
+        # signaux sous seuil, rejets notional, etc.
+        bt = max(diag["bars_total"], 1)
+        in_pos_pct = 100.0 * diag["bars_in_position"] / bt
+        logger.info(
+            f"[Backtest] {symbol} {timeframe or '?'} : terminé — "
+            f"{diag['bars_total']} barres, {diag['trades_opened']} trades ouverts, "
+            f"{in_pos_pct:.0f}% du temps en position "
+            f"(max {diag['max_bars_in_position']} barres consécutives), "
+            f"signaux acceptés={diag['signal_accepted']}, "
+            f"rejets notional={diag['rejected_notional']}, "
+            f"ATR<=0={diag['rejected_atr_zero']}, "
+            f"max sans signal={diag['max_bars_no_signal']} barres"
+        )
+        for sname, s in per_strategy_stats.items():
+            total_seen = s.get("evaluated", 0)
+            if total_seen == 0:
+                continue
+            logger.info(
+                f"[Backtest]   └─ {sname} : évalué×{total_seen}, "
+                f"proposés={s.get('proposed', 0)}, "
+                f"<seuil={s.get('below_threshold', 0)}, "
+                f">=seuil={s.get('above_threshold', 0)}, "
+                f"erreurs={s.get('errors', 0)}"
+            )
+
         _tf = timeframe or self.cfg["trading"].get("timeframe", "1h")
         result = BacktestResult(trades, equity_curve, self.initial_capital(self.cfg), timestamps, timeframe=_tf)
+        result.diagnostics = diag
         return self._add_buy_and_hold(result, df)
 
     def _add_buy_and_hold(self, result: "BacktestResult", df: pl.DataFrame) -> "BacktestResult":

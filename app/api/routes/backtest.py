@@ -142,6 +142,7 @@ def run_backtest(
                     "trades":           all_trades,
                     "days_covered":     days_covered,
                     "bars_warning":     _bars_warning,
+                    "diagnostics":      d.get("diagnostics"),
                 }
                 if walk_forward and len(df) >= 200:
                     wf = WalkForwardAnalyzer(
