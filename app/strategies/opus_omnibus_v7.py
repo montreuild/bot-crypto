@@ -868,7 +868,11 @@ class Strategy(BaseStrategyML):
             max_bin=63, force_col_wise=True,
             verbosity=-1, n_jobs=1,
         )
-        callbacks = [lgb.early_stopping(40, verbose=False), lgb.log_evaluation(-1)]
+        # Fix : ne PAS partager la liste de callbacks entre lgb.train(amp) et
+        # lgb.train(dir). early_stopping est stateful (compteur _no_improvement_count),
+        # sa réutilisation après le 1er entraînement déclenche un arrêt immédiat
+        # du 2e (dir) → modèle dégénéré, p_up ≈ 0.5 partout. Les callbacks sont
+        # désormais instanciés frais dans chaque lgb.train ci-dessous.
 
         with self._lock:
             self._amp_models.pop(tf_key, None)
@@ -884,7 +888,9 @@ class Strategy(BaseStrategyML):
                 {**common, "scale_pos_weight":
                     (y_amp[:split] == 0).sum() / max((y_amp[:split] == 1).sum(), 1)},
                 ds_train_amp, num_boost_round=n_estimators,
-                valid_sets=[ds_valid_amp], callbacks=callbacks,
+                valid_sets=[ds_valid_amp],
+                callbacks=[lgb.early_stopping(40, verbose=False),
+                           lgb.log_evaluation(-1)],
             )
         except Exception as e:
             logger.warning(f"[OmnibusV7-RT] {tf_key} : entraînement amp KO ({e})")
@@ -902,7 +908,9 @@ class Strategy(BaseStrategyML):
                 {**common, "scale_pos_weight":
                     (y_dir[:split] == 0).sum() / max((y_dir[:split] == 1).sum(), 1)},
                 ds_train_dir, num_boost_round=n_estimators,
-                valid_sets=[ds_valid_dir], callbacks=callbacks,
+                valid_sets=[ds_valid_dir],
+                callbacks=[lgb.early_stopping(40, verbose=False),
+                           lgb.log_evaluation(-1)],
             )
         except Exception as e:
             logger.warning(f"[OmnibusV7-RT] {tf_key} : entraînement dir KO ({e})")
