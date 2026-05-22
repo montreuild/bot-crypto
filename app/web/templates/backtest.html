@@ -149,7 +149,6 @@
       <div style="display:flex;gap:6px">
         <button class="btn btn-ghost" id="btn-exp" disabled onclick="exportJSON()" style="flex:1;font-size:.72rem">&#x2193; JSON</button>
         <button class="btn btn-ghost" id="btn-pdf" disabled onclick="exportPDF()" style="flex:1;font-size:.72rem">&#x2193; PDF</button>
-        <button class="btn btn-ghost" id="btn-csv" disabled onclick="exportCSV()" style="flex:1;font-size:.72rem">&#x2193; CSV</button>
       </div>
       <span id="msg" style="font-size:.68rem;color:var(--muted);font-family:var(--mono);word-break:break-word;line-height:1.4"></span>
       <div id="bt-log"></div>
@@ -327,7 +326,6 @@ setInterval(_syncBacktestRunState, 5000);
       btData=JSON.parse(saved);
       document.getElementById('btn-exp').disabled=false;
       document.getElementById('btn-pdf').disabled=false;
-      document.getElementById('btn-csv').disabled=false;
       const nStrats=Object.keys(btData.by_strategy||{}).length;
       document.getElementById('msg').textContent=`↩ Résultat restauré · ${btData.n_bars||'?'} bougies · ${nStrats} strat.`;
       const logEl=document.getElementById('bt-log');
@@ -416,7 +414,7 @@ async function run(){
       logAdd(`  ${n} : ${sd.total_trades||0} trades · WR ${wr.toFixed(0)}% · PnL ${sign}${pnl.toFixed(2)} USDC`,pnl>=0?'log-ok':'log-warn');
     });
     document.getElementById('msg').textContent=`✓ ${btData.n_bars} bougies · ${nS} strat. · ${elapsed}s`;
-    document.getElementById('btn-exp').disabled=false;document.getElementById('btn-pdf').disabled=false;document.getElementById('btn-csv').disabled=false;
+    document.getElementById('btn-exp').disabled=false;document.getElementById('btn-pdf').disabled=false;
     try{sessionStorage.setItem('bt_data',JSON.stringify(btData));}catch(_){}
     renderResults();
   }catch(e){
@@ -436,7 +434,6 @@ async function run(){
     document.getElementById('btn-run').disabled=false;
     document.getElementById('btn-cancel-bt').style.display='none';
     document.getElementById('btn-pdf').disabled=!btData;
-    document.getElementById('btn-csv').disabled=!btData;
     document.getElementById('loader').style.display='none';
   }
 }
@@ -481,10 +478,10 @@ function renderResults(){
       <div id="price-chart-wrap" style="height:300px;position:relative" role="img" aria-label="Graphique de prix avec signaux"></div>
       <div style="display:flex;gap:14px;flex-wrap:wrap;padding:6px 10px 2px;font-size:.65rem;color:var(--dim);border-top:1px solid var(--border)">
         <span>📍 Légende :</span>
-        <span><span style="color:#ffd166;font-size:.85rem">▲</span> Entrée Long</span>
-        <span><span style="color:#ffd166;font-size:.85rem">▼</span> Entrée Short</span>
-        <span><span style="color:#34d399;font-size:.9rem">●</span> Sortie gain</span>
-        <span><span style="color:#fb7185;font-size:.9rem">●</span> Sortie perte</span>
+        <span><span style="color:#34d399;font-size:.85rem">▲</span> Entrée Long (setup)</span>
+        <span><span style="color:#fb7185;font-size:.85rem">▼</span> Entrée Short (setup)</span>
+        <span><span style="color:#34d399;font-size:.9rem">●</span> Sortie gain (raison)</span>
+        <span><span style="color:#fb7185;font-size:.9rem">●</span> Sortie perte (raison)</span>
         <span><span style="display:inline-block;width:18px;height:2px;background:rgba(251,191,36,.6);vertical-align:middle;border-top:1px dashed rgba(251,191,36,.6)"></span> Stop initial</span>
         <span><span style="display:inline-block;width:18px;height:2px;background:rgba(167,139,250,.7);vertical-align:middle"></span> Stop trailing</span>
       </div>
@@ -692,10 +689,14 @@ function buildPrice(){
   // Markers (entry + exit)
   const timeMap={};times.forEach((t,i)=>{timeMap[i]=t;});
   const markers=[];
+  const _exitAbbr={'take_profit':'TP','stop_loss':'SL','trailing_stop':'TS','exit_after_bars':'T','end_of_data':'FIN','p_dir_inversion':'INV','p_dir_drop':'DROP','regime_exit_TD':'TD','regime_exit_choppy':'CH','regime_to_TD':'TD↓','p_dir_weak':'WEAK','to_TD':'↓TD'};
   trades.forEach(t=>{
     const bi=parseInt(t.bar),ei=parseInt(t.exit_bar),isLong=t.side==='long',isWin=(t.pnl||0)>=0;
-    if(!isNaN(bi)&&bi>=0&&bi<n&&timeMap[bi])markers.push({time:timeMap[bi],position:isLong?'belowBar':'aboveBar',color:'#ffd166',shape:isLong?'arrowUp':'arrowDown',text:''});
-    if(!isNaN(ei)&&ei>=0&&ei<n&&timeMap[ei])markers.push({time:timeMap[ei],position:isLong?'aboveBar':'belowBar',color:isWin?'#34d399':'#fb7185',shape:'circle',text:''});
+    const entryColor=isLong?'#34d399':'#fb7185';
+    const setupTxt=t.setup?t.setup.replace('_',' ').replace('SIGNAL UP','↑SIG').replace('SHORT TD HIGH','↓TDH').replace('SHORT TD','↓TD').replace('SHORT CHOPPY','↓CH').replace('LONG RANGE STRICT','↑RNG').replace('LONG CHOPPY','↑CH'):'';
+    if(!isNaN(bi)&&bi>=0&&bi<n&&timeMap[bi])markers.push({time:timeMap[bi],position:isLong?'belowBar':'aboveBar',color:entryColor,shape:isLong?'arrowUp':'arrowDown',text:setupTxt});
+    const exitAbbr=_exitAbbr[t.exit_reason]||t.exit_reason||'';
+    if(!isNaN(ei)&&ei>=0&&ei<n&&timeMap[ei])markers.push({time:timeMap[ei],position:isLong?'aboveBar':'belowBar',color:isWin?'#34d399':'#fb7185',shape:'circle',text:exitAbbr});
   });
   markers.sort((a,b)=>a.time-b.time);
   try{tvPriceS.setMarkers(markers);}catch(e){console.error('[bt] setMarkers:',e);}
@@ -911,7 +912,10 @@ function buildTrades(sd,sid){
     <div class="tcard">
       <div class="tth">
         <h3>${fil.length} trade${fil.length!==1?'s':''} — ${activeStrat}</h3>
-        <div class="fils">${['all','long','short','win','loss'].map(f=>`<button class="fil ${tradeFilter===f?'on':''}" onclick="setFil('${f}')">${f==='all'?'Tous':f==='win'?'✅ Gains':f==='loss'?'🔴 Pertes':f.charAt(0).toUpperCase()+f.slice(1)}</button>`).join('')}</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <div class="fils">${['all','long','short','win','loss'].map(f=>`<button class="fil ${tradeFilter===f?'on':''}" onclick="setFil('${f}')">${f==='all'?'Tous':f==='win'?'✅ Gains':f==='loss'?'🔴 Pertes':f.charAt(0).toUpperCase()+f.slice(1)}</button>`).join('')}</div>
+          <button onclick="exportCSV()" title="Exporter les trades en CSV" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 9px;border-radius:4px;font-size:.68rem;cursor:pointer;transition:all .12s;white-space:nowrap" onmouseover="this.style.color='var(--text)';this.style.borderColor='var(--border-hi)'" onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">&#x2193; CSV</button>
+        </div>
       </div>
       <div class="tsc"><table>
         <thead><tr>${th('id','#')}${th('side','Dir.')}${hasSetup?th('setup','Setup'):''}${th('entry_time','Entrée')}${th('entry','Prix E.')}${th('exit','Prix S.')}${th('duration_bars','Dur.')}${th('exit_reason','Sortie')}${th('score','Score')}${th('pnl','PnL')}${th('pnl_pct','%')}<th>Frais</th><th></th></tr></thead>
@@ -991,10 +995,14 @@ function openFullscreen(){
     const sd=btData.by_strategy[activeStrat];
     const trades=(sd?.trades||[]).filter(t=>t.status&&!t.status.startsWith('open')&&t.bar!=null&&t.exit_bar!=null);
     const markers=[];
+    const _fsExitAbbr={'take_profit':'TP','stop_loss':'SL','trailing_stop':'TS','exit_after_bars':'T','end_of_data':'FIN','p_dir_inversion':'INV','p_dir_drop':'DROP','regime_exit_TD':'TD','regime_exit_choppy':'CH','regime_to_TD':'TD↓','p_dir_weak':'WEAK','to_TD':'↓TD'};
     trades.forEach(t=>{
       const bi=parseInt(t.bar),ei=parseInt(t.exit_bar),isLong=t.side==='long',isWin=(t.pnl||0)>=0;
-      if(!isNaN(bi)&&bi>=0&&bi<n&&timeMap[bi])markers.push({time:timeMap[bi],position:isLong?'belowBar':'aboveBar',color:'#ffd166',shape:isLong?'arrowUp':'arrowDown',text:''});
-      if(!isNaN(ei)&&ei>=0&&ei<n&&timeMap[ei])markers.push({time:timeMap[ei],position:isLong?'aboveBar':'belowBar',color:isWin?'#34d399':'#fb7185',shape:'circle',text:''});
+      const entryColor=isLong?'#34d399':'#fb7185';
+      const setupTxt=t.setup?t.setup.replace('_',' ').replace('SIGNAL UP','↑SIG').replace('SHORT TD HIGH','↓TDH').replace('SHORT TD','↓TD').replace('SHORT CHOPPY','↓CH').replace('LONG RANGE STRICT','↑RNG').replace('LONG CHOPPY','↑CH'):'';
+      if(!isNaN(bi)&&bi>=0&&bi<n&&timeMap[bi])markers.push({time:timeMap[bi],position:isLong?'belowBar':'aboveBar',color:entryColor,shape:isLong?'arrowUp':'arrowDown',text:setupTxt});
+      const exitAbbr=_fsExitAbbr[t.exit_reason]||t.exit_reason||'';
+      if(!isNaN(ei)&&ei>=0&&ei<n&&timeMap[ei])markers.push({time:timeMap[ei],position:isLong?'aboveBar':'belowBar',color:isWin?'#34d399':'#fb7185',shape:'circle',text:exitAbbr});
     });
     markers.sort((a,b)=>a.time-b.time);
     try{s.setMarkers(markers);}catch(e){console.error('[bt] fs setMarkers:',e);}

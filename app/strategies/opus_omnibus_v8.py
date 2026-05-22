@@ -284,6 +284,9 @@ class Strategy(BaseStrategyML):
         "exit_td_window_bars": _EXIT_TD_WINDOW_BARS,
         "disable_trailing":    True,
         "use_fixed_tp":        True,
+        # V8 : seuils de détection de l'excès baissier (configurables YAML)
+        "bearish_excess_rsi_threshold": 42.0,   # RSI < X (défaut 42 vs spec 38)
+        "bearish_excess_sma_pct":        1.0,   # prix > X% sous SMA20 (défaut 1.0 vs spec 1.5)
     }
 
     _FEATURE_BUILDER = _FeatureBuilder()
@@ -466,6 +469,9 @@ class Strategy(BaseStrategyML):
             return self._none(f"Modèle {tf} indisponible")
 
         # === V8 : Excès baissier (calcul O(1), pas de to_numpy global) ===
+        be_rsi_thr = float(p.get("bearish_excess_rsi_threshold", 42.0))
+        be_sma_pct = float(p.get("bearish_excess_sma_pct", 1.0))
+
         # 1. 2+ bougies rouges consécutives — indexation directe Polars
         if len(df) >= 2:
             consec_red = bool(
@@ -475,15 +481,15 @@ class Strategy(BaseStrategyML):
         else:
             consec_red = False
 
-        # 2. RSI(14) < 38 — lit le RSI déjà calculé dans les features
+        # 2. RSI(14) < seuil configurable — lit le RSI déjà calculé dans les features
         rsi_v = float(last_row.get("RSI_14", 50.0) or 50.0)
-        rsi_excess = rsi_v < 38.0
+        rsi_excess = rsi_v < be_rsi_thr
 
-        # 3. Prix > 1.5% sous SMA(20) — fallback on-demand si precompute absent
+        # 3. Prix > X% sous SMA(20) — fallback on-demand si precompute absent
         sma20_v = float(pre_val(df, "_pre_sma20") or 0.0)
         if sma20_v <= 0 and len(df) >= 20:
             sma20_v = float(df["close"].rolling_mean(20)[-1] or 0.0)
-        price_below_sma20 = (c_now < sma20_v * 0.985) if sma20_v > 0 else False
+        price_below_sma20 = (c_now < sma20_v * (1.0 - be_sma_pct / 100.0)) if sma20_v > 0 else False
 
         bearish_excess = consec_red or rsi_excess or price_below_sma20
 
