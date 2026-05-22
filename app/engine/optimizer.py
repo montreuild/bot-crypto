@@ -129,6 +129,11 @@ def _eval_worker(args: tuple) -> dict:
         _eng.register(_mod.Strategy(), silent=True)
         _cfg_copy = _dp(_cfg)
         _cfg_copy.setdefault("strategy_params", {})[strategy_name] = params
+        # Empêche resolve_strategy_params() d'écraser les params échantillonnés :
+        # l'entrée optimizer_results sauvegardée dans le YAML stratégie a une
+        # priorité supérieure et avalerait silencieusement les params du trial.
+        if strategy_name in _cfg_copy.get("optimizer_results", {}):
+            del _cfg_copy["optimizer_results"][strategy_name]
         _bt = _Backtester(_eng, _cfg_copy, use_pretrained_ml=False)
 
         _res_is  = _bt.run(_df_is,  symbol, timeframe=timeframe)
@@ -425,6 +430,11 @@ class StrategyOptimizer:
         eng = self._load_strategy()
         cfg = deepcopy(self.cfg)
         cfg.setdefault("strategy_params", {})[self.strategy_name] = params
+        # Empêche resolve_strategy_params() d'écraser les params échantillonnés :
+        # l'entrée optimizer_results sauvegardée dans le YAML stratégie a une
+        # priorité supérieure et avalerait silencieusement les params du trial.
+        if self.strategy_name in cfg.get("optimizer_results", {}):
+            del cfg["optimizer_results"][self.strategy_name]
         # use_pretrained_ml=False : l'optimiseur évalue le comportement réel de la ML
         # avec réentraînement inline (walk-forward), sans charger de modèle pré-existant.
         bt  = Backtester(eng, cfg, cancel_event=self._cancel_event, use_pretrained_ml=False)
