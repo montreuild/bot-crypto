@@ -9,7 +9,8 @@ Règle de priorité :
   - Quand bearish_excess=False → les setups V7 (LONG_CHOPPY, LONG_EXIT_TD…) fonctionnent
     exactement comme en V7. Le compte de trades V8 ≥ V7.
 
-  - SIGNAL_UP confluence : SIGNAL_UP en régime Choppy + p_dir>0.58 → size_factor×1.5.
+  - SIGNAL_UP confluence : chaque fois que SIGNAL_UP se déclenche (bearish_excess=True
+    + p_dir>0.60, tout régime) → size_factor×1.5.
 
 Réutilise les modèles V4 pré-entraînés (même pkl + médianes que
 ``opus_stat_pretrained_v4``).
@@ -57,7 +58,7 @@ _EXIT_TD_WINDOW_BARS = 3   # fenêtre LONG_EXIT_TD (bougies)
 # ─────────────────────────────────────────────────────────────────────────────
 _DEFAULT_SETUPS: Tuple[Dict[str, Any], ...] = (
     # V8 : SIGNAL_UP — priorité -1 → gagne sur tout quand excès baissier confirmé.
-    # En Choppy + p_dir>0.58 → confluence : size_factor×1.5.
+    # bearish_excess=True + p_dir>0.60 garantis → size_factor×1.5 automatique.
     {
         "name": "SIGNAL_UP", "priority": -1, "direction": 1, "enabled": True,
         "regime": None,  # tout régime
@@ -520,14 +521,13 @@ class Strategy(BaseStrategyML):
                 p_event=p_event, p_up=p_up, regime=regime,
             )
 
-        # V8 : LONG_CHOPPY confluence — si SIGNAL_UP + conditions LONG_CHOPPY
-        # → multiplie le size_factor par 1.5 (préserve un éventuel override YAML)
+        # V8 : bonus SIGNAL_UP — bearish_excess=True ET p_dir>0.60 sont déjà
+        # garantis par _evaluate_setup, donc le bonus s'applique sur tous les régimes.
         long_choppy_confluence = False
         if setup["name"] == "SIGNAL_UP":
-            if (regime == REGIME_CHOPPY and p_up > 0.58 and p_event > 0.50):
-                setup = dict(setup)  # mutable copy avant mutation
-                setup["size_factor"] = float(setup.get("size_factor", 1.0)) * 1.5
-                long_choppy_confluence = True
+            setup = dict(setup)  # mutable copy avant mutation
+            setup["size_factor"] = float(setup.get("size_factor", 1.0)) * 1.5
+            long_choppy_confluence = True
 
         # 7. Construction du signal — mults TP/SL/max_bars du setup retenu
         side = "long" if setup["direction"] == 1 else "short"
