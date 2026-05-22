@@ -339,6 +339,7 @@ class Backtester:
         per_strategy_stats: Dict[str, Dict[str, int]] = {}
         _bars_since_signal     = 0
         _bars_current_position = 0
+        _prev_in_position      = False
 
         # Warmup dynamique : prend le max parmi les stratégies actives.
         # Chaque stratégie peut déclarer `warmup_bars` (attribut de classe ou d'instance).
@@ -375,6 +376,16 @@ class Backtester:
         for i in range(warmup, len(df) - 1):
             diag["bars_total"] += 1
             _had_position_at_start = position is not None
+            # Transition close : la barre précédente avait une position, plus
+            # maintenant. On ferme le compteur de durée et on met à jour le max.
+            # (Le bloc position fait ``continue`` après une clôture, donc on ne
+            # détecte la transition qu'au début de l'itération suivante.)
+            if _prev_in_position and not _had_position_at_start:
+                diag["trades_closed"] += 1
+                if _bars_current_position > diag["max_bars_in_position"]:
+                    diag["max_bars_in_position"] = _bars_current_position
+                _bars_current_position = 0
+            _prev_in_position = _had_position_at_start
             if i % 100 == 0:
                 if self._cancel_event is not None and self._cancel_event.is_set():
                     raise InterruptedError("Backtest annulé")
@@ -640,14 +651,6 @@ class Backtester:
             # ── Cherche un signal ─────────────────────────────────────────────
             diag["bars_seeking_signal"] += 1
             diag["signal_calls"] += 1
-            # Détecte la sortie de position survenue plus haut dans cette barre
-            # (close → position == None ici) : actualise les max et reset le compteur.
-            if _had_position_at_start:
-                diag["trades_closed"] += 1
-                if _bars_current_position > diag["max_bars_in_position"]:
-                    diag["max_bars_in_position"] = _bars_current_position
-                _bars_current_position = 0
-
             signal = self.engine.best_signal(
                 window, strat_params, threshold=threshold,
                 stats=per_strategy_stats,
@@ -810,8 +813,11 @@ class Backtester:
             trades.append(position)
             equity_curve.append(round(capital, 4))
 
-        # Finalise les compteurs de fin de boucle
-        if position is not None and _bars_current_position > diag["max_bars_in_position"]:
+        # Finalise les compteurs de fin de boucle : si la dernière position
+        # a été fermée à l'avant-dernière barre, la transition est déjà
+        # comptée ; sinon (position toujours ouverte ou close en fin de série)
+        # on rattrape ici.
+        if _bars_current_position > diag["max_bars_in_position"]:
             diag["max_bars_in_position"] = _bars_current_position
         diag["per_strategy"] = per_strategy_stats
 
