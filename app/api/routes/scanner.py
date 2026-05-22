@@ -457,8 +457,8 @@ def scanner_v8_series(symbol: str = "BTC/USDC", timeframe: str = "1h",
             for i in range(n_feats)
         ]
 
-        # 4. Excès baissier vectorisé
-        be_series = bearish_excess_series(df).to_numpy().astype(bool)
+        # 4. Excès baissier vectorisé — seuils V8 (RSI<38, prix>1.5% sous SMA20)
+        be_series = bearish_excess_series(df, rsi_threshold=38.0, price_dev_pct=1.5).to_numpy().astype(bool)
         # Align with feats length (feats may be shorter than df due to feature window)
         be_offset = len(df) - n_feats
         be_aligned = be_series[be_offset:] if be_offset > 0 else be_series[:n_feats]

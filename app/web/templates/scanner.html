@@ -881,13 +881,15 @@ async function loadV7Series(){
       if(d.p_event?.length) pAmpS.setData(d.p_event);
       if(d.p_up?.length)    pDirS.setData(d.p_up);
 
-      // V8 : excès baissier comme mini-histogramme en bas du sous-graphique
+      // V8 : excès baissier — mini-barre fixe à 0.04 (4% sur l'échelle 0-1)
+      // Utilise le même axe 'right' que les courbes de probabilité pour
+      // éviter l'auto-scale d'un axe indépendant (qui occupait tout le graphique).
       if(_v8Mode === 'v8' && d.bearish_excess?.length){
         const beS = tvV7Chart.addHistogramSeries({
-          color:'rgba(251,113,133,.35)', priceLineVisible:false, lastValueVisible:false,
-          priceScaleId:'be',
+          color:'rgba(251,113,133,.4)', priceLineVisible:false, lastValueVisible:false,
+          base:0,
         });
-        beS.setData(d.bearish_excess.map(p=>({time:p.time, value:p.value * 0.08})));
+        beS.setData(d.bearish_excess.map(p=>({time:p.time, value:p.value ? 0.04 : 0})));
       }
 
       // Lignes de référence V8 : 0.50, 0.60 (p_dir seuil SIGNAL_UP)
