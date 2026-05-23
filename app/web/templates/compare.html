@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %} — Comparatif{% endblock %}
+
+{% block page_styles %}
+.cmp-main{max-width:1400px;margin:0 auto;padding:24px 20px 32px;}
+.cmp-intro{font-size:.76rem;color:var(--muted);line-height:1.6;margin-bottom:18px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);}
+.cmp-controls{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:18px;padding:14px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);}
+.cmp-field{display:flex;flex-direction:column;gap:4px;}
+.cmp-field label{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.cmp-field input,.cmp-field select{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:var(--r-sm);padding:6px 8px;font-size:.78rem;font-family:var(--mono);}
+.cmp-strats{display:flex;flex-wrap:wrap;gap:6px;max-width:680px;}
+.cmp-chip{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-family:var(--mono);background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:3px 9px;cursor:pointer;color:var(--muted);user-select:none;}
+.cmp-chip.on{background:rgba(34,211,238,.12);border-color:var(--cyan);color:var(--text);}
+.cmp-table{border-collapse:collapse;width:100%;min-width:880px;}
+.cmp-table th{padding:7px 10px;font-size:.63rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;}
+.cmp-table th.sorted{color:var(--cyan);}
+.cmp-table td{padding:7px 10px;font-size:.78rem;font-family:var(--mono);border-bottom:1px solid rgba(255,255,255,.04);text-align:right;white-space:nowrap;}
+.cmp-table td.name{text-align:left;font-weight:600;color:var(--text);}
+.cmp-table td.best{background:rgba(52,211,153,.10);font-weight:700;}
+.cmp-rank{color:var(--dim);font-size:.66rem;margin-right:5px;}
+.cmp-msg{font-size:.78rem;color:var(--dim);padding:14px;}
+{% endblock %}
+
+{% block topbar_content %}
+<div class="topbar-title">Comparatif de stratégies</div>
+<div class="topbar-sep"></div>
+<div class="topbar-right">
+  <button class="btn btn-ghost btn-sm" onclick="exportCompare()">↓ Export CSV</button>
+  <button class="btn btn-cyan btn-sm" id="run-btn" onclick="runCompare()">▶ Comparer</button>
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content" class="fade-in">
+  <div class="cmp-main">
+    <div class="cmp-intro">
+      Backteste plusieurs stratégies sur <strong>la même fenêtre de données</strong> (même symbole, timeframe et nombre de bougies) et présente leurs métriques côte à côte. Complémentaire de l'Audit OOS (qui montre les scores d'optimisation hors-échantillon) : ici on compare la performance brute sur une période identique. La meilleure valeur de chaque colonne est surlignée.
+    </div>
+
+    <div class="cmp-controls">
+      <div class="cmp-field">
+        <label>Symbole</label>
+        <input id="f-symbol" value="BTC/USDC" style="width:110px">
+      </div>
+      <div class="cmp-field">
+        <label>Timeframe</label>
+        <select id="f-tf"></select>
+      </div>
+      <div class="cmp-field">
+        <label>Bougies</label>
+        <input id="f-limit" type="number" value="3000" min="200" max="50000" style="width:90px">
+      </div>
+      <div class="cmp-field" style="flex:1">
+        <label>Stratégies <span id="strat-count" style="color:var(--dim)"></span> · <a href="#" onclick="toggleAll(true);return false" style="color:var(--cyan)">toutes</a> / <a href="#" onclick="toggleAll(false);return false" style="color:var(--muted)">aucune</a> / <a href="#" onclick="selectOmnibus();return false" style="color:var(--purple)">omnibus</a></label>
+        <div id="strat-chips" class="cmp-strats"><span class="cmp-msg">Chargement…</span></div>
+      </div>
+    </div>
+
+    <div id="cmp-status" class="cmp-msg" style="display:none"></div>
+
+    <div class="table-card">
+      <div class="tscroll">
+        <table class="cmp-table" id="cmp-table">
+          <thead id="cmp-head"></thead>
+          <tbody id="cmp-body"><tr><td class="cmp-msg">Sélectionnez des stratégies puis cliquez sur « Comparer ».</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block body_scripts %}
+<script>
+// Colonnes : clé API, libellé, "higher better" (1) / lower better (-1) / neutre (0), formatteur
+const COLS = [
+  {k:'total_pnl',     l:'PnL',          dir: 1, fmt:v=>v.toFixed(2)},
+  {k:'win_rate',      l:'Win %',        dir: 1, fmt:v=>v.toFixed(1)},
+  {k:'sharpe',        l:'Sharpe',       dir: 1, fmt:v=>v.toFixed(2)},
+  {k:'max_drawdown',  l:'Max DD %',     dir:-1, fmt:v=>v.toFixed(2)},
+  {k:'profit_factor', l:'Profit Factor',dir: 1, fmt:v=>v.toFixed(2)},
+  {k:'expectancy',    l:'Expectancy',   dir: 1, fmt:v=>v.toFixed(3)},
+  {k:'total_trades',  l:'Trades',       dir: 0, fmt:v=>String(Math.round(v))},
+  {k:'final_equity',  l:'Equity finale',dir: 1, fmt:v=>v.toFixed(2)},
+];
+
+let _results = {};      // name -> metrics
+let _sortKey = 'total_pnl';
+let _sortDir = -1;       // -1 desc, 1 asc
+
+async function loadSettings(){
+  try{
+    const s = await apiFetch('/api/backtest/settings').then(r=>r.json());
+    const tfSel = document.getElementById('f-tf');
+    const tfs = s.available_timeframes || ['15m','30m','1h'];
+    tfSel.innerHTML = tfs.map(t=>`<option ${t===(s.timeframe||'1h')?'selected':''}>${t}</option>`).join('');
+    const all = s.all_strategies || [];
+    const enabled = new Set(s.strategies || []);
+    const chips = document.getElementById('strat-chips');
+    chips.innerHTML = all.map(n=>{
+      const on = enabled.has(n) || n.startsWith('opus_omnibus');
+      return `<span class="cmp-chip ${on?'on':''}" data-name="${escHtml(n)}" onclick="toggleChip(this)">${escHtml(n)}</span>`;
+    }).join('');
+    updateCount();
+  }catch(e){
+    document.getElementById('strat-chips').innerHTML =
+      `<span class="cmp-msg" style="color:var(--red)">Erreur chargement : ${escHtml(e.message)}</span>`;
+  }
+}
+
+function toggleChip(el){ el.classList.toggle('on'); updateCount(); }
+function toggleAll(on){ document.querySelectorAll('.cmp-chip').forEach(c=>c.classList.toggle('on', on)); updateCount(); }
+function selectOmnibus(){ document.querySelectorAll('.cmp-chip').forEach(c=>c.classList.toggle('on', c.dataset.name.startsWith('opus_omnibus'))); updateCount(); }
+function selectedStrats(){ return [...document.querySelectorAll('.cmp-chip.on')].map(c=>c.dataset.name); }
+function updateCount(){ document.getElementById('strat-count').textContent = '('+selectedStrats().length+')'; }
+
+async function runCompare(){
+  const strats = selectedStrats();
+  const status = document.getElementById('cmp-status');
+  if(!strats.length){ toast('Sélectionnez au moins une stratégie', true); return; }
+  const symbol = document.getElementById('f-symbol').value.trim() || 'BTC/USDC';
+  const tf     = document.getElementById('f-tf').value;
+  const limit  = parseInt(document.getElementById('f-limit').value,10) || 3000;
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true; btn.textContent = '… calcul';
+  status.style.display='block';
+  status.innerHTML = `Backtest de ${strats.length} stratégie(s) sur ${symbol} ${tf} · ${limit} bougies…`;
+  try{
+    const url = `/api/backtest?symbol=${encodeURIComponent(symbol)}&limit=${limit}&timeframe=${tf}&strategies=${encodeURIComponent(strats.join(','))}`;
+    const res = await apiFetch(url, {method:'POST'}).then(r=>r.json());
+    if(res.detail){ throw new Error(res.detail); }
+    _results = res.by_strategy || {};
+    status.innerHTML = `${Object.keys(_results).length} stratégie(s) · ${res.n_bars} bougies · ${res.date_from} → ${res.date_to}`;
+    renderTable();
+  }catch(e){
+    status.innerHTML = `<span style="color:var(--red)">Erreur : ${escHtml(e.message)}</span>`;
+  }finally{
+    btn.disabled=false; btn.textContent='▶ Comparer';
+  }
+}
+
+function setSort(k){
+  if(_sortKey===k){ _sortDir = -_sortDir; }
+  else { _sortKey=k; const c=COLS.find(x=>x.k===k); _sortDir = (c && c.dir>0)? -1 : (c && c.dir<0?1:-1); }
+  renderTable();
+}
+
+function renderTable(){
+  const names = Object.keys(_results);
+  const head = document.getElementById('cmp-head');
+  const body = document.getElementById('cmp-body');
+  if(!names.length){ body.innerHTML='<tr><td class="cmp-msg">Aucun résultat.</td></tr>'; head.innerHTML=''; return; }
+
+  // best value per column
+  const best = {};
+  for(const c of COLS){
+    if(c.dir===0) continue;
+    let bv=null;
+    for(const n of names){
+      const v=Number(_results[n][c.k]); if(!isFinite(v))continue;
+      if(bv===null || (c.dir>0 ? v>bv : v<bv)) bv=v;
+    }
+    best[c.k]=bv;
+  }
+
+  head.innerHTML = '<tr><th style="text-align:left" onclick="setSort(\'__name\')">Stratégie</th>' +
+    COLS.map(c=>`<th class="${_sortKey===c.k?'sorted':''}" onclick="setSort('${c.k}')">${c.l}${_sortKey===c.k?(_sortDir<0?' ▼':' ▲'):''}</th>`).join('') + '</tr>';
+
+  const sorted = names.slice().sort((a,b)=>{
+    if(_sortKey==='__name') return _sortDir * a.localeCompare(b);
+    const va=Number(_results[a][_sortKey])||0, vb=Number(_results[b][_sortKey])||0;
+    return _sortDir * (va - vb);
+  });
+
+  body.innerHTML = sorted.map((n,i)=>{
+    const r=_results[n];
+    const cells = COLS.map(c=>{
+      const v=Number(r[c.k]); const disp=isFinite(v)?c.fmt(v):'—';
+      const isBest = c.dir!==0 && best[c.k]!==null && isFinite(v) && v===best[c.k];
+      let clr='';
+      if(c.k==='total_pnl'||c.k==='expectancy') clr = v>0?'color:var(--green)':v<0?'color:var(--red)':'';
+      if(c.k==='max_drawdown') clr='color:var(--amber)';
+      return `<td class="${isBest?'best':''}" style="${clr}">${disp}</td>`;
+    }).join('');
+    return `<tr><td class="name"><span class="cmp-rank">#${i+1}</span>${escHtml(n)}</td>${cells}</tr>`;
+  }).join('');
+}
+
+function exportCompare(){
+  const names=Object.keys(_results);
+  if(!names.length){ toast('Aucune donnée à exporter', true); return; }
+  const rows=[['strategy',...COLS.map(c=>c.k)].join(',')];
+  for(const n of names){
+    rows.push([n, ...COLS.map(c=>{const v=Number(_results[n][c.k]);return isFinite(v)?v:'';})].join(','));
+  }
+  const blob=new Blob([rows.join('\n')],{type:'text/csv'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='comparatif_'+new Date().toISOString().slice(0,10)+'.csv';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href);
+  toast('Export CSV téléchargé ✓');
+}
+
+loadSettings();
+</script>
+{% endblock %}
