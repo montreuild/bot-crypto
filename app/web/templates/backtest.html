@@ -310,7 +310,7 @@ setInterval(_syncBacktestRunState, 5000);
     if(checksDiv&&allStrats.length){
       checksDiv.innerHTML=allStrats.map(st=>`
         <label style="display:flex;align-items:center;gap:6px;font-size:.78rem;cursor:pointer;padding:3px 0">
-          <input type="checkbox" id="sc-${st}" ${enabledSet.has(st)?'checked':''}
+          <input type="checkbox" id="sc-${st}"
             style="accent-color:var(--cyan);width:13px;height:13px"/>
           <span style="font-family:var(--mono)">${st}</span>
           ${enabledSet.has(st)?'<span style="font-size:.65rem;color:var(--green);margin-left:2px">● actif</span>':''}
