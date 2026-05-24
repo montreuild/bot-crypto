@@ -766,7 +766,7 @@ class Strategy(BaseStrategyML):
         "di_rescue":       [8.0, 10.0, 14.0],
         # ── Entraînement V4 ──
         "amp_top_pct":     [0.25, 0.30, 0.35],
-        "warmup_bars":     [1000, 2000, 3000],
+        "warmup_bars":     [500, 750, 1000, 1500],
         "retrain_every":   [500, 800, 1500],
         "n_estimators":    [200, 300, 500],
         "num_leaves":      [15, 31, 63],
@@ -794,7 +794,7 @@ class Strategy(BaseStrategyML):
         "importance_top_n": 15,
         # Entraînement
         "amp_top_pct":      0.30,
-        "warmup_bars":      2000,
+        "warmup_bars":      750,
         "retrain_every":    800,
         "n_estimators":     500,
         "num_leaves":       31,

@@ -213,11 +213,13 @@ class CandleStore:
             logger.warning(f"[CandleStore] parse_timeframe '{tf}' KO : {e} — fallback 1h")
             tf_ms = 3_600_000  # fallback 1h en ms
 
-        # Point de départ : assez loin dans le passé pour couvrir les bougies manquantes
+        # Point de départ : assez loin dans le passé pour couvrir les bougies manquantes.
+        # On clampe à 0 pour éviter un timestamp négatif (ex. 1d × 20000 > cache début)
+        # qui provoquerait "Illegal characters found in parameter 'startTime'" côté Binance.
         if before_ms is not None:
-            since = before_ms - needed * tf_ms
+            since = max(0, before_ms - needed * tf_ms)
         else:
-            since = exchange.milliseconds() - needed * tf_ms
+            since = max(0, int(exchange.milliseconds()) - needed * tf_ms)
 
         all_raw = []
         seen_ts = set()

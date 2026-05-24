@@ -24,7 +24,7 @@ params:
 
   # ── Entraînement inline (LightGBM amp/dir) ──
   amp_top_pct: 0.30
-  warmup_bars: 2000
+  warmup_bars: 750
   retrain_every: 800
   n_estimators: 500
   num_leaves: 31

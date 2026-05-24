@@ -678,7 +678,7 @@ class Strategy(BaseStrategyML):
         "exit_td_window_bars":              [2, 3, 4],
         # ── Entraînement V4 inline ──
         "amp_top_pct":     [0.25, 0.30, 0.35],
-        "warmup_bars":     [1000, 2000, 3000],
+        "warmup_bars":     [500, 750, 1000, 1500],
         "retrain_every":   [500, 800, 1500],
         "n_estimators":    [200, 300, 500],
         "num_leaves":      [15, 31, 63],
@@ -699,7 +699,7 @@ class Strategy(BaseStrategyML):
         "signal_up_dynamic_risk":        True,
         # Entraînement
         "amp_top_pct":         0.30,
-        "warmup_bars":         2000,
+        "warmup_bars":         750,
         "retrain_every":       800,
         "n_estimators":        500,
         "num_leaves":          31,
