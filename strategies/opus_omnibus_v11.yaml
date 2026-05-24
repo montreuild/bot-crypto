@@ -57,7 +57,7 @@ params:
   setup_long_choppy_dir_min: 0.58
   setup_long_choppy_tp_mult: 0.9
   setup_long_choppy_sl_mult: 1.2
-  setup_long_choppy_max_bars: 5
+  setup_long_choppy_max_bars: 10
 
   setup_short_choppy_enabled: true
   setup_short_choppy_priority: 2

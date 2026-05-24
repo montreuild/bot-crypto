@@ -51,13 +51,29 @@ class CandleStore:
     # ── API publique ──────────────────────────────────────────────────────────
 
     def fetch(self, exchange, symbol: str, tf: str,
-              total: int) -> Optional[pl.DataFrame]:
-        """Retourne `total` bougies pour (symbol, tf) depuis cache local + exchange."""
+              total: int, prefer_cache: bool = False) -> Optional[pl.DataFrame]:
+        """Retourne `total` bougies pour (symbol, tf) depuis cache local + exchange.
+
+        prefer_cache=True : si le Parquet local contient déjà au moins ``total``
+        bougies, on les retourne directement SANS aucun appel à l'exchange
+        (ni fetch incrémental, ni backfill historique). Utilisé par les backtests
+        et l'optimiseur, qui travaillent sur une plage historique fixe et n'ont
+        pas besoin de la dernière bougie en cours de formation. Le live et le
+        scanner gardent le défaut (prefer_cache=False) pour rester à jour.
+        """
         path = self._path(symbol, tf)
         lock = _get_file_lock(path)
 
         with lock:
             df_cached = self._load(path)
+
+            # Court-circuit cache : assez de données en stock → pas d'appel exchange.
+            if prefer_cache and len(df_cached) >= total:
+                logger.info(
+                    f"[CandleStore] {symbol}/{tf} — cache suffisant "
+                    f"({len(df_cached)} ≥ {total} bougies), aucun appel à l'exchange"
+                )
+                return df_cached.tail(total)
 
             # Fetch incrémental ou complet
             if len(df_cached) > 0:
