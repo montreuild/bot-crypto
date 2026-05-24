@@ -69,7 +69,7 @@ def run_backtest(
             limit = min(limit, 5000)
 
         exchange = _get_bt_exchange(state.cfg)
-        df       = get_store().fetch(exchange, symbol, tf, total=limit)
+        df       = get_store().fetch(exchange, symbol, tf, total=limit, prefer_cache=True)
         if df is None or len(df) == 0:
             raise HTTPException(400, f"Aucune donnée disponible pour {symbol}/{tf}")
 

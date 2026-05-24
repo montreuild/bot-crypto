@@ -76,7 +76,7 @@ def optimizer_start(
         for tf in tf_list:
             fetch_limit = limit if limit > 0 else RECOMMENDED_LIMIT.get(tf, 1000)
             fetch_details[tf] = fetch_limit
-            df = get_store().fetch(exchange, symbol, tf, total=fetch_limit)
+            df = get_store().fetch(exchange, symbol, tf, total=fetch_limit, prefer_cache=True)
             n_received = len(df) if df is not None else 0
             received_counts[tf] = n_received
             if df is not None and n_received > 0:

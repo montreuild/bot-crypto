@@ -35,26 +35,25 @@ def _save_ml_model_post_opt(strategy_name: str, best_params: dict,
     Appelé dans un thread daemon — ne bloque pas le reporting du job.
     """
     import os
-    import inspect
     try:
         # df_full peut être brut (sans colonnes _pre_*) — l'engine précompute
-        # à chaque run(), mais ici on appelle _fit directement.
+        # à chaque run(), mais ici on entraîne directement.
         from app.core.indicators import precompute_df
         if "_pre_atr14" not in df_full.columns:
             df_full = precompute_df(df_full)
 
         mod   = importlib.import_module(f"app.strategies.{strategy_name}")
         strat = mod.Strategy()
-        for k, v in best_params.items():
-            if hasattr(strat, k):
-                setattr(strat, k, v)
 
-        # Filtre best_params pour ne passer que les kwargs supportés par _fit
-        sig = inspect.signature(strat._fit)
-        fit_kwargs = {k: v for k, v in best_params.items() if k in sig.parameters}
-        strat._fit(df_full, timeframe, **fit_kwargs)
+        # Contrat unifié BaseStrategyML.fit(df, params) : chaque stratégie ML
+        # route en interne vers sa propre méthode d'entraînement (_train, _fit…)
+        # et détecte le timeframe depuis df. On ne suppose donc PAS l'existence
+        # d'une méthode privée _fit (toutes ne l'ont pas — d'où l'erreur
+        # « 'Strategy' object has no attribute '_fit' » pour v10_retrained/v11).
+        strat.fit(df_full, params={strategy_name: best_params})
 
-        if timeframe not in strat._trained_tfs:
+        trained = getattr(strat, "_trained_tfs", set())
+        if timeframe not in trained and not trained:
             logger.warning(f"[AutoOpt] ML post-opt : entraînement KO pour {strategy_name}/{timeframe}")
             return
         path = os.path.join(strat.model_dir, f"{strategy_name}_{timeframe}.pkl")
@@ -203,8 +202,12 @@ class AutoOptimizer:
             df_oos = df[split:]  if df is not None else None
 
             for name in strats:
-                if name not in PARAM_SPACES:
-                    skipped.append({"strategy": name, "timeframe": tf, "reason": "aucun espace de paramètres"})
+                # Pas d'espace de paramètres (ou espace vide) → rien à optimiser.
+                # On évite de lancer un job qui tournerait dans le vide (baseline +
+                # trials qui ne font qu'échantillonner un dict vide).
+                if not PARAM_SPACES.get(name):
+                    skipped.append({"strategy": name, "timeframe": tf,
+                                    "reason": "aucun paramètre à optimiser (espace de recherche vide)"})
                     continue
 
                 # Vérifier si les données sont suffisantes pour cette stratégie

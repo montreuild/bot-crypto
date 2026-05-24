@@ -73,7 +73,7 @@ _DEFAULT_SETUPS: Tuple[Dict[str, Any], ...] = (
         "name": "LONG_CHOPPY",  "priority": 2, "direction":  1, "enabled": True,
         "regime": REGIME_CHOPPY, "needs_exit_td_window": False,
         "amp_min": 0.50, "dir_max": None, "dir_min": 0.58,
-        "tp_mult": 0.9,  "sl_mult": 1.2,  "max_bars": 5,  "size_factor": 1.0,
+        "tp_mult": 0.9,  "sl_mult": 1.2,  "max_bars": 10,  "size_factor": 1.0,
     },
     # V7 : p_dir<0.42 (était 0.45), TP élargi à 1.2
     {

@@ -38,8 +38,8 @@ params:
   setup_long_choppy_amp_min: 0.50
   setup_long_choppy_dir_min: 0.55
   setup_long_choppy_tp_mult: 1.0
-  setup_long_choppy_sl_mult: 1.4
-  setup_long_choppy_max_bars: 6
+  setup_long_choppy_sl_mult: 1.2
+  setup_long_choppy_max_bars: 10
 
   # ── Setup 3 : LONG_EXIT_TD (priorité 3) ──
   setup_long_exit_td_enabled: true

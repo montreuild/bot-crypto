@@ -494,7 +494,7 @@ _DEFAULT_SETUPS: Tuple[Dict[str, Any], ...] = (
         "regime": REGIME_CHOPPY, "needs_exit_td_window": False,
         "needs_bearish_excess": False, "needs_rsi_below": None, "needs_adx_above": None,
         "amp_min": 0.50, "dir_max": None, "dir_min": 0.58,
-        "tp_mult": 0.9, "sl_mult": 1.2, "max_bars": 5, "size_factor": 1.0,
+        "tp_mult": 0.9, "sl_mult": 1.2, "max_bars": 10, "size_factor": 1.0,
     },
     {
         "name": "SHORT_CHOPPY", "priority": 2, "direction": -1, "enabled": True,
@@ -766,7 +766,7 @@ class Strategy(BaseStrategyML):
         "di_rescue":       [8.0, 10.0, 14.0],
         # ── Entraînement V4 ──
         "amp_top_pct":     [0.25, 0.30, 0.35],
-        "warmup_bars":     [1000, 2000, 3000],
+        "warmup_bars":     [500, 750, 1000, 1500],
         "retrain_every":   [500, 800, 1500],
         "n_estimators":    [200, 300, 500],
         "num_leaves":      [15, 31, 63],
@@ -794,7 +794,7 @@ class Strategy(BaseStrategyML):
         "importance_top_n": 15,
         # Entraînement
         "amp_top_pct":      0.30,
-        "warmup_bars":      2000,
+        "warmup_bars":      750,
         "retrain_every":    800,
         "n_estimators":     500,
         "num_leaves":       31,

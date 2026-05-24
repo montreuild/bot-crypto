@@ -367,10 +367,15 @@ class Backtester:
         close_arr = df["close"].to_numpy().astype(float)
         open_arr  = df["open"].to_numpy().astype(float)
 
+        # Libellé des stratégies actives — chaque backtest de l'UI tourne une
+        # stratégie par Backtester, donc ce libellé identifie la stratégie
+        # concernée dans les logs de progression et de fin.
+        _strat_label = ",".join(s.name for s in self.engine.strategies) or "?"
+
         total_bars = len(df) - 1 - warmup
         _t_loop    = time.time()
         logger.info(
-            f"[Backtest] {symbol} {timeframe or '?'} : démarrage boucle — "
+            f"[Backtest] [{_strat_label}] {symbol} {timeframe or '?'} : démarrage boucle — "
             f"{total_bars} barres à parcourir (warmup={warmup}, total={len(df)})"
         )
         for i in range(warmup, len(df) - 1):
@@ -398,7 +403,7 @@ class Backtester:
                     eta  = (total_bars - done) / max(rate, 0.001)
                     in_pos_pct = 100.0 * diag["bars_in_position"] / max(diag["bars_total"], 1)
                     logger.info(
-                        f"[Backtest] {symbol} {timeframe or '?'} : "
+                        f"[Backtest] [{_strat_label}] {symbol} {timeframe or '?'} : "
                         f"{done}/{total_bars} barres ({pct:.0f}%) — "
                         f"{rate:.0f} bars/s, ETA {eta:.0f}s, "
                         f"{len(trades)} trades, capital={capital:.2f} "
@@ -827,7 +832,7 @@ class Backtester:
         bt = max(diag["bars_total"], 1)
         in_pos_pct = 100.0 * diag["bars_in_position"] / bt
         logger.info(
-            f"[Backtest] {symbol} {timeframe or '?'} : terminé — "
+            f"[Backtest] [{_strat_label}] {symbol} {timeframe or '?'} : terminé — "
             f"{diag['bars_total']} barres, {diag['trades_opened']} trades ouverts, "
             f"{in_pos_pct:.0f}% du temps en position "
             f"(max {diag['max_bars_in_position']} barres consécutives), "

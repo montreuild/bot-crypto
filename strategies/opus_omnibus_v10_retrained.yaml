@@ -17,7 +17,7 @@ params:
 
   # ── Entraînement inline (LightGBM amp/dir, cf. opus_omnibus_v7) ──
   amp_top_pct: 0.30
-  warmup_bars: 2000
+  warmup_bars: 750
   retrain_every: 800
   n_estimators: 500
   num_leaves: 31
@@ -50,7 +50,7 @@ params:
   setup_long_choppy_dir_min: 0.58
   setup_long_choppy_tp_mult: 0.9
   setup_long_choppy_sl_mult: 1.2
-  setup_long_choppy_max_bars: 5
+  setup_long_choppy_max_bars: 10
 
   setup_short_choppy_enabled: true
   setup_short_choppy_priority: 2

@@ -51,13 +51,29 @@ class CandleStore:
     # ── API publique ──────────────────────────────────────────────────────────
 
     def fetch(self, exchange, symbol: str, tf: str,
-              total: int) -> Optional[pl.DataFrame]:
-        """Retourne `total` bougies pour (symbol, tf) depuis cache local + exchange."""
+              total: int, prefer_cache: bool = False) -> Optional[pl.DataFrame]:
+        """Retourne `total` bougies pour (symbol, tf) depuis cache local + exchange.
+
+        prefer_cache=True : si le Parquet local contient déjà au moins ``total``
+        bougies, on les retourne directement SANS aucun appel à l'exchange
+        (ni fetch incrémental, ni backfill historique). Utilisé par les backtests
+        et l'optimiseur, qui travaillent sur une plage historique fixe et n'ont
+        pas besoin de la dernière bougie en cours de formation. Le live et le
+        scanner gardent le défaut (prefer_cache=False) pour rester à jour.
+        """
         path = self._path(symbol, tf)
         lock = _get_file_lock(path)
 
         with lock:
             df_cached = self._load(path)
+
+            # Court-circuit cache : assez de données en stock → pas d'appel exchange.
+            if prefer_cache and len(df_cached) >= total:
+                logger.info(
+                    f"[CandleStore] {symbol}/{tf} — cache suffisant "
+                    f"({len(df_cached)} ≥ {total} bougies), aucun appel à l'exchange"
+                )
+                return df_cached.tail(total)
 
             # Fetch incrémental ou complet
             if len(df_cached) > 0:
@@ -197,11 +213,13 @@ class CandleStore:
             logger.warning(f"[CandleStore] parse_timeframe '{tf}' KO : {e} — fallback 1h")
             tf_ms = 3_600_000  # fallback 1h en ms
 
-        # Point de départ : assez loin dans le passé pour couvrir les bougies manquantes
+        # Point de départ : assez loin dans le passé pour couvrir les bougies manquantes.
+        # On clampe à 0 pour éviter un timestamp négatif (ex. 1d × 20000 > cache début)
+        # qui provoquerait "Illegal characters found in parameter 'startTime'" côté Binance.
         if before_ms is not None:
-            since = before_ms - needed * tf_ms
+            since = max(0, before_ms - needed * tf_ms)
         else:
-            since = exchange.milliseconds() - needed * tf_ms
+            since = max(0, int(exchange.milliseconds()) - needed * tf_ms)
 
         all_raw = []
         seen_ts = set()

@@ -1,10 +1,34 @@
 """Indicateurs techniques — source unique pour stratégies et moteur. Basé sur Polars."""
 import logging
+import threading
+from collections import OrderedDict
 import numpy as np
 import polars as pl
 from typing import Tuple
 
 _log = logging.getLogger(__name__)
+
+# ── Cache des features pré-calculées (partagé entre jobs d'un même process) ──
+# Le backtest et l'optimiseur appellent precompute_df() de façon répétée sur la
+# MÊME plage (par TF) : 4 stratégies en parallèle sur le même df côté backtest,
+# et N trials sur df_is/df_oos identiques côté optimiseur. On mémoïse le résultat
+# par empreinte de la plage pour ne calculer les indicateurs qu'une seule fois.
+# Borné à quelques entrées pour limiter la mémoire (plusieurs TF × IS/OOS).
+_PRECOMPUTE_CACHE: "OrderedDict[tuple, pl.DataFrame]" = OrderedDict()
+_PRECOMPUTE_LOCK = threading.Lock()
+_PRECOMPUTE_MAXSIZE = 16
+
+
+def _precompute_key(df: pl.DataFrame):
+    """Empreinte bon marché d'une plage OHLCV (taille + bornes temporelles + dernier close)."""
+    try:
+        n = df.height
+        if n == 0 or "time" not in df.columns:
+            return None
+        return (n, df.width, str(df["time"][0]), str(df["time"][-1]),
+                float(df["close"][-1]))
+    except Exception:
+        return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -482,6 +506,33 @@ def nearest_resistance(price: float, levels: list) -> float | None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def precompute_df(df: pl.DataFrame) -> pl.DataFrame:
+    """Enveloppe mémoïsée de :func:`_precompute_df_impl`.
+
+    - Idempotent : si le df porte déjà les colonnes ``_pre_*``, il est retourné tel quel.
+    - Cache par empreinte de plage (voir ``_precompute_key``) partagé au sein du
+      process, ce qui évite de recalculer les indicateurs pour chaque stratégie
+      (backtest 4 threads) et pour chaque trial (optimiseur) sur une plage identique.
+    """
+    if "_pre_atr14" in df.columns:
+        return df
+    key = _precompute_key(df)
+    if key is not None:
+        with _PRECOMPUTE_LOCK:
+            cached = _PRECOMPUTE_CACHE.get(key)
+            if cached is not None:
+                _PRECOMPUTE_CACHE.move_to_end(key)
+                return cached
+    result = _precompute_df_impl(df)
+    if key is not None:
+        with _PRECOMPUTE_LOCK:
+            _PRECOMPUTE_CACHE[key] = result
+            _PRECOMPUTE_CACHE.move_to_end(key)
+            while len(_PRECOMPUTE_CACHE) > _PRECOMPUTE_MAXSIZE:
+                _PRECOMPUTE_CACHE.popitem(last=False)
+    return result
+
+
+def _precompute_df_impl(df: pl.DataFrame) -> pl.DataFrame:
     """Enrichit le df avec les colonnes _pre_* calculées une seule fois via Polars.
     Appelé par Backtester.run() AVANT la boucle barre-par-barre.
     Les stratégies lisent ces colonnes via pre_val() → O(1).
