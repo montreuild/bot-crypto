@@ -298,7 +298,7 @@ function renderStratChecks(spaces, stratTfs) {
   el.innerHTML = Object.keys(spaces).map(s => {
     const tfs = (stratTfs[s] || []).join(', ') || 'tous';
     return `<div class="checkbox-row" style="margin-bottom:0;align-items:flex-start">
-      <input type="checkbox" id="sc-${s}" checked onchange="updateStratCompatibility()"/>
+      <input type="checkbox" id="sc-${s}" onchange="updateStratCompatibility()"/>
       <div>
         <label for="sc-${s}" style="font-family:var(--mono);font-size:.78rem;font-weight:600">${s}</label>
         <span id="sc-tfs-${s}" style="font-size:.65rem;color:var(--cyan);margin-left:6px">${tfs}</span>
