@@ -152,7 +152,6 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self.pipeline = SignalPipeline(
             loaded_strategies=self._loaded_strategies,
             cfg=cfg,
-            exchange=self.exchange,
         )
 
         self._last_day_key: str = ""

@@ -45,20 +45,26 @@ class SignalPipeline:
     Pipeline de collecte et de ranking des signaux.
 
     Usage :
-        pipeline = SignalPipeline(loaded_strategies, cfg, scanner)
+        pipeline = SignalPipeline(loaded_strategies, cfg)
         signals = pipeline.collect(
             symbols, active_per_tf, ohlcv_fn, open_positions, cooldowns
         )
         # signals est trié par score décroissant, dédupliqué par (symbol, side)
     """
 
-    def __init__(self, loaded_strategies: Dict[str, object], cfg: dict, exchange):
+    def __init__(self, loaded_strategies: Dict[str, object], cfg: dict):
         self._strategies   = loaded_strategies
         self._cfg          = cfg
-        self._exchange     = exchange
         self._threshold    = cfg["trading"]["score_threshold"]
         self._strat_thresholds: Dict[str, float] = {}
         self._score_timeout = float(cfg.get("trading", {}).get("signal_score_timeout", 5))
+        # Executor partagé pour borner le temps de scoring d'une stratégie sans
+        # recréer un ThreadPoolExecutor à chaque appel (réutilisé sur toute la
+        # vie du process). Plusieurs workers pour qu'un scoring lent/figé
+        # n'empêche pas immédiatement les suivants.
+        self._score_executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="sigscore"
+        )
         sp = cfg.get("strategy_params", {})
         for name in loaded_strategies:
             self._strat_thresholds[name] = float(
@@ -139,19 +145,21 @@ class SignalPipeline:
                 self._cfg.get("strategy_params", {}),
                 entry.get("params", {})
             )
-            with ThreadPoolExecutor(max_workers=1) as _pool:
-                future = _pool.submit(strategy.score, df, params,
-                                      df_htf=df_htf, symbol=symbol)
-                try:
-                    signal = future.result(timeout=self._score_timeout)
-                except FuturesTimeoutError:
-                    # Note : le thread sous-jacent continue jusqu'à sa fin naturelle ;
-                    # le résultat est simplement ignoré (pas de ressources partagées modifiées).
-                    logger.error(
-                        f"[Pipeline] {strat_name}/{symbol}/{tf} score timeout "
-                        f"({self._score_timeout}s) — signal ignoré"
-                    )
-                    return None
+            future = self._score_executor.submit(
+                strategy.score, df, params, df_htf=df_htf, symbol=symbol
+            )
+            try:
+                signal = future.result(timeout=self._score_timeout)
+            except FuturesTimeoutError:
+                # Le worker continue jusqu'à sa fin naturelle (le pool le
+                # réutilisera ensuite) ; le résultat est simplement ignoré
+                # — aucune ressource partagée n'est modifiée.
+                future.cancel()
+                logger.error(
+                    f"[Pipeline] {strat_name}/{symbol}/{tf} score timeout "
+                    f"({self._score_timeout}s) — signal ignoré"
+                )
+                return None
         except Exception as e:
             logger.error(f"[Pipeline] {strat_name}/{symbol}/{tf} score KO : {e}")
             return None
@@ -174,14 +182,10 @@ class SignalPipeline:
             })
             return None
 
-        atr   = float(df["_pre_atr14"][-1]) if "_pre_atr14" in df.columns else 0.0
-        price = 0.0
-        try:
-            ticker = self._exchange.fetch_ticker(symbol)
-            if ticker:
-                price = float(ticker.get("last", 0))
-        except Exception as e:
-            logger.debug(f"[SignalPipeline] fetch_ticker {symbol} : {e}")
+        # Le prix d'exécution est (re)lu au moment de l'ouverture dans
+        # LiveTrader._cycle (ticker frais) — inutile de fetch ici, ce qui
+        # évitait un double appel fetch_ticker par signal.
+        atr = float(df["_pre_atr14"][-1]) if "_pre_atr14" in df.columns else 0.0
 
         return Signal(
             symbol=symbol,
@@ -192,7 +196,7 @@ class SignalPipeline:
             slot_key=slot_key,
             params=entry.get("params", {}),
             atr=float(atr) if atr else 0.0,
-            price=price,
+            price=0.0,
             reason=signal.get("reason", ""),
         )
 
