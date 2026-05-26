@@ -70,6 +70,18 @@ _jobs: Dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 _cancel_flags: Dict[str, threading.Event] = {}
 
+# Borne le nombre de jobs d'optimisation exécutés *simultanément*, toutes sources
+# confondues (auto-optimisation planifiée + API). start_async peut créer des
+# centaines de threads (n_stratégies × n_TF) ; sans cette borne ils saturent le
+# CPU/la mémoire du serveur pendant le live. Les threads en excès attendent
+# (bloqués sur le sémaphore) au lieu de tourner tous en même temps.
+def _max_concurrent_opt_jobs() -> int:
+    import os
+    cpu = os.cpu_count() or 2
+    return max(1, cpu - 1)
+
+_job_semaphore = threading.BoundedSemaphore(_max_concurrent_opt_jobs())
+
 
 def _job_id(strategy: str, timeframe: str, symbol: str) -> str:
     return f"{strategy}@{timeframe}@{symbol}"
@@ -266,6 +278,16 @@ class AutoOptimizer:
 
         cancel_event = _cancel_flags.get(job_id)
 
+        # Attente bornée d'un créneau d'exécution (cap CPU global). Tant que le
+        # sémaphore n'est pas acquis, le job reste "queued" et reste annulable.
+        _update_job(job_id, status="queued")
+        while not _job_semaphore.acquire(timeout=1.0):
+            if cancel_event and cancel_event.is_set():
+                logger.info(f"[AutoOpt] {job_id} annulé pendant l'attente du créneau")
+                _update_job(job_id, status="cancelled", finished_at=time.time())
+                return
+        _update_job(job_id, status="running")
+
         def on_progress(trial: int, total: int, best_score: float, latest: dict):
             if cancel_event and cancel_event.is_set():
                 raise InterruptedError(f"Job {job_id} annulé par l'utilisateur")
@@ -407,6 +429,8 @@ class AutoOptimizer:
         except Exception as e:
             logger.error(f"[AutoOpt] {job_id} KO : {e}", exc_info=True)
             _update_job(job_id, status="error", error=str(e), finished_at=time.time())
+        finally:
+            _job_semaphore.release()
 
     # ── Exécution synchrone ───────────────────────────────────────────────
     def optimize_all(self, df_map: Dict[str, pl.DataFrame], symbol: str,

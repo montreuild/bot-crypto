@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
-from sqlalchemy import (create_engine, Column, Integer, Float, String,
+from sqlalchemy import (create_engine, event, Column, Integer, Float, String,
                         Boolean, DateTime, Text, JSON, Index)
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
@@ -110,7 +110,22 @@ class OpenPosition(Base):
 
 def init_db(url: str = "sqlite:///crypto_bot.db"):
     """Initialise la base de données et retourne (engine, SessionLocal)."""
-    engine     = create_engine(url, connect_args={"check_same_thread": False})
+    is_sqlite = url.startswith("sqlite")
+    # timeout/busy_timeout : le bot écrit depuis plusieurs threads (cycle live,
+    # retrains ML, jobs optimizer, API). Sans WAL + busy_timeout, SQLite lève
+    # « database is locked » sous écritures concurrentes en prod.
+    connect_args = {"check_same_thread": False, "timeout": 30} if is_sqlite else {}
+    engine = create_engine(url, connect_args=connect_args)
+
+    if is_sqlite:
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragma(dbapi_conn, _conn_record):
+            cur = dbapi_conn.cursor()
+            cur.execute("PRAGMA journal_mode=WAL")      # lecteurs concurrents + 1 writer
+            cur.execute("PRAGMA synchronous=NORMAL")    # bon compromis durabilité/perf
+            cur.execute("PRAGMA busy_timeout=30000")    # attend au lieu d'échouer (30s)
+            cur.close()
+
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     logger.info(f"[DB] Connecté : {url}")
