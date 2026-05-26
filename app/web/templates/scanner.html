@@ -216,7 +216,7 @@
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-ema200" checked onchange="toggleIndicator('ema200')" style="accent-color:#a78bfa"> EMA 200</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-bb"     checked onchange="toggleIndicator('bb')"     style="accent-color:rgba(77,159,255,.8)"> Bollinger</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-sr"           onchange="toggleIndicator('sr')"     style="accent-color:#ffd166"> Sup/Rés</label>
-        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer" title="Sous-graphique V8 : probabilités p(amp), p(dir) et markers des setups (SIGNAL_UP, SHORT_TD, …). V8 = setup long principal basé sur excès baissier + confirmation modèle."><input type="checkbox" id="tog-v7" checked onchange="toggleV7()" style="accent-color:#c084fc"> V8 — Probabilités (p_amp / p_dir + setups)</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer" title="Setups des stratégies (V8/V11/V12) : markers d'entrée long/short sur le prix + niveaux TP/SL du dernier setup. Bascule le modèle via le sélecteur V8/V11/V12."><input type="checkbox" id="tog-v7" checked onchange="toggleV7()" style="accent-color:#c084fc"> Setups stratégie (markers + TP/SL)</label>
       </div>
       <div class="panel-body" style="gap:0;padding:0">
         <div id="chart-status" style="padding:8px 14px;font-size:.72rem;color:var(--dim);min-height:20px"></div>
@@ -231,14 +231,14 @@
           <div class="chart-wrap" id="chart-macd" style="height:90px" role="img" aria-label="Indicateur MACD (12,26,9)"></div>
           <div id="v7-block">
             <div class="chart-sub-lbl" style="margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <span>V8 — Probabilités <span style="color:#c084fc">p(amplitude)</span> / <span style="color:#22d3ee">p(direction)</span></span>
+              <span>Setups <span style="color:#c084fc">stratégie</span> — markers d'entrée + <span style="color:#22d3ee">TP/SL</span> sur le prix</span>
               <span style="display:inline-flex;gap:4px;margin-left:4px">
-                <button id="v8-mode-v8" class="chart-tf-btn active" style="font-size:.6rem;padding:2px 6px" onclick="setV8Mode('v8')">V8</button>
-                <button id="v8-mode-v7" class="chart-tf-btn" style="font-size:.6rem;padding:2px 6px" onclick="setV8Mode('v7')">V7</button>
+                <button id="setup-strat-v8"  class="chart-tf-btn active" style="font-size:.6rem;padding:2px 6px" onclick="setSetupStrategy('v8')">V8</button>
+                <button id="setup-strat-v11" class="chart-tf-btn" style="font-size:.6rem;padding:2px 6px" onclick="setSetupStrategy('v11')">V11</button>
+                <button id="setup-strat-v12" class="chart-tf-btn" style="font-size:.6rem;padding:2px 6px" onclick="setSetupStrategy('v12')">V12</button>
               </span>
               <span id="v7-status" style="margin-left:4px;color:var(--dim);font-weight:400;font-size:.6rem"></span>
             </div>
-            <div class="chart-wrap" id="chart-v7" style="height:110px" role="img" aria-label="Probabilités V8 (p_amp, p_dir + excès baissier)"></div>
             <div id="v7-legend" style="padding:4px 12px 6px;font-size:.66rem;color:var(--dim);display:flex;gap:10px;flex-wrap:wrap;border-bottom:1px solid rgba(255,255,255,.04)"></div>
             <div id="v8-signal-detail" style="padding:4px 12px;font-size:.65rem;color:var(--dim);display:none;gap:10px;flex-wrap:wrap;align-items:center"></div>
           </div>
@@ -539,7 +539,7 @@ document.getElementById('opp-list').innerHTML='<div class="empty" style="color:v
 // ── Graphique Scanner ───────────────────────────────────────────────────
 let chartTf = '1h';
 let chartType = 'candles'; // 'candles' | 'line'
-let tvPriceChart = null, tvVolChart = null, tvRsiChart = null, tvMacdChart = null, tvV7Chart = null;
+let tvPriceChart = null, tvVolChart = null, tvRsiChart = null, tvMacdChart = null;
 let _v7PriceSeries = null;  // série principale du chart-price (pour markers V7)
 // Series refs for indicator toggles
 let _seriesMap = {};
@@ -582,8 +582,8 @@ function _destroyCharts(){
   _resizeObservers.forEach(ro=>{try{ro.disconnect();}catch(_){}});
   _resizeObservers = [];
   // Remove charts
-  [tvPriceChart, tvVolChart, tvRsiChart, tvMacdChart, tvV7Chart].forEach(c=>{try{if(c)c.remove();}catch(_){}});
-  tvPriceChart=tvVolChart=tvRsiChart=tvMacdChart=tvV7Chart=null;
+  [tvPriceChart, tvVolChart, tvRsiChart, tvMacdChart].forEach(c=>{try{if(c)c.remove();}catch(_){}});
+  tvPriceChart=tvVolChart=tvRsiChart=tvMacdChart=null;
   _v7PriceSeries = null;
   _seriesMap = {};
 }
@@ -773,22 +773,14 @@ function _renderChart(d){
     tvMacdChart.timeScale().fitContent();
   }
 
-  // ── V7 sub-chart : créé vide ici, peuplé via loadV7Series() ──────────
+  // ── Setups stratégie : markers + TP/SL directement sur le price chart ─
   const v7Visible = document.getElementById('tog-v7')?.checked !== false;
   document.getElementById('v7-block').style.display = v7Visible ? '' : 'none';
-  if(v7Visible){
-    tvV7Chart = _mkChart('chart-v7', 100, {
-      rightPriceScale:{scaleMargins:{top:.1,bottom:.1},autoScale:false,
-                       mode:LightweightCharts.PriceScaleMode.Normal},
-      timeScale:{visible:false},
-    });
-    // Référence lines ajoutées dans loadV7Series() selon le mode V7/V8
-    loadV7Series();
-  }
+  if(v7Visible){ loadSetupSeries(); }
 
   // ── Sync sub-charts to price chart via TIME range (fixes RSI offset) ─
   let _syncing = false;
-  const _subCharts = [tvVolChart, tvRsiChart, tvMacdChart, tvV7Chart].filter(Boolean);
+  const _subCharts = [tvVolChart, tvRsiChart, tvMacdChart].filter(Boolean);
 
   tvPriceChart.timeScale().subscribeVisibleTimeRangeChange(range=>{
     if(_syncing||!range) return;
@@ -807,53 +799,59 @@ function _renderChart(d){
   });
 }
 
-// ── V8/V7 sub-chart (p_amp / p_dir + markers setups) ──────────────────────
+// ── Setups stratégie (markers d'entrée + TP/SL sur le price chart) ─────────
 const V7_SETUP_COLORS = {
-  // V8 setups
-  SIGNAL_UP:        '#10b981',   // vert — setup long principal V8
-  // V7 setups (pour mode V7)
+  SIGNAL_UP:        '#10b981',   // vert — setup long principal
   SHORT_TD_HIGH:    '#7f1d1d',
   SHORT_TD:         '#dc2626',
-  LONG_CHOPPY:      '#06b6d4',   // cyan — confluence V8 (SIGNAL_UP + LONG_CHOPPY)
+  LONG_CHOPPY:      '#06b6d4',
   SHORT_CHOPPY:     '#ef4444',
-  LONG_EXIT_TD:     '#6b7280',   // gris — désactivé en V8
+  LONG_EXIT_TD:     '#6b7280',
   LONG_RANGE_STRICT:'#3b82f6',
+  LONG_TU:          '#22c55e',   // V11/V12 — long trend up
+  LONG_RANGE_LIGHT: '#60a5fa',   // V11/V12 — long range léger
 };
 
-// V8 mode: 'v8' (défaut) ou 'v7'
-let _v8Mode = 'v8';
+// Stratégie de setups sélectionnée : 'v8' (défaut), 'v11' ou 'v12'
+let _setupStrat = 'v8';
+const _SETUP_STRATS = ['v8', 'v11', 'v12'];
+// Price lines TP/SL/entrée du dernier setup (pour pouvoir les retirer au refresh)
+let _setupPriceLines = [];
 
-function setV8Mode(mode){
-  _v8Mode = mode;
-  document.getElementById('v8-mode-v8').classList.toggle('active', mode === 'v8');
-  document.getElementById('v8-mode-v7').classList.toggle('active', mode === 'v7');
-  // Reload the V7/V8 series
-  if(tvV7Chart && _lastChartData){ _renderChart(_lastChartData); }
+function _clearSetupOverlay(){
+  if(_v7PriceSeries){
+    try{ _v7PriceSeries.setMarkers([]); }catch(_){}
+    _setupPriceLines.forEach(pl=>{ try{ _v7PriceSeries.removePriceLine(pl); }catch(_){} });
+  }
+  _setupPriceLines = [];
+}
+
+function setSetupStrategy(key){
+  if(!_SETUP_STRATS.includes(key)) return;
+  _setupStrat = key;
+  _SETUP_STRATS.forEach(k=>document.getElementById('setup-strat-'+k)?.classList.toggle('active', k===key));
+  if(_lastChartData){ loadSetupSeries(); }
 }
 
 function toggleV7(){
   const checked = document.getElementById('tog-v7')?.checked;
   const blk = document.getElementById('v7-block');
   if(blk) blk.style.display = checked ? '' : 'none';
-  // Clear markers on price chart if hidden
-  if(!checked && _v7PriceSeries){
-    try{ _v7PriceSeries.setMarkers([]); }catch(_){}
-  }
-  // Re-render the whole chart to (re)create or destroy the V8 sub-chart
-  if(_lastChartData){ _renderChart(_lastChartData); }
+  if(!checked){ _clearSetupOverlay(); }
+  else if(_lastChartData){ loadSetupSeries(); }
 }
 
-async function loadV7Series(){
+async function loadSetupSeries(){
   const status = document.getElementById('v7-status');
   const legend = document.getElementById('v7-legend');
   const detailEl = document.getElementById('v8-signal-detail');
-  const endpoint = _v8Mode === 'v8' ? 'v8_series' : 'v7_series';
-  const vLabel = _v8Mode === 'v8' ? 'V8' : 'V7';
-  if(status) status.textContent = `⏳ calcul des probas ${vLabel}…`;
+  const vLabel = _setupStrat.toUpperCase();
+  if(status) status.textContent = `⏳ calcul des setups ${vLabel}… (entraînement à la volée si nécessaire)`;
+  _clearSetupOverlay();
   const sym = (document.getElementById('chart-symbol').value||'BTC/USDC').trim();
   try{
     const r = await apiFetch(
-      `/api/scanner/${endpoint}?symbol=${encodeURIComponent(sym)}&timeframe=${chartTf}&limit=300`
+      `/api/scanner/setup_series?symbol=${encodeURIComponent(sym)}&timeframe=${chartTf}&limit=300&strategy=${_setupStrat}`
     );
     if(!r.ok){
       const e = await r.json().catch(()=>({}));
@@ -862,135 +860,93 @@ async function loadV7Series(){
     const d = await r.json();
     if(!d.supported){
       if(status) status.textContent = `— ${vLabel} non disponible (${d.reason||'TF non supporté'})`;
-      if(_v7PriceSeries){ try{ _v7PriceSeries.setMarkers([]); }catch(_){} }
       if(legend) legend.innerHTML = '';
       if(detailEl) detailEl.style.display = 'none';
       return;
     }
 
-    // ── Séries probas sur le sous-graphique ──────────────────────────────
-    if(tvV7Chart){
-      const pAmpS = tvV7Chart.addLineSeries({
-        color:'#c084fc', lineWidth:1.5,
-        priceLineVisible:false, lastValueVisible:true, title:'p_amp',
-      });
-      const pDirS = tvV7Chart.addLineSeries({
-        color:'#22d3ee', lineWidth:1.5,
-        priceLineVisible:false, lastValueVisible:true, title:'p_dir',
-      });
-      if(d.p_event?.length) pAmpS.setData(d.p_event);
-      if(d.p_up?.length)    pDirS.setData(d.p_up);
+    const setups = Array.isArray(d.setups) ? d.setups : [];
 
-      // V8 : excès baissier — mini-barre fixe à 0.04 (4% sur l'échelle 0-1)
-      // Utilise le même axe 'right' que les courbes de probabilité pour
-      // éviter l'auto-scale d'un axe indépendant (qui occupait tout le graphique).
-      if(_v8Mode === 'v8' && d.bearish_excess?.length){
-        const beS = tvV7Chart.addHistogramSeries({
-          color:'rgba(251,113,133,.4)', priceLineVisible:false, lastValueVisible:false,
-          base:0,
-        });
-        beS.setData(d.bearish_excess.map(p=>({time:p.time, value:p.value ? 0.04 : 0})));
-      }
-
-      // Lignes de référence V8 : 0.50, 0.60 (p_dir seuil SIGNAL_UP)
-      if(_v8Mode === 'v8'){
-        const _ref=(val,color)=>{
-          const s=tvV7Chart.addLineSeries({color,lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dotted,priceLineVisible:false,lastValueVisible:false});
-          const first=d.p_up?.[0]?.time, last=d.p_up?.[d.p_up.length-1]?.time;
-          if(first&&last) s.setData([{time:first,value:val},{time:last,value:val}]);
-        };
-        _ref(0.5,'rgba(200,200,200,.3)');
-        _ref(0.60,'rgba(16,185,129,.4)');   // p_dir seuil SIGNAL_UP
-        _ref(0.42,'rgba(251,113,133,.3)');  // p_dir seuil SHORT_CHOPPY
-      } else {
-        const _ref=(val,color)=>{
-          const s=tvV7Chart.addLineSeries({color,lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dotted,priceLineVisible:false,lastValueVisible:false});
-          const first=d.p_up?.[0]?.time, last=d.p_up?.[d.p_up.length-1]?.time;
-          if(first&&last) s.setData([{time:first,value:val},{time:last,value:val}]);
-        };
-        _ref(0.5,'rgba(200,200,200,.4)');
-        _ref(0.58,'rgba(34,211,238,.3)');
-        _ref(0.42,'rgba(251,113,133,.3)');
-      }
-      try{ tvV7Chart.priceScale('right').applyOptions({autoScale:false}); }catch(_){}
-      tvV7Chart.timeScale().fitContent();
-    }
-
-    // ── Markers sur le price chart — enrichis (setup + probas) ───────────
-    if(_v7PriceSeries && Array.isArray(d.setups)){
-      const markers = d.setups.map(s=>{
+    // ── Markers d'entrée long/short sur le price chart ───────────────────
+    if(_v7PriceSeries){
+      const markers = setups.map(s=>{
         const isLong = s.side === 'long';
         const clr = s.confluence
-          ? '#ffd166'   // or doré pour SIGNAL_UP+LONG_CHOPPY confluence
+          ? '#ffd166'
           : (V7_SETUP_COLORS[s.setup] || (isLong ? '#34d399' : '#fb7185'));
-        const pAmpPct = s.p_event != null ? Math.round(s.p_event*100) : null;
-        const pDirPct = s.p_up    != null ? Math.round(s.p_up   *100) : null;
-        const beSuffix = (s.bearish_excess && s.setup === 'SIGNAL_UP') ? ' 📉' : '';
-        const confSuffix = s.confluence ? ' ⚡' : '';
-        const txt = (pAmpPct!=null && pDirPct!=null)
-          ? `${s.setup}${beSuffix}${confSuffix} A:${pAmpPct}% D:${pDirPct}%`
-          : `${s.setup}${confSuffix}`;
+        const fus = s.fusion === 'confirmed' ? ' ✓'
+                  : (s.fusion === 'neutral' ? ' ~' : '');
         return {
           time:     s.time,
           position: isLong ? 'belowBar' : 'aboveBar',
           color:    clr,
           shape:    isLong ? 'arrowUp' : 'arrowDown',
-          text:     txt,
+          text:     `${s.setup}${fus}`,
         };
       });
       try{ _v7PriceSeries.setMarkers(markers); }catch(_){}
+
+      // ── Niveaux entrée / TP / SL du dernier setup ──────────────────────
+      const last = setups[setups.length-1];
+      if(last){
+        const mk = (price,color,title)=>{
+          if(price == null) return null;
+          try{
+            return _v7PriceSeries.createPriceLine({
+              price: +price, color, lineWidth:1,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible:true, title,
+            });
+          }catch(_){ return null; }
+        };
+        _setupPriceLines = [
+          mk(last.entry, '#c084fc', `${last.setup} entrée`),
+          mk(last.tp,    '#34d399', 'TP'),
+          mk(last.sl,    '#fb7185', 'SL'),
+        ].filter(Boolean);
+      }
     }
 
     // ── Légende des setups détectés ───────────────────────────────────────
     if(legend){
-      const counts = {}, confCount = {};
-      (d.setups||[]).forEach(s=>{
-        counts[s.setup]=(counts[s.setup]||0)+1;
-        if(s.confluence) confCount[s.setup]=(confCount[s.setup]||0)+1;
-      });
+      const counts = {};
+      setups.forEach(s=>{ counts[s.setup] = (counts[s.setup]||0)+1; });
       const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
-      const last = (d.setups||[])[(d.setups||[]).length-1];
+      const last = setups[setups.length-1];
       const lastTxt = last
-        ? ` · dernier : <strong style="color:${last.confluence?'#ffd166':(V7_SETUP_COLORS[last.setup]||'#c084fc')}">${escHtml(last.setup)}${last.confluence?' ⚡':''}</strong>
-           (p_amp ${(last.p_event*100).toFixed(0)}%, p_dir ${(last.p_up*100).toFixed(0)}%, ${escHtml(last.regime_lbl||'?')})${last.bearish_excess?' — excès baissier ✓':''}`
+        ? ` · dernier : <strong style="color:${last.confluence?'#ffd166':(V7_SETUP_COLORS[last.setup]||'#c084fc')}">${escHtml(last.setup)}</strong>
+           ${last.side==='long'?'▲':'▼'} (entrée ${(+last.entry).toFixed(4)}, TP ${(+last.tp).toFixed(4)}, SL ${(+last.sl).toFixed(4)}, ${escHtml(last.regime_lbl||'?')})`
         : '';
       legend.innerHTML =
-        `<span><strong>${d.n_bars||0}</strong> pts · <strong>${d.n_setups||0}</strong> setups${lastTxt}</span>` +
-        entries.map(([k,n])=>{
-          const conf = confCount[k]||0;
-          const confBadge = conf ? ` <span style="color:#ffd166;font-size:.6rem">⚡×${conf}</span>` : '';
-          return `<span style="display:inline-flex;align-items:center;gap:4px">
+        `<span><strong>${d.n_setups||0}</strong> setups${lastTxt}</span>` +
+        entries.map(([k,n])=>
+          `<span style="display:inline-flex;align-items:center;gap:4px">
              <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${V7_SETUP_COLORS[k]||'#888'}"></span>
-             ${escHtml(k)} <strong>×${n}</strong>${confBadge}
-           </span>`;
-        }).join('');
+             ${escHtml(k)} <strong>×${n}</strong>
+           </span>`).join('');
     }
 
-    // ── Détail du dernier signal SIGNAL_UP (V8 seulement) ────────────────
-    if(detailEl && _v8Mode === 'v8'){
-      const lastUp = [...(d.setups||[])].reverse().find(s=>s.setup==='SIGNAL_UP');
-      if(lastUp){
+    // ── Détail du dernier setup (entrée / TP / SL) ───────────────────────
+    if(detailEl){
+      const last = setups[setups.length-1];
+      if(last){
         detailEl.style.display = 'flex';
-        const beFlags = [];
-        if(lastUp.bearish_excess) beFlags.push('✓ Excès baissier');
-        const confBadge = lastUp.confluence
-          ? `<span style="background:rgba(255,209,102,.2);color:#ffd166;font-size:.6rem;font-weight:700;padding:1px 5px;border-radius:3px">⚡ Confluence LONG_CHOPPY · size×1.5</span>`
+        const fusTxt = last.fusion
+          ? `<span style="color:${last.fusion==='confirmed'?'#34d399':'#fbbf24'}">fusion ${escHtml(last.fusion)}</span>`
           : '';
         detailEl.innerHTML = `
-          <span style="color:#10b981;font-weight:700">↑ SIGNAL_UP</span>
-          <span>p_amp=<strong style="color:#c084fc">${(lastUp.p_event*100).toFixed(0)}%</strong></span>
-          <span>p_dir=<strong style="color:#22d3ee">${(lastUp.p_up*100).toFixed(0)}%</strong></span>
-          <span style="color:var(--muted)">${escHtml(lastUp.regime_lbl||'?')}</span>
-          ${beFlags.map(f=>`<span style="color:var(--red);font-size:.62rem">${escHtml(f)}</span>`).join('')}
-          ${confBadge}`;
+          <span style="color:${last.side==='long'?'#10b981':'#fb7185'};font-weight:700">${last.side==='long'?'↑':'↓'} ${escHtml(last.setup)}</span>
+          <span>entrée <strong>${(+last.entry).toFixed(4)}</strong></span>
+          <span style="color:#34d399">TP <strong>${(+last.tp).toFixed(4)}</strong></span>
+          <span style="color:#fb7185">SL <strong>${(+last.sl).toFixed(4)}</strong></span>
+          <span style="color:var(--muted)">${escHtml(last.regime_lbl||'?')}</span>
+          ${fusTxt}`;
       } else {
         detailEl.style.display = 'none';
       }
-    } else if(detailEl){
-      detailEl.style.display = 'none';
     }
 
-    if(status) status.textContent = `${vLabel} · ${d.timeframe} · ${d.n_bars||0} pts · ${d.n_setups||0} setups`;
+    if(status) status.textContent = `${vLabel} · ${d.timeframe} · ${d.n_setups||0} setups`;
   }catch(e){
     if(status) status.textContent = '⚠ ' + e.message;
     if(legend) legend.innerHTML = '';

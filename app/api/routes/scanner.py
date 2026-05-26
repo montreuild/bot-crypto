@@ -210,342 +210,288 @@ def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 
         raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
-@router.get("/api/scanner/v7_series", dependencies=[Depends(verify_api_key)])
-def scanner_v7_series(symbol: str = "BTC/USDC", timeframe: str = "1h",
-                      limit: int = 300):
-    """Séries V7 par bougie pour le graphique scanner.
+# ── Séries de setups (markers + TP/SL) pour le scanner ─────────────────────
+def _atr_at(df, idx: int) -> float:
+    """ATR de la bougie idx (colonne pré-calculée _pre_atr14)."""
+    try:
+        if "_pre_atr14" in df.columns:
+            v = df["_pre_atr14"][idx]
+            return float(v) if v is not None else 0.0
+    except Exception:
+        pass
+    return 0.0
 
-    Calcule, sur la fenêtre OHLCV demandée, les probabilités V4 (``p_event`` /
-    ``p_up``) et le setup V7 sélectionné par bougie, en réutilisant le pkl
-    pré-entraîné partagé avec ``opus_omnibus_v7_pretrained``. Renvoie des
-    séries alignées sur les ``time`` du graphique scanner et la liste des
-    bougies déclenchant un setup (pour markers).
+
+def _tp_sl(side: str, entry: float, atr: float, tp_mult: float, sl_mult: float):
+    """Niveaux TP/SL absolus à partir des multiplicateurs ATR du setup."""
+    if side == "long":
+        return entry + tp_mult * atr, entry - sl_mult * atr
+    return entry - tp_mult * atr, entry + sl_mult * atr
+
+
+def _setup_series_v8(df, tf: str, limit: int) -> dict:
+    """Markers de setups V8 par bougie (modèles V4 pré-entraînés), avec TP/SL."""
+    from app.strategies.opus_stat_pretrained_v4 import (
+        _FeatureBuilder, _load_pretrained, _to_pandas_window, _detect_timeframe,
+    )
+    from app.strategies.opus_omnibus_v8 import (
+        _DEFAULT_SETUPS, _classify_regime, _evaluate_setup,
+        REGIME_LABELS, REGIME_CHOPPY,
+    )
+    from app.core.indicators import bearish_excess_series
+
+    tf_detected = _detect_timeframe(df)
+    if tf_detected not in ("15m", "30m", "1h"):
+        return {"supported": False, "reason": f"Timeframe {tf_detected} non supporté par V8",
+                "markers": []}
+
+    pdf   = _to_pandas_window(df, n=len(df))
+    feats = _FeatureBuilder().build(pdf)
+    if feats is None or len(feats) == 0:
+        return {"supported": False, "reason": "Construction des features V4 impossible",
+                "markers": []}
+
+    models, medians_all = _load_pretrained()
+    amp_entry = models.get((tf_detected, "amp", "single"))
+    dir_entry = models.get((tf_detected, "dir", "single"))
+    if amp_entry is None or dir_entry is None:
+        return {"supported": False, "reason": f"Modèles V4 indisponibles pour {tf_detected}",
+                "markers": []}
+
+    def _batch(entry, target):
+        feat_names = list(entry["features"])
+        med = medians_all.get((tf_detected, target), {})
+        X = feats.reindex(columns=feat_names).copy()
+        X = X.replace([np.inf, -np.inf], np.nan)
+        for col in feat_names:
+            X[col] = X[col].fillna(med.get(col, 0.0))
+        return entry["model"].predict_proba(X.values)[:, 1]
+
+    p_amp = _batch(amp_entry, "amp")
+    p_up  = _batch(dir_entry, "dir")
+
+    adx_arr  = feats["ADX"].fillna(0.0).to_numpy()
+    bull_arr = feats["MM_bullish_align"].fillna(0).astype(int).to_numpy()
+    bear_arr = feats["MM_bearish_align"].fillna(0).astype(int).to_numpy()
+    n_feats  = len(feats)
+    regimes  = [_classify_regime(float(adx_arr[i]), int(bull_arr[i]),
+                                 int(bear_arr[i]), 20.0) for i in range(n_feats)]
+
+    be_series  = bearish_excess_series(df, rsi_threshold=38.0, price_dev_pct=1.5).to_numpy().astype(bool)
+    offset     = len(df) - n_feats
+    be_aligned = be_series[offset:] if offset > 0 else be_series[:n_feats]
+    setups_def = sorted([dict(s) for s in _DEFAULT_SETUPS], key=lambda s: s["priority"])
+    times      = df["time"].dt.epoch(time_unit="s").to_list()
+    closes     = df["close"].to_list()
+
+    markers, start, last_seen = [], max(0, n_feats - limit), None
+    for i in range(n_feats):
+        be_val = bool(be_aligned[i]) if i < len(be_aligned) else False
+        chosen = None
+        for s in setups_def:
+            if _evaluate_setup(s, regimes[i], float(p_amp[i]), float(p_up[i]), False, be_val):
+                chosen = s
+                break
+        if i < start:
+            last_seen = chosen["name"] if chosen else None
+            continue
+        if chosen is None:
+            last_seen = None
+            continue
+        if chosen["name"] == last_seen:
+            continue
+        last_seen = chosen["name"]
+        di    = offset + i
+        entry = float(closes[di] or 0.0)
+        atr   = _atr_at(df, di)
+        if entry <= 0 or atr <= 0:
+            continue
+        side  = "long" if chosen["direction"] == 1 else "short"
+        tp, sl = _tp_sl(side, entry, atr, float(chosen["tp_mult"]), float(chosen["sl_mult"]))
+        confluence = (chosen["name"] == "SIGNAL_UP" and regimes[i] == REGIME_CHOPPY
+                      and p_up[i] > 0.58 and p_amp[i] > 0.50)
+        markers.append({
+            "time": int(times[di]), "setup": chosen["name"], "side": side,
+            "entry": round(entry, 8), "tp": round(tp, 8), "sl": round(sl, 8),
+            "p_event": round(float(p_amp[i]), 4), "p_up": round(float(p_up[i]), 4),
+            "regime_lbl": REGIME_LABELS.get(regimes[i], "?"),
+            "confluence": bool(confluence),
+        })
+    return {"supported": True, "reason": "", "markers": markers}
+
+
+def _setup_series_v11(df, tf: str, limit: int, strategy: str) -> dict:
+    """Markers de setups V11/V12 par bougie, avec TP/SL.
+
+    Instancie une stratégie dédiée (sans toucher aux modèles du live), charge le
+    pkl depuis models/ ou entraîne à la volée si absent, puis batch-predict.
+    Pour V12, applique le veto/confirmation ml_dynamic_threshold par marker.
     """
+    import os
+    from app.strategies.opus_omnibus_v11 import (
+        _build_features, _window_polars, _regime_history_v11, _exit_td_window_active,
+        _apply_setup_overrides, _select_setup, _signal_up_dynamic_risk,
+        _detect_timeframe, _SUPPORTED_TFS, REGIME_LABELS,
+    )
+    if strategy == "v12":
+        from app.strategies.opus_omnibus_v12 import Strategy as _S
+    else:
+        from app.strategies.opus_omnibus_v11 import Strategy as _S
+
+    tf_detected = _detect_timeframe(df)
+    if tf_detected not in _SUPPORTED_TFS:
+        return {"supported": False,
+                "reason": f"Timeframe {tf_detected} non supporté par {strategy.upper()}",
+                "markers": []}
+
+    strat = _S()
+    strat.managed_externally = False
+    name = strat.name
+    path = os.path.join(getattr(strat, "model_dir", "models"), f"{name}_{tf_detected}.pkl")
+    if os.path.exists(path):
+        strat.load_model(path)
+    if tf_detected not in getattr(strat, "_trained_tfs", set()):
+        try:
+            strat.fit(df, {name: {}})   # entraînement à la volée
+        except Exception as e:
+            return {"supported": False, "reason": f"Entraînement {strategy.upper()} KO : {e}",
+                    "markers": []}
+    if tf_detected not in getattr(strat, "_trained_tfs", set()):
+        return {"supported": False, "reason": f"Modèle {strategy.upper()} non disponible",
+                "markers": []}
+
+    features = _build_features(_window_polars(df, n=len(df)))
+    if features is None or len(features) == 0:
+        return {"supported": False, "reason": "Construction des features impossible", "markers": []}
+    n_feats = len(features)
+
+    p_amp = strat._predict_series(features, tf_detected, "amp")
+    p_up  = strat._predict_series(features, tf_detected, "dir")
+    if p_amp is None or p_up is None:
+        return {"supported": False, "reason": f"Modèle {tf_detected} indisponible", "markers": []}
+
+    p   = {}
+    d   = strat._DEFAULTS
+    adx_threshold       = float(d["adx_threshold"])
+    di_rescue           = float(d["di_rescue"])
+    exit_td_window_bars = int(d["exit_td_window_bars"])
+    signal_up_dyn       = bool(d["signal_up_dynamic_risk"])
+    be_rsi_thr, be_sma_pct = 38.0, 1.5
+
+    regimes, _subs = _regime_history_v11(features, n_last=n_feats,
+                                         adx_threshold=adx_threshold, di_rescue=di_rescue)
+    setups_def = _apply_setup_overrides(p)
+
+    offset   = len(df) - n_feats
+    closes   = df["close"].to_list()
+    opens    = df["open"].to_list()
+    rsi_col  = features["RSI_14"].to_list() if "RSI_14" in features.columns else [50.0] * n_feats
+    adx_col  = features["ADX"].to_list()    if "ADX"    in features.columns else [0.0] * n_feats
+    sma_col  = features["SMA_20"].to_list() if "SMA_20" in features.columns else [0.0] * n_feats
+    atr_col  = features["ATR_14"].to_list() if "ATR_14" in features.columns else [0.0] * n_feats
+    times    = df["time"].dt.epoch(time_unit="s").to_list()
+
+    # Instance ml_dyn pour le veto V12 (entraînée paresseusement au 1er score).
+    mldyn = getattr(strat, "_mldyn", None) if strategy == "v12" else None
+    mldyn_params = strat._mldyn_params({}) if (mldyn is not None) else None
+
+    markers, start, last_seen = [], max(0, n_feats - limit), None
+    for i in range(n_feats):
+        di = offset + i
+        if di < 1:
+            continue
+        rsi_v   = float(rsi_col[i] if rsi_col[i] is not None else 50.0)
+        adx_v   = float(adx_col[i] if adx_col[i] is not None else 0.0)
+        c_now   = float(closes[di] or 0.0)
+        sma20_v = float(sma_col[i] or 0.0)
+        consec_red = (closes[di] < opens[di] and closes[di - 1] < opens[di - 1])
+        price_below = (c_now < sma20_v * (1.0 - be_sma_pct / 100.0)) if sma20_v > 0 else False
+        bearish_excess = bool(consec_red or (rsi_v < be_rsi_thr) or price_below)
+        exit_td_active = _exit_td_window_active(regimes[:i + 1], exit_td_window_bars)
+        chosen = _select_setup(setups_def, regimes[i], float(p_amp[i]), float(p_up[i]),
+                               exit_td_active, bearish_excess, rsi_v, adx_v)
+        if i < start:
+            last_seen = chosen["name"] if chosen else None
+            continue
+        if chosen is None:
+            last_seen = None
+            continue
+        if chosen["name"] == last_seen:
+            continue
+        last_seen = chosen["name"]
+        atr = float(atr_col[i] or 0.0)
+        if atr <= 0:
+            atr = _atr_at(df, di)
+        if c_now <= 0 or atr <= 0:
+            continue
+        side    = "long" if chosen["direction"] == 1 else "short"
+        sl_mult = float(chosen["sl_mult"])
+        tp_mult = float(chosen["tp_mult"])
+        if chosen["name"] == "SIGNAL_UP" and signal_up_dyn:
+            _, sl_mult = _signal_up_dynamic_risk(regimes[i])
+
+        # V12 : veto/confirmation ml_dynamic_threshold sur la bougie du marker.
+        fusion = None
+        if mldyn is not None:
+            try:
+                mldyn.managed_externally = False
+                md = mldyn.score(df.slice(0, di + 1), mldyn_params)
+                md_proba = (md.get("indicators") or {}).get("proba_up")
+                if md_proba is not None:
+                    vm = float(strat._DEFAULTS["veto_margin"])
+                    disagree = (md_proba < 0.5 - vm) if side == "long" else (md_proba > 0.5 + vm)
+                    if disagree:
+                        last_seen = None   # marker veté : pas d'affichage
+                        continue
+                    agree = (md_proba >= 0.5) if side == "long" else (md_proba <= 0.5)
+                    fusion = "confirmed" if agree else "neutral"
+            except Exception:
+                fusion = None
+
+        tp, sl = _tp_sl(side, c_now, atr, tp_mult, sl_mult)
+        markers.append({
+            "time": int(times[di]), "setup": chosen["name"], "side": side,
+            "entry": round(c_now, 8), "tp": round(tp, 8), "sl": round(sl, 8),
+            "p_event": round(float(p_amp[i]), 4), "p_up": round(float(p_up[i]), 4),
+            "regime_lbl": REGIME_LABELS.get(regimes[i], "?"),
+            "confluence": False, "fusion": fusion,
+        })
+    return {"supported": True, "reason": "", "markers": markers}
+
+
+@router.get("/api/scanner/setup_series", dependencies=[Depends(verify_api_key)])
+def scanner_setup_series(symbol: str = "BTC/USDC", timeframe: str = "1h",
+                         limit: int = 300, strategy: str = "v8"):
+    """Markers des setups (entrée/TP/SL) d'une stratégie par bougie, pour le
+    graphique scanner. ``strategy`` ∈ {v8, v11, v12}."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
+    strat_key = (strategy or "v8").lower()
+    if strat_key not in ("v8", "v11", "v12"):
+        raise HTTPException(400, "strategy doit être v8, v11 ou v12")
     try:
-        # Imports paresseux : évite de charger pandas/lightgbm tant qu'on ne
-        # demande pas explicitement le sous-graphique V7.
-        from app.strategies.opus_stat_pretrained_v4 import (
-            _FeatureBuilder,
-            _load_pretrained,
-            _to_pandas_window,
-            _detect_timeframe,
-        )
-        from app.strategies.opus_omnibus_v7_pretrained import (
-            _DEFAULT_SETUPS,
-            _classify_regime,
-            _evaluate_setup,
-            _exit_td_window_active,
-            REGIME_LABELS,
-            _EXIT_TD_WINDOW_BARS,
-        )
-
         exchange = create_exchange(state.cfg)
         scanner  = MarketScanner(exchange, state.cfg)
         tf       = timeframe or state.cfg["trading"].get("timeframe", "1h")
 
-        # Le FeatureBuilder V4 a besoin de ≥210 bougies d'historique. On
-        # fetch limit + 260 puis on coupe pour renvoyer ``limit`` valeurs max.
         fetch_n = max(limit + 260, 460)
         df = scanner.fetch_ohlcv(symbol, tf, fetch_n)
         if df is None or len(df) < 230:
             raise HTTPException(404, f"Données insuffisantes pour {symbol}/{tf}")
 
-        tf_detected = _detect_timeframe(df)
-        if tf_detected not in ("15m", "30m", "1h"):
-            return JSONResponse(content={
-                "symbol":     symbol,
-                "timeframe":  tf,
-                "supported":  False,
-                "reason":     f"Timeframe {tf_detected} non supporté par V7",
-                "p_event":    [],
-                "p_up":       [],
-                "setups":     [],
-            })
+        if strat_key == "v8":
+            payload = _setup_series_v8(df, tf, limit)
+        else:
+            payload = _setup_series_v11(df, tf, limit, strat_key)
 
-        # 1. Features V4 sur toute la fenêtre (vectorisé)
-        pdf   = _to_pandas_window(df, n=len(df))
-        feats = _FeatureBuilder().build(pdf)
-        if feats is None or len(feats) == 0:
-            raise HTTPException(500, "Construction des features V4 impossible")
-
-        # 2. Modèles pré-entraînés + médianes
-        models, medians_all = _load_pretrained()
-        amp_entry = models.get((tf_detected, "amp", "single"))
-        dir_entry = models.get((tf_detected, "dir", "single"))
-        if amp_entry is None or dir_entry is None:
-            raise HTTPException(503, f"Modèles V4 indisponibles pour {tf_detected}")
-
-        def _batch_predict(entry: dict, target: str) -> np.ndarray:
-            feat_names = list(entry["features"])
-            med = medians_all.get((tf_detected, target), {})
-            X = feats.reindex(columns=feat_names).copy()
-            X = X.replace([np.inf, -np.inf], np.nan)
-            for col in feat_names:
-                X[col] = X[col].fillna(med.get(col, 0.0))
-            return entry["model"].predict_proba(X.values)[:, 1]
-
-        p_amp = _batch_predict(amp_entry, "amp")
-        p_up  = _batch_predict(dir_entry, "dir")
-
-        # 3. Régime par bougie + fenêtre exit-TD glissante
-        adx_arr  = feats["ADX"].fillna(0.0).to_numpy()
-        bull_arr = feats["MM_bullish_align"].fillna(0).astype(int).to_numpy()
-        bear_arr = feats["MM_bearish_align"].fillna(0).astype(int).to_numpy()
-        n_feats  = len(feats)
-        regimes  = [
-            _classify_regime(float(adx_arr[i]), int(bull_arr[i]),
-                             int(bear_arr[i]), 20.0)
-            for i in range(n_feats)
-        ]
-
-        setups_def = sorted(
-            [dict(s) for s in _DEFAULT_SETUPS], key=lambda s: s["priority"]
-        )
-        win = _EXIT_TD_WINDOW_BARS
-
-        setup_at: list = [None] * n_feats
-        side_at:  list = [None] * n_feats
-        for i in range(n_feats):
-            regime_hist = regimes[max(0, i - win - 1): i + 1]
-            exit_td = _exit_td_window_active(regime_hist, win)
-            for s in setups_def:
-                if _evaluate_setup(s, regimes[i],
-                                   float(p_amp[i]), float(p_up[i]), exit_td):
-                    setup_at[i] = s["name"]
-                    side_at[i]  = "long" if s["direction"] == 1 else "short"
-                    break
-
-        # 4. Garde uniquement les `limit` dernières bougies pour rester aligné
-        # avec ``/api/scanner/chart``.
-        times = df["time"].dt.epoch(time_unit="s").to_list()
-        start = max(0, len(df) - limit)
-
-        def _ok(v):
-            try:
-                f = float(v)
-                return not (math.isnan(f) or math.isinf(f))
-            except Exception:
-                return False
-
-        p_event_series = [
-            {"time": int(times[i]), "value": round(float(p_amp[i]), 4)}
-            for i in range(start, n_feats) if _ok(p_amp[i])
-        ]
-        p_up_series = [
-            {"time": int(times[i]), "value": round(float(p_up[i]), 4)}
-            for i in range(start, n_feats) if _ok(p_up[i])
-        ]
-
-        # 5. Markers = bougies où un setup s'arme (avec dédup sur séquences
-        # consécutives identiques pour ne pas saturer le graphique).
-        setup_markers: list = []
-        last_seen = None
-        for i in range(start, n_feats):
-            name = setup_at[i]
-            if name is None:
-                last_seen = None
-                continue
-            if name == last_seen:
-                continue
-            last_seen = name
-            setup_markers.append({
-                "time":       int(times[i]),
-                "setup":      name,
-                "side":       side_at[i],
-                "p_event":    round(float(p_amp[i]), 4),
-                "p_up":       round(float(p_up[i]), 4),
-                "regime_lbl": REGIME_LABELS.get(regimes[i], "?"),
-            })
-
-        return JSONResponse(content=_clean({
-            "symbol":      symbol,
-            "timeframe":   tf_detected,
-            "supported":   True,
-            "n_bars":      len(p_up_series),
-            "p_event":     p_event_series,
-            "p_up":        p_up_series,
-            "setups":      setup_markers,
-            "n_setups":    len(setup_markers),
-        }))
+        payload.update({"symbol": symbol, "timeframe": tf, "strategy": strat_key,
+                        "n_setups": len(payload.get("markers", []))})
+        return JSONResponse(content=_clean(payload))
     except HTTPException:
         raise
     except Exception as e:
         err_id = uuid.uuid4()
-        logger.error(f"[API] Erreur {err_id} scanner/v7_series : {e}", exc_info=True)
-        raise HTTPException(500, f"Erreur interne ({err_id})")
-
-
-@router.get("/api/scanner/v8_series", dependencies=[Depends(verify_api_key)])
-def scanner_v8_series(symbol: str = "BTC/USDC", timeframe: str = "1h",
-                      limit: int = 300):
-    """Séries V8 par bougie — p_event/p_up + SIGNAL_UP + setups V8.
-
-    Calcule l'excès baissier vectorisé par bougie (RSI<38, 2+ rouges, prix<SMA20-1.5%)
-    et évalue les setups V8 (SIGNAL_UP principal, SHORT_TD_HIGH/TD/CHOPPY, LONG_RANGE_STRICT).
-    LONG_CHOPPY apparaît comme "confluence" quand SIGNAL_UP + LONG_CHOPPY simultanés.
-    """
-    if not state.cfg:
-        raise HTTPException(503, "Config non chargée")
-    try:
-        from app.strategies.opus_stat_pretrained_v4 import (
-            _FeatureBuilder,
-            _load_pretrained,
-            _to_pandas_window,
-            _detect_timeframe,
-        )
-        from app.strategies.opus_omnibus_v8 import (
-            _DEFAULT_SETUPS,
-            _classify_regime,
-            _evaluate_setup,
-            REGIME_LABELS,
-            REGIME_CHOPPY,
-        )
-        from app.core.indicators import bearish_excess_series
-
-        exchange = create_exchange(state.cfg)
-        scanner  = MarketScanner(exchange, state.cfg)
-        tf       = timeframe or state.cfg["trading"].get("timeframe", "1h")
-
-        fetch_n = max(limit + 260, 460)
-        df = scanner.fetch_ohlcv(symbol, tf, fetch_n)
-        if df is None or len(df) < 230:
-            raise HTTPException(404, f"Données insuffisantes pour {symbol}/{tf}")
-
-        tf_detected = _detect_timeframe(df)
-        if tf_detected not in ("15m", "30m", "1h"):
-            return JSONResponse(content={
-                "symbol": symbol, "timeframe": tf, "supported": False,
-                "reason": f"Timeframe {tf_detected} non supporté par V8",
-                "p_event": [], "p_up": [], "setups": [], "bearish_excess": [],
-            })
-
-        # 1. Features V4
-        pdf   = _to_pandas_window(df, n=len(df))
-        feats = _FeatureBuilder().build(pdf)
-        if feats is None or len(feats) == 0:
-            raise HTTPException(500, "Construction des features V4 impossible")
-
-        # 2. Prédictions batch
-        models, medians_all = _load_pretrained()
-        amp_entry = models.get((tf_detected, "amp", "single"))
-        dir_entry = models.get((tf_detected, "dir", "single"))
-        if amp_entry is None or dir_entry is None:
-            raise HTTPException(503, f"Modèles V4 indisponibles pour {tf_detected}")
-
-        def _batch_predict(entry: dict, target: str) -> np.ndarray:
-            feat_names = list(entry["features"])
-            med = medians_all.get((tf_detected, target), {})
-            X = feats.reindex(columns=feat_names).copy()
-            X = X.replace([np.inf, -np.inf], np.nan)
-            for col in feat_names:
-                X[col] = X[col].fillna(med.get(col, 0.0))
-            return entry["model"].predict_proba(X.values)[:, 1]
-
-        p_amp = _batch_predict(amp_entry, "amp")
-        p_up  = _batch_predict(dir_entry, "dir")
-
-        # 3. Régime par bougie
-        adx_arr  = feats["ADX"].fillna(0.0).to_numpy()
-        bull_arr = feats["MM_bullish_align"].fillna(0).astype(int).to_numpy()
-        bear_arr = feats["MM_bearish_align"].fillna(0).astype(int).to_numpy()
-        n_feats  = len(feats)
-        regimes  = [
-            _classify_regime(float(adx_arr[i]), int(bull_arr[i]),
-                             int(bear_arr[i]), 20.0)
-            for i in range(n_feats)
-        ]
-
-        # 4. Excès baissier vectorisé — seuils V8 (RSI<38, prix>1.5% sous SMA20)
-        be_series = bearish_excess_series(df, rsi_threshold=38.0, price_dev_pct=1.5).to_numpy().astype(bool)
-        # Align with feats length (feats may be shorter than df due to feature window)
-        be_offset = len(df) - n_feats
-        be_aligned = be_series[be_offset:] if be_offset > 0 else be_series[:n_feats]
-
-        # 5. Setups V8 par bougie
-        setups_def = sorted([dict(s) for s in _DEFAULT_SETUPS], key=lambda s: s["priority"])
-
-        setup_at: list = [None] * n_feats
-        side_at:  list = [None] * n_feats
-        confluence_at: list = [False] * n_feats
-        for i in range(n_feats):
-            be_val = bool(be_aligned[i]) if i < len(be_aligned) else False
-            for s in setups_def:
-                if _evaluate_setup(s, regimes[i], float(p_amp[i]), float(p_up[i]),
-                                   False, be_val):
-                    setup_at[i] = s["name"]
-                    side_at[i]  = "long" if s["direction"] == 1 else "short"
-                    # Check LONG_CHOPPY confluence for SIGNAL_UP
-                    if s["name"] == "SIGNAL_UP" and regimes[i] == REGIME_CHOPPY and p_up[i] > 0.58 and p_amp[i] > 0.50:
-                        confluence_at[i] = True
-                    break
-
-        # 6. Dernières `limit` bougies alignées
-        times = df["time"].dt.epoch(time_unit="s").to_list()
-        start = max(0, len(df) - limit)
-
-        def _ok(v):
-            try:
-                f = float(v)
-                return not (math.isnan(f) or math.isinf(f))
-            except Exception:
-                return False
-
-        p_event_series = [
-            {"time": int(times[i]), "value": round(float(p_amp[i]), 4)}
-            for i in range(start, n_feats) if _ok(p_amp[i])
-        ]
-        p_up_series = [
-            {"time": int(times[i]), "value": round(float(p_up[i]), 4)}
-            for i in range(start, n_feats) if _ok(p_up[i])
-        ]
-
-        # Bearish excess series (for visualization)
-        be_vis = [
-            {"time": int(times[i]), "value": 1.0 if (i < len(be_aligned) and be_aligned[i]) else 0.0}
-            for i in range(start, n_feats)
-        ]
-
-        # 7. Markers
-        setup_markers: list = []
-        last_seen = None
-        for i in range(start, n_feats):
-            name = setup_at[i]
-            if name is None:
-                last_seen = None
-                continue
-            if name == last_seen and not confluence_at[i]:
-                continue
-            last_seen = name
-            be_val = bool(be_aligned[i]) if i < len(be_aligned) else False
-            setup_markers.append({
-                "time":         int(times[i]),
-                "setup":        name,
-                "side":         side_at[i],
-                "p_event":      round(float(p_amp[i]), 4),
-                "p_up":         round(float(p_up[i]), 4),
-                "regime_lbl":   REGIME_LABELS.get(regimes[i], "?"),
-                "bearish_excess": be_val,
-                "confluence":   bool(confluence_at[i]),
-            })
-
-        return JSONResponse(content=_clean({
-            "symbol":        symbol,
-            "timeframe":     tf_detected,
-            "supported":     True,
-            "n_bars":        len(p_up_series),
-            "p_event":       p_event_series,
-            "p_up":          p_up_series,
-            "bearish_excess": be_vis,
-            "setups":        setup_markers,
-            "n_setups":      len(setup_markers),
-        }))
-    except HTTPException:
-        raise
-    except Exception as e:
-        err_id = uuid.uuid4()
-        logger.error(f"[API] Erreur {err_id} scanner/v8_series : {e}", exc_info=True)
+        logger.error(f"[API] Erreur {err_id} scanner/setup_series : {e}", exc_info=True)
         raise HTTPException(500, f"Erreur interne ({err_id})")
 
 

@@ -1151,6 +1151,37 @@ class Strategy(BaseStrategyML):
     def predict_direction(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
         return self._predict(features_df, tf, "dir")
 
+    def _predict_series(self, features_df: pl.DataFrame, tf: str,
+                        target: str) -> Optional[np.ndarray]:
+        """Prédiction batch (toutes les bougies) — un seul appel booster au lieu
+        d'un par bougie. Utilisé par setup_series() pour le scanner."""
+        with self._lock:
+            booster   = (self._amp_models if target == "amp" else self._dir_models).get(tf)
+            cal       = (self._amp_cal if target == "amp" else self._dir_cal).get(tf)
+            feat_cols = self._feature_cols.get(tf)
+            medians   = self._medians.get(tf, {})
+        if booster is None or not feat_cols:
+            return None
+        try:
+            present = set(features_df.columns)
+            n = len(features_df)
+            X = np.empty((n, len(feat_cols)), dtype=np.float32)
+            for j, c in enumerate(feat_cols):
+                med = float(medians.get(c, 0.0))
+                if c in present:
+                    col = features_df[c].to_numpy().astype(np.float64)
+                    col = np.where(np.isfinite(col), col, med)
+                    X[:, j] = col
+                else:
+                    X[:, j] = med
+            raw = np.asarray(booster.predict(X), dtype=float)
+            if cal is not None:
+                raw = np.asarray(cal.predict(raw), dtype=float)
+            return raw
+        except Exception as e:
+            logger.warning(f"[OmnibusV11] Prédiction batch {tf}/{target} KO : {e}")
+            return None
+
     def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
         return self.score(df, params)
 
