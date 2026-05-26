@@ -782,12 +782,26 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 logger.warning("[AutoOpt] Données insuffisantes pour l'optimisation planifiée.")
                 return
 
+            # Ne ré-optimiser que les stratégies réellement actives/activées —
+            # évite de lancer un job par stratégie × TF (jusqu'à 31×5) à chaque
+            # cycle planifié. La concurrence est de toute façon bornée par le
+            # sémaphore de auto_optimizer, mais on réduit ici le travail inutile.
+            active_names = {
+                s["name"] for strats in self._active_per_tf.values() for s in strats
+            }
+            active_names |= set(self.cfg.get("strategies", {}).get("enabled", []))
+            strategies = sorted(active_names) or None
+
             opt = AutoOptimizer(
                 self.cfg, n_trials=40, method="bayesian",
                 on_apply_callback=self._on_opt_applied
             )
-            opt.start_async(df_map, symbol, auto_apply=True)
-            logger.info(f"[AutoOpt] Jobs lancés pour TFs : {list(df_map.keys())}")
+            opt.start_async(df_map, symbol, strategies=strategies,
+                            timeframes=self.timeframes, auto_apply=True)
+            logger.info(
+                f"[AutoOpt] Jobs lancés — stratégies={strategies or 'toutes'} "
+                f"| TFs={list(df_map.keys())}"
+            )
         except Exception as e:
             logger.error(f"[AutoOpt] Erreur : {e}", exc_info=True)
 

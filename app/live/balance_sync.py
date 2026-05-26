@@ -71,29 +71,45 @@ class BalanceSyncMixin:
 
     def _sync_spot_balance(self) -> None:
         """
-        Récupère le solde USDC/USDT libre sur l'exchange et recalcule
-        capital_display en y ajoutant le PnL non réalisé.
+        Récupère le solde libre sur l'exchange et recalcule l'équité totale.
+
+        L'équité = cash libre + valeur de marché signée des positions − emprunts.
+        Le cash libre seul sous-estime l'équité car le notionnel immobilisé dans
+        l'actif détenu (long) n'y figure plus ; on le réintègre via size×prix.
+        Cohérent avec le mode paper et robuste aux faux drawdowns.
         """
         try:
             detail = self.exchange.fetch_balance_detail()
             free   = detail["free"]
             if free > 0:
-                unrealized = 0.0
-                for pos in self.open_positions.values():
-                    ticker = self._safe_ticker(pos["symbol"])
-                    if ticker:
-                        price = ticker.get("last", pos["entry"])
-                        if pos["side"] == "long":
-                            unrealized += (price - pos["entry"]) * pos["size"]
-                        else:
-                            unrealized += (pos["entry"] - price) * pos["size"]
-                total = free + unrealized
+                total = free + self._open_positions_market_value() \
+                        - detail.get("borrowed", 0.0)
                 with self._capital_lock:
                     self.capital_display = round(total, 4)
                 self._balance_detail = detail
                 self.risk.update_equity(self.capital_display)
         except Exception as e:
             logger.warning(f"[Spot Sync] KO : {e}")
+
+    def _open_positions_market_value(self) -> float:
+        """
+        Valeur de marché signée des positions ouvertes (au prix ticker courant) :
+          + size×prix pour un long  (actif détenu)
+          − size×prix pour un short (passif à racheter ; les fonds de la vente
+                                      sont déjà comptés dans le cash libre)
+        Au levier 1, free + cette valeur − borrowed reconstitue l'équité réelle.
+        """
+        adj = 0.0
+        for pos in self.open_positions.values():
+            if pos.get("_reserved"):
+                continue
+            ticker = self._safe_ticker(pos["symbol"])
+            if not ticker:
+                continue
+            price = ticker.get("last", pos["entry"])
+            mv = pos["size"] * price
+            adj += mv if pos["side"] == "long" else -mv
+        return adj
 
     # ── Synchro compte margin ─────────────────────────────────────────────
 
@@ -115,10 +131,15 @@ class BalanceSyncMixin:
             if not self.cfg["trading"].get("paper_mode"):
                 detail = self.exchange.fetch_balance_detail()
                 if detail["free"] > 0:
+                    # Équité margin = cash libre + valeur de marché signée des
+                    # positions − emprunts (USDC). Le cash libre seul ignore
+                    # l'actif détenu (long) → faux drawdown / faux HALT.
+                    total = detail["free"] + self._open_positions_market_value() \
+                            - detail.get("borrowed", 0.0)
                     with self._capital_lock:
-                        self.capital_display = detail["free"]
+                        self.capital_display = round(total, 4)
                     self._balance_detail = detail
-                    self.risk.update_equity(detail["free"])
+                    self.risk.update_equity(self.capital_display)
         except Exception as e:
             logger.warning(f"[MARGIN] sync KO : {e}")
 

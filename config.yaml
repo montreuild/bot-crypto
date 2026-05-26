@@ -7,7 +7,11 @@ exchange:
   name: binance
   api_key: ${BINANCE_API_KEY}
   api_secret: ${BINANCE_API_SECRET}
-  margin: false
+  # Trading sur compte margin isolé assumé (emprunt auto AUTO_BORROW_REPAY).
+  # Doit rester cohérent avec trading.margin_mode : margin_mode != null active
+  # déjà le mode margin (cf. _margin_enabled). Pour revenir en spot pur sans
+  # emprunt : margin: false ET trading.margin_mode: null.
+  margin: true
 
 trading:
   capital: 1000
