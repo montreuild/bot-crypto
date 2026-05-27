@@ -178,8 +178,8 @@ def update_trading_params(
     # ── Validation des bornes ──
     if score_threshold is not None and not (0.0 < score_threshold < 1.0):
         raise HTTPException(400, "score_threshold doit être entre 0 et 1 (exclus)")
-    if risk_per_trade is not None and not (0.0 < risk_per_trade <= 0.5):
-        raise HTTPException(400, "risk_per_trade doit être entre 0 (exclus) et 0.5")
+    if risk_per_trade is not None and not (0.0 < risk_per_trade <= 1.0):
+        raise HTTPException(400, "risk_per_trade doit être entre 0 (exclus) et 1.0")
     if max_positions is not None and not (1 <= max_positions <= 50):
         raise HTTPException(400, "max_positions doit être entre 1 et 50")
     if paper_slippage is not None and not (0.0 <= paper_slippage <= 0.05):
@@ -353,7 +353,8 @@ def backtest_settings():
     return {
         "timeframe":            state.cfg["trading"].get("timeframe", "1h"),
         "timeframes":           state.cfg["trading"].get("timeframes", ["1h"]),
-        "available_timeframes": ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"],
+        # Harmonisé : les TFs sélectionnables suivent la config à chaud (trading.timeframes).
+        "available_timeframes": state.cfg["trading"].get("timeframes", ["1h"]),
         "strategies":           state.cfg["strategies"]["enabled"],
         "all_strategies":       all_strats,
         "strategy_params":      state.cfg.get("strategy_params", {}),
