@@ -218,6 +218,13 @@
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-sr"           onchange="toggleIndicator('sr')"     style="accent-color:#ffd166"> Sup/Rés</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer" title="Setups des stratégies (V8/V11/V12) : markers d'entrée long/short sur le prix + niveaux TP/SL du dernier setup. Bascule le modèle via le sélecteur V8/V11/V12."><input type="checkbox" id="tog-v7" checked onchange="toggleV7()" style="accent-color:#c084fc"> Setups stratégie (markers + TP/SL)</label>
       </div>
+      <!-- Toggle des stratégies de setups (juste sous les indicateurs) -->
+      <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:.68rem;color:var(--dim);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Stratégie :</span>
+        <button id="setup-strat-v8"  class="chart-tf-btn active" style="font-size:.65rem;padding:3px 9px" onclick="setSetupStrategy('v8')">V8</button>
+        <button id="setup-strat-v11" class="chart-tf-btn" style="font-size:.65rem;padding:3px 9px" onclick="setSetupStrategy('v11')">V11</button>
+        <button id="setup-strat-v12" class="chart-tf-btn" style="font-size:.65rem;padding:3px 9px" onclick="setSetupStrategy('v12')">V12</button>
+      </div>
       <div class="panel-body" style="gap:0;padding:0">
         <div id="chart-status" style="padding:8px 14px;font-size:.72rem;color:var(--dim);min-height:20px"></div>
         <div style="padding:0 8px">
@@ -231,12 +238,7 @@
           <div class="chart-wrap" id="chart-macd" style="height:90px" role="img" aria-label="Indicateur MACD (12,26,9)"></div>
           <div id="v7-block">
             <div class="chart-sub-lbl" style="margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <span>Setups <span style="color:#c084fc">stratégie</span> — markers d'entrée + <span style="color:#22d3ee">TP/SL</span> sur le prix</span>
-              <span style="display:inline-flex;gap:4px;margin-left:4px">
-                <button id="setup-strat-v8"  class="chart-tf-btn active" style="font-size:.6rem;padding:2px 6px" onclick="setSetupStrategy('v8')">V8</button>
-                <button id="setup-strat-v11" class="chart-tf-btn" style="font-size:.6rem;padding:2px 6px" onclick="setSetupStrategy('v11')">V11</button>
-                <button id="setup-strat-v12" class="chart-tf-btn" style="font-size:.6rem;padding:2px 6px" onclick="setSetupStrategy('v12')">V12</button>
-              </span>
+              <span>Setups <span style="color:#c084fc">stratégie</span> <span id="v7-strat-lbl" style="color:#c084fc">V8</span> — markers d'entrée + <span style="color:#22d3ee">TP/SL</span> sur le prix</span>
               <span id="v7-status" style="margin-left:4px;color:var(--dim);font-weight:400;font-size:.6rem"></span>
             </div>
             <div id="v7-legend" style="padding:4px 12px 6px;font-size:.66rem;color:var(--dim);display:flex;gap:10px;flex-wrap:wrap;border-bottom:1px solid rgba(255,255,255,.04)"></div>
@@ -594,13 +596,21 @@ function setChartTf(tf){
   loadChart();
 }
 
+// Nombre de bougies du graphique scanner : 5000 minimum, ou le nombre de
+// barres du scan manuel si celui-ci est plus élevé (sinon les setups des
+// stratégies, qui requièrent un long warmup, n'apparaissent pas).
+function _chartLimit(){
+  const v = parseInt(document.getElementById('scan-limit')?.value, 10) || 0;
+  return Math.max(5000, v);
+}
+
 async function loadChart(){
   const sym = (document.getElementById('chart-symbol').value||'BTC/USDC').trim();
   const statusEl = document.getElementById('chart-status');
   statusEl.innerHTML = '<span class="spinner"></span> Chargement…';
   _destroyCharts();
   try{
-    const r = await apiFetch(`/api/scanner/chart?symbol=${encodeURIComponent(sym)}&timeframe=${chartTf}&limit=300`);
+    const r = await apiFetch(`/api/scanner/chart?symbol=${encodeURIComponent(sym)}&timeframe=${chartTf}&limit=${_chartLimit()}`);
     if(!r.ok){const e=await r.json();throw new Error(e.detail||r.statusText);}
     const d = await r.json();
     _lastChartData = d;
@@ -830,6 +840,8 @@ function setSetupStrategy(key){
   if(!_SETUP_STRATS.includes(key)) return;
   _setupStrat = key;
   _SETUP_STRATS.forEach(k=>document.getElementById('setup-strat-'+k)?.classList.toggle('active', k===key));
+  const lbl = document.getElementById('v7-strat-lbl');
+  if(lbl) lbl.textContent = key.toUpperCase();
   if(_lastChartData){ loadSetupSeries(); }
 }
 
@@ -851,7 +863,7 @@ async function loadSetupSeries(){
   const sym = (document.getElementById('chart-symbol').value||'BTC/USDC').trim();
   try{
     const r = await apiFetch(
-      `/api/scanner/setup_series?symbol=${encodeURIComponent(sym)}&timeframe=${chartTf}&limit=300&strategy=${_setupStrat}`
+      `/api/scanner/setup_series?symbol=${encodeURIComponent(sym)}&timeframe=${chartTf}&limit=${_chartLimit()}&strategy=${_setupStrat}`
     );
     if(!r.ok){
       const e = await r.json().catch(()=>({}));
@@ -865,7 +877,8 @@ async function loadSetupSeries(){
       return;
     }
 
-    const setups = Array.isArray(d.setups) ? d.setups : [];
+    const setups = Array.isArray(d.markers) ? d.markers
+                 : (Array.isArray(d.setups) ? d.setups : []);
 
     // ── Markers d'entrée long/short sur le price chart ───────────────────
     if(_v7PriceSeries){
