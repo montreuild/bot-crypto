@@ -400,9 +400,18 @@ class AutoOptimizer:
             if result.get("best_params") and _is_ml_strategy(strategy_name) and df_full is not None:
                 _save_ml_model_post_opt(strategy_name, result["best_params"], df_full, timeframe)
 
+            # Si l'optimiseur signale un échec global (ex: tous les workers
+            # tombés à cause d'un OOM LightGBM), on marque le job "error"
+            # plutôt que "done" pour que le board reflète l'état réel.
+            job_failed = bool(result.get("failed")) or (
+                result.get("error") and not result.get("best_params")
+            )
             _update_job(job_id,
-                status="done", progress=100,
-                result=result, applied=applied,
+                status="error" if job_failed else "done",
+                progress=100,
+                result=result,
+                applied=applied,
+                error=result.get("error") if job_failed else None,
                 finished_at=time.time(),
             )
             elapsed = time.time() - get_job(job_id).get("started_at", time.time())
