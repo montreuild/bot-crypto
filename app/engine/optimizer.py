@@ -113,6 +113,13 @@ def _eval_worker(args: tuple) -> dict:
     """
     strategy_name, cfg_yaml, df_is_ipc, df_oos_ipc, symbol, params, timeframe = args
     try:
+        # Force mono-thread BLAS/OpenMP : sans ça, chaque worker réclame
+        # cpu_count threads OpenMP × ~50 Mo de buffers → std::bad_alloc côté
+        # LightGBM quand plusieurs workers tournent en parallèle.
+        import os as _os
+        for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+                   "NUMEXPR_NUM_THREADS", "LIGHTGBM_EXEC_NUM_THREADS"):
+            _os.environ.setdefault(_v, "1")
         import yaml as _yaml
         import importlib as _imp
         import polars as _pl
