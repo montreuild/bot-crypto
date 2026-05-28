@@ -106,34 +106,133 @@ def _overfitting_ratio(is_score: float, oos_score: float) -> float:
 
 
 # ── Worker standalone pour ProcessPoolExecutor (picklable — niveau module) ──
+
+# État partagé par worker : initialisé une seule fois via ``_worker_init``,
+# réutilisé pour tous les trials du même job. Évite de redésérialiser les
+# DataFrames et de reconstruire les features (qui ne dépendent pas des params)
+# à chaque trial — typiquement le poste de coût dominant pour les stratégies
+# à features lourdes (~462 colonnes type opus_omnibus_v8 / v10_retrained).
+_W: dict = {}
+
+
+def _worker_init(strategy_name: str, cfg_yaml: str,
+                 df_is_ipc: bytes, df_oos_ipc: bytes,
+                 symbol: str, timeframe: str) -> None:
+    """Initialiseur de worker : pré-calcule les features une fois par process."""
+    import os as _os
+    # Force mono-thread BLAS/OpenMP : empêche les std::bad_alloc côté LightGBM
+    # quand plusieurs workers tournent en parallèle.
+    for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+               "NUMEXPR_NUM_THREADS", "LIGHTGBM_EXEC_NUM_THREADS"):
+        _os.environ.setdefault(_v, "1")
+
+    import yaml as _yaml
+    import importlib as _imp
+    import polars as _pl
+
+    _W["strategy_name"] = strategy_name
+    _W["cfg"]           = _yaml.safe_load(cfg_yaml)
+    _W["df_is"]         = _pl.read_ipc(io.BytesIO(df_is_ipc))
+    _W["df_oos"]        = _pl.read_ipc(io.BytesIO(df_oos_ipc))
+    _W["symbol"]        = symbol
+    _W["timeframe"]     = timeframe
+    _W["strategy_mod"]  = _imp.import_module(f"app.strategies.{strategy_name}")
+
+    # Pré-calcul des features IS / OOS via une instance jetable.
+    # On capture l'état complet de l'instance après ``prepare_for_backtest``
+    # pour pouvoir le restaurer à chaque trial sans re-builder.
+    _W["snap_is"]  = None
+    _W["snap_oos"] = None
+    try:
+        _tmp = _W["strategy_mod"].Strategy()
+        prep = getattr(_tmp, "prepare_for_backtest", None)
+        if callable(prep):
+            prep(_W["df_is"])
+            _W["snap_is"] = {k: v for k, v in vars(_tmp).items()
+                             if k.startswith("_bt_") or "features" in k.lower()
+                             or "feats" in k.lower()}
+            # Reset l'instance pour OOS
+            reset = getattr(_tmp, "reset_model", None)
+            if callable(reset):
+                try: reset()
+                except Exception: pass
+            prep(_W["df_oos"])
+            _W["snap_oos"] = {k: v for k, v in vars(_tmp).items()
+                              if k.startswith("_bt_") or "features" in k.lower()
+                              or "feats" in k.lower()}
+        del _tmp
+    except Exception as _e:
+        # En cas d'échec on retombe simplement sur le comportement sans cache.
+        _W["snap_is"]  = None
+        _W["snap_oos"] = None
+
+
+def _install_features_cache(strat) -> None:
+    """Monkey-patch ``prepare_for_backtest`` sur l'instance pour réutiliser
+    le cache features du worker au lieu de rebuilder à chaque trial."""
+    snap_is  = _W.get("snap_is")
+    snap_oos = _W.get("snap_oos")
+    df_is    = _W.get("df_is")
+    df_oos   = _W.get("df_oos")
+    if not (snap_is or snap_oos):
+        return  # cache indisponible, comportement normal
+    _orig = getattr(strat, "prepare_for_backtest", None)
+
+    def _cached_prepare(df):
+        # Identité d'objet : df IS et OOS sont les DataFrames Polars du worker.
+        if df is df_is and snap_is:
+            for k, v in snap_is.items():
+                setattr(strat, k, v)
+            return
+        if df is df_oos and snap_oos:
+            for k, v in snap_oos.items():
+                setattr(strat, k, v)
+            return
+        if callable(_orig):
+            _orig(df)
+
+    try:
+        strat.prepare_for_backtest = _cached_prepare  # type: ignore[assignment]
+    except Exception:
+        pass
+
+
 def _eval_worker(args: tuple) -> dict:
     """
     Évalue un jeu de paramètres dans un processus séparé.
-    Utilise polars IPC pour déséraliser les DataFrames efficacement.
+    Réutilise les DataFrames + features pré-calculés par ``_worker_init``.
+    Fallback pickable : si l'initializer n'a pas été appelé (cas non
+    parallèle ou test), on redésérialise tout depuis les args.
     """
     strategy_name, cfg_yaml, df_is_ipc, df_oos_ipc, symbol, params, timeframe = args
     try:
-        # Force mono-thread BLAS/OpenMP : sans ça, chaque worker réclame
-        # cpu_count threads OpenMP × ~50 Mo de buffers → std::bad_alloc côté
-        # LightGBM quand plusieurs workers tournent en parallèle.
         import os as _os
         for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                    "NUMEXPR_NUM_THREADS", "LIGHTGBM_EXEC_NUM_THREADS"):
             _os.environ.setdefault(_v, "1")
-        import yaml as _yaml
-        import importlib as _imp
-        import polars as _pl
         from copy import deepcopy as _dp
         from app.engine.engine import Engine as _Engine
         from app.engine.backtest import Backtester as _Backtester
 
-        _cfg = _yaml.safe_load(cfg_yaml)
-        _df_is  = _pl.read_ipc(io.BytesIO(df_is_ipc))
-        _df_oos = _pl.read_ipc(io.BytesIO(df_oos_ipc))
+        # Fast-path : état partagé pré-chargé par ``_worker_init``.
+        if _W and _W.get("strategy_name") == strategy_name:
+            _cfg    = _W["cfg"]
+            _df_is  = _W["df_is"]
+            _df_oos = _W["df_oos"]
+            _mod    = _W["strategy_mod"]
+        else:
+            import yaml as _yaml
+            import importlib as _imp
+            import polars as _pl
+            _cfg = _yaml.safe_load(cfg_yaml)
+            _df_is  = _pl.read_ipc(io.BytesIO(df_is_ipc))
+            _df_oos = _pl.read_ipc(io.BytesIO(df_oos_ipc))
+            _mod = _imp.import_module(f"app.strategies.{strategy_name}")
 
-        _mod = _imp.import_module(f"app.strategies.{strategy_name}")
+        _strat = _mod.Strategy()
+        _install_features_cache(_strat)
         _eng = _Engine()
-        _eng.register(_mod.Strategy(), silent=True)
+        _eng.register(_strat, silent=True)
         _cfg_copy = _dp(_cfg)
         _cfg_copy.setdefault("strategy_params", {})[strategy_name] = params
         # Empêche resolve_strategy_params() d'écraser les params échantillonnés :
@@ -613,11 +712,19 @@ class StrategyOptimizer:
             except ImportError:  # py<3.3 fallback (jamais atteint)
                 BrokenProcessPool = Exception  # type: ignore
 
+            # initializer/initargs : chaque worker pré-calcule les features
+            # (lourdes, ~462 colonnes × 20k barres) une seule fois et les
+            # réutilise pour tous ses trials → gain typique ×5-10 sur les
+            # stratégies à features lourdes (opus_omnibus_v8/v10_retrained…).
+            _init_args = (self.strategy_name, cfg_yaml,
+                          df_is_ipc, df_oos_ipc, self.symbol, self.timeframe)
+
             remaining_params: List[dict] = []
             pool_broken = False
             try:
                 with concurrent.futures.ProcessPoolExecutor(
-                        max_workers=_safe_jobs, mp_context=ctx) as exe:
+                        max_workers=_safe_jobs, mp_context=ctx,
+                        initializer=_worker_init, initargs=_init_args) as exe:
                     futures_map = {exe.submit(_eval_worker, a): i for i, a in enumerate(worker_args)}
                     for fut in concurrent.futures.as_completed(futures_map):
                         done_count += 1
