@@ -411,6 +411,7 @@ def cached_strategy_features(
     builder: Callable,
     in_kind: str = "polars",
     out_kind: str = "polars",
+    include_time: bool = True,
 ):
     """Pont entre une stratégie et le catalogue FeatureStore.
 
@@ -431,6 +432,11 @@ def cached_strategy_features(
         type ``out_kind``.
     in_kind / out_kind :
         ``"polars"`` | ``"pandas"`` | ``"numpy"``.
+    include_time :
+        Si ``False``, la colonne ``time`` est retirée du résultat (cas des
+        stratégies qui consomment les features positionnellement, ex.
+        ``feats.to_numpy()`` : ``ml_dynamic_threshold``). Sans effet pour ``numpy``
+        (``time`` déjà exclu).
 
     Retour : features dans ``out_kind`` alignées à ``df``, ou ``None`` si le
     builder n'a rien pu produire (la stratégie retombe sur son chemin habituel).
@@ -467,6 +473,8 @@ def cached_strategy_features(
     if res is None or res.height == 0:
         return None
 
+    if not include_time and "time" in res.columns:
+        res = res.drop("time")
     if out_kind == "pandas":
         return res.to_pandas()
     if out_kind == "numpy":
