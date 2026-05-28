@@ -232,15 +232,27 @@ class Strategy(BaseStrategyML):
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         """Pré-calcule les features pour toute la fenêtre du backtest.
 
-        Le cache est lazy par ``adx_threshold`` (paramètre qui influence le
-        calcul du régime). En optim, chaque valeur distincte d'``adx_threshold``
-        ne déclenche qu'un seul build.
+        Le cache est par ``adx_threshold`` (paramètre qui influence le
+        calcul du régime). En optim on pré-peuple toutes les valeurs du
+        ``param_space`` pour que ``_train`` puisse lire le cache au lieu
+        de rebuilder à chaque trial.
         """
         try:
             self._bt_features_cache.clear()
             self._bt_features_len = len(df)
+            seeds = list(self.param_space.get("adx_threshold", [])) + [20.0]
+            seen = set()
+            for raw in seeds:
+                key = round(float(raw), 6)
+                if key in seen:
+                    continue
+                seen.add(key)
+                X = _build_features(df.head(self._bt_features_len), key)
+                if X is not None:
+                    self._bt_features_cache[key] = X
             logger.info(
-                f"[OpusV5-Stat] backtest : cache features prêt sur {len(df)} bougies"
+                f"[OpusV5-Stat] backtest : cache features prêt sur {len(df)} bougies "
+                f"({len(self._bt_features_cache)} seuil(s) adx_threshold pré-calculés)"
             )
         except Exception as e:
             logger.warning(f"[OpusV5-Stat] prepare_for_backtest KO : {e}")
@@ -316,7 +328,10 @@ class Strategy(BaseStrategyML):
         if len(df) < 200:
             return False
 
-        X = _build_features(df, adx_threshold)
+        # Réutilise le cache backtest si présent (pré-peuplé par
+        # ``prepare_for_backtest`` pour toutes les valeurs d'adx_threshold
+        # du param_space en optim).
+        X = self._get_or_build_features(df, adx_threshold)
         if X is None:
             return False
 
