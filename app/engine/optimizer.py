@@ -608,34 +608,90 @@ class StrategyOptimizer:
             _safe_jobs = max(1, min(n_jobs, max(1, _cpu - 1)))
             _worker_timeout = 300  # 5 min max par évaluation
             ctx = _mp.get_context("spawn")
-            with concurrent.futures.ProcessPoolExecutor(
-                    max_workers=_safe_jobs, mp_context=ctx) as exe:
-                futures_map = {exe.submit(_eval_worker, a): i for i, a in enumerate(worker_args)}
-                for fut in concurrent.futures.as_completed(futures_map):
-                    done_count += 1
+            try:
+                from concurrent.futures.process import BrokenProcessPool
+            except ImportError:  # py<3.3 fallback (jamais atteint)
+                BrokenProcessPool = Exception  # type: ignore
+
+            remaining_params: List[dict] = []
+            pool_broken = False
+            try:
+                with concurrent.futures.ProcessPoolExecutor(
+                        max_workers=_safe_jobs, mp_context=ctx) as exe:
+                    futures_map = {exe.submit(_eval_worker, a): i for i, a in enumerate(worker_args)}
+                    for fut in concurrent.futures.as_completed(futures_map):
+                        done_count += 1
+                        try:
+                            r = fut.result(timeout=_worker_timeout)
+                        except concurrent.futures.TimeoutError:
+                            logger.warning("[Optimizer] worker timeout (>%ds), ignoré", _worker_timeout)
+                            continue
+                        except BrokenProcessPool as _bp:
+                            # Un worker a été tué (OOM LightGBM, segfault…). Le pool
+                            # entier est compromis : on bascule sur du séquentiel
+                            # pour les trials restants au lieu de tout perdre.
+                            logger.error(
+                                "[Optimizer] BrokenProcessPool (worker tué, ex: OOM) — "
+                                "bascule en séquentiel pour les trials restants : %s", _bp,
+                            )
+                            pool_broken = True
+                            for f, idx in futures_map.items():
+                                if not f.done():
+                                    remaining_params.append(param_list[idx])
+                                    f.cancel()
+                            break
+                        except Exception as _e:
+                            logger.warning(f"[Optimizer] worker KO : {_e}")
+                            continue
+                        if "error" in r:
+                            logger.warning("[Optimizer] worker erreur : %s", r["error"])
+                            continue
+                        score = self._penalized_score(r)
+                        r["final_score"] = score
+                        self.results.append(r)
+                        if score > best_so_far:
+                            best_so_far = score
+                        if self.progress_callback:
+                            self.progress_callback(trial_offset + done_count, n_total, best_so_far, {
+                                "oos_pnl":     r["oos_pnl"],
+                                "oos_sharpe":  r["oos_sharpe"],
+                                "final_score": score,
+                                "overfit":     r.get("overfit", 1.0),
+                            })
+            except BrokenProcessPool as _bp:
+                # Le pool est mort à l'__exit__ (ex: shutdown KO après crash).
+                # On absorbe l'erreur ; les trials déjà collectés restent valides.
+                logger.error("[Optimizer] pool brisé à la fermeture, ignoré : %s", _bp)
+                pool_broken = True
+
+            # Fallback séquentiel pour les trials non traités après pool brisé.
+            if pool_broken and remaining_params:
+                logger.info(
+                    "[Optimizer] reprise en séquentiel de %d trial(s) restant(s)",
+                    len(remaining_params),
+                )
+                for p in remaining_params:
                     try:
-                        r = fut.result(timeout=_worker_timeout)
-                    except concurrent.futures.TimeoutError:
-                        logger.warning("[Optimizer] worker timeout (>%ds), ignoré", _worker_timeout)
+                        r = self._eval(p)
+                    except Exception as _se:
+                        logger.warning(f"[Optimizer] trial séquentiel KO : {_se}")
                         continue
-                    except Exception as _e:
-                        logger.warning(f"[Optimizer] worker KO : {_e}")
-                        continue
-                    if "error" in r:
-                        logger.warning("[Optimizer] worker erreur : %s", r["error"])
-                        continue
+                    done_count += 1
                     score = self._penalized_score(r)
                     r["final_score"] = score
                     self.results.append(r)
                     if score > best_so_far:
                         best_so_far = score
                     if self.progress_callback:
-                        self.progress_callback(trial_offset + done_count, n_total, best_so_far, {
-                            "oos_pnl":     r["oos_pnl"],
-                            "oos_sharpe":  r["oos_sharpe"],
-                            "final_score": score,
-                            "overfit":     r.get("overfit", 1.0),
-                        })
+                        try:
+                            self.progress_callback(trial_offset + done_count, n_total, best_so_far, {
+                                "oos_pnl":     r["oos_pnl"],
+                                "oos_sharpe":  r["oos_sharpe"],
+                                "final_score": score,
+                                "overfit":     r.get("overfit", 1.0),
+                            })
+                        except InterruptedError:
+                            raise
 
     def _perturb(self, params: dict) -> dict:
         """Perturbation légère d'un jeu de params pour l'exploitation."""
@@ -681,7 +737,11 @@ class StrategyOptimizer:
 
     def _best_result(self) -> dict:
         if not self.results:
-            return {"error": "Aucun trial complété"}
+            return {
+                "error": "Aucun trial complété (workers tous KO — ex: OOM LightGBM)",
+                "failed": True,
+                "completed_trials": 0,
+            }
         best = max(self.results, key=self._penalized_score)
         # Top 5 par score final
         sorted_results = sorted(self.results, key=self._penalized_score, reverse=True)
