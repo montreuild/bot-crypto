@@ -18,5 +18,8 @@ venv/
 # CandleStore — données OHLCV locales (Parquet)
 data/ohlcv/
 
+# FeatureStore — catalogue de features pré-calculées (Parquet)
+data/features/
+
 # Logs d entrainement V11 (artefacts runtime)
 logs/*.jsonl

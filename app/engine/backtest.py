@@ -295,6 +295,10 @@ class Backtester:
             # (``app.api.routes.replay``). Chaque trial subprocess en
             # bénéficie automatiquement (build × 1 puis ~N-1 lookups O(1) par
             # barre du backtest), sans modification supplémentaire.
+            # Symbole/TF exposés à la stratégie pour le catalogue FeatureStore
+            # (clé (symbol, tf) du cache disque de features pré-calculées).
+            strat._bt_symbol = symbol
+            strat._bt_tf = timeframe or self.cfg["trading"].get("timeframe", "1h")
             prep = getattr(strat, "prepare_for_backtest", None)
             if callable(prep):
                 try:

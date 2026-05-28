@@ -303,10 +303,14 @@ class Strategy(BaseStrategyML):
         sur les backtests longs).
         """
         try:
-            cols = [c for c in ("time", "open", "high", "low", "close", "volume")
-                    if c in df.columns]
-            pdf = df.select(cols).to_pandas()
-            feats = self._FEATURE_BUILDER.build(pdf)
+            from app.core.feature_store import cached_strategy_features
+            _ohlcv = ("time", "open", "high", "low", "close", "volume")
+            feats = cached_strategy_features(
+                getattr(self, "_bt_symbol", None), getattr(self, "_bt_tf", None), df,
+                name="opus_v4_pandas", version="1",
+                builder=lambda pdf: self._FEATURE_BUILDER.build(
+                    pdf[[c for c in _ohlcv if c in pdf.columns]]),
+                in_kind="pandas", out_kind="pandas")
             self._bt_features_pdf = feats
             self._bt_features_len = len(df) if feats is not None else 0
             logger.info(

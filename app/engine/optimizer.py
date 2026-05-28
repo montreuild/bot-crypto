@@ -170,6 +170,9 @@ def _worker_init(strategy_name: str, cfg_yaml: str,
 
     try:
         _tmp = _W["strategy_mod"].Strategy()
+        # Symbole/TF pour le catalogue FeatureStore (cache disque partagé).
+        _tmp._bt_symbol = symbol
+        _tmp._bt_tf = timeframe
         prep = getattr(_tmp, "prepare_for_backtest", None)
         if callable(prep):
             prep(_W["df_is"])
