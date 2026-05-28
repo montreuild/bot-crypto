@@ -845,7 +845,13 @@ class Strategy(BaseStrategyML):
         learning_rate = float(params.get("learning_rate", self._DEFAULTS["learning_rate"]))
 
         n_keep = max(2200, len(df))
-        feats  = _build_features(_window_polars(df, n=n_keep))
+        # Réutilise le cache backtest si dispo (features causales déterministes).
+        if (self._bt_features is not None and
+                self._bt_features_len > 0 and
+                len(df) <= self._bt_features_len):
+            feats = self._bt_features.head(len(df))
+        else:
+            feats = _build_features(_window_polars(df, n=n_keep))
         if feats is None or len(feats) < 250:
             logger.warning(f"[OmnibusV10-RT] {tf_key} : données insuffisantes")
             return False
@@ -910,7 +916,7 @@ class Strategy(BaseStrategyML):
                     (y_amp[:split] == 0).sum() / max((y_amp[:split] == 1).sum(), 1)},
                 ds_train_amp, num_boost_round=n_estimators,
                 valid_sets=[ds_valid_amp],
-                callbacks=[lgb.early_stopping(40, verbose=False),
+                callbacks=[lgb.early_stopping(20, verbose=False),
                            lgb.log_evaluation(-1)],
             )
         except Exception as e:
@@ -930,7 +936,7 @@ class Strategy(BaseStrategyML):
                     (y_dir[:split] == 0).sum() / max((y_dir[:split] == 1).sum(), 1)},
                 ds_train_dir, num_boost_round=n_estimators,
                 valid_sets=[ds_valid_dir],
-                callbacks=[lgb.early_stopping(40, verbose=False),
+                callbacks=[lgb.early_stopping(20, verbose=False),
                            lgb.log_evaluation(-1)],
             )
         except Exception as e:

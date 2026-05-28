@@ -321,7 +321,7 @@ class Strategy(BaseStrategyML):
             "n_jobs":            1,
         }
 
-        callbacks = [lgb.early_stopping(30, verbose=False), lgb.log_evaluation(-1)]
+        callbacks = [lgb.early_stopping(20, verbose=False), lgb.log_evaluation(-1)]
 
         if split < len(X_s):
             ds_train = lgb.Dataset(X_s[:split],  label=y_f[:split])

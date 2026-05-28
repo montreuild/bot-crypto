@@ -455,7 +455,7 @@ class Strategy(BaseStrategyML):
                 ds_train_amp,
                 num_boost_round=300,
                 valid_sets=[ds_valid_amp],
-                callbacks=[lgb.early_stopping(40, verbose=False),
+                callbacks=[lgb.early_stopping(20, verbose=False),
                            lgb.log_evaluation(-1)],
             )
         except Exception as e:
@@ -475,7 +475,7 @@ class Strategy(BaseStrategyML):
                 ds_train_dir,
                 num_boost_round=300,
                 valid_sets=[ds_valid_dir],
-                callbacks=[lgb.early_stopping(40, verbose=False),
+                callbacks=[lgb.early_stopping(20, verbose=False),
                            lgb.log_evaluation(-1)],
             )
         except Exception as e:
