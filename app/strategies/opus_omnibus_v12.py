@@ -54,11 +54,15 @@ class Strategy(_V11Strategy):
         "unconfirmed_size_factor": [0.5, 0.7, 1.0],
         "mldyn_vol_multiplier":    [0.4, 0.6, 0.8],
         "mldyn_lookahead":         [2, 3, 5],
+        # Knob d'optim : laisse l'optimiseur choisir d'éteindre mldyn (et
+        # économiser son entraînement, ~40-60% du coût par trial v12).
+        "mldyn_enabled":           [True, False],
     }
 
     _DEFAULTS = {
         **_V11Strategy._DEFAULTS,
         # ── Fusion ──
+        "mldyn_enabled":           True,
         "fusion_mode":             "confirm",
         "require_confirmation":    True,
         "confirm_margin":          0.0,
@@ -124,12 +128,31 @@ class Strategy(_V11Strategy):
             return sig
 
         p = (params or {}).get(self.name, {})
+        mldyn_enabled  = bool(p.get("mldyn_enabled",       self._DEFAULTS["mldyn_enabled"]))
         fusion_mode    = str(p.get("fusion_mode",          self._DEFAULTS["fusion_mode"]))
         require_conf   = bool(p.get("require_confirmation", self._DEFAULTS["require_confirmation"]))
         confirm_margin = float(p.get("confirm_margin",     self._DEFAULTS["confirm_margin"]))
         veto_margin    = float(p.get("veto_margin",        self._DEFAULTS["veto_margin"]))
         blend_weight   = float(p.get("blend_weight",       self._DEFAULTS["blend_weight"]))
         unconf_size    = float(p.get("unconfirmed_size_factor", self._DEFAULTS["unconfirmed_size_factor"]))
+
+        # ── Skip mldyn quand son effet est négligeable ───────────────────────
+        # Cas où mldyn ne change rien au signal V11 et où son coût (random
+        # search interne de ~8-15 trials par fit) est gaspillé :
+        #   - ``mldyn_enabled=False`` (knob d'optim explicite), OU
+        #   - ``require_conf=False`` ET ``fusion_mode=="veto"`` (le veto et
+        #     l'ajustement de taille sont gated par require_conf ; en mode
+        #     veto pur sans confirmation requise, mldyn n'a aucun effet)
+        if (not mldyn_enabled) or (
+            not require_conf and fusion_mode == "veto"
+        ):
+            sig["fusion"] = "skipped"
+            sig["mldyn_proba_up"] = None
+            sig["fusion_mode"]    = fusion_mode
+            sig.setdefault("conditions", []).append(
+                "Fusion : ml_dyn skip (mldyn_enabled=False ou veto+require_conf=False)"
+            )
+            return sig
 
         # ── Interroge le modèle ml_dynamic_threshold embarqué ────────────────
         self._mldyn._cancel_event = self._cancel_event

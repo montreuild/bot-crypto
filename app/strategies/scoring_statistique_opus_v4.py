@@ -254,17 +254,29 @@ class Strategy(BaseStrategyML):
         250 bougies — soit ~5000 rebuilds redondants sur un backtest long.
         On cache le tableau X complet par valeur de ``adx_threshold`` (seul
         paramètre qui influence le calcul des features de régime).
+        Pré-peuplement : pour les jobs d'optimisation, on construit aussi
+        tout de suite chaque valeur d'``adx_threshold`` du ``param_space``
+        afin que ``_train`` puisse lire le cache au lieu de rebuilder.
         """
         try:
-            # On reconstruit le cache pour la(les) valeur(s) ``adx_threshold``
-            # du config courant. Les trials suivants ré-appelleront prep avec
-            # leur propre seuil — le cache croît mais reste borné par les
-            # valeurs distinctes (~3 dans le param_space).
             self._bt_features_cache.clear()
             self._bt_features_len = len(df)
+            # Pré-peuplement : couvre toutes les valeurs d'adx_threshold du
+            # param_space + la valeur "par défaut" (20.0). Coût ~N×build mais
+            # amorti sur tous les trials du job.
+            seeds = list(self.param_space.get("adx_threshold", [])) + [20.0]
+            seen = set()
+            for raw in seeds:
+                key = round(float(raw), 6)
+                if key in seen:
+                    continue
+                seen.add(key)
+                X = _build_features(df.head(self._bt_features_len), key)
+                if X is not None:
+                    self._bt_features_cache[key] = X
             logger.info(
                 f"[OpusV4-Stat] backtest : cache features prêt sur {len(df)} bougies "
-                f"(rebuild paresseux par valeur d'adx_threshold)"
+                f"({len(self._bt_features_cache)} seuil(s) adx_threshold pré-calculés)"
             )
         except Exception as e:
             logger.warning(f"[OpusV4-Stat] prepare_for_backtest KO : {e}")
@@ -383,7 +395,10 @@ class Strategy(BaseStrategyML):
             logger.warning(f"[V4] {tf_key} : training annulé — df trop court ({len(df)} < 200)")
             return False
 
-        X = _build_features(df, adx_threshold)
+        # Réutilise le cache backtest si présent (sinon rebuild classique).
+        # En optim, ``prepare_for_backtest`` pré-peuple le cache pour toutes
+        # les valeurs d'adx_threshold du param_space → 0 rebuild ici.
+        X = self._get_or_build_features(df, adx_threshold)
         if X is None:
             missing = [c for c in _AMP_BASE_COLS + _DIR_BASE_COLS if c not in df.columns]
             logger.warning(
@@ -440,7 +455,7 @@ class Strategy(BaseStrategyML):
                 ds_train_amp,
                 num_boost_round=300,
                 valid_sets=[ds_valid_amp],
-                callbacks=[lgb.early_stopping(40, verbose=False),
+                callbacks=[lgb.early_stopping(20, verbose=False),
                            lgb.log_evaluation(-1)],
             )
         except Exception as e:
@@ -460,7 +475,7 @@ class Strategy(BaseStrategyML):
                 ds_train_dir,
                 num_boost_round=300,
                 valid_sets=[ds_valid_dir],
-                callbacks=[lgb.early_stopping(40, verbose=False),
+                callbacks=[lgb.early_stopping(20, verbose=False),
                            lgb.log_evaluation(-1)],
             )
         except Exception as e:

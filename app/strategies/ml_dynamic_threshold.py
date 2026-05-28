@@ -378,7 +378,10 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
     }
 
     fixed_params: Dict[str, Any] = {
-        "n_trials":      15,
+        # 8 trials suffisent : le random search interne converge typiquement
+        # avant et la marge marginale au-delà ne justifie pas le coût
+        # (chaque trial = 1 fit complet avec TimeSeriesSplit). Réduction 15→8.
+        "n_trials":      8,
         "min_train":     150,
         "retrain_every": 50,
     }
@@ -513,7 +516,10 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
     # ── Entraînement ──────────────────────────────────────────
     def _fit(self, df: pl.DataFrame, tf: str = "") -> None:
         try:
-            feats  = compute_features(df)
+            # Réutilise le cache backtest si dispo (peuplé par
+            # ``prepare_for_backtest``) au lieu de rebuilder les ~30 features
+            # à chaque fit (random search interne × n_trials × N retrains).
+            feats  = self._get_or_build_features(df)
             labels = compute_labels(df, self.lookahead, self.vol_multiplier)
 
             # Position-based alignment:

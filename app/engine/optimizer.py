@@ -141,25 +141,46 @@ def _worker_init(strategy_name: str, cfg_yaml: str,
     # Pré-calcul des features IS / OOS via une instance jetable.
     # On capture l'état complet de l'instance après ``prepare_for_backtest``
     # pour pouvoir le restaurer à chaque trial sans re-builder.
+    # On capture aussi les attributs des sous-stratégies imbriquées (ex:
+    # ``v12._mldyn``) pour éviter les rebuilds de features nested.
     _W["snap_is"]  = None
     _W["snap_oos"] = None
+
+    def _snap_state(obj) -> dict:
+        snap: dict = {}
+        try:
+            for k, v in vars(obj).items():
+                if k.startswith("_bt_") or "features" in k.lower() or "feats" in k.lower():
+                    snap[k] = ("self", v)
+            # Sous-stratégies imbriquées (ex: opus_omnibus_v12._mldyn).
+            for k, v in vars(obj).items():
+                if k.startswith("__") or not hasattr(v, "__class__"):
+                    continue
+                cls_mod = getattr(v.__class__, "__module__", "") or ""
+                if cls_mod.startswith("app.strategies."):
+                    sub: dict = {}
+                    for sk, sv in vars(v).items():
+                        if sk.startswith("_bt_") or "features" in sk.lower() or "feats" in sk.lower():
+                            sub[sk] = sv
+                    if sub:
+                        snap[k] = ("nested", sub)
+        except Exception:
+            pass
+        return snap
+
     try:
         _tmp = _W["strategy_mod"].Strategy()
         prep = getattr(_tmp, "prepare_for_backtest", None)
         if callable(prep):
             prep(_W["df_is"])
-            _W["snap_is"] = {k: v for k, v in vars(_tmp).items()
-                             if k.startswith("_bt_") or "features" in k.lower()
-                             or "feats" in k.lower()}
+            _W["snap_is"] = _snap_state(_tmp)
             # Reset l'instance pour OOS
             reset = getattr(_tmp, "reset_model", None)
             if callable(reset):
                 try: reset()
                 except Exception: pass
             prep(_W["df_oos"])
-            _W["snap_oos"] = {k: v for k, v in vars(_tmp).items()
-                              if k.startswith("_bt_") or "features" in k.lower()
-                              or "feats" in k.lower()}
+            _W["snap_oos"] = _snap_state(_tmp)
         del _tmp
     except Exception as _e:
         # En cas d'échec on retombe simplement sur le comportement sans cache.
@@ -178,15 +199,30 @@ def _install_features_cache(strat) -> None:
         return  # cache indisponible, comportement normal
     _orig = getattr(strat, "prepare_for_backtest", None)
 
+    def _apply_snap(snap: dict) -> None:
+        for k, payload in snap.items():
+            try:
+                kind, val = payload
+            except Exception:
+                # Format legacy (k → valeur directe) : applique tel quel.
+                setattr(strat, k, payload)
+                continue
+            if kind == "self":
+                setattr(strat, k, val)
+            elif kind == "nested":
+                sub = getattr(strat, k, None)
+                if sub is None:
+                    continue
+                for sk, sv in val.items():
+                    setattr(sub, sk, sv)
+
     def _cached_prepare(df):
         # Identité d'objet : df IS et OOS sont les DataFrames Polars du worker.
         if df is df_is and snap_is:
-            for k, v in snap_is.items():
-                setattr(strat, k, v)
+            _apply_snap(snap_is)
             return
         if df is df_oos and snap_oos:
-            for k, v in snap_oos.items():
-                setattr(strat, k, v)
+            _apply_snap(snap_oos)
             return
         if callable(_orig):
             _orig(df)

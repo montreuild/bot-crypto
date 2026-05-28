@@ -945,7 +945,16 @@ class Strategy(BaseStrategyML):
         top_n         = int(params.get("importance_top_n", self._DEFAULTS["importance_top_n"]))
 
         n_keep = max(2200, len(df))
-        feats  = _build_features(_window_polars(df, n=n_keep))
+        # Réutilise le cache backtest si dispo (peuplé par
+        # ``prepare_for_backtest``). Les features sont causales et
+        # déterministes par bougie → un slice du cache plein est
+        # équivalent à un rebuild sur la fenêtre.
+        if (self._bt_features is not None and
+                self._bt_features_len > 0 and
+                len(df) <= self._bt_features_len):
+            feats = self._bt_features.head(len(df))
+        else:
+            feats = _build_features(_window_polars(df, n=n_keep))
         if feats is None or len(feats) < 250:
             logger.warning(f"[OmnibusV11] {tf_key} : données insuffisantes")
             return False
@@ -1015,7 +1024,7 @@ class Strategy(BaseStrategyML):
                 booster = lgb.train(
                     {**common, "scale_pos_weight": spw},
                     ds_tr, num_boost_round=n_estimators, valid_sets=[ds_va],
-                    callbacks=[lgb.early_stopping(40, verbose=False),
+                    callbacks=[lgb.early_stopping(20, verbose=False),
                                lgb.log_evaluation(-1)],
                 )
             except Exception as e:
