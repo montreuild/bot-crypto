@@ -727,7 +727,13 @@ class Strategy(BaseStrategyML):
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         try:
-            feats = _build_features(_window_polars(df, n=len(df)))
+            # Catalogue partagé "v4_polars" (build identique entre v7/v10_rt/v11/stat_rt).
+            from app.core.feature_store import cached_strategy_features
+            feats = cached_strategy_features(
+                getattr(self, "_bt_symbol", None), getattr(self, "_bt_tf", None), df,
+                name="v4_polars", version="1",
+                builder=lambda w: _build_features(_window_polars(w, n=len(w))),
+                in_kind="polars", out_kind="polars")
             self._bt_features = feats
             self._bt_features_len = len(df) if feats is not None else 0
             logger.info(

@@ -447,7 +447,15 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         log-returns, divergences RSI/prix, micro-structure des bougies…).
         """
         try:
-            feats = compute_features(df)
+            # Catalogue FeatureStore : provider 'ml_dyn_threshold' (consommation
+            # positionnelle via to_numpy → include_time=False pour préserver le
+            # schéma exact de compute_features).
+            from app.core.feature_store import cached_strategy_features
+            feats = cached_strategy_features(
+                getattr(self, "_bt_symbol", None), getattr(self, "_bt_tf", None), df,
+                name="ml_dyn_threshold", version="1",
+                builder=lambda w: compute_features(w),
+                in_kind="polars", out_kind="polars", include_time=False)
             if feats is not None and len(feats) > 0:
                 self._bt_features = feats
                 self._bt_features_len = len(df)

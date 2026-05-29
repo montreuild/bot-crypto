@@ -239,6 +239,7 @@ class Strategy(BaseStrategyML):
         # car ``_build_features`` dépend de ce paramètre pour le régime.
         self._bt_features_cache: Dict[float, np.ndarray] = {}
         self._bt_features_len: int = 0
+        self._bt_full_df: Optional[pl.DataFrame] = None  # df complet du backtest (FeatureStore)
         # Diagnostic : compteurs et accumulateurs pour comprendre pourquoi
         # 0 trade peut survenir en backtest (échec training silencieux vs
         # seuils trop stricts). Loggés périodiquement dans score().
@@ -261,9 +262,10 @@ class Strategy(BaseStrategyML):
         try:
             self._bt_features_cache.clear()
             self._bt_features_len = len(df)
+            self._bt_full_df = df  # conservé pour des (re)builds alignés sur la fenêtre complète
             # Pré-peuplement : couvre toutes les valeurs d'adx_threshold du
             # param_space + la valeur "par défaut" (20.0). Coût ~N×build mais
-            # amorti sur tous les trials du job.
+            # amorti sur tous les trials du job, et persisté via le FeatureStore.
             seeds = list(self.param_space.get("adx_threshold", [])) + [20.0]
             seen = set()
             for raw in seeds:
@@ -271,7 +273,7 @@ class Strategy(BaseStrategyML):
                 if key in seen:
                     continue
                 seen.add(key)
-                X = _build_features(df.head(self._bt_features_len), key)
+                X = self._build_full_features(key)
                 if X is not None:
                     self._bt_features_cache[key] = X
             logger.info(
@@ -282,11 +284,35 @@ class Strategy(BaseStrategyML):
             logger.warning(f"[OpusV4-Stat] prepare_for_backtest KO : {e}")
             self._bt_features_cache.clear()
             self._bt_features_len = 0
+            self._bt_full_df = None
+
+    def _build_full_features(self, adx_threshold: float) -> Optional[np.ndarray]:
+        """Construit X (n, 48) sur TOUTE la fenêtre de backtest via le catalogue
+        FeatureStore (un provider par ``adx_threshold``). ``_build_features`` exige
+        les colonnes ``_pre_*`` : on les précalcule dans le builder
+        (``precompute_df`` est idempotent). Retourne ``None`` hors backtest."""
+        df = self._bt_full_df
+        if df is None:
+            return None
+        from app.core.feature_store import cached_strategy_features
+        from app.core.indicators import precompute_df as _pc
+        key = round(float(adx_threshold), 6)
+        return cached_strategy_features(
+            getattr(self, "_bt_symbol", None), getattr(self, "_bt_tf", None), df,
+            name=f"{self.name}_adx{key}", version="1",
+            builder=lambda w, t=adx_threshold: _build_features(_pc(w), t),
+            in_kind="polars", out_kind="numpy")
 
     def _get_or_build_features(self, df: pl.DataFrame,
                                adx_threshold: float) -> Optional[np.ndarray]:
-        """Retourne ``X[:len(df)]`` depuis le cache, en construisant ``X`` sur
-        la fenêtre complète au premier accès pour chaque ``adx_threshold``."""
+        """Retourne ``X[:len(df)]`` aligné sur ``df``.
+
+        En backtest, ``X`` couvre TOUTE la fenêtre (semé par
+        ``prepare_for_backtest``) : l'index ``len(df)-1`` correspond donc bien à
+        la barre courante. Correctif d'alignement : on (re)construit si le cache
+        est absent OU plus court que ``len(df)`` — auparavant un X figé à la
+        longueur du premier accès gelait les features de toutes les barres
+        suivantes."""
         if self._bt_features_len == 0 or len(df) > self._bt_features_len:
             # Pas en mode backtest cached ou DataFrame plus long que prévu :
             # fallback au build classique (sur le slice de 250 barres).
@@ -294,9 +320,8 @@ class Strategy(BaseStrategyML):
             return _build_features(feat_window, adx_threshold)
         key = round(float(adx_threshold), 6)
         X = self._bt_features_cache.get(key)
-        if X is None:
-            # Premier accès pour ce seuil : build sur la fenêtre complète.
-            X = _build_features(df.head(self._bt_features_len), adx_threshold)
+        if X is None or len(X) < len(df):
+            X = self._build_full_features(adx_threshold)
             if X is None:
                 return None
             self._bt_features_cache[key] = X
@@ -331,6 +356,7 @@ class Strategy(BaseStrategyML):
             self._best_auc = 0.0
         self._bt_features_cache.clear()
         self._bt_features_len = 0
+        self._bt_full_df = None
         self._diag_predictions.clear()
         self._diag_rejects.clear()
         self._diag_signals   = 0
