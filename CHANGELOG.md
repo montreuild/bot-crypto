@@ -4,6 +4,130 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [12.3.0] - 2026-06-03
+
+### ✨ Nouvelle stratégie — `volatility_squeeze` (RULE-BASED, antithèse de l'Omnibus)
+
+Issue d'une **remise en question des hypothèses** de la lignée `opus_omnibus`
+V7/V8/V10/V11 (cf. `research/CRITIQUE_omnibus_v7-v11.md`).
+
+**Critique de l'Omnibus :**
+- Hypothèse fondatrice fausse — la lignée prédit la DIRECTION par ML alors qu'elle
+  **admet elle-même un AUC_dir ≈ 0.53** (quasi-aléatoire, docstring V10). Toute la
+  machinerie de routing `p_up` filtre donc du bruit.
+- Sous-exploite le seul edge réel — l'AMPLITUDE/volatilité (AUC ≈ 0.7, clustering
+  ACF|r| 0.15-0.28).
+- Sur-apprentissage — 17 à 23 paramètres + seuils par setup, **tunés sur des
+  backtests in-sample de 12-122 trades**, `oos_score: null` (aucune validation OOS).
+- Mauvais timeframes — 15m/30m/1h, **sous le mur des frais** (mesuré).
+- Complexité fragile — LightGBM inline, path-dépendant, non déterministe.
+
+**Réponse — `volatility_squeeze` :** trader la VOLATILITÉ (prévisible), pas la
+direction (aléatoire). On attend une **compression** (squeeze = largeur Bollinger
+dans son percentile bas) puis sa **détente alignée sur la tendance établie**
+(jamais prédite) ; abstention en chop. Règle pure : **~8 paramètres, déterministe,
+ZÉRO ML, zéro réentraînement**.
+
+**Backtest 4h, 7.5 ans (frais/spread/borrow réalistes) :**
+- long-only strict : **+68.7 %** · Sharpe 13.7 · maxDD **-5.8 %** · **PF 2.49** · win 51 %.
+- Walk-forward OOS : **consistance 80 %** (meilleure des stratégies du repo).
+- BEAR 2022 **-1.2 % vs B&H -53 %** ; BULL 2023-24 +12.0 % (PF 3.9) ; CHOP -1.2 %.
+- ⚠️ 1h backtesté **-41.6 %** → confirme que l'orientation bas-TF de l'Omnibus est
+  sous le mur des frais.
+
+> 8 paramètres déterministes battent 23 paramètres + ML inline non-validé OOS :
+> la discipline (ne trader que l'edge réel) bat la complexité.
+
+### 🔧 Fichiers ajoutés
+
+| Fichier | Rôle |
+|---------|------|
+| `app/strategies/volatility_squeeze.py` | Stratégie rule-based (`BaseStrategy`, zéro ML) |
+| `strategies/volatility_squeeze.yaml` | Params + `optimizer_results` (4h, 1d) |
+| `tests/test_volatility_squeeze.py` | Tests unitaires + intégration |
+| `research/CRITIQUE_omnibus_v7-v11.md` | Critique structurée de la lignée Omnibus |
+| `research/backtest_squeeze.py` | Harnais backtest/walk-forward/split |
+
+---
+
+## [12.2.0] - 2026-06-03
+
+### ✨ Nouvelle stratégie — `momentum_blitz` (AGRESSIVE, plein capital)
+
+Pendant **agressif** de `harmonic_regime` : vise le rendement absolu maximal en
+assumant un drawdown élevé. Issue de `research/analysis_aggressive.py` +
+`research/STRATEGIE_momentum_blitz.md` (nouveaux TF 15m/30m analysés).
+
+**Edges (mesurés, nets de frais) :** ignition = breakout Donchian + surge de
+volume + expansion d'ATR + alignement HTF (net-positif seulement ≥ 4h ;
+15m/30m/1h perdent : frais > edge). Asymétrie MFE/MAE≈1.24, queue droite +6 %.
+
+**Mécanique d'agression :** déploiement **plein capital** (`size_factor` 1.0→2.0
+selon conviction), exits **asymétriques** (stop serré 1.3×ATR + trailing LARGE
+3×ATR → laisse courir), seuil de qualité bas mais gate ignition. Long-biais
+(shorts net-négatifs désactivés).
+
+**Backtest 4h, 7.5 ans (frais/spread/borrow réalistes) :**
+- full1x (réaliste) : **+58.2 %** · Sharpe **5.73** · maxDD **-11.6 %** · PF 1.55.
+- lev2x (agressif) : **+113.7 %** (×2.14) · Sharpe **6.95** · maxDD -12.3 % · PF 1.74.
+- Positif dans tous les régimes : BEAR 2022 flat (vs B&H -53 %), BULL +31.6 %,
+  CHOP +6.4 %. Walk-forward OOS : PnL moyen +87, consistance 60 %.
+- ⚠️ TF = 4h uniquement (1h/30m/15m backtestés négatifs).
+
+> Leçon : *agressif ≠ plus de trades* (plus de frais, edge dilué). La
+> sélectivité (ignition-only) maximise l'edge par trade, que le plein capital amplifie.
+
+### 🔧 Fichiers ajoutés
+
+| Fichier | Rôle |
+|---------|------|
+| `app/strategies/momentum_blitz.py` | Stratégie agressive (`BaseStrategy`) |
+| `strategies/momentum_blitz.yaml` | Params + `optimizer_results` (4h) |
+| `tests/test_momentum_blitz.py` | Tests unitaires + intégration |
+| `research/analysis_aggressive.py` | Analyse edges de gros mouvement nets de frais |
+| `research/backtest_blitz.py` | Harnais backtest (déploiement/levier, Monte-Carlo) |
+| `research/STRATEGIE_momentum_blitz.md` | Rapport analyse → conception → validation |
+
+---
+
+## [12.1.0] - 2026-06-03
+
+### ✨ Nouvelle stratégie — `harmonic_regime` (confluence régime-adaptative)
+
+Stratégie de swing **data-driven** issue d'une analyse quantitative exhaustive de
+BTC 1h/4h/1d (`research/analysis_btc.py`, `research/STRATEGIE_harmonic_regime.md`).
+
+**Edges retenus (mesurés, significatifs) :**
+- LONG trend-momentum (close>EMA50>EMA200 + ADX + breakout) — t≈7-8, multi-TF.
+- Clustering de volatilité (ACF|r|≈0.15-0.28) — timing d'entrée + sizing ATR.
+- SHORT **défensif** en macro-bear CONFIRMÉ uniquement (propre sur 1d).
+- Mean-reversion long douce en range (RSI survente). Cycle FFT + Fibonacci en
+  confirmation/zones à faible poids (non significatifs comme edges autonomes).
+
+**Posture :** longs en tendance + **FLAT en bear** (protège du DD -72 % du
+Buy & Hold) + shorts opportunistes filtrés. Sizing par risque 1 %/trade, stop
+ATR, trailing multi-phase (`TrailingStopManager`), max-hold.
+
+**Backtest (7.5 ans, frais/spread/borrow réalistes) :**
+- 4h : **+33.4 %**, Sharpe **5.29**, max DD **-7.3 %**, PF 1.41 ; walk-forward OOS
+  consistance 60 %. BEAR 2022 : **-1.1 % vs B&H -53 %** (alpha +52 pt).
+- 1d : **+11.5 %**, Sharpe **2.90**, max DD **-4.7 %**, PF 1.56 ; walk-forward OOS
+  consistance **100 %**.
+- ⚠️ 1h **non recommandé** : edge directionnel < coût round-trip → non rentable.
+
+### 🔧 Fichiers ajoutés
+
+| Fichier | Rôle |
+|---------|------|
+| `app/strategies/harmonic_regime.py` | Stratégie (`BaseStrategy`, score de confluence) |
+| `strategies/harmonic_regime.yaml` | Params + `optimizer_results` validés (4h, 1d) |
+| `tests/test_harmonic_regime.py` | Tests unitaires + intégration backtest |
+| `research/analysis_btc.py` | Analyse quantitative reproductible (9 sections) |
+| `research/backtest_harmonic.py` | Harnais backtest/walk-forward/split bull-bear |
+| `research/STRATEGIE_harmonic_regime.md` | Rapport analyse → conception → validation |
+
+---
+
 ## [12.0.0] - 2026-03-25
 
 ### ✨ Nouvelles fonctionnalités
