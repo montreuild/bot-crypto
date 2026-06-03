@@ -1,0 +1,68 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : Volatility Squeeze  (RULE-BASED — antithèse de la lignée Omnibus ML)
+# ──────────────────────────────────────────────────────────────────────────────
+# Conçue en remettant en question opus_omnibus V7/V8/V10/V11
+# (cf. research/CRITIQUE_omnibus_v7-v11.md). Thèse : trader la VOLATILITÉ
+# (prévisible) et non la DIRECTION (que l'Omnibus prédit par ML à AUC≈0.53,
+# quasi-aléatoire). On attend une compression (squeeze : largeur BB dans son
+# percentile bas), puis sa détente (expansion) DANS LE SENS DE LA TENDANCE
+# établie (jamais prédite). Hors tendance → abstention (pas de fade en chop).
+# Règle pure : ~8 params, déterministe, zéro ML, zéro réentraînement.
+#
+# Backtest 4h, 7.5 ans (frais/spread/borrow réalistes) :
+#   • long-only strict : +68.7% · Sharpe 13.7 · maxDD -5.8% · PF 2.49 · win 51%
+#   • Walk-forward OOS : consistance 80% (la meilleure des stratégies du repo)
+#   • BEAR 2022 -1.2% vs Buy&Hold -53% ; BULL 2023-24 +12.0% (PF 3.9) ; CHOP -1.2%
+#   • ⚠️ 1h backtesté NÉGATIF (-42%) — confirme que l'orientation bas-TF de la
+#       lignée Omnibus (15m/30m/1h) est sous le mur des frais.
+
+params:
+  squeeze_lookback: 100
+  squeeze_pctl: 0.20
+  release_window: 5
+  donchian: 20
+  adx_min: 22
+  sl_atr: 1.5
+  max_hold: 30
+  min_quality: 0.62
+  enable_short: true
+  require_trend: true
+  cooldown: 1
+  score_threshold: 0.55
+
+optimizer_results:
+  # 4h — config validée : long-only (les breakdowns shorts perdent -112), squeeze
+  # strict (percentile 0.20) + ADX≥22. +68.7% · Sharpe 13.7 · PF 2.49 · OOS 80%.
+  4h:
+    run_date: "2026-06-03"
+    oos_score: 69.8           # walk-forward 5 folds : PnL OOS moyen (USDC), consistance 80%
+    params:
+      enable_short: false
+      squeeze_pctl: 0.20
+      squeeze_lookback: 100
+      release_window: 5
+      donchian: 20
+      adx_min: 22
+      sl_atr: 1.5
+      max_hold: 30
+      min_quality: 0.62
+      require_trend: true
+      cooldown: 1
+
+  # 1d — squeeze plus rare sur le daily : percentile élargi (0.30) pour un nombre
+  # de trades exploitable, shorts autorisés (positifs sur 1d). Plus clairsemé.
+  1d:
+    run_date: "2026-06-03"
+    oos_score: 10.2           # walk-forward 5 folds : PnL OOS moyen (USDC), consistance 60%
+    params:
+      enable_short: true
+      squeeze_pctl: 0.30
+      squeeze_lookback: 100
+      release_window: 5
+      donchian: 20
+      adx_min: 18
+      sl_atr: 2.0
+      max_hold: 30
+      min_quality: 0.60
+      require_trend: true
+      cooldown: 1

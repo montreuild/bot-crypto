@@ -4,6 +4,52 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [12.3.0] - 2026-06-03
+
+### ✨ Nouvelle stratégie — `volatility_squeeze` (RULE-BASED, antithèse de l'Omnibus)
+
+Issue d'une **remise en question des hypothèses** de la lignée `opus_omnibus`
+V7/V8/V10/V11 (cf. `research/CRITIQUE_omnibus_v7-v11.md`).
+
+**Critique de l'Omnibus :**
+- Hypothèse fondatrice fausse — la lignée prédit la DIRECTION par ML alors qu'elle
+  **admet elle-même un AUC_dir ≈ 0.53** (quasi-aléatoire, docstring V10). Toute la
+  machinerie de routing `p_up` filtre donc du bruit.
+- Sous-exploite le seul edge réel — l'AMPLITUDE/volatilité (AUC ≈ 0.7, clustering
+  ACF|r| 0.15-0.28).
+- Sur-apprentissage — 17 à 23 paramètres + seuils par setup, **tunés sur des
+  backtests in-sample de 12-122 trades**, `oos_score: null` (aucune validation OOS).
+- Mauvais timeframes — 15m/30m/1h, **sous le mur des frais** (mesuré).
+- Complexité fragile — LightGBM inline, path-dépendant, non déterministe.
+
+**Réponse — `volatility_squeeze` :** trader la VOLATILITÉ (prévisible), pas la
+direction (aléatoire). On attend une **compression** (squeeze = largeur Bollinger
+dans son percentile bas) puis sa **détente alignée sur la tendance établie**
+(jamais prédite) ; abstention en chop. Règle pure : **~8 paramètres, déterministe,
+ZÉRO ML, zéro réentraînement**.
+
+**Backtest 4h, 7.5 ans (frais/spread/borrow réalistes) :**
+- long-only strict : **+68.7 %** · Sharpe 13.7 · maxDD **-5.8 %** · **PF 2.49** · win 51 %.
+- Walk-forward OOS : **consistance 80 %** (meilleure des stratégies du repo).
+- BEAR 2022 **-1.2 % vs B&H -53 %** ; BULL 2023-24 +12.0 % (PF 3.9) ; CHOP -1.2 %.
+- ⚠️ 1h backtesté **-41.6 %** → confirme que l'orientation bas-TF de l'Omnibus est
+  sous le mur des frais.
+
+> 8 paramètres déterministes battent 23 paramètres + ML inline non-validé OOS :
+> la discipline (ne trader que l'edge réel) bat la complexité.
+
+### 🔧 Fichiers ajoutés
+
+| Fichier | Rôle |
+|---------|------|
+| `app/strategies/volatility_squeeze.py` | Stratégie rule-based (`BaseStrategy`, zéro ML) |
+| `strategies/volatility_squeeze.yaml` | Params + `optimizer_results` (4h, 1d) |
+| `tests/test_volatility_squeeze.py` | Tests unitaires + intégration |
+| `research/CRITIQUE_omnibus_v7-v11.md` | Critique structurée de la lignée Omnibus |
+| `research/backtest_squeeze.py` | Harnais backtest/walk-forward/split |
+
+---
+
 ## [12.2.0] - 2026-06-03
 
 ### ✨ Nouvelle stratégie — `momentum_blitz` (AGRESSIVE, plein capital)
