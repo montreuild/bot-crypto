@@ -4,6 +4,44 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [12.1.0] - 2026-06-03
+
+### ✨ Nouvelle stratégie — `harmonic_regime` (confluence régime-adaptative)
+
+Stratégie de swing **data-driven** issue d'une analyse quantitative exhaustive de
+BTC 1h/4h/1d (`research/analysis_btc.py`, `research/STRATEGIE_harmonic_regime.md`).
+
+**Edges retenus (mesurés, significatifs) :**
+- LONG trend-momentum (close>EMA50>EMA200 + ADX + breakout) — t≈7-8, multi-TF.
+- Clustering de volatilité (ACF|r|≈0.15-0.28) — timing d'entrée + sizing ATR.
+- SHORT **défensif** en macro-bear CONFIRMÉ uniquement (propre sur 1d).
+- Mean-reversion long douce en range (RSI survente). Cycle FFT + Fibonacci en
+  confirmation/zones à faible poids (non significatifs comme edges autonomes).
+
+**Posture :** longs en tendance + **FLAT en bear** (protège du DD -72 % du
+Buy & Hold) + shorts opportunistes filtrés. Sizing par risque 1 %/trade, stop
+ATR, trailing multi-phase (`TrailingStopManager`), max-hold.
+
+**Backtest (7.5 ans, frais/spread/borrow réalistes) :**
+- 4h : **+33.4 %**, Sharpe **5.29**, max DD **-7.3 %**, PF 1.41 ; walk-forward OOS
+  consistance 60 %. BEAR 2022 : **-1.1 % vs B&H -53 %** (alpha +52 pt).
+- 1d : **+11.5 %**, Sharpe **2.90**, max DD **-4.7 %**, PF 1.56 ; walk-forward OOS
+  consistance **100 %**.
+- ⚠️ 1h **non recommandé** : edge directionnel < coût round-trip → non rentable.
+
+### 🔧 Fichiers ajoutés
+
+| Fichier | Rôle |
+|---------|------|
+| `app/strategies/harmonic_regime.py` | Stratégie (`BaseStrategy`, score de confluence) |
+| `strategies/harmonic_regime.yaml` | Params + `optimizer_results` validés (4h, 1d) |
+| `tests/test_harmonic_regime.py` | Tests unitaires + intégration backtest |
+| `research/analysis_btc.py` | Analyse quantitative reproductible (9 sections) |
+| `research/backtest_harmonic.py` | Harnais backtest/walk-forward/split bull-bear |
+| `research/STRATEGIE_harmonic_regime.md` | Rapport analyse → conception → validation |
+
+---
+
 ## [12.0.0] - 2026-03-25
 
 ### ✨ Nouvelles fonctionnalités

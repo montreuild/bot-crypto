@@ -1,0 +1,81 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : Harmonic Regime  (confluence régime-adaptative, data-driven)
+# ──────────────────────────────────────────────────────────────────────────────
+# Conçue à partir de l'analyse quantitative exhaustive BTC 1h/4h/1d
+# (research/analysis_btc.py, research/analysis_report.md).
+#
+# Edges exploités (mesurés, significatifs) :
+#   • LONG trend-momentum (close>EMA50>EMA200 + ADX + breakout)  → t≈7-8, multi-TF
+#   • Clustering de volatilité (ACF|r|≈0.15-0.28)                → timing + sizing ATR
+#   • SHORT défensif en macro-bear CONFIRMÉ uniquement           → propre sur 1d
+#   • Mean-reversion long douce en range (RSI survente)          → secondaire
+# Cycles FFT (non significatifs) et Fibonacci (incohérent) = confirmation/zones.
+#
+# Posture : longs en tendance + FLAT en bear (protège du DD -72% du Buy&Hold) +
+# shorts opportunistes filtrés. Sizing par risque 1%/trade, stop ATR, trailing.
+#
+# ⚠️  Timeframes recommandés : 4h et 1d (swing). Sur 1h l'edge directionnel
+#     (~+0.1%/12 barres) est inférieur au coût round-trip (~0.3%) → NON rentable
+#     après frais (backtesté : -67%). Ne pas exécuter cette stratégie en 1h.
+
+params:
+  adx_min: 24
+  slope_lookback: 20
+  donchian: 20
+  rsi_pullback: 42
+  rsi_oversold: 32
+  vol_extreme_mult: 2.2
+  sl_atr_long: 1.8
+  sl_atr_short: 1.2
+  max_hold: 36
+  min_quality: 0.62
+  enable_short: true
+  enable_meanrev: true
+  use_cycle: true
+  cooldown: 2
+  score_threshold: 0.55
+
+optimizer_results:
+  # 4h — swing long-only : les shorts perdent sur 4h (rebonds de contre-tendance
+  # qui whipsawent). Trends laissées courir (max_hold=40). Backtest 7.5 ans :
+  # +33.4% · Sharpe 5.29 · maxDD -7.3% · PF 1.41 · BEAR-2022 -1.1% vs B&H -53%.
+  4h:
+    run_date: "2026-06-03"
+    oos_score: 28.34          # walk-forward 5 folds : PnL OOS moyen (USDC), consistance 60%
+    params:
+      enable_short: false
+      enable_meanrev: true
+      use_cycle: true
+      adx_min: 25
+      min_quality: 0.62
+      max_hold: 40
+      sl_atr_long: 2.0
+      sl_atr_short: 1.2
+      donchian: 20
+      slope_lookback: 20
+      rsi_pullback: 42
+      rsi_oversold: 32
+      vol_extreme_mult: 2.2
+      cooldown: 2
+
+  # 1d — swing avec shorts ACTIVÉS : sur le daily les cassures de macro-bear
+  # confirmé capturent des downtrends propres (2022). Backtest 7.5 ans :
+  # +11.5% · Sharpe 2.90 · maxDD -4.7% · PF 1.56 · WF OOS consistance 100%.
+  1d:
+    run_date: "2026-06-03"
+    oos_score: 25.66          # walk-forward 5 folds : PnL OOS moyen (USDC), consistance 100%
+    params:
+      enable_short: true
+      enable_meanrev: true
+      use_cycle: true
+      adx_min: 22
+      min_quality: 0.60
+      max_hold: 24
+      sl_atr_long: 1.6
+      sl_atr_short: 1.2
+      donchian: 20
+      slope_lookback: 20
+      rsi_pullback: 42
+      rsi_oversold: 32
+      vol_extreme_mult: 2.2
+      cooldown: 2
