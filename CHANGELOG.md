@@ -4,6 +4,52 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [12.4.0] - 2026-06-03
+
+### ✨ Intégration de données de dérivés (gratuites) + edge directionnel
+
+Réponse à la question « peut-on prédire la direction ? ». Démarche en deux temps.
+
+**1. Chasse à l'edge directionnel** (`research/directional_hunt.py`) — mesure
+honnête sur OHLCV (P(up|condition), z-scores binomiaux, AUC logistique OOS) :
+- La direction non-conditionnelle est ~martingale (AUC OOS combiné ≈ **0.52**).
+- **Seul edge robuste : la mean-reversion sur la position-dans-le-range** —
+  bas de range → biais UP (P(up)≈**57 %**, **z=7.6**), haut → DOWN (z=-7.3),
+  cohérent 1h/4h/1d. Renforcé par : reversal de streaks, fade d'euphorie, rebond
+  de capitulation (volume), pullback en tendance.
+- Saisonnalité (heures funding, jour de semaine) : **démentie** (z≈0).
+
+**2. Pourquoi il faut les dérivés** — le cœur OHLCV mean-reversion est ≈ breakeven
+(`derivatives_reversion` backtest 4h ≈ -1.8 %) : l'edge directionnel est réel
+(win 59 %) mais le payoff est asymétrique (cassures de range → besoin de 71 % de
+win). **Filtrer les fausses reversions exige funding/OI/sentiment** — là vit
+l'alpha directionnel crypto.
+
+**Module `app/core/derivatives.py` — `DerivativesStore` (gratuit, sans clé API) :**
+- funding_rate (ccxt, historique long), open_interest (ccxt), long_short_ratio &
+  taker_buy_sell_ratio (Binance futures-data REST). Cache Parquet, thread-safe,
+  **dégradation gracieuse** (aucune exception si réseau KO).
+- `align_to_ohlcv()` : enrichit l'OHLCV (join_asof causal) avec funding_z, oi_change,
+  lsr_z, taker_z. Câblage live en 1 ligne (cf. research/DERIVATIVES_integration.md).
+
+**Stratégie `derivatives_reversion` (rule-based, zéro ML) :** fade des extrêmes de
+range, **veto/boost par funding & sentiment** quand les colonnes sont présentes ;
+fallback OHLCV pur sinon.
+
+### 🔧 Fichiers ajoutés
+
+| Fichier | Rôle |
+|---------|------|
+| `app/core/derivatives.py` | DerivativesStore (funding/OI/LS/taker, cache, alignement) |
+| `app/strategies/derivatives_reversion.py` | Stratégie directionnelle mean-reversion + dérivés |
+| `strategies/derivatives_reversion.yaml` | Paramètres |
+| `tests/test_derivatives.py` | Tests (réseau mocké) du store + de la stratégie |
+| `research/directional_hunt.py` | Chasse à l'edge directionnel (P(up), AUC OOS) |
+| `research/DERIVATIVES_integration.md` | Doc : sources gratuites, limites, câblage |
+| `research/backtest_reversion.py` | Harnais backtest du cœur OHLCV |
+
+---
+
 ## [12.3.0] - 2026-06-03
 
 ### ✨ Nouvelle stratégie — `volatility_squeeze` (RULE-BASED, antithèse de l'Omnibus)

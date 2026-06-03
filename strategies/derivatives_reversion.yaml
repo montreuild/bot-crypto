@@ -1,0 +1,35 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : Derivatives Reversion  (directionnelle — mean-reversion + dérivés)
+# ──────────────────────────────────────────────────────────────────────────────
+# Exploite le seul edge directionnel OHLCV robuste mesuré
+# (research/directional_hunt.py) : mean-reversion sur la position-dans-le-range
+# (bas de range → UP, P(up)≈57 %, z=7.6 ; haut → DOWN). On fade les extrêmes en
+# régime range uniquement, stop au-delà de l'extrême.
+#
+# ⚠️ Le cœur OHLCV seul est ≈ BREAKEVEN (backtest 4h ~ -1.8 %) : l'edge
+# directionnel est réel (win 59 %) mais le payoff est asymétrique (cassures de
+# range). La RENTABILITÉ vient de la couche DÉRIVÉS (funding/OI/sentiment), qui
+# filtre les fausses reversions — voir research/DERIVATIVES_integration.md.
+# Les colonnes dérivées sont mergées en live par DerivativesStore.align_to_ohlcv ;
+# sans elles, fallback OHLCV pur (ne casse rien). Validation live = ton déploiement.
+
+params:
+  range_lookback: 48
+  low_thr: 0.15
+  high_thr: 0.85
+  adx_range_max: 25
+  rsi_os: 35
+  rsi_ob: 65
+  sl_atr: 1.5
+  tp_atr: 2.0
+  max_hold: 10
+  min_quality: 0.60
+  enable_short: true
+  use_derivatives: true
+  funding_z_extreme: 2.0
+  cooldown: 2
+  score_threshold: 0.55
+
+# Pas d'optimizer_results validés : la couche dérivés (l'edge réel) requiert un
+# historique funding/OI accumulé en live avant calibration IS/OOS.
+optimizer_results: {}
