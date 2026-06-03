@@ -4,6 +4,46 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [12.2.0] - 2026-06-03
+
+### ✨ Nouvelle stratégie — `momentum_blitz` (AGRESSIVE, plein capital)
+
+Pendant **agressif** de `harmonic_regime` : vise le rendement absolu maximal en
+assumant un drawdown élevé. Issue de `research/analysis_aggressive.py` +
+`research/STRATEGIE_momentum_blitz.md` (nouveaux TF 15m/30m analysés).
+
+**Edges (mesurés, nets de frais) :** ignition = breakout Donchian + surge de
+volume + expansion d'ATR + alignement HTF (net-positif seulement ≥ 4h ;
+15m/30m/1h perdent : frais > edge). Asymétrie MFE/MAE≈1.24, queue droite +6 %.
+
+**Mécanique d'agression :** déploiement **plein capital** (`size_factor` 1.0→2.0
+selon conviction), exits **asymétriques** (stop serré 1.3×ATR + trailing LARGE
+3×ATR → laisse courir), seuil de qualité bas mais gate ignition. Long-biais
+(shorts net-négatifs désactivés).
+
+**Backtest 4h, 7.5 ans (frais/spread/borrow réalistes) :**
+- full1x (réaliste) : **+58.2 %** · Sharpe **5.73** · maxDD **-11.6 %** · PF 1.55.
+- lev2x (agressif) : **+113.7 %** (×2.14) · Sharpe **6.95** · maxDD -12.3 % · PF 1.74.
+- Positif dans tous les régimes : BEAR 2022 flat (vs B&H -53 %), BULL +31.6 %,
+  CHOP +6.4 %. Walk-forward OOS : PnL moyen +87, consistance 60 %.
+- ⚠️ TF = 4h uniquement (1h/30m/15m backtestés négatifs).
+
+> Leçon : *agressif ≠ plus de trades* (plus de frais, edge dilué). La
+> sélectivité (ignition-only) maximise l'edge par trade, que le plein capital amplifie.
+
+### 🔧 Fichiers ajoutés
+
+| Fichier | Rôle |
+|---------|------|
+| `app/strategies/momentum_blitz.py` | Stratégie agressive (`BaseStrategy`) |
+| `strategies/momentum_blitz.yaml` | Params + `optimizer_results` (4h) |
+| `tests/test_momentum_blitz.py` | Tests unitaires + intégration |
+| `research/analysis_aggressive.py` | Analyse edges de gros mouvement nets de frais |
+| `research/backtest_blitz.py` | Harnais backtest (déploiement/levier, Monte-Carlo) |
+| `research/STRATEGIE_momentum_blitz.md` | Rapport analyse → conception → validation |
+
+---
+
 ## [12.1.0] - 2026-06-03
 
 ### ✨ Nouvelle stratégie — `harmonic_regime` (confluence régime-adaptative)
