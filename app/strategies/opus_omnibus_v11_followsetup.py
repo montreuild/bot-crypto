@@ -546,6 +546,7 @@ def _select_setup(setups: List[Dict[str, Any]],
 logger = logging.getLogger(__name__)
 
 _TRAIN_LOG_PATH = os.path.join("logs", "opus_omnibus_v11_followsetup_train.jsonl")
+_FLIP_LOG_PATH  = os.path.join("logs", "opus_omnibus_v11_followsetup_flips.jsonl")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -657,6 +658,13 @@ class Strategy(BaseStrategyML):
         "learning_rate":   [0.02, 0.03, 0.05],
         # ── Filet de sécurité SL (pour le sizing uniquement) ──
         "safety_sl_atr_mult": [6.0, 8.0, 10.0, 15.0],
+        # ── Anti-whipsaw sur les flips de setup ──
+        "flip_confirm_bars":     [1, 2, 3, 4],
+        "flip_cooldown_bars":    [0, 3, 5, 8],
+        "flip_min_score":        [0.0, 0.50, 0.55, 0.60],
+        "flip_hysteresis_margin": [0.0, 0.03, 0.05, 0.08],
+        # ── Garde-fou temps maxi ouvert (borrow cost) ──
+        "max_bars_safety":       [100, 200, 400, 800],
     }
     fixed_params: Dict[str, Any] = {}
 
@@ -686,6 +694,14 @@ class Strategy(BaseStrategyML):
         "n_estimators":     500,
         "num_leaves":       31,
         "learning_rate":    0.03,
+        # Anti-whipsaw : K bougies consécutives avec setup opposé requis,
+        # cooldown post-flip, score minimum du setup cible, marge d'hystérésis
+        # sur dir_max/dir_min, et timeout dur en bougies (borrow cost guard).
+        "flip_confirm_bars":      2,
+        "flip_cooldown_bars":     5,
+        "flip_min_score":         0.55,
+        "flip_hysteresis_margin": 0.05,
+        "max_bars_safety":        200,
     }
 
     retrain_interval_h: int = 6
@@ -708,6 +724,9 @@ class Strategy(BaseStrategyML):
         self._cancel_event = None
         self._bt_features: Optional[pl.DataFrame] = None
         self._bt_features_len: int = 0
+        # Cooldown post-flip : compteur de bougies (cnt) au moment du dernier
+        # flip par TF, pour gel temporaire de l'ouverture côté score().
+        self._last_flip_cnt: Dict[str, int] = {}
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         try:
@@ -757,6 +776,7 @@ class Strategy(BaseStrategyML):
             self._medians.clear(); self._trained_tfs.clear()
             self._best_auc_per_tf.clear(); self._train_meta.clear()
             self._last_retrain.clear()
+            self._last_flip_cnt.clear()
             self._managed_externally = False
             self._best_auc = 0.0
         self._bt_features = None
@@ -1060,6 +1080,8 @@ class Strategy(BaseStrategyML):
         di_rescue         = float(p.get("di_rescue",         self._DEFAULTS["di_rescue"]))
         safety_sl_mult    = float(p.get("safety_sl_atr_mult", self._DEFAULTS["safety_sl_atr_mult"]))
         disable_trailing  = bool(p.get("disable_trailing",   self._DEFAULTS["disable_trailing"]))
+        cooldown_bars     = int(p.get("flip_cooldown_bars",  self._DEFAULTS["flip_cooldown_bars"]))
+        max_bars_safety   = int(p.get("max_bars_safety",     self._DEFAULTS["max_bars_safety"]))
 
         warmup_bars   = int(p.get("warmup_bars",   self._DEFAULTS["warmup_bars"]))
         retrain_every = int(p.get("retrain_every", self._DEFAULTS["retrain_every"]))
@@ -1080,6 +1102,15 @@ class Strategy(BaseStrategyML):
 
         if tf not in self._trained_tfs:
             return self._none("Modèle pas encore entraîné (warmup en cours)")
+
+        # Cooldown post-flip : gel des entrées pendant N bougies après un flip
+        # pour éviter les aller-retours rapides (anti-thrash).
+        last_flip = self._last_flip_cnt.get(tf, -10**9)
+        bars_since_flip = cnt - last_flip
+        if cooldown_bars > 0 and bars_since_flip < cooldown_bars:
+            return self._none(
+                f"Cooldown post-flip ({bars_since_flip}/{cooldown_bars} bougies)"
+            )
 
         features = self._compute_features(df, params)
         if features is None or len(features) == 0:
@@ -1132,8 +1163,9 @@ class Strategy(BaseStrategyML):
             "sl_atr_mult":      safety_sl_mult,
             "disable_trailing": disable_trailing,
             "size_factor":      size_factor,
-            # exit_after_bars volontairement absent : la position ne se ferme
-            # que sur flip de setup (cf. check_early_exit) ou SL safety.
+            # Timeout dur (garde-fou contre l'accumulation de borrow_cost si
+            # aucun flip ne se déclenche pendant des centaines de bougies).
+            "exit_after_bars":  max_bars_safety,
             "p_event":          round(p_event, 4),
             "p_up":             round(p_up, 4),
             "regime":           regime,
@@ -1176,8 +1208,10 @@ class Strategy(BaseStrategyML):
              f"P(hausse)={p_up:.2f} > {setup['dir_min']:.2f} ✓"
              if setup.get("dir_min") is not None else
              f"P(hausse)={p_up:.2f}"),
-            f"Pas de TP/trailing/timeout — sortie sur flip de setup uniquement "
-            f"(SL safety {safety_sl_mult:.1f}×ATR)",
+            f"Pas de TP/trailing — sortie sur flip de setup (confirm "
+            f"{int(p.get('flip_confirm_bars', self._DEFAULTS['flip_confirm_bars']))} "
+            f"bougies, cooldown {cooldown_bars}) | "
+            f"SL safety {safety_sl_mult:.1f}×ATR | timeout {max_bars_safety} bougies",
         ]
         sig["reason"] = (
             f"OmnibusV11-FollowSetup {setup['name']} {side.upper()} | "
@@ -1189,10 +1223,14 @@ class Strategy(BaseStrategyML):
     # ── Sortie pilotée par le flip de direction du setup ─────────────────────
     def check_early_exit(self, df: pl.DataFrame, position: dict,
                          params: dict = None) -> Optional[str]:
-        """Ferme la position uniquement si le setup courant pointe dans la
-        direction opposée. Tant qu'aucun setup opposé n'est actif (même si le
-        setup d'entrée n'est plus celui qui domine), la position reste ouverte
-        pour maximiser l'exposition au gain."""
+        """Ferme la position si un setup opposé est confirmé sur K bougies
+        consécutives, avec score suffisant et marge d'hystérésis sur les seuils
+        directionnels. État d'attente stocké directement sur la position via
+        ``_fs_opp_count`` / ``_fs_opp_setup``.
+
+        Tant qu'aucun setup opposé n'est validé, la position reste ouverte pour
+        maximiser l'exposition au gain.
+        """
         side = position.get("side")
         if side not in ("long", "short"):
             return None
@@ -1200,8 +1238,14 @@ class Strategy(BaseStrategyML):
             return None
 
         p = (params or {}).get(self.name, {})
-        adx_threshold = float(p.get("adx_threshold", self._DEFAULTS["adx_threshold"]))
-        di_rescue     = float(p.get("di_rescue",     self._DEFAULTS["di_rescue"]))
+        adx_threshold        = float(p.get("adx_threshold", self._DEFAULTS["adx_threshold"]))
+        di_rescue            = float(p.get("di_rescue",     self._DEFAULTS["di_rescue"]))
+        confirm_bars         = int(p.get("flip_confirm_bars",
+                                          self._DEFAULTS["flip_confirm_bars"]))
+        flip_min_score       = float(p.get("flip_min_score",
+                                            self._DEFAULTS["flip_min_score"]))
+        hysteresis_margin    = float(p.get("flip_hysteresis_margin",
+                                            self._DEFAULTS["flip_hysteresis_margin"]))
 
         tf = _detect_timeframe(df)
         if tf not in _SUPPORTED_TFS or tf not in self._trained_tfs:
@@ -1217,7 +1261,7 @@ class Strategy(BaseStrategyML):
             if c_now <= 0:
                 return None
 
-            regime, _ = _last_regime(features, adx_threshold, di_rescue)
+            regime, regime_sub = _last_regime(features, adx_threshold, di_rescue)
             p_event   = self.predict_amplitude(features, tf)
             p_up      = self.predict_direction(features, tf)
             if p_event is None or p_up is None:
@@ -1234,17 +1278,107 @@ class Strategy(BaseStrategyML):
             logger.warning(f"[OmnibusV11-FollowSetup] check_early_exit recompute KO : {e}")
             return None
 
-        if current is None:
-            return None  # aucun setup actif → on garde l'exposition
-
-        cur_dir  = int(current["direction"])
         held_dir = 1 if side == "long" else -1
-        if cur_dir == held_dir:
-            return None  # même direction → on continue à courir le gain
 
-        # Direction opposée → flip : on clôture pour permettre l'ouverture
-        # du nouveau sens au tick suivant via le flux standard.
+        # Pas de setup actif OU même direction → on garde l'exposition et on
+        # remet à zéro le compteur d'attente d'un setup opposé.
+        if current is None or int(current["direction"]) == held_dir:
+            position["_fs_opp_count"] = 0
+            position["_fs_opp_setup"] = None
+            return None
+
+        # Hystérésis sur les seuils directionnels du setup opposé : on exige
+        # une marge en plus de la condition stricte du setup pour éviter les
+        # flips sur signal limite.
+        if hysteresis_margin > 0.0:
+            d_max = current.get("dir_max")
+            d_min = current.get("dir_min")
+            if d_max is not None and p_up >= (float(d_max) - hysteresis_margin):
+                position["_fs_opp_count"] = 0
+                position["_fs_opp_setup"] = None
+                return None
+            if d_min is not None and p_up <= (float(d_min) + hysteresis_margin):
+                position["_fs_opp_count"] = 0
+                position["_fs_opp_setup"] = None
+                return None
+
+        # Score du setup cible (même formule que score()).
+        priority_bonus = max(0, 6 - int(current["priority"])) * 0.025
+        confidence     = abs(p_up - 0.5) * 2.0
+        new_score      = round(
+            min(0.55 + p_event * confidence * 0.30 + priority_bonus, 0.94), 3
+        )
+        if new_score < flip_min_score:
+            position["_fs_opp_count"] = 0
+            position["_fs_opp_setup"] = None
+            return None
+
+        # Confirmation sur K bougies consécutives : on incrémente le compteur
+        # uniquement si c'est le même setup opposé qu'à la bougie précédente.
+        prev_setup = position.get("_fs_opp_setup")
+        if prev_setup == current["name"]:
+            cnt_opp = int(position.get("_fs_opp_count", 0)) + 1
+        else:
+            cnt_opp = 1
+        position["_fs_opp_count"] = cnt_opp
+        position["_fs_opp_setup"] = current["name"]
+
+        if cnt_opp < max(1, confirm_bars):
+            return None
+
+        # Flip validé : on logge, on déclenche le cooldown et on rend la
+        # raison de sortie au moteur.
+        try:
+            self._last_flip_cnt[tf] = self._call_cnt.get(tf, 0)
+        except Exception:
+            pass
+        self._log_flip(
+            tf=tf,
+            position=position,
+            new_setup=current,
+            new_score=new_score,
+            p_event=float(p_event),
+            p_up=float(p_up),
+            regime=regime,
+            regime_sub=regime_sub,
+            adx=adx_v,
+            rsi=rsi_v,
+            confirm_bars=int(cnt_opp),
+        )
         return f"setup_flip_to_{current['name']}"
+
+    def _log_flip(self, tf: str, position: dict, new_setup: dict,
+                  new_score: float, p_event: float, p_up: float,
+                  regime: int, regime_sub: str, adx: float, rsi: float,
+                  confirm_bars: int) -> None:
+        try:
+            os.makedirs(os.path.dirname(_FLIP_LOG_PATH) or ".", exist_ok=True)
+            record = {
+                "ts":             _dt.datetime.utcnow().isoformat(),
+                "strategy":       self.name,
+                "tf":             tf,
+                "symbol":         position.get("symbol"),
+                "position_id":    position.get("id"),
+                "from_side":      position.get("side"),
+                "from_setup":     position.get("setup"),
+                "from_entry":     position.get("entry"),
+                "from_entry_bar": position.get("bar"),
+                "to_setup":       new_setup.get("name"),
+                "to_direction":   int(new_setup.get("direction", 0)),
+                "new_score":      round(float(new_score), 4),
+                "p_event":        round(float(p_event), 4),
+                "p_up":           round(float(p_up), 4),
+                "regime":         regime,
+                "regime_lbl":     REGIME_LABELS.get(regime, "?"),
+                "regime_sub":     regime_sub,
+                "adx":            round(float(adx), 2),
+                "rsi":            round(float(rsi), 2),
+                "confirm_bars":   int(confirm_bars),
+            }
+            with open(_FLIP_LOG_PATH, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.debug(f"[OmnibusV11-FollowSetup] log flip KO : {e}")
 
     def _none(self, reason: str = "", p_event: float = 0.0, p_up: float = 0.5,
               regime: int = -1) -> dict:

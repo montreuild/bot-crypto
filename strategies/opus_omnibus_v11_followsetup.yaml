@@ -14,6 +14,19 @@ params:
   disable_trailing: true
   use_fixed_tp: false
 
+  # ── Anti-whipsaw sur les flips de setup ────────────────────────────────────
+  # K bougies consécutives où un setup opposé qualifie avant de flipper.
+  flip_confirm_bars: 2
+  # Gel des entrées pendant N bougies après un flip (anti-thrash).
+  flip_cooldown_bars: 5
+  # Score minimum requis sur le setup cible pour valider le flip.
+  flip_min_score: 0.55
+  # Marge ajoutée à dir_max / dir_min pour exiger un signal plus net.
+  flip_hysteresis_margin: 0.05
+
+  # ── Garde-fou temps maxi ouvert (limite borrow_cost si pas de flip) ────────
+  max_bars_safety: 200
+
   # ── Pas d'exit_td_window, pas de signal_up dynamique ──────────────────────
   signal_up_dynamic_risk: false
 
