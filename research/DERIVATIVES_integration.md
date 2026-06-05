@@ -62,35 +62,54 @@ thread-safe, **dégradation gracieuse** si réseau indisponible).
   - `lsr_z` / `taker_z` extrêmes → boost contrarian.
 - **Dégradation gracieuse** : sans colonnes dérivées → OHLCV pur (ne casse rien).
 
-## 4. Câblage (1 ligne, additif, sans risque pour la boucle live)
+## 4. Câblage — INTÉGRÉ « au fil de l'eau » (comme l'OHLCV), opt-in
 
-Enrichir le df OHLCV **avant** de le passer au moteur de scoring. Point d'insertion
-naturel : juste après le fetch OHLCV (live pipeline / `ohlcv_cache`), par symbole :
+Accumulation + enrichissement sont maintenant **branchés dans la boucle live**, au
+même endroit que l'OHLCV (`app/live/ohlcv_cache.py → OHLCVCache.get()`), derrière
+un flag de config (comportement inchangé si désactivé) :
 
-```python
-from app.core.derivatives import DerivativesStore
-_DERIV = DerivativesStore()                      # singleton process
-
-# ... après avoir obtenu df (pl.DataFrame OHLCV) pour `symbol` :
-df = _DERIV.align_to_ohlcv(df, symbol, exchange=robust_exchange,
-                           period=timeframe, refresh=True)   # live
-# en backtest : refresh=False (lit le cache Parquet si tu as accumulé l'historique)
+```yaml
+# config.yaml
+derivatives:
+  enabled: true            # ← active l'accumulation + l'injection des colonnes
+  period: 1h               # granularité OI/long-short/taker
+  refresh_interval: 300    # throttle réseau par symbole (s)
+  z_window: 90             # fenêtre du z-score roulant
 ```
 
-Les stratégies qui savent lire les colonnes (`funding_z`, `lsr_z`, `taker_z`,
-`oi_change_pct`) en profitent ; les autres les ignorent. Activer la stratégie :
+À chaque nouvelle bougie, `OHLCVCache` :
+1. `DerivativesStore.refresh()` → fetch incrémental throttlé, **merge dans
+   `data/derivatives/*.parquet`** (accumulation, exactement comme CandleStore) ;
+2. `align_to_ohlcv(refresh=False)` → lit le cache et injecte `funding_z`,
+   `oi_change_pct`, `lsr_z`, `taker_z` dans le df de scoring.
 
+Tout est **gracieux** : si le réseau échoue, le df OHLCV est renvoyé inchangé
+(la boucle live n'est jamais cassée). Accumulation hors-bot (cron/backfill) :
+```bash
+python research/accumulate_derivatives.py --symbols BTC/USDC,ETH/USDC --loop 300
+```
+
+Activer la stratégie dérivés :
 ```yaml
 strategies:
   enabled:
-    - derivatives_reversion
+    - funding_flow            # directionnelle 100 % dérivés (théorique)
+    # - derivatives_reversion # mean-reversion OHLCV confirmée par dérivés
 ```
 
-## 5. Prochaine étape recommandée
+## 5. Stratégie `funding_flow` (100 % dérivés, théorique)
 
-1. **Accumuler** funding/OI/LS/taker en live (le cache Parquet se remplit) pendant
-   quelques semaines → constituer un historique pour backtester la couche dérivés.
-2. **Re-mesurer** l'AUC directionnel AVEC funding_z/lsr_z/taker_z (la littérature
+`app/strategies/funding_flow.py` — fade des extrêmes de positionnement :
+**pression de foule** = somme pondérée de `funding_z`/`lsr_z`/`taker_z` (contrarian),
+conviction renforcée par l'**OI** ; garde-fou taille si on fade une tendance forte.
+Pression positive extrême (foule longue) → SHORT ; négative → LONG. Sans colonnes
+dérivées → abstention. Prix/ATR (OHLCV) seulement pour stops/sizing.
+
+## 6. Prochaine étape recommandée
+
+1. **Accumuler** funding/OI/LS/taker en live (`derivatives.enabled: true` ou le
+   script) pendant quelques semaines → constituer l'historique.
+2. **Re-mesurer** l'AUC directionnel AVEC les dérivés (la littérature
    funding-reversion suggère AUC > 0.55) via `research/directional_hunt.py` enrichi.
-3. Si confirmé : calibrer les seuils `funding_z_extreme` / `sentiment_z_extreme`
-   sur IS/OOS, et envisager un **score P(up) calibré** combinant OHLCV + dérivés.
+3. **Calibrer** `enter_pressure` / poids de `funding_flow` sur IS/OOS une fois
+   l'historique suffisant ; envisager un score P(up) calibré OHLCV + dérivés.

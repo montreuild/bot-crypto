@@ -68,6 +68,7 @@ class DerivativesStore:
     def __init__(self, base_dir: str = "data/derivatives", fapi_base: str = _BINANCE_FAPI):
         self._base = Path(base_dir)
         self._fapi = fapi_base.rstrip("/")
+        self._last_refresh: Dict[str, float] = {}   # (symbol|period) → ts dernier fetch réseau
 
     def _path(self, symbol: str, metric: str) -> Path:
         return self._base / f"{to_perp_symbol(symbol)}__{metric}.parquet"
@@ -229,6 +230,28 @@ class DerivativesStore:
             if "taker_buy_sell_ratio" in out.columns:
                 out = out.with_columns(_zcol("taker_buy_sell_ratio").alias("taker_z"))
         return out
+
+    def refresh(self, exchange, symbol: str, period: str = "1h",
+                min_interval: float = 300.0) -> bool:
+        """Accumulation « au fil de l'eau » : fetch incrémental des 4 métriques et
+        merge dans le cache Parquet (comme CandleStore pour l'OHLCV). Throttlé par
+        ``min_interval`` (s) et par (symbol, period). Gracieux (aucune exception
+        propagée). Retourne True si un fetch réseau a été tenté."""
+        import time
+        key = f"{to_perp_symbol(symbol)}|{period}"
+        now = time.time()
+        if now - self._last_refresh.get(key, 0.0) < min_interval:
+            return False
+        self._last_refresh[key] = now
+        try:
+            if exchange is not None:
+                self.fetch_funding(exchange, symbol)
+                self.fetch_open_interest(exchange, symbol, period)
+            self.fetch_long_short_ratio(symbol, period)
+            self.fetch_taker_ratio(symbol, period)
+        except Exception as e:  # noqa: BLE001 — accumulation best-effort
+            logger.debug(f"[Derivatives] refresh {key} KO : {e}")
+        return True
 
     def latest(self, symbol: str, exchange=None, period: str = "1h") -> Dict[str, float]:
         """Dernières valeurs (live) : funding/OI via ccxt, LS/taker via REST. Gracieux."""

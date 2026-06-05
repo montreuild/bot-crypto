@@ -72,6 +72,16 @@ scanner:
     max_atr_pct: 10.0
     top_n: 15
 
+# Dérivés accumulés « au fil de l'eau » (comme l'OHLCV) dans data/derivatives/.
+# enabled: true → OHLCVCache fetch funding/OI/long-short/taker (gratuit, sans clé)
+# et injecte funding_z / oi_change_pct / lsr_z / taker_z dans le df de scoring,
+# consommés par la stratégie funding_flow. Dégradation gracieuse si réseau KO.
+derivatives:
+  enabled: false           # ← passer à true pour activer l'accumulation + funding_flow
+  period: 1h               # granularité OI/long-short/taker (5m..1d)
+  refresh_interval: 300    # throttle réseau par symbole (secondes)
+  z_window: 90             # fenêtre du z-score roulant (détection d'extrêmes)
+
 backtest:
   spread_pct: 0.0005
   latency_ms: 50

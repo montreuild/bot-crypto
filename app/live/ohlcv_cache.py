@@ -72,6 +72,41 @@ class OHLCVCache:
         scan_interval = cfg["trading"].get("scan_interval", 60)
         self._atr_cache_ttl: int = max(scan_interval // 2, 30)
 
+        # ── Dérivés (funding/OI/long-short/taker) au fil de l'eau ──────────────
+        # Opt-in via config (derivatives.enabled). Accumulés dans data/derivatives/
+        # comme l'OHLCV via CandleStore, et mergés en colonnes (funding_z, etc.)
+        # dans le df de scoring. Dégradation gracieuse : tout échec est avalé.
+        dcfg = cfg.get("derivatives", {}) or {}
+        self._deriv_enabled: bool = bool(dcfg.get("enabled", False))
+        self._deriv_period: str   = str(dcfg.get("period", "1h"))
+        self._deriv_interval: float = float(dcfg.get("refresh_interval", 300))
+        self._deriv_zwin: int     = int(dcfg.get("z_window", 90))
+        self._deriv_store = None
+        if self._deriv_enabled:
+            try:
+                from app.core.derivatives import DerivativesStore
+                self._deriv_store = DerivativesStore()
+                logger.info("[OHLCVCache] Dérivés activés — accumulation au fil de l'eau "
+                            f"(period={self._deriv_period}, refresh={self._deriv_interval:.0f}s)")
+            except Exception as e:
+                logger.warning(f"[OHLCVCache] Init dérivés KO (désactivés) : {e}")
+                self._deriv_enabled = False
+
+    def _enrich_derivatives(self, symbol: str, df: pl.DataFrame) -> pl.DataFrame:
+        """Accumule (fetch incrémental throttlé) puis merge les colonnes dérivées.
+        Gracieux : en cas d'échec, retourne le df OHLCV inchangé."""
+        if not self._deriv_enabled or self._deriv_store is None:
+            return df
+        try:
+            self._deriv_store.refresh(self._exchange, symbol, self._deriv_period,
+                                      min_interval=self._deriv_interval)
+            return self._deriv_store.align_to_ohlcv(
+                df, symbol, exchange=None, period=self._deriv_period,
+                refresh=False, z_window=self._deriv_zwin)
+        except Exception as e:
+            logger.debug(f"[OHLCVCache] enrich dérivés {symbol} KO : {e}")
+            return df
+
     # ── Accès principal ──────────────────────────────────────────────────
 
     def get(self, symbol: str, tf: str,
@@ -139,6 +174,9 @@ class OHLCVCache:
             df = precompute_df(df)
         except Exception as _pc_err:
             logger.debug(f"[OHLCVCache] precompute {symbol}/{tf} KO : {_pc_err}")
+
+        # Enrichissement dérivés (opt-in) — accumulation + colonnes funding_z, etc.
+        df = self._enrich_derivatives(symbol, df)
 
         self._ohlcv_cache[key] = (time.time(), df)
         return df

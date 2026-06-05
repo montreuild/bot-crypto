@@ -4,6 +4,43 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [12.5.0] - 2026-06-03
+
+### ✨ Dérivés « au fil de l'eau » + stratégie `funding_flow` (100 % dérivés)
+
+Suite de l'intégration dérivés (V12.4) : accumulation automatique dans la boucle
+live + stratégie directionnelle théorique exploitant funding/OI/LSR/taker.
+
+**Accumulation au fil de l'eau (comme l'OHLCV) :**
+- `DerivativesStore.refresh()` — fetch incrémental throttlé, merge dans
+  `data/derivatives/*.parquet` (même logique que CandleStore pour l'OHLCV).
+- Branché dans `OHLCVCache.get()` derrière le flag `derivatives.enabled`
+  (opt-in, **comportement inchangé si désactivé**) : à chaque nouvelle bougie,
+  accumulation + injection des colonnes `funding_z`/`oi_change_pct`/`lsr_z`/
+  `taker_z` dans le df de scoring. **Gracieux** : réseau KO → df OHLCV inchangé.
+- `research/accumulate_derivatives.py` — accumulation hors-bot (cron/backfill).
+- Config : section `derivatives` (`enabled`, `period`, `refresh_interval`, `z_window`).
+
+**Stratégie `funding_flow` (rule-based, théorique) :** fade des extrêmes de
+positionnement — pression de foule = somme pondérée `funding_z`/`lsr_z`/`taker_z`
+(contrarian), conviction renforcée par l'OI, garde-fou tendance. Pression positive
+extrême (foule longue) → SHORT ; négative → LONG. Sans dérivés → abstention.
+⚠️ Théorique (historique gratuit OI/LSR/taker ≈ 30 j) : à calibrer/valider en live.
+
+### 🔧 Fichiers
+
+| Fichier | Changement |
+|---------|------------|
+| `app/core/derivatives.py` | + `refresh()` throttlé (accumulation au fil de l'eau) |
+| `app/live/ohlcv_cache.py` | + enrichissement dérivés dans `get()` (opt-in, gracieux) |
+| `app/core/config.py`, `config.yaml` | + section `derivatives` |
+| `app/strategies/funding_flow.py` | Stratégie directionnelle 100 % dérivés |
+| `strategies/funding_flow.yaml` | Paramètres |
+| `research/accumulate_derivatives.py` | Script d'accumulation/backfill autonome |
+| `tests/test_funding_flow.py` | Tests stratégie + hook OHLCVCache (réseau mocké) |
+
+---
+
 ## [12.4.0] - 2026-06-03
 
 ### ✨ Intégration de données de dérivés (gratuites) + edge directionnel
