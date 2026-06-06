@@ -4,6 +4,51 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [12.6.0] - 2026-06-06
+
+### ✨ Jumeaux « sans ML » des stratégies Opus Omnibus + seuil dynamique
+
+Les stratégies ML (`opus_omnibus_v8/v10/v11/v11_followsetup`, `ml_dynamic_threshold`)
+sont coûteuses à entraîner et à maintenir (modèles LightGBM/sklearn, pkl,
+ré-entraînement périodique). Cette version ajoute pour chacune un **équivalent
+purement à base d'indicateurs**, suffixé `_no_ml`, qui réutilise tout le squelette
+de la stratégie d'origine et ne remplace **que** les deux sorties ML.
+
+**Principe — proxys déterministes (`app/strategies/_no_ml_proxy.py`) :**
+- `p_up` (direction) — moyenne pondérée de sous-signaux directionnels normalisés
+  (DI_diff, RSI, ROC, pente SMA20, distance SMA50, ratio bougies vertes, position
+  MACD) passée dans une sigmoïde centrée sur 0.5.
+- `p_event` (amplitude) — moyenne pondérée de sous-signaux d'amplitude (rang de
+  largeur Bollinger, surcroît de volume, force ADX, expansion/squeeze BB, magnitude
+  ROC récent), recentrée pour coller au taux d'événements ≈ 0.30 du label ML.
+- Tous les coefficients (échelles, poids, gains, centre) sont paramétrables/optimisables.
+
+**Conséquence :** tout le reste est **importé** de la stratégie ML jumelle pour
+rester synchronisé (détection de régime, setups, routing, score, sorties
+anticipées, cache feature_store partagé). Donc : aucun modèle chargé, aucune
+dépendance LightGBM/sklearn requise au runtime, aucun entraînement → coût CPU et
+maintenance quasi nuls, comportement déterministe et inspectable.
+
+**Variantes ajoutées :** `opus_omnibus_v8_no_ml`, `opus_omnibus_v10_no_ml`,
+`opus_omnibus_v11_no_ml` (régime enrichi conservé),
+`opus_omnibus_v11_followsetup_no_ml` (sortie sur flip de setup conservée),
+`ml_dynamic_threshold_no_ml` (filtre ADX + seuils proba conservés + porte de
+volatilité reproduisant l'esprit « seuil dynamique »).
+
+### 🔧 Fichiers
+
+| Fichier | Changement |
+|---------|------------|
+| `app/strategies/_no_ml_proxy.py` | Proxys `p_event`/`p_up` partagés (nouveau) |
+| `app/strategies/opus_omnibus_v8_no_ml.py` | Jumeau sans ML de V8 (nouveau) |
+| `app/strategies/opus_omnibus_v10_no_ml.py` | Jumeau sans ML de V10 (nouveau) |
+| `app/strategies/opus_omnibus_v11_no_ml.py` | Jumeau sans ML de V11 (nouveau) |
+| `app/strategies/opus_omnibus_v11_followsetup_no_ml.py` | Jumeau sans ML de V11-FollowSetup (nouveau) |
+| `app/strategies/ml_dynamic_threshold_no_ml.py` | Jumeau sans ML du seuil dynamique (nouveau) |
+| `strategies/*_no_ml.yaml` | Configs (params + coefficients de proxy) des 5 jumeaux |
+
+---
+
 ## [12.5.0] - 2026-06-03
 
 ### ✨ Dérivés « au fil de l'eau » + stratégie `funding_flow` (100 % dérivés)

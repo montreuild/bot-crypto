@@ -1,0 +1,95 @@
+# Opus Omnibus V11 FollowSetup — variante SANS ML (proxys d'indicateurs).
+# Jumeau déterministe de opus_omnibus_v11_followsetup : pas de TP/trailing/timeout
+# serré ; sortie pilotée uniquement par le flip de direction du setup actif
+# (anti-whipsaw : confirm/cooldown/score/hystérésis). p_event/p_up sont des proxys
+# d'indicateurs (app/strategies/_no_ml_proxy.py) — aucun modèle, aucun entraînement.
+enabled: true
+
+params:
+  # Session 24/7, aucun filtre horaire (suivi continu des setups).
+  enable_hour_filter: false
+
+  adx_threshold: 20
+  di_rescue: 10.0
+
+  # SL "safety net" large (dimensionnement backtest), jamais touché en théorie.
+  safety_sl_atr_mult: 10.0
+  disable_trailing: true
+  use_fixed_tp: false
+  signal_up_dynamic_risk: false
+
+  bearish_excess_rsi_threshold: 38.0
+  bearish_excess_sma_pct: 1.5
+
+  # ── Anti-whipsaw sur les flips de setup ──
+  flip_confirm_bars: 2
+  flip_cooldown_bars: 5
+  flip_min_score: 0.55
+  flip_hysteresis_margin: 0.05
+  max_bars_safety: 200
+  log_flips: true
+
+  # ── Coefficients des proxys (p_event / p_up) ──
+  dir_gain: 2.0
+  amp_gain: 3.2
+  amp_center: 0.40
+
+  # ── SIGNAL_UP ──
+  setup_signal_up_enabled: true
+  setup_signal_up_priority: -1
+  setup_signal_up_amp_min: 0.50
+  setup_signal_up_dir_min: 0.60
+  setup_signal_up_size_factor: 1.0
+
+  # ── SHORT_TD_HIGH ──
+  setup_short_td_high_enabled: true
+  setup_short_td_high_priority: 0
+  setup_short_td_high_amp_min: 0.60
+  setup_short_td_high_dir_max: 0.30
+  setup_short_td_high_size_factor: 1.0
+
+  # ── LONG_CHOPPY / SHORT_CHOPPY ──
+  setup_long_choppy_enabled: true
+  setup_long_choppy_priority: 2
+  setup_long_choppy_amp_min: 0.50
+  setup_long_choppy_dir_min: 0.58
+
+  setup_short_choppy_enabled: true
+  setup_short_choppy_priority: 2
+  setup_short_choppy_amp_min: 0.50
+  setup_short_choppy_dir_max: 0.42
+
+  # ── LONG_TU (strict) ──
+  setup_long_tu_enabled: true
+  setup_long_tu_priority: 3
+  setup_long_tu_amp_min: 0.55
+  setup_long_tu_dir_min: 0.62
+  setup_long_tu_needs_adx_above: 25.0
+
+  # ── LONG_RANGE_STRICT ──
+  setup_long_range_strict_enabled: true
+  setup_long_range_strict_priority: 5
+  setup_long_range_strict_amp_min: 0.60
+  setup_long_range_strict_dir_min: 0.60
+
+  # ── LONG_RANGE_LIGHT ──
+  setup_long_range_light_enabled: true
+  setup_long_range_light_priority: 6
+  setup_long_range_light_amp_min: 0.50
+  setup_long_range_light_dir_min: 0.55
+
+  score_threshold: 0.55
+
+optimizer_results:
+  15m:
+    run_date: null
+    oos_score: null
+    params: {}
+  30m:
+    run_date: null
+    oos_score: null
+    params: {}
+  1h:
+    run_date: null
+    oos_score: null
+    params: {}
