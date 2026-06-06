@@ -4,6 +4,100 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [12.7.0] - 2026-06-06
+
+### ✨ Indicateurs du catalogue V4 ajoutés à `indicators.py` + runner d'optimisation
+
+**Indicateurs repris du catalogue de features V4 (~462 colonnes).** Quatre
+primitives génériques, réutilisables et jusque-là absentes de
+`app/core/indicators.py`, y sont ajoutées (avec tests) :
+- `roc(close, n)` — Rate of Change en % (momentum fondamental, étonnamment absent) ;
+- `green_ratio(df, n)` — proportion de bougies haussières sur `n` (breadth locale) ;
+- `rsi_divergence(df, period, lookback)` — divergence RSI/prix signée {−1, 0, +1}
+  (fusion des features `bull_div`/`bear_div`) ;
+- `trend_duration(df, n, adx_threshold)` — barres consécutives en tendance forte
+  (persistance de régime).
+
+Les autres features V4 utiles étaient déjà couvertes : `precompute_df` expose en
+O(1) RSI/ATR/ADX/±DI/MACD/SMA/EMA, les ratios de volatilité normalisés 100b
+(`_pre_atr_pct_r`…), `_pre_range_pos20`, `_pre_rsi_vel6`, structure de bougie, etc.
+— c'est cette base que consomment les jumeaux `_no_ml`.
+
+**Runner d'optimisation en ligne de commande — `optimize_runner.py`.** Lance
+l'optimisation des stratégies **une à une** sans passer par l'interface web
+(même moteur `AutoOptimizer` : baseline → recherche → sauvegarde
+`strategies/<nom>.yaml`, ré-entraînement/persistance du modèle pour les ML) :
+- **séquentiel** (un seul job à la fois) via `AutoOptimizer.optimize_sequential` ;
+- **anti-veille** multi-plateforme (macOS `caffeinate` / Windows
+  `SetThreadExecutionState` / Linux `systemd-inhibit`), best-effort ;
+- **thread-safe** : verrou fichier exclusif (une seule instance) en plus des
+  verrous internes de l'optimiseur (YAML, registre de jobs) ;
+- **tâche de fond discrète** : priorité processus abaissée (`nice`/IDLE) et threads
+  de calcul bornés (`--jobs`, défaut 1 ; env `OMP/MKL/…_NUM_THREADS` plafonnés).
+
+Exemples : `python optimize_runner.py --no-ml-only --apply`,
+`python optimize_runner.py --strategies opus_omnibus_v11_no_ml --tfs 1h --trials 30`.
+
+### 🔧 Fichiers
+
+| Fichier | Changement |
+|---------|------------|
+| `app/core/indicators.py` | + `roc`, `green_ratio`, `rsi_divergence`, `trend_duration` |
+| `app/engine/auto_optimizer.py` | + `AutoOptimizer.optimize_sequential` (exécution une-à-une) |
+| `optimize_runner.py` | Script CLI : optimisation séquentielle, anti-veille, verrou, priorité basse (nouveau) |
+| `tests/test_indicators.py` | + tests des 4 nouveaux indicateurs |
+
+---
+
+## [12.6.0] - 2026-06-06
+
+### ✨ Jumeaux « sans ML » des stratégies Opus Omnibus + seuil dynamique
+
+Les stratégies ML (`opus_omnibus_v8/v10/v11/v11_followsetup`, `ml_dynamic_threshold`)
+sont coûteuses à entraîner et à maintenir (modèles LightGBM/sklearn, pkl,
+ré-entraînement périodique). Cette version ajoute pour chacune un **équivalent
+purement à base d'indicateurs**, suffixé `_no_ml`, qui réplique le routing de la
+stratégie d'origine et ne remplace **que** les deux sorties ML.
+
+**Chaque jumeau est autonome.** Aucun module proxy partagé, aucun import croisé
+entre stratégies : tout le routing (régime, setups, sélection, sorties
+anticipées) est embarqué dans le fichier, et tous les indicateurs proviennent de
+`app/core/indicators.py`.
+
+**Performance.** Les proxys lisent les indicateurs en **O(1)** depuis les
+colonnes `_pre_*` déjà calculées par `precompute_df` (appliqué une fois par le
+backtest et le live ; repli idempotent sinon). Aucun DataFrame de features lourd
+(~462 colonnes) n'est reconstruit par bougie → backtest ~0.5 s (contre plusieurs
+dizaines de secondes auparavant), coût live négligeable.
+
+**Proxys déterministes (inline dans chaque fichier) :**
+- `p_up` (direction) — sigmoïde d'une moyenne pondérée de signaux directionnels :
+  DI_diff, RSI, MACD/ATR, ROC, distance SMA50, vélocité RSI, position dans la
+  range 20, direction du corps de bougie.
+- `p_event` (amplitude) — sigmoïde recentrée de signaux d'amplitude déjà
+  normalisés par leur moyenne 100 barres (TF-indépendants) : ATR%, range,
+  écart-type des log-returns, ratio de volume, ADX, corps absolu.
+- Coefficients (`p_up_gain`, `p_event_gain`, `p_event_center`) paramétrables/optimisables.
+
+**Variantes ajoutées :** `opus_omnibus_v8_no_ml`, `opus_omnibus_v10_no_ml`,
+`opus_omnibus_v11_no_ml` (régime enrichi DI/pente conservé),
+`opus_omnibus_v11_followsetup_no_ml` (sortie sur flip de setup conservée),
+`ml_dynamic_threshold_no_ml` (filtre ADX + seuils proba + porte de volatilité
+reproduisant l'esprit « seuil dynamique »).
+
+### 🔧 Fichiers
+
+| Fichier | Changement |
+|---------|------------|
+| `app/strategies/opus_omnibus_v8_no_ml.py` | Jumeau autonome sans ML de V8 (nouveau) |
+| `app/strategies/opus_omnibus_v10_no_ml.py` | Jumeau autonome sans ML de V10 (nouveau) |
+| `app/strategies/opus_omnibus_v11_no_ml.py` | Jumeau autonome sans ML de V11 (nouveau) |
+| `app/strategies/opus_omnibus_v11_followsetup_no_ml.py` | Jumeau autonome sans ML de V11-FollowSetup (nouveau) |
+| `app/strategies/ml_dynamic_threshold_no_ml.py` | Jumeau autonome sans ML du seuil dynamique (nouveau) |
+| `strategies/*_no_ml.yaml` | Configs (params + coefficients de proxy) des 5 jumeaux |
+
+---
+
 ## [12.5.0] - 2026-06-03
 
 ### ✨ Dérivés « au fil de l'eau » + stratégie `funding_flow` (100 % dérivés)

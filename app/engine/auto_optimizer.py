@@ -441,6 +441,84 @@ class AutoOptimizer:
         finally:
             _job_semaphore.release()
 
+    # ── Exécution séquentielle (une stratégie à la fois) ──────────────────
+    def optimize_sequential(self, df_map: Dict[str, pl.DataFrame], symbol: str,
+                            strategies: List[str] = None,
+                            timeframes: List[str] = None,
+                            auto_apply: bool = False,
+                            on_job_done=None) -> List[str]:
+        """Optimise (strategy × tf) **une à une**, dans le thread courant.
+
+        Contrairement à ``start_async`` (qui lance N threads bornés par un
+        sémaphore), cette variante exécute chaque job de façon strictement
+        séquentielle — un seul job tourne à un instant donné. C'est l'API
+        utilisée par le script ``optimize_runner.py`` : déterministe, douce pour
+        la machine, et réutilisant toute la logique d'un job (baseline,
+        sauvegarde YAML, auto-apply vs baseline, persistance du modèle ML).
+
+        L'ordre est **par stratégie d'abord** (toutes ses TFs), puis stratégie
+        suivante — pour traiter les stratégies « une à une ».
+
+        ``on_job_done(job_id, job_dict)`` est appelé après chaque job (reporting).
+        Retourne la liste des job_ids exécutés.
+        """
+        strats = strategies or list(PARAM_SPACES.keys())
+        tfs    = timeframes or self.cfg["trading"].get(
+            "timeframes", [self.cfg["trading"].get("timeframe", "1h")]
+        )
+        done_ids: List[str] = []
+
+        for name in strats:
+            if not PARAM_SPACES.get(name):
+                logger.info(f"[AutoOpt] {name} ignoré : aucun paramètre à optimiser")
+                continue
+            try:
+                mod = importlib.import_module(f"app.strategies.{name}")
+                min_bars = mod.Strategy().min_bars_required()
+            except Exception:
+                min_bars = 220
+
+            for tf in tfs:
+                df = df_map.get(tf)
+                n_available = len(df) if df is not None else 0
+                min_total = math.ceil(min_bars / 0.35)
+                if n_available < min_total:
+                    logger.warning(
+                        f"[AutoOpt] {name}@{tf} ignoré : {n_available} bougies "
+                        f"(< {min_total} requises)"
+                    )
+                    continue
+
+                WARMUP = 210
+                split  = max(WARMUP + 100, int(n_available * 0.65))
+                df_is, df_oos = df[:split], df[split:]
+
+                recommended_tfs = STRATEGY_TIMEFRAMES.get(name, list(RECOMMENDED_LIMIT.keys()))
+                jid = _job_id(name, tf, symbol)
+                cancel_event = threading.Event()
+                with _jobs_lock:
+                    _cancel_flags[jid] = cancel_event
+                _update_job(jid,
+                    status="running", strategy=name, timeframe=tf, symbol=symbol,
+                    method=self.method, n_trials=self.n_trials,
+                    progress=0, best_score=-999, trials=[], result=None, error=None,
+                    started_at=time.time(), finished_at=None,
+                    baseline=_run_baseline(name, self.cfg, df_oos, symbol),
+                    is_recommended=(tf in recommended_tfs),
+                    recommended_tfs=recommended_tfs,
+                )
+                # Exécution synchrone du job (réutilise toute la logique async).
+                self._run_one_job(jid, name, tf, df_is, df_oos, symbol,
+                                  auto_apply, df, split)
+                done_ids.append(jid)
+                if on_job_done:
+                    try:
+                        on_job_done(jid, get_job(jid))
+                    except Exception as _cb:
+                        logger.debug(f"[AutoOpt] on_job_done KO : {_cb}")
+
+        return done_ids
+
     # ── Exécution synchrone ───────────────────────────────────────────────
     def optimize_all(self, df_map: Dict[str, pl.DataFrame], symbol: str,
                      strategies: List[str] = None,

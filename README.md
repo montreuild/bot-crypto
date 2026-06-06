@@ -168,6 +168,14 @@ Accessible sur **http://127.0.0.1:8000**
 | `supertrend_macd.py` | `supertrend_macd` | SuperTrend + MACD confluence | atr_period, macd_fast, macd_slow |
 | `breakout.py` | `breakout` | Cassure de range + volume | lookback_bars, volume_multiplier |
 | `ml_dynamic_threshold.py` | `ml_dynamic_threshold` | Seuil dynamique ML-based | - (optimisation séparée) |
+| `*_no_ml.py` | `<nom>_no_ml` | Jumeaux **sans ML** des stratégies Opus Omnibus / seuil dynamique — même routing, mais `p_event`/`p_up` calculés par des proxys d'indicateurs (aucun modèle, aucun entraînement) | seuils de setups + coefficients de proxy (`p_up_gain`, `p_event_gain`, `p_event_center`) |
+
+> **Jumeaux `_no_ml`** : `opus_omnibus_v8_no_ml`, `opus_omnibus_v10_no_ml`,
+> `opus_omnibus_v11_no_ml`, `opus_omnibus_v11_followsetup_no_ml`,
+> `ml_dynamic_threshold_no_ml`. Chacun est **autonome** (aucun import croisé, aucun
+> modèle) et remplace les sorties ML par des proxys déterministes lus en O(1)
+> depuis les colonnes `_pre_*` de `app/core/indicators.py` (`precompute_df`).
+> Coût d'entraînement/maintenance nul. Voir le CHANGELOG 12.6.0.
 
 Pour activer une stratégie :
 
@@ -187,6 +195,23 @@ strategies:
 3. Choisir la méthode (**Bayesian** recommandé) et le nombre de trials (40-100)
 4. Lancer — résultats IS/OOS en temps réel via Server-Sent Events
 5. Cliquer **"Appliquer dans config.yaml"** pour enregistrer les meilleurs paramètres
+
+### En ligne de commande — `optimize_runner.py`
+
+Pour optimiser les stratégies **une à une sans l'interface** (même moteur que l'UI :
+baseline → recherche → sauvegarde dans `strategies/<nom>.yaml`) :
+
+```bash
+python optimize_runner.py                      # toutes les stratégies, TFs du config
+python optimize_runner.py --no-ml-only --apply # uniquement les jumeaux _no_ml, et applique
+python optimize_runner.py --strategies opus_omnibus_v11_no_ml --tfs 1h --trials 30 --jobs 2
+```
+
+Exécution **séquentielle** (un job à la fois), **anti-veille** (empêche la mise en
+veille du PC : `caffeinate`/`SetThreadExecutionState`/`systemd-inhibit`),
+**thread-safe** (verrou exclusif : une seule instance) et **discrète** (priorité
+processus abaissée, threads de calcul bornés via `--jobs`). `--help` pour toutes
+les options.
 
 ### Paramètres optimisés vs globaux
 
@@ -225,6 +250,7 @@ strategies:
 ```
 crypto_bot_v12/
 ├── cli.py                          ← Point d'entrée (CLI)
+├── optimize_runner.py              ← Optimisation séquentielle CLI (anti-veille, verrou)
 ├── config.yaml                      ← Configuration principale
 ├── requirements.txt                 ← Dépendances Python 3.12
 ├── README.md                        ← Ce fichier

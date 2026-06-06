@@ -849,3 +849,65 @@ def bearish_excess_series(df: pl.DataFrame, rsi_period: int = 14,
     price_below = close < sma_safe * (1.0 - price_dev_pct / 100.0)
     return (consec_red | rsi_excess | price_below).fill_null(False)
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Indicateurs repris du catalogue de features V4 (~462 colonnes)
+#  Primitives génériques et réutilisables, jusque-là absentes d'indicators.py.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def roc(close: pl.Series, n: int = 14) -> pl.Series:
+    """Rate of Change — variation en % sur ``n`` barres : (close/close[-n] − 1)·100.
+
+    Indicateur de momentum fondamental (utilisé tel quel dans les features V4
+    ROC_7/14/21). Division sécurisée via clip(lower_bound).
+    """
+    return (close / close.shift(n).clip(lower_bound=1e-10) - 1.0) * 100.0
+
+
+def green_ratio(df: pl.DataFrame, n: int = 10) -> pl.Series:
+    """Proportion de bougies haussières (close > open) sur une fenêtre de ``n``.
+
+    Mesure de « breadth » directionnelle locale (features V4 green_ratio_10/20).
+    Retourne une Series dans [0, 1].
+    """
+    green = (df["close"] > df["open"]).cast(pl.Float64)
+    return green.rolling_mean(n)
+
+
+def rsi_divergence(df: pl.DataFrame, period: int = 14,
+                   lookback: int = 14) -> pl.Series:
+    """Divergence RSI/prix (features V4 bull_div / bear_div), fusionnée et signée.
+
+    Retourne une Series dans {−1, 0, +1} :
+      +1  divergence haussière : le prix inscrit un plus-bas sur ``lookback`` mais
+          le RSI reste nettement au-dessus de son propre plus-bas (essoufflement
+          baissier) ;
+      −1  divergence baissière : le prix inscrit un plus-haut mais le RSI reste
+          sous son plus-haut (essoufflement haussier) ;
+       0  pas de divergence.
+    """
+    close = df["close"]
+    r = rsi(close, period)
+    bear = ((close == close.rolling_max(lookback)) &
+            (r < r.rolling_max(lookback) * 0.97))
+    bull = ((close == close.rolling_min(lookback)) &
+            (r > r.rolling_min(lookback) * 1.03))
+    return (bull.cast(pl.Int8) - bear.cast(pl.Int8)).fill_null(0)
+
+
+def trend_duration(df: pl.DataFrame, n: int = 14,
+                   adx_threshold: float = 25.0) -> pl.Series:
+    """Persistance de tendance : nombre de barres consécutives avec ADX > seuil.
+
+    Reprend la feature V4 ``trend_duration`` (longueur du run courant de tendance
+    forte). Le compteur se remet à zéro dès que l'ADX repasse sous le seuil.
+    """
+    adx_line, _, _ = adx(df, n)
+    strong = (adx_line > adx_threshold).fill_null(False).to_numpy().astype(np.int8)
+    out = np.zeros(len(strong), dtype=np.int64)
+    run = 0
+    for i in range(len(strong)):
+        run = run + 1 if strong[i] else 0
+        out[i] = run
+    return pl.Series(out)
