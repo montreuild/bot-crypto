@@ -23,3 +23,6 @@ data/features/
 
 # Logs d entrainement V11 (artefacts runtime)
 logs/*.jsonl
+
+# optimize_runner.py — verrou exclusif (runtime)
+.optimize_runner.lock

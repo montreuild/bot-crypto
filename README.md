@@ -196,6 +196,23 @@ strategies:
 4. Lancer — résultats IS/OOS en temps réel via Server-Sent Events
 5. Cliquer **"Appliquer dans config.yaml"** pour enregistrer les meilleurs paramètres
 
+### En ligne de commande — `optimize_runner.py`
+
+Pour optimiser les stratégies **une à une sans l'interface** (même moteur que l'UI :
+baseline → recherche → sauvegarde dans `strategies/<nom>.yaml`) :
+
+```bash
+python optimize_runner.py                      # toutes les stratégies, TFs du config
+python optimize_runner.py --no-ml-only --apply # uniquement les jumeaux _no_ml, et applique
+python optimize_runner.py --strategies opus_omnibus_v11_no_ml --tfs 1h --trials 30 --jobs 2
+```
+
+Exécution **séquentielle** (un job à la fois), **anti-veille** (empêche la mise en
+veille du PC : `caffeinate`/`SetThreadExecutionState`/`systemd-inhibit`),
+**thread-safe** (verrou exclusif : une seule instance) et **discrète** (priorité
+processus abaissée, threads de calcul bornés via `--jobs`). `--help` pour toutes
+les options.
+
 ### Paramètres optimisés vs globaux
 
 | Type | Où | Modifiables par optimiseur ? |
@@ -233,6 +250,7 @@ strategies:
 ```
 crypto_bot_v12/
 ├── cli.py                          ← Point d'entrée (CLI)
+├── optimize_runner.py              ← Optimisation séquentielle CLI (anti-veille, verrou)
 ├── config.yaml                      ← Configuration principale
 ├── requirements.txt                 ← Dépendances Python 3.12
 ├── README.md                        ← Ce fichier

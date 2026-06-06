@@ -4,6 +4,51 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [12.7.0] - 2026-06-06
+
+### ✨ Indicateurs du catalogue V4 ajoutés à `indicators.py` + runner d'optimisation
+
+**Indicateurs repris du catalogue de features V4 (~462 colonnes).** Quatre
+primitives génériques, réutilisables et jusque-là absentes de
+`app/core/indicators.py`, y sont ajoutées (avec tests) :
+- `roc(close, n)` — Rate of Change en % (momentum fondamental, étonnamment absent) ;
+- `green_ratio(df, n)` — proportion de bougies haussières sur `n` (breadth locale) ;
+- `rsi_divergence(df, period, lookback)` — divergence RSI/prix signée {−1, 0, +1}
+  (fusion des features `bull_div`/`bear_div`) ;
+- `trend_duration(df, n, adx_threshold)` — barres consécutives en tendance forte
+  (persistance de régime).
+
+Les autres features V4 utiles étaient déjà couvertes : `precompute_df` expose en
+O(1) RSI/ATR/ADX/±DI/MACD/SMA/EMA, les ratios de volatilité normalisés 100b
+(`_pre_atr_pct_r`…), `_pre_range_pos20`, `_pre_rsi_vel6`, structure de bougie, etc.
+— c'est cette base que consomment les jumeaux `_no_ml`.
+
+**Runner d'optimisation en ligne de commande — `optimize_runner.py`.** Lance
+l'optimisation des stratégies **une à une** sans passer par l'interface web
+(même moteur `AutoOptimizer` : baseline → recherche → sauvegarde
+`strategies/<nom>.yaml`, ré-entraînement/persistance du modèle pour les ML) :
+- **séquentiel** (un seul job à la fois) via `AutoOptimizer.optimize_sequential` ;
+- **anti-veille** multi-plateforme (macOS `caffeinate` / Windows
+  `SetThreadExecutionState` / Linux `systemd-inhibit`), best-effort ;
+- **thread-safe** : verrou fichier exclusif (une seule instance) en plus des
+  verrous internes de l'optimiseur (YAML, registre de jobs) ;
+- **tâche de fond discrète** : priorité processus abaissée (`nice`/IDLE) et threads
+  de calcul bornés (`--jobs`, défaut 1 ; env `OMP/MKL/…_NUM_THREADS` plafonnés).
+
+Exemples : `python optimize_runner.py --no-ml-only --apply`,
+`python optimize_runner.py --strategies opus_omnibus_v11_no_ml --tfs 1h --trials 30`.
+
+### 🔧 Fichiers
+
+| Fichier | Changement |
+|---------|------------|
+| `app/core/indicators.py` | + `roc`, `green_ratio`, `rsi_divergence`, `trend_duration` |
+| `app/engine/auto_optimizer.py` | + `AutoOptimizer.optimize_sequential` (exécution une-à-une) |
+| `optimize_runner.py` | Script CLI : optimisation séquentielle, anti-veille, verrou, priorité basse (nouveau) |
+| `tests/test_indicators.py` | + tests des 4 nouveaux indicateurs |
+
+---
+
 ## [12.6.0] - 2026-06-06
 
 ### ✨ Jumeaux « sans ML » des stratégies Opus Omnibus + seuil dynamique

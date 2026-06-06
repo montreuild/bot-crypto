@@ -17,6 +17,7 @@ from app.core.indicators import (
     market_structure, htf_trend, detect_regime, detect_regime_full,
     support_resistance_levels, nearest_support, nearest_resistance,
     precompute_df, pre_val, build_features,
+    roc, green_ratio, rsi_divergence, trend_duration,
 )
 
 
@@ -328,3 +329,35 @@ class TestBuildFeatures:
         df = _make_ohlcv(10)
         result = build_features(df)
         assert len(result) == 0
+
+
+class TestV4CatalogueIndicators:
+    """Indicateurs repris du catalogue de features V4 (roc, green_ratio, …)."""
+
+    def test_roc_length_and_value(self):
+        df = _make_ohlcv(120)
+        r = roc(df["close"], 14)
+        assert len(r) == 120
+        # ROC manuel sur la dernière barre
+        c = df["close"].to_numpy()
+        expected = (c[-1] / c[-15] - 1.0) * 100.0
+        assert abs(float(r[-1]) - expected) < 1e-6
+
+    def test_green_ratio_bounds(self):
+        df = _make_ohlcv(120)
+        g = green_ratio(df, 10)
+        vals = g.to_numpy()[10:]
+        assert np.all((vals >= 0.0) & (vals <= 1.0))
+
+    def test_rsi_divergence_in_set(self):
+        df = _make_ohlcv(120)
+        d = rsi_divergence(df).to_numpy()
+        assert set(np.unique(d)).issubset({-1, 0, 1})
+
+    def test_trend_duration_monotonic_runs(self):
+        df = _make_ohlcv(200, trend=0.6)  # forte tendance → ADX élevé
+        td = trend_duration(df).to_numpy()
+        assert td.min() >= 0
+        # un run doit s'incrémenter de 1 au plus entre deux barres consécutives
+        diffs = np.diff(td)
+        assert diffs.max() <= 1
