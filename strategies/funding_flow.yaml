@@ -1,0 +1,28 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : Funding Flow  (directionnelle 100 % DÉRIVÉS — théorique)
+# ──────────────────────────────────────────────────────────────────────────────
+# Fade des extrêmes de positionnement (funding/LSR/taker), conviction renforcée
+# par l'OI. Requiert derivatives.enabled: true (colonnes funding_z/lsr_z/taker_z/
+# oi_change_pct injectées au fil de l'eau par DerivativesStore). Sans dérivés →
+# abstention. THÉORIQUE : à calibrer/valider en live (historique gratuit ~30 j).
+# Voir research/DERIVATIVES_integration.md.
+
+params:
+  w_funding: 0.5
+  w_lsr: 0.25
+  w_taker: 0.25
+  enter_pressure: 1.3
+  conviction_scale: 2.5
+  oi_boost: 0.15
+  sl_atr: 2.0
+  tp_atr: 3.0
+  max_hold: 12
+  min_quality: 0.60
+  enable_short: true
+  trend_guard: true
+  cooldown: 2
+  score_threshold: 0.55
+
+# Pas d'optimizer_results : calibration IS/OOS impossible sans historique dérivés
+# pluri-annuel. Accumuler en live (derivatives.enabled) puis calibrer.
+optimizer_results: {}

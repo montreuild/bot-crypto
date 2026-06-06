@@ -43,6 +43,11 @@ DEFAULTS = {
                   "log_file": "logs/bot.log"},
     "web":       {"host": "127.0.0.1", "port": 8000, "refresh_interval": 5, "api_key": ""},
     "scanner":   {"symbols": ["BTC/USDC","ETH/USDC","SOL/USDC"], "dynamic_scan": False, "top_n": 20},
+    # Dérivés (funding/OI/long-short/taker) accumulés au fil de l'eau dans
+    # data/derivatives/*.parquet, comme l'OHLCV. Opt-in (enabled: false par défaut
+    # → comportement inchangé). Enrichit le df de scoring en colonnes funding_z/
+    # oi_change_pct/lsr_z/taker_z, consommées par la stratégie funding_flow.
+    "derivatives": {"enabled": False, "period": "1h", "refresh_interval": 300, "z_window": 90},
 }
 
 _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}|\$([A-Z_][A-Z0-9_]*)")
