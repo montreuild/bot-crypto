@@ -1,28 +1,22 @@
 """Seuil dynamique — variante *sans ML* (``ml_dynamic_threshold_no_ml``).
 
-Équivalent à base d'indicateurs de :mod:`app.strategies.ml_dynamic_threshold`.
-La version ML entraîne un RandomForest / une régression logistique (random search
-+ TimeSeriesSplit) pour estimer ``proba_up`` = P(le rendement futur dépasse un
-seuil adaptatif à la volatilité), puis ouvre long/short selon
+Jumeau déterministe et **autonome** de ``ml_dynamic_threshold``. La version ML
+entraîne un RandomForest / une régression logistique pour estimer ``proba_up`` =
+P(rendement futur > seuil adaptatif à la volatilité), puis ouvre long/short selon
 ``proba_long`` / ``proba_short`` avec un filtre de régime ADX.
 
-Cette variante supprime tout l'apprentissage (pas de fit, pas de random search,
-pas de persistance de modèle) et remplace ``proba_up`` par un **proxy
-directionnel déterministe** combinant les mêmes familles d'indicateurs que celles
-vues par le modèle (RSI, momentum 5/20, croisements d'EMA, MACD normalisé,
-distance EMA/VWAP), normalisé dans ``[0, 1]`` via une sigmoïde. On conserve à
-l'identique :
+Cette variante supprime tout l'apprentissage et remplace ``proba_up`` par un
+**proxy directionnel d'indicateurs** (DI, RSI, MACD/ATR, ROC, distance SMA50,
+vélocité RSI, position dans la range, corps de bougie), normalisé dans ``[0,1]``
+via une sigmoïde. On conserve :
+  * le filtre de régime ADX (``adx_min``) ;
+  * les seuils de décision ``proba_long`` / ``proba_short`` et la formule de score ;
+  * l'esprit « seuil dynamique » via une porte de volatilité : le mouvement récent
+    sur ``lookahead`` bougies doit dépasser ``vol_20·sqrt(lookahead)·vol_multiplier``.
 
-  * le **filtre de régime ADX** (``adx_min``) ;
-  * les **seuils de décision** ``proba_long`` / ``proba_short`` et la formule de
-    score ;
-  * l'esprit « seuil dynamique » via une porte de confirmation : le mouvement
-    récent sur ``lookahead`` bougies doit dépasser un seuil proportionnel à la
-    volatilité (``vol_multiplier``) pour valider l'entrée.
-
-Le pipeline de features (``compute_features``) et la détection de timeframe sont
-importés de ``ml_dynamic_threshold`` ; le cache feature_store ``ml_dyn_threshold``
-v1 reste partagé.
+Autonome : aucune dépendance à un autre module de stratégie ni à un modèle. Tous
+les indicateurs proviennent de ``app.core.indicators`` (colonnes ``_pre_*`` via
+``precompute_df``, repli idempotent si absentes) → coût O(1).
 """
 
 import logging
@@ -33,69 +27,63 @@ import numpy as np
 import polars as pl
 
 from app.engine.engine import BaseStrategy
-from app.core.indicators import adx as _adx
-from app.strategies.ml_dynamic_threshold import compute_features, _detect_tf
-from app.strategies._no_ml_proxy import _f, _sigmoid, _tanh, _clip
+from app.core.indicators import precompute_df, pre_val
 
 logger = logging.getLogger(__name__)
 
-
-# ── Coefficients du proxy directionnel (features ml_dynamic_threshold) ────────
-_DIR_DEFAULTS: Dict[str, float] = {
-    "mom20_scale":  20.0,
-    "mom5_scale":   40.0,
-    "cross_scale":  300.0,
-    "macd_scale":   500.0,
-    "ema_scale":    30.0,
-    "vwap_scale":   30.0,
-    "w_rsi":    0.8,
-    "w_mom20":  1.0,
-    "w_mom5":   0.7,
-    "w_cross":  0.9,
-    "w_macd":   0.8,
-    "w_ema":    0.7,
-    "w_vwap":   0.6,
-    "gain":     2.2,
-}
+_SECS_TO_TF = {60: "1m", 180: "3m", 300: "5m", 900: "15m",
+               1800: "30m", 3600: "1h", 14400: "4h", 86400: "1d"}
 
 
-def _proba_up_proxy(row: Any, cfg: Dict[str, float]) -> float:
-    """Proxy directionnel dans ``[0, 1]`` depuis une ligne de features ml_dyn."""
-    rsi   = _clip((_f(row, "rsi_14", 0.5) - 0.5) * 2.0, -1.0, 1.0)   # rsi_14 ∈ [0,1]
-    mom20 = _tanh(_f(row, "mom_20") * cfg["mom20_scale"])
-    mom5  = _tanh(_f(row, "mom_5") * cfg["mom5_scale"])
-    cross = _tanh(_f(row, "cross_8_21") * cfg["cross_scale"])
-    macd  = _tanh(_f(row, "macd_hist_norm") * cfg["macd_scale"])
-    ema   = _tanh(_f(row, "ema21_rel") * cfg["ema_scale"])
-    vwap  = _tanh(_f(row, "vwap_dist_20") * cfg["vwap_scale"])
-
-    weights = (cfg["w_rsi"], cfg["w_mom20"], cfg["w_mom5"], cfg["w_cross"],
-               cfg["w_macd"], cfg["w_ema"], cfg["w_vwap"])
-    signals = (rsi, mom20, mom5, cross, macd, ema, vwap)
-    wsum = sum(weights)
-    if wsum <= 0:
-        return 0.5
-    s = sum(w * x for w, x in zip(weights, signals)) / wsum
-    return _sigmoid(cfg["gain"] * s)
+def _sig(x: float) -> float:
+    if x >= 0:
+        return 1.0 / (1.0 + math.exp(-x))
+    z = math.exp(x)
+    return z / (1.0 + z)
 
 
-def _resolve_dir_cfg(p: dict) -> Dict[str, float]:
-    cfg = dict(_DIR_DEFAULTS)
-    if p:
-        for k, v in p.items():
-            if k in cfg and v is not None:
-                try:
-                    cfg[k] = float(v)
-                except (TypeError, ValueError):
-                    continue
-    return cfg
+def _clip(x: float, lo: float, hi: float) -> float:
+    return lo if x < lo else hi if x > hi else x
+
+
+def _tanh(x: float) -> float:
+    return math.tanh(_clip(x, -30.0, 30.0))
+
+
+def _detect_tf(df: pl.DataFrame) -> str:
+    if "time" not in df.columns or len(df) < 3:
+        return "unknown"
+    try:
+        med_s = float(df["time"].diff().drop_nulls().dt.total_microseconds().median()) / 1e6
+    except Exception:
+        return "unknown"
+    if med_s <= 0:
+        return "unknown"
+    closest = min(_SECS_TO_TF, key=lambda k: abs(k - med_s))
+    if abs(closest - med_s) <= max(closest * 0.15, 5):
+        return _SECS_TO_TF[closest]
+    return f"custom_{int(med_s)}s"
+
+
+def _proxy_p_up(*, pdi, ndi, rsi, macd_hist, atr, roc, c, sma50,
+                rsi_vel, range_pos, body, gain: float) -> float:
+    di   = _tanh((pdi - ndi) / 20.0)
+    r    = _clip((rsi - 50.0) / 30.0, -1.0, 1.0)
+    macd = _tanh(macd_hist / (0.5 * atr + 1e-9))
+    rocs = _tanh(roc / 5.0)
+    dist = _tanh(((c - sma50) / sma50 * 15.0) if sma50 > 0 else 0.0)
+    rvel = _tanh(rsi_vel / 15.0)
+    rpos = _clip((range_pos - 0.5) * 2.0, -1.0, 1.0)
+    bdy  = _tanh(body * 200.0)
+    w = (1.0, 0.7, 0.8, 0.8, 0.8, 0.6, 0.6, 0.4)
+    s = (di, r, macd, rocs, dist, rvel, rpos, bdy)
+    return _sig(gain * (sum(wi * si for wi, si in zip(w, s)) / sum(w)))
 
 
 class Strategy(BaseStrategy):
     """Seuil dynamique sans ML — proxy directionnel + filtre ADX + porte de volatilité."""
 
     name = "ml_dynamic_threshold_no_ml"
-
     timeframes: List[str] = ["5m", "15m", "1h"]
 
     param_space: Dict[str, List] = {
@@ -104,115 +92,78 @@ class Strategy(BaseStrategy):
         "adx_min":        [15.0, 20.0, 25.0],
         "proba_long":     [0.55, 0.60, 0.65],
         "proba_short":    [0.35, 0.40, 0.45],
-        "gain":           [1.8, 2.2, 2.8],
+        "p_up_gain":      [1.8, 2.2, 2.8],
     }
-    fixed_params: Dict[str, Any] = {
-        "min_bars": 150,
-    }
+    fixed_params: Dict[str, Any] = {"min_bars": 60}
 
     _DEFAULTS = {
-        "lookahead":      3,
-        "vol_multiplier": 0.6,
-        "adx_min":        20.0,
-        "proba_long":     0.60,
-        "proba_short":    0.40,
-        "min_bars":       150,
+        "lookahead": 3, "vol_multiplier": 0.6, "adx_min": 20.0,
+        "proba_long": 0.60, "proba_short": 0.40, "p_up_gain": 2.2, "min_bars": 60,
     }
 
-    def __init__(self):
-        self._bt_features: Optional[pl.DataFrame] = None
-        self._bt_features_len: int = 0
-
     def min_bars_required(self, params: dict = None) -> int:
-        p = (params or {}).get(self.name, {})
-        return int(p.get("min_bars", self._DEFAULTS["min_bars"])) + 30
-
-    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
-        try:
-            from app.core.feature_store import cached_strategy_features
-            feats = cached_strategy_features(
-                getattr(self, "_bt_symbol", None), getattr(self, "_bt_tf", None), df,
-                name="ml_dyn_threshold", version="1",
-                builder=lambda w: compute_features(w),
-                in_kind="polars", out_kind="polars", include_time=False)
-            if feats is not None and len(feats) > 0:
-                self._bt_features = feats
-                self._bt_features_len = len(df)
-                logger.info(
-                    f"[DynThr-NoML] backtest : features pré-calculées sur "
-                    f"{self._bt_features_len} bougies ({len(feats.columns)} colonnes)"
-                )
-        except Exception as e:
-            logger.warning(f"[DynThr-NoML] prepare_for_backtest KO : {e}")
-            self._bt_features = None
-            self._bt_features_len = 0
-
-    def _features(self, df: pl.DataFrame) -> pl.DataFrame:
-        if self._bt_features is not None and len(df) <= self._bt_features_len:
-            return self._bt_features.head(len(df))
-        return compute_features(df)
+        return 230  # marge pour les EMA/SMA longues de precompute_df
 
     def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
+        if df is None or len(df) < self.min_bars_required():
+            return self._none()
+        if "_pre_atr14" not in df.columns:
+            df = precompute_df(df)
+
         p = (params or {}).get(self.name, {})
         lookahead      = int(p.get("lookahead",      self._DEFAULTS["lookahead"]))
         vol_multiplier = float(p.get("vol_multiplier", self._DEFAULTS["vol_multiplier"]))
         adx_min        = float(p.get("adx_min",        self._DEFAULTS["adx_min"]))
         proba_long     = float(p.get("proba_long",     self._DEFAULTS["proba_long"]))
         proba_short    = float(p.get("proba_short",    self._DEFAULTS["proba_short"]))
-
-        if df is None or len(df) < self.min_bars_required(params):
-            return self._none()
+        gain           = float(p.get("p_up_gain",      self._DEFAULTS["p_up_gain"]))
 
         tf = _detect_tf(df)
-        feats = self._features(df)
-        if feats is None or len(feats) == 0:
-            return self._none()
-
-        # Filtre régime ADX (identique à la version ML).
-        try:
-            adx_val = float(_adx(df, 14)[0][-1])
-        except Exception:
-            adx_val = 0.0
-        if not math.isfinite(adx_val):
-            adx_val = 0.0
+        adx_val = float(pre_val(df, "_pre_adx14") or 0.0)
         if adx_val < adx_min:
             return {
-                "score":      0.0,
-                "side":       "none",
-                "name":       self.name,
-                "reason":     f"Filtre régime : ADX={adx_val:.1f} < {adx_min} [{tf}]",
+                "score": 0.0, "side": "none", "name": self.name,
+                "reason": f"Filtre régime : ADX={adx_val:.1f} < {adx_min} [{tf}]",
                 "conditions": [f"ADX insuffisant ({adx_val:.1f})"],
                 "indicators": {"adx": round(adx_val, 2), "tf": tf, "proxy": True},
             }
 
-        cfg  = _resolve_dir_cfg(p)
-        last = feats.row(-1, named=True)
-        proba = _proba_up_proxy(last, cfg)
+        c = float(df["close"][-1] or 0.0)
+        if c <= 0:
+            return self._none()
+        roc = ((c / float(df["close"][-15]) - 1.0) * 100.0) if len(df) > 15 and float(df["close"][-15]) > 0 else 0.0
+        proba = _proxy_p_up(
+            pdi=float(pre_val(df, "_pre_pdi14") or 0.0),
+            ndi=float(pre_val(df, "_pre_ndi14") or 0.0),
+            rsi=float(pre_val(df, "_pre_rsi14") or 50.0),
+            macd_hist=float(pre_val(df, "_pre_macd_hist") or 0.0),
+            atr=float(pre_val(df, "_pre_atr14") or 0.0),
+            roc=roc, c=c, sma50=float(pre_val(df, "_pre_sma50") or 0.0),
+            rsi_vel=float(pre_val(df, "_pre_rsi_vel6") or 0.0),
+            range_pos=float(pre_val(df, "_pre_range_pos20") or 0.5),
+            body=float(pre_val(df, "_pre_body") or 0.0),
+            gain=gain,
+        )
 
-        # Porte « seuil dynamique » : le mouvement récent sur `lookahead` bougies
-        # doit dépasser un seuil proportionnel à la volatilité (mime le label ML
-        # adaptatif). Sinon le signal est jugé trop ténu → pas de trade.
-        close = df["close"]
-        if len(close) > lookahead + 21:
-            log_ret = (close / close.shift(1).clip(lower_bound=1e-9)).log(math.e)
-            vol_20  = float(log_ret.tail(20).std() or 0.0)
-            recent  = float(
-                math.log(max(float(close[-1]), 1e-9) /
-                         max(float(close[-1 - lookahead]), 1e-9))
-            )
-            dyn_thr = vol_20 * math.sqrt(lookahead) * vol_multiplier
+        # Porte « seuil dynamique » : amplitude récente vs volatilité (mime le
+        # label ML adaptatif = rendement futur > vol·sqrt(lookahead)·mult).
+        cprev = float(df["close"][-1 - lookahead]) if len(df) > lookahead else c
+        recent = math.log(max(c, 1e-9) / max(cprev, 1e-9))
+        if len(df) > 22:
+            cl = df["close"][-21:].to_numpy().astype(float)
+            std20 = float(np.std(np.log(np.clip(cl[1:] / cl[:-1], 1e-9, None))))
         else:
-            recent, dyn_thr = 0.0, 0.0
+            std20 = 0.0
+        dyn_thr = std20 * math.sqrt(lookahead) * vol_multiplier
 
         if proba >= proba_long:
-            side  = "long"
+            side = "long"
             score = 0.5 + (proba - proba_long) / max(1.0 - proba_long, 1e-9) * 0.5
-            # Confirmation : le marché ne doit pas être en fort excès baissier récent.
             if dyn_thr > 0 and recent < -dyn_thr:
                 return self._none()
         elif proba <= proba_short:
-            side  = "short"
+            side = "short"
             score = 0.5 + (proba_short - proba) / max(proba_short, 1e-9) * 0.5
             if dyn_thr > 0 and recent > dyn_thr:
                 return self._none()
@@ -220,16 +171,10 @@ class Strategy(BaseStrategy):
             return self._none()
 
         score = round(min(score, 0.99), 3)
-        close_v = float(close[-1])
-
         return {
-            "score":      score,
-            "side":       side,
-            "name":       self.name,
-            "reason":     (
-                f"DynThreshold-NoML/{tf} — proxy_up={proba:.3f} "
-                f"(long≥{proba_long}, short≤{proba_short}, ADX={adx_val:.1f})"
-            ),
+            "score": score, "side": side, "name": self.name,
+            "reason": (f"DynThreshold-NoML/{tf} — proxy_up={proba:.3f} "
+                       f"(long≥{proba_long}, short≤{proba_short}, ADX={adx_val:.1f})"),
             "conditions": [
                 f"Proba hausse (proxy) : {proba:.3f}",
                 f"Filtre ADX : {adx_val:.1f} ≥ {adx_min}",
@@ -237,23 +182,13 @@ class Strategy(BaseStrategy):
                 "Direction issue d'un proxy d'indicateurs (sans modèle ML)",
             ],
             "indicators": {
-                "proba_up":       round(proba, 4),
-                "adx":            round(adx_val, 2),
-                "tf":             tf,
-                "lookahead":      lookahead,
-                "vol_multiplier": vol_multiplier,
-                "close":          close_v,
-                "proxy":          True,
+                "proba_up": round(proba, 4), "adx": round(adx_val, 2), "tf": tf,
+                "lookahead": lookahead, "vol_multiplier": vol_multiplier,
+                "close": c, "proxy": True,
             },
         }
 
     @staticmethod
     def _none() -> Dict[str, Any]:
-        return {
-            "score":      0.0,
-            "side":       "none",
-            "name":       "ml_dynamic_threshold_no_ml",
-            "reason":     "Pas de signal (proxy)",
-            "conditions": [],
-            "indicators": {},
-        }
+        return {"score": 0.0, "side": "none", "name": "ml_dynamic_threshold_no_ml",
+                "reason": "Pas de signal (proxy)", "conditions": [], "indicators": {}}

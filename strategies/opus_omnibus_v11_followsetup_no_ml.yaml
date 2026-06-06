@@ -29,10 +29,10 @@ params:
   max_bars_safety: 200
   log_flips: true
 
-  # ── Coefficients des proxys (p_event / p_up) ──
-  dir_gain: 2.0
-  amp_gain: 3.2
-  amp_center: 0.40
+  # ── Coefficients des proxys d'indicateurs (p_event / p_up) ──
+  p_up_gain: 2.0
+  p_event_gain: 3.0
+  p_event_center: 0.42
 
   # ── SIGNAL_UP ──
   setup_signal_up_enabled: true

@@ -168,13 +168,14 @@ Accessible sur **http://127.0.0.1:8000**
 | `supertrend_macd.py` | `supertrend_macd` | SuperTrend + MACD confluence | atr_period, macd_fast, macd_slow |
 | `breakout.py` | `breakout` | Cassure de range + volume | lookback_bars, volume_multiplier |
 | `ml_dynamic_threshold.py` | `ml_dynamic_threshold` | Seuil dynamique ML-based | - (optimisation séparée) |
-| `*_no_ml.py` | `<nom>_no_ml` | Jumeaux **sans ML** des stratégies Opus Omnibus / seuil dynamique — même routing, mais `p_event`/`p_up` calculés par des proxys d'indicateurs (aucun modèle, aucun entraînement) | seuils de setups + coefficients de proxy (`dir_gain`, `amp_gain`, `amp_center`) |
+| `*_no_ml.py` | `<nom>_no_ml` | Jumeaux **sans ML** des stratégies Opus Omnibus / seuil dynamique — même routing, mais `p_event`/`p_up` calculés par des proxys d'indicateurs (aucun modèle, aucun entraînement) | seuils de setups + coefficients de proxy (`p_up_gain`, `p_event_gain`, `p_event_center`) |
 
 > **Jumeaux `_no_ml`** : `opus_omnibus_v8_no_ml`, `opus_omnibus_v10_no_ml`,
 > `opus_omnibus_v11_no_ml`, `opus_omnibus_v11_followsetup_no_ml`,
-> `ml_dynamic_threshold_no_ml`. Ils répliquent leur jumelle ML en remplaçant les
-> sorties de modèle par des proxys déterministes (`app/strategies/_no_ml_proxy.py`)
-> pour éliminer le coût d'entraînement/maintenance. Voir le CHANGELOG 12.6.0.
+> `ml_dynamic_threshold_no_ml`. Chacun est **autonome** (aucun import croisé, aucun
+> modèle) et remplace les sorties ML par des proxys déterministes lus en O(1)
+> depuis les colonnes `_pre_*` de `app/core/indicators.py` (`precompute_df`).
+> Coût d'entraînement/maintenance nul. Voir le CHANGELOG 12.6.0.
 
 Pour activer une stratégie :
 

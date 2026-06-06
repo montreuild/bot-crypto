@@ -14,7 +14,7 @@ params:
   proba_long: 0.60
   proba_short: 0.40
   # Gain de la sigmoïde du proxy directionnel.
-  gain: 2.2
+  p_up_gain: 2.2
 
   score_threshold: 0.55
 
