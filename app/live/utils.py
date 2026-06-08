@@ -31,6 +31,20 @@ def _is_nan_like(v) -> bool:
         return False
 
 
+def _clean_param_dict(d: dict) -> dict:
+    """Retourne une copie de ``d`` sans les valeurs scalaires invalides (NaN/NaT).
+
+    Appliqué aux params *de base* (``strategy_params``) en plus de l'overlay
+    optimiseur : un NaT persisté dans le bloc ``params:`` d'un YAML stratégie
+    (via ``apply_best_params``) était rechargé comme base et atteignait
+    ``float(p.get(...))`` côté stratégie sans passer par le filtre overlay.
+    Une valeur retirée fait retomber la stratégie sur son défaut interne.
+    """
+    if not isinstance(d, dict):
+        return d
+    return {k: v for k, v in d.items() if not _is_nan_like(v)}
+
+
 def _merge_params(base: dict, optimized: dict) -> dict:
     """
     Fusionne les params de config (base) avec les params optimisés.
@@ -41,7 +55,8 @@ def _merge_params(base: dict, optimized: dict) -> dict:
     Résultat : dict complet avec toutes les stratégies, params optimisés écrasant le base.
     Les valeurs NaN/None sont remplacées par les valeurs base ou les défauts.
     """
-    merged = {k: dict(v) if isinstance(v, dict) else v for k, v in base.items()}
+    merged = {k: _clean_param_dict(v) if isinstance(v, dict) else v
+              for k, v in base.items()}
     for strat_key, strat_params in optimized.items():
         if not isinstance(strat_params, dict):
             continue
@@ -77,7 +92,10 @@ def resolve_strategy_params(cfg: dict, timeframe: str = None) -> dict:
     cfg       : dict config globale (doit contenir "strategy_params")
     timeframe : str ou None — si fourni, superpose les résultats optimizer_results[strat][tf]
     """
-    strat_params = dict(cfg.get("strategy_params", {}))
+    strat_params = {
+        name: _clean_param_dict(p) if isinstance(p, dict) else p
+        for name, p in cfg.get("strategy_params", {}).items()
+    }
 
     if timeframe:
         opt_results = cfg.get("optimizer_results") or {}
