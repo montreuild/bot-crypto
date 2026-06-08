@@ -17,7 +17,7 @@ from typing import Dict, Any, List
 import polars as pl
 
 from app.engine.engine import BaseStrategy
-from app.core.indicators import macd as calc_macd, pre_val
+from app.core.indicators import pre_val, macd_hist_last3
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,15 @@ class Strategy(BaseStrategy):
     def __init__(self):
         self._last_signal: Dict[str, int] = {}
         self._call_count:  Dict[str, int] = {}
+        # Réutilisation causale de l'histogramme MACD (params optimisés) : série
+        # complète calculée une fois par jeu de params puis indexée en O(1).
+        self._bt_full_df = None
+        self._macd_cache: Dict[tuple, Any] = {}
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Mémorise le df complet pour réutiliser l'histogramme MACD (causal)
+        au lieu de le recalculer à chaque barre — O(n²) → O(n) en optimisation."""
+        self._bt_full_df = df
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get(self.name, {})
@@ -94,16 +103,16 @@ class Strategy(BaseStrategy):
             return self._none("ATR invalide")
 
         # ── MACD histogramme — flip de signe sur la dernière bougie ─────────────
-        # On utilise les colonnes pré-calculées (12,26,9) si compatibles, sinon
-        # recalcul on-demand via calc_macd().
+        # Colonne pré-calculée (12,26,9) si compatible, sinon série causale
+        # réutilisée du df complet (cache par params) → O(1)/barre en optimisation.
         if macd_fast == 12 and macd_slow == 26 and macd_sig_p == 9 \
                 and "_pre_macd_hist" in df.columns:
             hist_now  = float(df["_pre_macd_hist"][-1])
             hist_prev = float(df["_pre_macd_hist"][-2])
         else:
-            _, _, hist = calc_macd(close, macd_fast, macd_slow, macd_sig_p)
-            hist_now  = float(hist[-1])
-            hist_prev = float(hist[-2])
+            hist_now, hist_prev, _ = macd_hist_last3(
+                df, macd_fast, macd_slow, macd_sig_p,
+                full_df=self._bt_full_df, cache=self._macd_cache)
 
         macd_flip_bull = hist_prev <= 0 and hist_now > 0
         macd_flip_bear = hist_prev >= 0 and hist_now < 0

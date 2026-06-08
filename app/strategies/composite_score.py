@@ -11,7 +11,7 @@ from app.engine.engine import BaseStrategy
 from app.core.indicators import (
     rsi as calc_rsi,
     atr_val as calc_atr,
-    macd as calc_macd,
+    macd_hist_last3,
     vol_ratio as calc_vol,
     htf_trend,
     pre_val,
@@ -228,6 +228,13 @@ class Strategy(BaseStrategy):
     def __init__(self):
         self._last_signal: Dict[str, int] = {}
         self._call_count:  Dict[str, int] = {}
+        # Réutilisation causale de l'histogramme MACD si params non par défaut.
+        self._bt_full_df = None
+        self._macd_cache: Dict[tuple, Any] = {}
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Mémorise le df complet pour réutiliser l'histogramme MACD (causal)."""
+        self._bt_full_df = df
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get("composite_score", {})
@@ -303,15 +310,18 @@ class Strategy(BaseStrategy):
         if rsi_val is None:
             rsi_val = 50.0
 
-        # ── MACD(12, 26, 9) ───────────────────────────────────────────────────
-        lh = pre_val(df, "_pre_macd_hist")
-        if lh is None:
-            _, _, hist = calc_macd(close, macd_fast, macd_slow_p, macd_signal)
-            lh = float(hist[-1])
-            ph = float(hist[-2]) if len(hist) > 1 else 0.0
-        else:
+        # ── MACD ──────────────────────────────────────────────────────────────
+        # Params par défaut (12,26,9) : colonne pré-calculée O(1). Sinon (params
+        # custom), série causale réutilisée du df complet (cache par params).
+        _macd_default = (macd_fast == 12 and macd_slow_p == 26 and macd_signal == 9)
+        if _macd_default and pre_val(df, "_pre_macd_hist") is not None:
             ph_s = df["_pre_macd_hist"]
+            lh   = float(ph_s[-1])
             ph   = float(ph_s[-2]) if len(ph_s) > 1 else 0.0
+        else:
+            lh, ph, _ = macd_hist_last3(
+                df, macd_fast, macd_slow_p, macd_signal,
+                full_df=self._bt_full_df, cache=self._macd_cache)
 
         macd_cross_up   = ph <= 0 < lh
         macd_cross_down = ph >= 0 > lh
