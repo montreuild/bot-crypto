@@ -10,13 +10,16 @@ build/
 .venv
 venv/
 *.log
+*.log.*
 *.sqlite
 *.db
+*.db-shm
+*.db-wal
 .pytest_cache/
 .mypy_cache/
+*.pkl
 
 # CandleStore — données OHLCV locales (Parquet)
-data/ohlcv/
 
 # FeatureStore — catalogue de features pré-calculées (Parquet)
 data/features/
