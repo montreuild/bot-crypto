@@ -30,6 +30,34 @@ nettement inférieur (ex. `+33` sur 3 trades) face au paramétrage courant
 - `_beats_baseline` rend l'**amélioration du PnL OOS obligatoire** (plus jamais
   outvotée par WR/Sharpe), en plus d'au moins un gain de qualité (WR ou Sharpe).
 
+### 🛠️ Optimiseur : « non appliqué = non utilisé » + `params:` jamais écrasé
+
+**Problème.** Un résultat d'optimisation **non appliqué** (refusé par le
+garde-fou en auto-apply, ou simplement en attente du bouton « Appliquer »)
+était quand même persisté dans `optimizer_results[tf]` via
+`save_optimizer_results`. Or `resolve_strategy_params` donne **précédence** à
+`optimizer_results` sur `params:`, et `load_config` recharge ce store : le
+paramétrage « refusé » devenait donc **immédiatement actif** pour le
+backtest/comparatif/live (et pouvait même activer une stratégie en live). C'est
+pourquoi un comparatif après optimisation reproduisait les chiffres « Après
+optimisation » alors que « rien n'était appliqué ». De plus, le panneau
+« Avant optimisation » était calculé sans timeframe → sans l'overlay
+`optimizer_results`, donc à partir du seul bloc `params:`, ce qui ne reflétait
+pas le paramétrage réellement actif.
+
+**Correctif.**
+- **Non appliqué = non utilisé** : les chemins non appliqués tracent désormais
+  le résultat dans le changelog (audit) via la nouvelle fonction
+  `record_optimizer_audit`, **sans** écrire dans `optimizer_results`. Le
+  paramétrage en place reste actif tant qu'il n'est pas explicitement appliqué.
+- **`params:` jamais écrasé** : `apply_best_params` écrit désormais
+  **uniquement** dans `optimizer_results[tf]` (le store actif, par précédence) et
+  laisse intact le bloc `params:` = configuration par défaut réglée à la main.
+  Un timeframe est requis (sans lui, aucun emplacement à activer).
+- **Baseline réaligné** : `_run_baseline` reçoit le timeframe et applique
+  l'overlay `optimizer_results` → le panneau « Avant optimisation » reflète le
+  paramétrage réellement actif (comme le live et le comparatif).
+
 ### 🐛 Optimiseur : Alpha OOS manquant dans le panneau « Après optimisation »
 
 Le chemin d'évaluation **non parallèle** (`Optimizer._eval`) n'incluait pas
