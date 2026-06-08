@@ -100,8 +100,14 @@ def bb_squeeze(close: pl.Series, lookback: int = 15,
     """True si les bandes de Bollinger sont en squeeze (compression de volatilité)."""
     if len(close) < bb_period + lookback:
         return False
-    _sma     = close.rolling_mean(bb_period)
-    _std     = close.rolling_std(bb_period)
+    # Seules les `lookback+1` dernières largeurs sont utilisées, et chacune ne
+    # dépend que des `bb_period` closes précédents. On tronque à la queue → coût
+    # O(bb_period+lookback) par appel au lieu de O(n) (rolling sur toute la série) :
+    # transforme un backtest O(n²) en O(n) pour tous les appelants, à résultat
+    # strictement identique (fenêtres rolling causales).
+    tail     = close[-(bb_period + lookback + 2):]
+    _sma     = tail.rolling_mean(bb_period)
+    _std     = tail.rolling_std(bb_period)
     # clip évite pl.when qui retourne un Expr (non subscriptable)
     sma_safe = _sma.clip(lower_bound=1e-9)
     width    = 4 * _std / sma_safe
@@ -338,6 +344,35 @@ def macd_hist_last3(window: pl.DataFrame, fast: int, slow: int, signal: int,
             return float(h[idx]), float(h[idx - 1]), float(h[idx - 2])
     _, _, h = macd(window["close"], int(fast), int(slow), int(signal))
     return float(h[-1]), float(h[-2]), float(h[-3])
+
+
+def ema_window(window: pl.DataFrame, span: int,
+               full_df: pl.DataFrame = None, cache: dict = None) -> pl.Series:
+    """Série EMA(span) du ``close`` alignée sur ``window``.
+
+    L'EMA est causale (récurrence depuis la barre 0). Quand ``window`` est un
+    préfixe causal de ``full_df``, on calcule l'EMA complète UNE fois par span
+    (mémoïsée) puis on renvoie la tranche ``[:n]`` — l'appelant continue d'indexer
+    ``[-1]``, ``[-4]``, ``[-1-k]`` exactement comme avant. Évite un recalcul O(n)
+    de ``ewm_mean`` par barre (O(n²) sur le backtest) quand le span n'est pas
+    pré-calculé (ex: ema_fast 13/21/34, ema_slow 80 hors colonnes _pre_ema*).
+
+    Le cache retient plusieurs spans simultanément (ema_fast/slow/trend d'un même
+    trial coexistent) ; il est borné par sécurité. En live (pas de ``full_df``)
+    l'EMA est calculée directement sur ``window``.
+    """
+    if cache is not None and full_df is not None:
+        idx = _causal_prefix_index(window, full_df)
+        if idx is not None:
+            key = (id(full_df), full_df.height, int(span))
+            s = cache.get(key)
+            if s is None:
+                if len(cache) > 16:  # garde-fou mémoire (jamais atteint en backtest)
+                    cache.clear()
+                s = full_df["close"].ewm_mean(span=int(span), adjust=False)
+                cache[key] = s
+            return s[: idx + 1]
+    return window["close"].ewm_mean(span=int(span), adjust=False)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -367,7 +367,62 @@ class TestV4CatalogueIndicators:
 #  Réutilisation causale SuperTrend / MACD (accélération backtest)
 # ══════════════════════════════════════════════════════════════════════════════
 
-from app.core.indicators import supertrend_last, macd_hist_last3
+from app.core.indicators import supertrend_last, macd_hist_last3, ema_window, bb_squeeze
+
+
+class TestEmaWindowReuse:
+    """ema_window doit être identique au recalcul ewm_mean par fenêtre, y compris
+    pour les indices négatifs profonds (cross_lookback), et gérer plusieurs spans."""
+
+    def test_matches_per_window_all_indices(self):
+        full = _make_ohlcv(400, seed=21)
+        cache = {}
+        for i in range(250, full.height):
+            w = full[: i + 1]
+            s = ema_window(w, 34, full_df=full, cache=cache)
+            ref = w["close"].ewm_mean(span=34, adjust=False)
+            for k in (1, 2, 4, 8):
+                assert abs(float(s[-k]) - float(ref[-k])) < 1e-9
+
+    def test_multiple_spans_coexist(self):
+        full = _make_ohlcv(300, seed=22)
+        cache = {}
+        w = full[:280]
+        for span in (13, 21, 34, 80):
+            s = ema_window(w, span, full_df=full, cache=cache)
+            ref = w["close"].ewm_mean(span=span, adjust=False)
+            assert abs(float(s[-1]) - float(ref[-1])) < 1e-9
+        assert len(cache) == 4  # les 4 spans mémoïsés simultanément
+
+    def test_live_fallback_without_full_df(self):
+        full = _make_ohlcv(300, seed=23)
+        w = full[:280]
+        s = ema_window(w, 34)
+        ref = w["close"].ewm_mean(span=34, adjust=False)
+        assert abs(float(s[-1]) - float(ref[-1])) < 1e-9
+
+
+class TestBBSqueezeTailSlice:
+    """Le tronquage à la queue de bb_squeeze ne change pas le résultat."""
+
+    def _bb_full(self, close, lookback, bb_period, quantile):
+        _sma = close.rolling_mean(bb_period)
+        _std = close.rolling_std(bb_period)
+        width = 4 * _std / _sma.clip(lower_bound=1e-9)
+        cur = width[-1]
+        if cur is None:
+            return False
+        past = width[-(lookback + 1):-1].drop_nulls()
+        return len(past) >= 5 and float(cur) <= float(past.quantile(quantile))
+
+    def test_matches_full_series(self):
+        for seed in range(4):
+            df = _make_ohlcv(800, seed=seed)
+            close = df["close"]
+            for lb, bp, q in [(15, 20, 0.30), (10, 14, 0.25), (20, 30, 0.40)]:
+                for end in range(200, 800, 53):
+                    w = close[:end]
+                    assert bb_squeeze(w, lb, bp, q) == self._bb_full(w, lb, bp, q)
 
 
 class TestCausalReuse:

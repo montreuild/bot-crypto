@@ -5,7 +5,7 @@ from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
 from app.core.indicators import (
-    htf_trend, pre_val, supertrend_last, macd_hist_last3,
+    htf_trend, pre_val, supertrend_last, macd_hist_last3, ema_window,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,7 @@ class Strategy(BaseStrategy):
         self._bt_full_df = None
         self._st_cache:   Dict[tuple, Any] = {}
         self._macd_cache: Dict[tuple, Any] = {}
+        self._ema_cache:  Dict[tuple, Any] = {}
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         """Mémorise le df complet pour réutiliser les séries SuperTrend/MACD
@@ -97,8 +98,8 @@ class Strategy(BaseStrategy):
 
         # ── EMAs ─────────────────────────────────────────────────────────────
         _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
-        lt      = pre_val(df, _ema_map.get(ema_trend, "")) or float(close.ewm_mean(span=ema_trend, adjust=False)[-1])
-        lm      = pre_val(df, _ema_map.get(ema_mid_p, "")) or float(close.ewm_mean(span=ema_mid_p, adjust=False)[-1])
+        lt      = pre_val(df, _ema_map.get(ema_trend, "")) or float(ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lm      = pre_val(df, _ema_map.get(ema_mid_p, "")) or float(ema_window(df, ema_mid_p, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
         c_now   = float(close[-1])
 
         trend_bull = c_now >= lt * 0.970 and c_now >= lm * 0.985
