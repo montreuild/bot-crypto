@@ -10,7 +10,7 @@ from app.core.indicators import (
     rsi as calc_rsi,
     atr_val as calc_atr,
     adx_val as calc_adx,
-    macd as calc_macd,
+    macd_hist_last3,
     vol_ratio as calc_vol,
     htf_trend,
     pre_val,
@@ -46,6 +46,13 @@ class Strategy(BaseStrategy):
     def __init__(self):
         self._last_signal: Dict[str, int] = {}
         self._call_count:  Dict[str, int] = {}
+        # Réutilisation causale de l'histogramme MACD si params non par défaut.
+        self._bt_full_df = None
+        self._macd_cache: Dict[tuple, Any] = {}
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Mémorise le df complet pour réutiliser l'histogramme MACD (causal)."""
+        self._bt_full_df = df
 
     def min_bars_required(self, params: dict = None) -> int:
         p        = (params or {}).get("multi_tf_sr", {})
@@ -98,12 +105,11 @@ class Strategy(BaseStrategy):
         adx_val = pre_val(df, "_pre_adx14") or calc_adx(df, 14)
         vr      = pre_val(df, "_pre_volratio20") or calc_vol(df)
 
-        # MACD — momentum en cours de retournement
+        # MACD(12,26,9) — colonne pré-calculée O(1), sinon série causale réutilisée.
         lh = pre_val(df, "_pre_macd_hist")
         if lh is None:
-            _, _, hist = calc_macd(close, 12, 26, 9)
-            lh = float(hist[-1])
-            ph = float(hist[-2]) if len(hist) > 1 else 0.0
+            lh, ph, _ = macd_hist_last3(
+                df, 12, 26, 9, full_df=self._bt_full_df, cache=self._macd_cache)
         else:
             ph_s = df["_pre_macd_hist"]
             ph   = float(ph_s[-2]) if len(ph_s) > 1 else 0.0

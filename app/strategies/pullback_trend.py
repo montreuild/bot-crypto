@@ -4,7 +4,7 @@ import logging
 from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
-from app.core.indicators import market_structure, htf_trend, pre_val
+from app.core.indicators import market_structure, htf_trend, pre_val, ema_window
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,13 @@ class Strategy(BaseStrategy):
     def __init__(self):
         self._last_signal: Dict[str, int] = {}
         self._call_count: Dict[str, int] = {}
+        # Réutilisation causale des EMA custom (hors colonnes _pre_ema*).
+        self._bt_full_df = None
+        self._ema_cache:  Dict[tuple, Any] = {}
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Mémorise le df complet pour réutiliser les EMA causales (O(n²)→O(n))."""
+        self._bt_full_df = df
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get("pullback_trend", {})
@@ -73,12 +80,13 @@ class Strategy(BaseStrategy):
         # ── EMAs ─────────────────────────────────────────────────────────────
         _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
         _ema_col_f = _ema_map.get(ema_fast)
-        ef  = df[_ema_col_f] if (_ema_col_f and _ema_col_f in df.columns) else close.ewm_mean(span=ema_fast, adjust=False)
+        ef  = df[_ema_col_f] if (_ema_col_f and _ema_col_f in df.columns) \
+            else ema_window(df, ema_fast, full_df=self._bt_full_df, cache=self._ema_cache)
 
         lf  = float(ef[-1])
-        lm  = pre_val(df, _ema_map.get(ema_mid, ""))   or float(close.ewm_mean(span=ema_mid,   adjust=False)[-1])
-        ls  = pre_val(df, _ema_map.get(ema_slow, ""))  or float(close.ewm_mean(span=ema_slow,  adjust=False)[-1])
-        lt  = pre_val(df, _ema_map.get(ema_trend, "")) or float(close.ewm_mean(span=ema_trend, adjust=False)[-1])
+        lm  = pre_val(df, _ema_map.get(ema_mid, ""))   or float(ema_window(df, ema_mid,   full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        ls  = pre_val(df, _ema_map.get(ema_slow, ""))  or float(ema_window(df, ema_slow,  full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lt  = pre_val(df, _ema_map.get(ema_trend, "")) or float(ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
         c0  = float(close[-1])
         c1  = float(close[-2])
 

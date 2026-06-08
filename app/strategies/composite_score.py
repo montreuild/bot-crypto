@@ -11,7 +11,8 @@ from app.engine.engine import BaseStrategy
 from app.core.indicators import (
     rsi as calc_rsi,
     atr_val as calc_atr,
-    macd as calc_macd,
+    macd_hist_last3,
+    ema_window,
     vol_ratio as calc_vol,
     htf_trend,
     pre_val,
@@ -228,6 +229,15 @@ class Strategy(BaseStrategy):
     def __init__(self):
         self._last_signal: Dict[str, int] = {}
         self._call_count:  Dict[str, int] = {}
+        # Réutilisation causale (histogramme MACD / EMA custom) si params non
+        # par défaut : série complète calculée une fois par params puis indexée O(1).
+        self._bt_full_df = None
+        self._macd_cache: Dict[tuple, Any] = {}
+        self._ema_cache:  Dict[tuple, Any] = {}
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Mémorise le df complet pour réutiliser l'histogramme MACD (causal)."""
+        self._bt_full_df = df
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get("composite_score", {})
@@ -293,8 +303,8 @@ class Strategy(BaseStrategy):
 
         # ── EMA(20) et EMA(50) ────────────────────────────────────────────────
         _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
-        ema20    = pre_val(df, _ema_map.get(ema_fast, "")) or float(close.ewm_mean(span=ema_fast, adjust=False)[-1])
-        ema50    = pre_val(df, _ema_map.get(ema_slow, "")) or float(close.ewm_mean(span=ema_slow, adjust=False)[-1])
+        ema20    = pre_val(df, _ema_map.get(ema_fast, "")) or float(ema_window(df, ema_fast, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        ema50    = pre_val(df, _ema_map.get(ema_slow, "")) or float(ema_window(df, ema_slow, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
         ema_bull = c_now > ema20 > ema50
         ema_bear = c_now < ema20 < ema50
 
@@ -303,22 +313,29 @@ class Strategy(BaseStrategy):
         if rsi_val is None:
             rsi_val = 50.0
 
-        # ── MACD(12, 26, 9) ───────────────────────────────────────────────────
-        lh = pre_val(df, "_pre_macd_hist")
-        if lh is None:
-            _, _, hist = calc_macd(close, macd_fast, macd_slow_p, macd_signal)
-            lh = float(hist[-1])
-            ph = float(hist[-2]) if len(hist) > 1 else 0.0
-        else:
+        # ── MACD ──────────────────────────────────────────────────────────────
+        # Params par défaut (12,26,9) : colonne pré-calculée O(1). Sinon (params
+        # custom), série causale réutilisée du df complet (cache par params).
+        _macd_default = (macd_fast == 12 and macd_slow_p == 26 and macd_signal == 9)
+        if _macd_default and pre_val(df, "_pre_macd_hist") is not None:
             ph_s = df["_pre_macd_hist"]
+            lh   = float(ph_s[-1])
             ph   = float(ph_s[-2]) if len(ph_s) > 1 else 0.0
+        else:
+            lh, ph, _ = macd_hist_last3(
+                df, macd_fast, macd_slow_p, macd_signal,
+                full_df=self._bt_full_df, cache=self._macd_cache)
 
         macd_cross_up   = ph <= 0 < lh
         macd_cross_down = ph >= 0 > lh
 
         # ── Bollinger Bands(20, 2) ─────────────────────────────────────────────
-        bb_mid_s  = close.rolling_mean(bb_period)
-        bb_sigma  = close.rolling_std(bb_period)
+        # Seule la dernière barre est lue → on tronque à la queue (bb_period) :
+        # O(bb_period) au lieu de O(n) de rolling sur toute la série, résultat
+        # identique (fenêtre rolling causale).
+        _bb_tail  = close[-(bb_period + 2):]
+        bb_mid_s  = _bb_tail.rolling_mean(bb_period)
+        bb_sigma  = _bb_tail.rolling_std(bb_period)
         bb_upper  = float((bb_mid_s + bb_std_mult * bb_sigma)[-1])
         bb_lower  = float((bb_mid_s - bb_std_mult * bb_sigma)[-1])
         bb_mid_v  = float(bb_mid_s[-1]) if bb_mid_s[-1] is not None else 1.0

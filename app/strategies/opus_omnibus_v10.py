@@ -163,14 +163,40 @@ def _classify_regime(adx_val: float, bull: int, bear: int,
     return REGIME_CHOPPY
 
 
+def _safe_num(val, default: float = 0.0) -> float:
+    """Coercion float robuste : None / NaN / inf / NaT / non-numérique → ``default``.
+
+    Le pipeline de features V4 est pandas ; sur certains jeux de données réels
+    (trous, bougies dupliquées, jointures FeatureStore) une valeur peut ressortir
+    en ``NaT``/``NaN``. ``float(pd.NaT)`` lève « float() argument must be a string
+    or a real number, not 'NaTType' » — qui, non gardé, faisait échouer le score
+    de chaque barre (loggé « [Engine] Erreur dans stratégie … »). On neutralise
+    toutes ces valeurs ici.
+    """
+    if val is None:
+        return default
+    try:
+        if pd.isna(val):
+            return default
+    except (TypeError, ValueError):
+        pass
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return default
+    if not np.isfinite(f):
+        return default
+    return f
+
+
 def _regime_history_from_features(features_df: pd.DataFrame, n_last: int = 5,
                                   adx_threshold: float = 20.0) -> List[int]:
     sub = features_df.iloc[-n_last:]
     out: List[int] = []
     for _, row in sub.iterrows():
-        adx_v = float(row.get("ADX", 0.0) or 0.0)
-        bull  = int(row.get("MM_bullish_align", 0) or 0)
-        bear  = int(row.get("MM_bearish_align", 0) or 0)
+        adx_v = _safe_num(row.get("ADX", 0.0), 0.0)
+        bull  = int(_safe_num(row.get("MM_bullish_align", 0), 0.0))
+        bear  = int(_safe_num(row.get("MM_bearish_align", 0), 0.0))
         out.append(_classify_regime(adx_v, bull, bear, adx_threshold))
     return out
 
@@ -494,7 +520,7 @@ class Strategy(BaseStrategyML):
             return self._none("Construction des features V4 impossible")
 
         last_row = features.iloc[-1]
-        atr_v    = float(last_row.get("ATR_14", 0.0) or 0.0)
+        atr_v    = _safe_num(last_row.get("ATR_14", 0.0), 0.0)
         if not np.isfinite(atr_v) or atr_v <= 0:
             atr_v = float(pre_val(df, "_pre_atr14") or 0.0)
         c_now    = float(df["close"][-1] or 0.0)
@@ -525,8 +551,8 @@ class Strategy(BaseStrategyML):
         else:
             consec_red = False
 
-        rsi_v = float(last_row.get("RSI_14", 50.0) or 50.0)
-        adx_v = float(last_row.get("ADX", 0.0) or 0.0)
+        rsi_v = _safe_num(last_row.get("RSI_14", 50.0), 50.0)
+        adx_v = _safe_num(last_row.get("ADX", 0.0), 0.0)
         rsi_excess = rsi_v < be_rsi_thr
 
         sma20_v = float(pre_val(df, "_pre_sma20") or 0.0)

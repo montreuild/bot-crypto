@@ -7,7 +7,8 @@ from app.core.indicators import (
     rsi as calc_rsi,
     atr_val as calc_atr,
     atr_series as calc_atr_series,
-    macd as calc_macd,
+    macd_hist_last3,
+    ema_window,
     vol_ratio as calc_vol,
     adx_val as calc_adx,
     market_structure,
@@ -40,6 +41,14 @@ class Strategy(BaseStrategy):
     def __init__(self):
         self._last_signal: Dict[str, int] = {}
         self._call_count:  Dict[str, int] = {}
+        # Réutilisation causale (histogramme MACD / EMA custom) si params non défaut.
+        self._bt_full_df = None
+        self._macd_cache: Dict[tuple, Any] = {}
+        self._ema_cache:  Dict[tuple, Any] = {}
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Mémorise le df complet pour réutiliser l'histogramme MACD (causal)."""
+        self._bt_full_df = df
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get("fear_momentum", {})
@@ -78,9 +87,9 @@ class Strategy(BaseStrategy):
 
         # ── Calculs de base ──────────────────────────────────────────────────
         _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
-        lf   = pre_val(df, _ema_map.get(ema_fast, ""))  or float(close.ewm_mean(span=ema_fast,  adjust=False)[-1])
-        lm   = pre_val(df, _ema_map.get(ema_mid, ""))   or float(close.ewm_mean(span=ema_mid,   adjust=False)[-1])
-        lt   = pre_val(df, _ema_map.get(ema_trend, "")) or float(close.ewm_mean(span=ema_trend, adjust=False)[-1])
+        lf   = pre_val(df, _ema_map.get(ema_fast, ""))  or float(ema_window(df, ema_fast,  full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lm   = pre_val(df, _ema_map.get(ema_mid, ""))   or float(ema_window(df, ema_mid,   full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lt   = pre_val(df, _ema_map.get(ema_trend, "")) or float(ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
 
         c0   = float(close[-1])
         c1   = float(close[-2])
@@ -107,13 +116,11 @@ class Strategy(BaseStrategy):
         ms_window = int(p.get("market_struct_window", 5))
         struct    = market_structure(high, low, window=ms_window)
 
-        # MACD : pré-calculé si dispo
+        # MACD(12,26,9) : colonne pré-calculée O(1), sinon série causale réutilisée.
         mh0 = pre_val(df, "_pre_macd_hist")
         if mh0 is None:
-            _, _, macd_hist = calc_macd(close, 12, 26, 9)
-            mh0 = float(macd_hist[-1])
-            mh1 = float(macd_hist[-2])
-            mh2 = float(macd_hist[-3])
+            mh0, mh1, mh2 = macd_hist_last3(
+                df, 12, 26, 9, full_df=self._bt_full_df, cache=self._macd_cache)
         else:
             _mhist = df["_pre_macd_hist"]
             mh1 = float(_mhist[-2])
