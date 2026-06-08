@@ -30,6 +30,13 @@ nettement inférieur (ex. `+33` sur 3 trades) face au paramétrage courant
 - `_beats_baseline` rend l'**amélioration du PnL OOS obligatoire** (plus jamais
   outvotée par WR/Sharpe), en plus d'au moins un gain de qualité (WR ou Sharpe).
 
+### 🐛 Optimiseur : Alpha OOS manquant dans le panneau « Après optimisation »
+
+Le chemin d'évaluation **non parallèle** (`Optimizer._eval`) n'incluait pas
+`oos_alpha` dans son dict de résultat, contrairement au worker parallèle. En
+mode `n_jobs=1`, `best_oos_alpha` revenait donc `None` et l'UI masquait la ligne
+Alpha. Ajout de `oos_alpha` à `_eval` pour aligner les deux chemins.
+
 ## [12.7.0] - 2026-06-06
 
 ### ✨ Indicateurs du catalogue V4 ajoutés à `indicators.py` + runner d'optimisation

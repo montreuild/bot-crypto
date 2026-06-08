@@ -663,6 +663,7 @@ class StrategyOptimizer:
             "is_wr":       res_is.win_rate,
             "oos_wr":      res_oos.win_rate,
             "oos_dd":      res_oos.max_drawdown,
+            "oos_alpha":   getattr(res_oos, "alpha", None),
         }
 
     def _penalized_score(self, r: dict) -> float:
