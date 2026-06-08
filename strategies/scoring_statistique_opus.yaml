@@ -1,10 +1,14 @@
 params:
-  adx_threshold: 25
-  amp_thresh_td: 0.35
-  dir_dist_td: 0.12
-  amp_thresh_other: 0.45
-  dir_dist_other: 0.1
-  rr_min: 0.5
+  adx_threshold: 20
+  # Seuils §6.5 validés sur test OOS (rapport fév-mai 2026)
+  # Trend Down  : amp≥0.50, dir≥0.10 → WR 68-75%, Sharpe 0.55-0.66
+  # Range/Choppy: signal moins fiable, seuils stricts + demi-taille
+  amp_thresh_td: 0.50
+  dir_dist_td: 0.10
+  amp_thresh_other: 0.60
+  dir_dist_other: 0.15
+  rr_min: 0.6  # accepte R:R=0.67 (SL=1.5×ATR / TP=1.0×ATR), WR 68% → EV>0
+
 optimizer_results:
   15m:
     run_date: "2026-05-14"
@@ -17,52 +21,22 @@ optimizer_results:
       dir_dist_other: 0.15
       rr_min: 0.6
   30m:
-    run_date: '2026-06-08'
-    oos_score: -2.389001
-    params:
-      adx_threshold: 15
-      amp_thresh_td: 0.35
-      amp_thresh_other: 0.6
-      dir_dist_td: 0.05
-      dir_dist_other: 0.12
-      rr_min: 0.5
-  1h:
-    run_date: '2026-06-07'
-    oos_score: -0.559437
-    params:
-      adx_threshold: 25
-      amp_thresh_td: 0.35
-      amp_thresh_other: 0.45
-      dir_dist_td: 0.12
-      dir_dist_other: 0.1
-      rr_min: 0.5
-  4h:
-    run_date: '2026-06-07'
-    oos_score: -0.177686
-    params:
-      adx_threshold: 25
-      amp_thresh_td: 0.45
-      amp_thresh_other: 0.45
-      dir_dist_td: 0.08
-      dir_dist_other: 0.1
-      rr_min: 0.5
-  5m:
-    run_date: '2026-06-06'
-    oos_score: -20.699535
-    params:
-      adx_threshold: 15
-      amp_thresh_td: 0.5
-      amp_thresh_other: 0.6
-      dir_dist_td: 0.08
-      dir_dist_other: 0.15
-      rr_min: 0.5
-  1d:
-    run_date: '2026-06-07'
-    oos_score: -2.64614
+    run_date: "2026-05-14"
+    oos_score: 0.66  # Sharpe/trade OOS rapport (154 trades, WR 71.4%) — recommandé
     params:
       adx_threshold: 20
-      amp_thresh_td: 0.4
-      amp_thresh_other: 0.6
-      dir_dist_td: 0.05
-      dir_dist_other: 0.08
-      rr_min: 0.5
+      amp_thresh_td: 0.50
+      amp_thresh_other: 0.60
+      dir_dist_td: 0.10
+      dir_dist_other: 0.15
+      rr_min: 0.6
+  1h:
+    run_date: "2026-05-14"
+    oos_score: 0.65  # Sharpe/trade OOS rapport (127 trades, WR 71.7%, +0.403%/trade net)
+    params:
+      adx_threshold: 20
+      amp_thresh_td: 0.60    # 1h : seuil plus strict = meilleure qualité
+      amp_thresh_other: 0.65
+      dir_dist_td: 0.10
+      dir_dist_other: 0.15
+      rr_min: 0.6

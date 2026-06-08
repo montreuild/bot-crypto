@@ -14,133 +14,22 @@
 # sans elles, fallback OHLCV pur (ne casse rien). Validation live = ton déploiement.
 
 params:
-  range_lookback: 72
-  low_thr: 0.12
-  high_thr: 0.88
-  adx_range_max: 20
+  range_lookback: 48
+  low_thr: 0.15
+  high_thr: 0.85
+  adx_range_max: 25
   rsi_os: 35
-  rsi_ob: 70
-  sl_atr: 2.0
+  rsi_ob: 65
+  sl_atr: 1.5
   tp_atr: 2.0
   max_hold: 10
-  min_quality: 0.6
-  enable_short: false
+  min_quality: 0.60
+  enable_short: true
   use_derivatives: true
-  funding_z_extreme: 1.5
-  cooldown: 3
+  funding_z_extreme: 2.0
+  cooldown: 2
   score_threshold: 0.55
-optimizer_results:
-  1h:
-    run_date: '2026-06-07'
-    oos_score: 739.737686
-    params:
-      range_lookback: 72
-      low_thr: 0.12
-      high_thr: 0.88
-      adx_range_max: 20
-      rsi_os: 35
-      rsi_ob: 70
-      sl_atr: 2.0
-      tp_atr: 2.0
-      max_hold: 10
-      min_quality: 0.6
-      enable_short: false
-      use_derivatives: true
-      funding_z_extreme: 1.5
-      cooldown: 3
-      score_threshold: 0.6
-  4h:
-    run_date: '2026-06-07'
-    oos_score: 15.740747
-    params:
-      range_lookback: 72
-      low_thr: 0.12
-      high_thr: 0.8
-      adx_range_max: 25
-      rsi_os: 30
-      rsi_ob: 60
-      sl_atr: 1.2
-      tp_atr: 3.0
-      max_hold: 16
-      min_quality: 0.6
-      enable_short: false
-      use_derivatives: false
-      funding_z_extreme: 1.5
-      cooldown: 1
-      score_threshold: 0.55
-  5m:
-    run_date: '2026-06-07'
-    oos_score: 23.237273
-    params:
-      range_lookback: 72
-      low_thr: 0.2
-      high_thr: 0.8
-      adx_range_max: 25
-      rsi_os: 30
-      rsi_ob: 65
-      sl_atr: 1.2
-      tp_atr: 3.0
-      max_hold: 16
-      min_quality: 0.64
-      enable_short: false
-      use_derivatives: false
-      funding_z_extreme: 1.5
-      cooldown: 1
-      score_threshold: 0.6
-  30m:
-    run_date: '2026-06-07'
-    oos_score: 50.41203
-    params:
-      range_lookback: 36
-      low_thr: 0.12
-      high_thr: 0.85
-      adx_range_max: 20
-      rsi_os: 30
-      rsi_ob: 70
-      sl_atr: 2.0
-      tp_atr: 1.5
-      max_hold: 16
-      min_quality: 0.56
-      enable_short: false
-      use_derivatives: true
-      funding_z_extreme: 2.5
-      cooldown: 3
-      score_threshold: 0.55
-  15m:
-    run_date: '2026-06-07'
-    oos_score: -2.184704
-    params:
-      range_lookback: 72
-      low_thr: 0.12
-      high_thr: 0.8
-      adx_range_max: 25
-      rsi_os: 35
-      rsi_ob: 65
-      sl_atr: 2.0
-      tp_atr: 3.0
-      max_hold: 16
-      min_quality: 0.56
-      enable_short: false
-      use_derivatives: false
-      funding_z_extreme: 2.5
-      cooldown: 1
-      score_threshold: 0.55
-  1d:
-    run_date: '2026-06-07'
-    oos_score: 17.658049
-    params:
-      range_lookback: 72
-      low_thr: 0.12
-      high_thr: 0.85
-      adx_range_max: 25
-      rsi_os: 40
-      rsi_ob: 65
-      sl_atr: 1.2
-      tp_atr: 3.0
-      max_hold: 16
-      min_quality: 0.56
-      enable_short: false
-      use_derivatives: true
-      funding_z_extreme: 2.5
-      cooldown: 2
-      score_threshold: 0.55
+
+# Pas d'optimizer_results validés : la couche dérivés (l'edge réel) requiert un
+# historique funding/OI accumulé en live avant calibration IS/OOS.
+optimizer_results: {}

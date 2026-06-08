@@ -1,82 +1,74 @@
 params:
-  adx_threshold: 25
-  amp_thresh_tu: 0.5
-  dir_dist_tu: 0.25
-  amp_thresh_td: 0.45
-  dir_dist_td: 0.05
-  amp_thresh_other: 0.5
+  adx_threshold: 20
+  # Trend Up  : formule miroir, seuils conservateurs (AUC non validé OOS)
+  amp_thresh_tu: 0.50
+  dir_dist_tu: 0.20
+  # Trend Down : seuils OOS validés rapport §6.5
+  amp_thresh_td: 0.50
+  dir_dist_td: 0.10
+  # Range/Choppy
+  amp_thresh_other: 0.60
   dir_dist_other: 0.15
-  rr_min: 0.5
+  rr_min: 0.6
+  # Trailing stop — identique aux paramètres globaux par défaut.
+  # Surcharge possible par timeframe dans optimizer_results ci-dessous.
+  # (trail_wide=2.5 est le défaut engine — ne pas mettre < 1.5 sur 15m : trop de bruit)
+
 optimizer_results:
   15m:
-    run_date: '2026-06-08'
-    oos_score: -6.163568
+    run_date: "2026-05-14"
+    oos_score: 0.55
     params:
-      adx_threshold: 25
-      amp_thresh_tu: 0.5
-      amp_thresh_td: 0.45
-      amp_thresh_other: 0.5
-      dir_dist_tu: 0.2
-      dir_dist_td: 0.05
+      adx_threshold: 20
+      amp_thresh_tu: 0.50
+      amp_thresh_td: 0.50
+      amp_thresh_other: 0.60
+      dir_dist_tu: 0.20
+      dir_dist_td: 0.10
       dir_dist_other: 0.15
       rr_min: 0.6
+      # 15m : beaucoup de bruit → trailing plus large, breakeven tardif
+      trail_wide: 2.0
+      grace_bars: 3
+      breakeven_r: 1.0
+      lock_r: 2.0
+      tight_r: 3.5
+      trail_tight: 0.8
   30m:
-    run_date: '2026-06-07'
-    oos_score: -3.568878
+    run_date: "2026-05-14"
+    oos_score: 0.66
     params:
       adx_threshold: 20
-      amp_thresh_tu: 0.5
-      amp_thresh_td: 0.35
-      amp_thresh_other: 0.45
-      dir_dist_tu: 0.2
-      dir_dist_td: 0.12
-      dir_dist_other: 0.12
-      rr_min: 0.5
-  1h:
-    run_date: '2026-06-07'
-    oos_score: -1.261833
-    params:
-      adx_threshold: 25
-      amp_thresh_tu: 0.5
-      amp_thresh_td: 0.45
-      amp_thresh_other: 0.6
-      dir_dist_tu: 0.2
-      dir_dist_td: 0.12
-      dir_dist_other: 0.08
-      rr_min: 0.6
-  4h:
-    run_date: '2026-06-07'
-    oos_score: -0.15448
-    params:
-      adx_threshold: 25
-      amp_thresh_tu: 0.4
-      amp_thresh_td: 0.4
-      amp_thresh_other: 0.6
-      dir_dist_tu: 0.15
-      dir_dist_td: 0.05
-      dir_dist_other: 0.1
-      rr_min: 0.6
-  5m:
-    run_date: '2026-06-06'
-    oos_score: -28.591896
-    params:
-      adx_threshold: 20
-      amp_thresh_tu: 0.5
-      amp_thresh_td: 0.45
-      amp_thresh_other: 0.6
-      dir_dist_tu: 0.2
-      dir_dist_td: 0.08
+      amp_thresh_tu: 0.50
+      amp_thresh_td: 0.50
+      amp_thresh_other: 0.60
+      dir_dist_tu: 0.20
+      dir_dist_td: 0.10
       dir_dist_other: 0.15
-      rr_min: 0.5
-  1d:
-    run_date: '2026-06-08'
-    oos_score: -0.376118
+      rr_min: 0.6
+      # 30m : équilibre entre rapidité et bruit — cible mouvements >0.4%
+      trail_wide: 1.5
+      grace_bars: 2
+      breakeven_r: 0.8
+      lock_r: 1.8
+      tight_r: 3.0
+      trail_tight: 0.6
+  1h:
+    run_date: "2026-05-14"
+    oos_score: 0.65
     params:
-      adx_threshold: 25
-      amp_thresh_tu: 0.45
-      amp_thresh_td: 0.4
-      amp_thresh_other: 0.5
-      dir_dist_tu: 0.25
-      dir_dist_td: 0.05
-      dir_dist_other: 0.08
-      rr_min: 0.5
+      adx_threshold: 20
+      amp_thresh_tu: 0.55
+      amp_thresh_td: 0.60
+      amp_thresh_other: 0.65
+      dir_dist_tu: 0.20
+      dir_dist_td: 0.10
+      dir_dist_other: 0.15
+      rr_min: 0.6
+      # 1h : mouvements plus longs → trailing un peu plus serré qu'engine défaut
+      trail_wide: 1.8
+      grace_bars: 2
+      breakeven_r: 0.9
+      lock_r: 2.0
+      tight_r: 3.5
+      trail_tight: 0.7

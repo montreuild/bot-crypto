@@ -6,31 +6,42 @@ params:
   cooldown: 15
   ema_mid: 50
   ema_trend: 200
-  macd_fast: 10
+  macd_fast: 14
   macd_signal: 9
-  macd_slow: 26
-  st_mult: 2.0
-  st_period: 7
-  vol_min: 1.0
+  macd_slow: 24
+  st_mult: 3.0
+  st_period: 10
+  vol_min: 1.1
   rsi_min: 38
   rsi_max: 60
   rr_min: 1.3
+
 optimizer_results:
   1h:
-    run_date: '2026-06-06'
-    oos_score: 18.723597
-    params:
-      st_period: 7
-      st_mult: 2.0
-      macd_fast: 10
-      macd_slow: 26
-      vol_min: 1.0
-  1d:
-    run_date: '2026-06-08'
-    oos_score: -999.0
+    run_date: '2026-03-14'
+    oos_score: -0.010956
     params:
       st_period: 10
-      st_mult: 2.5
-      macd_fast: 14
-      macd_slow: 28
+      st_mult: 2.0
+      macd_fast: 10
+      macd_slow: 24
+      macd_signal: 9
       vol_min: 1.1
+      rsi_min: 42
+      rsi_max: 60
+      cooldown: 10
+      rr_min: 1.5
+  1d:
+    run_date: '2026-03-19'
+    oos_score: 2.062251
+    params:
+      st_period: 10
+      st_mult: 3.0
+      macd_fast: 14
+      macd_slow: 24
+      macd_signal: 9
+      vol_min: 1.1
+      rsi_min: 38
+      rsi_max: 60
+      cooldown: 15
+      rr_min: 1.3
