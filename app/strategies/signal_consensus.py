@@ -65,6 +65,36 @@ class Strategy(BaseStrategy):
         # La plus contraignante : EMA200 + marge pour les stratégies sous-jacentes
         return 250
 
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Propage le hook aux sous-stratégies.
+
+        Le backtest n'appelle ``prepare_for_backtest`` que sur la stratégie
+        enregistrée (ici le consensus). Sans cette propagation, les sous-stratégies
+        instrumentées (ex: supertrend_macd et sa série SuperTrend pré-calculée)
+        retomberaient sur un recalcul O(n) par barre × 8 stratégies → backtest très
+        lent. On transmet aussi symbol/tf pour le catalogue FeatureStore éventuel.
+        """
+        for name, inst in self._sub_strategies:
+            prep = getattr(inst, "prepare_for_backtest", None)
+            if not callable(prep):
+                continue
+            try:
+                inst._bt_symbol = getattr(self, "_bt_symbol", None)
+                inst._bt_tf = getattr(self, "_bt_tf", None)
+                prep(df)
+            except Exception as exc:
+                logger.debug(f"[signal_consensus] prepare_for_backtest({name}) KO: {exc}")
+
+    def reset_model(self) -> None:
+        """Propage le reset aux sous-stratégies (utilisé entre IS/OOS par l'optimiseur)."""
+        for name, inst in self._sub_strategies:
+            r = getattr(inst, "reset_model", None)
+            if callable(r):
+                try:
+                    r()
+                except Exception:
+                    pass
+
     def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = (params or {}).get("signal_consensus", {})

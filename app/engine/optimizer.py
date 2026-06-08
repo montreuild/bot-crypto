@@ -51,6 +51,50 @@ GLOBAL_TRADING_PARAMS = {
 }
 
 
+def _available_memory_bytes() -> Optional[int]:
+    """Mémoire disponible (octets). Linux via /proc/meminfo (MemAvailable),
+    psutil si présent, sinon None (cap mémoire désactivé)."""
+    try:
+        import psutil  # type: ignore
+        return int(psutil.virtual_memory().available)
+    except Exception:
+        pass
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024  # kB → octets
+    except Exception:
+        pass
+    return None
+
+
+def _mem_aware_max_workers(requested: int, per_worker_bytes: int) -> int:
+    """Plafonne le nombre de workers selon la mémoire disponible.
+
+    Chaque worker spawn duplique les DataFrames IS/OOS + reconstruit ~462 colonnes
+    de features + charge LightGBM. Sur les stratégies ML lourdes, lancer cpu-1
+    workers peut épuiser la RAM : tous les process meurent (OOM) et l'optimiseur
+    ne récolte AUCUN trial. On garde une marge de sécurité (60 % du dispo) et au
+    moins 1 worker.
+    """
+    if per_worker_bytes <= 0:
+        return max(1, requested)
+    avail = _available_memory_bytes()
+    if not avail:
+        return max(1, requested)
+    budget = int(avail * 0.60)
+    fit = max(1, budget // per_worker_bytes)
+    capped = max(1, min(requested, fit))
+    if capped < requested:
+        logger.warning(
+            "[Optimizer] workers plafonnés %d→%d (RAM dispo %.1f Go, "
+            "~%.0f Mo/worker) pour éviter l'OOM",
+            requested, capped, avail / 1e9, per_worker_bytes / 1e6,
+        )
+    return capped
+
+
 # ── Score composite ──
 def _composite_score(res: dict, min_trades: int = 2) -> float:
     n = res.get("total_trades", 0) if isinstance(res, dict) else res.total_trades
@@ -744,6 +788,10 @@ class StrategyOptimizer:
             import os as _os
             _cpu = _os.cpu_count() or 1
             _safe_jobs = max(1, min(n_jobs, max(1, _cpu - 1)))
+            # Cap mémoire : chaque worker duplique IS+OOS (IPC) et reconstruit les
+            # features lourdes + LightGBM. Estimation prudente ~5× le payload IPC.
+            _per_worker = int((len(df_is_ipc) + len(df_oos_ipc)) * 5) + 256 * 1024 * 1024
+            _safe_jobs = _mem_aware_max_workers(_safe_jobs, _per_worker)
             _worker_timeout = 300  # 5 min max par évaluation
             ctx = _mp.get_context("spawn")
             try:
@@ -884,7 +932,8 @@ class StrategyOptimizer:
     def _best_result(self) -> dict:
         if not self.results:
             return {
-                "error": "Aucun trial complété (workers tous KO — ex: OOM LightGBM)",
+                "error": ("Aucun trial complété (workers tous KO — ex: OOM LightGBM). "
+                          "Réduisez --jobs / n_jobs, ou diminuez le nombre de bougies."),
                 "failed": True,
                 "completed_trials": 0,
             }

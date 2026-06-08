@@ -256,23 +256,27 @@ class Backtester:
         import os
         from app.engine.engine import BaseStrategyML
         for strat in self.engine.strategies:
-            if not isinstance(strat, BaseStrategyML):
-                continue
-            strat.reset_model()
-            strat._cancel_event = self._cancel_event
-            if self.use_pretrained_ml and timeframe:
-                # Backtest standard : utilise le modèle pré-entraîné du timeframe.
-                # Pas de réentraînement inline → rapide et déterministe.
-                path = os.path.join(strat.model_dir, f"{strat.name}_{timeframe}.pkl")
-                if strat.load_model(path):
-                    strat.managed_externally = True
-                    logger.debug(f"[Backtest] ML '{strat.name}' : modèle {timeframe} chargé")
-                else:
-                    logger.info(
-                        f"[Backtest] ML '{strat.name}' : aucun modèle pour {timeframe} "
-                        "— entraînement inline activé (lancez d'abord un cycle live ou l'optimiseur)"
-                    )
+            # ── Spécifique ML : reset + chargement du modèle pré-entraîné ──────
+            if isinstance(strat, BaseStrategyML):
+                strat.reset_model()
+                strat._cancel_event = self._cancel_event
+                if self.use_pretrained_ml and timeframe:
+                    # Backtest standard : utilise le modèle pré-entraîné du timeframe.
+                    # Pas de réentraînement inline → rapide et déterministe.
+                    path = os.path.join(strat.model_dir, f"{strat.name}_{timeframe}.pkl")
+                    if strat.load_model(path):
+                        strat.managed_externally = True
+                        logger.debug(f"[Backtest] ML '{strat.name}' : modèle {timeframe} chargé")
+                    else:
+                        logger.info(
+                            f"[Backtest] ML '{strat.name}' : aucun modèle pour {timeframe} "
+                            "— entraînement inline activé (lancez d'abord un cycle live ou l'optimiseur)"
+                        )
             # ── Pré-calcul des features (optionnel, par stratégie) ───────────
+            # Hook ouvert à TOUTES les stratégies (ML ou rule-based) : les
+            # stratégies rule-based l'utilisent aussi pour réutiliser des séries
+            # causales lourdes (ex: supertrend_macd → SuperTrend pré-calculé,
+            # signal_consensus → propagation à ses sous-stratégies).
             # Les stratégies à features lourdes exposent un hook
             # ``prepare_for_backtest(df)`` qui construit toutes leurs features
             # sur la fenêtre complète, en une seule passe. Ensuite ``score()``
@@ -287,6 +291,8 @@ class Backtester:
             #   - scoring_statistique_opus_v4 (numpy, ~48 features, cache par adx_thr)
             #   - scoring_statistique_opus_v5 (numpy, ~48 features, cache par adx_thr)
             #   - ml_dynamic_threshold        (polars, ~30 features)
+            #   - supertrend_macd             (SuperTrend/MACD causaux, O(n²)→O(n))
+            #   - signal_consensus            (propage le hook à ses sous-stratégies)
             #
             # Ce hook est invoqué par TOUS les chemins qui passent par
             # ``Backtester.run`` — y compris donc les workers d'optimisation

@@ -4,7 +4,9 @@ import logging
 from typing import Dict, Any, List
 import polars as pl
 from app.engine.engine import BaseStrategy
-from app.core.indicators import macd as calc_macd, supertrend as calc_supertrend, htf_trend, pre_val
+from app.core.indicators import (
+    htf_trend, pre_val, supertrend_last, macd_hist_last3,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,17 @@ class Strategy(BaseStrategy):
     def __init__(self):
         self._last_signal: Dict[str, int] = {}
         self._call_count:  Dict[str, int] = {}
+        # Réutilisation des séries causales SuperTrend / MACD sur le df complet
+        # (cf. prepare_for_backtest). Caches détenus par l'instance, bornés à un
+        # seul jeu de paramètres → pas de contamination entre trials d'optimiseur.
+        self._bt_full_df = None
+        self._st_cache:   Dict[tuple, Any] = {}
+        self._macd_cache: Dict[tuple, Any] = {}
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Mémorise le df complet pour réutiliser les séries SuperTrend/MACD
+        (causales) au lieu de les recalculer à chaque barre — O(n²) → O(n)."""
+        self._bt_full_df = df
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get("supertrend_macd", {})
@@ -92,28 +105,28 @@ class Strategy(BaseStrategy):
         trend_bear = c_now <= lt * 1.030 and c_now <= lm * 1.015
 
         # ── SuperTrend ────────────────────────────────────────────────────────
-        direction, st_line = calc_supertrend(df, st_period, st_mult)
-        last_dir  = int(direction[-1])
-        prev_dir  = int(direction[-2])
+        # Série causale réutilisée du df complet (cache par params) → O(1)/barre
+        # en backtest au lieu d'un recalcul O(n) de la boucle Python à chaque barre.
+        last_dir, prev_dir, st_val = supertrend_last(
+            df, st_period, st_mult, full_df=self._bt_full_df, cache=self._st_cache)
         st_bull   = last_dir == 1
         st_bear   = last_dir == -1
         st_x_up   = prev_dir == -1 and last_dir == 1
         st_x_down = prev_dir == 1  and last_dir == -1
-        st_val    = float(st_line[-1])
 
         # ── MACD ──────────────────────────────────────────────────────────────
-        # Utilise les colonnes pré-calculées pour les params par défaut (12,26,9) ;
-        # recalcule si l'optimiseur utilise des params différents.
+        # Params par défaut (12,26,9) : colonne pré-calculée O(1). Sinon (optimiseur),
+        # série causale réutilisée du df complet (cache par params) au lieu d'un
+        # recalcul à chaque barre.
         _macd_default = (macd_fast == 12 and macd_slow == 26 and macd_sig_s == 9)
-        if _macd_default:
+        if _macd_default and "_pre_macd_hist" in df.columns:
             lh  = float(df["_pre_macd_hist"][-1])
             ph  = float(df["_pre_macd_hist"][-2])
             p2h = float(df["_pre_macd_hist"][-3])
         else:
-            _, _, hist = calc_macd(close, macd_fast, macd_slow, macd_sig_s)
-            lh  = float(hist[-1])
-            ph  = float(hist[-2])
-            p2h = float(hist[-3])
+            lh, ph, p2h = macd_hist_last3(
+                df, macd_fast, macd_slow, macd_sig_s,
+                full_df=self._bt_full_df, cache=self._macd_cache)
 
         macd_x_bull      = ph < 0 and lh > 0
         macd_x_bear      = ph > 0 and lh < 0

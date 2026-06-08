@@ -361,3 +361,79 @@ class TestV4CatalogueIndicators:
         # un run doit s'incrémenter de 1 au plus entre deux barres consécutives
         diffs = np.diff(td)
         assert diffs.max() <= 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Réutilisation causale SuperTrend / MACD (accélération backtest)
+# ══════════════════════════════════════════════════════════════════════════════
+
+from app.core.indicators import supertrend_last, macd_hist_last3
+
+
+class TestCausalReuse:
+    """La réutilisation de la série complète doit être STRICTEMENT identique au
+    recalcul par fenêtre (SuperTrend et MACD sont causaux), et ne pas contaminer
+    les résultats entre jeux de paramètres."""
+
+    def test_supertrend_last_matches_per_window(self):
+        full = _make_ohlcv(400, seed=7)
+        cache = {}
+        for i in range(250, full.height):
+            w = full[: i + 1]
+            ld, pd_, sv = supertrend_last(w, 7, 2.5, full_df=full, cache=cache)
+            d, line = supertrend(w, 7, 2.5)
+            assert (ld, pd_) == (int(d[-1]), int(d[-2]))
+            assert abs(sv - float(line[-1])) < 1e-9
+
+    def test_macd_hist_last3_matches_per_window(self):
+        full = _make_ohlcv(400, seed=8)
+        cache = {}
+        for i in range(250, full.height):
+            w = full[: i + 1]
+            lh, ph, p2h = macd_hist_last3(w, 10, 24, 9, full_df=full, cache=cache)
+            _, _, h = macd(w["close"], 10, 24, 9)
+            assert abs(lh - float(h[-1])) < 1e-9
+            assert abs(ph - float(h[-2])) < 1e-9
+            assert abs(p2h - float(h[-3])) < 1e-9
+
+    def test_supertrend_last_computes_full_series_once(self):
+        # Le cache ne calcule la série complète qu'une fois par jeu de params.
+        full = _make_ohlcv(300, seed=11)
+        cache = {}
+        import app.core.indicators as ind
+        calls = {"n": 0}
+        orig = ind.supertrend
+
+        def counting(*a, **k):
+            calls["n"] += 1
+            return orig(*a, **k)
+
+        ind.supertrend = counting
+        try:
+            for i in range(250, full.height):
+                supertrend_last(full[: i + 1], 10, 3.0, full_df=full, cache=cache)
+        finally:
+            ind.supertrend = orig
+        assert calls["n"] == 1  # une seule passe O(n), pas une par barre
+
+    def test_param_change_clears_cache(self):
+        # Changer les params recalcule (pas de contamination entre trials).
+        full = _make_ohlcv(300, seed=13)
+        cache = {}
+        w = full[:280]
+        r1 = supertrend_last(w, 7, 2.0, full_df=full, cache=cache)
+        r2 = supertrend_last(w, 14, 3.0, full_df=full, cache=cache)
+        # Les deux doivent égaler leur recalcul direct respectif.
+        d1, l1 = supertrend(w, 7, 2.0)
+        d2, l2 = supertrend(w, 14, 3.0)
+        assert r1[2] == pytest.approx(float(l1[-1]), abs=1e-9)
+        assert r2[2] == pytest.approx(float(l2[-1]), abs=1e-9)
+
+    def test_live_fallback_without_full_df(self):
+        # Sans full_df (live), calcule directement sur la fenêtre.
+        full = _make_ohlcv(300, seed=15)
+        w = full[:280]
+        ld, pd_, sv = supertrend_last(w, 10, 3.0)
+        d, line = supertrend(w, 10, 3.0)
+        assert (ld, pd_) == (int(d[-1]), int(d[-2]))
+        assert abs(sv - float(line[-1])) < 1e-9
