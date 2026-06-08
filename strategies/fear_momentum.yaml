@@ -3,79 +3,91 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 params:
-  atr_max_dip: 5.0
-  cooldown: 25
-  ema200_max_dist: 0.08
-  rr_min: 1.4
-  rsi_fear: 35
-  rsi_greed: 65
-  vol_cap_min: 1.5
-  ema_fast: 13
+  atr_max_dip: 3.0
+  cooldown: 18
+  ema200_max_dist: 0.12
+  rr_min: 1.6
+  rsi_fear: 42
+  rsi_greed: 62
+  vol_cap_min: 2.2
+  ema_fast: 21
   ema_mid: 50
-
 optimizer_results:
   1h:
-    run_date: '2026-03-19'
-    oos_score: -0.019478
+    run_date: '2026-06-07'
+    oos_score: -1.657377
     params:
-      ema_fast: 13
+      ema_fast: 34
       ema_mid: 50
-      rsi_fear: 35
-      rsi_greed: 65
+      rsi_fear: 42
+      rsi_greed: 62
       vol_cap_min: 1.5
-      atr_max_dip: 5.0
+      atr_max_dip: 3.0
       ema200_max_dist: 0.08
       cooldown: 25
       rr_min: 1.4
   4h:
-    run_date: '2026-03-19'
-    oos_score: 0.132191
-    params:
-      ema_fast: 21
-      ema_mid: 50
-      rsi_fear: 38
-      rsi_greed: 65
-      vol_cap_min: 1.8
-      atr_max_dip: 5.0
-      ema200_max_dist: 0.12
-      cooldown: 25
-      rr_min: 1.6
-  1d:
-    run_date: '2026-03-19'
-    oos_score: 1.742598
+    run_date: '2026-06-08'
+    oos_score: -0.031969
     params:
       ema_fast: 21
       ema_mid: 50
       rsi_fear: 42
-      rsi_greed: 58
-      vol_cap_min: 1.5
+      rsi_greed: 62
+      vol_cap_min: 2.2
       atr_max_dip: 3.0
-      ema200_max_dist: 0.08
+      ema200_max_dist: 0.12
       cooldown: 18
       rr_min: 1.6
-  15m:
-    run_date: '2026-03-19'
-    oos_score: -0.116898
+  1d:
+    run_date: '2026-06-07'
+    oos_score: 0.713533
     params:
       ema_fast: 13
       ema_mid: 50
       rsi_fear: 45
+      rsi_greed: 58
+      vol_cap_min: 2.5
+      atr_max_dip: 3.0
+      ema200_max_dist: 0.12
+      cooldown: 25
+      rr_min: 2.0
+  15m:
+    run_date: '2026-06-08'
+    oos_score: -7.484029
+    params:
+      ema_fast: 34
+      ema_mid: 50
+      rsi_fear: 35
+      rsi_greed: 65
+      vol_cap_min: 2.5
+      atr_max_dip: 3.0
+      ema200_max_dist: 0.08
+      cooldown: 25
+      rr_min: 1.4
+  5m:
+    run_date: '2026-06-07'
+    oos_score: -31.150025
+    params:
+      ema_fast: 21
+      ema_mid: 50
+      rsi_fear: 35
       rsi_greed: 65
       vol_cap_min: 2.5
       atr_max_dip: 3.0
       ema200_max_dist: 0.05
-      cooldown: 25
-      rr_min: 1.6
-  5m:
-    run_date: '2026-03-19'
-    oos_score: -0.569265
-    params:
-      ema_fast: 13
-      ema_mid: 50
-      rsi_fear: 42
-      rsi_greed: 62
-      vol_cap_min: 1.8
-      atr_max_dip: 3.0
-      ema200_max_dist: 0.12
-      cooldown: 18
+      cooldown: 22
       rr_min: 1.4
+  30m:
+    run_date: '2026-06-08'
+    oos_score: -4.730754
+    params:
+      ema_fast: 34
+      ema_mid: 50
+      rsi_fear: 35
+      rsi_greed: 65
+      vol_cap_min: 1.5
+      atr_max_dip: 3.0
+      ema200_max_dist: 0.08
+      cooldown: 22
+      rr_min: 1.6

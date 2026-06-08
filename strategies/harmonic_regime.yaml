@@ -65,17 +65,93 @@ optimizer_results:
     run_date: "2026-06-03"
     oos_score: 25.66          # walk-forward 5 folds : PnL OOS moyen (USDC), consistance 100%
     params:
-      enable_short: true
-      enable_meanrev: true
-      use_cycle: true
       adx_min: 22
-      min_quality: 0.60
-      max_hold: 24
-      sl_atr_long: 1.6
-      sl_atr_short: 1.2
-      donchian: 20
       slope_lookback: 20
+      donchian: 20
       rsi_pullback: 42
       rsi_oversold: 32
       vol_extreme_mult: 2.2
+      sl_atr_long: 1.6
+      sl_atr_short: 1.2
+      max_hold: 24
+      min_quality: 0.60
+      enable_short: true
+      enable_meanrev: true
+      use_cycle: true
       cooldown: 2
+  1h:
+    run_date: '2026-06-07'
+    oos_score: -1.213904
+    params:
+      adx_min: 22
+      slope_lookback: 20
+      donchian: 55
+      rsi_pullback: 38
+      rsi_oversold: 30
+      vol_extreme_mult: 1.8
+      sl_atr_long: 1.6
+      sl_atr_short: 1.0
+      max_hold: 24
+      min_quality: 0.64
+      enable_short: false
+      enable_meanrev: true
+      use_cycle: true
+      cooldown: 2
+      score_threshold: 0.6
+  5m:
+    run_date: '2026-06-07'
+    oos_score: -19.082024
+    params:
+      adx_min: 28
+      slope_lookback: 20
+      donchian: 30
+      rsi_pullback: 42
+      rsi_oversold: 28
+      vol_extreme_mult: 1.8
+      sl_atr_long: 2.0
+      sl_atr_short: 1.5
+      max_hold: 16
+      min_quality: 0.64
+      enable_short: true
+      enable_meanrev: true
+      use_cycle: false
+      cooldown: 2
+      score_threshold: 0.6
+  15m:
+    run_date: '2026-06-07'
+    oos_score: -4.952059
+    params:
+      adx_min: 28
+      slope_lookback: 40
+      donchian: 20
+      rsi_pullback: 42
+      rsi_oversold: 35
+      vol_extreme_mult: 1.8
+      sl_atr_long: 2.0
+      sl_atr_short: 1.5
+      max_hold: 16
+      min_quality: 0.6
+      enable_short: true
+      enable_meanrev: true
+      use_cycle: false
+      cooldown: 4
+      score_threshold: 0.6
+  30m:
+    run_date: '2026-06-08'
+    oos_score: -2.47162
+    params:
+      adx_min: 28
+      slope_lookback: 40
+      donchian: 55
+      rsi_pullback: 42
+      rsi_oversold: 28
+      vol_extreme_mult: 2.2
+      sl_atr_long: 2.0
+      sl_atr_short: 1.0
+      max_hold: 24
+      min_quality: 0.6
+      enable_short: false
+      enable_meanrev: false
+      use_cycle: false
+      cooldown: 4
+      score_threshold: 0.65

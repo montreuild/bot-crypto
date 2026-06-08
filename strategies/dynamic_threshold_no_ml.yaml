@@ -1,0 +1,70 @@
+enabled: true
+params:
+  lookahead: 3
+  vol_multiplier: 0.4
+  adx_min: 15.0
+  proba_long: 0.65
+  proba_short: 0.35
+  p_up_gain: 2.8
+  score_threshold: 0.55
+optimizer_results:
+  5m:
+    run_date: '2026-06-08'
+    oos_score: -21.403294
+    params:
+      lookahead: 2
+      vol_multiplier: 0.8
+      adx_min: 25.0
+      proba_long: 0.65
+      proba_short: 0.45
+      p_up_gain: 1.8
+  15m:
+    run_date: '2026-06-08'
+    oos_score: -5.124163
+    params:
+      lookahead: 3
+      vol_multiplier: 0.6
+      adx_min: 20.0
+      proba_long: 0.55
+      proba_short: 0.45
+      p_up_gain: 2.8
+  1h:
+    run_date: '2026-06-08'
+    oos_score: -1.212559
+    params:
+      lookahead: 3
+      vol_multiplier: 0.8
+      adx_min: 25.0
+      proba_long: 0.55
+      proba_short: 0.45
+      p_up_gain: 2.8
+  30m:
+    run_date: '2026-06-08'
+    oos_score: -2.235802
+    params:
+      lookahead: 3
+      vol_multiplier: 0.4
+      adx_min: 15.0
+      proba_long: 0.65
+      proba_short: 0.35
+      p_up_gain: 2.8
+  4h:
+    run_date: '2026-06-08'
+    oos_score: 1.077208
+    params:
+      lookahead: 5
+      vol_multiplier: 0.4
+      adx_min: 25.0
+      proba_long: 0.55
+      proba_short: 0.4
+      p_up_gain: 1.8
+  1d:
+    run_date: '2026-06-08'
+    oos_score: 1.098529
+    params:
+      lookahead: 2
+      vol_multiplier: 0.4
+      adx_min: 15.0
+      proba_long: 0.55
+      proba_short: 0.35
+      p_up_gain: 2.8

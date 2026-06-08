@@ -1,4 +1,4 @@
-"""Seuil dynamique — variante *sans ML* (``ml_dynamic_threshold_no_ml``).
+"""Seuil dynamique — variante *sans ML* (``dynamic_threshold_no_ml``).
 
 Jumeau déterministe et **autonome** de ``ml_dynamic_threshold``. La version ML
 entraîne un RandomForest / une régression logistique pour estimer ``proba_up`` =
@@ -83,7 +83,7 @@ def _proxy_p_up(*, pdi, ndi, rsi, macd_hist, atr, roc, c, sma50,
 class Strategy(BaseStrategy):
     """Seuil dynamique sans ML — proxy directionnel + filtre ADX + porte de volatilité."""
 
-    name = "ml_dynamic_threshold_no_ml"
+    name = "dynamic_threshold_no_ml"
     timeframes: List[str] = ["5m", "15m", "1h"]
 
     param_space: Dict[str, List] = {
@@ -190,5 +190,5 @@ class Strategy(BaseStrategy):
 
     @staticmethod
     def _none() -> Dict[str, Any]:
-        return {"score": 0.0, "side": "none", "name": "ml_dynamic_threshold_no_ml",
+        return {"score": 0.0, "side": "none", "name": "dynamic_threshold_no_ml",
                 "reason": "Pas de signal (proxy)", "conditions": [], "indicators": {}}
