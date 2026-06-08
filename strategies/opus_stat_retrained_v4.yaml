@@ -1,25 +1,17 @@
 params:
-  thresh_amp_td: 0.5
-  thresh_dir_td: 0.1
+  # ── Seuils de décision (mêmes défauts que la version pré-entraînée §6.4) ──
+  thresh_amp_td: 0.50
+  thresh_dir_td: 0.10
   thresh_amp_other: 0.55
   thresh_dir_other: 0.13
   adx_threshold: 20
+
+  # ── Filtre temporel V4 (session US, Lun-Ven) ──
   enable_hour_filter: true
-  active_hours_utc:
-  - 13
-  - 14
-  - 15
-  - 16
-  - 17
-  - 18
-  - 19
-  - 20
-  active_days:
-  - 0
-  - 1
-  - 2
-  - 3
-  - 4
+  active_hours_utc: [13, 14, 15, 16, 17, 18, 19, 20]
+  active_days: [0, 1, 2, 3, 4]
+
+  # ── Gestion SL/TP par régime (risk.py V4) ──
   sl_atr_mult_td: 1.8
   sl_atr_mult_other: 1.5
   tp_atr_mult_td: 1.2
@@ -28,79 +20,71 @@ params:
   disable_trailing: true
   use_exit_after_bars: false
   max_hold_bars: 4
+
+  # ── Sizing demi-Kelly (risk.py V4) ──
   use_kelly_sizing: true
   kelly_size_other: 0.5
   min_confidence: 0.2
-  amp_top_pct: 0.3
+
+  # ── Hyperparamètres d'entraînement (méthodologie 13_v4_models.py) ──
+  # Quantile cut-off pour labéliser un "événement" (top X% des |return_t+1|)
+  amp_top_pct: 0.30
+  # Walk-forward : retrain inline toutes les retrain_every barres si pas
+  # géré externellement par MLStrategyTrainer
   warmup_bars: 2000
   retrain_every: 800
+  # LightGBM
   n_estimators: 500
   num_leaves: 31
   learning_rate: 0.03
+  # Intervalle de réentraînement (heures) côté MLStrategyTrainer
   retrain_interval_h: 6
+
   score_threshold: 0.55
+
 optimizer_results:
   15m:
     run_date: null
     oos_score: null
     params:
-      thresh_amp_td: 0.5
-      thresh_dir_td: 0.1
+      thresh_amp_td: 0.50
+      thresh_dir_td: 0.10
       thresh_amp_other: 0.55
       thresh_dir_other: 0.13
       sl_atr_mult_td: 1.8
       sl_atr_mult_other: 1.5
       tp_atr_mult_td: 1.2
       tp_atr_mult_other: 1.0
-      amp_top_pct: 0.3
+      amp_top_pct: 0.30
       warmup_bars: 2000
       retrain_every: 800
   30m:
     run_date: null
     oos_score: null
     params:
-      thresh_amp_td: 0.5
-      thresh_dir_td: 0.1
+      thresh_amp_td: 0.50
+      thresh_dir_td: 0.10
       thresh_amp_other: 0.55
       thresh_dir_other: 0.13
       sl_atr_mult_td: 1.8
       sl_atr_mult_other: 1.5
       tp_atr_mult_td: 1.2
       tp_atr_mult_other: 1.0
-      amp_top_pct: 0.3
+      amp_top_pct: 0.30
       warmup_bars: 2000
       retrain_every: 800
   1h:
     run_date: null
     oos_score: null
     params:
-      thresh_amp_td: 0.5
-      thresh_dir_td: 0.1
+      thresh_amp_td: 0.50
+      thresh_dir_td: 0.10
       thresh_amp_other: 0.55
       thresh_dir_other: 0.13
       sl_atr_mult_td: 1.8
       sl_atr_mult_other: 1.5
       tp_atr_mult_td: 1.2
       tp_atr_mult_other: 1.0
-      amp_top_pct: 0.3
+      amp_top_pct: 0.30
       warmup_bars: 2000
       retrain_every: 800
-  5m:
-    run_date: '2026-06-08'
-    oos_score: -999.0
-    params:
-      thresh_amp_td: 0.4
-      thresh_dir_td: 0.12
-      thresh_amp_other: 0.7
-      thresh_dir_other: 0.18
-      sl_atr_mult_td: 2.25
-      sl_atr_mult_other: 1.25
-      tp_atr_mult_td: 1.2
-      tp_atr_mult_other: 0.8
-      max_hold_bars: 6
-      amp_top_pct: 0.3
-      warmup_bars: 1000
-      retrain_every: 500
-      n_estimators: 500
-      num_leaves: 31
-      learning_rate: 0.05

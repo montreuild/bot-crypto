@@ -6,11 +6,5 @@ params:
   min_consensus: 2
   score_threshold: 0.55
   consensus_bonus: 0.02
-optimizer_results:
-  1d:
-    run_date: '2026-06-08'
-    oos_score: 3.315275
-    params:
-      min_consensus: 2
-      score_threshold: 0.45
-      consensus_bonus: 0.02
+
+optimizer_results: {}
