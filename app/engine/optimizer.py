@@ -128,13 +128,27 @@ def _composite_score(res: dict, min_trades: int = 2) -> float:
     alpha_norm   = max(min(alpha / 50.0, 1.0), -1.0)
     alpha_bonus  = alpha_norm * 0.10
 
+    # Sharpe borné : un Sharpe brut non plafonné (souvent >50 sur de petites
+    # fenêtres OOS de quelques trades) écrasait tous les autres termes, ce qui
+    # poussait l'optimiseur à préférer des paramétrages à 2-3 trades au Sharpe
+    # absurde plutôt qu'un PnL nettement supérieur. On le normalise dans [-1, 1]
+    # (saturation dès |Sharpe| ≥ 10, déjà excellent) pour qu'il pèse comme les
+    # autres métriques au lieu de dominer le score.
+    sharpe_norm = max(min(sharpe / 10.0, 1.0), -1.0)
+
+    # Montant du PnL pris en compte (pas seulement son signe) : un +96 doit
+    # battre un +33 toutes choses égales par ailleurs. Normalisé dans [-1, 1]
+    # (saturation à |PnL| ≥ 100).
+    pnl_norm = max(min(pnl / 100.0, 1.0), -1.0)
+
     score = (
-        sharpe          * 0.28 +
-        wr              * 0.18 +
-        (pf / 6)        * 0.18 +
+        sharpe_norm     * 0.22 +
+        wr              * 0.15 +
+        (pf / 6)        * 0.15 +
         min(exp, 30) / 30 * 0.08 +
         dd_factor       * 0.10 +
-        trade_factor    * 0.08 +
+        trade_factor    * 0.10 +
+        pnl_norm        * 0.20 +
         alpha_bonus     * 1.00
     ) * pnl_sign
 
@@ -649,6 +663,7 @@ class StrategyOptimizer:
             "is_wr":       res_is.win_rate,
             "oos_wr":      res_oos.win_rate,
             "oos_dd":      res_oos.max_drawdown,
+            "oos_alpha":   getattr(res_oos, "alpha", None),
         }
 
     def _penalized_score(self, r: dict) -> float:
