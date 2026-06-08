@@ -4,6 +4,32 @@ Historique des versions du Crypto Bot.
 
 ---
 
+## [Non publié]
+
+### 🛠️ Optimiseur : score réaligné sur le PnL et garde-fou d'application durci
+
+**Problème.** L'optimiseur pouvait retenir/appliquer un paramétrage au PnL OOS
+nettement inférieur (ex. `+33` sur 3 trades) face au paramétrage courant
+(`+96` sur 15 trades). Deux causes :
+
+1. **Score composite dominé par un Sharpe brut non plafonné** (`_composite_score`,
+   `optimizer.py`). Le terme `sharpe * 0.28` n'étant pas borné, un Sharpe absurde
+   de petite fenêtre (>50, voire 120 sur 3 trades) écrasait tous les autres
+   termes (échelle 0–1) — et le **montant** du PnL n'entrait pas du tout dans le
+   score (seul son *signe* via `pnl_sign`). Le score gonflait jusqu'à ~34 alors
+   que l'UI attend une échelle 0–1 (seuils verts `>0.4`, viabilité `-0.05`).
+2. **Garde-fou d'application « 2 critères sur 3 »** (`_beats_baseline`,
+   `auto_optimizer.py`) : un meilleur Win Rate **et** Sharpe suffisait à
+   appliquer un PnL pourtant inférieur au baseline.
+
+**Correctif.**
+- Sharpe **normalisé** dans `[-1, 1]` (saturation à `|Sharpe| ≥ 10`) pour qu'il
+  pèse comme les autres métriques ; ajout d'un terme de **montant du PnL**
+  normalisé (poids 0.20) ; léger renfort du poids du nombre de trades
+  (`0.08 → 0.10`). Le score retrouve l'échelle 0–1 attendue par l'UI.
+- `_beats_baseline` rend l'**amélioration du PnL OOS obligatoire** (plus jamais
+  outvotée par WR/Sharpe), en plus d'au moins un gain de qualité (WR ou Sharpe).
+
 ## [12.7.0] - 2026-06-06
 
 ### ✨ Indicateurs du catalogue V4 ajoutés à `indicators.py` + runner d'optimisation

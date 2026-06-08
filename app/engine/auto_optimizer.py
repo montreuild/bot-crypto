@@ -341,19 +341,24 @@ class AutoOptimizer:
             best_oos_wr    = result.get("best_oos_wr", 0)
             best_oos_sharpe = result.get("best_oos_sharpe", 0)
 
-            # Un paramétrage n'est appliqué que s'il est meilleur que le baseline
-            # sur au moins 2 critères parmi : PnL, Win Rate, Sharpe
+            # Un paramétrage n'est appliqué que s'il est meilleur que le baseline.
+            # Le PnL OOS est un critère OBLIGATOIRE : un meilleur Win Rate ou
+            # Sharpe ne doit jamais suffire à appliquer un paramétrage qui gagne
+            # moins (ex. +33 à 3 trades qui « outvote » +96 à 15 trades sur WR +
+            # Sharpe). En plus du PnL, on exige une amélioration sur au moins un
+            # critère de qualité (Win Rate ou Sharpe).
             def _beats_baseline() -> bool:
                 if oos_trades < 3:
                     return False
                 if best_oos_pnl <= 0:
                     return False
-                improvements = sum([
-                    best_oos_pnl    > baseline_pnl,
+                if best_oos_pnl <= baseline_pnl:
+                    return False
+                quality_improvements = sum([
                     best_oos_wr     > baseline_wr,
                     best_oos_sharpe > baseline_sharpe,
                 ])
-                return improvements >= 2
+                return quality_improvements >= 1
 
             if auto_apply and result.get("best_params") and _beats_baseline():
                 best_params = result["best_params"]
