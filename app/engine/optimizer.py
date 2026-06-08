@@ -442,36 +442,72 @@ def save_optimizer_results(strategy_name: str, timeframe: str,
         return False
 
 
+def record_optimizer_audit(strategy_name: str, timeframe: str,
+                           params: dict, oos_score: float,
+                           config_path: str = "config.yaml") -> bool:
+    """
+    Trace un résultat d'optimisation **non appliqué** dans le changelog (audit),
+    SANS l'écrire dans ``optimizer_results`` — qui est le store actif lu par
+    ``resolve_strategy_params``. Sémantique « non appliqué = non utilisé » :
+    le backtest/comparatif/live continuent d'utiliser le paramétrage en place
+    tant que l'utilisateur (ou le garde-fou en auto-apply) ne l'a pas appliqué.
+    """
+    try:
+        _append_changelog(
+            _resolve_config_path(config_path),
+            strategy_name, timeframe, params, oos_score, {}
+        )
+        logger.info(
+            f"[Optimizer] Résultat NON appliqué tracé pour audit "
+            f"{strategy_name}[{timeframe}] score OOS={oos_score:.4f} "
+            "(optimizer_results inchangé)"
+        )
+        return True
+    except Exception as e:
+        logger.error(f"[Optimizer] record_optimizer_audit KO : {e}")
+        return False
+
+
 def apply_best_params(strategy_name: str, params: dict,
                       config_path: str = "config.yaml",
                       timeframe: str = None,
                       oos_score: float = 0.0) -> bool:
     """
-    Met à jour params et optimizer_results dans strategies/{strategy_name}.yaml.
-    Préserve tous les autres timeframes/paramètres. Thread-safe via _config_write_lock.
+    Applique le paramétrage optimisé **uniquement** dans ``optimizer_results``
+    de strategies/{strategy_name}.yaml, sans jamais toucher au bloc ``params``
+    (= configuration par défaut réglée à la main, qui doit rester intacte).
+    Le store ``optimizer_results[tf]`` a précédence dans ``resolve_strategy_params``,
+    donc écrire ici suffit à activer le paramétrage. Préserve les autres
+    timeframes/paramètres. Thread-safe via _config_write_lock.
+
+    Un timeframe est requis : sans lui, il n'existe aucun emplacement
+    ``optimizer_results[tf]`` où activer le paramétrage.
     """
+    if not timeframe:
+        logger.warning(
+            f"[Optimizer] apply_best_params({strategy_name}) sans timeframe : "
+            "rien à appliquer (optimizer_results est indexé par TF)."
+        )
+        return False
+
     strat_path = _strategy_file_path(strategy_name, config_path)
     old_params_snapshot = {}
     try:
         with _config_write_lock:
             data = _load_strategy_file(strat_path)
 
-            # Snapshot pour le changelog
-            old_params_snapshot = deepcopy(data.get("params", {}))
+            # Snapshot pour le changelog : ancien paramétrage actif de ce TF
+            # (l'entrée optimizer_results précédente, pas le bloc params: par défaut).
+            old_params_snapshot = deepcopy(
+                data.get("optimizer_results", {}).get(timeframe, {}).get("params", {})
+            )
 
-            # Mettre à jour les params par défaut (hors params globaux)
-            existing = data.setdefault("params", {})
-            for k, v in params.items():
-                if k not in GLOBAL_TRADING_PARAMS:
-                    existing[k] = v
-
-            # Mettre à jour optimizer_results si TF fourni
-            if timeframe:
-                data.setdefault("optimizer_results", {})[timeframe] = {
-                    "run_date":  datetime.utcnow().strftime("%Y-%m-%d"),
-                    "oos_score": round(float(oos_score), 6),
-                    "params":    deepcopy(params),
-                }
+            # Écriture exclusivement dans optimizer_results[tf] — params: intact.
+            data.setdefault("optimizer_results", {})[timeframe] = {
+                "run_date":  datetime.utcnow().strftime("%Y-%m-%d"),
+                "oos_score": round(float(oos_score), 6),
+                "params":    deepcopy(params),
+            }
 
             _write_strategy_file(strat_path, data)
 
@@ -484,8 +520,8 @@ def apply_best_params(strategy_name: str, params: dict,
             logger.debug(f"[Optimizer] changelog KO (non bloquant) : {_cle}")
 
         logger.info(
-            f"[Optimizer] Params appliqués → strategies/{strategy_name}.yaml"
-            + (f" [{timeframe}]" if timeframe else "")
+            f"[Optimizer] Params appliqués → strategies/{strategy_name}.yaml "
+            f"[optimizer_results.{timeframe}] (params: par défaut inchangés)"
         )
         return True
     except Exception as e:

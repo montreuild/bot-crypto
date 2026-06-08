@@ -12,7 +12,7 @@ from app.engine.engine   import Engine, BaseStrategyML
 from app.engine.backtest import Backtester
 from app.engine.optimizer import (
     StrategyOptimizer, PARAM_SPACES, STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT,
-    apply_best_params, save_optimizer_results, get_active_strategies_per_tf
+    apply_best_params, record_optimizer_audit, get_active_strategies_per_tf
 )
 
 logger = logging.getLogger(__name__)
@@ -133,13 +133,18 @@ def delete_job(job_id: str) -> bool:
 #  Baseline (snapshot avant optimisation)
 # ════════════════════════════════════════════════════════════════════════════
 def _run_baseline(strategy_name: str, cfg: dict,
-                  df_oos: pl.DataFrame, symbol: str) -> dict:
+                  df_oos: pl.DataFrame, symbol: str,
+                  timeframe: str = None) -> dict:
     try:
         mod = importlib.import_module(f"app.strategies.{strategy_name}")
         eng = Engine()
         eng.register(mod.Strategy())
         bt  = Backtester(eng, cfg)
-        res = bt.run(df_oos, symbol).to_dict()
+        # timeframe transmis pour que resolve_strategy_params superpose
+        # optimizer_results[tf] : le baseline reflète ainsi le paramétrage
+        # RÉELLEMENT actif (params: + optimizer_results), comme le live/comparatif,
+        # et non le seul bloc params: par défaut.
+        res = bt.run(df_oos, symbol, timeframe=timeframe).to_dict()
         return {
             "trades": res.get("total_trades", 0),
             "pnl":    round(res.get("total_pnl", 0), 4),
@@ -254,7 +259,7 @@ class AutoOptimizer:
                     progress=0, best_score=-999, trials=[],
                     result=None, error=None,
                     started_at=time.time(), finished_at=None,
-                    baseline=_run_baseline(name, self.cfg, df_oos, symbol),
+                    baseline=_run_baseline(name, self.cfg, df_oos, symbol, timeframe=tf),
                     is_recommended=is_recommended,
                     recommended_tfs=recommended_tfs,
                 )
@@ -385,15 +390,20 @@ class AutoOptimizer:
                     f"WR={best_oos_wr:.1f}% vs {baseline_wr:.1f}%, "
                     f"Sharpe={best_oos_sharpe:.2f} vs {baseline_sharpe:.2f})"
                 )
-                save_optimizer_results(
+                # Non appliqué = non utilisé : on trace pour l'audit sans écrire
+                # dans optimizer_results (sinon le paramétrage refusé deviendrait
+                # actif via la précédence de resolve_strategy_params).
+                record_optimizer_audit(
                     strategy_name, timeframe,
                     result["best_params"],
                     best_oos_score,
                     self.config_path
                 )
             elif result.get("best_params"):
-                # Sauvegarder le résultat même sans auto_apply
-                save_optimizer_results(
+                # Sans auto_apply : on ne fait que tracer le résultat pour l'audit.
+                # L'application reste explicite (bouton « Appliquer » de l'UI →
+                # apply_best_params), conformément à « non appliqué = non utilisé ».
+                record_optimizer_audit(
                     strategy_name, timeframe,
                     result["best_params"],
                     result.get("best_oos_score", 0.0),
@@ -508,7 +518,7 @@ class AutoOptimizer:
                     method=self.method, n_trials=self.n_trials,
                     progress=0, best_score=-999, trials=[], result=None, error=None,
                     started_at=time.time(), finished_at=None,
-                    baseline=_run_baseline(name, self.cfg, df_oos, symbol),
+                    baseline=_run_baseline(name, self.cfg, df_oos, symbol, timeframe=tf),
                     is_recommended=(tf in recommended_tfs),
                     recommended_tfs=recommended_tfs,
                 )
