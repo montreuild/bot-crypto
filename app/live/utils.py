@@ -4,7 +4,6 @@ Utilitaires partagés pour la couche live trading.
 Ce module regroupe les fonctions et constantes transversales utilisées par
 live_trader, signal_pipeline et ohlcv_cache, évitant les imports circulaires.
 """
-import math
 from typing import Dict
 
 from app.core.sanitize import safe_float as _safe_float   # noqa: F401 — re-export
@@ -14,6 +13,23 @@ from app.core.sanitize import sanitize as _sanitize        # noqa: F401 — re-e
 # ---------------------------------------------------------------------------
 # Fusion des paramètres de stratégie
 # ---------------------------------------------------------------------------
+
+def _is_nan_like(v) -> bool:
+    """True si ``v`` est un scalaire invalide : ``NaN`` *ou* ``NaT``.
+
+    ``math.isnan`` ne gère que les floats — il lève sur un ``NaT``
+    pandas/numpy, lequel se glissait jusque dans ``float(param)`` côté
+    stratégie et provoquait ``float() argument ... not 'NaTType'``. On
+    s'appuie sur l'auto-inégalité (``v != v``), vraie uniquement pour NaN et
+    NaT ; les listes/dicts/chaînes/nombres valides renvoient ``False``
+    (``[] != []`` vaut bien ``False``), et tout type exotique est ignoré sans
+    risque.
+    """
+    try:
+        return bool(v != v)
+    except Exception:
+        return False
+
 
 def _merge_params(base: dict, optimized: dict) -> dict:
     """
@@ -31,13 +47,8 @@ def _merge_params(base: dict, optimized: dict) -> dict:
             continue
         base_for_strat = dict(merged.get(strat_key, {}))
         for k, v in strat_params.items():
-            if v is None:
+            if v is None or _is_nan_like(v):
                 continue
-            try:
-                if isinstance(v, float) and math.isnan(v):
-                    continue
-            except (TypeError, ValueError):
-                pass
             base_for_strat[k] = v
         merged[strat_key] = base_for_strat
     return merged
@@ -81,9 +92,7 @@ def resolve_strategy_params(cfg: dict, timeframe: str = None) -> dict:
                 continue
             base = dict(strat_params.get(strat_name, {}))
             for k, v in opt_p.items():
-                if k in _GLOBAL_PARAM_KEYS or v is None:
-                    continue
-                if isinstance(v, float) and math.isnan(v):
+                if k in _GLOBAL_PARAM_KEYS or v is None or _is_nan_like(v):
                     continue
                 base[k] = v
             strat_params[strat_name] = base
