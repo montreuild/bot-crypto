@@ -255,7 +255,13 @@ class Backtester:
             timeframe: str = None) -> "BacktestResult":
         import os
         from app.engine.engine import BaseStrategyML
+        # Résolution des paramètres en amont du hook ``prepare_for_backtest`` :
+        # certaines stratégies pré-calculent leurs features/votes en fonction du
+        # paramétrage résolu (ex: signal_consensus → votes des sous-stratégies).
+        # On expose donc ``_bt_params`` avant l'appel à prepare.
+        strat_params = resolve_strategy_params(self.cfg, timeframe)
         for strat in self.engine.strategies:
+            strat._bt_params = strat_params
             # ── Spécifique ML : reset + chargement du modèle pré-entraîné ──────
             if isinstance(strat, BaseStrategyML):
                 strat.reset_model()
@@ -318,9 +324,9 @@ class Backtester:
         risk         = self.cfg["trading"]["risk_per_trade"]
         threshold    = self.cfg["trading"].get("score_threshold", 0.60)
 
-        # Résolution des paramètres : base (strategy_params) + overlay optimizer_results
-        # via la même logique que le live trader — garantit la cohérence backtest/live.
-        strat_params = resolve_strategy_params(self.cfg, timeframe)
+        # ``strat_params`` déjà résolu plus haut (avant prepare_for_backtest) :
+        # base (strategy_params) + overlay optimizer_results, même logique que le
+        # live trader — garantit la cohérence backtest/live.
         trades       = []
         equity_curve = [capital]
         timestamps   = [str(df["time"][0]) if "time" in df.columns else "0"]

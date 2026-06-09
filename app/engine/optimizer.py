@@ -231,6 +231,13 @@ def _worker_init(strategy_name: str, cfg_yaml: str,
         # Symbole/TF pour le catalogue FeatureStore (cache disque partagé).
         _tmp._bt_symbol = symbol
         _tmp._bt_tf = timeframe
+        # Paramètres résolus exposés au pré-calcul (ex: signal_consensus pré-calcule
+        # les votes des sous-stratégies selon ce paramétrage, invariant entre trials).
+        try:
+            from app.live.utils import resolve_strategy_params as _resolve_sp
+            _tmp._bt_params = _resolve_sp(_W["cfg"], timeframe)
+        except Exception:
+            _tmp._bt_params = None
         prep = getattr(_tmp, "prepare_for_backtest", None)
         if callable(prep):
             prep(_W["df_is"])

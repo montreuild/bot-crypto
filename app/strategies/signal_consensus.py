@@ -60,19 +60,37 @@ class Strategy(BaseStrategy):
     def __init__(self):
         # Chargement unique au démarrage pour éviter les imports répétés
         self._sub_strategies: List[Tuple[str, BaseStrategy]] = _load_sub_strategies()
+        # ── Pré-calcul backtest (cf. prepare_for_backtest / _precompute_votes) ──
+        # Cache des votes bruts des sous-stratégies indexé par timestamp de barre.
+        # Préfixe ``_bt_`` : capturé par le snapshot des workers d'optimisation
+        # (app.engine.optimizer._snap_state) → calculé une fois par worker puis
+        # réutilisé par tous les trials, qui ne font varier que les paramètres de
+        # consensus (sans impact sur les votes des sous-stratégies).
+        self._bt_full_df = None
+        self._bt_params: dict = None
+        self._bt_votes: Dict[str, List[Tuple[str, float, str, float]]] = {}
 
     def min_bars_required(self, params: dict = None) -> int:
         # La plus contraignante : EMA200 + marge pour les stratégies sous-jacentes
         return 250
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
-        """Propage le hook aux sous-stratégies.
+        """Propage le hook aux sous-stratégies puis pré-calcule les votes.
 
-        Le backtest n'appelle ``prepare_for_backtest`` que sur la stratégie
-        enregistrée (ici le consensus). Sans cette propagation, les sous-stratégies
-        instrumentées (ex: supertrend_macd et sa série SuperTrend pré-calculée)
-        retomberaient sur un recalcul O(n) par barre × 8 stratégies → backtest très
-        lent. On transmet aussi symbol/tf pour le catalogue FeatureStore éventuel.
+        1. Propagation : le backtest n'appelle ``prepare_for_backtest`` que sur la
+           stratégie enregistrée (ici le consensus). Sans propagation, les
+           sous-stratégies instrumentées (ex: supertrend_macd et sa série
+           SuperTrend pré-calculée) retomberaient sur un recalcul O(n) par barre
+           × 8 stratégies. On transmet aussi symbol/tf pour le FeatureStore.
+
+        2. Pré-calcul (``_precompute_votes``) : on évalue chaque sous-stratégie
+           **une seule fois par barre** sur la fenêtre complète et on mémorise le
+           vote brut (side, score). ``score()`` se réduit alors à un lookup O(1)
+           + l'agrégation pondérée. Dans l'optimiseur, ce cache (préfixe ``_bt_``)
+           est capturé par le snapshot du worker et partagé par tous les trials :
+           les votes des sous-stratégies ne dépendent pas des paramètres de
+           consensus optimisés (min_consensus / score_threshold / consensus_bonus),
+           donc on évite de tout recalculer à chaque trial (gain ×n_trials).
         """
         for name, inst in self._sub_strategies:
             prep = getattr(inst, "prepare_for_backtest", None)
@@ -85,8 +103,16 @@ class Strategy(BaseStrategy):
             except Exception as exc:
                 logger.debug(f"[signal_consensus] prepare_for_backtest({name}) KO: {exc}")
 
+        self._bt_full_df = df
+        try:
+            self._precompute_votes(df)
+        except Exception as exc:
+            logger.warning(f"[signal_consensus] pré-calcul des votes KO (fallback live): {exc}")
+            self._bt_votes = {}
+
     def reset_model(self) -> None:
         """Propage le reset aux sous-stratégies (utilisé entre IS/OOS par l'optimiseur)."""
+        self._bt_votes = {}
         for name, inst in self._sub_strategies:
             r = getattr(inst, "reset_model", None)
             if callable(r):
@@ -95,48 +121,86 @@ class Strategy(BaseStrategy):
                 except Exception:
                     pass
 
-    def score(self, df: pl.DataFrame, params: dict = None,
-              df_htf=None, symbol: str = "") -> Dict[str, Any]:
-        p = (params or {}).get("signal_consensus", {})
-        min_consensus   = int(p.get("min_consensus",   2))
-        score_threshold = float(p.get("score_threshold", 0.55))
-        consensus_bonus = float(p.get("consensus_bonus", 0.02))
+    # ── Pré-calcul / collecte des votes ──────────────────────────────────────
+    def _gather_votes(self, df: pl.DataFrame, params: dict,
+                      df_htf, symbol: str) -> List[Tuple[str, float, str, float]]:
+        """Évalue chaque sous-stratégie sur la dernière barre de ``df``.
 
-        if df is None or len(df) < self.min_bars_required(params):
-            return {
-                "score":  0.0,
-                "side":   "none",
-                "name":   self.name,
-                "reason": f"Données insuffisantes ({len(df) if df is not None else 0} barres < {self.min_bars_required(params)})",
-            }
-
-        # ── Collecte des votes ────────────────────────────────────────────────
-        votes_long:  List[Tuple[float, float]] = []   # (weight, score)
-        votes_short: List[Tuple[float, float]] = []
-        detail_parts: List[str] = []
-
+        Retourne une liste de tuples ``(strat_name, weight, side, score)`` —
+        données brutes indépendantes des seuils de consensus, donc réutilisables
+        quel que soit le paramétrage du consensus.
+        """
+        votes: List[Tuple[str, float, str, float]] = []
         for strat_name, inst in self._sub_strategies:
             weight = _STRATEGY_WEIGHTS.get(strat_name, 1.0)
             try:
                 result = inst.score(df, params, df_htf=df_htf, symbol=symbol)
                 side   = result.get("side", "none")
                 sc     = float(result.get("score") or 0.0)
-
-                if side == "long" and sc >= score_threshold:
-                    votes_long.append((weight, sc))
-                    detail_parts.append(f"▲{strat_name}({sc:.2f})")
-                elif side == "short" and sc >= score_threshold:
-                    votes_short.append((weight, sc))
-                    detail_parts.append(f"▼{strat_name}({sc:.2f})")
-                else:
-                    detail_parts.append(f"—{strat_name}")
             except Exception as exc:
                 logger.debug(f"[signal_consensus] Erreur {strat_name}: {exc}")
+                side, sc = "error", 0.0
+            votes.append((strat_name, weight, side, sc))
+        return votes
+
+    def _precompute_votes(self, df: pl.DataFrame) -> None:
+        """Pré-calcule les votes bruts de chaque barre une seule fois.
+
+        Évaluation par barre déterministe (état des sous-stratégies réinitialisé
+        en amont) → le cache est indépendant du chemin de positions du backtest,
+        ce qui le rend partageable entre tous les trials de l'optimiseur.
+        """
+        if df is None or "time" not in df.columns:
+            self._bt_votes = {}
+            return
+        # Colonnes _pre_* (idempotent + mémoïsé) : les sous-stratégies lisent ces
+        # indicateurs causaux en O(1) au lieu de les recalculer barre par barre.
+        # ``prepare_for_backtest`` est invoqué avant le precompute de Backtester.run,
+        # donc on l'applique ici pour ne pas évaluer sur un df brut (plus lent).
+        try:
+            from app.core.indicators import precompute_df as _precompute_df
+            df = _precompute_df(df)
+        except Exception as exc:
+            logger.debug(f"[signal_consensus] precompute_df KO: {exc}")
+        n = len(df)
+        start = self.min_bars_required(self._bt_params) - 1
+        if n <= start:
+            self._bt_votes = {}
+            return
+        # État propre pour une évaluation par barre déterministe.
+        self.reset_model()
+        symbol = getattr(self, "_bt_symbol", None) or ""
+        times  = df["time"]
+        votes_map: Dict[str, List[Tuple[str, float, str, float]]] = {}
+        for i in range(start, n):
+            window = df[: i + 1]
+            votes_map[str(times[i])] = self._gather_votes(
+                window, self._bt_params, None, symbol)
+        self._bt_votes = votes_map
+
+    def _build_consensus(self, votes: List[Tuple[str, float, str, float]],
+                         min_consensus: int, score_threshold: float,
+                         consensus_bonus: float) -> Dict[str, Any]:
+        """Agrège les votes bruts en un signal de consensus pondéré."""
+        votes_long:  List[Tuple[float, float]] = []   # (weight, score)
+        votes_short: List[Tuple[float, float]] = []
+        detail_parts: List[str] = []
+
+        for strat_name, weight, side, sc in votes:
+            if side == "long" and sc >= score_threshold:
+                votes_long.append((weight, sc))
+                detail_parts.append(f"▲{strat_name}({sc:.2f})")
+            elif side == "short" and sc >= score_threshold:
+                votes_short.append((weight, sc))
+                detail_parts.append(f"▼{strat_name}({sc:.2f})")
+            elif side == "error":
                 detail_parts.append(f"?{strat_name}")
+            else:
+                detail_parts.append(f"—{strat_name}")
 
         n_long  = len(votes_long)
         n_short = len(votes_short)
-        n_total = len(self._sub_strategies)
+        n_total = len(votes)
 
         # ── Seuil minimum de consensus ────────────────────────────────────────
         if n_long < min_consensus and n_short < min_consensus:
@@ -177,3 +241,31 @@ class Strategy(BaseStrategy):
             + " · ".join(detail_parts)
         )
         return {"score": 0.0, "side": "none", "name": self.name, "reason": reason}
+
+    def score(self, df: pl.DataFrame, params: dict = None,
+              df_htf=None, symbol: str = "") -> Dict[str, Any]:
+        p = (params or {}).get("signal_consensus", {})
+        min_consensus   = int(p.get("min_consensus",   2))
+        score_threshold = float(p.get("score_threshold", 0.55))
+        consensus_bonus = float(p.get("consensus_bonus", 0.02))
+
+        if df is None or len(df) < self.min_bars_required(params):
+            return {
+                "score":  0.0,
+                "side":   "none",
+                "name":   self.name,
+                "reason": f"Données insuffisantes ({len(df) if df is not None else 0} barres < {self.min_bars_required(params)})",
+            }
+
+        # ── Votes bruts : cache de pré-calcul si dispo, sinon collecte live ────
+        # En backtest/optimiseur, ``prepare_for_backtest`` a rempli ``_bt_votes``
+        # → lookup O(1). En live (pas de prepare), on évalue les sous-stratégies
+        # à la volée avec le df_htf réel.
+        votes = None
+        if self._bt_votes and "time" in df.columns:
+            votes = self._bt_votes.get(str(df["time"][-1]))
+        if votes is None:
+            votes = self._gather_votes(df, params, df_htf, symbol)
+
+        return self._build_consensus(
+            votes, min_consensus, score_threshold, consensus_bonus)
