@@ -80,7 +80,7 @@ async function loadOptResults() {
       activeTf[tf] = slots;
     }
 
-    renderOptResults({ by_strategy_tf: byStratTf, active_per_tf: activeTf });
+    renderOptResults({ by_strategy_tf: byStratTf, active_per_tf: activeTf, backtests: audit.backtests || {} });
   } catch(e) {
     document.getElementById('opt-results-container').innerHTML =
       `<div style="color:var(--red);font-size:.75rem">Erreur : ${e.message}</div>`;
@@ -90,18 +90,43 @@ async function loadOptResults() {
 function renderOptResults(d) {
   const byStratTf = d.by_strategy_tf || {};
   const activeTf  = d.active_per_tf  || {};
+  const backtests = d.backtests      || {};
   const container = document.getElementById('opt-results-container');
 
-  if (!Object.keys(byStratTf).length) {
-    container.innerHTML = '<div style="color:var(--dim);font-size:.78rem;padding:8px">Aucun résultat d\'optimisation. Lancez une optimisation avec auto-apply pour voir les résultats ici.</div>';
+  // Rendu compact du dernier backtest d'un slot (strategy::tf), ou '' si aucun.
+  function btLine(strat, tf) {
+    const bt = backtests[`${strat}::${tf}`];
+    if (!bt) return '';
+    const pnl = +bt.total_pnl || 0;
+    const wr  = bt.win_rate != null ? +bt.win_rate : null;
+    const tr  = bt.total_trades != null ? +bt.total_trades : null;
+    const clr = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--dim)';
+    const parts = [`<span style="color:${clr}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(1)}</span>`];
+    if (wr != null) parts.push(`<span style="color:var(--muted)">${wr.toFixed(0)}%</span>`);
+    if (tr != null) parts.push(`<span style="color:var(--dim)">${tr}t</span>`);
+    return `<div title="Dernier backtest ${escHtml(bt.run_date||'')} · ${escHtml(bt.symbol||'')}"
+      style="font-size:.58rem;margin-top:2px;font-family:var(--mono);white-space:nowrap">BT ${parts.join(' ')}</div>`;
+  }
+
+  if (!Object.keys(byStratTf).length && !Object.keys(backtests).length) {
+    container.innerHTML = '<div style="color:var(--dim);font-size:.78rem;padding:8px">Aucun résultat d\'optimisation ni backtest. Lancez une optimisation (auto-apply) ou un backtest pour voir les résultats ici.</div>';
     return;
   }
 
-  const allTfs = [...new Set(Object.values(byStratTf).flatMap(m => Object.keys(m)))].sort((a,b) => {
+  // Slots issus des backtests (strategy::tf) → inclus même sans résultat OOS,
+  // pour que « le dernier backtest de chaque slot » reste visible.
+  const btSlots = Object.keys(backtests).map(k => k.split('::'));
+  const allTfs = [...new Set([
+    ...Object.values(byStratTf).flatMap(m => Object.keys(m)),
+    ...btSlots.map(([, tf]) => tf).filter(Boolean),
+  ])].sort((a,b) => {
     const order = ['1m','3m','5m','15m','30m','1h','2h','4h','1d'];
     return order.indexOf(a) - order.indexOf(b);
   });
-  const allStrats = Object.keys(byStratTf).sort();
+  const allStrats = [...new Set([
+    ...Object.keys(byStratTf),
+    ...btSlots.map(([s]) => s).filter(Boolean),
+  ])].sort();
 
   if (!allTfs.length) {
     container.innerHTML = '<div style="color:var(--dim);font-size:.78rem;padding:8px">Aucun résultat.</div>';
@@ -112,6 +137,7 @@ function renderOptResults(d) {
     <span>Score OOS : <span style="color:var(--green)">≥ 0.0</span> = bon &nbsp;
     <span style="color:var(--amber)">-0.05 à 0</span> = limite &nbsp;
     <span style="color:var(--red)">&lt; -0.05</span> = exclu</span>
+    <span><strong style="font-family:var(--mono)">BT</strong> = dernier backtest (PnL · win-rate · trades)</span>
   </div>`;
 
   // TOP per TF cards
@@ -160,7 +186,10 @@ function renderOptResults(d) {
       ${allStrats.map(strat => {
         const cells = allTfs.map(tf => {
           const entry = byStratTf[strat]?.[tf];
-          if (!entry) return `<td style="padding:6px 10px;text-align:center;color:var(--border)">—</td>`;
+          if (!entry) {
+            const bt = btLine(strat, tf);
+            return `<td style="padding:6px 10px;text-align:center;color:var(--border)">${bt || '—'}</td>`;
+          }
           const score = entry.oos_score || 0;
           const scoreClr = score >= 0.0 ? 'var(--green)' : score >= -0.05 ? 'var(--amber)' : 'var(--red)';
           const isActive = (activeTf[tf] || []).includes(strat);
@@ -170,6 +199,7 @@ function renderOptResults(d) {
             <div style="font-size:.6rem;color:var(--dim);margin-top:1px">${entry.run_date||''}</div>
             ${isActive ? '<div style="font-size:.58rem;color:var(--green);font-weight:700">● ACTIF</div>' : ''}
             ${isExcluded ? '<div style="font-size:.58rem;color:var(--red)">✗ EXCLU</div>' : ''}
+            ${btLine(strat, tf)}
           </td>`;
         }).join('');
         return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">

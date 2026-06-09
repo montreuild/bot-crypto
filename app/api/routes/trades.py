@@ -378,9 +378,23 @@ def circuit_breakers():
 
 @router.get("/api/audit/results", dependencies=[Depends(verify_api_key)])
 def audit_results():
-    """Retourne les résultats de l'optimiseur depuis config.yaml."""
+    """Retourne les derniers résultats OOS de l'optimiseur.
+
+    Les résultats sont persistés par l'optimiseur dans ``strategies/{nom}.yaml``
+    (et fusionnés dans ``optimizer_results`` au chargement). Comme une optimisation
+    lancée pendant la session écrit sur disque sans rafraîchir le ``state.cfg`` en
+    mémoire, on relit la config depuis le disque ici afin que la page Audit OOS
+    affiche toujours les **derniers** OOS appliqués.
+    """
     if not state.cfg:
         raise HTTPException(503, "Config non initialisée")
+    try:
+        from app.core.config import load_config as _reload_cfg
+        _fresh = _reload_cfg("config.yaml")
+        if _fresh.get("optimizer_results"):
+            state.cfg["optimizer_results"] = _fresh["optimizer_results"]
+    except Exception as e:
+        logger.warning(f"[audit/results] relecture config disque KO : {e}")
     opt_results = state.cfg.get("optimizer_results", {})
     rows = []
     for strategy, tfs in opt_results.items():
@@ -404,7 +418,16 @@ def audit_results():
                 "params":    data.get("params", {}),
             })
     rows.sort(key=lambda r: r["oos_score"], reverse=True)
-    return {"results": rows, "total": len(rows)}
+
+    # Dernier backtest réel par slot (strategy::tf) — persisté par /api/backtest.
+    try:
+        from app.core.backtest_history import load_backtest_history
+        backtests = load_backtest_history()
+    except Exception as e:
+        logger.warning(f"[audit/results] historique backtests KO : {e}")
+        backtests = {}
+
+    return {"results": rows, "total": len(rows), "backtests": backtests}
 
 
 @router.get("/api/strategy/{slot_key:path}/performance", dependencies=[Depends(verify_api_key)])

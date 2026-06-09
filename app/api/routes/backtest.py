@@ -155,6 +155,13 @@ def run_backtest(
                         n_runs=state.cfg.get("backtest", {}).get("monte_carlo_runs", 200)
                     )
                     entry["monte_carlo"] = mc.run(all_trades, state.cfg["trading"]["capital"])
+                # Persiste le résumé du dernier backtest pour ce slot (strategy::tf)
+                # → consommé par la page Audit OOS. Non bloquant.
+                try:
+                    from app.core.backtest_history import record_backtest
+                    record_backtest(name, tf, symbol, entry, n_bars=len(df))
+                except Exception as _rec_e:
+                    logger.debug(f"[backtest] record_backtest({name}) KO : {_rec_e}")
                 return name, entry
             except InterruptedError:
                 return name, {"error": "Backtest annulé", "trades": []}
