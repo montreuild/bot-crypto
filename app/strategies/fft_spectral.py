@@ -23,52 +23,51 @@ logger = logging.getLogger(__name__)
 #  Analyse spectrale FFT
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _fft_direction(
-    prices: np.ndarray,
-    min_period: int = 5,
-    max_period: int = 150,
-    top_n: int = 10,
-) -> dict:
-    """
-    Analyse spectrale FFT sur les prix de clôture.
+def _fft_spectrum(prices: np.ndarray):
+    """Étapes lourdes **indépendantes des paramètres** : détrending + Hanning + FFT.
 
-    Étapes :
-      1. Détrending logarithmique (log-prix moins tendance linéaire)
-      2. Fenêtre de Hanning pour réduire le spectral leakage
-      3. FFT réelle (numpy.fft.rfft) — algorithme de Cooley-Tukey
-      4. Filtrage des cycles entre min_period et max_period barres
-      5. Extraction des top_n cycles par amplitude (énergie)
-      6. Phase à la dernière barre → direction (+1/-1) et jours avant retournement
+    Le résultat ne dépend que de la fenêtre de prix (et donc de ``fft_max_bars``,
+    constant — hors ``param_space``). Il est donc identique d'un trial d'optimiseur
+    à l'autre → mémoïsable et réutilisable (cf. ``prepare_for_backtest``).
 
-    Retourne un dict avec :
-      direction     : +1 haussier, −1 baissier, 0 neutre
-      confidence    : |avg_signal| ∈ [0.0, 1.0]
-      cycles        : liste des cycles dominants (period, weight_pct, direction,
-                      days_to_reversal)
-      avg_signal    : signal pondéré brut ∈ [−1.0, +1.0]
-      next_reversal : barres estimées avant le prochain retournement
+    Retourne ``(n, freqs, amps, phases)`` ou ``None`` si la fenêtre est trop courte.
     """
     n = len(prices)
-    if n < max(min_period * 3, 30):
-        return {
-            "direction": 0, "confidence": 0.0,
-            "cycles": [], "avg_signal": 0.0, "next_reversal": 0.0,
-        }
-
+    if n < 30:
+        return None
     # Étape 1 : log + détrending linéaire
     log_p     = np.log(np.maximum(prices, 1e-10))
     t         = np.arange(n)
     coeffs    = np.polyfit(t, log_p, 1)
     detrended = log_p - np.polyval(coeffs, t)
-
     # Étape 2 : fenêtre de Hanning
-    windowed = detrended * np.hanning(n)
-
+    windowed  = detrended * np.hanning(n)
     # Étape 3 : FFT réelle
-    fft_vals = np.fft.rfft(windowed)
-    freqs    = np.fft.rfftfreq(n)
-    amps     = np.abs(fft_vals)
-    phases   = np.angle(fft_vals)
+    fft_vals  = np.fft.rfft(windowed)
+    freqs     = np.fft.rfftfreq(n)
+    return (n, freqs, np.abs(fft_vals), np.angle(fft_vals))
+
+
+def _fft_select(
+    spectrum,
+    min_period: int = 5,
+    max_period: int = 150,
+    top_n: int = 10,
+) -> dict:
+    """Étapes légères **dépendantes des paramètres** : filtrage des cycles + direction.
+
+    Sépare le post-traitement (filtre [min_period, max_period], top_n, phase) de la
+    FFT brute pré-calculée par :func:`_fft_spectrum`.
+    """
+    _neutral = {
+        "direction": 0, "confidence": 0.0,
+        "cycles": [], "avg_signal": 0.0, "next_reversal": 0.0,
+    }
+    if spectrum is None:
+        return _neutral
+    n, freqs, amps, phases = spectrum
+    if n < max(min_period * 3, 30):
+        return _neutral
 
     # Étape 4 : filtrage sur [min_period, max_period] barres
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -77,17 +76,11 @@ def _fft_direction(
     valid_idx = np.where(valid)[0]
 
     if len(valid_idx) == 0:
-        return {
-            "direction": 0, "confidence": 0.0,
-            "cycles": [], "avg_signal": 0.0, "next_reversal": 0.0,
-        }
+        return _neutral
 
     total_energy = float(np.sum(amps[valid_idx] ** 2))
     if total_energy < 1e-15:
-        return {
-            "direction": 0, "confidence": 0.0,
-            "cycles": [], "avg_signal": 0.0, "next_reversal": 0.0,
-        }
+        return _neutral
 
     # Étape 5 : top N cycles par amplitude décroissante
     sorted_idx   = valid_idx[np.argsort(amps[valid_idx])[::-1]][:top_n]
@@ -140,6 +133,20 @@ def _fft_direction(
     }
 
 
+def _fft_direction(
+    prices: np.ndarray,
+    min_period: int = 5,
+    max_period: int = 150,
+    top_n: int = 10,
+) -> dict:
+    """Analyse spectrale FFT complète (spectre + sélection).
+
+    Conservée pour le chemin live / fallback ; en backtest, le spectre est
+    pré-calculé une fois par barre (cf. ``Strategy.prepare_for_backtest``).
+    """
+    return _fft_select(_fft_spectrum(prices), min_period, max_period, top_n)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Stratégie
 # ══════════════════════════════════════════════════════════════════════════════
@@ -164,10 +171,59 @@ class Strategy(BaseStrategy):
     def __init__(self):
         self._last_signal: Dict[str, int] = {}
         self._call_count:  Dict[str, int] = {}
+        # Pré-calcul backtest : spectre FFT (étapes lourdes, params-invariantes)
+        # mémoïsé par timestamp de barre. Préfixe ``_bt_`` → capturé par le snapshot
+        # des workers d'optimisation et réutilisé entre tous les trials (seul le
+        # post-traitement léger — filtre de périodes / top_n — varie par trial).
+        self._bt_full_df = None
+        self._bt_params: dict = None
+        self._bt_spectra: Dict[str, Any] = {}
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get("fft_spectral", {})
         return max(int(p.get("min_bars", 180)), 60)
+
+    def reset_model(self) -> None:
+        """Réinitialise l'état (cooldowns + cache spectre) — appelé entre IS/OOS."""
+        self._last_signal = {}
+        self._call_count = {}
+        self._bt_spectra = {}
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Pré-calcule le spectre FFT de chaque barre une seule fois.
+
+        La FFT (détrending + Hanning + rfft) ne dépend que de la fenêtre de prix
+        (``fft_max_bars`` est constant, hors ``param_space``), donc le spectre est
+        identique d'un trial d'optimiseur à l'autre. On le mémorise ici (cache
+        ``_bt_spectra`` capturé par le snapshot worker) ; ``score()`` se contente
+        d'un lookup O(1) + le post-traitement léger. **Exact** : aucune logique de
+        cooldown/seuil n'est déplacée, seule la FFT brute est mise en cache.
+        """
+        try:
+            self._bt_full_df = df
+            self._precompute_spectra(df)
+        except Exception as exc:
+            logger.warning(f"[fft_spectral] pré-calcul du spectre KO (fallback live): {exc}")
+            self._bt_spectra = {}
+
+    def _precompute_spectra(self, df: pl.DataFrame) -> None:
+        if df is None or "time" not in df.columns or "close" not in df.columns:
+            self._bt_spectra = {}
+            return
+        p = (self._bt_params or {}).get("fft_spectral", {})
+        fft_max_bars = int(p.get("fft_max_bars", 500))
+        min_bars     = self.min_bars_required(self._bt_params)
+        n            = len(df)
+        if n < min_bars:
+            self._bt_spectra = {}
+            return
+        close = df["close"].to_numpy().astype(float)
+        times = df["time"]
+        spectra: Dict[str, Any] = {}
+        for i in range(min_bars - 1, n):
+            lo = max(0, i + 1 - fft_max_bars)
+            spectra[str(times[i])] = _fft_spectrum(close[lo:i + 1])
+        self._bt_spectra = spectra
 
     def score(
         self,
@@ -206,9 +262,20 @@ class Strategy(BaseStrategy):
             return self._none("ATR invalide")
 
         # ── Analyse FFT ───────────────────────────────────────────────────────
+        # Spectre lourd (rfft) pré-calculé en backtest (lookup O(1) par barre),
+        # sinon calculé à la volée (live/fallback). Le post-traitement léger
+        # (filtre de périodes + top_n) reste dépendant des paramètres → appliqué ici.
         fft_max_bars = int(p.get("fft_max_bars", 500))
-        prices_np = close.tail(min(len(close), fft_max_bars)).to_numpy().astype(float)
-        fft       = _fft_direction(prices_np, fft_min_period, fft_max_period, fft_top_n)
+        _MISS = object()
+        spectrum = _MISS
+        if self._bt_spectra and "time" in df.columns:
+            # Le spectre mémoïsé peut valoir None (fenêtre trop courte) : on
+            # distingue « clé absente » (_MISS) de « clé présente = None ».
+            spectrum = self._bt_spectra.get(str(df["time"][-1]), _MISS)
+        if spectrum is _MISS:
+            prices_np = close.tail(min(len(close), fft_max_bars)).to_numpy().astype(float)
+            spectrum  = _fft_spectrum(prices_np)
+        fft = _fft_select(spectrum, fft_min_period, fft_max_period, fft_top_n)
 
         direction  = fft["direction"]
         confidence = fft["confidence"]
