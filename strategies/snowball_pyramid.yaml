@@ -1,0 +1,20 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : Snowball — TVR + pyramidage (effet boule de neige)
+# Exécution recommandée : 4h | Régime : 1D | Long & Short
+# ──────────────────────────────────────────────────────────────────────────────
+# params     : paramètres par défaut (validés research 2024→2026), éditables
+# optimizer_results : mis à jour automatiquement après chaque optimisation
+# ──────────────────────────────────────────────────────────────────────────────
+
+params:
+  donchian_n: 55
+  er_period: 30
+  er_min: 0.20
+  atr_period: 14
+  atr_expansion: 1.0
+  k_sl: 2.5
+  k_trail: 3.0
+  max_units: 3
+  pyr_step: 1.0
+
+optimizer_results: {}

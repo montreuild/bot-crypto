@@ -248,6 +248,7 @@ class Backtester:
             tight_r          = float(ov.get("tight_r",      self.tight_r)),
             lock_ratio       = float(ov.get("lock_ratio",   self.lock_ratio)),
             use_swing        = bool(ov.get("use_swing",     self.use_swing)),
+            mode             = str(ov.get("mode",           "dynamic")),
         )
 
     # ── run ───────────────────────────────────────────────────────────────────
@@ -666,6 +667,49 @@ class Backtester:
                             position["trail_phase"] = _tr._dts.phase_name
                         if i % 3 == 0:
                             position["_stop_trail"].append({"bar": i, "stop": round(new_stop, 6)})
+
+                    # ── Pyramidage (check_scale_in) ───────────────────────────
+                    # La stratégie peut demander l'ajout d'une unité sur une
+                    # position gagnante. L'unité est sizée comme une entrée
+                    # normale (risque % capital / distance au stop courant),
+                    # le prix d'entrée moyen et le notional sont recalculés.
+                    strat_si = self._find_strategy(position.get("strategy", ""))
+                    if strat_si is not None:
+                        try:
+                            scale = strat_si.check_scale_in(window, position, strat_params)
+                        except Exception as _si:
+                            logger.warning(
+                                f"[Backtest] check_scale_in({position.get('strategy', '')}) "
+                                f"KO : {_si}"
+                            )
+                            scale = None
+                        if scale:
+                            add_price = c_close * (1 + self.spread_pct) if side == "long" \
+                                        else c_close * (1 - self.spread_pct)
+                            stop_dist = abs(add_price - position["stop"])
+                            if stop_dist > 0:
+                                sf = max(0.0, min(float(scale.get("size_factor", 1.0)), 2.0))
+                                add_size = capital * risk / stop_dist * sf * self.partial_fill
+                                add_notional = add_size * add_price
+                                # Cap : le notional total reste sous max_notional_pct
+                                room = capital * self.max_notional_pct - position["notional"]
+                                if add_notional > room:
+                                    add_notional = max(room, 0.0)
+                                    add_size = add_notional / add_price
+                                if add_notional >= 1.0 and add_size > 0:
+                                    add_fees = self._fees(add_price, add_size, maker=False)
+                                    capital -= add_fees
+                                    new_size = position["size"] + add_size
+                                    position["entry"] = round(
+                                        (position["entry"] * position["size"]
+                                         + add_price * add_size) / new_size, 6)
+                                    position["size"]     = round(new_size, 6)
+                                    position["notional"] = round(
+                                        position["notional"] + add_notional, 4)
+                                    position["fees"]     = round(
+                                        position.get("fees", 0.0) + add_fees, 6)
+                                    position["scale_ins"] = position.get("scale_ins", 0) + 1
+                                    diag["scale_ins"] = diag.get("scale_ins", 0) + 1
 
                 continue
 

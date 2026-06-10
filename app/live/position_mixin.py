@@ -63,6 +63,7 @@ def _apply_trail_override(base_cfg: dict, override: dict) -> dict:
     if "tight_r"     in override: merged["tight_r"]          = float(override["tight_r"])
     if "lock_ratio"  in override: merged["lock_ratio"]       = float(override["lock_ratio"])
     if "use_swing"   in override: merged["use_swing"]        = bool(override["use_swing"])
+    if "mode"        in override: merged["mode"]             = str(override["mode"])
     return merged
 
 
@@ -401,6 +402,26 @@ class PositionMixin:
                 with session_scope(self.SessionLocal) as _sess:
                     persist_open_position(_sess, pos)
 
+        # ── Pyramidage piloté par la stratégie (check_scale_in) ────────────
+        # La stratégie peut demander l'ajout d'une unité sur position gagnante
+        # (ex. snowball_pyramid). L'unité passe par les mêmes garde-fous que
+        # l'entrée : risk.can_trade, sizing RiskManager, budget du slot.
+        if strat is not None and hasattr(strat, "check_scale_in"):
+            df_si = self.ohlcv_cache.get(symbol, pos_tf, self.open_positions)
+            if df_si is not None and len(df_si) > 50:
+                scale = None
+                try:
+                    scale = strat.check_scale_in(df_si, pos, self.strat_params)
+                except Exception as _si:
+                    logger.warning(f"[ScaleIn] {strat_name} KO sur {symbol} : {_si}")
+                if scale:
+                    try:
+                        self._scale_in_position(pos_id, pos, price, atr, scale)
+                    except Exception as _si:
+                        logger.error(
+                            f"[ScaleIn] Ajout d'unité {symbol} KO : {_si}", exc_info=True
+                        )
+
         # Notification perte non réalisée
         if pos_id not in self._loss_notified:
             unreal_pct = _calc_unreal_pct(pos["side"], pos["entry"], price)
@@ -414,6 +435,92 @@ class PositionMixin:
 
         if trailing.is_triggered(price, new_stop, pos["side"]):
             self._close_position(pos_id, price)
+
+    # ── Pyramidage (ajout d'unité) ─────────────────────────────────────────
+
+    def _scale_in_position(self, pos_id: str, pos: dict, price: float,
+                           atr: float, scale: dict) -> None:
+        """Ajoute une unité à une position existante (pyramidage).
+
+        Sizing identique à une entrée (RiskManager.compute_size × size_factor),
+        contraint par le budget du slot. Le prix d'entrée moyen, la taille, le
+        notional et les frais de la position sont recalculés puis persistés.
+        """
+        side   = pos["side"]
+        symbol = pos["symbol"]
+        ok_global, reason = self.risk.can_trade(side)
+        if not ok_global:
+            logger.debug(f"[ScaleIn] {symbol} refusé (risk: {reason})")
+            return
+        if price <= 0 or atr <= 0:
+            return
+
+        strat_threshold = self._strat_thresholds.get(pos.get("strategy", ""), self.threshold)
+        sf = max(0.0, min(float(scale.get("size_factor", 1.0)), 2.0))
+        add_size, add_notional = self.risk.compute_size(
+            price, atr, score=float(pos.get("score", 0)),
+            threshold=strat_threshold, size_factor=sf,
+        )
+        if add_size <= 0 or add_notional <= 0:
+            return
+
+        slot_key = f"{pos.get('strategy', '')}::{pos.get('timeframe', self.tf)}"
+        ok_budget, reason_budget = self.allocator.can_allocate(slot_key, add_notional)
+        if not ok_budget:
+            logger.debug(f"[ScaleIn] {symbol} refusé (budget: {reason_budget})")
+            return
+        if not self._pre_execution_check(symbol, side, add_size, price, add_notional):
+            return
+
+        order = self.exchange.create_order(
+            symbol, "market", side, add_size,
+            params={"leverage": int(pos.get("leverage", 1))}
+        )
+        exec_price = order.get("price") or order.get("average") or price
+        if self.cfg["trading"].get("paper_mode"):
+            slip = self.cfg["trading"].get("paper_slippage", 0.001)
+            exec_price *= (1 + slip) if side == "long" else (1 - slip)
+
+        fee_rate = self.cfg["trading"].get("taker_fee", 0.001)
+        add_fees = exec_price * add_size * fee_rate
+        with self._capital_lock:
+            if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
+                self._paper_base -= add_fees
+            else:
+                self.capital_display -= add_fees
+
+        new_size = pos["size"] + add_size
+        pos["entry"]    = (pos["entry"] * pos["size"] + exec_price * add_size) / new_size
+        pos["size"]     = round(new_size, 6)
+        pos["notional"] = round(pos.get("notional", 0.0) + add_notional, 4)
+        pos["fees"]     = round(pos.get("fees", 0.0) + add_fees, 6)
+        pos["scale_ins"] = pos.get("scale_ins", 0) + 1
+        with session_scope(self.SessionLocal) as _sess:
+            persist_open_position(_sess, pos)
+        self.allocator.register_open(slot_key, add_notional)
+
+        self.signal_log.append({
+            "time":      datetime.now(timezone.utc).isoformat(),
+            "symbol":    symbol,
+            "strategy":  pos.get("strategy", ""),
+            "side":      side,
+            "score":     round(float(pos.get("score", 0)), 3),
+            "threshold": round(float(strat_threshold), 3),
+            "timeframe": pos.get("timeframe", self.tf),
+            "status":    "scale_in",
+            "entry":     round(float(exec_price), 4),
+            "reason":    str(scale.get("reason", "pyramid")),
+        })
+        logger.info(
+            f"[SCALE-IN] {side.upper()} {symbol} +{add_size:.6f} @ {exec_price:.4f} "
+            f"| unité #{pos['scale_ins'] + 1} | entry moyen={pos['entry']:.4f} "
+            f"| notional={pos['notional']:.2f}"
+        )
+        self.notif.send(
+            f"➕ *Pyramidage* `{symbol}` {side} +{add_size:.6f} @ `{exec_price:.4f}` "
+            f"({scale.get('reason', 'pyramid')})",
+            async_=True
+        )
 
     # ── Clôture ───────────────────────────────────────────────────────────
 
