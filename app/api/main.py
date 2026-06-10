@@ -25,7 +25,8 @@ from slowapi.errors import RateLimitExceeded
 
 from app.api import state
 from app.api.helpers import CleanJSONResponse
-from app.api.routes import config, trades, backtest, scanner, optimizer, bot, ml, replay
+from app.api.routes import (config, trades, backtest, scanner, optimizer, bot,
+                            ml, replay, derivatives)
 from app.core.database import init_db
 
 logger = logging.getLogger(__name__)
@@ -191,6 +192,10 @@ def ml_page(request: Request):
 def compare_page(request: Request):
     return _tpl("compare.html", request, {"active_page": "compare"})
 
+@app.get("/derivatives", response_class=HTMLResponse)
+def derivatives_page(request: Request):
+    return _tpl("derivatives.html", request, {"active_page": "derivatives"})
+
 
 # ── Status (accès direct à state.cfg, hors router) ────────────────────────
 @app.get("/api/status")
@@ -253,3 +258,4 @@ app.include_router(optimizer.router)
 app.include_router(bot.router)
 app.include_router(ml.router)
 app.include_router(replay.router)
+app.include_router(derivatives.router)
