@@ -384,6 +384,15 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         "n_trials":      8,
         "min_train":     150,
         "retrain_every": 50,
+        # Le random search interne (n_trials × TimeSeriesSplit ≈ 40 fits) ne
+        # tourne qu'au 1er fit puis tous les `hyper_search_every` refits — les
+        # refits intermédiaires réutilisent les meilleurs hyperparams et ne
+        # coûtent qu'UN fit. Sans cela, un backtest 50k bougies = ~1000 random
+        # searches complets (heures de calcul).
+        "hyper_search_every": 20,
+        # Fenêtre d'entraînement glissante (walk-forward) : borne le coût de
+        # chaque fit, qui croissait avec la taille de la fenêtre du backtest.
+        "max_train_window": 6000,
     }
 
     def min_bars_required(self, params: dict = None) -> int:
@@ -400,7 +409,9 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                  proba_short:    float = 0.40,
                  n_trials:       int   = 15,
                  min_train:      int   = 150,
-                 retrain_every:  int   = 50):
+                 retrain_every:  int   = 50,
+                 hyper_search_every: int = 20,
+                 max_train_window:   int = 6000):
 
         self.model_type     = model_type
         self.lookahead      = lookahead
@@ -411,6 +422,9 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         self.n_trials       = n_trials
         self.min_train      = min_train
         self.retrain_every  = retrain_every
+        self.hyper_search_every = hyper_search_every
+        self.max_train_window   = max_train_window
+        self._fit_count_per_tf: Dict[str, int] = {}
         # TFs désactivés manuellement (ex: ["1h"] pour désactiver seulement le 1h).
         self.disabled_timeframes: List[str] = []
 
@@ -540,6 +554,13 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             # fill_null(0) évite les NaN qui transforment Int32→float64 en numpy
             y       = labels[:n_valid].fill_null(0).to_numpy().astype(np.int64)
 
+            # Fenêtre glissante : borne le coût d'entraînement sur les longues
+            # fenêtres de backtest (le fit croissait en O(n) avec la fenêtre).
+            max_win = int(self.max_train_window or 0)
+            if max_win > 0 and len(X) > max_win:
+                X = X[-max_win:]
+                y = y[-max_win:]
+
             # Sécurité : deux classes minimum
             if len(np.unique(y)) < 2:
                 logger.warning(
@@ -557,10 +578,27 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 )
                 return
 
-            best_p, best_auc, _ = random_search_hyperparams(
-                X, y, self.model_type, self.n_trials,
-                cancel_event=self._cancel_event,
-            )
+            # Random search complet seulement au 1er fit du TF puis tous les
+            # `hyper_search_every` refits ; entre-temps, réutilisation des
+            # meilleurs hyperparams (le refit ne coûte alors qu'UN fit).
+            tf_key = tf or _detect_tf(df)
+            fit_no = self._fit_count_per_tf.get(tf_key, 0)
+            self._fit_count_per_tf[tf_key] = fit_no + 1
+            hyper_every = max(int(self.hyper_search_every or 1), 1)
+            prev_p = self._best_params_per_tf.get(tf_key)
+            ran_search = not (prev_p and fit_no % hyper_every != 0)
+            if not ran_search:
+                best_p, best_auc = prev_p, self._best_auc_per_tf.get(tf_key, 0.0)
+            else:
+                # La recherche d'hyperparams (n_trials × CV) tourne sur la fin
+                # de fenêtre (3000 barres max) : la sélection d'hyperparams n'a
+                # pas besoin de tout l'historique, le fit final si (max_train_window).
+                _hs_cap = 3000
+                X_hs, y_hs = (X[-_hs_cap:], y[-_hs_cap:]) if len(X) > _hs_cap else (X, y)
+                best_p, best_auc, _ = random_search_hyperparams(
+                    X_hs, y_hs, self.model_type, self.n_trials,
+                    cancel_event=self._cancel_event,
+                )
 
             # Ne pas continuer si annulé après le random search
             if self._cancel_event is not None and self._cancel_event.is_set():
@@ -587,9 +625,11 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 self._feature_cols = list(feats.columns)
 
             # ── Validation IS/OOS — détection sur-apprentissage ───────────
+            # Diagnostic coûteux (un fit supplémentaire) : uniquement quand le
+            # random search a tourné, pas sur les refits à hyperparams réutilisés.
             try:
                 split = int(len(X) * 0.8)
-                if split > 20 and len(X) - split > 10:
+                if ran_search and split > 20 and len(X) - split > 10:
                     from sklearn.metrics import roc_auc_score as _auc
                     pipe_oos = _build_pipeline(self.model_type, best_p)
                     pipe_oos.fit(X[:split], y[:split])
