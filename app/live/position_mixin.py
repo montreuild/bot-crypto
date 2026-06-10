@@ -158,6 +158,10 @@ class PositionMixin:
             with self._positions_lock:
                 self.open_positions[pos_id] = pos
             self.risk.register_open(pos)
+            # Re-protège la position : adopte le stop exchange existant si
+            # présent (l'id n'est pas persisté en BDD), sinon en pose un.
+            if self._exchange_stops_enabled():
+                self._adopt_or_place_exchange_stop(pos)
             logger.info(
                 f"  [Reprise] {pos['side'].upper()} {pos['symbol']} "
                 f"@ {pos['entry']:.4f} | stop={pos['stop']:.4f} "
@@ -229,6 +233,20 @@ class PositionMixin:
         if self.cfg["trading"].get("paper_mode"):
             slip = self.cfg["trading"].get("paper_slippage", 0.001)
             exec_price *= (1 + slip) if signal["side"] == "long" else (1 - slip)
+        else:
+            # Remplissage partiel : aligner la taille trackée sur la taille
+            # réellement exécutée (sinon stops/PnL calculés sur une taille fausse).
+            try:
+                filled = float(order.get("filled") or 0)
+                if 0 < filled < size * 0.98:
+                    logger.warning(
+                        f"[OPEN] {symbol} remplissage partiel : "
+                        f"{filled:.6f}/{size:.6f} — taille de position ajustée"
+                    )
+                    size     = filled
+                    notional = size * exec_price
+            except (TypeError, ValueError):
+                pass
 
         fee_rate = self.cfg["trading"].get("taker_fee", 0.001)
         fees     = exec_price * size * fee_rate
@@ -269,6 +287,11 @@ class PositionMixin:
         self.risk.register_open(pos)
         with session_scope(self.SessionLocal) as _sess:
             persist_open_position(_sess, pos)
+
+        # Stop-loss côté exchange (filet de sécurité si le bot tombe) —
+        # le stop logiciel/trailing reste la référence de gestion.
+        if self._exchange_stops_enabled():
+            self._place_exchange_stop(pos)
 
         strat_threshold = self._strat_thresholds.get(strat_name, self.threshold)
         self.signal_log.append({
@@ -401,6 +424,13 @@ class PositionMixin:
                 pos["stop"] = new_stop
                 with session_scope(self.SessionLocal) as _sess:
                     persist_open_position(_sess, pos)
+                # Replace le stop exchange au nouveau niveau ; si l'ancien stop
+                # a déjà été exécuté côté exchange, clôture locale immédiate.
+                filled_stop = self._update_exchange_stop(pos)
+                if filled_stop is not None:
+                    pos["_closed_by_exchange_stop"] = filled_stop
+                    self._close_position(pos_id, price)
+                    return
 
         # ── Pyramidage piloté par la stratégie (check_scale_in) ────────────
         # La stratégie peut demander l'ajout d'une unité sur position gagnante
@@ -435,6 +465,105 @@ class PositionMixin:
 
         if trailing.is_triggered(price, new_stop, pos["side"]):
             self._close_position(pos_id, price)
+
+    # ── Stop-loss côté exchange ─────────────────────────────────────────────
+    #
+    # En live réel, un stop purement logiciel laisse la position sans protection
+    # si le bot crash ou perd le réseau. On pose donc un STOP_LOSS_LIMIT côté
+    # exchange (ccxt : ordre limit + param stopPrice) en miroir du stop logiciel,
+    # remplacé quand le trailing remonte le stop, annulé à la clôture.
+    # Opt-out via trading.exchange_stop_orders: false. Dégradation gracieuse :
+    # un échec de pose n'empêche pas le trade (le stop logiciel reste actif)
+    # mais déclenche une notification.
+
+    def _exchange_stops_enabled(self) -> bool:
+        return (not self.cfg["trading"].get("paper_mode")
+                and bool(self.cfg["trading"].get("exchange_stop_orders", True)))
+
+    def _place_exchange_stop(self, pos: dict) -> None:
+        """Pose un stop-loss-limit sur l'exchange en miroir du stop logiciel."""
+        try:
+            close_side = "sell" if pos["side"] == "long" else "buy"
+            stop_price = float(pos["stop"])
+            offset     = float(self.cfg["trading"].get("exchange_stop_limit_offset", 0.005))
+            limit_price = (stop_price * (1 - offset) if pos["side"] == "long"
+                           else stop_price * (1 + offset))
+            order = self.exchange.create_order(
+                pos["symbol"], "limit", close_side, pos["size"], limit_price,
+                params={"stopPrice": stop_price},
+            )
+            pos["stop_order_id"] = order.get("id")
+            logger.info(
+                f"[StopExchange] {pos['symbol']} stop posé @ {stop_price:.4f} "
+                f"(limit {limit_price:.4f}, id={pos['stop_order_id']})"
+            )
+        except Exception as e:
+            pos.pop("stop_order_id", None)
+            logger.error(
+                f"[StopExchange] Pose du stop {pos['symbol']} KO : {e} "
+                f"— position protégée par le stop logiciel uniquement"
+            )
+            self.notif.send(
+                f"⚠️ *Stop exchange non posé* `{pos['symbol']}` : {e}\n"
+                f"La position n'est protégée que par le stop logiciel.",
+                async_=True
+            )
+
+    def _cancel_exchange_stop(self, pos: dict):
+        """Annule le stop exchange. Retourne l'ordre s'il a DÉJÀ été exécuté
+        (position clôturée côté exchange pendant que le bot ne regardait pas),
+        None sinon."""
+        oid = pos.pop("stop_order_id", None)
+        if not oid:
+            return None
+        try:
+            o = self.exchange.fetch_order(oid, pos["symbol"]) or {}
+            status = str(o.get("status", "")).lower()
+            if status in ("closed", "filled"):
+                logger.warning(
+                    f"[StopExchange] {pos['symbol']} : stop {oid} déjà exécuté "
+                    f"côté exchange (avg={o.get('average')})"
+                )
+                return o
+            if status not in ("canceled", "cancelled", "expired", "rejected"):
+                self.exchange.cancel_order(oid, pos["symbol"])
+        except Exception as e:
+            logger.warning(f"[StopExchange] Annulation stop {pos['symbol']} KO : {e}")
+        return None
+
+    def _update_exchange_stop(self, pos: dict):
+        """Remplace le stop exchange après remontée du trailing. Retourne
+        l'ordre stop s'il était déjà exécuté (la position doit être clôturée
+        localement sans nouvel ordre), None sinon."""
+        if not self._exchange_stops_enabled():
+            return None
+        filled = self._cancel_exchange_stop(pos)
+        if filled is not None:
+            return filled
+        self._place_exchange_stop(pos)
+        return None
+
+    def _adopt_or_place_exchange_stop(self, pos: dict) -> None:
+        """À la restauration : adopte un stop déjà ouvert sur l'exchange pour ce
+        symbole (évite les stops dupliqués qui vendraient deux fois), sinon en
+        pose un nouveau."""
+        try:
+            close_side = "sell" if pos["side"] == "long" else "buy"
+            open_orders = self.exchange.fetch_open_orders(pos["symbol"]) or []
+            for o in open_orders:
+                info_type = str(o.get("type", "")).lower()
+                if (o.get("side") == close_side
+                        and ("stop" in info_type or o.get("stopPrice")
+                             or (o.get("info") or {}).get("stopPrice"))):
+                    pos["stop_order_id"] = o.get("id")
+                    logger.info(
+                        f"[StopExchange] {pos['symbol']} : stop existant adopté "
+                        f"(id={pos['stop_order_id']})"
+                    )
+                    return
+        except Exception as e:
+            logger.debug(f"[StopExchange] fetch_open_orders {pos['symbol']} KO : {e}")
+        self._place_exchange_stop(pos)
 
     # ── Pyramidage (ajout d'unité) ─────────────────────────────────────────
 
@@ -498,6 +627,12 @@ class PositionMixin:
         with session_scope(self.SessionLocal) as _sess:
             persist_open_position(_sess, pos)
         self.allocator.register_open(slot_key, add_notional)
+        # Le stop exchange couvre l'ancienne taille → replacement avec la nouvelle
+        filled_stop = self._update_exchange_stop(pos)
+        if filled_stop is not None:
+            pos["_closed_by_exchange_stop"] = filled_stop
+            self._close_position(pos_id, exec_price)
+            return
 
         self.signal_log.append({
             "time":      datetime.now(timezone.utc).isoformat(),
@@ -529,11 +664,35 @@ class PositionMixin:
             pos = self.open_positions.pop(pos_id, None)
         if not pos:
             return
+        # Stop exchange : annulation avant la clôture market. S'il a déjà été
+        # exécuté (position vendue par l'exchange), pas de second ordre —
+        # on solde la position localement au prix du stop exécuté.
+        ex_fill = pos.pop("_closed_by_exchange_stop", None)
+        if ex_fill is None and pos.get("stop_order_id"):
+            ex_fill = self._cancel_exchange_stop(pos)
+
         close_side = "sell" if pos["side"] == "long" else "buy"
-        order      = self.exchange.create_order(
-            pos["symbol"], "market", close_side, pos["size"]
-        )
-        exec_price = order.get("price") or exit_price
+        if ex_fill is not None:
+            order      = ex_fill
+            exec_price = ex_fill.get("average") or ex_fill.get("price") or exit_price
+        else:
+            order      = self.exchange.create_order(
+                pos["symbol"], "market", close_side, pos["size"]
+            )
+            exec_price = order.get("price") or order.get("average") or 0
+            if not exec_price and not self.cfg["trading"].get("paper_mode"):
+                # Ordres market réels : récupérer le prix moyen réellement exécuté
+                try:
+                    filled = self.exchange.fetch_order(order.get("id", ""), pos["symbol"])
+                    exec_price = filled.get("average") or filled.get("price") or 0
+                except Exception as _fe:
+                    logger.warning(
+                        f"[CLOSE] {pos['symbol']} — fetch_order KO ({_fe}), "
+                        f"utilisation du prix ticker {exit_price:.6f} "
+                        f"(PnL potentiellement décalé)"
+                    )
+            if not exec_price:
+                exec_price = exit_price
 
         # Slippage adverse en paper mode (vente moins chère)
         if self.cfg["trading"].get("paper_mode"):

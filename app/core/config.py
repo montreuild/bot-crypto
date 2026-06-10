@@ -233,6 +233,23 @@ def load_config(path: str = "config.yaml") -> dict:
     if not cfg["trading"].get("paper_mode"):
         logger.warning("🔴 LIVE TRADING ACTIVÉ — vérifiez bien vos paramètres !")
 
+    # ── Cohérence margin / levier / paper (garde-fous production) ────────────
+    margin_on = bool(cfg.get("exchange", {}).get("margin")
+                     or cfg["trading"].get("margin_mode"))
+    if margin_on and float(cfg["trading"].get("max_leverage", 1)) <= 1:
+        logger.warning(
+            "⚠ [Config] exchange.margin actif mais trading.max_leverage <= 1 : "
+            "le levier ne sera jamais utilisé (l'emprunt AUTO_BORROW_REPAY reste "
+            "actif côté Binance). Pour du spot pur : margin: false ET "
+            "margin_mode: null ; pour du margin réel : max_leverage > 1."
+        )
+    if margin_on and cfg["trading"].get("paper_mode"):
+        logger.warning(
+            "⚠ [Config] paper_mode + margin simultanés : les coûts d'emprunt sont "
+            "simulés mais aucun emprunt réel n'a lieu — les PnL paper et live "
+            "divergeront. Désactivez margin pour un paper trading représentatif."
+        )
+
     # Compatibilité multi-TF
     _VALID_TIMEFRAMES = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
     if "timeframes" in cfg and cfg["timeframes"]:

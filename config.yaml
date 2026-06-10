@@ -42,7 +42,13 @@ trading:
   borrow_rate_daily: 0.00072
   borrow_periods_per_day: 3
   margin_mode: isolated
-  margin_level_alert: 1.5
+  margin_level_alert: 1.5           # alerte si margin level < 1.5
+  margin_level_critical: 1.2        # HALT trading si margin level < 1.2 (liq. Binance ≈ 1.05)
+  # Stop-loss posé côté exchange en miroir du stop logiciel (live uniquement,
+  # filet de sécurité si le bot tombe). Ordre STOP_LOSS_LIMIT, limit décalé de
+  # exchange_stop_limit_offset sous/sur le stop.
+  exchange_stop_orders: true
+  exchange_stop_limit_offset: 0.005
   reentry_cooldown_bars: 2          # V6.1 : 2 bougies de cooldown après une perte
   top_strategies_per_tf: 2
 

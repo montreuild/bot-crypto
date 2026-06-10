@@ -303,7 +303,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 for _attempt in range(3):
                     try:
                         pos    = self.open_positions.get(pos_id)
-                        if not pos:
+                        if not pos or pos.get("_reserved"):
                             break
                         ticker = self._safe_ticker(pos["symbol"])
                         price  = ticker.get("last", pos["entry"]) if ticker else pos["entry"]
@@ -330,7 +330,8 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                             )
         elif self.open_positions:
             n    = len(self.open_positions)
-            syms = ", ".join(p["symbol"] for p in self.open_positions.values())
+            syms = ", ".join(p["symbol"] for p in self.open_positions.values()
+                             if not p.get("_reserved"))
             logger.info(
                 f"[LiveTrader] Arrêt sans clôture — {n} position(s) conservée(s) : {syms}"
             )
@@ -729,6 +730,8 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
     def _send_status_report(self) -> None:
         positions_detail = []
         for pos in self.open_positions.values():
+            if pos.get("_reserved"):
+                continue
             ticker = self._safe_ticker(pos["symbol"])
             if ticker:
                 price = ticker.get("last", pos["entry"])
@@ -821,7 +824,8 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
     @property
     def status(self) -> dict:
         risk      = self.risk.status_dict()
-        positions = [self._serialize_position(p) for p in self.open_positions.values()]
+        positions = [self._serialize_position(p) for p in self.open_positions.values()
+                     if not p.get("_reserved")]
 
         now = time.time()
         if (self._status_db_cache is None
