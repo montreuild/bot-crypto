@@ -2,7 +2,8 @@
 
 Revue fonctionnelle et technique complète du chemin de livetrading
 (`cli.py` → `LiveTrader` → `SignalPipeline` → `PositionMixin` → `RobustExchange`),
-réalisée en vue d'un passage en production. Date : 2026-06-10.
+réalisée en vue d'un passage en production. Date : 2026-06-10, mis à jour le
+2026-06-11 (module d'exécution commun + parité backtest↔live).
 
 **Verdict : le bot est sain en paper mode. Pour le live réel, les correctifs
 critiques ci-dessous ont été appliqués ; il reste des prérequis de
@@ -26,6 +27,15 @@ capital (voir checklist en fin de document).**
 Le mécanisme de **pyramidage** ajouté pour Snowball passe par les mêmes
 garde-fous que les entrées (risk.can_trade → sizing RiskManager → budget slot →
 pre_execution_check) et replace le stop exchange après chaque ajout.
+
+**Mise à jour 2026-06-11** — les formules monétaires (frais, coût d'emprunt
+composé, PnL net) sont désormais **partagées entre le backtest et le live**
+via `app/core/execution.py`, avec un test de parité
+(`tests/test_execution_parity.py` : même trade ⇒ même PnL net par les deux
+chemins). Conséquence pratique : les résultats de backtest/paper sont
+directement comparables au live sur le plan des coûts — un écart observé en
+production viendra du marché (slippage réel, fills partiels, taux d'emprunt
+variables), pas des formules.
 
 ---
 

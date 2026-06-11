@@ -1,17 +1,20 @@
 # 🔍 Audit Global du Bot — Architecture, Code, Web, Workflow
 
 Audit réalisé le 2026-06-10 (analyse statique complète + profilage d'exécution
-réel des 44 stratégies). Complémentaire de `PRODUCTION_READINESS.md` (axé
-livetrading) — ce document couvre l'architecture, la cohérence du code, les
-redondances, le web et le flux de travail.
+réel des 44 stratégies), **mis à jour le 2026-06-11 après la passe de
+corrections** (les éléments traités sont marqués ✅). Complémentaire de
+`PRODUCTION_READINESS.md` (axé livetrading) — ce document couvre
+l'architecture, la cohérence du code, les redondances, le web et le flux de
+travail.
 
 **Synthèse** : l'architecture en couches est saine (core / engine / live / api /
 strategies, registre auto-découvert, séparation config.yaml ↔ strategies/*.yaml,
-stockage Parquet unifié). Les trois vrais problèmes structurels sont :
+stockage Parquet unifié). Les trois problèmes structurels identifiés étaient :
 **(1) la prolifération de variantes de stratégies (45 fichiers, ~17 variantes
-Opus largement copiées-collées), (2) des fichiers monolithiques difficiles à
-faire évoluer (backtest.run ≈ 700 lignes), (3) la duplication backtest ↔ live
-de la logique d'exécution (fees, trailing, sizing implémentés deux fois).**
+Opus largement copiées-collées) — reste le chantier principal ; (2) des
+fichiers monolithiques — ✅ `Backtester.run()` a été découpé ; (3) la
+duplication backtest ↔ live de la logique d'exécution — ✅ résolue via
+`app/core/execution.py` + test de parité.**
 
 ---
 
@@ -28,18 +31,11 @@ de la logique d'exécution (fees, trailing, sizing implémentés deux fois).**
 - Pas d'import circulaire, logging structuré partout, pas de secrets en dur.
 
 ### Problèmes
-| Constat | Détail | Impact |
+| Constat | Détail | Statut |
 |---|---|---|
-| **Monolithes** | `backtest.py` 1058 L (la méthode `run()` ≈ 700 L gère signaux, trailing, TP, time-exit, early-exit, scale-in, fees, equity), `optimizer.py` 1033 L, `indicators.py` 1030 L, `live_trader.py` 951 L | Chaque évolution (ex. pyramidage) demande de toucher un bloc géant ; tests unitaires impossibles sur les sous-parties |
-| **Duplication backtest ↔ live** | Fees/slippage/borrow calculés dans `backtest.py` ET `position_mixin.py` avec des formules voisines mais pas identiques (ex. borrow simple en backtest vs composé en live) ; trailing partagé (bien) mais initialisation/phases dupliquées | Écarts paper/backtest vs live difficiles à diagnostiquer |
-| **Couche qui fuit** | `live_trader` charge directement les modèles ML (`MLStrategyTrainer`) ; `backtest.py` connaît les détails ML (`use_pretrained_ml`, reset_model) | Responsabilités partagées, fragile |
-
-**Recommandation** : ✅ fait — module commun `app/core/execution.py`
-(frais, emprunt composé, PnL net, sizing) consommé par les deux chemins ;
-`Backtester.run()` découpé en `_manage_open_position()` / `_try_enter()` /
-`_close_at()` (refactoring vérifié iso-comportement sur baseline) ; parité
-backtest ↔ live verrouillée par `tests/test_execution_parity.py`. Le backtest
-utilise désormais la formule d'emprunt composée du live (impact ≤ 0,003 %).
+| **Monolithes** | `backtest.py` (la méthode `run()` gérait ~700 L : signaux, trailing, TP, time-exit, early-exit, scale-in, fees, equity), `optimizer.py` 1033 L, `indicators.py` 1030 L, `live_trader.py` 951 L | ✅ `run()` découpé en `_close_at()` / `_manage_open_position()` / `_try_enter()` (vérifié iso-comportement sur baseline). Optimizer/indicators/live_trader restent à découper (moyen terme) |
+| **Duplication backtest ↔ live** | Fees/slippage/borrow calculés dans `backtest.py` ET `position_mixin.py` avec des formules voisines mais pas identiques (ex. borrow simple en backtest vs composé en live) | ✅ Résolu : `app/core/execution.py` (trade_fees, borrow_cost composé, close_pnl, sizing) consommé par les deux chemins ; parité verrouillée par `tests/test_execution_parity.py` ; le backtest utilise la formule d'emprunt du live (impact ≤ 0,003 %) et le TF effectif du run (bugfix) |
+| **Couche qui fuit** | `live_trader` charge directement les modèles ML (`MLStrategyTrainer`) ; `backtest.py` connaît les détails ML (`use_pretrained_ml`, reset_model) | ⏳ Responsabilités partagées, fragile — à traiter avec la factorisation Opus |
 
 ---
 
@@ -53,12 +49,13 @@ utilise désormais la formule d'emprunt composée du live (impact ≤ 0,003 %).
   → À remplacer par des presets de params dans le YAML de la version mère.
 - **Versions dépassées** : `scoring_statistique_opus.py`, `_v2`, `_v3`
   (la v5 est l'aboutissement) ; `opus_omnibus_v8/v9` si v11/v12 sont retenues.
-- **YAML orphelins** (le `.py` n'existe plus) : `strategies/yoyo.yaml`,
+- ✅ **YAML orphelins** (le `.py` n'existait plus) : `strategies/yoyo.yaml`,
   `opus_omnibus_v6.yaml`, `opus_omnibus_v6_pretrained.yaml`,
-  `ml_dynamic_threshold_no_ml.yaml` → chargés/affichés pour rien.
-- `optimizer_changelog.json` : ~~croissance infinie~~ *(correction : une
-  rotation à 200 entrées existait déjà ; l'écriture est désormais compacte,
-  166 Ko au lieu de 265 Ko)*.
+  `ml_dynamic_threshold_no_ml.yaml` — **supprimés** (ils étaient chargés dans
+  `strategies.enabled` et provoquaient un échec d'import à chaque démarrage).
+- ✅ `optimizer_changelog.json` : *(correction du constat initial : une
+  rotation à 200 entrées existait déjà)* — écriture passée en JSON compact,
+  166 Ko au lieu de 265 Ko.
 
 ### Copier-coller massif
 Les variantes Opus (v7→v12, `_no_ml`, `_pretrained`, `_retrained`) partagent
@@ -82,15 +79,16 @@ clairement marqués comme archives (README dans `research/`).
 
 ## 3. Qualité du code
 
-- **`except Exception` : 296 occurrences** dont 13 `except Exception: pass`.
+- **`except Exception` : ~296 occurrences** dont 13 `except Exception: pass`.
   Beaucoup sont une dégradation gracieuse volontaire (réseau, notifications) —
-  acceptable — mais certaines masquent de vrais bugs :
-  `registry.py:21` (stratégie cassée silencieusement ignorée → seul un
-  `logger.debug` la signale), `optimizer.py` (reset modèle), chargement YAML
-  stratégie (`config.py` — un YAML corrompu disparaît sans alerte visible).
-  → Promouvoir au minimum ces trois cas en `logger.warning/error`.
-- Fonctions trop longues : `Backtester.run`, `Optimizer.search`,
-  `LiveTrader._cycle` + `_try_open_from_signal` (acceptable), v11 `_train`.
+  acceptable. ✅ Les trois cas qui masquaient de vrais bugs sont promus en
+  `warning` : import de stratégie en échec dans `registry.py` (la stratégie
+  disparaissait du registre/optimiseur/UI avec un simple `debug`), bootstrap
+  YAML dans `config.py`, et `reset_model` avalé entre les snapshots IS/OOS
+  de l'optimiseur (risque de fuite d'état IS→OOS). *(Le chargement des YAML
+  stratégies loggait déjà en `warning` — vérifié.)*
+- Fonctions trop longues : ✅ `Backtester.run` découpé ; restent
+  `Optimizer.search` et v11 `_train` (acceptables à court terme).
 - Bons réflexes présents : validation des noms de stratégies (anti-injection),
   whitelist d'exchanges, sanitization JSON (NaN/Inf), locks fichiers Parquet.
 
@@ -121,10 +119,14 @@ possible par segment entre deux retrains).
 ## 5. Web / API
 
 - 13 templates, ~8900 lignes au total ; `config.html` 1421 L,
-  `backtest.html` 1092 L. CSS/JS utilitaires redéfinis par page (tables, KPI
-  cards, fetch boilerplate) malgré un `base.html` déjà riche. Sans framework
-  front, viser au minimum : extraire les styles communs des pages vers
-  `base.html` et un `static/common.js` (apiFetch+toast+format helpers).
+  `backtest.html` 1092 L. ✅ Les utilitaires réellement dupliqués à
+  l'identique ont été mutualisés dans `base.html` : CSS `.form-row`,
+  `.form-lbl`, `.btn-outline`, `.empty-state`, `.stat-chip`/`.chip-*` ;
+  JS `fmtSign`/`fmtPrice` (rejoignent `escHtml`/`apiFetch`/`toast` déjà
+  partagés). Les pages ne gardent que leurs vraies variantes en surcharge
+  (le bloc `page_styles` est injecté après les styles de base). *(Analyse :
+  la duplication restante est essentiellement du CSS spécifique par page,
+  pas du copier-coller — un framework front n'est pas justifié.)*
 - Routes : auth systématique via `verify_api_key`, semaphores backtest/
   optimiseur, SSE pour la progression — sain. *(Vérification : les handlers
   lèvent bien `HTTPException` partout ; les `{"error": …}` rencontrés sont
@@ -151,9 +153,11 @@ Frictions identifiées :
    (expérimentale / validée / production / archivée). C'est la cause racine de
    l'accumulation des 45 fichiers. → Ajouter un champ `status:` dans le YAML
    et le filtrer dans l'UI.
-2. Renommage/suppression d'une stratégie : le YAML devient orphelin sans
-   alerte (4 cas constatés).
-3. `optimizer_changelog.json` sans rotation.
+2. ✅ Renommage/suppression d'une stratégie : les 4 YAML orphelins constatés
+   ont été supprimés ; l'import en échec est désormais loggé en `warning`
+   (registry), ce qui rendra les prochains cas visibles.
+3. ✅ `optimizer_changelog.json` : rotation existante confirmée (200 entrées),
+   écriture compactée.
 4. Modèles ML (`models/*.pkl`) sans versioning : un changement de features
    rend un pkl silencieusement incompatible (le FeatureStore a un champ
    version, les pkl non).
@@ -162,10 +166,13 @@ Frictions identifiées :
 
 ## 7. Tests & données
 
-- 24 fichiers de tests, 276 tests, rapides (<10 s) — bonne base : backtest,
-  risk, allocator, indicateurs, stratégies clés, e2e paper.
-- Manques principaux : exécution d'ordres live (mockée), parité
-  backtest↔live, optimiseur (1033 L non testées), trailing multi-phases.
+- 26 fichiers de tests, 282 tests, rapides (~15 s) — bonne base : backtest,
+  risk, allocator, indicateurs, stratégies clés, e2e paper, ✅ cache
+  d'entraînement (`test_train_cache.py`), ✅ parité backtest↔live et formules
+  d'exécution (`test_execution_parity.py` : même trade ⇒ même PnL net via
+  `Backtester._close_at` et `PositionMixin._close_position`).
+- Manques restants : exécution d'ordres live (mockée, incl. stops exchange),
+  optimiseur (1033 L non testées), trailing multi-phases.
 - Données : stockage cohérent depuis cette session (`data/ohlcv`,
   `data/derivatives`, `data/features`). `trades.db` (SQLite) sans stratégie de
   backup automatisée → à brancher (cron + copie datée).
@@ -174,27 +181,36 @@ Frictions identifiées :
 
 ## 8. Plan d'action priorisé
 
-### Quick wins (≤ 1 jour)
-1. ~~Supprimer les 4 YAML orphelins + compacter `optimizer_changelog.json`~~ ✅ fait.
-2. Promouvoir en `warning` les `except` silencieux de `registry.py` et du
-   chargement des YAML stratégies.
-3. Décider la liste des stratégies « production » et passer `enabled: false`
+### ✅ Fait (passe du 2026-06-11)
+1. Suppression des 4 YAML orphelins + compactage `optimizer_changelog.json`.
+2. Promotion en `warning` des `except` silencieux critiques (registry,
+   bootstrap YAML, reset_model optimiseur).
+3. Module commun `app/core/execution.py` + découpage de `Backtester.run()`
+   (`_close_at` / `_manage_open_position` / `_try_enter`, vérifié
+   iso-comportement) + test de parité backtest ↔ live.
+4. Mutualisation des utilitaires CSS/JS dupliqués dans `base.html`.
+5. Redaction `web.api_key` / credentials DB dans `GET /api/config`.
+6. *(Passe précédente)* cache d'entraînement ML inter-trials, optimisation
+   `ml_dynamic_threshold`, page Dérivés, stops exchange, etc. — voir
+   `PRODUCTION_READINESS.md` et l'historique git.
+
+### Quick wins restants (≤ 1 jour)
+7. Décider la liste des stratégies « production » et passer `enabled: false`
    sur toutes les autres (réduit le bruit UI, le temps de chargement et les
    surprises de l'auto-optimiseur).
 
 ### Moyen terme (1–2 semaines)
-4. Factoriser la famille Opus autour d'une `OpusBase` ; supprimer wrappers
-   `*_1` et versions dépassées (−4000 L).
-5. Découper `Backtester.run()` + extraire le calcul fees/borrow commun
-   backtest/live ; ajouter le test de parité.
-6. Mutualiser le CSS/JS des templates dans `base.html`/static.
+8. Factoriser la famille Opus autour d'une `OpusBase` ; supprimer wrappers
+   `*_1` et versions dépassées (−4000 L). C'est désormais LE chantier
+   structurel principal.
+9. Découper `optimizer.py` (search/scoring/persistance) et `indicators.py`.
 
 ### Long terme
-7. Statut de cycle de vie des stratégies (YAML + UI) et archivage `research/`.
-8. Versioning des modèles ML (hash features + date dans le nom du pkl,
-   contrôle au chargement).
-9. Couverture de tests : ordres live mockés (ccxt stub), optimiseur,
-   scénarios de crash/restauration.
+10. Statut de cycle de vie des stratégies (YAML + UI) et archivage `research/`.
+11. Versioning des modèles ML (hash features + date dans le nom du pkl,
+    contrôle au chargement).
+12. Couverture de tests : ordres live mockés (ccxt stub, incl. stops
+    exchange), optimiseur, scénarios de crash/restauration.
 
 ---
 
