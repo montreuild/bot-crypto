@@ -48,6 +48,21 @@ def get_config():
     all_strats = sorted(_discover_strategies())
     safe = {k: v for k, v in state.cfg.items() if k not in ("exchange", "notifications")}
     safe["exchange"]           = {"name": state.cfg["exchange"]["name"]}
+    # Redaction : la clé API web et d'éventuels credentials dans l'URL de la
+    # base ne sortent jamais (le front n'en a pas besoin : le cookie d'auth
+    # est posé côté serveur).
+    if isinstance(safe.get("web"), dict):
+        web = dict(safe["web"])
+        if web.get("api_key"):
+            web["api_key"] = "****"
+        safe["web"] = web
+    if isinstance(safe.get("database"), dict):
+        db  = dict(safe["database"])
+        url = str(db.get("url", ""))
+        if "://" in url and "@" in url:
+            scheme = url.split("://", 1)[0]
+            db["url"] = f"{scheme}://****@{url.split('@', 1)[1]}"
+        safe["database"] = db
     safe["all_strategies"]     = all_strats
     from app.engine.optimizer import STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT
     safe["strategy_timeframes"] = STRATEGY_TIMEFRAMES

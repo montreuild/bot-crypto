@@ -125,10 +125,12 @@ possible par segment entre deux retrains).
   front, viser au minimum : extraire les styles communs des pages vers
   `base.html` et un `static/common.js` (apiFetch+toast+format helpers).
 - Routes : auth systématique via `verify_api_key`, semaphores backtest/
-  optimiseur, SSE pour la progression — sain. Incohérence mineure :
-  certains handlers renvoient `JSONResponse` d'erreur, d'autres lèvent
-  `HTTPException`.
-- `/api/config` redacte correctement `exchange` et `notifications`.
+  optimiseur, SSE pour la progression — sain. *(Vérification : les handlers
+  lèvent bien `HTTPException` partout ; les `{"error": …}` rencontrés sont
+  des résultats partiels par stratégie dans les payloads multi-backtests,
+  voulus — pas d'incohérence à corriger.)*
+- `/api/config` redacte `exchange` et `notifications` ; ✅ ajouté : masquage
+  de `web.api_key` et des credentials d'URL de base de données.
 
 ---
 
