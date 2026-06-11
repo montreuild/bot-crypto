@@ -1,5 +1,5 @@
 """Client exchange CCXT avec retry exponentiel et reconnexion de session."""
-import logging, time, functools
+import logging, time, functools, uuid
 from typing import Callable, Any, Optional
 import ccxt
 
@@ -112,7 +112,31 @@ class RobustExchange:
     @with_retry
     def fetch_balance(self): return self._ex.fetch_balance()
 
-    @with_retry
+    # ── Ordres : création idempotente ───────────────────────────────────────
+    #
+    # Un retry aveugle après timeout réseau peut DUPLIQUER un ordre market si
+    # l'exchange avait en fait reçu la requête (double position, stops faux).
+    # On attache donc un ``newClientOrderId`` déterministe à chaque appel et,
+    # avant chaque nouvelle tentative après une erreur réseau, on vérifie si
+    # l'ordre existe déjà côté exchange — auquel cas on le retourne au lieu
+    # d'en créer un second.
+
+    @staticmethod
+    def _gen_client_order_id() -> str:
+        # Format accepté par Binance : ^[\.A-Z\:/a-z0-9_-]{1,36}$
+        return f"bot-{uuid.uuid4().hex[:24]}"
+
+    def _fetch_order_by_client_id(self, client_id: str, symbol: str) -> Optional[dict]:
+        """Recherche un ordre par clientOrderId. None si introuvable/erreur."""
+        try:
+            params = {"origClientOrderId": client_id}
+            if self.margin:
+                params["isIsolated"] = str(self.margin_mode == "isolated").upper()
+            order = self._ex.fetch_order(None, symbol, params)
+            return order or None
+        except Exception:
+            return None
+
     def create_order(self, symbol, order_type, side, amount, price=None, params=None):
         if self.paper:
             logger.info(f"[PAPER{'·MARGIN' if self.margin else ''}] {side.upper()} {amount} {symbol} @ {price or 'market'}")
@@ -123,7 +147,56 @@ class RobustExchange:
             # Binance margin spot: emprunt et remboursement automatiques
             p.setdefault("sideEffectType", "AUTO_BORROW_REPAY")
             p.setdefault("isIsolated", str(self.margin_mode == "isolated").upper())
-        return self._ex.create_order(symbol, order_type, side, amount, price, p)
+        client_id = p.setdefault("newClientOrderId", self._gen_client_order_id())
+
+        delay = BASE_DELAY
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                result = self._ex.create_order(symbol, order_type, side, amount, price, p)
+                self._consecutive_errors = 0
+                return result
+            except ccxt.RateLimitExceeded:
+                wait = delay * (2 ** (attempt - 1))
+                logger.warning(f"[Exchange] Rate limit — pause {wait:.0f}s ({attempt}/{MAX_RETRIES})")
+                time.sleep(wait)
+            except (ccxt.NetworkError, ccxt.RequestTimeout) as e:
+                self._consecutive_errors += 1
+                if self._consecutive_errors >= RESET_AFTER_ERRORS:
+                    logger.warning(
+                        f"[Exchange] {self._consecutive_errors} erreurs consécutives — "
+                        f"reset de la session TCP…"
+                    )
+                    self._reconnect()
+                # L'ordre a peut-être été reçu malgré le timeout : vérification
+                # par clientOrderId avant tout retry (idempotence).
+                existing = self._fetch_order_by_client_id(client_id, symbol)
+                if existing is not None:
+                    logger.warning(
+                        f"[Exchange] Timeout sur create_order {symbol} mais l'ordre "
+                        f"{existing.get('id')} (clientOrderId={client_id}) existe déjà "
+                        f"— réutilisé, pas de doublon."
+                    )
+                    self._consecutive_errors = 0
+                    return existing
+                if attempt == MAX_RETRIES:
+                    logger.error(f"[Exchange] Erreur réseau définitive (create_order) : {e}")
+                    raise
+                wait = min(delay * (2 ** (attempt - 1)), MAX_RECONNECT_DELAY)
+                logger.warning(
+                    f"[Exchange] Réseau KO sur create_order — retry {attempt}/{MAX_RETRIES} "
+                    f"dans {wait:.0f}s (clientOrderId={client_id})"
+                )
+                time.sleep(wait)
+            except ccxt.AuthenticationError:
+                logger.error("[Exchange] ❌ Authentification échouée — vérifier clés API.")
+                raise
+            except ccxt.InsufficientFunds as e:
+                logger.error(f"[Exchange] ❌ Fonds insuffisants : {e}")
+                raise
+            except ccxt.ExchangeError as e:
+                logger.error(f"[Exchange] Erreur exchange : {e}")
+                raise
+        raise RuntimeError(f"Échec après {MAX_RETRIES} tentatives.")
 
     @with_retry
     def cancel_order(self, order_id, symbol):

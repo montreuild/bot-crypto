@@ -159,7 +159,9 @@ def _bootstrap_strategy_files(strategies_dir: str) -> None:
                 )
             logger.info(f"[Config] YAML créé automatiquement : strategies/{module_name}.yaml")
         except Exception as exc:
-            logger.debug(f"[Config] Bootstrap {module_name} ignoré : {exc}")
+            # warning : sans YAML bootstrappé, la stratégie n'apparaît ni dans
+            # strategies.enabled ni dans la page Configuration.
+            logger.warning(f"[Config] Bootstrap strategies/{module_name}.yaml KO : {exc}")
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -232,6 +234,37 @@ def load_config(path: str = "config.yaml") -> dict:
         logger.warning("⚠ Clés API exchange non configurées — mode backtest uniquement.")
     if not cfg["trading"].get("paper_mode"):
         logger.warning("🔴 LIVE TRADING ACTIVÉ — vérifiez bien vos paramètres !")
+
+    # ── Cohérence margin / levier / paper (garde-fous production) ────────────
+    margin_on = bool(cfg.get("exchange", {}).get("margin")
+                     or cfg["trading"].get("margin_mode"))
+    if margin_on and float(cfg["trading"].get("max_leverage", 1)) <= 1:
+        logger.warning(
+            "⚠ [Config] exchange.margin actif mais trading.max_leverage <= 1 : "
+            "le levier ne sera jamais utilisé (l'emprunt AUTO_BORROW_REPAY reste "
+            "actif côté Binance). Pour du spot pur : margin: false ET "
+            "margin_mode: null ; pour du margin réel : max_leverage > 1."
+        )
+    if margin_on and cfg["trading"].get("paper_mode"):
+        logger.warning(
+            "⚠ [Config] paper_mode + margin simultanés : les coûts d'emprunt sont "
+            "simulés mais aucun emprunt réel n'a lieu — les PnL paper et live "
+            "divergeront. Désactivez margin pour un paper trading représentatif."
+        )
+
+    # ── Sécurité API web ─────────────────────────────────────────────────────
+    # Sans web.api_key, l'auth retombe sur un filtre « localhost only » basé
+    # sur l'IP client — contournable derrière un reverse proxy mal configuré
+    # (X-Forwarded-For). Exposer 0.0.0.0 sans clé = API de trading ouverte.
+    web_cfg = cfg.get("web", {})
+    if not web_cfg.get("api_key") and str(web_cfg.get("host", "")) in ("0.0.0.0", "::"):
+        logger.warning(
+            "🔓 [Config] web.host=%s SANS web.api_key : l'API n'est protégée que "
+            "par un filtre localhost (fragile derrière un reverse proxy). "
+            "Définissez web.api_key avant toute exposition réseau — "
+            "ex. : python -c \"import secrets; print(secrets.token_urlsafe(32))\"",
+            web_cfg.get("host"),
+        )
 
     # Compatibilité multi-TF
     _VALID_TIMEFRAMES = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}

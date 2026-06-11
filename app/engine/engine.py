@@ -40,6 +40,26 @@ class BaseStrategy:
         """
         return None
 
+    def check_scale_in(self, df: pl.DataFrame, position: dict,
+                       params: dict = None) -> Optional[Dict[str, Any]]:
+        """Hook optionnel : pyramidage (ajout d'une unité sur position gagnante).
+
+        Appelé par le backtest et le live à chaque cycle quand une position de
+        cette stratégie est ouverte, **après** la mise à jour du trailing stop.
+        La stratégie peut stocker son état de pyramidage (nb d'unités, prochain
+        niveau d'ajout…) directement dans ``position`` — le dict est persisté
+        par l'appelant entre les cycles.
+
+        Retourne :
+          - ``None`` si aucun ajout (comportement par défaut)
+          - un dict ``{"size_factor": float, "reason": str}`` sinon : l'appelant
+            ouvre une unité supplémentaire dans le sens de la position, sizée
+            comme une entrée normale (risque % équité / distance au stop)
+            multipliée par ``size_factor``, dans la limite des contraintes de
+            risque globales (notional max, budget du slot).
+        """
+        return None
+
 
 class BaseStrategyML(BaseStrategy):
     """

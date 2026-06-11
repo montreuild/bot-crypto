@@ -23,6 +23,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
+from app.core.execution import close_pnl, trade_fees
 from app.core.trailing import TrailingStopManager
 from app.core.database import (save_trade, update_daily_stats,
                                 persist_open_position, delete_open_position,
@@ -63,6 +64,7 @@ def _apply_trail_override(base_cfg: dict, override: dict) -> dict:
     if "tight_r"     in override: merged["tight_r"]          = float(override["tight_r"])
     if "lock_ratio"  in override: merged["lock_ratio"]       = float(override["lock_ratio"])
     if "use_swing"   in override: merged["use_swing"]        = bool(override["use_swing"])
+    if "mode"        in override: merged["mode"]             = str(override["mode"])
     return merged
 
 
@@ -130,6 +132,13 @@ class PositionMixin:
                     delete_open_position(_sess, pos_id)
                 continue
 
+            # Cohérence entry/taille avec l'ordre réel (live) : si le bot a
+            # crashé entre l'exécution de l'ordre et la persistance, la BDD
+            # peut contenir un prix d'entrée pré-exécution ou une taille non
+            # ajustée du remplissage partiel → stops/PnL faux à la reprise.
+            if not self.cfg["trading"].get("paper_mode") and pos.get("order_id"):
+                self._verify_restored_position(pos)
+
             # Validate stop is not already breached (if we can get a ticker)
             try:
                 ticker = self.exchange.fetch_ticker(symbol) if hasattr(self, 'exchange') else None
@@ -157,6 +166,10 @@ class PositionMixin:
             with self._positions_lock:
                 self.open_positions[pos_id] = pos
             self.risk.register_open(pos)
+            # Re-protège la position : adopte le stop exchange existant si
+            # présent (l'id n'est pas persisté en BDD), sinon en pose un.
+            if self._exchange_stops_enabled():
+                self._adopt_or_place_exchange_stop(pos)
             logger.info(
                 f"  [Reprise] {pos['side'].upper()} {pos['symbol']} "
                 f"@ {pos['entry']:.4f} | stop={pos['stop']:.4f} "
@@ -172,6 +185,53 @@ class PositionMixin:
             f"⚠️ Vérifiez que les stops sont cohérents avec le marché.",
             async_=False
         )
+
+    def _verify_restored_position(self, pos: dict) -> None:
+        """Croise la position BDD avec l'ordre d'ouverture réel de l'exchange.
+
+        Ajuste ``entry`` (prix moyen réellement exécuté) si l'écart dépasse
+        0,1 % et ``size``/``notional`` (quantité réellement remplie) si l'écart
+        dépasse 2 %. Best-effort : ordre introuvable ou erreur réseau → la
+        position BDD est conservée telle quelle (log debug).
+        """
+        order_id = str(pos.get("order_id") or "")
+        if not order_id or order_id.startswith("paper_"):
+            return
+        try:
+            order = self.exchange.fetch_order(order_id, pos["symbol"]) or {}
+        except Exception as e:
+            logger.debug(
+                f"[Reprise] Vérification ordre {order_id} ({pos['symbol']}) KO : {e}"
+            )
+            return
+
+        real_entry = order.get("average") or order.get("price")
+        try:
+            real_entry = float(real_entry) if real_entry else 0.0
+        except (TypeError, ValueError):
+            real_entry = 0.0
+        if real_entry > 0 and pos.get("entry", 0) > 0:
+            drift = abs(real_entry - pos["entry"]) / pos["entry"]
+            if drift > 0.001:
+                logger.warning(
+                    f"[Reprise] {pos['symbol']} : entry BDD {pos['entry']:.6f} ≠ "
+                    f"prix exécuté réel {real_entry:.6f} ({drift * 100:.2f}%) — corrigé."
+                )
+                pos["entry"] = real_entry
+
+        try:
+            filled = float(order.get("filled") or 0)
+        except (TypeError, ValueError):
+            filled = 0.0
+        if filled > 0 and pos.get("size", 0) > 0:
+            drift = abs(filled - pos["size"]) / pos["size"]
+            if drift > 0.02:
+                logger.warning(
+                    f"[Reprise] {pos['symbol']} : taille BDD {pos['size']:.6f} ≠ "
+                    f"quantité remplie réelle {filled:.6f} ({drift * 100:.1f}%) — corrigée."
+                )
+                pos["size"]     = round(filled, 6)
+                pos["notional"] = round(filled * pos["entry"], 4)
 
     # ── Ouverture ──────────────────────────────────────────────────────────
 
@@ -228,9 +288,23 @@ class PositionMixin:
         if self.cfg["trading"].get("paper_mode"):
             slip = self.cfg["trading"].get("paper_slippage", 0.001)
             exec_price *= (1 + slip) if signal["side"] == "long" else (1 - slip)
+        else:
+            # Remplissage partiel : aligner la taille trackée sur la taille
+            # réellement exécutée (sinon stops/PnL calculés sur une taille fausse).
+            try:
+                filled = float(order.get("filled") or 0)
+                if 0 < filled < size * 0.98:
+                    logger.warning(
+                        f"[OPEN] {symbol} remplissage partiel : "
+                        f"{filled:.6f}/{size:.6f} — taille de position ajustée"
+                    )
+                    size     = filled
+                    notional = size * exec_price
+            except (TypeError, ValueError):
+                pass
 
         fee_rate = self.cfg["trading"].get("taker_fee", 0.001)
-        fees     = exec_price * size * fee_rate
+        fees     = trade_fees(exec_price, size, fee_rate)
         with self._capital_lock:
             if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
                 self._paper_base -= fees
@@ -268,6 +342,11 @@ class PositionMixin:
         self.risk.register_open(pos)
         with session_scope(self.SessionLocal) as _sess:
             persist_open_position(_sess, pos)
+
+        # Stop-loss côté exchange (filet de sécurité si le bot tombe) —
+        # le stop logiciel/trailing reste la référence de gestion.
+        if self._exchange_stops_enabled():
+            self._place_exchange_stop(pos)
 
         strat_threshold = self._strat_thresholds.get(strat_name, self.threshold)
         self.signal_log.append({
@@ -400,6 +479,33 @@ class PositionMixin:
                 pos["stop"] = new_stop
                 with session_scope(self.SessionLocal) as _sess:
                     persist_open_position(_sess, pos)
+                # Replace le stop exchange au nouveau niveau ; si l'ancien stop
+                # a déjà été exécuté côté exchange, clôture locale immédiate.
+                filled_stop = self._update_exchange_stop(pos)
+                if filled_stop is not None:
+                    pos["_closed_by_exchange_stop"] = filled_stop
+                    self._close_position(pos_id, price)
+                    return
+
+        # ── Pyramidage piloté par la stratégie (check_scale_in) ────────────
+        # La stratégie peut demander l'ajout d'une unité sur position gagnante
+        # (ex. snowball_pyramid). L'unité passe par les mêmes garde-fous que
+        # l'entrée : risk.can_trade, sizing RiskManager, budget du slot.
+        if strat is not None and hasattr(strat, "check_scale_in"):
+            df_si = self.ohlcv_cache.get(symbol, pos_tf, self.open_positions)
+            if df_si is not None and len(df_si) > 50:
+                scale = None
+                try:
+                    scale = strat.check_scale_in(df_si, pos, self.strat_params)
+                except Exception as _si:
+                    logger.warning(f"[ScaleIn] {strat_name} KO sur {symbol} : {_si}")
+                if scale:
+                    try:
+                        self._scale_in_position(pos_id, pos, price, atr, scale)
+                    except Exception as _si:
+                        logger.error(
+                            f"[ScaleIn] Ajout d'unité {symbol} KO : {_si}", exc_info=True
+                        )
 
         # Notification perte non réalisée
         if pos_id not in self._loss_notified:
@@ -415,6 +521,279 @@ class PositionMixin:
         if trailing.is_triggered(price, new_stop, pos["side"]):
             self._close_position(pos_id, price)
 
+    # ── Stop-loss côté exchange ─────────────────────────────────────────────
+    #
+    # En live réel, un stop purement logiciel laisse la position sans protection
+    # si le bot crash ou perd le réseau. On pose donc un STOP_LOSS_LIMIT côté
+    # exchange (ccxt : ordre limit + param stopPrice) en miroir du stop logiciel,
+    # remplacé quand le trailing remonte le stop, annulé à la clôture.
+    # Opt-out via trading.exchange_stop_orders: false. Dégradation gracieuse :
+    # un échec de pose n'empêche pas le trade (le stop logiciel reste actif)
+    # mais déclenche une notification.
+
+    def _exchange_stops_enabled(self) -> bool:
+        return (not self.cfg["trading"].get("paper_mode")
+                and bool(self.cfg["trading"].get("exchange_stop_orders", True)))
+
+    def _place_exchange_stop(self, pos: dict) -> None:
+        """Pose un stop-loss-limit sur l'exchange en miroir du stop logiciel."""
+        try:
+            close_side = "sell" if pos["side"] == "long" else "buy"
+            stop_price = float(pos["stop"])
+            offset     = float(self.cfg["trading"].get("exchange_stop_limit_offset", 0.005))
+            limit_price = (stop_price * (1 - offset) if pos["side"] == "long"
+                           else stop_price * (1 + offset))
+            order = self.exchange.create_order(
+                pos["symbol"], "limit", close_side, pos["size"], limit_price,
+                params={"stopPrice": stop_price},
+            )
+            pos["stop_order_id"] = order.get("id")
+            logger.info(
+                f"[StopExchange] {pos['symbol']} stop posé @ {stop_price:.4f} "
+                f"(limit {limit_price:.4f}, id={pos['stop_order_id']})"
+            )
+        except Exception as e:
+            pos.pop("stop_order_id", None)
+            logger.error(
+                f"[StopExchange] Pose du stop {pos['symbol']} KO : {e} "
+                f"— position protégée par le stop logiciel uniquement"
+            )
+            self.notif.send(
+                f"⚠️ *Stop exchange non posé* `{pos['symbol']}` : {e}\n"
+                f"La position n'est protégée que par le stop logiciel.",
+                async_=True
+            )
+
+    def _cancel_exchange_stop(self, pos: dict):
+        """Annule le stop exchange. Retourne l'ordre s'il a DÉJÀ été exécuté
+        (position clôturée côté exchange pendant que le bot ne regardait pas),
+        None sinon."""
+        oid = pos.pop("stop_order_id", None)
+        if not oid:
+            return None
+        try:
+            o = self.exchange.fetch_order(oid, pos["symbol"]) or {}
+            status = str(o.get("status", "")).lower()
+            if status in ("closed", "filled"):
+                logger.warning(
+                    f"[StopExchange] {pos['symbol']} : stop {oid} déjà exécuté "
+                    f"côté exchange (avg={o.get('average')})"
+                )
+                return o
+            if status not in ("canceled", "cancelled", "expired", "rejected"):
+                self.exchange.cancel_order(oid, pos["symbol"])
+        except Exception as e:
+            logger.warning(f"[StopExchange] Annulation stop {pos['symbol']} KO : {e}")
+        return None
+
+    def _update_exchange_stop(self, pos: dict):
+        """Remplace le stop exchange après remontée du trailing. Retourne
+        l'ordre stop s'il était déjà exécuté (la position doit être clôturée
+        localement sans nouvel ordre), None sinon."""
+        if not self._exchange_stops_enabled():
+            return None
+        filled = self._cancel_exchange_stop(pos)
+        if filled is not None:
+            return filled
+        self._place_exchange_stop(pos)
+        return None
+
+    def _adopt_or_place_exchange_stop(self, pos: dict) -> None:
+        """À la restauration : adopte un stop déjà ouvert sur l'exchange pour ce
+        symbole (évite les stops dupliqués qui vendraient deux fois), sinon en
+        pose un nouveau."""
+        try:
+            close_side = "sell" if pos["side"] == "long" else "buy"
+            open_orders = self.exchange.fetch_open_orders(pos["symbol"]) or []
+            for o in open_orders:
+                info_type = str(o.get("type", "")).lower()
+                if (o.get("side") == close_side
+                        and ("stop" in info_type or o.get("stopPrice")
+                             or (o.get("info") or {}).get("stopPrice"))):
+                    pos["stop_order_id"] = o.get("id")
+                    logger.info(
+                        f"[StopExchange] {pos['symbol']} : stop existant adopté "
+                        f"(id={pos['stop_order_id']})"
+                    )
+                    return
+        except Exception as e:
+            logger.debug(f"[StopExchange] fetch_open_orders {pos['symbol']} KO : {e}")
+        self._place_exchange_stop(pos)
+
+    # ── Pyramidage (ajout d'unité) ─────────────────────────────────────────
+
+    def _scale_in_position(self, pos_id: str, pos: dict, price: float,
+                           atr: float, scale: dict) -> None:
+        """Ajoute une unité à une position existante (pyramidage).
+
+        Sizing identique à une entrée (RiskManager.compute_size × size_factor),
+        contraint par le budget du slot. Le prix d'entrée moyen, la taille, le
+        notional et les frais de la position sont recalculés puis persistés.
+        """
+        side   = pos["side"]
+        symbol = pos["symbol"]
+        ok_global, reason = self.risk.can_trade(side)
+        if not ok_global:
+            logger.debug(f"[ScaleIn] {symbol} refusé (risk: {reason})")
+            return
+        if price <= 0 or atr <= 0:
+            return
+
+        strat_threshold = self._strat_thresholds.get(pos.get("strategy", ""), self.threshold)
+        sf = max(0.0, min(float(scale.get("size_factor", 1.0)), 2.0))
+        add_size, add_notional = self.risk.compute_size(
+            price, atr, score=float(pos.get("score", 0)),
+            threshold=strat_threshold, size_factor=sf,
+        )
+        if add_size <= 0 or add_notional <= 0:
+            return
+
+        slot_key = f"{pos.get('strategy', '')}::{pos.get('timeframe', self.tf)}"
+        ok_budget, reason_budget = self.allocator.can_allocate(slot_key, add_notional)
+        if not ok_budget:
+            logger.debug(f"[ScaleIn] {symbol} refusé (budget: {reason_budget})")
+            return
+        if not self._pre_execution_check(symbol, side, add_size, price, add_notional):
+            return
+
+        order = self.exchange.create_order(
+            symbol, "market", side, add_size,
+            params={"leverage": int(pos.get("leverage", 1))}
+        )
+        exec_price = order.get("price") or order.get("average") or price
+        if self.cfg["trading"].get("paper_mode"):
+            slip = self.cfg["trading"].get("paper_slippage", 0.001)
+            exec_price *= (1 + slip) if side == "long" else (1 - slip)
+
+        fee_rate = self.cfg["trading"].get("taker_fee", 0.001)
+        add_fees = trade_fees(exec_price, add_size, fee_rate)
+        with self._capital_lock:
+            if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
+                self._paper_base -= add_fees
+            else:
+                self.capital_display -= add_fees
+
+        new_size = pos["size"] + add_size
+        pos["entry"]    = (pos["entry"] * pos["size"] + exec_price * add_size) / new_size
+        pos["size"]     = round(new_size, 6)
+        pos["notional"] = round(pos.get("notional", 0.0) + add_notional, 4)
+        pos["fees"]     = round(pos.get("fees", 0.0) + add_fees, 6)
+        pos["scale_ins"] = pos.get("scale_ins", 0) + 1
+        with session_scope(self.SessionLocal) as _sess:
+            persist_open_position(_sess, pos)
+        self.allocator.register_open(slot_key, add_notional)
+        # Le stop exchange couvre l'ancienne taille → replacement avec la nouvelle
+        filled_stop = self._update_exchange_stop(pos)
+        if filled_stop is not None:
+            pos["_closed_by_exchange_stop"] = filled_stop
+            self._close_position(pos_id, exec_price)
+            return
+
+        self.signal_log.append({
+            "time":      datetime.now(timezone.utc).isoformat(),
+            "symbol":    symbol,
+            "strategy":  pos.get("strategy", ""),
+            "side":      side,
+            "score":     round(float(pos.get("score", 0)), 3),
+            "threshold": round(float(strat_threshold), 3),
+            "timeframe": pos.get("timeframe", self.tf),
+            "status":    "scale_in",
+            "entry":     round(float(exec_price), 4),
+            "reason":    str(scale.get("reason", "pyramid")),
+        })
+        logger.info(
+            f"[SCALE-IN] {side.upper()} {symbol} +{add_size:.6f} @ {exec_price:.4f} "
+            f"| unité #{pos['scale_ins'] + 1} | entry moyen={pos['entry']:.4f} "
+            f"| notional={pos['notional']:.2f}"
+        )
+        self.notif.send(
+            f"➕ *Pyramidage* `{symbol}` {side} +{add_size:.6f} @ `{exec_price:.4f}` "
+            f"({scale.get('reason', 'pyramid')})",
+            async_=True
+        )
+
+    # ── Réconciliation des coûts réels (live) ──────────────────────────────
+
+    def _reconcile_close_costs(self, pos: dict, close_order: dict,
+                               fees_est: float, borrow_est: float,
+                               pnl_est: float) -> tuple:
+        """Remplace les frais/emprunts ESTIMÉS par les valeurs RÉELLES exchange.
+
+        - Frais du fill de clôture : somme des ``fee.cost`` des trades du
+          close order (``fetch_my_trades``). Seuls les frais en devise de
+          cotation (ou USDT/USDC) sont sommés — frais en BNB & co ignorés
+          (pas de conversion fiable), on garde alors l'estimation.
+        - Coût d'emprunt : intérêts réels accumulés depuis l'ouverture via
+          ``fetch_borrow_interest`` (Binance margin interestHistory).
+
+        Best-effort : tout échec retombe sur les estimations (aucune exception
+        propagée). Alerte si l'écart dépasse 5 % du coût estimé.
+        Retourne ``(pnl, fees, borrow)`` ajustés.
+        """
+        symbol = pos["symbol"]
+        quote  = symbol.split("/")[-1].split(":")[0]
+        since  = max(0, int(pos.get("open_time", time.time()) * 1000) - 60_000)
+        fees_real = None
+        borrow_real = None
+
+        # 1. Frais réels du fill de clôture
+        try:
+            close_id = str((close_order or {}).get("id") or "")
+            if close_id and not close_id.startswith("paper_"):
+                my_trades = self.exchange.fetch_my_trades(symbol, since=since) or []
+                total, found, convertible = 0.0, False, True
+                for t in my_trades:
+                    if str(t.get("order")) != close_id:
+                        continue
+                    fee = t.get("fee") or {}
+                    cost, cur = fee.get("cost"), fee.get("currency")
+                    if cost is None:
+                        continue
+                    found = True
+                    if cur in (quote, "USDT", "USDC"):
+                        total += float(cost)
+                    else:
+                        convertible = False   # frais en BNB & co → estimation conservée
+                        break
+                if found and convertible:
+                    fees_real = total
+        except Exception as e:
+            logger.debug(f"[Reconcile] fetch_my_trades {symbol} KO : {e}")
+
+        # 2. Intérêts d'emprunt réels (margin uniquement)
+        if self.cfg.get("exchange", {}).get("margin") and borrow_est > 0:
+            try:
+                fetch_bi = getattr(self.exchange, "fetch_borrow_interest", None)
+                if callable(fetch_bi):
+                    rows = fetch_bi(code=quote, symbol=symbol, since=since) or []
+                    borrow_real = sum(float(r.get("interest") or 0) for r in rows)
+            except Exception as e:
+                logger.debug(f"[Reconcile] fetch_borrow_interest {symbol} KO : {e}")
+
+        fees   = fees_real   if fees_real   is not None else fees_est
+        borrow = borrow_real if borrow_real is not None else borrow_est
+        if fees == fees_est and borrow == borrow_est:
+            return pnl_est, fees_est, borrow_est
+
+        pnl = pnl_est + (fees_est - fees) + (borrow_est - borrow)
+        d_fees   = fees - fees_est
+        d_borrow = borrow - borrow_est
+        logger.info(
+            f"[Reconcile] {symbol} coûts réels : fees {fees_est:.6f}→{fees:.6f} "
+            f"(Δ{d_fees:+.6f}), borrow {borrow_est:.6f}→{borrow:.6f} "
+            f"(Δ{d_borrow:+.6f}) — PnL ajusté {pnl_est:.6f}→{pnl:.6f}"
+        )
+        # Alerte si l'estimation était fausse de > 5 % (config locale à revoir :
+        # taker_fee / borrow_rate_daily ne reflètent pas le compte réel).
+        for label, est, real in (("frais", fees_est, fees), ("emprunt", borrow_est, borrow)):
+            if est > 0 and abs(real - est) / est > 0.05:
+                logger.warning(
+                    f"[Reconcile] {symbol} : écart {label} estimé vs réel "
+                    f"{abs(real - est) / est * 100:.1f}% — ajustez la config "
+                    f"(taker_fee / borrow_rate_daily)."
+                )
+        return pnl, fees, borrow
+
     # ── Clôture ───────────────────────────────────────────────────────────
 
     def _close_position(self, pos_id: str, exit_price: float) -> None:
@@ -422,34 +801,62 @@ class PositionMixin:
             pos = self.open_positions.pop(pos_id, None)
         if not pos:
             return
+        # Stop exchange : annulation avant la clôture market. S'il a déjà été
+        # exécuté (position vendue par l'exchange), pas de second ordre —
+        # on solde la position localement au prix du stop exécuté.
+        ex_fill = pos.pop("_closed_by_exchange_stop", None)
+        if ex_fill is None and pos.get("stop_order_id"):
+            ex_fill = self._cancel_exchange_stop(pos)
+
         close_side = "sell" if pos["side"] == "long" else "buy"
-        order      = self.exchange.create_order(
-            pos["symbol"], "market", close_side, pos["size"]
-        )
-        exec_price = order.get("price") or exit_price
+        if ex_fill is not None:
+            order      = ex_fill
+            exec_price = ex_fill.get("average") or ex_fill.get("price") or exit_price
+        else:
+            order      = self.exchange.create_order(
+                pos["symbol"], "market", close_side, pos["size"]
+            )
+            exec_price = order.get("price") or order.get("average") or 0
+            if not exec_price and not self.cfg["trading"].get("paper_mode"):
+                # Ordres market réels : récupérer le prix moyen réellement exécuté
+                try:
+                    filled = self.exchange.fetch_order(order.get("id", ""), pos["symbol"])
+                    exec_price = filled.get("average") or filled.get("price") or 0
+                except Exception as _fe:
+                    logger.warning(
+                        f"[CLOSE] {pos['symbol']} — fetch_order KO ({_fe}), "
+                        f"utilisation du prix ticker {exit_price:.6f} "
+                        f"(PnL potentiellement décalé)"
+                    )
+            if not exec_price:
+                exec_price = exit_price
 
         # Slippage adverse en paper mode (vente moins chère)
         if self.cfg["trading"].get("paper_mode"):
             slip = self.cfg["trading"].get("paper_slippage", 0.001)
             exec_price *= (1 - slip) if pos["side"] == "long" else (1 + slip)
 
+        # Décompte de clôture (frais, emprunt composé, PnL net) : formules
+        # partagées avec le Backtester — app/core/execution.py (parité
+        # verrouillée par tests/test_execution_parity.py).
         fee_rate    = self.cfg["trading"].get("taker_fee", 0.001)
-        fees        = exec_price * pos["size"] * fee_rate
         hours_held  = (time.time() - pos["open_time"]) / 3600
-
-        # Coût d'emprunt (Binance Margin : 3 périodes/jour avec intérêts composés)
-        daily_rate      = self.cfg["trading"].get("borrow_rate_daily", 0.0002)
-        periods_per_day = self.cfg["trading"].get("borrow_periods_per_day", 3)
-        r_period        = daily_rate / periods_per_day
-        n_periods       = hours_held * periods_per_day / 24
-        borrow_cost     = pos["notional"] * ((1 + r_period) ** n_periods - 1)
-        self._margin_interest += borrow_cost
-
-        gross = (
-            (exec_price - pos["entry"]) * pos["size"] if pos["side"] == "long"
-            else (pos["entry"] - exec_price) * pos["size"]
+        pnl, fees, borrow_cost = close_pnl(
+            side=pos["side"], entry=pos["entry"], exit_price=exec_price,
+            size=pos["size"], notional=pos["notional"], fee_rate=fee_rate,
+            daily_rate=self.cfg["trading"].get("borrow_rate_daily", 0.0002),
+            hours_held=hours_held,
+            periods_per_day=self.cfg["trading"].get("borrow_periods_per_day", 3),
         )
-        pnl = gross - fees - borrow_cost
+        # Réconciliation avec les coûts RÉELS de l'exchange (live uniquement) :
+        # frais du fill de clôture via fetch_my_trades, intérêts d'emprunt réels
+        # via l'historique margin. Remplace les estimations dans le PnL persisté.
+        if (not self.cfg["trading"].get("paper_mode")
+                and self.cfg["trading"].get("reconcile_real_costs", True)):
+            pnl, fees, borrow_cost = self._reconcile_close_costs(
+                pos, order, fees, borrow_cost, pnl
+            )
+        self._margin_interest += borrow_cost
 
         with self._capital_lock:
             if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):

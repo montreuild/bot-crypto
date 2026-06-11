@@ -1,0 +1,18 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : TVR — Trend-Volatility-Regime (breakout Donchian + régime 1D)
+# Exécution recommandée : 4h | Régime : 1D | Long & Short
+# ──────────────────────────────────────────────────────────────────────────────
+# params     : paramètres par défaut (validés research 2019→2026), éditables
+# optimizer_results : mis à jour automatiquement après chaque optimisation
+# ──────────────────────────────────────────────────────────────────────────────
+
+params:
+  donchian_n: 55
+  er_period: 30
+  er_min: 0.20
+  atr_period: 14
+  atr_expansion: 1.0
+  k_sl: 2.5
+  k_trail: 3.0
+
+optimizer_results: {}

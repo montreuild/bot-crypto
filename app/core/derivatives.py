@@ -36,6 +36,15 @@ logger = logging.getLogger(__name__)
 _BINANCE_FAPI = "https://fapi.binance.com"
 _PERIOD_OK = ("5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d")
 
+# Compat polars : le kwarg ``min_periods`` (≤1.20, version épinglée 1.0.0) a été
+# renommé ``min_samples`` ensuite. Détection une fois à l'import.
+import inspect as _inspect
+_MIN_SAMPLES_KW = (
+    {"min_samples": 10}
+    if "min_samples" in _inspect.signature(pl.Expr.rolling_mean).parameters
+    else {"min_periods": 10}
+)
+
 _locks: Dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
@@ -207,8 +216,8 @@ class DerivativesStore:
         taker   = _series("taker", lambda: self.fetch_taker_ratio(symbol, period))
 
         def _zcol(name: str) -> pl.Expr:
-            mean = pl.col(name).rolling_mean(z_window, min_samples=10)
-            std = pl.col(name).rolling_std(z_window, min_samples=10)
+            mean = pl.col(name).rolling_mean(z_window, **_MIN_SAMPLES_KW)
+            std = pl.col(name).rolling_std(z_window, **_MIN_SAMPLES_KW)
             return ((pl.col(name) - mean) / (std + 1e-12))
 
         if funding is not None:

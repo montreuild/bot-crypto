@@ -54,6 +54,8 @@ class BalanceSyncMixin:
         """
         unrealized = 0.0
         for pos in self.open_positions.values():
+            if pos.get("_reserved"):
+                continue
             ticker = self._safe_ticker(pos["symbol"])
             if ticker:
                 price = ticker.get("last", pos["entry"])
@@ -123,10 +125,28 @@ class BalanceSyncMixin:
             ml_  = float(acct.get("marginLevel", 0) or 0)
             if ml_ > 0:
                 self._margin_level = round(ml_, 3)
-                if ml_ < 1.15:
-                    logger.warning(f"[MARGIN] ⚠ Margin level CRITIQUE : {ml_:.3f}")
+                ml_alert    = float(self.cfg["trading"].get("margin_level_alert", 1.5))
+                ml_critical = float(self.cfg["trading"].get("margin_level_critical", 1.2))
+                if ml_ < ml_critical:
+                    # Liquidation Binance à ~1.05 : HALT immédiat des nouvelles
+                    # entrées (notification synchrone — pas de délai de queue).
+                    logger.critical(
+                        f"[MARGIN] 🚨 Margin level CRITIQUE : {ml_:.3f} "
+                        f"< {ml_critical} — HALT du trading"
+                    )
+                    if not self.risk.halted:
+                        self.risk.halted      = True
+                        self.risk.halt_reason = f"Margin level critique : {ml_:.3f}"
                     self.notif.send(
-                        f"⚠ MARGIN LEVEL CRITIQUE : {ml_:.3f}", async_=True
+                        f"🚨 *MARGIN LEVEL CRITIQUE* : `{ml_:.3f}`\n"
+                        f"Trading HALTÉ — réduisez les positions ou ajoutez de la marge "
+                        f"(liquidation Binance ≈ 1.05).",
+                        async_=False
+                    )
+                elif ml_ < ml_alert:
+                    logger.warning(f"[MARGIN] ⚠ Margin level bas : {ml_:.3f}")
+                    self.notif.send(
+                        f"⚠ MARGIN LEVEL BAS : {ml_:.3f}", async_=True
                     )
             if not self.cfg["trading"].get("paper_mode"):
                 detail = self.exchange.fetch_balance_detail()

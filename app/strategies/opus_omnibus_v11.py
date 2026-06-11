@@ -935,7 +935,18 @@ class Strategy(BaseStrategyML):
         self._train(df, tf_key=tf, params=p)
 
     # ── Entraînement V11 ──────────────────────────────────────────────────────
+    # Entraînement avec cache process-wide (cf. app/core/train_cache.py) :
+    # les retrains identiques (même fenêtre, mêmes hyperparams d'entraînement)
+    # sont réutilisés entre les trials de l'optimiseur au lieu d'être relancés.
+    _TRAIN_STATE_ATTRS = ('_amp_models', '_dir_models', '_amp_cal', '_dir_cal', '_feature_cols', '_kept_features', '_medians', '_best_auc_per_tf', '_train_meta')
+    _TRAIN_PARAM_KEYS  = ('amp_top_pct', 'n_estimators', 'num_leaves', 'learning_rate', 'label_horizons', 'calibrate', 'prune_features')
+
     def _train(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
+        from app.core.train_cache import cached_train
+        return cached_train(self, df, tf_key, params, self._train_impl,
+                            self._TRAIN_STATE_ATTRS, self._TRAIN_PARAM_KEYS)
+
+    def _train_impl(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
         try:
             import lightgbm as lgb
         except ImportError:

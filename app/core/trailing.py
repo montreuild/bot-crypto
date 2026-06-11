@@ -97,12 +97,62 @@ class DynamicTrailingStop:
         return ["grace", "wide", "breakeven", "lock", "tight"][min(self._phase, 4)]
 
 
+class ChandelierTrailingStop:
+    """Trailing Chandelier classique : stop = extrême favorable ∓ mult × ATR.
+
+    Ratchet strict (le stop ne recule jamais), sans phases : utilisé par les
+    stratégies de suivi de tendance type TVR/Snowball où la sortie doit rester
+    « large » pour laisser respirer la tendance. Une instance par trade.
+    """
+
+    def __init__(self, mult=3.0):
+        self.mult = max(float(mult), 0.1)
+        self._peak_price = 0.0
+
+    def init(self, entry, atr, side):
+        self._peak_price = entry
+        return entry - atr * self.mult if side == "long" else entry + atr * self.mult
+
+    def update(self, current_price, current_stop, atr, side, entry=None,
+               bars_held=0, recent_lows=None, recent_highs=None):
+        if atr <= 0:
+            return current_stop, 1, "chandelier"
+        if side == "long":
+            self._peak_price = max(self._peak_price or current_price, current_price)
+            candidate = self._peak_price - atr * self.mult
+            # Clamp : le stop ne doit pas croiser le prix courant
+            candidate = min(candidate, current_price - atr * 0.1)
+            return max(current_stop, candidate), 1, "chandelier"
+        self._peak_price = min(self._peak_price or current_price, current_price)
+        candidate = self._peak_price + atr * self.mult
+        candidate = max(candidate, current_price + atr * 0.1)
+        return min(current_stop, candidate), 1, "chandelier"
+
+    def is_triggered(self, price, stop, side):
+        return price <= stop if side == "long" else price >= stop
+
+    @property
+    def phase(self):
+        return 1
+
+    @property
+    def phase_name(self):
+        return "chandelier"
+
+
 class TrailingStopManager:
-    """Interface simplifiée vers DynamicTrailingStop."""
+    """Interface simplifiée vers DynamicTrailingStop (ou ChandelierTrailingStop).
+
+    ``mode="chandelier"`` bascule sur le trailing Chandelier pur (ratchet
+    extrême ∓ mult × ATR, sans phases breakeven/lock/tight). Sélectionnable
+    par signal via ``trail_override={"mode": "chandelier", "trail_wide": k}``.
+    """
 
     def __init__(self, mult=2.5, grace_bars=4, breakeven_r=1.2, trail_tight_mult=1.0,
-                 lock_r=2.5, tight_r=4.0, lock_ratio=0.60, use_swing=True):
+                 lock_r=2.5, tight_r=4.0, lock_ratio=0.60, use_swing=True,
+                 mode="dynamic"):
         self.mult = mult
+        self.mode = str(mode or "dynamic").lower()
         self._dts = None
         self._kwargs = dict(
             trail_wide=mult, trail_normal=max(mult - 0.5, 1.5),
@@ -111,13 +161,21 @@ class TrailingStopManager:
             lock_ratio=lock_ratio, use_swing=use_swing,
         )
 
+    def _new_dts(self):
+        if self.mode == "chandelier":
+            return ChandelierTrailingStop(mult=self.mult)
+        return DynamicTrailingStop(**self._kwargs)
+
     def initial_stop(self, entry, atr, side):
-        self._dts = DynamicTrailingStop(**self._kwargs)
+        self._dts = self._new_dts()
         return self._dts.init(entry, atr, side)
 
     def init_from_stop(self, entry: float, saved_stop: float, side: str):
         """Réinitialise depuis un stop sauvegardé en BDD (reprise après crash)."""
-        self._dts = DynamicTrailingStop(**self._kwargs)
+        self._dts = self._new_dts()
+        if self.mode == "chandelier":
+            self._dts._peak_price = entry
+            return
         # Fallback si stop == entry : 1% du prix comme distance (évite peak_r infini)
         _FALLBACK_STOP_PCT = 0.01
         raw_dist = abs(entry - saved_stop)
@@ -131,10 +189,13 @@ class TrailingStopManager:
         if atr <= 0:
             return current_stop
         if self._dts is None:
-            self._dts = DynamicTrailingStop(**self._kwargs)
-            dist = abs(entry - current_stop) if entry else atr * self.mult
-            self._dts._initial_stop_dist = max(dist, 1e-9)
-            self._dts._peak_price = current_price
+            self._dts = self._new_dts()
+            if self.mode == "chandelier":
+                self._dts._peak_price = current_price
+            else:
+                dist = abs(entry - current_stop) if entry else atr * self.mult
+                self._dts._initial_stop_dist = max(dist, 1e-9)
+                self._dts._peak_price = current_price
         new_stop, _, _ = self._dts.update(
             current_price=current_price, current_stop=current_stop, atr=atr,
             side=side, entry=entry or current_price, bars_held=bars_held,

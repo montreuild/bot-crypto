@@ -266,10 +266,25 @@ a:focus-visible,.sb-link:focus-visible,.toggle input:focus-visible+.toggle-slide
 #theme-toggle:hover{color:var(--text);background:rgba(255,255,255,.08);}
 [data-theme="light"] #theme-toggle{background:rgba(0,0,0,.05);}
 [data-theme="light"] #theme-toggle:hover{background:rgba(0,0,0,.1);}
+/* ── Utilitaires partagés (formulaires, chips, états vides) ──
+   Définis ici une seule fois ; les pages peuvent surcharger via page_styles
+   (le bloc est injecté après, donc prioritaire à spécificité égale). */
+.form-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;}
+.form-lbl{font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px;}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--muted);}
+.btn-outline:hover{color:var(--text);border-color:var(--muted);}
+.empty-state{text-align:center;padding:48px 24px;color:var(--dim);}
+.stat-chip{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:.78rem;flex:1;min-width:100px;}
+.chip-lbl{color:var(--muted);font-size:.68rem;margin-bottom:3px;}
+.chip-val{font-weight:700;font-size:.92rem;font-family:var(--mono);}
+.chip-sub{color:var(--dim);font-size:.62rem;font-family:var(--mono);margin-top:2px;}
 {% block page_styles %}{% endblock %}
 </style>
 <script>
 function escHtml(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+/* Helpers de formatage partagés (étaient dupliqués dans dashboard/ml/optimizer) */
+function fmtSign(v,unit=''){const n=+(v||0);return(n>=0?'+':'')+n.toFixed(2)+unit;}
+function fmtPrice(v){const n=+(v||0);return n>=100?n.toFixed(2):n.toFixed(4);}
 function safeSide(v){const s=(v||'').toLowerCase();return['buy','sell','long','short'].includes(s)?s:'';}
 function apiFetch(url,opts={}){if(!opts.headers)opts.headers={};opts.credentials='include';return fetch(url,opts);}
 function toggleSidebar(){
@@ -324,6 +339,7 @@ function showSkeleton(el,lines){if(!el)return;let h='';for(let i=0;i<(lines||3);
     <a href="/backtest"   class="sb-link {% if active_page=='backtest'   %}active{% endif %}" aria-label="Backtest" {% if active_page=='backtest'   %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">↺</span><span class="sb-lbl">Backtest</span></a>
     <a href="/replay"     class="sb-link {% if active_page=='replay'     %}active{% endif %}" aria-label="Replay Bougies" {% if active_page=='replay'     %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">▶</span><span class="sb-lbl">Replay</span></a>
     <a href="/compare"    class="sb-link {% if active_page=='compare'    %}active{% endif %}" aria-label="Comparatif de stratégies" {% if active_page=='compare'    %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">⚖</span><span class="sb-lbl">Comparatif</span></a>
+    <a href="/derivatives" class="sb-link {% if active_page=='derivatives' %}active{% endif %}" aria-label="Dérivés (funding, OI, ratios)" {% if active_page=='derivatives' %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">∿</span><span class="sb-lbl">Dérivés</span></a>
     <div class="sb-group-label" style="margin-top:12px" role="presentation">Optimisation</div>
     <a href="/optimizer"  class="sb-link {% if active_page=='optimizer'  %}active{% endif %}" aria-label="Optimiseur de stratégies" {% if active_page=='optimizer'  %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">⬡</span><span class="sb-lbl">Optimiseur</span></a>
     <a href="/ml"         class="sb-link {% if active_page=='ml'         %}active{% endif %}" aria-label="Optimiseur ML" {% if active_page=='ml'         %}aria-current="page"{% endif %}><span class="sb-icon" aria-hidden="true">🧠</span><span class="sb-lbl">Optimiseur ML</span></a>

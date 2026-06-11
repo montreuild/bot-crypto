@@ -25,7 +25,8 @@ from slowapi.errors import RateLimitExceeded
 
 from app.api import state
 from app.api.helpers import CleanJSONResponse
-from app.api.routes import config, trades, backtest, scanner, optimizer, bot, ml, replay
+from app.api.routes import (config, trades, backtest, scanner, optimizer, bot,
+                            ml, replay, derivatives)
 from app.core.database import init_db
 
 logger = logging.getLogger(__name__)
@@ -70,13 +71,20 @@ async def _global_exception_handler(request: Request, exc: Exception):
 
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
+
+# CORS : whitelist localhost par défaut (dev). En production, définir
+# ALLOWED_ORIGINS (liste séparée par des virgules) pour restreindre au(x)
+# domaine(s) réel(s) — ex. ALLOWED_ORIGINS=https://bot.mondomaine.com
+_allowed_origins = [
+    o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()
+] or [
+    "http://localhost",      "http://127.0.0.1",
+    "http://localhost:8000", "http://127.0.0.1:8000",
+    "http://localhost:8001", "http://127.0.0.1:8001",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost",      "http://127.0.0.1",
-        "http://localhost:8000", "http://127.0.0.1:8000",
-        "http://localhost:8001", "http://127.0.0.1:8001",
-    ],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["X-API-Key", "Content-Type"],
@@ -191,6 +199,10 @@ def ml_page(request: Request):
 def compare_page(request: Request):
     return _tpl("compare.html", request, {"active_page": "compare"})
 
+@app.get("/derivatives", response_class=HTMLResponse)
+def derivatives_page(request: Request):
+    return _tpl("derivatives.html", request, {"active_page": "derivatives"})
+
 
 # ── Status (accès direct à state.cfg, hors router) ────────────────────────
 @app.get("/api/status")
@@ -253,3 +265,4 @@ app.include_router(optimizer.router)
 app.include_router(bot.router)
 app.include_router(ml.router)
 app.include_router(replay.router)
+app.include_router(derivatives.router)

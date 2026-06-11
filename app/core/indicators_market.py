@@ -1,0 +1,377 @@
+"""Structure de marché, régimes, niveaux S/R et statistiques roulantes.
+
+Extrait de ``indicators.py`` (découpage V13).
+"""
+import logging
+import threading
+from collections import OrderedDict
+from typing import Tuple
+
+import numpy as np
+import polars as pl
+
+_log = logging.getLogger(__name__)
+
+from app.core.indicators_core import (adx, adx_val, atr, atr_val, atr_series, bollinger,
+                                      ema, macd, rsi, sma, supertrend, volume_ratio)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Structure de marché & HTF
+# ══════════════════════════════════════════════════════════════════════════════
+
+def market_structure(high: pl.Series, low: pl.Series,
+                     n_pivots: int = 4, window: int = 5) -> int:
+    """+1 = HH/HL (uptrend), −1 = LL/LH (downtrend), 0 = neutral."""
+    if len(high) < n_pivots * window * 2:
+        return 0
+    highs = [float(high[-i * window - 1:-i * window + window - 1].max())
+             for i in range(1, n_pivots + 1)]
+    lows  = [float(low[-i * window - 1:-i * window + window - 1].min())
+             for i in range(1, n_pivots + 1)]
+    hh = sum(1 for i in range(len(highs) - 1) if highs[i] > highs[i + 1])
+    hl = sum(1 for i in range(len(lows) - 1)  if lows[i]  > lows[i + 1])
+    ll = sum(1 for i in range(len(highs) - 1) if highs[i] < highs[i + 1])
+    lh = sum(1 for i in range(len(lows) - 1)  if lows[i]  < lows[i + 1])
+    if (hh + hl) >= n_pivots - 1:
+        return 1
+    if (ll + lh) >= n_pivots - 1:
+        return -1
+    return 0
+
+
+def htf_trend(df_htf, ema_period: int = 50) -> int:
+    """Tendance du timeframe supérieur : +1 haussier, −1 baissier, 0 neutre."""
+    if df_htf is None or len(df_htf) < ema_period + 3:
+        return 0
+    c        = df_htf["close"]
+    ema_line = c.ewm_mean(span=ema_period, adjust=False)
+    price_above = float(c[-1]) > float(ema_line[-1])
+    slope_up    = float(ema_line[-1]) > float(ema_line[-4])
+    if price_above and slope_up:
+        return 1
+    if not price_above and not slope_up:
+        return -1
+    return 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Détection de régime
+# ══════════════════════════════════════════════════════════════════════════════
+
+def detect_regime_full(df: pl.DataFrame,
+                      adx_trend_threshold: float = 25.0,
+                      atr_volatile_threshold: float = 3.0) -> dict:
+    """Classifie le marché : trending | ranging | volatile.
+
+    Args:
+        adx_trend_threshold: ADX above this = trending (default 25)
+        atr_volatile_threshold: ATR% above this = volatile (default 3.0%)
+    """
+    if len(df) < 30:
+        return {"regime": "unknown", "adx": 0, "atr_pct": 0,
+                "confidence": 0, "trend_dir": "flat"}
+    adx_s, _, _ = adx(df, 14)
+    adx_l  = float(adx_s[-1]) if adx_s[-1] is not None else 0.0
+    atr_l  = atr_val(df, 14)
+    price  = float(df["close"][-1])
+    atr_p  = atr_l / price * 100 if price > 0 else 0
+    ema20  = float(ema(df["close"], 20)[-1])
+    ema50  = float(ema(df["close"], 50)[-1])
+    tdir   = "up" if ema20 > ema50 else "down"
+    if atr_p > atr_volatile_threshold:
+        regime, conf = "volatile", min(atr_p / 5, 1.0)
+    elif adx_l >= adx_trend_threshold:
+        regime, conf = "trending", min((adx_l - adx_trend_threshold) / 50, 1.0)
+    else:
+        regime, conf = "ranging",  max(0, 1 - (adx_l - 15) / 10)
+    return {"regime": regime, "adx": round(adx_l, 2), "atr_pct": round(atr_p, 3),
+            "confidence": round(conf, 3), "trend_dir": tdir}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Features ML
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_features(df: pl.DataFrame, window: int = 20) -> pl.DataFrame:
+    """Features ML depuis OHLCV."""
+    if len(df) < window + 10:
+        return pl.DataFrame()
+    close      = df["close"]
+    adx_s, pdi, ndi = adx(df, 14)
+    atr14      = atr(df, 14)
+    ml, ms, mh = macd(close)
+    bb_u, _, bb_l = bollinger(close)
+    vr         = volume_ratio(df, 20)
+    st_d, _    = supertrend(df)
+
+    result = pl.DataFrame({
+        "ret1":      close.pct_change(1),
+        "ret5":      close.pct_change(5),
+        "ret20":     close.pct_change(20),
+        "rsi":       rsi(close, 14),
+        "macd_h":    mh,
+        "macd_hd":   mh.diff(1),
+        "ema_ratio": ema(close, 10) / ema(close, 30).clip(lower_bound=1e-10),
+        "adx":       adx_s,
+        "pdi":       pdi,
+        "ndi":       ndi,
+        "atr_pct":   atr14 / close.clip(lower_bound=1e-10) * 100,
+        "bb_width":  (bb_u - bb_l) / close.clip(lower_bound=1e-10),
+        "vol_ratio": vr,
+        "st_dir":    st_d,
+    })
+    return result.drop_nulls()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Support / Résistance — détection via pivots swing
+# ══════════════════════════════════════════════════════════════════════════════
+
+def support_resistance_levels(
+    df: pl.DataFrame,
+    window: int = 5,
+    cluster_pct: float = 0.005,
+    min_touches: int = 1,
+    max_levels: int = 6,
+    lookback: int = 150,
+) -> dict:
+    """Détecte supports et résistances via pivots swing (hauts/bas locaux).
+
+    Optimized: uses numpy argmax/argmin on rolling windows instead of Python loops.
+
+    Args:
+        window       : Fenêtre de chaque côté pour valider un pivot (barres)
+        cluster_pct  : Distance relative max pour fusionner deux niveaux
+        min_touches  : Force minimum pour retenir un niveau
+        max_levels   : Nombre max de niveaux retournés par côté
+        lookback     : Nombre de bougies analysées (les plus récentes)
+
+    Returns:
+        {"supports": [...], "resistances": [...]}
+    """
+    n = len(df)
+    if n < window * 2 + 5:
+        return {"supports": [], "resistances": []}
+
+    start = max(0, n - lookback)
+    high  = df["high"][start:].to_numpy()
+    low   = df["low"][start:].to_numpy()
+    close = df["close"][start:].to_numpy()
+    m     = len(high)
+
+    # Vectorized pivot detection using rolling max/min
+    from numpy.lib.stride_tricks import sliding_window_view
+    win_size = 2 * window + 1
+
+    if m < win_size:
+        return {"supports": [], "resistances": []}
+
+    high_wins = sliding_window_view(high, win_size)
+    low_wins  = sliding_window_view(low, win_size)
+
+    # Pivot high: center element is the max of its window
+    high_center = high[window:m - window]
+    high_max    = high_wins.max(axis=1)
+    res_mask    = high_center == high_max
+    res_pivots  = high_center[res_mask].tolist()
+
+    # Pivot low: center element is the min of its window
+    low_center = low[window:m - window]
+    low_min    = low_wins.min(axis=1)
+    sup_mask   = low_center == low_min
+    sup_pivots = low_center[sup_mask].tolist()
+
+    def _cluster(prices: list[float], tol: float) -> list[tuple[float, int]]:
+        if not prices:
+            return []
+        prices = sorted(prices)
+        clusters: list[list[float]] = [[prices[0]]]
+        for p in prices[1:]:
+            ref = clusters[-1][0]
+            if ref > 0 and (p - ref) / ref <= tol:
+                clusters[-1].append(p)
+            else:
+                clusters.append([p])
+        return [(sum(c) / len(c), len(c)) for c in clusters]
+
+    res_clusters = _cluster(res_pivots, cluster_pct)
+    sup_clusters = _cluster(sup_pivots, cluster_pct)
+    price_now    = float(close[-1])
+
+    supports = sorted(
+        [{"price": round(p, 8), "strength": t}
+         for p, t in sup_clusters if p < price_now and t >= min_touches],
+        key=lambda x: -x["price"],
+    )[:max_levels]
+
+    resistances = sorted(
+        [{"price": round(p, 8), "strength": t}
+         for p, t in res_clusters if p > price_now and t >= min_touches],
+        key=lambda x: x["price"],
+    )[:max_levels]
+
+    return {"supports": supports, "resistances": resistances}
+
+
+def nearest_support(price: float, levels: list) -> float | None:
+    """Retourne le support le plus proche en-dessous du prix courant."""
+    candidates = [lv["price"] for lv in levels if lv["price"] < price]
+    return max(candidates) if candidates else None
+
+
+def nearest_resistance(price: float, levels: list) -> float | None:
+    """Retourne la résistance la plus proche au-dessus du prix courant."""
+    candidates = [lv["price"] for lv in levels if lv["price"] > price]
+    return min(candidates) if candidates else None
+
+
+def detect_regime(df: pl.DataFrame, adx_threshold: float = 25.0) -> str:
+    """
+    Détecte le régime de marché à partir de l'ADX(14).
+
+    Retourne ``"trend"`` si ADX >= adx_threshold, ``"range"`` sinon,
+    ou ``"unknown"`` si le DataFrame est trop court.
+
+    For detailed regime detection (trending/ranging/volatile with confidence),
+    use detect_regime_full() instead.
+
+    Utilisé par SignalPipeline (ML blending) et MarketScanner (screen/UI).
+    Extrait ici pour éviter que SignalPipeline dépende de MarketScanner.
+    """
+    if len(df) < 30:
+        return "unknown"
+    adx = adx_val(df, 14)
+    return "trend" if adx >= adx_threshold else "range"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Primitives glissantes génériques (numpy fallback)
+#  Réutilisables par n'importe quelle stratégie.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def bars_since_cross(s_fast: pl.Series, s_slow: pl.Series) -> pl.Series:
+    """Bougies écoulées depuis le dernier croisement signé de ``s_fast`` et ``s_slow``.
+
+    Convention : valeur positive ``+n`` = ``s_fast`` au-dessus depuis n barres,
+    négative ``-n`` = en-dessous. ``NaN`` tant qu'aucun croisement n'a eu lieu.
+    """
+    sf = s_fast.to_numpy()
+    ss = s_slow.to_numpy()
+    n  = len(sf)
+    above = (sf > ss).astype(np.int8)
+    diff  = np.zeros(n, dtype=np.int8)
+    if n > 1:
+        diff[1:] = above[1:] - above[:-1]
+    out = np.full(n, np.nan, dtype=np.float64)
+    last_idx, last_dir = -1, 0
+    for i in range(n):
+        if diff[i] != 0:
+            last_idx, last_dir = i, int(diff[i])
+        if last_idx >= 0:
+            out[i] = last_dir * (i - last_idx)
+    return pl.Series(out)
+
+
+def rolling_slope(s: pl.Series, window: int) -> pl.Series:
+    """Pente d'ordre 1 (``np.polyfit``) sur fenêtre glissante.
+
+    Retourne ``NaN`` pour les ``window-1`` premières barres.
+    """
+    arr = s.to_numpy()
+    n   = len(arr)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if window <= 1 or n < window:
+        return pl.Series(out)
+    x = np.arange(window, dtype=np.float64)
+    x_mean = x.mean()
+    x_dev  = x - x_mean
+    denom  = float((x_dev * x_dev).sum())
+    if denom == 0:
+        return pl.Series(out)
+    for i in range(window - 1, n):
+        y = arr[i - window + 1 : i + 1]
+        if np.any(np.isnan(y)):
+            continue
+        # pente = cov(x,y)/var(x) — équivalent à np.polyfit(x, y, 1)[0]
+        out[i] = float(((y - y.mean()) * x_dev).sum()) / denom
+    return pl.Series(out)
+
+
+def hurst_exponent(arr: np.ndarray, max_lag: int = 20) -> float:
+    """Exposant de Hurst par méthode R/S (scalaire).
+
+    Utilise les écarts-types des différences décalées (``arr[lag:] - arr[:-lag]``)
+    et ajuste une droite log-log pour estimer 2H. NaN si données insuffisantes.
+    """
+    a = arr[~np.isnan(arr)]
+    if len(a) < max_lag + 5:
+        return np.nan
+    tau = []
+    for lag in range(2, max_lag):
+        d = a[lag:] - a[:-lag]
+        if len(d) < 2 or np.std(d) == 0:
+            continue
+        tau.append(np.sqrt(np.std(d)))
+    if len(tau) < 5:
+        return np.nan
+    try:
+        poly = np.polyfit(np.log(np.arange(2, 2 + len(tau))), np.log(tau), 1)
+        return float(poly[0] * 2.0)
+    except Exception:
+        return np.nan
+
+
+def rolling_hurst(s: pl.Series, window: int = 100, max_lag: int = 20) -> pl.Series:
+    """Exposant de Hurst glissant — appelle ``hurst_exponent`` sur chaque fenêtre."""
+    arr = s.to_numpy()
+    n   = len(arr)
+    out = np.full(n, np.nan, dtype=np.float64)
+    for i in range(window - 1, n):
+        out[i] = hurst_exponent(arr[i - window + 1 : i + 1], max_lag=max_lag)
+    return pl.Series(out)
+
+
+def rolling_rank_pct(s: pl.Series, window: int) -> pl.Series:
+    """Rang percentile glissant (méthode ``average``).
+
+    Équivalent ``pd.Series.rolling(window).rank(pct=True)``.
+    Pour chaque barre, calcule la position de la valeur courante dans les
+    ``window`` dernières valeurs et la divise par ``window``.
+    """
+    arr = s.to_numpy()
+    n   = len(arr)
+    out = np.full(n, np.nan, dtype=np.float64)
+    for i in range(window - 1, n):
+        w = arr[i - window + 1 : i + 1]
+        if np.any(np.isnan(w)):
+            continue
+        last = w[-1]
+        rank_avg = (np.sum(w < last) + np.sum(w <= last) + 1) / 2.0
+        out[i] = rank_avg / window
+    return pl.Series(out)
+
+
+def bearish_excess_series(df: pl.DataFrame, rsi_period: int = 14,
+                          rsi_threshold: float = 38.0,
+                          sma_period: int = 20,
+                          price_dev_pct: float = 1.5) -> pl.Series:
+    """Excès baissier vectorisé — True si au moins une condition est remplie :
+      1. 2+ bougies rouges consécutives (close < open sur les 2 dernières barres)
+      2. RSI(rsi_period) < rsi_threshold
+      3. Prix > price_dev_pct% en-dessous de SMA(sma_period)
+    Conçu pour le scanner batch (vectorisé, zéro boucle Python).
+    """
+    close = df["close"]
+    open_ = df["open"]
+    red = (close < open_).cast(pl.Int8)
+    red_prev = red.shift(1).fill_null(0)
+    consec_red = (red & red_prev).cast(pl.Boolean)
+    rsi_s = rsi(close, rsi_period)
+    rsi_excess = rsi_s < rsi_threshold
+    sma_s = sma(close, sma_period)
+    sma_safe = sma_s.clip(lower_bound=1e-9)
+    price_below = close < sma_safe * (1.0 - price_dev_pct / 100.0)
+    return (consec_red | rsi_excess | price_below).fill_null(False)
+
+
+
