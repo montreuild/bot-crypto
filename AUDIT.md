@@ -203,7 +203,11 @@ Frictions identifiées :
 8. Factoriser la famille Opus autour d'une `OpusBase` ; supprimer wrappers
    `*_1` et versions dépassées (−4000 L). C'est désormais LE chantier
    structurel principal.
-9. Découper `optimizer.py` (search/scoring/persistance) et `indicators.py`.
+9. ✅ fait — `optimizer.py` découpé en `opt_scoring` / `opt_persistence` /
+   `opt_workers` (+ façade compatible) et `indicators.py` en
+   `indicators_core` / `indicators_causal` / `indicators_market` /
+   `indicators_precompute` (+ façade) ; chemin parallèle de l'optimiseur
+   vérifié, 54 sites d'import inchangés.
 
 ### Long terme
 10. Statut de cycle de vie des stratégies (YAML + UI) et archivage `research/`.
