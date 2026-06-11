@@ -245,8 +245,13 @@ def _worker_init(strategy_name: str, cfg_yaml: str,
             # Reset l'instance pour OOS
             reset = getattr(_tmp, "reset_model", None)
             if callable(reset):
-                try: reset()
-                except Exception: pass
+                try:
+                    reset()
+                except Exception as _re:
+                    logger.warning(
+                        f"[Optimizer] reset_model({getattr(_tmp, 'name', '?')}) KO "
+                        f"— le snapshot OOS peut hériter de l'état IS : {_re}"
+                    )
             prep(_W["df_oos"])
             _W["snap_oos"] = _snap_state(_tmp)
         del _tmp

@@ -159,7 +159,9 @@ def _bootstrap_strategy_files(strategies_dir: str) -> None:
                 )
             logger.info(f"[Config] YAML créé automatiquement : strategies/{module_name}.yaml")
         except Exception as exc:
-            logger.debug(f"[Config] Bootstrap {module_name} ignoré : {exc}")
+            # warning : sans YAML bootstrappé, la stratégie n'apparaît ni dans
+            # strategies.enabled ni dans la page Configuration.
+            logger.warning(f"[Config] Bootstrap strategies/{module_name}.yaml KO : {exc}")
 
 
 def load_config(path: str = "config.yaml") -> dict:

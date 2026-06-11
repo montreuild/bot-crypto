@@ -19,8 +19,11 @@ def _build_registry() -> tuple:
         try:
             mod = importlib.import_module(f"app.strategies.{module_name}")
         except Exception as exc:
-            logger.debug(
-                f"[Registry] Impossible d'importer app.strategies.{module_name}: {exc}"
+            # warning (et non debug) : une stratégie cassée disparaîtrait
+            # silencieusement du registre, de l'optimiseur et de l'UI.
+            logger.warning(
+                f"[Registry] Stratégie ignorée — import app.strategies.{module_name} "
+                f"impossible : {exc}"
             )
             continue
 
