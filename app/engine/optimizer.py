@@ -567,7 +567,9 @@ def _append_changelog(config_path: str, strategy: str, timeframe: str,
         log.append(entry)
         log = log[-200:]  # garder les 200 derniers
         with open(changelog_path, "w", encoding="utf-8") as f:
-            json.dump(log, f, ensure_ascii=False, indent=2)
+            # Compact (pas d'indent) : divise la taille du fichier par ~1.6 ;
+            # le changelog est consommé par l'API/UI, pas lu à la main.
+            json.dump(log, f, ensure_ascii=False, separators=(",", ":"))
 
 
 def get_active_strategies_per_tf(cfg: dict) -> Dict[str, List[dict]]:

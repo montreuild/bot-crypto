@@ -55,7 +55,9 @@ trade ⇒ même PnL net).
 - **YAML orphelins** (le `.py` n'existe plus) : `strategies/yoyo.yaml`,
   `opus_omnibus_v6.yaml`, `opus_omnibus_v6_pretrained.yaml`,
   `ml_dynamic_threshold_no_ml.yaml` → chargés/affichés pour rien.
-- `optimizer_changelog.json` : 265 KB, croissance infinie sans rotation.
+- `optimizer_changelog.json` : ~~croissance infinie~~ *(correction : une
+  rotation à 200 entrées existait déjà ; l'écriture est désormais compacte,
+  166 Ko au lieu de 265 Ko)*.
 
 ### Copier-coller massif
 Les variantes Opus (v7→v12, `_no_ml`, `_pretrained`, `_retrained`) partagent
@@ -170,7 +172,7 @@ Frictions identifiées :
 ## 8. Plan d'action priorisé
 
 ### Quick wins (≤ 1 jour)
-1. Supprimer les 4 YAML orphelins + rotation de `optimizer_changelog.json`.
+1. ~~Supprimer les 4 YAML orphelins + compacter `optimizer_changelog.json`~~ ✅ fait.
 2. Promouvoir en `warning` les `except` silencieux de `registry.py` et du
    chargement des YAML stratégies.
 3. Décider la liste des stratégies « production » et passer `enabled: false`
