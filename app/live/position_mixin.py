@@ -23,6 +23,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
+from app.core.execution import close_pnl, trade_fees
 from app.core.trailing import TrailingStopManager
 from app.core.database import (save_trade, update_daily_stats,
                                 persist_open_position, delete_open_position,
@@ -249,7 +250,7 @@ class PositionMixin:
                 pass
 
         fee_rate = self.cfg["trading"].get("taker_fee", 0.001)
-        fees     = exec_price * size * fee_rate
+        fees     = trade_fees(exec_price, size, fee_rate)
         with self._capital_lock:
             if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
                 self._paper_base -= fees
@@ -611,7 +612,7 @@ class PositionMixin:
             exec_price *= (1 + slip) if side == "long" else (1 - slip)
 
         fee_rate = self.cfg["trading"].get("taker_fee", 0.001)
-        add_fees = exec_price * add_size * fee_rate
+        add_fees = trade_fees(exec_price, add_size, fee_rate)
         with self._capital_lock:
             if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
                 self._paper_base -= add_fees
@@ -699,23 +700,19 @@ class PositionMixin:
             slip = self.cfg["trading"].get("paper_slippage", 0.001)
             exec_price *= (1 - slip) if pos["side"] == "long" else (1 + slip)
 
+        # Décompte de clôture (frais, emprunt composé, PnL net) : formules
+        # partagées avec le Backtester — app/core/execution.py (parité
+        # verrouillée par tests/test_execution_parity.py).
         fee_rate    = self.cfg["trading"].get("taker_fee", 0.001)
-        fees        = exec_price * pos["size"] * fee_rate
         hours_held  = (time.time() - pos["open_time"]) / 3600
-
-        # Coût d'emprunt (Binance Margin : 3 périodes/jour avec intérêts composés)
-        daily_rate      = self.cfg["trading"].get("borrow_rate_daily", 0.0002)
-        periods_per_day = self.cfg["trading"].get("borrow_periods_per_day", 3)
-        r_period        = daily_rate / periods_per_day
-        n_periods       = hours_held * periods_per_day / 24
-        borrow_cost     = pos["notional"] * ((1 + r_period) ** n_periods - 1)
-        self._margin_interest += borrow_cost
-
-        gross = (
-            (exec_price - pos["entry"]) * pos["size"] if pos["side"] == "long"
-            else (pos["entry"] - exec_price) * pos["size"]
+        pnl, fees, borrow_cost = close_pnl(
+            side=pos["side"], entry=pos["entry"], exit_price=exec_price,
+            size=pos["size"], notional=pos["notional"], fee_rate=fee_rate,
+            daily_rate=self.cfg["trading"].get("borrow_rate_daily", 0.0002),
+            hours_held=hours_held,
+            periods_per_day=self.cfg["trading"].get("borrow_periods_per_day", 3),
         )
-        pnl = gross - fees - borrow_cost
+        self._margin_interest += borrow_cost
 
         with self._capital_lock:
             if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):

@@ -8,6 +8,7 @@ import numpy as np
 import polars as pl
 
 from app.engine.engine import Engine
+from app.core.execution import close_pnl as _close_pnl, trade_fees as _trade_fees
 from app.core.trailing import TrailingStopManager
 from app.live.utils import resolve_strategy_params
 
@@ -223,6 +224,7 @@ class Backtester:
         self.taker_fee    = tcfg.get("taker_fee",         0.001)
         self.maker_fee    = tcfg.get("maker_fee",        0.0004)
         self.borrow_rate  = tcfg.get("borrow_rate_daily", 0.0002)
+        self.borrow_periods = int(tcfg.get("borrow_periods_per_day", 3))
         self.spread_pct   = bcfg.get("spread_pct",        0.0005)
         self.partial_fill = bcfg.get("partial_fill_pct",  0.95)
         self.max_notional_pct = float(bcfg.get("max_notional_pct", 0.50))
@@ -250,6 +252,332 @@ class Backtester:
             use_swing        = bool(ov.get("use_swing",     self.use_swing)),
             mode             = str(ov.get("mode",           "dynamic")),
         )
+
+    # ── Cycle de vie d'une position (extrait de run() — V13) ──────────────────
+
+    def _close_at(self, ctx, position: dict, i: int, exec_price: float,
+                  exit_reason: str, *, maker: bool, status: str = "closed",
+                  append_ts: bool = True) -> float:
+        """Clôture commune à toutes les sorties (early-exit, time-exit, TP,
+        stop, fin de série) : frais, coût d'emprunt (formule composée partagée
+        avec le live — app/core/execution.py), PnL net, enregistrement du
+        trade et de la courbe d'équité. Retourne le PnL net."""
+        df         = ctx.df
+        side       = position["side"]
+        entry      = position["entry"]
+        # position["size"] est déjà la taille post-partial_fill (appliquée à
+        # l'entrée) : ne pas réappliquer partial_fill à la sortie.
+        fill_size  = position["size"]
+        bars_held  = i - position["bar"]
+        hours_held = bars_held * _bar_to_days(ctx.timeframe) * 24.0
+        pnl, fees, borrow = _close_pnl(
+            side=side, entry=entry, exit_price=exec_price, size=fill_size,
+            notional=position["notional"],
+            fee_rate=(self.maker_fee if maker else self.taker_fee),
+            daily_rate=self.borrow_rate, hours_held=hours_held,
+            periods_per_day=self.borrow_periods,
+        )
+        ctx.capital += pnl
+        ts = str(df["time"][i]) if "time" in df.columns else str(i)
+        position.update({
+            "pnl":           round(pnl, 6),
+            "fees":          round(fees, 6),
+            "borrow_cost":   round(borrow, 6),
+            "exit":          round(exec_price, 6),
+            "status":        status,
+            "exit_bar":      i,
+            "exit_time":     ts,
+            "exit_reason":   str(exit_reason),
+            "pnl_pct":       round((exec_price - entry) / entry * 100 *
+                                   (1 if side == "long" else -1), 3) if entry else 0.0,
+            "duration_bars": bars_held,
+            "fill_pct":      self.partial_fill,
+            "stop_trail":    position.pop("_stop_trail", []),
+        })
+        position.pop("_trailing", None)
+        ctx.trades.append(position)
+        ctx.equity_curve.append(round(ctx.capital, 4))
+        if append_ts:
+            ctx.timestamps.append(ts)
+        return pnl
+
+    def _manage_open_position(self, ctx, position: dict, i: int):
+        """Gère la position ouverte sur la barre ``i`` : MAE/MFE, sorties
+        (early-exit stratégie, time-exit, TP, stop intrabar), sinon mise à
+        jour du trailing et pyramidage. Retourne la position (None si close)."""
+        diag    = ctx.diag
+        diag["bars_in_position"] += 1
+        ctx.bars_current_position += 1
+        side    = position["side"]
+        entry   = position["entry"]
+        stop    = position["stop"]
+        c_high  = ctx.high_arr[i]
+        c_low   = ctx.low_arr[i]
+        c_close = ctx.close_arr[i]
+
+        if side == "long":
+            mae_pts = c_low  - entry
+            mfe_pts = c_high - entry
+        else:
+            mae_pts = entry - c_high
+            mfe_pts = entry - c_low
+        if entry > 0:
+            position["mae"] = min(position.get("mae", 0.0), mae_pts / entry * 100)
+            position["mfe"] = max(position.get("mfe", 0.0), mfe_pts / entry * 100)
+
+        # ── Sortie temporelle (exit_after_bars) — prioritaire sur trailing.
+        # Utilisée par les stratégies type rapport V4 : sortie à la clôture
+        # de la barre suivante, sans SL/TP (mesure pure du signal directionnel).
+        exit_after = position.get("exit_after_bars")
+        time_exit  = (exit_after is not None
+                      and (i - position["bar"]) >= int(exit_after))
+
+        stop_hit = (side == "long"  and c_low  <= stop) or \
+                   (side == "short" and c_high >= stop)
+
+        # ── Sortie anticipée pilotée par la stratégie ────────────────────────
+        # Hook BaseStrategy.check_early_exit (changement de régime, inversion
+        # du signal…). Non priorisée sur le SL : si SL touché intrabar, le SL
+        # l'emporte.
+        early_exit_reason = None
+        if not stop_hit and not time_exit:
+            strat = self._find_strategy(position.get("strategy", ""))
+            if strat is not None:
+                try:
+                    early_exit_reason = strat.check_early_exit(
+                        ctx.window, position, ctx.strat_params
+                    )
+                except Exception as _ee:
+                    logger.warning(
+                        f"[Backtest] check_early_exit({position.get('strategy', '')}) "
+                        f"KO : {_ee}"
+                    )
+
+        # ── Take-profit fixe (intrabar) — optionnel via signal["tp_hint"].
+        # Vérifié seulement si stop NON touché (priorité conservative au stop
+        # en cas d'ambiguïté intrabar high/low).
+        tp_val = position.get("take_profit")
+        tp_hit = False
+        if tp_val is not None and not stop_hit:
+            tp_hit = (side == "long"  and c_high >= tp_val) or \
+                     (side == "short" and c_low  <= tp_val)
+
+        if early_exit_reason and not stop_hit and not tp_hit:
+            self._close_at(ctx, position, i, c_close, early_exit_reason, maker=True)
+            return None
+
+        if time_exit and not stop_hit and not tp_hit:
+            self._close_at(ctx, position, i, c_close, "exit_after_bars", maker=True)
+            return None
+
+        if tp_hit:
+            # TP fixe touché : sortie au prix TP (spread défavorable, côté maker)
+            exec_price = tp_val * (1 - self.spread_pct) if side == "long" \
+                         else tp_val * (1 + self.spread_pct)
+            self._close_at(ctx, position, i, exec_price, "take_profit", maker=True)
+            return None
+
+        if stop_hit:
+            exec_price = stop * (1 - self.spread_pct) if side == "long" \
+                         else stop * (1 + self.spread_pct)
+            _tr = position.get("_trailing")
+            if _tr and hasattr(_tr, "_dts") and _tr._dts:
+                position["trail_phase"] = _tr._dts.phase_name
+            else:
+                position["trail_phase"] = "unknown"
+            self._close_at(ctx, position, i, exec_price,
+                           ("stop_loss" if position.get("disable_trailing")
+                            else "trailing_stop"), maker=False)
+            return None
+
+        # ── Position conservée : trailing + pyramidage ───────────────────────
+        atr_v         = float(ctx.atr_arr[i]) or 1e-8
+        bars_held_now = i - position["bar"]
+        # Skip trailing si désactivé via signal["disable_trailing"]=True :
+        # le stop reste fixe (V4 standalone style : SL = entry ∓ 1.5×ATR).
+        _tr = (None if position.get("disable_trailing")
+               else position.get("_trailing"))
+        if _tr:
+            lo20 = ctx.low_arr[max(0, i - 19):i + 1].tolist()
+            hi20 = ctx.high_arr[max(0, i - 19):i + 1].tolist()
+            new_stop = _tr.update_stop(
+                current_price = c_close,
+                current_stop  = stop,
+                atr           = atr_v, side = side, entry = entry,
+                bars_held     = bars_held_now,
+                recent_lows   = lo20,
+                recent_highs  = hi20,
+            )
+            position["stop"] = new_stop
+            if hasattr(_tr, "_dts") and _tr._dts:
+                position["trail_phase"] = _tr._dts.phase_name
+            if i % 3 == 0:
+                position["_stop_trail"].append({"bar": i, "stop": round(new_stop, 6)})
+
+        # ── Pyramidage (check_scale_in) ──────────────────────────────────────
+        # La stratégie peut demander l'ajout d'une unité sur une position
+        # gagnante. L'unité est sizée comme une entrée normale (risque %
+        # capital / distance au stop courant), le prix d'entrée moyen et le
+        # notional sont recalculés.
+        strat_si = self._find_strategy(position.get("strategy", ""))
+        if strat_si is not None:
+            try:
+                scale = strat_si.check_scale_in(ctx.window, position, ctx.strat_params)
+            except Exception as _si:
+                logger.warning(
+                    f"[Backtest] check_scale_in({position.get('strategy', '')}) "
+                    f"KO : {_si}"
+                )
+                scale = None
+            if scale:
+                add_price = c_close * (1 + self.spread_pct) if side == "long" \
+                            else c_close * (1 - self.spread_pct)
+                stop_dist = abs(add_price - position["stop"])
+                if stop_dist > 0:
+                    sf = max(0.0, min(float(scale.get("size_factor", 1.0)), 2.0))
+                    add_size = ctx.capital * ctx.risk / stop_dist * sf * self.partial_fill
+                    add_notional = add_size * add_price
+                    # Cap : le notional total reste sous max_notional_pct
+                    room = ctx.capital * self.max_notional_pct - position["notional"]
+                    if add_notional > room:
+                        add_notional = max(room, 0.0)
+                        add_size = add_notional / add_price
+                    if add_notional >= 1.0 and add_size > 0:
+                        add_fees = self._fees(add_price, add_size, maker=False)
+                        ctx.capital -= add_fees
+                        new_size = position["size"] + add_size
+                        position["entry"] = round(
+                            (position["entry"] * position["size"]
+                             + add_price * add_size) / new_size, 6)
+                        position["size"]     = round(new_size, 6)
+                        position["notional"] = round(
+                            position["notional"] + add_notional, 4)
+                        position["fees"]     = round(
+                            position.get("fees", 0.0) + add_fees, 6)
+                        position["scale_ins"] = position.get("scale_ins", 0) + 1
+                        diag["scale_ins"] = diag.get("scale_ins", 0) + 1
+
+        return position
+
+    def _try_enter(self, ctx, signal: dict, i: int):
+        """Tente d'ouvrir une position depuis un signal accepté : stop/TP
+        initiaux, sizing par risque (cap notional, size_factor, partial fill),
+        frais d'entrée. Retourne le dict position ou None si rejeté."""
+        df   = ctx.df
+        diag = ctx.diag
+
+        atr_v = float(ctx.atr_arr[i])
+        if atr_v <= 0:
+            diag["rejected_atr_zero"] += 1
+            logger.debug(f"[Backtest] bar {i} : trade rejeté (ATR<=0)")
+            return None
+
+        exec_price = float(df["open"][i + 1])
+        if signal["side"] == "long":
+            exec_price *= (1 + self.spread_pct)
+        else:
+            exec_price *= (1 - self.spread_pct)
+
+        _trailing = self._make_trailing(signal.get("trail_override"))
+        # Stop initial : priorité au multiplicateur ATR (calé sur exec_price,
+        # robuste aux gaps close→open) ; sinon stop_hint absolu ; sinon trailing.
+        if signal.get("sl_atr_mult") is not None:
+            _sl_mult = float(signal["sl_atr_mult"])
+            stop = (exec_price - _sl_mult * atr_v) if signal["side"] == "long" \
+                   else (exec_price + _sl_mult * atr_v)
+        elif signal.get("stop_hint") is not None:
+            stop = float(signal["stop_hint"])
+        else:
+            stop = _trailing.initial_stop(exec_price, atr_v, signal["side"])
+
+        # TP fixe optionnel : priorité au multiplicateur ATR (calé sur
+        # exec_price), sinon tp_hint absolu fourni par la stratégie.
+        if signal.get("tp_atr_mult") is not None:
+            _tp_mult = float(signal["tp_atr_mult"])
+            tp_init = (exec_price + _tp_mult * atr_v) if signal["side"] == "long" \
+                      else (exec_price - _tp_mult * atr_v)
+        elif signal.get("tp_hint") is not None:
+            tp_init = float(signal["tp_hint"])
+        else:
+            tp_init = None
+
+        disable_trailing = bool(signal.get("disable_trailing", False))
+
+        stop_dist    = abs(exec_price - stop)
+        risk_amount  = ctx.capital * ctx.risk
+        size         = risk_amount / stop_dist if stop_dist > 0 else 0
+        notional     = size * exec_price
+        max_notional = ctx.capital * self.max_notional_pct
+        if notional > max_notional:
+            size     = max_notional / exec_price
+            notional = max_notional
+        if notional < 1.0 or size <= 0:
+            diag["rejected_notional"] += 1
+            logger.debug(
+                f"[Backtest] bar {i} : trade rejeté "
+                f"(notional={notional:.4f} size={size:.6f} capital={ctx.capital:.2f})"
+            )
+            return None
+
+        # Size factor (demi-Kelly côté stratégie — ex. ×confidence) :
+        # appliqué après le cap notional pour permettre à la stratégie de
+        # réduire la taille sans buter sur max_notional_pct.
+        # Cap haut à 2.0 : autorise les boosts type V7 SHORT_TD_HIGH (×1.5)
+        # tout en gardant max_notional_pct comme garde-fou de risque global.
+        size_factor = float(signal.get("size_factor", 1.0))
+        size_factor = max(0.0, min(size_factor, 2.0))
+        size       *= size_factor
+
+        size       *= self.partial_fill
+        notional    = size * exec_price
+        entry_fees  = self._fees(exec_price, size, maker=False)
+        ctx.capital -= entry_fees
+        ctx.trade_id += 1
+        ts = str(df["time"][i]) if "time" in df.columns else str(i)
+
+        position = {
+            "id":              ctx.trade_id,
+            "symbol":          ctx.symbol,
+            "side":            signal["side"],
+            "strategy":        signal.get("name", ""),
+            "score":           round(signal.get("score", 0), 3),
+            "entry":           round(exec_price, 6),
+            "stop":            round(stop, 6),
+            "take_profit":     round(tp_init, 6) if tp_init is not None else None,
+            "exit_after_bars": signal.get("exit_after_bars"),
+            "disable_trailing": disable_trailing,
+            "size":            round(size, 6),
+            "notional":     round(notional, 4),
+            "bar":          i + 1,
+            "entry_time":   ts,
+            "fees":         round(entry_fees, 6),
+            "borrow_cost":  0.0,
+            "status":       "open",
+            "pnl":          None,
+            "exit":         None,
+            "trail_phase":  "grace",
+            "_trailing":    _trailing,
+            "reason":       signal.get("reason", ""),
+            "conditions":   signal.get("conditions", []),
+            "indicators":   signal.get("indicators", {}),
+            # Champs V7 / V4 — utilisés pour les colonnes 'Sortie' et 'Setup'
+            # du tableau de trades et pour les statistiques par exit_reason.
+            "setup":           signal.get("setup"),
+            "setup_priority":  signal.get("setup_priority"),
+            "regime":          signal.get("regime"),
+            "regime_lbl":      signal.get("regime_lbl"),
+            "sl_atr_mult":     signal.get("sl_atr_mult"),
+            "tp_atr_mult":     signal.get("tp_atr_mult"),
+            "size_factor":     signal.get("size_factor"),
+            "tf_detected":     signal.get("tf_detected"),
+            "mae":          0.0,
+            "mfe":          0.0,
+            "_stop_trail":  [{"bar": i + 1, "stop": round(stop, 6)}],
+        }
+        diag["trades_opened"] += 1
+        diag["last_trade_bar"] = i
+        ctx.bars_current_position = 0
+        return position
 
     # ── run ───────────────────────────────────────────────────────────────────
     def run(self, df: pl.DataFrame, symbol: str = "BTC/USDC",
@@ -395,18 +723,33 @@ class Backtester:
             f"[Backtest] [{_strat_label}] {symbol} {timeframe or '?'} : démarrage boucle — "
             f"{total_bars} barres à parcourir (warmup={warmup}, total={len(df)})"
         )
+        from types import SimpleNamespace
+        ctx = SimpleNamespace(
+            df=df, window=None, symbol=symbol,
+            # Timeframe effectif du run (et non cfg.trading.timeframe : les
+            # coûts d'emprunt étaient calculés sur le mauvais TF quand le
+            # backtest tournait sur un TF différent de la config).
+            timeframe=timeframe or self.cfg["trading"].get("timeframe", "1h"),
+            capital=capital, risk=risk, trade_id=trade_id,
+            trades=trades, equity_curve=equity_curve, timestamps=timestamps,
+            diag=diag, strat_params=strat_params,
+            atr_arr=atr_arr, low_arr=low_arr, high_arr=high_arr,
+            close_arr=close_arr,
+            bars_current_position=_bars_current_position,
+        )
+
         for i in range(warmup, len(df) - 1):
             diag["bars_total"] += 1
             _had_position_at_start = position is not None
             # Transition close : la barre précédente avait une position, plus
             # maintenant. On ferme le compteur de durée et on met à jour le max.
-            # (Le bloc position fait ``continue`` après une clôture, donc on ne
-            # détecte la transition qu'au début de l'itération suivante.)
+            # (La gestion de position fait ``continue`` après une clôture, donc
+            # on ne détecte la transition qu'au début de l'itération suivante.)
             if _prev_in_position and not _had_position_at_start:
                 diag["trades_closed"] += 1
-                if _bars_current_position > diag["max_bars_in_position"]:
-                    diag["max_bars_in_position"] = _bars_current_position
-                _bars_current_position = 0
+                if ctx.bars_current_position > diag["max_bars_in_position"]:
+                    diag["max_bars_in_position"] = ctx.bars_current_position
+                ctx.bars_current_position = 0
             _prev_in_position = _had_position_at_start
             if i % 100 == 0:
                 if self._cancel_event is not None and self._cancel_event.is_set():
@@ -423,301 +766,24 @@ class Backtester:
                         f"[Backtest] [{_strat_label}] {symbol} {timeframe or '?'} : "
                         f"{done}/{total_bars} barres ({pct:.0f}%) — "
                         f"{rate:.0f} bars/s, ETA {eta:.0f}s, "
-                        f"{len(trades)} trades, capital={capital:.2f} "
+                        f"{len(trades)} trades, capital={ctx.capital:.2f} "
                         f"· {in_pos_pct:.0f}% en position · "
                         f"sig_acc={diag['signal_accepted']} "
                         f"rej_notional={diag['rejected_notional']} "
                         f"rej_atr={diag['rejected_atr_zero']}"
                     )
-            window  = df[:i + 1]
-            c_high  = high_arr[i]
-            c_low   = low_arr[i]
-            c_open  = open_arr[i]
+            ctx.window = df[:i + 1]
 
             # ── Gestion de la position ouverte ────────────────────────────────
             if position is not None:
-                diag["bars_in_position"] += 1
-                _bars_current_position += 1
-                side    = position["side"]
-                entry   = position["entry"]
-                stop    = position["stop"]
-                c_close = close_arr[i]
-
-                if side == "long":
-                    mae_pts = c_low  - entry
-                    mfe_pts = c_high - entry
-                else:
-                    mae_pts = entry - c_high
-                    mfe_pts = entry - c_low
-                if entry > 0:
-                    position["mae"] = min(position.get("mae", 0.0), mae_pts / entry * 100)
-                    position["mfe"] = max(position.get("mfe", 0.0), mfe_pts / entry * 100)
-
-                # ── Sortie temporelle (exit_after_bars) — prioritaire sur trailing
-                # Utilisée par les stratégies type rapport V4 : sortie à la clôture
-                # de la barre suivante, sans SL/TP (mesure pure du signal directionnel).
-                exit_after = position.get("exit_after_bars")
-                time_exit  = (exit_after is not None
-                              and (i - position["bar"]) >= int(exit_after))
-
-                stop_hit = (side == "long"  and c_low  <= stop) or \
-                           (side == "short" and c_high >= stop)
-
-                # ── Sortie anticipée pilotée par la stratégie ────────────────
-                # Hook BaseStrategy.check_early_exit : permet à la stratégie de
-                # clore la position sur changement de régime, inversion du signal,
-                # ou toute autre condition recalculée à chaque barre (V6.1).
-                # Non priorisée sur le SL : si SL touché intrabar, on respecte le SL.
-                early_exit_reason = None
-                if not stop_hit and not time_exit:
-                    strat = self._find_strategy(position.get("strategy", ""))
-                    if strat is not None:
-                        try:
-                            early_exit_reason = strat.check_early_exit(
-                                window, position, strat_params
-                            )
-                        except Exception as _ee:
-                            logger.warning(
-                                f"[Backtest] check_early_exit({position.get('strategy', '')}) "
-                                f"KO : {_ee}"
-                            )
-
-                # ── Take-profit fixe (intrabar) — optionnel via signal["tp_hint"]
-                # Vérifié seulement si stop NON touché (priorité conservative au stop
-                # en cas d'ambiguïté intrabar high/low).
-                tp_val = position.get("take_profit")
-                tp_hit = False
-                if tp_val is not None and not stop_hit:
-                    tp_hit = (side == "long"  and c_high >= tp_val) or \
-                             (side == "short" and c_low  <= tp_val)
-
-                # ── Sortie anticipée stratégie (avant TP/timeout) ─────────────
-                if early_exit_reason and not stop_hit and not tp_hit:
-                    exec_price = c_close
-                    fill_size  = position["size"]
-                    fees       = self._fees(exec_price, fill_size, maker=True)
-                    bars_held  = i - position["bar"]
-                    days_held  = bars_held * _bar_to_days(
-                        self.cfg["trading"].get("timeframe", "1h"))
-                    borrow_cost = position["notional"] * self.borrow_rate * days_held
-                    gross = (exec_price - entry) * fill_size * (1 if side == "long" else -1)
-                    pnl   = gross - fees - borrow_cost
-                    capital += pnl
-                    ts = str(df["time"][i]) if "time" in df.columns else str(i)
-                    position.update({
-                        "pnl":           round(pnl, 6),
-                        "fees":          round(fees, 6),
-                        "borrow_cost":   round(borrow_cost, 6),
-                        "exit":          round(exec_price, 6),
-                        "status":        "closed",
-                        "exit_bar":      i,
-                        "exit_time":     ts,
-                        "exit_reason":   str(early_exit_reason),
-                        "pnl_pct":       round((exec_price - entry) / entry * 100 *
-                                               (1 if side == "long" else -1), 3) if entry else 0.0,
-                        "duration_bars": bars_held,
-                        "fill_pct":      self.partial_fill,
-                        "stop_trail":    position.pop("_stop_trail", []),
-                    })
-                    position.pop("_trailing", None)
-                    trades.append(position)
-                    equity_curve.append(round(capital, 4))
-                    timestamps.append(ts)
-                    position = None
-                    continue
-
-                if time_exit and not stop_hit and not tp_hit:
-                    exec_price = c_close
-                    fill_size  = position["size"]
-                    fees       = self._fees(exec_price, fill_size, maker=True)
-                    bars_held  = i - position["bar"]
-                    days_held  = bars_held * _bar_to_days(
-                        self.cfg["trading"].get("timeframe", "1h"))
-                    borrow_cost = position["notional"] * self.borrow_rate * days_held
-                    gross = (exec_price - entry) * fill_size * (1 if side == "long" else -1)
-                    pnl   = gross - fees - borrow_cost
-                    capital += pnl
-                    ts = str(df["time"][i]) if "time" in df.columns else str(i)
-                    position.update({
-                        "pnl":           round(pnl, 6),
-                        "fees":          round(fees, 6),
-                        "borrow_cost":   round(borrow_cost, 6),
-                        "exit":          round(exec_price, 6),
-                        "status":        "closed",
-                        "exit_bar":      i,
-                        "exit_time":     ts,
-                        "exit_reason":   "exit_after_bars",
-                        "pnl_pct":       round((exec_price - entry) / entry * 100 *
-                                               (1 if side == "long" else -1), 3) if entry else 0.0,
-                        "duration_bars": bars_held,
-                        "fill_pct":      self.partial_fill,
-                        "stop_trail":    position.pop("_stop_trail", []),
-                    })
-                    position.pop("_trailing", None)
-                    trades.append(position)
-                    equity_curve.append(round(capital, 4))
-                    timestamps.append(ts)
-                    position = None
-                    continue
-
-                if tp_hit:
-                    # TP fixe touché : sortie au prix TP (avec spread défavorable côté maker)
-                    exec_price  = tp_val * (1 - self.spread_pct) if side == "long" \
-                                  else tp_val * (1 + self.spread_pct)
-                    fill_size   = position["size"]
-                    fees        = self._fees(exec_price, fill_size, maker=True)
-                    bars_held   = i - position["bar"]
-                    days_held   = bars_held * _bar_to_days(
-                        self.cfg["trading"].get("timeframe", "1h"))
-                    borrow_cost = position["notional"] * self.borrow_rate * days_held
-
-                    gross = (exec_price - entry) * fill_size * (1 if side == "long" else -1)
-                    pnl   = gross - fees - borrow_cost
-                    capital += pnl
-
-                    ts = str(df["time"][i]) if "time" in df.columns else str(i)
-                    position.update({
-                        "pnl":           round(pnl, 6),
-                        "fees":          round(fees, 6),
-                        "borrow_cost":   round(borrow_cost, 6),
-                        "exit":          round(exec_price, 6),
-                        "status":        "closed",
-                        "exit_bar":      i,
-                        "exit_time":     ts,
-                        "exit_reason":   "take_profit",
-                        "pnl_pct":       round((exec_price - entry) / entry * 100 *
-                                               (1 if side == "long" else -1), 3) if entry else 0.0,
-                        "duration_bars": bars_held,
-                        "fill_pct":      self.partial_fill,
-                        "stop_trail":    position.pop("_stop_trail", []),
-                    })
-                    position.pop("_trailing", None)
-                    trades.append(position)
-                    equity_curve.append(round(capital, 4))
-                    timestamps.append(ts)
-                    position = None
-                    continue
-
-                if stop_hit:
-                    exec_price  = stop * (1 - self.spread_pct) if side == "long" \
-                                  else stop * (1 + self.spread_pct)
-                    trail_phase = "unknown"
-                    _tr = position.get("_trailing")
-                    if _tr and hasattr(_tr, "_dts") and _tr._dts:
-                        trail_phase = _tr._dts.phase_name
-
-                    # position["size"] est déjà la taille post-partial_fill (appliquée à l'entrée).
-                    # Ne pas appliquer partial_fill une seconde fois à la sortie.
-                    fill_size   = position["size"]
-                    fees        = self._fees(exec_price, fill_size, maker=False)
-                    bars_held   = i - position["bar"]
-                    days_held   = bars_held * _bar_to_days(
-                        self.cfg["trading"].get("timeframe", "1h"))
-                    borrow_cost = position["notional"] * self.borrow_rate * days_held
-
-                    gross = (exec_price - entry) * fill_size * (1 if side == "long" else -1)
-                    pnl   = gross - fees - borrow_cost
-                    capital += pnl
-
-                    ts = str(df["time"][i]) if "time" in df.columns else str(i)
-                    position.update({
-                        "pnl":           round(pnl, 6),
-                        "fees":          round(fees, 6),
-                        "borrow_cost":   round(borrow_cost, 6),
-                        "exit":          round(exec_price, 6),
-                        "status":        "closed",
-                        "exit_bar":      i,
-                        "exit_time":     ts,
-                        "exit_reason":   ("stop_loss" if position.get("disable_trailing")
-                                           else "trailing_stop"),
-                        "trail_phase":   trail_phase,
-                        "pnl_pct":       round((exec_price - entry) / entry * 100 *
-                                               (1 if side == "long" else -1), 3) if entry else 0.0,
-                        "duration_bars": bars_held,
-                        "fill_pct":      self.partial_fill,
-                        "stop_trail":    position.pop("_stop_trail", []),
-                    })
-                    position.pop("_trailing", None)
-                    trades.append(position)
-                    equity_curve.append(round(capital, 4))
-                    timestamps.append(ts)
-                    position = None
-
-                else:
-                    atr_v         = float(atr_arr[i]) or 1e-8
-                    bars_held_now = i - position["bar"]
-                    # Skip trailing si désactivé via signal["disable_trailing"]=True :
-                    # le stop reste fixe (V4 standalone style : SL = entry ∓ 1.5×ATR).
-                    _tr           = (None if position.get("disable_trailing")
-                                     else position.get("_trailing"))
-                    lo20 = low_arr[max(0, i - 19):i + 1].tolist()
-                    hi20 = high_arr[max(0, i - 19):i + 1].tolist()
-
-                    if _tr:
-                        new_stop = _tr.update_stop(
-                            current_price = c_close,
-                            current_stop  = stop,
-                            atr           = atr_v, side = side, entry = entry,
-                            bars_held     = bars_held_now,
-                            recent_lows   = lo20,
-                            recent_highs  = hi20,
-                        )
-                        position["stop"] = new_stop
-                        if hasattr(_tr, "_dts") and _tr._dts:
-                            position["trail_phase"] = _tr._dts.phase_name
-                        if i % 3 == 0:
-                            position["_stop_trail"].append({"bar": i, "stop": round(new_stop, 6)})
-
-                    # ── Pyramidage (check_scale_in) ───────────────────────────
-                    # La stratégie peut demander l'ajout d'une unité sur une
-                    # position gagnante. L'unité est sizée comme une entrée
-                    # normale (risque % capital / distance au stop courant),
-                    # le prix d'entrée moyen et le notional sont recalculés.
-                    strat_si = self._find_strategy(position.get("strategy", ""))
-                    if strat_si is not None:
-                        try:
-                            scale = strat_si.check_scale_in(window, position, strat_params)
-                        except Exception as _si:
-                            logger.warning(
-                                f"[Backtest] check_scale_in({position.get('strategy', '')}) "
-                                f"KO : {_si}"
-                            )
-                            scale = None
-                        if scale:
-                            add_price = c_close * (1 + self.spread_pct) if side == "long" \
-                                        else c_close * (1 - self.spread_pct)
-                            stop_dist = abs(add_price - position["stop"])
-                            if stop_dist > 0:
-                                sf = max(0.0, min(float(scale.get("size_factor", 1.0)), 2.0))
-                                add_size = capital * risk / stop_dist * sf * self.partial_fill
-                                add_notional = add_size * add_price
-                                # Cap : le notional total reste sous max_notional_pct
-                                room = capital * self.max_notional_pct - position["notional"]
-                                if add_notional > room:
-                                    add_notional = max(room, 0.0)
-                                    add_size = add_notional / add_price
-                                if add_notional >= 1.0 and add_size > 0:
-                                    add_fees = self._fees(add_price, add_size, maker=False)
-                                    capital -= add_fees
-                                    new_size = position["size"] + add_size
-                                    position["entry"] = round(
-                                        (position["entry"] * position["size"]
-                                         + add_price * add_size) / new_size, 6)
-                                    position["size"]     = round(new_size, 6)
-                                    position["notional"] = round(
-                                        position["notional"] + add_notional, 4)
-                                    position["fees"]     = round(
-                                        position.get("fees", 0.0) + add_fees, 6)
-                                    position["scale_ins"] = position.get("scale_ins", 0) + 1
-                                    diag["scale_ins"] = diag.get("scale_ins", 0) + 1
-
+                position = self._manage_open_position(ctx, position, i)
                 continue
 
             # ── Cherche un signal ─────────────────────────────────────────────
             diag["bars_seeking_signal"] += 1
             diag["signal_calls"] += 1
             signal = self.engine.best_signal(
-                window, strat_params, threshold=threshold,
+                ctx.window, strat_params, threshold=threshold,
                 stats=per_strategy_stats,
             )
             if signal["side"] == "none":
@@ -733,150 +799,19 @@ class Backtester:
                 f"[Backtest] bar {i} : signal accepté — {signal.get('name')} "
                 f"{signal.get('side')} score={signal.get('score', 0):.3f}"
             )
+            position = self._try_enter(ctx, signal, i)
 
-            atr_v = float(atr_arr[i])
-            if atr_v <= 0:
-                diag["rejected_atr_zero"] += 1
-                logger.debug(f"[Backtest] bar {i} : trade rejeté (ATR<=0)")
-                continue
-
-            exec_price = float(df["open"][i + 1])
-            if signal["side"] == "long":
-                exec_price *= (1 + self.spread_pct)
-            else:
-                exec_price *= (1 - self.spread_pct)
-
-            _trailing = self._make_trailing(signal.get("trail_override"))
-            # Stop initial : priorité au multiplicateur ATR (calé sur exec_price,
-            # robuste aux gaps close→open) ; sinon stop_hint absolu ; sinon trailing.
-            if signal.get("sl_atr_mult") is not None:
-                _sl_mult = float(signal["sl_atr_mult"])
-                stop = (exec_price - _sl_mult * atr_v) if signal["side"] == "long" \
-                       else (exec_price + _sl_mult * atr_v)
-            elif signal.get("stop_hint") is not None:
-                stop = float(signal["stop_hint"])
-            else:
-                stop = _trailing.initial_stop(exec_price, atr_v, signal["side"])
-
-            # TP fixe optionnel : priorité au multiplicateur ATR (calé sur exec_price),
-            # sinon tp_hint absolu fourni par la stratégie.
-            if signal.get("tp_atr_mult") is not None:
-                _tp_mult = float(signal["tp_atr_mult"])
-                tp_init = (exec_price + _tp_mult * atr_v) if signal["side"] == "long" \
-                          else (exec_price - _tp_mult * atr_v)
-            elif signal.get("tp_hint") is not None:
-                tp_init = float(signal["tp_hint"])
-            else:
-                tp_init = None
-
-            disable_trailing = bool(signal.get("disable_trailing", False))
-
-            stop_dist    = abs(exec_price - stop)
-            risk_amount  = capital * risk
-            size         = risk_amount / stop_dist if stop_dist > 0 else 0
-            notional     = size * exec_price
-            max_notional = capital * self.max_notional_pct
-            if notional > max_notional:
-                size     = max_notional / exec_price
-                notional = max_notional
-            if notional < 1.0 or size <= 0:
-                diag["rejected_notional"] += 1
-                logger.debug(
-                    f"[Backtest] bar {i} : trade rejeté "
-                    f"(notional={notional:.4f} size={size:.6f} capital={capital:.2f})"
-                )
-                continue
-
-            # Size factor (demi-Kelly côté stratégie — ex. ×confidence) :
-            # appliqué après le cap notional pour permettre à la stratégie de
-            # réduire la taille sans buter sur max_notional_pct.
-            # Cap haut à 2.0 : autorise les boosts type V7 SHORT_TD_HIGH (×1.5)
-            # tout en gardant max_notional_pct comme garde-fou de risque global.
-            size_factor = float(signal.get("size_factor", 1.0))
-            size_factor = max(0.0, min(size_factor, 2.0))
-            size       *= size_factor
-
-            size       *= self.partial_fill
-            notional    = size * exec_price
-            entry_fees  = self._fees(exec_price, size, maker=False)
-            capital    -= entry_fees
-            trade_id   += 1
-            ts = str(df["time"][i]) if "time" in df.columns else str(i)
-
-            position = {
-                "id":              trade_id,
-                "symbol":          symbol,
-                "side":            signal["side"],
-                "strategy":        signal.get("name", ""),
-                "score":           round(signal.get("score", 0), 3),
-                "entry":           round(exec_price, 6),
-                "stop":            round(stop, 6),
-                "take_profit":     round(tp_init, 6) if tp_init is not None else None,
-                "exit_after_bars": signal.get("exit_after_bars"),
-                "disable_trailing": disable_trailing,
-                "size":            round(size, 6),
-                "notional":     round(notional, 4),
-                "bar":          i + 1,
-                "entry_time":   ts,
-                "fees":         round(entry_fees, 6),
-                "borrow_cost":  0.0,
-                "status":       "open",
-                "pnl":          None,
-                "exit":         None,
-                "trail_phase":  "grace",
-                "_trailing":    _trailing,
-                "reason":       signal.get("reason", ""),
-                "conditions":   signal.get("conditions", []),
-                "indicators":   signal.get("indicators", {}),
-                # Champs V7 / V4 — utilisés pour les colonnes 'Sortie' et 'Setup'
-                # du tableau de trades et pour les statistiques par exit_reason.
-                "setup":           signal.get("setup"),
-                "setup_priority":  signal.get("setup_priority"),
-                "regime":          signal.get("regime"),
-                "regime_lbl":      signal.get("regime_lbl"),
-                "sl_atr_mult":     signal.get("sl_atr_mult"),
-                "tp_atr_mult":     signal.get("tp_atr_mult"),
-                "size_factor":     signal.get("size_factor"),
-                "tf_detected":     signal.get("tf_detected"),
-                "mae":          0.0,
-                "mfe":          0.0,
-                "_stop_trail":  [{"bar": i + 1, "stop": round(stop, 6)}],
-            }
-            diag["trades_opened"] += 1
-            diag["last_trade_bar"] = i
-            _bars_current_position = 0
+        capital                = ctx.capital
+        trade_id               = ctx.trade_id
+        _bars_current_position = ctx.bars_current_position
 
         # ── Clôture forcée en fin de série ────────────────────────────────────
         if position is not None:
-            last_price  = float(df["close"][-1])
-            # position["size"] est déjà la taille post-partial_fill (appliquée à l'entrée).
-            # Ne pas appliquer partial_fill une seconde fois à la sortie finale.
-            fill_size   = position["size"]
-            fees        = self._fees(last_price, fill_size, maker=True)
-            bars_held   = len(df) - 1 - position["bar"]
-            days_held   = bars_held * _bar_to_days(self.cfg["trading"].get("timeframe", "1h"))
-            borrow_cost = position["notional"] * self.borrow_rate * days_held
-            gross = (last_price - position["entry"]) * fill_size * (1 if position["side"] == "long" else -1)
-            pnl   = gross - fees - borrow_cost
-            capital += pnl
-            position.update({
-                "pnl":           round(pnl, 6),
-                "fees":          round(fees, 6),
-                "borrow_cost":   round(borrow_cost, 6),
-                "exit":          round(last_price, 6),
-                "status":        "closed_eod",
-                "exit_bar":      len(df) - 1,
-                "exit_time":     str(df["time"][-1]) if "time" in df.columns else str(len(df) - 1),
-                "exit_reason":   "end_of_data",
-                "pnl_pct":       round((last_price - position["entry"]) / position["entry"] * 100 *
-                                       (1 if position["side"] == "long" else -1), 3) if position["entry"] else 0.0,
-                "duration_bars": bars_held,
-                "fill_pct":      self.partial_fill,
-                "stop_trail":    position.pop("_stop_trail", []),
-            })
-            position.pop("_trailing", None)
-            trades.append(position)
-            equity_curve.append(round(capital, 4))
+            self._close_at(ctx, position, len(df) - 1, float(df["close"][-1]),
+                           "end_of_data", maker=True, status="closed_eod",
+                           append_ts=False)
+            position = None
+            capital  = ctx.capital
 
         # Finalise les compteurs de fin de boucle : si la dernière position
         # a été fermée à l'avant-dernière barre, la transition est déjà
@@ -941,8 +876,7 @@ class Backtester:
         return cfg["trading"].get("capital", 1000.0)
 
     def _fees(self, price: float, size: float, maker: bool = False) -> float:
-        rate = self.maker_fee if maker else self.taker_fee
-        return price * size * rate
+        return _trade_fees(price, size, self.maker_fee if maker else self.taker_fee)
 
 
 # ── Walk-Forward ──

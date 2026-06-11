@@ -34,11 +34,12 @@ de la logique d'exécution (fees, trailing, sizing implémentés deux fois).**
 | **Duplication backtest ↔ live** | Fees/slippage/borrow calculés dans `backtest.py` ET `position_mixin.py` avec des formules voisines mais pas identiques (ex. borrow simple en backtest vs composé en live) ; trailing partagé (bien) mais initialisation/phases dupliquées | Écarts paper/backtest vs live difficiles à diagnostiquer |
 | **Couche qui fuit** | `live_trader` charge directement les modèles ML (`MLStrategyTrainer`) ; `backtest.py` connaît les détails ML (`use_pretrained_ml`, reset_model) | Responsabilités partagées, fragile |
 
-**Recommandation** : extraire un module commun `app/core/execution.py`
-(FeesCalculator, sizing) consommé par les deux chemins, et découper
-`Backtester.run()` en `_manage_open_position()` / `_try_enter()` /
-`_close_at()`. Ajouter un test de parité backtest ↔ live (même signal, même
-trade ⇒ même PnL net).
+**Recommandation** : ✅ fait — module commun `app/core/execution.py`
+(frais, emprunt composé, PnL net, sizing) consommé par les deux chemins ;
+`Backtester.run()` découpé en `_manage_open_position()` / `_try_enter()` /
+`_close_at()` (refactoring vérifié iso-comportement sur baseline) ; parité
+backtest ↔ live verrouillée par `tests/test_execution_parity.py`. Le backtest
+utilise désormais la formule d'emprunt composée du live (impact ≤ 0,003 %).
 
 ---
 
