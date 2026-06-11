@@ -72,3 +72,43 @@ def test_paper_order_skipped():
     pnl, fees, borrow = h._reconcile_close_costs(
         _pos(), {"id": "paper_1"}, fees_est=0.22, borrow_est=0.0, pnl_est=19.78)
     assert fees == pytest.approx(0.22)
+
+
+# ── Vérification entry/taille à la restauration ─────────────────────────────
+
+def _restore_harness(order):
+    h = PositionMixin()
+    h.cfg = {"trading": {"paper_mode": False}, "exchange": {"margin": False}}
+    h.exchange = MagicMock()
+    if isinstance(order, Exception):
+        h.exchange.fetch_order.side_effect = order
+    else:
+        h.exchange.fetch_order.return_value = order
+    return h
+
+
+def test_restore_fixes_entry_and_size_drift():
+    h = _restore_harness({"average": 101.5, "filled": 1.5})
+    pos = {"symbol": "BTC/USDC", "order_id": "o1", "entry": 100.0,
+           "size": 2.0, "notional": 200.0}
+    h._verify_restored_position(pos)
+    assert pos["entry"] == pytest.approx(101.5)
+    assert pos["size"] == pytest.approx(1.5)
+    assert pos["notional"] == pytest.approx(1.5 * 101.5)
+
+
+def test_restore_small_drift_untouched():
+    h = _restore_harness({"average": 100.05, "filled": 1.99})
+    pos = {"symbol": "BTC/USDC", "order_id": "o1", "entry": 100.0,
+           "size": 2.0, "notional": 200.0}
+    h._verify_restored_position(pos)
+    assert pos["entry"] == 100.0      # 0,05 % < seuil 0,1 %
+    assert pos["size"] == 2.0         # 0,5 % < seuil 2 %
+
+
+def test_restore_order_not_found_keeps_position():
+    h = _restore_harness(RuntimeError("ordre inconnu"))
+    pos = {"symbol": "BTC/USDC", "order_id": "o1", "entry": 100.0,
+           "size": 2.0, "notional": 200.0}
+    h._verify_restored_position(pos)
+    assert pos["entry"] == 100.0 and pos["size"] == 2.0

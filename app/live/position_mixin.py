@@ -132,6 +132,13 @@ class PositionMixin:
                     delete_open_position(_sess, pos_id)
                 continue
 
+            # Cohérence entry/taille avec l'ordre réel (live) : si le bot a
+            # crashé entre l'exécution de l'ordre et la persistance, la BDD
+            # peut contenir un prix d'entrée pré-exécution ou une taille non
+            # ajustée du remplissage partiel → stops/PnL faux à la reprise.
+            if not self.cfg["trading"].get("paper_mode") and pos.get("order_id"):
+                self._verify_restored_position(pos)
+
             # Validate stop is not already breached (if we can get a ticker)
             try:
                 ticker = self.exchange.fetch_ticker(symbol) if hasattr(self, 'exchange') else None
@@ -178,6 +185,53 @@ class PositionMixin:
             f"⚠️ Vérifiez que les stops sont cohérents avec le marché.",
             async_=False
         )
+
+    def _verify_restored_position(self, pos: dict) -> None:
+        """Croise la position BDD avec l'ordre d'ouverture réel de l'exchange.
+
+        Ajuste ``entry`` (prix moyen réellement exécuté) si l'écart dépasse
+        0,1 % et ``size``/``notional`` (quantité réellement remplie) si l'écart
+        dépasse 2 %. Best-effort : ordre introuvable ou erreur réseau → la
+        position BDD est conservée telle quelle (log debug).
+        """
+        order_id = str(pos.get("order_id") or "")
+        if not order_id or order_id.startswith("paper_"):
+            return
+        try:
+            order = self.exchange.fetch_order(order_id, pos["symbol"]) or {}
+        except Exception as e:
+            logger.debug(
+                f"[Reprise] Vérification ordre {order_id} ({pos['symbol']}) KO : {e}"
+            )
+            return
+
+        real_entry = order.get("average") or order.get("price")
+        try:
+            real_entry = float(real_entry) if real_entry else 0.0
+        except (TypeError, ValueError):
+            real_entry = 0.0
+        if real_entry > 0 and pos.get("entry", 0) > 0:
+            drift = abs(real_entry - pos["entry"]) / pos["entry"]
+            if drift > 0.001:
+                logger.warning(
+                    f"[Reprise] {pos['symbol']} : entry BDD {pos['entry']:.6f} ≠ "
+                    f"prix exécuté réel {real_entry:.6f} ({drift * 100:.2f}%) — corrigé."
+                )
+                pos["entry"] = real_entry
+
+        try:
+            filled = float(order.get("filled") or 0)
+        except (TypeError, ValueError):
+            filled = 0.0
+        if filled > 0 and pos.get("size", 0) > 0:
+            drift = abs(filled - pos["size"]) / pos["size"]
+            if drift > 0.02:
+                logger.warning(
+                    f"[Reprise] {pos['symbol']} : taille BDD {pos['size']:.6f} ≠ "
+                    f"quantité remplie réelle {filled:.6f} ({drift * 100:.1f}%) — corrigée."
+                )
+                pos["size"]     = round(filled, 6)
+                pos["notional"] = round(filled * pos["entry"], 4)
 
     # ── Ouverture ──────────────────────────────────────────────────────────
 
