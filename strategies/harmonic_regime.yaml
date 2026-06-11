@@ -34,27 +34,19 @@ params:
   use_cycle: true
   cooldown: 2
   score_threshold: 0.55
-
 optimizer_results:
   # 4h — swing long-only : les shorts perdent sur 4h (rebonds de contre-tendance
   # qui whipsawent). Trends laissées courir (max_hold=40). Backtest 7.5 ans :
   # +33.4% · Sharpe 5.29 · maxDD -7.3% · PF 1.41 · BEAR-2022 -1.1% vs B&H -53%.
   4h:
-    run_date: "2026-06-03"
-    oos_score: 28.34          # walk-forward 5 folds : PnL OOS moyen (USDC), consistance 60%
+    run_date: '2026-06-09'
+    oos_score: 0.379075
     params:
-      enable_short: false
-      enable_meanrev: true
-      use_cycle: true
-      adx_min: 25
-      min_quality: 0.62
-      max_hold: 40
-      sl_atr_long: 2.0
-      sl_atr_short: 1.2
-      donchian: 20
+      adx_min: 18
       slope_lookback: 20
-      rsi_pullback: 42
-      rsi_oversold: 32
+      donchian: 20
+      rsi_pullback: 38
+      rsi_oversold: 35
       vol_extreme_mult: 2.2
       cooldown: 2
 
@@ -62,20 +54,21 @@ optimizer_results:
   # confirmé capturent des downtrends propres (2022). Backtest 7.5 ans :
   # +11.5% · Sharpe 2.90 · maxDD -4.7% · PF 1.56 · WF OOS consistance 100%.
   1d:
-    run_date: "2026-06-03"
-    oos_score: 25.66          # walk-forward 5 folds : PnL OOS moyen (USDC), consistance 100%
+    run_date: '2026-06-10'
+    oos_score: 0.806669
     params:
+      adx_min: 28
+      slope_lookback: 20
+      donchian: 30
+      rsi_pullback: 38
+      rsi_oversold: 35
+      vol_extreme_mult: 2.6
+      sl_atr_long: 1.6
+      sl_atr_short: 1.2
+      max_hold: 16
+      min_quality: 0.64
       enable_short: true
       enable_meanrev: true
       use_cycle: true
-      adx_min: 22
-      min_quality: 0.60
-      max_hold: 24
-      sl_atr_long: 1.6
-      sl_atr_short: 1.2
-      donchian: 20
-      slope_lookback: 20
-      rsi_pullback: 42
-      rsi_oversold: 32
-      vol_extreme_mult: 2.2
-      cooldown: 2
+      cooldown: 0
+      score_threshold: 0.6

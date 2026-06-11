@@ -14,5 +14,14 @@ params:
   tp_atr: 3.0
   cooldown: 5
   atr_period: 14
-
-optimizer_results: {}
+optimizer_results:
+  1d:
+    run_date: '2026-06-09'
+    oos_score: 0.994943
+    params:
+      period: 30
+      macd_fast: 14
+      macd_slow: 30
+      sl_atr: 0.8
+      tp_atr: 2.5
+      cooldown: 5
