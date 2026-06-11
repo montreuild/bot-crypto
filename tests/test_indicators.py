@@ -455,7 +455,9 @@ class TestCausalReuse:
         # Le cache ne calcule la série complète qu'une fois par jeu de params.
         full = _make_ohlcv(300, seed=11)
         cache = {}
-        import app.core.indicators as ind
+        # Patch sur le module qui détient le binding utilisé par supertrend_last
+        # (indicators_causal, depuis le découpage V13 d'indicators.py).
+        import app.core.indicators_causal as ind
         calls = {"n": 0}
         orig = ind.supertrend
 
