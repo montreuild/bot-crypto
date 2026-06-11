@@ -85,7 +85,6 @@
 .job-group-hdr{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:600;margin:10px 0 6px;display:flex;align-items:center;gap:8px;}
 .job-group-hdr::after{content:'';flex:1;height:1px;background:var(--border);}
 /* Empty state */
-.empty-state{text-align:center;padding:48px 24px;color:var(--dim);}
 .empty-state p{font-size:.82rem;margin-top:8px;}
 /* Job action buttons */
 .job-actions{display:flex;gap:5px;flex-shrink:0;align-items:center;}
@@ -858,7 +857,6 @@ async function deleteJob(jobId, e) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
-function fmtSign(v, unit='') { const n=+(v||0); return (n>=0?'+':'')+n.toFixed(2)+unit; }
 function clr(v) { return v>0?'clr-green':v<0?'clr-red':'clr-muted'; }
 
 // ── Boot ──────────────────────────────────────────────────────────────────

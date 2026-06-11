@@ -689,8 +689,6 @@ async function exportCSV(){
 }
 
 function fmtUSDC(v){return(+(v||0)).toFixed(2);}
-function fmtSign(v,unit=''){const n=+(v||0);return(n>=0?'+':'')+n.toFixed(2)+unit;}
-function fmtPrice(v){const n=+(v||0);return n>=100?n.toFixed(2):n.toFixed(4);}
 function clrC(v){return v>0?'c-green':v<0?'c-red':'c-muted';}
 
 /* ── Keyboard: Escape closes modals ── */
