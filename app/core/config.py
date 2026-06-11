@@ -252,6 +252,20 @@ def load_config(path: str = "config.yaml") -> dict:
             "divergeront. Désactivez margin pour un paper trading représentatif."
         )
 
+    # ── Sécurité API web ─────────────────────────────────────────────────────
+    # Sans web.api_key, l'auth retombe sur un filtre « localhost only » basé
+    # sur l'IP client — contournable derrière un reverse proxy mal configuré
+    # (X-Forwarded-For). Exposer 0.0.0.0 sans clé = API de trading ouverte.
+    web_cfg = cfg.get("web", {})
+    if not web_cfg.get("api_key") and str(web_cfg.get("host", "")) in ("0.0.0.0", "::"):
+        logger.warning(
+            "🔓 [Config] web.host=%s SANS web.api_key : l'API n'est protégée que "
+            "par un filtre localhost (fragile derrière un reverse proxy). "
+            "Définissez web.api_key avant toute exposition réseau — "
+            "ex. : python -c \"import secrets; print(secrets.token_urlsafe(32))\"",
+            web_cfg.get("host"),
+        )
+
     # Compatibilité multi-TF
     _VALID_TIMEFRAMES = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
     if "timeframes" in cfg and cfg["timeframes"]:

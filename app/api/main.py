@@ -71,13 +71,20 @@ async def _global_exception_handler(request: Request, exc: Exception):
 
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
+
+# CORS : whitelist localhost par défaut (dev). En production, définir
+# ALLOWED_ORIGINS (liste séparée par des virgules) pour restreindre au(x)
+# domaine(s) réel(s) — ex. ALLOWED_ORIGINS=https://bot.mondomaine.com
+_allowed_origins = [
+    o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()
+] or [
+    "http://localhost",      "http://127.0.0.1",
+    "http://localhost:8000", "http://127.0.0.1:8000",
+    "http://localhost:8001", "http://127.0.0.1:8001",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost",      "http://127.0.0.1",
-        "http://localhost:8000", "http://127.0.0.1:8000",
-        "http://localhost:8001", "http://127.0.0.1:8001",
-    ],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["X-API-Key", "Content-Type"],

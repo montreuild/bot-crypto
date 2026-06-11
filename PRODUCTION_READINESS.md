@@ -54,10 +54,14 @@ variables), pas des formules.
    horaires variables par paire. Le PnL margin sera approximatif (cf. backlog).
 3. **Sécurité API** :
    - définir `web.api_key` (sinon l'API n'est accessible qu'en localhost, mais
-     ne comptez pas dessus derrière un reverse proxy) ;
+     ne comptez pas dessus derrière un reverse proxy) — un warning explicite
+     est désormais émis au démarrage si `web.host: 0.0.0.0` sans clé ;
+     génération : `python -c "import secrets; print(secrets.token_urlsafe(32))"` ;
    - clés exchange **uniquement** via variables d'env (`${BINANCE_API_KEY}` —
      déjà le cas) ; clés Binance restreintes par IP, sans droit de retrait ;
-   - HTTPS (`FORCE_HTTPS=1` + reverse proxy TLS) et CORS adapté au domaine.
+   - HTTPS (`FORCE_HTTPS=1` + reverse proxy TLS) et CORS adapté au domaine
+     via la variable d'env `ALLOWED_ORIGINS` (liste séparée par des virgules,
+     ex. `ALLOWED_ORIGINS=https://bot.mondomaine.com` — défaut : localhost).
 4. **Supervision** : activer Telegram (`notifications.telegram_enabled`),
    le service systemd avec `Restart=on-failure` (déjà dans `deploy/`), et le
    healthcheck `/health` dans un monitoring externe (UptimeRobot ou cron).
@@ -68,11 +72,11 @@ variables), pas des formules.
 
 | Priorité | Sujet | Détail |
 |---|---|---|
-| Haute | **Idempotence des ordres** | En cas de timeout réseau sur `create_order`, un retry peut dupliquer l'ordre. Utiliser un `newClientOrderId` déterministe et vérifier son existence avant retry. |
-| Haute | **Réconciliation des frais/emprunts réels** | Après clôture, lire `fetch_my_trades` pour remplacer frais et borrow_cost estimés par les valeurs réelles (écart actuel ~0,01–0,1 %/trade en margin). |
+| ~~Haute~~ ✅ fait | **Idempotence des ordres** | `create_order` attache un `newClientOrderId` stable entre tentatives ; après un timeout réseau, l'ordre est recherché par `origClientOrderId` et réutilisé s'il existe (pas de doublon). Tests : `test_order_idempotency.py`. |
+| ~~Haute~~ ✅ fait | **Réconciliation des frais/emprunts réels** | Après chaque clôture live, frais du fill (fetch_my_trades) et intérêts margin réels remplacent les estimations dans le PnL/BDD ; warning si écart > 5 %. Opt-out `trading.reconcile_real_costs`. Tests : `test_reconcile_costs.py`. |
 | Moyenne | **Locks `CapitalAllocator`/`RiskManager`** | `register_open/close` modifient les budgets sans verrou ; risque de course faible (la boucle est mono-thread) mais réel avec les threads d'auto-optimisation. |
 | Moyenne | **Circuit-breaker réseau global** | Les erreurs réseau consécutives déclenchent un reset de session TCP (exchange.py) mais jamais un halt : ajouter un halt temporaire après ~10 min d'échecs continus. |
-| Moyenne | **Vérification entry/size à la restauration** | `_restore_open_positions` vérifie l'existence de la position côté exchange, pas la cohérence taille/prix : croiser avec `fetch_order(pos["order_id"])`. |
+| ~~Moyenne~~ ✅ fait | **Vérification entry/size à la restauration** | `_verify_restored_position` croise la position BDD avec `fetch_order(pos["order_id"])` : entry corrigé si écart > 0,1 %, taille si écart > 2 %. |
 | Basse | **Slippage paper proportionnel à la taille** | Le slippage paper fixe (0,1 %) sous-estime les gros ordres sur paires illiquides. |
 | Basse | **Timeout scoring pipeline (5 s)** | Avec beaucoup de symboles×TF×stratégies, des scores peuvent être silencieusement abandonnés ; rendre le timeout configurable. |
 
