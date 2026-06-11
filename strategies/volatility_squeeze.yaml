@@ -18,7 +18,7 @@
 
 params:
   squeeze_lookback: 100
-  squeeze_pctl: 0.20
+  squeeze_pctl: 0.2
   release_window: 5
   donchian: 20
   adx_min: 22
@@ -29,23 +29,38 @@ params:
   require_trend: true
   cooldown: 1
   score_threshold: 0.55
-
 optimizer_results:
   # 4h — config validée : long-only (les breakdowns shorts perdent -112), squeeze
   # strict (percentile 0.20) + ADX≥22. +68.7% · Sharpe 13.7 · PF 2.49 · OOS 80%.
   4h:
-    run_date: "2026-06-03"
-    oos_score: 69.8           # walk-forward 5 folds : PnL OOS moyen (USDC), consistance 80%
+    run_date: '2026-06-10'
+    oos_score: 0.610517
     params:
-      enable_short: false
-      squeeze_pctl: 0.20
-      squeeze_lookback: 100
-      release_window: 5
-      donchian: 20
+      squeeze_lookback: 150
+      squeeze_pctl: 0.2
+      release_window: 8
+      donchian: 30
       adx_min: 22
-      sl_atr: 1.5
+      sl_atr: 2.0
+      max_hold: 20
+      min_quality: 0.56
+      enable_short: false
+      require_trend: true
+      cooldown: 2
+      score_threshold: 0.6
+  1d:
+    run_date: '2026-06-10'
+    oos_score: 0.89725
+    params:
+      squeeze_lookback: 100
+      squeeze_pctl: 0.25
+      release_window: 8
+      donchian: 15
+      adx_min: 22
+      sl_atr: 1.3
       max_hold: 30
-      min_quality: 0.62
+      min_quality: 0.6
+      enable_short: true
       require_trend: true
       cooldown: 1
 
@@ -55,14 +70,15 @@ optimizer_results:
     run_date: "2026-06-03"
     oos_score: 10.2           # walk-forward 5 folds : PnL OOS moyen (USDC), consistance 60%
     params:
-      enable_short: true
-      squeeze_pctl: 0.30
-      squeeze_lookback: 100
-      release_window: 5
-      donchian: 20
+      squeeze_lookback: 80
+      squeeze_pctl: 0.3
+      release_window: 3
+      donchian: 15
       adx_min: 18
       sl_atr: 2.0
       max_hold: 30
-      min_quality: 0.60
+      min_quality: 0.6
+      enable_short: false
       require_trend: true
-      cooldown: 1
+      cooldown: 2
+      score_threshold: 0.55

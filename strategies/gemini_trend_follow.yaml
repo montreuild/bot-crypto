@@ -13,5 +13,37 @@ params:
   atr_sl_mult: 1.5
   cooldown: 15
   rr_min: 2.0
-
-optimizer_results: {}
+optimizer_results:
+  1d:
+    run_date: '2026-06-09'
+    oos_score: 1.03
+    params:
+      ema_trend: 200
+      rsi_period: 14
+      rsi_os: 28
+      rsi_ob: 68
+      atr_sl_mult: 1.5
+      cooldown: 15
+      rr_min: 1.8
+  4h:
+    run_date: '2026-06-09'
+    oos_score: 0.660397
+    params:
+      ema_trend: 200
+      rsi_period: 14
+      rsi_os: 28
+      rsi_ob: 68
+      atr_sl_mult: 2.0
+      cooldown: 20
+      rr_min: 2.0
+  30m:
+    run_date: '2026-06-10'
+    oos_score: 0.423105
+    params:
+      ema_trend: 200
+      rsi_period: 14
+      rsi_os: 28
+      rsi_ob: 68
+      atr_sl_mult: 2.0
+      cooldown: 20
+      rr_min: 2.0

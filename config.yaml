@@ -12,18 +12,17 @@ exchange:
   # déjà le mode margin (cf. _margin_enabled). Pour revenir en spot pur sans
   # emprunt : margin: false ET trading.margin_mode: null.
   margin: true
-
 trading:
   capital: 1000
   paper_mode: true
   timeframe: 1h
   timeframes:
-    - 5m
-    - 15m
-    - 30m
-    - 1h
-    - 4h
-    - 1d
+  - 5m
+  - 15m
+  - 30m
+  - 1h
+  - 4h
+  - 1d
   scan_interval: 60
   score_threshold: 0.55
   risk_per_trade: 0.01
@@ -54,25 +53,20 @@ trading:
   reconcile_real_costs: true
   reentry_cooldown_bars: 2          # V6.1 : 2 bougies de cooldown après une perte
   top_strategies_per_tf: 2
-
 risk:
-  consecutive_loss_limit: 3          # V6.1 : max_losses = 3 pertes consécutives
-  consecutive_pause_secs: 1800       # V6.1 : cooldown × 2 (~30 min, ajustable)
+  consecutive_loss_limit: 3
+  consecutive_pause_secs: 1800
   slot_daily_dd_limit: 0.03
   win_rate_floor: 0.25
-  max_trades_per_day: 5              # V6.1 : daily.get(dk, 0) >= 5 → skip
+  max_trades_per_day: 5
   volatility_threshold: 0.05
   adx_trend_threshold: 25.0
   atr_volatile_threshold: 3.0
-
 scanner:
   dynamic_scan: false
   symbols:
-    - BTC/USDC
-    - ETH/USDC
-    - SOL/USDC
-    - BNB/USDC
-    - XRP/USDC
+  - BTC/USDC
+  - ETH/USDC
   top_n: 20
   symbols_cache_ttl: 300
   opportunity_scan:
@@ -86,27 +80,23 @@ scanner:
 # et injecte funding_z / oi_change_pct / lsr_z / taker_z dans le df de scoring,
 # consommés par la stratégie funding_flow. Dégradation gracieuse si réseau KO.
 derivatives:
-  enabled: false           # ← passer à true pour activer l'accumulation + funding_flow
-  period: 1h               # granularité OI/long-short/taker (5m..1d)
-  refresh_interval: 300    # throttle réseau par symbole (secondes)
-  z_window: 90             # fenêtre du z-score roulant (détection d'extrêmes)
-
+  enabled: false
+  period: 1h
+  refresh_interval: 300
+  z_window: 90
 backtest:
   spread_pct: 0.0005
   latency_ms: 50
   partial_fill_pct: 0.95
   monte_carlo_runs: 200
   walk_forward_folds: 5
-
 optimizer:
   enabled: false
   method: bayesian
   n_trials: 40
   out_of_sample_ratio: 0.35
-
 database:
   url: sqlite:///trades.db
-
 capital_allocator:
   mode: equal                  # equal | manual | performance
   max_slot_pct: 0.50
@@ -115,21 +105,29 @@ capital_allocator:
   max_symbol_exposure_pct: 0.25
   max_pyramiding: 2
   disabled_slots: []
-  slot_budgets: {}
-
+  slot_budgets:
+    scoring_statistique_opus::15m: 0.0909
+    scoring_statistique_opus::30m: 0.0909
+    scoring_statistique_opus_v2::30m: 0.0909
+    breakout::1h: 0.0909
+    breakout::4h: 0.0909
+    supertrend_macd::4h: 0.0909
+    breakout::1d: 0.0909
+    derivatives_reversion::1h: 0.0909
+    pullback_trend::1d: 0.0909
+    derivatives_reversion::5m: 0.0909
+    supertrend_macd::15m: 0.0909
 logging:
   level: INFO
   debug: false
   log_file: logs/bot.log
   max_bytes: 10485760
   backup_count: 5
-
 web:
   host: 0.0.0.0
   port: 8000
   refresh_interval: 5
   api_key: ''
-
 notifications:
   telegram_enabled: false
   telegram_bot_token: ''
