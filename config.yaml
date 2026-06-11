@@ -49,6 +49,9 @@ trading:
   # exchange_stop_limit_offset sous/sur le stop.
   exchange_stop_orders: true
   exchange_stop_limit_offset: 0.005
+  # Après chaque clôture en live : remplace frais/intérêts estimés par les
+  # valeurs réelles de l'exchange (fetch_my_trades + interestHistory margin).
+  reconcile_real_costs: true
   reentry_cooldown_bars: 2          # V6.1 : 2 bougies de cooldown après une perte
   top_strategies_per_tf: 2
 

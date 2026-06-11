@@ -658,6 +658,88 @@ class PositionMixin:
             async_=True
         )
 
+    # ── Réconciliation des coûts réels (live) ──────────────────────────────
+
+    def _reconcile_close_costs(self, pos: dict, close_order: dict,
+                               fees_est: float, borrow_est: float,
+                               pnl_est: float) -> tuple:
+        """Remplace les frais/emprunts ESTIMÉS par les valeurs RÉELLES exchange.
+
+        - Frais du fill de clôture : somme des ``fee.cost`` des trades du
+          close order (``fetch_my_trades``). Seuls les frais en devise de
+          cotation (ou USDT/USDC) sont sommés — frais en BNB & co ignorés
+          (pas de conversion fiable), on garde alors l'estimation.
+        - Coût d'emprunt : intérêts réels accumulés depuis l'ouverture via
+          ``fetch_borrow_interest`` (Binance margin interestHistory).
+
+        Best-effort : tout échec retombe sur les estimations (aucune exception
+        propagée). Alerte si l'écart dépasse 5 % du coût estimé.
+        Retourne ``(pnl, fees, borrow)`` ajustés.
+        """
+        symbol = pos["symbol"]
+        quote  = symbol.split("/")[-1].split(":")[0]
+        since  = max(0, int(pos.get("open_time", time.time()) * 1000) - 60_000)
+        fees_real = None
+        borrow_real = None
+
+        # 1. Frais réels du fill de clôture
+        try:
+            close_id = str((close_order or {}).get("id") or "")
+            if close_id and not close_id.startswith("paper_"):
+                my_trades = self.exchange.fetch_my_trades(symbol, since=since) or []
+                total, found, convertible = 0.0, False, True
+                for t in my_trades:
+                    if str(t.get("order")) != close_id:
+                        continue
+                    fee = t.get("fee") or {}
+                    cost, cur = fee.get("cost"), fee.get("currency")
+                    if cost is None:
+                        continue
+                    found = True
+                    if cur in (quote, "USDT", "USDC"):
+                        total += float(cost)
+                    else:
+                        convertible = False   # frais en BNB & co → estimation conservée
+                        break
+                if found and convertible:
+                    fees_real = total
+        except Exception as e:
+            logger.debug(f"[Reconcile] fetch_my_trades {symbol} KO : {e}")
+
+        # 2. Intérêts d'emprunt réels (margin uniquement)
+        if self.cfg.get("exchange", {}).get("margin") and borrow_est > 0:
+            try:
+                fetch_bi = getattr(self.exchange, "fetch_borrow_interest", None)
+                if callable(fetch_bi):
+                    rows = fetch_bi(code=quote, symbol=symbol, since=since) or []
+                    borrow_real = sum(float(r.get("interest") or 0) for r in rows)
+            except Exception as e:
+                logger.debug(f"[Reconcile] fetch_borrow_interest {symbol} KO : {e}")
+
+        fees   = fees_real   if fees_real   is not None else fees_est
+        borrow = borrow_real if borrow_real is not None else borrow_est
+        if fees == fees_est and borrow == borrow_est:
+            return pnl_est, fees_est, borrow_est
+
+        pnl = pnl_est + (fees_est - fees) + (borrow_est - borrow)
+        d_fees   = fees - fees_est
+        d_borrow = borrow - borrow_est
+        logger.info(
+            f"[Reconcile] {symbol} coûts réels : fees {fees_est:.6f}→{fees:.6f} "
+            f"(Δ{d_fees:+.6f}), borrow {borrow_est:.6f}→{borrow:.6f} "
+            f"(Δ{d_borrow:+.6f}) — PnL ajusté {pnl_est:.6f}→{pnl:.6f}"
+        )
+        # Alerte si l'estimation était fausse de > 5 % (config locale à revoir :
+        # taker_fee / borrow_rate_daily ne reflètent pas le compte réel).
+        for label, est, real in (("frais", fees_est, fees), ("emprunt", borrow_est, borrow)):
+            if est > 0 and abs(real - est) / est > 0.05:
+                logger.warning(
+                    f"[Reconcile] {symbol} : écart {label} estimé vs réel "
+                    f"{abs(real - est) / est * 100:.1f}% — ajustez la config "
+                    f"(taker_fee / borrow_rate_daily)."
+                )
+        return pnl, fees, borrow
+
     # ── Clôture ───────────────────────────────────────────────────────────
 
     def _close_position(self, pos_id: str, exit_price: float) -> None:
@@ -712,6 +794,14 @@ class PositionMixin:
             hours_held=hours_held,
             periods_per_day=self.cfg["trading"].get("borrow_periods_per_day", 3),
         )
+        # Réconciliation avec les coûts RÉELS de l'exchange (live uniquement) :
+        # frais du fill de clôture via fetch_my_trades, intérêts d'emprunt réels
+        # via l'historique margin. Remplace les estimations dans le PnL persisté.
+        if (not self.cfg["trading"].get("paper_mode")
+                and self.cfg["trading"].get("reconcile_real_costs", True)):
+            pnl, fees, borrow_cost = self._reconcile_close_costs(
+                pos, order, fees, borrow_cost, pnl
+            )
         self._margin_interest += borrow_cost
 
         with self._capital_lock:
