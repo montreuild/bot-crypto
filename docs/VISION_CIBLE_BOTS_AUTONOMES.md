@@ -238,7 +238,59 @@ les notifications.
 
 ---
 
-## 6. Chemin de migration (incrémental, sans big bang)
+## 6. Mono-compte Binance : long, short et margin en parallèle
+
+**Question : avec un unique compte Binance, plusieurs bots peuvent-ils gérer à la fois des
+positions à la hausse, à la baisse et du margin pour certains ? → Oui**, car un compte Binance
+est en réalité plusieurs portefeuilles étanches entre lesquels on transfère par API.
+
+### 6.1 Ce que permet un compte unique
+
+| Portefeuille | Long | Short | Levier | Isolation |
+|---|---|---|---|---|
+| Spot | ✅ | ❌ | ❌ | Aucune — solde commun |
+| Margin **isolé** (un mini-wallet par paire) | ✅ | ✅ (emprunt) | ✅ ~5× | ✅ liquidation bornée au capital du wallet |
+| Margin cross | ✅ | ✅ | ✅ | ❌ collatéral partagé — **à proscrire en multi-bots** |
+| Futures USDⓈ-M (mode hedge) | ✅ | ✅ | ✅ | Long + short simultanés sur un symbole (non supporté par le code actuel) |
+
+Alternatives : sous-comptes Binance (isolation parfaite, un bot = un sous-compte, mais réservé
+corporate/VIP) ; futures hedge mode (non supporté aujourd'hui, le margin isolé couvre le besoin).
+
+### 6.2 Le vrai problème : la comptabilité interne, pas Binance
+
+L'exchange ne sait pas quel bot possède quoi : si deux bots détiennent du BTC spot, rien côté
+Binance n'empêche l'un de vendre l'inventaire de l'autre. La protection est le registre interne —
+exactement ce que les budgets virtuels apportent. Le code actuel a déjà la moitié du chemin
+(`OpenPosition` en DB avec stratégie et taille, ventes dimensionnées sur la position du bot).
+
+### 6.3 Mapping recommandé
+
+- **Bots long spot** → wallet spot commun + registre interne (fonctionnement actuel).
+- **Bots short / à levier** → **margin isolé sur leur paire** : le budget du bot devient
+  *littéralement* le solde transféré dans son wallet isolé. « Un bot ne peut perdre que son
+  budget » n'est plus une règle logicielle — c'est garanti par l'exchange (liquidation bornée
+  au wallet, le reste du compte est intouchable).
+- **Rebalance = transferts** spot ↔ wallets isolés par le méta-allocateur (API de transfert),
+  au rythme quotidien déjà prévu.
+- **Long et short simultanés sur le même symbole** (bot A long spot, bot B short margin) :
+  techniquement sans conflit (deux wallets) ; économiquement un hedge qui paie frais + intérêts
+  des deux côtés. **À autoriser** (deux TFs peuvent légitimement diverger ; l'interdire serait un
+  veto brisant la fidélité au backtest), mais afficher l'**exposition nette par symbole** sur la
+  page Portefeuille.
+
+### 6.4 Adaptations du code
+
+1. **Le venue devient un attribut du bot** : identité = (stratégie, TF, params, version,
+   **venue** spot/margin-isolé). Aujourd'hui `margin_mode` et `max_leverage` sont globaux dans
+   `config.yaml` — limite principale de l'existant pour ce scénario.
+2. **Transferts de fonds au rebalance** (étendre `balance_sync.py` aux wallets margin par paire).
+3. **Margin level surveillé par wallet isolé** (alertes 1.5 / critique 1.2 déclinées par bot).
+4. Un seul processus, une seule clé API : les rate limits Binance sont par compte ; multiplier
+   les processus n'apporte rien et crée des conflits.
+
+---
+
+## 7. Chemin de migration (incrémental, sans big bang)
 
 1. **Forward-test glissant** : job quotidien qui re-backteste chaque slot actif sur les 30–60
    derniers jours avec ses params figés, stocke le score. Aucun impact trading — pure observation.
