@@ -36,7 +36,7 @@ import pandas as pd
 import polars as pl
 
 from app.engine.engine import BaseStrategyML
-from app.core.indicators import pre_val
+from app.core.indicators import pre_val, safe_num as _safe_num
 
 warnings.filterwarnings("ignore", category=UserWarning, module="lightgbm")
 
@@ -763,7 +763,7 @@ class Strategy(BaseStrategyML):
             return self._none("Construction des features V4 impossible")
 
         last = features.iloc[-1]
-        atr_v = float(last.get("ATR_14", 0.0) or 0.0)
+        atr_v = _safe_num(last.get("ATR_14", 0.0), 0.0)
         if not np.isfinite(atr_v) or atr_v <= 0:
             # Fallback : ATR depuis le précompute du backtester si disponible
             atr_v = float(pre_val(df, "_pre_atr14") or 0.0)
@@ -772,9 +772,9 @@ class Strategy(BaseStrategyML):
             return self._none("Prix ou ATR invalide")
 
         # 3. Régime : ADX + alignement SMA (réplique de la logique V4).
-        adx_v = float(last.get("ADX", 0.0) or 0.0)
-        bull  = int(last.get("MM_bullish_align", 0) or 0)
-        bear  = int(last.get("MM_bearish_align", 0) or 0)
+        adx_v = _safe_num(last.get("ADX", 0.0), 0.0)
+        bull  = int(_safe_num(last.get("MM_bullish_align", 0), 0.0))
+        bear  = int(_safe_num(last.get("MM_bearish_align", 0), 0.0))
         if adx_v < adx_threshold:
             regime = REGIME_RANGE
         elif bull == 1:
@@ -887,7 +887,7 @@ class Strategy(BaseStrategyML):
 
         sig["indicators"] = {
             "adx":              round(adx_v, 1),
-            "rsi":              round(float(last.get("RSI_14", 50.0) or 50.0), 1),
+            "rsi":              round(_safe_num(last.get("RSI_14", 50.0), 50.0), 1),
             "p_event":          round(p_event, 4),
             "p_up":             round(p_up, 4),
             "dir_dist":         round(dir_dist, 4),
