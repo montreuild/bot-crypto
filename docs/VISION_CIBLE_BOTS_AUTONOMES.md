@@ -302,6 +302,32 @@ recommandation :
 Fenêtre de conflit étroite en pratique (deux bots opposés, avec levier, sur la même paire, au
 même moment) ; le netting interne est l'extension naturelle du registre de budgets virtuels.
 
+**Mécanique du netting — exemple chiffré.** Personne ne « possède » de coins : le registre suit
+des positions virtuelles (taille + prix d'entrée) et chaque action d'un bot émet un **ordre
+delta** qui maintient l'invariant *position exchange = somme des positions virtuelles*.
+
+| Moment | Action | Positions virtuelles | Net cible | Ordre envoyé à Binance |
+|---|---|---|---|---|
+| t0 | A entre short 0,10 | A : −0,10 | −0,10 | Emprunte et vend 0,10 |
+| t+5 | B entre long 0,04 | A : −0,10 / B : +0,04 | −0,06 | Achète 0,04 (réduit le short) |
+| t+15 | A ferme son short | B : +0,04 | +0,04 | Achète 0,10 (0,06 rembourse l'emprunt, 0,04 devient détention réelle) |
+| t+35 | B solde son long | — | 0 | Vend 0,04 |
+
+À t+35, l'inventaire (+0,04 réels) est toujours exactement là : il a été créé mécaniquement quand
+la clôture de A a fait franchir zéro au net. Il n'y a jamais de trou. Règles d'attribution :
+
+- **Prix/PnL** : chaque action d'un bot déclenche un ordre de la même taille → le prix de fill de
+  cet ordre est le prix virtuel du bot (à t+5, l'achat réduit un short côté exchange mais c'est le
+  prix d'entrée long de B). Frais attribués au bot déclencheur.
+- **Intérêts d'emprunt** : facturer à chaque bot son emprunt **théorique** (fidélité au backtest) ;
+  l'écart avec le coût réel (réduit par le hedge) est une économie qui revient au portefeuille.
+- **Clôtures partielles** : simples deltas plus petits, aucun cas particulier.
+- **Contreparties** : stops logiciels par bot obligatoires ; gestion du franchissement de zéro en
+  margin (remboursement d'emprunt → détention, couvert par l'auto-repay Binance).
+
+⚠ Ce moteur de netting n'existe pas dans le code actuel (une position logicielle = une position
+exchange) — c'est un composant à construire du méta-allocateur.
+
 ### 6.4 Adaptations du code
 
 1. **Le venue devient un attribut du bot** : identité = (stratégie, TF, params, version,
