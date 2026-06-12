@@ -47,6 +47,27 @@ def _df_fingerprint(df) -> tuple:
         return (id(df),)
 
 
+def aligned_train_window(df, retrain_every: int, n_train: int):
+    """Fenêtre d'entraînement (tail) dont la fin est alignée sur la grille
+    ``retrain_every``. Retourne ``(train_df, start_offset)``.
+
+    Le déclenchement d'un retrain dépend du compteur d'appels ``score()``,
+    lui-même fonction des trades du trial (on ne cherche un signal que hors
+    position). Deux trials aux seuils de décision différents retrainent donc
+    à des barres légèrement décalées → fenêtres distinctes → aucun hit du
+    cache process-wide. En alignant la fin de fenêtre sur le multiple de
+    ``retrain_every`` inférieur, les fenêtres deviennent identiques entre
+    trials (quantifiées sur la même grille), avec une staleness bornée à
+    ``retrain_every`` barres — équivalente à celle du déclenchement.
+    """
+    step = max(int(retrain_every), 1)
+    end = (len(df) // step) * step
+    if end <= 0:
+        end = len(df)
+    start = max(0, end - int(n_train))
+    return df.slice(start, end - start), start
+
+
 def cached_train(strategy, df, tf_key: str, params: dict,
                  train_impl: Callable[..., bool],
                  state_attrs: Iterable[str],

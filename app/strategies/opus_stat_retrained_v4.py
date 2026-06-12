@@ -506,14 +506,20 @@ class Strategy(BaseStrategyML):
         "tp_atr_mult_td":    [1.0, 1.2, 1.4, 1.6],
         "tp_atr_mult_other": [0.8, 1.0, 1.2, 1.4],
         "max_hold_bars":     [1, 2, 4, 6, 8],
-        "amp_top_pct":     [0.25, 0.30, 0.35],
-        "warmup_bars":     [1000, 2000, 3000],
-        "retrain_every":   [500, 800, 1500],
-        "n_estimators":    [200, 300, 500],
-        "num_leaves":      [15, 31, 63],
-        "learning_rate":   [0.02, 0.03, 0.05],
     }
-    fixed_params: Dict[str, Any] = {}
+    # Hyperparamètres d'entraînement figés (hors espace de recherche) : les
+    # échantillonner invalide le cache d'entraînement process-wide entre les
+    # trials de l'optimiseur — chaque trial repaye alors l'intégralité des
+    # retrains LightGBM walk-forward (rédhibitoire sur 50k bougies). Valeurs
+    # effectives : _DEFAULTS ; surchargables via le YAML stratégie.
+    fixed_params: Dict[str, Any] = {
+        "amp_top_pct":     0.30,
+        "warmup_bars":     2000,
+        "retrain_every":   800,
+        "n_estimators":    500,
+        "num_leaves":      31,
+        "learning_rate":   0.03,
+    }
 
     _DEFAULTS = {
         "enable_hour_filter":  True,
@@ -700,12 +706,17 @@ class Strategy(BaseStrategyML):
         num_leaves    = int(params.get("num_leaves",      self._DEFAULTS["num_leaves"]))
         learning_rate = float(params.get("learning_rate", self._DEFAULTS["learning_rate"]))
 
-        # 1. Features V4 — réutilise le cache backtest si dispo
+        # 1. Features V4 — réutilise le cache backtest si dispo.
+        # ``_bt_train_offset`` (posé par score() avant _train) repère la
+        # position de la fenêtre d'entraînement dans la fenêtre complète :
+        # sans lui, head(len(df)) lisait les PREMIÈRES lignes des features
+        # alors que train_df est une tranche de FIN.
         n_keep = max(2200, len(df))
+        _off = int(getattr(self, "_bt_train_offset", None) or 0)
         if (self._bt_features is not None and
                 self._bt_features_len > 0 and
-                len(df) <= self._bt_features_len):
-            feats = self._bt_features.head(len(df))
+                _off + len(df) <= self._bt_features_len):
+            feats = self._bt_features.slice(_off, len(df))
         else:
             feats = _build_features(_window_polars(df, n=n_keep))
         if feats is None or len(feats) < 250:
@@ -930,9 +941,13 @@ class Strategy(BaseStrategyML):
         last       = self._last_retrain.get(tf, 0)
         need_train = (tf not in self._trained_tfs) or (cnt - last >= retrain_every)
         if need_train and not self._managed_externally:
-            n_train  = min(len(df) - 1, warmup_bars * 2)
-            train_df = df.slice(len(df) - n_train - 1, n_train)
-            if self._train(train_df, tf, p):
+            from app.core.train_cache import aligned_train_window
+            n_train = min(len(df) - 1, warmup_bars * 2)
+            train_df, self._bt_train_offset = aligned_train_window(
+                df, retrain_every, n_train)
+            ok = self._train(train_df, tf, p)
+            self._bt_train_offset = None
+            if ok:
                 self._last_retrain[tf] = cnt
 
         if tf not in self._trained_tfs:
