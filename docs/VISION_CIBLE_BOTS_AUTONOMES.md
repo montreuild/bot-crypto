@@ -278,6 +278,30 @@ exactement ce que les budgets virtuels apportent. Le code actuel a déjà la moi
   veto brisant la fidélité au backtest), mais afficher l'**exposition nette par symbole** sur la
   page Portefeuille.
 
+### 6.3 bis — Cas limite : long ET short *avec levier* sur la même paire
+
+Le levier impose le margin, et Binance n'offre qu'**un wallet margin isolé par paire** : dans ce
+wallet, le BTC acheté par le long compense comptablement le BTC emprunté par le short — les deux
+positions se neutralisent, impossible de les tenir simultanément. Sur des **paires différentes**,
+aucun problème (un wallet isolé chacun). Solutions pour la même paire, par ordre de
+recommandation :
+
+1. **Netting interne au méta-niveau (recommandé)** : les positions des bots restent virtuelles
+   dans le registre ; l'exchange ne porte que la position **nette** (A short 0,10 + B long 0,04
+   → short net 0,06). Chaque bot garde sa position virtuelle, son PnL, sa courbe d'équité.
+   Économiquement supérieur : on ne paie pas les intérêts d'emprunt des deux côtés pour une
+   exposition qui s'annule. Contrepartie : les stops exchange (`exchange_stop_orders`) deviennent
+   des stops logiciels par bot, la position exchange ne correspondant plus à un bot unique.
+2. **Paires de cotation différentes** : BTC/USDT et BTC/USDC = deux wallets isolés distincts →
+   short levier sur l'une, long levier sur l'autre. Fonctionne sans développement, mais paie
+   l'emprunt des deux côtés.
+3. **Futures USDⓈ-M en mode hedge** : conçus pour le long+short simultané avec levier sur un
+   même symbole — nécessite d'ajouter le support futures.
+4. **Sous-comptes** (corporate/VIP).
+
+Fenêtre de conflit étroite en pratique (deux bots opposés, avec levier, sur la même paire, au
+même moment) ; le netting interne est l'extension naturelle du registre de budgets virtuels.
+
 ### 6.4 Adaptations du code
 
 1. **Le venue devient un attribut du bot** : identité = (stratégie, TF, params, version,
