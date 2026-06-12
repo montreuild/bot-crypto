@@ -43,6 +43,7 @@ import polars as pl
 
 from app.engine.engine import BaseStrategyML
 from app.core.indicators import (
+    safe_num as _safe_num,
     bars_since_cross,
     rolling_slope,
     rolling_hurst,
@@ -1266,7 +1267,7 @@ class Strategy(BaseStrategyML):
             return self._none("Construction des features V4 impossible")
 
         last_row = features.row(-1, named=True)
-        atr_v = float(last_row.get("ATR_14") or 0.0)
+        atr_v = _safe_num(last_row.get("ATR_14"), 0.0)
         if not np.isfinite(atr_v) or atr_v <= 0:
             atr_v = float(pre_val(df, "_pre_atr14") or 0.0)
         c_now = float(df["close"][-1] or 0.0)
@@ -1297,10 +1298,10 @@ class Strategy(BaseStrategyML):
             )
         else:
             consec_red = False
-        rsi_v = float(last_row.get("RSI_14") or 50.0)
-        adx_v = float(last_row.get("ADX") or 0.0)
+        rsi_v = _safe_num(last_row.get("RSI_14"), 50.0)
+        adx_v = _safe_num(last_row.get("ADX"), 0.0)
         rsi_excess = rsi_v < be_rsi_thr
-        sma20_v = float(last_row.get("SMA_20") or 0.0)
+        sma20_v = _safe_num(last_row.get("SMA_20"), 0.0)
         price_below_sma20 = (c_now < sma20_v * (1.0 - be_sma_pct / 100.0)) if sma20_v > 0 else False
         bearish_excess = consec_red or rsi_excess or price_below_sma20
 

@@ -13,6 +13,7 @@ Découpage V13 du monolithe (1030 lignes) en modules thématiques :
 Tous les noms historiques restent importables depuis ``app.core.indicators``.
 """
 from app.core.indicators_core import (            # noqa: F401
+    safe_num,
     _true_range, ema, sma, rsi, macd, bollinger, bb_squeeze,
     atr, atr_series, atr_val, adx, adx_val,
     volume_ratio, vol_ratio, obv, donchian, supertrend,

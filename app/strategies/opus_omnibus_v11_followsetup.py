@@ -37,6 +37,7 @@ import polars as pl
 
 from app.engine.engine import BaseStrategyML
 from app.core.indicators import (
+    safe_num as _safe_num,
     bars_since_cross,
     rolling_slope,
     rolling_hurst,
@@ -574,11 +575,11 @@ def _last_regime(features_df: pl.DataFrame,
                  ) -> Tuple[int, str]:
     row = features_df.tail(1).row(-1, named=True)
     return _classify_regime(
-        float(row.get("ADX") or 0.0),
-        int(row.get("MM_bullish_align") or 0),
-        int(row.get("MM_bearish_align") or 0),
-        float(row.get("DI_diff") or 0.0),
-        float(row.get("slope_SMA20") or 0.0),
+        _safe_num(row.get("ADX"), 0.0),
+        int(_safe_num(row.get("MM_bullish_align"), 0.0)),
+        int(_safe_num(row.get("MM_bearish_align"), 0.0)),
+        _safe_num(row.get("DI_diff"), 0.0),
+        _safe_num(row.get("slope_SMA20"), 0.0),
         row.get("BB_width_rank100"),
         adx_threshold, di_rescue,
     )
@@ -1072,9 +1073,9 @@ class Strategy(BaseStrategyML):
             )
         else:
             consec_red = False
-        rsi_v = float(last_row.get("RSI_14") or 50.0)
+        rsi_v = _safe_num(last_row.get("RSI_14"), 50.0)
         rsi_excess = rsi_v < be_rsi_thr
-        sma20_v = float(last_row.get("SMA_20") or 0.0)
+        sma20_v = _safe_num(last_row.get("SMA_20"), 0.0)
         price_below_sma20 = (
             c_now < sma20_v * (1.0 - be_sma_pct / 100.0)
         ) if sma20_v > 0 else False
@@ -1128,7 +1129,7 @@ class Strategy(BaseStrategyML):
             return self._none("Construction des features V4 impossible")
 
         last_row = features.row(-1, named=True)
-        atr_v = float(last_row.get("ATR_14") or 0.0)
+        atr_v = _safe_num(last_row.get("ATR_14"), 0.0)
         if not np.isfinite(atr_v) or atr_v <= 0:
             atr_v = float(pre_val(df, "_pre_atr14") or 0.0)
         c_now = float(df["close"][-1] or 0.0)
@@ -1143,8 +1144,8 @@ class Strategy(BaseStrategyML):
         if p_event is None or p_up is None:
             return self._none(f"Modèle {tf} indisponible")
 
-        rsi_v = float(last_row.get("RSI_14") or 50.0)
-        adx_v = float(last_row.get("ADX") or 0.0)
+        rsi_v = _safe_num(last_row.get("RSI_14"), 50.0)
+        adx_v = _safe_num(last_row.get("ADX"), 0.0)
         bearish_excess = self._bearish_excess(df, last_row, c_now, p)
 
         setups = _apply_setup_overrides(p)
@@ -1278,8 +1279,8 @@ class Strategy(BaseStrategyML):
             if p_event is None or p_up is None:
                 return None
 
-            rsi_v = float(last_row.get("RSI_14") or 50.0)
-            adx_v = float(last_row.get("ADX") or 0.0)
+            rsi_v = _safe_num(last_row.get("RSI_14"), 50.0)
+            adx_v = _safe_num(last_row.get("ADX"), 0.0)
             bearish_excess = self._bearish_excess(df, last_row, c_now, p)
 
             setups = _apply_setup_overrides(p)

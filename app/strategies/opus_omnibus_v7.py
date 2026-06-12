@@ -32,6 +32,7 @@ import polars as pl
 
 from app.engine.engine import BaseStrategyML
 from app.core.indicators import (
+    safe_num as _safe_num,
     bars_since_cross,
     rolling_slope,
     rolling_hurst,
@@ -1036,9 +1037,9 @@ class Strategy(BaseStrategyML):
                 return None
             last_row = features.row(-1, named=True)
             regime = _classify_regime(
-                float(last_row.get("ADX") or 0.0),
-                int(last_row.get("MM_bullish_align") or 0),
-                int(last_row.get("MM_bearish_align") or 0),
+                _safe_num(last_row.get("ADX"), 0.0),
+                int(_safe_num(last_row.get("MM_bullish_align"), 0.0)),
+                int(_safe_num(last_row.get("MM_bearish_align"), 0.0)),
                 adx_threshold,
             )
             p_up = self.predict_direction(features, tf)
@@ -1113,7 +1114,7 @@ class Strategy(BaseStrategyML):
             return self._none("Construction des features V4 impossible")
 
         last_row = features.row(-1, named=True)
-        atr_v = float(last_row.get("ATR_14") or 0.0)
+        atr_v = _safe_num(last_row.get("ATR_14"), 0.0)
         if not np.isfinite(atr_v) or atr_v <= 0:
             atr_v = float(pre_val(df, "_pre_atr14") or 0.0)
         c_now = float(df["close"][-1] or 0.0)
@@ -1176,8 +1177,8 @@ class Strategy(BaseStrategyML):
             sig["tp_atr_mult"] = tp_atr_mult
 
         sig["indicators"] = {
-            "adx":              round(float(last_row.get("ADX") or 0.0), 1),
-            "rsi":              round(float(last_row.get("RSI_14") or 50.0), 1),
+            "adx":              round(_safe_num(last_row.get("ADX"), 0.0), 1),
+            "rsi":              round(_safe_num(last_row.get("RSI_14"), 50.0), 1),
             "p_event":          round(p_event, 4),
             "p_up":             round(p_up, 4),
             "regime":           regime,

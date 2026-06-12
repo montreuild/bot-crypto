@@ -17,6 +17,28 @@ _log = logging.getLogger(__name__)
 #  Primitives
 # ══════════════════════════════════════════════════════════════════════════════
 
+def safe_num(val, default: float = 0.0) -> float:
+    """Coercion float robuste : None / NaN / inf / NaT / non-numérique → ``default``.
+
+    Le pipeline de features V4 est pandas ; sur certains jeux de données réels
+    (trous, bougies dupliquées, jointures FeatureStore) une valeur peut ressortir
+    en ``NaT``/``NaN``. ``float(pd.NaT)`` lève « float() argument must be a string
+    or a real number, not 'NaTType' » — et ``bool(pd.NaT)`` vaut True, donc le
+    garde-fou ``float(x or 0.0)`` ne protège pas. On neutralise toutes ces
+    valeurs ici (source unique partagée par les stratégies Opus).
+    """
+    if val is None:
+        return default
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        # pd.NaT, pd.NA, datetime64, str non numérique…
+        return default
+    if not np.isfinite(f):
+        return default
+    return f
+
+
 def _true_range(df: pl.DataFrame) -> pl.Series:
     """True Range vectorisé : TR = max(H−L, |H−C_prev|, |L−C_prev|)."""
     h      = df["high"]
