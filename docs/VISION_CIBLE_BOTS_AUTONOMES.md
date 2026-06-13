@@ -328,14 +328,86 @@ la clôture de A a fait franchir zéro au net. Il n'y a jamais de trou. Règles 
 ⚠ Ce moteur de netting n'existe pas dans le code actuel (une position logicielle = une position
 exchange) — c'est un composant à construire du méta-allocateur.
 
+### 6.3 ter — Positions logicielles : comptabilité et facturation
+
+Le principe directeur : **chaque bot est facturé comme si sa position était portée seule sur
+l'exchange, indépendamment du netting.** Le netting est une optimisation d'exécution du
+portefeuille, jamais une remise accordée à un bot. Conséquences :
+
+- **Emprunt théorique complet facturé à A.** Dans l'exemple, entre t+5 et t+15, A est short 0,10
+  virtuel mais l'exchange n'emprunte réellement que 0,06 (le long de B couvre 0,04). A doit
+  **payer l'intérêt sur les 0,10 qu'il emprunte virtuellement**, pas sur les 0,06 réels — c'est ce
+  que son backtest lui a compté, donc c'est la seule façon de préserver la fidélité au backtest et
+  la comparabilité OOS ↔ réel. De même, si B était lui aussi à levier, il paierait l'intérêt sur
+  son emprunt théorique propre. L'écart entre la somme des emprunts théoriques (0,10 + l'éventuel
+  emprunt de B) et l'emprunt réellement contracté par le compte (0,06) est une **économie de
+  hedge qui revient au portefeuille** (réserve), jamais à un bot individuel.
+- **Frais d'ordre** attribués au bot qui déclenche le delta, au taux et au prix de son fill.
+- **Prix d'entrée/sortie** : le prix virtuel de chaque bot = le prix de fill de l'ordre delta qu'il
+  a déclenché (un ordre de sa taille exacte, seule la direction côté exchange peut différer).
+- **PnL** : calculé sur la position virtuelle complète du bot (entrée → sortie × sa taille), pas
+  sur le net. Chaque bot a sa courbe d'équité propre, son drawdown propre, son budget propre.
+- **Liquidation/franchissement de zéro** : géré au niveau du compte (auto-repay Binance) ; aucun
+  impact sur la comptabilité virtuelle des bots, qui reste purement logique.
+
+Règle générale : **la somme des positions virtuelles = la position nette de l'exchange ; la somme
+des coûts virtuels (frais + intérêts théoriques) ≥ le coût réel du compte, le surplus alimentant
+la réserve.** Un bot n'est jamais avantagé ni lésé par la présence des autres.
+
+### 6.3 quater — Stops : logiciels par bot + protection globale
+
+Le netting impose que les stops par bot soient **logiciels** (la position exchange ne correspond
+plus à un bot unique, on ne peut donc pas poser un stop exchange par bot). Chaque bot évalue son
+stop sur sa position virtuelle et émet un ordre delta quand il est touché. **Mais un stop logiciel
+dépend du process : s'il s'arrête, perd le réseau, ou si le marché bouge trop vite, plus personne
+ne surveille.** Il faut donc une protection à deux niveaux :
+
+1. **Stops logiciels par bot** (niveau normal) : trailing multi-phases actuel, évalué à chaque
+   bougie sur la position virtuelle. Couvre le fonctionnement nominal.
+2. **Stop de protection globale au niveau du compte** (filet de sécurité, indépendant du
+   logiciel), pour les cas où les stops logiciels ne peuvent pas agir :
+   - **Mouvement de marché brutal** : ex. BTC fait +5 % ou −10 % en 2–3 h — entre deux bougies de
+     timeframe long, un stop logiciel par bougie réagit trop tard. Un garde-fou sur l'exposition
+     **nette** du compte (stop de marché posé *sur l'exchange* à un niveau catastrophe, ou ordre
+     OCO sur la position nette) borne la perte même si le process est occupé/en retard.
+   - **Perte de connexion réseau prolongée** : si le bot ne peut plus envoyer d'ordre, les stops
+     logiciels sont aveugles. Deux mécanismes complémentaires :
+     - un **stop exchange persistant sur la position nette** (`STOP_MARKET`/OCO posé côté Binance,
+       qui survit à la coupure du bot) recalculé/déplacé à chaque rebalance ou changement de net ;
+     - un **dead-man switch** : si le bot ne « ping » pas l'exchange pendant N minutes (heartbeat),
+       déclenchement d'une réduction/clôture de la position nette (via stop persistant déjà en
+       place, ou réconciliation forcée au retour de connexion).
+   - **Kill-switch d'équité** (déjà prévu §2.2) : équité totale −X % → tout coupe.
+
+Le stop global protège le **net** (la seule chose que le marché voit) ; les stops logiciels gèrent
+le détail par bot. Au retour de connexion, une **réconciliation** compare position exchange réelle
+↔ somme des positions virtuelles et corrige tout écart (fill partiel, stop exchange déclenché
+pendant la coupure → réattribution au prorata des bots concernés).
+
+⚠ Aujourd'hui les stops sont posés par position via `exchange_stop_orders` (un stop exchange =
+une position = un bot) ; le passage au netting impose de découpler stops logiciels (par bot) et
+stop persistant (sur le net) — composant à construire.
+
 ### 6.4 Adaptations du code
 
-1. **Le venue devient un attribut du bot** : identité = (stratégie, TF, params, version,
-   **venue** spot/margin-isolé). Aujourd'hui `margin_mode` et `max_leverage` sont globaux dans
-   `config.yaml` — limite principale de l'existant pour ce scénario.
+1. **Le venue et le mode margin deviennent des attributs de l'identité du bot**, au même titre que
+   ses paramètres et sa version. Identité d'un bot =
+   `(stratégie, timeframe, params, version, venue)` où **venue** décrit :
+   - **type** : `spot` | `margin_isolé` | `margin_cross` (cross déconseillé en multi-bots) ;
+   - **levier** : 1 (spot/sans levier) … jusqu'au max de la paire (margin) ;
+   - éventuellement le **wallet cible** (paire de cotation) pour l'astuce multi-quote.
+
+   Aujourd'hui `margin_mode` et `max_leverage` sont des **réglages globaux** dans `config.yaml` :
+   c'est la limite principale de l'existant. Un bot prudent long spot et un bot agressif short
+   margin 3× doivent pouvoir coexister, donc ces réglages descendent au niveau du bot. Conséquences :
+   le sizing, le calcul d'intérêt théorique et la surveillance de margin level se font selon le
+   venue de chaque bot ; le Laboratoire fige le venue à la création du bot (comme les params) et la
+   re-optimisation peut produire un v2 avec un venue différent.
 2. **Transferts de fonds au rebalance** (étendre `balance_sync.py` aux wallets margin par paire).
 3. **Margin level surveillé par wallet isolé** (alertes 1.5 / critique 1.2 déclinées par bot).
-4. Un seul processus, une seule clé API : les rate limits Binance sont par compte ; multiplier
+4. **Moteur de netting + stops découplés** (§6.3 bis/ter/quater) : registre de positions
+   virtuelles, émission d'ordres delta, stop persistant sur le net, dead-man switch, réconciliation.
+5. Un seul processus, une seule clé API : les rate limits Binance sont par compte ; multiplier
    les processus n'apporte rien et crée des conflits.
 
 ---
