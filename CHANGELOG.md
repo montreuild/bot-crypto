@@ -6,6 +6,52 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### ⚡ Optimiseur ML : hyperparamètres d'entraînement figés + fenêtres alignées (≈ heures → minutes sur 50k bougies)
+
+**Problème.** Impossible de mener à terme les optimisations des stratégies ML
+sur 50 000 bougies (plusieurs heures par job, souvent interrompu) :
+
+1. Les `param_space` des stratégies ML « retrained » échantillonnaient les
+   hyperparamètres **d'entraînement** (`retrain_every`, `warmup_bars`,
+   `n_estimators`, `num_leaves`, `learning_rate`, `amp_top_pct`, et pour V11
+   `label_horizons`/`calibrate`/`prune_features`). Chaque trial avait donc une
+   clé de cache d'entraînement différente → le cache process-wide
+   (`train_cache.py`) ne servait à rien et **chaque trial repayait l'intégralité
+   des retrains LightGBM walk-forward** (~30-100 entraînements × 2 modèles ×
+   ~462 features par trial).
+2. Même à hyperparamètres identiques, le déclenchement des retrains dépend du
+   compteur d'appels `score()` (fonction des trades du trial) : les fenêtres
+   d'entraînement divergeaient de quelques barres entre trials → fingerprints
+   différents → cache contourné.
+
+**Correctif.**
+- Les hyperparamètres d'entraînement sortent de `param_space` (déplacés en
+  `fixed_params`, valeurs = `_DEFAULTS`, surchargables via le YAML stratégie)
+  pour : `opus_omnibus_v7`, `opus_stat_retrained_v4`, `opus_omnibus_v10_retrained`,
+  `opus_omnibus_v11`, `opus_omnibus_v11_followsetup`, `opus_omnibus_v12`
+  (`mldyn_lookahead`/`mldyn_vol_multiplier`), `scoring_statistique_opus_v3/v4/v5`.
+  L'optimiseur se concentre sur les paramètres de **décision** (seuils, SL/TP…),
+  ceux qui déterminent réellement le ratio gain/risque par timeframe.
+- Nouveau `aligned_train_window()` (`app/core/train_cache.py`) : la fin de la
+  fenêtre d'entraînement est alignée sur la grille `retrain_every` → fenêtres
+  identiques entre trials → hits de cache déterministes. Staleness bornée à
+  `retrain_every` barres, identique à la cadence de déclenchement existante.
+- **Bugfix walk-forward** : dans `_train_impl`, le fast-path features prenait
+  `self._bt_features.head(len(train_df))` — soit les **premières** lignes des
+  features pré-calculées alors que `train_df` est une tranche de **fin** de
+  fenêtre. Les modèles inline s'entraînaient donc sur les plus *vieilles*
+  données au lieu des plus récentes. Corrigé via un offset (`_bt_train_offset`)
+  posé par `score()` avant `_train`.
+
+Vérifié sur données synthétiques (3 000 barres 1h, `opus_omnibus_v7`) : 2ᵉ run
+= 100 % de hits du cache d'entraînement, 0 réentraînement, trades identiques.
+
+### 🗑️ Suppression des stratégies ML `_1`
+
+`opus_omnibus_v7_1`, `v8_1`, `v9_1`, `v10_1` (variantes « score additif » des
+omnibus ML) sont supprimées (`.py` + `strategies/*.yaml`). Aucune référence
+restante dans `config.yaml`, les tests ou l'UI.
+
 ### 🛠️ Optimiseur : score réaligné sur le PnL et garde-fou d'application durci
 
 **Problème.** L'optimiseur pouvait retenir/appliquer un paramétrage au PnL OOS

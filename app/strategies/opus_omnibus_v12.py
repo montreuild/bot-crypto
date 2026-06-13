@@ -52,11 +52,17 @@ class Strategy(_V11Strategy):
         "veto_margin":             [0.10, 0.15, 0.20],
         "blend_weight":            [0.6, 0.7, 0.8],
         "unconfirmed_size_factor": [0.5, 0.7, 1.0],
-        "mldyn_vol_multiplier":    [0.4, 0.6, 0.8],
-        "mldyn_lookahead":         [2, 3, 5],
         # Knob d'optim : laisse l'optimiseur choisir d'éteindre mldyn (et
         # économiser son entraînement, ~40-60% du coût par trial v12).
         "mldyn_enabled":           [True, False],
+    }
+    # mldyn_lookahead / mldyn_vol_multiplier définissent les labels du modèle
+    # mldyn embarqué : les échantillonner force un réentraînement RF différent
+    # à chaque trial. Figés aux défauts (cf. _DEFAULTS), surchargables via le
+    # YAML stratégie.
+    fixed_params: Dict[str, Any] = {
+        "mldyn_lookahead":      3,
+        "mldyn_vol_multiplier": 0.6,
     }
 
     _DEFAULTS = {

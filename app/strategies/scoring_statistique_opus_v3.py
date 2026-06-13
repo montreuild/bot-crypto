@@ -167,11 +167,14 @@ class Strategy(BaseStrategyML):
         "min_prob":       [0.55, 0.58, 0.60, 0.62],
         "lookahead":      [2, 3, 5],
         "min_move_pct":   [0.002, 0.003, 0.004],
-        "retrain_every":  [300, 500, 800],
-        "warmup_bars":    [500, 800, 1000],
     }
 
-    fixed_params: Dict[str, Any] = {}
+    # Cadence d'entraînement figée (hors espace de recherche) pour borner le
+    # coût des trials de l'optimiseur sur de longues fenêtres de bougies.
+    fixed_params: Dict[str, Any] = {
+        "retrain_every": 500,
+        "warmup_bars":   600,
+    }
 
     def __init__(self):
         self._models:         Dict[str, Any] = {}

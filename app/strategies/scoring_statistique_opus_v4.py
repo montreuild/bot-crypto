@@ -215,12 +215,15 @@ class Strategy(BaseStrategyML):
         "dir_dist_td":       [0.08, 0.10, 0.12, 0.15],
         "amp_thresh_other":  [0.55, 0.60, 0.65],
         "dir_dist_other":    [0.12, 0.15, 0.18],
-        "amp_top_pct":       [0.25, 0.30, 0.35],
-        "warmup_bars":       [1000, 2000, 3000],
-        "retrain_every":     [500, 800, 1500],
     }
 
-    fixed_params: Dict[str, Any] = {}
+    # Hyperparamètres d'entraînement figés (hors espace de recherche) pour
+    # borner le coût des trials de l'optimiseur sur de longues fenêtres.
+    fixed_params: Dict[str, Any] = {
+        "amp_top_pct":   0.30,
+        "warmup_bars":   2000,
+        "retrain_every": 800,
+    }
 
     def __init__(self):
         self._amp_models:  Dict[str, Any] = {}

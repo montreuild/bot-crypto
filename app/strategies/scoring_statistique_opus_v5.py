@@ -202,16 +202,19 @@ class Strategy(BaseStrategyML):
         # Range/Choppy
         "amp_thresh_other":  [0.40, 0.50, 0.55, 0.60, 0.65],
         "dir_dist_other":    [0.05, 0.08, 0.12, 0.15, 0.18],
-        "amp_top_pct":       [0.25, 0.30, 0.35],
         # Exploitation clustering
         "max_hold_bars":     [4, 6, 8, 12],
         "trail_wide":        [1.0, 1.5, 2.0],
         "breakeven_r":       [0.4, 0.5, 0.7],
-        "warmup_bars":       [1500, 2000, 3000],
-        "retrain_every":     [500, 800, 1500],
     }
 
-    fixed_params: Dict[str, Any] = {}
+    # Hyperparamètres d'entraînement figés (hors espace de recherche) pour
+    # borner le coût des trials de l'optimiseur sur de longues fenêtres.
+    fixed_params: Dict[str, Any] = {
+        "amp_top_pct":   0.30,
+        "warmup_bars":   2000,
+        "retrain_every": 800,
+    }
 
     def __init__(self):
         self._amp_models:  Dict[str, Any] = {}
