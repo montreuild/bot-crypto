@@ -561,6 +561,16 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 X = X[-max_win:]
                 y = y[-max_win:]
 
+            # Sanitisation NaN/inf — indispensable avant StandardScaler.
+            # compute_features nettoie déjà côté polars, mais certaines fenêtres
+            # de marché réelles laissent passer des NaN/inf (colonne entièrement
+            # nulle sur une fenêtre courte, division par variance nulle…). Sans
+            # ce garde-fou, une colonne all-NaN fait diverger StandardScaler
+            # (sample_count=0 → moyenne/échelle NaN), les prédictions deviennent
+            # NaN, tous les roc_auc sont NaN → « Aucun essai valide ». Même
+            # protection que scoring_statistique_opus_v4/v5.
+            X = np.nan_to_num(X.astype(np.float64), nan=0.0, posinf=1.0, neginf=-1.0)
+
             # Sécurité : deux classes minimum
             if len(np.unique(y)) < 2:
                 logger.warning(
@@ -606,8 +616,16 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 return
 
             if not best_p:
-                logger.warning(f"[{self.name}] Aucun essai valide — entraînement ignoré")
-                return
+                # Repli sur les hyperparamètres sklearn par défaut plutôt que
+                # d'abandonner l'entraînement : la recherche peut ne retenir
+                # aucun essai sur une fenêtre difficile (CV dégénérée, AUC NaN),
+                # mais un modèle par défaut reste exploitable et évite de laisser
+                # le TF sans modèle pour tout le reste du backtest.
+                logger.warning(
+                    f"[{self.name}] Random search sans essai valide — "
+                    f"repli sur hyperparamètres par défaut ({self.model_type})"
+                )
+                best_p, best_auc = {}, 0.0
 
             pipeline = _build_pipeline(self.model_type, best_p)
             pipeline.fit(X, y)
@@ -671,7 +689,12 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                     "indicators": {"adx": round(adx_val, 2), "auc": round(auc_tf, 4), "tf": tf},
                 }
 
-            X_last = feats[-1:].to_numpy()
+            # Même sanitisation qu'à l'entraînement : le StandardScaler embarqué
+            # propagerait des NaN en sortie sinon (et predict_proba renverrait NaN).
+            X_last = np.nan_to_num(
+                feats[-1:].to_numpy().astype(np.float64),
+                nan=0.0, posinf=1.0, neginf=-1.0,
+            )
             with self._model_lock:
                 pipeline = self._pipelines.get(tf)
             if pipeline is None:
