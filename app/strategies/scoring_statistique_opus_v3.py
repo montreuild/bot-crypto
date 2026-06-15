@@ -153,7 +153,13 @@ def _build_features(df: pl.DataFrame, adx_threshold: float = 20.0) -> Optional[n
     else:
         extra = np.zeros((n, 4), dtype=np.float32)
 
-    return np.column_stack([base, extra])
+    # Sanitisation finale — les colonnes de régime/DI/trend dérivent des _pre_*
+    # qui restent NaN/inf en warmup (division par sma200=0, ADX indéfini…). Sans
+    # ce garde-fou, une colonne all-NaN fait diverger StandardScaler
+    # (sample_count=0 → « invalid value encountered in divide »). Aligne v3 sur
+    # la protection déjà présente dans v4/v5.
+    X = np.column_stack([base, extra])
+    return np.nan_to_num(X, nan=0.0, posinf=1.0, neginf=-1.0)
 
 
 class Strategy(BaseStrategyML):
