@@ -125,6 +125,18 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self._auto_opt_interval = int(cfg.get("optimizer", {}).get("auto_interval_h", 24)) * 3600
         self._auto_opt_next_run = 0
 
+        # ── Forward-test glissant (Phase 0 — observationnel, zéro impact trading)
+        # Re-backteste chaque jour les params figés des slots actifs sur données
+        # fraîches et compare la réalisation live à une fourchette Monte-Carlo
+        # glissante (cf. app/core/oos_tracker.py). Tourne dans un thread dédié.
+        _ft_cfg = cfg.get("forward_test", {}) or {}
+        self._fwd_test_enabled       = bool(_ft_cfg.get("enabled", True))
+        self._fwd_test_interval      = int(_ft_cfg.get("interval_h", 24)) * 3600
+        self._fwd_test_lookback_days = int(_ft_cfg.get("lookback_days", 45))
+        self._fwd_test_symbol        = _ft_cfg.get("symbol", "BTC/USDC")
+        # Premier passage différé pour laisser le cache OHLCV se réchauffer.
+        self._fwd_test_next_run      = time.time() + int(_ft_cfg.get("initial_delay_s", 300))
+
         # Re-entry cooldown par symbole
         self._cooldown: Dict[str, float] = {}
 
@@ -273,6 +285,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                         self._recover_after_gap(gap_secs)
                         _last_successful_cycle = time.time()
                 self._maybe_auto_optimize()
+                self._maybe_forward_test()
                 self._purge_counter += 1
                 if self._purge_counter >= self._purge_every_n:
                     self._purge_counter = 0
@@ -806,6 +819,32 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             )
         except Exception as e:
             logger.error(f"[AutoOpt] Erreur : {e}", exc_info=True)
+
+    # ── Forward-test glissant (Phase 0) ───────────────────────────────────
+    def _maybe_forward_test(self) -> None:
+        """Planifie le forward-test glissant quotidien (thread dédié, non bloquant)."""
+        if not self._fwd_test_enabled:
+            return
+        now = time.time()
+        if now < self._fwd_test_next_run:
+            return
+        self._fwd_test_next_run = now + self._fwd_test_interval
+        logger.info("[ForwardTest] Démarrage forward-test glissant planifié…")
+        threading.Thread(target=self._forward_test_thread, daemon=True).start()
+
+    def _forward_test_thread(self) -> None:
+        try:
+            from app.core.oos_tracker import run_forward_test
+            run_forward_test(
+                cfg=self.cfg,
+                fetch_ohlcv=self.scanner.fetch_ohlcv,
+                active_per_tf=self._active_per_tf,
+                session_factory=self.SessionLocal,
+                symbol=self._fwd_test_symbol,
+                lookback_days=self._fwd_test_lookback_days,
+            )
+        except Exception as e:
+            logger.error(f"[ForwardTest] Erreur : {e}", exc_info=True)
 
     def _on_opt_applied(self, strategy_name: str, params: dict) -> None:
         """Callback après application des params optimisés — recharge les stratégies actives."""

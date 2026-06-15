@@ -95,6 +95,16 @@ optimizer:
   method: bayesian
   n_trials: 40
   out_of_sample_ratio: 0.35
+# Forward-test glissant (Phase 0 — observationnel, zéro impact trading).
+# Re-backteste chaque jour les params figés des slots actifs sur données
+# fraîches et compare la réalisation live à une fourchette Monte-Carlo glissante.
+# Résultats persistés dans data/oos_tracker.json. Cf. app/core/oos_tracker.py.
+forward_test:
+  enabled: true
+  interval_h: 24          # périodicité du re-backtest glissant
+  lookback_days: 45       # fenêtre glissante (30–60 j recommandé)
+  symbol: BTC/USDC        # paire de référence (alignée sur l'optimiseur)
+  initial_delay_s: 300    # délai avant le 1er passage (réchauffe le cache OHLCV)
 database:
   url: sqlite:///trades.db
 capital_allocator:

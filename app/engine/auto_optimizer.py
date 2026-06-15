@@ -352,6 +352,14 @@ class AutoOptimizer:
             # moins (ex. +33 à 3 trades qui « outvote » +96 à 15 trades sur WR +
             # Sharpe). En plus du PnL, on exige une amélioration sur au moins un
             # critère de qualité (Win Rate ou Sharpe).
+            # TODO(Phase 0 — durcissement optimiseur, reporté à une phase
+            # ultérieure) : remplacer le gate ci-dessous par
+            #   - un seuil de **Deflated Sharpe** (Bailey & López de Prado) au
+            #     gate de naissance, pour corriger le biais de sélection des
+            #     ~40 essais (multiple-testing) ;
+            #   - un minimum de **≥ 10 trades OOS** (au lieu de 3) ;
+            #   - une vérification **walk-forward** dans la décision d'apply.
+            # Cf. docs/SYNTHESE_VISION_PRODUIT.md §5 « Durcissement optimiseur ».
             def _beats_baseline() -> bool:
                 if oos_trades < 3:
                     return False

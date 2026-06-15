@@ -3,7 +3,7 @@ Base de données SQLite étendue — trades, métriques journalières, signaux, 
 """
 import logging
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy import (create_engine, event, Column, Integer, Float, String,
@@ -250,6 +250,26 @@ def get_trades(session: Session, limit=1000, symbol=None, strategy=None) -> List
     if symbol:   q = q.filter(Trade.symbol == symbol)
     if strategy: q = q.filter(Trade.strategy == strategy)
     return q.order_by(Trade.time.desc()).limit(limit).all()
+
+
+def get_closed_trades_for_slot(session: Session, strategy: str, timeframe: str,
+                               days: int = 45) -> List[Trade]:
+    """Trades réels **fermés** d'un slot ``strategy::timeframe`` sur les ``days``
+    derniers jours, du plus récent au plus ancien.
+
+    Utilisé par le forward-test glissant pour comparer la réalisation live à la
+    fourchette Monte-Carlo simulée. Ne renvoie que les trades avec un PnL connu
+    (``status`` commençant par ``closed``).
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    q = session.query(Trade).filter(
+        Trade.strategy == strategy,
+        Trade.timeframe == timeframe,
+        Trade.status.like("closed%"),
+        Trade.pnl.isnot(None),
+        Trade.time >= cutoff,
+    )
+    return q.order_by(Trade.time.desc()).all()
 
 
 def update_daily_stats(session: Session, date_str: str, pnl: float, win: bool,
