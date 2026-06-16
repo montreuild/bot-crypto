@@ -11,6 +11,7 @@ spawn : il doit rester au niveau module de ce fichier.
 """
 import io
 import logging
+import os
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -26,8 +27,13 @@ _W: dict = {}
 # ── Plafonnement mémoire ─────────────────────────────────────────────────────
 
 def available_memory_bytes() -> Optional[int]:
-    """Mémoire disponible (octets). Linux via /proc/meminfo (MemAvailable),
-    psutil si présent, sinon None (cap mémoire désactivé)."""
+    """Mémoire disponible (octets). psutil si présent, sinon /proc/meminfo
+    (Linux) ou GlobalMemoryStatusEx (Windows), sinon None (cap mémoire désactivé).
+
+    Le fallback Windows est essentiel : sans lui (et sans psutil, qui n'est pas
+    une dépendance obligatoire), le cap mémoire anti-OOM serait silencieusement
+    désactivé sur Windows — là où il est justement le plus utile (pas d'OOM-killer
+    noyau : un std::bad_alloc LightGBM tue tout le process sans traceback)."""
     try:
         import psutil  # type: ignore
         return int(psutil.virtual_memory().available)
@@ -38,6 +44,30 @@ def available_memory_bytes() -> Optional[int]:
             for line in f:
                 if line.startswith("MemAvailable:"):
                     return int(line.split()[1]) * 1024  # kB → octets
+    except Exception:
+        pass
+    # Windows : GlobalMemoryStatusEx (ullAvailPhys) via ctypes.
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class _MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = _MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return int(stat.ullAvailPhys)
     except Exception:
         pass
     return None

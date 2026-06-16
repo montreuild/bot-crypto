@@ -6,6 +6,38 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🛡️ Optimiseur ML : portillon mémoire anti-OOM (corrige l'arrêt silencieux du bot pendant une optimisation multi-jobs)
+
+**Problème.** Lancer une optimisation ML sur plusieurs stratégies × timeframes
+(ex. 9 jobs) depuis l'UI faisait **s'arrêter le bot sans aucune traceback**
+(retour sec au prompt). Cause : `start_async` ouvre un thread par job et en
+laisse tourner jusqu'à `cpu-1` **en parallèle** ; avec le défaut `n_jobs=1`,
+chaque job évalue ses trials **dans le process** (pas de ProcessPool) — soit
+`cpu-1` backtests ML walk-forward simultanés, chacun **réentraînant LightGBM en
+boucle** sur de larges matrices de features. Sur de gros jeux de données (50k
+bougies), le pic mémoire cumulé épuise la RAM → `std::bad_alloc` LightGBM / OOM →
+le process entier est tué (sur Windows : pas d'OOM-killer noyau, pas de
+traceback). Le garde-fou `mem_aware_max_workers` existant ne couvrait que le
+ProcessPool d'un job (chemin `n_jobs>1`), **jamais** la concurrence inter-jobs,
+et était de surcroît **désactivé sur Windows** (`available_memory_bytes()`
+dépendait de `psutil` — non installé — ou de `/proc/meminfo` — Linux only).
+
+**Correctif.**
+- **Portillon d'admission mémoire** (`auto_optimizer.py`) : un job n'entre en
+  exécution que si son empreinte estimée tient dans le budget restant (70 % de
+  la RAM dispo, mesurée par lot). La mémoire **cumulée** des jobs actifs est
+  bornée → sur machine contrainte, les jobs ML se sérialisent au lieu d'OOM.
+  Règle anti-blocage : un job seul est toujours admis (au pire, un par un).
+  L'estimation est échelonnée sur la taille réelle des données (la variable qui
+  provoque l'OOM) et le type de stratégie (ML vs non-ML).
+- **`available_memory_bytes()` multi-plateforme** (`opt_workers.py`) : ajout du
+  fallback Windows `GlobalMemoryStatusEx` (ctypes) → le cap mémoire fonctionne
+  enfin sur Windows même sans `psutil`.
+- `psutil` ajouté aux dépendances (chemin préféré ; fallbacks `/proc/meminfo` et
+  `GlobalMemoryStatusEx` conservés s'il est absent).
+- Couverture : `tests/test_opt_mem_gate.py` (admission, mise en attente,
+  anti-blocage, annulation, libération, estimation).
+
 ### ⚡ Optimiseur ML : hyperparamètres d'entraînement figés + fenêtres alignées (≈ heures → minutes sur 50k bougies)
 
 **Problème.** Impossible de mener à terme les optimisations des stratégies ML
