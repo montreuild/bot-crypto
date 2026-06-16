@@ -277,11 +277,15 @@ def random_search_hyperparams(
             params = {k: rng.choice(v) for k, v in space.items()}
             try:
                 pipeline = _build_pipeline(model_type, params)
-                scores   = cross_val_score(
-                    pipeline, X, y, cv=tscv,
-                    scoring="roc_auc", n_jobs=1,  # n_jobs=1 pour ne pas bloquer l'annulation
-                    error_score=np.nan,   # NaN sur fold mono-classe au lieu de crash
-                )
+                # np.errstate : une colonne de features entièrement NaN fait
+                # diviser 0/0 dans StandardScaler (sklearn extmath) → bruit de
+                # RuntimeWarning « invalid value encountered in divide ». Bénin.
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    scores   = cross_val_score(
+                        pipeline, X, y, cv=tscv,
+                        scoring="roc_auc", n_jobs=1,  # n_jobs=1 pour ne pas bloquer l'annulation
+                        error_score=np.nan,   # NaN sur fold mono-classe au lieu de crash
+                    )
                 if np.isnan(scores).all():
                     continue  # tous les folds invalides → skip
                 mean_auc = float(np.nanmean(scores))
@@ -628,7 +632,8 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 best_p, best_auc = {}, 0.0
 
             pipeline = _build_pipeline(self.model_type, best_p)
-            pipeline.fit(X, y)
+            with np.errstate(invalid="ignore", divide="ignore"):  # cf. note CV ci-dessus
+                pipeline.fit(X, y)
             tf = tf or _detect_tf(df)
 
             with self._model_lock:
@@ -650,7 +655,8 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 if ran_search and split > 20 and len(X) - split > 10:
                     from sklearn.metrics import roc_auc_score as _auc
                     pipe_oos = _build_pipeline(self.model_type, best_p)
-                    pipe_oos.fit(X[:split], y[:split])
+                    with np.errstate(invalid="ignore", divide="ignore"):  # cf. note CV
+                        pipe_oos.fit(X[:split], y[:split])
                     proba_oos = pipe_oos.predict_proba(X[split:])[:, 1]
                     oos_auc   = float(_auc(y[split:], proba_oos))
                     ratio     = best_auc / max(oos_auc, 1e-9)

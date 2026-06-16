@@ -382,7 +382,11 @@ class Strategy(BaseStrategyML):
             split = n - 50
 
         scaler = StandardScaler()
-        X_s    = scaler.fit_transform(X_train)
+        # Colonne de features entièrement NaN → 0/0 dans le calcul de variance de
+        # StandardScaler → RuntimeWarning « invalid value encountered in divide »
+        # (bénin, bruyant). Neutralisé localement, valeurs inchangées.
+        with np.errstate(invalid="ignore", divide="ignore"):
+            X_s    = scaler.fit_transform(X_train)
 
         params_lgb = {
             "objective":         "binary",

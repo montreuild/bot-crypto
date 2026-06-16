@@ -301,7 +301,13 @@ class Strategy(BaseStrategyML):
             return False
 
         scaler = StandardScaler()
-        X_s    = scaler.fit_transform(X_f)
+        # Une colonne de features entièrement NaN (indicateur indéfini sur la
+        # fenêtre) fait diviser 0/0 dans le calcul de variance de StandardScaler
+        # (sklearn extmath) → RuntimeWarning « invalid value encountered in
+        # divide », bénin mais bruyant. On le neutralise localement (sans changer
+        # les valeurs : LightGBM gère les NaN résiduels).
+        with np.errstate(invalid="ignore", divide="ignore"):
+            X_s    = scaler.fit_transform(X_f)
 
         # Pondération : équilibre hausse/baisse
         n_pos     = int(y_f.sum())
