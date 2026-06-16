@@ -1028,7 +1028,9 @@ class Strategy(BaseStrategyML):
         _impute_inplace(X_valid, feature_cols, medians)
 
         if len(np.unique(y_amp[:split])) < 2 or len(np.unique(y_dir[:split])) < 2:
-            logger.warning(f"[OmnibusV11] {tf_key} : labels mono-classe, fit ignoré")
+            from app.core.log_throttle import log_throttled
+            log_throttled(logger, f"omnibusv11:monoclass:{tf_key}",
+                          f"[OmnibusV11] {tf_key} : labels mono-classe, fit ignoré")
             return False
 
         common = dict(

@@ -78,6 +78,9 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
 
         _, self.SessionLocal = init_db(cfg["database"]["url"])
 
+        # Phase 3 — reprise propre : restaure halt/kill-switch/pauses/compteurs.
+        self.risk.attach_persistence(self.SessionLocal)
+
         # ── Moteur + stratégies ────────────────────────────────────────────
         self.engine = Engine()
         self._loaded_strategies: Dict[str, object] = {}
@@ -124,6 +127,33 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self._auto_opt_enabled  = cfg.get("optimizer", {}).get("enabled", False)
         self._auto_opt_interval = int(cfg.get("optimizer", {}).get("auto_interval_h", 24)) * 3600
         self._auto_opt_next_run = 0
+
+        # ── Forward-test glissant (Phase 0 — observationnel, zéro impact trading)
+        # Re-backteste chaque jour les params figés des slots actifs sur données
+        # fraîches et compare la réalisation live à une fourchette Monte-Carlo
+        # glissante (cf. app/core/oos_tracker.py). Tourne dans un thread dédié.
+        _ft_cfg = cfg.get("forward_test", {}) or {}
+        self._fwd_test_enabled       = bool(_ft_cfg.get("enabled", True))
+        self._fwd_test_interval      = int(_ft_cfg.get("interval_h", 24)) * 3600
+        self._fwd_test_lookback_days = int(_ft_cfg.get("lookback_days", 45))
+        self._fwd_test_symbol        = _ft_cfg.get("symbol", "BTC/USDC")
+        # Premier passage différé pour laisser le cache OHLCV se réchauffer.
+        self._fwd_test_next_run      = time.time() + int(_ft_cfg.get("initial_delay_s", 300))
+
+        # ── Cycle de vie & allocation continue (Phase 2 — lecture/shadow)
+        # Dérive l'état des bots (candidat/essai/actif/retiré) et calcule
+        # l'allocation cible pilotée par le score, SANS l'appliquer (shadow).
+        from app.live.slot_lifecycle import SlotLifecycleManager
+        _lc_cfg = cfg.get("lifecycle", {}) or {}
+        self._lifecycle = SlotLifecycleManager(cfg, session_factory=self.SessionLocal)
+        self._lifecycle_enabled  = bool(_lc_cfg.get("enabled", True))
+        self._lifecycle_interval = int(_lc_cfg.get("interval_h", 1)) * 3600
+        self._lifecycle_next_run = time.time() + int(_lc_cfg.get("initial_delay_s", 600))
+        # Re-optimisation automatique des bots retirés (opt-in). False = la file
+        # de re-opt est seulement exposée (l'utilisateur garde la main).
+        self._lifecycle_auto_reopt = bool(_lc_cfg.get("auto_reopt", False))
+        self._lifecycle_snapshot: dict = {}
+        self._shadow_alloc: dict = {}
 
         # Re-entry cooldown par symbole
         self._cooldown: Dict[str, float] = {}
@@ -189,6 +219,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         Format : { "1h": [{"name": "trend", "params": {...}, "score": 0.82}, ...] }
         """
         self._active_per_tf = get_active_strategies_per_tf(self.cfg)
+        self._bots_cache = None   # invalide le cache d'identités (set actif changé)
         for tf, strats in self._active_per_tf.items():
             names   = [s["name"] for s in strats]
             has_oos = any(s.get("score", 0) > 0 for s in strats)
@@ -272,11 +303,24 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                         )
                         self._recover_after_gap(gap_secs)
                         _last_successful_cycle = time.time()
-                self._maybe_auto_optimize()
-                self._purge_counter += 1
-                if self._purge_counter >= self._purge_every_n:
-                    self._purge_counter = 0
-                    self._purge_memory()
+                self._heartbeat()
+                self._check_dead_man()
+                # Maintenance planifiée isolée : une erreur ici (auto-opt,
+                # forward-test, cycle de vie, purge) ne doit JAMAIS arrêter le
+                # bot — sinon « arrêt complet ». Chaque tâche lourde tourne déjà
+                # dans son propre thread ; ce garde-fou couvre la planification.
+                try:
+                    self._maybe_auto_optimize()
+                    self._maybe_forward_test()
+                    self._maybe_lifecycle()
+                    self._purge_counter += 1
+                    if self._purge_counter >= self._purge_every_n:
+                        self._purge_counter = 0
+                        self._purge_memory()
+                except Exception as maint_err:
+                    logger.exception(
+                        f"[LiveTrader] Erreur de maintenance (non bloquante) : {maint_err}"
+                    )
                 time.sleep(self.interval)
         except KeyboardInterrupt:
             logger.info("[LiveTrader] Arrêt demandé (Ctrl+C)")
@@ -616,10 +660,19 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             logger.debug(f"[Trade] {symbol}/{slot_key} rejeté (corrélation: {reason_corr})")
             return False
 
-        # 5. Sizing
+        # 5. Sizing — par bot (sur son budget) si activé, sinon sur l'équité globale.
+        budget_usdc = None
+        max_lev = None
+        if getattr(self.allocator, "per_bot_sizing", False):
+            b = self.allocator.slot_budget_usdc(slot_key)
+            if b and b > 0:
+                from app.core.bot_identity import resolve_venue
+                budget_usdc = b
+                max_lev = resolve_venue(self.cfg, strategy_name, tf).max_leverage
         size, notional = self.risk.compute_size(
             price, atr, score=score, threshold=strat_threshold,
             size_factor=float(signal_dict.get("size_factor", 1.0)),
+            budget=budget_usdc, max_leverage=max_lev,
         )
         leverage = self.risk.compute_leverage(notional)
 
@@ -637,7 +690,10 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             if pos_key in self.open_positions:
                 return False
             max_pos = self.cfg["trading"].get("max_positions", 5)
-            if len(self.open_positions) >= max_pos:
+            # En mode veto shadow (paper), max_positions ne bloque plus — on a déjà
+            # compté l'écart dans risk.can_trade ; ce garde-fou atomique reste actif
+            # uniquement en mode enforce.
+            if not getattr(self.risk, "veto_shadow", False) and len(self.open_positions) >= max_pos:
                 return _reject("risk", f"Max positions ({max_pos}) atteint")
             # Réserve le slot avant de relâcher le verrou
             self.open_positions[pos_key] = {"_reserved": True}
@@ -807,6 +863,166 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         except Exception as e:
             logger.error(f"[AutoOpt] Erreur : {e}", exc_info=True)
 
+    # ── Forward-test glissant (Phase 0) ───────────────────────────────────
+    def _maybe_forward_test(self) -> None:
+        """Planifie le forward-test glissant quotidien (thread dédié, non bloquant)."""
+        if not self._fwd_test_enabled:
+            return
+        now = time.time()
+        if now < self._fwd_test_next_run:
+            return
+        # Ne pas surcharger pendant une optimisation (les backtests ML du
+        # forward-test s'ajouteraient à la charge → risque d'OOM) : on diffère.
+        if self._optimization_running():
+            self._fwd_test_next_run = now + 600   # nouvel essai dans 10 min
+            return
+        self._fwd_test_next_run = now + self._fwd_test_interval
+        logger.info("[ForwardTest] Démarrage forward-test glissant planifié…")
+        threading.Thread(target=self._forward_test_thread, daemon=True).start()
+
+    def _forward_test_thread(self) -> None:
+        try:
+            from app.core.oos_tracker import run_forward_test
+            run_forward_test(
+                cfg=self.cfg,
+                fetch_ohlcv=self.scanner.fetch_ohlcv,
+                active_per_tf=self._active_per_tf,
+                session_factory=self.SessionLocal,
+                symbol=self._fwd_test_symbol,
+                lookback_days=self._fwd_test_lookback_days,
+            )
+        except Exception as e:
+            logger.error(f"[ForwardTest] Erreur : {e}", exc_info=True)
+
+    # ── Watchdog dead-man (Phase 3) ────────────────────────────────────────
+    def _heartbeat(self) -> None:
+        """Écrit le battement de cœur lu par le watchdog séparé."""
+        try:
+            from app.live.watchdog import write_heartbeat
+            write_heartbeat({
+                "running": self.running,
+                "cycle": self.cycle_count,
+                "equity": round(self.capital_display, 2),
+                "halted": self.risk.halted,
+                "open_positions": len([p for p in self.open_positions.values()
+                                       if not p.get("_reserved")]),
+            })
+        except Exception as e:
+            logger.debug(f"[Heartbeat] KO : {e}")
+
+    def _check_dead_man(self) -> None:
+        """Si le watchdog a armé le kill-switch fichier → HALT immédiat."""
+        try:
+            from app.live.watchdog import kill_switch_armed, kill_switch_reason
+            if kill_switch_armed() and not self.risk._kill_switch_tripped:
+                self.risk.trip_kill_switch(
+                    f"watchdog dead-man : {kill_switch_reason() or 'kill-switch fichier'}"
+                )
+        except Exception as e:
+            logger.debug(f"[DeadMan] KO : {e}")
+
+    # ── Cycle de vie & allocation continue (Phase 2) ───────────────────────
+    def _maybe_lifecycle(self) -> None:
+        """Planifie l'évaluation du cycle de vie + allocation shadow (thread dédié)."""
+        if not self._lifecycle_enabled:
+            return
+        now = time.time()
+        if now < self._lifecycle_next_run:
+            return
+        # Le thread lit les stats live + recalcule l'alloc ; on diffère pendant
+        # une optimisation pour ne pas concurrencer la base/CPU.
+        if self._optimization_running():
+            self._lifecycle_next_run = now + 600
+            return
+        self._lifecycle_next_run = now + self._lifecycle_interval
+        threading.Thread(target=self._lifecycle_thread, daemon=True).start()
+
+    @staticmethod
+    def _optimization_running() -> bool:
+        """True si une optimisation est en cours (pour différer les tâches de fond)."""
+        try:
+            from app.engine.auto_optimizer import any_optimization_running
+            return any_optimization_running()
+        except Exception:
+            return False
+
+    def _lifecycle_thread(self) -> None:
+        try:
+            from app.core.oos_tracker import load_oos_tracker
+            from app.core.database import get_slot_live_stats, session_scope
+            oos = load_oos_tracker()
+            days = self._fwd_test_lookback_days
+            slots_data: dict = {}
+            scores: dict = {}
+            for tf, slots in self._active_per_tf.items():
+                for slot in slots:
+                    name = slot.get("name")
+                    if not name:
+                        continue
+                    key = f"{name}::{tf}"
+                    rec = oos.get(key, {})
+                    contract = rec.get("contract", {}) or {}
+                    sim = rec.get("sim", {}) or {}
+                    with session_scope(self.SessionLocal) as sess:
+                        stats = get_slot_live_stats(sess, name, tf, days=days)
+                    sb = self.allocator._slots.get(key)
+                    # Score budget-indépendant : rendement simulé moyen par trade.
+                    score = float(sim.get("avg_return_pct", 0.0) or 0.0)
+                    scores[key] = score
+                    slots_data[key] = {
+                        "budget_pct":          sb.budget_pct if sb else 0.0,
+                        "live_trades":         stats["n_trades"],
+                        "verdict":             contract.get("in_band"),
+                        "live_avg_return_pct": stats["avg_return_pct"],
+                        "score":               score,
+                    }
+            self._lifecycle_snapshot = self._lifecycle.evaluate(slots_data)
+            # Allocation continue : appliquée si activée, sinon calculée en shadow.
+            if getattr(self.allocator, "continuous_allocation", False):
+                self._shadow_alloc = self.allocator.apply_continuous_allocation(scores)
+            else:
+                self._shadow_alloc = self.allocator.compute_shadow_allocation(scores)
+            logger.info(
+                f"[Lifecycle] états={self._lifecycle_snapshot.get('counts')} "
+                f"| file re-opt={len(self._lifecycle_snapshot.get('reopt_queue', []))}"
+            )
+            # Re-optimisation des bots retirés (opt-in) : ferme la boucle
+            # « retrait → re-optimisation » de la doc §2.
+            if self._lifecycle_auto_reopt:
+                queue = self._lifecycle.pop_reopt_queue()
+                strategies = sorted({k.split("::", 1)[0] for k in queue})
+                if strategies:
+                    logger.info(f"[Lifecycle] Re-optimisation des bots retirés : {strategies}")
+                    self._trigger_reopt(strategies)
+        except Exception as e:
+            logger.error(f"[Lifecycle] Erreur : {e}", exc_info=True)
+
+    def _trigger_reopt(self, strategies: list) -> None:
+        """Lance une optimisation ciblée pour les stratégies de bots retirés.
+
+        L'application des nouveaux params (callback ``_on_opt_applied``) bumpe la
+        génération du bot et recharge les stratégies : le bot « renaît » et
+        repassera par candidat/essai au fil des trades live.
+        """
+        try:
+            from app.engine.auto_optimizer import AutoOptimizer
+            symbol = self._fwd_test_symbol
+            df_map = {}
+            for tf in self.timeframes:
+                limit = RECOMMENDED_LIMIT.get(tf, 500)
+                df = self.scanner.fetch_ohlcv(symbol, tf, limit=limit)
+                if df is not None and len(df) > 0:
+                    df_map[tf] = df
+            if not df_map:
+                logger.warning("[Lifecycle] Re-opt annulée : données insuffisantes.")
+                return
+            opt = AutoOptimizer(self.cfg, n_trials=40, method="bayesian",
+                                on_apply_callback=self._on_opt_applied)
+            opt.start_async(df_map, symbol, strategies=strategies,
+                            timeframes=self.timeframes, auto_apply=True)
+        except Exception as e:
+            logger.error(f"[Lifecycle] _trigger_reopt KO : {e}", exc_info=True)
+
     def _on_opt_applied(self, strategy_name: str, params: dict) -> None:
         """Callback après application des params optimisés — recharge les stratégies actives."""
         existing = dict(self.strat_params.get(strategy_name, {}))
@@ -814,10 +1030,46 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             if v is not None:
                 existing[k] = v
         self.strat_params[strategy_name] = existing
+        # Nouveaux params figés → nouveau bot : incrémente la génération monotone
+        # (anti-collision) pour chaque slot de cette stratégie.
+        try:
+            from app.core.bot_identity import register_identity
+            for tf, slots in self._active_per_tf.items():
+                for slot in slots:
+                    if slot.get("name") == strategy_name:
+                        ident = register_identity(
+                            strategy_name, tf,
+                            slot.get("params", {}).get(strategy_name, existing), self.cfg,
+                        )
+                        logger.info(f"[Bot] {ident.bot_id} ({ident.venue.describe()})")
+        except Exception as e:
+            logger.debug(f"[Bot] register_identity KO : {e}")
         self.reload_active_strategies()
-        logger.info(
-            f"[LiveTrader] Stratégies rechargées après optimisation de {strategy_name}"
-        )
+
+    def get_bot_identities(self) -> list:
+        """Identité (lecture seule) de chaque bot actif — pour l'API/UI.
+
+        Mise en cache (le ``status`` est sollicité ~1×/s) : on ne recalcule —
+        et on ne relit ``data/bot_generations.json`` — qu'à l'invalidation
+        (changement du set actif / application d'une optimisation).
+        """
+        if getattr(self, "_bots_cache", None) is not None:
+            return self._bots_cache
+        from app.core.bot_identity import peek_identity, _load_generations
+        gens = _load_generations()   # une seule lecture disque pour tous les bots
+        out = []
+        for tf, slots in self._active_per_tf.items():
+            for slot in slots:
+                name = slot.get("name")
+                if not name:
+                    continue
+                params = slot.get("params", {}).get(name, {})
+                try:
+                    out.append(peek_identity(name, tf, params, self.cfg, gens=gens).to_dict())
+                except Exception:
+                    continue
+        self._bots_cache = out
+        return out
 
     # ── Propriété status (API) ─────────────────────────────────────────────
 
@@ -871,6 +1123,10 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             "circuit_breakers":     self.risk.get_circuit_breakers_status(),
             "slot_states":          self.risk.get_slot_states(),
             "volatility_brake":     self.risk.volatility_brake_active,
+            # Phase 1/2 — identité des bots, cycle de vie, allocation shadow.
+            "bots":                 self.get_bot_identities(),
+            "lifecycle":            self._lifecycle_snapshot,
+            "shadow_allocation":    self._shadow_alloc,
         })
 
     def _load_db_stats(self) -> dict:

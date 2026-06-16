@@ -1,11 +1,24 @@
-"""Notifications multi-canaux : Telegram, WhatsApp, Email. Envoi asynchrone via queue."""
+"""Notifications multi-canaux : Telegram, WhatsApp, Email. Envoi asynchrone via queue.
+
+Hiérarchie à 3 niveaux (Phase 4) : ``info`` / ``warning`` / ``critical``, avec
+throttling (anti-spam) et un **flux en mémoire** miroir, exposé à l'UI (le même
+message part vers Telegram/email ET alimente le fil d'activité du portefeuille).
+Le mismatch de réconciliation est une alerte **critique** (doc §3).
+"""
 import logging
 import queue
 import smtplib
 import threading
+import time
+from collections import deque
+from datetime import datetime, timezone
 from email.mime.text import MIMEText
 
 logger = logging.getLogger(__name__)
+
+# Niveaux ordonnés (pour le filtrage « ≥ niveau » côté UI).
+LEVELS = ("info", "warning", "critical")
+_LEVEL_RANK = {lvl: i for i, lvl in enumerate(LEVELS)}
 
 try:
     import requests as _requests
@@ -66,6 +79,12 @@ class Notifier:
         self._dd_warn_sent = False
         self._halt_sent    = False
 
+        # ── Hiérarchie 3 niveaux + throttling + flux UI (Phase 4) ─────────────
+        self._throttle_secs = float(n.get("throttle_secs", 60))
+        self._throttle: dict = {}                 # clé → dernier envoi (ts)
+        self._feed: deque = deque(maxlen=int(n.get("feed_size", 200)))
+        self._feed_lock = threading.Lock()
+
         active = []
         if self.telegram_enabled: active.append("Telegram")
         if self.whatsapp_enabled: active.append(f"WhatsApp({self.whatsapp_mode})")
@@ -84,7 +103,28 @@ class Notifier:
 
     # ── Interface publique ────────────────────────────────────────────────────
 
-    def send(self, message: str, async_: bool = True, level: str = "info"):
+    def send(self, message: str, async_: bool = True, level: str = "info",
+             key: str = None, throttle: bool = True):
+        """Émet une notification.
+
+        ``level``    : "info" | "warning" | "critical".
+        ``key``      : clé de throttling (par défaut le message lui-même) — deux
+                       envois de même clé à moins de ``throttle_secs`` sont fusionnés.
+        ``throttle`` : désactivable ponctuellement. Les ``critical`` ne sont
+                       JAMAIS throttlés (on ne tait pas une catastrophe).
+        """
+        if level not in _LEVEL_RANK:
+            level = "info"
+        # Throttling (sauf critique)
+        if throttle and level != "critical":
+            tkey = key or message
+            now = time.time()
+            last = self._throttle.get(tkey, 0.0)
+            if now - last < self._throttle_secs:
+                return
+            self._throttle[tkey] = now
+        # Flux UI (miroir) — toujours alimenté, même si un canal échoue.
+        self._record_feed(message, level)
         if async_:
             try:
                 self._async_queue.put_nowait((message, level))
@@ -94,6 +134,36 @@ class Notifier:
                 self._dispatch(message, level)
         else:
             self._dispatch(message, level)
+
+    # ── Flux en mémoire (miroir UI) ───────────────────────────────────────────
+    def _record_feed(self, message: str, level: str) -> None:
+        entry = {
+            "time":  datetime.now(timezone.utc).isoformat(),
+            "level": level,
+            "message": self._strip_markdown(message),
+        }
+        with self._feed_lock:
+            self._feed.append(entry)
+
+    def recent(self, limit: int = 50, min_level: str = "info") -> list:
+        """Notifications récentes (plus récentes d'abord), filtrées par niveau mini."""
+        floor = _LEVEL_RANK.get(min_level, 0)
+        with self._feed_lock:
+            items = [e for e in self._feed if _LEVEL_RANK.get(e["level"], 0) >= floor]
+        return list(reversed(items))[:limit]
+
+    def notify_reconciliation_mismatch(self, symbol: str, label: str,
+                                       estimated: float, real: float,
+                                       gap_pct: float) -> None:
+        """Mismatch de réconciliation (coûts réels vs estimés) = alerte CRITIQUE."""
+        self.send(
+            f"🚨 *Mismatch réconciliation* `{symbol}`\n"
+            f"{label} estimé : `{estimated:.6f}` → réel : `{real:.6f}`\n"
+            f"Écart : `{gap_pct:.1f}%`\n"
+            f"_Vérifiez la config de frais/funding (live ≠ backtest)._",
+            async_=False, level="critical",
+            key=f"reconcile::{symbol}::{label}",
+        )
 
     def notify_trade_open(self, pos: dict):
         if not self._events.get("on_trade_open"): return
@@ -169,7 +239,8 @@ class Notifier:
             f"⚠️ *Alerte Drawdown*\n"
             f"DD journalier : `{daily_dd_pct:.2f}%`\n"
             f"Limite        : `{limit_pct:.2f}%`\n"
-            f"_Approche du circuit breaker journalier._"
+            f"_Approche du circuit breaker journalier._",
+            level="warning"
         )
 
     def reset_dd_warning(self):
@@ -184,7 +255,8 @@ class Notifier:
             f"Symbole    : `{symbol}`\n"
             f"Erreur     : `{error}`\n"
             f"Tentatives : `{count}`\n"
-            f"_Le symbole sera ignoré temporairement._"
+            f"_Le symbole sera ignoré temporairement._",
+            level="warning"
         )
 
     def notify_position_loss(self, symbol: str, strategy: str,
@@ -197,7 +269,8 @@ class Notifier:
             f"Pair      : `{symbol}` ({side.upper()})\n"
             f"Stratégie : `{strategy}`\n"
             f"PnL non réalisé : `{unrealized_pnl_pct:.2f}%`\n"
-            f"_Le trailing stop gérera la sortie automatiquement._"
+            f"_Le trailing stop gérera la sortie automatiquement._",
+            level="warning", key=f"loss::{symbol}::{strategy}"
         )
 
     def notify_status(self, status: dict):
@@ -265,6 +338,7 @@ class Notifier:
 
     def _dispatch(self, message: str, level: str = "info"):
         self._send_all(message)
+        # Email : si activé, ou systématiquement pour les critiques (filet).
         if self.email_enabled or level == "critical":
             self._email(self._strip_markdown(message), level)
 
@@ -311,7 +385,8 @@ class Notifier:
         if not self.email_enabled: return
         if not self._email_smtp or not self._email_user or not self._email_password: return
         try:
-            subject = f"[CryptoBot] {'🚨 CRITIQUE' if level == 'critical' else '🤖 Info'}"
+            _subj = {"critical": "🚨 CRITIQUE", "warning": "⚠️ Avertissement"}.get(level, "🤖 Info")
+            subject = f"[CryptoBot] {_subj}"
             m = MIMEText(text, "plain", "utf-8")
             m["Subject"] = subject
             m["From"]    = self._email_user

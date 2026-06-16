@@ -85,12 +85,35 @@ class RiskManager:
         self.halted      = False
         self.halt_reason = ""
 
+        # ── Mode de veto (Phase 1 — suppression progressive des vetos globaux)
+        # "enforce" (défaut) : les vetos de capacité (max_positions/longs/shorts,
+        #   anti-spam) et les pauses CB de slot bloquent réellement les entrées.
+        # "shadow"  : ils n'empêchent plus d'entrer mais sont **comptés** et
+        #   loggés — on mesure l'écart avant de retirer un garde-fou. Le
+        #   kill-switch global (``halted``) reste TOUJOURS appliqué. Par sécurité,
+        #   "shadow" n'est honoré qu'en paper (cf. _veto_shadow_active()).
+        self._veto_mode  = str(_risk_cfg.get("veto_mode", "enforce")).lower()
+        self._paper_mode = bool(cfg.get("trading", {}).get("paper_mode", True))
+        # Compteurs d'« écart » : combien de fois chaque veto aurait bloqué.
+        self.veto_shadow_blocks: Dict[str, int] = {}
+
         # Circuit breakers par slot
         self.slot_states: Dict[str, SlotRiskState] = {}
 
         # Volatility brake
         self.volatility_brake_active: bool  = False
         self.volatility_brake_factor: float = 1.0  # 0.5 si actif
+
+        # ── Kill-switch d'équité persistant (Phase 3 — veto catastrophe) ──────
+        # Plancher d'équité absolu : sous ce niveau, HALT définitif et PERSISTANT
+        # (survit au redémarrage, non levable sans ``force``). C'est le « seul
+        # veto global » de la doc §4. ``equity_kill_switch_dd`` = 0 → désactivé.
+        _kill_dd = float(_risk_cfg.get("equity_kill_switch_dd", 0.0))
+        self.kill_switch_equity = (self.initial_capital * (1.0 - _kill_dd)
+                                   if _kill_dd > 0 else 0.0)
+        self._kill_switch_tripped = False
+        # Persistance de l'état de risque (compteurs/pauses/halt) — reprise propre.
+        self._session_factory = None
 
     # ── Equity ────────────────────────────────────────────────────────────
     def update_equity(self, new_equity: float):
@@ -137,6 +160,14 @@ class RiskManager:
             self.halted      = True
             self.halt_reason = f"CB global : DD global {global_dd:.1%} ≥ {self.global_dd_limit:.1%}"
             logger.critical(f"HALT — {self.halt_reason}")
+            self.persist_state()
+
+        # Kill-switch d'équité : plancher absolu → HALT persistant et sticky.
+        if (self.kill_switch_equity > 0 and self.equity <= self.kill_switch_equity
+                and not self._kill_switch_tripped):
+            self.trip_kill_switch(
+                f"plancher d'équité {self.equity:.2f} ≤ {self.kill_switch_equity:.2f}"
+            )
 
     def _trigger_dd_warning(self, daily_dd: float):
         if self._notifier:
@@ -145,16 +176,124 @@ class RiskManager:
     def attach_notifier(self, notifier) -> None:
         self._notifier = notifier
 
-    def reset_halt(self):
+    def trip_kill_switch(self, reason: str) -> None:
+        """Déclenche le kill-switch catastrophe : HALT persistant et sticky."""
+        self.halted = True
+        self._kill_switch_tripped = True
+        self.halt_reason = f"KILL-SWITCH — {reason}"
+        logger.critical(f"🛑 {self.halt_reason}")
+        if self._notifier:
+            self._notifier.send(f"🛑 *KILL-SWITCH déclenché*\n{reason}",
+                                async_=False, level="critical")
+        self.persist_state()
+
+    def reset_halt(self, force: bool = False):
+        # Le kill-switch catastrophe n'est pas levable par un reset normal :
+        # il faut un acquittement explicite (force=True) — évite qu'un simple
+        # clic relance un bot en situation de ruine.
+        if self._kill_switch_tripped and not force:
+            logger.warning("[Risk] reset_halt ignoré : kill-switch actif "
+                           "(acquittement explicite requis).")
+            return
         self.halted      = False
         self.halt_reason = ""
-        logger.warning("[Risk] Circuit breaker global réinitialisé manuellement.")
+        self._kill_switch_tripped = False
+        logger.warning("[Risk] Circuit breaker global réinitialisé"
+                       + (" (kill-switch forcé)" if force else " manuellement."))
+        self.persist_state()
+
+    # ── Persistance de l'état de risque (Phase 3) ──────────────────────────
+    def attach_persistence(self, session_factory) -> None:
+        """Branche la persistance DB et restaure l'état (reprise propre)."""
+        self._session_factory = session_factory
+        self._restore_state()
+
+    def _state_blob(self) -> dict:
+        return {
+            "halted": self.halted,
+            "halt_reason": self.halt_reason,
+            "kill_switch_tripped": self._kill_switch_tripped,
+            "peak_equity": self.peak_equity,
+            "daily_start": self.daily_start,
+            "day_key": self.day_key,
+            "slots": {
+                k: {
+                    "consecutive_losses": s.consecutive_losses,
+                    "paused_until": s.paused_until,
+                    "pause_reason": s.pause_reason,
+                    "daily_pnl": s.daily_pnl,
+                    "daily_trades": s.daily_trades,
+                    "day_key": s.day_key,
+                }
+                for k, s in self.slot_states.items()
+            },
+        }
+
+    def persist_state(self) -> None:
+        """Sauvegarde l'état de risque en base (no-op si non branché)."""
+        if not self._session_factory:
+            return
+        try:
+            from app.core.database import save_risk_state, session_scope
+            with session_scope(self._session_factory) as sess:
+                save_risk_state(sess, "global", self._state_blob())
+        except Exception as e:
+            logger.debug(f"[Risk] persist_state KO : {e}")
+
+    def _restore_state(self) -> None:
+        if not self._session_factory:
+            return
+        try:
+            from app.core.database import load_risk_state, session_scope
+            with session_scope(self._session_factory) as sess:
+                blob = load_risk_state(sess, "global")
+        except Exception as e:
+            logger.debug(f"[Risk] _restore_state KO : {e}")
+            return
+        if not blob:
+            return
+        self.halted = bool(blob.get("halted", False))
+        self.halt_reason = blob.get("halt_reason", "")
+        self._kill_switch_tripped = bool(blob.get("kill_switch_tripped", False))
+        self.peak_equity = float(blob.get("peak_equity", self.peak_equity))
+        self.daily_start = float(blob.get("daily_start", self.daily_start))
+        self.day_key = blob.get("day_key", self.day_key)
+        for k, sd in (blob.get("slots") or {}).items():
+            st = self._get_slot_state(k)
+            st.consecutive_losses = int(sd.get("consecutive_losses", 0))
+            st.paused_until = float(sd.get("paused_until", 0.0))
+            st.pause_reason = sd.get("pause_reason", "")
+            st.daily_pnl = float(sd.get("daily_pnl", 0.0))
+            st.daily_trades = int(sd.get("daily_trades", 0))
+            st.day_key = sd.get("day_key", "")
+        n_paused = sum(1 for s in self.slot_states.values() if s.is_paused())
+        logger.info(
+            f"[Risk] État restauré — halted={self.halted}"
+            f"{' (KILL-SWITCH)' if self._kill_switch_tripped else ''}, "
+            f"{len(self.slot_states)} slot(s), {n_paused} en pause."
+        )
 
     # ── Circuit breakers par slot ──────────────────────────────────────────
     def _get_slot_state(self, slot_key: str) -> SlotRiskState:
         if slot_key not in self.slot_states:
             self.slot_states[slot_key] = SlotRiskState(slot_key=slot_key, day_key=self._today())
         return self.slot_states[slot_key]
+
+    def _veto_shadow_active(self) -> bool:
+        """Le mode shadow n'est honoré qu'en paper (sécurité : on ne retire jamais
+        un garde-fou en live sans l'avoir mesuré en paper au préalable)."""
+        return self._veto_mode == "shadow" and self._paper_mode
+
+    @property
+    def veto_shadow(self) -> bool:
+        """Accès public : les vetos de capacité sont-ils en mode shadow ?"""
+        return self._veto_shadow_active()
+
+    def _shadow_allow(self, reason: str) -> bool:
+        """Enregistre qu'un veto *aurait* bloqué, puis autorise (mode shadow)."""
+        self.veto_shadow_blocks[reason] = self.veto_shadow_blocks.get(reason, 0) + 1
+        logger.info(f"[Risk][shadow] veto ignoré (mesure d'écart) : {reason}")
+        return True
 
     def can_slot_trade(self, slot_key: str) -> tuple[bool, str]:
         """Vérifie les circuit breakers propres à un slot."""
@@ -165,11 +304,16 @@ class RiskManager:
             state.daily_pnl = 0.0
             state.daily_trades = 0
             state.day_key = today
+        shadow = self._veto_shadow_active()
         if state.is_paused():
+            if shadow and self._shadow_allow(f"slot_pause::{slot_key}"):
+                return True, ""
             remaining = int(state.paused_until - time.time())
             return False, f"Slot {slot_key} pausé ({state.pause_reason}) — {remaining}s restantes"
         # V6.1 : limite trades/jour par slot
         if self._max_trades_per_day > 0 and state.daily_trades >= self._max_trades_per_day:
+            if shadow and self._shadow_allow(f"slot_daily_limit::{slot_key}"):
+                return True, ""
             return False, (
                 f"Slot {slot_key} : limite quotidienne atteinte "
                 f"({state.daily_trades}/{self._max_trades_per_day} trades)"
@@ -245,6 +389,9 @@ class RiskManager:
                         async_=True
                     )
 
+        # Persiste compteurs/pauses du slot pour une reprise propre après crash.
+        self.persist_state()
+
     def reset_slot_pause(self, slot_key: str):
         """Réinitialisation manuelle d'une pause de slot."""
         state = self._get_slot_state(slot_key)
@@ -279,18 +426,33 @@ class RiskManager:
 
     def compute_size(self, entry: float, atr: float,
                      score: float = 1.0, threshold: float = 0.60,
-                     size_factor: float = 1.0) -> tuple:
+                     size_factor: float = 1.0,
+                     budget: float = None, max_leverage: float = None) -> tuple:
         """Calcule taille et notionnel, en intégrant score_factor et volatility_brake.
 
         ``size_factor`` (optionnel) est un facteur multiplicatif fourni par la
         stratégie (par ex. demi-Kelly : ×confidence ; ou boost setup V7 ×1.5).
         Borné [0, 2] et appliqué après le facteur score interne et le frein
         de volatilité. ``max_notional_pct`` reste la garde-fou de risque global.
+
+        Sizing par bot (Phase 1)
+        ------------------------
+        Si ``budget`` (USDC alloué au bot) est fourni, le bot dimensionne sur
+        **son** budget et non sur l'équité globale : le montant risqué devient
+        ``budget × risk%`` et le notionnel est plafonné à ``budget × levier``
+        (cf. doc §3 « Sizing : cap notional ≤ budget × levier »). C'est la
+        fidélité au backtest — un bot ne peut engager que son budget. Sans
+        ``budget`` (None), comportement historique inchangé (sizing sur équité).
         """
-        risk_amount  = self.equity * self.compute_risk()
+        base         = float(budget) if budget is not None else self.equity
+        risk_amount  = base * self.compute_risk()
         size         = risk_amount / max(atr, 1e-8)
         notional     = size * entry
-        max_notional = self.equity * self.max_notional_pct
+        if budget is not None:
+            lev          = float(max_leverage) if max_leverage is not None else self.max_leverage
+            max_notional = base * max(lev, 1.0)
+        else:
+            max_notional = self.equity * self.max_notional_pct
 
         score_range  = max(1.0 - threshold, 1e-9)
         score_internal_factor = 0.5 + 0.5 * min(max(score - threshold, 0) / score_range, 1.0)
@@ -309,18 +471,24 @@ class RiskManager:
 
     # ── Vérifications avant entrée ─────────────────────────────────────────
     def can_trade(self, side: str) -> tuple[bool, str]:
+        # Kill-switch global : TOUJOURS appliqué, même en mode shadow.
         if self.halted:
             return False, self.halt_reason
+        shadow = self._veto_shadow_active()
         if len(self.open_positions) >= self.max_positions:
-            return False, f"Max positions ({self.max_positions}) atteint"
+            if not (shadow and self._shadow_allow("max_positions")):
+                return False, f"Max positions ({self.max_positions}) atteint"
         longs  = sum(1 for p in self.open_positions.values() if p["side"] == "long")
         shorts = sum(1 for p in self.open_positions.values() if p["side"] == "short")
         if side == "long"  and longs  >= self.max_longs:
-            return False, f"Max longs ({self.max_longs}) atteint"
+            if not (shadow and self._shadow_allow("max_longs")):
+                return False, f"Max longs ({self.max_longs}) atteint"
         if side == "short" and shorts >= self.max_shorts:
-            return False, f"Max shorts ({self.max_shorts}) atteint"
+            if not (shadow and self._shadow_allow("max_shorts")):
+                return False, f"Max shorts ({self.max_shorts}) atteint"
         if not self._check_rate():
-            return False, "Trop de trades/minute (anti-spam)"
+            if not (shadow and self._shadow_allow("anti_spam")):
+                return False, "Trop de trades/minute (anti-spam)"
         return True, ""
 
     def _check_rate(self) -> bool:
@@ -367,11 +535,15 @@ class RiskManager:
             "open_positions":      len(self.open_positions),
             "halted":              self.halted,
             "halt_reason":         self.halt_reason,
+            "kill_switch":         self._kill_switch_tripped,
             "current_risk":        round(self.compute_risk() * 100, 2),
             "daily_dd_limit":      round(self.daily_dd_limit, 4),
             "global_dd_limit":     round(self.global_dd_limit, 4),
             "volatility_brake":    self.volatility_brake_active,
             "volatility_factor":   self.volatility_brake_factor,
+            "veto_mode":           self._veto_mode,
+            "veto_shadow_active":  self._veto_shadow_active(),
+            "veto_shadow_blocks":  dict(self.veto_shadow_blocks),
         }
 
     def get_slot_states(self) -> List[dict]:

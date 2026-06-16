@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %} — Mes Bots{% endblock %}
+
+{% block page_styles %}
+#content{padding:18px 20px;display:flex;flex-direction:column;gap:14px;flex:1;}
+.kanban{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+@media(max-width:1000px){.kanban{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:560px){.kanban{grid-template-columns:1fr;}}
+.col{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:10px;min-height:120px;}
+.col-hdr{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;display:flex;justify-content:space-between;}
+.col-actif .col-hdr{color:var(--green);}.col-essai .col-hdr{color:var(--cyan);}
+.col-candidat .col-hdr{color:var(--muted);}.col-retire .col-hdr{color:var(--red);}
+.bot-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:9px 10px;margin-bottom:8px;cursor:pointer;transition:border-color .15s,transform .15s;}
+.bot-card:hover{border-color:var(--cyan);transform:translateY(-1px);}
+.bot-card .nm{font-family:var(--mono);font-size:.76rem;color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.bot-card .meta{font-size:.64rem;color:var(--dim);margin-top:3px;display:flex;justify-content:space-between;}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;}
+.dot.ok{background:var(--green);}.dot.bad{background:var(--red);}.dot.na{background:var(--dim);}
+/* Detail drawer */
+#drawer{position:fixed;top:0;right:0;width:min(440px,94vw);height:100vh;background:var(--surface);border-left:1px solid var(--border);box-shadow:-8px 0 30px rgba(0,0,0,.4);transform:translateX(100%);transition:transform .22s ease;z-index:60;overflow:auto;padding:18px;}
+#drawer.open{transform:translateX(0);}
+#drawer h2{font-family:var(--mono);font-size:1rem;color:var(--cyan);margin:0 0 4px;word-break:break-all;}
+.d-row{display:flex;justify-content:space-between;font-size:.76rem;padding:5px 0;border-bottom:1px solid var(--border);}
+.d-row .k{color:var(--dim);}.d-row .v{font-family:var(--mono);color:var(--text);}
+.sect{margin-top:16px;font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700;}
+/* MC cône */
+.cone{margin-top:10px;}
+.cone-track{position:relative;height:46px;background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);}
+.cone-band{position:absolute;top:8px;height:30px;background:rgba(34,211,238,.18);border-left:1px solid var(--cyan);border-right:1px solid var(--cyan);}
+.cone-mark{position:absolute;top:2px;height:42px;width:2px;}
+.cone-mark.sim{background:var(--amber);}.cone-mark.live{background:var(--green);}
+.cone-mark.live.bad{background:var(--red);}
+.cone-zero{position:absolute;top:0;height:46px;width:1px;background:rgba(255,255,255,.25);}
+.cone-lbl{display:flex;justify-content:space-between;font-size:.62rem;color:var(--dim);font-family:var(--mono);margin-top:4px;}
+.verdict{margin-top:8px;padding:7px 10px;border-radius:var(--r-sm);font-size:.76rem;font-weight:600;}
+.verdict.ok{background:rgba(74,222,128,.1);color:var(--green);}
+.verdict.bad{background:var(--red-dim);color:var(--red);}
+.verdict.na{background:var(--card);color:var(--muted);}
+.backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:55;display:none;}
+.backdrop.show{display:block;}
+{% endblock %}
+
+{% block topbar_content %}
+<div class="topbar-title">🤖 Mes Bots</div>
+<div style="margin-left:auto;font-size:.72rem;color:var(--dim)" id="reoptInfo"></div>
+{% endblock %}
+
+{% block content %}
+<div id="content" class="fade-in">
+  <div class="kanban">
+    <div class="col col-candidat"><div class="col-hdr"><span>Candidat</span><span id="cnt-candidat">0</span></div><div id="col-candidat"></div></div>
+    <div class="col col-essai"><div class="col-hdr"><span>Essai</span><span id="cnt-essai">0</span></div><div id="col-essai"></div></div>
+    <div class="col col-actif"><div class="col-hdr"><span>Actif</span><span id="cnt-actif">0</span></div><div id="col-actif"></div></div>
+    <div class="col col-retire"><div class="col-hdr"><span>Retiré</span><span id="cnt-retire">0</span></div><div id="col-retire"></div></div>
+  </div>
+</div>
+<div class="backdrop" id="backdrop" onclick="closeDrawer()"></div>
+<div id="drawer"><div id="drawerBody"></div></div>
+{% endblock %}
+
+{% block body_scripts %}
+<script>
+let BOTS={};
+function pctf(v){ return (v==null||isNaN(v))?'—':(v>=0?'+':'')+Number(v).toFixed(2)+'%'; }
+
+async function loadBots(){
+  let d; try{ d = await apiFetch('/api/bots').then(r=>r.json()); }catch(e){ return; }
+  BOTS={}; const cols={candidat:[],essai:[],actif:[],retire:[]};
+  (d.bots||[]).forEach(b=>{ BOTS[b.slot_key]=b; (cols[b.state]||cols.candidat).push(b); });
+  for(const st of ['candidat','essai','actif','retire']){
+    document.getElementById('cnt-'+st).textContent=cols[st].length;
+    document.getElementById('col-'+st).innerHTML = cols[st].map(b=>{
+      const ib=b.in_band; const dot=ib===true?'ok':(ib===false?'bad':'na');
+      const live=(b.live&&b.live.n_trades)||0;
+      return `<div class="bot-card" onclick="openBot('${escHtml(b.slot_key)}')">
+        <div class="nm">${escHtml(b.slot_key)}</div>
+        <div class="meta"><span><span class="dot ${dot}"></span>${live} trade(s) live</span>
+        <span>${b.sim&&b.sim.return_pct!=null?pctf(b.sim.return_pct):'—'}</span></div></div>`;
+    }).join('') || '<div style="color:var(--dim);font-size:.7rem;padding:4px">—</div>';
+  }
+  const rq=(d.reopt_queue||[]).length;
+  document.getElementById('reoptInfo').textContent = rq?`${rq} bot(s) en file de re-optimisation`:'';
+}
+
+function coneHtml(b){
+  const c=b.contract||{}; const mc=b.monte_carlo||{};
+  // Fourchette = bande du contrat (rendement moyen/trade) si dispo, sinon MC equity.
+  let lo=c.band_low_pct, hi=c.band_high_pct, sim=c.sim_mean_pct, live=c.live_mean_pct;
+  if(lo==null||hi==null){ lo=mc.return_p5_pct; hi=mc.return_p95_pct; sim=mc.return_mean_pct; live=null; }
+  if(lo==null||hi==null) return '<div style="color:var(--dim);font-size:.74rem;margin-top:8px">Pas encore de fourchette Monte-Carlo (forward-test à venir).</div>';
+  const vals=[lo,hi,sim,live,0].filter(v=>v!=null);
+  let min=Math.min(...vals), max=Math.max(...vals); if(min===max){min-=1;max+=1;}
+  const pad=(max-min)*0.12; min-=pad; max+=pad; const span=max-min;
+  const X=v=>((v-min)/span*100);
+  const ib=c.in_band; const badLive=ib===false;
+  const liveMark=(live!=null)?`<div class="cone-mark live ${badLive?'bad':''}" style="left:${X(live)}%"></div>`:'';
+  const simMark=(sim!=null)?`<div class="cone-mark sim" style="left:${X(sim)}%"></div>`:'';
+  return `<div class="cone">
+    <div class="cone-track">
+      <div class="cone-band" style="left:${X(lo)}%;width:${X(hi)-X(lo)}%"></div>
+      <div class="cone-zero" style="left:${X(0)}%"></div>
+      ${simMark}${liveMark}
+    </div>
+    <div class="cone-lbl"><span>${lo.toFixed(2)}%</span><span style="color:var(--amber)">▮ sim ${sim!=null?sim.toFixed(2)+'%':'—'}</span>
+    <span style="color:${badLive?'var(--red)':'var(--green)'}">▮ réel ${live!=null?live.toFixed(2)+'%':'—'}</span><span>${hi.toFixed(2)}%</span></div>
+  </div>`;
+}
+
+function openBot(key){
+  const b=BOTS[key]; if(!b) return;
+  const id=b.identity||{}; const v=(id.venue)||{}; const sim=b.sim||{}; const live=b.live||{};
+  const ib=b.in_band; const vcls=ib===true?'ok':(ib===false?'bad':'na');
+  const vtxt={conforme:'✅ Le live confirme la simulation',sous_la_simulation:'⚠️ Le live sous-performe la simulation',
+    au_dessus_de_la_simulation:'↑ Le live dépasse la fourchette simulée',
+    pas_assez_de_trades_reels:'⏳ Pas encore assez de trades réels'}[b.verdict]||'—';
+  document.getElementById('drawerBody').innerHTML = `
+    <h2>${escHtml(b.slot_key)}</h2>
+    <div style="font-size:.66rem;color:var(--dim);margin-bottom:6px">${id.bot_id?escHtml(id.bot_id):'identité non figée'}</div>
+    <div class="d-row"><span class="k">État</span><span class="v">${b.state}</span></div>
+    <div class="d-row"><span class="k">Venue</span><span class="v">${v.exchange||'—'} · ${v.market_type||'—'}${v.max_leverage?(' ×'+v.max_leverage):''}</span></div>
+    <div class="d-row"><span class="k">Génération</span><span class="v">${id.generation!=null?('g'+id.generation):'—'}</span></div>
+    <div class="d-row"><span class="k">Budget</span><span class="v">${b.budget?b.budget.budget_pct+'% ('+b.budget.budget_usdc+'$)':'—'}</span></div>
+
+    <div class="sect">Cône Monte-Carlo vs réel</div>
+    ${coneHtml(b)}
+    <div class="verdict ${vcls}">${vtxt}</div>
+
+    <div class="sect">Simulation (forward-test ${b.run_date?'· '+b.run_date:''})</div>
+    <div class="d-row"><span class="k">Trades</span><span class="v">${sim.total_trades!=null?sim.total_trades:'—'}</span></div>
+    <div class="d-row"><span class="k">Rendement</span><span class="v">${sim.return_pct!=null?pctf(sim.return_pct):'—'}</span></div>
+    <div class="d-row"><span class="k">Win rate</span><span class="v">${sim.win_rate!=null?sim.win_rate+'%':'—'}</span></div>
+    <div class="d-row"><span class="k">Sharpe</span><span class="v">${sim.sharpe!=null?sim.sharpe:'—'}</span></div>
+
+    <div class="sect">Réel (live)</div>
+    <div class="d-row"><span class="k">Trades</span><span class="v">${live.n_trades!=null?live.n_trades:0}</span></div>
+    <div class="d-row"><span class="k">Rendement moyen/trade</span><span class="v">${live.avg_return_pct!=null?pctf(live.avg_return_pct):'—'}</span></div>`;
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('backdrop').classList.add('show');
+}
+function closeDrawer(){ document.getElementById('drawer').classList.remove('open'); document.getElementById('backdrop').classList.remove('show'); }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
+
+loadBots(); setInterval(loadBots, 8000);
+</script>
+{% endblock %}
