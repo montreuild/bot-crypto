@@ -154,10 +154,17 @@ class MLStrategyTrainer:
             with self._ml_lock:
                 strat.fit(df, strat_params)
                 strat.save_model(self._model_path(strat, name, tf))
-            logger.info(
-                f"[MLTrainer] {name}/{tf} réentraîné — "
-                f"AUC={strat._best_auc_per_tf.get(tf, 0):.4f}"
-            )
+            auc = strat._best_auc_per_tf.get(tf, 0) or 0.0
+            if auc <= 0.0:
+                # AUC nul = entraînement non concluant (labels mono-classe /
+                # validation dégénérée) — état attendu sur certaines fenêtres,
+                # pas une erreur : la stratégie garde son modèle précédent.
+                logger.info(
+                    f"[MLTrainer] {name}/{tf} : entraînement non concluant "
+                    f"(AUC≈0, données insuffisantes/mono-classe) — modèle inchangé"
+                )
+            else:
+                logger.info(f"[MLTrainer] {name}/{tf} réentraîné — AUC={auc:.4f}")
         except Exception as e:
             logger.error(f"[MLTrainer] Réentraînement {name}/{tf} KO : {e}")
 
