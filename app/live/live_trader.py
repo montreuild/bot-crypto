@@ -78,6 +78,9 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
 
         _, self.SessionLocal = init_db(cfg["database"]["url"])
 
+        # Phase 3 — reprise propre : restaure halt/kill-switch/pauses/compteurs.
+        self.risk.attach_persistence(self.SessionLocal)
+
         # ── Moteur + stratégies ────────────────────────────────────────────
         self.engine = Engine()
         self._loaded_strategies: Dict[str, object] = {}
@@ -296,6 +299,8 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                         )
                         self._recover_after_gap(gap_secs)
                         _last_successful_cycle = time.time()
+                self._heartbeat()
+                self._check_dead_man()
                 self._maybe_auto_optimize()
                 self._maybe_forward_test()
                 self._maybe_lifecycle()
@@ -870,6 +875,33 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             )
         except Exception as e:
             logger.error(f"[ForwardTest] Erreur : {e}", exc_info=True)
+
+    # ── Watchdog dead-man (Phase 3) ────────────────────────────────────────
+    def _heartbeat(self) -> None:
+        """Écrit le battement de cœur lu par le watchdog séparé."""
+        try:
+            from app.live.watchdog import write_heartbeat
+            write_heartbeat({
+                "running": self.running,
+                "cycle": self.cycle_count,
+                "equity": round(self.capital_display, 2),
+                "halted": self.risk.halted,
+                "open_positions": len([p for p in self.open_positions.values()
+                                       if not p.get("_reserved")]),
+            })
+        except Exception as e:
+            logger.debug(f"[Heartbeat] KO : {e}")
+
+    def _check_dead_man(self) -> None:
+        """Si le watchdog a armé le kill-switch fichier → HALT immédiat."""
+        try:
+            from app.live.watchdog import kill_switch_armed, kill_switch_reason
+            if kill_switch_armed() and not self.risk._kill_switch_tripped:
+                self.risk.trip_kill_switch(
+                    f"watchdog dead-man : {kill_switch_reason() or 'kill-switch fichier'}"
+                )
+        except Exception as e:
+            logger.debug(f"[DeadMan] KO : {e}")
 
     # ── Cycle de vie & allocation continue (Phase 2) ───────────────────────
     def _maybe_lifecycle(self) -> None:

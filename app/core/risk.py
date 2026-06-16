@@ -104,6 +104,17 @@ class RiskManager:
         self.volatility_brake_active: bool  = False
         self.volatility_brake_factor: float = 1.0  # 0.5 si actif
 
+        # ── Kill-switch d'équité persistant (Phase 3 — veto catastrophe) ──────
+        # Plancher d'équité absolu : sous ce niveau, HALT définitif et PERSISTANT
+        # (survit au redémarrage, non levable sans ``force``). C'est le « seul
+        # veto global » de la doc §4. ``equity_kill_switch_dd`` = 0 → désactivé.
+        _kill_dd = float(_risk_cfg.get("equity_kill_switch_dd", 0.0))
+        self.kill_switch_equity = (self.initial_capital * (1.0 - _kill_dd)
+                                   if _kill_dd > 0 else 0.0)
+        self._kill_switch_tripped = False
+        # Persistance de l'état de risque (compteurs/pauses/halt) — reprise propre.
+        self._session_factory = None
+
     # ── Equity ────────────────────────────────────────────────────────────
     def update_equity(self, new_equity: float):
         if new_equity < 0:
@@ -149,6 +160,14 @@ class RiskManager:
             self.halted      = True
             self.halt_reason = f"CB global : DD global {global_dd:.1%} ≥ {self.global_dd_limit:.1%}"
             logger.critical(f"HALT — {self.halt_reason}")
+            self.persist_state()
+
+        # Kill-switch d'équité : plancher absolu → HALT persistant et sticky.
+        if (self.kill_switch_equity > 0 and self.equity <= self.kill_switch_equity
+                and not self._kill_switch_tripped):
+            self.trip_kill_switch(
+                f"plancher d'équité {self.equity:.2f} ≤ {self.kill_switch_equity:.2f}"
+            )
 
     def _trigger_dd_warning(self, daily_dd: float):
         if self._notifier:
@@ -157,10 +176,102 @@ class RiskManager:
     def attach_notifier(self, notifier) -> None:
         self._notifier = notifier
 
-    def reset_halt(self):
+    def trip_kill_switch(self, reason: str) -> None:
+        """Déclenche le kill-switch catastrophe : HALT persistant et sticky."""
+        self.halted = True
+        self._kill_switch_tripped = True
+        self.halt_reason = f"KILL-SWITCH — {reason}"
+        logger.critical(f"🛑 {self.halt_reason}")
+        if self._notifier:
+            self._notifier.send(f"🛑 *KILL-SWITCH déclenché*\n{reason}",
+                                async_=False, level="critical")
+        self.persist_state()
+
+    def reset_halt(self, force: bool = False):
+        # Le kill-switch catastrophe n'est pas levable par un reset normal :
+        # il faut un acquittement explicite (force=True) — évite qu'un simple
+        # clic relance un bot en situation de ruine.
+        if self._kill_switch_tripped and not force:
+            logger.warning("[Risk] reset_halt ignoré : kill-switch actif "
+                           "(acquittement explicite requis).")
+            return
         self.halted      = False
         self.halt_reason = ""
-        logger.warning("[Risk] Circuit breaker global réinitialisé manuellement.")
+        self._kill_switch_tripped = False
+        logger.warning("[Risk] Circuit breaker global réinitialisé"
+                       + (" (kill-switch forcé)" if force else " manuellement."))
+        self.persist_state()
+
+    # ── Persistance de l'état de risque (Phase 3) ──────────────────────────
+    def attach_persistence(self, session_factory) -> None:
+        """Branche la persistance DB et restaure l'état (reprise propre)."""
+        self._session_factory = session_factory
+        self._restore_state()
+
+    def _state_blob(self) -> dict:
+        return {
+            "halted": self.halted,
+            "halt_reason": self.halt_reason,
+            "kill_switch_tripped": self._kill_switch_tripped,
+            "peak_equity": self.peak_equity,
+            "daily_start": self.daily_start,
+            "day_key": self.day_key,
+            "slots": {
+                k: {
+                    "consecutive_losses": s.consecutive_losses,
+                    "paused_until": s.paused_until,
+                    "pause_reason": s.pause_reason,
+                    "daily_pnl": s.daily_pnl,
+                    "daily_trades": s.daily_trades,
+                    "day_key": s.day_key,
+                }
+                for k, s in self.slot_states.items()
+            },
+        }
+
+    def persist_state(self) -> None:
+        """Sauvegarde l'état de risque en base (no-op si non branché)."""
+        if not self._session_factory:
+            return
+        try:
+            from app.core.database import save_risk_state, session_scope
+            with session_scope(self._session_factory) as sess:
+                save_risk_state(sess, "global", self._state_blob())
+        except Exception as e:
+            logger.debug(f"[Risk] persist_state KO : {e}")
+
+    def _restore_state(self) -> None:
+        if not self._session_factory:
+            return
+        try:
+            from app.core.database import load_risk_state, session_scope
+            with session_scope(self._session_factory) as sess:
+                blob = load_risk_state(sess, "global")
+        except Exception as e:
+            logger.debug(f"[Risk] _restore_state KO : {e}")
+            return
+        if not blob:
+            return
+        self.halted = bool(blob.get("halted", False))
+        self.halt_reason = blob.get("halt_reason", "")
+        self._kill_switch_tripped = bool(blob.get("kill_switch_tripped", False))
+        self.peak_equity = float(blob.get("peak_equity", self.peak_equity))
+        self.daily_start = float(blob.get("daily_start", self.daily_start))
+        self.day_key = blob.get("day_key", self.day_key)
+        for k, sd in (blob.get("slots") or {}).items():
+            st = self._get_slot_state(k)
+            st.consecutive_losses = int(sd.get("consecutive_losses", 0))
+            st.paused_until = float(sd.get("paused_until", 0.0))
+            st.pause_reason = sd.get("pause_reason", "")
+            st.daily_pnl = float(sd.get("daily_pnl", 0.0))
+            st.daily_trades = int(sd.get("daily_trades", 0))
+            st.day_key = sd.get("day_key", "")
+        n_paused = sum(1 for s in self.slot_states.values() if s.is_paused())
+        logger.info(
+            f"[Risk] État restauré — halted={self.halted}"
+            f"{' (KILL-SWITCH)' if self._kill_switch_tripped else ''}, "
+            f"{len(self.slot_states)} slot(s), {n_paused} en pause."
+        )
 
     # ── Circuit breakers par slot ──────────────────────────────────────────
     def _get_slot_state(self, slot_key: str) -> SlotRiskState:
@@ -277,6 +388,9 @@ class RiskManager:
                         f"⚠️ CB slot *{slot_key}* — {state.pause_reason}\nPause 24h.",
                         async_=True
                     )
+
+        # Persiste compteurs/pauses du slot pour une reprise propre après crash.
+        self.persist_state()
 
     def reset_slot_pause(self, slot_key: str):
         """Réinitialisation manuelle d'une pause de slot."""

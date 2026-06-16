@@ -70,6 +70,10 @@ risk:
   # entrées. "shadow" : ils ne bloquent plus mais sont comptés/loggés (mesure
   # d'écart) — honoré uniquement en paper_mode. Le kill-switch global reste actif.
   veto_mode: enforce
+  # Phase 3 — kill-switch d'équité PERSISTANT (veto catastrophe). HALT définitif
+  # et sticky si l'équité chute de ce % depuis le capital initial. Survit au
+  # redémarrage, non levable sans acquittement forcé. 0 = désactivé.
+  equity_kill_switch_dd: 0.35
   consecutive_loss_limit: 3
   consecutive_pause_secs: 1800
   slot_daily_dd_limit: 0.03
@@ -166,6 +170,12 @@ lifecycle:
   eval_min_trades: 10           # taille d'échantillon mini pour un retrait sur perf
   min_active_bots: 2            # plancher : jamais moins de N bots non-retirés
   max_demotions_per_day: 2      # quota anti-flush de rétrogradations/jour
+# Phase 3 — watchdog dead-man (process SÉPARÉ : `python -m app.live.watchdog`).
+# Lit data/heartbeat.json ; si périmé > timeout_s alors que le bot se dit actif,
+# arme data/KILL_SWITCH (le bot se met en HALT à son prochain cycle/redémarrage).
+watchdog:
+  check_interval_s: 60
+  timeout_s: 300                # ~5 cycles manqués (scan_interval=60s)
 logging:
   level: INFO
   debug: false
