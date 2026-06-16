@@ -437,9 +437,15 @@ class Strategy(BaseStrategyML):
             return False
 
         close   = df["close"].cast(pl.Float64).to_numpy()
-        n       = len(close) - 1
+        # Aligne strictement features et labels : X peut être plus court que
+        # len(close)-1 (warmup / cache de features). Sans borner n par len(X),
+        # le jeu de validation et ses labels divergent en taille et LightGBM lève
+        # « Length of labels differs from the length of #data ».
+        n       = min(len(X), len(close) - 1)
+        if n < 150:
+            return False
         X_train = X[:n]
-        ret_t1  = (close[1:] - close[:n]) / np.maximum(close[:n], 1e-9)
+        ret_t1  = (close[1:n + 1] - close[:n]) / np.maximum(close[:n], 1e-9)
         abs_ret = np.abs(ret_t1)
 
         # Label amplitude : top amp_top_pct des amplitudes (rapport §3.1, §4.1)
