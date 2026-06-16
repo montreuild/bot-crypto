@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %} — Portefeuille{% endblock %}
+
+{% block page_styles %}
+#content{padding:18px 20px;display:flex;flex-direction:column;gap:16px;flex:1;}
+.kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;}
+@media(max-width:900px){.kpi-grid{grid-template-columns:repeat(2,1fr);}}
+.kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;}
+.kpi .lbl{font-size:.62rem;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);}
+.kpi .val{font-family:var(--mono);font-size:1.25rem;font-weight:700;margin-top:4px;color:var(--text);}
+.lc-strip{display:flex;gap:8px;flex-wrap:wrap;}
+.lc-chip{padding:6px 12px;border-radius:20px;font-size:.74rem;font-weight:600;border:1px solid var(--border);background:var(--card);}
+.lc-actif{color:var(--green);border-color:rgba(74,222,128,.4);background:rgba(74,222,128,.08);}
+.lc-essai{color:var(--cyan);border-color:rgba(34,211,238,.4);background:var(--cyan-dim);}
+.lc-candidat{color:var(--muted);}
+.lc-retire{color:var(--red);border-color:rgba(251,113,133,.4);background:var(--red-dim);}
+.alloc-row{display:flex;align-items:center;gap:10px;margin-bottom:7px;font-size:.76rem;}
+.alloc-row .nm{font-family:var(--mono);width:230px;color:var(--cyan);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.alloc-bar{flex:1;height:18px;background:rgba(255,255,255,.05);border-radius:4px;position:relative;overflow:hidden;}
+.alloc-cur{position:absolute;left:0;top:0;height:100%;background:linear-gradient(90deg,var(--cyan),#3b82f6);opacity:.85;border-radius:4px;}
+.alloc-tgt{position:absolute;top:0;height:100%;width:2px;background:var(--amber);}
+.alloc-nums{width:150px;text-align:right;font-family:var(--mono);font-size:.7rem;color:var(--dim);}
+.delta-up{color:var(--green);}.delta-dn{color:var(--red);}
+.feed{display:flex;flex-direction:column;gap:6px;max-height:420px;overflow:auto;}
+.feed-item{display:flex;gap:10px;align-items:flex-start;padding:7px 10px;border-radius:var(--r-sm);background:var(--card);border-left:3px solid var(--border);}
+.feed-item.warning{border-left-color:var(--amber);}
+.feed-item.critical{border-left-color:var(--red);background:var(--red-dim);}
+.feed-lvl{font-size:.6rem;text-transform:uppercase;font-weight:700;letter-spacing:.05em;padding-top:2px;width:54px;flex-shrink:0;color:var(--dim);}
+.feed-item.warning .feed-lvl{color:var(--amber);}.feed-item.critical .feed-lvl{color:var(--red);}
+.feed-msg{font-size:.74rem;color:var(--muted);white-space:pre-wrap;line-height:1.35;}
+.feed-time{font-size:.6rem;color:var(--dim);font-family:var(--mono);margin-left:auto;flex-shrink:0;}
+.banner{display:none;padding:10px 14px;border-radius:var(--r);font-size:.8rem;font-weight:600;}
+.banner.show{display:block;}
+.banner.halt{background:var(--red-dim);color:var(--red);border:1px solid rgba(251,113,133,.4);}
+{% endblock %}
+
+{% block topbar_content %}
+<div class="topbar-title">💼 Portefeuille</div>
+<div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+  <span id="modeBadge" class="status-pill">—</span>
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content" class="fade-in">
+  <div id="haltBanner" class="banner halt"></div>
+
+  <div class="kpi-grid">
+    <div class="kpi"><div class="lbl">Capital</div><div class="val" id="kCapital">—</div></div>
+    <div class="kpi"><div class="lbl">PnL total</div><div class="val" id="kPnl">—</div></div>
+    <div class="kpi"><div class="lbl">Win rate</div><div class="val" id="kWr">—</div></div>
+    <div class="kpi"><div class="lbl">Bots dotés</div><div class="val" id="kBots">—</div></div>
+    <div class="kpi"><div class="lbl">DD global</div><div class="val" id="kDd">—</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-hdr">Équipe de bots — états</div>
+    <div class="panel-body"><div class="lc-strip" id="lcStrip"><span class="lc-chip lc-candidat">—</span></div></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-hdr">Allocation du capital <span style="color:var(--dim);font-weight:400">— barre = budget actuel · trait <span style="color:var(--amber)">▮</span> = cible shadow</span></div>
+    <div class="panel-body" id="allocBox"><div style="color:var(--dim);font-size:.8rem">Chargement…</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-hdr">Fil d'activité <span style="color:var(--dim);font-weight:400">— 3 niveaux (info · avertissement · critique)</span></div>
+    <div class="panel-body"><div class="feed" id="feed"><div style="color:var(--dim);font-size:.8rem">Aucune notification.</div></div></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block body_scripts %}
+<script>
+function pct(v){ return (v==null||isNaN(v))?'—':(v>=0?'+':'')+Number(v).toFixed(2)+'%'; }
+function usd(v){ return (v==null||isNaN(v))?'—':'$'+Number(v).toLocaleString('fr-FR',{maximumFractionDigits:2}); }
+
+async function loadPortfolio(){
+  let d; try{ d = await apiFetch('/api/portfolio').then(r=>r.json()); }catch(e){ return; }
+  const badge=document.getElementById('modeBadge');
+  badge.textContent = d.running ? (d.paper_mode?'📝 PAPER · actif':'🔴 LIVE · actif') : '⏸ arrêté';
+  document.getElementById('kCapital').textContent = usd(d.capital);
+  const pnlEl=document.getElementById('kPnl'); pnlEl.textContent=pct(d.total_pnl_pct);
+  pnlEl.style.color = (d.total_pnl_pct||0)>=0?'var(--green)':'var(--red)';
+  document.getElementById('kWr').textContent = d.win_rate!=null?Number(d.win_rate).toFixed(1)+'%':'—';
+  const counts=(d.lifecycle&&d.lifecycle.counts)||{};
+  document.getElementById('kBots').textContent = (counts.actif||0)+(counts.essai||0);
+  document.getElementById('kDd').textContent = pct(-(d.risk&&d.risk.global_dd_pct||0));
+
+  // Bandeau HALT / kill-switch
+  const hb=document.getElementById('haltBanner');
+  if(d.risk&&d.risk.halted){ hb.classList.add('show'); hb.textContent='⛔ '+(d.risk.halt_reason||'Trading suspendu'); }
+  else hb.classList.remove('show');
+
+  // États du cycle de vie
+  const strip=document.getElementById('lcStrip');
+  const order=[['actif','Actifs'],['essai','En essai'],['candidat','Candidats'],['retire','Retirés']];
+  strip.innerHTML = order.map(([k,lbl])=>`<span class="lc-chip lc-${k}">${lbl} : ${counts[k]||0}</span>`).join('');
+
+  // Allocation réelle + cible shadow
+  const box=document.getElementById('allocBox');
+  const alloc=d.allocation||[]; const shadow=(d.shadow_allocation&&d.shadow_allocation.targets)||{};
+  const sdelta=(d.shadow_allocation&&d.shadow_allocation.delta)||{};
+  if(!alloc.length){ box.innerHTML='<div style="color:var(--dim);font-size:.8rem">Aucun slot actif.</div>'; }
+  else{
+    box.innerHTML = alloc.map(s=>{
+      const cur=s.budget_pct||0; const tgt=(shadow[s.slot_key]!=null)?shadow[s.slot_key]*100:null;
+      const dl=sdelta[s.slot_key]; const dlTxt=(dl==null)?'':`<span class="${dl>=0?'delta-up':'delta-dn'}">${(dl>=0?'+':'')+(dl*100).toFixed(1)}%</span>`;
+      const tgtMark=(tgt!=null)?`<div class="alloc-tgt" style="left:${Math.min(tgt,100)}%"></div>`:'';
+      return `<div class="alloc-row"><div class="nm" title="${escHtml(s.slot_key)}">${escHtml(s.slot_key)}</div>
+        <div class="alloc-bar"><div class="alloc-cur" style="width:${Math.min(cur,100)}%"></div>${tgtMark}</div>
+        <div class="alloc-nums">${cur.toFixed(1)}% ${dlTxt}</div></div>`;
+    }).join('');
+  }
+}
+
+async function loadFeed(){
+  let d; try{ d = await apiFetch('/api/notifications?limit=30').then(r=>r.json()); }catch(e){ return; }
+  const feed=document.getElementById('feed'); const items=d.notifications||[];
+  if(!items.length){ feed.innerHTML='<div style="color:var(--dim);font-size:.8rem">Aucune notification.</div>'; return; }
+  feed.innerHTML = items.map(n=>{
+    const t=(n.time||'').replace('T',' ').slice(11,19);
+    return `<div class="feed-item ${n.level}"><div class="feed-lvl">${n.level}</div>
+      <div class="feed-msg">${escHtml(n.message||'')}</div><div class="feed-time">${t}</div></div>`;
+  }).join('');
+}
+
+function tick(){ loadPortfolio(); loadFeed(); }
+tick(); setInterval(tick, 5000);
+</script>
+{% endblock %}

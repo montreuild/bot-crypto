@@ -187,6 +187,10 @@ web:
   port: 8000
   refresh_interval: 5
   api_key: ''
+# Phase 4 — préférences d'interface (presets de risque, mode expert opt-in).
+ui:
+  risk_preset: null             # prudent | equilibre | agressif (null = personnalisé)
+  expert_mode: false
 notifications:
   telegram_enabled: false
   telegram_bot_token: ''
@@ -208,6 +212,9 @@ notifications:
   position_loss_warn_pct: 5.0
   exchange_error_threshold: 3
   dd_warning_ratio: 0.8
+  # Phase 4 — hiérarchie 3 niveaux (info/warning/critical) + throttling + flux UI.
+  throttle_secs: 60             # anti-spam : fusionne les messages de même clé
+  feed_size: 200                # taille du fil d'activité en mémoire (miroir UI)
   events:
     on_trade_open: true
     on_trade_close: true

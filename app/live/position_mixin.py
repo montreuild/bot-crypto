@@ -787,11 +787,19 @@ class PositionMixin:
         # taker_fee / borrow_rate_daily ne reflètent pas le compte réel).
         for label, est, real in (("frais", fees_est, fees), ("emprunt", borrow_est, borrow)):
             if est > 0 and abs(real - est) / est > 0.05:
+                gap_pct = abs(real - est) / est * 100
                 logger.warning(
                     f"[Reconcile] {symbol} : écart {label} estimé vs réel "
-                    f"{abs(real - est) / est * 100:.1f}% — ajustez la config "
+                    f"{gap_pct:.1f}% — ajustez la config "
                     f"(taker_fee / borrow_rate_daily)."
                 )
+                # Mismatch de réconciliation = alerte critique (Phase 4).
+                try:
+                    self.notif.notify_reconciliation_mismatch(
+                        symbol, label, est, real, gap_pct
+                    )
+                except Exception:
+                    pass
         return pnl, fees, borrow
 
     # ── Clôture ───────────────────────────────────────────────────────────
