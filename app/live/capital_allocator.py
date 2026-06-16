@@ -78,6 +78,8 @@ class CapitalAllocator:
         self._min_notional_usdc = float(alloc_cfg.get("min_notional_usdc", 10.0))
         self._max_budget_step  = float(alloc_cfg.get("max_budget_step", 0.25))  # ±25%
         self._active_floor     = int(alloc_cfg.get("active_floor", 2))
+        # Si True, l'allocation continue est RÉELLEMENT appliquée (sinon shadow only).
+        self._continuous_allocation = bool(alloc_cfg.get("continuous_allocation", False))
         self._custom_budgets: Dict[str, float] = {
             k: float(v) for k, v in alloc_cfg.get("slot_budgets", {}).items()
         }
@@ -544,6 +546,37 @@ class CapitalAllocator:
             "notes": notes,
             "delta": delta,
         }
+
+    @property
+    def continuous_allocation(self) -> bool:
+        return self._continuous_allocation
+
+    def apply_continuous_allocation(self, scores: Dict[str, float],
+                                    correlations: Dict[str, float] = None) -> dict:
+        """**Applique** l'allocation continue pilotée par le score (graduation
+        shadow → actif). Identique à ``compute_shadow_allocation`` mais écrit les
+        budgets, en respectant le garde-fou de collatéral (pas de retrait sous le
+        notionnel d'une position ouverte) et le cap par slot. Persiste si callback.
+        """
+        res = self.compute_shadow_allocation(scores, correlations)
+        targets = res["targets"]
+        for key, tgt in targets.items():
+            slot = self._slots.get(key)
+            if not slot or not slot.enabled:
+                continue
+            if slot.used_notional > 0 and self.capital > 0:
+                tgt = max(tgt, slot.used_notional / self.capital)  # garde-fou collatéral
+            slot.budget_pct = round(min(tgt, self._max_slot_pct), 4)
+        if self._persist_callback is not None:
+            budgets = {k: round(v.budget_pct, 4) for k, v in self._slots.items() if v.enabled}
+            try:
+                self._persist_callback(budgets)
+            except Exception as e:
+                logger.warning(f"[Allocator] Persistance budgets (continu) KO : {e}")
+        res["applied"] = True
+        logger.info("[Allocator] Allocation continue appliquée : "
+                    + ", ".join(f"{k}={v.budget_pct:.0%}" for k, v in self._slots.items() if v.enabled))
+        return res
 
     # ── Statut pour l'API ──────────────────────────────────────────────────
     def get_status(self) -> List[dict]:

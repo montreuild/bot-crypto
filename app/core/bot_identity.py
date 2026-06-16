@@ -213,15 +213,16 @@ def register_identity(strategy: str, timeframe: str, params: dict,
 
 
 def peek_identity(strategy: str, timeframe: str, params: dict,
-                  cfg: dict) -> BotIdentity:
+                  cfg: dict, gens: dict = None) -> BotIdentity:
     """Identité **sans** effet de bord (lecture seule, ne touche pas la génération).
 
     Utile pour l'affichage : la génération courante est celle persistée (ou 1 par
-    défaut si jamais enregistrée).
+    défaut si jamais enregistrée). ``gens`` (dict des générations déjà chargé)
+    évite une lecture disque par appel quand on itère plusieurs bots.
     """
     ph = params_hash(params)
     slot_key = f"{strategy}::{timeframe}"
-    rec = _load_generations().get(slot_key) or {}
+    rec = (gens if gens is not None else _load_generations()).get(slot_key) or {}
     gen = int(rec.get("generation", 1)) if rec.get("params_hash") == ph else \
         int(rec.get("generation", 0)) + 1
     return BotIdentity(strategy, timeframe, ph, gen,

@@ -99,13 +99,31 @@ def risk_status():
 
 
 @router.post("/api/risk/reset-halt", dependencies=[Depends(verify_api_key)])
-def reset_halt():
+def reset_halt(force: bool = False):
+    """Réinitialise le HALT global.
+
+    ``force=true`` est requis pour acquitter un **kill-switch** d'équité (veto
+    catastrophe persistant) — sans quoi un simple reset le laisse actif.
+    """
     if not state.trader:
         raise HTTPException(503, "Trader non initialisé")
-    state.trader.risk.reset_halt()
+    was_kill = state.trader.risk._kill_switch_tripped
+    if was_kill and not force:
+        raise HTTPException(
+            409, "Kill-switch actif — acquittement explicite requis (force=true)."
+        )
+    state.trader.risk.reset_halt(force=force)
     state.trader.notif.reset_halt_notification()
     state.trader.notif.reset_dd_warning()
-    return {"status": "reset", "message": "Circuit breaker réinitialisé"}
+    # Lève aussi le kill-switch fichier éventuel posé par le watchdog dead-man.
+    if force:
+        try:
+            from app.live.watchdog import clear_kill_switch
+            clear_kill_switch()
+        except Exception:
+            pass
+    return {"status": "reset", "force": force,
+            "message": "Kill-switch acquitté" if was_kill else "Circuit breaker réinitialisé"}
 
 
 @router.get("/api/capital-allocation", dependencies=[Depends(verify_api_key)])

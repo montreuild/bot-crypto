@@ -140,6 +140,9 @@ capital_allocator:
   min_notional_usdc: 10.0
   max_budget_step: 0.25
   active_floor: 2
+  # false = allocation continue calculée en shadow (affichée). true = APPLIQUÉE
+  # (graduation shadow → actif, une fois la donnée Phase 0 jugée fiable).
+  continuous_allocation: false
   min_trades_for_rebalance: 3
   rebalance_interval: daily
   max_symbol_exposure_pct: 0.25
@@ -170,6 +173,9 @@ lifecycle:
   eval_min_trades: 10           # taille d'échantillon mini pour un retrait sur perf
   min_active_bots: 2            # plancher : jamais moins de N bots non-retirés
   max_demotions_per_day: 2      # quota anti-flush de rétrogradations/jour
+  # false = la file de re-optimisation des bots retirés est seulement exposée.
+  # true = re-optimisation auto déclenchée (ferme la boucle retrait → re-opt).
+  auto_reopt: false
 # Phase 3 — watchdog dead-man (process SÉPARÉ : `python -m app.live.watchdog`).
 # Lit data/heartbeat.json ; si périmé > timeout_s alors que le bot se dit actif,
 # arme data/KILL_SWITCH (le bot se met en HALT à son prochain cycle/redémarrage).

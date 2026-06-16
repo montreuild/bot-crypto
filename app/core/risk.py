@@ -535,6 +535,7 @@ class RiskManager:
             "open_positions":      len(self.open_positions),
             "halted":              self.halted,
             "halt_reason":         self.halt_reason,
+            "kill_switch":         self._kill_switch_tripped,
             "current_risk":        round(self.compute_risk() * 100, 2),
             "daily_dd_limit":      round(self.daily_dd_limit, 4),
             "global_dd_limit":     round(self.global_dd_limit, 4),

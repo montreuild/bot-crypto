@@ -159,6 +159,7 @@ def get_portfolio():
         "risk": {
             "halted":             st.get("halted"),
             "halt_reason":        st.get("halt_reason"),
+            "kill_switch":        st.get("kill_switch"),
             "veto_mode":          st.get("veto_mode"),
             "veto_shadow_blocks": st.get("veto_shadow_blocks"),
             "global_dd_pct":      st.get("global_dd_pct"),

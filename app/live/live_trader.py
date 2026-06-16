@@ -149,6 +149,9 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self._lifecycle_enabled  = bool(_lc_cfg.get("enabled", True))
         self._lifecycle_interval = int(_lc_cfg.get("interval_h", 1)) * 3600
         self._lifecycle_next_run = time.time() + int(_lc_cfg.get("initial_delay_s", 600))
+        # Re-optimisation automatique des bots retirés (opt-in). False = la file
+        # de re-opt est seulement exposée (l'utilisateur garde la main).
+        self._lifecycle_auto_reopt = bool(_lc_cfg.get("auto_reopt", False))
         self._lifecycle_snapshot: dict = {}
         self._shadow_alloc: dict = {}
 
@@ -216,6 +219,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         Format : { "1h": [{"name": "trend", "params": {...}, "score": 0.82}, ...] }
         """
         self._active_per_tf = get_active_strategies_per_tf(self.cfg)
+        self._bots_cache = None   # invalide le cache d'identités (set actif changé)
         for tf, strats in self._active_per_tf.items():
             names   = [s["name"] for s in strats]
             has_oos = any(s.get("score", 0) > 0 for s in strats)
@@ -945,13 +949,51 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                         "score":               score,
                     }
             self._lifecycle_snapshot = self._lifecycle.evaluate(slots_data)
-            self._shadow_alloc = self.allocator.compute_shadow_allocation(scores)
+            # Allocation continue : appliquée si activée, sinon calculée en shadow.
+            if getattr(self.allocator, "continuous_allocation", False):
+                self._shadow_alloc = self.allocator.apply_continuous_allocation(scores)
+            else:
+                self._shadow_alloc = self.allocator.compute_shadow_allocation(scores)
             logger.info(
                 f"[Lifecycle] états={self._lifecycle_snapshot.get('counts')} "
                 f"| file re-opt={len(self._lifecycle_snapshot.get('reopt_queue', []))}"
             )
+            # Re-optimisation des bots retirés (opt-in) : ferme la boucle
+            # « retrait → re-optimisation » de la doc §2.
+            if self._lifecycle_auto_reopt:
+                queue = self._lifecycle.pop_reopt_queue()
+                strategies = sorted({k.split("::", 1)[0] for k in queue})
+                if strategies:
+                    logger.info(f"[Lifecycle] Re-optimisation des bots retirés : {strategies}")
+                    self._trigger_reopt(strategies)
         except Exception as e:
             logger.error(f"[Lifecycle] Erreur : {e}", exc_info=True)
+
+    def _trigger_reopt(self, strategies: list) -> None:
+        """Lance une optimisation ciblée pour les stratégies de bots retirés.
+
+        L'application des nouveaux params (callback ``_on_opt_applied``) bumpe la
+        génération du bot et recharge les stratégies : le bot « renaît » et
+        repassera par candidat/essai au fil des trades live.
+        """
+        try:
+            from app.engine.auto_optimizer import AutoOptimizer
+            symbol = self._fwd_test_symbol
+            df_map = {}
+            for tf in self.timeframes:
+                limit = RECOMMENDED_LIMIT.get(tf, 500)
+                df = self.scanner.fetch_ohlcv(symbol, tf, limit=limit)
+                if df is not None and len(df) > 0:
+                    df_map[tf] = df
+            if not df_map:
+                logger.warning("[Lifecycle] Re-opt annulée : données insuffisantes.")
+                return
+            opt = AutoOptimizer(self.cfg, n_trials=40, method="bayesian",
+                                on_apply_callback=self._on_opt_applied)
+            opt.start_async(df_map, symbol, strategies=strategies,
+                            timeframes=self.timeframes, auto_apply=True)
+        except Exception as e:
+            logger.error(f"[Lifecycle] _trigger_reopt KO : {e}", exc_info=True)
 
     def _on_opt_applied(self, strategy_name: str, params: dict) -> None:
         """Callback après application des params optimisés — recharge les stratégies actives."""
@@ -977,8 +1019,16 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self.reload_active_strategies()
 
     def get_bot_identities(self) -> list:
-        """Identité (lecture seule) de chaque bot actif — pour l'API/UI."""
-        from app.core.bot_identity import peek_identity
+        """Identité (lecture seule) de chaque bot actif — pour l'API/UI.
+
+        Mise en cache (le ``status`` est sollicité ~1×/s) : on ne recalcule —
+        et on ne relit ``data/bot_generations.json`` — qu'à l'invalidation
+        (changement du set actif / application d'une optimisation).
+        """
+        if getattr(self, "_bots_cache", None) is not None:
+            return self._bots_cache
+        from app.core.bot_identity import peek_identity, _load_generations
+        gens = _load_generations()   # une seule lecture disque pour tous les bots
         out = []
         for tf, slots in self._active_per_tf.items():
             for slot in slots:
@@ -987,9 +1037,10 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                     continue
                 params = slot.get("params", {}).get(name, {})
                 try:
-                    out.append(peek_identity(name, tf, params, self.cfg).to_dict())
+                    out.append(peek_identity(name, tf, params, self.cfg, gens=gens).to_dict())
                 except Exception:
                     continue
+        self._bots_cache = out
         return out
 
     # ── Propriété status (API) ─────────────────────────────────────────────

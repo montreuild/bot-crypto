@@ -87,10 +87,14 @@ async function loadPortfolio(){
   document.getElementById('kBots').textContent = (counts.actif||0)+(counts.essai||0);
   document.getElementById('kDd').textContent = pct(-(d.risk&&d.risk.global_dd_pct||0));
 
-  // Bandeau HALT / kill-switch
+  // Bandeau HALT / kill-switch (+ acquittement si kill-switch catastrophe)
   const hb=document.getElementById('haltBanner');
-  if(d.risk&&d.risk.halted){ hb.classList.add('show'); hb.textContent='⛔ '+(d.risk.halt_reason||'Trading suspendu'); }
-  else hb.classList.remove('show');
+  if(d.risk&&d.risk.halted){
+    hb.classList.add('show');
+    const ks=d.risk.kill_switch;
+    hb.innerHTML='⛔ '+escHtml(d.risk.halt_reason||'Trading suspendu')
+      + (ks?' <button class="btn btn-ghost" style="margin-left:10px;padding:3px 10px" onclick="ackKill()">Acquitter le kill-switch</button>':'');
+  } else hb.classList.remove('show');
 
   // États du cycle de vie
   const strip=document.getElementById('lcStrip');
@@ -123,6 +127,15 @@ async function loadFeed(){
     return `<div class="feed-item ${n.level}"><div class="feed-lvl">${n.level}</div>
       <div class="feed-msg">${escHtml(n.message||'')}</div><div class="feed-time">${t}</div></div>`;
   }).join('');
+}
+
+async function ackKill(){
+  if(!confirm('Acquitter le kill-switch ? Le bot pourra reprendre des positions.')) return;
+  try{
+    const r=await apiFetch('/api/risk/reset-halt?force=true',{method:'POST'});
+    if(r.ok){ toast('Kill-switch acquitté'); loadPortfolio(); }
+    else toast('Échec de l\'acquittement', true);
+  }catch(e){ toast('Erreur réseau', true); }
 }
 
 function tick(){ loadPortfolio(); loadFeed(); }
