@@ -629,10 +629,19 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             logger.debug(f"[Trade] {symbol}/{slot_key} rejeté (corrélation: {reason_corr})")
             return False
 
-        # 5. Sizing
+        # 5. Sizing — par bot (sur son budget) si activé, sinon sur l'équité globale.
+        budget_usdc = None
+        max_lev = None
+        if getattr(self.allocator, "per_bot_sizing", False):
+            b = self.allocator.slot_budget_usdc(slot_key)
+            if b and b > 0:
+                from app.core.bot_identity import resolve_venue
+                budget_usdc = b
+                max_lev = resolve_venue(self.cfg, strategy_name, tf).max_leverage
         size, notional = self.risk.compute_size(
             price, atr, score=score, threshold=strat_threshold,
             size_factor=float(signal_dict.get("size_factor", 1.0)),
+            budget=budget_usdc, max_leverage=max_lev,
         )
         leverage = self.risk.compute_leverage(notional)
 
@@ -650,7 +659,10 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             if pos_key in self.open_positions:
                 return False
             max_pos = self.cfg["trading"].get("max_positions", 5)
-            if len(self.open_positions) >= max_pos:
+            # En mode veto shadow (paper), max_positions ne bloque plus — on a déjà
+            # compté l'écart dans risk.can_trade ; ce garde-fou atomique reste actif
+            # uniquement en mode enforce.
+            if not getattr(self.risk, "veto_shadow", False) and len(self.open_positions) >= max_pos:
                 return _reject("risk", f"Max positions ({max_pos}) atteint")
             # Réserve le slot avant de relâcher le verrou
             self.open_positions[pos_key] = {"_reserved": True}
@@ -853,7 +865,37 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             if v is not None:
                 existing[k] = v
         self.strat_params[strategy_name] = existing
+        # Nouveaux params figés → nouveau bot : incrémente la génération monotone
+        # (anti-collision) pour chaque slot de cette stratégie.
+        try:
+            from app.core.bot_identity import register_identity
+            for tf, slots in self._active_per_tf.items():
+                for slot in slots:
+                    if slot.get("name") == strategy_name:
+                        ident = register_identity(
+                            strategy_name, tf,
+                            slot.get("params", {}).get(strategy_name, existing), self.cfg,
+                        )
+                        logger.info(f"[Bot] {ident.bot_id} ({ident.venue.describe()})")
+        except Exception as e:
+            logger.debug(f"[Bot] register_identity KO : {e}")
         self.reload_active_strategies()
+
+    def get_bot_identities(self) -> list:
+        """Identité (lecture seule) de chaque bot actif — pour l'API/UI."""
+        from app.core.bot_identity import peek_identity
+        out = []
+        for tf, slots in self._active_per_tf.items():
+            for slot in slots:
+                name = slot.get("name")
+                if not name:
+                    continue
+                params = slot.get("params", {}).get(name, {})
+                try:
+                    out.append(peek_identity(name, tf, params, self.cfg).to_dict())
+                except Exception:
+                    continue
+        return out
         logger.info(
             f"[LiveTrader] Stratégies rechargées après optimisation de {strategy_name}"
         )

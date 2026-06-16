@@ -12,6 +12,17 @@ exchange:
   # déjà le mode margin (cf. _margin_enabled). Pour revenir en spot pur sans
   # emprunt : margin: false ET trading.margin_mode: null.
   margin: true
+# Phase 1 — venues : modèle de marché (spot/margin/perp) + exchange, attribut PAR
+# bot. Par défaut, la venue est dérivée des globales trading.margin_mode /
+# trading.max_leverage (rétro-compatibilité). Déclarez ici des venues nommées et
+# assignez-les par bot (clé "strategy::tf") ; "perp-hedge-okx" servira en Phase 5.
+venues:
+  default: null                 # null → venue dérivée des globales trading.*
+  defs:
+    spot:            {market_type: spot,   exchange: binance, max_leverage: 1}
+    margin-isolated: {market_type: margin, exchange: binance, margin_mode: isolated, max_leverage: 3}
+    perp-hedge-okx:  {market_type: perp,   exchange: okx, hedge_mode: true, max_leverage: 5}
+  assign: {}                    # ex : {"breakout::4h": "margin-isolated"}
 trading:
   capital: 1000
   paper_mode: true
@@ -54,6 +65,11 @@ trading:
   reentry_cooldown_bars: 2          # V6.1 : 2 bougies de cooldown après une perte
   top_strategies_per_tf: 2
 risk:
+  # Phase 1 — suppression progressive des vetos globaux. "enforce" (défaut) :
+  # max_positions/longs/shorts, anti-spam et pauses CB de slot bloquent les
+  # entrées. "shadow" : ils ne bloquent plus mais sont comptés/loggés (mesure
+  # d'écart) — honoré uniquement en paper_mode. Le kill-switch global reste actif.
+  veto_mode: enforce
   consecutive_loss_limit: 3
   consecutive_pause_secs: 1800
   slot_daily_dd_limit: 0.03
@@ -110,6 +126,9 @@ database:
 capital_allocator:
   mode: equal                  # equal | manual | performance
   max_slot_pct: 0.50
+  # Phase 1 — sizing par bot : chaque bot dimensionne sur SON budget (budget ×
+  # levier) au lieu de l'équité globale (fidélité au backtest). False = inchangé.
+  per_bot_sizing: false
   min_trades_for_rebalance: 3
   rebalance_interval: daily
   max_symbol_exposure_pct: 0.25

@@ -85,6 +85,18 @@ class RiskManager:
         self.halted      = False
         self.halt_reason = ""
 
+        # ── Mode de veto (Phase 1 — suppression progressive des vetos globaux)
+        # "enforce" (défaut) : les vetos de capacité (max_positions/longs/shorts,
+        #   anti-spam) et les pauses CB de slot bloquent réellement les entrées.
+        # "shadow"  : ils n'empêchent plus d'entrer mais sont **comptés** et
+        #   loggés — on mesure l'écart avant de retirer un garde-fou. Le
+        #   kill-switch global (``halted``) reste TOUJOURS appliqué. Par sécurité,
+        #   "shadow" n'est honoré qu'en paper (cf. _veto_shadow_active()).
+        self._veto_mode  = str(_risk_cfg.get("veto_mode", "enforce")).lower()
+        self._paper_mode = bool(cfg.get("trading", {}).get("paper_mode", True))
+        # Compteurs d'« écart » : combien de fois chaque veto aurait bloqué.
+        self.veto_shadow_blocks: Dict[str, int] = {}
+
         # Circuit breakers par slot
         self.slot_states: Dict[str, SlotRiskState] = {}
 
@@ -156,6 +168,22 @@ class RiskManager:
             self.slot_states[slot_key] = SlotRiskState(slot_key=slot_key, day_key=self._today())
         return self.slot_states[slot_key]
 
+    def _veto_shadow_active(self) -> bool:
+        """Le mode shadow n'est honoré qu'en paper (sécurité : on ne retire jamais
+        un garde-fou en live sans l'avoir mesuré en paper au préalable)."""
+        return self._veto_mode == "shadow" and self._paper_mode
+
+    @property
+    def veto_shadow(self) -> bool:
+        """Accès public : les vetos de capacité sont-ils en mode shadow ?"""
+        return self._veto_shadow_active()
+
+    def _shadow_allow(self, reason: str) -> bool:
+        """Enregistre qu'un veto *aurait* bloqué, puis autorise (mode shadow)."""
+        self.veto_shadow_blocks[reason] = self.veto_shadow_blocks.get(reason, 0) + 1
+        logger.info(f"[Risk][shadow] veto ignoré (mesure d'écart) : {reason}")
+        return True
+
     def can_slot_trade(self, slot_key: str) -> tuple[bool, str]:
         """Vérifie les circuit breakers propres à un slot."""
         state = self._get_slot_state(slot_key)
@@ -165,11 +193,16 @@ class RiskManager:
             state.daily_pnl = 0.0
             state.daily_trades = 0
             state.day_key = today
+        shadow = self._veto_shadow_active()
         if state.is_paused():
+            if shadow and self._shadow_allow(f"slot_pause::{slot_key}"):
+                return True, ""
             remaining = int(state.paused_until - time.time())
             return False, f"Slot {slot_key} pausé ({state.pause_reason}) — {remaining}s restantes"
         # V6.1 : limite trades/jour par slot
         if self._max_trades_per_day > 0 and state.daily_trades >= self._max_trades_per_day:
+            if shadow and self._shadow_allow(f"slot_daily_limit::{slot_key}"):
+                return True, ""
             return False, (
                 f"Slot {slot_key} : limite quotidienne atteinte "
                 f"({state.daily_trades}/{self._max_trades_per_day} trades)"
@@ -279,18 +312,33 @@ class RiskManager:
 
     def compute_size(self, entry: float, atr: float,
                      score: float = 1.0, threshold: float = 0.60,
-                     size_factor: float = 1.0) -> tuple:
+                     size_factor: float = 1.0,
+                     budget: float = None, max_leverage: float = None) -> tuple:
         """Calcule taille et notionnel, en intégrant score_factor et volatility_brake.
 
         ``size_factor`` (optionnel) est un facteur multiplicatif fourni par la
         stratégie (par ex. demi-Kelly : ×confidence ; ou boost setup V7 ×1.5).
         Borné [0, 2] et appliqué après le facteur score interne et le frein
         de volatilité. ``max_notional_pct`` reste la garde-fou de risque global.
+
+        Sizing par bot (Phase 1)
+        ------------------------
+        Si ``budget`` (USDC alloué au bot) est fourni, le bot dimensionne sur
+        **son** budget et non sur l'équité globale : le montant risqué devient
+        ``budget × risk%`` et le notionnel est plafonné à ``budget × levier``
+        (cf. doc §3 « Sizing : cap notional ≤ budget × levier »). C'est la
+        fidélité au backtest — un bot ne peut engager que son budget. Sans
+        ``budget`` (None), comportement historique inchangé (sizing sur équité).
         """
-        risk_amount  = self.equity * self.compute_risk()
+        base         = float(budget) if budget is not None else self.equity
+        risk_amount  = base * self.compute_risk()
         size         = risk_amount / max(atr, 1e-8)
         notional     = size * entry
-        max_notional = self.equity * self.max_notional_pct
+        if budget is not None:
+            lev          = float(max_leverage) if max_leverage is not None else self.max_leverage
+            max_notional = base * max(lev, 1.0)
+        else:
+            max_notional = self.equity * self.max_notional_pct
 
         score_range  = max(1.0 - threshold, 1e-9)
         score_internal_factor = 0.5 + 0.5 * min(max(score - threshold, 0) / score_range, 1.0)
@@ -309,18 +357,24 @@ class RiskManager:
 
     # ── Vérifications avant entrée ─────────────────────────────────────────
     def can_trade(self, side: str) -> tuple[bool, str]:
+        # Kill-switch global : TOUJOURS appliqué, même en mode shadow.
         if self.halted:
             return False, self.halt_reason
+        shadow = self._veto_shadow_active()
         if len(self.open_positions) >= self.max_positions:
-            return False, f"Max positions ({self.max_positions}) atteint"
+            if not (shadow and self._shadow_allow("max_positions")):
+                return False, f"Max positions ({self.max_positions}) atteint"
         longs  = sum(1 for p in self.open_positions.values() if p["side"] == "long")
         shorts = sum(1 for p in self.open_positions.values() if p["side"] == "short")
         if side == "long"  and longs  >= self.max_longs:
-            return False, f"Max longs ({self.max_longs}) atteint"
+            if not (shadow and self._shadow_allow("max_longs")):
+                return False, f"Max longs ({self.max_longs}) atteint"
         if side == "short" and shorts >= self.max_shorts:
-            return False, f"Max shorts ({self.max_shorts}) atteint"
+            if not (shadow and self._shadow_allow("max_shorts")):
+                return False, f"Max shorts ({self.max_shorts}) atteint"
         if not self._check_rate():
-            return False, "Trop de trades/minute (anti-spam)"
+            if not (shadow and self._shadow_allow("anti_spam")):
+                return False, "Trop de trades/minute (anti-spam)"
         return True, ""
 
     def _check_rate(self) -> bool:
@@ -372,6 +426,9 @@ class RiskManager:
             "global_dd_limit":     round(self.global_dd_limit, 4),
             "volatility_brake":    self.volatility_brake_active,
             "volatility_factor":   self.volatility_brake_factor,
+            "veto_mode":           self._veto_mode,
+            "veto_shadow_active":  self._veto_shadow_active(),
+            "veto_shadow_blocks":  dict(self.veto_shadow_blocks),
         }
 
     def get_slot_states(self) -> List[dict]:

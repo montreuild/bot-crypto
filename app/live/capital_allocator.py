@@ -70,6 +70,9 @@ class CapitalAllocator:
         self._mode: str = alloc_cfg.get("mode", "equal")
         if self._mode not in _VALID_MODES:
             self._mode = "equal"
+        # Sizing par bot (Phase 1) : si True, chaque bot dimensionne sur SON budget
+        # (budget × levier) au lieu de l'équité globale → fidélité au backtest.
+        self._per_bot_sizing = bool(alloc_cfg.get("per_bot_sizing", False))
         self._custom_budgets: Dict[str, float] = {
             k: float(v) for k, v in alloc_cfg.get("slot_budgets", {}).items()
         }
@@ -295,6 +298,17 @@ class CapitalAllocator:
                     f"({symbol_count}/{self._max_pyramiding})"
                 )
         return True, ""
+
+    @property
+    def per_bot_sizing(self) -> bool:
+        return self._per_bot_sizing
+
+    def slot_budget_usdc(self, slot_key: str) -> float:
+        """Budget courant d'un slot en USDC (0 si inconnu/désactivé)."""
+        slot = self._slots.get(slot_key)
+        if not slot or not slot.enabled:
+            return 0.0
+        return round(self.capital * slot.budget_pct, 4)
 
     # ── Sync capital ───────────────────────────────────────────────────────
     def update_equity(self, capital: float):
