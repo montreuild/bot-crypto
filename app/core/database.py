@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy import (create_engine, event, Column, Integer, Float, String,
-                        Boolean, DateTime, Text, JSON, Index)
+                        Boolean, DateTime, Text, JSON, Index, func)
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 logger = logging.getLogger(__name__)
@@ -106,6 +106,40 @@ class OpenPosition(Base):
     __table_args__ = (
         Index("ix_open_positions_symbol", "symbol"),
     )
+
+
+class SlotLifecycleEvent(Base):
+    """Transition d'état du cycle de vie d'un bot (Phase 2).
+
+    États : candidat → essai → actif → retiré (et retours). L'état courant d'un
+    slot est le ``to_state`` de son événement le plus récent.
+    """
+    __tablename__ = "slot_lifecycle_events"
+    id        = Column(Integer, primary_key=True, autoincrement=True)
+    time      = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    slot_key  = Column(String(100), nullable=False)
+    from_state = Column(String(20))
+    to_state   = Column(String(20), nullable=False)
+    reason     = Column(Text, default="")
+    score      = Column(Float)
+    budget_pct = Column(Float)
+    __table_args__ = (
+        Index("ix_lifecycle_slot", "slot_key"),
+        Index("ix_lifecycle_time", "time"),
+    )
+
+
+class RiskStateRow(Base):
+    """État de risque persisté (Phase 3) pour une reprise propre après crash.
+
+    Une seule ligne (``id='global'``) pour l'état global ; une ligne par slot
+    (``id='slot::{slot_key}'``) pour les pauses CB. Stockage JSON souple.
+    """
+    __tablename__ = "risk_state"
+    id      = Column(String(120), primary_key=True)
+    updated = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                     onupdate=lambda: datetime.now(timezone.utc))
+    data    = Column(JSON)
 
 
 def init_db(url: str = "sqlite:///crypto_bot.db"):
@@ -270,6 +304,108 @@ def get_closed_trades_for_slot(session: Session, strategy: str, timeframe: str,
         Trade.time >= cutoff,
     )
     return q.order_by(Trade.time.desc()).all()
+
+
+def get_slot_live_stats(session: Session, strategy: str, timeframe: str,
+                        days: int = 30) -> dict:
+    """Stats live agrégées d'un bot ``strategy::timeframe`` sur ``days`` jours.
+
+    Budget-indépendant : on remonte le nombre de trades, le win-rate et le
+    **rendement moyen par trade (%)**, exploités par la machine à états du cycle
+    de vie (Phase 2). Retourne des zéros si aucun trade.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = session.query(Trade.pnl, Trade.pnl_pct).filter(
+        Trade.strategy == strategy,
+        Trade.timeframe == timeframe,
+        Trade.status.like("closed%"),
+        Trade.pnl.isnot(None),
+        Trade.time >= cutoff,
+    ).all()
+    n = len(rows)
+    if n == 0:
+        return {"n_trades": 0, "wins": 0, "win_rate": 0.0,
+                "total_pnl": 0.0, "avg_return_pct": 0.0}
+    wins = sum(1 for r in rows if (r.pnl or 0) > 0)
+    total_pnl = sum((r.pnl or 0) for r in rows)
+    pcts = [r.pnl_pct for r in rows if r.pnl_pct is not None]
+    avg_ret = (sum(pcts) / len(pcts)) if pcts else 0.0
+    return {
+        "n_trades": n,
+        "wins": wins,
+        "win_rate": round(wins / n * 100, 2),
+        "total_pnl": round(total_pnl, 6),
+        "avg_return_pct": round(avg_ret, 4),
+    }
+
+
+def record_lifecycle_event(session: Session, slot_key: str, from_state: Optional[str],
+                           to_state: str, reason: str = "", score: float = None,
+                           budget_pct: float = None) -> None:
+    """Persiste une transition d'état du cycle de vie d'un bot."""
+    rec = SlotLifecycleEvent(
+        slot_key=slot_key, from_state=from_state, to_state=to_state,
+        reason=reason, score=score, budget_pct=budget_pct,
+    )
+    try:
+        session.add(rec)
+        session.commit()
+    except Exception as e:
+        logger.warning(f"[DB] record_lifecycle_event KO ({slot_key}) : {e}")
+        session.rollback()
+
+
+def get_current_lifecycle_states(session: Session) -> Dict[str, str]:
+    """État courant (dernier ``to_state``) de chaque slot ayant un historique."""
+    rows = session.query(SlotLifecycleEvent).order_by(
+        SlotLifecycleEvent.time.asc()
+    ).all()
+    states: Dict[str, str] = {}
+    for r in rows:
+        states[r.slot_key] = r.to_state
+    return states
+
+
+def get_lifecycle_events(session: Session, slot_key: str = None,
+                         limit: int = 200) -> List[dict]:
+    """Historique des transitions (toutes ou filtrées par slot), plus récentes d'abord."""
+    q = session.query(SlotLifecycleEvent)
+    if slot_key:
+        q = q.filter(SlotLifecycleEvent.slot_key == slot_key)
+    rows = q.order_by(SlotLifecycleEvent.time.desc()).limit(limit).all()
+    return [{
+        "time": r.time.isoformat() if r.time else None,
+        "slot_key": r.slot_key, "from_state": r.from_state, "to_state": r.to_state,
+        "reason": r.reason, "score": r.score, "budget_pct": r.budget_pct,
+    } for r in rows]
+
+
+# ── Persistance de l'état de risque (Phase 3) ────────────────────────────────
+def save_risk_state(session: Session, key: str, data: dict) -> None:
+    """Upsert d'un blob d'état de risque (``key`` = 'global' ou 'slot::...')."""
+    try:
+        row = session.get(RiskStateRow, key)
+        if row is None:
+            row = RiskStateRow(id=key, data=data)
+            session.add(row)
+        else:
+            row.data = data
+        session.commit()
+    except Exception as e:
+        logger.warning(f"[DB] save_risk_state KO ({key}) : {e}")
+        session.rollback()
+
+
+def load_risk_state(session: Session, key: str = None) -> dict:
+    """Charge l'état de risque : un blob si ``key`` fourni, sinon tout le dict."""
+    try:
+        if key is not None:
+            row = session.get(RiskStateRow, key)
+            return dict(row.data) if row and row.data else {}
+        return {r.id: dict(r.data or {}) for r in session.query(RiskStateRow).all()}
+    except Exception as e:
+        logger.warning(f"[DB] load_risk_state KO : {e}")
+        return {}
 
 
 def update_daily_stats(session: Session, date_str: str, pnl: float, win: bool,

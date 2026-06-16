@@ -137,6 +137,18 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         # Premier passage différé pour laisser le cache OHLCV se réchauffer.
         self._fwd_test_next_run      = time.time() + int(_ft_cfg.get("initial_delay_s", 300))
 
+        # ── Cycle de vie & allocation continue (Phase 2 — lecture/shadow)
+        # Dérive l'état des bots (candidat/essai/actif/retiré) et calcule
+        # l'allocation cible pilotée par le score, SANS l'appliquer (shadow).
+        from app.live.slot_lifecycle import SlotLifecycleManager
+        _lc_cfg = cfg.get("lifecycle", {}) or {}
+        self._lifecycle = SlotLifecycleManager(cfg, session_factory=self.SessionLocal)
+        self._lifecycle_enabled  = bool(_lc_cfg.get("enabled", True))
+        self._lifecycle_interval = int(_lc_cfg.get("interval_h", 1)) * 3600
+        self._lifecycle_next_run = time.time() + int(_lc_cfg.get("initial_delay_s", 600))
+        self._lifecycle_snapshot: dict = {}
+        self._shadow_alloc: dict = {}
+
         # Re-entry cooldown par symbole
         self._cooldown: Dict[str, float] = {}
 
@@ -286,6 +298,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                         _last_successful_cycle = time.time()
                 self._maybe_auto_optimize()
                 self._maybe_forward_test()
+                self._maybe_lifecycle()
                 self._purge_counter += 1
                 if self._purge_counter >= self._purge_every_n:
                     self._purge_counter = 0
@@ -858,6 +871,56 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         except Exception as e:
             logger.error(f"[ForwardTest] Erreur : {e}", exc_info=True)
 
+    # ── Cycle de vie & allocation continue (Phase 2) ───────────────────────
+    def _maybe_lifecycle(self) -> None:
+        """Planifie l'évaluation du cycle de vie + allocation shadow (thread dédié)."""
+        if not self._lifecycle_enabled:
+            return
+        now = time.time()
+        if now < self._lifecycle_next_run:
+            return
+        self._lifecycle_next_run = now + self._lifecycle_interval
+        threading.Thread(target=self._lifecycle_thread, daemon=True).start()
+
+    def _lifecycle_thread(self) -> None:
+        try:
+            from app.core.oos_tracker import load_oos_tracker
+            from app.core.database import get_slot_live_stats, session_scope
+            oos = load_oos_tracker()
+            days = self._fwd_test_lookback_days
+            slots_data: dict = {}
+            scores: dict = {}
+            for tf, slots in self._active_per_tf.items():
+                for slot in slots:
+                    name = slot.get("name")
+                    if not name:
+                        continue
+                    key = f"{name}::{tf}"
+                    rec = oos.get(key, {})
+                    contract = rec.get("contract", {}) or {}
+                    sim = rec.get("sim", {}) or {}
+                    with session_scope(self.SessionLocal) as sess:
+                        stats = get_slot_live_stats(sess, name, tf, days=days)
+                    sb = self.allocator._slots.get(key)
+                    # Score budget-indépendant : rendement simulé moyen par trade.
+                    score = float(sim.get("avg_return_pct", 0.0) or 0.0)
+                    scores[key] = score
+                    slots_data[key] = {
+                        "budget_pct":          sb.budget_pct if sb else 0.0,
+                        "live_trades":         stats["n_trades"],
+                        "verdict":             contract.get("in_band"),
+                        "live_avg_return_pct": stats["avg_return_pct"],
+                        "score":               score,
+                    }
+            self._lifecycle_snapshot = self._lifecycle.evaluate(slots_data)
+            self._shadow_alloc = self.allocator.compute_shadow_allocation(scores)
+            logger.info(
+                f"[Lifecycle] états={self._lifecycle_snapshot.get('counts')} "
+                f"| file re-opt={len(self._lifecycle_snapshot.get('reopt_queue', []))}"
+            )
+        except Exception as e:
+            logger.error(f"[Lifecycle] Erreur : {e}", exc_info=True)
+
     def _on_opt_applied(self, strategy_name: str, params: dict) -> None:
         """Callback après application des params optimisés — recharge les stratégies actives."""
         existing = dict(self.strat_params.get(strategy_name, {}))
@@ -896,9 +959,6 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 except Exception:
                     continue
         return out
-        logger.info(
-            f"[LiveTrader] Stratégies rechargées après optimisation de {strategy_name}"
-        )
 
     # ── Propriété status (API) ─────────────────────────────────────────────
 
@@ -952,6 +1012,10 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             "circuit_breakers":     self.risk.get_circuit_breakers_status(),
             "slot_states":          self.risk.get_slot_states(),
             "volatility_brake":     self.risk.volatility_brake_active,
+            # Phase 1/2 — identité des bots, cycle de vie, allocation shadow.
+            "bots":                 self.get_bot_identities(),
+            "lifecycle":            self._lifecycle_snapshot,
+            "shadow_allocation":    self._shadow_alloc,
         })
 
     def _load_db_stats(self) -> dict:

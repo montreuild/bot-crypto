@@ -73,6 +73,11 @@ class CapitalAllocator:
         # Sizing par bot (Phase 1) : si True, chaque bot dimensionne sur SON budget
         # (budget × levier) au lieu de l'équité globale → fidélité au backtest.
         self._per_bot_sizing = bool(alloc_cfg.get("per_bot_sizing", False))
+        # Allocation continue pilotée par le score (Phase 2) — paramètres SHADOW.
+        self._reserve_pct      = float(alloc_cfg.get("reserve_pct", 0.10))
+        self._min_notional_usdc = float(alloc_cfg.get("min_notional_usdc", 10.0))
+        self._max_budget_step  = float(alloc_cfg.get("max_budget_step", 0.25))  # ±25%
+        self._active_floor     = int(alloc_cfg.get("active_floor", 2))
         self._custom_budgets: Dict[str, float] = {
             k: float(v) for k, v in alloc_cfg.get("slot_budgets", {}).items()
         }
@@ -388,7 +393,19 @@ class CapitalAllocator:
         # Appliquer + reset stats hebdo
         for slot in self._slots.values():
             if slot.enabled:
-                slot.budget_pct = new_budgets.get(slot.slot_key, slot.budget_pct)
+                target = new_budgets.get(slot.slot_key, slot.budget_pct)
+                # Garde-fou de rebalance : ne jamais retirer de collatéral d'un
+                # bot à position ouverte. On plancherise le budget au notionnel
+                # déjà engagé (doc §5, Phase 2).
+                if slot.used_notional > 0 and self.capital > 0:
+                    floor = slot.used_notional / self.capital
+                    if target < floor:
+                        logger.info(
+                            f"[Allocator] {slot.slot_key} : budget plancherisé à "
+                            f"{floor:.1%} (position ouverte, pas de retrait de collatéral)"
+                        )
+                        target = floor
+                slot.budget_pct = target
             slot.weekly_pnl = 0.0
             slot.weekly_wins = 0
             slot.weekly_trades = 0
@@ -446,6 +463,87 @@ class CapitalAllocator:
     @property
     def disabled_slots(self) -> list:
         return sorted(self._disabled_slots)
+
+    # ── Allocation continue pilotée par le score (Phase 2 — SHADOW) ──────────
+    def compute_shadow_allocation(self, scores: Dict[str, float],
+                                  correlations: Dict[str, float] = None) -> dict:
+        """Calcule l'allocation **cible** pilotée par le score, sans l'appliquer.
+
+        « Shadow » : on affiche ce que l'allocateur *aurait* fait (doc §5, Phase 2).
+        Pipeline : score → poids ; malus de corrélation ; réserve ; minimums
+        exchange ; variation bornée ±``max_budget_step`` ; plancher de bots actifs.
+
+        ``scores``       : ``{slot_key: score}`` (budget-indépendant).
+        ``correlations`` : ``{slot_key: malus∈[0,1]}`` optionnel (0 = aucun malus).
+        Retourne ``{targets, current, reserve_pct, dropped, notes, delta}``.
+        """
+        correlations = correlations or {}
+        active = [s for s in self._slots.values() if s.enabled]
+        notes: List[str] = []
+        if not active:
+            return {"targets": {}, "current": {}, "reserve_pct": self._reserve_pct,
+                    "dropped": [], "notes": ["aucun slot actif"], "delta": {}}
+
+        # 1) Score → poids (négatifs/absents = 0) + malus de corrélation.
+        weights: Dict[str, float] = {}
+        for s in active:
+            w = max(float(scores.get(s.slot_key, 0.0)), 0.0)
+            w *= (1.0 - max(0.0, min(float(correlations.get(s.slot_key, 0.0)), 1.0)))
+            weights[s.slot_key] = w
+        if sum(weights.values()) <= 0:
+            # Aucun score positif → repli sur l'égalité.
+            notes.append("aucun score positif → répartition égale")
+            for k in weights:
+                weights[k] = 1.0
+
+        # 2) Normalise sur la part investie (1 - réserve).
+        investable = max(0.0, 1.0 - self._reserve_pct)
+        total = sum(weights.values())
+        targets = {k: v / total * investable for k, v in weights.items()}
+
+        # 3) Minimums exchange : sous le notionnel minimal → budget 0.
+        dropped = []
+        min_pct = (self._min_notional_usdc / self.capital) if self.capital > 0 else 0.0
+        for k in list(targets):
+            if 0 < targets[k] < min_pct:
+                dropped.append(k)
+                targets[k] = 0.0
+        # Renormalise les survivants sur la part investie.
+        surv_total = sum(v for v in targets.values() if v > 0)
+        if surv_total > 0:
+            for k in targets:
+                if targets[k] > 0:
+                    targets[k] = targets[k] / surv_total * investable
+
+        # 4) Variation bornée ±max_budget_step depuis le budget courant.
+        for k in targets:
+            cur = self._slots[k].budget_pct
+            lo, hi = max(0.0, cur - self._max_budget_step), cur + self._max_budget_step
+            targets[k] = min(max(targets[k], lo), hi)
+            targets[k] = min(targets[k], self._max_slot_pct)
+
+        # 5) Plancher de bots actifs : garantir ≥ active_floor budgets > 0.
+        positive = [k for k, v in targets.items() if v > 0]
+        if len(positive) < self._active_floor:
+            ranked = sorted(active, key=lambda s: scores.get(s.slot_key, 0.0), reverse=True)
+            for s in ranked:
+                if targets.get(s.slot_key, 0.0) <= 0:
+                    targets[s.slot_key] = max(min_pct, 0.01)
+                    notes.append(f"plancher actif : {s.slot_key} maintenu")
+                if sum(1 for v in targets.values() if v > 0) >= self._active_floor:
+                    break
+
+        current = {s.slot_key: round(s.budget_pct, 4) for s in active}
+        targets = {k: round(v, 4) for k, v in targets.items()}
+        delta = {k: round(targets[k] - current.get(k, 0.0), 4) for k in targets}
+        return {
+            "targets": targets,
+            "current": current,
+            "reserve_pct": round(self._reserve_pct, 4),
+            "dropped": dropped,
+            "notes": notes,
+            "delta": delta,
+        }
 
     # ── Statut pour l'API ──────────────────────────────────────────────────
     def get_status(self) -> List[dict]:

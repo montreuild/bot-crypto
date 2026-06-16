@@ -129,6 +129,13 @@ capital_allocator:
   # Phase 1 — sizing par bot : chaque bot dimensionne sur SON budget (budget ×
   # levier) au lieu de l'équité globale (fidélité au backtest). False = inchangé.
   per_bot_sizing: false
+  # Phase 2 — allocation continue pilotée par le score (calculée en SHADOW :
+  # affichée mais pas appliquée). Réserve gardée, notionnel minimal exchange,
+  # variation de budget bornée par pas, plancher de bots dotés.
+  reserve_pct: 0.10
+  min_notional_usdc: 10.0
+  max_budget_step: 0.25
+  active_floor: 2
   min_trades_for_rebalance: 3
   rebalance_interval: daily
   max_symbol_exposure_pct: 0.25
@@ -146,6 +153,19 @@ capital_allocator:
     pullback_trend::1d: 0.0909
     derivatives_reversion::5m: 0.0909
     supertrend_macd::15m: 0.0909
+# Phase 2 — cycle de vie des bots (candidat/essai/actif/retiré). Lecture humaine
+# de la trajectoire du budget + réalisation live. Transitions lissées (plancher de
+# bots actifs + quota de rétrogradations/jour) et persistées en base.
+lifecycle:
+  enabled: true
+  interval_h: 1                 # fréquence de réévaluation des états
+  initial_delay_s: 600
+  plancher_budget_pct: 0.02     # sous ce budget (avec vécu) → retrait
+  trial_min_trades: 3           # < ce nb de trades live → essai
+  active_min_trades: 10         # ≥ ce nb + live conforme + score > 0 → actif
+  eval_min_trades: 10           # taille d'échantillon mini pour un retrait sur perf
+  min_active_bots: 2            # plancher : jamais moins de N bots non-retirés
+  max_demotions_per_day: 2      # quota anti-flush de rétrogradations/jour
 logging:
   level: INFO
   debug: false
