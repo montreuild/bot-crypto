@@ -305,13 +305,22 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                         _last_successful_cycle = time.time()
                 self._heartbeat()
                 self._check_dead_man()
-                self._maybe_auto_optimize()
-                self._maybe_forward_test()
-                self._maybe_lifecycle()
-                self._purge_counter += 1
-                if self._purge_counter >= self._purge_every_n:
-                    self._purge_counter = 0
-                    self._purge_memory()
+                # Maintenance planifiée isolée : une erreur ici (auto-opt,
+                # forward-test, cycle de vie, purge) ne doit JAMAIS arrêter le
+                # bot — sinon « arrêt complet ». Chaque tâche lourde tourne déjà
+                # dans son propre thread ; ce garde-fou couvre la planification.
+                try:
+                    self._maybe_auto_optimize()
+                    self._maybe_forward_test()
+                    self._maybe_lifecycle()
+                    self._purge_counter += 1
+                    if self._purge_counter >= self._purge_every_n:
+                        self._purge_counter = 0
+                        self._purge_memory()
+                except Exception as maint_err:
+                    logger.exception(
+                        f"[LiveTrader] Erreur de maintenance (non bloquante) : {maint_err}"
+                    )
                 time.sleep(self.interval)
         except KeyboardInterrupt:
             logger.info("[LiveTrader] Arrêt demandé (Ctrl+C)")
@@ -862,6 +871,11 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         now = time.time()
         if now < self._fwd_test_next_run:
             return
+        # Ne pas surcharger pendant une optimisation (les backtests ML du
+        # forward-test s'ajouteraient à la charge → risque d'OOM) : on diffère.
+        if self._optimization_running():
+            self._fwd_test_next_run = now + 600   # nouvel essai dans 10 min
+            return
         self._fwd_test_next_run = now + self._fwd_test_interval
         logger.info("[ForwardTest] Démarrage forward-test glissant planifié…")
         threading.Thread(target=self._forward_test_thread, daemon=True).start()
@@ -915,8 +929,22 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         now = time.time()
         if now < self._lifecycle_next_run:
             return
+        # Le thread lit les stats live + recalcule l'alloc ; on diffère pendant
+        # une optimisation pour ne pas concurrencer la base/CPU.
+        if self._optimization_running():
+            self._lifecycle_next_run = now + 600
+            return
         self._lifecycle_next_run = now + self._lifecycle_interval
         threading.Thread(target=self._lifecycle_thread, daemon=True).start()
+
+    @staticmethod
+    def _optimization_running() -> bool:
+        """True si une optimisation est en cours (pour différer les tâches de fond)."""
+        try:
+            from app.engine.auto_optimizer import any_optimization_running
+            return any_optimization_running()
+        except Exception:
+            return False
 
     def _lifecycle_thread(self) -> None:
         try:

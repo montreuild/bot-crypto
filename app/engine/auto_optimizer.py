@@ -97,6 +97,16 @@ def get_all_jobs() -> dict:
         return {k: dict(v) for k, v in _jobs.items()}
 
 
+def any_optimization_running() -> bool:
+    """True si au moins un job d'optimisation est en cours ou en file.
+
+    Sert aux tâches de fond (forward-test, cycle de vie) à se mettre en attente
+    pendant une optimisation lourde, pour ne pas saturer mémoire/CPU.
+    """
+    with _jobs_lock:
+        return any(j.get("status") in ("running", "queued") for j in _jobs.values())
+
+
 def _update_job(job_id: str, **kwargs):
     with _jobs_lock:
         if job_id not in _jobs:
