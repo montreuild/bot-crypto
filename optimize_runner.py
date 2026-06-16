@@ -24,6 +24,7 @@ Exemples :
     python optimize_runner.py                          # toutes les stratégies, TFs du config
     python optimize_runner.py --strategies opus_omnibus_v11_no_ml,opus_omnibus_v10_no_ml
     python optimize_runner.py --no-ml-only --apply     # uniquement les jumeaux _no_ml, et applique
+    python optimize_runner.py --ml-only --limit 50000 --apply  # toutes les stratégies ML, 50k bougies
     python optimize_runner.py --tfs 1h,15m --method random --trials 30 --jobs 2
 """
 
@@ -173,8 +174,11 @@ def parse_args():
                    help="Threads de calcul par trial (défaut 1, discret)")
     p.add_argument("--apply", action="store_true",
                    help="Applique les paramètres s'ils battent le baseline (sinon: sauvegarde seule)")
-    p.add_argument("--no-ml-only", action="store_true",
-                   help="N'optimise que les jumeaux suffixés _no_ml")
+    ml_group = p.add_mutually_exclusive_group()
+    ml_group.add_argument("--no-ml-only", action="store_true",
+                          help="N'optimise que les jumeaux suffixés _no_ml")
+    ml_group.add_argument("--ml-only", action="store_true",
+                          help="N'optimise que les stratégies ML (héritant de BaseStrategyML)")
     p.add_argument("--no-keep-awake", action="store_true",
                    help="Désactive l'anti-veille")
     return p.parse_args()
@@ -202,6 +206,9 @@ def main():
     strats = [s for s in strats if s in PARAM_SPACES]
     if args.no_ml_only:
         strats = [s for s in strats if s.endswith("_no_ml")]
+    if args.ml_only:
+        from app.engine.auto_optimizer import _is_ml_strategy
+        strats = [s for s in strats if _is_ml_strategy(s)]
     if not strats:
         print("Aucune stratégie optimisable à traiter.")
         return 1

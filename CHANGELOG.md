@@ -35,6 +35,9 @@ dépendait de `psutil` — non installé — ou de `/proc/meminfo` — Linux onl
   enfin sur Windows même sans `psutil`.
 - `psutil` ajouté aux dépendances (chemin préféré ; fallbacks `/proc/meminfo` et
   `GlobalMemoryStatusEx` conservés s'il est absent).
+- `optimize_runner.py --ml-only` : pendant symétrique de `--no-ml-only`, optimise
+  toutes les stratégies ML (détection structurelle `BaseStrategyML`). Ex. :
+  `python optimize_runner.py --ml-only --limit 50000 --apply` (séquentiel, sûr).
 - Couverture : `tests/test_opt_mem_gate.py` (admission, mise en attente,
   anti-blocage, annulation, libération, estimation).
 
