@@ -54,7 +54,7 @@ def _detect_tf(df: pl.DataFrame) -> str:
     if "time" not in df.columns or len(df) < 3:
         return "unknown"
     try:
-        med_s = float(df["time"].diff().drop_nulls().dt.total_microseconds().median()) / 1e6
+        med_s = float(df["time"].tail(64).diff().drop_nulls().dt.total_microseconds().median()) / 1e6
     except Exception:
         return "unknown"
     if med_s <= 0:

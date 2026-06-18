@@ -126,7 +126,9 @@ class Strategy(BaseStrategy):
             mh1 = float(_mhist[-2])
             mh2 = float(_mhist[-3])
 
-        vol_avg  = float(volume.rolling_mean(20)[-1])
+        # Borne la fenêtre : rolling_mean(20) sur toute la colonne croissante ne
+        # sert qu'à lire la dernière valeur → O(n)/barre (O(n²) en backtest).
+        vol_avg  = float(volume.tail(20).rolling_mean(20)[-1])
 
         # ── Cooldown ─────────────────────────────────────────────────────────
         if cnt - self._last_signal.get(sym, -999) < cooldown:

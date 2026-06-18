@@ -6,6 +6,48 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### ⚡ Performance backtest/optimisation : suppression d'un O(n²) et du « get_column storm » des stratégies ML
+
+**Symptôme.** Backtests ML très lents et **ralentissant avec la taille** (279 → 185
+→ 147 bars/s en cours de route) — catastrophique sur 50 000 barres.
+
+**Causes (profil cProfile).**
+1. **`_detect_timeframe(df)` appelé à chaque barre** sur la fenêtre **croissante**
+   `df[:i+1]` : `times.diff().median()` est O(i) → backtest O(n²). Or le
+   timeframe est **constant** sur tout le backtest.
+2. **`_predict` (stratégies polars v7/v10_retrained/v11/v11_followsetup,
+   opus_stat_retrained_v4) accédait aux ~440 colonnes de features une par une**
+   (`row[c][0]`), soit ~880 `get_column` polars par barre (~58 % du temps de
+   backtest).
+
+**Correctif.**
+- `_detect_timeframe` ne lit plus que les **derniers deltas** (`tail(64)`) → O(1)
+  par appel, résultat identique (espacement uniforme). Appliqué à toutes les
+  variantes (ML + `_no_ml`).
+- `_predict` extrait la dernière ligne en **un seul appel** (`row(0, named=True)`
+  → dict) puis lit les features depuis le dict → fini le `get_column` par feature.
+- Résultats **numériquement identiques** (336 tests OK, dont parité scoring/ML).
+
+**Gain mesuré** (v11, 1h) : **~5× plus rapide** (≈380 → ≈1840 bars/s à 4 000
+barres) et **mise à l'échelle linéaire** restaurée (plus de ralentissement ; le
+résidu provient des seuls ré-entraînements walk-forward périodiques).
+
+**Audit O(n²) de TOUTES les stratégies** (40 fichiers) — 5 autres bugs corrigés,
+même cause racine (indicateur pleine fenêtre recalculé par barre, sans cache ni
+tail, pour ne lire que la dernière valeur) :
+- `composite_score` : FFT+polyfit sur toute la fenêtre/barre (bornée à 1024
+  barres) **et** stochastique recalculé sur tout le df (borné à k+d barres).
+- `harmonic_regime` : `.to_numpy()` sur la colonne entière (ATR/close) pour
+  n'utiliser que la queue → matérialisation bornée (`tail`), `_cycle` reçoit la
+  queue + l'index absolu (cache stride préservé).
+- `fear_momentum` : `volume.rolling_mean(20)[-1]` sur tout le df → `tail(20)`.
+- `ml_dynamic_threshold` : `_detect_tf` (deltas pleine fenêtre) et `_adx(df,14)`
+  recalculé par barre → bornés (`tail(64)` / `tail(300)`).
+
+Mise à l'échelle vérifiée **constante** après correctif (ex. composite_score :
+~1050 bars/s à 4 000 comme à 12 000 barres). 35 stratégies déjà saines (cache
+`prepare_for_backtest` ou lectures `pre_val`/tails bornées). 336 tests OK.
+
 ### 🎯 Optimiseur : score monotone, données auto-dimensionnées, recherche TPE, parallélisme par défaut, réglage ML two-phase
 
 Cinq améliorations ciblées de l'optimiseur et de ses performances :

@@ -327,7 +327,7 @@ def _detect_tf(df: pl.DataFrame) -> str:
     if "time" not in df.columns or len(df) < 2:
         return "unknown"
     try:
-        t_int = df["time"].cast(pl.Int64).to_numpy()
+        t_int = df["time"].tail(64).cast(pl.Int64).to_numpy()  # TF constant: tail O(1)
         median_diff = int(np.median(np.diff(t_int)))
         # Polars Datetime est en microsecondes ; millisecondes ou secondes sinon
         if median_diff > 1_000_000_000:
@@ -682,8 +682,11 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             if len(feats) == 0:
                 return self._no_signal()
 
-            # Filtre ADX — régime de marché
-            adx_val = float(_adx(df, 14)[0][-1])
+            # Filtre ADX — régime de marché. Borne la fenêtre : adx() fait diff()
+            # + 4 ewm_mean() sur tout le df et on ne lit que la dernière valeur →
+            # O(n)/barre (O(n²) en backtest). Le lissage Wilder converge bien
+            # avant 300 barres → dernière valeur identique.
+            adx_val = float(_adx(df.tail(300), 14)[0][-1])
             auc_tf  = self._best_auc_per_tf.get(tf, self._best_auc)
             if adx_val < self.adx_min:
                 return {

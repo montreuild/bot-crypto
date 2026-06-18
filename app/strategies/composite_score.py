@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 #  Analyse spectrale FFT
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Fenêtre FFT max (barres) — borne le coût par barre en backtest (cf. score()).
+_FFT_WINDOW_BARS = 1024
+
+
 def _fft_direction(
     prices: np.ndarray,
     min_period: int = 5,
@@ -343,7 +347,11 @@ class Strategy(BaseStrategy):
         bw        = (bb_upper - bb_lower) / bb_mid_v * 100 if bb_mid_v > 0 else 0.0
 
         # ── Stochastique(14, 3) ───────────────────────────────────────────────
-        stoch_k_val, stoch_d_val = calc_stoch(df, k_period=stoch_k, d_period=stoch_d)
+        # Borne la fenêtre : stochastic() fait des rolling_min/max/mean sur tout
+        # le df et ne renvoie que la dernière valeur → O(n) par barre (O(n²) en
+        # backtest). Les k+d dernières barres suffisent (valeur identique).
+        _stoch_n = stoch_k + stoch_d + 5
+        stoch_k_val, stoch_d_val = calc_stoch(df.tail(_stoch_n), k_period=stoch_k, d_period=stoch_d)
 
         # ── Supports / Résistances (180 j, clustering 1.8 %) ─────────────────
         sr          = support_resistance_levels(
@@ -387,7 +395,11 @@ class Strategy(BaseStrategy):
             "cycles": [], "avg_signal": 0.0, "next_reversal": 0.0,
         }
         if use_fft and len(close) >= max(fft_min_period * 3, 30):
-            prices_np  = close.to_numpy().astype(float)
+            # Borne la fenêtre FFT : sans cache (contrairement à fft_spectral),
+            # une FFT+polyfit sur toute la fenêtre croissante à chaque barre est
+            # O(n log n) par barre → O(n² log n). Une fenêtre récente fixe capte
+            # largement les cycles utiles (fft_max_period par défaut = 150).
+            prices_np  = close.tail(min(len(close), _FFT_WINDOW_BARS)).to_numpy().astype(float)
             fft_result = _fft_direction(
                 prices_np, fft_min_period, fft_max_period, fft_top_n
             )

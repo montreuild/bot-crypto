@@ -72,7 +72,7 @@ def _detect_timeframe(df: pl.DataFrame) -> Optional[str]:
     """Renvoie '15m' / '30m' / '1h' selon la médiane des deltas de ``time``."""
     if "time" not in df.columns or len(df) < 5:
         return None
-    times = df["time"]
+    times = df["time"].tail(64)  # TF constant: derniers deltas suffisent (O(1))
     try:
         # Polars Datetime : différence retourne Duration (en µs)
         deltas = times.diff().drop_nulls()

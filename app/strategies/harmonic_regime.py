@@ -134,13 +134,15 @@ class Strategy(BaseStrategy):
                    int(p.get("cycle_win", self._D["cycle_win"]))) + 30
 
     # ── Cycle dominant (FFT) — confirmation douce, mémoïsée par pas ────────────
-    def _cycle(self, close: np.ndarray, p: dict, sym: str):
+    def _cycle(self, close: np.ndarray, p: dict, sym: str, n_abs: int = None):
+        # ``close`` peut être une queue bornée (perf) ; ``n_abs`` = index de barre
+        # absolu pour le cache anti-recalcul (stride), sinon len(close).
         if not p["use_cycle"]:
             return 0, 0.0
         win = int(p["cycle_win"])
-        n = len(close)
-        if n < win:
+        if len(close) < win:
             return 0, 0.0
+        n = n_abs if n_abs is not None else len(close)
         cached = self._cyc.get(sym)
         if cached is not None and (n - cached[0]) < int(p["cycle_stride"]):
             return cached[1], cached[2]
@@ -217,9 +219,13 @@ class Strategy(BaseStrategy):
         bb_up = bb_mid + p["bb_std"] * bb_sd
         bb_lo = bb_mid - p["bb_std"] * bb_sd
 
-        atr_s = df["_pre_atr14"].to_numpy().astype(float)
-        c_s = close.to_numpy().astype(float)
         vw = int(p["vol_med_window"])
+        # Borne la fenêtre : to_numpy() sur toute la colonne croissante = O(n)/barre
+        # (O(n²) en backtest) alors qu'on ne lit que les dernières vw / cycle_win
+        # barres. On matérialise donc juste la queue nécessaire.
+        _tail_n = max(vw, int(p["cycle_win"]))
+        atr_s = df["_pre_atr14"].tail(_tail_n).to_numpy().astype(float)
+        c_s = close.tail(_tail_n).to_numpy().astype(float)
         atr_pct_tail = (atr_s[-vw:] / np.maximum(c_s[-vw:], 1e-9)) * 100.0
         vol_med = float(np.median(atr_pct_tail))
         atr_pct = atr / c * 100.0
@@ -236,7 +242,7 @@ class Strategy(BaseStrategy):
         near_fib_sup = any(abs(c - lv) <= fib_tol and c >= lv for lv in fib.values())
         near_fib_res = any(abs(c - lv) <= fib_tol and c <= lv for lv in fib.values())
 
-        cyc_dir, cyc_pos = self._cycle(c_s, p, sym)
+        cyc_dir, cyc_pos = self._cycle(c_s, p, sym, n_abs=len(close))
 
         # ── États de régime ───────────────────────────────────────────────────
         slope = sma_now - sma_prev
