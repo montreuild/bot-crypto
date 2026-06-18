@@ -139,7 +139,6 @@
               <input type="number" id="opt-limit" value="0" min="0" max="8000" oninput="updateLimHint()" onchange="updateLimHint()"/>
             </div>
             <div class="checkbox-row"><input type="checkbox" id="opt-apply"/><label for="opt-apply">Appliquer automatiquement les meilleurs params</label></div>
-            <div class="checkbox-row"><input type="checkbox" id="opt-ml-tune"/><label for="opt-ml-tune">ML : régler aussi les hyperparamètres d'entraînement (two-phase, plus lent)</label></div>
             <button class="btn btn-purple btn-full" onclick="startOpt()">&#x25B6; Lancer l'optimisation</button>
           </div>
         </div>
@@ -417,7 +416,9 @@ function renderSpaces(spaces) {
   const globalNote = ['score_threshold','risk_per_trade','capital','timeframe','paper_mode'];
   let html = '';
   for (const [name, info] of Object.entries(spaces)) {
-    if (name.startsWith('ml_')) continue;
+    // Page d'optimisation non-ML : exclure les stratégies ML (préfixe ml_ OU
+    // flag is_ml). Elles ont leur page dédiée (/ml).
+    if (name.startsWith('ml_') || info.is_ml) continue;
     // info.params est un objet {param: [valeurs]}
     const params = info.params || {};
     const paramKeys = Object.keys(params);
@@ -478,7 +479,6 @@ async function startOpt() {
     auto_apply:          $('opt-apply').checked,
     n_jobs:              $('opt-njobs').value,
     early_stop_patience: $('opt-early-stop').value,
-    ml_tune_hp:          $('opt-ml-tune').checked,
   });
   _setOptBtn(true);
   // Show immediate loading feedback while candles are being fetched

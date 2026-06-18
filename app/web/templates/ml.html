@@ -136,11 +136,12 @@
             <div id="preview-matrix" style="margin-bottom:10px;background:rgba(0,0,0,.25);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px"></div>
             <div class="form-row">
               <label class="form-lbl">Bougies par TF (split IS/OOS 65/35)
-                <span class="hint" id="lim-hint">Saisissez une valeur pour voir le détail IS/OOS</span>
+                <span class="hint" id="lim-hint">0 = auto (selon le besoin des stratégies)</span>
               </label>
-              <input type="number" id="opt-limit" value="1500" min="300" max="8000" oninput="updateLimHint()" onchange="updateLimHint()"/>
+              <input type="number" id="opt-limit" value="0" min="0" max="8000" oninput="updateLimHint()" onchange="updateLimHint()"/>
             </div>
             <div class="checkbox-row"><input type="checkbox" id="opt-apply"/><label for="opt-apply">Appliquer automatiquement les meilleurs params + entraîner le modèle</label></div>
+            <div class="checkbox-row"><input type="checkbox" id="opt-ml-tune"/><label for="opt-ml-tune">Régler aussi les hyperparamètres d'entraînement (two-phase, plus lent)</label></div>
             <button class="btn btn-cyan btn-full" onclick="startOpt()">⬡ Lancer l'optimisation ML</button>
           </div>
         </div>
@@ -264,7 +265,12 @@ function updateLimHint() {
   const el    = document.getElementById('lim-hint');
   const input = document.getElementById('opt-limit');
   if (!el || !input) return;
-  const total = Math.max(300, Math.min(8000, parseInt(input.value) || 1500));
+  const raw = parseInt(input.value) || 0;
+  if (raw <= 0) {
+    el.textContent = 'Auto : limite dérivée du besoin réel des stratégies sélectionnées';
+    return;
+  }
+  const total = Math.max(300, Math.min(8000, raw));
   const is_n  = Math.round(total * 0.65);
   const oos_n = total - is_n;
   const checkedTfs = AVAILABLE_TFS.filter(tf => {
@@ -430,7 +436,9 @@ async function startOpt() {
   });
   if (!selectedTfs.length) { toast('Sélectionnez au moins un timeframe.', true); return; }
 
-  const lim = parseInt($('opt-limit').value) || 1500;
+  // 0 (ou vide) = auto : le backend dérive la limite du besoin réel des
+  // stratégies (les omnibus ML exigent ~2200+ bougies, sinon elles sont ignorées).
+  const lim = Math.max(0, parseInt($('opt-limit').value) || 0);
 
   const params = new URLSearchParams({
     symbol:              $('opt-symbol').value.trim() || 'BTC/USDC',
@@ -442,6 +450,7 @@ async function startOpt() {
     auto_apply:          $('opt-apply').checked,
     n_jobs:              $('opt-njobs').value,
     early_stop_patience: $('opt-early-stop').value,
+    ml_tune_hp:          $('opt-ml-tune').checked,
   });
   _setOptBtn(true);
   const loadingEl = document.createElement('div');
