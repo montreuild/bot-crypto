@@ -32,6 +32,22 @@ Historique des versions du Crypto Bot.
 barres) et **mise à l'échelle linéaire** restaurée (plus de ralentissement ; le
 résidu provient des seuls ré-entraînements walk-forward périodiques).
 
+**Audit O(n²) de TOUTES les stratégies** (40 fichiers) — 5 autres bugs corrigés,
+même cause racine (indicateur pleine fenêtre recalculé par barre, sans cache ni
+tail, pour ne lire que la dernière valeur) :
+- `composite_score` : FFT+polyfit sur toute la fenêtre/barre (bornée à 1024
+  barres) **et** stochastique recalculé sur tout le df (borné à k+d barres).
+- `harmonic_regime` : `.to_numpy()` sur la colonne entière (ATR/close) pour
+  n'utiliser que la queue → matérialisation bornée (`tail`), `_cycle` reçoit la
+  queue + l'index absolu (cache stride préservé).
+- `fear_momentum` : `volume.rolling_mean(20)[-1]` sur tout le df → `tail(20)`.
+- `ml_dynamic_threshold` : `_detect_tf` (deltas pleine fenêtre) et `_adx(df,14)`
+  recalculé par barre → bornés (`tail(64)` / `tail(300)`).
+
+Mise à l'échelle vérifiée **constante** après correctif (ex. composite_score :
+~1050 bars/s à 4 000 comme à 12 000 barres). 35 stratégies déjà saines (cache
+`prepare_for_backtest` ou lectures `pre_val`/tails bornées). 336 tests OK.
+
 ### 🎯 Optimiseur : score monotone, données auto-dimensionnées, recherche TPE, parallélisme par défaut, réglage ML two-phase
 
 Cinq améliorations ciblées de l'optimiseur et de ses performances :
