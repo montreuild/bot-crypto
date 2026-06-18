@@ -92,7 +92,7 @@ _NUMERIC_DTYPES = (
 def _detect_timeframe(df: pl.DataFrame) -> Optional[str]:
     if "time" not in df.columns or len(df) < 3:
         return None
-    times = df["time"]
+    times = df["time"].tail(64)  # TF constant: derniers deltas suffisent (O(1))
     try:
         deltas = times.diff().drop_nulls()
         if len(deltas) == 0:
@@ -1170,15 +1170,15 @@ class Strategy(BaseStrategyML):
         if booster is None or not feat_cols:
             return None
         try:
-            present = set(features_df.columns)
-            row     = features_df.tail(1)
-            vals    = np.empty(len(feat_cols), dtype=np.float32)
+            # Extraction de la derniere ligne en UN appel (dict col->valeur) au
+            # lieu d'un acces colonne polars par feature (~440 get_column par
+            # prediction, x2/barre). row.get(c)=None pour les colonnes absentes
+            # -> repli sur la mediane d'entrainement.
+            row  = features_df.tail(1).row(0, named=True)
+            vals = np.empty(len(feat_cols), dtype=np.float32)
             for j, c in enumerate(feat_cols):
-                if c in present:
-                    v = row[c][0]
-                    vals[j] = v if (v is not None and np.isfinite(v)) else medians.get(c, 0.0)
-                else:
-                    vals[j] = medians.get(c, 0.0)
+                v = row.get(c)
+                vals[j] = v if (v is not None and np.isfinite(v)) else medians.get(c, 0.0)
             raw = float(booster.predict(vals.reshape(1, -1))[0])
             if cal is not None:
                 return float(cal.predict([raw])[0])

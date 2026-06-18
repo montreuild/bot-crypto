@@ -66,7 +66,7 @@ def _detect_timeframe(df: pl.DataFrame) -> Optional[str]:
     if "time" not in df.columns or len(df) < 3:
         return None
     try:
-        med_us = df["time"].diff().drop_nulls().dt.total_microseconds().median()
+        med_us = df["time"].tail(64).diff().drop_nulls().dt.total_microseconds().median()
         med_s = float(med_us) / 1_000_000.0
     except Exception:
         return None
