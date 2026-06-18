@@ -27,6 +27,7 @@ def optimizer_start(
     auto_apply:          bool = False,
     n_jobs:              int  = 1,
     early_stop_patience: int  = 0,
+    ml_tune_hp:          bool = False,
 ):
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
@@ -53,7 +54,7 @@ def optimizer_start(
 
     try:
         from app.engine.auto_optimizer import AutoOptimizer
-        from app.engine.optimizer import PARAM_SPACES, RECOMMENDED_LIMIT
+        from app.engine.optimizer import PARAM_SPACES, RECOMMENDED_LIMIT, auto_fetch_limit
 
         tf_list = (
             [t.strip() for t in timeframes.split(",") if t.strip()]
@@ -74,7 +75,9 @@ def optimizer_start(
         fetch_details    = {}
         received_counts  = {}
         for tf in tf_list:
-            fetch_limit = limit if limit > 0 else RECOMMENDED_LIMIT.get(tf, 1000)
+            # Limite auto dérivée du besoin réel des stratégies (cf. #2) : évite
+            # que les stratégies ML (omnibus) soient ignorées faute de bougies.
+            fetch_limit = limit if limit > 0 else auto_fetch_limit(tf, strats)
             fetch_details[tf] = fetch_limit
             df = get_store().fetch(exchange, symbol, tf, total=fetch_limit, prefer_cache=True)
             n_received = len(df) if df is not None else 0
@@ -111,6 +114,7 @@ def optimizer_start(
             notifier=state.trader.notif if state.trader else None,
             n_jobs=n_jobs,
             early_stop_patience=early_stop_patience,
+            ml_tune_hp=ml_tune_hp,
         )
         job_ids, skipped = opt.start_async(df_map, symbol, strats,
                                            timeframes=tf_list, auto_apply=auto_apply)

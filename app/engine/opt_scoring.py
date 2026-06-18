@@ -64,7 +64,6 @@ def composite_score(res, min_trades: int = 2) -> float:
 
     trade_factor = min(n / 10, 1.0)
     dd_factor    = max(0, 1.0 - dd / 30)
-    ret_sign     = 1.0 if pnl > 0 else 0.3   # signe = signe du rendement (sans dimension)
     alpha_norm   = max(min(alpha / 50.0, 1.0), -1.0)
     alpha_bonus  = alpha_norm * 0.10
 
@@ -87,7 +86,10 @@ def composite_score(res, min_trades: int = 2) -> float:
     exp_pct  = exp / cap * 100.0
     exp_norm = min(exp_pct, 3.0) / 3.0
 
-    score = (
+    # Bundle « qualité » : combine toutes les métriques sans dimension. Ses termes
+    # sont structurellement positifs ou faiblement négatifs — il ne renseigne PAS,
+    # à lui seul, sur le signe du résultat.
+    quality = (
         sharpe_norm     * 0.22 +
         wr              * 0.15 +
         (pf / 6)        * 0.15 +
@@ -96,7 +98,24 @@ def composite_score(res, min_trades: int = 2) -> float:
         trade_factor    * 0.10 +
         ret_norm        * 0.20 +
         alpha_bonus     * 1.00
-    ) * ret_sign
+    )
+
+    # Monotonie avec le rendement (correctif Phase 0).
+    # Avant : ``score = quality * ret_sign`` avec ``ret_sign ∈ {1.0, 0.3}`` — une
+    # pénalité **multiplicative jamais négative** qui ne faisait qu'atténuer un
+    # bundle positif. Conséquence : une stratégie NETTE PERDANTE (PnL < 0) au
+    # win-rate/Sharpe/drawdown corrects obtenait un score **positif**, était
+    # sélectionnée par l'optimiseur et passait le gate live (MIN_VIABLE_SCORE).
+    # Désormais le score est monotone avec le PnL :
+    #   - PnL > 0  → bundle qualité (échelle inchangée → rétro-compatible avec les
+    #                scores positifs déjà persistés et le seuil -0.05) ;
+    #   - PnL ≤ 0  → score = rendement normalisé (négatif, et d'autant plus négatif
+    #                que la perte est grande) → toujours rejeté, et correctement
+    #                ordonné entre paramétrages perdants.
+    if pnl > 0:
+        score = quality
+    else:
+        score = ret_norm
 
     return round(score, 6)
 

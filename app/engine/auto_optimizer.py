@@ -274,7 +274,8 @@ class AutoOptimizer:
                  on_apply_callback=None,
                  notifier=None,
                  n_jobs: int = 1,
-                 early_stop_patience: int = 0):
+                 early_stop_patience: int = 0,
+                 ml_tune_hp: bool = False):
         self.cfg               = cfg
         self.n_trials          = n_trials
         self.method            = method
@@ -283,6 +284,11 @@ class AutoOptimizer:
         self._notifier         = notifier
         self.n_jobs            = n_jobs
         self.early_stop_patience = early_stop_patience
+        # #6 : optimisation ML two-phase (grille externe sur les hyperparamètres
+        # d'entraînement × recherche interne sur les seuils). Opt-in : coûteux
+        # (coût × nombre de combos HP). Sans effet sur les stratégies non-ML ou
+        # celles qui n'exposent pas d'hyperparamètres d'entraînement réglables.
+        self.ml_tune_hp        = ml_tune_hp
 
     # ── Lancement asynchrone ──────────────────────────────────────────────
     def start_async(self, df_map: Dict[str, pl.DataFrame], symbol: str,
@@ -433,7 +439,18 @@ class AutoOptimizer:
                 cancel_event=cancel_event,
             )
 
-            if self.method == "bayesian":
+            # #6 : two-phase pour les stratégies ML exposant des hyperparamètres
+            # d'entraînement réglables (et si activé). Sinon phase unique.
+            ml_hp_space = {}
+            if self.ml_tune_hp and _is_ml_strategy(strategy_name):
+                from app.engine.optimizer import ml_hp_space_for
+                ml_hp_space = ml_hp_space_for(strategy_name)
+
+            if ml_hp_space:
+                result = opt.optimize_two_phase(
+                    self.method, self.n_trials, self.n_jobs, ml_hp_space,
+                    early_stop_patience=self.early_stop_patience)
+            elif self.method == "bayesian":
                 result = opt.bayesian_search(self.n_trials, n_jobs=self.n_jobs,
                                              early_stop_patience=self.early_stop_patience)
             elif self.method == "grid":
@@ -621,10 +638,19 @@ class AutoOptimizer:
                 n_available = len(df) if df is not None else 0
                 min_total = math.ceil(min_bars / 0.35)
                 if n_available < min_total:
-                    logger.warning(
-                        f"[AutoOpt] {name}@{tf} ignoré : {n_available} bougies "
-                        f"(< {min_total} requises)"
-                    )
+                    reason = (f"{n_available} bougies < {min_total} requises "
+                              f"(min_bars={min_bars} sur la tranche OOS)")
+                    logger.warning(f"[AutoOpt] {name}@{tf} ignoré : {reason}")
+                    # Remonté visiblement à l'appelant (le runner l'affiche au lieu
+                    # de le noyer dans les logs fichier).
+                    if on_job_done:
+                        try:
+                            on_job_done(_job_id(name, tf, symbol), {
+                                "status": "skipped", "strategy": name,
+                                "timeframe": tf, "symbol": symbol, "error": reason,
+                            })
+                        except Exception as _cb:
+                            logger.debug(f"[AutoOpt] on_job_done(skip) KO : {_cb}")
                     continue
 
                 WARMUP = 210
