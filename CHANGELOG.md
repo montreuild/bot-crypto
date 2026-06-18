@@ -6,6 +6,42 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🎯 Optimiseur : score monotone, données auto-dimensionnées, recherche TPE, parallélisme par défaut, réglage ML two-phase
+
+Cinq améliorations ciblées de l'optimiseur et de ses performances :
+
+- **#1 — Score composite monotone avec le PnL** (`opt_scoring.py`). Avant, la
+  pénalité d'un résultat perdant était *multiplicative et jamais négative*
+  (`ret_sign ∈ {1.0, 0.3}`) : une stratégie **nette perdante** au win-rate/Sharpe
+  corrects obtenait un score **positif**, était sélectionnée par l'optimiseur et
+  passait le gate live (`MIN_VIABLE_SCORE`). Désormais : `PnL > 0` → bundle
+  qualité (échelle **inchangée**, rétro-compatible avec les scores déjà
+  persistés) ; `PnL ≤ 0` → score = rendement normalisé (**négatif** et monotone
+  avec la perte). Impact live : les paramétrages nets perdants sont correctement
+  exclus de `get_active_strategies_per_tf` (effet uniquement après ré-optimisation
+  — les scores déjà sauvegardés restent figés).
+- **#2 — Limite de bougies auto-dimensionnée** (`optimizer.auto_fetch_limit`,
+  utilisée par `optimize_runner.py` et la route web). Corrige le décalage
+  `RECOMMENDED_LIMIT[1h]=1500 < 2229` requis par les omnibus ML, qui faisait
+  **ignorer silencieusement** ces stratégies. La limite par défaut (`--limit 0`,
+  `limit=0` côté UI) dérive désormais du besoin réel (`ceil(min_bars/0.35)`). Les
+  jobs ignorés sont en plus **remontés visiblement** (`⊘ … ignoré : …`) au lieu
+  d'être noyés dans les logs.
+- **#4 — Recherche bayésienne TPE via Optuna** (`optimizer.bayesian_search`).
+  Remplace l'heuristique « random + perturbation locale » par une vraie recherche
+  informée (TPE). Parallèle sur un **ProcessPool persistant** (cache de features /
+  d'entraînement réutilisé entre lots) ou séquentielle (cache in-process chaud).
+  **Repli automatique** sur l'ancienne heuristique si Optuna est absent (dépendance
+  optionnelle ajoutée à `requirements.txt`).
+- **#5 — Parallélisme par défaut** (`optimize_runner.py --jobs 0 = auto cpu-1`).
+  Les threads BLAS/LightGBM restent épinglés à 1 et le portillon mémoire borne la
+  concurrence → discret mais bien plus rapide.
+- **#6 — Réglage ML two-phase** (`optimizer.optimize_two_phase`, opt-in via
+  `--ml-tune` / case UI). Grille externe sur les hyperparamètres d'entraînement
+  (`learning_rate`, `n_estimators`) × recherche interne sur les seuils de décision.
+  Chaque combo segmente le cache d'entraînement (coût ~linéaire). Les HP retenus
+  sont persistés dans `best_params` et réutilisés au ré-entraînement du modèle final.
+
 ### 🛡️ Optimiseur ML : portillon mémoire anti-OOM (corrige l'arrêt silencieux du bot pendant une optimisation multi-jobs)
 
 **Problème.** Lancer une optimisation ML sur plusieurs stratégies × timeframes

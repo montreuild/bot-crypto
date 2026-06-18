@@ -13,6 +13,7 @@ restent valides.
 import logging
 import importlib
 import itertools
+import math
 import random
 import threading
 import time
@@ -76,6 +77,61 @@ GLOBAL_TRADING_PARAMS = {
     "paper_mode", "max_positions", "taker_fee", "maker_fee",
 }
 
+# Fraction de la fenêtre réservée à l'OOS dans le découpage des jobs (cf.
+# auto_optimizer : split ≈ 65 % IS / 35 % OOS). Sert à dimensionner le nombre
+# minimal de bougies à charger pour qu'une stratégie ne soit PAS ignorée.
+_OOS_FRACTION = 0.35
+
+
+def required_total_bars(strategy_name: str, params: dict = None) -> int:
+    """Bougies TOTALES nécessaires pour qu'un job (stratégie) ne soit pas ignoré.
+
+    La tranche OOS (~35 %) doit contenir au moins ``min_bars_required`` bougies
+    (mêmes conditions que le skip dans ``auto_optimizer``). Renvoie donc
+    ``ceil(min_bars_required / 0.35)``. Fallback conservateur si l'import échoue.
+    """
+    try:
+        mod = importlib.import_module(f"app.strategies.{strategy_name}")
+        min_bars = mod.Strategy().min_bars_required(params)
+    except Exception:
+        min_bars = 220
+    return math.ceil(min_bars / _OOS_FRACTION)
+
+
+def auto_fetch_limit(timeframe: str, strategies: List[str],
+                     headroom: float = 1.15) -> int:
+    """Nombre de bougies à charger pour un TF, dérivé des besoins des stratégies.
+
+    Corrige le décalage historique (RECOMMENDED_LIMIT[1h]=1500 < 2229 requis par
+    les omnibus ML → jobs silencieusement ignorés). On prend le max entre la base
+    recommandée et le plus gros besoin parmi les stratégies sélectionnées, avec
+    une marge (``headroom``) pour que l'OOS dispose d'assez de bougies/trades.
+    """
+    base = RECOMMENDED_LIMIT.get(timeframe, 1000)
+    needed = max((required_total_bars(s) for s in strategies), default=0)
+    return int(max(base, math.ceil(needed * headroom)))
+
+
+# ── Hyperparamètres d'ENTRAÎNEMENT ML explorables (#6, two-phase) ────────────
+# Petite grille externe : chaque combinaison segmente le cache d'entraînement
+# (clé = hyperparamètres d'entraînement), donc le coût croît ~linéairement avec
+# le nombre de combos. On reste volontairement frugal (4 combos par défaut).
+# Intersection avec les ``fixed_params`` d'une stratégie : seules les clés
+# qu'elle déclare effectivement figées comme hyperparamètres d'entraînement
+# sont explorées (les autres seraient ignorées par ``_train`` → combos gâchés).
+ML_HP_SPACE: Dict[str, List] = {
+    "learning_rate": [0.03, 0.05],
+    "n_estimators":  [300, 500],
+}
+
+
+def ml_hp_space_for(strategy_name: str) -> Dict[str, List]:
+    """Sous-espace d'hyperparamètres d'entraînement réellement réglables pour
+    une stratégie (intersection de ``ML_HP_SPACE`` avec ses ``fixed_params``).
+    Vide si la stratégie n'expose aucun de ces hyperparamètres → phase unique."""
+    fixed = FIXED_PARAMS.get(strategy_name, {})
+    return {k: v for k, v in ML_HP_SPACE.items() if k in fixed}
+
 
 # ── StrategyOptimizer — classe principale ──
 class StrategyOptimizer:
@@ -100,6 +156,20 @@ class StrategyOptimizer:
         self.results: List[Dict] = []
         self.df_full = df_full if df_full is not None else pl.concat([df_is, df_oos])
         self.split   = split   if split   is not None else len(df_is)
+        # Hyperparamètres d'entraînement ML figés pour la passe courante (#6,
+        # two-phase) — fusionnés dans chaque jeu de params échantillonné via
+        # ``_with_hp``. None = phase unique (comportement historique inchangé).
+        self._fixed_ml_hp: Optional[Dict] = None
+
+    def _with_hp(self, params: dict) -> dict:
+        """Fusionne les hyperparamètres d'entraînement ML figés (``_fixed_ml_hp``)
+        dans un jeu de params échantillonné. Injecté au niveau du sampler pour
+        que les HP atteignent à la fois ``_eval`` (in-process) et les workers
+        (``_eval_worker`` reçoit ``params`` tel quel), et soient persistés dans
+        ``best_params``. No-op quand ``_fixed_ml_hp`` est None."""
+        if not self._fixed_ml_hp:
+            return params
+        return {**params, **self._fixed_ml_hp}
 
     def _load_strategy(self):
         mod = importlib.import_module(f"app.strategies.{self.strategy_name}")
@@ -163,7 +233,7 @@ class StrategyOptimizer:
         no_improve = 0
 
         for i in range(n_trials):
-            params = {k: random.choice(v) for k, v in self.param_space.items()}
+            params = self._with_hp({k: random.choice(v) for k, v in self.param_space.items()})
             r = self._eval(params)
             score = self._penalized_score(r)
             r["final_score"] = score
@@ -190,15 +260,159 @@ class StrategyOptimizer:
 
     def bayesian_search(self, n_trials: int = 40, n_jobs: int = 1,
                         early_stop_patience: int = 0) -> dict:
+        """Recherche bayésienne. Utilise Optuna (TPE, recherche informée par un
+        modèle de substitution) si la librairie est installée ; sinon retombe sur
+        l'heuristique historique (exploration aléatoire + raffinement local)."""
         if not self.param_space:
             return {"error": f"Aucun espace de params pour {self.strategy_name}"}
+        try:
+            import optuna  # noqa: F401
+        except Exception:
+            logger.info("[Bayesian] Optuna absent — repli sur random+perturbation. "
+                        "Installez optuna pour une vraie recherche TPE.")
+            return self._bayesian_search_legacy(n_trials, n_jobs, early_stop_patience)
+        return self._bayesian_search_optuna(n_trials, n_jobs, early_stop_patience)
 
+    # ── Optuna (TPE) : vraie recherche informée ───────────────────────────────
+    def _params_from_trial(self, trial) -> dict:
+        """Construit un jeu de params depuis un trial Optuna. Chaque paramètre est
+        encodé par l'INDICE de son option (catégoriel hashable) — robuste quel que
+        soit le type des valeurs (float/int/bool/list)."""
+        p = {}
+        for k, opts in self.param_space.items():
+            idx = trial.suggest_categorical(k, list(range(len(opts))))
+            p[k] = opts[idx]
+        return self._with_hp(p)
+
+    def _bayesian_search_optuna(self, n_trials: int, n_jobs: int,
+                                early_stop_patience: int) -> dict:
+        import optuna
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        sampler = optuna.samplers.TPESampler(
+            n_startup_trials=max(8, n_trials // 3), seed=0,
+        )
+        study = optuna.create_study(direction="maximize", sampler=sampler)
+
+        safe_jobs = self._safe_worker_count(n_jobs)
+        if safe_jobs <= 1:
+            self._optuna_sequential(study, n_trials, early_stop_patience)
+        else:
+            self._optuna_parallel(study, n_trials, safe_jobs, early_stop_patience)
+        return self._best_result()
+
+    def _optuna_sequential(self, study, n_trials: int, early_stop_patience: int) -> None:
+        """Ask/tell séquentiel in-process — garde le cache d'entraînement chaud
+        (même process) d'un trial à l'autre."""
+        best_score = -999.0
+        no_improve = 0
+        for i in range(n_trials):
+            trial  = study.ask()
+            params = self._params_from_trial(trial)
+            r      = self._eval(params)
+            score  = self._penalized_score(r)
+            r["final_score"] = score
+            self.results.append(r)
+            study.tell(trial, score if math.isfinite(score) else -999.0)
+
+            if score > best_score:
+                best_score = score
+                no_improve = 0
+            else:
+                no_improve += 1
+
+            if self.progress_callback:
+                self.progress_callback(i + 1, n_trials, best_score, {
+                    "oos_pnl":     r["oos_pnl"],
+                    "oos_sharpe":  r["oos_sharpe"],
+                    "final_score": score,
+                    "overfit":     r.get("overfit", 1.0),
+                })
+            if early_stop_patience > 0 and no_improve >= early_stop_patience:
+                logger.info(f"[Bayesian/TPE] Early stop à trial {i+1}/{n_trials}")
+                break
+
+    def _optuna_parallel(self, study, n_trials: int, safe_jobs: int,
+                         early_stop_patience: int) -> None:
+        """Ask/tell par lots sur un ProcessPool **persistant** (un seul pool pour
+        toute la recherche → workers et cache de features/entraînement réutilisés
+        entre les lots). Repli séquentiel si le pool casse (OOM worker)."""
+        import concurrent.futures
+        try:
+            from concurrent.futures.process import BrokenProcessPool
+        except ImportError:
+            BrokenProcessPool = Exception  # type: ignore
+        import multiprocessing as _mp
+
+        cfg_yaml, df_is_ipc, df_oos_ipc, init_args = self._serialize_pool_inputs()
+        ctx = _mp.get_context("spawn")
+        done = 0
+        best_score = -999.0
+        no_improve = 0
+        _worker_timeout = 300
+
+        try:
+            with concurrent.futures.ProcessPoolExecutor(
+                    max_workers=safe_jobs, mp_context=ctx,
+                    initializer=_worker_init, initargs=init_args) as exe:
+                while done < n_trials:
+                    if self._cancel_event is not None and self._cancel_event.is_set():
+                        raise InterruptedError("annulé")
+                    k = min(safe_jobs, n_trials - done)
+                    trials = [study.ask() for _ in range(k)]
+                    params = [self._params_from_trial(t) for t in trials]
+                    args   = [self._worker_args(p, cfg_yaml, df_is_ipc, df_oos_ipc)
+                              for p in params]
+                    futs   = {exe.submit(_eval_worker, a): i for i, a in enumerate(args)}
+                    for fut in concurrent.futures.as_completed(futs):
+                        i = futs[fut]
+                        try:
+                            r = fut.result(timeout=_worker_timeout)
+                        except Exception as _e:
+                            logger.warning(f"[Bayesian/TPE] worker KO : {_e}")
+                            study.tell(trials[i], -999.0)
+                            continue
+                        if "error" in r:
+                            logger.warning("[Bayesian/TPE] worker erreur : %s", r["error"])
+                            study.tell(trials[i], -999.0)
+                            continue
+                        score = self._penalized_score(r)
+                        r["final_score"] = score
+                        self.results.append(r)
+                        study.tell(trials[i], score if math.isfinite(score) else -999.0)
+                        if score > best_score:
+                            best_score = score
+                            no_improve = 0
+                        else:
+                            no_improve += 1
+                        if self.progress_callback:
+                            self.progress_callback(len(self.results), n_trials, best_score, {
+                                "oos_pnl":     r["oos_pnl"],
+                                "oos_sharpe":  r["oos_sharpe"],
+                                "final_score": score,
+                                "overfit":     r.get("overfit", 1.0),
+                            })
+                    done += k
+                    if early_stop_patience > 0 and no_improve >= early_stop_patience:
+                        logger.info(f"[Bayesian/TPE] Early stop à {done}/{n_trials}")
+                        break
+        except BrokenProcessPool as _bp:
+            logger.error("[Bayesian/TPE] pool brisé (OOM worker ?) — repli séquentiel "
+                         "pour les trials restants : %s", _bp)
+            self._optuna_sequential(study, n_trials - len(self.results),
+                                    early_stop_patience)
+
+    def _bayesian_search_legacy(self, n_trials: int = 40, n_jobs: int = 1,
+                                early_stop_patience: int = 0) -> dict:
+        """Heuristique historique : exploration aléatoire (1/3) puis raffinement
+        local (perturbation ±1 cran autour du meilleur). Repli quand Optuna est
+        absent (ex. environnement de production sans la dépendance)."""
         n_explore = max(8, n_trials // 3)
         n_exploit = n_trials - n_explore
 
         # Phase exploration : random
         self._run_parallel(n_explore, n_trials, trial_offset=0,
-                           sampler=lambda: {k: random.choice(v) for k, v in self.param_space.items()},
+                           sampler=lambda: self._with_hp(
+                               {k: random.choice(v) for k, v in self.param_space.items()}),
                            n_jobs=n_jobs)
 
         # Phase exploitation : gaussian autour du meilleur
@@ -209,7 +423,7 @@ class StrategyOptimizer:
 
             for i in range(n_exploit):
                 trial_idx = n_explore + i
-                params = self._perturb(best["params"])
+                params = self._with_hp(self._perturb(best["params"]))
                 r = self._eval(params)
                 score = self._penalized_score(r)
                 r["final_score"] = score
@@ -235,10 +449,43 @@ class StrategyOptimizer:
 
         return self._best_result()
 
+    # ── Helpers ProcessPool (partagés random/bayesian) ───────────────────────
+    def _serialize_pool_inputs(self):
+        """Sérialise (une fois) cfg + DataFrames IS/OOS pour les workers spawn.
+        Retourne ``(cfg_yaml, df_is_ipc, df_oos_ipc, init_args)``."""
+        import yaml as _yaml
+        _buf_is = io.BytesIO();  self.df_is.write_ipc(_buf_is);   df_is_ipc  = _buf_is.getvalue()
+        _buf_oos = io.BytesIO(); self.df_oos.write_ipc(_buf_oos); df_oos_ipc = _buf_oos.getvalue()
+        cfg_yaml = _yaml.dump(self.cfg)
+        init_args = (self.strategy_name, cfg_yaml,
+                     df_is_ipc, df_oos_ipc, self.symbol, self.timeframe)
+        return cfg_yaml, df_is_ipc, df_oos_ipc, init_args
+
+    def _worker_args(self, params: dict, cfg_yaml: str,
+                     df_is_ipc: bytes, df_oos_ipc: bytes) -> tuple:
+        return (self.strategy_name, cfg_yaml, df_is_ipc, df_oos_ipc,
+                self.symbol, params, self.timeframe)
+
+    def _safe_worker_count(self, n_jobs: int) -> int:
+        """Plafonne le nombre de workers : cpu-1 puis cap mémoire anti-OOM."""
+        if n_jobs <= 1:
+            return 1
+        _cpu = os.cpu_count() or 1
+        safe = max(1, min(n_jobs, max(1, _cpu - 1)))
+        # Estimation prudente ~5× le payload IPC + 256 Mo (features + LightGBM).
+        try:
+            _buf_is = io.BytesIO();  self.df_is.write_ipc(_buf_is)
+            _buf_oos = io.BytesIO(); self.df_oos.write_ipc(_buf_oos)
+            per_worker = int((_buf_is.tell() + _buf_oos.tell()) * 5) + 256 * 1024 * 1024
+            safe = _mem_aware_max_workers(safe, per_worker)
+        except Exception:
+            pass
+        return safe
+
     def _run_parallel(self, n: int, n_total: int, trial_offset: int = 0,
                       sampler=None, n_jobs: int = 1):
         if sampler is None:
-            sampler = lambda: {k: random.choice(v) for k, v in self.param_space.items()}
+            sampler = lambda: self._with_hp({k: random.choice(v) for k, v in self.param_space.items()})
 
         if n_jobs <= 1:
             best_so_far = -999
@@ -260,31 +507,22 @@ class StrategyOptimizer:
             # ProcessPoolExecutor pour parallélisme CPU réel (contourne le GIL)
             import multiprocessing as _mp
             import concurrent.futures
-            import yaml as _yaml
 
             param_list = [sampler() for _ in range(n)]
             best_so_far = -999
             done_count  = 0
 
             # Sérialisation des DataFrames via IPC (efficace, évite copie mémoire)
-            _buf_is = io.BytesIO(); self.df_is.write_ipc(_buf_is);  df_is_ipc  = _buf_is.getvalue()
-            _buf_oos = io.BytesIO(); self.df_oos.write_ipc(_buf_oos); df_oos_ipc = _buf_oos.getvalue()
-            cfg_yaml = _yaml.dump(self.cfg)
+            cfg_yaml, df_is_ipc, df_oos_ipc, _init_args = self._serialize_pool_inputs()
 
             worker_args = [
-                (self.strategy_name, cfg_yaml, df_is_ipc, df_oos_ipc, self.symbol, p, self.timeframe)
+                self._worker_args(p, cfg_yaml, df_is_ipc, df_oos_ipc)
                 for p in param_list
             ]
 
-            # spawn : évite les problèmes de fork avec les threads FastAPI
-            # Plafonnement à cpu_count-1 pour laisser un cœur au process principal
-            import os as _os
-            _cpu = _os.cpu_count() or 1
-            _safe_jobs = max(1, min(n_jobs, max(1, _cpu - 1)))
-            # Cap mémoire : chaque worker duplique IS+OOS (IPC) et reconstruit les
-            # features lourdes + LightGBM. Estimation prudente ~5× le payload IPC.
-            _per_worker = int((len(df_is_ipc) + len(df_oos_ipc)) * 5) + 256 * 1024 * 1024
-            _safe_jobs = _mem_aware_max_workers(_safe_jobs, _per_worker)
+            # spawn : évite les problèmes de fork avec les threads FastAPI ;
+            # plafonnement cpu-1 puis cap mémoire anti-OOM.
+            _safe_jobs = self._safe_worker_count(n_jobs)
             _worker_timeout = 300  # 5 min max par évaluation
             ctx = _mp.get_context("spawn")
             try:
@@ -407,7 +645,7 @@ class StrategyOptimizer:
         logger.info(f"[Optimizer] Grid search : {n_total} combinaisons")
 
         for i, combo in enumerate(combos):
-            params = dict(zip(keys, combo))
+            params = self._with_hp(dict(zip(keys, combo)))
             r = self._eval(params)
             score = self._penalized_score(r)
             r["final_score"] = score
@@ -466,3 +704,65 @@ class StrategyOptimizer:
             "n_trials":       len(self.results),
             "top5":           top5,
         }
+
+    # ── Dispatch & two-phase ML (#6) ──────────────────────────────────────────
+    def _dispatch(self, method: str, n_trials: int, n_jobs: int,
+                  early_stop_patience: int = 0) -> dict:
+        """Lance une recherche selon la méthode demandée (phase unique)."""
+        if method == "grid":
+            return self.grid_search()
+        if method == "bayesian":
+            return self.bayesian_search(n_trials, n_jobs=n_jobs,
+                                        early_stop_patience=early_stop_patience)
+        return self.random_search(n_trials, n_jobs=n_jobs,
+                                  early_stop_patience=early_stop_patience)
+
+    def optimize_two_phase(self, method: str, n_trials: int, n_jobs: int,
+                           ml_hp_space: Dict[str, List],
+                           early_stop_patience: int = 0) -> dict:
+        """Optimisation ML en deux phases (#6).
+
+        Phase externe : petite **grille** sur les hyperparamètres d'entraînement
+        (``ml_hp_space``). Phase interne : recherche ``method`` sur les seuils de
+        décision (``param_space``), avec les HP figés pour la combinaison
+        courante. Les HP figés sont injectés dans chaque jeu de params
+        (``_with_hp``) → le cache d'entraînement reste chaud *au sein* d'une
+        combinaison (clé de cache constante), et chaque combinaison repaie ses
+        propres réentraînements (coût ~linéaire avec le nombre de combos).
+
+        Sans HP réglables (``ml_hp_space`` vide), retombe sur la phase unique.
+        Retourne le meilleur résultat (best_oos_score) parmi les combinaisons ;
+        ``best_params`` y inclut les HP retenus (donc persistés et réutilisés au
+        ré-entraînement du modèle final).
+        """
+        keys = list(ml_hp_space.keys())
+        if not keys:
+            return self._dispatch(method, n_trials, n_jobs, early_stop_patience)
+
+        combos = list(itertools.product(*[ml_hp_space[k] for k in keys]))
+        logger.info("[Optimizer] Two-phase ML %s : %d combo(s) HP × recherche %s",
+                    self.strategy_name, len(combos), method)
+
+        candidates: List[dict] = []
+        for combo in combos:
+            hp = dict(zip(keys, combo))
+            self._fixed_ml_hp = hp
+            self.results = []  # isole les trials de cette combinaison
+            try:
+                res = self._dispatch(method, n_trials, n_jobs, early_stop_patience)
+            except InterruptedError:
+                self._fixed_ml_hp = None
+                raise
+            if res.get("best_params"):
+                res = dict(res)
+                res["ml_hp"] = hp
+                candidates.append(res)
+            logger.info("[Optimizer]   HP=%s → OOS=%.4f", hp,
+                        res.get("best_oos_score", float("nan")))
+        self._fixed_ml_hp = None
+
+        if not candidates:
+            return {"error": "two-phase : aucun trial exploitable", "failed": True}
+        best = max(candidates, key=lambda r: r.get("best_oos_score", -999))
+        best["n_hp_combos"] = len(combos)
+        return best

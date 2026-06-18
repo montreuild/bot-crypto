@@ -169,11 +169,16 @@ def parse_args():
                    choices=["bayesian", "random", "grid"], help="Méthode de recherche")
     p.add_argument("--trials", type=int, default=40, help="Trials par (stratégie, TF)")
     p.add_argument("--limit", type=int, default=0,
-                   help="Bougies à charger par TF (0 = RECOMMENDED_LIMIT)")
-    p.add_argument("--jobs", type=int, default=1,
-                   help="Threads de calcul par trial (défaut 1, discret)")
+                   help="Bougies à charger par TF (0 = auto : max(RECOMMENDED_LIMIT, "
+                        "besoin réel des stratégies))")
+    p.add_argument("--jobs", type=int, default=0,
+                   help="Workers parallèles par stratégie (0 = auto : cpu-1). "
+                        "1 = séquentiel discret.")
     p.add_argument("--apply", action="store_true",
                    help="Applique les paramètres s'ils battent le baseline (sinon: sauvegarde seule)")
+    p.add_argument("--ml-tune", action="store_true",
+                   help="Stratégies ML : optimise aussi les hyperparamètres "
+                        "d'entraînement (two-phase, plus lent).")
     ml_group = p.add_mutually_exclusive_group()
     ml_group.add_argument("--no-ml-only", action="store_true",
                           help="N'optimise que les jumeaux suffixés _no_ml")
@@ -192,7 +197,7 @@ def main():
     from app.core.exchange import create_exchange
     from app.core.candle_store import get_store
     from app.engine.auto_optimizer import AutoOptimizer
-    from app.engine.optimizer import PARAM_SPACES, RECOMMENDED_LIMIT
+    from app.engine.optimizer import PARAM_SPACES, auto_fetch_limit
 
     cfg = load_config(args.config)
     setup_logging(cfg)
@@ -215,16 +220,23 @@ def main():
 
     _lower_priority()
 
+    # Workers : 0 = auto (cpu-1), sinon valeur demandée plafonnée à cpu-1.
+    _cpu = os.cpu_count() or 1
+    n_jobs = max(1, _cpu - 1) if args.jobs <= 0 else min(args.jobs, max(1, _cpu - 1))
+
     # Chargement des données par TF (mémoïsé sur disque par le CandleStore).
+    # Limite auto : dérivée du besoin réel des stratégies sélectionnées, pour
+    # qu'aucune ne soit silencieusement ignorée faute de bougies (cf. #2).
     exchange = create_exchange(cfg)
     store = get_store()
     df_map = {}
     for tf in tf_list:
-        fetch_limit = args.limit if args.limit > 0 else RECOMMENDED_LIMIT.get(tf, 1000)
+        fetch_limit = args.limit if args.limit > 0 else auto_fetch_limit(tf, strats)
         df = store.fetch(exchange, args.symbol, tf, total=fetch_limit, prefer_cache=True)
         if df is not None and len(df) > 0:
             df_map[tf] = df
-            print(f"  Données {args.symbol}/{tf} : {len(df)} bougies")
+            print(f"  Données {args.symbol}/{tf} : {len(df)} bougies "
+                  f"(demandées : {fetch_limit})")
         else:
             print(f"  ⚠ {args.symbol}/{tf} : aucune donnée — TF ignoré")
     if not df_map:
@@ -233,13 +245,14 @@ def main():
 
     print(f"\n  Stratégies ({len(strats)}) : {', '.join(strats)}")
     print(f"  Timeframes : {', '.join(df_map.keys())}")
-    print(f"  Méthode : {args.method} | trials : {args.trials} | jobs : {args.jobs} "
-          f"| apply : {args.apply}\n")
+    print(f"  Méthode : {args.method} | trials : {args.trials} | jobs : {n_jobs} "
+          f"| apply : {args.apply} | ml-tune : {args.ml_tune}\n")
 
     opt = AutoOptimizer(cfg, n_trials=args.trials, method=args.method,
-                        config_path=args.config, n_jobs=max(1, args.jobs))
+                        config_path=args.config, n_jobs=n_jobs,
+                        ml_tune_hp=args.ml_tune)
 
-    counters = {"done": 0, "error": 0, "applied": 0}
+    counters = {"done": 0, "error": 0, "applied": 0, "skipped": 0}
 
     def _report(job_id, job):
         status = job.get("status")
@@ -251,6 +264,9 @@ def main():
             print(f"  ✓ {job_id:55} OOS={res.get('best_oos_score', 0):+.4f} "
                   f"PnL={res.get('best_oos_pnl', 0):+.2f} "
                   f"{'[appliqué]' if job.get('applied') else '[sauvegardé]'}")
+        elif status == "skipped":
+            counters["skipped"] += 1
+            print(f"  ⊘ {job_id:55} ignoré : {str(job.get('error'))[:60]}")
         else:
             counters["error"] += 1
             print(f"  ✗ {job_id:55} {status} : {str(job.get('error'))[:60]}")
@@ -264,7 +280,8 @@ def main():
 
     elapsed = time.time() - t0
     print(f"\n  Terminé en {elapsed:.0f}s — {counters['done']} OK "
-          f"({counters['applied']} appliqués), {counters['error']} échecs.")
+          f"({counters['applied']} appliqués), {counters['skipped']} ignorés, "
+          f"{counters['error']} échecs.")
     return 0
 
 
