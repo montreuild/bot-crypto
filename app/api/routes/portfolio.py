@@ -154,6 +154,8 @@ def get_portfolio():
         "open_positions":    st.get("positions", []),
         "allocation":        st.get("capital_allocation", []),
         "shadow_allocation": st.get("shadow_allocation", {}),
+        "continuous_allocation": bool(getattr(getattr(tr, "allocator", None),
+                                              "continuous_allocation", False)),
         "lifecycle":         st.get("lifecycle", {}),
         "bots":              st.get("bots", []),
         "risk": {

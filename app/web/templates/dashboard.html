@@ -213,7 +213,7 @@
 
   <!-- ── Allocation par slot ── -->
   <div>
-    <div class="sec-hdr"><h2>Allocation par slot</h2><a href="/slots" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Gérer les slots →</a></div>
+    <div class="sec-hdr"><h2>Allocation par slot</h2><a href="/bots" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Gérer les bots →</a></div>
     <div id="alloc-grid" class="alloc-grid"><div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div></div>
   </div>
 
@@ -236,7 +236,7 @@
   </div>
 
   <div>
-    <div class="sec-hdr"><h2>Performance par stratégie</h2><a href="/slots" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Détail par slot →</a></div>
+    <div class="sec-hdr"><h2>Performance par stratégie</h2><a href="/bots" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Détail par bot →</a></div>
     <div class="table-card"><div class="tscroll"><table>
       <thead><tr>
         <th>Stratégie</th><th class="r">Trades</th><th class="r">Win Rate</th>
@@ -567,7 +567,7 @@ function renderCapitalAllocation(slots, slotStates){
     const fillClr=isOff?'var(--dim)':isPaused?'var(--red)':usedPct>80?'var(--amber)':'var(--cyan)';
     const slotLabel=s.strategy.charAt(0).toUpperCase()+s.strategy.slice(1)+' '+s.tf;
     const pnlStr=s.weekly_pnl!=null?((s.weekly_pnl>=0?'+':'')+s.weekly_pnl.toFixed(2)+' 7j'):'';
-    return`<div class="alloc-card${isPaused?' paused':''}${isOff?' disabled':''}" onclick="window.location.href='/slots'" title="Cliquez pour gérer ce slot">
+    return`<div class="alloc-card${isPaused?' paused':''}${isOff?' disabled':''}" onclick="window.location.href='/bots'" title="Cliquez pour gérer ce bot">
       <div class="alloc-slot">${escHtml(slotLabel)}${isOff?' <span style="color:var(--dim);font-size:.65rem">OFF</span>':''}</div>
       <div class="alloc-meta">Budget: <strong style="color:var(--text)">${s.budget_pct??'—'}%</strong> · ${s.budget_usdc??'—'} USDC${pnlStr?` · <span class="${s.weekly_pnl>=0?'c-green':'c-red'}">${pnlStr}</span>`:''}${s.weekly_trades?' · '+s.weekly_trades+'T':''}</div>
       <div class="alloc-track"><div class="alloc-fill" style="width:${Math.min(usedPct,100)}%;background:${fillClr}"></div></div>

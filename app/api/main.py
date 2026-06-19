@@ -183,9 +183,11 @@ def audit_page(request: Request):
 def trades_page(request: Request):
     return _tpl("trades.html", request, {"active_page": "trades"})
 
-@app.get("/slots", response_class=HTMLResponse)
-def slots_page(request: Request):
-    return _tpl("slots.html", request, {"active_page": "slots"})
+@app.get("/slots")
+def slots_page():
+    # Fusionnée dans « Mes Bots » : on redirige les anciens liens/favoris.
+    from starlette.responses import RedirectResponse
+    return RedirectResponse(url="/bots", status_code=307)
 
 @app.get("/replay", response_class=HTMLResponse)
 def replay_page(request: Request):
