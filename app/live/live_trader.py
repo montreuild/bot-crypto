@@ -963,6 +963,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                     rec = oos.get(key, {})
                     contract = rec.get("contract", {}) or {}
                     sim = rec.get("sim", {}) or {}
+                    edge = rec.get("edge", {}) or {}
                     with session_scope(self.SessionLocal) as sess:
                         stats = get_slot_live_stats(sess, name, tf, days=days)
                     sb = self.allocator._slots.get(key)
@@ -972,9 +973,13 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                     slots_data[key] = {
                         "budget_pct":          sb.budget_pct if sb else 0.0,
                         "live_trades":         stats["n_trades"],
-                        "verdict":             contract.get("in_band"),
+                        "live_in_band":        contract.get("in_band"),
                         "live_avg_return_pct": stats["avg_return_pct"],
                         "score":               score,
+                        # Promotion par edge (cf. CONCEPTION_PROMOTION_PAR_EDGE).
+                        "edge_ci_low":         edge.get("ci_low_pct"),
+                        "edge_n":              edge.get("n"),
+                        "worst_trade_pct":     edge.get("worst_trade_pct"),
                     }
             self._lifecycle_snapshot = self._lifecycle.evaluate(slots_data)
             # Allocation continue : appliquée si activée, sinon calculée en shadow.
