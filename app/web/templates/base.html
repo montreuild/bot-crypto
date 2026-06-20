@@ -244,6 +244,19 @@ a:focus-visible,.sb-link:focus-visible,.toggle input:focus-visible+.toggle-slide
 .help-tip:hover{background:var(--cyan-dim);color:var(--cyan);border-color:rgba(34,211,238,.3);}
 .help-tip::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border-hi);color:var(--text);padding:6px 10px;border-radius:var(--r-sm);font-size:.68rem;font-weight:400;white-space:normal;width:max-content;max-width:240px;line-height:1.5;box-shadow:0 4px 12px rgba(0,0,0,.35);pointer-events:none;opacity:0;transition:opacity .15s;z-index:100;}
 .help-tip:hover::after{opacity:1;}
+/* ── Panneau d'aide repliable (partagé : bots / dashboard / trades…) ── */
+details.help{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
+details.help>summary{cursor:pointer;padding:11px 16px;font-size:.78rem;font-weight:700;color:var(--cyan);list-style:none;display:flex;align-items:center;gap:8px;}
+details.help>summary::-webkit-details-marker{display:none;}
+details.help>summary::before{content:'▸';transition:transform .15s;color:var(--dim);}
+details.help[open]>summary::before{transform:rotate(90deg);}
+.help-body{padding:0 16px 14px;font-size:.74rem;color:var(--muted);line-height:1.6;}
+.help-body b{color:var(--text);}
+.help-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px;}
+@media(max-width:760px){.help-grid{grid-template-columns:1fr 1fr;}}
+.help-state{padding:8px 10px;border-radius:var(--r-sm);background:rgba(255,255,255,.02);border:1px solid var(--border);}
+.help-state .hs-name{font-weight:700;font-size:.72rem;margin-bottom:3px;}
+.help-state .hs-desc{font-size:.66rem;color:var(--dim);line-height:1.45;}
 /* ── Clear filters button ── */
 .btn-clear-filters{font-size:.68rem;color:var(--muted);background:transparent;border:1px solid var(--border);padding:4px 10px;border-radius:var(--r-sm);cursor:pointer;transition:all .15s;}
 .btn-clear-filters:hover{color:var(--text);border-color:var(--border-hi);background:rgba(255,255,255,.03);}

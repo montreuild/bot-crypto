@@ -134,6 +134,22 @@
 <div id="content" class="grid-bg fade-in">
   <div id="margin-warn" style="display:none;background:var(--red-dim);border:1px solid rgba(251,113,133,.25);border-radius:var(--r);padding:10px 16px;font-size:.78rem;color:var(--red)"></div>
 
+  <details class="help">
+    <summary>Comment lire cette page ?</summary>
+    <div class="help-body">
+      Le <b>Dashboard</b> est la vue <b>temps réel</b> du trading : santé du portefeuille, risque,
+      positions ouvertes et signaux à la seconde. Pour piloter l'<b>équipe de bots</b> (états, budgets,
+      promotion), va sur <a href="/bots" style="color:var(--cyan)">Mes Bots</a> ; pour l'historique
+      détaillé, sur <a href="/trades" style="color:var(--cyan)">Trades</a>.
+      <div class="help-grid">
+        <div class="help-state"><div class="hs-name c-amber">Risque</div><div class="hs-desc">Le <b>DD journalier/global</b> déclenche un HALT près de 100 % de la jauge ; le <b>Volatility Brake</b> réduit les tailles ×0,5.</div></div>
+        <div class="help-state"><div class="hs-name c-cyan">Allocation par slot</div><div class="hs-desc">Un <b>slot/bot</b> = stratégie × timeframe. La barre = budget engagé en positions.</div></div>
+        <div class="help-state"><div class="hs-name c-green">Profit Factor</div><div class="hs-desc">Somme des gains ÷ somme des pertes. &gt; 1 = rentable.</div></div>
+        <div class="help-state"><div class="hs-name c-purple">Journal des signaux</div><div class="hs-desc">Chaque signal est pris si son <b>score ≥ seuil</b>, sinon rejeté (avec la raison).</div></div>
+      </div>
+    </div>
+  </details>
+
   <div>
     <div class="sec-hdr"><h2>Portefeuille</h2></div>
     <div class="hero-grid">
@@ -162,7 +178,7 @@
   <div>
     <div class="meta-grid">
       <div class="meta-card"><div class="meta-lbl">Trades fermés</div><div class="meta-val c-cyan" id="s-trades">—</div><div class="meta-sub">total</div></div>
-      <div class="meta-card"><div class="meta-lbl">Profit Factor</div><div class="meta-val" id="s-pf">—</div><div class="meta-sub">gains / pertes</div></div>
+      <div class="meta-card"><div class="meta-lbl">Profit Factor <span class="help-tip" data-tip="Somme des gains ÷ somme des pertes. > 1 = rentable ; < 1 = perdant.">?</span></div><div class="meta-val" id="s-pf">—</div><div class="meta-sub">gains / pertes</div></div>
       <div class="meta-card"><div class="meta-lbl">Frais cumulés</div><div class="meta-val c-red" id="s-fees">—</div><div class="meta-sub">USDC</div></div>
       <div class="meta-card"><div class="meta-lbl">Meilleur trade</div><div class="meta-val c-green" id="s-best">—</div><div class="meta-sub">USDC</div></div>
       <div class="meta-card" id="margin-card" style="display:none"><div class="meta-lbl">Margin Level</div><div class="meta-val" id="s-margin-level">—</div><div class="meta-sub" id="s-margin-sub">—</div></div>
@@ -171,7 +187,7 @@
 
   <!-- ── Risk gauges ── -->
   <div id="risk-gauges-section">
-    <div class="sec-hdr"><h2>Risque</h2></div>
+    <div class="sec-hdr"><h2>Risque</h2><span class="help-tip" data-tip="Drawdown = baisse depuis le plus haut. Quand une jauge atteint sa limite, le trading se met en HALT (arrêt automatique) jusqu'à reset ou minuit UTC.">?</span></div>
     <div class="risk-gauges-grid">
       <div class="risk-gauge-card" role="region" aria-label="Drawdown journalier">
         <div class="gauge-lbl">
@@ -266,6 +282,7 @@
   <div>
     <div class="sec-hdr">
       <h2>Journal des signaux</h2>
+      <span class="help-tip" data-tip="À chaque scan, une stratégie produit un score de conviction. Le trade n'est pris que si score ≥ seuil. Les rejetés affichent la raison (seuil, budget, corrélation, risque…).">?</span>
       <label class="signal-filter"><input type="checkbox" id="sig-show-rejected" checked onchange="renderSignals()" style="accent-color:var(--cyan)"/>Voir rejetés</label>
     </div>
     <div class="table-card"><div class="tscroll"><table class="table-striped">
