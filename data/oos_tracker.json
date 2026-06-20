@@ -4,9 +4,9 @@
     "strategy": "breakout",
     "timeframe": "1h",
     "symbol": "BTC/USDC",
-    "run_date": "2026-06-20 20:45",
+    "run_date": "2026-06-20 20:49",
     "lookback_days": 45,
-    "edge_lookback_days": 100,
+    "edge_lookback_days": 365,
     "n_bars": 1330,
     "sim": {
       "total_trades": 5,
@@ -27,12 +27,12 @@
     },
     "edge": {
       "available": true,
-      "n": 8,
+      "n": 34,
       "confidence": 0.9,
-      "expectancy_pct": -0.1381,
-      "ci_low_pct": -1.3264,
-      "ci_high_pct": 1.3746,
-      "worst_trade_pct": -2.814
+      "expectancy_pct": 0.6895,
+      "ci_low_pct": -0.0171,
+      "ci_high_pct": 1.5067,
+      "worst_trade_pct": -2.943
     },
     "live": {
       "n_trades": 0,

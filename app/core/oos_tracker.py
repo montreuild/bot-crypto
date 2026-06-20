@@ -49,8 +49,9 @@ _TF_MINUTES = {
 _WARMUP_BARS = 250
 # Garde-fou : on ne demande jamais plus que ça de bougies pour un forward-test.
 _MAX_BARS = 4000
-# Plafond plus large pour le backtest d'edge (fenêtre longue, ex. 100 j).
-_MAX_EDGE_BARS = 8000
+# Plafond plus large pour le backtest d'edge (fenêtre longue, ex. 365 j :
+# ~9000 bougies en 1h). Évite de tronquer la fenêtre d'edge.
+_MAX_EDGE_BARS = 12000
 
 
 # ── Persistance ────────────────────────────────────────────────────────────

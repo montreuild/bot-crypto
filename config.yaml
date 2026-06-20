@@ -100,7 +100,7 @@ forward_test:
   enabled: true
   interval_h: 24
   lookback_days: 45
-  edge_lookback_days: 100
+  edge_lookback_days: 365
   symbol: BTC/USDC
   initial_delay_s: 300
 database:
@@ -139,7 +139,7 @@ lifecycle:
   trial_min_trades: 3
   active_min_trades: 10
   eval_min_trades: 10
-  edge_min_trades: 20
+  edge_min_trades: 15
   edge_conf: 0.9
   max_worst_trade_pct: 50.0
   fidelity_min_fills: 2
