@@ -49,6 +49,9 @@ _TF_MINUTES = {
 _WARMUP_BARS = 250
 # Garde-fou : on ne demande jamais plus que ça de bougies pour un forward-test.
 _MAX_BARS = 4000
+# Plafond plus large pour le backtest d'edge (fenêtre longue, ex. 365 j :
+# ~9000 bougies en 1h). Évite de tronquer la fenêtre d'edge.
+_MAX_EDGE_BARS = 12000
 
 
 # ── Persistance ────────────────────────────────────────────────────────────
@@ -82,10 +85,10 @@ def _save_record(slot_key: str, record: dict) -> None:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
-def _bars_for_lookback(tf: str, lookback_days: int) -> int:
+def _bars_for_lookback(tf: str, lookback_days: int, max_bars: int = _MAX_BARS) -> int:
     minutes = _TF_MINUTES.get(tf, 60)
     bars = int(math.ceil(lookback_days * 1440 / minutes)) + _WARMUP_BARS
-    return max(_WARMUP_BARS + 30, min(bars, _MAX_BARS))
+    return max(_WARMUP_BARS + 30, min(bars, max_bars))
 
 
 def _closed_trades(trades: list) -> list:
@@ -186,7 +189,7 @@ def _verdict(contract: dict, live_mean_pct):
 # ── Forward-test d'un slot ─────────────────────────────────────────────────
 def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
                        cfg: dict, fetch_ohlcv, session_factory,
-                       lookback_days: int) -> dict | None:
+                       lookback_days: int, edge_lookback_days: int = 100) -> dict | None:
     """Re-backteste un slot sur données fraîches, construit le contrat MC et
     compare aux trades réels. Retourne l'enregistrement (ou None si données
     insuffisantes)."""
@@ -248,9 +251,28 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
     contract = _mc_contract(sim_returns, n_live=len(live_returns))
     in_band, verdict = _verdict(contract, live_mean)
 
-    # ── Cône d'edge (IC de l'expectancy sur le backtest) — promotion ──
+    # ── Cône d'edge (IC de l'expectancy) — promotion ──
+    # L'edge se juge sur une **fenêtre longue** (edge_lookback_days, défaut 100 j),
+    # distincte de la fenêtre de fidélité (lookback_days, ~45 j) : une stratégie
+    # peu fréquente accumule assez de trades sur l'historique pour être
+    # significative, sans attendre des mois de live. Cf.
+    # docs/CONCEPTION_PROMOTION_PAR_EDGE.md §2.1.
     edge_conf = float((cfg.get("lifecycle", {}) or {}).get("edge_conf", 0.90))
-    edge = _edge_contract(sim_returns, conf=edge_conf)
+    edge_returns = sim_returns
+    if edge_lookback_days and edge_lookback_days > lookback_days:
+        try:
+            e_bars = _bars_for_lookback(timeframe, edge_lookback_days, max_bars=_MAX_EDGE_BARS)
+            edge_df = fetch_ohlcv(symbol, timeframe, limit=e_bars)
+            if edge_df is not None and len(edge_df) >= _WARMUP_BARS + 30:
+                e_eng = Engine()
+                e_eng.register(mod.Strategy(), silent=True)
+                e_res = Backtester(e_eng, cfg).run(edge_df, symbol, timeframe=timeframe)
+                e_trades = _per_trade_returns_pct(_closed_trades(e_res.to_dict().get("trades", [])))
+                if e_trades:
+                    edge_returns = e_trades
+        except Exception as e:
+            logger.debug(f"[ForwardTest] edge backtest {strategy}@{timeframe} KO : {e}")
+    edge = _edge_contract(edge_returns, conf=edge_conf)
 
     return {
         "slot_key":      f"{strategy}::{timeframe}",
@@ -259,6 +281,7 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
         "symbol":        symbol,
         "run_date":      datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
         "lookback_days": lookback_days,
+        "edge_lookback_days": edge_lookback_days,
         "n_bars":        len(df),
         "sim": {
             "total_trades":   d.get("total_trades", 0),
@@ -287,7 +310,7 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
 # ── Point d'entrée ─────────────────────────────────────────────────────────
 def run_forward_test(cfg: dict, fetch_ohlcv, active_per_tf: dict,
                      session_factory, symbol: str = "BTC/USDC",
-                     lookback_days: int = 45) -> dict:
+                     lookback_days: int = 45, edge_lookback_days: int = 100) -> dict:
     """Exécute le forward-test glissant sur tous les slots actifs.
 
     Parameters
@@ -316,7 +339,7 @@ def run_forward_test(cfg: dict, fetch_ohlcv, active_per_tf: dict,
             try:
                 rec = _forward_test_slot(
                     strategy, tf, symbol, cfg, fetch_ohlcv,
-                    session_factory, lookback_days,
+                    session_factory, lookback_days, edge_lookback_days,
                 )
             except Exception as e:
                 logger.error(

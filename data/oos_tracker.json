@@ -1,0 +1,48 @@
+{
+  "breakout::1h": {
+    "slot_key": "breakout::1h",
+    "strategy": "breakout",
+    "timeframe": "1h",
+    "symbol": "BTC/USDC",
+    "run_date": "2026-06-20 20:57",
+    "lookback_days": 45,
+    "edge_lookback_days": 365,
+    "n_bars": 1330,
+    "sim": {
+      "total_trades": 5,
+      "win_rate": 20.0,
+      "total_pnl": 10.1714,
+      "return_pct": 1.017,
+      "avg_return_pct": 0.6058,
+      "sharpe": 12.409,
+      "max_drawdown": -1.76
+    },
+    "monte_carlo": {
+      "runs": 200,
+      "return_p5_pct": 1.017,
+      "return_mean_pct": 1.017,
+      "return_p95_pct": 1.017,
+      "max_dd_p95_pct": 0.8,
+      "prob_profit": 100.0
+    },
+    "edge": {
+      "available": true,
+      "n": 34,
+      "confidence": 0.85,
+      "expectancy_pct": 0.6895,
+      "ci_low_pct": 0.0596,
+      "ci_high_pct": 1.3928,
+      "worst_trade_pct": -2.943
+    },
+    "live": {
+      "n_trades": 0,
+      "avg_return_pct": null
+    },
+    "contract": {
+      "available": false,
+      "live_mean_pct": null,
+      "in_band": null,
+      "verdict": "pas_assez_de_trades_reels"
+    }
+  }
+}

@@ -136,6 +136,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self._fwd_test_enabled       = bool(_ft_cfg.get("enabled", True))
         self._fwd_test_interval      = int(_ft_cfg.get("interval_h", 24)) * 3600
         self._fwd_test_lookback_days = int(_ft_cfg.get("lookback_days", 45))
+        self._fwd_test_edge_lookback = int(_ft_cfg.get("edge_lookback_days", 100))
         self._fwd_test_symbol        = _ft_cfg.get("symbol", "BTC/USDC")
         # Premier passage différé pour laisser le cache OHLCV se réchauffer.
         self._fwd_test_next_run      = time.time() + int(_ft_cfg.get("initial_delay_s", 300))
@@ -890,6 +891,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 session_factory=self.SessionLocal,
                 symbol=self._fwd_test_symbol,
                 lookback_days=self._fwd_test_lookback_days,
+                edge_lookback_days=self._fwd_test_edge_lookback,
             )
         except Exception as e:
             logger.error(f"[ForwardTest] Erreur : {e}", exc_info=True)
