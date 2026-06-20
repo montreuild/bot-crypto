@@ -390,6 +390,9 @@ function openBot(key){
     ${b.paused?`<div class="verdict bad" style="margin-top:12px">⏸ ${escHtml(b.pause_reason||'Bot en pause (circuit breaker)')}</div>`:''}
 
     <div class="d-actions">
+      <button class="btn btn-ghost btn-sm" id="btn-fwd" onclick="forceBacktest('${escHtml(b.slot_key)}')"
+        title="Re-backteste les params figés et recalcule l'edge (fenêtre longue) + la fidélité">
+        🔄 Forcer le backtest</button>
       <button class="btn ${b.manual_active?'btn-ghost':'btn-purple'} btn-sm" onclick="forceActive('${escHtml(b.slot_key)}',${b.manual_active?'false':'true'})"
         title="Outrepasser la machine à états et forcer/libérer l'activation">
         ${b.manual_active?'📌 Annuler le forçage Actif':'📌 Forcer Actif'}</button>
@@ -451,6 +454,21 @@ async function resetCB(slotKey){
   try{ const r=await apiFetch('/api/slots/'+encodeURIComponent(slotKey)+'/reset',{method:'POST'});
     if(!r.ok)throw new Error((await r.json()).detail||r.statusText); toast('✓ Pause levée pour '+slotKey); await loadAll(); openBot(slotKey);
   }catch(e){toast('Erreur : '+e.message,true);}
+}
+async function forceBacktest(slotKey){
+  const btn=document.getElementById('btn-fwd');
+  if(btn){btn.disabled=true;btn.textContent='⏳ Backtest en cours…';}
+  try{
+    const r=await apiFetch('/api/bots/'+encodeURIComponent(slotKey)+'/forward-test',{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
+    const d=await r.json();
+    const sig=d.edge&&d.edge.available&&d.edge.ci_low_pct>0;
+    let msg = sig?'✓ Backtest relancé — edge significative':'✓ Backtest relancé — edge non significative';
+    if(!d.trader_running) msg += ' (démarre le bot pour activer la transition d\'état)';
+    toast(msg);
+    await loadAll(); openBot(slotKey);
+  }catch(e){toast('Erreur : '+e.message,true);}
+  finally{if(btn){btn.disabled=false;btn.textContent='🔄 Forcer le backtest';}}
 }
 async function forceActive(slotKey,enable){
   if(enable&&!confirm('Forcer ce bot en ACTIF outrepasse la preuve d\'edge automatique. Continuer ?')) return;

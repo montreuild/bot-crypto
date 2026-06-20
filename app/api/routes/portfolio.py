@@ -195,6 +195,69 @@ def force_active(slot_key: str, enabled: bool = True):
     return {"slot_key": slot_key, "manual_active": enabled, "all": manual}
 
 
+# ── Forcer un forward-test (recalcul de l'edge) pour un bot ──────────────────
+@router.post("/api/bots/{slot_key:path}/forward-test",
+             dependencies=[Depends(verify_api_key)])
+def run_bot_forward_test(slot_key: str):
+    """Relance immédiatement le forward-test glissant d'un seul bot : re-backteste
+    ses params figés (edge sur fenêtre longue + fidélité sur fenêtre courte),
+    réécrit ``data/oos_tracker.json`` et, si le trader tourne, ré-évalue le cycle
+    de vie pour que l'état se mette à jour tout de suite."""
+    cfg = state.cfg or {}
+    strat, _, tf = slot_key.partition("::")
+    if not strat or not tf:
+        raise HTTPException(400, "slot_key attendu au format 'strategy::timeframe'")
+    ft = cfg.get("forward_test", {}) or {}
+    lookback = int(ft.get("lookback_days", 45))
+    edge_lb = int(ft.get("edge_lookback_days", 100))
+    symbol = ft.get("symbol", "BTC/USDC")
+
+    tr = _trader()
+    if tr and getattr(tr, "scanner", None):
+        fetch = tr.scanner.fetch_ohlcv
+        session_factory = tr.SessionLocal
+    else:
+        try:
+            from app.api.routes.backtest import _get_bt_exchange
+            from app.core.candle_store import get_store
+            exch = _get_bt_exchange(cfg)
+
+            def fetch(sym, timeframe, limit=500):
+                return get_store().fetch(exch, sym, timeframe, total=limit,
+                                         prefer_cache=True)
+        except Exception as e:
+            raise HTTPException(503, f"Impossible d'initialiser les données : {e}")
+        session_factory = state.SessionLocal
+
+    from app.core.oos_tracker import run_forward_test
+    try:
+        res = run_forward_test(cfg, fetch, {tf: [{"name": strat}]}, session_factory,
+                               symbol=symbol, lookback_days=lookback,
+                               edge_lookback_days=edge_lb)
+    except Exception as e:
+        logger.error(f"[bots] forward-test {slot_key} KO : {e}", exc_info=True)
+        raise HTTPException(500, f"Forward-test échoué : {e}")
+
+    rec = res.get(slot_key) or {}
+    # Ré-évalue le cycle de vie maintenant si le trader tourne (sinon l'edge est
+    # recalculée et visible, mais la transition d'état attend le trader).
+    state_changed = False
+    if tr and getattr(tr, "_lifecycle_enabled", False):
+        try:
+            tr._lifecycle_thread()
+            state_changed = True
+        except Exception as e:
+            logger.debug(f"[bots] ré-évaluation lifecycle KO : {e}")
+
+    return {
+        "slot_key": slot_key,
+        "ran": bool(rec),
+        "edge": rec.get("edge"),
+        "trader_running": bool(tr),
+        "state_reevaluated": state_changed,
+    }
+
+
 # ── Portefeuille : santé + allocation réelle/shadow + activité ───────────────
 @router.get("/api/portfolio", dependencies=[Depends(verify_api_key)])
 def get_portfolio():

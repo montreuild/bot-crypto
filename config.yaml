@@ -100,6 +100,7 @@ forward_test:
   enabled: true
   interval_h: 24
   lookback_days: 45
+  edge_lookback_days: 100
   symbol: BTC/USDC
   initial_delay_s: 300
 database:
