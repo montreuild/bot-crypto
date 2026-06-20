@@ -12,8 +12,6 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Dict, List
 
-import yaml
-
 logger = logging.getLogger(__name__)
 
 # Lock global pour protéger les écritures concurrentes dans les fichiers YAML
@@ -40,23 +38,21 @@ def _strategy_file_path(strategy_name: str, config_path: str = "config.yaml") ->
 
 
 def _load_strategy_file(strat_path: str) -> dict:
-    """Charge un fichier stratégie YAML ; retourne {} si absent ou vide."""
-    if not os.path.exists(strat_path):
-        return {}
-    try:
-        with open(strat_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        return data if isinstance(data, dict) else {}
-    except Exception as e:
-        logger.warning(f"[Optimizer] Lecture {strat_path} KO : {e}")
-        return {}
+    """Charge un fichier stratégie YAML ; retourne {} si absent ou vide.
+
+    Round-trip (ruamel) : préserve les commentaires existants pour qu'ils
+    survivent à la réécriture par :func:`_write_strategy_file`.
+    """
+    from app.core.yaml_io import load_yaml
+    data = load_yaml(strat_path, default={})
+    return data if isinstance(data, dict) else {}
 
 
 def _write_strategy_file(strat_path: str, data: dict) -> None:
-    """Écrit un fichier stratégie YAML avec un commentaire d'en-tête."""
-    os.makedirs(os.path.dirname(strat_path), exist_ok=True)
-    with open(strat_path, "w", encoding="utf-8") as f:
-        yaml.dump(data, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+    """Écrit un fichier stratégie YAML en préservant les commentaires des clés
+    non modifiées (si ``data`` a été chargé via :func:`_load_strategy_file`)."""
+    from app.core.yaml_io import dump_yaml
+    dump_yaml(strat_path, data)
 
 
 # ── Sauvegarde / application des résultats ──────────────────────────────────

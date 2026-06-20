@@ -12,31 +12,28 @@ router = APIRouter()
 
 
 def _save_yaml(updates_fn):
-    """Applique updates_fn(disk_cfg) et réécrit config.yaml (thread-safe)."""
-    import yaml as _yaml
+    """Applique updates_fn(disk_cfg) et réécrit config.yaml (thread-safe).
+
+    Round-trip (ruamel) : les commentaires de config.yaml sont préservés."""
+    from app.core.yaml_io import load_yaml, dump_yaml
     with state._config_write_lock:
-        with open("config.yaml", "r", encoding="utf-8") as f:
-            disk_cfg = _yaml.safe_load(f) or {}
+        disk_cfg = load_yaml("config.yaml", default={})
         updates_fn(disk_cfg)
-        with open("config.yaml", "w", encoding="utf-8") as f:
-            _yaml.dump(disk_cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        dump_yaml("config.yaml", disk_cfg)
 
 
 def _save_strategy_yaml(strategy_name: str, updates_fn):
     """
     Applique updates_fn(data) et réécrit strategies/{strategy_name}.yaml (thread-safe).
-    Crée le fichier s'il n'existe pas.
+    Crée le fichier s'il n'existe pas. Préserve les commentaires (round-trip).
     """
-    import yaml as _yaml
     from app.engine.optimizer import _strategy_file_path, _load_strategy_file
-    import os as _os
+    from app.core.yaml_io import dump_yaml
     strat_path = _strategy_file_path(strategy_name)
     with state._config_write_lock:
         data = _load_strategy_file(strat_path)
         updates_fn(data)
-        _os.makedirs(_os.path.dirname(strat_path), exist_ok=True)
-        with open(strat_path, "w", encoding="utf-8") as f:
-            _yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        dump_yaml(strat_path, data)
 
 
 # ── GET /api/config ────────────────────────────────────────────────────────

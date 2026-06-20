@@ -77,12 +77,27 @@ th.sort-desc::after{content:' ↓';color:var(--cyan);}
 {% block content %}
 <div id="content" class="fade-in">
 
+  <details class="help">
+    <summary>Comment lire cette page ?</summary>
+    <div class="help-body">
+      Historique complet des trades <b>fermés</b> et leurs statistiques. Un <b>slot</b> = stratégie ×
+      timeframe (ex. <code>breakout::1h</code>) — c'est le « bot » qui a pris le trade. Utilise les
+      onglets pour comparer les performances <b>par slot</b> ou <b>par paire</b>.
+      <div class="help-grid">
+        <div class="help-state"><div class="hs-name c-green">Win Rate</div><div class="hs-desc">% de trades gagnants. Attention : un WR élevé ne dit rien des montants (voir Profit Factor).</div></div>
+        <div class="help-state"><div class="hs-name c-amber">Profit Factor</div><div class="hs-desc">Gains ÷ pertes. &gt; 1 = rentable. Plus robuste que le Win Rate seul.</div></div>
+        <div class="help-state"><div class="hs-name c-cyan">Score</div><div class="hs-desc">Conviction de la stratégie au moment de l'entrée (plus haut = signal plus fort).</div></div>
+        <div class="help-state"><div class="hs-name c-purple">Raison</div><div class="hs-desc">Cause de sortie : take-profit, stop, trailing, signal inverse…</div></div>
+      </div>
+    </div>
+  </details>
+
   <!-- Stats bar -->
   <div class="stats-bar">
     <div class="stat-cell"><div class="stat-lbl">Total trades</div><div class="stat-val c-cyan" id="st-total">—</div></div>
-    <div class="stat-cell"><div class="stat-lbl">Win Rate</div><div class="stat-val" id="st-wr">—</div></div>
+    <div class="stat-cell"><div class="stat-lbl">Win Rate <span class="help-tip" data-tip="% de trades gagnants. Ne reflète pas les montants : à compléter avec le Profit Factor.">?</span></div><div class="stat-val" id="st-wr">—</div></div>
     <div class="stat-cell"><div class="stat-lbl">PnL Total</div><div class="stat-val" id="st-pnl">—</div></div>
-    <div class="stat-cell"><div class="stat-lbl">Profit Factor</div><div class="stat-val" id="st-pf">—</div></div>
+    <div class="stat-cell"><div class="stat-lbl">Profit Factor <span class="help-tip" data-tip="Somme des gains ÷ somme des pertes. > 1 = rentable.">?</span></div><div class="stat-val" id="st-pf">—</div></div>
     <div class="stat-cell"><div class="stat-lbl">Frais</div><div class="stat-val c-red" id="st-fees">—</div></div>
     <div class="stat-cell"><div class="stat-lbl">Meilleur</div><div class="stat-val c-green" id="st-best">—</div></div>
   </div>
@@ -100,10 +115,13 @@ th.sort-desc::after{content:' ↓';color:var(--cyan);}
   </div>
 
   <!-- Onglets -->
-  <div class="tabs" role="tablist">
-    <button class="tab active" onclick="switchTab('all',this)" role="tab" aria-selected="true">Tous les trades</button>
-    <button class="tab" onclick="switchTab('slot',this)" role="tab">Par slot</button>
-    <button class="tab" onclick="switchTab('symbol',this)" role="tab">Par paire</button>
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <div class="tabs" role="tablist">
+      <button class="tab active" onclick="switchTab('all',this)" role="tab" aria-selected="true">Tous les trades</button>
+      <button class="tab" onclick="switchTab('slot',this)" role="tab">Par slot</button>
+      <button class="tab" onclick="switchTab('symbol',this)" role="tab">Par paire</button>
+    </div>
+    <span style="font-size:.68rem;color:var(--dim)">« Par slot » = quel bot performe · « Par paire » = quel marché performe</span>
   </div>
 
   <!-- Panel: Tous les trades -->
