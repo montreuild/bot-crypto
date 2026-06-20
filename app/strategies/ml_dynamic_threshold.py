@@ -323,28 +323,29 @@ _SECS_TO_TF: Dict[int, str] = {
 }
 
 def _detect_tf(df: pl.DataFrame) -> str:
-    """Infère le timeframe depuis l'intervalle médian entre les barres."""
+    """Infère le timeframe depuis l'intervalle médian entre les barres.
+
+    Utilise ``dt.total_microseconds()`` (sémantique native Polars) plutôt que de
+    deviner l'unité depuis la magnitude du delta : un intervalle long en
+    microsecondes (1 h = 3,6e9 µs) dépassait l'ancien seuil « nanosecondes » et
+    était divisé par 1e9 → 1h détecté comme « custom_3s ».
+    """
     if "time" not in df.columns or len(df) < 2:
         return "unknown"
     try:
-        t_int = df["time"].tail(64).cast(pl.Int64).to_numpy()  # TF constant: tail O(1)
-        median_diff = int(np.median(np.diff(t_int)))
-        # Polars Datetime est en microsecondes ; millisecondes ou secondes sinon
-        if median_diff > 1_000_000_000:
-            secs = median_diff // 1_000_000_000   # nanosecondes
-        elif median_diff > 1_000_000:
-            secs = median_diff // 1_000_000        # microsecondes (polars défaut)
-        elif median_diff > 1_000:
-            secs = median_diff // 1_000            # millisecondes
-        else:
-            secs = median_diff                     # déjà en secondes
-        closest = min(_SECS_TO_TF, key=lambda k: abs(k - secs))
-        if abs(closest - secs) <= max(closest * 0.15, 5):
-            return _SECS_TO_TF[closest]
-        return f"custom_{secs}s"
+        med_s = float(
+            df["time"].tail(64).diff().drop_nulls()
+            .dt.total_microseconds().median()
+        ) / 1e6
     except Exception as e:
         logger.debug(f"[MLDynThreshold] infer timeframe KO : {e}")
         return "unknown"
+    if not med_s or med_s <= 0:
+        return "unknown"
+    closest = min(_SECS_TO_TF, key=lambda k: abs(k - med_s))
+    if abs(closest - med_s) <= max(closest * 0.15, 5):
+        return _SECS_TO_TF[closest]
+    return f"custom_{int(med_s)}s"
 
 
 # ═══════════════════════════════════════════════════════════════
