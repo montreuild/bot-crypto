@@ -38,6 +38,9 @@ numpy==2.0.0
 # pack pré-entraîné) — sinon DataFrame.to_pandas() lève ModuleNotFoundError.
 pyarrow==16.1.0
 pyyaml==6.0.2
+# Round-trip YAML : préserve les commentaires lors de la réécriture des
+# fichiers strategies/*.yaml et config.yaml (cf. app/core/yaml_io.py).
+ruamel.yaml==0.18.6
 
 # -- Database --------------------------------------------------------
 sqlalchemy==2.0.30
