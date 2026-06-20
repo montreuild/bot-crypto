@@ -135,6 +135,37 @@ def _mc_contract(sim_returns_pct: list, n_live: int,
     }
 
 
+def _edge_contract(sim_returns_pct: list, runs: int = 2000,
+                   conf: float = 0.90) -> dict:
+    """Cône d'**edge** : intervalle de confiance de l'expectancy sur le backtest.
+
+    Contrairement à ``_mc_contract`` (qui bootstrappe ``n_live`` tirages pour
+    comparer au live), on bootstrappe ici la moyenne sur **``n_sim``** trades —
+    tout l'échantillon backtest. La borne basse ``ci_low_pct`` répond à « l'edge
+    est-elle significativement positive ? » *sans aucun trade live* (cf.
+    docs/CONCEPTION_PROMOTION_PAR_EDGE.md §2.1). La largeur ~ ``std/√n_sim``
+    encode la taille d'échantillon ; ``worst_trade_pct`` sert de garde-fou de
+    queue (indispensable pour les 100 % winrate).
+    """
+    if not sim_returns_pct:
+        return {"available": False}
+    arr = np.asarray(sim_returns_pct, dtype=float)
+    n = int(arr.size)
+    rng = np.random.default_rng(42)
+    means = rng.choice(arr, size=(runs, n), replace=True).mean(axis=1)
+    lo = (1.0 - conf) / 2.0 * 100.0
+    hi = (1.0 + conf) / 2.0 * 100.0
+    return {
+        "available":       True,
+        "n":               n,
+        "confidence":      conf,
+        "expectancy_pct":  round(float(arr.mean()), 4),
+        "ci_low_pct":      round(float(np.percentile(means, lo)), 4),
+        "ci_high_pct":     round(float(np.percentile(means, hi)), 4),
+        "worst_trade_pct": round(float(arr.min()), 4),
+    }
+
+
 def _verdict(contract: dict, live_mean_pct):
     """Compare le rendement réel moyen par trade à la fourchette MC.
 
@@ -217,6 +248,10 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
     contract = _mc_contract(sim_returns, n_live=len(live_returns))
     in_band, verdict = _verdict(contract, live_mean)
 
+    # ── Cône d'edge (IC de l'expectancy sur le backtest) — promotion ──
+    edge_conf = float((cfg.get("lifecycle", {}) or {}).get("edge_conf", 0.90))
+    edge = _edge_contract(sim_returns, conf=edge_conf)
+
     return {
         "slot_key":      f"{strategy}::{timeframe}",
         "strategy":      strategy,
@@ -235,6 +270,7 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
             "max_drawdown":   d.get("max_drawdown", 0.0),
         },
         "monte_carlo":  mc_equity,
+        "edge":         edge,
         "live": {
             "n_trades":       len(live_returns),
             "avg_return_pct": live_mean,

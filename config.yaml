@@ -1,28 +1,26 @@
-# ──────────────────────────────────────────────────────────────────────────────
-# Configuration principale du bot
-# Les paramètres et résultats d'optimisation des stratégies sont dans strategies/
-# ──────────────────────────────────────────────────────────────────────────────
-
 exchange:
   name: binance
   api_key: ${BINANCE_API_KEY}
   api_secret: ${BINANCE_API_SECRET}
-  # Trading sur compte margin isolé assumé (emprunt auto AUTO_BORROW_REPAY).
-  # Doit rester cohérent avec trading.margin_mode : margin_mode != null active
-  # déjà le mode margin (cf. _margin_enabled). Pour revenir en spot pur sans
-  # emprunt : margin: false ET trading.margin_mode: null.
   margin: true
-# Phase 1 — venues : modèle de marché (spot/margin/perp) + exchange, attribut PAR
-# bot. Par défaut, la venue est dérivée des globales trading.margin_mode /
-# trading.max_leverage (rétro-compatibilité). Déclarez ici des venues nommées et
-# assignez-les par bot (clé "strategy::tf") ; "perp-hedge-okx" servira en Phase 5.
 venues:
-  default: null                 # null → venue dérivée des globales trading.*
+  default: null
   defs:
-    spot:            {market_type: spot,   exchange: binance, max_leverage: 1}
-    margin-isolated: {market_type: margin, exchange: binance, margin_mode: isolated, max_leverage: 3}
-    perp-hedge-okx:  {market_type: perp,   exchange: okx, hedge_mode: true, max_leverage: 5}
-  assign: {}                    # ex : {"breakout::4h": "margin-isolated"}
+    spot:
+      market_type: spot
+      exchange: binance
+      max_leverage: 1
+    margin-isolated:
+      market_type: margin
+      exchange: binance
+      margin_mode: isolated
+      max_leverage: 3
+    perp-hedge-okx:
+      market_type: perp
+      exchange: okx
+      hedge_mode: true
+      max_leverage: 5
+  assign: {}
 trading:
   capital: 1000
   paper_mode: true
@@ -52,27 +50,15 @@ trading:
   borrow_rate_daily: 0.00072
   borrow_periods_per_day: 3
   margin_mode: isolated
-  margin_level_alert: 1.5           # alerte si margin level < 1.5
-  margin_level_critical: 1.2        # HALT trading si margin level < 1.2 (liq. Binance ≈ 1.05)
-  # Stop-loss posé côté exchange en miroir du stop logiciel (live uniquement,
-  # filet de sécurité si le bot tombe). Ordre STOP_LOSS_LIMIT, limit décalé de
-  # exchange_stop_limit_offset sous/sur le stop.
+  margin_level_alert: 1.5
+  margin_level_critical: 1.2
   exchange_stop_orders: true
   exchange_stop_limit_offset: 0.005
-  # Après chaque clôture en live : remplace frais/intérêts estimés par les
-  # valeurs réelles de l'exchange (fetch_my_trades + interestHistory margin).
   reconcile_real_costs: true
-  reentry_cooldown_bars: 2          # V6.1 : 2 bougies de cooldown après une perte
+  reentry_cooldown_bars: 2
   top_strategies_per_tf: 2
 risk:
-  # Phase 1 — suppression progressive des vetos globaux. "enforce" (défaut) :
-  # max_positions/longs/shorts, anti-spam et pauses CB de slot bloquent les
-  # entrées. "shadow" : ils ne bloquent plus mais sont comptés/loggés (mesure
-  # d'écart) — honoré uniquement en paper_mode. Le kill-switch global reste actif.
   veto_mode: enforce
-  # Phase 3 — kill-switch d'équité PERSISTANT (veto catastrophe). HALT définitif
-  # et sticky si l'équité chute de ce % depuis le capital initial. Survit au
-  # redémarrage, non levable sans acquittement forcé. 0 = désactivé.
   equity_kill_switch_dd: 0.35
   consecutive_loss_limit: 3
   consecutive_pause_secs: 1800
@@ -94,11 +80,6 @@ scanner:
     min_atr_pct: 1.0
     max_atr_pct: 10.0
     top_n: 15
-
-# Dérivés accumulés « au fil de l'eau » (comme l'OHLCV) dans data/derivatives/.
-# enabled: true → OHLCVCache fetch funding/OI/long-short/taker (gratuit, sans clé)
-# et injecte funding_z / oi_change_pct / lsr_z / taker_z dans le df de scoring,
-# consommés par la stratégie funding_flow. Dégradation gracieuse si réseau KO.
 derivatives:
   enabled: false
   period: 1h
@@ -115,33 +96,22 @@ optimizer:
   method: bayesian
   n_trials: 40
   out_of_sample_ratio: 0.35
-# Forward-test glissant (Phase 0 — observationnel, zéro impact trading).
-# Re-backteste chaque jour les params figés des slots actifs sur données
-# fraîches et compare la réalisation live à une fourchette Monte-Carlo glissante.
-# Résultats persistés dans data/oos_tracker.json. Cf. app/core/oos_tracker.py.
 forward_test:
   enabled: true
-  interval_h: 24          # périodicité du re-backtest glissant
-  lookback_days: 45       # fenêtre glissante (30–60 j recommandé)
-  symbol: BTC/USDC        # paire de référence (alignée sur l'optimiseur)
-  initial_delay_s: 300    # délai avant le 1er passage (réchauffe le cache OHLCV)
+  interval_h: 24
+  lookback_days: 45
+  symbol: BTC/USDC
+  initial_delay_s: 300
 database:
   url: sqlite:///trades.db
 capital_allocator:
-  mode: equal                  # equal | manual | performance
-  max_slot_pct: 0.50
-  # Phase 1 — sizing par bot : chaque bot dimensionne sur SON budget (budget ×
-  # levier) au lieu de l'équité globale (fidélité au backtest). False = inchangé.
+  mode: equal
+  max_slot_pct: 0.5
   per_bot_sizing: false
-  # Phase 2 — allocation continue pilotée par le score (calculée en SHADOW :
-  # affichée mais pas appliquée). Réserve gardée, notionnel minimal exchange,
-  # variation de budget bornée par pas, plancher de bots dotés.
-  reserve_pct: 0.10
+  reserve_pct: 0.1
   min_notional_usdc: 10.0
   max_budget_step: 0.25
   active_floor: 2
-  # false = allocation continue calculée en shadow (affichée). true = APPLIQUÉE
-  # (graduation shadow → actif, une fois la donnée Phase 0 jugée fiable).
   continuous_allocation: false
   min_trades_for_rebalance: 3
   rebalance_interval: daily
@@ -160,28 +130,25 @@ capital_allocator:
     pullback_trend::1d: 0.0909
     derivatives_reversion::5m: 0.0909
     supertrend_macd::15m: 0.0909
-# Phase 2 — cycle de vie des bots (candidat/essai/actif/retiré). Lecture humaine
-# de la trajectoire du budget + réalisation live. Transitions lissées (plancher de
-# bots actifs + quota de rétrogradations/jour) et persistées en base.
 lifecycle:
   enabled: true
-  interval_h: 1                 # fréquence de réévaluation des états
+  interval_h: 1
   initial_delay_s: 600
-  plancher_budget_pct: 0.02     # sous ce budget (avec vécu) → retrait
-  trial_min_trades: 3           # < ce nb de trades live → essai
-  active_min_trades: 10         # ≥ ce nb + live conforme + score > 0 → actif
-  eval_min_trades: 10           # taille d'échantillon mini pour un retrait sur perf
-  min_active_bots: 2            # plancher : jamais moins de N bots non-retirés
-  max_demotions_per_day: 2      # quota anti-flush de rétrogradations/jour
-  # false = la file de re-optimisation des bots retirés est seulement exposée.
-  # true = re-optimisation auto déclenchée (ferme la boucle retrait → re-opt).
+  plancher_budget_pct: 0.02
+  trial_min_trades: 3
+  active_min_trades: 10
+  eval_min_trades: 10
+  edge_min_trades: 20
+  edge_conf: 0.9
+  max_worst_trade_pct: 50.0
+  fidelity_min_fills: 2
+  manual_active: []
+  min_active_bots: 2
+  max_demotions_per_day: 2
   auto_reopt: false
-# Phase 3 — watchdog dead-man (process SÉPARÉ : `python -m app.live.watchdog`).
-# Lit data/heartbeat.json ; si périmé > timeout_s alors que le bot se dit actif,
-# arme data/KILL_SWITCH (le bot se met en HALT à son prochain cycle/redémarrage).
 watchdog:
   check_interval_s: 60
-  timeout_s: 300                # ~5 cycles manqués (scan_interval=60s)
+  timeout_s: 300
 logging:
   level: INFO
   debug: false
@@ -193,9 +160,8 @@ web:
   port: 8000
   refresh_interval: 5
   api_key: ''
-# Phase 4 — préférences d'interface (presets de risque, mode expert opt-in).
 ui:
-  risk_preset: null             # prudent | equilibre | agressif (null = personnalisé)
+  risk_preset: null
   expert_mode: false
 notifications:
   telegram_enabled: false
@@ -218,9 +184,8 @@ notifications:
   position_loss_warn_pct: 5.0
   exchange_error_threshold: 3
   dd_warning_ratio: 0.8
-  # Phase 4 — hiérarchie 3 niveaux (info/warning/critical) + throttling + flux UI.
-  throttle_secs: 60             # anti-spam : fusionne les messages de même clé
-  feed_size: 200                # taille du fil d'activité en mémoire (miroir UI)
+  throttle_secs: 60
+  feed_size: 200
   events:
     on_trade_open: true
     on_trade_close: true

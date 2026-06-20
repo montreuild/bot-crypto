@@ -54,13 +54,25 @@
   </div>
 
   <div class="panel">
-    <div class="panel-hdr">Équipe de bots — états</div>
-    <div class="panel-body"><div class="lc-strip" id="lcStrip"><span class="lc-chip lc-candidat">—</span></div></div>
+    <div class="panel-hdr">Équipe de bots — états <span style="color:var(--dim);font-weight:400;margin-left:auto;font-size:.7rem"><a href="/bots" style="color:var(--cyan);text-decoration:none">Voir mes bots →</a></span></div>
+    <div class="panel-body">
+      <div id="lcNarrative" style="font-size:.8rem;color:var(--muted);line-height:1.5;margin-bottom:4px">—</div>
+      <div class="lc-strip" id="lcStrip"><span class="lc-chip lc-candidat">—</span></div>
+      <div style="font-size:.66rem;color:var(--dim);line-height:1.5">
+        <b style="color:var(--muted)">Candidat</b> : pas encore de trade réel ·
+        <b style="color:var(--cyan)">Essai</b> : preuve live mince ·
+        <b style="color:var(--green)">Actif</b> : confirmé par le réel ·
+        <b style="color:var(--red)">Retiré</b> : re-optimisation. Les états sont déduits, jamais choisis.
+      </div>
+    </div>
   </div>
 
   <div class="panel">
-    <div class="panel-hdr">Allocation du capital <span style="color:var(--dim);font-weight:400">— barre = budget actuel · trait <span style="color:var(--amber)">▮</span> = cible shadow</span></div>
-    <div class="panel-body" id="allocBox"><div style="color:var(--dim);font-size:.8rem">Chargement…</div></div>
+    <div class="panel-hdr">Allocation du capital <span style="color:var(--dim);font-weight:400">— barre = budget actuel · trait <span style="color:var(--amber)">▮</span> = proposition de l'allocateur (selon le score)</span></div>
+    <div class="panel-body">
+      <div id="shadowNote" class="info-box" style="display:none;margin-bottom:4px"></div>
+      <div id="allocBox"><div style="color:var(--dim);font-size:.8rem">Chargement…</div></div>
+    </div>
   </div>
 
   <div class="panel">
@@ -101,7 +113,33 @@ async function loadPortfolio(){
   const order=[['actif','Actifs'],['essai','En essai'],['candidat','Candidats'],['retire','Retirés']];
   strip.innerHTML = order.map(([k,lbl])=>`<span class="lc-chip lc-${k}">${lbl} : ${counts[k]||0}</span>`).join('');
 
-  // Allocation réelle + cible shadow
+  // Récit d'équipe en une phrase
+  const nbots=(counts.actif||0)+(counts.essai||0)+(counts.candidat||0)+(counts.retire||0);
+  const alloc0=d.allocation||[];
+  const activeBudget=alloc0.filter(s=>(s.budget_pct||0)>0).reduce((a,s)=>a+(s.budget_pct||0),0);
+  const reserve=Math.max(0,100-activeBudget);
+  const narr=document.getElementById('lcNarrative');
+  if(narr){
+    narr.innerHTML = nbots
+      ? `<b>${nbots} bot(s)</b> dans l'équipe, dont <b style="color:var(--green)">${counts.actif||0} actif(s)</b> et <b style="color:var(--cyan)">${counts.essai||0} en essai</b>. `
+        + `Budget engagé : <b>${activeBudget.toFixed(0)}%</b>${reserve>1?` · réserve <b>${reserve.toFixed(0)}%</b>`:''}.`
+        + ((counts.retire||0)?` <span style="color:var(--red)">${counts.retire} retiré(s)</span> en re-optimisation.`:'')
+      : 'Aucun bot pour l\'instant — lance une optimisation pour créer des candidats.';
+  }
+
+  // Allocation réelle + proposition de l'allocateur (shadow)
+  const note=document.getElementById('shadowNote');
+  const hasShadow=d.shadow_allocation&&d.shadow_allocation.targets&&Object.keys(d.shadow_allocation.targets).length;
+  if(note){
+    if(hasShadow&&!d.continuous_allocation){
+      note.style.display='block';
+      note.innerHTML='👁 <b>Mode observation</b> — l\'allocateur affiche ce qu\'il <i>aurait</i> fait (trait ambre), mais ne l\'applique pas. Le budget réel ne bouge qu\'au rééquilibrage manuel ou programmé.';
+    } else if(hasShadow&&d.continuous_allocation){
+      note.style.display='block';
+      note.innerHTML='⚙ <b>Allocation continue active</b> — les budgets suivent automatiquement le score des bots (trait ambre = cible).';
+    } else { note.style.display='none'; }
+  }
+
   const box=document.getElementById('allocBox');
   const alloc=d.allocation||[]; const shadow=(d.shadow_allocation&&d.shadow_allocation.targets)||{};
   const sdelta=(d.shadow_allocation&&d.shadow_allocation.delta)||{};

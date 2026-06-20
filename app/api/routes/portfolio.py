@@ -63,11 +63,31 @@ def get_oos_tracker():
 
 
 # ── Bots : cycle de vie + identité + verdict réel vs simulation ──────────────
+def _edge_significant(edge: dict, edge_min: int, max_worst: float) -> bool:
+    """Réplique du gate d'edge (slot_lifecycle) pour l'affichage : borne basse
+    du cône > 0, plancher de trades backtest, garde-fou de queue."""
+    if not edge or not edge.get("available"):
+        return False
+    ci = edge.get("ci_low_pct")
+    n = int(edge.get("n", 0) or 0)
+    worst = edge.get("worst_trade_pct")
+    if ci is None or ci <= 0 or n < edge_min:
+        return False
+    if worst is not None and worst < -max_worst:
+        return False
+    return True
+
+
 @router.get("/api/bots", dependencies=[Depends(verify_api_key)])
 def get_bots():
     from app.core.oos_tracker import load_oos_tracker
     oos = load_oos_tracker()
     tr = _trader()
+    cfg = state.cfg or {}
+    lc = cfg.get("lifecycle", {}) or {}
+    edge_min = int(lc.get("edge_min_trades", 20))
+    max_worst = float(lc.get("max_worst_trade_pct", 50.0))
+    manual_set = set(lc.get("manual_active", []) or [])
 
     # États du cycle de vie : snapshot live, sinon base.
     states = {}
@@ -103,11 +123,17 @@ def get_bots():
             pass
 
     # Union des slots connus (oos ∪ states ∪ budgets).
-    keys = set(oos) | set(states) | set(budgets) | set(identities)
+    # Overlay des forçages manuels (droit de veto) : état affiché = actif.
+    for key in manual_set:
+        states[key] = "candidat" if key not in states else states[key]
+        states[key] = "actif"
+
+    keys = set(oos) | set(states) | set(budgets) | set(identities) | manual_set
     bots = []
     for key in sorted(keys):
         rec = oos.get(key, {})
         contract = rec.get("contract", {}) or {}
+        edge = rec.get("edge", {}) or {}
         strat, _, tf = key.partition("::")
         bots.append({
             "slot_key":     key,
@@ -118,6 +144,9 @@ def get_bots():
             "budget":       budgets.get(key),
             "sim":          rec.get("sim"),
             "monte_carlo":  rec.get("monte_carlo"),
+            "edge":         edge,
+            "edge_significant": _edge_significant(edge, edge_min, max_worst),
+            "manual_active": key in manual_set,
             "live":         rec.get("live"),
             "contract":     contract,
             "verdict":      contract.get("verdict"),
@@ -125,8 +154,45 @@ def get_bots():
             "run_date":     rec.get("run_date"),
         })
 
+    # Recompter après overlay manuel (les forçages comptent comme actifs).
+    counts = {st: sum(1 for b in bots if b["state"] == st)
+              for st in ("candidat", "essai", "actif", "retire")}
+
     return {"bots": bots, "counts": counts, "reopt_queue": reopt,
-            "states": states}
+            "states": states,
+            "thresholds": {"edge_min_trades": edge_min,
+                           "max_worst_trade_pct": max_worst,
+                           "fidelity_min_fills": int(lc.get("fidelity_min_fills", 2))}}
+
+
+# ── Bypass manuel : forcer un bot en ACTIF (droit de veto utilisateur) ───────
+@router.post("/api/bots/{slot_key:path}/force-active",
+             dependencies=[Depends(verify_api_key)])
+def force_active(slot_key: str, enabled: bool = True):
+    """Force (``enabled=true``) ou libère (``false``) l'activation manuelle d'un
+    bot. Persisté dans ``config.yaml`` (lifecycle.manual_active) et appliqué au
+    cycle de vie en cours s'il tourne."""
+    cfg = state.cfg or {}
+    lc = cfg.setdefault("lifecycle", {})
+    manual = [k for k in lc.get("manual_active", []) if k != slot_key]
+    if enabled:
+        manual.append(slot_key)
+    manual = sorted(set(manual))
+    lc["manual_active"] = manual
+
+    try:
+        from app.api.routes.config import _save_yaml
+        _save_yaml(lambda d: d.setdefault("lifecycle", {}).update(
+            {"manual_active": manual}))
+    except Exception as e:
+        logger.warning(f"[bots] sauvegarde manual_active KO : {e}")
+
+    tr = _trader()
+    if tr and getattr(tr, "_lifecycle", None):
+        tr._lifecycle.set_manual_active(slot_key, enabled)
+
+    logger.info(f"[bots] {slot_key} : forçage manuel ACTIF = {enabled}")
+    return {"slot_key": slot_key, "manual_active": enabled, "all": manual}
 
 
 # ── Portefeuille : santé + allocation réelle/shadow + activité ───────────────
@@ -154,6 +220,8 @@ def get_portfolio():
         "open_positions":    st.get("positions", []),
         "allocation":        st.get("capital_allocation", []),
         "shadow_allocation": st.get("shadow_allocation", {}),
+        "continuous_allocation": bool(getattr(getattr(tr, "allocator", None),
+                                              "continuous_allocation", False)),
         "lifecycle":         st.get("lifecycle", {}),
         "bots":              st.get("bots", []),
         "risk": {

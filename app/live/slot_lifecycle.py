@@ -46,6 +46,12 @@ class SlotLifecycleManager:
         self._trial_min       = int(lc.get("trial_min_trades", 3))
         self._active_min      = int(lc.get("active_min_trades", 10))
         self._eval_min        = int(lc.get("eval_min_trades", 10))
+        # Promotion par edge (cf. docs/CONCEPTION_PROMOTION_PAR_EDGE.md)
+        self._edge_min_trades = int(lc.get("edge_min_trades", 20))
+        self._max_worst_trade = float(lc.get("max_worst_trade_pct", 50.0))
+        self._fidelity_min_fills = int(lc.get("fidelity_min_fills", 2))
+        # Bypass manuel : bots forcés ACTIF (droit de veto utilisateur).
+        self._manual_active   = set(lc.get("manual_active", []) or [])
         # Lissage anti-flush
         self._min_active      = int(lc.get("min_active_bots", 2))
         self._max_demotions_per_day = int(lc.get("max_demotions_per_day", 2))
@@ -57,29 +63,62 @@ class SlotLifecycleManager:
         self._day_key = self._today()
         self._reopt_queue: List[str] = []
 
+    # ── Promotion par edge ───────────────────────────────────────────────────
+    def _edge_significant(self, d: dict) -> bool:
+        """L'edge est-elle significative sur le backtest ?
+
+        Borne basse du cône d'expectancy > 0, plancher de trades backtest
+        (anti-dégénérescence du bootstrap) et garde-fou de queue (pire trade
+        simulé borné). Cf. docs/CONCEPTION_PROMOTION_PAR_EDGE.md §2.1.
+        """
+        ci_low = d.get("edge_ci_low")
+        n_sim  = int(d.get("edge_n", 0) or 0)
+        worst  = d.get("worst_trade_pct")
+        if ci_low is None or ci_low <= 0 or n_sim < self._edge_min_trades:
+            return False
+        if worst is not None and worst < -self._max_worst_trade:
+            return False
+        return True
+
     # ── Dérivation de l'état proposé ─────────────────────────────────────────
     def _propose(self, d: dict) -> str:
+        # Bypass manuel : l'utilisateur force l'activation (droit de veto).
+        if d.get("manual_active"):
+            return LifecycleState.ACTIF
+
         budget = float(d.get("budget_pct", 0.0) or 0.0)
         n      = int(d.get("live_trades", 0) or 0)
-        verdict = d.get("verdict")            # True / False / None
+        # ``live_in_band`` est le signal de fidélité (True/False/None) ; on
+        # accepte ``verdict`` pour rétro-compat.
+        in_band = d.get("live_in_band", d.get("verdict"))
         ret    = d.get("live_avg_return_pct")
-        score  = float(d.get("score", 0.0) or 0.0)
 
         # Budget effondré sous le plancher (avec au moins un peu de vécu) → retrait.
         if n >= 1 and budget < self._plancher_budget:
             return LifecycleState.RETIRE
-        # Live contredit la simulation et perd, sur un échantillon suffisant → retrait.
-        if (verdict is False and ret is not None and ret < 0
+        # Le réel contredit la simulation et perd, sur un échantillon suffisant → retrait.
+        if (in_band is False and ret is not None and ret < 0
                 and n >= self._eval_min):
             return LifecycleState.RETIRE
-        if n == 0:
+
+        # Edge non prouvée sur le backtest → reste Candidat (même s'il a tradé).
+        if not self._edge_significant(d):
             return LifecycleState.CANDIDAT
-        if n < self._trial_min:
-            return LifecycleState.ESSAI
-        if (n >= self._active_min and score > 0
-                and verdict in (True, None)):
+
+        # Edge prouvée → la fidélité live confirme l'activation.
+        if n >= self._fidelity_min_fills and in_band is True:
             return LifecycleState.ACTIF
         return LifecycleState.ESSAI
+
+    # ── Bypass manuel ─────────────────────────────────────────────────────────
+    def set_manual_active(self, slot_key: str, enabled: bool) -> None:
+        """Force (ou libère) l'activation manuelle d'un bot. La transition est
+        appliquée au prochain ``evaluate`` ; la persistance config est gérée par
+        l'appelant (route API)."""
+        if enabled:
+            self._manual_active.add(slot_key)
+        else:
+            self._manual_active.discard(slot_key)
 
     # ── Évaluation lissée ────────────────────────────────────────────────────
     def evaluate(self, slots_data: Dict[str, dict]) -> dict:
@@ -96,7 +135,11 @@ class SlotLifecycleManager:
         def _active_count(states: Dict[str, str]) -> int:
             return sum(1 for s in states.values() if s != LifecycleState.RETIRE)
 
-        proposed = {k: self._propose(d) for k, d in slots_data.items()}
+        proposed = {
+            k: self._propose({**d, "manual_active": (k in self._manual_active)
+                              or bool(d.get("manual_active"))})
+            for k, d in slots_data.items()
+        }
         transitions = []
 
         # 1) Promotions / nouveaux slots : appliquées immédiatement.

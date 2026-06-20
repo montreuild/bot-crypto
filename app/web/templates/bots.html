@@ -3,27 +3,79 @@
 
 {% block page_styles %}
 #content{padding:18px 20px;display:flex;flex-direction:column;gap:14px;flex:1;}
+
+/* ── Aide intégrée ── */
+details.help{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
+details.help>summary{cursor:pointer;padding:11px 16px;font-size:.78rem;font-weight:700;color:var(--cyan);list-style:none;display:flex;align-items:center;gap:8px;}
+details.help>summary::-webkit-details-marker{display:none;}
+details.help>summary::before{content:'▸';transition:transform .15s;color:var(--dim);}
+details.help[open]>summary::before{transform:rotate(90deg);}
+.help-body{padding:0 16px 14px;font-size:.74rem;color:var(--muted);line-height:1.6;}
+.help-body b{color:var(--text);}
+.help-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px;}
+@media(max-width:760px){.help-grid{grid-template-columns:1fr 1fr;}}
+.help-state{padding:8px 10px;border-radius:var(--r-sm);background:rgba(255,255,255,.02);border:1px solid var(--border);}
+.help-state .hs-name{font-weight:700;font-size:.72rem;margin-bottom:3px;}
+.help-state .hs-desc{font-size:.66rem;color:var(--dim);line-height:1.45;}
+
+/* ── Barre d'allocation ── */
+.alloc-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:11px 14px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);}
+.alloc-bar label{font-size:.72rem;color:var(--muted);font-weight:600;}
+.alloc-bar select,.alloc-bar input[type=number]{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:var(--r-sm);padding:5px 8px;font-size:.76rem;font-family:var(--mono);}
+.alloc-bar select:focus,.alloc-bar input[type=number]:focus{border-color:var(--cyan);outline:none;}
+.alloc-bar .bar-sep{width:1px;height:24px;background:var(--border);margin:0 2px;}
+.alloc-bar .bar-info{font-size:.68rem;color:var(--dim);font-family:var(--mono);margin-left:auto;}
+
+/* ── Kanban ── */
 .kanban{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
 @media(max-width:1000px){.kanban{grid-template-columns:repeat(2,1fr);}}
 @media(max-width:560px){.kanban{grid-template-columns:1fr;}}
-.col{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:10px;min-height:120px;}
-.col-hdr{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;display:flex;justify-content:space-between;}
+.col{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:10px;min-height:140px;}
+.col-hdr{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;}
+.col-sub{font-size:.6rem;color:var(--dim);margin-bottom:8px;line-height:1.3;}
 .col-actif .col-hdr{color:var(--green);}.col-essai .col-hdr{color:var(--cyan);}
 .col-candidat .col-hdr{color:var(--muted);}.col-retire .col-hdr{color:var(--red);}
 .bot-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);padding:9px 10px;margin-bottom:8px;cursor:pointer;transition:border-color .15s,transform .15s;}
 .bot-card:hover{border-color:var(--cyan);transform:translateY(-1px);}
-.bot-card .nm{font-family:var(--mono);font-size:.76rem;color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.bot-card .meta{font-size:.64rem;color:var(--dim);margin-top:3px;display:flex;justify-content:space-between;}
-.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;}
+.bot-card.off{opacity:.5;border-style:dashed;}
+.bot-card.paused{border-color:rgba(251,113,133,.4);}
+.bot-card .nm{font-family:var(--mono);font-size:.76rem;color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:5px;}
+.bot-card .bdg{font-size:.55rem;padding:1px 5px;border-radius:3px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;flex-shrink:0;}
+.bdg-off{background:rgba(255,255,255,.06);color:var(--dim);}
+.bdg-paused{background:rgba(251,113,133,.15);color:var(--red);}
+.bot-card .meta{font-size:.64rem;color:var(--dim);margin-top:5px;display:flex;justify-content:space-between;gap:6px;}
+.bot-card .budget-mini{height:4px;background:rgba(255,255,255,.07);border-radius:2px;margin-top:6px;overflow:hidden;}
+.bot-card .budget-mini>i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),#3b82f6);}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;flex-shrink:0;}
 .dot.ok{background:var(--green);}.dot.bad{background:var(--red);}.dot.na{background:var(--dim);}
-/* Detail drawer */
-#drawer{position:fixed;top:0;right:0;width:min(440px,94vw);height:100vh;background:var(--surface);border-left:1px solid var(--border);box-shadow:-8px 0 30px rgba(0,0,0,.4);transform:translateX(100%);transition:transform .22s ease;z-index:60;overflow:auto;padding:18px;}
+
+/* ── Drawer ── */
+#drawer{position:fixed;top:0;right:0;width:min(460px,95vw);height:100vh;background:var(--surface);border-left:1px solid var(--border);box-shadow:-8px 0 30px rgba(0,0,0,.4);transform:translateX(100%);transition:transform .22s ease;z-index:60;overflow:auto;padding:18px;}
 #drawer.open{transform:translateX(0);}
 #drawer h2{font-family:var(--mono);font-size:1rem;color:var(--cyan);margin:0 0 4px;word-break:break-all;}
 .d-row{display:flex;justify-content:space-between;font-size:.76rem;padding:5px 0;border-bottom:1px solid var(--border);}
 .d-row .k{color:var(--dim);}.d-row .v{font-family:var(--mono);color:var(--text);}
 .sect{margin-top:16px;font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700;}
-/* MC cône */
+
+/* ── Frise de progression ── */
+.frieze{display:flex;align-items:center;margin:12px 0 4px;}
+.fstep{flex:1;text-align:center;position:relative;}
+.fstep .fdot{width:14px;height:14px;border-radius:50%;background:var(--card);border:2px solid var(--border);margin:0 auto 4px;}
+.fstep.done .fdot{background:var(--green);border-color:var(--green);}
+.fstep.current .fdot{background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 0 4px var(--cyan-dim);}
+.fstep.retire .fdot{background:var(--red);border-color:var(--red);}
+.fstep .flbl{font-size:.62rem;color:var(--dim);}
+.fstep.current .flbl{color:var(--cyan);font-weight:700;}
+.fstep.done .flbl{color:var(--green);}
+.fstep::after{content:'';position:absolute;top:7px;left:50%;width:100%;height:2px;background:var(--border);z-index:-1;}
+.fstep:last-child::after{display:none;}
+.fstep.done::after{background:var(--green);}
+.explain{margin-top:6px;padding:9px 12px;border-radius:var(--r-sm);background:var(--cyan-dim);border:1px solid rgba(34,211,238,.2);font-size:.74rem;color:var(--muted);line-height:1.5;}
+.explain b{color:var(--text);}
+.explain.retire{background:var(--red-dim);border-color:rgba(251,113,133,.3);}
+.explain.actif{background:rgba(74,222,128,.08);border-color:rgba(74,222,128,.25);}
+
+/* ── Cône MC ── */
 .cone{margin-top:10px;}
 .cone-track{position:relative;height:46px;background:var(--card);border:1px solid var(--border);border-radius:var(--r-sm);}
 .cone-band{position:absolute;top:8px;height:30px;background:rgba(34,211,238,.18);border-left:1px solid var(--cyan);border-right:1px solid var(--cyan);}
@@ -36,22 +88,76 @@
 .verdict.ok{background:rgba(74,222,128,.1);color:var(--green);}
 .verdict.bad{background:var(--red-dim);color:var(--red);}
 .verdict.na{background:var(--card);color:var(--muted);}
+
+/* ── Budget + actions dans le drawer ── */
+.budget-edit{margin-top:8px;}
+.budget-edit-row{display:flex;align-items:center;gap:8px;}
+.budget-edit-row input[type=range]{flex:1;accent-color:var(--cyan);}
+.budget-edit-row .bval{font-family:var(--mono);font-size:.78rem;min-width:46px;text-align:right;font-weight:600;}
+.budget-hint{font-size:.62rem;color:var(--dim);margin-top:4px;}
+.d-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;}
+
 .backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:55;display:none;}
 .backdrop.show{display:block;}
 {% endblock %}
 
 {% block topbar_content %}
 <div class="topbar-title">🤖 Mes Bots</div>
-<div style="margin-left:auto;font-size:.72rem;color:var(--dim)" id="reoptInfo"></div>
+<div class="topbar-sep"></div>
+<div class="topbar-right">
+  <span id="reoptInfo" style="font-size:.7rem;color:var(--dim)"></span>
+  <button class="btn btn-ghost btn-sm" onclick="loadAll()">↺ Actualiser</button>
+</div>
 {% endblock %}
 
 {% block content %}
 <div id="content" class="fade-in">
+
+  <details class="help">
+    <summary>Comment ça marche ? — les états ne se choisissent pas, ils se dérivent</summary>
+    <div class="help-body">
+      Un <b>bot</b> = une stratégie sur un timeframe (ex. <code>pullback_trend::1h</code>). Il a son
+      <b>budget</b> propre et prend tous ses signaux tant qu'il a du budget. Tu ne « l'actives » pas :
+      son état est <b>déduit automatiquement</b> de ses trades réels comparés à sa simulation.
+      La promotion se joue en deux temps : l'<b>edge</b> se prouve sur le <b>backtest</b>
+      (borne basse du cône d'expectancy &gt; 0), puis le <b>live</b> confirme seulement la
+      <b>fidélité</b> d'exécution. Tu peux toujours <b>forcer</b> un bot en Actif (📌).
+      <div class="help-grid">
+        <div class="help-state"><div class="hs-name c-muted">Candidat</div><div class="hs-desc">Edge pas encore prouvée sur le backtest.</div></div>
+        <div class="help-state"><div class="hs-name c-cyan">Essai</div><div class="hs-desc">Edge prouvée ; en attente de fidélité live.</div></div>
+        <div class="help-state"><div class="hs-name c-green">Actif</div><div class="hs-desc">Edge prouvée + fidélité live confirmée.</div></div>
+        <div class="help-state"><div class="hs-name c-red">Retiré</div><div class="hs-desc">Budget effondré ou le réel contredit la sim → re-optimisation.</div></div>
+      </div>
+    </div>
+  </details>
+
+  <div class="alloc-bar" id="allocBar">
+    <label for="mode-select">Mode d'allocation</label>
+    <select id="mode-select" onchange="changeMode(this.value)">
+      <option value="equal">Égal</option>
+      <option value="manual">Manuel</option>
+      <option value="performance">Performance</option>
+    </select>
+    <div class="bar-sep"></div>
+    <label for="max-pct">Max/bot</label>
+    <input type="number" id="max-pct" min="5" max="100" step="5" style="width:60px" onchange="changeMaxPct(this.value)"/>
+    <span style="font-size:.68rem;color:var(--dim)">%</span>
+    <div class="bar-sep"></div>
+    <label for="rebal-select">Rééquilibrage</label>
+    <select id="rebal-select" onchange="changeRebalance(this.value)">
+      <option value="daily">Quotidien</option>
+      <option value="weekly">Hebdomadaire</option>
+      <option value="never">Désactivé</option>
+    </select>
+    <button class="btn btn-ghost btn-sm" onclick="forceRebalance()" id="btn-rebalance" title="Forcer le rééquilibrage maintenant" style="margin-left:6px">↻ Rééquilibrer</button>
+    <span class="bar-info" id="capital-info">—</span>
+  </div>
+
   <div class="kanban">
-    <div class="col col-candidat"><div class="col-hdr"><span>Candidat</span><span id="cnt-candidat">0</span></div><div id="col-candidat"></div></div>
-    <div class="col col-essai"><div class="col-hdr"><span>Essai</span><span id="cnt-essai">0</span></div><div id="col-essai"></div></div>
-    <div class="col col-actif"><div class="col-hdr"><span>Actif</span><span id="cnt-actif">0</span></div><div id="col-actif"></div></div>
-    <div class="col col-retire"><div class="col-hdr"><span>Retiré</span><span id="cnt-retire">0</span></div><div id="col-retire"></div></div>
+    <div class="col col-candidat"><div class="col-hdr"><span>Candidat</span><span id="cnt-candidat">0</span></div><div class="col-sub">Pas encore de trade réel</div><div id="col-candidat"></div></div>
+    <div class="col col-essai"><div class="col-hdr"><span>Essai</span><span id="cnt-essai">0</span></div><div class="col-sub">Preuve live en cours</div><div id="col-essai"></div></div>
+    <div class="col col-actif"><div class="col-hdr"><span>Actif</span><span id="cnt-actif">0</span></div><div class="col-sub">Confirmé par le réel</div><div id="col-actif"></div></div>
+    <div class="col col-retire"><div class="col-hdr"><span>Retiré</span><span id="cnt-retire">0</span></div><div class="col-sub">En file de re-optimisation</div><div id="col-retire"></div></div>
   </div>
 </div>
 <div class="backdrop" id="backdrop" onclick="closeDrawer()"></div>
@@ -60,31 +166,164 @@
 
 {% block body_scripts %}
 <script>
-let BOTS={};
-function pctf(v){ return (v==null||isNaN(v))?'—':(v>=0?'+':'')+Number(v).toFixed(2)+'%'; }
+let BOTS={};           // slot_key -> bot fusionné (cycle de vie + slot)
+let ALLOC_CFG={};      // config de l'allocateur (mode, max_slot_pct, …)
+let CAPITAL=0;
+let THRESH={edge_min_trades:20, max_worst_trade_pct:50, fidelity_min_fills:2};
 
-async function loadBots(){
-  let d; try{ d = await apiFetch('/api/bots').then(r=>r.json()); }catch(e){ return; }
-  BOTS={}; const cols={candidat:[],essai:[],actif:[],retire:[]};
-  (d.bots||[]).forEach(b=>{ BOTS[b.slot_key]=b; (cols[b.state]||cols.candidat).push(b); });
+function pctf(v){ return (v==null||isNaN(v))?'—':(v>=0?'+':'')+Number(v).toFixed(2)+'%'; }
+function usd(v){ return (v==null||isNaN(v))?'—':'$'+Number(v).toLocaleString('fr-FR',{maximumFractionDigits:0}); }
+
+/* ── Chargement + fusion bots ⨯ slots ── */
+async function loadAll(){
+  let bd, sd;
+  try{
+    const [br, sr] = await Promise.all([
+      apiFetch('/api/bots'),
+      apiFetch('/api/slots').catch(()=>null),
+    ]);
+    bd = await br.json();
+    sd = sr && sr.ok ? await sr.json() : {slots:[], config:{}, capital:0};
+  }catch(e){ return; }
+
+  CAPITAL = sd.capital || 0;
+  ALLOC_CFG = sd.config || {};
+  if(bd.thresholds) THRESH = bd.thresholds;
+  renderAllocBar();
+
+  // Index slots par clé
+  const slotMap={};
+  (sd.slots||[]).forEach(s=>{ slotMap[s.slot_key]=s; });
+
+  // Fusion : bot (cycle de vie / sim / live) + slot (budget / pause / hebdo)
+  BOTS={};
+  const keys = new Set([...(bd.bots||[]).map(b=>b.slot_key), ...Object.keys(slotMap)]);
+  const botMap={}; (bd.bots||[]).forEach(b=>{ botMap[b.slot_key]=b; });
+  const states = bd.states||{};
+
+  const cols={candidat:[],essai:[],actif:[],retire:[]};
+  keys.forEach(key=>{
+    const b = botMap[key] || {slot_key:key, state:states[key]||'candidat'};
+    const s = slotMap[key] || {};
+    const merged = {
+      ...b,
+      enabled:       s.enabled!==false,
+      paused:        !!s.paused,
+      pause_reason:  s.pause_reason||'',
+      excluded:      !!s.excluded_by_optimizer,
+      budget_pct:    s.budget_pct,        // %
+      budget_usdc:   s.budget_usdc,
+      used_pct:      s.used_pct,
+      weekly_pnl:    s.weekly_pnl,
+      weekly_trades: s.weekly_trades,
+      weekly_wins:   s.weekly_wins,
+      consecutive_losses: s.consecutive_losses,
+    };
+    BOTS[key]=merged;
+    (cols[merged.state]||cols.candidat).push(merged);
+  });
+
   for(const st of ['candidat','essai','actif','retire']){
     document.getElementById('cnt-'+st).textContent=cols[st].length;
-    document.getElementById('col-'+st).innerHTML = cols[st].map(b=>{
-      const ib=b.in_band; const dot=ib===true?'ok':(ib===false?'bad':'na');
-      const live=(b.live&&b.live.n_trades)||0;
-      return `<div class="bot-card" onclick="openBot('${escHtml(b.slot_key)}')">
-        <div class="nm">${escHtml(b.slot_key)}</div>
-        <div class="meta"><span><span class="dot ${dot}"></span>${live} trade(s) live</span>
-        <span>${b.sim&&b.sim.return_pct!=null?pctf(b.sim.return_pct):'—'}</span></div></div>`;
-    }).join('') || '<div style="color:var(--dim);font-size:.7rem;padding:4px">—</div>';
+    document.getElementById('col-'+st).innerHTML = cols[st]
+      .sort((a,b)=>(b.budget_pct||0)-(a.budget_pct||0))
+      .map(cardHtml).join('')
+      || '<div style="color:var(--dim);font-size:.7rem;padding:4px">—</div>';
   }
-  const rq=(d.reopt_queue||[]).length;
+
+  const rq=(bd.reopt_queue||[]).length;
   document.getElementById('reoptInfo').textContent = rq?`${rq} bot(s) en file de re-optimisation`:'';
 }
 
+function cardHtml(b){
+  const live=(b.live&&b.live.n_trades)||0;
+  const ib=b.in_band; const dot=ib===true?'ok':(ib===false?'bad':'na');
+  const bp = b.budget_pct!=null ? b.budget_pct : 0;
+  const cls = (b.enabled===false?'off ':'') + (b.paused?'paused ':'');
+  const badge = (b.manual_active?'<span class="bdg" style="background:var(--purple-dim);color:var(--purple)">📌 Forcé</span>':'')
+              + (b.enabled===false ? '<span class="bdg bdg-off">Off</span>'
+              : b.paused ? '<span class="bdg bdg-paused">Pausé</span>' : '');
+  const pnl = b.weekly_pnl;
+  const pnlTxt = pnl!=null ? `<span style="color:${pnl>=0?'var(--green)':'var(--red)'}">${(pnl>=0?'+':'')+Number(pnl).toFixed(1)}$ /7j</span>` : '';
+  return `<div class="bot-card ${cls}" onclick="openBot('${escHtml(b.slot_key)}')">
+    <div class="nm"><span class="dot ${dot}"></span><span style="overflow:hidden;text-overflow:ellipsis">${escHtml(b.slot_key)}</span>${badge}</div>
+    <div class="meta"><span>${live} trade(s) réel(s)</span><span>${bp.toFixed(0)}% budget</span></div>
+    <div class="budget-mini"><i style="width:${Math.min(bp,100)}%"></i></div>
+    <div class="meta" style="margin-top:5px"><span>${pnlTxt}</span><span>${b.sim&&b.sim.return_pct!=null?'sim '+pctf(b.sim.return_pct):''}</span></div>
+  </div>`;
+}
+
+/* ── Phrase d'explication de l'état + prochaine étape ── */
+function explainState(b){
+  if(b.manual_active){
+    return {cls:'actif', html:`📌 <b>Forcé Actif manuellement.</b> Tu as outrepassé la décision
+      automatique. Annule le forçage ci-dessous pour rendre la main à la machine à états.`};
+  }
+  const live=(b.live&&b.live.n_trades)||0;
+  const edge=b.edge||{}; const nSim=edge.n||0;
+  const minN=(THRESH.edge_min_trades||20), kFills=(THRESH.fidelity_min_fills||2);
+  const ciLo=edge.ci_low_pct, exp=edge.expectancy_pct, worst=edge.worst_trade_pct;
+  const maxWorst=(THRESH.max_worst_trade_pct||50);
+
+  if(b.state==='candidat'){
+    // Expliquer POURQUOI l'edge n'est pas (encore) prouvée.
+    let why;
+    if(!edge.available) why=`aucun forward-test encore (pas de trades simulés)`;
+    else if(nSim<minN) why=`seulement <b>${nSim}</b> trades backtest (&lt; ${minN} requis) — échantillon trop court`;
+    else if(ciLo!=null&&ciLo<=0) why=`la borne basse du cône d'expectancy est <b>${ciLo.toFixed(2)}%</b> (≤ 0) — l'edge n'est pas significative`;
+    else if(worst!=null&&worst<-maxWorst) why=`pire trade simulé <b>${worst.toFixed(1)}%</b> au-delà du garde-fou de queue (−${maxWorst}%)`;
+    else why=`edge non confirmée`;
+    return {cls:'', html:`<b>Candidat.</b> Edge pas encore prouvée sur le backtest : ${why}.
+      → passe en <b>Essai</b> dès que l'edge est significative (ou via le forçage manuel).`};
+  }
+  if(b.state==='essai'){
+    const fid = (live>=kFills) ? `fidélité presque OK` : `besoin de ≈ ${Math.max(0,kFills-live)} fill(s) live de plus`;
+    return {cls:'', html:`<b>Essai.</b> Edge <b>prouvée</b> sur le backtest
+      ${(exp!=null&&ciLo!=null)?`(expectancy ${exp.toFixed(2)}%/trade, borne basse ${ciLo.toFixed(2)}% &gt; 0)`:''}.
+      → devient <b>Actif</b> quand les premiers fills réels confirment la fidélité (${fid}).`};
+  }
+  if(b.state==='actif'){
+    return {cls:'actif', html:`<b>Actif.</b> Edge prouvée sur le backtest <b>et</b> fidélité live confirmée
+      (le réel tombe dans la fourchette simulée). Son budget suit son score.`};
+  }
+  if(b.state==='retire'){
+    const why = (b.verdict==='sous_la_simulation')
+      ? 'le réel a perdu hors de la fourchette simulée'
+      : 'son budget est passé sous le plancher';
+    return {cls:'retire', html:`<b>Retiré.</b> ${why} → mis en file de <b>re-optimisation</b> (réversible).`};
+  }
+  return {cls:'', html:''};
+}
+
+function edgeRowHtml(b){
+  const e=b.edge||{};
+  if(!e.available) return `<div class="d-row"><span class="k">Edge backtest</span><span class="v" style="color:var(--dim)">forward-test à venir</span></div>`;
+  const sig=b.edge_significant;
+  const ci=(e.ci_low_pct!=null&&e.ci_high_pct!=null)?`[${e.ci_low_pct.toFixed(2)} ; ${e.ci_high_pct.toFixed(2)}]%`:'—';
+  return `<div class="d-row"><span class="k">Expectancy (sim)</span><span class="v">${e.expectancy_pct!=null?pctf(e.expectancy_pct):'—'} · ${e.n||0} trades</span></div>
+    <div class="d-row"><span class="k">Cône d'edge (IC)</span><span class="v">${ci}</span></div>
+    <div class="d-row"><span class="k">Pire trade sim</span><span class="v">${e.worst_trade_pct!=null?e.worst_trade_pct.toFixed(2)+'%':'—'}</span></div>
+    <div class="d-row"><span class="k">Edge significative ?</span><span class="v" style="color:${sig?'var(--green)':'var(--amber)'}">${sig?'✓ oui':'✗ pas encore'}</span></div>`;
+}
+
+function friezeHtml(b){
+  const order=['candidat','essai','actif'];
+  const idx=order.indexOf(b.state);
+  if(b.state==='retire'){
+    return `<div class="frieze">
+      ${order.map(s=>`<div class="fstep done"><div class="fdot"></div><div class="flbl">${cap(s)}</div></div>`).join('')}
+      <div class="fstep current retire"><div class="fdot"></div><div class="flbl" style="color:var(--red)">Retiré</div></div>
+    </div>`;
+  }
+  return `<div class="frieze">${order.map((s,i)=>{
+    const c = i<idx?'done':(i===idx?'current':'');
+    return `<div class="fstep ${c}"><div class="fdot"></div><div class="flbl">${cap(s)}</div></div>`;
+  }).join('')}</div>`;
+}
+function cap(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
+
 function coneHtml(b){
   const c=b.contract||{}; const mc=b.monte_carlo||{};
-  // Fourchette = bande du contrat (rendement moyen/trade) si dispo, sinon MC equity.
   let lo=c.band_low_pct, hi=c.band_high_pct, sim=c.sim_mean_pct, live=c.live_mean_pct;
   if(lo==null||hi==null){ lo=mc.return_p5_pct; hi=mc.return_p95_pct; sim=mc.return_mean_pct; live=null; }
   if(lo==null||hi==null) return '<div style="color:var(--dim);font-size:.74rem;margin-top:8px">Pas encore de fourchette Monte-Carlo (forward-test à venir).</div>';
@@ -92,7 +331,7 @@ function coneHtml(b){
   let min=Math.min(...vals), max=Math.max(...vals); if(min===max){min-=1;max+=1;}
   const pad=(max-min)*0.12; min-=pad; max+=pad; const span=max-min;
   const X=v=>((v-min)/span*100);
-  const ib=c.in_band; const badLive=ib===false;
+  const badLive=c.in_band===false;
   const liveMark=(live!=null)?`<div class="cone-mark live ${badLive?'bad':''}" style="left:${X(live)}%"></div>`:'';
   const simMark=(sim!=null)?`<div class="cone-mark sim" style="left:${X(sim)}%"></div>`:'';
   return `<div class="cone">
@@ -110,20 +349,46 @@ function openBot(key){
   const b=BOTS[key]; if(!b) return;
   const id=b.identity||{}; const v=(id.venue)||{}; const sim=b.sim||{}; const live=b.live||{};
   const ib=b.in_band; const vcls=ib===true?'ok':(ib===false?'bad':'na');
-  const vtxt={conforme:'✅ Le live confirme la simulation',sous_la_simulation:'⚠️ Le live sous-performe la simulation',
-    au_dessus_de_la_simulation:'↑ Le live dépasse la fourchette simulée',
-    pas_assez_de_trades_reels:'⏳ Pas encore assez de trades réels'}[b.verdict]||'—';
+  const vtxt={conforme:'✅ Le réel rend dans la fourchette simulée — confiance bonne',
+    sous_la_simulation:'⚠️ Le réel rend MOINS que la fourchette simulée — confiance dégradée',
+    au_dessus_de_la_simulation:'↑ Le réel dépasse la fourchette simulée',
+    pas_assez_de_trades_reels:'⏳ Pas encore assez de trades réels pour conclure'}[b.verdict]||'—';
+  const ex=explainState(b);
+  const isManual=(ALLOC_CFG.mode==='manual');
+  const maxPct=ALLOC_CFG.max_slot_pct||50;
+  const bp=b.budget_pct!=null?b.budget_pct:0;
+
   document.getElementById('drawerBody').innerHTML = `
     <h2>${escHtml(b.slot_key)}</h2>
     <div style="font-size:.66rem;color:var(--dim);margin-bottom:6px">${id.bot_id?escHtml(id.bot_id):'identité non figée'}</div>
-    <div class="d-row"><span class="k">État</span><span class="v">${b.state}</span></div>
-    <div class="d-row"><span class="k">Venue</span><span class="v">${v.exchange||'—'} · ${v.market_type||'—'}${v.max_leverage?(' ×'+v.max_leverage):''}</span></div>
-    <div class="d-row"><span class="k">Génération</span><span class="v">${id.generation!=null?('g'+id.generation):'—'}</span></div>
-    <div class="d-row"><span class="k">Budget</span><span class="v">${b.budget?b.budget.budget_pct+'% ('+b.budget.budget_usdc+'$)':'—'}</span></div>
 
-    <div class="sect">Cône Monte-Carlo vs réel</div>
+    ${friezeHtml(b)}
+    <div class="explain ${ex.cls}">${ex.html}</div>
+
+    <div class="sect">Edge — preuve sur le backtest</div>
+    ${edgeRowHtml(b)}
+
+    <div class="sect">Fidélité — réel vs simulation</div>
     ${coneHtml(b)}
     <div class="verdict ${vcls}">${vtxt}</div>
+
+    <div class="sect">Budget &amp; allocation</div>
+    <div class="d-row"><span class="k">Budget alloué</span><span class="v">${bp.toFixed(1)}% · ${usd(b.budget_usdc)}</span></div>
+    <div class="d-row"><span class="k">Engagé en position</span><span class="v">${b.used_pct!=null?b.used_pct.toFixed(0)+'%':'—'}</span></div>
+    <div class="budget-edit">
+      <div class="budget-edit-row">
+        <input type="range" min="1" max="${maxPct}" step="1" value="${Math.round(bp)}"
+               ${(!isManual||b.enabled===false)?'disabled':''}
+               oninput="this.nextElementSibling.textContent=this.value+'%'"
+               onchange="setBudget('${escHtml(b.slot_key)}',this.value)"/>
+        <span class="bval">${Math.round(bp)}%</span>
+      </div>
+      <div class="budget-hint">${isManual?'Glisse pour ajuster la part du capital de ce bot.':'Passe en mode <b>Manuel</b> (barre du haut) pour régler le budget à la main.'}</div>
+    </div>
+
+    <div class="sect">Venue &amp; identité</div>
+    <div class="d-row"><span class="k">Venue</span><span class="v">${v.exchange||'—'} · ${v.market_type||'—'}${v.max_leverage?(' ×'+v.max_leverage):''}</span></div>
+    <div class="d-row"><span class="k">Génération</span><span class="v">${id.generation!=null?('g'+id.generation):'—'}</span></div>
 
     <div class="sect">Simulation (forward-test ${b.run_date?'· '+b.run_date:''})</div>
     <div class="d-row"><span class="k">Trades</span><span class="v">${sim.total_trades!=null?sim.total_trades:'—'}</span></div>
@@ -133,13 +398,82 @@ function openBot(key){
 
     <div class="sect">Réel (live)</div>
     <div class="d-row"><span class="k">Trades</span><span class="v">${live.n_trades!=null?live.n_trades:0}</span></div>
-    <div class="d-row"><span class="k">Rendement moyen/trade</span><span class="v">${live.avg_return_pct!=null?pctf(live.avg_return_pct):'—'}</span></div>`;
+    <div class="d-row"><span class="k">Rendement moyen/trade</span><span class="v">${live.avg_return_pct!=null?pctf(live.avg_return_pct):'—'}</span></div>
+    <div class="d-row"><span class="k">P&amp;L 7 jours</span><span class="v">${b.weekly_pnl!=null?(b.weekly_pnl>=0?'+':'')+Number(b.weekly_pnl).toFixed(2)+'$':'—'}</span></div>
+
+    ${b.paused?`<div class="verdict bad" style="margin-top:12px">⏸ ${escHtml(b.pause_reason||'Bot en pause (circuit breaker)')}</div>`:''}
+
+    <div class="d-actions">
+      <button class="btn ${b.manual_active?'btn-ghost':'btn-purple'} btn-sm" onclick="forceActive('${escHtml(b.slot_key)}',${b.manual_active?'false':'true'})"
+        title="Outrepasser la machine à états et forcer/libérer l'activation">
+        ${b.manual_active?'📌 Annuler le forçage Actif':'📌 Forcer Actif'}</button>
+      <button class="btn btn-ghost btn-sm" onclick="toggleSlot('${escHtml(b.slot_key)}',${b.enabled===false?'true':'false'})">
+        ${b.enabled===false?'✓ Réactiver ce bot':'✕ Désactiver ce bot'}</button>
+      ${b.paused?`<button class="btn btn-ghost btn-sm" onclick="resetCB('${escHtml(b.slot_key)}')" style="border-color:var(--red);color:var(--red)">↻ Lever la pause</button>`:''}
+    </div>`;
   document.getElementById('drawer').classList.add('open');
   document.getElementById('backdrop').classList.add('show');
 }
 function closeDrawer(){ document.getElementById('drawer').classList.remove('open'); document.getElementById('backdrop').classList.remove('show'); }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
 
-loadBots(); setInterval(loadBots, 8000);
+/* ── Barre d'allocation ── */
+function renderAllocBar(){
+  const m=document.getElementById('mode-select'); if(m)m.value=ALLOC_CFG.mode||'equal';
+  const mp=document.getElementById('max-pct'); if(mp)mp.value=ALLOC_CFG.max_slot_pct||50;
+  const rb=document.getElementById('rebal-select'); if(rb)rb.value=ALLOC_CFG.rebalance_interval||'daily';
+  const n=Object.keys(BOTS).length;
+  document.getElementById('capital-info').textContent=`Capital ${usd(CAPITAL)} · ${n} bot${n>1?'s':''}`;
+}
+
+/* ── Actions (mêmes endpoints que l'ancienne page Slots) ── */
+async function changeMode(mode){
+  try{ const r=await apiFetch('/api/config/capital-allocator?mode='+encodeURIComponent(mode),{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText); toast('✓ Mode : '+mode); await loadAll();
+  }catch(e){toast('Erreur : '+e.message,true);}
+}
+async function changeMaxPct(val){
+  const pct=parseFloat(val); if(isNaN(pct)||pct<5||pct>100){toast('Valeur entre 5 et 100',true);return;}
+  try{ const r=await apiFetch('/api/config/capital-allocator?max_slot_pct='+(pct/100).toFixed(4),{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText); toast('✓ Max/bot : '+pct+'%'); await loadAll();
+  }catch(e){toast('Erreur : '+e.message,true);}
+}
+async function changeRebalance(val){
+  try{ const r=await apiFetch('/api/config/capital-allocator?rebalance_interval='+encodeURIComponent(val),{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText); toast('✓ Rééquilibrage : '+val); await loadAll();
+  }catch(e){toast('Erreur : '+e.message,true);}
+}
+async function forceRebalance(){
+  const btn=document.getElementById('btn-rebalance'); if(btn)btn.disabled=true;
+  try{ const r=await apiFetch('/api/slots/rebalance',{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText); toast('✓ Rééquilibrage forcé'); await loadAll();
+  }catch(e){toast('Erreur : '+e.message,true);}
+  finally{if(btn)btn.disabled=false;}
+}
+async function setBudget(slotKey,pctInt){
+  const pct=parseInt(pctInt,10)/100;
+  try{ const r=await apiFetch('/api/slots/'+encodeURIComponent(slotKey)+'/budget?budget_pct='+pct.toFixed(4),{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText); toast('✓ Budget '+slotKey+' → '+pctInt+'%'); await loadAll(); openBot(slotKey);
+  }catch(e){toast('Erreur : '+e.message,true);}
+}
+async function toggleSlot(slotKey,enable){
+  try{ const r=await apiFetch('/api/slots/'+encodeURIComponent(slotKey)+'/toggle?enabled='+enable,{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText); toast('✓ Bot '+(enable?'réactivé':'désactivé')); await loadAll(); openBot(slotKey);
+  }catch(e){toast('Erreur : '+e.message,true);}
+}
+async function resetCB(slotKey){
+  try{ const r=await apiFetch('/api/slots/'+encodeURIComponent(slotKey)+'/reset',{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText); toast('✓ Pause levée pour '+slotKey); await loadAll(); openBot(slotKey);
+  }catch(e){toast('Erreur : '+e.message,true);}
+}
+async function forceActive(slotKey,enable){
+  if(enable&&!confirm('Forcer ce bot en ACTIF outrepasse la preuve d\'edge automatique. Continuer ?')) return;
+  try{ const r=await apiFetch('/api/bots/'+encodeURIComponent(slotKey)+'/force-active?enabled='+enable,{method:'POST'});
+    if(!r.ok)throw new Error((await r.json()).detail||r.statusText);
+    toast(enable?'📌 Bot forcé Actif':'Forçage annulé'); await loadAll(); openBot(slotKey);
+  }catch(e){toast('Erreur : '+e.message,true);}
+}
+
+loadAll(); setInterval(loadAll, 8000);
 </script>
 {% endblock %}

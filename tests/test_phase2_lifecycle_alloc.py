@@ -9,32 +9,50 @@ from app.core.database import (init_db, session_scope, record_lifecycle_event,
 def _lc_cfg(**over):
     base = {"lifecycle": {"trial_min_trades": 3, "active_min_trades": 10,
                           "eval_min_trades": 10, "min_active_bots": 1,
-                          "max_demotions_per_day": 2, "plancher_budget_pct": 0.02}}
+                          "max_demotions_per_day": 2, "plancher_budget_pct": 0.02,
+                          "edge_min_trades": 20, "max_worst_trade_pct": 50.0,
+                          "fidelity_min_fills": 2}}
     base["lifecycle"].update(over)
     return base
 
 
-# ── Machine à états ─────────────────────────────────────────────────────────
+def _edge_active(**over):
+    """Bot avec edge prouvée (cône > 0, échantillon suffisant, queue bornée) ET
+    fidélité live confirmée → devrait être ACTIF."""
+    d = {"budget_pct": 0.2, "edge_ci_low": 0.5, "edge_n": 30, "worst_trade_pct": -5.0,
+         "live_trades": 3, "live_in_band": True}
+    d.update(over)
+    return d
+
+
+# ── Machine à états (promotion par edge) ─────────────────────────────────────
 def test_propose_states():
     m = SlotLifecycleManager(_lc_cfg())
-    assert m._propose({"live_trades": 0, "budget_pct": 0.1}) == LifecycleState.CANDIDAT
-    assert m._propose({"live_trades": 2, "budget_pct": 0.1}) == LifecycleState.ESSAI
-    assert m._propose({"live_trades": 12, "score": 0.5, "verdict": True,
-                       "budget_pct": 0.1}) == LifecycleState.ACTIF
-    # Budget effondré → retrait
-    assert m._propose({"live_trades": 5, "budget_pct": 0.001}) == LifecycleState.RETIRE
-    # Live contredit la sim et perd, échantillon suffisant → retrait
-    assert m._propose({"live_trades": 12, "verdict": False,
-                       "live_avg_return_pct": -1.5, "budget_pct": 0.1}) == LifecycleState.RETIRE
+    S = LifecycleState
+    # Pas d'edge prouvée → Candidat (même sans trade).
+    assert m._propose({"live_trades": 0, "budget_pct": 0.1}) == S.CANDIDAT
+    # Edge prouvée mais fidélité pas encore confirmée → Essai.
+    assert m._propose(_edge_active(live_trades=0, live_in_band=None)) == S.ESSAI
+    # Edge prouvée + fidélité (≥ fills, in_band True) → Actif.
+    assert m._propose(_edge_active()) == S.ACTIF
+    # Échantillon backtest trop court → Candidat.
+    assert m._propose(_edge_active(edge_n=5)) == S.CANDIDAT
+    # Borne basse du cône ≤ 0 → Candidat.
+    assert m._propose(_edge_active(edge_ci_low=-0.1)) == S.CANDIDAT
+    # Garde-fou de queue (pire trade au-delà du seuil) → Candidat.
+    assert m._propose(_edge_active(worst_trade_pct=-80.0)) == S.CANDIDAT
+    # Budget effondré → Retrait.
+    assert m._propose({"live_trades": 5, "budget_pct": 0.001}) == S.RETIRE
+    # Le réel contredit la sim et perd, échantillon suffisant → Retrait.
+    assert m._propose(_edge_active(live_in_band=False, live_avg_return_pct=-1.5,
+                                   live_trades=12)) == S.RETIRE
+    # Bypass manuel → Actif quoi qu'il arrive.
+    assert m._propose({"manual_active": True, "live_trades": 0, "budget_pct": 0.1}) == S.ACTIF
 
 
 def test_promotions_immediate_then_demotion_quota():
     m = SlotLifecycleManager(_lc_cfg(max_demotions_per_day=1, min_active_bots=0))
-    # 2 bots actifs
-    data = {
-        "a::1h": {"live_trades": 12, "score": 1, "verdict": True, "budget_pct": 0.2},
-        "b::1h": {"live_trades": 12, "score": 1, "verdict": True, "budget_pct": 0.2},
-    }
+    data = {"a::1h": _edge_active(), "b::1h": _edge_active()}
     snap = m.evaluate(data)
     assert snap["counts"][LifecycleState.ACTIF] == 2
     # Les deux s'effondrent → mais quota = 1 rétrogradation/jour
@@ -49,17 +67,36 @@ def test_promotions_immediate_then_demotion_quota():
 
 def test_active_floor_blocks_full_flush():
     m = SlotLifecycleManager(_lc_cfg(max_demotions_per_day=10, min_active_bots=1))
-    data = {"a::1h": {"live_trades": 12, "score": 1, "verdict": True, "budget_pct": 0.5}}
-    m.evaluate(data)
+    m.evaluate({"a::1h": _edge_active(budget_pct=0.5)})
     # Le seul bot s'effondre, mais plancher = 1 → retrait refusé
     snap = m.evaluate({"a::1h": {"live_trades": 5, "budget_pct": 0.001}})
     assert snap["counts"][LifecycleState.RETIRE] == 0
 
 
+def test_manual_active_bypass():
+    # Forçage via config : un bot sans edge est quand même Actif.
+    m = SlotLifecycleManager(_lc_cfg(manual_active=["x::1h"]))
+    snap = m.evaluate({"x::1h": {"live_trades": 0, "budget_pct": 0.1}})
+    assert snap["states"]["x::1h"] == LifecycleState.ACTIF
+
+
+def test_set_manual_active_runtime():
+    m = SlotLifecycleManager(_lc_cfg())
+    snap = m.evaluate({"x::1h": {"live_trades": 0, "budget_pct": 0.1}})
+    assert snap["states"]["x::1h"] == LifecycleState.CANDIDAT
+    m.set_manual_active("x::1h", True)
+    snap2 = m.evaluate({"x::1h": {"live_trades": 0, "budget_pct": 0.1}})
+    assert snap2["states"]["x::1h"] == LifecycleState.ACTIF
+    m.set_manual_active("x::1h", False)
+    snap3 = m.evaluate({"x::1h": {"live_trades": 0, "budget_pct": 0.1}})
+    # Libéré : retombe vers Candidat (pas d'edge) — au prochain quota de rétrogradation.
+    assert snap3["states"]["x::1h"] in (LifecycleState.CANDIDAT, LifecycleState.ACTIF)
+
+
 def test_lifecycle_persistence_roundtrip(tmp_path):
     _, SL = init_db("sqlite:///:memory:")
     m = SlotLifecycleManager(_lc_cfg(), session_factory=SL)
-    m.evaluate({"a::1h": {"live_trades": 12, "score": 1, "verdict": True, "budget_pct": 0.2}})
+    m.evaluate({"a::1h": _edge_active()})
     with session_scope(SL) as s:
         states = get_current_lifecycle_states(s)
     assert states.get("a::1h") == LifecycleState.ACTIF
@@ -137,3 +174,20 @@ def test_rebalance_guard_keeps_collateral_for_open_position():
     al._rebalance()
     # loser ne tombe pas sous 30% (collatéral de la position ouverte)
     assert al._slots["loser::1h"].budget_pct >= 0.30 - 1e-6
+
+
+# ── Cône d'edge (promotion par expectancy) ───────────────────────────────────
+def test_edge_contract_significance():
+    from app.core.oos_tracker import _edge_contract
+    # Edge consistante (gains réguliers, échantillon large) → borne basse > 0.
+    strong = _edge_contract([1.0, 1.2, 0.8, 1.1, 0.9] * 8)  # 40 trades
+    assert strong["available"] is True
+    assert strong["ci_low_pct"] > 0
+    assert strong["n"] == 40
+    # Échantillon minuscule mais bruité → borne basse ≤ 0 (cône large).
+    weak = _edge_contract([5.0, -4.0, 6.0])
+    assert weak["ci_low_pct"] <= weak["ci_high_pct"]
+    # worst_trade_pct = pire trade observé (garde-fou de queue).
+    assert weak["worst_trade_pct"] == -4.0
+    # Aucun trade → indisponible.
+    assert _edge_contract([])["available"] is False
