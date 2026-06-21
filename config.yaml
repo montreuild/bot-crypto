@@ -80,7 +80,7 @@ scanner:
     max_atr_pct: 10.0
     top_n: 15
 derivatives:
-  enabled: false
+  enabled: true
   period: 1h
   refresh_interval: 300
   z_window: 90
