@@ -122,9 +122,6 @@ capital_allocator:
   slot_budgets:
     derivatives_reversion::5m: 0.0909
     supertrend_macd::15m: 0.0909
-    scoring_statistique_opus::15m: 0.0909
-    scoring_statistique_opus::30m: 0.0909
-    scoring_statistique_opus_v2::30m: 0.0909
     breakout::1h: 0.0909
     derivatives_reversion::1h: 0.0909
     breakout::4h: 0.0909
