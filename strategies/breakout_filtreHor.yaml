@@ -20,4 +20,16 @@ params:
   cooldown: 20
   rr_min: 2.0
 
-optimizer_results: {}
+optimizer_results:
+  1h:
+    run_date: '2026-06-21'
+    oos_score: 0.711391
+    params:
+      period: 20
+      vol_min: 1.2
+      atr_expan_min: 1.05
+      pen_max_atr: 2.0
+      body_min_atr: 0.3
+      squeeze_bars: 20
+      cooldown: 15
+      rr_min: 2.0
