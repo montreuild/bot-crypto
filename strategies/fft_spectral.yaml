@@ -34,13 +34,13 @@ optimizer_results:
       cooldown: 40
       rr_min: 2.0
   1d:
-    run_date: '2026-06-09'
-    oos_score: 0.829368
+    run_date: '2026-06-20'
+    oos_score: 0.544366
     params:
       fft_min_period: 5
-      fft_max_period: 100
-      fft_top_n: 10
-      min_confidence: 0.15
+      fft_max_period: 200
+      fft_top_n: 7
+      min_confidence: 0.2
       min_bars: 150
       cooldown: 20
       rr_min: 1.5

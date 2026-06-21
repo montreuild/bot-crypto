@@ -16,12 +16,12 @@ params:
   atr_period: 14
 optimizer_results:
   1d:
-    run_date: '2026-06-09'
-    oos_score: 0.994943
+    run_date: '2026-06-20'
+    oos_score: 0.437786
     params:
-      period: 30
-      macd_fast: 14
+      period: 15
+      macd_fast: 10
       macd_slow: 30
-      sl_atr: 0.8
-      tp_atr: 2.5
-      cooldown: 5
+      sl_atr: 1.2
+      tp_atr: 3.0
+      cooldown: 3

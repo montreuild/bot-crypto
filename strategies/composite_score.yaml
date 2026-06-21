@@ -57,20 +57,20 @@ optimizer_results:
       cooldown: 20
       rr_min: 1.5
   1d:
-    run_date: '2026-06-10'
-    oos_score: 0.799383
+    run_date: '2026-06-20'
+    oos_score: 0.684539
     params:
       ema_fast: 13
       ema_slow: 50
-      score_long_threshold: 55
-      score_short_threshold: 45
+      score_long_threshold: 65
+      score_short_threshold: 40
       sr_lookback: 240
-      sr_cluster_pct: 0.01
-      use_fft: false
-      fft_min_period: 7
-      fft_max_period: 100
-      cooldown: 10
-      rr_min: 2.0
+      sr_cluster_pct: 0.025
+      use_fft: true
+      fft_min_period: 5
+      fft_max_period: 150
+      cooldown: 20
+      rr_min: 1.5
   15m:
     run_date: '2026-03-19'
     oos_score: -0.078253

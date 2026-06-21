@@ -1,1 +1,11 @@
-optimizer_results: {}
+optimizer_results:
+  1d:
+    run_date: '2026-06-13'
+    oos_score: 0.59106
+    params:
+      model_type: random_forest
+      lookahead: 5
+      vol_multiplier: 0.6
+      adx_min: 20.0
+      proba_long: 0.55
+      proba_short: 0.4
