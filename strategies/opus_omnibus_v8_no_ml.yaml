@@ -100,8 +100,8 @@ params:
   score_threshold: 0.55
 optimizer_results:
   15m:
-    run_date: null
-    oos_score: null
+    run_date:
+    oos_score:
     params: {}
   30m:
     run_date: '2026-06-10'
@@ -124,7 +124,7 @@ optimizer_results:
       p_event_gain: 2.5
       p_event_center: 0.46
   1h:
-    run_date: '2026-06-10'
+    run_date: '2026-06-22'
     oos_score: 0.762879
     params:
       setup_signal_up_amp_min: 0.55
@@ -143,3 +143,10 @@ optimizer_results:
       p_up_gain: 2.0
       p_event_gain: 4.0
       p_event_center: 0.46
+      setup_signal_up_tp_mult: 2.0
+      setup_short_td_high_tp_mult: 2.8
+      setup_short_td_tp_mult: 2.4
+      setup_long_choppy_tp_mult: 1.8
+      setup_short_choppy_tp_mult: 2.4
+      setup_long_exit_td_tp_mult: 2.4
+      setup_long_range_strict_tp_mult: 1.6
