@@ -1,3 +1,13 @@
+# Tache 12 — score_threshold remonte 0.55 -> 0.65.
+# score_threshold est une cle GLOBALE (cf. app/live/utils._GLOBAL_PARAM_KEYS) :
+# elle n'est PAS surchargeable par timeframe via optimizer_results, seulement
+# par strategie via ce bloc params. Motive par le slot 1h (sweep backtest 20000
+# bougies, params par defaut) : 0.55 -> PnL -62.67 / sharpe -8.45 ; 0.65 -> PnL
+# +126.18 / sharpe +7.05 / WR 43.5% (108 trades). Sur 4h, ml_dyn perd aux deux
+# seuils (-543 a 0.55, -505 a 0.65) : 0.65 ne l'aggrave pas (slot 4h a revoir
+# separement). S'applique donc a tous les TF de ml_dynamic_threshold.
+params:
+  score_threshold: 0.65
 optimizer_results:
   1d:
     run_date: '2026-06-13'
