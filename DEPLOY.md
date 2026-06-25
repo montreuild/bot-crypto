@@ -314,9 +314,10 @@ Login : botuser / votre_mot_de_passe
 
 ```yaml
 exchange:
-  name: binance
-  api_key: 'VOTRE_CLE_API_BINANCE'
-  api_secret: 'VOTRE_SECRET_BINANCE'
+  name: okx
+  api_key: 'VOTRE_CLE_API_OKX'
+  api_secret: 'VOTRE_SECRET_OKX'
+  api_password: 'VOTRE_PASSPHRASE_OKX'   # 3e credential — obligatoire en live
   margin: false                     # true pour le margin spot
 
 trading:
@@ -342,11 +343,12 @@ notifications:
   min_pnl_to_notify: 5.0
 ```
 
-**Créer les clés API Binance** :
-1. Binance → Profil → API Management → Créer une clé
-2. Cocher : **Lecture**, **Trading Spot & Margin**
-3. **Ne pas cocher** : Retraits, Futures
-4. Restreindre aux IP de votre serveur Oracle (optionnel mais recommandé)
+**Créer les clés API OKX** :
+1. OKX → Profil → API → Créer une clé V5
+2. Définir une **passphrase** (3e credential, à reporter dans `api_password`)
+3. Permissions : cocher **Trade** uniquement (pas **Withdraw**)
+4. Restreindre aux IP de votre serveur Oracle (recommandé)
+5. Compte en mode **Spot** (ou **Spot and futures / Multi-currency margin** si margin)
 
 ### 6.1 Appliquer la config sans redémarrage
 
@@ -663,7 +665,7 @@ Internet
 │  Cron 03:00 → backup trades.db → OCI Object Storage (20GB free) │
 └──────────────────────────────────────────────────────────────────┘
          │                              │
-         ▼ API Binance/CCXT             ▼ Telegram Bot API
+         ▼ API OKX/CCXT                 ▼ Telegram Bot API
     Exchange (live/paper)            Votre téléphone
 ```
 

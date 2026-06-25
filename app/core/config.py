@@ -235,15 +235,29 @@ def load_config(path: str = "config.yaml") -> dict:
     if not cfg["trading"].get("paper_mode"):
         logger.warning("🔴 LIVE TRADING ACTIVÉ — vérifiez bien vos paramètres !")
 
+    # OKX (et Kucoin/Coinbase) exigent une passphrase API en plus de la clé/secret.
+    exch_name = str(cfg.get("exchange", {}).get("name", "")).lower()
+    if (exch_name in ("okx", "kucoin", "coinbase", "coinbasepro")
+            and api_key not in ("", "YOUR_KEY")
+            and not (cfg["exchange"].get("api_password")
+                     or cfg["exchange"].get("api_passphrase")
+                     or cfg["exchange"].get("password"))):
+        logger.warning(
+            f"⚠ [Config] {exch_name} requiert une passphrase API "
+            f"(exchange.api_password / ${{OKX_API_PASSWORD}}) — absente : "
+            f"les appels authentifiés échoueront en live."
+        )
+
     # ── Cohérence margin / levier / paper (garde-fous production) ────────────
     margin_on = bool(cfg.get("exchange", {}).get("margin")
                      or cfg["trading"].get("margin_mode"))
     if margin_on and float(cfg["trading"].get("max_leverage", 1)) <= 1:
         logger.warning(
             "⚠ [Config] exchange.margin actif mais trading.max_leverage <= 1 : "
-            "le levier ne sera jamais utilisé (l'emprunt AUTO_BORROW_REPAY reste "
-            "actif côté Binance). Pour du spot pur : margin: false ET "
-            "margin_mode: null ; pour du margin réel : max_leverage > 1."
+            "le levier ne sera jamais utilisé (l'emprunt margin reste actif — "
+            "AUTO_BORROW_REPAY sur Binance, tdMode margin sur OKX). Pour du spot "
+            "pur : margin: false ET margin_mode: null ; pour du margin réel : "
+            "max_leverage > 1."
         )
     if margin_on and cfg["trading"].get("paper_mode"):
         logger.warning(

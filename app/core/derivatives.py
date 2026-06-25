@@ -55,9 +55,25 @@ def _lock(path: Path) -> threading.Lock:
 
 
 def to_perp_symbol(symbol: str) -> str:
-    """'BTC/USDC' | 'BTC/USDT' → 'BTCUSDT' (perp USDT = référence funding/OI)."""
+    """'BTC/USDC' | 'BTC/USDT' → 'BTCUSDT' (perp USDT = référence funding/OI).
+
+    Format compact utilisé pour les clés de cache Parquet et les endpoints REST
+    Binance futures-data (long/short, taker)."""
     base = symbol.split("/")[0].split(":")[0].upper()
     return f"{base}USDT"
+
+
+def _ccxt_swap_symbol(symbol: str, exchange=None) -> str:
+    """Symbole du perp linéaire USDT au format ccxt, pour fetch_funding/OI.
+
+    OKX exige le suffixe de règlement (``BTC/USDT:USDT``) ; Binance & co
+    acceptent ``BTC/USDT``. On référence toujours le perp **USDT** (liquidité
+    funding/OI), quelle que soit la quote de la paire spot tradée."""
+    base = symbol.split("/")[0].split(":")[0].upper()
+    name = (getattr(exchange, "id", "") or "").lower()
+    if name == "okx":
+        return f"{base}/USDT:USDT"
+    return f"{base}/USDT"
 
 
 def _http_get_json(url: str, timeout: float = 8.0) -> Optional[list]:
@@ -111,7 +127,7 @@ class DerivativesStore:
 
     def fetch_funding(self, exchange, symbol: str, limit: int = 1000) -> pl.DataFrame:
         """Historique du funding via ccxt (long historique). exchange = RobustExchange/ccxt."""
-        sym = symbol if "/" in symbol else f"{symbol[:-4]}/{symbol[-4:]}"
+        sym = _ccxt_swap_symbol(symbol, exchange)
         try:
             raw = exchange.fetch_funding_rate_history(sym, limit=limit)
         except Exception as e:
@@ -128,7 +144,7 @@ class DerivativesStore:
     def fetch_open_interest(self, exchange, symbol: str, period: str = "1h",
                             limit: int = 500) -> pl.DataFrame:
         """OI via ccxt fetch_open_interest_history (Binance : ~30 derniers jours)."""
-        sym = symbol if "/" in symbol else f"{symbol[:-4]}/{symbol[-4:]}"
+        sym = _ccxt_swap_symbol(symbol, exchange)
         try:
             raw = exchange.fetch_open_interest_history(sym, period, limit=limit)
         except Exception as e:

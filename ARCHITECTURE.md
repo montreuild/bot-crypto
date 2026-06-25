@@ -36,7 +36,7 @@ Vue d'ensemble technique, patterns de design et flux de données.
                   │
         ┌─────────▼──────────────────┐        ┌──────────────────────┐
         │  CandleStore (Parquet)     │◄───────│  Exchange (CCXT)     │
-        │  - data/ohlcv/{sym}/{tf}   │        │  - Binance, Kraken…  │
+        │  - data/ohlcv/{sym}/{tf}   │        │  - OKX, Binance…     │
         │  - Fetch incrémental       │        └──────────────────────┘
         │  - Thread-safe             │
         └────────────────────────────┘
@@ -98,7 +98,7 @@ Backtester(engine, cfg)
 1er fetch (symbol, tf inconnu)
   CandleStore.fetch(exchange, "BTC/USDC", "1h", 1500)
     ├─> _load()              → DataFrame vide (fichier inexistant)
-    ├─> _fetch_full()        → 1500 bougies paginées depuis Binance
+    ├─> _fetch_full()        → 1500 bougies paginées depuis l'exchange (OKX)
     ├─> merge + filtre
     └─> _save()              → data/ohlcv/BTC_USDC/1h.parquet
 
@@ -404,7 +404,8 @@ trader.risk.attach_notifier(notifier)  # Circuit breaker → notifications
 
 ```python
 create_exchange(cfg)
-  └─> ccxt.binance(), ccxt.kraken(), etc
+  └─> ccxt.okx(), ccxt.binance(), ccxt.kraken(), etc
+      (params margin/credentials adaptés par exchange — passphrase OKX)
 ```
 
 ---

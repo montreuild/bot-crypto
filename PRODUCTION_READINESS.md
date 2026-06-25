@@ -17,9 +17,9 @@ capital (voir checklist en fin de document).**
 | # | Problème | Correctif |
 |---|----------|-----------|
 | 1 | **Stop-loss purement logiciel** : si le bot crash ou perd le réseau, les positions restaient sans aucune protection côté exchange (risque de perte illimitée / liquidation en margin). | Stop **STOP_LOSS_LIMIT posé sur l'exchange** en miroir du stop logiciel à chaque ouverture (`_place_exchange_stop`), **remplacé** quand le trailing remonte le stop, **annulé** à la clôture. Si le stop exchange a déjà exécuté (bot down), la position est soldée localement **sans second ordre** (pas de double vente). À la restauration après crash, le stop existant est **adopté** (pas de doublon) ou reposé. Opt-out : `trading.exchange_stop_orders: false`. |
-| 2 | **Prix d'exécution à la clôture** : `order.get("price") or exit_price` — les ordres market Binance ne renvoient souvent pas de prix immédiat → PnL calculé sur le prix ticker pré-exécution. | `fetch_order()` de secours à la clôture (comme à l'ouverture) pour lire le prix moyen réellement exécuté. |
+| 2 | **Prix d'exécution à la clôture** : `order.get("price") or exit_price` — les ordres market ne renvoient souvent pas de prix immédiat → PnL calculé sur le prix ticker pré-exécution. | `fetch_order()` de secours à la clôture (comme à l'ouverture) pour lire le prix moyen réellement exécuté. |
 | 3 | **Partial fills ignorés à l'ouverture** : la position était trackée avec la taille demandée même si l'exchange n'en remplissait qu'une partie (stops/PnL faux). | La taille trackée est alignée sur `order["filled"]` si < 98 % de la taille demandée (live uniquement), avec warning. |
-| 4 | **Margin level critique = simple notification asynchrone** : le bot continuait à ouvrir des positions jusqu'à la liquidation (Binance liquide ≈ 1.05). | Nouveau seuil `margin_level_critical` (défaut 1.2) → **HALT immédiat du trading** (`risk.halted`) + notification **synchrone**. `margin_level_alert` (1.5) reste une alerte simple. |
+| 4 | **Margin level critique = simple notification asynchrone** : le bot continuait à ouvrir des positions jusqu'à la liquidation (Binance liquide ≈ 1.05 ; OKX = mgnRatio, à retuner). | Nouveau seuil `margin_level_critical` (défaut 1.2) → **HALT immédiat du trading** (`risk.halted`) + notification **synchrone**. `margin_level_alert` (1.5) reste une alerte simple. |
 | 5 | **Entrées `_reserved` (réservation atomique de slot) itérées comme de vraies positions** dans `status`, `_sync_paper_balance`, `_send_status_report`, `stop()` → KeyError potentiel / lignes fantômes dans l'API. | Filtrage systématique de `_reserved` dans tous les chemins d'itération. |
 | 6 | **Incohérences de configuration silencieuses** (margin + max_leverage=1, paper + margin). | Warnings explicites au chargement de la config (`app/core/config.py`). |
 | 7 | (commit précédent) **Bug polars épinglé 1.0.0** : les z-scores dérivés (`funding_z`, `lsr_z`…) échouaient silencieusement en live (`min_samples` inexistant). | Détection de la signature `min_periods`/`min_samples` à l'import. |
@@ -48,17 +48,19 @@ variables), pas des formules.
    - *Margin isolé* : `paper_mode: false`, `margin: true`,
      `margin_mode: isolated`, `max_leverage: 2–3` max, et surveiller
      `margin_level` quotidiennement.
-2. **Frais réels** : `taker_fee: 0.001` est correct pour le spot Binance sans
-   BNB. Vérifiez votre palier VIP/BNB réel ; en margin, le
-   `borrow_rate_daily: 0.00072` est une estimation — Binance applique des taux
-   horaires variables par paire. Le PnL margin sera approximatif (cf. backlog).
+2. **Frais réels** : `taker_fee: 0.001` / `maker_fee: 0.0008` correspondent au
+   palier standard OKX (taker 0.10 % / maker 0.08 %). Vérifiez votre palier
+   VIP réel ; en margin, le `borrow_rate_daily: 0.00072` est une estimation —
+   OKX applique des taux d'emprunt **horaires** variables par devise
+   (`borrow_periods_per_day: 24`). Le PnL margin sera approximatif (cf. backlog).
 3. **Sécurité API** :
    - définir `web.api_key` (sinon l'API n'est accessible qu'en localhost, mais
      ne comptez pas dessus derrière un reverse proxy) — un warning explicite
      est désormais émis au démarrage si `web.host: 0.0.0.0` sans clé ;
      génération : `python -c "import secrets; print(secrets.token_urlsafe(32))"` ;
-   - clés exchange **uniquement** via variables d'env (`${BINANCE_API_KEY}` —
-     déjà le cas) ; clés Binance restreintes par IP, sans droit de retrait ;
+   - clés exchange **uniquement** via variables d'env (`${OKX_API_KEY}`,
+     `${OKX_API_SECRET}`, `${OKX_API_PASSWORD}` — déjà le cas) ; clés OKX
+     restreintes par IP, droit *Trade* seul (sans retrait) ;
    - HTTPS (`FORCE_HTTPS=1` + reverse proxy TLS) et CORS adapté au domaine
      via la variable d'env `ALLOWED_ORIGINS` (liste séparée par des virgules,
      ex. `ALLOWED_ORIGINS=https://bot.mondomaine.com` — défaut : localhost).
@@ -107,16 +109,16 @@ variables), pas des formules.
 
 - [ ] Config mise en mode cible (spot pur OU margin assumé) — voir §Prérequis 1
 - [ ] `web.api_key` défini, HTTPS actif, CORS restreint au domaine
-- [ ] Clés Binance : restriction IP + pas de droit de retrait
+- [ ] Clés OKX : restriction IP + droit *Trade* seul (pas de retrait) + passphrase
 - [ ] Notifications Telegram testées (`POST /api/config/notifications/test`)
 - [ ] `exchange_stop_orders: true` vérifié sur un premier trade réel (le stop
-      apparaît dans les ordres ouverts Binance)
+      apparaît dans les ordres ouverts OKX — NB : OKX = ordres algo/trigger)
 - [ ] 2 semaines de paper mode sur les symboles/TF cibles, écart paper vs
       backtest < 5 %
 - [ ] Démarrage live avec capital réduit (ex. 10 % du capital cible) et
       `risk_per_trade: 0.005` pendant 2 semaines
 - [ ] Vérification quotidienne : margin level, positions BDD vs exchange,
-      stops orphelins, PnL vs relevé Binance
+      stops orphelins, PnL vs relevé OKX
 - [ ] Backup automatique de `trades.db` et `config.yaml`/`strategies/`
 
 ---

@@ -1,18 +1,19 @@
 exchange:
-  name: binance
-  api_key: ${BINANCE_API_KEY}
-  api_secret: ${BINANCE_API_SECRET}
+  name: okx
+  api_key: ${OKX_API_KEY}
+  api_secret: ${OKX_API_SECRET}
+  api_password: ${OKX_API_PASSWORD}   # passphrase API OKX — obligatoire en live
   margin: true
 venues:
   default:
   defs:
     spot:
       market_type: spot
-      exchange: binance
+      exchange: okx
       max_leverage: 1
     margin-isolated:
       market_type: margin
-      exchange: binance
+      exchange: okx
       margin_mode: isolated
       max_leverage: 3
     perp-hedge-okx:
@@ -42,12 +43,12 @@ trading:
   daily_drawdown_limit: 0.05
   max_drawdown_global: 0.2
   min_volume_usdc_24h: 5000000
-  taker_fee: 0.001
-  maker_fee: 0.0004
+  taker_fee: 0.001          # OKX spot/margin taker standard 0.10 %
+  maker_fee: 0.0008         # OKX spot/margin maker standard 0.08 % (Binance était 0.04 %)
   spread_pct: 0.0005
   latency_ms: 50
-  borrow_rate_daily: 0.00072
-  borrow_periods_per_day: 3
+  borrow_rate_daily: 0.00072   # à vérifier par actif sur OKX (taux d'emprunt margin)
+  borrow_periods_per_day: 24   # OKX facture l'intérêt margin à l'heure
   margin_mode: isolated
   margin_level_alert: 1.5
   margin_level_critical: 1.2

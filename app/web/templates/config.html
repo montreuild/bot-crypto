@@ -606,8 +606,10 @@
       <div class="panel-body">
         <div class="warn-box">
           ⚠ Le margin trading implique un <strong>risque de liquidation</strong>.
-          Si le Margin Level descend sous <strong>1.10</strong>, Binance liquide automatiquement vos positions.
-          Commencez avec <strong>isolated</strong> et levier ×2 maximum.
+          Sur OKX, la liquidation est pilotée par le <strong>mgnRatio</strong> du compte unifié
+          (sémantique différente de Binance — seuils à retuner). Commencez avec
+          <strong>isolated</strong> et levier ×2 maximum.
+          <br><em>NB : l'accès margin retail peut être restreint en UE sous MiCA.</em>
         </div>
 
         <div class="toggle-wrap">
@@ -629,23 +631,23 @@
           <div class="field">
             <label>Levier max</label>
             <input type="number" id="margin-leverage" min="1" max="5" step="1" value="2" oninput="markDirty('btn-apply-margin')"/>
-            <span class="hint">1 = pas de levier · 2 = doublement de l'exposition · 5 = max isolated Binance</span>
+            <span class="hint">1 = pas de levier · 2 = doublement de l'exposition · 5 = max isolated OKX</span>
           </div>
           <div class="field">
             <label>Alerte margin level</label>
             <input type="number" id="margin-alert" min="1.1" max="3" step="0.1" value="1.5" oninput="markDirty('btn-apply-margin')"/>
-            <span class="hint">Notification si le level descend sous ce seuil · Liquidation à 1.10</span>
+            <span class="hint">Notification si le level descend sous ce seuil · seuils à retuner pour le mgnRatio OKX</span>
           </div>
           <div class="field">
             <label>Taux d'emprunt journalier</label>
             <input type="number" id="margin-borrow-rate" min="0.0001" max="0.005" step="0.0001" value="0.00072" oninput="markDirty('btn-apply-margin')"/>
-            <span class="hint">0.00072 = 0.072%/jour ≈ 26%/an (taux Binance standard USDC) · Vérifiez sur binance.com/fr/margin-data</span>
+            <span class="hint">0.00072 = 0.072%/jour ≈ 26%/an (estimation) · OKX facture l'intérêt à l'heure · Vérifiez sur okx.com (taux d'emprunt margin)</span>
           </div>
           <div class="info-box">
-            <strong>Comment activer sur Binance :</strong><br>
-            1. Compte Binance → Portefeuille → Margin → Ouvrir compte margin<br>
-            2. Activer isolated margin sur chaque paire souhaitée<br>
-            3. Transférer des USDC sur votre compte margin<br>
+            <strong>Comment activer sur OKX :</strong><br>
+            1. Compte OKX → mode de compte « Spot and futures » ou « Multi-currency margin »<br>
+            2. Activer le margin trading et transférer des USDC sur le compte de trading<br>
+            3. Clé API V5 avec permission <em>Trade</em> + passphrase<br>
             4. Activer ici et redémarrer le bot
           </div>
         </div>

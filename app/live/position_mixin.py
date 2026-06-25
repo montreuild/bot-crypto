@@ -724,7 +724,8 @@ class PositionMixin:
           cotation (ou USDT/USDC) sont sommés — frais en BNB & co ignorés
           (pas de conversion fiable), on garde alors l'estimation.
         - Coût d'emprunt : intérêts réels accumulés depuis l'ouverture via
-          ``fetch_borrow_interest`` (Binance margin interestHistory).
+          ``fetch_borrow_interest`` (ccxt — supporté Binance ET OKX ; appel
+          défensif avec repli sur l'estimation si indisponible).
 
         Best-effort : tout échec retombe sur les estimations (aucune exception
         propagée). Alerte si l'écart dépasse 5 % du coût estimé.

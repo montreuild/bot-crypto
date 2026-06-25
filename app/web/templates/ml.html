@@ -291,7 +291,7 @@ function updateLimHint() {
     const isDays  = Math.round(is_act  * mins / 1440);
     const oosDays = Math.round(oos_act * mins / 1440);
     const capNote = total > tfMax
-      ? `<span style="color:var(--amber)"> (max Binance: ${tfMax})</span>`
+      ? `<span style="color:var(--amber)"> (max OKX: ${tfMax})</span>`
       : '';
     return `${tf} → IS ${is_act} (~${isDays}j) · OOS ${oos_act} (~${oosDays}j)${capNote}`;
   });
@@ -481,7 +481,7 @@ async function startOpt() {
         const tfMax = TF_MAX_UI[tf] || 8000;
         const capped = bars < lim && bars >= tfMax;
         html += `<span style="margin-right:10px">${tf}: <strong style="color:var(--text)">${bars}</strong> bougies`;
-        if (capped) html += ` <span style="color:var(--amber)">(max Binance)</span>`;
+        if (capped) html += ` <span style="color:var(--amber)">(max OKX)</span>`;
         html += `</span>`;
       });
       html += `</div>`;

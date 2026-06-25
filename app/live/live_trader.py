@@ -382,7 +382,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             )
             self.notif.send(
                 f"⏸ *Bot arrêté — surveillance suspendue*\n"
-                f"`{n}` position(s) conservée(s) sur Binance : `{syms}`\n"
+                f"`{n}` position(s) conservée(s) sur l'exchange : `{syms}`\n"
                 f"Elles seront reprises au prochain démarrage.",
                 async_=False
             )
