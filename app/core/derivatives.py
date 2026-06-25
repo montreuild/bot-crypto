@@ -5,8 +5,12 @@ le vrai edge directionnel crypto (cf. research/DERIVATIVES_integration.md) :
 
   • funding_rate          — funding des perp (ccxt fetch_funding_rate_history)
   • open_interest         — OI (ccxt fetch_open_interest_history)
-  • long_short_ratio      — ratio comptes long/short (Binance futures-data REST)
+  • long_short_ratio      — ratio comptes long/short (OKX rubik/stat REST public)
   • taker_buy_sell_ratio  — volume taker acheteur/vendeur = order-flow agressif
+
+100 % OKX : funding/OI via l'instance ccxt OKX, long-short/taker via les
+endpoints publics ``rubik/stat`` d'OKX (plus aucune dépendance à Binance — robuste
+en UE/MiCA où fapi.binance.com peut être géo-bloqué).
 
 Pattern aligné sur CandleStore : cache Parquet par (symbol, métrique), polars,
 thread-safe. Toutes les méthodes réseau sont GRACIEUSES : en cas d'échec (pas de
@@ -16,8 +20,8 @@ consommatrices basculent alors sur leur logique OHLCV pure.
 
 ⚠️ Limites des sources gratuites :
   • funding_rate : historique long (plusieurs années) via ccxt.
-  • open_interest / long_short / taker : Binance ne sert que ~30 DERNIERS JOURS
-    sur les endpoints publics → exploitables en LIVE, pas pour un backtest pluri-
+  • open_interest / long_short / taker : OKX ne sert qu'un historique RÉCENT sur
+    les endpoints publics → exploitables en LIVE, pas pour un backtest pluri-
     annuel (pour cela : source payante type Coinglass/Coinalyze/Glassnode, ou
     accumulation locale au fil de l'eau dans le cache Parquet de ce module).
 """
@@ -33,8 +37,13 @@ import polars as pl
 
 logger = logging.getLogger(__name__)
 
-_BINANCE_FAPI = "https://fapi.binance.com"
+_OKX_REST = "https://www.okx.com"
 _PERIOD_OK = ("5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d")
+# OKX rubik/stat attend les périodes en 5m / 1H / 1D (H et D majuscules).
+_OKX_PERIOD = {
+    "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1H",
+    "2h": "2H", "4h": "4H", "6h": "6H", "12h": "12H", "1d": "1D",
+}
 
 # Compat polars : le kwarg ``min_periods`` (≤1.20, version épinglée 1.0.0) a été
 # renommé ``min_samples`` ensuite. Détection une fois à l'import.
@@ -90,9 +99,9 @@ def _http_get_json(url: str, timeout: float = 8.0) -> Optional[list]:
 class DerivativesStore:
     """Cache Parquet + fetch des métriques de dérivés. Sans clé API."""
 
-    def __init__(self, base_dir: str = "data/derivatives", fapi_base: str = _BINANCE_FAPI):
+    def __init__(self, base_dir: str = "data/derivatives", okx_rest: str = _OKX_REST):
         self._base = Path(base_dir)
-        self._fapi = fapi_base.rstrip("/")
+        self._okx = okx_rest.rstrip("/")
         self._last_refresh: Dict[str, float] = {}   # (symbol|period) → ts dernier fetch réseau
 
     def _path(self, symbol: str, metric: str) -> Path:
@@ -165,25 +174,42 @@ class DerivativesStore:
             .with_columns(pl.col("time").cast(pl.Datetime("ms")))
         return self._merge_cache(self._path(symbol, "oi"), df)
 
-    def _fetch_fapi_data(self, symbol: str, endpoint: str, metric: str,
-                         value_key: str, period: str = "1h", limit: int = 500) -> pl.DataFrame:
-        """Endpoints Binance futures-data publics (long/short, taker). ~30 j d'historique."""
-        if period not in _PERIOD_OK:
-            period = "1h"
-        url = (f"{self._fapi}/futures/data/{endpoint}"
-               f"?symbol={to_perp_symbol(symbol)}&period={period}&limit={limit}")
-        raw = _http_get_json(url)
-        if not raw or not isinstance(raw, list):
+    def _fetch_okx_rubik(self, symbol: str, path: str, metric: str,
+                         period: str = "1h", num_cols: int = 1,
+                         inst_type: Optional[str] = None) -> pl.DataFrame:
+        """Endpoints publics OKX ``rubik/stat`` (long/short, taker). Historique récent.
+
+        Réponse OKX : ``{"code":"0","data":[[ts, v1, (v2)], ...]}`` (newest-first).
+        ``num_cols`` = nombre de colonnes de valeur après le timestamp :
+          • 1 → ratio direct (long-short-account-ratio : data[1])
+          • 2 → taker-volume [sellVol, buyVol] → ratio buy/sell = data[2]/data[1]
+        Param ``ccy`` = base de la paire (BTC pour BTC/USDC). Gracieux.
+        """
+        ccy = symbol.split("/")[0].split(":")[0].upper()
+        p   = _OKX_PERIOD.get(period if period in _PERIOD_OK else "1h", "1H")
+        url = f"{self._okx}/api/v5/rubik/stat/{path}?ccy={ccy}&period={p}"
+        if inst_type:
+            url += f"&instType={inst_type}"
+        raw  = _http_get_json(url)
+        data = raw.get("data") if isinstance(raw, dict) else None
+        if not data or not isinstance(data, list):
             return self._load(self._path(symbol, metric))
         rows_t, rows_v = [], []
-        for x in raw:
-            ts = x.get("timestamp")
-            if ts is None or value_key not in x:
+        for x in data:
+            if not isinstance(x, (list, tuple)) or len(x) < 1 + num_cols:
                 continue
             try:
-                rows_t.append(int(ts)); rows_v.append(float(x[value_key]))
+                ts = int(x[0])
+                if num_cols == 2:
+                    sell, buy = float(x[1]), float(x[2])
+                    if sell == 0:
+                        continue
+                    val = buy / sell
+                else:
+                    val = float(x[1])
             except (TypeError, ValueError):
                 continue
+            rows_t.append(ts); rows_v.append(val)
         if not rows_t:
             return self._load(self._path(symbol, metric))
         df = pl.DataFrame({"time": rows_t, "value": rows_v}) \
@@ -191,14 +217,14 @@ class DerivativesStore:
         return self._merge_cache(self._path(symbol, metric), df)
 
     def fetch_long_short_ratio(self, symbol: str, period: str = "1h", limit: int = 500) -> pl.DataFrame:
-        # globalLongShortAccountRatio → champ "longShortRatio"
-        return self._fetch_fapi_data(symbol, "globalLongShortAccountRatio",
-                                     "lsratio", "longShortRatio", period, limit)
+        # OKX rubik : ratio comptes long/short par devise → data[[ts, ratio]]
+        return self._fetch_okx_rubik(symbol, "contracts/long-short-account-ratio",
+                                     "lsratio", period, num_cols=1)
 
     def fetch_taker_ratio(self, symbol: str, period: str = "1h", limit: int = 500) -> pl.DataFrame:
-        # takerlongshortRatio → champ "buySellRatio"
-        return self._fetch_fapi_data(symbol, "takerlongshortRatio",
-                                     "taker", "buySellRatio", period, limit)
+        # OKX rubik : taker-volume [sellVol, buyVol] sur les contrats → ratio buy/sell
+        return self._fetch_okx_rubik(symbol, "taker-volume", "taker", period,
+                                     num_cols=2, inst_type="CONTRACTS")
 
     # ── Alignement sur l'OHLCV (sans lookahead) ────────────────────────────────
 

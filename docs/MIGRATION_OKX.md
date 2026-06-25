@@ -84,14 +84,17 @@ L'abstraction est pilotée par l'`id` ccxt de l'exchange (`RobustExchange._name`
 
 ## Données de dérivés (signaux)
 
-`DerivativesStore` agrège des signaux directionnels (funding, OI, long/short, taker) :
+`DerivativesStore` agrège des signaux directionnels (funding, OI, long/short, taker) —
+désormais **100 % OKX**, sans aucune dépendance à Binance :
 
-- **funding & open interest** : désormais récupérés via l'instance OKX (ccxt), symbole
-  swap `BTC/USDT:USDT`.
-- **long/short ratio & taker ratio** : restent servis par les endpoints **publics**
-  `fapi.binance.com` (pas de clé requise) — OKX n'expose pas d'équivalent aussi simple.
-  Dégradation gracieuse : si ces endpoints sont géo-bloqués depuis l'UE, les colonnes
-  sont simplement absentes et les stratégies retombent sur leur logique OHLCV pure.
+- **funding & open interest** : via l'instance OKX (ccxt), symbole swap `BTC/USDT:USDT`.
+- **long/short ratio & taker ratio** : via les endpoints **publics** OKX `rubik/stat`
+  (`/api/v5/rubik/stat/contracts/long-short-account-ratio` et `.../taker-volume`,
+  param `ccy`, périodes `1H`/`1D`). Le ratio taker buy/sell est calculé depuis
+  `taker-volume` (`buyVol / sellVol`). Plus robuste en UE/MiCA, où `fapi.binance.com`
+  peut être géo-bloqué.
+- Dégradation gracieuse inchangée : en cas d'échec réseau, les colonnes sont absentes
+  et les stratégies retombent sur leur logique OHLCV pure.
 
 ## Procédure de bascule recommandée
 

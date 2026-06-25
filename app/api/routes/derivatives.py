@@ -50,7 +50,7 @@ def derivatives_data(symbol: str = "BTC/USDC", period: str = "1h",
     """Séries dérivées + close OHLCV pour superposition graphique.
 
     ``refresh=true`` force un fetch réseau incrémental avant lecture
-    (funding/OI via ccxt, long-short/taker via REST Binance public).
+    (funding/OI via ccxt OKX, long-short/taker via OKX rubik/stat public).
     """
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
