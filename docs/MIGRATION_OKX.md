@@ -72,12 +72,19 @@ L'abstraction est pilotée par l'`id` ccxt de l'exchange (`RobustExchange._name`
 4. **MiCA & accès margin retail.** L'entité OKX Europe peut restreindre le margin /
    les dérivés au retail. Si l'accès margin est refusé : repasser en spot pur
    (`margin: false`, `margin_mode: null`, `max_leverage: 1`).
-5. **Stops exchange (OKX = ordres algo).** Sur OKX les stops sont des *algo orders*
-   (trigger) ; ils n'apparaissent pas dans `fetch_open_orders` standard. La pose et
-   l'annulation passent par `create_order(stopPrice=...)` (géré par ccxt), mais
-   l'adoption d'un stop existant après crash (`_adopt_or_place_exchange_stop`) peut
-   nécessiter un `params={'ordType':'trigger'}` selon la version ccxt — à valider sur
-   un premier trade réel. Dégradation gracieuse : le stop logiciel reste actif.
+5. **Protection exchange : OCO natif (SL+TP).** Sur OKX, si la position porte un
+   take-profit, la protection posée côté exchange est un **OCO standalone**
+   (`ordType: 'oco'` via ccxt : `stopLossPrice` + `takeProfitPrice`, jambes limit) —
+   les deux jambes vivent sur l'exchange (le TP est capté **même bot éteint**) et
+   l'exécution de l'une annule l'autre. Sans TP, ou sur Binance : stop simple
+   STOP_LOSS_LIMIT (comportement initial). L'OCO **attaché à l'ordre d'entrée**
+   (`attachAlgoOrds`) est réservé aux perp/swap chez OKX — indisponible en
+   spot/margin, d'où l'OCO standalone. Le trailing remplace l'OCO (cancel+replace)
+   en conservant le TP ; l'adoption après crash reconnaît les ordres algo/OCO OKX
+   (`slTriggerPx`/`tpTriggerPx`/`ordType oco`). ⚠️ Le cycle de vie des ordres algo
+   OKX (cancel/fetch via `fetch_open_orders`) garde les caveats best-effort de
+   l'existant — **à valider sur un premier trade réel**. Dégradation gracieuse : le
+   stop logiciel reste la référence de gestion en live.
 6. **Frais & taux d'emprunt.** Vérifiez votre palier VIP réel et les taux d'emprunt
    par devise sur okx.com ; les valeurs de `config.yaml` sont des estimations
    conservatrices.
