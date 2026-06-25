@@ -467,6 +467,28 @@ def cached_strategy_features(
         and df.height > 0 and "time" in df.columns
     if use_cache:
         res = get_feature_store().get_or_build(symbol, tf, df, provider)
+        # Garde-fou anti-désalignement du cache incrémental. Pour une fenêtre qui
+        # ne commence pas au bord du cache (typiquement la tranche OOS de
+        # l'optimiseur, qui suit la tranche IS sans chevauchement d'historique),
+        # l'ajout incrémental calcule les features sur une fenêtre dépourvue de
+        # warmup : les premières barres ressortent à NaN, y compris les colonnes
+        # « passthrough » (close/OHLC), puis sont mises en cache et relues. Ces
+        # close NaN faussent ensuite le labelling ML (labels mono-classe →
+        # entraînement LightGBM ignoré → 0 trade en OOS → score OOS = -999 pour
+        # les opus_omnibus_v*). Si une colonne passthrough est NaN là où df est
+        # finie (ou si la hauteur diffère), on retombe sur un build direct correct
+        # pour cette fenêtre (le cache disque n'est pas relu pour ce calcul).
+        if res is not None and res.height and "close" in res.columns \
+                and "close" in df.columns:
+            _rc = res["close"].to_numpy()
+            _dc = df["close"].to_numpy()
+            _misaligned = (_rc.shape != _dc.shape) or bool(
+                ((~_np.isfinite(_rc)) & _np.isfinite(_dc)).any())
+            if _misaligned:
+                logger.warning(
+                    f"[FeatureStore] {symbol}/{tf} [{name}] : cache désaligné "
+                    "(close NaN sur le warmup d'une fenêtre hors-bord) → build direct.")
+                res = _pbuild(df)
     else:
         res = _pbuild(df)
 

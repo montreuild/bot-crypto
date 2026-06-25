@@ -1,0 +1,35 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : Breakout + Filtre Horaire (doublon autonome de breakout)
+# ──────────────────────────────────────────────────────────────────────────────
+# Cassure Donchian (cf. breakout) restreinte à la session US (13-20h UTC, jours
+# ouvrés). Teste si filtrer les cassures aux heures de meilleure liquidité
+# améliore l'edge — c'est le levier du seul slot intraday robuste (v11::30m).
+
+params:
+  # ── Filtre horaire ──
+  enable_hour_filter: true
+  active_hours_utc: [13, 14, 15, 16, 17, 18, 19, 20]
+  active_days: [0, 1, 2, 3, 4]
+  # ── Cassure (defaults breakout 1h) ──
+  period: 30
+  vol_min: 1.1
+  atr_expan_min: 1.20
+  pen_max_atr: 1.5
+  body_min_atr: 0.30
+  squeeze_bars: 15
+  cooldown: 20
+  rr_min: 2.0
+
+optimizer_results:
+  1h:
+    run_date: '2026-06-21'
+    oos_score: 0.711391
+    params:
+      period: 20
+      vol_min: 1.2
+      atr_expan_min: 1.05
+      pen_max_atr: 2.0
+      body_min_atr: 0.3
+      squeeze_bars: 20
+      cooldown: 15
+      rr_min: 2.0

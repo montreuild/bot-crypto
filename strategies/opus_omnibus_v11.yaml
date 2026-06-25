@@ -112,14 +112,28 @@ params:
 
 optimizer_results:
   15m:
-    run_date: null
-    oos_score: null
+    run_date:
+    oos_score:
     params: {}
   30m:
-    run_date: null
-    oos_score: null
+    run_date:
+    oos_score:
     params: {}
   1h:
-    run_date: null
-    oos_score: null
-    params: {}
+    run_date: '2026-06-21'
+    oos_score: 0.331527
+    params:
+      setup_signal_up_amp_min: 0.45
+      setup_signal_up_dir_min: 0.65
+      setup_short_td_high_amp_min: 0.6
+      setup_short_td_high_dir_max: 0.25
+      setup_long_choppy_amp_min: 0.55
+      setup_long_choppy_dir_min: 0.58
+      setup_short_choppy_amp_min: 0.5
+      setup_short_choppy_dir_max: 0.42
+      setup_long_tu_amp_min: 0.55
+      setup_long_tu_dir_min: 0.58
+      setup_long_range_strict_amp_min: 0.65
+      setup_long_range_light_amp_min: 0.5
+      exit_td_window_bars: 4
+      di_rescue: 8.0

@@ -1,0 +1,309 @@
+"""Stratégie Breakout Donchian + FILTRE HORAIRE — doublon autonome de ``breakout``.
+
+Copie autonome de ``breakout`` (cassure de canal Donchian avec confirmations ATR,
+MACD, volume) à laquelle on ajoute un **filtre horaire/jours** : le signal n'est
+émis que pendant les heures et jours actifs (par défaut la session US, 13-20h UTC,
+du lundi au vendredi). C'est le levier qui distingue le seul slot intraday à edge
+robuste (opus_omnibus_v11::30m). Objectif : tester si filtrer les cassures aux
+heures de meilleure liquidité améliore l'edge du breakout.
+
+Aucune dépendance à ``breakout`` (pas d'héritage) : la stratégie est optimisable
+indépendamment, avec son propre espace de paramètres incluant le filtre horaire.
+"""
+import datetime as _dt
+import logging
+from typing import Dict, Any, List
+
+import polars as pl
+
+from app.engine.engine import BaseStrategy
+from app.core.indicators import bb_squeeze as calc_squeeze, htf_trend, pre_val, ema_window
+
+logger = logging.getLogger(__name__)
+
+
+def _last_bar_hour_dow(df: pl.DataFrame) -> tuple:
+    """(heure UTC, jour de semaine) de la dernière bougie, ou (None, None)."""
+    if "time" not in df.columns or len(df) == 0:
+        return None, None
+    ts = df["time"][-1]
+    try:
+        if hasattr(ts, "hour") and hasattr(ts, "weekday"):
+            return int(ts.hour), int(ts.weekday())
+    except Exception:
+        pass
+    try:
+        raw = float(ts)
+        if raw > 1e12:
+            raw /= 1000.0
+        d = _dt.datetime.utcfromtimestamp(raw)
+        return d.hour, d.weekday()
+    except Exception:
+        return None, None
+
+
+class Strategy(BaseStrategy):
+    name = "breakout_filtreHor"
+
+    timeframes: List[str] = ["15m", "30m", "1h"]
+
+    param_space: Dict[str, List] = {
+        "period":         [20, 25, 30, 40],
+        "vol_min":        [1.1, 1.2, 1.5],
+        "atr_expan_min":  [1.05, 1.08, 1.12, 1.20],
+        "pen_max_atr":    [1.5, 2.0, 2.5],
+        "body_min_atr":   [0.30, 0.35, 0.45],
+        "squeeze_bars":   [10, 15, 20],
+        "cooldown":       [15, 20, 25],
+        "rr_min":         [1.3, 1.5, 2.0],
+    }
+
+    # Filtre horaire figé (non exploré) : session US, jours ouvrés. C'est la
+    # raison d'être de la variante ; l'optimiseur règle les paramètres de cassure
+    # AVEC ce filtre actif.
+    fixed_params: Dict[str, Any] = {
+        "enable_hour_filter": True,
+        "active_hours_utc":   [13, 14, 15, 16, 17, 18, 19, 20],
+        "active_days":        [0, 1, 2, 3, 4],
+    }
+
+    def __init__(self):
+        self._last_signal: Dict[str, int] = {}
+        self._call_count:  Dict[str, int] = {}
+        # Réutilisation causale des EMA custom (hors colonnes _pre_ema*).
+        self._bt_full_df = None
+        self._ema_cache:  Dict[tuple, Any] = {}
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Mémorise le df complet pour réutiliser les EMA causales (O(n²)→O(n))."""
+        self._bt_full_df = df
+
+    def min_bars_required(self, params: dict = None) -> int:
+        p = (params or {}).get(self.name, {})
+        ema_trend    = int(p.get("ema_trend",    200))
+        period       = int(p.get("period",        30))
+        squeeze_bars = int(p.get("squeeze_bars",  15))
+        return max(ema_trend + 5, period + squeeze_bars + 25)
+
+    def score(self, df: pl.DataFrame, params: dict = None,
+              df_htf=None, symbol: str = "") -> Dict[str, Any]:
+        p = (params or {}).get(self.name, {})
+
+        # ── Filtre horaire/jours (raison d'être de la variante) ────────────────
+        enable_hour_filter = bool(p.get("enable_hour_filter",
+                                        self.fixed_params["enable_hour_filter"]))
+        active_hours_utc   = list(p.get("active_hours_utc",
+                                        self.fixed_params["active_hours_utc"]))
+        active_days        = list(p.get("active_days",
+                                        self.fixed_params["active_days"]))
+        if enable_hour_filter:
+            hour, dow = _last_bar_hour_dow(df)
+            if hour is not None and dow is not None:
+                if dow not in active_days:
+                    return self._none(f"Hors jours actifs (weekday={dow})")
+                if hour not in active_hours_utc:
+                    return self._none(f"Hors session ({hour}h UTC)")
+
+        period        = int(p.get("period",          30))
+        atr_mult      = float(p.get("atr_mult",      2.0))
+        vol_min       = float(p.get("vol_min",       1.2))
+        squeeze_bars  = int(p.get("squeeze_bars",    15))
+        cooldown      = int(p.get("cooldown",         20))
+        ema_trend     = int(p.get("ema_trend",       200))
+        ema_mid       = int(p.get("ema_mid",          50))
+        atr_expan_min = float(p.get("atr_expan_min", 1.08))
+        pen_max_atr   = float(p.get("pen_max_atr",   2.0))
+        body_min_atr  = float(p.get("body_min_atr",  0.35))
+        rr_min        = float(p.get("rr_min",        1.5))
+
+        sym = symbol or str(df["time"][-1]) if "time" in df.columns else "default"
+        cnt = self._call_count.get(sym, 0) + 1
+        self._call_count[sym] = cnt
+
+        min_bars = max(ema_trend + 5, period + squeeze_bars + 25)
+        if len(df) < min_bars:
+            return self._none(f"EMA{ema_trend} requiert {min_bars} bougies min, {len(df)} disponibles")
+
+        close  = df["close"]
+        high   = df["high"]
+        low    = df["low"]
+        open_  = df["open"]
+
+        # ── Tendance fond ────────────────────────────────────────────────────
+        _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
+        lt = pre_val(df, _ema_map.get(ema_trend, "")) or float(ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lm = pre_val(df, _ema_map.get(ema_mid, ""))   or float(ema_window(df, ema_mid,   full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        c_now = float(close[-1])
+        o_now = float(open_[-1])
+
+        trend_bull = c_now > lt and c_now > lm
+        trend_bear = c_now < lt and c_now < lm
+        trend_bull_soft = (c_now > lt * 0.97 and c_now > lm * 1.01)
+        trend_bear_soft = (c_now < lt * 1.03 and c_now < lm * 0.99)
+
+        # ── Canal Donchian ───────────────────────────────────────────────────
+        highest = float(high[-(period + 1):-1].max())
+        lowest  = float(low[-(period + 1):-1].min())
+
+        # ── ATR — série pré-calculée ─────────────────────────────────────────
+        atr_s   = df["_pre_atr14"]
+        atr_now = float(atr_s[-1])
+        if atr_now <= 0:
+            return self._none()
+
+        body    = abs(c_now - o_now)
+        body_ok = body >= atr_now * body_min_atr
+
+        atr_prev  = float(atr_s[-(squeeze_bars + 1):-1].mean())
+        atr_ratio = atr_now / max(atr_prev, 1e-9)
+        expanding = atr_ratio >= atr_expan_min
+
+        squeeze = calc_squeeze(close, squeeze_bars)
+
+        vr = float(df["_pre_volratio20"][-1])
+        vol_prev = float(df["volume"][-2])
+        vol_now  = float(df["volume"][-1])
+        vol_rising = vol_now > vol_prev * 1.05
+
+        lh = float(df["_pre_macd_hist"][-1])
+        ph = float(df["_pre_macd_hist"][-2])
+        macd_bull = lh > 0
+        macd_bear = lh < 0
+        macd_accel_bull = lh > ph
+        macd_accel_bear = lh < ph
+
+        htf = htf_trend(df_htf)
+
+        c1, c2, c3 = float(close[-2]), float(close[-3]), float(close[-4])
+        prev2_bullish = c1 > c3
+        prev2_bearish = c1 < c3
+
+        if cnt - self._last_signal.get(sym, -999) < cooldown:
+            return self._none("Cooldown")
+
+        indicators = {
+            "donchian_high": round(highest, 2), "donchian_low": round(lowest, 2),
+            "ema200": round(lt, 2), "ema50": round(lm, 2), "atr": round(atr_now, 2),
+            "atr_ratio": round(atr_ratio, 3), "vol_ratio": round(vr, 2),
+            "bb_squeeze": squeeze, "body_atr": round(body / atr_now, 3),
+            "macd_hist": round(lh, 6), "htf_trend": htf,
+        }
+
+        # ── LONG breakout ────────────────────────────────────────────────────
+        if c_now > highest and (trend_bull or trend_bull_soft) and vr >= vol_min:
+            penetration = (c_now - highest) / atr_now
+            if penetration > pen_max_atr:
+                return self._none(f"Épuisé {penetration:.2f}x ATR")
+            if not body_ok:
+                return self._none(f"Corps {body/atr_now:.2f}x ATR < {body_min_atr}")
+            if not expanding:
+                return self._none(f"ATR pas en expansion ({atr_ratio:.2f}x < {atr_expan_min}x)")
+            if not macd_bull:
+                return self._none(f"MACD négatif ({lh:+.5f})")
+            if htf < 0:
+                return self._none("HTF baissier — breakout contre tendance")
+
+            quality = sum([
+                squeeze,
+                penetration > 0.15,
+                prev2_bullish,
+                vol_rising,
+            ])
+            if quality < 2:
+                return self._none(f"Qualité {quality}/4 < 2")
+
+            stop_l  = highest - atr_now * atr_mult
+            risk_l  = c_now - stop_l
+            if risk_l <= 0:
+                return self._none("Stop invalide")
+            target_l = highest + (highest - lowest)
+            reward_l = max(target_l - c_now, 0.0)
+            rr_l = reward_l / risk_l if risk_l > 0 else 0.0
+            if rr_l < rr_min:
+                return self._none(f"R:R {rr_l:.2f} < {rr_min}")
+
+            vol_f     = min((vr - vol_min) / 2.0, 0.10)
+            pen_f     = min(penetration * 0.05, 0.08)
+            qual_b    = quality * 0.04
+            macd_b    = 0.04 if macd_accel_bull else 0.0
+            htf_b     = 0.04 if htf > 0 else 0.0
+            trend_b   = 0.04 if trend_bull else 0.0
+
+            score = min(0.62 + vol_f + pen_f + qual_b + macd_b + htf_b + trend_b, 0.94)
+            self._last_signal[sym] = cnt
+            return {
+                "score": round(score, 3), "side": "long", "name": self.name,
+                "atr": atr_now, "stop_hint": round(stop_l, 2),
+                "indicators": indicators,
+                "conditions": [
+                    f"Close {c_now:.0f} > Donchian{period}H {highest:.0f} ✓",
+                    f"Tendance: EMA200={lt:.0f} EMA50={lm:.0f} ✓",
+                    f"Vol {vr:.2f}x ↑ | ATR expansion {atr_ratio:.2f}x ✓",
+                    f"MACD {lh:+.5f} positif ✓ | Corps {body/atr_now:.2f}x ATR ✓",
+                    f"Qualité {quality}/4 | Pénétration {penetration:.2f}x ATR",
+                ],
+                "reason": (
+                    f"Breakout(filtreHor) LONG D{period} pén={penetration:.2f} "
+                    f"vol={vr:.1f}x q={quality}/4 MACD={lh:+.5f}"
+                ),
+            }
+
+        # ── SHORT breakout ───────────────────────────────────────────────────
+        if c_now < lowest and (trend_bear or trend_bear_soft) and vr >= vol_min:
+            penetration = (lowest - c_now) / atr_now
+            if penetration > pen_max_atr:
+                return self._none(f"Épuisé {penetration:.2f}x ATR")
+            if not body_ok:
+                return self._none(f"Corps {body/atr_now:.2f}x ATR < {body_min_atr}")
+            if not expanding:
+                return self._none(f"ATR pas en expansion ({atr_ratio:.2f}x)")
+            if not macd_bear:
+                return self._none(f"MACD positif ({lh:+.5f})")
+            if htf > 0:
+                return self._none("HTF haussier — breakout contre tendance")
+
+            quality = sum([squeeze, penetration > 0.15, prev2_bearish, vol_rising])
+            if quality < 2:
+                return self._none(f"Qualité {quality}/4 < 2")
+
+            stop_s  = lowest + atr_now * atr_mult
+            risk_s  = stop_s - c_now
+            if risk_s <= 0:
+                return self._none("Stop invalide")
+            target_s = lowest - (highest - lowest)
+            reward_s = max(c_now - target_s, 0.0)
+            rr_s = reward_s / risk_s if risk_s > 0 else 0.0
+            if rr_s < rr_min:
+                return self._none(f"R:R short {rr_s:.2f} < {rr_min}")
+
+            vol_f   = min((vr - vol_min) / 2.0, 0.10)
+            pen_f   = min(penetration * 0.05, 0.08)
+            qual_b  = quality * 0.04
+            macd_b  = 0.04 if macd_accel_bear else 0.0
+            htf_b   = 0.04 if htf < 0 else 0.0
+
+            score = min(0.62 + vol_f + pen_f + qual_b + macd_b + htf_b, 0.93)
+            self._last_signal[sym] = cnt
+            return {
+                "score": round(score, 3), "side": "short", "name": self.name,
+                "atr": atr_now, "stop_hint": round(stop_s, 2),
+                "indicators": indicators,
+                "conditions": [
+                    f"Close {c_now:.0f} < Donchian{period}L {lowest:.0f} ✓",
+                    f"Vol {vr:.2f}x | ATR {atr_ratio:.2f}x | q={quality}/4 ✓",
+                    f"MACD {lh:+.5f} négatif ✓ | Corps {body/atr_now:.2f}x ATR ✓",
+                ],
+                "reason": (
+                    f"Breakout(filtreHor) SHORT D{period} pén={penetration:.2f} "
+                    f"vol={vr:.1f}x q={quality}/4"
+                ),
+            }
+
+        return self._none(
+            f"Close {c_now:.0f} ∉ [{lowest:.0f}–{highest:.0f}] | "
+            f"trend={'bull' if trend_bull else 'bear' if trend_bear else '?'} | "
+            f"vol {vr:.1f}x | MACD {lh:+.5f}"
+        )
+
+    def _none(self, reason: str = "") -> dict:
+        return {"score": 0, "side": "none", "name": self.name, "reason": reason}

@@ -82,33 +82,63 @@ GLOBAL_TRADING_PARAMS = {
 # minimal de bougies à charger pour qu'une stratégie ne soit PAS ignorée.
 _OOS_FRACTION = 0.35
 
+# Conversion TF -> minutes (pour exprimer la fenêtre OOS en temps).
+_TF_MINUTES = {
+    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+    "1h": 60, "2h": 120, "4h": 240, "1d": 1440,
+}
 
-def required_total_bars(strategy_name: str, params: dict = None) -> int:
-    """Bougies TOTALES nécessaires pour qu'un job (stratégie) ne soit pas ignoré.
+# Fenêtre de TRADING visée dans la tranche OOS, AU-DELÀ du warmup, pour qu'elle
+# génère assez de trades (~ lifecycle.eval_min_trades). Sans elle, l'OOS ne
+# réservait que le warmup -> 0 bougie tradable après warmup -> 0 trade -> score
+# OOS dégénéré : c'est ce qui faisait sortir -999 les opus_omnibus_v* (gros
+# warmup ML + filtre horaire). Exprimée en jours, convertie en bougies par TF,
+# puis bornée pour ne pas exploser le runtime sur les bas TF ni rester trop
+# courte sur les hauts TF.
+_OOS_TRADE_DAYS = 200
+_OOS_TRADE_BARS_FLOOR = 1500
+_OOS_TRADE_BARS_CAP = 7000
 
-    La tranche OOS (~35 %) doit contenir au moins ``min_bars_required`` bougies
-    (mêmes conditions que le skip dans ``auto_optimizer``). Renvoie donc
-    ``ceil(min_bars_required / 0.35)``. Fallback conservateur si l'import échoue.
+
+def _oos_trade_window_bars(timeframe: str = None) -> int:
+    """Bougies de fenêtre de trading visées dans l'OOS pour un TF donné."""
+    minutes = _TF_MINUTES.get(timeframe or "1h", 60)
+    bars_per_day = 1440.0 / minutes
+    return int(min(_OOS_TRADE_BARS_CAP,
+                   max(_OOS_TRADE_BARS_FLOOR, round(bars_per_day * _OOS_TRADE_DAYS))))
+
+
+def required_total_bars(strategy_name: str, timeframe: str = None,
+                        params: dict = None) -> int:
+    """Bougies TOTALES à charger pour qu'une stratégie soit évaluable en OOS.
+
+    La tranche OOS (~35 %) doit contenir le warmup de la stratégie
+    (``min_bars_required``) PLUS une fenêtre de trading suffisante pour générer
+    assez de trades. L'ancienne formule ne réservait que le warmup
+    (``ceil(min_bars / 0.35)``) : l'OOS = juste le warmup -> 0 trade -> score
+    OOS dégénéré (-999) pour les stratégies ML à gros warmup. Fallback
+    conservateur si l'import échoue.
     """
     try:
         mod = importlib.import_module(f"app.strategies.{strategy_name}")
-        min_bars = mod.Strategy().min_bars_required(params)
+        min_bars = int(mod.Strategy().min_bars_required(params))
     except Exception:
         min_bars = 220
-    return math.ceil(min_bars / _OOS_FRACTION)
+    oos_needed = min_bars + _oos_trade_window_bars(timeframe)
+    return math.ceil(oos_needed / _OOS_FRACTION)
 
 
 def auto_fetch_limit(timeframe: str, strategies: List[str],
                      headroom: float = 1.15) -> int:
     """Nombre de bougies à charger pour un TF, dérivé des besoins des stratégies.
 
-    Corrige le décalage historique (RECOMMENDED_LIMIT[1h]=1500 < 2229 requis par
-    les omnibus ML → jobs silencieusement ignorés). On prend le max entre la base
-    recommandée et le plus gros besoin parmi les stratégies sélectionnées, avec
-    une marge (``headroom``) pour que l'OOS dispose d'assez de bougies/trades.
+    Prend le max entre la base recommandée et le plus gros besoin parmi les
+    stratégies (warmup + fenêtre de trading OOS, cf. ``required_total_bars``),
+    avec une marge (``headroom``). La fenêtre de trading OOS évite que l'OOS des
+    stratégies ML à gros warmup ne contienne aucun trade (score -999).
     """
     base = RECOMMENDED_LIMIT.get(timeframe, 1000)
-    needed = max((required_total_bars(s) for s in strategies), default=0)
+    needed = max((required_total_bars(s, timeframe) for s in strategies), default=0)
     return int(max(base, math.ceil(needed * headroom)))
 
 
