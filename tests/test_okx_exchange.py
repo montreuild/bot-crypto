@@ -61,28 +61,49 @@ def test_margin_params_spot_is_empty():
 class _FakeOkx:
     id = "okx"
 
-    def __init__(self, mgn_ratio="3.5", liab="12.0"):
+    def __init__(self, mgn_ratio="3.5", liab="12.0", adj_eq=None, mmr=None):
         self._mgn = mgn_ratio
         self._liab = liab
+        self._adj_eq = adj_eq
+        self._mmr = mmr
 
     def fetch_balance(self, params=None):
+        acct = {
+            "mgnRatio": self._mgn,
+            "details": [
+                {"ccy": "USDC", "liab": self._liab, "availBal": "100"},
+                {"ccy": "BTC", "liab": "0", "availBal": "0.1"},
+            ],
+        }
+        if self._adj_eq is not None:
+            acct["adjEq"] = self._adj_eq
+        if self._mmr is not None:
+            acct["mmr"] = self._mmr
         return {
             "USDC": {"free": 100.0, "used": 5.0, "total": 105.0},
-            "info": {"data": [{
-                "mgnRatio": self._mgn,
-                "details": [
-                    {"ccy": "USDC", "liab": self._liab, "availBal": "100"},
-                    {"ccy": "BTC", "liab": "0", "availBal": "0.1"},
-                ],
-            }]},
+            "info": {"data": [acct]},
         }
 
 
-def test_fetch_margin_account_okx_reads_mgn_ratio():
+def test_fetch_margin_account_okx_computes_adjeq_over_mmr():
+    # Chemin principal : marginLevel = adjEq / mmr (ratio décimal non ambigu).
+    ex = RobustExchange(_FakeOkx(adj_eq="3000", mmr="1500"), paper=False,
+                        margin=True, margin_mode="isolated")
+    assert ex.fetch_margin_account()["marginLevel"] == pytest.approx(2.0)
+
+
+def test_fetch_margin_account_okx_no_mmr_is_safe():
+    # Pas de mmr (aucune position margin) ET mgnRatio vide → sûr (999).
+    ex = RobustExchange(_FakeOkx(mgn_ratio="", adj_eq="500", mmr="0"),
+                        paper=False, margin=True, margin_mode="isolated")
+    assert ex.fetch_margin_account()["marginLevel"] == 999.0
+
+
+def test_fetch_margin_account_okx_falls_back_to_mgn_ratio():
+    # mmr indisponible mais mgnRatio présent → fallback sur le ratio brut.
     ex = RobustExchange(_FakeOkx(mgn_ratio="2.7"), paper=False,
                         margin=True, margin_mode="isolated")
-    acct = ex.fetch_margin_account()
-    assert acct["marginLevel"] == pytest.approx(2.7)
+    assert ex.fetch_margin_account()["marginLevel"] == pytest.approx(2.7)
 
 
 def test_fetch_margin_account_okx_graceful_on_empty_ratio():

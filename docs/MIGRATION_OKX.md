@@ -52,11 +52,23 @@ L'abstraction est pilotée par l'`id` ccxt de l'exchange (`RobustExchange._name`
 2. **Mode de compte OKX.** Pour le margin, le compte doit être en mode
    *Spot and futures* ou *Multi-currency margin* (pas *Spot* simple). Clé API V5,
    permission **Trade** uniquement (jamais **Withdraw**), restreinte par IP.
-3. **Sémantique du margin level.** Binance `marginLevel` (liquidation ≈ 1.05) ≠ OKX
-   `mgnRatio`. Les seuils `trading.margin_level_alert` (1.5) et `margin_level_critical`
-   (1.2) sont calibrés pour Binance → **à retuner pour OKX** avant le live. Sans
-   re-tuning, le HALT margin peut se déclencher trop tôt ou trop tard. (Inactif en
-   `paper_mode`.)
+3. **Sémantique du margin level (re-tunée).** Binance `marginLevel` (actif/passif,
+   liquidation ≈ 1.05) ≠ OKX. Sur OKX, le code calcule lui-même
+   `marginLevel = adjEq / mmr` (équité ajustée USD / maintenance margin requirement
+   USD) lu dans `fetch_balance().info.data[0]` — un **ratio décimal sans ambiguïté
+   d'échelle** : liquidation forcée à ≈ **1.0**, alerte native OKX à **3.0** (300 %),
+   plus c'est haut plus c'est sûr. On évite ainsi de parser le champ brut `mgnRatio`
+   (fraction vs pourcentage selon le mode de compte). Les seuils ont été recalibrés :
+
+   | Seuil | Binance (avant) | **OKX (après)** | Effet |
+   |---|---|---|---|
+   | `margin_level_alert` | 1.5 | **3.0** | notification (aligné sur l'alerte 300 % d'OKX) |
+   | `margin_level_critical` | 1.2 | **1.5** | HALT des nouvelles entrées (≈ 50 % de marge au-dessus de la liquidation) |
+   | Liquidation exchange | ≈ 1.05 | ≈ 1.0 | gérée par OKX (backstop ultime) |
+
+   Ce sont des **points de départ prudents**. Observez le ratio réel de votre compte
+   en paper / début de live et ajustez : un compte sain affiche typiquement un ratio
+   bien > 5. Sans positions margin (`mmr = 0`), le ratio vaut 999 (aucun risque).
 4. **MiCA & accès margin retail.** L'entité OKX Europe peut restreindre le margin /
    les dérivés au retail. Si l'accès margin est refusé : repasser en spot pur
    (`margin: false`, `margin_mode: null`, `max_leverage: 1`).

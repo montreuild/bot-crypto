@@ -455,7 +455,7 @@ function renderStatus(s){
     else{mlEl.textContent='—';mlEl.className='meta-val c-muted';}
   }else{$('margin-card').style.display='none';}
   const mw=$('margin-warn');
-  if(s.margin_enabled&&s.margin_level!=null&&s.margin_level<1.3){mw.style.display='';mw.textContent=`⚠ MARGIN LEVEL CRITIQUE : ${s.margin_level?.toFixed(3)} — Risque de liquidation !`;}
+  if(s.margin_enabled&&s.margin_level!=null&&s.margin_level<1.5){mw.style.display='';mw.textContent=`⚠ MARGIN LEVEL CRITIQUE : ${s.margin_level?.toFixed(3)} — Risque de liquidation (OKX liquide ≈ 1.0) !`;}
   else{mw.style.display='none';}
   // Fonds OKX (live uniquement)
   const bsec=$('balance-section'),bd=s.balance_detail;

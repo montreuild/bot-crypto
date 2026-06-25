@@ -60,6 +60,16 @@ def with_retry(fn: Callable) -> Callable:
     return wrapper
 
 
+def _safe_float(x, default: Optional[float] = None) -> Optional[float]:
+    """Float robuste : None / "" / valeur non numérique → ``default``."""
+    if x is None or x == "":
+        return default
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return default
+
+
 class RobustExchange:
     """Wrapper ccxt avec retry sur toutes les méthodes critiques + reconnexion de session."""
     def __init__(self, exchange: ccxt.Exchange, paper: bool = True,
@@ -251,10 +261,19 @@ class RobustExchange:
         """Retourne le compte margin (niveau de marge, emprunts, USDC libre).
 
         Binance expose ``fetch_{isolated,cross}_margin_account`` avec un
-        ``marginLevel`` (actif/passif, liquidation ≈ 1.05). OKX n'a PAS ces
-        méthodes : sur son compte unifié, la santé de marge est le ``mgnRatio``
-        renvoyé dans ``fetch_balance().info`` — sémantique différente (à retuner
-        avant un passage live ; cf. docs/MIGRATION_OKX.md). Dégradation gracieuse.
+        ``marginLevel`` (actif/passif, liquidation ≈ 1.05).
+
+        OKX n'a PAS ces méthodes. Sur son compte unifié, on dérive un niveau de
+        marge **non ambigu** depuis ``fetch_balance().info.data[0]`` :
+
+            marginLevel = adjEq / mmr
+
+        où ``adjEq`` = équité ajustée (USD) et ``mmr`` = maintenance margin
+        requirement (USD). C'est un ratio **décimal** (liquidation ≈ 1.0, plus
+        c'est haut plus c'est sûr), calculé nous-mêmes pour éviter l'ambiguïté
+        d'échelle du champ brut ``mgnRatio`` (fraction vs pourcentage selon le
+        mode de compte). Sans positions margin (``mmr`` = 0) → pas de risque
+        (999). Fallback sur ``mgnRatio`` brut puis 999. Cf. docs/MIGRATION_OKX.md.
         """
         if self.paper:
             return {"marginLevel": 999.0, "totalNetAssetOfBtc": 0,
@@ -265,13 +284,15 @@ class RobustExchange:
             return self._ex.fetch_cross_margin_account()
         if self._name == "okx":
             bal  = self._ex.fetch_balance()
-            data = ((bal.get("info") or {}).get("data") or [{}])
-            mgn  = data[0].get("mgnRatio") if data else None
-            try:
-                ml = float(mgn) if mgn not in (None, "") else 999.0
-            except (TypeError, ValueError):
-                ml = 999.0
-            return {"marginLevel": ml, "info": bal.get("info", {})}
+            acct = (((bal.get("info") or {}).get("data") or [{}]) or [{}])[0]
+            adj_eq = _safe_float(acct.get("adjEq"))
+            mmr    = _safe_float(acct.get("mmr"))
+            if mmr is not None and mmr > 0 and adj_eq is not None:
+                ml = adj_eq / mmr                       # ratio décimal, liquidation ≈ 1.0
+            else:
+                # Pas de mmr (aucune position margin) → sûr ; sinon mgnRatio brut.
+                ml = _safe_float(acct.get("mgnRatio"), default=999.0)
+            return {"marginLevel": round(ml, 4), "info": bal.get("info", {})}
         return {"marginLevel": 999.0}
 
     @with_retry
