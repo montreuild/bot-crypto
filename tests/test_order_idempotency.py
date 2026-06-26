@@ -1,8 +1,7 @@
 """Idempotence des ordres : pas de doublon après timeout réseau sur create_order.
 
-Paramétré par exchange : la migration OKX introduit des champs clientOrderId
-différents (Binance ``newClientOrderId``/``origClientOrderId`` vs OKX ``clOrdId``)
-— l'idempotence doit tenir quel que soit l'exchange.
+Paramétré par exchange : OKX utilise ``clOrdId``, les autres le champ unifié
+ccxt ``clientOrderId`` — l'idempotence doit tenir quel que soit l'exchange.
 """
 import pytest
 
@@ -12,8 +11,8 @@ from app.core.exchange import RobustExchange
 
 # (id ccxt, champ clientOrderId à la création, champ à la recherche d'ordre)
 _EXCHANGES = [
-    ("binance", "newClientOrderId", "origClientOrderId"),
-    ("okx",     "clOrdId",          "clOrdId"),
+    ("okx",   "clOrdId",        "clOrdId"),
+    ("bybit", "clientOrderId",  "clientOrderId"),   # fallback ccxt unifié
 ]
 
 
@@ -86,7 +85,7 @@ def test_timeout_without_order_retries_same_client_id(monkeypatch, ex_id,
 
 
 def test_paper_mode_unchanged():
-    fake = _FlakyExchange("binance", "newClientOrderId", "origClientOrderId")
+    fake = _FlakyExchange("okx", "clOrdId", "clOrdId")
     ex = RobustExchange(fake, paper=True)
     order = ex.create_order("BTC/USDC", "market", "buy", 0.01)
     assert order["id"].startswith("paper_")

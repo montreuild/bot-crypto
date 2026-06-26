@@ -224,7 +224,7 @@ class Backtester:
         self.taker_fee    = tcfg.get("taker_fee",         0.001)
         self.maker_fee    = tcfg.get("maker_fee",        0.0004)
         self.borrow_rate  = tcfg.get("borrow_rate_daily", 0.0002)
-        self.borrow_periods = int(tcfg.get("borrow_periods_per_day", 3))
+        self.borrow_periods = int(tcfg.get("borrow_periods_per_day", 24))
         self.spread_pct   = bcfg.get("spread_pct",        0.0005)
         self.partial_fill = bcfg.get("partial_fill_pct",  0.95)
         self.max_notional_pct = float(bcfg.get("max_notional_pct", 0.50))

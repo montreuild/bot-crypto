@@ -44,7 +44,7 @@ trading:
   max_drawdown_global: 0.2
   min_volume_usdc_24h: 5000000
   taker_fee: 0.001          # OKX spot/margin taker standard 0.10 %
-  maker_fee: 0.0008         # OKX spot/margin maker standard 0.08 % (Binance était 0.04 %)
+  maker_fee: 0.0008         # OKX spot/margin maker standard 0.08 %
   spread_pct: 0.0005
   latency_ms: 50
   borrow_rate_daily: 0.00072   # à vérifier par actif sur OKX (taux d'emprunt margin)
@@ -54,7 +54,6 @@ trading:
   # liquidation forcée ≈ 1.0, alerte native OKX à 3.0). alert > critical.
   #   < 3.0 → notification (aligné sur l'alerte 300% d'OKX)
   #   < 1.5 → HALT des nouvelles entrées (≈ 50% de marge au-dessus de la liquidation)
-  # (Pour Binance, c'était alert 1.5 / critical 1.2, liquidation ≈ 1.05.)
   margin_level_alert: 3.0
   margin_level_critical: 1.5
   exchange_stop_orders: true

@@ -19,10 +19,10 @@ from app.core.derivatives import DerivativesStore, to_perp_symbol
 
 
 def _exchange():
-    """Client ccxt binance USDM public (sans clé) pour funding/OI. None si indispo."""
+    """Client ccxt OKX public (sans clé) pour funding/OI. None si indispo."""
     try:
         import ccxt
-        return ccxt.binanceusdm({"enableRateLimit": True, "timeout": 30000})
+        return ccxt.okx({"enableRateLimit": True, "timeout": 30000})
     except Exception as e:
         print(f"[accumulate] ccxt indisponible : {e}")
         return None

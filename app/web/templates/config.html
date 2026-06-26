@@ -606,8 +606,8 @@
       <div class="panel-body">
         <div class="warn-box">
           ⚠ Le margin trading implique un <strong>risque de liquidation</strong>.
-          Sur OKX, la liquidation est pilotée par le <strong>mgnRatio</strong> du compte unifié
-          (sémantique différente de Binance — seuils à retuner). Commencez avec
+          Sur OKX, la santé de marge du compte unifié est le ratio <strong>adjEq/mmr</strong>
+          (liquidation ≈ 1.0). Commencez avec
           <strong>isolated</strong> et levier ×2 maximum.
           <br><em>NB : l'accès margin retail peut être restreint en UE sous MiCA.</em>
         </div>
@@ -888,7 +888,7 @@ async function applyStrategies() {
 }
 
 // ── Timeframes multi-TF ────────────────────────────────────────────────────
-// Tous les timeframes standard proposés par Binance/exchanges courants
+// Timeframes standard proposés par les exchanges courants (OKX inclus)
 const ALL_TFS = ['1m','3m','5m','15m','30m','1h','2h','4h','1d'];
 const TF_LABELS = {
   '1m':'1m ~1.4j','3m':'3m ~4j','5m':'5m ~14j','15m':'15m ~21j','30m':'30m ~31j',

@@ -532,7 +532,7 @@ class PositionMixin:
     # (SL + TP en un seul ordre algo lié : ``ordType: 'oco'`` via ccxt) — les
     # deux jambes vivent sur l'exchange (le TP est capté même bot éteint) et
     # l'exécution de l'une annule l'autre. Sinon (pas de TP, ou exchange sans
-    # OCO comme Binance ici) : stop simple STOP_LOSS_LIMIT, comportement initial.
+    # support OCO) : stop simple STOP_LOSS_LIMIT, comportement initial.
     #
     # NB : l'OCO attaché à l'ordre d'entrée (attachAlgoOrds) est réservé aux
     # perp/swap chez OKX — indisponible en spot/margin, d'où l'OCO standalone.
@@ -777,10 +777,10 @@ class PositionMixin:
 
         - Frais du fill de clôture : somme des ``fee.cost`` des trades du
           close order (``fetch_my_trades``). Seuls les frais en devise de
-          cotation (ou USDT/USDC) sont sommés — frais en BNB & co ignorés
-          (pas de conversion fiable), on garde alors l'estimation.
+          cotation (ou USDT/USDC) sont sommés — frais dans une devise tierce
+          (ex. OKB) ignorés (pas de conversion fiable), on garde l'estimation.
         - Coût d'emprunt : intérêts réels accumulés depuis l'ouverture via
-          ``fetch_borrow_interest`` (ccxt — supporté Binance ET OKX ; appel
+          ``fetch_borrow_interest`` (ccxt — supporté par OKX ; appel
           défensif avec repli sur l'estimation si indisponible).
 
         Best-effort : tout échec retombe sur les estimations (aucune exception
@@ -810,7 +810,7 @@ class PositionMixin:
                     if cur in (quote, "USDT", "USDC"):
                         total += float(cost)
                     else:
-                        convertible = False   # frais en BNB & co → estimation conservée
+                        convertible = False   # frais en devise tierce (ex. OKB) → estimation conservée
                         break
                 if found and convertible:
                     fees_real = total
@@ -911,7 +911,7 @@ class PositionMixin:
             size=pos["size"], notional=pos["notional"], fee_rate=fee_rate,
             daily_rate=self.cfg["trading"].get("borrow_rate_daily", 0.0002),
             hours_held=hours_held,
-            periods_per_day=self.cfg["trading"].get("borrow_periods_per_day", 3),
+            periods_per_day=self.cfg["trading"].get("borrow_periods_per_day", 24),
         )
         # Réconciliation avec les coûts RÉELS de l'exchange (live uniquement) :
         # frais du fill de clôture via fetch_my_trades, intérêts d'emprunt réels

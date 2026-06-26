@@ -1,8 +1,7 @@
-"""Migration OKX : câblage passphrase + quirks margin spécifiques OKX.
+"""OKX : câblage passphrase + quirks margin spécifiques OKX.
 
-Vérifie que la couche RobustExchange traduit correctement le modèle de marge
-Binance (sideEffectType/isIsolated, marginLevel, origClientOrderId) vers OKX
-(tdMode, mgnRatio, clOrdId) — sans régression côté Binance.
+Vérifie que la couche RobustExchange applique correctement le modèle de marge
+OKX (tdMode, clOrdId) et dérive le niveau de marge depuis adjEq/mmr.
 """
 import pytest
 
@@ -42,13 +41,6 @@ def test_margin_params_okx_uses_tdmode():
     ex2 = RobustExchange(ccxt.okx(), paper=False, margin=True, margin_mode="cross")
     assert ex2._margin_params() == {"tdMode": "cross"}
     assert ex._client_id_field() == "clOrdId"
-
-
-def test_margin_params_binance_unchanged():
-    ex = RobustExchange(ccxt.binance(), paper=False, margin=True, margin_mode="isolated")
-    assert ex._margin_params() == {
-        "sideEffectType": "AUTO_BORROW_REPAY", "isIsolated": "TRUE"}
-    assert ex._client_id_field() == "newClientOrderId"
 
 
 def test_margin_params_spot_is_empty():
@@ -120,7 +112,7 @@ def test_fetch_balance_detail_okx_reads_liability():
     assert detail["borrowed"] == pytest.approx(42.0)
 
 
-# ── cancel_order : pas de param Binance sur OKX ──────────────────────────────
+# ── cancel_order : pas de param margin superflu sur OKX ──────────────────────
 
 class _RecordingCancel:
     id = "okx"

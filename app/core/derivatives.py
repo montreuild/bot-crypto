@@ -9,8 +9,8 @@ le vrai edge directionnel crypto (cf. research/DERIVATIVES_integration.md) :
   • taker_buy_sell_ratio  — volume taker acheteur/vendeur = order-flow agressif
 
 100 % OKX : funding/OI via l'instance ccxt OKX, long-short/taker via les
-endpoints publics ``rubik/stat`` d'OKX (plus aucune dépendance à Binance — robuste
-en UE/MiCA où fapi.binance.com peut être géo-bloqué).
+endpoints publics ``rubik/stat`` d'OKX (aucun endpoint public tiers géo-bloquable
+en UE/MiCA).
 
 Pattern aligné sur CandleStore : cache Parquet par (symbol, métrique), polars,
 thread-safe. Toutes les méthodes réseau sont GRACIEUSES : en cas d'échec (pas de
@@ -66,8 +66,7 @@ def _lock(path: Path) -> threading.Lock:
 def to_perp_symbol(symbol: str) -> str:
     """'BTC/USDC' | 'BTC/USDT' → 'BTCUSDT' (perp USDT = référence funding/OI).
 
-    Format compact utilisé pour les clés de cache Parquet et les endpoints REST
-    Binance futures-data (long/short, taker)."""
+    Slug compact et stable servant de clé de cache Parquet par (symbole, métrique)."""
     base = symbol.split("/")[0].split(":")[0].upper()
     return f"{base}USDT"
 
@@ -75,9 +74,9 @@ def to_perp_symbol(symbol: str) -> str:
 def _ccxt_swap_symbol(symbol: str, exchange=None) -> str:
     """Symbole du perp linéaire USDT au format ccxt, pour fetch_funding/OI.
 
-    OKX exige le suffixe de règlement (``BTC/USDT:USDT``) ; Binance & co
-    acceptent ``BTC/USDT``. On référence toujours le perp **USDT** (liquidité
-    funding/OI), quelle que soit la quote de la paire spot tradée."""
+    OKX exige le suffixe de règlement (``BTC/USDT:USDT``). On référence toujours
+    le perp **USDT** (liquidité funding/OI), quelle que soit la quote de la paire
+    spot tradée."""
     base = symbol.split("/")[0].split(":")[0].upper()
     name = (getattr(exchange, "id", "") or "").lower()
     if name == "okx":
@@ -152,7 +151,7 @@ class DerivativesStore:
 
     def fetch_open_interest(self, exchange, symbol: str, period: str = "1h",
                             limit: int = 500) -> pl.DataFrame:
-        """OI via ccxt fetch_open_interest_history (Binance : ~30 derniers jours)."""
+        """OI via ccxt fetch_open_interest_history (OKX : historique récent)."""
         sym = _ccxt_swap_symbol(symbol, exchange)
         try:
             raw = exchange.fetch_open_interest_history(sym, period, limit=limit)

@@ -255,7 +255,7 @@ def load_config(path: str = "config.yaml") -> dict:
         logger.warning(
             "⚠ [Config] exchange.margin actif mais trading.max_leverage <= 1 : "
             "le levier ne sera jamais utilisé (l'emprunt margin reste actif — "
-            "AUTO_BORROW_REPAY sur Binance, tdMode margin sur OKX). Pour du spot "
+            "tdMode margin sur OKX). Pour du spot "
             "pur : margin: false ET margin_mode: null ; pour du margin réel : "
             "max_leverage > 1."
         )

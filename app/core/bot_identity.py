@@ -40,7 +40,7 @@ class Venue:
     """Modèle de marché + exchange. Attribut par bot (cf. doc §4)."""
     name: str
     market_type: str = "spot"          # spot | margin | perp
-    exchange: str = "binance"
+    exchange: str = "okx"
     margin_mode: Optional[str] = None  # isolated | cross | None (spot)
     max_leverage: float = 1.0
     hedge_mode: bool = False           # perp hedge mode → netting natif (Phase 5)
@@ -63,7 +63,7 @@ def default_venue_from_cfg(cfg: dict) -> Venue:
     """Venue dérivée des globales historiques (rétro-compatibilité)."""
     t = cfg.get("trading", {}) or {}
     mm = t.get("margin_mode")
-    exch = (cfg.get("exchange", {}) or {}).get("name", "binance")
+    exch = (cfg.get("exchange", {}) or {}).get("name", "okx")
     is_margin = bool(mm) or bool((cfg.get("exchange", {}) or {}).get("margin"))
     return Venue(
         name=("margin-" + str(mm)) if is_margin else "spot",
@@ -100,7 +100,7 @@ def resolve_venue(cfg: dict, strategy: Optional[str] = None,
         return Venue(
             name=vname,
             market_type=mt if mt in MARKET_TYPES else "spot",
-            exchange=d.get("exchange", (cfg.get("exchange", {}) or {}).get("name", "binance")),
+            exchange=d.get("exchange", (cfg.get("exchange", {}) or {}).get("name", "okx")),
             margin_mode=d.get("margin_mode"),
             max_leverage=float(d.get("max_leverage", 1) or 1),
             hedge_mode=bool(d.get("hedge_mode", False)),

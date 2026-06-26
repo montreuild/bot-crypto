@@ -8,7 +8,7 @@ from app.live.slot_lifecycle import SlotLifecycleManager, LifecycleState
 def test_peek_identity_uses_preloaded_gens(tmp_path, monkeypatch):
     monkeypatch.setattr(bi, "_GEN_PATH", str(tmp_path / "gen.json"))
     cfg = {"trading": {"margin_mode": None, "max_leverage": 1},
-           "exchange": {"name": "binance"}}
+           "exchange": {"name": "okx"}}
     bi.register_identity("trend", "1h", {"x": 1}, cfg)   # génération 1 persistée
     gens = bi._load_generations()
 

@@ -10,8 +10,8 @@ Conventions :
   - ``side`` : "long" | "short"
   - les frais sont proportionnels : prix × taille × taux
   - le coût d'emprunt margin est à intérêts composés sur ``periods_per_day``
-    périodes par jour (configurable par exchange : Binance facture ~3×/jour,
-    OKX à l'heure → 24) — c'est la formule du live, aussi utilisée par le backtest.
+    périodes par jour (OKX facture l'intérêt margin à l'heure → 24) — c'est la
+    formule du live, aussi utilisée par le backtest.
 
 La parité est verrouillée par ``tests/test_execution_parity.py``.
 """
@@ -24,10 +24,10 @@ def trade_fees(price: float, size: float, fee_rate: float) -> float:
 
 
 def borrow_cost(notional: float, daily_rate: float, hours_held: float,
-                periods_per_day: int = 3) -> float:
+                periods_per_day: int = 24) -> float:
     """Coût d'emprunt margin à intérêts composés.
 
-    ``periods_per_day`` périodes de facturation par jour (Binance ~3, OKX 24) ;
+    ``periods_per_day`` périodes de facturation par jour (OKX = 24, horaire) ;
     chaque période capitalise au taux ``daily_rate / periods_per_day``.
     """
     if notional <= 0 or daily_rate <= 0 or hours_held <= 0:
@@ -56,7 +56,7 @@ def net_pnl(side: str, entry: float, exit_price: float, size: float,
 
 def close_pnl(side: str, entry: float, exit_price: float, size: float,
               notional: float, fee_rate: float, daily_rate: float,
-              hours_held: float, periods_per_day: int = 3) -> tuple:
+              hours_held: float, periods_per_day: int = 24) -> tuple:
     """Décompte complet d'une clôture, partagé backtest ↔ live.
 
     Retourne ``(pnl_net, fees_sortie, cout_emprunt)`` :

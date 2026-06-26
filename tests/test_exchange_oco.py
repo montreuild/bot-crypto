@@ -86,8 +86,8 @@ def test_okx_without_tp_places_simple_stop():
 
 
 def test_non_okx_with_tp_does_not_use_oco():
-    # Binance ne passe pas par l'OCO standalone → stop simple, comportement initial.
-    ex = _RecExchange(name="binance")
+    # Un exchange non-OKX ne passe pas par l'OCO standalone → stop simple.
+    ex = _RecExchange(name="bybit")
     pos = _pos("long", stop=100.0, tp=120.0)
     _Trader(ex)._place_exchange_stop(pos)
 

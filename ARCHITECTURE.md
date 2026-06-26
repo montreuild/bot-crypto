@@ -36,7 +36,7 @@ Vue d'ensemble technique, patterns de design et flux de données.
                   │
         ┌─────────▼──────────────────┐        ┌──────────────────────┐
         │  CandleStore (Parquet)     │◄───────│  Exchange (CCXT)     │
-        │  - data/ohlcv/{sym}/{tf}   │        │  - OKX, Binance…     │
+        │  - data/ohlcv/{sym}/{tf}   │        │  - OKX (ccxt)        │
         │  - Fetch incrémental       │        └──────────────────────┘
         │  - Thread-safe             │
         └────────────────────────────┘
@@ -404,7 +404,7 @@ trader.risk.attach_notifier(notifier)  # Circuit breaker → notifications
 
 ```python
 create_exchange(cfg)
-  └─> ccxt.okx(), ccxt.binance(), ccxt.kraken(), etc
+  └─> ccxt.okx() (exchange cible) — autres exchanges ccxt via routage générique
       (params margin/credentials adaptés par exchange — passphrase OKX)
 ```
 

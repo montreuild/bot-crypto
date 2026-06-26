@@ -215,7 +215,7 @@ class CandleStore:
 
         # Point de départ : assez loin dans le passé pour couvrir les bougies manquantes.
         # On clampe à 0 pour éviter un timestamp négatif (ex. 1d × 20000 > cache début)
-        # qui provoquerait "Illegal characters found in parameter 'startTime'" côté Binance.
+        # qui ferait rejeter la requête OHLCV par l'exchange (paramètre since invalide).
         if before_ms is not None:
             since = max(0, before_ms - needed * tf_ms)
         else:
