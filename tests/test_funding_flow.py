@@ -107,7 +107,11 @@ class TestOHLCVCacheDerivativesHook:
     def _cache(self, tmp_path, enabled, monkeypatch):
         from app.live.ohlcv_cache import OHLCVCache
         t0 = int(datetime(2024, 1, 1).timestamp() * 1000)
-        fake_http = [{"timestamp": t0 + i * 3600_000, "longShortRatio": str(1.5 + 0.01 * i)} for i in range(60)]
+        # Format OKX rubik : {"code":"0","data":[[ts, val, ...], ...]} ; pour
+        # taker-volume (3 colonnes) sellVol=1.0 → buy/sell = 3e colonne.
+        fake_http = {"code": "0", "data": [
+            [str(t0 + i * 3600_000), "1.0", str(1.5 + 0.01 * i)] for i in range(60)
+        ]}
         monkeypatch.setattr(dv, "_http_get_json", lambda url, timeout=8.0: fake_http)
         cfg = {"trading": {"scan_interval": 60},
                "derivatives": {"enabled": enabled, "period": "1h", "refresh_interval": 0, "z_window": 20}}

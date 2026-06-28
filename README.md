@@ -6,7 +6,7 @@ Bot de trading algorithmique multi-stratégies avec interface web, backtest avan
 
 ## 📋 Fonctionnalités
 
-- **Live / Paper trading** — Exécution sur Binance (et autres exchanges via CCXT) avec gestion du risque, circuit breaker, trailing stop
+- **Live / Paper trading** — Exécution sur OKX (et autres exchanges via CCXT) avec gestion du risque, circuit breaker, trailing stop
 - **Backtest avancé** — Jusqu'à 8 000 bougies, Walk-Forward Analysis, Monte-Carlo, comparaison multi-stratégies, graphique de prix avec signaux
 - **Optimiseur** — Random Search / Bayesian UCB / Grid Search IS/OOS avec détection d'overfitting, application directe dans `config.yaml`
 - **ML** — Stratégie basée sur Random Forest / Logistic Regression (optionnel)
@@ -69,9 +69,10 @@ pip install -r requirements.txt
 
 ```yaml
 exchange:
-  name: binance
+  name: okx
   api_key: ""           # Requis pour live trading UNIQUEMENT
   api_secret: ""        # Requis pour live trading UNIQUEMENT
+  api_password: ""      # Passphrase API OKX — obligatoire en live (3e credential)
 
 trading:
   capital: 1000         # Capital initial en USDC
@@ -80,7 +81,10 @@ trading:
   paper_mode: true      # ← false = LIVE RÉEL ⚠️ DANGEREUX
 ```
 
-> ✅ **Backtest et optimisation ne nécessitent AUCUNE clé API** (données publiques Binance).
+> ✅ **Backtest et optimisation ne nécessitent AUCUNE clé API** (données publiques OKX).
+>
+> 🔁 **Migration depuis Binance** (MiCA) : voir [`docs/MIGRATION_OKX.md`](docs/MIGRATION_OKX.md).
+> Le bot reste multi-exchange via CCXT — il suffit de changer `exchange.name`.
 
 ---
 
@@ -341,7 +345,7 @@ crypto_bot_v12/
 ```
 [API] Backtest error : Aucune donnée reçue
 ```
-→ Vérifier que Binance fonctionne, augmenter le `--limit`, essayer un autre symbol
+→ Vérifier que l'exchange (OKX) fonctionne, augmenter le `--limit`, essayer un autre symbol
 
 ### Performance lente ?
 - Réduire `--limit` pour backtest

@@ -125,11 +125,13 @@ class BalanceSyncMixin:
             ml_  = float(acct.get("marginLevel", 0) or 0)
             if ml_ > 0:
                 self._margin_level = round(ml_, 3)
-                ml_alert    = float(self.cfg["trading"].get("margin_level_alert", 1.5))
-                ml_critical = float(self.cfg["trading"].get("margin_level_critical", 1.2))
+                ml_alert    = float(self.cfg["trading"].get("margin_level_alert", 3.0))
+                ml_critical = float(self.cfg["trading"].get("margin_level_critical", 1.5))
                 if ml_ < ml_critical:
-                    # Liquidation Binance à ~1.05 : HALT immédiat des nouvelles
-                    # entrées (notification synchrone — pas de délai de queue).
+                    # Seuil critique : HALT immédiat des nouvelles entrées
+                    # (notification synchrone — pas de délai de queue). NB : sur
+                    # OKX le niveau de marge est adjEq/mmr (ratio décimal,
+                    # liquidation ≈ 1.0) — cf. exchange.fetch_margin_account.
                     logger.critical(
                         f"[MARGIN] 🚨 Margin level CRITIQUE : {ml_:.3f} "
                         f"< {ml_critical} — HALT du trading"
@@ -139,8 +141,7 @@ class BalanceSyncMixin:
                         self.risk.halt_reason = f"Margin level critique : {ml_:.3f}"
                     self.notif.send(
                         f"🚨 *MARGIN LEVEL CRITIQUE* : `{ml_:.3f}`\n"
-                        f"Trading HALTÉ — réduisez les positions ou ajoutez de la marge "
-                        f"(liquidation Binance ≈ 1.05).",
+                        f"Trading HALTÉ — réduisez les positions ou ajoutez de la marge.",
                         async_=False
                     )
                 elif ml_ < ml_alert:

@@ -521,12 +521,22 @@ class PositionMixin:
         if trailing.is_triggered(price, new_stop, pos["side"]):
             self._close_position(pos_id, price)
 
-    # ── Stop-loss côté exchange ─────────────────────────────────────────────
+    # ── Stop-loss / take-profit côté exchange ───────────────────────────────
     #
     # En live réel, un stop purement logiciel laisse la position sans protection
-    # si le bot crash ou perd le réseau. On pose donc un STOP_LOSS_LIMIT côté
-    # exchange (ccxt : ordre limit + param stopPrice) en miroir du stop logiciel,
-    # remplacé quand le trailing remonte le stop, annulé à la clôture.
+    # si le bot crash ou perd le réseau. On pose donc un ordre protecteur côté
+    # exchange en miroir du stop logiciel, remplacé quand le trailing remonte le
+    # stop, annulé à la clôture.
+    #
+    # Sur OKX, si la position porte un take-profit, on pose un **OCO natif**
+    # (SL + TP en un seul ordre algo lié : ``ordType: 'oco'`` via ccxt) — les
+    # deux jambes vivent sur l'exchange (le TP est capté même bot éteint) et
+    # l'exécution de l'une annule l'autre. Sinon (pas de TP, ou exchange sans
+    # support OCO) : stop simple STOP_LOSS_LIMIT, comportement initial.
+    #
+    # NB : l'OCO attaché à l'ordre d'entrée (attachAlgoOrds) est réservé aux
+    # perp/swap chez OKX — indisponible en spot/margin, d'où l'OCO standalone.
+    #
     # Opt-out via trading.exchange_stop_orders: false. Dégradation gracieuse :
     # un échec de pose n'empêche pas le trade (le stop logiciel reste actif)
     # mais déclenche une notification.
@@ -535,27 +545,63 @@ class PositionMixin:
         return (not self.cfg["trading"].get("paper_mode")
                 and bool(self.cfg["trading"].get("exchange_stop_orders", True)))
 
+    def _exchange_oco_supported(self) -> bool:
+        """True si l'exchange supporte un OCO standalone SL+TP (OKX)."""
+        return getattr(self.exchange, "_name", "") == "okx"
+
     def _place_exchange_stop(self, pos: dict) -> None:
-        """Pose un stop-loss-limit sur l'exchange en miroir du stop logiciel."""
+        """Pose la protection exchange en miroir du stop logiciel.
+
+        OCO natif (SL+TP) si un take-profit est défini et que l'exchange le
+        supporte (OKX) ; sinon stop-loss-limit simple.
+        """
         try:
             close_side = "sell" if pos["side"] == "long" else "buy"
             stop_price = float(pos["stop"])
             offset     = float(self.cfg["trading"].get("exchange_stop_limit_offset", 0.005))
-            limit_price = (stop_price * (1 - offset) if pos["side"] == "long"
-                           else stop_price * (1 + offset))
-            order = self.exchange.create_order(
-                pos["symbol"], "limit", close_side, pos["size"], limit_price,
-                params={"stopPrice": stop_price},
-            )
-            pos["stop_order_id"] = order.get("id")
-            logger.info(
-                f"[StopExchange] {pos['symbol']} stop posé @ {stop_price:.4f} "
-                f"(limit {limit_price:.4f}, id={pos['stop_order_id']})"
-            )
+            # Long → on vend légèrement SOUS le déclencheur ; short → on achète
+            # légèrement AU-DESSUS — garantit le remplissage du limit au trigger.
+            edge = (1 - offset) if pos["side"] == "long" else (1 + offset)
+            sl_limit = stop_price * edge
+
+            tp_price = pos.get("take_profit")
+            if tp_price and self._exchange_oco_supported():
+                tp_price = float(tp_price)
+                tp_limit = tp_price * edge
+                # ccxt OKX : stopLossPrice + takeProfitPrice ⇒ ordType 'oco'.
+                # slOrdPx / tpOrdPx = prix limite de chaque jambe (sinon marché).
+                order = self.exchange.create_order(
+                    pos["symbol"], "limit", close_side, pos["size"], None,
+                    params={
+                        "stopLossPrice":   stop_price,
+                        "slOrdPx":         sl_limit,
+                        "takeProfitPrice": tp_price,
+                        "tpOrdPx":         tp_limit,
+                    },
+                )
+                pos["stop_order_id"] = order.get("id")
+                pos["_exchange_oco"] = True
+                logger.info(
+                    f"[StopExchange] {pos['symbol']} OCO posé "
+                    f"SL@{stop_price:.4f} / TP@{tp_price:.4f} "
+                    f"(id={pos['stop_order_id']})"
+                )
+            else:
+                order = self.exchange.create_order(
+                    pos["symbol"], "limit", close_side, pos["size"], sl_limit,
+                    params={"stopPrice": stop_price},
+                )
+                pos["stop_order_id"] = order.get("id")
+                pos.pop("_exchange_oco", None)
+                logger.info(
+                    f"[StopExchange] {pos['symbol']} stop posé @ {stop_price:.4f} "
+                    f"(limit {sl_limit:.4f}, id={pos['stop_order_id']})"
+                )
         except Exception as e:
             pos.pop("stop_order_id", None)
+            pos.pop("_exchange_oco", None)
             logger.error(
-                f"[StopExchange] Pose du stop {pos['symbol']} KO : {e} "
+                f"[StopExchange] Pose de la protection {pos['symbol']} KO : {e} "
                 f"— position protégée par le stop logiciel uniquement"
             )
             self.notif.send(
@@ -607,12 +653,22 @@ class PositionMixin:
             open_orders = self.exchange.fetch_open_orders(pos["symbol"]) or []
             for o in open_orders:
                 info_type = str(o.get("type", "")).lower()
-                if (o.get("side") == close_side
-                        and ("stop" in info_type or o.get("stopPrice")
-                             or (o.get("info") or {}).get("stopPrice"))):
+                info      = o.get("info") or {}
+                # Reconnaît stop simple ET OCO/algo OKX (slTriggerPx / tpTriggerPx /
+                # ordType oco|conditional|trigger) pour éviter un ordre dupliqué.
+                is_protective = (
+                    "stop" in info_type or "oco" in info_type
+                    or o.get("stopPrice") or o.get("stopLossPrice")
+                    or info.get("stopPrice") or info.get("slTriggerPx")
+                    or info.get("tpTriggerPx")
+                    or str(info.get("ordType", "")).lower() in ("oco", "conditional", "trigger")
+                )
+                if o.get("side") == close_side and is_protective:
                     pos["stop_order_id"] = o.get("id")
+                    if info.get("tpTriggerPx") or "oco" in str(info.get("ordType", "")).lower():
+                        pos["_exchange_oco"] = True
                     logger.info(
-                        f"[StopExchange] {pos['symbol']} : stop existant adopté "
+                        f"[StopExchange] {pos['symbol']} : protection existante adoptée "
                         f"(id={pos['stop_order_id']})"
                     )
                     return
@@ -721,10 +777,11 @@ class PositionMixin:
 
         - Frais du fill de clôture : somme des ``fee.cost`` des trades du
           close order (``fetch_my_trades``). Seuls les frais en devise de
-          cotation (ou USDT/USDC) sont sommés — frais en BNB & co ignorés
-          (pas de conversion fiable), on garde alors l'estimation.
+          cotation (ou USDT/USDC) sont sommés — frais dans une devise tierce
+          (ex. OKB) ignorés (pas de conversion fiable), on garde l'estimation.
         - Coût d'emprunt : intérêts réels accumulés depuis l'ouverture via
-          ``fetch_borrow_interest`` (Binance margin interestHistory).
+          ``fetch_borrow_interest`` (ccxt — supporté par OKX ; appel
+          défensif avec repli sur l'estimation si indisponible).
 
         Best-effort : tout échec retombe sur les estimations (aucune exception
         propagée). Alerte si l'écart dépasse 5 % du coût estimé.
@@ -753,7 +810,7 @@ class PositionMixin:
                     if cur in (quote, "USDT", "USDC"):
                         total += float(cost)
                     else:
-                        convertible = False   # frais en BNB & co → estimation conservée
+                        convertible = False   # frais en devise tierce (ex. OKB) → estimation conservée
                         break
                 if found and convertible:
                     fees_real = total
@@ -854,7 +911,7 @@ class PositionMixin:
             size=pos["size"], notional=pos["notional"], fee_rate=fee_rate,
             daily_rate=self.cfg["trading"].get("borrow_rate_daily", 0.0002),
             hours_held=hours_held,
-            periods_per_day=self.cfg["trading"].get("borrow_periods_per_day", 3),
+            periods_per_day=self.cfg["trading"].get("borrow_periods_per_day", 24),
         )
         # Réconciliation avec les coûts RÉELS de l'exchange (live uniquement) :
         # frais du fill de clôture via fetch_my_trades, intérêts d'emprunt réels

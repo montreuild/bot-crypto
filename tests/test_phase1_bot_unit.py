@@ -15,7 +15,7 @@ def _base_cfg(**over):
             "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20,
             "margin_mode": "isolated",
         },
-        "exchange": {"name": "binance", "margin": True},
+        "exchange": {"name": "okx", "margin": True},
         "backtest": {"max_notional_pct": 0.20},
         "risk": {},
     }

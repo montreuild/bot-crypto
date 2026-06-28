@@ -56,8 +56,9 @@ Environment="VIRTUAL_ENV=/opt/crypto_bot/.venv"
 Environment="PATH=/opt/crypto_bot/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # ── Clés API — fichier protégé chmod 600, jamais versionné ──
 # Créer /opt/crypto_bot/.env :
-#   BINANCE_API_KEY=votre_clé
-#   BINANCE_API_SECRET=votre_secret
+#   OKX_API_KEY=votre_clé
+#   OKX_API_SECRET=votre_secret
+#   OKX_API_PASSWORD=votre_passphrase   # passphrase API OKX (obligatoire)
 EnvironmentFile=-/opt/crypto_bot/.env
 
 # ── Sécurité ────────────────────────────────────────────────

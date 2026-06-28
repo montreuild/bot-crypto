@@ -381,7 +381,7 @@ print(f"Temps : {time.time() - t0:.2f}s")
    api_key = "hard-coded-key"
    
    # ✅ FAIRE
-   api_key = os.environ.get("BINANCE_API_KEY")
+   api_key = os.environ.get("OKX_API_KEY")
    ```
 
 3. **SQL Injection Prevention**

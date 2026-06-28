@@ -156,7 +156,7 @@
 
     <div class="bt-main">
       <div class="info-box">
-        Les données OHLCV Binance sont <strong>publiques</strong> — aucune clé API requise.
+        Les données OHLCV OKX sont <strong>publiques</strong> — aucune clé API requise.
         Les clés API ne sont nécessaires que pour le <strong>live trading</strong>.
         Jusqu'à <strong>50 000 bougies</strong> saisissables librement.
       </div>
@@ -381,7 +381,7 @@ async function run(){
   const nStrats=selStrats.length||1;
   const scaleFactor=Math.max(1,lim/500);
   const timePerStrat=Math.round(10*scaleFactor*1000);
-  const steps=[[400,'Connexion Binance & initialisation…'],[900,'Téléchargement des données OHLCV…'],[1800,'Données reçues — calcul des indicateurs…'],[2800,`Exécution ${(selStrats.length?selStrats:['?']).join(', ')}…`,'log-run'],[4500,'Calcul des métriques & statistiques…'],[6000,'Finalisation des résultats de base…']];
+  const steps=[[400,'Connexion OKX & initialisation…'],[900,'Téléchargement des données OHLCV…'],[1800,'Données reçues — calcul des indicateurs…'],[2800,`Exécution ${(selStrats.length?selStrats:['?']).join(', ')}…`,'log-run'],[4500,'Calcul des métriques & statistiques…'],[6000,'Finalisation des résultats de base…']];
   const dynSteps=[];let cursor=7000;
   (selStrats.length?selStrats:['?']).forEach(s=>{dynSteps.push([cursor,`  ↳ ${s} : backtest IS/OOS en cours…`,'log-run']);cursor+=timePerStrat;});
   if(wf){dynSteps.push([cursor,'Walk-Forward : découpage des folds…']);cursor+=1000;for(let f=1;f<=5;f++){(selStrats.length?selStrats:['?']).forEach(s=>{dynSteps.push([cursor,`  ↳ WF fold ${f}/5 · ${s}…`,'log-run']);cursor+=Math.round(timePerStrat/5*.8);});}}

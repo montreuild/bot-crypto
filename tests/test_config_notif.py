@@ -27,15 +27,15 @@ class TestExpandEnv:
         assert result == ""
 
     def test_no_substitution_plain_string(self):
-        assert _expand_env("binance") == "binance"
+        assert _expand_env("okx") == "okx"
 
     def test_dict_recursive(self, monkeypatch):
         monkeypatch.setenv("API_KEY", "abc")
         monkeypatch.setenv("SECRET", "xyz")
-        d = _expand_env({"api_key": "${API_KEY}", "secret": "${SECRET}", "name": "binance"})
+        d = _expand_env({"api_key": "${API_KEY}", "secret": "${SECRET}", "name": "okx"})
         assert d["api_key"] == "abc"
         assert d["secret"] == "xyz"
-        assert d["name"] == "binance"
+        assert d["name"] == "okx"
 
     def test_list_recursive(self, monkeypatch):
         monkeypatch.setenv("SYM1", "BTC/USDC")

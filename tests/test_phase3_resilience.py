@@ -13,7 +13,7 @@ def _cfg(**risk_over):
                     "max_positions": 5, "max_longs": 3, "max_shorts": 3,
                     "max_trades_per_minute": 100, "max_leverage": 1,
                     "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20},
-        "exchange": {"name": "binance"},
+        "exchange": {"name": "okx"},
         "backtest": {"max_notional_pct": 0.20},
         "risk": {"equity_kill_switch_dd": 0.35, **risk_over},
     }

@@ -69,7 +69,7 @@ RECOMMENDED_LIMIT: Dict[str, int] = {
     "30m": 1500,   # ~31 jours
     "1h":  1500,   # ~62 jours
     "4h":   800,   # ~133 jours
-    "1d":  2000,   # ~2000 jours (Binance fournit ~2500 max depuis 2017)
+    "1d":  2000,   # ~2000 jours (limité par l'historique OHLCV de l'exchange)
 }
 
 GLOBAL_TRADING_PARAMS = {

@@ -104,10 +104,12 @@ ENV_FILE="$APP_DIR/.env"
 if [[ ! -f "$ENV_FILE" ]]; then
     info "Création du fichier .env (à compléter manuellement)…"
     cat > "$ENV_FILE" <<'EOF'
-# ── Clés API échange (Binance / autre) ──────────────────────────
+# ── Clés API échange (OKX) ──────────────────────────────────────
 # Remplir avant de démarrer le bot en mode LIVE
-BINANCE_API_KEY=
-BINANCE_API_SECRET=
+# OKX exige une passphrase API en plus de la clé/secret
+OKX_API_KEY=
+OKX_API_SECRET=
+OKX_API_PASSWORD=
 
 # ── Clé API du dashboard web (générer une clé forte) ────────────
 # Exemple : openssl rand -hex 32
@@ -231,8 +233,9 @@ echo "  Dashboard accessible : http://$IP/"
 echo ""
 echo "  ── Étapes obligatoires avant démarrage ──────────────────────"
 echo "  1. Compléter $ENV_FILE :"
-echo "       BINANCE_API_KEY=..."
-echo "       BINANCE_API_SECRET=..."
+echo "       OKX_API_KEY=..."
+echo "       OKX_API_SECRET=..."
+echo "       OKX_API_PASSWORD=...   # passphrase API OKX"
 echo "       BOT_API_KEY=\$(openssl rand -hex 32)"
 echo ""
 echo "  2. Vérifier/adapter $APP_DIR/config.yaml :"

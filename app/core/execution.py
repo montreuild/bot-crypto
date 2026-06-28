@@ -9,9 +9,9 @@ chaque chemin réimplémentait ses propres formules avec de petites divergences
 Conventions :
   - ``side`` : "long" | "short"
   - les frais sont proportionnels : prix × taille × taux
-  - le coût d'emprunt suit la convention Binance Margin : ``periods_per_day``
-    périodes par jour (3 par défaut) à intérêts composés — c'est la formule
-    du live, désormais utilisée aussi par le backtest.
+  - le coût d'emprunt margin est à intérêts composés sur ``periods_per_day``
+    périodes par jour (OKX facture l'intérêt margin à l'heure → 24) — c'est la
+    formule du live, aussi utilisée par le backtest.
 
 La parité est verrouillée par ``tests/test_execution_parity.py``.
 """
@@ -24,11 +24,11 @@ def trade_fees(price: float, size: float, fee_rate: float) -> float:
 
 
 def borrow_cost(notional: float, daily_rate: float, hours_held: float,
-                periods_per_day: int = 3) -> float:
-    """Coût d'emprunt margin à intérêts composés (convention Binance).
+                periods_per_day: int = 24) -> float:
+    """Coût d'emprunt margin à intérêts composés.
 
-    ``periods_per_day`` périodes de facturation par jour ; chaque période
-    capitalise au taux ``daily_rate / periods_per_day``.
+    ``periods_per_day`` périodes de facturation par jour (OKX = 24, horaire) ;
+    chaque période capitalise au taux ``daily_rate / periods_per_day``.
     """
     if notional <= 0 or daily_rate <= 0 or hours_held <= 0:
         return 0.0
@@ -56,12 +56,12 @@ def net_pnl(side: str, entry: float, exit_price: float, size: float,
 
 def close_pnl(side: str, entry: float, exit_price: float, size: float,
               notional: float, fee_rate: float, daily_rate: float,
-              hours_held: float, periods_per_day: int = 3) -> tuple:
+              hours_held: float, periods_per_day: int = 24) -> tuple:
     """Décompte complet d'une clôture, partagé backtest ↔ live.
 
     Retourne ``(pnl_net, fees_sortie, cout_emprunt)`` :
       fees   = exit_price × size × fee_rate
-      borrow = intérêts composés Binance sur le notional
+      borrow = intérêts composés margin sur le notional
       pnl    = brut directionnel − fees − borrow
     """
     fees   = trade_fees(exit_price, size, fee_rate)

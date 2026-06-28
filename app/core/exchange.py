@@ -60,6 +60,16 @@ def with_retry(fn: Callable) -> Callable:
     return wrapper
 
 
+def _safe_float(x, default: Optional[float] = None) -> Optional[float]:
+    """Float robuste : None / "" / valeur non numérique → ``default``."""
+    if x is None or x == "":
+        return default
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return default
+
+
 class RobustExchange:
     """Wrapper ccxt avec retry sur toutes les méthodes critiques + reconnexion de session."""
     def __init__(self, exchange: ccxt.Exchange, paper: bool = True,
@@ -67,6 +77,9 @@ class RobustExchange:
         self._ex                  = exchange
         self._ex_class            = exchange.__class__   # pour recréer lors du reset
         self._ex_config           = dict(getattr(exchange, "options", {}))  # options d'origine
+        # Identifiant ccxt de l'exchange (ex. "okx") — pilote les quirks par
+        # exchange (params margin, format du clientOrderId, etc.).
+        self._name                = (getattr(exchange, "id", "") or "").lower()
         self.paper                = paper
         self.margin               = margin
         self.margin_mode          = margin_mode
@@ -85,6 +98,10 @@ class RobustExchange:
             if hasattr(self._ex, "apiKey") and self._ex.apiKey:
                 opts["apiKey"] = self._ex.apiKey
                 opts["secret"] = self._ex.secret
+                # OKX (et quelques autres) exigent une passphrase en 3e credential :
+                # sans elle, la session reconstruite perdrait l'authentification.
+                if getattr(self._ex, "password", None):
+                    opts["password"] = self._ex.password
             original_opts = getattr(self._ex, "options", {})
             if "defaultType" in original_opts:
                 opts["options"] = {"defaultType": original_opts["defaultType"]}
@@ -116,22 +133,45 @@ class RobustExchange:
     #
     # Un retry aveugle après timeout réseau peut DUPLIQUER un ordre market si
     # l'exchange avait en fait reçu la requête (double position, stops faux).
-    # On attache donc un ``newClientOrderId`` déterministe à chaque appel et,
+    # On attache donc un identifiant client déterministe (clOrdId OKX) à chaque appel et,
     # avant chaque nouvelle tentative après une erreur réseau, on vérifie si
     # l'ordre existe déjà côté exchange — auquel cas on le retourne au lieu
     # d'en créer un second.
 
     @staticmethod
     def _gen_client_order_id() -> str:
-        # Format accepté par Binance : ^[\.A-Z\:/a-z0-9_-]{1,36}$
-        return f"bot-{uuid.uuid4().hex[:24]}"
+        # Alphanumérique pur, 27 caractères → conforme au clOrdId OKX
+        # (lettres + chiffres, 32 max, pas de tiret) : un préfixe non
+        # alphanumérique ou une longueur excessive serait rejeté.
+        return f"bot{uuid.uuid4().hex[:24]}"
+
+    def _client_id_field(self) -> str:
+        """Nom du paramètre clientOrderId à la *création* d'ordre, par exchange."""
+        if self._name == "okx":
+            return "clOrdId"
+        return "clientOrderId"   # paramètre unifié ccxt (traduit par exchange)
+
+    def _margin_params(self) -> dict:
+        """Paramètres de marge propres à l'exchange (vide si spot ou non margin).
+
+        OKX (compte unifié) : ``tdMode`` = isolated|cross — l'auto-borrow y est
+        géré au niveau du compte, pas par ordre.
+        """
+        if not self.margin:
+            return {}
+        if self._name == "okx":
+            return {"tdMode": "isolated" if self.margin_mode == "isolated" else "cross"}
+        # Exchange margin générique : laisse ccxt router via marginMode.
+        return {"marginMode": self.margin_mode}
 
     def _fetch_order_by_client_id(self, client_id: str, symbol: str) -> Optional[dict]:
         """Recherche un ordre par clientOrderId. None si introuvable/erreur."""
         try:
-            params = {"origClientOrderId": client_id}
-            if self.margin:
-                params["isIsolated"] = str(self.margin_mode == "isolated").upper()
+            if self._name == "okx":
+                params = {"clOrdId": client_id}
+            else:
+                params = {"clientOrderId": client_id}
+            params.update(self._margin_params())
             order = self._ex.fetch_order(None, symbol, params)
             return order or None
         except Exception:
@@ -143,11 +183,9 @@ class RobustExchange:
             return {"id": f"paper_{int(time.time())}", "status": "closed",
                     "symbol": symbol, "side": side, "amount": amount, "price": price or 0}
         p = dict(params or {})
-        if self.margin:
-            # Binance margin spot: emprunt et remboursement automatiques
-            p.setdefault("sideEffectType", "AUTO_BORROW_REPAY")
-            p.setdefault("isIsolated", str(self.margin_mode == "isolated").upper())
-        client_id = p.setdefault("newClientOrderId", self._gen_client_order_id())
+        for k, v in self._margin_params().items():
+            p.setdefault(k, v)
+        client_id = p.setdefault(self._client_id_field(), self._gen_client_order_id())
 
         delay = BASE_DELAY
         for attempt in range(1, MAX_RETRIES + 1):
@@ -201,25 +239,48 @@ class RobustExchange:
     @with_retry
     def cancel_order(self, order_id, symbol):
         if self.paper: return {"id": order_id, "status": "canceled"}
-        params = {"isIsolated": str(self.margin_mode == "isolated").upper()} if self.margin else {}
-        return self._ex.cancel_order(order_id, symbol, params=params)
+        # OKX annule par ordId sans paramètre de marge supplémentaire.
+        return self._ex.cancel_order(order_id, symbol)
 
     @with_retry
     def fetch_margin_account(self) -> dict:
-        """Retourne le compte margin (niveau de marge, emprunts, USDC libre)."""
+        """Retourne le compte margin (niveau de marge, emprunts, USDC libre).
+
+        Sur le compte unifié OKX, on dérive un niveau de marge **non ambigu**
+        depuis ``fetch_balance().info.data[0]`` :
+
+            marginLevel = adjEq / mmr
+
+        où ``adjEq`` = équité ajustée (USD) et ``mmr`` = maintenance margin
+        requirement (USD). C'est un ratio **décimal** (liquidation ≈ 1.0, plus
+        c'est haut plus c'est sûr), calculé nous-mêmes pour éviter l'ambiguïté
+        d'échelle du champ brut ``mgnRatio`` (fraction vs pourcentage selon le
+        mode de compte). Sans positions margin (``mmr`` = 0) → pas de risque
+        (999). Fallback sur ``mgnRatio`` brut puis 999. Cf. docs/MIGRATION_OKX.md.
+        """
         if self.paper:
             return {"marginLevel": 999.0, "totalNetAssetOfBtc": 0,
                     "userAssets": [], "totalCollateralValueInUSDT": 0}
-        if self.margin_mode == "isolated":
-            return self._ex.fetch_isolated_margin_account()
-        return self._ex.fetch_cross_margin_account()
+        if self._name == "okx":
+            bal  = self._ex.fetch_balance()
+            acct = (((bal.get("info") or {}).get("data") or [{}]) or [{}])[0]
+            adj_eq = _safe_float(acct.get("adjEq"))
+            mmr    = _safe_float(acct.get("mmr"))
+            if mmr is not None and mmr > 0 and adj_eq is not None:
+                ml = adj_eq / mmr                       # ratio décimal, liquidation ≈ 1.0
+            else:
+                # Pas de mmr (aucune position margin) → sûr ; sinon mgnRatio brut.
+                ml = _safe_float(acct.get("mgnRatio"), default=999.0)
+            return {"marginLevel": round(ml, 4), "info": bal.get("info", {})}
+        return {"marginLevel": 999.0}
 
     @with_retry
     def fetch_margin_balance_usdc(self) -> float:
-        """Retourne le solde USDC libre sur le compte margin."""
+        """Retourne le solde USDC (ou USDT) libre sur le compte margin."""
         if self.paper:
             return 0.0
-        bal = self._ex.fetch_balance({"type": "margin"})
+        # OKX = compte unifié (pas de wallet ``type`` séparé).
+        bal = self._ex.fetch_balance()
         return float(bal.get("USDC", {}).get("free", 0) or
                      bal.get("USDT", {}).get("free", 0))
 
@@ -232,27 +293,22 @@ class RobustExchange:
         """
         if self.paper:
             return {"free": 0.0, "used": 0.0, "total": 0.0, "borrowed": 0.0}
-        params = {"type": "margin"} if self.margin else {}
-        bal    = self._ex.fetch_balance(params)
+        # OKX = compte unifié (pas de wallet ``type`` séparé).
+        bal    = self._ex.fetch_balance()
         usdc   = bal["USDC"] if "USDC" in bal else bal.get("USDT") or {}
         free   = float(usdc.get("free",  0) or 0)
         used   = float(usdc.get("used",  0) or 0)
         total  = float(usdc.get("total", 0) or 0)
 
         borrowed = 0.0
-        if self.margin:
+        if self.margin and self._name == "okx":
             try:
-                if self.margin_mode == "cross":
-                    acct = self._ex.fetch_cross_margin_account()
-                    for a in (acct.get("userAssets") or []):
-                        if a.get("asset") in ("USDC", "USDT"):
-                            borrowed += float(a.get("borrowed", 0) or 0)
-                else:
-                    acct = self._ex.fetch_isolated_margin_account()
-                    for asset in (acct.get("assets") or []):
-                        qa = asset.get("quoteAsset") or {}
-                        if qa.get("asset") in ("USDC", "USDT"):
-                            borrowed += float(qa.get("borrowed", 0) or 0)
+                # OKX : la dette par devise est le champ ``liab`` des details
+                # de fetch_balance().info.data[0].
+                data = ((bal.get("info") or {}).get("data") or [{}])
+                for d in (data[0].get("details") or []):
+                    if d.get("ccy") in ("USDC", "USDT"):
+                        borrowed += float(d.get("liab", 0) or 0)
             except Exception as e:
                 logger.debug(f"[Balance] Emprunts non récupérés : {e}")
 
@@ -273,9 +329,9 @@ class RobustExchange:
 
 
 # Exchanges autorisés (whitelist sécurité — empêche l'accès arbitraire aux attributs ccxt)
+# OKX est l'exchange cible ; les autres restent ouverts via le routage ccxt générique.
 _ALLOWED_EXCHANGES: frozenset = frozenset([
-    "binance", "binanceus", "binanceusdm", "binancecoinm",
-    "bybit", "okx", "kraken", "kucoin", "coinbase", "coinbasepro",
+    "okx", "bybit", "kraken", "kucoin", "coinbase", "coinbasepro",
     "gateio", "huobi", "htx", "mexc", "bitfinex", "bitmex",
 ])
 
@@ -304,6 +360,18 @@ def create_exchange(cfg: dict) -> RobustExchange:
     if api_key not in ("", "YOUR_KEY"):
         opts["apiKey"] = api_key
         opts["secret"] = api_secret
+        # OKX (et Kucoin, Coinbase Pro…) exigent une passphrase API en 3e
+        # credential. Acceptée sous api_password / api_passphrase / password.
+        passphrase = (cfg["exchange"].get("api_password")
+                      or cfg["exchange"].get("api_passphrase")
+                      or cfg["exchange"].get("password", ""))
+        if passphrase and passphrase not in ("YOUR_KEY",):
+            opts["password"] = passphrase
+        elif name in ("okx", "kucoin", "coinbase", "coinbasepro"):
+            logger.warning(
+                f"⚠ [Exchange] {name} exige une passphrase API (exchange.api_password) "
+                f"— absente : les appels authentifiés (live) échoueront."
+            )
     ex = klass(opts)
     # set_sandbox_mode non activé : le paper trading est simulé localement par RobustExchange.
     margin      = cfg["exchange"].get("margin", False) or cfg["trading"].get("margin_mode") is not None

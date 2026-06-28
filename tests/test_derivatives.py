@@ -63,21 +63,39 @@ class TestDerivativesStore:
         assert len(st.fetch_taker_ratio("BTC/USDC")) == 0
 
     def test_http_parsing(self, tmp_path, monkeypatch):
+        # Format OKX rubik : {"code":"0","data":[[ts, ratio], ...]}
         t0 = int(datetime(2024, 1, 1).timestamp() * 1000)
-        fake = [{"timestamp": t0 + i * 3600_000, "longShortRatio": str(1.0 + 0.1 * i)} for i in range(40)]
+        fake = {"code": "0",
+                "data": [[str(t0 + i * 3600_000), str(1.0 + 0.1 * i)] for i in range(40)]}
         monkeypatch.setattr(dv, "_http_get_json", lambda url, timeout=8.0: fake)
         st = DerivativesStore(base_dir=str(tmp_path))
         df = st.fetch_long_short_ratio("BTC/USDC")
         assert len(df) == 40 and df["value"][0] == pytest.approx(1.0)
 
+    def test_taker_volume_buy_sell_ratio(self, tmp_path, monkeypatch):
+        # taker-volume OKX : data[[ts, sellVol, buyVol]] → value = buyVol/sellVol
+        t0 = int(datetime(2024, 1, 1).timestamp() * 1000)
+        fake = {"code": "0", "data": [
+            [str(t0),            "100", "150"],   # buy/sell = 1.5
+            [str(t0 + 3600_000), "200", "100"],   # buy/sell = 0.5
+        ]}
+        monkeypatch.setattr(dv, "_http_get_json", lambda url, timeout=8.0: fake)
+        st = DerivativesStore(base_dir=str(tmp_path))
+        df = st.fetch_taker_ratio("BTC/USDC").sort("time")
+        assert df["value"][0] == pytest.approx(1.5)
+        assert df["value"][1] == pytest.approx(0.5)
+
     def test_align_adds_columns_and_zscores(self, tmp_path, monkeypatch):
         t0 = int(datetime(2024, 1, 1).timestamp() * 1000)
-        ls = [{"timestamp": t0 + i * 3600_000, "longShortRatio": str(1.5 + 0.2 * np.sin(i / 5))} for i in range(80)]
-        tk = [{"timestamp": t0 + i * 3600_000, "buySellRatio": str(1.0 + 0.1 * np.cos(i / 5))} for i in range(80)]
+        ls = {"code": "0",
+              "data": [[str(t0 + i * 3600_000), str(1.5 + 0.2 * np.sin(i / 5))] for i in range(80)]}
+        # taker-volume : [ts, sellVol, buyVol] avec sellVol=1.0 → value = buyVol
+        tk = {"code": "0",
+              "data": [[str(t0 + i * 3600_000), "1.0", str(1.0 + 0.1 * np.cos(i / 5))] for i in range(80)]}
         calls = {"n": 0}
         def fake_get(url, timeout=8.0):
             calls["n"] += 1
-            return ls if "globalLongShort" in url else tk
+            return ls if "long-short-account-ratio" in url else tk
         monkeypatch.setattr(dv, "_http_get_json", fake_get)
         st = DerivativesStore(base_dir=str(tmp_path))
         ex = _FakeExchange(t0)
