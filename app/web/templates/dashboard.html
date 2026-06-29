@@ -178,7 +178,7 @@
   <div>
     <div class="meta-grid">
       <div class="meta-card"><div class="meta-lbl">Trades fermés</div><div class="meta-val c-cyan" id="s-trades">—</div><div class="meta-sub">total</div></div>
-      <div class="meta-card"><div class="meta-lbl">Profit Factor <span class="help-tip" data-tip="Somme des gains ÷ somme des pertes. > 1 = rentable ; < 1 = perdant.">?</span></div><div class="meta-val" id="s-pf">—</div><div class="meta-sub">gains / pertes</div></div>
+      <div class="meta-card"><div class="meta-lbl">Profit Factor <span class="help-tip" data-tip="Somme des gains ÷ somme des pertes. > 1 = rentable ; < 1 = perdant.">?</span></div><div class="meta-val" id="s-pf">—</div><div class="meta-sub">gains / pertes · historique complet</div></div>
       <div class="meta-card"><div class="meta-lbl">Frais cumulés</div><div class="meta-val c-red" id="s-fees">—</div><div class="meta-sub">USDC</div></div>
       <div class="meta-card"><div class="meta-lbl">Meilleur trade</div><div class="meta-val c-green" id="s-best">—</div><div class="meta-sub">USDC</div></div>
       <div class="meta-card" id="margin-card" style="display:none"><div class="meta-lbl">Margin Level</div><div class="meta-val" id="s-margin-level">—</div><div class="meta-sub" id="s-margin-sub">—</div></div>
@@ -229,7 +229,7 @@
 
   <!-- ── Allocation par slot ── -->
   <div>
-    <div class="sec-hdr"><h2>Allocation par slot</h2><a href="/bots" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Gérer les bots →</a></div>
+    <div class="sec-hdr"><h2>Allocation par slot</h2><span style="font-size:.62rem;color:var(--muted);font-family:var(--mono);padding-left:8px">PnL / trades sur 7 j glissants</span><a href="/bots" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Gérer les bots →</a></div>
     <div id="alloc-grid" class="alloc-grid"><div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div></div>
   </div>
 
@@ -252,7 +252,7 @@
   </div>
 
   <div>
-    <div class="sec-hdr"><h2>Performance par stratégie</h2><a href="/bots" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Détail par bot →</a></div>
+    <div class="sec-hdr"><h2>Performance par stratégie</h2><span style="font-size:.62rem;color:var(--muted);font-family:var(--mono);padding-left:8px">historique complet</span><a href="/bots" style="font-size:.68rem;color:var(--cyan);text-decoration:none;margin-left:auto;font-weight:600">Détail par bot →</a></div>
     <div class="table-card"><div class="tscroll"><table>
       <thead><tr>
         <th>Stratégie</th><th class="r">Trades</th><th class="r">Win Rate</th>
