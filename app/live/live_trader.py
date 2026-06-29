@@ -177,6 +177,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             capital=self.capital_display,
             active_per_tf=self._active_per_tf,
             cfg=cfg,
+            session_factory=self.SessionLocal,
         )
         # Enregistrer le callback de persistance des budgets
         self.allocator.set_persist_callback(self._persist_allocator_budgets)

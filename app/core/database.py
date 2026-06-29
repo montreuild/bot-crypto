@@ -408,6 +408,21 @@ def load_risk_state(session: Session, key: str = None) -> dict:
         return {}
 
 
+# ── Persistance de l'état de l'allocateur de capital (stats hebdo) ───────────
+def save_allocator_state(session: Session, data: dict) -> None:
+    """Persiste l'état de l'allocateur (stats hebdo par slot + prochain rebalance).
+
+    Réutilise la table ``risk_state`` (blob JSON souple) sous la clé
+    ``'allocator'`` — évite les pertes au redémarrage (sinon le rééquilibrage
+    par profit-factor repart de zéro et ignore la semaine écoulée)."""
+    save_risk_state(session, "allocator", data)
+
+
+def load_allocator_state(session: Session) -> dict:
+    """Charge l'état persisté de l'allocateur (vide si absent)."""
+    return load_risk_state(session, "allocator")
+
+
 def update_daily_stats(session: Session, date_str: str, pnl: float, win: bool,
                        fees: float, equity: float):
     row = session.query(DailyStats).filter(DailyStats.date == date_str).first()

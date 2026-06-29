@@ -59,8 +59,9 @@ class CapitalAllocator:
     """
 
     def __init__(self, capital: float, active_per_tf: Dict[str, List[dict]],
-                 cfg: dict = None):
+                 cfg: dict = None, session_factory=None):
         self.capital = capital
+        self._session_factory = session_factory
         alloc_cfg = (cfg or {}).get("capital_allocator", {})
         self._max_slot_pct = float(alloc_cfg.get("max_slot_pct", _DEFAULT_MAX_SLOT_PCT))
         self._min_trades_for_rebalance = int(alloc_cfg.get("min_trades_for_rebalance", _DEFAULT_MIN_TRADES_FOR_REBALANCE))
@@ -89,6 +90,8 @@ class CapitalAllocator:
         # Callback optionnel appelé après chaque _apply_mode() : persist_fn(budgets: dict)
         self._persist_callback: Optional[Callable[[dict], None]] = None
         self.rebuild_slots(active_per_tf)
+        # Reprise des stats hebdo + planning de rebalance après redémarrage.
+        self._restore_weekly_stats()
 
     # ── Construction des slots ─────────────────────────────────────────────
     def rebuild_slots(self, active_per_tf: Dict[str, List[dict]]):
@@ -266,6 +269,8 @@ class CapitalAllocator:
                 slot.weekly_gross_win = round(slot.weekly_gross_win + pnl, 6)
             else:
                 slot.weekly_gross_loss = round(slot.weekly_gross_loss + abs(pnl), 6)
+            # Persiste les stats hebdo (survie au redémarrage pour le rebalance).
+            self._persist_weekly_stats()
 
     def check_correlation(self, side: str, open_positions: dict,
                           symbol: str = "") -> tuple[bool, str]:
@@ -429,6 +434,8 @@ class CapitalAllocator:
                 self._persist_callback(budgets)
             except Exception as e:
                 logger.warning(f"[Allocator] Persistance budgets (rebalance) KO : {e}")
+        # Persiste les stats hebdo remises à zéro + le nouveau planning de rebalance.
+        self._persist_weekly_stats()
 
     # ── Toggle slot ────────────────────────────────────────────────────────
     def set_slot_enabled(self, slot_key: str, enabled: bool) -> bool:
@@ -577,6 +584,67 @@ class CapitalAllocator:
         logger.info("[Allocator] Allocation continue appliquée : "
                     + ", ".join(f"{k}={v.budget_pct:.0%}" for k, v in self._slots.items() if v.enabled))
         return res
+
+    # ── Persistance des stats hebdo (reprise après redémarrage) ─────────────
+    def _persist_weekly_stats(self) -> None:
+        """Sauvegarde les stats hebdo par slot + le prochain rebalance (no-op si
+        non branché à une base). Sans ça, après un crash le rééquilibrage par
+        profit-factor repart de zéro et ignore la semaine écoulée."""
+        if not self._session_factory:
+            return
+        try:
+            from app.core.database import save_allocator_state, session_scope
+            blob = {
+                "rebalance_next": self._rebalance_next,
+                "slots": {
+                    k: {
+                        "weekly_pnl":        s.weekly_pnl,
+                        "weekly_wins":       s.weekly_wins,
+                        "weekly_trades":     s.weekly_trades,
+                        "weekly_gross_win":  s.weekly_gross_win,
+                        "weekly_gross_loss": s.weekly_gross_loss,
+                    }
+                    for k, s in self._slots.items()
+                },
+            }
+            with session_scope(self._session_factory) as sess:
+                save_allocator_state(sess, blob)
+        except Exception as e:
+            logger.debug(f"[Allocator] persistance stats hebdo KO : {e}")
+
+    def _restore_weekly_stats(self) -> None:
+        """Restaure les stats hebdo + le prochain rebalance depuis la base."""
+        if not self._session_factory:
+            return
+        try:
+            from app.core.database import load_allocator_state, session_scope
+            with session_scope(self._session_factory) as sess:
+                blob = load_allocator_state(sess)
+        except Exception as e:
+            logger.debug(f"[Allocator] reprise stats hebdo KO : {e}")
+            return
+        if not blob:
+            return
+        rb = blob.get("rebalance_next")
+        if rb:
+            try:
+                self._rebalance_next = float(rb)
+            except (TypeError, ValueError):
+                pass
+        restored = 0
+        for k, sd in (blob.get("slots") or {}).items():
+            s = self._slots.get(k)
+            if not s:
+                continue
+            s.weekly_pnl        = float(sd.get("weekly_pnl", 0.0) or 0.0)
+            s.weekly_wins       = int(sd.get("weekly_wins", 0) or 0)
+            s.weekly_trades     = int(sd.get("weekly_trades", 0) or 0)
+            s.weekly_gross_win  = float(sd.get("weekly_gross_win", 0.0) or 0.0)
+            s.weekly_gross_loss = float(sd.get("weekly_gross_loss", 0.0) or 0.0)
+            if s.weekly_trades > 0:
+                restored += 1
+        if restored:
+            logger.info(f"[Allocator] Stats hebdo restaurées ({restored} slot(s) actifs).")
 
     # ── Statut pour l'API ──────────────────────────────────────────────────
     def get_status(self) -> List[dict]:
