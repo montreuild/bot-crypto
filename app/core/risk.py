@@ -427,13 +427,24 @@ class RiskManager:
     def compute_size(self, entry: float, atr: float,
                      score: float = 1.0, threshold: float = 0.60,
                      size_factor: float = 1.0,
-                     budget: float = None, max_leverage: float = None) -> tuple:
+                     budget: float = None, max_leverage: float = None,
+                     stop_dist: float = None) -> tuple:
         """Calcule taille et notionnel, en intégrant score_factor et volatility_brake.
 
         ``size_factor`` (optionnel) est un facteur multiplicatif fourni par la
         stratégie (par ex. demi-Kelly : ×confidence ; ou boost setup V7 ×1.5).
         Borné [0, 2] et appliqué après le facteur score interne et le frein
         de volatilité. ``max_notional_pct`` reste la garde-fou de risque global.
+
+        Sizing par la distance au stop (parité backtest)
+        ------------------------------------------------
+        Quand ``stop_dist`` (distance absolue entry→stop) est fourni, la taille
+        vaut ``risk_amount / stop_dist`` : le risque réellement engagé est alors
+        **exactement** ``risk%`` du capital, quel que soit le multiplicateur ATR
+        du stop (cf. ``app/engine/backtest.py:_try_enter``). Sans ``stop_dist``
+        (rétro-compat), on retombe sur l'ATR brut — mais le risque réel devient
+        ``risk% × (stop_dist / ATR)`` (sur-risque ~2,5× quand le stop est à
+        2,5×ATR), d'où l'importance de toujours passer la distance au stop.
 
         Sizing par bot (Phase 1)
         ------------------------
@@ -446,7 +457,11 @@ class RiskManager:
         """
         base         = float(budget) if budget is not None else self.equity
         risk_amount  = base * self.compute_risk()
-        size         = risk_amount / max(atr, 1e-8)
+        # Dénominateur de risque : distance au stop réel si connue (parité
+        # backtest → risque = risk% exact), sinon ATR brut (rétro-compat).
+        risk_per_unit = (float(stop_dist) if (stop_dist is not None and stop_dist > 0)
+                         else max(atr, 1e-8))
+        size         = risk_amount / risk_per_unit
         notional     = size * entry
         if budget is not None:
             lev          = float(max_leverage) if max_leverage is not None else self.max_leverage

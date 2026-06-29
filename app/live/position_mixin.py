@@ -70,6 +70,32 @@ def _apply_trail_override(base_cfg: dict, override: dict) -> dict:
 
 class PositionMixin:
 
+    # ── Sizing : distance au stop initial (parité backtest) ─────────────────
+
+    def _initial_stop_distance(self, side: str, price: float, atr: float,
+                               signal: dict) -> float:
+        """Distance absolue entry→stop initial, pour un sizing par le risque réel.
+
+        Réplique la logique de stop initial de :meth:`_open_position` SANS ouvrir
+        la position, afin que ``RiskManager.compute_size`` dimensionne par la
+        distance au stop (comme le backtest) plutôt que par l'ATR brut — sinon le
+        risque réel vaut ``risk% × (stop_dist / ATR)`` (sur-risque). Ordre de
+        priorité identique à l'ouverture : ``sl_atr_mult`` → ``stop_hint`` →
+        trailing initial (``mult × ATR``). Retourne 0.0 si indéterminable
+        (``compute_size`` retombe alors sur l'ATR).
+        """
+        try:
+            if signal.get("sl_atr_mult") is not None:
+                return abs(float(signal["sl_atr_mult"]) * atr)
+            if signal.get("stop_hint") is not None:
+                return abs(float(price) - float(signal["stop_hint"]))
+            trail_cfg = _apply_trail_override(
+                self._trailing_cfg, signal.get("trail_override") or {}
+            )
+            return abs(float(trail_cfg.get("mult", 2.5)) * atr)
+        except (TypeError, ValueError):
+            return 0.0
+
     # ── Restauration au démarrage ──────────────────────────────────────────
 
     def _restore_open_positions(self) -> None:
@@ -697,9 +723,12 @@ class PositionMixin:
 
         strat_threshold = self._strat_thresholds.get(pos.get("strategy", ""), self.threshold)
         sf = max(0.0, min(float(scale.get("size_factor", 1.0)), 2.0))
+        # Sizing de l'unité par la distance au stop courant (parité backtest).
+        add_stop_dist = abs(float(price) - float(pos.get("stop", 0.0)))
         add_size, add_notional = self.risk.compute_size(
             price, atr, score=float(pos.get("score", 0)),
             threshold=strat_threshold, size_factor=sf,
+            stop_dist=add_stop_dist,
         )
         if add_size <= 0 or add_notional <= 0:
             return

@@ -670,10 +670,14 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 from app.core.bot_identity import resolve_venue
                 budget_usdc = b
                 max_lev = resolve_venue(self.cfg, strategy_name, tf).max_leverage
+        # Distance au stop initial → sizing par le risque réel (parité backtest),
+        # au lieu de l'ATR brut qui sur-risquait d'un facteur = multiple du stop.
+        stop_dist = self._initial_stop_distance(side, price, atr, signal_dict)
         size, notional = self.risk.compute_size(
             price, atr, score=score, threshold=strat_threshold,
             size_factor=float(signal_dict.get("size_factor", 1.0)),
             budget=budget_usdc, max_leverage=max_lev,
+            stop_dist=stop_dist,
         )
         leverage = self.risk.compute_leverage(notional)
 
