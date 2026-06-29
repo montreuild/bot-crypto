@@ -39,6 +39,13 @@ _OHLCV_TTL: Dict[str, int] = {
     "1h": 600, "4h": 2400, "1d": 14400,
 }
 
+# Durée d'un timeframe en millisecondes (pour détecter la bougie en cours).
+_TF_MS: Dict[str, int] = {
+    "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000,
+    "30m": 1_800_000, "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000,
+    "6h": 21_600_000, "8h": 28_800_000, "12h": 43_200_000, "1d": 86_400_000,
+}
+
 
 class OHLCVCache:
     """
@@ -107,6 +114,36 @@ class OHLCVCache:
             logger.debug(f"[OHLCVCache] enrich dérivés {symbol} KO : {e}")
             return df
 
+    # ── Bougie en cours de formation ───────────────────────────────────────
+
+    def _drop_forming_candle(self, df: pl.DataFrame, tf: str) -> pl.DataFrame:
+        """Retire la dernière bougie si elle n'est pas encore clôturée.
+
+        Une bougie d'ouverture ``t`` couvre l'intervalle ``[t, t+Δ)`` ; elle est
+        close dès que ``t + Δ <= now``. Si la dernière bougie est encore ouverte,
+        son ``close`` est provisoire (repaint) — on la retire pour que le scoring
+        live se fasse sur des bougies clôturées, comme le backtest. No-op si le TF
+        est inconnu ou si l'élagage viderait le DataFrame.
+        """
+        tf_ms = _TF_MS.get(tf)
+        if not tf_ms or df is None or df.height <= 1:
+            return df
+        try:
+            last_raw = df["time"][-1]
+            last_ms = (
+                int(last_raw.timestamp() * 1000) if hasattr(last_raw, "timestamp")
+                else int(last_raw) if isinstance(last_raw, (int, float))
+                else None
+            )
+            if last_ms is None:
+                return df
+            now_ms = int(time.time() * 1000)
+            if last_ms + tf_ms > now_ms:   # bougie encore en formation
+                return df.head(df.height - 1)
+        except Exception as e:
+            logger.debug(f"[OHLCVCache] élagage bougie en cours {tf} KO : {e}")
+        return df
+
     # ── Accès principal ──────────────────────────────────────────────────
 
     def get(self, symbol: str, tf: str,
@@ -136,6 +173,12 @@ class OHLCVCache:
         except Exception as _fe:
             logger.error(f"[OHLCVCache] fetch {symbol}/{tf} : {_fe}")
             df = None
+        # Parité de timing avec le backtest : on ne score que sur des bougies
+        # clôturées. La dernière bougie renvoyée par l'exchange est souvent
+        # encore en formation (close non définitif) → repaint et exécution une
+        # barre trop tôt vs backtest. On l'élague avant tout calcul.
+        if df is not None:
+            df = self._drop_forming_candle(df, tf)
         if df is None or len(df) < 220:
             self._exchange_errors[symbol] = self._exchange_errors.get(symbol, 0) + 1
             self._notif.notify_exchange_error(
