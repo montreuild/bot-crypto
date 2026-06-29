@@ -18,14 +18,31 @@ logger = logging.getLogger(__name__)
 
 # ── Auth ───────────────────────────────────────────────────────────────────
 
+def _trusted_proxies() -> set:
+    """IP(s) des reverse-proxies de confiance (env ``TRUSTED_PROXIES``, séparées
+    par des virgules). Vide par défaut → ``X-Forwarded-For`` n'est jamais honoré."""
+    raw = os.environ.get("TRUSTED_PROXIES", "")
+    return {p.strip() for p in raw.split(",") if p.strip()}
+
+
 def _extract_client_ip(request: Request) -> str:
-    """Extrait l'IP client depuis X-Forwarded-For ou request.client."""
-    forwarded_for = request.headers.get("x-forwarded-for", "").strip()
-    if forwarded_for:
-        real_ip = forwarded_for.split(",")[0].strip()
-        if real_ip:
-            return real_ip
-    return getattr(request.client, "host", "unknown") if request.client else "unknown"
+    """IP cliente réelle, robuste au spoofing de ``X-Forwarded-For``.
+
+    ``X-Forwarded-For`` est trivialement falsifiable par le client ; s'y fier
+    sans condition permettait de se faire passer pour ``127.0.0.1`` et de
+    contourner le contrôle « localhost only » quand aucune clé API n'est
+    configurée (bypass d'auth). On n'honore donc le header **que** si la
+    connexion provient directement d'un proxy explicitement déclaré de confiance
+    (``TRUSTED_PROXIES``) ; sinon on utilise l'IP réelle du pair TCP.
+    """
+    peer = (getattr(request.client, "host", "") if request.client else "") or ""
+    if peer in _trusted_proxies():
+        forwarded_for = request.headers.get("x-forwarded-for", "").strip()
+        if forwarded_for:
+            real_ip = forwarded_for.split(",")[0].strip()
+            if real_ip:
+                return real_ip
+    return peer or "unknown"
 
 
 async def verify_api_key(request: Request):

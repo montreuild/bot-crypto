@@ -64,6 +64,12 @@ variables), pas des formules.
    - HTTPS (`FORCE_HTTPS=1` + reverse proxy TLS) et CORS adapté au domaine
      via la variable d'env `ALLOWED_ORIGINS` (liste séparée par des virgules,
      ex. `ALLOWED_ORIGINS=https://bot.mondomaine.com` — défaut : localhost).
+   - **`X-Forwarded-For`** n'est désormais honoré que si la connexion provient
+     d'un proxy déclaré dans `TRUSTED_PROXIES` (IP séparées par des virgules,
+     ex. `TRUSTED_PROXIES=127.0.0.1`). **Derrière un reverse proxy, définissez
+     cette variable** avec l'IP du proxy ; sinon le header est ignoré
+     (anti-spoofing : un client distant ne peut plus se faire passer pour
+     localhost et contourner l'auth quand `web.api_key` est vide).
 4. **Supervision** : activer Telegram (`notifications.telegram_enabled`),
    le service systemd avec `Restart=on-failure` (déjà dans `deploy/`), et le
    healthcheck `/health` dans un monitoring externe (UptimeRobot ou cron).
