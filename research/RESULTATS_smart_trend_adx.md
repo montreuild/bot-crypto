@@ -59,6 +59,54 @@ Reproduire : `python research/backtest_smart_trend.py`
 - **Exécution** à l'**ouverture de la barre suivante** (`open[i+1]`) — comme
   `strategy.entry` par défaut en Pine.
 
+## Optimisation IS/OOS (bayésien Optuna, 40 trials/TF)
+
+Split chronologique 65 % in-sample / 35 % out-of-sample (warmup 220 partagé),
+config OKX **réaliste** (frais taker 0,1 %, sizing par risque plafonné) — c.-à-d.
+les hypothèses *live*, pas celles de TradingView. Reproduire :
+`python research/optimize_smart_trend.py`. Params écrits dans
+`strategies/smart_trend_adx.yaml` (section `optimizer_results`).
+
+| TF | Score IS | Score OOS | Overfit (IS/OOS) | OOS trades | OOS win % | OOS PnL ($/1000) | OOS DD |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1h | 0.343 | 0.367 | 0.94 | 29 | 41.4 % | +11.28 (+1.1 %) | −3.60 % |
+| 2h | −0.047 | 0.719 | 0.00 | 20 | 60.0 % | +83.52 (+8.4 %) | −1.16 % |
+| 4h | 0.483 | 0.452 | 1.07 | 9 | 55.6 % | +29.38 (+2.9 %) | −2.10 % |
+| 1d | 0.488 | 0.578 | 0.84 | 4 | 75.0 % | +55.06 (+5.5 %) | −1.06 % |
+
+Meilleurs paramètres :
+
+| TF | ema_len | adx_thresh | rsi_long | rsi_short | sl_mult | tp_mult |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1h | 150 | 25 | 35 | 55 | 1.2 | 2.5 |
+| 2h | 200 | 20 | 35 | 60 | 1.2 | 2.5 |
+| 4h | 150 | 25 | 35 | 60 | 1.2 | 2.0 |
+| 1d | 150 | 25 | 40 | 55 | 1.0 | 2.5 |
+
+**Lecture honnête (à lire avant d'y croire) :**
+
+- **Pas de surapprentissage au sens IS/OOS** : tous les ratios < 1.1 (seuil d'alerte
+  du projet : 2.5). Bonne nouvelle sur la stabilité IS→OOS.
+- **MAIS l'optimiseur sélectionne sur le score OOS** : l'OOS n'est donc plus un vrai
+  holdout ici (biais de sélection). Les métriques OOS ci-dessus sont **optimistes**.
+  Une validation propre exige un **3ᵉ segment jamais vu** (ou le forward-test
+  glissant du projet, `oos_tracker`, en live/paper).
+- **Puissance statistique faible en haut de TF** : 4h = 9 trades OOS, 1d = 4 trades.
+  Le win-rate 75 % (1d) sur 4 trades n'est pas exploitable. Le seul TF avec un
+  échantillon décent est le **1h (29 trades)** → +1,1 %, 41 % WR, DD −3,6 %.
+- **Le 2h est suspect** : meilleur OOS (+8,4 %) mais **score IS négatif** — c.-à-d.
+  la config était perdante sur l'in-sample et brille seulement sur la période
+  récente. Signal typique de params calés sur un régime favorable, pas d'un edge
+  robuste. À ne pas déployer sans forward-test.
+- Convergence des params : `rsi_long` resserré à **35** (dip plus profond exigé) et
+  `adx_thresh` relevé à **25** (tendance plus forte) sur la plupart des TF — cohérent
+  avec une meilleure sélectivité des entrées.
+
+**Recommandation** : traiter ces params comme des *candidats*, les faire tourner en
+**paper/forward-test** (le bot compare automatiquement le réel à la fourchette
+Monte-Carlo simulée) avant tout capital réel. Le 1h est le point de départ le plus
+crédible statistiquement ; le 2h/4h/1d demandent plus de trades pour conclure.
+
 ## Conclusion
 
 La stratégie reproduit fidèlement la **logique et les seuils** du PineScript (densité
