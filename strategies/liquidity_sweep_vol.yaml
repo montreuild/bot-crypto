@@ -21,3 +21,49 @@ params:
   sl_mult: 1.5
   tp_mult: 3.0
   score_threshold: 0.5
+optimizer_results:
+  30m:
+    run_date: '2026-07-01'
+    oos_score: -0.039694
+    params:
+      bb_mult: 2.0
+      ema_len: 200
+      sl_mult: 1.2
+      tp_mult: 2.5
+      vol_mult: 1.5
+  1h:
+    run_date: '2026-07-01'
+    oos_score: -0.000777
+    params:
+      bb_mult: 2.0
+      ema_len: 150
+      sl_mult: 2.0
+      tp_mult: 3.0
+      vol_mult: 2.0
+  2h:
+    run_date: '2026-07-01'
+    oos_score: 0.627852
+    params:
+      bb_mult: 2.2
+      ema_len: 200
+      sl_mult: 1.5
+      tp_mult: 3.0
+      vol_mult: 2.0
+  4h:
+    run_date: '2026-07-01'
+    oos_score: 0.29239
+    params:
+      bb_mult: 2.2
+      ema_len: 250
+      sl_mult: 1.5
+      tp_mult: 2.5
+      vol_mult: 2.0
+  1d:
+    run_date: '2026-07-01'
+    oos_score: 0.241234
+    params:
+      bb_mult: 2.2
+      ema_len: 250
+      sl_mult: 1.2
+      tp_mult: 3.5
+      vol_mult: 1.2
