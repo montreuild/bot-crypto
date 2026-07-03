@@ -1,0 +1,69 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : Liquidity Sweep Vol  (portage du PineScript « BTC Liquidity Sweep V7 »)
+# ──────────────────────────────────────────────────────────────────────────────
+# Sweep de liquidité confirmé par le volume : la mèche perce la Bollinger (bande
+# basse en tendance haussière), la bougie clôture DANS la bande (rejet) avec un
+# volume > 1.5× la moyenne (smart money). Miroir en short. Sortie par bracket
+# FIXE (pas de trailing) : SL = 1.5×ATR, TP = 3.0×ATR.
+#
+# Référence TradingView (BTC, 4h, 1 janv. 2024 → 1 juil. 2026) fournie par l'auteur :
+#   PnL +33.49 %, 75 trades, 18 gagnants, profit factor 1.542, commission 0.05 %/côté,
+#   100 % de l'équité par trade.
+#   → Voir research/backtest_pine.py et research/RESULTATS_liquidity_sweep_vol.md.
+
+params:
+  ema_len: 200
+  bb_len: 20
+  bb_mult: 2.0
+  vol_len: 20
+  vol_mult: 1.5
+  atr_len: 14
+  sl_mult: 1.5
+  tp_mult: 3.0
+  score_threshold: 0.5
+optimizer_results:
+  30m:
+    run_date: '2026-07-01'
+    oos_score: -0.039694
+    params:
+      bb_mult: 2.0
+      ema_len: 200
+      sl_mult: 1.2
+      tp_mult: 2.5
+      vol_mult: 1.5
+  1h:
+    run_date: '2026-07-01'
+    oos_score: -0.000777
+    params:
+      bb_mult: 2.0
+      ema_len: 150
+      sl_mult: 2.0
+      tp_mult: 3.0
+      vol_mult: 2.0
+  2h:
+    run_date: '2026-07-01'
+    oos_score: 0.627852
+    params:
+      bb_mult: 2.2
+      ema_len: 200
+      sl_mult: 1.5
+      tp_mult: 3.0
+      vol_mult: 2.0
+  4h:
+    run_date: '2026-07-01'
+    oos_score: 0.29239
+    params:
+      bb_mult: 2.2
+      ema_len: 250
+      sl_mult: 1.5
+      tp_mult: 2.5
+      vol_mult: 2.0
+  1d:
+    run_date: '2026-07-01'
+    oos_score: 0.241234
+    params:
+      bb_mult: 2.2
+      ema_len: 250
+      sl_mult: 1.2
+      tp_mult: 3.5
+      vol_mult: 1.2

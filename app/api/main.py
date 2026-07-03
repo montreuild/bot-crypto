@@ -20,6 +20,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
@@ -32,7 +33,13 @@ from app.core.database import init_db
 logger = logging.getLogger(__name__)
 
 # ── Rate limiter ───────────────────────────────────────────────────────────
-limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+# Clé = IP du pair TCP (get_remote_address ne lit PAS X-Forwarded-For → non
+# spoofable, cohérent avec helpers._extract_client_ip). La limite par défaut est
+# généreuse : l'UI mono-utilisateur poll /api/status (~12/min) et l'avancement
+# des jobs backtest/optimizer (jusqu'à ~30-60/min) ; on borne surtout l'abus.
+# Surchargeable via l'env RATE_LIMIT (ex. "120/minute").
+_RATE_LIMIT = os.environ.get("RATE_LIMIT", "300/minute")
+limiter = Limiter(key_func=get_remote_address, default_limits=[_RATE_LIMIT])
 
 # ── Application ────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -69,6 +76,10 @@ async def _global_exception_handler(request: Request, exc: Exception):
         },
     )
 
+
+# Rate-limiting effectif : sans ce middleware, ``default_limits`` du Limiter
+# n'était jamais appliqué (les limites étaient configurées mais inertes).
+app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
 

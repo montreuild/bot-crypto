@@ -382,7 +382,7 @@ function openBot(key){
     <div class="d-row"><span class="k">Win rate</span><span class="v">${sim.win_rate!=null?sim.win_rate+'%':'—'}</span></div>
     <div class="d-row"><span class="k">Sharpe</span><span class="v">${sim.sharpe!=null?sim.sharpe:'—'}</span></div>
 
-    <div class="sect">Réel (live)</div>
+    <div class="sect">Réel (live) — 45 j glissants</div>
     <div class="d-row"><span class="k">Trades</span><span class="v">${live.n_trades!=null?live.n_trades:0}</span></div>
     <div class="d-row"><span class="k">Rendement moyen/trade</span><span class="v">${live.avg_return_pct!=null?pctf(live.avg_return_pct):'—'}</span></div>
     <div class="d-row"><span class="k">P&amp;L 7 jours</span><span class="v">${b.weekly_pnl!=null?(b.weekly_pnl>=0?'+':'')+Number(b.weekly_pnl).toFixed(2)+'$':'—'}</span></div>
