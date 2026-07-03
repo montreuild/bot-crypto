@@ -495,6 +495,150 @@ def scanner_setup_series(symbol: str = "BTC/USDC", timeframe: str = "1h",
         raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
+# ── Analyse Smart Money Concepts (overlay graphique scanner/replay) ─────────
+@router.get("/api/scanner/smc", dependencies=[Depends(verify_api_key)])
+def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
+                limit: int = 1000):
+    """Analyse SMC complète du symbole : structure (BOS/CHoCH), poches de
+    liquidité, sweeps, order blocks, FVG, premium/discount, trendlines et
+    canal de régression — plus le signal courant de la stratégie
+    ``smart_money``. Indices convertis en timestamps epoch pour le chart."""
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    try:
+        from app.core import smc
+        from app.strategies.smart_money import Strategy as _SMCStrategy
+
+        exchange = create_exchange(state.cfg)
+        scanner  = MarketScanner(exchange, state.cfg)
+        tf       = timeframe or state.cfg["trading"].get("timeframe", "1h")
+        n_fetch  = max(300, min(int(limit), 3000))
+        df       = scanner.fetch_ohlcv(symbol, tf, n_fetch)
+        if df is None or len(df) < 60:
+            raise HTTPException(404, f"Données insuffisantes pour {symbol}/{tf}")
+
+        params = (state.cfg.get("strategy_params", {}) or {}).get("smart_money", {})
+        res = smc.analyze(df, _SMCStrategy._smc_params(
+            {**_SMCStrategy.fixed_params, **{k: v for k, v in params.items()
+                                             if v is not None}}))
+
+        times = df["time"].dt.epoch(time_unit="s").to_list()
+        n = len(df)
+        last_t = int(times[-1])
+
+        def _t(idx, default=None):
+            try:
+                return int(times[int(idx)])
+            except (TypeError, ValueError, IndexError):
+                return default
+
+        # ── Zones (rectangles top/bottom bornés dans le temps) ───────────────
+        order_blocks = [{
+            "kind": ob["kind"], "top": ob["top"], "bottom": ob["bottom"],
+            "time_start": _t(ob["index"]),
+            "time_end":   _t(ob["invalidated_at"], last_t),
+            "status": ("invalidated" if ob["invalidated_at"] is not None
+                       else "touched" if ob["touched_at"] is not None
+                       else "fresh"),
+            "strength": ob["strength"],
+        } for ob in res["order_blocks"][-14:]]
+
+        pools = [{
+            "kind": pool["kind"], "level": pool["level"],
+            "top": pool["top"], "bottom": pool["bottom"],
+            "time_start": _t(min(pool["indices"])),
+            "time_end":   _t(pool["swept_at"], last_t),
+            "status": "swept" if pool["swept_at"] is not None else "active",
+            "n_touches": len(pool["indices"]),
+        } for pool in res["liquidity_pools"][-16:]]
+
+        fvgs = [{
+            "kind": fv["kind"], "top": fv["top"], "bottom": fv["bottom"],
+            "time_start": _t(fv["index"]),
+            "time_end":   _t(fv["filled_at"], last_t),
+            "status": ("filled" if fv["filled_at"] is not None
+                       else "mitigated" if fv["mitigated_at"] is not None
+                       else "open"),
+        } for fv in res["fvgs"][-14:]]
+
+        # ── Markers (structure + sweeps + swings labellisés) ─────────────────
+        markers = []
+        for ev in res["structure_events"][-30:]:
+            markers.append({
+                "time": _t(ev["index"]), "type": ev["kind"],
+                "direction": ev["direction"], "level": ev["level"],
+            })
+        for ev in res["sweeps"][-20:]:
+            markers.append({
+                "time": _t(ev["index"]), "type": "SWEEP",
+                "direction": "down" if ev["kind"] == "sell_side" else "up",
+                "level": ev["level"], "rejected": ev["rejected"],
+                "source": ev["source"],
+            })
+        swing_marks = [{
+            "time": _t(sw["index"]), "type": "SWING",
+            "label": sw["label"], "price": sw["price"], "kind": sw["kind"],
+        } for sw in res["swings"][-24:] if sw["label"]]
+
+        # ── Trendlines + canal ────────────────────────────────────────────────
+        trendlines = [{
+            "kind": t["kind"],
+            "time1": _t(t["x1"]), "y1": t["y1"],
+            "time2": _t(t["x2"]), "y2": t["y2"],
+        } for t in res["trendlines"]]
+        channel = None
+        if res["channel"]:
+            ch = res["channel"]
+            channel = {
+                "time_start": _t(ch["start_index"]),
+                "time_end":   _t(ch["end_index"]),
+                "mid_start":  ch["mid_start"], "mid_end": ch["mid_end"],
+                "half_width": ch["half_width"],
+            }
+
+        # ── Signal courant de la stratégie smart_money ────────────────────────
+        signal = None
+        try:
+            strat = _SMCStrategy()
+            sig = strat.score(df, state.cfg.get("strategy_params", {}))
+            if sig.get("side") not in (None, "none"):
+                signal = {
+                    "side":   sig["side"],
+                    "score":  sig.get("score"),
+                    "setup":  sig.get("setup"),
+                    "entry":  round(float(df["close"][-1]), 8),
+                    "stop":   sig.get("stop_hint"),
+                    "tp":     sig.get("tp_hint"),
+                    "reason": sig.get("reason", ""),
+                    **{k: (sig.get("indicators") or {}).get(k)
+                       for k in ("gain_pct", "rr", "pd_zone", "tp_source")},
+                }
+            else:
+                signal = {"side": "none", "reason": sig.get("reason", "")}
+        except Exception as e:
+            logger.warning(f"[smc] signal stratégie KO : {e}")
+
+        return JSONResponse(content=_clean({
+            "symbol": symbol, "timeframe": tf, "n_bars": n,
+            "bias": res["bias"],
+            "premium_discount": res["premium_discount"],
+            "order_blocks": order_blocks,
+            "liquidity_pools": pools,
+            "fvgs": fvgs,
+            "markers": markers,
+            "swing_labels": swing_marks,
+            "trendlines": trendlines,
+            "channel": channel,
+            "signal": signal,
+        }))
+    except HTTPException:
+        raise
+    except Exception as e:
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} scanner/smc : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
+
+
 @router.get("/api/scanner/signals", dependencies=[Depends(verify_api_key)])
 def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 300):
     """Exécute toutes les stratégies sur le symbole et retourne leurs signaux."""

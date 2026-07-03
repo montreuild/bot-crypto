@@ -6,6 +6,39 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧠 Moteur d'analyse Smart Money Concepts + stratégie `smart_money`
+
+Nouveau moteur `app/core/smc.py` (une passe causale O(n), sans lookahead) :
+- **Structure de marché** : swings fractals HH/HL/LH/LL, cassures **BOS** et
+  changements de caractère **CHoCH** (sur clôture) ;
+- **Zones de liquidité** : equal highs/lows (buy-side/sell-side liquidity),
+  cycle de vie active → swept, **sweeps** (stop hunts) avec détection du rejet ;
+- **Offre/Demande** : **order blocks** par displacement (corps ≥ k×ATR),
+  strength 2 si l'impulsion casse la structure, statut fresh/touché/invalidé ;
+- **FVG** (imbalances) ouverts/mitigés/comblés ;
+- **Premium/Discount** (équilibre 50 %, OTE 62-79 %) — version causale par barre ;
+- **Tendances** : trendlines automatiques (2 derniers swings) + canal de
+  régression linéaire ±2σ.
+
+Nouvelle stratégie **`smart_money`** (`strategies/smart_money.yaml`) :
+- setups **SWEEP_REVERSAL** (prise de liquidité rejetée) et **OB_RETEST**
+  (premier retour dans l'order block) — uniquement avec la tendance, côté
+  momentum du range, au-dessus/en-dessous de l'EMA200 ;
+- TP posé devant la prochaine poche de liquidité opposée, bracket fixe ;
+- ⚠ **filtre de gain : seules les positions au gain potentiel > 0,4 %**
+  (`min_gain_pct`) et RR ≥ 1.2 sont retenues ;
+- backtest O(1)/barre via `prepare_for_backtest` (une passe + cache).
+
+Validation BTC/USDC 4h 2018→2026 : 179 trades, WR 45,2 %, **+33,8 %**, PF 1.35,
+Sharpe 5.5, DD −10,6 % (PF par tiers : 2.33/1.40/0.87 — edge décroissant sur
+2024-2026 ; TF < 4h négatifs avec les défauts, laissés à l'optimiseur).
+
+Branchements : case **« SMC (Smart Money) »** sur le graphique du scanner
+(zones, markers BOS/CHoCH/sweeps, trendlines, canal, signal courant avec
+entrée/SL/TP/gain %) via `GET /api/scanner/smc` ; stratégie disponible dans le
+replay, le backtest, l'optimiseur et le live. Documentation :
+`docs/SMART_MONEY_CONCEPTS.md`. 22 tests unitaires (`tests/test_smc.py`).
+
 ### ⚡ Performance backtest/optimisation : suppression d'un O(n²) et du « get_column storm » des stratégies ML
 
 **Symptôme.** Backtests ML très lents et **ralentissant avec la taille** (279 → 185

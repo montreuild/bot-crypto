@@ -210,6 +210,7 @@
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-bb"     checked onchange="toggleIndicator('bb')"     style="accent-color:rgba(77,159,255,.8)"> Bollinger</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer"><input type="checkbox" id="tog-sr"           onchange="toggleIndicator('sr')"     style="accent-color:#ffd166"> Sup/Rés</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer" title="Setups des stratégies (V8/V11/V12) : markers d'entrée long/short sur le prix + niveaux TP/SL du dernier setup. Bascule le modèle via le sélecteur V8/V11/V12."><input type="checkbox" id="tog-v7" checked onchange="toggleV7()" style="accent-color:#c084fc"> Setups stratégie (markers + TP/SL)</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);cursor:pointer" title="Smart Money Concepts : order blocks (offre/demande), poches de liquidité (equal highs/lows), FVG, BOS/CHoCH, sweeps, trendlines et canal de régression — moteur app/core/smc.py"><input type="checkbox" id="tog-smc" checked onchange="toggleSMC()" style="accent-color:#ffd166"> SMC (Smart Money)</label>
       </div>
       <!-- Toggle des stratégies de setups (juste sous les indicateurs) -->
       <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -236,6 +237,14 @@
             </div>
             <div id="v7-legend" style="padding:4px 12px 6px;font-size:.66rem;color:var(--dim);display:flex;gap:10px;flex-wrap:wrap;border-bottom:1px solid rgba(255,255,255,.04)"></div>
             <div id="v8-signal-detail" style="padding:4px 12px;font-size:.65rem;color:var(--dim);display:none;gap:10px;flex-wrap:wrap;align-items:center"></div>
+          </div>
+          <div id="smc-block">
+            <div class="chart-sub-lbl" style="margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span><span style="color:#ffd166">Smart Money Concepts</span> — order blocks, liquidité, FVG, structure (BOS/CHoCH), sweeps, tendances</span>
+              <span id="smc-status" style="margin-left:4px;color:var(--dim);font-weight:400;font-size:.6rem"></span>
+            </div>
+            <div id="smc-legend" style="padding:4px 12px 6px;font-size:.66rem;color:var(--dim);display:flex;gap:10px;flex-wrap:wrap;border-bottom:1px solid rgba(255,255,255,.04)"></div>
+            <div id="smc-signal-detail" style="padding:4px 12px;font-size:.65rem;color:var(--dim);display:none;gap:10px;flex-wrap:wrap;align-items:center"></div>
           </div>
         </div>
       </div>
@@ -581,6 +590,8 @@ function _destroyCharts(){
   tvPriceChart=tvVolChart=tvRsiChart=tvMacdChart=null;
   _v7PriceSeries = null;
   _seriesMap = {};
+  _smcSeries = [];
+  _smcMarkerSeries = null;
 }
 
 function setChartTf(tf){
@@ -781,6 +792,11 @@ function _renderChart(d){
   document.getElementById('v7-block').style.display = v7Visible ? '' : 'none';
   if(v7Visible){ loadSetupSeries(); }
 
+  // ── Overlay Smart Money Concepts ──────────────────────────────────────
+  const smcVisible = document.getElementById('tog-smc')?.checked !== false;
+  document.getElementById('smc-block').style.display = smcVisible ? '' : 'none';
+  if(smcVisible){ loadSMCOverlay(); }
+
   // ── Sync sub-charts to price chart via TIME range (fixes RSI offset) ─
   let _syncing = false;
   const _subCharts = [tvVolChart, tvRsiChart, tvMacdChart].filter(Boolean);
@@ -957,6 +973,221 @@ async function loadSetupSeries(){
     if(status) status.textContent = '⚠ ' + e.message;
     if(legend) legend.innerHTML = '';
     if(detailEl) detailEl.style.display = 'none';
+  }
+}
+
+// ── Overlay Smart Money Concepts ────────────────────────────────────────
+// Zones (order blocks, poches de liquidité, FVG) dessinées en segments
+// horizontaux bornés dans le temps, structure (BOS/CHoCH) et sweeps en
+// markers, trendlines/canal en segments diagonaux — moteur /api/scanner/smc.
+let _smcSeries = [];        // séries à retirer au refresh
+let _smcMarkerSeries = null; // série invisible portant les markers SMC
+
+const SMC_COLORS = {
+  ob_bull:  '52,211,153',    // demande (vert)
+  ob_bear:  '251,113,133',   // offre (rouge)
+  pool_buy: '251,191,36',    // buy-side liquidity (ambre)
+  pool_sell:'34,211,238',    // sell-side liquidity (cyan)
+  fvg:      '167,139,250',   // imbalance (violet)
+};
+
+function _clearSMCOverlay(){
+  _smcSeries.forEach(s=>{ try{ tvPriceChart?.removeSeries(s); }catch(_){} });
+  _smcSeries = [];
+  _smcMarkerSeries = null;
+}
+
+function toggleSMC(){
+  const checked = document.getElementById('tog-smc')?.checked;
+  const blk = document.getElementById('smc-block');
+  if(blk) blk.style.display = checked ? '' : 'none';
+  if(!checked){ _clearSMCOverlay(); }
+  else if(_lastChartData){ loadSMCOverlay(); }
+}
+
+function _smcSeg(t1, t2, y1, y2, color, width, style){
+  if(t1==null || t2==null || y1==null || y2==null || t2<=t1 || !tvPriceChart) return null;
+  const s = tvPriceChart.addLineSeries({
+    color, lineWidth: width,
+    lineStyle: style ?? LightweightCharts.LineStyle.Solid,
+    priceLineVisible:false, lastValueVisible:false,
+    crosshairMarkerVisible:false,
+  });
+  s.setData([{time:t1, value:y1},{time:t2, value:y2}]);
+  _smcSeries.push(s);
+  return s;
+}
+
+async function loadSMCOverlay(){
+  const status = document.getElementById('smc-status');
+  const legend = document.getElementById('smc-legend');
+  const detail = document.getElementById('smc-signal-detail');
+  if(status) status.textContent = '⏳ analyse Smart Money…';
+  _clearSMCOverlay();
+  const sym = (document.getElementById('chart-symbol').value||'BTC/USDC').trim();
+  try{
+    const r = await apiFetch(
+      `/api/scanner/smc?symbol=${encodeURIComponent(sym)}&timeframe=${chartTf}&limit=${_chartLimit()}`
+    );
+    if(!r.ok){
+      const e = await r.json().catch(()=>({}));
+      throw new Error(e.detail || r.statusText);
+    }
+    const d = await r.json();
+    if(!tvPriceChart || !_lastChartData) return;   // chart détruit entre-temps
+    const candles = _lastChartData.candles || [];
+    const closeByTime = new Map(candles.map(c=>[c.time, c.close]));
+    const lastTime = candles.length ? candles[candles.length-1].time : null;
+
+    // ── Order blocks (zones offre/demande) : segments top + bottom ────────
+    (d.order_blocks||[]).forEach(ob=>{
+      if(ob.status === 'invalidated') return;              // zones mortes masquées
+      const rgb = ob.kind === 'bullish' ? SMC_COLORS.ob_bull : SMC_COLORS.ob_bear;
+      const a   = ob.status === 'fresh' ? (ob.strength >= 2 ? 0.9 : 0.65) : 0.3;
+      const w   = ob.strength >= 2 ? 2 : 1;
+      _smcSeg(ob.time_start, ob.time_end, ob.top, ob.top, `rgba(${rgb},${a})`, w);
+      _smcSeg(ob.time_start, ob.time_end, ob.bottom, ob.bottom, `rgba(${rgb},${a})`, w);
+    });
+
+    // ── Poches de liquidité (equal highs/lows) : niveau pointillé ─────────
+    (d.liquidity_pools||[]).forEach(pool=>{
+      const rgb = pool.kind === 'buy_side' ? SMC_COLORS.pool_buy : SMC_COLORS.pool_sell;
+      const a   = pool.status === 'active' ? 0.85 : 0.25;
+      _smcSeg(pool.time_start, pool.time_end, pool.level, pool.level,
+              `rgba(${rgb},${a})`, pool.n_touches >= 3 ? 2 : 1,
+              LightweightCharts.LineStyle.Dotted);
+    });
+
+    // ── FVG (imbalances) ouverts : double trait tireté ─────────────────────
+    (d.fvgs||[]).forEach(fv=>{
+      if(fv.status === 'filled') return;
+      const a = fv.status === 'open' ? 0.55 : 0.25;
+      _smcSeg(fv.time_start, fv.time_end, fv.top, fv.top,
+              `rgba(${SMC_COLORS.fvg},${a})`, 1, LightweightCharts.LineStyle.Dashed);
+      _smcSeg(fv.time_start, fv.time_end, fv.bottom, fv.bottom,
+              `rgba(${SMC_COLORS.fvg},${a})`, 1, LightweightCharts.LineStyle.Dashed);
+    });
+
+    // ── Trendlines automatiques + canal de régression ──────────────────────
+    (d.trendlines||[]).forEach(t=>{
+      const clr = t.kind === 'support' ? 'rgba(52,211,153,.7)' : 'rgba(251,113,133,.7)';
+      _smcSeg(t.time1, t.time2, t.y1, t.y2, clr, 2, LightweightCharts.LineStyle.Dashed);
+    });
+    if(d.channel){
+      const ch = d.channel;
+      _smcSeg(ch.time_start, ch.time_end, ch.mid_start, ch.mid_end,
+              'rgba(148,163,184,.5)', 1, LightweightCharts.LineStyle.Dashed);
+      _smcSeg(ch.time_start, ch.time_end, ch.mid_start+ch.half_width,
+              ch.mid_end+ch.half_width, 'rgba(148,163,184,.35)', 1);
+      _smcSeg(ch.time_start, ch.time_end, ch.mid_start-ch.half_width,
+              ch.mid_end-ch.half_width, 'rgba(148,163,184,.35)', 1);
+    }
+
+    // ── Markers structure (BOS/CHoCH) + sweeps + labels de swings ─────────
+    const rawMarkers = [];
+    (d.markers||[]).forEach(m=>{
+      if(m.time==null || !closeByTime.has(m.time)) return;
+      if(m.type === 'BOS' || m.type === 'CHoCH'){
+        const up = m.direction === 'up';
+        rawMarkers.push({
+          time: m.time,
+          position: up ? 'belowBar' : 'aboveBar',
+          shape: up ? 'arrowUp' : 'arrowDown',
+          color: m.type === 'CHoCH' ? '#ffd166' : (up ? '#34d399' : '#fb7185'),
+          text: m.type,
+        });
+      } else if(m.type === 'SWEEP' && m.rejected){
+        rawMarkers.push({
+          time: m.time,
+          position: m.direction === 'down' ? 'belowBar' : 'aboveBar',
+          shape: 'circle',
+          color: '#c084fc',
+          text: 'SW',
+          size: 0.7,
+        });
+      }
+    });
+    (d.swing_labels||[]).forEach(s=>{
+      if(s.time==null || !closeByTime.has(s.time)) return;
+      rawMarkers.push({
+        time: s.time,
+        position: s.kind === 'high' ? 'aboveBar' : 'belowBar',
+        shape: 'circle',
+        color: 'rgba(148,163,184,.55)',
+        text: s.label,
+        size: 0,
+      });
+    });
+    if(rawMarkers.length){
+      rawMarkers.sort((a,b)=>a.time-b.time);
+      const mkSeries = tvPriceChart.addLineSeries({
+        color:'rgba(0,0,0,0)', lineWidth:1,
+        priceLineVisible:false, lastValueVisible:false,
+        crosshairMarkerVisible:false,
+      });
+      const seen = new Set();
+      const data = [];
+      rawMarkers.forEach(m=>{
+        if(seen.has(m.time)) return;
+        seen.add(m.time);
+        data.push({time:m.time, value:closeByTime.get(m.time)});
+      });
+      mkSeries.setData(data);
+      mkSeries.setMarkers(rawMarkers);
+      _smcSeries.push(mkSeries);
+      _smcMarkerSeries = mkSeries;
+    }
+
+    // ── Légende + biais + premium/discount ────────────────────────────────
+    if(legend){
+      const bias = d.bias || {};
+      const biasClr = bias.trend === 1 ? 'var(--green)' : bias.trend === -1 ? 'var(--red)' : 'var(--dim)';
+      const pd = d.premium_discount || {};
+      const pdClr = pd.zone === 'premium' ? 'var(--amber)' : pd.zone === 'discount' ? 'var(--cyan)' : 'var(--dim)';
+      const nOB = (d.order_blocks||[]).filter(o=>o.status!=='invalidated').length;
+      const nPools = (d.liquidity_pools||[]).filter(p=>p.status==='active').length;
+      const nFVG = (d.fvgs||[]).filter(f=>f.status==='open').length;
+      const sw = (d.markers||[]).filter(m=>m.type==='SWEEP'&&m.rejected).length;
+      const item=(rgb,label)=>`<span style="display:inline-flex;align-items:center;gap:4px">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(${rgb},.8)"></span>${label}</span>`;
+      legend.innerHTML =
+        `<span>Structure : <strong style="color:${biasClr}">${escHtml(bias.label||'?')}</strong></span>` +
+        `<span>Range : <strong style="color:${pdClr}">${escHtml(pd.zone||'?')}</strong>${pd.equilibrium?` (EQ ${(+pd.equilibrium).toFixed(4)})`:''}</span>` +
+        item(SMC_COLORS.ob_bull, `demande ×${(d.order_blocks||[]).filter(o=>o.kind==='bullish'&&o.status!=='invalidated').length}`) +
+        item(SMC_COLORS.ob_bear, `offre ×${(d.order_blocks||[]).filter(o=>o.kind==='bearish'&&o.status!=='invalidated').length}`) +
+        item(SMC_COLORS.pool_buy, `liquidité ×${nPools}`) +
+        item(SMC_COLORS.fvg, `FVG ×${nFVG}`) +
+        `<span>OB actifs <strong>${nOB}</strong> · sweeps rejetés <strong>${sw}</strong></span>`;
+    }
+
+    // ── Signal courant de la stratégie smart_money ─────────────────────────
+    if(detail){
+      const sig = d.signal;
+      if(sig && sig.side && sig.side !== 'none'){
+        const clr = sig.side === 'long' ? 'var(--green)' : 'var(--red)';
+        detail.style.display = 'flex';
+        detail.innerHTML = `
+          <span style="color:${clr};font-weight:700">${sig.side==='long'?'↑ LONG':'↓ SHORT'} ${escHtml(sig.setup||'')}</span>
+          <span>score <strong>${(+sig.score).toFixed(2)}</strong></span>
+          <span>entrée <strong>${(+sig.entry).toFixed(4)}</strong></span>
+          <span style="color:#fb7185">SL <strong>${sig.stop!=null?(+sig.stop).toFixed(4):'—'}</strong></span>
+          <span style="color:#34d399">TP <strong>${sig.tp!=null?(+sig.tp).toFixed(4):'—'}</strong></span>
+          ${sig.gain_pct!=null?`<span>gain potentiel <strong style="color:var(--cyan)">${(+sig.gain_pct).toFixed(2)}%</strong></span>`:''}
+          ${sig.rr!=null?`<span>RR <strong>${(+sig.rr).toFixed(2)}</strong></span>`:''}
+          ${sig.tp_source?`<span style="color:var(--muted)">cible : ${escHtml(sig.tp_source)}</span>`:''}`;
+      } else {
+        detail.style.display = 'flex';
+        detail.innerHTML = `<span style="color:var(--dim)">Aucun setup smart_money sur la dernière bougie${sig&&sig.reason?` — ${escHtml(sig.reason.slice(0,120))}`:''}</span>`;
+      }
+    }
+
+    if(status){
+      status.textContent = `${d.timeframe} · ${d.n_bars} bougies analysées`;
+    }
+  }catch(e){
+    if(status) status.textContent = '⚠ ' + e.message;
+    if(legend) legend.innerHTML = '';
+    if(detail) detail.style.display = 'none';
   }
 }
 
