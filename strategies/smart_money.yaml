@@ -10,19 +10,23 @@
 #     par la clôture → entrée contre le sweep, stop sous/sur l'extrême.
 #   - OB_RETEST : premier retour dans l'order block à l'origine d'une impulsion
 #     qui a cassé la structure → entrée sur la zone, stop de l'autre côté.
+#   - BREAKER_RETEST (use_breakers, off par défaut) : retest d'un order block
+#     invalidé (polarité inversée).
 #
-# Sorties : bracket FIXE. TP posé juste devant la prochaine poche de liquidité
-# opposée, sinon fallback tp_rr_fallback×R.
+# Sorties : bracket FIXE. TP posé juste devant la prochaine cible opposée —
+# poche de liquidité OU bord d'un liquidity void non comblé (use_void_targets),
+# sinon fallback tp_rr_fallback×R. Confluence trendline (tl_tol_atr) au score.
 #
 # ⚠ RÈGLE DE GAIN : seules les positions offrant un gain potentiel
 #   (entrée → TP) STRICTEMENT SUPÉRIEUR à min_gain_pct (0.4 %) ET un ratio
 #   gain/risque ≥ min_rr sont retenues. Tout setup trop court est rejeté.
 #
 # Validation BTC/USDC (2026-07, défauts ci-dessous, frais 0.1 %/côté) :
-#   4h : 2018→2026, 179 trades, WR 45.2 %, PnL +33.8 %, PF 1.35, Sharpe 5.5,
-#        DD −10.6 % (sous-périodes : PF 2.33 / 1.40 / 0.87 — edge décroissant
+#   4h : 2018→2026, 181 trades, WR 46.4 %, PnL +40.5 %, PF 1.41, Sharpe 6.5,
+#        DD −9.9 % (sous-périodes : PF 2.28 / 1.54 / 0.95 — edge décroissant
 #        sur 2024-2026, à surveiller via le forward-test / lifecycle).
 #   30m/1h/2h/1d : négatif avec les défauts → laissés à l'optimiseur.
+#   BREAKER_RETEST : −163 USDC / 220 trades sur 4h → use_breakers: false.
 
 params:
   swing_len: 3            # pivots fractals : N barres de chaque côté
@@ -39,4 +43,7 @@ params:
   choch_guard_bars: 5     # pas d'entrée contre un CHoCH plus récent que N barres
   ema_filter_len: 200     # biais institutionnel : long > EMA200, short < EMA200 (0 = off)
   choch_exit: false       # early-exit CHoCH : négatif sur BTC toutes TF (validation 2026-07)
+  use_breakers: false     # BREAKER_RETEST : négatif sur BTC 4h (validation 2026-07)
+  use_void_targets: true  # bords des liquidity voids non comblés comme cibles TP
+  tl_tol_atr: 0.3         # tolérance du tap de trendline automatique (×ATR)
   score_threshold: 0.55   # ≥ 1 confluence requise (score de base 0.50)

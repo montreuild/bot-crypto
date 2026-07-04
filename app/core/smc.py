@@ -18,10 +18,18 @@ Détection automatique, en une passe causale O(n), des structures institutionnel
     l'extrême précédent). Statut suivi : fresh → touché (mitigé) → invalidé.
   - Fair Value Gaps (FVG / imbalances) : gap entre high[i−2] et low[i] (et
     miroir), suivi comblé/mitigé.
+  - Liquidity Voids : runs d'au moins ``void_min_bars`` bougies directionnelles
+    consécutives traversant ≥ ``void_min_atr``×ATR — zone « fine » que le prix
+    a parcourue sans trader, aimant naturel pour un retour (fill).
+  - Breaker Blocks : order block invalidé → la zone inverse sa polarité
+    (une demande transpercée devient offre, et réciproquement).
   - Premium / Discount : range de travail (dernier swing high ↔ swing low),
     équilibre à 50 %, zone OTE (Optimal Trade Entry, retracement 62–79 %).
   - Tendances : trendline support (2 derniers swing lows), résistance
     (2 derniers swing highs) et canal de régression linéaire.
+  - Structure line (zigzag) : polyligne des swings alternés (peaks/troughs)
+    pour le tracé « market structure », + projection de cycle sur le canal
+    (expected peak/trough à la borne du canal).
 
 Toutes les entités portent des indices de barres (``index``, ``formed_at``,
 ``swept_at``…) : à la barre ``i``, seules les données ≤ i ont été utilisées, ce
@@ -53,6 +61,8 @@ DEFAULTS: Dict[str, Any] = {
     "disp_body_atr":  1.3,   # corps minimal d'une bougie de displacement (×ATR)
     "ob_lookback":    5,     # recherche de la bougie opposée avant l'impulsion
     "fvg_min_atr":    0.2,   # taille minimale d'un FVG (×ATR)
+    "void_min_bars":  3,     # bougies directionnelles consécutives min d'un void
+    "void_min_atr":   2.5,   # déplacement minimal du run (×ATR)
     "atr_len":        14,
     "channel_lookback": 120, # fenêtre du canal de régression
     "max_pool_age":   500,   # âge max (barres) d'un pool utilisable comme cible
@@ -121,6 +131,8 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
     sweeps: List[dict] = []          # {index, kind, level, rejected, source, ref_index}
     obs: List[dict] = []             # order blocks
     fvgs: List[dict] = []
+    voids: List[dict] = []           # liquidity voids (runs directionnels)
+    breakers: List[dict] = []        # order blocks invalidés → polarité inversée
     trend_arr = np.zeros(n, dtype=np.int8)
 
     trend = 0
@@ -135,6 +147,12 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
     active_pools: List[dict] = []
     active_obs:   List[dict] = []
     active_fvgs:  List[dict] = []
+    active_voids: List[dict] = []
+    active_breakers: List[dict] = []
+    # État du run directionnel courant (détection des liquidity voids)
+    run_dir = 0          # +1 haussier, −1 baissier, 0 neutre
+    run_start = 0        # index de la première bougie du run
+    run_void: Optional[dict] = None   # void en cours d'extension (ou None)
 
     for i in range(n):
         # ── Confirmation des pivots dont le délai expire à la barre i ────────
@@ -235,6 +253,9 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                 })
 
         # ── Order blocks : cycle de vie des zones existantes ──────────────────
+        # Un OB invalidé sur clôture devient un BREAKER BLOCK : la zone inverse
+        # sa polarité (demande transpercée → offre, et réciproquement). Les
+        # stops piégés dans la zone alimentent le retest en sens inverse.
         for ob in active_obs[:]:
             if i <= ob["created_at"]:
                 continue
@@ -244,12 +265,43 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                 if c[i] < ob["bottom"]:
                     ob["invalidated_at"] = i
                     active_obs.remove(ob)
+                    brk = {"kind": "bearish", "top": ob["top"],
+                           "bottom": ob["bottom"], "index": ob["index"],
+                           "created_at": i, "touched_at": None,
+                           "invalidated_at": None}
+                    breakers.append(brk)
+                    active_breakers.append(brk)
             else:
                 if ob["touched_at"] is None and h[i] >= ob["bottom"]:
                     ob["touched_at"] = i
                 if c[i] > ob["top"]:
                     ob["invalidated_at"] = i
                     active_obs.remove(ob)
+                    brk = {"kind": "bullish", "top": ob["top"],
+                           "bottom": ob["bottom"], "index": ob["index"],
+                           "created_at": i, "touched_at": None,
+                           "invalidated_at": None}
+                    breakers.append(brk)
+                    active_breakers.append(brk)
+
+        # ── Breaker blocks : cycle de vie (retest / re-cassure) ──────────────
+        for brk in active_breakers[:]:
+            if i <= brk["created_at"]:
+                continue
+            if brk["kind"] == "bullish":
+                # Zone devenue support : touch par le haut, invalidée sous le bottom
+                if brk["touched_at"] is None and l[i] <= brk["top"]:
+                    brk["touched_at"] = i
+                if c[i] < brk["bottom"]:
+                    brk["invalidated_at"] = i
+                    active_breakers.remove(brk)
+            else:
+                # Zone devenue résistance : touch par le bas, invalidée au-dessus
+                if brk["touched_at"] is None and h[i] >= brk["bottom"]:
+                    brk["touched_at"] = i
+                if c[i] > brk["top"]:
+                    brk["invalidated_at"] = i
+                    active_breakers.remove(brk)
 
         # ── Détection de displacement → nouvel order block ────────────────────
         body = c[i] - o[i]
@@ -311,12 +363,60 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                 fvgs.append(new_fvg)
                 active_fvgs.append(new_fvg)
 
+        # ── Liquidity voids : cycle de vie (retour du prix dans la zone) ─────
+        for vd in active_voids[:]:
+            if vd is run_void or i <= vd["end_index"]:
+                continue
+            if vd["kind"] == "bullish":
+                # Zone traversée à la hausse : fill par retracement baissier
+                if vd["mitigated_at"] is None and l[i] <= vd["top"]:
+                    vd["mitigated_at"] = i
+                if l[i] <= vd["bottom"]:
+                    vd["filled_at"] = i
+                    active_voids.remove(vd)
+            else:
+                if vd["mitigated_at"] is None and h[i] >= vd["bottom"]:
+                    vd["mitigated_at"] = i
+                if h[i] >= vd["top"]:
+                    vd["filled_at"] = i
+                    active_voids.remove(vd)
+
+        # ── Liquidity voids : détection du run directionnel courant ──────────
+        # Un run de ≥ void_min_bars bougies de même couleur traversant
+        # ≥ void_min_atr×ATR crée un void, étendu tant que le run continue.
+        bar_dir = 1 if c[i] > o[i] else (-1 if c[i] < o[i] else 0)
+        if bar_dir != 0 and bar_dir == run_dir:
+            pass                                    # le run continue
+        else:
+            run_dir, run_start, run_void = bar_dir, i, None
+        if run_dir != 0 and (i - run_start + 1) >= int(p["void_min_bars"]):
+            span_lo = float(min(o[run_start], c[i]))
+            span_hi = float(max(o[run_start], c[i]))
+            if (span_hi - span_lo) >= float(p["void_min_atr"]) * atr[i]:
+                if run_void is None:
+                    run_void = {
+                        "kind": "bullish" if run_dir == 1 else "bearish",
+                        "start_index": run_start, "end_index": i,
+                        "top": span_hi, "bottom": span_lo,
+                        "mitigated_at": None, "filled_at": None,
+                    }
+                    voids.append(run_void)
+                    active_voids.append(run_void)
+                else:                               # extension du void en cours
+                    run_void["end_index"] = i
+                    run_void["top"] = max(run_void["top"], span_hi)
+                    run_void["bottom"] = min(run_void["bottom"], span_lo)
+
     # ── 3. Premium / Discount + OTE (état à la dernière barre) ────────────────
     pd_zone = _premium_discount_at(swings, trend_arr, h, l, c, n - 1)
 
     # ── 4. Trendlines + canal de régression ──────────────────────────────────
     tls = _trendlines(swing_highs, swing_lows, n)
     channel = _regression_channel(c, int(p["channel_lookback"]))
+
+    # ── 5. Structure line (zigzag peaks/troughs) + projection de cycle ───────
+    structure_line = _zigzag(swings)
+    cycle = _cycle_projection(structure_line, channel, trend, float(c[-1]))
 
     bias_label = {1: "haussier", -1: "baissier", 0: "neutre"}[int(trend)]
     result = {
@@ -327,6 +427,10 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
         "sweeps": sweeps[-_MAX_KEEP:],
         "order_blocks": obs[-_MAX_KEEP:],
         "fvgs": fvgs[-_MAX_KEEP:],
+        "liquidity_voids": voids[-_MAX_KEEP:],
+        "breakers": breakers[-_MAX_KEEP:],
+        "structure_line": structure_line[-2 * _MAX_KEEP:],
+        "cycle": cycle,
         "premium_discount": pd_zone,
         "trendlines": tls,
         "channel": channel,
@@ -344,6 +448,8 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
         "_all_fvgs": fvgs,
         "_all_sweeps": sweeps,
         "_all_struct_events": struct_events,
+        "_all_voids": voids,
+        "_all_breakers": breakers,
     }
     return result
 
@@ -352,12 +458,14 @@ def _empty_result(n: int) -> Dict[str, Any]:
     return {
         "n_bars": n, "swings": [], "structure_events": [], "liquidity_pools": [],
         "sweeps": [], "order_blocks": [], "fvgs": [],
+        "liquidity_voids": [], "breakers": [], "structure_line": [], "cycle": None,
         "premium_discount": None, "trendlines": [], "channel": None,
         "bias": {"trend": 0, "label": "neutre", "last_event": None},
         "_trend_arr": np.zeros(max(n, 0), dtype=np.int8),
         "_atr_arr": np.zeros(max(n, 0), dtype=float),
         "_all_pools": [], "_all_swings": [], "_all_obs": [], "_all_fvgs": [],
-        "_all_sweeps": [], "_all_struct_events": [],
+        "_all_sweeps": [], "_all_struct_events": [], "_all_voids": [],
+        "_all_breakers": [],
     }
 
 
@@ -506,6 +614,99 @@ def _trendlines(swing_highs: List[dict], swing_lows: List[dict],
     return out
 
 
+def _zigzag(all_swings: List[dict]) -> List[dict]:
+    """Polyligne de structure (peaks/troughs) : swings triés par index avec
+    alternance high/low forcée — en cas de swings consécutifs de même nature,
+    seul le plus extrême est conservé. C'est le tracé « market structure »
+    classique (HH→HL→HH… ou LH→LL→LH…)."""
+    pts: List[dict] = []
+    for sw in sorted(all_swings, key=lambda s: s["index"]):
+        pt = {"index": sw["index"], "price": sw["price"],
+              "kind": sw["kind"], "label": sw["label"]}
+        if pts and pts[-1]["index"] == sw["index"]:
+            continue    # pivot haut ET bas sur la même bougie : un seul point
+        if pts and pts[-1]["kind"] == sw["kind"]:
+            keep_new = (sw["price"] > pts[-1]["price"]) if sw["kind"] == "high" \
+                else (sw["price"] < pts[-1]["price"])
+            if keep_new:
+                pts[-1] = pt
+            continue
+        pts.append(pt)
+    return pts
+
+
+def _cycle_projection(structure_line: List[dict], channel: Optional[dict],
+                      trend: int, last_close: float) -> Optional[dict]:
+    """Phase du cycle de marché et cible projetée sur le canal de régression.
+
+    Lecture « market cycle » des traders de canaux : après un trough (creux du
+    zigzag), le prix avance vers la borne haute du canal (expected peak) ; après
+    un peak, il décline vers la borne basse (expected trough)."""
+    if not structure_line or channel is None:
+        return None
+    last_pt = structure_line[-1]
+    mid_end = float(channel["mid_end"])
+    half = float(channel["half_width"])
+    if last_pt["kind"] == "low":
+        phase, boundary, target = "advance", "upper", mid_end + half
+    else:
+        phase, boundary, target = "decline", "lower", mid_end - half
+    span = 2 * half if half > 0 else 1e-12
+    progress = (last_close - (mid_end - half)) / span      # 0 = borne basse
+    if phase == "decline":
+        progress = 1.0 - progress
+    return {
+        "phase": phase,                       # advance | decline
+        "boundary": boundary,                 # borne visée du canal
+        "target": round(target, 8),           # expected peak/trough
+        "from_index": int(last_pt["index"]),
+        "from_price": last_pt["price"],
+        "progress": round(float(max(0.0, min(progress, 1.5))), 3),
+        "trend": int(trend),
+    }
+
+
+def trendline_value_at(result: Dict[str, Any], i: int,
+                       kind: str) -> Optional[float]:
+    """Valeur CAUSALE à la barre ``i`` de la trendline ``support`` (2 derniers
+    swing lows confirmés ≤ i) ou ``resistance`` (2 derniers swing highs).
+    Retourne None si moins de deux swings disponibles."""
+    want = "low" if kind == "support" else "high"
+    a = b = None
+    for sw in reversed(result["_all_swings"]):
+        if sw["kind"] != want or sw["confirmed_at"] > i:
+            continue
+        if b is None:
+            b = sw
+        else:
+            a = sw
+            break
+    if a is None or b is None or b["index"] == a["index"]:
+        return None
+    slope = (b["price"] - a["price"]) / (b["index"] - a["index"])
+    return float(b["price"] + slope * (i - b["index"]))
+
+
+def regression_channel_at(c: np.ndarray, i: int,
+                          lookback: int = 120) -> Optional[dict]:
+    """Canal de régression CAUSAL terminé à la barre ``i`` (mêmes conventions
+    que le canal du résultat d'analyse, mais calculable à n'importe quelle
+    barre pour un usage backtest sans lookahead)."""
+    lb = min(lookback, i + 1)
+    if lb < 20:
+        return None
+    y = c[i + 1 - lb:i + 1]
+    x = np.arange(lb, dtype=float)
+    slope, intercept = np.polyfit(x, y, 1)
+    resid = y - (slope * x + intercept)
+    half = float(2.0 * resid.std())
+    if not math.isfinite(half) or half <= 0:
+        return None
+    mid_i = float(intercept + slope * (lb - 1))
+    return {"mid": mid_i, "upper": mid_i + half, "lower": mid_i - half,
+            "half_width": half, "slope": float(slope)}
+
+
 def _regression_channel(c: np.ndarray, lookback: int) -> Optional[dict]:
     """Canal de régression linéaire sur les ``lookback`` dernières clôtures :
     droite médiane ± 2 écarts-types des résidus."""
@@ -562,6 +763,37 @@ def liquidity_targets_above(result: Dict[str, Any], i: int, price: float,
         if sw["price"] > price:
             levels.append(float(sw["price"]))
     return sorted(set(levels))
+
+
+def void_targets_above(result: Dict[str, Any], i: int, price: float,
+                       max_age: int = 500) -> List[float]:
+    """Bords supérieurs des liquidity voids non comblés au-dessus de ``price``
+    (causal à la barre ``i``). Un void est une zone « fine » : une fois le prix
+    dedans, il la traverse vite — le bord opposé est une cible naturelle."""
+    levels = []
+    for vd in result["_all_voids"]:
+        if vd["end_index"] >= i or i - vd["end_index"] > max_age:
+            continue
+        if vd["filled_at"] is not None and vd["filled_at"] <= i:
+            continue
+        if vd["top"] > price:
+            levels.append(float(vd["top"]))
+    return sorted(set(levels))
+
+
+def void_targets_below(result: Dict[str, Any], i: int, price: float,
+                       max_age: int = 500) -> List[float]:
+    """Miroir de :func:`void_targets_above` — bords inférieurs des voids non
+    comblés sous ``price``."""
+    levels = []
+    for vd in result["_all_voids"]:
+        if vd["end_index"] >= i or i - vd["end_index"] > max_age:
+            continue
+        if vd["filled_at"] is not None and vd["filled_at"] <= i:
+            continue
+        if vd["bottom"] < price:
+            levels.append(float(vd["bottom"]))
+    return sorted(set(levels), reverse=True)
 
 
 def liquidity_targets_below(result: Dict[str, Any], i: int, price: float,

@@ -197,6 +197,7 @@
           </div>
           <button id="chart-type-btn" class="btn btn-sm btn-outline" onclick="toggleChartType()" title="Basculer entre bougies et courbe de prix">📈 Courbe</button>
           <button class="btn btn-cyan btn-sm" onclick="loadChart()" aria-label="Charger le graphique">⟳ Charger</button>
+          <a class="btn btn-sm btn-outline" id="smartgraph-link" href="/smartgraph" title="Ouvrir cette paire dans le chart d'analyse Smart Money Concepts">💡 Smart graph</a>
         </div>
       </div>
       <!-- Sélecteur d'indicateurs -->
@@ -620,6 +621,8 @@ async function loadChart(){
     _lastChartData = d;
     statusEl.textContent = `${d.n_bars} bougies · ${d.symbol} · ${d.timeframe}`;
     document.getElementById('chart-title-lbl').textContent = `${d.symbol} · ${d.timeframe}`;
+    const sgLink = document.getElementById('smartgraph-link');
+    if(sgLink) sgLink.href = `/smartgraph?symbol=${encodeURIComponent(sym)}&tf=${chartTf}`;
     _renderChart(d);
     // Show predictions panel
     document.getElementById('pred-panel').style.display='';

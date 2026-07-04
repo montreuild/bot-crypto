@@ -13,6 +13,10 @@ rejet net d'une poche de liquidité :
      (zone de demande pour un long, d'offre pour un short) : entrée sur la
      zone, stop de l'autre côté de l'order block.
 
+  3. BREAKER_RETEST — un order block invalidé inverse sa polarité (breaker
+     block) : premier retest de la zone dans le nouveau sens (les stops
+     piégés dans l'ancienne zone alimentent le mouvement).
+
 Filtres DURS (validés sur BTC/USDC 30m→1d, 2019-2026) :
   - structure alignée obligatoire (long uniquement en trend haussier…) ;
   - côté momentum du range : pas de long en zone discount, pas de short en
@@ -21,13 +25,20 @@ Filtres DURS (validés sur BTC/USDC 30m→1d, 2019-2026) :
   - biais EMA(``ema_filter_len``) : long au-dessus, short en dessous.
 
 Confluences additionnées au score de base 0.50 (cap 1.0) :
-  +0.10 structure alignée (toujours vrai pour OB_RETEST)
+  +0.10 structure alignée (toujours vrai pour OB_RETEST / BREAKER_RETEST)
   +0.10 pool « véritable » (equal highs/lows) plutôt que swing isolé (sweep)
   +0.10 order block « strength 2 » (son impulsion a cassé la structure)
   +0.10 prix du côté momentum fort (premium pour un long, discount pour un short)
   +0.05 chevauchement avec un FVG ouvert de même direction
   +0.05 volume > ``vol_confluence`` × SMA20(volume)
   +0.05 bougie de rejet colorée dans le sens du trade
+  +0.05 tap de la trendline automatique (support pour un long, résistance
+        pour un short, à ``tl_tol_atr``×ATR près) — le « buy orders » des
+        traders de canaux
+
+Cibles de TP : poches de liquidité opposées ET bords opposés des liquidity
+voids non comblés (zones fines = aimants), première cible satisfaisant
+``min_gain_pct`` et ``min_rr``.
 
 Sorties : bracket FIXE (pas de trailing). SL sous/за l'extrême de la zone
 (+ ``sl_buffer_atr``×ATR), TP posé juste devant la prochaine poche de
@@ -70,6 +81,8 @@ class Strategy(BaseStrategy):
         "sl_buffer_atr":  [0.15, 0.25, 0.5],
         "ema_filter_len": [0, 100, 200],
         "choch_exit":     [True, False],
+        "use_breakers":   [True, False],
+        "use_void_targets": [True, False],
     }
 
     fixed_params: Dict[str, Any] = {
@@ -85,6 +98,11 @@ class Strategy(BaseStrategy):
         "tp_front_run_atr": 0.1,    # TP posé juste avant la poche (front-run)
         "vol_confluence":   1.2,
         "allow_counter_trend": False,  # sweeps contre-tendance interdits
+        "use_breakers":     False,  # setup BREAKER_RETEST : négatif sur BTC 4h
+                                    # (−163 USDC / 220 trades, validation 2026-07)
+                                    # → off par défaut, exploré par l'optimiseur
+        "use_void_targets": True,   # bords des liquidity voids comme cibles TP
+        "tl_tol_atr":       0.3,    # tolérance du tap de trendline (×ATR)
         "ema_filter_len":   200,    # biais EMA : long si close>EMA, short si close<EMA (0 = off)
         "choch_exit":       False,  # sortie anticipée sur CHoCH contre la position
                                     # (False par défaut : coupe systématiquement en perte
@@ -140,7 +158,9 @@ class Strategy(BaseStrategy):
             event_bars = sorted(
                 {ev["index"] for ev in res["_all_sweeps"] if ev["rejected"]} |
                 {ob["touched_at"] for ob in res["_all_obs"]
-                 if ob["touched_at"] is not None}
+                 if ob["touched_at"] is not None} |
+                {brk["touched_at"] for brk in res["_all_breakers"]
+                 if brk["touched_at"] is not None}
             )
             for i in event_bars:
                 sig = self._signal_at(res, i, open_, high, low, close, volr,
@@ -266,6 +286,16 @@ class Strategy(BaseStrategy):
         long_ema_ok  = ema is None or c > float(ema[i])
         short_ema_ok = ema is None or c < float(ema[i])
 
+        # Tap de trendline automatique (causal) : la mèche touche la ligne à
+        # tl_tol_atr×ATR près et la clôture tient du bon côté.
+        tl_tol = float(p["tl_tol_atr"]) * atr
+        tl_sup = smc.trendline_value_at(res, i, "support")
+        tl_res = smc.trendline_value_at(res, i, "resistance")
+        tl_tap_long = (tl_sup is not None
+                       and low[i] <= tl_sup + tl_tol and c > tl_sup)
+        tl_tap_short = (tl_res is not None
+                        and high[i] >= tl_res - tl_tol and c < tl_res)
+
         # ── A. Sweep reversal ────────────────────────────────────────────────
         # Filtres durs (validés sur BTC/USDC 1h→4h 2019-2026) :
         #   - AVEC la tendance uniquement : un sweep sell-side ne s'achète que
@@ -289,6 +319,7 @@ class Strategy(BaseStrategy):
                 sc += 0.10 if zone == "premium" else 0.0
                 sc += 0.05 if vol_ok else 0.0
                 sc += 0.05 if close[i] > open_[i] else 0.0
+                sc += 0.05 if tl_tap_long else 0.0
                 sl = min(float(low[i]), float(ev["level"])) - \
                     float(p["sl_buffer_atr"]) * atr
                 cand = self._build_trade(res, i, "long", c, sl, atr, p,
@@ -308,6 +339,7 @@ class Strategy(BaseStrategy):
                 sc += 0.10 if zone == "discount" else 0.0
                 sc += 0.05 if vol_ok else 0.0
                 sc += 0.05 if close[i] < open_[i] else 0.0
+                sc += 0.05 if tl_tap_short else 0.0
                 sl = max(float(high[i]), float(ev["level"])) + \
                     float(p["sl_buffer_atr"]) * atr
                 cand = self._build_trade(res, i, "short", c, sl, atr, p,
@@ -337,6 +369,7 @@ class Strategy(BaseStrategy):
                                                 ob["bottom"], ob["top"]) else 0.0
                 sc += 0.05 if vol_ok else 0.0
                 sc += 0.05 if close[i] > open_[i] else 0.0
+                sc += 0.05 if tl_tap_long else 0.0
                 sl = float(ob["bottom"]) - float(p["sl_buffer_atr"]) * atr
                 cand = self._build_trade(res, i, "long", c, sl, atr, p,
                                          setup="OB_RETEST", score=sc,
@@ -357,6 +390,7 @@ class Strategy(BaseStrategy):
                                                 ob["bottom"], ob["top"]) else 0.0
                 sc += 0.05 if vol_ok else 0.0
                 sc += 0.05 if close[i] < open_[i] else 0.0
+                sc += 0.05 if tl_tap_short else 0.0
                 sl = float(ob["top"]) + float(p["sl_buffer_atr"]) * atr
                 cand = self._build_trade(res, i, "short", c, sl, atr, p,
                                          setup="OB_RETEST", score=sc,
@@ -365,6 +399,51 @@ class Strategy(BaseStrategy):
                                          trend=trend, zone=zone)
                 if cand:
                     candidates.append(cand)
+
+        # ── C. Retest de breaker block (OB invalidé → polarité inversée) ────
+        # Le transpercement d'un OB accompagne le plus souvent un CHoCH : le
+        # premier retest de la zone dans le NOUVEAU sens attrape les stops
+        # piégés. Mêmes filtres durs que les autres setups.
+        if bool(p.get("use_breakers", True)):
+            for brk in res["_all_breakers"]:
+                if brk["touched_at"] != i or i - brk["created_at"] > max_ob_age:
+                    continue
+                if brk["invalidated_at"] is not None and brk["invalidated_at"] <= i:
+                    continue
+                if brk["kind"] == "bullish" and trend == 1 \
+                        and not recent_choch_down:
+                    if c < brk["bottom"] or zone == "discount" or not long_ema_ok:
+                        continue
+                    sc = 0.50 + 0.10
+                    sc += 0.10 if zone == "premium" else 0.0
+                    sc += 0.05 if vol_ok else 0.0
+                    sc += 0.05 if close[i] > open_[i] else 0.0
+                    sc += 0.05 if tl_tap_long else 0.0
+                    sl = float(brk["bottom"]) - float(p["sl_buffer_atr"]) * atr
+                    cand = self._build_trade(res, i, "long", c, sl, atr, p,
+                                             setup="BREAKER_RETEST", score=sc,
+                                             detail=f"breaker [{brk['bottom']:.6g}"
+                                                    f"–{brk['top']:.6g}]",
+                                             trend=trend, zone=zone)
+                    if cand:
+                        candidates.append(cand)
+                elif brk["kind"] == "bearish" and trend == -1 \
+                        and not recent_choch_up:
+                    if c > brk["top"] or zone == "premium" or not short_ema_ok:
+                        continue
+                    sc = 0.50 + 0.10
+                    sc += 0.10 if zone == "discount" else 0.0
+                    sc += 0.05 if vol_ok else 0.0
+                    sc += 0.05 if close[i] < open_[i] else 0.0
+                    sc += 0.05 if tl_tap_short else 0.0
+                    sl = float(brk["top"]) + float(p["sl_buffer_atr"]) * atr
+                    cand = self._build_trade(res, i, "short", c, sl, atr, p,
+                                             setup="BREAKER_RETEST", score=sc,
+                                             detail=f"breaker [{brk['bottom']:.6g}"
+                                                    f"–{brk['top']:.6g}]",
+                                             trend=trend, zone=zone)
+                    if cand:
+                        candidates.append(cand)
 
         if not candidates:
             return None
@@ -385,29 +464,39 @@ class Strategy(BaseStrategy):
         front    = float(p["tp_front_run_atr"]) * atr
         max_age  = int(p["pool_max_age"])
 
-        # Cibles de liquidité opposées : première poche qui satisfait à la fois
-        # le gain minimal (0.4 % par défaut) ET le RR minimal.
+        # Cibles opposées : poches de liquidité + bords des liquidity voids non
+        # comblés (zones fines = aimants). Première cible satisfaisant à la
+        # fois le gain minimal (0.4 % par défaut) ET le RR minimal.
+        use_voids = bool(p.get("use_void_targets", True))
         tp = None
         tp_src = ""
         if side == "long":
-            targets = smc.liquidity_targets_above(res, i, entry, max_age=max_age)
-            for level in targets:
+            liq = smc.liquidity_targets_above(res, i, entry, max_age=max_age)
+            vds = smc.void_targets_above(res, i, entry, max_age=max_age) \
+                if use_voids else []
+            targets = sorted({(lv, "liquidité") for lv in liq} |
+                             {(lv, "void") for lv in vds})
+            for level, src in targets:
                 cand = level - front
                 gain_pct = (cand - entry) / entry * 100.0
                 if gain_pct <= 0:
                     continue
                 if gain_pct > min_gain and (cand - entry) / risk >= min_rr:
-                    tp, tp_src = cand, f"liquidité {level:.6g}"
+                    tp, tp_src = cand, f"{src} {level:.6g}"
                     break
         else:
-            targets = smc.liquidity_targets_below(res, i, entry, max_age=max_age)
-            for level in targets:
+            liq = smc.liquidity_targets_below(res, i, entry, max_age=max_age)
+            vds = smc.void_targets_below(res, i, entry, max_age=max_age) \
+                if use_voids else []
+            targets = sorted({(lv, "liquidité") for lv in liq} |
+                             {(lv, "void") for lv in vds}, reverse=True)
+            for level, src in targets:
                 cand = level + front
                 gain_pct = (entry - cand) / entry * 100.0
                 if gain_pct <= 0:
                     continue
                 if gain_pct > min_gain and (entry - cand) / risk >= min_rr:
-                    tp, tp_src = cand, f"liquidité {level:.6g}"
+                    tp, tp_src = cand, f"{src} {level:.6g}"
                     break
 
         # Fallback : cible en multiple de R si aucune poche exploitable.

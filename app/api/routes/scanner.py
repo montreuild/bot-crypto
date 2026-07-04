@@ -561,6 +561,39 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
                        else "open"),
         } for fv in res["fvgs"][-14:]]
 
+        voids = [{
+            "kind": vd["kind"], "top": vd["top"], "bottom": vd["bottom"],
+            "time_start": _t(vd["start_index"]),
+            "time_end":   _t(vd["filled_at"], last_t),
+            "status": ("filled" if vd["filled_at"] is not None
+                       else "mitigated" if vd["mitigated_at"] is not None
+                       else "open"),
+        } for vd in res["liquidity_voids"][-12:]]
+
+        breakers = [{
+            "kind": brk["kind"], "top": brk["top"], "bottom": brk["bottom"],
+            "time_start": _t(brk["created_at"]),
+            "time_end":   _t(brk["invalidated_at"], last_t),
+            "status": ("invalidated" if brk["invalidated_at"] is not None
+                       else "touched" if brk["touched_at"] is not None
+                       else "fresh"),
+        } for brk in res["breakers"][-10:]]
+
+        # Zigzag de structure (peaks/troughs) + projection de cycle
+        structure_line = [{
+            "time": _t(pt["index"]), "price": pt["price"],
+            "kind": pt["kind"], "label": pt["label"],
+        } for pt in res["structure_line"][-40:] if _t(pt["index"]) is not None]
+        cycle = None
+        if res["cycle"]:
+            cy = res["cycle"]
+            cycle = {
+                "phase": cy["phase"], "boundary": cy["boundary"],
+                "target": cy["target"], "progress": cy["progress"],
+                "from_time": _t(cy["from_index"]),
+                "from_price": cy["from_price"],
+            }
+
         # ── Markers (structure + sweeps + swings labellisés) ─────────────────
         markers = []
         for ev in res["structure_events"][-30:]:
@@ -625,6 +658,10 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
             "order_blocks": order_blocks,
             "liquidity_pools": pools,
             "fvgs": fvgs,
+            "liquidity_voids": voids,
+            "breakers": breakers,
+            "structure_line": structure_line,
+            "cycle": cycle,
             "markers": markers,
             "swing_labels": swing_marks,
             "trendlines": trendlines,

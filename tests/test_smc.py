@@ -182,6 +182,105 @@ class TestOrderBlocksFVG:
         assert any(f["index"] == 41 for f in fvgs), "FVG bullish (gap 40→42) manquant"
 
 
+class TestLiquidityVoidsBreakers:
+    def _void_df(self):
+        """4 bougies vertes consécutives massives → liquidity void bullish,
+        puis retracement complet → filled."""
+        o, h, l, c = _flat(80, price=100.0)
+        px = 100.0
+        for i in range(40, 44):           # run haussier : +3 par bougie
+            o[i], c[i] = px, px + 3
+            h[i], l[i] = px + 3.2, px - 0.2
+            px += 3
+        for i in range(44, 60):           # plateau haut
+            o[i] += 12; c[i] += 12; h[i] += 12; l[i] += 12
+        # retracement complet à 60 : retour sous l'origine du run
+        o[60], c[60], h[60], l[60] = 112.0, 99.0, 112.2, 98.5
+        for i in range(61, 80):
+            o[i] -= 0; c[i] -= 0
+        return _mk_df(o, h, l, c)
+
+    def test_void_detected_and_filled(self):
+        r = smc.analyze(self._void_df(), {"void_min_bars": 3, "void_min_atr": 2.0})
+        vds = [v for v in r["_all_voids"] if v["kind"] == "bullish"]
+        assert vds, "liquidity void bullish non détecté"
+        vd = vds[0]
+        assert vd["start_index"] == 40
+        assert vd["top"] > vd["bottom"]
+        assert vd["filled_at"] == 60, f"fill attendu à 60, obtenu {vd['filled_at']}"
+
+    def test_void_targets_causal(self):
+        r = smc.analyze(self._void_df(), {"void_min_bars": 3, "void_min_atr": 2.0})
+        vd = [v for v in r["_all_voids"] if v["kind"] == "bullish"][0]
+        # Avant le fill (barre 50) : les bords du void sont des cibles
+        above = smc.void_targets_above(r, 50, 100.0)
+        assert vd["top"] in above
+        below = smc.void_targets_below(r, 50, 113.0)
+        assert vd["bottom"] in below
+        # Après le fill (barre 70) : le void comblé n'est plus une cible
+        below_after = smc.void_targets_below(r, 70, 113.0)
+        assert vd["bottom"] not in below_after
+
+    def test_breaker_created_on_ob_invalidation(self):
+        """OB bullish invalidé sur clôture → breaker bearish créé, retest suivi."""
+        o, h, l, c = _flat(90, price=100.0)
+        # bougie rouge (future OB) puis displacement haussier
+        o[40], c[40], h[40], l[40] = 100.5, 99.5, 100.7, 99.3
+        o[41], c[41], h[41], l[41] = 99.6, 106.0, 106.3, 99.5
+        for i in range(42, 55):
+            o[i] += 6; c[i] += 6; h[i] += 6; l[i] += 6
+        # invalidation : clôture sous le bottom de l'OB (99.3) à 60
+        o[60], c[60], h[60], l[60] = 100.0, 98.0, 100.2, 97.8
+        for i in range(61, 90):
+            o[i] -= 3; c[i] -= 3; h[i] -= 3; l[i] -= 3
+        # retest de la zone (par le bas) à 75
+        o[75], c[75], h[75], l[75] = 98.5, 99.0, 99.6, 98.3
+        df = _mk_df(o, h, l, c)
+        r = smc.analyze(df, {"disp_body_atr": 1.3})
+        ob = next((x for x in r["_all_obs"]
+                   if x["kind"] == "bullish" and x["index"] == 40), None)
+        assert ob is not None and ob["invalidated_at"] == 60
+        brks = [b for b in r["_all_breakers"]
+                if b["kind"] == "bearish" and b["index"] == 40]
+        assert brks, "breaker bearish non créé à l'invalidation de l'OB"
+        assert brks[0]["created_at"] == 60
+        assert brks[0]["touched_at"] == 75, \
+            f"retest attendu à 75, obtenu {brks[0]['touched_at']}"
+
+
+class TestStructureLineCycle:
+    def test_zigzag_alternates_and_strictly_increasing(self):
+        df = _random_df(600, seed=9)
+        r = smc.analyze(df)
+        line = r["structure_line"]
+        assert len(line) >= 4
+        for a, b in zip(line, line[1:]):
+            assert a["kind"] != b["kind"], "zigzag non alterné"
+            assert a["index"] < b["index"], "indices non strictement croissants"
+
+    def test_cycle_projection_fields(self):
+        df = _random_df(600, seed=9)
+        r = smc.analyze(df)
+        cy = r["cycle"]
+        assert cy is not None
+        assert cy["phase"] in ("advance", "decline")
+        assert cy["boundary"] in ("upper", "lower")
+        assert cy["target"] > 0
+
+    def test_trendline_value_causal(self):
+        df = _random_df(600, seed=9)
+        r = smc.analyze(df)
+        for i in (300, 599):
+            v = smc.trendline_value_at(r, i, "support")
+            w = smc.trendline_value_at(r, i, "resistance")
+            assert v is None or v > 0
+            assert w is None or w > 0
+        # à la dernière barre, cohérent avec la trendline publique
+        for t in r["trendlines"]:
+            v = smc.trendline_value_at(r, len(df) - 1, t["kind"])
+            assert v is not None and abs(v - t["y2"]) < 1e-6
+
+
 class TestPremiumDiscount:
     def test_zones_and_ote_fields(self):
         df = _random_df(500, seed=11)
@@ -274,6 +373,7 @@ class TestMinGainFilter:
                             "top": pool_level, "bottom": pool_level,
                             "indices": [10], "formed_at": 20, "swept_at": None}],
             "_all_swings": [],
+            "_all_voids": [],
         }
 
     def test_target_too_close_rejected(self):
@@ -305,6 +405,7 @@ class TestMinGainFilter:
                             "top": 98.5, "bottom": 98.5,
                             "indices": [10], "formed_at": 20, "swept_at": None}],
             "_all_swings": [],
+            "_all_voids": [],
         }
         trade = s._build_trade(res, 50, "short",
                                entry=100.0, sl=100.5, atr=0.0, p=p,

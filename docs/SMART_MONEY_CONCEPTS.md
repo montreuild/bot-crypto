@@ -13,9 +13,10 @@ moteur. Ajouté en juillet 2026.
 | `app/core/smc.py` | Moteur d'analyse : une passe causale O(n) sur l'OHLCV |
 | `app/strategies/smart_money.py` | Stratégie de trading (BaseStrategy) |
 | `strategies/smart_money.yaml` | Paramètres + activation (supprimer/`enabled: false` pour désactiver) |
-| `GET /api/scanner/smc` | Endpoint JSON pour l'overlay graphique |
-| `app/web/templates/scanner.html` | Case « SMC (Smart Money) » → dessin des zones sur le chart |
-| `tests/test_smc.py` | 22 tests unitaires (patterns synthétiques + contrats) |
+| `GET /api/scanner/smc` | Endpoint JSON pour l'overlay graphique et la page Smart graph |
+| `app/web/templates/smartgraph.html` | Page dédiée **« Smart graph »** (`/smartgraph`) — chart d'analyste complet |
+| `app/web/templates/scanner.html` | Case « SMC (Smart Money) » → dessin des zones sur le chart scanner |
+| `tests/test_smc.py` | 28 tests unitaires (patterns synthétiques + contrats) |
 
 ---
 
@@ -59,6 +60,20 @@ retour du prix) → `invalidated` (clôture au travers).
 Gap entre `high[i−2]` et `low[i]` (et miroir), taille ≥ `fvg_min_atr`×ATR.
 Cycle de vie : `open` → `mitigated` (prix entre dans le gap) → `filled`.
 
+### 6bis. Liquidity Voids
+Run d'au moins `void_min_bars` (3) bougies directionnelles consécutives
+traversant ≥ `void_min_atr` (2.5)×ATR : zone « fine » parcourue sans trader,
+étendue tant que le run continue. Aimant naturel : le prix revient la combler.
+Cycle de vie `open` → `mitigated` → `filled`. Les bords opposés des voids non
+comblés servent de **cibles de TP** à la stratégie (`use_void_targets`).
+
+### 6ter. Breaker Blocks
+Un order block **invalidé sur clôture** inverse sa polarité : une demande
+transpercée devient offre (et réciproquement) — les stops piégés dans la zone
+alimentent le retest en sens inverse. Cycle de vie `fresh` → `touched` →
+`invalidated` (re-cassure). Setup `BREAKER_RETEST` disponible dans la
+stratégie (off par défaut, négatif sur BTC 4h).
+
 ### 7. Premium / Discount + OTE
 Range de travail = dernier swing high ↔ dernier swing low (élargi au max/min des
 100 dernières barres). Équilibre à 50 % ; `premium` > 55 %, `discount` < 45 %.
@@ -68,8 +83,18 @@ Version causale par barre : `smc.premium_discount_at(result, h, l, c, i)`.
 ### 8. Tendances
 - **Trendlines automatiques** : support par les 2 derniers swing lows,
   résistance par les 2 derniers swing highs, projetées jusqu'à la dernière barre.
+  Version causale par barre : `smc.trendline_value_at(result, i, kind)`.
 - **Canal de régression** : droite médiane ± 2σ des résidus sur
-  `channel_lookback` barres.
+  `channel_lookback` barres. Version causale : `smc.regression_channel_at`.
+
+### 9. Structure line (zigzag) + cycle de marché
+- **Zigzag** : polyligne des swings alternés (peaks/troughs) avec labels
+  HH/HL/LH/LL — le tracé « market structure » classique, exposé dans
+  `structure_line`.
+- **Projection de cycle** (`cycle`) : après un trough, phase `advance` vers la
+  borne haute du canal (*expected peak*) ; après un peak, phase `decline` vers
+  la borne basse (*expected trough*). Expose la cible projetée et la
+  progression dans le cycle.
 
 ### API du module
 
@@ -147,17 +172,19 @@ sur les 179 trades du backtest 4h (gain potentiel min observé : 0,61 %).
 
 | TF | Trades | Win rate | PnL (capital 1000) | PF | Sharpe | DD max |
 |---|---|---|---|---|---|---|
-| **4h** | 179 | **45,2 %** | **+338 (+33,8 %)** | **1.35** | 5.5 | −10,6 % |
+| **4h** | 181 | **46,4 %** | **+405 (+40,5 %)** | **1.41** | 6.5 | −9,9 % |
 | 1h | 582 | 31,4 % | −350 | 0.80 | — | −60 % |
 | 2h | 379 | 33,2 % | −284 | 0.81 | — | −44 % |
 | 1d | 28 | 28,6 % | −62 | 0.69 | — | −11 % |
 
-Sous-périodes 4h : PF **2.33** (2018-2021), **1.40** (2021-2024), **0.87**
+Sous-périodes 4h : PF **2.28** (2018-2021), **1.54** (2021-2024), **0.95**
 (2024-2026) — l'edge décroît sur la période récente : à surveiller via le
-forward-test et le lifecycle avant toute allocation réelle. Les TF < 4h sont
-laissés à l'optimiseur (`param_space` expose `swing_len`, `eq_tol_atr`,
-`disp_body_atr`, `min_rr`, `min_gain_pct`, `sl_buffer_atr`, `ema_filter_len`,
-`choch_exit`).
+forward-test et le lifecycle avant toute allocation réelle. Les cibles voids
+(`use_void_targets`) apportent ~+65 USDC sur le 4h ; le setup BREAKER_RETEST
+teste négatif (−163 / 220 trades) → off par défaut. Les TF < 4h sont laissés à
+l'optimiseur (`param_space` expose `swing_len`, `eq_tol_atr`, `disp_body_atr`,
+`min_rr`, `min_gain_pct`, `sl_buffer_atr`, `ema_filter_len`, `choch_exit`,
+`use_breakers`, `use_void_targets`).
 
 ### Performance technique
 
@@ -170,6 +197,23 @@ laissés à l'optimiseur (`param_space` expose `swing_len`, `eq_tol_atr`,
 ---
 
 ## 🖥️ Branchements UI
+
+### Page « Smart graph » (`/smartgraph`) — chart d'analyste dédié
+Page spécifique avec un grand chart (620 px) façon « pro trader » :
+- **Zones en vrais rectangles ombrés** (primitive canvas lightweight-charts) :
+  vert = demande, rouge = offre (★ = strength 2), bleu = poches de liquidité
+  BSL/SSL, violet = FVG, gris = liquidity voids, orange = breakers ;
+- **Zigzag de structure** (polyligne blanche peaks/troughs) avec labels
+  HH/HL/LH/LL, flèches BOS/CHoCH, points SW (sweeps rejetés) ;
+- **Trendlines** support/résistance + **canal de régression** ;
+- **Projection de cycle** : ligne pointillée vers l'*expected peak/trough* à
+  la borne du canal, avec price line dédiée ;
+- **Signal courant** : price lines entrée/SL/TP de la stratégie ;
+- Calques activables individuellement, deep-link `?symbol=…&tf=…` ;
+- 3 panneaux : **Lecture du marché** (structure, dernier événement, zone
+  premium/discount, équilibre, OTE, phase et progression du cycle),
+  **Signal smart_money** (entrée/SL/TP/gain %/RR/cible/raison) et
+  **Zones actives** (liste chiffrée).
 
 ### Page Scanner (`/scanner`)
 Case **« SMC (Smart Money) »** dans la barre d'indicateurs du graphique :
@@ -202,7 +246,10 @@ le capital allocator.
 python -m pytest tests/test_smc.py -v
 ```
 
-22 tests : pivots/confirmation, BOS/CHoCH, equal lows → pool, sweep rejeté,
-order block (création/touch), FVG, premium/discount causal, trendlines/canal,
-contrat de la stratégie, **filtre min_gain_pct** (rejet des cibles < 0,4 %),
-cohérence cache backtest ↔ score live, invalidation du cache.
+28 tests : pivots/confirmation, BOS/CHoCH, equal lows → pool, sweep rejeté,
+order block (création/touch), FVG, **liquidity voids** (détection/fill/cibles
+causales), **breakers** (création à l'invalidation, retest), **zigzag**
+(alternance stricte) et projection de cycle, trendline causale,
+premium/discount causal, trendlines/canal, contrat de la stratégie,
+**filtre min_gain_pct** (rejet des cibles < 0,4 %), cohérence cache
+backtest ↔ score live, invalidation du cache.

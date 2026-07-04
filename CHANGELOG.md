@@ -6,6 +6,35 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 💡 Page « Smart graph » + enrichissements SMC (voids, breakers, structure, cycle)
+
+Nouvelle page dédiée **`/smartgraph`** (menu Analyse → Smart graph) : chart
+d'analyste complet façon « pro trader » — zones en **vrais rectangles ombrés**
+(primitive canvas lightweight-charts) pour l'offre/demande, les poches de
+liquidité BSL/SSL, les FVG, les liquidity voids et les breakers ; **zigzag de
+structure** (peaks/troughs) avec labels HH/HL/LH/LL et flèches BOS/CHoCH ;
+trendlines + canal de régression ; **projection de cycle** (expected
+peak/trough à la borne du canal) ; price lines entrée/SL/TP du signal courant.
+Calques activables, deep-link `?symbol=…&tf=…`, panneaux « Lecture du
+marché », « Signal smart_money » et « Zones actives ».
+
+Moteur `app/core/smc.py` enrichi :
+- **Liquidity Voids** : runs de ≥3 bougies directionnelles traversant
+  ≥2.5×ATR, cycle open → mitigated → filled — bords opposés utilisés comme
+  cibles de TP par la stratégie (`use_void_targets`, **+65 USDC** sur BTC 4h) ;
+- **Breaker Blocks** : OB invalidé → polarité inversée, retest suivi ;
+- **Structure line (zigzag)** : polyligne causale des swings alternés ;
+- **Cycle de marché** : phase advance/decline + cible projetée sur le canal ;
+- helpers causaux `trendline_value_at`, `regression_channel_at`,
+  `void_targets_above/below`, zone morte ±eq_tol×ATR sur les sweeps de swings.
+
+Stratégie `smart_money` adaptée : cibles voids, confluence « tap de
+trendline » (+0.05), setup `BREAKER_RETEST` (testé négatif sur BTC 4h :
+−163 USDC / 220 trades → off par défaut, exploré par l'optimiseur).
+**Validation BTC/USDC 4h 2018→2026 : 181 trades, WR 46,4 %, +40,5 %, PF 1.41,
+Sharpe 6.5, DD −9,9 %** (PF par tiers 2.28/1.54/0.95). Page vérifiée par
+capture navigateur (Playwright). 28 tests SMC — suite complète 405 OK.
+
 ### 🧠 Moteur d'analyse Smart Money Concepts + stratégie `smart_money`
 
 Nouveau moteur `app/core/smc.py` (une passe causale O(n), sans lookahead) :
