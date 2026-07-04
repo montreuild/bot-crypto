@@ -6,6 +6,23 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### ⏯ Page « Smart replay » : rejeu bougie par bougie de l'analyse SMC
+
+Nouvelle page `/smartreplay` (menu Analyse) pour rejouer le cours et **voir
+l'analyse évoluer comme le moteur la découvrait** : swings affichés à leur
+confirmation seulement, zones qui naissent/se font toucher/s'invalident,
+BOS/CHoCH et sweeps au fil de l'eau, trendlines recalculées à chaque barre.
+Contrôles play/pause/pas-à-pas/vitesse (2→20 barres/s)/slider + raccourcis
+clavier. Les **trades sont ceux du vrai Backtester** (paramètres par TF
+résolus) : bracket entrée/SL/TP visible pendant la position (PnL latent),
+dénouements ✓ TP / ✗ SL, et panneaux Performance cumulée / Journal des
+trades / Lecture à la barre — l'outil d'évaluation de pertinence des
+configurations. Architecture : UNE requête `/api/scanner/smc_replay`
+précalcule tout (le moteur causal expose les indices de cycle de vie de
+chaque entité), le navigateur reconstruit l'état à n'importe quelle barre —
+lecture fluide et scrubbing instantané sans appel serveur. Vérifié par
+navigation Playwright (chargement, saut, lecture auto, captures).
+
 ### 🧭 SMC : biais multi-timeframe, volume profile, killzones, AMD, rejection blocks — mesurés un par un
 
 Cinq nouveaux enrichissements implémentés dans le moteur (`app/core/smc.py`)

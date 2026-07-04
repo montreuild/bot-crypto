@@ -296,6 +296,27 @@ Page spécifique avec un grand chart (620 px) façon « pro trader » :
   **Signal smart_money** (entrée/SL/TP/gain %/RR/cible/raison) et
   **Zones actives** (liste chiffrée).
 
+### Page « Smart replay » (`/smartreplay`) — rejeu bougie par bougie
+Rejoue le cours et montre **l'analyse telle que le moteur la découvrait** à
+chaque instant (les swings n'apparaissent qu'à leur confirmation, les zones
+naissent, se font toucher, se font invalider…) :
+- **Contrôles TradingView-like** : play/pause (espace), pas à pas (←/→),
+  ±10 barres (⇧+flèches), début/fin, vitesse 2→20 barres/s, slider ;
+- **Une seule requête** (`/api/scanner/smc_replay`) : le moteur étant
+  strictement causal, chaque entité porte ses indices de cycle de vie —
+  le navigateur reconstruit l'état à n'importe quelle barre par simple
+  comparaison d'indices (lecture fluide, scrubbing instantané) ;
+- **Trades réels du Backtester** avec les paramètres par TF résolus
+  (`optimizer_results`) : flèche d'entrée, bracket entrée/SL/TP affiché tant
+  que la position est ouverte (PnL latent), dénouement marqué ✓ TP / ✗ SL
+  avec le % ;
+- **Évaluation de pertinence en direct** : panneau Performance cumulée
+  (trades clos, TP/SL, win rate, PnL cumulé), Journal des trades (motif au
+  survol), Lecture à la barre courante (structure, biais HTF, zone
+  premium/discount causale) ;
+- Calques activables (structure, zones, liquidité, FVG, voids, breakers,
+  rejections, trendlines, trades), deep-link `?symbol=…&tf=…`.
+
 ### Page Scanner (`/scanner`)
 Case **« SMC (Smart Money) »** dans la barre d'indicateurs du graphique :
 - **Order blocks** : segments horizontaux (top/bottom) — vert = demande,

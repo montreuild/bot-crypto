@@ -233,6 +233,10 @@ def settings_page(request: Request):
 def smartgraph_page(request: Request):
     return _tpl("smartgraph.html", request, {"active_page": "smartgraph"})
 
+@app.get("/smartreplay", response_class=HTMLResponse)
+def smartreplay_page(request: Request):
+    return _tpl("smartreplay.html", request, {"active_page": "smartreplay"})
+
 
 # ── Status (accès direct à state.cfg, hors router) ────────────────────────
 @app.get("/api/status")

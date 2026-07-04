@@ -718,6 +718,124 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
         raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
+# ── Smart replay : payload complet pour rejeu bougie par bougie ─────────────
+@router.get("/api/scanner/smc_replay", dependencies=[Depends(verify_api_key)])
+def scanner_smc_replay(symbol: str = "BTC/USDC", timeframe: str = "4h",
+                       limit: int = 800):
+    """Payload de rejeu Smart Money : UNE requête précalcule tout, le
+    navigateur reconstruit l'état à n'importe quelle barre.
+
+    Le moteur étant strictement causal, chaque entité porte ses indices de
+    cycle de vie (``index``/``created_at``/``confirmed_at`` → apparition,
+    ``touched_at``/``swept_at``/``filled_at``/``invalidated_at`` → mutations) :
+    l'état à la barre ``i`` se déduit par simple comparaison d'indices, sans
+    nouvel appel serveur. Les trades sont ceux du VRAI Backtester avec les
+    paramètres par timeframe résolus (optimizer_results)."""
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    try:
+        from app.core import smc
+        from app.strategies.smart_money import Strategy as _SMCStrategy
+        from app.engine.engine import Engine as _Engine
+        from app.engine.backtest import Backtester as _Backtester
+        from app.live.utils import resolve_strategy_params
+
+        exchange = create_exchange(state.cfg)
+        scanner  = MarketScanner(exchange, state.cfg)
+        tf       = timeframe or state.cfg["trading"].get("timeframe", "4h")
+        n_fetch  = max(400, min(int(limit), 2000))
+        df       = scanner.fetch_ohlcv(symbol, tf, n_fetch)
+        if df is None or len(df) < 320:
+            raise HTTPException(404, f"Données insuffisantes pour {symbol}/{tf}")
+        n = len(df)
+        times = df["time"].dt.epoch(time_unit="s").to_list()
+
+        # Paramètres résolus (base YAML + overlay optimizer_results du TF)
+        resolved = resolve_strategy_params(state.cfg, tf)
+        p_strat  = {**_SMCStrategy.fixed_params,
+                    **{k: v for k, v in (resolved.get("smart_money") or {}).items()
+                       if v is not None}}
+        res = smc.analyze(df, _SMCStrategy._smc_params(p_strat))
+        htf_arr, htf_meta = smc.htf_trend_series(
+            df, _SMCStrategy._smc_params(p_strat),
+            mult=int(p_strat.get("htf_mult", 4)))
+
+        # Trades réels : Backtester (mêmes coûts/priorités que le backtest)
+        eng = _Engine()
+        eng.register(_SMCStrategy(), silent=True)
+        bt_res = _Backtester(eng, state.cfg).run(df, symbol, timeframe=tf)
+        trades = [{
+            "entry_bar": t["bar"], "exit_bar": t.get("exit_bar"),
+            "side": t["side"], "setup": t.get("setup"),
+            "entry": t["entry"], "stop": t["stop"],
+            "tp": t.get("take_profit"),
+            "exit": t.get("exit"), "exit_reason": t.get("exit_reason"),
+            "pnl": round(t.get("pnl") or 0.0, 4),
+            "pnl_pct": t.get("pnl_pct"),
+            "score": t.get("score"), "reason": t.get("reason", ""),
+        } for t in bt_res.trades]
+
+        candles = [{
+            "time": int(times[i]),
+            "open":  round(float(df["open"][i]), 8),
+            "high":  round(float(df["high"][i]), 8),
+            "low":   round(float(df["low"][i]), 8),
+            "close": round(float(df["close"][i]), 8),
+        } for i in range(n)]
+
+        def _swings():
+            return [{"index": s["index"], "price": s["price"], "kind": s["kind"],
+                     "label": s["label"], "confirmed_at": s["confirmed_at"],
+                     "swept_at": s["swept_at"]} for s in res["_all_swings"]]
+
+        def _pools():
+            return [{"kind": x["kind"], "level": x["level"], "top": x["top"],
+                     "bottom": x["bottom"], "formed_at": x["formed_at"],
+                     "start_index": min(x["indices"]),
+                     "n_touches": len(x["indices"]),
+                     "swept_at": x["swept_at"]} for x in res["_all_pools"]]
+
+        def _zones(lst, start_key="index"):
+            return [{"kind": x["kind"], "top": x["top"], "bottom": x["bottom"],
+                     "index": x[start_key], "created_at": x["created_at"],
+                     "touched_at": x["touched_at"],
+                     "invalidated_at": x["invalidated_at"],
+                     "strength": x.get("strength", 1)} for x in lst]
+
+        payload = {
+            "symbol": symbol, "timeframe": tf, "n_bars": n,
+            "start_index": max(260, int(_SMCStrategy.warmup_bars)),
+            "candles": candles,
+            "swings": _swings(),
+            "struct_events": res["_all_struct_events"],
+            "sweeps": res["_all_sweeps"],
+            "pools": _pools(),
+            "order_blocks": _zones(res["_all_obs"]),
+            "breakers": _zones(res["_all_breakers"]),
+            "rejections": _zones(res["_all_rejections"]),
+            "fvgs": [{"kind": x["kind"], "top": x["top"], "bottom": x["bottom"],
+                      "index": x["index"], "mitigated_at": x["mitigated_at"],
+                      "filled_at": x["filled_at"]} for x in res["_all_fvgs"]],
+            "voids": [{"kind": x["kind"], "top": x["top"], "bottom": x["bottom"],
+                       "start_index": x["start_index"], "end_index": x["end_index"],
+                       "filled_at": x["filled_at"]} for x in res["_all_voids"]],
+            "trend": [int(v) for v in res["_trend_arr"]],
+            "htf_trend": [int(v) for v in htf_arr],
+            "trades": trades,
+            "params_used": {k: p_strat.get(k) for k in
+                            ("min_score", "min_rr", "min_gain_pct", "htf_filter",
+                             "sl_buffer_atr", "use_rejection_blocks", "kz_filter",
+                             "kz_bonus", "amd_bonus", "vp_confluence")},
+        }
+        return JSONResponse(content=_clean(payload))
+    except HTTPException:
+        raise
+    except Exception as e:
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} scanner/smc_replay : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
+
+
 @router.get("/api/scanner/signals", dependencies=[Depends(verify_api_key)])
 def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 300):
     """Exécute toutes les stratégies sur le symbole et retourne leurs signaux."""
