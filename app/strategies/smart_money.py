@@ -217,6 +217,152 @@ class Strategy(BaseStrategy):
             f"aucun setup SMC (bias {res['bias']['label']})"
         )
 
+    # ── Plans de trade : signal immédiat + setups EN ATTENTE ─────────────────
+    def trade_plans(self, df: pl.DataFrame, params: dict = None,
+                    max_plans: int = 8) -> List[dict]:
+        """Liste des trades à ouvrir (ou à surveiller) sur la dernière bougie :
+
+          - le signal immédiat s'il existe (``status: "immediate"``) ;
+          - les retests d'order blocks FRAIS alignés avec la structure
+            (``status: "pending"``) : entrée au bord de la zone, SL de l'autre
+            côté, TP par ciblage de liquidité — avec le déclencheur à attendre ;
+          - les sweeps potentiels des poches de liquidité actives alignées.
+
+        Chaque plan respecte les mêmes filtres durs que la stratégie (tendance,
+        côté momentum, EMA, gain > ``min_gain_pct``, RR ≥ ``min_rr``) ; les
+        confluences dépendantes de la bougie de déclenchement (volume, couleur)
+        ne sont pas connues d'avance → le score affiché est un score MINIMUM.
+        """
+        p = self._p(params)
+        if len(df) < self.min_bars_required(params):
+            return []
+        win = df[-int(p["max_window"]):] if len(df) > int(p["max_window"]) else df
+        res = smc.analyze(win, self._smc_params(p))
+        i = len(win) - 1
+        close = win["close"].to_numpy().astype(float)
+        open_ = win["open"].to_numpy().astype(float)
+        low   = win["low"].to_numpy().astype(float)
+        high  = win["high"].to_numpy().astype(float)
+        volr  = self._vol_ratio_arr(win)
+        ema   = self._ema_arr(win, int(p["ema_filter_len"]))
+        atr   = float(res["_atr_arr"][i])
+        price = float(close[i])
+        if atr <= 0 or price <= 0:
+            return []
+        trend = int(res["_trend_arr"][i])
+        pd_zone = smc.premium_discount_at(res, high, low, close, i) or {}
+        zone = pd_zone.get("zone", "")
+        long_ema_ok  = ema is None or price > float(ema[i])
+        short_ema_ok = ema is None or price < float(ema[i])
+        buf = float(p["sl_buffer_atr"]) * atr
+        max_ob_age = int(p["ob_max_age"])
+        plans: List[dict] = []
+
+        def _add(plan: Optional[dict], status: str, trigger: str,
+                 zone_lo=None, zone_hi=None):
+            if plan is None:
+                return
+            entry = plan.get("entry")
+            dist = (entry - price) / price * 100.0 if entry else 0.0
+            plans.append({
+                "status": status, "side": plan["side"], "setup": plan["setup"],
+                "score_min": plan["score"],
+                "entry": plan["entry"], "stop": plan["stop_hint"],
+                "tp": plan["tp_hint"],
+                "gain_pct": plan["indicators"]["gain_pct"],
+                "rr": plan["indicators"]["rr"],
+                "tp_source": plan["indicators"]["tp_source"],
+                "distance_pct": round(dist, 3),
+                "trigger": trigger, "reason": plan["reason"],
+                "zone_low": zone_lo, "zone_high": zone_hi,
+            })
+
+        # ── 1. Signal immédiat (bougie courante) ─────────────────────────────
+        sig = self._signal_at(res, i, open_, high, low, close, volr, ema, p)
+        if sig is not None:
+            sig = dict(sig)
+            sig["entry"] = price
+            _add(sig, "immediate",
+                 "Déclenché sur la bougie courante — entrée au prochain open")
+
+        # ── 2. Retests d'order blocks FRAIS alignés ──────────────────────────
+        for ob in reversed(res["_all_obs"]):
+            if ob["touched_at"] is not None or ob["invalidated_at"] is not None:
+                continue
+            if i - ob["created_at"] > max_ob_age:
+                continue
+            if ob["kind"] == "bullish" and trend == 1 and long_ema_ok \
+                    and zone != "discount" and price > ob["top"]:
+                sc = 0.50 + 0.10 + (0.10 if ob["strength"] >= 2 else 0.0) \
+                    + (0.10 if zone == "premium" else 0.0)
+                plan = self._build_trade(
+                    res, i, "long", float(ob["top"]),
+                    float(ob["bottom"]) - buf, atr, p,
+                    setup="OB_RETEST", score=round(min(sc, 1.0), 3),
+                    detail=f"demande [{ob['bottom']:.6g}–{ob['top']:.6g}]",
+                    trend=trend, zone=zone)
+                if plan:
+                    plan["entry"] = float(ob["top"])
+                _add(plan, "pending",
+                     f"Attendre le retour du prix dans la zone de demande "
+                     f"[{ob['bottom']:.6g}–{ob['top']:.6g}] + bougie de rejet",
+                     zone_lo=ob["bottom"], zone_hi=ob["top"])
+            elif ob["kind"] == "bearish" and trend == -1 and short_ema_ok \
+                    and zone != "premium" and price < ob["bottom"]:
+                sc = 0.50 + 0.10 + (0.10 if ob["strength"] >= 2 else 0.0) \
+                    + (0.10 if zone == "discount" else 0.0)
+                plan = self._build_trade(
+                    res, i, "short", float(ob["bottom"]),
+                    float(ob["top"]) + buf, atr, p,
+                    setup="OB_RETEST", score=round(min(sc, 1.0), 3),
+                    detail=f"offre [{ob['bottom']:.6g}–{ob['top']:.6g}]",
+                    trend=trend, zone=zone)
+                if plan:
+                    plan["entry"] = float(ob["bottom"])
+                _add(plan, "pending",
+                     f"Attendre le retour du prix dans la zone d'offre "
+                     f"[{ob['bottom']:.6g}–{ob['top']:.6g}] + bougie de rejet",
+                     zone_lo=ob["bottom"], zone_hi=ob["top"])
+
+        # ── 3. Sweeps potentiels des poches de liquidité actives ─────────────
+        for pool in reversed(res["_all_pools"]):
+            if pool["swept_at"] is not None or i - pool["formed_at"] > int(p["pool_max_age"]):
+                continue
+            lvl = float(pool["level"])
+            if pool["kind"] == "sell_side" and trend == 1 and long_ema_ok \
+                    and zone != "discount" and lvl < price:
+                sc = 0.50 + 0.10 + 0.10 + (0.10 if zone == "premium" else 0.0)
+                # Entrée estimée au niveau sweepé ; la mèche du sweep est
+                # inconnue d'avance → marge d'½ ATR sous le niveau.
+                plan = self._build_trade(
+                    res, i, "long", lvl, lvl - 0.5 * atr - buf, atr, p,
+                    setup="SWEEP_REVERSAL", score=round(min(sc, 1.0), 3),
+                    detail=f"sweep pool {lvl:.6g}", trend=trend, zone=zone)
+                if plan:
+                    plan["entry"] = lvl
+                _add(plan, "pending",
+                     f"Attendre une mèche SOUS les equal lows {lvl:.6g} "
+                     f"(×{len(pool['indices'])}) avec clôture au-dessus (rejet)",
+                     zone_lo=pool["bottom"], zone_hi=pool["top"])
+            elif pool["kind"] == "buy_side" and trend == -1 and short_ema_ok \
+                    and zone != "premium" and lvl > price:
+                sc = 0.50 + 0.10 + 0.10 + (0.10 if zone == "discount" else 0.0)
+                plan = self._build_trade(
+                    res, i, "short", lvl, lvl + 0.5 * atr + buf, atr, p,
+                    setup="SWEEP_REVERSAL", score=round(min(sc, 1.0), 3),
+                    detail=f"sweep pool {lvl:.6g}", trend=trend, zone=zone)
+                if plan:
+                    plan["entry"] = lvl
+                _add(plan, "pending",
+                     f"Attendre une mèche AU-DESSUS des equal highs {lvl:.6g} "
+                     f"(×{len(pool['indices'])}) avec clôture en dessous (rejet)",
+                     zone_lo=pool["bottom"], zone_hi=pool["top"])
+
+        # Tri : signal immédiat d'abord, puis plans les plus proches du prix.
+        plans.sort(key=lambda x: (x["status"] != "immediate",
+                                  abs(x["distance_pct"])))
+        return plans[:max_plans]
+
     # ── Sortie anticipée : CHoCH contre la position ──────────────────────────
     def check_early_exit(self, df: pl.DataFrame, position: dict,
                          params: dict = None) -> Optional[str]:

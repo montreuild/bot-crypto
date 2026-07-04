@@ -77,6 +77,38 @@
       </div>
     </div>
 
+    <!-- ── Trades à ouvrir / plans en attente ───────────────────────── -->
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-hdr">
+        📌 Trades à ouvrir — plans recommandés
+        <span id="sg-plans-count" style="margin-left:8px;font-size:.7rem;color:var(--dim)"></span>
+        <span style="margin-left:auto;font-size:.66rem;color:var(--dim)">cliquer sur un plan pour tracer entrée/SL/TP sur le graphique</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="table-striped" style="min-width:980px">
+          <thead>
+            <tr>
+              <th scope="col">Statut</th>
+              <th scope="col">Sens</th>
+              <th scope="col">Setup</th>
+              <th scope="col">Déclencheur / configuration</th>
+              <th scope="col">Entrée</th>
+              <th scope="col">SL</th>
+              <th scope="col">TP</th>
+              <th scope="col">Gain</th>
+              <th scope="col">RR</th>
+              <th scope="col">Dist.</th>
+              <th scope="col">Score min</th>
+            </tr>
+          </thead>
+          <tbody id="sg-plans-tbody">
+            <tr><td colspan="11" class="empty-row">Lancez une analyse.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="sg-plan-reason" style="display:none;padding:8px 14px;font-size:.7rem;color:var(--muted);border-top:1px solid var(--border);line-height:1.5"></div>
+    </div>
+
     <!-- ── Panneaux d'analyse ────────────────────────────────────────── -->
     <div class="sg-panel-grid">
       <div class="panel">
@@ -172,6 +204,7 @@ function sgDestroy(){
   if(sgRO){ try{ sgRO.disconnect(); }catch(_){} sgRO = null; }
   if(sgChart){ try{ sgChart.remove(); }catch(_){} }
   sgChart = null; sgCandleSeries = null; sgExtraSeries = []; sgZonesPrimitive = null;
+  sgPlanLines = []; sgSelectedPlan = null;
 }
 
 async function sgLoad(){
@@ -192,6 +225,7 @@ async function sgLoad(){
     status.textContent = `${chart.symbol} · ${sgTf} · ${chart.n_bars} bougies — structure ${smc.bias?.label || '?'} · zone ${smc.premium_discount?.zone || '?'}`;
     sgRedraw();
     sgRenderPanels();
+    sgRenderPlans();
   }catch(e){
     status.textContent = '⚠ ' + e.message;
   }
@@ -352,6 +386,92 @@ function sgRedraw(){
   }
 
   sgChart.timeScale().fitContent();
+}
+
+// ── Trades à ouvrir : tableau + tracé des niveaux au clic ─────────────────
+let sgPlanLines = [];        // price lines du plan sélectionné
+let sgSelectedPlan = null;
+
+function sgClearPlanLines(){
+  sgPlanLines.forEach(pl => { try{ sgCandleSeries?.removePriceLine(pl); }catch(_){} });
+  sgPlanLines = [];
+}
+
+function sgSelectPlan(idx){
+  const plans = sgData?.smc?.trade_plans || [];
+  const plan = plans[idx];
+  if(!plan || !sgCandleSeries) return;
+  sgSelectedPlan = idx;
+  sgClearPlanLines();
+  const mk = (price, color, title, style) => {
+    if(price == null) return;
+    try{
+      sgPlanLines.push(sgCandleSeries.createPriceLine({
+        price: +price, color, lineWidth: 2,
+        lineStyle: style ?? LightweightCharts.LineStyle.Solid,
+        axisLabelVisible: true, title,
+      }));
+    }catch(_){}
+  };
+  const arrow = plan.side === 'long' ? '▲' : '▼';
+  mk(plan.entry, '#c084fc', `${arrow} ${plan.setup} entrée`,
+     plan.status === 'pending' ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid);
+  mk(plan.tp, '#34d399', 'TP');
+  mk(plan.stop, '#fb7185', 'SL');
+  // Détail du motif sous le tableau
+  const reasonEl = document.getElementById('sg-plan-reason');
+  if(reasonEl){
+    reasonEl.style.display = '';
+    reasonEl.innerHTML = `<strong style="color:${plan.side === 'long' ? 'var(--green)' : 'var(--red)'}">${arrow} ${escHtml(plan.setup)}</strong>
+      — <strong>Déclencheur :</strong> ${escHtml(plan.trigger || '—')}
+      <br><strong>Motif :</strong> ${escHtml(plan.reason || '—')}`;
+  }
+  // Surligner la ligne sélectionnée
+  document.querySelectorAll('#sg-plans-tbody tr').forEach((tr, k) => {
+    tr.style.outline = (k === idx) ? '1px solid rgba(34,211,238,.5)' : 'none';
+  });
+  document.getElementById('sg-chart').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function sgRenderPlans(){
+  const tbody = document.getElementById('sg-plans-tbody');
+  const count = document.getElementById('sg-plans-count');
+  const reasonEl = document.getElementById('sg-plan-reason');
+  if(reasonEl) reasonEl.style.display = 'none';
+  sgSelectedPlan = null;
+  const d = sgData?.smc;
+  if(!tbody || !d) return;
+  const plans = d.trade_plans || [];
+  if(count) count.textContent = plans.length ? `${plans.length} plan(s)` : '';
+  if(!plans.length){
+    const bias = d.bias?.label || '?';
+    const zone = d.premium_discount?.zone || '?';
+    tbody.innerHTML = `<tr><td colspan="11" class="empty-row">
+      Aucun plan valide — les filtres durs ne sont pas réunis
+      (structure <strong>${escHtml(bias)}</strong>, zone <strong>${escHtml(zone)}</strong>,
+      gain requis &gt; 0,4 % et RR minimal). Revenez après une évolution de la structure.</td></tr>`;
+    return;
+  }
+  const fmt = v => v == null ? '—' : (+v).toFixed(4);
+  tbody.innerHTML = plans.map((p, k) => {
+    const sideClr = p.side === 'long' ? 'var(--green)' : 'var(--red)';
+    const stChip = p.status === 'immediate'
+      ? '<span class="sg-chip" style="background:rgba(52,211,153,.18);color:var(--green)">⚡ MAINTENANT</span>'
+      : '<span class="sg-chip" style="background:rgba(251,191,36,.14);color:var(--amber)">⏳ En attente</span>';
+    return `<tr style="cursor:pointer" onclick="sgSelectPlan(${k})" title="Tracer ce plan sur le graphique">
+      <td>${stChip}</td>
+      <td style="color:${sideClr};font-weight:700">${p.side === 'long' ? '▲ LONG' : '▼ SHORT'}</td>
+      <td style="font-family:var(--mono);font-size:.72rem;color:#c084fc">${escHtml(p.setup)}</td>
+      <td style="font-size:.7rem;color:var(--muted);max-width:330px;white-space:normal;word-break:break-word;line-height:1.35">${escHtml(p.trigger || '—')}</td>
+      <td style="font-family:var(--mono)">${fmt(p.entry)}</td>
+      <td style="font-family:var(--mono);color:var(--red)">${fmt(p.stop)}</td>
+      <td style="font-family:var(--mono);color:var(--green)">${fmt(p.tp)}</td>
+      <td style="font-family:var(--mono);color:var(--cyan);font-weight:700">${p.gain_pct != null ? (+p.gain_pct).toFixed(2) + '%' : '—'}</td>
+      <td style="font-family:var(--mono)">${p.rr != null ? (+p.rr).toFixed(2) : '—'}</td>
+      <td style="font-family:var(--mono);color:var(--dim)">${p.distance_pct != null ? (p.distance_pct > 0 ? '+' : '') + (+p.distance_pct).toFixed(2) + '%' : '—'}</td>
+      <td style="font-family:var(--mono)">${p.score_min != null ? (+p.score_min).toFixed(2) : '—'}</td>
+    </tr>`;
+  }).join('');
 }
 
 // ── Panneaux ──────────────────────────────────────────────────────────────

@@ -629,10 +629,12 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
                 "half_width": ch["half_width"],
             }
 
-        # ── Signal courant de la stratégie smart_money ────────────────────────
+        # ── Signal courant + plans de trade de la stratégie smart_money ──────
         signal = None
+        trade_plans = []
         try:
             strat = _SMCStrategy()
+            trade_plans = strat.trade_plans(df, state.cfg.get("strategy_params", {}))
             sig = strat.score(df, state.cfg.get("strategy_params", {}))
             if sig.get("side") not in (None, "none"):
                 signal = {
@@ -667,6 +669,7 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
             "trendlines": trendlines,
             "channel": channel,
             "signal": signal,
+            "trade_plans": trade_plans,
         }))
     except HTTPException:
         raise

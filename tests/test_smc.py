@@ -415,6 +415,34 @@ class TestMinGainFilter:
         assert trade["tp_hint"] >= 98.5
 
 
+class TestTradePlans:
+    def test_plans_contract(self):
+        """Chaque plan porte le bracket complet, le déclencheur, le motif et
+        respecte le filtre de gain > min_gain_pct et le RR minimal."""
+        found = 0
+        for seed in range(10):
+            plans = Strategy().trade_plans(_random_df(900, seed=seed, jump_p=0.04))
+            for p in plans:
+                found += 1
+                assert p["status"] in ("immediate", "pending")
+                assert p["side"] in ("long", "short")
+                assert p["setup"] in ("SWEEP_REVERSAL", "OB_RETEST",
+                                      "BREAKER_RETEST")
+                assert p["entry"] is not None and p["stop"] is not None \
+                    and p["tp"] is not None
+                assert p["gain_pct"] > Strategy.fixed_params["min_gain_pct"]
+                assert p["rr"] >= Strategy.fixed_params["min_rr"]
+                assert p["trigger"] and p["reason"]
+                if p["side"] == "long":
+                    assert p["stop"] < p["entry"] < p["tp"]
+                else:
+                    assert p["tp"] < p["entry"] < p["stop"]
+        assert found > 0, "aucun plan généré sur 10 seeds — test non significatif"
+
+    def test_plans_insufficient_data(self):
+        assert Strategy().trade_plans(_random_df(80)) == []
+
+
 class TestBacktestCacheCoherence:
     def test_cached_signals_match_live_windows(self):
         """Le cache prepare_for_backtest doit donner la même décision que

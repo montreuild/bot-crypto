@@ -6,6 +6,18 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 📌 Smart graph : tableau « Trades à ouvrir » (plans recommandés)
+
+Nouvelle méthode `Strategy.trade_plans()` (smart_money) exposée via
+`/api/scanner/smc` : en plus du signal immédiat, elle anticipe les setups EN
+ATTENTE — retests des order blocks frais et sweeps potentiels des poches de
+liquidité actives, avec les mêmes filtres durs que la stratégie (tendance,
+côté momentum, EMA200, gain > 0,4 %, RR minimal). La page Smart graph affiche
+ces plans dans un tableau : statut (⚡ maintenant / ⏳ en attente), sens,
+setup, **déclencheur à attendre**, entrée/SL/TP recommandés, gain potentiel,
+RR, distance au prix et score minimum ; un clic trace les niveaux du plan sur
+le graphique et détaille le motif. 30 tests SMC (contrat des plans inclus).
+
 ### 💡 Page « Smart graph » + enrichissements SMC (voids, breakers, structure, cycle)
 
 Nouvelle page dédiée **`/smartgraph`** (menu Analyse → Smart graph) : chart

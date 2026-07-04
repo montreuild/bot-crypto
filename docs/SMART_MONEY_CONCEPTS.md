@@ -210,6 +210,15 @@ Page spécifique avec un grand chart (620 px) façon « pro trader » :
   la borne du canal, avec price line dédiée ;
 - **Signal courant** : price lines entrée/SL/TP de la stratégie ;
 - Calques activables individuellement, deep-link `?symbol=…&tf=…` ;
+- **Tableau « Trades à ouvrir — plans recommandés »** : le signal immédiat
+  (⚡ MAINTENANT) et les setups EN ATTENTE (⏳) générés par
+  `Strategy.trade_plans()` — retests d'order blocks frais et sweeps potentiels
+  des poches actives, alignés avec les filtres durs de la stratégie. Chaque
+  plan affiche : sens, setup, **déclencheur/configuration à attendre**
+  (« Attendre le retour du prix dans la zone d'offre [x–y] + bougie de
+  rejet »), **entrée / SL / TP recommandés**, gain potentiel (> 0,4 %
+  garanti), RR, distance au prix et score minimum. Un clic sur un plan trace
+  ses niveaux entrée/SL/TP sur le graphique et affiche le motif complet ;
 - 3 panneaux : **Lecture du marché** (structure, dernier événement, zone
   premium/discount, équilibre, OTE, phase et progression du cycle),
   **Signal smart_money** (entrée/SL/TP/gain %/RR/cible/raison) et
