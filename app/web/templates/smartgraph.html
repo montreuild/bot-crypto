@@ -65,6 +65,8 @@
         <label class="sg-tog"><input type="checkbox" id="sg-l-pools" checked onchange="sgRedraw()" style="accent-color:#93c5fd"> Liquidité (EQH/EQL)</label>
         <label class="sg-tog"><input type="checkbox" id="sg-l-fvg" checked onchange="sgRedraw()" style="accent-color:#a78bfa"> FVG</label>
         <label class="sg-tog"><input type="checkbox" id="sg-l-voids" checked onchange="sgRedraw()" style="accent-color:#94a3b8"> Liquidity voids</label>
+        <label class="sg-tog"><input type="checkbox" id="sg-l-rejections" onchange="sgRedraw()" style="accent-color:#f472b6"> Rejection blocks</label>
+        <label class="sg-tog"><input type="checkbox" id="sg-l-vp" onchange="sgRedraw()" style="accent-color:#facc15"> Volume profile (POC/HVN/LVN)</label>
         <label class="sg-tog"><input type="checkbox" id="sg-l-lines" checked onchange="sgRedraw()" style="accent-color:#60a5fa"> Trendlines + canal</label>
         <label class="sg-tog"><input type="checkbox" id="sg-l-cycle" checked onchange="sgRedraw()" style="accent-color:#ffd166"> Cycle (projection)</label>
         <label class="sg-tog"><input type="checkbox" id="sg-l-signal" checked onchange="sgRedraw()" style="accent-color:#22d3ee"> Signal (entrée/SL/TP)</label>
@@ -148,6 +150,7 @@ const SG_FILL = {
   fvg:     ['rgba(167,139,250,.12)', 'rgba(167,139,250,.45)'],
   void:    ['rgba(148,163,184,.10)', 'rgba(148,163,184,.4)'],
   breaker: ['rgba(249,115,22,.12)',  'rgba(249,115,22,.5)'],
+  rejection:['rgba(244,114,182,.12)','rgba(244,114,182,.5)'],
 };
 
 // ── Primitive rectangles (plugin API v4) ─────────────────────────────────
@@ -276,6 +279,10 @@ function sgRedraw(){
     if(z.status === 'invalidated') return;
     pushZone(z, z.time_start, z.time_end, 'breaker', 'Breaker ' + (z.kind === 'bullish' ? '▲' : '▼'));
   });
+  if(document.getElementById('sg-l-rejections')?.checked) (d.rejection_blocks || []).forEach(z => {
+    if(z.status === 'invalidated') return;
+    pushZone(z, z.time_start, z.time_end, 'rejection', 'Rejet ' + (z.kind === 'bullish' ? '▲' : '▼'));
+  });
   if(on('sg-l-pools')) (d.liquidity_pools || []).forEach(z => {
     if(z.status !== 'active') return;
     const pad = (z.top - z.bottom) || z.level * 0.0006;
@@ -358,6 +365,17 @@ function sgRedraw(){
       seg(ch.time_start, ch.mid_start + ch.half_width, ch.time_end, ch.mid_end + ch.half_width, 'rgba(96,165,250,.65)', 1.5);
       seg(ch.time_start, ch.mid_start - ch.half_width, ch.time_end, ch.mid_end - ch.half_width, 'rgba(96,165,250,.65)', 1.5);
     }
+  }
+
+  // ── Volume profile : POC (plein), HVN (tireté), LVN (pointillé) ─────────
+  if(document.getElementById('sg-l-vp')?.checked && d.volume_profile){
+    const vp = d.volume_profile;
+    const firstTime = candles.length ? candles[0].time : null;
+    const hline = (price, color, width, style) =>
+      seg(firstTime, price, lastTime, price, color, width, style);
+    if(vp.poc != null) hline(vp.poc, 'rgba(250,204,21,.8)', 2);
+    (vp.hvns || []).forEach(lv => hline(lv, 'rgba(250,204,21,.4)', 1, LightweightCharts.LineStyle.Dashed));
+    (vp.lvns || []).forEach(lv => hline(lv, 'rgba(148,163,184,.3)', 1, LightweightCharts.LineStyle.Dotted));
   }
 
   // ── Projection de cycle : expected peak / trough ────────────────────────
@@ -488,9 +506,16 @@ function sgRenderPanels(){
   const pdClr = pd.zone === 'premium' ? 'var(--amber)' : pd.zone === 'discount' ? 'var(--cyan)' : 'var(--dim)';
   const lastEv = bias.last_event;
   const fmtP = v => v == null ? '—' : (+v).toFixed(4);
+  const htf = d.htf_bias || {};
+  const htfClr = htf.trend === 1 ? 'var(--green)' : htf.trend === -1 ? 'var(--red)' : 'var(--dim)';
+  const sess = d.session || {};
   read.innerHTML = `
     <div class="sg-row"><span class="sg-key">Structure</span>
       <span class="sg-val" style="color:${biasClr};font-weight:700">${escHtml(bias.label || '?')} ${bias.trend===1?'▲':bias.trend===-1?'▼':'•'}</span></div>
+    <div class="sg-row"><span class="sg-key">Biais HTF (×4)</span>
+      <span class="sg-val" style="color:${htfClr};font-weight:700">${escHtml(htf.label || '?')} ${htf.trend===1?'▲':htf.trend===-1?'▼':'•'}</span></div>
+    <div class="sg-row"><span class="sg-key">Session (UTC)</span>
+      <span class="sg-val">${escHtml(sess.name || '?')}${sess.in_killzone ? ' <span style="color:var(--amber)">⚡ killzone</span>' : ''}</span></div>
     <div class="sg-row"><span class="sg-key">Dernier événement</span>
       <span class="sg-val">${lastEv ? escHtml(lastEv.kind + ' ' + (lastEv.direction==='up'?'↑':'↓') + ' @ ' + fmtP(lastEv.level)) : '—'}</span></div>
     <div class="sg-row"><span class="sg-key">Zone de range</span>
@@ -541,6 +566,8 @@ function sgRenderPanels(){
       z, (z.strength >= 2 ? ' ★' : '') + (z.status === 'fresh' ? ' <span style="color:var(--green);font-size:.62rem">fresh</span>' : '')));
   (d.breakers || []).filter(z => z.status !== 'invalidated').slice(-4).reverse()
     .forEach(z => zrow('#f97316', 'Breaker ' + (z.kind === 'bullish' ? '▲' : '▼'), z));
+  (d.rejection_blocks || []).filter(z => z.status === 'fresh').slice(-4).reverse()
+    .forEach(z => zrow('#f472b6', 'Rejet ' + (z.kind === 'bullish' ? '▲' : '▼'), z));
   (d.liquidity_pools || []).filter(z => z.status === 'active').slice(-6).reverse()
     .forEach(z => zrow('#93c5fd', z.kind === 'buy_side' ? 'Liquidité BSL' : 'Liquidité SSL', z, ` ×${z.n_touches}`));
   (d.fvgs || []).filter(z => z.status === 'open').slice(-4).reverse()

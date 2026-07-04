@@ -248,6 +248,68 @@ class TestLiquidityVoidsBreakers:
             f"retest attendu à 75, obtenu {brks[0]['touched_at']}"
 
 
+class TestRejectionBlocks:
+    def test_rejection_block_on_wick_swing(self):
+        """Swing high avec grande mèche haute → rejection block bearish."""
+        o, h, l, c = _flat(60, price=100.0)
+        # sommet à 30 : corps petit, mèche haute de 3 (>> 0.5×ATR)
+        for i, d in ((28, 1), (29, 2), (31, 2), (32, 1)):
+            o[i] += d; c[i] += d; h[i] += d + 0.1; l[i] += d
+        o[30], c[30], h[30], l[30] = 102.4, 102.6, 106.0, 102.2
+        # retest de la zone par le bas à 45
+        h[45] = 103.5; o[45] = 100.0; c[45] = 100.2; l[45] = 99.8
+        df = _mk_df(o, h, l, c)
+        r = smc.analyze(df, {"rb_wick_atr": 0.5})
+        rbs = [x for x in r["_all_rejections"]
+               if x["kind"] == "bearish" and x["index"] == 30]
+        assert rbs, "rejection block bearish non détecté au swing 30"
+        rb = rbs[0]
+        assert abs(rb["top"] - 106.0) < 1e-9 and abs(rb["bottom"] - 102.6) < 1e-9
+        assert rb["touched_at"] == 45, f"retest attendu à 45, obtenu {rb['touched_at']}"
+
+
+class TestVolumeProfileSessions:
+    def test_volume_profile_fields(self):
+        df = _random_df(500, seed=4)
+        h = df["high"].to_numpy(); l = df["low"].to_numpy()
+        c = df["close"].to_numpy(); v = df["volume"].to_numpy()
+        vp = smc.volume_profile(h, l, c, v, len(df) - 1, lookback=240)
+        assert vp is not None
+        assert vp["range_low"] <= vp["poc"] <= vp["range_high"]
+        for lv in vp["hvns"] + vp["lvns"]:
+            assert vp["range_low"] <= lv <= vp["range_high"]
+        # fenêtre trop courte → None
+        assert smc.volume_profile(h, l, c, v, 10, lookback=240) is None
+
+    def test_killzone_flags(self):
+        import numpy as np
+        # 08:00 UTC (hors KZ), 08:30… non : 7h,9h dans LDN ; 13h dans NY ; 3h hors
+        epochs = np.array([7 * 3600, 9 * 3600, 13 * 3600, 3 * 3600, 11 * 3600],
+                          dtype=np.int64)
+        flags = smc.killzone_flags(epochs)
+        assert list(flags) == [1, 1, 1, 0, 0]
+        assert smc.session_label(3 * 3600) == "asia"
+        assert smc.session_label(13 * 3600) == "newyork"
+
+
+class TestHTFBias:
+    def test_htf_trend_causal_and_mapped(self):
+        df = _random_df(800, seed=13)
+        arr, meta = smc.htf_trend_series(df, mult=4)
+        assert len(arr) == len(df)
+        assert set(map(int, set(arr))) <= {-1, 0, 1}
+        assert meta["n_htf"] > 100
+        # Causalité : la série tronquée doit être identique sur son support
+        arr2, _ = smc.htf_trend_series(df[:500], mult=4)
+        assert (arr[:500] == arr2).all(), "htf_trend_series non causale"
+
+    def test_strategy_contract_with_htf(self):
+        s = Strategy()
+        r = s.score(_random_df(700, seed=6),
+                    {"smart_money": {"htf_filter": "strict"}})
+        assert r["side"] in ("long", "short", "none")
+
+
 class TestStructureLineCycle:
     def test_zigzag_alternates_and_strictly_increasing(self):
         df = _random_df(600, seed=9)

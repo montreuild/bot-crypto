@@ -63,6 +63,7 @@ DEFAULTS: Dict[str, Any] = {
     "fvg_min_atr":    0.2,   # taille minimale d'un FVG (×ATR)
     "void_min_bars":  3,     # bougies directionnelles consécutives min d'un void
     "void_min_atr":   2.5,   # déplacement minimal du run (×ATR)
+    "rb_wick_atr":    0.5,   # mèche minimale d'un rejection block (×ATR)
     "atr_len":        14,
     "channel_lookback": 120, # fenêtre du canal de régression
     "max_pool_age":   500,   # âge max (barres) d'un pool utilisable comme cible
@@ -133,6 +134,7 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
     fvgs: List[dict] = []
     voids: List[dict] = []           # liquidity voids (runs directionnels)
     breakers: List[dict] = []        # order blocks invalidés → polarité inversée
+    rejections: List[dict] = []      # rejection blocks (mèches de swing)
     trend_arr = np.zeros(n, dtype=np.int8)
 
     trend = 0
@@ -149,6 +151,8 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
     active_fvgs:  List[dict] = []
     active_voids: List[dict] = []
     active_breakers: List[dict] = []
+    active_rejections: List[dict] = []
+    rb_wick = float(p["rb_wick_atr"])
     # État du run directionnel courant (détection des liquidity voids)
     run_dir = 0          # +1 haussier, −1 baissier, 0 neutre
     run_start = 0        # index de la première bougie du run
@@ -170,6 +174,15 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
             _try_cluster_pool(pools, active_pools, swing_highs, sw,
                               atr[pi] * float(p["eq_tol_atr"]),
                               kind="buy_side", formed_at=i)
+            # Rejection block : mèche haute marquée au sommet → zone d'offre
+            body_top = max(o[pi], c[pi])
+            if h[pi] - body_top >= rb_wick * atr[pi]:
+                rb = {"kind": "bearish", "index": pi,
+                      "top": float(h[pi]), "bottom": float(body_top),
+                      "created_at": i, "touched_at": None,
+                      "invalidated_at": None}
+                rejections.append(rb)
+                active_rejections.append(rb)
 
         pi = conf_low.get(i)
         if pi is not None:
@@ -185,6 +198,15 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
             _try_cluster_pool(pools, active_pools, swing_lows, sw,
                               atr[pi] * float(p["eq_tol_atr"]),
                               kind="sell_side", formed_at=i)
+            # Rejection block : mèche basse marquée au creux → zone de demande
+            body_bot = min(o[pi], c[pi])
+            if body_bot - l[pi] >= rb_wick * atr[pi]:
+                rb = {"kind": "bullish", "index": pi,
+                      "top": float(body_bot), "bottom": float(l[pi]),
+                      "created_at": i, "touched_at": None,
+                      "invalidated_at": None}
+                rejections.append(rb)
+                active_rejections.append(rb)
 
         # ── Cassures de structure (sur clôture, corps > mèche) ────────────────
         if last_sh is not None and c[i] > last_sh["price"]:
@@ -283,6 +305,23 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                            "invalidated_at": None}
                     breakers.append(brk)
                     active_breakers.append(brk)
+
+        # ── Rejection blocks : cycle de vie (même sémantique que les OB) ─────
+        for rb in active_rejections[:]:
+            if i <= rb["created_at"]:
+                continue
+            if rb["kind"] == "bullish":
+                if rb["touched_at"] is None and l[i] <= rb["top"]:
+                    rb["touched_at"] = i
+                if c[i] < rb["bottom"]:
+                    rb["invalidated_at"] = i
+                    active_rejections.remove(rb)
+            else:
+                if rb["touched_at"] is None and h[i] >= rb["bottom"]:
+                    rb["touched_at"] = i
+                if c[i] > rb["top"]:
+                    rb["invalidated_at"] = i
+                    active_rejections.remove(rb)
 
         # ── Breaker blocks : cycle de vie (retest / re-cassure) ──────────────
         for brk in active_breakers[:]:
@@ -429,6 +468,7 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
         "fvgs": fvgs[-_MAX_KEEP:],
         "liquidity_voids": voids[-_MAX_KEEP:],
         "breakers": breakers[-_MAX_KEEP:],
+        "rejection_blocks": rejections[-_MAX_KEEP:],
         "structure_line": structure_line[-2 * _MAX_KEEP:],
         "cycle": cycle,
         "premium_discount": pd_zone,
@@ -450,6 +490,7 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
         "_all_struct_events": struct_events,
         "_all_voids": voids,
         "_all_breakers": breakers,
+        "_all_rejections": rejections,
     }
     return result
 
@@ -458,14 +499,15 @@ def _empty_result(n: int) -> Dict[str, Any]:
     return {
         "n_bars": n, "swings": [], "structure_events": [], "liquidity_pools": [],
         "sweeps": [], "order_blocks": [], "fvgs": [],
-        "liquidity_voids": [], "breakers": [], "structure_line": [], "cycle": None,
+        "liquidity_voids": [], "breakers": [], "rejection_blocks": [],
+        "structure_line": [], "cycle": None,
         "premium_discount": None, "trendlines": [], "channel": None,
         "bias": {"trend": 0, "label": "neutre", "last_event": None},
         "_trend_arr": np.zeros(max(n, 0), dtype=np.int8),
         "_atr_arr": np.zeros(max(n, 0), dtype=float),
         "_all_pools": [], "_all_swings": [], "_all_obs": [], "_all_fvgs": [],
         "_all_sweeps": [], "_all_struct_events": [], "_all_voids": [],
-        "_all_breakers": [],
+        "_all_breakers": [], "_all_rejections": [],
     }
 
 
@@ -728,6 +770,141 @@ def _regression_channel(c: np.ndarray, lookback: int) -> Optional[dict]:
         "half_width": round(half, 8),
         "slope": float(slope),
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Volume profile, sessions et biais multi-timeframe
+# ══════════════════════════════════════════════════════════════════════════════
+
+def volume_profile(h: np.ndarray, l: np.ndarray, c: np.ndarray, v: np.ndarray,
+                   i: int, lookback: int = 240, n_bins: int = 40,
+                   hvn_factor: float = 1.5,
+                   lvn_factor: float = 0.5) -> Optional[dict]:
+    """Profil de volume CAUSAL sur les ``lookback`` barres terminées à ``i`` :
+    histogramme du volume par tranche de prix (prix typique hlc3).
+
+    Retourne :
+      - ``poc``  : Point of Control (tranche la plus tradée — aimant naturel) ;
+      - ``hvns`` : High Volume Nodes (≥ ``hvn_factor``×moyenne, maxima locaux)
+                   — zones d'acceptation, support/résistance volumétriques ;
+      - ``lvns`` : Low Volume Nodes (≤ ``lvn_factor``×moyenne) — zones de
+                   rejet que le prix traverse vite (équivalent volumétrique
+                   des liquidity voids).
+    """
+    lo_w = max(0, i + 1 - lookback)
+    if i + 1 - lo_w < 30:
+        return None
+    hh = h[lo_w:i + 1]
+    ll = l[lo_w:i + 1]
+    tp = (hh + ll + c[lo_w:i + 1]) / 3.0
+    vv = v[lo_w:i + 1]
+    p_min, p_max = float(ll.min()), float(hh.max())
+    if p_max <= p_min:
+        return None
+    hist, edges = np.histogram(tp, bins=n_bins, range=(p_min, p_max),
+                               weights=vv)
+    centers = (edges[:-1] + edges[1:]) / 2.0
+    mean_v = float(hist.mean()) if hist.sum() > 0 else 0.0
+    if mean_v <= 0:
+        return None
+    poc = float(centers[int(np.argmax(hist))])
+    hvns, lvns = [], []
+    for k in range(n_bins):
+        left = hist[k - 1] if k > 0 else -1.0
+        right = hist[k + 1] if k < n_bins - 1 else -1.0
+        if hist[k] >= hvn_factor * mean_v and hist[k] >= left and hist[k] >= right:
+            hvns.append(float(centers[k]))
+        elif hist[k] <= lvn_factor * mean_v:
+            lvns.append(float(centers[k]))
+    return {"poc": poc, "hvns": hvns, "lvns": lvns,
+            "bin_size": float(edges[1] - edges[0]),
+            "range_low": p_min, "range_high": p_max}
+
+
+# Killzones ICT (heures UTC) : ouvertures de Londres et de New York — les
+# fenêtres où les desks institutionnels génèrent l'essentiel des sweeps.
+KILLZONES = {"london": (7, 10), "newyork": (12, 15)}
+SESSIONS  = {"asia": (0, 7), "london": (7, 12), "newyork": (12, 21),
+             "late": (21, 24)}
+
+
+def killzone_flags(times_epoch: np.ndarray) -> np.ndarray:
+    """1 si l'heure UTC d'ouverture de la barre tombe dans une killzone
+    (Londres 07-10 UTC, New York 12-15 UTC), 0 sinon."""
+    hours = (times_epoch // 3600) % 24
+    out = np.zeros(len(times_epoch), dtype=np.int8)
+    for lo, hi in KILLZONES.values():
+        out |= ((hours >= lo) & (hours < hi)).astype(np.int8)
+    return out
+
+
+def session_label(epoch: float) -> str:
+    hour = int((epoch // 3600) % 24)
+    for name, (lo, hi) in SESSIONS.items():
+        if lo <= hour < hi:
+            return name
+    return "late"
+
+
+def htf_trend_series(df: pl.DataFrame, params: Optional[dict] = None,
+                     mult: int = 4) -> tuple:
+    """Biais de structure MULTI-TIMEFRAME, causal barre par barre.
+
+    Agrège l'OHLCV en buckets de ``mult`` × timeframe (bornes horloge :
+    epoch // (ltf_sec × mult) — identiques en live et en backtest), lance la
+    même analyse de structure (BOS/CHoCH) sur le HTF, puis mappe sur chaque
+    barre LTF le trend du DERNIER bucket HTF **entièrement clôturé** à cet
+    instant — aucune fuite du futur.
+
+    Retourne ``(trend_arr, meta)`` : trend ∈ {+1, −1, 0} par barre LTF,
+    meta = {"htf_sec", "n_htf", "trend"} (état à la dernière barre).
+    """
+    n = len(df)
+    empty = np.zeros(n, dtype=np.int8)
+    if n < 40 or "time" not in df.columns:
+        return empty, {"htf_sec": 0, "n_htf": 0, "trend": 0}
+    epoch = df["time"].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
+    deltas = np.diff(epoch[-64:])
+    deltas = deltas[deltas > 0]
+    if len(deltas) == 0:
+        return empty, {"htf_sec": 0, "n_htf": 0, "trend": 0}
+    ltf_sec = int(np.median(deltas))
+    htf_sec = ltf_sec * max(int(mult), 2)
+
+    bucket = epoch // htf_sec
+    o = df["open"].to_numpy().astype(float)
+    h = df["high"].to_numpy().astype(float)
+    l = df["low"].to_numpy().astype(float)
+    c = df["close"].to_numpy().astype(float)
+    v = df["volume"].to_numpy().astype(float) if "volume" in df.columns \
+        else np.ones(n)
+
+    # Agrégation par bucket (une passe, buckets croissants)
+    starts = np.flatnonzero(np.diff(bucket, prepend=bucket[0] - 1))
+    ends = np.append(starts[1:], n)
+    if len(starts) < 12:
+        return empty, {"htf_sec": htf_sec, "n_htf": len(starts), "trend": 0}
+    ho = o[starts]
+    hc = c[ends - 1]
+    hh = np.array([h[s:e].max() for s, e in zip(starts, ends)])
+    hl = np.array([l[s:e].min() for s, e in zip(starts, ends)])
+    hv = np.array([v[s:e].sum() for s, e in zip(starts, ends)])
+    htf_df = pl.DataFrame({"open": ho, "high": hh, "low": hl,
+                           "close": hc, "volume": hv})
+    res = analyze(htf_df, params)
+    trend_htf = res["_trend_arr"]
+
+    # Mapping causal : dernier bucket HTF clôturé au moment où la barre LTF i
+    # est terminée (close de la barre = epoch + ltf_sec).
+    bucket_end = (bucket[starts] + 1) * htf_sec
+    close_times = epoch + ltf_sec
+    idx = np.searchsorted(bucket_end, close_times, side="right") - 1
+    out = np.zeros(n, dtype=np.int8)
+    valid = idx >= 0
+    out[valid] = trend_htf[idx[valid]]
+    meta = {"htf_sec": int(htf_sec), "n_htf": int(len(starts)),
+            "trend": int(out[-1])}
+    return out, meta
 
 
 # ══════════════════════════════════════════════════════════════════════════════

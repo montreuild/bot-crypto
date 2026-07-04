@@ -74,6 +74,38 @@ alimentent le retest en sens inverse. Cycle de vie `fresh` → `touched` →
 `invalidated` (re-cassure). Setup `BREAKER_RETEST` disponible dans la
 stratégie (off par défaut, négatif sur BTC 4h).
 
+### 6quater. Rejection Blocks
+Swing confirmé avec une **mèche marquée** (≥ `rb_wick_atr`×ATR) : la mèche
+matérialise un rejet violent — zone d'offre [corps haut, high] au sommet,
+de demande [low, corps bas] au creux. Même cycle de vie que les OB. Setup
+`REJECTION_RETEST` (off par défaut : dilue le PF sur BTC, seul l'OOS 4h/2h
+en profite — exploré par l'optimiseur).
+
+### 6quinquies. Volume Profile (POC / HVN / LVN)
+Histogramme causal du volume par tranche de prix (`smc.volume_profile`,
+fenêtre `vp_lookback`) : **POC** (Point of Control, aimant), **HVN**
+(acceptation — support/résistance volumétrique, bonus de confluence
+`vp_confluence`), **LVN** (rejet — équivalent volumétrique des voids).
+Cibles `vp_targets` disponibles (négatif sur BTC → off).
+
+### 6sexies. Sessions & Killzones
+Sessions UTC (Asia 0-7, London 7-12, New York 12-21) et killzones ICT
+(LDN 07-10, NY 12-15) : `kz_bonus` (confluence) et `kz_filter` (dur).
+Mesuré **sans edge sur BTC** (marché 24/7) → off par défaut.
+
+### 6septies. Biais multi-timeframe (HTF)
+`smc.htf_trend_series` : agrège l'OHLCV en buckets horloge de
+`htf_mult`×timeframe, analyse la structure HTF (BOS/CHoCH) et mappe sur
+chaque barre LTF le trend du dernier bucket **clôturé** (causal, identique
+live/backtest). Filtre `htf_filter` : `soft` (pas de trade contre le HTF,
+**défaut — seul enrichissement gagnant sur tous les TF testés**) ou
+`strict` (alignement exigé).
+
+### 6octies. AMD / Power of Three
+Compression (`amd_bars` barres dans ≤ `amd_range_atr`×ATR) suivie d'un sweep
+= manipulation probable avant expansion. Bonus `amd_bonus` sur les
+SWEEP_REVERSAL post-accumulation.
+
 ### 7. Premium / Discount + OTE
 Range de travail = dernier swing high ↔ dernier swing low (élargi au max/min des
 100 dernières barres). Équilibre à 50 % ; `premium` > 55 %, `discount` < 45 %.
@@ -123,6 +155,21 @@ smc.liquidity_targets_below(result, i, price)   # cibles TP short (causal)
    impulsion qui a cassé la structure → entrée sur la zone, stop de l'autre
    côté de l'order block.
 
+### Campagne de mesure des enrichissements (BTC/USDC, 2026-07)
+
+Chaque enrichissement testé ISOLÉMENT sur 15m/30m/1h/2h/4h/1d, historique
+complet + dernier tiers (pseudo-OOS 2024-2026, la période la plus dure) :
+
+| Enrichissement | Verdict | Détail |
+|---|---|---|
+| **Biais HTF (soft)** | ✅ **ON par défaut** | Seul gagnant sur TOUS les TF. 4h : PF 1.485 vs 1.414, DD −8.0 vs −9.9, OOS **+23 vs −8** |
+| Rejection blocks | ⚠ off | Dilue le PF global (4h : 323 vs 405) mais améliore l'OOS (+26) — exploré par l'optimiseur |
+| Volume profile (confluence) | ⚠ off | Neutre au seuil 0.55 (ne s'exprime qu'à seuil élevé, cf. configs par TF) |
+| Volume profile (cibles) | ❌ off | Légèrement négatif partout |
+| Killzones (bonus) | ⚠ off | Neutre au seuil 0.55 |
+| Killzones (filtre dur) | ❌ off | Négatif partout — pas d'edge horaire sur BTC 24/7 |
+| AMD (bonus) | ⚠ off | Neutre au seuil 0.55 |
+
 ### Filtres DURS (validés empiriquement sur BTC/USDC 30m→1d, 2019-2026)
 
 - **Avec la tendance uniquement** : long seulement en structure haussière,
@@ -170,21 +217,46 @@ sur les 179 trades du backtest 4h (gain potentiel min observé : 0,61 %).
 
 ### Validation (BTC/USDC, frais 0,1 %/côté, spread 0,05 %, risque 1 %/trade)
 
+Défauts actuels (dont `htf_filter: soft`) :
+
 | TF | Trades | Win rate | PnL (capital 1000) | PF | Sharpe | DD max |
 |---|---|---|---|---|---|---|
-| **4h** | 181 | **46,4 %** | **+405 (+40,5 %)** | **1.41** | 6.5 | −9,9 % |
-| 1h | 582 | 31,4 % | −350 | 0.80 | — | −60 % |
-| 2h | 379 | 33,2 % | −284 | 0.81 | — | −44 % |
-| 1d | 28 | 28,6 % | −62 | 0.69 | — | −11 % |
+| **4h** | 161 | **46,6 %** | **+410 (+41,0 %)** | **1.485** | 7.5 | −8,0 % |
+| 1h | 523 | 33,1 % | −306 | 0.81 | — | −54 % |
+| 2h | 343 | 34,4 % | −239 | 0.83 | — | −41 % |
+| 1d | 25 | 32,0 % | −37 | 0.78 | — | −9 % |
 
-Sous-périodes 4h : PF **2.28** (2018-2021), **1.54** (2021-2024), **0.95**
-(2024-2026) — l'edge décroît sur la période récente : à surveiller via le
-forward-test et le lifecycle avant toute allocation réelle. Les cibles voids
-(`use_void_targets`) apportent ~+65 USDC sur le 4h ; le setup BREAKER_RETEST
-teste négatif (−163 / 220 trades) → off par défaut. Les TF < 4h sont laissés à
-l'optimiseur (`param_space` expose `swing_len`, `eq_tol_atr`, `disp_body_atr`,
-`min_rr`, `min_gain_pct`, `sl_buffer_atr`, `ema_filter_len`, `choch_exit`,
-`use_breakers`, `use_void_targets`).
+Sous-périodes 4h : PF **2.35** (2018-2021), **1.61** (2021-2024), **1.03**
+(2024-2026) — le biais multi-timeframe fait repasser la période récente en
+positif. Les cibles voids apportent ~+65 USDC sur le 4h ; le setup
+BREAKER_RETEST teste négatif (−163 / 220 trades) → off par défaut.
+
+### Configurations par timeframe (calibration 2026-07-04)
+
+Grille ciblée par TF, split **IS 2/3 / OOS 1/3** (OOS = 2024-2026, la période
+la plus dure), sélection : ≥ 10 trades OOS **et** PF IS ≥ 1.0, classement par
+PF OOS. Écrites dans `strategies/smart_money.yaml` → `optimizer_results`
+(surcharge automatique par TF en live et en backtest via
+`resolve_strategy_params`). Le seuil par TF passe par `min_score` (paramètre
+interne de la stratégie — `score_threshold` est une clé globale protégée de
+l'overlay).
+
+| TF | Config retenue | OOS (2024-2026) | oos_score | Verdict |
+|---|---|---|---|---|
+| **4h** | min_score 0.75, RR ≥ 2, SL 0.5×ATR, bonus kz/amd/vp | 56 trades, **+60 (+6 %), PF 1.20, DD −5,1 %** | **+0.255** | ✅ tradable |
+| 1h | min_score 0.65, RR ≥ 2, gain ≥ 1,2 %, killzones only | −33, PF 0.83 (vs −182 défauts) | −0.067 | ❌ |
+| 2h | min_score 0.75, RR ≥ 2 | −115, PF 0.77 | −0.230 | ❌ |
+| 30m | min_score 0.75, RR ≥ 1.5, gain ≥ 1,2 % | −71, PF 0.78 | −0.142 | ❌ |
+| 15m | min_score 0.65, RR ≥ 1.5, gain ≥ 1,2 %, killzones only | −41, PF 0.42 | −0.082 | ❌ |
+| 1d | min_score 0.55 | −37, PF 0.59 (12 trades) | −0.075 | ❌ |
+
+**Lecture senior** : seul le 4h a un edge démontré out-of-sample. Les autres
+TF sont enregistrés avec leur config « la moins mauvaise » et un score négatif
+assumé — l'audit et le lifecycle ne les promouvront pas ; si un TF est forcé,
+la config limite au moins l'hémorragie. La sélectivité (min_score 0.75 = ≥ 3
+confluences dont les bonus killzone/AMD/volume-profile) sacrifie du PnL
+2018-2021 pour de la robustesse récente : c'est le bon arbitrage pour du
+capital futur.
 
 ### Performance technique
 

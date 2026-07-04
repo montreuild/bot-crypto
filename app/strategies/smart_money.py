@@ -17,12 +17,15 @@ rejet net d'une poche de liquidité :
      block) : premier retest de la zone dans le nouveau sens (les stops
      piégés dans l'ancienne zone alimentent le mouvement).
 
-Filtres DURS (validés sur BTC/USDC 30m→1d, 2019-2026) :
+Filtres DURS (validés sur BTC/USDC 15m→1d, 2019-2026) :
   - structure alignée obligatoire (long uniquement en trend haussier…) ;
   - côté momentum du range : pas de long en zone discount, pas de short en
     zone premium — sur crypto la force appelle la force, le « deep discount »
     d'une tendance haussière est le plus souvent une structure qui casse ;
-  - biais EMA(``ema_filter_len``) : long au-dessus, short en dessous.
+  - biais EMA(``ema_filter_len``) : long au-dessus, short en dessous ;
+  - biais MULTI-TIMEFRAME (``htf_filter: soft`` par défaut) : jamais de trade
+    contre la structure du timeframe supérieur (buckets ×``htf_mult``) — seul
+    enrichissement gagnant sur TOUS les TF testés (campagne 2026-07).
 
 Confluences additionnées au score de base 0.50 (cap 1.0) :
   +0.10 structure alignée (toujours vrai pour OB_RETEST / BREAKER_RETEST)
@@ -83,6 +86,11 @@ class Strategy(BaseStrategy):
         "choch_exit":     [True, False],
         "use_breakers":   [True, False],
         "use_void_targets": [True, False],
+        "htf_filter":     ["off", "soft", "strict"],
+        "kz_bonus":       [True, False],
+        "amd_bonus":      [True, False],
+        "vp_confluence":  [True, False],
+        "use_rejection_blocks": [True, False],
     }
 
     fixed_params: Dict[str, Any] = {
@@ -103,6 +111,27 @@ class Strategy(BaseStrategy):
                                     # → off par défaut, exploré par l'optimiseur
         "use_void_targets": True,   # bords des liquidity voids comme cibles TP
         "tl_tol_atr":       0.3,    # tolérance du tap de trendline (×ATR)
+        # ── Enrichissements 2026-07 (validés individuellement, cf. YAML) ─────
+        "htf_filter":       "soft", # biais multi-TF : off | soft (pas contre) | strict (aligné)
+                                    # → seul enrichissement gagnant sur TOUS les TF
+                                    # (4h : PF 1.49 vs 1.41, OOS +23 vs −8)
+        "htf_mult":         4,      # HTF = timeframe × mult
+        "use_rejection_blocks": False,  # setups REJECTION_RETEST (mèches de swing)
+        "rb_wick_atr":      0.5,    # mèche minimale d'un rejection block (×ATR)
+        "vp_confluence":    False,  # bonus si la zone chevauche un HVN (acceptation)
+        "vp_targets":       False,  # POC/HVN comme cibles TP additionnelles
+        "vp_lookback":      240,    # fenêtre du volume profile (barres)
+        "vp_bins":          40,
+        "kz_bonus":         False,  # bonus si signal dans une killzone (LDN/NY)
+        "kz_filter":        False,  # filtre dur : signaux uniquement en killzone
+        "amd_bonus":        False,  # bonus sweep après compression (manipulation AMD)
+        "amd_bars":         12,     # fenêtre de la phase d'accumulation
+        "amd_range_atr":    2.0,    # range max de l'accumulation (×ATR)
+        "min_score":        0.0,    # seuil de score interne à la stratégie —
+                                    # équivalent de score_threshold mais
+                                    # SURCHARGEABLE par optimizer_results/TF
+                                    # (score_threshold est une clé globale
+                                    # protégée de l'overlay, cf. app/live/utils)
         "ema_filter_len":   200,    # biais EMA : long si close>EMA, short si close<EMA (0 = off)
         "choch_exit":       False,  # sortie anticipée sur CHoCH contre la position
                                     # (False par défaut : coupe systématiquement en perte
@@ -136,7 +165,45 @@ class Strategy(BaseStrategy):
             "disp_body_atr": float(p["disp_body_atr"]),
             "ob_lookback":   int(p["ob_lookback"]),
             "fvg_min_atr":   float(p["fvg_min_atr"]),
+            "rb_wick_atr":   float(p.get("rb_wick_atr", 0.5)),
         }
+
+    def _build_aux(self, win: pl.DataFrame, p: Dict[str, Any],
+                   res: dict) -> Dict[str, Any]:
+        """Séries auxiliaires par barre (toutes causales) consommées par
+        ``_signal_at`` : volume ratio, EMA de biais, killzones, biais HTF et
+        compression AMD (range des ``amd_bars`` barres PRÉCÉDENTES ≤ k×ATR)."""
+        aux: Dict[str, Any] = {
+            "volr": self._vol_ratio_arr(win),
+            "ema":  self._ema_arr(win, int(p["ema_filter_len"])),
+            "h": win["high"].to_numpy().astype(float),
+            "l": win["low"].to_numpy().astype(float),
+            "c": win["close"].to_numpy().astype(float),
+            "v": win["volume"].to_numpy().astype(float),
+        }
+        # Killzones (nécessite la colonne time ; sinon neutre)
+        if (p.get("kz_bonus") or p.get("kz_filter")) and "time" in win.columns:
+            ep = win["time"].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
+            aux["kz"] = smc.killzone_flags(ep)
+        else:
+            aux["kz"] = None
+        # Biais multi-timeframe
+        if str(p.get("htf_filter", "off")) != "off":
+            aux["htf"], aux["htf_meta"] = smc.htf_trend_series(
+                win, self._smc_params(p), mult=int(p.get("htf_mult", 4)))
+        else:
+            aux["htf"], aux["htf_meta"] = None, None
+        # Compression AMD : range des m barres précédentes (barre courante
+        # exclue — c'est elle qui fait la manipulation)
+        if p.get("amd_bonus"):
+            m = int(p["amd_bars"])
+            hi = win["high"].rolling_max(m).shift(1)
+            lo = win["low"].rolling_min(m).shift(1)
+            rng = (hi - lo).fill_null(float("inf")).to_numpy().astype(float)
+            aux["comp"] = rng <= float(p["amd_range_atr"]) * res["_atr_arr"]
+        else:
+            aux["comp"] = None
+        return aux
 
     def min_bars_required(self, params: dict = None) -> int:
         return 220
@@ -151,8 +218,7 @@ class Strategy(BaseStrategy):
             open_ = df["open"].to_numpy().astype(float)
             low   = df["low"].to_numpy().astype(float)
             high  = df["high"].to_numpy().astype(float)
-            volr  = self._vol_ratio_arr(df)
-            ema   = self._ema_arr(df, int(p["ema_filter_len"]))
+            aux   = self._build_aux(df, p, res)
 
             signals: Dict[int, dict] = {}
             event_bars = sorted(
@@ -160,11 +226,12 @@ class Strategy(BaseStrategy):
                 {ob["touched_at"] for ob in res["_all_obs"]
                  if ob["touched_at"] is not None} |
                 {brk["touched_at"] for brk in res["_all_breakers"]
-                 if brk["touched_at"] is not None}
+                 if brk["touched_at"] is not None} |
+                {rb["touched_at"] for rb in res["_all_rejections"]
+                 if rb["touched_at"] is not None}
             )
             for i in event_bars:
-                sig = self._signal_at(res, i, open_, high, low, close, volr,
-                                      ema, p)
+                sig = self._signal_at(res, i, open_, high, low, close, aux, p)
                 if sig is not None:
                     signals[i] = sig
 
@@ -210,9 +277,8 @@ class Strategy(BaseStrategy):
         open_ = win["open"].to_numpy().astype(float)
         low   = win["low"].to_numpy().astype(float)
         high  = win["high"].to_numpy().astype(float)
-        volr  = self._vol_ratio_arr(win)
-        ema   = self._ema_arr(win, int(p["ema_filter_len"]))
-        sig = self._signal_at(res, i, open_, high, low, close, volr, ema, p)
+        aux   = self._build_aux(win, p, res)
+        sig = self._signal_at(res, i, open_, high, low, close, aux, p)
         return sig if sig else self._none(
             f"aucun setup SMC (bias {res['bias']['label']})"
         )
@@ -243,8 +309,8 @@ class Strategy(BaseStrategy):
         open_ = win["open"].to_numpy().astype(float)
         low   = win["low"].to_numpy().astype(float)
         high  = win["high"].to_numpy().astype(float)
-        volr  = self._vol_ratio_arr(win)
-        ema   = self._ema_arr(win, int(p["ema_filter_len"]))
+        aux   = self._build_aux(win, p, res)
+        ema   = aux["ema"]
         atr   = float(res["_atr_arr"][i])
         price = float(close[i])
         if atr <= 0 or price <= 0:
@@ -254,6 +320,13 @@ class Strategy(BaseStrategy):
         zone = pd_zone.get("zone", "")
         long_ema_ok  = ema is None or price > float(ema[i])
         short_ema_ok = ema is None or price < float(ema[i])
+        # Biais HTF appliqué aussi aux plans en attente
+        htf_mode = str(p.get("htf_filter", "off"))
+        htf_t = int(aux["htf"][i]) if aux["htf"] is not None else 0
+        long_htf_ok  = (htf_mode == "off") or \
+            (htf_mode == "soft" and htf_t >= 0) or (htf_mode == "strict" and htf_t == 1)
+        short_htf_ok = (htf_mode == "off") or \
+            (htf_mode == "soft" and htf_t <= 0) or (htf_mode == "strict" and htf_t == -1)
         buf = float(p["sl_buffer_atr"]) * atr
         max_ob_age = int(p["ob_max_age"])
         plans: List[dict] = []
@@ -278,22 +351,25 @@ class Strategy(BaseStrategy):
             })
 
         # ── 1. Signal immédiat (bougie courante) ─────────────────────────────
-        sig = self._signal_at(res, i, open_, high, low, close, volr, ema, p)
+        sig = self._signal_at(res, i, open_, high, low, close, aux, p)
         if sig is not None:
             sig = dict(sig)
             sig["entry"] = price
             _add(sig, "immediate",
                  "Déclenché sur la bougie courante — entrée au prochain open")
 
-        # ── 2. Retests d'order blocks FRAIS alignés ──────────────────────────
-        for ob in reversed(res["_all_obs"]):
+        # ── 2. Retests d'order blocks / rejection blocks FRAIS alignés ───────
+        pending_zones = list(res["_all_obs"])
+        if bool(p.get("use_rejection_blocks", False)):
+            pending_zones += list(res["_all_rejections"])
+        for ob in reversed(pending_zones):
             if ob["touched_at"] is not None or ob["invalidated_at"] is not None:
                 continue
             if i - ob["created_at"] > max_ob_age:
                 continue
             if ob["kind"] == "bullish" and trend == 1 and long_ema_ok \
-                    and zone != "discount" and price > ob["top"]:
-                sc = 0.50 + 0.10 + (0.10 if ob["strength"] >= 2 else 0.0) \
+                    and long_htf_ok and zone != "discount" and price > ob["top"]:
+                sc = 0.50 + 0.10 + (0.10 if ob.get("strength", 1) >= 2 else 0.0) \
                     + (0.10 if zone == "premium" else 0.0)
                 plan = self._build_trade(
                     res, i, "long", float(ob["top"]),
@@ -308,8 +384,8 @@ class Strategy(BaseStrategy):
                      f"[{ob['bottom']:.6g}–{ob['top']:.6g}] + bougie de rejet",
                      zone_lo=ob["bottom"], zone_hi=ob["top"])
             elif ob["kind"] == "bearish" and trend == -1 and short_ema_ok \
-                    and zone != "premium" and price < ob["bottom"]:
-                sc = 0.50 + 0.10 + (0.10 if ob["strength"] >= 2 else 0.0) \
+                    and short_htf_ok and zone != "premium" and price < ob["bottom"]:
+                sc = 0.50 + 0.10 + (0.10 if ob.get("strength", 1) >= 2 else 0.0) \
                     + (0.10 if zone == "discount" else 0.0)
                 plan = self._build_trade(
                     res, i, "short", float(ob["bottom"]),
@@ -330,7 +406,7 @@ class Strategy(BaseStrategy):
                 continue
             lvl = float(pool["level"])
             if pool["kind"] == "sell_side" and trend == 1 and long_ema_ok \
-                    and zone != "discount" and lvl < price:
+                    and long_htf_ok and zone != "discount" and lvl < price:
                 sc = 0.50 + 0.10 + 0.10 + (0.10 if zone == "premium" else 0.0)
                 # Entrée estimée au niveau sweepé ; la mèche du sweep est
                 # inconnue d'avance → marge d'½ ATR sous le niveau.
@@ -345,7 +421,7 @@ class Strategy(BaseStrategy):
                      f"(×{len(pool['indices'])}) avec clôture au-dessus (rejet)",
                      zone_lo=pool["bottom"], zone_hi=pool["top"])
             elif pool["kind"] == "buy_side" and trend == -1 and short_ema_ok \
-                    and zone != "premium" and lvl > price:
+                    and short_htf_ok and zone != "premium" and lvl > price:
                 sc = 0.50 + 0.10 + 0.10 + (0.10 if zone == "discount" else 0.0)
                 plan = self._build_trade(
                     res, i, "short", lvl, lvl + 0.5 * atr + buf, atr, p,
@@ -396,11 +472,13 @@ class Strategy(BaseStrategy):
 
     # ── Cœur : dérivation du signal à la barre i ─────────────────────────────
     def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
-                   low: np.ndarray, close: np.ndarray, volr: np.ndarray,
-                   ema: Optional[np.ndarray], p: Dict[str, Any]) -> Optional[dict]:
+                   low: np.ndarray, close: np.ndarray, aux: Dict[str, Any],
+                   p: Dict[str, Any]) -> Optional[dict]:
         """Construit le meilleur signal SMC à la barre ``i`` (causale : seules
         les entités formées avant ``i`` sont utilisées). Retourne None si aucun
         setup ne passe les filtres (dont le gain minimal ``min_gain_pct``)."""
+        volr = aux["volr"]
+        ema  = aux["ema"]
         trend_arr = res["_trend_arr"]
         atr = float(res["_atr_arr"][i])
         if atr <= 0 or i < 1:
@@ -408,6 +486,44 @@ class Strategy(BaseStrategy):
         trend = int(trend_arr[i])
         c = float(close[i])
         candidates: List[dict] = []
+
+        # ── Filtres/bonus transverses des enrichissements ─────────────────────
+        # Killzones : filtre dur optionnel + bonus (sessions LDN/NY = fenêtres
+        # où les desks génèrent l'essentiel des sweeps).
+        in_kz = bool(aux["kz"][i]) if aux["kz"] is not None else False
+        if bool(p.get("kz_filter", False)) and aux["kz"] is not None and not in_kz:
+            return None
+        kz_add = 0.05 if (bool(p.get("kz_bonus", False)) and in_kz) else 0.0
+        # Biais multi-timeframe : la structure du timeframe supérieur commande.
+        htf_mode = str(p.get("htf_filter", "off"))
+        htf_t = int(aux["htf"][i]) if aux["htf"] is not None else 0
+        long_htf_ok  = (htf_mode == "off") or \
+            (htf_mode == "soft" and htf_t >= 0) or (htf_mode == "strict" and htf_t == 1)
+        short_htf_ok = (htf_mode == "off") or \
+            (htf_mode == "soft" and htf_t <= 0) or (htf_mode == "strict" and htf_t == -1)
+        # AMD : la barre courante sweepe après une phase de compression
+        # (accumulation) → manipulation probable, expansion à suivre.
+        amd_here = bool(aux["comp"][i]) if aux["comp"] is not None else False
+        amd_add = 0.10 if (bool(p.get("amd_bonus", False)) and amd_here) else 0.0
+        # Volume profile : HVN = acceptation (support volumétrique de la zone).
+        vp = None
+        if bool(p.get("vp_confluence", False)) or bool(p.get("vp_targets", False)):
+            vp = smc.volume_profile(aux["h"], aux["l"], aux["c"], aux["v"], i,
+                                    lookback=int(p["vp_lookback"]),
+                                    n_bins=int(p["vp_bins"]))
+
+        def _vp_add(zone_lo: float, zone_hi: float) -> float:
+            if vp is None or not bool(p.get("vp_confluence", False)):
+                return 0.0
+            pad = 0.25 * atr
+            return 0.05 if any(zone_lo - pad <= lv <= zone_hi + pad
+                               for lv in vp["hvns"]) else 0.0
+
+        vp_above = sorted([lv for lv in ([vp["poc"]] + vp["hvns"])
+                           if lv > c]) if (vp and p.get("vp_targets")) else []
+        vp_below = sorted([lv for lv in ([vp["poc"]] + vp["hvns"])
+                           if lv < c], reverse=True) \
+            if (vp and p.get("vp_targets")) else []
 
         # Garde CHoCH : pas d'entrée contre un changement de caractère récent.
         guard = int(p["choch_guard_bars"])
@@ -457,94 +573,111 @@ class Strategy(BaseStrategy):
                 continue
             if ev["kind"] == "sell_side" and not recent_choch_down:
                 if (trend != 1 and not allow_ct) or zone == "discount" \
-                        or not long_ema_ok:
+                        or not long_ema_ok or not long_htf_ok:
                     continue
-                sc = 0.50
+                sc = 0.50 + kz_add + amd_add
                 sc += 0.10 if trend == 1 else 0.0
                 sc += 0.10 if ev["source"] == "pool" else 0.0
                 sc += 0.10 if zone == "premium" else 0.0
                 sc += 0.05 if vol_ok else 0.0
                 sc += 0.05 if close[i] > open_[i] else 0.0
                 sc += 0.05 if tl_tap_long else 0.0
+                sc += _vp_add(float(ev["level"]) - 0.5 * atr,
+                              float(ev["level"]) + 0.5 * atr)
                 sl = min(float(low[i]), float(ev["level"])) - \
                     float(p["sl_buffer_atr"]) * atr
                 cand = self._build_trade(res, i, "long", c, sl, atr, p,
                                          setup="SWEEP_REVERSAL", score=sc,
                                          detail=f"sweep {ev['source']} "
                                                 f"{ev['level']:.6g}",
-                                         trend=trend, zone=zone)
+                                         trend=trend, zone=zone,
+                                         extra_targets=vp_above)
                 if cand:
                     candidates.append(cand)
             elif ev["kind"] == "buy_side" and not recent_choch_up:
                 if (trend != -1 and not allow_ct) or zone == "premium" \
-                        or not short_ema_ok:
+                        or not short_ema_ok or not short_htf_ok:
                     continue
-                sc = 0.50
+                sc = 0.50 + kz_add + amd_add
                 sc += 0.10 if trend == -1 else 0.0
                 sc += 0.10 if ev["source"] == "pool" else 0.0
                 sc += 0.10 if zone == "discount" else 0.0
                 sc += 0.05 if vol_ok else 0.0
                 sc += 0.05 if close[i] < open_[i] else 0.0
                 sc += 0.05 if tl_tap_short else 0.0
+                sc += _vp_add(float(ev["level"]) - 0.5 * atr,
+                              float(ev["level"]) + 0.5 * atr)
                 sl = max(float(high[i]), float(ev["level"])) + \
                     float(p["sl_buffer_atr"]) * atr
                 cand = self._build_trade(res, i, "short", c, sl, atr, p,
                                          setup="SWEEP_REVERSAL", score=sc,
                                          detail=f"sweep {ev['source']} "
                                                 f"{ev['level']:.6g}",
-                                         trend=trend, zone=zone)
+                                         trend=trend, zone=zone,
+                                         extra_targets=vp_below)
                 if cand:
                     candidates.append(cand)
 
-        # ── B. Retest d'order block ──────────────────────────────────────────
+        # ── B. Retest d'order block / rejection block ─────────────────────────
+        # Les rejection blocks (mèches de swing) partagent la même mécanique de
+        # retest que les OB : zone d'offre/demande née d'un rejet violent.
         max_ob_age = int(p["ob_max_age"])
-        for ob in res["_all_obs"]:
-            if ob["touched_at"] != i or i - ob["created_at"] > max_ob_age:
-                continue
-            if ob["invalidated_at"] is not None and ob["invalidated_at"] <= i:
-                continue
-            if ob["kind"] == "bullish" and trend == 1 and not recent_choch_down:
-                if c < ob["bottom"]:
-                    continue          # zone déjà transpercée sur clôture
-                if zone == "discount" or not long_ema_ok:
-                    continue          # côté momentum uniquement (cf. sweeps)
-                sc = 0.50 + 0.10      # structure alignée par construction
-                sc += 0.10 if ob["strength"] >= 2 else 0.0
-                sc += 0.10 if zone == "premium" else 0.0
-                sc += 0.05 if self._fvg_overlap(res, i, "bullish",
-                                                ob["bottom"], ob["top"]) else 0.0
-                sc += 0.05 if vol_ok else 0.0
-                sc += 0.05 if close[i] > open_[i] else 0.0
-                sc += 0.05 if tl_tap_long else 0.0
-                sl = float(ob["bottom"]) - float(p["sl_buffer_atr"]) * atr
-                cand = self._build_trade(res, i, "long", c, sl, atr, p,
-                                         setup="OB_RETEST", score=sc,
-                                         detail=f"demande [{ob['bottom']:.6g}"
-                                                f"–{ob['top']:.6g}]",
-                                         trend=trend, zone=zone)
-                if cand:
-                    candidates.append(cand)
-            elif ob["kind"] == "bearish" and trend == -1 and not recent_choch_up:
-                if c > ob["top"]:
+        zone_sources = [("OB_RETEST", res["_all_obs"])]
+        if bool(p.get("use_rejection_blocks", False)):
+            zone_sources.append(("REJECTION_RETEST", res["_all_rejections"]))
+        for setup_name, zone_list in zone_sources:
+            for ob in zone_list:
+                if ob["touched_at"] != i or i - ob["created_at"] > max_ob_age:
                     continue
-                if zone == "premium" or not short_ema_ok:
-                    continue          # côté momentum uniquement (cf. sweeps)
-                sc = 0.50 + 0.10
-                sc += 0.10 if ob["strength"] >= 2 else 0.0
-                sc += 0.10 if zone == "discount" else 0.0
-                sc += 0.05 if self._fvg_overlap(res, i, "bearish",
-                                                ob["bottom"], ob["top"]) else 0.0
-                sc += 0.05 if vol_ok else 0.0
-                sc += 0.05 if close[i] < open_[i] else 0.0
-                sc += 0.05 if tl_tap_short else 0.0
-                sl = float(ob["top"]) + float(p["sl_buffer_atr"]) * atr
-                cand = self._build_trade(res, i, "short", c, sl, atr, p,
-                                         setup="OB_RETEST", score=sc,
-                                         detail=f"offre [{ob['bottom']:.6g}"
-                                                f"–{ob['top']:.6g}]",
-                                         trend=trend, zone=zone)
-                if cand:
-                    candidates.append(cand)
+                if ob["invalidated_at"] is not None and ob["invalidated_at"] <= i:
+                    continue
+                strength2 = ob.get("strength", 1) >= 2
+                if ob["kind"] == "bullish" and trend == 1 and not recent_choch_down:
+                    if c < ob["bottom"]:
+                        continue          # zone déjà transpercée sur clôture
+                    if zone == "discount" or not long_ema_ok or not long_htf_ok:
+                        continue          # côté momentum uniquement (cf. sweeps)
+                    sc = 0.50 + 0.10 + kz_add   # structure alignée par construction
+                    sc += 0.10 if strength2 else 0.0
+                    sc += 0.10 if zone == "premium" else 0.0
+                    sc += 0.05 if self._fvg_overlap(res, i, "bullish",
+                                                    ob["bottom"], ob["top"]) else 0.0
+                    sc += 0.05 if vol_ok else 0.0
+                    sc += 0.05 if close[i] > open_[i] else 0.0
+                    sc += 0.05 if tl_tap_long else 0.0
+                    sc += _vp_add(ob["bottom"], ob["top"])
+                    sl = float(ob["bottom"]) - float(p["sl_buffer_atr"]) * atr
+                    cand = self._build_trade(res, i, "long", c, sl, atr, p,
+                                             setup=setup_name, score=sc,
+                                             detail=f"demande [{ob['bottom']:.6g}"
+                                                    f"–{ob['top']:.6g}]",
+                                             trend=trend, zone=zone,
+                                             extra_targets=vp_above)
+                    if cand:
+                        candidates.append(cand)
+                elif ob["kind"] == "bearish" and trend == -1 and not recent_choch_up:
+                    if c > ob["top"]:
+                        continue
+                    if zone == "premium" or not short_ema_ok or not short_htf_ok:
+                        continue          # côté momentum uniquement (cf. sweeps)
+                    sc = 0.50 + 0.10 + kz_add
+                    sc += 0.10 if strength2 else 0.0
+                    sc += 0.10 if zone == "discount" else 0.0
+                    sc += 0.05 if self._fvg_overlap(res, i, "bearish",
+                                                    ob["bottom"], ob["top"]) else 0.0
+                    sc += 0.05 if vol_ok else 0.0
+                    sc += 0.05 if close[i] < open_[i] else 0.0
+                    sc += 0.05 if tl_tap_short else 0.0
+                    sc += _vp_add(ob["bottom"], ob["top"])
+                    sl = float(ob["top"]) + float(p["sl_buffer_atr"]) * atr
+                    cand = self._build_trade(res, i, "short", c, sl, atr, p,
+                                             setup=setup_name, score=sc,
+                                             detail=f"offre [{ob['bottom']:.6g}"
+                                                    f"–{ob['top']:.6g}]",
+                                             trend=trend, zone=zone,
+                                             extra_targets=vp_below)
+                    if cand:
+                        candidates.append(cand)
 
         # ── C. Retest de breaker block (OB invalidé → polarité inversée) ────
         # Le transpercement d'un OB accompagne le plus souvent un CHoCH : le
@@ -558,36 +691,42 @@ class Strategy(BaseStrategy):
                     continue
                 if brk["kind"] == "bullish" and trend == 1 \
                         and not recent_choch_down:
-                    if c < brk["bottom"] or zone == "discount" or not long_ema_ok:
+                    if c < brk["bottom"] or zone == "discount" \
+                            or not long_ema_ok or not long_htf_ok:
                         continue
-                    sc = 0.50 + 0.10
+                    sc = 0.50 + 0.10 + kz_add
                     sc += 0.10 if zone == "premium" else 0.0
                     sc += 0.05 if vol_ok else 0.0
                     sc += 0.05 if close[i] > open_[i] else 0.0
                     sc += 0.05 if tl_tap_long else 0.0
+                    sc += _vp_add(brk["bottom"], brk["top"])
                     sl = float(brk["bottom"]) - float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "long", c, sl, atr, p,
                                              setup="BREAKER_RETEST", score=sc,
                                              detail=f"breaker [{brk['bottom']:.6g}"
                                                     f"–{brk['top']:.6g}]",
-                                             trend=trend, zone=zone)
+                                             trend=trend, zone=zone,
+                                             extra_targets=vp_above)
                     if cand:
                         candidates.append(cand)
                 elif brk["kind"] == "bearish" and trend == -1 \
                         and not recent_choch_up:
-                    if c > brk["top"] or zone == "premium" or not short_ema_ok:
+                    if c > brk["top"] or zone == "premium" \
+                            or not short_ema_ok or not short_htf_ok:
                         continue
-                    sc = 0.50 + 0.10
+                    sc = 0.50 + 0.10 + kz_add
                     sc += 0.10 if zone == "discount" else 0.0
                     sc += 0.05 if vol_ok else 0.0
                     sc += 0.05 if close[i] < open_[i] else 0.0
                     sc += 0.05 if tl_tap_short else 0.0
+                    sc += _vp_add(brk["bottom"], brk["top"])
                     sl = float(brk["top"]) + float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "short", c, sl, atr, p,
                                              setup="BREAKER_RETEST", score=sc,
                                              detail=f"breaker [{brk['bottom']:.6g}"
                                                     f"–{brk['top']:.6g}]",
-                                             trend=trend, zone=zone)
+                                             trend=trend, zone=zone,
+                                             extra_targets=vp_below)
                     if cand:
                         candidates.append(cand)
 
@@ -595,13 +734,18 @@ class Strategy(BaseStrategy):
             return None
         best = max(candidates, key=lambda x: x["score"])
         best["score"] = round(min(best["score"], 1.0), 3)
+        # Seuil interne par TF (surchargable par optimizer_results, contrairement
+        # à score_threshold) : mêmes sémantiques que le seuil de l'engine.
+        if best["score"] < float(p.get("min_score", 0.0)):
+            return None
         return best
 
     # ── Construction du trade : ciblage liquidité + filtre 0.4 % ────────────
     def _build_trade(self, res: dict, i: int, side: str, entry: float,
                      sl: float, atr: float, p: Dict[str, Any],
                      setup: str, score: float, detail: str,
-                     trend: int = 0, zone: str = "") -> Optional[dict]:
+                     trend: int = 0, zone: str = "",
+                     extra_targets: Optional[List[float]] = None) -> Optional[dict]:
         risk = (entry - sl) if side == "long" else (sl - entry)
         if risk <= 0 or entry <= 0:
             return None
@@ -620,8 +764,10 @@ class Strategy(BaseStrategy):
             liq = smc.liquidity_targets_above(res, i, entry, max_age=max_age)
             vds = smc.void_targets_above(res, i, entry, max_age=max_age) \
                 if use_voids else []
+            vps = [lv for lv in (extra_targets or []) if lv > entry]
             targets = sorted({(lv, "liquidité") for lv in liq} |
-                             {(lv, "void") for lv in vds})
+                             {(lv, "void") for lv in vds} |
+                             {(lv, "volume") for lv in vps})
             for level, src in targets:
                 cand = level - front
                 gain_pct = (cand - entry) / entry * 100.0
@@ -634,8 +780,10 @@ class Strategy(BaseStrategy):
             liq = smc.liquidity_targets_below(res, i, entry, max_age=max_age)
             vds = smc.void_targets_below(res, i, entry, max_age=max_age) \
                 if use_voids else []
+            vps = [lv for lv in (extra_targets or []) if lv < entry]
             targets = sorted({(lv, "liquidité") for lv in liq} |
-                             {(lv, "void") for lv in vds}, reverse=True)
+                             {(lv, "void") for lv in vds} |
+                             {(lv, "volume") for lv in vps}, reverse=True)
             for level, src in targets:
                 cand = level + front
                 gain_pct = (entry - cand) / entry * 100.0

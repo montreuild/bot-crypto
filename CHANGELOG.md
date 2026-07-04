@@ -6,6 +6,35 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧭 SMC : biais multi-timeframe, volume profile, killzones, AMD, rejection blocks — mesurés un par un
+
+Cinq nouveaux enrichissements implémentés dans le moteur (`app/core/smc.py`)
+et la stratégie `smart_money`, puis **mesurés ISOLÉMENT** sur BTC/USDC
+15m→1d (historique complet + dernier tiers pseudo-OOS 2024-2026) :
+
+- **Biais multi-timeframe** (`htf_trend_series` : structure BOS/CHoCH sur
+  buckets horloge ×4, mapping causal par barre) — ✅ **seul enrichissement
+  gagnant sur tous les TF**, activé par défaut (`htf_filter: soft`).
+  4h : PF 1.485 vs 1.414, DD −8.0 vs −9.9, OOS +23 vs −8 ; **la période
+  2024-2026 repasse positive (PF 1.03)**. Nouveaux défauts 4h :
+  161 trades, WR 46.6 %, +41.0 %, Sharpe 7.5.
+- **Volume profile** (`volume_profile` : POC/HVN/LVN causals) — confluence
+  neutre au seuil 0.55, cibles légèrement négatives → off par défaut,
+  exploités par les configs par TF à seuils élevés.
+- **Killzones/sessions** (LDN 07-10, NY 12-15 UTC) — aucun edge horaire
+  mesurable sur BTC 24/7 → off (bonus et filtre).
+- **AMD / Power of Three** (compression → sweep de manipulation) — bonus
+  neutre au seuil 0.55 → off, exploré par l'optimiseur.
+- **Rejection blocks** (mèches de swing ≥ 0.5×ATR, setup REJECTION_RETEST)
+  — dilue le PF global mais améliore l'OOS 4h/2h → off, exploré par
+  l'optimiseur.
+
+Calibration PAR TIMEFRAME (grille IS 2/3 / OOS 1/3, sélection sur le PF OOS,
+score officiel `composite_score` du repo) écrite dans
+`strategies/smart_money.yaml` → `optimizer_results`. Page Smart graph :
+calques « Rejection blocks » et « Volume profile », biais HTF et session
+dans la Lecture du marché. 35 tests SMC, suite complète 412 OK.
+
 ### 📌 Smart graph : tableau « Trades à ouvrir » (plans recommandés)
 
 Nouvelle méthode `Strategy.trade_plans()` (smart_money) exposée via

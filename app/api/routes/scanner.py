@@ -579,6 +579,41 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
                        else "fresh"),
         } for brk in res["breakers"][-10:]]
 
+        rejections = [{
+            "kind": rb["kind"], "top": rb["top"], "bottom": rb["bottom"],
+            "time_start": _t(rb["index"]),
+            "time_end":   _t(rb["invalidated_at"], last_t),
+            "status": ("invalidated" if rb["invalidated_at"] is not None
+                       else "touched" if rb["touched_at"] is not None
+                       else "fresh"),
+        } for rb in res["rejection_blocks"][-10:]]
+
+        # Volume profile (POC / HVN / LVN), session courante et biais HTF
+        import numpy as _np
+        _h = df["high"].to_numpy().astype(float)
+        _l = df["low"].to_numpy().astype(float)
+        _c = df["close"].to_numpy().astype(float)
+        _v = df["volume"].to_numpy().astype(float)
+        vp = smc.volume_profile(_h, _l, _c, _v, n - 1,
+                                lookback=int(params.get("vp_lookback", 240)),
+                                n_bins=int(params.get("vp_bins", 40)))
+        vprofile = None
+        if vp:
+            vprofile = {"poc": round(vp["poc"], 8),
+                        "hvns": [round(x, 8) for x in vp["hvns"][:8]],
+                        "lvns": [round(x, 8) for x in vp["lvns"][:8]]}
+        last_epoch = int(times[-1])
+        kz_arr = smc.killzone_flags(_np.array([last_epoch], dtype=_np.int64))
+        session = {"name": smc.session_label(last_epoch),
+                   "in_killzone": bool(kz_arr[0])}
+        _, htf_meta = smc.htf_trend_series(
+            df, mult=int(params.get("htf_mult", 4)))
+        htf_bias = {
+            "trend": htf_meta["trend"],
+            "label": {1: "haussier", -1: "baissier", 0: "neutre"}[htf_meta["trend"]],
+            "n_htf": htf_meta["n_htf"],
+        }
+
         # Zigzag de structure (peaks/troughs) + projection de cycle
         structure_line = [{
             "time": _t(pt["index"]), "price": pt["price"],
@@ -662,6 +697,10 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
             "fvgs": fvgs,
             "liquidity_voids": voids,
             "breakers": breakers,
+            "rejection_blocks": rejections,
+            "volume_profile": vprofile,
+            "session": session,
+            "htf_bias": htf_bias,
             "structure_line": structure_line,
             "cycle": cycle,
             "markers": markers,
