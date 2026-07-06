@@ -504,6 +504,41 @@ class TestTradePlans:
     def test_plans_insufficient_data(self):
         assert Strategy().trade_plans(_random_df(80)) == []
 
+    def test_immediate_plan_matches_score(self):
+        """Un plan 'immediate' doit correspondre EXACTEMENT au signal que
+        score() renvoie (même côté/setup/entrée/SL/TP) — garantit que le
+        tableau « Trades à ouvrir » ne montre pas de trade que le moteur ne
+        prendrait pas. Enforce la cohérence trade_plans ↔ _signal_at."""
+        checked = 0
+        for seed in range(20):
+            df = _random_df(900, seed=seed, jump_p=0.04)
+            plans = Strategy().trade_plans(df)
+            sig = Strategy().score(df)
+            imm = [p for p in plans if p["status"] == "immediate"]
+            if sig["side"] != "none":
+                assert imm, f"score={sig['side']} mais aucun plan immediate (seed {seed})"
+                p = imm[0]
+                assert p["side"] == sig["side"] and p["setup"] == sig["setup"]
+                assert abs(p["stop"] - sig["stop_hint"]) < 1e-6
+                assert abs(p["tp"] - sig["tp_hint"]) < 1e-6
+                checked += 1
+            else:
+                assert not imm, f"aucun signal mais plan immediate présent (seed {seed})"
+        assert checked > 0, "aucun signal immédiat testé — échantillon non significatif"
+
+    def test_dir_gate_and_htf_ok_helpers(self):
+        # _htf_ok : sémantique off/soft/strict
+        assert Strategy._htf_ok("off", -1) == (True, True)
+        assert Strategy._htf_ok("soft", 1) == (True, False)
+        assert Strategy._htf_ok("soft", -1) == (False, True)
+        assert Strategy._htf_ok("strict", 0) == (False, False)
+        # _dir_gate : structure + momentum + ema + htf
+        assert Strategy._dir_gate("long", 1, "premium", True, True) is True
+        assert Strategy._dir_gate("long", 1, "discount", True, True) is False
+        assert Strategy._dir_gate("long", -1, "premium", True, True) is False
+        assert Strategy._dir_gate("short", -1, "discount", True, True) is True
+        assert Strategy._dir_gate("short", -1, "premium", True, True) is False
+
 
 class TestBacktestCacheCoherence:
     def test_cached_signals_match_live_windows(self):

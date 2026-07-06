@@ -508,6 +508,7 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
     try:
         from app.core import smc
         from app.strategies.smart_money import Strategy as _SMCStrategy
+        from app.live.utils import resolve_strategy_params
 
         exchange = create_exchange(state.cfg)
         scanner  = MarketScanner(exchange, state.cfg)
@@ -517,10 +518,16 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
         if df is None or len(df) < 60:
             raise HTTPException(404, f"Données insuffisantes pour {symbol}/{tf}")
 
-        params = (state.cfg.get("strategy_params", {}) or {}).get("smart_money", {})
-        res = smc.analyze(df, _SMCStrategy._smc_params(
-            {**_SMCStrategy.fixed_params, **{k: v for k, v in params.items()
-                                             if v is not None}}))
+        # Overlay optimizer_results du timeframe (même résolution que le live et
+        # le backtest) → l'UI reflète la config RÉELLEMENT tradée par le bot.
+        resolved_params = {"smart_money":
+                           resolve_strategy_params(state.cfg, tf).get("smart_money", {})}
+        # Une seule analyse partagée par la sérialisation ET par score/trade_plans
+        # (via le cache d'instance de la stratégie) : len(df) ≤ 3000 = max_window,
+        # donc la fenêtre de la stratégie == df.
+        strat = _SMCStrategy()
+        p_full = strat._p(resolved_params)
+        res, res_aux = strat._analyze_cached(df, p_full)
 
         times = df["time"].dt.epoch(time_unit="s").to_list()
         n = len(df)
@@ -595,8 +602,8 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
         _c = df["close"].to_numpy().astype(float)
         _v = df["volume"].to_numpy().astype(float)
         vp = smc.volume_profile(_h, _l, _c, _v, n - 1,
-                                lookback=int(params.get("vp_lookback", 240)),
-                                n_bins=int(params.get("vp_bins", 40)))
+                                lookback=int(p_full.get("vp_lookback", 240)),
+                                n_bins=int(p_full.get("vp_bins", 40)))
         vprofile = None
         if vp:
             vprofile = {"poc": round(vp["poc"], 8),
@@ -606,8 +613,14 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
         kz_arr = smc.killzone_flags(_np.array([last_epoch], dtype=_np.int64))
         session = {"name": smc.session_label(last_epoch),
                    "in_killzone": bool(kz_arr[0])}
-        _, htf_meta = smc.htf_trend_series(
-            df, mult=int(params.get("htf_mult", 4)))
+        # Biais HTF : réutilise l'analyse de l'aux si disponible (mêmes params
+        # swing que le signal), sinon calcule avec _smc_params (cohérence).
+        htf_meta = (res_aux or {}).get("htf_meta")
+        if htf_meta is None:
+            from app.strategies.smart_money import _HTF_SEC_MAP
+            _, htf_meta = smc.htf_trend_series(
+                df, _SMCStrategy._smc_params(p_full),
+                mult=int(p_full.get("htf_mult", 4)), htf_sec_map=_HTF_SEC_MAP)
         htf_bias = {
             "trend": htf_meta["trend"],
             "label": {1: "haussier", -1: "baissier", 0: "neutre"}[htf_meta["trend"]],
@@ -665,12 +678,13 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
             }
 
         # ── Signal courant + plans de trade de la stratégie smart_money ──────
+        # Réutilisent le cache d'analyse de `strat` (fenêtre == df) et les mêmes
+        # params résolus par TF → aucune analyse redondante, cohérence UI/live.
         signal = None
         trade_plans = []
         try:
-            strat = _SMCStrategy()
-            trade_plans = strat.trade_plans(df, state.cfg.get("strategy_params", {}))
-            sig = strat.score(df, state.cfg.get("strategy_params", {}))
+            trade_plans = strat.trade_plans(df, resolved_params)
+            sig = strat.score(df, resolved_params)
             if sig.get("side") not in (None, "none"):
                 signal = {
                     "side":   sig["side"],
@@ -733,6 +747,19 @@ def scanner_smc_replay(symbol: str = "BTC/USDC", timeframe: str = "4h",
     paramètres par timeframe résolus (optimizer_results)."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
+
+    import time as _time
+    cache_key = (symbol, timeframe, int(limit))
+    # Cache court : le payload ne change qu'à la clôture d'une nouvelle barre.
+    with state._smc_replay_lock:
+        hit = state._smc_replay_cache.get(cache_key)
+        if hit and (_time.monotonic() - hit[0]) < state._SMC_REPLAY_TTL:
+            return JSONResponse(content=hit[1])
+
+    # Borne la concurrence : un backtest complet sur le thread API est lourd —
+    # même garde que /api/replay (429 si saturé) pour ne pas affamer le bot.
+    if not state._smc_semaphore.acquire(blocking=False):
+        raise HTTPException(429, "Trop de rejeux SMC simultanés — réessayez.")
     try:
         from app.core import smc
         from app.strategies.smart_money import Strategy as _SMCStrategy
@@ -755,10 +782,11 @@ def scanner_smc_replay(symbol: str = "BTC/USDC", timeframe: str = "4h",
         p_strat  = {**_SMCStrategy.fixed_params,
                     **{k: v for k, v in (resolved.get("smart_money") or {}).items()
                        if v is not None}}
+        from app.strategies.smart_money import _HTF_SEC_MAP
         res = smc.analyze(df, _SMCStrategy._smc_params(p_strat))
         htf_arr, htf_meta = smc.htf_trend_series(
             df, _SMCStrategy._smc_params(p_strat),
-            mult=int(p_strat.get("htf_mult", 4)))
+            mult=int(p_strat.get("htf_mult", 4)), htf_sec_map=_HTF_SEC_MAP)
 
         # Trades réels : Backtester (mêmes coûts/priorités que le backtest)
         eng = _Engine()
@@ -827,13 +855,23 @@ def scanner_smc_replay(symbol: str = "BTC/USDC", timeframe: str = "4h",
                              "sl_buffer_atr", "use_rejection_blocks", "kz_filter",
                              "kz_bonus", "amd_bonus", "vp_confluence")},
         }
-        return JSONResponse(content=_clean(payload))
+        cleaned = _clean(payload)
+        with state._smc_replay_lock:
+            state._smc_replay_cache[cache_key] = (_time.monotonic(), cleaned)
+            # Borne la taille du cache (garde les 16 entrées les plus récentes).
+            if len(state._smc_replay_cache) > 16:
+                for k in sorted(state._smc_replay_cache,
+                                key=lambda k: state._smc_replay_cache[k][0])[:-16]:
+                    state._smc_replay_cache.pop(k, None)
+        return JSONResponse(content=cleaned)
     except HTTPException:
         raise
     except Exception as e:
         err_id = uuid.uuid4()
         logger.error(f"[API] Erreur {err_id} scanner/smc_replay : {e}", exc_info=True)
         raise HTTPException(500, f"Erreur interne ({err_id})")
+    finally:
+        state._smc_semaphore.release()
 
 
 @router.get("/api/scanner/signals", dependencies=[Depends(verify_api_key)])

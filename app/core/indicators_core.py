@@ -142,6 +142,17 @@ def atr_val(df: pl.DataFrame, n: int = 14) -> float:
     return float(v) if v is not None and float(v) > 0 else 0.0
 
 
+def atr_wilder(df: pl.DataFrame, n: int = 14) -> pl.Series:
+    """ATR(n) lissage de **Wilder** (RMA, alpha = 1/n) — la variante de
+    ``ta.atr`` en Pine, distincte de :func:`atr` (EMA span=n, alpha=2/(n+1)).
+
+    Utilisée par le moteur Smart Money (``app/core/smc.py``) et le portage
+    PineScript (``liquidity_sweep_vol``) pour que les seuils « ×ATR » de ces
+    modules correspondent au même ATR que TradingView. Source unique de vérité
+    du lissage Wilder — ne pas ré-implémenter en local."""
+    return _true_range(df).ewm_mean(alpha=1.0 / n, adjust=False)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  ADX  — deux variantes : tuple Series (pour detect_regime/build_features)
 #          et scalaire (stratégies)

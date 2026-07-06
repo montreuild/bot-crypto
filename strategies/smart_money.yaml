@@ -22,10 +22,9 @@
 #   gain/risque ≥ min_rr sont retenues. Tout setup trop court est rejeté.
 #
 # Validation BTC/USDC (2026-07, défauts ci-dessous dont htf_filter: soft,
-# frais 0.1 %/côté) :
-#   4h : 2018→2026, 161 trades, WR 46.6 %, PnL +41.0 %, PF 1.485, Sharpe 7.5,
-#        DD −8.0 % (sous-périodes : PF 2.35 / 1.61 / 1.03 — la période
-#        2024-2026 repasse POSITIVE grâce au biais multi-timeframe).
+# frais 0.1 %/côté ; HTF aligné sur _HTF_MAP → 4h utilise le 1d) :
+#   4h : 2018→2026, 145 trades, WR 46.9 %, PnL +40.1 %, PF 1.523, Sharpe 8.2,
+#        DD −8.1 % (sous-périodes : PF 2.49 / 1.56 / 0.97).
 #   30m/1h/2h/1d : négatif avec les défauts → laissés à l'optimiseur
 #        (voir optimizer_results ci-dessous pour les meilleures configs/TF).
 #   BREAKER_RETEST : −163 USDC / 220 trades sur 4h → use_breakers: false.
@@ -75,10 +74,10 @@ params:
 optimizer_results:
   4h:
     run_date: '2026-07-04'
-    oos_score: 0.2552
-    # OOS 2024-2026 : 56 trades, +60.2 (+6.0 %), PF 1.202, DD −5.1 %
-    # (vs défauts : +23, PF 1.06) — sélectivité maximale : seuls les setups
-    # multi-confluences (seuil 0.75) avec RR ≥ 2 passent.
+    oos_score: 0.1744
+    # OOS 2024-2026 (HTF _HTF_MAP) : 51 trades, +22.2 (+2.2 %), PF 1.078,
+    # DD −7.4 % — sélectivité maximale : seuls les setups multi-confluences
+    # (seuil 0.75) avec RR ≥ 2 passent. Seul TF au score OOS positif.
     params:
       min_score: 0.75
       min_rr: 2.0

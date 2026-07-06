@@ -46,7 +46,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import polars as pl
 
-from app.core.indicators_core import _true_range
+from app.core.indicators_core import atr_wilder as _atr_wilder_series
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +65,10 @@ DEFAULTS: Dict[str, Any] = {
     "void_min_atr":   2.5,   # déplacement minimal du run (×ATR)
     "rb_wick_atr":    0.5,   # mèche minimale d'un rejection block (×ATR)
     "atr_len":        14,
-    "channel_lookback": 120, # fenêtre du canal de régression
-    "max_pool_age":   500,   # âge max (barres) d'un pool utilisable comme cible
-    "max_ob_age":     250,   # âge max d'un order block « frais »
+    "channel_lookback": 120,  # fenêtre du canal de régression
+    # NB : le vieillissement des zones (âge max d'un pool/OB utilisable comme
+    # cible) est un paramètre de STRATÉGIE (``pool_max_age``/``ob_max_age`` dans
+    # smart_money.fixed_params), pas du moteur — il n'apparaît donc pas ici.
 }
 
 
@@ -81,8 +82,10 @@ def _params(p: Optional[dict]) -> Dict[str, Any]:
 
 
 def _wilder_atr(df: pl.DataFrame, n: int) -> np.ndarray:
-    return (_true_range(df).ewm_mean(alpha=1.0 / n, adjust=False)
-            .fill_null(0.0).to_numpy().astype(float))
+    # ATR de Wilder (RMA) — source unique : indicators_core.atr_wilder. Le
+    # lissage Wilder (≠ EMA span=n) est intentionnel : il aligne les seuils
+    # « ×ATR » du SMC sur l'ATR de TradingView (ta.atr).
+    return _atr_wilder_series(df, n).fill_null(0.0).to_numpy().astype(float)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -750,25 +753,23 @@ def regression_channel_at(c: np.ndarray, i: int,
 
 
 def _regression_channel(c: np.ndarray, lookback: int) -> Optional[dict]:
-    """Canal de régression linéaire sur les ``lookback`` dernières clôtures :
-    droite médiane ± 2 écarts-types des résidus."""
+    """Canal de régression pour le résultat d'``analyze`` (dernière barre) —
+    fin wrapper autour de :func:`regression_channel_at` qui reshape la sortie
+    en {start_index, end_index, mid_start, mid_end}. Source unique du calcul
+    (droite médiane ± 2σ des résidus) : les deux vues ne peuvent plus diverger."""
     n = len(c)
+    ch = regression_channel_at(c, n - 1, lookback)
+    if ch is None:
+        return None
     lb = min(lookback, n)
-    if lb < 20:
-        return None
-    y = c[n - lb:]
-    x = np.arange(lb, dtype=float)
-    slope, intercept = np.polyfit(x, y, 1)
-    resid = y - (slope * x + intercept)
-    half = float(2.0 * resid.std())
-    if not math.isfinite(half):
-        return None
+    mid_end = ch["mid"]
+    mid_start = mid_end - ch["slope"] * (lb - 1)
     return {
         "start_index": int(n - lb), "end_index": int(n - 1),
-        "mid_start": round(float(intercept), 8),
-        "mid_end": round(float(intercept + slope * (lb - 1)), 8),
-        "half_width": round(half, 8),
-        "slope": float(slope),
+        "mid_start": round(float(mid_start), 8),
+        "mid_end": round(float(mid_end), 8),
+        "half_width": round(float(ch["half_width"]), 8),
+        "slope": float(ch["slope"]),
     }
 
 
@@ -847,14 +848,18 @@ def session_label(epoch: float) -> str:
 
 
 def htf_trend_series(df: pl.DataFrame, params: Optional[dict] = None,
-                     mult: int = 4) -> tuple:
+                     mult: int = 4,
+                     htf_sec_map: Optional[Dict[int, int]] = None) -> tuple:
     """Biais de structure MULTI-TIMEFRAME, causal barre par barre.
 
-    Agrège l'OHLCV en buckets de ``mult`` × timeframe (bornes horloge :
-    epoch // (ltf_sec × mult) — identiques en live et en backtest), lance la
-    même analyse de structure (BOS/CHoCH) sur le HTF, puis mappe sur chaque
-    barre LTF le trend du DERNIER bucket HTF **entièrement clôturé** à cet
-    instant — aucune fuite du futur.
+    Agrège l'OHLCV en buckets HTF (bornes horloge : epoch // htf_sec —
+    identiques en live et en backtest), lance la même analyse de structure
+    (BOS/CHoCH) sur le HTF, puis mappe sur chaque barre LTF le trend du DERNIER
+    bucket HTF **entièrement clôturé** à cet instant — aucune fuite du futur.
+
+    Le HTF cible est ``htf_sec_map[ltf_sec]`` si fourni (aligné sur la « source
+    unique de vérité » ``_HTF_MAP`` d'app/live/utils via la stratégie), sinon
+    ``ltf_sec × mult`` (fallback autonome).
 
     Retourne ``(trend_arr, meta)`` : trend ∈ {+1, −1, 0} par barre LTF,
     meta = {"htf_sec", "n_htf", "trend"} (état à la dernière barre).
@@ -869,7 +874,7 @@ def htf_trend_series(df: pl.DataFrame, params: Optional[dict] = None,
     if len(deltas) == 0:
         return empty, {"htf_sec": 0, "n_htf": 0, "trend": 0}
     ltf_sec = int(np.median(deltas))
-    htf_sec = ltf_sec * max(int(mult), 2)
+    htf_sec = (htf_sec_map or {}).get(ltf_sec) or ltf_sec * max(int(mult), 2)
 
     bucket = epoch // htf_sec
     o = df["open"].to_numpy().astype(float)

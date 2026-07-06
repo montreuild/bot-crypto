@@ -24,7 +24,8 @@ Filtres DURS (validés sur BTC/USDC 15m→1d, 2019-2026) :
     d'une tendance haussière est le plus souvent une structure qui casse ;
   - biais EMA(``ema_filter_len``) : long au-dessus, short en dessous ;
   - biais MULTI-TIMEFRAME (``htf_filter: soft`` par défaut) : jamais de trade
-    contre la structure du timeframe supérieur (buckets ×``htf_mult``) — seul
+    contre la structure du timeframe supérieur. Le HTF est celui de la « source
+    unique de vérité » ``_HTF_MAP`` (app/live/utils : 4h→1d, 1h→4h…) — seul
     enrichissement gagnant sur TOUS les TF testés (campagne 2026-07).
 
 Confluences additionnées au score de base 0.50 (cap 1.0) :
@@ -62,8 +63,28 @@ import polars as pl
 
 from app.engine.engine import BaseStrategy
 from app.core import smc
+from app.core.indicators_core import ema as _ema_series, volume_ratio as _vol_ratio
+from app.live.utils import _HTF_MAP
 
 logger = logging.getLogger(__name__)
+
+
+def _tf_to_sec(tf: str) -> int:
+    """Convertit un libellé de timeframe (« 4h », « 30m », « 1d ») en secondes."""
+    try:
+        return int(tf[:-1]) * {"m": 60, "h": 3600, "d": 86400}.get(tf[-1], 60)
+    except (ValueError, IndexError):
+        return 0
+
+
+# Biais HTF aligné sur la « source unique de vérité » _HTF_MAP d'app/live/utils
+# (secondes LTF → secondes HTF), au lieu d'un multiplicateur ×N arbitraire.
+# Validé sur BTC : ≥ aussi bon que ×4 (4h→1d : PF 1.52 vs 1.49).
+_HTF_SEC_MAP: Dict[int, int] = {
+    _tf_to_sec(k): _tf_to_sec(v)
+    for k, v in _HTF_MAP.items()
+    if _tf_to_sec(k) and _tf_to_sec(v)
+}
 
 
 class Strategy(BaseStrategy):
@@ -112,10 +133,11 @@ class Strategy(BaseStrategy):
         "use_void_targets": True,   # bords des liquidity voids comme cibles TP
         "tl_tol_atr":       0.3,    # tolérance du tap de trendline (×ATR)
         # ── Enrichissements 2026-07 (validés individuellement, cf. YAML) ─────
-        "htf_filter":       "soft", # biais multi-TF : off | soft (pas contre) | strict (aligné)
+        "htf_filter":       "soft",  # biais multi-TF : off | soft (pas contre) | strict (aligné)
                                     # → seul enrichissement gagnant sur TOUS les TF
-                                    # (4h : PF 1.49 vs 1.41, OOS +23 vs −8)
-        "htf_mult":         4,      # HTF = timeframe × mult
+                                    # (4h : PF 1.52 vs 1.41)
+        "htf_mult":         4,      # fallback si le LTF détecté n'est pas dans
+                                    # _HTF_MAP ; sinon HTF = _HTF_MAP[tf] (4h→1d)
         "use_rejection_blocks": False,  # setups REJECTION_RETEST (mèches de swing)
         "rb_wick_atr":      0.5,    # mèche minimale d'un rejection block (×ATR)
         "vp_confluence":    False,  # bonus si la zone chevauche un HVN (acceptation)
@@ -147,6 +169,14 @@ class Strategy(BaseStrategy):
         self._bt_signals: Optional[Dict[int, dict]] = None
         self._bt_events_opposite: Optional[Dict[int, str]] = None
         self._bt_close_ref: Optional[np.ndarray] = None
+        # Cache d'analyse live/scanner : (res, aux) mémoïsés tant que la
+        # dernière barre close et les paramètres ne changent pas. Évite de
+        # relancer smc.analyze (+ HTF) à chaque cycle de scan (60 s) alors que
+        # le df est identique entre deux clôtures de barre, et de le refaire 3×
+        # dans les endpoints (score + trade_plans + endpoint).
+        self._ana_key: Optional[tuple] = None
+        self._ana_res: Optional[dict] = None
+        self._ana_aux: Optional[dict] = None
 
     # ── Paramètres ───────────────────────────────────────────────────────────
     def _p(self, params: dict = None) -> Dict[str, Any]:
@@ -187,10 +217,12 @@ class Strategy(BaseStrategy):
             aux["kz"] = smc.killzone_flags(ep)
         else:
             aux["kz"] = None
-        # Biais multi-timeframe
+        # Biais multi-timeframe — HTF cible aligné sur _HTF_MAP (secondes),
+        # fallback ×htf_mult si le LTF détecté n'y figure pas.
         if str(p.get("htf_filter", "off")) != "off":
             aux["htf"], aux["htf_meta"] = smc.htf_trend_series(
-                win, self._smc_params(p), mult=int(p.get("htf_mult", 4)))
+                win, self._smc_params(p), mult=int(p.get("htf_mult", 4)),
+                htf_sec_map=_HTF_SEC_MAP)
         else:
             aux["htf"], aux["htf_meta"] = None, None
         # Compression AMD : range des m barres précédentes (barre courante
@@ -204,6 +236,31 @@ class Strategy(BaseStrategy):
         else:
             aux["comp"] = None
         return aux
+
+    @staticmethod
+    def _pkey(p: Dict[str, Any]) -> tuple:
+        """Signature hachable des paramètres qui influent sur l'analyse/aux."""
+        return tuple(sorted((k, str(v)) for k, v in p.items()))
+
+    def _analyze_cached(self, win: pl.DataFrame, p: Dict[str, Any]):
+        """Retourne ``(res, aux)`` pour la fenêtre ``win``, mémoïsé sur
+        (hauteur, timestamp de la dernière barre, paramètres). Recalcule
+        uniquement quand une nouvelle barre close ou que la config change."""
+        ts = None
+        if "time" in win.columns and win.height:
+            try:
+                ts = int(win["time"][-1].timestamp())
+            except (AttributeError, TypeError):
+                ts = str(win["time"][-1])
+        key = (win.height, ts, self._pkey(p)) if ts is not None else None
+        if key is not None and key == self._ana_key \
+                and self._ana_res is not None:
+            return self._ana_res, self._ana_aux
+        res = smc.analyze(win, self._smc_params(p))
+        aux = self._build_aux(win, p, res)
+        if key is not None:
+            self._ana_key, self._ana_res, self._ana_aux = key, res, aux
+        return res, aux
 
     def min_bars_required(self, params: dict = None) -> int:
         return 220
@@ -269,15 +326,15 @@ class Strategy(BaseStrategy):
             sig = self._bt_signals.get(df.height - 1)
             return dict(sig) if sig else self._none("aucun setup SMC")
 
-        # Chemin live/scanner : analyse de la fenêtre (bornée à max_window).
+        # Chemin live/scanner : analyse de la fenêtre (bornée à max_window),
+        # mémoïsée tant que la dernière barre close ne change pas.
         win = df[-int(p["max_window"]):] if len(df) > int(p["max_window"]) else df
-        res = smc.analyze(win, self._smc_params(p))
+        res, aux = self._analyze_cached(win, p)
         i = len(win) - 1
         close = win["close"].to_numpy().astype(float)
         open_ = win["open"].to_numpy().astype(float)
         low   = win["low"].to_numpy().astype(float)
         high  = win["high"].to_numpy().astype(float)
-        aux   = self._build_aux(win, p, res)
         sig = self._signal_at(res, i, open_, high, low, close, aux, p)
         return sig if sig else self._none(
             f"aucun setup SMC (bias {res['bias']['label']})"
@@ -303,13 +360,12 @@ class Strategy(BaseStrategy):
         if len(df) < self.min_bars_required(params):
             return []
         win = df[-int(p["max_window"]):] if len(df) > int(p["max_window"]) else df
-        res = smc.analyze(win, self._smc_params(p))
+        res, aux = self._analyze_cached(win, p)
         i = len(win) - 1
         close = win["close"].to_numpy().astype(float)
         open_ = win["open"].to_numpy().astype(float)
         low   = win["low"].to_numpy().astype(float)
         high  = win["high"].to_numpy().astype(float)
-        aux   = self._build_aux(win, p, res)
         ema   = aux["ema"]
         atr   = float(res["_atr_arr"][i])
         price = float(close[i])
@@ -320,13 +376,10 @@ class Strategy(BaseStrategy):
         zone = pd_zone.get("zone", "")
         long_ema_ok  = ema is None or price > float(ema[i])
         short_ema_ok = ema is None or price < float(ema[i])
-        # Biais HTF appliqué aussi aux plans en attente
+        # Biais HTF appliqué aussi aux plans en attente (même helper que le signal)
         htf_mode = str(p.get("htf_filter", "off"))
         htf_t = int(aux["htf"][i]) if aux["htf"] is not None else 0
-        long_htf_ok  = (htf_mode == "off") or \
-            (htf_mode == "soft" and htf_t >= 0) or (htf_mode == "strict" and htf_t == 1)
-        short_htf_ok = (htf_mode == "off") or \
-            (htf_mode == "soft" and htf_t <= 0) or (htf_mode == "strict" and htf_t == -1)
+        long_htf_ok, short_htf_ok = self._htf_ok(htf_mode, htf_t)
         buf = float(p["sl_buffer_atr"]) * atr
         max_ob_age = int(p["ob_max_age"])
         plans: List[dict] = []
@@ -367,8 +420,8 @@ class Strategy(BaseStrategy):
                 continue
             if i - ob["created_at"] > max_ob_age:
                 continue
-            if ob["kind"] == "bullish" and trend == 1 and long_ema_ok \
-                    and long_htf_ok and zone != "discount" and price > ob["top"]:
+            if ob["kind"] == "bullish" and price > ob["top"] \
+                    and self._dir_gate("long", trend, zone, long_ema_ok, long_htf_ok):
                 sc = 0.50 + 0.10 + (0.10 if ob.get("strength", 1) >= 2 else 0.0) \
                     + (0.10 if zone == "premium" else 0.0)
                 plan = self._build_trade(
@@ -383,8 +436,8 @@ class Strategy(BaseStrategy):
                      f"Attendre le retour du prix dans la zone de demande "
                      f"[{ob['bottom']:.6g}–{ob['top']:.6g}] + bougie de rejet",
                      zone_lo=ob["bottom"], zone_hi=ob["top"])
-            elif ob["kind"] == "bearish" and trend == -1 and short_ema_ok \
-                    and short_htf_ok and zone != "premium" and price < ob["bottom"]:
+            elif ob["kind"] == "bearish" and price < ob["bottom"] \
+                    and self._dir_gate("short", trend, zone, short_ema_ok, short_htf_ok):
                 sc = 0.50 + 0.10 + (0.10 if ob.get("strength", 1) >= 2 else 0.0) \
                     + (0.10 if zone == "discount" else 0.0)
                 plan = self._build_trade(
@@ -405,8 +458,8 @@ class Strategy(BaseStrategy):
             if pool["swept_at"] is not None or i - pool["formed_at"] > int(p["pool_max_age"]):
                 continue
             lvl = float(pool["level"])
-            if pool["kind"] == "sell_side" and trend == 1 and long_ema_ok \
-                    and long_htf_ok and zone != "discount" and lvl < price:
+            if pool["kind"] == "sell_side" and lvl < price \
+                    and self._dir_gate("long", trend, zone, long_ema_ok, long_htf_ok):
                 sc = 0.50 + 0.10 + 0.10 + (0.10 if zone == "premium" else 0.0)
                 # Entrée estimée au niveau sweepé ; la mèche du sweep est
                 # inconnue d'avance → marge d'½ ATR sous le niveau.
@@ -420,8 +473,8 @@ class Strategy(BaseStrategy):
                      f"Attendre une mèche SOUS les equal lows {lvl:.6g} "
                      f"(×{len(pool['indices'])}) avec clôture au-dessus (rejet)",
                      zone_lo=pool["bottom"], zone_hi=pool["top"])
-            elif pool["kind"] == "buy_side" and trend == -1 and short_ema_ok \
-                    and short_htf_ok and zone != "premium" and lvl > price:
+            elif pool["kind"] == "buy_side" and lvl > price \
+                    and self._dir_gate("short", trend, zone, short_ema_ok, short_htf_ok):
                 sc = 0.50 + 0.10 + 0.10 + (0.10 if zone == "discount" else 0.0)
                 plan = self._build_trade(
                     res, i, "short", lvl, lvl + 0.5 * atr + buf, atr, p,
@@ -451,12 +504,14 @@ class Strategy(BaseStrategy):
                 and abs(float(df["close"][-1]) - self._bt_close_ref[idx]) < 1e-9):
             direction = self._bt_events_opposite.get(idx)
         else:
-            # Live : analyse d'une queue courte, suffisante pour la structure.
+            # Live : réutilise l'analyse mémoïsée (même fenêtre/cache que
+            # score()) au lieu de relancer un analyze dédié par position/cycle.
             p = self._p(params)
-            win = df[-400:] if len(df) > 400 else df
-            res = smc.analyze(win, self._smc_params(p))
-            for ev in reversed(res["structure_events"]):
-                if ev["index"] < len(win) - 1:
+            win = df[-int(p["max_window"]):] if len(df) > int(p["max_window"]) else df
+            res, _ = self._analyze_cached(win, p)
+            last = len(win) - 1
+            for ev in reversed(res["_all_struct_events"]):
+                if ev["index"] < last:
                     break
                 if ev["kind"] == "CHoCH":
                     direction = ev["direction"]
@@ -497,10 +552,7 @@ class Strategy(BaseStrategy):
         # Biais multi-timeframe : la structure du timeframe supérieur commande.
         htf_mode = str(p.get("htf_filter", "off"))
         htf_t = int(aux["htf"][i]) if aux["htf"] is not None else 0
-        long_htf_ok  = (htf_mode == "off") or \
-            (htf_mode == "soft" and htf_t >= 0) or (htf_mode == "strict" and htf_t == 1)
-        short_htf_ok = (htf_mode == "off") or \
-            (htf_mode == "soft" and htf_t <= 0) or (htf_mode == "strict" and htf_t == -1)
+        long_htf_ok, short_htf_ok = self._htf_ok(htf_mode, htf_t)
         # AMD : la barre courante sweepe après une phase de compression
         # (accumulation) → manipulation probable, expansion à suivre.
         amd_here = bool(aux["comp"][i]) if aux["comp"] is not None else False
@@ -526,17 +578,15 @@ class Strategy(BaseStrategy):
             if (vp and p.get("vp_targets")) else []
 
         # Garde CHoCH : pas d'entrée contre un changement de caractère récent.
+        # Indices CHoCH pré-triés et mémoïsés sur ``res`` → lookup O(log n) par
+        # barre au lieu d'un scan O(événements) (évite le O(événements²) de la
+        # passe prepare_for_backtest). Résultat strictement identique.
         guard = int(p["choch_guard_bars"])
-        recent_choch_down = any(
-            ev["kind"] == "CHoCH" and ev["direction"] == "down"
-            and 0 <= i - ev["index"] <= guard
-            for ev in res["_all_struct_events"]
-        )
-        recent_choch_up = any(
-            ev["kind"] == "CHoCH" and ev["direction"] == "up"
-            and 0 <= i - ev["index"] <= guard
-            for ev in res["_all_struct_events"]
-        )
+        cd, cu = self._choch_index_arrays(res)
+        recent_choch_down = bool(
+            np.searchsorted(cd, i, "right") - np.searchsorted(cd, i - guard, "left"))
+        recent_choch_up = bool(
+            np.searchsorted(cu, i, "right") - np.searchsorted(cu, i - guard, "left"))
 
         # Premium/discount CAUSAL à la barre i (pas l'état final de l'analyse).
         pd_zone = smc.premium_discount_at(res, high, low, close, i) or {}
@@ -827,6 +877,47 @@ class Strategy(BaseStrategy):
         }
 
     @staticmethod
+    def _htf_ok(htf_mode: str, htf_t: int) -> tuple:
+        """Autorisations HTF (long_ok, short_ok) selon le mode de filtre.
+        Source unique partagée par _signal_at et trade_plans."""
+        long_ok = (htf_mode == "off") \
+            or (htf_mode == "soft" and htf_t >= 0) \
+            or (htf_mode == "strict" and htf_t == 1)
+        short_ok = (htf_mode == "off") \
+            or (htf_mode == "soft" and htf_t <= 0) \
+            or (htf_mode == "strict" and htf_t == -1)
+        return long_ok, short_ok
+
+    @staticmethod
+    def _dir_gate(side: str, trend: int, zone: str,
+                  ema_ok: bool, htf_ok: bool) -> bool:
+        """Filtres directionnels DURS communs aux setups alignés-tendance
+        (OB / breaker / rejection / pool sweep) : structure alignée + côté
+        momentum du range + biais EMA + biais HTF. Source unique garantissant
+        que ``trade_plans`` applique exactement les mêmes filtres que le
+        signal réellement pris par le moteur."""
+        if side == "long":
+            return trend == 1 and zone != "discount" and ema_ok and htf_ok
+        return trend == -1 and zone != "premium" and ema_ok and htf_ok
+
+    @staticmethod
+    def _choch_index_arrays(res: dict) -> tuple:
+        """Indices des CHoCH down/up, triés et mémoïsés sur ``res`` (calculés
+        une fois par analyse, réutilisés par tous les appels _signal_at)."""
+        cached = res.get("_choch_idx")
+        if cached is None:
+            evs = res["_all_struct_events"]
+            cd = np.array(sorted(e["index"] for e in evs
+                                 if e["kind"] == "CHoCH" and e["direction"] == "down"),
+                          dtype=np.int64)
+            cu = np.array(sorted(e["index"] for e in evs
+                                 if e["kind"] == "CHoCH" and e["direction"] == "up"),
+                          dtype=np.int64)
+            cached = (cd, cu)
+            res["_choch_idx"] = cached
+        return cached
+
+    @staticmethod
     def _fvg_overlap(res: dict, i: int, kind: str,
                      zone_lo: float, zone_hi: float) -> bool:
         """True si un FVG ouvert de même direction chevauche la zone [lo, hi]."""
@@ -841,16 +932,17 @@ class Strategy(BaseStrategy):
 
     @staticmethod
     def _vol_ratio_arr(df: pl.DataFrame) -> np.ndarray:
-        avg = df["volume"].rolling_mean(20).fill_null(0.0)
-        avg = avg.clip(lower_bound=1e-9)
-        return (df["volume"] / avg).to_numpy().astype(float)
+        # Source unique : indicators_core.volume_ratio (volume / SMA20, division
+        # sécurisée). fill_null(0.0) sur les barres de warmup (jamais lues à un
+        # index de signal, i >> 260) pour un array numpy propre.
+        return _vol_ratio(df, 20).fill_null(0.0).to_numpy().astype(float)
 
     @staticmethod
     def _ema_arr(df: pl.DataFrame, length: int) -> Optional[np.ndarray]:
         if length <= 0:
             return None
-        return (df["close"].ewm_mean(span=length, adjust=False)
-                .to_numpy().astype(float))
+        # Source unique : indicators_core.ema (EMA span=n, adjust=False).
+        return _ema_series(df["close"], length).to_numpy().astype(float)
 
     def _none(self, reason: str = "") -> dict:
         return {"score": 0, "side": "none", "name": self.name, "reason": reason}

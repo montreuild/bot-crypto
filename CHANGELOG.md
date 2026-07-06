@@ -6,6 +6,43 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔧 SMC : correction des 10 findings de la revue de code
+
+Suite à une revue complète (8 angles) de la branche, correction de tous les
+findings vérifiés :
+
+- **Cohérence UI/live** : `/api/scanner/smc` applique désormais l'overlay
+  `optimizer_results` par timeframe (`resolve_strategy_params`) — la page Smart
+  graph reflète la config RÉELLEMENT tradée (4h : min_score 0.75), au lieu des
+  params de base.
+- **Thread API protégé** : `/api/scanner/smc_replay` (backtest synchrone) est
+  borné par un sémaphore non-bloquant (HTTP 429 si saturé) + cache court TTL,
+  comme `/api/replay` — plus de risque d'affamer le bot live.
+- **Mémoïsation de l'analyse** : `score()`/`trade_plans()`/`check_early_exit()`
+  partagent un cache `(res, aux)` clé sur la dernière barre close ; le live ne
+  relance plus `smc.analyze` (~130 ms → 0.3 ms entre deux barres identiques),
+  et les endpoints ne l'exécutent plus qu'UNE fois par requête (vs 3).
+- **Biais HTF aligné sur `_HTF_MAP`** (source unique de vérité d'app/live) :
+  4h→1d au lieu d'un ×4 arbitraire ; ≥ aussi bon (4h : PF 1.52 vs 1.49) et
+  cohérent partout (scanner, backtest, live). Défauts 4h re-validés :
+  145 trades, WR 46.9 %, +40.1 %, PF 1.523, Sharpe 8.2.
+- **Réutilisation des indicateurs canoniques** : `atr_wilder` ajouté à
+  `indicators_core` (source unique du lissage Wilder, partagé SMC/Pine) ;
+  `_vol_ratio_arr`/`_ema_arr` délèguent à `volume_ratio`/`ema` ;
+  `_regression_channel` devient un wrapper de `regression_channel_at`.
+- **Primitive de zones partagée** : `ZonesPrimitive` + palette extraites dans
+  `base.html` (`SmcChart`), utilisées par Smart graph ET Smart replay (fin de
+  la divergence de clipping entre les deux copies).
+- **Factorisation** : helpers `_htf_ok`/`_dir_gate` partagés par `_signal_at`
+  et `trade_plans` (garantit que les plans appliquent les mêmes filtres durs
+  que le signal) + test de parité plan-immédiat ↔ `score()`.
+- **Perf & nettoyage** : gardes CHoCH via tableau trié mémoïsé (fin du
+  O(événements²) dans `prepare_for_backtest`) ; suppression de 2 clés mortes
+  aux noms inversés dans `smc.DEFAULTS`.
+
+Backtest 4h byte-identique vérifié après chaque refactor mécanique. Suite
+complète : 414 tests OK (dont parité trade_plans/score et helpers).
+
 ### ⏯ Page « Smart replay » : rejeu bougie par bougie de l'analyse SMC
 
 Nouvelle page `/smartreplay` (menu Analyse) pour rejouer le cours et **voir

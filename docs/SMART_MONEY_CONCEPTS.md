@@ -162,7 +162,7 @@ complet + dernier tiers (pseudo-OOS 2024-2026, la période la plus dure) :
 
 | Enrichissement | Verdict | Détail |
 |---|---|---|
-| **Biais HTF (soft)** | ✅ **ON par défaut** | Seul gagnant sur TOUS les TF. 4h : PF 1.485 vs 1.414, DD −8.0 vs −9.9, OOS **+23 vs −8** |
+| **Biais HTF (soft)** | ✅ **ON par défaut** | Seul gagnant sur TOUS les TF. HTF aligné sur `_HTF_MAP` (4h→1d) : PF **1.52** vs 1.41, Sharpe 8.2, DD −8.1 vs −9.9 |
 | Rejection blocks | ⚠ off | Dilue le PF global (4h : 323 vs 405) mais améliore l'OOS (+26) — exploré par l'optimiseur |
 | Volume profile (confluence) | ⚠ off | Neutre au seuil 0.55 (ne s'exprime qu'à seuil élevé, cf. configs par TF) |
 | Volume profile (cibles) | ❌ off | Légèrement négatif partout |
@@ -217,18 +217,18 @@ sur les 179 trades du backtest 4h (gain potentiel min observé : 0,61 %).
 
 ### Validation (BTC/USDC, frais 0,1 %/côté, spread 0,05 %, risque 1 %/trade)
 
-Défauts actuels (dont `htf_filter: soft`) :
+Défauts actuels (dont `htf_filter: soft`, HTF aligné sur `_HTF_MAP` → 4h utilise
+le 1d) :
 
 | TF | Trades | Win rate | PnL (capital 1000) | PF | Sharpe | DD max |
 |---|---|---|---|---|---|---|
-| **4h** | 161 | **46,6 %** | **+410 (+41,0 %)** | **1.485** | 7.5 | −8,0 % |
+| **4h** | 145 | **46,9 %** | **+401 (+40,1 %)** | **1.523** | 8.2 | −8,1 % |
 | 1h | 523 | 33,1 % | −306 | 0.81 | — | −54 % |
-| 2h | 343 | 34,4 % | −239 | 0.83 | — | −41 % |
+| 2h | 295 | 34,9 % | −193 | 0.85 | — | −38 % |
 | 1d | 25 | 32,0 % | −37 | 0.78 | — | −9 % |
 
-Sous-périodes 4h : PF **2.35** (2018-2021), **1.61** (2021-2024), **1.03**
-(2024-2026) — le biais multi-timeframe fait repasser la période récente en
-positif. Les cibles voids apportent ~+65 USDC sur le 4h ; le setup
+Sous-périodes 4h : PF **2.49** (2018-2021), **1.56** (2021-2024), **0.97**
+(2024-2026). Les cibles voids apportent ~+65 USDC sur le 4h ; le setup
 BREAKER_RETEST teste négatif (−163 / 220 trades) → off par défaut.
 
 ### Configurations par timeframe (calibration 2026-07-04)
@@ -243,12 +243,16 @@ l'overlay).
 
 | TF | Config retenue | OOS (2024-2026) | oos_score | Verdict |
 |---|---|---|---|---|
-| **4h** | min_score 0.75, RR ≥ 2, SL 0.5×ATR, bonus kz/amd/vp | 56 trades, **+60 (+6 %), PF 1.20, DD −5,1 %** | **+0.255** | ✅ tradable |
+| **4h** | min_score 0.75, RR ≥ 2, SL 0.5×ATR, bonus kz/amd/vp | 51 trades, **+22 (+2,2 %), PF 1.08, DD −7,4 %** | **+0.174** | ✅ tradable |
 | 1h | min_score 0.65, RR ≥ 2, gain ≥ 1,2 %, killzones only | −33, PF 0.83 (vs −182 défauts) | −0.067 | ❌ |
 | 2h | min_score 0.75, RR ≥ 2 | −115, PF 0.77 | −0.230 | ❌ |
 | 30m | min_score 0.75, RR ≥ 1.5, gain ≥ 1,2 % | −71, PF 0.78 | −0.142 | ❌ |
 | 15m | min_score 0.65, RR ≥ 1.5, gain ≥ 1,2 %, killzones only | −41, PF 0.42 | −0.082 | ❌ |
 | 1d | min_score 0.55 | −37, PF 0.59 (12 trades) | −0.075 | ❌ |
+
+> Les scores OOS des TF ≠ 4h ont été mesurés avant l'alignement HTF sur
+> `_HTF_MAP` (juillet 2026) ; ils restent négatifs (non tradables) et n'ont pas
+> été re-calibrés — seul le 4h, la config effectivement candidate, l'a été.
 
 **Lecture senior** : seul le 4h a un edge démontré out-of-sample. Les autres
 TF sont enregistrés avec leur config « la moins mauvaise » et un score négatif
