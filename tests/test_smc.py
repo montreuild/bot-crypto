@@ -526,6 +526,28 @@ class TestTradePlans:
                 assert not imm, f"aucun signal mais plan immediate présent (seed {seed})"
         assert checked > 0, "aucun signal immédiat testé — échantillon non significatif"
 
+    def test_time_stop_sets_exit_after_bars(self):
+        """time_stop_bars > 0 → les signaux portent exit_after_bars (mécanisme
+        natif du Backtester) ; 0 (défaut) → pas de time-stop (None)."""
+        assert Strategy.fixed_params["time_stop_bars"] == 0
+        found_off = found_on = 0
+        for seed in range(12):
+            df = _random_df(900, seed=seed, jump_p=0.04)
+            # défaut : exit_after_bars None
+            s_off = Strategy(); s_off._bt_params = None
+            s_off.prepare_for_backtest(df)
+            for sig in (s_off._bt_signals or {}).values():
+                assert sig.get("exit_after_bars") is None
+                found_off += 1
+            # time_stop 12 : exit_after_bars == 12
+            s_on = Strategy()
+            s_on._bt_params = {"smart_money": {"time_stop_bars": 12}}
+            s_on.prepare_for_backtest(df)
+            for sig in (s_on._bt_signals or {}).values():
+                assert sig.get("exit_after_bars") == 12
+                found_on += 1
+        assert found_off > 0 and found_on > 0, "aucun signal généré — test non significatif"
+
     def test_dir_gate_and_htf_ok_helpers(self):
         # _htf_ok : sémantique off/soft/strict
         assert Strategy._htf_ok("off", -1) == (True, True)

@@ -243,7 +243,7 @@ l'overlay).
 
 | TF | Config retenue | OOS (2024-2026) | oos_score | Verdict |
 |---|---|---|---|---|
-| **4h** | min_score 0.75, RR ≥ 2, SL 0.5×ATR, bonus kz/amd/vp | 51 trades, **+22 (+2,2 %), PF 1.08, DD −7,4 %** | **+0.174** | ✅ tradable |
+| **4h** | min_score 0.70, RR ≥ 2, SL 0.5×ATR, **time-stop 12**, bonus kz/amd/vp | 58 trades, **+96 (+9,6 %), PF 1.41, DD −4,0 %** | **+0.354** | ✅ tradable |
 | 1h | min_score 0.65, RR ≥ 2, gain ≥ 1,2 %, killzones only | −33, PF 0.83 (vs −182 défauts) | −0.067 | ❌ |
 | 2h | min_score 0.75, RR ≥ 2 | −115, PF 0.77 | −0.230 | ❌ |
 | 30m | min_score 0.75, RR ≥ 1.5, gain ≥ 1,2 % | −71, PF 0.78 | −0.142 | ❌ |
@@ -261,6 +261,40 @@ la config limite au moins l'hémorragie. La sélectivité (min_score 0.75 = ≥ 
 confluences dont les bonus killzone/AMD/volume-profile) sacrifie du PnL
 2018-2021 pour de la robustesse récente : c'est le bon arbitrage pour du
 capital futur.
+
+### Time-stop : couper les trades qui stagnent dans la chop (2026-07)
+
+Diagnostic (replay 4h juillet 2026) : beaucoup de sweeps visibles mais peu
+exploités. Analyse : 37/45 sweeps sont **contre-tendance** (ignorés par
+design — plus mauvais bucket historique) ; le vrai problème n'est pas trop peu
+de trades mais que ceux pris **stagnent dans la chop** (le prix spike puis
+revient) en attendant une cible lointaine qui ne se remplit pas, ce qui
+**bloque le slot de position** unique et empêche de capter les signaux suivants.
+
+Cinq idées mesurées isolément (BTC 4h, full + OOS récent) :
+
+| Idée | OOS récent | Backtest complet |
+|---|---|---|
+| Entrées de retournement (sweep + CHoCH) | ❌ −38 (WR 15 %) | marginal |
+| Breakeven / TP partiel | ❌ pire | PnL plus faible |
+| Filtre de régime ADX | ❌ −15 à −36 | ~plat |
+| min_score 0.75 → 0.70 | = (+22) | ✅ +294 vs +220, Sharpe 5.9 |
+| **Time-stop (12 barres)** | ✅ **−19 → +96, PF 1.41** | +206 (vs +294 sans) |
+
+Le **time-stop** (paramètre `time_stop_bars`, porté par le mécanisme natif
+`exit_after_bars` du Backtester) est la seule idée qui redresse le régime
+récent — et il prend **plus** de trades (58 vs 51 : les positions bloquées
+libèrent le slot plus tôt). Validation : OOS score **doublé** (+0.354 vs
++0.174), DD divisé par 2 (−4,0 %), IS toujours positif (+119, PF 1.25),
+walk-forward consistance 40 %→60 %. Il ne rescape PAS les TF < 4h (chop
+edgeless) — c'est un levier spécifique au 4h, pas un cache-misère universel.
+
+⚠ **Pari de régime assumé** (choix explicite, 2026-07-06) : le time-stop
+sacrifie le PnL des fortes tendances (backtest complet 400→206, sous-période
+2021-2024 négative). Retenu car la méthodologie du projet sélectionne sur
+l'OOS (proxy du forward), et le régime récent est celui à trader. `ts=0` reste
+le défaut de base (validé toutes périodes) ; le 4h l'active via
+`optimizer_results`.
 
 ### Performance technique
 

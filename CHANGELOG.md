@@ -6,6 +6,31 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### ⏱ smart_money : time-stop pour exploiter la volatilité choppy (4h)
+
+Diagnostic depuis le Smart replay (« beaucoup de signaux, peu exploités ») :
+sur le 4h récent, 37/45 sweeps sont contre-tendance (ignorés par design) ; le
+vrai problème est que les trades pris **stagnent dans la chop** en attendant
+une cible lointaine, ce qui bloque le slot de position unique et empêche de
+capter les signaux suivants.
+
+Cinq idées mesurées isolément (full + OOS) ; quatre échouent (entrées de
+retournement sweep+CHoCH, breakeven/TP partiel, filtre ADX — toutes négatives
+sur le régime récent). La gagnante : un **time-stop** (`time_stop_bars`, porté
+par le mécanisme natif `exit_after_bars` du Backtester) qui coupe les positions
+stagnantes après N barres. Sur le 4h :
+- OOS 2024-2026 : **−19 → +96 USDC**, PF 1.08 → 1.41, DD −7,4 % → −4,0 % ;
+- prend PLUS de trades (58 vs 51 : le slot se libère plus tôt) ;
+- score OOS **doublé** (+0.354 vs +0.174), IS toujours positif, walk-forward
+  consistance 40 % → 60 %.
+
+Retenu pour le 4h (`optimizer_results`, choix utilisateur) — **pari de régime
+assumé** : sacrifie le PnL des fortes tendances (backtest complet 400→206,
+sous-période 2021-2024 négative), optimisé pour le régime choppy récent que la
+méthodologie OOS du projet privilégie. `time_stop_bars: 0` reste le défaut de
+base (validé toutes périodes) ; ajouté au `param_space` de l'optimiseur.
+Backtest byte-identique avec le défaut (off). 415 tests OK.
+
 ### 🔧 SMC : correction des 10 findings de la revue de code
 
 Suite à une revue complète (8 angles) de la branche, correction de tous les

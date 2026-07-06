@@ -112,6 +112,7 @@ class Strategy(BaseStrategy):
         "amd_bonus":      [True, False],
         "vp_confluence":  [True, False],
         "use_rejection_blocks": [True, False],
+        "time_stop_bars": [0, 12, 16, 24],
     }
 
     fixed_params: Dict[str, Any] = {
@@ -162,6 +163,13 @@ class Strategy(BaseStrategy):
         "ob_max_age":       250,    # âge max (barres) d'un OB jouable
         "pool_max_age":     500,    # âge max d'une poche utilisable comme cible
         "choch_guard_bars": 5,      # pas d'entrée contre un CHoCH < N barres
+        # Time-stop : sortie au bout de N barres si ni TP ni SL touché (0 = off).
+        # Coupe les positions qui STAGNENT dans la chop (le prix spike puis
+        # revient) au lieu de tenir jusqu'à une cible lointaine qui ne se remplit
+        # pas. Levier de RÉGIME : aide nettement les périodes choppy récentes
+        # (BTC 4h 2024-26 : −19 → +13) au prix de l'upside des tendances fortes
+        # (où l'on veut laisser courir). Arbitrage tranché par l'optimiseur/TF.
+        "time_stop_bars":   0,
     }
 
     def __init__(self):
@@ -858,11 +866,15 @@ class Strategy(BaseStrategy):
 
         bias_label = {1: "haussier", -1: "baissier", 0: "neutre"}[int(trend)]
         arrow = "LONG" if side == "long" else "SHORT"
+        # Time-stop optionnel : porté par exit_after_bars (géré nativement par le
+        # Backtester et le live — sortie à la clôture si ni SL ni TP touché).
+        ts_bars = int(p.get("time_stop_bars", 0) or 0)
         return {
             "score": score, "side": side, "name": self.name, "atr": atr,
             "setup": setup,
             "stop_hint": round(sl, 8),
             "tp_hint":   round(tp, 8),
+            "exit_after_bars": ts_bars if ts_bars > 0 else None,
             "disable_trailing": True,
             "indicators": {
                 "bias":     bias_label,

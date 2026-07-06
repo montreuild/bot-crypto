@@ -57,6 +57,8 @@ params:
   kz_bonus: false         # neutre au seuil 0.55
   kz_filter: false        # négatif partout — pas d'edge horaire sur BTC 24/7
   amd_bonus: false        # neutre au seuil 0.55
+  time_stop_bars: 0       # sortie après N barres si ni TP ni SL (0 = off) — voir
+                          # optimizer_results/4h : coupe la chop, capte plus de signaux
   score_threshold: 0.55   # ≥ 1 confluence requise (score de base 0.50)
 
 # ── Configurations par timeframe (calibration 2026-07-04) ────────────────────
@@ -73,15 +75,21 @@ params:
 # OOS −34 avec la config vs −182 avec les défauts).
 optimizer_results:
   4h:
-    run_date: '2026-07-04'
-    oos_score: 0.1744
-    # OOS 2024-2026 (HTF _HTF_MAP) : 51 trades, +22.2 (+2.2 %), PF 1.078,
-    # DD −7.4 % — sélectivité maximale : seuls les setups multi-confluences
-    # (seuil 0.75) avec RR ≥ 2 passent. Seul TF au score OOS positif.
+    run_date: '2026-07-06'
+    oos_score: 0.3536
+    # OOS 2024-2026 : 58 trades, +96.4 (+9.6 %), PF 1.411, DD −4.0 % — le
+    # time-stop (sortie après 12 barres si ni TP ni SL) coupe les positions qui
+    # STAGNENT dans la chop et libère le slot pour capter plus de signaux ;
+    # score OOS DOUBLÉ (+0.354 vs +0.174) et DD divisé par 2 vs sans time-stop.
+    # ⚠ Pari de régime assumé (choix utilisateur 2026-07-06) : le time-stop
+    # sacrifie le PnL des fortes tendances (backtest complet 165t +206 PF 1.285
+    # vs 132t +294 sans ; sous-période 2021-2024 négative). Optimisé pour le
+    # régime choppy récent, pas pour maximiser le backtest complet.
     params:
-      min_score: 0.75
+      min_score: 0.70
       min_rr: 2.0
       sl_buffer_atr: 0.5
+      time_stop_bars: 12
       use_rejection_blocks: false
       kz_bonus: true
       amd_bonus: true
