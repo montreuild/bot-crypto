@@ -6,6 +6,163 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔧 SMC : correction des 10 findings de la revue de code
+
+Suite à une revue complète (8 angles) de la branche, correction de tous les
+findings vérifiés :
+
+- **Cohérence UI/live** : `/api/scanner/smc` applique désormais l'overlay
+  `optimizer_results` par timeframe (`resolve_strategy_params`) — la page Smart
+  graph reflète la config RÉELLEMENT tradée (4h : min_score 0.75), au lieu des
+  params de base.
+- **Thread API protégé** : `/api/scanner/smc_replay` (backtest synchrone) est
+  borné par un sémaphore non-bloquant (HTTP 429 si saturé) + cache court TTL,
+  comme `/api/replay` — plus de risque d'affamer le bot live.
+- **Mémoïsation de l'analyse** : `score()`/`trade_plans()`/`check_early_exit()`
+  partagent un cache `(res, aux)` clé sur la dernière barre close ; le live ne
+  relance plus `smc.analyze` (~130 ms → 0.3 ms entre deux barres identiques),
+  et les endpoints ne l'exécutent plus qu'UNE fois par requête (vs 3).
+- **Biais HTF aligné sur `_HTF_MAP`** (source unique de vérité d'app/live) :
+  4h→1d au lieu d'un ×4 arbitraire ; ≥ aussi bon (4h : PF 1.52 vs 1.49) et
+  cohérent partout (scanner, backtest, live). Défauts 4h re-validés :
+  145 trades, WR 46.9 %, +40.1 %, PF 1.523, Sharpe 8.2.
+- **Réutilisation des indicateurs canoniques** : `atr_wilder` ajouté à
+  `indicators_core` (source unique du lissage Wilder, partagé SMC/Pine) ;
+  `_vol_ratio_arr`/`_ema_arr` délèguent à `volume_ratio`/`ema` ;
+  `_regression_channel` devient un wrapper de `regression_channel_at`.
+- **Primitive de zones partagée** : `ZonesPrimitive` + palette extraites dans
+  `base.html` (`SmcChart`), utilisées par Smart graph ET Smart replay (fin de
+  la divergence de clipping entre les deux copies).
+- **Factorisation** : helpers `_htf_ok`/`_dir_gate` partagés par `_signal_at`
+  et `trade_plans` (garantit que les plans appliquent les mêmes filtres durs
+  que le signal) + test de parité plan-immédiat ↔ `score()`.
+- **Perf & nettoyage** : gardes CHoCH via tableau trié mémoïsé (fin du
+  O(événements²) dans `prepare_for_backtest`) ; suppression de 2 clés mortes
+  aux noms inversés dans `smc.DEFAULTS`.
+
+Backtest 4h byte-identique vérifié après chaque refactor mécanique. Suite
+complète : 414 tests OK (dont parité trade_plans/score et helpers).
+
+### ⏯ Page « Smart replay » : rejeu bougie par bougie de l'analyse SMC
+
+Nouvelle page `/smartreplay` (menu Analyse) pour rejouer le cours et **voir
+l'analyse évoluer comme le moteur la découvrait** : swings affichés à leur
+confirmation seulement, zones qui naissent/se font toucher/s'invalident,
+BOS/CHoCH et sweeps au fil de l'eau, trendlines recalculées à chaque barre.
+Contrôles play/pause/pas-à-pas/vitesse (2→20 barres/s)/slider + raccourcis
+clavier. Les **trades sont ceux du vrai Backtester** (paramètres par TF
+résolus) : bracket entrée/SL/TP visible pendant la position (PnL latent),
+dénouements ✓ TP / ✗ SL, et panneaux Performance cumulée / Journal des
+trades / Lecture à la barre — l'outil d'évaluation de pertinence des
+configurations. Architecture : UNE requête `/api/scanner/smc_replay`
+précalcule tout (le moteur causal expose les indices de cycle de vie de
+chaque entité), le navigateur reconstruit l'état à n'importe quelle barre —
+lecture fluide et scrubbing instantané sans appel serveur. Vérifié par
+navigation Playwright (chargement, saut, lecture auto, captures).
+
+### 🧭 SMC : biais multi-timeframe, volume profile, killzones, AMD, rejection blocks — mesurés un par un
+
+Cinq nouveaux enrichissements implémentés dans le moteur (`app/core/smc.py`)
+et la stratégie `smart_money`, puis **mesurés ISOLÉMENT** sur BTC/USDC
+15m→1d (historique complet + dernier tiers pseudo-OOS 2024-2026) :
+
+- **Biais multi-timeframe** (`htf_trend_series` : structure BOS/CHoCH sur
+  buckets horloge ×4, mapping causal par barre) — ✅ **seul enrichissement
+  gagnant sur tous les TF**, activé par défaut (`htf_filter: soft`).
+  4h : PF 1.485 vs 1.414, DD −8.0 vs −9.9, OOS +23 vs −8 ; **la période
+  2024-2026 repasse positive (PF 1.03)**. Nouveaux défauts 4h :
+  161 trades, WR 46.6 %, +41.0 %, Sharpe 7.5.
+- **Volume profile** (`volume_profile` : POC/HVN/LVN causals) — confluence
+  neutre au seuil 0.55, cibles légèrement négatives → off par défaut,
+  exploités par les configs par TF à seuils élevés.
+- **Killzones/sessions** (LDN 07-10, NY 12-15 UTC) — aucun edge horaire
+  mesurable sur BTC 24/7 → off (bonus et filtre).
+- **AMD / Power of Three** (compression → sweep de manipulation) — bonus
+  neutre au seuil 0.55 → off, exploré par l'optimiseur.
+- **Rejection blocks** (mèches de swing ≥ 0.5×ATR, setup REJECTION_RETEST)
+  — dilue le PF global mais améliore l'OOS 4h/2h → off, exploré par
+  l'optimiseur.
+
+Calibration PAR TIMEFRAME (grille IS 2/3 / OOS 1/3, sélection sur le PF OOS,
+score officiel `composite_score` du repo) écrite dans
+`strategies/smart_money.yaml` → `optimizer_results`. Page Smart graph :
+calques « Rejection blocks » et « Volume profile », biais HTF et session
+dans la Lecture du marché. 35 tests SMC, suite complète 412 OK.
+
+### 📌 Smart graph : tableau « Trades à ouvrir » (plans recommandés)
+
+Nouvelle méthode `Strategy.trade_plans()` (smart_money) exposée via
+`/api/scanner/smc` : en plus du signal immédiat, elle anticipe les setups EN
+ATTENTE — retests des order blocks frais et sweeps potentiels des poches de
+liquidité actives, avec les mêmes filtres durs que la stratégie (tendance,
+côté momentum, EMA200, gain > 0,4 %, RR minimal). La page Smart graph affiche
+ces plans dans un tableau : statut (⚡ maintenant / ⏳ en attente), sens,
+setup, **déclencheur à attendre**, entrée/SL/TP recommandés, gain potentiel,
+RR, distance au prix et score minimum ; un clic trace les niveaux du plan sur
+le graphique et détaille le motif. 30 tests SMC (contrat des plans inclus).
+
+### 💡 Page « Smart graph » + enrichissements SMC (voids, breakers, structure, cycle)
+
+Nouvelle page dédiée **`/smartgraph`** (menu Analyse → Smart graph) : chart
+d'analyste complet façon « pro trader » — zones en **vrais rectangles ombrés**
+(primitive canvas lightweight-charts) pour l'offre/demande, les poches de
+liquidité BSL/SSL, les FVG, les liquidity voids et les breakers ; **zigzag de
+structure** (peaks/troughs) avec labels HH/HL/LH/LL et flèches BOS/CHoCH ;
+trendlines + canal de régression ; **projection de cycle** (expected
+peak/trough à la borne du canal) ; price lines entrée/SL/TP du signal courant.
+Calques activables, deep-link `?symbol=…&tf=…`, panneaux « Lecture du
+marché », « Signal smart_money » et « Zones actives ».
+
+Moteur `app/core/smc.py` enrichi :
+- **Liquidity Voids** : runs de ≥3 bougies directionnelles traversant
+  ≥2.5×ATR, cycle open → mitigated → filled — bords opposés utilisés comme
+  cibles de TP par la stratégie (`use_void_targets`, **+65 USDC** sur BTC 4h) ;
+- **Breaker Blocks** : OB invalidé → polarité inversée, retest suivi ;
+- **Structure line (zigzag)** : polyligne causale des swings alternés ;
+- **Cycle de marché** : phase advance/decline + cible projetée sur le canal ;
+- helpers causaux `trendline_value_at`, `regression_channel_at`,
+  `void_targets_above/below`, zone morte ±eq_tol×ATR sur les sweeps de swings.
+
+Stratégie `smart_money` adaptée : cibles voids, confluence « tap de
+trendline » (+0.05), setup `BREAKER_RETEST` (testé négatif sur BTC 4h :
+−163 USDC / 220 trades → off par défaut, exploré par l'optimiseur).
+**Validation BTC/USDC 4h 2018→2026 : 181 trades, WR 46,4 %, +40,5 %, PF 1.41,
+Sharpe 6.5, DD −9,9 %** (PF par tiers 2.28/1.54/0.95). Page vérifiée par
+capture navigateur (Playwright). 28 tests SMC — suite complète 405 OK.
+
+### 🧠 Moteur d'analyse Smart Money Concepts + stratégie `smart_money`
+
+Nouveau moteur `app/core/smc.py` (une passe causale O(n), sans lookahead) :
+- **Structure de marché** : swings fractals HH/HL/LH/LL, cassures **BOS** et
+  changements de caractère **CHoCH** (sur clôture) ;
+- **Zones de liquidité** : equal highs/lows (buy-side/sell-side liquidity),
+  cycle de vie active → swept, **sweeps** (stop hunts) avec détection du rejet ;
+- **Offre/Demande** : **order blocks** par displacement (corps ≥ k×ATR),
+  strength 2 si l'impulsion casse la structure, statut fresh/touché/invalidé ;
+- **FVG** (imbalances) ouverts/mitigés/comblés ;
+- **Premium/Discount** (équilibre 50 %, OTE 62-79 %) — version causale par barre ;
+- **Tendances** : trendlines automatiques (2 derniers swings) + canal de
+  régression linéaire ±2σ.
+
+Nouvelle stratégie **`smart_money`** (`strategies/smart_money.yaml`) :
+- setups **SWEEP_REVERSAL** (prise de liquidité rejetée) et **OB_RETEST**
+  (premier retour dans l'order block) — uniquement avec la tendance, côté
+  momentum du range, au-dessus/en-dessous de l'EMA200 ;
+- TP posé devant la prochaine poche de liquidité opposée, bracket fixe ;
+- ⚠ **filtre de gain : seules les positions au gain potentiel > 0,4 %**
+  (`min_gain_pct`) et RR ≥ 1.2 sont retenues ;
+- backtest O(1)/barre via `prepare_for_backtest` (une passe + cache).
+
+Validation BTC/USDC 4h 2018→2026 : 179 trades, WR 45,2 %, **+33,8 %**, PF 1.35,
+Sharpe 5.5, DD −10,6 % (PF par tiers : 2.33/1.40/0.87 — edge décroissant sur
+2024-2026 ; TF < 4h négatifs avec les défauts, laissés à l'optimiseur).
+
+Branchements : case **« SMC (Smart Money) »** sur le graphique du scanner
+(zones, markers BOS/CHoCH/sweeps, trendlines, canal, signal courant avec
+entrée/SL/TP/gain %) via `GET /api/scanner/smc` ; stratégie disponible dans le
+replay, le backtest, l'optimiseur et le live. Documentation :
+`docs/SMART_MONEY_CONCEPTS.md`. 22 tests unitaires (`tests/test_smc.py`).
+
 ### ⚡ Performance backtest/optimisation : suppression d'un O(n²) et du « get_column storm » des stratégies ML
 
 **Symptôme.** Backtests ML très lents et **ralentissant avec la taille** (279 → 185

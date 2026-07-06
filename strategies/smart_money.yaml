@@ -1,0 +1,149 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : Smart Money Concepts (SMC)
+# ──────────────────────────────────────────────────────────────────────────────
+# Basée sur le moteur d'analyse app/core/smc.py : structure de marché
+# (BOS/CHoCH), poches de liquidité (equal highs/lows), sweeps, order blocks
+# (offre/demande), FVG, premium/discount et OTE.
+#
+# Setups (uniquement AVEC la tendance et du côté momentum du range) :
+#   - SWEEP_REVERSAL : prise de liquidité (mèche au-delà d'une poche) rejetée
+#     par la clôture → entrée contre le sweep, stop sous/sur l'extrême.
+#   - OB_RETEST : premier retour dans l'order block à l'origine d'une impulsion
+#     qui a cassé la structure → entrée sur la zone, stop de l'autre côté.
+#   - BREAKER_RETEST (use_breakers, off par défaut) : retest d'un order block
+#     invalidé (polarité inversée).
+#
+# Sorties : bracket FIXE. TP posé juste devant la prochaine cible opposée —
+# poche de liquidité OU bord d'un liquidity void non comblé (use_void_targets),
+# sinon fallback tp_rr_fallback×R. Confluence trendline (tl_tol_atr) au score.
+#
+# ⚠ RÈGLE DE GAIN : seules les positions offrant un gain potentiel
+#   (entrée → TP) STRICTEMENT SUPÉRIEUR à min_gain_pct (0.4 %) ET un ratio
+#   gain/risque ≥ min_rr sont retenues. Tout setup trop court est rejeté.
+#
+# Validation BTC/USDC (2026-07, défauts ci-dessous dont htf_filter: soft,
+# frais 0.1 %/côté ; HTF aligné sur _HTF_MAP → 4h utilise le 1d) :
+#   4h : 2018→2026, 145 trades, WR 46.9 %, PnL +40.1 %, PF 1.523, Sharpe 8.2,
+#        DD −8.1 % (sous-périodes : PF 2.49 / 1.56 / 0.97).
+#   30m/1h/2h/1d : négatif avec les défauts → laissés à l'optimiseur
+#        (voir optimizer_results ci-dessous pour les meilleures configs/TF).
+#   BREAKER_RETEST : −163 USDC / 220 trades sur 4h → use_breakers: false.
+
+params:
+  swing_len: 3            # pivots fractals : N barres de chaque côté
+  eq_tol_atr: 0.25        # tolérance equal highs/lows (×ATR)
+  disp_body_atr: 1.3      # corps minimal du displacement (×ATR)
+  ob_lookback: 5          # recherche de la bougie opposée avant l'impulsion
+  fvg_min_atr: 0.2        # taille minimale d'un FVG (×ATR)
+  min_gain_pct: 0.4       # ⚠ gain potentiel minimal en % (filtre des positions)
+  min_rr: 1.2             # ratio gain/risque minimal
+  sl_buffer_atr: 0.25     # marge du stop sous/sur la zone (×ATR)
+  tp_rr_fallback: 2.0     # TP fallback en multiples de R
+  tp_front_run_atr: 0.1   # TP posé juste avant la poche visée (×ATR)
+  vol_confluence: 1.2     # bonus si volume > 1.2× SMA20(volume)
+  choch_guard_bars: 5     # pas d'entrée contre un CHoCH plus récent que N barres
+  ema_filter_len: 200     # biais institutionnel : long > EMA200, short < EMA200 (0 = off)
+  choch_exit: false       # early-exit CHoCH : négatif sur BTC toutes TF (validation 2026-07)
+  use_breakers: false     # BREAKER_RETEST : négatif sur BTC 4h (validation 2026-07)
+  use_void_targets: true  # bords des liquidity voids non comblés comme cibles TP
+  tl_tol_atr: 0.3         # tolérance du tap de trendline automatique (×ATR)
+  # ── Enrichissements 2026-07 — verdicts de la campagne de mesure ──────────
+  htf_filter: soft        # ✅ biais multi-TF : SEUL enrichissement gagnant sur
+                          #    tous les TF (4h : PF 1.49, OOS +23 vs −8)
+  htf_mult: 4             # HTF = timeframe × 4 (1h→4h, 4h→16h…)
+  use_rejection_blocks: false  # dilue le PF global (OOS 4h/2h en profite) → optimiseur
+  vp_confluence: false    # neutre au seuil 0.55 — utile aux seuils élevés (cf. configs/TF)
+  vp_targets: false       # légèrement négatif partout
+  kz_bonus: false         # neutre au seuil 0.55
+  kz_filter: false        # négatif partout — pas d'edge horaire sur BTC 24/7
+  amd_bonus: false        # neutre au seuil 0.55
+  score_threshold: 0.55   # ≥ 1 confluence requise (score de base 0.50)
+
+# ── Configurations par timeframe (calibration 2026-07-04) ────────────────────
+# Méthode : grille ciblée par TF (seuil de score avec bonus kz/amd/vp actifs,
+# min_rr, sl_buffer/min_gain, rejections/kz_filter), split IS 2/3 / OOS 1/3
+# (l'OOS = 2024-2026, la période la plus difficile). Sélection : ≥10 trades
+# OOS ET PF IS ≥ 1.0, classement par PF OOS. oos_score = composite_score du
+# repo calculé sur un backtest propre de la tranche OOS (warmup 260 barres).
+#
+# Lecture senior : SEUL LE 4H EST TRADABLE (oos_score positif). Les autres TF
+# sont enregistrés avec leur meilleure config « la moins mauvaise » et un
+# score NÉGATIF assumé — le lifecycle/audit ne les promouvra pas ; si vous
+# forcez un de ces TF, la config limite au moins l'hémorragie (ex. 1h :
+# OOS −34 avec la config vs −182 avec les défauts).
+optimizer_results:
+  4h:
+    run_date: '2026-07-04'
+    oos_score: 0.1744
+    # OOS 2024-2026 (HTF _HTF_MAP) : 51 trades, +22.2 (+2.2 %), PF 1.078,
+    # DD −7.4 % — sélectivité maximale : seuls les setups multi-confluences
+    # (seuil 0.75) avec RR ≥ 2 passent. Seul TF au score OOS positif.
+    params:
+      min_score: 0.75
+      min_rr: 2.0
+      sl_buffer_atr: 0.5
+      use_rejection_blocks: false
+      kz_bonus: true
+      amd_bonus: true
+      vp_confluence: true
+  2h:
+    run_date: '2026-07-04'
+    oos_score: -0.2299
+    # OOS : 104 trades, −115, PF 0.771 — NON tradable (0 config éligible sauf 3 IS-only).
+    params:
+      min_score: 0.75
+      min_rr: 2.0
+      sl_buffer_atr: 0.5
+      use_rejection_blocks: false
+      kz_bonus: true
+      amd_bonus: true
+      vp_confluence: true
+  1d:
+    run_date: '2026-07-04'
+    oos_score: -0.0747
+    # OOS : 12 trades, −37, PF 0.587 — trop peu de trades, pas d'edge.
+    params:
+      min_score: 0.55
+      min_rr: 1.2
+      sl_buffer_atr: 0.5
+      use_rejection_blocks: false
+      kz_bonus: true
+      amd_bonus: true
+      vp_confluence: true
+  1h:
+    run_date: '2026-07-04'
+    oos_score: -0.0667
+    # OOS : 56 trades, −33, PF 0.831 — NON tradable (0 config éligible).
+    # La config réduit l'hémorragie de −182 à −34 (kz_filter + gain min 1.2 %).
+    params:
+      min_score: 0.65
+      min_rr: 2.0
+      min_gain_pct: 1.2
+      kz_filter: true
+      kz_bonus: true
+      amd_bonus: true
+      vp_confluence: true
+  30m:
+    run_date: '2026-07-04'
+    oos_score: -0.1424
+    # OOS : 133 trades, −71, PF 0.781 — NON tradable.
+    params:
+      min_score: 0.75
+      min_rr: 1.5
+      min_gain_pct: 1.2
+      kz_filter: false
+      kz_bonus: true
+      amd_bonus: true
+      vp_confluence: true
+  15m:
+    run_date: '2026-07-04'
+    oos_score: -0.0818
+    # OOS : 34 trades, −41, PF 0.416 — NON tradable (bruit + frais).
+    params:
+      min_score: 0.65
+      min_rr: 1.5
+      min_gain_pct: 1.2
+      kz_filter: true
+      kz_bonus: true
+      amd_bonus: true
+      vp_confluence: true
