@@ -113,6 +113,8 @@ class Strategy(BaseStrategy):
         "vp_confluence":  [True, False],
         "use_rejection_blocks": [True, False],
         "time_stop_bars": [0, 12, 16, 24],
+        "use_trailing":   [True, False],
+        "trail_mult":     [2.0, 2.5, 3.5],
     }
 
     fixed_params: Dict[str, Any] = {
@@ -170,6 +172,15 @@ class Strategy(BaseStrategy):
         # (BTC 4h 2024-26 : −19 → +13) au prix de l'upside des tendances fortes
         # (où l'on veut laisser courir). Arbitrage tranché par l'optimiseur/TF.
         "time_stop_bars":   0,
+        # Trailing stop (via le TrailingStopManager du Backtester) au lieu du
+        # TP fixe : laisse COURIR les gagnants (outil de tendance, complément du
+        # time-stop). Combiné au time-stop CONDITIONNEL (coupe uniquement les
+        # trades qui n'ont jamais atteint +``ts_profit_r``×R = stagnants), on
+        # ride les tendances ET on coupe la chop. Validé 4h (cf. optimizer_results).
+        "use_trailing":     False,
+        "trail_mult":       2.5,    # multiplicateur ATR du trailing (trail_wide)
+        "ts_profit_r":      1.0,    # seuil de « progression » (×R) sous lequel le
+                                    # time-stop coupe quand use_trailing est actif
     }
 
     def __init__(self):
@@ -500,10 +511,29 @@ class Strategy(BaseStrategy):
                                   abs(x["distance_pct"])))
         return plans[:max_plans]
 
-    # ── Sortie anticipée : CHoCH contre la position ──────────────────────────
+    # ── Sortie anticipée : time-stop conditionnel (trailing) + CHoCH ─────────
     def check_early_exit(self, df: pl.DataFrame, position: dict,
                          params: dict = None) -> Optional[str]:
-        if not bool(self._p(params).get("choch_exit", True)):
+        p = self._p(params)
+        # Time-stop CONDITIONNEL (mode trailing) : coupe un trade qui STAGNE —
+        # jamais atteint +ts_profit_r×R après time_stop_bars barres. Un gagnant
+        # qui court (MFE au-delà du seuil) n'est PAS coupé : le trailing gère.
+        ts_bars = int(p.get("time_stop_bars", 0) or 0)
+        if bool(p.get("use_trailing", False)) and ts_bars > 0:
+            bars_held = (df.height - 1) - int(position.get("bar", df.height))
+            if bars_held >= ts_bars:
+                ind = position.get("indicators") or {}
+                risk_pct = float(ind.get("_risk_pct") or 0.0)
+                if risk_pct <= 0:
+                    st = position.get("_stop_trail") or []
+                    e = float(position.get("entry") or 0.0)
+                    if st and e > 0:
+                        risk_pct = abs(e - float(st[0]["stop"])) / e * 100.0
+                mfe = float(position.get("mfe", 0.0))
+                if risk_pct > 0 and mfe < float(p.get("ts_profit_r", 1.0)) * risk_pct:
+                    return "time_stop_stall"
+
+        if not bool(p.get("choch_exit", True)):
             return None
         idx = df.height - 1
         direction = None
@@ -514,7 +544,6 @@ class Strategy(BaseStrategy):
         else:
             # Live : réutilise l'analyse mémoïsée (même fenêtre/cache que
             # score()) au lieu de relancer un analyze dédié par position/cycle.
-            p = self._p(params)
             win = df[-int(p["max_window"]):] if len(df) > int(p["max_window"]) else df
             res, _ = self._analyze_cached(win, p)
             last = len(win) - 1
@@ -866,24 +895,46 @@ class Strategy(BaseStrategy):
 
         bias_label = {1: "haussier", -1: "baissier", 0: "neutre"}[int(trend)]
         arrow = "LONG" if side == "long" else "SHORT"
-        # Time-stop optionnel : porté par exit_after_bars (géré nativement par le
-        # Backtester et le live — sortie à la clôture si ni SL ni TP touché).
         ts_bars = int(p.get("time_stop_bars", 0) or 0)
+        use_trailing = bool(p.get("use_trailing", False))
+        risk_pct = risk / entry * 100.0
+
+        if use_trailing:
+            # Mode trailing : on laisse courir (pas de TP fixe → take_profit None),
+            # le TrailingStopManager du Backtester gère la sortie. Le time-stop
+            # devient CONDITIONNEL (via check_early_exit) : il ne coupe que les
+            # trades stagnants (MFE < ts_profit_r×R), jamais un gagnant qui court.
+            tp_out = None
+            exit_after = None
+            trail_override = {"trail_wide": float(p.get("trail_mult", 2.5)),
+                              "mode": "dynamic"}
+            disable_trailing = False
+            exit_txt = f"trailing {p.get('trail_mult', 2.5):g}×ATR"
+        else:
+            tp_out = round(tp, 8)
+            exit_after = ts_bars if ts_bars > 0 else None
+            trail_override = None
+            disable_trailing = True
+            exit_txt = f"TP {tp_src}"
+
         return {
             "score": score, "side": side, "name": self.name, "atr": atr,
             "setup": setup,
             "stop_hint": round(sl, 8),
-            "tp_hint":   round(tp, 8),
-            "exit_after_bars": ts_bars if ts_bars > 0 else None,
-            "disable_trailing": True,
+            "tp_hint":   tp_out,
+            "exit_after_bars": exit_after,
+            "disable_trailing": disable_trailing,
+            "trail_override": trail_override,
             "indicators": {
                 "bias":     bias_label,
                 "pd_zone":  zone or None,
                 "gain_pct": round(gain_pct, 3),
                 "rr":       round(rr_final, 2),
                 "tp_source": tp_src,
+                "tp_target": round(tp, 8),      # cible affichée (info) même en trailing
+                "_risk_pct": round(risk_pct, 6),  # pour le time-stop conditionnel
             },
-            "reason": (f"{arrow} {setup} : {detail} — TP {tp_src} "
+            "reason": (f"{arrow} {setup} : {detail} — {exit_txt} "
                        f"(gain {gain_pct:.2f}% > {min_gain:g}%, RR {rr_final:.2f}), "
                        f"bias {bias_label}"),
         }

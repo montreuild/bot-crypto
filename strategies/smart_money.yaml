@@ -75,21 +75,26 @@ params:
 # OOS −34 avec la config vs −182 avec les défauts).
 optimizer_results:
   4h:
-    run_date: '2026-07-06'
-    oos_score: 0.3536
-    # OOS 2024-2026 : 58 trades, +96.4 (+9.6 %), PF 1.411, DD −4.0 % — le
-    # time-stop (sortie après 12 barres si ni TP ni SL) coupe les positions qui
-    # STAGNENT dans la chop et libère le slot pour capter plus de signaux ;
-    # score OOS DOUBLÉ (+0.354 vs +0.174) et DD divisé par 2 vs sans time-stop.
-    # ⚠ Pari de régime assumé (choix utilisateur 2026-07-06) : le time-stop
-    # sacrifie le PnL des fortes tendances (backtest complet 165t +206 PF 1.285
-    # vs 132t +294 sans ; sous-période 2021-2024 négative). Optimisé pour le
-    # régime choppy récent, pas pour maximiser le backtest complet.
+    run_date: '2026-07-07'
+    oos_score: 0.2910
+    # TRAILING (2026-07-07) : au lieu du TP fixe, on laisse COURIR les gagnants
+    # (trailing 3.5×ATR via le TrailingStopManager) et le time-stop 12 devient
+    # CONDITIONNEL — il ne coupe QUE les trades stagnants (MFE < 1×R après 12
+    # barres), jamais un gagnant qui court. Ride les tendances ET coupe la chop.
+    # Mesuré (vrai Backtester, chemin de prod) vs time-stop pur :
+    #   FULL 2018→26 : 147t +318 PF 1.44 Sharpe 4.9  (vs 165t +168 PF 1.23 Sh 2.9)
+    #   OOS  2024→26 :  54t  +81 PF 1.34 sc 0.291     (vs  58t  +84 PF 1.35 sc 0.327)
+    # Le trailing RÉCUPÈRE l'upside des tendances que le time-stop pur sacrifiait
+    # (backtest complet quasi ×2) SANS coûter au régime récent (PnL OOS +81 vs
+    # +84 = égalité). Seul recul assumé : score composite OOS un peu plus bas
+    # (0.291 vs 0.327 sur le même harnais) — laisser courir = un peu plus de vol.
     params:
       min_score: 0.70
       min_rr: 2.0
       sl_buffer_atr: 0.5
       time_stop_bars: 12
+      use_trailing: true
+      trail_mult: 3.5
       use_rejection_blocks: false
       kz_bonus: true
       amd_bonus: true

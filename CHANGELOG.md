@@ -6,6 +6,39 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🏃 smart_money : trailing stop pour laisser courir les gagnants (4h)
+
+Suite au time-stop (dont le gain en nombre de trades restait modeste), deux
+idées testées pour exploiter davantage la volatilité :
+
+1. **Trailing stop plutôt que time-stop** — au lieu du TP fixe, un stop suiveur
+   à `trail_mult`×ATR (`TrailingStopManager` du Backtester) laisse **courir les
+   gagnants**. Le time-stop devient **conditionnel** (`check_early_exit`) : après
+   `time_stop_bars`, il ne coupe QUE les trades **stagnants** (MFE < `ts_profit_r`×R),
+   jamais un gagnant qui court. On ride les tendances ET on coupe la chop.
+2. **Plusieurs positions concurrentes** — pour ne pas rester bloqué sur un slot.
+
+Mesuré via le **vrai Backtester** (chemin de prod, BTC 4h) :
+
+| Config | FULL 2018→26 | OOS 2024→26 | oos_score |
+|---|---|---|---|
+| time-stop pur | +168, PF 1.23, Sh 2.9 | +84, PF 1.35 | +0.327 |
+| **trailing 3.5×ATR + ts12** | **+318, PF 1.44, Sh 4.9** | +81, PF 1.34 | +0.291 |
+
+**Idée 1 retenue** pour le 4h (`use_trailing: true`, `trail_mult: 3.5`,
+`time_stop_bars: 12`) : le trailing **récupère l'upside des tendances** que le
+time-stop pur sacrifiait (backtest complet quasi ×2, Sharpe 2.9→4.9) **sans
+coûter au régime récent** (PnL OOS +81 vs +84 = égalité). Recul assumé : score
+composite OOS un peu plus bas (0.291 vs 0.327), laisser courir = plus de vol.
+
+**Idée 2 rejetée (mesurée pire)** : passer de 1 à 2+ positions n'ajoute ~+5 sur
+le complet mais dégrade le régime récent (+21→+14, PF 1.34→1.21) ; le slot unique
+filtre involontairement les signaux marginaux (espérance négative).
+
+`use_trailing: false` reste le défaut de base (bracket fixe, validé toutes
+périodes) ; nouveaux paramètres `use_trailing`/`trail_mult`/`ts_profit_r` ajoutés
+au `param_space` de l'optimiseur. Backtest byte-identique avec le défaut (off).
+
 ### ⏱ smart_money : time-stop pour exploiter la volatilité choppy (4h)
 
 Diagnostic depuis le Smart replay (« beaucoup de signaux, peu exploités ») :

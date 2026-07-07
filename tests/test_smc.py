@@ -548,6 +548,56 @@ class TestTradePlans:
                 found_on += 1
         assert found_off > 0 and found_on > 0, "aucun signal généré — test non significatif"
 
+    def test_trailing_wiring(self):
+        """use_trailing=True → signaux sans TP fixe (tp_hint None), trailing
+        activé (disable_trailing False + trail_override), et time-stop porté
+        par check_early_exit (exit_after_bars None). Défaut (off) inchangé."""
+        assert Strategy.fixed_params["use_trailing"] is False
+        found = 0
+        for seed in range(12):
+            df = _random_df(900, seed=seed, jump_p=0.04)
+            s = Strategy()
+            s._bt_params = {"smart_money": {"use_trailing": True,
+                                            "trail_mult": 3.5,
+                                            "time_stop_bars": 12}}
+            s.prepare_for_backtest(df)
+            for sig in (s._bt_signals or {}).values():
+                found += 1
+                assert sig["tp_hint"] is None
+                assert sig["exit_after_bars"] is None
+                assert sig["disable_trailing"] is False
+                assert sig["trail_override"] == {"trail_wide": 3.5, "mode": "dynamic"}
+                # la cible reste exposée pour l'affichage, + risque pour le time-stop
+                assert sig["indicators"]["tp_target"] is not None
+                assert sig["indicators"]["_risk_pct"] > 0
+        assert found > 0, "aucun signal trailing généré — test non significatif"
+
+    def test_conditional_time_stop_cuts_only_stallers(self):
+        """En mode trailing, le time-stop conditionnel (check_early_exit) coupe
+        UNIQUEMENT les trades stagnants (MFE < ts_profit_r×R après N barres) —
+        jamais un gagnant qui court, ni un trade encore jeune. Off si !trailing."""
+        s = Strategy()
+        df = _random_df(30, seed=1)          # height 30 → bars_held = 29 - bar
+        on = {"smart_money": {"use_trailing": True, "time_stop_bars": 12,
+                              "choch_exit": False}}
+        # stagnant : détenu 19 barres, MFE 1.0 % < 1×R (risque 2.0 %) → coupé
+        stall = {"bar": 10, "mfe": 1.0, "indicators": {"_risk_pct": 2.0}}
+        assert s.check_early_exit(df, stall, on) == "time_stop_stall"
+        # gagnant qui court : MFE 3.0 % ≥ 1×R → PAS coupé (le trailing gère)
+        winner = {"bar": 10, "mfe": 3.0, "indicators": {"_risk_pct": 2.0}}
+        assert s.check_early_exit(df, winner, on) is None
+        # trop jeune : détenu 4 barres < 12 → PAS coupé
+        fresh = {"bar": 25, "mfe": 0.0, "indicators": {"_risk_pct": 2.0}}
+        assert s.check_early_exit(df, fresh, on) is None
+        # fallback risque via _stop_trail quand _risk_pct absent
+        fb = {"bar": 10, "mfe": 0.5, "entry": 100.0,
+              "_stop_trail": [{"bar": 11, "stop": 98.0}], "indicators": {}}
+        assert s.check_early_exit(df, fb, on) == "time_stop_stall"
+        # sans trailing : le time-stop natif (exit_after_bars) gère, pas ici
+        off = {"smart_money": {"use_trailing": False, "time_stop_bars": 12,
+                               "choch_exit": False}}
+        assert s.check_early_exit(df, stall, off) is None
+
     def test_dir_gate_and_htf_ok_helpers(self):
         # _htf_ok : sémantique off/soft/strict
         assert Strategy._htf_ok("off", -1) == (True, True)

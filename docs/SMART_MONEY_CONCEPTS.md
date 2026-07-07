@@ -196,12 +196,18 @@ complet + dernier tiers (pseudo-OOS 2024-2026, la période la plus dure) :
 | Volume > `vol_confluence`×SMA20(volume) | +0.05 |
 | Bougie de rejet colorée dans le sens du trade | +0.05 |
 
-### Sorties — bracket FIXE (pas de trailing)
+### Sorties — bracket fixe **ou** trailing (`use_trailing`)
 
 - **SL** : sous/sur l'extrême de la zone + `sl_buffer_atr`×ATR.
-- **TP** : posé juste devant la **prochaine poche de liquidité opposée**
-  (front-run de `tp_front_run_atr`×ATR) — la première poche satisfaisant les
-  deux contraintes ci-dessous ; sinon fallback `tp_rr_fallback`×R.
+- **TP (défaut, `use_trailing: false`)** : posé juste devant la **prochaine
+  poche de liquidité opposée** (front-run de `tp_front_run_atr`×ATR) — la
+  première poche satisfaisant les deux contraintes ci-dessous ; sinon fallback
+  `tp_rr_fallback`×R. Time-stop optionnel via `exit_after_bars`.
+- **Trailing (`use_trailing: true`, activé sur le 4h)** : pas de TP fixe — le
+  `TrailingStopManager` du Backtester suit le prix à `trail_mult`×ATR pour
+  **laisser courir les gagnants**. Le time-stop devient alors **conditionnel**
+  (cf. section dédiée) : il ne coupe que les trades stagnants, jamais un gagnant
+  qui court.
 - Early-exit CHoCH disponible (`choch_exit`) mais **désactivé par défaut** :
   coupait systématiquement en perte sur BTC toutes TF.
 
@@ -243,7 +249,7 @@ l'overlay).
 
 | TF | Config retenue | OOS (2024-2026) | oos_score | Verdict |
 |---|---|---|---|---|
-| **4h** | min_score 0.70, RR ≥ 2, SL 0.5×ATR, **time-stop 12**, bonus kz/amd/vp | 58 trades, **+96 (+9,6 %), PF 1.41, DD −4,0 %** | **+0.354** | ✅ tradable |
+| **4h** | min_score 0.70, RR ≥ 2, SL 0.5×ATR, **trailing 3.5×ATR + time-stop conditionnel 12**, bonus kz/amd/vp | 54 trades, **+81, PF 1.34** (FULL +318, PF 1.44, Sharpe 4.9) | **+0.291** | ✅ tradable |
 | 1h | min_score 0.65, RR ≥ 2, gain ≥ 1,2 %, killzones only | −33, PF 0.83 (vs −182 défauts) | −0.067 | ❌ |
 | 2h | min_score 0.75, RR ≥ 2 | −115, PF 0.77 | −0.230 | ❌ |
 | 30m | min_score 0.75, RR ≥ 1.5, gain ≥ 1,2 % | −71, PF 0.78 | −0.142 | ❌ |
@@ -285,16 +291,48 @@ Le **time-stop** (paramètre `time_stop_bars`, porté par le mécanisme natif
 `exit_after_bars` du Backtester) est la seule idée qui redresse le régime
 récent — et il prend **plus** de trades (58 vs 51 : les positions bloquées
 libèrent le slot plus tôt). Validation : OOS score **doublé** (+0.354 vs
-+0.174), DD divisé par 2 (−4,0 %), IS toujours positif (+119, PF 1.25),
-walk-forward consistance 40 %→60 %. Il ne rescape PAS les TF < 4h (chop
-edgeless) — c'est un levier spécifique au 4h, pas un cache-misère universel.
++0.174), DD divisé par 2 (−4,0 %), IS toujours positif (+119, PF 1.25). Il ne
+rescape PAS les TF < 4h (chop edgeless) — c'est un levier spécifique au 4h.
 
-⚠ **Pari de régime assumé** (choix explicite, 2026-07-06) : le time-stop
-sacrifie le PnL des fortes tendances (backtest complet 400→206, sous-période
-2021-2024 négative). Retenu car la méthodologie du projet sélectionne sur
-l'OOS (proxy du forward), et le régime récent est celui à trader. `ts=0` reste
-le défaut de base (validé toutes périodes) ; le 4h l'active via
-`optimizer_results`.
+Le time-stop **pur** avait un défaut assumé : il sacrifiait le PnL des fortes
+tendances (backtest complet 400→206), optimisé pour le seul régime choppy
+récent. La suite (trailing) corrige ce défaut.
+
+### Trailing stop : laisser courir les gagnants (2026-07-07)
+
+Deux idées testées pour aller plus loin que le time-stop pur (dont le gain en
+nombre de trades restait modeste) :
+
+1. **Trailing stop plutôt que time-stop** — au lieu du TP fixe, on laisse
+   courir avec un stop suiveur à `trail_mult`×ATR (`TrailingStopManager` du
+   Backtester). Le time-stop devient **conditionnel** : après `time_stop_bars`,
+   on ne coupe QUE les trades **stagnants** (MFE < `ts_profit_r`×R) ; un gagnant
+   qui court n'est jamais coupé — le trailing gère sa sortie.
+2. **Plusieurs positions concurrentes** — pour ne pas rester bloqué sur un slot
+   unique.
+
+Mesures via le **vrai Backtester** (chemin de prod, BTC 4h) :
+
+| Config | FULL 2018→26 | OOS 2024→26 | oos_score |
+|---|---|---|---|
+| time-stop pur (précédent) | +168, PF 1.23, Sh 2.9 | +84, PF 1.35 | +0.327 |
+| **trailing 3.5×ATR + ts12** | **+318, PF 1.44, Sh 4.9** | +81, PF 1.34 | +0.291 |
+
+**Idée 1 retenue.** Le trailing **récupère l'upside des tendances** que le
+time-stop pur sacrifiait (backtest complet quasi ×2, Sharpe 2.9→4.9) **sans
+coûter au régime récent** (PnL OOS +81 vs +84 = égalité). Seul recul assumé :
+score composite OOS un peu plus bas (0.291 vs 0.327 sur le même harnais), car
+laisser courir = un peu plus de volatilité — le 4h reste largement tradable.
+
+**Idée 2 rejetée (mesurée pire).** Passer de 1 à 2+ positions n'ajoute que ~+5
+sur le complet mais **dégrade le régime récent** (+21→+14, PF 1.34→1.21) ; sans
+time-stop c'est pire encore (−5,7→−14,9). Le **slot unique agit comme un
+filtre-qualité involontaire** : les signaux marginaux qu'il refuse ont une
+espérance négative. Non intégré.
+
+`use_trailing: false` (bracket fixe) reste le **défaut de base**, validé toutes
+périodes ; le 4h active le trailing via `optimizer_results`. Backtest
+byte-identique avec le défaut (off).
 
 ### Performance technique
 
