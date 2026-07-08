@@ -817,7 +817,24 @@ def volume_profile(h: np.ndarray, l: np.ndarray, c: np.ndarray, v: np.ndarray,
             hvns.append(float(centers[k]))
         elif hist[k] <= lvn_factor * mean_v:
             lvns.append(float(centers[k]))
+    # Value Area : plage contenant 70 % du volume, par expansion gloutonne
+    # bilatérale depuis le POC (côté au plus fort volume d'abord). Le prix tend
+    # à rester dans la VA ; en sortir signale un changement de régime.
+    total = float(hist.sum())
+    poc_k = int(np.argmax(hist))
+    lo_k = hi_k = poc_k
+    captured = float(hist[poc_k])
+    while captured < 0.70 * total and (lo_k > 0 or hi_k < n_bins - 1):
+        left_v = float(hist[lo_k - 1]) if lo_k > 0 else -1.0
+        right_v = float(hist[hi_k + 1]) if hi_k < n_bins - 1 else -1.0
+        if right_v >= left_v:
+            hi_k += 1
+            captured += float(hist[hi_k])
+        else:
+            lo_k -= 1
+            captured += float(hist[lo_k])
     return {"poc": poc, "hvns": hvns, "lvns": lvns,
+            "va_low": float(edges[lo_k]), "va_high": float(edges[hi_k + 1]),
             "bin_size": float(edges[1] - edges[0]),
             "range_low": p_min, "range_high": p_max}
 

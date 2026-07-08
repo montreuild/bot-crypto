@@ -6,6 +6,28 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 📐 indicators_core : nouveaux indicateurs réutilisables (VWAP, CVD, Choppiness…)
+
+Batch d'indicateurs génériques (importables par toute stratégie via la façade
+`app.core.indicators`), en vue de les croiser avec SMC :
+
+- **VWAP** : `rolling_vwap` (glissant), `session_vwap` (ancré jour UTC),
+  `vwap_bands` (± k×σ, cibles/sur-extension).
+- **CVD** (`cvd`) : Cumulative Volume Delta approximé OHLCV (multiplicateur
+  money-flow) — divergences prix/CVD = absorption.
+- **Choppiness** (`choppiness`) : tendance (< 38.2) vs congestion (> 61.8).
+- **Keltner** (`keltner`) : EMA ± mult×ATR (canal, cibles TP).
+- **Value Area** : `smc.volume_profile` renvoie désormais `va_low`/`va_high`
+  (70 % du volume autour du POC) — additif, signaux SMC inchangés.
+- **Price action** : `pin_bar` (marteau/étoile), `engulfing` (avalement),
+  `vsa_signal` (No Demand / No Supply).
+- **Divergences cachées** (`rsi_divergence_hidden`) : continuation, complément
+  de `rsi_divergence` (régulières).
+
+Toutes causales (fenêtres passées + barre courante), pures, testées (5 tests).
+Microstructure (carnet d'ordres, spoofing, niveaux de liquidation) NON incluse :
+nécessite des données L2/temps réel non backtestables sur OHLCV historique.
+
 ### 🧩 smart_money : 3 pistes SMC optionnelles (OFF par défaut)
 
 Audit complet de la stratégie contre la checklist SMC de référence : **15/19
