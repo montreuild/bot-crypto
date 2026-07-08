@@ -476,6 +476,31 @@ class TestMinGainFilter:
         assert trade["indicators"]["gain_pct"] > 0.4
         assert trade["tp_hint"] >= 98.5
 
+    def test_confluence_sizing(self):
+        """size_by_confluence → size_factor croît avec le score (borné
+        [0.4, 1.7]), vaut 1.0 au centre ; désactivé (défaut) → 1.0 constant."""
+        s = Strategy()
+
+        def sf(score, enabled, slope=3.0, center=0.83):
+            p = dict(Strategy.fixed_params)
+            p["size_by_confluence"] = enabled
+            p["size_conf_slope"] = slope
+            p["size_conf_center"] = center
+            t = s._build_trade(self._res_stub(101.5), 50, "long",
+                               entry=100.0, sl=99.5, atr=0.0, p=p,
+                               setup="TEST", score=score, detail="")
+            return t["size_factor"]
+
+        assert Strategy.fixed_params["size_by_confluence"] is False
+        # désactivé (défaut) : facteur neutre, quel que soit le score
+        assert sf(1.0, False) == 1.0 and sf(0.70, False) == 1.0
+        # activé : monotone croissant, = 1.0 au centre
+        assert sf(0.70, True) < sf(0.83, True) < sf(1.0, True)
+        assert abs(sf(0.83, True) - 1.0) < 1e-9
+        # bornes : slope élevée → clampé à [0.4, 1.7]
+        assert sf(1.0, True, slope=10) == 1.7
+        assert sf(0.70, True, slope=10) == 0.4
+
 
 class TestTradePlans:
     def test_plans_contract(self):

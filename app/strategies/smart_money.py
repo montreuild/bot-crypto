@@ -115,6 +115,8 @@ class Strategy(BaseStrategy):
         "time_stop_bars": [0, 12, 16, 24],
         "use_trailing":   [True, False],
         "trail_mult":     [2.0, 2.5, 3.5],
+        "size_by_confluence": [True, False],
+        "size_conf_slope": [2.0, 3.0, 4.0],
     }
 
     fixed_params: Dict[str, Any] = {
@@ -181,6 +183,16 @@ class Strategy(BaseStrategy):
         "trail_mult":       2.5,    # multiplicateur ATR du trailing (trail_wide)
         "ts_profit_r":      1.0,    # seuil de « progression » (×R) sous lequel le
                                     # time-stop coupe quand use_trailing est actif
+        # Sizing pondéré par confluence (via le hook natif ``size_factor`` du
+        # Backtester/live — « demi-Kelly ×confidence »). On alloue PLUS aux
+        # setups à forte confluence : size_factor = 1 + slope×(score − center),
+        # borné [0.4, 1.7]. Centré sur le score moyen ⇒ exposition globale ≈
+        # inchangée (RÉALLOCATION du risque, pas du levier) — le DD reste plat.
+        # Le score du moteur est prédictif : gain net sur les 2 périodes (4h OOS
+        # +81 → +108, score composite 0.291 → 0.332). Validé 4h (optimizer_results).
+        "size_by_confluence": False,
+        "size_conf_slope":  3.0,    # pente de la pondération par le score
+        "size_conf_center": 0.83,   # score « neutre » (≈ moyenne 4h) → facteur 1.0
     }
 
     def __init__(self):
@@ -917,6 +929,16 @@ class Strategy(BaseStrategy):
             disable_trailing = True
             exit_txt = f"TP {tp_src}"
 
+        # Sizing pondéré par confluence : on alloue plus aux setups à forte
+        # confluence via le hook natif size_factor (borné [0.4, 1.7] ; le
+        # Backtester/live re-bornent à [0, 2]). Centré sur size_conf_center ⇒
+        # exposition globale ≈ inchangée. Absent (=1.0) si désactivé.
+        size_factor = 1.0
+        if bool(p.get("size_by_confluence", False)):
+            slope = float(p.get("size_conf_slope", 3.0))
+            center = float(p.get("size_conf_center", 0.83))
+            size_factor = max(0.4, min(1.7, 1.0 + slope * (score - center)))
+
         return {
             "score": score, "side": side, "name": self.name, "atr": atr,
             "setup": setup,
@@ -925,6 +947,7 @@ class Strategy(BaseStrategy):
             "exit_after_bars": exit_after,
             "disable_trailing": disable_trailing,
             "trail_override": trail_override,
+            "size_factor": size_factor,
             "indicators": {
                 "bias":     bias_label,
                 "pd_zone":  zone or None,

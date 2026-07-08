@@ -6,6 +6,33 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### ⚖️ smart_money : sizing pondéré par confluence (4h)
+
+Empilé sur le trailing : au lieu d'un risque fixe par trade, on **alloue plus
+aux setups à forte confluence** via le hook natif `size_factor` du
+Backtester/live (« demi-Kelly ×confidence ») :
+
+    size_factor = clip(1 + size_conf_slope × (score − size_conf_center), 0.4, 1.7)
+
+Centré sur le score moyen (≈ 0.83 sur le 4h) → exposition globale ≈ inchangée :
+c'est une RÉALLOCATION du risque, pas un cran de levier. Mesuré (vrai
+Backtester, BTC 4h), empilé sur le trailing :
+
+| Config | FULL 2018→26 | OOS 2024→26 | oos_score |
+|---|---|---|---|
+| + trailing 3.5×ATR | +318, PF 1.44, Sh 4.9 | +81, PF 1.34 | +0.291 |
+| **+ sizing par confluence** | **+387, PF 1.51, Sh 5.2** | **+108, PF 1.46** | **+0.332** |
+
+Amélioration MONOTONE avec la pente → le score du moteur est réellement
+prédictif. Améliore tout sur les deux périodes **à exposition et DD égaux**
+(−4,3 %) et **récupère le score composite OOS** que le trailing avait cédé
+(0.332 > 0.327 du time-stop pur). Un 3ᵉ levier testé (taille scalée par régime)
+est écarté : PnL en hausse mais Sharpe plat → exposition, pas edge.
+
+`size_by_confluence: false` reste le défaut (byte-identique) ; le 4h l'active
+via `optimizer_results`. Params `size_by_confluence`/`size_conf_slope`/
+`size_conf_center` ajoutés au `param_space`. 418 tests OK.
+
 ### 🏃 smart_money : trailing stop pour laisser courir les gagnants (4h)
 
 Suite au time-stop (dont le gain en nombre de trades restait modeste), deux

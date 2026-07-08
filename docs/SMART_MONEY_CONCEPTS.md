@@ -249,7 +249,7 @@ l'overlay).
 
 | TF | Config retenue | OOS (2024-2026) | oos_score | Verdict |
 |---|---|---|---|---|
-| **4h** | min_score 0.70, RR ≥ 2, SL 0.5×ATR, **trailing 3.5×ATR + time-stop conditionnel 12**, bonus kz/amd/vp | 54 trades, **+81, PF 1.34** (FULL +318, PF 1.44, Sharpe 4.9) | **+0.291** | ✅ tradable |
+| **4h** | min_score 0.70, RR ≥ 2, SL 0.5×ATR, **trailing 3.5×ATR + time-stop conditionnel 12 + sizing par confluence**, bonus kz/amd/vp | 54 trades, **+108, PF 1.46** (FULL +387, PF 1.51, Sharpe 5.2) | **+0.332** | ✅ tradable |
 | 1h | min_score 0.65, RR ≥ 2, gain ≥ 1,2 %, killzones only | −33, PF 0.83 (vs −182 défauts) | −0.067 | ❌ |
 | 2h | min_score 0.75, RR ≥ 2 | −115, PF 0.77 | −0.230 | ❌ |
 | 30m | min_score 0.75, RR ≥ 1.5, gain ≥ 1,2 % | −71, PF 0.78 | −0.142 | ❌ |
@@ -333,6 +333,39 @@ espérance négative. Non intégré.
 `use_trailing: false` (bracket fixe) reste le **défaut de base**, validé toutes
 périodes ; le 4h active le trailing via `optimizer_results`. Backtest
 byte-identique avec le défaut (off).
+
+### Sizing pondéré par confluence (2026-07-08)
+
+Empilé sur le trailing : au lieu de risquer un montant fixe par trade, on
+**alloue plus aux setups à forte confluence** via le hook natif `size_factor`
+du Backtester/live (« demi-Kelly ×confidence ») :
+
+```
+size_factor = clip(1 + size_conf_slope × (score − size_conf_center), 0.4, 1.7)
+```
+
+Centré sur le **score moyen** (`size_conf_center` ≈ 0.83 sur le 4h) ⇒
+l'exposition globale reste ≈ inchangée : c'est une **réallocation** du risque
+(plus sur les meilleurs setups, moins sur les marginaux), pas un cran de levier.
+
+Mesuré (vrai Backtester, BTC 4h), empilé sur le trailing :
+
+| Config | FULL 2018→26 | OOS 2024→26 | oos_score |
+|---|---|---|---|
+| time-stop pur | +168, PF 1.23, Sh 2.9 | +84, PF 1.35 | +0.327 |
+| + trailing 3.5×ATR | +318, PF 1.44, Sh 4.9 | +81, PF 1.34 | +0.291 |
+| **+ sizing par confluence** | **+387, PF 1.51, Sh 5.2** | **+108, PF 1.46** | **+0.332** |
+
+L'amélioration est **monotone** avec la pente (score 1.0 → 1.5×, score 0.70 →
+0.6×) : le score du moteur est **réellement prédictif** — les setups mieux notés
+gagnent plus. Le sizing améliore TOUT sur les deux périodes **à exposition et DD
+égaux** (−4,3 %) et **récupère le score composite OOS** que le trailing avait
+cédé (0.332 > 0.327 du time-stop pur d'origine). `size_by_confluence: false`
+reste le défaut (byte-identique) ; le 4h l'active via `optimizer_results`.
+
+> Un troisième levier de sizing testé — **taille scalée par régime** (×1.4 en
+> tendance HTF-alignée, ×0.7 en neutre) — a été **écarté** : le PnL monte mais
+> le Sharpe reste plat → simple exposition supplémentaire, pas d'edge.
 
 ### Performance technique
 
