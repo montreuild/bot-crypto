@@ -63,7 +63,9 @@ import polars as pl
 
 from app.engine.engine import BaseStrategy
 from app.core import smc
-from app.core.indicators_core import ema as _ema_series, volume_ratio as _vol_ratio
+from app.core.indicators_core import (ema as _ema_series, volume_ratio as _vol_ratio,
+                                       choppiness as _choppiness, pin_bar as _pin_bar,
+                                       engulfing as _engulfing)
 from app.live.utils import _HTF_MAP
 
 logger = logging.getLogger(__name__)
@@ -120,6 +122,8 @@ class Strategy(BaseStrategy):
         "ext_structure_filter": [True, False],
         "tp_measured_move": [True, False],
         "inv_fvg_bonus":  [True, False],
+        "chop_filter_max": [0.0, 61.8],
+        "candle_bonus":   [True, False],
     }
 
     fixed_params: Dict[str, Any] = {
@@ -211,6 +215,17 @@ class Strategy(BaseStrategy):
         # de sens OPPOSÉ, déjà mitigé, chevauche la zone d'entrée (support/
         # résistance inversé).
         "inv_fvg_bonus":    False,
+        # ── Croisements indicateurs × SMC (campagne 2026-07-08) ──────────────
+        # Filtre Choppiness : ne PAS générer de signal si l'indice de choppiness
+        # (congestion) dépasse ce seuil (0 = off). Ne trader qu'en tendance.
+        # MESURÉ GAGNANT sur BTC 4h → activé (61.8) dans optimizer_results.
+        "chop_filter_max":  0.0,
+        "chop_len":         14,
+        # Bonus confirmation bougie : +0.05 au score si pin bar / engulfing dans
+        # le sens du setup à la barre de déclenchement (qualité par trade très
+        # élevée mais rare). OFF par défaut — via le sizing, monte les setups
+        # confirmés. Levier d'optimiseur.
+        "candle_bonus":     False,
     }
 
     def __init__(self):
@@ -294,6 +309,18 @@ class Strategy(BaseStrategy):
             aux["ext_trend"] = smc.analyze(win, ext_sp)["_trend_arr"]
         else:
             aux["ext_trend"] = None
+        # Filtre Choppiness (congestion) : série par barre si actif, sinon None.
+        if float(p.get("chop_filter_max", 0.0)) > 0:
+            aux["chop"] = _choppiness(win, int(p.get("chop_len", 14))) \
+                .fill_null(50.0).to_numpy().astype(float)
+        else:
+            aux["chop"] = None
+        # Confirmation bougie (pin bar / engulfing) : arrays {−1,0,+1} si actif.
+        if bool(p.get("candle_bonus", False)):
+            aux["pin"] = _pin_bar(win).to_numpy().astype(np.int8)
+            aux["eng"] = _engulfing(win).to_numpy().astype(np.int8)
+        else:
+            aux["pin"] = aux["eng"] = None
         return aux
 
     @staticmethod
@@ -622,6 +649,12 @@ class Strategy(BaseStrategy):
         atr = float(res["_atr_arr"][i])
         if atr <= 0 or i < 1:
             return None
+        # Filtre Choppiness (off par défaut) : pas de signal en congestion
+        # (indice ≥ seuil) — ne trader qu'en tendance. Mesuré gagnant BTC 4h.
+        chop = aux.get("chop")
+        chop_max = float(p.get("chop_filter_max", 0.0))
+        if chop is not None and chop_max > 0 and float(chop[i]) >= chop_max:
+            return None
         trend = int(trend_arr[i])
         c = float(close[i])
         candidates: List[dict] = []
@@ -669,6 +702,16 @@ class Strategy(BaseStrategy):
                 return 0.0
             return 0.05 if self._inv_fvg_overlap(res, i, side,
                                                  zone_lo, zone_hi) else 0.0
+
+        # Confirmation bougie (off par défaut) : +0.05 si pin bar / engulfing
+        # dans le sens du setup à la barre i (qualité par trade élevée).
+        pin_a, eng_a = aux.get("pin"), aux.get("eng")
+
+        def _candle_add(side: str) -> float:
+            if pin_a is None:
+                return 0.0
+            sgn = 1 if side == "long" else -1
+            return 0.05 if (int(pin_a[i]) == sgn or int(eng_a[i]) == sgn) else 0.0
 
         vp_above = sorted([lv for lv in ([vp["poc"]] + vp["hvns"])
                            if lv > c]) if (vp and p.get("vp_targets")) else []
@@ -735,6 +778,7 @@ class Strategy(BaseStrategy):
                               float(ev["level"]) + 0.5 * atr)
                 sc += _inv_fvg_add(float(ev["level"]) - 0.5 * atr,
                                    float(ev["level"]) + 0.5 * atr, "long")
+                sc += _candle_add("long")
                 sl = min(float(low[i]), float(ev["level"])) - \
                     float(p["sl_buffer_atr"]) * atr
                 cand = self._build_trade(res, i, "long", c, sl, atr, p,
@@ -760,6 +804,7 @@ class Strategy(BaseStrategy):
                               float(ev["level"]) + 0.5 * atr)
                 sc += _inv_fvg_add(float(ev["level"]) - 0.5 * atr,
                                    float(ev["level"]) + 0.5 * atr, "short")
+                sc += _candle_add("short")
                 sl = max(float(high[i]), float(ev["level"])) + \
                     float(p["sl_buffer_atr"]) * atr
                 cand = self._build_trade(res, i, "short", c, sl, atr, p,
@@ -800,6 +845,7 @@ class Strategy(BaseStrategy):
                     sc += 0.05 if tl_tap_long else 0.0
                     sc += _vp_add(ob["bottom"], ob["top"])
                     sc += _inv_fvg_add(ob["bottom"], ob["top"], "long")
+                    sc += _candle_add("long")
                     sl = float(ob["bottom"]) - float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "long", c, sl, atr, p,
                                              setup=setup_name, score=sc,
@@ -824,6 +870,7 @@ class Strategy(BaseStrategy):
                     sc += 0.05 if tl_tap_short else 0.0
                     sc += _vp_add(ob["bottom"], ob["top"])
                     sc += _inv_fvg_add(ob["bottom"], ob["top"], "short")
+                    sc += _candle_add("short")
                     sl = float(ob["top"]) + float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "short", c, sl, atr, p,
                                              setup=setup_name, score=sc,
@@ -856,6 +903,7 @@ class Strategy(BaseStrategy):
                     sc += 0.05 if tl_tap_long else 0.0
                     sc += _vp_add(brk["bottom"], brk["top"])
                     sc += _inv_fvg_add(brk["bottom"], brk["top"], "long")
+                    sc += _candle_add("long")
                     sl = float(brk["bottom"]) - float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "long", c, sl, atr, p,
                                              setup="BREAKER_RETEST", score=sc,
@@ -877,6 +925,7 @@ class Strategy(BaseStrategy):
                     sc += 0.05 if tl_tap_short else 0.0
                     sc += _vp_add(brk["bottom"], brk["top"])
                     sc += _inv_fvg_add(brk["bottom"], brk["top"], "short")
+                    sc += _candle_add("short")
                     sl = float(brk["top"]) + float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "short", c, sl, atr, p,
                                              setup="BREAKER_RETEST", score=sc,

@@ -6,6 +6,27 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🎯 smart_money : croisement indicateurs × SMC (choppiness + confirmation bougie)
+
+Croisement des nouveaux indicateurs avec la stratégie SMC (chacun testé comme
+filtre/confluence sur la config 4h via le vrai Backtester). **Deux gagnants nets
+activés sur le 4h**, le reste neutre/négatif :
+
+- **Filtre Choppiness < 61.8** (`chop_filter_max`) : ne trader QU'hors congestion
+  (l'idée « OB en tendance, pas en chop »). FULL +387→**+483** (PF 1.51→1.69,
+  Sharpe 5.2→6.7), OOS +108→**+117**, et **DD réduit** (−14 %→−9 %).
+- **Confirmation bougie** (`candle_bonus`) : bonus +0.05 si pin bar / engulfing
+  dans le sens du setup → via le sizing, monte les setups confirmés (qualité par
+  trade très élevée). OOS +117→**+129**, score 0.359→**0.372**, trades constants.
+
+Écartés (mesurés neutres/négatifs) : VWAP session (coupe les entrées de repli),
+CVD slope (coupe trop), RSI-divergence, VSA.
+
+Config 4h finale : trailing 3.5×ATR + time-stop conditionnel 12 + sizing par
+confluence + choppiness<61.8 + confirmation bougie → **FULL +503 (PF 1.72,
+Sharpe 6.8, DD −8.7 %), OOS +129 (PF 1.55, score 0.372)**. Tous OFF par défaut
+(byte-identique), ajoutés au `param_space` ; seul le 4h les active. 428 tests OK.
+
 ### 📐 indicators_core : nouveaux indicateurs réutilisables (VWAP, CVD, Choppiness…)
 
 Batch d'indicateurs génériques (importables par toute stratégie via la façade

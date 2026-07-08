@@ -249,7 +249,7 @@ l'overlay).
 
 | TF | Config retenue | OOS (2024-2026) | oos_score | Verdict |
 |---|---|---|---|---|
-| **4h** | min_score 0.70, RR ≥ 2, SL 0.5×ATR, **trailing 3.5×ATR + time-stop conditionnel 12 + sizing par confluence**, bonus kz/amd/vp | 54 trades, **+108, PF 1.46** (FULL +387, PF 1.51, Sharpe 5.2) | **+0.332** | ✅ tradable |
+| **4h** | min_score 0.70, RR ≥ 2, SL 0.5×ATR, **trailing 3.5×ATR + time-stop cond. 12 + sizing confluence + choppiness<61.8 + confirmation bougie**, bonus kz/amd/vp | 51 trades, **+129, PF 1.55** (FULL +503, PF 1.72, Sharpe 6.8, DD −3,6 %) | **+0.372** | ✅ tradable |
 | 1h | min_score 0.65, RR ≥ 2, gain ≥ 1,2 %, killzones only | −33, PF 0.83 (vs −182 défauts) | −0.067 | ❌ |
 | 2h | min_score 0.75, RR ≥ 2 | −115, PF 0.77 | −0.230 | ❌ |
 | 30m | min_score 0.75, RR ≥ 1.5, gain ≥ 1,2 % | −71, PF 0.78 | −0.142 | ❌ |
@@ -384,6 +384,32 @@ robuste (structure externe ≈ filtre HTF ; inversion FVG ≈ BREAKER_RETEST), s
 dominés par un choix existant (TP-liquidité > measured-move ; trailing > tout TP
 fixe). On les garde disponibles mais désactivés — la discipline reste : n'activer
 que ce qu'une mesure justifie.
+
+### Croisement indicateurs × SMC (2026-07-08)
+
+Batch d'indicateurs réutilisables ajouté à `indicators_core` (VWAP, CVD,
+Choppiness, Keltner, Value Area, pin bar / engulfing, VSA, divergences cachées),
+chacun croisé avec SMC comme filtre/confluence sur la config 4h. Deux gagnants
+nets (activés), le reste neutre/négatif :
+
+| Indicateur (filtre) | Effet sur la config 4h | Verdict |
+|---|---|---|
+| **Choppiness < 61.8** | FULL +387→**+483**, OOS +108→**+117**, PF 1.51→1.69, DD −14→−9 | ✅ **activé** |
+| **Confirmation bougie** (bonus) | + sizing des setups pin/engulfing : OOS +117→**+129**, sc 0.359→0.372 | ✅ **activé** |
+| VWAP session (long > VWAP) | FULL +82→−17 : coupe les entrées de repli (sweeps sous VWAP) | ❌ |
+| CVD slope alignée | coupe trop de trades (FULL +82→+26) | ❌ |
+| RSI divergence / VSA | quasi neutres | — |
+
+Config 4h finale : **trailing 3.5×ATR + time-stop conditionnel 12 + sizing par
+confluence + filtre choppiness<61.8 + confirmation bougie** → FULL +503 (PF 1.72,
+Sharpe 6.8, DD −8.7 %), OOS 2024-26 +129 (PF 1.55, score 0.372). Le filtre
+choppiness matérialise l'idée « ne trader qu'en tendance, pas en congestion » et
+réduit aussi le drawdown. Tous ces leviers sont OFF par défaut (byte-identique) ;
+seul le 4h les active via `optimizer_results`.
+
+> Microstructure (carnet d'ordres, spoofing, niveaux de liquidation) : non
+> traitée — nécessite des données L2/temps réel non backtestables sur l'OHLCV
+> historique. Envisageable en alertes live uniquement.
 
 ### Performance technique
 

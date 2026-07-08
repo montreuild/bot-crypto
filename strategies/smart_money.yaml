@@ -76,22 +76,22 @@ params:
 optimizer_results:
   4h:
     run_date: '2026-07-08'
-    oos_score: 0.3317
-    # TRAILING + SIZING PAR CONFLUENCE (2026-07-08).
-    # 1) Trailing 3.5×ATR (TrailingStopManager) au lieu du TP fixe : laisse
-    #    COURIR les gagnants. Time-stop 12 CONDITIONNEL — coupe uniquement les
-    #    trades stagnants (MFE < 1×R après 12 barres), jamais un gagnant.
-    # 2) Sizing pondéré par confluence (hook natif size_factor) : alloue plus
-    #    aux setups à forte confluence (size_factor = 1 + 3×(score − 0.83),
-    #    borné [0.4,1.7]), centré sur le score moyen ⇒ exposition ≈ inchangée.
-    # Mesuré (vrai Backtester, chemin de prod), empilé sur le time-stop pur :
-    #   time-stop pur      FULL +168 PF 1.23 Sh 2.9 | OOS +84  PF 1.35 sc 0.327
-    #   + trailing         FULL +318 PF 1.44 Sh 4.9 | OOS +81  PF 1.34 sc 0.291
-    #   + sizing conf.     FULL +387 PF 1.51 Sh 5.2 | OOS +108 PF 1.46 sc 0.332
-    # Le trailing récupère l'upside des tendances ; le sizing par confluence
-    # améliore TOUT à exposition égale (le score du moteur est prédictif) et
-    # RÉCUPÈRE le score OOS que le trailing avait cédé (0.332 > 0.327 du
-    # time-stop pur). DD inchangé (−4,3 %).
+    oos_score: 0.3718
+    # TRAILING + SIZING + FILTRE CHOPPINESS + CONFIRMATION BOUGIE (2026-07-08).
+    # 1) Trailing 3.5×ATR (TrailingStopManager) : laisse COURIR les gagnants ;
+    #    time-stop 12 CONDITIONNEL (coupe seulement les stagnants).
+    # 2) Sizing par confluence (size_factor = 1 + 3×(score − 0.83), [0.4,1.7]),
+    #    centré sur le score moyen ⇒ exposition ≈ inchangée.
+    # 3) Filtre Choppiness < 61.8 : ne trade QU'hors congestion (croisement
+    #    indicateur × SMC — l'idée « OB en tendance, pas en chop »).
+    # 4) Confirmation bougie : bonus +0.05 si pin bar / engulfing dans le sens
+    #    → via le sizing, monte les setups confirmés (qualité par trade élevée).
+    # Mesuré (vrai Backtester, chemin de prod), empilement :
+    #   trailing+sizing        FULL +387 PF 1.51 Sh 5.2 | OOS +108 PF 1.46 sc 0.332
+    #   + choppiness<61.8      FULL +483 PF 1.69 Sh 6.7 | OOS +117 PF 1.51 sc 0.359
+    #   + confirmation bougie  FULL +503 PF 1.72 Sh 6.8 | OOS +129        sc 0.372
+    # Choppiness et confirmation bougie améliorent TOUT sur les deux périodes à
+    # nombre de trades quasi constant (137/51) — croisements indicateurs gagnants.
     params:
       min_score: 0.70
       min_rr: 2.0
@@ -101,6 +101,8 @@ optimizer_results:
       trail_mult: 3.5
       size_by_confluence: true
       size_conf_slope: 3.0
+      chop_filter_max: 61.8
+      candle_bonus: true
       use_rejection_blocks: false
       kz_bonus: true
       amd_bonus: true

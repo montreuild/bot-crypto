@@ -502,9 +502,27 @@ class TestMinGainFilter:
         assert sf(0.70, True, slope=10) == 0.4
 
     def test_optional_pistes_default_off(self):
-        """Les 3 pistes SMC optionnelles sont OFF par défaut (byte-identique)."""
-        for k in ("ext_structure_filter", "tp_measured_move", "inv_fvg_bonus"):
+        """Pistes SMC / croisements optionnels OFF par défaut (byte-identique)."""
+        for k in ("ext_structure_filter", "tp_measured_move", "inv_fvg_bonus",
+                  "candle_bonus"):
             assert Strategy.fixed_params[k] is False
+        assert Strategy.fixed_params["chop_filter_max"] == 0.0
+
+    def test_chop_and_candle_aux_wiring(self):
+        """Filtre choppiness + confirmation bougie : séries aux None par défaut,
+        présentes (bonnes formes) quand activés."""
+        df = _random_df(900, seed=5, jump_p=0.04)
+        s = Strategy()
+        p_off = s._p({"smart_money": {}})
+        res = smc.analyze(df, s._smc_params(p_off))
+        aux_off = s._build_aux(df, p_off, res)
+        assert aux_off["chop"] is None
+        assert aux_off["pin"] is None and aux_off["eng"] is None
+        p_on = s._p({"smart_money": {"chop_filter_max": 61.8, "candle_bonus": True}})
+        aux_on = s._build_aux(df, p_on, res)
+        assert aux_on["chop"] is not None and len(aux_on["chop"]) == df.height
+        assert aux_on["pin"] is not None
+        assert set(np.unique(aux_on["pin"]).tolist()) <= {-1, 0, 1}
 
     def test_measured_move_target(self):
         """4b : amplitude de la dernière jambe (2 swings confirmés) projetée
