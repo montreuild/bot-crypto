@@ -250,11 +250,18 @@ l'overlay).
 | TF | Config retenue | OOS (2024-2026) | oos_score | Verdict |
 |---|---|---|---|---|
 | **4h** | min_score 0.70, RR ≥ 2, SL 0.5×ATR, **trailing 3.5×ATR + time-stop cond. 12 + sizing confluence + choppiness<61.8 + confirmation bougie**, bonus kz/amd/vp | 51 trades, **+129, PF 1.55** (FULL +503, PF 1.72, Sharpe 6.8, DD −3,6 %) | **+0.372** | ✅ tradable |
-| 1h | min_score 0.65, RR ≥ 2, gain ≥ 1,2 %, killzones only | −33, PF 0.83 (vs −182 défauts) | −0.067 | ❌ |
+| 1h | + **choppiness<50** | OOS −10,3 (20 tr, PF 0.85) — vs −38,8 sans | **−0.021** | ❌ |
 | 2h | min_score 0.75, RR ≥ 2 | −115, PF 0.77 | −0.230 | ❌ |
-| 30m | min_score 0.75, RR ≥ 1.5, gain ≥ 1,2 % | −71, PF 0.78 | −0.142 | ❌ |
-| 15m | min_score 0.65, RR ≥ 1.5, gain ≥ 1,2 %, killzones only | −41, PF 0.42 | −0.082 | ❌ |
+| 30m | + **choppiness<50** | OOS −48,8 (55 tr) — vs −77,4 sans | **−0.098** | ❌ |
+| 15m | + **choppiness<50** | OOS −22,6 (20 tr, PF 0.44) — vs −39,3 sans | **−0.045** | ❌ |
 | 1d | min_score 0.55 | −37, PF 0.59 (12 trades) | −0.075 | ❌ |
+
+> **15m / 30m / 1h re-testés (2026-07-08)** avec tout l'arsenal 4h (trailing,
+> sizing, choppiness, confirmation bougie) : ils restent NON tradables. Le
+> trailing les dégrade (bruit LTF) ; seule la sélectivité aide. Le filtre
+> choppiness<50 réduit fortement l'hémorragie (1h : OOS −38,8 → −10,3) mais
+> l'expectancy reste négative — structurel : bruit + frais 0,1 %/côté sur des
+> jambes trop courtes. Le filtre est enregistré comme « moins pire ».
 
 > Les scores OOS des TF ≠ 4h ont été mesurés avant l'alignement HTF sur
 > `_HTF_MAP` (juillet 2026) ; ils restent négatifs (non tradables) et n'ont pas

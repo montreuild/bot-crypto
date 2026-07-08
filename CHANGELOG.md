@@ -6,6 +6,27 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔬 smart_money : re-test 15m/30m/1h avec l'arsenal complet — restent non tradables
+
+Question : les LTF peuvent-ils devenir tradables avec les nouveaux leviers
+(trailing, sizing, choppiness, confirmation bougie) ? Batterie complète relancée
+par TF sur le vrai Backtester. **Réponse : non.** Le combo 4h ne transfère pas —
+le trailing DÉGRADE les LTF (bruit). Seule la sélectivité extrême aide, sans
+jamais rendre l'OOS positif :
+
+| TF | baseline OOS sc | meilleur (choppiness<50) | tradable |
+|---|---|---|---|
+| 1h | −0.078 | **−0.021** (OOS −10,3 vs −38,8) | ❌ |
+| 30m | −0.155 | **−0.098** (OOS −48,8 vs −77,4) | ❌ |
+| 15m | −0.079 | **−0.045** (OOS −22,6 vs −39,3) | ❌ |
+
+Structurel : SMC sur BTC en LTF est dominé par le bruit + les frais 0,1 %/côté
+sur des jambes trop courtes ; filtrer agressivement stoppe l'hémorragie mais
+effondre le nombre de trades (chiffres uniques) sans créer d'edge. Le filtre
+`chop_filter_max: 50` est enregistré dans les configs 1h/30m/15m comme « moins
+pire » (cohérent avec la philosophie du fichier), scores OOS mis à jour. Seul le
+4h reste tradable.
+
 ### 🎯 smart_money : croisement indicateurs × SMC (choppiness + confirmation bougie)
 
 Croisement des nouveaux indicateurs avec la stratégie SMC (chacun testé comme
