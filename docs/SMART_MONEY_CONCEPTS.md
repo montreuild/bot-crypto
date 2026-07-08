@@ -367,6 +367,24 @@ reste le défaut (byte-identique) ; le 4h l'active via `optimizer_results`.
 > tendance HTF-alignée, ×0.7 en neutre) — a été **écarté** : le PnL monte mais
 > le Sharpe reste plat → simple exposition supplémentaire, pas d'edge.
 
+### Pistes SMC optionnelles (désactivées par défaut)
+
+Trois raffinements SMC classiques ont été implémentés mais **mesurés perdants
+sur BTC 4h** : ils restent **OFF par défaut** (backtest byte-identique) et sont
+exposés au `param_space` de l'optimiseur pour d'autres TF / symboles / régimes.
+
+| Param | Piste | Mécanique | Verdict BTC 4h (OOS) |
+|---|---|---|---|
+| `ext_structure_filter` | Structure interne/externe | 2ᵉ analyse causale à pivots plus larges (`ext_swing_len`) ; n'autorise un sens que si aligné à la tendance de degré supérieur (composé avec le gate HTF) | ❌ +108→+73 : coupe les entrées de retournement gagnantes |
+| `tp_measured_move` | Symétrie de jambe | Ajoute la projection d'amplitude de la dernière jambe comme cible TP candidate (mode bracket) | ⚠️ inerte en trailing ; pire que le TP-liquidité en bracket |
+| `inv_fvg_bonus` | Inversion de rôle des FVG | Bonus de confluence (+0.05) si un FVG de sens opposé, déjà mitigé, chevauche la zone d'entrée | ≈ neutre (PnL +10 via sizing, score composite plat) |
+
+**Lecture senior** : ces concepts sont soit déjà couverts par une forme plus
+robuste (structure externe ≈ filtre HTF ; inversion FVG ≈ BREAKER_RETEST), soit
+dominés par un choix existant (TP-liquidité > measured-move ; trailing > tout TP
+fixe). On les garde disponibles mais désactivés — la discipline reste : n'activer
+que ce qu'une mesure justifie.
+
 ### Performance technique
 
 - `prepare_for_backtest` : une seule passe `smc.analyze` sur toute la fenêtre

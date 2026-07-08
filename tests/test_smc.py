@@ -501,6 +501,52 @@ class TestMinGainFilter:
         assert sf(1.0, True, slope=10) == 1.7
         assert sf(0.70, True, slope=10) == 0.4
 
+    def test_optional_pistes_default_off(self):
+        """Les 3 pistes SMC optionnelles sont OFF par défaut (byte-identique)."""
+        for k in ("ext_structure_filter", "tp_measured_move", "inv_fvg_bonus"):
+            assert Strategy.fixed_params[k] is False
+
+    def test_measured_move_target(self):
+        """4b : amplitude de la dernière jambe (2 swings confirmés) projetée
+        depuis l'entrée ; None si < 2 swings confirmés avant i."""
+        res = {"_all_swings": [
+            {"index": 10, "price": 100.0, "confirmed_at": 12},
+            {"index": 20, "price": 110.0, "confirmed_at": 22},
+        ]}
+        assert Strategy._measured_move_target(res, 30, "long", 105.0) == 115.0
+        assert Strategy._measured_move_target(res, 30, "short", 105.0) == 95.0
+        # à i=11, aucun swing confirmé avant → None
+        assert Strategy._measured_move_target(res, 11, "long", 105.0) is None
+
+    def test_inv_fvg_overlap(self):
+        """4c : un FVG de sens OPPOSÉ, mitigé avant i, chevauchant la zone."""
+        res = {"_all_fvgs": [{"kind": "bearish", "index": 5, "top": 101.0,
+                              "bottom": 99.0, "mitigated_at": 8, "filled_at": None}]}
+        # long → cherche un FVG bearish mitigé (support inversé) → True
+        assert Strategy._inv_fvg_overlap(res, 20, "long", 99.5, 100.5) is True
+        # short → cherche un FVG bullish → le bearish ne compte pas → False
+        assert Strategy._inv_fvg_overlap(res, 20, "short", 99.5, 100.5) is False
+        # pas encore mitigé → False
+        res2 = {"_all_fvgs": [{"kind": "bearish", "index": 5, "top": 101.0,
+                               "bottom": 99.0, "mitigated_at": None, "filled_at": None}]}
+        assert Strategy._inv_fvg_overlap(res2, 20, "long", 99.5, 100.5) is False
+        # mitigé APRÈS i (non causal) → False
+        res3 = {"_all_fvgs": [{"kind": "bearish", "index": 5, "top": 101.0,
+                               "bottom": 99.0, "mitigated_at": 25, "filled_at": None}]}
+        assert Strategy._inv_fvg_overlap(res3, 20, "long", 99.5, 100.5) is False
+
+    def test_ext_structure_filter_wiring(self):
+        """1d : aux['ext_trend'] None par défaut, array causal quand activé."""
+        df = _random_df(900, seed=3, jump_p=0.04)
+        s = Strategy()
+        p_off = s._p({"smart_money": {"ext_structure_filter": False}})
+        res = smc.analyze(df, s._smc_params(p_off))
+        assert s._build_aux(df, p_off, res)["ext_trend"] is None
+        p_on = s._p({"smart_money": {"ext_structure_filter": True,
+                                     "ext_swing_len": 8}})
+        ext = s._build_aux(df, p_on, res)["ext_trend"]
+        assert ext is not None and len(ext) == df.height
+
 
 class TestTradePlans:
     def test_plans_contract(self):

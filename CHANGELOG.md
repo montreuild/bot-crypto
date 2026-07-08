@@ -6,6 +6,31 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧩 smart_money : 3 pistes SMC optionnelles (OFF par défaut)
+
+Audit complet de la stratégie contre la checklist SMC de référence : **15/19
+concepts déjà implémentés et validés** (swings, BOS/CHoCH, BSL/SSL, sweeps, FVG,
+voids, OB avancés, breakers, premium/discount, confluence multi-facteurs, SL
+dynamique, TP-liquidité, killzones, MTFA). Les 4 restants ont été mesurés
+individuellement ET conjointement sur BTC 4h : tous perdants ou déjà couverts.
+
+Trois sont implémentés **désactivés par défaut** (backtest byte-identique,
+exposés au `param_space` pour d'autres TF/symboles/régimes) :
+
+- `ext_structure_filter` (+ `ext_swing_len`) — **1d** structure interne/externe :
+  2ᵉ analyse causale à pivots plus larges, gate de degré supérieur composé avec
+  le HTF. Mesuré ❌ (OOS +108→+73 : coupe les retournements gagnants).
+- `tp_measured_move` — **4b** symétrie de jambe : projection d'amplitude de la
+  dernière jambe comme cible TP candidate (bracket). ⚠️ inerte en trailing, pire
+  que le TP-liquidité en bracket.
+- `inv_fvg_bonus` — **4c** inversion de rôle des FVG : bonus de confluence si un
+  FVG opposé mitigé chevauche l'entrée. ≈ neutre (déjà couvert par les breakers).
+
+La 4ᵉ piste (**5d** TP partiel / scale-out) est **abandonnée** : elle exigerait
+un scale-out transverse du moteur d'exécution (backtest + live) pour une feature
+mesurée négative (variance↓ mais PnL↓). Aucune modif de la config live (4h reste
+trailing + time-stop conditionnel + sizing par confluence). 422 tests OK.
+
 ### ⚖️ smart_money : sizing pondéré par confluence (4h)
 
 Empilé sur le trailing : au lieu d'un risque fixe par trade, on **alloue plus

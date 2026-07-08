@@ -117,6 +117,9 @@ class Strategy(BaseStrategy):
         "trail_mult":     [2.0, 2.5, 3.5],
         "size_by_confluence": [True, False],
         "size_conf_slope": [2.0, 3.0, 4.0],
+        "ext_structure_filter": [True, False],
+        "tp_measured_move": [True, False],
+        "inv_fvg_bonus":  [True, False],
     }
 
     fixed_params: Dict[str, Any] = {
@@ -193,6 +196,21 @@ class Strategy(BaseStrategy):
         "size_by_confluence": False,
         "size_conf_slope":  3.0,    # pente de la pondération par le score
         "size_conf_center": 0.83,   # score « neutre » (≈ moyenne 4h) → facteur 1.0
+        # ── Pistes SMC optionnelles (OFF par défaut — mesurées perdantes sur
+        # BTC 4h, exposées à l'optimiseur pour d'autres TF/symboles/régimes) ──
+        # 1d — filtre de structure EXTERNE : n'autorise un sens que s'il est
+        # aligné avec la tendance de degré SUPÉRIEUR (pivots ext_swing_len,
+        # 2e analyse causale). Se compose avec le gate HTF.
+        "ext_structure_filter": False,
+        "ext_swing_len":    8,
+        # 4b — TP par symétrie de jambe (measured move) : ajoute, comme cible
+        # candidate, la projection de l'amplitude de la dernière jambe de
+        # structure depuis l'entrée (en concurrence avec les cibles liquidité).
+        "tp_measured_move": False,
+        # 4c — inversion de rôle des FVG : bonus de confluence (+0.05) si un FVG
+        # de sens OPPOSÉ, déjà mitigé, chevauche la zone d'entrée (support/
+        # résistance inversé).
+        "inv_fvg_bonus":    False,
     }
 
     def __init__(self):
@@ -266,6 +284,16 @@ class Strategy(BaseStrategy):
             aux["comp"] = rng <= float(p["amd_range_atr"]) * res["_atr_arr"]
         else:
             aux["comp"] = None
+        # 1d — structure de degré supérieur (ext_structure_filter, off par
+        # défaut) : 2e analyse causale à pivots plus larges → tendance externe
+        # par barre, consommée comme gate additionnel. None si désactivé.
+        if bool(p.get("ext_structure_filter", False)):
+            ext_sp = dict(self._smc_params(p))
+            L = int(p.get("ext_swing_len", 8))
+            ext_sp["swing_left"] = ext_sp["swing_right"] = L
+            aux["ext_trend"] = smc.analyze(win, ext_sp)["_trend_arr"]
+        else:
+            aux["ext_trend"] = None
         return aux
 
     @staticmethod
@@ -411,6 +439,13 @@ class Strategy(BaseStrategy):
         htf_mode = str(p.get("htf_filter", "off"))
         htf_t = int(aux["htf"][i]) if aux["htf"] is not None else 0
         long_htf_ok, short_htf_ok = self._htf_ok(htf_mode, htf_t)
+        # 1d — structure externe (off par défaut) : composé avec le gate HTF,
+        # cohérent avec _signal_at. Neutre si ext_trend None.
+        ext = aux.get("ext_trend")
+        if ext is not None:
+            et = int(ext[i])
+            long_htf_ok = long_htf_ok and et >= 0
+            short_htf_ok = short_htf_ok and et <= 0
         buf = float(p["sl_buffer_atr"]) * atr
         max_ob_age = int(p["ob_max_age"])
         plans: List[dict] = []
@@ -602,6 +637,13 @@ class Strategy(BaseStrategy):
         htf_mode = str(p.get("htf_filter", "off"))
         htf_t = int(aux["htf"][i]) if aux["htf"] is not None else 0
         long_htf_ok, short_htf_ok = self._htf_ok(htf_mode, htf_t)
+        # 1d — filtre de structure externe (off par défaut) : se COMPOSE avec le
+        # gate HTF (les deux doivent autoriser le sens). Neutre si ext_trend None.
+        ext = aux.get("ext_trend")
+        if ext is not None:
+            et = int(ext[i])
+            long_htf_ok = long_htf_ok and et >= 0
+            short_htf_ok = short_htf_ok and et <= 0
         # AMD : la barre courante sweepe après une phase de compression
         # (accumulation) → manipulation probable, expansion à suivre.
         amd_here = bool(aux["comp"][i]) if aux["comp"] is not None else False
@@ -619,6 +661,14 @@ class Strategy(BaseStrategy):
             pad = 0.25 * atr
             return 0.05 if any(zone_lo - pad <= lv <= zone_hi + pad
                                for lv in vp["hvns"]) else 0.0
+
+        # 4c — inversion de rôle des FVG (off par défaut) : bonus si un FVG de
+        # sens OPPOSÉ, déjà mitigé, chevauche la zone d'entrée.
+        def _inv_fvg_add(zone_lo: float, zone_hi: float, side: str) -> float:
+            if not bool(p.get("inv_fvg_bonus", False)):
+                return 0.0
+            return 0.05 if self._inv_fvg_overlap(res, i, side,
+                                                 zone_lo, zone_hi) else 0.0
 
         vp_above = sorted([lv for lv in ([vp["poc"]] + vp["hvns"])
                            if lv > c]) if (vp and p.get("vp_targets")) else []
@@ -683,6 +733,8 @@ class Strategy(BaseStrategy):
                 sc += 0.05 if tl_tap_long else 0.0
                 sc += _vp_add(float(ev["level"]) - 0.5 * atr,
                               float(ev["level"]) + 0.5 * atr)
+                sc += _inv_fvg_add(float(ev["level"]) - 0.5 * atr,
+                                   float(ev["level"]) + 0.5 * atr, "long")
                 sl = min(float(low[i]), float(ev["level"])) - \
                     float(p["sl_buffer_atr"]) * atr
                 cand = self._build_trade(res, i, "long", c, sl, atr, p,
@@ -706,6 +758,8 @@ class Strategy(BaseStrategy):
                 sc += 0.05 if tl_tap_short else 0.0
                 sc += _vp_add(float(ev["level"]) - 0.5 * atr,
                               float(ev["level"]) + 0.5 * atr)
+                sc += _inv_fvg_add(float(ev["level"]) - 0.5 * atr,
+                                   float(ev["level"]) + 0.5 * atr, "short")
                 sl = max(float(high[i]), float(ev["level"])) + \
                     float(p["sl_buffer_atr"]) * atr
                 cand = self._build_trade(res, i, "short", c, sl, atr, p,
@@ -745,6 +799,7 @@ class Strategy(BaseStrategy):
                     sc += 0.05 if close[i] > open_[i] else 0.0
                     sc += 0.05 if tl_tap_long else 0.0
                     sc += _vp_add(ob["bottom"], ob["top"])
+                    sc += _inv_fvg_add(ob["bottom"], ob["top"], "long")
                     sl = float(ob["bottom"]) - float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "long", c, sl, atr, p,
                                              setup=setup_name, score=sc,
@@ -768,6 +823,7 @@ class Strategy(BaseStrategy):
                     sc += 0.05 if close[i] < open_[i] else 0.0
                     sc += 0.05 if tl_tap_short else 0.0
                     sc += _vp_add(ob["bottom"], ob["top"])
+                    sc += _inv_fvg_add(ob["bottom"], ob["top"], "short")
                     sl = float(ob["top"]) + float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "short", c, sl, atr, p,
                                              setup=setup_name, score=sc,
@@ -799,6 +855,7 @@ class Strategy(BaseStrategy):
                     sc += 0.05 if close[i] > open_[i] else 0.0
                     sc += 0.05 if tl_tap_long else 0.0
                     sc += _vp_add(brk["bottom"], brk["top"])
+                    sc += _inv_fvg_add(brk["bottom"], brk["top"], "long")
                     sl = float(brk["bottom"]) - float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "long", c, sl, atr, p,
                                              setup="BREAKER_RETEST", score=sc,
@@ -819,6 +876,7 @@ class Strategy(BaseStrategy):
                     sc += 0.05 if close[i] < open_[i] else 0.0
                     sc += 0.05 if tl_tap_short else 0.0
                     sc += _vp_add(brk["bottom"], brk["top"])
+                    sc += _inv_fvg_add(brk["bottom"], brk["top"], "short")
                     sl = float(brk["top"]) + float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "short", c, sl, atr, p,
                                              setup="BREAKER_RETEST", score=sc,
@@ -857,6 +915,10 @@ class Strategy(BaseStrategy):
         # comblés (zones fines = aimants). Première cible satisfaisant à la
         # fois le gain minimal (0.4 % par défaut) ET le RR minimal.
         use_voids = bool(p.get("use_void_targets", True))
+        # 4b — cible optionnelle par symétrie de jambe (off par défaut) : entre
+        # en concurrence avec les cibles liquidité/void/volume.
+        mm = (self._measured_move_target(res, i, side, entry)
+              if bool(p.get("tp_measured_move", False)) else None)
         tp = None
         tp_src = ""
         if side == "long":
@@ -866,7 +928,8 @@ class Strategy(BaseStrategy):
             vps = [lv for lv in (extra_targets or []) if lv > entry]
             targets = sorted({(lv, "liquidité") for lv in liq} |
                              {(lv, "void") for lv in vds} |
-                             {(lv, "volume") for lv in vps})
+                             {(lv, "volume") for lv in vps} |
+                             ({(mm, "measured")} if mm else set()))
             for level, src in targets:
                 cand = level - front
                 gain_pct = (cand - entry) / entry * 100.0
@@ -882,7 +945,8 @@ class Strategy(BaseStrategy):
             vps = [lv for lv in (extra_targets or []) if lv < entry]
             targets = sorted({(lv, "liquidité") for lv in liq} |
                              {(lv, "void") for lv in vds} |
-                             {(lv, "volume") for lv in vps}, reverse=True)
+                             {(lv, "volume") for lv in vps} |
+                             ({(mm, "measured")} if mm else set()), reverse=True)
             for level, src in targets:
                 cand = level + front
                 gain_pct = (entry - cand) / entry * 100.0
@@ -1015,6 +1079,40 @@ class Strategy(BaseStrategy):
             if fv["bottom"] <= zone_hi and fv["top"] >= zone_lo:
                 return True
         return False
+
+    @staticmethod
+    def _inv_fvg_overlap(res: dict, i: int, side: str,
+                         zone_lo: float, zone_hi: float) -> bool:
+        """4c — inversion de rôle : un FVG de sens OPPOSÉ, DÉJÀ mitigé avant i,
+        qui chevauche la zone [lo, hi] agit en support (long) / résistance
+        (short) inversé. Causal (mitigated_at < i)."""
+        want = "bearish" if side == "long" else "bullish"
+        for fv in res["_all_fvgs"]:
+            if fv["kind"] != want:
+                continue
+            m = fv["mitigated_at"]
+            if m is None or m >= i:
+                continue
+            if fv["bottom"] <= zone_hi and fv["top"] >= zone_lo:
+                return True
+        return False
+
+    @staticmethod
+    def _measured_move_target(res: dict, i: int, side: str,
+                              entry: float) -> Optional[float]:
+        """4b — projection par symétrie de jambe (measured move) : amplitude de
+        la dernière jambe de structure COMPLÈTE avant i (deux derniers swings
+        confirmés), projetée depuis l'entrée. Causal. None si indisponible."""
+        sw = [s for s in res["_all_swings"] if s["confirmed_at"] < i]
+        if len(sw) < 2:
+            return None
+        sw = sorted(sw, key=lambda s: s["index"])[-2:]
+        amp = abs(float(sw[-1]["price"]) - float(sw[-2]["price"]))
+        if amp <= 0:
+            return None
+        lvl = entry + amp if side == "long" else entry - amp
+        ok = (lvl > entry) if side == "long" else (lvl < entry)
+        return lvl if ok else None
 
     @staticmethod
     def _vol_ratio_arr(df: pl.DataFrame) -> np.ndarray:
