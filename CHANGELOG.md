@@ -6,6 +6,32 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🆕 Nouvelle stratégie `trend_rider` (indicateurs classiques, long-biaisée)
+
+Stratégie construite UNIQUEMENT à partir d'indicateurs existants, par campagne
+de mesure méthodique :
+
+1. **Screening individuel** de ~22 indicateurs comme signal autonome (BTC 4h,
+   sortie identique) : aucun n'a d'edge fort ; seul l'alignement de tendance
+   EMA200 + EMA20/50 est positif sur toutes les périodes.
+2. **Combinaison** : la confluence naïve et les triggers momentum sur-tradent et
+   perdent ; le **long-only** (biais haussier crypto — les shorts saignent) sur
+   un « trend-hold » filtré régime devient positif sur les deux périodes.
+
+Setup : entrée LONG au **front montant** d'un régime de tendance filtré
+[close > EMA200, EMA20 > EMA50, ADX > seuil, DI+ > DI−, choppiness < 55], sortie
+**trailing** (laisse courir), SL initial 1,5×ATR. Confluences (CVD, volume, ADX
+fort, bougie, RSI) disponibles pour le sizing.
+
+Validation BTC 4h (vrai Backtester) : **FULL +370 (PF 1.18, Sharpe 2.4), OOS
+2024-26 +49 (PF 1.11, oos_score +0.183)** — tradable, edge modeste et
+**indépendant** du smart_money structurel. 1d testé : OOS négatif (non tradable).
+
+Fichiers : `app/strategies/trend_rider.py` + `strategies/trend_rider.yaml`.
+**`enabled: false`** — complément expérimental à valider en forward avant toute
+promotion live. 7 tests unitaires (contrat, front de régime, long-only,
+causalité live↔backtest). 435 tests OK.
+
 ### 🔬 smart_money : re-test 15m/30m/1h avec l'arsenal complet — restent non tradables
 
 Question : les LTF peuvent-ils devenir tradables avec les nouveaux leviers

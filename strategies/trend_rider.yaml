@@ -1,0 +1,56 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : trend_rider — trend-follower long-biaisé (indicateurs classiques)
+# ──────────────────────────────────────────────────────────────────────────────
+# Construite UNIQUEMENT à partir d'indicateurs techniques existants (aucun SMC),
+# par une campagne de mesure : screening individuel (aucun indicateur seul n'a
+# d'edge fort) puis combinaison. Gagnant : entrée LONG au front montant d'un
+# régime de tendance filtré (EMA200 + EMA20/50 + ADX + choppiness), sortie
+# trailing. Le long-only capture le biais haussier crypto (les shorts saignent).
+#
+# Validation BTC 4h (vrai Backtester, frais 0,1 %/côté) :
+#   FULL 2018→26 : +370 (PF 1.18, Sharpe 2.4) ; OOS 2024→26 : +49 (PF 1.11) —
+#   oos_score POSITIF, tradable. Edge modeste mais indépendant du smart_money.
+#   NON activée par défaut (enabled: false) — complément expérimental à valider
+#   en forward avant promotion.
+enabled: false
+
+params:
+  ema_fast: 20
+  ema_slow: 50
+  ema_trend: 200
+  adx_len: 14
+  adx_min: 22
+  adx_strong: 30
+  chop_len: 14
+  chop_max: 55.0
+  stop_atr: 1.5
+  trail_mult: 3.5
+  vol_min: 1.2
+  rsi_max: 68
+  cvd_slope_len: 5
+  long_only: true
+  min_score: 0.5
+  size_by_confluence: true
+  size_conf_slope: 3.0
+  size_conf_center: 0.7
+  max_window: 400
+
+# ── Configurations par timeframe (calibration 2026-07-08) ────────────────────
+# Split IS 2/3 / OOS 1/3 (OOS = 2024-2026), oos_score = composite_score du repo.
+optimizer_results:
+  4h:
+    run_date: '2026-07-08'
+    oos_score: 0.1826
+    # OOS : 84 trades, +49,4, PF 1.11, DD −10,7 % — tradable (edge modeste).
+    # FULL : 264 trades, +370, PF 1.18, Sharpe 2.4.
+    # Sizing par confluence DÉSACTIVÉ ici : il booste le FULL (+370 → +551) mais
+    # ajoute du DD sur l'OOS récent (score 0.183 → 0.159). Pour un edge modeste,
+    # on privilégie la robustesse OOS. (1d testé : OOS négatif → non tradable.)
+    params:
+      adx_min: 22
+      chop_max: 55.0
+      stop_atr: 1.5
+      trail_mult: 3.5
+      min_score: 0.5
+      long_only: true
+      size_by_confluence: false
