@@ -951,6 +951,47 @@ def htf_analysis(df: pl.DataFrame, params: Optional[dict] = None,
     return analyze(htf_df, params), idx
 
 
+def smt_series(df: pl.DataFrame, correlate_path: str,
+               lookback: int = 20) -> Optional[np.ndarray]:
+    """Série SMT divergence ``{−1, 0, +1}`` sur le référentiel de ``df``, contre
+    un actif CORRÉLÉ chargé depuis ``correlate_path`` (Parquet ou CSV), aligné
+    CAUSALEMENT par timestamp (dernière clôture connue ≤ t). Générique : n'importe
+    quel couple corrélé (ex. ETH pour trader BTC).
+
+      +1  ``df`` inscrit un nouveau plus-BAS sur ``lookback`` mais le corrélé NON
+          → biais haussier (smart money accumule) ;
+      −1  ``df`` inscrit un nouveau plus-HAUT mais le corrélé NON → biais baissier.
+
+    Retourne ``None`` (dégradation gracieuse) si le chemin est vide/absent, si le
+    fichier est illisible ou dépourvu de colonnes temps/clôture, ou si ``df`` n'a
+    pas de colonne ``time``. Primitive réutilisable (moteur) : câblée par
+    ``smart_money`` et ``vizion`` en confluence/filtre optionnel."""
+    import os
+    from app.core import ict
+    path = str(correlate_path or "")
+    if not path or not os.path.exists(path) or "time" not in df.columns:
+        return None
+    try:
+        cdf = (pl.read_parquet(path) if path.endswith((".parquet", ".pq"))
+               else pl.read_csv(path, try_parse_dates=True))
+        cdf = cdf.rename({c: c.strip().lower() for c in cdf.columns})
+        tcol = "time" if "time" in cdf.columns else (
+            "date" if "date" in cdf.columns else None)
+        ccol = "close" if "close" in cdf.columns else (
+            "adj close" if "adj close" in cdf.columns else None)
+        if tcol is None or ccol is None:
+            return None
+        ct = cdf[tcol].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
+        cc = cdf[ccol].cast(pl.Float64).to_numpy()
+        t = df["time"].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
+        aligned = ict.align_series(t, ct, cc)
+        close = df["close"].to_numpy().astype(float)
+        return ict.smt_divergence(close, aligned, int(lookback))
+    except Exception as e:                           # pragma: no cover
+        logger.warning(f"[smc] smt_series KO ({path}) : {e}")
+        return None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Helpers de ciblage (utilisés par la stratégie pour construire les TP)
 # ══════════════════════════════════════════════════════════════════════════════

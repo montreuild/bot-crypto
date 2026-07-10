@@ -6,6 +6,36 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔀 SMT divergence : primitive moteur + câblage smart_money (MESURÉ non pertinent)
+
+Nouvelle primitive **`smc.smt_series(df, correlate_path, lookback)`** (moteur,
+générique) : divergence SMT `{−1, 0, +1}` entre l'actif tradé et un actif corrélé
+(Parquet/CSV), aligné CAUSALEMENT par timestamp via `ict.align_series` +
+`ict.smt_divergence`. Dégradation gracieuse (None si corrélé absent). `vizion`
+délègue désormais son `_load_smt` à cette primitive (dé-duplication, cohérence).
+
+**Câblage dans `smart_money`** (paramètres OFF par défaut → byte-identique,
+vérifié par l'empreinte de régression) : `smt_bonus` (+`smt_conf` au score si la
+divergence CONFIRME le sens), `smt_filter` (rejette un setup CONTREDIT par une
+divergence opposée), point d'injection unique à la résolution des candidats.
+Corrélé configurable (`smt_correlate_path`, ex. ETH pour BTC). Ajoutés au
+`param_space` (leviers d'optimiseur).
+
+**Mesure honnête (vrai Backtester, 4h, split 2/3 OOS=2024+)** :
+
+| Variante | BTC 4h OOS | ETH 4h OOS |
+|----------|-----------|-----------|
+| baseline | +148 (PF 1.46, 52 tr) | −93 (PF 0.74, 51 tr) |
+| SMT bonus | **identique** | **identique** |
+| SMT filter | −0.1 / −1 trade | **identique** |
+
+→ **SMT n'est PAS pertinent comme confluence/filtre à la barre d'ENTRÉE de
+smart_money.** Mécanisme : le signal SMT ne se déclenche qu'à un nouvel EXTRÊME
+sur `lookback` (≈ 9 % des barres), or smart_money entre sur des RETESTS d'OB/
+breaker — loin des extrêmes → recouvrement quasi nul aux barres d'entrée (0 à 1
+trade modifié sur 8 ans). Le câblage est CONSERVÉ (off par défaut, levier
+d'optimiseur) ; une variante « SMT à la barre du SWEEP » resterait à tester.
+
 ### 🔌 Données OHLCV : correctif fetch + page « Données » + Fast Analyse Scanner
 
 - **Fix cache** : `CandleStore._load` force désormais l'ORDRE canonique des

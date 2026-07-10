@@ -21,7 +21,6 @@ vidéos ne survivront pas aux frais spot crypto (cf. campagne LTF) mais peuvent
 tenir sur futures ou en 4h.
 """
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -97,32 +96,12 @@ class Strategy(BaseStrategy):
     def _smc_params(self, p: Dict[str, Any]) -> Dict[str, Any]:
         return {"swing_left": int(p["swing_len"]), "swing_right": int(p["swing_len"])}
 
-    # ── SMT générique : charge l'actif corrélé et l'aligne par timestamp ──────
+    # ── SMT générique : délègue à la primitive moteur ``smc.smt_series`` ──────
     def _load_smt(self, df: pl.DataFrame, p: Dict[str, Any]) -> Optional[np.ndarray]:
-        path = str(p.get("smt_correlate_path", "") or "")
-        if not (bool(p.get("use_smt", False)) and path and os.path.exists(path)
-                and "time" in df.columns):
+        if not bool(p.get("use_smt", False)):
             return None
-        try:
-            cdf = pl.read_parquet(path) if path.endswith((".parquet", ".pq")) \
-                else pl.read_csv(path, try_parse_dates=True)
-            ren = {c: c.strip().lower() for c in cdf.columns}
-            cdf = cdf.rename(ren)
-            tcol = "time" if "time" in cdf.columns else (
-                "date" if "date" in cdf.columns else None)
-            ccol = "close" if "close" in cdf.columns else (
-                "adj close" if "adj close" in cdf.columns else None)
-            if tcol is None or ccol is None:
-                return None
-            ct = cdf[tcol].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
-            cc = cdf[ccol].cast(pl.Float64).to_numpy()
-            t = df["time"].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
-            aligned = ict.align_series(t, ct, cc)
-            close = df["close"].to_numpy().astype(float)
-            return ict.smt_divergence(close, aligned, int(p.get("smt_lookback", 20)))
-        except Exception as e:                      # pragma: no cover
-            logger.warning(f"[vizion] SMT KO ({path}) : {e}")
-            return None
+        return smc.smt_series(df, str(p.get("smt_correlate_path", "") or ""),
+                              int(p.get("smt_lookback", 20)))
 
     def _active_htf_obs(self, htf_res, hidx: int):
         if htf_res is None or hidx < 0:

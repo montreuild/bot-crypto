@@ -696,3 +696,42 @@ class TestBacktestCacheCoherence:
         s._bt_params = None
         s.prepare_for_backtest(df1)
         assert not s._cache_valid(df2), "cache accepté pour un autre dataset"
+
+
+# ── SMT divergence générique (smc.smt_series) ─────────────────────────────────
+
+class TestSmtSeries:
+    def _mk_corr(self, tmp_path, times, closes):
+        p = tmp_path / "corr.parquet"
+        pl.DataFrame({
+            "time": times, "open": closes, "high": closes,
+            "low": closes, "close": closes,
+            "volume": [1.0] * len(closes),
+        }).write_parquet(p)
+        return str(p)
+
+    def test_none_when_path_missing(self):
+        df = _random_df(300)
+        assert smc.smt_series(df, "", 20) is None
+        assert smc.smt_series(df, "/does/not/exist.parquet", 20) is None
+
+    def test_shape_and_domain(self, tmp_path):
+        df = _random_df(400, seed=3)
+        corr = self._mk_corr(tmp_path, df["time"].to_list(),
+                             df["close"].to_numpy() * 1.5)
+        s = smc.smt_series(df, corr, 20)
+        assert s is not None and len(s) == df.height
+        assert set(np.unique(s)).issubset({-1, 0, 1})
+
+    def test_bullish_divergence_detected(self, tmp_path):
+        # A fait un nouveau plus-bas à la dernière barre, B (corrélé) NON → +1
+        n = 40
+        times = [datetime(2024, 1, 1) + timedelta(hours=i) for i in range(n)]
+        a = [100.0] * n
+        a[-1] = 80.0                       # A : nouveau plus-bas franc
+        b = [100.0] * n                    # B : plat, pas de nouveau plus-bas
+        b[-1] = 105.0
+        df = _mk_df(a, a, a, a)
+        corr = self._mk_corr(tmp_path, times, b)
+        s = smc.smt_series(df, corr, 20)
+        assert int(s[-1]) == 1

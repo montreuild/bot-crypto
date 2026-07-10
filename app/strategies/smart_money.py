@@ -125,6 +125,8 @@ class Strategy(BaseStrategy):
         "inv_fvg_bonus":  [True, False],
         "chop_filter_max": [0.0, 61.8],
         "candle_bonus":   [True, False],
+        "smt_bonus":      [True, False],
+        "smt_filter":     [True, False],
     }
 
     fixed_params: Dict[str, Any] = {
@@ -227,6 +229,19 @@ class Strategy(BaseStrategy):
         # élevée mais rare). OFF par défaut — via le sizing, monte les setups
         # confirmés. Levier d'optimiseur.
         "candle_bonus":     False,
+        # ── SMT divergence (ICT) : confluence/filtre vs actif corrélé ────────
+        # Divergence entre l'actif tradé et un corrélé (``smt_correlate_path``,
+        # ex. data/ohlcv/ETH_USDC/4h.parquet pour BTC) : l'un prend la liquidité,
+        # l'autre non. Via ``smc.smt_series`` (primitive moteur générique).
+        #   smt_bonus  : +``smt_conf`` au score si la divergence CONFIRME le sens.
+        #   smt_filter : rejette un setup CONTREDIT par une divergence opposée.
+        # Les deux OFF par défaut → comportement byte-identique. À MESURER avant
+        # activation (confluence non prouvée sur BTC ; cf. campagne SMT).
+        "smt_correlate_path": "",
+        "smt_lookback":     20,
+        "smt_bonus":        False,
+        "smt_filter":       False,
+        "smt_conf":         0.05,
     }
 
     def __init__(self):
@@ -322,6 +337,15 @@ class Strategy(BaseStrategy):
             aux["eng"] = _engulfing(win).to_numpy().astype(np.int8)
         else:
             aux["pin"] = aux["eng"] = None
+        # SMT divergence vs actif corrélé (off par défaut) : {−1,0,+1} par barre,
+        # chargé + aligné causalement par ``smc.smt_series``. None si désactivé
+        # ou données du corrélé absentes (dégradation gracieuse).
+        if (bool(p.get("smt_bonus", False)) or bool(p.get("smt_filter", False))) \
+                and str(p.get("smt_correlate_path", "")):
+            aux["smt"] = smc.smt_series(win, str(p["smt_correlate_path"]),
+                                        int(p.get("smt_lookback", 20)))
+        else:
+            aux["smt"] = None
         return aux
 
     @staticmethod
@@ -939,6 +963,25 @@ class Strategy(BaseStrategy):
 
         if not candidates:
             return None
+        # SMT divergence (off par défaut) : filtre les setups contredits par une
+        # divergence de sens opposé, bonifie ceux qu'elle confirme. Appliqué une
+        # seule fois ici, par candidat (côté connu) → point d'injection unique.
+        smt_a = aux.get("smt")
+        if smt_a is not None and 0 <= i < len(smt_a):
+            s = int(smt_a[i])
+            use_filter = bool(p.get("smt_filter", False))
+            use_bonus = bool(p.get("smt_bonus", False))
+            kept: List[dict] = []
+            for cand in candidates:
+                sgn = 1 if cand["side"] == "long" else -1
+                if use_filter and s == -sgn:
+                    continue
+                if use_bonus and s == sgn:
+                    cand["score"] += float(p.get("smt_conf", 0.05))
+                kept.append(cand)
+            if not kept:
+                return None
+            candidates = kept
         best = max(candidates, key=lambda x: x["score"])
         best["score"] = round(min(best["score"], 1.0), 3)
         # Seuil interne par TF (surchargable par optimizer_results, contrairement
