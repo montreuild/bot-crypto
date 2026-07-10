@@ -540,7 +540,7 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
         # Overlay optimizer_results du timeframe (même résolution que le live et
         # le backtest) → l'UI reflète la config RÉELLEMENT tradée par le bot.
         resolved_params = {"smart_money":
-                           resolve_strategy_params(state.cfg, tf).get("smart_money", {})}
+                           resolve_strategy_params(state.cfg, tf, symbol).get("smart_money", {})}
         # Une seule analyse partagée par la sérialisation ET par score/trade_plans
         # (via le cache d'instance de la stratégie) : len(df) ≤ 3000 = max_window,
         # donc la fenêtre de la stratégie == df.
@@ -796,8 +796,8 @@ def scanner_smc_replay(symbol: str = "BTC/USDC", timeframe: str = "4h",
         n = len(df)
         times = df["time"].dt.epoch(time_unit="s").to_list()
 
-        # Paramètres résolus (base YAML + overlay optimizer_results du TF)
-        resolved = resolve_strategy_params(state.cfg, tf)
+        # Paramètres résolus (base YAML + overlay optimizer_results du TF/symbole)
+        resolved = resolve_strategy_params(state.cfg, tf, symbol)
         p_strat  = {**_SMCStrategy.fixed_params,
                     **{k: v for k, v in (resolved.get("smart_money") or {}).items()
                        if v is not None}}

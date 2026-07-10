@@ -588,7 +588,10 @@ class Backtester:
         # certaines stratégies pré-calculent leurs features/votes en fonction du
         # paramétrage résolu (ex: signal_consensus → votes des sous-stratégies).
         # On expose donc ``_bt_params`` avant l'appel à prepare.
-        strat_params = resolve_strategy_params(self.cfg, timeframe)
+        # ``symbol`` transmis : une config héritée (sans dimension symbole) reste
+        # celle de BTC/USDC ; les autres symboles prennent leur config dédiée si
+        # elle existe, sinon les params de base (séparation des configs).
+        strat_params = resolve_strategy_params(self.cfg, timeframe, symbol)
         for strat in self.engine.strategies:
             strat._bt_params = strat_params
             # ── Spécifique ML : reset + chargement du modèle pré-entraîné ──────

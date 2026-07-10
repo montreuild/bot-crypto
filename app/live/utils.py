@@ -4,7 +4,7 @@ Utilitaires partagés pour la couche live trading.
 Ce module regroupe les fonctions et constantes transversales utilisées par
 live_trader, signal_pipeline et ohlcv_cache, évitant les imports circulaires.
 """
-from typing import Dict
+from typing import Dict, Optional
 
 from app.core.sanitize import safe_float as _safe_float   # noqa: F401 — re-export
 from app.core.sanitize import sanitize as _sanitize        # noqa: F401 — re-export
@@ -76,7 +76,39 @@ _GLOBAL_PARAM_KEYS = frozenset({
 })
 
 
-def resolve_strategy_params(cfg: dict, timeframe: str = None) -> dict:
+# Symbole de référence : un jeu ``optimizer_results[strat][tf]`` HÉRITÉ (sans
+# dimension symbole) est considéré comme calibré pour ce symbole (historiquement,
+# l'optimiseur tournait sur BTC/USDC).
+DEFAULT_CONFIG_SYMBOL = "BTC/USDC"
+
+
+def _is_legacy_tf_entry(tf_entry: dict) -> bool:
+    """Vrai si ``tf_entry`` est une entrée d'optimisation UNIQUE (schéma hérité,
+    sans dimension symbole) plutôt qu'un mapping ``{symbole: entrée}``. On la
+    reconnaît à ses clés de métadonnées (``params``/``oos_score``/``run_date``)."""
+    return any(k in tf_entry for k in ("params", "oos_score", "run_date"))
+
+
+def _select_symbol_entry(tf_entry: dict, symbol: str = None) -> Optional[dict]:
+    """Sélectionne l'entrée d'optimisation applicable à ``symbol`` dans
+    ``optimizer_results[strat][tf]`` (schéma hérité OU ``{symbole: entrée}``).
+
+    - Entrée héritée (unique) = config de ``DEFAULT_CONFIG_SYMBOL`` (BTC/USDC) :
+      appliquée si ``symbol`` est None (appelants historiques → byte-identique)
+      ou vaut BTC/USDC ; sinon None (une config BTC ne déteint pas sur ETH).
+    - Mapping par symbole : entrée exacte de ``symbol`` ; à défaut, entrée
+      BTC/USDC quand ``symbol`` est None. Sinon None → params de base."""
+    if _is_legacy_tf_entry(tf_entry):
+        if symbol is None or symbol == DEFAULT_CONFIG_SYMBOL:
+            return tf_entry
+        return None
+    if symbol is not None:
+        return tf_entry.get(symbol)
+    return tf_entry.get(DEFAULT_CONFIG_SYMBOL)
+
+
+def resolve_strategy_params(cfg: dict, timeframe: str = None,
+                            symbol: str = None) -> dict:
     """
     Construit le dict de paramètres de stratégie en superposant les résultats
     de l'optimiseur (optimizer_results) sur les params de base (strategy_params).
@@ -84,13 +116,17 @@ def resolve_strategy_params(cfg: dict, timeframe: str = None) -> dict:
     Utilisé par Backtester.run() et LiveTrader pour garantir que les deux
     chemins de code utilisent exactement la même logique de résolution.
 
-    Précédence : strategy_params (base) < optimizer_results[strat][tf] (optimisé)
+    Précédence : strategy_params (base) < optimizer_results[strat][tf][symbol]
     Les clés globales (_GLOBAL_PARAM_KEYS) ne sont jamais écrasées par l'optimiseur.
 
     Parameters
     ----------
     cfg       : dict config globale (doit contenir "strategy_params")
-    timeframe : str ou None — si fourni, superpose les résultats optimizer_results[strat][tf]
+    timeframe : str ou None — si fourni, superpose optimizer_results[strat][tf][symbol]
+    symbol    : str ou None — symbole cible. None = comportement hérité (une config
+                sans dimension symbole s'applique ; sinon défaut BTC/USDC). Une
+                config héritée est réputée calibrée pour BTC/USDC et ne s'applique
+                PAS aux autres symboles (séparation des configs par symbole).
     """
     strat_params = {
         name: _clean_param_dict(p) if isinstance(p, dict) else p
@@ -105,7 +141,10 @@ def resolve_strategy_params(cfg: dict, timeframe: str = None) -> dict:
             tf_entry = tf_map.get(timeframe)
             if not isinstance(tf_entry, dict):
                 continue
-            opt_p = tf_entry.get("params", {})
+            entry = _select_symbol_entry(tf_entry, symbol)
+            if not isinstance(entry, dict):
+                continue
+            opt_p = entry.get("params", {})
             if not opt_p:
                 continue
             base = dict(strat_params.get(strat_name, {}))

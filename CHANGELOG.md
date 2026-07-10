@@ -6,6 +6,29 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🎯 Configs par symbole (phase 1/2) : `optimizer_results[strat][tf][symbol]`
+
+Première brique de la **séparation des configs par symbole** : une stratégie peut
+avoir une config BTC ET une config ETH distinctes qui **coexistent** (l'une
+n'écrase plus l'autre), au lieu d'un unique jeu par `(stratégie, timeframe)`
+partagé par tous les symboles.
+
+- **`resolve_strategy_params(cfg, tf, symbol)`** accepte désormais un `symbol`.
+  Schéma étendu `optimizer_results[strat][tf][symbol]`, avec **rétro-compatibilité**
+  (`_select_symbol_entry`) : une entrée HÉRITÉE (sans dimension symbole) est réputée
+  calibrée pour **BTC/USDC** (`DEFAULT_CONFIG_SYMBOL`) et **ne s'applique PLUS aux
+  autres symboles** — ETH retombe sur ses params de base tant qu'une config ETH
+  dédiée n'est pas ajoutée (avant, la config BTC déteignait silencieusement sur
+  tous les symboles).
+- **`Backtester.run` + routes scanner** transmettent le `symbol`. Vérifié :
+  **BTC 4h byte-identique** (la config héritée reste sa config) ; ETH bascule sur
+  ses params de base. 6 tests dédiés (rétro-compat, coexistence, fallback).
+- **Live inchangé** à ce stade : la sélection live passe par
+  `get_active_strategies_per_tf`/`_merge_params` (encore par TF). L'adaptation de
+  la **notion de slot** (`strategy::tf` → `strategy::tf::symbol`) dans le
+  capital-allocator, l'identité de bot, le lifecycle, l'OOS-tracker, la base et
+  l'UI est la **phase 2**.
+
 ### 🔀 SMT divergence : primitive moteur + câblage smart_money (MESURÉ non pertinent)
 
 Nouvelle primitive **`smc.smt_series(df, correlate_path, lookback)`** (moteur,
