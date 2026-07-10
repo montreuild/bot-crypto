@@ -6,6 +6,35 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🎬 Modèle @Vizion-fr : détecteurs + stratégie `vizion` (stricte)
+
+D'après les transcriptions de deux vidéos ICT de @Vizion-fr (entrée sur Order
+Block validée par le timeframe alignment). Nouveaux détecteurs dans `ict.py` :
+- **propulsion_block** : OB imbriqué dans un OB antérieur de même sens ;
+- **nested_order_block** : imbrication multi-timeframe (OB LTF ⊂ OB HTF) ;
+- **align_series** : alignement causal générique de deux actifs par timestamp
+  (crypto/action/ETF/forex) — préparation d'une SMT divergence sur N'IMPORTE
+  quel couple corrélé.
+
+Helper moteur **`smc.htf_analysis`** (bucketing causal partagé avec
+`htf_trend_series` via `_htf_buckets` — extraction **byte-identique**, vérifiée)
+qui expose l'analyse SMC HTF + le mapping LTF→bucket pour récupérer les OB HTF
+actifs à chaque barre.
+
+Nouvelle stratégie **`vizion`** (`enabled: false`) appliquant STRICTEMENT la
+checklist : OB avec la tendance en discount, ayant pris de la liquidité,
+déclenché sur rebalance de FVG, IMBRIQUÉ dans un OB HTF, confirmé par SMT
+(chemin d'actif corrélé GÉNÉRIQUE, dégradation gracieuse si absent). Chaque case
+est un paramètre activable → mesurable isolément.
+
+**Mesure honnête (BTC 4h, sans SMT)** : la checklist stricte donne **1 seul
+trade** sur 8 ans (0 OOS) — les gates cumulés (sweep+FVG+imbrication HTF)
+filtrent presque tout. Relâchée à « OB en discount avec la tendance », c'est
++66 OOS (48 trades) — mais c'est déjà le cœur du smart_money. Confirme le caveat
+des vidéos (exemples cherry-pické) : le modèle strict n'est pas tradable sur BTC
+faute d'échantillon. À re-mesurer sur d'autres TF/actifs et avec SMT (données
+ETH). 453 tests OK.
+
 ### 🧊 app/core/ict.py — détecteurs ICT automatisables (briques réutilisables)
 
 Nouveau module regroupant les concepts ICT (Inner Circle Trader) automatisables

@@ -42,6 +42,38 @@ def test_measured_move_target():
     assert ict.measured_move_target(sw, 11, "long", 105.0) is None    # <2 swings confirmés
 
 
+def test_propulsion_block():
+    obs = [
+        {"kind": "bullish", "created_at": 5, "top": 101.0, "bottom": 99.0, "invalidated_at": None},
+        {"kind": "bullish", "created_at": 8, "top": 100.5, "bottom": 99.5, "invalidated_at": None},
+    ]
+    z = ict.propulsion_block(obs, 12)          # OB(8) imbriqué dans OB(5)
+    assert len(z) == 1 and z[0]["bottom"] == 99.5 and z[0]["top"] == 100.5
+    # polarité opposée → pas de propulsion
+    obs[1]["kind"] = "bearish"
+    assert ict.propulsion_block(obs, 12) == []
+    # causal : à i=6, l'OB(8) n'existe pas encore
+    obs[1]["kind"] = "bullish"
+    assert ict.propulsion_block(obs, 6) == []
+
+
+def test_nested_order_block():
+    htf = [{"kind": "bullish", "top": 105.0, "bottom": 95.0}]
+    assert ict.nested_order_block(htf, "bullish", 99.0, 101.0) is True   # LTF ⊂ HTF
+    assert ict.nested_order_block(htf, "bearish", 99.0, 101.0) is False  # mauvais sens
+    assert ict.nested_order_block(htf, "bullish", 110.0, 112.0) is False  # pas de chevauchement
+
+
+def test_align_series():
+    ta = np.array([100, 200, 300, 400], np.int64)
+    tb = np.array([150, 350], np.int64)
+    cb = np.array([10.0, 20.0])
+    out = ict.align_series(ta, tb, cb)
+    assert np.isnan(out[0])                    # avant le début de B
+    assert out[1] == 10.0 and out[2] == 10.0   # dernière clôture B ≤ t
+    assert out[3] == 20.0
+
+
 def test_std_dev_projections():
     up = ict.std_dev_projections(100.0, 110.0, "up", mults=(1.0, 2.0))
     assert [p["level"] for p in up] == [120.0, 130.0]      # high + m×range

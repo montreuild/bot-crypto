@@ -882,17 +882,38 @@ def htf_trend_series(df: pl.DataFrame, params: Optional[dict] = None,
     meta = {"htf_sec", "n_htf", "trend"} (état à la dernière barre).
     """
     n = len(df)
-    empty = np.zeros(n, dtype=np.int8)
+    htf_df, idx, htf_sec, n_htf = _htf_buckets(df, htf_sec_map, mult)
+    if htf_df is None:
+        return np.zeros(n, dtype=np.int8), {"htf_sec": htf_sec, "n_htf": n_htf,
+                                            "trend": 0}
+    trend_htf = analyze(htf_df, params)["_trend_arr"]
+    out = np.zeros(n, dtype=np.int8)
+    valid = idx >= 0
+    out[valid] = trend_htf[idx[valid]]
+    return out, {"htf_sec": int(htf_sec), "n_htf": int(n_htf),
+                 "trend": int(out[-1])}
+
+
+def _htf_buckets(df: pl.DataFrame, htf_sec_map: Optional[Dict[int, int]] = None,
+                 mult: int = 4):
+    """Agrégation OHLCV en buckets HTF (bornes horloge ``epoch // htf_sec``) +
+    mapping CAUSAL LTF→dernier bucket HTF entièrement clôturé. Source partagée
+    par ``htf_trend_series`` et ``htf_analysis`` (aucune fuite du futur).
+
+    Retourne ``(htf_df|None, ltf_to_htf_idx, htf_sec, n_htf)`` — htf_df None si
+    données insuffisantes ; ``idx[i]`` = index du bucket HTF clôturé à la fin de
+    la barre LTF i (−1 si aucun)."""
+    n = len(df)
+    fail = (None, np.full(n, -1, dtype=int), 0, 0)
     if n < 40 or "time" not in df.columns:
-        return empty, {"htf_sec": 0, "n_htf": 0, "trend": 0}
+        return fail
     epoch = df["time"].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
     deltas = np.diff(epoch[-64:])
     deltas = deltas[deltas > 0]
     if len(deltas) == 0:
-        return empty, {"htf_sec": 0, "n_htf": 0, "trend": 0}
+        return fail
     ltf_sec = int(np.median(deltas))
     htf_sec = (htf_sec_map or {}).get(ltf_sec) or ltf_sec * max(int(mult), 2)
-
     bucket = epoch // htf_sec
     o = df["open"].to_numpy().astype(float)
     h = df["high"].to_numpy().astype(float)
@@ -900,12 +921,10 @@ def htf_trend_series(df: pl.DataFrame, params: Optional[dict] = None,
     c = df["close"].to_numpy().astype(float)
     v = df["volume"].to_numpy().astype(float) if "volume" in df.columns \
         else np.ones(n)
-
-    # Agrégation par bucket (une passe, buckets croissants)
     starts = np.flatnonzero(np.diff(bucket, prepend=bucket[0] - 1))
     ends = np.append(starts[1:], n)
     if len(starts) < 12:
-        return empty, {"htf_sec": htf_sec, "n_htf": len(starts), "trend": 0}
+        return None, np.full(n, -1, dtype=int), htf_sec, len(starts)
     ho = o[starts]
     hc = c[ends - 1]
     hh = np.array([h[s:e].max() for s, e in zip(starts, ends)])
@@ -913,20 +932,23 @@ def htf_trend_series(df: pl.DataFrame, params: Optional[dict] = None,
     hv = np.array([v[s:e].sum() for s, e in zip(starts, ends)])
     htf_df = pl.DataFrame({"open": ho, "high": hh, "low": hl,
                            "close": hc, "volume": hv})
-    res = analyze(htf_df, params)
-    trend_htf = res["_trend_arr"]
-
-    # Mapping causal : dernier bucket HTF clôturé au moment où la barre LTF i
-    # est terminée (close de la barre = epoch + ltf_sec).
     bucket_end = (bucket[starts] + 1) * htf_sec
     close_times = epoch + ltf_sec
     idx = np.searchsorted(bucket_end, close_times, side="right") - 1
-    out = np.zeros(n, dtype=np.int8)
-    valid = idx >= 0
-    out[valid] = trend_htf[idx[valid]]
-    meta = {"htf_sec": int(htf_sec), "n_htf": int(len(starts)),
-            "trend": int(out[-1])}
-    return out, meta
+    return htf_df, idx, int(htf_sec), int(len(starts))
+
+
+def htf_analysis(df: pl.DataFrame, params: Optional[dict] = None,
+                 htf_sec_map: Optional[Dict[int, int]] = None, mult: int = 4):
+    """Analyse SMC complète sur le HTF (mêmes buckets causaux que
+    ``htf_trend_series``) → ``(res_htf|None, ltf_to_htf_idx)``. Permet à une
+    stratégie de récupérer les Order Blocks HTF ACTIFS à chaque barre LTF (pour
+    l'imbrication multi-timeframe : ``res_htf['_all_obs']`` filtrés par
+    ``created_at <= idx[i]`` et non invalidés). Aucune fuite du futur."""
+    htf_df, idx, _htf_sec, _n = _htf_buckets(df, htf_sec_map, mult)
+    if htf_df is None:
+        return None, idx
+    return analyze(htf_df, params), idx
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -122,6 +122,59 @@ def measured_move_target(swings: List[dict], i: int, side: str,
     return lvl if ok else None
 
 
+def propulsion_block(obs: List[dict], i: int) -> List[dict]:
+    """Propulsion block : un Order Block qui se forme À L'INTÉRIEUR d'un OB
+    ANTÉRIEUR de même polarité (OB sur OB). Retesté, il « propulse » le prix.
+    Zones actives à la barre ``i`` (les deux OB formés avant i). Causal."""
+    def created(o):
+        return int(o.get("created_at", o.get("index", 0)))
+    active = [o for o in obs if created(o) < i
+              and not (o.get("invalidated_at") is not None and o["invalidated_at"] <= i)]
+    out = []
+    for ob in active:
+        for prev in active:
+            if prev is ob or prev["kind"] != ob["kind"]:
+                continue
+            if created(prev) >= created(ob):
+                continue
+            lo = max(float(ob["bottom"]), float(prev["bottom"]))
+            hi = min(float(ob["top"]), float(prev["top"]))
+            if hi > lo:                       # OB imbriqué dans un OB antérieur
+                out.append({"kind": ob["kind"], "bottom": float(ob["bottom"]),
+                            "top": float(ob["top"]),
+                            "ce": consequent_encroachment(ob["top"], ob["bottom"])})
+                break
+    return out
+
+
+def nested_order_block(htf_obs: List[dict], kind: str,
+                       zone_lo: float, zone_hi: float) -> bool:
+    """Imbrication multi-timeframe (« timeframe alignment » ICT) : True si un OB
+    HTF de même polarité (``kind``) chevauche la zone LTF [lo, hi]. L'appelant
+    ne fournit que les OB HTF ACTIFS à l'instant de la barre LTF (causal)."""
+    for ob in htf_obs:
+        if ob["kind"] != kind:
+            continue
+        if float(ob["bottom"]) <= zone_hi and float(ob["top"]) >= zone_lo:
+            return True
+    return False
+
+
+def align_series(time_a: np.ndarray, time_b: np.ndarray,
+                 close_b: np.ndarray) -> np.ndarray:
+    """Aligne CAUSALEMENT la série B sur les timestamps de A (générique : crypto,
+    action, ETF, forex — n'importe quel couple corrélé). Pour chaque temps de A,
+    prend la DERNIÈRE clôture de B connue à cet instant (≤). NaN avant le début
+    de B. Sert à préparer une SMT divergence entre deux actifs quelconques."""
+    ta = np.asarray(time_a, np.int64); tb = np.asarray(time_b, np.int64)
+    cb = np.asarray(close_b, float)
+    idx = np.searchsorted(tb, ta, side="right") - 1
+    out = np.full(len(ta), np.nan)
+    valid = idx >= 0
+    out[valid] = cb[idx[valid]]
+    return out
+
+
 def std_dev_projections(low: float, high: float, side: str,
                         mults=(1.0, 2.0, 2.5, 4.0)) -> List[dict]:
     """Projections ICT en « écarts-types » d'une jambe (dealing range) : cibles

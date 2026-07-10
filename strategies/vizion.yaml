@@ -1,0 +1,39 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Stratégie : vizion — modèle ICT @Vizion-fr (Order Block + timeframe alignment)
+# ──────────────────────────────────────────────────────────────────────────────
+# Application STRICTE de la checklist des vidéos : OB avec la tendance en zone
+# discount, ayant pris de la liquidité, avec rebalance de FVG comme déclencheur,
+# IMBRIQUÉ dans un OB HTF (timeframe alignment), confirmé par une divergence SMT
+# (actif corrélé). SL sous l'OB, TP sur la prochaine liquidité opposée.
+#
+# ⚠ enabled: false — modèle discrétionnaire à edge NON prouvé (les exemples des
+# vidéos sont cherry-pické : un seul trade gagnant montré par vidéo). À MESURER
+# avant toute activation. Chaque case de la checklist est un paramètre
+# activable/désactivable, pour isoler ce qui apporte réellement de l'edge.
+#
+# SMT GÉNÉRIQUE : renseigner `smt_correlate_path` avec le chemin d'un actif
+# corrélé (crypto, action, ETF, forex) — ex. data/ohlcv/ETH_USDC/4h.parquet pour
+# BTC, ou data/stocks/TTE.PA_1d.csv pour Eutelsat. Vide = SMT désactivé
+# (dégradation gracieuse, la stratégie tourne sans).
+enabled: false
+
+params:
+  swing_len: 3
+  ob_max_age: 60
+  pool_max_age: 120
+  sl_buffer_atr: 0.5
+  min_rr: 3.0
+  min_gain_pct: 0.4
+  tp_front_run_atr: 0.1
+  liq_lookback: 12
+  require_sweep: true
+  require_fvg: true
+  require_htf_ob: true
+  use_smt: true
+  smt_correlate_path: ''      # ex. data/ohlcv/ETH_USDC/4h.parquet
+  smt_lookback: 20
+  use_trailing: false
+  trail_mult: 3.0
+  long_only: false
+  min_score: 0.5
+  max_window: 500
