@@ -21,10 +21,17 @@ stratégie (on mesurera/activera ensuite, discipline du projet) :
 - **SMT divergence** (deux actifs corrélés alignés divergent sur un extrême —
   le plus prometteur, exploitable dès qu'on aura ETH/SOL en local).
 
-Toutes causales (signal à ``i`` ⇐ données ≤ ``i``, vérifié). 7 tests unitaires
-(cas déterministes + causalité BPR/Judas/SMT). Le reste du canon ICT (structure,
-liquidité, sweeps, OB, FVG, voids, premium/discount, OTE, killzones, HTF, AMD,
-IFVG) est déjà dans smart_money. 444 tests OK.
+Toutes causales (signal à ``i`` ⇐ données ≤ ``i``, vérifié). Le reste du canon
+ICT (structure, liquidité, sweeps, OB, FVG, voids, premium/discount, OTE,
+killzones, HTF, AMD) est déjà dans le moteur smart_money.
+
+**Cohérence** : trois détecteurs purs ICT qui vivaient dans la *stratégie*
+smart_money — `fvg_overlap`, `inverted_fvg_overlap` (IFVG), `measured_move_target`
+(symétrie de jambe) — sont **extraits vers `ict.py`** (primitives réutilisables),
+la stratégie les importe. Backtest **byte-identique** (config 4h : 168 signaux,
+empreinte inchangée). Les helpers du MOTEUR (`killzone_flags`, `premium_discount`,
+`liquidity_targets`…), couplés au graphe d'entités et partagés avec la route
+scanner, restent dans `smc.py` (API publique du moteur). 445 tests OK.
 
 ### 🛠 scripts/fetch_data.py — récupération OHLCV (crypto ccxt + actions Yahoo)
 

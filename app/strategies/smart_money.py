@@ -63,6 +63,7 @@ import polars as pl
 
 from app.engine.engine import BaseStrategy
 from app.core import smc
+from app.core import ict
 from app.core.indicators_core import (ema as _ema_series, volume_ratio as _vol_ratio,
                                        choppiness as _choppiness, pin_bar as _pin_bar,
                                        engulfing as _engulfing)
@@ -700,8 +701,8 @@ class Strategy(BaseStrategy):
         def _inv_fvg_add(zone_lo: float, zone_hi: float, side: str) -> float:
             if not bool(p.get("inv_fvg_bonus", False)):
                 return 0.0
-            return 0.05 if self._inv_fvg_overlap(res, i, side,
-                                                 zone_lo, zone_hi) else 0.0
+            return 0.05 if ict.inverted_fvg_overlap(res["_all_fvgs"], i, side,
+                                                    zone_lo, zone_hi) else 0.0
 
         # Confirmation bougie (off par défaut) : +0.05 si pin bar / engulfing
         # dans le sens du setup à la barre i (qualité par trade élevée).
@@ -838,8 +839,8 @@ class Strategy(BaseStrategy):
                     sc = 0.50 + 0.10 + kz_add   # structure alignée par construction
                     sc += 0.10 if strength2 else 0.0
                     sc += 0.10 if zone == "premium" else 0.0
-                    sc += 0.05 if self._fvg_overlap(res, i, "bullish",
-                                                    ob["bottom"], ob["top"]) else 0.0
+                    sc += 0.05 if ict.fvg_overlap(res["_all_fvgs"], i, "bullish",
+                                                  ob["bottom"], ob["top"]) else 0.0
                     sc += 0.05 if vol_ok else 0.0
                     sc += 0.05 if close[i] > open_[i] else 0.0
                     sc += 0.05 if tl_tap_long else 0.0
@@ -863,8 +864,8 @@ class Strategy(BaseStrategy):
                     sc = 0.50 + 0.10 + kz_add
                     sc += 0.10 if strength2 else 0.0
                     sc += 0.10 if zone == "discount" else 0.0
-                    sc += 0.05 if self._fvg_overlap(res, i, "bearish",
-                                                    ob["bottom"], ob["top"]) else 0.0
+                    sc += 0.05 if ict.fvg_overlap(res["_all_fvgs"], i, "bearish",
+                                                  ob["bottom"], ob["top"]) else 0.0
                     sc += 0.05 if vol_ok else 0.0
                     sc += 0.05 if close[i] < open_[i] else 0.0
                     sc += 0.05 if tl_tap_short else 0.0
@@ -966,7 +967,7 @@ class Strategy(BaseStrategy):
         use_voids = bool(p.get("use_void_targets", True))
         # 4b — cible optionnelle par symétrie de jambe (off par défaut) : entre
         # en concurrence avec les cibles liquidité/void/volume.
-        mm = (self._measured_move_target(res, i, side, entry)
+        mm = (ict.measured_move_target(res["_all_swings"], i, side, entry)
               if bool(p.get("tp_measured_move", False)) else None)
         tp = None
         tp_src = ""
@@ -1115,53 +1116,6 @@ class Strategy(BaseStrategy):
             cached = (cd, cu)
             res["_choch_idx"] = cached
         return cached
-
-    @staticmethod
-    def _fvg_overlap(res: dict, i: int, kind: str,
-                     zone_lo: float, zone_hi: float) -> bool:
-        """True si un FVG ouvert de même direction chevauche la zone [lo, hi]."""
-        for fv in res["_all_fvgs"]:
-            if fv["kind"] != kind or fv["index"] >= i:
-                continue
-            if fv["filled_at"] is not None and fv["filled_at"] <= i:
-                continue
-            if fv["bottom"] <= zone_hi and fv["top"] >= zone_lo:
-                return True
-        return False
-
-    @staticmethod
-    def _inv_fvg_overlap(res: dict, i: int, side: str,
-                         zone_lo: float, zone_hi: float) -> bool:
-        """4c — inversion de rôle : un FVG de sens OPPOSÉ, DÉJÀ mitigé avant i,
-        qui chevauche la zone [lo, hi] agit en support (long) / résistance
-        (short) inversé. Causal (mitigated_at < i)."""
-        want = "bearish" if side == "long" else "bullish"
-        for fv in res["_all_fvgs"]:
-            if fv["kind"] != want:
-                continue
-            m = fv["mitigated_at"]
-            if m is None or m >= i:
-                continue
-            if fv["bottom"] <= zone_hi and fv["top"] >= zone_lo:
-                return True
-        return False
-
-    @staticmethod
-    def _measured_move_target(res: dict, i: int, side: str,
-                              entry: float) -> Optional[float]:
-        """4b — projection par symétrie de jambe (measured move) : amplitude de
-        la dernière jambe de structure COMPLÈTE avant i (deux derniers swings
-        confirmés), projetée depuis l'entrée. Causal. None si indisponible."""
-        sw = [s for s in res["_all_swings"] if s["confirmed_at"] < i]
-        if len(sw) < 2:
-            return None
-        sw = sorted(sw, key=lambda s: s["index"])[-2:]
-        amp = abs(float(sw[-1]["price"]) - float(sw[-2]["price"]))
-        if amp <= 0:
-            return None
-        lvl = entry + amp if side == "long" else entry - amp
-        ok = (lvl > entry) if side == "long" else (lvl < entry)
-        return lvl if ok else None
 
     @staticmethod
     def _vol_ratio_arr(df: pl.DataFrame) -> np.ndarray:

@@ -12,7 +12,7 @@ qu'une mesure justifie). Deux familles :
 
 Toutes causales : un signal à la barre ``i`` n'utilise que des données ≤ ``i``.
 """
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import polars as pl
@@ -72,6 +72,54 @@ def unicorn_zones(breakers: List[dict], fvgs: List[dict], i: int) -> List[dict]:
                 out.append({"kind": brk["kind"], "bottom": lo, "top": hi,
                             "ce": consequent_encroachment(hi, lo)})
     return out
+
+
+def fvg_overlap(fvgs: List[dict], i: int, kind: str,
+                zone_lo: float, zone_hi: float) -> bool:
+    """True si un FVG OUVERT de même direction (``kind``) chevauche [lo, hi] à la
+    barre ``i`` (formé avant i, non comblé). Causal."""
+    for fv in fvgs:
+        if fv["kind"] != kind or fv["index"] >= i:
+            continue
+        if fv["filled_at"] is not None and fv["filled_at"] <= i:
+            continue
+        if fv["bottom"] <= zone_hi and fv["top"] >= zone_lo:
+            return True
+    return False
+
+
+def inverted_fvg_overlap(fvgs: List[dict], i: int, side: str,
+                         zone_lo: float, zone_hi: float) -> bool:
+    """Inversion de rôle (IFVG) : un FVG de sens OPPOSÉ, DÉJÀ mitigé avant i, qui
+    chevauche [lo, hi] agit en support (long) / résistance (short) inversé.
+    Causal (``mitigated_at`` < i)."""
+    want = "bearish" if side == "long" else "bullish"
+    for fv in fvgs:
+        if fv["kind"] != want:
+            continue
+        m = fv["mitigated_at"]
+        if m is None or m >= i:
+            continue
+        if fv["bottom"] <= zone_hi and fv["top"] >= zone_lo:
+            return True
+    return False
+
+
+def measured_move_target(swings: List[dict], i: int, side: str,
+                         entry: float) -> Optional[float]:
+    """Projection par symétrie de jambe (measured move) : amplitude de la
+    dernière jambe de structure COMPLÈTE avant i (deux derniers swings
+    confirmés), projetée depuis l'entrée. Causal. None si indisponible."""
+    sw = [s for s in swings if s["confirmed_at"] < i]
+    if len(sw) < 2:
+        return None
+    sw = sorted(sw, key=lambda s: s["index"])[-2:]
+    amp = abs(float(sw[-1]["price"]) - float(sw[-2]["price"]))
+    if amp <= 0:
+        return None
+    lvl = entry + amp if side == "long" else entry - amp
+    ok = (lvl > entry) if side == "long" else (lvl < entry)
+    return lvl if ok else None
 
 
 def std_dev_projections(low: float, high: float, side: str,

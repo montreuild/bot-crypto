@@ -524,34 +524,6 @@ class TestMinGainFilter:
         assert aux_on["pin"] is not None
         assert set(np.unique(aux_on["pin"]).tolist()) <= {-1, 0, 1}
 
-    def test_measured_move_target(self):
-        """4b : amplitude de la dernière jambe (2 swings confirmés) projetée
-        depuis l'entrée ; None si < 2 swings confirmés avant i."""
-        res = {"_all_swings": [
-            {"index": 10, "price": 100.0, "confirmed_at": 12},
-            {"index": 20, "price": 110.0, "confirmed_at": 22},
-        ]}
-        assert Strategy._measured_move_target(res, 30, "long", 105.0) == 115.0
-        assert Strategy._measured_move_target(res, 30, "short", 105.0) == 95.0
-        # à i=11, aucun swing confirmé avant → None
-        assert Strategy._measured_move_target(res, 11, "long", 105.0) is None
-
-    def test_inv_fvg_overlap(self):
-        """4c : un FVG de sens OPPOSÉ, mitigé avant i, chevauchant la zone."""
-        res = {"_all_fvgs": [{"kind": "bearish", "index": 5, "top": 101.0,
-                              "bottom": 99.0, "mitigated_at": 8, "filled_at": None}]}
-        # long → cherche un FVG bearish mitigé (support inversé) → True
-        assert Strategy._inv_fvg_overlap(res, 20, "long", 99.5, 100.5) is True
-        # short → cherche un FVG bullish → le bearish ne compte pas → False
-        assert Strategy._inv_fvg_overlap(res, 20, "short", 99.5, 100.5) is False
-        # pas encore mitigé → False
-        res2 = {"_all_fvgs": [{"kind": "bearish", "index": 5, "top": 101.0,
-                               "bottom": 99.0, "mitigated_at": None, "filled_at": None}]}
-        assert Strategy._inv_fvg_overlap(res2, 20, "long", 99.5, 100.5) is False
-        # mitigé APRÈS i (non causal) → False
-        res3 = {"_all_fvgs": [{"kind": "bearish", "index": 5, "top": 101.0,
-                               "bottom": 99.0, "mitigated_at": 25, "filled_at": None}]}
-        assert Strategy._inv_fvg_overlap(res3, 20, "long", 99.5, 100.5) is False
 
     def test_ext_structure_filter_wiring(self):
         """1d : aux['ext_trend'] None par défaut, array causal quand activé."""

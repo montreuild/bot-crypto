@@ -13,6 +13,35 @@ def test_consequent_encroachment():
     assert ict.consequent_encroachment(101.0, 99.0) == 100.0
 
 
+def test_fvg_overlap():
+    fvgs = [{"kind": "bullish", "index": 5, "top": 101.0, "bottom": 99.0,
+             "filled_at": None}]
+    assert ict.fvg_overlap(fvgs, 10, "bullish", 99.5, 100.5) is True
+    assert ict.fvg_overlap(fvgs, 10, "bearish", 99.5, 100.5) is False   # mauvais sens
+    assert ict.fvg_overlap(fvgs, 5, "bullish", 99.5, 100.5) is False    # pas encore formé
+    fvgs[0]["filled_at"] = 8
+    assert ict.fvg_overlap(fvgs, 10, "bullish", 99.5, 100.5) is False   # comblé
+
+
+def test_inverted_fvg_overlap():
+    fvgs = [{"kind": "bearish", "index": 5, "top": 101.0, "bottom": 99.0,
+             "mitigated_at": 8, "filled_at": None}]
+    assert ict.inverted_fvg_overlap(fvgs, 20, "long", 99.5, 100.5) is True
+    assert ict.inverted_fvg_overlap(fvgs, 20, "short", 99.5, 100.5) is False
+    fvgs[0]["mitigated_at"] = None
+    assert ict.inverted_fvg_overlap(fvgs, 20, "long", 99.5, 100.5) is False   # pas mitigé
+    fvgs[0]["mitigated_at"] = 25
+    assert ict.inverted_fvg_overlap(fvgs, 20, "long", 99.5, 100.5) is False   # mitigé après i
+
+
+def test_measured_move_target():
+    sw = [{"index": 10, "price": 100.0, "confirmed_at": 12},
+          {"index": 20, "price": 110.0, "confirmed_at": 22}]
+    assert ict.measured_move_target(sw, 30, "long", 105.0) == 115.0
+    assert ict.measured_move_target(sw, 30, "short", 105.0) == 95.0
+    assert ict.measured_move_target(sw, 11, "long", 105.0) is None    # <2 swings confirmés
+
+
 def test_std_dev_projections():
     up = ict.std_dev_projections(100.0, 110.0, "up", mults=(1.0, 2.0))
     assert [p["level"] for p in up] == [120.0, 130.0]      # high + m×range
