@@ -13,6 +13,13 @@ import polars as pl
 
 logger = logging.getLogger(__name__)
 
+# Plancher de `since` pour les fetch paginés : ~fondation d'OKX (2017-01-01).
+# Évite de calculer un `since` absurde (ex. 50000 × 4h ≈ année 2003) que l'exchange
+# REJETTE en renvoyant une liste vide → « premier fetch : 0 bougie » sur les gros
+# timeframes. OKX renvoie les plus anciennes bougies DISPONIBLES pour un `since`
+# antérieur au listing, mais pas pour un `since` d'avant sa création.
+_MIN_SINCE_MS = 1_483_228_800_000  # 2017-01-01 UTC
+
 # Schéma Parquet — time stocké en ms pour cohérence avec ccxt
 _OHLCV_SCHEMA = {
     "time":   pl.Datetime("ms"),
@@ -137,6 +144,10 @@ class CandleStore:
         result = df_cached.tail(total)
         return result if len(result) >= 1 else None
 
+    def load_cached(self, symbol: str, tf: str) -> pl.DataFrame:
+        """DataFrame OHLCV en cache (sans aucun appel exchange). Vide si absent."""
+        return self._load(self._path(symbol, tf))
+
     def stats(self, symbol: str, tf: str) -> dict:
         """Stats du cache Parquet pour (symbol, tf)."""
         path = self._path(symbol, tf)
@@ -214,12 +225,12 @@ class CandleStore:
             tf_ms = 3_600_000  # fallback 1h en ms
 
         # Point de départ : assez loin dans le passé pour couvrir les bougies manquantes.
-        # On clampe à 0 pour éviter un timestamp négatif (ex. 1d × 20000 > cache début)
-        # qui ferait rejeter la requête OHLCV par l'exchange (paramètre since invalide).
+        # On clampe à _MIN_SINCE_MS (2017-01-01) : un `since` trop ancien (ex. 1d × 20000
+        # ⇒ avant le listing) fait rejeter la requête OHLCV par l'exchange (liste vide).
         if before_ms is not None:
-            since = max(0, before_ms - needed * tf_ms)
+            since = max(_MIN_SINCE_MS, before_ms - needed * tf_ms)
         else:
-            since = max(0, int(exchange.milliseconds()) - needed * tf_ms)
+            since = max(_MIN_SINCE_MS, int(exchange.milliseconds()) - needed * tf_ms)
 
         all_raw = []
         seen_ts = set()
@@ -273,7 +284,7 @@ class CandleStore:
             logger.warning(f"[CandleStore] parse_timeframe '{tf}' KO : {e} — fallback 1h")
             tf_ms = 3_600_000  # fallback 1h en ms
 
-        since   = exchange.milliseconds() - total * tf_ms
+        since   = max(_MIN_SINCE_MS, exchange.milliseconds() - total * tf_ms)
         all_raw = []
         seen_ts = set()
 
@@ -314,9 +325,9 @@ class CandleStore:
                 df = pl.read_parquet(path)
                 cols = list(_OHLCV_SCHEMA.keys())
                 # Robustesse : force l'ORDRE canonique des colonnes. Un Parquet
-                # écrit par un outil tiers (ex. scripts/fetch_data.py) peut avoir
-                # un ordre différent (time en dernier) → sinon le pl.concat/vstack
-                # échoue « unable to vstack, column names don't match: open/time ».
+                # écrit avec un ordre différent (time en dernier) casse sinon le
+                # pl.concat/vstack « unable to vstack, column names don't match:
+                # open/time ».
                 if set(cols).issubset(df.columns):
                     df = df.select(cols)
                 if df.height and df["time"].dtype != pl.Datetime("ms"):
