@@ -6,6 +6,19 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🛠 scripts/fetch_data.py — récupération OHLCV (crypto ccxt + actions Yahoo)
+
+Complément de `analyze_indicators.py` : récupère les données pour n'importe quel
+symbole. Crypto via ccxt (pagination arrière) → `data/ohlcv/<SYM>/<tf>.parquet` ;
+actions/ETF via l'API chart de Yahoo Finance → `data/stocks/<TICKER>_<iv>.csv`.
+Tickers Euronext documentés (Eutelsat=ETL.PA, Capital B=ALTBG.PA, ETF CAC 40=
+CAC.PA). ⚠ Nécessite un accès réseau : dans l'environnement Claude Code managé
+par défaut, okx/Yahoo sont bloqués par la politique réseau (403) — à lancer en
+local ou après autorisation des hôtes.
+
+    python scripts/fetch_data.py --crypto ETH/USDC SOL/USDC XRP/USDC --tf 4h
+    python scripts/fetch_data.py --stocks ETL.PA ALTBG.PA CAC.PA --interval 1d --range 5y
+
 ### 🛠 scripts/analyze_indicators.py — analyse d'indicateurs sur n'importe quel OHLCV
 
 Script CLI réutilisable qui automatise la démarche des campagnes de mesure sur
