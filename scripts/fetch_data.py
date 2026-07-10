@@ -1,69 +1,62 @@
 #!/usr/bin/env python3
-"""Récupère des données OHLCV pour l'analyse (scripts/analyze_indicators.py).
+"""Récupère des données OHLCV pour l'analyse (scripts/analyze_indicators.py) et
+pour alimenter le cache du bot.
 
-Deux sources :
-  • CRYPTO via ccxt (okx/binance…) → data/ohlcv/<SYM>/<tf>.parquet
-  • ACTIONS/ETF via l'API chart de Yahoo Finance → data/stocks/<TICKER>_<iv>.csv
+  • CRYPTO via le CandleStore du bot (ccxt, pagination robuste, schéma canonique)
+    → data/ohlcv/<SYM>/<tf>.parquet — MÊME format que le live (colonnes
+    time/open/high/low/close/volume). Réutilise la machinerie qui marche déjà
+    pour BTC (évite le bug « 0 bougie » du fetch ccxt brut).
+  • ACTIONS/ETF via l'API chart de Yahoo Finance → data/stocks/<TICKER>_<iv>.csv.
 
-⚠ Nécessite un accès réseau sortant vers l'exchange / Yahoo. Dans l'environnement
-Claude Code managé par défaut, ces hôtes sont bloqués par la politique réseau
-(403) — lancez ce script en local, ou faites autoriser okx.com /
-query1.finance.yahoo.com dans les réglages d'environnement.
+⚠ Nécessite un accès réseau. Dans l'environnement Claude Code managé par défaut,
+ces hôtes sont bloqués (403) — lancez ce script en local.
 
 Exemples :
   python scripts/fetch_data.py --crypto ETH/USDC SOL/USDC XRP/USDC --tf 4h --bars 6000
-  python scripts/fetch_data.py --stocks ETL.PA ALTBG.PA CAC.PA --interval 1d --range 5y
+  python scripts/fetch_data.py --stocks ETL.PA CAC.PA --interval 1d --range 5y
 
-Tickers utiles (Euronext Paris) : Eutelsat=ETL.PA, Capital B (ex The Blockchain
-Group)=ALTBG.PA, ETF CAC 40=CAC.PA ou C40.PA (indice nu=^FCHI).
+Tickers Euronext : Eutelsat=ETL.PA, TotalEnergies=TTE.PA, ETF CAC 40=CAC.PA
+(indice nu=^FCHI). ⚠ Vérifiez le ticker EXACT sur finance.yahoo.com (ex.
+Capital B / The Blockchain Group : le symbole Yahoo peut différer → 404 sinon).
 """
 import argparse
 import os
-import time
+import sys
 
 import polars as pl
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
+sys.path.insert(0, ROOT)
+
+# Intervalles intraday Yahoo : historique plafonné (1m→7j, le reste→730j).
+_YF_INTRADAY = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d",
+                "30m": "60d", "60m": "730d", "90m": "60d", "1h": "730d"}
 
 
-# ── Crypto via ccxt (pagination arrière) ─────────────────────────────────────
+# ── Crypto via le CandleStore du bot (schéma canonique garanti) ──────────────
 def fetch_crypto(symbol: str, timeframe: str, bars: int, exchange: str):
     import ccxt
+    from app.core.candle_store import get_store
     ex = getattr(ccxt, exchange)({"enableRateLimit": True})
-    tf_ms = ex.parse_timeframe(timeframe) * 1000
-    since = ex.milliseconds() - bars * tf_ms
-    out, cursor = [], since
-    while len(out) < bars:
-        batch = ex.fetch_ohlcv(symbol, timeframe, since=cursor, limit=300)
-        if not batch:
-            break
-        out += batch
-        cursor = batch[-1][0] + tf_ms
-        if len(batch) < 300:
-            break
-        time.sleep(ex.rateLimit / 1000)
-    # dédoublonnage + tri
-    seen, rows = set(), []
-    for r in sorted(out, key=lambda x: x[0]):
-        if r[0] in seen:
-            continue
-        seen.add(r[0]); rows.append(r)
-    df = pl.DataFrame(rows, schema=["ts", "open", "high", "low", "close", "volume"],
-                      orient="row").with_columns(
-        pl.from_epoch("ts", time_unit="ms").alias("time")).drop("ts")
-    sym_dir = symbol.replace("/", "_")
-    path = os.path.join(ROOT, "data", "ohlcv", sym_dir, f"{timeframe}.parquet")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    df.write_parquet(path)
-    return path, df.height
+    store = get_store(os.path.join(ROOT, "data", "ohlcv"))
+    df = store.fetch(ex, symbol, timeframe, total=bars)
+    path = store._path(symbol, timeframe)
+    return str(path), (df.height if df is not None else 0)
 
 
 # ── Actions/ETF via Yahoo Finance ────────────────────────────────────────────
 def fetch_stock(ticker: str, interval: str, rng: str):
     import requests
+    # Yahoo refuse un range long avec un intervalle intraday (HTTP 422) → on cape.
+    eff_range = rng
+    if interval in _YF_INTRADAY:
+        eff_range = _YF_INTRADAY[interval]
+        if eff_range != rng:
+            print(f"  ↳ {ticker} : intervalle {interval} intraday → range plafonné "
+                  f"à {eff_range} (Yahoo refuse {rng}).")
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-    r = requests.get(url, params={"range": rng, "interval": interval},
+    r = requests.get(url, params={"range": eff_range, "interval": interval},
                      headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
     r.raise_for_status()
     res = r.json()["chart"]["result"][0]
@@ -96,7 +89,8 @@ def main():
     for sym in a.crypto:
         try:
             p, n = fetch_crypto(sym, a.tf, a.bars, a.exchange)
-            print(f"✔ crypto {sym} {a.tf} : {n} bougies → {p}")
+            status = "✔" if n > 0 else "⚠ 0 bougie (paire absente de l'exchange ?)"
+            print(f"{status} crypto {sym} {a.tf} : {n} bougies → {p}")
         except Exception as e:
             print(f"✗ crypto {sym} KO : {repr(e)[:160]}")
     for tk in a.stocks:

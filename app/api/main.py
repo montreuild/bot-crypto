@@ -27,7 +27,7 @@ from slowapi.errors import RateLimitExceeded
 from app.api import state
 from app.api.helpers import CleanJSONResponse
 from app.api.routes import (config, trades, backtest, scanner, optimizer, bot,
-                            ml, replay, derivatives, portfolio)
+                            ml, replay, derivatives, portfolio, data)
 from app.core.database import init_db
 
 logger = logging.getLogger(__name__)
@@ -301,3 +301,4 @@ app.include_router(ml.router)
 app.include_router(replay.router)
 app.include_router(derivatives.router)
 app.include_router(portfolio.router)
+app.include_router(data.router)

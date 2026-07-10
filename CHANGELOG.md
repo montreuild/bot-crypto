@@ -6,6 +6,22 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔌 Données OHLCV : correctif cache + bouton de rechargement UI
+
+- **Fix cache** : `CandleStore._load` force désormais l'ORDRE canonique des
+  colonnes (`time` en premier). Corrige le crash `unable to vstack, column names
+  don't match: "open" and "time"` provoqué par un Parquet écrit avec un ordre
+  différent (ancien `fetch_data.py`) — le `pl.concat` ne casse plus, et les
+  fichiers déjà écrits sont réparés au prochain fetch.
+- **`fetch_data.py`** : le fetch crypto passe maintenant par la MÊME machinerie
+  que le live (`CandleStore.fetch`) → schéma canonique garanti + pagination
+  robuste (corrige le bug « 0 bougie » du ccxt brut). Yahoo : plafonne
+  automatiquement le range pour les intervalles intraday (évite le 422
+  `interval=1h&range=5y`).
+- **Bouton UI « ↻ Données »** (dashboard) + endpoints `GET /api/data/status`
+  et `POST /api/data/refetch?symbol=&tf=&bars=` : recharge un symbole/TF précis
+  ou tous les symboles configurés, via `CandleStore.fetch`.
+
 ### 🎬 Modèle @Vizion-fr : détecteurs + stratégie `vizion` (stricte)
 
 D'après les transcriptions de deux vidéos ICT de @Vizion-fr (entrée sur Order

@@ -312,7 +312,14 @@ class CandleStore:
         if path.exists():
             try:
                 df = pl.read_parquet(path)
-                if df["time"].dtype != pl.Datetime("ms"):
+                cols = list(_OHLCV_SCHEMA.keys())
+                # Robustesse : force l'ORDRE canonique des colonnes. Un Parquet
+                # écrit par un outil tiers (ex. scripts/fetch_data.py) peut avoir
+                # un ordre différent (time en dernier) → sinon le pl.concat/vstack
+                # échoue « unable to vstack, column names don't match: open/time ».
+                if set(cols).issubset(df.columns):
+                    df = df.select(cols)
+                if df.height and df["time"].dtype != pl.Datetime("ms"):
                     df = df.with_columns(pl.col("time").cast(pl.Datetime("ms")))
                 return df
             except Exception as e:
