@@ -372,3 +372,151 @@ def trend_duration(df: pl.DataFrame, n: int = 14,
         run = run + 1 if strong[i] else 0
         out[i] = run
     return pl.Series(out)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  VWAP (rolling, ancré session, + bandes d'écart-type)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def rolling_vwap(df: pl.DataFrame, n: int = 20) -> pl.Series:
+    """VWAP glissant sur ``n`` barres (prix typique pondéré par le volume).
+    Causal (fenêtre = barres passées + courante)."""
+    tp = (df["high"] + df["low"] + df["close"]) / 3.0
+    pv = (tp * df["volume"]).rolling_sum(n)
+    vv = df["volume"].rolling_sum(n).clip(lower_bound=1e-9)
+    return pv / vv
+
+
+def vwap_bands(df: pl.DataFrame, n: int = 20,
+               k: float = 2.0) -> Tuple[pl.Series, pl.Series, pl.Series]:
+    """(VWAP glissant, bande haute, bande basse) — bandes à ``k`` écarts-types
+    du prix typique. Cibles/TP dynamiques et zones de sur-extension."""
+    tp = (df["high"] + df["low"] + df["close"]) / 3.0
+    vw = rolling_vwap(df, n)
+    sd = tp.rolling_std(n).fill_null(0.0)
+    return vw, vw + k * sd, vw - k * sd
+
+
+def session_vwap(df: pl.DataFrame) -> pl.Series:
+    """VWAP ancré par session (jour UTC) — le standard day-trading. Se réinitialise
+    à chaque nouvelle journée. Fallback cumulatif global si pas de colonne time."""
+    tp = (df["high"] + df["low"] + df["close"]) / 3.0
+    vol = df["volume"].clip(lower_bound=0.0)
+    if "time" in df.columns:
+        day = df["time"].dt.truncate("1d")
+        f = pl.DataFrame({"pv": tp * vol, "v": vol, "d": day})
+        cpv = f.select(pl.col("pv").cum_sum().over("d")).to_series()
+        cv = f.select(pl.col("v").cum_sum().over("d")).to_series().clip(lower_bound=1e-9)
+        return cpv / cv
+    cpv = (tp * vol).cum_sum()
+    cv = vol.cum_sum().clip(lower_bound=1e-9)
+    return cpv / cv
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CVD (Cumulative Volume Delta) — proxy OHLCV (multiplicateur money-flow)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def cvd(df: pl.DataFrame) -> pl.Series:
+    """Cumulative Volume Delta approximé depuis l'OHLCV (pas de données tick) :
+    volume signé par la position de la clôture dans la bougie
+    (``((C−L)−(H−C))/(H−L)`` ∈ [−1, 1]), cumulé. Une divergence prix↑/CVD↓
+    signale une absorption (retournement probable)."""
+    rng = (df["high"] - df["low"]).clip(lower_bound=1e-9)
+    mfm = ((df["close"] - df["low"]) - (df["high"] - df["close"])) / rng
+    return (mfm * df["volume"]).cum_sum()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Choppiness Index — tendance (< 38.2) vs congestion (> 61.8)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def choppiness(df: pl.DataFrame, n: int = 14) -> pl.Series:
+    """Choppiness Index ∈ [0, 100] : > 61.8 = range/congestion, < 38.2 = tendance.
+    ``100·log10(ΣTR / (max_H − min_L)) / log10(n)``."""
+    tr_sum = _true_range(df).rolling_sum(n)
+    rng = (df["high"].rolling_max(n) - df["low"].rolling_min(n)).clip(lower_bound=1e-9)
+    return 100.0 * (tr_sum / rng).log10() / float(np.log10(n))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Keltner Channels — EMA ± mult×ATR (cibles TP / sur-extension)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def keltner(df: pl.DataFrame, n: int = 20, mult: float = 2.0,
+            atr_n: int = None) -> Tuple[pl.Series, pl.Series, pl.Series]:
+    """(médiane EMA, bande haute, bande basse) = EMA(close, n) ± mult×ATR."""
+    mid = ema(df["close"], n)
+    a = atr_wilder(df, atr_n or n)
+    return mid, mid + mult * a, mid - mult * a
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Price action : pin bars, engulfing, VSA (no demand / no supply)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def pin_bar(df: pl.DataFrame, wick_ratio: float = 2.0,
+            body_max: float = 0.34) -> pl.Series:
+    """{+1, 0, −1} : +1 marteau (mèche basse ≥ wick_ratio×corps, petit corps),
+    −1 étoile filante (mèche haute dominante). Rejet à valider sur zone clé."""
+    o = df["open"].to_numpy(); h = df["high"].to_numpy()
+    lo = df["low"].to_numpy(); c = df["close"].to_numpy()
+    rng = np.maximum(h - lo, 1e-9)
+    body = np.abs(c - o)
+    upper = h - np.maximum(o, c)
+    lower = np.minimum(o, c) - lo
+    small = body <= body_max * rng
+    hammer = small & (lower >= wick_ratio * body) & (upper <= body)
+    star = small & (upper >= wick_ratio * body) & (lower <= body)
+    return pl.Series(hammer.astype(np.int8) - star.astype(np.int8))
+
+
+def engulfing(df: pl.DataFrame) -> pl.Series:
+    """{+1, 0, −1} : +1 avalement haussier (bougie verte englobant le corps
+    rouge précédent), −1 avalement baissier."""
+    o = df["open"].to_numpy(); c = df["close"].to_numpy()
+    out = np.zeros(len(c), dtype=np.int8)
+    for i in range(1, len(c)):
+        if c[i] > o[i] and c[i - 1] < o[i - 1] \
+                and c[i] >= o[i - 1] and o[i] <= c[i - 1]:
+            out[i] = 1
+        elif c[i] < o[i] and c[i - 1] > o[i - 1] \
+                and o[i] >= c[i - 1] and c[i] <= o[i - 1]:
+            out[i] = -1
+    return pl.Series(out)
+
+
+def vsa_signal(df: pl.DataFrame, n: int = 20, spread_k: float = 0.6,
+               vol_k: float = 0.7) -> pl.Series:
+    """Volume Spread Analysis {+1, 0, −1} en congestion :
+      +1 « No Supply » : bougie baissière à faible spread ET faible volume
+         (les vendeurs manquent) → biais haussier ;
+      −1 « No Demand » : bougie haussière à faible spread ET faible volume."""
+    o = df["open"].to_numpy(); h = df["high"].to_numpy()
+    lo = df["low"].to_numpy(); c = df["close"].to_numpy(); v = df["volume"].to_numpy()
+    spread = h - lo
+    avg_spread = pl.Series(spread).rolling_mean(n).fill_null(np.inf).to_numpy()
+    avg_vol = pl.Series(v).rolling_mean(n).fill_null(np.inf).to_numpy()
+    narrow = spread < spread_k * avg_spread
+    lowvol = v < vol_k * avg_vol
+    out = np.zeros(len(c), dtype=np.int8)
+    out[narrow & lowvol & (c < o)] = 1     # no supply → haussier
+    out[narrow & lowvol & (c > o)] = -1    # no demand → baissier
+    return pl.Series(out)
+
+
+def rsi_divergence_hidden(df: pl.DataFrame, period: int = 14,
+                          lookback: int = 14) -> pl.Series:
+    """Divergences CACHÉES (continuation) {+1, 0, −1}, complément de
+    ``rsi_divergence`` (régulières) :
+      +1  cachée haussière : le RSI inscrit un plus-bas mais le prix tient un
+          plus-bas PLUS HAUT (higher low) → continuation de la hausse ;
+      −1  cachée baissière : le RSI inscrit un plus-haut mais le prix tient un
+          plus-haut PLUS BAS (lower high) → continuation de la baisse."""
+    close = df["close"]
+    r = rsi(close, period)
+    hbull = ((r == r.rolling_min(lookback)) &
+             (close > close.rolling_min(lookback) * 1.003))
+    hbear = ((r == r.rolling_max(lookback)) &
+             (close < close.rolling_max(lookback) * 0.997))
+    return (hbull.cast(pl.Int8) - hbear.cast(pl.Int8)).fill_null(0)

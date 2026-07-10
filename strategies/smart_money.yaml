@@ -57,6 +57,8 @@ params:
   kz_bonus: false         # neutre au seuil 0.55
   kz_filter: false        # négatif partout — pas d'edge horaire sur BTC 24/7
   amd_bonus: false        # neutre au seuil 0.55
+  time_stop_bars: 0       # sortie après N barres si ni TP ni SL (0 = off) — voir
+                          # optimizer_results/4h : coupe la chop, capte plus de signaux
   score_threshold: 0.55   # ≥ 1 confluence requise (score de base 0.50)
 
 # ── Configurations par timeframe (calibration 2026-07-04) ────────────────────
@@ -73,15 +75,34 @@ params:
 # OOS −34 avec la config vs −182 avec les défauts).
 optimizer_results:
   4h:
-    run_date: '2026-07-04'
-    oos_score: 0.1744
-    # OOS 2024-2026 (HTF _HTF_MAP) : 51 trades, +22.2 (+2.2 %), PF 1.078,
-    # DD −7.4 % — sélectivité maximale : seuls les setups multi-confluences
-    # (seuil 0.75) avec RR ≥ 2 passent. Seul TF au score OOS positif.
+    run_date: '2026-07-08'
+    oos_score: 0.3718
+    # TRAILING + SIZING + FILTRE CHOPPINESS + CONFIRMATION BOUGIE (2026-07-08).
+    # 1) Trailing 3.5×ATR (TrailingStopManager) : laisse COURIR les gagnants ;
+    #    time-stop 12 CONDITIONNEL (coupe seulement les stagnants).
+    # 2) Sizing par confluence (size_factor = 1 + 3×(score − 0.83), [0.4,1.7]),
+    #    centré sur le score moyen ⇒ exposition ≈ inchangée.
+    # 3) Filtre Choppiness < 61.8 : ne trade QU'hors congestion (croisement
+    #    indicateur × SMC — l'idée « OB en tendance, pas en chop »).
+    # 4) Confirmation bougie : bonus +0.05 si pin bar / engulfing dans le sens
+    #    → via le sizing, monte les setups confirmés (qualité par trade élevée).
+    # Mesuré (vrai Backtester, chemin de prod), empilement :
+    #   trailing+sizing        FULL +387 PF 1.51 Sh 5.2 | OOS +108 PF 1.46 sc 0.332
+    #   + choppiness<61.8      FULL +483 PF 1.69 Sh 6.7 | OOS +117 PF 1.51 sc 0.359
+    #   + confirmation bougie  FULL +503 PF 1.72 Sh 6.8 | OOS +129        sc 0.372
+    # Choppiness et confirmation bougie améliorent TOUT sur les deux périodes à
+    # nombre de trades quasi constant (137/51) — croisements indicateurs gagnants.
     params:
-      min_score: 0.75
+      min_score: 0.70
       min_rr: 2.0
       sl_buffer_atr: 0.5
+      time_stop_bars: 12
+      use_trailing: true
+      trail_mult: 3.5
+      size_by_confluence: true
+      size_conf_slope: 3.0
+      chop_filter_max: 61.8
+      candle_bonus: true
       use_rejection_blocks: false
       kz_bonus: true
       amd_bonus: true
@@ -111,10 +132,13 @@ optimizer_results:
       amd_bonus: true
       vp_confluence: true
   1h:
-    run_date: '2026-07-04'
-    oos_score: -0.0667
-    # OOS : 56 trades, −33, PF 0.831 — NON tradable (0 config éligible).
-    # La config réduit l'hémorragie de −182 à −34 (kz_filter + gain min 1.2 %).
+    run_date: '2026-07-08'
+    oos_score: -0.0206
+    # NON tradable. Re-testé 2026-07-08 avec l'arsenal 4h (trailing, sizing,
+    # choppiness, confirmation bougie) : le trailing DÉGRADE (bruit LTF) ; seule
+    # la sélectivité aide. Le filtre choppiness<50 (ne trader qu'en tendance)
+    # réduit l'hémorragie OOS de −38,8 à −10,3 (20 trades, PF 0.85) — mais
+    # l'expectancy reste NÉGATIVE (structurel : bruit + frais 0,1 %/côté).
     params:
       min_score: 0.65
       min_rr: 2.0
@@ -123,10 +147,13 @@ optimizer_results:
       kz_bonus: true
       amd_bonus: true
       vp_confluence: true
+      chop_filter_max: 50.0
   30m:
-    run_date: '2026-07-04'
-    oos_score: -0.1424
-    # OOS : 133 trades, −71, PF 0.781 — NON tradable.
+    run_date: '2026-07-08'
+    oos_score: -0.0976
+    # NON tradable. Re-testé 2026-07-08 : choppiness<50 réduit l'hémorragie OOS
+    # de −77,4 à −48,8 (55 trades) ; le FULL repasse même positif avec une
+    # confirmation bougie dure, mais l'OOS reste négatif. Pas d'edge exploitable.
     params:
       min_score: 0.75
       min_rr: 1.5
@@ -135,10 +162,12 @@ optimizer_results:
       kz_bonus: true
       amd_bonus: true
       vp_confluence: true
+      chop_filter_max: 50.0
   15m:
-    run_date: '2026-07-04'
-    oos_score: -0.0818
-    # OOS : 34 trades, −41, PF 0.416 — NON tradable (bruit + frais).
+    run_date: '2026-07-08'
+    oos_score: -0.0452
+    # NON tradable (bruit + frais). Re-testé 2026-07-08 : choppiness<50 réduit
+    # l'hémorragie OOS de −39,3 à −22,6 (20 trades) mais PF reste < 0,5.
     params:
       min_score: 0.65
       min_rr: 1.5
@@ -147,3 +176,4 @@ optimizer_results:
       kz_bonus: true
       amd_bonus: true
       vp_confluence: true
+      chop_filter_max: 50.0

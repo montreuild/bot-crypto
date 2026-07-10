@@ -63,7 +63,10 @@ import polars as pl
 
 from app.engine.engine import BaseStrategy
 from app.core import smc
-from app.core.indicators_core import ema as _ema_series, volume_ratio as _vol_ratio
+from app.core import ict
+from app.core.indicators_core import (ema as _ema_series, volume_ratio as _vol_ratio,
+                                       choppiness as _choppiness, pin_bar as _pin_bar,
+                                       engulfing as _engulfing)
 from app.live.utils import _HTF_MAP
 
 logger = logging.getLogger(__name__)
@@ -112,6 +115,16 @@ class Strategy(BaseStrategy):
         "amd_bonus":      [True, False],
         "vp_confluence":  [True, False],
         "use_rejection_blocks": [True, False],
+        "time_stop_bars": [0, 12, 16, 24],
+        "use_trailing":   [True, False],
+        "trail_mult":     [2.0, 2.5, 3.5],
+        "size_by_confluence": [True, False],
+        "size_conf_slope": [2.0, 3.0, 4.0],
+        "ext_structure_filter": [True, False],
+        "tp_measured_move": [True, False],
+        "inv_fvg_bonus":  [True, False],
+        "chop_filter_max": [0.0, 61.8],
+        "candle_bonus":   [True, False],
     }
 
     fixed_params: Dict[str, Any] = {
@@ -162,6 +175,58 @@ class Strategy(BaseStrategy):
         "ob_max_age":       250,    # âge max (barres) d'un OB jouable
         "pool_max_age":     500,    # âge max d'une poche utilisable comme cible
         "choch_guard_bars": 5,      # pas d'entrée contre un CHoCH < N barres
+        # Time-stop : sortie au bout de N barres si ni TP ni SL touché (0 = off).
+        # Coupe les positions qui STAGNENT dans la chop (le prix spike puis
+        # revient) au lieu de tenir jusqu'à une cible lointaine qui ne se remplit
+        # pas. Levier de RÉGIME : aide nettement les périodes choppy récentes
+        # (BTC 4h 2024-26 : −19 → +13) au prix de l'upside des tendances fortes
+        # (où l'on veut laisser courir). Arbitrage tranché par l'optimiseur/TF.
+        "time_stop_bars":   0,
+        # Trailing stop (via le TrailingStopManager du Backtester) au lieu du
+        # TP fixe : laisse COURIR les gagnants (outil de tendance, complément du
+        # time-stop). Combiné au time-stop CONDITIONNEL (coupe uniquement les
+        # trades qui n'ont jamais atteint +``ts_profit_r``×R = stagnants), on
+        # ride les tendances ET on coupe la chop. Validé 4h (cf. optimizer_results).
+        "use_trailing":     False,
+        "trail_mult":       2.5,    # multiplicateur ATR du trailing (trail_wide)
+        "ts_profit_r":      1.0,    # seuil de « progression » (×R) sous lequel le
+                                    # time-stop coupe quand use_trailing est actif
+        # Sizing pondéré par confluence (via le hook natif ``size_factor`` du
+        # Backtester/live — « demi-Kelly ×confidence »). On alloue PLUS aux
+        # setups à forte confluence : size_factor = 1 + slope×(score − center),
+        # borné [0.4, 1.7]. Centré sur le score moyen ⇒ exposition globale ≈
+        # inchangée (RÉALLOCATION du risque, pas du levier) — le DD reste plat.
+        # Le score du moteur est prédictif : gain net sur les 2 périodes (4h OOS
+        # +81 → +108, score composite 0.291 → 0.332). Validé 4h (optimizer_results).
+        "size_by_confluence": False,
+        "size_conf_slope":  3.0,    # pente de la pondération par le score
+        "size_conf_center": 0.83,   # score « neutre » (≈ moyenne 4h) → facteur 1.0
+        # ── Pistes SMC optionnelles (OFF par défaut — mesurées perdantes sur
+        # BTC 4h, exposées à l'optimiseur pour d'autres TF/symboles/régimes) ──
+        # 1d — filtre de structure EXTERNE : n'autorise un sens que s'il est
+        # aligné avec la tendance de degré SUPÉRIEUR (pivots ext_swing_len,
+        # 2e analyse causale). Se compose avec le gate HTF.
+        "ext_structure_filter": False,
+        "ext_swing_len":    8,
+        # 4b — TP par symétrie de jambe (measured move) : ajoute, comme cible
+        # candidate, la projection de l'amplitude de la dernière jambe de
+        # structure depuis l'entrée (en concurrence avec les cibles liquidité).
+        "tp_measured_move": False,
+        # 4c — inversion de rôle des FVG : bonus de confluence (+0.05) si un FVG
+        # de sens OPPOSÉ, déjà mitigé, chevauche la zone d'entrée (support/
+        # résistance inversé).
+        "inv_fvg_bonus":    False,
+        # ── Croisements indicateurs × SMC (campagne 2026-07-08) ──────────────
+        # Filtre Choppiness : ne PAS générer de signal si l'indice de choppiness
+        # (congestion) dépasse ce seuil (0 = off). Ne trader qu'en tendance.
+        # MESURÉ GAGNANT sur BTC 4h → activé (61.8) dans optimizer_results.
+        "chop_filter_max":  0.0,
+        "chop_len":         14,
+        # Bonus confirmation bougie : +0.05 au score si pin bar / engulfing dans
+        # le sens du setup à la barre de déclenchement (qualité par trade très
+        # élevée mais rare). OFF par défaut — via le sizing, monte les setups
+        # confirmés. Levier d'optimiseur.
+        "candle_bonus":     False,
     }
 
     def __init__(self):
@@ -235,6 +300,28 @@ class Strategy(BaseStrategy):
             aux["comp"] = rng <= float(p["amd_range_atr"]) * res["_atr_arr"]
         else:
             aux["comp"] = None
+        # 1d — structure de degré supérieur (ext_structure_filter, off par
+        # défaut) : 2e analyse causale à pivots plus larges → tendance externe
+        # par barre, consommée comme gate additionnel. None si désactivé.
+        if bool(p.get("ext_structure_filter", False)):
+            ext_sp = dict(self._smc_params(p))
+            L = int(p.get("ext_swing_len", 8))
+            ext_sp["swing_left"] = ext_sp["swing_right"] = L
+            aux["ext_trend"] = smc.analyze(win, ext_sp)["_trend_arr"]
+        else:
+            aux["ext_trend"] = None
+        # Filtre Choppiness (congestion) : série par barre si actif, sinon None.
+        if float(p.get("chop_filter_max", 0.0)) > 0:
+            aux["chop"] = _choppiness(win, int(p.get("chop_len", 14))) \
+                .fill_null(50.0).to_numpy().astype(float)
+        else:
+            aux["chop"] = None
+        # Confirmation bougie (pin bar / engulfing) : arrays {−1,0,+1} si actif.
+        if bool(p.get("candle_bonus", False)):
+            aux["pin"] = _pin_bar(win).to_numpy().astype(np.int8)
+            aux["eng"] = _engulfing(win).to_numpy().astype(np.int8)
+        else:
+            aux["pin"] = aux["eng"] = None
         return aux
 
     @staticmethod
@@ -380,6 +467,13 @@ class Strategy(BaseStrategy):
         htf_mode = str(p.get("htf_filter", "off"))
         htf_t = int(aux["htf"][i]) if aux["htf"] is not None else 0
         long_htf_ok, short_htf_ok = self._htf_ok(htf_mode, htf_t)
+        # 1d — structure externe (off par défaut) : composé avec le gate HTF,
+        # cohérent avec _signal_at. Neutre si ext_trend None.
+        ext = aux.get("ext_trend")
+        if ext is not None:
+            et = int(ext[i])
+            long_htf_ok = long_htf_ok and et >= 0
+            short_htf_ok = short_htf_ok and et <= 0
         buf = float(p["sl_buffer_atr"]) * atr
         max_ob_age = int(p["ob_max_age"])
         plans: List[dict] = []
@@ -492,10 +586,29 @@ class Strategy(BaseStrategy):
                                   abs(x["distance_pct"])))
         return plans[:max_plans]
 
-    # ── Sortie anticipée : CHoCH contre la position ──────────────────────────
+    # ── Sortie anticipée : time-stop conditionnel (trailing) + CHoCH ─────────
     def check_early_exit(self, df: pl.DataFrame, position: dict,
                          params: dict = None) -> Optional[str]:
-        if not bool(self._p(params).get("choch_exit", True)):
+        p = self._p(params)
+        # Time-stop CONDITIONNEL (mode trailing) : coupe un trade qui STAGNE —
+        # jamais atteint +ts_profit_r×R après time_stop_bars barres. Un gagnant
+        # qui court (MFE au-delà du seuil) n'est PAS coupé : le trailing gère.
+        ts_bars = int(p.get("time_stop_bars", 0) or 0)
+        if bool(p.get("use_trailing", False)) and ts_bars > 0:
+            bars_held = (df.height - 1) - int(position.get("bar", df.height))
+            if bars_held >= ts_bars:
+                ind = position.get("indicators") or {}
+                risk_pct = float(ind.get("_risk_pct") or 0.0)
+                if risk_pct <= 0:
+                    st = position.get("_stop_trail") or []
+                    e = float(position.get("entry") or 0.0)
+                    if st and e > 0:
+                        risk_pct = abs(e - float(st[0]["stop"])) / e * 100.0
+                mfe = float(position.get("mfe", 0.0))
+                if risk_pct > 0 and mfe < float(p.get("ts_profit_r", 1.0)) * risk_pct:
+                    return "time_stop_stall"
+
+        if not bool(p.get("choch_exit", True)):
             return None
         idx = df.height - 1
         direction = None
@@ -506,7 +619,6 @@ class Strategy(BaseStrategy):
         else:
             # Live : réutilise l'analyse mémoïsée (même fenêtre/cache que
             # score()) au lieu de relancer un analyze dédié par position/cycle.
-            p = self._p(params)
             win = df[-int(p["max_window"]):] if len(df) > int(p["max_window"]) else df
             res, _ = self._analyze_cached(win, p)
             last = len(win) - 1
@@ -538,6 +650,12 @@ class Strategy(BaseStrategy):
         atr = float(res["_atr_arr"][i])
         if atr <= 0 or i < 1:
             return None
+        # Filtre Choppiness (off par défaut) : pas de signal en congestion
+        # (indice ≥ seuil) — ne trader qu'en tendance. Mesuré gagnant BTC 4h.
+        chop = aux.get("chop")
+        chop_max = float(p.get("chop_filter_max", 0.0))
+        if chop is not None and chop_max > 0 and float(chop[i]) >= chop_max:
+            return None
         trend = int(trend_arr[i])
         c = float(close[i])
         candidates: List[dict] = []
@@ -553,6 +671,13 @@ class Strategy(BaseStrategy):
         htf_mode = str(p.get("htf_filter", "off"))
         htf_t = int(aux["htf"][i]) if aux["htf"] is not None else 0
         long_htf_ok, short_htf_ok = self._htf_ok(htf_mode, htf_t)
+        # 1d — filtre de structure externe (off par défaut) : se COMPOSE avec le
+        # gate HTF (les deux doivent autoriser le sens). Neutre si ext_trend None.
+        ext = aux.get("ext_trend")
+        if ext is not None:
+            et = int(ext[i])
+            long_htf_ok = long_htf_ok and et >= 0
+            short_htf_ok = short_htf_ok and et <= 0
         # AMD : la barre courante sweepe après une phase de compression
         # (accumulation) → manipulation probable, expansion à suivre.
         amd_here = bool(aux["comp"][i]) if aux["comp"] is not None else False
@@ -570,6 +695,24 @@ class Strategy(BaseStrategy):
             pad = 0.25 * atr
             return 0.05 if any(zone_lo - pad <= lv <= zone_hi + pad
                                for lv in vp["hvns"]) else 0.0
+
+        # 4c — inversion de rôle des FVG (off par défaut) : bonus si un FVG de
+        # sens OPPOSÉ, déjà mitigé, chevauche la zone d'entrée.
+        def _inv_fvg_add(zone_lo: float, zone_hi: float, side: str) -> float:
+            if not bool(p.get("inv_fvg_bonus", False)):
+                return 0.0
+            return 0.05 if ict.inverted_fvg_overlap(res["_all_fvgs"], i, side,
+                                                    zone_lo, zone_hi) else 0.0
+
+        # Confirmation bougie (off par défaut) : +0.05 si pin bar / engulfing
+        # dans le sens du setup à la barre i (qualité par trade élevée).
+        pin_a, eng_a = aux.get("pin"), aux.get("eng")
+
+        def _candle_add(side: str) -> float:
+            if pin_a is None:
+                return 0.0
+            sgn = 1 if side == "long" else -1
+            return 0.05 if (int(pin_a[i]) == sgn or int(eng_a[i]) == sgn) else 0.0
 
         vp_above = sorted([lv for lv in ([vp["poc"]] + vp["hvns"])
                            if lv > c]) if (vp and p.get("vp_targets")) else []
@@ -634,6 +777,9 @@ class Strategy(BaseStrategy):
                 sc += 0.05 if tl_tap_long else 0.0
                 sc += _vp_add(float(ev["level"]) - 0.5 * atr,
                               float(ev["level"]) + 0.5 * atr)
+                sc += _inv_fvg_add(float(ev["level"]) - 0.5 * atr,
+                                   float(ev["level"]) + 0.5 * atr, "long")
+                sc += _candle_add("long")
                 sl = min(float(low[i]), float(ev["level"])) - \
                     float(p["sl_buffer_atr"]) * atr
                 cand = self._build_trade(res, i, "long", c, sl, atr, p,
@@ -657,6 +803,9 @@ class Strategy(BaseStrategy):
                 sc += 0.05 if tl_tap_short else 0.0
                 sc += _vp_add(float(ev["level"]) - 0.5 * atr,
                               float(ev["level"]) + 0.5 * atr)
+                sc += _inv_fvg_add(float(ev["level"]) - 0.5 * atr,
+                                   float(ev["level"]) + 0.5 * atr, "short")
+                sc += _candle_add("short")
                 sl = max(float(high[i]), float(ev["level"])) + \
                     float(p["sl_buffer_atr"]) * atr
                 cand = self._build_trade(res, i, "short", c, sl, atr, p,
@@ -690,12 +839,14 @@ class Strategy(BaseStrategy):
                     sc = 0.50 + 0.10 + kz_add   # structure alignée par construction
                     sc += 0.10 if strength2 else 0.0
                     sc += 0.10 if zone == "premium" else 0.0
-                    sc += 0.05 if self._fvg_overlap(res, i, "bullish",
-                                                    ob["bottom"], ob["top"]) else 0.0
+                    sc += 0.05 if ict.fvg_overlap(res["_all_fvgs"], i, "bullish",
+                                                  ob["bottom"], ob["top"]) else 0.0
                     sc += 0.05 if vol_ok else 0.0
                     sc += 0.05 if close[i] > open_[i] else 0.0
                     sc += 0.05 if tl_tap_long else 0.0
                     sc += _vp_add(ob["bottom"], ob["top"])
+                    sc += _inv_fvg_add(ob["bottom"], ob["top"], "long")
+                    sc += _candle_add("long")
                     sl = float(ob["bottom"]) - float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "long", c, sl, atr, p,
                                              setup=setup_name, score=sc,
@@ -713,12 +864,14 @@ class Strategy(BaseStrategy):
                     sc = 0.50 + 0.10 + kz_add
                     sc += 0.10 if strength2 else 0.0
                     sc += 0.10 if zone == "discount" else 0.0
-                    sc += 0.05 if self._fvg_overlap(res, i, "bearish",
-                                                    ob["bottom"], ob["top"]) else 0.0
+                    sc += 0.05 if ict.fvg_overlap(res["_all_fvgs"], i, "bearish",
+                                                  ob["bottom"], ob["top"]) else 0.0
                     sc += 0.05 if vol_ok else 0.0
                     sc += 0.05 if close[i] < open_[i] else 0.0
                     sc += 0.05 if tl_tap_short else 0.0
                     sc += _vp_add(ob["bottom"], ob["top"])
+                    sc += _inv_fvg_add(ob["bottom"], ob["top"], "short")
+                    sc += _candle_add("short")
                     sl = float(ob["top"]) + float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "short", c, sl, atr, p,
                                              setup=setup_name, score=sc,
@@ -750,6 +903,8 @@ class Strategy(BaseStrategy):
                     sc += 0.05 if close[i] > open_[i] else 0.0
                     sc += 0.05 if tl_tap_long else 0.0
                     sc += _vp_add(brk["bottom"], brk["top"])
+                    sc += _inv_fvg_add(brk["bottom"], brk["top"], "long")
+                    sc += _candle_add("long")
                     sl = float(brk["bottom"]) - float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "long", c, sl, atr, p,
                                              setup="BREAKER_RETEST", score=sc,
@@ -770,6 +925,8 @@ class Strategy(BaseStrategy):
                     sc += 0.05 if close[i] < open_[i] else 0.0
                     sc += 0.05 if tl_tap_short else 0.0
                     sc += _vp_add(brk["bottom"], brk["top"])
+                    sc += _inv_fvg_add(brk["bottom"], brk["top"], "short")
+                    sc += _candle_add("short")
                     sl = float(brk["top"]) + float(p["sl_buffer_atr"]) * atr
                     cand = self._build_trade(res, i, "short", c, sl, atr, p,
                                              setup="BREAKER_RETEST", score=sc,
@@ -808,6 +965,10 @@ class Strategy(BaseStrategy):
         # comblés (zones fines = aimants). Première cible satisfaisant à la
         # fois le gain minimal (0.4 % par défaut) ET le RR minimal.
         use_voids = bool(p.get("use_void_targets", True))
+        # 4b — cible optionnelle par symétrie de jambe (off par défaut) : entre
+        # en concurrence avec les cibles liquidité/void/volume.
+        mm = (ict.measured_move_target(res["_all_swings"], i, side, entry)
+              if bool(p.get("tp_measured_move", False)) else None)
         tp = None
         tp_src = ""
         if side == "long":
@@ -817,7 +978,8 @@ class Strategy(BaseStrategy):
             vps = [lv for lv in (extra_targets or []) if lv > entry]
             targets = sorted({(lv, "liquidité") for lv in liq} |
                              {(lv, "void") for lv in vds} |
-                             {(lv, "volume") for lv in vps})
+                             {(lv, "volume") for lv in vps} |
+                             ({(mm, "measured")} if mm else set()))
             for level, src in targets:
                 cand = level - front
                 gain_pct = (cand - entry) / entry * 100.0
@@ -833,7 +995,8 @@ class Strategy(BaseStrategy):
             vps = [lv for lv in (extra_targets or []) if lv < entry]
             targets = sorted({(lv, "liquidité") for lv in liq} |
                              {(lv, "void") for lv in vds} |
-                             {(lv, "volume") for lv in vps}, reverse=True)
+                             {(lv, "volume") for lv in vps} |
+                             ({(mm, "measured")} if mm else set()), reverse=True)
             for level, src in targets:
                 cand = level + front
                 gain_pct = (entry - cand) / entry * 100.0
@@ -858,20 +1021,57 @@ class Strategy(BaseStrategy):
 
         bias_label = {1: "haussier", -1: "baissier", 0: "neutre"}[int(trend)]
         arrow = "LONG" if side == "long" else "SHORT"
+        ts_bars = int(p.get("time_stop_bars", 0) or 0)
+        use_trailing = bool(p.get("use_trailing", False))
+        risk_pct = risk / entry * 100.0
+
+        if use_trailing:
+            # Mode trailing : on laisse courir (pas de TP fixe → take_profit None),
+            # le TrailingStopManager du Backtester gère la sortie. Le time-stop
+            # devient CONDITIONNEL (via check_early_exit) : il ne coupe que les
+            # trades stagnants (MFE < ts_profit_r×R), jamais un gagnant qui court.
+            tp_out = None
+            exit_after = None
+            trail_override = {"trail_wide": float(p.get("trail_mult", 2.5)),
+                              "mode": "dynamic"}
+            disable_trailing = False
+            exit_txt = f"trailing {p.get('trail_mult', 2.5):g}×ATR"
+        else:
+            tp_out = round(tp, 8)
+            exit_after = ts_bars if ts_bars > 0 else None
+            trail_override = None
+            disable_trailing = True
+            exit_txt = f"TP {tp_src}"
+
+        # Sizing pondéré par confluence : on alloue plus aux setups à forte
+        # confluence via le hook natif size_factor (borné [0.4, 1.7] ; le
+        # Backtester/live re-bornent à [0, 2]). Centré sur size_conf_center ⇒
+        # exposition globale ≈ inchangée. Absent (=1.0) si désactivé.
+        size_factor = 1.0
+        if bool(p.get("size_by_confluence", False)):
+            slope = float(p.get("size_conf_slope", 3.0))
+            center = float(p.get("size_conf_center", 0.83))
+            size_factor = max(0.4, min(1.7, 1.0 + slope * (score - center)))
+
         return {
             "score": score, "side": side, "name": self.name, "atr": atr,
             "setup": setup,
             "stop_hint": round(sl, 8),
-            "tp_hint":   round(tp, 8),
-            "disable_trailing": True,
+            "tp_hint":   tp_out,
+            "exit_after_bars": exit_after,
+            "disable_trailing": disable_trailing,
+            "trail_override": trail_override,
+            "size_factor": size_factor,
             "indicators": {
                 "bias":     bias_label,
                 "pd_zone":  zone or None,
                 "gain_pct": round(gain_pct, 3),
                 "rr":       round(rr_final, 2),
                 "tp_source": tp_src,
+                "tp_target": round(tp, 8),      # cible affichée (info) même en trailing
+                "_risk_pct": round(risk_pct, 6),  # pour le time-stop conditionnel
             },
-            "reason": (f"{arrow} {setup} : {detail} — TP {tp_src} "
+            "reason": (f"{arrow} {setup} : {detail} — {exit_txt} "
                        f"(gain {gain_pct:.2f}% > {min_gain:g}%, RR {rr_final:.2f}), "
                        f"bias {bias_label}"),
         }
@@ -916,19 +1116,6 @@ class Strategy(BaseStrategy):
             cached = (cd, cu)
             res["_choch_idx"] = cached
         return cached
-
-    @staticmethod
-    def _fvg_overlap(res: dict, i: int, kind: str,
-                     zone_lo: float, zone_hi: float) -> bool:
-        """True si un FVG ouvert de même direction chevauche la zone [lo, hi]."""
-        for fv in res["_all_fvgs"]:
-            if fv["kind"] != kind or fv["index"] >= i:
-                continue
-            if fv["filled_at"] is not None and fv["filled_at"] <= i:
-                continue
-            if fv["bottom"] <= zone_hi and fv["top"] >= zone_lo:
-                return True
-        return False
 
     @staticmethod
     def _vol_ratio_arr(df: pl.DataFrame) -> np.ndarray:

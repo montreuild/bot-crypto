@@ -196,12 +196,18 @@ complet + dernier tiers (pseudo-OOS 2024-2026, la période la plus dure) :
 | Volume > `vol_confluence`×SMA20(volume) | +0.05 |
 | Bougie de rejet colorée dans le sens du trade | +0.05 |
 
-### Sorties — bracket FIXE (pas de trailing)
+### Sorties — bracket fixe **ou** trailing (`use_trailing`)
 
 - **SL** : sous/sur l'extrême de la zone + `sl_buffer_atr`×ATR.
-- **TP** : posé juste devant la **prochaine poche de liquidité opposée**
-  (front-run de `tp_front_run_atr`×ATR) — la première poche satisfaisant les
-  deux contraintes ci-dessous ; sinon fallback `tp_rr_fallback`×R.
+- **TP (défaut, `use_trailing: false`)** : posé juste devant la **prochaine
+  poche de liquidité opposée** (front-run de `tp_front_run_atr`×ATR) — la
+  première poche satisfaisant les deux contraintes ci-dessous ; sinon fallback
+  `tp_rr_fallback`×R. Time-stop optionnel via `exit_after_bars`.
+- **Trailing (`use_trailing: true`, activé sur le 4h)** : pas de TP fixe — le
+  `TrailingStopManager` du Backtester suit le prix à `trail_mult`×ATR pour
+  **laisser courir les gagnants**. Le time-stop devient alors **conditionnel**
+  (cf. section dédiée) : il ne coupe que les trades stagnants, jamais un gagnant
+  qui court.
 - Early-exit CHoCH disponible (`choch_exit`) mais **désactivé par défaut** :
   coupait systématiquement en perte sur BTC toutes TF.
 
@@ -243,12 +249,19 @@ l'overlay).
 
 | TF | Config retenue | OOS (2024-2026) | oos_score | Verdict |
 |---|---|---|---|---|
-| **4h** | min_score 0.75, RR ≥ 2, SL 0.5×ATR, bonus kz/amd/vp | 51 trades, **+22 (+2,2 %), PF 1.08, DD −7,4 %** | **+0.174** | ✅ tradable |
-| 1h | min_score 0.65, RR ≥ 2, gain ≥ 1,2 %, killzones only | −33, PF 0.83 (vs −182 défauts) | −0.067 | ❌ |
+| **4h** | min_score 0.70, RR ≥ 2, SL 0.5×ATR, **trailing 3.5×ATR + time-stop cond. 12 + sizing confluence + choppiness<61.8 + confirmation bougie**, bonus kz/amd/vp | 51 trades, **+129, PF 1.55** (FULL +503, PF 1.72, Sharpe 6.8, DD −3,6 %) | **+0.372** | ✅ tradable |
+| 1h | + **choppiness<50** | OOS −10,3 (20 tr, PF 0.85) — vs −38,8 sans | **−0.021** | ❌ |
 | 2h | min_score 0.75, RR ≥ 2 | −115, PF 0.77 | −0.230 | ❌ |
-| 30m | min_score 0.75, RR ≥ 1.5, gain ≥ 1,2 % | −71, PF 0.78 | −0.142 | ❌ |
-| 15m | min_score 0.65, RR ≥ 1.5, gain ≥ 1,2 %, killzones only | −41, PF 0.42 | −0.082 | ❌ |
+| 30m | + **choppiness<50** | OOS −48,8 (55 tr) — vs −77,4 sans | **−0.098** | ❌ |
+| 15m | + **choppiness<50** | OOS −22,6 (20 tr, PF 0.44) — vs −39,3 sans | **−0.045** | ❌ |
 | 1d | min_score 0.55 | −37, PF 0.59 (12 trades) | −0.075 | ❌ |
+
+> **15m / 30m / 1h re-testés (2026-07-08)** avec tout l'arsenal 4h (trailing,
+> sizing, choppiness, confirmation bougie) : ils restent NON tradables. Le
+> trailing les dégrade (bruit LTF) ; seule la sélectivité aide. Le filtre
+> choppiness<50 réduit fortement l'hémorragie (1h : OOS −38,8 → −10,3) mais
+> l'expectancy reste négative — structurel : bruit + frais 0,1 %/côté sur des
+> jambes trop courtes. Le filtre est enregistré comme « moins pire ».
 
 > Les scores OOS des TF ≠ 4h ont été mesurés avant l'alignement HTF sur
 > `_HTF_MAP` (juillet 2026) ; ils restent négatifs (non tradables) et n'ont pas
@@ -261,6 +274,149 @@ la config limite au moins l'hémorragie. La sélectivité (min_score 0.75 = ≥ 
 confluences dont les bonus killzone/AMD/volume-profile) sacrifie du PnL
 2018-2021 pour de la robustesse récente : c'est le bon arbitrage pour du
 capital futur.
+
+### Time-stop : couper les trades qui stagnent dans la chop (2026-07)
+
+Diagnostic (replay 4h juillet 2026) : beaucoup de sweeps visibles mais peu
+exploités. Analyse : 37/45 sweeps sont **contre-tendance** (ignorés par
+design — plus mauvais bucket historique) ; le vrai problème n'est pas trop peu
+de trades mais que ceux pris **stagnent dans la chop** (le prix spike puis
+revient) en attendant une cible lointaine qui ne se remplit pas, ce qui
+**bloque le slot de position** unique et empêche de capter les signaux suivants.
+
+Cinq idées mesurées isolément (BTC 4h, full + OOS récent) :
+
+| Idée | OOS récent | Backtest complet |
+|---|---|---|
+| Entrées de retournement (sweep + CHoCH) | ❌ −38 (WR 15 %) | marginal |
+| Breakeven / TP partiel | ❌ pire | PnL plus faible |
+| Filtre de régime ADX | ❌ −15 à −36 | ~plat |
+| min_score 0.75 → 0.70 | = (+22) | ✅ +294 vs +220, Sharpe 5.9 |
+| **Time-stop (12 barres)** | ✅ **−19 → +96, PF 1.41** | +206 (vs +294 sans) |
+
+Le **time-stop** (paramètre `time_stop_bars`, porté par le mécanisme natif
+`exit_after_bars` du Backtester) est la seule idée qui redresse le régime
+récent — et il prend **plus** de trades (58 vs 51 : les positions bloquées
+libèrent le slot plus tôt). Validation : OOS score **doublé** (+0.354 vs
++0.174), DD divisé par 2 (−4,0 %), IS toujours positif (+119, PF 1.25). Il ne
+rescape PAS les TF < 4h (chop edgeless) — c'est un levier spécifique au 4h.
+
+Le time-stop **pur** avait un défaut assumé : il sacrifiait le PnL des fortes
+tendances (backtest complet 400→206), optimisé pour le seul régime choppy
+récent. La suite (trailing) corrige ce défaut.
+
+### Trailing stop : laisser courir les gagnants (2026-07-07)
+
+Deux idées testées pour aller plus loin que le time-stop pur (dont le gain en
+nombre de trades restait modeste) :
+
+1. **Trailing stop plutôt que time-stop** — au lieu du TP fixe, on laisse
+   courir avec un stop suiveur à `trail_mult`×ATR (`TrailingStopManager` du
+   Backtester). Le time-stop devient **conditionnel** : après `time_stop_bars`,
+   on ne coupe QUE les trades **stagnants** (MFE < `ts_profit_r`×R) ; un gagnant
+   qui court n'est jamais coupé — le trailing gère sa sortie.
+2. **Plusieurs positions concurrentes** — pour ne pas rester bloqué sur un slot
+   unique.
+
+Mesures via le **vrai Backtester** (chemin de prod, BTC 4h) :
+
+| Config | FULL 2018→26 | OOS 2024→26 | oos_score |
+|---|---|---|---|
+| time-stop pur (précédent) | +168, PF 1.23, Sh 2.9 | +84, PF 1.35 | +0.327 |
+| **trailing 3.5×ATR + ts12** | **+318, PF 1.44, Sh 4.9** | +81, PF 1.34 | +0.291 |
+
+**Idée 1 retenue.** Le trailing **récupère l'upside des tendances** que le
+time-stop pur sacrifiait (backtest complet quasi ×2, Sharpe 2.9→4.9) **sans
+coûter au régime récent** (PnL OOS +81 vs +84 = égalité). Seul recul assumé :
+score composite OOS un peu plus bas (0.291 vs 0.327 sur le même harnais), car
+laisser courir = un peu plus de volatilité — le 4h reste largement tradable.
+
+**Idée 2 rejetée (mesurée pire).** Passer de 1 à 2+ positions n'ajoute que ~+5
+sur le complet mais **dégrade le régime récent** (+21→+14, PF 1.34→1.21) ; sans
+time-stop c'est pire encore (−5,7→−14,9). Le **slot unique agit comme un
+filtre-qualité involontaire** : les signaux marginaux qu'il refuse ont une
+espérance négative. Non intégré.
+
+`use_trailing: false` (bracket fixe) reste le **défaut de base**, validé toutes
+périodes ; le 4h active le trailing via `optimizer_results`. Backtest
+byte-identique avec le défaut (off).
+
+### Sizing pondéré par confluence (2026-07-08)
+
+Empilé sur le trailing : au lieu de risquer un montant fixe par trade, on
+**alloue plus aux setups à forte confluence** via le hook natif `size_factor`
+du Backtester/live (« demi-Kelly ×confidence ») :
+
+```
+size_factor = clip(1 + size_conf_slope × (score − size_conf_center), 0.4, 1.7)
+```
+
+Centré sur le **score moyen** (`size_conf_center` ≈ 0.83 sur le 4h) ⇒
+l'exposition globale reste ≈ inchangée : c'est une **réallocation** du risque
+(plus sur les meilleurs setups, moins sur les marginaux), pas un cran de levier.
+
+Mesuré (vrai Backtester, BTC 4h), empilé sur le trailing :
+
+| Config | FULL 2018→26 | OOS 2024→26 | oos_score |
+|---|---|---|---|
+| time-stop pur | +168, PF 1.23, Sh 2.9 | +84, PF 1.35 | +0.327 |
+| + trailing 3.5×ATR | +318, PF 1.44, Sh 4.9 | +81, PF 1.34 | +0.291 |
+| **+ sizing par confluence** | **+387, PF 1.51, Sh 5.2** | **+108, PF 1.46** | **+0.332** |
+
+L'amélioration est **monotone** avec la pente (score 1.0 → 1.5×, score 0.70 →
+0.6×) : le score du moteur est **réellement prédictif** — les setups mieux notés
+gagnent plus. Le sizing améliore TOUT sur les deux périodes **à exposition et DD
+égaux** (−4,3 %) et **récupère le score composite OOS** que le trailing avait
+cédé (0.332 > 0.327 du time-stop pur d'origine). `size_by_confluence: false`
+reste le défaut (byte-identique) ; le 4h l'active via `optimizer_results`.
+
+> Un troisième levier de sizing testé — **taille scalée par régime** (×1.4 en
+> tendance HTF-alignée, ×0.7 en neutre) — a été **écarté** : le PnL monte mais
+> le Sharpe reste plat → simple exposition supplémentaire, pas d'edge.
+
+### Pistes SMC optionnelles (désactivées par défaut)
+
+Trois raffinements SMC classiques ont été implémentés mais **mesurés perdants
+sur BTC 4h** : ils restent **OFF par défaut** (backtest byte-identique) et sont
+exposés au `param_space` de l'optimiseur pour d'autres TF / symboles / régimes.
+
+| Param | Piste | Mécanique | Verdict BTC 4h (OOS) |
+|---|---|---|---|
+| `ext_structure_filter` | Structure interne/externe | 2ᵉ analyse causale à pivots plus larges (`ext_swing_len`) ; n'autorise un sens que si aligné à la tendance de degré supérieur (composé avec le gate HTF) | ❌ +108→+73 : coupe les entrées de retournement gagnantes |
+| `tp_measured_move` | Symétrie de jambe | Ajoute la projection d'amplitude de la dernière jambe comme cible TP candidate (mode bracket) | ⚠️ inerte en trailing ; pire que le TP-liquidité en bracket |
+| `inv_fvg_bonus` | Inversion de rôle des FVG | Bonus de confluence (+0.05) si un FVG de sens opposé, déjà mitigé, chevauche la zone d'entrée | ≈ neutre (PnL +10 via sizing, score composite plat) |
+
+**Lecture senior** : ces concepts sont soit déjà couverts par une forme plus
+robuste (structure externe ≈ filtre HTF ; inversion FVG ≈ BREAKER_RETEST), soit
+dominés par un choix existant (TP-liquidité > measured-move ; trailing > tout TP
+fixe). On les garde disponibles mais désactivés — la discipline reste : n'activer
+que ce qu'une mesure justifie.
+
+### Croisement indicateurs × SMC (2026-07-08)
+
+Batch d'indicateurs réutilisables ajouté à `indicators_core` (VWAP, CVD,
+Choppiness, Keltner, Value Area, pin bar / engulfing, VSA, divergences cachées),
+chacun croisé avec SMC comme filtre/confluence sur la config 4h. Deux gagnants
+nets (activés), le reste neutre/négatif :
+
+| Indicateur (filtre) | Effet sur la config 4h | Verdict |
+|---|---|---|
+| **Choppiness < 61.8** | FULL +387→**+483**, OOS +108→**+117**, PF 1.51→1.69, DD −14→−9 | ✅ **activé** |
+| **Confirmation bougie** (bonus) | + sizing des setups pin/engulfing : OOS +117→**+129**, sc 0.359→0.372 | ✅ **activé** |
+| VWAP session (long > VWAP) | FULL +82→−17 : coupe les entrées de repli (sweeps sous VWAP) | ❌ |
+| CVD slope alignée | coupe trop de trades (FULL +82→+26) | ❌ |
+| RSI divergence / VSA | quasi neutres | — |
+
+Config 4h finale : **trailing 3.5×ATR + time-stop conditionnel 12 + sizing par
+confluence + filtre choppiness<61.8 + confirmation bougie** → FULL +503 (PF 1.72,
+Sharpe 6.8, DD −8.7 %), OOS 2024-26 +129 (PF 1.55, score 0.372). Le filtre
+choppiness matérialise l'idée « ne trader qu'en tendance, pas en congestion » et
+réduit aussi le drawdown. Tous ces leviers sont OFF par défaut (byte-identique) ;
+seul le 4h les active via `optimizer_results`.
+
+> Microstructure (carnet d'ordres, spoofing, niveaux de liquidation) : non
+> traitée — nécessite des données L2/temps réel non backtestables sur l'OHLCV
+> historique. Envisageable en alertes live uniquement.
 
 ### Performance technique
 

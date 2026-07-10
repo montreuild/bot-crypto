@@ -6,6 +6,304 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🎬 Modèle @Vizion-fr : détecteurs + stratégie `vizion` (stricte)
+
+D'après les transcriptions de deux vidéos ICT de @Vizion-fr (entrée sur Order
+Block validée par le timeframe alignment). Nouveaux détecteurs dans `ict.py` :
+- **propulsion_block** : OB imbriqué dans un OB antérieur de même sens ;
+- **nested_order_block** : imbrication multi-timeframe (OB LTF ⊂ OB HTF) ;
+- **align_series** : alignement causal générique de deux actifs par timestamp
+  (crypto/action/ETF/forex) — préparation d'une SMT divergence sur N'IMPORTE
+  quel couple corrélé.
+
+Helper moteur **`smc.htf_analysis`** (bucketing causal partagé avec
+`htf_trend_series` via `_htf_buckets` — extraction **byte-identique**, vérifiée)
+qui expose l'analyse SMC HTF + le mapping LTF→bucket pour récupérer les OB HTF
+actifs à chaque barre.
+
+Nouvelle stratégie **`vizion`** (`enabled: false`) appliquant STRICTEMENT la
+checklist : OB avec la tendance en discount, ayant pris de la liquidité,
+déclenché sur rebalance de FVG, IMBRIQUÉ dans un OB HTF, confirmé par SMT
+(chemin d'actif corrélé GÉNÉRIQUE, dégradation gracieuse si absent). Chaque case
+est un paramètre activable → mesurable isolément.
+
+**Mesure honnête (BTC 4h, sans SMT)** : la checklist stricte donne **1 seul
+trade** sur 8 ans (0 OOS) — les gates cumulés (sweep+FVG+imbrication HTF)
+filtrent presque tout. Relâchée à « OB en discount avec la tendance », c'est
++66 OOS (48 trades) — mais c'est déjà le cœur du smart_money. Confirme le caveat
+des vidéos (exemples cherry-pické) : le modèle strict n'est pas tradable sur BTC
+faute d'échantillon. À re-mesurer sur d'autres TF/actifs et avec SMT (données
+ETH). 453 tests OK.
+
+### 🧊 app/core/ict.py — détecteurs ICT automatisables (briques réutilisables)
+
+Nouveau module regroupant les concepts ICT (Inner Circle Trader) automatisables
+qui manquaient au moteur SMC, en primitives PURES et CAUSALES — non câblées à une
+stratégie (on mesurera/activera ensuite, discipline du projet) :
+
+- **Consequent Encroachment** (niveau 50 % d'un FVG) ;
+- **Balanced Price Range** (chevauchement FVG haussier + baissier) ;
+- **Unicorn model** (Breaker chevauché par un FVG de même polarité) ;
+- **Projections en écarts-types** d'une jambe (grille de TP −1/−2/−2.5/−4 SD) ;
+- **Silver Bullet windows** (fenêtres horaires ICT, UTC) ;
+- **Judas Swing** (faux mouvement à l'ouverture de session, sweep + reclose) ;
+- **SMT divergence** (deux actifs corrélés alignés divergent sur un extrême —
+  le plus prometteur, exploitable dès qu'on aura ETH/SOL en local).
+
+Toutes causales (signal à ``i`` ⇐ données ≤ ``i``, vérifié). Le reste du canon
+ICT (structure, liquidité, sweeps, OB, FVG, voids, premium/discount, OTE,
+killzones, HTF, AMD) est déjà dans le moteur smart_money.
+
+**Cohérence** : trois détecteurs purs ICT qui vivaient dans la *stratégie*
+smart_money — `fvg_overlap`, `inverted_fvg_overlap` (IFVG), `measured_move_target`
+(symétrie de jambe) — sont **extraits vers `ict.py`** (primitives réutilisables),
+la stratégie les importe. Backtest **byte-identique** (config 4h : 168 signaux,
+empreinte inchangée). Les helpers du MOTEUR (`killzone_flags`, `premium_discount`,
+`liquidity_targets`…), couplés au graphe d'entités et partagés avec la route
+scanner, restent dans `smc.py` (API publique du moteur). 445 tests OK.
+
+### 🛠 scripts/fetch_data.py — récupération OHLCV (crypto ccxt + actions Yahoo)
+
+Complément de `analyze_indicators.py` : récupère les données pour n'importe quel
+symbole. Crypto via ccxt (pagination arrière) → `data/ohlcv/<SYM>/<tf>.parquet` ;
+actions/ETF via l'API chart de Yahoo Finance → `data/stocks/<TICKER>_<iv>.csv`.
+Tickers Euronext documentés (Eutelsat=ETL.PA, Capital B=ALTBG.PA, ETF CAC 40=
+CAC.PA). ⚠ Nécessite un accès réseau : dans l'environnement Claude Code managé
+par défaut, okx/Yahoo sont bloqués par la politique réseau (403) — à lancer en
+local ou après autorisation des hôtes.
+
+    python scripts/fetch_data.py --crypto ETH/USDC SOL/USDC XRP/USDC --tf 4h
+    python scripts/fetch_data.py --stocks ETL.PA ALTBG.PA CAC.PA --interval 1d --range 5y
+
+### 🛠 scripts/analyze_indicators.py — analyse d'indicateurs sur n'importe quel OHLCV
+
+Script CLI réutilisable qui automatise la démarche des campagnes de mesure sur
+un jeu OHLCV quelconque (crypto en .parquet, action/forex en .csv) : screening
+INDIVIDUEL de chaque indicateur comme signal autonome, familles TENDANCE
+(sortie trailing) et RETOUR-À-LA-MOYENNE (sortie TP=moyenne), avec sensibilité
+aux frais (taker vs maker) et split IS/OOS. Sortie : tableau classé + verdict
+(edge OOS significatif / marginal / aucun), export JSON optionnel.
+
+    python scripts/analyze_indicators.py data/ohlcv/BTC_USDC/4h.parquet --tf 4h
+    python scripts/analyze_indicators.py AAPL.csv --tf 1d --taker 0.0005 --maker 0.0
+
+Chargeur générique (alias de colonnes Open/Adj Close/Date…, volume par défaut
+si absent). Validé : sur BTC 4h il isole l'edge TENDANCE (✔ taker+maker) et
+rejette le mean-reversion ; sur une série mean-reverting synthétique c'est
+l'inverse — le mean-reversion ressort. 2 tests smoke.
+
+### ❌ Stratégie LTF mean-reversion : NON construite (mesurée perdante sur BTC)
+
+Demande : bâtir une stratégie LTF mean-reversion « maker ». Après mesure
+rigoureuse (BB/RSI/VWAP, filtres range, reclaim confirmé, 15m/30m/1h, frais
+taker ET maker), **le mean-reversion est négatif sur BTC quel que soit le
+régime de frais** : BTC est un actif de MOMENTUM, il traverse les bandes au lieu
+de réverser. Le positif-sous-maker mesuré précédemment était l'entrée
+STRUCTURELLE (SMC), pas du mean-reversion. Conformément à la discipline (ne pas
+livrer d'edge négatif), aucune stratégie n'a été créée. Le script
+`analyze_indicators.py` permet désormais de trouver un symbole où le
+mean-reversion fonctionne réellement (instruments range-bound).
+
+### 🆕 Nouvelle stratégie `trend_rider` (indicateurs classiques, long-biaisée)
+
+Stratégie construite UNIQUEMENT à partir d'indicateurs existants, par campagne
+de mesure méthodique :
+
+1. **Screening individuel** de ~22 indicateurs comme signal autonome (BTC 4h,
+   sortie identique) : aucun n'a d'edge fort ; seul l'alignement de tendance
+   EMA200 + EMA20/50 est positif sur toutes les périodes.
+2. **Combinaison** : la confluence naïve et les triggers momentum sur-tradent et
+   perdent ; le **long-only** (biais haussier crypto — les shorts saignent) sur
+   un « trend-hold » filtré régime devient positif sur les deux périodes.
+
+Setup : entrée LONG au **front montant** d'un régime de tendance filtré
+[close > EMA200, EMA20 > EMA50, ADX > seuil, DI+ > DI−, choppiness < 55], sortie
+**trailing** (laisse courir), SL initial 1,5×ATR. Confluences (CVD, volume, ADX
+fort, bougie, RSI) disponibles pour le sizing.
+
+Validation BTC 4h (vrai Backtester) : **FULL +370 (PF 1.18, Sharpe 2.4), OOS
+2024-26 +49 (PF 1.11, oos_score +0.183)** — tradable, edge modeste et
+**indépendant** du smart_money structurel. 1d testé : OOS négatif (non tradable).
+
+Fichiers : `app/strategies/trend_rider.py` + `strategies/trend_rider.yaml`.
+**`enabled: false`** — complément expérimental à valider en forward avant toute
+promotion live. 7 tests unitaires (contrat, front de régime, long-only,
+causalité live↔backtest). 435 tests OK.
+
+### 🔬 smart_money : re-test 15m/30m/1h avec l'arsenal complet — restent non tradables
+
+Question : les LTF peuvent-ils devenir tradables avec les nouveaux leviers
+(trailing, sizing, choppiness, confirmation bougie) ? Batterie complète relancée
+par TF sur le vrai Backtester. **Réponse : non.** Le combo 4h ne transfère pas —
+le trailing DÉGRADE les LTF (bruit). Seule la sélectivité extrême aide, sans
+jamais rendre l'OOS positif :
+
+| TF | baseline OOS sc | meilleur (choppiness<50) | tradable |
+|---|---|---|---|
+| 1h | −0.078 | **−0.021** (OOS −10,3 vs −38,8) | ❌ |
+| 30m | −0.155 | **−0.098** (OOS −48,8 vs −77,4) | ❌ |
+| 15m | −0.079 | **−0.045** (OOS −22,6 vs −39,3) | ❌ |
+
+Structurel : SMC sur BTC en LTF est dominé par le bruit + les frais 0,1 %/côté
+sur des jambes trop courtes ; filtrer agressivement stoppe l'hémorragie mais
+effondre le nombre de trades (chiffres uniques) sans créer d'edge. Le filtre
+`chop_filter_max: 50` est enregistré dans les configs 1h/30m/15m comme « moins
+pire » (cohérent avec la philosophie du fichier), scores OOS mis à jour. Seul le
+4h reste tradable.
+
+### 🎯 smart_money : croisement indicateurs × SMC (choppiness + confirmation bougie)
+
+Croisement des nouveaux indicateurs avec la stratégie SMC (chacun testé comme
+filtre/confluence sur la config 4h via le vrai Backtester). **Deux gagnants nets
+activés sur le 4h**, le reste neutre/négatif :
+
+- **Filtre Choppiness < 61.8** (`chop_filter_max`) : ne trader QU'hors congestion
+  (l'idée « OB en tendance, pas en chop »). FULL +387→**+483** (PF 1.51→1.69,
+  Sharpe 5.2→6.7), OOS +108→**+117**, et **DD réduit** (−14 %→−9 %).
+- **Confirmation bougie** (`candle_bonus`) : bonus +0.05 si pin bar / engulfing
+  dans le sens du setup → via le sizing, monte les setups confirmés (qualité par
+  trade très élevée). OOS +117→**+129**, score 0.359→**0.372**, trades constants.
+
+Écartés (mesurés neutres/négatifs) : VWAP session (coupe les entrées de repli),
+CVD slope (coupe trop), RSI-divergence, VSA.
+
+Config 4h finale : trailing 3.5×ATR + time-stop conditionnel 12 + sizing par
+confluence + choppiness<61.8 + confirmation bougie → **FULL +503 (PF 1.72,
+Sharpe 6.8, DD −8.7 %), OOS +129 (PF 1.55, score 0.372)**. Tous OFF par défaut
+(byte-identique), ajoutés au `param_space` ; seul le 4h les active. 428 tests OK.
+
+### 📐 indicators_core : nouveaux indicateurs réutilisables (VWAP, CVD, Choppiness…)
+
+Batch d'indicateurs génériques (importables par toute stratégie via la façade
+`app.core.indicators`), en vue de les croiser avec SMC :
+
+- **VWAP** : `rolling_vwap` (glissant), `session_vwap` (ancré jour UTC),
+  `vwap_bands` (± k×σ, cibles/sur-extension).
+- **CVD** (`cvd`) : Cumulative Volume Delta approximé OHLCV (multiplicateur
+  money-flow) — divergences prix/CVD = absorption.
+- **Choppiness** (`choppiness`) : tendance (< 38.2) vs congestion (> 61.8).
+- **Keltner** (`keltner`) : EMA ± mult×ATR (canal, cibles TP).
+- **Value Area** : `smc.volume_profile` renvoie désormais `va_low`/`va_high`
+  (70 % du volume autour du POC) — additif, signaux SMC inchangés.
+- **Price action** : `pin_bar` (marteau/étoile), `engulfing` (avalement),
+  `vsa_signal` (No Demand / No Supply).
+- **Divergences cachées** (`rsi_divergence_hidden`) : continuation, complément
+  de `rsi_divergence` (régulières).
+
+Toutes causales (fenêtres passées + barre courante), pures, testées (5 tests).
+Microstructure (carnet d'ordres, spoofing, niveaux de liquidation) NON incluse :
+nécessite des données L2/temps réel non backtestables sur OHLCV historique.
+
+### 🧩 smart_money : 3 pistes SMC optionnelles (OFF par défaut)
+
+Audit complet de la stratégie contre la checklist SMC de référence : **15/19
+concepts déjà implémentés et validés** (swings, BOS/CHoCH, BSL/SSL, sweeps, FVG,
+voids, OB avancés, breakers, premium/discount, confluence multi-facteurs, SL
+dynamique, TP-liquidité, killzones, MTFA). Les 4 restants ont été mesurés
+individuellement ET conjointement sur BTC 4h : tous perdants ou déjà couverts.
+
+Trois sont implémentés **désactivés par défaut** (backtest byte-identique,
+exposés au `param_space` pour d'autres TF/symboles/régimes) :
+
+- `ext_structure_filter` (+ `ext_swing_len`) — **1d** structure interne/externe :
+  2ᵉ analyse causale à pivots plus larges, gate de degré supérieur composé avec
+  le HTF. Mesuré ❌ (OOS +108→+73 : coupe les retournements gagnants).
+- `tp_measured_move` — **4b** symétrie de jambe : projection d'amplitude de la
+  dernière jambe comme cible TP candidate (bracket). ⚠️ inerte en trailing, pire
+  que le TP-liquidité en bracket.
+- `inv_fvg_bonus` — **4c** inversion de rôle des FVG : bonus de confluence si un
+  FVG opposé mitigé chevauche l'entrée. ≈ neutre (déjà couvert par les breakers).
+
+La 4ᵉ piste (**5d** TP partiel / scale-out) est **abandonnée** : elle exigerait
+un scale-out transverse du moteur d'exécution (backtest + live) pour une feature
+mesurée négative (variance↓ mais PnL↓). Aucune modif de la config live (4h reste
+trailing + time-stop conditionnel + sizing par confluence). 422 tests OK.
+
+### ⚖️ smart_money : sizing pondéré par confluence (4h)
+
+Empilé sur le trailing : au lieu d'un risque fixe par trade, on **alloue plus
+aux setups à forte confluence** via le hook natif `size_factor` du
+Backtester/live (« demi-Kelly ×confidence ») :
+
+    size_factor = clip(1 + size_conf_slope × (score − size_conf_center), 0.4, 1.7)
+
+Centré sur le score moyen (≈ 0.83 sur le 4h) → exposition globale ≈ inchangée :
+c'est une RÉALLOCATION du risque, pas un cran de levier. Mesuré (vrai
+Backtester, BTC 4h), empilé sur le trailing :
+
+| Config | FULL 2018→26 | OOS 2024→26 | oos_score |
+|---|---|---|---|
+| + trailing 3.5×ATR | +318, PF 1.44, Sh 4.9 | +81, PF 1.34 | +0.291 |
+| **+ sizing par confluence** | **+387, PF 1.51, Sh 5.2** | **+108, PF 1.46** | **+0.332** |
+
+Amélioration MONOTONE avec la pente → le score du moteur est réellement
+prédictif. Améliore tout sur les deux périodes **à exposition et DD égaux**
+(−4,3 %) et **récupère le score composite OOS** que le trailing avait cédé
+(0.332 > 0.327 du time-stop pur). Un 3ᵉ levier testé (taille scalée par régime)
+est écarté : PnL en hausse mais Sharpe plat → exposition, pas edge.
+
+`size_by_confluence: false` reste le défaut (byte-identique) ; le 4h l'active
+via `optimizer_results`. Params `size_by_confluence`/`size_conf_slope`/
+`size_conf_center` ajoutés au `param_space`. 418 tests OK.
+
+### 🏃 smart_money : trailing stop pour laisser courir les gagnants (4h)
+
+Suite au time-stop (dont le gain en nombre de trades restait modeste), deux
+idées testées pour exploiter davantage la volatilité :
+
+1. **Trailing stop plutôt que time-stop** — au lieu du TP fixe, un stop suiveur
+   à `trail_mult`×ATR (`TrailingStopManager` du Backtester) laisse **courir les
+   gagnants**. Le time-stop devient **conditionnel** (`check_early_exit`) : après
+   `time_stop_bars`, il ne coupe QUE les trades **stagnants** (MFE < `ts_profit_r`×R),
+   jamais un gagnant qui court. On ride les tendances ET on coupe la chop.
+2. **Plusieurs positions concurrentes** — pour ne pas rester bloqué sur un slot.
+
+Mesuré via le **vrai Backtester** (chemin de prod, BTC 4h) :
+
+| Config | FULL 2018→26 | OOS 2024→26 | oos_score |
+|---|---|---|---|
+| time-stop pur | +168, PF 1.23, Sh 2.9 | +84, PF 1.35 | +0.327 |
+| **trailing 3.5×ATR + ts12** | **+318, PF 1.44, Sh 4.9** | +81, PF 1.34 | +0.291 |
+
+**Idée 1 retenue** pour le 4h (`use_trailing: true`, `trail_mult: 3.5`,
+`time_stop_bars: 12`) : le trailing **récupère l'upside des tendances** que le
+time-stop pur sacrifiait (backtest complet quasi ×2, Sharpe 2.9→4.9) **sans
+coûter au régime récent** (PnL OOS +81 vs +84 = égalité). Recul assumé : score
+composite OOS un peu plus bas (0.291 vs 0.327), laisser courir = plus de vol.
+
+**Idée 2 rejetée (mesurée pire)** : passer de 1 à 2+ positions n'ajoute ~+5 sur
+le complet mais dégrade le régime récent (+21→+14, PF 1.34→1.21) ; le slot unique
+filtre involontairement les signaux marginaux (espérance négative).
+
+`use_trailing: false` reste le défaut de base (bracket fixe, validé toutes
+périodes) ; nouveaux paramètres `use_trailing`/`trail_mult`/`ts_profit_r` ajoutés
+au `param_space` de l'optimiseur. Backtest byte-identique avec le défaut (off).
+
+### ⏱ smart_money : time-stop pour exploiter la volatilité choppy (4h)
+
+Diagnostic depuis le Smart replay (« beaucoup de signaux, peu exploités ») :
+sur le 4h récent, 37/45 sweeps sont contre-tendance (ignorés par design) ; le
+vrai problème est que les trades pris **stagnent dans la chop** en attendant
+une cible lointaine, ce qui bloque le slot de position unique et empêche de
+capter les signaux suivants.
+
+Cinq idées mesurées isolément (full + OOS) ; quatre échouent (entrées de
+retournement sweep+CHoCH, breakeven/TP partiel, filtre ADX — toutes négatives
+sur le régime récent). La gagnante : un **time-stop** (`time_stop_bars`, porté
+par le mécanisme natif `exit_after_bars` du Backtester) qui coupe les positions
+stagnantes après N barres. Sur le 4h :
+- OOS 2024-2026 : **−19 → +96 USDC**, PF 1.08 → 1.41, DD −7,4 % → −4,0 % ;
+- prend PLUS de trades (58 vs 51 : le slot se libère plus tôt) ;
+- score OOS **doublé** (+0.354 vs +0.174), IS toujours positif, walk-forward
+  consistance 40 % → 60 %.
+
+Retenu pour le 4h (`optimizer_results`, choix utilisateur) — **pari de régime
+assumé** : sacrifie le PnL des fortes tendances (backtest complet 400→206,
+sous-période 2021-2024 négative), optimisé pour le régime choppy récent que la
+méthodologie OOS du projet privilégie. `time_stop_bars: 0` reste le défaut de
+base (validé toutes périodes) ; ajouté au `param_space` de l'optimiseur.
+Backtest byte-identique avec le défaut (off). 415 tests OK.
+
 ### 🔧 SMC : correction des 10 findings de la revue de code
 
 Suite à une revue complète (8 angles) de la branche, correction de tous les

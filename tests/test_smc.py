@@ -476,6 +476,67 @@ class TestMinGainFilter:
         assert trade["indicators"]["gain_pct"] > 0.4
         assert trade["tp_hint"] >= 98.5
 
+    def test_confluence_sizing(self):
+        """size_by_confluence → size_factor croît avec le score (borné
+        [0.4, 1.7]), vaut 1.0 au centre ; désactivé (défaut) → 1.0 constant."""
+        s = Strategy()
+
+        def sf(score, enabled, slope=3.0, center=0.83):
+            p = dict(Strategy.fixed_params)
+            p["size_by_confluence"] = enabled
+            p["size_conf_slope"] = slope
+            p["size_conf_center"] = center
+            t = s._build_trade(self._res_stub(101.5), 50, "long",
+                               entry=100.0, sl=99.5, atr=0.0, p=p,
+                               setup="TEST", score=score, detail="")
+            return t["size_factor"]
+
+        assert Strategy.fixed_params["size_by_confluence"] is False
+        # désactivé (défaut) : facteur neutre, quel que soit le score
+        assert sf(1.0, False) == 1.0 and sf(0.70, False) == 1.0
+        # activé : monotone croissant, = 1.0 au centre
+        assert sf(0.70, True) < sf(0.83, True) < sf(1.0, True)
+        assert abs(sf(0.83, True) - 1.0) < 1e-9
+        # bornes : slope élevée → clampé à [0.4, 1.7]
+        assert sf(1.0, True, slope=10) == 1.7
+        assert sf(0.70, True, slope=10) == 0.4
+
+    def test_optional_pistes_default_off(self):
+        """Pistes SMC / croisements optionnels OFF par défaut (byte-identique)."""
+        for k in ("ext_structure_filter", "tp_measured_move", "inv_fvg_bonus",
+                  "candle_bonus"):
+            assert Strategy.fixed_params[k] is False
+        assert Strategy.fixed_params["chop_filter_max"] == 0.0
+
+    def test_chop_and_candle_aux_wiring(self):
+        """Filtre choppiness + confirmation bougie : séries aux None par défaut,
+        présentes (bonnes formes) quand activés."""
+        df = _random_df(900, seed=5, jump_p=0.04)
+        s = Strategy()
+        p_off = s._p({"smart_money": {}})
+        res = smc.analyze(df, s._smc_params(p_off))
+        aux_off = s._build_aux(df, p_off, res)
+        assert aux_off["chop"] is None
+        assert aux_off["pin"] is None and aux_off["eng"] is None
+        p_on = s._p({"smart_money": {"chop_filter_max": 61.8, "candle_bonus": True}})
+        aux_on = s._build_aux(df, p_on, res)
+        assert aux_on["chop"] is not None and len(aux_on["chop"]) == df.height
+        assert aux_on["pin"] is not None
+        assert set(np.unique(aux_on["pin"]).tolist()) <= {-1, 0, 1}
+
+
+    def test_ext_structure_filter_wiring(self):
+        """1d : aux['ext_trend'] None par défaut, array causal quand activé."""
+        df = _random_df(900, seed=3, jump_p=0.04)
+        s = Strategy()
+        p_off = s._p({"smart_money": {"ext_structure_filter": False}})
+        res = smc.analyze(df, s._smc_params(p_off))
+        assert s._build_aux(df, p_off, res)["ext_trend"] is None
+        p_on = s._p({"smart_money": {"ext_structure_filter": True,
+                                     "ext_swing_len": 8}})
+        ext = s._build_aux(df, p_on, res)["ext_trend"]
+        assert ext is not None and len(ext) == df.height
+
 
 class TestTradePlans:
     def test_plans_contract(self):
@@ -525,6 +586,78 @@ class TestTradePlans:
             else:
                 assert not imm, f"aucun signal mais plan immediate présent (seed {seed})"
         assert checked > 0, "aucun signal immédiat testé — échantillon non significatif"
+
+    def test_time_stop_sets_exit_after_bars(self):
+        """time_stop_bars > 0 → les signaux portent exit_after_bars (mécanisme
+        natif du Backtester) ; 0 (défaut) → pas de time-stop (None)."""
+        assert Strategy.fixed_params["time_stop_bars"] == 0
+        found_off = found_on = 0
+        for seed in range(12):
+            df = _random_df(900, seed=seed, jump_p=0.04)
+            # défaut : exit_after_bars None
+            s_off = Strategy(); s_off._bt_params = None
+            s_off.prepare_for_backtest(df)
+            for sig in (s_off._bt_signals or {}).values():
+                assert sig.get("exit_after_bars") is None
+                found_off += 1
+            # time_stop 12 : exit_after_bars == 12
+            s_on = Strategy()
+            s_on._bt_params = {"smart_money": {"time_stop_bars": 12}}
+            s_on.prepare_for_backtest(df)
+            for sig in (s_on._bt_signals or {}).values():
+                assert sig.get("exit_after_bars") == 12
+                found_on += 1
+        assert found_off > 0 and found_on > 0, "aucun signal généré — test non significatif"
+
+    def test_trailing_wiring(self):
+        """use_trailing=True → signaux sans TP fixe (tp_hint None), trailing
+        activé (disable_trailing False + trail_override), et time-stop porté
+        par check_early_exit (exit_after_bars None). Défaut (off) inchangé."""
+        assert Strategy.fixed_params["use_trailing"] is False
+        found = 0
+        for seed in range(12):
+            df = _random_df(900, seed=seed, jump_p=0.04)
+            s = Strategy()
+            s._bt_params = {"smart_money": {"use_trailing": True,
+                                            "trail_mult": 3.5,
+                                            "time_stop_bars": 12}}
+            s.prepare_for_backtest(df)
+            for sig in (s._bt_signals or {}).values():
+                found += 1
+                assert sig["tp_hint"] is None
+                assert sig["exit_after_bars"] is None
+                assert sig["disable_trailing"] is False
+                assert sig["trail_override"] == {"trail_wide": 3.5, "mode": "dynamic"}
+                # la cible reste exposée pour l'affichage, + risque pour le time-stop
+                assert sig["indicators"]["tp_target"] is not None
+                assert sig["indicators"]["_risk_pct"] > 0
+        assert found > 0, "aucun signal trailing généré — test non significatif"
+
+    def test_conditional_time_stop_cuts_only_stallers(self):
+        """En mode trailing, le time-stop conditionnel (check_early_exit) coupe
+        UNIQUEMENT les trades stagnants (MFE < ts_profit_r×R après N barres) —
+        jamais un gagnant qui court, ni un trade encore jeune. Off si !trailing."""
+        s = Strategy()
+        df = _random_df(30, seed=1)          # height 30 → bars_held = 29 - bar
+        on = {"smart_money": {"use_trailing": True, "time_stop_bars": 12,
+                              "choch_exit": False}}
+        # stagnant : détenu 19 barres, MFE 1.0 % < 1×R (risque 2.0 %) → coupé
+        stall = {"bar": 10, "mfe": 1.0, "indicators": {"_risk_pct": 2.0}}
+        assert s.check_early_exit(df, stall, on) == "time_stop_stall"
+        # gagnant qui court : MFE 3.0 % ≥ 1×R → PAS coupé (le trailing gère)
+        winner = {"bar": 10, "mfe": 3.0, "indicators": {"_risk_pct": 2.0}}
+        assert s.check_early_exit(df, winner, on) is None
+        # trop jeune : détenu 4 barres < 12 → PAS coupé
+        fresh = {"bar": 25, "mfe": 0.0, "indicators": {"_risk_pct": 2.0}}
+        assert s.check_early_exit(df, fresh, on) is None
+        # fallback risque via _stop_trail quand _risk_pct absent
+        fb = {"bar": 10, "mfe": 0.5, "entry": 100.0,
+              "_stop_trail": [{"bar": 11, "stop": 98.0}], "indicators": {}}
+        assert s.check_early_exit(df, fb, on) == "time_stop_stall"
+        # sans trailing : le time-stop natif (exit_after_bars) gère, pas ici
+        off = {"smart_money": {"use_trailing": False, "time_stop_bars": 12,
+                               "choch_exit": False}}
+        assert s.check_early_exit(df, stall, off) is None
 
     def test_dir_gate_and_htf_ok_helpers(self):
         # _htf_ok : sémantique off/soft/strict

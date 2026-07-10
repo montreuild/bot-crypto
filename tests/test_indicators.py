@@ -18,6 +18,8 @@ from app.core.indicators import (
     support_resistance_levels, nearest_support, nearest_resistance,
     precompute_df, pre_val, build_features,
     roc, green_ratio, rsi_divergence, trend_duration,
+    rolling_vwap, vwap_bands, session_vwap, cvd, choppiness, keltner,
+    pin_bar, engulfing, vsa_signal, rsi_divergence_hidden,
 )
 
 
@@ -494,3 +496,62 @@ class TestCausalReuse:
         d, line = supertrend(w, 10, 3.0)
         assert (ld, pd_) == (int(d[-1]), int(d[-2]))
         assert abs(sv - float(line[-1])) < 1e-9
+
+
+class TestExtraIndicators:
+    """Indicateurs ajoutés pour le croisement SMC (VWAP, CVD, Choppiness,
+    Keltner, price-action patterns, VSA, divergences cachées)."""
+
+    def test_shapes_and_ranges(self):
+        df = _make_ohlcv(300, seed=7)
+        n = df.height
+        for s in (rolling_vwap(df, 20), session_vwap(df), cvd(df),
+                  choppiness(df, 14), pin_bar(df), engulfing(df),
+                  vsa_signal(df), rsi_divergence_hidden(df)):
+            assert pl.Series(s).len() == n
+        ch = choppiness(df, 14).drop_nulls().to_numpy()
+        assert ch.min() >= 0.0 and ch.max() <= 100.0
+        for f in (pin_bar, engulfing, vsa_signal, rsi_divergence_hidden):
+            vals = set(pl.Series(f(df)).fill_null(0).unique().to_list())
+            assert vals <= {-1, 0, 1}
+
+    def test_band_ordering(self):
+        df = _make_ohlcv(300, seed=8)
+        vw, up, dn = vwap_bands(df, 20, 2.0)
+        mid, ku, kd = keltner(df, 20, 2.0)
+        # bandes bien ordonnées sur les barres valides
+        for lo, m, hi in ((dn, vw, up), (kd, mid, ku)):
+            lo, m, hi = (pl.Series(x).to_numpy() for x in (lo, m, hi))
+            valid = ~(np.isnan(lo) | np.isnan(m) | np.isnan(hi))
+            assert np.all(lo[valid] <= m[valid] + 1e-9)
+            assert np.all(m[valid] <= hi[valid] + 1e-9)
+
+    def test_engulfing_deterministic(self):
+        # bougie 1 rouge [10→9], bougie 2 verte [8.8→10.2] englobe → +1
+        df = pl.DataFrame({
+            "open":   [10.0, 8.8], "high": [10.1, 10.3],
+            "low":    [8.9, 8.7],  "close": [9.0, 10.2],
+            "volume": [100.0, 120.0]})
+        assert engulfing(df)[1] == 1
+        # miroir baissier
+        df2 = pl.DataFrame({
+            "open":   [9.0, 10.2], "high": [9.1, 10.3],
+            "low":    [8.9, 8.7],  "close": [10.0, 8.8],
+            "volume": [100.0, 120.0]})
+        assert engulfing(df2)[1] == -1
+
+    def test_pin_bar_deterministic(self):
+        # marteau : long wick bas, petit corps en haut → +1
+        df = pl.DataFrame({
+            "open":   [10.0, 10.05], "high": [10.1, 10.10],
+            "low":    [9.9, 9.50],   "close": [10.0, 10.00],
+            "volume": [100.0, 100.0]})
+        assert pin_bar(df)[1] == 1
+
+    def test_cvd_direction(self):
+        # clôtures en haut de bougie → CVD croissant (achats agressifs)
+        up = pl.DataFrame({
+            "open":   [10.0] * 5, "high": [11.0] * 5, "low": [9.9] * 5,
+            "close":  [10.95] * 5, "volume": [100.0] * 5})
+        c = cvd(up).to_numpy()
+        assert c[-1] > c[0] and np.all(np.diff(c) > 0)

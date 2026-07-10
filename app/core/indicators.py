@@ -18,6 +18,8 @@ from app.core.indicators_core import (            # noqa: F401
     atr, atr_series, atr_val, adx, adx_val,
     volume_ratio, vol_ratio, obv, donchian, supertrend,
     stochastic, roc, green_ratio, rsi_divergence, trend_duration,
+    rolling_vwap, vwap_bands, session_vwap, cvd, choppiness, keltner,
+    pin_bar, engulfing, vsa_signal, rsi_divergence_hidden,
 )
 from app.core.indicators_causal import (          # noqa: F401
     _causal_prefix_index, supertrend_last, macd_hist_last3, ema_window,
