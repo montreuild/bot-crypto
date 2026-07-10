@@ -18,6 +18,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/api/scanner/fast_analysis", dependencies=[Depends(verify_api_key)])
+def fast_analysis(symbol: str, tf: str, taker: float = 0.001, maker: float = 0.0004):
+    """Fast Analyse & optimisation : screening des indicateurs sur les données
+    EN CACHE de (symbol, tf) — aucun appel exchange. Familles tendance / retour
+    à la moyenne, sensibilité taker/maker, split IS/OOS."""
+    from app.core.candle_store import get_store
+    from app.core.fast_analysis import analyze
+    try:
+        df = get_store().load_cached(symbol, tf)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    if df is None or df.height < 260:
+        return JSONResponse(
+            {"error": f"Données insuffisantes pour {symbol}/{tf} "
+                      f"({0 if df is None else df.height} barres) — chargez-les "
+                      f"d'abord depuis la page Données."}, status_code=400)
+    return JSONResponse(analyze(df, taker=taker, maker=maker))
+
+
 @router.get("/api/scanner", dependencies=[Depends(verify_api_key)])
 def run_scanner(timeframe: str = None, limit: int = 200):
     if not state.cfg:

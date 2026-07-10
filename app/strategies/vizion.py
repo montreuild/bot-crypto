@@ -9,8 +9,8 @@ Checklist (LONG ; miroir SHORT), à la barre où un Order Block est retesté :
      (``require_fvg``).
   4. TIMEFRAME ALIGNMENT : l'OB LTF est IMBRIQUÉ dans un OB HTF de même sens
      (``require_htf_ob`` — cœur de la méthode, via ``smc.htf_analysis``).
-  5. Confirmation SMT (``use_smt``) : un actif corrélé (``smt_correlate_path``,
-     GÉNÉRIQUE — crypto, action, ETF, forex) ne prend pas la liquidité
+  5. Confirmation SMT (``use_smt``) : un actif crypto corrélé
+     (``smt_correlate_path``, ex. ETH pour BTC) ne prend pas la liquidité
      équivalente. Dégradation gracieuse si les données du corrélé sont absentes.
   6. Confluences bonus (score) : Unicorn (OB+breaker), propulsion block.
   SL sous l'OB ; TP sur la prochaine liquidité opposée (bracket, comme la vidéo).

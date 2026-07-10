@@ -251,6 +251,18 @@
       </div>
     </div>
 
+    <!-- ── Fast Analyse & optimisation ──────────────────────────────── -->
+    <div class="panel" id="fast-panel" style="margin-top:16px">
+      <div class="panel-hdr">
+        ⚡ Fast Analyse &amp; optimisation
+        <span id="fast-sym-lbl" style="margin-left:6px;font-size:.72rem;color:var(--cyan)"></span>
+        <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="runFastAnalysis()">▶ Lancer</button>
+      </div>
+      <div class="panel-body" id="fast-body">
+        <div class="empty" style="font-size:.75rem;color:var(--dim)">Screening des indicateurs (tendance + retour à la moyenne) sur la paire et le timeframe du graphique — sensibilité frais taker/maker, split IS/OOS. Cliquez sur « Lancer ».</div>
+      </div>
+    </div>
+
     <!-- ── Prédictions par stratégie ───────────────────────────────── -->
     <div class="panel" id="pred-panel" style="margin-top:16px;display:none">
       <div class="panel-hdr">
@@ -1192,6 +1204,38 @@ async function loadSMCOverlay(){
     if(legend) legend.innerHTML = '';
     if(detail) detail.style.display = 'none';
   }
+}
+
+// ── Fast Analyse & optimisation ─────────────────────────────────────────
+async function runFastAnalysis(){
+  const sym=(document.getElementById('chart-symbol').value||'BTC/USDC').trim();
+  const tf=(typeof chartTf!=='undefined'?chartTf:'1h');
+  const lbl=document.getElementById('fast-sym-lbl'); if(lbl) lbl.textContent=sym+' · '+tf;
+  const body=document.getElementById('fast-body');
+  body.innerHTML='<div class="empty"><span class="spinner"></span> Screening des indicateurs…</div>';
+  try{
+    const r=await apiFetch('/api/scanner/fast_analysis?symbol='+encodeURIComponent(sym)+'&tf='+encodeURIComponent(tf));
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){body.innerHTML='<div class="empty" style="color:#f87171">'+(d.detail||d.error||'Erreur '+r.status)+'</div>';return;}
+    const rows=d.rows||[];
+    if(!rows.length){body.innerHTML='<div class="empty">'+(d.error||'Aucun résultat')+'</div>';return;}
+    const fmt=o=>o.pnl.toFixed(0)+' / '+o.pf.toFixed(2);
+    let h='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.74rem">'+
+      '<thead><tr style="color:var(--dim);text-align:left"><th style="padding:5px 8px">Signal</th><th>Type</th><th>FULL maker Σ/PF</th><th>OOS taker Σ/PF</th><th>OOS maker Σ/PF</th><th></th></tr></thead><tbody>';
+    for(const x of rows){
+      const om=x.maker.oos, ot=x.taker.oos, fm=x.maker.full;
+      const good=om.pnl>0&&om.pf>1;
+      const edge=x.edge?'<span style="color:#4ade80">✔ '+x.edge+'</span>':'';
+      h+='<tr style="border-top:1px solid rgba(255,255,255,.05)"><td style="padding:5px 8px;font-family:var(--mono)">'+x.signal+'</td>'+
+        '<td style="color:var(--dim)">'+x.kind+'</td><td style="font-family:var(--mono)">'+fmt(fm)+'</td>'+
+        '<td style="font-family:var(--mono)">'+fmt(ot)+'</td>'+
+        '<td style="font-family:var(--mono);color:'+(good?'#4ade80':'var(--dim)')+'">'+fmt(om)+' (n'+om.n+')</td><td>'+edge+'</td></tr>';
+    }
+    h+='</tbody></table></div>';
+    h+=d.best?'<div style="margin-top:8px;font-size:.75rem">Verdict : edge OOS significatif = <b style="color:#4ade80">'+d.best+'</b></div>'
+            :'<div style="margin-top:8px;font-size:.75rem;color:var(--dim)">Aucun edge OOS significatif (n≥10, PF&gt;1) sur '+sym+' '+tf+' — normal sur beaucoup de paires/TF.</div>';
+    body.innerHTML=h;
+  }catch(e){body.innerHTML='<div class="empty" style="color:#f87171">Erreur : '+e.message+'</div>';}
 }
 
 // ── Prédictions des stratégies ──────────────────────────────────────────

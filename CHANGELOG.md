@@ -6,21 +6,31 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
-### 🔌 Données OHLCV : correctif cache + bouton de rechargement UI
+### 🔌 Données OHLCV : correctif fetch + page « Données » + Fast Analyse Scanner
 
 - **Fix cache** : `CandleStore._load` force désormais l'ORDRE canonique des
   colonnes (`time` en premier). Corrige le crash `unable to vstack, column names
   don't match: "open" and "time"` provoqué par un Parquet écrit avec un ordre
-  différent (ancien `fetch_data.py`) — le `pl.concat` ne casse plus, et les
-  fichiers déjà écrits sont réparés au prochain fetch.
-- **`fetch_data.py`** : le fetch crypto passe maintenant par la MÊME machinerie
-  que le live (`CandleStore.fetch`) → schéma canonique garanti + pagination
-  robuste (corrige le bug « 0 bougie » du ccxt brut). Yahoo : plafonne
-  automatiquement le range pour les intervalles intraday (évite le 422
-  `interval=1h&range=5y`).
-- **Bouton UI « ↻ Données »** (dashboard) + endpoints `GET /api/data/status`
-  et `POST /api/data/refetch?symbol=&tf=&bars=` : recharge un symbole/TF précis
-  ou tous les symboles configurés, via `CandleStore.fetch`.
+  différent — le `pl.concat` ne casse plus, et les fichiers déjà écrits sont
+  réparés au prochain fetch.
+- **Fix « 0 bougie »** : le `since` du premier fetch (full/historical) est
+  désormais borné à `2017-01-01` (`_MIN_SINCE_MS`). Corrige le cas où
+  `now - 50000 × 4h ≈ 2003` faisait renvoyer un tableau VIDE par l'exchange
+  (OKX/Binance rejettent un `since` trop ancien) → plus aucune paire ne reste
+  bloquée à 0 bougie.
+- **Nouvelle page `/data` (« 🗄 Données »)** : tableau de l'état du cache par
+  paire/TF (bougies, plage de dates, taille) via `GET /api/data/status`, plus
+  un formulaire de **fetch manuel** sur une paire + un TF ARBITRAIRES (pas
+  forcément dans la config) via `POST /api/data/refetch?symbol=&tf=&bars=`, et
+  un « Recharger tout (config) ». Remplace l'ancien bouton dashboard.
+- **Cadre « ⚡ Fast Analyse & optimisation »** (Scanner, entre Graphique et
+  Prédictions) : screening d'indicateurs (tendance / retour-à-la-moyenne, frais
+  taker vs maker, split IS/OOS) sur la paire + TF affichés, via
+  `GET /api/scanner/fast_analysis`. Reprend la logique de l'ancien script
+  `analyze_indicators.py`, désormais intégrée à l'UI.
+- **Nettoyage** : suppression des scripts `fetch_data.py` / `analyze_indicators.py`
+  et de tout le support actions/ETF/Yahoo (CAC 40, Eutelsat, Capital B). Le
+  moteur est 100 % crypto (OKX/Binance via ccxt).
 
 ### 🎬 Modèle @Vizion-fr : détecteurs + stratégie `vizion` (stricte)
 
@@ -28,9 +38,8 @@ D'après les transcriptions de deux vidéos ICT de @Vizion-fr (entrée sur Order
 Block validée par le timeframe alignment). Nouveaux détecteurs dans `ict.py` :
 - **propulsion_block** : OB imbriqué dans un OB antérieur de même sens ;
 - **nested_order_block** : imbrication multi-timeframe (OB LTF ⊂ OB HTF) ;
-- **align_series** : alignement causal générique de deux actifs par timestamp
-  (crypto/action/ETF/forex) — préparation d'une SMT divergence sur N'IMPORTE
-  quel couple corrélé.
+- **align_series** : alignement causal générique de deux actifs crypto par
+  timestamp — préparation d'une SMT divergence sur N'IMPORTE quel couple corrélé.
 
 Helper moteur **`smc.htf_analysis`** (bucketing causal partagé avec
 `htf_trend_series` via `_htf_buckets` — extraction **byte-identique**, vérifiée)
@@ -78,36 +87,6 @@ empreinte inchangée). Les helpers du MOTEUR (`killzone_flags`, `premium_discoun
 `liquidity_targets`…), couplés au graphe d'entités et partagés avec la route
 scanner, restent dans `smc.py` (API publique du moteur). 445 tests OK.
 
-### 🛠 scripts/fetch_data.py — récupération OHLCV (crypto ccxt + actions Yahoo)
-
-Complément de `analyze_indicators.py` : récupère les données pour n'importe quel
-symbole. Crypto via ccxt (pagination arrière) → `data/ohlcv/<SYM>/<tf>.parquet` ;
-actions/ETF via l'API chart de Yahoo Finance → `data/stocks/<TICKER>_<iv>.csv`.
-Tickers Euronext documentés (Eutelsat=ETL.PA, Capital B=ALTBG.PA, ETF CAC 40=
-CAC.PA). ⚠ Nécessite un accès réseau : dans l'environnement Claude Code managé
-par défaut, okx/Yahoo sont bloqués par la politique réseau (403) — à lancer en
-local ou après autorisation des hôtes.
-
-    python scripts/fetch_data.py --crypto ETH/USDC SOL/USDC XRP/USDC --tf 4h
-    python scripts/fetch_data.py --stocks ETL.PA ALTBG.PA CAC.PA --interval 1d --range 5y
-
-### 🛠 scripts/analyze_indicators.py — analyse d'indicateurs sur n'importe quel OHLCV
-
-Script CLI réutilisable qui automatise la démarche des campagnes de mesure sur
-un jeu OHLCV quelconque (crypto en .parquet, action/forex en .csv) : screening
-INDIVIDUEL de chaque indicateur comme signal autonome, familles TENDANCE
-(sortie trailing) et RETOUR-À-LA-MOYENNE (sortie TP=moyenne), avec sensibilité
-aux frais (taker vs maker) et split IS/OOS. Sortie : tableau classé + verdict
-(edge OOS significatif / marginal / aucun), export JSON optionnel.
-
-    python scripts/analyze_indicators.py data/ohlcv/BTC_USDC/4h.parquet --tf 4h
-    python scripts/analyze_indicators.py AAPL.csv --tf 1d --taker 0.0005 --maker 0.0
-
-Chargeur générique (alias de colonnes Open/Adj Close/Date…, volume par défaut
-si absent). Validé : sur BTC 4h il isole l'edge TENDANCE (✔ taker+maker) et
-rejette le mean-reversion ; sur une série mean-reverting synthétique c'est
-l'inverse — le mean-reversion ressort. 2 tests smoke.
-
 ### ❌ Stratégie LTF mean-reversion : NON construite (mesurée perdante sur BTC)
 
 Demande : bâtir une stratégie LTF mean-reversion « maker ». Après mesure
@@ -116,8 +95,8 @@ taker ET maker), **le mean-reversion est négatif sur BTC quel que soit le
 régime de frais** : BTC est un actif de MOMENTUM, il traverse les bandes au lieu
 de réverser. Le positif-sous-maker mesuré précédemment était l'entrée
 STRUCTURELLE (SMC), pas du mean-reversion. Conformément à la discipline (ne pas
-livrer d'edge négatif), aucune stratégie n'a été créée. Le script
-`analyze_indicators.py` permet désormais de trouver un symbole où le
+livrer d'edge négatif), aucune stratégie n'a été créée. Le cadre
+« ⚡ Fast Analyse » du Scanner permet désormais de trouver un symbole où le
 mean-reversion fonctionne réellement (instruments range-bound).
 
 ### 🆕 Nouvelle stratégie `trend_rider` (indicateurs classiques, long-biaisée)

@@ -11,9 +11,8 @@
 # avant toute activation. Chaque case de la checklist est un paramètre
 # activable/désactivable, pour isoler ce qui apporte réellement de l'edge.
 #
-# SMT GÉNÉRIQUE : renseigner `smt_correlate_path` avec le chemin d'un actif
-# corrélé (crypto, action, ETF, forex) — ex. data/ohlcv/ETH_USDC/4h.parquet pour
-# BTC, ou data/stocks/TTE.PA_1d.csv pour Eutelsat. Vide = SMT désactivé
+# SMT : renseigner `smt_correlate_path` avec le chemin d'un actif crypto corrélé
+# — ex. data/ohlcv/ETH_USDC/4h.parquet pour trader BTC. Vide = SMT désactivé
 # (dégradation gracieuse, la stratégie tourne sans).
 enabled: false
 

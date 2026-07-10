@@ -229,6 +229,10 @@ def bots_page(request: Request):
 def settings_page(request: Request):
     return _tpl("settings.html", request, {"active_page": "settings"})
 
+@app.get("/data", response_class=HTMLResponse)
+def data_page(request: Request):
+    return _tpl("data.html", request, {"active_page": "data"})
+
 @app.get("/smartgraph", response_class=HTMLResponse)
 def smartgraph_page(request: Request):
     return _tpl("smartgraph.html", request, {"active_page": "smartgraph"})
