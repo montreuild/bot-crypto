@@ -117,6 +117,7 @@
   </div>
   <span class="ctrl-sep"></span>
   <div class="ctrl-group">
+    <button class="btn btn-ghost" onclick="refetchData()" title="Recharger les données OHLCV depuis l'exchange (laisser vide = tous les symboles configurés)">↻ Données</button>
     <button class="btn btn-ghost" onclick="exportCSV()">↓ Export CSV</button>
     <select id="export-limit" class="ctrl-select">
       <option value="500">500 trades</option><option value="1000">1 000</option>
@@ -603,6 +604,23 @@ function renderSignals(log){
     const slotLabel=s.strategy&&s.timeframe?(s.strategy.charAt(0).toUpperCase()+s.strategy.slice(1)+' '+s.timeframe):(s.strategy??'—');
     return`<tr><td style="color:var(--muted);font-family:var(--mono)">${ts}</td><td style="font-weight:600">${escHtml(s.symbol??'—')}</td><td><span class="tag tag-${safeSide(s.side)}">${escHtml((s.side||'').toUpperCase())}</span></td><td><span class="tag tag-strat">${escHtml(slotLabel)}</span></td><td class="r" style="font-family:var(--mono);color:${scoreClr};font-weight:600">${(s.score??0).toFixed(3)}</td><td class="r" style="font-family:var(--mono);color:var(--dim)">${(s.threshold??0).toFixed(2)}</td><td><span class="tag ${statusCls}">${statusLbl}</span></td><td style="color:var(--dim);font-size:.68rem">${escHtml(s.reason)}</td></tr>`;
   }).join('');
+}
+
+async function refetchData(){
+  const sym=prompt("Symbole à recharger (ex. ETH/USDC). Vide = tous les symboles configurés :","");
+  if(sym===null) return;
+  const tf=prompt("Timeframe (ex. 4h). Vide = tous les timeframes configurés :","");
+  if(tf===null) return;
+  const q=new URLSearchParams();
+  if(sym.trim()) q.set('symbol',sym.trim());
+  if(tf.trim())  q.set('tf',tf.trim());
+  toast('Rechargement des données… (peut prendre un moment)');
+  try{
+    const r=await apiFetch('/api/data/refetch?'+q.toString(),{method:'POST'});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){toast('Erreur: '+(d.detail||d.error||r.status),true);return;}
+    toast(`Données rechargées : ${d.ok_count||0}/${d.total||0} OK`, (d.ok_count||0)===0);
+  }catch(e){toast('Erreur: '+e.message,true);}
 }
 
 async function startBot(){
