@@ -6,6 +6,35 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🛠 scripts/analyze_indicators.py — analyse d'indicateurs sur n'importe quel OHLCV
+
+Script CLI réutilisable qui automatise la démarche des campagnes de mesure sur
+un jeu OHLCV quelconque (crypto en .parquet, action/forex en .csv) : screening
+INDIVIDUEL de chaque indicateur comme signal autonome, familles TENDANCE
+(sortie trailing) et RETOUR-À-LA-MOYENNE (sortie TP=moyenne), avec sensibilité
+aux frais (taker vs maker) et split IS/OOS. Sortie : tableau classé + verdict
+(edge OOS significatif / marginal / aucun), export JSON optionnel.
+
+    python scripts/analyze_indicators.py data/ohlcv/BTC_USDC/4h.parquet --tf 4h
+    python scripts/analyze_indicators.py AAPL.csv --tf 1d --taker 0.0005 --maker 0.0
+
+Chargeur générique (alias de colonnes Open/Adj Close/Date…, volume par défaut
+si absent). Validé : sur BTC 4h il isole l'edge TENDANCE (✔ taker+maker) et
+rejette le mean-reversion ; sur une série mean-reverting synthétique c'est
+l'inverse — le mean-reversion ressort. 2 tests smoke.
+
+### ❌ Stratégie LTF mean-reversion : NON construite (mesurée perdante sur BTC)
+
+Demande : bâtir une stratégie LTF mean-reversion « maker ». Après mesure
+rigoureuse (BB/RSI/VWAP, filtres range, reclaim confirmé, 15m/30m/1h, frais
+taker ET maker), **le mean-reversion est négatif sur BTC quel que soit le
+régime de frais** : BTC est un actif de MOMENTUM, il traverse les bandes au lieu
+de réverser. Le positif-sous-maker mesuré précédemment était l'entrée
+STRUCTURELLE (SMC), pas du mean-reversion. Conformément à la discipline (ne pas
+livrer d'edge négatif), aucune stratégie n'a été créée. Le script
+`analyze_indicators.py` permet désormais de trouver un symbole où le
+mean-reversion fonctionne réellement (instruments range-bound).
+
 ### 🆕 Nouvelle stratégie `trend_rider` (indicateurs classiques, long-biaisée)
 
 Stratégie construite UNIQUEMENT à partir d'indicateurs existants, par campagne
