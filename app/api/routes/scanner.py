@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from app.api import state
 from app.api.helpers import verify_api_key, _clean, _discover_strategies
 from app.core.exchange import create_exchange
-from app.engine.engine import Engine, BaseStrategyML
+from app.engine.engine import BaseStrategyML
 from app.engine.scanner import MarketScanner
 
 logger = logging.getLogger(__name__)
