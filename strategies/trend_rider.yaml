@@ -40,12 +40,11 @@ params:
 optimizer_results:
   4h:
     run_date: '2026-07-08'
-    oos_score: 0.1826
-    # OOS : 84 trades, +49,4, PF 1.11, DD −10,7 % — tradable (edge modeste).
-    # FULL : 264 trades, +370, PF 1.18, Sharpe 2.4.
-    # Sizing par confluence DÉSACTIVÉ ici : il booste le FULL (+370 → +551) mais
-    # ajoute du DD sur l'OOS récent (score 0.183 → 0.159). Pour un edge modeste,
-    # on privilégie la robustesse OOS. (1d testé : OOS négatif → non tradable.)
+    oos_score: 0.1592
+    # Sizing par confluence ACTIVÉ (choix utilisateur) : privilégie le rendement
+    # brut. FULL 264 trades +551 (PF 1.20, Sharpe 2.8) ; OOS 84 trades +43,9
+    # (PF 1.08, score 0.159). Le sizing booste le FULL (+370 → +551) au prix
+    # d'un peu plus de DD OOS (score 0.183 → 0.159). (1d : OOS négatif.)
     params:
       adx_min: 22
       chop_max: 55.0
@@ -53,4 +52,4 @@ optimizer_results:
       trail_mult: 3.5
       min_score: 0.5
       long_only: true
-      size_by_confluence: false
+      size_by_confluence: true
