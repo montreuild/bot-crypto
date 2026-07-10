@@ -6,6 +6,26 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧊 app/core/ict.py — détecteurs ICT automatisables (briques réutilisables)
+
+Nouveau module regroupant les concepts ICT (Inner Circle Trader) automatisables
+qui manquaient au moteur SMC, en primitives PURES et CAUSALES — non câblées à une
+stratégie (on mesurera/activera ensuite, discipline du projet) :
+
+- **Consequent Encroachment** (niveau 50 % d'un FVG) ;
+- **Balanced Price Range** (chevauchement FVG haussier + baissier) ;
+- **Unicorn model** (Breaker chevauché par un FVG de même polarité) ;
+- **Projections en écarts-types** d'une jambe (grille de TP −1/−2/−2.5/−4 SD) ;
+- **Silver Bullet windows** (fenêtres horaires ICT, UTC) ;
+- **Judas Swing** (faux mouvement à l'ouverture de session, sweep + reclose) ;
+- **SMT divergence** (deux actifs corrélés alignés divergent sur un extrême —
+  le plus prometteur, exploitable dès qu'on aura ETH/SOL en local).
+
+Toutes causales (signal à ``i`` ⇐ données ≤ ``i``, vérifié). 7 tests unitaires
+(cas déterministes + causalité BPR/Judas/SMT). Le reste du canon ICT (structure,
+liquidité, sweeps, OB, FVG, voids, premium/discount, OTE, killzones, HTF, AMD,
+IFVG) est déjà dans smart_money. 444 tests OK.
+
 ### 🛠 scripts/fetch_data.py — récupération OHLCV (crypto ccxt + actions Yahoo)
 
 Complément de `analyze_indicators.py` : récupère les données pour n'importe quel
