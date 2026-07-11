@@ -80,7 +80,7 @@ GLOBAL_TRADING_PARAMS = {
 # Fraction de la fenêtre réservée à l'OOS dans le découpage des jobs (cf.
 # auto_optimizer : split ≈ 65 % IS / 35 % OOS). Sert à dimensionner le nombre
 # minimal de bougies à charger pour qu'une stratégie ne soit PAS ignorée.
-_OOS_FRACTION = 0.35
+from app.core.is_oos import OOS_FRACTION_DEFAULT as _OOS_FRACTION  # BT-08 : constante partagée
 
 # Conversion TF -> minutes (pour exprimer la fenêtre OOS en temps).
 _TF_MINUTES = {

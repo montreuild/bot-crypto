@@ -10,6 +10,7 @@ import polars as pl
 
 from app.engine.engine   import Engine, BaseStrategyML
 from app.engine.backtest import Backtester
+from app.core.is_oos import split_is_oos
 from app.engine.optimizer import (
     StrategyOptimizer, PARAM_SPACES, STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT,
     apply_best_params, record_optimizer_audit, get_active_strategies_per_tf
@@ -317,10 +318,8 @@ class AutoOptimizer:
             df = df_map.get(tf)
             n_available = len(df) if df is not None else 0
 
-            WARMUP = 210
-            split  = max(WARMUP + 100, int(n_available * 0.65)) if n_available > 0 else 0
-            df_is  = df[:split]  if df is not None else None
-            df_oos = df[split:]  if df is not None else None
+            # Convention unique de split IS/OOS (BT-08) — cf. app/core/is_oos.py
+            df_is, df_oos, split = split_is_oos(df)
 
             for name in strats:
                 # Pas d'espace de paramètres (ou espace vide) → rien à optimiser.
@@ -644,9 +643,7 @@ class AutoOptimizer:
                             logger.debug(f"[AutoOpt] on_job_done(skip) KO : {_cb}")
                     continue
 
-                WARMUP = 210
-                split  = max(WARMUP + 100, int(n_available * 0.65))
-                df_is, df_oos = df[:split], df[split:]
+                df_is, df_oos, split = split_is_oos(df)   # convention unique (BT-08)
 
                 recommended_tfs = STRATEGY_TIMEFRAMES.get(name, list(RECOMMENDED_LIMIT.keys()))
                 jid = _job_id(name, tf, symbol)
@@ -689,10 +686,7 @@ class AutoOptimizer:
             df = df_map.get(tf)
             if df is None or len(df) < 300:
                 continue
-            WARMUP = 210
-            split  = max(WARMUP + 100, int(len(df) * 0.65))
-            df_is  = df[:split]
-            df_oos = df[split:]
+            df_is, df_oos, split = split_is_oos(df)   # convention unique (BT-08)
 
             for name in strats:
                 if name not in PARAM_SPACES:
