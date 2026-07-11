@@ -287,13 +287,14 @@ def get_trades(session: Session, limit=1000, symbol=None, strategy=None) -> List
 
 
 def get_closed_trades_for_slot(session: Session, strategy: str, timeframe: str,
-                               days: int = 45) -> List[Trade]:
-    """Trades réels **fermés** d'un slot ``strategy::timeframe`` sur les ``days``
-    derniers jours, du plus récent au plus ancien.
+                               days: int = 45, symbol: str = None) -> List[Trade]:
+    """Trades réels **fermés** d'un slot ``strategy::timeframe[::symbol]`` sur les
+    ``days`` derniers jours, du plus récent au plus ancien.
 
     Utilisé par le forward-test glissant pour comparer la réalisation live à la
     fourchette Monte-Carlo simulée. Ne renvoie que les trades avec un PnL connu
-    (``status`` commençant par ``closed``).
+    (``status`` commençant par ``closed``). ``symbol`` optionnel : restreint au
+    symbole du slot (configs par symbole).
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     q = session.query(Trade).filter(
@@ -303,6 +304,8 @@ def get_closed_trades_for_slot(session: Session, strategy: str, timeframe: str,
         Trade.pnl.isnot(None),
         Trade.time >= cutoff,
     )
+    if symbol:
+        q = q.filter(Trade.symbol == symbol)
     return q.order_by(Trade.time.desc()).all()
 
 

@@ -6,28 +6,38 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
-### 🎯 Configs par symbole (phase 1/2) : `optimizer_results[strat][tf][symbol]`
+### 🎯 Configs par symbole : `optimizer_results[strat][tf][symbol]` + slots par symbole
 
-Première brique de la **séparation des configs par symbole** : une stratégie peut
-avoir une config BTC ET une config ETH distinctes qui **coexistent** (l'une
-n'écrase plus l'autre), au lieu d'un unique jeu par `(stratégie, timeframe)`
-partagé par tous les symboles.
+**Séparation complète des configs par symbole** : une stratégie a une config BTC
+ET une config ETH distinctes qui **coexistent** (l'une n'écrase plus l'autre), au
+lieu d'un unique jeu par `(stratégie, timeframe)` partagé par tous les symboles.
 
-- **`resolve_strategy_params(cfg, tf, symbol)`** accepte désormais un `symbol`.
-  Schéma étendu `optimizer_results[strat][tf][symbol]`, avec **rétro-compatibilité**
-  (`_select_symbol_entry`) : une entrée HÉRITÉE (sans dimension symbole) est réputée
-  calibrée pour **BTC/USDC** (`DEFAULT_CONFIG_SYMBOL`) et **ne s'applique PLUS aux
-  autres symboles** — ETH retombe sur ses params de base tant qu'une config ETH
-  dédiée n'est pas ajoutée (avant, la config BTC déteignait silencieusement sur
-  tous les symboles).
-- **`Backtester.run` + routes scanner** transmettent le `symbol`. Vérifié :
-  **BTC 4h byte-identique** (la config héritée reste sa config) ; ETH bascule sur
-  ses params de base. 6 tests dédiés (rétro-compat, coexistence, fallback).
-- **Live inchangé** à ce stade : la sélection live passe par
-  `get_active_strategies_per_tf`/`_merge_params` (encore par TF). L'adaptation de
-  la **notion de slot** (`strategy::tf` → `strategy::tf::symbol`) dans le
-  capital-allocator, l'identité de bot, le lifecycle, l'OOS-tracker, la base et
-  l'UI est la **phase 2**.
+**Phase 1 — résolution des paramètres**
+- **`resolve_strategy_params(cfg, tf, symbol)`** accepte un `symbol`. Schéma
+  `optimizer_results[strat][tf][symbol]`, **rétro-compatible** (`_select_symbol_entry`) :
+  une entrée HÉRITÉE (sans dimension symbole) est réputée calibrée pour **BTC/USDC**
+  (`DEFAULT_CONFIG_SYMBOL`) et **ne s'applique plus aux autres symboles** (avant,
+  la config BTC déteignait silencieusement sur ETH).
+- `Backtester.run` + routes scanner transmettent le `symbol`. **BTC 4h
+  byte-identique** ; ETH retombe sur ses params de base sauf config dédiée.
+
+**Phase 2 — notion de slot `strategy::tf` → `strategy::tf::symbol`**
+- **`get_active_strategies_per_tf`** sélectionne les slots actifs **par (tf, symbole)**
+  (top-N par symbole ; itère `scanner.symbols`).
+- **`bot_identity`** (`slot_key`, `bot_id`, générations, `resolve_venue` avec
+  précédence `strat::tf::symbol`), **`capital_allocator`** (`SlotBudget.symbol`,
+  clés de slot), **`signal_pipeline`** (score par symbole), **`live_trader`**,
+  **`oos_tracker`** (+ `get_closed_trades_for_slot(symbol=…)`), **`apply_best_params`**
+  (écrit sous `[tf][symbol]`, migre une entrée héritée vers BTC/USDC) : tous
+  câblés sur le symbole. 12 tests (résolution + slots + identité + allocateur).
+
+**Calibration (vrai Backtester, 4h, OOS 2024+)**
+- **smart_money** : edge **spécifique BTC** (OOS +148). **Négatif OOS sur ETH pour
+  les 24 configs testées** → non calibrable sur ETH ; reste BTC-only (config héritée).
+- **trend_rider** : config **ETH dédiée** ajoutée (`adx_min=22, chop_max=60,
+  trail_mult=3.5`) → **OOS +286 / PF 1.27 / 77 tr** (vs BTC OOS ~+44). Les deux
+  coexistent dans `trend_rider.yaml`. Résultat concret : sur 4h, `trend_rider`
+  tourne sur **ETH/USDC** et `smart_money` sur **BTC/USDC**, chacun sa config.
 
 ### 🔀 SMT divergence : primitive moteur + câblage smart_money (MESURÉ non pertinent)
 

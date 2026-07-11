@@ -75,19 +75,24 @@ def default_venue_from_cfg(cfg: dict) -> Venue:
 
 
 def resolve_venue(cfg: dict, strategy: Optional[str] = None,
-                  tf: Optional[str] = None) -> Venue:
+                  tf: Optional[str] = None, symbol: Optional[str] = None) -> Venue:
     """Résout la venue d'un bot.
 
-    Précédence : ``venues.assign["strategy::tf"]`` > ``venues.assign[strategy]``
-    > ``venues.default`` > venue dérivée des globales (``default_venue_from_cfg``).
+    Précédence : ``venues.assign["strategy::tf::symbol"]`` >
+    ``venues.assign["strategy::tf"]`` > ``venues.assign[strategy]`` >
+    ``venues.default`` > venue dérivée des globales (``default_venue_from_cfg``).
     """
     venues = cfg.get("venues") or {}
     defs = venues.get("defs") or {}
     assign = venues.get("assign") or {}
+    slot_sym = (f"{strategy}::{tf}::{symbol}"
+                if strategy and tf and symbol else None)
     slot_key = f"{strategy}::{tf}" if strategy and tf else None
 
     vname = None
-    if slot_key and slot_key in assign:
+    if slot_sym and slot_sym in assign:
+        vname = assign[slot_sym]
+    elif slot_key and slot_key in assign:
         vname = assign[slot_key]
     elif strategy and strategy in assign:
         vname = assign[strategy]
@@ -161,15 +166,17 @@ class BotIdentity:
     generation: int
     venue: Venue
     created_at: str = ""
+    symbol: str = ""
 
     @property
     def slot_key(self) -> str:
-        return f"{self.strategy}::{self.timeframe}"
+        base = f"{self.strategy}::{self.timeframe}"
+        return f"{base}::{self.symbol}" if self.symbol else base
 
     @property
     def bot_id(self) -> str:
-        """Identité unique anti-collision : strat::tf::hash8::gN@venue."""
-        return (f"{self.strategy}::{self.timeframe}::"
+        """Identité unique anti-collision : strat::tf[::symbol]::hash8::gN@venue."""
+        return (f"{self.slot_key}::"
                 f"{self.params_hash[:8]}::g{self.generation}@{self.venue.name}")
 
     def to_dict(self) -> dict:
@@ -178,6 +185,7 @@ class BotIdentity:
             "slot_key": self.slot_key,
             "strategy": self.strategy,
             "timeframe": self.timeframe,
+            "symbol": self.symbol,
             "params_hash": self.params_hash,
             "generation": self.generation,
             "venue": self.venue.to_dict(),
@@ -189,16 +197,22 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _slot_key(strategy: str, timeframe: str, symbol: str = "") -> str:
+    base = f"{strategy}::{timeframe}"
+    return f"{base}::{symbol}" if symbol else base
+
+
 def register_identity(strategy: str, timeframe: str, params: dict,
-                      cfg: dict) -> BotIdentity:
+                      cfg: dict, symbol: str = "") -> BotIdentity:
     """Identité du bot, en incrémentant la **génération** si les params ont changé.
 
     À appeler quand un bot est (re)créé/redoté (typiquement après application
     d'une optimisation). Si le hash des params diffère du dernier enregistré pour
-    ce slot, la génération monotone est incrémentée et persistée (anti-collision).
+    ce slot ``strategy::tf::symbol``, la génération monotone est incrémentée et
+    persistée (anti-collision).
     """
     ph = params_hash(params)
-    slot_key = f"{strategy}::{timeframe}"
+    slot_key = _slot_key(strategy, timeframe, symbol)
     with _lock:
         data = _load_generations()
         rec = data.get(slot_key) or {}
@@ -209,11 +223,12 @@ def register_identity(strategy: str, timeframe: str, params: dict,
         else:
             gen = int(rec.get("generation", 1))
     return BotIdentity(strategy, timeframe, ph, gen,
-                       resolve_venue(cfg, strategy, timeframe), created_at=_now())
+                       resolve_venue(cfg, strategy, timeframe, symbol),
+                       created_at=_now(), symbol=symbol)
 
 
 def peek_identity(strategy: str, timeframe: str, params: dict,
-                  cfg: dict, gens: dict = None) -> BotIdentity:
+                  cfg: dict, gens: dict = None, symbol: str = "") -> BotIdentity:
     """Identité **sans** effet de bord (lecture seule, ne touche pas la génération).
 
     Utile pour l'affichage : la génération courante est celle persistée (ou 1 par
@@ -221,9 +236,10 @@ def peek_identity(strategy: str, timeframe: str, params: dict,
     évite une lecture disque par appel quand on itère plusieurs bots.
     """
     ph = params_hash(params)
-    slot_key = f"{strategy}::{timeframe}"
+    slot_key = _slot_key(strategy, timeframe, symbol)
     rec = (gens if gens is not None else _load_generations()).get(slot_key) or {}
     gen = int(rec.get("generation", 1)) if rec.get("params_hash") == ph else \
         int(rec.get("generation", 0)) + 1
     return BotIdentity(strategy, timeframe, ph, gen,
-                       resolve_venue(cfg, strategy, timeframe), created_at="")
+                       resolve_venue(cfg, strategy, timeframe, symbol),
+                       created_at="", symbol=symbol)

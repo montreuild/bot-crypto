@@ -240,7 +240,8 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
     try:
         from app.core.database import get_closed_trades_for_slot, session_scope
         with session_scope(session_factory) as sess:
-            rows = get_closed_trades_for_slot(sess, strategy, timeframe, days=lookback_days)
+            rows = get_closed_trades_for_slot(sess, strategy, timeframe,
+                                              days=lookback_days, symbol=symbol)
             live_returns = [float(r.pnl_pct) for r in rows if r.pnl_pct is not None]
     except Exception as e:
         logger.debug(f"[ForwardTest] lecture trades réels {strategy}@{timeframe} KO : {e}")
@@ -275,7 +276,8 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
     edge = _edge_contract(edge_returns, conf=edge_conf)
 
     return {
-        "slot_key":      f"{strategy}::{timeframe}",
+        "slot_key":      f"{strategy}::{timeframe}::{symbol}" if symbol
+                         else f"{strategy}::{timeframe}",
         "strategy":      strategy,
         "timeframe":     timeframe,
         "symbol":        symbol,
@@ -336,9 +338,10 @@ def run_forward_test(cfg: dict, fetch_ohlcv, active_per_tf: dict,
             strategy = slot.get("name")
             if not strategy:
                 continue
+            slot_sym = slot.get("symbol") or symbol   # config par symbole
             try:
                 rec = _forward_test_slot(
-                    strategy, tf, symbol, cfg, fetch_ohlcv,
+                    strategy, tf, slot_sym, cfg, fetch_ohlcv,
                     session_factory, lookback_days, edge_lookback_days,
                 )
             except Exception as e:

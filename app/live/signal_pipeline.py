@@ -112,12 +112,19 @@ class SignalPipeline:
                 df_htf = ohlcv_fn(symbol, htf) if htf and not htf_same else None
 
                 for entry in entries:
+                    # Config par symbole : une entrée ne s'applique qu'à SON
+                    # symbole (rétro-compat : une entrée sans symbole s'applique
+                    # à tous).
+                    e_sym = entry.get("symbol", "")
+                    if e_sym and e_sym != symbol:
+                        continue
                     strat_name = entry.get("name", "")
                     strategy   = self._strategies.get(strat_name)
                     if strategy is None:
                         continue
 
-                    slot_key = f"{strat_name}::{tf}"
+                    slot_key = (f"{strat_name}::{tf}::{symbol}" if e_sym
+                                else f"{strat_name}::{tf}")
                     pos_key  = f"{symbol}::{strat_name}::{tf}"
                     if pos_key in open_positions:
                         continue

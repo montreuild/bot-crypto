@@ -25,9 +25,10 @@ _VALID_MODES = ("equal", "manual", "performance")
 
 @dataclass
 class SlotBudget:
-    slot_key: str           # "trend::1h"
+    slot_key: str           # "trend::1h::BTC/USDC"
     strategy: str           # "trend"
     tf: str                 # "1h"
+    symbol: str             # "BTC/USDC"
     enabled: bool           # slot activé/désactivé
     budget_pct: float       # 0.25 → 25% du capital
     used_notional: float    # exposition courante en USDC
@@ -106,11 +107,12 @@ class CapitalAllocator:
                 name = entry.get("name", "")
                 if not name:
                     continue
-                key = f"{name}::{tf}"
+                symbol = entry.get("symbol", "")
+                key = f"{name}::{tf}::{symbol}" if symbol else f"{name}::{tf}"
                 new_keys.add(key)
                 if key not in self._slots:
                     self._slots[key] = SlotBudget(
-                        slot_key=key, strategy=name, tf=tf,
+                        slot_key=key, strategy=name, tf=tf, symbol=symbol,
                         enabled=key not in self._disabled_slots,
                         budget_pct=0.0,
                         used_notional=0.0,

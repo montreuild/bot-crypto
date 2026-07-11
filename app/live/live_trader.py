@@ -670,7 +670,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             if b and b > 0:
                 from app.core.bot_identity import resolve_venue
                 budget_usdc = b
-                max_lev = resolve_venue(self.cfg, strategy_name, tf).max_leverage
+                max_lev = resolve_venue(self.cfg, strategy_name, tf, symbol).max_leverage
         # Distance au stop initial → sizing par le risque réel (parité backtest),
         # au lieu de l'ATR brut qui sur-risquait d'un facteur = multiple du stop.
         stop_dist = self._initial_stop_distance(side, price, atr, signal_dict)
@@ -1052,6 +1052,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                         ident = register_identity(
                             strategy_name, tf,
                             slot.get("params", {}).get(strategy_name, existing), self.cfg,
+                            symbol=slot.get("symbol", ""),
                         )
                         logger.info(f"[Bot] {ident.bot_id} ({ident.venue.describe()})")
         except Exception as e:
@@ -1077,7 +1078,8 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                     continue
                 params = slot.get("params", {}).get(name, {})
                 try:
-                    out.append(peek_identity(name, tf, params, self.cfg, gens=gens).to_dict())
+                    out.append(peek_identity(name, tf, params, self.cfg, gens=gens,
+                                             symbol=slot.get("symbol", "")).to_dict())
                 except Exception:
                     continue
         self._bots_cache = out
