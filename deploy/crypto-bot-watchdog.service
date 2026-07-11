@@ -1,0 +1,48 @@
+# ═══════════════════════════════════════════════════════════════
+#  crypto-bot-watchdog.service — Dead-man switch du bot (OPS-03)
+#
+#  Process SÉPARÉ du bot : lit data/heartbeat.json (écrit à chaque
+#  cycle par LiveTrader._heartbeat) et, si le battement est périmé
+#  au-delà de watchdog.timeout_s, arme data/KILL_SWITCH + alerte.
+#  Sans ce service, un thread principal figé (deadlock réseau, lock
+#  jamais relâché) n'est JAMAIS détecté — le heartbeat seul ne fait
+#  rien s'il n'a pas de lecteur.
+#
+#  Installation (avec crypto-bot.service) :
+#    sudo cp deploy/crypto-bot-watchdog.service /etc/systemd/system/
+#    sudo systemctl daemon-reload
+#    sudo systemctl enable --now crypto-bot-watchdog
+# ═══════════════════════════════════════════════════════════════
+
+[Unit]
+Description=Crypto Trading Bot — Watchdog (dead-man switch)
+Documentation=https://github.com/ton-repo/crypto-bot
+After=network-online.target crypto-bot.service
+Wants=crypto-bot.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/crypto_bot
+
+ExecStart=/opt/crypto_bot/.venv/bin/python -m app.live.watchdog
+
+# Toujours relancer : un watchdog mort = plus de dead-man switch.
+Restart=always
+RestartSec=10s
+
+# Empreinte minuscule — aucun besoin des quotas du bot principal.
+MemoryMax=256M
+CPUQuota=10%
+LimitNOFILE=4096
+
+StandardOutput=append:/opt/crypto_bot/logs/watchdog.log
+StandardError=append:/opt/crypto_bot/logs/watchdog.log
+
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONPATH=/opt/crypto_bot"
+Environment="VIRTUAL_ENV=/opt/crypto_bot/.venv"
+
+[Install]
+WantedBy=multi-user.target

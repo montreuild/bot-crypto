@@ -10,6 +10,8 @@
 #    sudo cp deploy/crypto-bot.service /etc/systemd/system/
 #    sudo systemctl daemon-reload
 #    sudo systemctl enable --now crypto-bot
+#  ⚠ Installer AUSSI le dead-man switch (process séparé, cf. OPS-03) :
+#    sudo systemctl enable --now crypto-bot-watchdog
 # ═══════════════════════════════════════════════════════════════
 
 [Unit]
