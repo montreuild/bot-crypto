@@ -6,6 +6,32 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🛠 Audit Vague 0 : régressions per-symbole corrigées (BT-01, BT-12, OPS-01, UI-02/03/04)
+
+Exécution de la « Vague 0 » du plan d'audit (docs/audit/00-INDEX.md) — les six
+chemins secondaires qui supposaient encore l'ancien slot 2-parties :
+
+- **[BT-01]** `/api/optimize/apply` transmet désormais le `symbol` du job à
+  `apply_best_params` — un apply manuel n'écrase plus le mapping par symbole
+  des autres paires. Tests de coexistence + migration d'entrée héritée.
+- **[BT-12]** `/api/optimize/start` accepte `symbols` (CSV) : boucle
+  fetch+jobs par symbole (réponse `per_symbol`), mono-symbole inchangé.
+- **[OPS-01]** Clés héritées 2-parties (`slot_budgets`, `disabled_slots`,
+  `manual_active`) : repli par préfixe vers les slots 3-parties (helper
+  `_lookup_legacy`, log au chargement, priorité à la clé exacte ; la
+  désactivation d'un forçage lève aussi la clé héritée). 6 tests.
+- **[UI-02]** Écran /config : panneau « Overrides par symbole » par stratégie
+  (sélecteurs TF+symbole, éditeur, liste des overrides existants) ; l'API
+  `strategy-params` accepte `timeframe`+`symbol` et écrit dans
+  `optimizer_results[tf][symbole]` via `apply_best_params` (oos_score
+  préservé, base intacte) ; nouveau `GET /api/config/strategy-overrides`.
+- **[UI-03]** /audit n'écrase plus les résultats OOS entre symboles ;
+  `backtest_history` passe au slot 3-parties.
+- **[UI-04]** /trades : filtre « Slot » à 3 parties (`strat::tf::symbole`,
+  libellé « Strat TF · Paire ») — ne mélange plus les paires.
+
+483 tests OK (13 nouveaux).
+
 ### 🎯 Configs par symbole : `optimizer_results[strat][tf][symbol]` + slots par symbole
 
 **Séparation complète des configs par symbole** : une stratégie a une config BTC

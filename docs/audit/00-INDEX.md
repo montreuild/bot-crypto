@@ -31,19 +31,19 @@ autre contexte (fichiers:lignes, directive pas-à-pas, critère d'acceptation).
    tag de l'item dans le message (ex. `[BT-01] …`).
 4. **Ne pas committer `data/`** (`git add -A ':!data'`) sauf décision DEAD-03.
 
-## 🚨 Vague 0 — Régressions de la refonte per-symbole (à corriger EN PREMIER)
+## 🚨 Vague 0 — Régressions de la refonte per-symbole — ✅ RÉALISÉE (2026-07-11)
 
 Ces items sont des conséquences directes de la refonte : le cœur est migré,
-mais des chemins secondaires supposent encore l'ancien slot 2-parties.
+mais des chemins secondaires supposaient encore l'ancien slot 2-parties.
 
-| Item | Quoi | Effort |
-|---|---|---|
-| **BT-01** | `/api/optimize/apply` n'envoie pas le symbole → **écrase les configs des autres symboles** | S |
-| **OPS-01** | `manual_active` (15 clés) et `slot_budgets` (7 clés) hérités 2-parties **orphelins silencieux** | M |
-| **UI-03** | audit.html écrase les résultats OOS entre symboles (+ backtest_history.py en 2-parties) | M |
-| **UI-04** | trades.html : filtre « Slot » 2-parties incohérent | S |
-| **BT-12** | Route `/api/optimize/start` mono-symbole (seul le scheduler boucle) | S |
-| **UI-02** | config.html : édition des params sans dimension symbole | L |
+| Item | Quoi | Effort | État |
+|---|---|---|---|
+| **BT-01** | `/api/optimize/apply` n'envoie pas le symbole → **écrase les configs des autres symboles** | S | ✅ |
+| **OPS-01** | `manual_active` (15 clés) et `slot_budgets` (7 clés) hérités 2-parties **orphelins silencieux** | M | ✅ |
+| **UI-03** | audit.html écrase les résultats OOS entre symboles (+ backtest_history.py en 2-parties) | M | ✅ |
+| **UI-04** | trades.html : filtre « Slot » 2-parties incohérent | S | ✅ |
+| **BT-12** | Route `/api/optimize/start` mono-symbole (seul le scheduler boucle) | S | ✅ |
+| **UI-02** | config.html : édition des params sans dimension symbole | L | ✅ |
 
 ## 🔴 Vague 1 — Sécurité & intégrité (avant tout passage en réel)
 
