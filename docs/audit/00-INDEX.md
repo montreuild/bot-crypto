@@ -45,7 +45,7 @@ mais des chemins secondaires supposaient encore l'ancien slot 2-parties.
 | **BT-12** | Route `/api/optimize/start` mono-symbole (seul le scheduler boucle) | S | ✅ |
 | **UI-02** | config.html : édition des params sans dimension symbole | L | ✅ |
 
-## 🔴 Vague 1 — Sécurité & intégrité (avant tout passage en réel)
+## 🔴 Vague 1 — Sécurité & intégrité — ✅ RÉALISÉE (2026-07-11)
 
 | Item | Quoi | Effort |
 |---|---|---|
@@ -56,7 +56,7 @@ mais des chemins secondaires supposaient encore l'ancien slot 2-parties.
 | OPS-05 | 5 endpoints GET sans verify_api_key | S |
 | OPS-07 | Écriture parquet non atomique + verrou intra-process seulement | M |
 
-## 🟠 Vague 2 — Intégrité de la mesure (le backtest doit dire la vérité)
+## 🟠 Vague 2 — Intégrité de la mesure — ✅ RÉALISÉE (2026-07-11)
 
 | Item | Quoi | Effort |
 |---|---|---|

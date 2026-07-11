@@ -6,6 +6,48 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🛡 Audit Vagues 1-2 : sécurité + intégrité de la mesure (14 items)
+
+**Vague 1 — Sécurité (docs/audit)** :
+- **[UI-01]** XSS corrigée : échappement unifié sur `escHtml()` partagé
+  (data.html laissait passer les guillemets dans un attribut onclick →
+  boutons passés en data-attributes + délégation d'événement).
+- **[OPS-02]** `web.host=0.0.0.0` sans `web.api_key` → **blocage** au
+  chargement (override dev : `ALLOW_INSECURE_WEB=1`).
+- **[OPS-03]** Unit systemd `crypto-bot-watchdog.service` : le dead-man
+  switch a enfin un lecteur en production.
+- **[OPS-04]** `paper_mode=false` sans canal de notification → log CRITICAL.
+- **[OPS-05]** 6 endpoints GET (settings/changelog/optimize status/stream/
+  results/spaces) exigent désormais la clé API.
+- **[OPS-07]** CandleStore : écriture parquet **atomique** (tmp + os.replace).
+
+**Vague 2 — Intégrité de la mesure** :
+- **[BT-02]** Monte-Carlo réparé : bootstrap avec remise pour l'équité
+  finale/prob_profit (la permutation donnait p5=p95) ; permutation conservée
+  pour drawdown/ruine (statistiques d'ordre).
+- **[BT-03]** `max_notional_pct` unique (0.20) backtest/live — le backtest
+  plafonnait à 50 % du capital quand le live exécute 20 %. Delta documenté
+  (smart_money BTC 4h : FULL +483→+329 mais PF 1.67→1.90 — le backtest dit
+  désormais la vérité du live).
+- **[ARCH-01]** Parité : `_merge_params` (live) filtre `_GLOBAL_PARAM_KEYS`
+  comme le backtest — une clé globale glissée dans optimizer_results ne peut
+  plus modifier le risque en live.
+- **[BT-04]** Le bouton « Appliquer » passe le MÊME garde-fou que l'auto-apply
+  (refus 409 motivé, override `force=true` loggé).
+- **[BT-06]** Seuils unifiés (app/core/stats_thresholds.py) :
+  MIN_SIGNIFICANT_TRADES=10 pour toute décision engageante (apply, promotion
+  ACTIF — fidelity_min_fills 2→10) ; 2 réservé à l'anti-dégénérescence.
+- **[BT-07]** Gate **walk-forward** sur l'auto-apply : best_params figés,
+  consistency ≥ 60 % sur 5 folds requise (désactivable optimizer.wf_gate).
+- **[BT-08]** Convention IS/OOS unique (app/core/is_oos.py) : WARMUP=210 et
+  fraction 0.35 dédupliqués (3 sites auto_optimizer + optimizer) —
+  byte-identique (test d'équivalence des indices de coupure).
+- **[BT-09]** Le backtest applique la même **courbe de dé-risquage en
+  drawdown** que le live (×0.75 >5 %, ×0.5 >10 % — app/core/risk_curve.py).
+  BTC 4h byte-identique (aucun DD >5 % sur ce run).
+
+25 nouveaux tests. 508 tests OK.
+
 ### 🛠 Audit Vague 0 : régressions per-symbole corrigées (BT-01, BT-12, OPS-01, UI-02/03/04)
 
 Exécution de la « Vague 0 » du plan d'audit (docs/audit/00-INDEX.md) — les six
