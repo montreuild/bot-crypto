@@ -487,7 +487,53 @@ class AutoOptimizer:
                     logger.info(f"[AutoOpt] {job_id} : gate d'apply refusé — {reason}")
                 return ok
 
-            if auto_apply and result.get("best_params") and _beats_baseline():
+            def _wf_consistent() -> bool:
+                """Gate walk-forward (BT-07) : les best_params FIGÉS (aucune
+                re-optimisation par fold) doivent rester positifs sur une
+                majorité de fenêtres OOS glissantes avant l'auto-apply — un
+                unique split IS/OOS ne suffit pas. Neutre (True) si le gate
+                est désactivé (optimizer.wf_gate: false), si les données
+                complètes manquent, ou si le walk-forward est indisponible
+                (historique trop court) : on ne durcit pas à l'aveugle."""
+                opt_cfg = (self.cfg.get("optimizer") or {})
+                if not bool(opt_cfg.get("wf_gate", True)) or df_full is None:
+                    return True
+                min_cons = float(opt_cfg.get("wf_min_consistency", 60.0))
+                try:
+                    from copy import deepcopy
+                    from app.engine.backtest import WalkForwardAnalyzer
+                    cfg2 = {k: v for k, v in self.cfg.items()}
+                    sp = deepcopy(self.cfg.get("strategy_params") or {})
+                    frozen = dict(sp.get(strategy_name, {}))
+                    frozen.update(result["best_params"])
+                    sp[strategy_name] = frozen
+                    cfg2["strategy_params"] = sp
+                    cfg2["optimizer_results"] = {}   # params figés, pas d'overlay
+                    mod = importlib.import_module(f"app.strategies.{strategy_name}")
+                    eng = Engine()
+                    eng.register(mod.Strategy(), silent=True)
+                    wf = WalkForwardAnalyzer(eng, cfg2,
+                                             n_folds=int(opt_cfg.get("wf_folds", 5)))
+                    res_wf = wf.run(df_full, symbol)
+                    if "error" in res_wf:
+                        logger.info(f"[AutoOpt] {job_id} : walk-forward indisponible "
+                                    f"({res_wf['error']}) — gate neutre")
+                        return True
+                    cons = float(res_wf.get("consistency", 0.0))
+                    _update_job(job_id, wf_consistency=cons)
+                    if cons < min_cons:
+                        logger.info(f"[AutoOpt] {job_id} : gate walk-forward refusé — "
+                                    f"consistency {cons:.0f}% < {min_cons:.0f}%")
+                        return False
+                    return True
+                except Exception as e:
+                    logger.warning(f"[AutoOpt] {job_id} : walk-forward KO ({e}) — gate neutre")
+                    return True
+
+            gate_ok = bool(auto_apply and result.get("best_params")
+                           and _beats_baseline() and _wf_consistent())
+
+            if gate_ok:
                 best_params = result["best_params"]
                 # Config par symbole : on écrit sous optimizer_results[tf][symbol]
                 # (chaque paire a sa propre config, elles coexistent).
@@ -507,12 +553,12 @@ class AutoOptimizer:
                         f"WR={best_oos_wr:.1f}% vs {baseline_wr:.1f}%, "
                         f"Sharpe={best_oos_sharpe:.2f} vs {baseline_sharpe:.2f})"
                     )
-            elif auto_apply and result.get("best_params") and not _beats_baseline():
+            elif auto_apply and result.get("best_params"):
                 logger.info(
-                    f"[AutoOpt] {job_id} : application refusée — résultat inférieur au baseline "
-                    f"(OOS PnL={best_oos_pnl:+.2f} vs baseline={baseline_pnl:+.2f}, "
+                    f"[AutoOpt] {job_id} : application refusée (gate qualité ou walk-forward) — "
+                    f"OOS PnL={best_oos_pnl:+.2f} vs baseline={baseline_pnl:+.2f}, "
                     f"WR={best_oos_wr:.1f}% vs {baseline_wr:.1f}%, "
-                    f"Sharpe={best_oos_sharpe:.2f} vs {baseline_sharpe:.2f})"
+                    f"Sharpe={best_oos_sharpe:.2f} vs {baseline_sharpe:.2f}"
                 )
                 # Non appliqué = non utilisé : on trace pour l'audit sans écrire
                 # dans optimizer_results (sinon le paramétrage refusé deviendrait
