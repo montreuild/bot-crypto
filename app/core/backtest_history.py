@@ -1,12 +1,15 @@
-"""Persistance du dernier backtest par slot (stratégie::timeframe).
+"""Persistance du dernier backtest par slot (stratégie::timeframe[::symbole]).
 
 Chaque lancement de backtest via l'API enregistre un résumé léger des métriques
-par slot ``{stratégie}::{timeframe}``. La page Audit OOS lit ces résumés pour
-afficher, à côté du score OOS de l'optimiseur, le résultat du dernier backtest
-réel de chaque stratégie pour chaque slot.
+par slot ``{stratégie}::{timeframe}::{symbole}`` (3 parties, alignée sur le
+modèle de slot utilisé partout ailleurs — cf. ``app.core.bot_identity``). La
+page Audit OOS lit ces résumés pour afficher, à côté du score OOS de
+l'optimiseur, le résultat du dernier backtest réel de chaque stratégie pour
+chaque slot, sans écraser les entrées d'un symbole avec celles d'un autre.
 
 Stockage : ``data/backtest_history.json`` — un dict ``slot_key → résumé``, le
-dernier backtest écrasant le précédent pour le même slot.
+dernier backtest écrasant le précédent pour le même slot (même stratégie,
+même timeframe, même symbole).
 """
 import json
 import logging
@@ -54,7 +57,8 @@ def record_backtest(strategy: str, timeframe: str, symbol: str,
     """
     if not strategy or not timeframe:
         return
-    slot_key = f"{strategy}::{timeframe}"
+    from app.core.bot_identity import _slot_key
+    slot_key = _slot_key(strategy, timeframe, symbol)
     summary = {k: result.get(k) for k in _SUMMARY_FIELDS if result.get(k) is not None}
     summary.update({
         "slot_key":  slot_key,
