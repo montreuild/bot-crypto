@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
 
+from app.core.bot_identity import parse_slot_key
+
 logger = logging.getLogger(__name__)
 
 # Defaults (can be overridden via config)
@@ -21,6 +23,37 @@ _DEFAULT_REBALANCE_INTERVAL = "weekly"  # "daily" or "weekly"
 _DEFAULT_MAX_SYMBOL_EXPOSURE_PCT = 0.25  # max 25% of capital on a single symbol
 _DEFAULT_MAX_PYRAMIDING = 2  # max positions per symbol (pyramiding)
 _VALID_MODES = ("equal", "manual", "performance")
+
+
+def _lookup_legacy(mapping, slot_key: str) -> Optional[str]:
+    """Résout ``slot_key`` (``strategy::tf::symbol``) dans ``mapping`` (dict ou
+    set de clés persistées dans config.yaml), avec repli sur la clé héritée à
+    2 parties ``strategy::tf`` si la clé exacte à 3 parties est absente.
+
+    Cf. OPS-01 : avant la refonte per-symbole, ``capital_allocator.slot_budgets``
+    et ``lifecycle.manual_active`` ne portaient pas la dimension symbole. Une
+    clé 2 parties sans match exact s'applique donc à TOUS les slots de préfixe
+    ``strategy::tf::``. La clé exacte à 3 parties, si présente, a toujours
+    priorité sur la clé héritée.
+
+    Retourne la clé effectivement trouvée dans ``mapping`` (exacte ou héritée),
+    ou ``None`` si aucune des deux ne matche.
+    """
+    if slot_key in mapping:
+        return slot_key
+    strategy, tf, symbol = parse_slot_key(slot_key)
+    if symbol:
+        legacy_key = f"{strategy}::{tf}"
+        if legacy_key in mapping:
+            return legacy_key
+    return None
+
+
+def _legacy_keys(mapping) -> List[str]:
+    """Liste les clés à 2 parties (``strategy::tf``, sans symbole) présentes
+    dans ``mapping`` — utilisé uniquement pour le log de compatibilité au
+    chargement (cf. OPS-01)."""
+    return sorted(k for k in mapping if k.count("::") == 1)
 
 
 @dataclass
@@ -90,6 +123,16 @@ class CapitalAllocator:
         self._rebalance_next: float = self._next_rebalance_ts()
         # Callback optionnel appelé après chaque _apply_mode() : persist_fn(budgets: dict)
         self._persist_callback: Optional[Callable[[dict], None]] = None
+        # Compatibilité OPS-01 : clés héritées à 2 parties (sans symbole),
+        # appliquées par préfixe à tous les slots concernés (cf. _lookup_legacy).
+        legacy_budgets = _legacy_keys(self._custom_budgets)
+        legacy_disabled = _legacy_keys(self._disabled_slots)
+        if legacy_budgets or legacy_disabled:
+            logger.info(
+                "[Allocator] Clés héritées 2-parties détectées (appliquées par "
+                f"préfixe à tous les symboles) : slot_budgets={legacy_budgets}, "
+                f"disabled_slots={legacy_disabled}"
+            )
         self.rebuild_slots(active_per_tf)
         # Reprise des stats hebdo + planning de rebalance après redémarrage.
         self._restore_weekly_stats()
@@ -113,7 +156,7 @@ class CapitalAllocator:
                 if key not in self._slots:
                     self._slots[key] = SlotBudget(
                         slot_key=key, strategy=name, tf=tf, symbol=symbol,
-                        enabled=key not in self._disabled_slots,
+                        enabled=_lookup_legacy(self._disabled_slots, key) is None,
                         budget_pct=0.0,
                         used_notional=0.0,
                         weekly_pnl=0.0, weekly_wins=0,
@@ -153,9 +196,14 @@ class CapitalAllocator:
             # En mode manual, les custom budgets sont appliqués dans _apply_manual_budgets
             # Pour equal/performance, on restaure quand même les custom budgets persistés
             if self._mode == "performance":
-                for key, pct in self._custom_budgets.items():
-                    if key in self._slots and self._slots[key].enabled:
-                        self._slots[key].budget_pct = max(0.01, min(self._max_slot_pct, pct))
+                for slot in self._slots.values():
+                    if not slot.enabled:
+                        continue
+                    found_key = _lookup_legacy(self._custom_budgets, slot.slot_key)
+                    if found_key is not None:
+                        slot.budget_pct = max(
+                            0.01, min(self._max_slot_pct, self._custom_budgets[found_key])
+                        )
         # Persister les budgets calculés si un callback est enregistré
         if self._persist_callback is not None:
             budgets = {k: round(v.budget_pct, 4) for k, v in self._slots.items() if v.enabled}
@@ -187,12 +235,14 @@ class CapitalAllocator:
             if not s.enabled:
                 s.budget_pct = 0.0
 
-        # Appliquer les budgets custom
+        # Appliquer les budgets custom (clé exacte 3-parties, sinon repli sur la
+        # clé héritée 2-parties "strategy::tf" — cf. OPS-01/_lookup_legacy).
         used = 0.0
         unset_keys = []
         for s in active:
-            if s.slot_key in self._custom_budgets:
-                pct = max(0.01, min(self._max_slot_pct, self._custom_budgets[s.slot_key]))
+            found_key = _lookup_legacy(self._custom_budgets, s.slot_key)
+            if found_key is not None:
+                pct = max(0.01, min(self._max_slot_pct, self._custom_budgets[found_key]))
                 s.budget_pct = round(pct, 4)
                 used += s.budget_pct
             else:

@@ -20,7 +20,39 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
+from app.core.bot_identity import parse_slot_key
+
 logger = logging.getLogger(__name__)
+
+
+def _lookup_legacy(mapping, slot_key: str) -> Optional[str]:
+    """Résout ``slot_key`` (``strategy::tf::symbol``) dans ``mapping`` (dict ou
+    set de clés persistées dans config.yaml), avec repli sur la clé héritée à
+    2 parties ``strategy::tf`` si la clé exacte à 3 parties est absente.
+
+    Cf. OPS-01 : avant la refonte per-symbole, ``lifecycle.manual_active`` ne
+    portait pas la dimension symbole. Une clé 2 parties sans match exact
+    s'applique donc à TOUS les slots de préfixe ``strategy::tf::``. La clé
+    exacte à 3 parties, si présente, a toujours priorité sur la clé héritée.
+
+    Retourne la clé effectivement trouvée dans ``mapping`` (exacte ou héritée),
+    ou ``None`` si aucune des deux ne matche.
+    """
+    if slot_key in mapping:
+        return slot_key
+    strategy, tf, symbol = parse_slot_key(slot_key)
+    if symbol:
+        legacy_key = f"{strategy}::{tf}"
+        if legacy_key in mapping:
+            return legacy_key
+    return None
+
+
+def _legacy_keys(mapping) -> List[str]:
+    """Liste les clés à 2 parties (``strategy::tf``, sans symbole) présentes
+    dans ``mapping`` — utilisé uniquement pour le log de compatibilité au
+    chargement (cf. OPS-01)."""
+    return sorted(k for k in mapping if k.count("::") == 1)
 
 
 class LifecycleState:
@@ -52,6 +84,14 @@ class SlotLifecycleManager:
         self._fidelity_min_fills = int(lc.get("fidelity_min_fills", 2))
         # Bypass manuel : bots forcés ACTIF (droit de veto utilisateur).
         self._manual_active   = set(lc.get("manual_active", []) or [])
+        # Compatibilité OPS-01 : clés héritées à 2 parties (sans symbole),
+        # appliquées par préfixe à tous les slots concernés (cf. _lookup_legacy).
+        legacy_manual = _legacy_keys(self._manual_active)
+        if legacy_manual:
+            logger.info(
+                "[Lifecycle] Clés manual_active héritées 2-parties détectées "
+                f"(appliquées par préfixe à tous les symboles) : {legacy_manual}"
+            )
         # Lissage anti-flush
         self._min_active      = int(lc.get("min_active_bots", 2))
         self._max_demotions_per_day = int(lc.get("max_demotions_per_day", 2))
@@ -119,6 +159,12 @@ class SlotLifecycleManager:
             self._manual_active.add(slot_key)
         else:
             self._manual_active.discard(slot_key)
+            # Cf. OPS-01 : si le forçage venait d'une clé héritée 2-parties,
+            # la retirer aussi — sinon la désactivation resterait sans effet
+            # (le repli par préfixe re-forcerait le slot au prochain evaluate).
+            legacy = _lookup_legacy(self._manual_active, slot_key)
+            if legacy is not None:
+                self._manual_active.discard(legacy)
 
     # ── Évaluation lissée ────────────────────────────────────────────────────
     def evaluate(self, slots_data: Dict[str, dict]) -> dict:
@@ -136,7 +182,7 @@ class SlotLifecycleManager:
             return sum(1 for s in states.values() if s != LifecycleState.RETIRE)
 
         proposed = {
-            k: self._propose({**d, "manual_active": (k in self._manual_active)
+            k: self._propose({**d, "manual_active": (_lookup_legacy(self._manual_active, k) is not None)
                               or bool(d.get("manual_active"))})
             for k, d in slots_data.items()
         }
