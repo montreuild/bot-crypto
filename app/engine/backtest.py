@@ -961,6 +961,17 @@ class WalkForwardAnalyzer:
 
 # ── Monte-Carlo ──
 class MonteCarlo:
+    """Deux familles de statistiques, calculées avec la méthode adaptée (BT-02) :
+
+    - **Risque de SÉQUENCE** (``max_dd_p95``, ``prob_ruin_10pct``) : permutation
+      des PnL (sans remise). La somme est invariante — seul l'ORDRE change —
+      c'est exactement ce qu'on veut pour la distribution du drawdown.
+    - **Risque d'ÉCHANTILLONNAGE** (``final_equity_mean/p5/p95``,
+      ``prob_profit``) : bootstrap AVEC remise (rng.choice, replace=True).
+      La permutation donnait ici une distribution dégénérée : équité finale
+      identique à chaque run (p5 = p95, prob_profit ∈ {0, 100}).
+    """
+
     def __init__(self, n_runs: int = 200, confidence: float = 0.95):
         self.n_runs    = n_runs
         self.confidence = confidence
@@ -976,12 +987,15 @@ class MonteCarlo:
         rng    = np.random.default_rng(42)
 
         for _ in range(self.n_runs):
+            # Séquence (permutation) → drawdown/ruine.
             shuffled = rng.permutation(pnls)
             equity   = np.concatenate([[initial_capital], initial_capital + np.cumsum(shuffled)])
-            finals.append(float(equity[-1]))
             peak = np.maximum.accumulate(equity)
             dd   = (equity - peak) / np.where(peak > 0, peak, 1) * 100
             max_dds.append(float(dd.min()))
+            # Échantillonnage (bootstrap avec remise) → équité finale.
+            resampled = rng.choice(pnls, size=len(pnls), replace=True)
+            finals.append(float(initial_capital + resampled.sum()))
 
         return {
             "runs":               self.n_runs,
