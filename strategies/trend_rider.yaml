@@ -12,7 +12,10 @@
 #   oos_score POSITIF, tradable. Edge modeste mais indépendant du smart_money.
 #   NON activée par défaut (enabled: false) — complément expérimental à valider
 #   en forward avant promotion.
-enabled: false
+# ACTIVÉE (2026-07-11) : config ETH/USDC dédiée mesurée OOS +286 (PF 1.27) — voir
+# optimizer_results ci-dessous. Sur 4h, tourne sur ETH ; sur BTC elle reste sous
+# le top-N (breakout/supertrend classent mieux), donc n'y trade pas en pratique.
+enabled: true
 
 params:
   ema_fast: 20

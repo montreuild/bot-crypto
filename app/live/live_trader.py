@@ -834,17 +834,6 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                 return
 
             from app.engine.auto_optimizer import AutoOptimizer
-            symbol = "BTC/USDC"
-            df_map = {}
-            for tf in self.timeframes:
-                limit = RECOMMENDED_LIMIT.get(tf, 500)
-                df    = self.scanner.fetch_ohlcv(symbol, tf, limit=limit)
-                if df is not None and len(df) > 0:
-                    df_map[tf] = df
-
-            if not df_map:
-                logger.warning("[AutoOpt] Données insuffisantes pour l'optimisation planifiée.")
-                return
 
             # Ne ré-optimiser que les stratégies réellement actives/activées —
             # évite de lancer un job par stratégie × TF (jusqu'à 31×5) à chaque
@@ -856,16 +845,33 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             active_names |= set(self.cfg.get("strategies", {}).get("enabled", []))
             strategies = sorted(active_names) or None
 
+            # Config PAR SYMBOLE : on optimise chaque symbole configuré séparément
+            # → chaque paire écrit sa propre optimizer_results[tf][symbol]. La
+            # concurrence globale reste bornée par le sémaphore de l'optimiseur.
+            symbols = (self.cfg.get("scanner") or {}).get("symbols") or ["BTC/USDC"]
             opt = AutoOptimizer(
                 self.cfg, n_trials=40, method="bayesian",
                 on_apply_callback=self._on_opt_applied
             )
-            opt.start_async(df_map, symbol, strategies=strategies,
-                            timeframes=self.timeframes, auto_apply=True)
-            logger.info(
-                f"[AutoOpt] Jobs lancés — stratégies={strategies or 'toutes'} "
-                f"| TFs={list(df_map.keys())}"
-            )
+            launched = 0
+            for symbol in symbols:
+                df_map = {}
+                for tf in self.timeframes:
+                    limit = RECOMMENDED_LIMIT.get(tf, 500)
+                    df    = self.scanner.fetch_ohlcv(symbol, tf, limit=limit)
+                    if df is not None and len(df) > 0:
+                        df_map[tf] = df
+                if not df_map:
+                    logger.warning(f"[AutoOpt] Données insuffisantes pour {symbol}.")
+                    continue
+                opt.start_async(df_map, symbol, strategies=strategies,
+                                timeframes=self.timeframes, auto_apply=True)
+                launched += 1
+                logger.info(
+                    f"[AutoOpt] Jobs {symbol} lancés — "
+                    f"stratégies={strategies or 'toutes'} | TFs={list(df_map.keys())}")
+            if not launched:
+                logger.warning("[AutoOpt] Aucune donnée — optimisation planifiée annulée.")
         except Exception as e:
             logger.error(f"[AutoOpt] Erreur : {e}", exc_info=True)
 
@@ -1018,20 +1024,28 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         """
         try:
             from app.engine.auto_optimizer import AutoOptimizer
-            symbol = self._fwd_test_symbol
-            df_map = {}
-            for tf in self.timeframes:
-                limit = RECOMMENDED_LIMIT.get(tf, 500)
-                df = self.scanner.fetch_ohlcv(symbol, tf, limit=limit)
-                if df is not None and len(df) > 0:
-                    df_map[tf] = df
-            if not df_map:
-                logger.warning("[Lifecycle] Re-opt annulée : données insuffisantes.")
-                return
+            # Config par symbole : re-optimise sur chaque symbole configuré (chacun
+            # réécrit sa propre optimizer_results[tf][symbol]).
+            symbols = ((self.cfg.get("scanner") or {}).get("symbols")
+                       or [self._fwd_test_symbol])
             opt = AutoOptimizer(self.cfg, n_trials=40, method="bayesian",
                                 on_apply_callback=self._on_opt_applied)
-            opt.start_async(df_map, symbol, strategies=strategies,
-                            timeframes=self.timeframes, auto_apply=True)
+            launched = 0
+            for symbol in symbols:
+                df_map = {}
+                for tf in self.timeframes:
+                    limit = RECOMMENDED_LIMIT.get(tf, 500)
+                    df = self.scanner.fetch_ohlcv(symbol, tf, limit=limit)
+                    if df is not None and len(df) > 0:
+                        df_map[tf] = df
+                if not df_map:
+                    logger.warning(f"[Lifecycle] Re-opt {symbol} : données insuffisantes.")
+                    continue
+                opt.start_async(df_map, symbol, strategies=strategies,
+                                timeframes=self.timeframes, auto_apply=True)
+                launched += 1
+            if not launched:
+                logger.warning("[Lifecycle] Re-opt annulée : aucune donnée.")
         except Exception as e:
             logger.error(f"[Lifecycle] _trigger_reopt KO : {e}", exc_info=True)
 

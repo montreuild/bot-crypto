@@ -501,9 +501,11 @@ class AutoOptimizer:
 
             if auto_apply and result.get("best_params") and _beats_baseline():
                 best_params = result["best_params"]
+                # Config par symbole : on écrit sous optimizer_results[tf][symbol]
+                # (chaque paire a sa propre config, elles coexistent).
                 applied = apply_best_params(
                     strategy_name, best_params, self.config_path,
-                    timeframe=timeframe, oos_score=best_oos_score
+                    timeframe=timeframe, oos_score=best_oos_score, symbol=symbol
                 )
                 if applied and self.on_apply_callback:
                     try:

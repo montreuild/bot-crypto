@@ -31,6 +31,15 @@ lieu d'un unique jeu par `(stratégie, timeframe)` partagé par tous les symbole
   (écrit sous `[tf][symbol]`, migre une entrée héritée vers BTC/USDC) : tous
   câblés sur le symbole. 12 tests (résolution + slots + identité + allocateur).
 
+**Activation + auto-optimiseur par symbole**
+- **`trend_rider` activée** (`enabled: true`) : sur 4h elle tourne sur **ETH/USDC**
+  (config OOS +286) ; sur BTC elle reste sous le top-N, donc n'y trade pas.
+- **Auto-optimiseur bouclé par symbole** : la ré-optimisation planifiée et la
+  re-optimisation de cycle de vie itèrent désormais `scanner.symbols` — chaque
+  paire écrit sa propre `optimizer_results[tf][symbol]` (via `apply_best_params`
+  avec `symbol`). L'auto-apply reste borné par « bat la baseline » et la
+  viabilité OOS, donc une paire où une stratégie ne marche pas ne s'active pas.
+
 **Phase 3 — Web / UI**
 - `bot_identity.parse_slot_key` (décompose `strat::tf[::symbol]`, robuste aux "/"
   des symboles). Route **portfolio** : parse 3-composantes + expose `symbol` par
