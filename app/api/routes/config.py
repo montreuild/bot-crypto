@@ -438,7 +438,7 @@ def toggle_strategy_timeframe(strategy: str, timeframe: str, enabled: bool = Tru
 
 # ── GET /api/backtest/settings ────────────────────────────────────────────
 
-@router.get("/api/backtest/settings")
+@router.get("/api/backtest/settings", dependencies=[Depends(verify_api_key)])
 def backtest_settings():
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
@@ -463,7 +463,7 @@ def backtest_settings():
 
 # ── GET /api/config/changelog ─────────────────────────────────────────────
 
-@router.get("/api/config/changelog")
+@router.get("/api/config/changelog", dependencies=[Depends(verify_api_key)])
 def get_changelog(limit: int = 50):
     """Retourne les N dernières entrées du changelog d'optimisation."""
     import json as _json

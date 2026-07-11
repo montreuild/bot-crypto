@@ -216,7 +216,7 @@ def optimizer_start(
         state._opt_semaphore.release()
 
 
-@router.get("/api/optimize/status")
+@router.get("/api/optimize/status", dependencies=[Depends(verify_api_key)])
 def optimizer_status(job_id: str = ""):
     from app.engine.auto_optimizer import get_job, get_all_jobs
     if job_id:
@@ -227,7 +227,7 @@ def optimizer_status(job_id: str = ""):
     return get_all_jobs()
 
 
-@router.get("/api/optimize/stream")
+@router.get("/api/optimize/stream", dependencies=[Depends(verify_api_key)])
 async def optimizer_stream(job_id: str):
     from app.engine.auto_optimizer import get_job
     import asyncio
@@ -340,7 +340,7 @@ def optimizer_delete_job(job_id: str):
     return {"status": "deleted", "job_id": job_id}
 
 
-@router.get("/api/optimize/results")
+@router.get("/api/optimize/results", dependencies=[Depends(verify_api_key)])
 def optimizer_results():
     """Retourne les résultats d'optimisation classés par (strategy, tf)."""
     if not state.cfg:
@@ -367,7 +367,7 @@ def optimizer_results():
     }
 
 
-@router.get("/api/optimize/spaces")
+@router.get("/api/optimize/spaces", dependencies=[Depends(verify_api_key)])
 def optimizer_spaces():
     from app.engine.optimizer import PARAM_SPACES, STRATEGY_TIMEFRAMES
     from app.engine.auto_optimizer import _is_ml_strategy
