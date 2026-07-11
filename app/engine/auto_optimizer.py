@@ -472,32 +472,21 @@ class AutoOptimizer:
             best_oos_wr    = result.get("best_oos_wr", 0)
             best_oos_sharpe = result.get("best_oos_sharpe", 0)
 
-            # Un paramétrage n'est appliqué que s'il est meilleur que le baseline.
-            # Le PnL OOS est un critère OBLIGATOIRE : un meilleur Win Rate ou
-            # Sharpe ne doit jamais suffire à appliquer un paramétrage qui gagne
-            # moins (ex. +33 à 3 trades qui « outvote » +96 à 15 trades sur WR +
-            # Sharpe). En plus du PnL, on exige une amélioration sur au moins un
-            # critère de qualité (Win Rate ou Sharpe).
-            # TODO(Phase 0 — durcissement optimiseur, reporté à une phase
-            # ultérieure) : remplacer le gate ci-dessous par
-            #   - un seuil de **Deflated Sharpe** (Bailey & López de Prado) au
-            #     gate de naissance, pour corriger le biais de sélection des
-            #     ~40 essais (multiple-testing) ;
-            #   - un minimum de **≥ 10 trades OOS** (au lieu de 3) ;
-            #   - une vérification **walk-forward** dans la décision d'apply.
-            # Cf. docs/SYNTHESE_VISION_PRODUIT.md §5 « Durcissement optimiseur ».
+            # Garde-fou UNIQUE d'application (BT-04/BT-06) : fonction pure
+            # partagée avec la route /api/optimize/apply — échantillon OOS
+            # ≥ MIN_SIGNIFICANT_TRADES (10, cf. app/core/stats_thresholds.py,
+            # remplace l'ancien seuil 3 du TODO), PnL OOS positif ET meilleur
+            # que le baseline, plus une amélioration de qualité (WR ou Sharpe).
+            # TODO(Phase 0) restant : seuil de **Deflated Sharpe** (Bailey &
+            # López de Prado) au gate de naissance (biais multiple-testing).
+            from app.engine.opt_scoring import beats_baseline as _bb
+
             def _beats_baseline() -> bool:
-                if oos_trades < 3:
-                    return False
-                if best_oos_pnl <= 0:
-                    return False
-                if best_oos_pnl <= baseline_pnl:
-                    return False
-                quality_improvements = sum([
-                    best_oos_wr     > baseline_wr,
-                    best_oos_sharpe > baseline_sharpe,
-                ])
-                return quality_improvements >= 1
+                ok, reason = _bb(oos_trades, best_oos_pnl, best_oos_wr,
+                                 best_oos_sharpe, _baseline)
+                if not ok:
+                    logger.info(f"[AutoOpt] {job_id} : gate d'apply refusé — {reason}")
+                return ok
 
             if auto_apply and result.get("best_params") and _beats_baseline():
                 best_params = result["best_params"]

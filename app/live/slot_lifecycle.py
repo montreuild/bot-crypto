@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from app.core.bot_identity import parse_slot_key
+from app.core.stats_thresholds import MIN_SIGNIFICANT_TRADES
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,10 @@ class SlotLifecycleManager:
         # Promotion par edge (cf. docs/CONCEPTION_PROMOTION_PAR_EDGE.md)
         self._edge_min_trades = int(lc.get("edge_min_trades", 20))
         self._max_worst_trade = float(lc.get("max_worst_trade_pct", 50.0))
-        self._fidelity_min_fills = int(lc.get("fidelity_min_fills", 2))
+        # BT-06 : la promotion ACTIF est une décision engageante → seuil de
+        # significativité partagé (10) et non plus 2 (indiscernable du bruit).
+        self._fidelity_min_fills = int(lc.get("fidelity_min_fills",
+                                              MIN_SIGNIFICANT_TRADES))
         # Bypass manuel : bots forcés ACTIF (droit de veto utilisateur).
         self._manual_active   = set(lc.get("manual_active", []) or [])
         # Compatibilité OPS-01 : clés héritées à 2 parties (sans symbole),

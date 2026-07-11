@@ -142,7 +142,9 @@ lifecycle:
   edge_min_trades: 15
   edge_conf: 0.85
   max_worst_trade_pct: 50.0
-  fidelity_min_fills: 2
+  # BT-06 : seuil de promotion ACTIF aligné sur MIN_SIGNIFICANT_TRADES
+  # (app/core/stats_thresholds.py). Ancienne valeur : 2 (bruit statistique).
+  fidelity_min_fills: 10
   manual_active:
     - fft_spectral::1d
     - ml_dynamic_threshold::1h

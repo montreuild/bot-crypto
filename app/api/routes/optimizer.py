@@ -270,9 +270,19 @@ async def optimizer_stream(job_id: str):
 
 
 @router.post("/api/optimize/apply", dependencies=[Depends(verify_api_key)])
-def optimizer_apply(job_id: str, config_path: str = "config.yaml"):
+def optimizer_apply(job_id: str, config_path: str = "config.yaml",
+                    force: bool = False):
+    """Applique le meilleur paramétrage d'un job terminé.
+
+    Garde-fou qualité (BT-04) : mêmes exigences que l'auto-apply
+    (``opt_scoring.beats_baseline`` — ≥ MIN_SIGNIFICANT_TRADES trades OOS,
+    PnL OOS positif et meilleur que le baseline, amélioration WR ou Sharpe).
+    En cas de refus → HTTP 409 avec la raison. ``force=true`` = override
+    utilisateur explicite et assumé.
+    """
     from app.engine.auto_optimizer import get_job
     from app.engine.optimizer import apply_best_params
+    from app.engine.opt_scoring import beats_baseline
     from app.core.config import load_config as _reload_cfg
 
     job = get_job(job_id)
@@ -290,6 +300,18 @@ def optimizer_apply(job_id: str, config_path: str = "config.yaml"):
     symbol = job.get("symbol")
     if not best or not strat:
         raise HTTPException(400, "Aucun meilleur paramètre")
+
+    ok_quality, reason = beats_baseline(
+        result.get("best_oos_trades", 0), result.get("best_oos_pnl", 0),
+        result.get("best_oos_wr", 0), result.get("best_oos_sharpe", 0),
+        job.get("baseline", {}),
+    )
+    if not ok_quality and not force:
+        raise HTTPException(
+            409, f"Application refusée ({reason}). Utilisez force=true pour "
+                 f"passer outre en connaissance de cause.")
+    if not ok_quality and force:
+        logger.warning(f"[apply] {job_id} : garde-fou contourné (force=true) — {reason}")
 
     ok = apply_best_params(strat, best, config_path,
                            timeframe=tf,

@@ -14,13 +14,22 @@ logger = logging.getLogger(__name__)
 # sein d'une même optimisation (tous les essais partagent le même capital).
 _FALLBACK_CAPITAL = 1000.0
 
+from app.core.stats_thresholds import (            # noqa: E402
+    MIN_TRADES_DEGENERATE, MIN_SIGNIFICANT_TRADES,
+)
 
-def composite_score(res, min_trades: int = 2) -> float:
+
+def composite_score(res, min_trades: int = MIN_TRADES_DEGENERATE) -> float:
     """Score composite d'un résultat de backtest (dict ou BacktestResult).
 
     Combine Sharpe (borné), win-rate, profit factor, expectancy, drawdown,
     nombre de trades, **rendement %** et alpha vs buy & hold. Retourne -999 si
-    moins de ``min_trades`` trades (résultat non significatif).
+    moins de ``min_trades`` trades.
+
+    ⚠ ``min_trades`` est le seuil de NON-DÉGÉNÉRESCENCE (rendre le calcul
+    possible), PAS un seuil de décision : appliquer un paramétrage ou
+    promouvoir un bot exige ``MIN_SIGNIFICANT_TRADES`` trades — voir
+    ``beats_baseline`` et app/core/stats_thresholds.py (BT-06).
 
     Indépendance au budget (Phase 0)
     --------------------------------
@@ -132,3 +141,35 @@ def overfitting_ratio(is_score: float, oos_score: float) -> float:
 # Alias privés historiques (compat avec le code/les tests existants)
 _composite_score   = composite_score
 _overfitting_ratio = overfitting_ratio
+
+
+def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
+                   oos_sharpe: float, baseline: dict,
+                   min_trades: int = MIN_SIGNIFICANT_TRADES) -> tuple:
+    """Garde-fou UNIQUE d'application d'un paramétrage optimisé (BT-04/BT-06).
+
+    Retourne ``(ok, raison)``. Partagé par l'auto-apply (AutoOptimizer) et
+    l'apply manuel (route /api/optimize/apply) — mêmes exigences des deux
+    côtés :
+
+    1. échantillon suffisant : ``oos_trades >= min_trades``
+       (défaut ``MIN_SIGNIFICANT_TRADES`` — cf. app/core/stats_thresholds.py) ;
+    2. PnL OOS strictement positif ;
+    3. PnL OOS strictement meilleur que le baseline (params actuels) ;
+    4. amélioration d'au moins un critère de qualité (win-rate OU Sharpe).
+    """
+    baseline = baseline or {}
+    b_pnl    = baseline.get("pnl", float("-inf"))
+    b_wr     = baseline.get("wr", 0)
+    b_sharpe = baseline.get("sharpe", 0)
+    if oos_trades < min_trades:
+        return False, (f"échantillon OOS insuffisant ({oos_trades} trades "
+                       f"< {min_trades} requis)")
+    if oos_pnl <= 0:
+        return False, f"PnL OOS non positif ({oos_pnl:+.2f})"
+    if oos_pnl <= b_pnl:
+        return False, (f"PnL OOS ({oos_pnl:+.2f}) ≤ baseline ({b_pnl:+.2f})")
+    if not (oos_wr > b_wr or oos_sharpe > b_sharpe):
+        return False, (f"aucune amélioration de qualité (WR {oos_wr:.1f}% vs "
+                       f"{b_wr:.1f}%, Sharpe {oos_sharpe:.2f} vs {b_sharpe:.2f})")
+    return True, "ok"
