@@ -266,19 +266,44 @@ def load_config(path: str = "config.yaml") -> dict:
             "divergeront. Désactivez margin pour un paper trading représentatif."
         )
 
-    # ── Sécurité API web ─────────────────────────────────────────────────────
+    # ── Sécurité API web (OPS-02 : BLOQUANT) ─────────────────────────────────
     # Sans web.api_key, l'auth retombe sur un filtre « localhost only » basé
     # sur l'IP client — contournable derrière un reverse proxy mal configuré
-    # (X-Forwarded-For). Exposer 0.0.0.0 sans clé = API de trading ouverte.
+    # (X-Forwarded-For). Exposer 0.0.0.0 sans clé = API de trading OUVERTE
+    # (start/stop du bot, écriture de config). Le démarrage est donc REFUSÉ,
+    # sauf override explicite et assumé via ALLOW_INSECURE_WEB=1 (dev local).
     web_cfg = cfg.get("web", {})
     if not web_cfg.get("api_key") and str(web_cfg.get("host", "")) in ("0.0.0.0", "::"):
-        logger.warning(
-            "🔓 [Config] web.host=%s SANS web.api_key : l'API n'est protégée que "
-            "par un filtre localhost (fragile derrière un reverse proxy). "
-            "Définissez web.api_key avant toute exposition réseau — "
-            "ex. : python -c \"import secrets; print(secrets.token_urlsafe(32))\"",
-            web_cfg.get("host"),
-        )
+        if os.environ.get("ALLOW_INSECURE_WEB") == "1":
+            logger.warning(
+                "🔓 [Config] web.host=%s SANS web.api_key (override "
+                "ALLOW_INSECURE_WEB=1) : l'API n'est protégée que par le filtre "
+                "localhost — à réserver au développement.", web_cfg.get("host"),
+            )
+        else:
+            raise ValueError(
+                f"web.host={web_cfg.get('host')} SANS web.api_key : l'API de "
+                "trading serait exposée à tout le réseau. Définissez web.api_key "
+                "(ex. : python -c \"import secrets; print(secrets.token_urlsafe(32))\") "
+                "ou, pour du développement local uniquement, lancez avec "
+                "ALLOW_INSECURE_WEB=1."
+            )
+
+    # ── Notifications en réel (OPS-04) ───────────────────────────────────────
+    # paper_mode=false sans AUCUN canal externe : un HALT (margin critique,
+    # kill-switch, mismatch de réconciliation) resterait invisible hors du
+    # dashboard. Alerte CRITICAL — à transformer en blocage si souhaité.
+    if not cfg["trading"].get("paper_mode", True):
+        notif = cfg.get("notifications", {}) or {}
+        channels_on = any(bool(notif.get(k)) for k in
+                          ("telegram_enabled", "whatsapp_enabled", "email_enabled"))
+        if not channels_on:
+            logger.critical(
+                "🚨 [Config] paper_mode=false SANS canal de notification externe "
+                "(telegram/whatsapp/email) : un HALT ou une erreur critique en "
+                "trading RÉEL ne préviendrait personne. Activez au moins un canal "
+                "dans notifications: avant de trader en réel."
+            )
 
     # Compatibilité multi-TF
     _VALID_TIMEFRAMES = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
