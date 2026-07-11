@@ -102,7 +102,9 @@
   <details class="help">
     <summary>Comment ça marche ? — les états ne se choisissent pas, ils se dérivent</summary>
     <div class="help-body">
-      Un <b>bot</b> = une stratégie sur un timeframe (ex. <code>pullback_trend::1h</code>). Il a son
+      Un <b>bot</b> = une stratégie sur un timeframe <b>et un symbole</b>
+      (ex. <code>trend_rider::4h::ETH/USDC</code>) — chaque symbole a sa propre
+      config, indépendante. Il a son
       <b>budget</b> propre et prend tous ses signaux tant qu'il a du budget. Tu ne « l'actives » pas :
       son état est <b>déduit automatiquement</b> de ses trades réels comparés à sa simulation.
       La promotion se joue en deux temps : l'<b>edge</b> se prouve sur le <b>backtest</b>
@@ -231,8 +233,9 @@ function cardHtml(b){
               : b.paused ? '<span class="bdg bdg-paused">Pausé</span>' : '');
   const pnl = b.weekly_pnl;
   const pnlTxt = pnl!=null ? `<span style="color:${pnl>=0?'var(--green)':'var(--red)'}">${(pnl>=0?'+':'')+Number(pnl).toFixed(1)}$ /7j</span>` : '';
+  const symChip = b.symbol ? `<span class="bdg" style="background:var(--cyan-dim);color:var(--cyan)">${escHtml(b.symbol)}</span>` : '';
   return `<div class="bot-card ${cls}" onclick="openBot('${escHtml(b.slot_key)}')">
-    <div class="nm"><span class="dot ${dot}"></span><span style="overflow:hidden;text-overflow:ellipsis">${escHtml(b.slot_key)}</span>${badge}</div>
+    <div class="nm"><span class="dot ${dot}"></span><span style="overflow:hidden;text-overflow:ellipsis">${escHtml(b.slot_key)}</span>${symChip}${badge}</div>
     <div class="meta"><span>${live} trade(s) réel(s)</span><span>${bp.toFixed(0)}% budget</span></div>
     <div class="budget-mini"><i style="width:${Math.min(bp,100)}%"></i></div>
     <div class="meta" style="margin-top:5px"><span>${pnlTxt}</span><span>${b.sim&&b.sim.return_pct!=null?'sim '+pctf(b.sim.return_pct):''}</span></div>

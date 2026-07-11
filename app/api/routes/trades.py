@@ -450,22 +450,26 @@ def audit_results():
 
 @router.get("/api/strategy/{slot_key:path}/performance", dependencies=[Depends(verify_api_key)])
 def strategy_performance(slot_key: str):
-    """Stats détaillées pour un slot strategy::tf (ex: trend::1h)."""
+    """Stats détaillées pour un slot strategy::tf[::symbol] (ex: trend::1h,
+    trend_rider::4h::ETH/USDC)."""
     if not state.SessionLocal:
         raise HTTPException(503, "DB non initialisée")
 
-    parts = slot_key.split("::")
-    if len(parts) != 2:
-        raise HTTPException(400, "Format slot_key invalide. Attendu: strategy::tf (ex: trend::1h)")
+    from app.core.bot_identity import parse_slot_key
+    strategy_name, tf, symbol = parse_slot_key(slot_key)
+    if not strategy_name or not tf:
+        raise HTTPException(400, "Format slot_key invalide. Attendu: "
+                                 "strategy::tf[::symbol] (ex: trend::1h)")
 
-    strategy_name, tf = parts[0], parts[1]
     with session_scope(state.SessionLocal) as session:
         from app.core.database import Trade as _Trade
         q = (session.query(_Trade)
              .filter(_Trade.strategy == strategy_name)
-             .filter(_Trade.timeframe == tf)
-             .order_by(_Trade.time.desc())
-             .limit(500))
+             .filter(_Trade.timeframe == tf))
+        if symbol:
+            q = q.filter(_Trade.symbol == symbol)
+        q = (q.order_by(_Trade.time.desc())
+              .limit(500))
         trades_raw = q.all()
         total    = len(trades_raw)
         wins     = sum(1 for t in trades_raw if (t.pnl or 0) > 0)

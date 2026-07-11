@@ -202,6 +202,18 @@ def _slot_key(strategy: str, timeframe: str, symbol: str = "") -> str:
     return f"{base}::{symbol}" if symbol else base
 
 
+def parse_slot_key(slot_key: str) -> tuple:
+    """Décompose ``strategy::tf[::symbol]`` → ``(strategy, tf, symbol)``.
+
+    ``symbol`` vaut "" pour un slot hérité sans dimension symbole. Robuste aux
+    symboles contenant "/" (ex. BTC/USDC) — seul "::" sépare les composantes."""
+    parts = (slot_key or "").split("::")
+    strategy = parts[0] if parts else ""
+    tf = parts[1] if len(parts) > 1 else ""
+    symbol = parts[2] if len(parts) > 2 else ""
+    return strategy, tf, symbol
+
+
 def register_identity(strategy: str, timeframe: str, params: dict,
                       cfg: dict, symbol: str = "") -> BotIdentity:
     """Identité du bot, en incrémentant la **génération** si les params ont changé.

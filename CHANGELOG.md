@@ -31,6 +31,13 @@ lieu d'un unique jeu par `(stratégie, timeframe)` partagé par tous les symbole
   (écrit sous `[tf][symbol]`, migre une entrée héritée vers BTC/USDC) : tous
   câblés sur le symbole. 12 tests (résolution + slots + identité + allocateur).
 
+**Phase 3 — Web / UI**
+- `bot_identity.parse_slot_key` (décompose `strat::tf[::symbol]`, robuste aux "/"
+  des symboles). Route **portfolio** : parse 3-composantes + expose `symbol` par
+  bot. Route **trades** `/api/strategy/{slot_key}/performance` : accepte le format
+  à symbole et filtre les trades par symbole. Écran **Bots** : puce symbole sur
+  chaque carte + aide mise à jour (bot = stratégie × timeframe × symbole).
+
 **Calibration (vrai Backtester, 4h, OOS 2024+)**
 - **smart_money** : edge **spécifique BTC** (OOS +148). **Négatif OOS sur ETH pour
   les 24 configs testées** → non calibrable sur ETH ; reste BTC-only (config héritée).

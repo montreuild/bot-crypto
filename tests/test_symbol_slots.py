@@ -87,3 +87,12 @@ def test_allocator_per_symbol_slot_keys():
     assert "smart_money::4h::ETH/USDC" not in keys
     for k, slot in alloc._slots.items():
         assert slot.symbol in k
+
+
+# ── parse_slot_key (UI / routes) ──────────────────────────────────────────────
+
+def test_parse_slot_key():
+    from app.core.bot_identity import parse_slot_key
+    assert parse_slot_key("trend_rider::4h::ETH/USDC") == ("trend_rider", "4h", "ETH/USDC")
+    assert parse_slot_key("smart_money::1h") == ("smart_money", "1h", "")
+    assert parse_slot_key("") == ("", "", "")
