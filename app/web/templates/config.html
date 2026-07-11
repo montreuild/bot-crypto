@@ -1158,9 +1158,88 @@ function renderStratParams() {
           </div>
           <div id="save-status-${name}" style="display:none;font-size:.72rem;color:var(--green);margin-top:6px;font-weight:600">✓ Paramètres appliqués dans config.yaml</div>
         </div>` : ''}
+        <div style="margin-top:10px;border-top:1px dashed var(--border);padding-top:8px">
+          <button class="btn btn-ghost" style="font-size:.72rem" onclick="toggleOverrides('${name}')">🎯 Overrides par symbole (optimizer_results)</button>
+          <div id="ovr-${name}" style="display:none;margin-top:8px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+              <select id="ovr-tf-${name}" class="param-input" style="width:auto">
+                ${['15m','30m','1h','2h','4h','1d'].map(t=>`<option value="${t}"${t==='4h'?' selected':''}>${t}</option>`).join('')}
+              </select>
+              <select id="ovr-sym-${name}" class="param-input" style="width:auto"><option value="">…</option></select>
+              <button class="btn btn-ghost" style="font-size:.7rem" onclick="loadOverrideEditor('${name}')">📥 Charger</button>
+              <button class="btn btn-cyan" style="font-size:.7rem" onclick="saveOverride('${name}')">💾 Sauver l'override</button>
+            </div>
+            <div id="ovr-list-${name}" style="font-size:.68rem;color:var(--dim);margin-bottom:6px">Chargement…</div>
+            <textarea id="ovr-json-${name}" spellcheck="false" style="width:100%;min-height:110px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:.7rem;padding:8px" placeholder='{"param": valeur, ...}'></textarea>
+            <div style="font-size:.64rem;color:var(--dim);margin-top:4px">Écrit dans <code>optimizer_results[tf][symbole]</code> de strategies/${name}.yaml — la config des autres symboles reste intacte. Le bloc « params » de base ci-dessus n'est pas modifié.</div>
+          </div>
+        </div>
       </div>
     </div>`;
   }).join('');
+}
+
+/* ── Overrides par (timeframe, symbole) — cf. UI-02 ─────────────────────── */
+const _ovrCache = {};   // name -> {overrides, symbols, base_params}
+
+async function _fetchOverrides(name) {
+  const r = await apiFetch(`/api/config/strategy-overrides?strategy=${encodeURIComponent(name)}`);
+  if (!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || 'Erreur API');
+  _ovrCache[name] = await r.json();
+  return _ovrCache[name];
+}
+
+function _renderOvrList(name) {
+  const d = _ovrCache[name]; const el = $(`ovr-list-${name}`);
+  if (!d || !el) return;
+  const sel = $(`ovr-sym-${name}`);
+  if (sel && d.symbols.length && sel.options.length <= 1) {
+    sel.innerHTML = d.symbols.map(s=>`<option value="${escHtml(s)}">${escHtml(s)}</option>`).join('');
+  }
+  if (!d.overrides.length) { el.textContent = 'Aucun override — les params de base s\'appliquent partout.'; return; }
+  el.innerHTML = 'Overrides existants : ' + d.overrides.map(o =>
+    `<span style="display:inline-block;background:var(--cyan-dim);color:var(--cyan);border-radius:4px;padding:1px 6px;margin:1px 2px;font-family:var(--mono)">${escHtml(o.timeframe)} · ${escHtml(o.symbol)}${o.legacy?' (hérité)':''}${o.oos_score!=null?' · OOS '+(+o.oos_score).toFixed(3):''}</span>`
+  ).join('');
+}
+
+async function toggleOverrides(name) {
+  const box = $(`ovr-${name}`);
+  if (!box) return;
+  const show = box.style.display === 'none';
+  box.style.display = show ? 'block' : 'none';
+  if (show && !_ovrCache[name]) {
+    try { await _fetchOverrides(name); _renderOvrList(name); }
+    catch(e) { const el=$(`ovr-list-${name}`); if(el) el.textContent = 'Erreur : '+e.message; }
+  }
+}
+
+function loadOverrideEditor(name) {
+  const d = _ovrCache[name]; if (!d) return;
+  const tf = $(`ovr-tf-${name}`)?.value, sym = $(`ovr-sym-${name}`)?.value;
+  const o = d.overrides.find(x => x.timeframe === tf && x.symbol === sym);
+  // Pré-remplit avec l'override existant, sinon les params de base (point de départ).
+  const params = o ? o.params : (d.base_params || {});
+  $(`ovr-json-${name}`).value = JSON.stringify(params, null, 2);
+  toast(o ? `Override ${tf} · ${sym} chargé` : `Aucun override ${tf} · ${sym} — params de base pré-remplis`);
+}
+
+async function saveOverride(name) {
+  const tf = $(`ovr-tf-${name}`)?.value, sym = $(`ovr-sym-${name}`)?.value;
+  if (!sym) { toast('Choisissez un symbole', true); return; }
+  let params;
+  try { params = JSON.parse($(`ovr-json-${name}`).value || '{}'); }
+  catch(e) { toast('JSON invalide : ' + e.message, true); return; }
+  try {
+    const r = await apiFetch(`/api/config/strategy-params?strategy=${encodeURIComponent(name)}&timeframe=${encodeURIComponent(tf)}&symbol=${encodeURIComponent(sym)}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(params),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Erreur API');
+    toast(`✓ Override ${tf} · ${sym} sauvegardé (${name})`);
+    delete _ovrCache[name];
+    await _fetchOverrides(name); _renderOvrList(name);
+  } catch(e) { toast('Erreur : ' + e.message, true); }
 }
 
 function toggleParamGroup(hdr) {
