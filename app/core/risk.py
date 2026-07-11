@@ -415,14 +415,10 @@ class RiskManager:
 
     # ── Position sizing ────────────────────────────────────────────────────
     def compute_risk(self) -> float:
+        # Courbe partagée backtest/live (BT-09) — source unique : risk_curve.py.
+        from app.core.risk_curve import risk_multiplier
         dd = _safe_div(self.peak_equity - self.equity, self.peak_equity)
-        if dd > 0.10:
-            factor = 0.5
-        elif dd > 0.05:
-            factor = 0.75
-        else:
-            factor = 1.0
-        return self.base_risk * factor
+        return self.base_risk * risk_multiplier(dd)
 
     def compute_size(self, entry: float, atr: float,
                      score: float = 1.0, threshold: float = 0.60,

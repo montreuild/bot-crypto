@@ -10,6 +10,7 @@ import polars as pl
 from app.engine.engine import Engine
 from app.core.execution import close_pnl as _close_pnl, trade_fees as _trade_fees
 from app.core.trailing import TrailingStopManager
+from app.core.risk_curve import risk_multiplier as _risk_multiplier
 from app.live.utils import resolve_strategy_params
 
 
@@ -278,6 +279,8 @@ class Backtester:
             periods_per_day=self.borrow_periods,
         )
         ctx.capital += pnl
+        # BT-09 : plus-haut d'équité pour la courbe de dé-risquage en drawdown.
+        ctx.peak_capital = max(getattr(ctx, "peak_capital", ctx.capital), ctx.capital)
         ts = str(df["time"][i]) if "time" in df.columns else str(i)
         position.update({
             "pnl":           round(pnl, 6),
@@ -504,7 +507,11 @@ class Backtester:
         disable_trailing = bool(signal.get("disable_trailing", False))
 
         stop_dist    = abs(exec_price - stop)
-        risk_amount  = ctx.capital * ctx.risk
+        # BT-09 : même courbe de dé-risquage que le live (RiskManager.compute_risk)
+        # — ×0.75 si drawdown > 5 %, ×0.5 si > 10 % (app/core/risk_curve.py).
+        peak = getattr(ctx, "peak_capital", ctx.capital) or ctx.capital
+        dd   = max(0.0, (peak - ctx.capital) / peak) if peak > 0 else 0.0
+        risk_amount  = ctx.capital * ctx.risk * _risk_multiplier(dd)
         size         = risk_amount / stop_dist if stop_dist > 0 else 0
         notional     = size * exec_price
         max_notional = ctx.capital * self.max_notional_pct
@@ -733,7 +740,7 @@ class Backtester:
             # coûts d'emprunt étaient calculés sur le mauvais TF quand le
             # backtest tournait sur un TF différent de la config).
             timeframe=timeframe or self.cfg["trading"].get("timeframe", "1h"),
-            capital=capital, risk=risk, trade_id=trade_id,
+            capital=capital, peak_capital=capital, risk=risk, trade_id=trade_id,
             trades=trades, equity_curve=equity_curve, timestamps=timestamps,
             diag=diag, strat_params=strat_params,
             atr_arr=atr_arr, low_arr=low_arr, high_arr=high_arr,
