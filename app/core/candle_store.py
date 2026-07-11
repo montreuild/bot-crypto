@@ -3,6 +3,7 @@ CandleStore — stockage Parquet persistant des bougies OHLCV par (symbol, timef
 Fetch incrémental, thread-safe, retourne un pl.DataFrame identique à MarketScanner.
 """
 
+import os
 import logging
 import time
 import threading
@@ -338,11 +339,22 @@ class CandleStore:
         return pl.DataFrame(schema=_OHLCV_SCHEMA)
 
     def _save(self, path: Path, df: pl.DataFrame) -> None:
+        """Écriture ATOMIQUE : Parquet écrit dans un .tmp puis os.replace
+        (rename atomique sur le même filesystem). Un lecteur concurrent — y
+        compris un second process (cli.py --backtest/--optimize pendant que le
+        live tourne, cf. OPS-07 : le verrou _get_file_lock est intra-process
+        seulement) — ne voit jamais de fichier tronqué."""
         path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
         try:
-            df.write_parquet(path, compression="zstd")
+            df.write_parquet(tmp, compression="zstd")
+            os.replace(tmp, path)
         except Exception as e:
             logger.error(f"[CandleStore] Erreur écriture {path} : {e}")
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @staticmethod
     def _raw_to_df(raw: List[list]) -> pl.DataFrame:
