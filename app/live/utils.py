@@ -54,6 +54,12 @@ def _merge_params(base: dict, optimized: dict) -> dict:
 
     Résultat : dict complet avec toutes les stratégies, params optimisés écrasant le base.
     Les valeurs NaN/None sont remplacées par les valeurs base ou les défauts.
+
+    Les clés GLOBALES (`_GLOBAL_PARAM_KEYS` : score_threshold, risk_per_trade,
+    capital…) ne sont JAMAIS écrasées par l'overlay — même filtre que
+    ``resolve_strategy_params`` (cf. ARCH-01 : le live appliquait une clé
+    globale glissée par erreur dans optimizer_results là où le backtest la
+    bloquait — divergence de parité).
     """
     merged = {k: _clean_param_dict(v) if isinstance(v, dict) else v
               for k, v in base.items()}
@@ -62,7 +68,7 @@ def _merge_params(base: dict, optimized: dict) -> dict:
             continue
         base_for_strat = dict(merged.get(strat_key, {}))
         for k, v in strat_params.items():
-            if v is None or _is_nan_like(v):
+            if k in _GLOBAL_PARAM_KEYS or v is None or _is_nan_like(v):
                 continue
             base_for_strat[k] = v
         merged[strat_key] = base_for_strat

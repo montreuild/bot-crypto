@@ -74,3 +74,20 @@ def test_nested_per_symbol_coexist():
 
 def test_default_symbol_constant():
     assert DEFAULT_CONFIG_SYMBOL == "BTC/USDC"
+
+
+# ── ARCH-01 : _merge_params filtre les clés globales comme le backtest ────────
+
+def test_merge_params_filters_global_keys():
+    """Une clé globale (score_threshold, risk_per_trade…) glissée dans un
+    entry optimisé ne doit PAS écraser la config côté live — même sémantique
+    que resolve_strategy_params (parité live/backtest)."""
+    from app.live.utils import _merge_params
+    base = {"trend_rider": {"adx_min": 22, "score_threshold": 0.55}}
+    optimized = {"trend_rider": {"adx_min": 25, "score_threshold": 0.10,
+                                 "risk_per_trade": 0.5, "capital": 1}}
+    merged = _merge_params(base, optimized)
+    assert merged["trend_rider"]["adx_min"] == 25            # param normal appliqué
+    assert merged["trend_rider"]["score_threshold"] == 0.55  # clé globale protégée
+    assert "risk_per_trade" not in merged["trend_rider"]
+    assert "capital" not in merged["trend_rider"]
