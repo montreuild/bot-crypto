@@ -227,7 +227,7 @@ class Backtester:
         self.borrow_periods = int(tcfg.get("borrow_periods_per_day", 24))
         self.spread_pct   = bcfg.get("spread_pct",        0.0005)
         self.partial_fill = bcfg.get("partial_fill_pct",  0.95)
-        self.max_notional_pct = float(bcfg.get("max_notional_pct", 0.50))
+        self.max_notional_pct = float(bcfg.get("max_notional_pct", 0.20))  # BT-03 : aligné sur le live (risk.py)
 
     def _find_strategy(self, name: str):
         """Récupère l'instance Strategy par son nom (pour les hooks comme

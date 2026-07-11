@@ -37,6 +37,11 @@ DEFAULTS = {
     "backtest": {
         "spread_pct": 0.0005, "latency_ms": 50, "partial_fill_pct": 0.95,
         "monte_carlo_runs": 200, "walk_forward_folds": 5,
+        # Plafond de notionnel PAR TRADE (fraction du capital) — valeur UNIQUE
+        # partagée backtest/live (BT-03 : le backtest utilisait un repli 0.50
+        # quand le RiskManager live plafonnait à 0.20 → tailles ×2,5 invalidant
+        # la reproductibilité des backtests en réel).
+        "max_notional_pct": 0.20,
     },
     "optimizer": {"enabled": False, "method": "bayesian", "n_trials": 50, "out_of_sample_ratio": 0.3},
     "logging":   {"level": "INFO", "debug": False, "max_bytes": 10_485_760, "backup_count": 5,
