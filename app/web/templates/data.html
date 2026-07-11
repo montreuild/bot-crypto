@@ -58,7 +58,10 @@ table.dt-tbl{width:100%;border-collapse:collapse;font-size:.78rem;}
 
 {% block body_scripts %}
 <script>
-function esc(s){return String(s==null?'—':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+/* Échappement : escHtml() partagé de base.html (couvre aussi guillemets —
+   cf. UI-01 : l'ancien esc() local laissait passer ' et " et permettait de
+   casser l'attribut onclick avec un symbole forgé). Valeur nulle → tiret. */
+function esc(s){return escHtml(s==null?'—':String(s));}
 
 async function loadStatus(){
   const body=document.getElementById('dt-body');
@@ -69,11 +72,18 @@ async function loadStatus(){
     if(!ds.length){body.innerHTML='<tr><td colspan="7" style="color:var(--muted)">Aucune donnée en cache.</td></tr>';return;}
     body.innerHTML=ds.map(x=>{
       const badge=x.bars>0?'<span class="dt-badge dt-ok">'+x.bars+'</span>':'<span class="dt-badge dt-empty">0</span>';
+      // data-attributes + délégation d'événement (pas de JS dans l'attribut →
+      // aucune valeur API ne peut casser/injecter le onclick).
       return '<tr><td>'+esc(x.symbol)+'</td><td>'+esc(x.tf)+'</td><td>'+badge+'</td><td>'+esc(x.from)+'</td><td>'+esc(x.to)+'</td><td>'+(x.size_kb||0)+' Ko</td>'+
-        '<td><button class="dt-btn ghost" style="padding:4px 10px;font-size:.72rem" onclick="fetchOne(\''+esc(x.symbol)+'\',\''+esc(x.tf)+'\',this)">↻</button></td></tr>';
+        '<td><button class="dt-btn ghost dt-refetch" style="padding:4px 10px;font-size:.72rem" data-symbol="'+esc(x.symbol)+'" data-tf="'+esc(x.tf)+'">↻</button></td></tr>';
     }).join('');
   }catch(e){body.innerHTML='<tr><td colspan="7" style="color:#f87171">Erreur : '+esc(e.message)+'</td></tr>';}
 }
+
+document.getElementById('dt-body').addEventListener('click',ev=>{
+  const btn=ev.target.closest('.dt-refetch');
+  if(btn)fetchOne(btn.dataset.symbol,btn.dataset.tf,btn);
+});
 
 async function _refetch(params, btn, label){
   const old=btn?btn.innerHTML:''; if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner"></span>';}
