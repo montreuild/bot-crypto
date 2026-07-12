@@ -87,3 +87,14 @@ def test_flag_on_score_smoke():
     for mode in (True, "targets", "sweeps"):
         sig = strat.score(df, {"smart_money": {"use_calendar_liquidity": mode}})
         assert isinstance(sig, dict) and "side" in sig
+
+
+def test_require_inducement_default_off_and_smoke():
+    """SMC-11 : défaut off ; flag on → score() tourne et filtre (smoke)."""
+    from app.strategies.smart_money import Strategy
+    strat = Strategy()
+    assert strat.fixed_params["require_inducement"] is False
+    start = datetime(2026, 1, 5, 0, 0, tzinfo=timezone.utc)
+    df = _hourly_df(start, 400)
+    sig = strat.score(df, {"smart_money": {"require_inducement": True}})
+    assert isinstance(sig, dict) and "side" in sig

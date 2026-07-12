@@ -109,14 +109,8 @@ class Strategy(BaseStrategy):
 
     def _recent_sweep(self, res: dict, created_at: int, want: str,
                       lookback: int) -> bool:
-        """Un sweep rejeté de type ``want`` (buy_side/sell_side) dans la fenêtre
-        [created_at − lookback, created_at]. Prise de liquidité = crédibilité."""
-        for sw in res["_all_sweeps"]:
-            if not sw["rejected"] or sw["kind"] != want:
-                continue
-            if created_at - lookback <= sw["index"] <= created_at:
-                return True
-        return False
+        """Délègue à la primitive partagée ``smc.recent_sweep`` (SMC-11)."""
+        return smc.recent_sweep(res, created_at, want, lookback)
 
     def _build(self, res, htf_res, hidx_arr, smt, i, ob, side, p,
                high, low, close, atr) -> Optional[dict]:

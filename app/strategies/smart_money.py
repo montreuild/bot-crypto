@@ -123,6 +123,7 @@ class Strategy(BaseStrategy):
         "smt_bonus":      [True, False],
         "smt_filter":     [True, False],
         "smt_at_origin":  [True, False],
+        "require_inducement": [True, False],
         "use_calendar_liquidity": [False, "targets", "sweeps", True],
     }
 
@@ -246,6 +247,12 @@ class Strategy(BaseStrategy):
         # (recouvrement quasi nul mesuré : 0-1 trade modifié sur 8 ans).
         # SWEEP_REVERSAL inchangé (déjà la barre du sweep). OFF par défaut.
         "smt_at_origin":    False,
+        # SMC-11 : inducement — n'accepter un retest d'OB/breaker que si un
+        # sweep rejeté OPPOSÉ (prise de liquidité) a eu lieu dans les
+        # ``inducement_lookback`` barres avant l'origine de la zone
+        # (crédibilité du move, déjà validé côté vizion). OFF par défaut.
+        "require_inducement": False,
+        "inducement_lookback": 12,
         # ── SMC-03 : liquidité calendaire PDH/PDL/PWH/PWL (OFF par défaut) ───
         # Niveaux du jour/semaine UTC clôturés (smc.calendar_liquidity_levels).
         #   "targets" : cibles de TP additionnelles (concurrence liquidité/void)

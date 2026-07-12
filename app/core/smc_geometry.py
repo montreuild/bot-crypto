@@ -156,6 +156,23 @@ def trendline_value_at(result: Dict[str, Any], i: int,
     return float(b["price"] + slope * (i - b["index"]))
 
 
+def recent_sweep(result: Dict[str, Any], created_at: int, want: str,
+                 lookback: int) -> bool:
+    """Un sweep **rejeté** de type ``want`` (``buy_side``/``sell_side``) dans la
+    fenêtre ``[created_at − lookback, created_at]`` (SMC-11 : inducement).
+
+    Prise de liquidité opposée près de l'origine d'une zone = crédibilité du
+    move institutionnel (les stops ont été consommés avant l'impulsion).
+    Primitive partagée vizion (``require_sweep``) / smart_money
+    (``require_inducement``)."""
+    for sw in result["_all_sweeps"]:
+        if not sw["rejected"] or sw["kind"] != want:
+            continue
+        if created_at - lookback <= sw["index"] <= created_at:
+            return True
+    return False
+
+
 def liquidity_targets_above(result: Dict[str, Any], i: int, price: float,
                             max_age: int = 500) -> List[float]:
     """Niveaux de liquidité buy-side strictement au-dessus de ``price``,

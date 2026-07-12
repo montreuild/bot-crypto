@@ -66,3 +66,28 @@ score ne change presque rien.)
   elle retire des gagnants sur le slot déployé (BTC 4h OOS +68.2 → +36.8,
   PF 1.47 → 1.28). Le gain IS sur ETH 4h (+31) ne tient pas en OOS.
 - Exposé au param_space (`smt_at_origin`) pour l'optimiseur.
+
+## [SMC-11] Inducement pour OB/BREAKER_RETEST (2026-07-12) — ✅ ACTIVÉ BTC 4h
+
+Primitive partagée `smc.recent_sweep` (factorisée depuis `vizion._recent_sweep`) ;
+flag `require_inducement` (off) + `inducement_lookback` (12) : un retest
+d'OB/breaker n'est accepté que si un sweep rejeté OPPOSÉ (prise de liquidité)
+a eu lieu dans les N barres avant l'origine de la zone.
+
+| Slot | Mode | FULL PnL | IS n / PnL / PF | OOS n / PnL / PF / WR |
+|---|---|---:|---|---|
+| BTC 4h | baseline | +329.3 | 86 / +261.1 / 2.19 | 52 / +68.2 / 1.47 / 36.5 |
+| BTC 4h | **inducement 12** | **+326.8** | **58 / +251.4 / 2.71** | **32 / +75.4 / 1.88 / 43.8** |
+| BTC 4h | inducement 20 | +322.7 | 61 / +247.6 / 2.59 | 32 / +75.1 / 1.88 / 43.8 |
+| BTC 1h | inducement 12 | −27.0 | 38 / −20.7 / 0.74 | 12 / −6.3 / 0.71 |
+| ETH 4h | inducement 12 | −47.6 | 57 / +25.1 / 1.14 | 44 / −72.6 / 0.53 |
+| ETH 1h | inducement 12 | −114.7 | 185 / −112.0 / 0.70 | 91 / −2.8 / 0.98 |
+
+**Verdict : ACTIVÉ sur le slot BTC 4h uniquement**
+(`strategies/smart_money.yaml › optimizer_results.4h.params`) :
+- Sélectivité pure sur le slot déployé : PnL FULL quasi inchangé avec 38 %
+  de trades en moins, IS PF 2.19 → 2.71 ET OOS PF 1.47 → 1.88 (WR +7 pts) —
+  amélioration cohérente sur les deux périodes, n OOS = 32 ≥ 10.
+- ETH : le gain IS ne tient pas en OOS (0.53) → PAS activé ; ETH 1h
+  s'améliore nettement en OOS (−56 → −2.8) mais reste non positif.
+- Défaut global inchangé (off) ; exposé au param_space.

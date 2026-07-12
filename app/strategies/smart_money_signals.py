@@ -276,6 +276,10 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     # SMC-01 : si smt_at_origin, les candidats de retest portent la barre de
     # l'impulsion d'origine (created_at) — le SMT y sera évalué au lieu de i.
     smt_origin = bool(p.get("smt_at_origin", False)) and aux.get("smt") is not None
+    # SMC-11 — inducement (off par défaut) : sweep rejeté opposé requis dans
+    # les inducement_lookback barres avant l'origine de la zone (crédibilité).
+    req_inducement = bool(p.get("require_inducement", False))
+    ind_lb = int(p.get("inducement_lookback", 12))
     zone_sources = [("OB_RETEST", res["_all_obs"])]
     if bool(p.get("use_rejection_blocks", False)):
         zone_sources.append(("REJECTION_RETEST", res["_all_rejections"]))
@@ -291,6 +295,9 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                     continue          # zone déjà transpercée sur clôture
                 if zone == "discount" or not long_ema_ok or not long_htf_ok:
                     continue          # côté momentum uniquement (cf. sweeps)
+                if req_inducement and not smc.recent_sweep(
+                        res, int(ob["created_at"]), "sell_side", ind_lb):
+                    continue          # SMC-11 : pas de prise de liquidité avant
                 sc = 0.50 + 0.10 + kz_add   # structure alignée par construction
                 sc += 0.10 if strength2 else 0.0
                 sc += 0.10 if zone == "premium" else 0.0
@@ -319,6 +326,9 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                     continue
                 if zone == "premium" or not short_ema_ok or not short_htf_ok:
                     continue          # côté momentum uniquement (cf. sweeps)
+                if req_inducement and not smc.recent_sweep(
+                        res, int(ob["created_at"]), "buy_side", ind_lb):
+                    continue          # SMC-11 : pas de prise de liquidité avant
                 sc = 0.50 + 0.10 + kz_add
                 sc += 0.10 if strength2 else 0.0
                 sc += 0.10 if zone == "discount" else 0.0
@@ -358,6 +368,9 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                 if c < brk["bottom"] or zone == "discount" \
                         or not long_ema_ok or not long_htf_ok:
                     continue
+                if req_inducement and not smc.recent_sweep(
+                        res, int(brk["created_at"]), "sell_side", ind_lb):
+                    continue          # SMC-11
                 sc = 0.50 + 0.10 + kz_add
                 sc += 0.10 if zone == "premium" else 0.0
                 sc += 0.05 if vol_ok else 0.0
@@ -383,6 +396,9 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                 if c > brk["top"] or zone == "premium" \
                         or not short_ema_ok or not short_htf_ok:
                     continue
+                if req_inducement and not smc.recent_sweep(
+                        res, int(brk["created_at"]), "buy_side", ind_lb):
+                    continue          # SMC-11
                 sc = 0.50 + 0.10 + kz_add
                 sc += 0.10 if zone == "discount" else 0.0
                 sc += 0.05 if vol_ok else 0.0

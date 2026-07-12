@@ -52,7 +52,7 @@ from app.core.smc_structure import analyze        # noqa: F401
 from app.core.smc_geometry import (               # noqa: F401
     _cycle_projection, _premium_discount_at, _trendlines, _zigzag,
     liquidity_targets_above, liquidity_targets_below,
-    premium_discount_at, trendline_value_at,
+    premium_discount_at, recent_sweep, trendline_value_at,
     void_targets_above, void_targets_below,
 )
 from app.core.smc_volume import (                 # noqa: F401

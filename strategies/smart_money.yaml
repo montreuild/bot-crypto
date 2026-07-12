@@ -92,6 +92,12 @@ optimizer_results:
     #   + confirmation bougie  FULL +503 PF 1.72 Sh 6.8 | OOS +129        sc 0.372
     # Choppiness et confirmation bougie améliorent TOUT sur les deux périodes à
     # nombre de trades quasi constant (137/51) — croisements indicateurs gagnants.
+    # 5) Inducement (SMC-11, 2026-07-12) : retest d'OB/breaker accepté seulement
+    #    si un sweep rejeté opposé a eu lieu ≤ 12 barres avant l'origine de la
+    #    zone (prise de liquidité = crédibilité du move). Mesuré sur ce slot :
+    #    IS PF 2.19 → 2.71, OOS +68.2 → +75.4 (PF 1.47 → 1.88, WR 36.5 → 43.8)
+    #    avec 38 % de trades en moins (52 → 32 OOS) — sélectivité pure.
+    #    (ETH : IS s'améliore mais OOS se dégrade → PAS activé ailleurs.)
     params:
       min_score: 0.70
       min_rr: 2.0
@@ -107,6 +113,8 @@ optimizer_results:
       kz_bonus: true
       amd_bonus: true
       vp_confluence: true
+      require_inducement: true
+      inducement_lookback: 12
   2h:
     run_date: '2026-07-04'
     oos_score: -0.2299
