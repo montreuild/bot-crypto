@@ -6,7 +6,9 @@ Modes d'allocation :
   - manual      : budgets définis manuellement par l'utilisateur
   - performance : rééquilibrage automatique basé sur le profit_factor
 """
+import functools
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -15,6 +17,23 @@ from typing import Callable, Dict, List, Optional
 from app.core.bot_identity import parse_slot_key, build_slot_key
 
 logger = logging.getLogger(__name__)
+
+
+def _locked(method):
+    """Sérialise l'accès à ``self._slots`` (OPS-10).
+
+    Le thread lifecycle (``apply_continuous_allocation``/``_rebalance``) écrit
+    ``budget_pct`` pendant que le cycle principal appelle ``can_allocate``/
+    ``register_open``/``register_close`` sur les mêmes ``SlotBudget`` — sans
+    verrou, mises à jour perdues possibles sur ``used_notional``/``budget_pct``.
+    RLock : réentrant pour les appels imbriqués (rebuild_slots→_apply_mode,
+    register_close→_persist_weekly_stats, apply_continuous_allocation→
+    compute_shadow_allocation…)."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
 
 # Defaults (can be overridden via config)
 _DEFAULT_MAX_SLOT_PCT = 0.50
@@ -94,6 +113,8 @@ class CapitalAllocator:
 
     def __init__(self, capital: float, active_per_tf: Dict[str, List[dict]],
                  cfg: dict = None, session_factory=None):
+        # OPS-10 : créé AVANT tout accès à _slots (rebuild_slots en fin d'init).
+        self._lock = threading.RLock()
         self.capital = capital
         self._session_factory = session_factory
         alloc_cfg = (cfg or {}).get("capital_allocator", {})
@@ -138,6 +159,7 @@ class CapitalAllocator:
         self._restore_weekly_stats()
 
     # ── Construction des slots ─────────────────────────────────────────────
+    @_locked
     def rebuild_slots(self, active_per_tf: Dict[str, List[dict]]):
         """
         Reconstruit les slots depuis _active_per_tf.
@@ -186,6 +208,7 @@ class CapitalAllocator:
         """
         self._persist_callback = callback
 
+    @_locked
     def _apply_mode(self):
         """Applique le mode d'allocation actuel aux budgets des slots."""
         if self._mode == "manual":
@@ -274,6 +297,7 @@ class CapitalAllocator:
                     s.budget_pct = round(s.budget_pct * factor2, 4)
 
     # ── Allocation ─────────────────────────────────────────────────────────
+    @_locked
     def is_slot_enabled(self, slot_key: str) -> tuple[bool, str]:
         """
         Vérifie si le slot est activé (enabled/disabled).
@@ -286,6 +310,7 @@ class CapitalAllocator:
             return False, f"Slot '{slot_key}' désactivé"
         return True, ""
 
+    @_locked
     def can_allocate(self, slot_key: str, notional: float) -> tuple[bool, str]:
         """
         Vérifie si le slot dispose du budget nécessaire pour une nouvelle position.
@@ -303,12 +328,14 @@ class CapitalAllocator:
             )
         return True, ""
 
+    @_locked
     def register_open(self, slot_key: str, notional: float):
         """Enregistre l'ouverture d'une position dans un slot."""
         slot = self._slots.get(slot_key)
         if slot:
             slot.used_notional = round(slot.used_notional + notional, 4)
 
+    @_locked
     def register_close(self, slot_key: str, notional: float, pnl: float):
         """Enregistre la clôture d'une position + met à jour les stats hebdo."""
         slot = self._slots.get(slot_key)
@@ -367,6 +394,19 @@ class CapitalAllocator:
     def per_bot_sizing(self) -> bool:
         return self._per_bot_sizing
 
+    @_locked
+    def enabled_budgets(self) -> Dict[str, float]:
+        """Budgets courants ``{slot_key: budget_pct}`` des slots actifs —
+        lecture verrouillée (remplace l'accès direct à ``_slots``)."""
+        return {k: round(v.budget_pct, 4) for k, v in self._slots.items() if v.enabled}
+
+    @_locked
+    def budget_pct(self, slot_key: str) -> float:
+        """``budget_pct`` courant d'un slot (0.0 si inconnu) — lecture verrouillée."""
+        slot = self._slots.get(slot_key)
+        return slot.budget_pct if slot else 0.0
+
+    @_locked
     def slot_budget_usdc(self, slot_key: str) -> float:
         """Budget courant d'un slot en USDC (0 si inconnu/désactivé)."""
         slot = self._slots.get(slot_key)
@@ -379,6 +419,7 @@ class CapitalAllocator:
         self.capital = capital
 
     # ── Rééquilibrage ──────────────────────────────────────────────────────
+    @_locked
     def rebalance_if_due(self):
         if self._mode != "performance":
             return
@@ -387,6 +428,7 @@ class CapitalAllocator:
         self._rebalance_next = self._next_rebalance_ts()
         self._rebalance()
 
+    @_locked
     def force_rebalance(self):
         """Force un rééquilibrage immédiat (appelé via API)."""
         if self._mode == "performance":
@@ -396,6 +438,7 @@ class CapitalAllocator:
         # En mode manual, on ne rééquilibre pas automatiquement
         logger.info(f"[Allocator] Rééquilibrage forcé (mode={self._mode})")
 
+    @_locked
     def _rebalance(self):
         """
         Rééquilibrage basé sur le profit_factor des 7 derniers jours.
@@ -490,6 +533,7 @@ class CapitalAllocator:
         self._persist_weekly_stats()
 
     # ── Toggle slot ────────────────────────────────────────────────────────
+    @_locked
     def set_slot_enabled(self, slot_key: str, enabled: bool) -> bool:
         """
         Active ou désactive un slot. Recalcule les budgets après toggle.
@@ -508,6 +552,7 @@ class CapitalAllocator:
         return True
 
     # ── Mode ───────────────────────────────────────────────────────────────
+    @_locked
     def set_mode(self, mode: str) -> bool:
         """Change le mode d'allocation ('equal', 'manual', 'performance')."""
         if mode not in _VALID_MODES:
@@ -523,9 +568,11 @@ class CapitalAllocator:
 
     @property
     def disabled_slots(self) -> list:
-        return sorted(self._disabled_slots)
+        with self._lock:
+            return sorted(self._disabled_slots)
 
     # ── Allocation continue pilotée par le score (Phase 2 — SHADOW) ──────────
+    @_locked
     def compute_shadow_allocation(self, scores: Dict[str, float],
                                   correlations: Dict[str, float] = None) -> dict:
         """Calcule l'allocation **cible** pilotée par le score, sans l'appliquer.
@@ -610,6 +657,7 @@ class CapitalAllocator:
     def continuous_allocation(self) -> bool:
         return self._continuous_allocation
 
+    @_locked
     def apply_continuous_allocation(self, scores: Dict[str, float],
                                     correlations: Dict[str, float] = None) -> dict:
         """**Applique** l'allocation continue pilotée par le score (graduation
@@ -638,6 +686,7 @@ class CapitalAllocator:
         return res
 
     # ── Persistance des stats hebdo (reprise après redémarrage) ─────────────
+    @_locked
     def _persist_weekly_stats(self) -> None:
         """Sauvegarde les stats hebdo par slot + le prochain rebalance (no-op si
         non branché à une base). Sans ça, après un crash le rééquilibrage par
@@ -664,6 +713,7 @@ class CapitalAllocator:
         except Exception as e:
             logger.debug(f"[Allocator] persistance stats hebdo KO : {e}")
 
+    @_locked
     def _restore_weekly_stats(self) -> None:
         """Restaure les stats hebdo + le prochain rebalance depuis la base."""
         if not self._session_factory:
@@ -699,6 +749,7 @@ class CapitalAllocator:
             logger.info(f"[Allocator] Stats hebdo restaurées ({restored} slot(s) actifs).")
 
     # ── Statut pour l'API ──────────────────────────────────────────────────
+    @_locked
     def get_status(self) -> List[dict]:
         return [
             {
@@ -722,6 +773,7 @@ class CapitalAllocator:
             for s in self._slots.values()
         ]
 
+    @_locked
     def get_config(self) -> dict:
         """Retourne la configuration courante de l'allocateur."""
         return {
@@ -735,6 +787,7 @@ class CapitalAllocator:
             "custom_budgets":         {k: round(v * 100, 1) for k, v in self._custom_budgets.items()},
         }
 
+    @_locked
     def set_slot_budget(self, slot_key: str, budget_pct: float) -> bool:
         """
         Définit manuellement le budget d'un slot (en fraction du capital, ex: 0.25 = 25%).

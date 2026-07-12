@@ -604,12 +604,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         Persiste manuellement l'état complet de l'allocateur (budgets + disabled_slots)
         dans config.yaml. Utile après des modifications batch ou un redémarrage.
         """
-        budgets = {
-            k: round(v.budget_pct, 4)
-            for k, v in self.allocator._slots.items()
-            if v.enabled
-        }
-        self._persist_allocator_budgets(budgets)
+        self._persist_allocator_budgets(self.allocator.enabled_budgets())
 
     # ── Ouverture de position (chemin unique) ──────────────────────────────
 
@@ -990,12 +985,11 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                     with session_scope(self.SessionLocal) as sess:
                         stats = get_slot_live_stats(sess, name, tf, days=days,
                                                     symbol=slot.get("symbol") or None)
-                    sb = self.allocator._slots.get(key)
                     # Score budget-indépendant : rendement simulé moyen par trade.
                     score = float(sim.get("avg_return_pct", 0.0) or 0.0)
                     scores[key] = score
                     slots_data[key] = {
-                        "budget_pct":          sb.budget_pct if sb else 0.0,
+                        "budget_pct":          self.allocator.budget_pct(key),
                         "live_trades":         stats["n_trades"],
                         "live_in_band":        contract.get("in_band"),
                         "live_avg_return_pct": stats["avg_return_pct"],
