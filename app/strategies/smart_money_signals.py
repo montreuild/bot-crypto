@@ -273,6 +273,9 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     # Les rejection blocks (mèches de swing) partagent la même mécanique de
     # retest que les OB : zone d'offre/demande née d'un rejet violent.
     max_ob_age = int(p["ob_max_age"])
+    # SMC-01 : si smt_at_origin, les candidats de retest portent la barre de
+    # l'impulsion d'origine (created_at) — le SMT y sera évalué au lieu de i.
+    smt_origin = bool(p.get("smt_at_origin", False)) and aux.get("smt") is not None
     zone_sources = [("OB_RETEST", res["_all_obs"])]
     if bool(p.get("use_rejection_blocks", False)):
         zone_sources.append(("REJECTION_RETEST", res["_all_rejections"]))
@@ -308,6 +311,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                          extra_targets=vp_above,
                                          cal_targets=cal_tp)
                 if cand:
+                    if smt_origin:
+                        cand["_smt_ref_bar"] = int(ob["created_at"])
                     candidates.append(cand)
             elif ob["kind"] == "bearish" and trend == -1 and not recent_choch_up:
                 if c > ob["top"]:
@@ -334,6 +339,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                          extra_targets=vp_below,
                                          cal_targets=cal_tp)
                 if cand:
+                    if smt_origin:
+                        cand["_smt_ref_bar"] = int(ob["created_at"])
                     candidates.append(cand)
 
     # ── C. Retest de breaker block (OB invalidé → polarité inversée) ────
@@ -368,6 +375,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                          extra_targets=vp_above,
                                          cal_targets=cal_tp)
                 if cand:
+                    if smt_origin:
+                        cand["_smt_ref_bar"] = int(brk["created_at"])
                     candidates.append(cand)
             elif brk["kind"] == "bearish" and trend == -1 \
                     and not recent_choch_up:
@@ -391,6 +400,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                          extra_targets=vp_below,
                                          cal_targets=cal_tp)
                 if cand:
+                    if smt_origin:
+                        cand["_smt_ref_bar"] = int(brk["created_at"])
                     candidates.append(cand)
 
     if not candidates:
@@ -400,11 +411,14 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     # seule fois ici, par candidat (côté connu) → point d'injection unique.
     smt_a = aux.get("smt")
     if smt_a is not None and 0 <= i < len(smt_a):
-        s = int(smt_a[i])
         use_filter = bool(p.get("smt_filter", False))
         use_bonus = bool(p.get("smt_bonus", False))
         kept: List[dict] = []
         for cand in candidates:
+            # SMC-01 : barre de référence = origine de la zone si portée
+            # (smt_at_origin), sinon barre courante (comportement historique).
+            ref = cand.pop("_smt_ref_bar", i)
+            s = int(smt_a[ref]) if 0 <= ref < len(smt_a) else 0
             sgn = 1 if cand["side"] == "long" else -1
             if use_filter and s == -sgn:
                 continue

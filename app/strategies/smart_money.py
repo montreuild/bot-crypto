@@ -122,6 +122,7 @@ class Strategy(BaseStrategy):
         "candle_bonus":   [True, False],
         "smt_bonus":      [True, False],
         "smt_filter":     [True, False],
+        "smt_at_origin":  [True, False],
         "use_calendar_liquidity": [False, "targets", "sweeps", True],
     }
 
@@ -238,6 +239,13 @@ class Strategy(BaseStrategy):
         "smt_bonus":        False,
         "smt_filter":       False,
         "smt_conf":         0.05,
+        # SMC-01 : évaluer la divergence SMT à la barre d'ORIGINE de la zone
+        # (ob/breaker created_at = barre de l'impulsion) plutôt qu'à la barre
+        # de retest — le SMT ne se déclenche qu'à un nouvel extrême (~9 % des
+        # barres) alors que les retests surviennent loin des extrêmes
+        # (recouvrement quasi nul mesuré : 0-1 trade modifié sur 8 ans).
+        # SWEEP_REVERSAL inchangé (déjà la barre du sweep). OFF par défaut.
+        "smt_at_origin":    False,
         # ── SMC-03 : liquidité calendaire PDH/PDL/PWH/PWL (OFF par défaut) ───
         # Niveaux du jour/semaine UTC clôturés (smc.calendar_liquidity_levels).
         #   "targets" : cibles de TP additionnelles (concurrence liquidité/void)

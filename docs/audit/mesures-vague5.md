@@ -38,3 +38,31 @@ sur prise du niveau + rejet (première barre de perce).
   en retrait — signal non robuste. Négatif sur ETH.
 - Le flag est exposé dans `param_space` : l'optimiseur pourra l'explorer par
   TF/symbole ; aucune activation manuelle.
+
+## [SMC-01] SMT à la barre d'origine de la zone (2026-07-12)
+
+Flag `smt_at_origin` (off) : pour OB_RETEST/BREAKER_RETEST, la divergence SMT
+est lue à `created_at` (barre de l'impulsion d'origine) au lieu de la barre de
+retest. SWEEP_REVERSAL inchangé. Corrélé : ETH pour BTC, BTC pour ETH.
+
+| Slot | Mode | FULL PnL | IS n / PnL / PF | OOS n / PnL / PF |
+|---|---|---:|---|---|
+| BTC 4h | baseline | +329.3 | 86 / +261.1 / 2.19 | 52 / +68.2 / 1.47 |
+| BTC 4h | filter@retest | +328.2 | 85 / +260.0 / 2.18 | 52 / +68.2 / 1.47 |
+| BTC 4h | filter@origin | +284.6 | 83 / +247.8 / 2.12 | 48 / +36.8 / 1.28 |
+| BTC 1h | filter@origin | −28.9 | 55 / −21.4 / 0.84 | 22 / −7.6 / 0.77 |
+| ETH 4h | filter@retest | −83.6 | 95 / −31.2 / 0.91 | 65 / −52.4 / 0.71 |
+| ETH 4h | filter@origin | −45.0 | 83 / **+13.1** / 1.05 | 57 / −58.1 / 0.67 |
+| ETH 1h | filter@origin | −221.6 | 278 / −168.8 / 0.69 | 128 / −52.8 / 0.70 |
+
+(`bonus@origin` ≈ baseline partout : sans sizing par confluence, un bonus de
+score ne change presque rien.)
+
+**Verdict : OFF par défaut (inchangé).**
+- L'inertie mesurée est bien LEVÉE : filter@retest touchait 0-1 trade
+  (recouvrement quasi nul), filter@origin en filtre désormais des dizaines
+  (BTC 4h : 4 trades OOS retirés ; ETH 1h : 16 trades OOS retirés).
+- Mais la divergence SMT à l'origine n'est PAS un filtre de qualité ici :
+  elle retire des gagnants sur le slot déployé (BTC 4h OOS +68.2 → +36.8,
+  PF 1.47 → 1.28). Le gain IS sur ETH 4h (+31) ne tient pas en OOS.
+- Exposé au param_space (`smt_at_origin`) pour l'optimiseur.
