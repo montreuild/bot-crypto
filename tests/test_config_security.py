@@ -70,3 +70,14 @@ def test_live_with_channel_no_critical(tmp_path, caplog, monkeypatch):
     with caplog.at_level(logging.CRITICAL):
         load_config(path)
     assert not any("canal de notification" in r.message for r in caplog.records)
+
+
+def test_open_host_with_allow_insecure_config_loads(tmp_path, monkeypatch):
+    """L'override peut aussi venir du fichier de config (web.allow_insecure)."""
+    monkeypatch.delenv("ALLOW_INSECURE_WEB", raising=False)
+    import yaml as _yaml
+    path = _write_cfg(tmp_path, host="0.0.0.0", api_key="")
+    data = _yaml.safe_load(open(path))
+    data["web"]["allow_insecure"] = True
+    _yaml.safe_dump(data, open(path, "w"))
+    assert isinstance(load_config(path), dict)

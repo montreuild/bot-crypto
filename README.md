@@ -98,14 +98,14 @@ python cli.py
 
 > ⚠ **Dev local** : si `config.yaml` a `web.host: 0.0.0.0` sans `web.api_key`,
 > le démarrage est refusé (l'API de trading serait ouverte au réseau — OPS-02).
-> Pour des tests en local uniquement, lancer avec l'override explicite :
+> Pour des tests en local uniquement, mettre dans `config.yaml` :
 >
-> ```bash
-> ALLOW_INSECURE_WEB=1 python cli.py          # Linux/macOS
+> ```yaml
+> web:
+>   allow_insecure: true   # dev local uniquement
 > ```
-> ```powershell
-> $env:ALLOW_INSECURE_WEB="1"; py cli.py      # Windows PowerShell
-> ```
+>
+> (La variable d'environnement `ALLOW_INSECURE_WEB=1` fonctionne aussi.)
 >
 > Avant toute exposition réseau, définir `web.api_key`
 > (`python -c "import secrets; print(secrets.token_urlsafe(32))"`).

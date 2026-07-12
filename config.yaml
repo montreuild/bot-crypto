@@ -178,6 +178,9 @@ web:
   port: 8000
   refresh_interval: 5
   api_key: ''
+  # Dev LOCAL uniquement : autorise host ouvert sans api_key (sinon le
+  # démarrage est refusé — OPS-02). À retirer avant toute exposition réseau.
+  allow_insecure: true
 ui:
   risk_preset:
   expert_mode: false
