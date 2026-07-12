@@ -31,6 +31,10 @@ REQUIRED_FIELDS = [
 DEFAULT_TAKER_FEE = 0.001
 DEFAULT_MAKER_FEE = 0.0004
 
+# Racine des données persistées hors BDD (ARCH-13) — les stores en dérivent
+# leurs répertoires par défaut (data/ohlcv, data/features, data/derivatives).
+DATA_ROOT = "data"
+
 DEFAULTS = {
     "trading": {
         "paper_mode": True, "max_positions": 5, "max_longs": 3, "max_shorts": 3,

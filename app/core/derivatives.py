@@ -35,6 +35,10 @@ from typing import Dict, List, Optional
 
 import polars as pl
 
+from app.core.config import DATA_ROOT
+
+DERIVATIVES_DIR = str(Path(DATA_ROOT) / "derivatives")
+
 logger = logging.getLogger(__name__)
 
 _OKX_REST = "https://www.okx.com"
@@ -98,7 +102,7 @@ def _http_get_json(url: str, timeout: float = 8.0) -> Optional[list]:
 class DerivativesStore:
     """Cache Parquet + fetch des métriques de dérivés. Sans clé API."""
 
-    def __init__(self, base_dir: str = "data/derivatives", okx_rest: str = _OKX_REST):
+    def __init__(self, base_dir: str = DERIVATIVES_DIR, okx_rest: str = _OKX_REST):
         self._base = Path(base_dir)
         self._okx = okx_rest.rstrip("/")
         self._last_refresh: Dict[str, float] = {}   # (symbol|period) → ts dernier fetch réseau

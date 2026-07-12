@@ -12,6 +12,11 @@ from typing import Dict, List, Optional
 
 import polars as pl
 
+from app.core.config import DATA_ROOT
+from app.core.singleton import lazy_singleton
+
+OHLCV_DIR = os.path.join(DATA_ROOT, "ohlcv")
+
 logger = logging.getLogger(__name__)
 
 # Plancher de `since` pour les fetch paginés : ~fondation d'OKX (2017-01-01).
@@ -52,7 +57,7 @@ class CandleStore:
     Stratégie : cache local → fetch incrémental → merge+déduplique → persistance.
     """
 
-    def __init__(self, base_dir: str = "data/ohlcv"):
+    def __init__(self, base_dir: str = OHLCV_DIR):
         self._base = Path(base_dir)
         logger.info(f"[CandleStore] Initialisation — répertoire : {self._base.resolve()}")
 
@@ -369,16 +374,7 @@ class CandleStore:
 
 
 # ── Singleton global ───────────────────────────────────────────────────────────
-
-_default_store: Optional[CandleStore] = None
-_store_lock    = threading.Lock()
-
-
-def get_store(base_dir: str = "data/ohlcv") -> CandleStore:
-    """Retourne le singleton CandleStore (lazy init, thread-safe)."""
-    global _default_store
-    if _default_store is None:
-        with _store_lock:
-            if _default_store is None:
-                _default_store = CandleStore(base_dir)
-    return _default_store
+get_store = lazy_singleton(
+    CandleStore,
+    doc="Retourne le singleton CandleStore (lazy init, thread-safe).",
+)

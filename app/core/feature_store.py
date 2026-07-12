@@ -37,6 +37,7 @@ Thread-safety : un verrou par fichier (réutilise le registre de candle_store).
 from __future__ import annotations
 
 import json
+import os
 import logging
 import threading
 from dataclasses import dataclass
@@ -46,6 +47,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 import polars as pl
 
 from app.core.candle_store import _get_file_lock  # verrous par fichier partagés
+from app.core.config import DATA_ROOT
+from app.core.singleton import lazy_singleton
+
+FEATURES_DIR = os.path.join(DATA_ROOT, "features")
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +148,7 @@ def _with_ohlcv_hash(df: pl.DataFrame) -> pl.DataFrame:
 class FeatureStore:
     """Catalogue Parquet persistant de features par ``(symbol, timeframe)``."""
 
-    def __init__(self, base_dir: str = "data/features"):
+    def __init__(self, base_dir: str = FEATURES_DIR):
         self._base = Path(base_dir)
         logger.info(f"[FeatureStore] Initialisation — répertoire : {self._base.resolve()}")
 
@@ -381,19 +386,10 @@ class FeatureStore:
 
 
 # ── Singleton global ─────────────────────────────────────────────────────────
-
-_default_store: Optional[FeatureStore] = None
-_store_lock = threading.Lock()
-
-
-def get_feature_store(base_dir: str = "data/features") -> FeatureStore:
-    """Retourne le singleton FeatureStore (lazy init, thread-safe)."""
-    global _default_store
-    if _default_store is None:
-        with _store_lock:
-            if _default_store is None:
-                _default_store = FeatureStore(base_dir)
-    return _default_store
+get_feature_store = lazy_singleton(
+    FeatureStore,
+    doc="Retourne le singleton FeatureStore (lazy init, thread-safe).",
+)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
