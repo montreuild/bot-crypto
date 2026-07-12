@@ -67,7 +67,6 @@ from app.core import ict
 from app.core.indicators_core import (ema as _ema_series, volume_ratio as _vol_ratio,
                                        choppiness as _choppiness, pin_bar as _pin_bar,
                                        engulfing as _engulfing)
-from app.live.utils import _HTF_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -80,14 +79,10 @@ def _tf_to_sec(tf: str) -> int:
         return 0
 
 
-# Biais HTF aligné sur la « source unique de vérité » _HTF_MAP d'app/live/utils
-# (secondes LTF → secondes HTF), au lieu d'un multiplicateur ×N arbitraire.
+# Biais HTF aligné sur la source unique app/core/timeframes (secondes LTF →
+# secondes HTF), au lieu d'un multiplicateur ×N arbitraire.
 # Validé sur BTC : ≥ aussi bon que ×4 (4h→1d : PF 1.52 vs 1.49).
-_HTF_SEC_MAP: Dict[int, int] = {
-    _tf_to_sec(k): _tf_to_sec(v)
-    for k, v in _HTF_MAP.items()
-    if _tf_to_sec(k) and _tf_to_sec(v)
-}
+from app.core.timeframes import HTF_SECONDS_MAP as _HTF_SEC_MAP  # noqa: E402
 
 
 class Strategy(BaseStrategy):

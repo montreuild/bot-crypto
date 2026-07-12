@@ -39,12 +39,10 @@ _OHLCV_TTL: Dict[str, int] = {
     "1h": 600, "4h": 2400, "1d": 14400,
 }
 
-# Durée d'un timeframe en millisecondes (pour détecter la bougie en cours).
-_TF_MS: Dict[str, int] = {
-    "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000,
-    "30m": 1_800_000, "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000,
-    "6h": 21_600_000, "8h": 28_800_000, "12h": 43_200_000, "1d": 86_400_000,
-}
+# Durée d'un timeframe en millisecondes — source unique (V4-A).
+# (_OHLCV_TTL ci-dessus reste local : c'est un intervalle de POLLING, pas
+# une durée de timeframe.)
+from app.core.timeframes import TF_MS as _TF_MS  # noqa: E402
 
 
 class OHLCVCache:

@@ -83,10 +83,7 @@ GLOBAL_TRADING_PARAMS = {
 from app.core.is_oos import OOS_FRACTION_DEFAULT as _OOS_FRACTION  # BT-08 : constante partagée
 
 # Conversion TF -> minutes (pour exprimer la fenêtre OOS en temps).
-_TF_MINUTES = {
-    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-    "1h": 60, "2h": 120, "4h": 240, "1d": 1440,
-}
+from app.core.timeframes import TF_MINUTES as _TF_MINUTES  # V4-A : source unique
 
 # Fenêtre de TRADING visée dans la tranche OOS, AU-DELÀ du warmup, pour qu'elle
 # génère assez de trades (~ lifecycle.eval_min_trades). Sans elle, l'OOS ne

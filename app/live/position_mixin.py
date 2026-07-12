@@ -32,11 +32,8 @@ from app.core.indicators import atr_val as _compute_atr
 
 logger = logging.getLogger(__name__)
 
-# Mapping TF → secondes
-_TF_SECS = {
-    "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
-    "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400,
-}
+# Mapping TF → secondes — source unique (V4-A).
+from app.core.timeframes import TF_SECONDS as _TF_SECS  # noqa: E402
 
 
 def _calc_unreal_pct(side: str, entry: float, price: float) -> float:

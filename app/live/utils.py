@@ -4,7 +4,7 @@ Utilitaires partagés pour la couche live trading.
 Ce module regroupe les fonctions et constantes transversales utilisées par
 live_trader, signal_pipeline et ohlcv_cache, évitant les imports circulaires.
 """
-from typing import Dict, Optional
+from typing import Optional
 
 from app.core.sanitize import safe_float as _safe_float   # noqa: F401 — re-export
 from app.core.sanitize import sanitize as _sanitize        # noqa: F401 — re-export
@@ -168,18 +168,5 @@ def resolve_strategy_params(cfg: dict, timeframe: str = None,
 # Source unique de vérité — importé par live_trader et signal_pipeline.
 # ---------------------------------------------------------------------------
 
-_HTF_MAP: Dict[str, str] = {
-    "1m":  "15m",
-    "3m":  "30m",
-    "5m":  "1h",
-    "6m":  "1h",
-    "15m": "4h",
-    "30m": "4h",
-    "1h":  "4h",
-    "2h":  "1d",
-    "4h":  "1d",
-    "6h":  "1d",
-    "8h":  "1d",
-    "12h": "1d",
-    "1d":  "1d",
-}
+# V4-A : la table _HTF_MAP vit désormais dans app/core/timeframes.HTF_MAP
+# (importable par toutes les couches) — plus aucun importeur ici.

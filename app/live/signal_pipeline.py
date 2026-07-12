@@ -8,7 +8,8 @@ from typing import Callable, Dict, List, Optional
 
 import polars as pl
 
-from app.live.utils import _HTF_MAP, _merge_params
+from app.core.timeframes import HTF_MAP as _HTF_MAP
+from app.live.utils import _merge_params
 
 logger = logging.getLogger(__name__)
 

@@ -30,15 +30,12 @@ from app.engine.engine import BaseStrategy
 from app.core import smc
 from app.core import ict
 from app.core.indicators_core import atr_wilder
-from app.live.utils import _HTF_MAP
 
 logger = logging.getLogger(__name__)
 
-_TF_SEC = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
-           "1h": 3600, "2h": 7200, "4h": 14400, "6h": 21600, "12h": 43200,
-           "1d": 86400}
-_HTF_SEC_MAP = {_TF_SEC[k]: _TF_SEC[v] for k, v in _HTF_MAP.items()
-                if k in _TF_SEC and v in _TF_SEC}
+# Table canonique (V4-A) — l'ancienne version locale excluait 6m/8h ;
+# la canonique les inclut (entrées inertes : aucun TF tradé).
+from app.core.timeframes import HTF_SECONDS_MAP as _HTF_SEC_MAP
 
 
 class Strategy(BaseStrategy):

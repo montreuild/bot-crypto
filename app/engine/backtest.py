@@ -25,11 +25,9 @@ def _sf(v, fallback=None):
 logger = logging.getLogger(__name__)
 
 
-# Timeframe → minutes mapping (crypto markets: 365 days/year, 24h/day)
-_TF_MINUTES = {
-    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-    "1h": 60, "2h": 120, "4h": 240, "1d": 1440,
-}
+# Timeframe → minutes — source unique (V4-A). L'ancienne table locale (9 clés)
+# renvoyait le défaut pour 6h/8h/12h ; la canonique les couvre.
+from app.core.timeframes import TF_MINUTES as _TF_MINUTES
 
 
 def _bar_to_days(tf: str) -> float:
