@@ -433,7 +433,6 @@ def audit_results():
             # Schéma par symbole (V4-C) : une entrée peut être héritée (plate)
             # ou un mapping {symbole: entrée} — une ligne par symbole.
             from app.core.param_resolution import _is_legacy_tf_entry
-            from app.core.bot_identity import build_slot_key
             entries = ([("", data)] if _is_legacy_tf_entry(data)
                        else [(sym, d) for sym, d in data.items()
                              if isinstance(d, dict)])
