@@ -517,7 +517,9 @@ class RiskManager:
         strat = position.get("strategy", "")
         tf    = position.get("timeframe", "")
         if strat and tf:
-            self.register_slot_open(f"{strat}::{tf}")
+            from app.core.bot_identity import build_slot_key
+            self.register_slot_open(build_slot_key(strat, tf,
+                                                   position.get("symbol", "")))
 
     def register_close(self, position_id: str):
         self.open_positions.pop(position_id, None)

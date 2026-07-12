@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 
 import numpy as np
 
+from app.core.bot_identity import build_slot_key
+
 logger = logging.getLogger(__name__)
 
 _TRACKER_PATH = os.path.join("data", "oos_tracker.json")
@@ -272,8 +274,7 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
     edge = _edge_contract(edge_returns, conf=edge_conf)
 
     return {
-        "slot_key":      f"{strategy}::{timeframe}::{symbol}" if symbol
-                         else f"{strategy}::{timeframe}",
+        "slot_key":      build_slot_key(strategy, timeframe, symbol or ""),
         "strategy":      strategy,
         "timeframe":     timeframe,
         "symbol":        symbol,

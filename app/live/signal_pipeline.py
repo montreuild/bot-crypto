@@ -8,6 +8,7 @@ from typing import Callable, Dict, List, Optional
 
 import polars as pl
 
+from app.core.bot_identity import build_slot_key, build_pos_key
 from app.core.timeframes import HTF_MAP as _HTF_MAP
 from app.live.utils import _merge_params
 
@@ -124,9 +125,9 @@ class SignalPipeline:
                     if strategy is None:
                         continue
 
-                    slot_key = (f"{strat_name}::{tf}::{symbol}" if e_sym
-                                else f"{strat_name}::{tf}")
-                    pos_key  = f"{symbol}::{strat_name}::{tf}"
+                    slot_key = build_slot_key(strat_name, tf,
+                                              symbol if e_sym else "")
+                    pos_key  = build_pos_key(symbol, strat_name, tf)
                     if pos_key in open_positions:
                         continue
 

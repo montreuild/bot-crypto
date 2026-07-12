@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
 
-from app.core.bot_identity import parse_slot_key
+from app.core.bot_identity import parse_slot_key, build_slot_key
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,7 @@ class CapitalAllocator:
                 if not name:
                     continue
                 symbol = entry.get("symbol", "")
-                key = f"{name}::{tf}::{symbol}" if symbol else f"{name}::{tf}"
+                key = build_slot_key(name, tf, symbol)
                 new_keys.add(key)
                 if key not in self._slots:
                     self._slots[key] = SlotBudget(

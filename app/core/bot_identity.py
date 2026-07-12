@@ -202,6 +202,19 @@ def _slot_key(strategy: str, timeframe: str, symbol: str = "") -> str:
     return f"{base}::{symbol}" if symbol else base
 
 
+# Alias publics (V4-C : ARCH-05) — SEULS constructeurs autorisés pour les clés
+# de slot/position ; ne jamais reconstruire ces formats en f-string ad hoc.
+def build_slot_key(strategy: str, timeframe: str, symbol: str = "") -> str:
+    """Clé de slot ``strategy::tf[::symbol]`` (symbole vide = clé héritée)."""
+    return _slot_key(strategy, timeframe, symbol)
+
+
+def build_pos_key(symbol: str, strategy: str, timeframe: str) -> str:
+    """Clé de position ouverte ``symbol::strategy::tf`` (ordre HISTORIQUE,
+    distinct du slot_key — les deux formats coexistent volontairement)."""
+    return f"{symbol}::{strategy}::{timeframe}"
+
+
 def parse_slot_key(slot_key: str) -> tuple:
     """Décompose ``strategy::tf[::symbol]`` → ``(strategy, tf, symbol)``.
 

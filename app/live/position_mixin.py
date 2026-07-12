@@ -29,6 +29,7 @@ from app.core.database import (save_trade, update_daily_stats,
                                 persist_open_position, delete_open_position,
                                 load_open_positions, session_scope)
 from app.core.indicators import atr_val as _compute_atr
+from app.core.bot_identity import build_slot_key
 
 logger = logging.getLogger(__name__)
 
@@ -730,7 +731,9 @@ class PositionMixin:
         if add_size <= 0 or add_notional <= 0:
             return
 
-        slot_key = f"{pos.get('strategy', '')}::{pos.get('timeframe', self.tf)}"
+        slot_key = build_slot_key(pos.get('strategy', ''),
+                                  pos.get('timeframe', self.tf),
+                                  pos.get('symbol', ''))
         ok_budget, reason_budget = self.allocator.can_allocate(slot_key, add_notional)
         if not ok_budget:
             logger.debug(f"[ScaleIn] {symbol} refusé (budget: {reason_budget})")
@@ -959,7 +962,9 @@ class PositionMixin:
         self.risk.register_close(pos_id)
 
         # Mise à jour circuit breakers par slot
-        slot_key = f"{pos.get('strategy', '')}::{pos.get('timeframe', self.tf)}"
+        slot_key = build_slot_key(pos.get('strategy', ''),
+                                  pos.get('timeframe', self.tf),
+                                  pos.get('symbol', ''))
         self.risk.update_slot_result(slot_key, pnl, pnl > 0)
 
         # Libération du budget du slot

@@ -310,21 +310,25 @@ def get_closed_trades_for_slot(session: Session, strategy: str, timeframe: str,
 
 
 def get_slot_live_stats(session: Session, strategy: str, timeframe: str,
-                        days: int = 30) -> dict:
-    """Stats live agrégées d'un bot ``strategy::timeframe`` sur ``days`` jours.
+                        days: int = 30, symbol: str = None) -> dict:
+    """Stats live agrégées d'un bot ``strategy::timeframe[::symbol]`` sur
+    ``days`` jours. ``symbol`` optionnel : restreint au symbole du slot.
 
     Budget-indépendant : on remonte le nombre de trades, le win-rate et le
     **rendement moyen par trade (%)**, exploités par la machine à états du cycle
     de vie (Phase 2). Retourne des zéros si aucun trade.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    rows = session.query(Trade.pnl, Trade.pnl_pct).filter(
+    q = session.query(Trade.pnl, Trade.pnl_pct).filter(
         Trade.strategy == strategy,
         Trade.timeframe == timeframe,
         Trade.status.like("closed%"),
         Trade.pnl.isnot(None),
         Trade.time >= cutoff,
-    ).all()
+    )
+    if symbol:
+        q = q.filter(Trade.symbol == symbol)
+    rows = q.all()
     n = len(rows)
     if n == 0:
         return {"n_trades": 0, "wins": 0, "win_rate": 0.0,

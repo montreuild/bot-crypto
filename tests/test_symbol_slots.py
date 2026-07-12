@@ -154,3 +154,22 @@ def test_optimizer_apply_route_passes_symbol():
     src = inspect.getsource(opt_route.optimizer_apply)
     assert 'job.get("symbol")' in src
     assert "symbol=symbol" in src
+
+
+# ── V4-C : helpers canoniques + validation des clés 3-parties ────────────────
+
+def test_build_helpers():
+    from app.core.bot_identity import build_slot_key, build_pos_key
+    assert build_slot_key("trend_rider", "4h", "ETH/USDC") == "trend_rider::4h::ETH/USDC"
+    assert build_slot_key("trend", "1h") == "trend::1h"
+    assert build_pos_key("ETH/USDC", "trend_rider", "4h") == "ETH/USDC::trend_rider::4h"
+
+
+def test_slot_key_route_regex_accepts_symbol():
+    """La validation des routes slots accepte les clés 3-parties (l'ancienne
+    regex 2-parties cassait budget/toggle/reset depuis l'écran Bots)."""
+    from app.api.routes.trades import _SLOT_KEY_RE
+    assert _SLOT_KEY_RE.match("trend_rider::4h::ETH/USDC")
+    assert _SLOT_KEY_RE.match("smart_money::1h")
+    assert not _SLOT_KEY_RE.match("../etc/passwd")
+    assert not _SLOT_KEY_RE.match("bad key::4h")

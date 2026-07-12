@@ -34,6 +34,8 @@ from app.live.position_mixin     import PositionMixin, _calc_unreal_pct
 from app.live.signal_pipeline    import SignalPipeline
 from app.live.utils              import _HTF_MAP, _sanitize, _safe_float
 
+from app.core.bot_identity import build_slot_key, build_pos_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -454,7 +456,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         # 5. Exécution des signaux rankés
         for sig in signals:
             slot_key = sig.slot_key
-            pos_key  = f"{sig.symbol}::{sig.strategy}::{sig.tf}"
+            pos_key  = build_pos_key(sig.symbol, sig.strategy, sig.tf)
             if pos_key in self.open_positions:
                 continue
 
@@ -552,8 +554,10 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             return
 
         atr = _compute_atr(df)
-        slot_key = f"{strategy.name}::{tf}"
-        pos_key  = f"{symbol}::{strategy.name}::{tf}"
+        # V4-C : la clé 2-parties héritée ne matchait plus aucun slot 3-parties
+        # de l'allocateur (budget introuvable sur le chemin scan direct).
+        slot_key = build_slot_key(strategy.name, tf, symbol)
+        pos_key  = build_pos_key(symbol, strategy.name, tf)
         if pos_key in self.open_positions:
             return
 
@@ -972,13 +976,17 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
                     name = slot.get("name")
                     if not name:
                         continue
-                    key = f"{name}::{tf}"
+                    # V4-C : clé 3-parties (l'ancienne 2-parties ne matchait
+                    # plus ni oos_tracker ni allocator._slots -> budget lu = 0
+                    # pour TOUS les slots par le lifecycle).
+                    key = build_slot_key(name, tf, slot.get("symbol", ""))
                     rec = oos.get(key, {})
                     contract = rec.get("contract", {}) or {}
                     sim = rec.get("sim", {}) or {}
                     edge = rec.get("edge", {}) or {}
                     with session_scope(self.SessionLocal) as sess:
-                        stats = get_slot_live_stats(sess, name, tf, days=days)
+                        stats = get_slot_live_stats(sess, name, tf, days=days,
+                                                    symbol=slot.get("symbol") or None)
                     sb = self.allocator._slots.get(key)
                     # Score budget-indépendant : rendement simulé moyen par trade.
                     score = float(sim.get("avg_return_pct", 0.0) or 0.0)
