@@ -80,7 +80,7 @@ mais des chemins secondaires supposaient encore l'ancien slot 2-parties.
 | DEAD-03 | ⚠ décision utilisateur : parquets versionnés (choix actuel volontaire) + sort de XRP_USDC | S |
 | TEST-06 | Tests lents/fragiles : fixtures synthétiques + marker slow | M |
 
-## 🟢 Vague 4 — Architecture (après le nettoyage, avant les gros chantiers)
+## 🟢 Vague 4 — Architecture ✅ RÉALISÉE (2026-07-12)
 
 Ordre interne : ARCH-02 (param_resolution → core) débloque ARCH-03/11 ;
 ARCH-08 + DEAD-04 fusionnent en un seul module `app/core/timeframes.py`.
@@ -88,6 +88,29 @@ ARCH-08 + DEAD-04 fusionnent en un seul module `app/core/timeframes.py`.
 ARCH-02 → ARCH-08+DEAD-04 → ARCH-03 → ARCH-05 (+_pos_key) → ARCH-04 → ARCH-09
 → ARCH-10 → OPS-08/09 (migrations + index DB) → OPS-10 (lock allocateur)
 → ARCH-06/07/14 (découpage fichiers-dieux) → ARCH-12/13.
+
+Réalisation (un commit taggé par item ; couches documentées dans
+`ARCHITECTURE.md › Couches et règles de dépendance`) :
+
+- ✅ ARCH-08+DEAD-04 : `app/core/timeframes.py` (TF_SECONDS/TF_MINUTES/TF_MS/HTF_MAP uniques)
+- ✅ ARCH-02 : `app/core/param_resolution.py` (fin de l'inversion engine→live)
+- ✅ ARCH-05 : `build_slot_key`/`build_pos_key` canoniques + 4 reliquats 2-parties corrigés
+- ✅ ARCH-04 : live_trader n'importe plus app.api (`core/yaml_io.update_config_yaml`, verrou unique)
+- ✅ ARCH-09 : forward-test déplacé core→engine (`app/engine/forward_test.py`)
+- ✅ ARCH-10+11 : `DEFAULT_TAKER_FEE`/`DEFAULT_MAKER_FEE` + `DEFAULT_CONFIG_SYMBOL` partout
+- ✅ OPS-08+09 : `_migrate_schema` idempotente + index `ix_trades_strategy_tf_time`
+- ✅ OPS-10 : RLock interne au CapitalAllocator + accesseurs verrouillés
+- ✅ ARCH-13 : `DATA_ROOT` + `lazy_singleton` factorisé
+- ✅ ARCH-06 : live_trader.py 1240→470 lignes (AutoOptMixin + HealthMixin,
+  chemin d'ouverture dans PositionMixin)
+- ✅ ARCH-07 : routes scanner 995→260 lignes (`app/api/services/scanner_service.py`,
+  réponses byte-identiques vérifiées sur fixture)
+- ✅ ARCH-14 : smc.py → façade + 5 modules ; `smart_money_signals.py` extrait
+  (byte-identique sur fixture)
+- ✅ ARCH-03 : déjà résolu par la refonte per-symbole (`_select_symbol_entry`
+  partagé par `resolve_strategy_params` ET `get_active_strategies_per_tf`) — vérifié
+- ✅ ARCH-12 : partie prioritaire résolue par ARCH-04 (live sans app.api.state) ;
+  l'encapsulation AppState complète reste optionnelle (aucune inversion restante)
 
 ## 🔵 Vague 5 — Recherche d'edge SMC/ICT (mesures, gains potentiels)
 

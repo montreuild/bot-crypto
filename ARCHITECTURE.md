@@ -44,6 +44,75 @@ Vue d'ensemble technique, patterns de design et flux de données.
 
 ---
 
+## 🧱 Couches et règles de dépendance (Vague 4)
+
+Les imports ne vont que **vers le bas**. Toute nouvelle dépendance montante
+est une régression d'architecture (cf. `docs/audit/01-architecture.md`).
+
+```
+app/api         (routes FastAPI + app/api/services — peut tout importer)
+   │
+app/live        (LiveTrader + mixins — importe core/engine/strategies,
+   │             JAMAIS app.api : l'écriture config passe par core/yaml_io)
+app/engine      (Engine, Backtester, optimiseur, forward-test, scanner —
+   │             importe core + strategies dynamiquement)
+app/strategies  (importe core ; exception documentée : engine.BaseStrategy)
+   │
+app/core        (fondation pure : config, timeframes, param_resolution,
+                 bot_identity, indicateurs, smc_*, risk, database —
+                 n'importe AUCUNE couche supérieure)
+```
+
+Invariants vérifiables (tous tenus depuis la Vague 4) :
+
+| Invariant | Vérification |
+|---|---|
+| core n'importe pas engine/live/api | `grep -rn "from app.engine\|from app.live\|from app.api" app/core` = 0 |
+| live n'importe pas api | `grep -rn "from app.api" app/live` = 0 |
+| strategies n'importe pas live | `grep -rn "from app.live" app/strategies` = 0 |
+
+Sources uniques (ne jamais recopier ces littéraux) :
+
+- **Timeframes** : `app/core/timeframes.py` (`TF_SECONDS`, `TF_MINUTES`,
+  `TF_MS`, `HTF_MAP`).
+- **Résolution des params** : `app/core/param_resolution.py`
+  (`resolve_strategy_params`, `_select_symbol_entry`,
+  `DEFAULT_CONFIG_SYMBOL`) — utilisée par le Backtester, le LiveTrader
+  ET `get_active_strategies_per_tf` (aucun chemin parallèle).
+- **Clés de slot/position** : `app/core/bot_identity.py`
+  (`build_slot_key` = `strategy::tf[::symbol]`,
+  `build_pos_key` = `symbol::strategy::tf`, `parse_slot_key`).
+- **Frais** : `app/core/config.py` (`DEFAULT_TAKER_FEE`, `DEFAULT_MAKER_FEE`).
+- **Données** : `app/core/config.py` (`DATA_ROOT`) → `OHLCV_DIR`,
+  `FEATURES_DIR`, `DERIVATIVES_DIR` ; singletons via
+  `app/core/singleton.py::lazy_singleton`.
+- **Écriture config.yaml** : `app/core/yaml_io.py::update_config_yaml`
+  (verrou unique partagé api/live).
+- **Split IS/OOS** : `app/core/is_oos.py` ; seuils statistiques :
+  `app/core/stats_thresholds.py` ; courbe de risque DD :
+  `app/core/risk_curve.py`.
+
+### Composition du LiveTrader (fichiers < 500 lignes)
+
+`LiveTrader(PositionMixin, BalanceSyncMixin, AutoOptMixin, HealthMixin)` :
+
+- `live_trader.py` — init, boucle principale, cycle, wrappers OHLCV.
+- `position_mixin.py` — cycle de vie des positions + chemin unique
+  d'ouverture (`_try_open_from_signal`, gating risque→slot→budget).
+- `balance_sync.py` — synchronisation du capital (paper/spot/margin).
+- `auto_opt_mixin.py` — registre de stratégies, auto-optimisation
+  planifiée, forward-test glissant (exécuté par
+  `app/engine/forward_test.py`), cycle de vie des bots.
+- `health_mixin.py` — heartbeat/dead-man, reprise réseau, purge,
+  `status` (API), agrégats DB.
+
+Le moteur SMC est scindé de même : `app/core/smc.py` est une **façade**
+(`smc_primitives` / `smc_structure` / `smc_geometry` / `smc_volume` /
+`smc_sessions`), et la logique métier des routes scanner vit dans
+`app/api/services/scanner_service.py`.
+
+---
+
 ## 🔄 Flux de données
 
 ### Démarrage (cli.py)
