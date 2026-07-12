@@ -100,6 +100,17 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                        if lv < c], reverse=True) \
         if (vp and p.get("vp_targets")) else []
 
+    # SMC-03 — liquidité calendaire (off par défaut) : niveaux PDH/PDL/PWH/PWL
+    # du jour/semaine UTC clôturés. Deux usages indépendants :
+    #   mode "targets"/True : cibles de TP additionnelles (cal_tp) ;
+    #   mode "sweeps"/True  : déclencheur SWEEP_REVERSAL (bloc dédié plus bas).
+    cal_mode = p.get("use_calendar_liquidity", False)
+    cal = aux.get("cal") if cal_mode else None
+    cal_tp: List[float] = []
+    if cal is not None and cal_mode in (True, "targets"):
+        cal_tp = [float(cal[k][i]) for k in ("pdh", "pdl", "pwh", "pwl")
+                  if not np.isnan(cal[k][i])]
+
     # Garde CHoCH : pas d'entrée contre un changement de caractère récent.
     # Indices CHoCH pré-triés et mémoïsés sur ``res`` → lookup O(log n) par
     # barre au lieu d'un scan O(événements) (évite le O(événements²) de la
@@ -167,7 +178,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                      detail=f"sweep {ev['source']} "
                                             f"{ev['level']:.6g}",
                                      trend=trend, zone=zone,
-                                     extra_targets=vp_above)
+                                     extra_targets=vp_above,
+                                     cal_targets=cal_tp)
             if cand:
                 candidates.append(cand)
         elif ev["kind"] == "buy_side" and not recent_choch_up:
@@ -193,9 +205,69 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                      detail=f"sweep {ev['source']} "
                                             f"{ev['level']:.6g}",
                                      trend=trend, zone=zone,
-                                     extra_targets=vp_below)
+                                     extra_targets=vp_below,
+                                     cal_targets=cal_tp)
             if cand:
                 candidates.append(cand)
+
+    # SMC-03 — sweep d'un niveau calendaire (mode "sweeps"/True) : la mèche
+    # perce PDL/PWL (long) ou PDH/PWH (short) puis la clôture revient du bon
+    # côté — première barre de perce uniquement (low/high[i−1] du bon côté).
+    # Mêmes filtres durs et même grille de score que les sweeps du moteur ;
+    # +0.10 « pool » : un niveau calendaire est une poche majeure par nature.
+    if cal is not None and cal_mode in (True, "sweeps"):
+        if not recent_choch_down and (trend == 1 or allow_ct) \
+                and zone != "discount" and long_ema_ok and long_htf_ok:
+            for kname in ("pdl", "pwl"):
+                lv = float(cal[kname][i])
+                if np.isnan(lv) or not (float(low[i]) <= lv < float(low[i - 1])) \
+                        or c <= lv:
+                    continue
+                sc = 0.50 + kz_add + amd_add
+                sc += 0.10 if trend == 1 else 0.0
+                sc += 0.10                    # niveau calendaire = pool majeur
+                sc += 0.10 if zone == "premium" else 0.0
+                sc += 0.05 if vol_ok else 0.0
+                sc += 0.05 if close[i] > open_[i] else 0.0
+                sc += 0.05 if tl_tap_long else 0.0
+                sc += _vp_add(lv - 0.5 * atr, lv + 0.5 * atr)
+                sc += _inv_fvg_add(lv - 0.5 * atr, lv + 0.5 * atr, "long")
+                sc += _candle_add("long")
+                sl = min(float(low[i]), lv) - float(p["sl_buffer_atr"]) * atr
+                cand = self._build_trade(res, i, "long", c, sl, atr, p,
+                                         setup="SWEEP_REVERSAL", score=sc,
+                                         detail=f"sweep {kname.upper()} {lv:.6g}",
+                                         trend=trend, zone=zone,
+                                         extra_targets=vp_above,
+                                         cal_targets=cal_tp)
+                if cand:
+                    candidates.append(cand)
+        if not recent_choch_up and (trend == -1 or allow_ct) \
+                and zone != "premium" and short_ema_ok and short_htf_ok:
+            for kname in ("pdh", "pwh"):
+                lv = float(cal[kname][i])
+                if np.isnan(lv) or not (float(high[i]) >= lv > float(high[i - 1])) \
+                        or c >= lv:
+                    continue
+                sc = 0.50 + kz_add + amd_add
+                sc += 0.10 if trend == -1 else 0.0
+                sc += 0.10                    # niveau calendaire = pool majeur
+                sc += 0.10 if zone == "discount" else 0.0
+                sc += 0.05 if vol_ok else 0.0
+                sc += 0.05 if close[i] < open_[i] else 0.0
+                sc += 0.05 if tl_tap_short else 0.0
+                sc += _vp_add(lv - 0.5 * atr, lv + 0.5 * atr)
+                sc += _inv_fvg_add(lv - 0.5 * atr, lv + 0.5 * atr, "short")
+                sc += _candle_add("short")
+                sl = max(float(high[i]), lv) + float(p["sl_buffer_atr"]) * atr
+                cand = self._build_trade(res, i, "short", c, sl, atr, p,
+                                         setup="SWEEP_REVERSAL", score=sc,
+                                         detail=f"sweep {kname.upper()} {lv:.6g}",
+                                         trend=trend, zone=zone,
+                                         extra_targets=vp_below,
+                                         cal_targets=cal_tp)
+                if cand:
+                    candidates.append(cand)
 
     # ── B. Retest d'order block / rejection block ─────────────────────────
     # Les rejection blocks (mèches de swing) partagent la même mécanique de
@@ -233,7 +305,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                          detail=f"demande [{ob['bottom']:.6g}"
                                                 f"–{ob['top']:.6g}]",
                                          trend=trend, zone=zone,
-                                         extra_targets=vp_above)
+                                         extra_targets=vp_above,
+                                         cal_targets=cal_tp)
                 if cand:
                     candidates.append(cand)
             elif ob["kind"] == "bearish" and trend == -1 and not recent_choch_up:
@@ -258,7 +331,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                          detail=f"offre [{ob['bottom']:.6g}"
                                                 f"–{ob['top']:.6g}]",
                                          trend=trend, zone=zone,
-                                         extra_targets=vp_below)
+                                         extra_targets=vp_below,
+                                         cal_targets=cal_tp)
                 if cand:
                     candidates.append(cand)
 
@@ -291,7 +365,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                          detail=f"breaker [{brk['bottom']:.6g}"
                                                 f"–{brk['top']:.6g}]",
                                          trend=trend, zone=zone,
-                                         extra_targets=vp_above)
+                                         extra_targets=vp_above,
+                                         cal_targets=cal_tp)
                 if cand:
                     candidates.append(cand)
             elif brk["kind"] == "bearish" and trend == -1 \
@@ -313,7 +388,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                          detail=f"breaker [{brk['bottom']:.6g}"
                                                 f"–{brk['top']:.6g}]",
                                          trend=trend, zone=zone,
-                                         extra_targets=vp_below)
+                                         extra_targets=vp_below,
+                                         cal_targets=cal_tp)
                 if cand:
                     candidates.append(cand)
 
@@ -352,7 +428,8 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
                  sl: float, atr: float, p: Dict[str, Any],
                  setup: str, score: float, detail: str,
                  trend: int = 0, zone: str = "",
-                 extra_targets: Optional[List[float]] = None) -> Optional[dict]:
+                 extra_targets: Optional[List[float]] = None,
+                 cal_targets: Optional[List[float]] = None) -> Optional[dict]:
     risk = (entry - sl) if side == "long" else (sl - entry)
     if risk <= 0 or entry <= 0:
         return None
@@ -376,9 +453,11 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
         vds = smc.void_targets_above(res, i, entry, max_age=max_age) \
             if use_voids else []
         vps = [lv for lv in (extra_targets or []) if lv > entry]
+        cals = [lv for lv in (cal_targets or []) if lv > entry]
         targets = sorted({(lv, "liquidité") for lv in liq} |
                          {(lv, "void") for lv in vds} |
                          {(lv, "volume") for lv in vps} |
+                         {(lv, "calendaire") for lv in cals} |
                          ({(mm, "measured")} if mm else set()))
         for level, src in targets:
             cand = level - front
@@ -393,9 +472,11 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
         vds = smc.void_targets_below(res, i, entry, max_age=max_age) \
             if use_voids else []
         vps = [lv for lv in (extra_targets or []) if lv < entry]
+        cals = [lv for lv in (cal_targets or []) if lv < entry]
         targets = sorted({(lv, "liquidité") for lv in liq} |
                          {(lv, "void") for lv in vds} |
                          {(lv, "volume") for lv in vps} |
+                         {(lv, "calendaire") for lv in cals} |
                          ({(mm, "measured")} if mm else set()), reverse=True)
         for level, src in targets:
             cand = level + front

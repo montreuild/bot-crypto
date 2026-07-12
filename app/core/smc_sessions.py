@@ -18,6 +18,43 @@ SESSIONS  = {"asia": (0, 7), "london": (7, 12), "newyork": (12, 21),
              "late": (21, 24)}
 
 
+def calendar_liquidity_levels(df: pl.DataFrame) -> Optional[dict]:
+    """Niveaux de liquidité CALENDAIRE par barre, causals (SMC-03).
+
+    Pour chaque barre i : PDH/PDL = high/low du dernier jour UTC **clôturé**
+    (Previous Day High/Low, journées 00:00 UTC — nettes en crypto 24/7) et
+    PWH/PWL = high/low de la semaine précédente **clôturée** (ancrée lundi).
+    Cibles de sweep par excellence : les stops s'empilent au-dessus/en-dessous
+    de ces niveaux que tous les desks tracent.
+
+    Retourne ``{"pdh","pdl","pwh","pwl"}`` (np.ndarray float par barre,
+    NaN tant qu'aucun jour/semaine précédent n'est disponible), ou ``None``
+    si ``df`` n'a pas de colonne ``time``. Causal : une barre du jour J ne
+    voit que les agrégats du dernier jour observé < J (aucune fuite du futur ;
+    en cas de trou de données, le dernier jour disponible fait foi).
+    """
+    n = len(df)
+    if n == 0 or "time" not in df.columns:
+        return None
+    epoch = df["time"].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
+    h = df["high"].to_numpy().astype(float)
+    l = df["low"].to_numpy().astype(float)
+    day = epoch // 86400
+    week = (day + 3) // 7          # 1970-01-01 = jeudi -> +3 ancre le lundi
+
+    out = {k: np.full(n, np.nan) for k in ("pdh", "pdl", "pwh", "pwl")}
+    for ids, key_h, key_l in ((day, "pdh", "pdl"), (week, "pwh", "pwl")):
+        starts = np.flatnonzero(np.diff(ids, prepend=ids[0] - 1))
+        ends = np.append(starts[1:], n)
+        prev_h = prev_l = np.nan
+        for s, e in zip(starts, ends):
+            out[key_h][s:e] = prev_h
+            out[key_l][s:e] = prev_l
+            prev_h = float(h[s:e].max())
+            prev_l = float(l[s:e].min())
+    return out
+
+
 def killzone_flags(times_epoch: np.ndarray) -> np.ndarray:
     """1 si l'heure UTC d'ouverture de la barre tombe dans une killzone
     (Londres 07-10 UTC, New York 12-15 UTC), 0 sinon."""

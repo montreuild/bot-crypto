@@ -122,6 +122,7 @@ class Strategy(BaseStrategy):
         "candle_bonus":   [True, False],
         "smt_bonus":      [True, False],
         "smt_filter":     [True, False],
+        "use_calendar_liquidity": [False, "targets", "sweeps", True],
     }
 
     fixed_params: Dict[str, Any] = {
@@ -237,6 +238,12 @@ class Strategy(BaseStrategy):
         "smt_bonus":        False,
         "smt_filter":       False,
         "smt_conf":         0.05,
+        # ── SMC-03 : liquidité calendaire PDH/PDL/PWH/PWL (OFF par défaut) ───
+        # Niveaux du jour/semaine UTC clôturés (smc.calendar_liquidity_levels).
+        #   "targets" : cibles de TP additionnelles (concurrence liquidité/void)
+        #   "sweeps"  : déclencheur SWEEP_REVERSAL sur prise du niveau + rejet
+        #   True      : les deux usages ; False : inactif (byte-identique).
+        "use_calendar_liquidity": False,
     }
 
     def __init__(self):
@@ -341,6 +348,12 @@ class Strategy(BaseStrategy):
                                         int(p.get("smt_lookback", 20)))
         else:
             aux["smt"] = None
+        # SMC-03 — liquidité calendaire PDH/PDL/PWH/PWL (off par défaut) :
+        # niveaux causals du jour/semaine UTC clôturés, par barre.
+        if p.get("use_calendar_liquidity", False) and "time" in win.columns:
+            aux["cal"] = smc.calendar_liquidity_levels(win)
+        else:
+            aux["cal"] = None
         return aux
 
     @staticmethod

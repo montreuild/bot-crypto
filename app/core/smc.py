@@ -59,6 +59,7 @@ from app.core.smc_volume import (                 # noqa: F401
     _regression_channel, regression_channel_at, volume_profile,
 )
 from app.core.smc_sessions import (               # noqa: F401
-    KILLZONES, SESSIONS, _htf_buckets, htf_analysis, htf_trend_series,
-    killzone_flags, session_label, smt_series,
+    KILLZONES, SESSIONS, _htf_buckets, calendar_liquidity_levels,
+    htf_analysis, htf_trend_series, killzone_flags, session_label,
+    smt_series,
 )
