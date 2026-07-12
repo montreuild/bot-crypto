@@ -14,12 +14,10 @@ router = APIRouter()
 def _save_yaml(updates_fn):
     """Applique updates_fn(disk_cfg) et réécrit config.yaml (thread-safe).
 
-    Round-trip (ruamel) : les commentaires de config.yaml sont préservés."""
-    from app.core.yaml_io import load_yaml, dump_yaml
-    with state._config_write_lock:
-        disk_cfg = load_yaml("config.yaml", default={})
-        updates_fn(disk_cfg)
-        dump_yaml("config.yaml", disk_cfg)
+    V4-D : délègue au verrou UNIQUE de app.core.yaml_io (partagé avec le
+    LiveTrader) — le verrou api ne protégeait pas des écritures live."""
+    from app.core.yaml_io import update_config_yaml
+    update_config_yaml(updates_fn)
 
 
 def _save_strategy_yaml(strategy_name: str, updates_fn):

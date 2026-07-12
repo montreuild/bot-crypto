@@ -81,3 +81,23 @@ def dump_yaml(path: str, data) -> None:
     with open(path, "w", encoding="utf-8") as f:
         _pyyaml.dump(data, f, default_flow_style=False,
                      allow_unicode=True, sort_keys=False)
+
+
+# ── Mise à jour verrouillée de config.yaml (V4-D : ARCH-04) ──────────────────
+# Verrou UNIQUE pour toutes les écritures de config.yaml, quel que soit
+# l'appelant (routes API, LiveTrader). Avant : le verrou vivait dans
+# app.api.state et live_trader importait un helper privé d'un fichier de
+# routes FastAPI (inversion live→api).
+import threading
+
+_config_yaml_lock = threading.Lock()
+
+
+def update_config_yaml(updates_fn, path: str = "config.yaml") -> None:
+    """Applique ``updates_fn(disk_cfg)`` et réécrit ``path`` (thread-safe).
+
+    Round-trip (ruamel) : les commentaires du YAML sont préservés."""
+    with _config_yaml_lock:
+        disk_cfg = load_yaml(path, default={})
+        updates_fn(disk_cfg)
+        dump_yaml(path, disk_cfg)

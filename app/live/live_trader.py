@@ -583,16 +583,18 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         Met à jour capital_allocator.slot_budgets dans state.cfg et config.yaml.
         """
         try:
-            from app.api import state as _api_state
-            if _api_state.cfg is not None:
-                _api_state.cfg.setdefault("capital_allocator", {})["slot_budgets"] = budgets
-                try:
-                    from app.api.routes.config import _save_yaml
-                    def _upd(d):
-                        d.setdefault("capital_allocator", {})["slot_budgets"] = budgets
-                    _save_yaml(_upd)
-                except Exception as e:
-                    logger.warning(f"[LiveTrader] Persistance YAML budgets KO : {e}")
+            # V4-D : plus aucune dépendance à app.api — self.cfg EST l'objet
+            # config partagé du process (posé par cli.py, lu par les routes),
+            # et l'écriture disque passe par le verrou unique de core/yaml_io.
+            self.cfg.setdefault("capital_allocator", {})["slot_budgets"] = budgets
+            try:
+                from app.core.yaml_io import update_config_yaml
+
+                def _upd(d):
+                    d.setdefault("capital_allocator", {})["slot_budgets"] = budgets
+                update_config_yaml(_upd)
+            except Exception as e:
+                logger.warning(f"[LiveTrader] Persistance YAML budgets KO : {e}")
         except Exception as e:
             logger.debug(f"[LiveTrader] _persist_allocator_budgets : {e}")
 
