@@ -10,7 +10,9 @@ from fastapi.responses import JSONResponse
 
 from app.api import state
 from app.api.helpers import verify_api_key, _clean, _discover_strategies
+from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
 from app.core.exchange import create_exchange
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.engine.engine import BaseStrategyML
 from app.engine.scanner import MarketScanner
 
@@ -19,7 +21,8 @@ router = APIRouter()
 
 
 @router.get("/api/scanner/fast_analysis", dependencies=[Depends(verify_api_key)])
-def fast_analysis(symbol: str, tf: str, taker: float = 0.001, maker: float = 0.0004):
+def fast_analysis(symbol: str, tf: str, taker: float = DEFAULT_TAKER_FEE,
+                  maker: float = DEFAULT_MAKER_FEE):
     """Fast Analyse & optimisation : screening des indicateurs sur les données
     EN CACHE de (symbol, tf) — aucun appel exchange. Familles tendance / retour
     à la moyenne, sensibilité taker/maker, split IS/OOS."""
@@ -95,7 +98,7 @@ def scanner_opportunities(timeframe: str = None, limit: int = 200):
 
 
 @router.get("/api/scanner/chart", dependencies=[Depends(verify_api_key)])
-def scanner_chart(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 300):
+def scanner_chart(symbol: str = DEFAULT_CONFIG_SYMBOL, timeframe: str = "1h", limit: int = 300):
     """Retourne bougies OHLCV + séries indicateurs pour le graphique scanner."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
@@ -479,7 +482,7 @@ def _setup_series_v11(df, tf: str, limit: int, strategy: str) -> dict:
 
 
 @router.get("/api/scanner/setup_series", dependencies=[Depends(verify_api_key)])
-def scanner_setup_series(symbol: str = "BTC/USDC", timeframe: str = "1h",
+def scanner_setup_series(symbol: str = DEFAULT_CONFIG_SYMBOL, timeframe: str = "1h",
                          limit: int = 300, strategy: str = "v8"):
     """Markers des setups (entrée/TP/SL) d'une stratégie par bougie, pour le
     graphique scanner. ``strategy`` ∈ {v8, v11, v12}."""
@@ -516,7 +519,7 @@ def scanner_setup_series(symbol: str = "BTC/USDC", timeframe: str = "1h",
 
 # ── Analyse Smart Money Concepts (overlay graphique scanner/replay) ─────────
 @router.get("/api/scanner/smc", dependencies=[Depends(verify_api_key)])
-def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
+def scanner_smc(symbol: str = DEFAULT_CONFIG_SYMBOL, timeframe: str = "1h",
                 limit: int = 1000):
     """Analyse SMC complète du symbole : structure (BOS/CHoCH), poches de
     liquidité, sweeps, order blocks, FVG, premium/discount, trendlines et
@@ -753,7 +756,7 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
 
 # ── Smart replay : payload complet pour rejeu bougie par bougie ─────────────
 @router.get("/api/scanner/smc_replay", dependencies=[Depends(verify_api_key)])
-def scanner_smc_replay(symbol: str = "BTC/USDC", timeframe: str = "4h",
+def scanner_smc_replay(symbol: str = DEFAULT_CONFIG_SYMBOL, timeframe: str = "4h",
                        limit: int = 800):
     """Payload de rejeu Smart Money : UNE requête précalcule tout, le
     navigateur reconstruit l'état à n'importe quelle barre.
@@ -894,7 +897,7 @@ def scanner_smc_replay(symbol: str = "BTC/USDC", timeframe: str = "4h",
 
 
 @router.get("/api/scanner/signals", dependencies=[Depends(verify_api_key)])
-def scanner_signals(symbol: str = "BTC/USDC", timeframe: str = "1h", limit: int = 300):
+def scanner_signals(symbol: str = DEFAULT_CONFIG_SYMBOL, timeframe: str = "1h", limit: int = 300):
     """Exécute toutes les stratégies sur le symbole et retourne leurs signaux."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")

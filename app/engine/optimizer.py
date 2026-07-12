@@ -27,6 +27,7 @@ import polars as pl
 
 from app.engine.engine import Engine
 from app.engine.backtest import Backtester, BacktestResult
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.engine.registry import (
     get_strategy_timeframes,
     get_param_spaces,
@@ -166,7 +167,7 @@ class StrategyOptimizer:
                  df_is: pl.DataFrame, df_oos: pl.DataFrame,
                  param_space: Dict = None,
                  progress_callback: Optional[Callable] = None,
-                 symbol: str = "BTC/USDC",
+                 symbol: str = DEFAULT_CONFIG_SYMBOL,
                  df_full: pl.DataFrame = None,
                  split: int = None,
                  timeframe: str = None,

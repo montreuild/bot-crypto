@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 import numpy as np
 
 from app.core.bot_identity import build_slot_key
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.core.oos_tracker import (
     _closed_trades,
     _edge_contract,
@@ -175,7 +176,7 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
 
 # ── Point d'entrée ─────────────────────────────────────────────────────────
 def run_forward_test(cfg: dict, fetch_ohlcv, active_per_tf: dict,
-                     session_factory, symbol: str = "BTC/USDC",
+                     session_factory, symbol: str = DEFAULT_CONFIG_SYMBOL,
                      lookback_days: int = 45, edge_lookback_days: int = 100) -> dict:
     """Exécute le forward-test glissant sur tous les slots actifs.
 

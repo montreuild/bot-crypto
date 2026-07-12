@@ -11,6 +11,7 @@ from app.api import state
 from app.api.helpers import verify_api_key, _clean, _discover_strategies
 from app.core.candle_store import get_store
 from app.core.exchange import create_exchange
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -18,7 +19,7 @@ router = APIRouter()
 
 @router.post("/api/optimize/start", dependencies=[Depends(verify_api_key)])
 def optimizer_start(
-    symbol:              str  = "BTC/USDC",
+    symbol:              str  = DEFAULT_CONFIG_SYMBOL,
     symbols:             str  = "",
     strategies:          str  = "",
     timeframes:          str  = "",

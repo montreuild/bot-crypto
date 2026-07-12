@@ -23,6 +23,7 @@ from app.core.database           import init_db
 from app.core.exchange           import RobustExchange
 from app.core.indicators         import atr_val as _compute_atr
 from app.core.notifications      import Notifier
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.core.risk               import RiskManager
 from app.engine.engine           import Engine
 from app.engine.optimizer        import get_active_strategies_per_tf, RECOMMENDED_LIMIT
@@ -139,7 +140,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         self._fwd_test_interval      = int(_ft_cfg.get("interval_h", 24)) * 3600
         self._fwd_test_lookback_days = int(_ft_cfg.get("lookback_days", 45))
         self._fwd_test_edge_lookback = int(_ft_cfg.get("edge_lookback_days", 100))
-        self._fwd_test_symbol        = _ft_cfg.get("symbol", "BTC/USDC")
+        self._fwd_test_symbol        = _ft_cfg.get("symbol", DEFAULT_CONFIG_SYMBOL)
         # Premier passage différé pour laisser le cache OHLCV se réchauffer.
         self._fwd_test_next_run      = time.time() + int(_ft_cfg.get("initial_delay_s", 300))
 
@@ -854,7 +855,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
             # Config PAR SYMBOLE : on optimise chaque symbole configuré séparément
             # → chaque paire écrit sa propre optimizer_results[tf][symbol]. La
             # concurrence globale reste bornée par le sémaphore de l'optimiseur.
-            symbols = (self.cfg.get("scanner") or {}).get("symbols") or ["BTC/USDC"]
+            symbols = (self.cfg.get("scanner") or {}).get("symbols") or [DEFAULT_CONFIG_SYMBOL]
             opt = AutoOptimizer(
                 self.cfg, n_trials=40, method="bayesian",
                 on_apply_callback=self._on_opt_applied

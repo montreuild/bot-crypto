@@ -30,6 +30,7 @@ from app.core.database import (save_trade, update_daily_stats,
                                 load_open_positions, session_scope)
 from app.core.indicators import atr_val as _compute_atr
 from app.core.bot_identity import build_slot_key
+from app.core.config import DEFAULT_TAKER_FEE
 
 logger = logging.getLogger(__name__)
 
@@ -327,7 +328,7 @@ class PositionMixin:
             except (TypeError, ValueError):
                 pass
 
-        fee_rate = self.cfg["trading"].get("taker_fee", 0.001)
+        fee_rate = self.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE)
         fees     = trade_fees(exec_price, size, fee_rate)
         with self._capital_lock:
             if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
@@ -750,7 +751,7 @@ class PositionMixin:
             slip = self.cfg["trading"].get("paper_slippage", 0.001)
             exec_price *= (1 + slip) if side == "long" else (1 - slip)
 
-        fee_rate = self.cfg["trading"].get("taker_fee", 0.001)
+        fee_rate = self.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE)
         add_fees = trade_fees(exec_price, add_size, fee_rate)
         with self._capital_lock:
             if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
@@ -933,7 +934,7 @@ class PositionMixin:
         # Décompte de clôture (frais, emprunt composé, PnL net) : formules
         # partagées avec le Backtester — app/core/execution.py (parité
         # verrouillée par tests/test_execution_parity.py).
-        fee_rate    = self.cfg["trading"].get("taker_fee", 0.001)
+        fee_rate    = self.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE)
         hours_held  = (time.time() - pos["open_time"]) / 3600
         pnl, fees, borrow_cost = close_pnl(
             side=pos["side"], entry=pos["entry"], exit_price=exec_price,

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api import state
 from app.api.helpers import verify_api_key, _discover_strategies
+from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -450,8 +451,8 @@ def backtest_settings():
         "all_strategies":       all_strats,
         "strategy_params":      state.cfg.get("strategy_params", {}),
         "score_threshold":      state.cfg["trading"].get("score_threshold", 0.55),
-        "taker_fee":            state.cfg["trading"].get("taker_fee", 0.001),
-        "maker_fee":            state.cfg["trading"].get("maker_fee", 0.0004),
+        "taker_fee":            state.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE),
+        "maker_fee":            state.cfg["trading"].get("maker_fee", DEFAULT_MAKER_FEE),
         "capital":              state.cfg["trading"]["capital"],
         "risk_per_trade":       state.cfg["trading"]["risk_per_trade"],
         "spread_pct":           state.cfg.get("backtest", {}).get("spread_pct", 0.0005),

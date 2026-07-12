@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api import state
 from app.api.helpers import verify_api_key, _clean
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -45,7 +46,7 @@ def _series_payload(df: Optional[pl.DataFrame], limit: int) -> Optional[Dict]:
 
 
 @router.get("/api/derivatives/data", dependencies=[Depends(verify_api_key)])
-def derivatives_data(symbol: str = "BTC/USDC", period: str = "1h",
+def derivatives_data(symbol: str = DEFAULT_CONFIG_SYMBOL, period: str = "1h",
                      limit: int = 1000, refresh: bool = False):
     """Séries dérivées + close OHLCV pour superposition graphique.
 
@@ -94,7 +95,7 @@ def derivatives_data(symbol: str = "BTC/USDC", period: str = "1h",
 
 
 @router.get("/api/derivatives/status", dependencies=[Depends(verify_api_key)])
-def derivatives_status(symbol: str = "BTC/USDC"):
+def derivatives_status(symbol: str = DEFAULT_CONFIG_SYMBOL):
     """État du cache dérivés : config, nb de points et bornes par métrique."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")

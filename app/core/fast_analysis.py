@@ -12,6 +12,7 @@ import numpy as np
 import polars as pl
 
 import app.core.indicators as I
+from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
 from app.core.indicators_core import atr_wilder
 
 
@@ -115,7 +116,8 @@ def _stats(tr):
             "wr": round(float((a > 0).mean() * 100), 1)}
 
 
-def analyze(df: pl.DataFrame, taker: float = 0.001, maker: float = 0.0004,
+def analyze(df: pl.DataFrame, taker: float = DEFAULT_TAKER_FEE,
+            maker: float = DEFAULT_MAKER_FEE,
             oos_frac: float = 0.33) -> dict:
     """Retourne {rows:[…], best:…} classés par PnL OOS maker décroissant."""
     n = df.height

@@ -8,6 +8,7 @@ import polars as pl
 
 from app.core.candle_store import get_store
 from app.core.indicators import precompute_df, detect_regime
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class MarketScanner:
             if (time.time() - self._symbols_cache_ts) < ttl:
                 return self._symbols_cache
 
-        symbols = self.scfg.get("symbols", ["BTC/USDC", "ETH/USDC"])
+        symbols = self.scfg.get("symbols", [DEFAULT_CONFIG_SYMBOL, "ETH/USDC"])
         if self.scfg.get("dynamic_scan"):
             try:
                 return self._dynamic_symbols(self.scfg.get("top_n", 20))

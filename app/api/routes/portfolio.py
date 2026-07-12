@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api import state
 from app.api.helpers import verify_api_key
 from app.core.bot_identity import parse_slot_key
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -212,7 +213,7 @@ def run_bot_forward_test(slot_key: str):
     ft = cfg.get("forward_test", {}) or {}
     lookback = int(ft.get("lookback_days", 45))
     edge_lb = int(ft.get("edge_lookback_days", 100))
-    symbol = sym or ft.get("symbol", "BTC/USDC")
+    symbol = sym or ft.get("symbol", DEFAULT_CONFIG_SYMBOL)
 
     tr = _trader()
     if tr and getattr(tr, "scanner", None):

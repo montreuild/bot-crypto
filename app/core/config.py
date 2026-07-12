@@ -25,12 +25,19 @@ REQUIRED_FIELDS = [
     # ("strategies", "enabled") -- optionnel en mode multi-TF
 ]
 
+# Frais par défaut (ARCH-10) — SOURCE UNIQUE : tout repli `cfg.get("taker_fee", …)`
+# ou défaut de fonction doit importer ces constantes, jamais recopier le littéral
+# (sinon un changement du défaut canonique laisse des sites incohérents).
+DEFAULT_TAKER_FEE = 0.001
+DEFAULT_MAKER_FEE = 0.0004
+
 DEFAULTS = {
     "trading": {
         "paper_mode": True, "max_positions": 5, "max_longs": 3, "max_shorts": 3,
         "scan_interval": 60, "score_threshold": 0.55, "daily_drawdown_limit": 0.05,
         "max_trades_per_minute": 3, "min_volume_usdc_24h": 5_000_000,
-        "taker_fee": 0.001, "maker_fee": 0.0004, "borrow_rate_daily": 0.0002,
+        "taker_fee": DEFAULT_TAKER_FEE, "maker_fee": DEFAULT_MAKER_FEE,
+        "borrow_rate_daily": 0.0002,
         "max_leverage": 1, "max_drawdown_global": 0.20, "spread_pct": 0.0005,
         "latency_ms": 50, "paper_slippage": 0.001,
     },

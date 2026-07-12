@@ -12,6 +12,7 @@ from app.api.helpers import (
     verify_api_key, _clean, _discover_strategies, _get_bt_exchange, detect_ohlcv_gaps
 )
 from app.core.candle_store import get_store
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.engine.engine import Engine
 from app.engine.backtest import Backtester, WalkForwardAnalyzer, MonteCarlo
 
@@ -36,7 +37,7 @@ def cancel_replay():
 
 @router.post("/api/replay", dependencies=[Depends(verify_api_key)])
 def run_replay(
-    symbol:       str   = "BTC/USDC",
+    symbol:       str   = DEFAULT_CONFIG_SYMBOL,
     months:       float = 6.0,
     timeframes:   str   = "1h,4h,1d",
     strategies:   str   = "",

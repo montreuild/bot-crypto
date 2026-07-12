@@ -11,6 +11,8 @@ from app.engine.engine import Engine
 from app.core.execution import close_pnl as _close_pnl, trade_fees as _trade_fees
 from app.core.trailing import TrailingStopManager
 from app.core.risk_curve import risk_multiplier as _risk_multiplier
+from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.core.param_resolution import resolve_strategy_params
 
 
@@ -220,8 +222,8 @@ class Backtester:
         self.lock_ratio   = float(bcfg.get("lock_ratio",   0.60))
         self.use_swing    = bool(bcfg.get("use_swing",     True))
 
-        self.taker_fee    = tcfg.get("taker_fee",         0.001)
-        self.maker_fee    = tcfg.get("maker_fee",        0.0004)
+        self.taker_fee    = tcfg.get("taker_fee", DEFAULT_TAKER_FEE)
+        self.maker_fee    = tcfg.get("maker_fee", DEFAULT_MAKER_FEE)
         self.borrow_rate  = tcfg.get("borrow_rate_daily", 0.0002)
         self.borrow_periods = int(tcfg.get("borrow_periods_per_day", 24))
         self.spread_pct   = bcfg.get("spread_pct",        0.0005)
@@ -585,7 +587,7 @@ class Backtester:
         return position
 
     # ── run ───────────────────────────────────────────────────────────────────
-    def run(self, df: pl.DataFrame, symbol: str = "BTC/USDC",
+    def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL,
             timeframe: str = None) -> "BacktestResult":
         import os
         from app.engine.engine import BaseStrategyML
@@ -894,7 +896,7 @@ class WalkForwardAnalyzer:
         self.cfg     = cfg
         self.n_folds = n_folds
 
-    def run(self, df: pl.DataFrame, symbol: str = "BTC/USDC") -> dict:
+    def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL) -> dict:
         n      = len(df)
         fold_n = n // (self.n_folds + 1)
         WARMUP = 220
