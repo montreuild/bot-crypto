@@ -135,7 +135,10 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
         np.searchsorted(cu, i, "right") - np.searchsorted(cu, i - guard, "left"))
 
     # Premium/discount CAUSAL à la barre i (pas l'état final de l'analyse).
-    pd_zone = smc.premium_discount_at(res, high, low, close, i) or {}
+    pd_zone = smc.premium_discount_at(
+        res, high, low, close, i,
+        mode=str(p.get("pd_mode", "swing")),
+        ipda_lookback=int(p.get("ipda_lookback", 40))) or {}
     zone = pd_zone.get("zone", "")
     if bool(p.get("tp_std_dev", False)) and pd_zone:
         _rlo = float(pd_zone.get("range_low", 0.0) or 0.0)
@@ -318,6 +321,9 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     # les inducement_lookback barres avant l'origine de la zone (crédibilité).
     req_inducement = bool(p.get("require_inducement", False))
     ind_lb = int(p.get("inducement_lookback", 12))
+    # SMC-13 — Mitigation Blocks : zones dont l'impulsion n'a pas cassé la
+    # structure (subtype "mitigation") — exclues ou pénalisées si demandé.
+    mit_mode = str(p.get("mitigation_mode", "off"))
     zone_sources = [("OB_RETEST", res["_all_obs"])]
     if bool(p.get("use_rejection_blocks", False)):
         zone_sources.append(("REJECTION_RETEST", res["_all_rejections"]))
@@ -328,6 +334,12 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
             if ob["invalidated_at"] is not None and ob["invalidated_at"] <= i:
                 continue
             strength2 = ob.get("strength", 1) >= 2
+            is_mitigation = ob.get("subtype", "ob") == "mitigation"
+            if mit_mode == "exclude" and is_mitigation \
+                    and setup_name == "OB_RETEST":
+                continue              # SMC-13 : zone faible exclue
+            mit_pen = 0.05 if (mit_mode == "penalize" and is_mitigation
+                               and setup_name == "OB_RETEST") else 0.0
             if ob["kind"] == "bullish" and trend == 1 and not recent_choch_down:
                 if c < ob["bottom"]:
                     continue          # zone déjà transpercée sur clôture
@@ -336,7 +348,7 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                 if req_inducement and not smc.recent_sweep(
                         res, int(ob["created_at"]), "sell_side", ind_lb):
                     continue          # SMC-11 : pas de prise de liquidité avant
-                sc = 0.50 + 0.10 + kz_add   # structure alignée par construction
+                sc = 0.50 + 0.10 + kz_add - mit_pen   # structure alignée
                 sc += 0.10 if strength2 else 0.0
                 sc += 0.10 if zone == "premium" else 0.0
                 sc += 0.05 if ict.fvg_overlap(res["_all_fvgs"], i, "bullish",
@@ -368,7 +380,7 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                 if req_inducement and not smc.recent_sweep(
                         res, int(ob["created_at"]), "buy_side", ind_lb):
                     continue          # SMC-11 : pas de prise de liquidité avant
-                sc = 0.50 + 0.10 + kz_add
+                sc = 0.50 + 0.10 + kz_add - mit_pen
                 sc += 0.10 if strength2 else 0.0
                 sc += 0.10 if zone == "discount" else 0.0
                 sc += 0.05 if ict.fvg_overlap(res["_all_fvgs"], i, "bearish",

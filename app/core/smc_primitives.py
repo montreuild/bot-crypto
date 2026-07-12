@@ -129,3 +129,4 @@ def _flag_ob_structure(obs: List[dict], kind: str, i: int, window: int = 3):
             break
         ob["broke_structure"] = True
         ob["strength"] = 2
+        ob["subtype"] = "ob"       # SMC-13 : l'impulsion a cassé la structure

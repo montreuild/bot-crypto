@@ -8,6 +8,30 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+def _pd_from_range(range_high: float, range_low: float, trend: int,
+                   price: float) -> Optional[dict]:
+    """Équilibre/zone/OTE d'un range donné (partagé swing / IPDA)."""
+    if range_high <= range_low:
+        return None
+    eq = (range_high + range_low) / 2.0
+    span = range_high - range_low
+    pos = (price - range_low) / span            # 0 = bas du range, 1 = haut
+    zone = "premium" if pos > 0.55 else ("discount" if pos < 0.45 else "equilibrium")
+    # OTE : retracement 62–79 % de la jambe dans le sens de la tendance.
+    if trend >= 0:
+        ote_high = range_high - 0.62 * span
+        ote_low  = range_high - 0.79 * span
+    else:
+        ote_low  = range_low + 0.62 * span
+        ote_high = range_low + 0.79 * span
+    return {
+        "range_high": round(range_high, 8), "range_low": round(range_low, 8),
+        "equilibrium": round(eq, 8), "position": round(pos, 4), "zone": zone,
+        "ote_low": round(ote_low, 8), "ote_high": round(ote_high, 8),
+        "in_ote": bool(ote_low <= price <= ote_high),
+    }
+
+
 def _premium_discount_at(all_swings: List[dict], trend_arr: np.ndarray,
                          h: np.ndarray, l: np.ndarray, c: np.ndarray,
                          i: int) -> Optional[dict]:
@@ -29,34 +53,24 @@ def _premium_discount_at(all_swings: List[dict], trend_arr: np.ndarray,
     lo_w = max(0, i - 99)
     range_high = max(sh, float(h[lo_w:i + 1].max()))
     range_low  = min(sl, float(l[lo_w:i + 1].min()))
-    if range_high <= range_low:
-        return None
-    trend = int(trend_arr[i])
-    eq = (range_high + range_low) / 2.0
-    price = float(c[i])
-    span = range_high - range_low
-    pos = (price - range_low) / span            # 0 = bas du range, 1 = haut
-    zone = "premium" if pos > 0.55 else ("discount" if pos < 0.45 else "equilibrium")
-    # OTE : retracement 62–79 % de la jambe dans le sens de la tendance.
-    if trend >= 0:
-        ote_high = range_high - 0.62 * span
-        ote_low  = range_high - 0.79 * span
-    else:
-        ote_low  = range_low + 0.62 * span
-        ote_high = range_low + 0.79 * span
-    return {
-        "range_high": round(range_high, 8), "range_low": round(range_low, 8),
-        "equilibrium": round(eq, 8), "position": round(pos, 4), "zone": zone,
-        "ote_low": round(ote_low, 8), "ote_high": round(ote_high, 8),
-        "in_ote": bool(ote_low <= price <= ote_high),
-    }
+    return _pd_from_range(range_high, range_low, int(trend_arr[i]), float(c[i]))
 
 
 def premium_discount_at(result: Dict[str, Any], h: np.ndarray, l: np.ndarray,
-                        c: np.ndarray, i: int) -> Optional[dict]:
+                        c: np.ndarray, i: int, mode: str = "swing",
+                        ipda_lookback: int = 40) -> Optional[dict]:
     """Version publique causale de :func:`_premium_discount_at` sur un résultat
     d'``analyze`` — utilisée par la stratégie pour scorer la barre ``i`` sans
-    fuite d'information future."""
+    fuite d'information future.
+
+    SMC-12 : ``mode="ipda"`` définit le dealing range au canon ICT — max/min
+    glissant sur ``ipda_lookback`` barres (lookbacks IPDA 20/40/60) — au lieu
+    du dernier swing élargi à 100 barres. Défaut ``"swing"`` inchangé."""
+    if mode == "ipda":
+        lo_w = max(0, i - int(ipda_lookback) + 1)
+        return _pd_from_range(float(h[lo_w:i + 1].max()),
+                              float(l[lo_w:i + 1].min()),
+                              int(result["_trend_arr"][i]), float(c[i]))
     return _premium_discount_at(result["_all_swings"], result["_trend_arr"],
                                 h, l, c, i)
 

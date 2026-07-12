@@ -127,3 +127,51 @@ def test_fvg_overlap_ce():
     assert ict.fvg_overlap_ce(fvgs, 10, "bullish", 95.0, 105.0) == 105.0
     assert ict.fvg_overlap_ce(fvgs, 10, "bearish", 95.0, 105.0) is None
     assert ict.fvg_overlap_ce(fvgs, 3, "bullish", 95.0, 105.0) is None
+
+
+def test_smc12_ipda_mode():
+    """SMC-12 : mode IPDA causal — range = max/min glissant sur lookback."""
+    from app.core import smc
+    start = datetime(2026, 1, 5, 0, 0, tzinfo=timezone.utc)
+    df = _hourly_df(start, 350)
+    res = smc.analyze(df)
+    h = df["high"].to_numpy(); l = df["low"].to_numpy()
+    c = df["close"].to_numpy()
+    i = 300
+    pd_ipda = smc.premium_discount_at(res, h, l, c, i, mode="ipda",
+                                      ipda_lookback=20)
+    assert pd_ipda is not None
+    assert pd_ipda["range_high"] == round(float(h[281:301].max()), 8)
+    assert pd_ipda["range_low"] == round(float(l[281:301].min()), 8)
+    # Défaut "swing" inchangé (même dict que l'appel historique).
+    assert smc.premium_discount_at(res, h, l, c, i) == \
+        smc.premium_discount_at(res, h, l, c, i, mode="swing")
+
+
+def test_smc13_subtype_additive():
+    """SMC-13 : subtype additif — mitigation par défaut, ob si structure cassée."""
+    from app.core import smc
+    start = datetime(2026, 1, 5, 0, 0, tzinfo=timezone.utc)
+    df = _hourly_df(start, 350)
+    res = smc.analyze(df)
+    obs = res["_all_obs"]
+    if obs:
+        assert all(ob.get("subtype") in ("ob", "mitigation") for ob in obs)
+        # cohérence : strength 2 ⟺ subtype "ob"
+        for ob in obs:
+            if ob["strength"] >= 2:
+                assert ob["subtype"] == "ob"
+
+
+def test_smc12_13_14_defaults_and_smoke():
+    from app.strategies.smart_money import Strategy
+    fp = Strategy.fixed_params
+    assert fp["pd_mode"] == "swing" and fp["mitigation_mode"] == "off"
+    assert fp["amd_session_anchored"] is False
+    start = datetime(2026, 1, 5, 0, 0, tzinfo=timezone.utc)
+    df = _hourly_df(start, 400)
+    for extra in ({"pd_mode": "ipda"}, {"mitigation_mode": "exclude"},
+                  {"mitigation_mode": "penalize"},
+                  {"amd_bonus": True, "amd_session_anchored": True}):
+        sig = Strategy().score(df, {"smart_money": extra})
+        assert isinstance(sig, dict) and "side" in sig, extra

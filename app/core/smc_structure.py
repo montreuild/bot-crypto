@@ -283,7 +283,8 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                     "top": float(max(o[j], c[j])), "bottom": float(l[j]),
                     "created_at": i, "touched_at": None, "invalidated_at": None,
                     "broke_structure": False, "strength": 1,
-                }
+                    "subtype": "mitigation",   # SMC-13 : requalifié "ob" si
+                }                              # l'impulsion casse la structure
                 obs.append(new_ob)
                 active_obs.append(new_ob)
         elif i >= 1 and -body >= float(p["disp_body_atr"]) * atr[i] and c[i] < l[i - 1]:
@@ -295,7 +296,8 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                     "top": float(h[j]), "bottom": float(min(o[j], c[j])),
                     "created_at": i, "touched_at": None, "invalidated_at": None,
                     "broke_structure": False, "strength": 1,
-                }
+                    "subtype": "mitigation",   # SMC-13 : requalifié "ob" si
+                }                              # l'impulsion casse la structure
                 obs.append(new_ob)
                 active_obs.append(new_ob)
 

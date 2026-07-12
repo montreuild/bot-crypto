@@ -130,6 +130,10 @@ class Strategy(BaseStrategy):
         "use_bpr":        [True, False],
         "sb_bonus":       [True, False],
         "sb_filter":      [True, False],
+        "pd_mode":        ["swing", "ipda"],
+        "ipda_lookback":  [20, 40, 60],
+        "mitigation_mode": ["off", "exclude", "penalize"],
+        "amd_session_anchored": [True, False],
         "use_calendar_liquidity": [False, "targets", "sweeps", True],
     }
 
@@ -278,6 +282,21 @@ class Strategy(BaseStrategy):
         # filtre dur, même mécanique que les killzones. OFF par défaut.
         "sb_bonus":         False,
         "sb_filter":        False,
+        # SMC-12 : dealing range IPDA — premium/discount calculé sur le max/min
+        # glissant de ``ipda_lookback`` barres (canon ICT 20/40/60) au lieu du
+        # dernier swing élargi à 100 barres. Défaut "swing" (inchangé).
+        "pd_mode":          "swing",   # swing | ipda
+        "ipda_lookback":    40,
+        # SMC-13 : Mitigation Blocks — zones dont l'impulsion n'a PAS cassé la
+        # structure (subtype "mitigation", plus faibles que les vrais OB).
+        #   off      : indistinct (comportement historique)
+        #   exclude  : OB_RETEST refusé sur une zone mitigation
+        #   penalize : score −0.05 sur une zone mitigation
+        "mitigation_mode":  "off",     # off | exclude | penalize
+        # SMC-14 : AMD/PO3 ancré aux sessions — la compression doit être la
+        # session ASIE (00-07 UTC) du jour courant ET le sweep tomber dans une
+        # killzone (Londres/NY), au lieu d'une compression générique.
+        "amd_session_anchored": False,
         # ── SMC-03 : liquidité calendaire PDH/PDL/PWH/PWL (OFF par défaut) ───
         # Niveaux du jour/semaine UTC clôturés (smc.calendar_liquidity_levels).
         #   "targets" : cibles de TP additionnelles (concurrence liquidité/void)
@@ -350,11 +369,37 @@ class Strategy(BaseStrategy):
         # Compression AMD : range des m barres précédentes (barre courante
         # exclue — c'est elle qui fait la manipulation)
         if p.get("amd_bonus"):
-            m = int(p["amd_bars"])
-            hi = win["high"].rolling_max(m).shift(1)
-            lo = win["low"].rolling_min(m).shift(1)
-            rng = (hi - lo).fill_null(float("inf")).to_numpy().astype(float)
-            aux["comp"] = rng <= float(p["amd_range_atr"]) * res["_atr_arr"]
+            if bool(p.get("amd_session_anchored", False)) and "time" in win.columns:
+                # SMC-14 — PO3 ancré aux sessions : la compression est la
+                # session ASIE (00-07 UTC) du jour courant (complète dès 07 h)
+                # et la barre de manipulation doit tomber dans une killzone
+                # Londres/NY. Causal : seules les barres asie ≤ i sont lues.
+                ep = win["time"].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
+                hours = (ep // 3600) % 24
+                day = ep // 86400
+                kzf = smc.killzone_flags(ep).astype(bool)
+                atr_arr = res["_atr_arr"]
+                k = float(p["amd_range_atr"])
+                comp = np.zeros(len(win), dtype=bool)
+                starts = np.flatnonzero(np.diff(day, prepend=day[0] - 1))
+                ends = np.append(starts[1:], len(win))
+                for s, e in zip(starts, ends):
+                    mask = hours[s:e] < 7
+                    if not mask.any():
+                        continue
+                    rng = float(aux["h"][s:e][mask].max()
+                                - aux["l"][s:e][mask].min())
+                    for idx in range(s, e):
+                        if (hours[idx] >= 7 and kzf[idx]
+                                and rng <= k * float(atr_arr[idx])):
+                            comp[idx] = True
+                aux["comp"] = comp
+            else:
+                m = int(p["amd_bars"])
+                hi = win["high"].rolling_max(m).shift(1)
+                lo = win["low"].rolling_min(m).shift(1)
+                rng = (hi - lo).fill_null(float("inf")).to_numpy().astype(float)
+                aux["comp"] = rng <= float(p["amd_range_atr"]) * res["_atr_arr"]
         else:
             aux["comp"] = None
         # 1d — structure de degré supérieur (ext_structure_filter, off par

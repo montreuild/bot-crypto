@@ -123,3 +123,34 @@ Points saillants (mesure complète BTC+ETH × 4h/1h, 7 modes) :
   étroites pour 4h/1h ; `sb_bonus` = bruit.
 - Judas : inerte sur 1h/4h hors bonus marginal (le Judas vit sur des TF
   intra-journaliers plus fins).
+
+## [SMC-12/13/14] IPDA, Mitigation Blocks, AMD ancré sessions (2026-07-12)
+
+`pd_mode="ipda"` (+`ipda_lookback` 20/40/60), champ moteur additif
+`subtype: ob|mitigation` + `mitigation_mode` (off|exclude|penalize),
+`amd_session_anchored` (compression = session Asie 00-07 UTC + sweep en
+killzone). Baseline = config courante (inducement actif sur BTC 4h).
+
+Points saillants (8 modes × BTC/ETH × 4h/1h) :
+
+| Slot | Mode | FULL | IS pnl/PF | OOS pnl/PF |
+|---|---|---:|---|---|
+| BTC 4h | baseline | +326.8 | +251.4 / 2.71 | +75.4 / 1.88 |
+| BTC 4h | ipda20/40/60 | +76 à +137 | dégradé | −4.7 à +21.9 |
+| BTC 4h | mit_exclude | +314.5 | +252.4 / **3.01** | +62.1 / 1.81 |
+| BTC 4h | amd_anchored | +302.6 | +234.5 / 2.55 | +68.1 / 1.74 |
+| ETH 4h | mit_exclude | **+19.9** | +48.6 / 1.29 | −28.7 / 0.79 |
+| ETH 1h | mit_exclude | −141.2 | −124.4 / 0.65 | **−16.8 / 0.86** |
+| ETH 4h | ipda20 | −23.3 | +26.2 / 1.11 | −49.5 / 0.60 |
+
+**Verdict : tout reste OFF.**
+- IPDA : le dealing range par swing est PORTEUR de la config BTC 4h
+  déployée (la remplacer démolit le FULL). Aucun lookback ne gagne en OOS.
+- `mitigation_mode=exclude` : le signal le plus intéressant de la campagne —
+  transforme ETH 4h (FULL −73 → +20) et divise la perte OOS d'ETH 1h par 3,
+  IS PF BTC 4h 2.71 → 3.01… mais coûte de l'OOS sur BTC 4h (−13) et aucun
+  slot ETH ne devient positif en OOS. À réévaluer en tête de liste lors
+  d'une future calibration ETH (avec l'optimiseur, `mitigation_mode` est
+  dans le param_space).
+- `amd_session_anchored` : moins bon que la compression générique sur le
+  slot où amd_bonus est actif (BTC 4h) ; inerte ailleurs.
