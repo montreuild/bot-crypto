@@ -5,7 +5,7 @@
 HÉRITÉE (sans dimension symbole) est réputée calibrée pour BTC/USDC et ne
 s'applique PAS aux autres symboles.
 """
-from app.live.utils import (
+from app.core.param_resolution import (
     resolve_strategy_params, _select_symbol_entry, DEFAULT_CONFIG_SYMBOL,
 )
 
@@ -82,7 +82,7 @@ def test_merge_params_filters_global_keys():
     """Une clé globale (score_threshold, risk_per_trade…) glissée dans un
     entry optimisé ne doit PAS écraser la config côté live — même sémantique
     que resolve_strategy_params (parité live/backtest)."""
-    from app.live.utils import _merge_params
+    from app.core.param_resolution import _merge_params
     base = {"trend_rider": {"adx_min": 22, "score_threshold": 0.55}}
     optimized = {"trend_rider": {"adx_min": 25, "score_threshold": 0.10,
                                  "risk_per_trade": 0.5, "capital": 1}}

@@ -11,7 +11,7 @@ from app.engine.engine import Engine
 from app.core.execution import close_pnl as _close_pnl, trade_fees as _trade_fees
 from app.core.trailing import TrailingStopManager
 from app.core.risk_curve import risk_multiplier as _risk_multiplier
-from app.live.utils import resolve_strategy_params
+from app.core.param_resolution import resolve_strategy_params
 
 
 def _sf(v, fallback=None):

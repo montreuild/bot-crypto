@@ -291,7 +291,7 @@ def strategy_overrides(strategy: str):
     allowed = _discover_strategies()
     if strategy not in allowed:
         raise HTTPException(400, f"Stratégie inconnue : {strategy}")
-    from app.live.utils import DEFAULT_CONFIG_SYMBOL, _is_legacy_tf_entry
+    from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, _is_legacy_tf_entry
     tf_map = (state.cfg.get("optimizer_results") or {}).get(strategy) or {}
     overrides = []
     for tf, entry in tf_map.items():
@@ -339,7 +339,7 @@ def update_strategy_params(strategy: str, params: dict,
 
     if timeframe and symbol:
         from app.engine.opt_persistence import apply_best_params
-        from app.live.utils import _select_symbol_entry
+        from app.core.param_resolution import _select_symbol_entry
         tf_entry = ((state.cfg.get("optimizer_results") or {})
                     .get(strategy, {}).get(timeframe) or {})
         prev = _select_symbol_entry(tf_entry, symbol) if isinstance(tf_entry, dict) else None
@@ -352,7 +352,7 @@ def update_strategy_params(strategy: str, params: dict,
         # Mise à jour à chaud de la config en mémoire (même schéma que le YAML).
         opt = state.cfg.setdefault("optimizer_results", {}).setdefault(strategy, {})
         cur = opt.get(timeframe)
-        from app.live.utils import DEFAULT_CONFIG_SYMBOL, _is_legacy_tf_entry
+        from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, _is_legacy_tf_entry
         if isinstance(cur, dict) and _is_legacy_tf_entry(cur):
             cur = {DEFAULT_CONFIG_SYMBOL: cur}
         elif not isinstance(cur, dict):

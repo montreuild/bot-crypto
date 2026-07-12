@@ -146,7 +146,7 @@ def apply_best_params(strategy_name: str, params: dict,
         )
         return False
 
-    from app.live.utils import DEFAULT_CONFIG_SYMBOL, _is_legacy_tf_entry
+    from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, _is_legacy_tf_entry
     strat_path = _strategy_file_path(strategy_name, config_path)
     old_params_snapshot = {}
     entry = {
@@ -235,7 +235,7 @@ def _append_changelog(config_path: str, strategy: str, timeframe: str,
 
 def _config_symbols(cfg: dict) -> List[str]:
     """Symboles à activer (scanner.symbols) ; défaut BTC/USDC si absent."""
-    from app.live.utils import DEFAULT_CONFIG_SYMBOL
+    from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
     syms = ((cfg.get("scanner") or {}).get("symbols")
             or cfg.get("trading", {}).get("symbols") or [])
     return list(syms) if syms else [DEFAULT_CONFIG_SYMBOL]
@@ -253,7 +253,7 @@ def get_active_strategies_per_tf(cfg: dict) -> Dict[str, List[dict]]:
     Fallback : si AUCUN résultat d'optimisation n'existe (jamais optimisé),
     utilise strategies.enabled avec strategy_params, pour chaque symbole configuré.
     """
-    from app.live.utils import _select_symbol_entry
+    from app.core.param_resolution import _select_symbol_entry
     timeframes   = cfg["trading"].get("timeframes", [cfg["trading"].get("timeframe", "1h")])
     top_n        = cfg["trading"].get("top_strategies_per_tf", 2)
     opt_results  = cfg.get("optimizer_results") or {}

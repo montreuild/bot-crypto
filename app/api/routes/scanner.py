@@ -527,7 +527,7 @@ def scanner_smc(symbol: str = "BTC/USDC", timeframe: str = "1h",
     try:
         from app.core import smc
         from app.strategies.smart_money import Strategy as _SMCStrategy
-        from app.live.utils import resolve_strategy_params
+        from app.core.param_resolution import resolve_strategy_params
 
         exchange = create_exchange(state.cfg)
         scanner  = MarketScanner(exchange, state.cfg)
@@ -784,7 +784,7 @@ def scanner_smc_replay(symbol: str = "BTC/USDC", timeframe: str = "4h",
         from app.strategies.smart_money import Strategy as _SMCStrategy
         from app.engine.engine import Engine as _Engine
         from app.engine.backtest import Backtester as _Backtester
-        from app.live.utils import resolve_strategy_params
+        from app.core.param_resolution import resolve_strategy_params
 
         exchange = create_exchange(state.cfg)
         scanner  = MarketScanner(exchange, state.cfg)
