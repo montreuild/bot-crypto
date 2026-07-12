@@ -231,7 +231,7 @@ def run_bot_forward_test(slot_key: str):
             raise HTTPException(503, f"Impossible d'initialiser les données : {e}")
         session_factory = state.SessionLocal
 
-    from app.core.oos_tracker import run_forward_test
+    from app.engine.forward_test import run_forward_test
     try:
         res = run_forward_test(cfg, fetch, {tf: [{"name": strat, "symbol": sym}]},
                                session_factory, symbol=symbol, lookback_days=lookback,

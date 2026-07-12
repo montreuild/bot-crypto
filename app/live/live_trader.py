@@ -133,7 +133,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
         # ── Forward-test glissant (Phase 0 — observationnel, zéro impact trading)
         # Re-backteste chaque jour les params figés des slots actifs sur données
         # fraîches et compare la réalisation live à une fourchette Monte-Carlo
-        # glissante (cf. app/core/oos_tracker.py). Tourne dans un thread dédié.
+        # glissante (cf. app/engine/forward_test.py). Tourne dans un thread dédié.
         _ft_cfg = cfg.get("forward_test", {}) or {}
         self._fwd_test_enabled       = bool(_ft_cfg.get("enabled", True))
         self._fwd_test_interval      = int(_ft_cfg.get("interval_h", 24)) * 3600
@@ -900,7 +900,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin):
 
     def _forward_test_thread(self) -> None:
         try:
-            from app.core.oos_tracker import run_forward_test
+            from app.engine.forward_test import run_forward_test
             run_forward_test(
                 cfg=self.cfg,
                 fetch_ohlcv=self.scanner.fetch_ohlcv,
