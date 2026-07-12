@@ -47,6 +47,13 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     if bool(p.get("kz_filter", False)) and aux["kz"] is not None and not in_kz:
         return None
     kz_add = 0.05 if (bool(p.get("kz_bonus", False)) and in_kz) else 0.0
+    # SMC-07 — Silver Bullet (off par défaut) : fenêtres 08/15/19 UTC (1 h),
+    # filtre dur optionnel + bonus, cumulé au bonus killzone (kz_add).
+    sb = aux.get("sb")
+    in_sb = bool(sb[i]) if sb is not None else False
+    if bool(p.get("sb_filter", False)) and sb is not None and not in_sb:
+        return None
+    kz_add += 0.05 if (bool(p.get("sb_bonus", False)) and in_sb) else 0.0
     # Biais multi-timeframe : la structure du timeframe supérieur commande.
     htf_mode = str(p.get("htf_filter", "off"))
     htf_t = int(aux["htf"][i]) if aux["htf"] is not None else 0
@@ -111,6 +118,11 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
         cal_tp = [float(cal[k][i]) for k in ("pdh", "pdl", "pwh", "pwl")
                   if not np.isnan(cal[k][i])]
 
+    # SMC-05 — grille de TP en écarts-types ICT du dealing range courant
+    # (−1/−2/−2.5/−4 SD au-delà du range premium/discount). Off par défaut.
+    sd_up: List[float] = []
+    sd_dn: List[float] = []
+
     # Garde CHoCH : pas d'entrée contre un changement de caractère récent.
     # Indices CHoCH pré-triés et mémoïsés sur ``res`` → lookup O(log n) par
     # barre au lieu d'un scan O(événements) (évite le O(événements²) de la
@@ -125,6 +137,14 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     # Premium/discount CAUSAL à la barre i (pas l'état final de l'analyse).
     pd_zone = smc.premium_discount_at(res, high, low, close, i) or {}
     zone = pd_zone.get("zone", "")
+    if bool(p.get("tp_std_dev", False)) and pd_zone:
+        _rlo = float(pd_zone.get("range_low", 0.0) or 0.0)
+        _rhi = float(pd_zone.get("range_high", 0.0) or 0.0)
+        if _rhi > _rlo > 0:
+            sd_up = [d["level"] for d in
+                     ict.std_dev_projections(_rlo, _rhi, "up")]
+            sd_dn = [d["level"] for d in
+                     ict.std_dev_projections(_rlo, _rhi, "down")]
     vol_ok = bool(volr[i] > float(p["vol_confluence"])) if i < len(volr) else False
 
     # Biais EMA (filtre institutionnel simple) : long au-dessus, short en
@@ -152,6 +172,12 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     #     « deep discount » d'une tendance haussière est le plus souvent
     #     une structure en train de casser.
     allow_ct = bool(p.get("allow_counter_trend", False))
+    # SMC-04 — Judas swing (off par défaut) : bonus/filtre appliqué aux seuls
+    # SWEEP_REVERSAL (le Judas EST un sweep d'ouverture de session).
+    jd = aux.get("judas")
+    jd_s = int(jd[i]) if jd is not None else 0
+    jd_bonus = bool(p.get("judas_bonus", False))
+    jd_filter = bool(p.get("judas_filter", False))
     for ev in res["_all_sweeps"]:
         if ev["index"] != i or not ev["rejected"]:
             continue
@@ -159,7 +185,10 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
             if (trend != 1 and not allow_ct) or zone == "discount" \
                     or not long_ema_ok or not long_htf_ok:
                 continue
+            if jd_filter and jd_s == -1:
+                continue              # SMC-04 : Judas contredit le long
             sc = 0.50 + kz_add + amd_add
+            sc += 0.05 if (jd_bonus and jd_s == 1) else 0.0
             sc += 0.10 if trend == 1 else 0.0
             sc += 0.10 if ev["source"] == "pool" else 0.0
             sc += 0.10 if zone == "premium" else 0.0
@@ -179,14 +208,18 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                             f"{ev['level']:.6g}",
                                      trend=trend, zone=zone,
                                      extra_targets=vp_above,
-                                     cal_targets=cal_tp)
+                                     cal_targets=cal_tp,
+                                     sd_targets=sd_up)
             if cand:
                 candidates.append(cand)
         elif ev["kind"] == "buy_side" and not recent_choch_up:
             if (trend != -1 and not allow_ct) or zone == "premium" \
                     or not short_ema_ok or not short_htf_ok:
                 continue
+            if jd_filter and jd_s == 1:
+                continue              # SMC-04 : Judas contredit le short
             sc = 0.50 + kz_add + amd_add
+            sc += 0.05 if (jd_bonus and jd_s == -1) else 0.0
             sc += 0.10 if trend == -1 else 0.0
             sc += 0.10 if ev["source"] == "pool" else 0.0
             sc += 0.10 if zone == "discount" else 0.0
@@ -206,7 +239,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                             f"{ev['level']:.6g}",
                                      trend=trend, zone=zone,
                                      extra_targets=vp_below,
-                                     cal_targets=cal_tp)
+                                     cal_targets=cal_tp,
+                                     sd_targets=sd_dn)
             if cand:
                 candidates.append(cand)
 
@@ -217,7 +251,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     # +0.10 « pool » : un niveau calendaire est une poche majeure par nature.
     if cal is not None and cal_mode in (True, "sweeps"):
         if not recent_choch_down and (trend == 1 or allow_ct) \
-                and zone != "discount" and long_ema_ok and long_htf_ok:
+                and zone != "discount" and long_ema_ok and long_htf_ok \
+                and not (jd_filter and jd_s == -1):
             for kname in ("pdl", "pwl"):
                 lv = float(cal[kname][i])
                 if np.isnan(lv) or not (float(low[i]) <= lv < float(low[i - 1])) \
@@ -239,11 +274,13 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                          detail=f"sweep {kname.upper()} {lv:.6g}",
                                          trend=trend, zone=zone,
                                          extra_targets=vp_above,
-                                         cal_targets=cal_tp)
+                                         cal_targets=cal_tp,
+                                         sd_targets=sd_up)
                 if cand:
                     candidates.append(cand)
         if not recent_choch_up and (trend == -1 or allow_ct) \
-                and zone != "premium" and short_ema_ok and short_htf_ok:
+                and zone != "premium" and short_ema_ok and short_htf_ok \
+                and not (jd_filter and jd_s == 1):
             for kname in ("pdh", "pwh"):
                 lv = float(cal[kname][i])
                 if np.isnan(lv) or not (float(high[i]) >= lv > float(high[i - 1])) \
@@ -265,7 +302,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                          detail=f"sweep {kname.upper()} {lv:.6g}",
                                          trend=trend, zone=zone,
                                          extra_targets=vp_below,
-                                         cal_targets=cal_tp)
+                                         cal_targets=cal_tp,
+                                         sd_targets=sd_dn)
                 if cand:
                     candidates.append(cand)
 
@@ -316,7 +354,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                                 f"–{ob['top']:.6g}]",
                                          trend=trend, zone=zone,
                                          extra_targets=vp_above,
-                                         cal_targets=cal_tp)
+                                         cal_targets=cal_tp,
+                                         sd_targets=sd_up)
                 if cand:
                     if smt_origin:
                         cand["_smt_ref_bar"] = int(ob["created_at"])
@@ -347,7 +386,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                                 f"–{ob['top']:.6g}]",
                                          trend=trend, zone=zone,
                                          extra_targets=vp_below,
-                                         cal_targets=cal_tp)
+                                         cal_targets=cal_tp,
+                                         sd_targets=sd_dn)
                 if cand:
                     if smt_origin:
                         cand["_smt_ref_bar"] = int(ob["created_at"])
@@ -386,7 +426,8 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                                 f"–{brk['top']:.6g}]",
                                          trend=trend, zone=zone,
                                          extra_targets=vp_above,
-                                         cal_targets=cal_tp)
+                                         cal_targets=cal_tp,
+                                         sd_targets=sd_up)
                 if cand:
                     if smt_origin:
                         cand["_smt_ref_bar"] = int(brk["created_at"])
@@ -414,10 +455,66 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
                                                 f"–{brk['top']:.6g}]",
                                          trend=trend, zone=zone,
                                          extra_targets=vp_below,
-                                         cal_targets=cal_tp)
+                                         cal_targets=cal_tp,
+                                         sd_targets=sd_dn)
                 if cand:
                     if smt_origin:
                         cand["_smt_ref_bar"] = int(brk["created_at"])
+                    candidates.append(cand)
+
+    # ── D. BPR_REVERSAL (SMC-06, off par défaut) ────────────────────────
+    # Balanced Price Range : FVG haussier ∩ FVG baissier ouverts = offre et
+    # demande sur la même zone → forte réaction. Entrée disciplinée au CE
+    # (50 % de la zone) touché par la mèche, clôture du bon côté, tendance
+    # alignée — SL de l'autre côté de la zone.
+    if bool(p.get("use_bpr", False)):
+        for z in ict.balanced_price_ranges(res["_all_fvgs"], i):
+            ce = float(z["ce"])
+            if trend == 1 and not recent_choch_down:
+                if not (float(low[i]) <= ce <= float(high[i])) or c < ce:
+                    continue
+                if zone == "discount" or not long_ema_ok or not long_htf_ok:
+                    continue
+                sc = 0.50 + 0.10 + kz_add + amd_add   # structure alignée
+                sc += 0.10 if zone == "premium" else 0.0
+                sc += 0.05 if vol_ok else 0.0
+                sc += 0.05 if close[i] > open_[i] else 0.0
+                sc += 0.05 if tl_tap_long else 0.0
+                sc += _vp_add(float(z["bottom"]), float(z["top"]))
+                sc += _candle_add("long")
+                sl = float(z["bottom"]) - float(p["sl_buffer_atr"]) * atr
+                cand = self._build_trade(res, i, "long", c, sl, atr, p,
+                                         setup="BPR_REVERSAL", score=sc,
+                                         detail=f"BPR CE {ce:.6g} "
+                                                f"[{z['bottom']:.6g}–{z['top']:.6g}]",
+                                         trend=trend, zone=zone,
+                                         extra_targets=vp_above,
+                                         cal_targets=cal_tp,
+                                         sd_targets=sd_up)
+                if cand:
+                    candidates.append(cand)
+            elif trend == -1 and not recent_choch_up:
+                if not (float(low[i]) <= ce <= float(high[i])) or c > ce:
+                    continue
+                if zone == "premium" or not short_ema_ok or not short_htf_ok:
+                    continue
+                sc = 0.50 + 0.10 + kz_add + amd_add
+                sc += 0.10 if zone == "discount" else 0.0
+                sc += 0.05 if vol_ok else 0.0
+                sc += 0.05 if close[i] < open_[i] else 0.0
+                sc += 0.05 if tl_tap_short else 0.0
+                sc += _vp_add(float(z["bottom"]), float(z["top"]))
+                sc += _candle_add("short")
+                sl = float(z["top"]) + float(p["sl_buffer_atr"]) * atr
+                cand = self._build_trade(res, i, "short", c, sl, atr, p,
+                                         setup="BPR_REVERSAL", score=sc,
+                                         detail=f"BPR CE {ce:.6g} "
+                                                f"[{z['bottom']:.6g}–{z['top']:.6g}]",
+                                         trend=trend, zone=zone,
+                                         extra_targets=vp_below,
+                                         cal_targets=cal_tp,
+                                         sd_targets=sd_dn)
+                if cand:
                     candidates.append(cand)
 
     if not candidates:
@@ -459,7 +556,8 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
                  setup: str, score: float, detail: str,
                  trend: int = 0, zone: str = "",
                  extra_targets: Optional[List[float]] = None,
-                 cal_targets: Optional[List[float]] = None) -> Optional[dict]:
+                 cal_targets: Optional[List[float]] = None,
+                 sd_targets: Optional[List[float]] = None) -> Optional[dict]:
     risk = (entry - sl) if side == "long" else (sl - entry)
     if risk <= 0 or entry <= 0:
         return None
@@ -484,10 +582,12 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
             if use_voids else []
         vps = [lv for lv in (extra_targets or []) if lv > entry]
         cals = [lv for lv in (cal_targets or []) if lv > entry]
+        sds = [lv for lv in (sd_targets or []) if lv > entry]
         targets = sorted({(lv, "liquidité") for lv in liq} |
                          {(lv, "void") for lv in vds} |
                          {(lv, "volume") for lv in vps} |
                          {(lv, "calendaire") for lv in cals} |
+                         {(lv, "std_dev") for lv in sds} |
                          ({(mm, "measured")} if mm else set()))
         for level, src in targets:
             cand = level - front
@@ -503,10 +603,12 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
             if use_voids else []
         vps = [lv for lv in (extra_targets or []) if lv < entry]
         cals = [lv for lv in (cal_targets or []) if lv < entry]
+        sds = [lv for lv in (sd_targets or []) if lv < entry]
         targets = sorted({(lv, "liquidité") for lv in liq} |
                          {(lv, "void") for lv in vds} |
                          {(lv, "volume") for lv in vps} |
                          {(lv, "calendaire") for lv in cals} |
+                         {(lv, "std_dev") for lv in sds} |
                          ({(mm, "measured")} if mm else set()), reverse=True)
         for level, src in targets:
             cand = level + front

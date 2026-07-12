@@ -45,6 +45,7 @@ class Strategy(BaseStrategy):
     param_space: Dict[str, List] = {
         "require_sweep":   [True, False],
         "require_fvg":     [True, False],
+        "entry_at_ce":     [True, False],
         "require_htf_ob":  [True, False],
         "use_smt":         [True, False],
         "min_rr":          [2.0, 3.0, 4.0],
@@ -64,6 +65,7 @@ class Strategy(BaseStrategy):
         # ── Cases de la checklist (chacune activable/désactivable → mesurable) ──
         "require_sweep":   True,
         "require_fvg":     True,
+        "entry_at_ce":     False,   # SMC-06 : exiger le tap du CE du FVG déclencheur
         "require_htf_ob":  True,
         "use_smt":         True,
         "smt_correlate_path": "",    # ex. data/ohlcv/ETH_USDC/4h.parquet (GÉNÉRIQUE)
@@ -134,6 +136,14 @@ class Strategy(BaseStrategy):
         if bool(p.get("require_fvg", True)) and not ict.fvg_overlap(
                 res["_all_fvgs"], i, kind, ob["bottom"], ob["top"]):
             return None
+        # SMC-06 — entrée disciplinée au CE (off par défaut) : exiger que la
+        # barre ait TOUCHÉ le niveau 50 % (CE) du FVG déclencheur — approxime
+        # une entrée limite au CE avec un moteur à entrées marché.
+        if bool(p.get("entry_at_ce", False)):
+            ce = ict.fvg_overlap_ce(res["_all_fvgs"], i, kind,
+                                    ob["bottom"], ob["top"])
+            if ce is None or not (float(low[i]) <= ce <= float(high[i])):
+                return None
         # 4. timeframe alignment : imbrication dans un OB HTF de même sens
         if bool(p.get("require_htf_ob", True)):
             htf_obs = self._active_htf_obs(htf_res, int(hidx_arr[i]) if hidx_arr is not None else -1)

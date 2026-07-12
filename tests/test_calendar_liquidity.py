@@ -98,3 +98,32 @@ def test_require_inducement_default_off_and_smoke():
     df = _hourly_df(start, 400)
     sig = strat.score(df, {"smart_money": {"require_inducement": True}})
     assert isinstance(sig, dict) and "side" in sig
+
+
+def test_smc04_05_06_07_defaults_off_and_smoke():
+    """SMC-04/05/06/07 : défauts off ; chaque flag on → score() tourne."""
+    from app.strategies.smart_money import Strategy
+    fp = Strategy.fixed_params
+    assert fp["judas_bonus"] is False and fp["judas_filter"] is False
+    assert fp["tp_std_dev"] is False and fp["use_bpr"] is False
+    assert fp["sb_bonus"] is False and fp["sb_filter"] is False
+    start = datetime(2026, 1, 5, 0, 0, tzinfo=timezone.utc)
+    df = _hourly_df(start, 400)
+    for flag in ("judas_bonus", "judas_filter", "tp_std_dev", "use_bpr",
+                 "sb_bonus", "sb_filter"):
+        sig = Strategy().score(df, {"smart_money": {flag: True}})
+        assert isinstance(sig, dict) and "side" in sig, flag
+
+
+def test_vizion_entry_at_ce_default_off():
+    from app.strategies.vizion import Strategy as V
+    assert V.fixed_params["entry_at_ce"] is False
+
+
+def test_fvg_overlap_ce():
+    from app.core import ict
+    fvgs = [{"kind": "bullish", "index": 5, "filled_at": None,
+             "mitigated_at": None, "top": 110.0, "bottom": 100.0}]
+    assert ict.fvg_overlap_ce(fvgs, 10, "bullish", 95.0, 105.0) == 105.0
+    assert ict.fvg_overlap_ce(fvgs, 10, "bearish", 95.0, 105.0) is None
+    assert ict.fvg_overlap_ce(fvgs, 3, "bullish", 95.0, 105.0) is None

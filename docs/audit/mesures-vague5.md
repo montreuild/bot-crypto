@@ -91,3 +91,35 @@ a eu lieu dans les N barres avant l'origine de la zone.
 - ETH : le gain IS ne tient pas en OOS (0.53) → PAS activé ; ETH 1h
   s'améliore nettement en OOS (−56 → −2.8) mais reste non positif.
 - Défaut global inchangé (off) ; exposé au param_space.
+
+## [SMC-04/05/06/07] Judas, TP écart-type, BPR+CE, Silver Bullet (2026-07-12)
+
+Quatre détecteurs ICT morts câblés derrière des flags off :
+`judas_bonus`/`judas_filter` (sweeps uniquement), `tp_std_dev` (grille
+−1/−2/−2.5/−4 SD du dealing range), `use_bpr` (setup BPR_REVERSAL au CE),
+`sb_bonus`/`sb_filter` (fenêtres 08/15/19 UTC). Vizion : `entry_at_ce` (off,
+tap du CE du FVG déclencheur requis) via la nouvelle primitive
+`ict.fvg_overlap_ce`. Baseline BTC 4h = config avec inducement activé.
+
+Points saillants (mesure complète BTC+ETH × 4h/1h, 7 modes) :
+
+| Slot | Mode | FULL | IS pnl/PF | OOS pnl/PF |
+|---|---|---:|---|---|
+| BTC 4h | baseline | +326.8 | +251.4 / 2.71 | +75.4 / 1.88 |
+| BTC 4h | judas_filter | +346.1 | +269.6 / 2.82 | +76.5 / 1.88 |
+| BTC 4h | use_bpr | +357.8 | +280.7 / 2.81 | +77.1 / 1.88 |
+| BTC 4h | tp_std_dev | +318.9 | +244.0 / 2.59 | +74.9 / 1.88 |
+| BTC 4h | sb_filter | +31.8 | 8 tr / 7.06 | 2 tr / −7.4 |
+| ETH 4h | tp_std_dev | +24.0 | +65.2 / 1.18 | −41.2 / 0.78 |
+| ETH 1h | tp_std_dev | −174.0 | −99.5 / 0.83 | −74.4 / 0.62 |
+| ETH 1h | sb_filter | −65.0 | −50.1 / 0.47 | −14.9 / 0.80 |
+
+**Verdict : tout reste OFF.**
+- `judas_filter` / `use_bpr` : gain IS/FULL réel sur BTC 4h mais OOS plat
+  (+1 à +2) — pas de preuve OOS ; laissés à l'optimiseur (param_space).
+- `tp_std_dev` : transforme l'IS d'ETH 4h (−17.8 → +65.2, FULL +24) mais
+  l'OOS reste négatif (−41.2) — à revisiter si une config ETH émerge.
+- `sb_filter` : quasi-dégénéré (2-10 trades OOS) — fenêtres 1 h trop
+  étroites pour 4h/1h ; `sb_bonus` = bruit.
+- Judas : inerte sur 1h/4h hors bonus marginal (le Judas vit sur des TF
+  intra-journaliers plus fins).

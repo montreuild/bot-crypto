@@ -63,7 +63,7 @@ import polars as pl
 
 from app.engine.engine import BaseStrategy
 from app.strategies import smart_money_signals as _sm_signals
-from app.core import smc
+from app.core import ict, smc
 from app.core.indicators_core import (ema as _ema_series, volume_ratio as _vol_ratio,
                                        choppiness as _choppiness, pin_bar as _pin_bar,
                                        engulfing as _engulfing)
@@ -124,6 +124,12 @@ class Strategy(BaseStrategy):
         "smt_filter":     [True, False],
         "smt_at_origin":  [True, False],
         "require_inducement": [True, False],
+        "judas_bonus":    [True, False],
+        "judas_filter":   [True, False],
+        "tp_std_dev":     [True, False],
+        "use_bpr":        [True, False],
+        "sb_bonus":       [True, False],
+        "sb_filter":      [True, False],
         "use_calendar_liquidity": [False, "targets", "sweeps", True],
     }
 
@@ -253,6 +259,25 @@ class Strategy(BaseStrategy):
         # (crédibilité du move, déjà validé côté vizion). OFF par défaut.
         "require_inducement": False,
         "inducement_lookback": 12,
+        # SMC-04 : Judas swing (faux mouvement d'ouverture de session) — bonus
+        # +0.05 aux SWEEP_REVERSAL confirmés par le Judas de la barre, ou
+        # filtre dur (rejet des sweeps contredits). OFF par défaut.
+        "judas_bonus":      False,
+        "judas_filter":     False,
+        "judas_open_hour":  8,      # ouverture de session (UTC, Londres)
+        "judas_window":     3,      # barres d'ouverture scannées
+        "judas_lookback":   12,     # range de liquidité balayé
+        # SMC-05 : grille de TP en « écarts-types » ICT (−1/−2/−2.5/−4 SD du
+        # dealing range premium/discount courant), en concurrence avec les
+        # cibles liquidité/void/volume/measured. OFF par défaut.
+        "tp_std_dev":       False,
+        # SMC-06 : setup BPR_REVERSAL — Balanced Price Range (FVG haussier ∩
+        # FVG baissier) touchée au CE (50 %) dans le sens de la tendance.
+        "use_bpr":          False,
+        # SMC-07 : fenêtres Silver Bullet ICT (08/15/19 UTC, 1 h) — bonus ou
+        # filtre dur, même mécanique que les killzones. OFF par défaut.
+        "sb_bonus":         False,
+        "sb_filter":        False,
         # ── SMC-03 : liquidité calendaire PDH/PDL/PWH/PWL (OFF par défaut) ───
         # Niveaux du jour/semaine UTC clôturés (smc.calendar_liquidity_levels).
         #   "targets" : cibles de TP additionnelles (concurrence liquidité/void)
@@ -369,6 +394,22 @@ class Strategy(BaseStrategy):
             aux["cal"] = smc.calendar_liquidity_levels(win)
         else:
             aux["cal"] = None
+        # SMC-04 — Judas swing {−1,0,+1} par barre (off par défaut).
+        if (p.get("judas_bonus") or p.get("judas_filter")) and "time" in win.columns:
+            ep = win["time"].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
+            aux["judas"] = ict.judas_swing(
+                aux["h"], aux["l"], aux["c"], ep,
+                open_hour=int(p.get("judas_open_hour", 8)),
+                window=int(p.get("judas_window", 3)),
+                lookback=int(p.get("judas_lookback", 12)))
+        else:
+            aux["judas"] = None
+        # SMC-07 — fenêtres Silver Bullet (off par défaut).
+        if (p.get("sb_bonus") or p.get("sb_filter")) and "time" in win.columns:
+            ep = win["time"].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
+            aux["sb"] = ict.silver_bullet_flags(ep)
+        else:
+            aux["sb"] = None
         return aux
 
     @staticmethod
