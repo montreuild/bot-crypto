@@ -170,7 +170,9 @@ Détails : `docs/audit/06-ui-ux.md` (UI-0x) et `docs/audit/07-tests-ci-docs.md` 
 - ✅ TEST-02 tests/test_live_trader.py (12 tests : instanciation, _build_active_per_tf, reload_active_strategies/reload_strategies, status, _restore_open_positions, stop — MockExchange + sqlite jetable, zéro réseau)
 - ✅ TEST-03 tests/test_api_routes.py (10 tests : data_status/refetch, fast_analysis, portfolio ×2 (sans/avec trader), strategy_performance ×4 (2/3-parties, format invalide, sans SessionLocal), + 1 test d'auth dédié sans contournement — `verify_api_key` neutralisé via `app.dependency_overrides` pour les 9 autres, obstacle non anticipé par la directive)
 - ✅ TEST-07 tests/test_position_lifecycle.py (7) + tests/test_balance_sync.py (10) — 17 tests : ouverture/gating (halted, max_positions), gestion (gap→clôture forcée), clôture (PnL+persistance), sync paper/spot/margin, pré-exécution
-- ⚪ TEST-08/09/10/12 : pas encore commencés.
+- ✅ TEST-08 docstring `optimizer_results[strat][tf][symbol]` étendu dans `_load_strategy_configs` (app/core/config.py) — le vrai trou (resolve_strategy_params avait déjà d'excellents docstrings depuis V4-B)
+- ✅ TEST-10 ARCHITECTURE.md — section « Live Trading Loop » (composition mixins, diagramme _cycle(), slots, cycle de vie, allocation), pointeurs croisés depuis les 2 diagrammes sommaires existants
+- ⚪ TEST-09/12 : pas encore commencés.
 
 ## Conflits & dépendances à retenir
 

@@ -146,6 +146,9 @@ while trader.running:
   6. Sleep(scan_interval)
 ```
 
+Version détaillée (composition des mixins, slots, cycle de vie, allocation) :
+section « Live Trading Loop » plus bas.
+
 ### Backtest (Backtester)
 
 ```
@@ -182,6 +185,114 @@ Après 30 jours de live trading
   data/ohlcv/BTC_USDC/1h.parquet → 720+ bougies accumulées automatiquement
   Optimizer reçoit 30 jours d'historique réel sans appel paginé
 ```
+
+---
+
+## 🔴 Live Trading Loop
+
+Détaille le flux résumé dans « Trading Live (LiveTrader thread) » ci-dessus :
+composition des mixins, granularité des slots, cycle de vie des bots et
+allocation de capital. Schéma exact d'`optimizer_results[strategy][tf][symbol]` :
+docstring de `_load_strategy_configs` (`app/core/config.py`) et de
+`resolve_strategy_params` (`app/core/param_resolution.py`).
+
+### Composition (V4-J — un mixin par responsabilité)
+
+```
+LiveTrader(PositionMixin, BalanceSyncMixin, AutoOptMixin, HealthMixin)
+  ├─ PositionMixin    : _try_open_from_signal (chemin unique d'ouverture),
+  │                     _manage_position, _close_position, _restore_open_positions
+  ├─ BalanceSyncMixin : _sync_paper_balance / _sync_spot_balance / _sync_margin_account,
+  │                     _pre_execution_check
+  ├─ AutoOptMixin     : _load_all_strategies, _build_active_per_tf,
+  │                     reload_active_strategies, auto-opt planifiée, forward-test,
+  │                     cycle de vie des bots
+  └─ HealthMixin      : heartbeat/dead-man, reprise réseau, purge mémoire,
+                        propriété `status` (lue par les routes API)
+
+Composés (instances, pas des mixins) :
+  OHLCVCache       : cache multi-TF des DataFrames OHLCV (TTL par TF)
+  SignalPipeline    : collecte + ranking des signaux (thread de scoring borné)
+  CapitalAllocator  : allocation du capital par slot `strategy::tf::symbol`
+```
+
+### Boucle `_cycle()` (un tour = un scan)
+
+```
+while self.running:
+  1. Sanity checks : risk.halted ? → skip le tour
+  2. Volatility brake (ATR BTC/USDC 1h)
+  3. Gestion des positions ouvertes (_manage_position × N positions)
+       ├─ gap prix/stop > 2%           → clôture forcée
+       ├─ take-profit atteint          → clôture au TP
+       ├─ check_early_exit (stratégie) → clôture pilotée par la stratégie
+       ├─ trailing stop (update_stop)  → remonte le stop, replace le stop exchange
+       ├─ check_scale_in (stratégie)   → pyramidage optionnel sur position gagnante
+       └─ trailing déclenché           → clôture
+  4. Pipeline signaux : scanner.get_symbols() → SignalPipeline.collect()
+       └─ pour chaque (symbol, tf) actif : Engine.signal() par stratégie, ranking
+  5. Pour chaque signal ranké (score décroissant), _try_open_from_signal :
+       risk.can_trade → slot enabled → slot circuit breaker → corrélation
+       → sizing (RiskManager.compute_size ; budget du slot si per_bot_sizing)
+       → allocator.can_allocate (budget) → _pre_execution_check (capital)
+       → _open_position (ordre + persistance DB + stop exchange optionnel)
+  6. Synchro capital (paper / spot / margin selon le mode) + rapport périodique
+  7. Rééquilibrage hebdomadaire des budgets (allocator.rebalance_if_due)
+
++ hors du tour, planification indépendante (une erreur ici ne stoppe jamais
+  le bot — cf. garde-fou try/except autour de start()) :
+  _maybe_auto_optimize()  : ré-optimisation planifiée par stratégie/symbole
+  _maybe_forward_test()   : re-backteste les slots actifs, alimente le cône Monte-Carlo
+  _maybe_lifecycle()      : dérive l'état des bots + allocation shadow (cf. ci-dessous)
+```
+
+### Slots `strategy::tf::symbol`
+
+Un **slot** = une combinaison (stratégie, timeframe, symbole) — l'unité
+atomique de budget, de circuit breaker et de cycle de vie. Deux clés
+distinctes, volontairement dans un ordre différent :
+```
+build_slot_key(strategy, tf, symbol) → "trend_rider::4h::BTC/USDC"   (config/budget/lifecycle)
+build_pos_key(symbol, strategy, tf)  → "BTC/USDC::trend_rider::4h"   (position ouverte)
+```
+Un slot **hérité** (sans dimension symbole, ex. `"trend_rider::4h"`) est
+réputé calibré pour `DEFAULT_CONFIG_SYMBOL` (BTC/USDC) et ne s'applique PAS
+aux autres symboles — cf. schéma détaillé dans `app/core/config.py`.
+
+### Cycle de vie des bots (`SlotLifecycleManager`, Phase 2 — shadow/observationnel)
+
+```
+CANDIDAT ──edge prouvée sur backtest──▶ ESSAI ──fidélité live confirmée──▶ ACTIF
+    ▲                                                                        │
+    └────────────── budget sous plancher OU réel < simulation ◀─────────────┘
+                         (bascule vers RETIRÉ, file de re-optimisation)
+```
+- **Candidat** : pas encore de trade réel ; edge (expectancy backtest) non
+  prouvée (échantillon < `edge_min_trades`, ou borne basse de l'IC ≤ 0).
+- **Essai** : edge prouvée (IC bas > 0, ≥ `edge_min_trades` trades sim) ;
+  attend `fidelity_min_fills` fills réels pour confirmer la fidélité.
+- **Actif** : edge prouvée **et** fidélité live confirmée (le réel tombe
+  dans la fourchette Monte-Carlo simulée) — le budget suit le score.
+- **Retiré** : le réel sort de la fourchette simulée, ou le budget
+  s'effondre sous le plancher (`plancher_budget_pct`) → file de
+  re-optimisation (réversible).
+
+Les transitions sont **dérivées automatiquement**, jamais choisies à la
+main — sauf forçage explicite via `manual_active` (droit de veto
+utilisateur, outrepasse la machine à états). Cf. `app/live/slot_lifecycle.py`.
+
+### Allocation de capital (`CapitalAllocator`)
+
+- Budget par slot, en % du capital total ; 3 modes : `equal`, `manual`,
+  `performance` (pondéré par le score du bot).
+- **Shadow allocation** (par défaut) : l'allocateur calcule ce qu'il
+  *ferait* selon le score courant (exposé dans `status.shadow_allocation`)
+  **sans l'appliquer** — le budget réel ne bouge qu'au rééquilibrage
+  manuel/planifié, sauf `continuous_allocation` activé.
+- Rééquilibrage planifié (`daily`/`weekly`/`never`, `rebalance_if_due`) ou
+  forcé (`POST /api/slots/rebalance`).
+- Persistance : `capital_allocator.slot_budgets` dans `config.yaml`, écrite
+  via le callback `_persist_allocator_budgets` (verrou unique `core/yaml_io`).
 
 ---
 
@@ -271,7 +382,9 @@ class Engine:
 
 ### `app/live/live_trader.py`
 
-**Responsabilité** : Boucle de trading live/paper
+**Responsabilité** : Boucle de trading live/paper — orchestrateur composé de
+4 mixins (V4-J). Détail de la composition, du cycle `_cycle()`, des slots et
+du cycle de vie des bots : section « Live Trading Loop » plus haut.
 
 ```python
 class LiveTrader:

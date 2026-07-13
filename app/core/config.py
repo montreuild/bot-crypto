@@ -94,7 +94,32 @@ def _load_strategy_configs(strategies_dir: str) -> Tuple[dict, dict, list]:
     Chaque fichier a la structure :
       enabled: true          # optionnel — true par défaut ; mettre false pour désactiver
       params: {...}
-      optimizer_results: {tf: {run_date, oos_score, params}}
+      optimizer_results: {tf: {...}}   # schéma détaillé ci-dessous
+
+    Schéma EXACT de ``optimizer_results`` une fois assemblé dans la config
+    globale (clé racine = nom de stratégie, ajoutée par cette fonction) :
+
+      optimizer_results[strategy][tf][symbol] = {
+          "run_date":  str,     # date ISO de l'optimisation
+          "oos_score": float,   # score out-of-sample (seuil d'exclusion live : -0.05)
+          "params":    dict,    # overrides de strategy_params[strategy] pour ce (tf, symbol)
+      }
+
+      Exemple :
+        smart_money:
+          4h:
+            BTC/USDC: {run_date: "2026-07-01", oos_score: 0.42, params: {adx_min: 22}}
+            ETH/USDC: {run_date: "2026-07-02", oos_score: 0.18, params: {adx_min: 25}}
+
+    Rétro-compatibilité (schéma hérité, pré-refonte par symbole) : une entrée
+    ``optimizer_results[strategy][tf]`` qui contient DIRECTEMENT les clés
+    ``run_date``/``oos_score``/``params`` (au lieu d'un mapping ``{symbol: ...}``)
+    est réputée calibrée pour ``DEFAULT_CONFIG_SYMBOL`` (BTC/USDC) — elle ne
+    s'applique PAS aux autres symboles. Cette règle et sa résolution exacte
+    vivent dans ``app/core/param_resolution.py`` (``_select_symbol_entry``,
+    ``_is_legacy_tf_entry``, ``resolve_strategy_params`` — utilisé à la fois
+    par le backtest et le live pour garantir une résolution identique).
+    Cf. aussi la section « Live Trading Loop » d'ARCHITECTURE.md.
 
     Une stratégie est active si et seulement si son fichier existe
     et que `enabled` n'est pas explicitement à false.

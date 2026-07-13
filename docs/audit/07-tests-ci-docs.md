@@ -65,11 +65,12 @@
   - Piège découvert et neutralisé : `_manage_position` appelle inconditionnellement `ohlcv_cache.get()` pour `check_early_exit`/`check_scale_in` si la stratégie expose ces hooks (`trend_rider` les a) — sans `fetch_ohlcv` sur le mock, l'appel exchange échoue proprement (dégradation gracieuse déjà présente dans le code, aucune écriture disque sur échec — vérifié en lisant `CandleStore.fetch`). `fetch_ohlcv` stub ajouté au mock (retourne `[]`) pour un test silencieux plutôt que de compter sur le warning catché.
   - Vérifié : `pytest tests/test_position_lifecycle.py tests/test_balance_sync.py -v` → 17 passed ; suite complète 576 passed (559 + 17, aucune régression).
 
-### [TEST-08] Schéma `optimizer_results[strat][tf][symbol]` non documenté dans le code
+### [TEST-08] Schéma `optimizer_results[strat][tf][symbol]` non documenté dans le code — ✅ RÉALISÉ (2026-07-13)
 - Priorité: P2 | Effort: S | Fichiers: app/core/config.py, app/live/utils.py (resolve_strategy_params)
 - Problème: Le CHANGELOG détaille le nouveau schéma par symbole mais aucun docstring du code source ne définit la structure exacte (types, clés optionnelles, migration héritée → BTC/USDC). Onboarding difficile.
 - Directive: Ajouter dans app/core/config.py (chargement strategies/*.yaml) un docstring avec le schéma EXACT : `{'smart_money': {'4h': {'BTC/USDC': {'run_date','oos_score','params'}}}}` + la règle de rétro-compat (entrée sans symbole = BTC/USDC, ne s'applique pas aux autres symboles). Croiser avec le docstring de resolve_strategy_params.
 - Acceptation: docstring présent avec schéma et exemple ; référencé depuis ARCHITECTURE.md.
+- **Réalisation** : fichier corrigé — `resolve_strategy_params` a déménagé dans `app/core/param_resolution.py` lors de V4-B (ARCH-02), plus dans `app/live/utils.py` (ré-export de compatibilité seulement) ; ce module possédait déjà d'excellents docstrings détaillés (`_select_symbol_entry`, `_is_legacy_tf_entry`, `resolve_strategy_params`) décrivant la règle de rétro-compat exacte. Le vrai trou était `_load_strategy_configs` dans `app/core/config.py`, dont le docstring montrait encore l'ancien schéma à 2 niveaux (`{tf: {run_date, oos_score, params}}`, sans dimension symbole). Étendu avec le schéma exact à 3 niveaux, l'exemple demandé (`smart_money/4h/BTC-ETH`), la règle de rétro-compat, et un renvoi croisé vers `param_resolution.py` + la nouvelle section ARCHITECTURE.md. Vérifié : `python3 -c "import app.core.config"` sans erreur ; 576 tests verts (docstring seul, aucun changement de comportement).
 
 ### [TEST-09] CHANGELOG [Non publié] excessivement long (~750 lignes)
 - Priorité: P3 | Effort: M | Fichiers: CHANGELOG.md
@@ -77,11 +78,12 @@
 - Directive: Découper en versions datées (regrouper par jalon : moteur SMC, indicateurs, trend_rider, vizion, configs par symbole), garder [Non publié] court. Optionnel : script `scripts/release.py` qui fige [Non publié] sous un tag.
 - Acceptation: [Non publié] ≤ 150 lignes ; l'historique découpé reste intégral.
 
-### [TEST-10] ARCHITECTURE.md ne documente pas le flux live
+### [TEST-10] ARCHITECTURE.md ne documente pas le flux live — ✅ RÉALISÉ (2026-07-13)
 - Priorité: P3 | Effort: S | Fichiers: ARCHITECTURE.md, app/live/live_trader.py
 - Problème: ARCHITECTURE.md existe (14 Ko) mais ne couvre pas le flux live (LiveTrader loop → OHLCVCache → SignalPipeline → PositionMixin → BalanceSync → exchange), ni les slots par symbole ni le capital allocator.
 - Directive: Ajouter une section « Live Trading Loop » : diagramme ASCII du flux, description des slots `strategy::tf::symbol`, du cycle de vie (candidat/essai/actif/retiré) et de l'allocation de capital.
 - Acceptation: section présente, relue, cohérente avec le code actuel.
+- **Réalisation** : nouvelle section `## 🔴 Live Trading Loop` (entre « Flux de données » et « Modules clés »), 4 sous-sections : composition des 4 mixins (V4-J) + composés (OHLCVCache/SignalPipeline/CapitalAllocator) ; diagramme ASCII détaillé de `_cycle()` (gestion positions avec ses 5 branches de sortie, pipeline signaux, gating complet de `_try_open_from_signal`, synchro capital, rééquilibrage, + tâches planifiées hors-cycle) ; slots `strategy::tf::symbol` (formats `build_slot_key`/`build_pos_key`, ordres différents, règle héritée) ; cycle de vie des bots (diagramme ASCII candidat→essai→actif→retiré avec les conditions de transition exactes, `edge_min_trades`/`fidelity_min_fills`/`plancher_budget_pct` vérifiés dans `slot_lifecycle.py` avant d'être documentés) ; allocation de capital (3 modes, shadow allocation, rééquilibrage, persistance). Pointeurs croisés ajoutés depuis l'ancien diagramme sommaire de « Flux de données » et depuis l'entrée `app/live/live_trader.py` de « Modules clés » (tous deux restaient corrects mais incomplets — pas réécrits pour limiter le diff, juste reliés à la nouvelle section détaillée). Chaque affirmation (noms de méthodes, champs de config, seuils par défaut) vérifiée par lecture directe du code source avant rédaction, pas supposée. Relu pour cohérence avec le code actuel ; 576 tests verts (doc uniquement).
 
 ### [TEST-11] Stratégies : ~13/53 testées
 - Priorité: P3 | Effort: L | Fichiers: app/strategies/*.py, tests/
