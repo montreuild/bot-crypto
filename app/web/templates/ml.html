@@ -153,7 +153,7 @@
               <span class="ps-badge">Optimisé</span>
               <span class="ps-fixed-badge" style="margin-left:4px">Fixe</span>
             </div>
-            <div id="param-space-view"></div>
+            <div id="param-space-view" role="status" aria-live="polite"></div>
           </div>
         </div>
 
@@ -170,7 +170,7 @@
     <div class="opt-right">
       <div>
         <div class="sec-label">Jobs ML en cours et terminés</div>
-        <div id="jobs-container">
+        <div id="jobs-container" role="status" aria-live="polite">
           <div class="empty-state"><div class="spin" style="width:20px;height:20px;border-width:2px;margin:0 auto 8px"></div><p>Chargement des jobs…</p></div>
         </div>
       </div>
@@ -320,7 +320,7 @@ function updatePreviewMatrix(selectedTfs) {
   if (!strats.length || !selectedTfs.length) { el.innerHTML = ''; return; }
 
   const tfCols = selectedTfs.map(tf =>
-    `<th style="padding:4px 8px;font-size:.6rem;color:var(--dim);text-align:center">${tf}</th>`
+    `<th scope="col" style="padding:4px 8px;font-size:.6rem;color:var(--dim);text-align:center">${tf}</th>`
   ).join('');
   const rows = strats.map(s => {
     const cb = document.getElementById('sc-' + s);
@@ -346,7 +346,7 @@ function updatePreviewMatrix(selectedTfs) {
     </div>
     <div style="overflow-x:auto">
       <table style="border-collapse:collapse;width:100%">
-        <thead><tr><th style="padding:4px 8px;font-size:.6rem;color:var(--dim);text-align:left">Stratégie</th>${tfCols}</tr></thead>
+        <thead><tr><th scope="col" style="padding:4px 8px;font-size:.6rem;color:var(--dim);text-align:left">Stratégie</th>${tfCols}</tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
@@ -645,8 +645,8 @@ function renderJobCard(id, job, expanded = false) {
   if (hasResult && result.top5?.length) {
     top5Html = `<div class="top5-wrap">
       <table class="top5-table"><thead><tr>
-        <th>#</th><th>IS Score</th><th>OOS Score</th><th>Final</th>
-        <th>OOS PnL</th><th>OOS WR</th><th>OOS DD</th><th>Overfit</th>
+        <th scope="col">#</th><th scope="col">IS Score</th><th scope="col">OOS Score</th><th scope="col">Final</th>
+        <th scope="col">OOS PnL</th><th scope="col">OOS WR</th><th scope="col">OOS DD</th><th scope="col">Overfit</th>
       </tr></thead><tbody>${result.top5.map((r,i)=>`
       <tr class="${i===0?'top5-best':''}">
         <td>${i===0?'🏆':i+1}</td>
@@ -690,7 +690,7 @@ function renderJobCard(id, job, expanded = false) {
 
   const actionBtns = st === 'running'
     ? `<button class="job-action-btn btn-cancel-job" onclick="cancelJob('${escHtml(id)}',event)" title="Annuler ce job">✕ Annuler</button>`
-    : `<button class="job-action-btn btn-delete-job" onclick="deleteJob('${escHtml(id)}',event)" title="Supprimer ce job">🗑</button>`;
+    : `<button class="job-action-btn btn-delete-job" onclick="deleteJob('${escHtml(id)}',event)" title="Supprimer ce job" aria-label="Supprimer ce job">🗑</button>`;
 
   const summaryContent = `
     <div style="display:flex;align-items:flex-start;gap:6px">

@@ -151,7 +151,7 @@
               <span class="ps-fixed-badge" style="margin-left:4px">Fixe</span>
               <span class="ps-global-badge" style="margin-left:4px">Global trading</span>
             </div>
-            <div id="param-space-view"></div>
+            <div id="param-space-view" role="status" aria-live="polite"></div>
             <div style="margin-top:10px;padding:8px;background:rgba(34,211,238,.05);border:1px solid rgba(34,211,238,.15);border-radius:var(--r-sm)">
               <div style="font-size:.65rem;color:var(--cyan);font-weight:700;margin-bottom:4px">Parametres globaux</div>
               <div style="font-size:.63rem;color:var(--dim);line-height:1.6">
@@ -167,7 +167,7 @@
     <div class="opt-right">
       <div>
         <div class="sec-label">Jobs en cours et termines</div>
-        <div id="jobs-container">
+        <div id="jobs-container" role="status" aria-live="polite">
           <div class="empty-state"><div class="spin" style="width:20px;height:20px;border-width:2px;margin:0 auto 8px"></div><p>Chargement des jobs…</p></div>
         </div>
       </div>
@@ -330,7 +330,7 @@ function updatePreviewMatrix(selectedTfs) {
   });
 
   const tfCols = selectedTfs.map(tf =>
-    `<th style="padding:4px 8px;font-size:.6rem;color:var(--dim);text-align:center">${tf}</th>`
+    `<th scope="col" style="padding:4px 8px;font-size:.6rem;color:var(--dim);text-align:center">${tf}</th>`
   ).join('');
 
   const rows = strats.map(s => {
@@ -367,7 +367,7 @@ function updatePreviewMatrix(selectedTfs) {
     </div>
     <div style="overflow-x:auto">
       <table style="border-collapse:collapse;width:100%">
-        <thead><tr><th style="padding:4px 8px;font-size:.6rem;color:var(--dim);text-align:left">Stratégie</th>${tfCols}</tr></thead>
+        <thead><tr><th scope="col" style="padding:4px 8px;font-size:.6rem;color:var(--dim);text-align:left">Stratégie</th>${tfCols}</tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
@@ -679,8 +679,8 @@ function renderJobCard(id, job, expanded = false) {
   if (hasResult && result.top5?.length) {
     top5Html = `<div class="top5-wrap">
       <table class="top5-table"><thead><tr>
-        <th>#</th><th>IS Score</th><th>OOS Score</th><th>Final</th>
-        <th>OOS PnL</th><th>OOS WR</th><th>OOS DD</th><th>Overfit</th>
+        <th scope="col">#</th><th scope="col">IS Score</th><th scope="col">OOS Score</th><th scope="col">Final</th>
+        <th scope="col">OOS PnL</th><th scope="col">OOS WR</th><th scope="col">OOS DD</th><th scope="col">Overfit</th>
       </tr></thead><tbody>${result.top5.map((r,i)=>`
       <tr class="${i===0?'top5-best':''}">
         <td>${i===0?'🏆':i+1}</td>
@@ -726,7 +726,7 @@ function renderJobCard(id, job, expanded = false) {
 
   const actionBtns = st === 'running'
     ? `<button class="job-action-btn btn-cancel-job" onclick="cancelJob('${escHtml(id)}',event)" title="Annuler ce job">✕ Annuler</button>`
-    : `<button class="job-action-btn btn-delete-job" onclick="deleteJob('${escHtml(id)}',event)" title="Supprimer ce job">🗑</button>`;
+    : `<button class="job-action-btn btn-delete-job" onclick="deleteJob('${escHtml(id)}',event)" title="Supprimer ce job" aria-label="Supprimer ce job">🗑</button>`;
 
   const summaryContent = `
     <div style="display:flex;align-items:flex-start;gap:6px">

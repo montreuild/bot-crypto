@@ -132,7 +132,7 @@
     <button class="btn btn-cyan btn-full" id="btn-load" onclick="loadData()">▶ Charger</button>
     <button class="btn btn-stop btn-full" id="btn-cancel" style="display:none" onclick="cancelLoad()">■ Annuler</button>
 
-    <div id="rp-log" style="background:#050810;border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;font-size:.67rem;font-family:var(--mono);color:var(--dim);max-height:110px;overflow-y:auto;display:none;flex-direction:column;gap:2px;"></div>
+    <div id="rp-log" role="status" aria-live="polite" style="background:#050810;border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;font-size:.67rem;font-family:var(--mono);color:var(--dim);max-height:110px;overflow-y:auto;display:none;flex-direction:column;gap:2px;"></div>
 
     <div class="sb-divider" id="stats-divider" style="display:none"></div>
 
@@ -181,7 +181,7 @@
     </div>
 
     <!-- Loader -->
-    <div id="rp-loader">
+    <div id="rp-loader" role="status" aria-live="polite">
       <div class="loader-spin"></div>
       <div class="loader-msg" id="rp-loader-msg">Chargement des données…</div>
     </div>
@@ -209,13 +209,13 @@
       </div>
       <div class="ctrl-row">
         <div class="ctrl-btns">
-          <button class="ctrl-btn" title="Début (Home)" onclick="seekTo(0)">⏮</button>
-          <button class="ctrl-btn" title="-10 bougies" onclick="step(-10)">◀◀</button>
-          <button class="ctrl-btn" title="-1 bougie" onclick="step(-1)">◀</button>
-          <button class="ctrl-btn play-btn" id="btn-play" title="Play / Pause (Espace)" onclick="togglePlay()">▶</button>
-          <button class="ctrl-btn" title="+1 bougie" onclick="step(1)">▶</button>
-          <button class="ctrl-btn" title="+10 bougies" onclick="step(10)">▶▶</button>
-          <button class="ctrl-btn" title="Fin (End)" onclick="seekTo(-1)">⏭</button>
+          <button class="ctrl-btn" title="Début (Home)" aria-label="Aller au début" onclick="seekTo(0)">⏮</button>
+          <button class="ctrl-btn" title="-10 bougies" aria-label="Reculer de 10 bougies" onclick="step(-10)">◀◀</button>
+          <button class="ctrl-btn" title="-1 bougie" aria-label="Reculer d'une bougie" onclick="step(-1)">◀</button>
+          <button class="ctrl-btn play-btn" id="btn-play" title="Play / Pause (Espace)" aria-label="Lecture / Pause" onclick="togglePlay()">▶</button>
+          <button class="ctrl-btn" title="+1 bougie" aria-label="Avancer d'une bougie" onclick="step(1)">▶</button>
+          <button class="ctrl-btn" title="+10 bougies" aria-label="Avancer de 10 bougies" onclick="step(10)">▶▶</button>
+          <button class="ctrl-btn" title="Fin (End)" aria-label="Aller à la fin" onclick="seekTo(-1)">⏭</button>
         </div>
         <div class="ctrl-sep"></div>
         <div class="speed-btns" id="speed-btns">

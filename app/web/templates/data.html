@@ -35,8 +35,8 @@ table.dt-tbl{width:100%;border-collapse:collapse;font-size:.78rem;}
     </div>
     <div style="overflow-x:auto;">
       <table class="dt-tbl">
-        <thead><tr><th>Paire</th><th>TF</th><th>Bougies</th><th>Début</th><th>Fin</th><th>Taille</th><th>Action</th></tr></thead>
-        <tbody id="dt-body"><tr><td colspan="7" style="color:var(--muted)">Chargement…</td></tr></tbody>
+        <thead><tr><th scope="col">Paire</th><th scope="col">TF</th><th scope="col">Bougies</th><th scope="col">Début</th><th scope="col">Fin</th><th scope="col">Taille</th><th scope="col">Action</th></tr></thead>
+        <tbody id="dt-body" aria-live="polite"><tr><td colspan="7" style="color:var(--muted)">Chargement…</td></tr></tbody>
       </table>
     </div>
     <div class="dt-hint">Le dernier chargement = colonne « Fin ». « Recharger » complète le cache depuis l'exchange (OKX) via la même machinerie que le live.</div>
@@ -51,7 +51,7 @@ table.dt-tbl{width:100%;border-collapse:collapse;font-size:.78rem;}
       <button class="dt-btn" id="mf-btn" onclick="fetchManual()">Télécharger</button>
     </div>
     <div class="dt-hint">Une paire/timeframe même absente de la liste ci-dessus. Le format est identique au cache du bot (rien à convertir).</div>
-    <div id="mf-result" class="dt-hint"></div>
+    <div id="mf-result" class="dt-hint" role="status" aria-live="polite"></div>
   </div>
 </div>
 {% endblock %}
@@ -75,7 +75,7 @@ async function loadStatus(){
       // data-attributes + délégation d'événement (pas de JS dans l'attribut →
       // aucune valeur API ne peut casser/injecter le onclick).
       return '<tr><td>'+esc(x.symbol)+'</td><td>'+esc(x.tf)+'</td><td>'+badge+'</td><td>'+esc(x.from)+'</td><td>'+esc(x.to)+'</td><td>'+(x.size_kb||0)+' Ko</td>'+
-        '<td><button class="dt-btn ghost dt-refetch" style="padding:4px 10px;font-size:.72rem" data-symbol="'+esc(x.symbol)+'" data-tf="'+esc(x.tf)+'">↻</button></td></tr>';
+        '<td><button class="dt-btn ghost dt-refetch" style="padding:4px 10px;font-size:.72rem" data-symbol="'+esc(x.symbol)+'" data-tf="'+esc(x.tf)+'" aria-label="Recharger '+esc(x.symbol)+' '+esc(x.tf)+'">↻</button></td></tr>';
     }).join('');
   }catch(e){body.innerHTML='<tr><td colspan="7" style="color:#f87171">Erreur : '+esc(e.message)+'</td></tr>';}
 }

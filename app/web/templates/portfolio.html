@@ -43,7 +43,7 @@
 
 {% block content %}
 <div id="content" class="fade-in">
-  <div id="haltBanner" class="banner halt"></div>
+  <div id="haltBanner" class="banner halt" role="alert" aria-live="assertive"></div>
 
   <div class="kpi-grid">
     <div class="kpi"><div class="lbl">Capital</div><div class="val" id="kCapital">—</div></div>
@@ -71,13 +71,13 @@
     <div class="panel-hdr">Allocation du capital <span style="color:var(--dim);font-weight:400">— barre = budget actuel · trait <span style="color:var(--amber)">▮</span> = proposition de l'allocateur (selon le score)</span></div>
     <div class="panel-body">
       <div id="shadowNote" class="info-box" style="display:none;margin-bottom:4px"></div>
-      <div id="allocBox"><div style="color:var(--dim);font-size:.8rem">Chargement…</div></div>
+      <div id="allocBox" role="status" aria-live="polite"><div style="color:var(--dim);font-size:.8rem">Chargement…</div></div>
     </div>
   </div>
 
   <div class="panel">
     <div class="panel-hdr">Fil d'activité <span style="color:var(--dim);font-weight:400">— 3 niveaux (info · avertissement · critique)</span></div>
-    <div class="panel-body"><div class="feed" id="feed"><div style="color:var(--dim);font-size:.8rem">Aucune notification.</div></div></div>
+    <div class="panel-body"><div class="feed" id="feed" role="status" aria-live="polite"><div style="color:var(--dim);font-size:.8rem">Aucune notification.</div></div></div>
   </div>
 </div>
 {% endblock %}

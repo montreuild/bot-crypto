@@ -112,7 +112,7 @@ Réalisation (un commit taggé par item ; couches documentées dans
 - ✅ ARCH-12 : partie prioritaire résolue par ARCH-04 (live sans app.api.state) ;
   l'encapsulation AppState complète reste optionnelle (aucune inversion restante)
 
-## 🔵 Vague 5 — Recherche d'edge SMC/ICT ✅ RÉALISÉE (2026-07-12, sauf reliquat SMC-02)
+## 🔵 Vague 5 — Recherche d'edge SMC/ICT ✅ RÉALISÉE (2026-07-12, reliquat SMC-02 clos le 2026-07-13)
 
 Résultats détaillés : `docs/audit/mesures-vague5.md`. Synthèse :
 
@@ -148,7 +148,7 @@ Chaque item = flag off + campagne de mesure. Les plus prometteurs d'abord :
 6. SMC-09/10 (extensions fast_analysis), BT-10 (slippage dépendant de la taille), BT-11 (plafond groupe corrélé BTC+ETH)
 7. SMC-02 (profiling O(n²) du moteur — avant les campagnes massives multi-symboles), SMC-15 (index OB HTF vizion)
 
-## ⚪ Vague 6 — UX, accessibilité, docs
+## 🟡 Vague 6 — UX, accessibilité, docs (en cours, 2026-07-13)
 
 UI-05 (static/js partagé) débloque UI-08 et UI-10 → UI-06/07 (a11y)
 → UI-09 (liens data↔scanner) → UI-11 (terminologie) → UI-12 (adopter
@@ -156,6 +156,17 @@ showSkeleton — **tranche le conflit avec DEAD-08 : on adopte, on ne supprime p
 → TEST-02/03/07 (tests LiveTrader/API/lifecycle) → TEST-08/10 (docs schéma +
 flux live) → TEST-09 (découpage CHANGELOG) → TEST-11 (smoke stratégies, APRÈS
 DEAD-01) → TEST-12 (lock requirements).
+
+Détails : `docs/audit/06-ui-ux.md` (UI-0x) et `docs/audit/07-tests-ci-docs.md` (TEST-0x). Synthèse :
+
+- ✅ UI-05 static/js partagé (ml-optimizer-shared.js — 6 fonctions dédupliquées, 7 laissées séparées : divergence comportementale réelle constatée)
+- ✅ UI-06 accessibilité clavier (17 éléments cliquables : role/tabindex/onkeydown)
+- ✅ UI-08 renderAllocGrid partagé (dashboard/portfolio ; bots.html non migré — composant fonctionnellement différent)
+- ✅ UI-10 SmcChart conditionnel (smc-chart.js — smartgraph/smartreplay seulement, les 6 autres pages chart ne l'utilisaient pas)
+- ✅ UI-11 terminologie fr/en (Refresh→Actualiser, Rejections→Rejets)
+- ✅ UI-07 attributs ARIA sur les 11 templates restants (aria-label boutons icône-seul, role=status/aria-live zones de chargement, scope=col th)
+- ✅ UI-12 showSkeleton() partagé (API étendue opts.cards/opts.colspan, 8 sites convertis)
+- ⚪ UI-09, TEST-02/03/07/08/09/10/12 : pas encore commencés.
 
 ## Conflits & dépendances à retenir
 

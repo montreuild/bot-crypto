@@ -223,7 +223,7 @@
           et sauvegardés dans <code>config.yaml</code>.<br>
           Les positions ouvertes sur une stratégie désactivée restent ouvertes jusqu'à leur clôture.
         </div>
-        <div class="strat-grid" id="strat-grid"></div>
+        <div class="strat-grid" id="strat-grid" role="status" aria-live="polite"></div>
         <div class="btn-row">
           <button id="btn-apply-strat" class="btn btn-green btn-full" onclick="applyStrategies()">
             ✓ Appliquer<span class="dirty-dot"></span>
@@ -247,7 +247,7 @@
           <span style="color:var(--amber)">⚠ Plusieurs TFs = plus de cycles réseau.
           Recommandé : <strong>1h seul</strong> pour commencer, puis ajouter après optimisation.</span>
         </div>
-        <div id="tf-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+        <div id="tf-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px" role="status" aria-live="polite">
           <div class="skeleton skeleton-line w80" style="height:40px;width:130px"></div>
           <div class="skeleton skeleton-line w60" style="height:40px;width:130px"></div>
         </div>
@@ -672,7 +672,7 @@
           Modifiez et cliquez <strong>Sauvegarder</strong> pour mettre à jour le fichier.
           Le backtest utilisera les nouvelles valeurs immédiatement.
         </div>
-        <div id="strat-params-panels">
+        <div id="strat-params-panels" role="status" aria-live="polite">
           <div class="skeleton skeleton-line w80" style="margin:8px"></div>
           <div class="skeleton skeleton-line w60" style="margin:8px"></div>
         </div>
@@ -1167,7 +1167,7 @@ function renderStratParams() {
               <button class="btn btn-ghost" style="font-size:.7rem" onclick="loadOverrideEditor('${name}')">📥 Charger</button>
               <button class="btn btn-cyan" style="font-size:.7rem" onclick="saveOverride('${name}')">💾 Sauver l'override</button>
             </div>
-            <div id="ovr-list-${name}" style="font-size:.68rem;color:var(--dim);margin-bottom:6px">Chargement…</div>
+            <div id="ovr-list-${name}" style="font-size:.68rem;color:var(--dim);margin-bottom:6px" role="status" aria-live="polite">Chargement…</div>
             <textarea id="ovr-json-${name}" spellcheck="false" style="width:100%;min-height:110px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:.7rem;padding:8px" placeholder='{"param": valeur, ...}'></textarea>
             <div style="font-size:.64rem;color:var(--dim);margin-top:4px">Écrit dans <code>optimizer_results[tf][symbole]</code> de strategies/${name}.yaml — la config des autres symboles reste intacte. Le bloc « params » de base ci-dessus n'est pas modifié.</div>
           </div>
@@ -1489,7 +1489,7 @@ document.addEventListener('visibilitychange', async () => {
       `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span style="font-weight:700">🔬 Optimiseur a appliqué des params — ${escHtml(strat)}${escHtml(tf)}${escHtml(score)}</span>
         <span style="color:var(--dim);font-size:.65rem;margin-left:auto">${ts}</span>
-        <button onclick="this.closest('div[style]').remove()" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:.8rem;padding:0 4px">✕</button>
+        <button onclick="this.closest('div[style]').remove()" aria-label="Fermer ce message" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:.8rem;padding:0 4px">✕</button>
       </div>
       ${noChange ? '<span style="color:var(--dim);font-size:.7rem">Aucun paramètre modifié (identiques)</span>' : `<div>${items}</div>`}`;
     const container = document.getElementById('content') || document.querySelector('.main-content') || document.body;

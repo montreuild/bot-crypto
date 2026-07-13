@@ -52,17 +52,17 @@
       </div>
       <div class="cmp-field" style="flex:1">
         <label>Stratégies <span id="strat-count" style="color:var(--dim)"></span> · <a href="#" onclick="toggleAll(true);return false" style="color:var(--cyan)">toutes</a> / <a href="#" onclick="toggleAll(false);return false" style="color:var(--muted)">aucune</a> / <a href="#" onclick="selectOmnibus();return false" style="color:var(--purple)">omnibus</a></label>
-        <div id="strat-chips" class="cmp-strats"><span class="cmp-msg">Chargement…</span></div>
+        <div id="strat-chips" class="cmp-strats" role="status" aria-live="polite"><span class="cmp-msg">Chargement…</span></div>
       </div>
     </div>
 
-    <div id="cmp-status" class="cmp-msg" style="display:none"></div>
+    <div id="cmp-status" class="cmp-msg" style="display:none" role="status" aria-live="polite"></div>
 
     <div class="table-card">
       <div class="tscroll">
         <table class="cmp-table" id="cmp-table">
           <thead id="cmp-head"></thead>
-          <tbody id="cmp-body"><tr><td class="cmp-msg">Sélectionnez des stratégies puis cliquez sur « Comparer ».</td></tr></tbody>
+          <tbody id="cmp-body" aria-live="polite"><tr><td class="cmp-msg">Sélectionnez des stratégies puis cliquez sur « Comparer ».</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -163,8 +163,8 @@ function renderTable(){
     best[c.k]=bv;
   }
 
-  head.innerHTML = '<tr><th style="text-align:left" onclick="setSort(\'__name\')">Stratégie</th>' +
-    COLS.map(c=>`<th class="${_sortKey===c.k?'sorted':''}" onclick="setSort('${c.k}')">${c.l}${_sortKey===c.k?(_sortDir<0?' ▼':' ▲'):''}</th>`).join('') + '</tr>';
+  head.innerHTML = '<tr><th scope="col" style="text-align:left" onclick="setSort(\'__name\')">Stratégie</th>' +
+    COLS.map(c=>`<th scope="col" class="${_sortKey===c.k?'sorted':''}" onclick="setSort('${c.k}')">${c.l}${_sortKey===c.k?(_sortDir<0?' ▼':' ▲'):''}</th>`).join('') + '</tr>';
 
   const sorted = names.slice().sort((a,b)=>{
     if(_sortKey==='__name') return _sortDir * a.localeCompare(b);

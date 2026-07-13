@@ -30,9 +30,9 @@
     <!-- TOP par Timeframe & Classement OOS par TF -->
     <div class="audit-section">
       <div class="sec-hdr"><h2>TOP par Timeframe</h2><span class="sec-hdr-line"></span>
-        <button onclick="loadOptResults()" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:.7rem">&#x21BA;</button>
+        <button onclick="loadOptResults()" aria-label="Recharger le TOP par timeframe" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:.7rem">&#x21BA;</button>
       </div>
-      <div id="opt-results-container"></div>
+      <div id="opt-results-container" role="status" aria-live="polite"></div>
     </div>
 
     <!-- Historique des paramètres optimisés -->
@@ -41,9 +41,9 @@
       <div class="table-card">
         <div class="tscroll"><table class="table-striped">
           <thead><tr>
-            <th>Date</th><th>Stratégie</th><th>TF</th><th>Paramètres modifiés</th><th class="r">Score OOS</th>
+            <th scope="col">Date</th><th scope="col">Stratégie</th><th scope="col">TF</th><th scope="col">Paramètres modifiés</th><th scope="col" class="r">Score OOS</th>
           </tr></thead>
-          <tbody id="changelog-body"></tbody>
+          <tbody id="changelog-body" aria-live="polite"></tbody>
         </table></div>
       </div>
     </div>
@@ -198,10 +198,10 @@ function renderOptResults(d) {
   html += `<div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:600;margin-bottom:8px">Classement OOS par TF</div>`;
   html += `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:${allTfs.length * 160 + 120}px">
     <thead><tr>
-      <th style="padding:6px 10px;text-align:left;font-size:.63rem;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap">Stratégie</th>
+      <th scope="col" style="padding:6px 10px;text-align:left;font-size:.63rem;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap">Stratégie</th>
       ${allTfs.map(tf => {
         const active = activeTf[tf] || [];
-        return `<th style="padding:6px 10px;text-align:center;font-size:.63rem;color:var(--cyan);text-transform:uppercase;border-bottom:1px solid var(--border);font-family:var(--mono)">
+        return `<th scope="col" style="padding:6px 10px;text-align:center;font-size:.63rem;color:var(--cyan);text-transform:uppercase;border-bottom:1px solid var(--border);font-family:var(--mono)">
           ${tf}
           ${active.length ? `<div style="font-size:.58rem;color:var(--green);font-weight:400">${active.length} actif${active.length>1?'s':''}</div>` : ''}
         </th>`;
