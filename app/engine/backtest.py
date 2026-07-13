@@ -227,6 +227,12 @@ class Backtester:
         self.borrow_rate  = tcfg.get("borrow_rate_daily", 0.0002)
         self.borrow_periods = int(tcfg.get("borrow_periods_per_day", 24))
         self.spread_pct   = bcfg.get("spread_pct",        0.0005)
+        # BT-10 : modèle de slippage dépendant de la taille (off par défaut).
+        # "size" → coût d'impact additionnel notional × spread_pct × k ×
+        # (notional / volume quote moyen 20 barres), appliqué à l'entrée, aux
+        # scale-ins et à la sortie. "static" (défaut) = byte-identique.
+        self.slippage_model = str(bcfg.get("slippage_model", "static"))
+        self.slippage_k     = float(bcfg.get("slippage_k", 1.0))
         self.partial_fill = bcfg.get("partial_fill_pct",  0.95)
         self.max_notional_pct = float(bcfg.get("max_notional_pct", 0.20))  # BT-03 : aligné sur le live (risk.py)
 
@@ -278,6 +284,10 @@ class Backtester:
             daily_rate=self.borrow_rate, hours_held=hours_held,
             periods_per_day=self.borrow_periods,
         )
+        impact = self._impact_cost(ctx, i, position["notional"])   # BT-10
+        if impact:
+            pnl -= impact
+            fees += impact
         ctx.capital += pnl
         # BT-09 : plus-haut d'équité pour la courbe de dé-risquage en drawdown.
         ctx.peak_capital = max(getattr(ctx, "peak_capital", ctx.capital), ctx.capital)
@@ -447,6 +457,7 @@ class Backtester:
                         add_size = add_notional / add_price
                     if add_notional >= 1.0 and add_size > 0:
                         add_fees = self._fees(add_price, add_size, maker=False)
+                        add_fees += self._impact_cost(ctx, i, add_notional)  # BT-10
                         ctx.capital -= add_fees
                         new_size = position["size"] + add_size
                         position["entry"] = round(
@@ -538,6 +549,7 @@ class Backtester:
         size       *= self.partial_fill
         notional    = size * exec_price
         entry_fees  = self._fees(exec_price, size, maker=False)
+        entry_fees += self._impact_cost(ctx, i, notional)   # BT-10
         ctx.capital -= entry_fees
         ctx.trade_id += 1
         ts = str(df["time"][i]) if "time" in df.columns else str(i)
@@ -747,6 +759,12 @@ class Backtester:
             close_arr=close_arr,
             bars_current_position=_bars_current_position,
         )
+        # BT-10 : volume quote moyen (20 barres, causal) pour le modèle "size".
+        if self.slippage_model == "size" and "volume" in df.columns:
+            ctx.qvol_arr = (df["volume"] * df["close"]).rolling_mean(20) \
+                .fill_null(0.0).to_numpy().astype(float)
+        else:
+            ctx.qvol_arr = None
 
         for i in range(warmup, len(df) - 1):
             diag["bars_total"] += 1
@@ -884,6 +902,24 @@ class Backtester:
 
     def initial_capital(self, cfg: dict) -> float:
         return cfg["trading"].get("capital", 1000.0)
+
+    def _impact_cost(self, ctx, i: int, notional: float) -> float:
+        """BT-10 : coût d'impact croissant avec la taille RELATIVE du trade
+        (participation au volume) — 0.0 si le modèle est off ou volume absent.
+
+        ``notional × spread_pct × k × (notional / volume_quote_moyen_20b)`` :
+        un trade à 1 % du volume moyen d'une barre coûte ~1 % de spread en
+        plus ; un trade à 50 % le multiplie d'autant. Linéaire en
+        participation, quadratique en notional (impact de marché standard)."""
+        if self.slippage_model != "size":
+            return 0.0
+        qv = getattr(ctx, "qvol_arr", None)
+        if qv is None or not (0 <= i < len(qv)):
+            return 0.0
+        avg = float(qv[i])
+        if avg <= 0 or notional <= 0:
+            return 0.0
+        return notional * self.spread_pct * self.slippage_k * (notional / avg)
 
     def _fees(self, price: float, size: float, maker: bool = False) -> float:
         return _trade_fees(price, size, self.maker_fee if maker else self.taker_fee)

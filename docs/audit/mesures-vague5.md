@@ -154,3 +154,31 @@ Points saillants (8 modes × BTC/ETH × 4h/1h) :
   dans le param_space).
 - `amd_session_anchored` : moins bon que la compression générique sur le
   slot où amd_bonus est actif (BTC 4h) ; inerte ailleurs.
+
+## [SMC-09/10 + BT-10] Fast Analyse SMC + grilles + slippage taille (2026-07-12)
+
+- **SMC-09** : famille « smc » dans `fast_analysis.build_signals` — signaux
+  « SMC sweep rejeté » et « SMC OB retest » edge-triggered depuis
+  `smc.analyze`, TP = première cible de liquidité opposée. Les 9 signaux
+  historiques inchangés (test de forme).
+- **SMC-10** : `analyze(fee_grid=[(taker,maker)…], period_scales=(0.5,2.0))`
+  opt-in — grille de frais par signal + variantes de période « nom ×0.5 » ;
+  appel sans nouvel argument → byte-identique.
+- **BT-10** : `backtest.slippage_model: "size"` (+`slippage_k`, défaut
+  "static" = byte-identique) — coût d'impact
+  `notional × spread_pct × k × (notional / volume_quote_moyen_20b)`
+  (linéaire en participation, quadratique en notionnel), appliqué à
+  l'entrée, aux scale-ins et à la sortie.
+
+Écart mesuré (smart_money BTC 4h, volume moyen ≈ 25 M USDC/barre, k=1) :
+
+| Capital | FULL off | FULL size | Δ | Sharpe off→size |
+|---:|---:|---:|---:|---|
+| 1 000 | +326.8 | +326.8 | 0 % | 8.87 → 8.87 |
+| 1 M | +326 833 | +326 187 | −0.2 % | 8.87 → 8.84 |
+| 20 M | +6.54 M | +6.28 M | −3.9 % | 8.87 → 8.30 |
+
+**Verdict : OFF par défaut.** Au capital actuel (10³ USDC, participation
+~10⁻⁶ du volume d'une barre), l'impact est strictement nul — le modèle
+statique reste fidèle. Le modèle « size » devient matériel au-delà de ~1 M
+de capital : à activer quand le bot gérera un notionnel significatif.
