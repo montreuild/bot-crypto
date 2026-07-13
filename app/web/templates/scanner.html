@@ -508,7 +508,7 @@ function renderScanTable(results){
     const posBadge=hasPos?'<span class="pos-badge" title="Position ouverte"></span>':'';
     // Click on row loads the chart for this pair
     const sym=escHtml(r.symbol);
-    return`<tr style="cursor:pointer" onclick="loadChartFor('${sym}')" title="Cliquer pour afficher le graphique">
+    return`<tr style="cursor:pointer" onclick="loadChartFor('${sym}')" title="Cliquer pour afficher le graphique" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadChartFor('${sym}');}">
       <td><strong>${sym}</strong>${posBadge}</td>
       <td><span class="tag ${regimeClass}">${escHtml(r.regime_label||'?')}</span></td>
       <td><span style="font-family:var(--mono)">${adx.toFixed(1)}</span><br><span class="adx-bar" style="width:${adxW}px"></span></td>

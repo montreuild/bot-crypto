@@ -430,7 +430,7 @@ function sgRenderPlans(){
     const stChip = p.status === 'immediate'
       ? '<span class="sg-chip" style="background:rgba(52,211,153,.18);color:var(--green)">⚡ MAINTENANT</span>'
       : '<span class="sg-chip" style="background:rgba(251,191,36,.14);color:var(--amber)">⏳ En attente</span>';
-    return `<tr style="cursor:pointer" onclick="sgSelectPlan(${k})" title="Tracer ce plan sur le graphique">
+    return `<tr style="cursor:pointer" onclick="sgSelectPlan(${k})" title="Tracer ce plan sur le graphique" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sgSelectPlan(${k});}">
       <td>${stChip}</td>
       <td style="color:${sideClr};font-weight:700">${p.side === 'long' ? '▲ LONG' : '▼ SHORT'}</td>
       <td style="font-family:var(--mono);font-size:.72rem;color:#c084fc">${escHtml(p.setup)}</td>

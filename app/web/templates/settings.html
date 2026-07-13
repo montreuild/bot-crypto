@@ -55,7 +55,7 @@ async function loadPresets(){
   let d; try{ d = await apiFetch('/api/settings/presets').then(r=>r.json()); }catch(e){ return; }
   const grid=document.getElementById('presetGrid'); const P=d.presets||{};
   grid.innerHTML = Object.entries(P).map(([key,p])=>`
-    <div class="preset ${d.current===key?'active':''}" onclick="applyPreset('${key}')">
+    <div class="preset ${d.current===key?'active':''}" onclick="applyPreset('${key}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();applyPreset('${key}');}">
       <h3>${escHtml(p.label)}</h3>
       ${row('Risque / trade',(p.risk_per_trade*100).toFixed(2)+'%')}
       ${row('Positions max',p.max_positions)}

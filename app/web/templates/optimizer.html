@@ -729,7 +729,7 @@ function renderJobCard(id, job, expanded = false) {
 
   const summaryContent = `
     <div style="display:flex;align-items:flex-start;gap:6px">
-      <div style="flex:1;min-width:0;cursor:pointer" onclick="toggleJobCard('${id}')">
+      <div style="flex:1;min-width:0;cursor:pointer" onclick="toggleJobCard('${id}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleJobCard('${id}');}">
         <div class="job-title" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
           <span>${job.strategy || id}</span>
           <span style="color:var(--cyan);font-size:.8rem">@${job.timeframe||'?'}</span>

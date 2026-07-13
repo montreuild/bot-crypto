@@ -212,7 +212,7 @@
 
     <!-- Stratégies actives -->
     <div class="panel">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span style="color:var(--green)">📋</span>
         <h3>Stratégies actives</h3>
         <span id="strat-count" style="margin-left:auto;font-size:.7rem;color:var(--dim);padding-right:20px"></span>
@@ -236,7 +236,7 @@
 
     <!-- Timeframes Multi-TF -->
     <div class="panel">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span style="color:var(--cyan)">⏱</span>
         <h3>Timeframes actifs</h3>
         <span id="tf-active-badge" style="margin-left:auto;font-size:.7rem;color:var(--dim);padding-right:20px"></span>
@@ -264,7 +264,7 @@
 
     <!-- Notifications -->
     <div class="panel acc-closed">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span>🔔</span>
         <h3>Notifications</h3>
         <span id="notif-badge" class="strat-badge badge-off" style="margin-left:auto;margin-right:20px">OFF</span>
@@ -448,7 +448,7 @@
 
     <!-- Auto-optimisation -->
     <div class="panel acc-closed">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span style="color:var(--purple)">🔬</span>
         <h3>Auto-optimisation</h3>
         <span id="auto-opt-badge" class="strat-badge badge-off" style="margin-left:auto;margin-right:20px">OFF</span>
@@ -484,7 +484,7 @@
 
     <!-- Paramètres trading globaux -->
     <div class="panel acc-closed">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span style="color:var(--cyan)">⚙</span>
         <h3>Paramètres trading</h3>
       </div>
@@ -548,7 +548,7 @@
 
     <!-- Circuit Breakers avancés -->
     <div class="panel acc-closed">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span style="color:var(--red)">⚡</span>
         <h3>Circuit Breakers par slot</h3>
       </div>
@@ -598,7 +598,7 @@
 
     <!-- Margin spot -->
     <div class="panel acc-closed">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span style="color:var(--orange)">📊</span>
         <h3>Margin spot</h3>
         <span id="margin-badge" class="strat-badge badge-off" style="margin-left:auto;margin-right:20px">OFF</span>
@@ -850,7 +850,7 @@ function renderStrategies() {
         ? '<span class="strat-badge badge-warn">⏸ En config</span>'
         : '<span class="strat-badge badge-off">○ Inactive</span>';
     }
-    return `<div class="strat-card ${borderClass}" id="sc-${name}" onclick="toggleStrat('${name}')">
+    return `<div class="strat-card ${borderClass}" id="sc-${name}" onclick="toggleStrat('${name}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleStrat('${name}');}">
       <div class="strat-info">
         <div class="strat-name">${name}</div>
         <div class="strat-meta">${STRAT_DESC[name] || '—'}</div>
@@ -903,7 +903,7 @@ function renderTimeframes() {
   grid.innerHTML = ALL_TFS.map(tf => {
     const isActive = activeTfs.includes(tf);
     const strats   = (activePerTf[tf] || []).join(' · ') || '';
-    return '<div style="border:1px solid ' + (isActive ? 'rgba(77,159,255,.35)' : 'var(--border)') + ';border-radius:8px;padding:8px 12px;background:' + (isActive ? 'var(--cyan-dim)' : 'var(--surface)') + ';cursor:pointer;min-width:100px" onclick="toggleTfCard(this,\'' + tf + '\',event)">'
+    return '<div style="border:1px solid ' + (isActive ? 'rgba(77,159,255,.35)' : 'var(--border)') + ';border-radius:8px;padding:8px 12px;background:' + (isActive ? 'var(--cyan-dim)' : 'var(--surface)') + ';cursor:pointer;min-width:100px" onclick="toggleTfCard(this,\'' + tf + '\',event)" role="button" tabindex="0" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();toggleTfCard(this,\'' + tf + '\',event);}">'
       + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
       + '<input type="checkbox" id="tf-check-' + tf + '" ' + (isActive ? 'checked' : '') + ' style="cursor:pointer" onchange="markDirty(\'btn-apply-tf\');updateTfDisplay()">'
       + '<span style="font-weight:700;color:' + (isActive ? 'var(--cyan)' : 'var(--muted)') + ';font-size:.85rem">' + (TF_LABELS[tf] || tf) + '</span></div>'
@@ -1141,7 +1141,7 @@ function renderStratParams() {
     }).join('');
 
     return `<div class="params-group">
-      <div class="params-hdr" onclick="toggleParamGroup(this)">
+      <div class="params-hdr" onclick="toggleParamGroup(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleParamGroup(this);}">
         <span class="params-hdr-title">
           <span style="width:8px;height:8px;border-radius:50%;background:var(--cyan);display:inline-block"></span>
           ${name}
