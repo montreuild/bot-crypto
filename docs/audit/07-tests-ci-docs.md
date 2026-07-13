@@ -54,11 +54,16 @@
 - Directive: `pytest --durations=10` ; remplacer les lectures data/ par des fixtures polars synthétiques quand possible ; marquer les tests restants `@pytest.mark.slow` (enregistrer le marker dans pytest.ini) et permettre `pytest -m "not slow"` pour la boucle dev + CI rapide.
 - Acceptation: `pytest -m "not slow" tests/` < 5s ; markers déclarés sans warning pytest.
 
-### [TEST-07] Composants live sans tests isolés (position_mixin, slot_lifecycle, balance_sync)
+### [TEST-07] Composants live sans tests isolés (position_mixin, slot_lifecycle, balance_sync) — ✅ RÉALISÉ (2026-07-13)
 - Priorité: P2 | Effort: M | Fichiers: app/live/position_mixin.py, app/live/slot_lifecycle.py, app/live/balance_sync.py
 - Problème: Couverts seulement par les tests d'intégration phase*/e2e — pas d'unittests isolés du cycle de vie de position ni de la sync de balance. Une régression de clôture de position passe inaperçue.
 - Directive: Créer `tests/test_position_lifecycle.py` (ouverture→gestion→fermeture, mock exchange) et `tests/test_balance_sync.py` (sync paper/spot/margin). Minimum 3 tests par fichier.
 - Acceptation: 6+ tests verts couvrant open/manage/close et les 3 modes de sync.
+- **Réalisation** : **17 tests** au total (mini. 6 demandé), sur une vraie instance `LiveTrader` (MockExchange en mémoire + DB sqlite jetable), périmètre `position_mixin.py`/`balance_sync.py` (`slot_lifecycle.py` a son propre test dédié pré-existant, `tests/test_phase2_lifecycle_alloc.py` — non dupliqué ici).
+  - `tests/test_position_lifecycle.py` (7 tests) : `_try_open_from_signal` (création réussie avec les bons champs stop/side/strategy ; bloqué par `risk.halted` ; bloqué par `max_positions`) ; `_manage_position` (prix stable → reste ouverte ; gap sous le stop → clôture forcée, PnL négatif persisté en base) ; `_close_position` (PnL positif crédité au capital paper + trade persisté ; `pos_id` inconnu → no-op sans lever).
+  - `tests/test_balance_sync.py` (10 tests) : `_sync_paper_balance` (base seule, PnL non réalisé long ajouté, position `_reserved` ignorée) ; `_sync_spot_balance` (cash − emprunt, valeur de marché d'une position longue incluse) ; `_sync_margin_account` (met à jour `_margin_level` ; niveau critique → `risk.halted=True`) ; `_pre_execution_check` (capital suffisant/insuffisant, notionnel déjà verrouillé par une autre position pris en compte).
+  - Piège découvert et neutralisé : `_manage_position` appelle inconditionnellement `ohlcv_cache.get()` pour `check_early_exit`/`check_scale_in` si la stratégie expose ces hooks (`trend_rider` les a) — sans `fetch_ohlcv` sur le mock, l'appel exchange échoue proprement (dégradation gracieuse déjà présente dans le code, aucune écriture disque sur échec — vérifié en lisant `CandleStore.fetch`). `fetch_ohlcv` stub ajouté au mock (retourne `[]`) pour un test silencieux plutôt que de compter sur le warning catché.
+  - Vérifié : `pytest tests/test_position_lifecycle.py tests/test_balance_sync.py -v` → 17 passed ; suite complète 576 passed (559 + 17, aucune régression).
 
 ### [TEST-08] Schéma `optimizer_results[strat][tf][symbol]` non documenté dans le code
 - Priorité: P2 | Effort: S | Fichiers: app/core/config.py, app/live/utils.py (resolve_strategy_params)
