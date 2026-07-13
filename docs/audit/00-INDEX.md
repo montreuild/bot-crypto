@@ -112,7 +112,25 @@ Réalisation (un commit taggé par item ; couches documentées dans
 - ✅ ARCH-12 : partie prioritaire résolue par ARCH-04 (live sans app.api.state) ;
   l'encapsulation AppState complète reste optionnelle (aucune inversion restante)
 
-## 🔵 Vague 5 — Recherche d'edge SMC/ICT (mesures, gains potentiels)
+## 🔵 Vague 5 — Recherche d'edge SMC/ICT ✅ RÉALISÉE (2026-07-12, sauf reliquat SMC-02)
+
+Résultats détaillés : `docs/audit/mesures-vague5.md`. Synthèse :
+
+- ✅ SMC-03 liquidité calendaire (off — sweeps OOS BTC 4h légèrement mieux, IS dégradé)
+- ✅ SMC-01 SMT à l'origine (off — l'inertie est levée mais le filtre coûte de l'OOS)
+- ✅ SMC-11 inducement — **ACTIVÉ BTC 4h** (OOS +68→+75, PF 1.47→1.88, WR +7 pts)
+- ✅ SMC-04/05/06/07 judas / TP σ / BPR+CE / silver bullet (off — pas de preuve OOS)
+- ✅ SMC-12/13/14 IPDA / mitigation / AMD sessions (off — mit_exclude prometteur
+  pour une future calibration ETH)
+- ✅ SMC-09/10 famille SMC + grilles dans fast_analysis ; BT-10 slippage taille
+  (off — nul au capital actuel, matériel > 1 M)
+- ✅ SMC-15 index OB HTF vizion (mémoïsation par bucket, sortie identique)
+- ⚠ SMC-02 : profil RÉALISÉ (croissance confirmée des listes actives, 0.8 s/4.1 s
+  par analyse 4h/1h) ; le remplacement par index triés byte-identiques reste à
+  faire dans un chantier dédié (cf. mesures-vague5.md).
+- ⛔ BT-11 exclu par décision utilisateur (multi-crypto corrélé assumé).
+
+## 🔵 Vague 5 (référence d'origine) — Recherche d'edge SMC/ICT (mesures, gains potentiels)
 
 Chaque item = flag off + campagne de mesure. Les plus prometteurs d'abord :
 

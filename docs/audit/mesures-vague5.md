@@ -182,3 +182,32 @@ Points saillants (8 modes × BTC/ETH × 4h/1h) :
 ~10⁻⁶ du volume d'une barre), l'impact est strictement nul — le modèle
 statique reste fidèle. Le modèle « size » devient matériel au-delà de ~1 M
 de capital : à activer quand le bot gérera un notionnel significatif.
+
+## [SMC-02 + SMC-15] Profil du moteur + index OB HTF vizion (2026-07-12)
+
+**SMC-02 — profil (partie « PROFILER d'abord » de la directive) : CONFIRMÉ.**
+
+| BTC | n barres | temps analyze | µs/barre |
+|---|---:|---:|---:|
+| 4h | 3 900 / 7 800 / 15 601 | 88 / 253 / 794 ms | 22.6 / 32.5 / 50.9 |
+| 1h | 12 809 / 25 619 / 51 238 | 365 / 1 362 / 4 097 ms | 28.5 / 53.1 / 80.0 |
+
+Cause identifiée par sonde interne : les listes `active_*` scannées à chaque
+barre croissent sans borne (zones jamais retouchées) — entre les barres
+4 000 et 48 000 du 1h : rejections 53→178, obs 28→117, fvgs 32→121,
+breakers 18→83 (somme ~150→600 items scannés/barre). Les listes
+cumulatives (swings 10 395, obs 2 046) ne sont accédées que par tranches
+bornées (`[-4:]`, `[-12:]`) — hors de cause.
+
+Le correctif (index triés par niveau + suppression paresseuse, byte-identique
+sur `touched_at`/`invalidated_at`/`swept_at`) reste À FAIRE dans un chantier
+dédié : 6 types d'entités × 2 polarités × 2 seuils (touch/invalidation)
+chacun — trop risqué à glisser en fin de vague. Coût actuel absolu :
+0.8 s (4h) / 4.1 s (1h) par analyse complète, une fois par backtest —
+gênant pour l'optimiseur multi-symboles, pas bloquant en live.
+
+**SMC-15 — fait.** `vizion._active_htf_obs` mémoïsé par bucket HTF
+(des dizaines de barres LTF partagent le même `hidx`, et `_signals`
+rappelait le refiltrage complet de `_all_obs` pour CHAQUE candidat →
+O(événements_LTF × OB_HTF) ; coût amorti O(1) désormais). Sortie vérifiée
+strictement identique sur BTC 4h réel ; tests test_vizion.py verts.

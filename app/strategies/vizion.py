@@ -103,11 +103,23 @@ class Strategy(BaseStrategy):
                               int(p.get("smt_lookback", 20)))
 
     def _active_htf_obs(self, htf_res, hidx: int):
+        """OB HTF actifs au bucket ``hidx`` — mémoïsé par ``hidx`` (SMC-15).
+
+        ``hidx`` est l'index du bucket HTF : des dizaines de barres LTF
+        partagent le même bucket, et ``_signals`` rappelle ce filtre pour
+        CHAQUE candidat — le refiltrage complet de ``_all_obs`` était
+        O(événements_LTF × OB_HTF). Le cache (res, hidx) → liste rend le
+        coût amorti O(1) par candidat, sortie strictement identique."""
         if htf_res is None or hidx < 0:
             return []
-        return [ob for ob in htf_res["_all_obs"]
-                if ob["created_at"] <= hidx
-                and (ob["invalidated_at"] is None or ob["invalidated_at"] > hidx)]
+        cache = getattr(self, "_htf_obs_cache", None)
+        if cache is not None and cache[0] is htf_res and cache[1] == hidx:
+            return cache[2]
+        out = [ob for ob in htf_res["_all_obs"]
+               if ob["created_at"] <= hidx
+               and (ob["invalidated_at"] is None or ob["invalidated_at"] > hidx)]
+        self._htf_obs_cache = (htf_res, hidx, out)
+        return out
 
     def _recent_sweep(self, res: dict, created_at: int, want: str,
                       lookback: int) -> bool:
