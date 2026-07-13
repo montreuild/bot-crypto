@@ -6,6 +6,10 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+---
+
+## [12.17.0] - 2026-07-11
+
 ### 🛡 Audit Vagues 1-2 : sécurité + intégrité de la mesure (14 items)
 
 **Vague 1 — Sécurité (docs/audit)** :
@@ -74,6 +78,10 @@ chemins secondaires qui supposaient encore l'ancien slot 2-parties :
 
 483 tests OK (13 nouveaux).
 
+---
+
+## [12.16.0] - 2026-07-11
+
 ### 🎯 Configs par symbole : `optimizer_results[strat][tf][symbol]` + slots par symbole
 
 **Séparation complète des configs par symbole** : une stratégie a une config BTC
@@ -122,6 +130,10 @@ lieu d'un unique jeu par `(stratégie, timeframe)` partagé par tous les symbole
   trail_mult=3.5`) → **OOS +286 / PF 1.27 / 77 tr** (vs BTC OOS ~+44). Les deux
   coexistent dans `trend_rider.yaml`. Résultat concret : sur 4h, `trend_rider`
   tourne sur **ETH/USDC** et `smart_money` sur **BTC/USDC**, chacun sa config.
+
+---
+
+## [12.15.0] - 2026-07-10
 
 ### 🔀 SMT divergence : primitive moteur + câblage smart_money (MESURÉ non pertinent)
 
@@ -246,6 +258,10 @@ livrer d'edge négatif), aucune stratégie n'a été créée. Le cadre
 « ⚡ Fast Analyse » du Scanner permet désormais de trouver un symbole où le
 mean-reversion fonctionne réellement (instruments range-bound).
 
+---
+
+## [12.14.0] - 2026-07-09
+
 ### 🆕 Nouvelle stratégie `trend_rider` (indicateurs classiques, long-biaisée)
 
 Stratégie construite UNIQUEMENT à partir d'indicateurs existants, par campagne
@@ -271,6 +287,10 @@ Fichiers : `app/strategies/trend_rider.py` + `strategies/trend_rider.yaml`.
 **`enabled: false`** — complément expérimental à valider en forward avant toute
 promotion live. 7 tests unitaires (contrat, front de régime, long-only,
 causalité live↔backtest). 435 tests OK.
+
+---
+
+## [12.13.0] - 2026-07-08
 
 ### 🔬 smart_money : re-test 15m/30m/1h avec l'arsenal complet — restent non tradables
 
@@ -388,6 +408,10 @@ est écarté : PnL en hausse mais Sharpe plat → exposition, pas edge.
 via `optimizer_results`. Params `size_by_confluence`/`size_conf_slope`/
 `size_conf_center` ajoutés au `param_space`. 418 tests OK.
 
+---
+
+## [12.12.0] - 2026-07-07
+
 ### 🏃 smart_money : trailing stop pour laisser courir les gagnants (4h)
 
 Suite au time-stop (dont le gain en nombre de trades restait modeste), deux
@@ -482,6 +506,10 @@ findings vérifiés :
 
 Backtest 4h byte-identique vérifié après chaque refactor mécanique. Suite
 complète : 414 tests OK (dont parité trade_plans/score et helpers).
+
+---
+
+## [12.11.0] - 2026-07-04
 
 ### ⏯ Page « Smart replay » : rejeu bougie par bougie de l'analyse SMC
 
@@ -603,6 +631,10 @@ entrée/SL/TP/gain %) via `GET /api/scanner/smc` ; stratégie disponible dans le
 replay, le backtest, l'optimiseur et le live. Documentation :
 `docs/SMART_MONEY_CONCEPTS.md`. 22 tests unitaires (`tests/test_smc.py`).
 
+---
+
+## [12.10.0] - 2026-06-18
+
 ### ⚡ Performance backtest/optimisation : suppression d'un O(n²) et du « get_column storm » des stratégies ML
 
 **Symptôme.** Backtests ML très lents et **ralentissant avec la taille** (279 → 185
@@ -681,6 +713,10 @@ Cinq améliorations ciblées de l'optimiseur et de ses performances :
   Chaque combo segmente le cache d'entraînement (coût ~linéaire). Les HP retenus
   sont persistés dans `best_params` et réutilisés au ré-entraînement du modèle final.
 
+---
+
+## [12.9.0] - 2026-06-16
+
 ### 🛡️ Optimiseur ML : portillon mémoire anti-OOM (corrige l'arrêt silencieux du bot pendant une optimisation multi-jobs)
 
 **Problème.** Lancer une optimisation ML sur plusieurs stratégies × timeframes
@@ -756,6 +792,10 @@ sur 50 000 bougies (plusieurs heures par job, souvent interrompu) :
 Vérifié sur données synthétiques (3 000 barres 1h, `opus_omnibus_v7`) : 2ᵉ run
 = 100 % de hits du cache d'entraînement, 0 réentraînement, trades identiques.
 
+---
+
+## [12.8.0] - 2026-06-08
+
 ### 🗑️ Suppression des stratégies ML `_1`
 
 `opus_omnibus_v7_1`, `v8_1`, `v9_1`, `v10_1` (variantes « score additif » des
@@ -820,6 +860,8 @@ Le chemin d'évaluation **non parallèle** (`Optimizer._eval`) n'incluait pas
 `oos_alpha` dans son dict de résultat, contrairement au worker parallèle. En
 mode `n_jobs=1`, `best_oos_alpha` revenait donc `None` et l'UI masquait la ligne
 Alpha. Ajout de `oos_alpha` à `_eval` pour aligner les deux chemins.
+
+---
 
 ## [12.7.0] - 2026-06-06
 

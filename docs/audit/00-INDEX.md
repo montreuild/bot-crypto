@@ -172,7 +172,8 @@ Détails : `docs/audit/06-ui-ux.md` (UI-0x) et `docs/audit/07-tests-ci-docs.md` 
 - ✅ TEST-07 tests/test_position_lifecycle.py (7) + tests/test_balance_sync.py (10) — 17 tests : ouverture/gating (halted, max_positions), gestion (gap→clôture forcée), clôture (PnL+persistance), sync paper/spot/margin, pré-exécution
 - ✅ TEST-08 docstring `optimizer_results[strat][tf][symbol]` étendu dans `_load_strategy_configs` (app/core/config.py) — le vrai trou (resolve_strategy_params avait déjà d'excellents docstrings depuis V4-B)
 - ✅ TEST-10 ARCHITECTURE.md — section « Live Trading Loop » (composition mixins, diagramme _cycle(), slots, cycle de vie, allocation), pointeurs croisés depuis les 2 diagrammes sommaires existants
-- ⚪ TEST-09/12 : pas encore commencés.
+- ✅ TEST-09 CHANGELOG.md — [Non publié] (817 lignes réelles, pas ~750) découpé en 10 versions datées (12.8.0→12.17.0, dates réelles via git log) par jalon ; [Non publié] → 3 lignes ; découpe scriptée et vérifiée lossless (git diff : 42 insertions, 0 suppression)
+- ⚪ TEST-12 : pas encore commencé.
 
 ## Conflits & dépendances à retenir
 
