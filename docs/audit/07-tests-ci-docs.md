@@ -10,11 +10,19 @@
 - Directive: Créer `.github/workflows/test.yml` déclenché sur PR et push vers main : setup Python 3.11+, `pip install -r requirements.txt`, `python -m pytest tests/ -q --tb=short`, plus un job lint (`python -m pyflakes app/` en attendant TEST-05/ruff). Attention : certains tests peuvent dépendre de `data/ohlcv` versionné — vérifier qu'ils passent sur un clone frais, sinon les marquer et les exclure du workflow (cf TEST-06).
 - Acceptation: Workflow visible dans GitHub Actions, tests verts sur un push.
 
-### [TEST-02] Module LiveTrader jamais instancié dans les tests
+### [TEST-02] Module LiveTrader jamais instancié dans les tests — ✅ RÉALISÉ (2026-07-13)
 - Priorité: P1 | Effort: M | Fichiers: app/live/live_trader.py:40-150, tests/
 - Problème: `app.live.live_trader.LiveTrader` (le cœur du trading) n'est jamais importé dans tests/ (grep = 0). Les tests e2e ne l'exercent que via cli.py — pas d'unittests isolés. Toute régression du live passe inaperçue.
 - Directive: Ajouter `tests/test_live_trader.py` avec fixtures de mock exchange : tests d'instanciation et chemins clés (init, _build_active_per_tf, reload_active_strategies, status, _restore_open_positions). Minimum 5 tests.
 - Acceptation: `pytest tests/test_live_trader.py -v` exécute 5+ tests, tous PASSED.
+- **Réalisation** : `tests/test_live_trader.py`, **12 tests** (mini. 5 demandé) construisant une vraie instance `LiveTrader` avec `MockExchange` (fetch_ticker/fetch_positions/fetch_balance en mémoire, zéro réseau) + DB sqlite jetable (`tmp_path`, `init_db`) :
+  - instanciation (`TestInstantiation` ×2) : construction sans réseau, et vérification que `_load_all_strategies()` charge bien `PARAM_SPACES ∪ strategies.enabled` (~45 stratégies) et pas seulement la liste `enabled` — comportement réel découvert en inspectant le code, pas supposé.
+  - `_build_active_per_tf` (×2) : fallback sur `strategies.enabled` (score 0.0) quand `optimizer_results` est vide ; bascule sur le score OOS réel quand `optimizer_results` est renseigné.
+  - `reload_active_strategies`/`reload_strategies` (×2) : rechargement depuis un nouvel `optimizer_results` ; et **découverte empirique** que `reload_strategies(enabled)` ne recharge pas de nouveaux modules (déjà tous chargés par `_load_all_strategies`) mais **retire** ceux hors de la liste — testé sur le chemin réellement emprunté (vérifié par exécution directe avant d'écrire l'assertion), pas sur une hypothèse.
+  - `status` (×2) : forme du dict retourné, et garde-fou `not callable(type(trader).status)` — c'est une `@property` côté `HealthMixin`, une régression vers une méthode casserait silencieusement les routes API qui la lisent sans parenthèses.
+  - `_restore_open_positions` (×3) : restaure une position persistée (`persist_open_position` + `session_scope`), rejette une position à prix d'entrée invalide (0.0), no-op sur DB vide.
+  - `stop()` (×1) : chemin sans position ouverte, ne lève pas.
+  - Vérifié : `pytest tests/test_live_trader.py -v` → 12 passed ; suite complète 549 passed (537 + 12, aucune régression, aucun état global partagé entre tests grâce à `tmp_path`/instance par test).
 
 ### [TEST-03] Toutes les routes FastAPI non testées via TestClient
 - Priorité: P1 | Effort: L | Fichiers: app/api/routes/*.py (12 fichiers), tests/
