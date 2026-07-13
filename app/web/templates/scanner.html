@@ -112,7 +112,7 @@
           <div class="panel-hdr">
             🎯 Opportunités
             <span id="opp-help-btn" title="Les Opportunités sont les paires avec le meilleur potentiel de mouvement selon un score combiné : 40% volume 24h + 60% ATR%. Ce sont les paires les plus volatiles et liquides du moment, candidates à un trade." style="cursor:help;font-size:.72rem;color:var(--dim);margin-left:4px;border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">?</span>
-            <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="loadOpportunities()">↺ Refresh</button>
+            <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="loadOpportunities()">↺ Actualiser</button>
           </div>
           <div class="panel-body" id="opp-list">
             <div class="empty"><span class="spinner"></span></div>
@@ -268,7 +268,7 @@
       <div class="panel-hdr">
         🧠 Prédictions des stratégies
         <span id="pred-sym-lbl" style="margin-left:6px;font-size:.72rem;color:var(--cyan)"></span>
-        <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="loadPredictions()">↺ Refresh</button>
+        <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="loadPredictions()">↺ Actualiser</button>
       </div>
       <div class="panel-body" id="pred-body">
         <div class="empty">Chargez un graphique pour voir les prédictions.</div>
@@ -551,7 +551,7 @@ function renderOpportunities(opps){
 restoreFilters();
 loadConfig();
 loadOpenPositions();
-document.getElementById('opp-list').innerHTML='<div class="empty" style="color:var(--dim)">Cliquez sur <strong style="color:var(--text)">↺ Refresh</strong> pour charger les opportunités.</div>';
+document.getElementById('opp-list').innerHTML='<div class="empty" style="color:var(--dim)">Cliquez sur <strong style="color:var(--text)">↺ Actualiser</strong> pour charger les opportunités.</div>';
 
 // ── Graphique Scanner ───────────────────────────────────────────────────
 let chartTf = '1h';

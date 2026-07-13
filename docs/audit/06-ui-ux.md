@@ -68,11 +68,12 @@
 - Acceptation: les pages sans chart ne définissent plus `window.SmcChart` ; les pages chart fonctionnent sans régression sur les zones SMC.
 - **Réalisation** : extrait vers `app/web/static/js/smc-chart.js` (option retenue : fichier statique conditionnel, combine bien avec UI-05) ; base.html expose `{% block chart_helpers %}{% endblock %}` (vide par défaut, placé APRÈS la fermeture du `<script>` inline existant — l'imbriquer dedans aurait produit un `<script>` invalide dans les pages qui y insèrent un `<script src>`). **Périmètre vérifié plus étroit que suggéré** : sur les 8 pages chargeant lightweight-charts (backtest/dashboard/derivatives/replay/scanner/trades/smartgraph/smartreplay), seules **smartgraph.html et smartreplay.html** appellent réellement `SmcChart.FILL`/`SmcChart.ZonesPrimitive` — les 6 autres chargent la librairie de graphique mais jamais ce helper. Le bloc n'est donc rempli que par ces deux templates. Vérifié (TestClient) : `/smartgraph` et `/smartreplay` chargent `smc-chart.js` et ne redéfinissent plus `window.SmcChart` inline ; les 9 autres pages testées (config/data/portfolio/bots/audit/ml/optimizer/compare/settings) ne référencent ni l'un ni l'autre.
 
-### [UI-11] Terminologie fr/en mélangée
+### [UI-11] Terminologie fr/en mélangée — ✅ RÉALISÉ (2026-07-13)
 - Priorité: P3 | Effort: S | Fichiers: scanner.html:115,271,554 ; smartreplay.html:65
 - Problème: scanner.html utilise « ↺ Refresh » là où les autres pages disent « Rafraîchir »/« Actualiser » ; smartreplay.html a « Rejections » au milieu de libellés français.
 - Directive: Remplacer « ↺ Refresh » par « ↺ Actualiser » (scanner.html:115,271,554) et « Rejections » par « Rejets » (smartreplay.html:65, conserver l'id `rp-l-rejections`).
 - Acceptation: `grep -n ">Refresh<\|>Rejections<" *.html` vide ; pas de régression.
+- **Réalisation** : 3 occurrences « ↺ Refresh » → « ↺ Actualiser » dans scanner.html (bouton + message vide) ; « Rejections » → « Rejets » dans smartreplay.html, id `rp-l-rejections` conservé. Grep d'acceptation vide (vérifié) ; 537 tests verts.
 
 ### [UI-12] Helper showSkeleton() partagé mais jamais utilisé
 - Priorité: P3 | Effort: S | Fichiers: base.html:328 ; trades.html:145,159,172 ; config.html:678-679,788-789
