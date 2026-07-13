@@ -125,9 +125,15 @@ Résultats détaillés : `docs/audit/mesures-vague5.md`. Synthèse :
 - ✅ SMC-09/10 famille SMC + grilles dans fast_analysis ; BT-10 slippage taille
   (off — nul au capital actuel, matériel > 1 M)
 - ✅ SMC-15 index OB HTF vizion (mémoïsation par bucket, sortie identique)
-- ⚠ SMC-02 : profil RÉALISÉ (croissance confirmée des listes actives, 0.8 s/4.1 s
-  par analyse 4h/1h) ; le remplacement par index triés byte-identiques reste à
-  faire dans un chantier dédié (cf. mesures-vague5.md).
+- ✅ SMC-02 : hoisting des scalaires h[i]/l[i]/c[i]/o[i] hors des boucles de
+  cycle de vie (rejections/FVG/OB/breakers dominaient 76 % du coût) —
+  ×1.65 à ×1.85 mesuré BTC/ETH 4h/1h, sortie strictement identique
+  vérifiée (comparaison profonde vs git HEAD, 12 combinaisons) + test de
+  non-régression permanent (`TestAnalyzeSnapshotRegression`). Piste
+  alternative testée et rejetée (suppression paresseuse : neutre). Un
+  remplacement par index triés/bisect reste possible mais le profil
+  résiduel (dominé par les lookups dict Python) rend le gain incertain
+  — non engagé (cf. mesures-vague5.md).
 - ⛔ BT-11 exclu par décision utilisateur (multi-crypto corrélé assumé).
 
 ## 🔵 Vague 5 (référence d'origine) — Recherche d'edge SMC/ICT (mesures, gains potentiels)

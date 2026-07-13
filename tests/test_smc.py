@@ -735,3 +735,56 @@ class TestSmtSeries:
         corr = self._mk_corr(tmp_path, times, b)
         s = smc.smt_series(df, corr, 20)
         assert int(s[-1]) == 1
+
+
+# ── SMC-02 : non-régression de perf/exactitude sur analyze() ─────────────────
+# Le corps de la boucle principale hoiste h[i]/l[i]/c[i]/o[i] hors des boucles
+# internes sur active_obs/active_rejections/active_breakers/active_fvgs/
+# active_pools/active_voids (accès scalaire numpy invariant par barre, ~1.6-1.85×
+# plus rapide mesuré sur BTC/ETH réel — cf. docs/audit/mesures-vague5.md). Ce
+# test fige une EMPREINTE complète du résultat sur un dataset déterministe :
+# toute régression de comportement (et pas seulement de forme) doit le casser.
+class TestAnalyzeSnapshotRegression:
+    def test_full_result_snapshot(self):
+        df = _random_df(1500, seed=42, jump_p=0.03)
+        res = smc.analyze(df)
+
+        def counts():
+            return {
+                "swings": len(res["_all_swings"]),
+                "struct_events": len(res["_all_struct_events"]),
+                "pools": len(res["_all_pools"]),
+                "sweeps": len(res["_all_sweeps"]),
+                "obs": len(res["_all_obs"]),
+                "fvgs": len(res["_all_fvgs"]),
+                "voids": len(res["_all_voids"]),
+                "breakers": len(res["_all_breakers"]),
+                "rejections": len(res["_all_rejections"]),
+            }
+        # Empreinte figée (dataset déterministe, seed=42) — casse si le
+        # comportement change, y compris silencieusement (ordre, seuils…).
+        # obs/breakers=0 : cette série synthétique n'a jamais un corps de
+        # bougie ≥ disp_body_atr×ATR (pas de displacement) — légitime.
+        assert counts() == {
+            "swings": 261, "struct_events": 112, "pools": 42, "sweeps": 205,
+            "obs": 0, "fvgs": 472, "voids": 9, "breakers": 0,
+            "rejections": 100,
+        }
+        assert int(res["_trend_arr"][-1]) == res["bias"]["trend"]
+        last_fvg = res["_all_fvgs"][-1]
+        assert last_fvg["top"] > last_fvg["bottom"]
+        assert all(ob["subtype"] in ("ob", "mitigation") for ob in res["_all_obs"])
+        # Order blocks / breakers déjà couverts (non-vides) par
+        # TestOrderBlocks / TestBreakerBlocks plus haut dans ce fichier
+        # (dataset _displacement_df dédié) — pas dupliqué ici.
+
+    def test_deterministic_across_repeated_runs(self):
+        """Aucune fuite d'état entre appels (listes actives locales à chaque
+        analyze()) : deux runs sur le même df donnent un résultat identique."""
+        df = _random_df(600, seed=11)
+        r1 = smc.analyze(df)
+        r2 = smc.analyze(df)
+        assert len(r1["_all_obs"]) == len(r2["_all_obs"])
+        assert len(r1["_all_fvgs"]) == len(r2["_all_fvgs"])
+        assert [o["top"] for o in r1["_all_obs"]] == [o["top"] for o in r2["_all_obs"]]
+        assert np.array_equal(r1["_trend_arr"], r2["_trend_arr"])

@@ -89,6 +89,9 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
     run_void: Optional[dict] = None   # void en cours d'extension (ou None)
 
     for i in range(n):
+        h_i = float(h[i]); l_i = float(l[i])
+        c_i = float(c[i]); o_i = float(o[i])
+
         # ── Confirmation des pivots dont le délai expire à la barre i ────────
         pi = conf_high.get(i)
         if pi is not None:
@@ -139,7 +142,7 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                 active_rejections.append(rb)
 
         # ── Cassures de structure (sur clôture, corps > mèche) ────────────────
-        if last_sh is not None and c[i] > last_sh["price"]:
+        if last_sh is not None and c_i > last_sh["price"]:
             kind = "CHoCH" if trend == -1 else "BOS"
             struct_events.append({
                 "index": i, "kind": kind, "direction": "up",
@@ -148,7 +151,7 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
             trend = 1
             last_sh = None            # niveau consommé, attendre le prochain swing
             _flag_ob_structure(obs, "bullish", i)
-        if last_sl is not None and c[i] < last_sl["price"]:
+        if last_sl is not None and c_i < last_sl["price"]:
             kind = "CHoCH" if trend == 1 else "BOS"
             struct_events.append({
                 "index": i, "kind": kind, "direction": "down",
@@ -163,20 +166,20 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
         for pool in active_pools[:]:
             if pool["formed_at"] >= i:
                 continue
-            if pool["kind"] == "buy_side" and h[i] > pool["level"]:
+            if pool["kind"] == "buy_side" and h_i > pool["level"]:
                 pool["swept_at"] = i
                 active_pools.remove(pool)
                 sweeps.append({
                     "index": i, "kind": "buy_side", "level": pool["level"],
-                    "rejected": bool(c[i] < pool["level"]),
+                    "rejected": bool(c_i < pool["level"]),
                     "source": "pool", "ref_index": pool["indices"][-1],
                 })
-            elif pool["kind"] == "sell_side" and l[i] < pool["level"]:
+            elif pool["kind"] == "sell_side" and l_i < pool["level"]:
                 pool["swept_at"] = i
                 active_pools.remove(pool)
                 sweeps.append({
                     "index": i, "kind": "sell_side", "level": pool["level"],
-                    "rejected": bool(c[i] > pool["level"]),
+                    "rejected": bool(c_i > pool["level"]),
                     "source": "pool", "ref_index": pool["indices"][-1],
                 })
 
@@ -187,20 +190,20 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
         tol_i = float(p["eq_tol_atr"]) * atr[i]
         for sw in swing_highs[-4:]:
             if sw["swept_at"] is None and sw["confirmed_at"] < i \
-                    and h[i] > sw["price"] + tol_i:
+                    and h_i > sw["price"] + tol_i:
                 sw["swept_at"] = i
                 sweeps.append({
                     "index": i, "kind": "buy_side", "level": sw["price"],
-                    "rejected": bool(c[i] < sw["price"]),
+                    "rejected": bool(c_i < sw["price"]),
                     "source": "swing", "ref_index": sw["index"],
                 })
         for sw in swing_lows[-4:]:
             if sw["swept_at"] is None and sw["confirmed_at"] < i \
-                    and l[i] < sw["price"] - tol_i:
+                    and l_i < sw["price"] - tol_i:
                 sw["swept_at"] = i
                 sweeps.append({
                     "index": i, "kind": "sell_side", "level": sw["price"],
-                    "rejected": bool(c[i] > sw["price"]),
+                    "rejected": bool(c_i > sw["price"]),
                     "source": "swing", "ref_index": sw["index"],
                 })
 
@@ -212,9 +215,9 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
             if i <= ob["created_at"]:
                 continue
             if ob["kind"] == "bullish":
-                if ob["touched_at"] is None and l[i] <= ob["top"]:
+                if ob["touched_at"] is None and l_i <= ob["top"]:
                     ob["touched_at"] = i
-                if c[i] < ob["bottom"]:
+                if c_i < ob["bottom"]:
                     ob["invalidated_at"] = i
                     active_obs.remove(ob)
                     brk = {"kind": "bearish", "top": ob["top"],
@@ -224,9 +227,9 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                     breakers.append(brk)
                     active_breakers.append(brk)
             else:
-                if ob["touched_at"] is None and h[i] >= ob["bottom"]:
+                if ob["touched_at"] is None and h_i >= ob["bottom"]:
                     ob["touched_at"] = i
-                if c[i] > ob["top"]:
+                if c_i > ob["top"]:
                     ob["invalidated_at"] = i
                     active_obs.remove(ob)
                     brk = {"kind": "bullish", "top": ob["top"],
@@ -241,15 +244,15 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
             if i <= rb["created_at"]:
                 continue
             if rb["kind"] == "bullish":
-                if rb["touched_at"] is None and l[i] <= rb["top"]:
+                if rb["touched_at"] is None and l_i <= rb["top"]:
                     rb["touched_at"] = i
-                if c[i] < rb["bottom"]:
+                if c_i < rb["bottom"]:
                     rb["invalidated_at"] = i
                     active_rejections.remove(rb)
             else:
-                if rb["touched_at"] is None and h[i] >= rb["bottom"]:
+                if rb["touched_at"] is None and h_i >= rb["bottom"]:
                     rb["touched_at"] = i
-                if c[i] > rb["top"]:
+                if c_i > rb["top"]:
                     rb["invalidated_at"] = i
                     active_rejections.remove(rb)
 
@@ -259,22 +262,22 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                 continue
             if brk["kind"] == "bullish":
                 # Zone devenue support : touch par le haut, invalidée sous le bottom
-                if brk["touched_at"] is None and l[i] <= brk["top"]:
+                if brk["touched_at"] is None and l_i <= brk["top"]:
                     brk["touched_at"] = i
-                if c[i] < brk["bottom"]:
+                if c_i < brk["bottom"]:
                     brk["invalidated_at"] = i
                     active_breakers.remove(brk)
             else:
                 # Zone devenue résistance : touch par le bas, invalidée au-dessus
-                if brk["touched_at"] is None and h[i] >= brk["bottom"]:
+                if brk["touched_at"] is None and h_i >= brk["bottom"]:
                     brk["touched_at"] = i
-                if c[i] > brk["top"]:
+                if c_i > brk["top"]:
                     brk["invalidated_at"] = i
                     active_breakers.remove(brk)
 
         # ── Détection de displacement → nouvel order block ────────────────────
-        body = c[i] - o[i]
-        if i >= 1 and body >= float(p["disp_body_atr"]) * atr[i] and c[i] > h[i - 1]:
+        body = c_i - o_i
+        if i >= 1 and body >= float(p["disp_body_atr"]) * atr[i] and c_i > h[i - 1]:
             j = _last_opposite_candle(o, c, i, int(p["ob_lookback"]), bullish=True)
             if j is not None and not any(x["index"] == j and x["kind"] == "bullish"
                                          for x in obs[-12:]):
@@ -287,7 +290,7 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                 }                              # l'impulsion casse la structure
                 obs.append(new_ob)
                 active_obs.append(new_ob)
-        elif i >= 1 and -body >= float(p["disp_body_atr"]) * atr[i] and c[i] < l[i - 1]:
+        elif i >= 1 and -body >= float(p["disp_body_atr"]) * atr[i] and c_i < l[i - 1]:
             j = _last_opposite_candle(o, c, i, int(p["ob_lookback"]), bullish=False)
             if j is not None and not any(x["index"] == j and x["kind"] == "bearish"
                                          for x in obs[-12:]):
@@ -306,30 +309,30 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
             if i <= fv["index"] + 1:
                 continue
             if fv["kind"] == "bullish":
-                if fv["mitigated_at"] is None and l[i] <= fv["top"]:
+                if fv["mitigated_at"] is None and l_i <= fv["top"]:
                     fv["mitigated_at"] = i
-                if l[i] <= fv["bottom"]:
+                if l_i <= fv["bottom"]:
                     fv["filled_at"] = i
                     active_fvgs.remove(fv)
             else:
-                if fv["mitigated_at"] is None and h[i] >= fv["bottom"]:
+                if fv["mitigated_at"] is None and h_i >= fv["bottom"]:
                     fv["mitigated_at"] = i
-                if h[i] >= fv["top"]:
+                if h_i >= fv["top"]:
                     fv["filled_at"] = i
                     active_fvgs.remove(fv)
 
         if i >= 2:
-            gap_up = l[i] - h[i - 2]
+            gap_up = l_i - h[i - 2]
             if gap_up >= float(p["fvg_min_atr"]) * atr[i]:
                 new_fvg = {"kind": "bullish", "index": i - 1,
-                           "top": float(l[i]), "bottom": float(h[i - 2]),
+                           "top": float(l_i), "bottom": float(h[i - 2]),
                            "mitigated_at": None, "filled_at": None}
                 fvgs.append(new_fvg)
                 active_fvgs.append(new_fvg)
-            gap_dn = l[i - 2] - h[i]
+            gap_dn = l[i - 2] - h_i
             if gap_dn >= float(p["fvg_min_atr"]) * atr[i]:
                 new_fvg = {"kind": "bearish", "index": i - 1,
-                           "top": float(l[i - 2]), "bottom": float(h[i]),
+                           "top": float(l[i - 2]), "bottom": float(h_i),
                            "mitigated_at": None, "filled_at": None}
                 fvgs.append(new_fvg)
                 active_fvgs.append(new_fvg)
@@ -340,29 +343,29 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                 continue
             if vd["kind"] == "bullish":
                 # Zone traversée à la hausse : fill par retracement baissier
-                if vd["mitigated_at"] is None and l[i] <= vd["top"]:
+                if vd["mitigated_at"] is None and l_i <= vd["top"]:
                     vd["mitigated_at"] = i
-                if l[i] <= vd["bottom"]:
+                if l_i <= vd["bottom"]:
                     vd["filled_at"] = i
                     active_voids.remove(vd)
             else:
-                if vd["mitigated_at"] is None and h[i] >= vd["bottom"]:
+                if vd["mitigated_at"] is None and h_i >= vd["bottom"]:
                     vd["mitigated_at"] = i
-                if h[i] >= vd["top"]:
+                if h_i >= vd["top"]:
                     vd["filled_at"] = i
                     active_voids.remove(vd)
 
         # ── Liquidity voids : détection du run directionnel courant ──────────
         # Un run de ≥ void_min_bars bougies de même couleur traversant
         # ≥ void_min_atr×ATR crée un void, étendu tant que le run continue.
-        bar_dir = 1 if c[i] > o[i] else (-1 if c[i] < o[i] else 0)
+        bar_dir = 1 if c_i > o_i else (-1 if c_i < o_i else 0)
         if bar_dir != 0 and bar_dir == run_dir:
             pass                                    # le run continue
         else:
             run_dir, run_start, run_void = bar_dir, i, None
         if run_dir != 0 and (i - run_start + 1) >= int(p["void_min_bars"]):
-            span_lo = float(min(o[run_start], c[i]))
-            span_hi = float(max(o[run_start], c[i]))
+            span_lo = float(min(o[run_start], c_i))
+            span_hi = float(max(o[run_start], c_i))
             if (span_hi - span_lo) >= float(p["void_min_atr"]) * atr[i]:
                 if run_void is None:
                     run_void = {

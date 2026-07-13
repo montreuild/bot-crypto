@@ -211,3 +211,40 @@ gênant pour l'optimiseur multi-symboles, pas bloquant en live.
 rappelait le refiltrage complet de `_all_obs` pour CHAQUE candidat →
 O(événements_LTF × OB_HTF) ; coût amorti O(1) désormais). Sortie vérifiée
 strictement identique sur BTC 4h réel ; tests test_vizion.py verts.
+
+**SMC-02 — clôturé (2026-07-13).** Deux hypothèses testées avec
+correctif appliqué UNIQUEMENT si le gain est mesuré :
+
+1. *Suppression paresseuse* (reconstruction filtrée au lieu de N appels
+   `list.remove()`) : implémentée, vérifiée byte-identique, **mesurée
+   neutre à légèrement négative** (`list.remove()` en C avec fast-path
+   d'identité est déjà aussi rapide qu'un filtre Python) → **rejetée**,
+   codebase laissé inchangé sur ce point.
+2. *Profilage fin par bloc* (13 timers internes, BTC 1h 51 238 barres) :
+   confirme que 5 blocs de cycle de vie (rejections 27.4 %, FVG 20.2 %,
+   OB 17.7 %, breakers 10.5 %, pool sweep 6.7 % — 82.6 % du total)
+   dominent, et que le coût réel est la ré-extraction scalaire numpy
+   (`h[i]`/`l[i]`/`c[i]`/`o[i]`) À CHAQUE item actif de CHAQUE bloc,
+   alors que ce sont des valeurs invariantes pour toute la barre.
+   **Correctif appliqué** : hoisting de `h_i/l_i/c_i/o_i` (4 floats
+   Python) une fois en tête de la boucle `for i in range(n)`, réutilisés
+   partout où le code lisait `h[i]/l[i]/c[i]/o[i]` (44 sites) — les accès
+   à d'autres index (`h[i-1]`, `h[pi]`, `o[run_start]`…) restent des
+   accès numpy inchangés.
+
+| BTC/ETH | n barres | avant | après | accélération |
+|---|---:|---:|---:|---:|
+| BTC 4h | 15 601 | 1 018 ms | 617 ms | ×1.65 |
+| BTC 1h | 51 238 | 6 002 ms | 3 294 ms | **×1.82** |
+| ETH 4h | 15 601 | 937 ms | 507 ms | ×1.85 |
+| ETH 1h | 46 520 | 3 900 ms | 2 201 ms | ×1.77 |
+
+Sortie strictement identique vérifiée (comparaison profonde dict+numpy,
+tous champs, contre `git HEAD`) sur 12 combinaisons symbole×TF×taille.
+Régression permanente : `tests/test_smc.py::TestAnalyzeSnapshotRegression`
+(empreinte figée sur dataset déterministe + test de déterminisme
+inter-appels). Reliquat restant (non traité, gain marginal décroissant
+au vu du profil résiduel — dominé par les lookups dict Python, pas par
+la donnée numpy) : remplacement des scans par index triés/bisect —
+chantier plus lourd, documenté comme optionnel, pas engagé faute de
+gain/risque favorable à ce stade.
