@@ -327,6 +327,7 @@
 {% endblock %}
 
 {% block body_scripts %}
+<script src="/static/js/alloc.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 
@@ -572,26 +573,7 @@ function renderStratPerf(byStrat){
 }
 
 function renderCapitalAllocation(slots, slotStates){
-  const grid=$('alloc-grid');
-  if(!grid)return;
-  if(!slots||!slots.length){grid.innerHTML='<span style="color:var(--dim);font-size:.75rem">Aucun slot actif</span>';return;}
-  // Map pause state by slot_key
-  const paused={};
-  (slotStates||[]).forEach(s=>{if(s.paused)paused[s.slot_key]={reason:s.pause_reason};});
-  grid.innerHTML=slots.map(s=>{
-    const isOff=s.enabled===false;
-    const usedPct=s.used_pct??0,isPaused=!!paused[s.slot_key];
-    const fillClr=isOff?'var(--dim)':isPaused?'var(--red)':usedPct>80?'var(--amber)':'var(--cyan)';
-    const slotLabel=s.strategy.charAt(0).toUpperCase()+s.strategy.slice(1)+' '+s.tf;
-    const pnlStr=s.weekly_pnl!=null?((s.weekly_pnl>=0?'+':'')+s.weekly_pnl.toFixed(2)+' 7j'):'';
-    return`<div class="alloc-card${isPaused?' paused':''}${isOff?' disabled':''}" onclick="window.location.href='/bots'" title="Cliquez pour gérer ce bot">
-      <div class="alloc-slot">${escHtml(slotLabel)}${isOff?' <span style="color:var(--dim);font-size:.65rem">OFF</span>':''}</div>
-      <div class="alloc-meta">Budget: <strong style="color:var(--text)">${s.budget_pct??'—'}%</strong> · ${s.budget_usdc??'—'} USDC${pnlStr?` · <span class="${s.weekly_pnl>=0?'c-green':'c-red'}">${pnlStr}</span>`:''}${s.weekly_trades?' · '+s.weekly_trades+'T':''}</div>
-      <div class="alloc-track"><div class="alloc-fill" style="width:${Math.min(usedPct,100)}%;background:${fillClr}"></div></div>
-      <div class="alloc-nums"><span>${(s.used_notional??0).toFixed(1)} USDC utilisé</span><span>${usedPct.toFixed(0)}%</span></div>
-      ${isPaused?`<div class="alloc-cb">⏸ ${escHtml(paused[s.slot_key].reason)}</div>`:''}
-    </div>`;
-  }).join('');
+  renderAllocGrid($('alloc-grid'), slots, {style:'card', slotStates});
 }
 
 function renderSignals(log){

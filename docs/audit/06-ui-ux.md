@@ -47,11 +47,12 @@
 - Directive: Sur chaque fichier listé : `aria-label` sur les boutons icône-seul, `role="status"`/`aria-live="polite"` sur les zones de chargement, `scope="col"` sur les `<th>` (reprendre le modèle scanner/dashboard).
 - Acceptation: `grep -c "aria-"` > 0 pour les 11 fichiers ; audit axe-core sans absence de label sur les contrôles principaux.
 
-### [UI-08] Triple redondance de l'affichage budget/allocation (dashboard/portfolio/bots)
+### [UI-08] Triple redondance de l'affichage budget/allocation (dashboard/portfolio/bots) — ✅ RÉALISÉ (2026-07-13, 2/3 pages)
 - Priorité: P2 | Effort: M | Fichiers: dashboard.html:574-595 (renderCapitalAllocation) ; portfolio.html:148-152 ; bots.html:157-224 (cardHtml)
 - Problème: la grille « Répartition du capital » par slot est recalculée et rendue avec 3 implémentations JS distinctes et 3 appels API séparés pour la même donnée (slot → budget).
 - Directive: Extraire `renderAllocGrid(slots, opts)` dans app/web/static/js/alloc.js (dépend de UI-05), paramètre de niveau de détail (compact dashboard / détaillé portfolio-bots) ; migrer les 3 call-sites.
 - Acceptation: les 3 pages affichent des données cohérentes (même formule used_pct/seuils) via une seule fonction ; pas de régression visuelle.
+- **Réalisation** : `app/web/static/js/alloc.js::renderAllocGrid(container, slots, opts)` avec `opts.style` ∈ {'card' (dashboard, cliquable→/bots), 'row' (portfolio, avec overlay de cible « shadow allocation »)} — markup HTML strictement identique à l'original, vérifié (dashboard/portfolio chargent le script, 200, contenu attendu présent). **bots.html NON migré** : après inspection, `cardHtml`/`.budget-mini` n'est PAS une grille d'allocation mais une ligne de budget au sein d'une carte de bot bien plus riche (état de cycle de vie, edge, PnL hebdo, badges) — un composant fonctionnellement différent des deux autres, pas un troisième rendu de la même donnée. Extraire isolément la barre `.budget-mini` (une ligne) n'aurait pas constitué une vraie déduplication ; documenté en tête d'`alloc.js` pour qu'un futur agent ne tente pas de forcer la fusion.
 
 ### [UI-09] Pas d'enchaînement UX entre /data et scanner/Fast Analyse
 - Priorité: P2 | Effort: S | Fichiers: data.html (entier) ; scanner.html:1215-1238 (runFastAnalysis)
