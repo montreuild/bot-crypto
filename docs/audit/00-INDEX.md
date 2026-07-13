@@ -166,7 +166,8 @@ Détails : `docs/audit/06-ui-ux.md` (UI-0x) et `docs/audit/07-tests-ci-docs.md` 
 - ✅ UI-11 terminologie fr/en (Refresh→Actualiser, Rejections→Rejets)
 - ✅ UI-07 attributs ARIA sur les 11 templates restants (aria-label boutons icône-seul, role=status/aria-live zones de chargement, scope=col th)
 - ✅ UI-12 showSkeleton() partagé (API étendue opts.cards/opts.colspan, 8 sites convertis)
-- ⚪ UI-09, TEST-02/03/07/08/09/10/12 : pas encore commencés.
+- ✅ UI-09 liens croisés data↔scanner (lien ↗ Analyser par ligne data.html ; lien → Charger les données sur erreur « insuffisantes » côté scanner.html ; lecture symbol/tf en URL au boot du scanner)
+- ⚪ TEST-02/03/07/08/09/10/12 : pas encore commencés.
 
 ## Conflits & dépendances à retenir
 

@@ -74,8 +74,10 @@ async function loadStatus(){
       const badge=x.bars>0?'<span class="dt-badge dt-ok">'+x.bars+'</span>':'<span class="dt-badge dt-empty">0</span>';
       // data-attributes + délégation d'événement (pas de JS dans l'attribut →
       // aucune valeur API ne peut casser/injecter le onclick).
+      const analyzeHref='/scanner?symbol='+encodeURIComponent(x.symbol)+'&tf='+encodeURIComponent(x.tf);
       return '<tr><td>'+esc(x.symbol)+'</td><td>'+esc(x.tf)+'</td><td>'+badge+'</td><td>'+esc(x.from)+'</td><td>'+esc(x.to)+'</td><td>'+(x.size_kb||0)+' Ko</td>'+
-        '<td><button class="dt-btn ghost dt-refetch" style="padding:4px 10px;font-size:.72rem" data-symbol="'+esc(x.symbol)+'" data-tf="'+esc(x.tf)+'" aria-label="Recharger '+esc(x.symbol)+' '+esc(x.tf)+'">↻</button></td></tr>';
+        '<td><a class="dt-btn ghost" style="padding:4px 10px;font-size:.72rem;text-decoration:none;display:inline-block" href="'+analyzeHref+'" title="Analyser '+esc(x.symbol)+' '+esc(x.tf)+' dans le Scanner">↗ Analyser</a> '+
+        '<button class="dt-btn ghost dt-refetch" style="padding:4px 10px;font-size:.72rem" data-symbol="'+esc(x.symbol)+'" data-tf="'+esc(x.tf)+'" aria-label="Recharger '+esc(x.symbol)+' '+esc(x.tf)+'">↻</button></td></tr>';
     }).join('');
   }catch(e){body.innerHTML='<tr><td colspan="7" style="color:#f87171">Erreur : '+esc(e.message)+'</td></tr>';}
 }
