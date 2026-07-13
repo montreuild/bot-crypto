@@ -124,13 +124,7 @@ capital_allocator:
   max_pyramiding: 2
   disabled_slots: []
   slot_budgets:
-    supertrend_macd::15m: 0.0909
-    breakout::1h: 0.0909
-    derivatives_reversion::1h: 0.0909
-    breakout::4h: 0.0909
-    supertrend_macd::4h: 0.0909
-    volatility_squeeze::1d: 0.0909
-    breakout::1d: 0.0909
+    trend_rider::1h::BTC/USDC: 0.5
 lifecycle:
   enabled: true
   interval_h: 1
