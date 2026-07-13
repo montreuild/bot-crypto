@@ -16,6 +16,7 @@ except ImportError:
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -121,6 +122,13 @@ try:
 except Exception as e:
     logger.warning(f"[API] Chargement templates KO : {e}")
     templates = None
+
+# ── Static (JS/CSS partagés entre templates — UI-05) ──────────────────────
+try:
+    _static_path = os.path.join(os.path.dirname(__file__), "..", "web", "static")
+    app.mount("/static", StaticFiles(directory=_static_path), name="static")
+except Exception as e:
+    logger.warning(f"[API] Montage /static KO : {e}")
 
 
 # ── Initialisation ─────────────────────────────────────────────────────────
