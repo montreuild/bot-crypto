@@ -75,11 +75,12 @@
 - Acceptation: `grep -n ">Refresh<\|>Rejections<" *.html` vide ; pas de régression.
 - **Réalisation** : 3 occurrences « ↺ Refresh » → « ↺ Actualiser » dans scanner.html (bouton + message vide) ; « Rejections » → « Rejets » dans smartreplay.html, id `rp-l-rejections` conservé. Grep d'acceptation vide (vérifié) ; 537 tests verts.
 
-### [UI-12] Helper showSkeleton() partagé mais jamais utilisé
+### [UI-12] Helper showSkeleton() partagé mais jamais utilisé — ✅ RÉALISÉ (2026-07-13, périmètre étendu)
 - Priorité: P3 | Effort: S | Fichiers: base.html:328 ; trades.html:145,159,172 ; config.html:678-679,788-789
 - Problème: `showSkeleton(el, lines)` est défini dans base.html mais jamais appelé — chaque page réécrit à la main le même markup skeleton (8+ fichiers).
 - Directive: Remplacer les blocs `innerHTML` statiques de squelette par `showSkeleton(el, n)` dans trades.html, config.html, ml.html, optimizer.html, audit.html.
 - Acceptation: `grep -c "showSkeleton(" *.html` > 1 sur les fichiers listés ; rendu visuel inchangé.
+- **Réalisation** : `showSkeleton` initialement limité aux `.skeleton-line` (div nues) — incompatible avec 2 patterns réellement présents : squelette de `<tbody>` (nécessite un `<tr><td colspan>` autour, sinon markup de table invalide) et squelette `.skeleton-card` (variante visuelle différente, pas des lignes). Étendu de façon **rétro-compatible** : `showSkeleton(el, lines, opts)` avec `opts.colspan` (enveloppe `<tr><td>`) et `opts.cards` (n `.skeleton-card` au lieu de lignes) ; sans `opts`, comportement historique inchangé. Converti : trades.html ×3 (tbody, colspan 10/7/6, appelés en tête de `load()`), config.html ×2 (`.strat-grid` cards + `.strat-params-panels` lignes, dans `init()` — matchait déjà exactement `showSkeleton(el,3)` par défaut), ml.html/optimizer.html ×1 (`param-space-view`, dans `init()`), audit.html ×2 (`opt-results-container` div + `changelog-body` tbody colspan 5). Le HTML Jinja statique correspondant est vidé (le squelette est désormais posé par JS dès le début de la fonction de chargement, avant le fetch async — même séquence temporelle, une seule source). `config.html:253-254,678-679` (lignes à hauteur/largeur personnalisées, hors du pattern 3-lignes w80/w60/w40) laissées telles quelles — non convertibles sans étendre encore l'API pour un cas très spécifique. `grep -c "showSkeleton(" *.html` > 1 sur les 5 fichiers cibles (vérifié) ; 537 tests verts.
 
 ---
 

@@ -223,9 +223,7 @@
           et sauvegardés dans <code>config.yaml</code>.<br>
           Les positions ouvertes sur une stratégie désactivée restent ouvertes jusqu'à leur clôture.
         </div>
-        <div class="strat-grid" id="strat-grid">
-          <div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div>
-        </div>
+        <div class="strat-grid" id="strat-grid"></div>
         <div class="btn-row">
           <button id="btn-apply-strat" class="btn btn-green btn-full" onclick="applyStrategies()">
             ✓ Appliquer<span class="dirty-dot"></span>
@@ -785,8 +783,8 @@ async function init() {
   loadNotifications();
   const stratGrid = $('strat-grid');
   const stratParams = $('strat-params-panels');
-  if (stratGrid) stratGrid.innerHTML = '<div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div>';
-  if (stratParams) stratParams.innerHTML = '<div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div><div class="skeleton skeleton-line w40"></div>';
+  showSkeleton(stratGrid, null, {cards:2});
+  showSkeleton(stratParams, 3);
   try {
     const resp = await fetch('/api/config');
     if (!resp.ok) {

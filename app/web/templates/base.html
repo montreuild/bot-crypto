@@ -325,7 +325,17 @@ document.addEventListener('DOMContentLoaded',function(){
 /* ── Escape key closes modals ── */
 document.addEventListener('keydown',function(e){if(e.key==='Escape'){document.querySelectorAll('.modal-overlay').forEach(m=>{if(m.style.display!=='none'&&getComputedStyle(m).display!=='none')m.style.display='none';});}});
 /* ── Skeleton loader helper ── */
-function showSkeleton(el,lines){if(!el)return;let h='';for(let i=0;i<(lines||3);i++){const w=['w80','w60','w40'][i%3];h+=`<div class="skeleton skeleton-line ${w}"></div>`;}el.innerHTML=h;}
+/* UI-12 : opts.cards (n cartes .skeleton-card) et opts.colspan (enveloppe
+   <tr><td colspan=…> pour un tbody) — les deux optionnels, comportement
+   par défaut (lignes .skeleton-line) inchangé sans opts. */
+function showSkeleton(el,lines,opts){
+  if(!el)return;
+  opts=opts||{};
+  let h;
+  if(opts.cards){h='<div class="skeleton skeleton-card"></div>'.repeat(opts.cards);}
+  else{h='';for(let i=0;i<(lines||3);i++){const w=['w80','w60','w40'][i%3];h+=`<div class="skeleton skeleton-line ${w}"></div>`;}}
+  el.innerHTML=opts.colspan?`<tr><td colspan="${opts.colspan}" class="empty-row">${h}</td></tr>`:h;
+}
 </script>
 {% block chart_helpers %}{% endblock %}
 </head>
