@@ -24,11 +24,17 @@
   - `stop()` (×1) : chemin sans position ouverte, ne lève pas.
   - Vérifié : `pytest tests/test_live_trader.py -v` → 12 passed ; suite complète 549 passed (537 + 12, aucune régression, aucun état global partagé entre tests grâce à `tmp_path`/instance par test).
 
-### [TEST-03] Toutes les routes FastAPI non testées via TestClient
+### [TEST-03] Toutes les routes FastAPI non testées via TestClient — ✅ RÉALISÉ (2026-07-13)
 - Priorité: P1 | Effort: L | Fichiers: app/api/routes/*.py (12 fichiers), tests/
 - Problème: Les routes (backtest, bot, config, data, derivatives, ml, optimizer, portfolio, replay, scanner, trades) ne sont pas testées avec le TestClient FastAPI. Risque d'erreurs 500, routes cassées, paramètres ignorés (le parsing slot_key 3-parties vient d'ailleurs de casser silencieusement 2 routes lors de la refonte).
 - Directive: Créer `tests/test_api_routes.py` avec `from starlette.testclient import TestClient`. Pour chaque route majeure : cas nominal + cas d'erreur. Minimum : data_status, data_refetch (400 sans symbole), scanner fast_analysis (400 données insuffisantes), portfolio bots (symbol exposé), strategy_performance (slot 2 et 3 parties).
 - Acceptation: 8+ tests d'API verts, couvrant GET/POST nominaux et gestion d'erreurs.
+- **Réalisation** : `tests/test_api_routes.py`, **10 tests** (mini. 8 demandé) sur les 5 routes citées, plus un test d'auth :
+  - Obstacle non anticipé par la directive : `verify_api_key` bloque par défaut toute requête « non locale » (aucune clé API configurée) — or `TestClient` n'a pas l'IP `127.0.0.1`, donc **tous** les appels auraient dû échouer en 403 sans traitement particulier. Résolu via `app.dependency_overrides[verify_api_key] = lambda: None` (mécanisme FastAPI standard pour ce cas), appliqué par une fixture `client` avec teardown (`dependency_overrides.pop`) pour ne pas fuiter entre tests.
+  - `data_status` (200, structure `datasets`) ; `data_refetch` sans symbole ni `scanner.symbols` configuré (400) ; `scanner/fast_analysis` sur un symbole sans cache (400, message « insuffisantes ») ; `portfolio` sans trader (200, forme par défaut) et **avec** un vrai `LiveTrader` attaché à `state.trader` (200, `bots[0]["symbol"] == "BTC/USDC"` — confirme l'exposition du symbole) ; `strategy_performance` en 2 parties (`trend_rider::4h`) et 3 parties (`trend_rider::4h::BTC/USDC`, `/` encodé en `%2F` dans l'URL, `:path` converter) — les deux renvoient `strategy`/`tf`/`slot_key` correctement décomposés ; format invalide → 400 ; `SessionLocal` absent → 503 (garde-fou testé séparément).
+  - **Test d'auth dédié** (`test_protected_route_rejects_unauthenticated_non_local_request`) qui n'utilise PAS le contournement, pour vérifier que le bypass de test ne masque pas une vraie régression de la couche auth : un `TestClient` brut reçoit bien 403 sur une route protégée.
+  - État global (`app.dependency_overrides`, `app.api.state.cfg/trader/SessionLocal`) manipulé exclusivement via la fixture `client` (teardown systématique) et `monkeypatch` (restauration automatique par test) — pas d'effet de bord d'un test sur les suivants, vérifié en relançant la suite complète après ce fichier.
+  - Vérifié : `pytest tests/test_api_routes.py -v` → 10 passed ; suite complète 559 passed (549 + 10, aucune régression).
 
 ### [TEST-04] Absence de configuration flake8 / mypy
 - Priorité: P2 | Effort: S | Fichiers: .flake8 (création), mypy.ini (création), requirements.txt
