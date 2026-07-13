@@ -148,7 +148,7 @@ Chaque item = flag off + campagne de mesure. Les plus prometteurs d'abord :
 6. SMC-09/10 (extensions fast_analysis), BT-10 (slippage dépendant de la taille), BT-11 (plafond groupe corrélé BTC+ETH)
 7. SMC-02 (profiling O(n²) du moteur — avant les campagnes massives multi-symboles), SMC-15 (index OB HTF vizion)
 
-## 🟡 Vague 6 — UX, accessibilité, docs (en cours, 2026-07-13)
+## 🟡 Vague 6 — UX, accessibilité, docs ✅ RÉALISÉE (2026-07-13, sauf TEST-11 bloqué par DEAD-01)
 
 UI-05 (static/js partagé) débloque UI-08 et UI-10 → UI-06/07 (a11y)
 → UI-09 (liens data↔scanner) → UI-11 (terminologie) → UI-12 (adopter
@@ -173,7 +173,8 @@ Détails : `docs/audit/06-ui-ux.md` (UI-0x) et `docs/audit/07-tests-ci-docs.md` 
 - ✅ TEST-08 docstring `optimizer_results[strat][tf][symbol]` étendu dans `_load_strategy_configs` (app/core/config.py) — le vrai trou (resolve_strategy_params avait déjà d'excellents docstrings depuis V4-B)
 - ✅ TEST-10 ARCHITECTURE.md — section « Live Trading Loop » (composition mixins, diagramme _cycle(), slots, cycle de vie, allocation), pointeurs croisés depuis les 2 diagrammes sommaires existants
 - ✅ TEST-09 CHANGELOG.md — [Non publié] (817 lignes réelles, pas ~750) découpé en 10 versions datées (12.8.0→12.17.0, dates réelles via git log) par jalon ; [Non publié] → 3 lignes ; découpe scriptée et vérifiée lossless (git diff : 42 insertions, 0 suppression)
-- ⚪ TEST-12 : pas encore commencé.
+- ✅ TEST-12 requirements.txt — déjà entièrement épinglé (constat), vérifié par un vrai `pip install` dans un venv Python 3.12 vierge (0 conflit) + `pytest -q` (576 verts) ; date de lock + justification transitive-non-figée ajoutées en commentaire
+- 🚫 TEST-11 (smoke tests ~40 stratégies) : hors-scope de cette passe, bloqué par DEAD-01 (tri du code mort, Vague 2/3, non demandé) — cf. directive originale du TEST-11.
 
 ## Conflits & dépendances à retenir
 

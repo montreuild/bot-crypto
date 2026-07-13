@@ -95,8 +95,12 @@
 - Directive: Après archivage, ajouter un test smoke paramétré : pour chaque stratégie restante, instancier + `score()` sur 300 bougies synthétiques (pas de crash, dict conforme {score, side, name}). Marker `@pytest.mark.strategy_smoke`.
 - Acceptation: 1 test smoke par stratégie conservée, tous verts.
 
-### [TEST-12] Reproductibilité de l'environnement
+### [TEST-12] Reproductibilité de l'environnement — ✅ RÉALISÉ (2026-07-13)
 - Priorité: P3 | Effort: S | Fichiers: requirements.txt
 - Problème: Versions partiellement épinglées ; installer sur une machine vierge n'est pas garanti reproductible (ccxt/polars évoluent vite et cassent des APIs).
 - Directive: Épingler toutes les versions (pip freeze trié pour les deps directes), commenter la date de lock, tester `pip install -r requirements.txt` dans un venv vierge + `pytest -q`.
 - Acceptation: installation vierge complète sans erreur, tests verts.
+- **Réalisation** : constat après lecture — le fichier avait DÉJÀ toutes ses dépendances directes épinglées en `==` (probablement corrigé entre l'écriture de l'audit le 2026-07-11 et maintenant). Le vrai travail restant : **vérifier** que ces pins installent réellement ensemble sans conflit sur une machine vierge (jamais testé), pas les deviner depuis l'environnement de ce conteneur (qui s'est avéré ne PAS avoir été provisionné depuis ce fichier — plusieurs paquets requis par requirements.txt, ex. `psutil`/`optuna`/`black`/`mypy`/`pytest-cov`, étaient absents, et les versions présentes avaient dérivé). « pip freeze trié » depuis cet environnement ad hoc aurait donc figé un état jamais réellement testé contre ce dépôt.
+  - Créé un **vrai venv Python 3.12 vierge** (`python3.12 -m venv`, conforme à l'en-tête du fichier « Python 3.12 REQUIRED »), `pip install -r requirements.txt` : **succès sans aucun conflit de résolution**, chaque paquet installé exactement à la version épinglée. `pytest -q` dans ce même venv : **576 passed**. Les deux critères d'acceptation sont donc remplis avec les pins **existants**, sans changer un seul numéro de version (aucune preuve qu'une version soit cassée — les changer aurait été un risque non justifié).
+  - Ajouté le commentaire de **date de lock** manquant (2026-07-13, avec le résumé de la vérification) dans l'en-tête du fichier, et une note explicite sur le choix de ne pas figer les sous-dépendances transitives (pas de lockfile de type `pip-tools`/`poetry.lock` dans ce projet — hors scope de cet item, effort L pour un gain marginal tant que l'install directe reste reproductible comme vérifié ici).
+  - Venv de test (850 Mo) supprimé après vérification — pas conservé dans le dépôt ni le scratchpad.

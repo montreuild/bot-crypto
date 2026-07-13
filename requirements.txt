@@ -17,6 +17,13 @@
 #  NOTE : les versions sont épinglées pour garantir la reproductibilité
 #  en production. Pour mettre à jour, testez d'abord dans un environnement
 #  de développement, puis mettez à jour les versions ici.
+#
+#  Date de lock : 2026-07-13 — vérifié par `pip install -r requirements.txt`
+#  dans un venv Python 3.12 vierge (aucun conflit de résolution) suivi de
+#  `pytest -q` (576 tests, tous verts). Toutes les dépendances directes sont
+#  épinglées en version exacte (==) ; les sous-dépendances transitives ne le
+#  sont pas (pas de lockfile — cf. TEST-12 dans docs/audit/07-tests-ci-docs.md
+#  pour la justification de ce choix).
 # ================================================================
 
 # -- Web / API -------------------------------------------------------
