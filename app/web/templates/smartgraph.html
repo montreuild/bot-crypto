@@ -5,6 +5,10 @@
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" integrity="sha384-OK7vELvjHdhUFi31JYioPIcRHTROLdcDa6ZsNWgvgLaKj+9JqhU0Ad8g4wz3CXjA" crossorigin="anonymous"></script>
 {% endblock %}
 
+{% block chart_helpers %}
+<script src="/static/js/smc-chart.js"></script>
+{% endblock %}
+
 {% block page_styles %}
 .sg-main{max-width:1500px;margin:0 auto;padding:16px;}
 .sg-tf-btn{background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 10px;border-radius:4px;font-size:.72rem;cursor:pointer;transition:all .12s;font-family:var(--body);font-weight:600;}

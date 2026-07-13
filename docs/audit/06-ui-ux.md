@@ -60,11 +60,12 @@
 - Directive: Dans le bloc erreur de `runFastAnalysis()`, ajouter un lien `<a href="/data">Charger les données</a>` quand l'erreur évoque un manque de bougies. Dans data.html, ajouter par ligne un lien « ↗ Analyser » vers `/scanner?symbol=…&tf=…` (ajouter la lecture des paramètres d'URL dans scanner.html si absente).
 - Acceptation: liens fonctionnels dans les deux sens, pré-remplis avec le symbole/TF.
 
-### [UI-10] SmcChart chargé globalement même sur les pages sans graphique
+### [UI-10] SmcChart chargé globalement même sur les pages sans graphique — ✅ RÉALISÉ (2026-07-13)
 - Priorité: P3 | Effort: S | Fichiers: base.html:296-388
 - Problème: `window.SmcChart` (~55 lignes) est défini dans le `<head>` de base.html, exécuté sur TOUTES les pages — y compris config/settings/data/portfolio/bots/audit/ml/optimizer/compare qui n'utilisent jamais lightweight-charts.
 - Directive: Déplacer la définition dans un bloc Jinja `{% block chart_helpers %}{% endblock %}` inclus uniquement par les templates chargeant lightweight-charts (ou static/js/smc-chart.js conditionnel, cf UI-05).
 - Acceptation: les pages sans chart ne définissent plus `window.SmcChart` ; les pages chart fonctionnent sans régression sur les zones SMC.
+- **Réalisation** : extrait vers `app/web/static/js/smc-chart.js` (option retenue : fichier statique conditionnel, combine bien avec UI-05) ; base.html expose `{% block chart_helpers %}{% endblock %}` (vide par défaut, placé APRÈS la fermeture du `<script>` inline existant — l'imbriquer dedans aurait produit un `<script>` invalide dans les pages qui y insèrent un `<script src>`). **Périmètre vérifié plus étroit que suggéré** : sur les 8 pages chargeant lightweight-charts (backtest/dashboard/derivatives/replay/scanner/trades/smartgraph/smartreplay), seules **smartgraph.html et smartreplay.html** appellent réellement `SmcChart.FILL`/`SmcChart.ZonesPrimitive` — les 6 autres chargent la librairie de graphique mais jamais ce helper. Le bloc n'est donc rempli que par ces deux templates. Vérifié (TestClient) : `/smartgraph` et `/smartreplay` chargent `smc-chart.js` et ne redéfinissent plus `window.SmcChart` inline ; les 9 autres pages testées (config/data/portfolio/bots/audit/ml/optimizer/compare/settings) ne référencent ni l'un ni l'autre.
 
 ### [UI-11] Terminologie fr/en mélangée
 - Priorité: P3 | Effort: S | Fichiers: scanner.html:115,271,554 ; smartreplay.html:65
