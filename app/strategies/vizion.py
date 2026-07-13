@@ -21,7 +21,6 @@ vidéos ne survivront pas aux frais spot crypto (cf. campagne LTF) mais peuvent
 tenir sur futures ou en 4h.
 """
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -31,15 +30,12 @@ from app.engine.engine import BaseStrategy
 from app.core import smc
 from app.core import ict
 from app.core.indicators_core import atr_wilder
-from app.live.utils import _HTF_MAP
 
 logger = logging.getLogger(__name__)
 
-_TF_SEC = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
-           "1h": 3600, "2h": 7200, "4h": 14400, "6h": 21600, "12h": 43200,
-           "1d": 86400}
-_HTF_SEC_MAP = {_TF_SEC[k]: _TF_SEC[v] for k, v in _HTF_MAP.items()
-                if k in _TF_SEC and v in _TF_SEC}
+# Table canonique (V4-A) — l'ancienne version locale excluait 6m/8h ;
+# la canonique les inclut (entrées inertes : aucun TF tradé).
+from app.core.timeframes import HTF_SECONDS_MAP as _HTF_SEC_MAP
 
 
 class Strategy(BaseStrategy):
@@ -49,6 +45,7 @@ class Strategy(BaseStrategy):
     param_space: Dict[str, List] = {
         "require_sweep":   [True, False],
         "require_fvg":     [True, False],
+        "entry_at_ce":     [True, False],
         "require_htf_ob":  [True, False],
         "use_smt":         [True, False],
         "min_rr":          [2.0, 3.0, 4.0],
@@ -68,6 +65,7 @@ class Strategy(BaseStrategy):
         # ── Cases de la checklist (chacune activable/désactivable → mesurable) ──
         "require_sweep":   True,
         "require_fvg":     True,
+        "entry_at_ce":     False,   # SMC-06 : exiger le tap du CE du FVG déclencheur
         "require_htf_ob":  True,
         "use_smt":         True,
         "smt_correlate_path": "",    # ex. data/ohlcv/ETH_USDC/4h.parquet (GÉNÉRIQUE)
@@ -97,50 +95,36 @@ class Strategy(BaseStrategy):
     def _smc_params(self, p: Dict[str, Any]) -> Dict[str, Any]:
         return {"swing_left": int(p["swing_len"]), "swing_right": int(p["swing_len"])}
 
-    # ── SMT générique : charge l'actif corrélé et l'aligne par timestamp ──────
+    # ── SMT générique : délègue à la primitive moteur ``smc.smt_series`` ──────
     def _load_smt(self, df: pl.DataFrame, p: Dict[str, Any]) -> Optional[np.ndarray]:
-        path = str(p.get("smt_correlate_path", "") or "")
-        if not (bool(p.get("use_smt", False)) and path and os.path.exists(path)
-                and "time" in df.columns):
+        if not bool(p.get("use_smt", False)):
             return None
-        try:
-            cdf = pl.read_parquet(path) if path.endswith((".parquet", ".pq")) \
-                else pl.read_csv(path, try_parse_dates=True)
-            ren = {c: c.strip().lower() for c in cdf.columns}
-            cdf = cdf.rename(ren)
-            tcol = "time" if "time" in cdf.columns else (
-                "date" if "date" in cdf.columns else None)
-            ccol = "close" if "close" in cdf.columns else (
-                "adj close" if "adj close" in cdf.columns else None)
-            if tcol is None or ccol is None:
-                return None
-            ct = cdf[tcol].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
-            cc = cdf[ccol].cast(pl.Float64).to_numpy()
-            t = df["time"].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
-            aligned = ict.align_series(t, ct, cc)
-            close = df["close"].to_numpy().astype(float)
-            return ict.smt_divergence(close, aligned, int(p.get("smt_lookback", 20)))
-        except Exception as e:                      # pragma: no cover
-            logger.warning(f"[vizion] SMT KO ({path}) : {e}")
-            return None
+        return smc.smt_series(df, str(p.get("smt_correlate_path", "") or ""),
+                              int(p.get("smt_lookback", 20)))
 
     def _active_htf_obs(self, htf_res, hidx: int):
+        """OB HTF actifs au bucket ``hidx`` — mémoïsé par ``hidx`` (SMC-15).
+
+        ``hidx`` est l'index du bucket HTF : des dizaines de barres LTF
+        partagent le même bucket, et ``_signals`` rappelle ce filtre pour
+        CHAQUE candidat — le refiltrage complet de ``_all_obs`` était
+        O(événements_LTF × OB_HTF). Le cache (res, hidx) → liste rend le
+        coût amorti O(1) par candidat, sortie strictement identique."""
         if htf_res is None or hidx < 0:
             return []
-        return [ob for ob in htf_res["_all_obs"]
-                if ob["created_at"] <= hidx
-                and (ob["invalidated_at"] is None or ob["invalidated_at"] > hidx)]
+        cache = getattr(self, "_htf_obs_cache", None)
+        if cache is not None and cache[0] is htf_res and cache[1] == hidx:
+            return cache[2]
+        out = [ob for ob in htf_res["_all_obs"]
+               if ob["created_at"] <= hidx
+               and (ob["invalidated_at"] is None or ob["invalidated_at"] > hidx)]
+        self._htf_obs_cache = (htf_res, hidx, out)
+        return out
 
     def _recent_sweep(self, res: dict, created_at: int, want: str,
                       lookback: int) -> bool:
-        """Un sweep rejeté de type ``want`` (buy_side/sell_side) dans la fenêtre
-        [created_at − lookback, created_at]. Prise de liquidité = crédibilité."""
-        for sw in res["_all_sweeps"]:
-            if not sw["rejected"] or sw["kind"] != want:
-                continue
-            if created_at - lookback <= sw["index"] <= created_at:
-                return True
-        return False
+        """Délègue à la primitive partagée ``smc.recent_sweep`` (SMC-11)."""
+        return smc.recent_sweep(res, created_at, want, lookback)
 
     def _build(self, res, htf_res, hidx_arr, smt, i, ob, side, p,
                high, low, close, atr) -> Optional[dict]:
@@ -164,6 +148,14 @@ class Strategy(BaseStrategy):
         if bool(p.get("require_fvg", True)) and not ict.fvg_overlap(
                 res["_all_fvgs"], i, kind, ob["bottom"], ob["top"]):
             return None
+        # SMC-06 — entrée disciplinée au CE (off par défaut) : exiger que la
+        # barre ait TOUCHÉ le niveau 50 % (CE) du FVG déclencheur — approxime
+        # une entrée limite au CE avec un moteur à entrées marché.
+        if bool(p.get("entry_at_ce", False)):
+            ce = ict.fvg_overlap_ce(res["_all_fvgs"], i, kind,
+                                    ob["bottom"], ob["top"])
+            if ce is None or not (float(low[i]) <= ce <= float(high[i])):
+                return None
         # 4. timeframe alignment : imbrication dans un OB HTF de même sens
         if bool(p.get("require_htf_ob", True)):
             htf_obs = self._active_htf_obs(htf_res, int(hidx_arr[i]) if hidx_arr is not None else -1)

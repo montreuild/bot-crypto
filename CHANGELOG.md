@@ -6,6 +6,165 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+---
+
+## [12.17.0] - 2026-07-11
+
+### 🛡 Audit Vagues 1-2 : sécurité + intégrité de la mesure (14 items)
+
+**Vague 1 — Sécurité (docs/audit)** :
+- **[UI-01]** XSS corrigée : échappement unifié sur `escHtml()` partagé
+  (data.html laissait passer les guillemets dans un attribut onclick →
+  boutons passés en data-attributes + délégation d'événement).
+- **[OPS-02]** `web.host=0.0.0.0` sans `web.api_key` → **blocage** au
+  chargement (override dev : `ALLOW_INSECURE_WEB=1`).
+- **[OPS-03]** Unit systemd `crypto-bot-watchdog.service` : le dead-man
+  switch a enfin un lecteur en production.
+- **[OPS-04]** `paper_mode=false` sans canal de notification → log CRITICAL.
+- **[OPS-05]** 6 endpoints GET (settings/changelog/optimize status/stream/
+  results/spaces) exigent désormais la clé API.
+- **[OPS-07]** CandleStore : écriture parquet **atomique** (tmp + os.replace).
+
+**Vague 2 — Intégrité de la mesure** :
+- **[BT-02]** Monte-Carlo réparé : bootstrap avec remise pour l'équité
+  finale/prob_profit (la permutation donnait p5=p95) ; permutation conservée
+  pour drawdown/ruine (statistiques d'ordre).
+- **[BT-03]** `max_notional_pct` unique (0.20) backtest/live — le backtest
+  plafonnait à 50 % du capital quand le live exécute 20 %. Delta documenté
+  (smart_money BTC 4h : FULL +483→+329 mais PF 1.67→1.90 — le backtest dit
+  désormais la vérité du live).
+- **[ARCH-01]** Parité : `_merge_params` (live) filtre `_GLOBAL_PARAM_KEYS`
+  comme le backtest — une clé globale glissée dans optimizer_results ne peut
+  plus modifier le risque en live.
+- **[BT-04]** Le bouton « Appliquer » passe le MÊME garde-fou que l'auto-apply
+  (refus 409 motivé, override `force=true` loggé).
+- **[BT-06]** Seuils unifiés (app/core/stats_thresholds.py) :
+  MIN_SIGNIFICANT_TRADES=10 pour toute décision engageante (apply, promotion
+  ACTIF — fidelity_min_fills 2→10) ; 2 réservé à l'anti-dégénérescence.
+- **[BT-07]** Gate **walk-forward** sur l'auto-apply : best_params figés,
+  consistency ≥ 60 % sur 5 folds requise (désactivable optimizer.wf_gate).
+- **[BT-08]** Convention IS/OOS unique (app/core/is_oos.py) : WARMUP=210 et
+  fraction 0.35 dédupliqués (3 sites auto_optimizer + optimizer) —
+  byte-identique (test d'équivalence des indices de coupure).
+- **[BT-09]** Le backtest applique la même **courbe de dé-risquage en
+  drawdown** que le live (×0.75 >5 %, ×0.5 >10 % — app/core/risk_curve.py).
+  BTC 4h byte-identique (aucun DD >5 % sur ce run).
+
+25 nouveaux tests. 508 tests OK.
+
+### 🛠 Audit Vague 0 : régressions per-symbole corrigées (BT-01, BT-12, OPS-01, UI-02/03/04)
+
+Exécution de la « Vague 0 » du plan d'audit (docs/audit/00-INDEX.md) — les six
+chemins secondaires qui supposaient encore l'ancien slot 2-parties :
+
+- **[BT-01]** `/api/optimize/apply` transmet désormais le `symbol` du job à
+  `apply_best_params` — un apply manuel n'écrase plus le mapping par symbole
+  des autres paires. Tests de coexistence + migration d'entrée héritée.
+- **[BT-12]** `/api/optimize/start` accepte `symbols` (CSV) : boucle
+  fetch+jobs par symbole (réponse `per_symbol`), mono-symbole inchangé.
+- **[OPS-01]** Clés héritées 2-parties (`slot_budgets`, `disabled_slots`,
+  `manual_active`) : repli par préfixe vers les slots 3-parties (helper
+  `_lookup_legacy`, log au chargement, priorité à la clé exacte ; la
+  désactivation d'un forçage lève aussi la clé héritée). 6 tests.
+- **[UI-02]** Écran /config : panneau « Overrides par symbole » par stratégie
+  (sélecteurs TF+symbole, éditeur, liste des overrides existants) ; l'API
+  `strategy-params` accepte `timeframe`+`symbol` et écrit dans
+  `optimizer_results[tf][symbole]` via `apply_best_params` (oos_score
+  préservé, base intacte) ; nouveau `GET /api/config/strategy-overrides`.
+- **[UI-03]** /audit n'écrase plus les résultats OOS entre symboles ;
+  `backtest_history` passe au slot 3-parties.
+- **[UI-04]** /trades : filtre « Slot » à 3 parties (`strat::tf::symbole`,
+  libellé « Strat TF · Paire ») — ne mélange plus les paires.
+
+483 tests OK (13 nouveaux).
+
+---
+
+## [12.16.0] - 2026-07-11
+
+### 🎯 Configs par symbole : `optimizer_results[strat][tf][symbol]` + slots par symbole
+
+**Séparation complète des configs par symbole** : une stratégie a une config BTC
+ET une config ETH distinctes qui **coexistent** (l'une n'écrase plus l'autre), au
+lieu d'un unique jeu par `(stratégie, timeframe)` partagé par tous les symboles.
+
+**Phase 1 — résolution des paramètres**
+- **`resolve_strategy_params(cfg, tf, symbol)`** accepte un `symbol`. Schéma
+  `optimizer_results[strat][tf][symbol]`, **rétro-compatible** (`_select_symbol_entry`) :
+  une entrée HÉRITÉE (sans dimension symbole) est réputée calibrée pour **BTC/USDC**
+  (`DEFAULT_CONFIG_SYMBOL`) et **ne s'applique plus aux autres symboles** (avant,
+  la config BTC déteignait silencieusement sur ETH).
+- `Backtester.run` + routes scanner transmettent le `symbol`. **BTC 4h
+  byte-identique** ; ETH retombe sur ses params de base sauf config dédiée.
+
+**Phase 2 — notion de slot `strategy::tf` → `strategy::tf::symbol`**
+- **`get_active_strategies_per_tf`** sélectionne les slots actifs **par (tf, symbole)**
+  (top-N par symbole ; itère `scanner.symbols`).
+- **`bot_identity`** (`slot_key`, `bot_id`, générations, `resolve_venue` avec
+  précédence `strat::tf::symbol`), **`capital_allocator`** (`SlotBudget.symbol`,
+  clés de slot), **`signal_pipeline`** (score par symbole), **`live_trader`**,
+  **`oos_tracker`** (+ `get_closed_trades_for_slot(symbol=…)`), **`apply_best_params`**
+  (écrit sous `[tf][symbol]`, migre une entrée héritée vers BTC/USDC) : tous
+  câblés sur le symbole. 12 tests (résolution + slots + identité + allocateur).
+
+**Activation + auto-optimiseur par symbole**
+- **`trend_rider` activée** (`enabled: true`) : sur 4h elle tourne sur **ETH/USDC**
+  (config OOS +286) ; sur BTC elle reste sous le top-N, donc n'y trade pas.
+- **Auto-optimiseur bouclé par symbole** : la ré-optimisation planifiée et la
+  re-optimisation de cycle de vie itèrent désormais `scanner.symbols` — chaque
+  paire écrit sa propre `optimizer_results[tf][symbol]` (via `apply_best_params`
+  avec `symbol`). L'auto-apply reste borné par « bat la baseline » et la
+  viabilité OOS, donc une paire où une stratégie ne marche pas ne s'active pas.
+
+**Phase 3 — Web / UI**
+- `bot_identity.parse_slot_key` (décompose `strat::tf[::symbol]`, robuste aux "/"
+  des symboles). Route **portfolio** : parse 3-composantes + expose `symbol` par
+  bot. Route **trades** `/api/strategy/{slot_key}/performance` : accepte le format
+  à symbole et filtre les trades par symbole. Écran **Bots** : puce symbole sur
+  chaque carte + aide mise à jour (bot = stratégie × timeframe × symbole).
+
+**Calibration (vrai Backtester, 4h, OOS 2024+)**
+- **smart_money** : edge **spécifique BTC** (OOS +148). **Négatif OOS sur ETH pour
+  les 24 configs testées** → non calibrable sur ETH ; reste BTC-only (config héritée).
+- **trend_rider** : config **ETH dédiée** ajoutée (`adx_min=22, chop_max=60,
+  trail_mult=3.5`) → **OOS +286 / PF 1.27 / 77 tr** (vs BTC OOS ~+44). Les deux
+  coexistent dans `trend_rider.yaml`. Résultat concret : sur 4h, `trend_rider`
+  tourne sur **ETH/USDC** et `smart_money` sur **BTC/USDC**, chacun sa config.
+
+---
+
+## [12.15.0] - 2026-07-10
+
+### 🔀 SMT divergence : primitive moteur + câblage smart_money (MESURÉ non pertinent)
+
+Nouvelle primitive **`smc.smt_series(df, correlate_path, lookback)`** (moteur,
+générique) : divergence SMT `{−1, 0, +1}` entre l'actif tradé et un actif corrélé
+(Parquet/CSV), aligné CAUSALEMENT par timestamp via `ict.align_series` +
+`ict.smt_divergence`. Dégradation gracieuse (None si corrélé absent). `vizion`
+délègue désormais son `_load_smt` à cette primitive (dé-duplication, cohérence).
+
+**Câblage dans `smart_money`** (paramètres OFF par défaut → byte-identique,
+vérifié par l'empreinte de régression) : `smt_bonus` (+`smt_conf` au score si la
+divergence CONFIRME le sens), `smt_filter` (rejette un setup CONTREDIT par une
+divergence opposée), point d'injection unique à la résolution des candidats.
+Corrélé configurable (`smt_correlate_path`, ex. ETH pour BTC). Ajoutés au
+`param_space` (leviers d'optimiseur).
+
+**Mesure honnête (vrai Backtester, 4h, split 2/3 OOS=2024+)** :
+
+| Variante | BTC 4h OOS | ETH 4h OOS |
+|----------|-----------|-----------|
+| baseline | +148 (PF 1.46, 52 tr) | −93 (PF 0.74, 51 tr) |
+| SMT bonus | **identique** | **identique** |
+| SMT filter | −0.1 / −1 trade | **identique** |
+
+→ **SMT n'est PAS pertinent comme confluence/filtre à la barre d'ENTRÉE de
+smart_money.** Mécanisme : le signal SMT ne se déclenche qu'à un nouvel EXTRÊME
+sur `lookback` (≈ 9 % des barres), or smart_money entre sur des RETESTS d'OB/
+breaker — loin des extrêmes → recouvrement quasi nul aux barres d'entrée (0 à 1
+trade modifié sur 8 ans). Le câblage est CONSERVÉ (off par défaut, levier
+d'optimiseur) ; une variante « SMT à la barre du SWEEP » resterait à tester.
+
 ### 🔌 Données OHLCV : correctif fetch + page « Données » + Fast Analyse Scanner
 
 - **Fix cache** : `CandleStore._load` force désormais l'ORDRE canonique des
@@ -99,6 +258,10 @@ livrer d'edge négatif), aucune stratégie n'a été créée. Le cadre
 « ⚡ Fast Analyse » du Scanner permet désormais de trouver un symbole où le
 mean-reversion fonctionne réellement (instruments range-bound).
 
+---
+
+## [12.14.0] - 2026-07-09
+
 ### 🆕 Nouvelle stratégie `trend_rider` (indicateurs classiques, long-biaisée)
 
 Stratégie construite UNIQUEMENT à partir d'indicateurs existants, par campagne
@@ -124,6 +287,10 @@ Fichiers : `app/strategies/trend_rider.py` + `strategies/trend_rider.yaml`.
 **`enabled: false`** — complément expérimental à valider en forward avant toute
 promotion live. 7 tests unitaires (contrat, front de régime, long-only,
 causalité live↔backtest). 435 tests OK.
+
+---
+
+## [12.13.0] - 2026-07-08
 
 ### 🔬 smart_money : re-test 15m/30m/1h avec l'arsenal complet — restent non tradables
 
@@ -241,6 +408,10 @@ est écarté : PnL en hausse mais Sharpe plat → exposition, pas edge.
 via `optimizer_results`. Params `size_by_confluence`/`size_conf_slope`/
 `size_conf_center` ajoutés au `param_space`. 418 tests OK.
 
+---
+
+## [12.12.0] - 2026-07-07
+
 ### 🏃 smart_money : trailing stop pour laisser courir les gagnants (4h)
 
 Suite au time-stop (dont le gain en nombre de trades restait modeste), deux
@@ -335,6 +506,10 @@ findings vérifiés :
 
 Backtest 4h byte-identique vérifié après chaque refactor mécanique. Suite
 complète : 414 tests OK (dont parité trade_plans/score et helpers).
+
+---
+
+## [12.11.0] - 2026-07-04
 
 ### ⏯ Page « Smart replay » : rejeu bougie par bougie de l'analyse SMC
 
@@ -456,6 +631,10 @@ entrée/SL/TP/gain %) via `GET /api/scanner/smc` ; stratégie disponible dans le
 replay, le backtest, l'optimiseur et le live. Documentation :
 `docs/SMART_MONEY_CONCEPTS.md`. 22 tests unitaires (`tests/test_smc.py`).
 
+---
+
+## [12.10.0] - 2026-06-18
+
 ### ⚡ Performance backtest/optimisation : suppression d'un O(n²) et du « get_column storm » des stratégies ML
 
 **Symptôme.** Backtests ML très lents et **ralentissant avec la taille** (279 → 185
@@ -534,6 +713,10 @@ Cinq améliorations ciblées de l'optimiseur et de ses performances :
   Chaque combo segmente le cache d'entraînement (coût ~linéaire). Les HP retenus
   sont persistés dans `best_params` et réutilisés au ré-entraînement du modèle final.
 
+---
+
+## [12.9.0] - 2026-06-16
+
 ### 🛡️ Optimiseur ML : portillon mémoire anti-OOM (corrige l'arrêt silencieux du bot pendant une optimisation multi-jobs)
 
 **Problème.** Lancer une optimisation ML sur plusieurs stratégies × timeframes
@@ -609,6 +792,10 @@ sur 50 000 bougies (plusieurs heures par job, souvent interrompu) :
 Vérifié sur données synthétiques (3 000 barres 1h, `opus_omnibus_v7`) : 2ᵉ run
 = 100 % de hits du cache d'entraînement, 0 réentraînement, trades identiques.
 
+---
+
+## [12.8.0] - 2026-06-08
+
 ### 🗑️ Suppression des stratégies ML `_1`
 
 `opus_omnibus_v7_1`, `v8_1`, `v9_1`, `v10_1` (variantes « score additif » des
@@ -673,6 +860,8 @@ Le chemin d'évaluation **non parallèle** (`Optimizer._eval`) n'incluait pas
 `oos_alpha` dans son dict de résultat, contrairement au worker parallèle. En
 mode `n_jobs=1`, `best_oos_alpha` revenait donc `None` et l'UI masquait la ligne
 Alpha. Ajout de `oos_alpha` à `_eval` pour aligner les deux chemins.
+
+---
 
 ## [12.7.0] - 2026-06-06
 

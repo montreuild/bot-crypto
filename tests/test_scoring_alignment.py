@@ -41,7 +41,7 @@ def test_scoring_features_aligned_per_bar(tmp_path, module_name):
     import app.core.feature_store as fs
     from app.core.indicators import precompute_df
 
-    fs._default_store = fs.FeatureStore(base_dir=str(tmp_path))
+    fs.get_feature_store.set(fs.FeatureStore(base_dir=str(tmp_path)))
     mod = importlib.import_module(f"app.strategies.{module_name}")
 
     df = _make_df()

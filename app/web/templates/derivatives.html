@@ -50,7 +50,7 @@
         </div>
         <button class="btn btn-cyan" onclick="loadAll()">Charger</button>
         <button class="btn btn-ghost" onclick="loadAll(true)" title="Fetch réseau incrémental (funding/OI via OKX, long-short/taker via données publiques) puis rechargement">⟳ Rafraîchir (réseau)</button>
-        <span id="deriv-loading" style="display:none;color:var(--muted);font-size:.74rem;">Chargement…</span>
+        <span id="deriv-loading" style="display:none;color:var(--muted);font-size:.74rem;" role="status" aria-live="polite">Chargement…</span>
       </div>
       <div class="chip-sub" id="deriv-info">
         Données accumulées au fil de l'eau dans <span class="c-cyan" id="deriv-dir">data/derivatives/</span> —
@@ -60,24 +60,24 @@
     </div>
   </div>
 
-  <div class="stat-chips" id="deriv-chips"></div>
+  <div class="stat-chips" id="deriv-chips" role="status" aria-live="polite"></div>
 
   <div class="charts-grid">
     <div class="panel">
       <div class="panel-hdr"><h3><span class="legend-dot" style="background:var(--cyan)"></span>Funding rate <small>perp USDT — sentiment des leveraged longs/shorts</small></h3></div>
-      <div class="panel-body"><div class="chart-box" id="chart-funding"></div></div>
+      <div class="panel-body"><div class="chart-box" id="chart-funding" role="img" aria-label="Graphique du funding rate"></div></div>
     </div>
     <div class="panel">
       <div class="panel-hdr"><h3><span class="legend-dot" style="background:var(--purple)"></span>Open interest <small>engagement total du marché</small></h3></div>
-      <div class="panel-body"><div class="chart-box" id="chart-oi"></div></div>
+      <div class="panel-body"><div class="chart-box" id="chart-oi" role="img" aria-label="Graphique de l'open interest"></div></div>
     </div>
     <div class="panel">
       <div class="panel-hdr"><h3><span class="legend-dot" style="background:var(--amber)"></span>Long/Short ratio <small>comptes retail — contrarian aux extrêmes</small></h3></div>
-      <div class="panel-body"><div class="chart-box" id="chart-lsr"></div></div>
+      <div class="panel-body"><div class="chart-box" id="chart-lsr" role="img" aria-label="Graphique du ratio long/short"></div></div>
     </div>
     <div class="panel">
       <div class="panel-hdr"><h3><span class="legend-dot" style="background:var(--green)"></span>Taker buy/sell ratio <small>order-flow agressif</small></h3></div>
-      <div class="panel-body"><div class="chart-box" id="chart-taker"></div></div>
+      <div class="panel-body"><div class="chart-box" id="chart-taker" role="img" aria-label="Graphique du ratio taker buy/sell"></div></div>
     </div>
   </div>
 </div>

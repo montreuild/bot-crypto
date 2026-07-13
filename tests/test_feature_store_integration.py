@@ -47,7 +47,7 @@ def test_backtest_cold_vs_warm_cache_identical(tmp_path):
     from app.engine.backtest import Backtester
     from app.strategies.opus_omnibus_v10 import Strategy
 
-    fs._default_store = fs.FeatureStore(base_dir=str(tmp_path))
+    fs.get_feature_store.set(fs.FeatureStore(base_dir=str(tmp_path)))
     df = _make_df()
     cfg = _cfg()
 

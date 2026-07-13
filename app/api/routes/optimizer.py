@@ -11,6 +11,7 @@ from app.api import state
 from app.api.helpers import verify_api_key, _clean, _discover_strategies
 from app.core.candle_store import get_store
 from app.core.exchange import create_exchange
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -18,7 +19,8 @@ router = APIRouter()
 
 @router.post("/api/optimize/start", dependencies=[Depends(verify_api_key)])
 def optimizer_start(
-    symbol:              str  = "BTC/USDC",
+    symbol:              str  = DEFAULT_CONFIG_SYMBOL,
+    symbols:             str  = "",
     strategies:          str  = "",
     timeframes:          str  = "",
     method:              str  = "bayesian",
@@ -29,6 +31,16 @@ def optimizer_start(
     early_stop_patience: int  = 0,
     ml_tune_hp:          bool = False,
 ):
+    """
+    Démarre un ou plusieurs jobs d'optimisation.
+
+    ``symbol`` : symbole unique (comportement historique, défaut "BTC/USDC").
+    ``symbols``: liste CSV optionnelle (ex. "BTC/USDC,ETH/USDC") — si fournie,
+    prime sur ``symbol`` et boucle sur chaque symbole (fetch + jobs par
+    symbole), comme le fait `LiveTrader._auto_opt_thread` (cf. BT-12). Le
+    comportement mono-symbole existant (``symbols`` non fourni) reste
+    STRICTEMENT inchangé (même réponse plate qu'avant ce correctif).
+    """
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
 
@@ -54,7 +66,7 @@ def optimizer_start(
 
     try:
         from app.engine.auto_optimizer import AutoOptimizer
-        from app.engine.optimizer import PARAM_SPACES, RECOMMENDED_LIMIT, auto_fetch_limit
+        from app.engine.optimizer import PARAM_SPACES, auto_fetch_limit
 
         tf_list = (
             [t.strip() for t in timeframes.split(",") if t.strip()]
@@ -70,33 +82,41 @@ def optimizer_start(
         allowed = _discover_strategies()
         strats  = [s for s in strats if s in PARAM_SPACES and s in allowed]
 
-        exchange      = create_exchange(state.cfg)
-        df_map        = {}
-        fetch_details    = {}
-        received_counts  = {}
-        for tf in tf_list:
-            # Limite auto dérivée du besoin réel des stratégies (cf. #2) : évite
-            # que les stratégies ML (omnibus) soient ignorées faute de bougies.
-            fetch_limit = limit if limit > 0 else auto_fetch_limit(tf, strats)
-            fetch_details[tf] = fetch_limit
-            df = get_store().fetch(exchange, symbol, tf, total=fetch_limit, prefer_cache=True)
-            n_received = len(df) if df is not None else 0
-            received_counts[tf] = n_received
-            if df is not None and n_received > 0:
-                df_map[tf] = df
-                if n_received < fetch_limit:
-                    logger.info(
-                        f"[Optimizer] TF={tf} : {n_received} bougies reçues "
-                        f"(demandées: {fetch_limit})"
-                    )
-            else:
-                logger.warning(f"[Optimizer] TF={tf} : aucune bougie reçue, ignoré")
+        # `symbols` (CSV) prime sur `symbol` : bascule en mode multi-symbole
+        # (BT-12). Non fourni → un seul symbole, réponse legacy inchangée.
+        multi_symbol = bool(symbols.strip())
+        symbol_list  = (
+            [s.strip() for s in symbols.split(",") if s.strip()]
+            if multi_symbol
+            else [symbol]
+        )
 
-        if not df_map:
-            details = "; ".join(
-                f"{tf}: {received_counts.get(tf, 0)} bougies reçues" for tf in tf_list
-            )
-            raise HTTPException(400, f"Aucune donnée reçue pour les TFs demandés. {details}.")
+        exchange = create_exchange(state.cfg)
+
+        def _fetch_df_map(sym: str):
+            """Récupère les bougies par TF pour `sym`. Logique commune aux
+            modes mono/multi-symbole (extraite pour BT-12)."""
+            df_map          = {}
+            fetch_details   = {}
+            received_counts = {}
+            for tf in tf_list:
+                # Limite auto dérivée du besoin réel des stratégies (cf. #2) : évite
+                # que les stratégies ML (omnibus) soient ignorées faute de bougies.
+                fetch_limit = limit if limit > 0 else auto_fetch_limit(tf, strats)
+                fetch_details[tf] = fetch_limit
+                df = get_store().fetch(exchange, sym, tf, total=fetch_limit, prefer_cache=True)
+                n_received = len(df) if df is not None else 0
+                received_counts[tf] = n_received
+                if df is not None and n_received > 0:
+                    df_map[tf] = df
+                    if n_received < fetch_limit:
+                        logger.info(
+                            f"[Optimizer] {sym} TF={tf} : {n_received} bougies reçues "
+                            f"(demandées: {fetch_limit})"
+                        )
+                else:
+                    logger.warning(f"[Optimizer] {sym} TF={tf} : aucune bougie reçue, ignoré")
+            return df_map, fetch_details, received_counts
 
         def _on_apply(strat_name: str, params: dict):
             try:
@@ -116,21 +136,76 @@ def optimizer_start(
             early_stop_patience=early_stop_patience,
             ml_tune_hp=ml_tune_hp,
         )
-        job_ids, skipped = opt.start_async(df_map, symbol, strats,
-                                           timeframes=tf_list, auto_apply=auto_apply)
+
+        if not multi_symbol:
+            # ── Mono-symbole : comportement historique STRICTEMENT inchangé ──
+            df_map, fetch_details, received_counts = _fetch_df_map(symbol)
+            if not df_map:
+                details = "; ".join(
+                    f"{tf}: {received_counts.get(tf, 0)} bougies reçues" for tf in tf_list
+                )
+                raise HTTPException(400, f"Aucune donnée reçue pour les TFs demandés. {details}.")
+
+            job_ids, skipped = opt.start_async(df_map, symbol, strats,
+                                               timeframes=tf_list, auto_apply=auto_apply)
+
+            return {
+                "status":        "started",
+                "job_ids":       job_ids,
+                "symbol":        symbol,
+                "strategies":    strats,
+                "timeframes":    tf_list,
+                "method":        method,
+                "n_trials":      n_trials,
+                "skipped":       skipped,
+                "n_jobs_created": len(job_ids),
+                "fetch_details": fetch_details,
+                "received_bars": received_counts,
+            }
+
+        # ── Multi-symbole (BT-12) : une passe fetch + start_async par symbole,
+        # comme LiveTrader._auto_opt_thread — chaque symbole écrit ses propres
+        # jobs `strategy@tf@symbol`, la concurrence restant bornée par le
+        # sémaphore de l'optimiseur (AutoOptimizer partagé pour tout le lot). ──
+        all_job_ids = []
+        all_skipped = []
+        per_symbol  = {}
+        for sym in symbol_list:
+            df_map, fetch_details, received_counts = _fetch_df_map(sym)
+            if not df_map:
+                per_symbol[sym] = {
+                    "job_ids": [], "skipped": [],
+                    "fetch_details": fetch_details, "received_bars": received_counts,
+                    "error": "Aucune donnée reçue pour les TFs demandés.",
+                }
+                logger.warning(f"[Optimizer] {sym} : aucune donnée reçue, symbole ignoré.")
+                continue
+            job_ids, skipped = opt.start_async(df_map, sym, strats,
+                                               timeframes=tf_list, auto_apply=auto_apply)
+            all_job_ids.extend(job_ids)
+            all_skipped.extend(skipped)
+            per_symbol[sym] = {
+                "job_ids": job_ids, "skipped": skipped,
+                "fetch_details": fetch_details, "received_bars": received_counts,
+            }
+
+        if not all_job_ids:
+            details = "; ".join(
+                f"{s}: {d.get('error', 'aucun job créé')}" for s, d in per_symbol.items()
+            )
+            raise HTTPException(400, f"Aucune donnée reçue pour les symboles demandés. {details}.")
 
         return {
-            "status":        "started",
-            "job_ids":       job_ids,
-            "symbol":        symbol,
-            "strategies":    strats,
-            "timeframes":    tf_list,
-            "method":        method,
-            "n_trials":      n_trials,
-            "skipped":       skipped,
-            "n_jobs_created": len(job_ids),
-            "fetch_details": fetch_details,
-            "received_bars": received_counts,
+            "status":         "started",
+            "job_ids":        all_job_ids,
+            "symbols":        symbol_list,
+            "strategies":     strats,
+            "timeframes":     tf_list,
+            "method":         method,
+            "n_trials":       n_trials,
+            "skipped":        all_skipped,
+            "n_jobs_created": len(all_job_ids),
+            "per_symbol":     per_symbol,
         }
     except HTTPException:
         raise
@@ -142,7 +217,7 @@ def optimizer_start(
         state._opt_semaphore.release()
 
 
-@router.get("/api/optimize/status")
+@router.get("/api/optimize/status", dependencies=[Depends(verify_api_key)])
 def optimizer_status(job_id: str = ""):
     from app.engine.auto_optimizer import get_job, get_all_jobs
     if job_id:
@@ -153,7 +228,7 @@ def optimizer_status(job_id: str = ""):
     return get_all_jobs()
 
 
-@router.get("/api/optimize/stream")
+@router.get("/api/optimize/stream", dependencies=[Depends(verify_api_key)])
 async def optimizer_stream(job_id: str):
     from app.engine.auto_optimizer import get_job
     import asyncio
@@ -196,9 +271,19 @@ async def optimizer_stream(job_id: str):
 
 
 @router.post("/api/optimize/apply", dependencies=[Depends(verify_api_key)])
-def optimizer_apply(job_id: str, config_path: str = "config.yaml"):
+def optimizer_apply(job_id: str, config_path: str = "config.yaml",
+                    force: bool = False):
+    """Applique le meilleur paramétrage d'un job terminé.
+
+    Garde-fou qualité (BT-04) : mêmes exigences que l'auto-apply
+    (``opt_scoring.beats_baseline`` — ≥ MIN_SIGNIFICANT_TRADES trades OOS,
+    PnL OOS positif et meilleur que le baseline, amélioration WR ou Sharpe).
+    En cas de refus → HTTP 409 avec la raison. ``force=true`` = override
+    utilisateur explicite et assumé.
+    """
     from app.engine.auto_optimizer import get_job
     from app.engine.optimizer import apply_best_params
+    from app.engine.opt_scoring import beats_baseline
     from app.core.config import load_config as _reload_cfg
 
     job = get_job(job_id)
@@ -210,12 +295,29 @@ def optimizer_apply(job_id: str, config_path: str = "config.yaml"):
     best   = result.get("best_params", {})
     strat  = job.get("strategy", "")
     tf     = job.get("timeframe", "")
+    # Le job stocke le symbole sur lequel il a tourné (cf. AutoOptimizer.start_async) :
+    # il FAUT le transmettre à apply_best_params, sinon la branche legacy (symbol=None)
+    # écrase tout le mapping par symbole de optimizer_results[tf] (cf. BT-01).
+    symbol = job.get("symbol")
     if not best or not strat:
         raise HTTPException(400, "Aucun meilleur paramètre")
 
+    ok_quality, reason = beats_baseline(
+        result.get("best_oos_trades", 0), result.get("best_oos_pnl", 0),
+        result.get("best_oos_wr", 0), result.get("best_oos_sharpe", 0),
+        job.get("baseline", {}),
+    )
+    if not ok_quality and not force:
+        raise HTTPException(
+            409, f"Application refusée ({reason}). Utilisez force=true pour "
+                 f"passer outre en connaissance de cause.")
+    if not ok_quality and force:
+        logger.warning(f"[apply] {job_id} : garde-fou contourné (force=true) — {reason}")
+
     ok = apply_best_params(strat, best, config_path,
                            timeframe=tf,
-                           oos_score=result.get("best_oos_score", 0.0))
+                           oos_score=result.get("best_oos_score", 0.0),
+                           symbol=symbol)
     if not ok:
         raise HTTPException(500, "Erreur écriture config")
 
@@ -232,7 +334,7 @@ def optimizer_apply(job_id: str, config_path: str = "config.yaml"):
         except Exception as e:
             logger.warning(f"[apply] propagation trader KO: {e}")
 
-    return {"status": "applied", "strategy": strat, "timeframe": tf,
+    return {"status": "applied", "strategy": strat, "timeframe": tf, "symbol": symbol,
             "params": best, "trader_updated": trader_updated}
 
 
@@ -261,7 +363,7 @@ def optimizer_delete_job(job_id: str):
     return {"status": "deleted", "job_id": job_id}
 
 
-@router.get("/api/optimize/results")
+@router.get("/api/optimize/results", dependencies=[Depends(verify_api_key)])
 def optimizer_results():
     """Retourne les résultats d'optimisation classés par (strategy, tf)."""
     if not state.cfg:
@@ -288,7 +390,7 @@ def optimizer_results():
     }
 
 
-@router.get("/api/optimize/spaces")
+@router.get("/api/optimize/spaces", dependencies=[Depends(verify_api_key)])
 def optimizer_spaces():
     from app.engine.optimizer import PARAM_SPACES, STRATEGY_TIMEFRAMES
     from app.engine.auto_optimizer import _is_ml_strategy

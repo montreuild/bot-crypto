@@ -31,7 +31,7 @@
 <div id="content" class="fade-in">
   <div class="panel">
     <div class="panel-hdr">Profil de risque <span style="color:var(--dim);font-weight:400">— choisissez un preset, le détail reste accessible en mode expert</span></div>
-    <div class="panel-body"><div class="preset-grid" id="presetGrid"><div style="color:var(--dim)">Chargement…</div></div></div>
+    <div class="panel-body"><div class="preset-grid" id="presetGrid" role="status" aria-live="polite"><div style="color:var(--dim)">Chargement…</div></div></div>
   </div>
 
   <div class="panel">
@@ -55,7 +55,7 @@ async function loadPresets(){
   let d; try{ d = await apiFetch('/api/settings/presets').then(r=>r.json()); }catch(e){ return; }
   const grid=document.getElementById('presetGrid'); const P=d.presets||{};
   grid.innerHTML = Object.entries(P).map(([key,p])=>`
-    <div class="preset ${d.current===key?'active':''}" onclick="applyPreset('${key}')">
+    <div class="preset ${d.current===key?'active':''}" onclick="applyPreset('${key}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();applyPreset('${key}');}">
       <h3>${escHtml(p.label)}</h3>
       ${row('Risque / trade',(p.risk_per_trade*100).toFixed(2)+'%')}
       ${row('Positions max',p.max_positions)}

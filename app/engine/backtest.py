@@ -10,7 +10,10 @@ import polars as pl
 from app.engine.engine import Engine
 from app.core.execution import close_pnl as _close_pnl, trade_fees as _trade_fees
 from app.core.trailing import TrailingStopManager
-from app.live.utils import resolve_strategy_params
+from app.core.risk_curve import risk_multiplier as _risk_multiplier
+from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
+from app.core.param_resolution import resolve_strategy_params
 
 
 def _sf(v, fallback=None):
@@ -24,11 +27,9 @@ def _sf(v, fallback=None):
 logger = logging.getLogger(__name__)
 
 
-# Timeframe → minutes mapping (crypto markets: 365 days/year, 24h/day)
-_TF_MINUTES = {
-    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-    "1h": 60, "2h": 120, "4h": 240, "1d": 1440,
-}
+# Timeframe → minutes — source unique (V4-A). L'ancienne table locale (9 clés)
+# renvoyait le défaut pour 6h/8h/12h ; la canonique les couvre.
+from app.core.timeframes import TF_MINUTES as _TF_MINUTES
 
 
 def _bar_to_days(tf: str) -> float:
@@ -221,13 +222,19 @@ class Backtester:
         self.lock_ratio   = float(bcfg.get("lock_ratio",   0.60))
         self.use_swing    = bool(bcfg.get("use_swing",     True))
 
-        self.taker_fee    = tcfg.get("taker_fee",         0.001)
-        self.maker_fee    = tcfg.get("maker_fee",        0.0004)
+        self.taker_fee    = tcfg.get("taker_fee", DEFAULT_TAKER_FEE)
+        self.maker_fee    = tcfg.get("maker_fee", DEFAULT_MAKER_FEE)
         self.borrow_rate  = tcfg.get("borrow_rate_daily", 0.0002)
         self.borrow_periods = int(tcfg.get("borrow_periods_per_day", 24))
         self.spread_pct   = bcfg.get("spread_pct",        0.0005)
+        # BT-10 : modèle de slippage dépendant de la taille (off par défaut).
+        # "size" → coût d'impact additionnel notional × spread_pct × k ×
+        # (notional / volume quote moyen 20 barres), appliqué à l'entrée, aux
+        # scale-ins et à la sortie. "static" (défaut) = byte-identique.
+        self.slippage_model = str(bcfg.get("slippage_model", "static"))
+        self.slippage_k     = float(bcfg.get("slippage_k", 1.0))
         self.partial_fill = bcfg.get("partial_fill_pct",  0.95)
-        self.max_notional_pct = float(bcfg.get("max_notional_pct", 0.50))
+        self.max_notional_pct = float(bcfg.get("max_notional_pct", 0.20))  # BT-03 : aligné sur le live (risk.py)
 
     def _find_strategy(self, name: str):
         """Récupère l'instance Strategy par son nom (pour les hooks comme
@@ -277,7 +284,13 @@ class Backtester:
             daily_rate=self.borrow_rate, hours_held=hours_held,
             periods_per_day=self.borrow_periods,
         )
+        impact = self._impact_cost(ctx, i, position["notional"])   # BT-10
+        if impact:
+            pnl -= impact
+            fees += impact
         ctx.capital += pnl
+        # BT-09 : plus-haut d'équité pour la courbe de dé-risquage en drawdown.
+        ctx.peak_capital = max(getattr(ctx, "peak_capital", ctx.capital), ctx.capital)
         ts = str(df["time"][i]) if "time" in df.columns else str(i)
         position.update({
             "pnl":           round(pnl, 6),
@@ -444,6 +457,7 @@ class Backtester:
                         add_size = add_notional / add_price
                     if add_notional >= 1.0 and add_size > 0:
                         add_fees = self._fees(add_price, add_size, maker=False)
+                        add_fees += self._impact_cost(ctx, i, add_notional)  # BT-10
                         ctx.capital -= add_fees
                         new_size = position["size"] + add_size
                         position["entry"] = round(
@@ -504,7 +518,11 @@ class Backtester:
         disable_trailing = bool(signal.get("disable_trailing", False))
 
         stop_dist    = abs(exec_price - stop)
-        risk_amount  = ctx.capital * ctx.risk
+        # BT-09 : même courbe de dé-risquage que le live (RiskManager.compute_risk)
+        # — ×0.75 si drawdown > 5 %, ×0.5 si > 10 % (app/core/risk_curve.py).
+        peak = getattr(ctx, "peak_capital", ctx.capital) or ctx.capital
+        dd   = max(0.0, (peak - ctx.capital) / peak) if peak > 0 else 0.0
+        risk_amount  = ctx.capital * ctx.risk * _risk_multiplier(dd)
         size         = risk_amount / stop_dist if stop_dist > 0 else 0
         notional     = size * exec_price
         max_notional = ctx.capital * self.max_notional_pct
@@ -531,6 +549,7 @@ class Backtester:
         size       *= self.partial_fill
         notional    = size * exec_price
         entry_fees  = self._fees(exec_price, size, maker=False)
+        entry_fees += self._impact_cost(ctx, i, notional)   # BT-10
         ctx.capital -= entry_fees
         ctx.trade_id += 1
         ts = str(df["time"][i]) if "time" in df.columns else str(i)
@@ -580,7 +599,7 @@ class Backtester:
         return position
 
     # ── run ───────────────────────────────────────────────────────────────────
-    def run(self, df: pl.DataFrame, symbol: str = "BTC/USDC",
+    def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL,
             timeframe: str = None) -> "BacktestResult":
         import os
         from app.engine.engine import BaseStrategyML
@@ -588,7 +607,10 @@ class Backtester:
         # certaines stratégies pré-calculent leurs features/votes en fonction du
         # paramétrage résolu (ex: signal_consensus → votes des sous-stratégies).
         # On expose donc ``_bt_params`` avant l'appel à prepare.
-        strat_params = resolve_strategy_params(self.cfg, timeframe)
+        # ``symbol`` transmis : une config héritée (sans dimension symbole) reste
+        # celle de BTC/USDC ; les autres symboles prennent leur config dédiée si
+        # elle existe, sinon les params de base (séparation des configs).
+        strat_params = resolve_strategy_params(self.cfg, timeframe, symbol)
         for strat in self.engine.strategies:
             strat._bt_params = strat_params
             # ── Spécifique ML : reset + chargement du modèle pré-entraîné ──────
@@ -730,13 +752,19 @@ class Backtester:
             # coûts d'emprunt étaient calculés sur le mauvais TF quand le
             # backtest tournait sur un TF différent de la config).
             timeframe=timeframe or self.cfg["trading"].get("timeframe", "1h"),
-            capital=capital, risk=risk, trade_id=trade_id,
+            capital=capital, peak_capital=capital, risk=risk, trade_id=trade_id,
             trades=trades, equity_curve=equity_curve, timestamps=timestamps,
             diag=diag, strat_params=strat_params,
             atr_arr=atr_arr, low_arr=low_arr, high_arr=high_arr,
             close_arr=close_arr,
             bars_current_position=_bars_current_position,
         )
+        # BT-10 : volume quote moyen (20 barres, causal) pour le modèle "size".
+        if self.slippage_model == "size" and "volume" in df.columns:
+            ctx.qvol_arr = (df["volume"] * df["close"]).rolling_mean(20) \
+                .fill_null(0.0).to_numpy().astype(float)
+        else:
+            ctx.qvol_arr = None
 
         for i in range(warmup, len(df) - 1):
             diag["bars_total"] += 1
@@ -875,6 +903,24 @@ class Backtester:
     def initial_capital(self, cfg: dict) -> float:
         return cfg["trading"].get("capital", 1000.0)
 
+    def _impact_cost(self, ctx, i: int, notional: float) -> float:
+        """BT-10 : coût d'impact croissant avec la taille RELATIVE du trade
+        (participation au volume) — 0.0 si le modèle est off ou volume absent.
+
+        ``notional × spread_pct × k × (notional / volume_quote_moyen_20b)`` :
+        un trade à 1 % du volume moyen d'une barre coûte ~1 % de spread en
+        plus ; un trade à 50 % le multiplie d'autant. Linéaire en
+        participation, quadratique en notional (impact de marché standard)."""
+        if self.slippage_model != "size":
+            return 0.0
+        qv = getattr(ctx, "qvol_arr", None)
+        if qv is None or not (0 <= i < len(qv)):
+            return 0.0
+        avg = float(qv[i])
+        if avg <= 0 or notional <= 0:
+            return 0.0
+        return notional * self.spread_pct * self.slippage_k * (notional / avg)
+
     def _fees(self, price: float, size: float, maker: bool = False) -> float:
         return _trade_fees(price, size, self.maker_fee if maker else self.taker_fee)
 
@@ -886,7 +932,7 @@ class WalkForwardAnalyzer:
         self.cfg     = cfg
         self.n_folds = n_folds
 
-    def run(self, df: pl.DataFrame, symbol: str = "BTC/USDC") -> dict:
+    def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL) -> dict:
         n      = len(df)
         fold_n = n // (self.n_folds + 1)
         WARMUP = 220
@@ -958,6 +1004,17 @@ class WalkForwardAnalyzer:
 
 # ── Monte-Carlo ──
 class MonteCarlo:
+    """Deux familles de statistiques, calculées avec la méthode adaptée (BT-02) :
+
+    - **Risque de SÉQUENCE** (``max_dd_p95``, ``prob_ruin_10pct``) : permutation
+      des PnL (sans remise). La somme est invariante — seul l'ORDRE change —
+      c'est exactement ce qu'on veut pour la distribution du drawdown.
+    - **Risque d'ÉCHANTILLONNAGE** (``final_equity_mean/p5/p95``,
+      ``prob_profit``) : bootstrap AVEC remise (rng.choice, replace=True).
+      La permutation donnait ici une distribution dégénérée : équité finale
+      identique à chaque run (p5 = p95, prob_profit ∈ {0, 100}).
+    """
+
     def __init__(self, n_runs: int = 200, confidence: float = 0.95):
         self.n_runs    = n_runs
         self.confidence = confidence
@@ -973,12 +1030,15 @@ class MonteCarlo:
         rng    = np.random.default_rng(42)
 
         for _ in range(self.n_runs):
+            # Séquence (permutation) → drawdown/ruine.
             shuffled = rng.permutation(pnls)
             equity   = np.concatenate([[initial_capital], initial_capital + np.cumsum(shuffled)])
-            finals.append(float(equity[-1]))
             peak = np.maximum.accumulate(equity)
             dd   = (equity - peak) / np.where(peak > 0, peak, 1) * 100
             max_dds.append(float(dd.min()))
+            # Échantillonnage (bootstrap avec remise) → équité finale.
+            resampled = rng.choice(pnls, size=len(pnls), replace=True)
+            finals.append(float(initial_capital + resampled.sum()))
 
         return {
             "runs":               self.n_runs,

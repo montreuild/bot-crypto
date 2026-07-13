@@ -3,6 +3,7 @@ CandleStore — stockage Parquet persistant des bougies OHLCV par (symbol, timef
 Fetch incrémental, thread-safe, retourne un pl.DataFrame identique à MarketScanner.
 """
 
+import os
 import logging
 import time
 import threading
@@ -10,6 +11,11 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import polars as pl
+
+from app.core.config import DATA_ROOT
+from app.core.singleton import lazy_singleton
+
+OHLCV_DIR = os.path.join(DATA_ROOT, "ohlcv")
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +57,7 @@ class CandleStore:
     Stratégie : cache local → fetch incrémental → merge+déduplique → persistance.
     """
 
-    def __init__(self, base_dir: str = "data/ohlcv"):
+    def __init__(self, base_dir: str = OHLCV_DIR):
         self._base = Path(base_dir)
         logger.info(f"[CandleStore] Initialisation — répertoire : {self._base.resolve()}")
 
@@ -338,11 +344,22 @@ class CandleStore:
         return pl.DataFrame(schema=_OHLCV_SCHEMA)
 
     def _save(self, path: Path, df: pl.DataFrame) -> None:
+        """Écriture ATOMIQUE : Parquet écrit dans un .tmp puis os.replace
+        (rename atomique sur le même filesystem). Un lecteur concurrent — y
+        compris un second process (cli.py --backtest/--optimize pendant que le
+        live tourne, cf. OPS-07 : le verrou _get_file_lock est intra-process
+        seulement) — ne voit jamais de fichier tronqué."""
         path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
         try:
-            df.write_parquet(path, compression="zstd")
+            df.write_parquet(tmp, compression="zstd")
+            os.replace(tmp, path)
         except Exception as e:
             logger.error(f"[CandleStore] Erreur écriture {path} : {e}")
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @staticmethod
     def _raw_to_df(raw: List[list]) -> pl.DataFrame:
@@ -357,16 +374,7 @@ class CandleStore:
 
 
 # ── Singleton global ───────────────────────────────────────────────────────────
-
-_default_store: Optional[CandleStore] = None
-_store_lock    = threading.Lock()
-
-
-def get_store(base_dir: str = "data/ohlcv") -> CandleStore:
-    """Retourne le singleton CandleStore (lazy init, thread-safe)."""
-    global _default_store
-    if _default_store is None:
-        with _store_lock:
-            if _default_store is None:
-                _default_store = CandleStore(base_dir)
-    return _default_store
+get_store = lazy_singleton(
+    CandleStore,
+    doc="Retourne le singleton CandleStore (lazy init, thread-safe).",
+)

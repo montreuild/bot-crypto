@@ -5,6 +5,10 @@
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" integrity="sha384-OK7vELvjHdhUFi31JYioPIcRHTROLdcDa6ZsNWgvgLaKj+9JqhU0Ad8g4wz3CXjA" crossorigin="anonymous"></script>
 {% endblock %}
 
+{% block chart_helpers %}
+<script src="/static/js/smc-chart.js"></script>
+{% endblock %}
+
 {% block page_styles %}
 .sg-main{max-width:1500px;margin:0 auto;padding:16px;}
 .sg-tf-btn{background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 10px;border-radius:4px;font-size:.72rem;cursor:pointer;transition:all .12s;font-family:var(--body);font-weight:600;}
@@ -426,7 +430,7 @@ function sgRenderPlans(){
     const stChip = p.status === 'immediate'
       ? '<span class="sg-chip" style="background:rgba(52,211,153,.18);color:var(--green)">⚡ MAINTENANT</span>'
       : '<span class="sg-chip" style="background:rgba(251,191,36,.14);color:var(--amber)">⏳ En attente</span>';
-    return `<tr style="cursor:pointer" onclick="sgSelectPlan(${k})" title="Tracer ce plan sur le graphique">
+    return `<tr style="cursor:pointer" onclick="sgSelectPlan(${k})" title="Tracer ce plan sur le graphique" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sgSelectPlan(${k});}">
       <td>${stChip}</td>
       <td style="color:${sideClr};font-weight:700">${p.side === 'long' ? '▲ LONG' : '▼ SHORT'}</td>
       <td style="font-family:var(--mono);font-size:.72rem;color:#c084fc">${escHtml(p.setup)}</td>

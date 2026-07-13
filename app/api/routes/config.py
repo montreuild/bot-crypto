@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api import state
 from app.api.helpers import verify_api_key, _discover_strategies
+from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -14,12 +15,10 @@ router = APIRouter()
 def _save_yaml(updates_fn):
     """Applique updates_fn(disk_cfg) et réécrit config.yaml (thread-safe).
 
-    Round-trip (ruamel) : les commentaires de config.yaml sont préservés."""
-    from app.core.yaml_io import load_yaml, dump_yaml
-    with state._config_write_lock:
-        disk_cfg = load_yaml("config.yaml", default={})
-        updates_fn(disk_cfg)
-        dump_yaml("config.yaml", disk_cfg)
+    V4-D : délègue au verrou UNIQUE de app.core.yaml_io (partagé avec le
+    LiveTrader) — le verrou api ne protégeait pas des écritures live."""
+    from app.core.yaml_io import update_config_yaml
+    update_config_yaml(updates_fn)
 
 
 def _save_strategy_yaml(strategy_name: str, updates_fn):
@@ -280,13 +279,94 @@ def update_risk_config(
 
 # ── POST /api/config/strategy-params ─────────────────────────────────────
 
-@router.post("/api/config/strategy-params", dependencies=[Depends(verify_api_key)])
-def update_strategy_params(strategy: str, params: dict):
+@router.get("/api/config/strategy-overrides", dependencies=[Depends(verify_api_key)])
+def strategy_overrides(strategy: str):
+    """Liste les overrides ``optimizer_results[tf][symbole]`` d'une stratégie
+    (cf. UI-02). Une entrée héritée (sans dimension symbole) est présentée
+    comme la config de ``DEFAULT_CONFIG_SYMBOL`` (BTC/USDC). Fournit aussi la
+    liste des symboles configurés (scanner.symbols) pour les sélecteurs UI."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     allowed = _discover_strategies()
     if strategy not in allowed:
         raise HTTPException(400, f"Stratégie inconnue : {strategy}")
+    from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, _is_legacy_tf_entry
+    tf_map = (state.cfg.get("optimizer_results") or {}).get(strategy) or {}
+    overrides = []
+    for tf, entry in tf_map.items():
+        if not isinstance(entry, dict):
+            continue
+        if _is_legacy_tf_entry(entry):
+            overrides.append({"timeframe": tf, "symbol": DEFAULT_CONFIG_SYMBOL,
+                              "legacy": True,
+                              "oos_score": entry.get("oos_score"),
+                              "run_date": entry.get("run_date"),
+                              "params": entry.get("params", {})})
+        else:
+            for sym, sub in entry.items():
+                if isinstance(sub, dict):
+                    overrides.append({"timeframe": tf, "symbol": sym,
+                                      "legacy": False,
+                                      "oos_score": sub.get("oos_score"),
+                                      "run_date": sub.get("run_date"),
+                                      "params": sub.get("params", {})})
+    symbols = list((state.cfg.get("scanner") or {}).get("symbols") or [])
+    return {"strategy": strategy, "overrides": overrides, "symbols": symbols,
+            "base_params": (state.cfg.get("strategy_params") or {}).get(strategy, {})}
+
+
+@router.post("/api/config/strategy-params", dependencies=[Depends(verify_api_key)])
+def update_strategy_params(strategy: str, params: dict,
+                           timeframe: str = None, symbol: str = None):
+    """Sauvegarde les paramètres d'une stratégie.
+
+    - Sans ``timeframe``/``symbol`` : comportement historique inchangé — écrit
+      le bloc ``params:`` de base de strategies/{strategy}.yaml.
+    - Avec ``timeframe`` ET ``symbol`` (cf. UI-02) : écrit un OVERRIDE dans
+      ``optimizer_results[tf][symbole]`` via ``apply_best_params`` (schéma
+      per-symbole canonique — une entrée héritée est migrée vers BTC/USDC,
+      les autres symboles restent intacts). Le ``oos_score`` existant de
+      l'entrée est préservé (édition manuelle ≠ nouvelle optimisation).
+    """
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    allowed = _discover_strategies()
+    if strategy not in allowed:
+        raise HTTPException(400, f"Stratégie inconnue : {strategy}")
+    if (timeframe is None) != (symbol is None):
+        raise HTTPException(400, "timeframe et symbol doivent être fournis ensemble")
+
+    if timeframe and symbol:
+        from app.engine.opt_persistence import apply_best_params
+        from app.core.param_resolution import _select_symbol_entry
+        tf_entry = ((state.cfg.get("optimizer_results") or {})
+                    .get(strategy, {}).get(timeframe) or {})
+        prev = _select_symbol_entry(tf_entry, symbol) if isinstance(tf_entry, dict) else None
+        prev_score = float((prev or {}).get("oos_score") or 0.0)
+        ok = apply_best_params(strategy, params, "config.yaml",
+                               timeframe=timeframe, oos_score=prev_score,
+                               symbol=symbol)
+        if not ok:
+            raise HTTPException(500, "Erreur écriture override")
+        # Mise à jour à chaud de la config en mémoire (même schéma que le YAML).
+        opt = state.cfg.setdefault("optimizer_results", {}).setdefault(strategy, {})
+        cur = opt.get(timeframe)
+        from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, _is_legacy_tf_entry
+        if isinstance(cur, dict) and _is_legacy_tf_entry(cur):
+            cur = {DEFAULT_CONFIG_SYMBOL: cur}
+        elif not isinstance(cur, dict):
+            cur = {}
+        cur[symbol] = {"oos_score": prev_score, "params": dict(params)}
+        opt[timeframe] = cur
+        if state.trader:
+            try:
+                state.trader.reload_active_strategies()
+            except Exception as e:
+                logger.warning(f"[config] reload après override KO : {e}")
+        return {"saved": True, "strategy": strategy, "timeframe": timeframe,
+                "symbol": symbol, "params": params,
+                "file": f"strategies/{strategy}.yaml", "scope": "override"}
+
     state.cfg.setdefault("strategy_params", {})[strategy] = params
     if state.trader:
         state.trader.strat_params = state.cfg["strategy_params"]
@@ -295,7 +375,7 @@ def update_strategy_params(strategy: str, params: dict):
             data["params"] = params
         _save_strategy_yaml(strategy, _upd)
         return {"saved": True, "strategy": strategy, "params": params,
-                "file": f"strategies/{strategy}.yaml"}
+                "file": f"strategies/{strategy}.yaml", "scope": "base"}
     except Exception as e:
         err_id = uuid.uuid4()
         logger.error(f"[API] Erreur {err_id} config/strategy-params : {e}", exc_info=True)
@@ -357,7 +437,7 @@ def toggle_strategy_timeframe(strategy: str, timeframe: str, enabled: bool = Tru
 
 # ── GET /api/backtest/settings ────────────────────────────────────────────
 
-@router.get("/api/backtest/settings")
+@router.get("/api/backtest/settings", dependencies=[Depends(verify_api_key)])
 def backtest_settings():
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
@@ -371,8 +451,8 @@ def backtest_settings():
         "all_strategies":       all_strats,
         "strategy_params":      state.cfg.get("strategy_params", {}),
         "score_threshold":      state.cfg["trading"].get("score_threshold", 0.55),
-        "taker_fee":            state.cfg["trading"].get("taker_fee", 0.001),
-        "maker_fee":            state.cfg["trading"].get("maker_fee", 0.0004),
+        "taker_fee":            state.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE),
+        "maker_fee":            state.cfg["trading"].get("maker_fee", DEFAULT_MAKER_FEE),
         "capital":              state.cfg["trading"]["capital"],
         "risk_per_trade":       state.cfg["trading"]["risk_per_trade"],
         "spread_pct":           state.cfg.get("backtest", {}).get("spread_pct", 0.0005),
@@ -382,7 +462,7 @@ def backtest_settings():
 
 # ── GET /api/config/changelog ─────────────────────────────────────────────
 
-@router.get("/api/config/changelog")
+@router.get("/api/config/changelog", dependencies=[Depends(verify_api_key)])
 def get_changelog(limit: int = 50):
     """Retourne les N dernières entrées du changelog d'optimisation."""
     import json as _json

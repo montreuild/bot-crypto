@@ -6,13 +6,34 @@ Modes d'allocation :
   - manual      : budgets définis manuellement par l'utilisateur
   - performance : rééquilibrage automatique basé sur le profit_factor
 """
+import functools
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
 
+from app.core.bot_identity import parse_slot_key, build_slot_key
+
 logger = logging.getLogger(__name__)
+
+
+def _locked(method):
+    """Sérialise l'accès à ``self._slots`` (OPS-10).
+
+    Le thread lifecycle (``apply_continuous_allocation``/``_rebalance``) écrit
+    ``budget_pct`` pendant que le cycle principal appelle ``can_allocate``/
+    ``register_open``/``register_close`` sur les mêmes ``SlotBudget`` — sans
+    verrou, mises à jour perdues possibles sur ``used_notional``/``budget_pct``.
+    RLock : réentrant pour les appels imbriqués (rebuild_slots→_apply_mode,
+    register_close→_persist_weekly_stats, apply_continuous_allocation→
+    compute_shadow_allocation…)."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
 
 # Defaults (can be overridden via config)
 _DEFAULT_MAX_SLOT_PCT = 0.50
@@ -23,11 +44,43 @@ _DEFAULT_MAX_PYRAMIDING = 2  # max positions per symbol (pyramiding)
 _VALID_MODES = ("equal", "manual", "performance")
 
 
+def _lookup_legacy(mapping, slot_key: str) -> Optional[str]:
+    """Résout ``slot_key`` (``strategy::tf::symbol``) dans ``mapping`` (dict ou
+    set de clés persistées dans config.yaml), avec repli sur la clé héritée à
+    2 parties ``strategy::tf`` si la clé exacte à 3 parties est absente.
+
+    Cf. OPS-01 : avant la refonte per-symbole, ``capital_allocator.slot_budgets``
+    et ``lifecycle.manual_active`` ne portaient pas la dimension symbole. Une
+    clé 2 parties sans match exact s'applique donc à TOUS les slots de préfixe
+    ``strategy::tf::``. La clé exacte à 3 parties, si présente, a toujours
+    priorité sur la clé héritée.
+
+    Retourne la clé effectivement trouvée dans ``mapping`` (exacte ou héritée),
+    ou ``None`` si aucune des deux ne matche.
+    """
+    if slot_key in mapping:
+        return slot_key
+    strategy, tf, symbol = parse_slot_key(slot_key)
+    if symbol:
+        legacy_key = f"{strategy}::{tf}"
+        if legacy_key in mapping:
+            return legacy_key
+    return None
+
+
+def _legacy_keys(mapping) -> List[str]:
+    """Liste les clés à 2 parties (``strategy::tf``, sans symbole) présentes
+    dans ``mapping`` — utilisé uniquement pour le log de compatibilité au
+    chargement (cf. OPS-01)."""
+    return sorted(k for k in mapping if k.count("::") == 1)
+
+
 @dataclass
 class SlotBudget:
-    slot_key: str           # "trend::1h"
+    slot_key: str           # "trend::1h::BTC/USDC"
     strategy: str           # "trend"
     tf: str                 # "1h"
+    symbol: str             # "BTC/USDC"
     enabled: bool           # slot activé/désactivé
     budget_pct: float       # 0.25 → 25% du capital
     used_notional: float    # exposition courante en USDC
@@ -60,6 +113,8 @@ class CapitalAllocator:
 
     def __init__(self, capital: float, active_per_tf: Dict[str, List[dict]],
                  cfg: dict = None, session_factory=None):
+        # OPS-10 : créé AVANT tout accès à _slots (rebuild_slots en fin d'init).
+        self._lock = threading.RLock()
         self.capital = capital
         self._session_factory = session_factory
         alloc_cfg = (cfg or {}).get("capital_allocator", {})
@@ -89,11 +144,22 @@ class CapitalAllocator:
         self._rebalance_next: float = self._next_rebalance_ts()
         # Callback optionnel appelé après chaque _apply_mode() : persist_fn(budgets: dict)
         self._persist_callback: Optional[Callable[[dict], None]] = None
+        # Compatibilité OPS-01 : clés héritées à 2 parties (sans symbole),
+        # appliquées par préfixe à tous les slots concernés (cf. _lookup_legacy).
+        legacy_budgets = _legacy_keys(self._custom_budgets)
+        legacy_disabled = _legacy_keys(self._disabled_slots)
+        if legacy_budgets or legacy_disabled:
+            logger.info(
+                "[Allocator] Clés héritées 2-parties détectées (appliquées par "
+                f"préfixe à tous les symboles) : slot_budgets={legacy_budgets}, "
+                f"disabled_slots={legacy_disabled}"
+            )
         self.rebuild_slots(active_per_tf)
         # Reprise des stats hebdo + planning de rebalance après redémarrage.
         self._restore_weekly_stats()
 
     # ── Construction des slots ─────────────────────────────────────────────
+    @_locked
     def rebuild_slots(self, active_per_tf: Dict[str, List[dict]]):
         """
         Reconstruit les slots depuis _active_per_tf.
@@ -106,12 +172,13 @@ class CapitalAllocator:
                 name = entry.get("name", "")
                 if not name:
                     continue
-                key = f"{name}::{tf}"
+                symbol = entry.get("symbol", "")
+                key = build_slot_key(name, tf, symbol)
                 new_keys.add(key)
                 if key not in self._slots:
                     self._slots[key] = SlotBudget(
-                        slot_key=key, strategy=name, tf=tf,
-                        enabled=key not in self._disabled_slots,
+                        slot_key=key, strategy=name, tf=tf, symbol=symbol,
+                        enabled=_lookup_legacy(self._disabled_slots, key) is None,
                         budget_pct=0.0,
                         used_notional=0.0,
                         weekly_pnl=0.0, weekly_wins=0,
@@ -141,6 +208,7 @@ class CapitalAllocator:
         """
         self._persist_callback = callback
 
+    @_locked
     def _apply_mode(self):
         """Applique le mode d'allocation actuel aux budgets des slots."""
         if self._mode == "manual":
@@ -151,9 +219,14 @@ class CapitalAllocator:
             # En mode manual, les custom budgets sont appliqués dans _apply_manual_budgets
             # Pour equal/performance, on restaure quand même les custom budgets persistés
             if self._mode == "performance":
-                for key, pct in self._custom_budgets.items():
-                    if key in self._slots and self._slots[key].enabled:
-                        self._slots[key].budget_pct = max(0.01, min(self._max_slot_pct, pct))
+                for slot in self._slots.values():
+                    if not slot.enabled:
+                        continue
+                    found_key = _lookup_legacy(self._custom_budgets, slot.slot_key)
+                    if found_key is not None:
+                        slot.budget_pct = max(
+                            0.01, min(self._max_slot_pct, self._custom_budgets[found_key])
+                        )
         # Persister les budgets calculés si un callback est enregistré
         if self._persist_callback is not None:
             budgets = {k: round(v.budget_pct, 4) for k, v in self._slots.items() if v.enabled}
@@ -185,12 +258,14 @@ class CapitalAllocator:
             if not s.enabled:
                 s.budget_pct = 0.0
 
-        # Appliquer les budgets custom
+        # Appliquer les budgets custom (clé exacte 3-parties, sinon repli sur la
+        # clé héritée 2-parties "strategy::tf" — cf. OPS-01/_lookup_legacy).
         used = 0.0
         unset_keys = []
         for s in active:
-            if s.slot_key in self._custom_budgets:
-                pct = max(0.01, min(self._max_slot_pct, self._custom_budgets[s.slot_key]))
+            found_key = _lookup_legacy(self._custom_budgets, s.slot_key)
+            if found_key is not None:
+                pct = max(0.01, min(self._max_slot_pct, self._custom_budgets[found_key]))
                 s.budget_pct = round(pct, 4)
                 used += s.budget_pct
             else:
@@ -222,6 +297,7 @@ class CapitalAllocator:
                     s.budget_pct = round(s.budget_pct * factor2, 4)
 
     # ── Allocation ─────────────────────────────────────────────────────────
+    @_locked
     def is_slot_enabled(self, slot_key: str) -> tuple[bool, str]:
         """
         Vérifie si le slot est activé (enabled/disabled).
@@ -234,6 +310,7 @@ class CapitalAllocator:
             return False, f"Slot '{slot_key}' désactivé"
         return True, ""
 
+    @_locked
     def can_allocate(self, slot_key: str, notional: float) -> tuple[bool, str]:
         """
         Vérifie si le slot dispose du budget nécessaire pour une nouvelle position.
@@ -251,12 +328,14 @@ class CapitalAllocator:
             )
         return True, ""
 
+    @_locked
     def register_open(self, slot_key: str, notional: float):
         """Enregistre l'ouverture d'une position dans un slot."""
         slot = self._slots.get(slot_key)
         if slot:
             slot.used_notional = round(slot.used_notional + notional, 4)
 
+    @_locked
     def register_close(self, slot_key: str, notional: float, pnl: float):
         """Enregistre la clôture d'une position + met à jour les stats hebdo."""
         slot = self._slots.get(slot_key)
@@ -315,6 +394,19 @@ class CapitalAllocator:
     def per_bot_sizing(self) -> bool:
         return self._per_bot_sizing
 
+    @_locked
+    def enabled_budgets(self) -> Dict[str, float]:
+        """Budgets courants ``{slot_key: budget_pct}`` des slots actifs —
+        lecture verrouillée (remplace l'accès direct à ``_slots``)."""
+        return {k: round(v.budget_pct, 4) for k, v in self._slots.items() if v.enabled}
+
+    @_locked
+    def budget_pct(self, slot_key: str) -> float:
+        """``budget_pct`` courant d'un slot (0.0 si inconnu) — lecture verrouillée."""
+        slot = self._slots.get(slot_key)
+        return slot.budget_pct if slot else 0.0
+
+    @_locked
     def slot_budget_usdc(self, slot_key: str) -> float:
         """Budget courant d'un slot en USDC (0 si inconnu/désactivé)."""
         slot = self._slots.get(slot_key)
@@ -327,6 +419,7 @@ class CapitalAllocator:
         self.capital = capital
 
     # ── Rééquilibrage ──────────────────────────────────────────────────────
+    @_locked
     def rebalance_if_due(self):
         if self._mode != "performance":
             return
@@ -335,6 +428,7 @@ class CapitalAllocator:
         self._rebalance_next = self._next_rebalance_ts()
         self._rebalance()
 
+    @_locked
     def force_rebalance(self):
         """Force un rééquilibrage immédiat (appelé via API)."""
         if self._mode == "performance":
@@ -344,6 +438,7 @@ class CapitalAllocator:
         # En mode manual, on ne rééquilibre pas automatiquement
         logger.info(f"[Allocator] Rééquilibrage forcé (mode={self._mode})")
 
+    @_locked
     def _rebalance(self):
         """
         Rééquilibrage basé sur le profit_factor des 7 derniers jours.
@@ -438,6 +533,7 @@ class CapitalAllocator:
         self._persist_weekly_stats()
 
     # ── Toggle slot ────────────────────────────────────────────────────────
+    @_locked
     def set_slot_enabled(self, slot_key: str, enabled: bool) -> bool:
         """
         Active ou désactive un slot. Recalcule les budgets après toggle.
@@ -456,6 +552,7 @@ class CapitalAllocator:
         return True
 
     # ── Mode ───────────────────────────────────────────────────────────────
+    @_locked
     def set_mode(self, mode: str) -> bool:
         """Change le mode d'allocation ('equal', 'manual', 'performance')."""
         if mode not in _VALID_MODES:
@@ -471,9 +568,11 @@ class CapitalAllocator:
 
     @property
     def disabled_slots(self) -> list:
-        return sorted(self._disabled_slots)
+        with self._lock:
+            return sorted(self._disabled_slots)
 
     # ── Allocation continue pilotée par le score (Phase 2 — SHADOW) ──────────
+    @_locked
     def compute_shadow_allocation(self, scores: Dict[str, float],
                                   correlations: Dict[str, float] = None) -> dict:
         """Calcule l'allocation **cible** pilotée par le score, sans l'appliquer.
@@ -558,6 +657,7 @@ class CapitalAllocator:
     def continuous_allocation(self) -> bool:
         return self._continuous_allocation
 
+    @_locked
     def apply_continuous_allocation(self, scores: Dict[str, float],
                                     correlations: Dict[str, float] = None) -> dict:
         """**Applique** l'allocation continue pilotée par le score (graduation
@@ -586,6 +686,7 @@ class CapitalAllocator:
         return res
 
     # ── Persistance des stats hebdo (reprise après redémarrage) ─────────────
+    @_locked
     def _persist_weekly_stats(self) -> None:
         """Sauvegarde les stats hebdo par slot + le prochain rebalance (no-op si
         non branché à une base). Sans ça, après un crash le rééquilibrage par
@@ -612,6 +713,7 @@ class CapitalAllocator:
         except Exception as e:
             logger.debug(f"[Allocator] persistance stats hebdo KO : {e}")
 
+    @_locked
     def _restore_weekly_stats(self) -> None:
         """Restaure les stats hebdo + le prochain rebalance depuis la base."""
         if not self._session_factory:
@@ -647,6 +749,7 @@ class CapitalAllocator:
             logger.info(f"[Allocator] Stats hebdo restaurées ({restored} slot(s) actifs).")
 
     # ── Statut pour l'API ──────────────────────────────────────────────────
+    @_locked
     def get_status(self) -> List[dict]:
         return [
             {
@@ -670,6 +773,7 @@ class CapitalAllocator:
             for s in self._slots.values()
         ]
 
+    @_locked
     def get_config(self) -> dict:
         """Retourne la configuration courante de l'allocateur."""
         return {
@@ -683,6 +787,7 @@ class CapitalAllocator:
             "custom_budgets":         {k: round(v * 100, 1) for k, v in self._custom_budgets.items()},
         }
 
+    @_locked
     def set_slot_budget(self, slot_key: str, budget_pct: float) -> bool:
         """
         Définit manuellement le budget d'un slot (en fraction du capital, ex: 0.25 = 25%).

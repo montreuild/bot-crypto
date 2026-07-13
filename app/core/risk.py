@@ -415,14 +415,10 @@ class RiskManager:
 
     # ── Position sizing ────────────────────────────────────────────────────
     def compute_risk(self) -> float:
+        # Courbe partagée backtest/live (BT-09) — source unique : risk_curve.py.
+        from app.core.risk_curve import risk_multiplier
         dd = _safe_div(self.peak_equity - self.equity, self.peak_equity)
-        if dd > 0.10:
-            factor = 0.5
-        elif dd > 0.05:
-            factor = 0.75
-        else:
-            factor = 1.0
-        return self.base_risk * factor
+        return self.base_risk * risk_multiplier(dd)
 
     def compute_size(self, entry: float, atr: float,
                      score: float = 1.0, threshold: float = 0.60,
@@ -521,7 +517,9 @@ class RiskManager:
         strat = position.get("strategy", "")
         tf    = position.get("timeframe", "")
         if strat and tf:
-            self.register_slot_open(f"{strat}::{tf}")
+            from app.core.bot_identity import build_slot_key
+            self.register_slot_open(build_slot_key(strat, tf,
+                                                   position.get("symbol", "")))
 
     def register_close(self, position_id: str):
         self.open_positions.pop(position_id, None)

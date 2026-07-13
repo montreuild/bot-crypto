@@ -12,6 +12,7 @@ import numpy as np
 import polars as pl
 
 import app.core.indicators as I
+from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
 from app.core.indicators_core import atr_wilder
 
 
@@ -22,20 +23,69 @@ def _edge(cond) -> np.ndarray:
     return out
 
 
-def build_signals(df: pl.DataFrame):
-    """{nom: (entrees{+1,0,-1}, kind, tp_arr|None)} ; kind ∈ trend|mr."""
+def _smc_signals(df: pl.DataFrame):
+    """Famille « smc » (SMC-09) : signaux du moteur SMC du bot lui-même —
+    sweeps REJETÉS (achat après prise de liquidité sell-side, miroir short)
+    et premiers retests d'order block. Edge-triggered par construction
+    (une entrée par événement) ; TP = première cible de liquidité opposée
+    (``smc.liquidity_targets_above/below``) — signal ignoré si aucune."""
+    from app.core import smc as _smc
+    n = len(df)
+    res = _smc.analyze(df)
     c = df["close"].to_numpy()
-    e20 = I.ema(df["close"], 20).to_numpy(); e50 = I.ema(df["close"], 50).to_numpy()
-    e200 = I.ema(df["close"], 200).to_numpy()
-    rsi = I.rsi(df["close"], 14).to_numpy()
+    out = {}
+
+    def _tp_for(i: int, direction: int):
+        price = float(c[i])
+        if direction > 0:
+            lv = _smc.liquidity_targets_above(res, i, price)
+            return lv[0] if lv else None
+        lv = _smc.liquidity_targets_below(res, i, price)
+        return lv[-1] if lv else None
+
+    events = {
+        "SMC sweep rejeté": [(ev["index"], 1 if ev["kind"] == "sell_side" else -1)
+                             for ev in res["_all_sweeps"] if ev["rejected"]],
+        "SMC OB retest":    [(ob["touched_at"], 1 if ob["kind"] == "bullish" else -1)
+                             for ob in res["_all_obs"]
+                             if ob["touched_at"] is not None
+                             and (ob["invalidated_at"] is None
+                                  or ob["invalidated_at"] > ob["touched_at"])],
+    }
+    for name, evs in events.items():
+        s = np.zeros(n, dtype=np.int8)
+        tp = np.full(n, np.nan)
+        for i, direction in evs:
+            if not (0 <= i < n):
+                continue
+            lvl = _tp_for(i, direction)
+            if lvl is None:
+                continue
+            s[i] = direction
+            tp[i] = lvl
+        out[name] = (s, "smc", tp)
+    return out
+
+
+def build_signals(df: pl.DataFrame, scale: float = 1.0, include_smc: bool = True):
+    """{nom: (entrees{+1,0,-1}, kind, tp_arr|None)} ; kind ∈ trend|mr|smc.
+
+    ``scale`` (SMC-10) : facteur multiplicatif des périodes d'indicateurs
+    (1.0 = défaut historique, byte-identique). La famille smc n'est incluse
+    qu'à l'échelle 1.0 (le moteur SMC n'a pas de période à balayer)."""
+    P = lambda x: max(2, int(round(x * scale)))
+    c = df["close"].to_numpy()
+    e20 = I.ema(df["close"], P(20)).to_numpy(); e50 = I.ema(df["close"], P(50)).to_numpy()
+    e200 = I.ema(df["close"], P(200)).to_numpy()
+    rsi = I.rsi(df["close"], P(14)).to_numpy()
     _, _, mh = (x.to_numpy() for x in I.macd(df["close"]))
-    bbu, _, bbl = (x.to_numpy() for x in I.bollinger(df["close"], 20, 2.0))
-    adx_l, pdi, ndi = (x.to_numpy() for x in I.adx(df, 14))
-    st_dir, _ = (x.to_numpy() for x in I.supertrend(df, 10, 3.0))
-    dcu, dcl = (x.to_numpy() for x in I.donchian(df, 20))
-    chop = I.choppiness(df, 14).fill_null(50.0).to_numpy()
-    bbm = I.bollinger(df["close"], 20, 2.0)[1].to_numpy()
-    vw, vwu, vwd = (x.to_numpy() for x in I.vwap_bands(df, 20, 2.0))
+    bbu, _, bbl = (x.to_numpy() for x in I.bollinger(df["close"], P(20), 2.0))
+    adx_l, pdi, ndi = (x.to_numpy() for x in I.adx(df, P(14)))
+    st_dir, _ = (x.to_numpy() for x in I.supertrend(df, P(10), 3.0))
+    dcu, dcl = (x.to_numpy() for x in I.donchian(df, P(20)))
+    chop = I.choppiness(df, P(14)).fill_null(50.0).to_numpy()
+    bbm = I.bollinger(df["close"], P(20), 2.0)[1].to_numpy()
+    vw, vwu, vwd = (x.to_numpy() for x in I.vwap_bands(df, P(20), 2.0))
     up = (c > e200) & (e20 > e50); dn = (c < e200) & (e20 < e50)
     trL = up & (adx_l > 22) & (pdi > ndi) & (chop < 55)
     trS = dn & (adx_l > 22) & (ndi > pdi) & (chop < 55)
@@ -46,7 +96,7 @@ def build_signals(df: pl.DataFrame):
         s[_edge(L) == 1] = 1; s[_edge(S) == 1] = -1
         return s
 
-    return {
+    out = {
         "TENDANCE EMA200 + long":   (sig(trL, np.zeros(len(c), bool)), "trend", None),
         "TENDANCE EMA200 align":    (sig(trL, trS), "trend", None),
         "TENDANCE SuperTrend flip": (sig(st_dir > 0, st_dir < 0), "trend", None),
@@ -57,6 +107,9 @@ def build_signals(df: pl.DataFrame):
         "RETOUR RSI30/70→mid":      (sig((rsi < 30) & rng, (rsi > 70) & rng), "mr", bbm),
         "RETOUR VWAP2σ→vwap":       (sig((c < vwd) & rng, (c > vwu) & rng), "mr", vw),
     }
+    if include_smc and scale == 1.0:
+        out.update(_smc_signals(df))
+    return out
 
 
 def _sim(df, sig, kind, tp_arr, lo, hi, fee, spread,
@@ -94,7 +147,7 @@ def _sim(df, sig, kind, tp_arr, lo, hi, fee, spread,
             a = float(atr[j - 1]) or 1e-9
             sl = entry - stop_k * a if side == "long" else entry + stop_k * a
             pos = {"side": side, "entry": entry, "sl": sl, "risk": stop_k * a, "bar": j}
-            if kind == "mr":
+            if kind in ("mr", "smc"):
                 tp = float(tp_arr[j - 1])
                 if (side == "long" and tp <= entry) or (side == "short" and tp >= entry):
                     pos = None; continue
@@ -115,19 +168,42 @@ def _stats(tr):
             "wr": round(float((a > 0).mean() * 100), 1)}
 
 
-def analyze(df: pl.DataFrame, taker: float = 0.001, maker: float = 0.0004,
-            oos_frac: float = 0.33) -> dict:
-    """Retourne {rows:[…], best:…} classés par PnL OOS maker décroissant."""
+def analyze(df: pl.DataFrame, taker: float = DEFAULT_TAKER_FEE,
+            maker: float = DEFAULT_MAKER_FEE,
+            oos_frac: float = 0.33, fee_grid: list = None,
+            period_scales: tuple = None) -> dict:
+    """Retourne {rows:[…], best:…} classés par PnL OOS maker décroissant.
+
+    SMC-10 (opt-in, API par défaut inchangée) :
+      - ``fee_grid``      : liste de (taker, maker) additionnels — chaque row
+        gagne ``fee_grid: [{taker, maker, oos_taker, oos_maker}]`` (un edge
+        visible seulement à un autre niveau de frais n'est plus manqué) ;
+      - ``period_scales`` : échelles de période (ex. (0.5, 2.0)) — chaque
+        signal indicateur est aussi testé avec ses périodes ×échelle
+        (lignes « nom ×0.5 »)."""
     n = df.height
     if n < 260:
         return {"rows": [], "best": None, "error": "historique insuffisant (< 260 barres)"}
     split = int(n * (1 - oos_frac)); spread = taker * 0.5
+    all_signals = dict(build_signals(df))
+    for sc in (period_scales or ()):
+        if sc == 1.0:
+            continue
+        for nm, tpl in build_signals(df, scale=float(sc),
+                                     include_smc=False).items():
+            all_signals[f"{nm} ×{sc:g}"] = tpl
     rows = []
-    for name, (sig, kind, tp) in build_signals(df).items():
+    for name, (sig, kind, tp) in all_signals.items():
         rec = {"signal": name, "kind": kind}
         for fee, tag in ((taker, "taker"), (maker, "maker")):
             rec[tag] = {"full": _stats(_sim(df, sig, kind, tp, 0, n, fee, spread)),
                         "oos": _stats(_sim(df, sig, kind, tp, split, n, fee, spread))}
+        if fee_grid:
+            rec["fee_grid"] = [
+                {"taker": t, "maker": m,
+                 "oos_taker": _stats(_sim(df, sig, kind, tp, split, n, t, t * 0.5)),
+                 "oos_maker": _stats(_sim(df, sig, kind, tp, split, n, m, t * 0.5))}
+                for t, m in fee_grid]
         rows.append(rec)
     rows.sort(key=lambda r: -r["maker"]["oos"]["pnl"])
     best: Optional[str] = None

@@ -88,6 +88,21 @@ def fvg_overlap(fvgs: List[dict], i: int, kind: str,
     return False
 
 
+def fvg_overlap_ce(fvgs: List[dict], i: int, kind: str,
+                   zone_lo: float, zone_hi: float):
+    """CE (niveau 50 %) du premier FVG OUVERT de même direction chevauchant
+    [lo, hi] à la barre ``i`` — None si aucun. Variante de ``fvg_overlap``
+    exposant le niveau d'entrée « propre » ICT (SMC-06)."""
+    for fv in fvgs:
+        if fv["kind"] != kind or fv["index"] >= i:
+            continue
+        if fv["filled_at"] is not None and fv["filled_at"] <= i:
+            continue
+        if fv["bottom"] <= zone_hi and fv["top"] >= zone_lo:
+            return consequent_encroachment(fv["top"], fv["bottom"])
+    return None
+
+
 def inverted_fvg_overlap(fvgs: List[dict], i: int, side: str,
                          zone_lo: float, zone_hi: float) -> bool:
     """Inversion de rôle (IFVG) : un FVG de sens OPPOSÉ, DÉJÀ mitigé avant i, qui

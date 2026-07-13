@@ -12,16 +12,14 @@ from app.api.helpers import (
     verify_api_key, _clean, _discover_strategies, _get_bt_exchange, detect_ohlcv_gaps
 )
 from app.core.candle_store import get_store
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.engine.engine import Engine
 from app.engine.backtest import Backtester, WalkForwardAnalyzer, MonteCarlo
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_TF_MINUTES = {
-    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-    "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480, "12h": 720, "1d": 1440,
-}
+from app.core.timeframes import TF_MINUTES as _TF_MINUTES  # V4-A : source unique
 
 
 def _months_to_bars(months: float, tf: str) -> int:
@@ -39,7 +37,7 @@ def cancel_replay():
 
 @router.post("/api/replay", dependencies=[Depends(verify_api_key)])
 def run_replay(
-    symbol:       str   = "BTC/USDC",
+    symbol:       str   = DEFAULT_CONFIG_SYMBOL,
     months:       float = 6.0,
     timeframes:   str   = "1h,4h,1d",
     strategies:   str   = "",

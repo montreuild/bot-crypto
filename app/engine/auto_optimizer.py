@@ -10,6 +10,7 @@ import polars as pl
 
 from app.engine.engine   import Engine, BaseStrategyML
 from app.engine.backtest import Backtester
+from app.core.is_oos import split_is_oos
 from app.engine.optimizer import (
     StrategyOptimizer, PARAM_SPACES, STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT,
     apply_best_params, record_optimizer_audit, get_active_strategies_per_tf
@@ -317,10 +318,8 @@ class AutoOptimizer:
             df = df_map.get(tf)
             n_available = len(df) if df is not None else 0
 
-            WARMUP = 210
-            split  = max(WARMUP + 100, int(n_available * 0.65)) if n_available > 0 else 0
-            df_is  = df[:split]  if df is not None else None
-            df_oos = df[split:]  if df is not None else None
+            # Convention unique de split IS/OOS (BT-08) — cf. app/core/is_oos.py
+            df_is, df_oos, split = split_is_oos(df)
 
             for name in strats:
                 # Pas d'espace de paramètres (ou espace vide) → rien à optimiser.
@@ -472,38 +471,75 @@ class AutoOptimizer:
             best_oos_wr    = result.get("best_oos_wr", 0)
             best_oos_sharpe = result.get("best_oos_sharpe", 0)
 
-            # Un paramétrage n'est appliqué que s'il est meilleur que le baseline.
-            # Le PnL OOS est un critère OBLIGATOIRE : un meilleur Win Rate ou
-            # Sharpe ne doit jamais suffire à appliquer un paramétrage qui gagne
-            # moins (ex. +33 à 3 trades qui « outvote » +96 à 15 trades sur WR +
-            # Sharpe). En plus du PnL, on exige une amélioration sur au moins un
-            # critère de qualité (Win Rate ou Sharpe).
-            # TODO(Phase 0 — durcissement optimiseur, reporté à une phase
-            # ultérieure) : remplacer le gate ci-dessous par
-            #   - un seuil de **Deflated Sharpe** (Bailey & López de Prado) au
-            #     gate de naissance, pour corriger le biais de sélection des
-            #     ~40 essais (multiple-testing) ;
-            #   - un minimum de **≥ 10 trades OOS** (au lieu de 3) ;
-            #   - une vérification **walk-forward** dans la décision d'apply.
-            # Cf. docs/SYNTHESE_VISION_PRODUIT.md §5 « Durcissement optimiseur ».
-            def _beats_baseline() -> bool:
-                if oos_trades < 3:
-                    return False
-                if best_oos_pnl <= 0:
-                    return False
-                if best_oos_pnl <= baseline_pnl:
-                    return False
-                quality_improvements = sum([
-                    best_oos_wr     > baseline_wr,
-                    best_oos_sharpe > baseline_sharpe,
-                ])
-                return quality_improvements >= 1
+            # Garde-fou UNIQUE d'application (BT-04/BT-06) : fonction pure
+            # partagée avec la route /api/optimize/apply — échantillon OOS
+            # ≥ MIN_SIGNIFICANT_TRADES (10, cf. app/core/stats_thresholds.py,
+            # remplace l'ancien seuil 3 du TODO), PnL OOS positif ET meilleur
+            # que le baseline, plus une amélioration de qualité (WR ou Sharpe).
+            # TODO(Phase 0) restant : seuil de **Deflated Sharpe** (Bailey &
+            # López de Prado) au gate de naissance (biais multiple-testing).
+            from app.engine.opt_scoring import beats_baseline as _bb
 
-            if auto_apply and result.get("best_params") and _beats_baseline():
+            def _beats_baseline() -> bool:
+                ok, reason = _bb(oos_trades, best_oos_pnl, best_oos_wr,
+                                 best_oos_sharpe, _baseline)
+                if not ok:
+                    logger.info(f"[AutoOpt] {job_id} : gate d'apply refusé — {reason}")
+                return ok
+
+            def _wf_consistent() -> bool:
+                """Gate walk-forward (BT-07) : les best_params FIGÉS (aucune
+                re-optimisation par fold) doivent rester positifs sur une
+                majorité de fenêtres OOS glissantes avant l'auto-apply — un
+                unique split IS/OOS ne suffit pas. Neutre (True) si le gate
+                est désactivé (optimizer.wf_gate: false), si les données
+                complètes manquent, ou si le walk-forward est indisponible
+                (historique trop court) : on ne durcit pas à l'aveugle."""
+                opt_cfg = (self.cfg.get("optimizer") or {})
+                if not bool(opt_cfg.get("wf_gate", True)) or df_full is None:
+                    return True
+                min_cons = float(opt_cfg.get("wf_min_consistency", 60.0))
+                try:
+                    from copy import deepcopy
+                    from app.engine.backtest import WalkForwardAnalyzer
+                    cfg2 = {k: v for k, v in self.cfg.items()}
+                    sp = deepcopy(self.cfg.get("strategy_params") or {})
+                    frozen = dict(sp.get(strategy_name, {}))
+                    frozen.update(result["best_params"])
+                    sp[strategy_name] = frozen
+                    cfg2["strategy_params"] = sp
+                    cfg2["optimizer_results"] = {}   # params figés, pas d'overlay
+                    mod = importlib.import_module(f"app.strategies.{strategy_name}")
+                    eng = Engine()
+                    eng.register(mod.Strategy(), silent=True)
+                    wf = WalkForwardAnalyzer(eng, cfg2,
+                                             n_folds=int(opt_cfg.get("wf_folds", 5)))
+                    res_wf = wf.run(df_full, symbol)
+                    if "error" in res_wf:
+                        logger.info(f"[AutoOpt] {job_id} : walk-forward indisponible "
+                                    f"({res_wf['error']}) — gate neutre")
+                        return True
+                    cons = float(res_wf.get("consistency", 0.0))
+                    _update_job(job_id, wf_consistency=cons)
+                    if cons < min_cons:
+                        logger.info(f"[AutoOpt] {job_id} : gate walk-forward refusé — "
+                                    f"consistency {cons:.0f}% < {min_cons:.0f}%")
+                        return False
+                    return True
+                except Exception as e:
+                    logger.warning(f"[AutoOpt] {job_id} : walk-forward KO ({e}) — gate neutre")
+                    return True
+
+            gate_ok = bool(auto_apply and result.get("best_params")
+                           and _beats_baseline() and _wf_consistent())
+
+            if gate_ok:
                 best_params = result["best_params"]
+                # Config par symbole : on écrit sous optimizer_results[tf][symbol]
+                # (chaque paire a sa propre config, elles coexistent).
                 applied = apply_best_params(
                     strategy_name, best_params, self.config_path,
-                    timeframe=timeframe, oos_score=best_oos_score
+                    timeframe=timeframe, oos_score=best_oos_score, symbol=symbol
                 )
                 if applied and self.on_apply_callback:
                     try:
@@ -517,12 +553,12 @@ class AutoOptimizer:
                         f"WR={best_oos_wr:.1f}% vs {baseline_wr:.1f}%, "
                         f"Sharpe={best_oos_sharpe:.2f} vs {baseline_sharpe:.2f})"
                     )
-            elif auto_apply and result.get("best_params") and not _beats_baseline():
+            elif auto_apply and result.get("best_params"):
                 logger.info(
-                    f"[AutoOpt] {job_id} : application refusée — résultat inférieur au baseline "
-                    f"(OOS PnL={best_oos_pnl:+.2f} vs baseline={baseline_pnl:+.2f}, "
+                    f"[AutoOpt] {job_id} : application refusée (gate qualité ou walk-forward) — "
+                    f"OOS PnL={best_oos_pnl:+.2f} vs baseline={baseline_pnl:+.2f}, "
                     f"WR={best_oos_wr:.1f}% vs {baseline_wr:.1f}%, "
-                    f"Sharpe={best_oos_sharpe:.2f} vs {baseline_sharpe:.2f})"
+                    f"Sharpe={best_oos_sharpe:.2f} vs {baseline_sharpe:.2f}"
                 )
                 # Non appliqué = non utilisé : on trace pour l'audit sans écrire
                 # dans optimizer_results (sinon le paramétrage refusé deviendrait
@@ -653,9 +689,7 @@ class AutoOptimizer:
                             logger.debug(f"[AutoOpt] on_job_done(skip) KO : {_cb}")
                     continue
 
-                WARMUP = 210
-                split  = max(WARMUP + 100, int(n_available * 0.65))
-                df_is, df_oos = df[:split], df[split:]
+                df_is, df_oos, split = split_is_oos(df)   # convention unique (BT-08)
 
                 recommended_tfs = STRATEGY_TIMEFRAMES.get(name, list(RECOMMENDED_LIMIT.keys()))
                 jid = _job_id(name, tf, symbol)
@@ -698,10 +732,7 @@ class AutoOptimizer:
             df = df_map.get(tf)
             if df is None or len(df) < 300:
                 continue
-            WARMUP = 210
-            split  = max(WARMUP + 100, int(len(df) * 0.65))
-            df_is  = df[:split]
-            df_oos = df[split:]
+            df_is, df_oos, split = split_is_oos(df)   # convention unique (BT-08)
 
             for name in strats:
                 if name not in PARAM_SPACES:

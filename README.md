@@ -96,6 +96,20 @@ trading:
 python cli.py
 ```
 
+> ⚠ **Dev local** : si `config.yaml` a `web.host: 0.0.0.0` sans `web.api_key`,
+> le démarrage est refusé (l'API de trading serait ouverte au réseau — OPS-02).
+> Pour des tests en local uniquement, mettre dans `config.yaml` :
+>
+> ```yaml
+> web:
+>   allow_insecure: true   # dev local uniquement
+> ```
+>
+> (La variable d'environnement `ALLOW_INSECURE_WEB=1` fonctionne aussi.)
+>
+> Avant toute exposition réseau, définir `web.api_key`
+> (`python -c "import secrets; print(secrets.token_urlsafe(32))"`).
+
 Lance automatiquement :
 - Trader (live ou paper selon `config.yaml`)
 - Serveur web sur `http://127.0.0.1:8000`

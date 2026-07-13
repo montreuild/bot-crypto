@@ -43,7 +43,7 @@
 
 {% block content %}
 <div id="content" class="fade-in">
-  <div id="haltBanner" class="banner halt"></div>
+  <div id="haltBanner" class="banner halt" role="alert" aria-live="assertive"></div>
 
   <div class="kpi-grid">
     <div class="kpi"><div class="lbl">Capital</div><div class="val" id="kCapital">—</div></div>
@@ -71,18 +71,19 @@
     <div class="panel-hdr">Allocation du capital <span style="color:var(--dim);font-weight:400">— barre = budget actuel · trait <span style="color:var(--amber)">▮</span> = proposition de l'allocateur (selon le score)</span></div>
     <div class="panel-body">
       <div id="shadowNote" class="info-box" style="display:none;margin-bottom:4px"></div>
-      <div id="allocBox"><div style="color:var(--dim);font-size:.8rem">Chargement…</div></div>
+      <div id="allocBox" role="status" aria-live="polite"><div style="color:var(--dim);font-size:.8rem">Chargement…</div></div>
     </div>
   </div>
 
   <div class="panel">
     <div class="panel-hdr">Fil d'activité <span style="color:var(--dim);font-weight:400">— 3 niveaux (info · avertissement · critique)</span></div>
-    <div class="panel-body"><div class="feed" id="feed"><div style="color:var(--dim);font-size:.8rem">Aucune notification.</div></div></div>
+    <div class="panel-body"><div class="feed" id="feed" role="status" aria-live="polite"><div style="color:var(--dim);font-size:.8rem">Aucune notification.</div></div></div>
   </div>
 </div>
 {% endblock %}
 
 {% block body_scripts %}
+<script src="/static/js/alloc.js"></script>
 <script>
 function pct(v){ return (v==null||isNaN(v))?'—':(v>=0?'+':'')+Number(v).toFixed(2)+'%'; }
 function usd(v){ return (v==null||isNaN(v))?'—':'$'+Number(v).toLocaleString('fr-FR',{maximumFractionDigits:2}); }
@@ -140,20 +141,11 @@ async function loadPortfolio(){
     } else { note.style.display='none'; }
   }
 
-  const box=document.getElementById('allocBox');
-  const alloc=d.allocation||[]; const shadow=(d.shadow_allocation&&d.shadow_allocation.targets)||{};
-  const sdelta=(d.shadow_allocation&&d.shadow_allocation.delta)||{};
-  if(!alloc.length){ box.innerHTML='<div style="color:var(--dim);font-size:.8rem">Aucun slot actif.</div>'; }
-  else{
-    box.innerHTML = alloc.map(s=>{
-      const cur=s.budget_pct||0; const tgt=(shadow[s.slot_key]!=null)?shadow[s.slot_key]*100:null;
-      const dl=sdelta[s.slot_key]; const dlTxt=(dl==null)?'':`<span class="${dl>=0?'delta-up':'delta-dn'}">${(dl>=0?'+':'')+(dl*100).toFixed(1)}%</span>`;
-      const tgtMark=(tgt!=null)?`<div class="alloc-tgt" style="left:${Math.min(tgt,100)}%"></div>`:'';
-      return `<div class="alloc-row"><div class="nm" title="${escHtml(s.slot_key)}">${escHtml(s.slot_key)}</div>
-        <div class="alloc-bar"><div class="alloc-cur" style="width:${Math.min(cur,100)}%"></div>${tgtMark}</div>
-        <div class="alloc-nums">${cur.toFixed(1)}% ${dlTxt}</div></div>`;
-    }).join('');
-  }
+  const alloc=d.allocation||[];
+  const shadowTargets=(d.shadow_allocation&&d.shadow_allocation.targets)||{};
+  const shadowDelta=(d.shadow_allocation&&d.shadow_allocation.delta)||{};
+  renderAllocGrid(document.getElementById('allocBox'), alloc,
+    {style:'row', shadowTargets, shadowDelta});
 }
 
 async function loadFeed(){

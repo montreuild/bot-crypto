@@ -28,15 +28,17 @@ from app.core.trailing import TrailingStopManager
 from app.core.database import (save_trade, update_daily_stats,
                                 persist_open_position, delete_open_position,
                                 load_open_positions, session_scope)
+import polars as pl
+
 from app.core.indicators import atr_val as _compute_atr
+from app.core.bot_identity import build_slot_key, build_pos_key
+from app.core.config import DEFAULT_TAKER_FEE
+from app.core.timeframes import HTF_MAP as _HTF_MAP
 
 logger = logging.getLogger(__name__)
 
-# Mapping TF → secondes
-_TF_SECS = {
-    "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
-    "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400,
-}
+# Mapping TF → secondes — source unique (V4-A).
+from app.core.timeframes import TF_SECONDS as _TF_SECS  # noqa: E402
 
 
 def _calc_unreal_pct(side: str, entry: float, price: float) -> float:
@@ -329,7 +331,7 @@ class PositionMixin:
             except (TypeError, ValueError):
                 pass
 
-        fee_rate = self.cfg["trading"].get("taker_fee", 0.001)
+        fee_rate = self.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE)
         fees     = trade_fees(exec_price, size, fee_rate)
         with self._capital_lock:
             if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
@@ -733,7 +735,9 @@ class PositionMixin:
         if add_size <= 0 or add_notional <= 0:
             return
 
-        slot_key = f"{pos.get('strategy', '')}::{pos.get('timeframe', self.tf)}"
+        slot_key = build_slot_key(pos.get('strategy', ''),
+                                  pos.get('timeframe', self.tf),
+                                  pos.get('symbol', ''))
         ok_budget, reason_budget = self.allocator.can_allocate(slot_key, add_notional)
         if not ok_budget:
             logger.debug(f"[ScaleIn] {symbol} refusé (budget: {reason_budget})")
@@ -750,7 +754,7 @@ class PositionMixin:
             slip = self.cfg["trading"].get("paper_slippage", 0.001)
             exec_price *= (1 + slip) if side == "long" else (1 - slip)
 
-        fee_rate = self.cfg["trading"].get("taker_fee", 0.001)
+        fee_rate = self.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE)
         add_fees = trade_fees(exec_price, add_size, fee_rate)
         with self._capital_lock:
             if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
@@ -933,7 +937,7 @@ class PositionMixin:
         # Décompte de clôture (frais, emprunt composé, PnL net) : formules
         # partagées avec le Backtester — app/core/execution.py (parité
         # verrouillée par tests/test_execution_parity.py).
-        fee_rate    = self.cfg["trading"].get("taker_fee", 0.001)
+        fee_rate    = self.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE)
         hours_held  = (time.time() - pos["open_time"]) / 3600
         pnl, fees, borrow_cost = close_pnl(
             side=pos["side"], entry=pos["entry"], exit_price=exec_price,
@@ -962,7 +966,9 @@ class PositionMixin:
         self.risk.register_close(pos_id)
 
         # Mise à jour circuit breakers par slot
-        slot_key = f"{pos.get('strategy', '')}::{pos.get('timeframe', self.tf)}"
+        slot_key = build_slot_key(pos.get('strategy', ''),
+                                  pos.get('timeframe', self.tf),
+                                  pos.get('symbol', ''))
         self.risk.update_slot_result(slot_key, pnl, pnl > 0)
 
         # Libération du budget du slot
@@ -1057,3 +1063,175 @@ class PositionMixin:
             "open_time": pos.get("open_time", 0),
             "reason":    pos.get("reason", ""),
         }
+
+    # ── Ouverture de position (chemin unique) ──────────────────────────────
+
+    def _try_open_from_signal(
+        self,
+        pos_key: str,
+        symbol: str,
+        strategy_name: str,
+        side: str,
+        score: float,
+        strat_threshold: float,
+        tf: str,
+        slot_key: str,
+        signal_dict: dict,
+        atr: float,
+        price: float,
+    ) -> bool:
+        """
+        Chemin unique d'ouverture de position.
+        Applique dans l'ordre : global risk → slot enabled → slot CB → corrélation →
+        sizing → budget → pre_execution_check → ouverture.
+        Retourne True si la position a été ouverte, False sinon.
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        def _reject(tag: str, reason: str) -> bool:
+            logger.debug(f"[Trade] {symbol}/{slot_key} rejeté ({tag}: {reason})")
+            self.signal_log.append({
+                "time": now_iso, "symbol": symbol, "strategy": strategy_name,
+                "side": side, "score": round(score, 3),
+                "threshold": round(strat_threshold, 3),
+                "timeframe": tf, "status": "rejected",
+                "reason": f"{tag}: {reason}",
+            })
+            return False
+
+        # 1. Risque global
+        ok_global, reason_global = self.risk.can_trade(side)
+        if not ok_global:
+            return _reject("risk", reason_global)
+
+        # 2. Slot activé/désactivé (statut indépendant du budget)
+        ok_enabled, reason_enabled = self.allocator.is_slot_enabled(slot_key)
+        if not ok_enabled:
+            return _reject("slot_disabled", reason_enabled)
+
+        # 3. Slot circuit breaker (pause)
+        ok_slot, reason_slot = self.risk.can_slot_trade(slot_key)
+        if not ok_slot:
+            return _reject("slot_cb", reason_slot)
+
+        # 4. Corrélation/exposition
+        ok_corr, reason_corr = self.allocator.check_correlation(
+            side, self.open_positions, symbol=symbol
+        )
+        if not ok_corr:
+            logger.debug(f"[Trade] {symbol}/{slot_key} rejeté (corrélation: {reason_corr})")
+            return False
+
+        # 5. Sizing — par bot (sur son budget) si activé, sinon sur l'équité globale.
+        budget_usdc = None
+        max_lev = None
+        if getattr(self.allocator, "per_bot_sizing", False):
+            b = self.allocator.slot_budget_usdc(slot_key)
+            if b and b > 0:
+                from app.core.bot_identity import resolve_venue
+                budget_usdc = b
+                max_lev = resolve_venue(self.cfg, strategy_name, tf, symbol).max_leverage
+        # Distance au stop initial → sizing par le risque réel (parité backtest),
+        # au lieu de l'ATR brut qui sur-risquait d'un facteur = multiple du stop.
+        stop_dist = self._initial_stop_distance(side, price, atr, signal_dict)
+        size, notional = self.risk.compute_size(
+            price, atr, score=score, threshold=strat_threshold,
+            size_factor=float(signal_dict.get("size_factor", 1.0)),
+            budget=budget_usdc, max_leverage=max_lev,
+            stop_dist=stop_dist,
+        )
+        leverage = self.risk.compute_leverage(notional)
+
+        # 6. Budget
+        ok_budget, reason_budget = self.allocator.can_allocate(slot_key, notional)
+        if not ok_budget:
+            return _reject("budget", reason_budget)
+
+        # 7. Pre-execution check (ordres réels)
+        if not self._pre_execution_check(symbol, side, size, price, notional):
+            return False
+
+        # 8. Vérification atomique + ouverture (protège contre les races concurrentes)
+        with self._positions_lock:
+            if pos_key in self.open_positions:
+                return False
+            max_pos = self.cfg["trading"].get("max_positions", 5)
+            # En mode veto shadow (paper), max_positions ne bloque plus — on a déjà
+            # compté l'écart dans risk.can_trade ; ce garde-fou atomique reste actif
+            # uniquement en mode enforce.
+            if not getattr(self.risk, "veto_shadow", False) and len(self.open_positions) >= max_pos:
+                return _reject("risk", f"Max positions ({max_pos}) atteint")
+            # Réserve le slot avant de relâcher le verrou
+            self.open_positions[pos_key] = {"_reserved": True}
+
+        try:
+            self._open_position(pos_key, symbol, signal_dict, price, size, notional, atr, leverage, tf)
+        except Exception:
+            with self._positions_lock:
+                self.open_positions.pop(pos_key, None)
+            raise
+        self.allocator.register_open(slot_key, notional)
+        return True
+
+    # ── Scan direct par stratégie (conservé pour compatibilité tests) ──────
+
+    def _scan_symbol_strategy(self, symbol: str, df: pl.DataFrame,
+                               strategy, params: dict, tf: str) -> None:
+        """
+        Exécute une stratégie sur un symbole/TF et ouvre une position si le signal
+        passe tous les filtres. Conservé pour les appels directs et les tests unitaires ;
+        la boucle principale utilise SignalPipeline.collect().
+        Applique le même chemin de gating que _cycle() via _try_open_from_signal().
+        """
+        htf    = _HTF_MAP.get(tf)
+        df_htf = self._get_ohlcv(symbol, htf) if htf and htf != tf else None
+        try:
+            signal = strategy.score(df, params, df_htf=df_htf, symbol=symbol)
+        except Exception as e:
+            logger.error(f"[Scan] {strategy.name}/{symbol}/{tf} score KO : {e}")
+            return
+
+        if signal.get("side") == "none":
+            return
+
+        strat_threshold = self._strat_thresholds.get(strategy.name, self.threshold)
+        score = signal.get("score", 0)
+        if score < strat_threshold:
+            self.signal_log.append({
+                "time":      datetime.now(timezone.utc).isoformat(),
+                "symbol":    symbol, "strategy": strategy.name,
+                "side":      signal.get("side", "?"), "score": round(float(score), 3),
+                "threshold": round(float(strat_threshold), 3),
+                "timeframe": tf, "status": "rejected",
+                "reason":    f"score {score:.2f} < threshold {strat_threshold:.2f}",
+            })
+            return
+
+        ticker = self._safe_ticker(symbol)
+        if ticker is None:
+            return
+        price = ticker.get("last", 0)
+        if price <= 0:
+            return
+
+        atr = _compute_atr(df)
+        # V4-C : la clé 2-parties héritée ne matchait plus aucun slot 3-parties
+        # de l'allocateur (budget introuvable sur le chemin scan direct).
+        slot_key = build_slot_key(strategy.name, tf, symbol)
+        pos_key  = build_pos_key(symbol, strategy.name, tf)
+        if pos_key in self.open_positions:
+            return
+
+        self._try_open_from_signal(
+            pos_key=pos_key,
+            symbol=symbol,
+            strategy_name=strategy.name,
+            side=signal["side"],
+            score=float(signal.get("score", 0)),
+            strat_threshold=strat_threshold,
+            tf=tf,
+            slot_key=slot_key,
+            signal_dict=signal,
+            atr=atr,
+            price=price,
+        )

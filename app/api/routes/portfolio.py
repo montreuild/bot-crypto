@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api import state
 from app.api.helpers import verify_api_key
+from app.core.bot_identity import parse_slot_key
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -134,11 +136,12 @@ def get_bots():
         rec = oos.get(key, {})
         contract = rec.get("contract", {}) or {}
         edge = rec.get("edge", {}) or {}
-        strat, _, tf = key.partition("::")
+        strat, tf, sym = parse_slot_key(key)
         bots.append({
             "slot_key":     key,
             "strategy":     rec.get("strategy", strat),
             "timeframe":    rec.get("timeframe", tf),
+            "symbol":       rec.get("symbol", sym),
             "state":        states.get(key, "candidat"),
             "identity":     identities.get(key),
             "budget":       budgets.get(key),
@@ -204,13 +207,13 @@ def run_bot_forward_test(slot_key: str):
     réécrit ``data/oos_tracker.json`` et, si le trader tourne, ré-évalue le cycle
     de vie pour que l'état se mette à jour tout de suite."""
     cfg = state.cfg or {}
-    strat, _, tf = slot_key.partition("::")
+    strat, tf, sym = parse_slot_key(slot_key)
     if not strat or not tf:
-        raise HTTPException(400, "slot_key attendu au format 'strategy::timeframe'")
+        raise HTTPException(400, "slot_key attendu au format 'strategy::timeframe[::symbol]'")
     ft = cfg.get("forward_test", {}) or {}
     lookback = int(ft.get("lookback_days", 45))
     edge_lb = int(ft.get("edge_lookback_days", 100))
-    symbol = ft.get("symbol", "BTC/USDC")
+    symbol = sym or ft.get("symbol", DEFAULT_CONFIG_SYMBOL)
 
     tr = _trader()
     if tr and getattr(tr, "scanner", None):
@@ -229,10 +232,10 @@ def run_bot_forward_test(slot_key: str):
             raise HTTPException(503, f"Impossible d'initialiser les données : {e}")
         session_factory = state.SessionLocal
 
-    from app.core.oos_tracker import run_forward_test
+    from app.engine.forward_test import run_forward_test
     try:
-        res = run_forward_test(cfg, fetch, {tf: [{"name": strat}]}, session_factory,
-                               symbol=symbol, lookback_days=lookback,
+        res = run_forward_test(cfg, fetch, {tf: [{"name": strat, "symbol": sym}]},
+                               session_factory, symbol=symbol, lookback_days=lookback,
                                edge_lookback_days=edge_lb)
     except Exception as e:
         logger.error(f"[bots] forward-test {slot_key} KO : {e}", exc_info=True)

@@ -124,13 +124,7 @@ capital_allocator:
   max_pyramiding: 2
   disabled_slots: []
   slot_budgets:
-    supertrend_macd::15m: 0.0909
-    breakout::1h: 0.0909
-    derivatives_reversion::1h: 0.0909
-    breakout::4h: 0.0909
-    supertrend_macd::4h: 0.0909
-    volatility_squeeze::1d: 0.0909
-    breakout::1d: 0.0909
+    trend_rider::1h::BTC/USDC: 0.5
 lifecycle:
   enabled: true
   interval_h: 1
@@ -142,7 +136,9 @@ lifecycle:
   edge_min_trades: 15
   edge_conf: 0.85
   max_worst_trade_pct: 50.0
-  fidelity_min_fills: 2
+  # BT-06 : seuil de promotion ACTIF aligné sur MIN_SIGNIFICANT_TRADES
+  # (app/core/stats_thresholds.py). Ancienne valeur : 2 (bruit statistique).
+  fidelity_min_fills: 10
   manual_active:
     - fft_spectral::1d
     - ml_dynamic_threshold::1h
@@ -176,6 +172,9 @@ web:
   port: 8000
   refresh_interval: 5
   api_key: ''
+  # Dev LOCAL uniquement : autorise host ouvert sans api_key (sinon le
+  # démarrage est refusé — OPS-02). À retirer avant toute exposition réseau.
+  allow_insecure: true
 ui:
   risk_preset:
   expert_mode: false

@@ -865,7 +865,7 @@ function buildTrades(sd,sid){
       const pnlColor = v.pnl >= 0 ? 'var(--green)' : 'var(--red)';
       const tdS = i < arr.length-1 ? miniTdStyle : miniTdLastStyle;
       return `<tr>
-        <td style="${tdS}color:var(--purple)">${escHtmlBt(k)}</td>
+        <td style="${tdS}color:var(--purple)">${escHtml(k)}</td>
         <td style="${tdS}text-align:right">${v.n}</td>
         <td style="${tdS}text-align:right;color:${parseFloat(wr)>=50?'var(--green)':'var(--red)'}">${wr}%</td>
         <td style="${tdS}text-align:right;color:${pnlColor}">${v.pnl>=0?'+':''}${v.pnl.toFixed(2)}</td>
@@ -895,7 +895,7 @@ function buildTrades(sd,sid){
       const pnlColor = v.pnl >= 0 ? 'var(--green)' : 'var(--red)';
       const tdS = i < arr.length-1 ? miniTdStyle : miniTdLastStyle;
       return `<tr>
-        <td style="${tdS}color:var(--cyan);font-size:.67rem">${escHtmlBt(k)}</td>
+        <td style="${tdS}color:var(--cyan);font-size:.67rem">${escHtml(k)}</td>
         <td style="${tdS}text-align:right">${v.n}</td>
         <td style="${tdS}text-align:right;color:${parseFloat(wr)>=50?'var(--green)':'var(--red)'}">${wr}%</td>
         <td style="${tdS}text-align:right;color:${pnlColor}">${v.pnl>=0?'+':''}${v.pnl.toFixed(2)}</td>
@@ -958,10 +958,9 @@ function exitReasonBadge(reason){
     return `<span style="background:${c}22;color:${c};font-size:.6rem;font-weight:700;padding:2px 6px;border-radius:3px;font-family:var(--mono)" title="${lbl}">${ic} ${reason}</span>`;
   }
   // Sortie pilotée par stratégie (V7) — texte libre
-  return `<span style="background:rgba(196,132,252,.15);color:#c084fc;font-size:.6rem;font-weight:700;padding:2px 6px;border-radius:3px;font-family:var(--mono)" title="Sortie anticipée pilotée par la stratégie">🚪 ${escHtmlBt(reason)}</span>`;
+  return `<span style="background:rgba(196,132,252,.15);color:#c084fc;font-size:.6rem;font-weight:700;padding:2px 6px;border-radius:3px;font-family:var(--mono)" title="Sortie anticipée pilotée par la stratégie">🚪 ${escHtml(reason)}</span>`;
 }
 
-function escHtmlBt(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 function detail(t){
   const conds=(t.conditions||[]).map(c=>`<li>${c}</li>`).join('');
@@ -969,8 +968,8 @@ function detail(t){
   // Détails sortie / position — expose les paramètres V7 quand présents.
   const sortieRows = [];
   sortieRows.push(`<div class="ir"><span class="ik">Raison sortie</span><span>${t.exit_reason ? exitReasonBadge(t.exit_reason) : '<span style="color:var(--dim)">—</span>'}</span></div>`);
-  if(t.setup) sortieRows.push(`<div class="ir"><span class="ik">Setup V7</span><span style="color:var(--purple);font-family:var(--mono)">${escHtmlBt(t.setup)}</span></div>`);
-  if(t.regime_lbl) sortieRows.push(`<div class="ir"><span class="ik">Régime entrée</span><span>${escHtmlBt(t.regime_lbl)}</span></div>`);
+  if(t.setup) sortieRows.push(`<div class="ir"><span class="ik">Setup V7</span><span style="color:var(--purple);font-family:var(--mono)">${escHtml(t.setup)}</span></div>`);
+  if(t.regime_lbl) sortieRows.push(`<div class="ir"><span class="ik">Régime entrée</span><span>${escHtml(t.regime_lbl)}</span></div>`);
   if(t.take_profit != null) sortieRows.push(`<div class="ir"><span class="ik">TP fixé</span><span>${fN(t.take_profit,4)}</span></div>`);
   if(t.sl_atr_mult != null) sortieRows.push(`<div class="ir"><span class="ik">SL (×ATR)</span><span>${fN(t.sl_atr_mult,2)}</span></div>`);
   if(t.tp_atr_mult != null) sortieRows.push(`<div class="ir"><span class="ik">TP (×ATR)</span><span>${fN(t.tp_atr_mult,2)}</span></div>`);

@@ -142,7 +142,7 @@ th.sort-desc::after{content:' ↓';color:var(--cyan);}
           <th class="r sortable" onclick="sortBy('entry')" scope="col" aria-sort="none">Entrée</th><th class="r sortable" onclick="sortBy('exit')" scope="col" aria-sort="none">Sortie</th>
           <th class="r sortable" onclick="sortBy('pnl')" scope="col" aria-sort="none">PnL</th><th class="r sortable" onclick="sortBy('pnl_pct')" scope="col" aria-sort="none">%</th><th class="r sortable" onclick="sortBy('score')" scope="col" aria-sort="none">Score</th><th scope="col">Raison</th>
         </tr></thead>
-        <tbody id="trades-tbody"><tr><td colspan="10" class="empty-row"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div><div class="skeleton skeleton-line w40"></div></td></tr></tbody>
+        <tbody id="trades-tbody"></tbody>
       </table></div>
     </div>
     <div class="pagination" id="pagination" style="margin-top:12px"></div>
@@ -156,7 +156,7 @@ th.sort-desc::after{content:' ↓';color:var(--cyan);}
           <th>Slot</th><th class="r">Trades</th><th class="r">Win Rate</th>
           <th class="r">PnL</th><th class="r">P. Factor</th><th class="r">Sharpe</th><th class="r">Max DD</th>
         </tr></thead>
-        <tbody id="slot-tbody"><tr><td colspan="7" class="empty-row"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div></td></tr></tbody>
+        <tbody id="slot-tbody"></tbody>
       </table></div>
     </div>
   </div>
@@ -169,7 +169,7 @@ th.sort-desc::after{content:' ↓';color:var(--cyan);}
           <th>Paire</th><th class="r">Trades</th><th class="r">Win Rate</th>
           <th class="r">PnL</th><th class="r">Meilleur</th><th class="r">Pire</th>
         </tr></thead>
-        <tbody id="symbol-tbody"><tr><td colspan="6" class="empty-row"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div></td></tr></tbody>
+        <tbody id="symbol-tbody"></tbody>
       </table></div>
     </div>
   </div>
@@ -242,8 +242,7 @@ function applyFilters(){
   const side=($('f-side')?.value||'');
   _filtered=_allTrades.filter(t=>{
     if(sym&&!(t.symbol||'').toLowerCase().includes(sym))return false;
-    const slotKey=(t.strategy&&t.timeframe)?t.strategy+'::'+t.timeframe:'';
-    if(slot&&slotKey!==slot)return false;
+    if(slot&&tradeSlotKey(t)!==slot)return false;
     if(side&&t.side!==side)return false;
     return true;
   });
@@ -365,20 +364,30 @@ function renderEquity(daily, trades){
 }
 
 /* ── Slot selector ── */
+/* Clé de slot à 3 parties strategy::tf::symbol, alignée sur le modèle utilisé
+   partout ailleurs (bots/portfolio/allocateur) — cf. UI-04 : l'ancienne clé
+   2-parties regroupait plusieurs bots (par symbole) sous une même option. */
+function tradeSlotKey(t){
+  if(!t.strategy||!t.timeframe)return '';
+  return t.strategy+'::'+t.timeframe+'::'+(t.symbol||'');
+}
 function buildSlotFilter(trades){
   const sel=$('f-slot');
-  const slots=new Set(trades.map(t=>t.strategy&&t.timeframe?t.strategy+'::'+t.timeframe:'').filter(Boolean));
+  const slots=new Set(trades.map(tradeSlotKey).filter(Boolean));
   const cur=sel.value;
   sel.innerHTML='<option value="">Tous les slots</option>';
   [...slots].sort().forEach(sk=>{
-    const strat=sk.split('::')[0],tf=sk.split('::')[1];
-    const lbl=strat.charAt(0).toUpperCase()+strat.slice(1)+' '+tf;
+    const [strat,tf,sym]=sk.split('::');
+    const lbl=strat.charAt(0).toUpperCase()+strat.slice(1)+' '+tf+(sym?' · '+sym:'');
     sel.innerHTML+=`<option value="${escHtml(sk)}"${sk===cur?' selected':''}>${escHtml(lbl)}</option>`;
   });
 }
 
 /* ── Main load ── */
 async function load(){
+  showSkeleton($('trades-tbody'), 3, {colspan:10});
+  showSkeleton($('slot-tbody'), 2, {colspan:7});
+  showSkeleton($('symbol-tbody'), 2, {colspan:6});
   try{
     const [trRes, stRes, dayRes]=await Promise.all([
       apiFetch('/api/trades?limit=5000'),

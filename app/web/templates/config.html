@@ -212,7 +212,7 @@
 
     <!-- Stratégies actives -->
     <div class="panel">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span style="color:var(--green)">📋</span>
         <h3>Stratégies actives</h3>
         <span id="strat-count" style="margin-left:auto;font-size:.7rem;color:var(--dim);padding-right:20px"></span>
@@ -223,9 +223,7 @@
           et sauvegardés dans <code>config.yaml</code>.<br>
           Les positions ouvertes sur une stratégie désactivée restent ouvertes jusqu'à leur clôture.
         </div>
-        <div class="strat-grid" id="strat-grid">
-          <div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div>
-        </div>
+        <div class="strat-grid" id="strat-grid" role="status" aria-live="polite"></div>
         <div class="btn-row">
           <button id="btn-apply-strat" class="btn btn-green btn-full" onclick="applyStrategies()">
             ✓ Appliquer<span class="dirty-dot"></span>
@@ -236,7 +234,7 @@
 
     <!-- Timeframes Multi-TF -->
     <div class="panel">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span style="color:var(--cyan)">⏱</span>
         <h3>Timeframes actifs</h3>
         <span id="tf-active-badge" style="margin-left:auto;font-size:.7rem;color:var(--dim);padding-right:20px"></span>
@@ -249,7 +247,7 @@
           <span style="color:var(--amber)">⚠ Plusieurs TFs = plus de cycles réseau.
           Recommandé : <strong>1h seul</strong> pour commencer, puis ajouter après optimisation.</span>
         </div>
-        <div id="tf-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+        <div id="tf-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px" role="status" aria-live="polite">
           <div class="skeleton skeleton-line w80" style="height:40px;width:130px"></div>
           <div class="skeleton skeleton-line w60" style="height:40px;width:130px"></div>
         </div>
@@ -264,7 +262,7 @@
 
     <!-- Notifications -->
     <div class="panel acc-closed">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span>🔔</span>
         <h3>Notifications</h3>
         <span id="notif-badge" class="strat-badge badge-off" style="margin-left:auto;margin-right:20px">OFF</span>
@@ -448,7 +446,7 @@
 
     <!-- Auto-optimisation -->
     <div class="panel acc-closed">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span style="color:var(--purple)">🔬</span>
         <h3>Auto-optimisation</h3>
         <span id="auto-opt-badge" class="strat-badge badge-off" style="margin-left:auto;margin-right:20px">OFF</span>
@@ -484,7 +482,7 @@
 
     <!-- Paramètres trading globaux -->
     <div class="panel acc-closed">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span style="color:var(--cyan)">⚙</span>
         <h3>Paramètres trading</h3>
       </div>
@@ -548,7 +546,7 @@
 
     <!-- Circuit Breakers avancés -->
     <div class="panel acc-closed">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span style="color:var(--red)">⚡</span>
         <h3>Circuit Breakers par slot</h3>
       </div>
@@ -598,7 +596,7 @@
 
     <!-- Margin spot -->
     <div class="panel acc-closed">
-      <div class="panel-hdr" onclick="toggleLeftAcc(this)">
+      <div class="panel-hdr" onclick="toggleLeftAcc(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLeftAcc(this);}">
         <span style="color:var(--orange)">📊</span>
         <h3>Margin spot</h3>
         <span id="margin-badge" class="strat-badge badge-off" style="margin-left:auto;margin-right:20px">OFF</span>
@@ -674,7 +672,7 @@
           Modifiez et cliquez <strong>Sauvegarder</strong> pour mettre à jour le fichier.
           Le backtest utilisera les nouvelles valeurs immédiatement.
         </div>
-        <div id="strat-params-panels">
+        <div id="strat-params-panels" role="status" aria-live="polite">
           <div class="skeleton skeleton-line w80" style="margin:8px"></div>
           <div class="skeleton skeleton-line w60" style="margin:8px"></div>
         </div>
@@ -785,8 +783,8 @@ async function init() {
   loadNotifications();
   const stratGrid = $('strat-grid');
   const stratParams = $('strat-params-panels');
-  if (stratGrid) stratGrid.innerHTML = '<div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div>';
-  if (stratParams) stratParams.innerHTML = '<div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div><div class="skeleton skeleton-line w40"></div>';
+  showSkeleton(stratGrid, null, {cards:2});
+  showSkeleton(stratParams, 3);
   try {
     const resp = await fetch('/api/config');
     if (!resp.ok) {
@@ -850,7 +848,7 @@ function renderStrategies() {
         ? '<span class="strat-badge badge-warn">⏸ En config</span>'
         : '<span class="strat-badge badge-off">○ Inactive</span>';
     }
-    return `<div class="strat-card ${borderClass}" id="sc-${name}" onclick="toggleStrat('${name}')">
+    return `<div class="strat-card ${borderClass}" id="sc-${name}" onclick="toggleStrat('${name}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleStrat('${name}');}">
       <div class="strat-info">
         <div class="strat-name">${name}</div>
         <div class="strat-meta">${STRAT_DESC[name] || '—'}</div>
@@ -903,7 +901,7 @@ function renderTimeframes() {
   grid.innerHTML = ALL_TFS.map(tf => {
     const isActive = activeTfs.includes(tf);
     const strats   = (activePerTf[tf] || []).join(' · ') || '';
-    return '<div style="border:1px solid ' + (isActive ? 'rgba(77,159,255,.35)' : 'var(--border)') + ';border-radius:8px;padding:8px 12px;background:' + (isActive ? 'var(--cyan-dim)' : 'var(--surface)') + ';cursor:pointer;min-width:100px" onclick="toggleTfCard(this,\'' + tf + '\',event)">'
+    return '<div style="border:1px solid ' + (isActive ? 'rgba(77,159,255,.35)' : 'var(--border)') + ';border-radius:8px;padding:8px 12px;background:' + (isActive ? 'var(--cyan-dim)' : 'var(--surface)') + ';cursor:pointer;min-width:100px" onclick="toggleTfCard(this,\'' + tf + '\',event)" role="button" tabindex="0" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();toggleTfCard(this,\'' + tf + '\',event);}">'
       + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
       + '<input type="checkbox" id="tf-check-' + tf + '" ' + (isActive ? 'checked' : '') + ' style="cursor:pointer" onchange="markDirty(\'btn-apply-tf\');updateTfDisplay()">'
       + '<span style="font-weight:700;color:' + (isActive ? 'var(--cyan)' : 'var(--muted)') + ';font-size:.85rem">' + (TF_LABELS[tf] || tf) + '</span></div>'
@@ -1141,7 +1139,7 @@ function renderStratParams() {
     }).join('');
 
     return `<div class="params-group">
-      <div class="params-hdr" onclick="toggleParamGroup(this)">
+      <div class="params-hdr" onclick="toggleParamGroup(this)" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleParamGroup(this);}">
         <span class="params-hdr-title">
           <span style="width:8px;height:8px;border-radius:50%;background:var(--cyan);display:inline-block"></span>
           ${name}
@@ -1158,9 +1156,88 @@ function renderStratParams() {
           </div>
           <div id="save-status-${name}" style="display:none;font-size:.72rem;color:var(--green);margin-top:6px;font-weight:600">✓ Paramètres appliqués dans config.yaml</div>
         </div>` : ''}
+        <div style="margin-top:10px;border-top:1px dashed var(--border);padding-top:8px">
+          <button class="btn btn-ghost" style="font-size:.72rem" onclick="toggleOverrides('${name}')">🎯 Overrides par symbole (optimizer_results)</button>
+          <div id="ovr-${name}" style="display:none;margin-top:8px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+              <select id="ovr-tf-${name}" class="param-input" style="width:auto">
+                ${['15m','30m','1h','2h','4h','1d'].map(t=>`<option value="${t}"${t==='4h'?' selected':''}>${t}</option>`).join('')}
+              </select>
+              <select id="ovr-sym-${name}" class="param-input" style="width:auto"><option value="">…</option></select>
+              <button class="btn btn-ghost" style="font-size:.7rem" onclick="loadOverrideEditor('${name}')">📥 Charger</button>
+              <button class="btn btn-cyan" style="font-size:.7rem" onclick="saveOverride('${name}')">💾 Sauver l'override</button>
+            </div>
+            <div id="ovr-list-${name}" style="font-size:.68rem;color:var(--dim);margin-bottom:6px" role="status" aria-live="polite">Chargement…</div>
+            <textarea id="ovr-json-${name}" spellcheck="false" style="width:100%;min-height:110px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:.7rem;padding:8px" placeholder='{"param": valeur, ...}'></textarea>
+            <div style="font-size:.64rem;color:var(--dim);margin-top:4px">Écrit dans <code>optimizer_results[tf][symbole]</code> de strategies/${name}.yaml — la config des autres symboles reste intacte. Le bloc « params » de base ci-dessus n'est pas modifié.</div>
+          </div>
+        </div>
       </div>
     </div>`;
   }).join('');
+}
+
+/* ── Overrides par (timeframe, symbole) — cf. UI-02 ─────────────────────── */
+const _ovrCache = {};   // name -> {overrides, symbols, base_params}
+
+async function _fetchOverrides(name) {
+  const r = await apiFetch(`/api/config/strategy-overrides?strategy=${encodeURIComponent(name)}`);
+  if (!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || 'Erreur API');
+  _ovrCache[name] = await r.json();
+  return _ovrCache[name];
+}
+
+function _renderOvrList(name) {
+  const d = _ovrCache[name]; const el = $(`ovr-list-${name}`);
+  if (!d || !el) return;
+  const sel = $(`ovr-sym-${name}`);
+  if (sel && d.symbols.length && sel.options.length <= 1) {
+    sel.innerHTML = d.symbols.map(s=>`<option value="${escHtml(s)}">${escHtml(s)}</option>`).join('');
+  }
+  if (!d.overrides.length) { el.textContent = 'Aucun override — les params de base s\'appliquent partout.'; return; }
+  el.innerHTML = 'Overrides existants : ' + d.overrides.map(o =>
+    `<span style="display:inline-block;background:var(--cyan-dim);color:var(--cyan);border-radius:4px;padding:1px 6px;margin:1px 2px;font-family:var(--mono)">${escHtml(o.timeframe)} · ${escHtml(o.symbol)}${o.legacy?' (hérité)':''}${o.oos_score!=null?' · OOS '+(+o.oos_score).toFixed(3):''}</span>`
+  ).join('');
+}
+
+async function toggleOverrides(name) {
+  const box = $(`ovr-${name}`);
+  if (!box) return;
+  const show = box.style.display === 'none';
+  box.style.display = show ? 'block' : 'none';
+  if (show && !_ovrCache[name]) {
+    try { await _fetchOverrides(name); _renderOvrList(name); }
+    catch(e) { const el=$(`ovr-list-${name}`); if(el) el.textContent = 'Erreur : '+e.message; }
+  }
+}
+
+function loadOverrideEditor(name) {
+  const d = _ovrCache[name]; if (!d) return;
+  const tf = $(`ovr-tf-${name}`)?.value, sym = $(`ovr-sym-${name}`)?.value;
+  const o = d.overrides.find(x => x.timeframe === tf && x.symbol === sym);
+  // Pré-remplit avec l'override existant, sinon les params de base (point de départ).
+  const params = o ? o.params : (d.base_params || {});
+  $(`ovr-json-${name}`).value = JSON.stringify(params, null, 2);
+  toast(o ? `Override ${tf} · ${sym} chargé` : `Aucun override ${tf} · ${sym} — params de base pré-remplis`);
+}
+
+async function saveOverride(name) {
+  const tf = $(`ovr-tf-${name}`)?.value, sym = $(`ovr-sym-${name}`)?.value;
+  if (!sym) { toast('Choisissez un symbole', true); return; }
+  let params;
+  try { params = JSON.parse($(`ovr-json-${name}`).value || '{}'); }
+  catch(e) { toast('JSON invalide : ' + e.message, true); return; }
+  try {
+    const r = await apiFetch(`/api/config/strategy-params?strategy=${encodeURIComponent(name)}&timeframe=${encodeURIComponent(tf)}&symbol=${encodeURIComponent(sym)}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(params),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Erreur API');
+    toast(`✓ Override ${tf} · ${sym} sauvegardé (${name})`);
+    delete _ovrCache[name];
+    await _fetchOverrides(name); _renderOvrList(name);
+  } catch(e) { toast('Erreur : ' + e.message, true); }
 }
 
 function toggleParamGroup(hdr) {
@@ -1412,7 +1489,7 @@ document.addEventListener('visibilitychange', async () => {
       `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span style="font-weight:700">🔬 Optimiseur a appliqué des params — ${escHtml(strat)}${escHtml(tf)}${escHtml(score)}</span>
         <span style="color:var(--dim);font-size:.65rem;margin-left:auto">${ts}</span>
-        <button onclick="this.closest('div[style]').remove()" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:.8rem;padding:0 4px">✕</button>
+        <button onclick="this.closest('div[style]').remove()" aria-label="Fermer ce message" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:.8rem;padding:0 4px">✕</button>
       </div>
       ${noChange ? '<span style="color:var(--dim);font-size:.7rem">Aucun paramètre modifié (identiques)</span>' : `<div>${items}</div>`}`;
     const container = document.getElementById('content') || document.querySelector('.main-content') || document.body;

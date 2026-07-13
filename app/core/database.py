@@ -44,6 +44,9 @@ class Trade(Base):
         Index("ix_trades_strategy", "strategy"),
         Index("ix_trades_time", "time"),
         Index("ix_trades_symbol_strategy", "symbol", "strategy"),
+        # OPS-09 : couvre get_closed_trades_for_slot/get_slot_live_stats
+        # (filtres strategy + timeframe + time >=) — sinon scan complet.
+        Index("ix_trades_strategy_tf_time", "strategy", "timeframe", "time"),
     )
 
 
@@ -142,6 +145,44 @@ class RiskStateRow(Base):
     data    = Column(JSON)
 
 
+def _migrate_schema(engine):
+    """Migrations idempotentes (OPS-08) : colonnes et index manquants.
+
+    ``create_all`` ignore entièrement une table déjà existante : toute colonne
+    (ou index) ajoutée au modèle après la création d'une base n'y apparaîtrait
+    jamais — l'INSERT suivant échouerait. On compare donc le schéma réel
+    (``PRAGMA table_info``) aux modèles et on exécute des
+    ``ALTER TABLE … ADD COLUMN`` idempotents, puis on crée les index manquants
+    (``checkfirst`` — ex. ``ix_trades_strategy_tf_time``, OPS-09).
+
+    Les colonnes ajoutées le sont **nullables sans défaut SQL** (contrainte
+    SQLite sur ADD COLUMN) : les défauts Python des modèles restent appliqués
+    par l'ORM aux nouvelles lignes.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            rows = conn.execute(
+                text(f'PRAGMA table_info("{table.name}")')).fetchall()
+            if not rows:          # table absente : create_all vient de la créer
+                continue
+            existing = {r[1] for r in rows}
+            for col in table.columns:
+                if col.name in existing:
+                    continue
+                ddl_type = col.type.compile(engine.dialect)
+                conn.execute(text(
+                    f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {ddl_type}'))
+                logger.info(
+                    f"[DB] Migration : colonne {table.name}.{col.name} "
+                    f"({ddl_type}) ajoutée.")
+    for table in Base.metadata.sorted_tables:
+        for idx in table.indexes:
+            idx.create(bind=engine, checkfirst=True)
+
+
 def init_db(url: str = "sqlite:///crypto_bot.db"):
     """Initialise la base de données et retourne (engine, SessionLocal)."""
     is_sqlite = url.startswith("sqlite")
@@ -161,6 +202,7 @@ def init_db(url: str = "sqlite:///crypto_bot.db"):
             cur.close()
 
     Base.metadata.create_all(engine)
+    _migrate_schema(engine)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     logger.info(f"[DB] Connecté : {url}")
     return engine, SessionLocal
@@ -287,13 +329,14 @@ def get_trades(session: Session, limit=1000, symbol=None, strategy=None) -> List
 
 
 def get_closed_trades_for_slot(session: Session, strategy: str, timeframe: str,
-                               days: int = 45) -> List[Trade]:
-    """Trades réels **fermés** d'un slot ``strategy::timeframe`` sur les ``days``
-    derniers jours, du plus récent au plus ancien.
+                               days: int = 45, symbol: str = None) -> List[Trade]:
+    """Trades réels **fermés** d'un slot ``strategy::timeframe[::symbol]`` sur les
+    ``days`` derniers jours, du plus récent au plus ancien.
 
     Utilisé par le forward-test glissant pour comparer la réalisation live à la
     fourchette Monte-Carlo simulée. Ne renvoie que les trades avec un PnL connu
-    (``status`` commençant par ``closed``).
+    (``status`` commençant par ``closed``). ``symbol`` optionnel : restreint au
+    symbole du slot (configs par symbole).
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     q = session.query(Trade).filter(
@@ -303,25 +346,31 @@ def get_closed_trades_for_slot(session: Session, strategy: str, timeframe: str,
         Trade.pnl.isnot(None),
         Trade.time >= cutoff,
     )
+    if symbol:
+        q = q.filter(Trade.symbol == symbol)
     return q.order_by(Trade.time.desc()).all()
 
 
 def get_slot_live_stats(session: Session, strategy: str, timeframe: str,
-                        days: int = 30) -> dict:
-    """Stats live agrégées d'un bot ``strategy::timeframe`` sur ``days`` jours.
+                        days: int = 30, symbol: str = None) -> dict:
+    """Stats live agrégées d'un bot ``strategy::timeframe[::symbol]`` sur
+    ``days`` jours. ``symbol`` optionnel : restreint au symbole du slot.
 
     Budget-indépendant : on remonte le nombre de trades, le win-rate et le
     **rendement moyen par trade (%)**, exploités par la machine à états du cycle
     de vie (Phase 2). Retourne des zéros si aucun trade.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    rows = session.query(Trade.pnl, Trade.pnl_pct).filter(
+    q = session.query(Trade.pnl, Trade.pnl_pct).filter(
         Trade.strategy == strategy,
         Trade.timeframe == timeframe,
         Trade.status.like("closed%"),
         Trade.pnl.isnot(None),
         Trade.time >= cutoff,
-    ).all()
+    )
+    if symbol:
+        q = q.filter(Trade.symbol == symbol)
+    rows = q.all()
     n = len(rows)
     if n == 0:
         return {"n_trades": 0, "wins": 0, "win_rate": 0.0,

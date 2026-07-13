@@ -9,12 +9,17 @@ from fastapi.responses import StreamingResponse
 
 from app.api import state
 from app.api.helpers import verify_api_key
+from app.core.bot_identity import build_slot_key
 from app.core.database import session_scope
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_SLOT_KEY_RE = re.compile(r'^[a-z_][a-z0-9_]*::[0-9a-z]+$')
+# V4-C : accepte le slot 3-parties ``strategy::tf::SYMBOL`` (ex.
+# trend_rider::4h::ETH/USDC) — l'ancienne regex 2-parties renvoyait 400 sur
+# les actions budget/toggle/reset de l'écran Bots depuis la refonte per-symbole.
+_SLOT_KEY_RE = re.compile(
+    r'^[a-z_][a-z0-9_]*::[0-9a-z]+(::[A-Za-z0-9/:\-]+)?$')
 
 
 def _validate_slot_key(slot_key: str) -> None:
@@ -156,7 +161,10 @@ def _build_slots_from_cfg(cfg: dict) -> tuple[list, dict]:
     max_slot_pct = float(alloc_cfg.get("max_slot_pct", 0.50))
 
     # Construire tous les slots (stratégie × timeframe)
-    all_keys = [f"{name}::{tf}" for name in strategies for tf in timeframes]
+    # Aperçu THÉORIQUE (trader inactif) : énumération stratégie×TF sans
+    # dimension symbole — les vrais slots (3-parties) viennent de
+    # allocator.get_status() quand le trader tourne.
+    all_keys = [build_slot_key(name, tf) for name in strategies for tf in timeframes]
     enabled_keys = [k for k in all_keys if k not in disabled_slots]
     n_enabled = len(enabled_keys)
 
@@ -173,7 +181,7 @@ def _build_slots_from_cfg(cfg: dict) -> tuple[list, dict]:
     slots = []
     for name in strategies:
         for tf in timeframes:
-            key = f"{name}::{tf}"
+            key = build_slot_key(name, tf)
             is_enabled = key not in disabled_slots
             bpct = _compute_budget(key, is_enabled)
             slots.append({
@@ -422,19 +430,27 @@ def audit_results():
             if not isinstance(data, dict):
                 continue
             # ``oos_score`` peut être absent / None (run échoué ou en cours)
-            raw_score = data.get("oos_score")
-            try:
-                oos_score = round(float(raw_score), 4) if raw_score is not None else 0.0
-            except (TypeError, ValueError):
-                oos_score = 0.0
-            rows.append({
-                "strategy":  strategy,
-                "tf":        tf,
-                "slot_key":  f"{strategy}::{tf}",
-                "run_date":  data.get("run_date", ""),
-                "oos_score": oos_score,
-                "params":    data.get("params", {}),
-            })
+            # Schéma par symbole (V4-C) : une entrée peut être héritée (plate)
+            # ou un mapping {symbole: entrée} — une ligne par symbole.
+            from app.core.param_resolution import _is_legacy_tf_entry
+            entries = ([("", data)] if _is_legacy_tf_entry(data)
+                       else [(sym, d) for sym, d in data.items()
+                             if isinstance(d, dict)])
+            for sym, entry in entries:
+                raw_score = entry.get("oos_score")
+                try:
+                    oos_score = round(float(raw_score), 4) if raw_score is not None else 0.0
+                except (TypeError, ValueError):
+                    oos_score = 0.0
+                rows.append({
+                    "strategy":  strategy,
+                    "tf":        tf,
+                    "symbol":    sym,
+                    "slot_key":  build_slot_key(strategy, tf, sym),
+                    "run_date":  entry.get("run_date", ""),
+                    "oos_score": oos_score,
+                    "params":    entry.get("params", {}),
+                })
     rows.sort(key=lambda r: r["oos_score"], reverse=True)
 
     # Dernier backtest réel par slot (strategy::tf) — persisté par /api/backtest.
@@ -450,22 +466,26 @@ def audit_results():
 
 @router.get("/api/strategy/{slot_key:path}/performance", dependencies=[Depends(verify_api_key)])
 def strategy_performance(slot_key: str):
-    """Stats détaillées pour un slot strategy::tf (ex: trend::1h)."""
+    """Stats détaillées pour un slot strategy::tf[::symbol] (ex: trend::1h,
+    trend_rider::4h::ETH/USDC)."""
     if not state.SessionLocal:
         raise HTTPException(503, "DB non initialisée")
 
-    parts = slot_key.split("::")
-    if len(parts) != 2:
-        raise HTTPException(400, "Format slot_key invalide. Attendu: strategy::tf (ex: trend::1h)")
+    from app.core.bot_identity import parse_slot_key
+    strategy_name, tf, symbol = parse_slot_key(slot_key)
+    if not strategy_name or not tf:
+        raise HTTPException(400, "Format slot_key invalide. Attendu: "
+                                 "strategy::tf[::symbol] (ex: trend::1h)")
 
-    strategy_name, tf = parts[0], parts[1]
     with session_scope(state.SessionLocal) as session:
         from app.core.database import Trade as _Trade
         q = (session.query(_Trade)
              .filter(_Trade.strategy == strategy_name)
-             .filter(_Trade.timeframe == tf)
-             .order_by(_Trade.time.desc())
-             .limit(500))
+             .filter(_Trade.timeframe == tf))
+        if symbol:
+            q = q.filter(_Trade.symbol == symbol)
+        q = (q.order_by(_Trade.time.desc())
+              .limit(500))
         trades_raw = q.all()
         total    = len(trades_raw)
         wins     = sum(1 for t in trades_raw if (t.pnl or 0) > 0)

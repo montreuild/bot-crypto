@@ -25,18 +25,34 @@ REQUIRED_FIELDS = [
     # ("strategies", "enabled") -- optionnel en mode multi-TF
 ]
 
+# Frais par défaut (ARCH-10) — SOURCE UNIQUE : tout repli `cfg.get("taker_fee", …)`
+# ou défaut de fonction doit importer ces constantes, jamais recopier le littéral
+# (sinon un changement du défaut canonique laisse des sites incohérents).
+DEFAULT_TAKER_FEE = 0.001
+DEFAULT_MAKER_FEE = 0.0004
+
+# Racine des données persistées hors BDD (ARCH-13) — les stores en dérivent
+# leurs répertoires par défaut (data/ohlcv, data/features, data/derivatives).
+DATA_ROOT = "data"
+
 DEFAULTS = {
     "trading": {
         "paper_mode": True, "max_positions": 5, "max_longs": 3, "max_shorts": 3,
         "scan_interval": 60, "score_threshold": 0.55, "daily_drawdown_limit": 0.05,
         "max_trades_per_minute": 3, "min_volume_usdc_24h": 5_000_000,
-        "taker_fee": 0.001, "maker_fee": 0.0004, "borrow_rate_daily": 0.0002,
+        "taker_fee": DEFAULT_TAKER_FEE, "maker_fee": DEFAULT_MAKER_FEE,
+        "borrow_rate_daily": 0.0002,
         "max_leverage": 1, "max_drawdown_global": 0.20, "spread_pct": 0.0005,
         "latency_ms": 50, "paper_slippage": 0.001,
     },
     "backtest": {
         "spread_pct": 0.0005, "latency_ms": 50, "partial_fill_pct": 0.95,
         "monte_carlo_runs": 200, "walk_forward_folds": 5,
+        # Plafond de notionnel PAR TRADE (fraction du capital) — valeur UNIQUE
+        # partagée backtest/live (BT-03 : le backtest utilisait un repli 0.50
+        # quand le RiskManager live plafonnait à 0.20 → tailles ×2,5 invalidant
+        # la reproductibilité des backtests en réel).
+        "max_notional_pct": 0.20,
     },
     "optimizer": {"enabled": False, "method": "bayesian", "n_trials": 50, "out_of_sample_ratio": 0.3},
     "logging":   {"level": "INFO", "debug": False, "max_bytes": 10_485_760, "backup_count": 5,
@@ -78,7 +94,32 @@ def _load_strategy_configs(strategies_dir: str) -> Tuple[dict, dict, list]:
     Chaque fichier a la structure :
       enabled: true          # optionnel — true par défaut ; mettre false pour désactiver
       params: {...}
-      optimizer_results: {tf: {run_date, oos_score, params}}
+      optimizer_results: {tf: {...}}   # schéma détaillé ci-dessous
+
+    Schéma EXACT de ``optimizer_results`` une fois assemblé dans la config
+    globale (clé racine = nom de stratégie, ajoutée par cette fonction) :
+
+      optimizer_results[strategy][tf][symbol] = {
+          "run_date":  str,     # date ISO de l'optimisation
+          "oos_score": float,   # score out-of-sample (seuil d'exclusion live : -0.05)
+          "params":    dict,    # overrides de strategy_params[strategy] pour ce (tf, symbol)
+      }
+
+      Exemple :
+        smart_money:
+          4h:
+            BTC/USDC: {run_date: "2026-07-01", oos_score: 0.42, params: {adx_min: 22}}
+            ETH/USDC: {run_date: "2026-07-02", oos_score: 0.18, params: {adx_min: 25}}
+
+    Rétro-compatibilité (schéma hérité, pré-refonte par symbole) : une entrée
+    ``optimizer_results[strategy][tf]`` qui contient DIRECTEMENT les clés
+    ``run_date``/``oos_score``/``params`` (au lieu d'un mapping ``{symbol: ...}``)
+    est réputée calibrée pour ``DEFAULT_CONFIG_SYMBOL`` (BTC/USDC) — elle ne
+    s'applique PAS aux autres symboles. Cette règle et sa résolution exacte
+    vivent dans ``app/core/param_resolution.py`` (``_select_symbol_entry``,
+    ``_is_legacy_tf_entry``, ``resolve_strategy_params`` — utilisé à la fois
+    par le backtest et le live pour garantir une résolution identique).
+    Cf. aussi la section « Live Trading Loop » d'ARCHITECTURE.md.
 
     Une stratégie est active si et seulement si son fichier existe
     et que `enabled` n'est pas explicitement à false.
@@ -266,19 +307,46 @@ def load_config(path: str = "config.yaml") -> dict:
             "divergeront. Désactivez margin pour un paper trading représentatif."
         )
 
-    # ── Sécurité API web ─────────────────────────────────────────────────────
+    # ── Sécurité API web (OPS-02 : BLOQUANT) ─────────────────────────────────
     # Sans web.api_key, l'auth retombe sur un filtre « localhost only » basé
     # sur l'IP client — contournable derrière un reverse proxy mal configuré
-    # (X-Forwarded-For). Exposer 0.0.0.0 sans clé = API de trading ouverte.
+    # (X-Forwarded-For). Exposer 0.0.0.0 sans clé = API de trading OUVERTE
+    # (start/stop du bot, écriture de config). Le démarrage est donc REFUSÉ,
+    # sauf override explicite et assumé via ALLOW_INSECURE_WEB=1 (dev local).
     web_cfg = cfg.get("web", {})
     if not web_cfg.get("api_key") and str(web_cfg.get("host", "")) in ("0.0.0.0", "::"):
-        logger.warning(
-            "🔓 [Config] web.host=%s SANS web.api_key : l'API n'est protégée que "
-            "par un filtre localhost (fragile derrière un reverse proxy). "
-            "Définissez web.api_key avant toute exposition réseau — "
-            "ex. : python -c \"import secrets; print(secrets.token_urlsafe(32))\"",
-            web_cfg.get("host"),
-        )
+        allow_insecure = (bool(web_cfg.get("allow_insecure"))
+                          or os.environ.get("ALLOW_INSECURE_WEB") == "1")
+        if allow_insecure:
+            logger.warning(
+                "🔓 [Config] web.host=%s SANS web.api_key (override "
+                "web.allow_insecure) : l'API n'est protégée que par le filtre "
+                "localhost — à réserver au développement local.", web_cfg.get("host"),
+            )
+        else:
+            raise ValueError(
+                f"web.host={web_cfg.get('host')} SANS web.api_key : l'API de "
+                "trading serait exposée à tout le réseau. Définissez web.api_key "
+                "(ex. : python -c \"import secrets; print(secrets.token_urlsafe(32))\") "
+                "ou, pour du développement local uniquement, mettez "
+                "web.allow_insecure: true dans config.yaml."
+            )
+
+    # ── Notifications en réel (OPS-04) ───────────────────────────────────────
+    # paper_mode=false sans AUCUN canal externe : un HALT (margin critique,
+    # kill-switch, mismatch de réconciliation) resterait invisible hors du
+    # dashboard. Alerte CRITICAL — à transformer en blocage si souhaité.
+    if not cfg["trading"].get("paper_mode", True):
+        notif = cfg.get("notifications", {}) or {}
+        channels_on = any(bool(notif.get(k)) for k in
+                          ("telegram_enabled", "whatsapp_enabled", "email_enabled"))
+        if not channels_on:
+            logger.critical(
+                "🚨 [Config] paper_mode=false SANS canal de notification externe "
+                "(telegram/whatsapp/email) : un HALT ou une erreur critique en "
+                "trading RÉEL ne préviendrait personne. Activez au moins un canal "
+                "dans notifications: avant de trader en réel."
+            )
 
     # Compatibilité multi-TF
     _VALID_TIMEFRAMES = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}

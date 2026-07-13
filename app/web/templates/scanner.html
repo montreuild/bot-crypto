@@ -112,7 +112,7 @@
           <div class="panel-hdr">
             🎯 Opportunités
             <span id="opp-help-btn" title="Les Opportunités sont les paires avec le meilleur potentiel de mouvement selon un score combiné : 40% volume 24h + 60% ATR%. Ce sont les paires les plus volatiles et liquides du moment, candidates à un trade." style="cursor:help;font-size:.72rem;color:var(--dim);margin-left:4px;border:1px solid var(--border);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0">?</span>
-            <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="loadOpportunities()">↺ Refresh</button>
+            <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="loadOpportunities()">↺ Actualiser</button>
           </div>
           <div class="panel-body" id="opp-list">
             <div class="empty"><span class="spinner"></span></div>
@@ -268,7 +268,7 @@
       <div class="panel-hdr">
         🧠 Prédictions des stratégies
         <span id="pred-sym-lbl" style="margin-left:6px;font-size:.72rem;color:var(--cyan)"></span>
-        <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="loadPredictions()">↺ Refresh</button>
+        <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="loadPredictions()">↺ Actualiser</button>
       </div>
       <div class="panel-body" id="pred-body">
         <div class="empty">Chargez un graphique pour voir les prédictions.</div>
@@ -508,7 +508,7 @@ function renderScanTable(results){
     const posBadge=hasPos?'<span class="pos-badge" title="Position ouverte"></span>':'';
     // Click on row loads the chart for this pair
     const sym=escHtml(r.symbol);
-    return`<tr style="cursor:pointer" onclick="loadChartFor('${sym}')" title="Cliquer pour afficher le graphique">
+    return`<tr style="cursor:pointer" onclick="loadChartFor('${sym}')" title="Cliquer pour afficher le graphique" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loadChartFor('${sym}');}">
       <td><strong>${sym}</strong>${posBadge}</td>
       <td><span class="tag ${regimeClass}">${escHtml(r.regime_label||'?')}</span></td>
       <td><span style="font-family:var(--mono)">${adx.toFixed(1)}</span><br><span class="adx-bar" style="width:${adxW}px"></span></td>
@@ -551,7 +551,7 @@ function renderOpportunities(opps){
 restoreFilters();
 loadConfig();
 loadOpenPositions();
-document.getElementById('opp-list').innerHTML='<div class="empty" style="color:var(--dim)">Cliquez sur <strong style="color:var(--text)">↺ Refresh</strong> pour charger les opportunités.</div>';
+document.getElementById('opp-list').innerHTML='<div class="empty" style="color:var(--dim)">Cliquez sur <strong style="color:var(--text)">↺ Actualiser</strong> pour charger les opportunités.</div>';
 
 // ── Graphique Scanner ───────────────────────────────────────────────────
 let chartTf = '1h';
@@ -1216,7 +1216,14 @@ async function runFastAnalysis(){
   try{
     const r=await apiFetch('/api/scanner/fast_analysis?symbol='+encodeURIComponent(sym)+'&tf='+encodeURIComponent(tf));
     const d=await r.json().catch(()=>({}));
-    if(!r.ok){body.innerHTML='<div class="empty" style="color:#f87171">'+(d.detail||d.error||'Erreur '+r.status)+'</div>';return;}
+    if(!r.ok){
+      const msg=d.detail||d.error||('Erreur '+r.status);
+      const dataLink=/insuffisantes/i.test(msg)
+        ? ' <a href="/data?symbol='+encodeURIComponent(sym)+'&tf='+encodeURIComponent(tf)+'" style="color:var(--cyan)">→ Charger les données</a>'
+        : '';
+      body.innerHTML='<div class="empty" style="color:#f87171">'+escHtml(msg)+dataLink+'</div>';
+      return;
+    }
     const rows=d.rows||[];
     if(!rows.length){body.innerHTML='<div class="empty">'+(d.error||'Aucun résultat')+'</div>';return;}
     const fmt=o=>o.pnl.toFixed(0)+' / '+o.pf.toFixed(2);
@@ -1400,6 +1407,18 @@ async function loadPredictions(){
     body.innerHTML=`<div class="empty">⚠ ${escHtml(e.message)}</div>`;
   }
 }
+
+// ── UI-09 : pré-remplissage symbole/TF depuis l'URL (lien "↗ Analyser" de /data) ──
+(function applyUrlParams(){
+  const params=new URLSearchParams(window.location.search);
+  const sym=params.get('symbol');
+  const tf=params.get('tf');
+  if(sym) document.getElementById('chart-symbol').value=sym;
+  if(tf){
+    chartTf=tf;
+    document.querySelectorAll('.chart-tf-btn').forEach(b=>b.classList.toggle('active', b.textContent===tf));
+  }
+})();
 
 // Auto-load chart on page init
 loadChart();

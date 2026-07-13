@@ -30,9 +30,9 @@
     <!-- TOP par Timeframe & Classement OOS par TF -->
     <div class="audit-section">
       <div class="sec-hdr"><h2>TOP par Timeframe</h2><span class="sec-hdr-line"></span>
-        <button onclick="loadOptResults()" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:.7rem">&#x21BA;</button>
+        <button onclick="loadOptResults()" aria-label="Recharger le TOP par timeframe" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:.7rem">&#x21BA;</button>
       </div>
-      <div id="opt-results-container"><div class="skeleton skeleton-line w80" style="margin:8px"></div><div class="skeleton skeleton-line w60" style="margin:8px"></div></div>
+      <div id="opt-results-container" role="status" aria-live="polite"></div>
     </div>
 
     <!-- Historique des paramètres optimisés -->
@@ -41,9 +41,9 @@
       <div class="table-card">
         <div class="tscroll"><table class="table-striped">
           <thead><tr>
-            <th>Date</th><th>Stratégie</th><th>TF</th><th>Paramètres modifiés</th><th class="r">Score OOS</th>
+            <th scope="col">Date</th><th scope="col">Stratégie</th><th scope="col">TF</th><th scope="col">Paramètres modifiés</th><th scope="col" class="r">Score OOS</th>
           </tr></thead>
-          <tbody id="changelog-body"><tr><td colspan="5" class="empty-row"><div class="skeleton skeleton-line w80"></div><div class="skeleton skeleton-line w60"></div></td></tr></tbody>
+          <tbody id="changelog-body" aria-live="polite"></tbody>
         </table></div>
       </div>
     </div>
@@ -55,6 +55,7 @@
 {% block body_scripts %}
 <script>
 async function loadOptResults() {
+  showSkeleton(document.getElementById('opt-results-container'), 2);
   try {
     const [auditR, cfgR] = await Promise.all([
       apiFetch('/api/audit/results'),
@@ -63,14 +64,20 @@ async function loadOptResults() {
     const audit = await auditR.json();
     const cfg   = await cfgR.json();
 
-    // Rebuild byStratTf from flat results list
+    // Rebuild byStratTf from flat results list.
+    // Sous-clé par symbole (entry.symbol||'*') : plusieurs symboles peuvent
+    // partager le même couple stratégie/timeframe (cas normal désormais), il
+    // ne faut donc pas les écraser les uns les autres.
     const byStratTf = {};
     for (const entry of (audit.results || [])) {
       if (!byStratTf[entry.strategy]) byStratTf[entry.strategy] = {};
-      byStratTf[entry.strategy][entry.tf] = {
+      if (!byStratTf[entry.strategy][entry.tf]) byStratTf[entry.strategy][entry.tf] = {};
+      const symKey = entry.symbol || '*';
+      byStratTf[entry.strategy][entry.tf][symKey] = {
         oos_score: entry.oos_score,
         run_date:  entry.run_date,
         params:    entry.params || {},
+        symbol:    entry.symbol || '',
       };
     }
 
@@ -93,9 +100,24 @@ function renderOptResults(d) {
   const backtests = d.backtests      || {};
   const container = document.getElementById('opt-results-container');
 
-  // Rendu compact du dernier backtest d'un slot (strategy::tf), ou '' si aucun.
-  function btLine(strat, tf) {
-    const bt = backtests[`${strat}::${tf}`];
+  // Regroupe les backtests bruts (clé "strategy::tf" héritée ou
+  // "strategy::tf::symbole") par [stratégie][tf][symbole||'*'], pour les
+  // apparier avec byStratTf qui est lui aussi indexé par symbole.
+  const btBySlot = {};
+  for (const [key, bt] of Object.entries(backtests)) {
+    const [s, tf, sym] = key.split('::');
+    if (!s || !tf) continue;
+    if (!btBySlot[s]) btBySlot[s] = {};
+    if (!btBySlot[s][tf]) btBySlot[s][tf] = {};
+    btBySlot[s][tf][sym || bt.symbol || '*'] = bt;
+  }
+
+  // Rendu compact du dernier backtest d'un slot (strategy::tf[::symbole]),
+  // ou '' si aucun. symKey optionnel : si omis, prend le premier backtest du
+  // slot (cas legacy sans distinction de symbole).
+  function btLine(strat, tf, symKey) {
+    const slotBt = btBySlot[strat]?.[tf] || {};
+    const bt = symKey ? (slotBt[symKey] || slotBt['*']) : Object.values(slotBt)[0];
     if (!bt) return '';
     const pnl = +bt.total_pnl || 0;
     const wr  = bt.win_rate != null ? +bt.win_rate : null;
@@ -140,12 +162,14 @@ function renderOptResults(d) {
     <span><strong style="font-family:var(--mono)">BT</strong> = dernier backtest (PnL · win-rate · trades)</span>
   </div>`;
 
-  // TOP per TF cards
+  // TOP per TF cards — un élément par couple (stratégie, symbole) : un même
+  // strategy+tf peut apparaître plusieurs fois si plusieurs symboles ont un
+  // score OOS (cf. UI-03).
   html += `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">
   ${allTfs.map(tf => {
     const entries = allStrats
-      .filter(s => byStratTf[s]?.[tf])
-      .map(s => ({ strat: s, ...byStratTf[s][tf] }))
+      .flatMap(s => Object.entries(byStratTf[s]?.[tf] || {})
+        .map(([symKey, data]) => ({ strat: s, symKey, symbol: symKey === '*' ? '' : symKey, ...data })))
       .sort((a,b) => (b.oos_score||0) - (a.oos_score||0))
       .slice(0, 5);
     if (!entries.length) return '';
@@ -156,10 +180,11 @@ function renderOptResults(d) {
         const score = e.oos_score || 0;
         const scoreClr = score >= 0.0 ? 'var(--green)' : score >= -0.05 ? 'var(--amber)' : 'var(--red)';
         const isActive = activList.includes(e.strat);
+        const label = e.strat + (e.symbol ? ` <span style="color:var(--dim);font-weight:400">· ${escHtml(e.symbol)}</span>` : '');
         return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)">
           <div>
             <span style="font-size:.7rem;color:var(--dim);margin-right:4px">#${i+1}</span>
-            <span style="font-family:var(--mono);font-size:.73rem;font-weight:${isActive?700:400};color:${isActive?'var(--text)':'var(--muted)'}">${e.strat}</span>
+            <span style="font-family:var(--mono);font-size:.73rem;font-weight:${isActive?700:400};color:${isActive?'var(--text)':'var(--muted)'}">${label}</span>
             ${isActive ? '<span style="color:var(--green);font-size:.6rem;margin-left:3px">●</span>' : ''}
           </div>
           <span style="font-family:var(--mono);font-size:.75rem;font-weight:700;color:${scoreClr}">${score.toFixed(3)}</span>
@@ -173,10 +198,10 @@ function renderOptResults(d) {
   html += `<div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:600;margin-bottom:8px">Classement OOS par TF</div>`;
   html += `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:${allTfs.length * 160 + 120}px">
     <thead><tr>
-      <th style="padding:6px 10px;text-align:left;font-size:.63rem;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap">Stratégie</th>
+      <th scope="col" style="padding:6px 10px;text-align:left;font-size:.63rem;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap">Stratégie</th>
       ${allTfs.map(tf => {
         const active = activeTf[tf] || [];
-        return `<th style="padding:6px 10px;text-align:center;font-size:.63rem;color:var(--cyan);text-transform:uppercase;border-bottom:1px solid var(--border);font-family:var(--mono)">
+        return `<th scope="col" style="padding:6px 10px;text-align:center;font-size:.63rem;color:var(--cyan);text-transform:uppercase;border-bottom:1px solid var(--border);font-family:var(--mono)">
           ${tf}
           ${active.length ? `<div style="font-size:.58rem;color:var(--green);font-weight:400">${active.length} actif${active.length>1?'s':''}</div>` : ''}
         </th>`;
@@ -185,21 +210,33 @@ function renderOptResults(d) {
     <tbody>
       ${allStrats.map(strat => {
         const cells = allTfs.map(tf => {
-          const entry = byStratTf[strat]?.[tf];
-          if (!entry) {
+          const symMap = byStratTf[strat]?.[tf];
+          if (!symMap || !Object.keys(symMap).length) {
             const bt = btLine(strat, tf);
             return `<td style="padding:6px 10px;text-align:center;color:var(--border)">${bt || '—'}</td>`;
           }
-          const score = entry.oos_score || 0;
-          const scoreClr = score >= 0.0 ? 'var(--green)' : score >= -0.05 ? 'var(--amber)' : 'var(--red)';
           const isActive = (activeTf[tf] || []).includes(strat);
-          const isExcluded = score < -0.05;
+          const multi = Object.keys(symMap).length > 1;
+          // Une sous-ligne par symbole : la meilleure entrée d'abord.
+          const symRows = Object.entries(symMap)
+            .sort((a,b) => (b[1].oos_score||0) - (a[1].oos_score||0))
+            .map(([symKey, entry]) => {
+              const score = entry.oos_score || 0;
+              const scoreClr = score >= 0.0 ? 'var(--green)' : score >= -0.05 ? 'var(--amber)' : 'var(--red)';
+              const isExcluded = score < -0.05;
+              const symLbl = symKey !== '*'
+                ? `<div style="font-size:.58rem;color:var(--muted);font-family:var(--mono)">${escHtml(symKey)}</div>` : '';
+              return `<div style="padding:2px 0;${multi ? 'border-top:1px dashed rgba(255,255,255,.08)' : ''}">
+                ${symLbl}
+                <div style="font-weight:700;font-family:var(--mono);font-size:.82rem;color:${scoreClr}">${score.toFixed(3)}</div>
+                <div style="font-size:.6rem;color:var(--dim);margin-top:1px">${entry.run_date||''}</div>
+                ${isExcluded ? '<div style="font-size:.58rem;color:var(--red)">✗ EXCLU</div>' : ''}
+                ${btLine(strat, tf, symKey)}
+              </div>`;
+            }).join('');
           return `<td style="padding:6px 10px;text-align:center;${isActive?'background:rgba(52,211,153,.04)':''}">
-            <div style="font-weight:700;font-family:var(--mono);font-size:.82rem;color:${scoreClr}">${score.toFixed(3)}</div>
-            <div style="font-size:.6rem;color:var(--dim);margin-top:1px">${entry.run_date||''}</div>
             ${isActive ? '<div style="font-size:.58rem;color:var(--green);font-weight:700">● ACTIF</div>' : ''}
-            ${isExcluded ? '<div style="font-size:.58rem;color:var(--red)">✗ EXCLU</div>' : ''}
-            ${btLine(strat, tf)}
+            ${symRows}
           </td>`;
         }).join('');
         return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
@@ -215,6 +252,7 @@ function renderOptResults(d) {
 
 async function loadChangelog(){
   const el=document.getElementById('changelog-body');if(!el)return;
+  showSkeleton(el, 2, {colspan:5});
   try{
     const rows=await apiFetch('/api/config/changelog?limit=100').then(r=>r.json()).catch(()=>[]);
     if(!rows||!rows.length){el.innerHTML='<tr><td colspan="5" class="empty-row">Aucun changement enregistré.</td></tr>';return;}

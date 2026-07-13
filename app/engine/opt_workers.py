@@ -162,7 +162,7 @@ def _worker_init(strategy_name: str, cfg_yaml: str,
         # Paramètres résolus exposés au pré-calcul (ex: signal_consensus pré-calcule
         # les votes des sous-stratégies selon ce paramétrage, invariant entre trials).
         try:
-            from app.live.utils import resolve_strategy_params as _resolve_sp
+            from app.core.param_resolution import resolve_strategy_params as _resolve_sp
             _tmp._bt_params = _resolve_sp(_W["cfg"], timeframe)
         except Exception:
             _tmp._bt_params = None
