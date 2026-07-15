@@ -5,7 +5,8 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Bot, LineChart, Settings, Activity,
-  Zap, AlertCircle, Database, Network,
+  Zap, Database, Network, Sparkles, Repeat,
+  BrainCircuit, ClipboardList, TrendingUp, Wallet, Cpu,
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -15,6 +16,7 @@ const NAV_GROUPS = [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { href: '/bots', label: 'Mes Bots', icon: Bot },
       { href: '/trades', label: 'Trades', icon: Activity },
+      { href: '/portfolio', label: 'Portefeuille', icon: Wallet },
     ],
   },
   {
@@ -22,12 +24,24 @@ const NAV_GROUPS = [
     items: [
       { href: '/backtest', label: 'Backtest', icon: LineChart },
       { href: '/scanner', label: 'Scanner', icon: Network },
+      { href: '/replay', label: 'Replay', icon: Repeat },
+      { href: '/optimizer', label: 'Optimiseur', icon: Sparkles },
+      { href: '/audit', label: 'Audit OOS', icon: ClipboardList },
+    ],
+  },
+  {
+    label: 'Données',
+    items: [
+      { href: '/derivatives', label: 'Dérivées', icon: TrendingUp },
+      { href: '/data', label: 'Bougies OHLCV', icon: Database },
+      { href: '/ml', label: 'Modèles ML', icon: BrainCircuit },
     ],
   },
   {
     label: 'Configuration',
     items: [
       { href: '/config', label: 'Configuration', icon: Settings },
+      { href: '/settings', label: 'Réglages', icon: Cpu },
     ],
   },
 ];

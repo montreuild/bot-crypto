@@ -301,3 +301,147 @@ export interface BacktestTrade {
   fees: number;
   reason: string;
 }
+
+// ── Optimizer ───────────────────────────────────────────────────────────────
+
+export interface OptimizeJob {
+  job_id: string;
+  strategy: string;
+  timeframe: string;
+  symbol?: string;
+  status: 'pending' | 'running' | 'done' | 'error' | 'cancelled';
+  progress: number;
+  best_score: number;
+  trials_done: number;
+  n_trials: number;
+  method: string;
+  started_at?: number;
+  finished_at?: number;
+  baseline?: Record<string, any>;
+  trials?: any[];
+  result?: {
+    best_params?: Record<string, any>;
+    best_oos_score?: number;
+    best_oos_pnl?: number;
+    best_oos_trades?: number;
+    best_oos_wr?: number;
+    best_oos_sharpe?: number;
+  };
+  applied?: boolean;
+  error?: string;
+}
+
+export interface OptimizeSpaces {
+  [strategy: string]: {
+    params: Record<string, any>;
+    timeframes: string[];
+    n_combos: number;
+    is_ml: boolean;
+  };
+}
+
+export interface OptimizeResults {
+  by_strategy_tf: Record<string, Record<string, any>>;
+  active_per_tf: Record<string, string[]>;
+}
+
+// ── ML ──────────────────────────────────────────────────────────────────────
+
+export interface MLStrategyInfo {
+  is_trained: boolean;
+  best_auc: number;
+  next_retrain_at: number | null;
+}
+
+// ── Data / Candles ──────────────────────────────────────────────────────────
+
+export interface CandlesDataset {
+  symbol: string;
+  timeframe: string;
+  count: number;
+  first: string;
+  last: string;
+  size_bytes?: number;
+}
+
+// ── Derivatives ─────────────────────────────────────────────────────────────
+
+export interface DerivativesData {
+  symbol: string;
+  period: string;
+  metrics: {
+    funding_rate?: TimeSeries;
+    open_interest?: TimeSeries;
+    long_short_ratio?: TimeSeries;
+    taker_buy_sell_ratio?: TimeSeries;
+  };
+  price?: {
+    time: number[];
+    close: number[];
+  };
+}
+
+export interface TimeSeries {
+  time: number[];
+  value: (number | null)[];
+  count: number;
+  first: string;
+  last: string;
+}
+
+// ── Replay ──────────────────────────────────────────────────────────────────
+
+export interface ReplayResult {
+  symbol: string;
+  months: number;
+  timeframes_tested: string[];
+  strategies_tested: string[];
+  by_timeframe: Record<string, {
+    n_bars: number;
+    date_from: string;
+    date_to: string;
+    days_covered: number;
+    ohlcv?: { time: number[]; close: number[]; open: number[]; high: number[]; low: number[] };
+    by_strategy: Record<string, any>;
+    gaps_warning?: string | null;
+  }>;
+  cross_tf_summary: Array<{
+    tf: string;
+    strategy: string;
+    n_bars: number;
+    days_covered: number;
+    trades: number;
+    win_rate: number;
+    pnl: number;
+    pnl_pct: number;
+    sharpe: number;
+    max_drawdown: number;
+    profit_factor: number;
+    final_equity: number;
+  }>;
+}
+
+// ── Audit ───────────────────────────────────────────────────────────────────
+
+export interface AuditResult {
+  results: Array<{
+    strategy: string;
+    tf: string;
+    symbol: string;
+    slot_key: string;
+    run_date: string;
+    oos_score: number;
+    params: Record<string, any>;
+  }>;
+  total: number;
+  backtests: Record<string, any>;
+}
+
+// ── Notifications ───────────────────────────────────────────────────────────
+
+export interface Notification {
+  ts: string;
+  level: 'info' | 'warning' | 'critical';
+  message: string;
+  title?: string;
+}

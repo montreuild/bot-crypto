@@ -172,6 +172,14 @@ export function useSetRiskPreset() {
   });
 }
 
+export function useSetExpertMode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) => api.setExpertMode(enabled),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['presets'] }),
+  });
+}
+
 // ── Config ──────────────────────────────────────────────────────────────────
 export function useConfig() {
   return useQuery({
@@ -210,5 +218,132 @@ export function useStrategyPerformance(slotKey: string | null) {
     queryKey: ['strategyPerf', slotKey],
     queryFn: () => api.getStrategyPerformance(slotKey!),
     enabled: !!slotKey,
+  });
+}
+
+// ── Optimizer ───────────────────────────────────────────────────────────────
+export function useOptimizeStatus(jobId?: string) {
+  return useQuery({
+    queryKey: ['optimizeStatus', jobId],
+    queryFn: () => api.getOptimizeStatus(jobId),
+    refetchInterval: 1500, // polling rapide pour suivi temps réel
+  });
+}
+
+export function useOptimizeSpaces() {
+  return useQuery({
+    queryKey: ['optimizeSpaces'],
+    queryFn: api.getOptimizeSpaces,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useOptimizeResults() {
+  return useQuery({
+    queryKey: ['optimizeResults'],
+    queryFn: api.getOptimizeResults,
+    refetchInterval: 30000,
+  });
+}
+
+export function useStartOptimize() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (params: any) => api.startOptimize(params),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['optimizeStatus'] });
+    },
+  });
+}
+
+export function useApplyOptimize() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, force }: { jobId: string; force?: boolean }) =>
+      api.applyOptimize(jobId, force),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['optimizeStatus'] });
+      qc.invalidateQueries({ queryKey: ['optimizeResults'] });
+      qc.invalidateQueries({ queryKey: ['audit'] });
+    },
+  });
+}
+
+export function useCancelOptimize() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => api.cancelOptimize(jobId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['optimizeStatus'] }),
+  });
+}
+
+export function useDeleteOptimizeJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => api.deleteOptimizeJob(jobId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['optimizeStatus'] }),
+  });
+}
+
+// ── ML ──────────────────────────────────────────────────────────────────────
+export function useMLStrategyInfo() {
+  return useQuery({
+    queryKey: ['mlInfo'],
+    queryFn: api.getMLStrategyInfo,
+    refetchInterval: 30000,
+  });
+}
+
+export function useCandlesStats() {
+  return useQuery({
+    queryKey: ['candlesStats'],
+    queryFn: api.getCandlesStats,
+    refetchInterval: 30000,
+  });
+}
+
+// ── Derivatives ─────────────────────────────────────────────────────────────
+export function useDerivativesData(symbol = 'BTC/USDC', period = '1h', refresh = false) {
+  return useQuery({
+    queryKey: ['derivatives', symbol, period, refresh],
+    queryFn: () => api.getDerivativesData(symbol, period, 1000, refresh),
+    refetchInterval: 60000,
+  });
+}
+
+export function useDerivativesStatus(symbol = 'BTC/USDC') {
+  return useQuery({
+    queryKey: ['derivativesStatus', symbol],
+    queryFn: () => api.getDerivativesStatus(symbol),
+  });
+}
+
+// ── Replay ──────────────────────────────────────────────────────────────────
+export function useRunReplay() {
+  return useMutation({
+    mutationFn: (params: any) => api.runReplay(params),
+  });
+}
+
+export function useCancelReplay() {
+  return useMutation({
+    mutationFn: api.cancelReplay,
+  });
+}
+
+// ── Data ────────────────────────────────────────────────────────────────────
+export function useDataStatus() {
+  return useQuery({
+    queryKey: ['dataStatus'],
+    queryFn: api.getDataStatus,
+    refetchInterval: 30000,
+  });
+}
+
+export function useRefetchData() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ symbol, tf }: { symbol: string; tf: string }) => api.refetchData(symbol, tf),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dataStatus'] }),
   });
 }

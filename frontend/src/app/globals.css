@@ -11,12 +11,27 @@
     --foreground: #e5e7eb;
   }
 
+  /* Light theme */
+  .light {
+    --background: #f8fafc;
+    --surface: #ffffff;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --foreground: #1e293b;
+    --muted: #64748b;
+    --dim: #94a3b8;
+  }
+
   * {
     border-color: var(--border);
   }
 
   html {
     color-scheme: dark;
+  }
+
+  html.light {
+    color-scheme: light;
   }
 
   body {

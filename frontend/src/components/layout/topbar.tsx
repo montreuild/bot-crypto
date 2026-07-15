@@ -2,13 +2,15 @@
 
 import { useBotStatus, useHealth } from '@/hooks/use-api';
 import { useWebSocket } from '@/lib/ws-provider';
-import { cn, formatUSD } from '@/lib/utils';
+import { cn, formatUSD, getStoredTheme, setStoredTheme } from '@/lib/utils';
+import { useRouter } from 'next/navigation';
 import {
   Play, Square, RefreshCw, AlertTriangle, Wifi, WifiOff, Loader2,
+  Sun, Moon, Search, Command,
 } from 'lucide-react';
 import { useStartBot, useStopBot, useResetHalt } from '@/hooks/use-api';
 import { toast } from 'sonner';
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 
 export function Topbar() {
   const { data: status } = useBotStatus();
@@ -17,6 +19,32 @@ export function Topbar() {
   const startBot = useStartBot();
   const stopBot = useStopBot();
   const resetHalt = useResetHalt();
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  // Initialise le thème au mount
+  useEffect(() => {
+    setTheme(getStoredTheme());
+  }, []);
+
+  // Raccourci clavier Cmd/Ctrl+K pour la recherche
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+      }
+      if (e.key === 'Escape') setSearchOpen(false);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setStoredTheme(next);
+    setTheme(next);
+  };
 
   const isRunning = status?.status === 'running';
   const isPaperMode = status?.paper_mode ?? true;
@@ -147,6 +175,130 @@ export function Topbar() {
           {health.trader && <span title="Trader OK" className="w-2 h-2 rounded-full bg-emerald-400" />}
         </div>
       )}
+
+      {/* Recherche cmd+K */}
+      <button
+        onClick={() => setSearchOpen(true)}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-card-hover border border-border text-xs text-muted hover:text-foreground hover:border-border-hi transition-all"
+        title="Recherche (Cmd+K)"
+      >
+        <Search className="w-3.5 h-3.5" />
+        <span className="hidden md:inline">Rechercher</span>
+        <kbd className="hidden md:inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-background text-[10px] font-mono">
+          <Command className="w-2.5 h-2.5" />K
+        </kbd>
+      </button>
+
+      {/* Theme toggle */}
+      <button
+        onClick={toggleTheme}
+        className="p-2 rounded-lg hover:bg-card-hover text-muted hover:text-foreground transition-colors"
+        title={theme === 'dark' ? 'Passer en mode clair' : 'Passer en mode sombre'}
+      >
+        {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+      </button>
+
+      {/* Search modal */}
+      {searchOpen && <SearchModal onClose={() => setSearchOpen(false)} />}
     </header>
+  );
+}
+
+// ── Search modal (cmd+K) ────────────────────────────────────────────────────
+
+const SEARCH_PAGES = [
+  { href: '/dashboard', label: 'Dashboard', desc: 'Vue temps réel du trading', keywords: ['live', 'trading', 'positions', 'pnl'] },
+  { href: '/bots', label: 'Mes Bots', desc: 'Portefeuille de stratégies', keywords: ['stratégies', 'lifecycle', 'candidat', 'essai', 'actif'] },
+  { href: '/trades', label: 'Trades', desc: 'Historique des trades', keywords: ['historique', 'export', 'csv'] },
+  { href: '/backtest', label: 'Backtest', desc: 'Test de stratégies sur données historiques', keywords: ['walk-forward', 'monte-carlo', 'test'] },
+  { href: '/optimizer', label: 'Optimiseur', desc: 'Optimisation des paramètres', keywords: ['bayesian', 'grid', 'random', 'trials'] },
+  { href: '/scanner', label: 'Scanner', desc: 'Fast Analyse SMC/ICT', keywords: ['patterns', 'smc', 'ict', 'fvg', 'ob'] },
+  { href: '/replay', label: 'Replay', desc: 'Rejeu multi-timeframe', keywords: ['rejeu', 'multi-tf', 'validation'] },
+  { href: '/ml', label: 'ML', desc: 'Modèles Machine Learning', keywords: ['machine', 'learning', 'lightgbm', 'random forest'] },
+  { href: '/audit', label: 'Audit OOS', desc: 'Résultats OOS optimiseur', keywords: ['oos', 'résultats', 'score'] },
+  { href: '/data', label: 'Données', desc: 'Cache bougies OHLCV', keywords: ['ohlcv', 'candles', 'cache', 'parquet'] },
+  { href: '/derivatives', label: 'Dérivés', desc: 'Funding, OI, LSR, taker', keywords: ['funding', 'open interest', 'long short'] },
+  { href: '/portfolio', label: 'Portefeuille', desc: 'Vue fonds détaillée', keywords: ['allocation', 'shadow', 'lifecycle', 'risk'] },
+  { href: '/config', label: 'Configuration', desc: 'Stratégies, risk, notifications', keywords: ['paramètres', 'risk', 'exchange'] },
+  { href: '/settings', label: 'Réglages', desc: 'Presets, thème, expert mode', keywords: ['preset', 'thème', 'clair', 'sombre'] },
+];
+
+function SearchModal({ onClose }: { onClose: () => void }) {
+  const [query, setQuery] = useState('');
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const router = useRouter();
+
+  const filtered = SEARCH_PAGES.filter((p) => {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    return p.label.toLowerCase().includes(q)
+      || p.desc.toLowerCase().includes(q)
+      || p.keywords.some((k) => k.includes(q));
+  });
+
+  const onNavigate = (href: string) => {
+    router.push(href);
+    onClose();
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center pt-24 bg-black/50 backdrop-blur-sm animate-fade-in"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-xl mx-4 rounded-xl border border-border bg-card shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
+          <Search className="w-4 h-4 text-dim" />
+          <input
+            autoFocus
+            type="text"
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setSelectedIdx(0); }}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setSelectedIdx((i) => Math.min(i + 1, filtered.length - 1));
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setSelectedIdx((i) => Math.max(i - 1, 0));
+              } else if (e.key === 'Enter' && filtered[selectedIdx]) {
+                onNavigate(filtered[selectedIdx].href);
+              }
+            }}
+            placeholder="Rechercher une page, une action..."
+            className="flex-1 bg-transparent outline-none text-sm placeholder:text-dim"
+          />
+          <kbd className="px-1.5 py-0.5 rounded bg-background text-[10px] font-mono text-dim">ESC</kbd>
+        </div>
+        <div className="max-h-80 overflow-y-auto p-2">
+          {filtered.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-muted">Aucun résultat</div>
+          ) : (
+            filtered.map((page, idx) => (
+              <button
+                key={page.href}
+                onClick={() => onNavigate(page.href)}
+                onMouseEnter={() => setSelectedIdx(idx)}
+                className={cn(
+                  'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors',
+                  idx === selectedIdx ? 'bg-primary-500/10 text-primary-400' : 'hover:bg-card-hover',
+                )}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm">{page.label}</div>
+                  <div className="text-xs text-muted truncate">{page.desc}</div>
+                </div>
+                <kbd className="px-1.5 py-0.5 rounded bg-background text-[10px] font-mono text-dim">
+                  ↵
+                </kbd>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
