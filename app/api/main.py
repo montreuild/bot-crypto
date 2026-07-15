@@ -14,6 +14,7 @@ try:
 except ImportError:
     pass
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,8 +29,9 @@ from slowapi.errors import RateLimitExceeded
 from app.api import state
 from app.api.helpers import CleanJSONResponse
 from app.api.routes import (config, trades, backtest, scanner, optimizer, bot,
-                            ml, replay, derivatives, portfolio, data)
+                            ml, replay, derivatives, portfolio, data, ws)
 from app.core.database import init_db
+from app.core.events import event_hub
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +45,22 @@ _RATE_LIMIT = os.environ.get("RATE_LIMIT", "300/minute")
 limiter = Limiter(key_func=get_remote_address, default_limits=[_RATE_LIMIT])
 
 # ── Application ────────────────────────────────────────────────────────────
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Lifespan : lie la loop async au hub d'événements au démarrage."""
+    import asyncio
+    event_hub.set_loop(asyncio.get_running_loop())
+    logger.info("[API] Event hub loop liée — WebSocket prêt")
+    yield
+
 app = FastAPI(
     title="Crypto Bot",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
-    description="API de trading algorithmique multi-stratégies. Tous les endpoints protégés exigent `X-API-Key`.",
+    description="API de trading algorithmique multi-stratégies. Tous les endpoints protégés exigent `X-API-Key`. Endpoint WebSocket temps réel sur `/ws`.",
     default_response_class=CleanJSONResponse,
+    lifespan=_lifespan,
 )
 
 app.state.limiter = limiter
@@ -314,3 +325,4 @@ app.include_router(replay.router)
 app.include_router(derivatives.router)
 app.include_router(portfolio.router)
 app.include_router(data.router)
+app.include_router(ws.router)  # WebSocket temps réel + /api/ws/status
