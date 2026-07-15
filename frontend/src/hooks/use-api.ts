@@ -197,6 +197,23 @@ export function useAuditResults() {
   });
 }
 
+// ── Audit Log ───────────────────────────────────────────────────────────────
+export function useAuditLog(params: { limit?: number; offset?: number; action?: string; actor?: string } = {}) {
+  return useQuery({
+    queryKey: ['auditLog', params],
+    queryFn: () => api.getAuditLog(params),
+    refetchInterval: 10000,
+  });
+}
+
+export function useAuditLogStats() {
+  return useQuery({
+    queryKey: ['auditLogStats'],
+    queryFn: api.getAuditLogStats,
+    refetchInterval: 30000,
+  });
+}
+
 // ── Backtest ────────────────────────────────────────────────────────────────
 export function useBacktestSettings() {
   return useQuery({
@@ -345,5 +362,33 @@ export function useRefetchData() {
   return useMutation({
     mutationFn: ({ symbol, tf }: { symbol: string; tf: string }) => api.refetchData(symbol, tf),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dataStatus'] }),
+  });
+}
+
+// ── SMC / Scanner ───────────────────────────────────────────────────────────
+export function useSMC(symbol: string, timeframe: string, limit: number, enabled = true) {
+  return useQuery({
+    queryKey: ['smc', symbol, timeframe, limit],
+    queryFn: () => api.getSMC(symbol, timeframe, limit),
+    enabled,
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useSMCReplay(symbol: string, timeframe: string, limit: number, enabled = true) {
+  return useQuery({
+    queryKey: ['smcReplay', symbol, timeframe, limit],
+    queryFn: () => api.getSMCReplay(symbol, timeframe, limit),
+    enabled,
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useSignals(symbol: string, timeframe: string, limit: number, enabled = true) {
+  return useQuery({
+    queryKey: ['signals', symbol, timeframe, limit],
+    queryFn: () => api.getSignals(symbol, timeframe, limit),
+    enabled,
+    staleTime: 30 * 1000,
   });
 }

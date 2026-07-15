@@ -29,7 +29,8 @@ from slowapi.errors import RateLimitExceeded
 from app.api import state
 from app.api.helpers import CleanJSONResponse
 from app.api.routes import (config, trades, backtest, scanner, optimizer, bot,
-                            ml, replay, derivatives, portfolio, data, ws)
+                            ml, replay, derivatives, portfolio, data, ws,
+                            audit_log)
 from app.core.database import init_db
 from app.core.events import event_hub
 
@@ -147,7 +148,10 @@ def init_app(config: dict, live_trader=None):
     """Injecte la config et le trader dans l'état partagé au démarrage."""
     state.cfg    = config
     state.trader = live_trader
-    _, state.SessionLocal = init_db(config["database"]["url"])
+    _engine, state.SessionLocal = init_db(config["database"]["url"])
+    # Initialise la table d'audit (crée la table si absente)
+    from app.core.audit_log import _init_audit_db
+    _init_audit_db(_engine)
 
 
 # ── Health check (sans auth) ───────────────────────────────────────────────
@@ -326,3 +330,4 @@ app.include_router(derivatives.router)
 app.include_router(portfolio.router)
 app.include_router(data.router)
 app.include_router(ws.router)  # WebSocket temps réel + /api/ws/status
+app.include_router(audit_log.router)  # Journal d'audit /api/audit/log

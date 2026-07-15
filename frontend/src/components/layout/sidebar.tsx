@@ -7,6 +7,7 @@ import {
   LayoutDashboard, Bot, LineChart, Settings, Activity,
   Zap, Database, Network, Sparkles, Repeat,
   BrainCircuit, ClipboardList, TrendingUp, Wallet, Cpu,
+  CandlestickChart, Film, GitCompare, ScrollText,
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -25,8 +26,12 @@ const NAV_GROUPS = [
       { href: '/backtest', label: 'Backtest', icon: LineChart },
       { href: '/scanner', label: 'Scanner', icon: Network },
       { href: '/replay', label: 'Replay', icon: Repeat },
+      { href: '/smartgraph', label: 'Smart Graph', icon: CandlestickChart },
+      { href: '/smartreplay', label: 'Smart Replay', icon: Film },
+      { href: '/compare', label: 'Comparatif', icon: GitCompare },
       { href: '/optimizer', label: 'Optimiseur', icon: Sparkles },
       { href: '/audit', label: 'Audit OOS', icon: ClipboardList },
+      { href: '/audit-log', label: 'Journal Audit', icon: ScrollText },
     ],
   },
   {
