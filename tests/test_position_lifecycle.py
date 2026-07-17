@@ -23,11 +23,19 @@ class MockExchange:
     def __init__(self, ticker_price: float = 100.0):
         self.ticker_price = ticker_price
         self.orders = []
+        # S0-02 : file de réponses forcées pour create_order (None ou statut
+        # rejeté/annulé), consommée dans l'ordre — le comportement normal
+        # reprend une fois la file épuisée.
+        self.next_order_responses = []
 
     def fetch_ticker(self, symbol):
         return {"last": self.ticker_price}
 
     def create_order(self, symbol, order_type, side, amount, price=None, params=None):
+        if self.next_order_responses:
+            forced = self.next_order_responses.pop(0)
+            self.orders.append(forced)
+            return forced
         order = {
             "id": f"order{len(self.orders)}", "symbol": symbol, "side": side,
             "amount": amount, "price": self.ticker_price,
@@ -122,6 +130,22 @@ class TestOpen:
         assert opened2 is False
         assert len(trader.open_positions) == 1
 
+    def test_rejected_order_raises_and_leaves_no_phantom_position(self, trader_exchange):
+        """S0-02 : un ordre rejeté ne doit pas être traité comme une ouverture réussie."""
+        trader, exchange = trader_exchange
+        exchange.next_order_responses = [{"id": "o1", "status": "rejected",
+                                          "failReason": "insufficient balance"}]
+        with pytest.raises(RuntimeError, match="rejected"):
+            _open(trader)
+        assert trader.open_positions == {}  # slot réservé nettoyé, pas de position fantôme
+
+    def test_none_order_raises_and_leaves_no_phantom_position(self, trader_exchange):
+        trader, exchange = trader_exchange
+        exchange.next_order_responses = [None]
+        with pytest.raises(RuntimeError, match="None"):
+            _open(trader)
+        assert trader.open_positions == {}
+
 
 # ── Gestion (tick-by-tick) ────────────────────────────────────────────────
 
@@ -170,3 +194,38 @@ class TestClose:
         trader._close_position("does-not-exist", 100.0)  # ne doit pas lever
         with session_scope(trader.SessionLocal) as sess:
             assert get_trades(sess, limit=10) == []
+
+    def test_close_position_rejected_order_keeps_position_open(self, trader_exchange):
+        """S0-02 : le cas le plus critique — _close_position retire la position de
+        open_positions AVANT d'appeler create_order. Un ordre rejeté ne doit pas
+        faire disparaître silencieusement une position toujours ouverte côté
+        exchange (pas de PnL calculé, pas de trade persisté, pas de perte de suivi).
+        """
+        trader, exchange = trader_exchange
+        _, pos_key = _open(trader, price=100.0, stop_hint=95.0)
+        assert pos_key in trader.open_positions
+
+        exchange.next_order_responses = [{"id": "o-close", "status": "canceled"}]
+        trader._close_position(pos_key, 120.0)
+
+        assert pos_key in trader.open_positions  # remise en gestion, pas perdue
+        with session_scope(trader.SessionLocal) as sess:
+            assert get_trades(sess, limit=10) == []  # aucun trade fantôme persisté
+
+
+# ── Scale-in ──────────────────────────────────────────────────────────────
+
+class TestScaleIn:
+    def test_rejected_order_raises_and_position_unchanged(self, trader_exchange):
+        """S0-02 : un ordre de pyramidage rejeté ne doit pas modifier la
+        taille/l'entrée moyenne de la position existante."""
+        trader, exchange = trader_exchange
+        _, pos_key = _open(trader, price=100.0, stop_hint=95.0)
+        pos = trader.open_positions[pos_key]
+        size_before = pos["size"]
+
+        exchange.next_order_responses = [{"id": "o-si", "status": "rejected"}]
+        with pytest.raises(RuntimeError, match="rejected"):
+            trader._scale_in_position(pos_key, pos, 105.0, 1.0, {"size_factor": 1.0})
+
+        assert trader.open_positions[pos_key]["size"] == size_before

@@ -90,6 +90,7 @@ class BalanceSyncMixin:
                     self.capital_display = round(total, 4)
                 self._balance_detail = detail
                 self.risk.update_equity(self.capital_display)
+                self.allocator.update_equity(self.capital_display)
         except Exception as e:
             logger.warning(f"[Spot Sync] KO : {e}")
 
@@ -161,6 +162,7 @@ class BalanceSyncMixin:
                         self.capital_display = round(total, 4)
                     self._balance_detail = detail
                     self.risk.update_equity(self.capital_display)
+                    self.allocator.update_equity(self.capital_display)
         except Exception as e:
             logger.warning(f"[MARGIN] sync KO : {e}")
 

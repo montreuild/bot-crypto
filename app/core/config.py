@@ -69,20 +69,29 @@ DEFAULTS = {
 _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}|\$([A-Z_][A-Z0-9_]*)")
 
 
-def _expand_env(value: Any) -> Any:
-    """Substitue récursivement les variables d'environnement dans les chaînes."""
+def _expand_env(value: Any, missing: set | None = None) -> Any:
+    """Substitue récursivement les variables d'environnement dans les chaînes.
+
+    Les noms de variables référencées (``${VAR}``) mais absentes ou vides
+    dans l'environnement sont collectés dans ``missing`` si fourni — permet
+    à ``load_config`` de lever une erreur explicite en mode live plutôt que
+    de démarrer avec des identifiants vides (échecs d'authentification
+    silencieux, cf. OPS/14.1).
+    """
     if isinstance(value, str):
         def _replace(m: re.Match) -> str:
             var = m.group(1) or m.group(2)
             env_val = os.environ.get(var, "")
             if env_val:
                 logger.debug(f"[Config] Variable d'env résolue : ${var}")
+            elif missing is not None:
+                missing.add(var)
             return env_val
         return _ENV_PATTERN.sub(_replace, value)
     if isinstance(value, dict):
-        return {k: _expand_env(v) for k, v in value.items()}
+        return {k: _expand_env(v, missing) for k, v in value.items()}
     if isinstance(value, list):
-        return [_expand_env(v) for v in value]
+        return [_expand_env(v, missing) for v in value]
     return value
 
 
@@ -215,7 +224,8 @@ def load_config(path: str = "config.yaml") -> dict:
     if not isinstance(cfg, dict):
         raise ValueError("Le fichier config.yaml est vide ou invalide.")
 
-    cfg = _expand_env(cfg)
+    _missing_env: set = set()
+    cfg = _expand_env(cfg, _missing_env)
 
     # ── Chargement des configs de stratégies (strategies/*.yaml) ─────────────
     strategies_dir = os.path.join(os.path.dirname(os.path.abspath(path)), "strategies")
@@ -249,6 +259,27 @@ def load_config(path: str = "config.yaml") -> dict:
             cfg[section] = {}
         for k, v in defaults.items():
             cfg[section].setdefault(k, v)
+
+    # Variables d'env référencées mais absentes (OPS/14.1) : bloquant en live
+    # (sinon échecs d'authentification silencieux avec des clés vides),
+    # WARNING seulement en paper mode. Opt-out explicite via config.strict_env.
+    if _missing_env:
+        paper_mode = bool(cfg["trading"].get("paper_mode", True))
+        strict_env = cfg.get("config", {}).get("strict_env")
+        strict_env = (not paper_mode) if strict_env is None else bool(strict_env)
+        missing_list = ", ".join(f"${{{v}}}" for v in sorted(_missing_env))
+        if strict_env:
+            raise ValueError(
+                f"Variable(s) d'environnement référencée(s) dans config.yaml mais "
+                f"absente(s)/vide(s) : {missing_list} — le mode live refuse de "
+                f"démarrer avec des identifiants vides (échec d'authentification "
+                f"silencieux sinon). Définissez ces variables, ou passez "
+                f"trading.paper_mode: true / config.strict_env: false pour ignorer."
+            )
+        logger.warning(
+            f"[Config] Variable(s) d'environnement absente(s)/vide(s) (mode paper, "
+            f"non bloquant) : {missing_list}"
+        )
 
     errors = []
     for section, field in REQUIRED_FIELDS:
