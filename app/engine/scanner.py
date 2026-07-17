@@ -6,6 +6,7 @@ from typing import List, Dict, Optional, Tuple
 
 import polars as pl
 
+from app.core.bot_identity import resolve_venue
 from app.core.candle_store import get_store
 from app.core.indicators import precompute_df, detect_regime
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
@@ -18,7 +19,11 @@ class MarketScanner:
         self.exchange = exchange
         self.cfg      = cfg
         self.scfg     = cfg.get("scanner", {})
-        self.min_vol  = cfg["trading"].get("min_volume_usdc_24h", 5_000_000)
+        # S2-03 : min_volume_quote_24h (générique) prime sur l'ancienne clé
+        # min_volume_usdc_24h — même défaut, alias propagé dans load_config.
+        self.min_vol  = cfg["trading"].get(
+            "min_volume_quote_24h", cfg["trading"].get("min_volume_usdc_24h", 5_000_000)
+        )
         self._symbols_cache: Optional[List[str]] = None
         self._symbols_cache_ts: float = 0.0
 
@@ -69,10 +74,15 @@ class MarketScanner:
         return filtered if filtered else symbols
 
     def _dynamic_symbols(self, top_n: int) -> List[str]:
+        # S2-03 : devise de cotation résolue via la venue par défaut (USDC en
+        # crypto historique) au lieu du littéral "/USDC" — le scan dynamique
+        # reste un concept crypto (les actions utilisent un univers statique,
+        # cf. chantier G2), mais la devise n'est plus codée en dur ici.
+        quote = resolve_venue(self.cfg).quote_currency
         tickers = self.exchange.fetch_tickers()
-        usdc = {s: t for s, t in tickers.items()
-                if s.endswith("/USDC") and (t.get("quoteVolume") or 0) >= self.min_vol}
-        ranked = sorted(usdc.items(), key=lambda x: x[1].get("quoteVolume", 0), reverse=True)
+        matching = {s: t for s, t in tickers.items()
+                   if s.endswith(f"/{quote}") and (t.get("quoteVolume") or 0) >= self.min_vol}
+        ranked = sorted(matching.items(), key=lambda x: x[1].get("quoteVolume", 0), reverse=True)
         return [s for s, _ in ranked[:top_n]]
 
     def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 500) -> Optional[pl.DataFrame]:

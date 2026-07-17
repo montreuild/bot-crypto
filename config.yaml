@@ -6,20 +6,35 @@ exchange:
   margin: true
 venues:
   default:
+  # asset_class/quote_currency explicités (S2-02, généralisation multi-actifs) —
+  # valeurs identiques aux défauts implicites précédents, aucun changement de
+  # comportement. Une venue actions (equity) s'ajoute ici sans toucher aux
+  # venues crypto existantes, ex. :
+  #   euronext-paper:
+  #     asset_class: equity
+  #     quote_currency: EUR
+  #     fractional: false
+  #     allow_short: false
   defs:
     spot:
       market_type: spot
       exchange: okx
+      asset_class: crypto
+      quote_currency: USDC
       max_leverage: 1
     margin-isolated:
       market_type: margin
       exchange: okx
       margin_mode: isolated
+      asset_class: crypto
+      quote_currency: USDC
       max_leverage: 3
     perp-hedge-okx:
       market_type: perp
       exchange: okx
       hedge_mode: true
+      asset_class: crypto
+      quote_currency: USDC
       max_leverage: 5
   assign: {}
 trading:

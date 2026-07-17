@@ -37,13 +37,26 @@ MARKET_TYPES = ("spot", "margin", "perp")
 # ── Venue ───────────────────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class Venue:
-    """Modèle de marché + exchange. Attribut par bot (cf. doc §4)."""
+    """Modèle de marché + exchange. Attribut par bot (cf. doc §4).
+
+    Champs S2-02 (généralisation multi-actifs) : ``asset_class``,
+    ``quote_currency``, ``tick_size``, ``lot_size``, ``fractional``,
+    ``allow_short`` — tous par défaut alignés sur le comportement crypto
+    historique (rétro-compatibilité totale des ``venues.defs`` existants qui
+    ne renseignent pas ces clés).
+    """
     name: str
     market_type: str = "spot"          # spot | margin | perp
     exchange: str = "okx"
     margin_mode: Optional[str] = None  # isolated | cross | None (spot)
     max_leverage: float = 1.0
     hedge_mode: bool = False           # perp hedge mode → netting natif (Phase 5)
+    asset_class: str = "crypto"        # crypto | equity
+    quote_currency: str = "USDC"
+    tick_size: float = 0.0             # 0.0 = pas de contrainte (crypto quasi-continu)
+    lot_size: float = 0.0              # 0.0 = pas de contrainte (fractionnable)
+    fractional: bool = True            # False = quantité entière requise (actions)
+    allow_short: bool = True
 
     def describe(self) -> str:
         lev = f"×{self.max_leverage:g}" if self.max_leverage and self.max_leverage > 1 else "1×"
@@ -56,6 +69,9 @@ class Venue:
             "name": self.name, "market_type": self.market_type,
             "exchange": self.exchange, "margin_mode": self.margin_mode,
             "max_leverage": self.max_leverage, "hedge_mode": self.hedge_mode,
+            "asset_class": self.asset_class, "quote_currency": self.quote_currency,
+            "tick_size": self.tick_size, "lot_size": self.lot_size,
+            "fractional": self.fractional, "allow_short": self.allow_short,
         }
 
 
@@ -79,8 +95,11 @@ def resolve_venue(cfg: dict, strategy: Optional[str] = None,
     """Résout la venue d'un bot.
 
     Précédence : ``venues.assign["strategy::tf::symbol"]`` >
-    ``venues.assign["strategy::tf"]`` > ``venues.assign[strategy]`` >
-    ``venues.default`` > venue dérivée des globales (``default_venue_from_cfg``).
+    ``venues.assign["strategy::tf"]`` > ``venues.assign[symbol]`` (S2-02 —
+    un instrument porte sa venue indépendamment de la stratégie qui le
+    trade, ex. assigner "AIR.PA" à une venue actions sans lister chaque
+    stratégie) > ``venues.assign[strategy]`` > ``venues.default`` > venue
+    dérivée des globales (``default_venue_from_cfg``).
     """
     venues = cfg.get("venues") or {}
     defs = venues.get("defs") or {}
@@ -94,6 +113,8 @@ def resolve_venue(cfg: dict, strategy: Optional[str] = None,
         vname = assign[slot_sym]
     elif slot_key and slot_key in assign:
         vname = assign[slot_key]
+    elif symbol and symbol in assign:
+        vname = assign[symbol]
     elif strategy and strategy in assign:
         vname = assign[strategy]
     elif venues.get("default"):
@@ -109,6 +130,12 @@ def resolve_venue(cfg: dict, strategy: Optional[str] = None,
             margin_mode=d.get("margin_mode"),
             max_leverage=float(d.get("max_leverage", 1) or 1),
             hedge_mode=bool(d.get("hedge_mode", False)),
+            asset_class=d.get("asset_class", "crypto"),
+            quote_currency=d.get("quote_currency", "USDC"),
+            tick_size=float(d.get("tick_size", 0.0) or 0.0),
+            lot_size=float(d.get("lot_size", 0.0) or 0.0),
+            fractional=bool(d.get("fractional", True)),
+            allow_short=bool(d.get("allow_short", True)),
         )
     return default_venue_from_cfg(cfg)
 

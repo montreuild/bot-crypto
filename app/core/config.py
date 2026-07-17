@@ -40,6 +40,10 @@ DEFAULTS = {
         "paper_mode": True, "max_positions": 5, "max_longs": 3, "max_shorts": 3,
         "scan_interval": 60, "score_threshold": 0.55, "daily_drawdown_limit": 0.05,
         "max_trades_per_minute": 3, "min_volume_usdc_24h": 5_000_000,
+        # Alias générique (S2-03, multi-actifs) — même défaut ; scanner.py lit
+        # min_volume_quote_24h en priorité (repli automatique sur l'ancienne
+        # clé si l'utilisateur ne l'a personnalisée qu'elle).
+        "min_volume_quote_24h": 5_000_000,
         "taker_fee": DEFAULT_TAKER_FEE, "maker_fee": DEFAULT_MAKER_FEE,
         "borrow_rate_daily": 0.0002,
         "max_leverage": 1, "max_drawdown_global": 0.20, "spread_pct": 0.0005,
@@ -223,6 +227,15 @@ def load_config(path: str = "config.yaml") -> dict:
 
     if not isinstance(cfg, dict):
         raise ValueError("Le fichier config.yaml est vide ou invalide.")
+
+    # S2-03 : alias générique min_volume_quote_24h — propage une valeur
+    # personnalisée de l'ancienne clé min_volume_usdc_24h AVANT le merge des
+    # défauts (sinon la nouvelle clé retomberait sur le défaut générique et
+    # ignorerait le réglage existant de l'utilisateur).
+    _t_raw = cfg.get("trading") or {}
+    if isinstance(_t_raw, dict) and "min_volume_quote_24h" not in _t_raw \
+            and "min_volume_usdc_24h" in _t_raw:
+        cfg.setdefault("trading", {})["min_volume_quote_24h"] = _t_raw["min_volume_usdc_24h"]
 
     _missing_env: set = set()
     cfg = _expand_env(cfg, _missing_env)
