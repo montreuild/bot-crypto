@@ -15,6 +15,7 @@ import asyncio
 import json
 from starlette.testclient import TestClient
 
+from app.api import state
 from app.api.main import app
 from app.core.events import (
     event_hub,
@@ -285,3 +286,51 @@ def test_ws_multiple_subscribers():
                         found = True
                         break
                 assert found, f"Client n'a pas reçu l'event"
+
+
+# ── Auth par cookie HttpOnly (S1-04) ────────────────────────────────────────
+
+def test_ws_cookie_auth_accepted(monkeypatch):
+    """Le cookie HttpOnly api_key (posé par les pages web) suffit — pas
+    besoin de ?api_key= dans l'URL."""
+    _setup_hub_loop()
+    monkeypatch.setattr(state, "cfg", {"web": {"api_key": "secret123"}})
+    with TestClient(app) as client:
+        client.cookies.set("api_key", "secret123")
+        with client.websocket_connect("/ws") as ws:
+            msg = ws.receive_json()
+            assert msg["type"] == "connected"
+
+
+def test_ws_query_param_fallback_when_no_cookie(monkeypatch):
+    """?api_key= reste un fallback pour les clients sans cookie jar."""
+    _setup_hub_loop()
+    monkeypatch.setattr(state, "cfg", {"web": {"api_key": "secret123"}})
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws?api_key=secret123") as ws:
+            msg = ws.receive_json()
+            assert msg["type"] == "connected"
+
+
+def test_ws_wrong_key_rejected(monkeypatch):
+    _setup_hub_loop()
+    monkeypatch.setattr(state, "cfg", {"web": {"api_key": "secret123"}})
+    with TestClient(app) as client:
+        try:
+            with client.websocket_connect("/ws?api_key=wrong") as ws:
+                ws.receive_json()
+            assert False, "connexion aurait dû être refusée"
+        except Exception:
+            pass  # WebSocketDisconnect ou fermeture — refus attendu
+
+
+def test_ws_cookie_takes_priority_over_wrong_query_param(monkeypatch):
+    """Le cookie valide authentifie même si le query param est absent/faux —
+    cf. _check_ws_auth : cookie vérifié en premier."""
+    _setup_hub_loop()
+    monkeypatch.setattr(state, "cfg", {"web": {"api_key": "secret123"}})
+    with TestClient(app) as client:
+        client.cookies.set("api_key", "secret123")
+        with client.websocket_connect("/ws") as ws:  # pas de query param du tout
+            msg = ws.receive_json()
+            assert msg["type"] == "connected"

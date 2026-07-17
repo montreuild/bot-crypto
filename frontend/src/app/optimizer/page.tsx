@@ -53,7 +53,10 @@ function LiveProgress({ job }: { job: OptimizeJob }) {
       return;
     }
     const url = api.optimizeStreamUrl(job.job_id);
-    const es = new EventSource(url);
+    // withCredentials : envoie le cookie HttpOnly api_key même en dev
+    // (frontend/backend sur des ports différents = origines distinctes) —
+    // S1-05, plus de clé API en query string.
+    const es = new EventSource(url, { withCredentials: true });
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);

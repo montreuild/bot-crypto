@@ -2,13 +2,15 @@
  * Client API pour le backend FastAPI.
  * Côté client (navigateur) : utilise NEXT_PUBLIC_API_URL directement.
  * Côté serveur (SSR) : proxy relatif via Next.js rewrites.
+ *
+ * Auth (S1-05) : le cookie HttpOnly `api_key` (posé par les pages web, cf.
+ * app/api/main.py::_tpl) est envoyé via `credentials: 'include'` — plus de
+ * clé API dans une variable NEXT_PUBLIC_* (visible dans le bundle JS client).
  */
 
 import type {
   BotStatus, Trade, Bot, SlotBudget, BacktestResult,
 } from '@/types';
-
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY || '';
 
 const API_BASE = typeof window !== 'undefined'
   ? (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '') + '/api'
@@ -26,10 +28,9 @@ async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise
     'Content-Type': 'application/json',
     ...((options.headers as Record<string, string>) || {}),
   };
-  if (API_KEY) headers['X-API-Key'] = API_KEY;
 
   const res = await fetch(`${API_BASE}${endpoint}`, {
-    ...options, headers, cache: 'no-store',
+    ...options, headers, cache: 'no-store', credentials: 'include',
   });
 
   if (!res.ok) {
@@ -161,8 +162,7 @@ export const api = {
   getOptimizeSpaces: () => apiFetch<any>('/optimize/spaces'),
   optimizeStreamUrl: (jobId: string) => {
     const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
-    const keySuffix = API_KEY ? `&api_key=${encodeURIComponent(API_KEY)}` : '';
-    return `${base}/api/optimize/stream?job_id=${jobId}${keySuffix}`;
+    return `${base}/api/optimize/stream?job_id=${jobId}`;
   },
 
   // ── ML ──────────────────────────────────────────────────────────────────

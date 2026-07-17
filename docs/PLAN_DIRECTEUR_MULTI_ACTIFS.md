@@ -17,6 +17,26 @@
 
 ---
 
+## 0. Note d'exécution — flakiness pré-existante de la suite complète
+
+En validant les Sprints 0-1, `pytest tests/` (610 tests) s'est bloqué de façon
+non-déterministe (~1 run sur 3-4) lors de l'exécution de la suite COMPLÈTE en
+un seul process — jamais en lançant les fichiers individuellement ou par
+moitiés. Root-cause isolée par bisection : **le blocage se reproduit à
+l'identique sur le code d'AVANT le Sprint 1** (`git stash` → HEAD Sprint 0
+seul, sans aucun des verrous `RLock` ajoutés) — donc **non lié** aux
+correctifs `RiskManager`/`OHLCVCache`/`CapitalAllocator` de ce plan. C'est une
+flakiness pré-existante de l'environnement sandboxé (probable throttling CPU
+cgroup sous charge de threads multiples — `test_allocator_thread_safety.py`
+préexistant en est un candidat). Sans accès à l'infra CI réelle, hors
+périmètre des sprints ci-dessous ; mitigé pragmatiquement en réduisant la
+charge de `test_risk_thread_safety.py` (moins d'itérations, `time.sleep(0)`
+dans la boucle de lecture). Recommandation de suivi : exécuter `pytest` avec
+`pytest-timeout` en CI pour transformer un blocage en échec explicite plutôt
+qu'un run qui ne se termine jamais.
+
+---
+
 ## 1. Corrections au plan d'amélioration (vérification code)
 
 Le plan d'amélioration (91 items) a été audité contre le code actuel. La branche
@@ -51,6 +71,7 @@ détail, priorité conservée).
 | 11.1 « Tests WebSocket manquants » | **OBSOLÈTE** : `tests/test_websocket.py` existe (10 tests), ainsi que `tests/test_api_routes.py` (10 tests) | Refaire l'inventaire réel des routes non couvertes avant d'ouvrir des chantiers de tests (portfolio, replay, derivatives, trades restent à vérifier) |
 | 14.6 `allow_insecure` par défaut | **PARTIEL** : le garde-fou OPS-02 existe (`config.py:318-332`) — le démarrage est refusé sur host ouvert sans clé, sauf opt-in explicite `allow_insecure: true` | Reste : `setup.sh` génère une clé aléatoire dans `.env` ; WARNING au boot si `allow_insecure: true` + bind `0.0.0.0` |
 | 16.5 `venues.assign: {}` non documenté | **ABSORBÉ** par le chantier G (généralisation) : la section `venues` devient le socle du `VenueRegistry` (voir §3.2) | Rien à faire isolément |
+| 3.7 Routes backtest/replay/optimizer bloquantes | **FAUX** : les routes `def` (sync) de FastAPI sont automatiquement déportées dans le threadpool AnyIO par Starlette — elles ne bloquent PAS la boucle asyncio. Vérifié empiriquement (serveur uvicorn réel : une route `async` reste réactive en ~0.08s pendant qu'une route sync dort 1.5s). `optimizer_start` retourne déjà immédiatement (`start_async` lance des threads en arrière-plan) ; `backtest`/`replay` ont chacun leur sémaphore anti-chevauchement | Aucune (un `asyncio.to_thread()` ici serait une double-mise-en-thread sans bénéfice) |
 
 ### 1.3 Items conservés sans re-vérification détaillée
 

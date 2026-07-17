@@ -173,3 +173,47 @@ class TestPreExecutionCheck:
         assert trader._pre_execution_check(
             "ETH/USDC", "long", 1.0, 100.0, trader._paper_base * 0.2
         ) is False
+
+    def test_live_spot_blocks_when_free_balance_insufficient(self, tmp_path):
+        """S1-07 : capital_display seul (agrégé, resynchronisé 1×/cycle) ne
+        suffit pas — le solde spot RÉEL (_balance_detail.free) doit couvrir
+        le notionnel, sans quoi plusieurs ouvertures dans le même tour
+        pourraient sur-engager un cash déjà consommé par un trade précédent."""
+        cfg = _make_cfg(str(tmp_path / "live.db"), paper=False)
+        cfg["exchange"]["margin"] = False  # spot pur : pas de levier
+        exchange = MockExchange()
+        trader = LiveTrader(cfg, exchange)
+        trader.capital_display = 1000.0       # valeur agrégée encore "fraîche"
+        trader._balance_detail = {"free": 50.0, "used": 950.0, "total": 1000.0, "borrowed": 0.0}
+        # 25% de capital_display (250) passerait l'ancien garde-fou, mais le
+        # cash libre réel (50) ne couvre pas ce notionnel.
+        assert trader._pre_execution_check("BTC/USDC", "long", 1.0, 100.0, 200.0) is False
+
+    def test_live_spot_passes_when_free_balance_sufficient(self, tmp_path):
+        cfg = _make_cfg(str(tmp_path / "live.db"), paper=False)
+        cfg["exchange"]["margin"] = False
+        exchange = MockExchange()
+        trader = LiveTrader(cfg, exchange)
+        trader.capital_display = 1000.0
+        trader._balance_detail = {"free": 500.0, "used": 500.0, "total": 1000.0, "borrowed": 0.0}
+        assert trader._pre_execution_check("BTC/USDC", "long", 1.0, 100.0, 200.0) is True
+
+    def test_live_margin_blocks_when_margin_level_critical(self, tmp_path):
+        cfg = _make_cfg(str(tmp_path / "live.db"), paper=False)
+        cfg["exchange"]["margin"] = True
+        cfg["trading"]["margin_level_critical"] = 1.5
+        exchange = MockExchange()
+        trader = LiveTrader(cfg, exchange)
+        trader.capital_display = 1000.0
+        trader._margin_level = 1.2  # < margin_level_critical
+        assert trader._pre_execution_check("BTC/USDC", "long", 1.0, 100.0, 200.0) is False
+
+    def test_live_margin_passes_when_margin_level_safe(self, tmp_path):
+        cfg = _make_cfg(str(tmp_path / "live.db"), paper=False)
+        cfg["exchange"]["margin"] = True
+        cfg["trading"]["margin_level_critical"] = 1.5
+        exchange = MockExchange()
+        trader = LiveTrader(cfg, exchange)
+        trader.capital_display = 1000.0
+        trader._margin_level = 4.0
+        assert trader._pre_execution_check("BTC/USDC", "long", 1.0, 100.0, 200.0) is True

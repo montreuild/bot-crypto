@@ -174,7 +174,12 @@ class BalanceSyncMixin:
         Vérifie que le capital disponible est suffisant avant d'ouvrir une position.
 
         En paper mode : compare le capital settled moins les positions ouvertes.
-        En live mode  : vérifie les seuils minimaux de capital.
+        En live mode  : vérifie les seuils minimaux de capital, PLUS (S1-07) le
+        solde/marge RÉELS remontés par l'exchange (``_balance_detail``/
+        ``_margin_level``, rafraîchis par ``_sync_spot_balance``/
+        ``_sync_margin_account``) — ``capital_display`` seul est une valeur
+        agrégée resynchronisée une fois par cycle : plusieurs ouvertures dans
+        le même tour peuvent la laisser stale entre deux trades.
 
         Retourne True si l'exécution peut continuer, False sinon.
         """
@@ -197,4 +202,28 @@ class BalanceSyncMixin:
                 f"[PreCheck] {symbol} : notionnel trop élevé ({notional:.2f})"
             )
             return False
+
+        is_margin = bool(self.cfg.get("exchange", {}).get("margin")
+                         or self.cfg["trading"].get("margin_mode") is not None)
+        detail = getattr(self, "_balance_detail", None)
+        if detail and not is_margin:
+            # Spot pur (sans levier) : le notionnel nécessite le même montant
+            # en cash libre — pas d'emprunt possible pour combler l'écart.
+            free = float(detail.get("free", 0.0) or 0.0)
+            if free < notional:
+                logger.warning(
+                    f"[PreCheck] {symbol} : solde spot insuffisant "
+                    f"(free={free:.2f} < notional={notional:.2f})"
+                )
+                return False
+        elif is_margin:
+            margin_level = getattr(self, "_margin_level", None)
+            if margin_level is not None:
+                ml_critical = float(self.cfg["trading"].get("margin_level_critical", 1.5))
+                if margin_level < ml_critical:
+                    logger.warning(
+                        f"[PreCheck] {symbol} : margin level critique "
+                        f"({margin_level:.3f} < {ml_critical}) — entrée refusée"
+                    )
+                    return False
         return True

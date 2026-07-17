@@ -95,6 +95,19 @@ backtest:
   partial_fill_pct: 0.95
   monte_carlo_runs: 200
   walk_forward_folds: 5
+live:
+  # Paramètres de trailing du LiveTrader — dédiés, indépendants de backtest.*
+  # (S1-08 : sans cette section, le trailing live suivait silencieusement
+  # tout changement de config backtest/walk-forward/optimiseur).
+  trailing:
+    trail_wide: 2.5
+    grace_bars: 4
+    breakeven_r: 1.2
+    trail_tight: 1.0
+    lock_r: 2.5
+    tight_r: 4.0
+    lock_ratio: 0.60
+    use_swing: true
 optimizer:
   enabled: false
   method: bayesian
