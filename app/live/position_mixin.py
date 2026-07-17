@@ -35,6 +35,13 @@ from app.core.bot_identity import build_slot_key, build_pos_key
 from app.core.config import DEFAULT_TAKER_FEE
 from app.core.timeframes import HTF_MAP as _HTF_MAP
 
+# WebSocket temps réel — non bloquant, jamais critique pour le trading
+try:
+    from app.core.events import publish_trade_opened, publish_trade_closed
+except Exception:  # pragma: no cover — fallback si events.py indisponible
+    def publish_trade_opened(*_a, **_kw): pass
+    def publish_trade_closed(*_a, **_kw): pass
+
 logger = logging.getLogger(__name__)
 
 # Mapping TF → secondes — source unique (V4-A).
@@ -401,6 +408,23 @@ class PositionMixin:
             f"| Sizing={score_factor * 100:.0f}% | Size={size:.6f} | Stop={stop:.4f}"
         )
         self.notif.notify_trade_open(pos)
+
+        # WebSocket temps réel — publish non bloquant (jamais critique)
+        try:
+            publish_trade_opened(
+                slot_key=build_slot_key(strat_name, tf, symbol),
+                symbol=symbol,
+                side=signal["side"],
+                size=size,
+                entry_price=exec_price,
+                stop_price=stop,
+                strategy=strat_name,
+                timeframe=tf,
+                score=float(signal.get("score", 0)),
+                reason=signal.get("reason", ""),
+            )
+        except Exception:
+            pass
 
     # ── Gestion (suivi tick-by-tick) ──────────────────────────────────────
 
@@ -1032,6 +1056,23 @@ class PositionMixin:
             f"[CLOSE] {pos['side'].upper()} {pos['symbol']} @ {exec_price:.4f} "
             f"| PnL={pnl:+.4f} | Strat={pos.get('strategy', '')}@{pos.get('timeframe', '?')}"
         )
+
+        # WebSocket temps réel — publish non bloquant (jamais critique)
+        try:
+            publish_trade_closed(
+                slot_key=slot_key,
+                symbol=pos["symbol"],
+                side=pos["side"],
+                entry_price=pos["entry"],
+                exit_price=exec_price,
+                pnl=float(pnl),
+                pnl_pct=float(pnl_pct),
+                fees=float(fees),
+                reason=pos.get("reason", ""),
+                duration_bars=int(bars_since),
+            )
+        except Exception:
+            pass
 
     # ── Sérialisation pour l'API ──────────────────────────────────────────
 

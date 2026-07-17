@@ -1,31 +1,57 @@
+# Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
+*$py.class
+*.so
 .Python
-*.egg-info/
-dist/
-build/
-.env
-.venv
+.venv/
+.venv-test/
 venv/
-*.log
-*.log.*
-*.sqlite
-*.db
-*.db-shm
-*.db-wal
+env/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+/lib/
+/lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Pytest
 .pytest_cache/
-.mypy_cache/
-*.pkl
+.coverage
+htmlcov/
+.tox/
 
-# CandleStore — données OHLCV locales (Parquet)
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-# FeatureStore — catalogue de features pré-calculées (Parquet)
-data/features/
+# OS
+.DS_Store
+Thumbs.db
 
-# Logs d entrainement V11 (artefacts runtime)
-logs/*.jsonl
+# Bot runtime
+logs/*.log
+data/heartbeat.json
+data/KILL_SWITCH
+backups/
 
-# optimize_runner.py — verrou exclusif (runtime)
-.optimize_runner.lock
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
