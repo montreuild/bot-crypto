@@ -30,14 +30,37 @@ def _is_ml_strategy(name: str) -> bool:
 
 
 def _save_ml_model_post_opt(strategy_name: str, best_params: dict,
-                             df_full: pl.DataFrame, timeframe: str) -> None:
+                             df_full: pl.DataFrame, timeframe: str,
+                             df_is: Optional[pl.DataFrame] = None,
+                             train_mode: str = "full") -> None:
     """
     Après optimisation ML : entraîne un modèle final avec les meilleurs paramètres
-    sur l'ensemble des données et le persiste en .pkl.
-    Appelé dans un thread daemon — ne bloque pas le reporting du job.
+    et le persiste en .pkl. Appelé dans un thread daemon — ne bloque pas le
+    reporting du job.
+
+    S4-03 — Data leakage PAR DESIGN en mode ``train_mode="full"`` (défaut,
+    comportement historique inchangé) : le modèle est entraîné sur IS+OOS,
+    donc il a "vu" les données OOS que l'optimiseur a utilisées pour choisir
+    les meilleurs params. Le score OOS rapporté par l'optimiseur reste
+    honnête (calculé AVANT ce ré-entraînement final, sur un modèle qui
+    n'avait vu que l'IS pendant la recherche de params) — mais le modèle
+    *déployé en production* a un edge futur potentiellement surestimé par
+    rapport à ce score, puisqu'il a ensuite été affiné sur l'OOS. Ce choix
+    est délibéré : maximiser la donnée disponible pour le modèle réellement
+    tradé, au prix d'un léger optimisme. Alternative disponible via
+    ``optimizer.ml_final_train_mode: "is_only"`` (config.yaml) : entraîne
+    uniquement sur l'IS (``df_is``), cohérent avec le score OOS rapporté
+    mais avec moins de données pour le modèle final.
     """
     import os
     try:
+        if train_mode == "is_only" and df_is is not None:
+            df_full = df_is
+            logger.info(
+                f"[AutoOpt] ML post-opt {strategy_name}/{timeframe} : entraînement "
+                f"IS-only (optimizer.ml_final_train_mode=is_only) — cohérent avec "
+                f"le score OOS rapporté, mais moins de données que le mode 'full'."
+            )
         # df_full peut être brut (sans colonnes _pre_*) — l'engine précompute
         # à chaque run(), mais ici on entraîne directement.
         from app.core.indicators import precompute_df
@@ -581,9 +604,14 @@ class AutoOptimizer:
                 )
 
             # Pour les stratégies ML : entraîner un modèle final avec les meilleurs params
-            # sur l'ensemble complet des données et le persister sur disque.
+            # sur l'ensemble complet des données (par défaut) et le persister sur
+            # disque. S4-03 : optimizer.ml_final_train_mode contrôle full (IS+OOS,
+            # défaut, comportement inchangé) vs is_only (cohérent avec le score
+            # OOS rapporté, cf. docstring de _save_ml_model_post_opt).
             if result.get("best_params") and _is_ml_strategy(strategy_name) and df_full is not None:
-                _save_ml_model_post_opt(strategy_name, result["best_params"], df_full, timeframe)
+                _ml_train_mode = self.cfg.get("optimizer", {}).get("ml_final_train_mode", "full")
+                _save_ml_model_post_opt(strategy_name, result["best_params"], df_full, timeframe,
+                                        df_is=df_is, train_mode=_ml_train_mode)
 
             # Si l'optimiseur signale un échec global (ex: tous les workers
             # tombés à cause d'un OOM LightGBM), on marque le job "error"

@@ -58,7 +58,10 @@ DEFAULTS = {
         # la reproductibilité des backtests en réel).
         "max_notional_pct": 0.20,
     },
-    "optimizer": {"enabled": False, "method": "bayesian", "n_trials": 50, "out_of_sample_ratio": 0.3},
+    "optimizer": {"enabled": False, "method": "bayesian", "n_trials": 50, "out_of_sample_ratio": 0.3,
+                  # S4-03 : "full" (IS+OOS, historique) vs "is_only" — cf.
+                  # docstring de _save_ml_model_post_opt (auto_optimizer.py).
+                  "ml_final_train_mode": "full"},
     "logging":   {"level": "INFO", "debug": False, "max_bytes": 10_485_760, "backup_count": 5,
                   "log_file": "logs/bot.log"},
     "web":       {"host": "127.0.0.1", "port": 8000, "refresh_interval": 5, "api_key": ""},

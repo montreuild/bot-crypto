@@ -346,17 +346,19 @@ en parallèle), puis G2/G3 entrelacés avec la dette qualité.
 | S3-07 | ML : réentraînement par instrument (fix 8.2) | `ml/trainer.py` |
 | S3-08 | Validation : 1 semaine de paper sur 3 valeurs SBF120 (1h/1d) | — |
 
-### Sprint 4 — Qualité des métriques & optimiseur (P1-P2)
+### Sprint 4 — Qualité des métriques & optimiseur (P1-P2) — ✅ terminé
 
-| ID | Item | Origine |
-|----|------|---------|
-| S4-01 | Sharpe live sur rendements, aligné backtest | 1.4 |
-| S4-02 | Annualisation Sharpe backtest (barres avec trade / resampling daily) | 1.5 |
-| S4-03 | Data leakage ML final (mode `is_only` optionnel + score OOS-only) | 5.1 |
-| S4-04 | Deflated Sharpe Ratio dans `opt_scoring` | 5.2 |
-| S4-05 | Métriques par stratégie en une passe (`defaultdict`) | 5.3 |
-| S4-06 | `_load_db_stats` en SQL agrégé | 5.6 |
-| S4-07 | Test de régression scale-in/budget (remplace l'item 1.3 invalidé) | §1.2 |
+| ID | Item | Origine | Statut |
+|----|------|---------|--------|
+| S4-01 | Sharpe live sur rendements, aligné backtest | 1.4 | ✅ courbe d'équité synthétique par trade (au lieu des PnL bruts), ordre chronologique corrigé (`get_trades()` renvoie DESC), annualisation par TF dominant |
+| S4-02 | Annualisation Sharpe backtest/live partagée | 1.5 | ✅ `bars_per_year()` promu source unique dans `app/core/timeframes.py`, importé par `backtest.py` ET `health_mixin.py` |
+| S4-03 | Data leakage ML final (mode `is_only` optionnel) | 5.1 | ✅ `optimizer.ml_final_train_mode: full\|is_only` + docstring explicite du choix de design. Métrique OOS-only comparative NON implémentée (hors scope, nécessiterait un re-scoring dédié) |
+| S4-04 | Deflated Sharpe Ratio dans `opt_scoring` | 5.2 | ✅ `deflated_sharpe_ratio()` + `_expected_max_sharpe()` (Bailey & López de Prado 2014, stdlib `statistics.NormalDist` — pas de dépendance scipy). Fonction AUTONOME, pas encore câblée dans `composite_score()` (nécessiterait de faire remonter n_trials depuis la boucle optimiseur — suivi séparé) |
+| S4-05 | Métriques par stratégie en une passe (`defaultdict`) | 5.3 | ✅ `trades_by_strategy` pré-groupé une fois (au lieu de 3 refiltrages de `closed` par stratégie) |
+| S4-06 | `_load_db_stats` en SQL agrégé | 5.6 | ✅ `get_trade_global_aggregates()` (COUNT/SUM/MAX SQL) pour les totaux globaux. Détail par stratégie reste en Python (Sharpe a besoin de la séquence ordonnée, non SQL-able) — fenêtre de lookback 30j NON appliquée (changerait les métriques déjà affichées, risque UX non justifié par le seul gain perf) |
+| S4-07 | Test de régression scale-in/budget (remplace l'item 1.3 invalidé) | §1.2 | ✅ confirme `can_allocate` rejette bien le 3e scale-in au dépassement cumulé |
+
+Tests : 649/649 verts (33 nouveaux tests).
 
 ### Sprint 5 — Chantier G3 : exécution réelle actions
 

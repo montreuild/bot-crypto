@@ -229,3 +229,47 @@ class TestScaleIn:
             trader._scale_in_position(pos_key, pos, 105.0, 1.0, {"size_factor": 1.0})
 
         assert trader.open_positions[pos_key]["size"] == size_before
+
+    def test_third_scale_in_rejected_when_cumulative_budget_exceeded(self, tmp_path):
+        """S4-07 (item 1.3 du plan) : can_allocate() compare le notionnel
+        CUMULÉ (position + scale-ins déjà enregistrés) au budget du slot —
+        un pyramidage agressif ne doit pas pouvoir dépasser le plafond.
+        Budget du slot = 30% de 1000 = 300 (tolérance 5% → 315). Sizing
+        forcé à 100 de notionnel par unité : ouverture (100) + 2 scale-ins
+        (100 chacun) atteignent exactement 300 ; le 3e scale-in porterait
+        le cumul à 400 > 315 → rejeté, aucun état modifié."""
+        cfg = _make_cfg(str(tmp_path / "live.db"))
+        cfg["capital_allocator"] = {
+            "mode": "manual",
+            "slot_budgets": {f"{STRATEGY}::{TF}::{SYMBOL}": 0.3},
+        }
+        exchange = MockExchange()
+        trader = LiveTrader(cfg, exchange)
+
+        # Sizing déterministe : chaque ouverture/scale-in vaut exactement
+        # 100 de notionnel, quel que soit le score/ATR réel.
+        trader.risk.compute_size = lambda *a, **kw: (1.0, 100.0)
+
+        _, pos_key = _open(trader, price=100.0, stop_hint=95.0)
+        slot_key = build_slot_key(STRATEGY, TF, SYMBOL)
+        slot = trader.allocator._slots[slot_key]
+        assert slot.used_notional == 100.0
+
+        pos = trader.open_positions[pos_key]
+        trader._scale_in_position(pos_key, pos, 105.0, 1.0, {"size_factor": 1.0})
+        assert slot.used_notional == 200.0
+        assert pos["scale_ins"] == 1
+
+        trader._scale_in_position(pos_key, pos, 110.0, 1.0, {"size_factor": 1.0})
+        assert slot.used_notional == 300.0
+        assert pos["scale_ins"] == 2
+
+        # 3e tentative : 300 + 100 = 400 > 315 (budget × tolérance) → rejeté,
+        # can_allocate échoue avant tout appel exchange (pas d'exception,
+        # simple no-op — cf. _scale_in_position : `if not ok_budget: return`).
+        size_before, entry_before = pos["size"], pos["entry"]
+        trader._scale_in_position(pos_key, pos, 115.0, 1.0, {"size_factor": 1.0})
+        assert slot.used_notional == 300.0
+        assert pos.get("scale_ins", 0) == 2
+        assert pos["size"] == size_before
+        assert pos["entry"] == entry_before

@@ -30,17 +30,14 @@ logger = logging.getLogger(__name__)
 # Timeframe → minutes — source unique (V4-A). L'ancienne table locale (9 clés)
 # renvoyait le défaut pour 6h/8h/12h ; la canonique les couvre.
 from app.core.timeframes import TF_MINUTES as _TF_MINUTES
+# S4-01/S4-02 : facteur d'annualisation partagé avec le Sharpe live
+# (health_mixin.py) — sans source unique, les deux Sharpe n'étaient pas
+# comparables (cf. app/core/timeframes.py::bars_per_year).
+from app.core.timeframes import bars_per_year as _bars_per_year
 
 
 def _bar_to_days(tf: str) -> float:
     return _TF_MINUTES.get(tf, 15) / 1440.0
-
-
-def _bars_per_year(tf: str) -> float:
-    """Number of bars in a trading year for the given timeframe."""
-    minutes = _TF_MINUTES.get(tf, 60)
-    # Crypto markets trade 365 days/year, 24h/day
-    return 365 * 24 * 60 / minutes
 
 
 # ── BacktestResult ──
@@ -101,20 +98,30 @@ class BacktestResult:
         self.avg_mfe = _sf(float(np.mean(mfes)), 0.0) if mfes else 0.0
 
         # ── Métriques par stratégie ───────────────────────────────────────────
-        self.by_strategy: Dict[str, dict] = {}
+        # S4-05 : pré-groupement en une passe — l'ancien code refiltrait
+        # `closed` (par ex. `[t for t in closed if t.get("strategy") == s]`)
+        # TROIS fois par stratégie, soit O(n×k) sur n trades / k stratégies.
+        # `trades_by_strategy` préserve l'ordre chronologique (celui de
+        # `closed`), requis par la courbe d'équité et le Sharpe ci-dessous.
+        from collections import defaultdict as _defaultdict
+        trades_by_strategy: Dict[str, list] = _defaultdict(list)
         for t in closed:
-            s = t.get("strategy", "unknown")
-            if s not in self.by_strategy:
-                self.by_strategy[s] = {"trades": 0, "wins": 0, "pnl": 0.0, "fees": 0.0}
-            d = self.by_strategy[s]
-            d["trades"] += 1
-            d["pnl"]    += t["pnl"]
-            d["fees"]   += t.get("fees", 0)
-            if t["pnl"] > 0:
-                d["wins"] += 1
+            trades_by_strategy[t.get("strategy", "unknown")].append(t)
+
+        self.by_strategy: Dict[str, dict] = {}
+        for s, strat_trades in trades_by_strategy.items():
+            d = {"trades": 0, "wins": 0, "pnl": 0.0, "fees": 0.0}
+            for t in strat_trades:
+                d["trades"] += 1
+                d["pnl"]    += t["pnl"]
+                d["fees"]   += t.get("fees", 0)
+                if t["pnl"] > 0:
+                    d["wins"] += 1
+            self.by_strategy[s] = d
 
         for s, d in self.by_strategy.items():
-            sd_pnls = [t["pnl"] for t in closed if t.get("strategy") == s]
+            strat_trades = trades_by_strategy[s]
+            sd_pnls = [t["pnl"] for t in strat_trades]
             wins_s  = [p for p in sd_pnls if p > 0]
             loss_s  = [p for p in sd_pnls if p <= 0]
 
@@ -135,7 +142,7 @@ class BacktestResult:
 
             eq_s  = [self.initial_capital]
             cap   = self.initial_capital
-            for t in [x for x in closed if x.get("strategy") == s]:
+            for t in strat_trades:
                 cap += t["pnl"]
                 eq_s.append(round(cap, 4))
             d["equity_curve"]    = eq_s
@@ -162,7 +169,7 @@ class BacktestResult:
             else:
                 d["sharpe"] = 0.0
 
-            d["trades"] = [t for t in closed if t.get("strategy") == s]
+            d["trades"] = strat_trades
 
     def to_dict(self) -> dict:
         pf = self.profit_factor

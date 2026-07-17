@@ -4,8 +4,13 @@ Extrait de ``optimizer.py`` (découpage V13 : recherche / scoring / persistance)
 Module sans état ni dépendance lourde : importable par les workers spawn.
 """
 import logging
+import math
+from statistics import NormalDist
 
 logger = logging.getLogger(__name__)
+
+_STD_NORMAL = NormalDist(mu=0.0, sigma=1.0)
+_EULER_MASCHERONI = 0.5772156649015329
 
 
 # Capital de repli quand le résultat ne porte pas son ``initial_capital``
@@ -173,3 +178,72 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
         return False, (f"aucune amélioration de qualité (WR {oos_wr:.1f}% vs "
                        f"{b_wr:.1f}%, Sharpe {oos_sharpe:.2f} vs {b_sharpe:.2f})")
     return True, "ok"
+
+
+# ── Deflated Sharpe Ratio (S4-04) ────────────────────────────────────────────
+#
+# L'optimiseur teste des dizaines/centaines de combinaisons de paramètres et
+# retient le meilleur Sharpe OOS — sans correction, ce max est biaisé à la
+# hausse par le nombre d'essais (biais de sélection multiple, cf. Bailey &
+# López de Prado, "The Deflated Sharpe Ratio: Correcting for Selection Bias,
+# Backtest Overfitting and Non-Normality", 2014). Le DSR estime la probabilité
+# que le Sharpe observé soit RÉELLEMENT > 0 une fois ce biais retiré.
+#
+# Fonction volontairement AUTONOME (pas encore câblée dans composite_score) :
+# une intégration au score de classement nécessiterait de faire remonter
+# n_trials/trial_sharpes_std depuis la boucle de l'optimiseur (optimizer.py/
+# opt_workers.py) jusqu'à chaque appel de composite_score — changement plus
+# large que ce correctif, laissé en suivi. Utilisable dès maintenant pour
+# annoter un rapport d'optimisation (ex. DSR du meilleur essai).
+
+def _expected_max_sharpe(n_trials: int, sharpe_std: float) -> float:
+    """E[max SR] sur ``n_trials`` essais indépendants dont l'écart-type des
+    Sharpe individuels vaut ``sharpe_std`` — approximation de Bailey & López
+    de Prado (2014, éq. 7), basée sur la loi des extrêmes gaussiens."""
+    if n_trials <= 1 or sharpe_std <= 0:
+        return 0.0
+    n = float(n_trials)
+    term1 = (1 - _EULER_MASCHERONI) * _STD_NORMAL.inv_cdf(1 - 1 / n)
+    term2 = _EULER_MASCHERONI * _STD_NORMAL.inv_cdf(1 - 1 / (n * math.e))
+    return sharpe_std * (term1 + term2)
+
+
+def deflated_sharpe_ratio(sharpe: float, n_observations: int, n_trials: int = 1,
+                          trial_sharpes_std: float = None,
+                          skew: float = 0.0, kurtosis: float = 3.0) -> float:
+    """Deflated Sharpe Ratio ∈ [0, 1] : probabilité que ``sharpe`` soit
+    réellement positif, corrigée du biais de sélection multiple (``n_trials``
+    essais d'optimisation) et de la non-normalité des rendements.
+
+    Paramètres
+    ----------
+    sharpe : Sharpe annualisé observé (le "meilleur essai" à évaluer).
+    n_observations : nombre de rendements utilisés pour calculer ce Sharpe
+        (≈ nombre de trades ou de barres selon la méthode — cohérence avec
+        le calcul source requise).
+    n_trials : nombre d'essais indépendants dont ``sharpe`` est le maximum
+        (ex. nombre de combinaisons de paramètres testées par l'optimiseur).
+        1 = pas de correction de sélection (DSR ≈ probabilistic Sharpe ratio
+        simple).
+    trial_sharpes_std : écart-type des Sharpe individuels entre essais, si
+        connu (variance empirique de la recherche). ``None`` → 1.0, valeur
+        conservative standard de la littérature quand la distribution des
+        essais n'est pas trackée.
+    skew, kurtosis : moments des rendements (défauts = gaussien standard,
+        skew=0/kurtosis=3 → aucune correction de non-normalité).
+
+    Retourne 0.0 si l'échantillon est dégénéré (< 2 observations).
+    """
+    if sharpe is None or n_observations is None or n_observations < 2:
+        return 0.0
+    sr = float(sharpe)
+    t  = float(n_observations)
+    std_sr = trial_sharpes_std if trial_sharpes_std is not None else 1.0
+    sr0 = _expected_max_sharpe(max(int(n_trials), 1), std_sr)
+
+    # γ3 (skew) et γ4 (kurtosis) corrigent l'écart à la normalité des
+    # rendements — un Sharpe calculé sur des rendements à queue épaisse
+    # (kurtosis > 3) est moins fiable qu'annoncé par le t-test gaussien.
+    denom = math.sqrt(max(1 - skew * sr + (kurtosis - 1) / 4.0 * sr ** 2, 1e-9))
+    z = (sr - sr0) * math.sqrt(t - 1) / denom
+    return round(_STD_NORMAL.cdf(z), 6)

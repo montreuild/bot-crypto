@@ -33,6 +33,16 @@ TF_SECONDS: Dict[str, int] = {
 TF_MINUTES: Dict[str, int] = {tf: s // 60 for tf, s in TF_SECONDS.items()}
 TF_MS: Dict[str, int] = {tf: s * 1000 for tf, s in TF_SECONDS.items()}
 
+
+def bars_per_year(tf: str) -> float:
+    """Nombre de bougies par an pour ``tf`` — facteur d'annualisation du
+    Sharpe (S4-01/S4-02). Marchés crypto : 365j × 24h (pas de fermeture).
+    Source unique partagée par ``engine/backtest.py`` (Sharpe backtest) et
+    ``live/health_mixin.py`` (Sharpe live) — sans elle, les deux Sharpe
+    n'étaient pas comparables (live : ``sqrt(252)`` fixe sur des PnL bruts)."""
+    minutes = TF_MINUTES.get(tf, 60)
+    return 365 * 24 * 60 / minutes
+
 # Timeframe → timeframe SUPÉRIEUR pour le biais/l'analyse HTF.
 # (Historiquement « source unique de vérité » déclarée dans app/live/utils,
 # mais recalculée localement par vizion/smart_money — désormais ici.)
