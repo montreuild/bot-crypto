@@ -2,7 +2,9 @@
 Gestion du risque et du portfolio :
 circuit breakers global et par slot, sizing, volatility brake, anti-spam.
 """
+import functools
 import logging
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -14,6 +16,23 @@ logger = logging.getLogger(__name__)
 
 def _safe_div(numerator: float, denominator: float) -> float:
     return numerator / max(denominator, 1e-9)
+
+
+def _locked(method):
+    """Sérialise l'accès à l'état partagé de RiskManager (S1-01).
+
+    ``open_positions``/``equity``/``slot_states`` sont lus et mutés depuis le
+    thread de trading (``can_trade``, ``register_open``/``close``,
+    ``update_equity``) ET depuis les threads API (``status_dict`` pour
+    ``/api/status``) — sans verrou, races possibles (compteurs perdus, lecture
+    torn d'un dict en cours de mutation). RLock : réentrant, les méthodes
+    verrouillées s'appellent entre elles (ex. ``update_equity`` →
+    ``_check_circuit_breakers`` → ``trip_kill_switch`` → ``persist_state``)."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
 
 
 # ── Circuit breaker par slot ───────────────────────────────────────────────
@@ -45,6 +64,8 @@ class SlotRiskState:
 
 class RiskManager:
     def __init__(self, cfg: dict):
+        # Créé AVANT tout accès à l'état partagé (cf. _locked ci-dessus).
+        self._lock = threading.RLock()
         t = cfg["trading"]
         self.initial_capital     = t["capital"]
         self.daily_dd_limit      = t.get("daily_drawdown_limit", 0.05)
@@ -116,6 +137,7 @@ class RiskManager:
         self._session_factory = None
 
     # ── Equity ────────────────────────────────────────────────────────────
+    @_locked
     def update_equity(self, new_equity: float):
         if new_equity < 0:
             logger.critical(f"[Risk] Equity négative ({new_equity:.2f}) — circuit breaker déclenché")
@@ -176,6 +198,7 @@ class RiskManager:
     def attach_notifier(self, notifier) -> None:
         self._notifier = notifier
 
+    @_locked
     def trip_kill_switch(self, reason: str) -> None:
         """Déclenche le kill-switch catastrophe : HALT persistant et sticky."""
         self.halted = True
@@ -187,6 +210,7 @@ class RiskManager:
                                 async_=False, level="critical")
         self.persist_state()
 
+    @_locked
     def reset_halt(self, force: bool = False):
         # Le kill-switch catastrophe n'est pas levable par un reset normal :
         # il faut un acquittement explicite (force=True) — évite qu'un simple
@@ -203,6 +227,7 @@ class RiskManager:
         self.persist_state()
 
     # ── Persistance de l'état de risque (Phase 3) ──────────────────────────
+    @_locked
     def attach_persistence(self, session_factory) -> None:
         """Branche la persistance DB et restaure l'état (reprise propre)."""
         self._session_factory = session_factory
@@ -229,6 +254,7 @@ class RiskManager:
             },
         }
 
+    @_locked
     def persist_state(self) -> None:
         """Sauvegarde l'état de risque en base (no-op si non branché)."""
         if not self._session_factory:
@@ -240,6 +266,7 @@ class RiskManager:
         except Exception as e:
             logger.debug(f"[Risk] persist_state KO : {e}")
 
+    @_locked
     def _restore_state(self) -> None:
         if not self._session_factory:
             return
@@ -295,6 +322,7 @@ class RiskManager:
         logger.info(f"[Risk][shadow] veto ignoré (mesure d'écart) : {reason}")
         return True
 
+    @_locked
     def can_slot_trade(self, slot_key: str) -> tuple[bool, str]:
         """Vérifie les circuit breakers propres à un slot."""
         state = self._get_slot_state(slot_key)
@@ -320,6 +348,7 @@ class RiskManager:
             )
         return True, ""
 
+    @_locked
     def register_slot_open(self, slot_key: str) -> None:
         """Incrémente le compteur de trades du slot (appelé à l'ouverture)."""
         state = self._get_slot_state(slot_key)
@@ -330,6 +359,7 @@ class RiskManager:
             state.day_key = today
         state.daily_trades += 1
 
+    @_locked
     def update_slot_result(self, slot_key: str, pnl: float, won: bool):
         """Met à jour l'état de risque d'un slot après clôture et déclenche les CBs si besoin."""
         state = self._get_slot_state(slot_key)
@@ -392,6 +422,7 @@ class RiskManager:
         # Persiste compteurs/pauses du slot pour une reprise propre après crash.
         self.persist_state()
 
+    @_locked
     def reset_slot_pause(self, slot_key: str):
         """Réinitialisation manuelle d'une pause de slot."""
         state = self._get_slot_state(slot_key)
@@ -399,6 +430,7 @@ class RiskManager:
         logger.warning(f"[Risk] Pause slot {slot_key} réinitialisée manuellement.")
 
     # ── Volatility brake ───────────────────────────────────────────────────
+    @_locked
     def update_volatility(self, btc_atr_pct: float):
         """Met à jour le volatility brake (ATR BTC en % du prix). Tailles ×0.5 si actif."""
         was_active = self.volatility_brake_active
@@ -414,12 +446,14 @@ class RiskManager:
             logger.info("[Risk] Volatility brake désactivé.")
 
     # ── Position sizing ────────────────────────────────────────────────────
+    @_locked
     def compute_risk(self) -> float:
         # Courbe partagée backtest/live (BT-09) — source unique : risk_curve.py.
         from app.core.risk_curve import risk_multiplier
         dd = _safe_div(self.peak_equity - self.equity, self.peak_equity)
         return self.base_risk * risk_multiplier(dd)
 
+    @_locked
     def compute_size(self, entry: float, atr: float,
                      score: float = 1.0, threshold: float = 0.60,
                      size_factor: float = 1.0,
@@ -476,11 +510,13 @@ class RiskManager:
             notional = max_notional
         return round(size, 6), round(notional, 4)
 
+    @_locked
     def compute_leverage(self, notional: float) -> float:
         lev = _safe_div(notional, self.equity)
         return min(lev, self.max_leverage)
 
     # ── Vérifications avant entrée ─────────────────────────────────────────
+    @_locked
     def can_trade(self, side: str) -> tuple[bool, str]:
         # Kill-switch global : TOUJOURS appliqué, même en mode shadow.
         if self.halted:
@@ -511,6 +547,7 @@ class RiskManager:
         return True
 
     # ── Positions ──────────────────────────────────────────────────────────
+    @_locked
     def register_open(self, position: dict):
         self.open_positions[position["id"]] = position
         # V6.1 : incrémente le compteur quotidien du slot
@@ -521,9 +558,11 @@ class RiskManager:
             self.register_slot_open(build_slot_key(strat, tf,
                                                    position.get("symbol", "")))
 
+    @_locked
     def register_close(self, position_id: str):
         self.open_positions.pop(position_id, None)
 
+    @_locked
     def has_hedge(self, symbol: str) -> bool:
         positions_for_symbol = [p for p in self.open_positions.values()
                                  if p.get("symbol") == symbol]
@@ -532,13 +571,16 @@ class RiskManager:
 
     # ── Stats pour l'API ───────────────────────────────────────────────────
     @property
+    @_locked
     def daily_pnl_pct(self) -> float:
         return _safe_div(self.equity - self.daily_start, self.daily_start)
 
     @property
+    @_locked
     def global_dd_pct(self) -> float:
         return _safe_div(self.peak_equity - self.equity, self.peak_equity)
 
+    @_locked
     def status_dict(self) -> dict:
         return {
             "equity":              round(self.equity, 4),
@@ -559,6 +601,7 @@ class RiskManager:
             "veto_shadow_blocks":  dict(self.veto_shadow_blocks),
         }
 
+    @_locked
     def get_slot_states(self) -> List[dict]:
         """Retourne l'état CB de tous les slots pour l'API."""
         result = []
@@ -578,6 +621,7 @@ class RiskManager:
             })
         return result
 
+    @_locked
     def get_circuit_breakers_status(self) -> List[dict]:
         """Retourne le statut de tous les CBs (global + slots)."""
         cbs = [

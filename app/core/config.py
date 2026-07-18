@@ -40,6 +40,10 @@ DEFAULTS = {
         "paper_mode": True, "max_positions": 5, "max_longs": 3, "max_shorts": 3,
         "scan_interval": 60, "score_threshold": 0.55, "daily_drawdown_limit": 0.05,
         "max_trades_per_minute": 3, "min_volume_usdc_24h": 5_000_000,
+        # Alias générique (S2-03, multi-actifs) — même défaut ; scanner.py lit
+        # min_volume_quote_24h en priorité (repli automatique sur l'ancienne
+        # clé si l'utilisateur ne l'a personnalisée qu'elle).
+        "min_volume_quote_24h": 5_000_000,
         "taker_fee": DEFAULT_TAKER_FEE, "maker_fee": DEFAULT_MAKER_FEE,
         "borrow_rate_daily": 0.0002,
         "max_leverage": 1, "max_drawdown_global": 0.20, "spread_pct": 0.0005,
@@ -54,7 +58,10 @@ DEFAULTS = {
         # la reproductibilité des backtests en réel).
         "max_notional_pct": 0.20,
     },
-    "optimizer": {"enabled": False, "method": "bayesian", "n_trials": 50, "out_of_sample_ratio": 0.3},
+    "optimizer": {"enabled": False, "method": "bayesian", "n_trials": 50, "out_of_sample_ratio": 0.3,
+                  # S4-03 : "full" (IS+OOS, historique) vs "is_only" — cf.
+                  # docstring de _save_ml_model_post_opt (auto_optimizer.py).
+                  "ml_final_train_mode": "full"},
     "logging":   {"level": "INFO", "debug": False, "max_bytes": 10_485_760, "backup_count": 5,
                   "log_file": "logs/bot.log"},
     "web":       {"host": "127.0.0.1", "port": 8000, "refresh_interval": 5, "api_key": ""},
@@ -69,20 +76,29 @@ DEFAULTS = {
 _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}|\$([A-Z_][A-Z0-9_]*)")
 
 
-def _expand_env(value: Any) -> Any:
-    """Substitue récursivement les variables d'environnement dans les chaînes."""
+def _expand_env(value: Any, missing: set | None = None) -> Any:
+    """Substitue récursivement les variables d'environnement dans les chaînes.
+
+    Les noms de variables référencées (``${VAR}``) mais absentes ou vides
+    dans l'environnement sont collectés dans ``missing`` si fourni — permet
+    à ``load_config`` de lever une erreur explicite en mode live plutôt que
+    de démarrer avec des identifiants vides (échecs d'authentification
+    silencieux, cf. OPS/14.1).
+    """
     if isinstance(value, str):
         def _replace(m: re.Match) -> str:
             var = m.group(1) or m.group(2)
             env_val = os.environ.get(var, "")
             if env_val:
                 logger.debug(f"[Config] Variable d'env résolue : ${var}")
+            elif missing is not None:
+                missing.add(var)
             return env_val
         return _ENV_PATTERN.sub(_replace, value)
     if isinstance(value, dict):
-        return {k: _expand_env(v) for k, v in value.items()}
+        return {k: _expand_env(v, missing) for k, v in value.items()}
     if isinstance(value, list):
-        return [_expand_env(v) for v in value]
+        return [_expand_env(v, missing) for v in value]
     return value
 
 
@@ -215,7 +231,17 @@ def load_config(path: str = "config.yaml") -> dict:
     if not isinstance(cfg, dict):
         raise ValueError("Le fichier config.yaml est vide ou invalide.")
 
-    cfg = _expand_env(cfg)
+    # S2-03 : alias générique min_volume_quote_24h — propage une valeur
+    # personnalisée de l'ancienne clé min_volume_usdc_24h AVANT le merge des
+    # défauts (sinon la nouvelle clé retomberait sur le défaut générique et
+    # ignorerait le réglage existant de l'utilisateur).
+    _t_raw = cfg.get("trading") or {}
+    if isinstance(_t_raw, dict) and "min_volume_quote_24h" not in _t_raw \
+            and "min_volume_usdc_24h" in _t_raw:
+        cfg.setdefault("trading", {})["min_volume_quote_24h"] = _t_raw["min_volume_usdc_24h"]
+
+    _missing_env: set = set()
+    cfg = _expand_env(cfg, _missing_env)
 
     # ── Chargement des configs de stratégies (strategies/*.yaml) ─────────────
     strategies_dir = os.path.join(os.path.dirname(os.path.abspath(path)), "strategies")
@@ -249,6 +275,27 @@ def load_config(path: str = "config.yaml") -> dict:
             cfg[section] = {}
         for k, v in defaults.items():
             cfg[section].setdefault(k, v)
+
+    # Variables d'env référencées mais absentes (OPS/14.1) : bloquant en live
+    # (sinon échecs d'authentification silencieux avec des clés vides),
+    # WARNING seulement en paper mode. Opt-out explicite via config.strict_env.
+    if _missing_env:
+        paper_mode = bool(cfg["trading"].get("paper_mode", True))
+        strict_env = cfg.get("config", {}).get("strict_env")
+        strict_env = (not paper_mode) if strict_env is None else bool(strict_env)
+        missing_list = ", ".join(f"${{{v}}}" for v in sorted(_missing_env))
+        if strict_env:
+            raise ValueError(
+                f"Variable(s) d'environnement référencée(s) dans config.yaml mais "
+                f"absente(s)/vide(s) : {missing_list} — le mode live refuse de "
+                f"démarrer avec des identifiants vides (échec d'authentification "
+                f"silencieux sinon). Définissez ces variables, ou passez "
+                f"trading.paper_mode: true / config.strict_env: false pour ignorer."
+            )
+        logger.warning(
+            f"[Config] Variable(s) d'environnement absente(s)/vide(s) (mode paper, "
+            f"non bloquant) : {missing_list}"
+        )
 
     errors = []
     for section, field in REQUIRED_FIELDS:

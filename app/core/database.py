@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy import (create_engine, event, Column, Integer, Float, String,
-                        Boolean, DateTime, Text, JSON, Index, func)
+                        Boolean, DateTime, Text, JSON, Index, func, case)
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 logger = logging.getLogger(__name__)
@@ -321,11 +321,43 @@ def save_trade(session: Session, t: dict):
     return rec
 
 
-def get_trades(session: Session, limit=1000, symbol=None, strategy=None) -> List[Trade]:
+def get_trades(session: Session, limit=1000, symbol=None, strategy=None,
+               since: Optional[datetime] = None) -> List[Trade]:
     q = session.query(Trade)
     if symbol:   q = q.filter(Trade.symbol == symbol)
     if strategy: q = q.filter(Trade.strategy == strategy)
+    if since is not None: q = q.filter(Trade.time >= since)
     return q.order_by(Trade.time.desc()).limit(limit).all()
+
+
+def get_trade_global_aggregates(session: Session, since: Optional[datetime] = None) -> dict:
+    """Agrégats globaux (S4-06) calculés par SQL (COUNT/SUM/MAX) — évite de
+    charger jusqu'à 10 000 lignes ``Trade`` en objets Python pour un simple
+    total. Consommé par ``HealthMixin._load_db_stats`` pour les compteurs
+    globaux ; le détail par stratégie (Sharpe/drawdown, qui a besoin de la
+    séquence ORDONNÉE des PnL) continue de charger les lignes via
+    ``get_trades`` — non exprimable en agrégats SQL simples."""
+    q = session.query(
+        func.count(Trade.id).label("total_trades"),
+        func.coalesce(func.sum(Trade.pnl), 0.0).label("total_pnl"),
+        func.coalesce(func.sum(Trade.fees), 0.0).label("total_fees"),
+        func.coalesce(func.max(Trade.pnl), 0.0).label("best_trade"),
+        func.coalesce(func.sum(case((Trade.pnl > 0, 1), else_=0)), 0).label("wins"),
+        func.coalesce(func.sum(case((Trade.pnl > 0, Trade.pnl), else_=0.0)), 0.0).label("gross_win"),
+        func.coalesce(func.sum(case((Trade.pnl < 0, Trade.pnl), else_=0.0)), 0.0).label("gross_loss_signed"),
+    )
+    if since is not None:
+        q = q.filter(Trade.time >= since)
+    row = q.one()
+    return {
+        "total_trades": int(row.total_trades or 0),
+        "total_pnl":    float(row.total_pnl or 0.0),
+        "total_fees":   float(row.total_fees or 0.0),
+        "best_trade":   float(row.best_trade or 0.0),
+        "wins":         int(row.wins or 0),
+        "gross_win":    float(row.gross_win or 0.0),
+        "gross_loss":   abs(float(row.gross_loss_signed or 0.0)),
+    }
 
 
 def get_closed_trades_for_slot(session: Session, strategy: str, timeframe: str,

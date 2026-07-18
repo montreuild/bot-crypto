@@ -57,6 +57,10 @@ def _col_last(df: pl.DataFrame, name: str) -> Optional[float]:
 class Strategy(BaseStrategy):
     name = "derivatives_reversion"
 
+    # S2-04 : funding/OI/long-short/taker n'existent que sur les perpetuals
+    # crypto (app/core/derivatives.py) — sans équivalent sur actions.
+    asset_classes = frozenset({"crypto"})
+
     timeframes: List[str] = ["1h", "4h"]
 
     warmup_bars = 230

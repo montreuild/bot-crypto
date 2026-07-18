@@ -51,7 +51,6 @@ cp .env.example .env.local
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
 NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws
-NEXT_PUBLIC_API_KEY=               # optionnel, seulement si web.api_key défini côté backend
 ```
 
 ### Lancement
@@ -197,8 +196,13 @@ export function useMyEvents() {
 ## Sécurité
 
 - En local sans `web.api_key` : le backend accepte les requêtes depuis `127.0.0.1` uniquement
-- En production : définir `NEXT_PUBLIC_API_KEY` dans `.env.local` (même valeur que `web.api_key` côté backend)
-- WebSocket : même règle, auth via `?api_key=xxx` dans l'URL
+- En production : définir `web.api_key` côté backend. Les pages web posent alors
+  un cookie HttpOnly `api_key`, envoyé automatiquement par le navigateur
+  (`fetch` avec `credentials: 'include'`, WebSocket, `EventSource` avec
+  `withCredentials: true`) — aucune clé à configurer côté frontend (S1-05 :
+  une variable `NEXT_PUBLIC_*` serait visible dans le bundle JS client)
+- WebSocket : même règle ; `?api_key=xxx` dans l'URL reste un fallback pour
+  les clients non-navigateur (visible dans les logs d'accès, à éviter sinon)
 
 ## Dépannage
 

@@ -56,6 +56,30 @@ def _calc_unreal_pct(side: str, entry: float, price: float) -> float:
            else (entry - price) / entry * 100
 
 
+_REJECTED_ORDER_STATUSES = frozenset({"rejected", "canceled", "cancelled", "expired"})
+
+
+def _order_failed(order: dict | None) -> bool:
+    """True si l'ordre exchange n'a manifestement pas été exécuté.
+
+    Un ``None`` ou un statut rejeté/annulé/expiré signifie qu'aucune position
+    réelle n'existe côté exchange — poursuivre comme si l'ordre avait réussi
+    créerait une position fantôme (trackée par le bot, absente de l'exchange).
+    """
+    if order is None:
+        return True
+    return str(order.get("status") or "").lower() in _REJECTED_ORDER_STATUSES
+
+
+def _order_fail_reason(order: dict | None) -> str:
+    if order is None:
+        return "create_order a retourné None"
+    status = order.get("status") or "inconnu"
+    info   = order.get("info") if isinstance(order.get("info"), dict) else {}
+    detail = order.get("failReason") or info.get("msg") or info.get("sMsg")
+    return f"status={status}" + (f" — {detail}" if detail else "")
+
+
 def _apply_trail_override(base_cfg: dict, override: dict) -> dict:
     """Fusionne la config trailing globale avec un trail_override signal/position.
 
@@ -306,6 +330,10 @@ class PositionMixin:
             symbol, "market", signal["side"], size,
             params={"leverage": int(leverage)}
         )
+        if _order_failed(order):
+            raise RuntimeError(
+                f"[OPEN] {symbol} : ordre non exécuté — {_order_fail_reason(order)}"
+            )
         exec_price = order.get("price") or order.get("average") or price
         if not exec_price and not self.cfg["trading"].get("paper_mode"):
             try:
@@ -631,6 +659,8 @@ class PositionMixin:
                         "tpOrdPx":         tp_limit,
                     },
                 )
+                if _order_failed(order):
+                    raise RuntimeError(f"OCO non posé — {_order_fail_reason(order)}")
                 pos["stop_order_id"] = order.get("id")
                 pos["_exchange_oco"] = True
                 logger.info(
@@ -643,6 +673,8 @@ class PositionMixin:
                     pos["symbol"], "limit", close_side, pos["size"], sl_limit,
                     params={"stopPrice": stop_price},
                 )
+                if _order_failed(order):
+                    raise RuntimeError(f"Stop non posé — {_order_fail_reason(order)}")
                 pos["stop_order_id"] = order.get("id")
                 pos.pop("_exchange_oco", None)
                 logger.info(
@@ -773,6 +805,10 @@ class PositionMixin:
             symbol, "market", side, add_size,
             params={"leverage": int(pos.get("leverage", 1))}
         )
+        if _order_failed(order):
+            raise RuntimeError(
+                f"[SCALE-IN] {symbol} : ordre non exécuté — {_order_fail_reason(order)}"
+            )
         exec_price = order.get("price") or order.get("average") or price
         if self.cfg["trading"].get("paper_mode"):
             slip = self.cfg["trading"].get("paper_slippage", 0.001)
@@ -935,9 +971,30 @@ class PositionMixin:
             order      = ex_fill
             exec_price = ex_fill.get("average") or ex_fill.get("price") or exit_price
         else:
-            order      = self.exchange.create_order(
+            order = self.exchange.create_order(
                 pos["symbol"], "market", close_side, pos["size"]
             )
+            if _order_failed(order):
+                # La position a déjà été retirée de self.open_positions (ligne 959) :
+                # si on continue, l'ordre rejeté serait comptabilisé comme une
+                # clôture réelle (PnL calculé sur le prix ticker, position supprimée
+                # de la BDD) alors qu'elle reste ouverte côté exchange. On la remet
+                # en gestion pour une nouvelle tentative au cycle suivant plutôt que
+                # de la faire disparaître silencieusement.
+                reason = _order_fail_reason(order)
+                logger.critical(
+                    f"[CLOSE] {pos['symbol']} : ordre de clôture NON exécuté "
+                    f"({reason}) — position remise en gestion, nouvelle tentative "
+                    f"au prochain cycle."
+                )
+                with self._positions_lock:
+                    self.open_positions[pos_id] = pos
+                self.notif.send(
+                    f"🚨 *Échec de clôture* `{pos['symbol']}` : {reason}\n"
+                    f"La position reste ouverte, nouvelle tentative au prochain cycle.",
+                    async_=False
+                )
+                return
             exec_price = order.get("price") or order.get("average") or 0
             if not exec_price and not self.cfg["trading"].get("paper_mode"):
                 # Ordres market réels : récupérer le prix moyen réellement exécuté

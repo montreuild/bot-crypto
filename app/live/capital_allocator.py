@@ -351,6 +351,7 @@ class CapitalAllocator:
             # Persiste les stats hebdo (survie au redémarrage pour le rebalance).
             self._persist_weekly_stats()
 
+    @_locked
     def check_correlation(self, side: str, open_positions: dict,
                           symbol: str = "") -> tuple[bool, str]:
         """
@@ -415,6 +416,7 @@ class CapitalAllocator:
         return round(self.capital * slot.budget_pct, 4)
 
     # ── Sync capital ───────────────────────────────────────────────────────
+    @_locked
     def update_equity(self, capital: float):
         self.capital = capital
 

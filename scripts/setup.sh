@@ -129,6 +129,53 @@ EOF
     fi
 }
 
+# ── Fichier .env (secrets locaux, jamais versionné) ─────────────────────────
+# S0-05 : sans web.api_key, l'API de trading n'est protégée que par le filtre
+# « localhost only » (cf. OPS-02 dans app/core/config.py) — un WEB_API_KEY
+# généré ici ferme ce trou par défaut, y compris pour un usage local.
+ensure_env_file() {
+    section "Fichier .env (secrets locaux)"
+
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+    local env_file="$PROJECT_DIR/.env"
+
+    if [ ! -f "$env_file" ]; then
+        log "Aucun .env trouvé — création avec une clé API web générée..."
+        cat > "$env_file" <<EOF
+# Généré par scripts/setup.sh — NE JAMAIS COMMITER CE FICHIER (voir .gitignore)
+
+# Clé API de l'interface web/API du bot (protège /api/*)
+WEB_API_KEY=$(_gen_random_key)
+
+# Identifiants exchange (obligatoires en live, inutiles en --paper) :
+# OKX_API_KEY=
+# OKX_API_SECRET=
+# OKX_API_PASSWORD=
+EOF
+        chmod 600 "$env_file"
+        success ".env créé avec une clé API web générée ($env_file)"
+    elif ! grep -q '^WEB_API_KEY=' "$env_file" 2>/dev/null; then
+        log "WEB_API_KEY absente du .env existant — ajout..."
+        {
+            echo ""
+            echo "WEB_API_KEY=$(_gen_random_key)"
+        } >> "$env_file"
+        success "WEB_API_KEY ajoutée à $env_file"
+    else
+        success ".env existant conservé ($env_file)"
+    fi
+}
+
+_gen_random_key() {
+    if command -v openssl &>/dev/null; then
+        openssl rand -hex 32
+    else
+        # Fallback sans openssl (portable, /dev/urandom requis)
+        python3 -c "import secrets; print(secrets.token_hex(32))"
+    fi
+}
+
 check_git() {
     if ! command -v git &>/dev/null; then
         error "Git non trouvé. Installez-le :"
@@ -187,6 +234,8 @@ install_backend() {
             source .venv/bin/activate
             ;;
     esac
+
+    ensure_env_file
 
     # Upgrade pip
     log "Mise à jour de pip..."
@@ -300,6 +349,22 @@ run_bot() {
         windows) source .venv/Scripts/activate 2>/dev/null || source .venv/bin/activate ;;
         *)       source .venv/bin/activate ;;
     esac
+
+    # Charge .env (WEB_API_KEY, credentials exchange) dans l'environnement du
+    # process — contrairement à systemd (EnvironmentFile=), un run local ne
+    # lit pas .env automatiquement.
+    if [ -f ".env" ]; then
+        set -a
+        # shellcheck disable=SC1091
+        source .env
+        set +a
+    else
+        ensure_env_file
+        set -a
+        # shellcheck disable=SC1091
+        source .env
+        set +a
+    fi
 
     if [ "$mode" = "paper" ]; then
         log "Démarrage en PAPER MODE (sans clés API)..."

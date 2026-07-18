@@ -64,15 +64,29 @@ class LiveTrader(PositionMixin, BalanceSyncMixin, AutoOptMixin, HealthMixin):
         self.notif    = Notifier(cfg)
         self.risk.attach_notifier(self.notif)
 
+        # S1-08 : live.trailing est la source dédiée des paramètres de trailing
+        # live — sans elle, un changement de config backtest (walk-forward,
+        # optimiseur) modifiait silencieusement le trailing live. Repli sur
+        # backtest.* pour compatibilité avec les config.yaml existants.
+        _trailing_src = cfg.get("live", {}).get("trailing")
+        if _trailing_src is None:
+            _trailing_src = cfg.get("backtest", {})
+            logger.warning(
+                "[LiveTrader] live.trailing absent — repli sur backtest.* pour "
+                "le trailing live (trail_wide/grace_bars/breakeven_r/...). "
+                "Un changement de config backtest (walk-forward, optimiseur) "
+                "modifie alors aussi le trailing live sans le vouloir — "
+                "définissez live.trailing dans config.yaml pour découpler les deux."
+            )
         self._trailing_cfg = {
-            "mult":             float(cfg.get("backtest", {}).get("trail_wide",     2.5)),
-            "grace_bars":       int(cfg.get("backtest", {}).get("grace_bars",       4)),
-            "breakeven_r":      float(cfg.get("backtest", {}).get("breakeven_r",    1.2)),
-            "trail_tight_mult": float(cfg.get("backtest", {}).get("trail_tight",    1.0)),
-            "lock_r":           float(cfg.get("backtest", {}).get("lock_r",         2.5)),
-            "tight_r":          float(cfg.get("backtest", {}).get("tight_r",        4.0)),
-            "lock_ratio":       float(cfg.get("backtest", {}).get("lock_ratio",     0.60)),
-            "use_swing":        bool(cfg.get("backtest", {}).get("use_swing",       True)),
+            "mult":             float(_trailing_src.get("trail_wide",     2.5)),
+            "grace_bars":       int(_trailing_src.get("grace_bars",       4)),
+            "breakeven_r":      float(_trailing_src.get("breakeven_r",    1.2)),
+            "trail_tight_mult": float(_trailing_src.get("trail_tight",    1.0)),
+            "lock_r":           float(_trailing_src.get("lock_r",         2.5)),
+            "tight_r":          float(_trailing_src.get("tight_r",        4.0)),
+            "lock_ratio":       float(_trailing_src.get("lock_ratio",     0.60)),
+            "use_swing":        bool(_trailing_src.get("use_swing",       True)),
         }
 
         self.scanner  = MarketScanner(exchange, cfg)

@@ -6,20 +6,35 @@ exchange:
   margin: true
 venues:
   default:
+  # asset_class/quote_currency explicités (S2-02, généralisation multi-actifs) —
+  # valeurs identiques aux défauts implicites précédents, aucun changement de
+  # comportement. Une venue actions (equity) s'ajoute ici sans toucher aux
+  # venues crypto existantes, ex. :
+  #   euronext-paper:
+  #     asset_class: equity
+  #     quote_currency: EUR
+  #     fractional: false
+  #     allow_short: false
   defs:
     spot:
       market_type: spot
       exchange: okx
+      asset_class: crypto
+      quote_currency: USDC
       max_leverage: 1
     margin-isolated:
       market_type: margin
       exchange: okx
       margin_mode: isolated
+      asset_class: crypto
+      quote_currency: USDC
       max_leverage: 3
     perp-hedge-okx:
       market_type: perp
       exchange: okx
       hedge_mode: true
+      asset_class: crypto
+      quote_currency: USDC
       max_leverage: 5
   assign: {}
 trading:
@@ -95,6 +110,19 @@ backtest:
   partial_fill_pct: 0.95
   monte_carlo_runs: 200
   walk_forward_folds: 5
+live:
+  # Paramètres de trailing du LiveTrader — dédiés, indépendants de backtest.*
+  # (S1-08 : sans cette section, le trailing live suivait silencieusement
+  # tout changement de config backtest/walk-forward/optimiseur).
+  trailing:
+    trail_wide: 2.5
+    grace_bars: 4
+    breakeven_r: 1.2
+    trail_tight: 1.0
+    lock_r: 2.5
+    tight_r: 4.0
+    lock_ratio: 0.60
+    use_swing: true
 optimizer:
   enabled: false
   method: bayesian
@@ -171,7 +199,7 @@ web:
   host: 0.0.0.0
   port: 8000
   refresh_interval: 5
-  api_key: ''
+  api_key: ${WEB_API_KEY}
   # Dev LOCAL uniquement : autorise host ouvert sans api_key (sinon le
   # démarrage est refusé — OPS-02). À retirer avant toute exposition réseau.
   allow_insecure: true

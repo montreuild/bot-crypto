@@ -106,6 +106,46 @@ class TestBuildActivePerTf:
         assert any(s["name"] == "trend_rider" and s["score"] == 0.42 for s in active)
 
 
+# ── S2-04 : filtre asset_classes ─────────────────────────────────────────
+
+class TestAssetClassFilter:
+    def test_crypto_only_strategy_kept_by_default(self, tmp_path):
+        """Sans venue actions configurée, tout symbole reste 'crypto' — une
+        stratégie crypto-only (funding_flow) n'est jamais filtrée."""
+        cfg = _make_cfg(str(tmp_path / "live.db"))
+        cfg["strategies"]["enabled"] = ["funding_flow"]
+        t = LiveTrader(cfg, MockExchange())
+        names = [s["name"] for s in t._active_per_tf["1h"]]
+        assert names == ["funding_flow"]
+
+    def test_crypto_only_strategy_excluded_on_equity_symbol(self, tmp_path):
+        """funding_flow (asset_classes={'crypto'}) est exclue pour un
+        symbole résolu en venue actions."""
+        cfg = _make_cfg(str(tmp_path / "live.db"))
+        cfg["strategies"]["enabled"] = ["funding_flow"]
+        # Le fallback (pas d'optimizer_results) assigne DEFAULT_CONFIG_SYMBOL
+        # (BTC/USDC) aux entrées actives — on le fait résoudre en venue actions.
+        cfg["venues"] = {
+            "defs": {"euronext": {"asset_class": "equity", "quote_currency": "EUR"}},
+            "assign": {"BTC/USDC": "euronext"},
+        }
+        t = LiveTrader(cfg, MockExchange())
+        names = [s["name"] for s in t._active_per_tf["1h"]]
+        assert names == []
+
+    def test_generic_strategy_kept_on_equity_symbol(self, tmp_path):
+        """trend_rider (asset_classes par défaut = crypto ET equity) reste
+        actif même sur un symbole résolu en venue actions."""
+        cfg = _make_cfg(str(tmp_path / "live.db"))
+        cfg["venues"] = {
+            "defs": {"euronext": {"asset_class": "equity", "quote_currency": "EUR"}},
+            "assign": {"BTC/USDC": "euronext"},
+        }
+        t = LiveTrader(cfg, MockExchange())
+        names = [s["name"] for s in t._active_per_tf["1h"]]
+        assert names == ["trend_rider"]
+
+
 # ── reload_active_strategies / reload_strategies ────────────────────────
 
 class TestReloadActiveStrategies:

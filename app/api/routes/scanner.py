@@ -74,7 +74,11 @@ def scanner_config():
         "scanner":             state.cfg.get("scanner", {}),
         "timeframes":          state.cfg["trading"].get("timeframes",
                                [state.cfg["trading"].get("timeframe", "1h")]),
-        "min_volume_usdc_24h": state.cfg["trading"].get("min_volume_usdc_24h", 5_000_000),
+        # Clé JSON conservée pour compat (Jinja2 scanner.html) ; valeur résolue
+        # via l'alias générique min_volume_quote_24h (S2-03).
+        "min_volume_usdc_24h": state.cfg["trading"].get(
+            "min_volume_quote_24h", state.cfg["trading"].get("min_volume_usdc_24h", 5_000_000)
+        ),
         "active_per_tf":       active_per_tf,
         "strategy_timeframes": STRATEGY_TIMEFRAMES,
         "min_viable_score":    -0.05,

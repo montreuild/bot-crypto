@@ -65,22 +65,43 @@ pip install -r requirements.txt
 
 ## 🔧 Configuration
 
-Éditer `config.yaml` — les champs marqués `<<REQUIRED>>` sont obligatoires pour le live trading :
+Les secrets ne vivent **pas** dans `config.yaml` : le fichier référence des
+variables d'environnement (`${VAR}`), résolues au chargement. Le plus simple
+est de laisser `scripts/setup.sh` créer un fichier **`.env`** (jamais
+versionné, cf. `.gitignore`) avec une `WEB_API_KEY` générée, puis d'y ajouter
+vos clés exchange pour le live :
+
+```bash
+# .env (créé par scripts/setup.sh, à compléter pour le live)
+WEB_API_KEY=<générée automatiquement>   # protège l'API web (/api/*)
+OKX_API_KEY=...                          # live uniquement
+OKX_API_SECRET=...                       # live uniquement
+OKX_API_PASSWORD=...                     # passphrase OKX — 3e credential, live uniquement
+```
 
 ```yaml
+# config.yaml (extraits)
 exchange:
   name: okx
-  api_key: ""           # Requis pour live trading UNIQUEMENT
-  api_secret: ""        # Requis pour live trading UNIQUEMENT
-  api_password: ""      # Passphrase API OKX — obligatoire en live (3e credential)
+  api_key: ${OKX_API_KEY}          # résolu depuis l'environnement / .env
+  api_secret: ${OKX_API_SECRET}
+  api_password: ${OKX_API_PASSWORD}
 
 trading:
   capital: 1000         # Capital initial en USDC
   risk_per_trade: 0.01  # 1% du capital par trade
   timeframe: "1h"       # Timeframe principal
   paper_mode: true      # ← false = LIVE RÉEL ⚠️ DANGEREUX
+
+web:
+  api_key: ${WEB_API_KEY}
 ```
 
+> ⚠️ **En live (`paper_mode: false`), une variable `${...}` référencée mais
+> absente/vide bloque le démarrage** (erreur explicite plutôt que des
+> credentials vides et des échecs d'authentification silencieux). En paper,
+> simple WARNING. Opt-out : `config.strict_env: false`.
+>
 > ✅ **Backtest et optimisation ne nécessitent AUCUNE clé API** (données publiques OKX).
 >
 > 🔁 **Migration depuis Binance** (MiCA) : voir [`docs/MIGRATION_OKX.md`](docs/MIGRATION_OKX.md).

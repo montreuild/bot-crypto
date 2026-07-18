@@ -16,7 +16,9 @@ Requiert que l'instance possède (fournis par LiveTrader.__init__) :
 """
 import logging
 import time
+from collections import Counter
 
+from app.core.timeframes import bars_per_year as _bars_per_year
 from app.live.position_mixin import _calc_unreal_pct
 from app.live.utils import _sanitize, _safe_float
 
@@ -227,37 +229,49 @@ class HealthMixin:
         })
 
     def _load_db_stats(self) -> dict:
-        """Agrège les statistiques de trading depuis la table Trade."""
-        total_pnl = 0.0; total_trades = 0; wins = 0
-        best_trade = 0.0; total_fees = 0.0
-        gross_win = 0.0;  gross_loss = 0.0
+        """Agrège les statistiques de trading depuis la table Trade.
+
+        S4-06 : les compteurs GLOBAUX (total_pnl/fees/trades, win_rate,
+        profit_factor, best_trade) sont calculés par une requête SQL agrégée
+        (COUNT/SUM/MAX) au lieu d'une boucle Python sur jusqu'à 10 000 objets
+        ORM. Le détail PAR STRATÉGIE reste calculé en Python : le Sharpe a
+        besoin de la séquence ORDONNÉE des PnL (courbe d'équité synthétique,
+        S4-01), non exprimable en agrégats SQL simples — même fetch qu'avant.
+        """
+        total_pnl = total_fees = best_trade = gross_win = gross_loss = 0.0
+        total_trades = wins = 0
         by_strategy: dict = {}
         try:
-            from app.core.database import get_trades as _gt, session_scope
+            from app.core.database import (
+                get_trade_global_aggregates as _agg, get_trades as _gt, session_scope
+            )
             with session_scope(self.SessionLocal) as _sess:
-                for t in _gt(_sess, limit=10000):
+                agg = _agg(_sess)
+                total_trades = agg["total_trades"]
+                total_pnl    = agg["total_pnl"]
+                total_fees   = agg["total_fees"]
+                best_trade   = agg["best_trade"]
+                wins         = agg["wins"]
+                gross_win    = agg["gross_win"]
+                gross_loss   = agg["gross_loss"]
+
+                # get_trades() ordonne du plus récent au plus ancien ; on
+                # reverse pour itérer chronologiquement — indispensable pour
+                # la courbe d'équité synthétique par stratégie (Sharpe, S4-01).
+                for t in reversed(_gt(_sess, limit=10000)):
                     p   = float(t.pnl or 0)
                     fee = float(t.fees or 0)
-                    total_pnl    += p
-                    total_fees   += fee
-                    total_trades += 1
-                    if p > 0:
-                        wins += 1
-                        gross_win += p
-                    else:
-                        gross_loss += abs(p)
-                    if p > best_trade:
-                        best_trade = p
                     sname = t.strategy or "unknown"
                     if sname not in by_strategy:
                         by_strategy[sname] = {
                             "trades": 0, "wins": 0,
-                            "pnl": 0.0, "fees": 0.0, "pnls": [],
+                            "pnl": 0.0, "fees": 0.0, "pnls": [], "timeframes": [],
                         }
                     by_strategy[sname]["trades"] += 1
                     by_strategy[sname]["pnl"]    += p
                     by_strategy[sname]["fees"]   += fee
                     by_strategy[sname]["pnls"].append(p)
+                    by_strategy[sname]["timeframes"].append(t.timeframe or "1h")
                     if p > 0:
                         by_strategy[sname]["wins"] += 1
         except Exception as e:
@@ -268,9 +282,11 @@ class HealthMixin:
               else (999.0 if gross_win > 0 else 0.0))
 
         import numpy as _np
+        initial_capital = float(getattr(self.risk, "initial_capital", 0.0) or 0.0)
         for sname, d in by_strategy.items():
             n    = d["trades"]
             pnls = d.pop("pnls", [])
+            tfs  = d.pop("timeframes", [])
             gw   = sum(p for p in pnls if p > 0)
             gl   = abs(sum(p for p in pnls if p < 0))
             d["win_rate"]      = round(d["wins"] / n * 100, 1) if n > 0 else 0.0
@@ -278,11 +294,29 @@ class HealthMixin:
             d["total_fees"]    = round(d["fees"], 4)
             d["total_trades"]  = n
             d["profit_factor"] = round(gw / gl, 3) if gl > 0 else (999.0 if gw > 0 else 0.0)
-            if len(pnls) >= 3:
-                arr = _np.array(pnls, dtype=float)
-                std = float(_np.std(arr))
-                raw = float(_np.mean(arr)) / std * _np.sqrt(252) if std > 0 else 0.0
-                d["sharpe"] = round(_safe_float(raw, 0.0), 3)
+            # S4-01 : Sharpe aligné sur BacktestResult._compute_metrics()
+            # (engine/backtest.py) — courbe d'équité synthétique PAR TRADE
+            # (pas les PnL bruts en $), retours relatifs au capital avant
+            # chaque trade, annualisation par bars_per_year() du TF dominant
+            # de la stratégie (pas un sqrt(252) fixe indépendant du TF réel).
+            # Les deux Sharpe (live/backtest) redeviennent comparables.
+            if len(pnls) >= 3 and initial_capital > 0:
+                eq = [initial_capital]
+                cap = initial_capital
+                for p in pnls:
+                    cap += p
+                    eq.append(cap)
+                eq_arr = _np.array(eq, dtype=float)
+                denom  = _np.where(eq_arr[:-1] > 0, eq_arr[:-1], 1.0)
+                rets   = _np.diff(eq_arr) / denom
+                std    = float(rets.std())
+                if std > 0:
+                    dominant_tf = Counter(tfs).most_common(1)[0][0] if tfs else "1h"
+                    ann = float(_np.sqrt(_bars_per_year(dominant_tf)))
+                    raw = float(rets.mean() / std * ann)
+                    d["sharpe"] = round(_safe_float(raw, 0.0), 3)
+                else:
+                    d["sharpe"] = 0.0
             else:
                 d["sharpe"] = 0.0
             if len(pnls) >= 2:

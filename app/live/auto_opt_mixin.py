@@ -59,6 +59,7 @@ class AutoOptMixin:
         Format : { "1h": [{"name": "trend", "params": {...}, "score": 0.82}, ...] }
         """
         self._active_per_tf = get_active_strategies_per_tf(self.cfg)
+        self._active_per_tf = self._filter_by_asset_class(self._active_per_tf)
         self._bots_cache = None   # invalide le cache d'identités (set actif changé)
         for tf, strats in self._active_per_tf.items():
             names   = [s["name"] for s in strats]
@@ -66,6 +67,39 @@ class AutoOptMixin:
             origin  = ("optimizer_results" if has_oos
                        else "fallback (stratégies activées manuellement)")
             logger.info(f"[LiveTrader] TF={tf} → {names} [{origin}]")
+
+    def _filter_by_asset_class(self, active_per_tf: dict) -> dict:
+        """S2-04 : exclut les couples (stratégie, symbole) dont la classe
+        d'actif résolue pour le symbole n'est pas dans ``strategy.asset_classes``
+        (ex. funding_flow — crypto perpetuals only — sur un symbole actions).
+
+        Comportement crypto INCHANGÉ par défaut : sans venue actions
+        configurée, tout symbole résout en asset_class="crypto" et aucune
+        stratégie n'est filtrée (asset_classes par défaut = les deux classes).
+        """
+        from app.core.bot_identity import resolve_venue
+        filtered = {}
+        for tf, entries in active_per_tf.items():
+            kept = []
+            for entry in entries:
+                name = entry.get("name", "")
+                strat = self._loaded_strategies.get(name)
+                allowed = getattr(strat, "asset_classes", None) if strat else None
+                if not allowed:
+                    kept.append(entry)  # stratégie non chargée : ne pas bloquer
+                    continue
+                symbol = entry.get("symbol", "")
+                asset_class = resolve_venue(self.cfg, name, tf, symbol).asset_class
+                if asset_class in allowed:
+                    kept.append(entry)
+                else:
+                    logger.info(
+                        f"[LiveTrader] {name}::{tf}::{symbol} exclu du portefeuille "
+                        f"actif — asset_class '{asset_class}' non supportée "
+                        f"(stratégie compatible : {sorted(allowed)})"
+                    )
+            filtered[tf] = kept
+        return filtered
 
     def reload_active_strategies(self) -> None:
         """Rechargement à chaud après optimisation (appelé par l'API)."""

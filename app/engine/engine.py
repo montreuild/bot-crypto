@@ -16,6 +16,13 @@ class BaseStrategy:
     param_space:  Dict[str, List] = {}
     fixed_params: Dict[str, Any]  = {}
 
+    # S2-04 (généralisation multi-actifs) : classes d'actifs compatibles.
+    # Défaut = les deux (comportement inchangé pour toute stratégie qui ne
+    # dépend pas de données crypto-only). Les stratégies consommant des
+    # features dérivés (funding/OI/long-short/taker — crypto perpetuals
+    # uniquement) surchargent avec frozenset({"crypto"}).
+    asset_classes: frozenset = frozenset({"crypto", "equity"})
+
     def min_bars_required(self, params: dict = None) -> int:
         """Nombre minimum de bougies requis pour calculer les indicateurs."""
         return 50

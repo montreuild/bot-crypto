@@ -22,6 +22,7 @@ Usage dans LiveTrader :
     self.ohlcv_cache.purge(active_symbols)
 """
 import logging
+import threading
 import time
 from typing import Dict, Optional, Tuple
 
@@ -64,6 +65,14 @@ class OHLCVCache:
         self._cfg      = cfg
         self._notif    = notif
         self._risk     = risk
+
+        # S1-02 : protège les dicts ci-dessous — update_volatility_brake()/
+        # _enrich_derivatives() tournent depuis le cycle principal, mais
+        # get()/purge() sont aussi appelés depuis les threads d'auto-opt et
+        # de forward-test (cf. app/live/auto_opt_mixin.py). RLock : get()
+        # réacquiert le verrou en deux temps (lecture cache, puis écriture
+        # après le fetch réseau) sans jamais s'auto-bloquer.
+        self._lock = threading.RLock()
 
         # (symbol, tf) → (timestamp_fetch, DataFrame)
         self._ohlcv_cache: Dict[Tuple[str, str], Tuple[float, pl.DataFrame]] = {}
@@ -161,10 +170,15 @@ class OHLCVCache:
         """
         key = (symbol, tf)
         ttl = _OHLCV_TTL.get(tf, 120)
-        cached = self._ohlcv_cache.get(key)
-        if cached and (time.time() - cached[0]) < ttl:
-            return cached[1]
+        with self._lock:
+            cached = self._ohlcv_cache.get(key)
+            if cached and (time.time() - cached[0]) < ttl:
+                return cached[1]
 
+        # Fetch réseau HORS verrou : un lock tenu ici sérialiserait tous les
+        # (symbol, tf) entre eux à chaque cycle (get() est appelé pour
+        # chaque symbole actif), alors que seuls les dicts partagés
+        # ci-dessous ont besoin d'exclusion mutuelle.
         fetch_limit = min(RECOMMENDED_LIMIT.get(tf, 500), 500)
         try:
             df = get_store().fetch(self._exchange, symbol, tf, total=fetch_limit)
@@ -178,35 +192,37 @@ class OHLCVCache:
         if df is not None:
             df = self._drop_forming_candle(df, tf)
         if df is None or len(df) < 220:
-            self._exchange_errors[symbol] = self._exchange_errors.get(symbol, 0) + 1
+            with self._lock:
+                self._exchange_errors[symbol] = self._exchange_errors.get(symbol, 0) + 1
+                n_errors = self._exchange_errors[symbol]
             self._notif.notify_exchange_error(
-                symbol, f"fetch_ohlcv {tf} retourné vide ou trop court",
-                self._exchange_errors[symbol]
+                symbol, f"fetch_ohlcv {tf} retourné vide ou trop court", n_errors
             )
             return None
-        self._exchange_errors[symbol] = 0
+        with self._lock:
+            self._exchange_errors[symbol] = 0
 
-        # Filtre "nouvelle bougie" — skip si même ts et pas de position ouverte
-        try:
-            last_ts_raw = df["time"][-1]
-            last_ts = (
-                int(last_ts_raw.timestamp() * 1000) if hasattr(last_ts_raw, "timestamp")
-                else int(last_ts_raw) if isinstance(last_ts_raw, (int, float))
-                else 0
-            )
-            prev_ts  = self._last_candle_ts.get(key, 0)
-            has_open = open_positions is None or bool(open_positions)
-            if last_ts == prev_ts and not has_open:
-                logger.debug(f"[OHLCVCache] {symbol}/{tf} : même bougie — skip")
-                return None
-            self._last_candle_ts[key] = last_ts
-        except Exception as e:
-            logger.debug(f"[OHLCVCache] vérif bougie {symbol}/{tf} : {e}")
+            # Filtre "nouvelle bougie" — skip si même ts et pas de position ouverte
+            try:
+                last_ts_raw = df["time"][-1]
+                last_ts = (
+                    int(last_ts_raw.timestamp() * 1000) if hasattr(last_ts_raw, "timestamp")
+                    else int(last_ts_raw) if isinstance(last_ts_raw, (int, float))
+                    else 0
+                )
+                prev_ts  = self._last_candle_ts.get(key, 0)
+                has_open = open_positions is None or bool(open_positions)
+                if last_ts == prev_ts and not has_open:
+                    logger.debug(f"[OHLCVCache] {symbol}/{tf} : même bougie — skip")
+                    return None
+                self._last_candle_ts[key] = last_ts
+            except Exception as e:
+                logger.debug(f"[OHLCVCache] vérif bougie {symbol}/{tf} : {e}")
 
-        # Mise à jour cache ATR (TF primaire, utilisé par _manage_position)
-        atr = _compute_atr(df)
-        if atr > 0:
-            self._atr_cache[symbol] = (time.time(), float(atr))
+            # Mise à jour cache ATR (TF primaire, utilisé par _manage_position)
+            atr = _compute_atr(df)
+            if atr > 0:
+                self._atr_cache[symbol] = (time.time(), float(atr))
 
         # Pré-calcul vectorisé des indicateurs partagés (RSI, ATR, ADX, MACD, vol_ratio).
         # Appelé une seule fois par fetch — toutes les stratégies lisent ensuite via
@@ -219,21 +235,24 @@ class OHLCVCache:
         # Enrichissement dérivés (opt-in) — accumulation + colonnes funding_z, etc.
         df = self._enrich_derivatives(symbol, df)
 
-        self._ohlcv_cache[key] = (time.time(), df)
+        with self._lock:
+            self._ohlcv_cache[key] = (time.time(), df)
         return df
 
     # ── Cache ATR ────────────────────────────────────────────────────────
 
     def get_cached_atr(self, symbol: str) -> Optional[float]:
         """Retourne l'ATR mis en cache si non expiré, sinon None."""
-        cached = self._atr_cache.get(symbol)
-        if cached and (time.time() - cached[0]) < self._atr_cache_ttl:
-            return cached[1]
-        return None
+        with self._lock:
+            cached = self._atr_cache.get(symbol)
+            if cached and (time.time() - cached[0]) < self._atr_cache_ttl:
+                return cached[1]
+            return None
 
     def set_atr(self, symbol: str, atr: float) -> None:
         """Met à jour manuellement le cache ATR (ex. après fetch fallback dans _manage_position)."""
-        self._atr_cache[symbol] = (time.time(), float(atr))
+        with self._lock:
+            self._atr_cache[symbol] = (time.time(), float(atr))
 
     # ── Volatility brake ─────────────────────────────────────────────────
 
@@ -259,8 +278,9 @@ class OHLCVCache:
 
     def clear(self) -> None:
         """Vide les caches OHLCV et ATR (ex. après coupure réseau)."""
-        self._ohlcv_cache.clear()
-        self._atr_cache.clear()
+        with self._lock:
+            self._ohlcv_cache.clear()
+            self._atr_cache.clear()
         logger.debug("[OHLCVCache] Caches OHLCV et ATR vidés.")
 
     def purge(self, active_symbols) -> None:
@@ -273,29 +293,29 @@ class OHLCVCache:
         active_symbols : iterable — symboles actuellement actifs (scanner.get_symbols())
         """
         now = time.time()
-
-        # Cache OHLCV : entrées dont TTL × 10 est dépassé
-        stale = [k for k, v in self._ohlcv_cache.items()
-                 if (now - v[0]) > _OHLCV_TTL.get(k[1], 120) * 10]
-        for k in stale:
-            del self._ohlcv_cache[k]
-
-        # Timestamps de bougies pour les symboles inactifs
         active_set = set(active_symbols)
-        for key in list(self._last_candle_ts.keys()):
-            if key[0] not in active_set:
-                del self._last_candle_ts[key]
 
-        # Cache ATR expiré
-        cutoff_atr = now - self._atr_cache_ttl * 10
-        self._atr_cache = {s: v for s, v in self._atr_cache.items() if v[0] > cutoff_atr}
+        with self._lock:
+            # Cache OHLCV : entrées dont TTL × 10 est dépassé
+            stale = [k for k, v in self._ohlcv_cache.items()
+                     if (now - v[0]) > _OHLCV_TTL.get(k[1], 120) * 10]
+            for k in stale:
+                del self._ohlcv_cache[k]
 
-        # Erreurs exchange pour les symboles inactifs
-        self._exchange_errors = {
-            s: v for s, v in self._exchange_errors.items() if s in active_set
-        }
+            # Timestamps de bougies pour les symboles inactifs
+            for key in list(self._last_candle_ts.keys()):
+                if key[0] not in active_set:
+                    del self._last_candle_ts[key]
 
-        logger.debug(
-            f"[OHLCVCache] Purge : {len(self._ohlcv_cache)} entrées OHLCV, "
-            f"{len(self._atr_cache)} ATR."
-        )
+            # Cache ATR expiré
+            cutoff_atr = now - self._atr_cache_ttl * 10
+            self._atr_cache = {s: v for s, v in self._atr_cache.items() if v[0] > cutoff_atr}
+
+            # Erreurs exchange pour les symboles inactifs
+            self._exchange_errors = {
+                s: v for s, v in self._exchange_errors.items() if s in active_set
+            }
+
+            n_ohlcv, n_atr = len(self._ohlcv_cache), len(self._atr_cache)
+
+        logger.debug(f"[OHLCVCache] Purge : {n_ohlcv} entrées OHLCV, {n_atr} ATR.")

@@ -3,7 +3,7 @@
 Vérifie que la dimension symbole (`strategy::tf::symbol`) traverse la sélection
 des slots actifs, l'identité de bot et l'allocateur de capital.
 """
-from app.core.bot_identity import BotIdentity, resolve_venue, Venue
+from app.core.bot_identity import BotIdentity, default_venue_from_cfg, resolve_venue, Venue
 from app.engine.opt_persistence import get_active_strategies_per_tf
 from app.live.capital_allocator import CapitalAllocator
 
@@ -173,3 +173,52 @@ def test_slot_key_route_regex_accepts_symbol():
     assert _SLOT_KEY_RE.match("smart_money::1h")
     assert not _SLOT_KEY_RE.match("../etc/passwd")
     assert not _SLOT_KEY_RE.match("bad key::4h")
+
+
+# ── S2-02 : généralisation multi-actifs (Venue étendue) ─────────────────────
+
+def test_venue_defaults_preserve_crypto_behavior():
+    """Sans venues.defs configuré (config.yaml historique), les nouveaux
+    champs restent alignés sur le comportement crypto (rétro-compat totale)."""
+    v = default_venue_from_cfg({"trading": {}, "exchange": {"name": "okx"}})
+    assert v.asset_class == "crypto"
+    assert v.quote_currency == "USDC"
+    assert v.fractional is True
+    assert v.allow_short is True
+
+
+def test_resolve_venue_symbol_alone_assigns_asset_class():
+    """Un symbole peut être assigné à une venue actions indépendamment de
+    la stratégie qui le trade (ex. AIR.PA → euronext-paper, quelle que soit
+    la stratégie)."""
+    cfg = {"venues": {"defs": {
+        "euronext-paper": {
+            "asset_class": "equity", "quote_currency": "EUR",
+            "fractional": False, "allow_short": False, "lot_size": 1.0,
+        },
+    }, "assign": {"AIR.PA": "euronext-paper"}}}
+    v = resolve_venue(cfg, "pullback_trend", "1d", "AIR.PA")
+    assert v.name == "euronext-paper"
+    assert v.asset_class == "equity"
+    assert v.quote_currency == "EUR"
+    assert v.fractional is False
+    assert v.allow_short is False
+    assert v.lot_size == 1.0
+    # Un autre symbole, même stratégie/tf, reste sur le défaut crypto.
+    v2 = resolve_venue(cfg, "pullback_trend", "1d", "BTC/USDC")
+    assert v2.asset_class == "crypto"
+    assert v2.quote_currency == "USDC"
+
+
+def test_resolve_venue_strategy_tf_symbol_still_beats_symbol_alone():
+    """La clé composée strategy::tf::symbol reste prioritaire sur symbol seul."""
+    cfg = {"venues": {"defs": {
+        "specific": {"asset_class": "equity", "max_leverage": 1},
+        "generic": {"asset_class": "crypto", "max_leverage": 3},
+    }, "assign": {
+        "AIR.PA": "generic",
+        "trend_rider::1d::AIR.PA": "specific",
+    }}}
+    v = resolve_venue(cfg, "trend_rider", "1d", "AIR.PA")
+    assert v.name == "specific"
+    assert v.asset_class == "equity"

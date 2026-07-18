@@ -8,7 +8,6 @@ import { useEffect, useRef, useState, useCallback, createContext, useContext, Re
 import type { WSEvent, TradeOpenedData, TradeClosedData, SignalData, RiskData, CycleUpdateData, TickerData } from '@/types';
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws';
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY || '';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -37,10 +36,11 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     setStatus('connecting');
-    const url = API_KEY ? `${WS_URL}?api_key=${encodeURIComponent(API_KEY)}` : WS_URL;
-
+    // S1-04/S1-05 : plus de clé API dans l'URL — le cookie HttpOnly api_key
+    // (posé par les pages web) est envoyé automatiquement par le navigateur
+    // lors du handshake WebSocket, sans exposition dans les logs/devtools.
     try {
-      const ws = new WebSocket(url);
+      const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
       ws.onopen = () => {

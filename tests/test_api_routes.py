@@ -160,3 +160,22 @@ def test_protected_route_rejects_unauthenticated_non_local_request():
     raw_client = TestClient(app)
     r = raw_client.get("/api/data/status")
     assert r.status_code == 403
+
+
+# ── CORS (S0-03) ──────────────────────────────────────────────────────────
+# DELETE /api/optimize/job existe (routes/optimizer.py) mais allow_methods
+# ne listait que GET/POST — un navigateur bloquait le preflight en prod.
+
+def test_cors_preflight_allows_delete():
+    raw_client = TestClient(app)
+    r = raw_client.options(
+        "/api/optimize/job",
+        headers={
+            "Origin": "http://localhost",
+            "Access-Control-Request-Method": "DELETE",
+            "Access-Control-Request-Headers": "X-API-Key",
+        },
+    )
+    assert r.status_code == 200
+    allowed = r.headers.get("access-control-allow-methods", "")
+    assert "DELETE" in allowed

@@ -6,8 +6,15 @@ analysés par des agents indépendants en lecture seule. **89 items** au total,
 chacun rédigé pour être **directement exécutable par un nouvel agent** sans
 autre contexte (fichiers:lignes, directive pas-à-pas, critère d'acceptation).
 
-> ⚠ **Ce document est un PLAN : aucune des recommandations n'a été appliquée.**
-> Chaque item doit être validé avant exécution.
+> ⚠ Avertissement d'origine (2026-07-11) : « ce document est un PLAN, aucune
+> recommandation appliquée ». **Caduc depuis** : les Vagues 0, 1, 2, 4, 5 et 6
+> ont été réalisées et commitées (un commit taggé `[ID]` par item, cf. git log
+> des 11-13/07). **Seule la Vague 3 (code mort + CI/lint) reste à faire.**
+>
+> 📌 **État consolidé et backlog à jour** (fusion avec le plan complémentaire
+> du 2026-07-14 et le plan multi-actifs, vérifié contre le code le 2026-07-18) :
+> **`docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md`** — ce fichier-ci reste la référence
+> historique des directives détaillées par item.
 
 ## Les fichiers
 
@@ -69,7 +76,14 @@ mais des chemins secondaires supposaient encore l'ancien slot 2-parties.
 | BT-07 | Walk-forward branché sur l'auto-apply | M |
 | BT-09 | Réduction de risque en drawdown absente du backtest | M |
 
-## 🟡 Vague 3 — Nettoyage & outillage
+## 🟡 Vague 3 — Nettoyage & outillage — ❌ NON RÉALISÉE (constat 2026-07-18)
+
+Aucun commit `[DEAD-*]`/`[TEST-01]`/`[TEST-04]`/`[TEST-05]`/`[TEST-06]` dans
+l'historique ; vérifié dans le code : les 8 stratégies mortes (8005 lignes avec
+DEAD-02) sont toujours présentes, le bug pyflakes DEAD-05 (`opus_omnibus_v11.py`,
+stratégie ACTIVE) toujours là, `.github/workflows/`, `ruff.toml`, `pytest.ini`
+toujours absents. **Reprise priorisée dans
+`docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md` §4.1 (Sprint 7).**
 
 | Item | Quoi | Effort |
 |---|---|---|
