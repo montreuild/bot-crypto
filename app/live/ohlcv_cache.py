@@ -30,6 +30,7 @@ import polars as pl
 
 from app.core.candle_store import get_store
 from app.core.indicators import precompute_df, atr_val as _compute_atr
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.engine.optimizer import RECOMMENDED_LIMIT
 
 logger = logging.getLogger(__name__)
@@ -254,6 +255,31 @@ class OHLCVCache:
         with self._lock:
             self._atr_cache[symbol] = (time.time(), float(atr))
 
+    # ── Volume quote moyen (FIN-07) ─────────────────────────────────────────
+
+    def get_avg_quote_volume(self, symbol: str, tf: str, lookback: int = 20) -> Optional[float]:
+        """Moyenne glissante du volume en devise de cotation (``volume × close``)
+        sur les ``lookback`` dernières bougies mises en cache — même fenêtre que
+        ``ctx.qvol_arr`` côté backtest (modèle ``slippage_model: size``, BT-10).
+
+        Lit uniquement le cache déjà rempli par ``get()`` (pas de fetch réseau
+        dédié) : retourne ``None`` si (symbol, tf) n'a pas encore été chargé.
+        """
+        with self._lock:
+            cached = self._ohlcv_cache.get((symbol, tf))
+        if not cached:
+            return None
+        df = cached[1]
+        if df is None or len(df) < lookback or "volume" not in df.columns:
+            return None
+        try:
+            tail = df.tail(lookback)
+            avg = float((tail["volume"] * tail["close"]).mean())
+            return avg if avg > 0 else None
+        except Exception as e:
+            logger.debug(f"[OHLCVCache] get_avg_quote_volume {symbol}/{tf} KO : {e}")
+            return None
+
     # ── Volatility brake ─────────────────────────────────────────────────
 
     def update_volatility_brake(self) -> None:
@@ -264,11 +290,11 @@ class OHLCVCache:
         directement plutôt que de le recalculer.
         """
         try:
-            df_btc = self.get("BTC/USDC", "1h")
+            df_btc = self.get(DEFAULT_CONFIG_SYMBOL, "1h")
             if df_btc is None or len(df_btc) <= 10:
                 return
             price = float(df_btc["close"][-1])
-            atr   = self.get_cached_atr("BTC/USDC")  # déjà calculé dans get()
+            atr   = self.get_cached_atr(DEFAULT_CONFIG_SYMBOL)  # déjà calculé dans get()
             if price > 0 and atr and atr > 0:
                 self._risk.update_volatility(atr / price)
         except Exception as e:

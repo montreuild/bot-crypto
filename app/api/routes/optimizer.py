@@ -4,7 +4,7 @@ import logging
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.api import state
@@ -18,7 +18,9 @@ router = APIRouter()
 
 
 @router.post("/api/optimize/start", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("5/minute")
 def optimizer_start(
+    request:             Request,
     symbol:              str  = DEFAULT_CONFIG_SYMBOL,
     symbols:             str  = "",
     strategies:          str  = "",
@@ -271,7 +273,8 @@ async def optimizer_stream(job_id: str):
 
 
 @router.post("/api/optimize/apply", dependencies=[Depends(verify_api_key)])
-def optimizer_apply(job_id: str, config_path: str = "config.yaml",
+@state.limiter.limit("10/minute")
+def optimizer_apply(request: Request, job_id: str, config_path: str = "config.yaml",
                     force: bool = False):
     """Applique le meilleur paramétrage d'un job terminé.
 
@@ -339,7 +342,8 @@ def optimizer_apply(job_id: str, config_path: str = "config.yaml",
 
 
 @router.post("/api/optimize/cancel", dependencies=[Depends(verify_api_key)])
-def optimizer_cancel(job_id: str):
+@state.limiter.limit("30/minute")
+def optimizer_cancel(request: Request, job_id: str):
     """Annule un job d'optimisation en cours."""
     from app.engine.auto_optimizer import get_job, cancel_job
     job = get_job(job_id)
@@ -352,7 +356,8 @@ def optimizer_cancel(job_id: str):
 
 
 @router.delete("/api/optimize/job", dependencies=[Depends(verify_api_key)])
-def optimizer_delete_job(job_id: str):
+@state.limiter.limit("30/minute")
+def optimizer_delete_job(request: Request, job_id: str):
     """Supprime un job terminé, annulé ou en erreur."""
     from app.engine.auto_optimizer import get_job, delete_job
     job = get_job(job_id)

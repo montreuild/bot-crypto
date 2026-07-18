@@ -289,7 +289,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin, AutoOptMixin, HealthMixin):
                             break
                         ticker = self._safe_ticker(pos["symbol"])
                         price  = ticker.get("last", pos["entry"]) if ticker else pos["entry"]
-                        self._close_position(pos_id, price)
+                        self._close_position(pos_id, price, exit_reason="manual")
                         break
                     except Exception as e:
                         wait = 2 ** _attempt

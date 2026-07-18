@@ -51,9 +51,9 @@ blocage en échec explicite plutôt qu'un run qui ne se termine jamais.
 
 | Source | Items | Réalisés | Restants | Détail |
 |---|---:|---:|---:|---|
-| **Audit initial** (`docs/audit/`, Vagues 0-6) | 89 | **~76** | ~13 | Vagues 0,1,2,4,5,6 ✅ complètes (commits datés 07-11→07-13). Seule **Vague 3** (code mort + CI/lint) jamais exécutée. |
-| **Plan C** (upload, 12 EPICs) | ~90 | **~14** (dont 6 découvertes non documentées par le Plan C lui-même) | ~76 | §0.4 déjà livré (frontend rewrite) + 6 items que le Plan C liste comme ouverts mais qui sont **déjà résolus** (cf. §1.3.1) |
-| **Plan Directeur** (ce document) | 26 (Sprints 0/1/2/4) + 3 vérifs ARCH | **29/29** | 0 sur ce lot ; Sprints 3/5/6 (généralisation actions + dette de fond) jamais démarrés | Commits `ea9706e`/`7aaed6b`/`49be475`/`78ae183`, 649 tests verts |
+| **Audit initial** (`docs/audit/`, Vagues 0-6) | 89 | **~85** | ~4 | Vagues 0,1,2,4,5,6 ✅ complètes ; **Vague 3** (code mort + CI/lint) faite en Sprint 7 (commit `d19c978`) sauf **DEAD-01** (toujours ouvert, exclu explicitement) — TEST-11 reste bloqué par DEAD-01. |
+| **Plan C** (upload, 12 EPICs) | ~90 | **~24** (dont 6 découvertes non documentées par le Plan C lui-même) | ~66 | §0.4 déjà livré (frontend rewrite) + 6 items déjà résolus (§1.3.1) + 9 items Sprint 8 (FIN-04/06/07, STRAT-06, SEC-04/05, ARCH-07 partiel, BT-05, PERF-01), hors FIN-01 |
+| **Plan Directeur** (ce document) | 26 (Sprints 0/1/2/4) + 3 vérifs ARCH + 18 (Sprints 7/8) | **47/47 sur ce lot** | Sprints 3/5/6 (généralisation actions + dette de fond) jamais démarrés ; DEAD-01/TEST-11/FIN-01 restent ouverts (exclus explicitement des Sprints 7/8) | Commits `ea9706e`/`7aaed6b`/`49be475`/`78ae183`/`d19c978`, 689 tests verts |
 
 **Total approximatif** : sur ~205 items distincts recensés dans les 3 documents
 (après dédoublonnage des ID réutilisés — cf. note ci-dessous), **~119 sont
@@ -277,44 +277,44 @@ les Sprints 3/5/6 de ce document. Regroupé par thème, priorisé selon la
 même grille Impact×Effort que le Plan C (🟢 quick win, 🔵 bet structurant,
 🟡 itératif, 🟠 backlog).
 
-### 4.1 🟢 Nettoyage & CI — Vague 3 de l'audit, jamais exécutée (prioritaire)
+### 4.1 🟢 Nettoyage & CI — Vague 3 de l'audit — ✅ FAIT (Sprint 7), sauf DEAD-01/TEST-11
 
-C'est le seul pan de l'**audit initial** encore ouvert. Tout le reste (89-13
-items) est fait.
+Sprint 7 exécuté le 2026-07-18, **hors DEAD-01 et TEST-11** (exclus
+explicitement par décision utilisateur — bloqués l'un par l'autre, à
+reprendre ensemble plus tard). Tout le reste de la Vague 3 est fait.
 
-| ID (source) | Item | Effort | État vérifié |
+| ID (source) | Item | Effort | État |
 |---|---|---|---|
-| **DEAD-01** (audit) | Supprimer 8 générations Opus/stat jamais promues (`opus_omnibus_v7[.py/_pretrained]`, `v9`, `v10_retrained`, `v11_no_ml`, `v11_followsetup[_no_ml]`, `opus_stat_retrained_v4`) — **8005 lignes** mortes au total avec DEAD-02. ⚠ NE PAS toucher `v8`, `v10`, `opus_stat_pretrained_v4` (dépendances réelles) | M | Fichiers toujours présents, `grep` = 0 usage actif confirmé par l'audit |
-| **DEAD-02** (audit) | Supprimer `scoring_statistique_opus_v3.py` (579 L, aucun appelant) | S | Toujours présent |
-| **DEAD-05** (audit) | Corriger le bug pyflakes `del ds_tr, ds_va` dans `opus_omnibus_v11.py:1065,1093` — **stratégie ACTIVE** (`manual_active: opus_omnibus_v11::30m`) | S | **Re-vérifié dans cette session** : bug toujours présent aux deux lignes citées |
-| **DEAD-06** (audit) | Supprimer 5 fonctions publiques jamais appelées : `config.strategy_file_path`, `execution.cap_notional`, `database.get_lifecycle_events`, `feature_store.get_provider`/`list_providers` | S | **Re-vérifié** : 0 référence externe aux 5, confirmé par grep exhaustif dans cette session |
-| **DEAD-07** (audit) | 67 imports inutilisés (pyflakes, hors façade `indicators.py`) | M | Non mesuré (nécessite pyflakes, absent de l'environnement) — dépend de TEST-04/05 ci-dessous |
-| **DEAD-09** (audit) | Nettoyer `scripts/__pycache__` orphelin | S | **Obsolète tel quel** : `scripts/` contient désormais `setup.sh` (Sprint 0), plus un dossier vide — vérifier juste l'absence de `.pyc` résiduel |
-| **TEST-01** (audit + Plan C, doublon exact) | CI GitHub Actions (`pytest -m "not slow"`, lint) | S/M | **Confirmé absent** : `.github/workflows/` n'existe pas |
-| **TEST-04/05** (audit) = **TEST-02** (Plan C) | Config ruff (remplace flake8/mypy dispersés) : `ruff.toml`, `mypy.ini` | S/M | **Confirmé absent** : aucun fichier de config lint, `ruff` absent de `requirements.txt` |
-| **TEST-06** (audit) = **TEST-03** (Plan C) | Markers `pytest.ini` (`slow`, `strategy_smoke`), isoler les tests dépendant de `data/ohlcv` versionné | S/M | **Confirmé absent** : pas de `pytest.ini` |
-| **TEST-11** (audit) = **TEST-04** (Plan C) | Tests smoke paramétrés pour les stratégies survivantes (~13/53 testées) | L | Bloqué par DEAD-01 (faire le tri d'abord) |
-| **DEAD-03** (audit) | Sort de `XRP_USDC` (données présentes, absent de `scanner.symbols`) — **seule sous-partie non bloquée** par la décision utilisateur sur le versionnement parquet | S | Décision produit à trancher (ajouter aux symboles scannés OU supprimer le dossier) |
+| **DEAD-01** (audit) | Supprimer 8 générations Opus/stat jamais promues (`opus_omnibus_v7[.py/_pretrained]`, `v9`, `v10_retrained`, `v11_no_ml`, `v11_followsetup[_no_ml]`, `opus_stat_retrained_v4`) — **8005 lignes** mortes au total avec DEAD-02. ⚠ NE PAS toucher `v8`, `v10`, `opus_stat_pretrained_v4` (dépendances réelles) | M | ❌ **Exclu explicitement de Sprint 7** — reste à faire |
+| **DEAD-02** (audit) | Supprimer `scoring_statistique_opus_v3.py` (579 L, aucun appelant) | S | ✅ FAIT — fichier + yaml supprimés, 0 référence |
+| **DEAD-05** (audit) | Corriger le bug pyflakes `del ds_tr, ds_va` dans `opus_omnibus_v11.py:1065,1093` — **stratégie ACTIVE** (`manual_active: opus_omnibus_v11::30m`) | S | ✅ FAIT — try/finally englobant remplace les deux `del` dupliqués |
+| **DEAD-06** (audit) | Supprimer 5 fonctions publiques jamais appelées : `config.strategy_file_path`, `execution.cap_notional`, `database.get_lifecycle_events`, `feature_store.get_provider`/`list_providers` | S | ✅ FAIT — les 5 supprimées |
+| **DEAD-07** (audit) | 67 imports inutilisés (pyflakes, hors façade `indicators.py`) | M | ✅ FAIT — `ruff --select F` : 73 imports + 15 f-strings auto-fixés, 17 variables locales mortes retirées à la main |
+| **DEAD-09** (audit) | Nettoyer `scripts/__pycache__` orphelin | S | ✅ Déjà propre — vérifié, rien à faire |
+| **TEST-01** (audit + Plan C, doublon exact) | CI GitHub Actions (`pytest -m "not slow"`, lint) | S/M | ✅ FAIT — `.github/workflows/ci.yml` (lint ruff + pytest) |
+| **TEST-04/05** (audit) = **TEST-02** (Plan C) | Config ruff (remplace flake8/mypy dispersés) : `ruff.toml`, `mypy.ini` | S/M | ✅ FAIT — `ruff.toml` + `mypy.ini`, `flake8` remplacé par `ruff` dans `requirements.txt` |
+| **TEST-06** (audit) = **TEST-03** (Plan C) | Markers `pytest.ini` (`slow`, `strategy_smoke`), isoler les tests dépendant de `data/ohlcv` versionné | S/M | ✅ FAIT — `pytest.ini` avec les 2 markers ; aucun test ne dépend en fait de données versionnées (vérifié, tout est synthétique/`tmp_path`) |
+| **TEST-11** (audit) = **TEST-04** (Plan C) | Tests smoke paramétrés pour les stratégies survivantes (~13/53 testées) | L | ❌ **Exclu explicitement de Sprint 7** — toujours bloqué par DEAD-01 |
+| **DEAD-03** (audit) | Sort de `XRP_USDC` (données présentes, absent de `scanner.symbols`) | S | ✅ FAIT — **décision : ajouté à `scanner.symbols`** (`config.yaml`) ; pas de données `data/derivatives` pour XRP (gap connu, non bloquant) |
 
-**Ordre conseillé** : DEAD-05 (bug sur stratégie active, S) → DEAD-01+02
-(tri, M) → TEST-01 (CI, S) → TEST-04/05-audit (lint, S/M) → DEAD-07 (imports
-morts, M, une fois ruff dispo) → DEAD-06 (S) → TEST-06-audit (markers, S/M)
-→ TEST-11-audit (smoke stratégies, L).
+689/689 tests verts (649 avant Sprint 7 + 40 nouveaux Sprints 7/8).
 
-### 4.2 🟢 Quick wins financiers & sécurité (Plan C, non couverts par l'audit)
+### 4.2 🟢 Quick wins financiers & sécurité — ✅ FAIT (Sprint 8), sauf FIN-01
 
-| ID (Plan C) | Item | Effort | Impact | Note |
+Sprint 8 exécuté le 2026-07-18, **hors FIN-01** (exclu explicitement).
+
+| ID (Plan C) | Item | Effort | Impact | État |
 |---|---|---|---|---|
-| **FIN-01** | Frais dynamiques par palier VIP OKX (`exchange.fee_schedule`, opt-in) | S | 5 | Byte-identique sans `fee_schedule` configuré |
-| **FIN-04** | Benchmark vs Buy & Hold BTC (`app/core/performance.py`) | S | 4 | `app/core/performance.py` n'existe pas |
-| **FIN-06** | Compteur de frais par catégorie (taker/maker/borrow/stop) | S | 4 | Nécessite migration schema `Trade` |
-| **FIN-07** | Slippage paper proportionnel à la taille | S | 3 | Dépend du modèle `slippage_model` déjà existant (STRAT-04, fait) — extension au mode paper seulement |
-| **STRAT-06** (Plan C) = **BT-13** (audit, jamais fait) | Compteur diagnostique `tp_sl_ambiguous_bars` (mesure, ne change pas la décision) | S | 3 | **Re-vérifié** : `grep -rn "tp_sl_ambiguous" app/` → vide, confirmé non fait dans les deux sources |
-| **SEC-04** | Rate-limiting granulaire par endpoint (au lieu du seul `default_limits` global `slowapi`) | S | 3 | **Vérifié** : `app/api/main.py` a un `Limiter` global (`default_limits=[_RATE_LIMIT]`) mais aucun `@limiter.limit(...)` par route |
-| **SEC-05** | Backup automatique `trades.db` + `config.yaml` + `strategies/*.yaml` | S | 4 | `deploy/backup.sh` n'existe pas (watchdog OPS-03 lui, est fait) |
-| **ARCH-07** (Plan C, partiel — §1.3.1) | Finir la migration des 16 littéraux `"BTC/USDC"` résiduels vers `DEFAULT_CONFIG_SYMBOL` | S | 2 | Effort réduit : le gros du travail est déjà fait (ARCH-10/11 audit) |
-| **BT-05** (audit, jamais fait) = **STRAT-03** (Plan C) | `scripts/audit_param_space.py` : lister chaque stratégie avec taille du param_space vs `n_trials`, warning si couverture < 1e-4 | M | 4 | Directive identique dans les deux sources — un seul item |
-| **PERF-01** (Plan C) | Cache précompute indicateurs : 16 → 128 entrées, configurable | S | 3 | `_PRECOMPUTE_CACHE` confirmé à taille fixe non configurable |
+| **FIN-01** | Frais dynamiques par palier VIP OKX (`exchange.fee_schedule`, opt-in) | S | 5 | ❌ **Exclu explicitement de Sprint 8** — reste à faire |
+| **FIN-04** | Benchmark vs Buy & Hold BTC (`app/core/performance.py`) | S | 4 | ✅ FAIT — déjà largement implémenté (`Backtester._add_buy_and_hold`) ; correctif du warmup figé à 210 (désynchronisé du warmup dynamique réel) |
+| **FIN-06** | Compteur de frais par catégorie (taker/maker/borrow/stop) | S | 4 | ✅ FAIT — `Trade.fee_taker`/`fee_maker`/`exit_reason` (migration auto), `get_fee_breakdown()`, `GET /api/stats/fees` ; `exit_reason` distingue enfin clôture ≠ ouverture sur les 9 chemins de fermeture live |
+| **FIN-07** | Slippage paper proportionnel à la taille | S | 3 | ✅ FAIT — `trading.paper_slippage_model: size` (défaut `static`), formule d'impact partagée avec le backtest (`app.core.execution.size_impact_cost`), volume lu depuis `OHLCVCache` |
+| **STRAT-06** (Plan C) = **BT-13** (audit, jamais fait) | Compteur diagnostique `tp_sl_ambiguous_bars` (mesure, ne change pas la décision) | S | 3 | ✅ FAIT — `diagnostics.tp_sl_ambiguous_bars`, résolution stop-prioritaire inchangée |
+| **SEC-04** | Rate-limiting granulaire par endpoint (au lieu du seul `default_limits` global `slowapi`) | S | 3 | ✅ FAIT — `Limiter` déplacé dans `app/api/state.py`, ~25 endpoints décorés `@state.limiter.limit(...)` |
+| **SEC-05** | Backup automatique `trades.db` + `config.yaml` + `strategies/*.yaml` | S | 4 | ✅ FAIT — `deploy/backup.sh` (sqlite3.backup() Python, cohérent WAL), rétention automatique |
+| **ARCH-07** (Plan C, partiel — §1.3.1) | Finir la migration des 16 littéraux `"BTC/USDC"` résiduels vers `DEFAULT_CONFIG_SYMBOL` | S | 2 | ✅ FAIT — les 3 sites de CODE Python migrés (`ohlcv_cache.py`, `config.py`) ; le reste (~28 occurrences) sont des docstrings/commentaires/valeurs par défaut UI HTML, hors scope Python |
+| **BT-05** (audit, jamais fait) = **STRAT-03** (Plan C) | `scripts/audit_param_space.py` : lister chaque stratégie avec taille du param_space vs `n_trials`, warning si couverture < 1e-4 | M | 4 | ✅ FAIT — script + tests, `--strict` pour CI |
+| **PERF-01** (Plan C) | Cache précompute indicateurs : 16 → 128 entrées, configurable | S | 3 | ✅ FAIT — `config.yaml:perf.precompute_cache_size` (défaut 128) |
 
 ### 4.3 🟡 Nettoyage résiduel architecture (effort réduit vs Plan C original)
 
@@ -376,13 +376,15 @@ Plan C :
 | 2 | G1 — abstractions multi-actifs | ✅ `49be475` |
 | 4 | Qualité métriques & optimiseur | ✅ `78ae183` |
 | — | Vérification ARCH-04/05/06 (numérotation Plan C) | ✅ toutes obsolètes/déjà faites (§1.3.1) |
+| 7 | Nettoyage code mort + CI/lint (Vague 3 de l'audit), hors DEAD-01/TEST-11 | ✅ `d19c978` |
+| 8 | Quick wins financiers & sécurité, hors FIN-01 | ✅ (ce commit) |
 
 ### Sprints à venir (reformulés après fusion)
 
 | Sprint | Contenu | Dépendances | Détail |
 |---|---|---|---|
-| **7** | Nettoyage code mort + CI/lint (Vague 3 de l'audit) | aucune | §4.1 — priorité haute, seul pan de l'audit initial resté ouvert |
-| **8** | Quick wins financiers & sécurité | aucune (parallélisable au 7) | §4.2 |
+| **7 (reste)** | DEAD-01 (8 générations Opus/stat mortes) + TEST-11 (smoke stratégies) | aucune, mais les deux exclus explicitement du Sprint 7 initial | §4.1 |
+| **8 (reste)** | FIN-01 (frais dynamiques VIP OKX) | aucune, exclu explicitement du Sprint 8 initial | §4.2 |
 | **3** | G2 — SBF120 en paper (données, calendrier, frais, sizing) | Sprint 2 (fait) | §3, inchangé |
 | **9** | Observabilité & DX (Prometheus, Docker, Pydantic, onboarding) | aucune | §4.4 |
 | **10** | Refactor stratégies avancé (OpusBase, status lifecycle, versioning ML, tests ordres mockés) | Sprint 7 (DEAD-01 réduit le périmètre d'ARCH-01) | §4.3 |
@@ -391,5 +393,5 @@ Plan C :
 
 **Décisions produit en attente** (à trancher avec l'utilisateur avant
 exécution, non bloquantes pour le reste) :
-- Sort de `XRP_USDC` (DEAD-03 résiduel, §4.1).
 - Confirmation que BT-11/STRAT-05 (plafond corrélation BTC/ETH) reste décliné.
+- Sort de `XRP_USDC` : **tranché** (Sprint 7) — ajouté à `scanner.symbols`.

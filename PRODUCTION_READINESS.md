@@ -125,7 +125,8 @@ variables), pas des formules.
       `risk_per_trade: 0.005` pendant 2 semaines
 - [ ] Vérification quotidienne : margin level, positions BDD vs exchange,
       stops orphelins, PnL vs relevé OKX
-- [ ] Backup automatique de `trades.db` et `config.yaml`/`strategies/`
+- [x] Backup automatique de `trades.db` et `config.yaml`/`strategies/`
+      (SEC-05 : `deploy/backup.sh` + cron, cf. `DEPLOY.md` §9.1)
 
 ---
 

@@ -31,7 +31,7 @@ def test_load_forces_canonical_column_order(tmp_path):
 
 def test_refetch_requires_symbol():
     state.cfg = {"scanner": {"symbols": [], "timeframes": ["4h"]}}
-    r = droute.data_refetch(symbol=None, tf=None)
+    r = droute.data_refetch(None, symbol=None, tf=None)
     assert r.status_code == 400
     assert "symbole" in json.loads(r.body)["error"].lower()
 

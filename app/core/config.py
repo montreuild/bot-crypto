@@ -14,6 +14,8 @@ from typing import Any, Tuple
 
 import yaml
 
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
+
 logger = logging.getLogger(__name__)
 
 REQUIRED_FIELDS = [
@@ -48,6 +50,10 @@ DEFAULTS = {
         "borrow_rate_daily": 0.0002,
         "max_leverage": 1, "max_drawdown_global": 0.20, "spread_pct": 0.0005,
         "latency_ms": 50, "paper_slippage": 0.001,
+        # FIN-07 : "static" (défaut, comportement inchangé) vs "size" (ajoute
+        # un coût d'impact ~ notional/volume_moyen_20b, même formule que
+        # backtest.slippage_model — app.core.execution.size_impact_cost).
+        "paper_slippage_model": "static", "slippage_k": 1.0,
     },
     "backtest": {
         "spread_pct": 0.0005, "latency_ms": 50, "partial_fill_pct": 0.95,
@@ -65,12 +71,15 @@ DEFAULTS = {
     "logging":   {"level": "INFO", "debug": False, "max_bytes": 10_485_760, "backup_count": 5,
                   "log_file": "logs/bot.log"},
     "web":       {"host": "127.0.0.1", "port": 8000, "refresh_interval": 5, "api_key": ""},
-    "scanner":   {"symbols": ["BTC/USDC","ETH/USDC","SOL/USDC"], "dynamic_scan": False, "top_n": 20},
+    "scanner":   {"symbols": [DEFAULT_CONFIG_SYMBOL,"ETH/USDC","SOL/USDC"], "dynamic_scan": False, "top_n": 20},
     # Dérivés (funding/OI/long-short/taker) accumulés au fil de l'eau dans
     # data/derivatives/*.parquet, comme l'OHLCV. Opt-in (enabled: false par défaut
     # → comportement inchangé). Enrichit le df de scoring en colonnes funding_z/
     # oi_change_pct/lsr_z/taker_z, consommées par la stratégie funding_flow.
     "derivatives": {"enabled": False, "period": "1h", "refresh_interval": 300, "z_window": 90},
+    # PERF-01 : taille du cache LRU process-wide de indicators_precompute.py
+    # (avant : 16 fixe, non configurable).
+    "perf": {"precompute_cache_size": 128},
 }
 
 _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}|\$([A-Z_][A-Z0-9_]*)")

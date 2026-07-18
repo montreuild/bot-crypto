@@ -207,6 +207,11 @@ web:
 ui:
   risk_preset:
   expert_mode: false
+perf:
+  # Taille du cache LRU process-wide des colonnes pré-calculées (_pre_*),
+  # partagé entre stratégies/trials tournant sur la même plage OHLCV
+  # (PERF-01). 128 par défaut (avant : 16 fixe, non configurable).
+  precompute_cache_size: 128
 notifications:
   telegram_enabled: false
   telegram_bot_token: ''

@@ -26,6 +26,16 @@ _PRECOMPUTE_LOCK = threading.Lock()
 _PRECOMPUTE_MAXSIZE = 16
 
 
+def set_precompute_maxsize(n: int) -> None:
+    """Reconfigure la taille du cache LRU (PERF-01, ``config.yaml:perf.precompute_cache_size``).
+
+    Appelé une fois au démarrage, après ``load_config`` — les 19 sites
+    d'appel de :func:`precompute_df` restent inchangés (signature intacte).
+    """
+    global _PRECOMPUTE_MAXSIZE
+    _PRECOMPUTE_MAXSIZE = max(1, int(n))
+
+
 def _precompute_key(df: pl.DataFrame):
     """Empreinte bon marché d'une plage OHLCV (taille + bornes temporelles + dernier close)."""
     try:

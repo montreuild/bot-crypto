@@ -2,7 +2,7 @@
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api import state
 from app.api.helpers import verify_api_key, _discover_strategies
@@ -75,7 +75,8 @@ def get_config():
 # ── POST /api/config/strategies ───────────────────────────────────────────
 
 @router.post("/api/config/strategies", dependencies=[Depends(verify_api_key)])
-def update_strategies(enabled: str = ""):
+@state.limiter.limit("30/minute")
+def update_strategies(request: Request, enabled: str = ""):
     """
     Active/désactive des stratégies en écrivant `enabled: true/false`
     dans chaque fichier strategies/{name}.yaml.
@@ -116,7 +117,8 @@ def update_strategies(enabled: str = ""):
 # ── POST /api/config/timeframes ───────────────────────────────────────────
 
 @router.post("/api/config/timeframes", dependencies=[Depends(verify_api_key)])
-def update_timeframes(timeframes: str = "1h"):
+@state.limiter.limit("30/minute")
+def update_timeframes(request: Request, timeframes: str = "1h"):
     """Met à jour les timeframes actifs (CSV, ex: '5m,1h,4h')."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
@@ -153,7 +155,8 @@ def update_timeframes(timeframes: str = "1h"):
 # ── POST /api/config/auto-optimizer ──────────────────────────────────────
 
 @router.post("/api/config/auto-optimizer", dependencies=[Depends(verify_api_key)])
-def update_auto_optimizer(enabled: bool = False, interval_h: int = 24):
+@state.limiter.limit("30/minute")
+def update_auto_optimizer(request: Request, enabled: bool = False, interval_h: int = 24):
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     state.cfg.setdefault("optimizer", {})["enabled"]        = enabled
@@ -176,7 +179,9 @@ def update_auto_optimizer(enabled: bool = False, interval_h: int = 24):
 # ── POST /api/config/trading ──────────────────────────────────────────────
 
 @router.post("/api/config/trading", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("30/minute")
 def update_trading_params(
+    request:              Request,
     score_threshold:      float = None,
     risk_per_trade:       float = None,
     max_positions:        int   = None,
@@ -230,7 +235,9 @@ def update_trading_params(
 # ── POST /api/config/risk ─────────────────────────────────────────────────
 
 @router.post("/api/config/risk", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("30/minute")
 def update_risk_config(
+    request:                 Request,
     consecutive_loss_limit:  int   = None,
     slot_daily_dd_limit:     float = None,
     win_rate_floor:          float = None,
@@ -316,7 +323,8 @@ def strategy_overrides(strategy: str):
 
 
 @router.post("/api/config/strategy-params", dependencies=[Depends(verify_api_key)])
-def update_strategy_params(strategy: str, params: dict,
+@state.limiter.limit("30/minute")
+def update_strategy_params(request: Request, strategy: str, params: dict,
                            timeframe: str = None, symbol: str = None):
     """Sauvegarde les paramètres d'une stratégie.
 
@@ -382,7 +390,8 @@ def update_strategy_params(strategy: str, params: dict,
         raise HTTPException(500, f"Erreur interne ({err_id})")
 
 @router.post("/api/config/strategy-timeframe", dependencies=[Depends(verify_api_key)])
-def toggle_strategy_timeframe(strategy: str, timeframe: str, enabled: bool = True):
+@state.limiter.limit("30/minute")
+def toggle_strategy_timeframe(request: Request, strategy: str, timeframe: str, enabled: bool = True):
     """
     Active ou désactive une stratégie sur un timeframe spécifique.
     Fonctionne via strategy_params[strategy]["disabled_timeframes"].
@@ -507,7 +516,9 @@ def get_notifications_config():
 # ── POST /api/config/notifications ────────────────────────────────────────
 
 @router.post("/api/config/notifications", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("30/minute")
 def update_notifications_config(
+    request:                Request,
     telegram_enabled:       bool  = None,
     telegram_bot_token:     str   = None,
     telegram_chat_id:       str   = None,
@@ -569,7 +580,8 @@ def update_notifications_config(
 # ── POST /api/config/notifications/test ──────────────────────────────────
 
 @router.post("/api/config/notifications/test", dependencies=[Depends(verify_api_key)])
-def test_notification():
+@state.limiter.limit("5/minute")
+def test_notification(request: Request):
     if not state.trader:
         raise HTTPException(503, "Trader non initialisé")
     state.trader.notif.send("🔔 Test de notification depuis le bot", async_=False)
@@ -579,7 +591,9 @@ def test_notification():
 # ── POST /api/config/margin ────────────────────────────────────────────────
 
 @router.post("/api/config/margin", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("30/minute")
 def update_margin_config(
+    request:      Request,
     margin:       bool = None,
     margin_mode:  str  = None,
     max_leverage: int  = None,
@@ -615,7 +629,9 @@ def update_margin_config(
 # ── POST /api/config/capital-allocator ─────────────────────────────────────
 
 @router.post("/api/config/capital-allocator", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("30/minute")
 def update_capital_allocator_config(
+    request: Request,
     mode: str = None,
     rebalance_interval: str = None,
     max_slot_pct: float = None,

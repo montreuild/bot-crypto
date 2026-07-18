@@ -21,9 +21,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.api import state
@@ -35,15 +34,6 @@ from app.core.database import init_db
 from app.core.events import event_hub
 
 logger = logging.getLogger(__name__)
-
-# ── Rate limiter ───────────────────────────────────────────────────────────
-# Clé = IP du pair TCP (get_remote_address ne lit PAS X-Forwarded-For → non
-# spoofable, cohérent avec helpers._extract_client_ip). La limite par défaut est
-# généreuse : l'UI mono-utilisateur poll /api/status (~12/min) et l'avancement
-# des jobs backtest/optimizer (jusqu'à ~30-60/min) ; on borne surtout l'abus.
-# Surchargeable via l'env RATE_LIMIT (ex. "120/minute").
-_RATE_LIMIT = os.environ.get("RATE_LIMIT", "300/minute")
-limiter = Limiter(key_func=get_remote_address, default_limits=[_RATE_LIMIT])
 
 # ── Application ────────────────────────────────────────────────────────────
 @asynccontextmanager
@@ -64,7 +54,7 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
-app.state.limiter = limiter
+app.state.limiter = state.limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 

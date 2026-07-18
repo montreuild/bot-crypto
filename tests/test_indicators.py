@@ -5,6 +5,7 @@ Vérifie les calculs contre des valeurs de référence et les cas limites.
 import pytest
 import sys
 import os
+import datetime as dt
 import numpy as np
 import polars as pl
 
@@ -20,6 +21,7 @@ from app.core.indicators import (
     rolling_vwap, vwap_bands, session_vwap, cvd, choppiness, keltner,
     pin_bar, engulfing, vsa_signal, rsi_divergence_hidden,
 )
+import app.core.indicators_precompute as indicators_precompute
 
 
 def _make_ohlcv(n=300, base=100.0, trend=0.05, seed=42):
@@ -292,6 +294,39 @@ class TestPrecompute:
         df = _make_ohlcv(300)
         result = precompute_df(df)
         assert len(result) == 300
+
+
+def _make_ohlcv_timed(n):
+    """OHLCV synthétique avec colonne ``time`` (requise par _precompute_key)."""
+    df = _make_ohlcv(n, seed=n)
+    t0 = dt.datetime(2024, 1, 1)
+    return df.with_columns(
+        pl.Series("time", [t0 + dt.timedelta(hours=i) for i in range(n)])
+    )
+
+
+class TestPrecomputeCacheSize:
+    """PERF-01 : taille du cache LRU reconfigurable (config.yaml:perf.precompute_cache_size)."""
+
+    def test_set_precompute_maxsize_bounds_eviction(self):
+        original = indicators_precompute._PRECOMPUTE_MAXSIZE
+        try:
+            indicators_precompute.set_precompute_maxsize(2)
+            indicators_precompute._PRECOMPUTE_CACHE.clear()
+            for n in (60, 61, 62, 63):
+                precompute_df(_make_ohlcv_timed(n))
+            assert len(indicators_precompute._PRECOMPUTE_CACHE) <= 2
+        finally:
+            indicators_precompute.set_precompute_maxsize(original)
+            indicators_precompute._PRECOMPUTE_CACHE.clear()
+
+    def test_set_precompute_maxsize_rejects_non_positive(self):
+        original = indicators_precompute._PRECOMPUTE_MAXSIZE
+        try:
+            indicators_precompute.set_precompute_maxsize(0)
+            assert indicators_precompute._PRECOMPUTE_MAXSIZE == 1
+        finally:
+            indicators_precompute.set_precompute_maxsize(original)
 
 
 class TestPreVal:

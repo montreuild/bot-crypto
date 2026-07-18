@@ -4,7 +4,7 @@ import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.api import state
@@ -29,14 +29,17 @@ def _months_to_bars(months: float, tf: str) -> int:
 
 
 @router.post("/api/replay/cancel", dependencies=[Depends(verify_api_key)])
-def cancel_replay():
+@state.limiter.limit("30/minute")
+def cancel_replay(request: Request):
     """Annule le replay en cours."""
     state._rp_cancel_event.set()
     return {"status": "cancelling"}
 
 
 @router.post("/api/replay", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("10/minute")
 def run_replay(
+    request:      Request,
     symbol:       str   = DEFAULT_CONFIG_SYMBOL,
     months:       float = 6.0,
     timeframes:   str   = "1h,4h,1d",

@@ -23,7 +23,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from app.core.execution import close_pnl, trade_fees
+from app.core.execution import close_pnl, trade_fees, size_impact_cost
 from app.core.trailing import TrailingStopManager
 from app.core.database import (save_trade, update_daily_stats,
                                 persist_open_position, delete_open_position,
@@ -292,6 +292,30 @@ class PositionMixin:
                 pos["size"]     = round(filled, 6)
                 pos["notional"] = round(filled * pos["entry"], 4)
 
+    # ── Slippage paper trading (FIN-07) ─────────────────────────────────────
+
+    def _paper_slippage_fraction(self, symbol: str, tf: str, notional: float) -> float:
+        """Fraction de slippage à appliquer au prix en paper mode.
+
+        ``trading.paper_slippage_model`` (défaut ``"static"``, comportement
+        byte-identique à avant FIN-07) : fraction fixe ``paper_slippage``.
+        ``"size"`` : ajoute un coût d'impact croissant avec la participation
+        du trade au volume moyen 20 barres — même formule que le backtest
+        (``backtest.slippage_model: size``, BT-10), via
+        ``app.core.execution.size_impact_cost`` partagée. Repli silencieux sur
+        la valeur statique si le volume moyen n'est pas encore en cache
+        (symbole tout juste scanné) pour ne jamais bloquer une exécution.
+        """
+        base = float(self.cfg["trading"].get("paper_slippage", 0.001))
+        if self.cfg["trading"].get("paper_slippage_model", "static") != "size":
+            return base
+        avg_qv = (self.ohlcv_cache.get_avg_quote_volume(symbol, tf)
+                 if getattr(self, "ohlcv_cache", None) else None)
+        if not avg_qv or notional <= 0:
+            return base
+        k = float(self.cfg["trading"].get("slippage_k", 1.0))
+        return base + size_impact_cost(notional, base, k, avg_qv) / notional
+
     # ── Ouverture ──────────────────────────────────────────────────────────
 
     def _open_position(self, pos_key: str, symbol: str, signal: dict,
@@ -349,7 +373,7 @@ class PositionMixin:
 
         # Slippage adverse en paper mode (achat plus cher)
         if self.cfg["trading"].get("paper_mode"):
-            slip = self.cfg["trading"].get("paper_slippage", 0.001)
+            slip = self._paper_slippage_fraction(symbol, tf, notional)
             exec_price *= (1 + slip) if signal["side"] == "long" else (1 - slip)
         else:
             # Remplissage partiel : aligner la taille trackée sur la taille
@@ -486,14 +510,14 @@ class PositionMixin:
                 f"[Gap] {symbol} prix {price:.4f} < stop {pos['stop']:.4f} "
                 f"— clôture forcée"
             )
-            self._close_position(pos_id, price)
+            self._close_position(pos_id, price, exit_reason="gap")
             return
         if pos["side"] == "short" and price > pos["stop"] * 1.02:
             logger.warning(
                 f"[Gap] {symbol} prix {price:.4f} > stop {pos['stop']:.4f} "
                 f"— clôture forcée"
             )
-            self._close_position(pos_id, price)
+            self._close_position(pos_id, price, exit_reason="gap")
             return
 
         # ── Take-profit fixe (vérifié sur ticker, en complément du SL) ────────
@@ -505,7 +529,7 @@ class PositionMixin:
                 logger.info(
                     f"[TP] {symbol} {pos['side']} TP={tp_val:.4f} touché @ {price:.4f}"
                 )
-                self._close_position(pos_id, tp_val)
+                self._close_position(pos_id, tp_val, exit_reason="take_profit")
                 return
 
         # ── Sortie anticipée pilotée par la stratégie (check_early_exit) ───
@@ -536,7 +560,7 @@ class PositionMixin:
                         f"[EarlyExit] {symbol} {pos['side']} clôture sur "
                         f"'{early_reason}' (stratégie {strat_name})"
                     )
-                    self._close_position(pos_id, price)
+                    self._close_position(pos_id, price, exit_reason="early_exit")
                     return
 
         _pos_tf_secs = _TF_SECS.get(pos.get("timeframe", "1h"), 3600)
@@ -564,7 +588,8 @@ class PositionMixin:
                 filled_stop = self._update_exchange_stop(pos)
                 if filled_stop is not None:
                     pos["_closed_by_exchange_stop"] = filled_stop
-                    self._close_position(pos_id, price)
+                    self._close_position(pos_id, price, exit_reason=(
+                        "stop_loss" if pos.get("disable_trailing") else "trailing_stop"))
                     return
 
         # ── Pyramidage piloté par la stratégie (check_scale_in) ────────────
@@ -599,7 +624,8 @@ class PositionMixin:
             self._loss_notified.discard(pos_id)
 
         if trailing.is_triggered(price, new_stop, pos["side"]):
-            self._close_position(pos_id, price)
+            self._close_position(pos_id, price, exit_reason=(
+                "stop_loss" if pos.get("disable_trailing") else "trailing_stop"))
 
     # ── Stop-loss / take-profit côté exchange ───────────────────────────────
     #
@@ -811,7 +837,8 @@ class PositionMixin:
             )
         exec_price = order.get("price") or order.get("average") or price
         if self.cfg["trading"].get("paper_mode"):
-            slip = self.cfg["trading"].get("paper_slippage", 0.001)
+            slip = self._paper_slippage_fraction(
+                symbol, pos.get("timeframe", self.tf), add_notional)
             exec_price *= (1 + slip) if side == "long" else (1 - slip)
 
         fee_rate = self.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE)
@@ -835,7 +862,8 @@ class PositionMixin:
         filled_stop = self._update_exchange_stop(pos)
         if filled_stop is not None:
             pos["_closed_by_exchange_stop"] = filled_stop
-            self._close_position(pos_id, exec_price)
+            self._close_position(pos_id, exec_price, exit_reason=(
+                "stop_loss" if pos.get("disable_trailing") else "trailing_stop"))
             return
 
         self.signal_log.append({
@@ -954,7 +982,23 @@ class PositionMixin:
 
     # ── Clôture ───────────────────────────────────────────────────────────
 
-    def _close_position(self, pos_id: str, exit_price: float) -> None:
+    def _close_position(self, pos_id: str, exit_price: float,
+                        exit_reason: str = "unknown") -> None:
+        """``exit_reason`` (FIN-06) : motif de clôture persisté dans
+        ``Trade.exit_reason`` — distinct de ``pos["reason"]`` (motif
+        d'OUVERTURE, jamais modifié ici). Vocabulaire aligné sur le backtest
+        (``stop_loss``/``trailing_stop``/``take_profit``) + valeurs propres au
+        live (``gap``, ``early_exit``, ``manual``). "unknown" par défaut pour
+        tout appelant qui ne le précise pas encore.
+
+        NOTE maker/taker (cf. FIN-06) : le live n'implémente aujourd'hui
+        AUCUNE distinction maker/taker à l'exécution (toujours ``taker_fee``,
+        cf. ``fee_rate`` ci-dessous) — contrairement au backtest
+        (``Backtester._close_at``, ``maker=True`` pour TP/time-exit,
+        ``maker=False`` pour stop). ``fee_taker``/``fee_maker`` reflètent donc
+        honnêtement cette réalité (100 % taker) plutôt que de simuler une
+        distinction non implémentée à l'exécution réelle.
+        """
         with self._positions_lock:
             pos = self.open_positions.pop(pos_id, None)
         if not pos:
@@ -1012,7 +1056,8 @@ class PositionMixin:
 
         # Slippage adverse en paper mode (vente moins chère)
         if self.cfg["trading"].get("paper_mode"):
-            slip = self.cfg["trading"].get("paper_slippage", 0.001)
+            slip = self._paper_slippage_fraction(
+                pos["symbol"], pos.get("timeframe", self.tf), pos.get("notional", 0.0))
             exec_price *= (1 - slip) if pos["side"] == "long" else (1 + slip)
 
         # Décompte de clôture (frais, emprunt composé, PnL net) : formules
@@ -1070,11 +1115,16 @@ class PositionMixin:
             "pnl":           round(pnl, 6),
             "pnl_pct":       pnl_pct,
             "fees":          round(fees, 6),
+            # FIN-06 : aucune distinction maker/taker à l'exécution live
+            # aujourd'hui (cf. docstring ci-dessus) — 100% taker, honnête.
+            "fee_taker":     round(fees, 6),
+            "fee_maker":     0.0,
             "borrow_cost":   round(borrow_cost, 6),
             "status":        "closed",
             "duration_bars": bars_since,
             "exit_time":     datetime.now(timezone.utc),
             "timeframe":     pos.get("timeframe", self.tf),
+            "exit_reason":   exit_reason,
         })
 
         strat_threshold = self._strat_thresholds.get(pos.get("strategy", ""), self.threshold)
@@ -1091,7 +1141,7 @@ class PositionMixin:
             "exit":      round(float(exec_price), 4),
             "pnl":       round(float(pnl), 4),
             "pnl_pct":   pnl_pct,
-            "reason":    "stop" if pnl < 0 else "trailing",
+            "reason":    exit_reason,
         })
 
         with session_scope(self.SessionLocal) as session:
@@ -1102,7 +1152,7 @@ class PositionMixin:
                 pnl, pnl > 0, fees, self.capital_display
             )
 
-        if "stop" in str(pos.get("reason", "")).lower() or pnl < 0:
+        if exit_reason in ("stop_loss", "trailing_stop", "gap") or pnl < 0:
             cooldown_secs = (
                 self.cfg["trading"].get("reentry_cooldown_bars", 3) * self.interval
             )

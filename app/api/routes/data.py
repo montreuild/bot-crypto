@@ -6,7 +6,7 @@
 """
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from app.api import state
@@ -28,7 +28,8 @@ def data_status():
 
 
 @router.post("/api/data/refetch", dependencies=[Depends(verify_api_key)])
-def data_refetch(symbol: str = None, tf: str = None, bars: int = 6000):
+@state.limiter.limit("5/minute")
+def data_refetch(request: Request, symbol: str = None, tf: str = None, bars: int = 6000):
     """(Re)télécharge les bougies. ``symbol``/``tf`` optionnels : si absents, on
     reprend les symboles/timeframes du scanner configuré. Réutilise
     ``CandleStore.fetch`` (pagination robuste + schéma canonique)."""

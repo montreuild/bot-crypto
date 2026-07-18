@@ -45,6 +45,9 @@ def test_migrate_adds_missing_columns_and_index(tmp_path):
     with engine.connect() as conn:
         cols = {r[1] for r in conn.execute(text('PRAGMA table_info("trades")'))}
         assert {"tags", "borrow_cost", "leverage"} <= cols
+        # FIN-06 : décomposition des frais + motif de clôture, ajoutés au
+        # modèle après la création de cette base « ancienne ».
+        assert {"fee_taker", "fee_maker", "exit_reason"} <= cols
         idx = {r[1] for r in conn.execute(text('PRAGMA index_list("trades")'))}
         assert "ix_trades_strategy_tf_time" in idx
         # La ligne héritée reste lisible.

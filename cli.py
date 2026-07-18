@@ -14,6 +14,7 @@ from app.core.config        import load_config
 from app.core.logger        import setup_logging
 from app.core.exchange      import create_exchange
 from app.core.candle_store  import get_store
+from app.core.indicators_precompute import set_precompute_maxsize
 from app.engine.engine      import Engine
 from app.engine.backtest    import Backtester, WalkForwardAnalyzer, MonteCarlo
 from app.api.main           import app as fastapi_app, init_app
@@ -180,6 +181,7 @@ def run_optimizer_cli(cfg, args):
 def main():
     args = parse_args()
     cfg  = load_config(args.config)
+    set_precompute_maxsize(cfg.get("perf", {}).get("precompute_cache_size", 128))
 
     if args.live:
         # --live force le mode réel (désactive paper trading)

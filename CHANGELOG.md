@@ -117,6 +117,51 @@ exclus explicitement de ce sprint.
 Périmètre §4.2 du plan directeur, hors **FIN-01** (frais dynamiques par
 palier VIP OKX) — exclu explicitement de ce sprint.
 
+- **[FIN-04]** Benchmark Buy & Hold : correctif du warmup figé à 210 barres
+  dans `_add_buy_and_hold` (désynchronisé du warmup dynamique réel de la
+  boucle de trading dès qu'une stratégie déclare `warmup_bars`/`min_bars` >
+  210) — le prix de départ du B&H (et donc l'alpha) est maintenant calculé
+  sur la MÊME fenêtre que le backtest.
+- **[FIN-06]** Compteur de frais par catégorie (taker/maker/borrow/stop) :
+  colonnes `Trade.fee_taker`/`fee_maker`/`exit_reason` (auto-migrées),
+  `get_fee_breakdown()` + `GET /api/stats/fees`. `exit_reason` distingue
+  enfin le motif de CLÔTURE du motif d'OUVERTURE (`Trade.reason`, conflatés
+  auparavant) sur les 9 chemins de fermeture du live
+  (stop_loss/trailing_stop/take_profit/gap/early_exit/manual). `fee_taker`/
+  `fee_maker` reflètent honnêtement l'absence actuelle de distinction
+  maker/taker à l'exécution live (100 % taker) plutôt que de la simuler.
+- **[FIN-07]** Slippage paper proportionnel à la taille : nouveau
+  `trading.paper_slippage_model: size` (défaut `static`, comportement
+  inchangé) réutilise la formule d'impact de `backtest.slippage_model: size`
+  (BT-10), extraite en fonction partagée `app.core.execution.
+  size_impact_cost`. Volume moyen 20 barres lu depuis le cache déjà rempli
+  par `OHLCVCache.get()` (nouveau `get_avg_quote_volume`, aucun fetch réseau
+  dédié) ; repli silencieux sur le slippage statique si absent.
+- **[STRAT-06/BT-13]** Compteur diagnostique `diagnostics.tp_sl_ambiguous_bars`
+  (backtest) : mesure les barres où stop ET take-profit auraient tous deux
+  été touchés (ambiguïté intrabar high/low) — n'affecte pas la résolution
+  (le stop continue de toujours l'emporter).
+- **[SEC-04]** Rate-limiting par endpoint : `Limiter` déplacé de
+  `app/api/main.py` vers `app/api/state.py` (évite l'import circulaire avec
+  les modules de routes) ; ~25 endpoints sensibles/coûteux (contrôle bot,
+  backtest/optimizer/replay, écritures config, refetch data, slots,
+  paramètres de risque) décorés `@state.limiter.limit(...)` avec des limites
+  plus strictes que le `default_limits` global (300/minute).
+- **[SEC-05]** `deploy/backup.sh` : sauvegarde datée de `trades.db` (via
+  `sqlite3.backup()` Python, cohérent sous WAL) + `config.yaml` +
+  `strategies/*.yaml`, rétention automatique — remplace les one-liners cron
+  ad hoc de `DEPLOY.md` §9.
+- **[ARCH-07]** Derniers littéraux `"BTC/USDC"` de code (hors docstrings/UI)
+  migrés vers `DEFAULT_CONFIG_SYMBOL` (`app/live/ohlcv_cache.py`,
+  `app/core/config.py`).
+- **[BT-05/STRAT-03]** `scripts/audit_param_space.py` : liste chaque
+  stratégie avec la cardinalité de son `param_space` vs `optimizer.n_trials`,
+  avertit si la couverture < 1e-4 (`--strict` pour un code de retour non-nul
+  en CI).
+- **[PERF-01]** Cache LRU de `indicators_precompute.py` : taille
+  configurable via `config.yaml:perf.precompute_cache_size` (défaut 16 → 128).
+- 689/689 tests verts après chaque étape.
+
 ### 📚 Documentation
 
 - `docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md` : fusion des 3 plans (audit

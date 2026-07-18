@@ -80,7 +80,7 @@ class HealthMixin:
                 positions_to_close.append((pos_id, price))
 
         for pos_id, price in positions_to_close:
-            self._close_position(pos_id, price)
+            self._close_position(pos_id, price, exit_reason="stop_loss")
 
         if positions_to_close:
             self.notif.send(

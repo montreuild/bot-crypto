@@ -4,7 +4,7 @@ import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.api import state
@@ -21,7 +21,8 @@ router = APIRouter()
 
 
 @router.post("/api/backtest/cancel", dependencies=[Depends(verify_api_key)])
-def cancel_backtest():
+@state.limiter.limit("30/minute")
+def cancel_backtest(request: Request):
     """Annule le backtest en cours en levant le signal d'arrêt."""
     state._bt_cancel_event.set()
     return {"status": "cancelling"}
@@ -44,7 +45,9 @@ def backtest_status():
 
 
 @router.post("/api/backtest", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("10/minute")
 def run_backtest(
+    request:      Request,
     symbol:       str  = DEFAULT_CONFIG_SYMBOL,
     limit:        int  = 500,
     timeframe:    str  = "",
