@@ -1,98 +1,151 @@
 # Plan Directeur — Généralisation Multi-Actifs (Crypto + Actions SBF120) & Améliorations
 
-> **Objectif :** document de référence unique fusionnant (A) la généralisation du bot
-> vers le trading d'actions type SBF120, et (B) le plan d'amélioration existant,
-> **vérifié item par item contre le code** (HEAD `63f7d11`, 2026-07-17).
-> Chaque item est formulé pour être exécutable par un agent autonome.
+> **Document de référence unique**, fusion de **trois sources** vérifiées contre le
+> code réel au commit `HEAD` (branche `claude/generic-bot-crypto-stocks-6t7lsc`,
+> **2026-07-18**) :
+> 1. **Audit initial** (`docs/audit/00-INDEX.md` + 7 fichiers domaine + `mesures-vague5.md`)
+>    — 89 items, daté 2026-07-11, réalisé en 6 « vagues » entre le 11 et le 13/07.
+> 2. **Plan complémentaire** (upload utilisateur, ci-après « Plan C ») — ~90 items
+>    en 12 EPICs, daté 2026-07-14 (post V12.17.0), analyse statique du repo.
+> 3. **Ce document** (Plan Directeur) — généralisation multi-actifs + 26 items de
+>    correctifs vérifiés, Sprints 0/1/2/4 réalisés le 2026-07-17.
+>
+> Chaque item ci-dessous est classé **FAIT** (preuve : commit ou grep/wc -l réel),
+> **OBSOLÈTE/DÉCLINÉ** (prémisse fausse ou décision utilisateur), ou **RESTE À
+> FAIRE** (reformulé, dédupliqué entre les 3 sources).
 
 ---
 
 ## Table des matières
 
-1. [Corrections au plan d'amélioration (vérification code)](#1-corrections-au-plan-daméliorations-vérification-code)
+0. [Note d'exécution — flakiness pré-existante de la suite complète](#0-note-dexécution--flakiness-pré-existante-de-la-suite-complète)
+1. [Bilan consolidé des 3 sources](#1-bilan-consolidé-des-3-sources)
 2. [Architecture cible multi-actifs](#2-architecture-cible-multi-actifs)
 3. [Chantier G — Généralisation (détail exécutable)](#3-chantier-g--généralisation-détail-exécutable)
-4. [Roadmap fusionnée par sprints](#4-roadmap-fusionnée-par-sprints)
-5. [Récapitulatif des priorités](#5-récapitulatif-des-priorités)
+4. [Ce qui reste à faire — backlog fusionné et priorisé](#4-ce-qui-reste-à-faire--backlog-fusionné-et-priorisé)
+5. [Roadmap par sprints (mise à jour)](#5-roadmap-par-sprints-mise-à-jour)
 
 ---
 
 ## 0. Note d'exécution — flakiness pré-existante de la suite complète
 
-En validant les Sprints 0-1, `pytest tests/` (610 tests) s'est bloqué de façon
-non-déterministe (~1 run sur 3-4) lors de l'exécution de la suite COMPLÈTE en
-un seul process — jamais en lançant les fichiers individuellement ou par
-moitiés. Root-cause isolée par bisection : **le blocage se reproduit à
-l'identique sur le code d'AVANT le Sprint 1** (`git stash` → HEAD Sprint 0
-seul, sans aucun des verrous `RLock` ajoutés) — donc **non lié** aux
-correctifs `RiskManager`/`OHLCVCache`/`CapitalAllocator` de ce plan. C'est une
-flakiness pré-existante de l'environnement sandboxé (probable throttling CPU
-cgroup sous charge de threads multiples — `test_allocator_thread_safety.py`
-préexistant en est un candidat). Sans accès à l'infra CI réelle, hors
-périmètre des sprints ci-dessous ; mitigé pragmatiquement en réduisant la
-charge de `test_risk_thread_safety.py` (moins d'itérations, `time.sleep(0)`
-dans la boucle de lecture). Recommandation de suivi : exécuter `pytest` avec
-`pytest-timeout` en CI pour transformer un blocage en échec explicite plutôt
-qu'un run qui ne se termine jamais.
+En validant les Sprints 0-1, `pytest tests/` (610 tests à l'époque, 649 au
+2026-07-18) s'est bloqué de façon non-déterministe (~1 run sur 3-4) lors de
+l'exécution de la suite COMPLÈTE en un seul process — jamais en lançant les
+fichiers individuellement ou par moitiés. Root-cause isolée par bisection :
+**le blocage se reproduit à l'identique sur le code d'AVANT le Sprint 1**
+(`git stash` → HEAD Sprint 0 seul, sans aucun des verrous `RLock` ajoutés) —
+donc **non lié** aux correctifs `RiskManager`/`OHLCVCache`/`CapitalAllocator`
+de ce plan. C'est une flakiness pré-existante de l'environnement sandboxé
+(probable throttling CPU cgroup sous charge de threads multiples). Sans accès
+à l'infra CI réelle, hors périmètre des sprints ; mitigé pragmatiquement en
+réduisant la charge de `test_risk_thread_safety.py`. Recommandation : exécuter
+`pytest` avec `pytest-timeout` en CI (cf. TEST-01 §4) pour transformer un
+blocage en échec explicite plutôt qu'un run qui ne se termine jamais.
 
 ---
 
-## 1. Corrections au plan d'amélioration (vérification code)
+## 1. Bilan consolidé des 3 sources
 
-Le plan d'amélioration (91 items) a été audité contre le code actuel. La branche
-qu'il visait (`claude/new-session-q8yfi6`) est mergée dans `main` : certains
-items sont confirmés, d'autres sont **déjà couverts, obsolètes ou requalifiés**.
-Les items non listés ci-dessous sont repris tels quels (non re-vérifiés en
-détail, priorité conservée).
+### 1.1 Vue d'ensemble
 
-### 1.1 Items CONFIRMÉS (à exécuter tels quels)
+| Source | Items | Réalisés | Restants | Détail |
+|---|---:|---:|---:|---|
+| **Audit initial** (`docs/audit/`, Vagues 0-6) | 89 | **~76** | ~13 | Vagues 0,1,2,4,5,6 ✅ complètes (commits datés 07-11→07-13). Seule **Vague 3** (code mort + CI/lint) jamais exécutée. |
+| **Plan C** (upload, 12 EPICs) | ~90 | **~14** (dont 6 découvertes non documentées par le Plan C lui-même) | ~76 | §0.4 déjà livré (frontend rewrite) + 6 items que le Plan C liste comme ouverts mais qui sont **déjà résolus** (cf. §1.3.1) |
+| **Plan Directeur** (ce document) | 26 (Sprints 0/1/2/4) + 3 vérifs ARCH | **29/29** | 0 sur ce lot ; Sprints 3/5/6 (généralisation actions + dette de fond) jamais démarrés | Commits `ea9706e`/`7aaed6b`/`49be475`/`78ae183`, 649 tests verts |
 
-| Item | Preuve dans le code | Priorité |
-|------|--------------------|----------|
-| 1.1 Spot sync ne propage pas l'équité à l'allocateur | `balance_sync.py:92` appelle `risk.update_equity()` mais pas `allocator.update_equity()` (le paper le fait, lignes 69-70) | **P0** |
-| 1.2 Retour de `create_order` non validé | `position_mixin.py:305` enchaîne `order.get("price")` sans vérifier `None`/`status`. Nuance : `RobustExchange.create_order` lève des exceptions sur la plupart des échecs — le cas résiduel est un ordre retourné avec `status` `rejected`/`canceled` | **P0** |
-| 1.6 CORS bloque DELETE | `main.py:113` : `allow_methods=["GET", "POST"]` alors que `optimizer.py:354` expose `@router.delete("/api/optimize/job")` | **P0** |
-| 2.1 Clé API en query string WebSocket | `ws.py:48-53` : auth par `?api_key=xxx` documentée et implémentée | P1 |
-| 2.2 `NEXT_PUBLIC_API_KEY` dans le bundle client | `frontend/src/lib/api.ts:11`, `ws-provider.tsx:11` | P1 |
-| 3.2 Caches OHLCV sans verrou | Aucun `Lock` dans `ohlcv_cache.py` | P1 |
-| 3.3 `RiskManager` sans verrou | Aucun `Lock`/`RLock` dans `risk.py` (624 lignes, accès thread trading + threads API) | P1 |
-| 3.5 `update_equity`/`check_correlation` non verrouillées | `capital_allocator.py:418` : `update_equity` sans le décorateur `@_locked` présent ailleurs | P1 |
-| 6.1 Trailing live lu depuis `cfg["backtest"]` | `live_trader.py:67-76` | P2 |
-| 14.1 `_expand_env` silencieux (`""` si var absente) | `config.py:72-86`, aucune notion de `strict_env` | P1 |
-| 15.5 `datetime.utcnow()` déprécié | 7 occurrences dans `app/` | P3 |
-| 16.6 Frontend Jinja2 toujours chargé | `main.py:132-136` instancie encore `Jinja2Templates` en parallèle du Next.js | P3 |
+**Total approximatif** : sur ~205 items distincts recensés dans les 3 documents
+(après dédoublonnage des ID réutilisés — cf. note ci-dessous), **~119 sont
+faits**, **~5 sont déclinés/obsolètes par construction**, **~81 restent à
+faire** (détail priorisé en §4).
 
-### 1.2 Items INVALIDÉS ou DÉJÀ COUVERTS
+> ⚠ **Piège de numérotation** : le Plan C réutilise les préfixes `ARCH-`,
+> `TEST-`, `OPS-`, `UI-`, `SEC-` de l'audit initial pour des items **différents**
+> (ex. Plan C `ARCH-01` = « extraire OpusBase », audit `ARCH-01` = « parité
+> params live/backtest » — aucun rapport). Dans ce document, `ARCH-01 (audit)`
+> et `ARCH-01 (Plan C)` désignent donc deux items distincts, désambiguïsés par
+> la source entre parenthèses partout où c'est ambigu.
 
-| Item | Constat | Reste à faire |
-|------|---------|---------------|
-| 1.3 Scale-in sans validation du notional cumulé | **FAUX** : `can_allocate` (`capital_allocator.py:314-329`) compare `used_notional + notional` au budget du slot, et `_scale_in_position` appelle bien `register_open(slot_key, add_notional)` (`position_mixin.py:797`) — le cumul est donc tracé | Transformer en **test de régression** (P3) : 3 scale-ins successifs, vérifier le rejet au dépassement de budget |
-| 6.2 Absence de rate-limiting exchange | **REQUALIFIÉ** : `create_exchange` active `enableRateLimit: True` (`exchange.py:351`) — ccxt applique déjà le throttle par exchange. Un token bucket maison serait une duplication | P3 : exposer une métrique de latence des appels ; batcher les `fetch_ticker` par cycle via `fetch_tickers` (1 appel au lieu de N) |
-| 11.1 « Tests WebSocket manquants » | **OBSOLÈTE** : `tests/test_websocket.py` existe (10 tests), ainsi que `tests/test_api_routes.py` (10 tests) | Refaire l'inventaire réel des routes non couvertes avant d'ouvrir des chantiers de tests (portfolio, replay, derivatives, trades restent à vérifier) |
-| 14.6 `allow_insecure` par défaut | **PARTIEL** : le garde-fou OPS-02 existe (`config.py:318-332`) — le démarrage est refusé sur host ouvert sans clé, sauf opt-in explicite `allow_insecure: true` | Reste : `setup.sh` génère une clé aléatoire dans `.env` ; WARNING au boot si `allow_insecure: true` + bind `0.0.0.0` |
-| 16.5 `venues.assign: {}` non documenté | **ABSORBÉ** par le chantier G (généralisation) : la section `venues` devient le socle du `VenueRegistry` (voir §3.2) | Rien à faire isolément |
-| 3.7 Routes backtest/replay/optimizer bloquantes | **FAUX** : les routes `def` (sync) de FastAPI sont automatiquement déportées dans le threadpool AnyIO par Starlette — elles ne bloquent PAS la boucle asyncio. Vérifié empiriquement (serveur uvicorn réel : une route `async` reste réactive en ~0.08s pendant qu'une route sync dort 1.5s). `optimizer_start` retourne déjà immédiatement (`start_async` lance des threads en arrière-plan) ; `backtest`/`replay` ont chacun leur sémaphore anti-chevauchement | Aucune (un `asyncio.to_thread()` ici serait une double-mise-en-thread sans bénéfice) |
-| ARCH-04 (144 imports scopés `from app.`) | **CHIFFRES FAUX ET PROBLÈME INEXISTANT** : compte réel 153-161, mais `scanner.py` a 0 import scopé (pas 19), `live_trader.py` en a 3 (pas 18). Surtout : `grep` ne trouve **aucune violation de couche** — `from app.(engine\|live\|api)` dans `core` = 0, `from app.api` dans `live` = 0, `from app.live` dans `strategies` = 0. Les imports scopés restants sont concentrés dans `app/api/*` (autorisé à tout importer) ou sont du lazy-loading intra-couche légitime | Aucune — refactor aveugle sans gain, risque de casser des contournements de cycle intentionnels |
-| ARCH-05 (découper smc.py 1083L / smart_money.py 1178L) | **DÉJÀ FAIT** : `smc.py` fait 65 lignes, façade documentée « V4-L / ARCH-14 » réexportant `smc_primitives/smc_structure/smc_geometry/smc_volume/smc_sessions` (tous < 450L). `smart_money.py` délègue déjà `_signal_at`/`_build_trade` à `smart_money_signals.py` (ligne 776-777) | Aucune |
-| ARCH-06 (déplacer `_save_yaml` vers yaml_io.py, live→api) | **DÉJÀ FAIT** : `live_trader.py` fait 484 lignes (pas 591+), 0 référence à `app.api` — commentaire ligne 457 : « V4-D : plus aucune dépendance à app.api — self.cfg EST l'objet » | Aucune |
+### 1.2 Audit initial (`docs/audit/`) — bilan par vague
 
-### 1.3 Items conservés sans re-vérification détaillée
+Vérifié par `git log --oneline` : chaque item a un commit taggé `[ID] titre`
+correspondant. Les 6 premières vagues sont **intégralement commitées** :
 
-Les items suivants sont plausibles et conservés à leur priorité d'origine :
-1.4/1.5 (cohérence Sharpe live/backtest — chantier « métriques » du Sprint Q),
-5.1-5.6, 7.x, 8.x, 9.x, 10.x, 12.x, 13.x, 14.2-14.5, 14.7-14.8, 15.1-15.4,
-16.1-16.4, 16.7.
+| Vague | Contenu | Statut | Commits (échantillon) |
+|---|---|---|---|
+| 0 | Régressions refonte per-symbole (BT-01, OPS-01, UI-02/03/04, BT-12) | ✅ | (pré-existant à ce plan) |
+| 1 | Sécurité & intégrité (OPS-02/03/04/05/07, UI-01) | ✅ | `f7ec351`, watchdog service présent (`deploy/crypto-bot-watchdog.service`) |
+| 2 | Intégrité de la mesure (BT-02/03/04/06/08/09, ARCH-01, BT-07) | ✅ | `f102572`, `1f4d047`, `d03275a`, `c89281b`, `bb7f759`, `009b036`, `8ba0c67` — **BT-05 seul non fait** (cf. §4) |
+| 3 | Nettoyage & outillage (DEAD-01/02/03/05/06/07/09, TEST-01/04/05/06) | ❌ **jamais exécutée** | aucun commit `[DEAD-` ni `[TEST-01]`/`[TEST-04]`/`[TEST-05]`/`[TEST-06]` — vérifié : les 8 fichiers stratégies mortes (8005 lignes) existent toujours, `.github/workflows/` absent, `.flake8`/`mypy.ini`/`ruff.toml`/`pytest.ini` absents |
+| 4 | Architecture (ARCH-02/03/04/05/06/07/08/09/10/11/12/13/14, OPS-08/09/10) | ✅ | `2197ff6`, `cc0007a`, `a834768`, `f717c87`, `ce75d94`, `fa4fa21`, `87ac2cd`, `845a325`, `ade3add`, `ab44207`, `04e4dd4`, `1176ae3` |
+| 5 | Recherche edge SMC/ICT (SMC-01→15, BT-10, BT-11 décliné) | ✅ | `586124a`, `5227788`, `549e030`, `7897e72`, `bc3b7b7`, `d7c8ea5`, `0a18587`, `c047bc2` |
+| 6 | UX/a11y/docs (UI-05→12, TEST-02/03/07/08/09/10/12) | ✅ (sauf TEST-11, bloqué par DEAD-01) | `9eab974`…`21e322d` |
 
-Deux d'entre eux sont **promus** car ils conditionnent la généralisation :
+**Vérifications indépendantes faites dans cette session** (pas seulement lecture
+du doc) :
+- `grep -rln "from app\.\(engine\|live\|api\)" app/core` → 0 ; `from app.api` dans
+  `app/live` → 0 ; `from app.live` dans `app/strategies` → 0 (0 violation de couche, confirme ARCH-02/04/09 audit).
+- `app/core/singleton.py::lazy_singleton` existe, utilisé par `candle_store.py`
+  et `feature_store.py` (confirme ARCH-13 audit).
+- `app/core/smc.py` = 65 lignes (façade), confirme ARCH-14 audit.
+- `app/live/live_trader.py` = 484 lignes (confirme ARCH-06 audit).
 
-- **8.2** (symbole BTC hardcodé dans `ml/trainer.py`) → intégré au chantier G
-  (le réentraînement doit être par instrument, pas « le symbole qui contient BTC »).
-- **7.8** (paramètres `smart_money` spécialisés BTC/USDC) → le mécanisme
-  `symbol_params` existant est la réponse ; à généraliser à tout instrument.
+**Reste de la Vague 3** (jamais faite) → détaillé en §4.1.
+
+### 1.3 Plan complémentaire (Plan C, upload `ce6370b9…`) — corrections vérifiées
+
+#### 1.3.1 Items que le Plan C liste comme ouverts mais qui sont **déjà faits**
+
+Le Plan C a été généré par « analyse statique » le 2026-07-14, soit **après**
+la fin de la Vague 4 de l'audit initial (13/07) — mais son analyse contient
+des chiffres obsolètes ou faux sur plusieurs points d'architecture qui avaient
+pourtant déjà été corrigés la veille. Vérifié dans cette session :
+
+| Item Plan C | Prétention du Plan C | Constat réel (vérifié) | Verdict |
+|---|---|---|---|
+| **ARCH-02** (Plan C) | « `live_trader.py` (951 L) … Cible < 500 L » | `wc -l app/live/live_trader.py` → **484 lignes**, déjà scindé en mixins (`PositionMixin`, `BalanceSyncMixin`, `AutoOptMixin`, `HealthMixin`) depuis le commit `ab44207` [ARCH-06 audit] du 07-13 | ✅ **DÉJÀ FAIT** |
+| **ARCH-06** (Plan C) | « Déplacer `_save_yaml` vers `core/yaml_io.py` » | Fait depuis `f717c87` [ARCH-04 audit] : `live_trader.py` utilise `app.core.yaml_io.update_config_yaml`, 0 référence à `app.api` (`grep -rn "from app.api" app/live` → vide) — **re-vérifié dans cette session, tâche #29** | ✅ **DÉJÀ FAIT** |
+| **ARCH-07** (Plan C) | « 25 littéraux `"BTC/USDC"`, cible ≤ 3 hors tests » | Fait en grande partie depuis `fa4fa21` [ARCH-10+11 audit] (`DEFAULT_CONFIG_SYMBOL` exporté et utilisé) mais `grep -rn '"BTC/USDC"' app/ \| grep -v test \| grep -v DEFAULT_CONFIG_SYMBOL` → **16 occurrences résiduelles** (cible ≤3 non atteinte) | 🟡 **PARTIEL** — reste un nettoyage S (cf. §4.3) |
+| **ARCH-08** (Plan C) | « Factoriser `_lazy_singleton` » | Fait depuis `ade3add` [ARCH-13 audit] : `app/core/singleton.py::lazy_singleton()` existe, `DATA_ROOT` centralisé | ✅ **DÉJÀ FAIT** |
+| **ARCH-04** (Plan C) | « 144 imports scopés `from app.` dans des fonctions, symptôme d'inversion de couche » | **Déjà vérifié faux dans cette session** (tâche #27, avant lecture du Plan C) : compte réel **56** (grep hors `__pycache__`), **0 violation de couche** (core→engine/live/api, live→api, live→strategies tous à 0). Les scoped imports restants sont dans `app/api/*` (couche autorisée à tout importer) ou du lazy-loading intra-couche légitime | ❌ **PRÉMISSE FAUSSE — refactor aveugle sans gain, ne pas exécuter** |
+| **ARCH-05** (Plan C) | « `smc.py` (1083 L) et `smart_money.py` (1178 L), cible < 450 L chacun » | `smc.py` = 65 L (façade, ✅) mais `smart_money.py` = **836 L** et `smart_money_signals.py` = **702 L** — le découpage a eu lieu (ARCH-14 audit) mais aucun des deux fichiers résultants n'est sous 450 L | 🟡 **PARTIEL** — le split existe, la cible de taille non atteinte (cf. §4.3, effort réduit car structure déjà en place) |
+| **STRAT-04** (Plan C) | « Modèle de slippage dépendant de la taille, absent » | **Déjà fait** : `backtest.slippage_model` (`"static"` par défaut, `"size"` opt-in) câblé dans `app/engine/backtest.py:241,770,921`, mesuré et documenté dans `mesures-vague5.md` [BT-10 audit] | ✅ **DÉJÀ FAIT** (off par défaut, comme spécifié) |
+| **STRAT-07** (Plan C) | « Walk-forward jamais branché sur l'auto-apply — à vérifier si BT-07 l'a fait » | Le Plan C soupçonnait lui-même que BT-07 avait pu le faire. Vérifié : `optimizer.wf_gate` (défaut `True`) est lu dans `auto_optimizer.py:522`, gate complet avec logs de refus | ✅ **DÉJÀ FAIT** — le Plan C avait raison de douter, confirmation apportée ici |
+
+**Six items** que le Plan C présentait comme du travail restant sont donc en
+réalité déjà terminés (quatre entièrement, deux partiellement) — le Plan C
+n'a pas vérifié son hypothèse contre le code au moment de sa rédaction.
+
+#### 1.3.2 Items obsolètes ou déclinés par décision utilisateur
+
+| Item | Concerné | Raison |
+|---|---|---|
+| **BT-11** (audit) / **STRAT-05** (Plan C) — plafond d'exposition sur actifs corrélés (BTC+ETH) | Les deux décrivent le même garde-fou | **Décliné explicitement par l'utilisateur** lors de la Vague 5 (« ⛔ BT-11 exclu par décision utilisateur (multi-crypto corrélé assumé) », `00-INDEX.md` L137) — ne pas ré-ouvrir sans confirmation explicite |
+| **DEAD-03** (audit) — dé-versionner `data/ohlcv`/`data/derivatives` de git | — | **Décision utilisateur requise**, explicitement bloqué (« ne pas dé-versionner sans son accord explicite » — les parquets sont poussés volontairement depuis la machine de l'utilisateur, l'environnement distant n'a pas accès aux exchanges). Reste ouvert **uniquement** le sort de `XRP_USDC` (données présentes, absent de `scanner.symbols`) |
+| **1.3** (mon plan, §1.2 ancienne version) — validation scale-in cumulé | — | Déjà invalidé lors du Sprint 4 (S4-07), remplacé par un test de régression |
+| **6.2** (mon plan) — rate-limiting exchange par token bucket maison | — | Requalifié : `enableRateLimit: True` ccxt suffit, dupliquer serait un sur-engineering |
+
+### 1.4 Mon plan directeur — Sprints déjà réalisés
+
+Sprints 0, 1, 2, 4 (26 items) **intégralement terminés et poussés** :
+commits `ea9706e` (Sprint 0), `7aaed6b` (Sprint 1), `49be475` (Sprint 2),
+`78ae183` (Sprint 4). 649 tests verts (33 nouveaux vs les 616 d'avant ces
+sprints). Détail item par item : voir historique de ce document (git blame)
+ou `CHANGELOG.md`. Les trois vérifications ARCH-04/05/06 (numérotation Plan C,
+demandées explicitement par l'utilisateur) sont documentées en §1.3.1 ci-dessus
+avec preuve de code — **aucune n'a nécessité d'implémentation**, toutes
+obsolètes/déjà faites.
+
+**Non démarré** : Sprint 3 (G2 — actions SBF120 en paper), Sprint 5 (G3 —
+exécution réelle actions), Sprint 6 (fond de dette). Détail inchangé en §3-§5.
 
 ---
 
 ## 2. Architecture cible multi-actifs
+
+*(Section inchangée depuis la version précédente de ce document — toujours
+valide, non impactée par la fusion des audits.)*
 
 ### 2.1 Ce qui est déjà générique (ne pas toucher)
 
@@ -106,293 +159,204 @@ Deux d'entre eux sont **promus** car ils conditionnent la généralisation :
   `core/candle_store.py`, `core/derivatives.py`, `live/position_mixin.py`,
   `api/routes/derivatives.py`.
 - **Config `venues`** : la section existe déjà (`config.yaml:7-24`) avec
-  `defs` + `assign` — c'est le point d'extension naturel.
+  `defs` + `assign`, étendue par S2-02 (`Instrument` + `VenueRegistry`,
+  `app/core/providers.py`) — c'est le point d'extension naturel, **déjà posé**.
 
 ### 2.2 Les 4 points de couplage crypto à casser
 
-**(a) Couche marché/exécution.** Extraire deux protocoles dans `app/core` :
+**(a) Couche marché/exécution.** `MarketDataProvider`/`ExecutionProvider`
+(Protocol) **déjà créés** en Sprint 2 (S2-01, `app/core/providers.py`).
+`RobustExchange` les implémente de facto. Reste : un provider **data-only**
+pour actions (§3, G2).
 
-```python
-class MarketDataProvider(Protocol):
-    def fetch_ohlcv(self, symbol, tf, limit, since) -> list: ...
-    def fetch_ticker(self, symbol) -> dict: ...
-    def fetch_tickers(self, symbols) -> dict: ...
-    def load_markets(self) -> dict: ...
+**(b) Modèle d'instrument et devise de cotation.** `Instrument`/`VenueRegistry`
+**déjà créés** (S2-02, `app/core/instruments.py` via `providers.py`), devise
+de cotation neutralisée (S2-03). Reste : brancher un vrai provider actions.
 
-class ExecutionProvider(Protocol):
-    def create_order(self, symbol, type, side, amount, price, params) -> dict: ...
-    def cancel_order(self, order_id, symbol) -> dict: ...
-    def fetch_order(self, order_id, symbol) -> dict: ...
-    def fetch_balance_detail(self) -> dict: ...
-```
+**(c) Calendrier de marché — le point le plus structurant, non démarré.**
+La boucle live suppose toujours un marché 24/7. Reste intégralement à faire
+(§3, G2/S3-02) : `MarketCalendar`, gating `_cycle()`/`CandleStore`, seuil de
+gap par classe d'actif, mode `close_at_session_end`.
 
-`RobustExchange` devient l'implémentation ccxt (les deux protocoles). Le paper
-trading étant déjà simulé localement (`exchange.py:181`), un provider
-**data-only** suffit pour backtester et paper-trader les actions.
-
-**(b) Modèle d'instrument et devise de cotation.** USDC/USDT est codé en dur
-dans les balances (`exchange.py:284,298`), le scanner filtre
-`s.endswith("/USDC")` (`scanner.py:74`), `min_volume_usdc_24h`,
-`DEFAULT_CONFIG_SYMBOL = BTC/USDC`. Introduire :
-
-```python
-@dataclass(frozen=True)
-class Instrument:
-    symbol: str            # "BTC/USDC" ou "AIR.PA"
-    asset_class: str       # "crypto" | "equity"
-    venue: str             # clé dans venues.defs
-    quote_currency: str    # "USDC" | "EUR"
-    tick_size: float
-    lot_size: float        # 1.0 pour action entière, 1e-6 crypto
-    fractional: bool
-```
-
-résolu par un `VenueRegistry` construit depuis `venues` (voir §3.2).
-
-**(c) Calendrier de marché — le point le plus structurant.** La boucle live
-suppose un marché 24/7 (`scan_interval: 60`, aucun gating dans `_cycle()`).
-Euronext : 9h00–17h30 CET, fermé week-ends/fériés. Un `MarketCalendar` par
-venue (lib `exchange_calendars`, calendrier `XPAR`) doit être consulté par :
-
-- la boucle live (skip des instruments hors séance) ;
-- la fraîcheur des bougies dans `CandleStore` (ne pas attendre de bougie la nuit) ;
-- la planification du forward-test et de l'auto-opt ;
-- la gestion des **gaps** : la règle « gap prix/stop > 2 % → clôture forcée »
-  de `position_mixin` est une anomalie en crypto mais un événement quotidien
-  normal sur actions (gap d'ouverture) — le seuil doit être par classe d'actif ;
-- les stops : pas de stop exchange actif la nuit sur actions au comptant — le
-  risque overnight est soit assumé (stop géré à l'ouverture), soit éliminé
-  (clôture en fin de séance, mode `day_trading` par slot).
-
-**(d) Coûts et sizing.** `compute_size` retourne des fractions
-(`risk.py:477`) : sur actions il faut arrondir au `lot_size` de l'instrument
-et respecter le `tick_size` pour les stops. Le modèle taker/maker doit devenir
-un **modèle de frais par venue** : courtage fixe + variable, et surtout la
-**TTF française (0,4 % à l'achat)** qui s'applique à la quasi-totalité du
-SBF120 (capitalisation > 1 Md€) — l'ignorer fausse tous les backtests.
-Le short : `max_shorts`, le borrow OKX (`fetch_margin_account`) sont
-crypto-spécifiques → `allow_short: false` sur la venue actions au départ
-(le SRD est un chantier séparé, hors périmètre initial).
+**(d) Coûts et sizing.** `compute_size` reste en fractions continues (pas de
+`lot_size`/`tick_size`). Modèle de frais par venue (fixe + % + TTF française
+0,4 %) non implémenté. Reste à faire (§3, G2/S3-03/S3-04).
 
 ### 2.3 Compatibilité des stratégies
 
-Les features dérivés (funding, OI, long/short ratio) sont crypto-only et déjà
-opt-in. Ajouter un attribut de classe sur `BaseStrategy` :
-
-```python
-class BaseStrategy:
-    asset_classes: frozenset = frozenset({"crypto", "equity"})  # défaut : les deux
-```
-
-`funding_flow`, `derivatives_reversion` (et toute stratégie consommant
-`funding_z`/`oi_change_pct`/`lsr_z`/`taker_z`) déclarent
-`asset_classes = frozenset({"crypto"})`. `_build_active_per_tf`
-(`auto_opt_mixin.py`) filtre les couples (stratégie, instrument) incompatibles.
-Le lifecycle existant (candidat → essai → actif) fait ensuite naturellement le
-tri des stratégies qui survivent au passage sur actions.
+`BaseStrategy.asset_classes` **déjà ajouté** (S2-04), `funding_flow`/
+`derivatives_reversion` marquées `frozenset({"crypto"})`, filtre câblé dans
+`_build_active_per_tf`. Fait.
 
 ### 2.4 Fournisseurs pour le SBF120
 
+*(Inchangé — recommandations non encore mises en œuvre)*
+
 | Rôle | Option recommandée | Alternative |
 |------|--------------------|-------------|
-| Données 1h/1d | `yfinance` (tickers `.PA`, gratuit, suffisant pour valider) | EOD Historical Data (payant, plus fiable, intraday complet) |
-| Exécution réelle | Interactive Brokers via `ib_insync` (Euronext couvert, API robuste) | Saxo OpenAPI (Alpaca = US-only ; Degiro = pas d'API officielle) |
+| Données 1h/1d | `yfinance` (tickers `.PA`, gratuit) | EOD Historical Data (payant) |
+| Exécution réelle | Interactive Brokers via `ib_insync` | Saxo OpenAPI |
 | Calendrier | `exchange_calendars` (XPAR) | `pandas_market_calendars` |
-| Liste SBF120 | Liste statique versionnée `data/universe/sbf120.yaml` (composition d'indice, révisée trimestriellement) | Scraping Euronext (fragile, à éviter) |
-
-Contraintes `yfinance` à intégrer : intraday 1m limité à 7 jours, < 1d limité
-à 60 jours → les timeframes réalistes pour le SBF120 sont **1h et 1d**.
+| Liste SBF120 | `data/universe/sbf120.yaml` statique | Scraping Euronext (à éviter) |
 
 ---
 
 ## 3. Chantier G — Généralisation (détail exécutable)
 
-### G1 — Abstractions sans changement de comportement (Phase 1)
+*(Section inchangée — toujours le plan de référence pour la généralisation
+actions. G1 est fait, G2/G3 non démarrés.)*
 
-1. **`app/core/providers.py`** : protocoles `MarketDataProvider` +
-   `ExecutionProvider` (signatures ci-dessus). `RobustExchange` les implémente
-   déjà de facto — aucune modification de son code, juste la conformité.
-2. **`app/core/instruments.py`** : dataclass `Instrument` + `VenueRegistry` :
-   - construit depuis `cfg["venues"]` étendu :
-     ```yaml
-     venues:
-       default: okx-spot
-       defs:
-         okx-spot:
-           provider: ccxt          # nouveau champ
-           exchange: okx
-           market_type: spot
-           asset_class: crypto
-           quote_currency: USDC
-           calendar: 24/7
-           fees: {taker: 0.001, maker: 0.0008}
-           allow_short: false
-         euronext-paper:
-           provider: yfinance
-           asset_class: equity
-           quote_currency: EUR
-           calendar: XPAR
-           fees: {fixed: 1.0, pct: 0.0005, fta_pct: 0.004}   # TTF à l'achat
-           allow_short: false
-           fractional: false
-       assign:
-         "AIR.PA": euronext-paper       # le reste hérite de default
-     ```
-   - `registry.resolve(symbol) -> Instrument` (fallback : venue `default`).
-3. **Neutraliser la devise de cotation** :
-   - `exchange.py:284,298` : la devise cherchée dans les balances vient de
-     `Instrument.quote_currency` (ou de la venue), plus de littéral USDC/USDT ;
-   - `scanner.py:74` : le filtre `endswith("/USDC")` devient
-     `registry.is_scannable(s)` (crypto : filtre volume ; equity : liste statique) ;
-   - `min_volume_usdc_24h` → `min_volume_quote_24h` (alias rétro-compatible) ;
-   - `DEFAULT_CONFIG_SYMBOL` reste `BTC/USDC` (rétro-compat des YAML hérités).
-4. **`asset_classes` sur `BaseStrategy`** + marquage des stratégies dérivés
-   (§2.3) + filtre dans `_build_active_per_tf`.
-5. **Critère de sortie** : suite de tests existante 100 % verte, aucun
-   changement de comportement en crypto (golden test : un backtest BTC/USDC
-   avant/après donne un résultat identique au centime).
+### G1 — Abstractions sans changement de comportement — ✅ FAIT (Sprint 2)
 
-### G2 — Actions en paper (Phase 2)
+1. `app/core/providers.py` : protocoles `MarketDataProvider`/`ExecutionProvider` ✅
+2. `Instrument` + `VenueRegistry` (extension `venues.defs`) ✅
+3. Neutralisation devise de cotation (balances, scanner, `min_volume_quote_24h`) ✅
+4. `asset_classes` sur `BaseStrategy` + marquage dérivés + filtre ✅
+5. Golden test parité BTC/USDC (`tests/test_generic_parity.py`) ✅
 
-1. **`app/core/providers_equity.py`** : `YFinanceProvider(MarketDataProvider)`
-   → alimente `CandleStore` au même format Parquet
-   (`data/ohlcv/AIR_PA/1d.parquet`). Mapping tf bot ↔ intervalles yfinance,
-   gestion des limites d'historique intraday.
-2. **`app/core/market_calendar.py`** : wrapper `exchange_calendars` ;
-   `is_open(venue, ts)`, `next_close(venue)`, `session_bounds(venue, date)`.
-   Intégration :
-   - `SignalPipeline.collect()` : skip des instruments dont la venue est fermée ;
-   - `CandleStore` : pas de refetch hors séance ;
-   - `_manage_position` : seuil de gap par classe d'actif
-     (`gap_force_close_pct` par venue, défaut crypto 2 %, equity 8 %) ;
-   - mode `close_at_session_end: true|false` par slot equity.
-3. **Sizing entier** : `compute_size` reçoit l'`Instrument` et arrondit
-   `size` au `lot_size` (floor), rejette si notional < 1 action.
-   `_update_exchange_stop` arrondit les prix au `tick_size`.
-4. **Modèle de frais par venue** : `trade_fees()` prend l'`Instrument` ;
-   equity = fixe + % + TTF à l'achat. Backtester ET live partagent la même
-   fonction (parité déjà exigée par BT-03).
-5. **Univers SBF120** : `data/universe/sbf120.yaml` (liste des tickers `.PA`) ;
-   le scanner en mode equity lit cette liste au lieu du scan par volume.
-6. **ML/optimiseur** : corriger 8.2 (`ml/trainer.py` : symbole de
-   réentraînement par instrument configuré, plus de `"BTC" in s`).
-7. **Critère de sortie** : backtest + optimisation + paper trading d'au moins
-   3 valeurs SBF120 sur 1h/1d pendant une semaine, avec calendrier respecté
-   (aucun scan le week-end, log de skip hors séance) et frais TTF visibles
-   dans les trades.
+### G2 — Actions en paper (Phase 2) — ❌ non démarré
 
-### G3 — Exécution réelle actions (Phase 3)
+1. `app/core/providers_equity.py::YFinanceProvider` → CandleStore Parquet.
+2. `app/core/market_calendar.py` (wrapper `exchange_calendars`, XPAR) +
+   gating `_cycle()`/`CandleStore`/forward-test, seuil de gap par classe
+   d'actif, `close_at_session_end`.
+3. Sizing entier (`lot_size`, floor) + stops au `tick_size`.
+4. Frais par venue (fixe + % + TTF 0,4 %) partagés backtest/live.
+5. `data/universe/sbf120.yaml` + scanner mode equity.
+6. ML : réentraînement par instrument (fix `"BTC" in s` codé en dur dans
+   `ml/trainer.py`).
+7. Critère de sortie : backtest + optimisation + paper trading ≥3 valeurs
+   SBF120 sur 1h/1d pendant une semaine, calendrier respecté, TTF visible.
 
-1. **`IBKRExecutionProvider`** (`ib_insync`) ou Saxo OpenAPI : create/cancel/
-   fetch order + balance EUR. L'idempotence par `clientOrderId`
-   (`exchange.py:141-178`) se transpose (IBKR : `orderRef`).
-2. **Synchro de solde** : `BalanceSyncMixin` par venue (le solde EUR IBKR et
-   le solde USDC OKX coexistent ; l'équité globale est la somme convertie).
-3. **Risque multi-classes** : `check_correlation` groupe par classe d'actif ;
-   nouveau plafond `max_asset_class_exposure_pct` dans `capital_allocator`.
-4. **SRD/short actions** : chantier séparé, non planifié ici.
+### G3 — Exécution réelle actions (Phase 3) — ❌ non démarré
+
+1. `IBKRExecutionProvider` (`ib_insync`) ou Saxo OpenAPI, idempotence `orderRef`.
+2. `BalanceSyncMixin` multi-venue (EUR + USDC, équité globale convertie).
+3. `check_correlation` par classe d'actif, `max_asset_class_exposure_pct`.
+4. SRD/short actions : hors périmètre, chantier séparé.
 
 ---
 
-## 4. Roadmap fusionnée par sprints
+## 4. Ce qui reste à faire — backlog fusionné et priorisé
 
-Ordre de priorité : d'abord sécuriser ce qui tourne (P0/P1), puis les
-abstractions G1 (elles ne changent rien au comportement donc peuvent avancer
-en parallèle), puis G2/G3 entrelacés avec la dette qualité.
+Dédupliqué entre les 89 items de l'audit initial, les ~90 items du Plan C et
+les Sprints 3/5/6 de ce document. Regroupé par thème, priorisé selon la
+même grille Impact×Effort que le Plan C (🟢 quick win, 🔵 bet structurant,
+🟡 itératif, 🟠 backlog).
 
-### Sprint 0 — Correctifs immédiats (P0) — parallélisable
+### 4.1 🟢 Nettoyage & CI — Vague 3 de l'audit, jamais exécutée (prioritaire)
 
-| ID | Item | Fichiers | Origine |
-|----|------|----------|---------|
-| S0-01 | Spot sync → `allocator.update_equity()` | `balance_sync.py` | 1.1 ✔ vérifié |
-| S0-02 | Validation retour `create_order` (None/status rejeté) sur les 5 sites d'appel | `position_mixin.py` | 1.2 ✔ vérifié |
-| S0-03 | CORS : ajouter DELETE/PUT à `allow_methods` | `api/main.py:113` | 1.6 ✔ vérifié |
-| S0-04 | `_expand_env` strict en live (`ValueError` si var absente et `paper_mode: false`) | `core/config.py` | 14.1 ✔ vérifié |
-| S0-05 | `setup.sh` génère une clé API ; WARNING si `allow_insecure` + `0.0.0.0` | `scripts/setup.sh`, `config.py` | 14.6 (reliquat) |
+C'est le seul pan de l'**audit initial** encore ouvert. Tout le reste (89-13
+items) est fait.
 
-### Sprint 1 — Concurrence & sécurité (P1) — parallélisable
+| ID (source) | Item | Effort | État vérifié |
+|---|---|---|---|
+| **DEAD-01** (audit) | Supprimer 8 générations Opus/stat jamais promues (`opus_omnibus_v7[.py/_pretrained]`, `v9`, `v10_retrained`, `v11_no_ml`, `v11_followsetup[_no_ml]`, `opus_stat_retrained_v4`) — **8005 lignes** mortes au total avec DEAD-02. ⚠ NE PAS toucher `v8`, `v10`, `opus_stat_pretrained_v4` (dépendances réelles) | M | Fichiers toujours présents, `grep` = 0 usage actif confirmé par l'audit |
+| **DEAD-02** (audit) | Supprimer `scoring_statistique_opus_v3.py` (579 L, aucun appelant) | S | Toujours présent |
+| **DEAD-05** (audit) | Corriger le bug pyflakes `del ds_tr, ds_va` dans `opus_omnibus_v11.py:1065,1093` — **stratégie ACTIVE** (`manual_active: opus_omnibus_v11::30m`) | S | **Re-vérifié dans cette session** : bug toujours présent aux deux lignes citées |
+| **DEAD-06** (audit) | Supprimer 5 fonctions publiques jamais appelées : `config.strategy_file_path`, `execution.cap_notional`, `database.get_lifecycle_events`, `feature_store.get_provider`/`list_providers` | S | **Re-vérifié** : 0 référence externe aux 5, confirmé par grep exhaustif dans cette session |
+| **DEAD-07** (audit) | 67 imports inutilisés (pyflakes, hors façade `indicators.py`) | M | Non mesuré (nécessite pyflakes, absent de l'environnement) — dépend de TEST-04/05 ci-dessous |
+| **DEAD-09** (audit) | Nettoyer `scripts/__pycache__` orphelin | S | **Obsolète tel quel** : `scripts/` contient désormais `setup.sh` (Sprint 0), plus un dossier vide — vérifier juste l'absence de `.pyc` résiduel |
+| **TEST-01** (audit + Plan C, doublon exact) | CI GitHub Actions (`pytest -m "not slow"`, lint) | S/M | **Confirmé absent** : `.github/workflows/` n'existe pas |
+| **TEST-04/05** (audit) = **TEST-02** (Plan C) | Config ruff (remplace flake8/mypy dispersés) : `ruff.toml`, `mypy.ini` | S/M | **Confirmé absent** : aucun fichier de config lint, `ruff` absent de `requirements.txt` |
+| **TEST-06** (audit) = **TEST-03** (Plan C) | Markers `pytest.ini` (`slow`, `strategy_smoke`), isoler les tests dépendant de `data/ohlcv` versionné | S/M | **Confirmé absent** : pas de `pytest.ini` |
+| **TEST-11** (audit) = **TEST-04** (Plan C) | Tests smoke paramétrés pour les stratégies survivantes (~13/53 testées) | L | Bloqué par DEAD-01 (faire le tri d'abord) |
+| **DEAD-03** (audit) | Sort de `XRP_USDC` (données présentes, absent de `scanner.symbols`) — **seule sous-partie non bloquée** par la décision utilisateur sur le versionnement parquet | S | Décision produit à trancher (ajouter aux symboles scannés OU supprimer le dossier) |
 
-| ID | Item | Fichiers | Origine |
-|----|------|----------|---------|
-| S1-01 | `RLock` sur `RiskManager` (can_trade, register_open/close, update_equity, status_dict) | `core/risk.py` | 3.3 ✔ |
-| S1-02 | Verrou caches OHLCV | `live/ohlcv_cache.py` | 3.2 ✔ |
-| S1-03 | `@_locked` sur `update_equity`/`check_correlation` | `live/capital_allocator.py` | 3.5 ✔ |
-| S1-04 | Auth WS par cookie HttpOnly (query param en fallback) | `routes/ws.py`, `ws-provider.tsx` | 2.1 ✔ |
-| S1-05 | Supprimer `NEXT_PUBLIC_API_KEY` (cookie only) | `frontend/src/lib/api.ts` | 2.2 ✔ |
-| S1-06 | Routes backtest/replay/optimizer non bloquantes (`asyncio.to_thread`) | `routes/*.py` | 3.7 |
-| S1-07 | `_pre_execution_check` : budget slot + marge/solde réels | `balance_sync.py` | 6.4 |
-| S1-08 | Section `live.trailing` (fallback `backtest` + WARNING) | `live_trader.py`, `config.yaml` | 6.1 ✔ |
+**Ordre conseillé** : DEAD-05 (bug sur stratégie active, S) → DEAD-01+02
+(tri, M) → TEST-01 (CI, S) → TEST-04/05-audit (lint, S/M) → DEAD-07 (imports
+morts, M, une fois ruff dispo) → DEAD-06 (S) → TEST-06-audit (markers, S/M)
+→ TEST-11-audit (smoke stratégies, L).
 
-### Sprint 2 — Chantier G1 : abstractions (comportement inchangé)
+### 4.2 🟢 Quick wins financiers & sécurité (Plan C, non couverts par l'audit)
 
-| ID | Item | Fichiers |
-|----|------|----------|
-| S2-01 | Protocoles `MarketDataProvider`/`ExecutionProvider` | `core/providers.py` (nouveau) |
-| S2-02 | `Instrument` + `VenueRegistry` + extension section `venues` | `core/instruments.py` (nouveau), `config.yaml` |
-| S2-03 | Neutralisation USDC (balances, scanner, `min_volume_quote_24h`) | `core/exchange.py`, `engine/scanner.py`, `core/config.py` |
-| S2-04 | `asset_classes` sur `BaseStrategy` + marquage dérivés + filtre | `engine/engine.py`, `strategies/funding_flow.py`, `strategies/derivatives_reversion.py`, `live/auto_opt_mixin.py` |
-| S2-05 | Golden test backtest BTC/USDC avant/après (parité au centime) | `tests/test_generic_parity.py` (nouveau) |
+| ID (Plan C) | Item | Effort | Impact | Note |
+|---|---|---|---|---|
+| **FIN-01** | Frais dynamiques par palier VIP OKX (`exchange.fee_schedule`, opt-in) | S | 5 | Byte-identique sans `fee_schedule` configuré |
+| **FIN-04** | Benchmark vs Buy & Hold BTC (`app/core/performance.py`) | S | 4 | `app/core/performance.py` n'existe pas |
+| **FIN-06** | Compteur de frais par catégorie (taker/maker/borrow/stop) | S | 4 | Nécessite migration schema `Trade` |
+| **FIN-07** | Slippage paper proportionnel à la taille | S | 3 | Dépend du modèle `slippage_model` déjà existant (STRAT-04, fait) — extension au mode paper seulement |
+| **STRAT-06** (Plan C) = **BT-13** (audit, jamais fait) | Compteur diagnostique `tp_sl_ambiguous_bars` (mesure, ne change pas la décision) | S | 3 | **Re-vérifié** : `grep -rn "tp_sl_ambiguous" app/` → vide, confirmé non fait dans les deux sources |
+| **SEC-04** | Rate-limiting granulaire par endpoint (au lieu du seul `default_limits` global `slowapi`) | S | 3 | **Vérifié** : `app/api/main.py` a un `Limiter` global (`default_limits=[_RATE_LIMIT]`) mais aucun `@limiter.limit(...)` par route |
+| **SEC-05** | Backup automatique `trades.db` + `config.yaml` + `strategies/*.yaml` | S | 4 | `deploy/backup.sh` n'existe pas (watchdog OPS-03 lui, est fait) |
+| **ARCH-07** (Plan C, partiel — §1.3.1) | Finir la migration des 16 littéraux `"BTC/USDC"` résiduels vers `DEFAULT_CONFIG_SYMBOL` | S | 2 | Effort réduit : le gros du travail est déjà fait (ARCH-10/11 audit) |
+| **BT-05** (audit, jamais fait) = **STRAT-03** (Plan C) | `scripts/audit_param_space.py` : lister chaque stratégie avec taille du param_space vs `n_trials`, warning si couverture < 1e-4 | M | 4 | Directive identique dans les deux sources — un seul item |
+| **PERF-01** (Plan C) | Cache précompute indicateurs : 16 → 128 entrées, configurable | S | 3 | `_PRECOMPUTE_CACHE` confirmé à taille fixe non configurable |
 
-### Sprint 3 — Chantier G2 : actions en paper
+### 4.3 🟡 Nettoyage résiduel architecture (effort réduit vs Plan C original)
 
-| ID | Item | Fichiers |
-|----|------|----------|
-| S3-01 | `YFinanceProvider` → CandleStore Parquet | `core/providers_equity.py` (nouveau) |
-| S3-02 | `MarketCalendar` (XPAR) + gating boucle live/CandleStore/forward-test | `core/market_calendar.py` (nouveau), `live/signal_pipeline.py`, `core/candle_store.py` |
-| S3-03 | Sizing entier (`lot_size`) + stops au `tick_size` | `core/risk.py`, `live/position_mixin.py` |
-| S3-04 | Frais par venue (fixe + % + TTF 0,4 %) partagés backtest/live | `core/config.py`, `engine/backtest.py`, `live/position_mixin.py` |
-| S3-05 | Gap par classe d'actif + `close_at_session_end` | `live/position_mixin.py` |
-| S3-06 | Univers `data/universe/sbf120.yaml` + scanner equity | `engine/scanner.py` |
-| S3-07 | ML : réentraînement par instrument (fix 8.2) | `ml/trainer.py` |
-| S3-08 | Validation : 1 semaine de paper sur 3 valeurs SBF120 (1h/1d) | — |
+| ID | Item | Effort réel | Note |
+|---|---|---|---|
+| **ARCH-05** (Plan C, partiel — §1.3.1) | Réduire `smart_money.py` (836 L) et `smart_money_signals.py` (702 L) sous 450 L chacun | M (pas L — la séparation en modules existe déjà, il s'agit d'extraire encore, pas de créer l'architecture) | Aucune urgence fonctionnelle, dette de lisibilité pure |
+| **ARCH-03** (Plan C) = **ARCH-12** (audit, jamais fait, jugé optionnel) | `app/core/state.py::AppState` dataclass pour remplacer `app/api/state.py` | L | L'audit avait déjà conclu « l'encapsulation AppState complète reste optionnelle (aucune inversion restante) » après ARCH-04 audit — à ne faire que si un besoin concret apparaît (ex. plusieurs instances de bot par process) |
+| **ARCH-01** (Plan C) | Extraire `OpusBase` (features V4, régime, train/predict partagés) pour les variantes Opus **survivantes** (v8, v10, v11, v12, `opus_stat_pretrained_v4`) | L | À faire **après** DEAD-01 (réduit le nombre de fichiers à traiter de 45 à ~37) |
+| **STRAT-01** (Plan C) | Champ `status: experimental\|validated\|production\|archived` dans chaque YAML stratégie | M | Concept **distinct** du `SlotLifecycleManager` runtime existant (candidat/essai/actif/retiré, calculé) — ceci est une déclaration statique de maturité, filtrable dans l'UI `/config` |
+| **STRAT-02** (Plan C) | Versioning modèles ML (hash features + date, `models/index.json`) | M | Aucun équivalent existant |
+| **SEC-06** (Plan C) | Migrations SQLite via Alembic | M | **Nuance** : `_migrate_schema` idempotent (`ALTER TABLE` auto) existe déjà depuis OPS-08 (audit, Vague 4) — Alembic serait un upgrade d'outillage, pas un correctif de bug. Impact réel réduit vs la description du Plan C |
+| **TEST-05** (Plan C) | Tests d'ordres live mockés (`MockExchange` complet : idempotence clientOrderId, partial fills, réconciliation frais, restauration crash) | L | Aucun équivalent — les tests actuels (`test_live_trader.py`, `test_position_lifecycle.py`) couvrent des scénarios plus étroits |
+| **TEST-06** (Plan C) | Fixtures de non-régression backtest byte-identique (3 configs de référence, JSON snapshot) | M | Partiellement couvert par `test_execution_parity.py`/`test_generic_parity.py` mais pas de snapshot global multi-métriques |
 
-### Sprint 4 — Qualité des métriques & optimiseur (P1-P2) — ✅ terminé
+### 4.4 🔵 Bets structurants — observabilité, sécurité avancée, DX
 
-| ID | Item | Origine | Statut |
-|----|------|---------|--------|
-| S4-01 | Sharpe live sur rendements, aligné backtest | 1.4 | ✅ courbe d'équité synthétique par trade (au lieu des PnL bruts), ordre chronologique corrigé (`get_trades()` renvoie DESC), annualisation par TF dominant |
-| S4-02 | Annualisation Sharpe backtest/live partagée | 1.5 | ✅ `bars_per_year()` promu source unique dans `app/core/timeframes.py`, importé par `backtest.py` ET `health_mixin.py` |
-| S4-03 | Data leakage ML final (mode `is_only` optionnel) | 5.1 | ✅ `optimizer.ml_final_train_mode: full\|is_only` + docstring explicite du choix de design. Métrique OOS-only comparative NON implémentée (hors scope, nécessiterait un re-scoring dédié) |
-| S4-04 | Deflated Sharpe Ratio dans `opt_scoring` | 5.2 | ✅ `deflated_sharpe_ratio()` + `_expected_max_sharpe()` (Bailey & López de Prado 2014, stdlib `statistics.NormalDist` — pas de dépendance scipy). Fonction AUTONOME, pas encore câblée dans `composite_score()` (nécessiterait de faire remonter n_trials depuis la boucle optimiseur — suivi séparé) |
-| S4-05 | Métriques par stratégie en une passe (`defaultdict`) | 5.3 | ✅ `trades_by_strategy` pré-groupé une fois (au lieu de 3 refiltrages de `closed` par stratégie) |
-| S4-06 | `_load_db_stats` en SQL agrégé | 5.6 | ✅ `get_trade_global_aggregates()` (COUNT/SUM/MAX SQL) pour les totaux globaux. Détail par stratégie reste en Python (Sharpe a besoin de la séquence ordonnée, non SQL-able) — fenêtre de lookback 30j NON appliquée (changerait les métriques déjà affichées, risque UX non justifié par le seul gain perf) |
-| S4-07 | Test de régression scale-in/budget (remplace l'item 1.3 invalidé) | §1.2 | ✅ confirme `can_allocate` rejette bien le 3e scale-in au dépassement cumulé |
+Aucun équivalent dans l'audit initial ni dans ce plan directeur — intégralement
+issus du Plan C, tous confirmés **non démarrés** (fichiers/dépendances absents,
+vérifié) :
 
-Tests : 649/649 verts (33 nouveaux tests).
+| ID | Item | Effort | Impact |
+|---|---|---|---|
+| **OBS-01** | Métriques Prometheus (`prometheus-client` absent de `requirements.txt`, `app/core/metrics.py` inexistant) | M | 5 |
+| **OBS-02** | Logs JSON + correlation IDs (`contextvars`) | M | 4 |
+| **OBS-03** | Dashboard Grafana (dépend OBS-01) | M | 4 |
+| **OBS-04** | Alertes Prometheus AlertManager (dépend OBS-01) | M | 4 |
+| **OBS-05** | Tracing OpenTelemetry | L | 2 (backlog) |
+| **DX-01** | Docker + docker-compose (`Dockerfile` absent) | M | 5 |
+| **SEC-01** | Rotation secrets via vault (`SecretProvider` Protocol) | M | 4 |
+| **SEC-03** | Validation Pydantic des payloads API (`app/api/schemas.py` inexistant) | M | 4 |
+| **UI-02** | Refonte navigation 3 sections + `/onboarding` (`onboarding.html` inexistant — seul le regroupement sidebar a été fait par le rewrite frontend, confirmé par la note du Plan C lui-même §0.4) | M | 4 |
 
-### Sprint 5 — Chantier G3 : exécution réelle actions
+### 4.5 🟡 Itératif — reste du backlog Plan C (non re-vérifié en détail)
 
-| ID | Item |
-|----|------|
-| S5-01 | `IBKRExecutionProvider` (`ib_insync`) : ordres + idempotence `orderRef` |
-| S5-02 | Balance multi-venue (EUR + USDC, équité globale convertie) |
-| S5-03 | `max_asset_class_exposure_pct` + corrélation par classe |
-| S5-04 | Runbook incidents étendu aux actions (15.1) |
+Ces items n'ont pas été vérifiés ligne à ligne contre le code dans cette
+session (faible risque d'être déjà faits vu qu'ils créent tous des fichiers
+absents du repo — `app/core/regime.py`, `sentiment.py`, `tax_report.py`,
+`app/ml/trainer.py` versioning, etc. — confirmé par `ls` négatif sur les
+cibles principales). Conservés tels quels, priorité inchangée par rapport au
+Plan C :
 
-### Sprint 6 — Fond de dette (P2-P3) — au fil de l'eau
-
-Découpage `risk.py` (4.1), `AppState` (3.1), Pydantic (9.1), Prometheus (13.3),
-logs JSON (13.1), health check détaillé (13.4), nettoyage stratégies Opus
-(16.1), doublons save_trade (12.3), backup config.yaml (14.7), watchdog chemin
-absolu (14.8), deps dev/prod (14.3), suppression Jinja2 (16.6), items P3
-restants du plan d'origine.
+- **FIN-02** (borrow rate dynamique), **FIN-03** (reporting fiscal FIFO, dépend SEC-06), **FIN-05** (Sharpe/Sortino/Calmar/VaR/CVaR temps réel), **FIN-08** (réconciliation PnL quotidienne), **FIN-09** (multi-devises, backlog).
+- **DX-02** (setup interactif), **DX-03** (hot-reload dev), **DX-04** (ADR), **DX-05** (profiling intégré), **DX-06** (OpenAPI enrichi).
+- **PERF-02** (parallélisation optimiseur), **PERF-03** (PostgreSQL, backlog), **PERF-04** (streaming SSE backtests).
+- **LIFE-01** (tests transitions cycle de vie), **LIFE-02** (timeline UI), **LIFE-03** (auto-re-opt, backlog), **LIFE-04** (allocation graduelle, backlog).
+- **WKFLOW-01/02/03** (conventional commits, pre-commit, templates issues/PR).
+- **RES-01** (regime detection HMM), **RES-02** (backtest portfolio multi-actifs), **RES-03** (sentiment F&G, backlog), **RES-04** (extension usage dérivés).
 
 ---
 
-## 5. Récapitulatif des priorités
+## 5. Roadmap par sprints (mise à jour)
 
-| Sprint | Contenu | Dépendances |
-|--------|---------|-------------|
-| 0 | 5 correctifs P0 (sécurité financière + config) | aucune |
-| 1 | 8 items concurrence/sécurité P1 | aucune |
-| 2 | G1 : abstractions multi-actifs (comportement inchangé) | aucune (parallèle aux sprints 0-1) |
-| 3 | G2 : SBF120 en paper (données, calendrier, frais, sizing) | Sprint 2 |
-| 4 | Métriques/optimiseur (Sharpe, DSR, leakage ML) | aucune |
-| 5 | G3 : exécution réelle actions (IBKR/Saxo) | Sprint 3 validé en paper |
-| 6 | Dette de fond P2-P3 | au fil de l'eau |
+### Sprints terminés
 
-**Corrections notables au plan d'origine** : l'item 1.3 (scale-in) est déjà
-couvert par le code ; l'item 6.2 (rate-limiting) est requalifié car ccxt
-throttle déjà ; l'item 11.1 sous-estimait la couverture de tests existante ;
-l'item 14.6 est partiellement traité (garde OPS-02 en place) ; l'item 16.5
-(`venues.assign`) est absorbé par la généralisation.
+| Sprint | Contenu | Statut |
+|---|---|---|
+| 0 | 5 correctifs P0 sécurité financière/config | ✅ `ea9706e` |
+| 1 | 8 items concurrence/sécurité P1 | ✅ `7aaed6b` |
+| 2 | G1 — abstractions multi-actifs | ✅ `49be475` |
+| 4 | Qualité métriques & optimiseur | ✅ `78ae183` |
+| — | Vérification ARCH-04/05/06 (numérotation Plan C) | ✅ toutes obsolètes/déjà faites (§1.3.1) |
+
+### Sprints à venir (reformulés après fusion)
+
+| Sprint | Contenu | Dépendances | Détail |
+|---|---|---|---|
+| **7** | Nettoyage code mort + CI/lint (Vague 3 de l'audit) | aucune | §4.1 — priorité haute, seul pan de l'audit initial resté ouvert |
+| **8** | Quick wins financiers & sécurité | aucune (parallélisable au 7) | §4.2 |
+| **3** | G2 — SBF120 en paper (données, calendrier, frais, sizing) | Sprint 2 (fait) | §3, inchangé |
+| **9** | Observabilité & DX (Prometheus, Docker, Pydantic, onboarding) | aucune | §4.4 |
+| **10** | Refactor stratégies avancé (OpusBase, status lifecycle, versioning ML, tests ordres mockés) | Sprint 7 (DEAD-01 réduit le périmètre d'ARCH-01) | §4.3 |
+| **5** | G3 — exécution réelle actions (IBKR/Saxo) | Sprint 3 validé en paper | §3, inchangé |
+| **11** | Itératif (financier, DX, perf, cycle de vie, workflow, recherche) | au fil de l'eau | §4.5 |
+
+**Décisions produit en attente** (à trancher avec l'utilisateur avant
+exécution, non bloquantes pour le reste) :
+- Sort de `XRP_USDC` (DEAD-03 résiduel, §4.1).
+- Confirmation que BT-11/STRAT-05 (plafond corrélation BTC/ETH) reste décliné.
