@@ -188,6 +188,35 @@ de la décision DEAD-01).
   random_search(n_trials=10)` sur 1h/8000 barres passe de « n'aboutit jamais
   en 300 s » à 67 s (29 hits / 4 misses).
 - 693/693 tests verts (+4 nouveaux, `tests/test_ml_dynamic_threshold_cache.py`).
+- **`random_search` : `n_jobs` réellement câblé.** Le paramètre était accepté
+  mais la boucle restait toujours séquentielle — contrairement à
+  `bayesian_search`, qui dispose déjà d'un `ProcessPoolExecutor` robuste
+  (`_run_parallel` : contexte `spawn`, cap mémoire anti-OOM via
+  `_safe_worker_count`, repli séquentiel si le pool casse) utilisé par
+  `_bayesian_search_legacy`/`_optuna_parallel` mais jamais par
+  `random_search`. `n_jobs>1` délègue maintenant à cette même infra
+  existante ; `n_jobs<=1` reste la boucle inline inchangée (même
+  `early_stop_patience`, non supporté en mode parallèle — tous les trials
+  sont soumis d'un coup, comme la phase d'exploration bayésienne). Mesuré :
+  12 trials sur `opus_omnibus_v8_no_ml`/1h/8000 barres, 10.6 s (n_jobs=1) →
+  3.5 s (n_jobs=3), soit ×3.0 sur 3 workers.
+- **`rolling_slope`/`rolling_hurst` (`app/core/indicators_market.py`)
+  vectorisés.** Les deux étaient des boucles Python par fenêtre glissante
+  (O(n·window)). `rolling_slope` : la pente `cov(x,y)/var(x)` avec
+  `x=arange(window)` fixe et centré se réduit à une corrélation par noyau
+  fixe (`np.correlate`), exacte bit-à-bit. `rolling_hurst` : pas linéaire
+  (méthode R/S), vectorisé par lot sur toutes les fenêtres
+  (`sliding_window_view` + régression log-log en forme fermée avec
+  réductions `nan*` pour un nombre de lags valides variable par fenêtre),
+  avec repli sur l'implémentation scalaire d'origine pour toute fenêtre
+  contenant un NaN (troncature `arr[~isnan]` non vectorisable sans casser
+  l'alignement — cas rare en pratique, essentiellement le warmup en tête de
+  série). Vérifié bit-exact (écart < 1e-6) contre les implémentations
+  d'origine sur données BTC/USDC réelles + cas limites synthétiques (NaN
+  dispersés, segment constant). Mesuré sur BTC/USDC 1h/3000 barres :
+  `rolling_slope` ×233, `rolling_hurst` ×57.
+- 712/712 tests verts (+19 nouveaux : `tests/test_optimizer_n_jobs.py`,
+  `tests/test_indicators_market_rolling.py`).
 
 ### 📚 Documentation
 

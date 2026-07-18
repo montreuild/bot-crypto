@@ -256,6 +256,17 @@ class StrategyOptimizer:
         if not self.param_space:
             return {"error": f"Aucun espace de params pour {self.strategy_name}"}
 
+        if n_jobs and n_jobs > 1:
+            # ``n_jobs`` était accepté mais jamais utilisé (boucle toujours
+            # séquentielle) — réutilise le ProcessPoolExecutor déjà construit
+            # pour _bayesian_search_legacy/_optuna_parallel (même sampler
+            # uniforme par défaut, cap mémoire anti-OOM, repli séquentiel si
+            # le pool casse). ``early_stop_patience`` n'est pas respecté dans
+            # ce mode : tous les trials sont soumis d'un coup, même
+            # comportement que la phase d'exploration bayésienne.
+            self._run_parallel(n_trials, n_trials, trial_offset=0, n_jobs=n_jobs)
+            return self._best_result()
+
         best_score = -999
         no_improve = 0
 
