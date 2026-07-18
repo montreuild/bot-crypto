@@ -162,6 +162,33 @@ palier VIP OKX) — exclu explicitement de ce sprint.
   configurable via `config.yaml:perf.precompute_cache_size` (défaut 16 → 128).
 - 689/689 tests verts après chaque étape.
 
+### 🔬 Post-Sprint 8 — Comparatif DEAD-01 : 4h/1j + optimiseur v12
+
+Suites du comparatif fonctionnel de la famille opus_omnibus/opus_stat (préparation
+de la décision DEAD-01).
+
+- **Garde-fou timeframe levé** : `_SUPPORTED_TFS`/`_detect_timeframe` (14 fichiers,
+  `opus_omnibus_v12` par héritage de v11) n'autorisaient que 15m/30m/1h en dur —
+  toute exécution sur 4h/1j sortait silencieusement sans signal. Détection 4h/1j
+  ajoutée (mêmes tolérances relatives) et `_SUPPORTED_TFS` étendu en conséquence.
+- **Cache d'entraînement pour `ml_dynamic_threshold`** (sous-modèle RandomForest
+  de `opus_omnibus_v12`, filtre de confirmation/veto post-hoc sur V11) : branché
+  sur le cache process-wide existant (`app.core.train_cache`, déjà utilisé par
+  v7/v10_retrained/v11/v11_followsetup/opus_stat_retrained_v4) — aucun des
+  hyperparamètres d'entraînement (`lookahead`, `vol_multiplier`, `n_trials`,
+  `model_type`) n'étant dans le `param_space` optimisé de v12, chaque retrain
+  (+ random search interne 8 essais + fit OOS de validation, jusqu'à ~10 fits
+  par appel, tous les 200 appels de `score()`) était strictement redondant
+  d'un trial de l'optimiseur à l'autre — jusqu'à ~40-60 % du coût par trial
+  d'après la docstring de v12. Ajout de l'alignement de fenêtre glissante
+  (`aligned_train_window`, même correctif que v11) pour que la dérive du
+  déclenchement de retrain entre trials (dépendante des trades ouverts par
+  les seuils testés) n'empêche pas les hits de cache. Vérifié : résultats de
+  backtest strictement identiques cache ON/OFF ; `StrategyOptimizer.
+  random_search(n_trials=10)` sur 1h/8000 barres passe de « n'aboutit jamais
+  en 300 s » à 67 s (29 hits / 4 misses).
+- 693/693 tests verts (+4 nouveaux, `tests/test_ml_dynamic_threshold_cache.py`).
+
 ### 📚 Documentation
 
 - `docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md` : fusion des 3 plans (audit

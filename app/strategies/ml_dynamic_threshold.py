@@ -457,6 +457,9 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         # Cache backtest : voir prepare_for_backtest.
         self._bt_features: Optional[pl.DataFrame] = None
         self._bt_features_len: int = 0
+        # Offset de la fenêtre d'entraînement alignée courante (posé par
+        # ``_fit`` avant ``cached_train`` — cf. ``_get_or_build_features``).
+        self._bt_train_offset: Optional[int] = None
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         """Pré-calcule les ~30 features pour toute la fenêtre du backtest.
@@ -487,9 +490,18 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             self._bt_features = None
             self._bt_features_len = 0
 
-    def _get_or_build_features(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Cache-aware wrapper autour de ``compute_features``."""
+    def _get_or_build_features(self, df: pl.DataFrame, offset: int = None) -> pl.DataFrame:
+        """Cache-aware wrapper autour de ``compute_features``.
+
+        ``offset`` (posé par ``_fit`` avant ``cached_train``, même mécanisme
+        que ``opus_omnibus_v11``) permet de lire une TRANCHE du cache
+        pré-calculé par ``prepare_for_backtest`` plutôt que ses premières
+        lignes, quand ``df`` est une fenêtre glissante alignée
+        (``aligned_train_window``) et non le préfixe complet du backtest.
+        """
         if self._bt_features is not None and len(df) <= self._bt_features_len:
+            if offset is not None and offset + len(df) <= self._bt_features_len:
+                return self._bt_features.slice(offset, len(df))
             return self._bt_features.head(len(df))
         return compute_features(df)
 
@@ -541,12 +553,66 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         return self._predict(df, tf)
 
     # ── Entraînement ──────────────────────────────────────────
+    # Cache process-wide (cf. app/core/train_cache.py, même mécanisme que
+    # opus_omnibus_v11/v7/...) : aucun des hyperparamètres d'entraînement
+    # (lookahead, vol_multiplier, n_trials, model_type…) n'est dans le
+    # param_space de v12 — seuls les seuils de fusion post-hoc le sont — donc
+    # ce fit RandomForest (+ random search interne 8 trials + fit OOS de
+    # validation, jusqu'à ~10 fits par appel) est strictement identique à
+    # chaque trial de l'optimiseur pour une même fenêtre glissante. Sans ce
+    # cache, c'était ~40-60% du coût par trial de v12 (cf. docstring
+    # opus_omnibus_v12).
+    _TRAIN_STATE_ATTRS = ('_pipelines', '_best_params_per_tf', '_best_auc_per_tf',
+                          '_feature_cols_per_tf')
+    _TRAIN_PARAM_KEYS  = ('lookahead', 'vol_multiplier', 'n_trials', 'model_type',
+                          'max_train_window', '_ran_search', '_prev_p')
+
     def _fit(self, df: pl.DataFrame, tf: str = "") -> None:
+        # Bookkeeping (compteur de fits, décision random-search-vs-refit) tenu
+        # HORS du cache : il doit avancer à chaque appel logique, même sur un
+        # cache hit, sinon le cycle hyper_search_every se désynchronise entre
+        # trials (un trial avec plus de hits verrait moins de "vrais" fits).
+        tf_key = tf or _detect_tf(df)
+        fit_no = self._fit_count_per_tf.get(tf_key, 0)
+        self._fit_count_per_tf[tf_key] = fit_no + 1
+        hyper_every = max(int(self.hyper_search_every or 1), 1)
+        prev_p = self._best_params_per_tf.get(tf_key)
+        ran_search = not (prev_p and fit_no % hyper_every != 0)
+
+        from app.core.train_cache import aligned_train_window, cached_train
+        # Le déclenchement du retrain dépend de ``cnt`` (compteur de score()
+        # "hors position"), qui dérive légèrement d'un trial à l'autre selon
+        # les trades ouverts par les seuils testés. Sans alignement, la
+        # fenêtre passée à _fit_impl différerait de quelques bougies entre
+        # trials → aucun hit du cache process-wide. Même correctif que
+        # opus_omnibus_v11 (cf. train_cache.aligned_train_window).
+        n_train = int(self.max_train_window or 6000) + 2 * int(self.lookahead) + 100
+        train_df, offset = aligned_train_window(df, self.retrain_every, n_train)
+        self._bt_train_offset = offset
+
+        cache_params = {
+            "lookahead":         self.lookahead,
+            "vol_multiplier":    self.vol_multiplier,
+            "n_trials":          self.n_trials,
+            "model_type":        self.model_type,
+            "max_train_window":  self.max_train_window,
+            "_ran_search":       ran_search,
+            "_prev_p":           None if ran_search else prev_p,
+        }
+        cached_train(self, train_df, tf_key, cache_params, self._fit_impl,
+                    self._TRAIN_STATE_ATTRS, self._TRAIN_PARAM_KEYS)
+        self._bt_train_offset = None
+
+    def _fit_impl(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
+        ran_search = bool(params.get("_ran_search"))
+        prev_p     = params.get("_prev_p")
         try:
             # Réutilise le cache backtest si dispo (peuplé par
             # ``prepare_for_backtest``) au lieu de rebuilder les ~30 features
             # à chaque fit (random search interne × n_trials × N retrains).
-            feats  = self._get_or_build_features(df)
+            # ``df`` est ici la fenêtre alignée (``aligned_train_window``,
+            # posée par ``_fit``) : offset explicite, pas un préfixe complet.
+            feats  = self._get_or_build_features(df, offset=self._bt_train_offset)
             labels = compute_labels(df, self.lookahead, self.vol_multiplier)
 
             # Position-based alignment:
@@ -582,7 +648,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                     f"[{self.name}] Fit annulé : une seule classe dans les labels. "
                     "Augmentez min_train ou réduisez vol_multiplier."
                 )
-                return
+                return False
 
             # Sécurité : effectif minimum par classe
             class_counts = np.bincount(y)
@@ -591,17 +657,8 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                     f"[{self.name}] Fit annulé : classe minoritaire trop petite "
                     f"({class_counts.min()} exemples)."
                 )
-                return
+                return False
 
-            # Random search complet seulement au 1er fit du TF puis tous les
-            # `hyper_search_every` refits ; entre-temps, réutilisation des
-            # meilleurs hyperparams (le refit ne coûte alors qu'UN fit).
-            tf_key = tf or _detect_tf(df)
-            fit_no = self._fit_count_per_tf.get(tf_key, 0)
-            self._fit_count_per_tf[tf_key] = fit_no + 1
-            hyper_every = max(int(self.hyper_search_every or 1), 1)
-            prev_p = self._best_params_per_tf.get(tf_key)
-            ran_search = not (prev_p and fit_no % hyper_every != 0)
             if not ran_search:
                 best_p, best_auc = prev_p, self._best_auc_per_tf.get(tf_key, 0.0)
             else:
@@ -618,7 +675,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             # Ne pas continuer si annulé après le random search
             if self._cancel_event is not None and self._cancel_event.is_set():
                 logger.info(f"[{self.name}] Entraînement annulé après random search")
-                return
+                return False
 
             if not best_p:
                 # Repli sur les hyperparamètres sklearn par défaut plutôt que
@@ -635,14 +692,13 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             pipeline = _build_pipeline(self.model_type, best_p)
             with np.errstate(invalid="ignore", divide="ignore"):  # cf. note CV ci-dessus
                 pipeline.fit(X, y)
-            tf = tf or _detect_tf(df)
 
             with self._model_lock:
-                self._pipelines[tf]          = pipeline
-                self._best_params_per_tf[tf] = best_p
-                self._best_auc_per_tf[tf]    = best_auc
-                self._feature_cols_per_tf[tf] = list(feats.columns)
-                self._trained_tfs.add(tf)
+                self._pipelines[tf_key]          = pipeline
+                self._best_params_per_tf[tf_key] = best_p
+                self._best_auc_per_tf[tf_key]    = best_auc
+                self._feature_cols_per_tf[tf_key] = list(feats.columns)
+                self._trained_tfs.add(tf_key)
                 # Compat rétrograde (logs du trainer, etc.)
                 self._best_auc     = best_auc
                 self._best_params  = best_p
@@ -663,17 +719,19 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                     ratio     = best_auc / max(oos_auc, 1e-9)
                     status    = "✅ robuste" if ratio < 1.3 else "⚠️ surapprentissage probable"
                     logger.info(
-                        f"[{self.name}/{tf}] IS AUC={best_auc:.4f} | OOS AUC={oos_auc:.4f} "
+                        f"[{self.name}/{tf_key}] IS AUC={best_auc:.4f} | OOS AUC={oos_auc:.4f} "
                         f"| Ratio IS/OOS={ratio:.2f} — {status}"
                     )
             except Exception as oe:
-                logger.debug(f"[{self.name}/{tf}] IS/OOS check KO : {oe}")
+                logger.debug(f"[{self.name}/{tf_key}] IS/OOS check KO : {oe}")
 
             logger.info(
-                f"[{self.name}/{tf}] Modèle entraîné — AUC={best_auc:.4f} | n={len(X)}"
+                f"[{self.name}/{tf_key}] Modèle entraîné — AUC={best_auc:.4f} | n={len(X)}"
             )
+            return True
         except Exception as e:
             logger.error(f"[{self.name}] Erreur entraînement : {e}")
+            return False
 
     # ── Prédiction ────────────────────────────────────────────
     def _predict(self, df: pl.DataFrame, tf: str = "") -> Dict[str, Any]:
