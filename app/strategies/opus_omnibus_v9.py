@@ -61,7 +61,7 @@ from app.strategies.opus_stat_pretrained_v4 import (
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_TFS = ("15m", "30m", "1h")
+_SUPPORTED_TFS = ("15m", "30m", "1h", "4h", "1d")
 _EXIT_TD_WINDOW_BARS = 3   # fenêtre LONG_EXIT_TD (bougies)
 
 

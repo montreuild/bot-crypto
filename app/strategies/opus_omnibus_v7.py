@@ -42,7 +42,7 @@ from app.core.indicators import (
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_TFS = ("15m", "30m", "1h")
+_SUPPORTED_TFS = ("15m", "30m", "1h", "4h", "1d")
 
 # Codes de régime
 REGIME_RANGE    = 0
@@ -107,6 +107,8 @@ def _detect_timeframe(df: pl.DataFrame) -> Optional[str]:
     if abs(med_s - 900)  < 60:  return "15m"
     if abs(med_s - 1800) < 120: return "30m"
     if abs(med_s - 3600) < 240: return "1h"
+    if abs(med_s - 14400) < 960:  return "4h"
+    if abs(med_s - 86400) < 5760: return "1d"
     return None
 
 
