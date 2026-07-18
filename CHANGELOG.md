@@ -6,6 +6,81 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🛡 Sprint 0 — Correctifs P0 sécurité financière & config
+
+- **[S0-01]** Sync spot/margin propage l'équité à l'allocateur
+  (`allocator.update_equity`) — les budgets de slots suivaient l'ancien capital.
+- **[S0-02]** Retour de `create_order` validé sur les 5 sites d'appel
+  (ouverture, stops/OCO, scale-in, clôture) : `None`/status
+  `rejected|canceled|expired` → plus de position fantôme ; un échec de
+  CLÔTURE remet la position en gestion + alerte critique.
+- **[S0-03]** CORS : `DELETE`/`PUT` ajoutés (`/api/optimize/job` était
+  inutilisable depuis le frontend).
+- **[S0-04]** `_expand_env` strict : variable `${...}` absente = démarrage
+  refusé en live (WARNING en paper) — fini les credentials vides silencieux.
+- **[S0-05]** `scripts/setup.sh` génère un `.env` avec `WEB_API_KEY`
+  aléatoire ; `.env` ajouté au `.gitignore` ; `web.api_key: ${WEB_API_KEY}`.
+
+### 🔒 Sprint 1 — Concurrence & sécurité
+
+- **[S1-01]** `RLock` sur `RiskManager` (23 méthodes `@_locked`) — état
+  partagé thread trading / threads API.
+- **[S1-02]** `RLock` sur `OHLCVCache` (fetch réseau hors verrou).
+- **[S1-03]** `update_equity`/`check_correlation` verrouillées
+  (`CapitalAllocator`).
+- **[S1-04]** Auth WebSocket par cookie HttpOnly (query param en fallback
+  non-navigateur).
+- **[S1-05]** `NEXT_PUBLIC_API_KEY` supprimée du bundle client —
+  `credentials: 'include'` + `EventSource withCredentials`.
+- **[S1-06]** Routes backtest/replay/optimizer : vérifié non bloquantes
+  (threadpool AnyIO de Starlette) — aucun changement requis, documenté.
+- **[S1-07]** `_pre_execution_check` renforcé : solde spot libre réel et
+  margin level critique vérifiés avant chaque entrée.
+- **[S1-08]** Section `live.trailing` dédiée — le trailing live ne suit plus
+  silencieusement les changements de `backtest.*` (repli + WARNING).
+
+### 🌍 Sprint 2 — Abstractions multi-actifs (G1, comportement crypto inchangé)
+
+- **[S2-01]** `app/core/providers.py` : protocoles `MarketDataProvider`/
+  `ExecutionProvider` (PEP 544) — `RobustExchange` conforme sans modification.
+- **[S2-02]** `Venue` étendue : `asset_class`, `quote_currency`, `tick_size`,
+  `lot_size`, `fractional`, `allow_short` ; `venues.assign[symbol]` supporté.
+- **[S2-03]** Devise de cotation neutralisée : `min_volume_quote_24h` (alias
+  rétro-compatible de `min_volume_usdc_24h`), scan dynamique par
+  `Venue.quote_currency` au lieu du littéral `/USDC`.
+- **[S2-04]** `BaseStrategy.asset_classes` + marquage crypto-only de
+  `funding_flow`/`derivatives_reversion` + filtre dans `_build_active_per_tf`.
+- **[S2-05]** Golden test de parité backtest BTC/USDC avant/après
+  (`tests/test_generic_parity.py`).
+
+### 📊 Sprint 4 — Qualité des métriques & optimiseur
+
+- **[S4-01/02]** Sharpe live aligné sur le backtest : courbe d'équité
+  synthétique par trade, ordre chronologique corrigé (`get_trades` renvoie
+  DESC), annualisation par `bars_per_year(tf)` (source unique
+  `app/core/timeframes.py`) au lieu d'un `sqrt(252)` fixe.
+- **[S4-03]** Data leakage du ré-entraînement ML final documenté par design +
+  mode opt-in `optimizer.ml_final_train_mode: is_only`.
+- **[S4-04]** Deflated Sharpe Ratio (Bailey & López de Prado 2014) dans
+  `opt_scoring.py` — stdlib `statistics.NormalDist`, autonome (pas encore
+  câblé dans `composite_score`, suivi séparé).
+- **[S4-05]** Métriques par stratégie en une passe (pré-groupement, fini le
+  triple refiltrage O(n×k)).
+- **[S4-06]** `_load_db_stats` : agrégats globaux en SQL
+  (`get_trade_global_aggregates`, COUNT/SUM/MAX).
+- **[S4-07]** Test de régression scale-in/budget cumulé (l'item « scale-in
+  sans validation » du plan d'amélioration était faux — `can_allocate`
+  couvre déjà le cumul).
+
+### 📚 Documentation
+
+- `docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md` : fusion des 3 plans (audit
+  `docs/audit/`, plan complémentaire du 14/07, plan multi-actifs) — état
+  vérifié contre le code, backlog consolidé (§4), ~119 items faits /
+  ~81 restants.
+- `docs/audit/00-INDEX.md` : Vagues 0-2/4-6 marquées réalisées, Vague 3
+  identifiée non réalisée (reprise en Sprint 7 du plan directeur).
+
 ---
 
 ## [12.17.0] - 2026-07-11

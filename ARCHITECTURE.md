@@ -59,7 +59,7 @@ app/engine      (Engine, Backtester, optimiseur, forward-test, scanner —
 app/strategies  (importe core ; exception documentée : engine.BaseStrategy)
    │
 app/core        (fondation pure : config, timeframes, param_resolution,
-                 bot_identity, indicateurs, smc_*, risk, database —
+                 bot_identity, providers, indicateurs, smc_*, risk, database —
                  n'importe AUCUNE couche supérieure)
 ```
 
@@ -74,7 +74,20 @@ Invariants vérifiables (tous tenus depuis la Vague 4) :
 Sources uniques (ne jamais recopier ces littéraux) :
 
 - **Timeframes** : `app/core/timeframes.py` (`TF_SECONDS`, `TF_MINUTES`,
-  `TF_MS`, `HTF_MAP`).
+  `TF_MS`, `HTF_MAP`, `bars_per_year` — facteur d'annualisation du Sharpe
+  partagé backtest/live, S4-01/S4-02).
+- **Venue / classe d'actif** : `app/core/bot_identity.py` (`Venue` étendue
+  S2-02 : `asset_class`, `quote_currency`, `tick_size`, `lot_size`,
+  `fractional`, `allow_short` ; `resolve_venue` accepte aussi
+  `venues.assign[symbol]`). Protocoles d'accès marché/exécution :
+  `app/core/providers.py` (`MarketDataProvider`, `ExecutionProvider`, S2-01
+  — `RobustExchange` s'y conforme structurellement). Les stratégies déclarent
+  `asset_classes` (`BaseStrategy`, défaut crypto+equity ; `funding_flow`/
+  `derivatives_reversion` = crypto only), filtré par
+  `AutoOptMixin._filter_by_asset_class`.
+- **Trailing live** : section `live.trailing` de config.yaml (S1-08) —
+  dédiée, indépendante de `backtest.*` (repli sur `backtest.*` + WARNING si
+  absente, pour compat).
 - **Résolution des params** : `app/core/param_resolution.py`
   (`resolve_strategy_params`, `_select_symbol_entry`,
   `DEFAULT_CONFIG_SYMBOL`) — utilisée par le Backtester, le LiveTrader
@@ -451,8 +464,18 @@ StrategyOptimizer(strategy, cfg, df_train, df_test, param_space)
 
 ```yaml
 web:
-  api_key: "your-secret-key"  # Ajouter à config.yaml
+  api_key: ${WEB_API_KEY}   # Résolue depuis .env (généré par scripts/setup.sh)
 ```
+
+Transport de la clé (`verify_api_key`, `app/api/helpers.py`) : header
+`X-API-Key` OU cookie **HttpOnly** `api_key` (posé par les pages web,
+`app/api/main.py::_tpl`). Le frontend Next.js n'embarque plus de clé dans le
+bundle (S1-05 : `NEXT_PUBLIC_API_KEY` supprimée) — il envoie le cookie via
+`credentials: 'include'` / `EventSource(..., {withCredentials: true})`. Le
+WebSocket `/ws` vérifie le cookie en premier, `?api_key=` reste un fallback
+pour les clients non-navigateur (S1-04). En live (`paper_mode: false`), une
+variable d'environnement `${...}` référencée mais absente **bloque le
+démarrage** (`config.strict_env`, S0-04).
 
 **Endpoints non-autentifiés** :
 - `GET /api/status` (info publique, sans détails sensibles)

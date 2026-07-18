@@ -132,13 +132,46 @@ Sprints 0, 1, 2, 4 (26 items) **intégralement terminés et poussés** :
 commits `ea9706e` (Sprint 0), `7aaed6b` (Sprint 1), `49be475` (Sprint 2),
 `78ae183` (Sprint 4). 649 tests verts (33 nouveaux vs les 616 d'avant ces
 sprints). Détail item par item : voir historique de ce document (git blame)
-ou `CHANGELOG.md`. Les trois vérifications ARCH-04/05/06 (numérotation Plan C,
-demandées explicitement par l'utilisateur) sont documentées en §1.3.1 ci-dessus
-avec preuve de code — **aucune n'a nécessité d'implémentation**, toutes
-obsolètes/déjà faites.
+ou `CHANGELOG.md` (section `[Non publié]`). Les trois vérifications
+ARCH-04/05/06 (numérotation Plan C, demandées explicitement par l'utilisateur)
+sont documentées en §1.3.1 ci-dessus avec preuve de code — **aucune n'a
+nécessité d'implémentation**, toutes obsolètes/déjà faites.
 
 **Non démarré** : Sprint 3 (G2 — actions SBF120 en paper), Sprint 5 (G3 —
 exécution réelle actions), Sprint 6 (fond de dette). Détail inchangé en §3-§5.
+
+#### 1.4.1 Passe de re-vérification de la branche (2026-07-18)
+
+Revue complète du diff `origin/main..HEAD` (50 fichiers, ~2 330 insertions)
+demandée après coup, item par item :
+
+- **Code : aucun correctif nécessaire.** Les 26 items relus dans le diff sont
+  conformes à leur intention ; points sensibles re-validés à la lecture :
+  chaîne d'auth cookie complète de bout en bout (cookie posé par `_tpl` →
+  `verify_api_key` lit header OU cookie → `EventSource` du frontend passe
+  bien `withCredentials: true` → WS lit le cookie en premier) ; échec de
+  clôture d'ordre = position remise dans `open_positions` sous
+  `_positions_lock` (pas de perte d'état allocateur, rien n'était encore
+  désenregistré à ce point du flux) ; fetch réseau de `OHLCVCache.get()`
+  hors verrou (pas de sérialisation inter-symboles) ; `df_is` bien en scope
+  au call site de `_save_ml_model_post_opt` ; alias
+  `min_volume_quote_24h` propagé AVANT le merge des défauts (une valeur
+  utilisateur de l'ancienne clé n'est pas écrasée par le défaut générique).
+- **Suite complète : 649/649 verts en 19,7 s** sur ce run (la flakiness §0
+  ne s'est pas manifestée — elle reste non-déterministe, pas « corrigée »).
+- **Documentation : 3 lacunes trouvées et corrigées** (les sprints avaient
+  modifié le comportement sans mettre à jour les docs transverses) :
+  1. `CHANGELOG.md` `[Non publié]` était vide → section complète ajoutée
+     (Sprints 0/1/2/4 + fusion des plans), dans le style des versions
+     précédentes.
+  2. `ARCHITECTURE.md` ignorait `app/core/providers.py`, l'extension `Venue`
+     (asset_class/quote_currency/…), `bars_per_year`, `live.trailing`, et
+     décrivait l'auth API sans le cookie HttpOnly ni le strict-env → complété
+     (liste des couches, « Sources uniques », section Sécurité).
+  3. `README.md` § Configuration montrait des clés API en dur dans
+     config.yaml alors que le fichier réel utilise `${OKX_API_KEY}`/
+     `${WEB_API_KEY}` résolues depuis `.env` (généré par `scripts/setup.sh`),
+     avec blocage strict en live → section réécrite.
 
 ---
 
