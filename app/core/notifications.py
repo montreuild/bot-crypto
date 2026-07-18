@@ -69,7 +69,6 @@ class Notifier:
         self._email_to         = n.get("email_to", "")
 
         self.min_pnl                 = float(n.get("min_pnl_to_notify", 5.0))
-        t = cfg.get("trading", {})
         self._loss_warn_pct          = float(n.get("position_loss_warn_pct", 5.0))
         self._exchange_err_threshold = int(n.get("exchange_error_threshold", 3))
 

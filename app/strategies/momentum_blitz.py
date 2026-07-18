@@ -39,7 +39,6 @@ import logging
 import math
 from typing import Any, Dict, List, Optional
 
-import numpy as np
 import polars as pl
 
 from app.engine.engine import BaseStrategy
@@ -146,8 +145,6 @@ class Strategy(BaseStrategy):
 
         rsi = _safe(pre_val(df, "_pre_rsi14"), 50.0)
         adx = _safe(pre_val(df, "_pre_adx14"))
-        pdi = _safe(pre_val(df, "_pre_pdi14"))
-        ndi = _safe(pre_val(df, "_pre_ndi14"))
         ema20 = _safe(pre_val(df, "_pre_ema20"), c)
         ema50 = _safe(pre_val(df, "_pre_ema50"), c)
         ema200 = _safe(pre_val(df, "_pre_ema200"), c)

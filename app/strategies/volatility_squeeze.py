@@ -248,7 +248,7 @@ class Strategy(BaseStrategy):
                        f"q={score:.2f} taille×{size_factor:.2f} SL={p['sl_atr']:.1f}ATR"),
             "conditions": [
                 f"Ressort comprimé puis détente ({setup})",
-                f"Direction = tendance établie (jamais prédite)",
+                "Direction = tendance établie (jamais prédite)",
                 f"Score {score:.2f} ≥ seuil {min_q:.2f} · coil {coil:.2f} · ADX-force {adx_str:.2f}",
                 f"Stop {p['sl_atr']:.1f}×ATR + trailing (laisse courir l'expansion)",
             ],

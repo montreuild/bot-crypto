@@ -32,10 +32,9 @@ Méthodologie ML héritée du rapport (inchangée vs V4) :
 """
 
 import logging
-import math
 import os
 import threading
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 
 import numpy as np
 import polars as pl
@@ -688,7 +687,7 @@ class Strategy(BaseStrategyML):
                 f"AUC modèle : amp={auc_amp:.2f} dir={auc_dir:.2f}",
                 f"Exit : max {max_hold_bars} barres + trailing "
                 f"({trail_wide:.1f}×ATR initial)",
-                f"Clustering exploité : §3.1 (50-70% des événements)",
+                "Clustering exploité : §3.1 (50-70% des événements)",
             ],
             "reason": (
                 f"OpusV5 {side.upper()} | {regime_lbl} | "

@@ -12,7 +12,6 @@ Couvre :
 - Auth (localhost only sans clé API)
 """
 import asyncio
-import json
 from starlette.testclient import TestClient
 
 from app.api import state
@@ -285,7 +284,7 @@ def test_ws_multiple_subscribers():
                         assert msg["data"]["slot_key"] == "multi::1h::BTC/USDC"
                         found = True
                         break
-                assert found, f"Client n'a pas reçu l'event"
+                assert found, "Client n'a pas reçu l'event"
 
 
 # ── Auth par cookie HttpOnly (S1-04) ────────────────────────────────────────

@@ -3,7 +3,7 @@ import logging
 import math
 import threading
 import time
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 import numpy as np
 import polars as pl
 
@@ -739,7 +739,6 @@ class Backtester:
         low_arr   = df["low"].to_numpy().astype(float)
         high_arr  = df["high"].to_numpy().astype(float)
         close_arr = df["close"].to_numpy().astype(float)
-        open_arr  = df["open"].to_numpy().astype(float)
 
         # Libellé des stratégies actives — chaque backtest de l'UI tourne une
         # stratégie par Backtester, donc ce libellé identifie la stratégie

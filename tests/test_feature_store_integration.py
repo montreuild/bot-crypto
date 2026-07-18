@@ -1,5 +1,4 @@
 """Intégration FeatureStore ↔ backtest : cache froid vs chaud doit être identique."""
-import tempfile
 from datetime import datetime, timedelta
 
 import numpy as np

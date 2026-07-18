@@ -2,7 +2,6 @@
 Tests E2E — cycle complet de trading (signal → position → trailing → clôture).
 Vérifie le pipeline complet du backtester avec des scénarios réalistes.
 """
-import pytest
 import sys
 import os
 import numpy as np

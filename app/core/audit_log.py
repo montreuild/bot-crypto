@@ -19,12 +19,11 @@ Usage via middleware (auto-log all POST/DELETE) :
 """
 import json
 import logging
-import time
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Any, Optional
+from typing import Optional
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Index, create_engine
+from sqlalchemy import Column, Integer, String, Text, DateTime, Index
 from sqlalchemy.orm import sessionmaker
 
 logger = logging.getLogger(__name__)
@@ -108,7 +107,6 @@ if Base is not None:
             return {"events": [], "total": 0, "limit": limit, "offset": offset}
         try:
             with _SessionLocal() as session:
-                from sqlalchemy import func
                 q = session.query(AuditEvent)
                 if action_filter:
                     q = q.filter(AuditEvent.action.ilike(f"%{action_filter}%"))

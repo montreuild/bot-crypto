@@ -8,14 +8,12 @@ _pre_ema*, _pre_volratio20…) lues ensuite en O(1) par les stratégies via
 import logging
 import threading
 from collections import OrderedDict
-from typing import Tuple
 
-import numpy as np
 import polars as pl
 
 _log = logging.getLogger(__name__)
 
-from app.core.indicators_core import _true_range, adx, atr_series, macd, rsi, sma, ema  # noqa: E402
+from app.core.indicators_core import _true_range  # noqa: E402
 
 # ── Cache des features pré-calculées (partagé entre jobs d'un même process) ──
 # Le backtest et l'optimiseur appellent precompute_df() de façon répétée sur la

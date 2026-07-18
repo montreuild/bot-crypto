@@ -4,7 +4,6 @@ Tests unitaires — app.strategies.registry (auto-découverte des stratégies)
 import importlib
 import glob
 import os
-import pytest
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

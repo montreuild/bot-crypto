@@ -28,7 +28,7 @@ instance privée de ml_dynamic_threshold dont il pilote le cycle de vie
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 import polars as pl
 

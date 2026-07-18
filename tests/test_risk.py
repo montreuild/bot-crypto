@@ -1,7 +1,6 @@
 """
 Tests unitaires — RiskManager
 """
-import threading
 
 import pytest
 import sys, os

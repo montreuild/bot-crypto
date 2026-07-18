@@ -21,7 +21,7 @@ les indicateurs proviennent de ``app.core.indicators`` (colonnes ``_pre_*`` via
 
 import logging
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import numpy as np
 import polars as pl

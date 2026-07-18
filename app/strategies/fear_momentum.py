@@ -92,8 +92,6 @@ class Strategy(BaseStrategy):
         lt   = pre_val(df, _ema_map.get(ema_trend, "")) or float(ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
 
         c0   = float(close[-1])
-        c1   = float(close[-2])
-        c2   = float(close[-3])
         h0   = float(high[-1])
         l0   = float(low[-1])
         o0   = float(open_[-1])

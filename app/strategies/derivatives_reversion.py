@@ -26,7 +26,6 @@ import logging
 import math
 from typing import Any, Dict, List, Optional
 
-import numpy as np
 import polars as pl
 
 from app.engine.engine import BaseStrategy
@@ -229,8 +228,8 @@ class Strategy(BaseStrategy):
                        f"{'+dérivés' if derivs else 'OHLCV'} TP={p['tp_atr']:.1f}/SL={p['sl_atr']:.1f}ATR"),
             "conditions": [
                 f"Fade extrême de range ({setup}) en régime range",
-                f"Edge directionnel : position-dans-le-range (mesuré z≈7.6)",
-                (f"Confirmation dérivés (funding/sentiment)" if derivs
+                "Edge directionnel : position-dans-le-range (mesuré z≈7.6)",
+                ("Confirmation dérivés (funding/sentiment)" if derivs
                  else "OHLCV pur (dérivés absents → fallback)"),
                 f"TP {p['tp_atr']:.1f}×ATR / SL {p['sl_atr']:.1f}×ATR (gère la cassure)",
             ],

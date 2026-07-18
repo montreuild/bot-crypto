@@ -1,11 +1,9 @@
 """Tests du FeatureStore — correction de l'incrémental, du hash strict et du partage."""
 import numpy as np
 import polars as pl
-import pytest
 
 from app.core.feature_store import (
-    FeatureStore, FeatureProvider, register_provider, get_feature_store,
-    WARMUP_FULL,
+    FeatureStore, FeatureProvider, register_provider, WARMUP_FULL,
 )
 
 

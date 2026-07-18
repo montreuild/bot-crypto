@@ -16,7 +16,6 @@ import itertools
 import math
 import random
 import threading
-import time
 import os
 import io
 from copy import deepcopy
@@ -26,7 +25,7 @@ import numpy as np
 import polars as pl
 
 from app.engine.engine import Engine
-from app.engine.backtest import Backtester, BacktestResult
+from app.engine.backtest import Backtester
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.engine.registry import (
     get_strategy_timeframes,

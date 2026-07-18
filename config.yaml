@@ -92,6 +92,7 @@ scanner:
   symbols:
     - BTC/USDC
     - ETH/USDC
+    - XRP/USDC
   top_n: 20
   symbols_cache_ttl: 300
   opportunity_scan:

@@ -93,8 +93,6 @@ class Strategy(BaseStrategy):
             return self._none(f"EMA{ema_trend} requiert {min_bars} bougies min, {len(df)} disponibles")
 
         close = df["close"]
-        high  = df["high"]
-        low   = df["low"]
 
         # ── EMAs ─────────────────────────────────────────────────────────────
         _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}

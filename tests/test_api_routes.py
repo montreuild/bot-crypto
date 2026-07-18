@@ -7,8 +7,6 @@ voyaient qu'en usage réel. `verify_api_key` bloque par défaut tout appel
 neutralise cette dépendance pour les tests fonctionnels ; un test dédié
 vérifie séparément, sans le contournement, que le blocage est bien actif.
 """
-import os
-import tempfile
 
 import pytest
 from starlette.testclient import TestClient

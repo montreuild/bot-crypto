@@ -5,16 +5,12 @@ causale calculée une fois sur le df complet du backtest à la position de la
 fenêtre courante (SuperTrend, MACD, EMA) — évite le recalcul O(n) par barre.
 """
 import logging
-import threading
-from collections import OrderedDict
-from typing import Tuple
 
-import numpy as np
 import polars as pl
 
 _log = logging.getLogger(__name__)
 
-from app.core.indicators_core import ema, macd, supertrend
+from app.core.indicators_core import macd, supertrend
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Réutilisation des pré-calculs causaux (accélération backtest/optimiseur)

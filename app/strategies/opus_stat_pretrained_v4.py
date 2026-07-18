@@ -788,7 +788,7 @@ class Strategy(BaseStrategyML):
         # 4. Trend Up : AUC ≈ 0.50 → pas d'edge, on s'abstient (rapport §6.4).
         if regime == REGIME_TREND_UP:
             return self._none(
-                f"Trend Up : aucun edge (AUC dir ≈ 0.50)",
+                "Trend Up : aucun edge (AUC dir ≈ 0.50)",
                 regime=regime,
             )
 

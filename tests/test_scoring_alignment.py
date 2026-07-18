@@ -6,7 +6,6 @@ accès (``df.head(_bt_features_len)`` sur une fenêtre plus courte) ET
 ``None``). Conséquence : toutes les barres lisaient les features de la barre
 ~warmup. Ce test vérifie que X[:len(df)][-1] correspond bien à la barre courante.
 """
-import tempfile
 from datetime import datetime, timedelta
 
 import numpy as np

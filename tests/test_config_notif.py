@@ -1,12 +1,11 @@
 """
 Tests unitaires — Config (variables d'env) & Notifier
 """
-import pytest
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.core.config import _expand_env, load_config
+from app.core.config import _expand_env
 from app.core.notifications import Notifier
 
 

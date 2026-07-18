@@ -25,7 +25,7 @@ import logging
 import os
 import threading
 from collections import OrderedDict
-from typing import Callable, Dict, Iterable, Tuple
+from typing import Callable, Dict, Iterable
 
 logger = logging.getLogger(__name__)
 

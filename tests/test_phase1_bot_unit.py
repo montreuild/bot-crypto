@@ -1,6 +1,4 @@
 """Phase 1 — le bot comme unité : identité/venue, sizing par bot, vetos shadow."""
-import os
-import tempfile
 
 import app.core.bot_identity as bi
 from app.core.risk import RiskManager

@@ -115,16 +115,6 @@ def register_provider(provider: FeatureProvider) -> FeatureProvider:
         return provider
 
 
-def get_provider(name: str) -> Optional[FeatureProvider]:
-    with _REGISTRY_LOCK:
-        return _REGISTRY.get(name)
-
-
-def list_providers() -> List[str]:
-    with _REGISTRY_LOCK:
-        return sorted(_REGISTRY.keys())
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 #  Helpers
 # ══════════════════════════════════════════════════════════════════════════════

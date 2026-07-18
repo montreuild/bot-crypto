@@ -223,8 +223,8 @@ class LiveTrader(PositionMixin, BalanceSyncMixin, AutoOptMixin, HealthMixin):
         logger.info("=" * 60)
         logger.info("  BOT DÉMARRÉ (Multi-TF)")
         logger.info(f"  Timeframes actifs     : {self.timeframes}")
-        logger.info(f"  → Pour ajouter des TFs : config.yaml › trading.timeframes")
-        logger.info(f"  → Puis lancer une optimisation pour activer les stratégies")
+        logger.info("  → Pour ajouter des TFs : config.yaml › trading.timeframes")
+        logger.info("  → Puis lancer une optimisation pour activer les stratégies")
         logger.info("=" * 60)
         _last_successful_cycle = time.time()
         try:

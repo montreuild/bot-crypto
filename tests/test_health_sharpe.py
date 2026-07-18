@@ -10,7 +10,7 @@ l'ordre chronologique des trades utilisé pour la construire.
 import numpy as np
 import pytest
 
-from app.core.database import Trade, get_trades, init_db, session_scope
+from app.core.database import Trade, session_scope
 from app.core.timeframes import bars_per_year
 from app.live.live_trader import LiveTrader
 

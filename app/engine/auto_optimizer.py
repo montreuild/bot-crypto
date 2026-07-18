@@ -13,7 +13,7 @@ from app.engine.backtest import Backtester
 from app.core.is_oos import split_is_oos
 from app.engine.optimizer import (
     StrategyOptimizer, PARAM_SPACES, STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT,
-    apply_best_params, record_optimizer_audit, get_active_strategies_per_tf
+    apply_best_params, record_optimizer_audit
 )
 from app.engine.opt_workers import available_memory_bytes
 

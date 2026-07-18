@@ -1,6 +1,5 @@
 """Scanner de marché — screen des paires, fetch OHLCV via CandleStore (Parquet persistant)."""
 import logging
-import math
 import time
 from typing import List, Dict, Optional, Tuple
 
@@ -116,7 +115,6 @@ class MarketScanner:
         car elles ne font pas partie du pré-calcul partagé.
         """
         close  = df["close"]
-        volume = df["volume"]
         n      = len(df)
         if n < 60:
             return {}

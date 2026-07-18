@@ -4,7 +4,7 @@ Base de données SQLite étendue — trades, métriques journalières, signaux, 
 import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 
 from sqlalchemy import (create_engine, event, Column, Integer, Float, String,
                         Boolean, DateTime, Text, JSON, Index, func, case)
@@ -445,20 +445,6 @@ def get_current_lifecycle_states(session: Session) -> Dict[str, str]:
     for r in rows:
         states[r.slot_key] = r.to_state
     return states
-
-
-def get_lifecycle_events(session: Session, slot_key: str = None,
-                         limit: int = 200) -> List[dict]:
-    """Historique des transitions (toutes ou filtrées par slot), plus récentes d'abord."""
-    q = session.query(SlotLifecycleEvent)
-    if slot_key:
-        q = q.filter(SlotLifecycleEvent.slot_key == slot_key)
-    rows = q.order_by(SlotLifecycleEvent.time.desc()).limit(limit).all()
-    return [{
-        "time": r.time.isoformat() if r.time else None,
-        "slot_key": r.slot_key, "from_state": r.from_state, "to_state": r.to_state,
-        "reason": r.reason, "score": r.score, "budget_pct": r.budget_pct,
-    } for r in rows]
 
 
 # ── Persistance de l'état de risque (Phase 3) ────────────────────────────────

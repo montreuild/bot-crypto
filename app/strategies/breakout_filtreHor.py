@@ -174,7 +174,7 @@ class Strategy(BaseStrategy):
 
         htf = htf_trend(df_htf)
 
-        c1, c2, c3 = float(close[-2]), float(close[-3]), float(close[-4])
+        c1, c3 = float(close[-2]), float(close[-4])
         prev2_bullish = c1 > c3
         prev2_bearish = c1 < c3
 

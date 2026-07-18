@@ -6,7 +6,6 @@ Asserts:
 """
 import sys
 import os
-import math
 
 import pytest
 

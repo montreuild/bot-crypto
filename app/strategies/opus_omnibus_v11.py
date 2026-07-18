@@ -1054,44 +1054,44 @@ class Strategy(BaseStrategyML):
             ds_va = lgb.Dataset(X_valid, label=y[split:n], reference=ds_tr,
                                 feature_name=feature_cols, free_raw_data=False)
             try:
-                booster = lgb.train(
-                    {**common, "scale_pos_weight": spw},
-                    ds_tr, num_boost_round=n_estimators, valid_sets=[ds_va],
-                    callbacks=[lgb.early_stopping(20, verbose=False),
-                               lgb.log_evaluation(-1)],
-                )
-            except Exception as e:
-                logger.warning(f"[OmnibusV11] {tf_key} : entraînement {target} KO ({e})")
-                del ds_tr, ds_va; gc.collect()
-                return False
-            aucs[target] = float(booster.best_score.get("valid_0", {}).get("auc", 0.0))
-            boosters[target] = booster
-
-            # Calibration isotone sur le set de validation.
-            if calibrate:
                 try:
-                    from sklearn.isotonic import IsotonicRegression
-                    raw_va = booster.predict(X_valid)
-                    y_va = y[split:n]
-                    if len(np.unique(y_va)) >= 2:
-                        iso = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
-                        iso.fit(raw_va, y_va)
-                        cal_va = iso.predict(raw_va)
-                        cal_err[target] = round(float(np.mean(np.abs(cal_va - y_va))), 4)
-                        calibrators[target] = iso
-                except Exception as ce:
-                    logger.debug(f"[OmnibusV11] {tf_key} calibration {target} KO : {ce}")
+                    booster = lgb.train(
+                        {**common, "scale_pos_weight": spw},
+                        ds_tr, num_boost_round=n_estimators, valid_sets=[ds_va],
+                        callbacks=[lgb.early_stopping(20, verbose=False),
+                                   lgb.log_evaluation(-1)],
+                    )
+                except Exception as e:
+                    logger.warning(f"[OmnibusV11] {tf_key} : entraînement {target} KO ({e})")
+                    return False
+                aucs[target] = float(booster.best_score.get("valid_0", {}).get("auc", 0.0))
+                boosters[target] = booster
 
-            # Importance des features (gain).
-            try:
-                gains = booster.feature_importance(importance_type="gain")
-                pairs = sorted(zip(feature_cols, gains), key=lambda kv: -kv[1])
-                importances[target] = [(c, float(g)) for c, g in pairs]
-            except Exception:
-                importances[target] = []
+                # Calibration isotone sur le set de validation.
+                if calibrate:
+                    try:
+                        from sklearn.isotonic import IsotonicRegression
+                        raw_va = booster.predict(X_valid)
+                        y_va = y[split:n]
+                        if len(np.unique(y_va)) >= 2:
+                            iso = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
+                            iso.fit(raw_va, y_va)
+                            cal_va = iso.predict(raw_va)
+                            cal_err[target] = round(float(np.mean(np.abs(cal_va - y_va))), 4)
+                            calibrators[target] = iso
+                    except Exception as ce:
+                        logger.debug(f"[OmnibusV11] {tf_key} calibration {target} KO : {ce}")
 
-            del ds_tr, ds_va
-            gc.collect()
+                # Importance des features (gain).
+                try:
+                    gains = booster.feature_importance(importance_type="gain")
+                    pairs = sorted(zip(feature_cols, gains), key=lambda kv: -kv[1])
+                    importances[target] = [(c, float(g)) for c, g in pairs]
+                except Exception:
+                    importances[target] = []
+            finally:
+                del ds_tr, ds_va
+                gc.collect()
 
         del X_train, X_valid
 

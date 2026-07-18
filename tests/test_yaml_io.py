@@ -1,5 +1,4 @@
 """Round-trip YAML : préservation des commentaires lors de la réécriture."""
-import pytest
 
 from app.core.yaml_io import load_yaml, dump_yaml, ruamel_available
 

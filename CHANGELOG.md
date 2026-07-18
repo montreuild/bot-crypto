@@ -72,6 +72,51 @@ Historique des versions du Crypto Bot.
   sans validation » du plan d'amélioration était faux — `can_allocate`
   couvre déjà le cumul).
 
+### 🧹 Sprint 7 — Nettoyage code mort + CI/lint (Vague 3 de l'audit)
+
+Périmètre §4.1 du plan directeur, hors **DEAD-01** (8 générations Opus/stat
+jamais promues) et **TEST-11** (tests smoke stratégies, bloqué par DEAD-01) —
+exclus explicitement de ce sprint.
+
+- **[DEAD-02]** Suppression de `scoring_statistique_opus_v3.py` (579 lignes)
+  et de `strategies/scoring_statistique_opus_v3.yaml` — zéro appelant
+  (grep exhaustif Python + YAML).
+- **[DEAD-03]** `XRP/USDC` ajouté à `scanner.symbols` (`config.yaml`) —
+  données OHLCV présentes sur disque mais symbole absent du scan ;
+  pas de données `derivatives` pour XRP (gap connu, sans impact bloquant).
+- **[DEAD-05]** `opus_omnibus_v11.py` (stratégie **active**,
+  `manual_active: opus_omnibus_v11::30m`) : les deux `del ds_tr, ds_va`
+  dupliqués (bloc 1050-1094) remplacés par un `try/finally` englobant —
+  suppression garantie une seule fois par itération, plus de dépendance à
+  deux points de sortie distincts.
+- **[DEAD-06]** Suppression des 5 fonctions publiques jamais appelées :
+  `config.strategy_file_path`, `execution.cap_notional`,
+  `database.get_lifecycle_events`, `feature_store.get_provider`/
+  `list_providers` — zéro référence externe re-vérifiée avant suppression.
+- **[DEAD-07]** Nettoyage `ruff --select F` (façade `indicators.py`
+  exclue via `ruff.toml`) : 73 imports inutilisés + 15 f-strings sans
+  placeholder auto-fixés ; 17 variables locales mortes retirées à la main
+  (lecture des lignes concernées confirmée sans effet de bord avant
+  suppression).
+- **[DEAD-09]** `scripts/__pycache__` déjà propre (aucun `.pyc` résiduel) —
+  vérifié, rien à faire.
+- **[TEST-01]** `.github/workflows/ci.yml` : job `lint` (`ruff check .`) +
+  job `test` (`pytest tests/ -q -m "not slow"`), Python 3.12.
+- **[TEST-04/05]** `ruff.toml` (remplace flake8/pyflakes — `line-length=120`
+  aligné sur la convention `CONTRIBUTING.md`, règles `F/W/E/I`) et
+  `mypy.ini` (non strict, `ignore_missing_imports`) ; `flake8` retiré de
+  `requirements.txt` au profit de `ruff==0.15.8`.
+- **[TEST-06]** `pytest.ini` : markers `slow`/`strategy_smoke` déclarés
+  (aucun test actuel ne dépend de `data/ohlcv`/`data/derivatives` versionnés
+  — vérifié, toute la suite tourne sur données synthétiques/`tmp_path` ;
+  rien à isoler pour l'instant).
+- 649/649 tests verts après chaque étape.
+
+### 💰 Sprint 8 — Quick wins financiers & sécurité
+
+Périmètre §4.2 du plan directeur, hors **FIN-01** (frais dynamiques par
+palier VIP OKX) — exclu explicitement de ce sprint.
+
 ### 📚 Documentation
 
 - `docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md` : fusion des 3 plans (audit

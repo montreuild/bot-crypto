@@ -85,10 +85,3 @@ def risk_position_size(capital: float, risk_pct: float, entry: float,
     return size, notional
 
 
-def cap_notional(size: float, price: float, max_notional: float) -> tuple:
-    """Plafonne (size, notional) à un notionnel maximal absolu."""
-    notional = float(size) * float(price)
-    if notional > max_notional:
-        notional = max(float(max_notional), 0.0)
-        size     = notional / price if price > 0 else 0.0
-    return size, notional

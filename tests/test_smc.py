@@ -407,7 +407,6 @@ class TestStrategyContract:
 
     def test_signal_carries_bracket_and_gain(self):
         """Tout signal émis doit porter SL/TP fixes et gain potentiel > 0.4 %."""
-        s = Strategy()
         found = 0
         for seed in range(12):
             df = _random_df(900, seed=seed, jump_p=0.04)

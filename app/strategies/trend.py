@@ -264,13 +264,13 @@ class Strategy(BaseStrategy):
             }
 
         missing = []
-        if not cond_ema:   missing.append(f"EMA align ✗")
-        if not cond_trend: missing.append(f"EMA200 ✗")
+        if not cond_ema:   missing.append("EMA align ✗")
+        if not cond_trend: missing.append("EMA200 ✗")
         if not cond_macd:  missing.append(f"MACD ✗ ({lh:+.5f})")
         if not cond_adx:   missing.append(f"ADX {adx_val:.0f}<{adx_min} ✗")
         if not cond_rsi:   missing.append(f"RSI {rsi_now:.0f} ✗")
-        if overextended:   missing.append(f"Overext ✗")
-        if htf < 0 and lf > ls: missing.append(f"HTF baissier ✗")
+        if overextended:   missing.append("Overext ✗")
+        if htf < 0 and lf > ls: missing.append("HTF baissier ✗")
         return self._none(" | ".join(missing) or "Conditions non réunies")
 
     def _none(self, reason: str = "") -> dict:

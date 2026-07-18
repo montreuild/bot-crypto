@@ -92,8 +92,6 @@ class Strategy(BaseStrategy):
             return self._none("Cooldown")
 
         close = df["close"]
-        high  = df["high"]
-        low   = df["low"]
         c_now = float(close[-1])
 
         # ── Indicateurs de base ───────────────────────────────────────────────

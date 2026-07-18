@@ -4,8 +4,6 @@ Extrait de ``indicators.py`` (découpage V13). Importer de préférence via la
 façade ``app.core.indicators`` qui ré-exporte tous les noms.
 """
 import logging
-import threading
-from collections import OrderedDict
 from typing import Tuple
 
 import numpy as np

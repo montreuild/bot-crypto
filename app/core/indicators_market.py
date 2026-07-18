@@ -3,16 +3,13 @@
 Extrait de ``indicators.py`` (découpage V13).
 """
 import logging
-import threading
-from collections import OrderedDict
-from typing import Tuple
 
 import numpy as np
 import polars as pl
 
 _log = logging.getLogger(__name__)
 
-from app.core.indicators_core import (adx, adx_val, atr, atr_val, atr_series, bollinger,
+from app.core.indicators_core import (adx, adx_val, atr, atr_val, bollinger,
                                       ema, macd, rsi, sma, supertrend, volume_ratio)
 
 # ══════════════════════════════════════════════════════════════════════════════

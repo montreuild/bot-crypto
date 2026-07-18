@@ -205,7 +205,7 @@ class Strategy(BaseStrategy):
                 f"Reversion contrarian → {side.upper()} (fade de la foule)",
                 (f"OI confirme (+{oi_chg:.2f}%)" if (oi_chg is not None and oi_chg > 0)
                  else "OI neutre/baissier"),
-                (f"Garde-fou tendance actif (taille ×0.5)" if size_guard < 1.0
+                ("Garde-fou tendance actif (taille ×0.5)" if size_guard < 1.0
                  else "Pas de tendance forte adverse"),
                 f"TP {p['tp_atr']:.1f}×ATR / SL {p['sl_atr']:.1f}×ATR / hold ≤ {p['max_hold']}",
             ],

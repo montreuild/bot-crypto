@@ -13,8 +13,6 @@ from app.core.indicators import (
     atr_val as calc_atr,
     macd_hist_last3,
     ema_window,
-    vol_ratio as calc_vol,
-    htf_trend,
     pre_val,
     support_resistance_levels,
     nearest_support,
