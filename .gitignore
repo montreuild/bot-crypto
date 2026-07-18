@@ -44,8 +44,10 @@ Thumbs.db
 
 # Bot runtime
 logs/*.log
+logs/*.jsonl
 data/heartbeat.json
 data/KILL_SWITCH
+data/features/
 backups/
 
 # Secrets (clés API générées par scripts/setup.sh, credentials exchange)
