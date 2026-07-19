@@ -287,7 +287,10 @@ class AutoOptimizer:
     Paramètres :
       cfg             : config.yaml chargé en dict
       n_trials        : nombre de trials par (strategy, tf)
-      method          : "random" | "bayesian" | "grid" | "param_search_optim"
+      method          : "random" | "bayesian" | "grid"
+      param_search_optim : dépistage + gel des paramètres à faible impact
+                        avant la recherche (activé par défaut, orthogonal
+                        à ``method`` — pas un mode en plus)
       config_path     : chemin vers config.yaml
       on_apply_callback : callback(strategy_name, params) après application
     """
@@ -299,7 +302,8 @@ class AutoOptimizer:
                  notifier=None,
                  n_jobs: int = 1,
                  early_stop_patience: int = 0,
-                 ml_tune_hp: bool = False):
+                 ml_tune_hp: bool = False,
+                 param_search_optim: bool = True):
         self.cfg               = cfg
         self.n_trials          = n_trials
         self.method            = method
@@ -308,6 +312,12 @@ class AutoOptimizer:
         self._notifier         = notifier
         self.n_jobs            = n_jobs
         self.early_stop_patience = early_stop_patience
+        # Param Search Optim (activé par défaut) : dépistage sur fenêtre
+        # réduite puis gel des paramètres à faible impact AVANT que
+        # random/bayesian/grid ne lancent leur recherche — pas un 4e
+        # "method", une option orthogonale appliquée à celui choisi
+        # ci-dessus (cf. StrategyOptimizer.reduce_param_space).
+        self.param_search_optim = param_search_optim
         # #6 : optimisation ML two-phase (grille externe sur les hyperparamètres
         # d'entraînement × recherche interne sur les seuils). Opt-in : coûteux
         # (coût × nombre de combos HP). Sans effet sur les stratégies non-ML ou
@@ -474,14 +484,15 @@ class AutoOptimizer:
                     early_stop_patience=self.early_stop_patience)
             elif self.method == "bayesian":
                 result = opt.bayesian_search(self.n_trials, n_jobs=self.n_jobs,
-                                             early_stop_patience=self.early_stop_patience)
+                                             early_stop_patience=self.early_stop_patience,
+                                             param_search_optim=self.param_search_optim)
             elif self.method == "grid":
-                result = opt.grid_search()
-            elif self.method == "param_search_optim":
-                result = opt.param_search_optim(self.n_trials, n_jobs=self.n_jobs)
+                result = opt.grid_search(n_jobs=self.n_jobs,
+                                         param_search_optim=self.param_search_optim)
             else:
                 result = opt.random_search(self.n_trials, n_jobs=self.n_jobs,
-                                           early_stop_patience=self.early_stop_patience)
+                                           early_stop_patience=self.early_stop_patience,
+                                           param_search_optim=self.param_search_optim)
 
             applied = False
             oos_trades   = result.get("best_oos_trades", 0)
@@ -776,13 +787,16 @@ class AutoOptimizer:
                                             symbol=symbol, df_full=df, split=split,
                                             timeframe=tf)
                     if self.method == "bayesian":
-                        results[key] = opt.bayesian_search(self.n_trials, n_jobs=self.n_jobs)
+                        results[key] = opt.bayesian_search(
+                            self.n_trials, n_jobs=self.n_jobs,
+                            param_search_optim=self.param_search_optim)
                     elif self.method == "grid":
-                        results[key] = opt.grid_search()
-                    elif self.method == "param_search_optim":
-                        results[key] = opt.param_search_optim(self.n_trials, n_jobs=self.n_jobs)
+                        results[key] = opt.grid_search(
+                            n_jobs=self.n_jobs, param_search_optim=self.param_search_optim)
                     else:
-                        results[key] = opt.random_search(self.n_trials, n_jobs=self.n_jobs)
+                        results[key] = opt.random_search(
+                            self.n_trials, n_jobs=self.n_jobs,
+                            param_search_optim=self.param_search_optim)
                 except Exception as e:
                     results[key] = {"error": str(e)}
         return results

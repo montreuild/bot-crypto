@@ -32,6 +32,7 @@ def optimizer_start(
     n_jobs:              int  = 1,
     early_stop_patience: int  = 0,
     ml_tune_hp:          bool = False,
+    param_search_optim:  bool = True,
 ):
     """
     Démarre un ou plusieurs jobs d'optimisation.
@@ -42,6 +43,13 @@ def optimizer_start(
     symbole), comme le fait `LiveTrader._auto_opt_thread` (cf. BT-12). Le
     comportement mono-symbole existant (``symbols`` non fourni) reste
     STRICTEMENT inchangé (même réponse plate qu'avant ce correctif).
+
+    ``param_search_optim`` (activé par défaut) : dépistage sur fenêtre
+    réduite puis gel des paramètres à faible impact AVANT que ``method``
+    (random/bayesian/grid) ne lance sa recherche — réduit la dimensionnalité
+    effective de l'espace pour les stratégies à beaucoup de paramètres, pas
+    un mode de recherche en plus. Désactivable pour retrouver le
+    comportement historique exact.
     """
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
@@ -137,6 +145,7 @@ def optimizer_start(
             n_jobs=n_jobs,
             early_stop_patience=early_stop_patience,
             ml_tune_hp=ml_tune_hp,
+            param_search_optim=param_search_optim,
         )
 
         if not multi_symbol:
@@ -158,6 +167,7 @@ def optimizer_start(
                 "strategies":    strats,
                 "timeframes":    tf_list,
                 "method":        method,
+                "param_search_optim": param_search_optim,
                 "n_trials":      n_trials,
                 "skipped":       skipped,
                 "n_jobs_created": len(job_ids),
@@ -204,6 +214,7 @@ def optimizer_start(
             "strategies":     strats,
             "timeframes":     tf_list,
             "method":         method,
+            "param_search_optim": param_search_optim,
             "n_trials":       n_trials,
             "skipped":        all_skipped,
             "n_jobs_created": len(all_job_ids),

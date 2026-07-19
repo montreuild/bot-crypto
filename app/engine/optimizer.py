@@ -17,7 +17,6 @@ import math
 import random
 import statistics
 import threading
-import time
 import os
 import io
 from contextlib import contextmanager
@@ -255,138 +254,126 @@ class StrategyOptimizer:
         return oos
 
     def random_search(self, n_trials: int = 40, n_jobs: int = 1,
-                      early_stop_patience: int = 0) -> dict:
+                      early_stop_patience: int = 0,
+                      param_search_optim: bool = True) -> dict:
         if not self.param_space:
             return {"error": f"Aucun espace de params pour {self.strategy_name}"}
 
-        if n_jobs and n_jobs > 1:
-            # ``n_jobs`` était accepté mais jamais utilisé (boucle toujours
-            # séquentielle) — réutilise le ProcessPoolExecutor déjà construit
-            # pour _bayesian_search_legacy/_optuna_parallel (même sampler
-            # uniforme par défaut, cap mémoire anti-OOM, repli séquentiel si
-            # le pool casse). ``early_stop_patience`` n'est pas respecté dans
-            # ce mode : tous les trials sont soumis d'un coup, même
-            # comportement que la phase d'exploration bayésienne.
-            self._run_parallel(n_trials, n_trials, trial_offset=0, n_jobs=n_jobs)
-            return self._best_result()
-
-        best_score = -999
-        no_improve = 0
-
-        for i in range(n_trials):
-            params = self._with_hp({k: random.choice(v) for k, v in self.param_space.items()})
-            r = self._eval(params)
-            score = self._penalized_score(r)
-            r["final_score"] = score
-            self.results.append(r)
-
-            if score > best_score:
-                best_score = score
-                no_improve = 0
+        reduction = self._maybe_reduce_space(param_search_optim, n_trials, n_jobs)
+        try:
+            if n_jobs and n_jobs > 1:
+                # ``n_jobs`` était accepté mais jamais utilisé (boucle toujours
+                # séquentielle) — réutilise le ProcessPoolExecutor déjà construit
+                # pour _bayesian_search_legacy/_optuna_parallel (même sampler
+                # uniforme par défaut, cap mémoire anti-OOM, repli séquentiel si
+                # le pool casse). ``early_stop_patience`` n'est pas respecté dans
+                # ce mode : tous les trials sont soumis d'un coup, même
+                # comportement que la phase d'exploration bayésienne.
+                self._run_parallel(n_trials, n_trials, trial_offset=0, n_jobs=n_jobs)
+                result = self._best_result()
             else:
-                no_improve += 1
+                best_score = -999
+                no_improve = 0
 
-            if self.progress_callback:
-                self.progress_callback(i + 1, n_trials, best_score, {
-                    "oos_pnl":     r["oos_pnl"],
-                    "oos_sharpe":  r["oos_sharpe"],
-                    "final_score": score,
-                    "overfit":     r.get("overfit", 1.0),
-                })
-            if early_stop_patience > 0 and no_improve >= early_stop_patience:
-                logger.info(f"[Optimizer] Early stop à trial {i+1}/{n_trials}")
-                break
+                for i in range(n_trials):
+                    params = self._with_hp({k: random.choice(v) for k, v in self.param_space.items()})
+                    r = self._eval(params)
+                    score = self._penalized_score(r)
+                    r["final_score"] = score
+                    self.results.append(r)
 
-        return self._best_result()
+                    if score > best_score:
+                        best_score = score
+                        no_improve = 0
+                    else:
+                        no_improve += 1
 
-    # ── Param Search Optim : gel + étages + successive halving ────────────
-    def param_search_optim(self, n_trials: int = 40, n_jobs: int = 1,
-                           freeze_fraction: float = 0.3,
-                           keep_fraction: float = 0.3,
-                           small_window_frac: float = 0.35) -> dict:
-        """Mode de recherche combinant trois techniques :
+                    if self.progress_callback:
+                        self.progress_callback(i + 1, n_trials, best_score, {
+                            "oos_pnl":     r["oos_pnl"],
+                            "oos_sharpe":  r["oos_sharpe"],
+                            "final_score": score,
+                            "overfit":     r.get("overfit", 1.0),
+                        })
+                    if early_stop_patience > 0 and no_improve >= early_stop_patience:
+                        logger.info(f"[Optimizer] Early stop à trial {i+1}/{n_trials}")
+                        break
 
-        1. **Gel des paramètres à faible impact** — dépistage (``n_screen``
-           essais, espace complet) sur une fenêtre RÉDUITE
-           (``small_window_frac`` de ``df_is``/``df_oos``). Pour chaque
-           paramètre, l'« impact » est l'écart entre la moyenne du score des
-           essais groupés par valeur la plus haute et la plus basse. Les
-           paramètres les moins impactants (``freeze_fraction`` d'entre eux)
-           sont gelés à leur valeur la plus performante observée — l'espace
-           de recherche effectif se réduit d'autant pour la suite.
-        2. **Optimisation étagée** — l'étage 1 (``n_round_a`` essais) ne fait
-           varier que les paramètres CONSERVÉS (non gelés), toujours sur la
-           fenêtre réduite (peu coûteux).
-        3. **Successive halving** — seul le top ``keep_fraction`` de l'étage 1
-           est ré-évalué sur la fenêtre COMPLÈTE (``self.df_is``/``df_oos``,
-           la même donnée que ``random_search``/``bayesian_search``) : c'est
-           cette dernière passe, la plus coûteuse par essai mais la moins
-           nombreuse, qui produit le résultat final.
+                result = self._best_result()
+        finally:
+            self._restore_param_space()
+        if reduction:
+            result["param_search_optim"] = reduction
+        return result
 
-        ``n_trials`` est un budget indicatif réparti entre les 3 phases (pas
-        un compte exact — le nombre réel d'évaluations dépend de
-        ``freeze_fraction``/``keep_fraction``, cf. ``phase_counts`` dans le
-        retour). Le format de retour est celui de ``_best_result()`` avec en
-        plus ``frozen_params``, ``kept_params``, ``phase_counts``,
-        ``elapsed_s``.
+    # ── Param Search Optim : dépistage + gel des paramètres à faible impact ──
+    # Option (activée par défaut) appliquée EN AMONT de random_search/
+    # bayesian_search/grid_search — ce n'est pas un 4e mode de recherche.
+    def _should_reduce_space(self, n_trials: int) -> bool:
+        """Ne réduit que quand ça peut vraiment aider : espace à au moins 6
+        paramètres ET couverture (n_trials / cardinalité) très faible — même
+        seuil d'esprit que scripts/audit_param_space.py. Sur un petit espace
+        déjà bien couvert, le dépistage ne ferait que gaspiller du budget."""
+        if len(self.param_space) < 6:
+            return False
+        card = math.prod(len(v) for v in self.param_space.values())
+        return card > max(n_trials, 1) * 200
+
+    def _maybe_reduce_space(self, enabled: bool, n_trials: int, n_jobs: int) -> Optional[dict]:
+        if not enabled or not self._should_reduce_space(n_trials):
+            return None
+        return self.reduce_param_space(n_jobs=n_jobs)
+
+    def reduce_param_space(self, n_jobs: int = 1, freeze_fraction: float = 0.3,
+                           small_window_frac: float = 0.35,
+                           n_screen: Optional[int] = None) -> dict:
+        """Dépistage (essais sur fenêtre RÉDUITE, ``small_window_frac`` de
+        ``df_is``/``df_oos``) puis gel des paramètres à faible impact.
+
+        Pour chaque paramètre, l'« impact » est l'écart entre la moyenne du
+        score des essais groupés par valeur la plus haute et la plus basse.
+        Les ``freeze_fraction`` paramètres les moins impactants sont gelés à
+        leur valeur la plus performante observée — ``self.param_space`` est
+        muté EN PLACE (clé gelée → liste à 1 valeur) et reste réduit jusqu'à
+        ``_restore_param_space()``.
+
+        Ne lance AUCUNE recherche elle-même : conçue pour être appelée juste
+        avant ``random_search``/``bayesian_search``/``grid_search``, qui
+        héritent alors d'un espace réduit sans aucune modification de leur
+        propre logique (un paramètre à 1 seule option ne coûte plus ni essai
+        ni dimension). Retourne un diagnostic (jamais un résultat de trial).
         """
-        if not self.param_space:
-            return {"error": f"Aucun espace de params pour {self.strategy_name}"}
-
-        t_start = time.time()
         param_keys = list(self.param_space.keys())
-        n_screen  = max(12, round(n_trials * 0.35))
-        n_round_a = max(8, round(n_trials * 0.45))
+        if n_screen is None:
+            n_screen = max(12, 2 * len(param_keys))
 
         small_is  = self.df_is.tail(max(int(len(self.df_is) * small_window_frac), 200))
         small_oos = self.df_oos.tail(max(int(len(self.df_oos) * small_window_frac), 100))
-
-        # ── Phase 1 : dépistage (espace complet, fenêtre réduite) ──────────
         screen_results = self._eval_batch_isolated(n_screen, None, n_jobs, small_is, small_oos)
         frozen, kept_keys = self._compute_freeze(screen_results, param_keys, freeze_fraction)
+
+        card_before = math.prod(len(v) for v in self.param_space.values())
+        self._param_space_backup = dict(self.param_space)
+        for k, v in frozen.items():
+            self.param_space[k] = [v]
+        card_after = math.prod(len(v) for v in self.param_space.values())
+
         logger.info(
             f"[ParamSearchOptim] {self.strategy_name} : {len(frozen)}/{len(param_keys)} "
-            f"paramètres gelés après dépistage ({len(screen_results)} essais) -> {frozen}"
+            f"paramètres gelés après dépistage ({len(screen_results)} essais) — "
+            f"cardinalité {card_before:,} -> {card_after:,}"
         )
-
-        # ── Phase 2 : étage réduit (espace réduit, fenêtre réduite) ────────
-        if kept_keys:
-            sampler = self._make_frozen_sampler(frozen, kept_keys)
-            round_a_results = self._eval_batch_isolated(n_round_a, sampler, n_jobs, small_is, small_oos)
-        else:
-            r = self._eval(self._with_hp(dict(frozen)))
-            r["final_score"] = self._penalized_score(r)
-            round_a_results = [r]
-
-        if not round_a_results:
-            return {"error": "Aucun essai valide à l'étage réduit (échecs workers ?)",
-                   "failed": True, "completed_trials": len(screen_results)}
-
-        round_a_results.sort(key=self._penalized_score, reverse=True)
-        n_survivors = max(1, round(len(round_a_results) * keep_fraction))
-        survivors = round_a_results[:n_survivors]
-
-        # ── Phase 3 : successive halving — survivants sur fenêtre COMPLÈTE ─
-        survivor_params = [s["params"] for s in survivors]
-        final_results = self._eval_batch_isolated(
-            len(survivor_params), self._replay_sampler(survivor_params), n_jobs,
-            self.df_is, self.df_oos, progress=True, n_total=len(survivor_params))
-
-        if not final_results:
-            return {"error": "Aucun essai valide à l'étage final (échecs workers ?)",
-                   "failed": True,
-                   "completed_trials": len(screen_results) + len(round_a_results)}
-
-        self.results = final_results
-        result = self._best_result()
-        result["frozen_params"] = frozen
-        result["kept_params"]   = kept_keys
-        result["phase_counts"]  = {
-            "screen": len(screen_results), "round_a": len(round_a_results),
-            "final": len(final_results),
+        return {
+            "frozen_params": frozen, "kept_params": kept_keys,
+            "n_screen": len(screen_results),
+            "cardinality_before": card_before, "cardinality_after": card_after,
         }
-        result["elapsed_s"] = round(time.time() - t_start, 1)
-        return result
+
+    def _restore_param_space(self) -> None:
+        backup = getattr(self, "_param_space_backup", None)
+        if backup is not None:
+            self.param_space = backup
+            self._param_space_backup = None
 
     def _compute_freeze(self, screen_results: List[dict], param_keys: List[str],
                         freeze_fraction: float):
@@ -416,21 +403,6 @@ class StrategyOptimizer:
         frozen = {k: best_value_by_param[k] for k in frozen_keys}
         kept_keys = [k for k in param_keys if k not in frozen]
         return frozen, kept_keys
-
-    def _make_frozen_sampler(self, frozen: dict, kept_keys: List[str]) -> Callable[[], dict]:
-        def _sample():
-            params = dict(frozen)
-            for k in kept_keys:
-                params[k] = random.choice(self.param_space[k])
-            return self._with_hp(params)
-        return _sample
-
-    @staticmethod
-    def _replay_sampler(param_list: List[dict]) -> Callable[[], dict]:
-        it = iter(param_list)
-        def _sample():
-            return next(it)
-        return _sample
 
     @contextmanager
     def _temp_data_window(self, df_is: pl.DataFrame, df_oos: pl.DataFrame):
@@ -471,19 +443,28 @@ class StrategyOptimizer:
         return batch
 
     def bayesian_search(self, n_trials: int = 40, n_jobs: int = 1,
-                        early_stop_patience: int = 0) -> dict:
+                        early_stop_patience: int = 0,
+                        param_search_optim: bool = True) -> dict:
         """Recherche bayésienne. Utilise Optuna (TPE, recherche informée par un
         modèle de substitution) si la librairie est installée ; sinon retombe sur
         l'heuristique historique (exploration aléatoire + raffinement local)."""
         if not self.param_space:
             return {"error": f"Aucun espace de params pour {self.strategy_name}"}
+        reduction = self._maybe_reduce_space(param_search_optim, n_trials, n_jobs)
         try:
-            import optuna  # noqa: F401
-        except Exception:
-            logger.info("[Bayesian] Optuna absent — repli sur random+perturbation. "
-                        "Installez optuna pour une vraie recherche TPE.")
-            return self._bayesian_search_legacy(n_trials, n_jobs, early_stop_patience)
-        return self._bayesian_search_optuna(n_trials, n_jobs, early_stop_patience)
+            try:
+                import optuna  # noqa: F401
+            except Exception:
+                logger.info("[Bayesian] Optuna absent — repli sur random+perturbation. "
+                            "Installez optuna pour une vraie recherche TPE.")
+                result = self._bayesian_search_legacy(n_trials, n_jobs, early_stop_patience)
+            else:
+                result = self._bayesian_search_optuna(n_trials, n_jobs, early_stop_patience)
+        finally:
+            self._restore_param_space()
+        if reduction:
+            result["param_search_optim"] = reduction
+        return result
 
     # ── Optuna (TPE) : vraie recherche informée ───────────────────────────────
     def _params_from_trial(self, trial) -> dict:
@@ -847,30 +828,48 @@ class StrategyOptimizer:
                 new_params[k] = options[new_idx]
         return new_params
 
-    def grid_search(self) -> dict:
+    # Grid search est exhaustif — au-delà de ce nombre de combinaisons, une
+    # grille complète devient impraticable ; c'est là que la réduction
+    # d'espace (gel des paramètres à faible impact) rend le plus service.
+    _GRID_REDUCE_THRESHOLD = 5000
+
+    def grid_search(self, n_jobs: int = 1, param_search_optim: bool = True) -> dict:
         if not self.param_space:
             return {"error": "Pas d'espace de params"}
-        keys = list(self.param_space.keys())
-        vals = list(self.param_space.values())
-        combos = list(itertools.product(*vals))
-        n_total = len(combos)
-        logger.info(f"[Optimizer] Grid search : {n_total} combinaisons")
 
-        for i, combo in enumerate(combos):
-            params = self._with_hp(dict(zip(keys, combo)))
-            r = self._eval(params)
-            score = self._penalized_score(r)
-            r["final_score"] = score
-            self.results.append(r)
-            if self.progress_callback:
-                best_now = max(self._penalized_score(x) for x in self.results)
-                self.progress_callback(i + 1, n_total, best_now, {
-                    "oos_pnl":    r["oos_pnl"],
-                    "oos_sharpe": r["oos_sharpe"],
-                    "final_score": score,
-                    "overfit":    r.get("overfit", 1.0),
-                })
-        return self._best_result()
+        reduction = None
+        if (param_search_optim and len(self.param_space) >= 6
+                and math.prod(len(v) for v in self.param_space.values())
+                > self._GRID_REDUCE_THRESHOLD):
+            reduction = self.reduce_param_space(n_jobs=n_jobs)
+
+        try:
+            keys = list(self.param_space.keys())
+            vals = list(self.param_space.values())
+            combos = list(itertools.product(*vals))
+            n_total = len(combos)
+            logger.info(f"[Optimizer] Grid search : {n_total} combinaisons")
+
+            for i, combo in enumerate(combos):
+                params = self._with_hp(dict(zip(keys, combo)))
+                r = self._eval(params)
+                score = self._penalized_score(r)
+                r["final_score"] = score
+                self.results.append(r)
+                if self.progress_callback:
+                    best_now = max(self._penalized_score(x) for x in self.results)
+                    self.progress_callback(i + 1, n_total, best_now, {
+                        "oos_pnl":    r["oos_pnl"],
+                        "oos_sharpe": r["oos_sharpe"],
+                        "final_score": score,
+                        "overfit":    r.get("overfit", 1.0),
+                    })
+            result = self._best_result()
+        finally:
+            self._restore_param_space()
+        if reduction:
+            result["param_search_optim"] = reduction
+        return result
 
     def _best_result(self) -> dict:
         if not self.results:
@@ -919,17 +918,24 @@ class StrategyOptimizer:
 
     # ── Dispatch & two-phase ML (#6) ──────────────────────────────────────────
     def _dispatch(self, method: str, n_trials: int, n_jobs: int,
-                  early_stop_patience: int = 0) -> dict:
-        """Lance une recherche selon la méthode demandée (phase unique)."""
+                  early_stop_patience: int = 0,
+                  param_search_optim: bool = True) -> dict:
+        """Lance une recherche selon la méthode demandée (phase unique).
+
+        ``param_search_optim`` (gel des paramètres à faible impact avant la
+        recherche, cf. ``reduce_param_space``) n'est PAS un 4e ``method`` —
+        c'est une option orthogonale appliquée par ``random_search``/
+        ``bayesian_search``/``grid_search`` eux-mêmes, quel que soit celui
+        choisi ici."""
         if method == "grid":
-            return self.grid_search()
+            return self.grid_search(n_jobs=n_jobs, param_search_optim=param_search_optim)
         if method == "bayesian":
             return self.bayesian_search(n_trials, n_jobs=n_jobs,
-                                        early_stop_patience=early_stop_patience)
-        if method == "param_search_optim":
-            return self.param_search_optim(n_trials, n_jobs=n_jobs)
+                                        early_stop_patience=early_stop_patience,
+                                        param_search_optim=param_search_optim)
         return self.random_search(n_trials, n_jobs=n_jobs,
-                                  early_stop_patience=early_stop_patience)
+                                  early_stop_patience=early_stop_patience,
+                                  param_search_optim=param_search_optim)
 
     def optimize_two_phase(self, method: str, n_trials: int, n_jobs: int,
                            ml_hp_space: Dict[str, List],
