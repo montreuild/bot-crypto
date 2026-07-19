@@ -21,7 +21,8 @@ import os
 import io
 from contextlib import contextmanager
 from copy import deepcopy
-from typing import Dict, List, Any, Callable, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Any, Callable, Optional, Tuple
 
 import numpy as np
 import polars as pl
@@ -162,6 +163,21 @@ def ml_hp_space_for(strategy_name: str) -> Dict[str, List]:
     return {k: v for k, v in ML_HP_SPACE.items() if k in fixed}
 
 
+@dataclass
+class _PoolHandle:
+    """Pool de process ouvert et déjà initialisé (workers avec features
+    pré-calculées), partageable entre plusieurs vagues d'évaluation d'un même
+    appel (ex: dépistage puis recherche réduite) — évite de repayer le spawn
+    + ré-import complet de l'appli (lightgbm, sklearn, polars…) à chaque
+    phase, coût quasi fixe par pool et dominant pour les stratégies ML
+    multi-modèles (ex: opus_omnibus_v12)."""
+    executor: Any
+    cfg_yaml: str
+    df_is_ipc: bytes
+    df_oos_ipc: bytes
+    safe_jobs: int
+
+
 # ── StrategyOptimizer — classe principale ──
 class StrategyOptimizer:
     def __init__(self, strategy_name: str, cfg: dict,
@@ -259,115 +275,153 @@ class StrategyOptimizer:
         if not self.param_space:
             return {"error": f"Aucun espace de params pour {self.strategy_name}"}
 
-        reduction = self._maybe_reduce_space(param_search_optim, n_trials, n_jobs)
+        param_keys = list(self.param_space.keys())
+        do_reduce = param_search_optim and self._should_reduce_space(n_trials)
+        reduction = None
         try:
-            if n_jobs and n_jobs > 1:
-                # ``n_jobs`` était accepté mais jamais utilisé (boucle toujours
-                # séquentielle) — réutilise le ProcessPoolExecutor déjà construit
-                # pour _bayesian_search_legacy/_optuna_parallel (même sampler
-                # uniforme par défaut, cap mémoire anti-OOM, repli séquentiel si
-                # le pool casse). ``early_stop_patience`` n'est pas respecté dans
-                # ce mode : tous les trials sont soumis d'un coup, même
-                # comportement que la phase d'exploration bayésienne.
-                self._run_parallel(n_trials, n_trials, trial_offset=0, n_jobs=n_jobs)
-                result = self._best_result()
-            else:
-                best_score = -999
-                no_improve = 0
-
-                for i in range(n_trials):
-                    params = self._with_hp({k: random.choice(v) for k, v in self.param_space.items()})
-                    r = self._eval(params)
-                    score = self._penalized_score(r)
-                    r["final_score"] = score
-                    self.results.append(r)
-
-                    if score > best_score:
-                        best_score = score
-                        no_improve = 0
-                    else:
-                        no_improve += 1
-
-                    if self.progress_callback:
-                        self.progress_callback(i + 1, n_trials, best_score, {
-                            "oos_pnl":     r["oos_pnl"],
-                            "oos_sharpe":  r["oos_sharpe"],
-                            "final_score": score,
-                            "overfit":     r.get("overfit", 1.0),
-                        })
-                    if early_stop_patience > 0 and no_improve >= early_stop_patience:
-                        logger.info(f"[Optimizer] Early stop à trial {i+1}/{n_trials}")
-                        break
-
-                result = self._best_result()
+            with self._open_pool(n_jobs) as pool:
+                if do_reduce:
+                    # Phase A = dépistage EN BUDGET (1er tiers des essais, sur
+                    # l'espace ET la fenêtre COMPLETS — pas une fenêtre à
+                    # part) : le gel décidé ici s'applique aux essais restants
+                    # du MÊME appel, sur le MÊME pool déjà chaud. Remplace
+                    # l'ancien design (dépistage sur fenêtre réduite, en plus
+                    # du budget de n_trials, sur un 2e pool) qui coûtait plus
+                    # cher que la recherche qu'il préparait sur les gros
+                    # espaces (mesuré : 749s vs 287s sur opus_omnibus_v9) et
+                    # ne profitait jamais aux stratégies ML multi-modèles
+                    # comme v12 (spawn d'un 2e pool = coût quasi fixe,
+                    # indépendant du nombre d'essais qu'il contient).
+                    k = min(n_trials, max(8, n_trials // 3))
+                    self._run_parallel(k, n_trials, trial_offset=0, pool=pool,
+                                       early_stop_patience=early_stop_patience)
+                    if self.results:
+                        reduction = self._freeze_from_results(self.results[-k:], param_keys)
+                    remaining = n_trials - len(self.results)
+                    if remaining > 0:
+                        initial_best = max((self._penalized_score(r) for r in self.results),
+                                           default=-999.0)
+                        self._run_parallel(remaining, n_trials, trial_offset=len(self.results),
+                                           pool=pool, early_stop_patience=early_stop_patience,
+                                           initial_best=initial_best)
+                else:
+                    self._run_parallel(n_trials, n_trials, trial_offset=0, pool=pool,
+                                       early_stop_patience=early_stop_patience)
+            result = self._best_result()
         finally:
             self._restore_param_space()
         if reduction:
             result["param_search_optim"] = reduction
         return result
 
-    # ── Param Search Optim : dépistage + gel des paramètres à faible impact ──
-    # Option (activée par défaut) appliquée EN AMONT de random_search/
-    # bayesian_search/grid_search — ce n'est pas un 4e mode de recherche.
+    # ── Param Search Optim : dépistage EN BUDGET + gel des paramètres à
+    # faible impact ────────────────────────────────────────────────────────
+    # Option (activée par défaut) appliquée PENDANT random_search/
+    # bayesian_search/grid_search — pas AVANT : leurs premiers essais SONT le
+    # dépistage. Ce n'est pas un 4e mode de recherche. Principe : les essais
+    # de dépistage sont les premiers essais de la recherche elle-même, sur la
+    # fenêtre complète, comptés dans le budget demandé — jamais un essai ni
+    # un pool de process en plus.
     def _should_reduce_space(self, n_trials: int) -> bool:
         """Ne réduit que quand ça peut vraiment aider : espace à au moins 6
         paramètres ET couverture (n_trials / cardinalité) très faible — même
         seuil d'esprit que scripts/audit_param_space.py. Sur un petit espace
-        déjà bien couvert, le dépistage ne ferait que gaspiller du budget."""
+        déjà bien couvert, le gel ne ferait que réduire l'exploration pour
+        rien."""
         if len(self.param_space) < 6:
             return False
         card = math.prod(len(v) for v in self.param_space.values())
         return card > max(n_trials, 1) * 200
 
-    def _maybe_reduce_space(self, enabled: bool, n_trials: int, n_jobs: int) -> Optional[dict]:
-        if not enabled or not self._should_reduce_space(n_trials):
-            return None
-        # Le dépistage ne doit JAMAIS coûter plus que la recherche qu'il
-        # prépare — sans ce plafond, une stratégie à beaucoup de paramètres
-        # (ex. 21 pour opus_omnibus_v9) pouvait dépenser plus d'essais en
-        # dépistage (2 × 21 = 42) qu'il n'y avait de budget demandé
-        # (n_trials=20), rendant l'option plus lente que sans elle — mesuré :
-        # 749s vs 287s sur opus_omnibus_v9. Plafonné à n_trials.
-        n_screen = min(max(12, 2 * len(self.param_space)), max(n_trials, 12))
-        return self.reduce_param_space(n_jobs=n_jobs, n_screen=n_screen)
+    def _impact_scores(self, results: List[dict],
+                       param_keys: List[str]) -> Tuple[Dict[str, float], Dict[str, Any]]:
+        """Impact marginal de chaque paramètre à partir d'essais déjà joués :
+        écart entre la moyenne du score final des essais groupés par valeur,
+        la plus haute et la plus basse. 0 si le paramètre n'a montré aucun
+        signal (ex: essais tous dégénérés — cf. ``_freeze_params``)."""
+        impacts: Dict[str, float] = {}
+        best_value_by_param: Dict[str, Any] = {}
+        for k in param_keys:
+            by_value: Dict[Any, List[float]] = {}
+            for r in results:
+                v = r["params"].get(k)
+                by_value.setdefault(v, []).append(r["final_score"])
+            means = {v: statistics.mean(s) for v, s in by_value.items() if s}
+            finite = {v: m for v, m in means.items() if math.isfinite(m)}
+            impacts[k] = (max(finite.values()) - min(finite.values())
+                         if len(finite) >= 2 else 0.0)
+            if finite:
+                best_value_by_param[k] = max(finite.items(), key=lambda kv: kv[1])[0]
+            elif means:
+                best_value_by_param[k] = next(iter(means))
+            else:
+                opts = self.param_space[k]
+                best_value_by_param[k] = opts[len(opts) // 2]
+        return impacts, best_value_by_param
 
-    def reduce_param_space(self, n_jobs: int = 1, freeze_fraction: float = 0.3,
-                           small_window_frac: float = 0.35,
-                           n_screen: Optional[int] = None) -> dict:
-        """Dépistage (essais sur fenêtre RÉDUITE, ``small_window_frac`` de
-        ``df_is``/``df_oos``) puis gel des paramètres à faible impact.
-
-        Pour chaque paramètre, l'« impact » est l'écart entre la moyenne du
-        score des essais groupés par valeur la plus haute et la plus basse.
-        Les ``freeze_fraction`` paramètres les moins impactants sont gelés à
-        leur valeur la plus performante observée — ``self.param_space`` est
-        muté EN PLACE (clé gelée → liste à 1 valeur) et reste réduit jusqu'à
-        ``_restore_param_space()``.
-
-        Ne lance AUCUNE recherche elle-même : conçue pour être appelée juste
-        avant ``random_search``/``bayesian_search``/``grid_search``, qui
-        héritent alors d'un espace réduit sans aucune modification de leur
-        propre logique (un paramètre à 1 seule option ne coûte plus ni essai
-        ni dimension). Retourne un diagnostic (jamais un résultat de trial).
+    def _freeze_params(self, impacts: Dict[str, float], best_value_by_param: Dict[str, Any],
+                       param_keys: List[str], *,
+                       max_cardinality: Optional[float] = None,
+                       min_impact_share: float = 0.10) -> Tuple[dict, list]:
+        """Décide quels paramètres geler à partir d'impacts déjà calculés.
+        Toujours au moins 1 paramètre conservé (jamais un espace totalement
+        gelé). Deux modes :
+          - ``max_cardinality`` (grid) : gèle par impact CROISSANT jusqu'à
+            repasser sous ce seuil — réduction OBLIGATOIRE (une grille de
+            plusieurs milliards de combinaisons est infaisable), donc gèle
+            même sur signal faible.
+          - sinon (random/bayesian, réduction facultative) : gèle seulement
+            les paramètres dont la part d'impact mesuré reste sous
+            ``min_impact_share`` — si le dépistage n'a montré AUCUN signal
+            (impacts tous nuls, ex: essais tous dégénérés à -999, observé sur
+            opus_omnibus_v12 avec une fenêtre de test trop courte), ne gèle
+            RIEN plutôt que de figer des paramètres sur du bruit.
         """
-        param_keys = list(self.param_space.keys())
-        if n_screen is None:
-            n_screen = max(12, 2 * len(param_keys))
+        ranked = sorted(param_keys, key=lambda k: impacts.get(k, 0.0))  # impact croissant
+        if max_cardinality is not None:
+            frozen_keys: List[str] = []
+            card = math.prod(len(self.param_space[k]) for k in param_keys)
+            for k in ranked:
+                if card <= max_cardinality or len(frozen_keys) >= len(param_keys) - 1:
+                    break
+                card = max(1, card // max(1, len(self.param_space[k])))
+                frozen_keys.append(k)
+        else:
+            total = sum(v for v in impacts.values() if math.isfinite(v) and v > 0)
+            frozen_keys = []
+            if total > 0:
+                for k in ranked:
+                    if len(frozen_keys) >= len(param_keys) - 1:
+                        break
+                    if impacts.get(k, 0.0) / total > min_impact_share:
+                        break
+                    frozen_keys.append(k)
+        frozen = {k: best_value_by_param[k] for k in frozen_keys}
+        kept_keys = [k for k in param_keys if k not in frozen]
+        return frozen, kept_keys
 
-        small_is  = self.df_is.tail(max(int(len(self.df_is) * small_window_frac), 200))
-        small_oos = self.df_oos.tail(max(int(len(self.df_oos) * small_window_frac), 100))
-        screen_results = self._eval_batch_isolated(n_screen, None, n_jobs, small_is, small_oos)
-        frozen, kept_keys = self._compute_freeze(screen_results, param_keys, freeze_fraction)
-
-        card_before = math.prod(len(v) for v in self.param_space.values())
-        self._param_space_backup = dict(self.param_space)
+    def _freeze_from_results(self, screen_results: List[dict], param_keys: List[str], *,
+                             max_cardinality: Optional[float] = None) -> Optional[dict]:
+        """Calcule l'impact de chaque paramètre à partir d'essais DÉJÀ joués
+        (en budget, même fenêtre que la recherche) et gèle les moins
+        impactants — mute ``self.param_space`` EN PLACE (sauvegardé pour
+        ``_restore_param_space``). Retourne ``None`` si rien n'a été gelé."""
+        if not screen_results:
+            return None
+        impacts, best_value_by_param = self._impact_scores(screen_results, param_keys)
+        frozen, kept_keys = self._freeze_params(impacts, best_value_by_param, param_keys,
+                                                max_cardinality=max_cardinality)
+        if not frozen:
+            return None
+        card_before = math.prod(len(self.param_space[k]) for k in param_keys)
+        if getattr(self, "_param_space_backup", None) is None:
+            self._param_space_backup = dict(self.param_space)
         for k, v in frozen.items():
             self.param_space[k] = [v]
-        card_after = math.prod(len(v) for v in self.param_space.values())
-
+        card_after = math.prod(len(self.param_space[k]) for k in param_keys)
         logger.info(
             f"[ParamSearchOptim] {self.strategy_name} : {len(frozen)}/{len(param_keys)} "
-            f"paramètres gelés après dépistage ({len(screen_results)} essais) — "
+            f"paramètres gelés (dépistage {len(screen_results)} essais, dans le budget) — "
             f"cardinalité {card_before:,} -> {card_after:,}"
         )
         return {
@@ -382,72 +436,80 @@ class StrategyOptimizer:
             self.param_space = backup
             self._param_space_backup = None
 
-    def _compute_freeze(self, screen_results: List[dict], param_keys: List[str],
-                        freeze_fraction: float):
-        """Impact d'un paramètre = écart entre la moyenne du score final des
-        essais groupés par valeur la plus haute et la plus basse (dépistage).
-        Gèle les ``freeze_fraction`` paramètres les moins impactants à leur
-        valeur la plus performante en moyenne. Toujours au moins 1 paramètre
-        conservé (jamais un espace de recherche totalement gelé)."""
-        impacts: Dict[str, float] = {}
-        best_value_by_param: Dict[str, Any] = {}
-        for k in param_keys:
-            by_value: Dict[Any, List[float]] = {}
-            for r in screen_results:
-                v = r["params"].get(k)
-                by_value.setdefault(v, []).append(r["final_score"])
-            means = {v: statistics.mean(s) for v, s in by_value.items() if s}
-            impacts[k] = (max(means.values()) - min(means.values())) if len(means) >= 2 else 0.0
-            if means:
-                best_value_by_param[k] = max(means.items(), key=lambda kv: kv[1])[0]
-            else:
-                opts = self.param_space[k]
-                best_value_by_param[k] = opts[len(opts) // 2]
-
-        n_freeze = max(0, min(len(param_keys) - 1, round(len(param_keys) * freeze_fraction)))
-        ranked = sorted(param_keys, key=lambda k: impacts[k])  # impact croissant
-        frozen_keys = ranked[:n_freeze]
-        frozen = {k: best_value_by_param[k] for k in frozen_keys}
-        kept_keys = [k for k in param_keys if k not in frozen]
-        return frozen, kept_keys
-
+    # ── Pool de process partagé (dépistage + recherche, sans re-spawn) ──────
     @contextmanager
-    def _temp_data_window(self, df_is: pl.DataFrame, df_oos: pl.DataFrame):
-        """Substitue temporairement ``self.df_is``/``df_oos`` — permet de
-        réutiliser ``_run_parallel`` (séquentiel ET ProcessPoolExecutor)
-        inchangé sur une fenêtre de données différente de celle passée au
-        constructeur, sans dupliquer sa logique de sérialisation/cap mémoire."""
-        orig_is, orig_oos = self.df_is, self.df_oos
-        self.df_is, self.df_oos = df_is, df_oos
+    def _open_pool(self, n_jobs: int):
+        """Pool PERSISTANT pour toute la durée du bloc ``with`` — plusieurs
+        appels à ``_run_parallel`` (ex: dépistage puis recherche réduite)
+        peuvent le partager sans jamais repayer le spawn + ré-import complet
+        de l'appli. ``None`` en mode séquentiel (n_jobs<=1, ou mémoire
+        insuffisante pour >1 worker) : ``_run_parallel`` bascule alors en
+        boucle in-process."""
+        safe_jobs = self._safe_worker_count(n_jobs)
+        if safe_jobs <= 1:
+            yield None
+            return
+        import concurrent.futures
+        import multiprocessing as _mp
+        cfg_yaml, df_is_ipc, df_oos_ipc, init_args = self._serialize_pool_inputs()
+        ctx = _mp.get_context("spawn")
+        executor = concurrent.futures.ProcessPoolExecutor(
+            max_workers=safe_jobs, mp_context=ctx,
+            initializer=_worker_init, initargs=init_args)
         try:
-            yield
+            yield _PoolHandle(executor, cfg_yaml, df_is_ipc, df_oos_ipc, safe_jobs)
         finally:
-            self.df_is, self.df_oos = orig_is, orig_oos
+            executor.shutdown(wait=True, cancel_futures=True)
 
-    def _eval_batch_isolated(self, n: int, sampler: Optional[Callable[[], dict]],
-                             n_jobs: int, df_is: pl.DataFrame, df_oos: pl.DataFrame,
-                             progress: bool = False, n_total: Optional[int] = None) -> List[dict]:
-        """Évalue ``n`` essais (via ``_run_parallel``, séquentiel ou
-        ProcessPoolExecutor selon ``n_jobs``) sur une fenêtre de données
-        donnée, SANS polluer ``self.results`` — les phases de dépistage/étage
-        réduit d'un ``param_search_optim`` ne sont pas comparables aux essais
-        sur fenêtre complète (scores calculés sur moins de barres) et ne
-        doivent donc jamais entrer en compétition dans ``_best_result()``.
-        """
-        saved_results = self.results
-        saved_callback = self.progress_callback
-        self.results = []
-        if not progress:
-            self.progress_callback = None
+    def _submit_wave(self, pool: "_PoolHandle", params_list: List[dict],
+                     timeout: int = 300) -> Tuple[List[dict], bool, List[dict]]:
+        """Soumet une vague de ``params_list`` au pool DÉJÀ OUVERT (jamais
+        créé ici) et attend leurs résultats. Retourne (résultats OK, pool
+        cassé ?, params non traités si cassé). Primitive bas niveau partagée
+        par ``_run_parallel`` (random/grid) et ``_optuna_parallel`` (bayésien
+        parallèle)."""
+        import concurrent.futures
         try:
-            with self._temp_data_window(df_is, df_oos):
-                self._run_parallel(n, n_total or n, trial_offset=0,
-                                   sampler=sampler, n_jobs=n_jobs)
-            batch = self.results
-        finally:
-            self.results = saved_results
-            self.progress_callback = saved_callback
-        return batch
+            from concurrent.futures.process import BrokenProcessPool
+        except ImportError:
+            BrokenProcessPool = Exception  # type: ignore
+
+        worker_args = [self._worker_args(p, pool.cfg_yaml, pool.df_is_ipc, pool.df_oos_ipc)
+                      for p in params_list]
+        try:
+            futures_map = {pool.executor.submit(_eval_worker, a): i
+                           for i, a in enumerate(worker_args)}
+        except BrokenProcessPool as _bp:
+            logger.error("[Optimizer] pool déjà cassé, bascule séquentielle : %s", _bp)
+            return [], True, list(params_list)
+
+        results: List[Optional[dict]] = [None] * len(params_list)
+        broken = False
+        remaining: List[dict] = []
+        for fut in concurrent.futures.as_completed(futures_map):
+            i = futures_map[fut]
+            try:
+                r = fut.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                logger.warning("[Optimizer] worker timeout (>%ds), ignoré", timeout)
+                continue
+            except BrokenProcessPool as _bp:
+                logger.error("[Optimizer] BrokenProcessPool (worker tué, ex: OOM) : %s", _bp)
+                broken = True
+                for f, idx in futures_map.items():
+                    if not f.done():
+                        remaining.append(params_list[idx])
+                        f.cancel()
+                break
+            except Exception as _e:
+                logger.warning(f"[Optimizer] worker KO : {_e}")
+                continue
+            if "error" in r:
+                logger.warning("[Optimizer] worker erreur : %s", r["error"])
+                continue
+            results[i] = r
+        ok_results = [r for r in results if r is not None]
+        return ok_results, broken, remaining
 
     def bayesian_search(self, n_trials: int = 40, n_jobs: int = 1,
                         early_stop_patience: int = 0,
@@ -457,21 +519,18 @@ class StrategyOptimizer:
         l'heuristique historique (exploration aléatoire + raffinement local)."""
         if not self.param_space:
             return {"error": f"Aucun espace de params pour {self.strategy_name}"}
-        reduction = self._maybe_reduce_space(param_search_optim, n_trials, n_jobs)
         try:
+            import optuna  # noqa: F401
+        except Exception:
+            logger.info("[Bayesian] Optuna absent — repli sur random+perturbation. "
+                        "Installez optuna pour une vraie recherche TPE.")
             try:
-                import optuna  # noqa: F401
-            except Exception:
-                logger.info("[Bayesian] Optuna absent — repli sur random+perturbation. "
-                            "Installez optuna pour une vraie recherche TPE.")
-                result = self._bayesian_search_legacy(n_trials, n_jobs, early_stop_patience)
-            else:
-                result = self._bayesian_search_optuna(n_trials, n_jobs, early_stop_patience)
-        finally:
-            self._restore_param_space()
-        if reduction:
-            result["param_search_optim"] = reduction
-        return result
+                return self._bayesian_search_legacy(n_trials, n_jobs, early_stop_patience,
+                                                    param_search_optim=param_search_optim)
+            finally:
+                self._restore_param_space()
+        return self._bayesian_search_optuna(n_trials, n_jobs, early_stop_patience,
+                                            param_search_optim=param_search_optim)
 
     # ── Optuna (TPE) : vraie recherche informée ───────────────────────────────
     def _params_from_trial(self, trial) -> dict:
@@ -485,26 +544,101 @@ class StrategyOptimizer:
         return self._with_hp(p)
 
     def _bayesian_search_optuna(self, n_trials: int, n_jobs: int,
-                                early_stop_patience: int) -> dict:
+                                early_stop_patience: int,
+                                param_search_optim: bool = True) -> dict:
         import optuna
         optuna.logging.set_verbosity(optuna.logging.WARNING)
-        sampler = optuna.samplers.TPESampler(
-            n_startup_trials=max(8, n_trials // 3), seed=0,
-        )
+        n_startup = max(8, n_trials // 3)
+        sampler = optuna.samplers.TPESampler(n_startup_trials=n_startup, seed=0)
         study = optuna.create_study(direction="maximize", sampler=sampler)
+
+        param_keys = list(self.param_space.keys())
+        freeze_at = (n_startup if (param_search_optim and self._should_reduce_space(n_trials))
+                    else None)
 
         safe_jobs = self._safe_worker_count(n_jobs)
         if safe_jobs <= 1:
-            self._optuna_sequential(study, n_trials, early_stop_patience)
+            reduction = self._optuna_sequential(study, n_trials, early_stop_patience,
+                                                freeze_at=freeze_at, param_keys=param_keys)
         else:
-            self._optuna_parallel(study, n_trials, safe_jobs, early_stop_patience)
-        return self._best_result()
+            reduction = self._optuna_parallel(study, n_trials, safe_jobs, early_stop_patience,
+                                              freeze_at=freeze_at, param_keys=param_keys)
+        result = self._best_result()
+        if reduction:
+            result["param_search_optim"] = reduction
+        return result
 
-    def _optuna_sequential(self, study, n_trials: int, early_stop_patience: int) -> None:
+    def _optuna_apply_freeze(self, study, screen_results: List[dict],
+                             param_keys: List[str]) -> Optional[dict]:
+        """Gèle le SAMPLER Optuna (``PartialFixedSampler``) sur les paramètres
+        à faible impact, calculé à partir des essais de démarrage du TPE déjà
+        joués (en budget). Ne mute JAMAIS ``self.param_space`` : le sampler
+        fige la valeur lui-même, contrairement à random/grid/legacy — pas de
+        backup/restore nécessaire pour ce chemin. Utilise l'estimateur
+        d'importance fANOVA d'Optuna quand disponible (plus robuste que
+        l'écart marginal simple face à des paramètres corrélés), avec repli
+        sur l'estimateur marginal partagé (``_impact_scores``) si fANOVA
+        échoue ou ne rend aucun signal exploitable."""
+        import optuna
+        own_impacts, best_value_by_param = self._impact_scores(screen_results, param_keys)
+        impacts = own_impacts
+        try:
+            import warnings
+
+            from optuna.importance import FanovaImportanceEvaluator, get_param_importances
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
+                raw = get_param_importances(study, evaluator=FanovaImportanceEvaluator(seed=0))
+            optuna_impacts = {k: float(raw.get(k, 0.0)) for k in param_keys}
+            if (all(math.isfinite(v) for v in optuna_impacts.values())
+                    and sum(optuna_impacts.values()) > 0):
+                impacts = optuna_impacts
+        except Exception as _e:
+            logger.info("[Bayesian/TPE] importance Optuna indisponible (%s) — repli sur "
+                        "l'estimateur marginal.", _e)
+
+        frozen, kept_keys = self._freeze_params(impacts, best_value_by_param, param_keys)
+        if not frozen:
+            return None
+        fixed_indices: Dict[str, int] = {}
+        for k, v in frozen.items():
+            try:
+                fixed_indices[k] = self.param_space[k].index(v)
+            except ValueError:
+                continue  # valeur introuvable (ne devrait pas arriver) -> ne fige pas ce param
+        if not fixed_indices:
+            return None
+
+        import warnings as _warnings
+        with _warnings.catch_warnings():
+            _warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
+            study.sampler = optuna.samplers.PartialFixedSampler(fixed_indices, study.sampler)
+
+        card_before = math.prod(len(self.param_space[k]) for k in param_keys)
+        card_after  = math.prod(1 if k in fixed_indices else len(self.param_space[k])
+                                for k in param_keys)
+        logger.info(
+            f"[ParamSearchOptim] {self.strategy_name} (bayésien/TPE) : "
+            f"{len(fixed_indices)}/{len(param_keys)} paramètres gelés "
+            f"(dépistage {len(screen_results)} essais, dans le budget, sampler figé) — "
+            f"cardinalité {card_before:,} -> {card_after:,}"
+        )
+        return {
+            "frozen_params": {k: frozen[k] for k in fixed_indices},
+            "kept_params": kept_keys,
+            "n_screen": len(screen_results),
+            "cardinality_before": card_before, "cardinality_after": card_after,
+        }
+
+    def _optuna_sequential(self, study, n_trials: int, early_stop_patience: int,
+                           freeze_at: Optional[int] = None,
+                           param_keys: Optional[List[str]] = None) -> Optional[dict]:
         """Ask/tell séquentiel in-process — garde le cache d'entraînement chaud
         (même process) d'un trial à l'autre."""
         best_score = -999.0
         no_improve = 0
+        reduction = None
+        own_results: List[dict] = []
         for i in range(n_trials):
             trial  = study.ask()
             params = self._params_from_trial(trial)
@@ -512,6 +646,7 @@ class StrategyOptimizer:
             score  = self._penalized_score(r)
             r["final_score"] = score
             self.results.append(r)
+            own_results.append(r)
             study.tell(trial, score if math.isfinite(score) else -999.0)
 
             if score > best_score:
@@ -527,12 +662,19 @@ class StrategyOptimizer:
                     "final_score": score,
                     "overfit":     r.get("overfit", 1.0),
                 })
+
+            if freeze_at is not None and reduction is None and len(own_results) >= freeze_at:
+                reduction = self._optuna_apply_freeze(study, own_results, param_keys)
+
             if early_stop_patience > 0 and no_improve >= early_stop_patience:
                 logger.info(f"[Bayesian/TPE] Early stop à trial {i+1}/{n_trials}")
                 break
+        return reduction
 
     def _optuna_parallel(self, study, n_trials: int, safe_jobs: int,
-                         early_stop_patience: int) -> None:
+                         early_stop_patience: int,
+                         freeze_at: Optional[int] = None,
+                         param_keys: Optional[List[str]] = None) -> Optional[dict]:
         """Ask/tell par lots sur un ProcessPool **persistant** (un seul pool pour
         toute la recherche → workers et cache de features/entraînement réutilisés
         entre les lots). Repli séquentiel si le pool casse (OOM worker)."""
@@ -549,6 +691,8 @@ class StrategyOptimizer:
         best_score = -999.0
         no_improve = 0
         _worker_timeout = 300
+        reduction = None
+        own_results: List[dict] = []
 
         try:
             with concurrent.futures.ProcessPoolExecutor(
@@ -578,6 +722,7 @@ class StrategyOptimizer:
                         score = self._penalized_score(r)
                         r["final_score"] = score
                         self.results.append(r)
+                        own_results.append(r)
                         study.tell(trials[i], score if math.isfinite(score) else -999.0)
                         if score > best_score:
                             best_score = score
@@ -592,30 +737,50 @@ class StrategyOptimizer:
                                 "overfit":     r.get("overfit", 1.0),
                             })
                     done += k
+                    if freeze_at is not None and reduction is None and len(own_results) >= freeze_at:
+                        reduction = self._optuna_apply_freeze(study, own_results, param_keys)
                     if early_stop_patience > 0 and no_improve >= early_stop_patience:
                         logger.info(f"[Bayesian/TPE] Early stop à {done}/{n_trials}")
                         break
         except BrokenProcessPool as _bp:
             logger.error("[Bayesian/TPE] pool brisé (OOM worker ?) — repli séquentiel "
                          "pour les trials restants : %s", _bp)
-            self._optuna_sequential(study, n_trials - len(self.results),
-                                    early_stop_patience)
+            remaining_freeze_at = None
+            if freeze_at is not None and reduction is None:
+                remaining_freeze_at = freeze_at - len(own_results)
+                if remaining_freeze_at <= 0:
+                    remaining_freeze_at = None
+            seq_reduction = self._optuna_sequential(
+                study, n_trials - len(self.results), early_stop_patience,
+                freeze_at=remaining_freeze_at, param_keys=param_keys)
+            reduction = reduction or seq_reduction
+        return reduction
 
     def _bayesian_search_legacy(self, n_trials: int = 40, n_jobs: int = 1,
-                                early_stop_patience: int = 0) -> dict:
-        """Heuristique historique : exploration aléatoire (1/3) puis raffinement
-        local (perturbation ±1 cran autour du meilleur). Repli quand Optuna est
-        absent (ex. environnement de production sans la dépendance)."""
+                                early_stop_patience: int = 0,
+                                param_search_optim: bool = True) -> dict:
+        """Heuristique historique : exploration aléatoire (1/3, EN BUDGET) puis
+        raffinement local (perturbation ±1 cran autour du meilleur). Repli quand
+        Optuna est absent (ex. environnement de production sans la dépendance).
+        La phase d'exploration sert aussi de dépistage Param Search Optim :
+        aucun essai ni pool de process supplémentaire."""
         n_explore = max(8, n_trials // 3)
         n_exploit = n_trials - n_explore
+        param_keys = list(self.param_space.keys())
+        do_reduce = param_search_optim and self._should_reduce_space(n_trials)
 
-        # Phase exploration : random
-        self._run_parallel(n_explore, n_trials, trial_offset=0,
-                           sampler=lambda: self._with_hp(
-                               {k: random.choice(v) for k, v in self.param_space.items()}),
-                           n_jobs=n_jobs)
+        with self._open_pool(n_jobs) as pool:
+            self._run_parallel(n_explore, n_trials, trial_offset=0,
+                               sampler=lambda: self._with_hp(
+                                   {k: random.choice(v) for k, v in self.param_space.items()}),
+                               pool=pool)
 
-        # Phase exploitation : gaussian autour du meilleur
+        reduction = None
+        if do_reduce and self.results:
+            reduction = self._freeze_from_results(self.results[-n_explore:], param_keys)
+
+        # Phase exploitation : gaussian autour du meilleur (séquentielle — le
+        # pool ci-dessus est déjà refermé, pas de 2e pool ouvert ici).
         if self.results and n_exploit > 0:
             best = max(self.results, key=self._penalized_score)
             no_improve = 0
@@ -647,7 +812,10 @@ class StrategyOptimizer:
                     logger.info(f"[Bayesian] Early stop exploit trial {i+1}/{n_exploit}")
                     break
 
-        return self._best_result()
+        result = self._best_result()
+        if reduction:
+            result["param_search_optim"] = reduction
+        return result
 
     # ── Helpers ProcessPool (partagés random/bayesian) ───────────────────────
     def _serialize_pool_inputs(self):
@@ -683,140 +851,88 @@ class StrategyOptimizer:
         return safe
 
     def _run_parallel(self, n: int, n_total: int, trial_offset: int = 0,
-                      sampler=None, n_jobs: int = 1):
+                      sampler=None, pool: Optional["_PoolHandle"] = None,
+                      early_stop_patience: int = 0,
+                      initial_best: float = -999.0) -> None:
+        """Évalue ``n`` essais et les ajoute à ``self.results`` : séquentiel si
+        ``pool`` est ``None``, sinon par vagues de ``pool.safe_jobs`` sur le
+        pool DÉJÀ OUVERT (jamais créé ici — cf. ``_open_pool``). Plusieurs
+        appels successifs peuvent partager le même ``pool`` (dépistage puis
+        recherche réduite) sans jamais rouvrir de 2e pool. ``initial_best``
+        amorce le meilleur score reporté au ``progress_callback`` quand cet
+        appel poursuit une recherche déjà commencée (évite un faux retour à
+        -999 affiché en UI entre deux phases)."""
         if sampler is None:
             sampler = lambda: self._with_hp({k: random.choice(v) for k, v in self.param_space.items()})
 
-        if n_jobs <= 1:
-            best_so_far = -999
-            for i in range(n):
-                r = self._eval(sampler())
-                score = self._penalized_score(r)
-                r["final_score"] = score
-                self.results.append(r)
-                if score > best_so_far:
-                    best_so_far = score
-                if self.progress_callback:
-                    self.progress_callback(trial_offset + i + 1, n_total, best_so_far, {
-                        "oos_pnl":     r["oos_pnl"],
-                        "oos_sharpe":  r["oos_sharpe"],
-                        "final_score": score,
-                        "overfit":     r.get("overfit", 1.0),
-                    })
-        else:
-            # ProcessPoolExecutor pour parallélisme CPU réel (contourne le GIL)
-            import multiprocessing as _mp
-            import concurrent.futures
+        best_so_far = initial_best
+        no_improve = 0
+        done = 0
 
-            param_list = [sampler() for _ in range(n)]
-            best_so_far = -999
-            done_count  = 0
+        def _record(r: dict) -> None:
+            nonlocal best_so_far, no_improve, done
+            score = self._penalized_score(r)
+            r["final_score"] = score
+            self.results.append(r)
+            done += 1
+            if score > best_so_far:
+                best_so_far = score
+                no_improve = 0
+            else:
+                no_improve += 1
+            if self.progress_callback:
+                self.progress_callback(trial_offset + done, n_total, best_so_far, {
+                    "oos_pnl":     r["oos_pnl"],
+                    "oos_sharpe":  r["oos_sharpe"],
+                    "final_score": score,
+                    "overfit":     r.get("overfit", 1.0),
+                })
 
-            # Sérialisation des DataFrames via IPC (efficace, évite copie mémoire)
-            cfg_yaml, df_is_ipc, df_oos_ipc, _init_args = self._serialize_pool_inputs()
+        if pool is None:
+            for _ in range(n):
+                _record(self._eval(sampler()))
+                if early_stop_patience > 0 and no_improve >= early_stop_patience:
+                    logger.info(f"[Optimizer] Early stop à trial {trial_offset + done}/{n_total}")
+                    break
+            return
 
-            worker_args = [
-                self._worker_args(p, cfg_yaml, df_is_ipc, df_oos_ipc)
-                for p in param_list
-            ]
-
-            # spawn : évite les problèmes de fork avec les threads FastAPI ;
-            # plafonnement cpu-1 puis cap mémoire anti-OOM.
-            _safe_jobs = self._safe_worker_count(n_jobs)
-            _worker_timeout = 300  # 5 min max par évaluation
-            ctx = _mp.get_context("spawn")
-            try:
-                from concurrent.futures.process import BrokenProcessPool
-            except ImportError:  # py<3.3 fallback (jamais atteint)
-                BrokenProcessPool = Exception  # type: ignore
-
-            # initializer/initargs : chaque worker pré-calcule les features
-            # (lourdes, ~462 colonnes × 20k barres) une seule fois et les
-            # réutilise pour tous ses trials → gain typique ×5-10 sur les
-            # stratégies à features lourdes (opus_omnibus_v8/v10_retrained…).
-            _init_args = (self.strategy_name, cfg_yaml,
-                          df_is_ipc, df_oos_ipc, self.symbol, self.timeframe)
-
-            remaining_params: List[dict] = []
-            pool_broken = False
-            try:
-                with concurrent.futures.ProcessPoolExecutor(
-                        max_workers=_safe_jobs, mp_context=ctx,
-                        initializer=_worker_init, initargs=_init_args) as exe:
-                    futures_map = {exe.submit(_eval_worker, a): i for i, a in enumerate(worker_args)}
-                    for fut in concurrent.futures.as_completed(futures_map):
-                        done_count += 1
+        # Parallèle : par vagues de pool.safe_jobs sur le pool partagé (jamais
+        # créé/fermé ici — cf. _open_pool).
+        pool_broken = False
+        while done < n:
+            if self._cancel_event is not None and self._cancel_event.is_set():
+                raise InterruptedError("annulé")
+            if pool_broken:
+                # Pool définitivement mort (BrokenProcessPool observé) : bascule
+                # séquentielle pour le reste, un trial à la fois.
+                params = sampler()
+                try:
+                    r = self._eval(params)
+                except Exception as _se:
+                    logger.warning(f"[Optimizer] trial séquentiel KO : {_se}")
+                    continue
+                _record(r)
+            else:
+                k = min(pool.safe_jobs, n - done)
+                param_list = [sampler() for _ in range(k)]
+                wave_results, broken, remaining = self._submit_wave(pool, param_list)
+                for r in wave_results:
+                    _record(r)
+                if broken:
+                    pool_broken = True
+                    logger.error(
+                        "[Optimizer] BrokenProcessPool (worker tué, ex: OOM) — "
+                        "bascule en séquentiel pour les trials restants")
+                    for p in remaining:
                         try:
-                            r = fut.result(timeout=_worker_timeout)
-                        except concurrent.futures.TimeoutError:
-                            logger.warning("[Optimizer] worker timeout (>%ds), ignoré", _worker_timeout)
+                            r = self._eval(p)
+                        except Exception as _se:
+                            logger.warning(f"[Optimizer] trial séquentiel KO : {_se}")
                             continue
-                        except BrokenProcessPool as _bp:
-                            # Un worker a été tué (OOM LightGBM, segfault…). Le pool
-                            # entier est compromis : on bascule sur du séquentiel
-                            # pour les trials restants au lieu de tout perdre.
-                            logger.error(
-                                "[Optimizer] BrokenProcessPool (worker tué, ex: OOM) — "
-                                "bascule en séquentiel pour les trials restants : %s", _bp,
-                            )
-                            pool_broken = True
-                            for f, idx in futures_map.items():
-                                if not f.done():
-                                    remaining_params.append(param_list[idx])
-                                    f.cancel()
-                            break
-                        except Exception as _e:
-                            logger.warning(f"[Optimizer] worker KO : {_e}")
-                            continue
-                        if "error" in r:
-                            logger.warning("[Optimizer] worker erreur : %s", r["error"])
-                            continue
-                        score = self._penalized_score(r)
-                        r["final_score"] = score
-                        self.results.append(r)
-                        if score > best_so_far:
-                            best_so_far = score
-                        if self.progress_callback:
-                            self.progress_callback(trial_offset + done_count, n_total, best_so_far, {
-                                "oos_pnl":     r["oos_pnl"],
-                                "oos_sharpe":  r["oos_sharpe"],
-                                "final_score": score,
-                                "overfit":     r.get("overfit", 1.0),
-                            })
-            except BrokenProcessPool as _bp:
-                # Le pool est mort à l'__exit__ (ex: shutdown KO après crash).
-                # On absorbe l'erreur ; les trials déjà collectés restent valides.
-                logger.error("[Optimizer] pool brisé à la fermeture, ignoré : %s", _bp)
-                pool_broken = True
-
-            # Fallback séquentiel pour les trials non traités après pool brisé.
-            if pool_broken and remaining_params:
-                logger.info(
-                    "[Optimizer] reprise en séquentiel de %d trial(s) restant(s)",
-                    len(remaining_params),
-                )
-                for p in remaining_params:
-                    try:
-                        r = self._eval(p)
-                    except Exception as _se:
-                        logger.warning(f"[Optimizer] trial séquentiel KO : {_se}")
-                        continue
-                    done_count += 1
-                    score = self._penalized_score(r)
-                    r["final_score"] = score
-                    self.results.append(r)
-                    if score > best_so_far:
-                        best_so_far = score
-                    if self.progress_callback:
-                        try:
-                            self.progress_callback(trial_offset + done_count, n_total, best_so_far, {
-                                "oos_pnl":     r["oos_pnl"],
-                                "oos_sharpe":  r["oos_sharpe"],
-                                "final_score": score,
-                                "overfit":     r.get("overfit", 1.0),
-                            })
-                        except InterruptedError:
-                            raise
+                        _record(r)
+            if early_stop_patience > 0 and no_improve >= early_stop_patience:
+                logger.info(f"[Optimizer] Early stop à {trial_offset + done}/{n_total}")
+                break
 
     def _perturb(self, params: dict) -> dict:
         """Perturbation légère d'un jeu de params pour l'exploitation."""
@@ -844,33 +960,40 @@ class StrategyOptimizer:
         if not self.param_space:
             return {"error": "Pas d'espace de params"}
 
+        param_keys = list(self.param_space.keys())
+        full_card = math.prod(len(v) for v in self.param_space.values())
+        do_reduce = (param_search_optim and len(param_keys) >= 6
+                    and full_card > self._GRID_REDUCE_THRESHOLD)
         reduction = None
-        if (param_search_optim and len(self.param_space) >= 6
-                and math.prod(len(v) for v in self.param_space.values())
-                > self._GRID_REDUCE_THRESHOLD):
-            reduction = self.reduce_param_space(n_jobs=n_jobs)
-
         try:
-            keys = list(self.param_space.keys())
-            vals = list(self.param_space.values())
-            combos = list(itertools.product(*vals))
-            n_total = len(combos)
-            logger.info(f"[Optimizer] Grid search : {n_total} combinaisons")
+            with self._open_pool(n_jobs) as pool:
+                if do_reduce:
+                    # Dépistage sur la fenêtre COMPLÈTE (même IS/OOS que
+                    # l'énumération qui suit) et le MÊME pool que
+                    # l'énumération — une fenêtre réduite forcerait un 2e pool
+                    # (les workers pré-chargent IS/OOS une seule fois à
+                    # l'ouverture, cf. opt_workers._worker_init) et casserait
+                    # le cache de features entre dépistage et énumération.
+                    n_screen = min(max(12, 2 * len(param_keys)), 60)
+                    self._run_parallel(n_screen, n_screen, trial_offset=0, pool=pool)
+                    reduction = self._freeze_from_results(
+                        self.results[-n_screen:], param_keys,
+                        max_cardinality=self._GRID_REDUCE_THRESHOLD)
 
-            for i, combo in enumerate(combos):
-                params = self._with_hp(dict(zip(keys, combo)))
-                r = self._eval(params)
-                score = self._penalized_score(r)
-                r["final_score"] = score
-                self.results.append(r)
-                if self.progress_callback:
-                    best_now = max(self._penalized_score(x) for x in self.results)
-                    self.progress_callback(i + 1, n_total, best_now, {
-                        "oos_pnl":    r["oos_pnl"],
-                        "oos_sharpe": r["oos_sharpe"],
-                        "final_score": score,
-                        "overfit":    r.get("overfit", 1.0),
-                    })
+                keys = list(self.param_space.keys())
+                vals = list(self.param_space.values())
+                combos = list(itertools.product(*vals))
+                n_combos = len(combos)
+                logger.info(f"[Optimizer] Grid search : {n_combos} combinaisons")
+                param_iter = iter(self._with_hp(dict(zip(keys, c))) for c in combos)
+                initial_best = max((self._penalized_score(r) for r in self.results),
+                                   default=-999.0)
+                # Énumération parallélisée (n_jobs) sur le pool partagé — la
+                # boucle exhaustive était auparavant toujours séquentielle,
+                # même quand n_jobs>1 était demandé.
+                self._run_parallel(n_combos, n_combos, trial_offset=0,
+                                   sampler=lambda: next(param_iter), pool=pool,
+                                   initial_best=initial_best)
             result = self._best_result()
         finally:
             self._restore_param_space()
@@ -929,9 +1052,10 @@ class StrategyOptimizer:
                   param_search_optim: bool = True) -> dict:
         """Lance une recherche selon la méthode demandée (phase unique).
 
-        ``param_search_optim`` (gel des paramètres à faible impact avant la
-        recherche, cf. ``reduce_param_space``) n'est PAS un 4e ``method`` —
-        c'est une option orthogonale appliquée par ``random_search``/
+        ``param_search_optim`` (dépistage en budget puis gel des paramètres à
+        faible impact, cf. ``StrategyOptimizer._freeze_from_results`` /
+        ``_optuna_apply_freeze``) n'est PAS un 4e ``method`` — c'est une
+        option orthogonale appliquée par ``random_search``/
         ``bayesian_search``/``grid_search`` eux-mêmes, quel que soit celui
         choisi ici."""
         if method == "grid":

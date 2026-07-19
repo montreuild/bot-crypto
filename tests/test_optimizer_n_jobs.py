@@ -1,11 +1,13 @@
-"""n_jobs de StrategyOptimizer.random_search : la signature l'acceptait mais
-la boucle restait toujours séquentielle (ProcessPoolExecutor jamais utilisé,
-contrairement à bayesian_search qui a déjà cette infra). Ces tests vérifient
-le ROUTAGE (n_jobs<=1 → boucle inchangée, n_jobs>1 → délégation à
-_run_parallel, déjà utilisé et testé indirectement par
-_bayesian_search_legacy/_optuna_parallel en production) sans payer le coût
-d'un vrai ProcessPoolExecutor (spawn de subprocess, lent et non déterministe
-en CI)."""
+"""n_jobs de StrategyOptimizer.random_search : le routage se fait maintenant
+via un pool de process PARTAGÉ (``_open_pool``), ouvert une seule fois par
+appel et réutilisable entre le dépistage Param Search Optim et la recherche
+principale — plus un ProcessPoolExecutor recréé à chaque phase. Ces tests
+vérifient le ROUTAGE (n_jobs<=1 → ``_open_pool`` cède ``None`` → boucle
+séquentielle ; n_jobs>1 → ``_open_pool`` cède un pool → ``_run_parallel``
+l'utilise) sans payer le coût d'un vrai ProcessPoolExecutor (spawn de
+subprocess, lent et non déterministe en CI)."""
+from contextlib import contextmanager
+
 import polars as pl
 
 from app.engine.optimizer import StrategyOptimizer
@@ -53,39 +55,50 @@ def test_no_param_space_returns_error_regardless_of_n_jobs():
         "error": "Aucun espace de params pour opus_omnibus_v11"}
 
 
-def test_n_jobs_1_stays_sequential_and_never_calls_run_parallel(monkeypatch):
+def test_n_jobs_1_opens_no_pool_and_run_parallel_gets_pool_none(monkeypatch):
     opt = _make_opt()
-    calls = {"eval": 0, "run_parallel": 0}
-    monkeypatch.setattr(opt, "_eval", lambda params: (
-        calls.__setitem__("eval", calls["eval"] + 1), _fake_eval_result(1.0))[1])
-    monkeypatch.setattr(opt, "_run_parallel", lambda *a, **k: calls.__setitem__(
-        "run_parallel", calls["run_parallel"] + 1))
+    calls = {"eval": 0, "run_parallel_pool": "unset"}
 
+    def _fake_run_parallel(n, n_total, trial_offset=0, sampler=None, pool=None,
+                           early_stop_patience=0, initial_best=-999.0):
+        calls["run_parallel_pool"] = pool
+        for _ in range(n):
+            calls["eval"] += 1
+            opt.results.append(_fake_eval_result(1.0))
+
+    monkeypatch.setattr(opt, "_run_parallel", _fake_run_parallel)
     result = opt.random_search(n_trials=5, n_jobs=1)
 
+    assert calls["run_parallel_pool"] is None, "n_jobs<=1 -> _open_pool doit céder None"
     assert calls["eval"] == 5
-    assert calls["run_parallel"] == 0
     assert result["best_oos_score"] == 1.0
-    assert len(opt.results) == 5
 
 
-def test_n_jobs_gt_1_delegates_to_run_parallel_and_skips_own_loop(monkeypatch):
+def test_n_jobs_gt_1_run_parallel_receives_the_shared_pool(monkeypatch):
     opt = _make_opt()
-    calls = {"eval": 0, "run_parallel_args": None}
+    calls = {"n_jobs_seen": None, "run_parallel_pool": "unset"}
 
-    def _fake_run_parallel(n, n_total, trial_offset=0, sampler=None, n_jobs=1):
-        calls["run_parallel_args"] = (n, n_total, trial_offset, n_jobs)
-        # Simule ce que _run_parallel ferait réellement : peupler self.results.
+    class _FakePool:
+        safe_jobs = 4
+
+    @contextmanager
+    def _fake_open_pool(n_jobs):
+        calls["n_jobs_seen"] = n_jobs
+        yield _FakePool()
+
+    def _fake_run_parallel(n, n_total, trial_offset=0, sampler=None, pool=None,
+                           early_stop_patience=0, initial_best=-999.0):
+        calls["run_parallel_pool"] = pool
         opt.results.append(_fake_eval_result(2.5))
 
-    monkeypatch.setattr(opt, "_eval", lambda params: (
-        calls.__setitem__("eval", calls["eval"] + 1), _fake_eval_result(1.0))[1])
+    monkeypatch.setattr(opt, "_open_pool", _fake_open_pool)
     monkeypatch.setattr(opt, "_run_parallel", _fake_run_parallel)
 
     result = opt.random_search(n_trials=8, n_jobs=4)
 
-    assert calls["eval"] == 0, "n_jobs>1 doit déléguer entièrement, sans jamais passer par la boucle inline"
-    assert calls["run_parallel_args"] == (8, 8, 0, 4)
+    assert calls["n_jobs_seen"] == 4
+    assert isinstance(calls["run_parallel_pool"], _FakePool), (
+        "n_jobs>1 doit passer le pool ouvert par _open_pool à _run_parallel")
     assert result["best_oos_score"] == 2.5
 
 

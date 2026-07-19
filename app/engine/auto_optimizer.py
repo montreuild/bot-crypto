@@ -312,11 +312,11 @@ class AutoOptimizer:
         self._notifier         = notifier
         self.n_jobs            = n_jobs
         self.early_stop_patience = early_stop_patience
-        # Param Search Optim (activé par défaut) : dépistage sur fenêtre
-        # réduite puis gel des paramètres à faible impact AVANT que
-        # random/bayesian/grid ne lancent leur recherche — pas un 4e
-        # "method", une option orthogonale appliquée à celui choisi
-        # ci-dessus (cf. StrategyOptimizer.reduce_param_space).
+        # Param Search Optim (activé par défaut) : dépistage EN BUDGET (les
+        # premiers essais de la recherche elle-même, même fenêtre, même pool)
+        # puis gel des paramètres à faible impact — pas un 4e "method", une
+        # option orthogonale appliquée par celui choisi ci-dessus (cf.
+        # StrategyOptimizer._freeze_from_results / _optuna_apply_freeze).
         self.param_search_optim = param_search_optim
         # #6 : optimisation ML two-phase (grille externe sur les hyperparamètres
         # d'entraînement × recherche interne sur les seuils). Opt-in : coûteux
