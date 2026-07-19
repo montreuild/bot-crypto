@@ -531,7 +531,7 @@ export default function OptimizerPage() {
             <div className="flex items-end">
               <label
                 className="flex items-center gap-2 text-sm cursor-pointer h-10"
-                title="Dépistage sur fenêtre réduite puis gel des paramètres à faible impact avant la recherche (espaces larges uniquement)"
+                title="Gel des paramètres à faible impact pendant la recherche (dépistage dans le budget d'essais, espaces larges uniquement)"
               >
                 <input
                   type="checkbox"

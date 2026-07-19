@@ -44,11 +44,14 @@ def optimizer_start(
     comportement mono-symbole existant (``symbols`` non fourni) reste
     STRICTEMENT inchangé (même réponse plate qu'avant ce correctif).
 
-    ``param_search_optim`` (activé par défaut) : dépistage sur fenêtre
-    réduite puis gel des paramètres à faible impact AVANT que ``method``
-    (random/bayesian/grid) ne lance sa recherche — réduit la dimensionnalité
-    effective de l'espace pour les stratégies à beaucoup de paramètres, pas
-    un mode de recherche en plus. Désactivable pour retrouver le
+    ``param_search_optim`` (activé par défaut) : les premiers essais de la
+    recherche ``method`` (random/bayesian/grid) servent de dépistage — dans
+    le budget ``n_trials``, sur la fenêtre complète — puis les paramètres à
+    faible impact sont gelés pour les essais restants. Réduit la
+    dimensionnalité effective de l'espace pour les stratégies à beaucoup de
+    paramètres, pas un mode de recherche en plus ; sans effet (aucun essai
+    dépensé) sur les petits espaces déjà bien couverts ou quand le dépistage
+    est trop court pour être fiable. Désactivable pour retrouver le
     comportement historique exact.
     """
     if not state.cfg:

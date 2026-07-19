@@ -293,15 +293,23 @@ class StrategyOptimizer:
                     # comme v12 (spawn d'un 2e pool = coût quasi fixe,
                     # indépendant du nombre d'essais qu'il contient).
                     k = min(n_trials, max(8, n_trials // 3))
-                    self._run_parallel(k, n_trials, trial_offset=0, pool=pool,
-                                       early_stop_patience=early_stop_patience)
-                    if self.results:
-                        reduction = self._freeze_from_results(self.results[-k:], param_keys)
-                    remaining = n_trials - len(self.results)
+                    # base : ne compter que les essais de CET appel — self.results
+                    # peut contenir des résultats antérieurs si l'instance est
+                    # réutilisée (les slices/décomptes relatifs à la fin de la
+                    # liste mélangeraient des essais d'une autre recherche).
+                    base = len(self.results)
+                    did = self._run_parallel(k, n_trials, trial_offset=0, pool=pool,
+                                             early_stop_patience=early_stop_patience)
+                    screen = self.results[base:]
+                    if screen:
+                        reduction = self._freeze_from_results(screen, param_keys)
+                    # Budget décompté en TENTATIVES (did), pas en succès : un
+                    # échec de worker en phase A ne doit pas gonfler la phase B.
+                    remaining = n_trials - did
                     if remaining > 0:
-                        initial_best = max((self._penalized_score(r) for r in self.results),
+                        initial_best = max((self._penalized_score(r) for r in screen),
                                            default=-999.0)
-                        self._run_parallel(remaining, n_trials, trial_offset=len(self.results),
+                        self._run_parallel(remaining, n_trials, trial_offset=did,
                                            pool=pool, early_stop_patience=early_stop_patience,
                                            initial_best=initial_best)
                 else:
@@ -804,6 +812,7 @@ class StrategyOptimizer:
         param_keys = list(self.param_space.keys())
         do_reduce = param_search_optim and self._should_reduce_space(n_trials)
 
+        base = len(self.results)  # essais de CET appel seulement (réutilisation d'instance)
         with self._open_pool(n_jobs) as pool:
             self._run_parallel(n_explore, n_trials, trial_offset=0,
                                sampler=lambda: self._with_hp(
@@ -811,8 +820,8 @@ class StrategyOptimizer:
                                pool=pool)
 
         reduction = None
-        if do_reduce and self.results:
-            reduction = self._freeze_from_results(self.results[-n_explore:], param_keys)
+        if do_reduce and len(self.results) > base:
+            reduction = self._freeze_from_results(self.results[base:], param_keys)
 
         # Phase exploitation : gaussian autour du meilleur (séquentielle — le
         # pool ci-dessus est déjà refermé, pas de 2e pool ouvert ici).
@@ -888,7 +897,7 @@ class StrategyOptimizer:
     def _run_parallel(self, n: int, n_total: int, trial_offset: int = 0,
                       sampler=None, pool: Optional["_PoolHandle"] = None,
                       early_stop_patience: int = 0,
-                      initial_best: float = -999.0) -> None:
+                      initial_best: float = -999.0) -> int:
         """Évalue ``n`` essais et les ajoute à ``self.results`` : séquentiel si
         ``pool`` est ``None``, sinon par vagues de ``pool.safe_jobs`` sur le
         pool DÉJÀ OUVERT (jamais créé ici — cf. ``_open_pool``). Plusieurs
@@ -896,7 +905,10 @@ class StrategyOptimizer:
         recherche réduite) sans jamais rouvrir de 2e pool. ``initial_best``
         amorce le meilleur score reporté au ``progress_callback`` quand cet
         appel poursuit une recherche déjà commencée (évite un faux retour à
-        -999 affiché en UI entre deux phases)."""
+        -999 affiché en UI entre deux phases). Retourne le nombre de trials
+        TENTÉS (échecs inclus, ≤ n ; < n seulement sur early stop) — c'est ce
+        décompte, pas celui des seuls succès, que l'appelant doit soustraire
+        de son budget."""
         if sampler is None:
             sampler = lambda: self._with_hp({k: random.choice(v) for k, v in self.param_space.items()})
 
@@ -924,23 +936,33 @@ class StrategyOptimizer:
                 })
 
         if pool is None:
+            attempted = 0
             for _ in range(n):
+                attempted += 1
                 _record(self._eval(sampler()))
                 if early_stop_patience > 0 and no_improve >= early_stop_patience:
                     logger.info(f"[Optimizer] Early stop à trial {trial_offset + done}/{n_total}")
                     break
-            return
+            return attempted
 
         # Parallèle : par vagues de pool.safe_jobs sur le pool partagé (jamais
-        # créé/fermé ici — cf. _open_pool).
+        # créé/fermé ici — cf. _open_pool). La boucle compte les TENTATIVES
+        # (``attempted``), pas les seuls succès (``done``) : un trial en échec
+        # (worker KO/timeout/erreur stratégie) consomme quand même son
+        # créneau du budget ``n``. Compter les succès faisait échantillonner
+        # au-delà du budget en cas d'échecs — et pour grid_search, dont le
+        # sampler épuise une énumération finie, levait StopIteration en plein
+        # milieu de la grille.
         pool_broken = False
-        while done < n:
+        attempted = 0
+        while attempted < n:
             if self._cancel_event is not None and self._cancel_event.is_set():
                 raise InterruptedError("annulé")
             if pool_broken:
                 # Pool définitivement mort (BrokenProcessPool observé) : bascule
                 # séquentielle pour le reste, un trial à la fois.
                 params = sampler()
+                attempted += 1
                 try:
                     r = self._eval(params)
                 except Exception as _se:
@@ -948,8 +970,9 @@ class StrategyOptimizer:
                     continue
                 _record(r)
             else:
-                k = min(pool.safe_jobs, n - done)
+                k = min(pool.safe_jobs, n - attempted)
                 param_list = [sampler() for _ in range(k)]
+                attempted += k
                 wave_results, broken, remaining = self._submit_wave(pool, param_list)
                 for r in wave_results:
                     _record(r)
@@ -958,6 +981,9 @@ class StrategyOptimizer:
                     logger.error(
                         "[Optimizer] BrokenProcessPool (worker tué, ex: OOM) — "
                         "bascule en séquentiel pour les trials restants")
+                    # Re-tentatives des params déjà comptés dans ``attempted``
+                    # (soumis puis annulés par la casse du pool) — pas des
+                    # tirages en plus.
                     for p in remaining:
                         try:
                             r = self._eval(p)
@@ -968,6 +994,7 @@ class StrategyOptimizer:
             if early_stop_patience > 0 and no_improve >= early_stop_patience:
                 logger.info(f"[Optimizer] Early stop à {trial_offset + done}/{n_total}")
                 break
+        return attempted
 
     def _perturb(self, params: dict) -> dict:
         """Perturbation légère d'un jeu de params pour l'exploitation."""
@@ -1010,9 +1037,10 @@ class StrategyOptimizer:
                     # l'ouverture, cf. opt_workers._worker_init) et casserait
                     # le cache de features entre dépistage et énumération.
                     n_screen = min(max(12, 2 * len(param_keys)), 60)
+                    base = len(self.results)  # essais de CET appel seulement
                     self._run_parallel(n_screen, n_screen, trial_offset=0, pool=pool)
                     reduction = self._freeze_from_results(
-                        self.results[-n_screen:], param_keys,
+                        self.results[base:], param_keys,
                         max_cardinality=self._GRID_REDUCE_THRESHOLD)
 
                 keys = list(self.param_space.keys())
@@ -1105,7 +1133,8 @@ class StrategyOptimizer:
 
     def optimize_two_phase(self, method: str, n_trials: int, n_jobs: int,
                            ml_hp_space: Dict[str, List],
-                           early_stop_patience: int = 0) -> dict:
+                           early_stop_patience: int = 0,
+                           param_search_optim: bool = True) -> dict:
         """Optimisation ML en deux phases (#6).
 
         Phase externe : petite **grille** sur les hyperparamètres d'entraînement
@@ -1123,7 +1152,8 @@ class StrategyOptimizer:
         """
         keys = list(ml_hp_space.keys())
         if not keys:
-            return self._dispatch(method, n_trials, n_jobs, early_stop_patience)
+            return self._dispatch(method, n_trials, n_jobs, early_stop_patience,
+                                  param_search_optim=param_search_optim)
 
         combos = list(itertools.product(*[ml_hp_space[k] for k in keys]))
         logger.info("[Optimizer] Two-phase ML %s : %d combo(s) HP × recherche %s",
@@ -1135,7 +1165,8 @@ class StrategyOptimizer:
             self._fixed_ml_hp = hp
             self.results = []  # isole les trials de cette combinaison
             try:
-                res = self._dispatch(method, n_trials, n_jobs, early_stop_patience)
+                res = self._dispatch(method, n_trials, n_jobs, early_stop_patience,
+                                     param_search_optim=param_search_optim)
             except InterruptedError:
                 self._fixed_ml_hp = None
                 raise

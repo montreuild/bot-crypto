@@ -481,7 +481,8 @@ class AutoOptimizer:
             if ml_hp_space:
                 result = opt.optimize_two_phase(
                     self.method, self.n_trials, self.n_jobs, ml_hp_space,
-                    early_stop_patience=self.early_stop_patience)
+                    early_stop_patience=self.early_stop_patience,
+                    param_search_optim=self.param_search_optim)
             elif self.method == "bayesian":
                 result = opt.bayesian_search(self.n_trials, n_jobs=self.n_jobs,
                                              early_stop_patience=self.early_stop_patience,

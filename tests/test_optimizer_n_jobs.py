@@ -102,6 +102,60 @@ def test_n_jobs_gt_1_run_parallel_receives_the_shared_pool(monkeypatch):
     assert result["best_oos_score"] == 2.5
 
 
+class _FakePool:
+    safe_jobs = 4
+
+
+def test_failed_trials_consume_budget_not_resampled(monkeypatch):
+    """Un trial en échec (worker KO/timeout/erreur stratégie, silencieusement
+    absent des résultats de la vague) doit consommer son créneau du budget
+    ``n`` — compter les seuls succès faisait échantillonner au-delà du budget
+    (et, pour grid_search dont le sampler épuise une énumération finie,
+    levait StopIteration en pleine grille)."""
+    opt = _make_opt()
+    draws = {"n": 0}
+
+    def _sampler():
+        draws["n"] += 1
+        return {"p": draws["n"]}
+
+    def _fake_submit_wave(pool, params_list, timeout=300):
+        # Simule 1 échec par vague : le 1er trial de chaque vague disparaît
+        # sans résultat (comme un worker KO réel dans _submit_wave).
+        return [_fake_eval_result(1.0) for _ in params_list[1:]], False, []
+
+    monkeypatch.setattr(opt, "_submit_wave", _fake_submit_wave)
+    attempted = opt._run_parallel(10, 10, sampler=_sampler, pool=_FakePool())
+
+    assert draws["n"] == 10, "le budget se compte en TENTATIVES : jamais plus de n tirages"
+    assert attempted == 10
+    assert len(opt.results) == 7  # 3 vagues (4+4+2), 1 échec par vague
+
+
+def test_grid_with_failed_trials_exhausts_enumeration_without_stopiteration(monkeypatch):
+    """grid_search en parallèle : le sampler est ``next()`` sur une
+    énumération FINIE — si les échecs ne comptaient pas dans le budget, la
+    boucle re-tirait après épuisement -> StopIteration en pleine grille."""
+    opt = _make_opt({"a": [0, 1, 2], "b": [0, 1, 2]})  # 9 combos
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _fake_open_pool(n_jobs):
+        yield _FakePool()
+
+    def _fake_submit_wave(pool, params_list, timeout=300):
+        return [_fake_eval_result(1.0) for _ in params_list[1:]], False, []
+
+    monkeypatch.setattr(opt, "_open_pool", _fake_open_pool)
+    monkeypatch.setattr(opt, "_submit_wave", _fake_submit_wave)
+
+    result = opt.grid_search(n_jobs=4)  # ne doit PAS lever StopIteration
+
+    assert "error" not in result
+    assert len(opt.results) == 6  # 9 combos tentés, 1 échec par vague (4+4+1)
+
+
 def test_n_jobs_1_respects_early_stop_patience(monkeypatch):
     opt = _make_opt()
     scores = iter([1.0, 1.0, 1.0, 1.0, 1.0])  # jamais d'amélioration après le 1er
