@@ -322,7 +322,14 @@ class StrategyOptimizer:
     def _maybe_reduce_space(self, enabled: bool, n_trials: int, n_jobs: int) -> Optional[dict]:
         if not enabled or not self._should_reduce_space(n_trials):
             return None
-        return self.reduce_param_space(n_jobs=n_jobs)
+        # Le dépistage ne doit JAMAIS coûter plus que la recherche qu'il
+        # prépare — sans ce plafond, une stratégie à beaucoup de paramètres
+        # (ex. 21 pour opus_omnibus_v9) pouvait dépenser plus d'essais en
+        # dépistage (2 × 21 = 42) qu'il n'y avait de budget demandé
+        # (n_trials=20), rendant l'option plus lente que sans elle — mesuré :
+        # 749s vs 287s sur opus_omnibus_v9. Plafonné à n_trials.
+        n_screen = min(max(12, 2 * len(self.param_space)), max(n_trials, 12))
+        return self.reduce_param_space(n_jobs=n_jobs, n_screen=n_screen)
 
     def reduce_param_space(self, n_jobs: int = 1, freeze_fraction: float = 0.3,
                            small_window_frac: float = 0.35,
