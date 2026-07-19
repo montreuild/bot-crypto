@@ -229,6 +229,46 @@ class TestFreezeFromResults:
         opt._restore_param_space()
         assert opt.param_space == original
 
+    def test_screen_too_small_relative_to_param_count_skips_freeze(self):
+        """Régression réelle (opus_omnibus_v9, 21 paramètres, dépistage à 8
+        essais en budget) : avec aussi peu d'essais que de paramètres, CHAQUE
+        paramètre varie à presque chaque essai — l'estimateur marginal ne
+        distingue plus le signal du bruit de confusion, et gelait 20/21
+        paramètres à chaque run malgré le correctif NaN-vs-mesuré-plat. Sous
+        _MIN_SCREEN_PER_PARAM essais par paramètre, on ne gèle plus du tout
+        en mode facultatif (max_cardinality=None) plutôt que de figer sur du
+        bruit non fiable."""
+        opt = _make_opt({f"p{i}": [0, 1, 2] for i in range(6)})  # 6 params
+        rng = _random.Random(0)
+        # Seulement 8 essais pour 6 paramètres -> sous le seuil (2*6=12).
+        results = []
+        for i in range(8):
+            p0 = i % 3
+            params = {"p0": p0, **{f"p{j}": rng.choice([0, 1, 2]) for j in range(1, 6)}}
+            results.append(_fake_eval_result(params, score=float(p0)))
+
+        diag = opt._freeze_from_results(results, list(opt.param_space.keys()))
+        assert diag is None
+        assert all(len(v) == 3 for v in opt.param_space.values())  # jamais muté
+
+    def test_grid_mode_ignores_the_min_screen_gate(self):
+        """Le garde-fou ne s'applique qu'au mode facultatif — grid DOIT
+        réduire (une grille de plusieurs milliards de combinaisons est
+        infaisable), il n'a pas le choix de reculer même sur un dépistage
+        trop petit relativement au nombre de paramètres."""
+        opt = _make_opt({f"p{i}": [0, 1, 2, 3, 4] for i in range(6)})  # 5**6=15625
+        rng = _random.Random(0)
+        results = [_fake_eval_result({f"p{i}": rng.choice([0, 1, 2, 3, 4]) for i in range(6)},
+                                     score=rng.random())
+                  for _ in range(8)]  # 8 << 2*6=12, bloquerait en mode facultatif
+        diag = opt._freeze_from_results(results, list(opt.param_space.keys()),
+                                        max_cardinality=5000)
+        assert diag is not None
+        remaining_card = 1
+        for k in diag["kept_params"]:
+            remaining_card *= len(opt.param_space[k])
+        assert remaining_card <= 5000
+
     def test_degenerate_results_freeze_nothing_and_no_mutation(self):
         opt = _make_opt(_wide_space())
         original = {k: list(v) for k, v in opt.param_space.items()}
@@ -266,12 +306,17 @@ class TestRandomSearchIntegration:
             params, score=float(params["p0"]) * 10 + sum(params.values())))
         _random.seed(0)
 
-        result = opt.random_search(n_trials=20, n_jobs=1)  # 46656 > 20*200 -> réduit
+        # n_trials=45 -> dépistage = max(8, 45//3)=15 essais, >= 2*6 params :
+        # assez pour dépasser le garde-fou _MIN_SCREEN_PER_PARAM (sous ce
+        # ratio essais/paramètres, l'estimateur marginal est noyé dans le
+        # bruit de confusion entre paramètres qui varient tous en même temps
+        # — mesuré sur opus_omnibus_v9 en vérification réelle).
+        result = opt.random_search(n_trials=45, n_jobs=1)  # 46656 > 45*200 -> réduit
 
         assert "param_search_optim" in result
         assert len(result["param_search_optim"]["frozen_params"]) >= 1
         # Le dépistage EN BUDGET ne dépense jamais plus que n_trials au total.
-        assert result["n_trials"] <= 20
+        assert result["n_trials"] <= 45
         # self.param_space restauré après coup (n'affecte pas un run suivant).
         assert opt.param_space == original
 
@@ -289,11 +334,14 @@ class TestRandomSearchIntegration:
 
     def test_degenerate_screening_does_not_crash_and_freezes_nothing(self, monkeypatch):
         """Tous les essais scorent -999 (ex: OOS sans trade) : la recherche
-        se termine normalement, sans geler sur du bruit."""
+        se termine normalement, sans geler sur du bruit. n_trials=45 pour que
+        le dépistage (15 essais) dépasse _MIN_SCREEN_PER_PARAM et exerce
+        vraiment le garde-fou "aucun signal", pas juste celui, plus en amont,
+        sur la taille du dépistage."""
         opt = _make_opt(_wide_space_6vals())
         monkeypatch.setattr(opt, "_eval", lambda params: _fake_eval_result(params, -999.0))
 
-        result = opt.random_search(n_trials=20, n_jobs=1)
+        result = opt.random_search(n_trials=45, n_jobs=1)
         assert "error" not in result
         assert "param_search_optim" not in result
 
@@ -305,11 +353,11 @@ class TestBayesianSearchLegacy:
             params, score=float(params["p0"]) * 10 + sum(params.values())))
         _random.seed(0)
         try:
-            result = opt._bayesian_search_legacy(n_trials=20, n_jobs=1)
+            result = opt._bayesian_search_legacy(n_trials=45, n_jobs=1)
             assert "param_search_optim" in result
-            n_explore = max(8, 20 // 3)
+            n_explore = max(8, 45 // 3)
             assert result["param_search_optim"]["n_screen"] == n_explore
-            assert result["n_trials"] <= 20
+            assert result["n_trials"] <= 45
         finally:
             opt._restore_param_space()
 
@@ -329,7 +377,7 @@ class TestBayesianSearchOptuna:
         monkeypatch.setattr(opt, "_eval", lambda params: _fake_eval_result(
             params, score=float(params["p0"]) * 10 + sum(params.values())))
 
-        result = opt.bayesian_search(n_trials=20, n_jobs=1)
+        result = opt.bayesian_search(n_trials=45, n_jobs=1)
 
         assert "param_search_optim" in result
         # Le chemin Optuna fige le SAMPLER, jamais self.param_space.

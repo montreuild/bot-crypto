@@ -417,6 +417,19 @@ class StrategyOptimizer:
         kept_keys = [k for k in param_keys if k not in frozen]
         return frozen, kept_keys
 
+    # Sous ce ratio (essais de dépistage / nombre de paramètres), l'estimateur
+    # marginal n'a plus de signal fiable à offrir en mode facultatif : avec
+    # aussi peu d'essais que de paramètres (voire moins), CHAQUE paramètre
+    # varie simultanément à presque chaque essai — l'« impact » mesuré d'un
+    # paramètre est alors dominé par le bruit de tous les autres qui changent
+    # en même temps, pas par son propre effet. Mesuré sur opus_omnibus_v9 (21
+    # paramètres, 8 essais de dépistage) : geler 20/21 paramètres sur cette
+    # base, à chaque run, gel ou pas gel du signal NaN (cf. commit précédent).
+    # Le mode grid (max_cardinality) n'est PAS concerné : sa réduction est
+    # obligatoire (une grille de plusieurs milliards de combinaisons est
+    # infaisable), il n'a pas le choix de reculer.
+    _MIN_SCREEN_PER_PARAM = 2
+
     def _freeze_from_results(self, screen_results: List[dict], param_keys: List[str], *,
                              max_cardinality: Optional[float] = None) -> Optional[dict]:
         """Calcule l'impact de chaque paramètre à partir d'essais DÉJÀ joués
@@ -424,6 +437,9 @@ class StrategyOptimizer:
         impactants — mute ``self.param_space`` EN PLACE (sauvegardé pour
         ``_restore_param_space``). Retourne ``None`` si rien n'a été gelé."""
         if not screen_results:
+            return None
+        if (max_cardinality is None
+                and len(screen_results) < self._MIN_SCREEN_PER_PARAM * len(param_keys)):
             return None
         impacts, best_value_by_param = self._impact_scores(screen_results, param_keys)
         frozen, kept_keys = self._freeze_params(impacts, best_value_by_param, param_keys,
@@ -596,6 +612,8 @@ class StrategyOptimizer:
         l'écart marginal simple face à des paramètres corrélés), avec repli
         sur l'estimateur marginal partagé (``_impact_scores``) si fANOVA
         échoue ou ne rend aucun signal exploitable."""
+        if len(screen_results) < self._MIN_SCREEN_PER_PARAM * len(param_keys):
+            return None
         import optuna
         own_impacts, best_value_by_param = self._impact_scores(screen_results, param_keys)
         impacts = own_impacts
