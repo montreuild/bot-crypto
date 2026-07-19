@@ -15,9 +15,12 @@ import importlib
 import itertools
 import math
 import random
+import statistics
 import threading
+import time
 import os
 import io
+from contextlib import contextmanager
 from copy import deepcopy
 from typing import Dict, List, Any, Callable, Optional
 
@@ -295,6 +298,177 @@ class StrategyOptimizer:
                 break
 
         return self._best_result()
+
+    # ── Param Search Optim : gel + étages + successive halving ────────────
+    def param_search_optim(self, n_trials: int = 40, n_jobs: int = 1,
+                           freeze_fraction: float = 0.3,
+                           keep_fraction: float = 0.3,
+                           small_window_frac: float = 0.35) -> dict:
+        """Mode de recherche combinant trois techniques :
+
+        1. **Gel des paramètres à faible impact** — dépistage (``n_screen``
+           essais, espace complet) sur une fenêtre RÉDUITE
+           (``small_window_frac`` de ``df_is``/``df_oos``). Pour chaque
+           paramètre, l'« impact » est l'écart entre la moyenne du score des
+           essais groupés par valeur la plus haute et la plus basse. Les
+           paramètres les moins impactants (``freeze_fraction`` d'entre eux)
+           sont gelés à leur valeur la plus performante observée — l'espace
+           de recherche effectif se réduit d'autant pour la suite.
+        2. **Optimisation étagée** — l'étage 1 (``n_round_a`` essais) ne fait
+           varier que les paramètres CONSERVÉS (non gelés), toujours sur la
+           fenêtre réduite (peu coûteux).
+        3. **Successive halving** — seul le top ``keep_fraction`` de l'étage 1
+           est ré-évalué sur la fenêtre COMPLÈTE (``self.df_is``/``df_oos``,
+           la même donnée que ``random_search``/``bayesian_search``) : c'est
+           cette dernière passe, la plus coûteuse par essai mais la moins
+           nombreuse, qui produit le résultat final.
+
+        ``n_trials`` est un budget indicatif réparti entre les 3 phases (pas
+        un compte exact — le nombre réel d'évaluations dépend de
+        ``freeze_fraction``/``keep_fraction``, cf. ``phase_counts`` dans le
+        retour). Le format de retour est celui de ``_best_result()`` avec en
+        plus ``frozen_params``, ``kept_params``, ``phase_counts``,
+        ``elapsed_s``.
+        """
+        if not self.param_space:
+            return {"error": f"Aucun espace de params pour {self.strategy_name}"}
+
+        t_start = time.time()
+        param_keys = list(self.param_space.keys())
+        n_screen  = max(12, round(n_trials * 0.35))
+        n_round_a = max(8, round(n_trials * 0.45))
+
+        small_is  = self.df_is.tail(max(int(len(self.df_is) * small_window_frac), 200))
+        small_oos = self.df_oos.tail(max(int(len(self.df_oos) * small_window_frac), 100))
+
+        # ── Phase 1 : dépistage (espace complet, fenêtre réduite) ──────────
+        screen_results = self._eval_batch_isolated(n_screen, None, n_jobs, small_is, small_oos)
+        frozen, kept_keys = self._compute_freeze(screen_results, param_keys, freeze_fraction)
+        logger.info(
+            f"[ParamSearchOptim] {self.strategy_name} : {len(frozen)}/{len(param_keys)} "
+            f"paramètres gelés après dépistage ({len(screen_results)} essais) -> {frozen}"
+        )
+
+        # ── Phase 2 : étage réduit (espace réduit, fenêtre réduite) ────────
+        if kept_keys:
+            sampler = self._make_frozen_sampler(frozen, kept_keys)
+            round_a_results = self._eval_batch_isolated(n_round_a, sampler, n_jobs, small_is, small_oos)
+        else:
+            r = self._eval(self._with_hp(dict(frozen)))
+            r["final_score"] = self._penalized_score(r)
+            round_a_results = [r]
+
+        if not round_a_results:
+            return {"error": "Aucun essai valide à l'étage réduit (échecs workers ?)",
+                   "failed": True, "completed_trials": len(screen_results)}
+
+        round_a_results.sort(key=self._penalized_score, reverse=True)
+        n_survivors = max(1, round(len(round_a_results) * keep_fraction))
+        survivors = round_a_results[:n_survivors]
+
+        # ── Phase 3 : successive halving — survivants sur fenêtre COMPLÈTE ─
+        survivor_params = [s["params"] for s in survivors]
+        final_results = self._eval_batch_isolated(
+            len(survivor_params), self._replay_sampler(survivor_params), n_jobs,
+            self.df_is, self.df_oos, progress=True, n_total=len(survivor_params))
+
+        if not final_results:
+            return {"error": "Aucun essai valide à l'étage final (échecs workers ?)",
+                   "failed": True,
+                   "completed_trials": len(screen_results) + len(round_a_results)}
+
+        self.results = final_results
+        result = self._best_result()
+        result["frozen_params"] = frozen
+        result["kept_params"]   = kept_keys
+        result["phase_counts"]  = {
+            "screen": len(screen_results), "round_a": len(round_a_results),
+            "final": len(final_results),
+        }
+        result["elapsed_s"] = round(time.time() - t_start, 1)
+        return result
+
+    def _compute_freeze(self, screen_results: List[dict], param_keys: List[str],
+                        freeze_fraction: float):
+        """Impact d'un paramètre = écart entre la moyenne du score final des
+        essais groupés par valeur la plus haute et la plus basse (dépistage).
+        Gèle les ``freeze_fraction`` paramètres les moins impactants à leur
+        valeur la plus performante en moyenne. Toujours au moins 1 paramètre
+        conservé (jamais un espace de recherche totalement gelé)."""
+        impacts: Dict[str, float] = {}
+        best_value_by_param: Dict[str, Any] = {}
+        for k in param_keys:
+            by_value: Dict[Any, List[float]] = {}
+            for r in screen_results:
+                v = r["params"].get(k)
+                by_value.setdefault(v, []).append(r["final_score"])
+            means = {v: statistics.mean(s) for v, s in by_value.items() if s}
+            impacts[k] = (max(means.values()) - min(means.values())) if len(means) >= 2 else 0.0
+            if means:
+                best_value_by_param[k] = max(means.items(), key=lambda kv: kv[1])[0]
+            else:
+                opts = self.param_space[k]
+                best_value_by_param[k] = opts[len(opts) // 2]
+
+        n_freeze = max(0, min(len(param_keys) - 1, round(len(param_keys) * freeze_fraction)))
+        ranked = sorted(param_keys, key=lambda k: impacts[k])  # impact croissant
+        frozen_keys = ranked[:n_freeze]
+        frozen = {k: best_value_by_param[k] for k in frozen_keys}
+        kept_keys = [k for k in param_keys if k not in frozen]
+        return frozen, kept_keys
+
+    def _make_frozen_sampler(self, frozen: dict, kept_keys: List[str]) -> Callable[[], dict]:
+        def _sample():
+            params = dict(frozen)
+            for k in kept_keys:
+                params[k] = random.choice(self.param_space[k])
+            return self._with_hp(params)
+        return _sample
+
+    @staticmethod
+    def _replay_sampler(param_list: List[dict]) -> Callable[[], dict]:
+        it = iter(param_list)
+        def _sample():
+            return next(it)
+        return _sample
+
+    @contextmanager
+    def _temp_data_window(self, df_is: pl.DataFrame, df_oos: pl.DataFrame):
+        """Substitue temporairement ``self.df_is``/``df_oos`` — permet de
+        réutiliser ``_run_parallel`` (séquentiel ET ProcessPoolExecutor)
+        inchangé sur une fenêtre de données différente de celle passée au
+        constructeur, sans dupliquer sa logique de sérialisation/cap mémoire."""
+        orig_is, orig_oos = self.df_is, self.df_oos
+        self.df_is, self.df_oos = df_is, df_oos
+        try:
+            yield
+        finally:
+            self.df_is, self.df_oos = orig_is, orig_oos
+
+    def _eval_batch_isolated(self, n: int, sampler: Optional[Callable[[], dict]],
+                             n_jobs: int, df_is: pl.DataFrame, df_oos: pl.DataFrame,
+                             progress: bool = False, n_total: Optional[int] = None) -> List[dict]:
+        """Évalue ``n`` essais (via ``_run_parallel``, séquentiel ou
+        ProcessPoolExecutor selon ``n_jobs``) sur une fenêtre de données
+        donnée, SANS polluer ``self.results`` — les phases de dépistage/étage
+        réduit d'un ``param_search_optim`` ne sont pas comparables aux essais
+        sur fenêtre complète (scores calculés sur moins de barres) et ne
+        doivent donc jamais entrer en compétition dans ``_best_result()``.
+        """
+        saved_results = self.results
+        saved_callback = self.progress_callback
+        self.results = []
+        if not progress:
+            self.progress_callback = None
+        try:
+            with self._temp_data_window(df_is, df_oos):
+                self._run_parallel(n, n_total or n, trial_offset=0,
+                                   sampler=sampler, n_jobs=n_jobs)
+            batch = self.results
+        finally:
+            self.results = saved_results
+            self.progress_callback = saved_callback
+        return batch
 
     def bayesian_search(self, n_trials: int = 40, n_jobs: int = 1,
                         early_stop_patience: int = 0) -> dict:
@@ -752,6 +926,8 @@ class StrategyOptimizer:
         if method == "bayesian":
             return self.bayesian_search(n_trials, n_jobs=n_jobs,
                                         early_stop_patience=early_stop_patience)
+        if method == "param_search_optim":
+            return self.param_search_optim(n_trials, n_jobs=n_jobs)
         return self.random_search(n_trials, n_jobs=n_jobs,
                                   early_stop_patience=early_stop_patience)
 

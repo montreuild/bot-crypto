@@ -287,7 +287,7 @@ class AutoOptimizer:
     Paramètres :
       cfg             : config.yaml chargé en dict
       n_trials        : nombre de trials par (strategy, tf)
-      method          : "random" | "bayesian" | "grid"
+      method          : "random" | "bayesian" | "grid" | "param_search_optim"
       config_path     : chemin vers config.yaml
       on_apply_callback : callback(strategy_name, params) après application
     """
@@ -477,6 +477,8 @@ class AutoOptimizer:
                                              early_stop_patience=self.early_stop_patience)
             elif self.method == "grid":
                 result = opt.grid_search()
+            elif self.method == "param_search_optim":
+                result = opt.param_search_optim(self.n_trials, n_jobs=self.n_jobs)
             else:
                 result = opt.random_search(self.n_trials, n_jobs=self.n_jobs,
                                            early_stop_patience=self.early_stop_patience)
@@ -777,6 +779,8 @@ class AutoOptimizer:
                         results[key] = opt.bayesian_search(self.n_trials, n_jobs=self.n_jobs)
                     elif self.method == "grid":
                         results[key] = opt.grid_search()
+                    elif self.method == "param_search_optim":
+                        results[key] = opt.param_search_optim(self.n_trials, n_jobs=self.n_jobs)
                     else:
                         results[key] = opt.random_search(self.n_trials, n_jobs=self.n_jobs)
                 except Exception as e:
