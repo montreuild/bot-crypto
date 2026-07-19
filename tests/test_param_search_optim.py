@@ -5,6 +5,7 @@ recherche elle-même (fenêtre complète, budget demandé) servent de dépistage
 un checkpoint fige ensuite les paramètres à faible impact pour le reste de
 l'appel, sur le MÊME pool de process. Tests de contrôle avec ``_eval`` stubbé
 (rapide, pas de vrai Backtester)."""
+import math
 import random as _random
 
 import polars as pl
@@ -91,6 +92,23 @@ class TestImpactScores:
         impacts, _ = opt._impact_scores(results, list(opt.param_space.keys()))
         assert all(v == 0.0 for v in impacts.values())
 
+    def test_param_observed_at_a_single_value_gives_nan_not_zero(self):
+        """Un paramètre jamais tiré qu'à UNE seule valeur dans le dépistage
+        (donnée insuffisante) doit rendre NaN, PAS 0.0 — 0.0 signifierait
+        « mesuré et plat », ce qui est un signal différent (et exploitable
+        pour geler) de « je n'ai aucune idée ». Confondre les deux a mené à
+        geler 20 paramètres sur 21 pour opus_omnibus_v9 à partir de 8 essais
+        de dépistage seulement (régression détectée en vérification réelle)."""
+        opt = _make_opt({"always_same": [0, 1, 2], "varies": [0, 1, 2]})
+        results = [
+            _fake_eval_result({"always_same": 0, "varies": 0}, 1.0),
+            _fake_eval_result({"always_same": 0, "varies": 1}, 2.0),
+            _fake_eval_result({"always_same": 0, "varies": 2}, 3.0),
+        ]
+        impacts, _ = opt._impact_scores(results, ["always_same", "varies"])
+        assert math.isnan(impacts["always_same"])
+        assert impacts["varies"] > 0
+
 
 class TestFreezeParams:
     def test_freezes_low_impact_keeps_high_impact(self):
@@ -133,6 +151,40 @@ class TestFreezeParams:
             remaining_card *= len(opt.param_space[k])
         assert remaining_card <= 5000
         assert len(kept) >= 1
+
+    def test_nan_impact_params_never_frozen_in_optional_mode(self):
+        """Régression : un dépistage en budget court (ex. 8 essais pour un
+        espace à 21 paramètres, cas réel opus_omnibus_v9) laisse la plupart
+        des paramètres avec une seule valeur observée -> impact NaN, PAS un
+        signal de faible impact. Ils ne doivent JAMAIS être gelés en mode
+        random/bayesian (contrairement au mode grid, où le gel est
+        obligatoire) — seul un paramètre effectivement MESURÉ à faible
+        impact (relativement aux autres impacts mesurés) est gelable."""
+        opt = _make_opt({f"p{i}": [0, 1, 2] for i in range(6)})
+        keys = list(opt.param_space.keys())
+        # p0 : mesuré, impact dominant. p1 : mesuré, faible impact relatif.
+        # p2..p5 : donnée insuffisante (NaN) -> jamais gelables ici.
+        impacts = {"p0": 10.0, "p1": 0.1, **{f"p{i}": float("nan") for i in range(2, 6)}}
+        best_value = {k: 0 for k in keys}
+        frozen, kept = opt._freeze_params(impacts, best_value, keys)
+        assert frozen == {"p1": 0}
+        assert set(kept) == {"p0", "p2", "p3", "p4", "p5"}
+
+    def test_nan_impact_params_frozen_as_last_resort_in_grid_mode(self):
+        """En mode grid (réduction obligatoire), si les impacts mesurés ne
+        suffisent pas à atteindre la cardinalité cible, les paramètres à
+        donnée insuffisante (NaN) sont gelés en dernier recours — sinon la
+        réduction resterait bloquée au-dessus du seuil."""
+        opt = _make_opt({f"p{i}": [0, 1, 2, 3, 4] for i in range(6)})  # 5**6=15625
+        keys = list(opt.param_space.keys())
+        impacts = {k: float("nan") for k in keys}  # aucun signal mesuré du tout
+        best_value = {k: 0 for k in keys}
+        frozen, kept = opt._freeze_params(impacts, best_value, keys, max_cardinality=5000)
+        remaining_card = 1
+        for k in kept:
+            remaining_card *= len(opt.param_space[k])
+        assert remaining_card <= 5000
+        assert frozen  # a dû geler malgré l'absence totale de signal
         assert frozen  # réduction obligatoire pour grid : gèle même sur signal faible
 
 

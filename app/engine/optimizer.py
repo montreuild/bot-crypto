@@ -337,8 +337,10 @@ class StrategyOptimizer:
                        param_keys: List[str]) -> Tuple[Dict[str, float], Dict[str, Any]]:
         """Impact marginal de chaque paramètre à partir d'essais déjà joués :
         écart entre la moyenne du score final des essais groupés par valeur,
-        la plus haute et la plus basse. 0 si le paramètre n'a montré aucun
-        signal (ex: essais tous dégénérés — cf. ``_freeze_params``)."""
+        la plus haute et la plus basse. NaN si le paramètre n'a pas été
+        observé à au moins 2 valeurs distinctes (donnée insuffisante pour
+        juger — DIFFÉRENT d'un impact mesuré et nul, cf. ``_freeze_params``).
+        0.0 si mesuré et effectivement plat (essais tous dégénérés, par ex.)."""
         impacts: Dict[str, float] = {}
         best_value_by_param: Dict[str, Any] = {}
         for k in param_keys:
@@ -349,7 +351,7 @@ class StrategyOptimizer:
             means = {v: statistics.mean(s) for v, s in by_value.items() if s}
             finite = {v: m for v, m in means.items() if math.isfinite(m)}
             impacts[k] = (max(finite.values()) - min(finite.values())
-                         if len(finite) >= 2 else 0.0)
+                         if len(finite) >= 2 else float("nan"))
             if finite:
                 best_value_by_param[k] = max(finite.items(), key=lambda kv: kv[1])[0]
             elif means:
@@ -369,15 +371,27 @@ class StrategyOptimizer:
           - ``max_cardinality`` (grid) : gèle par impact CROISSANT jusqu'à
             repasser sous ce seuil — réduction OBLIGATOIRE (une grille de
             plusieurs milliards de combinaisons est infaisable), donc gèle
-            même sur signal faible.
+            même sur signal faible ou absent (NaN inclus, en dernier
+            recours), sinon la cible ne serait jamais atteignable.
           - sinon (random/bayesian, réduction facultative) : gèle seulement
-            les paramètres dont la part d'impact mesuré reste sous
-            ``min_impact_share`` — si le dépistage n'a montré AUCUN signal
-            (impacts tous nuls, ex: essais tous dégénérés à -999, observé sur
-            opus_omnibus_v12 avec une fenêtre de test trop courte), ne gèle
-            RIEN plutôt que de figer des paramètres sur du bruit.
+            les paramètres MESURÉS à faible impact (part sous
+            ``min_impact_share``). Un impact NaN (paramètre observé à moins
+            de 2 valeurs distinctes dans le dépistage — arrive vite avec un
+            dépistage en budget court face à un espace à beaucoup de
+            paramètres, ex. 8 essais pour 21 paramètres) n'est PAS une
+            preuve de faible impact : ce paramètre n'est jamais gelé sur
+            cette base. Idem si aucun paramètre n'a de signal exploitable
+            (impacts tous nuls ou NaN, ex: essais tous dégénérés à -999,
+            observé sur opus_omnibus_v12 avec une fenêtre de test trop
+            courte) : ne gèle RIEN plutôt que de figer des paramètres sur du
+            bruit ou une absence de données.
         """
-        ranked = sorted(param_keys, key=lambda k: impacts.get(k, 0.0))  # impact croissant
+        # NaN (donnée insuffisante) toujours après les impacts mesurés, pour
+        # qu'ils ne soient gelés qu'en tout dernier recours (mode grid) ou
+        # jamais (mode random/bayesian, cf. boucle ci-dessous).
+        ranked = sorted(param_keys, key=lambda k: (not math.isfinite(impacts.get(k, 0.0)),
+                                                    impacts.get(k, 0.0)
+                                                    if math.isfinite(impacts.get(k, 0.0)) else 0.0))
         if max_cardinality is not None:
             frozen_keys: List[str] = []
             card = math.prod(len(self.param_space[k]) for k in param_keys)
@@ -393,7 +407,10 @@ class StrategyOptimizer:
                 for k in ranked:
                     if len(frozen_keys) >= len(param_keys) - 1:
                         break
-                    if impacts.get(k, 0.0) / total > min_impact_share:
+                    v = impacts.get(k, 0.0)
+                    if not math.isfinite(v):
+                        continue  # pas assez de données -> jamais gelé sur cette base
+                    if v / total > min_impact_share:
                         break
                     frozen_keys.append(k)
         frozen = {k: best_value_by_param[k] for k in frozen_keys}
