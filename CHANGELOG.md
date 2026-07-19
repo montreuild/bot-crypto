@@ -217,6 +217,50 @@ de la décision DEAD-01).
   `rolling_slope` ×233, `rolling_hurst` ×57.
 - 712/712 tests verts (+19 nouveaux : `tests/test_optimizer_n_jobs.py`,
   `tests/test_indicators_market_rolling.py`).
+- **Refonte de `param_search_optim`** (option activée par défaut sur
+  `random_search`/`bayesian_search`/`grid_search` — PAS un 4e mode de
+  recherche — qui gèle les paramètres à faible impact avant la recherche
+  demandée). L'implémentation initiale dépistait sur une fenêtre de données
+  RÉDUITE, en plus du budget `n_trials` demandé, sur un `ProcessPoolExecutor`
+  séparé de celui de la recherche principale : payait un 2e spawn/ré-import
+  complet de l'appli (coût quasi fixe, dominant pour les stratégies
+  multi-modèles ML type `opus_omnibus_v12` : 195-201 s mesurés contre
+  68-75 s sans réduction) et pouvait dépenser plus d'essais en dépistage
+  qu'il n'y avait de budget (mesuré : 749 s contre 287 s sur
+  `opus_omnibus_v9`, 21 paramètres). Nouveau design : le dépistage est EN
+  BUDGET (les premiers essais de la recherche elle-même, sur la fenêtre
+  complète, jamais un essai en plus) et partage un seul pool de process
+  entre dépistage et recherche (`_open_pool`/`_submit_wave`, remplace 3
+  blocs de création de pool quasi identiques). Le chemin Optuna/TPE gèle via
+  `optuna.samplers.PartialFixedSampler` sur l'importance fANOVA (repli sur
+  l'estimateur marginal existant si indisponible) sans muter
+  `param_space` — pas de backup/restore nécessaire pour ce chemin. Le mode
+  grid dépiste désormais sur la fenêtre complète (partage le pool avec son
+  énumération, elle-même parallélisée par `n_jobs` pour la première fois) et
+  gèle par cardinalité cible plutôt qu'une fraction fixe de 30 %. Mesuré sur
+  `opus_omnibus_v12` (le cas qui motivait la refonte) : 137-140 s → ~63 s
+  (pool unique), reproduit sur 3 runs indépendants.
+  Deux régressions de fond débusquées en vérification réelle (pas par les
+  tests unitaires, qui utilisent un `_eval` simulé) et corrigées avant
+  merge : (1) un paramètre observé à une seule valeur distincte dans le
+  dépistage rendait un impact 0.0 — indiscernable d'un impact « mesuré et
+  réellement plat » — menant à geler ce paramètre sur aucune donnée plutôt
+  que sur un signal ; corrigé en rendant NaN (jamais gelable en mode
+  facultatif) ce cas précis. (2) Insuffisant en soi : avec aussi peu
+  d'essais de dépistage que de paramètres (8 essais pour les 21 de
+  `opus_omnibus_v9`), CHAQUE paramètre varie simultanément à presque chaque
+  essai — l'estimateur marginal reste noyé dans le bruit de confusion
+  inter-paramètres même une fois le cas NaN exclu (mesuré : 20/21 paramètres
+  gelés à partir de 8 essais, à l'identique avant et après le correctif
+  NaN). Nouveau garde-fou `_MIN_SCREEN_PER_PARAM` : sous ce ratio essais/
+  paramètres, le mode facultatif (random/bayesian) ne gèle plus RIEN plutôt
+  que de figer des paramètres sur un signal non fiable — le mode grid
+  (réduction obligatoire) n'est pas concerné. Score final OOS sur
+  `opus_omnibus_v9` inchangé (~0.64) que la réduction gèle 0 ou 20
+  paramètres, confirmant qu'aucune perte de qualité ne résultait du
+  garde-fou plus prudent.
+- 741/741 tests verts (+29 nouveaux/réécrits :
+  `tests/test_param_search_optim.py`, `tests/test_optimizer_n_jobs.py`).
 
 ### 📚 Documentation
 
