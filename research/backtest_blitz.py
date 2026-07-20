@@ -3,16 +3,17 @@
 Usage : python research/backtest_blitz.py [--tf 1h,4h] [--deploy full1x|lev2x]
         [--wf] [--split] [--mc] [--params k=v ...]
 """
+import json
 import os
 import sys
 import time
-import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import polars as pl
+
+from app.engine.backtest import Backtester, MonteCarlo, WalkForwardAnalyzer
 from app.engine.engine import Engine
-from app.engine.backtest import Backtester, WalkForwardAnalyzer, MonteCarlo
 from app.strategies.momentum_blitz import Strategy
 
 UPLOAD = "/root/.claude/uploads/6ee1d036-9dde-49c8-ba23-22b93133ed2a"
@@ -48,7 +49,8 @@ def load(tf):
 def run_tf(tf, params, deploy="full1x", do_mc=False, label=""):
     df = load(tf)
     mn = DEPLOY[deploy]
-    eng = Engine(); eng.register(Strategy(), silent=True)
+    eng = Engine()
+    eng.register(Strategy(), silent=True)
     bt = Backtester(eng, cfg(params, max_notional=mn), use_pretrained_ml=False)
     t0 = time.time()
     res = bt.run(df, "BTC/USDC", timeframe=tf)
@@ -59,11 +61,14 @@ def run_tf(tf, params, deploy="full1x", do_mc=False, label=""):
         if str(t.get("status", "")).startswith("closed"):
             s = t.get("setup", "?")
             d = setups.setdefault(s, {"n": 0, "pnl": 0.0, "wins": 0})
-            d["n"] += 1; d["pnl"] += t.get("pnl", 0.0); d["wins"] += 1 if t.get("pnl", 0) > 0 else 0
+            d["n"] += 1
+            d["pnl"] += t.get("pnl", 0.0)
+            d["wins"] += 1 if t.get("pnl", 0) > 0 else 0
     print(f"\n{'═'*74}\n {label or 'momentum_blitz'} · {tf} · deploy={deploy} "
           f"(maxNotional={mn:.0%}) · {len(df)} bougies · {dt:.1f}s\n{'═'*74}")
     eqmult = r['final_equity'] / r['initial_capital']
-    print(f"  RENDEMENT : {(eqmult-1)*100:+.1f}%  (x{eqmult:.2f}, equity {r['initial_capital']:.0f}→{r['final_equity']:.0f})")
+    print(f"  RENDEMENT : {(eqmult-1)*100:+.1f}%  (x{eqmult:.2f}, "
+         f"equity {r['initial_capital']:.0f}→{r['final_equity']:.0f})")
     print(f"  Buy&Hold  : {r['buy_and_hold_pct']:+.1f}%   ALPHA={r['alpha']:+.0f} USDC")
     print(f"  RISQUE    : max DD {r['max_drawdown']:.1f}%  | Sharpe {r['sharpe']:.2f}  | PF {r['profit_factor']:.2f}")
     print(f"  Trades    : {r['total_trades']}  win {r['win_rate']:.1f}%  | "
@@ -96,7 +101,8 @@ def run_split(tf, params, deploy="full1x"):
                           (pl.col("time") <= pl.lit(d1).str.to_datetime()))
         if len(sub) < 300:
             continue
-        eng = Engine(); eng.register(Strategy(), silent=True)
+        eng = Engine()
+        eng.register(Strategy(), silent=True)
         r = Backtester(eng, cfg(params, max_notional=mn), use_pretrained_ml=False
                        ).run(sub, "BTC/USDC", timeframe=tf).to_dict()
         pnl = (r["final_equity"] / r["initial_capital"] - 1) * 100
@@ -105,7 +111,8 @@ def run_split(tf, params, deploy="full1x"):
 
 
 def run_wf(tf, params, deploy="full1x"):
-    eng = Engine(); eng.register(Strategy(), silent=True)
+    eng = Engine()
+    eng.register(Strategy(), silent=True)
     r = WalkForwardAnalyzer(eng, cfg(params, max_notional=DEPLOY[deploy]), n_folds=5).run(load(tf), "BTC/USDC")
     if "error" in r:
         print(f"\n  ── WF {tf} : {r['error']}")

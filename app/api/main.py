@@ -15,21 +15,34 @@ except ImportError:
     pass
 
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from slowapi import _rate_limit_exceeded_handler
-from slowapi.middleware import SlowAPIMiddleware
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api import state
 from app.api.helpers import CleanJSONResponse
-from app.api.routes import (config, trades, backtest, scanner, optimizer, bot,
-                            ml, replay, derivatives, portfolio, data, ws,
-                            audit_log)
+from app.api.routes import (
+    audit_log,
+    backtest,
+    bot,
+    config,
+    data,
+    derivatives,
+    ml,
+    optimizer,
+    portfolio,
+    replay,
+    scanner,
+    trades,
+    ws,
+)
 from app.core.database import init_db
 from app.core.events import event_hub
 
@@ -49,7 +62,10 @@ app = FastAPI(
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
-    description="API de trading algorithmique multi-stratégies. Tous les endpoints protégés exigent `X-API-Key`. Endpoint WebSocket temps réel sur `/ws`.",
+    description=(
+        "API de trading algorithmique multi-stratégies. Tous les endpoints protégés "
+        "exigent `X-API-Key`. Endpoint WebSocket temps réel sur `/ws`."
+    ),
     default_response_class=CleanJSONResponse,
     lifespan=_lifespan,
 )

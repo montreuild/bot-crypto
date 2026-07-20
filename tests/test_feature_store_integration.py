@@ -18,7 +18,8 @@ def _make_df(n=600):
     closes = np.array(closes)
     highs = closes * (1 + np.abs(np.random.randn(n) * 0.005))
     lows = closes * (1 - np.abs(np.random.randn(n) * 0.005))
-    opens = np.roll(closes, 1); opens[0] = closes[0]
+    opens = np.roll(closes, 1)
+    opens[0] = closes[0]
     vols = np.random.uniform(1000, 5000, n)
     times = [datetime(2024, 1, 1) + timedelta(hours=i) for i in range(n)]
     return pl.DataFrame({"time": times, "open": opens, "high": highs,
@@ -42,8 +43,8 @@ def _cfg():
 
 def test_backtest_cold_vs_warm_cache_identical(tmp_path):
     import app.core.feature_store as fs
-    from app.engine.engine import Engine
     from app.engine.backtest import Backtester
+    from app.engine.engine import Engine
     from app.strategies.opus_omnibus_v10 import Strategy
 
     fs.get_feature_store.set(fs.FeatureStore(base_dir=str(tmp_path)))
@@ -51,8 +52,10 @@ def test_backtest_cold_vs_warm_cache_identical(tmp_path):
     cfg = _cfg()
 
     def run_once():
-        eng = Engine(); eng.register(Strategy(), silent=True)
-        bt = Backtester(eng, cfg); bt.use_pretrained_ml = False
+        eng = Engine()
+        eng.register(Strategy(), silent=True)
+        bt = Backtester(eng, cfg)
+        bt.use_pretrained_ml = False
         return bt.run(df, "BTC/USDC", "1h").to_dict()
 
     r_cold = run_once()   # build → store

@@ -12,16 +12,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.core import smc
 from app.strategies.smart_money import Strategy
 
-
 # ── Helpers de construction OHLCV ─────────────────────────────────────────────
 
-def _mk_df(o, h, l, c, v=None):
+def _mk_df(o, h, lo, c, v=None):
     n = len(c)
     times = [datetime(2024, 1, 1) + timedelta(hours=i) for i in range(n)]
     return pl.DataFrame({
         "time": times,
         "open": [float(x) for x in o], "high": [float(x) for x in h],
-        "low": [float(x) for x in l], "close": [float(x) for x in c],
+        "low": [float(x) for x in lo], "close": [float(x) for x in c],
         "volume": [float(x) for x in (v if v is not None else [100.0] * n)],
     })
 
@@ -36,9 +35,9 @@ def _random_df(n=800, seed=7, jump_p=0.02):
     o = base + rng.normal(0, 0.1, n)
     c = base + rng.normal(0, 0.1, n)
     h = np.maximum(o, c) + np.abs(rng.normal(0, 0.2, n))
-    l = np.minimum(o, c) - np.abs(rng.normal(0, 0.2, n))
+    lo = np.minimum(o, c) - np.abs(rng.normal(0, 0.2, n))
     v = np.abs(rng.normal(1000, 300, n))
-    return _mk_df(o, h, l, c, v)
+    return _mk_df(o, h, lo, c, v)
 
 
 def _flat(n, price=100.0, amp=0.1):
@@ -46,8 +45,8 @@ def _flat(n, price=100.0, amp=0.1):
     o = [price + (amp if i % 2 else -amp) for i in range(n)]
     c = [price - (amp if i % 2 else -amp) for i in range(n)]
     h = [max(a, b) + amp / 2 for a, b in zip(o, c)]
-    l = [min(a, b) - amp / 2 for a, b in zip(o, c)]
-    return o, h, l, c
+    lo = [min(a, b) - amp / 2 for a, b in zip(o, c)]
+    return o, h, lo, c
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -57,13 +56,19 @@ def _flat(n, price=100.0, amp=0.1):
 class TestSwingsStructure:
     def test_pivots_detected_and_confirmed_later(self):
         # V simple : montée, sommet net, descente, creux net, remontée.
-        o, h, l, c = _flat(60)
+        o, h, lo, c = _flat(60)
         # sommet à l'indice 20, creux à l'indice 40
         for i, d in ((18, 2), (19, 4), (20, 6), (21, 4), (22, 2)):
-            o[i] += d; c[i] += d; h[i] += d + 0.2; l[i] += d
+            o[i] += d
+            c[i] += d
+            h[i] += d + 0.2
+            lo[i] += d
         for i, d in ((38, -2), (39, -4), (40, -6), (41, -4), (42, -2)):
-            o[i] += d; c[i] += d; h[i] += d; l[i] += d - 0.2
-        df = _mk_df(o, h, l, c)
+            o[i] += d
+            c[i] += d
+            h[i] += d
+            lo[i] += d - 0.2
+        df = _mk_df(o, h, lo, c)
         r = smc.analyze(df, {"swing_left": 3, "swing_right": 3})
         highs = [s for s in r["_all_swings"] if s["kind"] == "high"]
         lows = [s for s in r["_all_swings"] if s["kind"] == "low"]
@@ -74,13 +79,19 @@ class TestSwingsStructure:
 
     def test_bos_up_detected_on_close_above_swing_high(self):
         # Sommet confirmé puis clôture au-dessus → BOS direction up, trend haussier.
-        o, h, l, c = _flat(50)
+        o, h, lo, c = _flat(50)
         for i, d in ((18, 2), (19, 4), (20, 6), (21, 4), (22, 2)):
-            o[i] += d; c[i] += d; h[i] += d + 0.2; l[i] += d
+            o[i] += d
+            c[i] += d
+            h[i] += d + 0.2
+            lo[i] += d
         # cassure franche à l'indice 35
         for i in range(35, 50):
-            o[i] += 12; c[i] += 12; h[i] += 12.3; l[i] += 12
-        df = _mk_df(o, h, l, c)
+            o[i] += 12
+            c[i] += 12
+            h[i] += 12.3
+            lo[i] += 12
+        df = _mk_df(o, h, lo, c)
         r = smc.analyze(df, {"swing_left": 3, "swing_right": 3})
         ups = [e for e in r["_all_struct_events"] if e["direction"] == "up"]
         assert ups, "aucune cassure haussière détectée"
@@ -95,9 +106,11 @@ class TestSwingsStructure:
             100 + np.linspace(0, 40, 200),           # uptrend
             140 - np.linspace(0, 50, 100),           # retournement
         ]) + rng.normal(0, 0.4, n)
-        o = base - 0.1; c = base + 0.1
-        h = np.maximum(o, c) + 0.3; l = np.minimum(o, c) - 0.3
-        df = _mk_df(o, h, l, c)
+        o = base - 0.1
+        c = base + 0.1
+        h = np.maximum(o, c) + 0.3
+        lo = np.minimum(o, c) - 0.3
+        df = _mk_df(o, h, lo, c)
         r = smc.analyze(df)
         kinds = {(e["kind"], e["direction"]) for e in r["_all_struct_events"]}
         assert ("CHoCH", "down") in kinds, f"CHoCH down absent : {kinds}"
@@ -107,15 +120,23 @@ class TestSwingsStructure:
 class TestLiquidity:
     def _equal_lows_df(self):
         """Deux creux quasi égaux (equal lows) puis sweep rejeté."""
-        o, h, l, c = _flat(80, price=100.0)
+        o, h, lo, c = _flat(80, price=100.0)
         for i, d in ((18, -2), (19, -4), (20, -6), (21, -4), (22, -2)):
-            o[i] += d; c[i] += d; h[i] += d; l[i] += d - 0.2
+            o[i] += d
+            c[i] += d
+            h[i] += d
+            lo[i] += d - 0.2
         for i, d in ((38, -2), (39, -4), (40, -6.05), (41, -4), (42, -2)):
-            o[i] += d; c[i] += d; h[i] += d; l[i] += d - 0.2
+            o[i] += d
+            c[i] += d
+            h[i] += d
+            lo[i] += d - 0.2
         # sweep à l'indice 60 : mèche sous les equal lows, clôture au-dessus
-        l[60] = 92.0          # sous le niveau ~93.6
-        o[60] = 100.2; c[60] = 100.4; h[60] = 100.8
-        return _mk_df(o, h, l, c)
+        lo[60] = 92.0          # sous le niveau ~93.6
+        o[60] = 100.2
+        c[60] = 100.4
+        h[60] = 100.8
+        return _mk_df(o, h, lo, c)
 
     def test_equal_lows_form_sell_side_pool(self):
         r = smc.analyze(self._equal_lows_df(), {"eq_tol_atr": 0.6})
@@ -146,20 +167,26 @@ class TestLiquidity:
 class TestOrderBlocksFVG:
     def _displacement_df(self):
         """Bougie rouge puis displacement haussier massif → OB bullish + FVG."""
-        o, h, l, c = _flat(80, price=100.0)
+        o, h, lo, c = _flat(80, price=100.0)
         # bougie rouge nette à 40
-        o[40], c[40], h[40], l[40] = 100.5, 99.5, 100.7, 99.3
+        o[40], c[40], h[40], lo[40] = 100.5, 99.5, 100.7, 99.3
         # displacement à 41 : corps énorme qui engloutit le high précédent
-        o[41], c[41], h[41], l[41] = 99.6, 106.0, 106.3, 99.5
+        o[41], c[41], h[41], lo[41] = 99.6, 106.0, 106.3, 99.5
         # bougie suivante laisse un gap (FVG) : low[42] > high[40]
-        o[42], c[42], h[42], l[42] = 106.0, 107.0, 107.3, 105.5
+        o[42], c[42], h[42], lo[42] = 106.0, 107.0, 107.3, 105.5
         # retour dans la zone OB à 60
-        o[60], c[60], h[60], l[60] = 101.0, 101.5, 101.8, 100.2
+        o[60], c[60], h[60], lo[60] = 101.0, 101.5, 101.8, 100.2
         for i in range(43, 60):
-            o[i] += 6; c[i] += 6; h[i] += 6; l[i] += 6
+            o[i] += 6
+            c[i] += 6
+            h[i] += 6
+            lo[i] += 6
         for i in range(61, 80):
-            o[i] += 2; c[i] += 2; h[i] += 2; l[i] += 2
-        return _mk_df(o, h, l, c)
+            o[i] += 2
+            c[i] += 2
+            h[i] += 2
+            lo[i] += 2
+        return _mk_df(o, h, lo, c)
 
     def test_bullish_ob_created_at_last_red_candle(self):
         r = smc.analyze(self._displacement_df(), {"disp_body_atr": 1.3})
@@ -186,19 +213,23 @@ class TestLiquidityVoidsBreakers:
     def _void_df(self):
         """4 bougies vertes consécutives massives → liquidity void bullish,
         puis retracement complet → filled."""
-        o, h, l, c = _flat(80, price=100.0)
+        o, h, lo, c = _flat(80, price=100.0)
         px = 100.0
         for i in range(40, 44):           # run haussier : +3 par bougie
             o[i], c[i] = px, px + 3
-            h[i], l[i] = px + 3.2, px - 0.2
+            h[i], lo[i] = px + 3.2, px - 0.2
             px += 3
         for i in range(44, 60):           # plateau haut
-            o[i] += 12; c[i] += 12; h[i] += 12; l[i] += 12
+            o[i] += 12
+            c[i] += 12
+            h[i] += 12
+            lo[i] += 12
         # retracement complet à 60 : retour sous l'origine du run
-        o[60], c[60], h[60], l[60] = 112.0, 99.0, 112.2, 98.5
+        o[60], c[60], h[60], lo[60] = 112.0, 99.0, 112.2, 98.5
         for i in range(61, 80):
-            o[i] -= 0; c[i] -= 0
-        return _mk_df(o, h, l, c)
+            o[i] -= 0
+            c[i] -= 0
+        return _mk_df(o, h, lo, c)
 
     def test_void_detected_and_filled(self):
         r = smc.analyze(self._void_df(), {"void_min_bars": 3, "void_min_atr": 2.0})
@@ -223,19 +254,25 @@ class TestLiquidityVoidsBreakers:
 
     def test_breaker_created_on_ob_invalidation(self):
         """OB bullish invalidé sur clôture → breaker bearish créé, retest suivi."""
-        o, h, l, c = _flat(90, price=100.0)
+        o, h, lo, c = _flat(90, price=100.0)
         # bougie rouge (future OB) puis displacement haussier
-        o[40], c[40], h[40], l[40] = 100.5, 99.5, 100.7, 99.3
-        o[41], c[41], h[41], l[41] = 99.6, 106.0, 106.3, 99.5
+        o[40], c[40], h[40], lo[40] = 100.5, 99.5, 100.7, 99.3
+        o[41], c[41], h[41], lo[41] = 99.6, 106.0, 106.3, 99.5
         for i in range(42, 55):
-            o[i] += 6; c[i] += 6; h[i] += 6; l[i] += 6
+            o[i] += 6
+            c[i] += 6
+            h[i] += 6
+            lo[i] += 6
         # invalidation : clôture sous le bottom de l'OB (99.3) à 60
-        o[60], c[60], h[60], l[60] = 100.0, 98.0, 100.2, 97.8
+        o[60], c[60], h[60], lo[60] = 100.0, 98.0, 100.2, 97.8
         for i in range(61, 90):
-            o[i] -= 3; c[i] -= 3; h[i] -= 3; l[i] -= 3
+            o[i] -= 3
+            c[i] -= 3
+            h[i] -= 3
+            lo[i] -= 3
         # retest de la zone (par le bas) à 75
-        o[75], c[75], h[75], l[75] = 98.5, 99.0, 99.6, 98.3
-        df = _mk_df(o, h, l, c)
+        o[75], c[75], h[75], lo[75] = 98.5, 99.0, 99.6, 98.3
+        df = _mk_df(o, h, lo, c)
         r = smc.analyze(df, {"disp_body_atr": 1.3})
         ob = next((x for x in r["_all_obs"]
                    if x["kind"] == "bullish" and x["index"] == 40), None)
@@ -251,14 +288,20 @@ class TestLiquidityVoidsBreakers:
 class TestRejectionBlocks:
     def test_rejection_block_on_wick_swing(self):
         """Swing high avec grande mèche haute → rejection block bearish."""
-        o, h, l, c = _flat(60, price=100.0)
+        o, h, lo, c = _flat(60, price=100.0)
         # sommet à 30 : corps petit, mèche haute de 3 (>> 0.5×ATR)
         for i, d in ((28, 1), (29, 2), (31, 2), (32, 1)):
-            o[i] += d; c[i] += d; h[i] += d + 0.1; l[i] += d
-        o[30], c[30], h[30], l[30] = 102.4, 102.6, 106.0, 102.2
+            o[i] += d
+            c[i] += d
+            h[i] += d + 0.1
+            lo[i] += d
+        o[30], c[30], h[30], lo[30] = 102.4, 102.6, 106.0, 102.2
         # retest de la zone par le bas à 45
-        h[45] = 103.5; o[45] = 100.0; c[45] = 100.2; l[45] = 99.8
-        df = _mk_df(o, h, l, c)
+        h[45] = 103.5
+        o[45] = 100.0
+        c[45] = 100.2
+        lo[45] = 99.8
+        df = _mk_df(o, h, lo, c)
         r = smc.analyze(df, {"rb_wick_atr": 0.5})
         rbs = [x for x in r["_all_rejections"]
                if x["kind"] == "bearish" and x["index"] == 30]
@@ -271,15 +314,17 @@ class TestRejectionBlocks:
 class TestVolumeProfileSessions:
     def test_volume_profile_fields(self):
         df = _random_df(500, seed=4)
-        h = df["high"].to_numpy(); l = df["low"].to_numpy()
-        c = df["close"].to_numpy(); v = df["volume"].to_numpy()
-        vp = smc.volume_profile(h, l, c, v, len(df) - 1, lookback=240)
+        h = df["high"].to_numpy()
+        lo = df["low"].to_numpy()
+        c = df["close"].to_numpy()
+        v = df["volume"].to_numpy()
+        vp = smc.volume_profile(h, lo, c, v, len(df) - 1, lookback=240)
         assert vp is not None
         assert vp["range_low"] <= vp["poc"] <= vp["range_high"]
         for lv in vp["hvns"] + vp["lvns"]:
             assert vp["range_low"] <= lv <= vp["range_high"]
         # fenêtre trop courte → None
-        assert smc.volume_profile(h, l, c, v, 10, lookback=240) is None
+        assert smc.volume_profile(h, lo, c, v, 10, lookback=240) is None
 
     def test_killzone_flags(self):
         import numpy as np
@@ -355,12 +400,13 @@ class TestPremiumDiscount:
     def test_causal_pd_at_bar(self):
         df = _random_df(500, seed=11)
         r = smc.analyze(df)
-        h = df["high"].to_numpy(); l = df["low"].to_numpy()
+        h = df["high"].to_numpy()
+        lo = df["low"].to_numpy()
         c = df["close"].to_numpy()
-        pd_mid = smc.premium_discount_at(r, h, l, c, 250)
+        pd_mid = smc.premium_discount_at(r, h, lo, c, 250)
         assert pd_mid is None or pd_mid["zone"] in ("premium", "discount", "equilibrium")
         # à la dernière barre, identique au champ public
-        pd_last = smc.premium_discount_at(r, h, l, c, len(df) - 1)
+        pd_last = smc.premium_discount_at(r, h, lo, c, len(df) - 1)
         assert pd_last == r["premium_discount"]
 
 
@@ -594,7 +640,8 @@ class TestTradePlans:
         for seed in range(12):
             df = _random_df(900, seed=seed, jump_p=0.04)
             # défaut : exit_after_bars None
-            s_off = Strategy(); s_off._bt_params = None
+            s_off = Strategy()
+            s_off._bt_params = None
             s_off.prepare_for_backtest(df)
             for sig in (s_off._bt_signals or {}).values():
                 assert sig.get("exit_after_bars") is None

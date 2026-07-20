@@ -27,8 +27,8 @@ logging.getLogger().setLevel(logging.WARNING)
 for _n in ("app", "optuna"):
     logging.getLogger(_n).setLevel(logging.WARNING)
 
-from app.core.yaml_io import load_yaml, dump_yaml          # noqa: E402
-from app.engine.optimizer import StrategyOptimizer, PARAM_SPACES  # noqa: E402
+from app.core.yaml_io import dump_yaml, load_yaml  # noqa: E402
+from app.engine.optimizer import PARAM_SPACES, StrategyOptimizer  # noqa: E402
 
 OOS_RATIO = 0.35
 WARMUP = 220

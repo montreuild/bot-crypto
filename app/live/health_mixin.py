@@ -20,7 +20,7 @@ from collections import Counter
 
 from app.core.timeframes import bars_per_year as _bars_per_year
 from app.live.position_mixin import _calc_unreal_pct
-from app.live.utils import _sanitize, _safe_float
+from app.live.utils import _safe_float, _sanitize
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ class HealthMixin:
         """
         if getattr(self, "_bots_cache", None) is not None:
             return self._bots_cache
-        from app.core.bot_identity import peek_identity, _load_generations
+        from app.core.bot_identity import _load_generations, peek_identity
         gens = _load_generations()   # une seule lecture disque pour tous les bots
         out = []
         for tf, slots in self._active_per_tf.items():
@@ -242,9 +242,9 @@ class HealthMixin:
         total_trades = wins = 0
         by_strategy: dict = {}
         try:
-            from app.core.database import (
-                get_trade_global_aggregates as _agg, get_trades as _gt, session_scope
-            )
+            from app.core.database import get_trade_global_aggregates as _agg
+            from app.core.database import get_trades as _gt
+            from app.core.database import session_scope
             with session_scope(self.SessionLocal) as _sess:
                 agg = _agg(_sess)
                 total_trades = agg["total_trades"]

@@ -39,6 +39,7 @@ def test_route_guards_with_beats_baseline():
     """Garde-fou statique : la route apply appelle bien beats_baseline et
     expose force=... (BT-04)."""
     import inspect
+
     from app.api.routes import optimizer as opt_route
     src = inspect.getsource(opt_route.optimizer_apply)
     assert "beats_baseline" in src and "force" in src and "409" in src
@@ -48,6 +49,7 @@ def test_auto_apply_has_walk_forward_gate():
     """BT-07 : l'auto-apply passe par un gate walk-forward (params figés,
     consistency minimale, désactivable via optimizer.wf_gate)."""
     import inspect
+
     from app.engine import auto_optimizer
     src = inspect.getsource(auto_optimizer.AutoOptimizer._run_one_job)
     assert "_wf_consistent" in src

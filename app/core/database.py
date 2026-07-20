@@ -3,12 +3,25 @@ Base de données SQLite étendue — trades, métriques journalières, signaux, 
 """
 import logging
 from contextlib import contextmanager
-from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional
 
-from sqlalchemy import (create_engine, event, Column, Integer, Float, String,
-                        Boolean, DateTime, Text, JSON, Index, func, case)
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    Index,
+    Integer,
+    String,
+    Text,
+    case,
+    create_engine,
+    event,
+    func,
+)
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 logger = logging.getLogger(__name__)
 Base   = declarative_base()
@@ -346,9 +359,12 @@ def save_trade(session: Session, t: dict):
 def get_trades(session: Session, limit=1000, symbol=None, strategy=None,
                since: Optional[datetime] = None) -> List[Trade]:
     q = session.query(Trade)
-    if symbol:   q = q.filter(Trade.symbol == symbol)
-    if strategy: q = q.filter(Trade.strategy == strategy)
-    if since is not None: q = q.filter(Trade.time >= since)
+    if symbol:
+        q = q.filter(Trade.symbol == symbol)
+    if strategy:
+        q = q.filter(Trade.strategy == strategy)
+    if since is not None:
+        q = q.filter(Trade.time >= since)
     return q.order_by(Trade.time.desc()).limit(limit).all()
 
 

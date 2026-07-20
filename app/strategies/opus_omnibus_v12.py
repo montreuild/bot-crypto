@@ -32,8 +32,8 @@ from typing import Any, Dict
 
 import polars as pl
 
-from app.strategies.opus_omnibus_v11 import Strategy as _V11Strategy
 from app.strategies.ml_dynamic_threshold import Strategy as _MLDynStrategy
+from app.strategies.opus_omnibus_v11 import Strategy as _V11Strategy
 
 logger = logging.getLogger(__name__)
 

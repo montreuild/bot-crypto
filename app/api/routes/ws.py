@@ -35,7 +35,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Set
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from app.api import state
 from app.core.events import event_hub

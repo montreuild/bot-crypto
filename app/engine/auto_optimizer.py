@@ -8,14 +8,18 @@ from typing import Dict, List, Optional
 
 import polars as pl
 
-from app.engine.engine   import Engine, BaseStrategyML
-from app.engine.backtest import Backtester
 from app.core.is_oos import split_is_oos
-from app.engine.optimizer import (
-    StrategyOptimizer, PARAM_SPACES, STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT,
-    apply_best_params, record_optimizer_audit
-)
+from app.engine.backtest import Backtester
+from app.engine.engine import BaseStrategyML, Engine
 from app.engine.opt_workers import available_memory_bytes
+from app.engine.optimizer import (
+    PARAM_SPACES,
+    RECOMMENDED_LIMIT,
+    STRATEGY_TIMEFRAMES,
+    StrategyOptimizer,
+    apply_best_params,
+    record_optimizer_audit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -406,7 +410,8 @@ class AutoOptimizer:
                 )
                 t.start()
                 job_ids.append(jid)
-                rec_str = "" if is_recommended else f" [TF non recommandé pour {name}, recommandé: {', '.join(recommended_tfs)}]"
+                rec_str = ("" if is_recommended else
+                          f" [TF non recommandé pour {name}, recommandé: {', '.join(recommended_tfs)}]")
                 logger.info(f"[AutoOpt] Job lancé : {jid} ({self.method}, {self.n_trials} trials){rec_str}")
 
         return job_ids, skipped
@@ -538,6 +543,7 @@ class AutoOptimizer:
                 min_cons = float(opt_cfg.get("wf_min_consistency", 60.0))
                 try:
                     from copy import deepcopy
+
                     from app.engine.backtest import WalkForwardAnalyzer
                     cfg2 = {k: v for k, v in self.cfg.items()}
                     sp = deepcopy(self.cfg.get("strategy_params") or {})

@@ -1,15 +1,18 @@
 """
 Tests unitaires — Backtester & BacktestResult
 """
-import pytest
-import sys, os
+import os
+import sys
 from datetime import datetime, timedelta
+
 import numpy as np
 import polars as pl
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.engine.backtest import BacktestResult, Backtester
-from app.engine.engine import Engine, BaseStrategy
+from app.engine.backtest import Backtester, BacktestResult
+from app.engine.engine import BaseStrategy, Engine
 
 
 def _make_df(n=300, trend="up"):
@@ -27,7 +30,8 @@ def _make_df(n=300, trend="up"):
     closes = np.array(closes)
     highs  = closes * (1 + np.abs(np.random.randn(n) * 0.005))
     lows   = closes * (1 - np.abs(np.random.randn(n) * 0.005))
-    opens  = np.roll(closes, 1); opens[0] = closes[0]
+    opens  = np.roll(closes, 1)
+    opens[0] = closes[0]
     vols   = np.random.uniform(1000, 5000, n)
     start  = datetime(2024, 1, 1)
     times  = [start + timedelta(hours=i) for i in range(n)]
@@ -211,7 +215,8 @@ class TestTpSlAmbiguousBars:
         closes = np.array(closes)
         highs = closes * (1 + np.abs(np.random.randn(n) * 0.003))
         lows  = closes * (1 - np.abs(np.random.randn(n) * 0.003))
-        opens = np.roll(closes, 1); opens[0] = closes[0]
+        opens = np.roll(closes, 1)
+        opens[0] = closes[0]
         vols  = np.random.uniform(1000, 5000, n)
         # Barre volontairement hors des bornes du bracket ±10% des deux côtés.
         highs[ambiguous_bar] = closes[ambiguous_bar] * 3.0

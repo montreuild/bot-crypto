@@ -38,7 +38,7 @@ def calendar_liquidity_levels(df: pl.DataFrame) -> Optional[dict]:
         return None
     epoch = df["time"].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
     h = df["high"].to_numpy().astype(float)
-    l = df["low"].to_numpy().astype(float)
+    lo = df["low"].to_numpy().astype(float)
     day = epoch // 86400
     week = (day + 3) // 7          # 1970-01-01 = jeudi -> +3 ancre le lundi
 
@@ -51,7 +51,7 @@ def calendar_liquidity_levels(df: pl.DataFrame) -> Optional[dict]:
             out[key_h][s:e] = prev_h
             out[key_l][s:e] = prev_l
             prev_h = float(h[s:e].max())
-            prev_l = float(l[s:e].min())
+            prev_l = float(lo[s:e].min())
     return out
 
 
@@ -126,7 +126,7 @@ def _htf_buckets(df: pl.DataFrame, htf_sec_map: Optional[Dict[int, int]] = None,
     bucket = epoch // htf_sec
     o = df["open"].to_numpy().astype(float)
     h = df["high"].to_numpy().astype(float)
-    l = df["low"].to_numpy().astype(float)
+    lo = df["low"].to_numpy().astype(float)
     c = df["close"].to_numpy().astype(float)
     v = df["volume"].to_numpy().astype(float) if "volume" in df.columns \
         else np.ones(n)
@@ -137,7 +137,7 @@ def _htf_buckets(df: pl.DataFrame, htf_sec_map: Optional[Dict[int, int]] = None,
     ho = o[starts]
     hc = c[ends - 1]
     hh = np.array([h[s:e].max() for s, e in zip(starts, ends)])
-    hl = np.array([l[s:e].min() for s, e in zip(starts, ends)])
+    hl = np.array([lo[s:e].min() for s, e in zip(starts, ends)])
     hv = np.array([v[s:e].sum() for s, e in zip(starts, ends)])
     htf_df = pl.DataFrame({"open": ho, "high": hh, "low": hl,
                            "close": hc, "volume": hv})
@@ -176,6 +176,7 @@ def smt_series(df: pl.DataFrame, correlate_path: str,
     pas de colonne ``time``. Primitive réutilisable (moteur) : câblée par
     ``smart_money`` et ``vizion`` en confluence/filtre optionnel."""
     import os
+
     from app.core import ict
     path = str(correlate_path or "")
     if not path or not os.path.exists(path) or "time" not in df.columns:

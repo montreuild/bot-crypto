@@ -3,8 +3,8 @@ import importlib
 
 import pytest
 
+from app.core.database import init_db, load_risk_state, session_scope
 from app.core.risk import RiskManager
-from app.core.database import init_db, session_scope, load_risk_state
 
 
 def _cfg(**risk_over):

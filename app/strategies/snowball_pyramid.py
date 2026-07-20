@@ -23,7 +23,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import polars as pl
 
-from app.strategies.tvr_trend import Strategy as TVRStrategy, _atr_series
+from app.strategies.tvr_trend import Strategy as TVRStrategy
+from app.strategies.tvr_trend import _atr_series
 
 logger = logging.getLogger(__name__)
 

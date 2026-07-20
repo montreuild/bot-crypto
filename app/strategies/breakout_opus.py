@@ -12,12 +12,12 @@ Sortie sur signal opposé : gérée nativement par le moteur (un signal short fe
 position longue ouverte, et inversement).
 """
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 import polars as pl
 
+from app.core.indicators import macd_hist_last3, pre_val
 from app.engine.engine import BaseStrategy
-from app.core.indicators import pre_val, macd_hist_last3
 
 logger = logging.getLogger(__name__)
 

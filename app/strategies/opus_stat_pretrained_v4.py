@@ -35,8 +35,9 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
+from app.core.indicators import pre_val
+from app.core.indicators import safe_num as _safe_num
 from app.engine.engine import BaseStrategyML
-from app.core.indicators import pre_val, safe_num as _safe_num
 
 warnings.filterwarnings("ignore", category=UserWarning, module="lightgbm")
 
@@ -141,19 +142,20 @@ class _FeatureBuilder:
         return ma, ma + k * sd, ma - k * sd
 
     @staticmethod
-    def _atr(h: pd.Series, l: pd.Series, c: pd.Series, n=14) -> pd.Series:
+    def _atr(h: pd.Series, lo: pd.Series, c: pd.Series, n=14) -> pd.Series:
         tr = pd.concat(
-            [h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1
+            [h - lo, (h - c.shift()).abs(), (lo - c.shift()).abs()], axis=1
         ).max(axis=1)
         return tr.ewm(alpha=1/n, adjust=False).mean()
 
     @staticmethod
-    def _adx(h: pd.Series, l: pd.Series, c: pd.Series, n=14):
-        up = h.diff();  dn = -l.diff()
+    def _adx(h: pd.Series, lo: pd.Series, c: pd.Series, n=14):
+        up = h.diff()
+        dn = -lo.diff()
         plus_dm  = ((up > dn) & (up > 0)) * up
         minus_dm = ((dn > up) & (dn > 0)) * dn
         tr = pd.concat(
-            [h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1
+            [h - lo, (h - c.shift()).abs(), (lo - c.shift()).abs()], axis=1
         ).max(axis=1)
         atr_ = tr.ewm(alpha=1/n, adjust=False).mean()
         pdi  = 100 * plus_dm.ewm(alpha=1/n, adjust=False).mean() / atr_
@@ -216,8 +218,11 @@ class _FeatureBuilder:
             d_raw = raw_df.sort_values("time").reset_index(drop=True)
         else:
             d_raw = raw_df.reset_index(drop=True)
-        c = d_raw["close"]; h = d_raw["high"]; l = d_raw["low"]
-        v = d_raw["volume"]; o = d_raw["open"]
+        c = d_raw["close"]
+        h = d_raw["high"]
+        lo = d_raw["low"]
+        v = d_raw["volume"]
+        o = d_raw["open"]
 
         # Accumulateur unique — évite la fragmentation pandas.
         f: dict = {}
@@ -265,9 +270,11 @@ class _FeatureBuilder:
         f["RSI_oversold"]   = (f["RSI_14"] < 30).astype(int)
         f["RSI_overbought"] = (f["RSI_14"] > 70).astype(int)
 
-        rhp = c.rolling(14).max();  rhr = f["RSI_14"].rolling(14).max()
+        rhp = c.rolling(14).max()
+        rhr = f["RSI_14"].rolling(14).max()
         f["bear_div"] = ((c == rhp) & (f["RSI_14"] < rhr * 0.97)).astype(int)
-        rlp = c.rolling(14).min();  rlr = f["RSI_14"].rolling(14).min()
+        rlp = c.rolling(14).min()
+        rlr = f["RSI_14"].rolling(14).min()
         f["bull_div"] = ((c == rlp) & (f["RSI_14"] > rlr * 1.03)).astype(int)
 
         green = (c > o).astype(int)
@@ -288,7 +295,7 @@ class _FeatureBuilder:
         # 5. Breakout
         for n in (20, 50, 100):
             f[f"high_{n}"]       = h.rolling(n).max().shift(1)
-            f[f"low_{n}"]        = l.rolling(n).min().shift(1)
+            f[f"low_{n}"]        = lo.rolling(n).min().shift(1)
             f[f"break_high_{n}"] = (c > f[f"high_{n}"]).astype(int)
             f[f"break_low_{n}"]  = (c < f[f"low_{n}"]).astype(int)
             f[f"dist_high_{n}"]  = (c - f[f"high_{n}"]) / f[f"high_{n}"]
@@ -300,7 +307,7 @@ class _FeatureBuilder:
             (h.rolling(3).max().shift(1) > f["high_20"].shift(2)) & (c < f["high_20"])
         ).astype(int)
         f["false_break_low_20"] = (
-            (l.rolling(3).min().shift(1) < f["low_20"].shift(2)) & (c > f["low_20"])
+            (lo.rolling(3).min().shift(1) < f["low_20"].shift(2)) & (c > f["low_20"])
         ).astype(int)
 
         # 6. Bollinger
@@ -316,11 +323,12 @@ class _FeatureBuilder:
         big = f["ret"].rolling(5).sum()
         f["pullback_after_rally"] = ((big.shift(3) > 0.01)  & (f["ret"].rolling(3).sum() < 0)).astype(int)
         f["bounce_after_drop"]    = ((big.shift(3) < -0.01) & (f["ret"].rolling(3).sum() > 0)).astype(int)
-        sh = h.rolling(50).max(); sl_s = l.rolling(50).min()
+        sh = h.rolling(50).max()
+        sl_s = lo.rolling(50).min()
         f["fib_pos"] = (c - sl_s) / (sh - sl_s).replace(0, np.nan)
 
         # 8. ADX / régime
-        adxv, pdi, mdi = self._adx(h, l, c)
+        adxv, pdi, mdi = self._adx(h, lo, c)
         f["ADX"]               = adxv
         f["DI_plus"]           = pdi
         f["DI_minus"]          = mdi
@@ -335,7 +343,7 @@ class _FeatureBuilder:
         )
 
         # 9. Volatilité / volume
-        f["ATR_14"]       = self._atr(h, l, c, 14)
+        f["ATR_14"]       = self._atr(h, lo, c, 14)
         f["ATR_pct"]      = f["ATR_14"] / c
         f["vol_std_20"]   = f["ret"].rolling(20).std()
         f["vol_ratio"]    = v / v.rolling(20).mean()
@@ -349,8 +357,8 @@ class _FeatureBuilder:
         f["body"]        = (c - o) / o
         f["body_abs"]    = f["body"].abs()
         f["upper_wick"]  = (h - max_oc) / o
-        f["lower_wick"]  = (min_oc - l) / o
-        f["range_size"]  = (h - l) / o
+        f["lower_wick"]  = (min_oc - lo) / o
+        f["range_size"]  = (h - lo) / o
         f["doji"]        = (f["body_abs"] < 0.001).astype(int)
         f["three_green"] = ((c > o) & (c.shift() > o.shift()) & (c.shift(2) > o.shift(2))).astype(int)
         f["three_red"]   = ((c < o) & (c.shift() < o.shift()) & (c.shift(2) < o.shift(2))).astype(int)

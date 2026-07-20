@@ -47,10 +47,10 @@ def test_no_ref_bar_leak_and_smoke(tmp_path):
     res, aux = strat2._analyze_cached(df, p_full)
     o = df["open"].to_numpy().astype(float)
     h = df["high"].to_numpy().astype(float)
-    l = df["low"].to_numpy().astype(float)
+    lo = df["low"].to_numpy().astype(float)
     c = df["close"].to_numpy().astype(float)
     for i in range(260, len(df)):
-        s = strat2._signal_at(res, i, o, h, l, c, aux, p_full)
+        s = strat2._signal_at(res, i, o, h, lo, c, aux, p_full)
         if s is not None:
             assert "_smt_ref_bar" not in s
 
@@ -70,11 +70,11 @@ def test_off_identical_to_baseline(tmp_path):
         res, aux = strat._analyze_cached(df, p_full)
         o = df["open"].to_numpy().astype(float)
         h = df["high"].to_numpy().astype(float)
-        l = df["low"].to_numpy().astype(float)
+        lo = df["low"].to_numpy().astype(float)
         c = df["close"].to_numpy().astype(float)
         return [(i, s["side"], round(s["score"], 6))
                 for i in range(260, len(df))
-                for s in [strat._signal_at(res, i, o, h, l, c, aux, p_full)]
+                for s in [strat._signal_at(res, i, o, h, lo, c, aux, p_full)]
                 if s is not None]
 
     assert signals({}) == signals({"smt_at_origin": False})

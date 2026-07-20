@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.api import state
-from app.api.helpers import verify_api_key, _clean, _discover_strategies
+from app.api.helpers import _clean, _discover_strategies, verify_api_key
 from app.core.candle_store import get_store
 from app.core.exchange import create_exchange
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
@@ -235,7 +235,7 @@ def optimizer_start(
 
 @router.get("/api/optimize/status", dependencies=[Depends(verify_api_key)])
 def optimizer_status(job_id: str = ""):
-    from app.engine.auto_optimizer import get_job, get_all_jobs
+    from app.engine.auto_optimizer import get_all_jobs, get_job
     if job_id:
         job = get_job(job_id)
         if not job:
@@ -246,8 +246,9 @@ def optimizer_status(job_id: str = ""):
 
 @router.get("/api/optimize/stream", dependencies=[Depends(verify_api_key)])
 async def optimizer_stream(job_id: str):
-    from app.engine.auto_optimizer import get_job
     import asyncio
+
+    from app.engine.auto_optimizer import get_job
 
     async def event_generator():
         last_progress = -1
@@ -298,10 +299,10 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
     En cas de refus → HTTP 409 avec la raison. ``force=true`` = override
     utilisateur explicite et assumé.
     """
-    from app.engine.auto_optimizer import get_job
-    from app.engine.optimizer import apply_best_params
-    from app.engine.opt_scoring import beats_baseline
     from app.core.config import load_config as _reload_cfg
+    from app.engine.auto_optimizer import get_job
+    from app.engine.opt_scoring import beats_baseline
+    from app.engine.optimizer import apply_best_params
 
     job = get_job(job_id)
     if not job:
@@ -359,7 +360,7 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
 @state.limiter.limit("30/minute")
 def optimizer_cancel(request: Request, job_id: str):
     """Annule un job d'optimisation en cours."""
-    from app.engine.auto_optimizer import get_job, cancel_job
+    from app.engine.auto_optimizer import cancel_job, get_job
     job = get_job(job_id)
     if not job:
         raise HTTPException(404, f"Job '{job_id}' introuvable")
@@ -373,7 +374,7 @@ def optimizer_cancel(request: Request, job_id: str):
 @state.limiter.limit("30/minute")
 def optimizer_delete_job(request: Request, job_id: str):
     """Supprime un job terminé, annulé ou en erreur."""
-    from app.engine.auto_optimizer import get_job, delete_job
+    from app.engine.auto_optimizer import delete_job, get_job
     job = get_job(job_id)
     if not job:
         raise HTTPException(404, f"Job '{job_id}' introuvable")
@@ -411,8 +412,8 @@ def optimizer_results():
 
 @router.get("/api/optimize/spaces", dependencies=[Depends(verify_api_key)])
 def optimizer_spaces():
-    from app.engine.optimizer import PARAM_SPACES, STRATEGY_TIMEFRAMES
     from app.engine.auto_optimizer import _is_ml_strategy
+    from app.engine.optimizer import PARAM_SPACES, STRATEGY_TIMEFRAMES
     return {
         strat: {
             "params":     {k: v for k, v in space.items()},

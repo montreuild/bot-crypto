@@ -8,10 +8,10 @@ import polars as pl
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.strategies.harmonic_regime import Strategy
 from app.core.indicators import precompute_df
-from app.engine.engine import Engine
 from app.engine.backtest import Backtester
+from app.engine.engine import Engine
+from app.strategies.harmonic_regime import Strategy
 
 
 def _df(n=400, trend="up", seed=1):
@@ -24,7 +24,8 @@ def _df(n=400, trend="up", seed=1):
     closes = np.array(closes)
     highs = closes * (1 + np.abs(np.random.randn(n) * 0.004))
     lows = closes * (1 - np.abs(np.random.randn(n) * 0.004))
-    opens = np.roll(closes, 1); opens[0] = closes[0]
+    opens = np.roll(closes, 1)
+    opens[0] = closes[0]
     vols = np.random.uniform(100, 500, n)
     times = [datetime(2023, 1, 1) + timedelta(hours=4 * i) for i in range(n)]
     return pl.DataFrame({"time": times, "open": opens, "high": highs,

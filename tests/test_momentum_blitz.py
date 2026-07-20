@@ -8,10 +8,10 @@ import polars as pl
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.strategies.momentum_blitz import Strategy
 from app.core.indicators import precompute_df
-from app.engine.engine import Engine
 from app.engine.backtest import Backtester
+from app.engine.engine import Engine
+from app.strategies.momentum_blitz import Strategy
 
 
 def _df(n=400, trend="up", seed=1):
@@ -24,7 +24,8 @@ def _df(n=400, trend="up", seed=1):
     closes = np.array(closes)
     highs = closes * (1 + np.abs(np.random.randn(n) * 0.005))
     lows = closes * (1 - np.abs(np.random.randn(n) * 0.005))
-    opens = np.roll(closes, 1); opens[0] = closes[0]
+    opens = np.roll(closes, 1)
+    opens[0] = closes[0]
     # volume avec quelques surges pour déclencher l'ignition
     vols = np.random.uniform(100, 300, n)
     vols[np.random.randint(0, n, n // 10)] *= 3
@@ -100,7 +101,8 @@ class TestBlitzScore:
 
 class TestBlitzBacktest:
     def test_integrates_with_backtester(self):
-        eng = Engine(); eng.register(Strategy(), silent=True)
+        eng = Engine()
+        eng.register(Strategy(), silent=True)
         bt = Backtester(eng, _cfg(), use_pretrained_ml=False)
         d = bt.run(_df(700, "up"), "BTC/USDC", timeframe="4h").to_dict()
         assert "total_pnl" in d and d["total_trades"] >= 0

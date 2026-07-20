@@ -8,9 +8,9 @@ import logging
 
 import polars as pl
 
-_log = logging.getLogger(__name__)
-
 from app.core.indicators_core import macd, supertrend
+
+_log = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Réutilisation des pré-calculs causaux (accélération backtest/optimiseur)

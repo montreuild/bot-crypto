@@ -4,21 +4,19 @@ Crypto Bot V11 — Point d'entrée principal.
 import argparse
 import importlib
 import logging
-import sys
 import threading
 
-import polars as pl
 import uvicorn
 
-from app.core.config        import load_config
-from app.core.logger        import setup_logging
-from app.core.exchange      import create_exchange
-from app.core.candle_store  import get_store
+from app.api.main import app as fastapi_app
+from app.api.main import init_app
+from app.core.candle_store import get_store
+from app.core.config import load_config
+from app.core.exchange import create_exchange
 from app.core.indicators_precompute import set_precompute_maxsize
-from app.engine.engine      import Engine
-from app.engine.backtest    import Backtester, WalkForwardAnalyzer, MonteCarlo
-from app.api.main           import app as fastapi_app, init_app
-
+from app.core.logger import setup_logging
+from app.engine.backtest import Backtester, MonteCarlo, WalkForwardAnalyzer
+from app.engine.engine import Engine
 
 # Nombre de minutes par timeframe — utilisé pour convertir des mois en nombre de bougies
 _TF_MINUTES = {
@@ -40,7 +38,8 @@ def parse_args():
     p.add_argument("--timeframe",    default="",             help="Timeframe (défaut=config)")
     p.add_argument("--timeframes",   default="",             help="Multi-timeframes séparés par virgule (ex: 1h,4h,1d)")
     p.add_argument("--limit",        type=int, default=0,    help="Nombre de bougies (prioritaire sur --months)")
-    p.add_argument("--months",       type=float, default=6.0,help="Période en mois (défaut=6, converti en bougies par TF)")
+    p.add_argument("--months",       type=float, default=6.0,
+                  help="Période en mois (défaut=6, converti en bougies par TF)")
     p.add_argument("--walk-forward", action="store_true",    help="Activer Walk-Forward")
     p.add_argument("--monte-carlo",  action="store_true",    help="Activer Monte-Carlo")
     p.add_argument("--optimize",     metavar="STRATEGY",     help="Optimiser une stratégie")
@@ -82,7 +81,8 @@ def _run_backtest_one_tf(cfg, args, exchange, symbol: str, tf: str,
     for name in cfg["strategies"]["enabled"]:
         print(f"\n  -- Stratégie : {name}")
         mod = importlib.import_module(f"app.strategies.{name}")
-        eng = Engine(); eng.register(mod.Strategy())
+        eng = Engine()
+        eng.register(mod.Strategy())
         bt  = Backtester(eng, cfg)
         res = bt.run(df, symbol)
         d   = res.to_dict()
@@ -156,7 +156,7 @@ def run_backtest_cli(cfg, args):
 
 
 def run_optimizer_cli(cfg, args):
-    from app.engine.optimizer import StrategyOptimizer, DEFAULT_SPACES
+    from app.engine.optimizer import DEFAULT_SPACES, StrategyOptimizer
     strategy = args.optimize
     exchange = create_exchange(cfg)
     tf       = cfg["trading"]["timeframe"]
@@ -168,9 +168,12 @@ def run_optimizer_cli(cfg, args):
     opt      = StrategyOptimizer(strategy, cfg, df[:split], df[split:],
                                   DEFAULT_SPACES.get(strategy, {}))
     method = args.opt_method
-    if method == "grid":       result = opt.grid_search()
-    elif method == "bayesian": result = opt.bayesian_search(30)
-    else:                      result = opt.random_search(30)
+    if method == "grid":
+        result = opt.grid_search()
+    elif method == "bayesian":
+        result = opt.bayesian_search(30)
+    else:
+        result = opt.random_search(30)
     best = result.get("best", {})
     print(f"\n  Meilleurs parametres ({method}) :")
     print(f"  Params   : {best.get('params')}")

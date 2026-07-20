@@ -30,7 +30,8 @@ def test_contract_insufficient():
 
 
 def test_prepare_runs_and_cache():
-    s = Strategy(); s._bt_params = {"vizion": {"use_smt": False}}
+    s = Strategy()
+    s._bt_params = {"vizion": {"use_smt": False}}
     s.prepare_for_backtest(_df(500, seed=2))
     assert isinstance(s._sig, dict)          # tourne sans erreur (peut être vide)
     for sig in s._sig.values():
@@ -66,7 +67,8 @@ def test_gates_monotone():
     df = _df(600, seed=5)
 
     def count(**ov):
-        s = Strategy(); s._bt_params = {"vizion": {"use_smt": False, **ov}}
+        s = Strategy()
+        s._bt_params = {"vizion": {"use_smt": False, **ov}}
         s.prepare_for_backtest(df)
         return len(s._sig or {})
 

@@ -1,8 +1,8 @@
 """Registre des stratégies — découverte automatique des métadonnées d'optimisation."""
 import importlib
-import pkgutil
 import logging
-from typing import Dict, List, Any
+import pkgutil
+from typing import Any, Dict, List
 
 import app.strategies as _strategies_pkg
 

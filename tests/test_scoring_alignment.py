@@ -24,7 +24,8 @@ def _make_df(n=500):
     closes = np.array(closes)
     highs = closes * (1 + np.abs(np.random.randn(n) * 0.005))
     lows = closes * (1 - np.abs(np.random.randn(n) * 0.005))
-    opens = np.roll(closes, 1); opens[0] = closes[0]
+    opens = np.roll(closes, 1)
+    opens[0] = closes[0]
     vols = np.random.uniform(1000, 5000, n)
     times = [datetime(2024, 1, 1) + timedelta(hours=i) for i in range(n)]
     return pl.DataFrame({"time": times, "open": opens, "high": highs,
@@ -37,6 +38,7 @@ def _make_df(n=500):
 ])
 def test_scoring_features_aligned_per_bar(tmp_path, module_name):
     import importlib
+
     import app.core.feature_store as fs
     from app.core.indicators import precompute_df
 

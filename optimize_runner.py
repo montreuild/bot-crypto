@@ -29,7 +29,6 @@ Exemples :
 """
 
 import argparse
-import atexit
 import contextlib
 import logging
 import os
@@ -192,10 +191,10 @@ def parse_args():
 def main():
     args = parse_args()
 
-    from app.core.config import load_config
-    from app.core.logger import setup_logging
-    from app.core.exchange import create_exchange
     from app.core.candle_store import get_store
+    from app.core.config import load_config
+    from app.core.exchange import create_exchange
+    from app.core.logger import setup_logging
     from app.engine.auto_optimizer import AutoOptimizer
     from app.engine.optimizer import PARAM_SPACES, auto_fetch_limit
 

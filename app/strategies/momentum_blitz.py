@@ -41,8 +41,8 @@ from typing import Any, Dict, List, Optional
 
 import polars as pl
 
+from app.core.indicators import pre_val, precompute_df
 from app.engine.engine import BaseStrategy
-from app.core.indicators import precompute_df, pre_val
 
 logger = logging.getLogger(__name__)
 

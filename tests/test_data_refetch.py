@@ -8,8 +8,8 @@ import polars as pl
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import app.core.candle_store as cs
-from app.api.routes import data as droute
 from app.api import state
+from app.api.routes import data as droute
 
 
 def test_load_forces_canonical_column_order(tmp_path):

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
 
-from app.core.bot_identity import parse_slot_key, build_slot_key
+from app.core.bot_identity import build_slot_key, parse_slot_key
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +119,11 @@ class CapitalAllocator:
         self._session_factory = session_factory
         alloc_cfg = (cfg or {}).get("capital_allocator", {})
         self._max_slot_pct = float(alloc_cfg.get("max_slot_pct", _DEFAULT_MAX_SLOT_PCT))
-        self._min_trades_for_rebalance = int(alloc_cfg.get("min_trades_for_rebalance", _DEFAULT_MIN_TRADES_FOR_REBALANCE))
+        self._min_trades_for_rebalance = int(
+            alloc_cfg.get("min_trades_for_rebalance", _DEFAULT_MIN_TRADES_FOR_REBALANCE))
         self._rebalance_interval = alloc_cfg.get("rebalance_interval", _DEFAULT_REBALANCE_INTERVAL)
-        self._max_symbol_exposure_pct = float(alloc_cfg.get("max_symbol_exposure_pct", _DEFAULT_MAX_SYMBOL_EXPOSURE_PCT))
+        self._max_symbol_exposure_pct = float(
+            alloc_cfg.get("max_symbol_exposure_pct", _DEFAULT_MAX_SYMBOL_EXPOSURE_PCT))
         self._max_pyramiding = int(alloc_cfg.get("max_pyramiding", _DEFAULT_MAX_PYRAMIDING))
         self._mode: str = alloc_cfg.get("mode", "equal")
         if self._mode not in _VALID_MODES:

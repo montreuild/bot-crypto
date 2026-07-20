@@ -40,11 +40,11 @@ def safe_num(val, default: float = 0.0) -> float:
 def _true_range(df: pl.DataFrame) -> pl.Series:
     """True Range vectorisé : TR = max(H−L, |H−C_prev|, |L−C_prev|)."""
     h      = df["high"]
-    l      = df["low"]
+    lo      = df["low"]
     c_prev = df["close"].shift(1).fill_null(df["close"][0])
-    hl     = h - l
+    hl     = h - lo
     hcp    = (h - c_prev).abs()
-    lcp    = (l - c_prev).abs()
+    lcp    = (lo - c_prev).abs()
     return (
         pl.DataFrame({"hl": hl, "hcp": hcp, "lcp": lcp})
         .select(pl.max_horizontal("hl", "hcp", "lcp"))
@@ -68,8 +68,8 @@ def rsi(close: pl.Series, period: int = 14) -> pl.Series:
     """RSI(period) pur Polars — division sécurisée via clip lower_bound=1e-10."""
     d      = close.diff(1)
     g      = d.clip(lower_bound=0).ewm_mean(alpha=1 / period, adjust=False)
-    l      = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / period, adjust=False)
-    l_safe = l.clip(lower_bound=1e-10)
+    lo      = (-d.clip(upper_bound=0)).ewm_mean(alpha=1 / period, adjust=False)
+    l_safe = lo.clip(lower_bound=1e-10)
     return 100 - (100 / (1 + g / l_safe))
 
 
@@ -168,9 +168,9 @@ def adx(df: pl.DataFrame, n: int = 14) -> Tuple[pl.Series, pl.Series, pl.Series]
         z = pl.Series([0.0] * len(df))
         return z, z, z
     h    = df["high"]
-    l    = df["low"]
+    lo    = df["low"]
     up   = h.diff(1).clip(lower_bound=0)
-    dn   = (-l.diff(1)).clip(lower_bound=0)
+    dn   = (-lo.diff(1)).clip(lower_bound=0)
     pdm  = up  * (up > dn).cast(pl.Float64)
     ndm  = dn  * (dn > up).cast(pl.Float64)
 
@@ -457,8 +457,10 @@ def pin_bar(df: pl.DataFrame, wick_ratio: float = 2.0,
             body_max: float = 0.34) -> pl.Series:
     """{+1, 0, −1} : +1 marteau (mèche basse ≥ wick_ratio×corps, petit corps),
     −1 étoile filante (mèche haute dominante). Rejet à valider sur zone clé."""
-    o = df["open"].to_numpy(); h = df["high"].to_numpy()
-    lo = df["low"].to_numpy(); c = df["close"].to_numpy()
+    o = df["open"].to_numpy()
+    h = df["high"].to_numpy()
+    lo = df["low"].to_numpy()
+    c = df["close"].to_numpy()
     rng = np.maximum(h - lo, 1e-9)
     body = np.abs(c - o)
     upper = h - np.maximum(o, c)
@@ -472,7 +474,8 @@ def pin_bar(df: pl.DataFrame, wick_ratio: float = 2.0,
 def engulfing(df: pl.DataFrame) -> pl.Series:
     """{+1, 0, −1} : +1 avalement haussier (bougie verte englobant le corps
     rouge précédent), −1 avalement baissier."""
-    o = df["open"].to_numpy(); c = df["close"].to_numpy()
+    o = df["open"].to_numpy()
+    c = df["close"].to_numpy()
     out = np.zeros(len(c), dtype=np.int8)
     for i in range(1, len(c)):
         if c[i] > o[i] and c[i - 1] < o[i - 1] \
@@ -490,8 +493,11 @@ def vsa_signal(df: pl.DataFrame, n: int = 20, spread_k: float = 0.6,
       +1 « No Supply » : bougie baissière à faible spread ET faible volume
          (les vendeurs manquent) → biais haussier ;
       −1 « No Demand » : bougie haussière à faible spread ET faible volume."""
-    o = df["open"].to_numpy(); h = df["high"].to_numpy()
-    lo = df["low"].to_numpy(); c = df["close"].to_numpy(); v = df["volume"].to_numpy()
+    o = df["open"].to_numpy()
+    h = df["high"].to_numpy()
+    lo = df["low"].to_numpy()
+    c = df["close"].to_numpy()
+    v = df["volume"].to_numpy()
     spread = h - lo
     avg_spread = pl.Series(spread).rolling_mean(n).fill_null(np.inf).to_numpy()
     avg_vol = pl.Series(v).rolling_mean(n).fill_null(np.inf).to_numpy()

@@ -13,9 +13,9 @@ import time
 import polars as pl
 import pytest
 
+from app.core.execution import size_impact_cost
 from app.live.ohlcv_cache import OHLCVCache
 from app.live.position_mixin import PositionMixin
-from app.core.execution import size_impact_cost
 
 
 def _df(n, base_volume=1000.0):

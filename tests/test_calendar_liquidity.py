@@ -28,16 +28,16 @@ def test_pdh_pdl_causal():
     cal = smc.calendar_liquidity_levels(df)
     assert cal is not None
     h = df["high"].to_numpy()
-    l = df["low"].to_numpy()
+    lo = df["low"].to_numpy()
     # Jour 1 (barres 0-23) : aucun jour précédent → NaN.
     assert np.isnan(cal["pdh"][:24]).all()
     assert np.isnan(cal["pdl"][:24]).all()
     # Jour 2 (barres 24-47) : PDH/PDL = extrêmes du jour 1, constants.
     assert np.allclose(cal["pdh"][24:48], h[:24].max())
-    assert np.allclose(cal["pdl"][24:48], l[:24].min())
+    assert np.allclose(cal["pdl"][24:48], lo[:24].min())
     # Jour 3 : extrêmes du jour 2 uniquement (pas du jour 1 ni du jour 3).
     assert np.allclose(cal["pdh"][48:72], h[24:48].max())
-    assert np.allclose(cal["pdl"][48:72], l[24:48].min())
+    assert np.allclose(cal["pdl"][48:72], lo[24:48].min())
 
 
 def test_pwh_pwl_weekly_monday_anchor():
@@ -46,14 +46,14 @@ def test_pwh_pwl_weekly_monday_anchor():
     df = _hourly_df(start, 24 * 15)
     cal = smc.calendar_liquidity_levels(df)
     h = df["high"].to_numpy()
-    l = df["low"].to_numpy()
+    lo = df["low"].to_numpy()
     week1 = slice(0, 24 * 7)
     week2 = slice(24 * 7, 24 * 14)
     # Semaine 1 : aucune semaine précédente.
     assert np.isnan(cal["pwh"][week1]).all()
     # Semaine 2 : PWH/PWL = extrêmes de la semaine 1, constants.
     assert np.allclose(cal["pwh"][week2], h[week1].max())
-    assert np.allclose(cal["pwl"][week2], l[week1].min())
+    assert np.allclose(cal["pwl"][week2], lo[week1].min())
     # Lundi de la semaine 3 : extrêmes de la semaine 2.
     assert np.allclose(cal["pwh"][24 * 14:], h[week2].max())
 
@@ -135,17 +135,18 @@ def test_smc12_ipda_mode():
     start = datetime(2026, 1, 5, 0, 0, tzinfo=timezone.utc)
     df = _hourly_df(start, 350)
     res = smc.analyze(df)
-    h = df["high"].to_numpy(); l = df["low"].to_numpy()
+    h = df["high"].to_numpy()
+    lo = df["low"].to_numpy()
     c = df["close"].to_numpy()
     i = 300
-    pd_ipda = smc.premium_discount_at(res, h, l, c, i, mode="ipda",
+    pd_ipda = smc.premium_discount_at(res, h, lo, c, i, mode="ipda",
                                       ipda_lookback=20)
     assert pd_ipda is not None
     assert pd_ipda["range_high"] == round(float(h[281:301].max()), 8)
-    assert pd_ipda["range_low"] == round(float(l[281:301].min()), 8)
+    assert pd_ipda["range_low"] == round(float(lo[281:301].min()), 8)
     # Défaut "swing" inchangé (même dict que l'appel historique).
-    assert smc.premium_discount_at(res, h, l, c, i) == \
-        smc.premium_discount_at(res, h, l, c, i, mode="swing")
+    assert smc.premium_discount_at(res, h, lo, c, i) == \
+        smc.premium_discount_at(res, h, lo, c, i, mode="swing")
 
 
 def test_smc13_subtype_additive():

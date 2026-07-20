@@ -29,8 +29,9 @@ def audit_log_list(
 @router.get("/api/audit/log/stats", dependencies=[Depends(verify_api_key)])
 def audit_log_stats():
     """Statistiques rapides : compte par action, dernière activité."""
-    from app.core.audit_log import _SessionLocal, AuditEvent
     from sqlalchemy import func
+
+    from app.core.audit_log import AuditEvent, _SessionLocal
     if _SessionLocal is None:
         return {"by_action": {}, "total": 0, "last_event": None}
     try:

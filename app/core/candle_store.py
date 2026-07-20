@@ -3,10 +3,10 @@ CandleStore — stockage Parquet persistant des bougies OHLCV par (symbol, timef
 Fetch incrémental, thread-safe, retourne un pl.DataFrame identique à MarketScanner.
 """
 
-import os
 import logging
-import time
+import os
 import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 

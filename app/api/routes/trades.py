@@ -38,8 +38,10 @@ def list_trades(limit: int = 100, offset: int = 0,
     with session_scope(state.SessionLocal) as session:
         from app.core.database import Trade as _Trade
         q = session.query(_Trade)
-        if symbol:   q = q.filter(_Trade.symbol   == symbol)
-        if strategy: q = q.filter(_Trade.strategy == strategy)
+        if symbol:
+            q = q.filter(_Trade.symbol   == symbol)
+        if strategy:
+            q = q.filter(_Trade.strategy == strategy)
         total = q.count()
         page  = q.order_by(_Trade.time.desc()).offset(offset).limit(limit).all()
         return {
@@ -106,6 +108,7 @@ def fee_breakdown(days: int = None):
     if not state.SessionLocal:
         return {"taker": 0.0, "maker": 0.0, "borrow": 0.0, "stop": 0.0}
     from datetime import datetime, timedelta, timezone
+
     from app.core.database import get_fee_breakdown
     since = (datetime.now(timezone.utc) - timedelta(days=days)) if days else None
     with session_scope(state.SessionLocal) as session:

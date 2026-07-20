@@ -1,10 +1,12 @@
 """Stratégie Gemini Trend Follow — EMA200 filtre tendance + RSI pullback oversold/overbought + ATR SL dynamique."""
 
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
 import polars as pl
-from app.engine.engine import BaseStrategy
+
 from app.core.indicators import htf_trend, pre_val
+from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
 

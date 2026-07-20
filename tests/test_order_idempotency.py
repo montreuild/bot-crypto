@@ -7,7 +7,7 @@ import pytest
 
 ccxt = pytest.importorskip("ccxt")
 
-from app.core.exchange import RobustExchange
+from app.core.exchange import RobustExchange  # noqa: E402 — après importorskip, exchange.py importe ccxt
 
 # (id ccxt, champ clientOrderId à la création, champ à la recherche d'ordre)
 _EXCHANGES = [

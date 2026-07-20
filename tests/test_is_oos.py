@@ -6,7 +6,9 @@ auto_optimizer (WARMUP=210, fraction OOS 0.35) : mêmes indices de coupure.
 import polars as pl
 
 from app.core.is_oos import (
-    split_is_oos, WARMUP_BARS_DEFAULT, OOS_FRACTION_DEFAULT,
+    OOS_FRACTION_DEFAULT,
+    WARMUP_BARS_DEFAULT,
+    split_is_oos,
 )
 
 

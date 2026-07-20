@@ -15,6 +15,7 @@ def test_backtester_tracks_peak_and_applies_curve():
     """Garde-fou statique : le Backtester suit peak_capital et applique
     _risk_multiplier au sizing (parité avec RiskManager.compute_risk)."""
     import inspect
+
     from app.engine import backtest
     src = inspect.getsource(backtest)
     assert "peak_capital" in src
@@ -23,6 +24,7 @@ def test_backtester_tracks_peak_and_applies_curve():
 
 def test_risk_manager_delegates_to_shared_curve():
     import inspect
+
     from app.core.risk import RiskManager
     src = inspect.getsource(RiskManager.compute_risk)
     assert "risk_multiplier" in src

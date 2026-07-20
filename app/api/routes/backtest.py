@@ -8,13 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.api import state
-from app.api.helpers import (
-    verify_api_key, _clean, _discover_strategies, _get_bt_exchange, detect_ohlcv_gaps
-)
+from app.api.helpers import _clean, _discover_strategies, _get_bt_exchange, detect_ohlcv_gaps, verify_api_key
 from app.core.candle_store import get_store
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
+from app.engine.backtest import Backtester, MonteCarlo, WalkForwardAnalyzer
 from app.engine.engine import Engine
-from app.engine.backtest import Backtester, WalkForwardAnalyzer, MonteCarlo
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

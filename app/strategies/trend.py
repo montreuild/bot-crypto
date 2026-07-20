@@ -1,10 +1,12 @@
 """Stratégie Trend Following — tendance EMA + ADX + MACD avec filtres volume et R:R."""
 
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
 import polars as pl
+
+from app.core.indicators import ema_window, htf_trend, market_structure, pre_val
 from app.engine.engine import BaseStrategy
-from app.core.indicators import market_structure, htf_trend, pre_val, ema_window
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +91,8 @@ class Strategy(BaseStrategy):
 
         lf    = float(ema_f[-1])
         ls    = float(ema_s[-1])
-        lt    = pre_val(df, _ema_map.get(ema_trend, "")) or float(ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lt    = pre_val(df, _ema_map.get(ema_trend, "")) or float(
+            ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
         c_now = float(close[-1])
 
         atr_val = float(df["_pre_atr14"][-1])
@@ -119,8 +122,12 @@ class Strategy(BaseStrategy):
         for k in range(1, min(cross_lookback + 1, len(df) - 2)):
             pf = float(ema_f[-1 - k])
             ps = float(ema_s[-1 - k])
-            if pf <= ps and lf > ls: cross_bull = True; break
-            if pf >= ps and lf < ls: cross_bear = True; break
+            if pf <= ps and lf > ls:
+                cross_bull = True
+                break
+            if pf >= ps and lf < ls:
+                cross_bear = True
+                break
 
         # Overextension
         overextended = (
@@ -264,13 +271,20 @@ class Strategy(BaseStrategy):
             }
 
         missing = []
-        if not cond_ema:   missing.append("EMA align ✗")
-        if not cond_trend: missing.append("EMA200 ✗")
-        if not cond_macd:  missing.append(f"MACD ✗ ({lh:+.5f})")
-        if not cond_adx:   missing.append(f"ADX {adx_val:.0f}<{adx_min} ✗")
-        if not cond_rsi:   missing.append(f"RSI {rsi_now:.0f} ✗")
-        if overextended:   missing.append("Overext ✗")
-        if htf < 0 and lf > ls: missing.append("HTF baissier ✗")
+        if not cond_ema:
+            missing.append("EMA align ✗")
+        if not cond_trend:
+            missing.append("EMA200 ✗")
+        if not cond_macd:
+            missing.append(f"MACD ✗ ({lh:+.5f})")
+        if not cond_adx:
+            missing.append(f"ADX {adx_val:.0f}<{adx_min} ✗")
+        if not cond_rsi:
+            missing.append(f"RSI {rsi_now:.0f} ✗")
+        if overextended:
+            missing.append("Overext ✗")
+        if htf < 0 and lf > ls:
+            missing.append("HTF baissier ✗")
         return self._none(" | ".join(missing) or "Conditions non réunies")
 
     def _none(self, reason: str = "") -> dict:

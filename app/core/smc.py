@@ -44,22 +44,43 @@ Ce module est une FAÇADE (V4-L / ARCH-14) : l'implémentation vit dans
 ``smc_sessions``. Tous les noms historiques restent importables d'ici —
 aucun site d'appel n'a besoin de changer.
 """
-from app.core.smc_primitives import (            # noqa: F401
-    DEFAULTS, _MAX_KEEP, _empty_result, _flag_ob_structure,
-    _last_opposite_candle, _params, _try_cluster_pool, _wilder_atr,
+from app.core.smc_geometry import (  # noqa: F401
+    _cycle_projection,
+    _premium_discount_at,
+    _trendlines,
+    _zigzag,
+    liquidity_targets_above,
+    liquidity_targets_below,
+    premium_discount_at,
+    recent_sweep,
+    trendline_value_at,
+    void_targets_above,
+    void_targets_below,
 )
-from app.core.smc_structure import analyze        # noqa: F401
-from app.core.smc_geometry import (               # noqa: F401
-    _cycle_projection, _premium_discount_at, _trendlines, _zigzag,
-    liquidity_targets_above, liquidity_targets_below,
-    premium_discount_at, recent_sweep, trendline_value_at,
-    void_targets_above, void_targets_below,
+from app.core.smc_primitives import (  # noqa: F401
+    _MAX_KEEP,
+    DEFAULTS,
+    _empty_result,
+    _flag_ob_structure,
+    _last_opposite_candle,
+    _params,
+    _try_cluster_pool,
+    _wilder_atr,
 )
-from app.core.smc_volume import (                 # noqa: F401
-    _regression_channel, regression_channel_at, volume_profile,
-)
-from app.core.smc_sessions import (               # noqa: F401
-    KILLZONES, SESSIONS, _htf_buckets, calendar_liquidity_levels,
-    htf_analysis, htf_trend_series, killzone_flags, session_label,
+from app.core.smc_sessions import (  # noqa: F401
+    KILLZONES,
+    SESSIONS,
+    _htf_buckets,
+    calendar_liquidity_levels,
+    htf_analysis,
+    htf_trend_series,
+    killzone_flags,
+    session_label,
     smt_series,
+)
+from app.core.smc_structure import analyze  # noqa: F401
+from app.core.smc_volume import (  # noqa: F401
+    _regression_channel,
+    regression_channel_at,
+    volume_profile,
 )

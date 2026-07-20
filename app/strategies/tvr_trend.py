@@ -37,12 +37,12 @@ logger = logging.getLogger(__name__)
 
 def _atr_series(df: pl.DataFrame, n: int) -> pl.Series:
     """ATR Wilder (ewm alpha=1/n) — strictement causal."""
-    h, l, c = df["high"], df["low"], df["close"]
+    h, lo, c = df["high"], df["low"], df["close"]
     pc = c.shift(1)
     tr = pl.DataFrame({
-        "a": h - l,
+        "a": h - lo,
         "b": (h - pc).abs(),
-        "c": (l - pc).abs(),
+        "c": (lo - pc).abs(),
     }).select(pl.max_horizontal("a", "b", "c").alias("tr"))["tr"]
     return tr.ewm_mean(alpha=1.0 / n, adjust=False)
 

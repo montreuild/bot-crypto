@@ -8,10 +8,10 @@ import polars as pl
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.strategies.volatility_squeeze import Strategy, _bb_width_series
 from app.core.indicators import precompute_df
-from app.engine.engine import Engine
 from app.engine.backtest import Backtester
+from app.engine.engine import Engine
+from app.strategies.volatility_squeeze import Strategy, _bb_width_series
 
 
 def _df_squeeze_then_break(n=400, seed=1):
@@ -30,7 +30,8 @@ def _df_squeeze_then_break(n=400, seed=1):
     closes = np.array(closes)
     highs = closes * (1 + np.abs(np.random.randn(n) * 0.003))
     lows = closes * (1 - np.abs(np.random.randn(n) * 0.003))
-    opens = np.roll(closes, 1); opens[0] = closes[0]
+    opens = np.roll(closes, 1)
+    opens[0] = closes[0]
     vols = np.random.uniform(100, 400, n)
     times = [datetime(2023, 1, 1) + timedelta(hours=4 * i) for i in range(n)]
     return pl.DataFrame({"time": times, "open": opens, "high": highs,
@@ -107,7 +108,8 @@ class TestSqueezeScore:
 
 class TestSqueezeBacktest:
     def test_integrates(self):
-        eng = Engine(); eng.register(Strategy(), silent=True)
+        eng = Engine()
+        eng.register(Strategy(), silent=True)
         d = Backtester(eng, _cfg(), use_pretrained_ml=False).run(
             _df_squeeze_then_break(600), "BTC/USDC", timeframe="4h").to_dict()
         assert "total_pnl" in d and d["total_trades"] >= 0

@@ -18,11 +18,12 @@ Seuils Trend Up conservateurs :
 
 import logging
 import math
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 import polars as pl
-from app.engine.engine import BaseStrategy
+
 from app.core.indicators import pre_val
+from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
 

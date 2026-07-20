@@ -1,6 +1,6 @@
 """Routes contrôle du bot — start, stop, reset circuit breaker."""
-import threading as _threading
 import logging
+import threading as _threading
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 

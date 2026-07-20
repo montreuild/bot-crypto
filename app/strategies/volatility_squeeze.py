@@ -31,8 +31,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import polars as pl
 
+from app.core.indicators import pre_val, precompute_df
 from app.engine.engine import BaseStrategy
-from app.core.indicators import precompute_df, pre_val
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +173,8 @@ class Strategy(BaseStrategy):
 
         # ── Bandes & breakout ─────────────────────────────────────────────────
         bb_win = close[-bbp:].to_numpy().astype(float)
-        bb_mid = float(bb_win.mean()); bb_sd = float(bb_win.std())
+        bb_mid = float(bb_win.mean())
+        bb_sd = float(bb_win.std())
         bb_up = bb_mid + p["bb_std"] * bb_sd
         bb_lo = bb_mid - p["bb_std"] * bb_sd
         N = int(p["donchian"])

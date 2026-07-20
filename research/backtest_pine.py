@@ -19,8 +19,8 @@ import polars as pl
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.engine.engine import Engine            # noqa: E402
-from app.engine.backtest import Backtester      # noqa: E402
+from app.engine.backtest import Backtester  # noqa: E402
+from app.engine.engine import Engine  # noqa: E402
 
 WIN_START, WIN_END = "2024-01-01", "2026-07-01"
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -82,7 +82,8 @@ def main():
     Strategy = importlib.import_module(f"app.strategies.{strat_name}").Strategy
 
     print(f"Backtest {strat_name} — BTC/USDC — fenêtre {WIN_START} → {WIN_END}\n")
-    header = f"{'TF':>4} | {'trades':>6} | {'gagnants':>8} | {'win%':>6} | {'PF':>6} | {'ret%':>8} | {'L/S':>7} | {'TP/SL':>7}"
+    header = (f"{'TF':>4} | {'trades':>6} | {'gagnants':>8} | {'win%':>6} | "
+             f"{'PF':>6} | {'ret%':>8} | {'L/S':>7} | {'TP/SL':>7}")
     print(header)
     print("-" * len(header))
     for tf in tfs:

@@ -1,23 +1,31 @@
 """Stratégie Multi-Timeframe Support/Résistance — entrées sur niveaux S/R avec filtre HTF."""
 
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 import polars as pl
 
-from app.engine.engine import BaseStrategy
 from app.core.indicators import (
-    rsi as calc_rsi,
-    atr_val as calc_atr,
     adx_val as calc_adx,
-    macd_hist_last3,
-    vol_ratio as calc_vol,
+)
+from app.core.indicators import (
+    atr_val as calc_atr,
+)
+from app.core.indicators import (
     htf_trend,
+    macd_hist_last3,
+    nearest_resistance,
+    nearest_support,
     pre_val,
     support_resistance_levels,
-    nearest_support,
-    nearest_resistance,
 )
+from app.core.indicators import (
+    rsi as calc_rsi,
+)
+from app.core.indicators import (
+    vol_ratio as calc_vol,
+)
+from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -147,12 +155,12 @@ class Strategy(BaseStrategy):
                 lookback    = min(100, len(df_htf) - 1),
             )
             htf_near_sup = any(
-                abs(c_now - l["price"]) <= atr_val * sr_proximity_atr * 2.0
-                for l in htf_sr["supports"]
+                abs(c_now - lvl["price"]) <= atr_val * sr_proximity_atr * 2.0
+                for lvl in htf_sr["supports"]
             )
             htf_near_res = any(
-                abs(c_now - l["price"]) <= atr_val * sr_proximity_atr * 2.0
-                for l in htf_sr["resistances"]
+                abs(c_now - lvl["price"]) <= atr_val * sr_proximity_atr * 2.0
+                for lvl in htf_sr["resistances"]
             )
 
         indicators = {
@@ -193,8 +201,8 @@ class Strategy(BaseStrategy):
                     return self._none(f"R:R long {rr_l:.2f} < {rr_min}")
 
                 sup_strength = next(
-                    (l["strength"] for l in supports
-                     if abs(l["price"] - nearest_sup) < atr_val * 0.1), 1
+                    (lvl["strength"] for lvl in supports
+                     if abs(lvl["price"] - nearest_sup) < atr_val * 0.1), 1
                 )
 
                 htf_b      = 0.08 if htf > 0 else 0.0
@@ -257,8 +265,8 @@ class Strategy(BaseStrategy):
                     return self._none(f"R:R short {rr_s:.2f} < {rr_min}")
 
                 res_strength = next(
-                    (l["strength"] for l in resistances
-                     if abs(l["price"] - nearest_res) < atr_val * 0.1), 1
+                    (lvl["strength"] for lvl in resistances
+                     if abs(lvl["price"] - nearest_res) < atr_val * 0.1), 1
                 )
 
                 htf_b      = 0.08 if htf < 0 else 0.0

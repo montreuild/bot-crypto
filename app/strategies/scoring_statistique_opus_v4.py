@@ -33,13 +33,13 @@ sur au moins 20 000-50 000 barres. Sur 2000 barres inline, l'AUC sera plus faibl
 import logging
 import os
 import threading
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import polars as pl
 
-from app.engine.engine import BaseStrategyML
 from app.core.indicators import pre_val
+from app.engine.engine import BaseStrategyML
 
 logger = logging.getLogger(__name__)
 

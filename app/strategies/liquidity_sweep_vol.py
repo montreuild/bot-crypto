@@ -21,14 +21,14 @@ ni RSI.
   * Exécution au open[i+1] ; SL/TP intrabar avec priorité au stop.
 """
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 import numpy as np
 import polars as pl
 
-from app.engine.engine import BaseStrategy
 from app.core.indicators import pre_val
 from app.core.indicators_core import _true_range
+from app.engine.engine import BaseStrategy
 
 
 def _rma(s: pl.Series, n: int) -> pl.Series:
@@ -131,10 +131,15 @@ class Strategy(BaseStrategy):
         if len(df) < self.min_bars_required(params):
             return self._none("historique insuffisant")
 
-        close = df["close"]; high = df["high"]; low = df["low"]
-        open_ = df["open"];  vol  = df["volume"]
-        c = float(close[-1]); o = float(open_[-1])
-        h = float(high[-1]);  lo = float(low[-1])
+        close = df["close"]
+        high = df["high"]
+        low = df["low"]
+        open_ = df["open"]
+        vol  = df["volume"]
+        c = float(close[-1])
+        o = float(open_[-1])
+        h = float(high[-1])
+        lo = float(low[-1])
 
         atr = self._atr_last(df, atr_len)
         if atr <= 0:

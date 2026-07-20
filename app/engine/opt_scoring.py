@@ -19,8 +19,9 @@ _EULER_MASCHERONI = 0.5772156649015329
 # sein d'une même optimisation (tous les essais partagent le même capital).
 _FALLBACK_CAPITAL = 1000.0
 
-from app.core.stats_thresholds import (            # noqa: E402
-    MIN_TRADES_DEGENERATE, MIN_SIGNIFICANT_TRADES,
+from app.core.stats_thresholds import (  # noqa: E402
+    MIN_SIGNIFICANT_TRADES,
+    MIN_TRADES_DEGENERATE,
 )
 
 

@@ -1,6 +1,6 @@
 """Moteur multi-stratégies avec scoring — chaque stratégie retourne un dict signal."""
 import logging
-from typing import List, Dict, Any, Optional  # noqa: F401
+from typing import Any, Dict, List, Optional  # noqa: F401
 
 import polars as pl
 

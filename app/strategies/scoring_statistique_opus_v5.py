@@ -34,13 +34,13 @@ Méthodologie ML héritée du rapport (inchangée vs V4) :
 import logging
 import os
 import threading
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import polars as pl
 
-from app.engine.engine import BaseStrategyML
 from app.core.indicators import pre_val
+from app.engine.engine import BaseStrategyML
 
 logger = logging.getLogger(__name__)
 
@@ -167,9 +167,12 @@ def _build_features(df: pl.DataFrame, adx_threshold: float = 20.0) -> Optional[n
 
 
 def _hour_multiplier(hour: int) -> float:
-    if 13 <= hour <= 17:    return 1.0
-    if 8  <= hour <= 12:    return 0.7
-    if 0  <= hour <= 5:     return 0.3
+    if 13 <= hour <= 17:
+        return 1.0
+    if 8  <= hour <= 12:
+        return 0.7
+    if 0  <= hour <= 5:
+        return 0.3
     return 0.5
 
 

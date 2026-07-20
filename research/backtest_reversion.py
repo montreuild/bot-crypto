@@ -2,11 +2,16 @@
 Les colonnes dérivées sont absentes ici → fallback OHLCV pur (part validable).
 Usage : python research/backtest_reversion.py [--tf 1h,4h,1d] [--wf] [--split] [--params k=v]
 """
-import os, sys, time, json
+import json
+import os
+import sys
+import time
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import polars as pl
-from app.engine.engine import Engine
+
 from app.engine.backtest import Backtester, WalkForwardAnalyzer
+from app.engine.engine import Engine
 from app.strategies.derivatives_reversion import Strategy
 
 UP = "/root/.claude/uploads/6ee1d036-9dde-49c8-ba23-22b93133ed2a"
@@ -24,13 +29,19 @@ def load(tf): return pl.read_parquet(FILES[tf]).sort("time")
 
 
 def run(tf, sp):
-    df = load(tf); eng = Engine(); eng.register(Strategy(), silent=True)
-    t0 = time.time(); r = Backtester(eng, cfg(sp), use_pretrained_ml=False).run(df, "BTC/USDC", timeframe=tf).to_dict()
+    df = load(tf)
+    eng = Engine()
+    eng.register(Strategy(), silent=True)
+    t0 = time.time()
+    r = Backtester(eng, cfg(sp), use_pretrained_ml=False).run(df, "BTC/USDC", timeframe=tf).to_dict()
     setg = {}
     for t in r["trades"]:
         if str(t.get("status", "")).startswith("closed"):
-            s = t.get("setup", "?"); d = setg.setdefault(s, {"n": 0, "pnl": 0.0, "w": 0})
-            d["n"] += 1; d["pnl"] += t.get("pnl", 0.0); d["w"] += 1 if t.get("pnl", 0) > 0 else 0
+            s = t.get("setup", "?")
+            d = setg.setdefault(s, {"n": 0, "pnl": 0.0, "w": 0})
+            d["n"] += 1
+            d["pnl"] += t.get("pnl", 0.0)
+            d["w"] += 1 if t.get("pnl", 0) > 0 else 0
     print(f"\n{'═'*70}\n derivatives_reversion · {tf} · {len(df)} bougies · {time.time()-t0:.1f}s\n{'═'*70}")
     print(f"  Rendement {(r['final_equity']/r['initial_capital']-1)*100:+.1f}% | B&H {r['buy_and_hold_pct']:+.0f}% "
           f"alpha {r['alpha']:+.0f}")
@@ -46,32 +57,41 @@ WINDOWS = [("BEAR 2022", "2022-01-01", "2022-12-31"), ("BULL 2023-24", "2023-01-
 
 
 def run_split(tf, sp):
-    base = load(tf); print(f"\n  ── macro-régime · {tf} ──")
+    base = load(tf)
+    print(f"\n  ── macro-régime · {tf} ──")
     print(f"     {'fenêtre':<18}{'trades':>7}{'PnL%':>8}{'B&H%':>9}{'DD%':>7}{'PF':>6}{'win%':>7}")
     for name, d0, d1 in WINDOWS:
-        sub = base.filter((pl.col("time") >= pl.lit(d0).str.to_datetime()) & (pl.col("time") <= pl.lit(d1).str.to_datetime()))
-        if len(sub) < 300: continue
-        eng = Engine(); eng.register(Strategy(), silent=True)
+        sub = base.filter((pl.col("time") >= pl.lit(d0).str.to_datetime())
+                         & (pl.col("time") <= pl.lit(d1).str.to_datetime()))
+        if len(sub) < 300:
+            continue
+        eng = Engine()
+        eng.register(Strategy(), silent=True)
         r = Backtester(eng, cfg(sp), use_pretrained_ml=False).run(sub, "BTC/USDC", timeframe=tf).to_dict()
         print(f"     {name:<18}{r['total_trades']:>7}{(r['final_equity']/r['initial_capital']-1)*100:>+8.1f}"
               f"{r['buy_and_hold_pct']:>+9.1f}{r['max_drawdown']:>7.1f}{r['profit_factor']:>6.2f}{r['win_rate']:>7.1f}")
 
 
 def run_wf(tf, sp):
-    eng = Engine(); eng.register(Strategy(), silent=True)
+    eng = Engine()
+    eng.register(Strategy(), silent=True)
     r = WalkForwardAnalyzer(eng, cfg(sp), 5).run(load(tf), "BTC/USDC")
     print(f"\n  ── WF {tf} : " + (r["error"] if "error" in r else
-          f"OOS pnl={r['avg_oos_pnl']:+.1f} sharpe={r['avg_oos_sharpe']:.2f} wr={r['avg_oos_wr']:.0f}% consist={r['consistency']:.0f}%"))
+          f"OOS pnl={r['avg_oos_pnl']:+.1f} sharpe={r['avg_oos_sharpe']:.2f} "
+          f"wr={r['avg_oos_wr']:.0f}% consist={r['consistency']:.0f}%"))
 
 
 def parse(a):
     p = {}
     if "--params" in a:
         for kv in a[a.index("--params")+1:]:
-            if kv.startswith("--"): break
+            if kv.startswith("--"):
+                break
             k, v = kv.split("=")
-            try: p[k] = json.loads(v)
-            except Exception: p[k] = v
+            try:
+                p[k] = json.loads(v)
+            except Exception:
+                p[k] = v
     return p
 
 
@@ -80,5 +100,7 @@ if __name__ == "__main__":
     sp = parse(sys.argv)
     for tf in tfs.split(","):
         run(tf, dict(sp))
-        if "--wf" in sys.argv: run_wf(tf, dict(sp))
-        if "--split" in sys.argv: run_split(tf, dict(sp))
+        if "--wf" in sys.argv:
+            run_wf(tf, dict(sp))
+        if "--split" in sys.argv:
+            run_split(tf, dict(sp))

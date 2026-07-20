@@ -2,16 +2,17 @@
 
 Usage : python research/backtest_squeeze.py [--tf 4h,1d] [--wf] [--split] [--params k=v ...]
 """
+import json
 import os
 import sys
 import time
-import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import polars as pl
-from app.engine.engine import Engine
+
 from app.engine.backtest import Backtester, WalkForwardAnalyzer
+from app.engine.engine import Engine
 from app.strategies.volatility_squeeze import Strategy
 
 UPLOAD = "/root/.claude/uploads/6ee1d036-9dde-49c8-ba23-22b93133ed2a"
@@ -38,15 +39,19 @@ def load(tf):
 
 def run(tf, sp):
     df = load(tf)
-    eng = Engine(); eng.register(Strategy(), silent=True)
+    eng = Engine()
+    eng.register(Strategy(), silent=True)
     t0 = time.time()
     r = Backtester(eng, cfg(sp), use_pretrained_ml=False).run(df, "BTC/USDC", timeframe=tf).to_dict()
     dt = time.time() - t0
     setups = {}
     for t in r["trades"]:
         if str(t.get("status", "")).startswith("closed"):
-            s = t.get("setup", "?"); d = setups.setdefault(s, {"n": 0, "pnl": 0.0, "w": 0})
-            d["n"] += 1; d["pnl"] += t.get("pnl", 0.0); d["w"] += 1 if t.get("pnl", 0) > 0 else 0
+            s = t.get("setup", "?")
+            d = setups.setdefault(s, {"n": 0, "pnl": 0.0, "w": 0})
+            d["n"] += 1
+            d["pnl"] += t.get("pnl", 0.0)
+            d["w"] += 1 if t.get("pnl", 0) > 0 else 0
     print(f"\n{'═'*70}\n volatility_squeeze · {tf} · {len(df)} bougies · {dt:.1f}s\n{'═'*70}")
     print(f"  Rendement {(r['final_equity']/r['initial_capital']-1)*100:+.1f}%  | "
           f"B&H {r['buy_and_hold_pct']:+.0f}%  alpha {r['alpha']:+.0f}")
@@ -71,7 +76,8 @@ def run_split(tf, sp):
                           (pl.col("time") <= pl.lit(d1).str.to_datetime()))
         if len(sub) < 300:
             continue
-        eng = Engine(); eng.register(Strategy(), silent=True)
+        eng = Engine()
+        eng.register(Strategy(), silent=True)
         r = Backtester(eng, cfg(sp), use_pretrained_ml=False).run(sub, "BTC/USDC", timeframe=tf).to_dict()
         pnl = (r["final_equity"] / r["initial_capital"] - 1) * 100
         print(f"     {name:<18}{r['total_trades']:>7}{pnl:>+8.1f}{r['buy_and_hold_pct']:>+9.1f}"
@@ -79,7 +85,8 @@ def run_split(tf, sp):
 
 
 def run_wf(tf, sp):
-    eng = Engine(); eng.register(Strategy(), silent=True)
+    eng = Engine()
+    eng.register(Strategy(), silent=True)
     r = WalkForwardAnalyzer(eng, cfg(sp), 5).run(load(tf), "BTC/USDC")
     if "error" in r:
         print(f"\n  ── WF {tf} : {r['error']}")

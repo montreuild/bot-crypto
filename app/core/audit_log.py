@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from functools import wraps
 from typing import Optional
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Index
+from sqlalchemy import Column, DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import sessionmaker
 
 logger = logging.getLogger(__name__)
@@ -178,4 +178,4 @@ else:
             async def w(*a, **k): return await fn(*a, **k)
             return w
         return deco
-    _init_audit_db = lambda _e: None
+    def _init_audit_db(_e): pass

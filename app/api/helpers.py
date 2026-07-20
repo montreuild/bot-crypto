@@ -8,10 +8,8 @@ import time
 from fastapi import HTTPException, Request
 
 from app.api import state
-from app.core.sanitize import (                          # noqa: F401 — re-export
-    clean_for_json as _clean,
-    CleanJSONResponse,
-)
+from app.core.sanitize import CleanJSONResponse  # noqa: F401 — re-export
+from app.core.sanitize import clean_for_json as _clean  # noqa: F401 — re-export
 
 logger = logging.getLogger(__name__)
 

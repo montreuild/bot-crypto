@@ -28,8 +28,8 @@ from typing import Any, Dict, List, Optional
 
 import polars as pl
 
+from app.core.indicators import pre_val, precompute_df
 from app.engine.engine import BaseStrategy
-from app.core.indicators import precompute_df, pre_val
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,9 @@ class Strategy(BaseStrategy):
         if cnt - self._last.get(sym, -10**9) < int(p["cooldown"]):
             return self._none("Cooldown")
 
-        close = df["close"]; high = df["high"]; low = df["low"]
+        close = df["close"]
+        high = df["high"]
+        low = df["low"]
         c = _safe(close[-1])
         atr = _safe(pre_val(df, "_pre_atr14"))
         if c <= 0 or atr <= 0:

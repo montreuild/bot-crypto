@@ -3,18 +3,21 @@ import logging
 import math
 import threading
 import time
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
+
 import numpy as np
 import polars as pl
 
-from app.engine.engine import Engine
-from app.core.execution import (close_pnl as _close_pnl, trade_fees as _trade_fees,
-                                size_impact_cost as _size_impact_cost)
-from app.core.trailing import TrailingStopManager
-from app.core.risk_curve import risk_multiplier as _risk_multiplier
 from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
-from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.core.param_resolution import resolve_strategy_params
+from app.core.execution import close_pnl as _close_pnl
+from app.core.execution import size_impact_cost as _size_impact_cost
+from app.core.execution import trade_fees as _trade_fees
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, resolve_strategy_params
+from app.core.risk_curve import risk_multiplier as _risk_multiplier
+from app.core.timeframes import TF_MINUTES as _TF_MINUTES
+from app.core.timeframes import bars_per_year as _bars_per_year
+from app.core.trailing import TrailingStopManager
+from app.engine.engine import Engine
 
 
 def _sf(v, fallback=None):
@@ -30,11 +33,9 @@ logger = logging.getLogger(__name__)
 
 # Timeframe → minutes — source unique (V4-A). L'ancienne table locale (9 clés)
 # renvoyait le défaut pour 6h/8h/12h ; la canonique les couvre.
-from app.core.timeframes import TF_MINUTES as _TF_MINUTES
-# S4-01/S4-02 : facteur d'annualisation partagé avec le Sharpe live
-# (health_mixin.py) — sans source unique, les deux Sharpe n'étaient pas
+# S4-01/S4-02 : bars_per_year — facteur d'annualisation partagé avec le Sharpe
+# live (health_mixin.py) — sans source unique, les deux Sharpe n'étaient pas
 # comparables (cf. app/core/timeframes.py::bars_per_year).
-from app.core.timeframes import bars_per_year as _bars_per_year
 
 
 def _bar_to_days(tf: str) -> float:
@@ -619,6 +620,7 @@ class Backtester:
     def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL,
             timeframe: str = None) -> "BacktestResult":
         import os
+
         from app.engine.engine import BaseStrategyML
         # Résolution des paramètres en amont du hook ``prepare_for_backtest`` :
         # certaines stratégies pré-calculent leurs features/votes en fonction du
@@ -989,12 +991,14 @@ class WalkForwardAnalyzer:
                 for s in self.engine.strategies:
                     mod = _imp.import_module(f"app.strategies.{s.name}")
                     fresh_strats.append(mod.Strategy())
-                eng_is  = Engine(); [eng_is.register(s, silent=True)  for s in fresh_strats]
+                eng_is  = Engine()
+                [eng_is.register(s, silent=True)  for s in fresh_strats]
                 fresh_strats_oos = []
                 for s in self.engine.strategies:
                     mod = _imp.import_module(f"app.strategies.{s.name}")
                     fresh_strats_oos.append(mod.Strategy())
-                eng_oos = Engine(); [eng_oos.register(s, silent=True) for s in fresh_strats_oos]
+                eng_oos = Engine()
+                [eng_oos.register(s, silent=True) for s in fresh_strats_oos]
 
                 bt_is  = Backtester(eng_is,  self.cfg)
                 bt_oos = Backtester(eng_oos, self.cfg)

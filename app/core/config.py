@@ -192,8 +192,9 @@ def _bootstrap_strategy_files(strategies_dir: str) -> None:
     active par défaut et sera enrichie par l'optimiseur lors de sa première exécution.
     """
     try:
-        import pkgutil
         import importlib
+        import pkgutil
+
         import app.strategies as _strat_pkg
     except ImportError:
         return

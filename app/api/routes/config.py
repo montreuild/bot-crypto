@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api import state
-from app.api.helpers import verify_api_key, _discover_strategies
+from app.api.helpers import _discover_strategies, verify_api_key
 from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
 
 logger = logging.getLogger(__name__)
@@ -26,8 +26,8 @@ def _save_strategy_yaml(strategy_name: str, updates_fn):
     Applique updates_fn(data) et réécrit strategies/{strategy_name}.yaml (thread-safe).
     Crée le fichier s'il n'existe pas. Préserve les commentaires (round-trip).
     """
-    from app.engine.optimizer import _strategy_file_path, _load_strategy_file
     from app.core.yaml_io import dump_yaml
+    from app.engine.optimizer import _load_strategy_file, _strategy_file_path
     strat_path = _strategy_file_path(strategy_name)
     with state._config_write_lock:
         data = _load_strategy_file(strat_path)
@@ -60,7 +60,7 @@ def get_config():
             db["url"] = f"{scheme}://****@{url.split('@', 1)[1]}"
         safe["database"] = db
     safe["all_strategies"]     = all_strats
-    from app.engine.optimizer import STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT
+    from app.engine.optimizer import RECOMMENDED_LIMIT, STRATEGY_TIMEFRAMES
     safe["strategy_timeframes"] = STRATEGY_TIMEFRAMES
     safe["recommended_limits"]  = RECOMMENDED_LIMIT
     if state.trader:
@@ -345,8 +345,8 @@ def update_strategy_params(request: Request, strategy: str, params: dict,
         raise HTTPException(400, "timeframe et symbol doivent être fournis ensemble")
 
     if timeframe and symbol:
-        from app.engine.opt_persistence import apply_best_params
         from app.core.param_resolution import _select_symbol_entry
+        from app.engine.opt_persistence import apply_best_params
         tf_entry = ((state.cfg.get("optimizer_results") or {})
                     .get(strategy, {}).get(timeframe) or {})
         prev = _select_symbol_entry(tf_entry, symbol) if isinstance(tf_entry, dict) else None

@@ -8,9 +8,9 @@ Vérifie que :
      consensus_bonus) ré-agrège le MÊME cache sans le recalculer ;
   4. sans prepare (mode live), ``score()`` reste fonctionnel via le fallback.
 """
+import datetime as dt
 import os
 import sys
-import datetime as dt
 
 import numpy as np
 import polars as pl

@@ -10,48 +10,61 @@ Ce module ré-exporte les noms historiques : les imports existants
 (``from app.engine.optimizer import apply_best_params, PARAM_SPACES, …``)
 restent valides.
 """
-import logging
 import importlib
+import io
 import itertools
+import logging
 import math
+import os
 import random
 import statistics
 import threading
-import os
-import io
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Dict, List, Any, Callable, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import polars as pl
 
-from app.engine.engine import Engine
-from app.engine.backtest import Backtester
+from app.core.is_oos import OOS_FRACTION_DEFAULT as _OOS_FRACTION  # BT-08 : constante partagée
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.engine.registry import (
-    get_strategy_timeframes,
-    get_param_spaces,
-    get_fixed_params,
+from app.core.timeframes import TF_MINUTES as _TF_MINUTES  # V4-A : source unique
+from app.engine.backtest import Backtester
+from app.engine.engine import Engine
+from app.engine.opt_persistence import (  # noqa: F401
+    _append_changelog,
+    _changelog_lock,
+    _config_write_lock,
+    _load_strategy_file,
+    _resolve_config_path,
+    _strategy_file_path,
+    _write_strategy_file,
+    apply_best_params,
+    get_active_strategies_per_tf,
+    record_optimizer_audit,
+    save_optimizer_results,
 )
 
 # ── Sous-modules (ré-exports compatibilité — noms historiques inclus) ────────
-from app.engine.opt_scoring import (              # noqa: F401
-    composite_score, overfitting_ratio,
-    _composite_score, _overfitting_ratio,
+from app.engine.opt_scoring import (  # noqa: F401
+    _composite_score,
+    _overfitting_ratio,
+    composite_score,
+    overfitting_ratio,
 )
-from app.engine.opt_persistence import (          # noqa: F401
-    save_optimizer_results, record_optimizer_audit, apply_best_params,
-    get_active_strategies_per_tf,
-    _config_write_lock, _changelog_lock, _append_changelog,
-    _resolve_config_path, _strategy_file_path, _load_strategy_file,
-    _write_strategy_file,
+from app.engine.opt_workers import (  # noqa: F401
+    _W,
+    _eval_worker,
+    _install_features_cache,
+    _worker_init,
 )
-from app.engine.opt_workers import (              # noqa: F401
-    _W, _worker_init, _eval_worker, _install_features_cache,
-    available_memory_bytes as _available_memory_bytes,
-    mem_aware_max_workers as _mem_aware_max_workers,
+from app.engine.opt_workers import available_memory_bytes as _available_memory_bytes  # noqa: F401
+from app.engine.opt_workers import mem_aware_max_workers as _mem_aware_max_workers  # noqa: F401
+from app.engine.registry import (
+    get_fixed_params,
+    get_param_spaces,
+    get_strategy_timeframes,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,11 +95,9 @@ GLOBAL_TRADING_PARAMS = {
 
 # Fraction de la fenêtre réservée à l'OOS dans le découpage des jobs (cf.
 # auto_optimizer : split ≈ 65 % IS / 35 % OOS). Sert à dimensionner le nombre
-# minimal de bougies à charger pour qu'une stratégie ne soit PAS ignorée.
-from app.core.is_oos import OOS_FRACTION_DEFAULT as _OOS_FRACTION  # BT-08 : constante partagée
-
-# Conversion TF -> minutes (pour exprimer la fenêtre OOS en temps).
-from app.core.timeframes import TF_MINUTES as _TF_MINUTES  # V4-A : source unique
+# minimal de bougies à charger pour qu'une stratégie ne soit PAS ignorée
+# (``_OOS_FRACTION``, importé en tête de fichier). ``_TF_MINUTES`` (idem) sert
+# à exprimer la fenêtre OOS en temps.
 
 # Fenêtre de TRADING visée dans la tranche OOS, AU-DELÀ du warmup, pour qu'elle
 # génère assez de trades (~ lifecycle.eval_min_trades). Sans elle, l'OOS ne
@@ -866,8 +877,12 @@ class StrategyOptimizer:
         """Sérialise (une fois) cfg + DataFrames IS/OOS pour les workers spawn.
         Retourne ``(cfg_yaml, df_is_ipc, df_oos_ipc, init_args)``."""
         import yaml as _yaml
-        _buf_is = io.BytesIO();  self.df_is.write_ipc(_buf_is);   df_is_ipc  = _buf_is.getvalue()
-        _buf_oos = io.BytesIO(); self.df_oos.write_ipc(_buf_oos); df_oos_ipc = _buf_oos.getvalue()
+        _buf_is = io.BytesIO()
+        self.df_is.write_ipc(_buf_is)
+        df_is_ipc  = _buf_is.getvalue()
+        _buf_oos = io.BytesIO()
+        self.df_oos.write_ipc(_buf_oos)
+        df_oos_ipc = _buf_oos.getvalue()
         cfg_yaml = _yaml.dump(self.cfg)
         init_args = (self.strategy_name, cfg_yaml,
                      df_is_ipc, df_oos_ipc, self.symbol, self.timeframe)
@@ -886,8 +901,10 @@ class StrategyOptimizer:
         safe = max(1, min(n_jobs, max(1, _cpu - 1)))
         # Estimation prudente ~5× le payload IPC + 256 Mo (features + LightGBM).
         try:
-            _buf_is = io.BytesIO();  self.df_is.write_ipc(_buf_is)
-            _buf_oos = io.BytesIO(); self.df_oos.write_ipc(_buf_oos)
+            _buf_is = io.BytesIO()
+            self.df_is.write_ipc(_buf_is)
+            _buf_oos = io.BytesIO()
+            self.df_oos.write_ipc(_buf_oos)
             per_worker = int((_buf_is.tell() + _buf_oos.tell()) * 5) + 256 * 1024 * 1024
             safe = _mem_aware_max_workers(safe, per_worker)
         except Exception:
@@ -910,7 +927,8 @@ class StrategyOptimizer:
         décompte, pas celui des seuls succès, que l'appelant doit soustraire
         de son budget."""
         if sampler is None:
-            sampler = lambda: self._with_hp({k: random.choice(v) for k, v in self.param_space.items()})
+            def sampler(): return self._with_hp(
+                {k: random.choice(v) for k, v in self.param_space.items()})
 
         best_so_far = initial_best
         no_improve = 0

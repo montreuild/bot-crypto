@@ -12,12 +12,13 @@ indépendamment, avec son propre espace de paramètres incluant le filtre horair
 """
 import datetime as _dt
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 import polars as pl
 
+from app.core.indicators import bb_squeeze as calc_squeeze
+from app.core.indicators import ema_window, htf_trend, pre_val
 from app.engine.engine import BaseStrategy
-from app.core.indicators import bb_squeeze as calc_squeeze, htf_trend, pre_val, ema_window
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +132,10 @@ class Strategy(BaseStrategy):
 
         # ── Tendance fond ────────────────────────────────────────────────────
         _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
-        lt = pre_val(df, _ema_map.get(ema_trend, "")) or float(ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
-        lm = pre_val(df, _ema_map.get(ema_mid, ""))   or float(ema_window(df, ema_mid,   full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lt = pre_val(df, _ema_map.get(ema_trend, "")) or float(
+            ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lm = pre_val(df, _ema_map.get(ema_mid, ""))   or float(
+            ema_window(df, ema_mid,   full_df=self._bt_full_df, cache=self._ema_cache)[-1])
         c_now = float(close[-1])
         o_now = float(open_[-1])
 

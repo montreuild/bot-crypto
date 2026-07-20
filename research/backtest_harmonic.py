@@ -3,16 +3,17 @@
 Usage : python research/backtest_harmonic.py [--tf 1h,4h,1d] [--limit N] [--params k=v ...]
 Réutilise frais/spread/borrow réalistes (config.yaml) + benchmark Buy&Hold/alpha.
 """
+import json
 import os
 import sys
 import time
-import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import polars as pl
-from app.engine.engine import Engine
+
 from app.engine.backtest import Backtester, WalkForwardAnalyzer
+from app.engine.engine import Engine
 from app.strategies.harmonic_regime import Strategy
 
 UPLOAD = "/root/.claude/uploads/6ee1d036-9dde-49c8-ba23-22b93133ed2a"
@@ -86,7 +87,7 @@ def _print(r: dict, label: str = ""):
     print(f"  avg win/loss   : {r['avg_win']:+.2f} / {r['avg_loss']:+.2f}  "
           f"| MAE {r.get('avg_mae',0):.2f}% MFE {r.get('avg_mfe',0):.2f}%")
     if r["_setups"]:
-        print(f"  par setup :")
+        print("  par setup :")
         for s, d in sorted(r["_setups"].items(), key=lambda x: -x[1]["pnl"]):
             wr = d["wins"] / d["n"] * 100 if d["n"] else 0
             print(f"     {s:<14} n={d['n']:<5} pnl={d['pnl']:+9.2f}  win={wr:4.1f}%")
@@ -120,7 +121,6 @@ WINDOWS = [
 
 
 def run_split(tf: str, params: dict):
-    import datetime as _dt
     print(f"\n  ── Robustesse par macro-régime · {tf} ──")
     print(f"     {'fenêtre':<18} {'trades':>6} {'PnL%':>7} {'B&H%':>8} {'alpha%':>7} "
           f"{'PF':>5} {'DD%':>6} {'Sharpe':>7}")
@@ -130,7 +130,8 @@ def run_split(tf: str, params: dict):
                           (pl.col("time") <= pl.lit(d1).str.to_datetime()))
         if len(sub) < 300:
             continue
-        eng = Engine(); eng.register(Strategy(), silent=True)
+        eng = Engine()
+        eng.register(Strategy(), silent=True)
         bt = Backtester(eng, cfg(params), use_pretrained_ml=False)
         r = bt.run(sub, "BTC/USDC", timeframe=tf).to_dict()
         pnl_pct = (r["final_equity"] / r["initial_capital"] - 1) * 100

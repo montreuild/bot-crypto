@@ -13,7 +13,7 @@ import polars as pl
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api import state
-from app.api.helpers import verify_api_key, _clean
+from app.api.helpers import _clean, verify_api_key
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 logger = logging.getLogger(__name__)

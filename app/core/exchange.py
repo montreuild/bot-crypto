@@ -1,6 +1,10 @@
 """Client exchange CCXT avec retry exponentiel et reconnexion de session."""
-import logging, time, functools, uuid
-from typing import Callable, Any, Optional
+import functools
+import logging
+import time
+import uuid
+from typing import Any, Callable, Optional
+
 import ccxt
 
 logger = logging.getLogger(__name__)
@@ -179,7 +183,8 @@ class RobustExchange:
 
     def create_order(self, symbol, order_type, side, amount, price=None, params=None):
         if self.paper:
-            logger.info(f"[PAPER{'·MARGIN' if self.margin else ''}] {side.upper()} {amount} {symbol} @ {price or 'market'}")
+            logger.info(f"[PAPER{'·MARGIN' if self.margin else ''}] {side.upper()} {amount} "
+                       f"{symbol} @ {price or 'market'}")
             return {"id": f"paper_{int(time.time())}", "status": "closed",
                     "symbol": symbol, "side": side, "amount": amount, "price": price or 0}
         p = dict(params or {})
@@ -238,7 +243,8 @@ class RobustExchange:
 
     @with_retry
     def cancel_order(self, order_id, symbol):
-        if self.paper: return {"id": order_id, "status": "canceled"}
+        if self.paper:
+            return {"id": order_id, "status": "canceled"}
         # OKX annule par ordId sans paramètre de marge supplémentaire.
         return self._ex.cancel_order(order_id, symbol)
 
@@ -321,7 +327,8 @@ class RobustExchange:
 
     @with_retry
     def fetch_order(self, order_id, symbol):
-        if self.paper: return {"id": order_id, "status": "closed"}
+        if self.paper:
+            return {"id": order_id, "status": "closed"}
         return self._ex.fetch_order(order_id, symbol)
 
     # Accès direct aux attributs de l'exchange sous-jacent

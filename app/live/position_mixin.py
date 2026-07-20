@@ -23,21 +23,26 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from app.core.execution import close_pnl, trade_fees, size_impact_cost
-from app.core.trailing import TrailingStopManager
-from app.core.database import (save_trade, update_daily_stats,
-                                persist_open_position, delete_open_position,
-                                load_open_positions, session_scope)
 import polars as pl
 
-from app.core.indicators import atr_val as _compute_atr
-from app.core.bot_identity import build_slot_key, build_pos_key
+from app.core.bot_identity import build_pos_key, build_slot_key
 from app.core.config import DEFAULT_TAKER_FEE
+from app.core.database import (
+    delete_open_position,
+    load_open_positions,
+    persist_open_position,
+    save_trade,
+    session_scope,
+    update_daily_stats,
+)
+from app.core.execution import close_pnl, size_impact_cost, trade_fees
+from app.core.indicators import atr_val as _compute_atr
 from app.core.timeframes import HTF_MAP as _HTF_MAP
+from app.core.trailing import TrailingStopManager
 
 # WebSocket temps réel — non bloquant, jamais critique pour le trading
 try:
-    from app.core.events import publish_trade_opened, publish_trade_closed
+    from app.core.events import publish_trade_closed, publish_trade_opened
 except Exception:  # pragma: no cover — fallback si events.py indisponible
     def publish_trade_opened(*_a, **_kw): pass
     def publish_trade_closed(*_a, **_kw): pass
@@ -89,15 +94,24 @@ def _apply_trail_override(base_cfg: dict, override: dict) -> dict:
     if not override:
         return base_cfg
     merged = dict(base_cfg)
-    if "trail_wide"  in override: merged["mult"]             = float(override["trail_wide"])
-    if "trail_tight" in override: merged["trail_tight_mult"] = float(override["trail_tight"])
-    if "grace_bars"  in override: merged["grace_bars"]       = int(override["grace_bars"])
-    if "breakeven_r" in override: merged["breakeven_r"]      = float(override["breakeven_r"])
-    if "lock_r"      in override: merged["lock_r"]           = float(override["lock_r"])
-    if "tight_r"     in override: merged["tight_r"]          = float(override["tight_r"])
-    if "lock_ratio"  in override: merged["lock_ratio"]       = float(override["lock_ratio"])
-    if "use_swing"   in override: merged["use_swing"]        = bool(override["use_swing"])
-    if "mode"        in override: merged["mode"]             = str(override["mode"])
+    if "trail_wide"  in override:
+        merged["mult"]             = float(override["trail_wide"])
+    if "trail_tight" in override:
+        merged["trail_tight_mult"] = float(override["trail_tight"])
+    if "grace_bars"  in override:
+        merged["grace_bars"]       = int(override["grace_bars"])
+    if "breakeven_r" in override:
+        merged["breakeven_r"]      = float(override["breakeven_r"])
+    if "lock_r"      in override:
+        merged["lock_r"]           = float(override["lock_r"])
+    if "tight_r"     in override:
+        merged["tight_r"]          = float(override["tight_r"])
+    if "lock_ratio"  in override:
+        merged["lock_ratio"]       = float(override["lock_ratio"])
+    if "use_swing"   in override:
+        merged["use_swing"]        = bool(override["use_swing"])
+    if "mode"        in override:
+        merged["mode"]             = str(override["mode"])
     return merged
 
 

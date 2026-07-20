@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 
-from audit_param_space import audit, cardinality, COVERAGE_WARN_THRESHOLD
+from audit_param_space import COVERAGE_WARN_THRESHOLD, audit, cardinality
 
 
 class TestCardinality:

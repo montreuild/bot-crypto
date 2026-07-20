@@ -1,8 +1,7 @@
 """Phase 2 — cycle de vie & allocation continue (shadow) + garde-fou rebalance."""
-from app.live.slot_lifecycle import SlotLifecycleManager, LifecycleState
+from app.core.database import get_current_lifecycle_states, get_slot_live_stats, init_db, save_trade, session_scope
 from app.live.capital_allocator import CapitalAllocator
-from app.core.database import (init_db, session_scope, get_current_lifecycle_states, get_slot_live_stats,
-                               save_trade)
+from app.live.slot_lifecycle import LifecycleState, SlotLifecycleManager
 
 
 def _lc_cfg(**over):

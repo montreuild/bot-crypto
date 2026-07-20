@@ -29,7 +29,8 @@ from typing import Dict, Optional, Tuple
 import polars as pl
 
 from app.core.candle_store import get_store
-from app.core.indicators import precompute_df, atr_val as _compute_atr
+from app.core.indicators import atr_val as _compute_atr
+from app.core.indicators import precompute_df
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.engine.optimizer import RECOMMENDED_LIMIT
 

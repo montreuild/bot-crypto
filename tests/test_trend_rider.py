@@ -36,7 +36,8 @@ class TestTrendRider:
         assert out["side"] == "none" and out["name"] == "trend_rider"
 
     def test_long_signal_in_uptrend(self):
-        s = Strategy(); s._bt_params = None
+        s = Strategy()
+        s._bt_params = None
         df = _trend_df(500, direction=1, seed=1)
         s.prepare_for_backtest(df)
         assert s._sig, "aucun signal en tendance haussière franche"
@@ -49,25 +50,29 @@ class TestTrendRider:
 
     def test_long_only_default(self):
         """long_only par défaut → aucun signal short même en tendance baissière."""
-        s = Strategy(); s._bt_params = None
+        s = Strategy()
+        s._bt_params = None
         s.prepare_for_backtest(_trend_df(500, direction=-1, seed=2))
         assert all(v["side"] == "long" for v in (s._sig or {}).values())
         assert not any(v["side"] == "short" for v in (s._sig or {}).values())
 
     def test_shorts_when_enabled(self):
-        s = Strategy(); s._bt_params = {"trend_rider": {"long_only": False}}
+        s = Strategy()
+        s._bt_params = {"trend_rider": {"long_only": False}}
         s.prepare_for_backtest(_trend_df(700, direction=-1, seed=3))
         assert any(v["side"] == "short" for v in (s._sig or {}).values())
 
     def test_edge_triggered_sparse(self):
         """Entrées au front montant du régime → clairsemées, pas chaque barre."""
-        s = Strategy(); s._bt_params = None
+        s = Strategy()
+        s._bt_params = None
         df = _trend_df(500, direction=1, seed=4)
         s.prepare_for_backtest(df)
         assert 0 < len(s._sig) < df.height // 5
 
     def test_stop_below_entry_long(self):
-        s = Strategy(); s._bt_params = None
+        s = Strategy()
+        s._bt_params = None
         df = _trend_df(500, direction=1, seed=5)
         s.prepare_for_backtest(df)
         c = df["close"].to_numpy()
@@ -77,7 +82,8 @@ class TestTrendRider:
     def test_cache_coherence_live_vs_backtest(self):
         """Le chemin live (score sur df tronqué) reproduit le signal du cache
         backtest à la même barre — mêmes côté/stop."""
-        s = Strategy(); s._bt_params = None
+        s = Strategy()
+        s._bt_params = None
         df = _trend_df(500, direction=1, seed=6)
         s.prepare_for_backtest(df)
         checked = 0

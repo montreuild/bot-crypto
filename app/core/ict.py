@@ -17,7 +17,6 @@ from typing import List, Optional
 import numpy as np
 import polars as pl
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 #  Sur entités SMC (FVG / breakers)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -181,7 +180,8 @@ def align_series(time_a: np.ndarray, time_b: np.ndarray,
     action, ETF, forex — n'importe quel couple corrélé). Pour chaque temps de A,
     prend la DERNIÈRE clôture de B connue à cet instant (≤). NaN avant le début
     de B. Sert à préparer une SMT divergence entre deux actifs quelconques."""
-    ta = np.asarray(time_a, np.int64); tb = np.asarray(time_b, np.int64)
+    ta = np.asarray(time_a, np.int64)
+    tb = np.asarray(time_b, np.int64)
     cb = np.asarray(close_b, float)
     idx = np.searchsorted(tb, ta, side="right") - 1
     out = np.full(len(ta), np.nan)
@@ -235,11 +235,13 @@ def judas_swing(high: np.ndarray, low: np.ndarray, close: np.ndarray,
       −1  balaie le plus-HAUT récent et clôture en dessous → faux move haussier
           (biais SHORT) ;
       +1  balaie le plus-BAS récent et clôture au-dessus → biais LONG. Causal."""
-    h = np.asarray(high, float); l = np.asarray(low, float); c = np.asarray(close, float)
+    h = np.asarray(high, float)
+    lo = np.asarray(low, float)
+    c = np.asarray(close, float)
     ep = np.asarray(times_epoch, np.int64)
     hours = (ep // 3600) % 24
     hh = pl.Series(h).rolling_max(lookback).shift(1).to_numpy()
-    ll = pl.Series(l).rolling_min(lookback).shift(1).to_numpy()
+    ll = pl.Series(lo).rolling_min(lookback).shift(1).to_numpy()
     out = np.zeros(len(c), dtype=np.int8)
     in_win = (hours >= open_hour) & (hours < open_hour + window)
     for i in range(len(c)):
@@ -247,7 +249,7 @@ def judas_swing(high: np.ndarray, low: np.ndarray, close: np.ndarray,
             continue
         if h[i] > hh[i] and c[i] < hh[i]:
             out[i] = -1
-        elif l[i] < ll[i] and c[i] > ll[i]:
+        elif lo[i] < ll[i] and c[i] > ll[i]:
             out[i] = 1
     return out
 
@@ -260,7 +262,8 @@ def smt_divergence(close_a: np.ndarray, close_b: np.ndarray,
           money distribue) → biais baissier ;
       +1  A inscrit un nouveau plus-BAS mais B NON → biais haussier.
     ⚠ ``close_a`` et ``close_b`` doivent être alignés temporellement (même index)."""
-    a = np.asarray(close_a, float); b = np.asarray(close_b, float)
+    a = np.asarray(close_a, float)
+    b = np.asarray(close_b, float)
     n = min(len(a), len(b))
     a, b = a[:n], b[:n]
     amax = pl.Series(a).rolling_max(lookback).to_numpy()
@@ -269,8 +272,10 @@ def smt_divergence(close_a: np.ndarray, close_b: np.ndarray,
     bmin = pl.Series(b).rolling_min(lookback).to_numpy()
     out = np.zeros(n, dtype=np.int8)
     tol = 1e-9
-    new_high_a = a >= amax - tol; new_high_b = b >= bmax - tol
-    new_low_a = a <= amin + tol; new_low_b = b <= bmin + tol
+    new_high_a = a >= amax - tol
+    new_high_b = b >= bmax - tol
+    new_low_a = a <= amin + tol
+    new_low_b = b <= bmin + tol
     out[new_high_a & ~new_high_b] = -1
     out[new_low_a & ~new_low_b] = 1
     return out
