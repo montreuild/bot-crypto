@@ -55,6 +55,18 @@ def run_backtest(
 ):
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
+    # Symétrique du check dans optimizer_start() : une optimisation (potentiel-
+    # lement des dizaines de jobs LightGBM concurrents) tourne dans le même
+    # process et ne partage aucun portillon CPU/mémoire avec le backtest —
+    # les deux en même temps risquent la contention/l'OOM.
+    from app.engine.auto_optimizer import get_all_jobs as _get_all_jobs
+    _opt_running = [jid for jid, j in _get_all_jobs().items() if j.get("status") == "running"]
+    if _opt_running:
+        raise HTTPException(
+            429,
+            f"Une optimisation est en cours ({len(_opt_running)} job(s) actif(s)) — "
+            f"patientez avant de lancer un backtest (contention CPU/mémoire)."
+        )
     if not state._bt_semaphore.acquire(blocking=False):
         raise HTTPException(429, "Un backtest est déjà en cours.")
     state._bt_cancel_event.clear()

@@ -187,6 +187,39 @@ def test_fees_without_session_local_returns_zeros(client, monkeypatch):
     assert r.json() == {"taker": 0.0, "maker": 0.0, "borrow": 0.0, "stop": 0.0}
 
 
+# ── /api/backtest ↔ /api/optimize/start : exclusion mutuelle ────────────────
+# Les deux tournent dans le même process serveur mais ne partagent aucun
+# portillon CPU/mémoire (_bt_semaphore vs _job_semaphore/_acquire_mem_slot de
+# AutoOptimizer, scopés chacun à leur famille) — les laisser se chevaucher
+# risque la contention CPU/OOM (constaté en pratique lors d'un comparatif
+# DEAD-01 avec des jobs LightGBM concurrents). Chaque route refuse désormais
+# l'autre pendant qu'elle tourne, avec un message 429 explicite qui remonte
+# tel quel jusqu'à l'UI (Next.js : toast.error(e.message) ; legacy HTML :
+# panneau de log — les deux lisent déjà `detail` de la réponse JSON).
+
+def test_backtest_rejects_while_optimize_running(client, monkeypatch):
+    monkeypatch.setattr(state, "cfg", {"trading": {}})
+    monkeypatch.setattr(
+        "app.engine.auto_optimizer.get_all_jobs",
+        lambda: {"opus_omnibus_v12@1h@BTC/USDC": {"status": "running"}},
+    )
+    r = client.post("/api/backtest")
+    assert r.status_code == 429
+    assert "optimisation" in r.json()["detail"].lower()
+
+
+def test_optimizer_start_rejects_while_backtest_running(client, monkeypatch):
+    monkeypatch.setattr(state, "cfg", {"trading": {}})
+    monkeypatch.setattr("app.engine.auto_optimizer.get_all_jobs", lambda: {})
+    assert state._bt_semaphore.acquire(blocking=False)
+    try:
+        r = client.post("/api/optimize/start")
+        assert r.status_code == 429
+        assert "backtest" in r.json()["detail"].lower()
+    finally:
+        state._bt_semaphore.release()
+
+
 # ── Auth : le contournement de test ne doit pas masquer un vrai trou ─────
 
 def test_protected_route_rejects_unauthenticated_non_local_request():

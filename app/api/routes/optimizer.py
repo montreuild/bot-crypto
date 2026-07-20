@@ -65,6 +65,19 @@ def optimizer_start(
             f"Une optimisation est déjà en cours "
             f"({len(_running)} job(s) actif(s) : {', '.join(_running[:3])})."
         )
+    # Un backtest tourne dans le MÊME process, sans le portillon mémoire/CPU
+    # inter-jobs de AutoOptimizer (§_job_semaphore/_acquire_mem_slot, scopé aux
+    # jobs d'optimisation) — le laisser tourner en même temps qu'un batch
+    # d'optimisation (potentiellement des dizaines de jobs LightGBM) risque la
+    # contention CPU/OOM. On refuse plutôt que de laisser les deux se marcher
+    # dessus (cf. pattern peek de ``backtest_status()``).
+    if not state._bt_semaphore.acquire(blocking=False):
+        raise HTTPException(
+            429,
+            "Un backtest est en cours — patientez avant de lancer une "
+            "optimisation (contention CPU/mémoire)."
+        )
+    state._bt_semaphore.release()
     if not state._opt_semaphore.acquire(blocking=False):
         raise HTTPException(429, "Une optimisation est déjà en cours.")
 
