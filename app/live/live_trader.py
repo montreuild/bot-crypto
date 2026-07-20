@@ -23,21 +23,21 @@ from typing import Dict, List, Optional
 
 import polars as pl
 
-from app.core.bot_identity       import build_pos_key
-from app.core.database           import init_db
-from app.core.exchange           import RobustExchange
-from app.core.notifications      import Notifier
-from app.core.param_resolution   import DEFAULT_CONFIG_SYMBOL
-from app.core.risk               import RiskManager
-from app.engine.engine           import Engine
-from app.engine.scanner          import MarketScanner
-from app.live.auto_opt_mixin     import AutoOptMixin
-from app.live.balance_sync       import BalanceSyncMixin
-from app.live.capital_allocator  import CapitalAllocator
-from app.live.health_mixin       import HealthMixin
-from app.live.ohlcv_cache        import OHLCVCache
-from app.live.position_mixin     import PositionMixin
-from app.live.signal_pipeline    import SignalPipeline
+from app.core.bot_identity import build_pos_key
+from app.core.database import init_db
+from app.core.exchange import RobustExchange
+from app.core.notifications import Notifier
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
+from app.core.risk import RiskManager
+from app.engine.engine import Engine
+from app.engine.scanner import MarketScanner
+from app.live.auto_opt_mixin import AutoOptMixin
+from app.live.balance_sync import BalanceSyncMixin
+from app.live.capital_allocator import CapitalAllocator
+from app.live.health_mixin import HealthMixin
+from app.live.ohlcv_cache import OHLCVCache
+from app.live.position_mixin import PositionMixin
+from app.live.signal_pipeline import SignalPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -223,8 +223,8 @@ class LiveTrader(PositionMixin, BalanceSyncMixin, AutoOptMixin, HealthMixin):
         logger.info("=" * 60)
         logger.info("  BOT DÉMARRÉ (Multi-TF)")
         logger.info(f"  Timeframes actifs     : {self.timeframes}")
-        logger.info(f"  → Pour ajouter des TFs : config.yaml › trading.timeframes")
-        logger.info(f"  → Puis lancer une optimisation pour activer les stratégies")
+        logger.info("  → Pour ajouter des TFs : config.yaml › trading.timeframes")
+        logger.info("  → Puis lancer une optimisation pour activer les stratégies")
         logger.info("=" * 60)
         _last_successful_cycle = time.time()
         try:
@@ -289,7 +289,7 @@ class LiveTrader(PositionMixin, BalanceSyncMixin, AutoOptMixin, HealthMixin):
                             break
                         ticker = self._safe_ticker(pos["symbol"])
                         price  = ticker.get("last", pos["entry"]) if ticker else pos["entry"]
-                        self._close_position(pos_id, price)
+                        self._close_position(pos_id, price, exit_reason="manual")
                         break
                     except Exception as e:
                         wait = 2 ** _attempt

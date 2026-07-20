@@ -69,7 +69,6 @@ class Notifier:
         self._email_to         = n.get("email_to", "")
 
         self.min_pnl                 = float(n.get("min_pnl_to_notify", 5.0))
-        t = cfg.get("trading", {})
         self._loss_warn_pct          = float(n.get("position_loss_warn_pct", 5.0))
         self._exchange_err_threshold = int(n.get("exchange_error_threshold", 3))
 
@@ -86,9 +85,12 @@ class Notifier:
         self._feed_lock = threading.Lock()
 
         active = []
-        if self.telegram_enabled: active.append("Telegram")
-        if self.whatsapp_enabled: active.append(f"WhatsApp({self.whatsapp_mode})")
-        if self.email_enabled:    active.append("Email")
+        if self.telegram_enabled:
+            active.append("Telegram")
+        if self.whatsapp_enabled:
+            active.append(f"WhatsApp({self.whatsapp_mode})")
+        if self.email_enabled:
+            active.append("Email")
         if not _HAS_REQUESTS and (self.telegram_enabled or self.whatsapp_enabled):
             logger.warning("[Notifier] 'requests' non installé — Telegram/WhatsApp désactivés.")
             self.telegram_enabled = self.whatsapp_enabled = False
@@ -166,7 +168,8 @@ class Notifier:
         )
 
     def notify_trade_open(self, pos: dict):
-        if not self._events.get("on_trade_open"): return
+        if not self._events.get("on_trade_open"):
+            return
         side  = pos.get("side", "?")
         emoji = "🟢" if side == "long" else "🔴"
         self.send(
@@ -179,9 +182,11 @@ class Notifier:
         )
 
     def notify_trade(self, trade: dict):
-        if not self._events.get("on_trade_close"): return
+        if not self._events.get("on_trade_close"):
+            return
         pnl = trade.get("pnl") or 0
-        if abs(pnl) < self.min_pnl: return
+        if abs(pnl) < self.min_pnl:
+            return
         emoji   = "✅" if pnl >= 0 else "🔴"
         entry   = trade.get("entry", 0)
         exit_   = trade.get("exit", 0)
@@ -200,7 +205,8 @@ class Notifier:
         )
 
     def notify_start(self, cfg: dict):
-        if not self._events.get("on_start_stop"): return
+        if not self._events.get("on_start_stop"):
+            return
         t      = cfg.get("trading", {})
         strats = cfg.get("strategies", {}).get("enabled", [])
         self.send(
@@ -212,12 +218,15 @@ class Notifier:
         )
 
     def notify_stop(self, reason: str = "Arrêt normal"):
-        if not self._events.get("on_start_stop"): return
+        if not self._events.get("on_start_stop"):
+            return
         self.send(f"🛑 *Bot arrêté*\nRaison : `{reason}`", async_=False)
 
     def notify_halt(self, reason: str, equity: float = 0, dd_pct: float = 0):
-        if not self._events.get("on_circuit_breaker"): return
-        if self._halt_sent: return
+        if not self._events.get("on_circuit_breaker"):
+            return
+        if self._halt_sent:
+            return
         self._halt_sent = True
         self.send(
             f"🚨 *CIRCUIT BREAKER ACTIVÉ*\n"
@@ -232,8 +241,10 @@ class Notifier:
         self._halt_sent = False
 
     def notify_dd_warning(self, daily_dd_pct: float, limit_pct: float):
-        if not self._events.get("on_dd_warning"): return
-        if self._dd_warn_sent: return
+        if not self._events.get("on_dd_warning"):
+            return
+        if self._dd_warn_sent:
+            return
         self._dd_warn_sent = True
         self.send(
             f"⚠️ *Alerte Drawdown*\n"
@@ -248,8 +259,10 @@ class Notifier:
         self._halt_sent    = False
 
     def notify_exchange_error(self, symbol: str, error: str, count: int):
-        if not self._events.get("on_exchange_error"): return
-        if count != self._exchange_err_threshold: return
+        if not self._events.get("on_exchange_error"):
+            return
+        if count != self._exchange_err_threshold:
+            return
         self.send(
             f"⚠️ *Erreur Exchange Répétée*\n"
             f"Symbole    : `{symbol}`\n"
@@ -261,7 +274,8 @@ class Notifier:
 
     def notify_position_loss(self, symbol: str, strategy: str,
                               side: str, unrealized_pnl_pct: float):
-        if not self._events.get("on_position_loss"): return
+        if not self._events.get("on_position_loss"):
+            return
         if unrealized_pnl_pct >= 0 or abs(unrealized_pnl_pct) < self._loss_warn_pct:
             return
         self.send(
@@ -274,7 +288,8 @@ class Notifier:
         )
 
     def notify_status(self, status: dict):
-        if not self._events.get("on_status_report"): return
+        if not self._events.get("on_status_report"):
+            return
         eq     = status.get("equity", 0)
         dd     = status.get("global_dd_pct", 0)
         dpnl   = status.get("daily_pnl_pct", 0)
@@ -302,7 +317,8 @@ class Notifier:
 
     def notify_optimization_done(self, strategy: str, score_before: float,
                                   score_after: float, applied: bool):
-        if not self._events.get("on_optimization"): return
+        if not self._events.get("on_optimization"):
+            return
         delta = score_after - score_before
         emoji = "✅" if delta > 0 else "➡️"
         self.send(
@@ -352,8 +368,10 @@ class Notifier:
         return text.replace("*", "").replace("`", "").replace("_", "")
 
     def _telegram(self, text: str):
-        if not self.telegram_enabled or not _HAS_REQUESTS: return
-        if not self.telegram_token or not self.telegram_chat_id: return
+        if not self.telegram_enabled or not _HAS_REQUESTS:
+            return
+        if not self.telegram_token or not self.telegram_chat_id:
+            return
         try:
             resp = _requests.post(
                 f"https://api.telegram.org/bot{self.telegram_token}/sendMessage",
@@ -366,7 +384,8 @@ class Notifier:
             logger.error(f"[Notifier] Telegram KO : {e}")
 
     def _whatsapp(self, text: str):
-        if not self.whatsapp_enabled or not _HAS_REQUESTS: return
+        if not self.whatsapp_enabled or not _HAS_REQUESTS:
+            return
         try:
             if self.whatsapp_mode == "twilio" and _HAS_TWILIO and self._twilio_sid:
                 _TwilioClient(self._twilio_sid, self._twilio_auth).messages.create(
@@ -382,8 +401,10 @@ class Notifier:
             logger.warning(f"[Notifier] WhatsApp KO : {e}")
 
     def _email(self, text: str, level: str):
-        if not self.email_enabled: return
-        if not self._email_smtp or not self._email_user or not self._email_password: return
+        if not self.email_enabled:
+            return
+        if not self._email_smtp or not self._email_user or not self._email_password:
+            return
         try:
             _subj = {"critical": "🚨 CRITIQUE", "warning": "⚠️ Avertissement"}.get(level, "🤖 Info")
             subject = f"[CryptoBot] {_subj}"

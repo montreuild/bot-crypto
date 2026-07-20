@@ -4,24 +4,23 @@ import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.api import state
-from app.api.helpers import (
-    verify_api_key, _clean, _discover_strategies, _get_bt_exchange, detect_ohlcv_gaps
-)
+from app.api.helpers import _clean, _discover_strategies, _get_bt_exchange, detect_ohlcv_gaps, verify_api_key
 from app.core.candle_store import get_store
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
+from app.engine.backtest import Backtester, MonteCarlo, WalkForwardAnalyzer
 from app.engine.engine import Engine
-from app.engine.backtest import Backtester, WalkForwardAnalyzer, MonteCarlo
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 @router.post("/api/backtest/cancel", dependencies=[Depends(verify_api_key)])
-def cancel_backtest():
+@state.limiter.limit("30/minute")
+def cancel_backtest(request: Request):
     """Annule le backtest en cours en levant le signal d'arrêt."""
     state._bt_cancel_event.set()
     return {"status": "cancelling"}
@@ -44,7 +43,9 @@ def backtest_status():
 
 
 @router.post("/api/backtest", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("10/minute")
 def run_backtest(
+    request:      Request,
     symbol:       str  = DEFAULT_CONFIG_SYMBOL,
     limit:        int  = 500,
     timeframe:    str  = "",
@@ -54,6 +55,18 @@ def run_backtest(
 ):
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
+    # Symétrique du check dans optimizer_start() : une optimisation (potentiel-
+    # lement des dizaines de jobs LightGBM concurrents) tourne dans le même
+    # process et ne partage aucun portillon CPU/mémoire avec le backtest —
+    # les deux en même temps risquent la contention/l'OOM.
+    from app.engine.auto_optimizer import get_all_jobs as _get_all_jobs
+    _opt_running = [jid for jid, j in _get_all_jobs().items() if j.get("status") == "running"]
+    if _opt_running:
+        raise HTTPException(
+            429,
+            f"Une optimisation est en cours ({len(_opt_running)} job(s) actif(s)) — "
+            f"patientez avant de lancer un backtest (contention CPU/mémoire)."
+        )
     if not state._bt_semaphore.acquire(blocking=False):
         raise HTTPException(429, "Un backtest est déjà en cours.")
     state._bt_cancel_event.clear()

@@ -2,19 +2,21 @@
 
 
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 import numpy as np
 import polars as pl
 
-from app.engine.engine import BaseStrategy
 from app.core.indicators import (
     atr_val as calc_atr,
+)
+from app.core.indicators import (
+    nearest_resistance,
+    nearest_support,
     pre_val,
     support_resistance_levels,
-    nearest_support,
-    nearest_resistance,
 )
+from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
 

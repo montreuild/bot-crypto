@@ -15,35 +15,38 @@ except ImportError:
     pass
 
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api import state
 from app.api.helpers import CleanJSONResponse
-from app.api.routes import (config, trades, backtest, scanner, optimizer, bot,
-                            ml, replay, derivatives, portfolio, data, ws,
-                            audit_log)
+from app.api.routes import (
+    audit_log,
+    backtest,
+    bot,
+    config,
+    data,
+    derivatives,
+    ml,
+    optimizer,
+    portfolio,
+    replay,
+    scanner,
+    trades,
+    ws,
+)
 from app.core.database import init_db
 from app.core.events import event_hub
 
 logger = logging.getLogger(__name__)
-
-# ── Rate limiter ───────────────────────────────────────────────────────────
-# Clé = IP du pair TCP (get_remote_address ne lit PAS X-Forwarded-For → non
-# spoofable, cohérent avec helpers._extract_client_ip). La limite par défaut est
-# généreuse : l'UI mono-utilisateur poll /api/status (~12/min) et l'avancement
-# des jobs backtest/optimizer (jusqu'à ~30-60/min) ; on borne surtout l'abus.
-# Surchargeable via l'env RATE_LIMIT (ex. "120/minute").
-_RATE_LIMIT = os.environ.get("RATE_LIMIT", "300/minute")
-limiter = Limiter(key_func=get_remote_address, default_limits=[_RATE_LIMIT])
 
 # ── Application ────────────────────────────────────────────────────────────
 @asynccontextmanager
@@ -59,12 +62,15 @@ app = FastAPI(
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
-    description="API de trading algorithmique multi-stratégies. Tous les endpoints protégés exigent `X-API-Key`. Endpoint WebSocket temps réel sur `/ws`.",
+    description=(
+        "API de trading algorithmique multi-stratégies. Tous les endpoints protégés "
+        "exigent `X-API-Key`. Endpoint WebSocket temps réel sur `/ws`."
+    ),
     default_response_class=CleanJSONResponse,
     lifespan=_lifespan,
 )
 
-app.state.limiter = limiter
+app.state.limiter = state.limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 

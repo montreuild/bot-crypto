@@ -15,6 +15,9 @@ Usage :
 """
 import logging
 import os
+import threading
+
+import yaml as _pyyaml
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +33,6 @@ try:
         return y
 except Exception:                        # pragma: no cover - dépend de l'install
     _RUAMEL = False
-
-import yaml as _pyyaml
 
 
 def ruamel_available() -> bool:
@@ -88,8 +89,6 @@ def dump_yaml(path: str, data) -> None:
 # l'appelant (routes API, LiveTrader). Avant : le verrou vivait dans
 # app.api.state et live_trader importait un helper privé d'un fichier de
 # routes FastAPI (inversion live→api).
-import threading
-
 _config_yaml_lock = threading.Lock()
 
 

@@ -3,12 +3,25 @@ Base de données SQLite étendue — trades, métriques journalières, signaux, 
 """
 import logging
 from contextlib import contextmanager
-from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict, Any
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional
 
-from sqlalchemy import (create_engine, event, Column, Integer, Float, String,
-                        Boolean, DateTime, Text, JSON, Index, func, case)
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    Index,
+    Integer,
+    String,
+    Text,
+    case,
+    create_engine,
+    event,
+    func,
+)
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 logger = logging.getLogger(__name__)
 Base   = declarative_base()
@@ -30,6 +43,12 @@ class Trade(Base):
     pnl         = Column(Float)
     pnl_pct     = Column(Float)
     fees        = Column(Float)
+    # FIN-06 : décomposition de `fees` par catégorie (agrégats via
+    # get_fee_breakdown ci-dessous). `fee_taker`+`fee_maker` == `fees` — les
+    # deux existent séparément de `fees` pour rester rétro-compatibles avec
+    # tout code lisant encore l'agrégat historique.
+    fee_taker   = Column(Float, default=0.0)
+    fee_maker   = Column(Float, default=0.0)
     borrow_cost = Column(Float, default=0.0)
     leverage    = Column(Float, default=1.0)
     status      = Column(String(30))
@@ -38,6 +57,11 @@ class Trade(Base):
     exit_time   = Column(DateTime)
     timeframe   = Column(String(10))
     reason      = Column(Text)
+    # FIN-06 : motif de CLÔTURE (stop_loss/trailing_stop/take_profit/
+    # exit_after_bars/manual/...), distinct de `reason` qui reste le motif
+    # d'OUVERTURE (signal de la stratégie) — les deux étaient conflatés
+    # auparavant (`reason` écrasé par le motif de sortie anticipée seulement).
+    exit_reason = Column(String(30))
     tags        = Column(JSON)
     __table_args__ = (
         Index("ix_trades_symbol", "symbol"),
@@ -303,14 +327,25 @@ def load_open_positions(session: Session) -> List[dict]:
 
 
 def save_trade(session: Session, t: dict):
+    # FIN-06 : si l'appelant ne fournit pas déjà la répartition taker/maker,
+    # replie tout l'agrégat `fees` sur `fee_taker` — c'est la réalité actuelle
+    # du chemin live (aucune distinction maker/taker implémentée côté
+    # exécution, cf. docstring PositionMixin._close_position) : mieux vaut
+    # une répartition honnête (100% taker) qu'une colonne `fee_maker` vide de
+    # sens par défaut.
+    fees = t.get("fees", 0) or 0
+    fee_taker = t.get("fee_taker", fees)
+    fee_maker = t.get("fee_maker", 0)
     rec = Trade(
         symbol=t.get("symbol"), side=t.get("side"), strategy=t.get("strategy"),
         score=t.get("score"), entry=t.get("entry"), exit_price=t.get("exit"),
         stop=t.get("stop"), size=t.get("size"), notional=t.get("notional"),
-        pnl=t.get("pnl"), pnl_pct=t.get("pnl_pct"), fees=t.get("fees",0),
+        pnl=t.get("pnl"), pnl_pct=t.get("pnl_pct"), fees=fees,
+        fee_taker=fee_taker, fee_maker=fee_maker,
         borrow_cost=t.get("borrow_cost",0), leverage=t.get("leverage",1),
         status=t.get("status"), duration_bars=t.get("duration_bars"),
-        timeframe=t.get("timeframe"), reason=t.get("reason",""), tags=t.get("tags"),
+        timeframe=t.get("timeframe"), reason=t.get("reason",""),
+        exit_reason=t.get("exit_reason"), tags=t.get("tags"),
     )
     try:
         session.add(rec)
@@ -324,9 +359,12 @@ def save_trade(session: Session, t: dict):
 def get_trades(session: Session, limit=1000, symbol=None, strategy=None,
                since: Optional[datetime] = None) -> List[Trade]:
     q = session.query(Trade)
-    if symbol:   q = q.filter(Trade.symbol == symbol)
-    if strategy: q = q.filter(Trade.strategy == strategy)
-    if since is not None: q = q.filter(Trade.time >= since)
+    if symbol:
+        q = q.filter(Trade.symbol == symbol)
+    if strategy:
+        q = q.filter(Trade.strategy == strategy)
+    if since is not None:
+        q = q.filter(Trade.time >= since)
     return q.order_by(Trade.time.desc()).limit(limit).all()
 
 
@@ -357,6 +395,39 @@ def get_trade_global_aggregates(session: Session, since: Optional[datetime] = No
         "wins":         int(row.wins or 0),
         "gross_win":    float(row.gross_win or 0.0),
         "gross_loss":   abs(float(row.gross_loss_signed or 0.0)),
+    }
+
+
+_STOP_EXIT_REASONS = ("stop_loss", "trailing_stop")
+
+
+def get_fee_breakdown(session: Session, since: Optional[datetime] = None) -> dict:
+    """FIN-06 : compteur de frais par catégorie — taker/maker/borrow/stop.
+
+    ``taker``/``maker`` : répartition de ``fees`` (hors emprunt) par colonnes
+    dédiées (``fee_taker``/``fee_maker``, cf. modèle ``Trade``).
+    ``borrow`` : ``SUM(borrow_cost)`` (déjà séparé du reste, colonne existante).
+    ``stop`` : ``SUM(fees)`` des seuls trades clos par ``exit_reason`` in
+    (stop_loss, trailing_stop) — mesure DIAGNOSTIC (quelle part des frais vient
+    de sorties subies plutôt que voulues), pas une catégorie disjointe de
+    taker/maker (un exit stop est lui-même taker OU maker)."""
+    q = session.query(
+        func.coalesce(func.sum(Trade.fee_taker), 0.0).label("taker"),
+        func.coalesce(func.sum(Trade.fee_maker), 0.0).label("maker"),
+        func.coalesce(func.sum(Trade.borrow_cost), 0.0).label("borrow"),
+        func.coalesce(
+            func.sum(case((Trade.exit_reason.in_(_STOP_EXIT_REASONS), Trade.fees), else_=0.0)),
+            0.0,
+        ).label("stop"),
+    )
+    if since is not None:
+        q = q.filter(Trade.time >= since)
+    row = q.one()
+    return {
+        "taker":  float(row.taker or 0.0),
+        "maker":  float(row.maker or 0.0),
+        "borrow": float(row.borrow or 0.0),
+        "stop":   float(row.stop or 0.0),
     }
 
 
@@ -445,20 +516,6 @@ def get_current_lifecycle_states(session: Session) -> Dict[str, str]:
     for r in rows:
         states[r.slot_key] = r.to_state
     return states
-
-
-def get_lifecycle_events(session: Session, slot_key: str = None,
-                         limit: int = 200) -> List[dict]:
-    """Historique des transitions (toutes ou filtrées par slot), plus récentes d'abord."""
-    q = session.query(SlotLifecycleEvent)
-    if slot_key:
-        q = q.filter(SlotLifecycleEvent.slot_key == slot_key)
-    rows = q.order_by(SlotLifecycleEvent.time.desc()).limit(limit).all()
-    return [{
-        "time": r.time.isoformat() if r.time else None,
-        "slot_key": r.slot_key, "from_state": r.from_state, "to_state": r.to_state,
-        "reason": r.reason, "score": r.score, "budget_pct": r.budget_pct,
-    } for r in rows]
 
 
 # ── Persistance de l'état de risque (Phase 3) ────────────────────────────────

@@ -32,8 +32,8 @@ from typing import Any, Dict, List, Optional
 
 import polars as pl
 
+from app.core.indicators import pre_val, precompute_df
 from app.engine.engine import BaseStrategy
-from app.core.indicators import precompute_df, pre_val
 
 logger = logging.getLogger(__name__)
 
@@ -140,11 +140,14 @@ class Strategy(BaseStrategy):
         # ── Pression de foule (positionnement) — somme pondérée des z dispo ───
         terms, wsum = 0.0, 0.0
         if funding_z is not None:
-            terms += p["w_funding"] * funding_z; wsum += p["w_funding"]
+            terms += p["w_funding"] * funding_z
+            wsum += p["w_funding"]
         if lsr_z is not None:
-            terms += p["w_lsr"] * lsr_z; wsum += p["w_lsr"]
+            terms += p["w_lsr"] * lsr_z
+            wsum += p["w_lsr"]
         if taker_z is not None:
-            terms += p["w_taker"] * taker_z; wsum += p["w_taker"]
+            terms += p["w_taker"] * taker_z
+            wsum += p["w_taker"]
         if wsum <= 0:
             return self._none("Pondération dérivés nulle")
         pressure = terms / wsum * (p["w_funding"] + p["w_lsr"] + p["w_taker"])
@@ -205,7 +208,7 @@ class Strategy(BaseStrategy):
                 f"Reversion contrarian → {side.upper()} (fade de la foule)",
                 (f"OI confirme (+{oi_chg:.2f}%)" if (oi_chg is not None and oi_chg > 0)
                  else "OI neutre/baissier"),
-                (f"Garde-fou tendance actif (taille ×0.5)" if size_guard < 1.0
+                ("Garde-fou tendance actif (taille ×0.5)" if size_guard < 1.0
                  else "Pas de tendance forte adverse"),
                 f"TP {p['tp_atr']:.1f}×ATR / SL {p['sl_atr']:.1f}×ATR / hold ≤ {p['max_hold']}",
             ],

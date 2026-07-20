@@ -73,9 +73,10 @@ def build_signals(df: pl.DataFrame, scale: float = 1.0, include_smc: bool = True
     ``scale`` (SMC-10) : facteur multiplicatif des périodes d'indicateurs
     (1.0 = défaut historique, byte-identique). La famille smc n'est incluse
     qu'à l'échelle 1.0 (le moteur SMC n'a pas de période à balayer)."""
-    P = lambda x: max(2, int(round(x * scale)))
+    def P(x): return max(2, int(round(x * scale)))
     c = df["close"].to_numpy()
-    e20 = I.ema(df["close"], P(20)).to_numpy(); e50 = I.ema(df["close"], P(50)).to_numpy()
+    e20 = I.ema(df["close"], P(20)).to_numpy()
+    e50 = I.ema(df["close"], P(50)).to_numpy()
     e200 = I.ema(df["close"], P(200)).to_numpy()
     rsi = I.rsi(df["close"], P(14)).to_numpy()
     _, _, mh = (x.to_numpy() for x in I.macd(df["close"]))
@@ -86,14 +87,16 @@ def build_signals(df: pl.DataFrame, scale: float = 1.0, include_smc: bool = True
     chop = I.choppiness(df, P(14)).fill_null(50.0).to_numpy()
     bbm = I.bollinger(df["close"], P(20), 2.0)[1].to_numpy()
     vw, vwu, vwd = (x.to_numpy() for x in I.vwap_bands(df, P(20), 2.0))
-    up = (c > e200) & (e20 > e50); dn = (c < e200) & (e20 < e50)
+    up = (c > e200) & (e20 > e50)
+    dn = (c < e200) & (e20 < e50)
     trL = up & (adx_l > 22) & (pdi > ndi) & (chop < 55)
     trS = dn & (adx_l > 22) & (ndi > pdi) & (chop < 55)
     rng = chop > 55
 
     def sig(L, S):
         s = np.zeros(len(c), dtype=np.int8)
-        s[_edge(L) == 1] = 1; s[_edge(S) == 1] = -1
+        s[_edge(L) == 1] = 1
+        s[_edge(S) == 1] = -1
         return s
 
     out = {
@@ -114,29 +117,40 @@ def build_signals(df: pl.DataFrame, scale: float = 1.0, include_smc: bool = True
 
 def _sim(df, sig, kind, tp_arr, lo, hi, fee, spread,
          trail_k=3.5, stop_k=1.5, tstop_trend=24, tstop_mr=16):
-    o = df["open"].to_numpy(); h = df["high"].to_numpy()
-    lw = df["low"].to_numpy(); c = df["close"].to_numpy()
+    o = df["open"].to_numpy()
+    h = df["high"].to_numpy()
+    lw = df["low"].to_numpy()
+    c = df["close"].to_numpy()
     atr = atr_wilder(df, 14).fill_null(0.0).to_numpy()
-    pos = None; trades = []
+    pos = None
+    trades = []
     for j in range(max(1, lo + 1), hi):
         if pos:
-            hh, ll = float(h[j]), float(lw[j]); side = pos["side"]; bars = j - pos["bar"]
+            hh, ll = float(h[j]), float(lw[j])
+            side = pos["side"]
+            bars = j - pos["bar"]
             ex = None
             if kind == "trend":
                 fav = (hh - pos["entry"]) if side == "long" else (pos["entry"] - ll)
                 if fav >= pos["risk"]:
-                    pos["tr"] = True; a = float(atr[j]) or pos["risk"]
+                    pos["tr"] = True
+                    a = float(atr[j]) or pos["risk"]
                     pos["sl"] = max(pos["sl"], hh - trail_k * a) if side == "long" \
                         else min(pos["sl"], ll + trail_k * a)
                 hsl = (ll <= pos["sl"]) if side == "long" else (hh >= pos["sl"])
-                if hsl: ex = pos["sl"]
-                elif bars >= tstop_trend and not pos.get("tr"): ex = float(c[j])
+                if hsl:
+                    ex = pos["sl"]
+                elif bars >= tstop_trend and not pos.get("tr"):
+                    ex = float(c[j])
             else:
                 htp = (hh >= pos["tp"]) if side == "long" else (ll <= pos["tp"])
                 hsl = (ll <= pos["sl"]) if side == "long" else (hh >= pos["sl"])
-                if hsl: ex = pos["sl"]
-                elif htp: ex = pos["tp"]
-                elif bars >= tstop_mr: ex = float(c[j])
+                if hsl:
+                    ex = pos["sl"]
+                elif htp:
+                    ex = pos["tp"]
+                elif bars >= tstop_mr:
+                    ex = float(c[j])
             if ex is not None:
                 trades.append(((ex - pos["entry"]) / pos["entry"] * 100
                                * (1 if side == "long" else -1)) - 2 * fee * 100)
@@ -150,7 +164,8 @@ def _sim(df, sig, kind, tp_arr, lo, hi, fee, spread,
             if kind in ("mr", "smc"):
                 tp = float(tp_arr[j - 1])
                 if (side == "long" and tp <= entry) or (side == "short" and tp >= entry):
-                    pos = None; continue
+                    pos = None
+                    continue
                 pos["tp"] = tp
     if pos:
         trades.append(((float(c[hi - 1]) - pos["entry"]) / pos["entry"] * 100
@@ -161,7 +176,9 @@ def _sim(df, sig, kind, tp_arr, lo, hi, fee, spread,
 def _stats(tr):
     if not tr:
         return {"n": 0, "pnl": 0.0, "pf": 0.0, "sharpe": 0.0, "wr": 0.0}
-    a = np.array(tr); w = a[a > 0]; gl = abs(a[a <= 0].sum())
+    a = np.array(tr)
+    w = a[a > 0]
+    gl = abs(a[a <= 0].sum())
     return {"n": len(tr), "pnl": round(float(a.sum()), 1),
             "pf": round(float(w.sum() / gl) if gl > 0 else 9.99, 2),
             "sharpe": round(float(a.mean() / a.std() * np.sqrt(len(a))) if a.std() > 0 else 0.0, 2),
@@ -184,7 +201,8 @@ def analyze(df: pl.DataFrame, taker: float = DEFAULT_TAKER_FEE,
     n = df.height
     if n < 260:
         return {"rows": [], "best": None, "error": "historique insuffisant (< 260 barres)"}
-    split = int(n * (1 - oos_frac)); spread = taker * 0.5
+    split = int(n * (1 - oos_frac))
+    spread = taker * 0.5
     all_signals = dict(build_signals(df))
     for sc in (period_scales or ()):
         if sc == 1.0:

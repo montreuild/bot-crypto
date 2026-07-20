@@ -3,17 +3,21 @@ import logging
 import math
 import threading
 import time
-from typing import List, Dict, Optional, Tuple
+from typing import Dict, List, Optional
+
 import numpy as np
 import polars as pl
 
-from app.engine.engine import Engine
-from app.core.execution import close_pnl as _close_pnl, trade_fees as _trade_fees
-from app.core.trailing import TrailingStopManager
-from app.core.risk_curve import risk_multiplier as _risk_multiplier
 from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
-from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.core.param_resolution import resolve_strategy_params
+from app.core.execution import close_pnl as _close_pnl
+from app.core.execution import size_impact_cost as _size_impact_cost
+from app.core.execution import trade_fees as _trade_fees
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, resolve_strategy_params
+from app.core.risk_curve import risk_multiplier as _risk_multiplier
+from app.core.timeframes import TF_MINUTES as _TF_MINUTES
+from app.core.timeframes import bars_per_year as _bars_per_year
+from app.core.trailing import TrailingStopManager
+from app.engine.engine import Engine
 
 
 def _sf(v, fallback=None):
@@ -29,11 +33,9 @@ logger = logging.getLogger(__name__)
 
 # Timeframe → minutes — source unique (V4-A). L'ancienne table locale (9 clés)
 # renvoyait le défaut pour 6h/8h/12h ; la canonique les couvre.
-from app.core.timeframes import TF_MINUTES as _TF_MINUTES
-# S4-01/S4-02 : facteur d'annualisation partagé avec le Sharpe live
-# (health_mixin.py) — sans source unique, les deux Sharpe n'étaient pas
+# S4-01/S4-02 : bars_per_year — facteur d'annualisation partagé avec le Sharpe
+# live (health_mixin.py) — sans source unique, les deux Sharpe n'étaient pas
 # comparables (cf. app/core/timeframes.py::bars_per_year).
-from app.core.timeframes import bars_per_year as _bars_per_year
 
 
 def _bar_to_days(tf: str) -> float:
@@ -381,6 +383,15 @@ class Backtester:
         if tp_val is not None and not stop_hit:
             tp_hit = (side == "long"  and c_high >= tp_val) or \
                      (side == "short" and c_low  <= tp_val)
+        elif tp_val is not None and stop_hit:
+            # STRAT-06/BT-13 : diagnostic pur — le stop l'emporte toujours
+            # (comportement inchangé), on compte seulement les barres où le TP
+            # aurait AUSSI été touché (ambiguïté intrabar réelle, mesurable
+            # seulement en high/low faute de données tick).
+            would_tp_hit = (side == "long"  and c_high >= tp_val) or \
+                           (side == "short" and c_low  <= tp_val)
+            if would_tp_hit:
+                diag["tp_sl_ambiguous_bars"] += 1
 
         if early_exit_reason and not stop_hit and not tp_hit:
             self._close_at(ctx, position, i, c_close, early_exit_reason, maker=True)
@@ -609,6 +620,7 @@ class Backtester:
     def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL,
             timeframe: str = None) -> "BacktestResult":
         import os
+
         from app.engine.engine import BaseStrategyML
         # Résolution des paramètres en amont du hook ``prepare_for_backtest`` :
         # certaines stratégies pré-calculent leurs features/votes en fonction du
@@ -709,6 +721,10 @@ class Backtester:
             "last_trade_bar":        None,
             "max_bars_no_signal":    0,   # plus longue séquence sans signal accepté
             "max_bars_in_position":  0,   # plus longue position détenue
+            # STRAT-06/BT-13 : barres où stop ET take-profit auraient TOUS DEUX
+            # été touchés (ambiguïté intrabar high/low, mesure seule — le stop
+            # continue de toujours l'emporter, cf. _manage_open_position).
+            "tp_sl_ambiguous_bars":  0,
         }
         per_strategy_stats: Dict[str, Dict[str, int]] = {}
         _bars_since_signal     = 0
@@ -739,7 +755,6 @@ class Backtester:
         low_arr   = df["low"].to_numpy().astype(float)
         high_arr  = df["high"].to_numpy().astype(float)
         close_arr = df["close"].to_numpy().astype(float)
-        open_arr  = df["open"].to_numpy().astype(float)
 
         # Libellé des stratégies actives — chaque backtest de l'UI tourne une
         # stratégie par Backtester, donc ce libellé identifie la stratégie
@@ -886,12 +901,19 @@ class Backtester:
         _tf = timeframe or self.cfg["trading"].get("timeframe", "1h")
         result = BacktestResult(trades, equity_curve, self.initial_capital(self.cfg), timestamps, timeframe=_tf)
         result.diagnostics = diag
-        return self._add_buy_and_hold(result, df)
+        return self._add_buy_and_hold(result, df, warmup)
 
-    def _add_buy_and_hold(self, result: "BacktestResult", df: pl.DataFrame) -> "BacktestResult":
-        """Calcule le benchmark Buy & Hold sur la même période que le backtest."""
+    def _add_buy_and_hold(self, result: "BacktestResult", df: pl.DataFrame,
+                          warmup: int = 210) -> "BacktestResult":
+        """Calcule le benchmark Buy & Hold sur la MÊME fenêtre que le backtest.
+
+        FIN-04 : ``warmup`` doit être le warmup dynamique réellement utilisé par
+        la boucle de trading (``run()``, potentiellement > 210 si une stratégie
+        déclare un ``warmup_bars``/``min_bars`` plus grand) — un warmup figé à
+        210 désynchronisait le prix de départ du Buy & Hold de la première
+        barre réellement tradée, faussant l'alpha calculé.
+        """
         try:
-            warmup = 210
             if len(df) <= warmup:
                 return result
             first_price = float(df["close"][warmup])
@@ -913,20 +935,14 @@ class Backtester:
     def _impact_cost(self, ctx, i: int, notional: float) -> float:
         """BT-10 : coût d'impact croissant avec la taille RELATIVE du trade
         (participation au volume) — 0.0 si le modèle est off ou volume absent.
-
-        ``notional × spread_pct × k × (notional / volume_quote_moyen_20b)`` :
-        un trade à 1 % du volume moyen d'une barre coûte ~1 % de spread en
-        plus ; un trade à 50 % le multiplie d'autant. Linéaire en
-        participation, quadratique en notional (impact de marché standard)."""
+        Formule partagée avec le paper trading live (FIN-07) : voir
+        ``app.core.execution.size_impact_cost``."""
         if self.slippage_model != "size":
             return 0.0
         qv = getattr(ctx, "qvol_arr", None)
         if qv is None or not (0 <= i < len(qv)):
             return 0.0
-        avg = float(qv[i])
-        if avg <= 0 or notional <= 0:
-            return 0.0
-        return notional * self.spread_pct * self.slippage_k * (notional / avg)
+        return _size_impact_cost(notional, self.spread_pct, self.slippage_k, float(qv[i]))
 
     def _fees(self, price: float, size: float, maker: bool = False) -> float:
         return _trade_fees(price, size, self.maker_fee if maker else self.taker_fee)
@@ -975,12 +991,14 @@ class WalkForwardAnalyzer:
                 for s in self.engine.strategies:
                     mod = _imp.import_module(f"app.strategies.{s.name}")
                     fresh_strats.append(mod.Strategy())
-                eng_is  = Engine(); [eng_is.register(s, silent=True)  for s in fresh_strats]
+                eng_is  = Engine()
+                [eng_is.register(s, silent=True)  for s in fresh_strats]
                 fresh_strats_oos = []
                 for s in self.engine.strategies:
                     mod = _imp.import_module(f"app.strategies.{s.name}")
                     fresh_strats_oos.append(mod.Strategy())
-                eng_oos = Engine(); [eng_oos.register(s, silent=True) for s in fresh_strats_oos]
+                eng_oos = Engine()
+                [eng_oos.register(s, silent=True) for s in fresh_strats_oos]
 
                 bt_is  = Backtester(eng_is,  self.cfg)
                 bt_oos = Backtester(eng_oos, self.cfg)

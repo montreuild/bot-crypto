@@ -8,7 +8,7 @@ continuer de s'appliquer, par préfixe, à tous les slots ``strategy::tf::*``
 silence. La clé exacte à 3 parties garde priorité.
 """
 from app.live.capital_allocator import CapitalAllocator, _lookup_legacy
-from app.live.slot_lifecycle import SlotLifecycleManager, LifecycleState
+from app.live.slot_lifecycle import LifecycleState, SlotLifecycleManager
 
 
 def _active_per_tf():

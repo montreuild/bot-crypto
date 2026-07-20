@@ -5,7 +5,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.database import (
-    Trade, get_trade_global_aggregates, get_trades, init_db, session_scope,
+    Trade,
+    get_trade_global_aggregates,
+    get_trades,
+    init_db,
+    session_scope,
 )
 
 
@@ -65,7 +69,8 @@ def test_since_filter_excludes_older_trades(tmp_path):
 
 def test_get_trades_since_filter():
     """get_trades() supporte aussi `since` (S4-06)."""
-    import tempfile, os
+    import os
+    import tempfile
     with tempfile.TemporaryDirectory() as d:
         _, SessionLocal = init_db(f"sqlite:///{os.path.join(d, 'db.sqlite')}")
         with session_scope(SessionLocal) as sess:

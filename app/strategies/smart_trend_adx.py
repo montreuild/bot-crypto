@@ -19,14 +19,16 @@ Portage fidèle du PineScript `BTC Smart Trend V6 - ADX Filter` :
     d'ambiguïté high/low — cohérent avec l'hypothèse conservatrice de TradingView.
 """
 import logging
-from typing import Dict, Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import polars as pl
 
-from app.engine.engine import BaseStrategy
 from app.core.indicators import pre_val
-from app.core.indicators_core import ema as _ema, rsi as _rsi, _true_range
+from app.core.indicators_core import _true_range
+from app.core.indicators_core import ema as _ema
+from app.core.indicators_core import rsi as _rsi
+from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +45,9 @@ def _wilder_atr_adx(df: pl.DataFrame, n: int) -> Tuple[np.ndarray, np.ndarray]:
     ``ta.dmi(n, n)`` du PineScript."""
     tr = _true_range(df)
     atr = _rma(tr, n)
-    h, l = df["high"], df["low"]
+    h, lo = df["high"], df["low"]
     up = h.diff(1)
-    dn = -l.diff(1)
+    dn = -lo.diff(1)
     up_pos = up.clip(lower_bound=0.0)
     dn_pos = dn.clip(lower_bound=0.0)
     plus_dm  = up_pos * (up > dn).cast(pl.Float64)     # up>dn ET up>0
@@ -186,9 +188,14 @@ class Strategy(BaseStrategy):
         if len(df) < self.min_bars_required(params):
             return self._none("historique insuffisant")
 
-        close = df["close"]; high = df["high"]; low = df["low"]; open_ = df["open"]
-        c = float(close[-1]); o = float(open_[-1])
-        h = float(high[-1]);  lo = float(low[-1])
+        close = df["close"]
+        high = df["high"]
+        low = df["low"]
+        open_ = df["open"]
+        c = float(close[-1])
+        o = float(open_[-1])
+        h = float(high[-1])
+        lo = float(low[-1])
 
         atr, adx = self._atr_adx(df, atr_len, adx_len)   # Wilder (ta.atr / ta.dmi)
         if atr <= 0:

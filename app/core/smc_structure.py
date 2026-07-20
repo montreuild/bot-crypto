@@ -8,12 +8,20 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import polars as pl
 
-from app.core.smc_primitives import (
-    _MAX_KEEP, _empty_result, _flag_ob_structure, _last_opposite_candle,
-    _params, _try_cluster_pool, _wilder_atr,
-)
 from app.core.smc_geometry import (
-    _cycle_projection, _premium_discount_at, _trendlines, _zigzag,
+    _cycle_projection,
+    _premium_discount_at,
+    _trendlines,
+    _zigzag,
+)
+from app.core.smc_primitives import (
+    _MAX_KEEP,
+    _empty_result,
+    _flag_ob_structure,
+    _last_opposite_candle,
+    _params,
+    _try_cluster_pool,
+    _wilder_atr,
 )
 from app.core.smc_volume import _regression_channel
 
@@ -33,7 +41,7 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
 
     o = df["open"].to_numpy().astype(float)
     h = df["high"].to_numpy().astype(float)
-    l = df["low"].to_numpy().astype(float)
+    lo = df["low"].to_numpy().astype(float)
     c = df["close"].to_numpy().astype(float)
     atr = _wilder_atr(df, int(p["atr_len"]))
     # ATR de secours pour les premières barres (ewm ≈ 0 au tout début)
@@ -47,10 +55,10 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
     piv_low:  List[int] = []
     for i in range(L, n - R):
         win_h = h[i - L:i + R + 1]
-        win_l = l[i - L:i + R + 1]
+        win_l = lo[i - L:i + R + 1]
         if h[i] >= win_h.max() and (win_h == h[i]).sum() == 1:
             piv_high.append(i)
-        if l[i] <= win_l.min() and (win_l == l[i]).sum() == 1:
+        if lo[i] <= win_l.min() and (win_l == lo[i]).sum() == 1:
             piv_low.append(i)
     conf_high = {i + R: i for i in piv_high}   # barre de confirmation → pivot
     conf_low  = {i + R: i for i in piv_low}
@@ -89,8 +97,10 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
     run_void: Optional[dict] = None   # void en cours d'extension (ou None)
 
     for i in range(n):
-        h_i = float(h[i]); l_i = float(l[i])
-        c_i = float(c[i]); o_i = float(o[i])
+        h_i = float(h[i])
+        l_i = float(lo[i])
+        c_i = float(c[i])
+        o_i = float(o[i])
 
         # ── Confirmation des pivots dont le délai expire à la barre i ────────
         pi = conf_high.get(i)
@@ -121,21 +131,21 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
         if pi is not None:
             label = None
             if prev_low_price is not None:
-                label = "HL" if l[pi] > prev_low_price else "LL"
-            sw = {"index": pi, "kind": "low", "price": float(l[pi]),
+                label = "HL" if lo[pi] > prev_low_price else "LL"
+            sw = {"index": pi, "kind": "low", "price": float(lo[pi]),
                   "label": label, "confirmed_at": i, "swept_at": None}
             swings.append(sw)
             swing_lows.append(sw)
-            prev_low_price = float(l[pi])
+            prev_low_price = float(lo[pi])
             last_sl = sw
             _try_cluster_pool(pools, active_pools, swing_lows, sw,
                               atr[pi] * float(p["eq_tol_atr"]),
                               kind="sell_side", formed_at=i)
             # Rejection block : mèche basse marquée au creux → zone de demande
             body_bot = min(o[pi], c[pi])
-            if body_bot - l[pi] >= rb_wick * atr[pi]:
+            if body_bot - lo[pi] >= rb_wick * atr[pi]:
                 rb = {"kind": "bullish", "index": pi,
-                      "top": float(body_bot), "bottom": float(l[pi]),
+                      "top": float(body_bot), "bottom": float(lo[pi]),
                       "created_at": i, "touched_at": None,
                       "invalidated_at": None}
                 rejections.append(rb)
@@ -283,14 +293,14 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                                          for x in obs[-12:]):
                 new_ob = {
                     "kind": "bullish", "index": j,
-                    "top": float(max(o[j], c[j])), "bottom": float(l[j]),
+                    "top": float(max(o[j], c[j])), "bottom": float(lo[j]),
                     "created_at": i, "touched_at": None, "invalidated_at": None,
                     "broke_structure": False, "strength": 1,
                     "subtype": "mitigation",   # SMC-13 : requalifié "ob" si
                 }                              # l'impulsion casse la structure
                 obs.append(new_ob)
                 active_obs.append(new_ob)
-        elif i >= 1 and -body >= float(p["disp_body_atr"]) * atr[i] and c_i < l[i - 1]:
+        elif i >= 1 and -body >= float(p["disp_body_atr"]) * atr[i] and c_i < lo[i - 1]:
             j = _last_opposite_candle(o, c, i, int(p["ob_lookback"]), bullish=False)
             if j is not None and not any(x["index"] == j and x["kind"] == "bearish"
                                          for x in obs[-12:]):
@@ -329,10 +339,10 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                            "mitigated_at": None, "filled_at": None}
                 fvgs.append(new_fvg)
                 active_fvgs.append(new_fvg)
-            gap_dn = l[i - 2] - h_i
+            gap_dn = lo[i - 2] - h_i
             if gap_dn >= float(p["fvg_min_atr"]) * atr[i]:
                 new_fvg = {"kind": "bearish", "index": i - 1,
-                           "top": float(l[i - 2]), "bottom": float(h_i),
+                           "top": float(lo[i - 2]), "bottom": float(h_i),
                            "mitigated_at": None, "filled_at": None}
                 fvgs.append(new_fvg)
                 active_fvgs.append(new_fvg)
@@ -382,7 +392,7 @@ def analyze(df: pl.DataFrame, params: Optional[dict] = None) -> Dict[str, Any]:
                     run_void["bottom"] = min(run_void["bottom"], span_lo)
 
     # ── 3. Premium / Discount + OTE (état à la dernière barre) ────────────────
-    pd_zone = _premium_discount_at(swings, trend_arr, h, l, c, n - 1)
+    pd_zone = _premium_discount_at(swings, trend_arr, h, lo, c, n - 1)
 
     # ── 4. Trendlines + canal de régression ──────────────────────────────────
     tls = _trendlines(swing_highs, swing_lows, n)

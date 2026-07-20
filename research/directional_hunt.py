@@ -20,6 +20,7 @@ rendement forward sur k barres) :
 Usage : python research/directional_hunt.py
 """
 from __future__ import annotations
+
 import os
 import sys
 import warnings
@@ -29,7 +30,7 @@ import pandas as pd
 
 warnings.filterwarnings("ignore")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from analysis_btc import load, enrich, ema  # noqa: E402
+from analysis_btc import enrich, load  # noqa: E402
 
 TFS = ("1h", "4h", "1d")
 HZ = {"1h": (6, 24), "4h": (3, 6), "1d": (1, 3)}
@@ -121,7 +122,8 @@ def logistic_direction(d, tf):
     volr = (d["volume"] / d["volume"].rolling(20).mean()).fillna(1.0)
     up_tr = ((d["close"] > d["ema50"]) & (d["ema50"] > d["ema200"])).astype(float)
     dn_tr = ((d["close"] < d["ema50"]) & (d["ema50"] < d["ema200"])).astype(float)
-    roll_lo = d["low"].rolling(50).min(); roll_hi = d["high"].rolling(50).max()
+    roll_lo = d["low"].rolling(50).min()
+    roll_hi = d["high"].rolling(50).max()
     range_pos = ((d["close"] - roll_lo) / (roll_hi - roll_lo).replace(0, np.nan)).fillna(0.5)
     h = pd.to_datetime(d["time"]).dt.hour
     feats = pd.DataFrame({
@@ -149,7 +151,9 @@ def logistic_direction(d, tf):
     split = int(n * 0.7)
     Xtr, ytr, Xte, yte = X[:split], yb[:split], X[split:], yb[split:]
     # logistic GD
-    w = np.zeros(X.shape[1]); b = 0.0; lr = 0.1
+    w = np.zeros(X.shape[1])
+    b = 0.0
+    lr = 0.1
     for _ in range(2000):
         z = Xtr @ w + b
         p = 1 / (1 + np.exp(-z))
@@ -158,11 +162,13 @@ def logistic_direction(d, tf):
         b -= lr * g.mean()
     # AUC OOS (via rang de Mann-Whitney)
     pte = 1 / (1 + np.exp(-(Xte @ w + b)))
-    pos = pte[yte == 1]; neg = pte[yte == 0]
+    pos = pte[yte == 1]
+    neg = pte[yte == 0]
     if len(pos) == 0 or len(neg) == 0:
         return None
     order = np.argsort(np.concatenate([pos, neg]))
-    ranks = np.empty_like(order, dtype=float); ranks[order] = np.arange(1, len(order) + 1)
+    ranks = np.empty_like(order, dtype=float)
+    ranks[order] = np.arange(1, len(order) + 1)
     auc = (ranks[:len(pos)].sum() - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg))
     # importance (poids absolus standardisés)
     imp = sorted(zip(feats.columns, w), key=lambda x: -abs(x[1]))[:5]
@@ -182,7 +188,7 @@ def main():
             print(f"\n  ▶ Modèle logistique combiné [{tf}] — AUC directionnel OOS = "
                   f"{lg['auc_oos']:.4f}  (0.50=hasard) · base P(up)={lg['base']:.1f}% · "
                   f"n_test={lg['n_test']}")
-            print(f"    top features : " +
+            print("    top features : " +
                   ", ".join(f"{k}({w:+.2f})" for k, w in lg["top"]))
         all_rows[tf] = rows
     # Synthèse : meilleurs edges (|z|>=3, robustes)

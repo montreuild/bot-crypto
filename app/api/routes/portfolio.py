@@ -6,7 +6,7 @@ fil d'activité (notifications 3 niveaux) et presets de risque.
 """
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api import state
 from app.api.helpers import verify_api_key
@@ -171,7 +171,8 @@ def get_bots():
 # ── Bypass manuel : forcer un bot en ACTIF (droit de veto utilisateur) ───────
 @router.post("/api/bots/{slot_key:path}/force-active",
              dependencies=[Depends(verify_api_key)])
-def force_active(slot_key: str, enabled: bool = True):
+@state.limiter.limit("30/minute")
+def force_active(request: Request, slot_key: str, enabled: bool = True):
     """Force (``enabled=true``) ou libère (``false``) l'activation manuelle d'un
     bot. Persisté dans ``config.yaml`` (lifecycle.manual_active) et appliqué au
     cycle de vie en cours s'il tourne."""
@@ -201,7 +202,8 @@ def force_active(slot_key: str, enabled: bool = True):
 # ── Forcer un forward-test (recalcul de l'edge) pour un bot ──────────────────
 @router.post("/api/bots/{slot_key:path}/forward-test",
              dependencies=[Depends(verify_api_key)])
-def run_bot_forward_test(slot_key: str):
+@state.limiter.limit("10/minute")
+def run_bot_forward_test(request: Request, slot_key: str):
     """Relance immédiatement le forward-test glissant d'un seul bot : re-backteste
     ses params figés (edge sur fenêtre longue + fidélité sur fenêtre courte),
     réécrit ``data/oos_tracker.json`` et, si le trader tourne, ré-évalue le cycle
@@ -317,7 +319,8 @@ def get_presets():
 
 
 @router.post("/api/settings/risk-preset", dependencies=[Depends(verify_api_key)])
-def set_risk_preset(preset: str):
+@state.limiter.limit("30/minute")
+def set_risk_preset(request: Request, preset: str):
     if preset not in _RISK_PRESETS:
         raise HTTPException(400, f"Preset inconnu : {preset}")
     p = _RISK_PRESETS[preset]
@@ -340,7 +343,8 @@ def set_risk_preset(preset: str):
 
 
 @router.post("/api/settings/expert-mode", dependencies=[Depends(verify_api_key)])
-def set_expert_mode(enabled: bool = False):
+@state.limiter.limit("30/minute")
+def set_expert_mode(request: Request, enabled: bool = False):
     from app.api.routes.config import _save_yaml
     _save_yaml(lambda disk: disk.setdefault("ui", {}).update({"expert_mode": enabled}))
     if state.cfg:

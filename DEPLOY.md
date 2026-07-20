@@ -481,20 +481,25 @@ curl http://localhost:8000/api/optimize/status
 
 ## 9. Sauvegarde de la base de données
 
-### 9.1 Sauvegarde locale (quotidienne)
+### 9.1 Sauvegarde locale (quotidienne) — SEC-05
+
+`deploy/backup.sh` sauvegarde en une seule exécution `trades.db` (via
+`sqlite3.backup()`, cohérent même sous écriture WAL — un `cp` brut peut
+manquer les pages encore dans `trades.db-wal`), `config.yaml` et
+`strategies/*.yaml`, avec rétention automatique (7 jours par défaut).
+Remplace les anciens one-liners cron ad hoc de cette section.
 
 ```bash
-# Créer le répertoire de sauvegardes
-mkdir -p /opt/crypto_bot/backups
+chmod +x /opt/crypto_bot/deploy/backup.sh
 
-# Cron : sauvegarde SQLite chaque nuit à 03h00
-(crontab -l 2>/dev/null; echo "0 3 * * * cp /opt/crypto_bot/trades.db \
-  /opt/crypto_bot/backups/trades_\$(date +\%Y\%m\%d).db && \
-  ls -t /opt/crypto_bot/backups/trades_*.db | tail -n +8 | xargs rm -f") \
-  | crontab -
+# Backup manuel
+/opt/crypto_bot/deploy/backup.sh
+
+# Cron : chaque nuit à 03h00, rétention 7 jours (variables adaptables :
+# APP_DIR, BACKUP_DIR, RETENTION_DAYS)
+(crontab -l 2>/dev/null; echo "0 3 * * * /opt/crypto_bot/deploy/backup.sh \
+  >> /opt/crypto_bot/logs/backup.log 2>&1") | crontab -
 ```
-
-Garde les 7 dernières sauvegardes quotidiennes.
 
 ### 9.2 Sauvegarde vers OCI Object Storage (20 GB gratuits)
 
@@ -506,19 +511,13 @@ oci setup config   # suivre l'assistant
 # Créer un bucket dans la console Oracle : Storage → Object Storage → Create Bucket
 # Nom : "crypto-bot-backups"
 
-# Cron : backup vers OCI chaque nuit à 03h30
+# Cron : push vers OCI chaque nuit à 03h30 (après le backup local ci-dessus)
+# des sauvegardes datées les plus récentes
 (crontab -l 2>/dev/null; echo "30 3 * * * oci os object put \
   --bucket-name crypto-bot-backups \
-  --file /opt/crypto_bot/trades.db \
+  --file \$(ls -t /opt/crypto_bot/backups/trades_*.db | head -1) \
   --name trades_\$(date +\%Y\%m\%d).db \
   --force > /dev/null 2>&1") | crontab -
-```
-
-### 9.3 Sauvegarder config.yaml
-
-```bash
-(crontab -l 2>/dev/null; echo "0 3 * * * cp /opt/crypto_bot/config.yaml \
-  /opt/crypto_bot/backups/config_\$(date +\%Y\%m\%d).yaml") | crontab -
 ```
 
 ---

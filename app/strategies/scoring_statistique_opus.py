@@ -17,11 +17,12 @@ Règle de décision (rapport §6.5) :
 
 import logging
 import math
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 import polars as pl
-from app.engine.engine import BaseStrategy
+
 from app.core.indicators import pre_val
+from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +210,6 @@ class Strategy(BaseStrategy):
         atr_now  = pre_val(df, "_pre_atr14")     or 0.0
         rsi_now  = pre_val(df, "_pre_rsi14")     or 50.0
         adx_now  = pre_val(df, "_pre_adx14")     or 0.0
-        macd_h   = pre_val(df, "_pre_macd_hist") or 0.0
         vr       = pre_val(df, "_pre_volratio20") or 1.0
 
         if atr_now <= 0:

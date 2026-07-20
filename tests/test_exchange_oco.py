@@ -7,6 +7,7 @@ Vérifie la construction des paramètres dans _place_exchange_stop :
 - dégradation gracieuse si la pose échoue.
 """
 import types
+
 import pytest
 
 from app.live.position_mixin import PositionMixin

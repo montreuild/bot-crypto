@@ -23,12 +23,12 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import polars as pl
 
+from app.core.indicators import pre_val, precompute_df
 from app.engine.engine import BaseStrategy
-from app.core.indicators import precompute_df, pre_val
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_TFS = ("15m", "30m", "1h")
+_SUPPORTED_TFS = ("15m", "30m", "1h", "4h", "1d")
 _FLIP_LOG_PATH = os.path.join("logs", "opus_omnibus_v11_followsetup_no_ml_flips.jsonl")
 
 REGIME_RANGE, REGIME_TREND_UP, REGIME_TREND_DN, REGIME_CHOPPY = 0, 1, 2, 3
@@ -62,9 +62,16 @@ def _detect_timeframe(df: pl.DataFrame) -> Optional[str]:
         return None
     if med_s <= 0:
         return None
-    if abs(med_s - 900) < 60:   return "15m"
-    if abs(med_s - 1800) < 120: return "30m"
-    if abs(med_s - 3600) < 240: return "1h"
+    if abs(med_s - 900) < 60:
+        return "15m"
+    if abs(med_s - 1800) < 120:
+        return "30m"
+    if abs(med_s - 3600) < 240:
+        return "1h"
+    if abs(med_s - 14400) < 960:
+        return "4h"
+    if abs(med_s - 86400) < 5760:
+        return "1d"
     return None
 
 
@@ -429,15 +436,18 @@ class Strategy(BaseStrategy):
         if hyst > 0.0:
             d_max, d_min = current.get("dir_max"), current.get("dir_min")
             if d_max is not None and p_up >= (float(d_max) - hyst):
-                position["_fs_opp_count"] = 0; position["_fs_opp_setup"] = None
+                position["_fs_opp_count"] = 0
+                position["_fs_opp_setup"] = None
                 return None
             if d_min is not None and p_up <= (float(d_min) + hyst):
-                position["_fs_opp_count"] = 0; position["_fs_opp_setup"] = None
+                position["_fs_opp_count"] = 0
+                position["_fs_opp_setup"] = None
                 return None
 
         new_score = self._score_of(current, p_event, p_up)
         if new_score < flip_min_score:
-            position["_fs_opp_count"] = 0; position["_fs_opp_setup"] = None
+            position["_fs_opp_count"] = 0
+            position["_fs_opp_setup"] = None
             return None
 
         if position.get("_fs_opp_setup") == current["name"]:

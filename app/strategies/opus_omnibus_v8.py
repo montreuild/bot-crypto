@@ -34,22 +34,26 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
+from app.core.indicators import pre_val
+from app.core.indicators import safe_num as _safe_num
 from app.engine.engine import BaseStrategyML
-from app.core.indicators import pre_val, safe_num as _safe_num
 from app.strategies.opus_stat_pretrained_v4 import (
-    _FeatureBuilder,
+    REGIME_CHOPPY,
+    REGIME_LABELS,
+    REGIME_RANGE,
+    REGIME_TREND_DN,
+    REGIME_TREND_UP,
     _detect_timeframe,
+    _FeatureBuilder,
     _last_bar_hour_dow,
-    _to_pandas_window,
     _load_pretrained,
     _prepare_row,
-    REGIME_RANGE, REGIME_TREND_UP, REGIME_TREND_DN, REGIME_CHOPPY,
-    REGIME_LABELS,
+    _to_pandas_window,
 )
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_TFS = ("15m", "30m", "1h")
+_SUPPORTED_TFS = ("15m", "30m", "1h", "4h", "1d")
 _EXIT_TD_WINDOW_BARS = 3   # fenêtre LONG_EXIT_TD (bougies)
 
 
@@ -224,22 +228,33 @@ def _check_early_exit_v7(setup_name: str, regime: int, p_up: float,
                             p_dir < dir_drop_range  → 'p_dir_drop'
     """
     if setup_name == "SIGNAL_UP":
-        if p_up < dir_inv_long:          return "p_dir_drop"
-        if regime == REGIME_TREND_DN:    return "to_TD"
+        if p_up < dir_inv_long:
+            return "p_dir_drop"
+        if regime == REGIME_TREND_DN:
+            return "to_TD"
     elif setup_name in ("SHORT_TD_HIGH", "SHORT_TD"):
-        if regime != REGIME_TREND_DN:    return "regime_exit_TD"
-        if p_up > dir_inv_short:         return "p_dir_inversion"
+        if regime != REGIME_TREND_DN:
+            return "regime_exit_TD"
+        if p_up > dir_inv_short:
+            return "p_dir_inversion"
     elif setup_name == "LONG_CHOPPY":
-        if p_up < dir_inv_long:          return "p_dir_drop"
-        if regime == REGIME_TREND_DN:    return "to_TD"
+        if p_up < dir_inv_long:
+            return "p_dir_drop"
+        if regime == REGIME_TREND_DN:
+            return "to_TD"
     elif setup_name == "SHORT_CHOPPY":
-        if regime != REGIME_CHOPPY:      return "regime_exit_choppy"
-        if p_up > 0.58:                  return "p_dir_inversion"
+        if regime != REGIME_CHOPPY:
+            return "regime_exit_choppy"
+        if p_up > 0.58:
+            return "p_dir_inversion"
     elif setup_name == "LONG_EXIT_TD":
-        if regime == REGIME_TREND_DN:    return "back_to_TD"
+        if regime == REGIME_TREND_DN:
+            return "back_to_TD"
     elif setup_name == "LONG_RANGE_STRICT":
-        if regime == REGIME_TREND_DN:    return "regime_to_TD"
-        if p_up < dir_drop_range:        return "p_dir_drop"
+        if regime == REGIME_TREND_DN:
+            return "regime_to_TD"
+        if p_up < dir_drop_range:
+            return "p_dir_drop"
     return None
 
 

@@ -1,14 +1,14 @@
 """
 Tests unitaires — CapitalAllocator (gestion des slots).
 """
-import pytest
-import sys
 import os
-import time
+import sys
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.live.capital_allocator import CapitalAllocator, SlotBudget
+from app.live.capital_allocator import CapitalAllocator
 
 
 def _active_per_tf(strategies=None, tfs=None):

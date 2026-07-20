@@ -72,6 +72,244 @@ Historique des versions du Crypto Bot.
   sans validation » du plan d'amélioration était faux — `can_allocate`
   couvre déjà le cumul).
 
+### 🧹 Sprint 7 — Nettoyage code mort + CI/lint (Vague 3 de l'audit)
+
+Périmètre §4.1 du plan directeur, hors **DEAD-01** (8 générations Opus/stat
+jamais promues) et **TEST-11** (tests smoke stratégies, bloqué par DEAD-01) —
+exclus explicitement de ce sprint.
+
+- **[DEAD-02]** Suppression de `scoring_statistique_opus_v3.py` (579 lignes)
+  et de `strategies/scoring_statistique_opus_v3.yaml` — zéro appelant
+  (grep exhaustif Python + YAML).
+- **[DEAD-03]** `XRP/USDC` ajouté à `scanner.symbols` (`config.yaml`) —
+  données OHLCV présentes sur disque mais symbole absent du scan ;
+  pas de données `derivatives` pour XRP (gap connu, sans impact bloquant).
+- **[DEAD-05]** `opus_omnibus_v11.py` (stratégie **active**,
+  `manual_active: opus_omnibus_v11::30m`) : les deux `del ds_tr, ds_va`
+  dupliqués (bloc 1050-1094) remplacés par un `try/finally` englobant —
+  suppression garantie une seule fois par itération, plus de dépendance à
+  deux points de sortie distincts.
+- **[DEAD-06]** Suppression des 5 fonctions publiques jamais appelées :
+  `config.strategy_file_path`, `execution.cap_notional`,
+  `database.get_lifecycle_events`, `feature_store.get_provider`/
+  `list_providers` — zéro référence externe re-vérifiée avant suppression.
+- **[DEAD-07]** Nettoyage `ruff --select F` (façade `indicators.py`
+  exclue via `ruff.toml`) : 73 imports inutilisés + 15 f-strings sans
+  placeholder auto-fixés ; 17 variables locales mortes retirées à la main
+  (lecture des lignes concernées confirmée sans effet de bord avant
+  suppression).
+- **[DEAD-09]** `scripts/__pycache__` déjà propre (aucun `.pyc` résiduel) —
+  vérifié, rien à faire.
+- **[TEST-01]** `.github/workflows/ci.yml` : job `lint` (`ruff check .`) +
+  job `test` (`pytest tests/ -q -m "not slow"`), Python 3.12.
+- **[TEST-04/05]** `ruff.toml` (remplace flake8/pyflakes — `line-length=120`
+  aligné sur la convention `CONTRIBUTING.md`, règles `F/W/E/I`) et
+  `mypy.ini` (non strict, `ignore_missing_imports`) ; `flake8` retiré de
+  `requirements.txt` au profit de `ruff==0.15.8`.
+- **[TEST-06]** `pytest.ini` : markers `slow`/`strategy_smoke` déclarés
+  (aucun test actuel ne dépend de `data/ohlcv`/`data/derivatives` versionnés
+  — vérifié, toute la suite tourne sur données synthétiques/`tmp_path` ;
+  rien à isoler pour l'instant).
+- 649/649 tests verts après chaque étape.
+
+### 💰 Sprint 8 — Quick wins financiers & sécurité
+
+Périmètre §4.2 du plan directeur, hors **FIN-01** (frais dynamiques par
+palier VIP OKX) — exclu explicitement de ce sprint.
+
+- **[FIN-04]** Benchmark Buy & Hold : correctif du warmup figé à 210 barres
+  dans `_add_buy_and_hold` (désynchronisé du warmup dynamique réel de la
+  boucle de trading dès qu'une stratégie déclare `warmup_bars`/`min_bars` >
+  210) — le prix de départ du B&H (et donc l'alpha) est maintenant calculé
+  sur la MÊME fenêtre que le backtest.
+- **[FIN-06]** Compteur de frais par catégorie (taker/maker/borrow/stop) :
+  colonnes `Trade.fee_taker`/`fee_maker`/`exit_reason` (auto-migrées),
+  `get_fee_breakdown()` + `GET /api/stats/fees`. `exit_reason` distingue
+  enfin le motif de CLÔTURE du motif d'OUVERTURE (`Trade.reason`, conflatés
+  auparavant) sur les 9 chemins de fermeture du live
+  (stop_loss/trailing_stop/take_profit/gap/early_exit/manual). `fee_taker`/
+  `fee_maker` reflètent honnêtement l'absence actuelle de distinction
+  maker/taker à l'exécution live (100 % taker) plutôt que de la simuler.
+- **[FIN-07]** Slippage paper proportionnel à la taille : nouveau
+  `trading.paper_slippage_model: size` (défaut `static`, comportement
+  inchangé) réutilise la formule d'impact de `backtest.slippage_model: size`
+  (BT-10), extraite en fonction partagée `app.core.execution.
+  size_impact_cost`. Volume moyen 20 barres lu depuis le cache déjà rempli
+  par `OHLCVCache.get()` (nouveau `get_avg_quote_volume`, aucun fetch réseau
+  dédié) ; repli silencieux sur le slippage statique si absent.
+- **[STRAT-06/BT-13]** Compteur diagnostique `diagnostics.tp_sl_ambiguous_bars`
+  (backtest) : mesure les barres où stop ET take-profit auraient tous deux
+  été touchés (ambiguïté intrabar high/low) — n'affecte pas la résolution
+  (le stop continue de toujours l'emporter).
+- **[SEC-04]** Rate-limiting par endpoint : `Limiter` déplacé de
+  `app/api/main.py` vers `app/api/state.py` (évite l'import circulaire avec
+  les modules de routes) ; ~25 endpoints sensibles/coûteux (contrôle bot,
+  backtest/optimizer/replay, écritures config, refetch data, slots,
+  paramètres de risque) décorés `@state.limiter.limit(...)` avec des limites
+  plus strictes que le `default_limits` global (300/minute).
+- **[SEC-05]** `deploy/backup.sh` : sauvegarde datée de `trades.db` (via
+  `sqlite3.backup()` Python, cohérent sous WAL) + `config.yaml` +
+  `strategies/*.yaml`, rétention automatique — remplace les one-liners cron
+  ad hoc de `DEPLOY.md` §9.
+- **[ARCH-07]** Derniers littéraux `"BTC/USDC"` de code (hors docstrings/UI)
+  migrés vers `DEFAULT_CONFIG_SYMBOL` (`app/live/ohlcv_cache.py`,
+  `app/core/config.py`).
+- **[BT-05/STRAT-03]** `scripts/audit_param_space.py` : liste chaque
+  stratégie avec la cardinalité de son `param_space` vs `optimizer.n_trials`,
+  avertit si la couverture < 1e-4 (`--strict` pour un code de retour non-nul
+  en CI).
+- **[PERF-01]** Cache LRU de `indicators_precompute.py` : taille
+  configurable via `config.yaml:perf.precompute_cache_size` (défaut 16 → 128).
+- 689/689 tests verts après chaque étape.
+
+### 🔬 Post-Sprint 8 — Comparatif DEAD-01 : 4h/1j + optimiseur v12
+
+Suites du comparatif fonctionnel de la famille opus_omnibus/opus_stat (préparation
+de la décision DEAD-01).
+
+- **Garde-fou timeframe levé** : `_SUPPORTED_TFS`/`_detect_timeframe` (14 fichiers,
+  `opus_omnibus_v12` par héritage de v11) n'autorisaient que 15m/30m/1h en dur —
+  toute exécution sur 4h/1j sortait silencieusement sans signal. Détection 4h/1j
+  ajoutée (mêmes tolérances relatives) et `_SUPPORTED_TFS` étendu en conséquence.
+- **Cache d'entraînement pour `ml_dynamic_threshold`** (sous-modèle RandomForest
+  de `opus_omnibus_v12`, filtre de confirmation/veto post-hoc sur V11) : branché
+  sur le cache process-wide existant (`app.core.train_cache`, déjà utilisé par
+  v7/v10_retrained/v11/v11_followsetup/opus_stat_retrained_v4) — aucun des
+  hyperparamètres d'entraînement (`lookahead`, `vol_multiplier`, `n_trials`,
+  `model_type`) n'étant dans le `param_space` optimisé de v12, chaque retrain
+  (+ random search interne 8 essais + fit OOS de validation, jusqu'à ~10 fits
+  par appel, tous les 200 appels de `score()`) était strictement redondant
+  d'un trial de l'optimiseur à l'autre — jusqu'à ~40-60 % du coût par trial
+  d'après la docstring de v12. Ajout de l'alignement de fenêtre glissante
+  (`aligned_train_window`, même correctif que v11) pour que la dérive du
+  déclenchement de retrain entre trials (dépendante des trades ouverts par
+  les seuils testés) n'empêche pas les hits de cache. Vérifié : résultats de
+  backtest strictement identiques cache ON/OFF ; `StrategyOptimizer.
+  random_search(n_trials=10)` sur 1h/8000 barres passe de « n'aboutit jamais
+  en 300 s » à 67 s (29 hits / 4 misses).
+- 693/693 tests verts (+4 nouveaux, `tests/test_ml_dynamic_threshold_cache.py`).
+- **`random_search` : `n_jobs` réellement câblé.** Le paramètre était accepté
+  mais la boucle restait toujours séquentielle — contrairement à
+  `bayesian_search`, qui dispose déjà d'un `ProcessPoolExecutor` robuste
+  (`_run_parallel` : contexte `spawn`, cap mémoire anti-OOM via
+  `_safe_worker_count`, repli séquentiel si le pool casse) utilisé par
+  `_bayesian_search_legacy`/`_optuna_parallel` mais jamais par
+  `random_search`. `n_jobs>1` délègue maintenant à cette même infra
+  existante ; `n_jobs<=1` reste la boucle inline inchangée (même
+  `early_stop_patience`, non supporté en mode parallèle — tous les trials
+  sont soumis d'un coup, comme la phase d'exploration bayésienne). Mesuré :
+  12 trials sur `opus_omnibus_v8_no_ml`/1h/8000 barres, 10.6 s (n_jobs=1) →
+  3.5 s (n_jobs=3), soit ×3.0 sur 3 workers.
+- **`rolling_slope`/`rolling_hurst` (`app/core/indicators_market.py`)
+  vectorisés.** Les deux étaient des boucles Python par fenêtre glissante
+  (O(n·window)). `rolling_slope` : la pente `cov(x,y)/var(x)` avec
+  `x=arange(window)` fixe et centré se réduit à une corrélation par noyau
+  fixe (`np.correlate`), exacte bit-à-bit. `rolling_hurst` : pas linéaire
+  (méthode R/S), vectorisé par lot sur toutes les fenêtres
+  (`sliding_window_view` + régression log-log en forme fermée avec
+  réductions `nan*` pour un nombre de lags valides variable par fenêtre),
+  avec repli sur l'implémentation scalaire d'origine pour toute fenêtre
+  contenant un NaN (troncature `arr[~isnan]` non vectorisable sans casser
+  l'alignement — cas rare en pratique, essentiellement le warmup en tête de
+  série). Vérifié bit-exact (écart < 1e-6) contre les implémentations
+  d'origine sur données BTC/USDC réelles + cas limites synthétiques (NaN
+  dispersés, segment constant). Mesuré sur BTC/USDC 1h/3000 barres :
+  `rolling_slope` ×233, `rolling_hurst` ×57.
+- 712/712 tests verts (+19 nouveaux : `tests/test_optimizer_n_jobs.py`,
+  `tests/test_indicators_market_rolling.py`).
+- **Refonte de `param_search_optim`** (option activée par défaut sur
+  `random_search`/`bayesian_search`/`grid_search` — PAS un 4e mode de
+  recherche — qui gèle les paramètres à faible impact avant la recherche
+  demandée). L'implémentation initiale dépistait sur une fenêtre de données
+  RÉDUITE, en plus du budget `n_trials` demandé, sur un `ProcessPoolExecutor`
+  séparé de celui de la recherche principale : payait un 2e spawn/ré-import
+  complet de l'appli (coût quasi fixe, dominant pour les stratégies
+  multi-modèles ML type `opus_omnibus_v12` : 195-201 s mesurés contre
+  68-75 s sans réduction) et pouvait dépenser plus d'essais en dépistage
+  qu'il n'y avait de budget (mesuré : 749 s contre 287 s sur
+  `opus_omnibus_v9`, 21 paramètres). Nouveau design : le dépistage est EN
+  BUDGET (les premiers essais de la recherche elle-même, sur la fenêtre
+  complète, jamais un essai en plus) et partage un seul pool de process
+  entre dépistage et recherche (`_open_pool`/`_submit_wave`, remplace 3
+  blocs de création de pool quasi identiques). Le chemin Optuna/TPE gèle via
+  `optuna.samplers.PartialFixedSampler` sur l'importance fANOVA (repli sur
+  l'estimateur marginal existant si indisponible) sans muter
+  `param_space` — pas de backup/restore nécessaire pour ce chemin. Le mode
+  grid dépiste désormais sur la fenêtre complète (partage le pool avec son
+  énumération, elle-même parallélisée par `n_jobs` pour la première fois) et
+  gèle par cardinalité cible plutôt qu'une fraction fixe de 30 %. Mesuré sur
+  `opus_omnibus_v12` (le cas qui motivait la refonte) : 137-140 s → ~63 s
+  (pool unique), reproduit sur 3 runs indépendants.
+  Deux régressions de fond débusquées en vérification réelle (pas par les
+  tests unitaires, qui utilisent un `_eval` simulé) et corrigées avant
+  merge : (1) un paramètre observé à une seule valeur distincte dans le
+  dépistage rendait un impact 0.0 — indiscernable d'un impact « mesuré et
+  réellement plat » — menant à geler ce paramètre sur aucune donnée plutôt
+  que sur un signal ; corrigé en rendant NaN (jamais gelable en mode
+  facultatif) ce cas précis. (2) Insuffisant en soi : avec aussi peu
+  d'essais de dépistage que de paramètres (8 essais pour les 21 de
+  `opus_omnibus_v9`), CHAQUE paramètre varie simultanément à presque chaque
+  essai — l'estimateur marginal reste noyé dans le bruit de confusion
+  inter-paramètres même une fois le cas NaN exclu (mesuré : 20/21 paramètres
+  gelés à partir de 8 essais, à l'identique avant et après le correctif
+  NaN). Nouveau garde-fou `_MIN_SCREEN_PER_PARAM` : sous ce ratio essais/
+  paramètres, le mode facultatif (random/bayesian) ne gèle plus RIEN plutôt
+  que de figer des paramètres sur un signal non fiable — le mode grid
+  (réduction obligatoire) n'est pas concerné. Score final OOS sur
+  `opus_omnibus_v9` inchangé (~0.64) que la réduction gèle 0 ou 20
+  paramètres, confirmant qu'aucune perte de qualité ne résultait du
+  garde-fou plus prudent.
+- 741/741 tests verts (+29 nouveaux/réécrits :
+  `tests/test_param_search_optim.py`, `tests/test_optimizer_n_jobs.py`).
+- **Revue approfondie de la refonte ci-dessus, 3 défauts trouvés et corrigés
+  avant tout autre travail dessus** : (1) `_run_parallel` comptait les
+  SUCCÈS de sa boucle par vagues, pas les tentatives — un trial en échec
+  (worker KO/timeout/erreur stratégie) faisait ré-échantillonner au-delà du
+  budget `n` demandé, et pour `grid_search` (sampler = énumération finie via
+  `next()`) pouvait lever `StopIteration` en pleine grille ; corrigé en
+  comptant les tentatives, `_run_parallel` les retourne pour que la phase B
+  de `random_search` décompte sur le même registre. (2) Comptabilité fragile
+  à la réutilisation d'instance : `self.results[-k:]` et `n_trials -
+  len(self.results)` supposaient une liste vide en entrée d'appel —
+  remplacés par un index de base capturé au début de chaque méthode.
+  (3) `optimize_two_phase` ne transmettait pas `param_search_optim` à
+  `_dispatch` : le toggle utilisateur était silencieusement ignoré pour les
+  jobs `ml_tune_hp` — plombé de bout en bout (signature, les deux appels,
+  le site d'appel d'`auto_optimizer`). Docs API/UI remises au design actuel
+  (décrivaient encore l'ancien dépistage hors budget sur fenêtre réduite).
+- 743/743 tests verts.
+
+### 🧹 Résolution de la dette lint pré-existante du dépôt (773 → 0 erreur)
+
+`ruff check .` n'avait jamais été vert depuis la création du job CI
+(Sprint 7) — 773 erreurs pré-existantes sur 163 fichiers, aucune liée aux
+sprints de ce document. Traité en trois passes, chacune vérifiée par la
+suite de tests complète avant la suivante :
+
+- **Mécanique et sûre** (`ruff --fix`) : tri des imports (193), imports/
+  variables/f-strings inutilisés (20).
+- **Instructions compactées en une ligne** (`autopep8 --select=E701,E702,
+  E401`, 458 occurrences) : vérifié bit-exact (tests identiques avant/après)
+  avant application au dépôt réel — la même passe en mode `--aggressive`
+  incluant `E501` a été rejetée après coup car elle cassait des f-strings en
+  pleine chaîne dans 5 fichiers (littéraux non fermés) ; ces ~37 lignes trop
+  longues ont été re-wrappées à la main.
+- **Noms de variable ambigus** (`l`, 41 occurrences → `lo`/`lvl`/`ls` selon
+  le contexte réel : prix bas OHLC, niveau S/R, perte RSI) : la première
+  tentative par regex (`\bl\b`) a corrompu du texte français dans des
+  docstrings/commentaires (élisions `l'` — ex. « l'intérieur » →
+  « lo'intérieur »), détectée avant commit et intégralement annulée ;
+  refaite par renommage au niveau des tokens Python (`tokenize`, jamais dans
+  une string/commentaire), vérifiée sans collision de portée.
+  Deux ré-exports intentionnels (`CleanJSONResponse`, `available_memory_
+  bytes`) supprimés par erreur par un fixer automatique malgré leur
+  `# noqa: F401` — détecté par échec de collection pytest, restauré.
+- `.github/workflows/ci.yml` job `lint` **vert pour la première fois**
+  (vérifié sur le commit réel via l'API GitHub, pas seulement en local).
+  743/743 tests inchangés, 0 régression fonctionnelle, aucun fichier
+  touché en dehors du périmètre lint (pas de refactor, pas de changement de
+  comportement).
+
 ### 📚 Documentation
 
 - `docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md` : fusion des 3 plans (audit

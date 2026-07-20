@@ -10,14 +10,15 @@ Appelé par systemd : ExecStopPost=/opt/crypto_bot/deploy/notify-crash.sh
 Les variables d'environnement MAINPID, EXIT_CODE, EXIT_STATUS sont injectées
 automatiquement par systemd.
 """
+import logging
 import os
 import re
-import sys
 import subprocess
-import logging
-import yaml
-import requests
+import sys
 import time
+
+import requests
+import yaml
 
 CONFIG_PATH  = "/opt/crypto_bot/config.yaml"
 LOG_PATH     = "/opt/crypto_bot/logs/bot.log"

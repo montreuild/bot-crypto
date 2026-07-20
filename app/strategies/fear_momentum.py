@@ -1,20 +1,32 @@
 """Stratégie Fear & Momentum — rebond sur dips en tendance haussière, short sur exhaustion."""
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
 import polars as pl
-from app.engine.engine import BaseStrategy
+
 from app.core.indicators import (
-    rsi as calc_rsi,
-    atr_val as calc_atr,
-    atr_series as calc_atr_series,
-    macd_hist_last3,
-    ema_window,
-    vol_ratio as calc_vol,
     adx_val as calc_adx,
-    market_structure,
+)
+from app.core.indicators import (
+    atr_series as calc_atr_series,
+)
+from app.core.indicators import (
+    atr_val as calc_atr,
+)
+from app.core.indicators import (
+    ema_window,
     htf_trend,
+    macd_hist_last3,
+    market_structure,
     pre_val,
 )
+from app.core.indicators import (
+    rsi as calc_rsi,
+)
+from app.core.indicators import (
+    vol_ratio as calc_vol,
+)
+from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -87,13 +99,14 @@ class Strategy(BaseStrategy):
 
         # ── Calculs de base ──────────────────────────────────────────────────
         _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
-        lf   = pre_val(df, _ema_map.get(ema_fast, ""))  or float(ema_window(df, ema_fast,  full_df=self._bt_full_df, cache=self._ema_cache)[-1])
-        lm   = pre_val(df, _ema_map.get(ema_mid, ""))   or float(ema_window(df, ema_mid,   full_df=self._bt_full_df, cache=self._ema_cache)[-1])
-        lt   = pre_val(df, _ema_map.get(ema_trend, "")) or float(ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lf   = pre_val(df, _ema_map.get(ema_fast, ""))  or float(
+            ema_window(df, ema_fast,  full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lm   = pre_val(df, _ema_map.get(ema_mid, ""))   or float(
+            ema_window(df, ema_mid,   full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lt   = pre_val(df, _ema_map.get(ema_trend, "")) or float(
+            ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
 
         c0   = float(close[-1])
-        c1   = float(close[-2])
-        c2   = float(close[-3])
         h0   = float(high[-1])
         l0   = float(low[-1])
         o0   = float(open_[-1])
@@ -238,11 +251,16 @@ class Strategy(BaseStrategy):
                 # (les stratégies concurrentes n'en demandent qu'un seul)
                 if n_sig < 3:
                     reasons = []
-                    if not sig1: reasons.append(f"RSI pas en zone peur ({rsi0:.0f})")
-                    if not sig2: reasons.append("Pas de capitulation")
-                    if not sig3: reasons.append("Pas de marteau/doji")
-                    if not sig4: reasons.append("Pas de divergence RSI")
-                    if not sig5: reasons.append(f"MACD pas en recovery ({mh0:+.5f})")
+                    if not sig1:
+                        reasons.append(f"RSI pas en zone peur ({rsi0:.0f})")
+                    if not sig2:
+                        reasons.append("Pas de capitulation")
+                    if not sig3:
+                        reasons.append("Pas de marteau/doji")
+                    if not sig4:
+                        reasons.append("Pas de divergence RSI")
+                    if not sig5:
+                        reasons.append(f"MACD pas en recovery ({mh0:+.5f})")
                     return self._none(f"Seulement {n_sig}/8 signaux: " + " | ".join(reasons[:2]))
 
                 # Signaux premium : forte probabilité supplémentaire

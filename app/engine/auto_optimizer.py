@@ -8,14 +8,18 @@ from typing import Dict, List, Optional
 
 import polars as pl
 
-from app.engine.engine   import Engine, BaseStrategyML
-from app.engine.backtest import Backtester
 from app.core.is_oos import split_is_oos
-from app.engine.optimizer import (
-    StrategyOptimizer, PARAM_SPACES, STRATEGY_TIMEFRAMES, RECOMMENDED_LIMIT,
-    apply_best_params, record_optimizer_audit, get_active_strategies_per_tf
-)
+from app.engine.backtest import Backtester
+from app.engine.engine import BaseStrategyML, Engine
 from app.engine.opt_workers import available_memory_bytes
+from app.engine.optimizer import (
+    PARAM_SPACES,
+    RECOMMENDED_LIMIT,
+    STRATEGY_TIMEFRAMES,
+    StrategyOptimizer,
+    apply_best_params,
+    record_optimizer_audit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +292,9 @@ class AutoOptimizer:
       cfg             : config.yaml chargé en dict
       n_trials        : nombre de trials par (strategy, tf)
       method          : "random" | "bayesian" | "grid"
+      param_search_optim : dépistage + gel des paramètres à faible impact
+                        avant la recherche (activé par défaut, orthogonal
+                        à ``method`` — pas un mode en plus)
       config_path     : chemin vers config.yaml
       on_apply_callback : callback(strategy_name, params) après application
     """
@@ -299,7 +306,8 @@ class AutoOptimizer:
                  notifier=None,
                  n_jobs: int = 1,
                  early_stop_patience: int = 0,
-                 ml_tune_hp: bool = False):
+                 ml_tune_hp: bool = False,
+                 param_search_optim: bool = True):
         self.cfg               = cfg
         self.n_trials          = n_trials
         self.method            = method
@@ -308,6 +316,12 @@ class AutoOptimizer:
         self._notifier         = notifier
         self.n_jobs            = n_jobs
         self.early_stop_patience = early_stop_patience
+        # Param Search Optim (activé par défaut) : dépistage EN BUDGET (les
+        # premiers essais de la recherche elle-même, même fenêtre, même pool)
+        # puis gel des paramètres à faible impact — pas un 4e "method", une
+        # option orthogonale appliquée par celui choisi ci-dessus (cf.
+        # StrategyOptimizer._freeze_from_results / _optuna_apply_freeze).
+        self.param_search_optim = param_search_optim
         # #6 : optimisation ML two-phase (grille externe sur les hyperparamètres
         # d'entraînement × recherche interne sur les seuils). Opt-in : coûteux
         # (coût × nombre de combos HP). Sans effet sur les stratégies non-ML ou
@@ -396,7 +410,8 @@ class AutoOptimizer:
                 )
                 t.start()
                 job_ids.append(jid)
-                rec_str = "" if is_recommended else f" [TF non recommandé pour {name}, recommandé: {', '.join(recommended_tfs)}]"
+                rec_str = ("" if is_recommended else
+                          f" [TF non recommandé pour {name}, recommandé: {', '.join(recommended_tfs)}]")
                 logger.info(f"[AutoOpt] Job lancé : {jid} ({self.method}, {self.n_trials} trials){rec_str}")
 
         return job_ids, skipped
@@ -471,15 +486,19 @@ class AutoOptimizer:
             if ml_hp_space:
                 result = opt.optimize_two_phase(
                     self.method, self.n_trials, self.n_jobs, ml_hp_space,
-                    early_stop_patience=self.early_stop_patience)
+                    early_stop_patience=self.early_stop_patience,
+                    param_search_optim=self.param_search_optim)
             elif self.method == "bayesian":
                 result = opt.bayesian_search(self.n_trials, n_jobs=self.n_jobs,
-                                             early_stop_patience=self.early_stop_patience)
+                                             early_stop_patience=self.early_stop_patience,
+                                             param_search_optim=self.param_search_optim)
             elif self.method == "grid":
-                result = opt.grid_search()
+                result = opt.grid_search(n_jobs=self.n_jobs,
+                                         param_search_optim=self.param_search_optim)
             else:
                 result = opt.random_search(self.n_trials, n_jobs=self.n_jobs,
-                                           early_stop_patience=self.early_stop_patience)
+                                           early_stop_patience=self.early_stop_patience,
+                                           param_search_optim=self.param_search_optim)
 
             applied = False
             oos_trades   = result.get("best_oos_trades", 0)
@@ -524,6 +543,7 @@ class AutoOptimizer:
                 min_cons = float(opt_cfg.get("wf_min_consistency", 60.0))
                 try:
                     from copy import deepcopy
+
                     from app.engine.backtest import WalkForwardAnalyzer
                     cfg2 = {k: v for k, v in self.cfg.items()}
                     sp = deepcopy(self.cfg.get("strategy_params") or {})
@@ -774,11 +794,16 @@ class AutoOptimizer:
                                             symbol=symbol, df_full=df, split=split,
                                             timeframe=tf)
                     if self.method == "bayesian":
-                        results[key] = opt.bayesian_search(self.n_trials, n_jobs=self.n_jobs)
+                        results[key] = opt.bayesian_search(
+                            self.n_trials, n_jobs=self.n_jobs,
+                            param_search_optim=self.param_search_optim)
                     elif self.method == "grid":
-                        results[key] = opt.grid_search()
+                        results[key] = opt.grid_search(
+                            n_jobs=self.n_jobs, param_search_optim=self.param_search_optim)
                     else:
-                        results[key] = opt.random_search(self.n_trials, n_jobs=self.n_jobs)
+                        results[key] = opt.random_search(
+                            self.n_trials, n_jobs=self.n_jobs,
+                            param_search_optim=self.param_search_optim)
                 except Exception as e:
                     results[key] = {"error": str(e)}
         return results

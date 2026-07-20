@@ -7,8 +7,6 @@ sqlite jetable) et exercent _try_open_from_signal (chemin unique
 d'ouverture), _manage_position (gap → clôture forcée) et _close_position
 (PnL + persistance) directement.
 """
-import tempfile
-import os
 
 import pytest
 

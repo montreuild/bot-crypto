@@ -46,10 +46,14 @@ class DynamicTrailingStop:
         else:
             self._peak_price = min(self._peak_price, current_price)
             peak_r = (entry - self._peak_price) / self._initial_stop_dist
-        if   peak_r >= self.tight_r:       self._phase = max(self._phase, 4)
-        elif peak_r >= self.lock_r:        self._phase = max(self._phase, 3)
-        elif peak_r >= self.breakeven_r:   self._phase = max(self._phase, 2)
-        elif bars_held >= self.grace_bars: self._phase = max(self._phase, 1)
+        if   peak_r >= self.tight_r:
+            self._phase = max(self._phase, 4)
+        elif peak_r >= self.lock_r:
+            self._phase = max(self._phase, 3)
+        elif peak_r >= self.breakeven_r:
+            self._phase = max(self._phase, 2)
+        elif bars_held >= self.grace_bars:
+            self._phase = max(self._phase, 1)
         phase = self._phase
         if phase == 0:
             return current_stop, 0, "grace"

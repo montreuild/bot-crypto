@@ -8,14 +8,12 @@ _pre_ema*, _pre_volratio20…) lues ensuite en O(1) par les stratégies via
 import logging
 import threading
 from collections import OrderedDict
-from typing import Tuple
 
-import numpy as np
 import polars as pl
 
 _log = logging.getLogger(__name__)
 
-from app.core.indicators_core import _true_range, adx, atr_series, macd, rsi, sma, ema  # noqa: E402
+from app.core.indicators_core import _true_range  # noqa: E402
 
 # ── Cache des features pré-calculées (partagé entre jobs d'un même process) ──
 # Le backtest et l'optimiseur appellent precompute_df() de façon répétée sur la
@@ -26,6 +24,16 @@ from app.core.indicators_core import _true_range, adx, atr_series, macd, rsi, sm
 _PRECOMPUTE_CACHE: "OrderedDict[tuple, pl.DataFrame]" = OrderedDict()
 _PRECOMPUTE_LOCK = threading.Lock()
 _PRECOMPUTE_MAXSIZE = 16
+
+
+def set_precompute_maxsize(n: int) -> None:
+    """Reconfigure la taille du cache LRU (PERF-01, ``config.yaml:perf.precompute_cache_size``).
+
+    Appelé une fois au démarrage, après ``load_config`` — les 19 sites
+    d'appel de :func:`precompute_df` restent inchangés (signature intacte).
+    """
+    global _PRECOMPUTE_MAXSIZE
+    _PRECOMPUTE_MAXSIZE = max(1, int(n))
 
 
 def _precompute_key(df: pl.DataFrame):
@@ -96,7 +104,7 @@ def _precompute_df_impl(df: pl.DataFrame) -> pl.DataFrame:
     """
     c = df["close"]
     h = df["high"]
-    l = df["low"]
+    lo = df["low"]
     v = df["volume"]
 
     # True Range — via _true_range (pur Polars, pl.max_horizontal)
@@ -114,7 +122,7 @@ def _precompute_df_impl(df: pl.DataFrame) -> pl.DataFrame:
 
     # ADX(14) — multiplication booléenne, clip pour division sécurisée
     up       = h.diff(1).clip(lower_bound=0)
-    down     = (-l.diff(1)).clip(lower_bound=0)
+    down     = (-lo.diff(1)).clip(lower_bound=0)
     pdm      = up   * (up > down).cast(pl.Float64)
     ndm      = down * (down > up).cast(pl.Float64)
     atr_safe = pre_atr14.clip(lower_bound=1e-10)
@@ -150,23 +158,23 @@ def _precompute_df_impl(df: pl.DataFrame) -> pl.DataFrame:
 
     # ATR% + range + vol_std20 (volatilité)
     pre_atr_pct   = pre_atr14 / c_safe
-    pre_range     = (h - l) / c_safe
+    pre_range     = (h - lo) / c_safe
     log_ret       = (c / c.shift(1).fill_null(c).clip(lower_bound=1e-9)).log(2.718281828)
     pre_volstd20  = log_ret.rolling_std(20).fill_null(0)
 
     # Ratios normalisés /mean100 → TF-indépendants (rapport §6.2, calibration)
-    _rm100 = lambda s: s.rolling_mean(100).clip(lower_bound=1e-9)
+    def _rm100(s): return s.rolling_mean(100).clip(lower_bound=1e-9)
     pre_atr_pct_r  = pre_atr_pct  / _rm100(pre_atr_pct)
     pre_range_r    = pre_range     / _rm100(pre_range)
     pre_volstd20_r = pre_volstd20  / _rm100(pre_volstd20)
 
     # Structure de bougie (rapport §6.3 — body #1 feature, wicks importants)
-    t_range    = (h - l).clip(lower_bound=1e-9)
+    t_range    = (h - lo).clip(lower_bound=1e-9)
     body_top   = pl.max_horizontal(c, o)
     body_bot   = pl.min_horizontal(c, o)
     pre_body        = (c - o) / c_safe                          # direction corps signé
     pre_upper_wick  = (h - body_top) / t_range                  # mèche haute [0-1]
-    pre_lower_wick  = (body_bot - l) / t_range                  # mèche basse [0-1]
+    pre_lower_wick  = (body_bot - lo) / t_range                  # mèche basse [0-1]
 
     # Corps de bougie absolu (amplitude formula rapport §6.2 : poids 60/250)
     pre_body_abs   = (c - o).abs() / c_safe

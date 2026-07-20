@@ -19,8 +19,8 @@ import polars as pl
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.engine.engine import Engine            # noqa: E402
-from app.engine.backtest import Backtester      # noqa: E402
+from app.engine.backtest import Backtester  # noqa: E402
+from app.engine.engine import Engine  # noqa: E402
 from app.strategies.smart_trend_adx import Strategy  # noqa: E402
 
 WIN_START = "2024-01-01"
@@ -103,8 +103,9 @@ def _metrics(trades: list) -> dict:
 
 def main():
     print(f"Backtest smart_trend_adx — BTC/USDC — fenêtre {WIN_START} → {WIN_END}")
-    print(f"Réf. TradingView : +19 %, 63 trades, 16 gagnants, PF 1.451\n")
-    header = f"{'TF':>4} | {'trades':>6} | {'gagnants':>8} | {'win%':>6} | {'PF':>6} | {'ret%':>8} | {'L/S':>7} | {'TP/SL':>7}"
+    print("Réf. TradingView : +19 %, 63 trades, 16 gagnants, PF 1.451\n")
+    header = (f"{'TF':>4} | {'trades':>6} | {'gagnants':>8} | {'win%':>6} | "
+             f"{'PF':>6} | {'ret%':>8} | {'L/S':>7} | {'TP/SL':>7}")
     print(header)
     print("-" * len(header))
     rows = []

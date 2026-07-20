@@ -40,8 +40,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import polars as pl
 
+from app.core.indicators import pre_val, precompute_df
 from app.engine.engine import BaseStrategy
-from app.core.indicators import precompute_df, pre_val
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +229,6 @@ class Strategy(BaseStrategy):
         atr_pct_tail = (atr_s[-vw:] / np.maximum(c_s[-vw:], 1e-9)) * 100.0
         vol_med = float(np.median(atr_pct_tail))
         atr_pct = atr / c * 100.0
-        vol_low = atr_pct <= vol_med
         vol_extreme = atr_pct >= p["vol_extreme_mult"] * vol_med
 
         # Fibonacci (swing roulant) — zones de confluence

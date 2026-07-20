@@ -3,17 +3,26 @@
 Extrait de ``indicators.py`` (découpage V13).
 """
 import logging
-import threading
-from collections import OrderedDict
-from typing import Tuple
+import warnings
 
 import numpy as np
 import polars as pl
 
-_log = logging.getLogger(__name__)
+from app.core.indicators_core import (
+    adx,
+    adx_val,
+    atr,
+    atr_val,
+    bollinger,
+    ema,
+    macd,
+    rsi,
+    sma,
+    supertrend,
+    volume_ratio,
+)
 
-from app.core.indicators_core import (adx, adx_val, atr, atr_val, atr_series, bollinger,
-                                      ema, macd, rsi, sma, supertrend, volume_ratio)
+_log = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Structure de marché & HTF
@@ -276,24 +285,27 @@ def rolling_slope(s: pl.Series, window: int) -> pl.Series:
     """Pente d'ordre 1 (``np.polyfit``) sur fenêtre glissante.
 
     Retourne ``NaN`` pour les ``window-1`` premières barres.
+
+    Vectorisé : ``pente = cov(x,y)/var(x)`` avec ``x = arange(window)`` FIXE
+    (indépendant de la position de la fenêtre) et ``x`` centré
+    (``sum(x_dev) == 0``) — le terme ``y.mean()`` de la formule de covariance
+    s'annule, ce qui réduit le calcul à une corrélation de ``y`` par le noyau
+    fixe ``x_dev`` (``np.correlate``, O(n·window) en C plutôt qu'en boucle
+    Python). Un NaN dans une fenêtre se propage naturellement à travers la
+    somme et produit NaN en sortie pour cette position — même comportement
+    que la version scalaire.
     """
-    arr = s.to_numpy()
+    arr = s.to_numpy().astype(np.float64)
     n   = len(arr)
     out = np.full(n, np.nan, dtype=np.float64)
     if window <= 1 or n < window:
         return pl.Series(out)
     x = np.arange(window, dtype=np.float64)
-    x_mean = x.mean()
-    x_dev  = x - x_mean
+    x_dev  = x - x.mean()
     denom  = float((x_dev * x_dev).sum())
     if denom == 0:
         return pl.Series(out)
-    for i in range(window - 1, n):
-        y = arr[i - window + 1 : i + 1]
-        if np.any(np.isnan(y)):
-            continue
-        # pente = cov(x,y)/var(x) — équivalent à np.polyfit(x, y, 1)[0]
-        out[i] = float(((y - y.mean()) * x_dev).sum()) / denom
+    out[window - 1:] = np.correlate(arr, x_dev, mode="valid") / denom
     return pl.Series(out)
 
 
@@ -322,12 +334,70 @@ def hurst_exponent(arr: np.ndarray, max_lag: int = 20) -> float:
 
 
 def rolling_hurst(s: pl.Series, window: int = 100, max_lag: int = 20) -> pl.Series:
-    """Exposant de Hurst glissant — appelle ``hurst_exponent`` sur chaque fenêtre."""
-    arr = s.to_numpy()
+    """Exposant de Hurst glissant — ``hurst_exponent`` appliqué à chaque fenêtre.
+
+    Vectorisé sur toutes les fenêtres à la fois (``sliding_window_view`` +
+    régression log-log en forme fermée ``cov/var``, comme ``rolling_slope``,
+    appliquée par ligne via des réductions ``nan*`` pour tolérer un nombre de
+    lags valides différent d'une fenêtre à l'autre — pas de boucle Python sur
+    les ``n - window + 1`` positions, seulement sur les ``max_lag - 2`` lags
+    (petite constante). Les fenêtres contenant un NaN en entrée retombent sur
+    ``hurst_exponent`` scalaire (compaction ``arr[~isnan]`` avant calcul,
+    impossible à vectoriser sans casser l'alignement entre fenêtres) — cas
+    rare en pratique (essentiellement le warmup en tête de série), donc sans
+    impact mesurable sur le coût total.
+    """
+    arr = s.to_numpy().astype(np.float64)
     n   = len(arr)
     out = np.full(n, np.nan, dtype=np.float64)
-    for i in range(window - 1, n):
-        out[i] = hurst_exponent(arr[i - window + 1 : i + 1], max_lag=max_lag)
+    if window < 2 or n < window:
+        return pl.Series(out)
+
+    windows = np.lib.stride_tricks.sliding_window_view(arr, window)  # (n-window+1, window)
+    has_nan = np.isnan(windows).any(axis=1)
+
+    lags = np.arange(2, max_lag)
+    n_win = windows.shape[0]
+    if len(lags) == 0:
+        return pl.Series(out)
+
+    log_tau = np.full((n_win, len(lags)), np.nan, dtype=np.float64)
+    for li, lag in enumerate(lags):
+        if window - lag < 2:
+            continue
+        d = windows[:, lag:] - windows[:, :-lag]
+        with np.errstate(invalid="ignore"):
+            std_d = d.std(axis=1)
+        valid = std_d > 0
+        with np.errstate(divide="ignore"):
+            log_tau[valid, li] = 0.5 * np.log(std_d[valid])  # log(sqrt(x)) = 0.5*log(x)
+
+    log_lags = np.log(lags.astype(np.float64))
+    xb = np.broadcast_to(log_lags, log_tau.shape).astype(np.float64).copy()
+    xb[np.isnan(log_tau)] = np.nan
+    valid_count = np.sum(~np.isnan(log_tau), axis=1)
+
+    with np.errstate(invalid="ignore"), warnings.catch_warnings():
+        # "Mean of empty slice" attendu pour les fenêtres à 0 lag valide
+        # (nanmean sur une ligne intégralement NaN) — résultat NaN correct,
+        # filtré ensuite par valid_count >= 5.
+        warnings.filterwarnings("ignore", message="Mean of empty slice")
+        x_mean = np.nanmean(xb, axis=1)
+        y_mean = np.nanmean(log_tau, axis=1)
+        x_dev  = xb - x_mean[:, None]
+        y_dev  = log_tau - y_mean[:, None]
+        cov = np.nansum(x_dev * y_dev, axis=1)
+        var = np.nansum(x_dev * x_dev, axis=1)
+        slope = np.where(var > 0, cov / var, np.nan)
+
+    vectorized = np.where(valid_count >= 5, 2.0 * slope, np.nan)
+    vectorized[has_nan] = np.nan  # recalculées ci-dessous par le repli scalaire
+
+    result = vectorized
+    for idx in np.nonzero(has_nan)[0]:
+        result[idx] = hurst_exponent(windows[idx], max_lag=max_lag)
+
+    out[window - 1:] = result
     return pl.Series(out)
 
 

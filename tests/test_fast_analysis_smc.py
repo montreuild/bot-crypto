@@ -58,9 +58,10 @@ def test_fee_grid_and_period_scales():
 
 def test_bt10_slippage_model_off_is_default():
     """BT-10 : défaut "static" ; modèle "size" → coût d'impact > 0 croissant."""
+    from types import SimpleNamespace
+
     from app.engine.backtest import Backtester
     from app.engine.engine import Engine
-    from types import SimpleNamespace
     cfg = {"trading": {"capital": 1000, "risk_per_trade": 0.01,
                        "timeframe": "1h"},
            "backtest": {}, "strategy_params": {}}

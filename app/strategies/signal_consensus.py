@@ -3,7 +3,7 @@
 
 import importlib
 import logging
-from typing import Dict, Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import polars as pl
 
@@ -254,7 +254,8 @@ class Strategy(BaseStrategy):
                 "score":  0.0,
                 "side":   "none",
                 "name":   self.name,
-                "reason": f"Données insuffisantes ({len(df) if df is not None else 0} barres < {self.min_bars_required(params)})",
+                "reason": (f"Données insuffisantes ({len(df) if df is not None else 0} barres "
+                          f"< {self.min_bars_required(params)})"),
             }
 
         # ── Votes bruts : cache de pré-calcul si dispo, sinon collecte live ────

@@ -2,24 +2,57 @@
 Tests unitaires — Indicateurs techniques (RSI, ATR, ADX, EMA, MACD, SuperTrend, S/R, etc.)
 Vérifie les calculs contre des valeurs de référence et les cas limites.
 """
-import pytest
-import sys
+import datetime as dt
 import os
+import sys
+
 import numpy as np
 import polars as pl
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import app.core.indicators_precompute as indicators_precompute
 from app.core.indicators import (
-    ema, rsi, atr, atr_val, adx, adx_val,
-    macd, bollinger, supertrend, stochastic,
-    volume_ratio, vol_ratio, donchian, obv,
-    market_structure, htf_trend, detect_regime, detect_regime_full,
-    support_resistance_levels, nearest_support, nearest_resistance,
-    precompute_df, pre_val, build_features,
-    roc, green_ratio, rsi_divergence, trend_duration,
-    rolling_vwap, vwap_bands, session_vwap, cvd, choppiness, keltner,
-    pin_bar, engulfing, vsa_signal, rsi_divergence_hidden,
+    adx,
+    adx_val,
+    atr,
+    atr_val,
+    bb_squeeze,
+    bollinger,
+    build_features,
+    choppiness,
+    cvd,
+    detect_regime,
+    detect_regime_full,
+    ema,
+    ema_window,
+    engulfing,
+    green_ratio,
+    keltner,
+    macd,
+    macd_hist_last3,
+    market_structure,
+    nearest_resistance,
+    nearest_support,
+    pin_bar,
+    pre_val,
+    precompute_df,
+    roc,
+    rolling_vwap,
+    rsi,
+    rsi_divergence,
+    rsi_divergence_hidden,
+    session_vwap,
+    stochastic,
+    supertrend,
+    supertrend_last,
+    support_resistance_levels,
+    trend_duration,
+    vol_ratio,
+    volume_ratio,
+    vsa_signal,
+    vwap_bands,
 )
 
 
@@ -167,8 +200,8 @@ class TestBollinger:
         df = _make_ohlcv(100)
         upper, mid, lower = bollinger(df["close"])
         u = upper.drop_nulls().to_numpy()
-        l = lower.drop_nulls().to_numpy()
-        assert np.all(u >= l)
+        lo = lower.drop_nulls().to_numpy()
+        assert np.all(u >= lo)
 
 
 class TestVolumeRatio:
@@ -295,6 +328,39 @@ class TestPrecompute:
         assert len(result) == 300
 
 
+def _make_ohlcv_timed(n):
+    """OHLCV synthétique avec colonne ``time`` (requise par _precompute_key)."""
+    df = _make_ohlcv(n, seed=n)
+    t0 = dt.datetime(2024, 1, 1)
+    return df.with_columns(
+        pl.Series("time", [t0 + dt.timedelta(hours=i) for i in range(n)])
+    )
+
+
+class TestPrecomputeCacheSize:
+    """PERF-01 : taille du cache LRU reconfigurable (config.yaml:perf.precompute_cache_size)."""
+
+    def test_set_precompute_maxsize_bounds_eviction(self):
+        original = indicators_precompute._PRECOMPUTE_MAXSIZE
+        try:
+            indicators_precompute.set_precompute_maxsize(2)
+            indicators_precompute._PRECOMPUTE_CACHE.clear()
+            for n in (60, 61, 62, 63):
+                precompute_df(_make_ohlcv_timed(n))
+            assert len(indicators_precompute._PRECOMPUTE_CACHE) <= 2
+        finally:
+            indicators_precompute.set_precompute_maxsize(original)
+            indicators_precompute._PRECOMPUTE_CACHE.clear()
+
+    def test_set_precompute_maxsize_rejects_non_positive(self):
+        original = indicators_precompute._PRECOMPUTE_MAXSIZE
+        try:
+            indicators_precompute.set_precompute_maxsize(0)
+            assert indicators_precompute._PRECOMPUTE_MAXSIZE == 1
+        finally:
+            indicators_precompute.set_precompute_maxsize(original)
+
+
 class TestPreVal:
     def test_returns_value_when_present(self):
         df = _make_ohlcv(100)
@@ -368,9 +434,6 @@ class TestV4CatalogueIndicators:
 # ══════════════════════════════════════════════════════════════════════════════
 #  Réutilisation causale SuperTrend / MACD (accélération backtest)
 # ══════════════════════════════════════════════════════════════════════════════
-
-from app.core.indicators import supertrend_last, macd_hist_last3, ema_window, bb_squeeze
-
 
 class TestEmaWindowReuse:
     """ema_window doit être identique au recalcul ewm_mean par fenêtre, y compris

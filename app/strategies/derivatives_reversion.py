@@ -26,11 +26,10 @@ import logging
 import math
 from typing import Any, Dict, List, Optional
 
-import numpy as np
 import polars as pl
 
+from app.core.indicators import pre_val, precompute_df
 from app.engine.engine import BaseStrategy
-from app.core.indicators import precompute_df, pre_val
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +125,9 @@ class Strategy(BaseStrategy):
         if cnt - self._last.get(sym, -10**9) < int(p["cooldown"]):
             return self._none("Cooldown")
 
-        close = df["close"]; high = df["high"]; low = df["low"]
+        close = df["close"]
+        high = df["high"]
+        low = df["low"]
         c = _safe(close[-1])
         atr = _safe(pre_val(df, "_pre_atr14"))
         if c <= 0 or atr <= 0:
@@ -229,8 +230,8 @@ class Strategy(BaseStrategy):
                        f"{'+dérivés' if derivs else 'OHLCV'} TP={p['tp_atr']:.1f}/SL={p['sl_atr']:.1f}ATR"),
             "conditions": [
                 f"Fade extrême de range ({setup}) en régime range",
-                f"Edge directionnel : position-dans-le-range (mesuré z≈7.6)",
-                (f"Confirmation dérivés (funding/sentiment)" if derivs
+                "Edge directionnel : position-dans-le-range (mesuré z≈7.6)",
+                ("Confirmation dérivés (funding/sentiment)" if derivs
                  else "OHLCV pur (dérivés absents → fallback)"),
                 f"TP {p['tp_atr']:.1f}×ATR / SL {p['sl_atr']:.1f}×ATR (gère la cassure)",
             ],

@@ -145,6 +145,7 @@ export const api = {
     symbol?: string; symbols?: string; strategies?: string; timeframes?: string;
     method?: string; n_trials?: number; limit?: number; auto_apply?: boolean;
     n_jobs?: number; early_stop_patience?: number; ml_tune_hp?: boolean;
+    param_search_optim?: boolean;
   }) => {
     const q = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => {

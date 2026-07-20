@@ -52,7 +52,7 @@ def test_overrides_listing_nested_and_legacy(fake_cfg):
 
 def test_update_requires_both_tf_and_symbol(fake_cfg):
     with pytest.raises(HTTPException) as e:
-        update_strategy_params("trend_rider", {"adx_min": 20}, timeframe="4h")
+        update_strategy_params(None, "trend_rider", {"adx_min": 20}, timeframe="4h")
     assert e.value.status_code == 400
 
 
@@ -68,7 +68,7 @@ def test_override_write_goes_through_apply_best_params(fake_cfg, monkeypatch):
     import app.engine.opt_persistence as op
     monkeypatch.setattr(op, "apply_best_params", _fake_apply)
 
-    res = update_strategy_params("trend_rider", {"chop_max": 58.0},
+    res = update_strategy_params(None, "trend_rider", {"chop_max": 58.0},
                                  timeframe="4h", symbol="ETH/USDC")
     assert res["scope"] == "override" and res["symbol"] == "ETH/USDC"
     # Le symbole est transmis (BT-01 côté route config) et l'oos_score
@@ -87,7 +87,7 @@ def test_base_write_unchanged_without_tf_symbol(fake_cfg, monkeypatch):
     import app.api.routes.config as cfg_route
     monkeypatch.setattr(cfg_route, "_save_strategy_yaml",
                         lambda name, fn: saved.setdefault("name", name))
-    res = update_strategy_params("trend_rider", {"adx_min": 25})
+    res = update_strategy_params(None, "trend_rider", {"adx_min": 25})
     assert res["scope"] == "base"
     assert fake_cfg["strategy_params"]["trend_rider"] == {"adx_min": 25}
     assert saved["name"] == "trend_rider"

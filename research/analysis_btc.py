@@ -20,11 +20,11 @@ Usage :  python research/analysis_btc.py [--section N]
 Sorties : stdout lisible + research/analysis_report.md + research/analysis_metrics.json
 """
 from __future__ import annotations
+
 import json
 import os
 import sys
 import warnings
-from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -224,11 +224,11 @@ def section_autocorr(data: Dict[str, pd.DataFrame]):
             return float(varq / (q * var1)) if var1 > 0 else 1.0
         vrs = {q: vr(r, q) for q in (2, 5, 10, 20)}
         out(f"\n  [{tf}]")
-        out(f"    ACF rendements  lag 1/2/3/5/10/24 : " +
+        out("    ACF rendements  lag 1/2/3/5/10/24 : " +
             " ".join(f"{v:+.3f}" for v in ac_r))
-        out(f"    ACF |rendement| lag 1/2/3/5/10/24 : " +
+        out("    ACF |rendement| lag 1/2/3/5/10/24 : " +
             " ".join(f"{v:+.3f}" for v in ac_a) + "   (clustering vol)")
-        out(f"    Variance ratio  q=2/5/10/20       : " +
+        out("    Variance ratio  q=2/5/10/20       : " +
             " ".join(f"{vrs[q]:.3f}" for q in (2, 5, 10, 20)) +
             "   (>1 momentum, <1 mean-rev)")
         METRICS.setdefault(tf, {})["autocorr"] = {
@@ -284,18 +284,17 @@ def section_seasonality(data: Dict[str, pd.DataFrame]):
         d["dow"] = d["time"].dt.dayofweek
         out(f"\n  [{tf}] rendement moyen par heure UTC (×1e4) :")
         hourly = d.groupby("hour")["ret"].agg(["mean", "count"])
-        line = "    " + " ".join(f"{h:02d}:{hourly['mean'].get(h,0)*1e4:+05.1f}"
-                                  for h in range(0, 24))
         # affichage compact en 2 lignes
         hrs = [f"h{h:02d}={hourly['mean'].get(h,0)*1e4:+5.1f}" for h in range(24)]
         for i in range(0, 24, 8):
             out("    " + "  ".join(hrs[i:i+8]))
-        best = hourly["mean"].idxmax(); worst = hourly["mean"].idxmin()
+        best = hourly["mean"].idxmax()
+        worst = hourly["mean"].idxmin()
         out(f"    meilleure heure={best:02d}h ({hourly['mean'][best]*1e4:+.1f}e-4)  "
             f"pire={worst:02d}h ({hourly['mean'][worst]*1e4:+.1f}e-4)")
         dow_names = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
         dow = d.groupby("dow")["ret"].mean() * 1e4
-        out(f"    par jour (×1e4) : " +
+        out("    par jour (×1e4) : " +
             " ".join(f"{dow_names[i]}={dow.get(i,0):+.1f}" for i in range(7)))
         METRICS.setdefault(tf, {})["seasonality"] = {
             "best_hour": int(best), "worst_hour": int(worst),
@@ -438,8 +437,10 @@ def section_edges(data: Dict[str, pd.DataFrame]):
             "SHORT cassure Bollinger inf":                   (d["close"] < bb_mid - 2 * bb_std, -1),
             "LONG MACD flip+ EN uptrend":                    ((hist > 0) & (hist.shift(1) <= 0) & up_struct, 1),
             "SHORT MACD flip- EN downtrend":                 ((hist < 0) & (hist.shift(1) >= 0) & dn_struct, -1),
-            "LONG ADX>25 trend_up":                          ((d["adx14"] > 25) & up_struct & (d["pdi14"] > d["ndi14"]), 1),
-            "SHORT ADX>25 trend_down":                       ((d["adx14"] > 25) & dn_struct & (d["ndi14"] > d["pdi14"]), -1),
+            "LONG ADX>25 trend_up":
+                ((d["adx14"] > 25) & up_struct & (d["pdi14"] > d["ndi14"]), 1),
+            "SHORT ADX>25 trend_down":
+                ((d["adx14"] > 25) & dn_struct & (d["ndi14"] > d["pdi14"]), -1),
             "LONG momentum filtré low-vol":                  (up_struct & lowvol, 1),
         }
         results = {}

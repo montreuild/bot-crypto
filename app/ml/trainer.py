@@ -3,7 +3,8 @@ import logging
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Dict, List
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,8 @@ class MLStrategyTrainer:
                 key  = f"{name}@{tf}"
                 path = self._model_path(strat, name, tf)
                 if strat.load_model(path):
-                    logger.info(f"[MLTrainer] {name}/{tf} : modèle chargé (AUC={strat._best_auc_per_tf.get(tf, 0):.4f})")
+                    logger.info(f"[MLTrainer] {name}/{tf} : modèle chargé "
+                               f"(AUC={strat._best_auc_per_tf.get(tf, 0):.4f})")
                     self._retrain_at[key] = time.time() + interval_h * 3600
                 else:
                     logger.info(f"[MLTrainer] {name}/{tf} : pas de modèle — réentraînement immédiat planifié")

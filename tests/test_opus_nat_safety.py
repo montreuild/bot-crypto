@@ -10,12 +10,12 @@ import sys
 
 import numpy as np
 import pandas as pd
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.strategies.opus_omnibus_v10 import (
-    _safe_num, _regime_history_from_features,
+    _regime_history_from_features,
+    _safe_num,
 )
 
 

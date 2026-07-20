@@ -14,6 +14,7 @@ limitée sur bas TF (pas de bear 2022). Validation bear → 1h/4h/1d.
 Usage : python research/analysis_aggressive.py
 """
 from __future__ import annotations
+
 import os
 import sys
 
@@ -21,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from analysis_btc import load, enrich, ema  # réutilise les helpers  # noqa: E402
+from analysis_btc import enrich  # réutilise les helpers  # noqa: E402
 
 UPLOAD = "/root/.claude/uploads/6ee1d036-9dde-49c8-ba23-22b93133ed2a"
 FILES = {
@@ -36,7 +37,6 @@ HORIZONS = {"15m": (8, 16, 32), "30m": (6, 12, 24), "1h": (4, 8, 16), "4h": (3, 
 
 
 def _load(tf):
-    import pandas as pd
     df = pd.read_parquet(FILES[tf]).sort_values("time").reset_index(drop=True)
     df["time"] = pd.to_datetime(df["time"])
     return enrich(df)

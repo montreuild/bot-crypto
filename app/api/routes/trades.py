@@ -4,7 +4,7 @@ import io
 import logging
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.api import state
@@ -38,8 +38,10 @@ def list_trades(limit: int = 100, offset: int = 0,
     with session_scope(state.SessionLocal) as session:
         from app.core.database import Trade as _Trade
         q = session.query(_Trade)
-        if symbol:   q = q.filter(_Trade.symbol   == symbol)
-        if strategy: q = q.filter(_Trade.strategy == strategy)
+        if symbol:
+            q = q.filter(_Trade.symbol   == symbol)
+        if strategy:
+            q = q.filter(_Trade.strategy == strategy)
         total = q.count()
         page  = q.order_by(_Trade.time.desc()).offset(offset).limit(limit).all()
         return {
@@ -96,6 +98,23 @@ def daily_stats(days: int = 30):
                 for r in rows]
 
 
+@router.get("/api/stats/fees", dependencies=[Depends(verify_api_key)])
+def fee_breakdown(days: int = None):
+    """FIN-06 : compteur de frais par catégorie — taker/maker/borrow/stop.
+
+    ``days`` optionnel (défaut : toute l'historique) limite aux trades clos
+    dans les N derniers jours, comme ``/api/stats/daily``.
+    """
+    if not state.SessionLocal:
+        return {"taker": 0.0, "maker": 0.0, "borrow": 0.0, "stop": 0.0}
+    from datetime import datetime, timedelta, timezone
+
+    from app.core.database import get_fee_breakdown
+    since = (datetime.now(timezone.utc) - timedelta(days=days)) if days else None
+    with session_scope(state.SessionLocal) as session:
+        return get_fee_breakdown(session, since=since)
+
+
 @router.get("/api/risk", dependencies=[Depends(verify_api_key)])
 def risk_status():
     if not state.trader:
@@ -104,7 +123,8 @@ def risk_status():
 
 
 @router.post("/api/risk/reset-halt", dependencies=[Depends(verify_api_key)])
-def reset_halt(force: bool = False):
+@state.limiter.limit("10/minute")
+def reset_halt(request: Request, force: bool = False):
     """Réinitialise le HALT global.
 
     ``force=true`` est requis pour acquitter un **kill-switch** d'équité (veto
@@ -261,9 +281,13 @@ def list_slots():
     }
 
 
-@router.post("/api/slots/{slot_key:path}/budget", dependencies=[Depends(verify_api_key)])
-def set_slot_budget(slot_key: str, budget_pct: float):
-    """Définit manuellement le budget d'un slot (budget_pct en fraction, ex: 0.25 = 25%)."""
+def _set_slot_budget_impl(slot_key: str, budget_pct: float) -> dict:
+    """Définit manuellement le budget d'un slot (budget_pct en fraction, ex: 0.25 = 25%).
+
+    Logique nue partagée par la route courante et l'alias legacy — évite de
+    ré-invoquer une route déjà décorée `@state.limiter.limit(...)` (double
+    comptage du rate-limit) tout en gardant chaque route indépendamment limitée.
+    """
     _validate_slot_key(slot_key)
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
@@ -298,8 +322,15 @@ def set_slot_budget(slot_key: str, budget_pct: float):
     }
 
 
+@router.post("/api/slots/{slot_key:path}/budget", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("30/minute")
+def set_slot_budget(request: Request, slot_key: str, budget_pct: float):
+    return _set_slot_budget_impl(slot_key, budget_pct)
+
+
 @router.post("/api/slots/{slot_key:path}/toggle", dependencies=[Depends(verify_api_key)])
-def toggle_slot(slot_key: str, enabled: bool = True):
+@state.limiter.limit("30/minute")
+def toggle_slot(request: Request, slot_key: str, enabled: bool = True):
     """Active ou désactive un slot."""
     _validate_slot_key(slot_key)
 
@@ -355,7 +386,8 @@ def toggle_slot(slot_key: str, enabled: bool = True):
 
 
 @router.post("/api/slots/{slot_key:path}/reset", dependencies=[Depends(verify_api_key)])
-def reset_slot(slot_key: str):
+@state.limiter.limit("30/minute")
+def reset_slot(request: Request, slot_key: str):
     """Réinitialise le circuit breaker d'un slot."""
     _validate_slot_key(slot_key)
     if not state.trader:
@@ -369,7 +401,8 @@ def reset_slot(slot_key: str):
 
 
 @router.post("/api/slots/rebalance", dependencies=[Depends(verify_api_key)])
-def force_rebalance():
+@state.limiter.limit("10/minute")
+def force_rebalance(request: Request):
     """Force un rééquilibrage immédiat des budgets des slots."""
     if not state.trader:
         raise HTTPException(503, "Trader non initialisé")
@@ -383,9 +416,10 @@ def force_rebalance():
 # ── Ancien endpoint conservé pour compatibilité ──
 
 @router.post("/api/capital-allocation/set-budget", dependencies=[Depends(verify_api_key)])
-def set_slot_budget_legacy(slot_key: str, budget_pct: float):
+@state.limiter.limit("30/minute")
+def set_slot_budget_legacy(request: Request, slot_key: str, budget_pct: float):
     """Ancien endpoint — redirige vers /api/slots/{slot_key}/budget."""
-    return set_slot_budget(slot_key, budget_pct)
+    return _set_slot_budget_impl(slot_key, budget_pct)
 
 
 @router.get("/api/circuit-breakers", dependencies=[Depends(verify_api_key)])

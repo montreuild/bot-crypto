@@ -112,9 +112,10 @@ def _worker_init(strategy_name: str, cfg_yaml: str,
                "NUMEXPR_NUM_THREADS", "LIGHTGBM_EXEC_NUM_THREADS"):
         _os.environ.setdefault(_v, "1")
 
-    import yaml as _yaml
     import importlib as _imp
+
     import polars as _pl
+    import yaml as _yaml
 
     _W["strategy_name"] = strategy_name
     _W["cfg"]           = _yaml.safe_load(cfg_yaml)
@@ -248,8 +249,9 @@ def _eval_worker(args: tuple) -> dict:
                    "NUMEXPR_NUM_THREADS", "LIGHTGBM_EXEC_NUM_THREADS"):
             _os.environ.setdefault(_v, "1")
         from copy import deepcopy as _dp
-        from app.engine.engine import Engine as _Engine
+
         from app.engine.backtest import Backtester as _Backtester
+        from app.engine.engine import Engine as _Engine
         from app.engine.opt_scoring import composite_score, overfitting_ratio
 
         # Fast-path : état partagé pré-chargé par ``_worker_init``.
@@ -259,9 +261,10 @@ def _eval_worker(args: tuple) -> dict:
             _df_oos = _W["df_oos"]
             _mod    = _W["strategy_mod"]
         else:
-            import yaml as _yaml
             import importlib as _imp
+
             import polars as _pl
+            import yaml as _yaml
             _cfg = _yaml.safe_load(cfg_yaml)
             _df_is  = _pl.read_ipc(io.BytesIO(df_is_ipc))
             _df_oos = _pl.read_ipc(io.BytesIO(df_oos_ipc))

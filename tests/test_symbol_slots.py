@@ -3,7 +3,7 @@
 Vérifie que la dimension symbole (`strategy::tf::symbol`) traverse la sélection
 des slots actifs, l'identité de bot et l'allocateur de capital.
 """
-from app.core.bot_identity import BotIdentity, default_venue_from_cfg, resolve_venue, Venue
+from app.core.bot_identity import BotIdentity, Venue, default_venue_from_cfg, resolve_venue
 from app.engine.opt_persistence import get_active_strategies_per_tf
 from app.live.capital_allocator import CapitalAllocator
 
@@ -105,12 +105,15 @@ def test_apply_best_params_per_symbol_coexist(tmp_path):
     coexister dans optimizer_results[tf] — la route /api/optimize/apply doit
     transmettre le symbole du job pour emprunter ce chemin (cf. BT-01)."""
     import yaml
+
     from app.engine.opt_persistence import apply_best_params
 
-    sdir = tmp_path / "strategies"; sdir.mkdir()
+    sdir = tmp_path / "strategies"
+    sdir.mkdir()
     spath = sdir / "trend_rider.yaml"
     yaml.safe_dump({"params": {"adx_min": 22}}, spath.open("w"))
-    cfgpath = tmp_path / "config.yaml"; cfgpath.write_text("trading: {}\n")
+    cfgpath = tmp_path / "config.yaml"
+    cfgpath.write_text("trading: {}\n")
 
     assert apply_best_params("trend_rider", {"chop_max": 55.0}, str(cfgpath),
                              timeframe="4h", oos_score=0.16, symbol="BTC/USDC")
@@ -128,16 +131,19 @@ def test_apply_best_params_migrates_legacy_entry(tmp_path):
     """Une entrée héritée (sans symbole) est migrée vers BTC/USDC lors de la
     première écriture per-symbole — rien n'est perdu."""
     import yaml
+
     from app.engine.opt_persistence import apply_best_params
 
-    sdir = tmp_path / "strategies"; sdir.mkdir()
+    sdir = tmp_path / "strategies"
+    sdir.mkdir()
     spath = sdir / "trend_rider.yaml"
     yaml.safe_dump({
         "params": {},
         "optimizer_results": {"4h": {"run_date": "2026-07-08", "oos_score": 0.16,
                                      "params": {"chop_max": 55.0}}},
     }, spath.open("w"))
-    cfgpath = tmp_path / "config.yaml"; cfgpath.write_text("trading: {}\n")
+    cfgpath = tmp_path / "config.yaml"
+    cfgpath.write_text("trading: {}\n")
 
     assert apply_best_params("trend_rider", {"chop_max": 60.0}, str(cfgpath),
                              timeframe="4h", oos_score=0.32, symbol="ETH/USDC")
@@ -150,6 +156,7 @@ def test_optimizer_apply_route_passes_symbol():
     """Garde-fou de non-régression BT-01 : la route lit bien job['symbol'] et
     le transmet à apply_best_params (vérification statique du source)."""
     import inspect
+
     from app.api.routes import optimizer as opt_route
     src = inspect.getsource(opt_route.optimizer_apply)
     assert 'job.get("symbol")' in src
@@ -159,7 +166,7 @@ def test_optimizer_apply_route_passes_symbol():
 # ── V4-C : helpers canoniques + validation des clés 3-parties ────────────────
 
 def test_build_helpers():
-    from app.core.bot_identity import build_slot_key, build_pos_key
+    from app.core.bot_identity import build_pos_key, build_slot_key
     assert build_slot_key("trend_rider", "4h", "ETH/USDC") == "trend_rider::4h::ETH/USDC"
     assert build_slot_key("trend", "1h") == "trend::1h"
     assert build_pos_key("ETH/USDC", "trend_rider", "4h") == "ETH/USDC::trend_rider::4h"

@@ -50,8 +50,10 @@ _OKX_PERIOD = {
 }
 
 # Compat polars : le kwarg ``min_periods`` (≤1.20, version épinglée 1.0.0) a été
-# renommé ``min_samples`` ensuite. Détection une fois à l'import.
-import inspect as _inspect
+# renommé ``min_samples`` ensuite. Détection une fois à l'import — importé ici,
+# juste avant son unique usage, plutôt qu'en tête de fichier.
+import inspect as _inspect  # noqa: E402
+
 _MIN_SAMPLES_KW = (
     {"min_samples": 10}
     if "min_samples" in _inspect.signature(pl.Expr.rolling_mean).parameters
@@ -170,7 +172,8 @@ class DerivativesStore:
             val = (x.get("openInterestValue") or x.get("openInterestAmount")
                    or (x.get("info") or {}).get("sumOpenInterest"))
             if ts and val is not None:
-                rows_t.append(int(ts)); rows_v.append(float(val))
+                rows_t.append(int(ts))
+                rows_v.append(float(val))
         if not rows_t:
             return self._load(self._path(symbol, "oi"))
         df = pl.DataFrame({"time": rows_t, "value": rows_v}) \
@@ -212,7 +215,8 @@ class DerivativesStore:
                     val = float(x[1])
             except (TypeError, ValueError):
                 continue
-            rows_t.append(ts); rows_v.append(val)
+            rows_t.append(ts)
+            rows_v.append(val)
         if not rows_t:
             return self._load(self._path(symbol, metric))
         df = pl.DataFrame({"time": rows_t, "value": rows_v}) \
@@ -255,8 +259,10 @@ class DerivativesStore:
                 return None
             return df.sort("time").rename({"value": metric})
 
-        funding = _series("funding", lambda: self.fetch_funding(exchange, symbol)) if (exchange or not refresh) else None
-        oi      = _series("oi", lambda: self.fetch_open_interest(exchange, symbol, period)) if (exchange or not refresh) else None
+        funding = (_series("funding", lambda: self.fetch_funding(exchange, symbol))
+                  if (exchange or not refresh) else None)
+        oi      = (_series("oi", lambda: self.fetch_open_interest(exchange, symbol, period))
+                  if (exchange or not refresh) else None)
         lsr     = _series("lsratio", lambda: self.fetch_long_short_ratio(symbol, period))
         taker   = _series("taker", lambda: self.fetch_taker_ratio(symbol, period))
 

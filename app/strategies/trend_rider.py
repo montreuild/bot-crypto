@@ -28,9 +28,9 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import polars as pl
 
-from app.engine.engine import BaseStrategy
 import app.core.indicators as ind
 from app.core.indicators_core import atr_wilder
+from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,8 @@ class Strategy(BaseStrategy):
             else c + float(p["stop_atr"]) * atr
         size_factor = 1.0
         if bool(p.get("size_by_confluence", False)):
-            slope = float(p["size_conf_slope"]); center = float(p["size_conf_center"])
+            slope = float(p["size_conf_slope"])
+            center = float(p["size_conf_center"])
             size_factor = max(0.4, min(1.7, 1.0 + slope * (sc - center)))
         arrow = "LONG" if side == "long" else "SHORT"
         return {

@@ -33,7 +33,7 @@ def _pd_from_range(range_high: float, range_low: float, trend: int,
 
 
 def _premium_discount_at(all_swings: List[dict], trend_arr: np.ndarray,
-                         h: np.ndarray, l: np.ndarray, c: np.ndarray,
+                         h: np.ndarray, lo: np.ndarray, c: np.ndarray,
                          i: int) -> Optional[dict]:
     """Range de travail à la barre ``i`` (causal) : dernier swing high ↔ dernier
     swing low confirmés ≤ i, élargi au max/min des 100 dernières barres,
@@ -52,11 +52,11 @@ def _premium_discount_at(all_swings: List[dict], trend_arr: np.ndarray,
         return None
     lo_w = max(0, i - 99)
     range_high = max(sh, float(h[lo_w:i + 1].max()))
-    range_low  = min(sl, float(l[lo_w:i + 1].min()))
+    range_low  = min(sl, float(lo[lo_w:i + 1].min()))
     return _pd_from_range(range_high, range_low, int(trend_arr[i]), float(c[i]))
 
 
-def premium_discount_at(result: Dict[str, Any], h: np.ndarray, l: np.ndarray,
+def premium_discount_at(result: Dict[str, Any], h: np.ndarray, lo: np.ndarray,
                         c: np.ndarray, i: int, mode: str = "swing",
                         ipda_lookback: int = 40) -> Optional[dict]:
     """Version publique causale de :func:`_premium_discount_at` sur un résultat
@@ -69,10 +69,10 @@ def premium_discount_at(result: Dict[str, Any], h: np.ndarray, l: np.ndarray,
     if mode == "ipda":
         lo_w = max(0, i - int(ipda_lookback) + 1)
         return _pd_from_range(float(h[lo_w:i + 1].max()),
-                              float(l[lo_w:i + 1].min()),
+                              float(lo[lo_w:i + 1].min()),
                               int(result["_trend_arr"][i]), float(c[i]))
     return _premium_discount_at(result["_all_swings"], result["_trend_arr"],
-                                h, l, c, i)
+                                h, lo, c, i)
 
 
 def _trendlines(swing_highs: List[dict], swing_lows: List[dict],

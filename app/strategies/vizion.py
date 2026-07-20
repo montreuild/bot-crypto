@@ -26,16 +26,15 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import polars as pl
 
-from app.engine.engine import BaseStrategy
-from app.core import smc
-from app.core import ict
+from app.core import ict, smc
 from app.core.indicators_core import atr_wilder
-
-logger = logging.getLogger(__name__)
 
 # Table canonique (V4-A) — l'ancienne version locale excluait 6m/8h ;
 # la canonique les inclut (entrées inertes : aucun TF tradé).
 from app.core.timeframes import HTF_SECONDS_MAP as _HTF_SEC_MAP
+from app.engine.engine import BaseStrategy
+
+logger = logging.getLogger(__name__)
 
 
 class Strategy(BaseStrategy):

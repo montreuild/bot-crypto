@@ -14,9 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.core.execution import (borrow_cost, close_pnl, gross_pnl, net_pnl,
-                                risk_position_size, trade_fees)
-
+from app.core.execution import borrow_cost, close_pnl, gross_pnl, net_pnl, risk_position_size, trade_fees
 
 # ── 1. Formules unitaires ───────────────────────────────────────────────────
 
@@ -87,8 +85,9 @@ def _backtest_close_pnl() -> float:
         trades=[], equity_curve=[], timestamps=[],
     )
     # df minimal pour le timestamp de sortie
-    import polars as pl
     from datetime import datetime, timedelta
+
+    import polars as pl
     t0 = datetime(2024, 1, 1)
     ctx.df = pl.DataFrame({"time": [t0 + timedelta(hours=i) for i in range(5)],
                            "close": [ENTRY] * 5})

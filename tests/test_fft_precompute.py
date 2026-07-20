@@ -5,9 +5,9 @@ La FFT brute (détrending + Hanning + rfft) ne dépend pas des paramètres optim
 seulement de la fenêtre de prix. On la mémoïse par barre dans prepare_for_backtest
 et score() la réutilise. Le résultat doit être STRICTEMENT identique au calcul live.
 """
+import datetime as dt
 import os
 import sys
-import datetime as dt
 
 import numpy as np
 import polars as pl
@@ -15,7 +15,7 @@ import polars as pl
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.core.indicators import precompute_df
-from app.strategies.fft_spectral import Strategy, _fft_spectrum, _fft_select, _fft_direction
+from app.strategies.fft_spectral import Strategy, _fft_direction, _fft_select, _fft_spectrum
 
 
 def _ohlcv(n=700, seed=5):
@@ -47,9 +47,13 @@ def test_spectrum_split_matches_monolithic():
 def test_precompute_exact_vs_live():
     """score() avec cache == score() live, barre par barre (cooldown inclus)."""
     df = _ohlcv()
-    A = Strategy(); A._bt_symbol = ""; A._bt_tf = "4h"; A._bt_params = None
+    A = Strategy()
+    A._bt_symbol = ""
+    A._bt_tf = "4h"
+    A._bt_params = None
     A.prepare_for_backtest(df)
-    B = Strategy(); B._bt_symbol = ""  # pas de prepare → chemin live
+    B = Strategy()
+    B._bt_symbol = ""  # pas de prepare → chemin live
 
     assert A._bt_spectra, "le cache de spectres doit être peuplé"
     mb = A.min_bars_required(None)
@@ -67,7 +71,9 @@ def test_precompute_exact_vs_live():
 
 def test_reset_clears_spectra():
     df = _ohlcv()
-    s = Strategy(); s._bt_symbol = ""; s._bt_params = None
+    s = Strategy()
+    s._bt_symbol = ""
+    s._bt_params = None
     s.prepare_for_backtest(df)
     assert s._bt_spectra
     s.reset_model()

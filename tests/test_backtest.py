@@ -1,15 +1,18 @@
 """
 Tests unitaires — Backtester & BacktestResult
 """
-import pytest
-import sys, os
+import os
+import sys
 from datetime import datetime, timedelta
+
 import numpy as np
 import polars as pl
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.engine.backtest import BacktestResult, Backtester
-from app.engine.engine import Engine, BaseStrategy
+from app.engine.backtest import Backtester, BacktestResult
+from app.engine.engine import BaseStrategy, Engine
 
 
 def _make_df(n=300, trend="up"):
@@ -27,7 +30,8 @@ def _make_df(n=300, trend="up"):
     closes = np.array(closes)
     highs  = closes * (1 + np.abs(np.random.randn(n) * 0.005))
     lows   = closes * (1 - np.abs(np.random.randn(n) * 0.005))
-    opens  = np.roll(closes, 1); opens[0] = closes[0]
+    opens  = np.roll(closes, 1)
+    opens[0] = closes[0]
     vols   = np.random.uniform(1000, 5000, n)
     start  = datetime(2024, 1, 1)
     times  = [start + timedelta(hours=i) for i in range(n)]
@@ -181,3 +185,127 @@ class TestBacktester:
         if closed:
             assert "stop_trail" in closed[0]
             assert isinstance(closed[0]["stop_trail"], list)
+
+
+class TightBracketStrategy(BaseStrategy):
+    """Bracket fixe ±10% (stop_hint/tp_hint), trailing désactivé — utilisée
+    pour forcer une barre où stop ET take-profit sont TOUS DEUX touchables
+    (STRAT-06/BT-13)."""
+    name = "tight_bracket"
+
+    def score(self, df, params=None, df_htf=None, symbol: str = ""):
+        if len(df) < 30:
+            return {"side": "none", "score": 0}
+        c = float(df["close"][-1])
+        return {
+            "side": "long", "score": 0.80, "name": "tight_bracket", "reason": "test",
+            "stop_hint": c * 0.90, "tp_hint": c * 1.10, "disable_trailing": True,
+        }
+
+
+class TestTpSlAmbiguousBars:
+    """STRAT-06/BT-13 : compteur diagnostique tp_sl_ambiguous_bars — mesure
+    seule, ne change pas la résolution (le stop continue de toujours l'emporter)."""
+
+    def _df_with_ambiguous_bar(self, n=230, ambiguous_bar=220):
+        np.random.seed(7)
+        closes = [100.0]
+        for _ in range(n - 1):
+            closes.append(max(closes[-1] + np.random.randn() * 0.3, 1.0))
+        closes = np.array(closes)
+        highs = closes * (1 + np.abs(np.random.randn(n) * 0.003))
+        lows  = closes * (1 - np.abs(np.random.randn(n) * 0.003))
+        opens = np.roll(closes, 1)
+        opens[0] = closes[0]
+        vols  = np.random.uniform(1000, 5000, n)
+        # Barre volontairement hors des bornes du bracket ±10% des deux côtés.
+        highs[ambiguous_bar] = closes[ambiguous_bar] * 3.0
+        lows[ambiguous_bar]  = closes[ambiguous_bar] * 0.3
+        start = datetime(2024, 1, 1)
+        times = [start + timedelta(hours=i) for i in range(n)]
+        return pl.DataFrame({"time": times, "open": opens, "high": highs,
+                             "low": lows, "close": closes, "volume": vols})
+
+    def test_counts_bar_where_both_would_hit(self):
+        engine = Engine()
+        engine.register(TightBracketStrategy())
+        cfg = _cfg()
+        cfg["strategies"]["enabled"] = ["tight_bracket"]
+        bt = Backtester(engine, cfg)
+        df = self._df_with_ambiguous_bar()
+        result = bt.run(df, "BTC/USDC")
+        assert result.diagnostics["tp_sl_ambiguous_bars"] >= 1
+
+    def test_stop_still_wins_resolution_unchanged(self):
+        """Le comportement de résolution (stop prioritaire) n'est pas modifié —
+        seule une mesure diagnostique est ajoutée."""
+        engine = Engine()
+        engine.register(TightBracketStrategy())
+        cfg = _cfg()
+        cfg["strategies"]["enabled"] = ["tight_bracket"]
+        bt = Backtester(engine, cfg)
+        df = self._df_with_ambiguous_bar()
+        result = bt.run(df, "BTC/USDC")
+        closed = [t for t in result.trades if t.get("status") == "closed"]
+        assert closed, "aucun trade fermé — le scénario n'a pas déclenché le bracket"
+        assert closed[0]["exit_reason"] == "stop_loss"
+
+    def test_zero_when_no_ambiguity(self):
+        engine = Engine()
+        engine.register(DummyLongStrategy())
+        bt = Backtester(engine, _cfg())
+        df = _make_df(300)
+        result = bt.run(df, "BTC/USDC")
+        assert result.diagnostics["tp_sl_ambiguous_bars"] == 0
+
+
+class _NoSignalStrategy(BaseStrategy):
+    """N'émet jamais de signal — utile pour isoler le calcul du benchmark
+    Buy & Hold (FIN-04) des mécaniques d'entrée/sortie."""
+    name = "no_signal"
+    warmup_bars = 250
+
+    def score(self, df, params=None, df_htf=None, symbol: str = ""):
+        return {"side": "none", "score": 0}
+
+
+class TestBuyAndHold:
+    """FIN-04 : benchmark Buy & Hold calculé sur la MÊME fenêtre que le backtest."""
+
+    def test_buy_and_hold_present_in_result(self):
+        engine = Engine()
+        engine.register(DummyLongStrategy())
+        bt = Backtester(engine, _cfg())
+        df = _make_df(300, trend="up")
+        result = bt.run(df, "BTC/USDC")
+        d = result.to_dict()
+        assert d["buy_and_hold_pct"] is not None
+        assert d["buy_and_hold_pnl"] is not None
+        assert d["alpha"] is not None
+        assert d["alpha"] == pytest.approx(round(result.total_pnl - result.buy_and_hold_pnl, 4))
+
+    def test_buy_and_hold_start_price_matches_dynamic_warmup(self):
+        """Avant le correctif, `_add_buy_and_hold` recalculait un warmup figé à
+        210 au lieu du warmup dynamique (>= 250 ici, `_NoSignalStrategy.
+        warmup_bars`) réellement utilisé par la boucle de trading — le prix de
+        départ du B&H était désynchronisé de la première barre tradée."""
+        engine = Engine()
+        engine.register(_NoSignalStrategy())
+        cfg = _cfg()
+        cfg["strategies"]["enabled"] = ["no_signal"]
+        bt = Backtester(engine, cfg)
+        df = _make_df(300, trend="up")
+        result = bt.run(df, "BTC/USDC")
+
+        first_price = float(df["close"][250])
+        last_price  = float(df["close"][-1])
+        expected_pct = round((last_price - first_price) / first_price * 100, 3)
+        assert result.buy_and_hold_pct == pytest.approx(expected_pct)
+
+    def test_buy_and_hold_absent_when_df_too_short(self):
+        engine = Engine()
+        engine.register(DummyLongStrategy())
+        bt = Backtester(engine, _cfg())
+        df = _make_df(150, trend="up")  # < warmup (210) : fenêtre trop courte
+        result = bt.run(df, "BTC/USDC")
+        assert getattr(result, "buy_and_hold_pct", None) is None

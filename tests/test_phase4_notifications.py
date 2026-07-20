@@ -1,5 +1,5 @@
 """Phase 4 — hiérarchie de notifications 3 niveaux, throttling, flux UI, réconciliation."""
-from app.core.notifications import Notifier, LEVELS
+from app.core.notifications import LEVELS, Notifier
 
 
 def _notifier():

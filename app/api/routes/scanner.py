@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.api import state
-from app.api.helpers import verify_api_key, _clean
+from app.api.helpers import _clean, verify_api_key
 from app.api.services import scanner_service
 from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
 from app.core.exchange import create_exchange

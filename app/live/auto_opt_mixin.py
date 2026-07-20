@@ -22,7 +22,7 @@ import time
 
 from app.core.bot_identity import build_slot_key
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.engine.optimizer import get_active_strategies_per_tf, RECOMMENDED_LIMIT
+from app.engine.optimizer import RECOMMENDED_LIMIT, get_active_strategies_per_tf
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ class AutoOptMixin:
     def _load_all_strategies(self) -> None:
         """Charge toutes les stratégies disponibles dans PARAM_SPACES + enabled."""
         import re as _re
+
         from app.engine.optimizer import PARAM_SPACES
         to_load = set(PARAM_SPACES.keys()) | set(self.cfg["strategies"].get("enabled", []))
         for name in to_load:
@@ -275,8 +276,8 @@ class AutoOptMixin:
 
     def _lifecycle_thread(self) -> None:
         try:
-            from app.core.oos_tracker import load_oos_tracker
             from app.core.database import get_slot_live_stats, session_scope
+            from app.core.oos_tracker import load_oos_tracker
             oos = load_oos_tracker()
             days = self._fwd_test_lookback_days
             slots_data: dict = {}

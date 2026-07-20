@@ -1,14 +1,15 @@
 """SignalPipeline — collecte, scoring et ranking des signaux par slot strategy::tf."""
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
 
 import polars as pl
 
-from app.core.bot_identity import build_slot_key, build_pos_key
+from app.core.bot_identity import build_pos_key, build_slot_key
 from app.core.timeframes import HTF_MAP as _HTF_MAP
 from app.live.utils import _merge_params
 

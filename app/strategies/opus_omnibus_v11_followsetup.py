@@ -35,20 +35,22 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import polars as pl
 
-from app.engine.engine import BaseStrategyML
 from app.core.indicators import (
-    safe_num as _safe_num,
     bars_since_cross,
-    rolling_slope,
+    pre_val,
     rolling_hurst,
     rolling_rank_pct,
-    pre_val,
+    rolling_slope,
 )
+from app.core.indicators import (
+    safe_num as _safe_num,
+)
+from app.engine.engine import BaseStrategyML
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Pipeline V4 dupliqué (FeatureBuilder polars + régime + setups V10 sans EXIT_TD).
 # ─────────────────────────────────────────────────────────────────────────────
-_SUPPORTED_TFS = ("15m", "30m", "1h")
+_SUPPORTED_TFS = ("15m", "30m", "1h", "4h", "1d")
 
 REGIME_RANGE    = 0
 REGIME_TREND_UP = 1
@@ -103,9 +105,16 @@ def _detect_timeframe(df: pl.DataFrame) -> Optional[str]:
             return None
     if med_s <= 0:
         return None
-    if abs(med_s - 900)  < 60:  return "15m"
-    if abs(med_s - 1800) < 120: return "30m"
-    if abs(med_s - 3600) < 240: return "1h"
+    if abs(med_s - 900)  < 60:
+        return "15m"
+    if abs(med_s - 1800) < 120:
+        return "30m"
+    if abs(med_s - 3600) < 240:
+        return "1h"
+    if abs(med_s - 14400) < 960:
+        return "4h"
+    if abs(med_s - 86400) < 5760:
+        return "1d"
     return None
 
 
@@ -291,8 +300,12 @@ def _build_features(raw_df: pl.DataFrame) -> Optional[pl.DataFrame]:
     l_np = df["low"].to_numpy()
     c_np = df["close"].to_numpy()
     a    = 1.0 / 14.0
-    up = np.empty_like(h_np); up[:] = np.nan; up[1:] = h_np[1:] - h_np[:-1]
-    dn = np.empty_like(l_np); dn[:] = np.nan; dn[1:] = -(l_np[1:] - l_np[:-1])
+    up = np.empty_like(h_np)
+    up[:] = np.nan
+    up[1:] = h_np[1:] - h_np[:-1]
+    dn = np.empty_like(l_np)
+    dn[:] = np.nan
+    dn[1:] = -(l_np[1:] - l_np[:-1])
     plus_dm  = np.where((up > dn) & (up > 0), up, 0.0)
     minus_dm = np.where((dn > up) & (dn > 0), dn, 0.0)
     c_prev = np.concatenate(([np.nan], c_np[:-1]))
@@ -778,11 +791,15 @@ class Strategy(BaseStrategyML):
 
     def reset_model(self) -> None:
         with self._lock:
-            self._amp_models.clear(); self._dir_models.clear()
-            self._amp_cal.clear(); self._dir_cal.clear()
+            self._amp_models.clear()
+            self._dir_models.clear()
+            self._amp_cal.clear()
+            self._dir_cal.clear()
             self._feature_cols.clear()
-            self._medians.clear(); self._trained_tfs.clear()
-            self._best_auc_per_tf.clear(); self._train_meta.clear()
+            self._medians.clear()
+            self._trained_tfs.clear()
+            self._best_auc_per_tf.clear()
+            self._train_meta.clear()
             self._last_retrain.clear()
             self._last_flip_cnt.clear()
             self._managed_externally = False
@@ -852,8 +869,10 @@ class Strategy(BaseStrategyML):
     # Entraînement avec cache process-wide (cf. app/core/train_cache.py) :
     # les retrains identiques (même fenêtre, mêmes hyperparams d'entraînement)
     # sont réutilisés entre les trials de l'optimiseur au lieu d'être relancés.
-    _TRAIN_STATE_ATTRS = ('_amp_models', '_dir_models', '_amp_cal', '_dir_cal', '_feature_cols', '_medians', '_best_auc_per_tf', '_train_meta')
-    _TRAIN_PARAM_KEYS  = ('amp_top_pct', 'n_estimators', 'num_leaves', 'learning_rate', 'label_horizons', 'calibrate')
+    _TRAIN_STATE_ATTRS = ('_amp_models', '_dir_models', '_amp_cal', '_dir_cal', '_feature_cols',
+                         '_medians', '_best_auc_per_tf', '_train_meta')
+    _TRAIN_PARAM_KEYS  = ('amp_top_pct', 'n_estimators', 'num_leaves', 'learning_rate',
+                         'label_horizons', 'calibrate')
 
     def _train(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
         from app.core.train_cache import cached_train
@@ -958,7 +977,8 @@ class Strategy(BaseStrategyML):
                 )
             except Exception as e:
                 logger.warning(f"[OmnibusV11-FollowSetup] {tf_key} : entraînement {target} KO ({e})")
-                del ds_tr, ds_va; gc.collect()
+                del ds_tr, ds_va
+                gc.collect()
                 return False
             aucs[target] = float(booster.best_score.get("valid_0", {}).get("auc", 0.0))
             boosters[target] = booster

@@ -11,8 +11,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import app.core.derivatives as dv
 from app.core.derivatives import DerivativesStore
-from app.strategies.funding_flow import Strategy
 from app.core.indicators import precompute_df
+from app.strategies.funding_flow import Strategy
 
 
 def _ohlcv(n=260, t0=datetime(2024, 1, 1), seed=0):

@@ -85,10 +85,23 @@ def risk_position_size(capital: float, risk_pct: float, entry: float,
     return size, notional
 
 
-def cap_notional(size: float, price: float, max_notional: float) -> tuple:
-    """Plafonne (size, notional) à un notionnel maximal absolu."""
-    notional = float(size) * float(price)
-    if notional > max_notional:
-        notional = max(float(max_notional), 0.0)
-        size     = notional / price if price > 0 else 0.0
-    return size, notional
+def size_impact_cost(notional: float, spread_pct: float, slippage_k: float,
+                     avg_quote_volume: float) -> float:
+    """Coût d'impact croissant avec la taille RELATIVE du trade (participation
+    au volume) — 0.0 si le volume moyen est absent/nul (BT-10, FIN-07).
+
+    ``notional × spread_pct × k × (notional / volume_quote_moyen)`` : un trade
+    à 1 % du volume moyen coûte ~1 % de spread en plus ; à 50 %, ×50. Linéaire
+    en participation, quadratique en notional (impact de marché standard).
+
+    Formule UNIQUE partagée par ``Backtester._impact_cost`` (modèle
+    ``backtest.slippage_model: size``, moyenne 20 barres causale) et le
+    slippage paper trading live (``trading.paper_slippage_model: size``,
+    moyenne glissante de ``OHLCVCache``) — évite de re-diverger les deux
+    chemins comme l'estimation frais maker/taker (cf. FIN-06).
+    """
+    if avg_quote_volume <= 0 or notional <= 0:
+        return 0.0
+    return float(notional) * float(spread_pct) * float(slippage_k) * (float(notional) / float(avg_quote_volume))
+
+

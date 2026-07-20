@@ -2,17 +2,17 @@
 Tests E2E — cycle complet de trading (signal → position → trailing → clôture).
 Vérifie le pipeline complet du backtester avec des scénarios réalistes.
 """
-import pytest
-import sys
 import os
+import sys
+from datetime import datetime, timedelta
+
 import numpy as np
 import polars as pl
-from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.engine.backtest import BacktestResult, Backtester
-from app.engine.engine import Engine, BaseStrategy
+from app.engine.backtest import Backtester, BacktestResult
+from app.engine.engine import BaseStrategy, Engine
 
 
 def _make_trending_df(n=500, trend_up=True, seed=42):

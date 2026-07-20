@@ -2,26 +2,30 @@
 
 
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 import numpy as np
 import polars as pl
 
-from app.engine.engine import BaseStrategy
 from app.core.indicators import (
-    rsi as calc_rsi,
     atr_val as calc_atr,
-    macd_hist_last3,
+)
+from app.core.indicators import (
+    bb_squeeze,
     ema_window,
-    vol_ratio as calc_vol,
-    htf_trend,
+    macd_hist_last3,
+    nearest_resistance,
+    nearest_support,
     pre_val,
     support_resistance_levels,
-    nearest_support,
-    nearest_resistance,
-    stochastic as calc_stoch,
-    bb_squeeze,
 )
+from app.core.indicators import (
+    rsi as calc_rsi,
+)
+from app.core.indicators import (
+    stochastic as calc_stoch,
+)
+from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -307,8 +311,10 @@ class Strategy(BaseStrategy):
 
         # ── EMA(20) et EMA(50) ────────────────────────────────────────────────
         _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
-        ema20    = pre_val(df, _ema_map.get(ema_fast, "")) or float(ema_window(df, ema_fast, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
-        ema50    = pre_val(df, _ema_map.get(ema_slow, "")) or float(ema_window(df, ema_slow, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        ema20    = pre_val(df, _ema_map.get(ema_fast, "")) or float(
+            ema_window(df, ema_fast, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        ema50    = pre_val(df, _ema_map.get(ema_slow, "")) or float(
+            ema_window(df, ema_slow, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
         ema_bull = c_now > ema20 > ema50
         ema_bear = c_now < ema20 < ema50
 

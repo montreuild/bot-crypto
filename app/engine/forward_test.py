@@ -24,7 +24,6 @@ from datetime import datetime, timezone
 import numpy as np
 
 from app.core.bot_identity import build_slot_key
-from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.core.oos_tracker import (
     _closed_trades,
     _edge_contract,
@@ -33,6 +32,7 @@ from app.core.oos_tracker import (
     _save_record,
     _verdict,
 )
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.core.timeframes import TF_MINUTES as _TF_MINUTES
 
 logger = logging.getLogger(__name__)
@@ -59,8 +59,8 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
     """Re-backteste un slot sur données fraîches, construit le contrat MC et
     compare aux trades réels. Retourne l'enregistrement (ou None si données
     insuffisantes)."""
-    from app.engine.engine import Engine
     from app.engine.backtest import Backtester, MonteCarlo
+    from app.engine.engine import Engine
 
     bars = _bars_for_lookback(timeframe, lookback_days)
     df = fetch_ohlcv(symbol, timeframe, limit=bars)

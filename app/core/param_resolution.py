@@ -12,7 +12,6 @@ Précédence de résolution : strategy_params (base) < optimizer_results
 """
 from typing import Optional
 
-
 # ---------------------------------------------------------------------------
 # Fusion des paramètres de stratégie
 # ---------------------------------------------------------------------------

@@ -38,18 +38,18 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import polars as pl
 
-from app.engine.engine import BaseStrategyML
 from app.core.indicators import (
     bars_since_cross,
-    rolling_slope,
+    pre_val,
     rolling_hurst,
     rolling_rank_pct,
-    pre_val,
+    rolling_slope,
 )
+from app.engine.engine import BaseStrategyML
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_TFS = ("15m", "30m", "1h")
+_SUPPORTED_TFS = ("15m", "30m", "1h", "4h", "1d")
 
 # Codes / labels de régime (alignés sur ``app.engine.risk`` V4)
 REGIME_RANGE    = 0
@@ -111,9 +111,16 @@ def _detect_timeframe(df: pl.DataFrame) -> Optional[str]:
             return None
     if med_s <= 0:
         return None
-    if abs(med_s - 900)  < 60:  return "15m"
-    if abs(med_s - 1800) < 120: return "30m"
-    if abs(med_s - 3600) < 240: return "1h"
+    if abs(med_s - 900)  < 60:
+        return "15m"
+    if abs(med_s - 1800) < 120:
+        return "30m"
+    if abs(med_s - 3600) < 240:
+        return "1h"
+    if abs(med_s - 14400) < 960:
+        return "4h"
+    if abs(med_s - 86400) < 5760:
+        return "1d"
     return None
 
 
@@ -336,8 +343,12 @@ def _build_features(raw_df: pl.DataFrame) -> Optional[pl.DataFrame]:
     l_np = df["low"].to_numpy()
     c_np = df["close"].to_numpy()
     a    = 1.0 / 14.0
-    up = np.empty_like(h_np); up[:] = np.nan; up[1:] = h_np[1:] - h_np[:-1]
-    dn = np.empty_like(l_np); dn[:] = np.nan; dn[1:] = -(l_np[1:] - l_np[:-1])
+    up = np.empty_like(h_np)
+    up[:] = np.nan
+    up[1:] = h_np[1:] - h_np[:-1]
+    dn = np.empty_like(l_np)
+    dn[:] = np.nan
+    dn[1:] = -(l_np[1:] - l_np[:-1])
     plus_dm  = np.where((up > dn) & (up > 0), up, 0.0)
     minus_dm = np.where((dn > up) & (dn > 0), dn, 0.0)
     c_prev = np.concatenate(([np.nan], c_np[:-1]))
@@ -797,7 +808,8 @@ class Strategy(BaseStrategyML):
             )
         except Exception as e:
             logger.warning(f"[OpusV4-RT] {tf_key} : entraînement amp KO ({e})")
-            del ds_train_amp, ds_valid_amp; gc.collect()
+            del ds_train_amp, ds_valid_amp
+            gc.collect()
             return False
         auc_amp = booster_amp.best_score.get("valid_0", {}).get("auc", 0.0)
         del ds_train_amp, ds_valid_amp
@@ -818,7 +830,8 @@ class Strategy(BaseStrategyML):
             )
         except Exception as e:
             logger.warning(f"[OpusV4-RT] {tf_key} : entraînement dir KO ({e})")
-            del ds_train_dir, ds_valid_dir; gc.collect()
+            del ds_train_dir, ds_valid_dir
+            gc.collect()
             return False
         auc_dir = booster_dir.best_score.get("valid_0", {}).get("auc", 0.0)
         del ds_train_dir, ds_valid_dir, X_train, X_valid

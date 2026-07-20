@@ -1,10 +1,29 @@
 """État partagé de l'API — variables initialisées par init_app(), accédées via `state.cfg`."""
+import os
 import threading
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 # ── Runtime state ──────────────────────────────────────────────────────────
 cfg          = None   # dict config chargé depuis config.yaml
 trader       = None   # instance LiveTrader (ou None si bot arrêté)
 SessionLocal = None   # factory SQLAlchemy session
+
+# ── Rate limiter (SEC-04) ────────────────────────────────────────────────────
+# Défini ici (et non dans main.py) : main.py importe les modules de routes
+# AVANT toute définition de module-level — un `from app.api.main import
+# limiter` dans un fichier de route lèverait une ImportError circulaire.
+# `state` est déjà importé en premier par chaque route (`from app.api import
+# state`), donc `state.limiter` y est toujours disponible pour les décorateurs
+# `@state.limiter.limit(...)` par endpoint, en plus de `app.state.limiter`
+# (SlowAPIMiddleware) réglé sur le MÊME objet dans main.py.
+# Clé = IP du pair TCP (get_remote_address ne lit PAS X-Forwarded-For → non
+# spoofable, cohérent avec helpers._extract_client_ip). Limite globale
+# généreuse (surchargeable via RATE_LIMIT) ; les endpoints sensibles/coûteux
+# ont des limites `@state.limiter.limit(...)` plus strictes par route.
+_RATE_LIMIT = os.environ.get("RATE_LIMIT", "300/minute")
+limiter = Limiter(key_func=get_remote_address, default_limits=[_RATE_LIMIT])
 
 # ── Sémaphores & verrous ───────────────────────────────────────────────────
 _bt_exchange       = None

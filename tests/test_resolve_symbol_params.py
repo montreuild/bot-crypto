@@ -6,7 +6,9 @@ HÉRITÉE (sans dimension symbole) est réputée calibrée pour BTC/USDC et ne
 s'applique PAS aux autres symboles.
 """
 from app.core.param_resolution import (
-    resolve_strategy_params, _select_symbol_entry, DEFAULT_CONFIG_SYMBOL,
+    DEFAULT_CONFIG_SYMBOL,
+    _select_symbol_entry,
+    resolve_strategy_params,
 )
 
 

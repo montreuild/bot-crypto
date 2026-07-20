@@ -75,10 +75,10 @@ def build_chart_payload(df, symbol: str, timeframe: str) -> dict:
     def _rsi_series():
         out = []
         for i in range(n):
-            g, l = _safe(gain[i]), _safe(loss[i])
-            if g is None or l is None:
+            g, ls = _safe(gain[i]), _safe(loss[i])
+            if g is None or ls is None:
                 continue
-            rsi = 100.0 if l == 0.0 else 100 - (100 / (1 + g / l))
+            rsi = 100.0 if ls == 0.0 else 100 - (100 / (1 + g / ls))
             if not math.isnan(rsi):
                 out.append({"time": int(times[i]), "value": round(rsi, 2)})
         return out
@@ -157,14 +157,20 @@ def _tp_sl(side: str, entry: float, atr: float, tp_mult: float, sl_mult: float):
 
 def _setup_series_v8(df, tf: str, limit: int) -> dict:
     """Markers de setups V8 par bougie (modèles V4 pré-entraînés), avec TP/SL."""
-    from app.strategies.opus_stat_pretrained_v4 import (
-        _FeatureBuilder, _load_pretrained, _to_pandas_window, _detect_timeframe,
-    )
-    from app.strategies.opus_omnibus_v8 import (
-        _DEFAULT_SETUPS, _classify_regime, _evaluate_setup,
-        REGIME_LABELS, REGIME_CHOPPY,
-    )
     from app.core.indicators import bearish_excess_series
+    from app.strategies.opus_omnibus_v8 import (
+        _DEFAULT_SETUPS,
+        REGIME_CHOPPY,
+        REGIME_LABELS,
+        _classify_regime,
+        _evaluate_setup,
+    )
+    from app.strategies.opus_stat_pretrained_v4 import (
+        _detect_timeframe,
+        _FeatureBuilder,
+        _load_pretrained,
+        _to_pandas_window,
+    )
 
     tf_detected = _detect_timeframe(df)
     if tf_detected not in ("15m", "30m", "1h"):
@@ -254,10 +260,18 @@ def _setup_series_v11(df, tf: str, limit: int, strategy: str) -> dict:
     Pour V12, applique le veto/confirmation ml_dynamic_threshold par marker.
     """
     import os
+
     from app.strategies.opus_omnibus_v11 import (
-        _build_features, _window_polars, _regime_history_v11, _exit_td_window_active,
-        _apply_setup_overrides, _select_setup, _signal_up_dynamic_risk,
-        _detect_timeframe, _SUPPORTED_TFS, REGIME_LABELS,
+        _SUPPORTED_TFS,
+        REGIME_LABELS,
+        _apply_setup_overrides,
+        _build_features,
+        _detect_timeframe,
+        _exit_td_window_active,
+        _regime_history_v11,
+        _select_setup,
+        _signal_up_dynamic_risk,
+        _window_polars,
     )
     if strategy == "v12":
         from app.strategies.opus_omnibus_v12 import Strategy as _S
@@ -390,8 +404,8 @@ def build_smc_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
     """Analyse SMC complète (structure, liquidité, OB/FVG, sessions, HTF,
     signal smart_money) — payload brut prêt pour _clean/JSONResponse."""
     from app.core import smc
-    from app.strategies.smart_money import Strategy as _SMCStrategy
     from app.core.param_resolution import resolve_strategy_params
+    from app.strategies.smart_money import Strategy as _SMCStrategy
 
     # Overlay optimizer_results du timeframe (même résolution que le live et
     # le backtest) → l'UI reflète la config RÉELLEMENT tradée par le bot.
@@ -606,10 +620,10 @@ def build_smc_replay_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
     """Payload de rejeu Smart Money : moteur causal + trades du VRAI
     Backtester avec les paramètres résolus du TF/symbole."""
     from app.core import smc
-    from app.strategies.smart_money import Strategy as _SMCStrategy
-    from app.engine.engine import Engine as _Engine
-    from app.engine.backtest import Backtester as _Backtester
     from app.core.param_resolution import resolve_strategy_params
+    from app.engine.backtest import Backtester as _Backtester
+    from app.engine.engine import Engine as _Engine
+    from app.strategies.smart_money import Strategy as _SMCStrategy
 
     n = len(df)
     times = df["time"].dt.epoch(time_unit="s").to_list()
@@ -735,8 +749,10 @@ def build_signals_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
             # setup, régime, probas, paramètres de sortie. Tout est optionnel —
             # une stratégie classique renverra simplement None côté UI.
             def _num(v, nd=3):
-                try: return round(float(v), nd) if v is not None else None
-                except (TypeError, ValueError): return None
+                try:
+                    return round(float(v), nd) if v is not None else None
+                except (TypeError, ValueError):
+                    return None
             signals.append({
                 "strategy":   name,
                 "side":       side,

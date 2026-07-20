@@ -5,7 +5,6 @@ import logging
 import logging.handlers
 import os
 import sys
-from typing import Optional
 
 
 def setup_logging(cfg: dict) -> logging.Logger:

@@ -1,18 +1,17 @@
 """
 Tests unitaires — app.strategies.registry (auto-découverte des stratégies)
 """
-import importlib
 import glob
+import importlib
 import os
-import pytest
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.engine.registry import (
+    get_fixed_params,
     get_param_spaces,
     get_strategy_timeframes,
-    get_fixed_params,
 )
 
 
@@ -102,7 +101,7 @@ class TestRegistry:
 
     def test_optimizer_sees_same_dicts(self):
         """PARAM_SPACES et STRATEGY_TIMEFRAMES dans optimizer.py viennent du registry."""
-        from app.engine.optimizer import PARAM_SPACES, STRATEGY_TIMEFRAMES, FIXED_PARAMS
+        from app.engine.optimizer import FIXED_PARAMS, PARAM_SPACES, STRATEGY_TIMEFRAMES
 
         assert PARAM_SPACES == get_param_spaces(), (
             "optimizer.PARAM_SPACES doit correspondre au registry"
@@ -121,6 +120,7 @@ class TestRegistry:
         la prendrait en compte.
         """
         import types
+
         from app.engine.engine import BaseStrategy
 
         # Créer une fausse classe Strategy

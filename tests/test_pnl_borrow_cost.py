@@ -4,9 +4,8 @@ Tests — Issue #7 : vérification que borrow_cost est bien déduit du PnL réal
 Asserts:
     realized_pnl = gross_pnl - fees - borrow_cost
 """
-import sys
 import os
-import math
+import sys
 
 import pytest
 

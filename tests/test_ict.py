@@ -120,14 +120,18 @@ def test_silver_bullet_flags():
 def test_judas_swing():
     n = 20
     ep = np.array([(8 if i >= 14 else 12) * 3600 + i * 86400 for i in range(n)], np.int64)
-    h = np.full(n, 100.0); l = np.full(n, 99.0); c = np.full(n, 99.5)
+    h = np.full(n, 100.0)
+    lo = np.full(n, 99.0)
+    c = np.full(n, 99.5)
     # barre 15 (heure 8, dans la fenêtre) balaie le plus-haut récent puis referme
-    h[15] = 102.0; c[15] = 99.6            # high > max(100) mais clôture < 100
-    out = ict.judas_swing(h, l, c, ep, open_hour=8, window=3, lookback=12)
+    h[15] = 102.0
+    c[15] = 99.6            # high > max(100) mais clôture < 100
+    out = ict.judas_swing(h, lo, c, ep, open_hour=8, window=3, lookback=12)
     assert out[15] == -1
     # même mèche hors fenêtre (barre 5, heure 12) → ignorée
-    h[5] = 102.0; c[5] = 99.6
-    assert ict.judas_swing(h, l, c, ep, open_hour=8, window=3, lookback=12)[5] == 0
+    h[5] = 102.0
+    c[5] = 99.6
+    assert ict.judas_swing(h, lo, c, ep, open_hour=8, window=3, lookback=12)[5] == 0
 
 
 def test_smt_divergence_and_causality():

@@ -4,17 +4,17 @@ Vérifie que le pré-calcul de la série complète (via prepare_for_backtest +
 macd_hist_last3) donne un backtest STRICTEMENT identique au recalcul par fenêtre,
 y compris avec des paramètres MACD non par défaut (chemin réellement accéléré).
 """
+import datetime as dt
 import os
 import sys
-import datetime as dt
 
 import numpy as np
 import polars as pl
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.engine.engine import Engine
 from app.engine.backtest import Backtester
+from app.engine.engine import Engine
 
 
 def _ohlcv(n=1200, seed=3):

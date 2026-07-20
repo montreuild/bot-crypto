@@ -7,8 +7,10 @@ import pytest
 
 ccxt = pytest.importorskip("ccxt")
 
-from app.core.exchange import RobustExchange, create_exchange
-
+from app.core.exchange import (  # noqa: E402 — après importorskip, exchange.py importe ccxt
+    RobustExchange,
+    create_exchange,
+)
 
 # ── Câblage des credentials (passphrase OKX) ─────────────────────────────────
 

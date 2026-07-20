@@ -31,16 +31,15 @@ sur au moins 20 000-50 000 barres. Sur 2000 barres inline, l'AUC sera plus faibl
 """
 
 import logging
-import math
 import os
 import threading
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import polars as pl
 
-from app.engine.engine import BaseStrategyML
 from app.core.indicators import pre_val
+from app.engine.engine import BaseStrategyML
 
 logger = logging.getLogger(__name__)
 
@@ -654,7 +653,7 @@ class Strategy(BaseStrategyML):
             self._diag_record_reject("regime_trend_up")
             self._diag_dump_if_due(cnt)
             return self._none(
-                f"Trend Up — AUC dir ≈ 0.50, pas d'edge (§6.4)",
+                "Trend Up — AUC dir ≈ 0.50, pas d'edge (§6.4)",
                 regime=regime,
             )
 
@@ -767,7 +766,7 @@ class Strategy(BaseStrategyML):
                 f"P(hausse) = {p_up:.2f} → |dist|={dir_dist:.2f} ≥ {dir_thresh:.2f} ✓",
                 f"Heure {hour}h UTC ×{hour_fac:.1f} | Taille {size_fac:.0%}",
                 f"AUC modèle : amp={auc_amp:.2f} dir={auc_dir:.2f}",
-                f"Sortie : clôture barre suivante (next-bar return, rapport §5)",
+                "Sortie : clôture barre suivante (next-bar return, rapport §5)",
             ],
             "reason": (
                 f"OpusV4 {side.upper()} | {regime_lbl} | "

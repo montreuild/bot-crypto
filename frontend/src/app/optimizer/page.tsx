@@ -319,6 +319,7 @@ export default function OptimizerPage() {
   const [nTrials, setNTrials] = useState(60);
   const [nJobs, setNJobs] = useState(1);
   const [autoApply, setAutoApply] = useState(false);
+  const [paramSearchOptim, setParamSearchOptim] = useState(true);
 
   // Jobs list — polled via the useOptimizeStatus hook (no jobId = all jobs)
   const {
@@ -373,6 +374,7 @@ export default function OptimizerPage() {
         n_trials: nTrials,
         n_jobs: nJobs,
         auto_apply: autoApply,
+        param_search_optim: paramSearchOptim,
       });
       toast.success('Job démarré');
     } catch (e: any) {
@@ -482,7 +484,7 @@ export default function OptimizerPage() {
           </div>
 
           {/* Method + numerics */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <div>
               <label className="text-xs text-dim block mb-1.5">Méthode</label>
               <select
@@ -524,6 +526,20 @@ export default function OptimizerPage() {
                   className="rounded"
                 />
                 Auto-apply
+              </label>
+            </div>
+            <div className="flex items-end">
+              <label
+                className="flex items-center gap-2 text-sm cursor-pointer h-10"
+                title="Gel des paramètres à faible impact pendant la recherche (dépistage dans le budget d'essais, espaces larges uniquement)"
+              >
+                <input
+                  type="checkbox"
+                  checked={paramSearchOptim}
+                  onChange={(e) => setParamSearchOptim(e.target.checked)}
+                  className="rounded"
+                />
+                Param Search Optim
               </label>
             </div>
           </div>

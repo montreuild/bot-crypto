@@ -1,7 +1,7 @@
 """Suivi A (régressions) + B (file re-opt & allocation appliquée)."""
 import app.core.bot_identity as bi
 from app.live.capital_allocator import CapitalAllocator
-from app.live.slot_lifecycle import SlotLifecycleManager, LifecycleState
+from app.live.slot_lifecycle import LifecycleState, SlotLifecycleManager
 
 
 # ── A2 : peek_identity accepte un dict de générations préchargé (0 lecture disque)

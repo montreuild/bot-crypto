@@ -1,12 +1,18 @@
 """Stratégie SuperTrend + MACD — confirmation de tendance avec cross et continuation."""
 
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
 import polars as pl
-from app.engine.engine import BaseStrategy
+
 from app.core.indicators import (
-    htf_trend, pre_val, supertrend_last, macd_hist_last3, ema_window,
+    ema_window,
+    htf_trend,
+    macd_hist_last3,
+    pre_val,
+    supertrend_last,
 )
+from app.engine.engine import BaseStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -93,13 +99,13 @@ class Strategy(BaseStrategy):
             return self._none(f"EMA{ema_trend} requiert {min_bars} bougies min, {len(df)} disponibles")
 
         close = df["close"]
-        high  = df["high"]
-        low   = df["low"]
 
         # ── EMAs ─────────────────────────────────────────────────────────────
         _ema_map = {20: "_pre_ema20", 50: "_pre_ema50", 200: "_pre_ema200"}
-        lt      = pre_val(df, _ema_map.get(ema_trend, "")) or float(ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
-        lm      = pre_val(df, _ema_map.get(ema_mid_p, "")) or float(ema_window(df, ema_mid_p, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lt      = pre_val(df, _ema_map.get(ema_trend, "")) or float(
+            ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lm      = pre_val(df, _ema_map.get(ema_mid_p, "")) or float(
+            ema_window(df, ema_mid_p, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
         c_now   = float(close[-1])
 
         trend_bull = c_now >= lt * 0.970 and c_now >= lm * 0.985
@@ -184,9 +190,11 @@ class Strategy(BaseStrategy):
                 return self._none(f"R:R {rr_l:.2f} < {rr_min}")
 
             if long_A:
-                base = 0.72; tag = "ST cross↑ + MACD"
+                base = 0.72
+                tag = "ST cross↑ + MACD"
             else:
-                base = 0.65; tag = "ST bull + MACD accel"
+                base = 0.65
+                tag = "ST bull + MACD accel"
 
             vol_b   = min((vr - vol_min) * 0.04, 0.08)
             macd_b  = 0.05 if macd_x_bull else 0.02
@@ -233,9 +241,11 @@ class Strategy(BaseStrategy):
                 return self._none(f"R:R {rr_s:.2f} < {rr_min} (short)")
 
             if short_A:
-                base = 0.71; tag = "ST cross↓ + MACD"
+                base = 0.71
+                tag = "ST cross↓ + MACD"
             else:
-                base = 0.64; tag = "ST bear + MACD accel"
+                base = 0.64
+                tag = "ST bear + MACD accel"
 
             vol_b  = min((vr - vol_min) * 0.04, 0.08)
             macd_b = 0.05 if macd_x_bear else 0.02
@@ -259,12 +269,16 @@ class Strategy(BaseStrategy):
             }
 
         reasons = []
-        if not (st_bull or st_x_up):   reasons.append(f"ST {'bear' if st_bear else '?'}")
+        if not (st_bull or st_x_up):
+            reasons.append(f"ST {'bear' if st_bear else '?'}")
         if not (macd_x_bull or macd_accel_bull):
             reasons.append(f"MACD {lh:+.5f}")
-        if not rsi_ok:   reasons.append(f"RSI {rsi_now:.0f} hors [{rsi_min:.0f}–{rsi_max:.0f}]")
-        if vr < vol_min: reasons.append(f"Vol {vr:.1f}x < {vol_min}x")
-        if htf < 0 and st_bull: reasons.append("HTF baissier")
+        if not rsi_ok:
+            reasons.append(f"RSI {rsi_now:.0f} hors [{rsi_min:.0f}–{rsi_max:.0f}]")
+        if vr < vol_min:
+            reasons.append(f"Vol {vr:.1f}x < {vol_min}x")
+        if htf < 0 and st_bull:
+            reasons.append("HTF baissier")
         return self._none(" | ".join(reasons) or "Conditions non réunies")
 
     def _none(self, reason: str = "") -> dict:

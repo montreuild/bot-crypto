@@ -1,6 +1,6 @@
 """Routes contrôle du bot — start, stop, reset circuit breaker."""
-import threading as _threading
 import logging
+import threading as _threading
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -13,6 +13,7 @@ router = APIRouter()
 
 
 @router.post("/api/bot/start", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("10/minute")
 def bot_start(request: Request):
     if not state.trader:
         raise HTTPException(503, "Trader non initialisé")
@@ -26,6 +27,7 @@ def bot_start(request: Request):
 
 
 @router.post("/api/bot/stop", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("10/minute")
 def bot_stop(request: Request, close_positions: bool = False):
     if not state.trader:
         raise HTTPException(503, "Trader non initialisé")
@@ -43,6 +45,7 @@ def bot_stop(request: Request, close_positions: bool = False):
 
 
 @router.post("/api/circuit-breakers/reset/{slot_key:path}", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("20/minute")
 def reset_slot_circuit_breaker(slot_key: str, request: Request):
     """Réinitialise la pause d'un slot (format: strategy::tf)."""
     if not state.trader:

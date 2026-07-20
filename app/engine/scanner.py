@@ -1,14 +1,13 @@
 """Scanner de marché — screen des paires, fetch OHLCV via CandleStore (Parquet persistant)."""
 import logging
-import math
 import time
-from typing import List, Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import polars as pl
 
 from app.core.bot_identity import resolve_venue
 from app.core.candle_store import get_store
-from app.core.indicators import precompute_df, detect_regime
+from app.core.indicators import detect_regime, precompute_df
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 logger = logging.getLogger(__name__)
@@ -116,7 +115,6 @@ class MarketScanner:
         car elles ne font pas partie du pré-calcul partagé.
         """
         close  = df["close"]
-        volume = df["volume"]
         n      = len(df)
         if n < 60:
             return {}

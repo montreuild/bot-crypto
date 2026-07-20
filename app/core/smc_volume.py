@@ -7,7 +7,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-def volume_profile(h: np.ndarray, l: np.ndarray, c: np.ndarray, v: np.ndarray,
+def volume_profile(h: np.ndarray, lo: np.ndarray, c: np.ndarray, v: np.ndarray,
                    i: int, lookback: int = 240, n_bins: int = 40,
                    hvn_factor: float = 1.5,
                    lvn_factor: float = 0.5) -> Optional[dict]:
@@ -26,7 +26,7 @@ def volume_profile(h: np.ndarray, l: np.ndarray, c: np.ndarray, v: np.ndarray,
     if i + 1 - lo_w < 30:
         return None
     hh = h[lo_w:i + 1]
-    ll = l[lo_w:i + 1]
+    ll = lo[lo_w:i + 1]
     tp = (hh + ll + c[lo_w:i + 1]) / 3.0
     vv = v[lo_w:i + 1]
     p_min, p_max = float(ll.min()), float(hh.max())

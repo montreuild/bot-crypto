@@ -1,10 +1,12 @@
 """Stratégie Pullback Trend — entrée en pullback vers EMA fast dans une tendance confirmée."""
 
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
 import polars as pl
+
+from app.core.indicators import ema_window, htf_trend, market_structure, pre_val
 from app.engine.engine import BaseStrategy
-from app.core.indicators import market_structure, htf_trend, pre_val, ema_window
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +86,12 @@ class Strategy(BaseStrategy):
             else ema_window(df, ema_fast, full_df=self._bt_full_df, cache=self._ema_cache)
 
         lf  = float(ef[-1])
-        lm  = pre_val(df, _ema_map.get(ema_mid, ""))   or float(ema_window(df, ema_mid,   full_df=self._bt_full_df, cache=self._ema_cache)[-1])
-        ls  = pre_val(df, _ema_map.get(ema_slow, ""))  or float(ema_window(df, ema_slow,  full_df=self._bt_full_df, cache=self._ema_cache)[-1])
-        lt  = pre_val(df, _ema_map.get(ema_trend, "")) or float(ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lm  = pre_val(df, _ema_map.get(ema_mid, ""))   or float(
+            ema_window(df, ema_mid,   full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        ls  = pre_val(df, _ema_map.get(ema_slow, ""))  or float(
+            ema_window(df, ema_slow,  full_df=self._bt_full_df, cache=self._ema_cache)[-1])
+        lt  = pre_val(df, _ema_map.get(ema_trend, "")) or float(
+            ema_window(df, ema_trend, full_df=self._bt_full_df, cache=self._ema_cache)[-1])
         c0  = float(close[-1])
         c1  = float(close[-2])
 

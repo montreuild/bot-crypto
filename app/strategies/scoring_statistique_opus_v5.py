@@ -32,16 +32,15 @@ Méthodologie ML héritée du rapport (inchangée vs V4) :
 """
 
 import logging
-import math
 import os
 import threading
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import polars as pl
 
-from app.engine.engine import BaseStrategyML
 from app.core.indicators import pre_val
+from app.engine.engine import BaseStrategyML
 
 logger = logging.getLogger(__name__)
 
@@ -168,9 +167,12 @@ def _build_features(df: pl.DataFrame, adx_threshold: float = 20.0) -> Optional[n
 
 
 def _hour_multiplier(hour: int) -> float:
-    if 13 <= hour <= 17:    return 1.0
-    if 8  <= hour <= 12:    return 0.7
-    if 0  <= hour <= 5:     return 0.3
+    if 13 <= hour <= 17:
+        return 1.0
+    if 8  <= hour <= 12:
+        return 0.7
+    if 0  <= hour <= 5:
+        return 0.3
     return 0.5
 
 
@@ -688,7 +690,7 @@ class Strategy(BaseStrategyML):
                 f"AUC modèle : amp={auc_amp:.2f} dir={auc_dir:.2f}",
                 f"Exit : max {max_hold_bars} barres + trailing "
                 f"({trail_wide:.1f}×ATR initial)",
-                f"Clustering exploité : §3.1 (50-70% des événements)",
+                "Clustering exploité : §3.1 (50-70% des événements)",
             ],
             "reason": (
                 f"OpusV5 {side.upper()} | {regime_lbl} | "

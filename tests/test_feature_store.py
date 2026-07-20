@@ -1,11 +1,12 @@
 """Tests du FeatureStore — correction de l'incrémental, du hash strict et du partage."""
 import numpy as np
 import polars as pl
-import pytest
 
 from app.core.feature_store import (
-    FeatureStore, FeatureProvider, register_provider, get_feature_store,
     WARMUP_FULL,
+    FeatureProvider,
+    FeatureStore,
+    register_provider,
 )
 
 
@@ -83,8 +84,8 @@ def test_incremental_path_dependent_with_full_warmup(tmp_path):
             "obv": (d["close"].diff().sign().fill_null(0) * d["volume"]).cum_sum(),
         })
 
-    prov = lambda: FeatureProvider("cum", _cumulative_build,
-                                   warmup=WARMUP_FULL, version="1")
+    def prov(): return FeatureProvider("cum", _cumulative_build,
+                                       warmup=WARMUP_FULL, version="1")
     store.get_or_build("BTC/USDC", "1h", df.head(1200), prov())
     incr = store.get_or_build("BTC/USDC", "1h", df, prov())
     direct = _cumulative_build(df)

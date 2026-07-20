@@ -7,8 +7,6 @@ voyaient qu'en usage réel. `verify_api_key` bloque par défaut tout appel
 neutralise cette dépendance pour les tests fonctionnels ; un test dédié
 vérifie séparément, sans le contournement, que le blocage est bien actif.
 """
-import os
-import tempfile
 
 import pytest
 from starlette.testclient import TestClient
@@ -151,6 +149,77 @@ def test_strategy_performance_without_session_local_is_503(client, monkeypatch):
     assert r.status_code == 503
 
 
+# ── /api/stats/fees (FIN-06) ─────────────────────────────────────────────
+
+class TestFeeBreakdown:
+    @pytest.fixture(autouse=True)
+    def _session_local(self, monkeypatch, tmp_path):
+        db = tmp_path / "fees.db"
+        _, session_local = init_db(f"sqlite:///{db}")
+        monkeypatch.setattr(state, "SessionLocal", session_local, raising=False)
+        self._session_local = session_local
+
+    def test_shape_and_defaults(self, client):
+        r = client.get("/api/stats/fees")
+        assert r.status_code == 200
+        assert r.json() == {"taker": 0.0, "maker": 0.0, "borrow": 0.0, "stop": 0.0}
+
+    def test_reflects_saved_trades(self, client):
+        from app.core.database import Trade, session_scope
+        with session_scope(self._session_local) as sess:
+            sess.add(Trade(symbol="BTC/USDC", side="long", strategy="t",
+                           entry=100.0, exit_price=101.0, size=1.0, notional=100.0,
+                           pnl=1.0, fees=0.5, fee_taker=0.5, fee_maker=0.0,
+                           borrow_cost=0.05, exit_reason="stop_loss",
+                           status="closed", timeframe="1h"))
+            sess.commit()
+        r = client.get("/api/stats/fees")
+        body = r.json()
+        assert body["taker"] == pytest.approx(0.5)
+        assert body["borrow"] == pytest.approx(0.05)
+        assert body["stop"] == pytest.approx(0.5)
+
+
+def test_fees_without_session_local_returns_zeros(client, monkeypatch):
+    monkeypatch.setattr(state, "SessionLocal", None, raising=False)
+    r = client.get("/api/stats/fees")
+    assert r.status_code == 200
+    assert r.json() == {"taker": 0.0, "maker": 0.0, "borrow": 0.0, "stop": 0.0}
+
+
+# ── /api/backtest ↔ /api/optimize/start : exclusion mutuelle ────────────────
+# Les deux tournent dans le même process serveur mais ne partagent aucun
+# portillon CPU/mémoire (_bt_semaphore vs _job_semaphore/_acquire_mem_slot de
+# AutoOptimizer, scopés chacun à leur famille) — les laisser se chevaucher
+# risque la contention CPU/OOM (constaté en pratique lors d'un comparatif
+# DEAD-01 avec des jobs LightGBM concurrents). Chaque route refuse désormais
+# l'autre pendant qu'elle tourne, avec un message 429 explicite qui remonte
+# tel quel jusqu'à l'UI (Next.js : toast.error(e.message) ; legacy HTML :
+# panneau de log — les deux lisent déjà `detail` de la réponse JSON).
+
+def test_backtest_rejects_while_optimize_running(client, monkeypatch):
+    monkeypatch.setattr(state, "cfg", {"trading": {}})
+    monkeypatch.setattr(
+        "app.engine.auto_optimizer.get_all_jobs",
+        lambda: {"opus_omnibus_v12@1h@BTC/USDC": {"status": "running"}},
+    )
+    r = client.post("/api/backtest")
+    assert r.status_code == 429
+    assert "optimisation" in r.json()["detail"].lower()
+
+
+def test_optimizer_start_rejects_while_backtest_running(client, monkeypatch):
+    monkeypatch.setattr(state, "cfg", {"trading": {}})
+    monkeypatch.setattr("app.engine.auto_optimizer.get_all_jobs", lambda: {})
+    assert state._bt_semaphore.acquire(blocking=False)
+    try:
+        r = client.post("/api/optimize/start")
+        assert r.status_code == 429
+        assert "backtest" in r.json()["detail"].lower()
+    finally:
+        state._bt_semaphore.release()
+
+
 # ── Auth : le contournement de test ne doit pas masquer un vrai trou ─────
 
 def test_protected_route_rejects_unauthenticated_non_local_request():
@@ -179,3 +248,25 @@ def test_cors_preflight_allows_delete():
     assert r.status_code == 200
     allowed = r.headers.get("access-control-allow-methods", "")
     assert "DELETE" in allowed
+
+
+# ── Rate limiting par endpoint (SEC-04) ──────────────────────────────────────
+# Le reste de la suite désactive le limiter (tests/conftest.py::_disable_rate_
+# limiting, car de nombreux tests appellent les fonctions de route directement
+# sans objet Request réel) — ce test le réactive localement pour vérifier
+# qu'une limite PLUS STRICTE que le default_limits global (300/minute) est
+# bien appliquée à un endpoint sensible.
+
+def test_per_route_limit_returns_429(client):
+    original = state.limiter.enabled
+    state.limiter.enabled = True
+    state.limiter.reset()
+    try:
+        # /api/config/notifications/test est décoré @state.limiter.limit("5/minute").
+        statuses = [client.post("/api/config/notifications/test").status_code
+                    for _ in range(6)]
+    finally:
+        state.limiter.reset()
+        state.limiter.enabled = original
+    assert 429 not in statuses[:5], statuses
+    assert statuses[5] == 429, statuses

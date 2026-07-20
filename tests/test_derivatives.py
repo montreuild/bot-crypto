@@ -16,8 +16,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import app.core.derivatives as dv
 from app.core.derivatives import DerivativesStore, to_perp_symbol
-from app.strategies.derivatives_reversion import Strategy
 from app.core.indicators import precompute_df
+from app.strategies.derivatives_reversion import Strategy
 
 
 class _FakeExchange:
