@@ -22,10 +22,16 @@
 > nuancé — le job CI `lint` existait depuis Sprint 7 mais n'était **jamais
 > passé** (773 erreurs pré-existantes, aucune liée à un sprint de ce
 > document) jusqu'à cette passe, désormais vert ; **DEAD-01** toujours
-> ouvert mais son **analyse est maintenant livrée** (comparatif fonctionnel
-> + empirique des 15 variantes opus_omnibus/opus_stat sur 5 timeframes,
-> rapport HTML remis à l'utilisateur) — la décision de suppression elle-même
-> reste en attente, aucun fichier supprimé.
+> ouvert mais son **analyse est maintenant livrée et re-confirmée** (deux
+> passes de comparatif fonctionnel + empirique des 15 variantes opus_omnibus/
+> opus_stat sur 5 timeframes — la seconde avec un dimensionnement de fenêtre
+> calqué sur la production et sans aucune stratégie sautée, rapports HTML
+> remis à l'utilisateur) — la décision de suppression elle-même reste en
+> attente, aucun fichier supprimé. Découverte annexe hors périmètre DEAD-01 :
+> `v11`/`v12` (actives) sous-performent sur leur TF de production (1h) dans
+> ce test, signalé pour examen séparé (§4.1). Garde-fou ajouté : `/api/
+> backtest` et `/api/optimize/start` se refusent désormais mutuellement
+> pendant que l'autre tourne (contention CPU/mémoire constatée en pratique).
 
 ---
 
@@ -299,7 +305,7 @@ reprendre ensemble plus tard). Tout le reste de la Vague 3 est fait.
 
 | ID (source) | Item | Effort | État |
 |---|---|---|---|
-| **DEAD-01** (audit) | Supprimer 8 générations Opus/stat jamais promues (`opus_omnibus_v7[.py/_pretrained]`, `v9`, `v10_retrained`, `v11_no_ml`, `v11_followsetup[_no_ml]`, `opus_stat_retrained_v4`) — **8005 lignes** mortes au total avec DEAD-02. ⚠ NE PAS toucher `v8`, `v10`, `opus_stat_pretrained_v4` (dépendances réelles) | M | 🟡 **Analyse livrée (2026-07-19/20), décision utilisateur en attente** — comparatif fonctionnel + empirique des 15 variantes sur 5 TF (15m/30m/1h/4h/1j), rapport HTML remis à l'utilisateur (hors dépôt). Verdict par candidat : suppression nette pour 6/8 (`v7`, `v7_pretrained`, `v9`, `v10_retrained`, `v11_no_ml`, `opus_stat_retrained_v4`), 2 « discutables » (`v11_followsetup[_no_ml]` — seule paire positive sur 1j, échantillons trop petits pour trancher seuls). **Aucun fichier supprimé.** |
+| **DEAD-01** (audit) | Supprimer 8 générations Opus/stat jamais promues (`opus_omnibus_v7[.py/_pretrained]`, `v9`, `v10_retrained`, `v11_no_ml`, `v11_followsetup[_no_ml]`, `opus_stat_retrained_v4`) — **8005 lignes** mortes au total avec DEAD-02. ⚠ NE PAS toucher `v8`, `v10`, `opus_stat_pretrained_v4` (dépendances réelles) | M | 🟡 **Analyse livrée (2026-07-19/20), re-confirmée le 2026-07-20 avec méthodologie de production**, décision utilisateur en attente — comparatif fonctionnel + empirique des 15 variantes sur 5 TF (15m/30m/1h/4h/1j), **re-run intégral le 2026-07-20** avec dimensionnement de fenêtre calqué sur la production (`auto_fetch_limit`/`split_is_oos`, plus de cap arbitraire) et **sans aucune stratégie sautée** (les 4 précédemment en timeout — v9/v10/v11_followsetup/v12 — ont maintenant un résultat optimisé complet), rapport HTML mis à jour remis à l'utilisateur (hors dépôt). Verdict par candidat, confirmé sur échantillons 2-4× plus grands : suppression nette pour 6/8 (`v7`, `v7_pretrained`, `v9`, `v10_retrained`, `v11_no_ml`, `opus_stat_retrained_v4`), 2 « discutables » (`v11_followsetup[_no_ml]`) — le dossier a changé de forme lors du re-run : la variante *no_ml* se renforce (1h optimisé passe positif), la variante ML s'affaiblit (score OOS de recherche positif partout mais aucun gain traduit sur le backtest complet, signal probable de surapprentissage à 10 essais). **Découverte hors périmètre DEAD-01** : `v11`/`v12` (actives en production) ressortent négatives sur leur TF de production (1h) dans ce test, positives seulement sur 4h — signalé pour examen séparé, non tranché. **Aucun fichier supprimé.** |
 | **DEAD-02** (audit) | Supprimer `scoring_statistique_opus_v3.py` (579 L, aucun appelant) | S | ✅ FAIT — fichier + yaml supprimés, 0 référence |
 | **DEAD-05** (audit) | Corriger le bug pyflakes `del ds_tr, ds_va` dans `opus_omnibus_v11.py:1065,1093` — **stratégie ACTIVE** (`manual_active: opus_omnibus_v11::30m`) | S | ✅ FAIT — try/finally englobant remplace les deux `del` dupliqués |
 | **DEAD-06** (audit) | Supprimer 5 fonctions publiques jamais appelées : `config.strategy_file_path`, `execution.cap_notional`, `database.get_lifecycle_events`, `feature_store.get_provider`/`list_providers` | S | ✅ FAIT — les 5 supprimées |

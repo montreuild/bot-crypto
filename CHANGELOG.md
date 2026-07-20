@@ -310,6 +310,62 @@ suite de tests complète avant la suivante :
   touché en dehors du périmètre lint (pas de refactor, pas de changement de
   comportement).
 
+### 🔒 Exclusion mutuelle backtest ↔ optimisation (contention CPU/mémoire)
+
+- `/api/backtest` et `/api/optimize/start` tournent dans le même process
+  serveur sans portillon partagé (`_bt_semaphore` vs `_job_semaphore`/
+  `_acquire_mem_slot` de `AutoOptimizer`, chacun scopé à sa propre famille) —
+  un batch d'optimisation (potentiellement des dizaines de jobs LightGBM
+  concurrents) et un backtest manuel pouvaient se marcher dessus. Chaque
+  route refuse désormais l'autre pendant qu'elle tourne (429, message
+  explicite) plutôt que de risquer la contention CPU/OOM. Le message remonte
+  tel quel jusqu'à l'UI (Next.js : `toast.error` déjà branché sur
+  `ApiError` ; legacy HTML : panneau de log déjà branché sur `detail`) sans
+  aucun changement frontend. 2 tests de régression ajoutés
+  (`tests/test_api_routes.py`).
+
+### 🔬 Re-comparatif DEAD-01 : méthodologie de production, 15 stratégies × 5 TF sans exception
+
+Suite du comparatif du 2026-07-18/19 (Post-Sprint 8), refait intégralement
+après les accélérations optimiseur livrées entre-temps, avec deux
+différences méthodologiques majeures par rapport au premier passage :
+
+- **Dimensionnement de fenêtre IS/OOS calqué sur la production**
+  (`auto_fetch_limit`/`split_is_oos`, les mêmes fonctions que
+  `/api/optimize/start`/`AutoOptimizer` utilisent réellement) au lieu du cap
+  fixe arbitraire (8000 bougies, split 70/30) du script ad hoc précédent —
+  qui sous-dimensionnait l'OOS pour les stratégies ML à gros warmup et
+  produisait un score dégénéré (-999, 0 trade OOS) pour `opus_omnibus_v12`
+  sur TOUS les TF, y compris après le passage à `bayesian_search` documenté
+  au Post-Sprint 8. Avec le dimensionnement correct, v12 obtient un score
+  OOS réel et fini sur 4 TF sur 5 (négatif sur 15m/30m/1h, fortement positif
+  sur 4h : 0.60).
+- **Aucune stratégie sautée** : le premier comparatif avait un
+  `SKIP_OPT_STRATS` explicite pour v9/v10/v11_followsetup/v12 sur 4h/1j
+  (leur optimisation dépassait 300-500 s et avait dû être tuée
+  manuellement) — ces 4 lignes n'avaient donc aucun résultat optimisé, sur
+  aucun TF. Ce re-run a fait tourner l'optimisation complète (10 essais,
+  `n_jobs=2-3`) pour les 15 stratégies × 5 TF sans aucune exception —
+  ~5h de calcul en tâche de fond (fenêtres 2-3× plus grandes que le cap
+  fixe précédent), 2 stratégies ayant dû être relancées individuellement
+  après un timeout dû à la contention CPU du batch (`-P2` concurrent),
+  cf. section précédente pour le garde-fou correspondant côté API.
+- Verdict DEAD-01 mis à jour (détail complet dans le rapport HTML remis à
+  l'utilisateur, hors dépôt) : 6/8 candidats restent des suppressions
+  nettes, confirmées avec des échantillons 2-4× plus grands qu'avant. Les 2
+  cas « discutables » (`v11_followsetup`/`v11_followsetup_no_ml`) le
+  restent, mais le dossier a changé de forme — la variante *no_ml* se
+  renforce (1h optimisé passe positif), la variante ML s'affaiblit (score
+  OOS de recherche positif partout mais aucun gain traduit sur le backtest
+  complet, signal probable de surapprentissage à seulement 10 essais).
+- **Découverte hors périmètre DEAD-01** : `v11` et `v12` (actives en
+  production, pas candidates DEAD-01) ressortent négatives sur leur TF de
+  production habituel (1h) dans ce test, et positives uniquement sur 4h — un
+  TF où elles ne sont pas utilisées en production. Signalé pour examen
+  séparé, pas tranché ici (un seul run BTC/USDC, pas de repli walk-forward).
+- Aucun fichier supprimé — décision de suppression toujours en attente côté
+  utilisateur.
+
 ### 📚 Documentation
 
 - `docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md` : fusion des 3 plans (audit
