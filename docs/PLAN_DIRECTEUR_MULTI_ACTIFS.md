@@ -13,6 +13,19 @@
 > Chaque item ci-dessous est classé **FAIT** (preuve : commit ou grep/wc -l réel),
 > **OBSOLÈTE/DÉCLINÉ** (prémisse fausse ou décision utilisateur), ou **RESTE À
 > FAIRE** (reformulé, dédupliqué entre les 3 sources).
+>
+> **Mise à jour 2026-07-20** (branche `claude/sprint-7-8-planning-xb12m0`,
+> commits `5022b69`…`3bbcd55`) : voir `CHANGELOG.md` § « Post-Sprint 8 » pour
+> le détail technique. Résumé des changements de statut apportés par cette
+> passe : **PERF-02** (Plan C, §4.5) marqué **FAIT** (parallélisme réel de
+> l'optimiseur + refonte `param_search_optim`, détail §4.1bis) ; **TEST-01**
+> nuancé — le job CI `lint` existait depuis Sprint 7 mais n'était **jamais
+> passé** (773 erreurs pré-existantes, aucune liée à un sprint de ce
+> document) jusqu'à cette passe, désormais vert ; **DEAD-01** toujours
+> ouvert mais son **analyse est maintenant livrée** (comparatif fonctionnel
+> + empirique des 15 variantes opus_omnibus/opus_stat sur 5 timeframes,
+> rapport HTML remis à l'utilisateur) — la décision de suppression elle-même
+> reste en attente, aucun fichier supprimé.
 
 ---
 
@@ -52,13 +65,14 @@ blocage en échec explicite plutôt qu'un run qui ne se termine jamais.
 | Source | Items | Réalisés | Restants | Détail |
 |---|---:|---:|---:|---|
 | **Audit initial** (`docs/audit/`, Vagues 0-6) | 89 | **~85** | ~4 | Vagues 0,1,2,4,5,6 ✅ complètes ; **Vague 3** (code mort + CI/lint) faite en Sprint 7 (commit `d19c978`) sauf **DEAD-01** (toujours ouvert, exclu explicitement) — TEST-11 reste bloqué par DEAD-01. |
-| **Plan C** (upload, 12 EPICs) | ~90 | **~24** (dont 6 découvertes non documentées par le Plan C lui-même) | ~66 | §0.4 déjà livré (frontend rewrite) + 6 items déjà résolus (§1.3.1) + 9 items Sprint 8 (FIN-04/06/07, STRAT-06, SEC-04/05, ARCH-07 partiel, BT-05, PERF-01), hors FIN-01 |
+| **Plan C** (upload, 12 EPICs) | ~90 | **~25** (dont 6 découvertes non documentées par le Plan C lui-même) | ~65 | §0.4 déjà livré (frontend rewrite) + 6 items déjà résolus (§1.3.1) + 9 items Sprint 8 (FIN-04/06/07, STRAT-06, SEC-04/05, ARCH-07 partiel, BT-05, PERF-01) + **PERF-02** (2026-07-20, §4.1bis), hors FIN-01 |
 | **Plan Directeur** (ce document) | 26 (Sprints 0/1/2/4) + 3 vérifs ARCH + 18 (Sprints 7/8) | **47/47 sur ce lot** | Sprints 3/5/6 (généralisation actions + dette de fond) jamais démarrés ; DEAD-01/TEST-11/FIN-01 restent ouverts (exclus explicitement des Sprints 7/8) | Commits `ea9706e`/`7aaed6b`/`49be475`/`78ae183`/`d19c978`, 689 tests verts |
 
 **Total approximatif** : sur ~205 items distincts recensés dans les 3 documents
-(après dédoublonnage des ID réutilisés — cf. note ci-dessous), **~119 sont
-faits**, **~5 sont déclinés/obsolètes par construction**, **~81 restent à
-faire** (détail priorisé en §4).
+(après dédoublonnage des ID réutilisés — cf. note ci-dessous), **~120 sont
+faits** (dont **PERF-02**, ajouté 2026-07-20 — cf. §4.1bis), **~5 sont
+déclinés/obsolètes par construction**, **~80 restent à faire** (détail
+priorisé en §4).
 
 > ⚠ **Piège de numérotation** : le Plan C réutilise les préfixes `ARCH-`,
 > `TEST-`, `OPS-`, `UI-`, `SEC-` de l'audit initial pour des items **différents**
@@ -285,19 +299,62 @@ reprendre ensemble plus tard). Tout le reste de la Vague 3 est fait.
 
 | ID (source) | Item | Effort | État |
 |---|---|---|---|
-| **DEAD-01** (audit) | Supprimer 8 générations Opus/stat jamais promues (`opus_omnibus_v7[.py/_pretrained]`, `v9`, `v10_retrained`, `v11_no_ml`, `v11_followsetup[_no_ml]`, `opus_stat_retrained_v4`) — **8005 lignes** mortes au total avec DEAD-02. ⚠ NE PAS toucher `v8`, `v10`, `opus_stat_pretrained_v4` (dépendances réelles) | M | ❌ **Exclu explicitement de Sprint 7** — reste à faire |
+| **DEAD-01** (audit) | Supprimer 8 générations Opus/stat jamais promues (`opus_omnibus_v7[.py/_pretrained]`, `v9`, `v10_retrained`, `v11_no_ml`, `v11_followsetup[_no_ml]`, `opus_stat_retrained_v4`) — **8005 lignes** mortes au total avec DEAD-02. ⚠ NE PAS toucher `v8`, `v10`, `opus_stat_pretrained_v4` (dépendances réelles) | M | 🟡 **Analyse livrée (2026-07-19/20), décision utilisateur en attente** — comparatif fonctionnel + empirique des 15 variantes sur 5 TF (15m/30m/1h/4h/1j), rapport HTML remis à l'utilisateur (hors dépôt). Verdict par candidat : suppression nette pour 6/8 (`v7`, `v7_pretrained`, `v9`, `v10_retrained`, `v11_no_ml`, `opus_stat_retrained_v4`), 2 « discutables » (`v11_followsetup[_no_ml]` — seule paire positive sur 1j, échantillons trop petits pour trancher seuls). **Aucun fichier supprimé.** |
 | **DEAD-02** (audit) | Supprimer `scoring_statistique_opus_v3.py` (579 L, aucun appelant) | S | ✅ FAIT — fichier + yaml supprimés, 0 référence |
 | **DEAD-05** (audit) | Corriger le bug pyflakes `del ds_tr, ds_va` dans `opus_omnibus_v11.py:1065,1093` — **stratégie ACTIVE** (`manual_active: opus_omnibus_v11::30m`) | S | ✅ FAIT — try/finally englobant remplace les deux `del` dupliqués |
 | **DEAD-06** (audit) | Supprimer 5 fonctions publiques jamais appelées : `config.strategy_file_path`, `execution.cap_notional`, `database.get_lifecycle_events`, `feature_store.get_provider`/`list_providers` | S | ✅ FAIT — les 5 supprimées |
 | **DEAD-07** (audit) | 67 imports inutilisés (pyflakes, hors façade `indicators.py`) | M | ✅ FAIT — `ruff --select F` : 73 imports + 15 f-strings auto-fixés, 17 variables locales mortes retirées à la main |
 | **DEAD-09** (audit) | Nettoyer `scripts/__pycache__` orphelin | S | ✅ Déjà propre — vérifié, rien à faire |
-| **TEST-01** (audit + Plan C, doublon exact) | CI GitHub Actions (`pytest -m "not slow"`, lint) | S/M | ✅ FAIT — `.github/workflows/ci.yml` (lint ruff + pytest) |
+| **TEST-01** (audit + Plan C, doublon exact) | CI GitHub Actions (`pytest -m "not slow"`, lint) | S/M | ✅ FAIT — `.github/workflows/ci.yml` (lint ruff + pytest). **Nuance (2026-07-20)** : le job `lint` existait depuis Sprint 7 mais n'était **jamais passé** (773 erreurs `ruff check .` pré-existantes sur 163 fichiers, aucune liée à un sprint de ce document, jamais résorbées) — désormais **vert pour la première fois**, cf. §4.1bis |
 | **TEST-04/05** (audit) = **TEST-02** (Plan C) | Config ruff (remplace flake8/mypy dispersés) : `ruff.toml`, `mypy.ini` | S/M | ✅ FAIT — `ruff.toml` + `mypy.ini`, `flake8` remplacé par `ruff` dans `requirements.txt` |
 | **TEST-06** (audit) = **TEST-03** (Plan C) | Markers `pytest.ini` (`slow`, `strategy_smoke`), isoler les tests dépendant de `data/ohlcv` versionné | S/M | ✅ FAIT — `pytest.ini` avec les 2 markers ; aucun test ne dépend en fait de données versionnées (vérifié, tout est synthétique/`tmp_path`) |
 | **TEST-11** (audit) = **TEST-04** (Plan C) | Tests smoke paramétrés pour les stratégies survivantes (~13/53 testées) | L | ❌ **Exclu explicitement de Sprint 7** — toujours bloqué par DEAD-01 |
 | **DEAD-03** (audit) | Sort de `XRP_USDC` (données présentes, absent de `scanner.symbols`) | S | ✅ FAIT — **décision : ajouté à `scanner.symbols`** (`config.yaml`) ; pas de données `data/derivatives` pour XRP (gap connu, non bloquant) |
 
 689/689 tests verts (649 avant Sprint 7 + 40 nouveaux Sprints 7/8).
+
+### 4.1bis 🟢 PERF-02 (Plan C) — parallélisme réel de l'optimiseur — ✅ FAIT (2026-07-20)
+
+Travail réalisé hors sprint numéroté, en marge de la préparation de la
+décision DEAD-01 (nécessitait de faire tourner l'optimiseur sur les 15
+variantes candidates × 5 timeframes en un temps raisonnable). Détail
+technique complet dans `CHANGELOG.md` § « Post-Sprint 8 ». Résumé :
+
+- `_SUPPORTED_TFS`/`_detect_timeframe` étendus à 4h/1j (14 fichiers,
+  n'autorisaient que 15m/30m/1h en dur — exécution silencieuse sans signal
+  au-delà).
+- Cache d'entraînement process-wide branché sur `ml_dynamic_threshold`
+  (sous-modèle de `opus_omnibus_v12`) — évitait jusqu'à ~40-60 % de coût par
+  trial en retrains redondants. `random_search(n_trials=10)` sur 1h/8000
+  barres : de « n'aboutit jamais en 300 s » à 67 s.
+- **`random_search` : `n_jobs` réellement câblé** sur l'infra
+  `ProcessPoolExecutor` déjà utilisée par `bayesian_search` (contexte
+  `spawn`, cap mémoire anti-OOM, repli séquentiel) — la boucle restait
+  séquentielle malgré le paramètre accepté. Mesuré ×3.0 sur 3 workers.
+- `rolling_slope`/`rolling_hurst` (`app/core/indicators_market.py`)
+  vectorisés (boucle Python O(n·window) → noyau/forme fermée), bit-exacts
+  contre l'original. Mesuré ×233 / ×57.
+- **Refonte de `param_search_optim`** (option de gel des paramètres à
+  faible impact sur `random_search`/`bayesian_search`/`grid_search`, PAS un
+  4e mode) : dépistage désormais **en budget** (les premiers essais de la
+  recherche elle-même, jamais un essai en plus) et **pool de process
+  partagé** entre dépistage et recherche (`_open_pool`/`_submit_wave`,
+  remplace 3 blocs de création de pool quasi identiques). Mesuré sur
+  `opus_omnibus_v12` : 137-140 s → ~63 s. Garde-fou `_MIN_SCREEN_PER_PARAM`
+  ajouté après avoir mesuré que trop peu d'essais de dépistage vs nombre de
+  paramètres gelait des paramètres sur un signal non fiable (mode
+  facultatif uniquement — le mode grid, réduction obligatoire, n'est pas
+  concerné).
+- **Revue de code approfondie post-refonte** (pas seulement les tests
+  unitaires) : 3 défauts trouvés et corrigés avant tout autre travail —
+  `_run_parallel` comptait les succès au lieu des tentatives (ré-
+  échantillonnage au-delà du budget, risque de `StopIteration` en mode
+  grid) ; comptabilité fragile à la réutilisation d'instance de
+  l'optimiseur ; `optimize_two_phase` ne propageait pas `param_search_optim`
+  à `_dispatch` (toggle utilisateur silencieusement ignoré pour les jobs
+  `ml_tune_hp`).
+- 743/743 tests verts (+54 nouveaux/réécrits au total sur cet ensemble de
+  travaux).
 
 ### 4.2 🟢 Quick wins financiers & sécurité — ✅ FAIT (Sprint 8), sauf FIN-01
 
@@ -358,7 +415,7 @@ Plan C :
 
 - **FIN-02** (borrow rate dynamique), **FIN-03** (reporting fiscal FIFO, dépend SEC-06), **FIN-05** (Sharpe/Sortino/Calmar/VaR/CVaR temps réel), **FIN-08** (réconciliation PnL quotidienne), **FIN-09** (multi-devises, backlog).
 - **DX-02** (setup interactif), **DX-03** (hot-reload dev), **DX-04** (ADR), **DX-05** (profiling intégré), **DX-06** (OpenAPI enrichi).
-- **PERF-02** (parallélisation optimiseur), **PERF-03** (PostgreSQL, backlog), **PERF-04** (streaming SSE backtests).
+- ~~**PERF-02** (parallélisation optimiseur)~~ — ✅ **FAIT** (2026-07-20, cf. §4.1bis), retiré de ce backlog. **PERF-03** (PostgreSQL, backlog), **PERF-04** (streaming SSE backtests).
 - **LIFE-01** (tests transitions cycle de vie), **LIFE-02** (timeline UI), **LIFE-03** (auto-re-opt, backlog), **LIFE-04** (allocation graduelle, backlog).
 - **WKFLOW-01/02/03** (conventional commits, pre-commit, templates issues/PR).
 - **RES-01** (regime detection HMM), **RES-02** (backtest portfolio multi-actifs), **RES-03** (sentiment F&G, backlog), **RES-04** (extension usage dérivés).
@@ -378,12 +435,13 @@ Plan C :
 | — | Vérification ARCH-04/05/06 (numérotation Plan C) | ✅ toutes obsolètes/déjà faites (§1.3.1) |
 | 7 | Nettoyage code mort + CI/lint (Vague 3 de l'audit), hors DEAD-01/TEST-11 | ✅ `d19c978` |
 | 8 | Quick wins financiers & sécurité, hors FIN-01 | ✅ (ce commit) |
+| Post-8 | Comparatif DEAD-01 (4h/1j) + PERF-02 (parallélisme réel optimiseur, refonte `param_search_optim`) + résolution dette lint pré-existante (773 → 0 erreur, `ruff check .` vert pour la 1ère fois) | ✅ `5022b69`…`3bbcd55` (§4.1bis) |
 
 ### Sprints à venir (reformulés après fusion)
 
 | Sprint | Contenu | Dépendances | Détail |
 |---|---|---|---|
-| **7 (reste)** | DEAD-01 (8 générations Opus/stat mortes) + TEST-11 (smoke stratégies) | aucune, mais les deux exclus explicitement du Sprint 7 initial | §4.1 |
+| **7 (reste)** | DEAD-01 (8 générations Opus/stat mortes) + TEST-11 (smoke stratégies) | analyse livrée (2026-07-19/20) — **décision utilisateur de suppression en attente** ; TEST-11 reste bloqué par DEAD-01 | §4.1 |
 | **8 (reste)** | FIN-01 (frais dynamiques VIP OKX) | aucune, exclu explicitement du Sprint 8 initial | §4.2 |
 | **3** | G2 — SBF120 en paper (données, calendrier, frais, sizing) | Sprint 2 (fait) | §3, inchangé |
 | **9** | Observabilité & DX (Prometheus, Docker, Pydantic, onboarding) | aucune | §4.4 |

@@ -261,6 +261,54 @@ de la décision DEAD-01).
   garde-fou plus prudent.
 - 741/741 tests verts (+29 nouveaux/réécrits :
   `tests/test_param_search_optim.py`, `tests/test_optimizer_n_jobs.py`).
+- **Revue approfondie de la refonte ci-dessus, 3 défauts trouvés et corrigés
+  avant tout autre travail dessus** : (1) `_run_parallel` comptait les
+  SUCCÈS de sa boucle par vagues, pas les tentatives — un trial en échec
+  (worker KO/timeout/erreur stratégie) faisait ré-échantillonner au-delà du
+  budget `n` demandé, et pour `grid_search` (sampler = énumération finie via
+  `next()`) pouvait lever `StopIteration` en pleine grille ; corrigé en
+  comptant les tentatives, `_run_parallel` les retourne pour que la phase B
+  de `random_search` décompte sur le même registre. (2) Comptabilité fragile
+  à la réutilisation d'instance : `self.results[-k:]` et `n_trials -
+  len(self.results)` supposaient une liste vide en entrée d'appel —
+  remplacés par un index de base capturé au début de chaque méthode.
+  (3) `optimize_two_phase` ne transmettait pas `param_search_optim` à
+  `_dispatch` : le toggle utilisateur était silencieusement ignoré pour les
+  jobs `ml_tune_hp` — plombé de bout en bout (signature, les deux appels,
+  le site d'appel d'`auto_optimizer`). Docs API/UI remises au design actuel
+  (décrivaient encore l'ancien dépistage hors budget sur fenêtre réduite).
+- 743/743 tests verts.
+
+### 🧹 Résolution de la dette lint pré-existante du dépôt (773 → 0 erreur)
+
+`ruff check .` n'avait jamais été vert depuis la création du job CI
+(Sprint 7) — 773 erreurs pré-existantes sur 163 fichiers, aucune liée aux
+sprints de ce document. Traité en trois passes, chacune vérifiée par la
+suite de tests complète avant la suivante :
+
+- **Mécanique et sûre** (`ruff --fix`) : tri des imports (193), imports/
+  variables/f-strings inutilisés (20).
+- **Instructions compactées en une ligne** (`autopep8 --select=E701,E702,
+  E401`, 458 occurrences) : vérifié bit-exact (tests identiques avant/après)
+  avant application au dépôt réel — la même passe en mode `--aggressive`
+  incluant `E501` a été rejetée après coup car elle cassait des f-strings en
+  pleine chaîne dans 5 fichiers (littéraux non fermés) ; ces ~37 lignes trop
+  longues ont été re-wrappées à la main.
+- **Noms de variable ambigus** (`l`, 41 occurrences → `lo`/`lvl`/`ls` selon
+  le contexte réel : prix bas OHLC, niveau S/R, perte RSI) : la première
+  tentative par regex (`\bl\b`) a corrompu du texte français dans des
+  docstrings/commentaires (élisions `l'` — ex. « l'intérieur » →
+  « lo'intérieur »), détectée avant commit et intégralement annulée ;
+  refaite par renommage au niveau des tokens Python (`tokenize`, jamais dans
+  une string/commentaire), vérifiée sans collision de portée.
+  Deux ré-exports intentionnels (`CleanJSONResponse`, `available_memory_
+  bytes`) supprimés par erreur par un fixer automatique malgré leur
+  `# noqa: F401` — détecté par échec de collection pytest, restauré.
+- `.github/workflows/ci.yml` job `lint` **vert pour la première fois**
+  (vérifié sur le commit réel via l'API GitHub, pas seulement en local).
+  743/743 tests inchangés, 0 régression fonctionnelle, aucun fichier
+  touché en dehors du périmètre lint (pas de refactor, pas de changement de
+  comportement).
 
 ### 📚 Documentation
 
