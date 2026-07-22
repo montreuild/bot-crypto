@@ -444,6 +444,15 @@ et mode de sortie enfichables). Aucun fichier supprimé, aucun changement
 de code de stratégie — investigation pure via scripts de scratchpad de
 session.
 
+Deux items de backlog ajoutés au plan directeur (§4.5) à partir de ces
+constats : **ML-01** (gating de promotion `manual_active` par walk-forward
+au lieu d'un `oos_score` sur un seul split) et **ML-02** (gestion du cycle
+de vie des modèles pkl : fenêtre d'entraînement dimensionnée — le trainer
+auto ne fetche que ~1560 barres contre les ~40k qui font l'edge —,
+provenance/métadonnées dans le pkl, script d'entraînement reproductible
+committé, ré-entraînement périodique sur grande fenêtre glissante, et flag
+pour optimiser les seuils contre un modèle figé).
+
 ### 📚 Documentation
 
 - `docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md` : fusion des 3 plans (audit
