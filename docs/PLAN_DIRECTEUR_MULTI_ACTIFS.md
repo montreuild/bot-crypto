@@ -32,6 +32,13 @@
 > ce test, signalé pour examen séparé (§4.1). Garde-fou ajouté : `/api/
 > backtest` et `/api/optimize/start` se refusent désormais mutuellement
 > pendant que l'autre tourne (contention CPU/mémoire constatée en pratique).
+> **Verdict DEAD-01 révisé après discussion** : `opus_omnibus_v9` retiré de
+> la liste (classé à tort sur un motif de versioning — cf. §4.1) ; le pkl
+> figé V4 (dépendance de `v7_pretrained`/`v8`/`v9`/`v10`) a été soumis à un
+> test de fuite (aucune fuite trouvée) et à une expérience de gel de la
+> recette V11 sur 40 000 barres (hypothèse réfutée — le V4 figé reste
+> supérieur à volume de trades égal) ; nouveau backlog item **ML-01** (§4.5)
+> sur le gating de promotion `manual_active`.
 
 ---
 
@@ -385,7 +392,7 @@ Sprint 8 exécuté le 2026-07-18, **hors FIN-01** (exclu explicitement).
 |---|---|---|---|
 | **ARCH-05** (Plan C, partiel — §1.3.1) | Réduire `smart_money.py` (836 L) et `smart_money_signals.py` (702 L) sous 450 L chacun | M (pas L — la séparation en modules existe déjà, il s'agit d'extraire encore, pas de créer l'architecture) | Aucune urgence fonctionnelle, dette de lisibilité pure |
 | **ARCH-03** (Plan C) = **ARCH-12** (audit, jamais fait, jugé optionnel) | `app/core/state.py::AppState` dataclass pour remplacer `app/api/state.py` | L | L'audit avait déjà conclu « l'encapsulation AppState complète reste optionnelle (aucune inversion restante) » après ARCH-04 audit — à ne faire que si un besoin concret apparaît (ex. plusieurs instances de bot par process) |
-| **ARCH-01** (Plan C) | Extraire `OpusBase` (features V4, régime, train/predict partagés) pour les variantes Opus **survivantes** (v8, v10, v11, v12, `opus_stat_pretrained_v4`) | L | À faire **après** DEAD-01 (réduit le nombre de fichiers à traiter de 45 à ~37) |
+| **ARCH-01** (Plan C) | Extraire une stratégie maître unique **`setup_router`** (renommé depuis « OpusBase » 2026-07-20 — trop spécifique au nommage de la lignée existante ; le composant réel route le régime vers une table de setups configurable, avec source de signal — pkl figé / ré-entraîné / proxy / ML V11 — et mode de sortie, tous enfichables) pour les variantes Opus **survivantes** (v8, v9, v10, v11, v12, `opus_stat_pretrained_v4`) | L | À faire **après** DEAD-01 (réduit le nombre de fichiers à traiter). Chaque variante actuelle devient un *preset* YAML du moteur unique (10 setups, 3 axes de conception : routing/source-signal/sortie — cf. carte structurelle remise à l'utilisateur, hors dépôt) |
 | **STRAT-01** (Plan C) | Champ `status: experimental\|validated\|production\|archived` dans chaque YAML stratégie | M | Concept **distinct** du `SlotLifecycleManager` runtime existant (candidat/essai/actif/retiré, calculé) — ceci est une déclaration statique de maturité, filtrable dans l'UI `/config` |
 | **STRAT-02** (Plan C) | Versioning modèles ML (hash features + date, `models/index.json`) | M | Aucun équivalent existant |
 | **SEC-06** (Plan C) | Migrations SQLite via Alembic | M | **Nuance** : `_migrate_schema` idempotent (`ALTER TABLE` auto) existe déjà depuis OPS-08 (audit, Vague 4) — Alembic serait un upgrade d'outillage, pas un correctif de bug. Impact réel réduit vs la description du Plan C |
@@ -425,6 +432,7 @@ Plan C :
 - **LIFE-01** (tests transitions cycle de vie), **LIFE-02** (timeline UI), **LIFE-03** (auto-re-opt, backlog), **LIFE-04** (allocation graduelle, backlog).
 - **WKFLOW-01/02/03** (conventional commits, pre-commit, templates issues/PR).
 - **RES-01** (regime detection HMM), **RES-02** (backtest portfolio multi-actifs), **RES-03** (sentiment F&G, backlog), **RES-04** (extension usage dérivés).
+- **ML-01** *(nouveau, découvert 2026-07-20 lors de l'investigation légitimité pkl §DEAD-01)* — Gating de promotion `manual_active` par walk-forward multi-fenêtres plutôt qu'un `oos_score` sur un seul split. Constaté sur `opus_omnibus_v8_no_ml`/`v10_no_ml` (déjà actives) : `oos_score` de production positif (0.76-0.77) mais backtest fenêtre complète nettement négatif (PnL −95/−110) — même divergence surapprentissage que `v11_followsetup`. Pas de suppression ni de retrait de `manual_active` proposé ici, juste un chantier de fiabilisation du critère de promotion.
 
 ---
 
