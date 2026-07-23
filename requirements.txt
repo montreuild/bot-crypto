@@ -24,6 +24,11 @@
 #  épinglées en version exacte (==) ; les sous-dépendances transitives ne le
 #  sont pas (pas de lockfile — cf. TEST-12 dans docs/audit/07-tests-ci-docs.md
 #  pour la justification de ce choix).
+#
+#  Bump 2026-07-23 : ccxt 4.3.1 -> 4.5.68 (requests 2.32.0 -> 2.34.2, exigé
+#  par ccxt) — re-vérifié par `pip install -r requirements.txt` (0 conflit)
+#  + `pytest -q` (746 tests, tous verts, hors sklearn/pandas/pyarrow retirés
+#  en phase 6).
 # ================================================================
 
 # -- Web / API -------------------------------------------------------
@@ -34,7 +39,11 @@ python-multipart==0.0.22
 slowapi==0.1.9
 
 # -- Exchange --------------------------------------------------------
-ccxt==4.3.1
+# Bump 2026-07-23 (depuis 4.3.1, mi-2024) : ccxt==4.3.1 déclenchait une
+# TypeError interne ("unsupported operand type(s) for +: 'NoneType' and
+# 'str'") lors du parsing des marchés OKX au fetch_ohlcv — l'implémentation
+# fetch_ohlcv/load_markets d'OKX a été réécrite entre ces deux versions.
+ccxt==4.5.68
 
 # -- Data / Compute --------------------------------------------------
 # Polars: main library (Rust, Arrow, multi-threaded, 5-50x faster than Pandas)
@@ -70,7 +79,8 @@ lightgbm==4.4.0
 optuna==4.0.0
 
 # -- Notifications ---------------------------------------------------
-requests==2.32.0
+# Bump 2026-07-23 (depuis 2.32.0) : version exacte exigée par ccxt==4.5.68.
+requests==2.34.2
 
 # -- Development / Debug (optional) ----------------------------------
 pytest==8.2.0

@@ -155,10 +155,12 @@ Candidates (aucune dans `manual_active`, ~7 569 L au total) :
 
 ### 3.2 🟢 Durcissement sécurité (audit externe SEC)
 
-Non traités par le refactoring (hors périmètre). Effort faible, impact réel :
+Non traités par le refactoring (hors périmètre), sauf le bump ccxt ci-dessous.
+Effort faible, impact réel :
 
 | ID | Item | Fichier |
 |---|---|---|
+| ✅ **ccxt** | `4.3.1` (mi-2024) → `4.5.68` : la vieille version levait une `TypeError` interne au parsing des marchés OKX (`fetch_ohlcv`/`load_markets` réécrits depuis) — non liée à une CVE mais bloquait le fetch incrémental de bougies. `requests` bumpé en cascade (`2.32.0` → `2.34.2`, exigé par ccxt). Re-vérifié : 0 conflit pip, 746 tests verts. | `requirements.txt` |
 | **SEC-002** | Path traversal via `tf` non validé → whitelist de timeframes dans `CandleStore._path` (+ `resolve().is_relative_to`) | `app/core/candle_store.py` |
 | **SEC-003** | Retirer `web.allow_insecure: true` committé par défaut → opt-in par flag CLI/env, jamais via YAML | `config.yaml` |
 | **SEC-004** | Retirer `"testclient"` de la whitelist localhost WebSocket | `app/api/routes/ws.py` |
