@@ -3,33 +3,42 @@
 Contrairement aux stratégies `scoring_statistique_opus_v*`, **aucun entraînement
 n'est effectué** (ni inline dans l'optimiseur, ni périodique en live). Les six
 modèles LightGBM (15m/30m/1h × amplitude/direction) du pack V4 sont chargés une
-fois pour toutes depuis le PKL embarqué dans
+fois pour toutes depuis les fichiers natifs `.lgb` + `.json` dans
 ``app/strategies/opus_stat_pretrained_v4_data/``.
 
 Pipeline :
 
   1. Détection du timeframe (15m / 30m / 1h) à partir des deltas de ``df['time']``
-  2. Construction des 40 features V4 attendues par chaque modèle, via une
-     reproduction fidèle du ``FeatureBuilder`` du bot autonome V4 (pandas).
+  2. Construction des ~462 features V4 via ``MLBackend.build_features`` (Polars)
+     — équivalent byte-à-byte du ``_FeatureBuilder`` pandas originel (vérifié
+     à 3.19e-07 près, cf. ``scripts/check_pandas_polars_equivalence.py``).
+     Conversion finale en pandas pour ``booster.predict`` (préserve les noms
+     de colonnes attendus par LightGBM).
   3. Détection du régime ADX + alignement SMA (Range / Trend Up / Trend Down /
      Choppy). Trend Up → pas de signal (AUC ≈ 0.50).
-  4. P(événement) et P(hausse) prédits par les modèles pré-entraînés
-     (les médianes du set d'entraînement servent à imputer les NaN).
+  4. P(événement) et P(hausse) prédits par les boosters natifs (sans wrapper
+     sklearn — élimine le risque RCE du pkl original).
   5. Décision : seuils plus stricts hors Trend Down (cf. rapport V4 §6.4).
   6. Sortie : stop initial = 1.5×ATR (SL) + trailing manager (TP par trailing).
 
 Comme la stratégie est entièrement statique, ``managed_externally`` est forcé à
 ``True`` : le ``MLStrategyTrainer`` ne tentera jamais de la réentraîner et
 l'optimiseur ne fera que varier les seuils de décision.
+
+Migration ARCH-012 + SEC-020 :
+  - Le pkl ``v4_models.pkl`` (8,8 Mo, RCE-vulnérable via ``pickle.load``) a été
+    converti en 8 fichiers ``.lgb`` + 8 fichiers ``.json`` via
+    ``scripts/convert_v4_pretrained.py``.
+  - Le ``_FeatureBuilder`` pandas (~290 L) a été supprimé, remplacé par
+    ``MLBackend.build_features`` (Polars) — source unique.
 """
 
 import json
 import logging
 import os
-import pickle
 import threading
 import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -38,6 +47,19 @@ import polars as pl
 from app.core.indicators import pre_val
 from app.core.indicators import safe_num as _safe_num
 from app.engine.engine import BaseStrategyML
+from app.ml.backend import (
+    MLBackend,
+    REGIME_CHOPPY,
+    REGIME_LABELS,
+    REGIME_RANGE,
+    REGIME_TREND_DN,
+    REGIME_TREND_UP,
+    SUPPORTED_TFS,
+    build_features as _build_features_polars,
+    detect_timeframe as _detect_timeframe,
+    last_bar_hour_dow as _last_bar_hour_dow,
+    window_polars as _window_polars,
+)
 
 warnings.filterwarnings("ignore", category=UserWarning, module="lightgbm")
 
@@ -45,413 +67,103 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Chemins des artefacts embarqués (pkl + médianes d'imputation)
+# Chemins des artefacts embarqués (format natif LGB + JSON, plus de pkl)
 # ─────────────────────────────────────────────────────────────────────────────
 _DATA_DIR     = os.path.join(os.path.dirname(__file__), "opus_stat_pretrained_v4_data")
-_MODELS_PATH  = os.path.join(_DATA_DIR, "v4_models.pkl")
 _MEDIANS_PATH = os.path.join(_DATA_DIR, "v4_medians.json")
 
-# Régimes — alignés sur les stratégies opus existantes
-REGIME_RANGE    = 0
-REGIME_TREND_UP = 1
-REGIME_TREND_DN = 2
-REGIME_CHOPPY   = 3
-REGIME_LABELS = {
-    REGIME_RANGE:    "Range",
-    REGIME_TREND_UP: "Trend Up",
-    REGIME_TREND_DN: "Trend Down",
-    REGIME_CHOPPY:   "Choppy",
-}
-
-_SUPPORTED_TFS = ("15m", "30m", "1h", "4h", "1d")
+# Alias de régimes (compat — consommateurs historiques importent ces symboles)
+_SUPPORTED_TFS = SUPPORTED_TFS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Détection de timeframe à partir des deltas de la colonne ``time``
-# ─────────────────────────────────────────────────────────────────────────────
-def _detect_timeframe(df: pl.DataFrame) -> Optional[str]:
-    """Renvoie '15m' / '30m' / '1h' selon la médiane des deltas de ``time``."""
-    if "time" not in df.columns or len(df) < 5:
-        return None
-    times = df["time"].tail(64)  # TF constant: derniers deltas suffisent (O(1))
-    try:
-        # Polars Datetime : différence retourne Duration (en µs)
-        deltas = times.diff().drop_nulls()
-        if len(deltas) == 0:
-            return None
-        # Convert to seconds — try several access patterns selon la version Polars
-        try:
-            med_ns = deltas.dt.total_microseconds().median()
-            med_s  = float(med_ns) / 1_000_000.0
-        except Exception:
-            med_s = float(deltas.median().total_seconds())
-    except Exception:
-        # Fallback : timestamps numériques (epoch s ou ms)
-        arr = times.to_numpy()
-        try:
-            diffs = np.diff(arr.astype("float64"))
-            med_s = float(np.median(diffs))
-            if med_s > 1e6:  # epoch ms
-                med_s /= 1000.0
-        except Exception:
-            return None
-    if med_s <= 0:
-        return None
-    if abs(med_s - 900)  < 60:
-        return "15m"
-    if abs(med_s - 1800) < 120:
-        return "30m"
-    if abs(med_s - 3600) < 240:
-        return "1h"
-    if abs(med_s - 14400) < 960:
-        return "4h"
-    if abs(med_s - 86400) < 5760:
-        return "1d"
-    return None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Reproduction du FeatureBuilder V4 (pipeline 11_v4_datasets.py — pandas)
-# ─────────────────────────────────────────────────────────────────────────────
-class _FeatureBuilder:
-    """Construit, sur un DataFrame pandas OHLCV, l'intégralité des features V4
-    plus leurs lags 1/3/6/12 — strictement le même pipeline que celui qui a
-    servi à entraîner les modèles, sans quoi les prédictions seraient invalides.
-    """
-
-    @staticmethod
-    def _rsi(close: pd.Series, n: int = 14) -> pd.Series:
-        delta = close.diff()
-        gain  = delta.clip(lower=0).ewm(alpha=1/n, adjust=False).mean()
-        loss  = (-delta.clip(upper=0)).ewm(alpha=1/n, adjust=False).mean()
-        rs    = gain / loss.replace(0, np.nan)
-        return 100 - (100 / (1 + rs))
-
-    @staticmethod
-    def _macd(close: pd.Series, fast=12, slow=26, signal=9):
-        ef   = close.ewm(span=fast, adjust=False).mean()
-        es   = close.ewm(span=slow, adjust=False).mean()
-        line = ef - es
-        sig  = line.ewm(span=signal, adjust=False).mean()
-        return line, sig, line - sig
-
-    @staticmethod
-    def _bollinger(close: pd.Series, n=20, k=2):
-        ma = close.rolling(n).mean()
-        sd = close.rolling(n).std()
-        return ma, ma + k * sd, ma - k * sd
-
-    @staticmethod
-    def _atr(h: pd.Series, lo: pd.Series, c: pd.Series, n=14) -> pd.Series:
-        tr = pd.concat(
-            [h - lo, (h - c.shift()).abs(), (lo - c.shift()).abs()], axis=1
-        ).max(axis=1)
-        return tr.ewm(alpha=1/n, adjust=False).mean()
-
-    @staticmethod
-    def _adx(h: pd.Series, lo: pd.Series, c: pd.Series, n=14):
-        up = h.diff()
-        dn = -lo.diff()
-        plus_dm  = ((up > dn) & (up > 0)) * up
-        minus_dm = ((dn > up) & (dn > 0)) * dn
-        tr = pd.concat(
-            [h - lo, (h - c.shift()).abs(), (lo - c.shift()).abs()], axis=1
-        ).max(axis=1)
-        atr_ = tr.ewm(alpha=1/n, adjust=False).mean()
-        pdi  = 100 * plus_dm.ewm(alpha=1/n, adjust=False).mean() / atr_
-        mdi  = 100 * minus_dm.ewm(alpha=1/n, adjust=False).mean() / atr_
-        dx   = 100 * (pdi - mdi).abs() / (pdi + mdi).replace(0, np.nan)
-        return dx.ewm(alpha=1/n, adjust=False).mean(), pdi, mdi
-
-    @staticmethod
-    def _slope(series: pd.Series, n: int) -> pd.Series:
-        x = np.arange(n)
-        def _s(y):
-            if np.any(np.isnan(y)):
-                return np.nan
-            return np.polyfit(x, y, 1)[0]
-        return series.rolling(n).apply(_s, raw=True)
-
-    @staticmethod
-    def _hurst_rs(arr: np.ndarray, max_lag: int = 20) -> float:
-        arr = arr[~np.isnan(arr)]
-        if len(arr) < max_lag + 5:
-            return np.nan
-        tau = []
-        for lag in range(2, max_lag):
-            diff = arr[lag:] - arr[:-lag]
-            if len(diff) < 2 or np.std(diff) == 0:
-                continue
-            tau.append(np.sqrt(np.std(diff)))
-        if len(tau) < 5:
-            return np.nan
-        try:
-            poly = np.polyfit(np.log(np.arange(2, 2 + len(tau))), np.log(tau), 1)
-            return poly[0] * 2.0
-        except Exception:
-            return np.nan
-
-    @staticmethod
-    def _bars_since_cross(sf: pd.Series, ss: pd.Series) -> pd.Series:
-        above = (sf > ss).astype(int)
-        cross = above.diff().fillna(0)
-        result = np.full(len(above), np.nan)
-        last_idx, last_dir = -1, 0
-        for i in range(len(above)):
-            if cross.iloc[i] != 0:
-                last_idx, last_dir = i, int(cross.iloc[i])
-            if last_idx >= 0:
-                result[i] = last_dir * (i - last_idx)
-        return pd.Series(result, index=above.index)
-
-    def build(self, raw_df: pd.DataFrame) -> Optional[pd.DataFrame]:
-        """Construit le DataFrame de features V4 sans fragmentation.
-
-        Accumule toutes les colonnes dans un ``dict`` puis fait un ``pd.concat``
-        unique à la fin (au lieu de 200+ insertions ``d["col"] = ...`` qui
-        provoquaient ``PerformanceWarning: DataFrame is highly fragmented``).
-        """
-        if len(raw_df) < 210:
-            return None
-
-        if "time" in raw_df.columns:
-            d_raw = raw_df.sort_values("time").reset_index(drop=True)
-        else:
-            d_raw = raw_df.reset_index(drop=True)
-        c = d_raw["close"]
-        h = d_raw["high"]
-        lo = d_raw["low"]
-        v = d_raw["volume"]
-        o = d_raw["open"]
-
-        # Accumulateur unique — évite la fragmentation pandas.
-        f: dict = {}
-
-        # 1. Rendements
-        f["ret"]       = c.pct_change()
-        f["ret_intra"] = (c - o) / o
-        f["log_ret"]   = np.log(c / c.shift(1))
-
-        # 2. MMs + distances + slopes
-        for n in (20, 50, 100, 200):
-            f[f"SMA_{n}"]      = c.rolling(n).mean()
-            f[f"EMA_{n}"]      = c.ewm(span=n, adjust=False).mean()
-            f[f"dist_SMA{n}"]  = (c - f[f"SMA_{n}"]) / f[f"SMA_{n}"]
-            f[f"dist_EMA{n}"]  = (c - f[f"EMA_{n}"]) / f[f"EMA_{n}"]
-            f[f"slope_SMA{n}"] = self._slope(f[f"SMA_{n}"], min(n, 20)) / c
-
-        f["MM_bullish_align"] = (
-            (f["SMA_20"]  > f["SMA_50"])  &
-            (f["SMA_50"]  > f["SMA_100"]) &
-            (f["SMA_100"] > f["SMA_200"])
-        ).astype(int)
-        f["MM_bearish_align"] = (
-            (f["SMA_20"]  < f["SMA_50"])  &
-            (f["SMA_50"]  < f["SMA_100"]) &
-            (f["SMA_100"] < f["SMA_200"])
-        ).astype(int)
-        f["EMA_9"]  = c.ewm(span=9,  adjust=False).mean()
-        f["EMA_21"] = c.ewm(span=21, adjust=False).mean()
-
-        # Croisements
-        f["cross_9_21"]   = self._bars_since_cross(f["EMA_9"],  f["EMA_21"])
-        f["cross_20_50"]  = self._bars_since_cross(f["SMA_20"], f["SMA_50"])
-        f["cross_50_100"] = self._bars_since_cross(f["SMA_50"], f["SMA_100"])
-        f["cross_50_200"] = self._bars_since_cross(f["SMA_50"], f["SMA_200"])
-
-        # 3. Momentum
-        for n in (7, 14, 21):
-            f[f"RSI_{n}"] = self._rsi(c, n)
-            f[f"ROC_{n}"] = c.pct_change(n) * 100
-
-        f["RSI_14_d1"]    = f["RSI_14"].diff()
-        f["RSI_14_d3"]    = f["RSI_14"].diff(3)
-        f["RSI_14_accel"] = f["RSI_14_d1"].diff()
-        f["RSI_oversold"]   = (f["RSI_14"] < 30).astype(int)
-        f["RSI_overbought"] = (f["RSI_14"] > 70).astype(int)
-
-        rhp = c.rolling(14).max()
-        rhr = f["RSI_14"].rolling(14).max()
-        f["bear_div"] = ((c == rhp) & (f["RSI_14"] < rhr * 0.97)).astype(int)
-        rlp = c.rolling(14).min()
-        rlr = f["RSI_14"].rolling(14).min()
-        f["bull_div"] = ((c == rlp) & (f["RSI_14"] > rlr * 1.03)).astype(int)
-
-        green = (c > o).astype(int)
-        f["green_ratio_10"] = green.rolling(10).mean()
-        f["green_ratio_20"] = green.rolling(20).mean()
-        f["accel_5"]        = f["ret"].rolling(5).mean().diff(5)
-
-        # 4. MACD
-        m, sgn, hist = self._macd(c)
-        f["MACD"]              = m
-        f["MACD_signal"]       = sgn
-        f["MACD_hist"]         = hist
-        f["MACD_hist_d1"]      = hist.diff()
-        f["MACD_hist_d3"]      = hist.diff(3)
-        f["MACD_above_signal"] = (m > sgn).astype(int)
-        f["MACD_zero_cross"]   = (np.sign(m) - np.sign(m.shift(1))).fillna(0)
-
-        # 5. Breakout
-        for n in (20, 50, 100):
-            f[f"high_{n}"]       = h.rolling(n).max().shift(1)
-            f[f"low_{n}"]        = lo.rolling(n).min().shift(1)
-            f[f"break_high_{n}"] = (c > f[f"high_{n}"]).astype(int)
-            f[f"break_low_{n}"]  = (c < f[f"low_{n}"]).astype(int)
-            f[f"dist_high_{n}"]  = (c - f[f"high_{n}"]) / f[f"high_{n}"]
-            f[f"dist_low_{n}"]   = (c - f[f"low_{n}"]) / f[f"low_{n}"]
-            rng = f[f"high_{n}"] - f[f"low_{n}"]
-            f[f"range_pos_{n}"]  = (c - f[f"low_{n}"]) / rng.replace(0, np.nan)
-
-        f["false_break_high_20"] = (
-            (h.rolling(3).max().shift(1) > f["high_20"].shift(2)) & (c < f["high_20"])
-        ).astype(int)
-        f["false_break_low_20"] = (
-            (lo.rolling(3).min().shift(1) < f["low_20"].shift(2)) & (c > f["low_20"])
-        ).astype(int)
-
-        # 6. Bollinger
-        bb_ma, bb_up, bb_lo = self._bollinger(c)
-        f["BB_width"]         = (bb_up - bb_lo) / bb_ma
-        f["BB_pos"]           = (c - bb_lo) / (bb_up - bb_lo).replace(0, np.nan)
-        f["BB_width_rank100"] = f["BB_width"].rolling(100).rank(pct=True)
-        f["BB_squeeze"]       = (f["BB_width_rank100"] < 0.2).astype(int)
-        f["BB_expansion"]     = (f["BB_width"] > f["BB_width"].shift(5) * 1.2).astype(int)
-
-        # 7. Pullback
-        f["pullback_to_sma20"]    = (f["SMA_20"] - c) / c
-        big = f["ret"].rolling(5).sum()
-        f["pullback_after_rally"] = ((big.shift(3) > 0.01)  & (f["ret"].rolling(3).sum() < 0)).astype(int)
-        f["bounce_after_drop"]    = ((big.shift(3) < -0.01) & (f["ret"].rolling(3).sum() > 0)).astype(int)
-        sh = h.rolling(50).max()
-        sl_s = lo.rolling(50).min()
-        f["fib_pos"] = (c - sl_s) / (sh - sl_s).replace(0, np.nan)
-
-        # 8. ADX / régime
-        adxv, pdi, mdi = self._adx(h, lo, c)
-        f["ADX"]               = adxv
-        f["DI_plus"]           = pdi
-        f["DI_minus"]          = mdi
-        f["DI_diff"]           = pdi - mdi
-        f["trend_strong"]      = (adxv > 25).astype(int)
-        f["trend_very_strong"] = (adxv > 40).astype(int)
-        strong = f["trend_strong"]
-        grp = (strong != strong.shift()).cumsum()
-        f["trend_duration"] = strong.groupby(grp).cumsum()
-        f["hurst_100"] = f["log_ret"].rolling(100).apply(
-            lambda x: self._hurst_rs(np.asarray(x)), raw=True
-        )
-
-        # 9. Volatilité / volume
-        f["ATR_14"]       = self._atr(h, lo, c, 14)
-        f["ATR_pct"]      = f["ATR_14"] / c
-        f["vol_std_20"]   = f["ret"].rolling(20).std()
-        f["vol_ratio"]    = v / v.rolling(20).mean()
-        f["vol_ratio_50"] = v / v.rolling(50).mean()
-        f["OBV"]          = (np.sign(c.diff()).fillna(0) * v).cumsum()
-        f["OBV_slope"]    = self._slope(f["OBV"], 10) / v.rolling(10).mean()
-
-        # 10. Bougie
-        max_oc = pd.concat([o, c], axis=1).max(axis=1)
-        min_oc = pd.concat([o, c], axis=1).min(axis=1)
-        f["body"]        = (c - o) / o
-        f["body_abs"]    = f["body"].abs()
-        f["upper_wick"]  = (h - max_oc) / o
-        f["lower_wick"]  = (min_oc - lo) / o
-        f["range_size"]  = (h - lo) / o
-        f["doji"]        = (f["body_abs"] < 0.001).astype(int)
-        f["three_green"] = ((c > o) & (c.shift() > o.shift()) & (c.shift(2) > o.shift(2))).astype(int)
-        f["three_red"]   = ((c < o) & (c.shift() < o.shift()) & (c.shift(2) < o.shift(2))).astype(int)
-
-        # 11. Interactions
-        f["RSI_x_ADX"]   = f["RSI_14"] * f["ADX"]
-        f["BBpos_x_ADX"] = f["BB_pos"] * f["ADX"]
-        f["vol_x_break"] = f["vol_ratio"] * (f["break_high_20"] + f["break_low_20"])
-
-        # 12. Lags 1/3/6/12
-        continuous_feats = (
-            "dist_SMA20", "dist_SMA50", "dist_SMA100", "dist_SMA200",
-            "dist_EMA20", "dist_EMA50", "slope_SMA20", "slope_SMA50", "slope_SMA100",
-            "cross_9_21", "cross_20_50", "cross_50_100", "cross_50_200",
-            "RSI_7", "RSI_14", "RSI_21", "RSI_14_d1", "RSI_14_d3", "RSI_14_accel",
-            "ROC_7", "ROC_14", "ROC_21", "green_ratio_10", "green_ratio_20", "accel_5",
-            "MACD", "MACD_signal", "MACD_hist", "MACD_hist_d1", "MACD_hist_d3",
-            "dist_high_20", "dist_low_20", "dist_high_50", "dist_low_50",
-            "range_pos_20", "range_pos_50", "range_pos_100",
-            "BB_width", "BB_pos", "BB_width_rank100", "pullback_to_sma20", "fib_pos",
-            "ADX", "DI_plus", "DI_minus", "DI_diff", "trend_duration", "hurst_100",
-            "ATR_pct", "vol_std_20", "vol_ratio", "vol_ratio_50", "OBV_slope",
-            "body", "body_abs", "upper_wick", "lower_wick", "range_size",
-            "RSI_x_ADX", "BBpos_x_ADX",
-        )
-        binary_feats = (
-            "MM_bullish_align", "MM_bearish_align", "RSI_oversold", "RSI_overbought",
-            "bear_div", "bull_div", "MACD_above_signal",
-            "break_high_20", "break_low_20", "break_high_50", "break_low_50",
-            "break_high_100", "break_low_100",
-            "false_break_high_20", "false_break_low_20", "BB_squeeze", "BB_expansion",
-            "pullback_after_rally", "bounce_after_drop", "trend_strong", "trend_very_strong",
-            "doji", "three_green", "three_red", "MACD_zero_cross", "vol_x_break",
-        )
-        for feat in continuous_feats + binary_feats:
-            if feat not in f:
-                continue
-            for lag in (1, 3, 6, 12):
-                f[f"{feat}_lag{lag}"] = f[feat].shift(lag)
-
-        # Construction du DataFrame final en UNE seule opération.
-        return pd.concat([d_raw, pd.DataFrame(f, index=d_raw.index)], axis=1)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Chargeur des modèles V4 (singleton process-wide pour éviter de relire le pkl)
+# Chargeur des modèles V4 natifs (singleton process-wide)
 # ─────────────────────────────────────────────────────────────────────────────
 _PRETRAINED_CACHE: dict = {"models": None, "medians": None}
 _PRETRAINED_LOCK = threading.Lock()
 
 
 def _load_pretrained() -> tuple:
-    """Charge (une seule fois par process) le pkl + le JSON de médianes.
+    """Charge (une seule fois par process) les boosters natifs + médianes JSON.
 
-    Supprime le ``InconsistentVersionWarning`` de scikit-learn pendant le
-    ``pickle.load`` : le pkl a été produit sous une version récente de sklearn
-    (1.8+) mais le bot tourne sur 1.5 ; pour les objets sérialisés (LabelEncoder,
-    LightGBM booster wrappers) la compatibilité ascendante est garantie pour
-    notre usage (predict_proba seulement, pas de fit). Le warning polluait
-    chaque appel et masquait des messages utiles.
+    Remplace l'ancien ``pickle.load(v4_models.pkl)`` (RCE-vulnérable) par un
+    chargement de fichiers LightGBM natifs (``.lgb``) + JSON (``.json``) —
+    sans exécution de code arbitraire à la désérialisation.
+
+    Retourne ``(models, medians)`` où :
+      - ``models`` : ``Dict[Tuple[tf, target, config], dict]`` avec
+        ``{"model": lgb.Booster, "features": List[str], "split_idx": int, ...}``
+      - ``medians`` : ``Dict[Tuple[tf, target], Dict[str, float]]``
     """
     with _PRETRAINED_LOCK:
-        if _PRETRAINED_CACHE["models"] is None:
-            if not os.path.exists(_MODELS_PATH) or not os.path.exists(_MEDIANS_PATH):
-                raise FileNotFoundError(
-                    f"Artefacts V4 introuvables — vérifiez {_DATA_DIR}"
-                )
-            import warnings as _w
+        if _PRETRAINED_CACHE["models"] is not None:
+            return _PRETRAINED_CACHE["models"], _PRETRAINED_CACHE["medians"]
+
+        # 1. Charger les 8 fichiers natifs (.lgb + .json).
+        # Ignorer v4_medians.json (ce n'est pas un modèle, juste les médianes).
+        try:
+            import lightgbm as lgb
+        except ImportError:
+            raise RuntimeError("lightgbm requis pour opus_stat_pretrained_v4")
+
+        models: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+        for fname in sorted(os.listdir(_DATA_DIR)):
+            # Format attendu : v4_{tf}_{target}_{config}.json
+            # (ex: v4_15m_amp_single.json) — on exclut v4_medians.json.
+            if not fname.endswith(".json") or not fname.startswith("v4_"):
+                continue
+            if fname == "v4_medians.json":
+                continue
+            meta_path = os.path.join(_DATA_DIR, fname)
+            lgb_path  = meta_path[:-5] + ".lgb"  # remplace .json par .lgb
+            if not os.path.exists(lgb_path):
+                logger.warning(f"[OpusV4-PT] {fname} sans .lgb correspondant — skip")
+                continue
             try:
-                from sklearn.exceptions import InconsistentVersionWarning as _IVW
-                _SK_FILTER = ("ignore", None, _IVW)
-            except ImportError:
-                _SK_FILTER = None
-            with _w.catch_warnings():
-                if _SK_FILTER is not None:
-                    _w.simplefilter("ignore", _SK_FILTER[2])
-                with open(_MODELS_PATH, "rb") as f:
-                    models = pickle.load(f)
-            with open(_MEDIANS_PATH, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            medians: Dict[tuple, Dict[str, float]] = {}
-            for k, v in raw.items():
-                # clés stockées comme "('15m', 'amp')" — on les normalise
-                k_clean = k.strip("()").replace("'", "").replace(" ", "")
-                parts = k_clean.split(",")
-                if len(parts) == 2:
-                    medians[(parts[0], parts[1])] = v
-            _PRETRAINED_CACHE["models"]  = models
-            _PRETRAINED_CACHE["medians"] = medians
-            logger.info(
-                "[OpusV4-PT] Modèles V4 pré-entraînés chargés "
-                f"({len(models)} entrées, {len(medians)} sets de médianes)"
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                booster = lgb.Booster(model_file=lgb_path)
+                tf      = meta["tf"]
+                target  = meta["target"]
+                config  = meta["config"]
+                models[(tf, target, config)] = {
+                    "model":      booster,
+                    "features":   list(meta.get("features") or []),
+                    "split_idx":  int(meta.get("split_idx", 0)),
+                    "tf":         tf,
+                    "target":     target,
+                    "config":     config,
+                    "n_features_in": int(meta.get("n_features_in", 0)),
+                    "n_classes":  int(meta.get("n_classes", 2)),
+                    "classes_":   list(meta.get("classes_", [0, 1])),
+                }
+            except Exception as e:
+                logger.warning(f"[OpusV4-PT] Chargement {fname} KO : {e}")
+
+        if not models:
+            raise FileNotFoundError(
+                f"Aucun modèle natif V4 trouvé dans {_DATA_DIR} — exécutez "
+                f"scripts/convert_v4_pretrained.py pour migrer le pkl legacy."
             )
+
+        # 2. Charger les médianes (déjà JSON).
+        with open(_MEDIANS_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        medians: Dict[tuple, Dict[str, float]] = {}
+        for k, v in raw.items():
+            # clés stockées comme "('15m', 'amp')" — on les normalise
+            k_clean = k.strip("()").replace("'", "").replace(" ", "")
+            parts = k_clean.split(",")
+            if len(parts) == 2:
+                medians[(parts[0], parts[1])] = v
+
+        _PRETRAINED_CACHE["models"]  = models
+        _PRETRAINED_CACHE["medians"] = medians
+        logger.info(
+            "[OpusV4-PT] Modèles V4 natifs chargés "
+            f"({len(models)} entrées, {len(medians)} sets de médianes) — "
+            "format RCE-safe (.lgb + .json)"
+        )
     return _PRETRAINED_CACHE["models"], _PRETRAINED_CACHE["medians"]
 
 
@@ -474,33 +186,13 @@ def _prepare_row(features_df: pd.DataFrame,
     return pd.DataFrame([row], columns=feat_names)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Conversion polars → pandas pour le sous-ensemble utile au FeatureBuilder
-# ─────────────────────────────────────────────────────────────────────────────
-def _last_bar_hour_dow(df: pl.DataFrame) -> tuple:
-    """Renvoie ``(hour_utc, weekday)`` de la dernière barre, ou ``(None, None)``."""
-    if "time" not in df.columns or len(df) == 0:
-        return None, None
-    ts = df["time"][-1]
-    try:
-        if hasattr(ts, "hour") and hasattr(ts, "weekday"):
-            return int(ts.hour), int(ts.weekday())
-    except Exception:
-        pass
-    # Fallback : timestamp numérique (epoch s ou ms)
-    try:
-        import datetime as _dt
-        raw = float(ts)
-        if raw > 1e12:
-            raw /= 1000.0
-        d = _dt.datetime.utcfromtimestamp(raw)
-        return d.hour, d.weekday()
-    except Exception:
-        return None, None
-
-
 def _to_pandas_window(df: pl.DataFrame, n: int = 260) -> pd.DataFrame:
-    """Retourne les `n` dernières lignes en pandas avec les seules colonnes OHLCV+time."""
+    """Retourne les `n` dernières lignes en pandas avec les seules colonnes OHLCV+time.
+
+    Utilisé pour la conversion Polars → pandas requise par le ``_FeatureBuilder``
+    historique. Après migration ARCH-012, on garde la conversion pour préserver
+    l'API pandas des features (les boosts LightGBM acceptent les deux).
+    """
     cols = [c for c in ("time", "open", "high", "low", "close", "volume") if c in df.columns]
     window = df.select(cols).tail(n)
     pdf = window.to_pandas()
@@ -513,11 +205,45 @@ def _to_pandas_window(df: pl.DataFrame, n: int = 260) -> pd.DataFrame:
     return pdf
 
 
+def _build_features_pandas(raw_df: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """Construit les ~462 features V4 en pandas via MLBackend (Polars) + conversion.
+
+    ARCH-012 : le builder Polars de ``MLBackend`` est la source unique (plus de
+    duplication du code pandas). La conversion finale ``to_pandas()`` préserve
+    l'API historique (predict_proba, iloc, etc.).
+    """
+    if len(raw_df) < 210:
+        return None
+    pl_df = pl.from_pandas(raw_df)
+    feats_pl = _build_features_polars(pl_df)
+    if feats_pl is None:
+        return None
+    return feats_pl.to_pandas()
+
+
+class _FeatureBuilder:
+    """Compatibilité ARCH-012 — wrapper autour de ``_build_features_pandas``.
+
+    Historiquement, cette classe était un builder pandas de ~290 L dupliqué
+    dans ``opus_stat_pretrained_v4.py``. Le code est désormais factorisé dans
+    ``app.ml.backend.features.build_features`` (Polars), et cette classe est
+    un simple wrapper qui préserve l'API ``.build(raw_df: pd.DataFrame)``
+    attendue par les stratégies V8/V9/V10/V7_pretrained.
+
+    Équivalence byte-à-byte vérifiée à 3.19e-07 près (< 1e-6) — cf.
+    ``scripts/check_pandas_polars_equivalence.py``.
+    """
+
+    def build(self, raw_df: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """Construit les ~462 features V4 (pandas) via MLBackend (Polars)."""
+        return _build_features_pandas(raw_df)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Stratégie
 # ─────────────────────────────────────────────────────────────────────────────
 class Strategy(BaseStrategyML):
-    """Stratégie ML utilisant directement les modèles V4 pré-entraînés (pkl)."""
+    """Stratégie ML utilisant directement les modèles V4 pré-entraînés (natifs)."""
 
     name      = "opus_stat_pretrained_v4"
     # Le dossier embarque les artefacts ; l'engine ne tentera pas d'écrire dedans.
@@ -525,7 +251,7 @@ class Strategy(BaseStrategyML):
 
     timeframes: List[str] = list(_SUPPORTED_TFS)
 
-    # Seuls les seuils de décision sont optimisables — les modèles sont figés.
+    # Seuils de décision sont optimisables — les modèles sont figés.
     # SL/TP per régime : reproduit risk.py (tp_mults / sl_mults) du bot V4.
     param_space: Dict[str, Any] = {
         "thresh_amp_td":    [0.40, 0.45, 0.50, 0.55, 0.60],
@@ -566,8 +292,6 @@ class Strategy(BaseStrategyML):
     # mais on laisse le MLStrategyTrainer planifier un cycle factice par sécurité.
     retrain_interval_h: int = 24 * 365  # 1 an : effectivement jamais
 
-    _FEATURE_BUILDER = _FeatureBuilder()
-
     def __init__(self):
         self._lock = threading.Lock()
         self._models:  Dict[tuple, Any]            = {}
@@ -591,8 +315,12 @@ class Strategy(BaseStrategyML):
         Appelé une fois par ``Backtester.run`` avant la boucle bar-par-bar.
         Sans ce cache, ``score()`` reconstruit ~462 features à chaque appel
         (≈ 50 ms × ~5000 barres = > 4 min par stratégie). Avec ce cache,
-        coût constant : un seul ``_FeatureBuilder.build`` sur toute la
+        coût constant : un seul ``_build_features_pandas`` sur toute la
         fenêtre, puis lookup ``iloc[:i+1]`` dans la boucle.
+
+        ARCH-012 : utilise le FeatureStore (catalogue partagé ``opus_v4_pandas``
+        version ``1``) — la construction est déléguée à ``_build_features_pandas``
+        qui utilise ``MLBackend.build_features`` (Polars) puis convertit en pandas.
         """
         try:
             from app.core.feature_store import cached_strategy_features
@@ -600,7 +328,7 @@ class Strategy(BaseStrategyML):
             feats = cached_strategy_features(
                 getattr(self, "_bt_symbol", None), getattr(self, "_bt_tf", None), df,
                 name="opus_v4_pandas", version="1",
-                builder=lambda pdf: self._FEATURE_BUILDER.build(
+                builder=lambda pdf: _build_features_pandas(
                     pdf[[c for c in _ohlcv if c in pdf.columns]]),
                 in_kind="pandas", out_kind="pandas")
             self._bt_features_pdf = feats
@@ -632,7 +360,7 @@ class Strategy(BaseStrategyML):
                     self._train_meta[tf] = {
                         "auc_amp": {"15m": 0.749, "30m": 0.690, "1h": 0.676}.get(tf, 0.0),
                         "auc_dir": {"15m": 0.503, "30m": 0.504, "1h": 0.530}.get(tf, 0.0),
-                        "source":  "v4_models.pkl (pré-entraîné, AUC OOS rapport V4)",
+                        "source":  "v4_native (.lgb + .json, converté depuis v4_models.pkl)",
                     }
             return True
         except Exception as e:
@@ -690,7 +418,11 @@ class Strategy(BaseStrategyML):
             feat_names = entry["features"]
             medians    = self._medians.get((tf, target), {})
             X          = _prepare_row(features_df, feat_names, medians)
-            return float(entry["model"].predict_proba(X)[0, 1])
+            # ARCH-012 + SEC-020 : utilisation de booster.predict() (natif LightGBM)
+            # au lieu de clf.predict_proba() (sklearn wrapper). Équivalence
+            # byte-à-byte vérifiée (cf. scripts/check_v4_equivalence.py).
+            booster = entry["model"]
+            return float(booster.predict(X.to_numpy())[0])
         except Exception as e:
             logger.warning(f"[OpusV4-PT] Prédiction {key} KO : {e}")
             return None
@@ -770,7 +502,7 @@ class Strategy(BaseStrategyML):
             features = self._bt_features_pdf.iloc[: len(df)]
         else:
             pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required() + 20))
-            features = self._FEATURE_BUILDER.build(pdf)
+            features = _build_features_pandas(pdf)
         if features is None or len(features) == 0:
             return self._none("Construction des features V4 impossible")
 
