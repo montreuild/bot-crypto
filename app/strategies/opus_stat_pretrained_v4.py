@@ -12,8 +12,8 @@ Pipeline :
   2. Construction des ~462 features V4 via ``MLBackend.build_features`` (Polars)
      — équivalent byte-à-byte du ``_FeatureBuilder`` pandas originel (vérifié
      à 3.19e-07 près, cf. ``scripts/check_pandas_polars_equivalence.py``).
-     Conversion finale en pandas pour ``booster.predict`` (préserve les noms
-     de colonnes attendus par LightGBM).
+     Les features restent en Polars de bout en bout (``booster.predict``
+     reçoit un ``np.ndarray``).
   3. Détection du régime ADX + alignement SMA (Range / Trend Up / Trend Down /
      Choppy). Trend Up → pas de signal (AUC ≈ 0.50).
   4. P(événement) et P(hausse) prédits par les boosters natifs (sans wrapper
@@ -31,6 +31,13 @@ Migration ARCH-012 + SEC-020 :
     ``scripts/convert_v4_pretrained.py``.
   - Le ``_FeatureBuilder`` pandas (~290 L) a été supprimé, remplacé par
     ``MLBackend.build_features`` (Polars) — source unique.
+
+Migration phase6-pandas-removal :
+  - Suppression de toute dépendance à ``pandas`` : les features V4 restent en
+    Polars de bout en bout, ``_prepare_row`` renvoie un ``np.ndarray`` direct
+    (LightGBM accepte nativement un ndarray), et le catalogue FeatureStore
+    passe de ``opus_v4_pandas`` à ``opus_v4_polars`` (version ``1``) pour
+    invalider le cache disque pandas résiduel.
 """
 
 import json
@@ -41,7 +48,6 @@ import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import pandas as pd
 import polars as pl
 
 from app.core.indicators import pre_val
@@ -167,76 +173,74 @@ def _load_pretrained() -> tuple:
     return _PRETRAINED_CACHE["models"], _PRETRAINED_CACHE["medians"]
 
 
-def _prepare_row(features_df: pd.DataFrame,
+def _prepare_row(features_df: pl.DataFrame,
                  feat_names: List[str],
-                 medians: dict) -> pd.DataFrame:
+                 medians: dict) -> np.ndarray:
     """Extrait la dernière ligne ; impute NaN/inf via les médianes du train.
 
-    Renvoie un DataFrame (et non un ndarray) pour que LightGBM retrouve les
-    noms de colonnes attendus, évitant le warning sklearn ``X does not have
-    valid feature names``.
+    Renvoie un ``np.ndarray`` 2D ``(1, n_features)`` directement consommable
+    par ``lightgbm.Booster.predict`` (natif — pas de wrapper sklearn). Les
+    valeurs manquantes sont remplacées par les médianes du set d'entraînement
+    (cf. ``v4_medians.json``).
     """
-    last = features_df.iloc[-1]
-    row = {}
-    for f in feat_names:
-        val = last.get(f, np.nan)
-        if pd.isna(val) or np.isinf(val):
+    last = features_df.row(-1, named=True)  # dict col → valeur (None si absent)
+    row = np.empty(len(feat_names), dtype=np.float64)
+    for i, f in enumerate(feat_names):
+        val = last.get(f)
+        if val is None:
             val = medians.get(f, 0.0)
-        row[f] = float(val)
-    return pd.DataFrame([row], columns=feat_names)
+        try:
+            v = float(val)
+        except (TypeError, ValueError):
+            v = float(medians.get(f, 0.0))
+        if not np.isfinite(v):
+            v = float(medians.get(f, 0.0))
+        row[i] = v
+    return row.reshape(1, -1)
 
 
-def _to_pandas_window(df: pl.DataFrame, n: int = 260) -> pd.DataFrame:
-    """Retourne les `n` dernières lignes en pandas avec les seules colonnes OHLCV+time.
+def _build_features(raw_df: pl.DataFrame) -> Optional[pl.DataFrame]:
+    """Construit les ~462 features V4 en Polars via ``MLBackend.build_features``.
 
-    Utilisé pour la conversion Polars → pandas requise par le ``_FeatureBuilder``
-    historique. Après migration ARCH-012, on garde la conversion pour préserver
-    l'API pandas des features (les boosts LightGBM acceptent les deux).
-    """
-    cols = [c for c in ("time", "open", "high", "low", "close", "volume") if c in df.columns]
-    window = df.select(cols).tail(n)
-    pdf = window.to_pandas()
-    # Garantie : colonnes float
-    for c in ("open", "high", "low", "close", "volume"):
-        if c in pdf.columns:
-            pdf[c] = pdf[c].astype(float)
-    if "time" not in pdf.columns:
-        pdf["time"] = pd.RangeIndex(len(pdf))
-    return pdf
-
-
-def _build_features_pandas(raw_df: pd.DataFrame) -> Optional[pd.DataFrame]:
-    """Construit les ~462 features V4 en pandas via MLBackend (Polars) + conversion.
-
-    ARCH-012 : le builder Polars de ``MLBackend`` est la source unique (plus de
-    duplication du code pandas). La conversion finale ``to_pandas()`` préserve
-    l'API historique (predict_proba, iloc, etc.).
+    ARCH-012 + phase6-pandas-removal : le builder Polars de ``MLBackend`` est la
+    source unique. Plus de conversion finale en pandas — les features restent
+    en Polars de bout en bout (``_prepare_row`` en extrait la dernière ligne
+    et renvoie un ``np.ndarray`` pour ``booster.predict``).
     """
     if len(raw_df) < 210:
         return None
-    pl_df = pl.from_pandas(raw_df)
-    feats_pl = _build_features_polars(pl_df)
-    if feats_pl is None:
-        return None
-    return feats_pl.to_pandas()
+    return _build_features_polars(raw_df)
+
+
+# Alias maintenu pour compat (scanner_service importait _to_pandas_window).
+# Retourne un pl.DataFrame OHLCV+time (équivalent Polars de l'ancienne version).
+def _to_pandas_window(df: pl.DataFrame, n: int = 260) -> pl.DataFrame:
+    """Déprécié — alias retro-compat de ``MLBackend.window_polars``.
+
+    Retourne les ``n`` dernières lignes en Polars avec les colonnes OHLCV+time.
+    Conservé temporairement pour ``app.api.services.scanner_service`` qui
+    consommait l'ancienne version pandas ; migrera vers ``MLBackend.window_polars``
+    au prochain passage.
+    """
+    return _window_polars(df, n)
 
 
 class _FeatureBuilder:
-    """Compatibilité ARCH-012 — wrapper autour de ``_build_features_pandas``.
+    """Compatibilité ARCH-012 — wrapper autour de ``_build_features``.
 
     Historiquement, cette classe était un builder pandas de ~290 L dupliqué
     dans ``opus_stat_pretrained_v4.py``. Le code est désormais factorisé dans
-    ``app.ml.backend.features.build_features`` (Polars), et cette classe est
-    un simple wrapper qui préserve l'API ``.build(raw_df: pd.DataFrame)``
+    ``app.ml.backend.features.build_features`` (Polars). Depuis phase6, elle
+    préserve l'API ``.build(raw_df: pl.DataFrame) -> Optional[pl.DataFrame]``
     attendue par les stratégies V8/V9/V10/V7_pretrained.
 
     Équivalence byte-à-byte vérifiée à 3.19e-07 près (< 1e-6) — cf.
     ``scripts/check_pandas_polars_equivalence.py``.
     """
 
-    def build(self, raw_df: pd.DataFrame) -> Optional[pd.DataFrame]:
-        """Construit les ~462 features V4 (pandas) via MLBackend (Polars)."""
-        return _build_features_pandas(raw_df)
+    def build(self, raw_df: pl.DataFrame) -> Optional[pl.DataFrame]:
+        """Construit les ~462 features V4 (Polars) via MLBackend."""
+        return _build_features(raw_df)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -305,7 +309,7 @@ class Strategy(BaseStrategyML):
         # Cache backtest : features V4 pré-calculées sur toute la fenêtre.
         # Évite de rebuild les ~462 colonnes à chaque barre du backtest
         # (gain x100 sur les backtests longs).
-        self._bt_features_pdf: Optional[pd.DataFrame] = None
+        self._bt_features: Optional[pl.DataFrame] = None
         self._bt_features_len: int = 0
         self._ensure_loaded()
 
@@ -315,32 +319,31 @@ class Strategy(BaseStrategyML):
         Appelé une fois par ``Backtester.run`` avant la boucle bar-par-bar.
         Sans ce cache, ``score()`` reconstruit ~462 features à chaque appel
         (≈ 50 ms × ~5000 barres = > 4 min par stratégie). Avec ce cache,
-        coût constant : un seul ``_build_features_pandas`` sur toute la
-        fenêtre, puis lookup ``iloc[:i+1]`` dans la boucle.
+        coût constant : un seul ``_build_features`` sur toute la fenêtre,
+        puis lookup ``head(i+1)`` dans la boucle.
 
-        ARCH-012 : utilise le FeatureStore (catalogue partagé ``opus_v4_pandas``
-        version ``1``) — la construction est déléguée à ``_build_features_pandas``
-        qui utilise ``MLBackend.build_features`` (Polars) puis convertit en pandas.
+        ARCH-012 + phase6 : utilise le FeatureStore (catalogue partagé
+        ``opus_v4_polars`` version ``1``) — la construction est déléguée à
+        ``MLBackend.build_features`` (Polars). Plus de conversion pandas :
+        les features restent en Polars de bout en bout.
         """
         try:
             from app.core.feature_store import cached_strategy_features
-            _ohlcv = ("time", "open", "high", "low", "close", "volume")
             feats = cached_strategy_features(
                 getattr(self, "_bt_symbol", None), getattr(self, "_bt_tf", None), df,
-                name="opus_v4_pandas", version="1",
-                builder=lambda pdf: _build_features_pandas(
-                    pdf[[c for c in _ohlcv if c in pdf.columns]]),
-                in_kind="pandas", out_kind="pandas")
-            self._bt_features_pdf = feats
+                name="opus_v4_polars", version="1",
+                builder=lambda w: MLBackend.build_features(w),
+                in_kind="polars", out_kind="polars")
+            self._bt_features = feats
             self._bt_features_len = len(df) if feats is not None else 0
+            n_cols = len(feats.columns) if feats is not None else 0
             logger.info(
                 f"[OpusV4-PT] backtest : features pré-calculées sur "
-                f"{self._bt_features_len} bougies "
-                f"({(feats.shape[1] if feats is not None else 0)} colonnes)"
+                f"{self._bt_features_len} bougies ({n_cols} colonnes)"
             )
         except Exception as e:
             logger.warning(f"[OpusV4-PT] prepare_for_backtest KO : {e}")
-            self._bt_features_pdf = None
+            self._bt_features = None
             self._bt_features_len = 0
 
     # ── Cycle de vie ML ────────────────────────────────────────────────────
@@ -388,7 +391,7 @@ class Strategy(BaseStrategyML):
     def reset_model(self) -> None:
         # Les modèles sont figés — on ne les efface jamais. En revanche on
         # vide le cache de features (réinitialisé entre deux backtests).
-        self._bt_features_pdf = None
+        self._bt_features = None
         self._bt_features_len = 0
 
     def fit(self, df: pl.DataFrame, params: dict = None) -> None:
@@ -408,7 +411,7 @@ class Strategy(BaseStrategyML):
     # méthodes publiques explicites (predict_amplitude / predict_direction) qui
     # délèguent au cœur générique _predict(target). Les NaN/Inf sont imputés
     # via les médianes du set d'entraînement (cf. v4_medians.json).
-    def _predict(self, features_df: pd.DataFrame, tf: str,
+    def _predict(self, features_df: pl.DataFrame, tf: str,
                  target: str) -> Optional[float]:
         key = (tf, target, "single")
         entry = self._models.get(key)
@@ -421,17 +424,18 @@ class Strategy(BaseStrategyML):
             # ARCH-012 + SEC-020 : utilisation de booster.predict() (natif LightGBM)
             # au lieu de clf.predict_proba() (sklearn wrapper). Équivalence
             # byte-à-byte vérifiée (cf. scripts/check_v4_equivalence.py).
+            # ``_prepare_row`` renvoie déjà un ``np.ndarray`` — pas de conversion.
             booster = entry["model"]
-            return float(booster.predict(X.to_numpy())[0])
+            return float(booster.predict(X)[0])
         except Exception as e:
             logger.warning(f"[OpusV4-PT] Prédiction {key} KO : {e}")
             return None
 
-    def predict_amplitude(self, features_df: pd.DataFrame, tf: str) -> Optional[float]:
+    def predict_amplitude(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
         """P(événement |return_{t+1}| > seuil) pour le timeframe donné."""
         return self._predict(features_df, tf, "amp")
 
-    def predict_direction(self, features_df: pd.DataFrame, tf: str) -> Optional[float]:
+    def predict_direction(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
         """P(hausse à t+1) pour le timeframe donné."""
         return self._predict(features_df, tf, "dir")
 
@@ -497,17 +501,17 @@ class Strategy(BaseStrategyML):
             )
 
         # 2. Construction des features V4 — fast-path backtest si pré-calculé.
-        features = None
-        if self._bt_features_pdf is not None and len(df) <= self._bt_features_len:
-            features = self._bt_features_pdf.iloc[: len(df)]
+        features: Optional[pl.DataFrame] = None
+        if self._bt_features is not None and len(df) <= self._bt_features_len:
+            features = self._bt_features.head(len(df))
         else:
-            pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required() + 20))
-            features = _build_features_pandas(pdf)
+            window   = _window_polars(df, n=max(260, self.min_bars_required() + 20))
+            features = _build_features(window)
         if features is None or len(features) == 0:
             return self._none("Construction des features V4 impossible")
 
-        last = features.iloc[-1]
-        atr_v = _safe_num(last.get("ATR_14", 0.0), 0.0)
+        last = features.row(-1, named=True)
+        atr_v = _safe_num(last.get("ATR_14"), 0.0)
         if not np.isfinite(atr_v) or atr_v <= 0:
             # Fallback : ATR depuis le précompute du backtester si disponible
             atr_v = float(pre_val(df, "_pre_atr14") or 0.0)
@@ -516,9 +520,9 @@ class Strategy(BaseStrategyML):
             return self._none("Prix ou ATR invalide")
 
         # 3. Régime : ADX + alignement SMA (réplique de la logique V4).
-        adx_v = _safe_num(last.get("ADX", 0.0), 0.0)
-        bull  = int(_safe_num(last.get("MM_bullish_align", 0), 0.0))
-        bear  = int(_safe_num(last.get("MM_bearish_align", 0), 0.0))
+        adx_v = _safe_num(last.get("ADX"), 0.0)
+        bull  = int(_safe_num(last.get("MM_bullish_align"), 0.0))
+        bear  = int(_safe_num(last.get("MM_bearish_align"), 0.0))
         if adx_v < adx_threshold:
             regime = REGIME_RANGE
         elif bull == 1:
@@ -631,7 +635,7 @@ class Strategy(BaseStrategyML):
 
         sig["indicators"] = {
             "adx":              round(adx_v, 1),
-            "rsi":              round(_safe_num(last.get("RSI_14", 50.0), 50.0), 1),
+            "rsi":              round(_safe_num(last.get("RSI_14"), 50.0), 1),
             "p_event":          round(p_event, 4),
             "p_up":             round(p_up, 4),
             "dir_dist":         round(dir_dist, 4),

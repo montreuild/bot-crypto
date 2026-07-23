@@ -985,7 +985,7 @@ class Strategy(BaseStrategyML):
 
             if calibrate:
                 try:
-                    from sklearn.isotonic import IsotonicRegression
+                    from app.ml.backend.isotonic import IsotonicRegression
                     raw_va = booster.predict(X_valid)
                     y_va = y[split:n]
                     if len(np.unique(y_va)) >= 2:

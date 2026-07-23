@@ -9,7 +9,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-pytest.importorskip("sklearn")
+pytest.importorskip("lightgbm")
 
 from app.core import train_cache
 from app.strategies.ml_dynamic_threshold import MLDynamicThresholdStrategy
@@ -61,7 +61,7 @@ def test_fit_second_instance_hits_cache_and_skips_training():
     b._fit(df, "1h")
     assert calls["n"] == 0                    # cache hit : jamais rappelé
     assert "1h" in b._trained_tfs
-    assert b._pipelines["1h"] is a._pipelines["1h"]  # même objet, par référence
+    assert b._boosters["1h"] is a._boosters["1h"]  # même objet, par référence
     assert b._best_auc_per_tf["1h"] == a._best_auc_per_tf["1h"]
     assert train_cache.stats()["hits"] == 1
 
