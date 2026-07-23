@@ -31,6 +31,54 @@ from app.ml.backend.trainer import TrainState
 logger = logging.getLogger(__name__)
 
 
+# ── Traçabilité d'entraînement (commune à tous les save_model) ─────────────
+def build_train_meta_fields(df, feature_cols, train_started_at: str) -> dict:
+    """Champs de traçabilité à fusionner dans ``train_meta`` lors d'un
+    entraînement : bornes temporelles des bougies utilisées, nombre de
+    barres, horodatage de l'entraînement (début/fin, UTC) et hash du
+    catalogue de features (détecte un changement silencieux du jeu de
+    features entre deux entraînements du même modèle, ex. après une
+    modification du feature engineering non suivie d'un ré-entraînement
+    complet de tous les TF).
+
+    ``df`` : DataFrame OHLCV (polars) de la fenêtre d'entraînement — accédé
+    en duck-typing (colonne ``time``) pour ne pas ajouter de dépendance
+    polars à ce module. ``train_started_at`` : timestamp ISO8601 UTC
+    capturé par l'appelant AVANT le feature engineering / fit (ce module
+    n'a pas connaissance du moment de démarrage).
+    """
+    import hashlib
+    from datetime import datetime, timezone
+
+    n_bars = 0
+    candle_start = candle_end = None
+    try:
+        n_bars = len(df)
+        if n_bars and "time" in df.columns:
+            t_min = df["time"].min()
+            t_max = df["time"].max()
+            candle_start = t_min.isoformat() if t_min is not None else None
+            candle_end   = t_max.isoformat() if t_max is not None else None
+    except Exception as e:
+        logger.debug(
+            f"[MLBackend.persistence] build_train_meta_fields : bornes "
+            f"bougies indisponibles ({e})"
+        )
+
+    feature_hash = hashlib.sha256(
+        "|".join(sorted(feature_cols or [])).encode("utf-8")
+    ).hexdigest()[:16]
+
+    return {
+        "train_started_at":  train_started_at,
+        "train_finished_at": datetime.now(timezone.utc).isoformat(),
+        "n_bars":            n_bars,
+        "candle_start":      candle_start,
+        "candle_end":        candle_end,
+        "feature_hash":      feature_hash,
+    }
+
+
 # ── Helpers de sérialisation JSON pour IsotonicRegression native ────────────
 def _isotonic_to_dict(iso) -> Optional[dict]:
     """Sérialise une IsotonicRegression (native) en dict JSON-compatible."""

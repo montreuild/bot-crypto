@@ -350,6 +350,9 @@ class Strategy(BaseStrategyML):
             logger.error("[V5] pip install lightgbm")
             return False
 
+        from datetime import datetime, timezone
+        _train_started_at = datetime.now(timezone.utc).isoformat()
+
         if len(df) < 200:
             return False
 
@@ -451,6 +454,10 @@ class Strategy(BaseStrategyML):
                 "auc_dir":     round(float(auc_dir), 4),
                 "amp_thr_pct": round(float(amp_thr) * 100, 3),
             }
+            from app.ml.backend.persistence import build_train_meta_fields
+            _feat_catalog = _AMP_BASE_COLS + _DIR_BASE_COLS + [f"lag_{k}" for k in _LAGS]
+            self._train_meta[tf_key].update(
+                build_train_meta_fields(df.slice(0, n), _feat_catalog, _train_started_at))
 
         logger.info(
             f"[V5] {tf_key} : {split} train / {n - split} val | "

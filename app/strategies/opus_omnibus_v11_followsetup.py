@@ -879,6 +879,9 @@ class Strategy(BaseStrategyML):
             logger.error("[OmnibusV11-FollowSetup] lightgbm requis : pip install lightgbm")
             return False
 
+        from datetime import datetime, timezone
+        _train_started_at = datetime.now(timezone.utc).isoformat()
+
         amp_top_pct   = float(params.get("amp_top_pct",   self._DEFAULTS["amp_top_pct"]))
         n_estimators  = int(params.get("n_estimators",    self._DEFAULTS["n_estimators"]))
         num_leaves    = int(params.get("num_leaves",      self._DEFAULTS["num_leaves"]))
@@ -1009,6 +1012,8 @@ class Strategy(BaseStrategyML):
             "calibrated":   bool(calibrators),
             "cal_err":      cal_err,
         }
+        from app.ml.backend.persistence import build_train_meta_fields
+        meta.update(build_train_meta_fields(df, feature_cols, _train_started_at))
 
         with self._lock:
             self._amp_models[tf_key] = boosters["amp"]

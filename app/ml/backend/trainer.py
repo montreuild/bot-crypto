@@ -174,6 +174,9 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
         logger.error("[MLBackend] lightgbm requis : pip install lightgbm")
         return False
 
+    from datetime import datetime, timezone
+    _train_started_at = datetime.now(timezone.utc).isoformat()
+
     cfg = TrainConfig.from_params(params, defaults)
 
     n_keep = max(2200, len(df))
@@ -328,6 +331,8 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
         "top_features_amp": top_feats["amp"],
         "top_features_dir": top_feats["dir"],
     }
+    from app.ml.backend.persistence import build_train_meta_fields
+    meta.update(build_train_meta_fields(df, feature_cols, _train_started_at))
 
     with lock:
         state.amp_models[tf_key]    = boosters["amp"]

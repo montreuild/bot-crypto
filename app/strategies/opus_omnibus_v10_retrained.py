@@ -879,6 +879,9 @@ class Strategy(BaseStrategyML):
             logger.error("[OmnibusV10-RT] lightgbm requis : pip install lightgbm")
             return False
 
+        from datetime import datetime, timezone
+        _train_started_at = datetime.now(timezone.utc).isoformat()
+
         amp_top_pct   = float(params.get("amp_top_pct",   self._DEFAULTS["amp_top_pct"]))
         n_estimators  = int(params.get("n_estimators",    self._DEFAULTS["n_estimators"]))
         num_leaves    = int(params.get("num_leaves",      self._DEFAULTS["num_leaves"]))
@@ -1011,6 +1014,9 @@ class Strategy(BaseStrategyML):
                 "amp_thr_pct": round(float(amp_thr) * 100, 3),
                 "amp_top_pct": amp_top_pct,
             }
+            from app.ml.backend.persistence import build_train_meta_fields
+            self._train_meta[tf_key].update(
+                build_train_meta_fields(df, feature_cols, _train_started_at))
         gc.collect()
         logger.info(
             f"[OmnibusV10-RT] {tf_key} entraîné : {split} train / {n - split} val | "

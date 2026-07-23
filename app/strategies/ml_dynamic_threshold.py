@@ -491,6 +491,9 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         self._feature_cols_per_tf: Dict[str, List]  = {}
         self._call_count_per_tf: Dict[str, int]     = {}
         self._trained_tfs:      set                 = set()
+        # Traçabilité d'entraînement (dates, n_bars, hash features) — fusionnée
+        # dans le meta.json à la sauvegarde (build_train_meta_fields).
+        self._train_meta_per_tf: Dict[str, dict]    = {}
 
         # Compat rétrograde
         self._best_auc:     float    = 0.0
@@ -603,6 +606,8 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
     def _fit_impl(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
         ran_search = bool(params.get("_ran_search"))
         prev_p     = params.get("_prev_p")
+        from datetime import datetime, timezone
+        _train_started_at = datetime.now(timezone.utc).isoformat()
         try:
             feats  = self._get_or_build_features(df, offset=self._bt_train_offset)
             labels = compute_labels(df, self.lookahead, self.vol_multiplier)
@@ -658,11 +663,15 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             # Entraînement final sur toute la fenêtre avec les meilleurs params.
             booster = _train_lgbm(X, y, best_p)
 
+            from app.ml.backend.persistence import build_train_meta_fields
+            train_meta = build_train_meta_fields(df, list(feats.columns), _train_started_at)
+
             with self._model_lock:
                 self._boosters[tf_key]            = booster
                 self._best_params_per_tf[tf_key] = best_p
                 self._best_auc_per_tf[tf_key]    = best_auc
                 self._feature_cols_per_tf[tf_key] = list(feats.columns)
+                self._train_meta_per_tf[tf_key]  = train_meta
                 self._trained_tfs.add(tf_key)
                 self._best_auc     = best_auc
                 self._best_params  = best_p
@@ -806,10 +815,11 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         """
         tf = os.path.basename(path).rsplit("_", 1)[-1].split(".")[0]
         with self._model_lock:
-            booster   = self._boosters.get(tf)
-            best_p    = self._best_params_per_tf.get(tf, {})
-            auc       = self._best_auc_per_tf.get(tf, 0.0)
-            feat_cols = self._feature_cols_per_tf.get(tf, [])
+            booster    = self._boosters.get(tf)
+            best_p     = self._best_params_per_tf.get(tf, {})
+            auc        = self._best_auc_per_tf.get(tf, 0.0)
+            feat_cols  = self._feature_cols_per_tf.get(tf, [])
+            train_meta = self._train_meta_per_tf.get(tf, {})
         if booster is None:
             logger.debug(f"[{self.name}] save_model: aucun booster pour {tf}, skip")
             return
@@ -827,6 +837,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 "model_type":  "lightgbm",
                 "format_version": 1,
                 "source":      "ml_dynamic_threshold (LightGBM natif)",
+                "train_meta":  dict(train_meta),
             }
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False)
@@ -854,6 +865,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                     self._best_params_per_tf[tf] = dict(payload.get("best_params") or {})
                     self._best_auc_per_tf[tf]    = auc
                     self._feature_cols_per_tf[tf] = list(payload.get("features") or [])
+                    self._train_meta_per_tf[tf]  = dict(payload.get("train_meta") or {})
                     self._trained_tfs.add(tf)
                     self._best_auc     = auc
                     self._best_params  = dict(payload.get("best_params") or {})
