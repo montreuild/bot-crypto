@@ -195,7 +195,18 @@ class CandleStore:
             try:
                 batch = exchange.fetch_ohlcv(symbol, tf, since=since, limit=LIMIT)
             except Exception as e:
-                logger.warning(f"[CandleStore] fetch_incr {symbol}/{tf} : {e}")
+                # Le nom de classe (ex. ccxt.NetworkError vs TypeError brut)
+                # aide à distinguer un problème réseau transitoire d'un bug
+                # interne à ccxt. Trace complète en DEBUG (silencieuse par
+                # défaut) pour diagnostiquer sans polluer les logs INFO/WARNING.
+                logger.warning(
+                    f"[CandleStore] fetch_incr {symbol}/{tf} : "
+                    f"{type(e).__name__}: {e}"
+                )
+                logger.debug(
+                    f"[CandleStore] fetch_incr {symbol}/{tf} — traceback complet",
+                    exc_info=True,
+                )
                 break
 
             if not batch:
