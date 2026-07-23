@@ -10,7 +10,7 @@ Sémantique attendue (cf. correctif « non appliqué = non utilisé ») :
 """
 import yaml
 
-from app.engine import optimizer as O
+from app.engine import optimizer_search as O
 
 
 def _make_strategy_file(tmp_path):

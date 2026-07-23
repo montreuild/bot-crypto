@@ -1,18 +1,23 @@
 """
 LiveTrader — orchestrateur principal de la boucle de trading live.
 
-Architecture (V4-J / ARCH-06 : un fichier par responsabilité) :
-  - LiveTrader(PositionMixin, BalanceSyncMixin, AutoOptMixin, HealthMixin)
+Architecture (V4-J / ARCH-06 : un fichier par responsabilité ;
+               ARCH-003 : PositionMixin découpé en 4 mixins spécialisés) :
+  - LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
+               PositionRestoreMixin, BalanceSyncMixin, AutoOptMixin, HealthMixin)
     centralise la coordination (init, boucle, cycle)
-  - PositionMixin   : cycle de vie des positions (open/manage/close/restore)
-                      + chemin unique d'ouverture (_try_open_from_signal)
-  - BalanceSyncMixin : synchronisation du capital (paper/spot/margin)
-  - AutoOptMixin    : portefeuille de stratégies, auto-optimisation,
-                      forward-test glissant, cycle de vie des bots
-  - HealthMixin     : heartbeat/dead-man, reprise réseau, purge, status API
-  - OHLCVCache      : cache multi-TF des DataFrames OHLCV (composé)
-  - SignalPipeline  : collecte et ranking des signaux
-  - CapitalAllocator : allocation du capital par slot strategy::tf::symbol
+  - PositionOpenMixin    : ouverture de positions + chemin unique
+                          (_try_open_from_signal, _open_position, slippage)
+  - PositionManageMixin  : suivi tick-by-tick (trailing, scale-in, exchange stops)
+  - PositionCloseMixin   : clôture (ordre + PnL + BDD + notifications)
+  - PositionRestoreMixin : restauration au démarrage depuis la BDD
+  - BalanceSyncMixin     : synchronisation du capital (paper/spot/margin)
+  - AutoOptMixin         : portefeuille de stratégies, auto-optimisation,
+                           forward-test glissant, cycle de vie des bots
+  - HealthMixin          : heartbeat/dead-man, reprise réseau, purge, status API
+  - OHLCVCache           : cache multi-TF des DataFrames OHLCV (composé)
+  - SignalPipeline       : collecte et ranking des signaux
+  - CapitalAllocator     : allocation du capital par slot strategy::tf::symbol
 """
 import logging
 import threading
@@ -28,7 +33,7 @@ from app.core.database import init_db
 from app.core.exchange import RobustExchange
 from app.core.notifications import Notifier
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.core.risk import RiskManager
+from app.core.risk_gate import RiskManager
 from app.engine.engine import Engine
 from app.engine.scanner import MarketScanner
 from app.live.auto_opt_mixin import AutoOptMixin
@@ -36,19 +41,24 @@ from app.live.balance_sync import BalanceSyncMixin
 from app.live.capital_allocator import CapitalAllocator
 from app.live.health_mixin import HealthMixin
 from app.live.ohlcv_cache import OHLCVCache
-from app.live.position_mixin import PositionMixin
+from app.live.position_close_mixin import PositionCloseMixin
+from app.live.position_manage_mixin import PositionManageMixin
+from app.live.position_open_mixin import PositionOpenMixin
+from app.live.position_restore_mixin import PositionRestoreMixin
 from app.live.signal_pipeline import SignalPipeline
 
 logger = logging.getLogger(__name__)
 
 
-class LiveTrader(PositionMixin, BalanceSyncMixin, AutoOptMixin, HealthMixin):
+class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
+                 PositionRestoreMixin, BalanceSyncMixin, AutoOptMixin, HealthMixin):
     """
     Orchestrateur de la boucle de trading live.
 
     Coordonne sans les implémenter directement :
       - la collecte de signaux multi-TF (via SignalPipeline)
-      - la gestion des positions et l'ouverture (via PositionMixin)
+      - la gestion des positions et l'ouverture (via PositionOpenMixin /
+        PositionManageMixin / PositionCloseMixin / PositionRestoreMixin)
       - la synchronisation du capital (via BalanceSyncMixin)
       - le réentraînement ML, l'auto-optimisation, le forward-test et le
         cycle de vie des bots (via AutoOptMixin)

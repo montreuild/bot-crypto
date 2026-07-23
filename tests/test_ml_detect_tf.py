@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 import polars as pl
 import pytest
 
-pytest.importorskip("sklearn")  # le module importe scikit-learn
+pytest.importorskip("lightgbm")  # le module importe lightgbm
 
 from app.strategies.ml_dynamic_threshold import _detect_tf
 

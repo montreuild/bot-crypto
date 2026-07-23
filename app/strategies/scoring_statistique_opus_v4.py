@@ -227,7 +227,6 @@ class Strategy(BaseStrategyML):
     def __init__(self):
         self._amp_models:  Dict[str, Any] = {}
         self._dir_models:  Dict[str, Any] = {}
-        self._scalers:     Dict[str, Any] = {}
         self._trained_tfs: set            = set()
         self._lock         = threading.Lock()
         self._call_cnt:    Dict[str, int] = {}
@@ -349,7 +348,6 @@ class Strategy(BaseStrategyML):
         with self._lock:
             self._amp_models.clear()
             self._dir_models.clear()
-            self._scalers.clear()
             self._trained_tfs.clear()
             self._best_auc_per_tf.clear()
             self._train_meta.clear()
@@ -414,9 +412,8 @@ class Strategy(BaseStrategyML):
         """
         try:
             import lightgbm as lgb
-            from sklearn.preprocessing import StandardScaler
         except ImportError:
-            logger.error("[V4] pip install lightgbm scikit-learn")
+            logger.error("[V4] pip install lightgbm")
             return False
 
         if len(df) < 200:
@@ -458,12 +455,9 @@ class Strategy(BaseStrategyML):
         if split >= n - 50:
             split = n - 50
 
-        scaler = StandardScaler()
-        # Colonne de features entièrement NaN → 0/0 dans le calcul de variance de
-        # StandardScaler → RuntimeWarning « invalid value encountered in divide »
-        # (bénin, bruyant). Neutralisé localement, valeurs inchangées.
-        with np.errstate(invalid="ignore", divide="ignore"):
-            X_s    = scaler.fit_transform(X_train)
+        # LightGBM est invariant aux transformations monotones des features :
+        # pas besoin de StandardScaler (supprimé en phase6-sklearn-removal).
+        X_s = X_train
 
         params_lgb = {
             "objective":         "binary",
@@ -528,7 +522,6 @@ class Strategy(BaseStrategyML):
         with self._lock:
             self._amp_models[tf_key]      = booster_amp
             self._dir_models[tf_key]      = booster_dir
-            self._scalers[tf_key]         = scaler
             self._trained_tfs.add(tf_key)
             self._best_auc_per_tf[tf_key] = auc_combined
             self._best_auc                = auc_combined
@@ -552,38 +545,31 @@ class Strategy(BaseStrategyML):
         return self.score(df, params)
 
     def save_model(self, path: str) -> None:
-        import joblib
         tf_key = os.path.splitext(os.path.basename(path))[0].rsplit("_", 1)[-1]
         with self._lock:
             amp  = self._amp_models.get(tf_key)
             dir_ = self._dir_models.get(tf_key)
-            sc   = self._scalers.get(tf_key)
             auc  = self._best_auc_per_tf.get(tf_key, 0.0)
             meta = self._train_meta.get(tf_key, {})
         if amp is None or dir_ is None:
             return
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        joblib.dump({
-            "amp_model":  amp,
-            "dir_model":  dir_,
-            "scaler":     sc,
-            "best_auc":   auc,
-            "train_meta": meta,
-        }, path)
-        logger.info(f"[V4] Modèles sauvegardés → {path} (AUC combiné={auc:.3f})")
+        # phase6 : plus de StandardScaler — on utilise save_lgb_with_scaler
+        # avec scaler=None (rétro-compat avec le format existant).
+        from app.ml.backend.persistence import save_lgb_with_scaler
+        if save_lgb_with_scaler(amp, dir_, None, path, tf_key, auc, meta):
+            logger.info(f"[V4] Modèles sauvegardés → {path} (AUC combiné={auc:.3f})")
 
     def load_model(self, path: str) -> bool:
-        if not os.path.exists(path):
-            return False
         tf_key = os.path.splitext(os.path.basename(path))[0].rsplit("_", 1)[-1]
+        from app.ml.backend.persistence import load_lgb_with_scaler
+        data = load_lgb_with_scaler(path)
+        if data is None:
+            return False
         try:
-            import joblib
-            data = joblib.load(path)
             with self._lock:
                 for key in (tf_key, "default"):
                     self._amp_models[key]      = data["amp_model"]
                     self._dir_models[key]      = data["dir_model"]
-                    self._scalers[key]         = data["scaler"]
                     self._best_auc_per_tf[key] = float(data.get("best_auc", 0.0))
                     self._train_meta[key]      = data.get("train_meta", {})
                     self._trained_tfs.add(key)
@@ -670,17 +656,17 @@ class Strategy(BaseStrategyML):
         with self._lock:
             amp_m   = self._amp_models.get(tf_key)
             dir_m   = self._dir_models.get(tf_key)
-            scaler  = self._scalers.get(tf_key)
 
-        if amp_m is None or dir_m is None or scaler is None:
+        if amp_m is None or dir_m is None:
             self._diag_record_reject("modele_indispo")
             self._diag_dump_if_due(cnt)
             return self._none("Modèle indisponible")
 
         try:
-            X_s     = scaler.transform(X_last)
-            p_event = float(amp_m.predict(X_s)[0])
-            p_up    = float(dir_m.predict(X_s)[0])
+            # phase6 : plus de StandardScaler — LightGBM est invariant aux
+            # transformations monotones des features.
+            p_event = float(amp_m.predict(X_last)[0])
+            p_up    = float(dir_m.predict(X_last)[0])
         except Exception as e:
             logger.warning(f"[V4] Prédiction : {e}")
             self._diag_record_reject("erreur_predict")

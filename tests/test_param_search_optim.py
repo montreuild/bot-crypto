@@ -10,7 +10,7 @@ import random as _random
 
 import polars as pl
 
-from app.engine.optimizer import StrategyOptimizer
+from app.engine.optimizer_search import StrategyOptimizer
 
 
 def _tiny_df(n=200):

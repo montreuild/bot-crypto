@@ -1,0 +1,241 @@
+"""Routes config GLOBALE — split ARCH-013 de config.py (684 lignes → 4 routers).
+
+Endpoints : GET /api/config, POST /api/config/{trading,margin,capital-allocator},
+GET /api/backtest/settings, GET /api/config/changelog.
+"""
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from app.api import state
+from app.api.helpers import _discover_strategies, verify_api_key
+from app.api.routes._config_helpers import _save_yaml
+from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+
+@router.get("/api/config", dependencies=[Depends(verify_api_key)])
+def get_config():
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    all_strats = sorted(_discover_strategies())
+    safe = {k: v for k, v in state.cfg.items() if k not in ("exchange", "notifications")}
+    safe["exchange"]           = {"name": state.cfg["exchange"]["name"]}
+    # Redaction : la clé API web et d'éventuels credentials dans l'URL de la
+    # base ne sortent jamais (le front n'en a pas besoin : le cookie d'auth
+    # est posé côté serveur).
+    if isinstance(safe.get("web"), dict):
+        web = dict(safe["web"])
+        if web.get("api_key"):
+            web["api_key"] = "****"
+        safe["web"] = web
+    if isinstance(safe.get("database"), dict):
+        db  = dict(safe["database"])
+        url = str(db.get("url", ""))
+        if "://" in url and "@" in url:
+            scheme = url.split("://", 1)[0]
+            db["url"] = f"{scheme}://****@{url.split('@', 1)[1]}"
+        safe["database"] = db
+    safe["all_strategies"]     = all_strats
+    from app.engine.optimizer_search import RECOMMENDED_LIMIT, STRATEGY_TIMEFRAMES
+    safe["strategy_timeframes"] = STRATEGY_TIMEFRAMES
+    safe["recommended_limits"]  = RECOMMENDED_LIMIT
+    if state.trader:
+        safe["_auto_opt_enabled"]    = state.trader._auto_opt_enabled
+        safe["_auto_opt_interval_h"] = state.trader._auto_opt_interval // 3600
+        safe["_auto_opt_next_run"]   = state.trader._auto_opt_next_run
+        safe["_active_per_tf"] = {tf: [s["name"] for s in v]
+                                  for tf, v in state.trader._active_per_tf.items()}
+    return safe
+
+
+@router.post("/api/config/trading", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("30/minute")
+def update_trading_params(
+    request:              Request,
+    score_threshold:      float = None,
+    risk_per_trade:       float = None,
+    max_positions:        int   = None,
+    paper_mode:           bool  = None,
+    paper_slippage:       float = None,
+    daily_drawdown_limit: float = None,
+):
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    # ── Validation des bornes ──
+    if score_threshold is not None and not (0.0 < score_threshold < 1.0):
+        raise HTTPException(400, "score_threshold doit être entre 0 et 1 (exclus)")
+    if risk_per_trade is not None and not (0.0 < risk_per_trade <= 1.0):
+        raise HTTPException(400, "risk_per_trade doit être entre 0 (exclus) et 1.0")
+    if max_positions is not None and not (1 <= max_positions <= 50):
+        raise HTTPException(400, "max_positions doit être entre 1 et 50")
+    if paper_slippage is not None and not (0.0 <= paper_slippage <= 0.05):
+        raise HTTPException(400, "paper_slippage doit être entre 0 et 0.05 (5%)")
+    if daily_drawdown_limit is not None and not (0.0 < daily_drawdown_limit <= 0.5):
+        raise HTTPException(400, "daily_drawdown_limit doit être entre 0 (exclus) et 0.5")
+    changed = {}
+    mapping = {
+        "score_threshold":      score_threshold,
+        "risk_per_trade":       risk_per_trade,
+        "max_positions":        max_positions,
+        "paper_mode":           paper_mode,
+        "paper_slippage":       paper_slippage,
+        "daily_drawdown_limit": daily_drawdown_limit,
+    }
+    for key, val in mapping.items():
+        if val is not None:
+            state.cfg["trading"][key] = val
+            changed[key] = val
+            if state.trader:
+                if hasattr(state.trader, key):
+                    setattr(state.trader, key, val)
+                if hasattr(state.trader.risk, key):
+                    setattr(state.trader.risk, key, val)
+                if key == "score_threshold":
+                    state.trader.threshold = val
+    try:
+        _save_yaml(lambda d: d.setdefault("trading", {}).update(changed))
+        saved = True
+    except Exception as e:
+        logger.warning(f"[config/trading] sauvegarde YAML KO : {e}")
+        saved = False
+    return {"changed": changed, "saved_to_disk": saved,
+            "trader_updated": state.trader is not None}
+
+
+@router.post("/api/config/margin", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("30/minute")
+def update_margin_config(
+    request:      Request,
+    margin:       bool = None,
+    margin_mode:  str  = None,
+    max_leverage: int  = None,
+):
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    if margin_mode is not None and margin_mode not in ("isolated", "cross"):
+        raise HTTPException(400, "margin_mode doit être 'isolated' ou 'cross'")
+    if max_leverage is not None and not (1 <= max_leverage <= 125):
+        raise HTTPException(400, "max_leverage doit être entre 1 et 125")
+    if margin is not None:
+        state.cfg["exchange"]["margin"]      = margin
+    if margin_mode is not None:
+        state.cfg["trading"]["margin_mode"]  = margin_mode
+    if max_leverage is not None:
+        state.cfg["trading"]["max_leverage"] = max_leverage
+    try:
+        def _upd(d):
+            if margin is not None:
+                d.setdefault("exchange", {})["margin"]      = margin
+            if margin_mode is not None:
+                d.setdefault("trading", {})["margin_mode"]  = margin_mode
+            if max_leverage is not None:
+                d.setdefault("trading", {})["max_leverage"] = max_leverage
+        _save_yaml(_upd)
+        saved = True
+    except Exception as e:
+        logger.warning(f"[config/margin] sauvegarde YAML KO : {e}")
+        saved = False
+    return {"saved_to_disk": saved}
+
+
+@router.post("/api/config/capital-allocator", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("30/minute")
+def update_capital_allocator_config(
+    request: Request,
+    mode: str = None,
+    rebalance_interval: str = None,
+    max_slot_pct: float = None,
+):
+    """
+    Met à jour la configuration du capital allocator.
+    mode: 'equal', 'manual' ou 'performance'
+    rebalance_interval: 'daily', 'weekly' ou 'never'
+    max_slot_pct: fraction max par slot (0.0-1.0)
+    """
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    valid_modes = ("equal", "manual", "performance")
+    if mode is not None and mode not in valid_modes:
+        raise HTTPException(400, f"mode doit être parmi : {valid_modes}")
+    valid_intervals = ("daily", "weekly", "never")
+    if rebalance_interval is not None and rebalance_interval not in valid_intervals:
+        raise HTTPException(400, f"rebalance_interval doit être parmi : {valid_intervals}")
+    if max_slot_pct is not None and not (0.0 < max_slot_pct <= 1.0):
+        raise HTTPException(400, "max_slot_pct doit être entre 0.01 et 1.0")
+
+    state.cfg.setdefault("capital_allocator", {})
+    if mode is not None:
+        state.cfg["capital_allocator"]["mode"] = mode
+        if state.trader and state.trader.allocator:
+            state.trader.allocator.set_mode(mode)
+    if rebalance_interval is not None:
+        state.cfg["capital_allocator"]["rebalance_interval"] = rebalance_interval
+        if state.trader and state.trader.allocator:
+            state.trader.allocator.set_rebalance_interval(rebalance_interval)
+    if max_slot_pct is not None:
+        state.cfg["capital_allocator"]["max_slot_pct"] = max_slot_pct
+        if state.trader and state.trader.allocator:
+            state.trader.allocator.set_max_slot_pct(max_slot_pct)
+
+    try:
+        def _upd(d):
+            d.setdefault("capital_allocator", {})
+            if mode is not None:
+                d["capital_allocator"]["mode"] = mode
+            if rebalance_interval is not None:
+                d["capital_allocator"]["rebalance_interval"] = rebalance_interval
+            if max_slot_pct is not None:
+                d["capital_allocator"]["max_slot_pct"] = max_slot_pct
+        _save_yaml(_upd)
+        saved = True
+    except Exception as e:
+        logger.warning(f"[config/capital-allocator] sauvegarde YAML KO : {e}")
+        saved = False
+    return {"saved_to_disk": saved, "capital_allocator": state.cfg["capital_allocator"]}
+
+
+@router.get("/api/backtest/settings", dependencies=[Depends(verify_api_key)])
+def backtest_settings():
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    all_strats = sorted(_discover_strategies())
+    return {
+        "timeframe":            state.cfg["trading"].get("timeframe", "1h"),
+        "timeframes":           state.cfg["trading"].get("timeframes", ["1h"]),
+        # Harmonisé : les TFs sélectionnables suivent la config à chaud (trading.timeframes).
+        "available_timeframes": state.cfg["trading"].get("timeframes", ["1h"]),
+        "strategies":           state.cfg["strategies"]["enabled"],
+        "all_strategies":       all_strats,
+        "strategy_params":      state.cfg.get("strategy_params", {}),
+        "score_threshold":      state.cfg["trading"].get("score_threshold", 0.55),
+        "taker_fee":            state.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE),
+        "maker_fee":            state.cfg["trading"].get("maker_fee", DEFAULT_MAKER_FEE),
+        "capital":              state.cfg["trading"]["capital"],
+        "risk_per_trade":       state.cfg["trading"]["risk_per_trade"],
+        "spread_pct":           state.cfg.get("backtest", {}).get("spread_pct", 0.0005),
+        "partial_fill_pct":     state.cfg.get("backtest", {}).get("partial_fill_pct", 0.95),
+    }
+
+
+@router.get("/api/config/changelog", dependencies=[Depends(verify_api_key)])
+def get_changelog(limit: int = 50):
+    """Retourne les N dernières entrées du changelog d'optimisation."""
+    import json as _json
+    import os as _os
+    changelog_path = _os.path.join(
+        _os.path.dirname(_os.path.abspath("config.yaml")),
+        "optimizer_changelog.json"
+    )
+    try:
+        with open(changelog_path, "r", encoding="utf-8") as f:
+            log = _json.load(f)
+        log = list(reversed(log))[:max(1, min(limit, 500))]
+        return log
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        logger.warning(f"[changelog] lecture KO : {e}")
+        return []

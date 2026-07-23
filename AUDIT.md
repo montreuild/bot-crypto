@@ -1,5 +1,10 @@
 # 🔍 Audit Global du Bot — Architecture, Code, Web, Workflow
 
+> ⚠️ **Archive (2026-06-10).** L'état consolidé « ce qui est fait / ce qui reste »
+> est désormais tenu à jour dans **[`docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md`](docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md)**
+> (document de référence unique). Ce fichier reste conservé pour la valeur
+> historique de son analyse ; ne pas s'y fier pour le statut courant.
+
 Audit réalisé le 2026-06-10 (analyse statique complète + profilage d'exécution
 réel des 44 stratégies), **mis à jour le 2026-06-11 après la passe de
 corrections** (les éléments traités sont marqués ✅). Complémentaire de

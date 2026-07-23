@@ -22,7 +22,7 @@ import time
 
 from app.core.bot_identity import build_slot_key
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.engine.optimizer import RECOMMENDED_LIMIT, get_active_strategies_per_tf
+from app.engine.optimizer_search import RECOMMENDED_LIMIT, get_active_strategies_per_tf
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class AutoOptMixin:
         """Charge toutes les stratégies disponibles dans PARAM_SPACES + enabled."""
         import re as _re
 
-        from app.engine.optimizer import PARAM_SPACES
+        from app.engine.optimizer_search import PARAM_SPACES
         to_load = set(PARAM_SPACES.keys()) | set(self.cfg["strategies"].get("enabled", []))
         for name in to_load:
             # Validation du nom : lettres minuscules, chiffres et underscores uniquement.

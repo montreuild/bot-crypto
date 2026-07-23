@@ -78,7 +78,7 @@ class TestInstantiation:
         # _load_all_strategies() charge PARAM_SPACES ∪ strategies.enabled — pas
         # seulement les stratégies explicitement activées (cf. docstring de
         # AutoOptMixin._load_all_strategies).
-        from app.engine.optimizer import PARAM_SPACES
+        from app.engine.optimizer_search import PARAM_SPACES
         assert "trend_rider" in trader._loaded_strategies
         # -1 : 'breakout_filtreHor' est rejeté par le validateur de nom (camelCase).
         assert len(trader._loaded_strategies) >= len(PARAM_SPACES) - 1

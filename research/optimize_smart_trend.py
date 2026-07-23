@@ -27,7 +27,7 @@ for _n in ("app", "optuna"):
     logging.getLogger(_n).setLevel(logging.WARNING)
 
 from app.core.yaml_io import dump_yaml, load_yaml  # noqa: E402
-from app.engine.optimizer import PARAM_SPACES, StrategyOptimizer  # noqa: E402
+from app.engine.optimizer_search import PARAM_SPACES, StrategyOptimizer  # noqa: E402
 
 STRAT = "smart_trend_adx"
 TIMEFRAMES = ["1h", "2h", "4h", "1d"]

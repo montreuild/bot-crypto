@@ -1,18 +1,16 @@
-# Plan Directeur — Généralisation Multi-Actifs (Crypto + Actions SBF120) & Améliorations
+# Plan Directeur — État des lieux & Feuille de route
 
-> **Document de référence unique**, fusion de **trois sources** vérifiées contre le
-> code réel au commit `HEAD` (branche `claude/generic-bot-crypto-stocks-6t7lsc`,
-> **2026-07-18**) :
-> 1. **Audit initial** (`docs/audit/00-INDEX.md` + 7 fichiers domaine + `mesures-vague5.md`)
->    — 89 items, daté 2026-07-11, réalisé en 6 « vagues » entre le 11 et le 13/07.
-> 2. **Plan complémentaire** (upload utilisateur, ci-après « Plan C ») — ~90 items
->    en 12 EPICs, daté 2026-07-14 (post V12.17.0), analyse statique du repo.
-> 3. **Ce document** (Plan Directeur) — généralisation multi-actifs + 26 items de
->    correctifs vérifiés, Sprints 0/1/2/4 réalisés le 2026-07-17.
+> **Document de référence unique** du bot (améliorations + généralisation
+> multi-actifs). Il remplace et fusionne les plans historiques dispersés
+> (`AUDIT.md`, `docs/audit/00-INDEX.md` + 7 fichiers domaine, les audits
+> externes successifs). Ces fichiers restent consultables comme **archive des
+> directives détaillées**, mais **c'est ici la source de vérité** sur ce qui est
+> fait et ce qui reste à faire.
 >
-> Chaque item ci-dessous est classé **FAIT** (preuve : commit ou grep/wc -l réel),
-> **OBSOLÈTE/DÉCLINÉ** (prémisse fausse ou décision utilisateur), ou **RESTE À
-> FAIRE** (reformulé, dédupliqué entre les 3 sources).
+> **Dernière mise à jour : 2026-07-23** — branche `claude/apply-patch-sn96hj`
+> (PR #155), après le **refactoring structurel Phases 1-6** (MLBackend, suppression
+> de 5 façades, éclatement des fichiers-dieux, format ML natif RCE-safe,
+> suppression de pandas/pyarrow/scikit-learn) et la **remise au vert de la CI**.
 >
 > **Mise à jour 2026-07-20** (branche `claude/sprint-7-8-planning-xb12m0`,
 > commits `5022b69`…`3bbcd55`) : voir `CHANGELOG.md` § « Post-Sprint 8 » pour
@@ -39,279 +37,270 @@
 > recette V11 sur 40 000 barres (hypothèse réfutée — le V4 figé reste
 > supérieur à volume de trades égal) ; nouveau backlog item **ML-01** (§4.5)
 > sur le gating de promotion `manual_active`.
+> Convention de statut : **✅ FAIT** (preuve : commit + vérif code/tests),
+> **🟡 PARTIEL**, **❌ RESTE À FAIRE**, **⛔ DÉCLINÉ** (décision utilisateur ou
+> prémisse obsolète).
 
 ---
 
 ## Table des matières
 
-0. [Note d'exécution — flakiness pré-existante de la suite complète](#0-note-dexécution--flakiness-pré-existante-de-la-suite-complète)
-1. [Bilan consolidé des 3 sources](#1-bilan-consolidé-des-3-sources)
-2. [Architecture cible multi-actifs](#2-architecture-cible-multi-actifs)
-3. [Chantier G — Généralisation (détail exécutable)](#3-chantier-g--généralisation-détail-exécutable)
-4. [Ce qui reste à faire — backlog fusionné et priorisé](#4-ce-qui-reste-à-faire--backlog-fusionné-et-priorisé)
-5. [Roadmap par sprints (mise à jour)](#5-roadmap-par-sprints-mise-à-jour)
+1. [État de santé actuel](#1-état-de-santé-actuel)
+2. [Ce qui a été fait](#2-ce-qui-a-été-fait)
+3. [Ce qui reste à faire — backlog priorisé](#3-ce-qui-reste-à-faire--backlog-priorisé)
+4. [Généralisation multi-actifs (crypto → actions SBF120)](#4-généralisation-multi-actifs-crypto--actions-sbf120)
+5. [Roadmap par sprints](#5-roadmap-par-sprints)
+6. [Décisions produit en attente](#6-décisions-produit-en-attente)
 
 ---
 
-## 0. Note d'exécution — flakiness pré-existante de la suite complète
+## 1. État de santé actuel
 
-En validant les Sprints 0-1, `pytest tests/` (610 tests à l'époque, 649 au
-2026-07-18) s'est bloqué de façon non-déterministe (~1 run sur 3-4) lors de
-l'exécution de la suite COMPLÈTE en un seul process — jamais en lançant les
-fichiers individuellement ou par moitiés. Root-cause isolée par bisection :
-**le blocage se reproduit à l'identique sur le code d'AVANT le Sprint 1**
-(`git stash` → HEAD Sprint 0 seul, sans aucun des verrous `RLock` ajoutés) —
-donc **non lié** aux correctifs `RiskManager`/`OHLCVCache`/`CapitalAllocator`
-de ce plan. C'est une flakiness pré-existante de l'environnement sandboxé
-(probable throttling CPU cgroup sous charge de threads multiples). Sans accès
-à l'infra CI réelle, hors périmètre des sprints ; mitigé pragmatiquement en
-réduisant la charge de `test_risk_thread_safety.py`. Recommandation : exécuter
-`pytest` avec `pytest-timeout` en CI (cf. TEST-01 §4) pour transformer un
-blocage en échec explicite plutôt qu'un run qui ne se termine jamais.
-
----
-
-## 1. Bilan consolidé des 3 sources
-
-### 1.1 Vue d'ensemble
-
-| Source | Items | Réalisés | Restants | Détail |
-|---|---:|---:|---:|---|
-| **Audit initial** (`docs/audit/`, Vagues 0-6) | 89 | **~85** | ~4 | Vagues 0,1,2,4,5,6 ✅ complètes ; **Vague 3** (code mort + CI/lint) faite en Sprint 7 (commit `d19c978`) sauf **DEAD-01** (toujours ouvert, exclu explicitement) — TEST-11 reste bloqué par DEAD-01. |
-| **Plan C** (upload, 12 EPICs) | ~90 | **~25** (dont 6 découvertes non documentées par le Plan C lui-même) | ~65 | §0.4 déjà livré (frontend rewrite) + 6 items déjà résolus (§1.3.1) + 9 items Sprint 8 (FIN-04/06/07, STRAT-06, SEC-04/05, ARCH-07 partiel, BT-05, PERF-01) + **PERF-02** (2026-07-20, §4.1bis), hors FIN-01 |
-| **Plan Directeur** (ce document) | 26 (Sprints 0/1/2/4) + 3 vérifs ARCH + 18 (Sprints 7/8) | **47/47 sur ce lot** | Sprints 3/5/6 (généralisation actions + dette de fond) jamais démarrés ; DEAD-01/TEST-11/FIN-01 restent ouverts (exclus explicitement des Sprints 7/8) | Commits `ea9706e`/`7aaed6b`/`49be475`/`78ae183`/`d19c978`, 689 tests verts |
-
-**Total approximatif** : sur ~205 items distincts recensés dans les 3 documents
-(après dédoublonnage des ID réutilisés — cf. note ci-dessous), **~120 sont
-faits** (dont **PERF-02**, ajouté 2026-07-20 — cf. §4.1bis), **~5 sont
-déclinés/obsolètes par construction**, **~80 restent à faire** (détail
-priorisé en §4).
-
-> ⚠ **Piège de numérotation** : le Plan C réutilise les préfixes `ARCH-`,
-> `TEST-`, `OPS-`, `UI-`, `SEC-` de l'audit initial pour des items **différents**
-> (ex. Plan C `ARCH-01` = « extraire OpusBase », audit `ARCH-01` = « parité
-> params live/backtest » — aucun rapport). Dans ce document, `ARCH-01 (audit)`
-> et `ARCH-01 (Plan C)` désignent donc deux items distincts, désambiguïsés par
-> la source entre parenthèses partout où c'est ambigu.
-
-### 1.2 Audit initial (`docs/audit/`) — bilan par vague
-
-Vérifié par `git log --oneline` : chaque item a un commit taggé `[ID] titre`
-correspondant. Les 6 premières vagues sont **intégralement commitées** :
-
-| Vague | Contenu | Statut | Commits (échantillon) |
-|---|---|---|---|
-| 0 | Régressions refonte per-symbole (BT-01, OPS-01, UI-02/03/04, BT-12) | ✅ | (pré-existant à ce plan) |
-| 1 | Sécurité & intégrité (OPS-02/03/04/05/07, UI-01) | ✅ | `f7ec351`, watchdog service présent (`deploy/crypto-bot-watchdog.service`) |
-| 2 | Intégrité de la mesure (BT-02/03/04/06/08/09, ARCH-01, BT-07) | ✅ | `f102572`, `1f4d047`, `d03275a`, `c89281b`, `bb7f759`, `009b036`, `8ba0c67` — **BT-05 seul non fait** (cf. §4) |
-| 3 | Nettoyage & outillage (DEAD-01/02/03/05/06/07/09, TEST-01/04/05/06) | ❌ **jamais exécutée** | aucun commit `[DEAD-` ni `[TEST-01]`/`[TEST-04]`/`[TEST-05]`/`[TEST-06]` — vérifié : les 8 fichiers stratégies mortes (8005 lignes) existent toujours, `.github/workflows/` absent, `.flake8`/`mypy.ini`/`ruff.toml`/`pytest.ini` absents |
-| 4 | Architecture (ARCH-02/03/04/05/06/07/08/09/10/11/12/13/14, OPS-08/09/10) | ✅ | `2197ff6`, `cc0007a`, `a834768`, `f717c87`, `ce75d94`, `fa4fa21`, `87ac2cd`, `845a325`, `ade3add`, `ab44207`, `04e4dd4`, `1176ae3` |
-| 5 | Recherche edge SMC/ICT (SMC-01→15, BT-10, BT-11 décliné) | ✅ | `586124a`, `5227788`, `549e030`, `7897e72`, `bc3b7b7`, `d7c8ea5`, `0a18587`, `c047bc2` |
-| 6 | UX/a11y/docs (UI-05→12, TEST-02/03/07/08/09/10/12) | ✅ (sauf TEST-11, bloqué par DEAD-01) | `9eab974`…`21e322d` |
-
-**Vérifications indépendantes faites dans cette session** (pas seulement lecture
-du doc) :
-- `grep -rln "from app\.\(engine\|live\|api\)" app/core` → 0 ; `from app.api` dans
-  `app/live` → 0 ; `from app.live` dans `app/strategies` → 0 (0 violation de couche, confirme ARCH-02/04/09 audit).
-- `app/core/singleton.py::lazy_singleton` existe, utilisé par `candle_store.py`
-  et `feature_store.py` (confirme ARCH-13 audit).
-- `app/core/smc.py` = 65 lignes (façade), confirme ARCH-14 audit.
-- `app/live/live_trader.py` = 484 lignes (confirme ARCH-06 audit).
-
-**Reste de la Vague 3** (jamais faite) → détaillé en §4.1.
-
-### 1.3 Plan complémentaire (Plan C, upload `ce6370b9…`) — corrections vérifiées
-
-#### 1.3.1 Items que le Plan C liste comme ouverts mais qui sont **déjà faits**
-
-Le Plan C a été généré par « analyse statique » le 2026-07-14, soit **après**
-la fin de la Vague 4 de l'audit initial (13/07) — mais son analyse contient
-des chiffres obsolètes ou faux sur plusieurs points d'architecture qui avaient
-pourtant déjà été corrigés la veille. Vérifié dans cette session :
-
-| Item Plan C | Prétention du Plan C | Constat réel (vérifié) | Verdict |
-|---|---|---|---|
-| **ARCH-02** (Plan C) | « `live_trader.py` (951 L) … Cible < 500 L » | `wc -l app/live/live_trader.py` → **484 lignes**, déjà scindé en mixins (`PositionMixin`, `BalanceSyncMixin`, `AutoOptMixin`, `HealthMixin`) depuis le commit `ab44207` [ARCH-06 audit] du 07-13 | ✅ **DÉJÀ FAIT** |
-| **ARCH-06** (Plan C) | « Déplacer `_save_yaml` vers `core/yaml_io.py` » | Fait depuis `f717c87` [ARCH-04 audit] : `live_trader.py` utilise `app.core.yaml_io.update_config_yaml`, 0 référence à `app.api` (`grep -rn "from app.api" app/live` → vide) — **re-vérifié dans cette session, tâche #29** | ✅ **DÉJÀ FAIT** |
-| **ARCH-07** (Plan C) | « 25 littéraux `"BTC/USDC"`, cible ≤ 3 hors tests » | Fait en grande partie depuis `fa4fa21` [ARCH-10+11 audit] (`DEFAULT_CONFIG_SYMBOL` exporté et utilisé) mais `grep -rn '"BTC/USDC"' app/ \| grep -v test \| grep -v DEFAULT_CONFIG_SYMBOL` → **16 occurrences résiduelles** (cible ≤3 non atteinte) | 🟡 **PARTIEL** — reste un nettoyage S (cf. §4.3) |
-| **ARCH-08** (Plan C) | « Factoriser `_lazy_singleton` » | Fait depuis `ade3add` [ARCH-13 audit] : `app/core/singleton.py::lazy_singleton()` existe, `DATA_ROOT` centralisé | ✅ **DÉJÀ FAIT** |
-| **ARCH-04** (Plan C) | « 144 imports scopés `from app.` dans des fonctions, symptôme d'inversion de couche » | **Déjà vérifié faux dans cette session** (tâche #27, avant lecture du Plan C) : compte réel **56** (grep hors `__pycache__`), **0 violation de couche** (core→engine/live/api, live→api, live→strategies tous à 0). Les scoped imports restants sont dans `app/api/*` (couche autorisée à tout importer) ou du lazy-loading intra-couche légitime | ❌ **PRÉMISSE FAUSSE — refactor aveugle sans gain, ne pas exécuter** |
-| **ARCH-05** (Plan C) | « `smc.py` (1083 L) et `smart_money.py` (1178 L), cible < 450 L chacun » | `smc.py` = 65 L (façade, ✅) mais `smart_money.py` = **836 L** et `smart_money_signals.py` = **702 L** — le découpage a eu lieu (ARCH-14 audit) mais aucun des deux fichiers résultants n'est sous 450 L | 🟡 **PARTIEL** — le split existe, la cible de taille non atteinte (cf. §4.3, effort réduit car structure déjà en place) |
-| **STRAT-04** (Plan C) | « Modèle de slippage dépendant de la taille, absent » | **Déjà fait** : `backtest.slippage_model` (`"static"` par défaut, `"size"` opt-in) câblé dans `app/engine/backtest.py:241,770,921`, mesuré et documenté dans `mesures-vague5.md` [BT-10 audit] | ✅ **DÉJÀ FAIT** (off par défaut, comme spécifié) |
-| **STRAT-07** (Plan C) | « Walk-forward jamais branché sur l'auto-apply — à vérifier si BT-07 l'a fait » | Le Plan C soupçonnait lui-même que BT-07 avait pu le faire. Vérifié : `optimizer.wf_gate` (défaut `True`) est lu dans `auto_optimizer.py:522`, gate complet avec logs de refus | ✅ **DÉJÀ FAIT** — le Plan C avait raison de douter, confirmation apportée ici |
-
-**Six items** que le Plan C présentait comme du travail restant sont donc en
-réalité déjà terminés (quatre entièrement, deux partiellement) — le Plan C
-n'a pas vérifié son hypothèse contre le code au moment de sa rédaction.
-
-#### 1.3.2 Items obsolètes ou déclinés par décision utilisateur
-
-| Item | Concerné | Raison |
+| Indicateur | État | Détail |
 |---|---|---|
-| **BT-11** (audit) / **STRAT-05** (Plan C) — plafond d'exposition sur actifs corrélés (BTC+ETH) | Les deux décrivent le même garde-fou | **Décliné explicitement par l'utilisateur** lors de la Vague 5 (« ⛔ BT-11 exclu par décision utilisateur (multi-crypto corrélé assumé) », `00-INDEX.md` L137) — ne pas ré-ouvrir sans confirmation explicite |
-| **DEAD-03** (audit) — dé-versionner `data/ohlcv`/`data/derivatives` de git | — | **Décision utilisateur requise**, explicitement bloqué (« ne pas dé-versionner sans son accord explicite » — les parquets sont poussés volontairement depuis la machine de l'utilisateur, l'environnement distant n'a pas accès aux exchanges). Reste ouvert **uniquement** le sort de `XRP_USDC` (données présentes, absent de `scanner.symbols`) |
-| **1.3** (mon plan, §1.2 ancienne version) — validation scale-in cumulé | — | Déjà invalidé lors du Sprint 4 (S4-07), remplacé par un test de régression |
-| **6.2** (mon plan) — rate-limiting exchange par token bucket maison | — | Requalifié : `enableRateLimit: True` ccxt suffit, dupliquer serait un sur-engineering |
+| **CI** (`.github/workflows/ci.yml`) | ✅ **Verte** | Jobs `lint` (ruff) + `test` (pytest `-m "not slow"`). Run #19 = success sur `a601400`. |
+| **Tests** | ✅ 746 verts, 2 skipped | Vérifié hors `sklearn`/`pandas`/`joblib` (conditions CI réelles). |
+| **Lint** | ✅ `ruff check .` = 0 erreur | 25 erreurs introduites par le refactoring ont été résorbées. |
+| **Sécurité désérialisation (RCE)** | ✅ **Clos** | Plus **aucun** `pickle`/`joblib` dans le code (actif comme mort) : format 100 % LightGBM natif (`.lgb` + `.meta.json`) partout. Le `RestrictedUnpickler` de compat legacy a été supprimé (plus de `.pkl` à lire). |
+| **Dépendances** | ✅ Allégé | `pandas`, `pyarrow`, `scikit-learn` supprimés (~23 Mo + scipy/joblib transitifs). Polars + LightGBM natif partout. |
+| **Couches** | ✅ Strictes | `core → engine → live → api → strategies`, 0 import circulaire (vérifié par grep). |
+| **Stratégies actives** | 15 (`manual_active`) | Sur ~45 fichiers `app/strategies/` — dont **8 morts** à supprimer (DEAD-01). |
 
-### 1.4 Mon plan directeur — Sprints déjà réalisés
+### Note d'exécution — flakiness environnementale (rappel)
 
-Sprints 0, 1, 2, 4 (26 items) **intégralement terminés et poussés** :
-commits `ea9706e` (Sprint 0), `7aaed6b` (Sprint 1), `49be475` (Sprint 2),
-`78ae183` (Sprint 4). 649 tests verts (33 nouveaux vs les 616 d'avant ces
-sprints). Détail item par item : voir historique de ce document (git blame)
-ou `CHANGELOG.md` (section `[Non publié]`). Les trois vérifications
-ARCH-04/05/06 (numérotation Plan C, demandées explicitement par l'utilisateur)
-sont documentées en §1.3.1 ci-dessus avec preuve de code — **aucune n'a
-nécessité d'implémentation**, toutes obsolètes/déjà faites.
-
-**Non démarré** : Sprint 3 (G2 — actions SBF120 en paper), Sprint 5 (G3 —
-exécution réelle actions), Sprint 6 (fond de dette). Détail inchangé en §3-§5.
-
-#### 1.4.1 Passe de re-vérification de la branche (2026-07-18)
-
-Revue complète du diff `origin/main..HEAD` (50 fichiers, ~2 330 insertions)
-demandée après coup, item par item :
-
-- **Code : aucun correctif nécessaire.** Les 26 items relus dans le diff sont
-  conformes à leur intention ; points sensibles re-validés à la lecture :
-  chaîne d'auth cookie complète de bout en bout (cookie posé par `_tpl` →
-  `verify_api_key` lit header OU cookie → `EventSource` du frontend passe
-  bien `withCredentials: true` → WS lit le cookie en premier) ; échec de
-  clôture d'ordre = position remise dans `open_positions` sous
-  `_positions_lock` (pas de perte d'état allocateur, rien n'était encore
-  désenregistré à ce point du flux) ; fetch réseau de `OHLCVCache.get()`
-  hors verrou (pas de sérialisation inter-symboles) ; `df_is` bien en scope
-  au call site de `_save_ml_model_post_opt` ; alias
-  `min_volume_quote_24h` propagé AVANT le merge des défauts (une valeur
-  utilisateur de l'ancienne clé n'est pas écrasée par le défaut générique).
-- **Suite complète : 649/649 verts en 19,7 s** sur ce run (la flakiness §0
-  ne s'est pas manifestée — elle reste non-déterministe, pas « corrigée »).
-- **Documentation : 3 lacunes trouvées et corrigées** (les sprints avaient
-  modifié le comportement sans mettre à jour les docs transverses) :
-  1. `CHANGELOG.md` `[Non publié]` était vide → section complète ajoutée
-     (Sprints 0/1/2/4 + fusion des plans), dans le style des versions
-     précédentes.
-  2. `ARCHITECTURE.md` ignorait `app/core/providers.py`, l'extension `Venue`
-     (asset_class/quote_currency/…), `bars_per_year`, `live.trailing`, et
-     décrivait l'auth API sans le cookie HttpOnly ni le strict-env → complété
-     (liste des couches, « Sources uniques », section Sécurité).
-  3. `README.md` § Configuration montrait des clés API en dur dans
-     config.yaml alors que le fichier réel utilise `${OKX_API_KEY}`/
-     `${WEB_API_KEY}` résolues depuis `.env` (généré par `scripts/setup.sh`),
-     avec blocage strict en live → section réécrite.
+La suite complète en un seul process peut se bloquer de façon non-déterministe
+en environnement sandboxé chargé (throttling CPU cgroup) — reproductible sur du
+code antérieur, donc **non lié** aux évolutions récentes. La CI GitHub n'est pas
+affectée. Mitigation recommandée si cela réapparaît : `pytest-timeout` pour
+convertir un blocage en échec explicite.
 
 ---
 
-## 2. Architecture cible multi-actifs
+## 2. Ce qui a été fait
 
-*(Section inchangée depuis la version précédente de ce document — toujours
-valide, non impactée par la fusion des audits.)*
+### 2.1 Refactoring structurel — Phases 1-6 (2026-07-23, PR #155)
 
-### 2.1 Ce qui est déjà générique (ne pas toucher)
+Objectif : réduire la dette (fichiers-dieux, duplication ML, façades),
+supprimer le risque RCE des `.pkl`, et alléger les dépendances. **Tout vérifié
+contre le code de la branche.**
 
-- **Stratégies** : `BaseStrategy.analyze()` consomme des DataFrames OHLCV —
-  aucune dépendance crypto dans l'interface.
-- **Moteur/backtester/optimiseur/lifecycle** : tout est déjà indexé par slot
-  `strategy::tf::symbol` (`bot_identity.py`). Le slot
-  `pullback_trend::1d::AIR.PA` est représentable sans modification.
-- **CandleStore** : stockage Parquet par `(symbol, tf)`, agnostique de la source.
-- **Couplage ccxt confiné à 5 fichiers** : `core/exchange.py`,
-  `core/candle_store.py`, `core/derivatives.py`, `live/position_mixin.py`,
-  `api/routes/derivatives.py`.
-- **Config `venues`** : la section existe déjà (`config.yaml:7-24`) avec
-  `defs` + `assign`, étendue par S2-02 (`Instrument` + `VenueRegistry`,
-  `app/core/providers.py`) — c'est le point d'extension naturel, **déjà posé**.
+| Thème | Livré | Preuve |
+|---|---|---|
+| **MLBackend générique** | `app/ml/backend/` : `features.py` (features V4 Polars ~462 col.), `trainer.py`, `predictor.py`, `persistence.py`, `isotonic.py` (IsotonicRegression native PAV), `__init__.py` (façade thread-safe) | 6 modules, V11 migrée |
+| **Format ML natif RCE-safe** | `v4_models.pkl` (8,8 Mo) → 8 × `.lgb` + 8 × `.json` ; `save_lgb_with_scaler`/`load_model` natifs ; `RestrictedUnpickler` en défense-profondeur pour le legacy | 8 `.lgb` présents |
+| **Suppression pandas/pyarrow/sklearn** | `ml_dynamic_threshold` refondu (LightGBM natif, plus de `StandardScaler`/`Pipeline`), `_FeatureBuilder` pandas supprimé, 5 stratégies Opus passées à Polars | `requirements.txt`, 0 import top-level résiduel |
+| **Éclatement des god-classes** | `position_mixin.py` (1399 L) → 4 mixins (open/manage/close/restore) ; `risk.py` (667 L) → `risk_gate`+`risk_sizer`+`risk_notifier`+`risk_state` ; `optimizer.py` → `optimizer_search`+`optimizer_applier` ; `backtest.py` → +`walk_forward`+`monte_carlo` ; `_signal_at` SMC 542 → 24 L (dispatcher) | 4 façades supprimées |
+| **Éclatement API** | `routes/config.py` (684 L) → 4 routers + `_config_helpers` ; middlewares FastAPI → `middleware.py` ; `main.py` 346 → 279 L | façade `config.py` supprimée |
+| **Artefact mort** | `logs/ml_strategy.pkl` (549 Ko, dernier `.pkl` RCE committé) désindexé de git + `.gitignore` | supprimé |
 
-### 2.2 Les 4 points de couplage crypto à casser
+**5 façades supprimées** : `risk.py`, `optimizer.py`, `position_mixin.py`,
+`routes/config.py`, `_FeatureBuilder` pandas.
 
-**(a) Couche marché/exécution.** `MarketDataProvider`/`ExecutionProvider`
-(Protocol) **déjà créés** en Sprint 2 (S2-01, `app/core/providers.py`).
-`RobustExchange` les implémente de facto. Reste : un provider **data-only**
-pour actions (§3, G2).
+### 2.2 Remise au vert de la CI (2026-07-23)
 
-**(b) Modèle d'instrument et devise de cotation.** `Instrument`/`VenueRegistry`
-**déjà créés** (S2-02, `app/core/instruments.py` via `providers.py`), devise
-de cotation neutralisée (S2-03). Reste : brancher un vrai provider actions.
+Le refactoring avait rendu la CI rouge sur ses deux jobs. Corrigé :
 
-**(c) Calendrier de marché — le point le plus structurant, non démarré.**
-La boucle live suppose toujours un marché 24/7. Reste intégralement à faire
-(§3, G2/S3-02) : `MarketCalendar`, gating `_cycle()`/`CandleStore`, seuil de
-gap par classe d'actif, mode `close_at_session_end`.
+- **Lint** : 25 erreurs ruff (imports non triés `I001`, imports inutilisés
+  `F401`, `E701` multi-instructions, `F841` variable inutilisée). Les
+  ré-exports de compat de `backtest.py` (`WalkForwardAnalyzer`, `MonteCarlo`)
+  reçoivent un `# noqa: F401` explicite.
+- **Test `test_freezes_via_partial_fixed_sampler`** : la suppression de
+  scikit-learn a cassé le gel de paramètres du chemin **Optuna**, qui reposait
+  sur l'estimateur d'importance **fANOVA** (RandomForestRegressor sklearn en
+  interne). Correctif : ajout de **PedANOVA** (évaluateur d'importance Optuna
+  *sklearn-free*) comme repli entre fANOVA et l'estimateur marginal
+  (`_optuna_param_importances`). fANOVA reste prioritaire si sklearn est présent
+  (dev). *Découvert par reproduction fidèle des conditions CI, hors sklearn.*
 
-**(d) Coûts et sizing.** `compute_size` reste en fractions continues (pas de
-`lot_size`/`tick_size`). Modèle de frais par venue (fixe + % + TTF française
-0,4 %) non implémenté. Reste à faire (§3, G2/S3-03/S3-04).
+### 2.3 Persistance des stratégies « retrained » : joblib → natif (2026-07-23)
 
-### 2.3 Compatibilité des stratégies
+Les 4 stratégies retrained encore inactives (`opus_omnibus_v7`,
+`_v10_retrained`, `_v11_followsetup`, `opus_stat_retrained_v4`) persistaient
+leurs modèles via `joblib.dump`/`joblib.load` — dernier code dépendant de
+`joblib` (supprimé avec sklearn) et de pickle (RCE). Migré vers le format natif
+LGB+JSON via deux helpers factorisés `save_amp_dir_bundle`/`load_amp_dir_bundle`
+(`app/ml/backend/persistence.py`, calibrators isotoniques sérialisés en JSON).
+Dans la foulée, **toute la machinerie pickle a été supprimée** du backend
+(`RestrictedUnpickler`, `restricted_pickle_load`, `import pickle`) et le suffixe
+`.pkl` des chemins de modèle est remplacé par un préfixe natif — il n'existe
+plus aucun `.pkl` ni pickle dans le code. Ces stratégies restent candidates à
+DEAD-01, mais ne dépendent plus de joblib. **SEC-020 est désormais clos.**
 
-`BaseStrategy.asset_classes` **déjà ajouté** (S2-04), `funding_flow`/
-`derivatives_reversion` marquées `frozenset({"crypto"})`, filtre câblé dans
-`_build_active_per_tf`. Fait.
+### 2.4 Historique antérieur (résumé)
 
-### 2.4 Fournisseurs pour le SBF120
+Travaux consolidés et vérifiés lors des passes précédentes (détail dans
+`CHANGELOG.md` et les fichiers `docs/audit/*` d'archive) :
 
-*(Inchangé — recommandations non encore mises en œuvre)*
+| Lot | Contenu | Statut |
+|---|---|---|
+| Audit Vagues 0-2 | Régressions per-symbole, sécurité/intégrité (auth, watchdog, notifs, parquet atomique), intégrité de la mesure (Monte-Carlo, IS/OOS, WF gate, garde-fous d'apply) | ✅ |
+| Audit Vague 4 | Architecture : couches strictes, `param_resolution`, `timeframes`, `execution.py` (parité BT/live), découpage `live_trader`/scanner/smc | ✅ |
+| Audit Vague 5 | Recherche d'edge SMC/ICT (inducement BTC 4h activé ; le reste `off`, sans preuve OOS) | ✅ |
+| Audit Vague 6 | UX/a11y/docs, tests LiveTrader/API/lifecycle, découpe CHANGELOG | ✅ (sauf TEST-11, bloqué par DEAD-01) |
+| Sprint 7 | Nettoyage code mort partiel (`scoring_v3`, pyflakes, imports morts), **CI + ruff.toml + mypy.ini + pytest.ini** | ✅ (hors DEAD-01) |
+| Sprint 8 | Quick wins financiers/sécu : benchmark B&H, compteur de frais, slippage paper, rate-limit par endpoint, backup auto, `audit_param_space.py` | ✅ (hors FIN-01) |
+| Post-8 | Parallélisme réel de l'optimiseur (`n_jobs` câblé, refonte `param_search_optim`), résorption dette lint pré-existante (773 → 0) | ✅ |
 
-| Rôle | Option recommandée | Alternative |
-|------|--------------------|-------------|
-| Données 1h/1d | `yfinance` (tickers `.PA`, gratuit) | EOD Historical Data (payant) |
-| Exécution réelle | Interactive Brokers via `ib_insync` | Saxo OpenAPI |
+---
+
+## 3. Ce qui reste à faire — backlog priorisé
+
+Grille : 🟢 quick win · 🔵 bet structurant · 🟡 itératif.
+
+### 3.1 🟢 DEAD-01 — Supprimer les 8 stratégies Opus/stat mortes
+
+**Le chantier de nettoyage le plus rentable, et il débloque plusieurs autres.**
+Analyse comparative (fonctionnelle + empirique sur 5 TF) déjà livrée ;
+**décision de suppression utilisateur en attente**. Aucun fichier supprimé à ce
+jour.
+
+Candidates (aucune dans `manual_active`, ~7 569 L au total) :
+
+| Fichier | Lignes | Verdict analyse |
+|---|---:|---|
+| `opus_omnibus_v7.py` | 1266 | suppression nette |
+| `opus_omnibus_v7_pretrained.py` | 640 | suppression nette |
+| `opus_omnibus_v9.py` | 738 | suppression nette |
+| `opus_omnibus_v10_retrained.py` | 1323 | suppression nette |
+| `opus_omnibus_v11_no_ml.py` | 545 | suppression nette |
+| `opus_omnibus_v11_followsetup.py` | 1444 | discutable (seule paire positive sur 1j, échantillon faible) |
+| `opus_omnibus_v11_followsetup_no_ml.py` | 492 | discutable |
+| `opus_stat_retrained_v4.py` | 1121 | suppression nette |
+
+⚠ **Ne pas toucher** `opus_omnibus_v8`, `opus_omnibus_v10`,
+`opus_stat_pretrained_v4` (dépendances réelles, dont le scanner V8).
+
+> **Note** : ces stratégies ont été migrées hors de `joblib` vers le format
+> natif LGB+JSON (§2.3, 2026-07-23), donc **SEC-020 est déjà clos** et elles ne
+> crashent plus à la sauvegarde. Leur suppression est désormais un nettoyage de
+> **code mort « pur »**, sans enjeu sécurité résiduel.
+>
+> **Débloque** : TEST-11 (smoke tests stratégies) et ARCH-01 (OpusBase — moins
+> de variantes à factoriser).
+
+### 3.2 🟢 Durcissement sécurité (audit externe SEC)
+
+Non traités par le refactoring (hors périmètre). Effort faible, impact réel :
+
+| ID | Item | Fichier |
+|---|---|---|
+| **SEC-002** | Path traversal via `tf` non validé → whitelist de timeframes dans `CandleStore._path` (+ `resolve().is_relative_to`) | `app/core/candle_store.py` |
+| **SEC-003** | Retirer `web.allow_insecure: true` committé par défaut → opt-in par flag CLI/env, jamais via YAML | `config.yaml` |
+| **SEC-004** | Retirer `"testclient"` de la whitelist localhost WebSocket | `app/api/routes/ws.py` |
+| **SEC-005** | Retirer `auth_basic off;` sur `/api/optimize/stream` | `deploy/nginx.conf` |
+| **SEC-006** | Docs OpenAPI (`/api/docs`, `/api/openapi.json`) non protégées → désactiver en prod (`ENV=prod`) | `app/api/main.py` |
+| SEC-009/010 | Bumps CVE : `sqlalchemy>=2.0.32`, `jinja2>=3.1.5` | `requirements.txt` |
+| SEC-007/008 | `notify-crash.py` (fuite de logs vers Telegram), `backup.sh` (chmod 600) | `deploy/` |
+
+### 3.3 🔵 Observabilité (score le plus faible, ~4/10)
+
+Aucun équivalent existant (fichiers/dépendances absents, vérifié) :
+
+| ID | Item | Effort |
+|---|---|---|
+| OBS-01 | Métriques Prometheus (`prometheus-client`, `app/core/metrics.py`) | M |
+| OBS-02 | Logs JSON structurés + correlation IDs (`contextvars`) — remplace les f-strings | M |
+| OBS-06/07 | `/health` enrichi + alerting sur seuils critiques | M |
+| OBS-03/04/05 | Grafana, AlertManager, tracing OpenTelemetry (dépendent d'OBS-01) | M/L |
+
+### 3.4 🔵 Refactor stratégies avancé
+
+| ID | Item | Dépend de |
+|---|---|---|
+| **ARCH-01** (OpusBase) | Factoriser le routing V10 partagé (setups, `_select_setup`, `_check_early_exit`) des variantes **survivantes** (v8/v10/v11/v12/pretrained_v4). `MLBackend` a déjà extrait le ML ; ~600 L de routing restent dupliquées | DEAD-01 |
+| **STRAT-01** | Champ `status: experimental\|validated\|production\|archived` dans chaque YAML (distinct du lifecycle runtime) | — |
+| **STRAT-02** | Versioning modèles ML (hash features + date, `models/index.json`) | — |
+| ARCH-05 | Réduire `smart_money.py` (838 L) et `smart_money_signals.py` (891 L) — dette de lisibilité, pas d'urgence | — |
+
+### 3.5 🟡 Tests, docs, DX
+
+| ID | Item |
+|---|---|
+| TEST-11 | Smoke tests paramétrés pour les stratégies survivantes (après DEAD-01) |
+| TEST-05 | Tests d'ordres live mockés complets (idempotence clientOrderId, partial fills, réconciliation frais, restauration crash) |
+| TEST-04 | `pytest-cov` + seuil de couverture en CI ; ajouter mypy/security-scan à la CI |
+| DOC-005/006 | 4 guides référencés au README mais inexistants ; 0 ADR |
+| DOC-mAj | `ARCHITECTURE.md` : refléter `MLBackend` et la suppression des façades |
+| DX-01 | `Dockerfile` + `docker-compose` |
+| WKFLOW | pre-commit hooks, Dependabot/Renovate, release workflow |
+
+### 3.6 🟡 Financier & recherche (itératif)
+
+FIN-01 (frais VIP OKX dynamiques), FIN-02 (borrow dynamique), FIN-05
+(Sharpe/Sortino/Calmar/VaR temps réel), FIN-08 (réconciliation PnL quotidienne),
+RES-01 (regime detection HMM), RES-02 (backtest portefeuille multi-actifs). Au
+fil de l'eau.
+
+---
+
+## 4. Généralisation multi-actifs (crypto → actions SBF120)
+
+*Objectif produit distinct de la dette technique : faire tourner le bot sur des
+actions (SBF120) en plus de la crypto. Les abstractions sont posées, l'exécution
+reste à brancher.*
+
+### 4.1 Déjà générique — G1 ✅ FAIT
+
+- `app/core/providers.py` : protocoles `MarketDataProvider`/`ExecutionProvider`.
+- `Instrument` + `VenueRegistry` (extension `venues.defs`), devise de cotation neutralisée.
+- `BaseStrategy.asset_classes` + marquage des stratégies crypto-only + filtre câblé.
+- Golden test de parité (`tests/test_generic_parity.py`).
+- Couplage ccxt confiné à ~5 fichiers (`exchange`, `candle_store`, `derivatives`,
+  `position_*`, `routes/derivatives`).
+
+### 4.2 Les 3 points de couplage restants
+
+| Point | À faire |
+|---|---|
+| **Calendrier de marché** (le plus structurant) | `app/core/market_calendar.py` (wrapper `exchange_calendars` XPAR), gating `_cycle()`/`CandleStore`/forward-test, seuil de gap par classe d'actif, `close_at_session_end`. La boucle live suppose encore un marché 24/7. |
+| **Sizing & coûts par venue** | `compute_size` en fractions continues → sizing entier (`lot_size`, `tick_size`) ; frais par venue (fixe + % + **TTF française 0,4 %**) partagés backtest/live. |
+| **Provider actions** | `YFinanceProvider` (data-only, tickers `.PA`) → CandleStore ; `data/universe/sbf120.yaml` ; scanner mode equity ; ML par instrument (retirer le `"BTC" in s` codé en dur). |
+
+### 4.3 Exécution réelle actions — G3 (Phase 3)
+
+`IBKRExecutionProvider` (`ib_insync`) ou Saxo OpenAPI (idempotence `orderRef`),
+`BalanceSyncMixin` multi-venue (EUR+USDC), exposition par classe d'actif.
+SRD/short : chantier séparé, hors périmètre.
+
+### 4.4 Fournisseurs recommandés
+
+| Rôle | Recommandé | Alternative |
+|---|---|---|
+| Données 1h/1d | `yfinance` (`.PA`, gratuit) | EOD Historical Data |
+| Exécution | Interactive Brokers (`ib_insync`) | Saxo OpenAPI |
 | Calendrier | `exchange_calendars` (XPAR) | `pandas_market_calendars` |
-| Liste SBF120 | `data/universe/sbf120.yaml` statique | Scraping Euronext (à éviter) |
+| Univers | `data/universe/sbf120.yaml` statique | Scraping Euronext (à éviter) |
 
 ---
 
-## 3. Chantier G — Généralisation (détail exécutable)
+## 5. Roadmap par sprints
 
-*(Section inchangée — toujours le plan de référence pour la généralisation
-actions. G1 est fait, G2/G3 non démarrés.)*
+### Terminés
 
-### G1 — Abstractions sans changement de comportement — ✅ FAIT (Sprint 2)
+| Sprint | Contenu |
+|---|---|
+| 0-2, 4 | Correctifs P0/P1 sécurité-config, abstractions multi-actifs (G1), qualité métriques |
+| Audit V0-6 | Régressions, sécurité, mesure, architecture, edge SMC, UX/docs |
+| 7 | Nettoyage code mort partiel + **CI/lint/mypy/pytest configs** |
+| 8 | Quick wins financiers & sécurité |
+| Post-8 | Parallélisme optimiseur + dette lint |
+| **Refactoring 1-6** | **MLBackend, 5 façades supprimées, format ML natif, suppression pandas/sklearn, CI remise au vert** (2026-07-23, PR #155) |
 
-1. `app/core/providers.py` : protocoles `MarketDataProvider`/`ExecutionProvider` ✅
-2. `Instrument` + `VenueRegistry` (extension `venues.defs`) ✅
-3. Neutralisation devise de cotation (balances, scanner, `min_volume_quote_24h`) ✅
-4. `asset_classes` sur `BaseStrategy` + marquage dérivés + filtre ✅
-5. Golden test parité BTC/USDC (`tests/test_generic_parity.py`) ✅
+### À venir (ordre suggéré)
 
-### G2 — Actions en paper (Phase 2) — ❌ non démarré
+| Priorité | Sprint | Contenu | Dépend de |
+|---|---|---|---| 
+| 1 | **DEAD-01** | Supprimer les 8 stratégies mortes (décision utilisateur) → clôt SEC-020, débloque TEST-11 + ARCH-01 | décision |
+| 2 | **Sécurité** | SEC-002/003/004/005/006 + bumps CVE | — |
+| 3 | **ARCH-01** | OpusBase (routing partagé) sur les variantes survivantes | DEAD-01 |
+| 4 | **Observabilité** | Prometheus, logs JSON, `/health` enrichi | — |
+| 5 | **Tests** | TEST-11 (smoke), TEST-05 (ordres mockés), coverage CI | DEAD-01 |
+| 6 | **G2** | Actions SBF120 en paper (calendrier, sizing, frais, provider) | G1 (fait) |
+| 7 | **G3** | Exécution réelle actions (IBKR/Saxo) | G2 validé |
+| — | Itératif | Financier, DX, recherche (§3.5-3.6) | au fil de l'eau |
 
-1. `app/core/providers_equity.py::YFinanceProvider` → CandleStore Parquet.
-2. `app/core/market_calendar.py` (wrapper `exchange_calendars`, XPAR) +
-   gating `_cycle()`/`CandleStore`/forward-test, seuil de gap par classe
-   d'actif, `close_at_session_end`.
-3. Sizing entier (`lot_size`, floor) + stops au `tick_size`.
-4. Frais par venue (fixe + % + TTF 0,4 %) partagés backtest/live.
-5. `data/universe/sbf120.yaml` + scanner mode equity.
-6. ML : réentraînement par instrument (fix `"BTC" in s` codé en dur dans
-   `ml/trainer.py`).
-7. Critère de sortie : backtest + optimisation + paper trading ≥3 valeurs
-   SBF120 sur 1h/1d pendant une semaine, calendrier respecté, TTF visible.
 
-### G3 — Exécution réelle actions (Phase 3) — ❌ non démarré
-
-1. `IBKRExecutionProvider` (`ib_insync`) ou Saxo OpenAPI, idempotence `orderRef`.
-2. `BalanceSyncMixin` multi-venue (EUR + USDC, équité globale convertie).
-3. `check_correlation` par classe d'actif, `max_asset_class_exposure_pct`.
-4. SRD/short actions : hors périmètre, chantier séparé.
-
----
-
-## 4. Ce qui reste à faire — backlog fusionné et priorisé
-
-Dédupliqué entre les 89 items de l'audit initial, les ~90 items du Plan C et
-les Sprints 3/5/6 de ce document. Regroupé par thème, priorisé selon la
-même grille Impact×Effort que le Plan C (🟢 quick win, 🔵 bet structurant,
-🟡 itératif, 🟠 backlog).
-
-### 4.1 🟢 Nettoyage & CI — Vague 3 de l'audit — ✅ FAIT (Sprint 7), sauf DEAD-01/TEST-11
-
-Sprint 7 exécuté le 2026-07-18, **hors DEAD-01 et TEST-11** (exclus
-explicitement par décision utilisateur — bloqués l'un par l'autre, à
-reprendre ensemble plus tard). Tout le reste de la Vague 3 est fait.
-
-| ID (source) | Item | Effort | État |
-|---|---|---|---|
+claude/sprint-7-8-planning-xb12m0
 | **DEAD-01** (audit) | Supprimer 8 générations Opus/stat jamais promues — liste **révisée** (7 restants, cf. note) — **8005 lignes** mortes au total avec DEAD-02. ⚠ NE PAS toucher `v8`, `v10`, `opus_stat_pretrained_v4` (dépendances réelles) | M | 🟡 **Analyse livrée (2026-07-19/20), re-confirmée le 2026-07-20 avec méthodologie de production, verdict révisé le 2026-07-20 après discussion utilisateur** — comparatif fonctionnel + empirique des 15 variantes sur 5 TF (15m/30m/1h/4h/1j), **re-run intégral** avec dimensionnement de fenêtre calqué sur la production (`auto_fetch_limit`/`split_is_oos`, plus de cap arbitraire) et **sans aucune stratégie sautée** (les 4 précédemment en timeout — v9/v10/v11_followsetup/v12 — ont maintenant un résultat optimisé complet), rapport HTML mis à jour remis à l'utilisateur (hors dépôt). **`opus_omnibus_v9` retiré de la liste DEAD-01** : classé « supprimer » à tort sur le seul motif que `v10` n'en hérite pas (versioning, pas qualité) — les chiffres montrent au contraire le signal le plus fort de toute la lignée v7-v10 (1h : PnL +561.5, Sharpe 49.4, supérieur à `v8` ET `v10`), avec deux setups Trend-Up réels (`LONG_TU`/`LONG_PULLBACK_TU`) que `v10` a explicitement écartés (jugement délibéré, mais non confirmé sur cette fenêtre de données). Verdict final : suppression nette pour **5/7** restants (`v7`, `v7_pretrained`, `v10_retrained`, `v11_no_ml`, `opus_stat_retrained_v4`), 2 « discutables » (`v11_followsetup[_no_ml]`) — le dossier a changé de forme lors du re-run : la variante *no_ml* se renforce (1h optimisé passe positif), la variante ML s'affaiblit (score OOS de recherche positif partout mais aucun gain traduit sur le backtest complet, signal probable de surapprentissage à 10 essais). **Découvertes hors périmètre DEAD-01** : (1) `v11`/`v12` (actives en production) ressortent négatives sur leur TF de production (1h) dans ce test, positives seulement sur 4h — signalé pour examen séparé, non tranché ; (2) l'écart ML vs no_ml (`v8`/`v8_no_ml`, `v11`/`v11_no_ml`) s'explique par des seuils de setup identiques mais des probabilités non calibrées côté proxy (sigmoïde à gain fixe non entraînée) contre un modèle ML calibré sur historique réel — 6-9× plus de trades, WR proche du hasard côté proxy. **Aucun fichier supprimé.** |
 | **DEAD-02** (audit) | Supprimer `scoring_statistique_opus_v3.py` (579 L, aucun appelant) | S | ✅ FAIT — fichier + yaml supprimés, 0 référence |
 | **DEAD-05** (audit) | Corriger le bug pyflakes `del ds_tr, ds_va` dans `opus_omnibus_v11.py:1065,1093` — **stratégie ACTIVE** (`manual_active: opus_omnibus_v11::30m`) | S | ✅ FAIT — try/finally englobant remplace les deux `del` dupliqués |
@@ -439,37 +428,24 @@ Plan C :
   - **Reproductibilité.** Le pkl V4 actuel a été généré par un script **hors dépôt**, impossible à régénérer à l'identique. Committer un script d'entraînement paramétré (fenêtre + hyperparamètres + seed) dans le dépôt.
   - **Ré-entraînement périodique sur GRANDE fenêtre.** Un modèle figé se dégrade (constaté : direction 15m passe **sous 0.5** — anti-prédictive — sur les données récentes). Ni « figé pour toujours » ni « ré-entraîné tous les 800 barres sur peu de données » (les deux perdent, mesuré) : viser un ré-entraînement **rare** (mensuel/trimestriel) sur **≥40k barres glissantes**. L'infra existe (`MLStrategyTrainer`, `retrain_interval_h`, `save_model`/`load_model`, `managed_externally`) — il manque le dimensionnement et la planification.
   - **Optimiser contre un modèle figé.** L'optimiseur est câblé en dur sur `use_pretrained_ml=False` (`optimizer.py:247`, `opt_workers.py:284` — ré-entraîne à chaque essai). Ajouter un flag pour geler un modèle puis optimiser ses seuils de setup **contre** lui : plus rapide (pas de ré-entraînement par essai), méthodologiquement correct (cible fixe), et cela débloque proprement l'expérimentation « recette figée + seuils re-tunés » (tentée manuellement en §06, réfutée pour V11, mais l'outillage manque pour l'industrialiser).
+=======
 
----
 
-## 5. Roadmap par sprints (mise à jour)
+## 6. Décisions produit en attente
 
-### Sprints terminés
+- **DEAD-01** : feu vert pour supprimer les 8 stratégies mortes (analyse
+  livrée). Bloque plusieurs chantiers en aval.
+- **FIN-01** : implémenter les frais VIP OKX dynamiques (exclu des sprints
+  précédents).
 
-| Sprint | Contenu | Statut |
-|---|---|---|
-| 0 | 5 correctifs P0 sécurité financière/config | ✅ `ea9706e` |
-| 1 | 8 items concurrence/sécurité P1 | ✅ `7aaed6b` |
-| 2 | G1 — abstractions multi-actifs | ✅ `49be475` |
-| 4 | Qualité métriques & optimiseur | ✅ `78ae183` |
-| — | Vérification ARCH-04/05/06 (numérotation Plan C) | ✅ toutes obsolètes/déjà faites (§1.3.1) |
-| 7 | Nettoyage code mort + CI/lint (Vague 3 de l'audit), hors DEAD-01/TEST-11 | ✅ `d19c978` |
-| 8 | Quick wins financiers & sécurité, hors FIN-01 | ✅ (ce commit) |
-| Post-8 | Comparatif DEAD-01 (4h/1j) + PERF-02 (parallélisme réel optimiseur, refonte `param_search_optim`) + résolution dette lint pré-existante (773 → 0 erreur, `ruff check .` vert pour la 1ère fois) | ✅ `5022b69`…`3bbcd55` (§4.1bis) |
+### Déclinés / obsolètes (ne pas rouvrir sans confirmation)
 
-### Sprints à venir (reformulés après fusion)
-
-| Sprint | Contenu | Dépendances | Détail |
-|---|---|---|---|
-| **7 (reste)** | DEAD-01 (8 générations Opus/stat mortes) + TEST-11 (smoke stratégies) | analyse livrée (2026-07-19/20) — **décision utilisateur de suppression en attente** ; TEST-11 reste bloqué par DEAD-01 | §4.1 |
-| **8 (reste)** | FIN-01 (frais dynamiques VIP OKX) | aucune, exclu explicitement du Sprint 8 initial | §4.2 |
-| **3** | G2 — SBF120 en paper (données, calendrier, frais, sizing) | Sprint 2 (fait) | §3, inchangé |
-| **9** | Observabilité & DX (Prometheus, Docker, Pydantic, onboarding) | aucune | §4.4 |
-| **10** | Refactor stratégies avancé (OpusBase, status lifecycle, versioning ML, tests ordres mockés) | Sprint 7 (DEAD-01 réduit le périmètre d'ARCH-01) | §4.3 |
-| **5** | G3 — exécution réelle actions (IBKR/Saxo) | Sprint 3 validé en paper | §3, inchangé |
-| **11** | Itératif (financier, DX, perf, cycle de vie, workflow, recherche) | au fil de l'eau | §4.5 |
-
-**Décisions produit en attente** (à trancher avec l'utilisateur avant
-exécution, non bloquantes pour le reste) :
-- Confirmation que BT-11/STRAT-05 (plafond corrélation BTC/ETH) reste décliné.
-- Sort de `XRP_USDC` : **tranché** (Sprint 7) — ajouté à `scanner.symbols`.
+- ⛔ **BT-11 / plafond d'exposition BTC+ETH corrélés** — décliné par
+  l'utilisateur (multi-crypto corrélé assumé).
+- ⛔ **DEAD-03 / dé-versionner `data/`** — les parquets sont poussés
+  volontairement depuis la machine de l'utilisateur ; ne pas exécuter sans
+  accord explicite. (Sort de `XRP_USDC` déjà tranché : ajouté à `scanner.symbols`.)
+- ⛔ **HMAC de signature des `.pkl`** (ancien SEC-001) — rendu **sans objet** :
+  il n'y a plus aucun `.pkl` ni pickle dans le code (format 100 % LightGBM natif).
+- ⛔ **Encapsulation `AppState` complète** — optionnelle, aucune inversion de
+  couche restante ; à ne faire que sur besoin concret (multi-instances).

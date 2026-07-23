@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api import state
-from app.api.routes.config import strategy_overrides, update_strategy_params
+from app.api.routes.config_strategies import strategy_overrides, update_strategy_params
 
 
 @pytest.fixture
@@ -84,7 +84,7 @@ def test_override_write_goes_through_apply_best_params(fake_cfg, monkeypatch):
 
 def test_base_write_unchanged_without_tf_symbol(fake_cfg, monkeypatch):
     saved = {}
-    import app.api.routes.config as cfg_route
+    import app.api.routes.config_strategies as cfg_route
     monkeypatch.setattr(cfg_route, "_save_strategy_yaml",
                         lambda name, fn: saved.setdefault("name", name))
     res = update_strategy_params(None, "trend_rider", {"adx_min": 25})

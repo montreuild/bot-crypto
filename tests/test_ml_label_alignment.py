@@ -13,7 +13,6 @@ import polars as pl
 import pytest
 
 pytest.importorskip("lightgbm")
-pytest.importorskip("sklearn")
 
 
 def _make_df(n=400, seed=3):
