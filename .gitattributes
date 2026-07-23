@@ -1,0 +1,12 @@
+# Fichiers modèle LightGBM natifs : dump texte (features/tree splits en
+# ASCII), MAIS le parseur LightGBM est sensible aux fins de ligne — un
+# checkout Windows avec core.autocrlf=true convertit silencieusement les
+# LF en CRLF, ce qui corrompt le fichier et peut faire planter LightGBM au
+# chargement (crash natif C++, non rattrapable par un try/except Python).
+# "binary" désactive toute conversion de fin de ligne, sur toutes les
+# plateformes.
+*.lgb binary
+
+# Parquet est déjà un format binaire (détecté automatiquement par git),
+# mais on le déclare explicitement par robustesse.
+*.parquet binary
