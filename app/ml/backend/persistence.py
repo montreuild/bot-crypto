@@ -56,6 +56,17 @@ def _lgb_allowed_classes() -> Tuple[type, ...]:
         return ()
 
 
+def _native_allowed_classes() -> Tuple[type, ...]:
+    """Classes natives du repo autorisées à la désérialisation legacy (ex.
+    calibrators ``IsotonicRegression`` picklés dans les anciens ``.pkl`` des
+    stratégies retrained). Objets de données purs, sans exécution de code."""
+    try:
+        from app.ml.backend.isotonic import IsotonicRegression
+        return (IsotonicRegression,)
+    except Exception:
+        return ()
+
+
 class RestrictedUnpickler(pickle.Unpickler):
     """Unpickler avec liste blanche — refuse toute classe non autorisée.
 
@@ -65,7 +76,8 @@ class RestrictedUnpickler(pickle.Unpickler):
     """
 
     def find_class(self, module: str, name: str) -> Any:
-        allowed = _ALLOWED_PICKLE_CLASSES + _lgb_allowed_classes()
+        allowed = (_ALLOWED_PICKLE_CLASSES + _lgb_allowed_classes()
+                   + _native_allowed_classes())
         for cls in allowed:
             if cls.__module__ == module and cls.__name__ == name:
                 return super().find_class(module, name)
@@ -339,6 +351,124 @@ def load_lgb_with_scaler(path: str):
             }
         except Exception as e:
             logger.warning(f"[MLBackend.persistence] load_lgb_with_scaler natif KO : {e}")
+            return None
+
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Variante pour stratégies « retrained » standalone (amp + dir + features +
+#  medians, sans TrainState ni calibrators) — opus_omnibus_v7 / v10_retrained /
+#  v11_followsetup / opus_stat_retrained_v4.
+# ─────────────────────────────────────────────────────────────────────────────
+# Ces stratégies entraînent leurs propres boosters LightGBM et les persistaient
+# via ``joblib.dump`` (pickle, donc RCE + dépendance joblib supprimée en phase6).
+# Ces deux helpers remplacent joblib par le format natif LGB + JSON, avec un
+# repli RCE-safe (RestrictedUnpickler) pour lire les anciens ``.pkl``.
+
+def save_amp_dir_bundle(path: str, tf: str, amp_model, dir_model,
+                        features, medians, best_auc: float,
+                        train_meta: dict, amp_cal=None, dir_cal=None) -> bool:
+    """Sauvegarde ``{amp, dir, features, medians, best_auc, train_meta}`` (+
+    calibrators isotoniques optionnels) au format natif LGB + JSON (remplace
+    ``joblib.dump``, RCE-safe).
+
+    Écrit ``{base}.amp.lgb`` + ``{base}.dir.lgb`` + ``{base}.meta.json`` (le
+    ``base`` retire l'extension ``.pkl`` du chemin d'origine pour compat). Les
+    calibrators ``amp_cal``/``dir_cal`` (``IsotonicRegression`` native) sont
+    sérialisés en JSON (pas de pickle) via ``_isotonic_to_dict`` — ``None``
+    accepté (stratégies sans calibration). Retourne ``False`` si un modèle
+    manque.
+    """
+    if amp_model is None or dir_model is None:
+        return False
+    base = path[:-4] if path.endswith(".pkl") else path
+    amp_path  = f"{base}.amp.lgb"
+    dir_path  = f"{base}.dir.lgb"
+    meta_path = f"{base}.meta.json"
+    os.makedirs(os.path.dirname(os.path.abspath(amp_path)), exist_ok=True)
+    try:
+        amp_model.save_model(amp_path)
+        dir_model.save_model(dir_path)
+    except Exception as e:
+        logger.error(f"[MLBackend.persistence] save_amp_dir_bundle LGB KO : {e}")
+        return False
+    payload = {
+        "tf":         tf,
+        "features":   list(features or []),
+        "medians":    {k: float(v) for k, v in (medians or {}).items()},
+        "best_auc":   float(best_auc),
+        "train_meta": dict(train_meta or {}),
+        "amp_cal":    _isotonic_to_dict(amp_cal),
+        "dir_cal":    _isotonic_to_dict(dir_cal),
+        "format_version": 1,
+    }
+    try:
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"[MLBackend.persistence] save_amp_dir_bundle meta.json KO : {e}")
+        return False
+    return True
+
+
+def load_amp_dir_bundle(path: str) -> Optional[dict]:
+    """Charge ``{amp_model, dir_model, features, medians, best_auc, train_meta,
+    tf, amp_cal, dir_cal}`` — format natif LGB + JSON d'abord, repli RCE-safe
+    sur l'ancien ``.pkl`` (via ``RestrictedUnpickler``). Retourne ``None`` si
+    introuvable ou illisible (l'appelant doit alors ré-entraîner)."""
+    base = path[:-4] if path.endswith(".pkl") else path
+    amp_path  = f"{base}.amp.lgb"
+    dir_path  = f"{base}.dir.lgb"
+    meta_path = f"{base}.meta.json"
+
+    # 1. Format natif (RCE-safe).
+    if os.path.exists(amp_path) and os.path.exists(dir_path) and os.path.exists(meta_path):
+        try:
+            import lightgbm as lgb
+            amp_model = lgb.Booster(model_file=amp_path)
+            dir_model = lgb.Booster(model_file=dir_path)
+            with open(meta_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            return {
+                "amp_model":  amp_model,
+                "dir_model":  dir_model,
+                "features":   list(payload.get("features") or []),
+                "medians":    dict(payload.get("medians") or {}),
+                "best_auc":   float(payload.get("best_auc", 0.0)),
+                "train_meta": dict(payload.get("train_meta") or {}),
+                "amp_cal":    _isotonic_from_dict(payload.get("amp_cal")),
+                "dir_cal":    _isotonic_from_dict(payload.get("dir_cal")),
+                "tf":         payload.get("tf"),
+            }
+        except Exception as e:
+            logger.warning(f"[MLBackend.persistence] load_amp_dir_bundle natif KO : {e}")
+            return None
+
+    # 2. Legacy .pkl (joblib) — lecture RCE-safe via RestrictedUnpickler.
+    legacy = path if path.endswith(".pkl") else f"{base}.pkl"
+    if os.path.exists(legacy):
+        try:
+            with open(legacy, "rb") as f:
+                data = restricted_pickle_load(f)
+            logger.warning(
+                f"[MLBackend.persistence] {legacy} : ancien .pkl chargé via "
+                f"RestrictedUnpickler — ré-sauvegardez via save_model() pour "
+                f"migrer vers le format natif."
+            )
+            return {
+                "amp_model":  data.get("amp_model"),
+                "dir_model":  data.get("dir_model"),
+                "features":   list(data.get("features") or []),
+                "medians":    dict(data.get("medians") or {}),
+                "best_auc":   float(data.get("best_auc", 0.0)),
+                "train_meta": dict(data.get("train_meta") or {}),
+                "amp_cal":    data.get("amp_cal"),
+                "dir_cal":    data.get("dir_cal"),
+                "tf":         data.get("tf"),
+            }
+        except Exception as e:
+            logger.warning(f"[MLBackend.persistence] load_amp_dir_bundle legacy .pkl KO : {e}")
             return None
 
     return None

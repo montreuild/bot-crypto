@@ -643,7 +643,7 @@ class Strategy(BaseStrategyML):
         return base.rsplit("_", 1)[-1]
 
     def save_model(self, path: str) -> None:
-        import joblib
+        from app.ml.backend.persistence import save_amp_dir_bundle
         tf_key = self._tf_from_path(path)
         with self._lock:
             amp_m = self._amp_models.get(tf_key)
@@ -655,22 +655,13 @@ class Strategy(BaseStrategyML):
         if amp_m is None or dir_m is None:
             logger.debug(f"[OpusV4-RT] save_model({path}) : pas de modèle pour {tf_key}")
             return
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        joblib.dump({
-            "amp_model": amp_m, "dir_model": dir_m,
-            "features": feats, "medians": meds,
-            "best_auc": auc, "train_meta": meta, "tf": tf_key,
-        }, path)
-        logger.info(f"[OpusV4-RT] Modèles sauvegardés → {path} (AUC={auc:.3f})")
+        if save_amp_dir_bundle(path, tf_key, amp_m, dir_m, feats, meds, auc, meta):
+            logger.info(f"[OpusV4-RT] Modèles sauvegardés → {path} (AUC={auc:.3f})")
 
     def load_model(self, path: str) -> bool:
-        if not os.path.exists(path):
-            return False
-        try:
-            import joblib
-            data = joblib.load(path)
-        except Exception as e:
-            logger.warning(f"[OpusV4-RT] Chargement échoué {path}: {e}")
+        from app.ml.backend.persistence import load_amp_dir_bundle
+        data = load_amp_dir_bundle(path)
+        if data is None or data.get("amp_model") is None or data.get("dir_model") is None:
             return False
         tf_key = self._tf_from_path(path)
         with self._lock:
