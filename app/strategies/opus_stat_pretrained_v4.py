@@ -25,12 +25,9 @@ Comme la stratégie est entièrement statique, ``managed_externally`` est forcé
 ``True`` : le ``MLStrategyTrainer`` ne tentera jamais de la réentraîner et
 l'optimiseur ne fera que varier les seuils de décision.
 
-Migration ARCH-012 + SEC-020 :
-  - Le pkl ``v4_models.pkl`` (8,8 Mo, RCE-vulnérable via ``pickle.load``) a été
-    converti en 8 fichiers ``.lgb`` + 8 fichiers ``.json`` via
-    ``scripts/convert_v4_pretrained.py``.
-  - Le ``_FeatureBuilder`` pandas (~290 L) a été supprimé, remplacé par
-    ``MLBackend.build_features`` (Polars) — source unique.
+Format des modèles : 8 boosters LightGBM natifs (``.lgb``) + métadonnées
+``.json``, chargés directement — aucun pickle. Les features sont construites
+par ``MLBackend.build_features`` (Polars, source unique).
 
 Migration phase6-pandas-removal :
   - Suppression de toute dépendance à ``pandas`` : les features V4 restent en
@@ -100,9 +97,8 @@ _PRETRAINED_LOCK = threading.Lock()
 def _load_pretrained() -> tuple:
     """Charge (une seule fois par process) les boosters natifs + médianes JSON.
 
-    Remplace l'ancien ``pickle.load(v4_models.pkl)`` (RCE-vulnérable) par un
-    chargement de fichiers LightGBM natifs (``.lgb``) + JSON (``.json``) —
-    sans exécution de code arbitraire à la désérialisation.
+    Chargement de fichiers LightGBM natifs (``.lgb``) + JSON (``.json``) —
+    aucun pickle.
 
     Retourne ``(models, medians)`` où :
       - ``models`` : ``Dict[Tuple[tf, target, config], dict]`` avec

@@ -85,7 +85,7 @@ def _save_ml_model_post_opt(strategy_name: str, best_params: dict,
         if timeframe not in trained and not trained:
             logger.warning(f"[AutoOpt] ML post-opt : entraînement KO pour {strategy_name}/{timeframe}")
             return
-        path = os.path.join(strat.model_dir, f"{strategy_name}_{timeframe}.pkl")
+        path = os.path.join(strat.model_dir, f"{strategy_name}_{timeframe}")
         os.makedirs(strat.model_dir, exist_ok=True)
         strat.save_model(path)
         logger.info(f"[AutoOpt] Modèle ML sauvegardé après optimisation → {path}")

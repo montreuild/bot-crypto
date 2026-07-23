@@ -297,7 +297,7 @@ def _setup_series_v11(df, tf: str, limit: int, strategy: str) -> dict:
     strat = _S()
     strat.managed_externally = False
     name = strat.name
-    path = os.path.join(getattr(strat, "model_dir", "models"), f"{name}_{tf_detected}.pkl")
+    path = os.path.join(getattr(strat, "model_dir", "models"), f"{name}_{tf_detected}")
     if os.path.exists(path):
         strat.load_model(path)
     if tf_detected not in getattr(strat, "_trained_tfs", set()):
@@ -738,7 +738,7 @@ def build_signals_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
             inst = cls()
             # Stratégies ML : charger un modèle pré-entraîné ou marquer skipped
             if isinstance(inst, BaseStrategyML):
-                model_path = f"{inst.model_dir}/{name}_{tf}.pkl"
+                model_path = f"{inst.model_dir}/{name}_{tf}"
                 if not inst.load_model(model_path):
                     signals.append({
                         "strategy": name,

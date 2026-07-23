@@ -185,4 +185,5 @@ class MLStrategyTrainer:
 
     @staticmethod
     def _model_path(strat, name: str, tf: str) -> str:
-        return os.path.join(strat.model_dir, f"{name}_{tf}.pkl")
+        # Préfixe des fichiers modèle natifs ({name}_{tf}.amp.lgb / .meta.json…).
+        return os.path.join(strat.model_dir, f"{name}_{tf}")

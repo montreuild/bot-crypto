@@ -323,7 +323,7 @@ class MLBackend:
     # ── Persistance ─────────────────────────────────────────────────────────
     @staticmethod
     def _tf_from_path(path: str) -> str:
-        """Extrait le TF depuis le nom de fichier (ex: `foo_1h.pkl` → `1h`)."""
+        """Extrait le TF depuis le nom de fichier (ex: `foo_1h` → `1h`)."""
         base = os.path.splitext(os.path.basename(path))[0]
         return base.rsplit("_", 1)[-1]
 
@@ -333,7 +333,7 @@ class MLBackend:
         _save_model_impl(self._state, self._lock, path, tf)
 
     def load_model(self, path: str) -> bool:
-        """Charge depuis le format natif ou legacy (.pkl via RestrictedUnpickler)."""
+        """Charge les modèles depuis le format natif LightGBM (.lgb + .meta.json)."""
         tf = self._tf_from_path(path)
         return _load_model_impl(self._state, self._lock, path, tf)
 

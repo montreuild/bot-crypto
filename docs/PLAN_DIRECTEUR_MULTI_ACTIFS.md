@@ -36,7 +36,7 @@
 | **CI** (`.github/workflows/ci.yml`) | ✅ **Verte** | Jobs `lint` (ruff) + `test` (pytest `-m "not slow"`). Run #19 = success sur `a601400`. |
 | **Tests** | ✅ 746 verts, 2 skipped | Vérifié hors `sklearn`/`pandas`/`joblib` (conditions CI réelles). |
 | **Lint** | ✅ `ruff check .` = 0 erreur | 25 erreurs introduites par le refactoring ont été résorbées. |
-| **Sécurité désérialisation (RCE)** | ✅ **Clos** | Plus aucun `joblib`/`pickle.load` non protégé dans le code (actif **comme mort**) : format natif LGB+JSON partout, `RestrictedUnpickler` (liste blanche) en repli legacy. |
+| **Sécurité désérialisation (RCE)** | ✅ **Clos** | Plus **aucun** `pickle`/`joblib` dans le code (actif comme mort) : format 100 % LightGBM natif (`.lgb` + `.meta.json`) partout. Le `RestrictedUnpickler` de compat legacy a été supprimé (plus de `.pkl` à lire). |
 | **Dépendances** | ✅ Allégé | `pandas`, `pyarrow`, `scikit-learn` supprimés (~23 Mo + scipy/joblib transitifs). Polars + LightGBM natif partout. |
 | **Couches** | ✅ Strictes | `core → engine → live → api → strategies`, 0 import circulaire (vérifié par grep). |
 | **Stratégies actives** | 15 (`manual_active`) | Sur ~45 fichiers `app/strategies/` — dont **8 morts** à supprimer (DEAD-01). |
@@ -94,10 +94,12 @@ Les 4 stratégies retrained encore inactives (`opus_omnibus_v7`,
 leurs modèles via `joblib.dump`/`joblib.load` — dernier code dépendant de
 `joblib` (supprimé avec sklearn) et de pickle (RCE). Migré vers le format natif
 LGB+JSON via deux helpers factorisés `save_amp_dir_bundle`/`load_amp_dir_bundle`
-(`app/ml/backend/persistence.py`), avec repli RCE-safe `RestrictedUnpickler`
-pour les anciens `.pkl` (whitelist étendue à la calibration `IsotonicRegression`
-native). Ces stratégies restent candidates à DEAD-01, mais ne dépendent plus de
-joblib et ne crasheraient plus à la sauvegarde. **SEC-020 est désormais clos.**
+(`app/ml/backend/persistence.py`, calibrators isotoniques sérialisés en JSON).
+Dans la foulée, **toute la machinerie pickle a été supprimée** du backend
+(`RestrictedUnpickler`, `restricted_pickle_load`, `import pickle`) et le suffixe
+`.pkl` des chemins de modèle est remplacé par un préfixe natif — il n'existe
+plus aucun `.pkl` ni pickle dans le code. Ces stratégies restent candidates à
+DEAD-01, mais ne dépendent plus de joblib. **SEC-020 est désormais clos.**
 
 ### 2.4 Historique antérieur (résumé)
 
@@ -288,8 +290,7 @@ SRD/short : chantier séparé, hors périmètre.
 - ⛔ **DEAD-03 / dé-versionner `data/`** — les parquets sont poussés
   volontairement depuis la machine de l'utilisateur ; ne pas exécuter sans
   accord explicite. (Sort de `XRP_USDC` déjà tranché : ajouté à `scanner.symbols`.)
-- ⛔ **HMAC de signature des `.pkl`** (ancien SEC-001) — rendu **sans objet** par
-  le format natif LGB+JSON (plus de pickle non protégé dans le code ; le legacy
-  passe par `RestrictedUnpickler` à liste blanche).
+- ⛔ **HMAC de signature des `.pkl`** (ancien SEC-001) — rendu **sans objet** :
+  il n'y a plus aucun `.pkl` ni pickle dans le code (format 100 % LightGBM natif).
 - ⛔ **Encapsulation `AppState` complète** — optionnelle, aucune inversion de
   couche restante ; à ne faire que sur besoin concret (multi-instances).

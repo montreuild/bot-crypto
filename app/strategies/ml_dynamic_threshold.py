@@ -815,9 +815,8 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             return
         try:
             import json
-            base = path[:-4] if path.endswith(".pkl") else path
-            lgb_path  = f"{base}.lgb"
-            meta_path = f"{base}.meta.json"
+            lgb_path  = f"{path}.lgb"
+            meta_path = f"{path}.meta.json"
             os.makedirs(os.path.dirname(lgb_path) or ".", exist_ok=True)
             booster.save_model(lgb_path)
             payload = {
@@ -827,36 +826,24 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 "best_auc":    float(auc),
                 "model_type":  "lightgbm",
                 "format_version": 1,
-                "source":      "ml_dynamic_threshold (refonte phase6 sans sklearn)",
+                "source":      "ml_dynamic_threshold (LightGBM natif)",
             }
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False)
-            # Supprimer le .pkl legacy si présent (migration idempotente).
-            if path.endswith(".pkl") and os.path.exists(path):
-                try:
-                    os.unlink(path)
-                except Exception:
-                    pass
             logger.info(f"[{self.name}/{tf}] Modèle LightGBM sauvegardé → {lgb_path}")
         except Exception as e:
             logger.warning(f"[{self.name}/{tf}] Sauvegarde modèle KO : {e}")
 
     def load_model(self, path: str) -> bool:
-        """Charge le booster LightGBM natif depuis le format RCE-safe.
-
-        Supporte aussi le legacy .pkl (sklearn Pipeline) via RestrictedUnpickler
-        — mais loggue un warning invitant à re-sauvegarder.
-        """
+        """Charge le booster LightGBM natif (``{path}.lgb`` + ``.meta.json``)."""
         tf = os.path.basename(path).rsplit("_", 1)[-1].split(".")[0]
         try:
             import json
 
             import lightgbm as lgb
-            base = path[:-4] if path.endswith(".pkl") else path
-            lgb_path  = f"{base}.lgb"
-            meta_path = f"{base}.meta.json"
+            lgb_path  = f"{path}.lgb"
+            meta_path = f"{path}.meta.json"
 
-            # 1. Format natif ?
             if os.path.exists(lgb_path) and os.path.exists(meta_path):
                 booster = lgb.Booster(model_file=lgb_path)
                 with open(meta_path, "r", encoding="utf-8") as f:
@@ -873,31 +860,6 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                     self._feature_cols = list(payload.get("features") or [])
                 logger.info(f"[{self.name}/{tf}] Modèle LightGBM chargé (natif) — AUC={auc:.4f}")
                 return True
-
-            # 2. Legacy .pkl (sklearn Pipeline) — compat ascendante via RestrictedUnpickler.
-            if os.path.exists(path):
-                logger.warning(
-                    f"[{self.name}/{tf}] Modèle legacy .pkl détecté — "
-                    f"re-sauvegardez via save_model() pour migrer vers le format natif."
-                )
-                from app.ml.backend.persistence import restricted_pickle_load
-                try:
-                    with open(path, "rb") as f:
-                        # Validation RCE-safe via RestrictedUnpickler (lève sur
-                        # une classe non whitelistée). La valeur n'est pas
-                        # réutilisée : l'ancien format contient un sklearn
-                        # Pipeline non convertible en lgb.Booster.
-                        restricted_pickle_load(f)
-                    # On loggue et on échoue proprement (l'utilisateur doit
-                    # re-entraîner la stratégie).
-                    logger.warning(
-                        f"[{self.name}/{tf}] Legacy .pkl avec sklearn Pipeline ne peut "
-                        f"pas être chargé sans sklearn — re-entraînez la stratégie."
-                    )
-                    return False
-                except Exception as e:
-                    logger.warning(f"[{self.name}/{tf}] Chargement legacy KO : {e}")
-                    return False
 
             return False
         except Exception as e:

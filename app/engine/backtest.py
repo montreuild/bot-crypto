@@ -645,7 +645,7 @@ class Backtester:
                 if self.use_pretrained_ml and timeframe:
                     # Backtest standard : utilise le modèle pré-entraîné du timeframe.
                     # Pas de réentraînement inline → rapide et déterministe.
-                    path = os.path.join(strat.model_dir, f"{strat.name}_{timeframe}.pkl")
+                    path = os.path.join(strat.model_dir, f"{strat.name}_{timeframe}")
                     if strat.load_model(path):
                         strat.managed_externally = True
                         logger.debug(f"[Backtest] ML '{strat.name}' : modèle {timeframe} chargé")
