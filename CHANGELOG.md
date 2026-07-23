@@ -310,6 +310,149 @@ suite de tests complète avant la suivante :
   touché en dehors du périmètre lint (pas de refactor, pas de changement de
   comportement).
 
+### 🔒 Exclusion mutuelle backtest ↔ optimisation (contention CPU/mémoire)
+
+- `/api/backtest` et `/api/optimize/start` tournent dans le même process
+  serveur sans portillon partagé (`_bt_semaphore` vs `_job_semaphore`/
+  `_acquire_mem_slot` de `AutoOptimizer`, chacun scopé à sa propre famille) —
+  un batch d'optimisation (potentiellement des dizaines de jobs LightGBM
+  concurrents) et un backtest manuel pouvaient se marcher dessus. Chaque
+  route refuse désormais l'autre pendant qu'elle tourne (429, message
+  explicite) plutôt que de risquer la contention CPU/OOM. Le message remonte
+  tel quel jusqu'à l'UI (Next.js : `toast.error` déjà branché sur
+  `ApiError` ; legacy HTML : panneau de log déjà branché sur `detail`) sans
+  aucun changement frontend. 2 tests de régression ajoutés
+  (`tests/test_api_routes.py`).
+
+### 🔬 Re-comparatif DEAD-01 : méthodologie de production, 15 stratégies × 5 TF sans exception
+
+Suite du comparatif du 2026-07-18/19 (Post-Sprint 8), refait intégralement
+après les accélérations optimiseur livrées entre-temps, avec deux
+différences méthodologiques majeures par rapport au premier passage :
+
+- **Dimensionnement de fenêtre IS/OOS calqué sur la production**
+  (`auto_fetch_limit`/`split_is_oos`, les mêmes fonctions que
+  `/api/optimize/start`/`AutoOptimizer` utilisent réellement) au lieu du cap
+  fixe arbitraire (8000 bougies, split 70/30) du script ad hoc précédent —
+  qui sous-dimensionnait l'OOS pour les stratégies ML à gros warmup et
+  produisait un score dégénéré (-999, 0 trade OOS) pour `opus_omnibus_v12`
+  sur TOUS les TF, y compris après le passage à `bayesian_search` documenté
+  au Post-Sprint 8. Avec le dimensionnement correct, v12 obtient un score
+  OOS réel et fini sur 4 TF sur 5 (négatif sur 15m/30m/1h, fortement positif
+  sur 4h : 0.60).
+- **Aucune stratégie sautée** : le premier comparatif avait un
+  `SKIP_OPT_STRATS` explicite pour v9/v10/v11_followsetup/v12 sur 4h/1j
+  (leur optimisation dépassait 300-500 s et avait dû être tuée
+  manuellement) — ces 4 lignes n'avaient donc aucun résultat optimisé, sur
+  aucun TF. Ce re-run a fait tourner l'optimisation complète (10 essais,
+  `n_jobs=2-3`) pour les 15 stratégies × 5 TF sans aucune exception —
+  ~5h de calcul en tâche de fond (fenêtres 2-3× plus grandes que le cap
+  fixe précédent), 2 stratégies ayant dû être relancées individuellement
+  après un timeout dû à la contention CPU du batch (`-P2` concurrent),
+  cf. section précédente pour le garde-fou correspondant côté API.
+- Verdict DEAD-01 mis à jour (détail complet dans le rapport HTML remis à
+  l'utilisateur, hors dépôt) : 6/8 candidats restent des suppressions
+  nettes, confirmées avec des échantillons 2-4× plus grands qu'avant. Les 2
+  cas « discutables » (`v11_followsetup`/`v11_followsetup_no_ml`) le
+  restent, mais le dossier a changé de forme — la variante *no_ml* se
+  renforce (1h optimisé passe positif), la variante ML s'affaiblit (score
+  OOS de recherche positif partout mais aucun gain traduit sur le backtest
+  complet, signal probable de surapprentissage à seulement 10 essais).
+- **Découverte hors périmètre DEAD-01** : `v11` et `v12` (actives en
+  production, pas candidates DEAD-01) ressortent négatives sur leur TF de
+  production habituel (1h) dans ce test, et positives uniquement sur 4h — un
+  TF où elles ne sont pas utilisées en production. Signalé pour examen
+  séparé, pas tranché ici (un seul run BTC/USDC, pas de repli walk-forward).
+- Aucun fichier supprimé — décision de suppression toujours en attente côté
+  utilisateur.
+
+### 🔬 DEAD-01 : révision du verdict v9 + investigation légitimité du pkl figé
+
+Suite de discussion utilisateur sur le re-comparatif ci-dessus, deux volets :
+
+**Révision du verdict `opus_omnibus_v9`.** Classé « supprimer » à tort dans
+la première passe du verdict, sur le seul motif que `v10` n'en hérite pas
+— un critère de versioning, pas de qualité (l'utilisateur l'a relevé
+explicitement : « il ne faut pas que le versioning soit un motif de
+DEAD-01 »). Les chiffres du re-comparatif montrent au contraire le signal
+le plus fort de toute la lignée v7-v10 (1h : 384 trades, PnL +561.5,
+Sharpe 49.4 — supérieur à `v8` ET `v10`, tous deux gardés). Vérifié par
+import direct des modules (`_DEFAULT_SETUPS`) : `v9` porte une couverture
+Trend-Up réelle (`LONG_TU`/`LONG_PULLBACK_TU`) que `v10` a explicitement
+écartée (`LONG_PULLBACK_TU` jugé « inefficace sur 1h » dans son propre
+historique de développement) — un jugement délibéré, mais non confirmé sur
+la fenêtre de données de ce comparatif. `v9` retiré de la liste DEAD-01 :
+**5/7 candidats restants** sont des suppressions à critère structurel fort
+(`v7`, `v7_pretrained`, `v10_retrained`, `v11_no_ml`, `opus_stat_retrained_v4`
+— chacun un sous-ensemble strict ou un jumeau redondant d'une stratégie
+gardée, vérifié par comparaison byte-à-byte des tables de setups).
+
+**Investigation de la légitimité du pkl figé V4** (`opus_stat_pretrained_v4`,
+dépendance dure de `v7_pretrained`/`v8`/`v9`/`v10`) — l'edge le plus solide
+mesuré dans toute la famille méritait vérification plutôt que confiance :
+
+- **Test de fuite** : reconstruction des features/labels V4 exacts sur la
+  série courante, comparaison AUC in-sample (avant `split_idx` stocké dans
+  le pkl) vs OOS réel (après). Résultat : **pas de fuite** — in-sample ≈
+  OOS partout (amplitude 15m 0.764 vs 0.695 ; amplitude 1h 0.708 vs
+  **0.761**, OOS meilleur ; direction quasi-aléatoire des deux côtés,
+  0.50-0.58). Une vraie mémorisation ferait exploser l'AUC in-sample —
+  absent ici. Split chronologique respecté, early-stopping efficace.
+- **Origine du WR de 83-90 %** : pas une direction juste (AUC 0.53, pile ou
+  face) — un filtre de **sélectivité sur l'amplitude** (AUC OOS 0.70-0.76,
+  vrai signal) combiné à l'asymétrie TP serré/SL large et au biais long
+  sur une fenêtre haussière. Confirmé sur le batch complet : les 5
+  stratégies à pkl figé sont la seule catégorie positive de toute la
+  famille sur 30m/1h.
+- **`v8_no_ml`/`v10_no_ml` (actives en `manual_active`)** : le batch
+  (défauts de classe) les sous-estimait — leurs vrais `optimizer_results`
+  de production font +52/+85 de PnL — mais elles restent **franchement
+  perdantes** (PnL −95/−110, WR 36-38 %) malgré un `oos_score` de
+  production positif (0.76-0.77) qui a dû motiver leur promotion. Même
+  divergence score-OOS-vs-backtest-complet que `v11_followsetup` ci-dessus.
+- **Expérience (sans fuite, split temporel strict 2020-2025 train /
+  2025-2026 test)** : geler la recette V11 (labels multi-horizon,
+  calibration isotone, 437 features) sur 40 000 barres — pour tester si
+  elle combine la « meilleure recette » à l'avantage d'échantillon du V4 —
+  **hypothèse réfutée**. À seuils par défaut : 6 trades seulement (non
+  concluant). Desserrage progressif des seuils jusqu'à volume comparable à
+  v8/v10 (~190 trades, delta 0.15) : WR chute à 53.4 %, PnL −32, PF 0.81,
+  contre v8 WR 82.5 %/PnL +238/PF 4.84 au même volume. Le V4 figé bat la
+  recette V11 figée à volume égal.
+- **Diagnostic causal** (AUC OOS de chaque sous-modèle v11 séparément,
+  fenêtre test strictement postérieure) : la **direction n'a aucun edge
+  dans aucune des deux recettes** (V11 0.532, V4 0.54 — le multi-horizon
+  n'y change rien, 0.531 identique en mono). L'**amplitude** a un edge
+  réel dans les deux, mais celui de V11 est plus faible (0.674-0.700 vs
+  0.76) et le multi-horizon le **dégrade** au lieu de l'améliorer (0.700
+  contre son propre label mono, seulement 0.674 contre le label
+  multi-horizon qu'il prédit). Facteur aggravant probable : 437 features
+  vs 40 sur le même échantillon.
+- **Conclusion actionnable** : le pkl figé est légitime et porte le
+  meilleur discriminateur d'amplitude de la famille — aucune remise en
+  cause de conserver `v8`/`v9`/`v10` pour DEAD-01. Toute amélioration
+  future du modèle devrait cibler un meilleur discriminateur d'amplitude
+  (moins de features, horizon unique) — jamais la direction, qui n'a de
+  edge dans aucune recette testée.
+
+Rapport HTML mis à jour (§06, nouvelle section) remis à l'utilisateur, hors
+dépôt. Nom de la future stratégie maître unifiée révisé de `OpusBase`
+(trop spécifique à la lignée existante) vers **`setup_router`** (décrit la
+fonction réelle : router vers une table de setups configurable selon le
+régime, avec source de signal — pkl figé / ré-entraîné / proxy / ML V11 —
+et mode de sortie enfichables). Aucun fichier supprimé, aucun changement
+de code de stratégie — investigation pure via scripts de scratchpad de
+session.
+
+Deux items de backlog ajoutés au plan directeur (§4.5) à partir de ces
+constats : **ML-01** (gating de promotion `manual_active` par walk-forward
+au lieu d'un `oos_score` sur un seul split) et **ML-02** (gestion du cycle
+de vie des modèles pkl : fenêtre d'entraînement dimensionnée — le trainer
+auto ne fetche que ~1560 barres contre les ~40k qui font l'edge —,
+provenance/métadonnées dans le pkl, script d'entraînement reproductible
+committé, ré-entraînement périodique sur grande fenêtre glissante, et flag
+pour optimiser les seuils contre un modèle figé).
+
 ### 📚 Documentation
 
 - `docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md` : fusion des 3 plans (audit
