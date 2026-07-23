@@ -152,8 +152,11 @@ def _load_pretrained() -> tuple:
 
         if not models:
             raise FileNotFoundError(
-                f"Aucun modèle natif V4 trouvé dans {_DATA_DIR} — exécutez "
-                f"scripts/convert_v4_pretrained.py pour migrer le pkl legacy."
+                f"Aucun modèle natif V4 chargeable dans {_DATA_DIR} — vérifiez "
+                f"l'intégrité des fichiers .lgb (ex. corruption de fin de ligne "
+                f"CRLF/LF sur un checkout Windows sans .gitattributes à jour ; "
+                f"un `git checkout -- {_DATA_DIR}` après avoir mis à jour "
+                f".gitattributes restaure les fichiers depuis git)."
             )
 
         # 2. Charger les médianes (déjà JSON).
