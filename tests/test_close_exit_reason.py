@@ -7,13 +7,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.core.database import Trade, init_db, session_scope
-from app.live.position_mixin import PositionMixin
+from app.live.position_close_mixin import PositionCloseMixin
+from app.live.position_open_mixin import PositionOpenMixin
 
 
 def _harness(tmp_path):
     _, SessionLocal = init_db(f"sqlite:///{tmp_path / 'db.sqlite'}")
 
-    class Harness(PositionMixin):
+    class Harness(PositionOpenMixin, PositionCloseMixin):
         def __init__(self):
             self.cfg = {"trading": {
                 "paper_mode": True, "paper_slippage": 0.0,

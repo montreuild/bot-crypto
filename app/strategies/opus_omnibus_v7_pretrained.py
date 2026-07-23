@@ -29,12 +29,12 @@ import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import pandas as pd
 import polars as pl
 
 from app.core.indicators import pre_val
 from app.core.indicators import safe_num as _safe_num
 from app.engine.engine import BaseStrategyML
+from app.ml.backend import MLBackend
 from app.strategies.opus_stat_pretrained_v4 import (
     REGIME_CHOPPY,
     REGIME_LABELS,
@@ -46,7 +46,6 @@ from app.strategies.opus_stat_pretrained_v4 import (
     _last_bar_hour_dow,
     _load_pretrained,
     _prepare_row,
-    _to_pandas_window,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,15 +112,15 @@ def _classify_regime(adx_val: float, bull: int, bear: int,
     return REGIME_CHOPPY
 
 
-def _regime_history_from_features(features_df: pd.DataFrame, n_last: int = 5,
+def _regime_history_from_features(features_df: pl.DataFrame, n_last: int = 5,
                                   adx_threshold: float = 20.0) -> List[int]:
     """Calcule la séquence des régimes sur les `n_last` dernières bougies."""
-    sub = features_df.iloc[-n_last:]
+    sub = features_df.tail(n_last)
     out: List[int] = []
-    for _, row in sub.iterrows():
-        adx_v = _safe_num(row.get("ADX", 0.0), 0.0)
-        bull  = int(_safe_num(row.get("MM_bullish_align", 0), 0.0))
-        bear  = int(_safe_num(row.get("MM_bearish_align", 0), 0.0))
+    for row in sub.rows(named=True):
+        adx_v = _safe_num(row.get("ADX"), 0.0)
+        bull  = int(_safe_num(row.get("MM_bullish_align"), 0.0))
+        bear  = int(_safe_num(row.get("MM_bearish_align"), 0.0))
         out.append(_classify_regime(adx_v, bull, bear, adx_threshold))
     return out
 
@@ -305,7 +304,7 @@ class Strategy(BaseStrategyML):
         self._best_auc_per_tf: Dict[str, float] = {}
         self._train_meta:      Dict[str, dict]  = {}
         # Cache backtest : voir opus_stat_pretrained_v4 pour la motivation.
-        self._bt_features_pdf = None
+        self._bt_features: Optional[pl.DataFrame] = None
         self._bt_features_len = 0
         self._ensure_loaded()
 
@@ -317,23 +316,21 @@ class Strategy(BaseStrategyML):
         """
         try:
             from app.core.feature_store import cached_strategy_features
-            _ohlcv = ("time", "open", "high", "low", "close", "volume")
             feats = cached_strategy_features(
                 getattr(self, "_bt_symbol", None), getattr(self, "_bt_tf", None), df,
-                name="opus_v4_pandas", version="1",
-                builder=lambda pdf: self._FEATURE_BUILDER.build(
-                    pdf[[c for c in _ohlcv if c in pdf.columns]]),
-                in_kind="pandas", out_kind="pandas")
-            self._bt_features_pdf = feats
+                name="opus_v4_polars", version="1",
+                builder=lambda w: MLBackend.build_features(w),
+                in_kind="polars", out_kind="polars")
+            self._bt_features = feats
             self._bt_features_len = len(df) if feats is not None else 0
+            n_cols = len(feats.columns) if feats is not None else 0
             logger.info(
                 f"[OmnibusV7-PT] backtest : features pré-calculées sur "
-                f"{self._bt_features_len} bougies "
-                f"({(feats.shape[1] if feats is not None else 0)} colonnes)"
+                f"{self._bt_features_len} bougies ({n_cols} colonnes)"
             )
         except Exception as e:
             logger.warning(f"[OmnibusV7-PT] prepare_for_backtest KO : {e}")
-            self._bt_features_pdf = None
+            self._bt_features = None
             self._bt_features_len = 0
 
     # ── Cycle de vie ML ────────────────────────────────────────────────────
@@ -377,7 +374,7 @@ class Strategy(BaseStrategyML):
     def reset_model(self) -> None:
         # Modèles figés, mais on réinitialise le cache de features
         # (réutilisé entre deux backtests sur des fenêtres différentes).
-        self._bt_features_pdf = None
+        self._bt_features = None
         self._bt_features_len = 0
 
     def fit(self, df: pl.DataFrame, params: dict = None) -> None:
@@ -390,7 +387,7 @@ class Strategy(BaseStrategyML):
         return self._ensure_loaded()
 
     # ── Prédictions (API V4 publique) ──────────────────────────────────────
-    def _predict(self, features_df: pd.DataFrame, tf: str,
+    def _predict(self, features_df: pl.DataFrame, tf: str,
                  target: str) -> Optional[float]:
         key = (tf, target, "single")
         entry = self._models.get(key)
@@ -400,15 +397,16 @@ class Strategy(BaseStrategyML):
             feat_names = entry["features"]
             medians    = self._medians.get((tf, target), {})
             X          = _prepare_row(features_df, feat_names, medians)
-            return float(entry["model"].predict_proba(X)[0, 1])
+            # Phase6 : _prepare_row renvoie un np.ndarray (natif LightGBM).
+            return float(entry["model"].predict(X)[0])
         except Exception as e:
             logger.warning(f"[OmnibusV7-PT] Prédiction {key} KO : {e}")
             return None
 
-    def predict_amplitude(self, features_df: pd.DataFrame, tf: str) -> Optional[float]:
+    def predict_amplitude(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
         return self._predict(features_df, tf, "amp")
 
-    def predict_direction(self, features_df: pd.DataFrame, tf: str) -> Optional[float]:
+    def predict_direction(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
         return self._predict(features_df, tf, "dir")
 
     # ── Cœur du signal ─────────────────────────────────────────────────────
@@ -450,16 +448,16 @@ class Strategy(BaseStrategyML):
             )
 
         # 3. Features V4 — fast-path backtest si pré-calculé.
-        if self._bt_features_pdf is not None and len(df) <= self._bt_features_len:
-            features = self._bt_features_pdf.iloc[: len(df)]
+        if self._bt_features is not None and len(df) <= self._bt_features_len:
+            features = self._bt_features.head(len(df))
         else:
-            pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required() + 20))
-            features = self._FEATURE_BUILDER.build(pdf)
+            window   = MLBackend.window_polars(df, n=max(260, self.min_bars_required() + 20))
+            features = self._FEATURE_BUILDER.build(window)
         if features is None or len(features) == 0:
             return self._none("Construction des features V4 impossible")
 
-        last_row = features.iloc[-1]
-        atr_v    = _safe_num(last_row.get("ATR_14", 0.0), 0.0)
+        last_row = features.row(-1, named=True)
+        atr_v    = _safe_num(last_row.get("ATR_14"), 0.0)
         if not np.isfinite(atr_v) or atr_v <= 0:
             atr_v = float(pre_val(df, "_pre_atr14") or 0.0)
         c_now    = float(df["close"][-1] or 0.0)
@@ -529,8 +527,8 @@ class Strategy(BaseStrategyML):
             sig["tp_atr_mult"] = tp_atr_mult
 
         sig["indicators"] = {
-            "adx":              round(_safe_num(last_row.get("ADX", 0.0), 0.0), 1),
-            "rsi":              round(_safe_num(last_row.get("RSI_14", 50.0), 50.0), 1),
+            "adx":              round(_safe_num(last_row.get("ADX"), 0.0), 1),
+            "rsi":              round(_safe_num(last_row.get("RSI_14"), 50.0), 1),
             "p_event":          round(p_event, 4),
             "p_up":             round(p_up, 4),
             "regime":           regime,
@@ -599,18 +597,18 @@ class Strategy(BaseStrategyML):
 
         # 3. Recalculer features + régime + p_dir à la barre courante
         try:
-            if self._bt_features_pdf is not None and len(df) <= self._bt_features_len:
-                features = self._bt_features_pdf.iloc[: len(df)]
+            if self._bt_features is not None and len(df) <= self._bt_features_len:
+                features = self._bt_features.head(len(df))
             else:
-                pdf      = _to_pandas_window(df, n=max(260, self.min_bars_required() + 20))
-                features = self._FEATURE_BUILDER.build(pdf)
+                window   = MLBackend.window_polars(df, n=max(260, self.min_bars_required() + 20))
+                features = self._FEATURE_BUILDER.build(window)
             if features is None or len(features) == 0:
                 return None
-            last_row = features.iloc[-1]
+            last_row = features.row(-1, named=True)
             regime = _classify_regime(
-                _safe_num(last_row.get("ADX", 0.0), 0.0),
-                int(_safe_num(last_row.get("MM_bullish_align", 0), 0.0)),
-                int(_safe_num(last_row.get("MM_bearish_align", 0), 0.0)),
+                _safe_num(last_row.get("ADX"), 0.0),
+                int(_safe_num(last_row.get("MM_bullish_align"), 0.0)),
+                int(_safe_num(last_row.get("MM_bearish_align"), 0.0)),
                 adx_threshold,
             )
             p_up = self.predict_direction(features, tf)

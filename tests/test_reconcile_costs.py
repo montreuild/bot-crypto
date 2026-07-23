@@ -4,11 +4,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.live.position_mixin import PositionMixin
+from app.live.position_close_mixin import PositionCloseMixin
+from app.live.position_restore_mixin import PositionRestoreMixin
 
 
 def _harness(margin=True, my_trades=None, interest_rows=None):
-    h = PositionMixin()
+    h = PositionCloseMixin()
     h.cfg = {"trading": {"paper_mode": False, "reconcile_real_costs": True},
              "exchange": {"margin": margin}}
     h.exchange = MagicMock()
@@ -77,7 +78,7 @@ def test_paper_order_skipped():
 # ── Vérification entry/taille à la restauration ─────────────────────────────
 
 def _restore_harness(order):
-    h = PositionMixin()
+    h = PositionRestoreMixin()
     h.cfg = {"trading": {"paper_mode": False}, "exchange": {"margin": False}}
     h.exchange = MagicMock()
     if isinstance(order, Exception):

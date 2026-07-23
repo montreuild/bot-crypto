@@ -38,12 +38,11 @@ ccxt==4.3.1
 
 # -- Data / Compute --------------------------------------------------
 # Polars: main library (Rust, Arrow, multi-threaded, 5-50x faster than Pandas)
+# phase6-pandas-removal : Pandas supprimé (migration complète vers Polars).
 polars==1.0.0
-# NumPy: kept for the backtest hot loop (O(1) indexing) and scikit-learn interface
+# NumPy: gardé pour le hot loop du backtest (O(1) indexing) et l'interface LightGBM
 numpy==2.0.0
-# PyArrow: requis par polars.to_pandas() (features V4 pandas des stratégies V8 +
-# pack pré-entraîné) — sinon DataFrame.to_pandas() lève ModuleNotFoundError.
-pyarrow==16.1.0
+# phase6-pandas-removal : PyArrow supprimé (plus de polars.to_pandas()).
 pyyaml==6.0.2
 # Round-trip YAML : préserve les commentaires lors de la réécriture des
 # fichiers strategies/*.yaml et config.yaml (cf. app/core/yaml_io.py).
@@ -58,13 +57,14 @@ sqlalchemy==2.0.30
 psutil==5.9.8
 
 # -- Machine Learning (optional - required if ml.enabled: true) ------
-# scikit-learn 1.5+ is the first version with official Python 3.12 support
-scikit-learn==1.5.0
-# joblib is bundled with scikit-learn
-# Pandas + LightGBM : requis par opus_stat_*_v4 / opus_omnibus_v6*
-pandas==2.2.2
+# phase6-sklearn-removal : scikit-learn et pandas supprimés.
+# - scikit-learn remplacé par LightGBM natif + IsotonicRegression native
+#   (app/ml/backend/isotonic.py) — plus de Pipeline/StandardScaler/RF/LR.
+# - Pandas remplacé par Polars partout (y compris dans les stratégies V4/V8-V10).
+# LightGBM : booster natif pour toutes les stratégies ML (V11/V12/scoring_opus/
+# ml_dynamic_threshold). Format de persistance RCE-safe (.lgb + .json).
 lightgbm==4.4.0
-# Optuna : recherche bayésienne TPE de l'optimiseur (app/engine/optimizer.py).
+# Optuna : recherche bayésienne TPE de l'optimiseur (app/engine/optimizer_search.py).
 # Optionnel — l'optimiseur retombe sur une heuristique random+perturbation si la
 # librairie est absente. Recommandé pour une vraie recherche informée (TPE).
 optuna==4.0.0

@@ -815,35 +815,28 @@ class Strategy(BaseStrategyML):
         return base.rsplit("_", 1)[-1]
 
     def save_model(self, path: str) -> None:
-        import joblib
+        from app.ml.backend.persistence import save_amp_dir_bundle
         tf = self._tf_from_path(path)
         with self._lock:
-            payload = {
-                "amp_model": self._amp_models.get(tf),
-                "dir_model": self._dir_models.get(tf),
-                "amp_cal":   self._amp_cal.get(tf),
-                "dir_cal":   self._dir_cal.get(tf),
-                "features":  self._feature_cols.get(tf),
-                "medians":   self._medians.get(tf),
-                "best_auc":  self._best_auc_per_tf.get(tf, 0.0),
-                "train_meta": self._train_meta.get(tf, {}),
-                "tf": tf,
-            }
-        if payload["amp_model"] is None or payload["dir_model"] is None:
+            amp_m = self._amp_models.get(tf)
+            dir_m = self._dir_models.get(tf)
+            amp_c = self._amp_cal.get(tf)
+            dir_c = self._dir_cal.get(tf)
+            feats = self._feature_cols.get(tf)
+            meds  = self._medians.get(tf)
+            auc   = self._best_auc_per_tf.get(tf, 0.0)
+            meta  = self._train_meta.get(tf, {})
+        if amp_m is None or dir_m is None:
             return
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        joblib.dump(payload, path)
-        logger.info(f"[OmnibusV11-FollowSetup] Modèles sauvegardés → {path} "
-                    f"(AUC={payload['best_auc']:.3f})")
+        if save_amp_dir_bundle(path, tf, amp_m, dir_m, feats, meds, auc, meta,
+                               amp_cal=amp_c, dir_cal=dir_c):
+            logger.info(f"[OmnibusV11-FollowSetup] Modèles sauvegardés → {path} "
+                        f"(AUC={auc:.3f})")
 
     def load_model(self, path: str) -> bool:
-        if not os.path.exists(path):
-            return False
-        try:
-            import joblib
-            data = joblib.load(path)
-        except Exception as e:
-            logger.warning(f"[OmnibusV11-FollowSetup] Chargement échoué {path}: {e}")
+        from app.ml.backend.persistence import load_amp_dir_bundle
+        data = load_amp_dir_bundle(path)
+        if data is None or data.get("amp_model") is None or data.get("dir_model") is None:
             return False
         tf = self._tf_from_path(path)
         with self._lock:
@@ -985,7 +978,7 @@ class Strategy(BaseStrategyML):
 
             if calibrate:
                 try:
-                    from sklearn.isotonic import IsotonicRegression
+                    from app.ml.backend.isotonic import IsotonicRegression
                     raw_va = booster.predict(X_valid)
                     y_va = y[split:n]
                     if len(np.unique(y_va)) >= 2:

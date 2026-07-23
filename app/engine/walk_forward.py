@@ -1,0 +1,117 @@
+"""Walk-Forward Analysis — validation OOS par folds glissants.
+
+Extrait de ``app/engine/backtest.py`` (ARCH-010) pour réduire la taille du
+module de backtest. La classe ``WalkForwardAnalyzer`` découpe la série
+historique en ``n_folds`` fenêtres IS/OOS contiguës, ré-instancie un
+``Backtester`` neuf (stratégies fraîchement rechargées) sur chaque fold et
+agrège les métriques out-of-sample (PnL, Sharpe, win-rate, consistency).
+
+Ré-exportée depuis ``app.engine.backtest`` pour compatibilité ascendante.
+"""
+import importlib as _imp
+import logging
+
+import numpy as np
+import polars as pl
+
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
+from app.engine.engine import Engine
+
+logger = logging.getLogger(__name__)
+
+
+def _sf(v, fallback=None):
+    """Safe float : convertit nan/inf en fallback pour JSON.
+
+    Dupliqué depuis ``app.engine.backtest`` pour éviter un import circulaire
+    (backtest ré-exporte WalkForwardAnalyzer en fin de module).
+    """
+    import math
+
+    try:
+        f = float(v)
+        return fallback if (math.isnan(f) or math.isinf(f)) else f
+    except (TypeError, ValueError):
+        return fallback
+
+
+# ── Walk-Forward ──
+class WalkForwardAnalyzer:
+    def __init__(self, engine: Engine, cfg: dict, n_folds: int = 5):
+        self.engine  = engine
+        self.cfg     = cfg
+        self.n_folds = n_folds
+
+    def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL) -> dict:
+        # Import lazy : ``Backtester`` vit dans ``app.engine.backtest`` qui
+        # ré-exporte ``WalkForwardAnalyzer`` (cycle sinon).
+        from app.engine.backtest import Backtester
+
+        n      = len(df)
+        fold_n = n // (self.n_folds + 1)
+        WARMUP = 220
+        MIN_IS = WARMUP + 50
+        MIN_OOS = 40
+        if fold_n < MIN_OOS:
+            return {"error": f"Données insuffisantes pour Walk-Forward ({n} barres · min {MIN_OOS * (self.n_folds+1)})"}
+        if fold_n < MIN_IS:
+            return {
+                "error": (
+                    f"IS trop court pour les stratégies EMA ({fold_n} barres/fold · "
+                    f"min {MIN_IS} requis). Augmentez les bougies à ≥{MIN_IS * (self.n_folds+1)} "
+                    f"ou réduisez les folds."
+                ),
+                "n_bars": n,
+                "fold_n": fold_n,
+                "min_required": MIN_IS * (self.n_folds + 1),
+            }
+
+        in_sample_results  = []
+        out_sample_results = []
+
+        for k in range(self.n_folds):
+            is_end  = fold_n * (k + 1)
+            oos_end = min(fold_n * (k + 2), n)
+            df_is   = df[:is_end]
+            df_oos  = df[is_end:oos_end]
+            if len(df_oos) < 30:
+                continue
+            try:
+                fresh_strats = []
+                for s in self.engine.strategies:
+                    mod = _imp.import_module(f"app.strategies.{s.name}")
+                    fresh_strats.append(mod.Strategy())
+                eng_is  = Engine()
+                [eng_is.register(s, silent=True)  for s in fresh_strats]
+                fresh_strats_oos = []
+                for s in self.engine.strategies:
+                    mod = _imp.import_module(f"app.strategies.{s.name}")
+                    fresh_strats_oos.append(mod.Strategy())
+                eng_oos = Engine()
+                [eng_oos.register(s, silent=True) for s in fresh_strats_oos]
+
+                bt_is  = Backtester(eng_is,  self.cfg)
+                bt_oos = Backtester(eng_oos, self.cfg)
+                r_is   = bt_is.run(df_is,  symbol).to_dict()
+                r_oos  = bt_oos.run(df_oos, symbol).to_dict()
+                in_sample_results.append(r_is)
+                out_sample_results.append(r_oos)
+            except Exception as e:
+                logger.error(f"[WF] Fold {k} : {e}", exc_info=True)
+
+        if not out_sample_results:
+            return {"error": "Aucun fold OOS valide"}
+
+        oos_pnl    = [r["total_pnl"]  for r in out_sample_results]
+        oos_sharpe = [r["sharpe"]     for r in out_sample_results]
+        oos_wr     = [r["win_rate"]   for r in out_sample_results]
+
+        return {
+            "n_folds":        len(out_sample_results),
+            "avg_oos_pnl":    round(_sf(float(np.mean(oos_pnl)),    0.0), 4),
+            "avg_oos_sharpe": round(_sf(float(np.mean(oos_sharpe)), 0.0), 3),
+            "avg_oos_wr":     round(_sf(float(np.mean(oos_wr)),     0.0), 2),
+            "consistency":    round(sum(1 for p in oos_pnl if p > 0) / len(oos_pnl) * 100, 1),
+            "in_sample":      in_sample_results,
+            "out_of_sample":  out_sample_results,
+        }

@@ -45,6 +45,7 @@ Thumbs.db
 # Bot runtime
 logs/*.log
 logs/*.jsonl
+logs/*.pkl
 data/heartbeat.json
 data/KILL_SWITCH
 data/features/

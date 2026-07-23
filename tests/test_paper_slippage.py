@@ -3,7 +3,7 @@
 - ``OHLCVCache.get_avg_quote_volume`` : lecture seule du cache déjà rempli
   (pas de fetch réseau), même fenêtre (20 barres) que ``ctx.qvol_arr`` côté
   backtest (BT-10).
-- ``PositionMixin._paper_slippage_fraction`` : "static" (défaut, inchangé)
+- ``PositionOpenMixin._paper_slippage_fraction`` : "static" (défaut, inchangé)
   vs "size" (repli sur static si volume absent, sinon coût d'impact croissant
   avec la taille — même formule que ``Backtester._impact_cost``).
 """
@@ -15,7 +15,7 @@ import pytest
 
 from app.core.execution import size_impact_cost
 from app.live.ohlcv_cache import OHLCVCache
-from app.live.position_mixin import PositionMixin
+from app.live.position_open_mixin import PositionOpenMixin
 
 
 def _df(n, base_volume=1000.0):
@@ -54,8 +54,8 @@ class TestGetAvgQuoteVolume:
         assert avg == pytest.approx(100_000.0)
 
 
-class Harness(PositionMixin):
-    """Instance minimale de PositionMixin pour tester _paper_slippage_fraction
+class Harness(PositionOpenMixin):
+    """Instance minimale de PositionOpenMixin pour tester _paper_slippage_fraction
     isolément (même pattern que test_execution_parity.py::_live_close_pnl)."""
 
     def __init__(self, model="static", ohlcv_cache=None):

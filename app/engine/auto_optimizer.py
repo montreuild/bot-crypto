@@ -12,7 +12,7 @@ from app.core.is_oos import split_is_oos
 from app.engine.backtest import Backtester
 from app.engine.engine import BaseStrategyML, Engine
 from app.engine.opt_workers import available_memory_bytes
-from app.engine.optimizer import (
+from app.engine.optimizer_search import (
     PARAM_SPACES,
     RECOMMENDED_LIMIT,
     STRATEGY_TIMEFRAMES,
@@ -85,7 +85,7 @@ def _save_ml_model_post_opt(strategy_name: str, best_params: dict,
         if timeframe not in trained and not trained:
             logger.warning(f"[AutoOpt] ML post-opt : entraînement KO pour {strategy_name}/{timeframe}")
             return
-        path = os.path.join(strat.model_dir, f"{strategy_name}_{timeframe}.pkl")
+        path = os.path.join(strat.model_dir, f"{strategy_name}_{timeframe}")
         os.makedirs(strat.model_dir, exist_ok=True)
         strat.save_model(path)
         logger.info(f"[AutoOpt] Modèle ML sauvegardé après optimisation → {path}")
@@ -480,7 +480,7 @@ class AutoOptimizer:
             # d'entraînement réglables (et si activé). Sinon phase unique.
             ml_hp_space = {}
             if self.ml_tune_hp and _is_ml_strategy(strategy_name):
-                from app.engine.optimizer import ml_hp_space_for
+                from app.engine.optimizer_search import ml_hp_space_for
                 ml_hp_space = ml_hp_space_for(strategy_name)
 
             if ml_hp_space:

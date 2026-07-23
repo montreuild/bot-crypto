@@ -10,7 +10,7 @@ torn d'un dict en cours de mutation). Miroir de test_allocator_thread_safety.py
 import threading
 import time
 
-from app.core.risk import RiskManager
+from app.core.risk_gate import RiskManager
 
 SLOT = "trend_rider::1h::BTC/USDC"
 

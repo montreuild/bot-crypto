@@ -10,6 +10,7 @@ import logging
 import math
 
 import numpy as np
+import polars as pl
 
 from app.engine.engine import BaseStrategyML
 
@@ -158,6 +159,7 @@ def _tp_sl(side: str, entry: float, atr: float, tp_mult: float, sl_mult: float):
 def _setup_series_v8(df, tf: str, limit: int) -> dict:
     """Markers de setups V8 par bougie (modèles V4 pré-entraînés), avec TP/SL."""
     from app.core.indicators import bearish_excess_series
+    from app.ml.backend import MLBackend
     from app.strategies.opus_omnibus_v8 import (
         _DEFAULT_SETUPS,
         REGIME_CHOPPY,
@@ -169,7 +171,6 @@ def _setup_series_v8(df, tf: str, limit: int) -> dict:
         _detect_timeframe,
         _FeatureBuilder,
         _load_pretrained,
-        _to_pandas_window,
     )
 
     tf_detected = _detect_timeframe(df)
@@ -177,8 +178,9 @@ def _setup_series_v8(df, tf: str, limit: int) -> dict:
         return {"supported": False, "reason": f"Timeframe {tf_detected} non supporté par V8",
                 "markers": []}
 
-    pdf   = _to_pandas_window(df, n=len(df))
-    feats = _FeatureBuilder().build(pdf)
+    # Phase6 : _FeatureBuilder.build prend/retourne du Polars maintenant.
+    window = MLBackend.window_polars(df, n=len(df))
+    feats  = _FeatureBuilder().build(window)
     if feats is None or len(feats) == 0:
         return {"supported": False, "reason": "Construction des features V4 impossible",
                 "markers": []}
@@ -191,20 +193,28 @@ def _setup_series_v8(df, tf: str, limit: int) -> dict:
                 "markers": []}
 
     def _batch(entry, target):
+        # Phase6 : batch prediction Polars → ndarray 2D (n_rows, n_features)
+        # avec imputation des NaN/inf par les médianes du train.
         feat_names = list(entry["features"])
         med = medians_all.get((tf_detected, target), {})
-        X = feats.reindex(columns=feat_names).copy()
-        X = X.replace([np.inf, -np.inf], np.nan)
-        for col in feat_names:
-            X[col] = X[col].fillna(med.get(col, 0.0))
-        return entry["model"].predict_proba(X.values)[:, 1]
+        cols_present = [c for c in feat_names if c in feats.columns]
+        arr = feats.select(cols_present).to_numpy()
+        # Replace inf by NaN puis impute colonne par colonne
+        arr = np.where(np.isfinite(arr), arr, np.nan)
+        for j, col in enumerate(cols_present):
+            col_data = arr[:, j]
+            mask = ~np.isfinite(col_data)
+            if mask.any():
+                col_data[mask] = float(med.get(col, 0.0))
+        # Booster natif LightGBM : predict() retourne P(class=1) en binaire.
+        return entry["model"].predict(arr)
 
     p_amp = _batch(amp_entry, "amp")
     p_up  = _batch(dir_entry, "dir")
 
-    adx_arr  = feats["ADX"].fillna(0.0).to_numpy()
-    bull_arr = feats["MM_bullish_align"].fillna(0).astype(int).to_numpy()
-    bear_arr = feats["MM_bearish_align"].fillna(0).astype(int).to_numpy()
+    adx_arr  = feats["ADX"].fill_null(0.0).to_numpy()
+    bull_arr = feats["MM_bullish_align"].fill_null(0).cast(pl.Int64).to_numpy()
+    bear_arr = feats["MM_bearish_align"].fill_null(0).cast(pl.Int64).to_numpy()
     n_feats  = len(feats)
     regimes  = [_classify_regime(float(adx_arr[i]), int(bull_arr[i]),
                                  int(bear_arr[i]), 20.0) for i in range(n_feats)]
@@ -287,7 +297,7 @@ def _setup_series_v11(df, tf: str, limit: int, strategy: str) -> dict:
     strat = _S()
     strat.managed_externally = False
     name = strat.name
-    path = os.path.join(getattr(strat, "model_dir", "models"), f"{name}_{tf_detected}.pkl")
+    path = os.path.join(getattr(strat, "model_dir", "models"), f"{name}_{tf_detected}")
     if os.path.exists(path):
         strat.load_model(path)
     if tf_detected not in getattr(strat, "_trained_tfs", set()):
@@ -728,7 +738,7 @@ def build_signals_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
             inst = cls()
             # Stratégies ML : charger un modèle pré-entraîné ou marquer skipped
             if isinstance(inst, BaseStrategyML):
-                model_path = f"{inst.model_dir}/{name}_{tf}.pkl"
+                model_path = f"{inst.model_dir}/{name}_{tf}"
                 if not inst.load_model(model_path):
                     signals.append({
                         "strategy": name,

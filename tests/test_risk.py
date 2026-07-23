@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.core.risk import RiskManager
+from app.core.risk_gate import RiskManager
 
 
 def _cfg(capital=1000, paper=True, dd_daily=0.05, dd_global=0.20,
