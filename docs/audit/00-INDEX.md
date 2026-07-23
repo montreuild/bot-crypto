@@ -9,12 +9,14 @@ autre contexte (fichiers:lignes, directive pas-à-pas, critère d'acceptation).
 > ⚠ Avertissement d'origine (2026-07-11) : « ce document est un PLAN, aucune
 > recommandation appliquée ». **Caduc depuis** : les Vagues 0, 1, 2, 4, 5 et 6
 > ont été réalisées et commitées (un commit taggé `[ID]` par item, cf. git log
-> des 11-13/07). **Seule la Vague 3 (code mort + CI/lint) reste à faire.**
+> des 11-13/07). La Vague 3 (code mort + CI/lint) a suivi, **sauf DEAD-01**
+> (suppression des stratégies mortes — décision utilisateur en attente).
 >
-> 📌 **État consolidé et backlog à jour** (fusion avec le plan complémentaire
-> du 2026-07-14 et le plan multi-actifs, vérifié contre le code le 2026-07-18) :
-> **`docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md`** — ce fichier-ci reste la référence
-> historique des directives détaillées par item.
+> 📌 **Source de vérité unique** (« ce qui est fait / ce qui reste », mise à jour
+> après le refactoring Phases 1-6 du 2026-07-23) :
+> **[`../PLAN_DIRECTEUR_MULTI_ACTIFS.md`](../PLAN_DIRECTEUR_MULTI_ACTIFS.md)**.
+> Ce fichier-ci reste **l'archive des directives détaillées** par item (Problème
+> + Directive + Acceptation), utile pour exécuter un item précis.
 
 ## Les fichiers
 
