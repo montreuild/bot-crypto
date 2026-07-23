@@ -156,7 +156,7 @@ def run_backtest_cli(cfg, args):
 
 
 def run_optimizer_cli(cfg, args):
-    from app.engine.optimizer import DEFAULT_SPACES, StrategyOptimizer
+    from app.engine.optimizer_search import DEFAULT_SPACES, StrategyOptimizer
     strategy = args.optimize
     exchange = create_exchange(cfg)
     tf       = cfg["trading"]["timeframe"]

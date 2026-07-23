@@ -854,29 +854,30 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             logger.debug(f"[{self.name}] save_model: aucun pipeline pour {tf}, skip")
             return
         try:
-            import joblib
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            payload = {
-                "pipeline":     pipeline,
-                "best_params":  self._best_params_per_tf.get(tf, {}),
-                "best_auc":     self._best_auc_per_tf.get(tf, 0.0),
-                "feature_cols": self._feature_cols_per_tf.get(tf, []),
-                "model_type":   self.model_type,
-            }
-            joblib.dump(payload, path)
-            logger.info(f"[{self.name}/{tf}] Modèle sauvegardé → {path}")
+            from app.ml.backend.persistence import save_sklearn_pipeline
+            ok = save_sklearn_pipeline(
+                pipeline=pipeline,
+                best_params=self._best_params_per_tf.get(tf, {}),
+                best_auc=self._best_auc_per_tf.get(tf, 0.0),
+                feature_cols=self._feature_cols_per_tf.get(tf, []),
+                model_type=self.model_type,
+                path=path,
+            )
+            if ok:
+                logger.info(f"[{self.name}/{tf}] Modèle sauvegardé → {path}")
         except Exception as e:
             logger.warning(f"[{self.name}/{tf}] Sauvegarde modèle KO : {e}")
 
     def load_model(self, path: str) -> bool:
         """Charge le modèle et l'enregistre sous le TF encodé dans le chemin."""
-        if not os.path.exists(path):
-            return False
         tf = os.path.basename(path).rsplit("_", 1)[-1].split(".")[0]
         try:
-            import joblib
-            data = joblib.load(path)
-            auc  = data.get("best_auc", 0.0)
+            from app.ml.backend.persistence import load_sklearn_pipeline
+            data = load_sklearn_pipeline(path)
+            if data is None:
+                return False
+            auc = data.get("best_auc", 0.0)
             with self._model_lock:
                 self._pipelines[tf]           = data["pipeline"]
                 self._best_params_per_tf[tf]  = data.get("best_params", {})

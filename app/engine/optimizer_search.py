@@ -1,14 +1,17 @@
-"""Optimiseur de stratégies — auto-découverte des espaces de paramètres via le registre.
+"""Moteur de recherche d'hyperparamètres — grid / random / bayesian (TPE).
 
-Découpage V13 (recherche / scoring / persistance) :
-  - ``optimizer.py``       : constantes + ``StrategyOptimizer`` (grid/random/bayesian)
-  - ``opt_scoring.py``     : score composite IS/OOS, ratio de surapprentissage
-  - ``opt_persistence.py`` : YAML stratégies, changelog, stratégies actives par TF
-  - ``opt_workers.py``     : workers ProcessPoolExecutor (état partagé, cap mémoire)
+Découpage ARCH-007 (recherche / persistance / scoring / workers) :
+  - ``optimizer_search.py``   : constantes + ``OptimizerSearchEngine`` (grid/random/bayesian)
+  - ``optimizer_applier.py``  : ``OptimizerResultApplier`` (apply_best_params + garde-fou beats_baseline)
+  - ``opt_scoring.py``        : score composite IS/OOS, ratio de surapprentissage
+  - ``opt_persistence.py``    : YAML stratégies, changelog, stratégies actives par TF
+  - ``opt_workers.py``        : workers ProcessPoolExecutor (état partagé, cap mémoire)
 
-Ce module ré-exporte les noms historiques : les imports existants
-(``from app.engine.optimizer import apply_best_params, PARAM_SPACES, …``)
-restent valides.
+Ce module ré-exporte les noms historiques de la façade ``optimizer.py``
+supprimée (ARCH-007) : les imports existants
+(``from app.engine.optimizer_search import apply_best_params, PARAM_SPACES, …``)
+restent valides. ``StrategyOptimizer`` est conservé comme alias de
+``OptimizerSearchEngine`` pour compatibilité ascendante.
 """
 import importlib
 import io
@@ -189,8 +192,8 @@ class _PoolHandle:
     safe_jobs: int
 
 
-# ── StrategyOptimizer — classe principale ──
-class StrategyOptimizer:
+# ── OptimizerSearchEngine — classe principale ──
+class OptimizerSearchEngine:
     def __init__(self, strategy_name: str, cfg: dict,
                  df_is: pl.DataFrame, df_oos: pl.DataFrame,
                  param_space: Dict = None,
@@ -1201,3 +1204,10 @@ class StrategyOptimizer:
         best = max(candidates, key=lambda r: r.get("best_oos_score", -999))
         best["n_hp_combos"] = len(combos)
         return best
+
+
+# ── Compatibilité ascendante ─────────────────────────────────────────────────
+# La façade ``app.engine.optimizer`` a été supprimée (ARCH-007). Les consommateurs
+# historiques qui référencent ``StrategyOptimizer`` continuent de fonctionner via
+# cet alias — nouvelle classe canonique : ``OptimizerSearchEngine``.
+StrategyOptimizer = OptimizerSearchEngine

@@ -92,7 +92,7 @@ def optimizer_start(
 
     try:
         from app.engine.auto_optimizer import AutoOptimizer
-        from app.engine.optimizer import PARAM_SPACES, auto_fetch_limit
+        from app.engine.optimizer_search import PARAM_SPACES, auto_fetch_limit
 
         tf_list = (
             [t.strip() for t in timeframes.split(",") if t.strip()]
@@ -315,7 +315,7 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
     from app.core.config import load_config as _reload_cfg
     from app.engine.auto_optimizer import get_job
     from app.engine.opt_scoring import beats_baseline
-    from app.engine.optimizer import apply_best_params
+    from app.engine.optimizer_search import apply_best_params
 
     job = get_job(job_id)
     if not job:
@@ -410,7 +410,7 @@ def optimizer_results():
     except Exception as e:
         logger.warning(f"[optimizer/results] lecture config disque KO : {e}")
     raw    = state.cfg.get("optimizer_results") or {}
-    from app.engine.optimizer import get_active_strategies_per_tf
+    from app.engine.optimizer_search import get_active_strategies_per_tf
     active = get_active_strategies_per_tf(state.cfg)
     result = {
         strat: {tf: entry for tf, entry in tf_map.items()}
@@ -426,7 +426,7 @@ def optimizer_results():
 @router.get("/api/optimize/spaces", dependencies=[Depends(verify_api_key)])
 def optimizer_spaces():
     from app.engine.auto_optimizer import _is_ml_strategy
-    from app.engine.optimizer import PARAM_SPACES, STRATEGY_TIMEFRAMES
+    from app.engine.optimizer_search import PARAM_SPACES, STRATEGY_TIMEFRAMES
     return {
         strat: {
             "params":     {k: v for k, v in space.items()},

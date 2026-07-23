@@ -1,7 +1,7 @@
 """Phase 1 — le bot comme unité : identité/venue, sizing par bot, vetos shadow."""
 
 import app.core.bot_identity as bi
-from app.core.risk import RiskManager
+from app.core.risk_gate import RiskManager
 
 
 def _base_cfg(**over):

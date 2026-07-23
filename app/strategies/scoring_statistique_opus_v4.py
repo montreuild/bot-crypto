@@ -552,7 +552,6 @@ class Strategy(BaseStrategyML):
         return self.score(df, params)
 
     def save_model(self, path: str) -> None:
-        import joblib
         tf_key = os.path.splitext(os.path.basename(path))[0].rsplit("_", 1)[-1]
         with self._lock:
             amp  = self._amp_models.get(tf_key)
@@ -562,28 +561,22 @@ class Strategy(BaseStrategyML):
             meta = self._train_meta.get(tf_key, {})
         if amp is None or dir_ is None:
             return
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        joblib.dump({
-            "amp_model":  amp,
-            "dir_model":  dir_,
-            "scaler":     sc,
-            "best_auc":   auc,
-            "train_meta": meta,
-        }, path)
-        logger.info(f"[V4] Modèles sauvegardés → {path} (AUC combiné={auc:.3f})")
+        from app.ml.backend.persistence import save_lgb_with_scaler
+        if save_lgb_with_scaler(amp, dir_, sc, path, tf_key, auc, meta):
+            logger.info(f"[V4] Modèles sauvegardés → {path} (AUC combiné={auc:.3f})")
 
     def load_model(self, path: str) -> bool:
-        if not os.path.exists(path):
-            return False
         tf_key = os.path.splitext(os.path.basename(path))[0].rsplit("_", 1)[-1]
+        from app.ml.backend.persistence import load_lgb_with_scaler
+        data = load_lgb_with_scaler(path)
+        if data is None:
+            return False
         try:
-            import joblib
-            data = joblib.load(path)
             with self._lock:
                 for key in (tf_key, "default"):
                     self._amp_models[key]      = data["amp_model"]
                     self._dir_models[key]      = data["dir_model"]
-                    self._scalers[key]         = data["scaler"]
+                    self._scalers[key]         = data.get("scaler")
                     self._best_auc_per_tf[key] = float(data.get("best_auc", 0.0))
                     self._train_meta[key]      = data.get("train_meta", {})
                     self._trained_tfs.add(key)

@@ -299,7 +299,7 @@ def _set_slot_budget_impl(slot_key: str, budget_pct: float) -> dict:
     # Persist to config.yaml so the allocation survives restarts
     state.cfg.setdefault("capital_allocator", {}).setdefault("slot_budgets", {})[slot_key] = rounded
     try:
-        from app.api.routes.config import _save_yaml
+        from app.api.routes._config_helpers import _save_yaml
         def _upd(d):
             d.setdefault("capital_allocator", {}).setdefault("slot_budgets", {})[slot_key] = rounded
         _save_yaml(_upd)
@@ -348,7 +348,7 @@ def toggle_slot(request: Request, slot_key: str, enabled: bool = True):
         disabled = sorted(disabled)
         alloc["disabled_slots"] = disabled
         try:
-            from app.api.routes.config import _save_yaml
+            from app.api.routes._config_helpers import _save_yaml
             _save_yaml(lambda d: d.setdefault("capital_allocator", {}).update(
                 {"disabled_slots": disabled}
             ))
@@ -370,7 +370,7 @@ def toggle_slot(request: Request, slot_key: str, enabled: bool = True):
     disabled = state.trader.allocator.disabled_slots
     state.cfg.setdefault("capital_allocator", {})["disabled_slots"] = disabled
     try:
-        from app.api.routes.config import _save_yaml
+        from app.api.routes._config_helpers import _save_yaml
         _save_yaml(lambda d: d.setdefault("capital_allocator", {}).update(
             {"disabled_slots": disabled}
         ))

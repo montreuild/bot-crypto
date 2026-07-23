@@ -185,7 +185,7 @@ def force_active(request: Request, slot_key: str, enabled: bool = True):
     lc["manual_active"] = manual
 
     try:
-        from app.api.routes.config import _save_yaml
+        from app.api.routes._config_helpers import _save_yaml
         _save_yaml(lambda d: d.setdefault("lifecycle", {}).update(
             {"manual_active": manual}))
     except Exception as e:
@@ -324,7 +324,7 @@ def set_risk_preset(request: Request, preset: str):
     if preset not in _RISK_PRESETS:
         raise HTTPException(400, f"Preset inconnu : {preset}")
     p = _RISK_PRESETS[preset]
-    from app.api.routes.config import _save_yaml
+    from app.api.routes._config_helpers import _save_yaml
 
     def _apply(disk):
         disk.setdefault("trading", {}).update(p["trading"])
@@ -345,7 +345,7 @@ def set_risk_preset(request: Request, preset: str):
 @router.post("/api/settings/expert-mode", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("30/minute")
 def set_expert_mode(request: Request, enabled: bool = False):
-    from app.api.routes.config import _save_yaml
+    from app.api.routes._config_helpers import _save_yaml
     _save_yaml(lambda disk: disk.setdefault("ui", {}).update({"expert_mode": enabled}))
     if state.cfg:
         state.cfg.setdefault("ui", {})["expert_mode"] = enabled

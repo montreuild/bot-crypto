@@ -1,4 +1,10 @@
-"""Backtester, WalkForwardAnalyzer et MonteCarlo. Stop vérifié intrabar, trailing dynamique."""
+"""Backtester (BacktestResult) — stop vérifié intrabar, trailing dynamique.
+
+ARCH-010 : ``WalkForwardAnalyzer`` et ``MonteCarlo`` ont été extraits vers
+``app/engine/walk_forward.py`` et ``app/engine/monte_carlo.py``. Ils sont
+ré-exportés en fin de module pour préserver la compatibilité ascendante
+(``from app.engine.backtest import WalkForwardAnalyzer`` continue de fonctionner).
+"""
 import logging
 import math
 import threading
@@ -948,130 +954,12 @@ class Backtester:
         return _trade_fees(price, size, self.maker_fee if maker else self.taker_fee)
 
 
-# ── Walk-Forward ──
-class WalkForwardAnalyzer:
-    def __init__(self, engine: Engine, cfg: dict, n_folds: int = 5):
-        self.engine  = engine
-        self.cfg     = cfg
-        self.n_folds = n_folds
-
-    def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL) -> dict:
-        n      = len(df)
-        fold_n = n // (self.n_folds + 1)
-        WARMUP = 220
-        MIN_IS = WARMUP + 50
-        MIN_OOS = 40
-        if fold_n < MIN_OOS:
-            return {"error": f"Données insuffisantes pour Walk-Forward ({n} barres · min {MIN_OOS * (self.n_folds+1)})"}
-        if fold_n < MIN_IS:
-            return {
-                "error": (
-                    f"IS trop court pour les stratégies EMA ({fold_n} barres/fold · "
-                    f"min {MIN_IS} requis). Augmentez les bougies à ≥{MIN_IS * (self.n_folds+1)} "
-                    f"ou réduisez les folds."
-                ),
-                "n_bars": n,
-                "fold_n": fold_n,
-                "min_required": MIN_IS * (self.n_folds + 1),
-            }
-
-        in_sample_results  = []
-        out_sample_results = []
-
-        for k in range(self.n_folds):
-            is_end  = fold_n * (k + 1)
-            oos_end = min(fold_n * (k + 2), n)
-            df_is   = df[:is_end]
-            df_oos  = df[is_end:oos_end]
-            if len(df_oos) < 30:
-                continue
-            try:
-                import importlib as _imp
-                fresh_strats = []
-                for s in self.engine.strategies:
-                    mod = _imp.import_module(f"app.strategies.{s.name}")
-                    fresh_strats.append(mod.Strategy())
-                eng_is  = Engine()
-                [eng_is.register(s, silent=True)  for s in fresh_strats]
-                fresh_strats_oos = []
-                for s in self.engine.strategies:
-                    mod = _imp.import_module(f"app.strategies.{s.name}")
-                    fresh_strats_oos.append(mod.Strategy())
-                eng_oos = Engine()
-                [eng_oos.register(s, silent=True) for s in fresh_strats_oos]
-
-                bt_is  = Backtester(eng_is,  self.cfg)
-                bt_oos = Backtester(eng_oos, self.cfg)
-                r_is   = bt_is.run(df_is,  symbol).to_dict()
-                r_oos  = bt_oos.run(df_oos, symbol).to_dict()
-                in_sample_results.append(r_is)
-                out_sample_results.append(r_oos)
-            except Exception as e:
-                logger.error(f"[WF] Fold {k} : {e}", exc_info=True)
-
-        if not out_sample_results:
-            return {"error": "Aucun fold OOS valide"}
-
-        oos_pnl    = [r["total_pnl"]  for r in out_sample_results]
-        oos_sharpe = [r["sharpe"]     for r in out_sample_results]
-        oos_wr     = [r["win_rate"]   for r in out_sample_results]
-
-        return {
-            "n_folds":        len(out_sample_results),
-            "avg_oos_pnl":    round(_sf(float(np.mean(oos_pnl)),    0.0), 4),
-            "avg_oos_sharpe": round(_sf(float(np.mean(oos_sharpe)), 0.0), 3),
-            "avg_oos_wr":     round(_sf(float(np.mean(oos_wr)),     0.0), 2),
-            "consistency":    round(sum(1 for p in oos_pnl if p > 0) / len(oos_pnl) * 100, 1),
-            "in_sample":      in_sample_results,
-            "out_of_sample":  out_sample_results,
-        }
-
-
-# ── Monte-Carlo ──
-class MonteCarlo:
-    """Deux familles de statistiques, calculées avec la méthode adaptée (BT-02) :
-
-    - **Risque de SÉQUENCE** (``max_dd_p95``, ``prob_ruin_10pct``) : permutation
-      des PnL (sans remise). La somme est invariante — seul l'ORDRE change —
-      c'est exactement ce qu'on veut pour la distribution du drawdown.
-    - **Risque d'ÉCHANTILLONNAGE** (``final_equity_mean/p5/p95``,
-      ``prob_profit``) : bootstrap AVEC remise (rng.choice, replace=True).
-      La permutation donnait ici une distribution dégénérée : équité finale
-      identique à chaque run (p5 = p95, prob_profit ∈ {0, 100}).
-    """
-
-    def __init__(self, n_runs: int = 200, confidence: float = 0.95):
-        self.n_runs    = n_runs
-        self.confidence = confidence
-
-    def run(self, trades: List[dict], initial_capital: float) -> dict:
-        closed = [t for t in trades if t.get("status", "").startswith("closed")]
-        if not closed:
-            return {"error": "Aucun trade fermé"}
-
-        pnls   = np.array([t["pnl"] for t in closed])
-        finals = []
-        max_dds= []
-        rng    = np.random.default_rng(42)
-
-        for _ in range(self.n_runs):
-            # Séquence (permutation) → drawdown/ruine.
-            shuffled = rng.permutation(pnls)
-            equity   = np.concatenate([[initial_capital], initial_capital + np.cumsum(shuffled)])
-            peak = np.maximum.accumulate(equity)
-            dd   = (equity - peak) / np.where(peak > 0, peak, 1) * 100
-            max_dds.append(float(dd.min()))
-            # Échantillonnage (bootstrap avec remise) → équité finale.
-            resampled = rng.choice(pnls, size=len(pnls), replace=True)
-            finals.append(float(initial_capital + resampled.sum()))
-
-        return {
-            "runs":               self.n_runs,
-            "confidence":         self.confidence,
-            "final_equity_mean":  round(_sf(float(np.mean(finals)),  0.0), 2),
-            "final_equity_p5":    round(_sf(float(np.percentile(finals,  5)),  0.0), 2),
-            "final_equity_p95":   round(_sf(float(np.percentile(finals, 95)),  0.0), 2),
-            "max_dd_p95":         round(_sf(abs(float(np.percentile(max_dds, 95))), 0.0), 2),
-            "prob_profit":        round(sum(1 for f in finals if f > initial_capital) / self.n_runs * 100, 1),
-            "prob_ruin_10pct":    round(sum(1 for d in max_dds if d < -10) / self.n_runs * 100, 1),
-        }
+# ── Ré-exports (compat ascendante — ARCH-010) ────────────────────────────────
+# ``WalkForwardAnalyzer`` et ``MonteCarlo`` ont été extraits vers leurs propres
+# modules (walk_forward.py / monte_carlo.py). Ils restent importables depuis
+# backtest.py pour ne pas casser les callers existants (api/routes, cli,
+# research/*, auto_optimizer). Imports placés EN FIN de module pour éviter un
+# cycle : walk_forward.py fait un import lazy de ``Backtester`` dans sa méthode
+# ``run``, et ``Backtester`` doit donc être défini avant cet import.
+from app.engine.walk_forward import WalkForwardAnalyzer  # noqa: E402
+from app.engine.monte_carlo import MonteCarlo            # noqa: E402

@@ -38,5 +38,5 @@ def test_none_df():
 
 
 def test_optimizer_imports_shared_fraction():
-    from app.engine.optimizer import _OOS_FRACTION
+    from app.engine.optimizer_search import _OOS_FRACTION
     assert _OOS_FRACTION == OOS_FRACTION_DEFAULT

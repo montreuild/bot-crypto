@@ -1,4 +1,9 @@
-"""API FastAPI du Crypto Bot — point d'entrée, middlewares, pages web et status."""
+"""API FastAPI du Crypto Bot — point d'entrée, pages web et status.
+
+Les middlewares (CORS, GZIP, SlowAPI, HTTPS redirect) et les exception
+handlers globaux sont désormais dans :mod:`app.api.middleware` et enregistrés
+via :func:`setup_middleware` (refactoring ARCH-014).
+"""
 import hmac
 import logging
 import os
@@ -17,22 +22,21 @@ except ImportError:
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
 
 from app.api import state
 from app.api.helpers import CleanJSONResponse
+from app.api.middleware import setup_middleware
 from app.api.routes import (
     audit_log,
     backtest,
     bot,
-    config,
+    config_global,
+    config_strategies,
+    config_risk,
+    config_notifications,
     data,
     derivatives,
     ml,
@@ -70,68 +74,10 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
+# ``app.state.limiter`` doit être posé AVANT ``setup_middleware`` car
+# ``SlowAPIMiddleware`` le lit à l'enregistrement.
 app.state.limiter = state.limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-
-# ── Filet de sécurité : capture toutes les exceptions non gérées ──────────
-# Sans ce handler, une exception dans une route (ex. ``TypeError`` à cause
-# d'un ``oos_score=None``) remonte à travers la middleware Starlette et
-# se transforme en ``ExceptionGroup: unhandled errors in a TaskGroup``
-# moche dans les logs serveur, sans message HTTP propre côté client.
-@app.exception_handler(Exception)
-async def _global_exception_handler(request: Request, exc: Exception):
-    """Loggue l'exception puis retourne un JSON 500 propre (sans stacktrace)."""
-    logger.error(
-        f"[API] Exception non gérée {request.method} {request.url.path} : "
-        f"{type(exc).__name__}: {exc}",
-        exc_info=True,
-    )
-    return JSONResponse(
-        status_code=500,
-        content={
-            "detail": f"Erreur interne : {type(exc).__name__}",
-            "path":   request.url.path,
-        },
-    )
-
-
-# Rate-limiting effectif : sans ce middleware, ``default_limits`` du Limiter
-# n'était jamais appliqué (les limites étaient configurées mais inertes).
-app.add_middleware(SlowAPIMiddleware)
-
-app.add_middleware(GZipMiddleware, minimum_size=500)
-
-# CORS : whitelist localhost par défaut (dev). En production, définir
-# ALLOWED_ORIGINS (liste séparée par des virgules) pour restreindre au(x)
-# domaine(s) réel(s) — ex. ALLOWED_ORIGINS=https://bot.mondomaine.com
-_allowed_origins = [
-    o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()
-] or [
-    "http://localhost",      "http://127.0.0.1",
-    "http://localhost:8000", "http://127.0.0.1:8000",
-    "http://localhost:8001", "http://127.0.0.1:8001",
-]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_allowed_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE", "PUT"],
-    allow_headers=["X-API-Key", "Content-Type"],
-)
-
-
-# ── HTTPS redirect (if configured) ────────────────────────────────────────
-@app.middleware("http")
-async def https_redirect(request: Request, call_next):
-    """Redirect HTTP to HTTPS in production if FORCE_HTTPS env var is set."""
-    if os.environ.get("FORCE_HTTPS", "").lower() in ("1", "true", "yes"):
-        proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-        if proto == "http":
-            url = request.url.replace(scheme="https")
-            from starlette.responses import RedirectResponse
-            return RedirectResponse(url=str(url), status_code=301)
-    return await call_next(request)
+setup_middleware(app)
 
 # ── Templates ──────────────────────────────────────────────────────────────
 try:
@@ -324,7 +270,10 @@ def get_status(request: Request):
 
 
 # ── Inclusion des routers ──────────────────────────────────────────────────
-app.include_router(config.router)
+app.include_router(config_global.router)
+app.include_router(config_strategies.router)
+app.include_router(config_risk.router)
+app.include_router(config_notifications.router)
 app.include_router(trades.router)
 app.include_router(backtest.router)
 app.include_router(scanner.router)

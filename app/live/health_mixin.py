@@ -19,7 +19,7 @@ import time
 from collections import Counter
 
 from app.core.timeframes import bars_per_year as _bars_per_year
-from app.live.position_mixin import _calc_unreal_pct
+from app.live.position_open_mixin import _calc_unreal_pct
 from app.live.utils import _safe_float, _sanitize
 
 logger = logging.getLogger(__name__)

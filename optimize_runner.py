@@ -196,7 +196,7 @@ def main():
     from app.core.exchange import create_exchange
     from app.core.logger import setup_logging
     from app.engine.auto_optimizer import AutoOptimizer
-    from app.engine.optimizer import PARAM_SPACES, auto_fetch_limit
+    from app.engine.optimizer_search import PARAM_SPACES, auto_fetch_limit
 
     cfg = load_config(args.config)
     setup_logging(cfg)

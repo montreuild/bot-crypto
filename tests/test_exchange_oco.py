@@ -10,7 +10,7 @@ import types
 
 import pytest
 
-from app.live.position_mixin import PositionMixin
+from app.live.position_manage_mixin import PositionManageMixin
 
 
 class _RecExchange:
@@ -29,7 +29,7 @@ class _RecExchange:
         return {"id": f"stop-{len(self.calls)}"}
 
 
-class _Trader(PositionMixin):
+class _Trader(PositionManageMixin):
     """Stub minimal exposant juste ce dont _place_exchange_stop a besoin."""
 
     def __init__(self, exchange):

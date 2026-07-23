@@ -61,7 +61,7 @@ def scanner_config():
     """Retourne la configuration active du scanner."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
-    from app.engine.optimizer import STRATEGY_TIMEFRAMES
+    from app.engine.optimizer_search import STRATEGY_TIMEFRAMES
     if state.trader:
         active_per_tf = {tf: [s["name"] for s in v]
                          for tf, v in state.trader._active_per_tf.items()}

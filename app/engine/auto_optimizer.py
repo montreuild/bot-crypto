@@ -12,7 +12,7 @@ from app.core.is_oos import split_is_oos
 from app.engine.backtest import Backtester
 from app.engine.engine import BaseStrategyML, Engine
 from app.engine.opt_workers import available_memory_bytes
-from app.engine.optimizer import (
+from app.engine.optimizer_search import (
     PARAM_SPACES,
     RECOMMENDED_LIMIT,
     STRATEGY_TIMEFRAMES,
@@ -480,7 +480,7 @@ class AutoOptimizer:
             # d'entraînement réglables (et si activé). Sinon phase unique.
             ml_hp_space = {}
             if self.ml_tune_hp and _is_ml_strategy(strategy_name):
-                from app.engine.optimizer import ml_hp_space_for
+                from app.engine.optimizer_search import ml_hp_space_for
                 ml_hp_space = ml_hp_space_for(strategy_name)
 
             if ml_hp_space:

@@ -101,7 +101,7 @@ class TestRegistry:
 
     def test_optimizer_sees_same_dicts(self):
         """PARAM_SPACES et STRATEGY_TIMEFRAMES dans optimizer.py viennent du registry."""
-        from app.engine.optimizer import FIXED_PARAMS, PARAM_SPACES, STRATEGY_TIMEFRAMES
+        from app.engine.optimizer_search import FIXED_PARAMS, PARAM_SPACES, STRATEGY_TIMEFRAMES
 
         assert PARAM_SPACES == get_param_spaces(), (
             "optimizer.PARAM_SPACES doit correspondre au registry"

@@ -1,6 +1,6 @@
 """Parité backtest ↔ live : même trade ⇒ même PnL net.
 
-Les deux chemins (Backtester._close_at et PositionMixin._close_position)
+Les deux chemins (Backtester._close_at et PositionCloseMixin._close_position)
 consomment désormais les mêmes formules (app/core/execution.py). Ces tests
 verrouillent :
   1. les formules elles-mêmes (frais, emprunt composé, PnL net) ;
@@ -97,10 +97,11 @@ def _backtest_close_pnl() -> float:
 
 
 def _live_close_pnl() -> float:
-    """Clôture du même trade via PositionMixin._close_position (paper)."""
-    from app.live.position_mixin import PositionMixin
+    """Clôture du même trade via PositionCloseMixin._close_position (paper)."""
+    from app.live.position_close_mixin import PositionCloseMixin
+    from app.live.position_open_mixin import PositionOpenMixin
 
-    class Harness(PositionMixin):
+    class Harness(PositionOpenMixin, PositionCloseMixin):
         def __init__(self):
             import threading
             self.cfg = {"trading": {
