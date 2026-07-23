@@ -961,5 +961,5 @@ class Backtester:
 # research/*, auto_optimizer). Imports placés EN FIN de module pour éviter un
 # cycle : walk_forward.py fait un import lazy de ``Backtester`` dans sa méthode
 # ``run``, et ``Backtester`` doit donc être défini avant cet import.
-from app.engine.walk_forward import WalkForwardAnalyzer  # noqa: E402
-from app.engine.monte_carlo import MonteCarlo            # noqa: E402
+from app.engine.monte_carlo import MonteCarlo  # noqa: E402,F401
+from app.engine.walk_forward import WalkForwardAnalyzer  # noqa: E402,F401

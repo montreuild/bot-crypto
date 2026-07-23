@@ -34,7 +34,6 @@ from app.core.database import persist_open_position, session_scope
 from app.core.execution import size_impact_cost, trade_fees
 from app.core.indicators import atr_val as _compute_atr
 from app.core.timeframes import HTF_MAP as _HTF_MAP
-from app.core.timeframes import TF_SECONDS as _TF_SECS
 from app.core.trailing import TrailingStopManager
 
 # WebSocket temps réel — non bloquant, jamais critique pour le trading

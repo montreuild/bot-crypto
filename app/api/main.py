@@ -10,7 +10,6 @@ import os
 
 # phase6-sklearn-removal : plus de warning sklearn à filtrer (sklearn supprimé
 # du repo). Le bloc try/except qui suivait est retiré.
-
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -26,9 +25,9 @@ from app.api.routes import (
     backtest,
     bot,
     config_global,
-    config_strategies,
-    config_risk,
     config_notifications,
+    config_risk,
+    config_strategies,
     data,
     derivatives,
     ml,

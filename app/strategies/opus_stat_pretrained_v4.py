@@ -54,16 +54,24 @@ from app.core.indicators import pre_val
 from app.core.indicators import safe_num as _safe_num
 from app.engine.engine import BaseStrategyML
 from app.ml.backend import (
-    MLBackend,
     REGIME_CHOPPY,
     REGIME_LABELS,
     REGIME_RANGE,
     REGIME_TREND_DN,
     REGIME_TREND_UP,
     SUPPORTED_TFS,
+    MLBackend,
+)
+from app.ml.backend import (
     build_features as _build_features_polars,
+)
+from app.ml.backend import (
     detect_timeframe as _detect_timeframe,
+)
+from app.ml.backend import (
     last_bar_hour_dow as _last_bar_hour_dow,
+)
+from app.ml.backend import (
     window_polars as _window_polars,
 )
 

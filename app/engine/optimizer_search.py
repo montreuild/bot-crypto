@@ -623,6 +623,53 @@ class OptimizerSearchEngine:
             result["param_search_optim"] = reduction
         return result
 
+    def _optuna_param_importances(self, study,
+                                  param_keys: List[str]) -> Optional[Dict[str, float]]:
+        """Importances de paramètres estimées par Optuna, basées ANOVA.
+
+        Essaie les évaluateurs dans l'ordre de préférence :
+          1. fANOVA — le plus robuste face aux paramètres corrélés, mais requiert
+             scikit-learn (RandomForestRegressor interne). Depuis la suppression
+             de sklearn (phase 6), il n'est donc plus disponible en production ;
+             conservé en tête pour les environnements de dev qui l'ont encore.
+          2. PedANOVA — variante sklearn-free (pure Optuna), disponible même sans
+             sklearn. C'est le chemin effectif du repo post-phase 6.
+
+        Retourne ``None`` si aucun évaluateur ne rend un signal fini de somme
+        strictement positive — l'appelant retombe alors sur l'estimateur
+        marginal ``_impact_scores`` (défense en profondeur)."""
+        import warnings
+
+        import optuna
+        from optuna.importance import get_param_importances
+
+        evaluator_factories = []
+        try:
+            from optuna.importance import FanovaImportanceEvaluator
+            evaluator_factories.append(("fANOVA", lambda: FanovaImportanceEvaluator(seed=0)))
+        except Exception:
+            pass
+        try:
+            from optuna.importance import PedAnovaImportanceEvaluator
+            evaluator_factories.append(("PedANOVA", lambda: PedAnovaImportanceEvaluator()))
+        except Exception:
+            pass
+
+        for name, make_evaluator in evaluator_factories:
+            try:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore", category=optuna.exceptions.ExperimentalWarning)
+                    raw = get_param_importances(study, evaluator=make_evaluator())
+                impacts = {k: float(raw.get(k, 0.0)) for k in param_keys}
+                if (all(math.isfinite(v) for v in impacts.values())
+                        and sum(impacts.values()) > 0):
+                    return impacts
+            except Exception as _e:
+                logger.info("[Bayesian/TPE] importance %s indisponible (%s) — "
+                            "essai de l'évaluateur suivant.", name, _e)
+        return None
+
     def _optuna_apply_freeze(self, study, screen_results: List[dict],
                              param_keys: List[str]) -> Optional[dict]:
         """Gèle le SAMPLER Optuna (``PartialFixedSampler``) sur les paramètres
@@ -638,21 +685,8 @@ class OptimizerSearchEngine:
             return None
         import optuna
         own_impacts, best_value_by_param = self._impact_scores(screen_results, param_keys)
-        impacts = own_impacts
-        try:
-            import warnings
-
-            from optuna.importance import FanovaImportanceEvaluator, get_param_importances
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
-                raw = get_param_importances(study, evaluator=FanovaImportanceEvaluator(seed=0))
-            optuna_impacts = {k: float(raw.get(k, 0.0)) for k in param_keys}
-            if (all(math.isfinite(v) for v in optuna_impacts.values())
-                    and sum(optuna_impacts.values()) > 0):
-                impacts = optuna_impacts
-        except Exception as _e:
-            logger.info("[Bayesian/TPE] importance Optuna indisponible (%s) — repli sur "
-                        "l'estimateur marginal.", _e)
+        optuna_impacts = self._optuna_param_importances(study, param_keys)
+        impacts = optuna_impacts if optuna_impacts is not None else own_impacts
 
         frozen, kept_keys = self._freeze_params(impacts, best_value_by_param, param_keys)
         if not frozen:

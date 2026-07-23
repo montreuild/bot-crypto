@@ -850,6 +850,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         tf = os.path.basename(path).rsplit("_", 1)[-1].split(".")[0]
         try:
             import json
+
             import lightgbm as lgb
             base = path[:-4] if path.endswith(".pkl") else path
             lgb_path  = f"{base}.lgb"
@@ -882,10 +883,13 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 from app.ml.backend.persistence import restricted_pickle_load
                 try:
                     with open(path, "rb") as f:
-                        data = restricted_pickle_load(f)
-                    # L'ancien format contient un sklearn Pipeline — on ne peut
-                    # pas le convertir en lgb.Booster directement. On loggue et
-                    # on échoue proprement (l'utilisateur doit re-entraîner).
+                        # Validation RCE-safe via RestrictedUnpickler (lève sur
+                        # une classe non whitelistée). La valeur n'est pas
+                        # réutilisée : l'ancien format contient un sklearn
+                        # Pipeline non convertible en lgb.Booster.
+                        restricted_pickle_load(f)
+                    # On loggue et on échoue proprement (l'utilisateur doit
+                    # re-entraîner la stratégie).
                     logger.warning(
                         f"[{self.name}/{tf}] Legacy .pkl avec sklearn Pipeline ne peut "
                         f"pas être chargé sans sklearn — re-entraînez la stratégie."

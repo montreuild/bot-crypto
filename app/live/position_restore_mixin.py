@@ -14,7 +14,6 @@ Requiert que l'instance possède (fournis par LiveTrader.__init__) :
   self._exchange_stops_enabled, _adopt_or_place_exchange_stop (PositionManageMixin)
 """
 import logging
-import time
 
 from app.core.database import (
     delete_open_position,

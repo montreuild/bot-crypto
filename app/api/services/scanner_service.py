@@ -159,6 +159,7 @@ def _tp_sl(side: str, entry: float, atr: float, tp_mult: float, sl_mult: float):
 def _setup_series_v8(df, tf: str, limit: int) -> dict:
     """Markers de setups V8 par bougie (modèles V4 pré-entraînés), avec TP/SL."""
     from app.core.indicators import bearish_excess_series
+    from app.ml.backend import MLBackend
     from app.strategies.opus_omnibus_v8 import (
         _DEFAULT_SETUPS,
         REGIME_CHOPPY,
@@ -166,7 +167,6 @@ def _setup_series_v8(df, tf: str, limit: int) -> dict:
         _classify_regime,
         _evaluate_setup,
     )
-    from app.ml.backend import MLBackend
     from app.strategies.opus_stat_pretrained_v4 import (
         _detect_timeframe,
         _FeatureBuilder,

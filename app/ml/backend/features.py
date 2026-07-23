@@ -131,11 +131,16 @@ def detect_timeframe(df: pl.DataFrame) -> Optional[str]:
             return None
     if med_s <= 0:
         return None
-    if abs(med_s - 900)   < 60:   return "15m"
-    if abs(med_s - 1800)  < 120:  return "30m"
-    if abs(med_s - 3600)  < 240:  return "1h"
-    if abs(med_s - 14400) < 960:  return "4h"
-    if abs(med_s - 86400) < 5760: return "1d"
+    if abs(med_s - 900)   < 60:
+        return "15m"
+    if abs(med_s - 1800)  < 120:
+        return "30m"
+    if abs(med_s - 3600)  < 240:
+        return "1h"
+    if abs(med_s - 14400) < 960:
+        return "4h"
+    if abs(med_s - 86400) < 5760:
+        return "1d"
     return None
 
 
