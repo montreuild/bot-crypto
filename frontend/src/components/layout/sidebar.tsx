@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Bot, LineChart, Settings, Activity,
   Zap, Database, Network, Sparkles, Repeat,
   BrainCircuit, ClipboardList, TrendingUp, Wallet, Cpu,
-  CandlestickChart, Film, GitCompare, ScrollText,
+  CandlestickChart, Film, GitCompare, ScrollText, Archive,
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -40,6 +40,7 @@ const NAV_GROUPS = [
       { href: '/derivatives', label: 'Dérivées', icon: TrendingUp },
       { href: '/data', label: 'Bougies OHLCV', icon: Database },
       { href: '/ml', label: 'Modèles ML', icon: BrainCircuit },
+      { href: '/models', label: 'Registre modèles', icon: Archive },
     ],
   },
   {
