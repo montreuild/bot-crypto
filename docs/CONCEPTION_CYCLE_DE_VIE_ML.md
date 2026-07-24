@@ -274,7 +274,14 @@ Trois exécutants, zéro duplication :
   plusieurs plages et comparer » de la Solution 1 — avec hold-out commun,
   donc comparaison légitime.
 
-### 3.4 Le gate de promotion (répond au point de vigilance n°3 et à ML-01)
+### 3.4 Le gate de promotion (répond au point de vigilance n°3 — modèle, pas stratégie)
+
+> Précision (implémentation, 2026-07-24) : ce gate porte sur la promotion
+> d'un **artefact modèle** dans le registre — il ne couvre PAS ML-01, qui
+> gate la promotion d'une **stratégie** vers `manual_active`
+> (`app/live/slot_lifecycle.py`, walk-forward multi-fenêtres sur le PnL).
+> Même philosophie (comparer sur une fenêtre tenue à l'écart plutôt qu'un
+> score unique), deux mécanismes distincts — ML-01 reste un chantier séparé.
 
 À l'instant de rafraîchissement `T`, avec `h = holdout_bars` :
 
@@ -475,20 +482,72 @@ même recette ne diversifient pas), et la passe de confirmation post-promotion
 
 ## 7. Migration incrémentale (chaque étape utile seule)
 
-| # | Étape | Effort | Contenu / risque |
-|---|---|---|---|
-| E1 | Meta v2 + `ml_info` + warning fraîcheur | S | Enrichir `save_model`/`load_model` et `BacktestResult` ; aucun changement de layout ; risque ~nul |
-| E2 | Registre + layout symbole/TF + `resolve(as_of)` + garde anti-chevauchement + migration V4 | M | Compat lecture layout plat ; supprime les fuites 2-3-4 |
-| E3 | Runner CLI committé + window sweep | S | Reproductibilité (ML-02) ; s'appuie sur E2 |
-| E4 | Gate + `decisions.jsonl` + cadence en barres dans le trainer live | M | Fin de l'écrasement aveugle ; alertes de décroissance |
-| E5 | `ml_mode=simulated_live` (Backtester + WalkForward) avec cache registre | M/L | Le banc 2-3 ans ; le plus gros morceau algorithmique |
-| E6 | Optimiseur `frozen` par défaut + passe de confirmation + purge dims dir + feature freezing | M | Gros gain de vitesse ; supprime le train final leaky S4-03 |
-| E7 | UI Modèles + santé (les 2 fronts) | M | Pure surface, après E2/E4 |
+> **Mise à jour 2026-07-24 (implémentation) :** E1-E5 livrés intégralement,
+> E3 inclus. E6 livré **partiellement** (voir détail sous le tableau — le
+> flip de défaut, la passe de confirmation et le feature freezing restent à
+> faire). E7 (UI) non commencé. Suite complète : 812 tests passés / 2 skip,
+> aucune régression sur la base préexistante (746 tests avant ce chantier).
+
+| # | Étape | Effort | Statut | Contenu / risque |
+|---|---|---|---|---|
+| E1 | Meta v2 + `ml_info` + warning fraîcheur | S | ✅ fait | `persistence.py` (`provenance`/`gate` optionnels, rétro-compat v1), `BacktestResult.ml_info`, `MLStrategyTrainer._freshness_warning` |
+| E2 | Registre + layout symbole/TF + `resolve(as_of)` + garde anti-chevauchement + migration V4 | M | ✅ fait | `app/ml/model_registry.py` ; V4 déplacé dans `models/BTC_USDC/{tf}/opus_stat_pretrained_v4/legacy/`, prédictions vérifiées byte-identiques ; repli sur l'ancien layout plat conservé tant qu'une recette n'est pas migrée |
+| E3 | Runner CLI committé + window sweep | S | ✅ fait | `app/ml/train_runner.py` + `scripts/train_model.py` — dry-run par défaut (rien n'est écrit), `--publish` pour la publication gatée réelle, `--windows` pour le sweep sur holdout commun |
+| E4 | Gate + `decisions.jsonl` + cadence en barres dans le trainer live | M | ✅ fait (cadence **partielle**) | `app/ml/policy.py` (`decide_gate`, `maybe_refresh`, AUC par rang sans sklearn/scipy) câblé dans le live trainer et le runner. Le live trainer garde une cadence **horloge murale** (`retrain_interval_h`, inchangé) plutôt que barres — voir note ci-dessous |
+| E5 | `ml_mode=simulated_live` (Backtester + WalkForward) avec cache registre | M/L | ✅ fait | `Backtester.ml_mode` (`frozen`/`inline`/`simulated_live`) ; rafraîchissement périodique à même la boucle bar-par-bar, publication registre à chaque frontière de cadence ; `WalkForwardAnalyzer` transmet `ml_mode` par fold (la fuite `as_of` par fold est corrigée par construction, sans code spécifique aux folds) |
+| E6 | Optimiseur `frozen` par défaut + passe de confirmation + purge dims dir + feature freezing | M | 🟡 partiel | Voir détail ci-dessous |
+| E7 | UI Modèles + santé (les 2 fronts) | M | ⬜ non commencé | Pure surface, après E2/E4 — endpoints `app/api/routes/ml.py` à étendre (registre, décisions, fraîcheur), template `app/web/templates/ml.html` + page `frontend/src/app/ml/` |
+
+### Détail E6 — ce qui est fait vs restant
+
+Fait :
+- `OptimizerSearchEngine.ml_mode` lu depuis `cfg["optimizer"]["ml_mode"]`
+  (in-process **et** worker subprocess, même clé après désérialisation YAML) —
+  remplace le `use_pretrained_ml=False` câblé en dur.
+- Purge de `setup_*_dir_min`/`setup_*_dir_max` de `param_space` pour
+  `opus_omnibus_v11` (mesuré directement) — `opus_omnibus_v12` en hérite
+  automatiquement (`param_space = {**_V11Strategy.param_space, ...}`).
+  Vérifié sans risque runtime : `_apply_setup_overrides` a son propre
+  défaut câblé en dur (`_DEFAULT_SETUPS`), appliqué dès qu'une clé est
+  absente des params résolus.
+
+Restant, délibérément hors scope de cette passe (pas une conclusion
+définitive — juste pas fait) :
+- **Défaut `ml_mode` NON basculé sur `"frozen"`** pour l'optimiseur — reste
+  `"inline"` (comportement historique). Le flip de défaut change la
+  méthodologie de fond (cible fixe vs walk-forward réel par trial) pour
+  potentiellement tous les runs existants ; laissé en opt-in explicite
+  (`cfg["optimizer"]["ml_mode"] = "frozen"`) plutôt qu'imposé silencieusement.
+- **Purge dir_min/dir_max non étendue** à `opus_omnibus_v7`/
+  `opus_omnibus_v10_retrained`/`opus_omnibus_v11_followsetup` — même
+  architecture partagée (label/feature builder identique par construction,
+  cf. `app/ml/backend/features.py`), conclusion probablement transposable,
+  mais leur `param_space`/routing interne n'a pas été relu ligne à ligne
+  avant de toucher au comportement de l'optimiseur dessus.
+- **Passe de confirmation post-optimisation** (§4.2 : re-jouer le best en
+  `simulated_live` sur l'OOS avant d'écrire `optimizer_results`) — pas
+  construite. Le train final leaky de `auto_optimizer.py` (S4-03, IS+OOS)
+  n'a pas été retiré.
+- **Feature freezing** (job de screening → liste figée committée dans la
+  recette, symétrique du gel des params déjà fait par l'optimiseur) — pas
+  construit ; `prune_features` (élagage a posteriori) reste le seul
+  mécanisme en place.
+
+### Note E4 — cadence live restée horloge murale, pas barres
+
+Le trainer live (`MLStrategyTrainer`) continue de planifier ses cycles via
+`retrain_interval_h` (heures, inchangé) plutôt que de compter les barres —
+seul le **contenu** de chaque cycle a changé (gate via `maybe_refresh` au
+lieu d'un `fit()+save_model()` aveugle), pas son **déclenchement**. Basculer
+la cadence elle-même en barres aurait nécessité de faire correspondre le
+scheduler live à la grille de bougies par TF, un chantier plus large
+(recoupe le "chantier connexe" ci-dessous) volontairement laissé de côté ici.
 
 Chantier connexe à séquencer à part : **état ML par (symbole, TF)** au lieu
 de TF seul (TrainState/predictor keyés `tf`) — prérequis pour des modèles
 réellement par symbole ; d'ici là le registre reste honnête en écrivant
-`symbol: BTC/USDC` dans la meta (état de fait actuel, enfin explicite).
+`symbol` dans la meta (état de fait actuel, enfin explicite) sans que
+l'inférence elle-même distingue encore les symboles en mémoire.
 
 ## 8. Défauts proposés — hypothèses, pas des réglages
 
