@@ -174,6 +174,10 @@ def replay_page(request: Request):
 def ml_page(request: Request):
     return _tpl("ml.html", request, {"active_page": "ml"})
 
+@app.get("/models", response_class=HTMLResponse)
+def models_page(request: Request):
+    return _tpl("models.html", request, {"active_page": "models"})
+
 @app.get("/compare", response_class=HTMLResponse)
 def compare_page(request: Request):
     return _tpl("compare.html", request, {"active_page": "compare"})
