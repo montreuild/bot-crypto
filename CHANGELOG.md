@@ -714,6 +714,51 @@ livrer d'edge négatif), aucune stratégie n'a été créée. Le cadre
 « ⚡ Fast Analyse » du Scanner permet désormais de trouver un symbole où le
 mean-reversion fonctionne réellement (instruments range-bound).
 
+### 🤖 ML-02 : registre de modèles daté, gate de promotion, entraînement reproductible
+
+Suite de l'investigation légitimité du pkl figé (ci-dessus) : le slot modèle
+unique `models/{stratégie}_{tf}.*`, écrasé sans comparaison par trois
+écrivains différents, devient un registre daté versionné par (symbole, TF,
+recette) — cf. `docs/CONCEPTION_CYCLE_DE_VIE_ML.md` pour l'architecture.
+
+- **`app/ml/model_registry.py`** : layout `models/{symbole}/{tf}/{recette}/
+  {version}/`, `resolve(as_of=…, pin=…)` (jamais un modèle qui a vu les
+  données évaluées), garde anti-chevauchement, `decisions.jsonl` (audit),
+  repli sur l'ancien layout plat le temps qu'une recette soit migrée.
+- **`app/ml/policy.py`** : gate de promotion — candidat entraîné jusqu'à
+  `T-holdout`, scoré contre le sortant sur le MÊME holdout (AUC par rang
+  Mann-Whitney, numpy pur — pas de sklearn/scipy dans ce dépôt), promu
+  seulement s'il ne régresse pas. Fonctionne pour toute stratégie
+  `BaseStrategyML` (format de persistance à 3 fichiers déjà universel).
+- **Migration V4** : les modèles quittent
+  `app/strategies/opus_stat_pretrained_v4_data/` pour
+  `models/BTC_USDC/{tf}/opus_stat_pretrained_v4/legacy/`, comme tous les
+  autres modèles — prédictions vérifiées byte-identiques avant/après.
+- **Backtester** : `ml_mode` (`frozen`/`inline`/`simulated_live`) remplace
+  `use_pretrained_ml` (conservé, compat) ; `simulated_live` rejoue la
+  politique de rafraîchissement complète bar par bar (backtests fidèles au
+  ré-entraînement périodique du live) ; `result.ml_info` expose la version
+  résolue et le repli inline — fini le switch silencieux vers l'entraînement
+  inline quand aucun modèle n'est publié.
+- **Live trainer** : charge la dernière version promue (alerte si périmée
+  >2× l'intervalle configuré), réentraîne via le gate au lieu d'un
+  `fit()+save_model()` aveugle (seul garde-fou avant : AUC>0).
+- **Optimiseur** : `ml_mode` optionnel (`cfg["optimizer"]["ml_mode"]`,
+  défaut `"inline"` inchangé) pour optimiser les seuils contre un modèle
+  figé sans réentraîner à chaque essai ; dimensions `setup_*_dir_min/dir_max`
+  retirées de `param_space` (v11/v12) — AUC direction mesurée 0.53-0.54,
+  au niveau du hasard y compris in-sample.
+- **`scripts/train_model.py`** + `app/ml/train_runner.py` : script
+  d'entraînement committé et reproductible (le pkl V4 avait été généré par
+  un script hors dépôt, irrégénérable) — dry-run par défaut, `--publish`
+  pour la publication gatée réelle, `--windows` pour comparer plusieurs
+  tailles de fenêtre sur un holdout commun.
+
+UI Modèles (E7) et passe de confirmation post-optimisation non construites
+dans cette passe — cf. `CONCEPTION_CYCLE_DE_VIE_ML.md` §7 pour le détail
+exact de ce qui reste. 66 tests ajoutés, 812 tests OK (0 régression sur les
+746 préexistants).
+
 ---
 
 ## [12.14.0] - 2026-07-09
