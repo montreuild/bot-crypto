@@ -72,7 +72,7 @@ table.mdl-tbl{width:100%;border-collapse:collapse;font-size:.78rem;}
       <div class="mdl-fld"><label>Symbole</label><input id="tr-symbol" value="BTC/USDC"></div>
       <div class="mdl-fld"><label>Timeframe</label><input id="tr-tf" value="1h"></div>
       <div class="mdl-fld"><label>Fenêtre (barres)<span class="mdl-hint" style="margin:0">0 = tout dispo</span></label><input id="tr-window" type="number" value="0" min="0"></div>
-      <div class="mdl-fld"><label>as_of (optionnel)<span class="mdl-hint" style="margin:0">fige l'entraînement à cette date passée (rejoue une décision historique)</span></label><input id="tr-asof" placeholder="2026-06-01T00:00:00" title="Ne garde que les bougies antérieures à cette date pour l'entraînement ET le holdout du gate. Vide = tout l'historique disponible jusqu'à maintenant."></div>
+      <div class="mdl-fld"><label>Date de fin d'entraînement (optionnel)<span class="mdl-hint" style="margin:0">fige l'entraînement à cette date passée (rejoue une décision historique)</span></label><input id="tr-asof" placeholder="2026-06-01T00:00:00" title="Ne garde que les bougies antérieures à cette date pour l'entraînement ET le holdout du gate. Vide = tout l'historique disponible jusqu'à maintenant."></div>
       <div class="mdl-fld" style="flex-direction:row;align-items:center;gap:6px">
         <input type="checkbox" id="tr-publish" style="width:14px;height:14px">
         <label for="tr-publish" style="text-transform:none;font-size:.78rem;color:var(--text)">Publier réellement (sinon dry-run)</label>

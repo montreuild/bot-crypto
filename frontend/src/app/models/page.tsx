@@ -511,7 +511,7 @@ function TrainForm() {
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">
-              as_of (optionnel)
+              Date de fin d'entraînement (optionnel)
               <span className="block normal-case text-[10px] text-dim font-normal">
                 fige l'entraînement à cette date passée
               </span>
