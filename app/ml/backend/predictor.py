@@ -66,19 +66,14 @@ def predict_single(state: TrainState, lock,
         return None
 
 
-def predict_series(state: TrainState, lock,
-                   features_df: pl.DataFrame, tf: str,
-                   target: str) -> Optional[np.ndarray]:
-    """Prédit les probabilités calibrées pour TOUTES les barres (batch).
-
-    Utilisé par le scanner pour éviter un appel `predict_single` par barre.
-    Un seul appel `booster.predict(X)` sur l'ensemble du DataFrame.
+def predict_batch_raw(booster, cal, feat_cols, medians: dict,
+                      features_df: pl.DataFrame) -> Optional[np.ndarray]:
+    """Prédiction batch (probas calibrées) à partir d'un booster/calibrator/
+    feature_cols/medians déjà résolus — cœur vectorisé partagé par
+    ``predict_series`` (état ``TrainState``, tf courant) et
+    ``app.ml.policy.score_holdout`` (bundle chargé du registre, comparaison
+    de gate). Un seul appel ``booster.predict(X)`` sur tout le DataFrame.
     """
-    with lock:
-        booster   = (state.amp_models if target == "amp" else state.dir_models).get(tf)
-        cal       = (state.amp_cal    if target == "amp" else state.dir_cal).get(tf)
-        feat_cols = state.feature_cols.get(tf)
-        medians   = state.medians.get(tf, {})
     if booster is None or not feat_cols:
         return None
     try:
@@ -98,8 +93,24 @@ def predict_series(state: TrainState, lock,
             raw = np.asarray(cal.predict(raw), dtype=float)
         return raw
     except Exception as e:
-        logger.warning(f"[MLBackend] Prédiction batch {tf}/{target} KO : {e}")
+        logger.warning(f"[MLBackend] Prédiction batch KO : {e}")
         return None
+
+
+def predict_series(state: TrainState, lock,
+                   features_df: pl.DataFrame, tf: str,
+                   target: str) -> Optional[np.ndarray]:
+    """Prédit les probabilités calibrées pour TOUTES les barres (batch).
+
+    Utilisé par le scanner pour éviter un appel `predict_single` par barre.
+    Un seul appel `booster.predict(X)` sur l'ensemble du DataFrame.
+    """
+    with lock:
+        booster   = (state.amp_models if target == "amp" else state.dir_models).get(tf)
+        cal       = (state.amp_cal    if target == "amp" else state.dir_cal).get(tf)
+        feat_cols = state.feature_cols.get(tf)
+        medians   = state.medians.get(tf, {})
+    return predict_batch_raw(booster, cal, feat_cols, medians, features_df)
 
 
 def predict_amplitude(state: TrainState, lock,

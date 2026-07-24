@@ -814,7 +814,7 @@ class Strategy(BaseStrategyML):
         base = os.path.splitext(os.path.basename(path))[0]
         return base.rsplit("_", 1)[-1]
 
-    def save_model(self, path: str) -> None:
+    def save_model(self, path: str, extra_meta: dict = None) -> None:
         from app.ml.backend.persistence import save_amp_dir_bundle
         tf = self._tf_from_path(path)
         with self._lock:
@@ -829,7 +829,7 @@ class Strategy(BaseStrategyML):
         if amp_m is None or dir_m is None:
             return
         if save_amp_dir_bundle(path, tf, amp_m, dir_m, feats, meds, auc, meta,
-                               amp_cal=amp_c, dir_cal=dir_c):
+                               amp_cal=amp_c, dir_cal=dir_c, extra_meta=extra_meta):
             logger.info(f"[OmnibusV11-FollowSetup] Modèles sauvegardés → {path} "
                         f"(AUC={auc:.3f})")
 

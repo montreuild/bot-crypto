@@ -788,7 +788,7 @@ class Strategy(BaseStrategyML):
         base = os.path.splitext(os.path.basename(path))[0]
         return base.rsplit("_", 1)[-1]
 
-    def save_model(self, path: str) -> None:
+    def save_model(self, path: str, extra_meta: dict = None) -> None:
         from app.ml.backend.persistence import save_amp_dir_bundle
         tf_key = self._tf_from_path(path)
         with self._lock:
@@ -801,7 +801,8 @@ class Strategy(BaseStrategyML):
         if amp_m is None or dir_m is None:
             logger.debug(f"[OmnibusV7-RT] save_model({path}) : pas de modèle pour {tf_key}")
             return
-        if save_amp_dir_bundle(path, tf_key, amp_m, dir_m, feats, meds, auc, meta):
+        if save_amp_dir_bundle(path, tf_key, amp_m, dir_m, feats, meds, auc, meta,
+                               extra_meta=extra_meta):
             logger.info(f"[OmnibusV7-RT] Modèles sauvegardés → {path} (AUC={auc:.3f})")
 
     def load_model(self, path: str) -> bool:

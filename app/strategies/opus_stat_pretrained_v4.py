@@ -37,7 +37,6 @@ Migration phase6-pandas-removal :
     invalider le cache disque pandas résiduel.
 """
 
-import json
 import logging
 import os
 import threading
@@ -78,10 +77,17 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Chemins des artefacts embarqués (format natif LGB + JSON, plus de pkl)
+# Registre ML (ML-02) — les artefacts V4 vivent désormais dans models/,
+# comme tous les autres modèles (rangés par symbole/TF), au lieu d'un
+# répertoire à part sous app/strategies/. Migration : scripts/migrate_v4_to_registry.py
+# (idempotente — importe depuis l'ancien répertoire vers le registre, copie
+# jamais destructive). Épinglé sur la version "legacy" : ce modèle est figé
+# par construction (managed_externally toujours True, cf. plus bas) — aucune
+# nouvelle version n'est jamais publiée sous cette recette.
 # ─────────────────────────────────────────────────────────────────────────────
-_DATA_DIR     = os.path.join(os.path.dirname(__file__), "opus_stat_pretrained_v4_data")
-_MEDIANS_PATH = os.path.join(_DATA_DIR, "v4_medians.json")
+_TRAINED_SYMBOL = "BTC/USDC"  # symbole d'entraînement historique (inféré — cf. ML-02)
+_REGISTRY_BASE_DIR = "models"
+_LEGACY_TFS: Tuple[str, ...] = ("15m", "30m", "1h")  # seuls TF fournis par le pack V4
 
 # Alias de régimes (compat — consommateurs historiques importent ces symboles)
 _SUPPORTED_TFS = SUPPORTED_TFS
@@ -95,85 +101,84 @@ _PRETRAINED_LOCK = threading.Lock()
 
 
 def _load_pretrained() -> tuple:
-    """Charge (une seule fois par process) les boosters natifs + médianes JSON.
+    """Charge (une seule fois par process) les boosters natifs + médianes,
+    depuis le registre ML (``models/BTC_USDC/{tf}/opus_stat_pretrained_v4/legacy/``).
 
-    Chargement de fichiers LightGBM natifs (``.lgb``) + JSON (``.json``) —
-    aucun pickle.
+    Format natif LightGBM (``.lgb``) + JSON — aucun pickle. Signature de
+    retour et forme de ``models``/``medians`` INCHANGÉES (consommées telles
+    quelles par ``opus_omnibus_v7_pretrained``/``v8``/``v9``/``v10`` via
+    import direct de cette fonction) — seule la SOURCE des données change
+    (registre au lieu d'un scan de répertoire ad hoc) :
 
-    Retourne ``(models, medians)`` où :
       - ``models`` : ``Dict[Tuple[tf, target, config], dict]`` avec
         ``{"model": lgb.Booster, "features": List[str], "split_idx": int, ...}``
-      - ``medians`` : ``Dict[Tuple[tf, target], Dict[str, float]]``
+        (``config`` toujours ``"single"`` — les variantes ``"multi"`` du pack
+        V4 original n'étaient de toute façon jamais chargées à l'inférence,
+        cf. ``_predict`` : ``key = (tf, target, "single")`` en dur — non
+        migrées, poids morts laissés dans l'ancien répertoire historique).
+      - ``medians`` : ``Dict[Tuple[tf, target], Dict[str, float]]`` — amp et
+        dir ont chacun leurs propres médianes/features dans le pack V4
+        d'origine (contrairement à ``MLBackend`` qui les partage).
     """
     with _PRETRAINED_LOCK:
         if _PRETRAINED_CACHE["models"] is not None:
             return _PRETRAINED_CACHE["models"], _PRETRAINED_CACHE["medians"]
 
-        # 1. Charger les 8 fichiers natifs (.lgb + .json).
-        # Ignorer v4_medians.json (ce n'est pas un modèle, juste les médianes).
-        try:
-            import lightgbm as lgb
-        except ImportError:
-            raise RuntimeError("lightgbm requis pour opus_stat_pretrained_v4")
+        import app.ml.model_registry as _registry
+        from app.ml.backend.persistence import load_amp_dir_bundle
 
         models: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
-        for fname in sorted(os.listdir(_DATA_DIR)):
-            # Format attendu : v4_{tf}_{target}_{config}.json
-            # (ex: v4_15m_amp_single.json) — on exclut v4_medians.json.
-            if not fname.endswith(".json") or not fname.startswith("v4_"):
+        medians: Dict[tuple, Dict[str, float]] = {}
+        for tf in _LEGACY_TFS:
+            art = _registry.resolve(_TRAINED_SYMBOL, tf, "opus_stat_pretrained_v4",
+                                    pin="legacy", base_dir=_REGISTRY_BASE_DIR)
+            if art is None:
+                logger.warning(
+                    f"[OpusV4-PT] Aucun artefact registre pour {tf} "
+                    f"({_REGISTRY_BASE_DIR}/{_registry.symbol_to_dir(_TRAINED_SYMBOL)}/{tf}/"
+                    f"opus_stat_pretrained_v4/legacy) — relancez "
+                    f"`python -m scripts.migrate_v4_to_registry` si le registre "
+                    f"a été supprimé par erreur (source encore versionnée dans git)."
+                )
                 continue
-            if fname == "v4_medians.json":
+            bundle = load_amp_dir_bundle(art.path_prefix)
+            if bundle is None or bundle.get("amp_model") is None or bundle.get("dir_model") is None:
+                logger.warning(f"[OpusV4-PT] Artefact {tf} illisible ({art.path_prefix}) — skip")
                 continue
-            meta_path = os.path.join(_DATA_DIR, fname)
-            lgb_path  = meta_path[:-5] + ".lgb"  # remplace .json par .lgb
-            if not os.path.exists(lgb_path):
-                logger.warning(f"[OpusV4-PT] {fname} sans .lgb correspondant — skip")
-                continue
-            try:
-                with open(meta_path, "r", encoding="utf-8") as f:
-                    meta = json.load(f)
-                booster = lgb.Booster(model_file=lgb_path)
-                tf      = meta["tf"]
-                target  = meta["target"]
-                config  = meta["config"]
-                models[(tf, target, config)] = {
-                    "model":      booster,
-                    "features":   list(meta.get("features") or []),
-                    "split_idx":  int(meta.get("split_idx", 0)),
-                    "tf":         tf,
-                    "target":     target,
-                    "config":     config,
-                    "n_features_in": int(meta.get("n_features_in", 0)),
-                    "n_classes":  int(meta.get("n_classes", 2)),
-                    "classes_":   list(meta.get("classes_", [0, 1])),
-                }
-            except Exception as e:
-                logger.warning(f"[OpusV4-PT] Chargement {fname} KO : {e}")
+
+            amp_feats  = bundle["features"]
+            dir_feats  = bundle.get("dir_features") or bundle["features"]
+            amp_meds   = bundle["medians"]
+            dir_meds   = bundle.get("dir_medians") or bundle["medians"]
+            tmeta      = bundle.get("train_meta") or {}
+            models[(tf, "amp", "single")] = {
+                "model": bundle["amp_model"], "features": list(amp_feats),
+                "split_idx": int(tmeta.get("amp_split_idx", 0)),
+                "tf": tf, "target": "amp", "config": "single",
+                "n_features_in": len(amp_feats), "n_classes": 2, "classes_": [0, 1],
+            }
+            models[(tf, "dir", "single")] = {
+                "model": bundle["dir_model"], "features": list(dir_feats),
+                "split_idx": int(tmeta.get("dir_split_idx", 0)),
+                "tf": tf, "target": "dir", "config": "single",
+                "n_features_in": len(dir_feats), "n_classes": 2, "classes_": [0, 1],
+            }
+            medians[(tf, "amp")] = dict(amp_meds)
+            medians[(tf, "dir")] = dict(dir_meds)
 
         if not models:
             raise FileNotFoundError(
-                f"Aucun modèle natif V4 chargeable dans {_DATA_DIR} — vérifiez "
-                f"l'intégrité des fichiers .lgb (ex. corruption de fin de ligne "
-                f"CRLF/LF sur un checkout Windows sans .gitattributes à jour ; "
-                f"un `git checkout -- {_DATA_DIR}` après avoir mis à jour "
-                f".gitattributes restaure les fichiers depuis git)."
+                f"Aucun modèle V4 chargeable depuis le registre "
+                f"({_REGISTRY_BASE_DIR}/{_registry.symbol_to_dir(_TRAINED_SYMBOL)}/*/"
+                f"opus_stat_pretrained_v4/legacy) — relancez "
+                f"`python -m scripts.migrate_v4_to_registry` (idempotent, source "
+                f"versionnée dans git) pour régénérer le registre."
             )
-
-        # 2. Charger les médianes (déjà JSON).
-        with open(_MEDIANS_PATH, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        medians: Dict[tuple, Dict[str, float]] = {}
-        for k, v in raw.items():
-            # clés stockées comme "('15m', 'amp')" — on les normalise
-            k_clean = k.strip("()").replace("'", "").replace(" ", "")
-            parts = k_clean.split(",")
-            if len(parts) == 2:
-                medians[(parts[0], parts[1])] = v
 
         _PRETRAINED_CACHE["models"]  = models
         _PRETRAINED_CACHE["medians"] = medians
         logger.info(
-            "[OpusV4-PT] Modèles V4 natifs chargés "
+            "[OpusV4-PT] Modèles V4 chargés depuis le registre "
             f"({len(models)} entrées, {len(medians)} sets de médianes) — "
             "format RCE-safe (.lgb + .json)"
         )
@@ -257,8 +262,13 @@ class Strategy(BaseStrategyML):
     """Stratégie ML utilisant directement les modèles V4 pré-entraînés (natifs)."""
 
     name      = "opus_stat_pretrained_v4"
-    # Le dossier embarque les artefacts ; l'engine ne tentera pas d'écrire dedans.
-    model_dir = _DATA_DIR
+    # ML-02 : les artefacts vivent dans le registre (models/BTC_USDC/{tf}/
+    # opus_stat_pretrained_v4/legacy/), comme tous les autres modèles.
+    # ``model_dir`` reste "models" par cohérence d'affichage/API — le
+    # chargement réel passe par ``_load_pretrained()`` → ``registry.resolve``
+    # (pin="legacy"), pas par une construction de chemin à partir de
+    # ``model_dir`` (``load_model()`` ci-dessous ignore son argument ``path``).
+    model_dir = _REGISTRY_BASE_DIR
 
     timeframes: List[str] = list(_SUPPORTED_TFS)
 

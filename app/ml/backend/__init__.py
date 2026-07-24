@@ -327,10 +327,14 @@ class MLBackend:
         base = os.path.splitext(os.path.basename(path))[0]
         return base.rsplit("_", 1)[-1]
 
-    def save_model(self, path: str) -> None:
-        """Sauvegarde au format natif (3 fichiers : .amp.lgb, .dir.lgb, .meta.json)."""
+    def save_model(self, path: str, extra_meta: Optional[dict] = None) -> None:
+        """Sauvegarde au format natif (3 fichiers : .amp.lgb, .dir.lgb, .meta.json).
+
+        ``extra_meta`` : bloc de provenance ML-02 optionnel
+        (``{"provenance": {...}, "gate": {...}}``), fusionné dans meta.json.
+        """
         tf = self._tf_from_path(path)
-        _save_model_impl(self._state, self._lock, path, tf)
+        _save_model_impl(self._state, self._lock, path, tf, extra_meta=extra_meta)
 
     def load_model(self, path: str) -> bool:
         """Charge les modèles depuis le format natif LightGBM (.lgb + .meta.json)."""
