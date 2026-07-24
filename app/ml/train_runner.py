@@ -176,7 +176,8 @@ def _dry_run(strategy_name: str, symbol: str, tf: str, df: pl.DataFrame,
         "candidate": candidate_metrics, "incumbent": incumbent_metrics,
         "incumbent_version": incumbent.version_id if incumbent else None,
         "n_bars": n, "n_train": len(train_df),
-        "note": "dry-run : rien n'a été écrit au registre — relancez avec publish=True (--publish en CLI) pour publier réellement.",
+        "note": "dry-run : rien n'a été écrit au registre — relancez avec "
+                "publish=True (--publish en CLI) pour publier réellement.",
     }
 
 

@@ -38,7 +38,6 @@ Migration phase6-pandas-removal :
 """
 
 import logging
-import os
 import threading
 import warnings
 from typing import Any, Dict, List, Optional, Tuple

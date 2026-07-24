@@ -1,6 +1,5 @@
 """app.ml.model_registry — layout daté par (symbole, TF, recette), resolve(as_of/pin),
 repli sur l'ancien layout plat, garde anti-chevauchement (ML-02 §3.2)."""
-import json
 import os
 
 import lightgbm as lgb

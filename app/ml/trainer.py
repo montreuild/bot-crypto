@@ -49,8 +49,8 @@ class MLStrategyTrainer:
         s'il a été publié sans symbole (legacy) ; sinon comportement identique
         à « pas de modèle » (réentraînement immédiat planifié), sans lever.
         """
-        from app.engine.engine import BaseStrategyML
         import app.ml.model_registry as ml_registry
+        from app.engine.engine import BaseStrategyML
         if isinstance(timeframes, str):
             timeframes = [timeframes]
 

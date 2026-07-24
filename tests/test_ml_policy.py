@@ -7,7 +7,7 @@ import polars as pl
 import pytest
 
 import app.ml.model_registry as registry
-from app.ml.policy import GateConfig, decide_gate, maybe_refresh, rank_auc
+from app.ml.policy import decide_gate, maybe_refresh, rank_auc
 
 
 # ─────────────────────────────────────────────────────────────────────────────
