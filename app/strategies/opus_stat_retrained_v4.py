@@ -64,6 +64,24 @@ REGIME_LABELS   = {
     -1:              "?",
 }
 
+# Multiplicateur de taille par heure UTC — dérivé du lift empirique horaire
+# mesuré sur ~50k bougies 15m (heatmap jour×heure de l'analyse V4 recouvrée) :
+# mult(h) = lift(h) / lift_max(=2.43 à 14h), plancher 0.2. Cf.
+# opus_stat_pretrained_v4.py (même constante, dupliquée — stratégies
+# auto-portantes par convention de ce module, cf. docstring).
+_HOUR_LIFT_15M = {
+    0: 0.44, 1: 1.09, 2: 0.66, 3: 0.62, 4: 0.47, 5: 0.54, 6: 0.64, 7: 0.65,
+    8: 0.82, 9: 0.90, 10: 0.91, 11: 0.89, 12: 0.87, 13: 1.49, 14: 2.43,
+    15: 2.28, 16: 1.80, 17: 1.62, 18: 1.30, 19: 1.10, 20: 0.94, 21: 0.79,
+    22: 0.67, 23: 0.56,
+}
+_HOUR_SIZE_MULT_FLOOR = 0.20
+_HOUR_LIFT_MAX = max(_HOUR_LIFT_15M.values())
+_HOUR_SIZE_MULT = {
+    h: max(_HOUR_SIZE_MULT_FLOOR, lift / _HOUR_LIFT_MAX)
+    for h, lift in _HOUR_LIFT_15M.items()
+}
+
 # Colonnes exclues du jeu de features (raw OHLCV + MM brutes non-stationnaires)
 _EXCLUDED_COLS = frozenset({
     "time", "open", "high", "low", "close", "volume",
@@ -530,12 +548,22 @@ class Strategy(BaseStrategyML):
         "n_estimators":    500,
         "num_leaves":      31,
         "learning_rate":   0.03,
+        # Déclaratif — _train_impl labellise toujours en t+1 (ret_t1 ci-dessous),
+        # jamais lu en interne. Sert au gate (app.ml.policy.recipe_gate_defaults)
+        # pour évaluer les candidats sur LA MÊME définition de labels qu'à
+        # l'entraînement, au lieu du défaut multi-horizon [1,3,6] de GateConfig
+        # (pensé pour V11) qui donnait un AUC holdout mesuré sur une cible que
+        # ce modèle n'a jamais appris à prédire.
+        "label_horizons":  [1],
     }
 
     _DEFAULTS = {
         "enable_hour_filter":  True,
         "active_hours_utc":    list(range(13, 21)),
         "active_days":         [0, 1, 2, 3, 4],
+        # Sizing gradué par heure UTC (indépendant du filtre binaire ci-dessus,
+        # cf. _HOUR_SIZE_MULT) — désactivable pour retrouver un sizing plat.
+        "enable_hour_sizing":  True,
         "use_fixed_tp":        True,
         "disable_trailing":    True,
         "use_exit_after_bars": False,
@@ -828,6 +856,17 @@ class Strategy(BaseStrategyML):
         auc_dir = booster_dir.best_score.get("valid_0", {}).get("auc", 0.0)
         del ds_train_dir, ds_valid_dir, X_train, X_valid
 
+        # Top features par gain — pour l'affichage "Top features avec
+        # importance" de la page Modèles (E7), même format que MLBackend
+        # (app/ml/backend/trainer.py) pour un rendu UI générique.
+        def _top_features(booster, top_n: int = 15):
+            try:
+                gains = booster.feature_importance(importance_type="gain")
+                pairs = sorted(zip(feature_cols, gains), key=lambda kv: -kv[1])[:top_n]
+                return [{"feature": c, "gain": round(float(g), 2)} for c, g in pairs]
+            except Exception:
+                return []
+
         auc_combined = (auc_amp + auc_dir) / 2.0
         with self._lock:
             self._amp_models[tf_key]      = booster_amp
@@ -845,6 +884,8 @@ class Strategy(BaseStrategyML):
                 "auc_dir":     round(float(auc_dir), 4),
                 "amp_thr_pct": round(float(amp_thr) * 100, 3),
                 "amp_top_pct": amp_top_pct,
+                "feature_importance_amp": _top_features(booster_amp),
+                "feature_importance_dir": _top_features(booster_dir),
             }
         gc.collect()
         logger.info(
@@ -916,6 +957,7 @@ class Strategy(BaseStrategyML):
         enable_hour_filter  = bool(p.get("enable_hour_filter",  self._DEFAULTS["enable_hour_filter"]))
         active_hours_utc    = list(p.get("active_hours_utc",    self._DEFAULTS["active_hours_utc"]))
         active_days         = list(p.get("active_days",         self._DEFAULTS["active_days"]))
+        enable_hour_sizing  = bool(p.get("enable_hour_sizing",  self._DEFAULTS["enable_hour_sizing"]))
         use_fixed_tp        = bool(p.get("use_fixed_tp",        self._DEFAULTS["use_fixed_tp"]))
         disable_trailing    = bool(p.get("disable_trailing",    self._DEFAULTS["disable_trailing"]))
         use_exit_after_bars = bool(p.get("use_exit_after_bars", self._DEFAULTS["use_exit_after_bars"]))
@@ -923,17 +965,19 @@ class Strategy(BaseStrategyML):
         warmup_bars   = int(p.get("warmup_bars",   self._DEFAULTS["warmup_bars"]))
         retrain_every = int(p.get("retrain_every", self._DEFAULTS["retrain_every"]))
 
-        if enable_hour_filter:
-            hour, dow = _last_bar_hour_dow(df)
-            if hour is not None and dow is not None:
-                if dow not in active_days:
-                    return self._none(
-                        f"Hors jours actifs (weekday={dow}, autorisés={active_days})"
-                    )
-                if hour not in active_hours_utc:
-                    return self._none(
-                        f"Hors session ({hour}h UTC, autorisées={active_hours_utc})"
-                    )
+        # Heure/jour de la dernière bougie — calculés inconditionnellement :
+        # le filtre binaire (skip total hors session) et le sizing gradué
+        # (_HOUR_SIZE_MULT, appliqué plus bas) sont deux leviers indépendants.
+        hour, dow = _last_bar_hour_dow(df)
+        if enable_hour_filter and hour is not None and dow is not None:
+            if dow not in active_days:
+                return self._none(
+                    f"Hors jours actifs (weekday={dow}, autorisés={active_days})"
+                )
+            if hour not in active_hours_utc:
+                return self._none(
+                    f"Hors session ({hour}h UTC, autorisées={active_hours_utc})"
+                )
 
         tf = _detect_timeframe(df)
         if tf not in _SUPPORTED_TFS:
@@ -1024,6 +1068,15 @@ class Strategy(BaseStrategyML):
         else:
             size_factor = regime_size_fac
 
+        # Sizing gradué par heure UTC (indépendant du filtre binaire) — un
+        # signal à 14h (lift ×2.43, mult=1.0) garde sa taille pleine ; le même
+        # signal à 19h (lift ×1.10, mult≈0.45) ou hors fenêtre si le filtre
+        # est désactivé est réduit en proportion du lift empirique mesuré.
+        hour_size_mult = 1.0
+        if enable_hour_sizing and hour is not None:
+            hour_size_mult = _HOUR_SIZE_MULT.get(hour, 1.0)
+            size_factor = min(1.0, max(0.0, size_factor * hour_size_mult))
+
         score_val = round(min(0.55 + p_event * confidence * 0.39, 0.94), 3)
         meta      = self._train_meta.get(tf, {})
 
@@ -1071,6 +1124,7 @@ class Strategy(BaseStrategyML):
             "confidence":       round(confidence, 4),
             "size_factor":      round(size_factor, 4),
             "regime_size_fac":  regime_size_fac,
+            "hour_size_mult":   round(hour_size_mult, 3),
             "sl_mult":          sl_atr_mult,
             "tp_mult":          tp_atr_mult if use_fixed_tp else None,
             "use_fixed_tp":     use_fixed_tp,
@@ -1091,6 +1145,9 @@ class Strategy(BaseStrategyML):
             f"Sizing : régime ×{regime_size_fac:.2f} × confidence {confidence:.2f} "
             f"= size_factor {size_factor:.2f}" if use_kelly_sizing
             else f"Sizing : ×{regime_size_fac:.2f} (Kelly désactivé)",
+            f"Sizing horaire : {hour}h UTC → ×{hour_size_mult:.2f} "
+            f"(lift empirique {_HOUR_LIFT_15M.get(hour, 1.0):.2f}× la moyenne)"
+            if enable_hour_sizing and hour is not None else "Sizing horaire désactivé",
             f"Sortie : {' + '.join(exit_desc)}",
         ]
         sig["reason"] = (

@@ -7,7 +7,13 @@ import polars as pl
 import pytest
 
 import app.ml.model_registry as registry
-from app.ml.policy import decide_gate, maybe_refresh, rank_auc
+from app.ml.policy import (
+    decide_gate,
+    maybe_refresh,
+    rank_auc,
+    recipe_gate_defaults,
+    score_holdout,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -179,3 +185,91 @@ def test_maybe_refresh_skips_when_insufficient_data(tmp_path):
     assert result["decision"] == "skipped"
     assert not strat.is_trained
     assert registry.latest_promoted("BTC/USDC", "1h", "opus_omnibus_v11", base_dir=base) is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  recipe_gate_defaults — le gate doit évaluer un candidat sur LA MÊME
+#  définition de labels que celle utilisée à son entraînement (régression
+#  trouvée : opus_stat_retrained_v4 est single-horizon t+1, mais était gaté
+#  contre des labels multi-horizon [1,3,6] pensés pour V11).
+# ─────────────────────────────────────────────────────────────────────────────
+def test_recipe_gate_defaults_single_horizon_strategy_by_name():
+    d = recipe_gate_defaults("opus_stat_retrained_v4")
+    assert d.get("label_horizons") == [1]
+    assert d.get("amp_top_pct") == pytest.approx(0.30)
+
+
+def test_recipe_gate_defaults_frozen_pretrained_strategy_by_name():
+    d = recipe_gate_defaults("opus_stat_pretrained_v4")
+    assert d.get("label_horizons") == [1]
+
+
+def test_recipe_gate_defaults_multi_horizon_strategy_unaffected():
+    d = recipe_gate_defaults("opus_omnibus_v11")
+    assert d.get("label_horizons") == [1, 3, 6]
+
+
+def test_recipe_gate_defaults_by_instance_matches_by_name():
+    strat = _v11_strategy()
+    assert recipe_gate_defaults(strat) == recipe_gate_defaults("opus_omnibus_v11")
+
+
+def test_recipe_gate_defaults_unknown_recipe_returns_empty():
+    assert recipe_gate_defaults("this_strategy_does_not_exist") == {}
+
+
+def test_recipe_gate_defaults_explicit_params_override_recipe_default():
+    # GateConfig.from_params applique les params explicites APRÈS les défauts
+    # de recette — un appelant qui force label_horizons doit toujours gagner.
+    from app.ml.policy import GateConfig
+    merged = {**recipe_gate_defaults("opus_stat_retrained_v4"), "label_horizons": [1, 3]}
+    gc_ = GateConfig.from_params(merged)
+    assert gc_.label_horizons == [1, 3]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  score_holdout / decide_gate — recette à persistance non-V4 (ex.
+#  ml_dynamic_threshold : un seul {path}.lgb, pas de bundle amp+dir). Le gate
+#  doit répondre "keep" avec un motif honnête ("format non reconnu"), pas le
+#  trompeur "labels mono-classe / holdout dégénéré" qui suggère un problème
+#  de données plutôt qu'une recette non couverte par ce scorer.
+# ─────────────────────────────────────────────────────────────────────────────
+def _make_synthetic_ohlcv_local(n: int, seed: int = 0) -> pl.DataFrame:
+    rng = np.random.RandomState(seed)
+    ret = rng.normal(0, 0.01, n)
+    close = 100.0 * np.cumprod(1.0 + ret)
+    high = close * (1 + np.abs(rng.normal(0, 0.005, n)))
+    low = close * (1 - np.abs(rng.normal(0, 0.005, n)))
+    open_ = np.roll(close, 1)
+    open_[0] = close[0]
+    vol = rng.uniform(100, 1000, n)
+    times = [dt.datetime(2024, 1, 1) + dt.timedelta(hours=i) for i in range(n)]
+    return pl.DataFrame({"time": times, "open": open_, "high": high,
+                         "low": low, "close": close, "volume": vol})
+
+
+def test_score_holdout_unsupported_single_booster_format(tmp_path):
+    prefix = str(tmp_path / "ml_dynamic_threshold_1h")
+    # Un seul .lgb (pas de .amp.lgb/.dir.lgb) reproduit exactement ce que
+    # ml_dynamic_threshold.save_model() écrit — contenu factice, jamais lu
+    # avant le court-circuit "unsupported_format".
+    with open(f"{prefix}.lgb", "w", encoding="utf-8") as f:
+        f.write("not a real booster")
+    holdout_df = _make_synthetic_ohlcv_local(300)
+    metrics = score_holdout(prefix, holdout_df)
+    assert metrics == {"unsupported_format": True}
+
+
+def test_score_holdout_missing_artifact_is_plain_empty(tmp_path):
+    # Chemin totalement absent (aucun fichier) : reste {} — pas le nouveau
+    # marqueur, qui est réservé au cas "artefact présent, format inconnu".
+    prefix = str(tmp_path / "nothing_here_1h")
+    holdout_df = _make_synthetic_ohlcv_local(300)
+    assert score_holdout(prefix, holdout_df) == {}
+
+
+def test_decide_gate_unsupported_format_keeps_with_honest_reason():
+    gate = decide_gate({"unsupported_format": True}, None)
+    assert gate.decision == "keep"
+    assert "format de persistance non reconnu" in gate.reason
+    assert "mono-classe" not in gate.reason

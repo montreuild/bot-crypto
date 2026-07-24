@@ -112,7 +112,19 @@ def score_holdout(path_prefix: str, holdout_df, *,
     barres *après elle mais toujours dans le holdout* — jamais au-delà (les
     fonctions de labellisation tronquent silencieusement les dernières
     ``max(horizons)`` barres, non labellisables). Retourne ``{}`` si
-    l'artefact est illisible ou le holdout trop court.
+    l'artefact est illisible ou le holdout trop court ;
+    ``{"unsupported_format": True}`` si l'artefact existe mais dans un format
+    de persistance que ce scorer générique ne sait pas lire (cf. ci-dessous)
+    — ``decide_gate`` distingue ce cas d'un vrai échec de scoring.
+
+    Portée connue : ce scorer suppose le bundle amp+dir V4 universel
+    (``save_amp_dir_bundle``/``load_amp_dir_bundle``) ET le catalogue de
+    features V4 (``build_features``). Les stratégies qui persistent
+    autrement (ex. ``ml_dynamic_threshold`` — un seul booster ``{path}.lgb``,
+    features/labels propres, sans notion amplitude/direction) ne peuvent pas
+    être gatées automatiquement par CE scorer : le gate répond alors "keep"
+    avec un motif explicite plutôt que le trompeur "labels mono-classe /
+    holdout dégénéré" (qui suggère un problème de données, pas d'architecture).
     """
     from app.ml.backend.features import (
         build_features,
@@ -122,6 +134,8 @@ def score_holdout(path_prefix: str, holdout_df, *,
 
     bundle = load_amp_dir_bundle(path_prefix)
     if bundle is None or bundle.get("amp_model") is None:
+        if os.path.exists(f"{path_prefix}.lgb") and not os.path.exists(f"{path_prefix}.amp.lgb"):
+            return {"unsupported_format": True}
         return {}
 
     feats = build_features(holdout_df)
@@ -179,6 +193,13 @@ def decide_gate(candidate_metrics: Optional[Dict[str, Any]],
     non scorable (holdout dégénéré) — deux cas distincts, cf. docstring
     module. Le plancher ``auc_floor`` s'applique dans tous les cas ;
     ``epsilon`` ne joue que si un sortant comparable existe."""
+    if (candidate_metrics or {}).get("unsupported_format"):
+        return GateResult(
+            "keep",
+            "candidat : format de persistance non reconnu par le scorer générique "
+            "(pas de bundle amplitude+direction V4, cf. score_holdout) — cette recette "
+            "n'a pas encore de scoring de gate dédié, comparaison manuelle requise",
+            candidate_metrics or {}, incumbent_metrics)
     cand_auc = (candidate_metrics or {}).get(metric)
     if cand_auc is None:
         return GateResult("keep",
@@ -207,6 +228,48 @@ def decide_gate(candidate_metrics: Optional[Dict[str, Any]],
 # ─────────────────────────────────────────────────────────────────────────────
 #  Configuration de la politique (lue depuis les params résolus de la stratégie)
 # ─────────────────────────────────────────────────────────────────────────────
+def recipe_gate_defaults(strategy_or_name: Any) -> Dict[str, Any]:
+    """Introspecte ``fixed_params``/``_DEFAULTS`` de la classe ``Strategy``
+    pour les clés de gate qu'elle déclare explicitement (``label_horizons``,
+    ``amp_top_pct``) — permet à ``score_holdout`` d'évaluer un candidat sur
+    LA MÊME définition de labels que celle utilisée à son entraînement, au
+    lieu du défaut ``[1, 3, 6]`` de ``GateConfig`` appliqué aveuglément.
+
+    Sans quoi : les recettes single-horizon (``opus_stat_retrained_v4``,
+    ``opus_stat_pretrained_v4`` — labellisation ``t+1`` uniquement, pas de
+    notion de ``label_horizons``) étaient gatées contre des labels
+    multi-horizon ``[1,3,6]`` qu'elles n'ont jamais appris à prédire — écart
+    mesuré : AUC candidat auto-rapporté 0.732 vs AUC gate holdout 0.702 sur
+    un même entraînement (même modèle, labels différents, PAS du bruit
+    d'échantillonnage). Corrigé en déclarant ``label_horizons: [1]`` dans le
+    ``fixed_params`` de ces deux stratégies.
+
+    Sans déclaration explicite (stratégies non retouchées), ``GateConfig``
+    garde son défaut ``[1, 3, 6]`` — comportement inchangé.
+
+    ``strategy_or_name`` : nom de recette (import ``app.strategies.<name>``)
+    ou instance/classe déjà résolue. Best-effort : retourne ``{}`` si
+    l'introspection échoue, jamais d'exception."""
+    cls: Any = None
+    if isinstance(strategy_or_name, str):
+        try:
+            import importlib
+            cls = importlib.import_module(f"app.strategies.{strategy_or_name}").Strategy
+        except Exception:
+            return {}
+    elif isinstance(strategy_or_name, type):
+        cls = strategy_or_name
+    else:
+        cls = type(strategy_or_name)
+    out: Dict[str, Any] = {}
+    for src_name in ("fixed_params", "_DEFAULTS"):
+        src = getattr(cls, src_name, None) or {}
+        for key in ("label_horizons", "amp_top_pct"):
+            if key not in out and key in src:
+                out[key] = src[key]
+    return out
+
+
 @dataclass
 class GateConfig:
     """Hypothèses par défaut (conception §8) — à calibrer au banc (window
@@ -262,7 +325,7 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
     type d'argument, etc.) remontent.
     """
     recipe = recipe or getattr(strategy, "name", "strategy")
-    gc_ = gate_cfg or GateConfig.from_params(params)
+    gc_ = gate_cfg or GateConfig.from_params({**recipe_gate_defaults(strategy), **(params or {})})
 
     n = len(df) if df is not None else 0
     required = gc_.holdout_bars + gc_.min_window_bars

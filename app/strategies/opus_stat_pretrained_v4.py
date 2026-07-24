@@ -91,6 +91,29 @@ _LEGACY_TFS: Tuple[str, ...] = ("15m", "30m", "1h")  # seuls TF fournis par le p
 # Alias de régimes (compat — consommateurs historiques importent ces symboles)
 _SUPPORTED_TFS = SUPPORTED_TFS
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Multiplicateur de taille par heure UTC — dérivé du lift empirique horaire
+# mesuré sur ~50k bougies 15m (heatmap jour×heure de l'analyse V4 recouvrée) :
+# mult(h) = lift(h) / lift_max(=2.43 à 14h), plancher 0.2. Complète le filtre
+# horaire binaire existant (enable_hour_filter/active_hours_utc, qui coupe
+# tout hors [13h,20h]) par une pondération CONTINUE à l'intérieur — et
+# au-delà — de cette fenêtre : le rapport documente un dégradé progressif
+# (14h=pic ×2.43 → 8h-12h ≈ moitié → nuit ≈ un cinquième), pas un plateau.
+# Ce lookup est un fait empirique figé (comme les multiplicateurs SL/TP par
+# régime ci-dessous) — pas un paramètre d'optimiseur.
+_HOUR_LIFT_15M = {
+    0: 0.44, 1: 1.09, 2: 0.66, 3: 0.62, 4: 0.47, 5: 0.54, 6: 0.64, 7: 0.65,
+    8: 0.82, 9: 0.90, 10: 0.91, 11: 0.89, 12: 0.87, 13: 1.49, 14: 2.43,
+    15: 2.28, 16: 1.80, 17: 1.62, 18: 1.30, 19: 1.10, 20: 0.94, 21: 0.79,
+    22: 0.67, 23: 0.56,
+}
+_HOUR_SIZE_MULT_FLOOR = 0.20
+_HOUR_LIFT_MAX = max(_HOUR_LIFT_15M.values())
+_HOUR_SIZE_MULT = {
+    h: max(_HOUR_SIZE_MULT_FLOOR, lift / _HOUR_LIFT_MAX)
+    for h, lift in _HOUR_LIFT_15M.items()
+}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Chargeur des modèles V4 natifs (singleton process-wide)
@@ -284,7 +307,11 @@ class Strategy(BaseStrategyML):
         "tp_atr_mult_other": [0.8, 1.0, 1.2, 1.4],
         "max_hold_bars":     [1, 2, 4, 6, 8],
     }
-    fixed_params: Dict[str, Any] = {}
+    # Déclaratif uniquement (aucun entraînement n'a jamais lieu ici) — sert au
+    # gate (app.ml.policy.recipe_gate_defaults) si jamais un dry-run/sweep est
+    # lancé sur cette recette figée : le pack V4 original est labellisé en
+    # t+1 (cf. rapport V4), pas le défaut multi-horizon [1,3,6] de GateConfig.
+    fixed_params: Dict[str, Any] = {"label_horizons": [1]}
 
     # Valeurs par défaut des flags de comportement V4 — surchargeables via YAML.
     # Multiplicateurs SL/TP par régime alignés sur risk.py du bot V4 :
@@ -294,6 +321,9 @@ class Strategy(BaseStrategyML):
         "enable_hour_filter":  True,
         "active_hours_utc":    list(range(13, 21)),   # 13h-20h UTC (session US)
         "active_days":         [0, 1, 2, 3, 4],       # Lun-Ven
+        # Sizing gradué par heure UTC (indépendant du filtre binaire ci-dessus,
+        # cf. _HOUR_SIZE_MULT) — désactivable pour retrouver un sizing plat.
+        "enable_hour_sizing":  True,
         "use_fixed_tp":        True,                  # TP fixe = tp_atr_mult × ATR
         "disable_trailing":    True,                  # SL fixe, pas de trailing
         "use_exit_after_bars": False,                 # pas de sortie temporelle
@@ -492,22 +522,24 @@ class Strategy(BaseStrategyML):
         enable_hour_filter  = bool(p.get("enable_hour_filter",  self._DEFAULTS["enable_hour_filter"]))
         active_hours_utc    = list(p.get("active_hours_utc",    self._DEFAULTS["active_hours_utc"]))
         active_days         = list(p.get("active_days",         self._DEFAULTS["active_days"]))
+        enable_hour_sizing  = bool(p.get("enable_hour_sizing",  self._DEFAULTS["enable_hour_sizing"]))
         use_fixed_tp        = bool(p.get("use_fixed_tp",        self._DEFAULTS["use_fixed_tp"]))
         disable_trailing    = bool(p.get("disable_trailing",    self._DEFAULTS["disable_trailing"]))
         use_exit_after_bars = bool(p.get("use_exit_after_bars", self._DEFAULTS["use_exit_after_bars"]))
 
-        # 0. Filtre temporel (session US par défaut, désactivable via YAML).
-        if enable_hour_filter:
-            hour, dow = _last_bar_hour_dow(df)
-            if hour is not None and dow is not None:
-                if dow not in active_days:
-                    return self._none(
-                        f"Hors jours actifs (weekday={dow}, autorisés={active_days})"
-                    )
-                if hour not in active_hours_utc:
-                    return self._none(
-                        f"Hors session ({hour}h UTC, autorisées={active_hours_utc})"
-                    )
+        # 0. Heure/jour de la dernière bougie — calculés inconditionnellement :
+        # le filtre binaire (skip total hors session) et le sizing gradué
+        # (_HOUR_SIZE_MULT, appliqué plus bas) sont deux leviers indépendants.
+        hour, dow = _last_bar_hour_dow(df)
+        if enable_hour_filter and hour is not None and dow is not None:
+            if dow not in active_days:
+                return self._none(
+                    f"Hors jours actifs (weekday={dow}, autorisés={active_days})"
+                )
+            if hour not in active_hours_utc:
+                return self._none(
+                    f"Hors session ({hour}h UTC, autorisées={active_hours_utc})"
+                )
 
         # 1. Détection du TF — indispensable pour choisir le bon modèle.
         tf = _detect_timeframe(df)
@@ -605,6 +637,15 @@ class Strategy(BaseStrategyML):
         else:
             size_factor = regime_size_fac
 
+        # Sizing gradué par heure UTC (indépendant du filtre binaire) — un
+        # signal à 14h (lift ×2.43, mult=1.0) garde sa taille pleine ; le même
+        # signal à 19h (lift ×1.10, mult≈0.45) ou hors fenêtre si le filtre
+        # est désactivé est réduit en proportion du lift empirique mesuré.
+        hour_size_mult = 1.0
+        if enable_hour_sizing and hour is not None:
+            hour_size_mult = _HOUR_SIZE_MULT.get(hour, 1.0)
+            size_factor = min(1.0, max(0.0, size_factor * hour_size_mult))
+
         # Construction du signal — payload conditionnel selon les flags V4.
         sig: Dict[str, Any] = {
             "score":            score_val,
@@ -658,6 +699,7 @@ class Strategy(BaseStrategyML):
             "confidence":       round(confidence, 4),
             "size_factor":      round(size_factor, 4),
             "regime_size_fac":  regime_size_fac,
+            "hour_size_mult":   round(hour_size_mult, 3),
             "sl_mult":          sl_atr_mult,
             "tp_mult":          tp_atr_mult if use_fixed_tp else None,
             "use_fixed_tp":     use_fixed_tp,
@@ -675,6 +717,9 @@ class Strategy(BaseStrategyML):
             f"Sizing : régime ×{regime_size_fac:.2f} × confidence {confidence:.2f} "
             f"= size_factor {size_factor:.2f}" if use_kelly_sizing
             else f"Sizing : ×{regime_size_fac:.2f} (Kelly désactivé)",
+            f"Sizing horaire : {hour}h UTC → ×{hour_size_mult:.2f} "
+            f"(lift empirique {_HOUR_LIFT_15M.get(hour, 1.0):.2f}× la moyenne)"
+            if enable_hour_sizing and hour is not None else "Sizing horaire désactivé",
             f"Sortie : {' + '.join(exit_desc)}",
             f"AUC OOS V4 : amp={meta.get('auc_amp', 0):.2f} / dir={meta.get('auc_dir', 0):.2f}",
         ]

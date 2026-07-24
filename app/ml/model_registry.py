@@ -165,6 +165,13 @@ class ArtifactRef:
             "recipe_hash": self.recipe_hash, "git_commit": self.git_commit,
             "source": self.source, "created_at": self.created_at,
             "gate_decision": self.gate_decision, "legacy": self.legacy,
+            # train_meta : diagnostics d'entraînement (AUC par régime, top
+            # features + importance, erreur de calibration...) — toujours
+            # petit/borné (cf. app.ml.backend.trainer, jamais de features/
+            # médianes/calibrators bruts dedans), donc exposé tel quel plutôt
+            # que par une liste de clés à maintenir à la main. Page Modèles
+            # (E7) : historique de versions + panneau "top features".
+            "train_meta": (self.meta or {}).get("train_meta") or {},
         }
 
 

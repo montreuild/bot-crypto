@@ -355,6 +355,30 @@ export interface MLStrategyInfo {
 
 // ── ML Model Registry (ML-02) ───────────────────────────────────────────────
 
+export interface ModelFeatureImportance {
+  feature: string;
+  gain: number;
+}
+
+export interface ModelRegimeAuc {
+  n: number | null;
+  auc: number | null;
+  approx_n?: number;
+}
+
+export interface ModelTrainMeta {
+  n_features?: number;
+  n_train?: number;
+  n_valid?: number;
+  horizons?: number[];
+  calibrated?: boolean;
+  cal_err?: { amp?: number; dir?: number };
+  auc_dir_by_regime?: Record<string, ModelRegimeAuc>;
+  feature_importance_amp?: ModelFeatureImportance[];
+  feature_importance_dir?: ModelFeatureImportance[];
+  [key: string]: unknown;
+}
+
 export interface ModelArtifact {
   path_prefix: string;
   symbol: string | null;
@@ -371,6 +395,7 @@ export interface ModelArtifact {
   created_at: string | null;
   gate_decision: string | null;
   legacy: boolean;
+  train_meta?: ModelTrainMeta;
 }
 
 export interface ModelRegistryEntry {

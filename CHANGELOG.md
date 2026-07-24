@@ -759,6 +759,52 @@ dans cette passe — cf. `CONCEPTION_CYCLE_DE_VIE_ML.md` §7 pour le détail
 exact de ce qui reste. 66 tests ajoutés, 812 tests OK (0 régression sur les
 746 préexistants).
 
+### 🤖 ML-02/E7 : pages « Modèles » (Jinja + Next.js) + corrections du gate
+
+UI Modèles construite dans les deux surfaces web (registre, historique de
+versions/décisions, pin/promotion manuelle, entraînement + window sweep
+asynchrones). En la testant en conditions réelles, plusieurs écarts ont été
+trouvés et corrigés dans le gate lui-même :
+
+- **`app/ml/policy.recipe_gate_defaults`** : le gate scorait TOUJOURS les
+  candidats sur des labels multi-horizon `[1,3,6]` (pensés pour V11), y
+  compris pour `opus_stat_retrained_v4`/`opus_stat_pretrained_v4` qui
+  labellisent en single-horizon (`t+1`) — écart mesuré : AUC auto-rapporté à
+  l'entraînement 0.732 vs AUC gate holdout 0.702 sur le MÊME modèle (labels
+  différents, pas du bruit). Les deux stratégies déclarent maintenant
+  `label_horizons: [1]` dans leur `fixed_params`, introspecté par le gate.
+- **`policy.score_holdout`** : les recettes à persistance non-V4 (ex.
+  `ml_dynamic_threshold`, un seul `{path}.lgb`) faisaient échouer
+  silencieusement le scoring, avec le message trompeur "labels mono-classe /
+  holdout dégénéré" (suggère un problème de données, pas d'architecture).
+  Diagnostic distinct maintenant renvoyé : format de persistance non reconnu
+  par ce scorer générique.
+- **Warning LightGBM `bagging_by_query`** au chargement des 6 boosters
+  legacy V4 : paramètre inerte (valeur 0, propre au ranking, sans effet sur
+  un objectif binaire) hérité de l'entraînement original — retiré du texte
+  des `.lgb` après vérification des prédictions byte-identiques avant/après.
+- **Métadonnées registre V4 enrichies** : `best_auc` (0.0 → AUC amplitude
+  réelle par TF) + `train_meta` (AUC direction par régime, lift horaire/jour,
+  formule EV) recouvrés d'une analyse quantitative externe fournie par
+  l'utilisateur — corrige le badge "n/m" trompeur dans les deux UI.
+- **Sizing horaire gradué** (`opus_stat_pretrained_v4`/`opus_stat_retrained_v4`)
+  : le filtre binaire (13h-20h UTC ou skip) est complété par un multiplicateur
+  de taille continu dérivé du lift empirique par heure (pic ×2.43 à 14h UTC,
+  plancher 0.2 la nuit) — dégradé au lieu d'un plateau plat à l'intérieur de
+  la fenêtre active.
+- **AUC direction par régime instrumentée dans V11/V12**
+  (`app/ml/backend/trainer.py`, `train_meta["auc_dir_by_regime"]`) pour
+  trancher si la purge `dir_min`/`dir_max` de l'optimiseur (ci-dessus) est
+  justifiée pour CES modèles précisément (pas seulement par analogie avec le
+  pkl V4 autonome). **Résultat mesuré (BTC/USDC, 15m/30m/1h, fenêtres de 20k-
+  40k barres, labels single ET multi-horizon) : AUC direction par régime
+  0.47-0.54 partout, y compris Trend Down — pas de signal régime-conditionnel
+  reproduit sur les modèles propres de V11/V12**, contrairement au pkl V4
+  (0.86-0.88 en Trend Down sur son propre test OOS). La purge reste donc
+  justifiée en l'état ; `param_space` non modifié. Hypothèse la plus probable :
+  méthodologie d'entraînement différente (features/pruning/calibration) plutôt
+  qu'un artefact de la seule granularité des labels (testé et écarté).
+
 ---
 
 ## [12.14.0] - 2026-07-09

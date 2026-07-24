@@ -16,7 +16,10 @@ import {
   Loader2, Database, AlertCircle, Pin, PinOff, ChevronDown, ChevronRight,
   Rocket, BarChart3, RefreshCw, ThumbsUp, ThumbsDown,
 } from 'lucide-react';
-import type { ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus } from '@/types';
+import type {
+  ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
+  ModelFeatureImportance, ModelRegimeAuc, ModelTrainMeta,
+} from '@/types';
 
 // ── Badges ──────────────────────────────────────────────────────────────────
 
@@ -139,6 +142,110 @@ function DecisionsTable({ decisions }: { decisions: ModelDecision[] }) {
   );
 }
 
+// ── Diagnostics (version active) : top features + AUC direction par régime ──
+
+const REGIME_LABELS: Record<string, string> = {
+  range: 'Range', trend_up: 'Trend Up', trend_down: 'Trend Down', choppy: 'Choppy',
+};
+
+function FeatureImportanceTable({ items }: { items?: ModelFeatureImportance[] }) {
+  if (!items || items.length === 0) {
+    return <div className="text-xs text-dim">Non disponible.</div>;
+  }
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-left text-dim border-b border-border/50">
+          <th className="p-2 font-medium">Feature</th>
+          <th className="p-2 font-medium text-right">Importance (gain)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((f, i) => (
+          <tr key={`${f.feature}-${i}`} className="border-b border-border/20">
+            <td className="p-2 font-mono">{f.feature}</td>
+            <td className="p-2 text-right font-mono">{f.gain}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function RegimeAucTable({ byRegime }: { byRegime?: Record<string, ModelRegimeAuc> }) {
+  const keys = Object.keys(byRegime || {}).filter((k) => REGIME_LABELS[k]);
+  if (keys.length === 0) {
+    return <div className="text-xs text-dim">Non disponible.</div>;
+  }
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-left text-dim border-b border-border/50">
+          <th className="p-2 font-medium">Régime</th>
+          <th className="p-2 font-medium">N</th>
+          <th className="p-2 font-medium">AUC direction</th>
+        </tr>
+      </thead>
+      <tbody>
+        {keys.map((k) => {
+          const v = (byRegime || {})[k] || { n: null, auc: null };
+          return (
+            <tr key={k} className="border-b border-border/20">
+              <td className="p-2">{REGIME_LABELS[k]}</td>
+              <td className="p-2 font-mono text-muted">
+                {v.n != null ? v.n : v.approx_n != null ? `~${v.approx_n} (population régime)` : '—'}
+              </td>
+              <td className="p-2">
+                {v.auc != null ? <AucBadge auc={v.auc} trainEnd="x" /> : <Badge>n/a</Badge>}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function DiagnosticsPanel({ trainMeta }: { trainMeta?: ModelTrainMeta }) {
+  if (!trainMeta || Object.keys(trainMeta).length === 0) return null;
+  const hasFeats = (trainMeta.feature_importance_amp?.length || trainMeta.feature_importance_dir?.length);
+  const hasRegime = trainMeta.auc_dir_by_regime && Object.keys(trainMeta.auc_dir_by_regime).length > 0;
+  if (!hasFeats && !hasRegime) return null;
+
+  return (
+    <div className="mt-4">
+      <div className="text-[10px] uppercase tracking-wider text-dim font-semibold mb-2">
+        Diagnostics (version active)
+      </div>
+      <div className="text-xs text-muted mb-3">
+        {trainMeta.calibrated
+          ? `Calibré ✓${trainMeta.cal_err ? ` — erreur moyenne : amp=${trainMeta.cal_err.amp ?? '—'} dir=${trainMeta.cal_err.dir ?? '—'}` : ''}`
+          : 'Non calibré'}
+        {trainMeta.n_features ? ` · ${trainMeta.n_features} features` : ''}
+        {trainMeta.horizons ? ` · horizons=${JSON.stringify(trainMeta.horizons)}` : ''}
+      </div>
+      {hasRegime && (
+        <div className="mb-4">
+          <div className="text-xs text-muted mb-1.5">AUC direction par régime</div>
+          <RegimeAucTable byRegime={trainMeta.auc_dir_by_regime} />
+        </div>
+      )}
+      {hasFeats && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <div className="text-xs text-muted mb-1.5">Top features — amplitude</div>
+            <FeatureImportanceTable items={trainMeta.feature_importance_amp} />
+          </div>
+          <div>
+            <div className="text-xs text-muted mb-1.5">Top features — direction</div>
+            <FeatureImportanceTable items={trainMeta.feature_importance_dir} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Registry row (recette + détail dépliable) ───────────────────────────────
 
 function RegistryRow({ entry }: { entry: ModelRegistryEntry }) {
@@ -228,6 +335,7 @@ function RegistryRow({ entry }: { entry: ModelRegistryEntry }) {
               Décisions récentes
             </div>
             <DecisionsTable decisions={decisionsData?.decisions || []} />
+            <DiagnosticsPanel trainMeta={entry.active?.train_meta} />
           </td>
         </tr>
       )}
@@ -402,10 +510,16 @@ function TrainForm() {
             />
           </div>
           <div>
-            <label className="text-xs text-dim block mb-1.5">as_of (ISO, optionnel)</label>
+            <label className="text-xs text-dim block mb-1.5">
+              as_of (optionnel)
+              <span className="block normal-case text-[10px] text-dim font-normal">
+                fige l'entraînement à cette date passée
+              </span>
+            </label>
             <input
               value={asOf} onChange={(e) => setAsOf(e.target.value)}
               placeholder="2026-06-01T00:00:00"
+              title="Ne garde que les bougies antérieures à cette date pour l'entraînement ET le holdout du gate. Vide = tout l'historique disponible jusqu'à maintenant."
               className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
             />
           </div>
