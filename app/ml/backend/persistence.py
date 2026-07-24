@@ -74,8 +74,23 @@ def _isotonic_from_dict(d: Optional[dict]):
         return None
 
 
+# ── Provenance (ML-02 / meta.json v2) ───────────────────────────────────────
+# Bloc optionnel, absent des anciens meta.json (lu comme {} par les
+# lecteurs — aucune rupture de compatibilité). Rempli par le registre
+# (app/ml/model_registry.py) et la politique de gate (app/ml/policy.py) ;
+# les appelants qui n'utilisent pas encore le registre (tests, scripts de
+# recherche) peuvent laisser `extra_meta=None` — comportement inchangé.
+def _merge_provenance(payload: dict, extra_meta: Optional[dict]) -> None:
+    if extra_meta:
+        payload["provenance"] = dict(extra_meta.get("provenance") or {})
+        gate = extra_meta.get("gate")
+        if gate:
+            payload["gate"] = dict(gate)
+
+
 # ── Sauvegarde (format natif) ───────────────────────────────────────────────
-def save_model(state: TrainState, lock, path: str, tf: str) -> bool:
+def save_model(state: TrainState, lock, path: str, tf: str,
+               extra_meta: Optional[dict] = None) -> bool:
     """Sauvegarde les modèles (amp + dir) + métadonnées au format natif.
 
     Écrit 3 fichiers :
@@ -84,6 +99,10 @@ def save_model(state: TrainState, lock, path: str, tf: str) -> bool:
         {path}.meta.json     (features, medians, calibrators, train_meta, best_auc)
 
     Le `path` sert de préfixe (ex. `models/foo_1h` → `models/foo_1h.amp.lgb`).
+
+    Args:
+        extra_meta: bloc de provenance optionnel (ML-02) — voir
+            ``_merge_provenance``. ``{"provenance": {...}, "gate": {...}}``.
 
     Returns:
         True si sauvegardé, False si modèles manquants (non entraînés).
@@ -124,8 +143,9 @@ def save_model(state: TrainState, lock, path: str, tf: str) -> bool:
         "train_meta": dict(meta),
         "amp_cal":    _isotonic_to_dict(amp_cal),
         "dir_cal":    _isotonic_to_dict(dir_cal),
-        "format_version": 1,
+        "format_version": 2,
     }
+    _merge_provenance(payload, extra_meta)
     try:
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
@@ -183,6 +203,13 @@ def _load_native(state: TrainState, lock,
         medians   = dict(payload.get("medians") or {})
         best_auc  = float(payload.get("best_auc", 0.0))
         meta      = dict(payload.get("train_meta") or {})
+        # ML-02 : provenance/gate optionnels (absents des anciens meta.json) —
+        # rattachés à train_meta plutôt qu'un nouveau slot TrainState, pour ne
+        # pas complexifier l'état pour un besoin de lecture/diagnostic seul.
+        if payload.get("provenance"):
+            meta["provenance"] = dict(payload["provenance"])
+        if payload.get("gate"):
+            meta["gate"] = dict(payload["gate"])
         amp_cal   = _isotonic_from_dict(payload.get("amp_cal"))
         dir_cal   = _isotonic_from_dict(payload.get("dir_cal"))
 
@@ -294,14 +321,27 @@ def load_lgb_with_scaler(path: str):
 
 def save_amp_dir_bundle(path: str, tf: str, amp_model, dir_model,
                         features, medians, best_auc: float,
-                        train_meta: dict, amp_cal=None, dir_cal=None) -> bool:
+                        train_meta: dict, amp_cal=None, dir_cal=None,
+                        extra_meta: Optional[dict] = None,
+                        dir_features=None, dir_medians=None) -> bool:
     """Sauvegarde ``{amp, dir, features, medians, best_auc, train_meta}`` (+
     calibrators isotoniques optionnels) au format natif LGB + JSON.
 
     Écrit ``{path}.amp.lgb`` + ``{path}.dir.lgb`` + ``{path}.meta.json``. Les
     calibrators ``amp_cal``/``dir_cal`` (``IsotonicRegression`` native) sont
     sérialisés en JSON via ``_isotonic_to_dict`` — ``None`` accepté (stratégies
-    sans calibration). Retourne ``False`` si un modèle manque.
+    sans calibration). ``extra_meta`` : bloc de provenance ML-02 optionnel
+    (cf. ``_merge_provenance``).
+
+    ``dir_features``/``dir_medians`` : optionnels — certains modèles legacy
+    (V4) entraînent amplitude et direction sur des listes de features et des
+    médianes DIFFÉRENTES (contrairement à ``MLBackend``/``trainer.py`` qui
+    partagent une liste unique entre les deux cibles). ``None`` (défaut)
+    préserve le comportement historique : ``features``/``medians`` servent
+    aux deux cibles — c'est le cas de tous les appelants actuels
+    (``opus_omnibus_v7/v10_retrained/v11_followsetup``, ``opus_stat_retrained_v4``).
+
+    Retourne ``False`` si un modèle manque.
     """
     if amp_model is None or dir_model is None:
         return False
@@ -324,8 +364,13 @@ def save_amp_dir_bundle(path: str, tf: str, amp_model, dir_model,
         "train_meta": dict(train_meta or {}),
         "amp_cal":    _isotonic_to_dict(amp_cal),
         "dir_cal":    _isotonic_to_dict(dir_cal),
-        "format_version": 1,
+        "format_version": 2,
     }
+    if dir_features is not None:
+        payload["dir_features"] = list(dir_features)
+    if dir_medians is not None:
+        payload["dir_medians"] = {k: float(v) for k, v in dir_medians.items()}
+    _merge_provenance(payload, extra_meta)
     try:
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
@@ -352,16 +397,26 @@ def load_amp_dir_bundle(path: str) -> Optional[dict]:
         dir_model = lgb.Booster(model_file=dir_path)
         with open(meta_path, "r", encoding="utf-8") as f:
             payload = json.load(f)
+        features = list(payload.get("features") or [])
+        medians  = dict(payload.get("medians") or {})
         return {
             "amp_model":  amp_model,
             "dir_model":  dir_model,
-            "features":   list(payload.get("features") or []),
-            "medians":    dict(payload.get("medians") or {}),
+            "features":   features,
+            "medians":    medians,
+            # None = pas de split amp/dir -> l'appelant retombe sur features/medians
+            # (comportement historique, cf. docstring save_amp_dir_bundle).
+            "dir_features": (list(payload["dir_features"])
+                             if payload.get("dir_features") is not None else None),
+            "dir_medians":  (dict(payload["dir_medians"])
+                             if payload.get("dir_medians") is not None else None),
             "best_auc":   float(payload.get("best_auc", 0.0)),
             "train_meta": dict(payload.get("train_meta") or {}),
             "amp_cal":    _isotonic_from_dict(payload.get("amp_cal")),
             "dir_cal":    _isotonic_from_dict(payload.get("dir_cal")),
             "tf":         payload.get("tf"),
+            "provenance": dict(payload.get("provenance") or {}),
+            "gate":       dict(payload.get("gate") or {}),
         }
     except Exception as e:
         logger.warning(f"[MLBackend.persistence] load_amp_dir_bundle KO : {e}")

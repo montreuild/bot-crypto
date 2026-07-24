@@ -146,7 +146,7 @@ def scanner_setup_series(symbol: str = DEFAULT_CONFIG_SYMBOL, timeframe: str = "
         if strat_key == "v8":
             payload = scanner_service._setup_series_v8(df, tf, limit)
         else:
-            payload = scanner_service._setup_series_v11(df, tf, limit, strat_key)
+            payload = scanner_service._setup_series_v11(df, tf, limit, strat_key, symbol=symbol)
 
         payload.update({"symbol": symbol, "timeframe": tf, "strategy": strat_key,
                         "n_setups": len(payload.get("markers", []))})

@@ -319,6 +319,94 @@ export function useCandlesStats() {
   });
 }
 
+// ── ML Model Registry (ML-02) ────────────────────────────────────────────────
+export function useMLRegistry() {
+  return useQuery({
+    queryKey: ['mlRegistry'],
+    queryFn: api.getMLRegistry,
+    refetchInterval: 30000,
+  });
+}
+
+export function useMLRegistryVersions(symbol: string | null, tf: string | null, recipe: string | null) {
+  return useQuery({
+    queryKey: ['mlRegistryVersions', symbol, tf, recipe],
+    queryFn: () => api.getMLRegistryVersions(symbol!, tf!, recipe!),
+    enabled: !!symbol && !!tf && !!recipe,
+  });
+}
+
+export function useMLRegistryDecisions(symbol: string | null, tf: string | null, recipe: string | null) {
+  return useQuery({
+    queryKey: ['mlRegistryDecisions', symbol, tf, recipe],
+    queryFn: () => api.getMLRegistryDecisions(symbol!, tf!, recipe!),
+    enabled: !!symbol && !!tf && !!recipe,
+  });
+}
+
+// Invalide la vue d'ensemble ET les détails (versions/décisions) déjà montés
+// pour toute recette — nécessaire pour que le tableau déplié (pin/décision)
+// reflète immédiatement une action, comme le fait la page Jinja équivalente.
+function invalidateModelRegistryQueries(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['mlRegistry'] });
+  qc.invalidateQueries({ queryKey: ['mlRegistryVersions'] });
+  qc.invalidateQueries({ queryKey: ['mlRegistryDecisions'] });
+}
+
+export function usePinModel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ symbol, tf, recipe, versionId }: { symbol: string; tf: string; recipe: string; versionId: string }) =>
+      api.pinModel(symbol, tf, recipe, versionId),
+    onSuccess: () => invalidateModelRegistryQueries(qc),
+  });
+}
+
+export function useUnpinModel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ symbol, tf, recipe }: { symbol: string; tf: string; recipe: string }) =>
+      api.unpinModel(symbol, tf, recipe),
+    onSuccess: () => invalidateModelRegistryQueries(qc),
+  });
+}
+
+export function usePromoteModel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ symbol, tf, recipe, versionId, decision }:
+      { symbol: string; tf: string; recipe: string; versionId: string; decision: 'manual' | 'keep' }) =>
+      api.promoteModel(symbol, tf, recipe, versionId, decision),
+    onSuccess: () => invalidateModelRegistryQueries(qc),
+  });
+}
+
+export function useStartMLTrain() {
+  return useMutation({ mutationFn: api.startMLTrain });
+}
+
+export function useMLTrainStatus(jobId: string | null) {
+  return useQuery({
+    queryKey: ['mlTrainStatus', jobId],
+    queryFn: () => api.getMLTrainStatus(jobId!),
+    enabled: !!jobId,
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 1500 : false),
+  });
+}
+
+export function useStartMLSweep() {
+  return useMutation({ mutationFn: api.startMLSweep });
+}
+
+export function useMLSweepStatus(jobId: string | null) {
+  return useQuery({
+    queryKey: ['mlSweepStatus', jobId],
+    queryFn: () => api.getMLSweepStatus(jobId!),
+    enabled: !!jobId,
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 1500 : false),
+  });
+}
+
 // ── Derivatives ─────────────────────────────────────────────────────────────
 export function useDerivativesData(symbol = 'BTC/USDC', period = '1h', refresh = false) {
   return useQuery({

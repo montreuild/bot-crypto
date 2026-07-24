@@ -202,7 +202,8 @@ class OptimizerSearchEngine:
                  df_full: pl.DataFrame = None,
                  split: int = None,
                  timeframe: str = None,
-                 cancel_event: Optional[threading.Event] = None):
+                 cancel_event: Optional[threading.Event] = None,
+                 ml_mode: Optional[str] = None):
         self.strategy_name     = strategy_name
         self.cfg               = deepcopy(cfg)
         self.df_is             = df_is
@@ -219,6 +220,17 @@ class OptimizerSearchEngine:
         # two-phase) — fusionnés dans chaque jeu de params échantillonné via
         # ``_with_hp``. None = phase unique (comportement historique inchangé).
         self._fixed_ml_hp: Optional[Dict] = None
+        # ML-02 : ml_mode du Backtester utilisé par CHAQUE trial. "inline"
+        # (défaut, comportement historique inchangé) réentraîne à chaque essai
+        # — c'est délibéré pour évaluer le comportement réel de la ML sur des
+        # seuils de décision variés. "frozen" gèle un modèle déjà publié au
+        # registre et n'optimise QUE les seuils contre lui (plus rapide, cible
+        # fixe) — cf. docs/CONCEPTION_CYCLE_DE_VIE_ML.md §4.2. Lu depuis
+        # cfg["optimizer"]["ml_mode"] si non fourni explicitement — les workers
+        # (opt_workers._eval_worker) le redérivent de la même clé après
+        # désérialisation du YAML, aucun paramètre supplémentaire à faire
+        # traverser la frontière de process.
+        self.ml_mode = ml_mode if ml_mode is not None else (self.cfg.get("optimizer") or {}).get("ml_mode", "inline")
 
     def _with_hp(self, params: dict) -> dict:
         """Fusionne les hyperparamètres d'entraînement ML figés (``_fixed_ml_hp``)
@@ -245,9 +257,7 @@ class OptimizerSearchEngine:
         # priorité supérieure et avalerait silencieusement les params du trial.
         if self.strategy_name in cfg.get("optimizer_results", {}):
             del cfg["optimizer_results"][self.strategy_name]
-        # use_pretrained_ml=False : l'optimiseur évalue le comportement réel de la ML
-        # avec réentraînement inline (walk-forward), sans charger de modèle pré-existant.
-        bt  = Backtester(eng, cfg, cancel_event=self._cancel_event, use_pretrained_ml=False)
+        bt  = Backtester(eng, cfg, cancel_event=self._cancel_event, ml_mode=self.ml_mode)
 
         res_is  = bt.run(self.df_is,  self.symbol, timeframe=self.timeframe)
         res_oos = bt.run(self.df_oos, self.symbol, timeframe=self.timeframe)

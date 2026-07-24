@@ -281,7 +281,13 @@ def _eval_worker(args: tuple) -> dict:
         # priorité supérieure et avalerait silencieusement les params du trial.
         if strategy_name in _cfg_copy.get("optimizer_results", {}):
             del _cfg_copy["optimizer_results"][strategy_name]
-        _bt = _Backtester(_eng, _cfg_copy, use_pretrained_ml=False)
+        # ML-02 : ml_mode dérivé de cfg["optimizer"]["ml_mode"] (défaut "inline",
+        # comportement historique inchangé) — même clé que côté in-process
+        # (OptimizerSearchEngine.ml_mode), pas de paramètre supplémentaire à
+        # faire traverser la frontière de process : _cfg contient déjà tout
+        # cfg["optimizer"] via le YAML dumpé par l'engine.
+        _ml_mode = (_cfg.get("optimizer") or {}).get("ml_mode", "inline")
+        _bt = _Backtester(_eng, _cfg_copy, ml_mode=_ml_mode)
 
         _res_is  = _bt.run(_df_is,  symbol, timeframe=timeframe)
         _res_oos = _bt.run(_df_oos, symbol, timeframe=timeframe)

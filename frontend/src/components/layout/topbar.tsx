@@ -223,6 +223,7 @@ const SEARCH_PAGES = [
   { href: '/derivatives', label: 'Dérivés', desc: 'Funding, OI, LSR, taker', keywords: ['funding', 'open interest', 'long short'] },
   { href: '/data', label: 'Données', desc: 'Cache bougies OHLCV', keywords: ['ohlcv', 'candles', 'cache', 'parquet'] },
   { href: '/ml', label: 'ML', desc: 'Modèles Machine Learning', keywords: ['machine', 'learning', 'lightgbm', 'random forest'] },
+  { href: '/models', label: 'Registre modèles', desc: 'Registre versionné, gate de promotion, entraînement', keywords: ['registre', 'version', 'gate', 'pin', 'entraînement', 'sweep', 'promotion'] },
   { href: '/config', label: 'Configuration', desc: 'Stratégies, risk, notifications', keywords: ['paramètres', 'risk', 'exchange'] },
   { href: '/settings', label: 'Réglages', desc: 'Presets, thème, expert mode', keywords: ['preset', 'thème', 'clair', 'sombre'] },
 ];

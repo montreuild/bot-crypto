@@ -85,8 +85,14 @@ class BaseStrategyML(BaseStrategy):
         """Retourne un signal en utilisant le modèle déjà entraîné."""
         raise NotImplementedError
 
-    def save_model(self, path: str) -> None:
-        """Persiste le modèle entraîné sur disque (implémentation optionnelle)."""
+    def save_model(self, path: str, extra_meta: Optional[dict] = None) -> None:
+        """Persiste le modèle entraîné sur disque (implémentation optionnelle).
+
+        ``extra_meta`` (ML-02) : bloc de provenance optionnel
+        (``{"provenance": {...}, "gate": {...}}``) à fusionner dans le
+        meta.json — utilisé par ``app.ml.model_registry``/``app.ml.policy``
+        pour dater/gater les modèles. Les implémentations qui l'ignorent
+        restent valides (comportement historique inchangé)."""
 
     def load_model(self, path: str) -> bool:
         """Charge un modèle depuis le disque. Retourne True si réussi."""

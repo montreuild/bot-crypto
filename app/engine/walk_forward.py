@@ -37,10 +37,20 @@ def _sf(v, fallback=None):
 
 # ── Walk-Forward ──
 class WalkForwardAnalyzer:
-    def __init__(self, engine: Engine, cfg: dict, n_folds: int = 5):
+    def __init__(self, engine: Engine, cfg: dict, n_folds: int = 5,
+                 ml_mode: str = None):
+        """``ml_mode`` (ML-02, cf. ``Backtester``) : transmis tel quel à
+        chaque ``Backtester`` de fold (IS et OOS). ``None`` (défaut) laisse
+        ``Backtester`` dériver de sa config (``"frozen"`` par défaut) —
+        chaque fold résout alors le modèle via le registre avec
+        ``as_of`` = début de la fenêtre DE CE FOLD (``df_is``/``df_oos``
+        propres à l'itération), ce qui empêche par construction un fold de
+        charger un modèle entraîné sur des données qu'il évalue (fuite
+        précédemment possible avec le chemin plat non daté)."""
         self.engine  = engine
         self.cfg     = cfg
         self.n_folds = n_folds
+        self.ml_mode = ml_mode
 
     def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL) -> dict:
         # Import lazy : ``Backtester`` vit dans ``app.engine.backtest`` qui
@@ -90,8 +100,8 @@ class WalkForwardAnalyzer:
                 eng_oos = Engine()
                 [eng_oos.register(s, silent=True) for s in fresh_strats_oos]
 
-                bt_is  = Backtester(eng_is,  self.cfg)
-                bt_oos = Backtester(eng_oos, self.cfg)
+                bt_is  = Backtester(eng_is,  self.cfg, ml_mode=self.ml_mode)
+                bt_oos = Backtester(eng_oos, self.cfg, ml_mode=self.ml_mode)
                 r_is   = bt_is.run(df_is,  symbol).to_dict()
                 r_oos  = bt_oos.run(df_oos, symbol).to_dict()
                 in_sample_results.append(r_is)

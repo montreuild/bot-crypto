@@ -1,0 +1,589 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { cn, formatDateTime } from '@/lib/utils';
+import { toast } from 'sonner';
+import {
+  useMLRegistry, useMLRegistryVersions, useMLRegistryDecisions,
+  usePinModel, useUnpinModel, usePromoteModel,
+  useStartMLTrain, useMLTrainStatus, useStartMLSweep, useMLSweepStatus,
+} from '@/hooks/use-api';
+import {
+  Loader2, Database, AlertCircle, Pin, PinOff, ChevronDown, ChevronRight,
+  Rocket, BarChart3, RefreshCw, ThumbsUp, ThumbsDown,
+} from 'lucide-react';
+import type { ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus } from '@/types';
+
+// ── Badges ──────────────────────────────────────────────────────────────────
+
+function AucBadge({ auc, trainEnd }: { auc: number | null | undefined; trainEnd?: string | null }) {
+  // auc=0 sans date d'entraînement = non mesurée (artefact legacy importé sans
+  // provenance), PAS un modèle mesuré mauvais — distinct d'un vrai 0.000 (qui
+  // aurait une date). Éviter le rouge trompeur dans les deux cas.
+  if (auc == null || (auc === 0 && !trainEnd)) {
+    return <Badge title="AUC non mesurée (ex. artefact legacy sans provenance)">n/m</Badge>;
+  }
+  const variant = auc >= 0.65 ? 'success' : auc >= 0.55 ? 'warning' : 'danger';
+  return <Badge variant={variant}>{auc.toFixed(3)}</Badge>;
+}
+
+function DecisionBadge({ decision }: { decision: string | null | undefined }) {
+  if (!decision) return <Badge>—</Badge>;
+  const ok = decision === 'promote' || decision === 'initial' || decision === 'manual';
+  return <Badge variant={ok ? 'success' : 'danger'}>{decision}</Badge>;
+}
+
+// ── Version row (historique + actions) ──────────────────────────────────────
+
+function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: ModelArtifact }) {
+  const pin = usePinModel();
+  const unpin = useUnpinModel();
+  const promote = usePromoteModel();
+  const isPinned = entry.pinned_version_id === version.version_id;
+  const busy = pin.isPending || unpin.isPending || promote.isPending;
+
+  const handlePinToggle = async () => {
+    try {
+      if (isPinned) {
+        await unpin.mutateAsync({ symbol: entry.symbol, tf: entry.tf, recipe: entry.recipe });
+        toast.success('Pin retiré');
+      } else {
+        await pin.mutateAsync({
+          symbol: entry.symbol, tf: entry.tf, recipe: entry.recipe, versionId: version.version_id,
+        });
+        toast.success('Version épinglée');
+      }
+    } catch (e: any) {
+      toast.error(`Erreur : ${e.message}`);
+    }
+  };
+
+  const handlePromote = async (decision: 'manual' | 'keep') => {
+    const verb = decision === 'manual' ? 'Promouvoir' : 'Rejeter';
+    if (!window.confirm(`${verb} la version ${version.version_id} pour ${entry.symbol}/${entry.tf}/${entry.recipe} ?`)) {
+      return;
+    }
+    try {
+      await promote.mutateAsync({
+        symbol: entry.symbol, tf: entry.tf, recipe: entry.recipe,
+        versionId: version.version_id, decision,
+      });
+      toast.success('Décision mise à jour');
+    } catch (e: any) {
+      toast.error(`Erreur : ${e.message}`);
+    }
+  };
+
+  return (
+    <tr className="border-b border-border/20">
+      <td className="p-2 font-mono">{version.version_id}</td>
+      <td className="p-2 text-muted font-mono">{formatDateTime(version.train_end)}</td>
+      <td className="p-2 text-right font-mono">{version.n_bars ?? '—'}</td>
+      <td className="p-2"><AucBadge auc={version.auc} trainEnd={version.train_end} /></td>
+      <td className="p-2"><DecisionBadge decision={version.gate_decision} /></td>
+      <td className="p-2 text-dim">{version.legacy ? 'oui' : '—'}</td>
+      <td className="p-2">
+        <div className="flex flex-wrap gap-1.5">
+          <Button
+            size="sm" variant="outline" onClick={handlePinToggle} disabled={busy}
+            className={isPinned ? 'text-purple-400 border-purple-500/40 bg-purple-500/10' : ''}
+          >
+            {isPinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
+            {isPinned ? 'Retirer' : 'Épingler'}
+          </Button>
+          <Button size="sm" variant="success" onClick={() => handlePromote('manual')} disabled={busy}>
+            <ThumbsUp className="w-3 h-3" />
+            Promouvoir
+          </Button>
+          <Button size="sm" variant="danger" onClick={() => handlePromote('keep')} disabled={busy}>
+            <ThumbsDown className="w-3 h-3" />
+            Rejeter
+          </Button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function DecisionsTable({ decisions }: { decisions: ModelDecision[] }) {
+  if (decisions.length === 0) {
+    return <div className="text-xs text-dim">Aucune décision journalisée.</div>;
+  }
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-left text-dim border-b border-border/50">
+          <th className="p-2 font-medium">Date</th>
+          <th className="p-2 font-medium">Version</th>
+          <th className="p-2 font-medium">Décision</th>
+          <th className="p-2 font-medium">Source</th>
+          <th className="p-2 font-medium">Raison</th>
+        </tr>
+      </thead>
+      <tbody>
+        {decisions.map((d, i) => (
+          <tr key={`${d.ts}-${d.version_id}-${i}`} className="border-b border-border/20">
+            <td className="p-2 font-mono text-muted">{formatDateTime(d.ts)}</td>
+            <td className="p-2 font-mono">{d.version_id}</td>
+            <td className="p-2"><DecisionBadge decision={d.decision} /></td>
+            <td className="p-2 text-dim">{d.source || '—'}</td>
+            <td className="p-2 text-muted">{d.reason || '—'}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// ── Registry row (recette + détail dépliable) ───────────────────────────────
+
+function RegistryRow({ entry }: { entry: ModelRegistryEntry }) {
+  const [expanded, setExpanded] = useState(false);
+  const { data: versionsData, isLoading: versionsLoading } = useMLRegistryVersions(
+    expanded ? entry.symbol : null, expanded ? entry.tf : null, expanded ? entry.recipe : null,
+  );
+  const { data: decisionsData } = useMLRegistryDecisions(
+    expanded ? entry.symbol : null, expanded ? entry.tf : null, expanded ? entry.recipe : null,
+  );
+
+  const active = entry.active;
+
+  return (
+    <>
+      <tr className="border-b border-border/30 hover:bg-card-hover">
+        <td className="p-3 font-mono font-semibold">{entry.symbol}</td>
+        <td className="p-3"><Badge variant="purple">{entry.tf}</Badge></td>
+        <td className="p-3 font-mono text-xs">{entry.recipe}</td>
+        <td className="p-3 font-mono text-xs">
+          {active ? active.version_id : <span className="text-dim">aucune</span>}
+        </td>
+        <td className="p-3 text-xs text-muted font-mono">
+          {active ? formatDateTime(active.train_end) : '—'}
+        </td>
+        <td className="p-3">{active ? <AucBadge auc={active.auc} trainEnd={active.train_end} /> : '—'}</td>
+        <td className="p-3">{active ? <DecisionBadge decision={active.gate_decision} /> : '—'}</td>
+        <td className="p-3">
+          <div className="flex flex-col gap-1 items-start">
+            {entry.freshness_warning ? (
+              <Badge variant="warning" title={entry.freshness_warning} className="whitespace-nowrap">
+                <AlertCircle className="w-3 h-3" />
+                {entry.freshness_warning.length > 28
+                  ? `${entry.freshness_warning.slice(0, 28)}…`
+                  : entry.freshness_warning}
+              </Badge>
+            ) : (
+              <Badge variant="success">OK</Badge>
+            )}
+            {entry.pinned_version_id && (
+              <Badge variant="purple" title={`Épinglé sur ${entry.pinned_version_id}`}>
+                <Pin className="w-3 h-3" />
+                pin
+              </Badge>
+            )}
+          </div>
+        </td>
+        <td className="p-3 text-right font-mono">{entry.n_versions}</td>
+        <td className="p-3">
+          <Button size="sm" variant="ghost" onClick={() => setExpanded((v) => !v)}>
+            {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            {expanded ? 'Masquer' : 'Détails'}
+          </Button>
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="bg-black/10">
+          <td colSpan={10} className="p-4">
+            <div className="text-[10px] uppercase tracking-wider text-dim font-semibold mb-2">Versions</div>
+            {versionsLoading ? (
+              <div className="flex items-center py-4">
+                <Loader2 className="w-4 h-4 animate-spin text-primary-400" />
+              </div>
+            ) : (
+              <div className="overflow-x-auto mb-4">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-left text-dim border-b border-border/50">
+                      <th className="p-2 font-medium">Version</th>
+                      <th className="p-2 font-medium">Entraînée jusqu'au</th>
+                      <th className="p-2 font-medium text-right">N barres</th>
+                      <th className="p-2 font-medium">AUC</th>
+                      <th className="p-2 font-medium">Décision</th>
+                      <th className="p-2 font-medium">Legacy</th>
+                      <th className="p-2 font-medium">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(versionsData?.versions || []).map((v) => (
+                      <VersionRow key={v.version_id} entry={entry} version={v} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="text-[10px] uppercase tracking-wider text-dim font-semibold mb-2">
+              Décisions récentes
+            </div>
+            <DecisionsTable decisions={decisionsData?.decisions || []} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function RegistryTable({ entries }: { entries: ModelRegistryEntry[] }) {
+  if (entries.length === 0) {
+    return <div className="text-sm text-muted text-center py-6">Aucun modèle dans le registre.</div>;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-dim border-b border-border">
+            <th className="p-3 font-medium">Symbole</th>
+            <th className="p-3 font-medium">TF</th>
+            <th className="p-3 font-medium">Recette</th>
+            <th className="p-3 font-medium">Version active</th>
+            <th className="p-3 font-medium">Entraînée jusqu'au</th>
+            <th className="p-3 font-medium">AUC</th>
+            <th className="p-3 font-medium">Décision</th>
+            <th className="p-3 font-medium">Fraîcheur</th>
+            <th className="p-3 font-medium text-right">Versions</th>
+            <th className="p-3 font-medium">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((e) => (
+            <RegistryRow key={`${e.symbol}|${e.tf}|${e.recipe}`} entry={e} />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Résultat de job asynchrone (entraînement / sweep) ───────────────────────
+
+function JobResult({ job }: { job: MLJobStatus }) {
+  const isRunning = job.status === 'running';
+  const isError = job.status === 'error';
+  const res = job.result || {};
+
+  return (
+    <div className={cn(
+      'rounded-lg border p-3 text-xs space-y-1',
+      isRunning ? 'border-cyan-500/40 bg-cyan-500/5'
+        : isError ? 'border-red-500/30 bg-red-500/5'
+          : 'border-emerald-500/30 bg-emerald-500/5',
+    )}
+    >
+      {isRunning && (
+        <div className="flex items-center gap-2 text-muted">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-400" />
+          En cours… ({job.strategy}/{job.symbol}/{job.tf})
+        </div>
+      )}
+      {isError && <div className="text-red-400">Échec : {job.error}</div>}
+      {!isRunning && !isError && (
+        <div className="space-y-1 text-muted">
+          {res.decision && (
+            <>
+              <div><span className="font-semibold text-foreground">{res.decision}</span> — {res.reason || ''}</div>
+              {res.candidate?.auc_amp != null && (
+                <div>Candidat : AUC amp = {Number(res.candidate.auc_amp).toFixed(3)}</div>
+              )}
+              {res.published_version && (
+                <div>Version publiée : <span className="font-mono">{res.published_version}</span></div>
+              )}
+            </>
+          )}
+          {res.candidates && (
+            <>
+              {res.candidates.map((c: any, i: number) => (
+                <div key={i} className="font-mono">
+                  {c.window_bars} barres : {c.auc_amp != null ? Number(c.auc_amp).toFixed(3) : (c.skipped || '—')}
+                </div>
+              ))}
+              {res.best_window_bars && (
+                <div className="font-semibold text-foreground">Meilleure fenêtre : {res.best_window_bars}</div>
+              )}
+              {res.published_version ? (
+                <div>Version publiée : <span className="font-mono">{res.published_version}</span></div>
+              ) : res.note ? <div>{res.note}</div> : null}
+            </>
+          )}
+          {!res.decision && !res.candidates && <div>Terminé.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Formulaire d'entraînement ────────────────────────────────────────────────
+
+function TrainForm() {
+  const qc = useQueryClient();
+  const startTrain = useStartMLTrain();
+  const [jobId, setJobId] = useState<string | null>(null);
+  const { data: job } = useMLTrainStatus(jobId);
+
+  const [strategy, setStrategy] = useState('opus_omnibus_v11');
+  const [symbol, setSymbol] = useState('BTC/USDC');
+  const [tf, setTf] = useState('1h');
+  const [windowBars, setWindowBars] = useState(0);
+  const [asOf, setAsOf] = useState('');
+  const [publish, setPublish] = useState(false);
+
+  useEffect(() => {
+    if (job?.status === 'done') qc.invalidateQueries({ queryKey: ['mlRegistry'] });
+  }, [job?.status, qc]);
+
+  const handleSubmit = async () => {
+    if (!strategy.trim() || !symbol.trim() || !tf.trim()) {
+      toast.error('Stratégie/symbole/TF requis');
+      return;
+    }
+    try {
+      const res = await startTrain.mutateAsync({
+        strategy: strategy.trim(), symbol: symbol.trim(), tf: tf.trim(),
+        window_bars: windowBars > 0 ? windowBars : null,
+        as_of: asOf.trim() || null,
+        publish,
+      });
+      setJobId(res.job_id);
+    } catch (e: any) {
+      toast.error(`Erreur : ${e.message}`);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Entraîner un modèle</CardTitle>
+        <Rocket className="w-4 h-4 text-primary-400" />
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div>
+            <label className="text-xs text-dim block mb-1.5">Stratégie</label>
+            <input
+              value={strategy} onChange={(e) => setStrategy(e.target.value)}
+              placeholder="ex. opus_omnibus_v11"
+              className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-dim block mb-1.5">Symbole</label>
+            <input
+              value={symbol} onChange={(e) => setSymbol(e.target.value)}
+              className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-dim block mb-1.5">Timeframe</label>
+            <input
+              value={tf} onChange={(e) => setTf(e.target.value)}
+              className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-dim block mb-1.5">
+              Fenêtre (barres)
+              <span className="block normal-case text-[10px] text-dim font-normal">0 = tout dispo</span>
+            </label>
+            <input
+              type="number" min={0} value={windowBars}
+              onChange={(e) => setWindowBars(Math.max(0, Number(e.target.value) || 0))}
+              className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-dim block mb-1.5">as_of (ISO, optionnel)</label>
+            <input
+              value={asOf} onChange={(e) => setAsOf(e.target.value)}
+              placeholder="2026-06-01T00:00:00"
+              className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={publish} onChange={(e) => setPublish(e.target.checked)} className="rounded" />
+            Publier réellement (sinon dry-run)
+          </label>
+          <Button onClick={handleSubmit} disabled={startTrain.isPending} variant="primary">
+            {startTrain.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
+            Entraîner
+          </Button>
+        </div>
+        <p className="text-xs text-muted">
+          Dry-run (par défaut) : entraîne un candidat, le compare au sortant sur un holdout, n'écrit rien.
+          « Publier » déclenche le gate réel (promotion seulement si le candidat ne régresse pas) — mêmes
+          règles qu'en live.
+        </p>
+        {job && <JobResult job={job} />}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Formulaire de window sweep ───────────────────────────────────────────────
+
+function SweepForm() {
+  const qc = useQueryClient();
+  const startSweep = useStartMLSweep();
+  const [jobId, setJobId] = useState<string | null>(null);
+  const { data: job } = useMLSweepStatus(jobId);
+
+  const [strategy, setStrategy] = useState('opus_omnibus_v11');
+  const [symbol, setSymbol] = useState('BTC/USDC');
+  const [tf, setTf] = useState('1h');
+  const [windowsStr, setWindowsStr] = useState('10000,20000,40000');
+  const [publishBest, setPublishBest] = useState(false);
+
+  useEffect(() => {
+    if (job?.status === 'done') qc.invalidateQueries({ queryKey: ['mlRegistry'] });
+  }, [job?.status, qc]);
+
+  const handleSubmit = async () => {
+    const windows = windowsStr.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => n > 0);
+    if (!strategy.trim() || !symbol.trim() || !tf.trim() || windows.length === 0) {
+      toast.error('Stratégie/symbole/TF/fenêtres requis');
+      return;
+    }
+    try {
+      const res = await startSweep.mutateAsync({
+        strategy: strategy.trim(), symbol: symbol.trim(), tf: tf.trim(),
+        windows, publish_best: publishBest,
+      });
+      setJobId(res.job_id);
+    } catch (e: any) {
+      toast.error(`Erreur : ${e.message}`);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Window sweep</CardTitle>
+        <BarChart3 className="w-4 h-4 text-primary-400" />
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div>
+            <label className="text-xs text-dim block mb-1.5">Stratégie</label>
+            <input
+              value={strategy} onChange={(e) => setStrategy(e.target.value)}
+              className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-dim block mb-1.5">Symbole</label>
+            <input
+              value={symbol} onChange={(e) => setSymbol(e.target.value)}
+              className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-dim block mb-1.5">Timeframe</label>
+            <input
+              value={tf} onChange={(e) => setTf(e.target.value)}
+              className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-dim block mb-1.5">Fenêtres (barres, CSV)</label>
+            <input
+              value={windowsStr} onChange={(e) => setWindowsStr(e.target.value)}
+              className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox" checked={publishBest} onChange={(e) => setPublishBest(e.target.checked)}
+              className="rounded"
+            />
+            Publier le meilleur (gaté)
+          </label>
+          <Button onClick={handleSubmit} disabled={startSweep.isPending} variant="primary">
+            {startSweep.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <BarChart3 className="w-4 h-4" />}
+            Comparer
+          </Button>
+        </div>
+        <p className="text-xs text-muted">
+          Compare chaque fenêtre sur un holdout COMMUN — comparaison légitime entre tailles. Sans « Publier »,
+          rien n'est écrit au registre.
+        </p>
+        {job && <JobResult job={job} />}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Page principale ───────────────────────────────────────────────────────────
+
+export default function ModelsPage() {
+  const { data, isLoading, isError, refetch, isFetching } = useMLRegistry();
+  const entries = data?.models || [];
+  const warnCount = entries.filter((e) => e.freshness_warning).length;
+  const badgeVariant = entries.length === 0 ? 'default' : warnCount === 0 ? 'success' : 'warning';
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      {/* Header */}
+      <div className="flex items-end justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Modèles</h1>
+          <p className="text-sm text-muted mt-1">
+            Registre de modèles ML daté — versions, gate de promotion, entraînement et window sweep
+          </p>
+        </div>
+        <Badge variant={badgeVariant}>
+          <Database className="w-3 h-3" />
+          {entries.length} recette{entries.length !== 1 ? 's' : ''}
+          {warnCount > 0 ? ` · ${warnCount} alerte${warnCount !== 1 ? 's' : ''}` : ''}
+        </Badge>
+      </div>
+
+      {/* Registry */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Registre de modèles</CardTitle>
+          <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
+            <RefreshCw className={cn('w-3.5 h-3.5', isFetching && 'animate-spin')} />
+            Rafraîchir
+          </Button>
+        </CardHeader>
+        <CardContent className="p-0">
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-8 h-8 text-primary-400 animate-spin" />
+            </div>
+          ) : isError ? (
+            <div className="text-center py-8 text-red-400 text-sm">
+              <AlertCircle className="w-8 h-8 mx-auto mb-2" />
+              Erreur lors du chargement du registre
+            </div>
+          ) : (
+            <RegistryTable entries={entries} />
+          )}
+          <div className="px-5 py-4 text-xs text-muted border-t border-border">
+            « Version active » = ce que <code className="font-mono text-foreground">resolve()</code> retournerait
+            maintenant (pin persistant prioritaire, sinon dernière version promue). Une recette sans version
+            active a vu tous ses candidats rejetés par le gate — entraînez-en un nouveau ou promouvez
+            manuellement un candidat existant depuis l'historique.
+          </div>
+        </CardContent>
+      </Card>
+
+      <TrainForm />
+      <SweepForm />
+    </div>
+  );
+}

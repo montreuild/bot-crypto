@@ -353,6 +353,58 @@ export interface MLStrategyInfo {
   next_retrain_at: number | null;
 }
 
+// ── ML Model Registry (ML-02) ───────────────────────────────────────────────
+
+export interface ModelArtifact {
+  path_prefix: string;
+  symbol: string | null;
+  tf: string;
+  recipe: string;
+  version_id: string;
+  train_start: string | null;
+  train_end: string | null;
+  n_bars: number | null;
+  auc: number;
+  recipe_hash: string | null;
+  git_commit: string | null;
+  source: string | null;
+  created_at: string | null;
+  gate_decision: string | null;
+  legacy: boolean;
+}
+
+export interface ModelRegistryEntry {
+  symbol: string;
+  tf: string;
+  recipe: string;
+  n_versions: number;
+  active: ModelArtifact | null;
+  pinned_version_id: string | null;
+  freshness_warning: string | null;
+}
+
+export interface ModelDecision {
+  ts: string;
+  version_id: string;
+  decision: string;
+  source?: string;
+  reason?: string;
+  previous_decision?: string;
+  [key: string]: unknown;
+}
+
+export interface MLJobStatus {
+  kind: 'train' | 'sweep';
+  status: 'running' | 'done' | 'error';
+  strategy: string;
+  symbol: string;
+  tf: string;
+  started_at: number;
+  finished_at?: number;
+  result: Record<string, any> | null;
+  error: string | null;
+}
+
 // ── Data / Candles ──────────────────────────────────────────────────────────
 
 export interface CandlesDataset {

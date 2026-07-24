@@ -10,6 +10,7 @@
 
 import type {
   BotStatus, Trade, Bot, SlotBudget, BacktestResult,
+  ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
 } from '@/types';
 
 const API_BASE = typeof window !== 'undefined'
@@ -169,6 +170,45 @@ export const api = {
   // ── ML ──────────────────────────────────────────────────────────────────
   getMLStrategyInfo: () => apiFetch<{ strategies: Record<string, any> }>('/ml/strategy-info'),
   getCandlesStats: () => apiFetch<{ store: any }>('/candles/stats'),
+
+  // ── ML Model Registry (ML-02) ────────────────────────────────────────────
+  getMLRegistry: () => apiFetch<{ models: ModelRegistryEntry[] }>('/ml/registry'),
+  getMLRegistryVersions: (symbol: string, tf: string, recipe: string) =>
+    apiFetch<{ versions: ModelArtifact[] }>(
+      `/ml/registry/versions?${new URLSearchParams({ symbol, tf, recipe })}`,
+    ),
+  getMLRegistryDecisions: (symbol: string, tf: string, recipe: string, limit = 20) =>
+    apiFetch<{ decisions: ModelDecision[] }>(
+      `/ml/registry/decisions?${new URLSearchParams({ symbol, tf, recipe, limit: String(limit) })}`,
+    ),
+  pinModel: (symbol: string, tf: string, recipe: string, versionId: string) =>
+    apiFetch<{ status: string }>('/ml/registry/pin', {
+      method: 'POST', body: JSON.stringify({ symbol, tf, recipe, version_id: versionId }),
+    }),
+  unpinModel: (symbol: string, tf: string, recipe: string) =>
+    apiFetch<{ status: string }>('/ml/registry/unpin', {
+      method: 'POST', body: JSON.stringify({ symbol, tf, recipe }),
+    }),
+  promoteModel: (symbol: string, tf: string, recipe: string, versionId: string, decision: 'manual' | 'keep') =>
+    apiFetch<{ status: string }>('/ml/registry/promote', {
+      method: 'POST',
+      body: JSON.stringify({
+        symbol, tf, recipe, version_id: versionId, decision,
+        reason: 'Action manuelle depuis la page Modèles (frontend)',
+      }),
+    }),
+  startMLTrain: (params: {
+    strategy: string; symbol: string; tf: string; as_of?: string | null;
+    window_bars?: number | null; params?: Record<string, any>; publish?: boolean;
+  }) => apiFetch<{ job_id: string }>('/ml/train', { method: 'POST', body: JSON.stringify(params) }),
+  getMLTrainStatus: (jobId: string) =>
+    apiFetch<MLJobStatus>(`/ml/train/status?${new URLSearchParams({ job_id: jobId })}`),
+  startMLSweep: (params: {
+    strategy: string; symbol: string; tf: string; windows: number[];
+    as_of?: string | null; params?: Record<string, any>; publish_best?: boolean;
+  }) => apiFetch<{ job_id: string }>('/ml/sweep', { method: 'POST', body: JSON.stringify(params) }),
+  getMLSweepStatus: (jobId: string) =>
+    apiFetch<MLJobStatus>(`/ml/sweep/status?${new URLSearchParams({ job_id: jobId })}`),
 
   // ── Derivatives ─────────────────────────────────────────────────────────
   getDerivativesData: (symbol = 'BTC/USDC', period = '1h', limit = 1000, refresh = false) =>
