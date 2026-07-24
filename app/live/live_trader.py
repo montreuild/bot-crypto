@@ -123,7 +123,7 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
         # Chargement des modèles ML persistés
         from app.ml.trainer import MLStrategyTrainer
         self._ml_trainer = MLStrategyTrainer(cfg, ml_lock=self._ml_lock)
-        self._ml_trainer.load_models(self._loaded_strategies, self.timeframes)
+        self._ml_trainer.load_models(self._loaded_strategies, self.timeframes, scanner=self.scanner)
 
         # Stratégies actives par TF (depuis optimizer_results)
         self._active_per_tf: Dict[str, List[dict]] = {}

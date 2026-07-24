@@ -12,6 +12,7 @@ import math
 import numpy as np
 import polars as pl
 
+from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.engine.engine import BaseStrategyML
 
 logger = logging.getLogger(__name__)
@@ -262,15 +263,16 @@ def _setup_series_v8(df, tf: str, limit: int) -> dict:
     return {"supported": True, "reason": "", "markers": markers}
 
 
-def _setup_series_v11(df, tf: str, limit: int, strategy: str) -> dict:
+def _setup_series_v11(df, tf: str, limit: int, strategy: str,
+                      symbol: str = DEFAULT_CONFIG_SYMBOL) -> dict:
     """Markers de setups V11/V12 par bougie, avec TP/SL.
 
-    Instancie une stratégie dédiée (sans toucher aux modèles du live), charge le
-    pkl depuis models/ ou entraîne à la volée si absent, puis batch-predict.
-    Pour V12, applique le veto/confirmation ml_dynamic_threshold par marker.
+    Instancie une stratégie dédiée (sans toucher aux modèles du live), charge
+    la dernière version promue du registre ML ou entraîne à la volée si
+    absente, puis batch-predict. Pour V12, applique le veto/confirmation
+    ml_dynamic_threshold par marker.
     """
-    import os
-
+    import app.ml.model_registry as ml_registry
     from app.strategies.opus_omnibus_v11 import (
         _SUPPORTED_TFS,
         REGIME_LABELS,
@@ -297,9 +299,10 @@ def _setup_series_v11(df, tf: str, limit: int, strategy: str) -> dict:
     strat = _S()
     strat.managed_externally = False
     name = strat.name
-    path = os.path.join(getattr(strat, "model_dir", "models"), f"{name}_{tf_detected}")
-    if os.path.exists(path):
-        strat.load_model(path)
+    art = ml_registry.resolve(symbol, tf_detected, name,
+                              base_dir=getattr(strat, "model_dir", "models"))
+    if art is not None:
+        strat.load_model(art.path_prefix)
     if tf_detected not in getattr(strat, "_trained_tfs", set()):
         try:
             strat.fit(df, {name: {}})   # entraînement à la volée
@@ -723,6 +726,7 @@ def build_smc_replay_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
 def build_signals_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
     """Exécute toutes les stratégies découvertes sur le df et retourne leurs
     signaux (side/score/détails V7, ML pré-entraîné chargé si présent)."""
+    import app.ml.model_registry as ml_registry
     from app.api.helpers import _discover_strategies
     enabled_set = set(cfg["strategies"].get("enabled", []))
     strats      = sorted(_discover_strategies())
@@ -736,10 +740,12 @@ def build_signals_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
             if cls is None:
                 continue
             inst = cls()
-            # Stratégies ML : charger un modèle pré-entraîné ou marquer skipped
+            # Stratégies ML : charger la dernière version promue du registre
+            # ou marquer skipped.
             if isinstance(inst, BaseStrategyML):
-                model_path = f"{inst.model_dir}/{name}_{tf}"
-                if not inst.load_model(model_path):
+                art = ml_registry.resolve(symbol, tf, name,
+                                          base_dir=getattr(inst, "model_dir", "models"))
+                if art is None or not inst.load_model(art.path_prefix):
                     signals.append({
                         "strategy": name,
                         "side":     "none",

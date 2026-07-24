@@ -1,13 +1,28 @@
-"""MLStrategyTrainer — gestion du cycle de vie des modèles ML (chargement, scheduling, réentraînement)."""
+"""MLStrategyTrainer — gestion du cycle de vie des modèles ML (chargement, scheduling, réentraînement).
+
+ML-02 : le chargement passe par le registre (``app.ml.model_registry`` —
+dernière version PROMUE pour ce (symbole, TF, stratégie), au lieu du chemin
+plat historique) et le réentraînement passe par la politique de gate
+(``app.ml.policy.maybe_refresh`` — le nouveau modèle n'est promu que s'il ne
+régresse pas par rapport au sortant, comparés sur le même holdout). Un modèle
+qui régresse reste sur disque pour l'audit (``decisions.jsonl``) mais
+n'écrase jamais silencieusement le modèle servi.
+"""
 import logging
-import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
-from typing import Dict, List
+from datetime import datetime
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Au-delà de ce multiple de l'intervalle de réentraînement configuré, un
+# modèle chargé au démarrage est considéré périmé (log de warning seul —
+# rien n'empêche de continuer à le servir, cf. ``retrain_due`` qui le
+# rafraîchira au prochain cycle si le scheduler tourne).
+_STALE_FACTOR = 2.0
 
 
 class MLStrategyTrainer:
@@ -23,12 +38,23 @@ class MLStrategyTrainer:
         self._retrain_at: Dict[str, float] = {}
 
     # ── Démarrage ─────────────────────────────────────────────────────────
-    def load_models(self, strategies: dict, timeframes) -> None:
-        """Charge les modèles persistés et active managed_externally pour chaque (stratégie, TF)."""
+    def load_models(self, strategies: dict, timeframes, scanner=None) -> None:
+        """Charge la dernière version PROMUE du registre pour chaque (stratégie,
+        TF) et active ``managed_externally``.
+
+        ``scanner`` : nécessaire pour dériver le symbole d'entraînement (même
+        sélection que ``_retrain_thread`` — préfère BTC). ``None`` (tests, ou
+        appelant qui ne connaît pas encore de scanner) : résolution tentée
+        sans dimension symbole (``symbol=None``) — ne trouvera un modèle que
+        s'il a été publié sans symbole (legacy) ; sinon comportement identique
+        à « pas de modèle » (réentraînement immédiat planifié), sans lever.
+        """
         from app.engine.engine import BaseStrategyML
+        import app.ml.model_registry as ml_registry
         if isinstance(timeframes, str):
             timeframes = [timeframes]
 
+        symbol = self._resolve_symbol(scanner)
         strat_params = self.cfg.get("strategy_params", {})
         for name, strat in strategies.items():
             if not isinstance(strat, BaseStrategyML):
@@ -36,13 +62,24 @@ class MLStrategyTrainer:
             strat.managed_externally = True
             sp         = strat_params.get(name, {})
             interval_h = float(sp.get("retrain_interval_h", strat.retrain_interval_h))
+            base_dir   = getattr(strat, "model_dir", "models") or "models"
 
             for tf in self._supported_tfs(strat, timeframes):
-                key  = f"{name}@{tf}"
-                path = self._model_path(strat, name, tf)
-                if strat.load_model(path):
-                    logger.info(f"[MLTrainer] {name}/{tf} : modèle chargé "
-                               f"(AUC={strat._best_auc_per_tf.get(tf, 0):.4f})")
+                key = f"{name}@{tf}"
+                art = None
+                try:
+                    art = ml_registry.resolve(symbol, tf, name, base_dir=base_dir)
+                except Exception as e:
+                    logger.warning(f"[MLTrainer] {name}/{tf} : resolve() KO : {e}")
+
+                if art is not None and strat.load_model(art.path_prefix):
+                    logger.info(
+                        f"[MLTrainer] {name}/{tf} : modèle chargé "
+                        f"(version={art.version_id}, AUC={strat._best_auc_per_tf.get(tf, 0):.4f})"
+                    )
+                    warn = self._freshness_warning(art, interval_h)
+                    if warn:
+                        logger.warning(f"[MLTrainer] {name}/{tf} : {warn}")
                     self._retrain_at[key] = time.time() + interval_h * 3600
                 else:
                     logger.info(f"[MLTrainer] {name}/{tf} : pas de modèle — réentraînement immédiat planifié")
@@ -116,61 +153,114 @@ class MLStrategyTrainer:
     # ── Thread interne ─────────────────────────────────────────────────────
     def _retrain_thread(self, name: str, strat, strat_params: dict,
                         tf: str, scanner) -> None:
-        """Fetch OHLCV → fit → save_model pour un TF donné (thread daemon).
+        """Fetch OHLCV → entraîne un candidat → gate contre le sortant publié
+        → promeut ou garde (``app.ml.policy.maybe_refresh``).
 
-        Le nombre de bougies demandé à ``scanner.fetch_ohlcv`` est calculé pour
-        couvrir ``strat.min_bars_required`` + une marge raisonnable (jusqu'à
-        ``2× warmup`` côté V4 retrained pour avoir un signal d'entraînement utile).
-        Les logs détaillent la fenêtre demandée vs reçue, ce qui rend explicite
-        l'origine d'un échec « données insuffisantes ».
+        Le nombre de bougies demandé à ``scanner.fetch_ohlcv`` couvre à la
+        fois le minimum de la stratégie (``min_bars_required``) ET le
+        plancher du gate (``holdout_bars + min_window_bars`` — sinon
+        ``maybe_refresh`` refuserait systématiquement faute de données,
+        cf. ``GateConfig``). Un plancher explicite plus large est possible
+        par stratégie/TF via ``strategy_params.<name>.live_fetch_bars``
+        (ML-02 volet « dimensionnement de la fenêtre » — l'edge mesuré du V4
+        figé vient d'un entraînement sur ~40k barres, très supérieur au
+        minimum technique). Les logs détaillent la fenêtre demandée vs reçue.
         """
         logger.info(f"[MLTrainer] Début réentraînement {name}/{tf}…")
         try:
-            symbols = scanner.get_symbols()
-            symbol  = next((s for s in symbols if "BTC" in s), symbols[0] if symbols else None)
+            import app.ml.policy as ml_policy
+
+            symbol = self._resolve_symbol(scanner)
             if not symbol:
                 logger.warning(f"[MLTrainer] {name}/{tf} : aucun symbole disponible")
                 return
 
+            sp = strat_params.get(name, {})
+            gate_cfg = ml_policy.GateConfig.from_params(sp)
             need = int(strat.min_bars_required(strat_params))
-            # Marge raisonnable au-dessus du minimum (≥ 2× warmup pour les V4).
-            fetch_n = max(need + 200, 2 * need, 1000)
+            gate_min_n = gate_cfg.holdout_bars + gate_cfg.min_window_bars
+            fetch_n = max(need + 200, 2 * need, gate_min_n, int(sp.get("live_fetch_bars", 0)), 1000)
+
             logger.info(
                 f"[MLTrainer] {name}/{tf} : fetch {symbol} — demande {fetch_n} bougies "
-                f"(min requis = {need})"
+                f"(min stratégie={need}, plancher gate={gate_min_n})"
             )
             df = scanner.fetch_ohlcv(symbol, tf, fetch_n)
             got = 0 if df is None else len(df)
-            if df is None or got < need:
+            if df is None or got < gate_min_n:
                 logger.warning(
                     f"[MLTrainer] {name}/{tf} : données insuffisantes pour {symbol} — "
-                    f"reçu {got} bougies, requis ≥{need} "
+                    f"reçu {got} bougies, requis ≥{gate_min_n} pour évaluer le gate "
                     f"(le store local a-t-il un historique suffisant ? "
                     f"sinon laissez tourner le live un moment avant de réentraîner)"
                 )
                 return
             logger.info(
-                f"[MLTrainer] {name}/{tf} : {got} bougies dispo pour {symbol} — fit en cours…"
+                f"[MLTrainer] {name}/{tf} : {got} bougies dispo pour {symbol} — "
+                f"entraînement + gate en cours…"
             )
-            # Acquire lock to prevent race condition with main thread inference
+            base_dir = getattr(strat, "model_dir", "models") or "models"
+            # Verrou tenu sur TOUT maybe_refresh (fit + score_holdout + éventuel
+            # rollback) : l'inférence concurrente ne doit jamais voir un état
+            # ML partiellement muté.
             with self._ml_lock:
-                strat.fit(df, strat_params)
-                strat.save_model(self._model_path(strat, name, tf))
-            auc = strat._best_auc_per_tf.get(tf, 0) or 0.0
-            if auc <= 0.0:
-                # AUC nul = entraînement non concluant (labels mono-classe /
-                # validation dégénérée) — état attendu sur certaines fenêtres,
-                # pas une erreur : la stratégie garde son modèle précédent.
-                logger.info(
-                    f"[MLTrainer] {name}/{tf} : entraînement non concluant "
-                    f"(AUC≈0, données insuffisantes/mono-classe) — modèle inchangé"
+                result = ml_policy.maybe_refresh(
+                    strat, symbol, tf, df, params=sp, recipe=name,
+                    gate_cfg=gate_cfg, source="live", base_dir=base_dir,
                 )
-            else:
-                logger.info(f"[MLTrainer] {name}/{tf} réentraîné — AUC={auc:.4f}")
+            self._log_gate_result(name, tf, result)
         except Exception as e:
             logger.error(f"[MLTrainer] Réentraînement {name}/{tf} KO : {e}")
 
+    @staticmethod
+    def _log_gate_result(name: str, tf: str, result: dict) -> None:
+        decision = result.get("decision")
+        reason   = result.get("reason", "")
+        if decision in ("promote", "initial"):
+            logger.info(
+                f"[MLTrainer] {name}/{tf} : {decision} — {reason} "
+                f"(version={result.get('published_version')})"
+            )
+        elif decision == "keep":
+            logger.info(f"[MLTrainer] {name}/{tf} : candidat rejeté — {reason}")
+        elif decision == "skipped":
+            logger.info(f"[MLTrainer] {name}/{tf} : {reason} (n_bars={result.get('n_bars')})")
+        else:
+            logger.warning(f"[MLTrainer] {name}/{tf} : {decision} — {reason}")
+
     # ── Helpers ────────────────────────────────────────────────────────────
+    @staticmethod
+    def _resolve_symbol(scanner) -> Optional[str]:
+        """Symbole d'entraînement — préfère BTC (même sélection historique
+        que l'ancien ``_retrain_thread``, cf. commentaire d'origine).
+        ``None`` si aucun scanner ou aucun symbole disponible."""
+        if scanner is None:
+            return None
+        try:
+            symbols = scanner.get_symbols()
+        except Exception as e:
+            logger.warning(f"[MLTrainer] get_symbols() KO : {e}")
+            return None
+        return next((s for s in symbols if "BTC" in s), symbols[0] if symbols else None)
+
+    @staticmethod
+    def _freshness_warning(art, interval_h: float, stale_factor: float = _STALE_FACTOR) -> Optional[str]:
+        """Message si le modèle chargé est trop vieux par rapport à
+        l'intervalle de réentraînement configuré — ``None`` si frais ou si la
+        fraîcheur n'est pas mesurable (artefact legacy sans date)."""
+        if art.legacy or not art.train_end:
+            return f"modèle sans provenance datée (version={art.version_id}) — fraîcheur non mesurable"
+        try:
+            train_end_dt = datetime.strptime(art.train_end, "%Y-%m-%dT%H:%M:%S")
+        except (ValueError, TypeError):
+            return None
+        age_hours = (datetime.utcnow() - train_end_dt).total_seconds() / 3600.0
+        if interval_h > 0 and age_hours > stale_factor * interval_h:
+            return (f"modèle vieux de {age_hours / 24:.1f}j "
+                    f"(> {stale_factor:.0f}× l'intervalle de réentraînement {interval_h:.1f}h) "
+                    f"— le scheduler a-t-il tourné récemment ?")
+        return None
+
     @staticmethod
     def _supported_tfs(strat, requested_tfs: List[str]) -> List[str]:
         """
@@ -182,8 +272,3 @@ class MLStrategyTrainer:
         if not supported:
             return list(requested_tfs)
         return [tf for tf in requested_tfs if tf in supported] or [supported[0]]
-
-    @staticmethod
-    def _model_path(strat, name: str, tf: str) -> str:
-        # Préfixe des fichiers modèle natifs ({name}_{tf}.amp.lgb / .meta.json…).
-        return os.path.join(strat.model_dir, f"{name}_{tf}")
