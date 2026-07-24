@@ -187,6 +187,12 @@ model:
     auc_floor: 0.55
 ```
 
+- Le bloc peut être **inline** (recette propre à la stratégie) ou référencer
+  une **recette nommée partagée** — `model: {recipe: recipes/omnibus_amp_v1.yaml,
+  pin: …}` : plusieurs stratégies qui consomment le même signal (famille
+  omnibus) partagent alors entraînements, artefacts, gate et monitoring
+  (cf. §5.5). Une stratégie peut référencer *plusieurs* recettes (V12 :
+  l'omnibus partagée + celle de son filtre `ml_dynamic_threshold`).
 - Le hash canonique de ce bloc (`recipe_hash`) identifie la recette dans le
   registre. Tout artefact porte le hash de la recette qui l'a produit.
 - Remplace à terme `retrain_interval_h` (heures) par `cadence_bars`
@@ -201,7 +207,7 @@ model:
 models/
   BTC_USDC/
     15m/
-      opus_omnibus_v11/
+      omnibus_amp_v1/                   # RECETTE, pas stratégie (cf. §5.5)
         2026-07-18T00-00Z_a3f9c1d2/     # {train_end}_{recipe_hash8}
           model.amp.lgb
           model.meta.json               # schéma v2, cf. ci-dessous
@@ -215,7 +221,9 @@ models/
   `source` (`live|runner|backtest_sim|optimizer`), `gate` (décision et
   métriques vs sortant), `created_at`.
 - **API** : `publish(...)`, `resolve(symbol, tf, strategy, as_of=None,
-  pin=None)`, `latest_promoted(...)`, `list_versions(...)`. **La vérité est
+  pin=None)`, `latest_promoted(...)`, `list_versions(...)`. `resolve` commence
+  par traduire la stratégie vers sa (ses) recette(s) via le YAML : deux
+  stratégies référençant la même recette obtiennent le même artefact. **La vérité est
   le système de fichiers** (scan des meta, cache mtime) ; `index.json`
   (STRAT-02) devient un simple cache reconstruisible — pas de fichier d'index
   à verrouiller entre le thread live et les process de l'optimiseur.
@@ -401,6 +409,50 @@ d'amplitude est la seule porte d'entrée ML justifiée aujourd'hui. Le head
 V4 historique, jamais re-vérifiée : c'est un run de banc, pas un défaut de
 prod). Le retirer par défaut divise le coût d'entraînement par deux et purge
 ~⅓ des dimensions d'optimisation.
+
+### 5.5 « Un même modèle pour plusieurs stratégies, ou séparés ? »
+
+**Partagé — le modèle appartient à la recette, pas à la stratégie.** Les
+labels (`amp_top_pct`, `label_horizons`) décrivent des propriétés du marché ;
+aucun paramètre de décision de la stratégie n'entre dans l'entraînement
+(`_TRAIN_PARAM_KEYS` ne contient que des hyperparamètres de recette). Deux
+stratégies à recette identique produiraient le même modèle au bruit près :
+l'entraîner deux fois coûte double et fait diverger aléatoirement deux
+consommateurs du même signal.
+
+Le code actuel vit déjà dans les deux régimes, sans le gérer :
+
+- **Partage de fait** : `opus_stat_pretrained_v4`, `v7_pretrained`, `v8`,
+  `v9`, `v10` pointent tous `model_dir` sur les mêmes fichiers
+  `opus_stat_pretrained_v4_data/*.lgb` — cinq stratégies, un artefact.
+- **Duplication de fait** : `v12` hérite de `v11` avec une recette amp/dir
+  strictement identique mais ré-entraîne et persiste son propre
+  `models/opus_omnibus_v12_{tf}` ; le `train_cache` ne mutualise même pas
+  entre les deux (clé par `type(strategy).__module__`,
+  `train_cache.py:94`).
+
+Règles retenues :
+
+- **Même recette ⇒ mêmes artefacts** (répertoire de registre par *recette*,
+  §3.2). Gate, alertes de fraîcheur et santé sont par modèle — détectés une
+  fois, pas N fois. Les différences entre stratégies restent dans leurs
+  seuils/setups/params, là où elles ont un sens.
+- **Recette différente ⇒ modèle séparé, automatiquement**
+  (`ml_dynamic_threshold`, `scoring_statistique_opus_v4/v5`). V12 consomme
+  deux recettes (l'omnibus partagée + son filtre de confirmation).
+- **Séparation à la demande, par fork de recette** (nouveau nom ou bump de
+  `recipe_version`) quand une stratégie veut expérimenter d'autres
+  features/labels — jamais par duplication silencieuse d'entraînements.
+- **Déploiement progressif via `pin`** : un consommateur peut rester épinglé
+  sur la version N pendant qu'un autre valide la N+1.
+
+Risque assumé du partage : la **corrélation des consommateurs** (une
+promotion touche toutes les stratégies liées ; une décroissance du modèle
+les dégrade ensemble). Cette corrélation existe déjà implicitement — toutes
+les variantes omnibus tradent la même famille de signal — le registre la
+rend explicite : l'allocateur de capital peut la lire (deux stratégies de
+même recette ne diversifient pas), et la passe de confirmation post-promotion
+(§4.2) se joue par stratégie consommatrice.
 
 ## 6. UI — page « Modèles » (les deux fronts)
 
