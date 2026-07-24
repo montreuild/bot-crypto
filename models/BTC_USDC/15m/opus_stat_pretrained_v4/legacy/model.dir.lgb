@@ -9577,6 +9577,7 @@ parameters:
 [neg_bagging_fraction: 1]
 [bagging_freq: 0]
 [bagging_seed: 400]
+[bagging_by_query: 0]
 [feature_fraction: 1]
 [feature_fraction_bynode: 1]
 [feature_fraction_seed: 30056]

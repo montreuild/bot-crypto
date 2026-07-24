@@ -4,13 +4,22 @@ l'optimiseur V11/V12, commit d6eb9db). Diagnostic pur : n'affecte ni
 l'entraînement ni le routing, seulement train_meta/logs.
 """
 import datetime as dt
+import json
 
 import numpy as np
 import polars as pl
 import pytest
 
 from app.ml.backend.features import REGIME_CHOPPY, REGIME_RANGE, REGIME_TREND_DN
-from app.ml.backend.trainer import TrainState, _auc_dir_by_regime, _rank_auc, train
+from app.ml.backend.trainer import (
+    TrainState,
+    _auc_dir_by_regime,
+    _feature_importance_by_regime,
+    _rank_auc,
+    _regime_similarity,
+    _spearman,
+    train,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -127,3 +136,133 @@ def test_train_populates_auc_dir_by_regime_with_all_four_keys():
         assert v["n"] >= 0
         if v["auc"] is not None:
             assert 0.0 <= v["auc"] <= 1.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Importance des features PAR RÉGIME (pred_contrib) — le modèle direction
+#  lit-il d'AUTRES signaux selon le régime ? L'importance "gain" native de
+#  LightGBM est globale et ne peut pas répondre ; les attributions par
+#  échantillon, oui.
+# ─────────────────────────────────────────────────────────────────────────────
+def _toy_booster(n_feat: int = 6, n: int = 400, seed: int = 0):
+    import lightgbm as lgb
+    rng = np.random.RandomState(seed)
+    X = rng.randn(n, n_feat)
+    # La cible ne dépend que de la feature 0 -> elle doit dominer partout.
+    y = (X[:, 0] > 0).astype(int)
+    booster = lgb.train({"objective": "binary", "verbosity": -1, "num_leaves": 7},
+                        lgb.Dataset(X, label=y), num_boost_round=20)
+    return booster, X, [f"f{i}" for i in range(n_feat)]
+
+
+def test_feature_importance_by_regime_returns_all_regimes_and_ranks_driver_first():
+    booster, X, cols = _toy_booster()
+    # Deux régimes de 200 échantillons chacun.
+    regimes = [REGIME_TREND_DN] * 200 + [REGIME_RANGE] * 200
+    out = _feature_importance_by_regime(booster, X, cols, regimes, top_n=3)
+
+    assert set(out.keys()) == {"range", "trend_up", "trend_down", "choppy"}
+    for key in ("trend_down", "range"):
+        assert out[key]["n"] == 200
+        # f0 pilote la cible -> première par |contribution| dans chaque régime.
+        assert out[key]["top"][0]["feature"] == "f0"
+        assert out[key]["top"][0]["contrib"] > 0
+    # Régimes absents du batch : n=0, top vide, aucune exception.
+    for absent in ("trend_up", "choppy"):
+        assert out[absent]["n"] == 0
+        assert out[absent]["top"] == []
+
+
+def test_feature_importance_by_regime_below_min_samples_is_empty():
+    booster, X, cols = _toy_booster(n=400)
+    regimes = [REGIME_CHOPPY] * 5 + [REGIME_RANGE] * 395
+    out = _feature_importance_by_regime(booster, X, cols, regimes, top_n=3)
+    assert out["choppy"]["n"] == 5
+    assert out["choppy"]["top"] == []
+
+
+def test_feature_importance_by_regime_caps_samples_for_memory():
+    from app.ml.backend.trainer import _CONTRIB_MAX_SAMPLES_PER_REGIME
+    n = _CONTRIB_MAX_SAMPLES_PER_REGIME + 500
+    booster, X, cols = _toy_booster(n=n)
+    out = _feature_importance_by_regime(booster, X, cols, [REGIME_RANGE] * n, top_n=3)
+    assert out["range"]["n"] == _CONTRIB_MAX_SAMPLES_PER_REGIME
+
+
+# ── Spearman (sans scipy) ────────────────────────────────────────────────────
+def test_spearman_perfect_monotonic_is_one():
+    a = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    assert _spearman(a, a * 3.0 + 1.0) == pytest.approx(1.0)
+
+
+def test_spearman_reversed_is_minus_one():
+    a = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    assert _spearman(a, -a) == pytest.approx(-1.0)
+
+
+def test_spearman_constant_vector_is_none():
+    a = np.array([1.0, 2.0, 3.0, 4.0])
+    assert _spearman(a, np.ones(4)) is None
+
+
+def test_spearman_too_short_is_none():
+    assert _spearman(np.array([1.0]), np.array([2.0])) is None
+
+
+# ── Similarité entre régimes ─────────────────────────────────────────────────
+def test_regime_similarity_identical_importances_are_maximally_similar():
+    full = np.array([5.0, 3.0, 1.0, 0.5])
+    top = [{"feature": "a", "contrib": 5.0}, {"feature": "b", "contrib": 3.0}]
+    by_regime = {
+        "trend_down": {"n": 100, "top": top, "_full": full},
+        "range":      {"n": 100, "top": top, "_full": full},
+    }
+    sim = _regime_similarity(by_regime, top_n=2)
+    entry = sim["trend_down__vs__range"]
+    assert entry["spearman"] == pytest.approx(1.0)
+    assert entry["top_overlap"] == pytest.approx(1.0)
+
+
+def test_regime_similarity_disjoint_tops_have_zero_overlap():
+    by_regime = {
+        "trend_down": {"n": 100, "top": [{"feature": "a"}, {"feature": "b"}],
+                       "_full": np.array([5.0, 3.0, 1.0])},
+        "trend_up":   {"n": 100, "top": [{"feature": "x"}, {"feature": "y"}],
+                       "_full": np.array([1.0, 3.0, 5.0])},
+    }
+    entry = _regime_similarity(by_regime, top_n=2)["trend_down__vs__trend_up"]
+    assert entry["top_overlap"] == pytest.approx(0.0)
+    assert entry["spearman"] == pytest.approx(-1.0)
+
+
+def test_regime_similarity_skips_regimes_without_data():
+    by_regime = {
+        "trend_down": {"n": 100, "top": [{"feature": "a"}], "_full": np.array([1.0, 2.0, 3.0])},
+        "choppy":     {"n": 0, "top": []},
+    }
+    assert _regime_similarity(by_regime) == {}
+
+
+@pytest.mark.slow
+def test_train_populates_regime_feature_diagnostics_and_strips_internals():
+    import threading
+    df = _make_trending_ohlcv(3000, seed=11)
+    state = TrainState()
+    assert train(state, threading.Lock(), df, "1h", params={}, defaults={})
+    meta = state.train_meta["1h"]
+
+    fi = meta["feature_importance_dir_by_regime"]
+    assert set(fi.keys()) == {"range", "trend_up", "trend_down", "choppy"}
+    for v in fi.values():
+        # ``_full`` est un tableau numpy interne (calcul du Spearman) : il ne
+        # doit jamais atteindre meta.json, qui est sérialisé en JSON.
+        assert "_full" not in v
+        for f in v["top"]:
+            assert set(f.keys()) == {"feature", "contrib"}
+
+    for entry in meta["regime_feature_similarity"].values():
+        assert 0.0 <= entry["top_overlap"] <= 1.0
+        if entry.get("spearman") is not None:
+            assert -1.0 <= entry["spearman"] <= 1.0
+
+    json.dumps(meta)  # doit rester sérialisable de bout en bout

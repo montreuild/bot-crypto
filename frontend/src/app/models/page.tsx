@@ -19,6 +19,7 @@ import {
 import type {
   ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
   ModelFeatureImportance, ModelRegimeAuc, ModelTrainMeta,
+  ModelRegimeFeatureImportance, ModelRegimeSimilarity,
 } from '@/types';
 
 // ── Badges ──────────────────────────────────────────────────────────────────
@@ -206,11 +207,88 @@ function RegimeAucTable({ byRegime }: { byRegime?: Record<string, ModelRegimeAuc
   );
 }
 
+/** Importance des features PAR RÉGIME (attributions `pred_contrib`) — permet de
+ *  voir si le modèle direction s'appuie sur des signaux différents selon le
+ *  régime de marché, ce que l'importance « gain » globale ne peut pas dire. */
+function RegimeFeatureColumns({ byRegime }: { byRegime?: Record<string, ModelRegimeFeatureImportance> }) {
+  const keys = Object.keys(byRegime || {}).filter(
+    (k) => REGIME_LABELS[k] && ((byRegime || {})[k].top || []).length > 0,
+  );
+  if (keys.length === 0) return null;
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {keys.map((k) => {
+        const v = (byRegime || {})[k];
+        return (
+          <div key={k}>
+            <div className="text-xs text-muted mb-1.5">
+              {REGIME_LABELS[k]} <span className="text-dim">(n={v.n})</span>
+            </div>
+            <table className="w-full text-xs">
+              <tbody>
+                {v.top.slice(0, 8).map((f, i) => (
+                  <tr key={`${f.feature}-${i}`} className="border-b border-border/20">
+                    <td className="p-1.5 font-mono">{f.feature}</td>
+                    <td className="p-1.5 text-right font-mono text-muted">{f.contrib}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Similarité des importances entre régimes : Spearman ≈ 1 signifie que le
+ *  modèle hiérarchise les features de la même façon partout (donc aucune
+ *  spécialisation par régime à exploiter). */
+function RegimeSimilarityTable({ sim }: { sim?: Record<string, ModelRegimeSimilarity> }) {
+  const keys = Object.keys(sim || {});
+  if (keys.length === 0) return null;
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-left text-dim border-b border-border/50">
+          <th className="p-2 font-medium">Paire de régimes</th>
+          <th className="p-2 font-medium">Spearman</th>
+          <th className="p-2 font-medium">Overlap top</th>
+        </tr>
+      </thead>
+      <tbody>
+        {keys.map((k) => {
+          const v = (sim || {})[k];
+          const [a, b] = k.split('__vs__');
+          const rho = v.spearman;
+          const variant = rho == null ? 'default'
+            : rho >= 0.9 ? 'danger' : rho >= 0.7 ? 'warning' : 'success';
+          return (
+            <tr key={k} className="border-b border-border/20">
+              <td className="p-2">{(REGIME_LABELS[a] || a)} ↔ {(REGIME_LABELS[b] || b)}</td>
+              <td className="p-2">
+                {rho == null ? <Badge>n/a</Badge> : <Badge variant={variant}>{rho.toFixed(3)}</Badge>}
+              </td>
+              <td className="p-2 font-mono text-muted">
+                {v.top_overlap != null ? `${(v.top_overlap * 100).toFixed(0)}%` : '—'}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 function DiagnosticsPanel({ trainMeta }: { trainMeta?: ModelTrainMeta }) {
   if (!trainMeta || Object.keys(trainMeta).length === 0) return null;
   const hasFeats = (trainMeta.feature_importance_amp?.length || trainMeta.feature_importance_dir?.length);
   const hasRegime = trainMeta.auc_dir_by_regime && Object.keys(trainMeta.auc_dir_by_regime).length > 0;
-  if (!hasFeats && !hasRegime) return null;
+  const fiReg = trainMeta.feature_importance_dir_by_regime;
+  const hasFiReg = fiReg && Object.keys(fiReg).some((k) => (fiReg[k].top || []).length > 0);
+  const sim = trainMeta.regime_feature_similarity;
+  const hasSim = sim && Object.keys(sim).length > 0;
+  if (!hasFeats && !hasRegime && !hasFiReg) return null;
 
   return (
     <div className="mt-4">
@@ -228,6 +306,26 @@ function DiagnosticsPanel({ trainMeta }: { trainMeta?: ModelTrainMeta }) {
         <div className="mb-4">
           <div className="text-xs text-muted mb-1.5">AUC direction par régime</div>
           <RegimeAucTable byRegime={trainMeta.auc_dir_by_regime} />
+        </div>
+      )}
+      {hasFiReg && (
+        <div className="mb-4">
+          <div className="text-xs text-muted mb-1.5">
+            Top features direction PAR RÉGIME{' '}
+            <span className="text-dim">(attributions moyennes |contribution|)</span>
+          </div>
+          <RegimeFeatureColumns byRegime={fiReg} />
+        </div>
+      )}
+      {hasSim && (
+        <div className="mb-4">
+          <div className="text-xs text-muted mb-1.5">Similarité des importances entre régimes</div>
+          <RegimeSimilarityTable sim={sim} />
+          <p className="text-xs text-dim mt-1.5">
+            Spearman ≈ 1 = le modèle classe les features de la même façon dans les deux régimes
+            (pas de spécialisation exploitable). Un écart net serait la piste d'un routing
+            conditionnel au régime.
+          </p>
         </div>
       )}
       {hasFeats && (

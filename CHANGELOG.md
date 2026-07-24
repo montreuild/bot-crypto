@@ -805,6 +805,67 @@ trouvés et corrigés dans le gate lui-même :
   méthodologie d'entraînement différente (features/pruning/calibration) plutôt
   qu'un artefact de la seule granularité des labels (testé et écarté).
 
+### 🤖 ML-02 : le scoring du gate devient un contrat porté par la recette
+
+Les correctifs de la passe précédente étaient des cas particuliers empilés
+dans le gate (une recette single-horizon ici, un format non lu là, un
+paramètre LightGBM patché à la main dans 6 fichiers). Le problème de fond :
+`policy.score_holdout` **supposait** un format de persistance (bundle
+amplitude+direction V4), un catalogue de features (V4) et une définition de
+labels — chaque écart devenait une exception à coder.
+
+Le scoring appartient désormais à la recette (`app/ml/scoring.py`) :
+
+- **`gate_spec`** (déclaratif, sur `BaseStrategyML`) — `label_horizons`,
+  `amp_top_pct`, `metric` : pour les recettes qui utilisent le scorer par
+  défaut avec d'autres conventions. Les clés d'exploitation (seuils,
+  fenêtre) restent au YAML, et `gate_metric` prime sur le `metric` déclaré.
+- **`score_holdout()`** (classmethod surchargeable) — pour les recettes dont
+  le format diffère réellement. `classmethod` par construction : on score un
+  artefact sur disque (souvent le sortant), jamais l'état en mémoire.
+- `policy.score_holdout` devient un dispatcher, avec repli sur le scorer par
+  défaut si la recette n'a rien surchargé.
+
+Ce que le contrat a révélé — **le bug touchait 6 stratégies, pas 2** :
+`opus_omnibus_v7`, `opus_omnibus_v10_retrained`, `scoring_statistique_opus_v4`
+et `v5` labellisent aussi en `t+1` et étaient gatées contre `[1,3,6]`, comme
+`opus_stat_retrained_v4`. Toutes déclarent maintenant leur convention ;
+`opus_omnibus_v12` hérite de celle de v11 sans duplication, et v11 dérive la
+sienne de `fixed_params` pour que les deux ne puissent pas diverger.
+
+- **`ml_dynamic_threshold` est réellement gatable** (au lieu de « format non
+  supporté ») : scorer dédié qui charge son booster unique, construit SES
+  features et SES labels à seuil de volatilité adaptatif, et arbitre sur
+  `auc_dir` — la recette n'a pas de modèle d'amplitude.
+- **`scoring_statistique_opus_v4/v5`** : leur format (`save_lgb_with_scaler`)
+  ne sérialise ni features ni médianes → diagnostic honnête au lieu d'un
+  `auc_amp` silencieusement absent.
+- **Warning LightGBM générique** (`app/ml/lgb_logging.py`) : les messages
+  passent par `register_logger` vers le logging Python, et le motif
+  « Ignoring unrecognized parameter » est dégradé en DEBUG. Il est inoffensif
+  par construction (LightGBM énumère puis ignore — prédictions vérifiées
+  identiques). Le patch manuel des 6 `.lgb` legacy est **annulé** : le
+  correctif est dans le code et couvre tout artefact futur.
+
+### 🔬 Importance des features par régime (V11/V12) — réponse mesurée
+
+L'importance « gain » de LightGBM est globale et ne peut pas dire si le
+modèle lit d'autres signaux selon le régime. Les attributions par échantillon
+(`predict(..., pred_contrib=True)`, moyennées par bucket de régime) le
+peuvent — ajoutées à `train_meta` avec une similarité inter-régimes
+(Spearman sur le vecteur complet + recouvrement des tops), exposée dans les
+deux UI.
+
+**Mesure réelle (BTC/USDC 15m/30m/1h, fenêtres 20k–40k barres) : Spearman
+0.93–0.999 entre TOUTES les paires de régimes**, recouvrement des top-15 de
+60–93 %. Le modèle direction de V11 hiérarchise les mêmes features partout —
+la paire la moins similaire est bien `trend_up`/`trend_down` (sens attendu)
+mais très loin d'une spécialisation. Cohérent avec l'AUC par régime
+(0.47–0.54 partout, mesurée à la passe précédente) : le modèle ne se contente
+pas de mal performer par régime, il ne *regarde* pas autre chose. La purge
+`dir_min`/`dir_max` de l'optimiseur reste donc justifiée pour V11/V12 ;
+`param_space` inchangé.
+
 ---
 
 ## [12.14.0] - 2026-07-09

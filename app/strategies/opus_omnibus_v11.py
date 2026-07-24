@@ -294,6 +294,15 @@ class Strategy(BaseStrategyML):
         "learning_rate":   0.03,
     }
 
+    # Contrat de gate (ML-02) : le gate doit évaluer un candidat sur LA MÊME
+    # définition de labels que celle de son entraînement — dérivé de
+    # fixed_params (source de vérité réellement lue par TrainConfig) pour que
+    # les deux ne puissent pas diverger.
+    gate_spec: Dict[str, Any] = {
+        "label_horizons": fixed_params["label_horizons"],
+        "amp_top_pct":    fixed_params["amp_top_pct"],
+    }
+
     _DEFAULTS = {
         "enable_hour_filter":  True,
         "active_hours_utc":    list(range(13, 21)),

@@ -16,11 +16,12 @@ le live (``app.ml.trainer.MLStrategyTrainer``), le backtest ``simulated_live``
 
 Le gate ne dépend d'AUCUNE spécificité de backend ML : il s'appuie uniquement
 sur le contrat ``BaseStrategyML`` (``fit``, ``save_model``, ``is_trained``,
-``load_model``, ``reset_model``) + le format de persistance universel à 3
-fichiers (``app.ml.backend.persistence`` — toutes les stratégies ML du dépôt
-y écrivent, cf. ``save_model``/``save_amp_dir_bundle``). Aucun sklearn/scipy
-(cf. phase6-sklearn-removal) : l'AUC est calculée par rang (Mann-Whitney),
-implémentation numpy pure.
+``load_model``, ``reset_model``, et pour le scoring ``gate_spec`` /
+``score_holdout``). Le SCORING lui-même n'est pas universel et n'essaie plus
+de l'être : il est porté par la recette (cf. ``app.ml.scoring``), avec le
+bundle amplitude+direction V4 comme implémentation par défaut. Aucun
+sklearn/scipy (cf. phase6-sklearn-removal) : l'AUC est calculée par rang
+(Mann-Whitney), implémentation numpy pure.
 """
 from __future__ import annotations
 
@@ -31,11 +32,17 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-import numpy as np
-
 import app.ml.model_registry as registry
-from app.ml.backend.persistence import load_amp_dir_bundle
-from app.ml.backend.predictor import predict_batch_raw
+
+# Ré-exports : ``rank_auc``/``score_holdout`` ont toujours vécu ici et restent
+# importables depuis ``app.ml.policy`` (appelants et tests existants).
+from app.ml.scoring import (  # noqa: F401
+    _rankdata_average,
+    rank_auc,
+    resolve_gate_spec,
+    resolve_scorer,
+    score_amp_dir_bundle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,122 +57,46 @@ _RECIPE_PARAM_KEYS = (
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  AUC par rang (Mann-Whitney), sans sklearn/scipy
-# ─────────────────────────────────────────────────────────────────────────────
-def _rankdata_average(a: np.ndarray) -> np.ndarray:
-    """Rangs moyens (méthode "average", équivalent ``scipy.stats.rankdata``) —
-    dépôt sans scipy (phase6-sklearn-removal), implémentation numpy pure via
-    un double argsort + moyenne par groupe de valeurs égales."""
-    n = len(a)
-    sorter = np.argsort(a, kind="mergesort")
-    a_sorted = a[sorter]
-    ordinal = np.arange(1, n + 1, dtype=np.float64)
-    is_new_group = np.empty(n, dtype=bool)
-    is_new_group[0] = True
-    if n > 1:
-        is_new_group[1:] = a_sorted[1:] != a_sorted[:-1]
-    group_id = np.cumsum(is_new_group) - 1
-    sum_per_group = np.bincount(group_id, weights=ordinal)
-    cnt_per_group = np.bincount(group_id)
-    avg_rank_sorted = (sum_per_group / cnt_per_group)[group_id]
-    ranks = np.empty(n, dtype=np.float64)
-    ranks[sorter] = avg_rank_sorted
-    return ranks
-
-
-def rank_auc(y_true: np.ndarray, scores: np.ndarray) -> Optional[float]:
-    """AUC ROC via la statistique de Mann-Whitney U (équivalente à l'AUC,
-    Wilcoxon rank-sum) — ``None`` si une seule classe est présente (AUC non
-    définie, PAS 0.5 : ne pas confondre "pas de signal" et "pas mesurable")."""
-    y = np.asarray(y_true)
-    s = np.asarray(scores, dtype=np.float64)
-    if len(y) == 0 or len(y) != len(s):
-        return None
-    n_pos = int((y == 1).sum())
-    n_neg = int((y == 0).sum())
-    if n_pos == 0 or n_neg == 0:
-        return None
-    finite = np.isfinite(s)
-    if not finite.all():
-        y, s = y[finite], s[finite]
-        n_pos, n_neg = int((y == 1).sum()), int((y == 0).sum())
-        if n_pos == 0 or n_neg == 0:
-            return None
-    ranks = _rankdata_average(s)
-    sum_ranks_pos = float(ranks[y == 1].sum())
-    u = sum_ranks_pos - n_pos * (n_pos + 1) / 2.0
-    return u / (n_pos * n_neg)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Score d'un artefact sur un holdout (features + labels calculés
-#  UNIQUEMENT sur le holdout — aucun look-ahead au-delà)
+#  Score d'un artefact sur un holdout — DISPATCH vers la recette
 # ─────────────────────────────────────────────────────────────────────────────
 def score_holdout(path_prefix: str, holdout_df, *,
                   label_horizons: Optional[List[int]] = None,
-                  amp_top_pct: float = 0.30) -> Dict[str, Any]:
-    """Charge l'artefact à ``path_prefix`` (format universel 3-fichiers) et
-    calcule son AUC réalisée (amp + dir) sur ``holdout_df``.
+                  amp_top_pct: float = 0.30,
+                  strategy: Any = None,
+                  gate_cfg: Any = None,
+                  params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Score l'artefact à ``path_prefix`` sur ``holdout_df``.
 
-    Features et labels sont dérivés de ``holdout_df`` seul : le label d'un
-    horizon ``h`` d'une barre proche de la fin du holdout nécessite ``h``
-    barres *après elle mais toujours dans le holdout* — jamais au-delà (les
-    fonctions de labellisation tronquent silencieusement les dernières
-    ``max(horizons)`` barres, non labellisables). Retourne ``{}`` si
-    l'artefact est illisible ou le holdout trop court ;
-    ``{"unsupported_format": True}`` si l'artefact existe mais dans un format
-    de persistance que ce scorer générique ne sait pas lire (cf. ci-dessous)
-    — ``decide_gate`` distingue ce cas d'un vrai échec de scoring.
+    Le scoring appartient à la RECETTE, pas au gate (cf. ``app.ml.scoring``) :
+    si ``strategy`` est fourni et surcharge ``score_holdout``, on l'appelle ;
+    sinon on retombe sur le scorer par défaut (bundle amplitude+direction V4).
+    ``strategy`` accepte une instance, une classe ou un nom de recette.
 
-    Portée connue : ce scorer suppose le bundle amp+dir V4 universel
-    (``save_amp_dir_bundle``/``load_amp_dir_bundle``) ET le catalogue de
-    features V4 (``build_features``). Les stratégies qui persistent
-    autrement (ex. ``ml_dynamic_threshold`` — un seul booster ``{path}.lgb``,
-    features/labels propres, sans notion amplitude/direction) ne peuvent pas
-    être gatées automatiquement par CE scorer : le gate répond alors "keep"
-    avec un motif explicite plutôt que le trompeur "labels mono-classe /
-    holdout dégénéré" (qui suggère un problème de données, pas d'architecture).
+    ``label_horizons``/``amp_top_pct`` restent acceptés en direct (appelants
+    et tests historiques) et servent à fabriquer un ``gate_cfg`` minimal
+    quand aucun n'est passé.
     """
-    from app.ml.backend.features import (
-        build_features,
-        multi_horizon_labels,
-        single_horizon_labels,
+    if gate_cfg is None:
+        gate_cfg = GateConfig(
+            label_horizons=list(label_horizons or [1, 3, 6]),
+            amp_top_pct=float(amp_top_pct),
+        )
+
+    if strategy is not None:
+        scorer = resolve_scorer(strategy)
+        if scorer is not None:
+            try:
+                return scorer(path_prefix, holdout_df, gate_cfg=gate_cfg, params=params or {})
+            except Exception as e:
+                logger.warning(
+                    f"[MLPolicy] scorer dédié de {getattr(strategy, 'name', strategy)!r} "
+                    f"KO sur {path_prefix} : {e} — repli sur le scorer par défaut"
+                )
+
+    return score_amp_dir_bundle(
+        path_prefix, holdout_df,
+        label_horizons=gate_cfg.label_horizons, amp_top_pct=gate_cfg.amp_top_pct,
     )
-
-    bundle = load_amp_dir_bundle(path_prefix)
-    if bundle is None or bundle.get("amp_model") is None:
-        if os.path.exists(f"{path_prefix}.lgb") and not os.path.exists(f"{path_prefix}.amp.lgb"):
-            return {"unsupported_format": True}
-        return {}
-
-    feats = build_features(holdout_df)
-    if feats is None or len(feats) < 50:
-        return {}
-
-    close = feats["close"].to_numpy().astype(np.float64)
-    hs = list(label_horizons or [1, 3, 6])
-    if len(hs) > 1:
-        y_amp, y_dir, n, _, _ = multi_horizon_labels(close, hs, amp_top_pct)
-    else:
-        y_amp, y_dir, n, _ = single_horizon_labels(close, amp_top_pct)
-    if n < 30:
-        return {}
-
-    scored_feats = feats.head(n)
-    out: Dict[str, Any] = {"n": int(n)}
-    amp_scores = predict_batch_raw(bundle["amp_model"], bundle.get("amp_cal"),
-                                   bundle["features"], bundle["medians"], scored_feats)
-    if amp_scores is not None:
-        out["auc_amp"] = rank_auc(y_amp, amp_scores)
-    # V4 legacy : amp/dir peuvent avoir des features/médianes distinctes
-    # (cf. persistence.save_amp_dir_bundle) — None = partagées (cas courant).
-    dir_feats = bundle.get("dir_features") if bundle.get("dir_features") is not None else bundle["features"]
-    dir_meds  = bundle.get("dir_medians") if bundle.get("dir_medians") is not None else bundle["medians"]
-    dir_scores = predict_batch_raw(bundle.get("dir_model"), bundle.get("dir_cal"),
-                                   dir_feats, dir_meds, scored_feats)
-    if dir_scores is not None:
-        out["auc_dir"] = rank_auc(y_dir, dir_scores)
-    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -229,45 +160,21 @@ def decide_gate(candidate_metrics: Optional[Dict[str, Any]],
 #  Configuration de la politique (lue depuis les params résolus de la stratégie)
 # ─────────────────────────────────────────────────────────────────────────────
 def recipe_gate_defaults(strategy_or_name: Any) -> Dict[str, Any]:
-    """Introspecte ``fixed_params``/``_DEFAULTS`` de la classe ``Strategy``
-    pour les clés de gate qu'elle déclare explicitement (``label_horizons``,
-    ``amp_top_pct``) — permet à ``score_holdout`` d'évaluer un candidat sur
-    LA MÊME définition de labels que celle utilisée à son entraînement, au
-    lieu du défaut ``[1, 3, 6]`` de ``GateConfig`` appliqué aveuglément.
+    """Défauts de gate déclarés par une recette via ``BaseStrategyML.gate_spec``.
 
-    Sans quoi : les recettes single-horizon (``opus_stat_retrained_v4``,
-    ``opus_stat_pretrained_v4`` — labellisation ``t+1`` uniquement, pas de
-    notion de ``label_horizons``) étaient gatées contre des labels
-    multi-horizon ``[1,3,6]`` qu'elles n'ont jamais appris à prédire — écart
-    mesuré : AUC candidat auto-rapporté 0.732 vs AUC gate holdout 0.702 sur
-    un même entraînement (même modèle, labels différents, PAS du bruit
-    d'échantillonnage). Corrigé en déclarant ``label_horizons: [1]`` dans le
-    ``fixed_params`` de ces deux stratégies.
+    Conservé comme alias de ``app.ml.scoring.resolve_gate_spec`` : le nom est
+    utilisé par les appelants/tests existants, mais la source de vérité est
+    désormais l'attribut déclaratif ``gate_spec`` de la recette — plus le
+    reniflage de ``fixed_params``/``_DEFAULTS`` (heuristique fragile : elle
+    devinait l'intention à partir de clés d'ENTRAÎNEMENT qui se trouvaient
+    porter le même nom).
 
-    Sans déclaration explicite (stratégies non retouchées), ``GateConfig``
-    garde son défaut ``[1, 3, 6]`` — comportement inchangé.
-
-    ``strategy_or_name`` : nom de recette (import ``app.strategies.<name>``)
-    ou instance/classe déjà résolue. Best-effort : retourne ``{}`` si
-    l'introspection échoue, jamais d'exception."""
-    cls: Any = None
-    if isinstance(strategy_or_name, str):
-        try:
-            import importlib
-            cls = importlib.import_module(f"app.strategies.{strategy_or_name}").Strategy
-        except Exception:
-            return {}
-    elif isinstance(strategy_or_name, type):
-        cls = strategy_or_name
-    else:
-        cls = type(strategy_or_name)
-    out: Dict[str, Any] = {}
-    for src_name in ("fixed_params", "_DEFAULTS"):
-        src = getattr(cls, src_name, None) or {}
-        for key in ("label_horizons", "amp_top_pct"):
-            if key not in out and key in src:
-                out[key] = src[key]
-    return out
+    Motivation d'origine, toujours valable : une recette single-horizon
+    (``opus_stat_retrained_v4`` — labellisation ``t+1``) était gatée contre
+    des labels multi-horizon ``[1,3,6]`` hérités de V11, qu'elle n'a jamais
+    appris à prédire (écart mesuré 0.732 auto-rapporté vs 0.702 au gate).
+    """
+    return resolve_gate_spec(strategy_or_name)
 
 
 @dataclass
@@ -286,6 +193,15 @@ class GateConfig:
 
     @classmethod
     def from_params(cls, p: Dict[str, Any]) -> "GateConfig":
+        """``p`` = ``{**gate_spec_de_la_recette, **params_résolus}``.
+
+        Deux origines se rencontrent ici, avec des préséances différentes :
+        la RECETTE déclare ses conventions (``metric``, ``label_horizons``,
+        ``amp_top_pct`` — cf. ``gate_spec``), l'EXPLOITATION règle les seuils
+        (clés préfixées ``gate_``, lues du YAML). ``gate_metric`` gagne donc
+        sur le ``metric`` de la recette : un opérateur doit pouvoir arbitrer
+        sur une autre métrique sans toucher au code de la stratégie.
+        """
         p = p or {}
         wb = p.get("window_bars")
         return cls(
@@ -294,7 +210,7 @@ class GateConfig:
             min_window_bars=int(p.get("gate_min_window_bars", 2000)),
             auc_floor=float(p.get("gate_auc_floor", 0.55)),
             epsilon=float(p.get("gate_epsilon", 0.01)),
-            metric=str(p.get("gate_metric", "auc_amp")),
+            metric=str(p.get("gate_metric", p.get("metric", "auc_amp"))),
             label_horizons=list(p.get("label_horizons", [1, 3, 6])),
             amp_top_pct=float(p.get("amp_top_pct", 0.30)),
         )
@@ -343,7 +259,7 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
     if incumbent is not None:
         incumbent_metrics = score_holdout(
             incumbent.path_prefix, holdout_df,
-            label_horizons=gc_.label_horizons, amp_top_pct=gc_.amp_top_pct,
+            strategy=strategy, gate_cfg=gc_, params=params,
         )
 
     tmp_dir = tempfile.mkdtemp(prefix="ml_gate_")
@@ -368,7 +284,7 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
         strategy.save_model(tmp_prefix)
         candidate_metrics = score_holdout(
             tmp_prefix, holdout_df,
-            label_horizons=gc_.label_horizons, amp_top_pct=gc_.amp_top_pct,
+            strategy=strategy, gate_cfg=gc_, params=params,
         )
         gate = decide_gate(candidate_metrics, incumbent_metrics,
                            auc_floor=gc_.auc_floor, epsilon=gc_.epsilon, metric=gc_.metric)

@@ -137,9 +137,8 @@ def _train_candidate_and_score(strategy_name: str, tf: str, train_df: pl.DataFra
     try:
         tmp_prefix = os.path.join(tmp_dir, f"{strategy_name}_{tf}")
         strat.save_model(tmp_prefix)
-        metrics = policy.score_holdout(tmp_prefix, holdout_df,
-                                       label_horizons=gate_cfg.label_horizons,
-                                       amp_top_pct=gate_cfg.amp_top_pct)
+        metrics = policy.score_holdout(tmp_prefix, holdout_df, strategy=strat,
+                                       gate_cfg=gate_cfg, params=params)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     return strat, metrics
@@ -169,8 +168,8 @@ def _dry_run(strategy_name: str, symbol: str, tf: str, df: pl.DataFrame,
     incumbent_metrics = None
     if incumbent is not None:
         incumbent_metrics = policy.score_holdout(incumbent.path_prefix, holdout_df,
-                                                 label_horizons=gc_.label_horizons,
-                                                 amp_top_pct=gc_.amp_top_pct)
+                                                 strategy=strategy_name,
+                                                 gate_cfg=gc_, params=params)
     gate = policy.decide_gate(candidate_metrics, incumbent_metrics,
                               auc_floor=gc_.auc_floor, epsilon=gc_.epsilon, metric=gc_.metric)
     return {
@@ -253,8 +252,8 @@ def window_sweep(strategy_name: str, symbol: str, tf: str, windows: List[int], *
     incumbent_metrics = None
     if incumbent is not None:
         incumbent_metrics = policy.score_holdout(incumbent.path_prefix, holdout_df,
-                                                 label_horizons=gc_.label_horizons,
-                                                 amp_top_pct=gc_.amp_top_pct)
+                                                 strategy=strategy_name,
+                                                 gate_cfg=gc_, params=p)
     candidate_metrics = {k: v for k, v in best.items() if k not in ("window_bars", "n_train")}
     gate = policy.decide_gate(candidate_metrics, incumbent_metrics,
                               auc_floor=gc_.auc_floor, epsilon=gc_.epsilon, metric=gc_.metric)

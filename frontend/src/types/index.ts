@@ -366,6 +366,18 @@ export interface ModelRegimeAuc {
   approx_n?: number;
 }
 
+export interface ModelRegimeFeatureImportance {
+  n: number;
+  top: { feature: string; contrib: number }[];
+}
+
+export interface ModelRegimeSimilarity {
+  /** Spearman sur le vecteur complet d'importances : ≈1 = mêmes priorités. */
+  spearman?: number | null;
+  /** Part de features communes dans le top-N (0..1). */
+  top_overlap: number;
+}
+
 export interface ModelTrainMeta {
   n_features?: number;
   n_train?: number;
@@ -376,6 +388,8 @@ export interface ModelTrainMeta {
   auc_dir_by_regime?: Record<string, ModelRegimeAuc>;
   feature_importance_amp?: ModelFeatureImportance[];
   feature_importance_dir?: ModelFeatureImportance[];
+  feature_importance_dir_by_regime?: Record<string, ModelRegimeFeatureImportance>;
+  regime_feature_similarity?: Record<string, ModelRegimeSimilarity>;
   [key: string]: unknown;
 }
 

@@ -548,13 +548,15 @@ class Strategy(BaseStrategyML):
         "n_estimators":    500,
         "num_leaves":      31,
         "learning_rate":   0.03,
-        # Déclaratif — _train_impl labellise toujours en t+1 (ret_t1 ci-dessous),
-        # jamais lu en interne. Sert au gate (app.ml.policy.recipe_gate_defaults)
-        # pour évaluer les candidats sur LA MÊME définition de labels qu'à
-        # l'entraînement, au lieu du défaut multi-horizon [1,3,6] de GateConfig
-        # (pensé pour V11) qui donnait un AUC holdout mesuré sur une cible que
-        # ce modèle n'a jamais appris à prédire.
-        "label_horizons":  [1],
+    }
+
+    # Contrat de gate (ML-02) : _train_impl labellise en t+1 EN DUR (ret_t1),
+    # ce n'est pas un paramètre d'entraînement — d'où la déclaration explicite
+    # ici. Sans elle, le gate évaluait les candidats sur le défaut multi-horizon
+    # [1,3,6] hérité de V11, soit une cible que ce modèle n'a jamais apprise.
+    gate_spec: Dict[str, Any] = {
+        "label_horizons": [1],
+        "amp_top_pct":    fixed_params["amp_top_pct"],
     }
 
     _DEFAULTS = {

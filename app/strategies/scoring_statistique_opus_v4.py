@@ -224,6 +224,15 @@ class Strategy(BaseStrategyML):
         "retrain_every": 800,
     }
 
+    # Contrat de gate (ML-02) : labellisation single-horizon t+1 câblée en dur
+    # dans _train_impl (ret_t1), ce n'est pas un paramètre d'entraînement.
+    # Sans cette déclaration, le gate évaluait les candidats sur le défaut
+    # multi-horizon [1,3,6] hérité de V11 — une cible jamais apprise ici.
+    gate_spec: Dict[str, Any] = {
+        "label_horizons": [1],
+        "amp_top_pct":    fixed_params["amp_top_pct"],
+    }
+
     def __init__(self):
         self._amp_models:  Dict[str, Any] = {}
         self._dir_models:  Dict[str, Any] = {}

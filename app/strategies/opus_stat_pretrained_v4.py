@@ -307,11 +307,13 @@ class Strategy(BaseStrategyML):
         "tp_atr_mult_other": [0.8, 1.0, 1.2, 1.4],
         "max_hold_bars":     [1, 2, 4, 6, 8],
     }
-    # Déclaratif uniquement (aucun entraînement n'a jamais lieu ici) — sert au
-    # gate (app.ml.policy.recipe_gate_defaults) si jamais un dry-run/sweep est
-    # lancé sur cette recette figée : le pack V4 original est labellisé en
-    # t+1 (cf. rapport V4), pas le défaut multi-horizon [1,3,6] de GateConfig.
-    fixed_params: Dict[str, Any] = {"label_horizons": [1]}
+    fixed_params: Dict[str, Any] = {}
+
+    # Contrat de gate (ML-02) — utile même si aucun entraînement n'a jamais
+    # lieu ici : un dry-run/sweep lancé sur cette recette figée doit scorer le
+    # pack V4 sur SA labellisation d'origine (t+1, cf. rapport V4), pas sur le
+    # défaut multi-horizon [1,3,6] hérité de V11.
+    gate_spec: Dict[str, Any] = {"label_horizons": [1]}
 
     # Valeurs par défaut des flags de comportement V4 — surchargeables via YAML.
     # Multiplicateurs SL/TP par régime alignés sur risk.py du bot V4 :

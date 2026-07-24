@@ -205,14 +205,57 @@ function regimeAucTbl(byRegime){
         (v.auc!=null?aucBadge(v.auc,'x'):'<span class="mdl-badge">n/a</span>')+'</td></tr>';
     }).join('')+'</tbody></table>';
 }
+const _REGIME_LBL={range:'Range',trend_up:'Trend Up',trend_down:'Trend Down',choppy:'Choppy'};
+
+// Importance des features PAR RÉGIME (attributions pred_contrib) : une colonne
+// par régime, pour lire d'un coup d'œil si le modèle direction s'appuie sur des
+// signaux différents selon le régime de marché — ou sur les mêmes partout.
+function regimeFeatureCols(byRegime){
+  const keys=Object.keys(byRegime||{}).filter(k=>_REGIME_LBL[k]&&(byRegime[k].top||[]).length);
+  if(!keys.length)return '';
+  return '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px">'+
+    keys.map(k=>{
+      const v=byRegime[k];
+      return '<div style="flex:1;min-width:190px">'+
+        '<div style="font-size:.66rem;color:var(--muted);margin-bottom:4px">'+esc(_REGIME_LBL[k])+
+        ' <span style="color:var(--dim)">(n='+(v.n??'—')+')</span></div>'+
+        '<table class="mdl-sub-tbl"><tbody>'+
+        v.top.slice(0,8).map(f=>'<tr><td>'+esc(f.feature)+'</td><td style="text-align:right">'+esc(String(f.contrib))+'</td></tr>').join('')+
+        '</tbody></table></div>';
+    }).join('')+'</div>';
+}
+
+// Similarité des importances entre régimes. Spearman proche de 1 = le modèle
+// hiérarchise les features de la MÊME façon dans les deux régimes (aucune
+// spécialisation) ; overlap = features communes dans le top.
+function regimeSimilarityTbl(sim){
+  const keys=Object.keys(sim||{});
+  if(!keys.length)return '';
+  return '<table class="mdl-sub-tbl"><thead><tr><th>Paire de régimes</th><th>Spearman</th><th>Overlap top</th></tr></thead><tbody>'+
+    keys.map(k=>{
+      const v=sim[k]||{};
+      const [a,b]=k.split('__vs__');
+      const rho=v.spearman;
+      // ≥0.9 = quasi identique (rouge : pas de spécialisation exploitable) ;
+      // <0.7 = hiérarchies nettement distinctes (vert : piste à creuser).
+      const cls=rho==null?'':(rho>=0.9?'mdl-empty':rho>=0.7?'mdl-warn':'mdl-ok');
+      return '<tr><td>'+esc((_REGIME_LBL[a]||a)+' ↔ '+(_REGIME_LBL[b]||b))+'</td>'+
+        '<td>'+(rho==null?'<span class="mdl-badge">n/a</span>':'<span class="mdl-badge '+cls+'">'+rho.toFixed(3)+'</span>')+'</td>'+
+        '<td>'+(v.top_overlap!=null?(v.top_overlap*100).toFixed(0)+'%':'—')+'</td></tr>';
+    }).join('')+'</tbody></table>';
+}
+
 function diagnosticsPanel(tm){
   if(!tm||!Object.keys(tm).length)return '';
   const hasFeats=(tm.feature_importance_amp&&tm.feature_importance_amp.length)||(tm.feature_importance_dir&&tm.feature_importance_dir.length);
   const hasRegime=tm.auc_dir_by_regime&&Object.keys(tm.auc_dir_by_regime).length;
+  const fiReg=tm.feature_importance_dir_by_regime;
+  const hasFiReg=fiReg&&Object.keys(fiReg).some(k=>(fiReg[k].top||[]).length);
+  const hasSim=tm.regime_feature_similarity&&Object.keys(tm.regime_feature_similarity).length;
   const calTxt=tm.calibrated
     ? 'Calibré ✓'+(tm.cal_err?' — erreur moyenne : amp='+(tm.cal_err.amp??'—')+' dir='+(tm.cal_err.dir??'—'):'')
     : 'Non calibré';
-  if(!hasFeats && !hasRegime)return '';
+  if(!hasFeats && !hasRegime && !hasFiReg)return '';
   return '<div class="mdl-sub-hdr">Diagnostics (version active)</div>'+
     '<div class="mdl-hint" style="margin-bottom:8px">'+esc(calTxt)+
     (tm.n_features?' · '+tm.n_features+' features':'')+
@@ -221,7 +264,13 @@ function diagnosticsPanel(tm){
     (hasFeats?'<div class="two-col-feats" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px">'+
       '<div style="flex:1;min-width:220px"><div style="font-size:.68rem;color:var(--muted);margin-bottom:4px">Top features — amplitude</div>'+featureImportanceTbl(tm.feature_importance_amp)+'</div>'+
       '<div style="flex:1;min-width:220px"><div style="font-size:.68rem;color:var(--muted);margin-bottom:4px">Top features — direction</div>'+featureImportanceTbl(tm.feature_importance_dir)+'</div>'+
-      '</div>':'');
+      '</div>':'')+
+    (hasFiReg?'<div style="font-size:.68rem;color:var(--muted);margin:12px 0 2px">Top features direction PAR RÉGIME '+
+      '<span style="color:var(--dim)">(attributions moyennes |contribution|)</span></div>'+regimeFeatureCols(fiReg):'')+
+    (hasSim?'<div style="font-size:.68rem;color:var(--muted);margin:12px 0 2px">Similarité des importances entre régimes</div>'+
+      regimeSimilarityTbl(tm.regime_feature_similarity)+
+      '<div class="mdl-hint">Spearman ≈ 1 = le modèle classe les features de la même façon dans les deux régimes '+
+      '(pas de spécialisation exploitable). Un écart net serait la piste d\'un routing conditionnel au régime.</div>':'');
 }
 
 async function loadDetail(m){
