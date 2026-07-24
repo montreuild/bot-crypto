@@ -48,6 +48,77 @@ def _bar_to_days(tf: str) -> float:
     return _TF_MINUTES.get(tf, 15) / 1440.0
 
 
+def _iso_of(df: pl.DataFrame, idx: int) -> Optional[str]:
+    """``time`` de la barre ``idx`` en ISO — borne ``as_of``/anti-chevauchement
+    du registre ML (``app.ml.model_registry.to_iso``, importé localement pour
+    éviter un import module-wide non nécessaire au reste de ce fichier)."""
+    if df is None or len(df) == 0 or "time" not in df.columns:
+        return None
+    from app.ml.model_registry import to_iso
+    return to_iso(df["time"][idx])
+
+
+def _resolve_frozen_ml_model(strat, symbol: Optional[str], tf: Optional[str],
+                             window_start: Optional[str], window_end: Optional[str]) -> dict:
+    """Résout et charge le modèle figé pour ``strat`` via le registre ML
+    (``ml_mode="frozen"``, ou repli d'une stratégie sans cadence de
+    réentraînement configurée en ``ml_mode="simulated_live"``).
+
+    ``as_of=window_start`` : ne retient qu'un modèle entraîné AVANT le début
+    de la fenêtre backtestée — c'est la garde qui empêche un backtest de
+    charger un modèle qui a vu des données de la période évaluée. Un
+    chevauchement résiduel (modèle legacy sans date, ou fenêtre de train
+    partiellement postérieure) est signalé (log + ``overlap_warning``), pas
+    silencieusement ignoré.
+
+    Ne lève jamais : un modèle introuvable/illisible reste un repli sur
+    l'entraînement inline (comportement historique), mais ce repli est
+    désormais TOUJOURS visible dans l'entrée retournée (``fallback_to_inline``)
+    au lieu d'un simple log — c'est le changement demandé par ML-02 §4.1
+    (« ce switch silencieux peut fausser une comparaison sans qu'on le voie »).
+    """
+    import app.ml.model_registry as ml_registry
+
+    entry: Dict = {"resolved": False, "fallback_to_inline": True}
+    if not tf:
+        return entry
+    base_dir = getattr(strat, "model_dir", "models") or "models"
+    try:
+        art = ml_registry.resolve(symbol, tf, strat.name, as_of=window_start, base_dir=base_dir)
+    except Exception as e:
+        logger.warning(f"[Backtest] ml_mode=frozen : resolve() KO pour {strat.name}/{tf} : {e}")
+        return entry
+    if art is None:
+        logger.warning(
+            f"[Backtest] ml_mode=frozen : aucun modèle résoluble pour {strat.name}/{tf} "
+            f"(symbole={symbol}) — entraînement inline activé (lancez d'abord un cycle "
+            f"live, le runner CLI, ou un optimiseur pour publier un modèle)."
+        )
+        return entry
+    overlap = ml_registry.overlaps(art, window_start, window_end)
+    if overlap:
+        logger.warning(
+            f"[Backtest] ml_mode=frozen : {strat.name}/{tf} — la fenêtre d'entraînement "
+            f"de {art.version_id} ({art.train_start}..{art.train_end}) chevauche la "
+            f"fenêtre backtestée ({window_start}..{window_end}) : fuite potentielle."
+        )
+    if not strat.load_model(art.path_prefix):
+        logger.warning(
+            f"[Backtest] ml_mode=frozen : {strat.name}/{tf} — modèle {art.version_id} "
+            f"résolu mais illisible — entraînement inline activé."
+        )
+        return entry
+    strat.managed_externally = True
+    logger.debug(f"[Backtest] ml_mode=frozen : {strat.name}/{tf} -> {art.version_id} chargé")
+    entry.update({
+        "resolved": True, "fallback_to_inline": False,
+        "version_id": art.version_id, "train_start": art.train_start,
+        "train_end": art.train_end, "auc": round(float(art.auc), 4),
+        "legacy": art.legacy, "overlap_warning": overlap,
+    })
+    return entry
+
+
 # ── BacktestResult ──
 class BacktestResult:
     def __init__(self, trades: List[dict], equity_curve: List[float],
@@ -205,21 +276,49 @@ class BacktestResult:
             "by_strategy":        self.by_strategy,
             "trades":             self.trades,
             "diagnostics":        getattr(self, "diagnostics", None),
+            "ml_info":            getattr(self, "ml_info", None),
         }
 
 
 # ── Backtester ──
+_ML_MODES = ("frozen", "inline", "simulated_live")
+
+
 class Backtester:
     """Backtester trailing stop multi-phases, sans TP fixe.
-    use_pretrained_ml=False force le réentraînement inline (walk-forward/optimiseur).
+
+    ``ml_mode`` (ML-02) pilote le comportement des stratégies ``BaseStrategyML`` :
+
+    - ``"frozen"`` (défaut) : résout le dernier modèle promu au registre
+      antérieur au début de la fenêtre backtestée (``as_of``) — rapide,
+      déterministe, sans fuite temporelle. Repli visible sur l'entraînement
+      inline si aucun modèle n'est résoluble (cf. ``result.ml_info``).
+    - ``"inline"`` : réentraînement walk-forward par la stratégie elle-même
+      (comportement historique de ``use_pretrained_ml=False``) — utilisé par
+      l'optimiseur et les tests qui évaluent le comportement réel de la ML.
+    - ``"simulated_live"`` : rejoue la politique de rafraîchissement complète
+      (``app.ml.policy.maybe_refresh`` — entraînement + gate + registre) aux
+      frontières de cadence de chaque stratégie, comme si le backtest était
+      vécu en live. Pour une stratégie sans cadence configurée (modèle figé
+      pour toujours), se comporte comme ``"frozen"``.
+
+    ``use_pretrained_ml`` (bool) reste accepté pour compatibilité ascendante :
+    ``True``/``False`` équivalent à ``ml_mode="frozen"``/``"inline"``. Certains
+    appelants mutent l'attribut ``use_pretrained_ml`` après construction (avant
+    ``run()``) — ce chemin continue de fonctionner : ``ml_mode`` explicite est
+    prioritaire uniquement s'il a été passé au constructeur.
     """
     def __init__(self, engine: Engine, cfg: dict,
                  cancel_event: Optional[threading.Event] = None,
-                 use_pretrained_ml: bool = True):
+                 use_pretrained_ml: bool = True,
+                 ml_mode: Optional[str] = None):
         self.engine             = engine
         self.cfg                = cfg
         self._cancel_event      = cancel_event
         self.use_pretrained_ml  = use_pretrained_ml
+        if ml_mode is not None and ml_mode not in _ML_MODES:
+            raise ValueError(f"ml_mode invalide : {ml_mode!r} (attendu parmi {_ML_MODES})")
+        self._ml_mode_explicit  = ml_mode
         bcfg = cfg.get("backtest", {})
         tcfg = cfg.get("trading",  {})
 
@@ -625,8 +724,7 @@ class Backtester:
     # ── run ───────────────────────────────────────────────────────────────────
     def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL,
             timeframe: str = None) -> "BacktestResult":
-        import os
-
+        import app.ml.policy as _ml_policy
         from app.engine.engine import BaseStrategyML
         # Résolution des paramètres en amont du hook ``prepare_for_backtest`` :
         # certaines stratégies pré-calculent leurs features/votes en fonction du
@@ -636,24 +734,52 @@ class Backtester:
         # celle de BTC/USDC ; les autres symboles prennent leur config dédiée si
         # elle existe, sinon les params de base (séparation des configs).
         strat_params = resolve_strategy_params(self.cfg, timeframe, symbol)
+
+        # ML-02 : mode effectif — l'attribut ``use_pretrained_ml`` est relu ICI
+        # (pas caché à __init__) pour rester compatible avec les appelants qui
+        # le mutent après construction (cf. docstring de la classe).
+        ml_mode = self._ml_mode_explicit or ("frozen" if self.use_pretrained_ml else "inline")
+        symbol_key      = symbol or DEFAULT_CONFIG_SYMBOL
+        window_start_iso = _iso_of(df, 0)
+        window_end_iso   = _iso_of(df, -1)
+        ml_info: Dict[str, Dict] = {"mode": ml_mode, "symbol": symbol_key,
+                                    "timeframe": timeframe, "models": {}}
+        # (stratégie, cadence_bars, dernière barre rafraîchie, params) pour le
+        # rafraîchissement périodique en ml_mode="simulated_live" — alimenté
+        # ci-dessous, consommé dans la boucle bar-par-bar plus loin.
+        sim_live_entries: List[Dict] = []
+
         for strat in self.engine.strategies:
             strat._bt_params = strat_params
-            # ── Spécifique ML : reset + chargement du modèle pré-entraîné ──────
+            # ── Spécifique ML : reset + configuration selon ml_mode ────────────
             if isinstance(strat, BaseStrategyML):
                 strat.reset_model()
                 strat._cancel_event = self._cancel_event
-                if self.use_pretrained_ml and timeframe:
-                    # Backtest standard : utilise le modèle pré-entraîné du timeframe.
-                    # Pas de réentraînement inline → rapide et déterministe.
-                    path = os.path.join(strat.model_dir, f"{strat.name}_{timeframe}")
-                    if strat.load_model(path):
-                        strat.managed_externally = True
-                        logger.debug(f"[Backtest] ML '{strat.name}' : modèle {timeframe} chargé")
-                    else:
-                        logger.info(
-                            f"[Backtest] ML '{strat.name}' : aucun modèle pour {timeframe} "
-                            "— entraînement inline activé (lancez d'abord un cycle live ou l'optimiseur)"
-                        )
+                sp = strat_params.get(strat.name, {})
+                cadence_bars = int(sp.get("retrain_every") or 0)
+
+                if ml_mode == "inline":
+                    pass  # comportement historique : la stratégie s'auto-entraîne (need_train interne)
+                elif ml_mode == "simulated_live" and cadence_bars > 0 and timeframe:
+                    # Pas de résolution figée ici : la politique de gate décide
+                    # au fil de la boucle (cf. plus bas), à partir d'un état
+                    # non entraîné (cold start, comme un live fraîchement déployé).
+                    strat.managed_externally = True
+                    entry = {"requested_mode": "simulated_live", "cadence_bars": cadence_bars,
+                             "n_refreshes": 0, "decisions": []}
+                    ml_info["models"][strat.name] = entry
+                    sim_live_entries.append({
+                        "strat": strat, "symbol": symbol_key, "tf": timeframe,
+                        "cadence_bars": cadence_bars, "last_refresh_bar": -1,
+                        "params": sp, "entry": entry,
+                    })
+                else:
+                    # "frozen", ou "simulated_live" sans cadence configurée
+                    # (modèle figé pour toujours, ex. familles V4 pretrained).
+                    entry = _resolve_frozen_ml_model(strat, symbol_key, timeframe,
+                                                     window_start_iso, window_end_iso)
+                    entry["requested_mode"] = ml_mode
+                    ml_info["models"][strat.name] = entry
             # ── Pré-calcul des features (optionnel, par stratégie) ───────────
             # Hook ouvert à TOUTES les stratégies (ML ou rule-based) : les
             # stratégies rule-based l'utilisent aussi pour réutiliser des séries
@@ -830,6 +956,32 @@ class Backtester:
                     )
             ctx.window = df[:i + 1]
 
+            # ── ml_mode="simulated_live" : rafraîchissement aux frontières de
+            # cadence, indépendamment de la gestion de position (comme le
+            # thread du live trainer, qui tourne sans se soucier des positions
+            # ouvertes). Coût borné : une entrée par stratégie ML concernée,
+            # déclenchée seulement tous les ``cadence_bars`` (800-3000+
+            # barres typiquement), pas à chaque itération.
+            for sle in sim_live_entries:
+                if i - sle["last_refresh_bar"] < sle["cadence_bars"]:
+                    continue
+                sle["last_refresh_bar"] = i
+                try:
+                    res = _ml_policy.maybe_refresh(
+                        sle["strat"], sle["symbol"], sle["tf"], ctx.window,
+                        params=sle["params"], recipe=sle["strat"].name,
+                        source="backtest_sim",
+                        base_dir=getattr(sle["strat"], "model_dir", "models") or "models",
+                    )
+                except Exception as e:
+                    res = {"decision": "failed", "reason": f"maybe_refresh KO : {e}"}
+                    logger.warning(
+                        f"[Backtest] simulated_live : {sle['strat'].name}/{sle['tf']} "
+                        f"@bar {i} : {e}"
+                    )
+                sle["entry"]["n_refreshes"] += 1
+                sle["entry"]["decisions"].append({"bar": i, **res})
+
             # ── Gestion de la position ouverte ────────────────────────────────
             if position is not None:
                 position = self._manage_open_position(ctx, position, i)
@@ -907,6 +1059,7 @@ class Backtester:
         _tf = timeframe or self.cfg["trading"].get("timeframe", "1h")
         result = BacktestResult(trades, equity_curve, self.initial_capital(self.cfg), timestamps, timeframe=_tf)
         result.diagnostics = diag
+        result.ml_info = ml_info
         return self._add_buy_and_hold(result, df, warmup)
 
     def _add_buy_and_hold(self, result: "BacktestResult", df: pl.DataFrame,
