@@ -261,22 +261,25 @@ class Strategy(BaseStrategyML):
     timeframes: List[str] = list(_SUPPORTED_TFS)
 
     param_space: Dict[str, Any] = {
-        # ── Setups V10 ──
+        # ── Setups V10 (amplitude uniquement) ──
         "setup_signal_up_amp_min":          [0.45, 0.50, 0.55],
-        "setup_signal_up_dir_min":          [0.55, 0.60, 0.65],
         "setup_short_td_high_amp_min":      [0.55, 0.60, 0.65],
-        "setup_short_td_high_dir_max":      [0.25, 0.30, 0.35],
         "setup_long_choppy_amp_min":        [0.45, 0.50, 0.55],
-        "setup_long_choppy_dir_min":        [0.55, 0.58, 0.62],
         "setup_short_choppy_amp_min":       [0.45, 0.50, 0.55],
-        "setup_short_choppy_dir_max":       [0.38, 0.42, 0.46],
         "setup_long_tu_amp_min":            [0.50, 0.55, 0.60],
-        "setup_long_tu_dir_min":            [0.58, 0.62, 0.66],
         "setup_long_range_strict_amp_min":  [0.55, 0.60, 0.65],
         "setup_long_range_light_amp_min":   [0.45, 0.50, 0.55],
         "exit_td_window_bars":              [2, 3, 4],
         # ── V11 ML (décision uniquement) ──
         "di_rescue":       [8.0, 10.0, 14.0],
+        # ML-02 : les seuils setup_*_dir_min/dir_max (direction) ont été
+        # retirés de l'espace de recherche — AUC direction mesurée 0.53-0.54
+        # (V4 et V11), au niveau du hasard y compris in-sample : il n'y a
+        # rien à right- ou mal-régler sur ce signal, l'optimiseur ne fait
+        # qu'y dépenser ~1/3 de son budget d'essais pour du bruit. Les
+        # valeurs restent réglables manuellement dans le YAML de la
+        # stratégie (_apply_setup_overrides les lit si présentes) — seule
+        # la recherche automatique ne les explore plus par défaut.
     }
     # Hyperparamètres d'entraînement figés (hors espace de recherche).
     fixed_params: Dict[str, Any] = {
