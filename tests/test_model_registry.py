@@ -190,3 +190,182 @@ def test_publish_missing_source_files_returns_none(tmp_path):
     art = registry.publish("BTC/USDC", "1h", "r", str(tmp_path / "does_not_exist"),
                            base_dir=base)
     assert art is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Pin persistant (set_pin/get_pin/clear_pin)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_get_pin_none_when_not_set(tmp_path):
+    base = str(tmp_path / "models")
+    assert registry.get_pin("BTC/USDC", "1h", "r", base_dir=base) is None
+
+
+def test_set_pin_then_resolve_prefers_pinned_over_newer(tmp_path):
+    base = str(tmp_path / "models")
+    old_src = _write_tmp_bundle(tmp_path, "old", best_auc=0.55)
+    old = registry.publish("BTC/USDC", "1h", "r", old_src, train_end="2026-01-01T00:00:00",
+                           decision="promote", base_dir=base)
+    new_src = _write_tmp_bundle(tmp_path, "new", best_auc=0.70)
+    registry.publish("BTC/USDC", "1h", "r", new_src, train_end="2026-03-01T00:00:00",
+                     decision="promote", base_dir=base)
+
+    # Sans pin : la plus récente gagne.
+    assert registry.resolve("BTC/USDC", "1h", "r", base_dir=base).auc == pytest.approx(0.70)
+
+    ok = registry.set_pin("BTC/USDC", "1h", "r", old.version_id, base_dir=base)
+    assert ok is True
+    assert registry.get_pin("BTC/USDC", "1h", "r", base_dir=base) == old.version_id
+
+    pinned = registry.resolve("BTC/USDC", "1h", "r", base_dir=base)
+    assert pinned.version_id == old.version_id
+    assert pinned.auc == pytest.approx(0.55)
+
+
+def test_set_pin_can_override_a_rejected_version(tmp_path):
+    """Un pin peut ramener en service un candidat rejeté (decision='keep') —
+    override humain assumé, distinct de l'éligibilité automatique du gate."""
+    base = str(tmp_path / "models")
+    src = _write_tmp_bundle(tmp_path, "rejected", best_auc=0.40)
+    art = registry.publish("BTC/USDC", "1h", "r", src, train_end="2026-01-01T00:00:00",
+                           decision="keep", base_dir=base)
+    assert registry.resolve("BTC/USDC", "1h", "r", base_dir=base) is None
+
+    registry.set_pin("BTC/USDC", "1h", "r", art.version_id, base_dir=base)
+    resolved = registry.resolve("BTC/USDC", "1h", "r", base_dir=base)
+    assert resolved is not None
+    assert resolved.version_id == art.version_id
+
+
+def test_clear_pin_restores_default_resolution(tmp_path):
+    base = str(tmp_path / "models")
+    src = _write_tmp_bundle(tmp_path, "v1", best_auc=0.60)
+    art = registry.publish("BTC/USDC", "1h", "r", src, train_end="2026-01-01T00:00:00",
+                           decision="promote", base_dir=base)
+    registry.set_pin("BTC/USDC", "1h", "r", art.version_id, base_dir=base)
+    registry.clear_pin("BTC/USDC", "1h", "r", base_dir=base)
+    assert registry.get_pin("BTC/USDC", "1h", "r", base_dir=base) is None
+    # Toujours résolu normalement (repli sur la dernière éligible).
+    assert registry.resolve("BTC/USDC", "1h", "r", base_dir=base).version_id == art.version_id
+
+
+def test_clear_pin_is_noop_when_absent(tmp_path):
+    base = str(tmp_path / "models")
+    registry.clear_pin("BTC/USDC", "1h", "r", base_dir=base)  # ne lève pas
+
+
+def test_set_pin_unknown_version_returns_false(tmp_path):
+    base = str(tmp_path / "models")
+    assert registry.set_pin("BTC/USDC", "1h", "r", "does-not-exist", base_dir=base) is False
+
+
+def test_pin_does_not_leak_into_historical_as_of_resolution(tmp_path):
+    """Un pin reflète l'état courant de production, jamais une vérité
+    historique — resolve(as_of=...) doit l'ignorer, sinon un backtest
+    "frozen" verrait un modèle différent de ce qui existait réellement à
+    cette date (fuite via le pin, contournant tout le travail anti-fuite)."""
+    base = str(tmp_path / "models")
+    old_src = _write_tmp_bundle(tmp_path, "old", best_auc=0.55)
+    old = registry.publish("BTC/USDC", "1h", "r", old_src, train_end="2026-01-01T00:00:00",
+                           decision="promote", base_dir=base)
+    new_src = _write_tmp_bundle(tmp_path, "new", best_auc=0.70)
+    new = registry.publish("BTC/USDC", "1h", "r", new_src, train_end="2026-03-01T00:00:00",
+                           decision="promote", base_dir=base)
+
+    registry.set_pin("BTC/USDC", "1h", "r", new.version_id, base_dir=base)
+
+    # as_of antérieur au pin : doit résoudre "old" (seule version existante
+    # à cette date), PAS le pin (qui pointe sur une version future à as_of).
+    historical = registry.resolve("BTC/USDC", "1h", "r", as_of="2026-02-01T00:00:00", base_dir=base)
+    assert historical.version_id == old.version_id
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  set_decision — promotion/rejet manuel d'une version déjà publiée
+# ─────────────────────────────────────────────────────────────────────────────
+def test_set_decision_promotes_a_rejected_candidate(tmp_path):
+    base = str(tmp_path / "models")
+    src = _write_tmp_bundle(tmp_path, "rejected", best_auc=0.40)
+    art = registry.publish("BTC/USDC", "1h", "r", src, train_end="2026-01-01T00:00:00",
+                           decision="keep", base_dir=base)
+    assert registry.resolve("BTC/USDC", "1h", "r", base_dir=base) is None
+
+    ok = registry.set_decision("BTC/USDC", "1h", "r", art.version_id, "manual",
+                              reason="revue humaine : régression jugée mineure", base_dir=base)
+    assert ok is True
+
+    resolved = registry.resolve("BTC/USDC", "1h", "r", base_dir=base)
+    assert resolved is not None
+    assert resolved.version_id == art.version_id
+    assert resolved.gate_decision == "manual"
+
+
+def test_set_decision_appends_manual_source_to_decisions_log(tmp_path):
+    base = str(tmp_path / "models")
+    src = _write_tmp_bundle(tmp_path, "v1", best_auc=0.60)
+    art = registry.publish("BTC/USDC", "1h", "r", src, train_end="2026-01-01T00:00:00",
+                           decision="promote", base_dir=base)
+    registry.set_decision("BTC/USDC", "1h", "r", art.version_id, "keep",
+                          reason="dépromotion manuelle", base_dir=base)
+
+    decisions = registry.read_decisions("BTC/USDC", "1h", "r", base_dir=base)
+    assert decisions[-1]["source"] == "manual"
+    assert decisions[-1]["decision"] == "keep"
+    assert decisions[-1]["previous_decision"] == "promote"
+
+
+def test_set_decision_unknown_version_returns_false(tmp_path):
+    base = str(tmp_path / "models")
+    assert registry.set_decision("BTC/USDC", "1h", "r", "nope", "manual", base_dir=base) is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  list_recipes — énumération pour la vue d'ensemble de l'UI
+# ─────────────────────────────────────────────────────────────────────────────
+def test_list_recipes_empty_base_dir_returns_empty(tmp_path):
+    assert registry.list_recipes(base_dir=str(tmp_path / "models")) == []
+
+
+def test_list_recipes_finds_new_layout_entries(tmp_path):
+    base = str(tmp_path / "models")
+    src1 = _write_tmp_bundle(tmp_path, "a", best_auc=0.6)
+    registry.publish("BTC/USDC", "1h", "opus_omnibus_v11", src1,
+                     train_end="2026-01-01T00:00:00", decision="promote", base_dir=base)
+    src2 = _write_tmp_bundle(tmp_path, "b", best_auc=0.6)
+    registry.publish("ETH/USDC", "4h", "opus_omnibus_v7", src2,
+                     train_end="2026-01-01T00:00:00", decision="promote", base_dir=base)
+
+    recipes = registry.list_recipes(base_dir=base)
+    keys = {(r["symbol"], r["tf"], r["recipe"]) for r in recipes}
+    assert ("BTC/USDC", "1h", "opus_omnibus_v11") in keys
+    assert ("ETH/USDC", "4h", "opus_omnibus_v7") in keys
+    for r in recipes:
+        assert len(r["versions"]) >= 1
+
+
+def test_list_recipes_finds_legacy_flat_entries(tmp_path):
+    base = str(tmp_path / "models")
+    os.makedirs(base, exist_ok=True)
+    legacy_prefix = os.path.join(base, "opus_stat_pretrained_v4_1h")
+    amp = _train_tiny_booster(3)
+    dir_ = _train_tiny_booster(4)
+    assert save_amp_dir_bundle(legacy_prefix, "1h", amp, dir_, ["f0"], {}, 0.58, {})
+
+    recipes = registry.list_recipes(base_dir=base)
+    assert len(recipes) == 1
+    assert recipes[0]["recipe"] == "opus_stat_pretrained_v4"
+    assert recipes[0]["tf"] == "1h"
+    assert recipes[0]["versions"][0].legacy is True
+
+
+def test_list_recipes_includes_rejected_only_recipes(tmp_path):
+    """Un recipe dont TOUTES les versions sont rejetées doit rester visible
+    dans l'énumération (l'UI doit pouvoir montrer "aucune version active"),
+    pas disparaître silencieusement."""
+    base = str(tmp_path / "models")
+    src = _write_tmp_bundle(tmp_path, "rejected", best_auc=0.3)
+    registry.publish("BTC/USDC", "1h", "r", src, train_end="2026-01-01T00:00:00",
+                     decision="keep", base_dir=base)
+
+    recipes = registry.list_recipes(base_dir=base)
+    assert len(recipes) == 1
+    assert recipes[0]["versions"][0].gate_decision == "keep"
