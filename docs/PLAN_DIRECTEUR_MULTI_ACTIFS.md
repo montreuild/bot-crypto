@@ -428,7 +428,7 @@ Plan C :
   - **Reproductibilité.** Le pkl V4 actuel a été généré par un script **hors dépôt**, impossible à régénérer à l'identique. Committer un script d'entraînement paramétré (fenêtre + hyperparamètres + seed) dans le dépôt.
   - **Ré-entraînement périodique sur GRANDE fenêtre.** Un modèle figé se dégrade (constaté : direction 15m passe **sous 0.5** — anti-prédictive — sur les données récentes). Ni « figé pour toujours » ni « ré-entraîné tous les 800 barres sur peu de données » (les deux perdent, mesuré) : viser un ré-entraînement **rare** (mensuel/trimestriel) sur **≥40k barres glissantes**. L'infra existe (`MLStrategyTrainer`, `retrain_interval_h`, `save_model`/`load_model`, `managed_externally`) — il manque le dimensionnement et la planification.
   - **Optimiser contre un modèle figé.** L'optimiseur est câblé en dur sur `use_pretrained_ml=False` (`optimizer.py:247`, `opt_workers.py:284` — ré-entraîne à chaque essai). Ajouter un flag pour geler un modèle puis optimiser ses seuils de setup **contre** lui : plus rapide (pas de ré-entraînement par essai), méthodologiquement correct (cible fixe), et cela débloque proprement l'expérimentation « recette figée + seuils re-tunés » (tentée manuellement en §06, réfutée pour V11, mais l'outillage manque pour l'industrialiser).
-=======
+  - ➕ **Spec détaillée (2026-07-24)** : `docs/CONCEPTION_CYCLE_DE_VIE_ML.md` — architecture cible **recette / registre / politique de rafraîchissement** (critique des deux solutions candidates, gate de promotion sans lookahead, mode backtest `simulated_live`, optimiseur contre modèle figé, plan de migration E1-E7). Couvre aussi ML-01 (gate) et absorbe STRAT-02 (`models/index.json` → cache du registre).
 
 
 ## 6. Décisions produit en attente
