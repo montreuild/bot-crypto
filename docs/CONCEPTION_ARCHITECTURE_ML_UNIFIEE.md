@@ -891,6 +891,39 @@ recette.
 - sur les 3 TF, et si possible un deuxième symbole pour éviter de conclure sur
   BTC seul.
 
+### 8.1 Résultat mesuré (2026-07-25)
+
+`scripts/measure_calibration_and_pruning.py`, V11 sur BTC/USDC, holdout 1500,
+labels `[1,3,6]`, ECE sur 10 bins.
+
+| TF | ECE sans calibration | ECE avec | variation | écart d'AUC |
+|---|---:|---:|---:|---:|
+| 15m | 0.0797 | **0.0420** | −47 % | +0.0000 |
+| 30m | 0.1495 | **0.0499** | −67 % | +0.0000 |
+| 1h | **0.0247** | 0.1387 | **+461 %** | +0.0000 |
+
+**L'écart d'AUC est nul à 1e-4 partout**, exactement comme l'invariance
+monotone le prédit : c'est le contrôle qui valide que la mesure est bien
+posée, et la démonstration que juger la calibration à l'AUC n'aurait rien dit.
+
+**Verdict — l'effet dépend du TF, et il n'est pas toujours favorable.** La
+calibration divise l'erreur par deux ou trois en 15m et 30m, mais la
+**multiplie par 5,6 en 1h**, où le modèle brut était déjà le mieux calibré des
+trois (0.0247). Ce n'est pas anodin : un `p_event` mal calibré vide de sens les
+seuils des setups — `amp_min: 0.50` cesse de vouloir dire « une chance sur
+deux ». Application du critère n°3 fixé à l'avance : **garder la calibration en
+paramètre de recette, et la désactiver en 1h.** À trancher : une recette par
+TF, ou un bloc `hp` par TF dans la recette.
+
+**L'élagage n'est PAS mesuré, et ne peut pas l'être par ce protocole.** Il
+retire les features à gain nul *au cycle d'entraînement suivant* ; le script ne
+fait qu'un `fit()`. Vérifié : `kept_features` vaut 324/437 que le flag soit à
+`True` ou `False`, et `feature_cols` reste à 437 dans les deux cas — l'écart
+d'AUC nul reflète l'absence de mécanisme exercé, pas l'absence d'effet.
+Conclure « à retirer » sur cette base reviendrait à prendre une non-mesure pour
+un résultat. Trancher demande un walk-forward à au moins deux retrains
+successifs, ce qui reste à faire.
+
 **Décisions possibles à l'issue** — à énoncer avant de mesurer, pour ne pas
 ajuster le critère au résultat :
 
