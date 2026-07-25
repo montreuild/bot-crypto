@@ -190,7 +190,7 @@ def _setup_series_v11(df, tf: str, limit: int, strategy: str,
     strat = _S()
     strat.managed_externally = False
     name = strat.name
-    art = ml_registry.resolve(symbol, tf_detected, name,
+    art = ml_registry.resolve(tf_detected, name,
                               base_dir=getattr(strat, "model_dir", "models"))
     if art is not None:
         strat.load_model(art.path_prefix)
@@ -634,7 +634,7 @@ def build_signals_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
             # Stratégies ML : charger la dernière version promue du registre
             # ou marquer skipped.
             if isinstance(inst, BaseStrategyML):
-                art = ml_registry.resolve(symbol, tf, name,
+                art = ml_registry.resolve(tf, name,
                                           base_dir=getattr(inst, "model_dir", "models"))
                 if art is None or not inst.load_model(art.path_prefix):
                     signals.append({

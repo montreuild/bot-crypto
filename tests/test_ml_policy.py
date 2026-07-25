@@ -141,7 +141,7 @@ def test_maybe_refresh_cold_start_publishes_initial(tmp_path):
 
     assert result["decision"] in ("initial", "promote")
     assert strat.is_trained
-    art = registry.latest_promoted("BTC/USDC", "1h", "opus_omnibus_v11", base_dir=base)
+    art = registry.latest_promoted("1h", "opus_omnibus_v11", base_dir=base)
     assert art is not None
     assert art.version_id == result["published_version"]
 
@@ -156,7 +156,7 @@ def test_maybe_refresh_rejects_candidate_and_restores_incumbent(tmp_path):
                           params=dict(_FAST_PARAMS, gate_auc_floor=0.0),
                           recipe="opus_omnibus_v11", source="test", base_dir=base)
     assert first["decision"] in ("initial", "promote")
-    first_version = registry.latest_promoted("BTC/USDC", "1h", "opus_omnibus_v11", base_dir=base).version_id
+    first_version = registry.latest_promoted("1h", "opus_omnibus_v11", base_dir=base).version_id
 
     df2 = _make_synthetic_ohlcv(1400, seed=3)
     second = maybe_refresh(strat, "BTC/USDC", "1h", df2,
@@ -165,12 +165,12 @@ def test_maybe_refresh_rejects_candidate_and_restores_incumbent(tmp_path):
     assert second["decision"] == "keep"
 
     # Le sortant publié reste le premier -- le candidat rejeté n'a rien écrasé.
-    still = registry.latest_promoted("BTC/USDC", "1h", "opus_omnibus_v11", base_dir=base)
+    still = registry.latest_promoted("1h", "opus_omnibus_v11", base_dir=base)
     assert still.version_id == first_version
     # La stratégie a été rechargée sur le sortant, pas laissée sur le rejeté.
     assert strat.is_trained
 
-    decisions = registry.read_decisions("BTC/USDC", "1h", "opus_omnibus_v11", base_dir=base)
+    decisions = registry.read_decisions("1h", "opus_omnibus_v11", base_dir=base)
     assert decisions[-1]["decision"] == "keep"
 
 
@@ -184,7 +184,7 @@ def test_maybe_refresh_skips_when_insufficient_data(tmp_path):
                            recipe="opus_omnibus_v11", source="test", base_dir=base)
     assert result["decision"] == "skipped"
     assert not strat.is_trained
-    assert registry.latest_promoted("BTC/USDC", "1h", "opus_omnibus_v11", base_dir=base) is None
+    assert registry.latest_promoted("1h", "opus_omnibus_v11", base_dir=base) is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

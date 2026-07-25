@@ -99,7 +99,7 @@ def test_train_and_publish_dry_run_writes_nothing(seeded_store, tmp_path):
 
     assert result["decision"].startswith("dry_run_would_")
     assert "note" in result
-    versions = registry.list_versions("BTC/USDC", "1h", _RECIPE, base_dir=registry_base)
+    versions = registry.list_versions("1h", _RECIPE, base_dir=registry_base)
     assert len(versions) == 0  # dry-run : rien n'est écrit
 
 
@@ -113,7 +113,7 @@ def test_train_and_publish_publish_true_writes_registry(seeded_store, tmp_path):
                                params=_FAST_PARAMS, publish=True, base_dir=registry_base)
 
     assert result["decision"] in ("initial", "promote")
-    versions = registry.list_versions("BTC/USDC", "1h", _RECIPE, base_dir=registry_base)
+    versions = registry.list_versions("1h", _RECIPE, base_dir=registry_base)
     assert len(versions) == 1
 
 
@@ -139,7 +139,7 @@ def test_window_sweep_compares_without_publishing_by_default(seeded_store, tmp_p
     assert len(result["candidates"]) == 2
     assert result["best_window_bars"] in (800, 1200)
     assert "gate_decision" not in result
-    versions = registry.list_versions("BTC/USDC", "1h", _RECIPE, base_dir=registry_base)
+    versions = registry.list_versions("1h", _RECIPE, base_dir=registry_base)
     assert len(versions) == 0  # comparaison seule, rien publié
 
 
@@ -154,7 +154,7 @@ def test_window_sweep_publish_best_writes_only_one_version(seeded_store, tmp_pat
                           publish_best=True, base_dir=registry_base)
 
     assert result["gate_decision"] in ("initial", "promote")
-    versions = registry.list_versions("BTC/USDC", "1h", _RECIPE, base_dir=registry_base)
+    versions = registry.list_versions("1h", _RECIPE, base_dir=registry_base)
     assert len(versions) == 1  # seul le meilleur candidat est publié, pas les deux
 
 

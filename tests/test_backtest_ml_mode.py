@@ -67,7 +67,7 @@ def _publish_toy_model(tmp_path, symbol, tf, recipe, train_end, train_start=None
     prefix = str(tmp_path / "toy_src")
     amp, dir_ = _train_tiny_booster(1), _train_tiny_booster(2)
     save_amp_dir_bundle(prefix, tf, amp, dir_, ["f0", "f1", "f2"], {}, 0.6, {})
-    return registry.publish(symbol, tf, recipe, prefix, train_start=train_start,
+    return registry.publish(tf, recipe, prefix, train_start=train_start,
                             train_end=train_end, decision="promote",
                             base_dir=str(tmp_path / "models"))
 
@@ -188,7 +188,7 @@ def test_backtest_simulated_live_refreshes_and_publishes(tmp_path):
     # entraîner réellement (skipped tant que la fenêtre est trop courte).
     assert any(d["decision"] in ("initial", "promote") for d in info["decisions"])
 
-    versions = registry.list_versions("BTC/USDC", "1h", _RECIPE, base_dir=registry_base)
+    versions = registry.list_versions("1h", _RECIPE, base_dir=registry_base)
     assert len(versions) >= 1
 
 

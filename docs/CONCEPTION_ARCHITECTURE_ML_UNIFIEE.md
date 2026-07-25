@@ -1,8 +1,10 @@
 # Conception — Architecture unifiée : entraînement, gestion et exploitation des modèles
 
-> **Statut** : **révision 4** — étapes **A, B, D.1 et G livrées**. Restent
-> **C, D.2, E, F** et les décisions 11 (dimension symbole) et 8 (fusion
-> omnibus complète), cette dernière étant la seule qui change des backtests.
+> **Statut** : **révision 5** — étapes **A, B, C, D.1, E, F, G livrées**, et
+> la décision 11 (dimension symbole) tranchée par la mesure (§8bis : retirée de
+> la clé du registre, conservée en provenance). Restent **D.2** (fusion omnibus
+> complète, décision 8 — la seule qui change des backtests) et les 4 variantes
+> `_no_ml` non encore converties.
 >
 > Trois bugs préexistants ont été trouvés *par* ce travail, tous silencieux :
 > snapshot vide du cache d'entraînement (V11/V12 perdaient leur modèle à chaque
@@ -987,6 +989,109 @@ ferait passer pour un résultat.
 
 ---
 
+## 8bis. La dimension symbole (décision 11) — mesurée, puis retirée
+
+### Le constat de départ
+
+Le registre rangeait par `(symbole, TF, recette)`. Or :
+
+* le trainer live n'entraîne **que sur BTC** — `MLStrategyTrainer._resolve_symbol`
+  retourne `next((s for s in symbols if "BTC" in s), …)` ;
+* le pipeline de signaux score **ce modèle sur tous les symboles** du scanner —
+  `signal_pipeline.collect` boucle sur `get_symbols()` (BTC/USDC, ETH/USDC,
+  XRP/USDC en config) et appelle `strategy.score(…, symbol=symbol)` sur la
+  **même instance**, dont l'état ML n'a pas de dimension symbole.
+
+Un artefact rangé sous `BTC_USDC/` décidait donc en réalité sur ETH et XRP. La
+dimension nommait une partition qui n'existait pas. Deux conséquences
+concrètes, pas seulement esthétiques :
+
+* `load_models(scanner=None)` résolvait `symbol=None`, ne trouvait jamais rien,
+  et planifiait un réentraînement immédiat en croyant qu'aucun modèle
+  n'existait ;
+* un modèle publié sous un autre symbole était invisible du live.
+
+### Le protocole
+
+`scripts/measure_symbol_transfer.py`. Deux candidats de la recette V11, mêmes
+paramètres, l'un entraîné sur BTC, l'autre sur ETH ; les deux scorés sur le
+holdout de **chaque** symbole tradé. IC 95 % bootstrap **apparié** (mêmes
+barres tirées pour les deux modèles).
+
+Un détail du protocole a changé la conclusion et mérite d'être noté : la
+première version découpait chaque symbole à `len − 1500`, ce qui donne des
+périodes d'évaluation différentes par symbole — les séries n'ont ni la même
+longueur ni la même densité. Le holdout XRP 1h démarrait alors le 2025-12-10
+alors que l'entraînement BTC allait jusqu'au 2026-05-03 : **cinq mois de fuite
+temporelle** dans la colonne XRP, et une cellule BTC faussement significative.
+La version retenue coupe à une **date commune** (la plus tardive des coupures
+des symboles d'entraînement). Sans cette correction, la mesure aurait conclu
+l'inverse sur au moins une cellule.
+
+### Le résultat (18 cellules : 3 TF × 3 holdouts × 2 têtes)
+
+| TF | holdout | AUC amp ← BTC | ← ETH | IC 95 % (ETH − BTC) |
+|---|---|---|---|---|
+| 15m | BTC | 0.627 | 0.616 | [−0.030, +0.007] indiscernable |
+| 15m | ETH | 0.619 | 0.614 | [−0.019, +0.008] indiscernable |
+| 15m | XRP | 0.609 | 0.605 | [−0.022, +0.014] indiscernable |
+| 30m | BTC | 0.642 | 0.641 | [−0.011, +0.010] indiscernable |
+| 30m | ETH | 0.663 | 0.663 | [−0.010, +0.008] indiscernable |
+| 30m | XRP | 0.533 | 0.545 | [−0.015, +0.041] indiscernable |
+| 1h | BTC | 0.630 | 0.618 | [−0.030, +0.006] indiscernable |
+| 1h | ETH | 0.638 | 0.634 | [−0.016, +0.007] indiscernable |
+| 1h | XRP | 0.542 | 0.562 | [−0.002, +0.042] indiscernable |
+
+Sur la tête `dir`, une seule cellule est significative (15m / XRP :
+0.529 → 0.581 en faveur du modèle ETH). **17 des 18 cellules sont
+indiscernables du bruit** ; à 95 %, une significative sur 18 est exactement ce
+que le hasard produit (0,9 attendue). Aucune preuve de spécificité par symbole.
+
+Deux faits s'ajoutent au tableau :
+
+* **ETH ne gagne rien à son propre modèle** — 0.634 contre 0.638 pour le modèle
+  BTC en 1h. C'est la cellule décisive : c'est le seul symbole, en plus de BTC,
+  qui a de quoi s'entraîner.
+* **XRP ne peut pas avoir de modèle propre** : 2 220 barres 1h pour 7 303 heures
+  d'historique (30 % de couverture ; 10 % en 15m, 5 % en 30m). Un tiers des
+  symboles tradés sert forcément un modèle étranger, quelle que soit la
+  décision.
+
+### La décision
+
+**Retirer le symbole de la clé, le garder en provenance.** Le layout devient
+`{base_dir}/{tf}/{recette}/{version_id}/`, et `provenance.symbol` — exposé par
+`ArtifactRef.train_symbol`, alimenté par `publish(…, train_symbol=…)` — dit sur
+quelles données l'artefact a été construit. Savoir cela est de la traçabilité ;
+l'utiliser comme index prétendrait à une partition qui n'existe pas.
+
+Ce que ça change concrètement :
+
+* `resolve/publish/list_versions/read_decisions/{get,set,clear}_pin/set_decision`
+  perdent leur premier argument ;
+* `load_models(strategies, timeframes)` n'a plus besoin de `scanner` — le
+  paramètre n'existait que pour dériver un symbole de résolution, et c'est lui
+  qui produisait le « pas de modèle » silencieux ;
+* `_resolve_symbol` reste, mais documenté pour ce qu'il est : le choix du **jeu
+  d'entraînement**, pas l'identité du modèle. Préférer BTC est maintenant un
+  choix justifié (historique le plus profond et le plus dense) plutôt qu'un
+  héritage ;
+* les deux UI « Modèles » affichent le symbole en colonne « Entraîné sur »
+  au lieu de l'utiliser comme clé de ligne.
+
+Deux tests verrouillent l'invariant (`test_model_registry.py`) : deux
+publications de symboles différents cohabitent comme **deux versions de la même
+entrée** — pas comme deux entrées parallèles — et `resolve()` ne dépend que de
+`(TF, recette)`.
+
+**Ce que cette mesure ne dit pas.** Elle porte sur deux symboles entraînables,
+tous deux large-cap et fortement corrélés. Si le bot passe à un panier plus
+large et moins corrélé, c'est **cette mesure qu'il faut rejouer** — le script
+est committé pour ça — avant de réintroduire la dimension. Ce n'est pas une
+vérité générale sur le ML multi-actifs, c'est un résultat sur ce panier-ci.
+
+---
+
 ## 9. Ce que ça donne en volume
 
 Arithmétique à partir des lignes mesurées de §1.3 (`routing` = total −
@@ -1128,12 +1233,13 @@ propre au moteur.
 | 8 | Fusion omnibus complète (**§7**) | **à trancher** | **change des backtests** — chaque arbitrage documenté avant le code |
 | 9 | `ProxyPredictor` (**E**) | **à faire** | absorbe 5 fichiers ; nécessite l'injection de prédicteur dans `score()` |
 | 10 | Population 2 (27 stratégies) | **ne rien faire** | l'architecture leur est neutre |
-| 11 | Dimension **symbole** des modèles | **à trancher** | l'exploiter ou la retirer — pas la porter à moitié |
+| 11 | Dimension **symbole** des modèles | ✅ **retirée de la clé** (§8bis) | 17/18 cellules indiscernables ; reste en provenance (`train_symbol`) |
 | 12 | Mesurer calibration / élagage (**§8**) | ✅ **fait** (§8.1) | calibration : garder, mais **désactiver en 1h**. Élagage : non mesurable par ce protocole |
 
-Les décisions **8 et 11** sont les seules qui ne sont pas techniques : la
-première change ce que le bot trade, la seconde change ce qu'un modèle
-représente. Les autres sont des refactorisations à comportement constant, à
-prouver signal par signal.
+La décision **8** est la seule qui reste non technique : elle change ce que le
+bot trade. La 11 l'était aussi — elle changeait ce qu'un modèle représente — et
+a été tranchée par la mesure (§8bis) plutôt que par arbitrage. Les autres sont
+des refactorisations à comportement constant, à prouver signal par signal.
 
-Ordre de valeur décroissante sur ce qui reste : **9 → 6 → 8 → 11**.
+Ordre de valeur décroissante sur ce qui reste : **8** (fusion omnibus), puis
+les 4 variantes `_no_ml` restantes.

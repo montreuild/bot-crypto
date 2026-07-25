@@ -395,7 +395,9 @@ export interface ModelTrainMeta {
 
 export interface ModelArtifact {
   path_prefix: string;
-  symbol: string | null;
+  /** Symbole d'ENTRAÎNEMENT (provenance) — le registre ne range pas par
+   *  symbole, l'artefact sert tous les symboles tradés. */
+  train_symbol: string | null;
   tf: string;
   recipe: string;
   version_id: string;
@@ -412,9 +414,10 @@ export interface ModelArtifact {
 }
 
 export interface ModelRegistryEntry {
-  symbol: string;
   tf: string;
   recipe: string;
+  /** Provenance de la version active — affichage seul, pas une clé. */
+  train_symbol: string | null;
   n_versions: number;
   active: ModelArtifact | null;
   pinned_version_id: string | null;

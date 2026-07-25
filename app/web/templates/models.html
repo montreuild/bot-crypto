@@ -50,7 +50,7 @@ table.mdl-tbl{width:100%;border-collapse:collapse;font-size:.78rem;}
     <div style="overflow-x:auto">
       <table class="mdl-tbl">
         <thead><tr>
-          <th scope="col">Symbole</th><th scope="col">TF</th><th scope="col">Recette</th>
+          <th scope="col">TF</th><th scope="col">Recette</th><th scope="col" title="Symbole dont proviennent les bougies d'entraînement — le modèle sert tous les symboles tradés">Entraîné sur</th>
           <th scope="col">Version active</th><th scope="col">Entraînée jusqu'au</th>
           <th scope="col">AUC</th><th scope="col">Décision</th><th scope="col">Fraîcheur</th>
           <th scope="col">Versions</th><th scope="col">Actions</th>
@@ -145,7 +145,7 @@ async function loadRegistry(){
   }catch(e){body.innerHTML='<tr><td colspan="10" style="color:#f87171">Erreur : '+esc(e.message)+'</td></tr>';}
 }
 
-function rowKey(m){return m.symbol+'|'+m.tf+'|'+m.recipe;}
+function rowKey(m){return m.tf+'|'+m.recipe;}
 
 function renderRegistry(){
   const body=document.getElementById('mdl-body');
@@ -156,7 +156,8 @@ function renderRegistry(){
     const pinTag=m.pinned_version_id?'<div class="mdl-badge mdl-pin" style="display:inline-block;margin-top:3px" title="Épinglé sur '+esc(m.pinned_version_id)+'">📌 pin</div>':'';
     const expanded=_expanded.has(key);
     const row='<tr>'+
-      '<td>'+esc(m.symbol)+'</td><td>'+esc(m.tf)+'</td><td>'+esc(m.recipe)+'</td>'+
+      '<td>'+esc(m.tf)+'</td><td>'+esc(m.recipe)+'</td>'+
+      '<td style="color:var(--muted)">'+esc(m.train_symbol||'—')+'</td>'+
       '<td>'+(a?esc(a.version_id):'<span style="color:var(--dim)">aucune</span>')+'</td>'+
       '<td>'+(a?fmtAge(a.train_end):'—')+'</td>'+
       '<td>'+(a?aucBadge(a.auc,a.train_end):'—')+'</td>'+
@@ -277,7 +278,7 @@ async function loadDetail(m){
   const el=document.getElementById('detail-'+cssEscape(rowKey(m)));
   if(!el)return;
   try{
-    const q='symbol='+encodeURIComponent(m.symbol)+'&tf='+encodeURIComponent(m.tf)+'&recipe='+encodeURIComponent(m.recipe);
+    const q='tf='+encodeURIComponent(m.tf)+'&recipe='+encodeURIComponent(m.recipe);
     const [vRes,dRes]=await Promise.all([
       apiFetch('/api/ml/registry/versions?'+q), apiFetch('/api/ml/registry/decisions?'+q+'&limit=20'),
     ]);
@@ -291,9 +292,9 @@ async function loadDetail(m){
         return '<tr><td>'+esc(v.version_id)+'</td><td>'+fmtAge(v.train_end)+'</td><td>'+(v.n_bars??'—')+'</td>'+
           '<td>'+aucBadge(v.auc,v.train_end)+'</td><td>'+decisionBadge(v.gate_decision)+'</td>'+
           '<td>'+
-          '<button class="mdl-btn ghost sm mdl-pin-btn" data-symbol="'+esc(m.symbol)+'" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'">'+(isPinned?'📌 retirer':'📌 épingler')+'</button> '+
-          '<button class="mdl-btn ghost sm mdl-promote-btn" data-symbol="'+esc(m.symbol)+'" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'" data-decision="manual">promouvoir</button> '+
-          '<button class="mdl-btn ghost sm danger mdl-promote-btn" data-symbol="'+esc(m.symbol)+'" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'" data-decision="keep">rejeter</button>'+
+          '<button class="mdl-btn ghost sm mdl-pin-btn" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'">'+(isPinned?'📌 retirer':'📌 épingler')+'</button> '+
+          '<button class="mdl-btn ghost sm mdl-promote-btn" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'" data-decision="manual">promouvoir</button> '+
+          '<button class="mdl-btn ghost sm danger mdl-promote-btn" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'" data-decision="keep">rejeter</button>'+
           '</td></tr>';
       }).join('')+'</tbody></table>'+
       '<div class="mdl-sub-hdr">Décisions récentes</div>'+
@@ -307,18 +308,18 @@ async function loadDetail(m){
 document.addEventListener('click', async ev=>{
   const pinBtn=ev.target.closest('.mdl-pin-btn');
   if(pinBtn){
-    const {symbol,tf,recipe,version}=pinBtn.dataset;
+    const {tf,recipe,version}=pinBtn.dataset;
     const isPinned=pinBtn.textContent.includes('retirer');
     pinBtn.disabled=true;
     try{
       const url=isPinned?'/api/ml/registry/unpin':'/api/ml/registry/pin';
-      const body=isPinned?{symbol,tf,recipe}:{symbol,tf,recipe,version_id:version};
+      const body=isPinned?{tf,recipe}:{tf,recipe,version_id:version};
       const r=await apiFetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json().catch(()=>({}));
       if(!r.ok){toast('Erreur : '+(d.detail||r.status),true);return;}
       toast(isPinned?'Pin retiré':'Version épinglée');
       await loadRegistry();
-      const key=symbol+'|'+tf+'|'+recipe;
+      const key=tf+'|'+recipe;
       if(_expanded.has(key)){
         const m=_registryCache.find(x=>rowKey(x)===key);
         if(m)await loadDetail(m);
@@ -329,17 +330,17 @@ document.addEventListener('click', async ev=>{
   }
   const promBtn=ev.target.closest('.mdl-promote-btn');
   if(promBtn){
-    const {symbol,tf,recipe,version,decision}=promBtn.dataset;
-    if(!confirm((decision==='manual'?'Promouvoir':'Rejeter')+' la version '+version+' pour '+symbol+'/'+tf+'/'+recipe+' ?'))return;
+    const {tf,recipe,version,decision}=promBtn.dataset;
+    if(!confirm((decision==='manual'?'Promouvoir':'Rejeter')+' la version '+version+' pour '+tf+'/'+recipe+' ?'))return;
     promBtn.disabled=true;
     try{
       const r=await apiFetch('/api/ml/registry/promote',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({symbol,tf,recipe,version_id:version,decision,reason:'Action manuelle depuis la page Modèles'})});
+        body:JSON.stringify({tf,recipe,version_id:version,decision,reason:'Action manuelle depuis la page Modèles'})});
       const d=await r.json().catch(()=>({}));
       if(!r.ok){toast('Erreur : '+(d.detail||r.status),true);return;}
       toast('Décision mise à jour');
       await loadRegistry();
-      const key=symbol+'|'+tf+'|'+recipe;
+      const key=tf+'|'+recipe;
       if(_expanded.has(key)){
         const m=_registryCache.find(x=>rowKey(x)===key);
         if(m)await loadDetail(m);

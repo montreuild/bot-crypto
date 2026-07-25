@@ -11,18 +11,20 @@ Les transformer en presets du routing partagé **corrige cette dérive**, donc
 doit pas être présenté comme telle : ce script mesure l'ampleur du changement
 au lieu de l'affirmer.
 
-Usage — l'original doit être fourni comme fichier de sauvegarde ::
+Usage — l'original doit être fourni comme fichier de sauvegarde, et le preset
+par son nom de module (défaut : ``opus_omnibus_v11_no_ml``) ::
 
-    PYTHONPATH=. python scripts/compare_no_ml_preset.py <chemin_original.py>
+    PYTHONPATH=. python scripts/compare_no_ml_preset.py <chemin_original.py> \\
+                                                        [module_du_preset] [tf]
 """
+import importlib
 import importlib.util
 import sys
 
 from app.core.candle_store import get_store
 from app.core.indicators_precompute import precompute_df
 
-import app.strategies.opus_omnibus_v11_no_ml as preset  # isort: skip
-
+DEFAULT_PRESET = "app.strategies.opus_omnibus_v11_no_ml"
 TF = "1h"
 N_WINDOW = 600
 DECISION_KEYS = ("side", "score", "setup", "regime", "p_event", "p_up",
@@ -51,9 +53,16 @@ def main() -> int:
         print(__doc__)
         return 2
     orig = load_original(sys.argv[1])
+    preset_name = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_PRESET
+    if "." not in preset_name:
+        preset_name = f"app.strategies.{preset_name}"
+    preset = importlib.import_module(preset_name)
+    tf = sys.argv[3] if len(sys.argv) > 3 else TF
+    print(f"# fork {orig.Strategy.name} vs preset {preset.Strategy.name} sur {tf}",
+          file=sys.stderr)
 
-    df = precompute_df(get_store().load_cached("BTC/USDC", TF).sort("time"))
-    ends = list(range(len(df) - 30000, len(df), 250))
+    df = precompute_df(get_store().load_cached("BTC/USDC", tf).sort("time"))
+    ends = list(range(max(N_WINDOW, len(df) - 30000), len(df), 250))
 
     same = fired_a = fired_b = 0
     changed_side = []

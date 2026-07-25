@@ -86,7 +86,7 @@ def _resolve_frozen_ml_model(strat, symbol: Optional[str], tf: Optional[str],
     try:
         from app.ml.scoring import resolve_recipe_name
         recipe = resolve_recipe_name(strat)
-        art = ml_registry.resolve(symbol, tf, recipe, as_of=window_start, base_dir=base_dir)
+        art = ml_registry.resolve(tf, recipe, as_of=window_start, base_dir=base_dir)
     except Exception as e:
         logger.warning(f"[Backtest] ml_mode=frozen : resolve() KO pour {strat.name}/{tf} : {e}")
         return entry

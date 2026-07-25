@@ -194,7 +194,7 @@ class GateConfig:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Orchestration — appelée par le live trainer et le backtest simulated_live
 # ─────────────────────────────────────────────────────────────────────────────
-def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
+def maybe_refresh(strategy: Any, train_symbol: str, tf: str, df, *,
                   params: Dict[str, Any],
                   recipe: Optional[str] = None,
                   gate_cfg: Optional[GateConfig] = None,
@@ -204,6 +204,11 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
     now"), le compare au sortant publié via un holdout partagé, publie le
     résultat dans le registre, et s'assure que ``strategy`` termine avec le
     modèle GAGNANT chargé en mémoire (jamais un candidat rejeté).
+
+    ``train_symbol`` est le symbole d'où vient ``df``. Il n'entre PAS dans la
+    clé du registre (qui est ``(tf, recette)``) : il est enregistré en
+    provenance de l'artefact publié, parce que l'artefact servira ensuite tous
+    les symboles tradés — cf. la docstring de ``app.ml.model_registry``.
 
     ``df`` doit être strictement antérieur à l'instant de décision (aucune
     barre "future" par rapport à ce que l'appelant sait déjà) — c'est
@@ -223,13 +228,13 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
     if n < required:
         return {"decision": "skipped", "reason": "insufficient_data",
                 "n_bars": n, "required_bars": required,
-                "recipe": recipe, "symbol": symbol, "tf": tf}
+                "recipe": recipe, "train_symbol": train_symbol, "tf": tf}
 
     holdout_df = df.tail(gc_.holdout_bars + 210)
     pre_holdout = df.slice(0, n - gc_.holdout_bars)
     train_df = pre_holdout.tail(gc_.window_bars) if gc_.window_bars else pre_holdout
 
-    incumbent = registry.latest_promoted(symbol, tf, recipe, base_dir=base_dir)
+    incumbent = registry.latest_promoted(tf, recipe, base_dir=base_dir)
     incumbent_metrics = None
     if incumbent is not None:
         incumbent_metrics = score_holdout(
@@ -247,13 +252,13 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
         try:
             strategy.fit(train_df, params={getattr(strategy, "name", recipe): params})
         except Exception as e:
-            logger.error(f"[MLPolicy] {symbol}/{tf}/{recipe} : fit() candidat KO : {e}")
+            logger.error(f"[MLPolicy] {tf}/{recipe} : fit() candidat KO : {e}")
             return {"decision": "failed", "reason": f"fit KO : {e}",
-                    "recipe": recipe, "symbol": symbol, "tf": tf,
+                    "recipe": recipe, "train_symbol": train_symbol, "tf": tf,
                     "incumbent_version": incumbent.version_id if incumbent else None}
         if not getattr(strategy, "is_trained", False):
             return {"decision": "failed", "reason": "fit n'a produit aucun modèle exploitable",
-                    "recipe": recipe, "symbol": symbol, "tf": tf,
+                    "recipe": recipe, "train_symbol": train_symbol, "tf": tf,
                     "incumbent_version": incumbent.version_id if incumbent else None}
 
         strategy.save_model(tmp_prefix)
@@ -270,7 +275,7 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
                            "auc_floor": gc_.auc_floor, "epsilon": gc_.epsilon})
 
         published = registry.publish(
-            symbol, tf, recipe, tmp_prefix,
+            tf, recipe, tmp_prefix, train_symbol=train_symbol,
             train_start=bounds["train_start"], train_end=bounds["train_end"],
             n_bars=bounds["n_bars"], recipe_cfg=recipe_cfg, source=source,
             decision=gate.decision,
@@ -294,14 +299,14 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
             strategy.load_model(incumbent.path_prefix)
 
     logger.info(
-        f"[MLPolicy] {symbol}/{tf}/{recipe} : {gate.decision} — {gate.reason}"
+        f"[MLPolicy] {tf}/{recipe} : {gate.decision} — {gate.reason}"
     )
     return {
         "decision": gate.decision, "reason": gate.reason,
         "candidate": candidate_metrics, "incumbent": incumbent_metrics,
         "published_version": published.version_id if published else None,
         "incumbent_version": incumbent.version_id if incumbent else None,
-        "recipe": recipe, "symbol": symbol, "tf": tf,
+        "recipe": recipe, "train_symbol": train_symbol, "tf": tf,
     }
 
 

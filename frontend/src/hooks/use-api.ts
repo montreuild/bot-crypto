@@ -328,19 +328,19 @@ export function useMLRegistry() {
   });
 }
 
-export function useMLRegistryVersions(symbol: string | null, tf: string | null, recipe: string | null) {
+export function useMLRegistryVersions(tf: string | null, recipe: string | null) {
   return useQuery({
-    queryKey: ['mlRegistryVersions', symbol, tf, recipe],
-    queryFn: () => api.getMLRegistryVersions(symbol!, tf!, recipe!),
-    enabled: !!symbol && !!tf && !!recipe,
+    queryKey: ['mlRegistryVersions', tf, recipe],
+    queryFn: () => api.getMLRegistryVersions(tf!, recipe!),
+    enabled: !!tf && !!recipe,
   });
 }
 
-export function useMLRegistryDecisions(symbol: string | null, tf: string | null, recipe: string | null) {
+export function useMLRegistryDecisions(tf: string | null, recipe: string | null) {
   return useQuery({
-    queryKey: ['mlRegistryDecisions', symbol, tf, recipe],
-    queryFn: () => api.getMLRegistryDecisions(symbol!, tf!, recipe!),
-    enabled: !!symbol && !!tf && !!recipe,
+    queryKey: ['mlRegistryDecisions', tf, recipe],
+    queryFn: () => api.getMLRegistryDecisions(tf!, recipe!),
+    enabled: !!tf && !!recipe,
   });
 }
 
@@ -356,8 +356,8 @@ function invalidateModelRegistryQueries(qc: ReturnType<typeof useQueryClient>) {
 export function usePinModel() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ symbol, tf, recipe, versionId }: { symbol: string; tf: string; recipe: string; versionId: string }) =>
-      api.pinModel(symbol, tf, recipe, versionId),
+    mutationFn: ({ tf, recipe, versionId }: { tf: string; recipe: string; versionId: string }) =>
+      api.pinModel(tf, recipe, versionId),
     onSuccess: () => invalidateModelRegistryQueries(qc),
   });
 }
@@ -365,8 +365,8 @@ export function usePinModel() {
 export function useUnpinModel() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ symbol, tf, recipe }: { symbol: string; tf: string; recipe: string }) =>
-      api.unpinModel(symbol, tf, recipe),
+    mutationFn: ({ tf, recipe }: { tf: string; recipe: string }) =>
+      api.unpinModel(tf, recipe),
     onSuccess: () => invalidateModelRegistryQueries(qc),
   });
 }
@@ -374,9 +374,9 @@ export function useUnpinModel() {
 export function usePromoteModel() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ symbol, tf, recipe, versionId, decision }:
-      { symbol: string; tf: string; recipe: string; versionId: string; decision: 'manual' | 'keep' }) =>
-      api.promoteModel(symbol, tf, recipe, versionId, decision),
+    mutationFn: ({ tf, recipe, versionId, decision }:
+      { tf: string; recipe: string; versionId: string; decision: 'manual' | 'keep' }) =>
+      api.promoteModel(tf, recipe, versionId, decision),
     onSuccess: () => invalidateModelRegistryQueries(qc),
   });
 }

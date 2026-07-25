@@ -48,8 +48,8 @@ def _publish(tmp_path, symbol, tf, recipe, train_end, decision="promote", auc=0.
     prefix = str(tmp_path / f"src_{tag}_{recipe}_{tf}")
     amp, dir_ = _train_tiny_booster(1), _train_tiny_booster(2)
     save_amp_dir_bundle(prefix, tf, amp, dir_, ["f0", "f1", "f2"], {}, auc, {})
-    return registry.publish(symbol, tf, recipe, prefix, train_end=train_end,
-                            decision=decision, base_dir="models")
+    return registry.publish(tf, recipe, prefix, train_symbol=symbol,
+                            train_end=train_end, decision=decision, base_dir="models")
 
 
 def _make_ohlcv(n, seed=1, start=dt.datetime(2020, 1, 1)):
@@ -81,7 +81,7 @@ def test_registry_overview_lists_published_models(client, tmp_path):
     models = r.json()["models"]
     assert len(models) == 1
     m = models[0]
-    assert m["symbol"] == "BTC/USDC"
+    assert m["train_symbol"] == "BTC/USDC"
     assert m["tf"] == "1h"
     assert m["recipe"] == "opus_omnibus_v11"
     assert m["active"] is not None
@@ -102,7 +102,7 @@ def test_registry_overview_flags_no_active_version(client, tmp_path):
 def test_registry_versions_newest_first(client, tmp_path):
     _publish(tmp_path, "BTC/USDC", "1h", "r", "2026-01-01T00:00:00", tag="old")
     _publish(tmp_path, "BTC/USDC", "1h", "r", "2026-03-01T00:00:00", tag="new")
-    r = client.get("/api/ml/registry/versions", params={"symbol": "BTC/USDC", "tf": "1h", "recipe": "r"})
+    r = client.get("/api/ml/registry/versions", params={"tf": "1h", "recipe": "r"})
     versions = r.json()["versions"]
     assert len(versions) == 2
     assert versions[0]["train_end"] == "2026-03-01T00:00:00"  # plus récent en premier
@@ -110,7 +110,7 @@ def test_registry_versions_newest_first(client, tmp_path):
 
 def test_registry_decisions_reflects_publish(client, tmp_path):
     _publish(tmp_path, "BTC/USDC", "1h", "r", "2026-01-01T00:00:00")
-    r = client.get("/api/ml/registry/decisions", params={"symbol": "BTC/USDC", "tf": "1h", "recipe": "r"})
+    r = client.get("/api/ml/registry/decisions", params={"tf": "1h", "recipe": "r"})
     decisions = r.json()["decisions"]
     assert len(decisions) == 1
     assert decisions[0]["decision"] == "promote"
@@ -124,7 +124,7 @@ def test_pin_then_registry_overview_reflects_it(client, tmp_path):
     _publish(tmp_path, "BTC/USDC", "1h", "r", "2026-03-01T00:00:00", tag="new")
 
     r = client.post("/api/ml/registry/pin", json={
-        "symbol": "BTC/USDC", "tf": "1h", "recipe": "r", "version_id": old.version_id,
+        "tf": "1h", "recipe": "r", "version_id": old.version_id,
     })
     assert r.status_code == 200
 
@@ -136,7 +136,7 @@ def test_pin_then_registry_overview_reflects_it(client, tmp_path):
 def test_pin_unknown_version_404(client, tmp_path):
     _publish(tmp_path, "BTC/USDC", "1h", "r", "2026-01-01T00:00:00")
     r = client.post("/api/ml/registry/pin", json={
-        "symbol": "BTC/USDC", "tf": "1h", "recipe": "r", "version_id": "does-not-exist",
+        "tf": "1h", "recipe": "r", "version_id": "does-not-exist",
     })
     assert r.status_code == 404
 
@@ -144,9 +144,9 @@ def test_pin_unknown_version_404(client, tmp_path):
 def test_unpin_clears_it(client, tmp_path):
     old = _publish(tmp_path, "BTC/USDC", "1h", "r", "2026-01-01T00:00:00")
     client.post("/api/ml/registry/pin", json={
-        "symbol": "BTC/USDC", "tf": "1h", "recipe": "r", "version_id": old.version_id,
+        "tf": "1h", "recipe": "r", "version_id": old.version_id,
     })
-    r = client.post("/api/ml/registry/unpin", json={"symbol": "BTC/USDC", "tf": "1h", "recipe": "r"})
+    r = client.post("/api/ml/registry/unpin", json={"tf": "1h", "recipe": "r"})
     assert r.status_code == 200
     assert client.get("/api/ml/registry").json()["models"][0]["pinned_version_id"] is None
 
@@ -157,7 +157,7 @@ def test_unpin_clears_it(client, tmp_path):
 def test_promote_rejected_candidate(client, tmp_path):
     art = _publish(tmp_path, "BTC/USDC", "1h", "r", "2026-01-01T00:00:00", decision="keep")
     r = client.post("/api/ml/registry/promote", json={
-        "symbol": "BTC/USDC", "tf": "1h", "recipe": "r",
+        "tf": "1h", "recipe": "r",
         "version_id": art.version_id, "decision": "manual",
     })
     assert r.status_code == 200
@@ -168,7 +168,7 @@ def test_promote_rejected_candidate(client, tmp_path):
 def test_promote_invalid_decision_400(client, tmp_path):
     art = _publish(tmp_path, "BTC/USDC", "1h", "r", "2026-01-01T00:00:00")
     r = client.post("/api/ml/registry/promote", json={
-        "symbol": "BTC/USDC", "tf": "1h", "recipe": "r",
+        "tf": "1h", "recipe": "r",
         "version_id": art.version_id, "decision": "bogus",
     })
     assert r.status_code == 400
@@ -176,7 +176,7 @@ def test_promote_invalid_decision_400(client, tmp_path):
 
 def test_promote_unknown_version_404(client, tmp_path):
     r = client.post("/api/ml/registry/promote", json={
-        "symbol": "BTC/USDC", "tf": "1h", "recipe": "r", "version_id": "nope",
+        "tf": "1h", "recipe": "r", "version_id": "nope",
     })
     assert r.status_code == 404
 

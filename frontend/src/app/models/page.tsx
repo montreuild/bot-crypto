@@ -53,11 +53,11 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
   const handlePinToggle = async () => {
     try {
       if (isPinned) {
-        await unpin.mutateAsync({ symbol: entry.symbol, tf: entry.tf, recipe: entry.recipe });
+        await unpin.mutateAsync({ tf: entry.tf, recipe: entry.recipe });
         toast.success('Pin retiré');
       } else {
         await pin.mutateAsync({
-          symbol: entry.symbol, tf: entry.tf, recipe: entry.recipe, versionId: version.version_id,
+          tf: entry.tf, recipe: entry.recipe, versionId: version.version_id,
         });
         toast.success('Version épinglée');
       }
@@ -68,12 +68,12 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
 
   const handlePromote = async (decision: 'manual' | 'keep') => {
     const verb = decision === 'manual' ? 'Promouvoir' : 'Rejeter';
-    if (!window.confirm(`${verb} la version ${version.version_id} pour ${entry.symbol}/${entry.tf}/${entry.recipe} ?`)) {
+    if (!window.confirm(`${verb} la version ${version.version_id} pour ${entry.tf}/${entry.recipe} ?`)) {
       return;
     }
     try {
       await promote.mutateAsync({
-        symbol: entry.symbol, tf: entry.tf, recipe: entry.recipe,
+        tf: entry.tf, recipe: entry.recipe,
         versionId: version.version_id, decision,
       });
       toast.success('Décision mise à jour');
@@ -348,10 +348,10 @@ function DiagnosticsPanel({ trainMeta }: { trainMeta?: ModelTrainMeta }) {
 function RegistryRow({ entry }: { entry: ModelRegistryEntry }) {
   const [expanded, setExpanded] = useState(false);
   const { data: versionsData, isLoading: versionsLoading } = useMLRegistryVersions(
-    expanded ? entry.symbol : null, expanded ? entry.tf : null, expanded ? entry.recipe : null,
+    expanded ? entry.tf : null, expanded ? entry.recipe : null,
   );
   const { data: decisionsData } = useMLRegistryDecisions(
-    expanded ? entry.symbol : null, expanded ? entry.tf : null, expanded ? entry.recipe : null,
+    expanded ? entry.tf : null, expanded ? entry.recipe : null,
   );
 
   const active = entry.active;
@@ -359,9 +359,9 @@ function RegistryRow({ entry }: { entry: ModelRegistryEntry }) {
   return (
     <>
       <tr className="border-b border-border/30 hover:bg-card-hover">
-        <td className="p-3 font-mono font-semibold">{entry.symbol}</td>
         <td className="p-3"><Badge variant="purple">{entry.tf}</Badge></td>
         <td className="p-3 font-mono text-xs">{entry.recipe}</td>
+        <td className="p-3 font-mono text-xs text-muted">{entry.train_symbol ?? '—'}</td>
         <td className="p-3 font-mono text-xs">
           {active ? active.version_id : <span className="text-dim">aucune</span>}
         </td>
@@ -448,9 +448,11 @@ function RegistryTable({ entries }: { entries: ModelRegistryEntry[] }) {
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs text-dim border-b border-border">
-            <th className="p-3 font-medium">Symbole</th>
             <th className="p-3 font-medium">TF</th>
             <th className="p-3 font-medium">Recette</th>
+            <th className="p-3 font-medium" title="Symbole dont proviennent les bougies d&apos;entraînement — le modèle sert tous les symboles tradés">
+              Entraîné sur
+            </th>
             <th className="p-3 font-medium">Version active</th>
             <th className="p-3 font-medium">Entraînée jusqu'au</th>
             <th className="p-3 font-medium">AUC</th>
@@ -462,7 +464,7 @@ function RegistryTable({ entries }: { entries: ModelRegistryEntry[] }) {
         </thead>
         <tbody>
           {entries.map((e) => (
-            <RegistryRow key={`${e.symbol}|${e.tf}|${e.recipe}`} entry={e} />
+            <RegistryRow key={`${e.tf}|${e.recipe}`} entry={e} />
           ))}
         </tbody>
       </table>
