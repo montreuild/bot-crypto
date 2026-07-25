@@ -12,10 +12,12 @@ Solution : un cache LRU au niveau du process, partagé entre les instances de
 stratégie. Les workers de l'optimiseur étant persistants
 (ProcessPoolExecutor + _worker_init), le cache survit d'un trial à l'autre.
 
-Clé = (classe, tf, empreinte de la fenêtre d'entraînement, params
-d'entraînement). Valeur = snapshot de l'état par TF (modèles, feature_cols,
-medians, AUC, meta). Les objets modèles sont partagés par référence (lecture
-seule en prédiction) ; les dicts/listes sont copiés à la restauration.
+Clé = (identité de RECETTE, tf, empreinte de la fenêtre d'entraînement,
+params d'entraînement). La recette plutôt que la classe : deux stratégies qui
+consomment le même modèle doivent l'entraîner une seule fois (ML-02 §5.5).
+Valeur = snapshot de l'état par TF (modèles, feature_cols, medians, AUC,
+meta). Les objets modèles sont partagés par référence (lecture seule en
+prédiction) ; les dicts/listes sont copiés à la restauration.
 
 Dimensionnement : TRAIN_CACHE_MAX entrées (env var, défaut 160 ≈ une passe
 complète de retrains sur 50k bougies à retrain_every=800, plusieurs jeux de
@@ -69,6 +71,30 @@ def aligned_train_window(df, retrain_every: int, n_train: int):
 
 
 
+
+def _recipe_identity(strategy) -> str:
+    """Identité du MODÈLE que ``strategy`` entraîne — clé de partage du cache.
+
+    La clé était ``type(strategy).__module__``, donc deux stratégies
+    consommant la MÊME recette entraînaient deux fois le même modèle : mesuré
+    sur ``opus_omnibus_v11`` et ``opus_omnibus_v12``, qui partagent
+    ``omnibus_v4_multi`` (même hash) — deux misses, aucun hit. C'est le
+    « partage de fait non géré » de ML-02 §5.5, devenu corrigeable maintenant
+    que la recette est un objet.
+
+    Repli sur le module si la stratégie ne déclare pas de recette : conserver
+    l'ancien comportement vaut mieux que refuser de cacher.
+    """
+    try:
+        from app.ml.recipe import load_recipe, primary_recipe
+        name = primary_recipe(type(strategy))
+        if name:
+            return f"recipe:{name}@{load_recipe(name).hash()}"
+    except Exception as e:
+        logger.debug(f"[TrainCache] identité de recette indisponible : {e}")
+    return f"module:{type(strategy).__module__}"
+
+
 def _state_dict(strategy, attr: str):
     """Dict d'état par TF, que la stratégie le nomme ``attr`` ou ``_attr``.
 
@@ -107,7 +133,7 @@ def cached_train(strategy, df, tf_key: str, params: dict,
         return v
 
     key = (
-        type(strategy).__module__,
+        _recipe_identity(strategy),
         tf_key,
         _df_fingerprint(df),
         tuple((k, _hashable(params.get(k))) for k in sorted(param_keys)),

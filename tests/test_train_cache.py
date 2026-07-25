@@ -171,3 +171,40 @@ def test_empty_snapshot_is_never_cached():
     b = _StratNoState()
     train_cache.cached_train(b, df, "1h", {}, b._train_impl, ("amp_models",), ())
     assert b.calls == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Clé = recette, pas classe : « même recette ⇒ un seul entraînement »
+# ─────────────────────────────────────────────────────────────────────────────
+def test_two_strategies_sharing_a_recipe_train_once():
+    """opus_omnibus_v11 et v12 consomment omnibus_v4_multi (même hash). La clé
+    étant la CLASSE, chacun entraînait sa propre copie du même modèle — la
+    « duplication de fait » que ML-02 §5.5 décrivait sans pouvoir la corriger.
+    """
+    import app.strategies.opus_omnibus_v11 as v11
+    import app.strategies.opus_omnibus_v12 as v12
+    from app.ml.recipe import primary_recipe
+
+    assert primary_recipe(v11.Strategy) == primary_recipe(v12.Strategy)
+    a = train_cache._recipe_identity(v11.Strategy())
+    b = train_cache._recipe_identity(v12.Strategy())
+    assert a == b, "recette partagée mais identités de cache distinctes"
+    assert a.startswith("recipe:")
+
+
+def test_distinct_recipes_keep_distinct_cache_identities():
+    """Le partage ne doit pas déborder : deux recettes différentes restent
+    deux lignées d'entraînement."""
+    import app.strategies.opus_omnibus_v10_retrained as v10
+    import app.strategies.opus_omnibus_v11 as v11
+    assert (train_cache._recipe_identity(v10.Strategy())
+            != train_cache._recipe_identity(v11.Strategy()))
+
+
+def test_strategy_without_recipe_falls_back_to_module():
+    """Une stratégie sans recette doit rester cachable — le repli conserve
+    l'ancien comportement plutôt que de refuser de cacher."""
+    class _Anon:
+        pass
+    ident = train_cache._recipe_identity(_Anon())
+    assert ident.startswith("module:")
