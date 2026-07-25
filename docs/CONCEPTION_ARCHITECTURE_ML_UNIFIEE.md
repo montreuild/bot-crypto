@@ -742,10 +742,28 @@ et ses trois implémentations, le bloc `models:` dans les YAML de stratégie, et
 `recipe` en **paramètre requis** aux quatre sites de la fracture (b). Referme
 (a), (b), (c), (d).
 
-**C. Entraînement unifié.** Un seul chemin `train(recipe, df, tf)` ; les
-4 `_train_impl` de ~150 lignes disparaissent. Étape la plus sensible : à valider
-**recette par recette**, en comparant les artefacts produits avant/après sur la
-même fenêtre — le protocole de §1.5 s'y applique tel quel.
+**C. Entraînement unifié — préparé, non exécuté.** Un seul chemin
+`train(recipe, df, tf)` ; les `_train_impl` autonomes (~150 lignes chacun)
+disparaissent. C'était l'étape la plus sensible : elle touche l'entraînement
+lui-même, et rien ne garantissait a priori que `MLBackend` produise le même
+modèle que les implémentations recopiées.
+
+**Cette garantie est désormais mesurée** — `scripts/check_train_impl_equivalence.py`,
+BTC/USDC 1h, 4 000 barres, chaque stratégie comparée à `MLBackend` sur son
+propre jeu de paramètres de recette :
+
+| stratégie | écart max `amp` | écart max `dir` | corrélation |
+|---|---:|---:|---:|
+| `opus_stat_retrained_v4` | 0.000000 | 0.000000 | 1.0000 |
+| `opus_omnibus_v7` | 0.000000 | 0.000000 | 1.0000 |
+| `opus_omnibus_v11_followsetup` | 0.000000 | 0.000000 | 1.0000 |
+
+Les trois sont **strictement identiques**. La suppression de leur
+`_train_impl` au profit de `MLBackend` ne change donc pas le modèle produit :
+l'étape C cesse d'être un pari. Ce qui reste à faire est mécanique — donner un
+`MLBackend` à `opus_omnibus_v7` et `opus_omnibus_v11_followsetup` (qui n'en ont
+pas encore) et rebrancher `save`/`load`/`predict` dessus, comme
+`opus_omnibus_v11` le fait déjà.
 
 **D. Fusion du catalogue de setups omnibus** (§7) — le chantier qui absorbe
 v7 à v11 dans un routing unique portant les 10 setups.
