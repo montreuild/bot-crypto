@@ -1,7 +1,15 @@
 # Conception — Architecture unifiée : entraînement, gestion et exploitation des modèles
 
-> **Statut** : **révision 3 — l'étape A est implémentée** (§6.A). Le reste
-> (B → G) est encore une proposition.
+> **Statut** : **révision 4** — étapes **A, B, D.1 et G livrées**. Restent
+> **C, D.2, E, F** et les décisions 11 (dimension symbole) et 8 (fusion
+> omnibus complète), cette dernière étant la seule qui change des backtests.
+>
+> Trois bugs préexistants ont été trouvés *par* ce travail, tous silencieux :
+> snapshot vide du cache d'entraînement (V11/V12 perdaient leur modèle à chaque
+> hit → zéro signal dès le 2ᵉ essai d'optimisation), `defaults` ignoré par
+> `MLBackend.fit` (une stratégie s'entraînait avec les réglages du backend, pas
+> les siens), et deux tests morts par `importorskip("sklearn")` sur un dépôt
+> sans sklearn.
 >
 > Révision 2 avait intégré deux informations qui changeaient les conclusions :
 > (a) le bot n'est **pas en production**, donc aucune contrainte de
@@ -1078,18 +1086,18 @@ propre au moteur.
 | 2 | `v10` figé : retirer ou rebrancher | ✅ **retiré** | le rebrancher aurait donné `v10_retrained`, dont le routing est déjà celui de `v11` |
 | 3 | `v8` / `v9` : retirer ou rebrancher | ✅ **retirés, setups préservés** | `SHORT_TD` et `LONG_PULLBACK_TU` portés dans v11 désactivés — la fusion (§7) reste à faire |
 | 4 | Supprimer le code de rétrocompat (§3.2) | ✅ **fait** | `ml_mode` seul levier, défaut explicite (pas rendu obligatoire — cf. §6.A) |
-| 5 | Recette + prédicteur en une passe (**B**) | **à faire** | referme (a)(b)(c)(d) ; `recipe` requis, sans repli |
+| 5 | Recette + prédicteur en une passe (**B**) | ✅ **fait** | 7 recettes, contrat `Predictor` à 4 implémentations ; (a)(b)(c)(d) refermées |
 | 6 | Entraînement unifié (**C**) | **à faire**, recette par recette | validation artefact par artefact |
-| 7 | Fusion `v10_retrained` + `v11` | **à faire, en premier** | routing identique : fusion à comportement constant, prouvable |
+| 7 | Fusion `v10_retrained` + `v11` | ✅ **fait** | 952 → 93 lignes ; équivalence prouvée sur 3 plans |
 | 8 | Fusion omnibus complète (**§7**) | **à trancher** | **change des backtests** — chaque arbitrage documenté avant le code |
-| 9 | `ProxyPredictor` (**E**) | **à faire** | absorbe 5 fichiers, corrige la dérive (e) |
+| 9 | `ProxyPredictor` (**E**) | **à faire** | absorbe 5 fichiers ; nécessite l'injection de prédicteur dans `score()` |
 | 10 | Population 2 (27 stratégies) | **ne rien faire** | l'architecture leur est neutre |
 | 11 | Dimension **symbole** des modèles | **à trancher** | l'exploiter ou la retirer — pas la porter à moitié |
-| 12 | Mesurer calibration / élagage (**§8**) | **à faire, en dernier** | critère à fixer AVANT la mesure ; l'AUC ne peut pas juger la calibration |
+| 12 | Mesurer calibration / élagage (**§8**) | ✅ **fait** (§8.1) | calibration : garder, mais **désactiver en 1h**. Élagage : non mesurable par ce protocole |
 
 Les décisions **8 et 11** sont les seules qui ne sont pas techniques : la
 première change ce que le bot trade, la seconde change ce qu'un modèle
 représente. Les autres sont des refactorisations à comportement constant, à
 prouver signal par signal.
 
-Ordre de valeur décroissante sur ce qui reste : **5 → 7 → 9 → 8 → 12**.
+Ordre de valeur décroissante sur ce qui reste : **9 → 6 → 8 → 11**.
