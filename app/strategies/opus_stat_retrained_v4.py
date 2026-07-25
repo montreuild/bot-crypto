@@ -122,6 +122,9 @@ class Strategy(BaseStrategyML):
     """Stratégie ML — pipeline V4 entraîné inline (modèles persistés par TF)."""
 
     name      = "opus_stat_retrained_v4"
+    # Recette(s) consommée(s) — surchargeable par le bloc `models:`
+    # du YAML (cf. app.ml.recipe.strategy_models).
+    models: Dict[str, str] = {"signal": "omnibus_v4_single"}
     model_dir = "models"
 
     timeframes: List[str] = list(_SUPPORTED_TFS)
@@ -149,15 +152,6 @@ class Strategy(BaseStrategyML):
         "n_estimators":    500,
         "num_leaves":      31,
         "learning_rate":   0.03,
-    }
-
-    # Contrat de gate (ML-02) : _train_impl labellise en t+1 EN DUR (ret_t1),
-    # ce n'est pas un paramètre d'entraînement — d'où la déclaration explicite
-    # ici. Sans elle, le gate évaluait les candidats sur le défaut multi-horizon
-    # [1,3,6] hérité de V11, soit une cible que ce modèle n'a jamais apprise.
-    gate_spec: Dict[str, Any] = {
-        "label_horizons": [1],
-        "amp_top_pct":    fixed_params["amp_top_pct"],
     }
 
     _DEFAULTS = {

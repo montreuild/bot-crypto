@@ -84,6 +84,9 @@ class Strategy(BaseStrategy):
     """Seuil dynamique sans ML — proxy directionnel + filtre ADX + porte de volatilité."""
 
     name = "dynamic_threshold_no_ml"
+    # Recette(s) consommée(s) — surchargeable par le bloc `models:`
+    # du YAML (cf. app.ml.recipe.strategy_models).
+    models: Dict[str, str] = {"signal": "proxy_indicators"}
     timeframes: List[str] = ["5m", "15m", "1h"]
 
     param_space: Dict[str, List] = {

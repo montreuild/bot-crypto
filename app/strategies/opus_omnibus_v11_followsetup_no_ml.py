@@ -186,6 +186,9 @@ class Strategy(BaseStrategy):
     """V11 FollowSetup sans ML — sortie sur flip de setup, proxys d'indicateurs."""
 
     name = "opus_omnibus_v11_followsetup_no_ml"
+    # Recette(s) consommée(s) — surchargeable par le bloc `models:`
+    # du YAML (cf. app.ml.recipe.strategy_models).
+    models: Dict[str, str] = {"signal": "proxy_indicators"}
     timeframes: List[str] = list(_SUPPORTED_TFS)
 
     param_space: Dict[str, Any] = {

@@ -9,10 +9,15 @@ import pytest
 
 pytest.importorskip("lightgbm")
 
+
 import app.ml.model_registry as registry
 from app.engine.backtest import Backtester, _resolve_frozen_ml_model
 from app.engine.engine import Engine
 from app.ml.backend.persistence import save_amp_dir_bundle
+
+# Clé de registre = RECETTE, plus nom de stratégie (fracture b).
+# opus_omnibus_v11 consomme omnibus_v4_multi.
+_RECIPE = "omnibus_v4_multi"
 
 
 def _cfg(strategy_params=None):
@@ -94,7 +99,7 @@ def test_ml_mode_is_the_only_lever(tmp_path):
 # ─────────────────────────────────────────────────────────────────────────────
 def test_resolve_frozen_ml_model_loads_and_reports_no_overlap(tmp_path):
     registry_base = str(tmp_path / "models")
-    art = _publish_toy_model(tmp_path, "BTC/USDC", "1h", "opus_omnibus_v11",
+    art = _publish_toy_model(tmp_path, "BTC/USDC", "1h", _RECIPE,
                              train_end="2020-01-01T00:00:00")
     assert art is not None
     strat = _v11()
@@ -116,7 +121,7 @@ def test_resolve_frozen_ml_model_flags_overlap_at_boundary(tmp_path):
     doit être signalé, pas silencieusement ignoré (ML-02 §4.1)."""
     registry_base = str(tmp_path / "models")
     boundary = "2020-06-01T00:00:00"
-    art = _publish_toy_model(tmp_path, "BTC/USDC", "1h", "opus_omnibus_v11",
+    art = _publish_toy_model(tmp_path, "BTC/USDC", "1h", _RECIPE,
                              train_start="2020-01-01T00:00:00", train_end=boundary)
     assert art is not None
     strat = _v11()
@@ -183,7 +188,7 @@ def test_backtest_simulated_live_refreshes_and_publishes(tmp_path):
     # entraîner réellement (skipped tant que la fenêtre est trop courte).
     assert any(d["decision"] in ("initial", "promote") for d in info["decisions"])
 
-    versions = registry.list_versions("BTC/USDC", "1h", "opus_omnibus_v11", base_dir=registry_base)
+    versions = registry.list_versions("BTC/USDC", "1h", _RECIPE, base_dir=registry_base)
     assert len(versions) >= 1
 
 
@@ -193,7 +198,7 @@ def test_backtest_simulated_live_without_cadence_behaves_like_frozen(tmp_path):
     ex. familles V4 pretrained) doit se comporter comme "frozen" même sous
     ml_mode="simulated_live" — pas de tentative de réentraînement périodique."""
     registry_base = str(tmp_path / "models")
-    art = _publish_toy_model(tmp_path, "BTC/USDC", "1h", "opus_omnibus_v11",
+    art = _publish_toy_model(tmp_path, "BTC/USDC", "1h", _RECIPE,
                              train_end="2020-01-01T00:00:00")
     assert art is not None
     df = _make_ohlcv(1400, seed=3)

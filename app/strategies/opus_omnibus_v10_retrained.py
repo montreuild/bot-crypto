@@ -311,6 +311,9 @@ class Strategy(BaseStrategyML):
     """OMNIBUS V10 — routing V10 sur modèles LightGBM entraînés inline."""
 
     name      = "opus_omnibus_v10_retrained"
+    # Recette(s) consommée(s) — surchargeable par le bloc `models:`
+    # du YAML (cf. app.ml.recipe.strategy_models).
+    models: Dict[str, str] = {"signal": "omnibus_v4_single"}
     model_dir = "models"
 
     timeframes: List[str] = list(_SUPPORTED_TFS)
@@ -344,15 +347,6 @@ class Strategy(BaseStrategyML):
         "n_estimators":    500,
         "num_leaves":      31,
         "learning_rate":   0.03,
-    }
-
-    # Contrat de gate (ML-02) : labellisation single-horizon t+1 câblée en dur
-    # dans _train_impl (ret_t1), ce n'est pas un paramètre d'entraînement.
-    # Sans cette déclaration, le gate évaluait les candidats sur le défaut
-    # multi-horizon [1,3,6] hérité de V11 — une cible jamais apprise ici.
-    gate_spec: Dict[str, Any] = {
-        "label_horizons": [1],
-        "amp_top_pct":    fixed_params["amp_top_pct"],
     }
 
     _DEFAULTS = {

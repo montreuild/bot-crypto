@@ -1,0 +1,40 @@
+recipe: dyn_threshold_v1
+version: 1
+description: >
+  Seuil dynamique — catalogue de features propre (~30 colonnes : VWAP,
+  micro-structure, volatilité réalisée) et label à seuil ADAPTATIF à la
+  volatilité, pas un quantile d'amplitude fixe. Une seule tête : direction.
+  C'est la recette qui prouve que le scoring ne peut pas être universel.
+
+features:
+  catalog: dyn_threshold@1
+  params:
+    lookahead: 3                  # horizon de label : change le MODÈLE, donc
+                                  # entre dans le hash de recette
+    vol_multiplier: 0.6
+
+labels:
+  horizons: [3]
+  amp_top_pct: 0.30
+
+heads: [dir]
+
+hp:
+  n_estimators: 300
+  num_leaves: 31
+  learning_rate: 0.05
+
+window:
+  bars:
+    default: max
+  min_bars: 1500
+  cadence_bars: 800
+
+gate:
+  metric: auc_dir                 # pas d'amplitude : arbitrer sur auc_amp
+                                  # rapporterait un faux « indisponible »
+  holdout_bars: 1500
+  auc_floor: 0.55
+  epsilon: 0.01
+
+persistence: lgbm_single

@@ -237,6 +237,9 @@ class Strategy(BaseStrategy):
     """V8 OMNIBUS sans ML — SIGNAL_UP + proxys d'indicateurs (O(1))."""
 
     name = "opus_omnibus_v8_no_ml"
+    # Recette(s) consommée(s) — surchargeable par le bloc `models:`
+    # du YAML (cf. app.ml.recipe.strategy_models).
+    models: Dict[str, str] = {"signal": "proxy_indicators"}
     timeframes: List[str] = list(_SUPPORTED_TFS)
 
     param_space: Dict[str, Any] = {

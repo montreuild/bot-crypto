@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional
 import app.ml.model_registry as registry
 from app.ml.scoring import (
     resolve_gate_spec,
+    resolve_recipe_name,
     resolve_scorer,
     score_amp_dir_bundle,
 )
@@ -214,7 +215,7 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
     ``decision="failed"``) ; seules les erreurs de programmation (mauvais
     type d'argument, etc.) remontent.
     """
-    recipe = recipe or getattr(strategy, "name", "strategy")
+    recipe = recipe or resolve_recipe_name(strategy, params)
     gc_ = gate_cfg or GateConfig.from_params({**resolve_gate_spec(strategy), **(params or {})})
 
     n = len(df) if df is not None else 0

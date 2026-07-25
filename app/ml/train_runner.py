@@ -108,7 +108,7 @@ def train_and_publish(strategy_name: str, symbol: str, tf: str, *,
     strat = mod.Strategy()
     gc_ = gate_cfg or policy.GateConfig.from_params(
         {**policy.resolve_gate_spec(strategy_name), **p})
-    return policy.maybe_refresh(strat, symbol, tf, df, params=p, recipe=strategy_name,
+    return policy.maybe_refresh(strat, symbol, tf, df, params=p,
                                 gate_cfg=gc_, source=source, base_dir=base_dir)
 
 
@@ -151,6 +151,8 @@ def _dry_run(strategy_name: str, symbol: str, tf: str, df: pl.DataFrame,
 
     gc_ = gate_cfg or policy.GateConfig.from_params(
         {**policy.resolve_gate_spec(strategy_name), **params})
+    # La clé du registre est la RECETTE, pas le nom de stratégie (fracture b).
+    recipe_name = policy.resolve_recipe_name(strategy_name, params)
     n = len(df)
     if n < gc_.holdout_bars + gc_.min_window_bars:
         return {"decision": "skipped", "reason": "insufficient_data", "n_bars": n,
@@ -164,7 +166,7 @@ def _dry_run(strategy_name: str, symbol: str, tf: str, df: pl.DataFrame,
     if strat is None:
         return {"decision": "failed", "reason": candidate_metrics.get("skipped"), "n_bars": n}
 
-    incumbent = registry.latest_promoted(symbol, tf, strategy_name, base_dir=base_dir)
+    incumbent = registry.latest_promoted(symbol, tf, recipe_name, base_dir=base_dir)
     incumbent_metrics = None
     if incumbent is not None:
         incumbent_metrics = policy.score_holdout(incumbent.path_prefix, holdout_df,
@@ -207,6 +209,7 @@ def window_sweep(strategy_name: str, symbol: str, tf: str, windows: List[int], *
     p = dict(params or {})
     gc_ = gate_cfg or policy.GateConfig.from_params(
         {**policy.resolve_gate_spec(strategy_name), **p})
+    recipe_name = policy.resolve_recipe_name(strategy_name, p)
     n = len(df)
     smallest = min(windows) if windows else 0
     if n < gc_.holdout_bars + smallest:
@@ -248,7 +251,7 @@ def window_sweep(strategy_name: str, symbol: str, tf: str, windows: List[int], *
         return result
 
     best_strat = trained[best_w]
-    incumbent = registry.latest_promoted(symbol, tf, strategy_name, base_dir=base_dir)
+    incumbent = registry.latest_promoted(symbol, tf, recipe_name, base_dir=base_dir)
     incumbent_metrics = None
     if incumbent is not None:
         incumbent_metrics = policy.score_holdout(incumbent.path_prefix, holdout_df,
@@ -264,7 +267,7 @@ def window_sweep(strategy_name: str, symbol: str, tf: str, windows: List[int], *
         best_strat.save_model(tmp_prefix)
         bounds = registry.train_window_bounds(pre_holdout.tail(best_w))
         published = registry.publish(
-            symbol, tf, strategy_name, tmp_prefix,
+            symbol, tf, recipe_name, tmp_prefix,
             train_start=bounds["train_start"], train_end=bounds["train_end"],
             n_bars=bounds["n_bars"], recipe_cfg={**p, "window_bars": best_w},
             source=source, decision=gate.decision,

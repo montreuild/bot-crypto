@@ -64,9 +64,31 @@ def test_v12_inherits_gate_spec_from_v11_without_duplication():
     assert resolve_gate_spec("opus_omnibus_v12") == resolve_gate_spec("opus_omnibus_v11")
 
 
-def test_v11_gate_spec_derived_from_fixed_params_cannot_drift():
-    import app.strategies.opus_omnibus_v11 as v11
-    assert v11.Strategy.gate_spec["label_horizons"] is v11.Strategy.fixed_params["label_horizons"]
+@pytest.mark.parametrize("strategy", SINGLE_HORIZON_RECIPES + MULTI_HORIZON_RECIPES)
+def test_recipe_labels_match_what_the_strategy_actually_trains_with(strategy):
+    """La recette-fichier et les paramètres d'entraînement ne doivent pas dériver.
+
+    Le gate mesure le candidat sur les labels DÉCLARÉS par la recette ; la
+    stratégie s'entraîne sur ceux de ses ``fixed_params``/``_DEFAULTS``. Si les
+    deux divergent, le gate note un modèle sur une cible qu'il n'a jamais
+    apprise — exactement l'écart 0.732 vs 0.702 qui a motivé tout ce contrat.
+    Le garde-fou était auparavant une identité d'objet intra-fichier ; il est
+    désormais inter-fichiers, donc il couvre le vrai risque.
+    """
+    import importlib
+
+    from app.ml.recipe import load_recipe, primary_recipe
+    cls = importlib.import_module(f"app.strategies.{strategy}").Strategy
+    recipe = load_recipe(primary_recipe(cls))
+    declared = (getattr(cls, "fixed_params", {}) or {}).get("label_horizons")
+    if declared is None:
+        declared = (getattr(cls, "_DEFAULTS", {}) or {}).get("label_horizons")
+    if declared is None:
+        pytest.skip(f"{strategy} ne déclare pas label_horizons — recette seule source")
+    assert list(declared) == list(recipe.label_horizons), (
+        f"{strategy} s'entraîne sur {declared} mais sa recette "
+        f"{recipe.name!r} déclare {recipe.label_horizons}"
+    )
 
 
 def test_unknown_recipe_resolves_to_empty_spec():

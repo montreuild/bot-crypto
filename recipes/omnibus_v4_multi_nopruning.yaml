@@ -1,0 +1,38 @@
+recipe: omnibus_v4_multi_nopruning
+version: 1
+description: >
+  Identique à omnibus_v4_multi, SANS élagage des features. Recette distincte
+  et non paramètre, parce que l'élagage change le modèle produit : deux
+  modèles différents doivent avoir deux lignées d'artefacts distinctes.
+  Consommée par opus_omnibus_v11_followsetup.
+
+features:
+  catalog: v4_polars@1
+  params: {}
+
+labels:
+  horizons: [1, 3, 6]
+  amp_top_pct: 0.30
+
+heads: [amp, dir]
+
+hp:
+  n_estimators: 500
+  num_leaves: 31
+  learning_rate: 0.03
+  calibrate: true
+  prune_features: false
+
+window:
+  bars:
+    default: max
+  min_bars: 2000
+  cadence_bars: 800
+
+gate:
+  metric: auc_amp
+  holdout_bars: 1500
+  auc_floor: 0.55
+  epsilon: 0.01
+
+persistence: lgbm_amp_dir_bundle

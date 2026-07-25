@@ -427,6 +427,9 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
     - managed_externally=True (live) : le LiveTrader planifie fit() en arrière-plan.
     """
     name = "ml_dynamic_threshold"
+    # Recette(s) consommée(s) — surchargeable par le bloc `models:`
+    # du YAML (cf. app.ml.recipe.strategy_models).
+    models: Dict[str, str] = {"signal": "dyn_threshold_v1"}
     retrain_interval_h: int = 6
     model_dir: str = "models"
 
@@ -450,14 +453,6 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         "hyper_search_every": 20,
         "max_train_window": 6000,
     }
-
-    # Contrat de gate (ML-02) : cette recette n'a PAS de modèle d'amplitude —
-    # un unique booster prédit un label directionnel à seuil de volatilité
-    # adaptatif. Le gate doit donc arbitrer sur ``auc_dir``, pas sur le
-    # ``auc_amp`` par défaut (qui n'existera jamais ici). Le scoring lui-même
-    # est surchargé ci-dessous (format de persistance + features + labels
-    # propres).
-    gate_spec: Dict[str, Any] = {"metric": "auc_dir"}
 
     @classmethod
     def score_holdout(cls, path_prefix: str, holdout_df, *,

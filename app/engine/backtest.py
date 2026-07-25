@@ -84,7 +84,9 @@ def _resolve_frozen_ml_model(strat, symbol: Optional[str], tf: Optional[str],
         return entry
     base_dir = getattr(strat, "model_dir", "models") or "models"
     try:
-        art = ml_registry.resolve(symbol, tf, strat.name, as_of=window_start, base_dir=base_dir)
+        from app.ml.scoring import resolve_recipe_name
+        recipe = resolve_recipe_name(strat)
+        art = ml_registry.resolve(symbol, tf, recipe, as_of=window_start, base_dir=base_dir)
     except Exception as e:
         logger.warning(f"[Backtest] ml_mode=frozen : resolve() KO pour {strat.name}/{tf} : {e}")
         return entry
@@ -965,7 +967,7 @@ class Backtester:
                 try:
                     res = _ml_policy.maybe_refresh(
                         sle["strat"], sle["symbol"], sle["tf"], ctx.window,
-                        params=sle["params"], recipe=sle["strat"].name,
+                        params=sle["params"],   # recipe dérivé de la liaison
                         source="backtest_sim",
                         base_dir=getattr(sle["strat"], "model_dir", "models") or "models",
                     )

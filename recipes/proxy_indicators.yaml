@@ -1,0 +1,33 @@
+recipe: proxy_indicators
+version: 1
+description: >
+  Pas un modèle : p_event et p_up dérivés d'indicateurs par formule fixe.
+  Aucun artefact, aucun entraînement, aucun gate — c'est ce qui permet à une
+  variante « sans ML » d'être une LIAISON (models: {signal: proxy_indicators})
+  plutôt qu'un fichier de stratégie parallèle qui dérive de son jumeau.
+  Les pondérations sont reprises à l'identique des cinq variantes *_no_ml.
+
+features:
+  catalog: none
+  params: {}
+
+labels:
+  horizons: [1]
+  amp_top_pct: 0.30
+
+heads: [amp, dir]
+
+hp:
+  p_up_gain: 3.0
+  p_event_center: 0.45
+  p_event_gain: 5.0
+
+window:
+  bars:
+    default: max
+  min_bars: 0
+  cadence_bars: 0
+
+gate: {}                          # rien à gater : aucun artefact produit
+
+persistence: proxy

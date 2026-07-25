@@ -9,9 +9,14 @@ import pytest
 
 pytest.importorskip("lightgbm")
 
+
 import app.ml.model_registry as registry
 from app.ml.backend.persistence import save_amp_dir_bundle
 from app.ml.trainer import MLStrategyTrainer
+
+# Clé de registre = RECETTE, plus nom de stratégie (fracture b).
+# opus_omnibus_v11 consomme omnibus_v4_multi.
+_RECIPE = "omnibus_v4_multi"
 
 
 def _train_tiny_booster(seed: int):
@@ -118,7 +123,7 @@ def test_freshness_warning_undated_artifact_is_non_measurable():
 # ─────────────────────────────────────────────────────────────────────────────
 def test_load_models_resolves_from_registry_and_schedules_future_retrain(tmp_path):
     registry_base = str(tmp_path / "models")
-    art = _publish_toy_model(tmp_path, "BTC/USDC", "1h", "opus_omnibus_v11",
+    art = _publish_toy_model(tmp_path, "BTC/USDC", "1h", _RECIPE,
                              train_end="2020-01-01T00:00:00")
     assert art is not None
 
@@ -174,7 +179,7 @@ def test_retrain_thread_trains_and_publishes_when_enough_data(tmp_path):
     trainer._retrain_thread("opus_omnibus_v11", strat, strat_params, "1h", scanner)
 
     assert strat.is_trained
-    versions = registry.list_versions("BTC/USDC", "1h", "opus_omnibus_v11", base_dir=registry_base)
+    versions = registry.list_versions("BTC/USDC", "1h", _RECIPE, base_dir=registry_base)
     assert len(versions) >= 1
 
 
@@ -192,7 +197,7 @@ def test_retrain_thread_insufficient_data_does_not_crash_or_publish(tmp_path):
     trainer._retrain_thread("opus_omnibus_v11", strat, strat_params, "1h", scanner)
 
     assert not strat.is_trained
-    versions = registry.list_versions("BTC/USDC", "1h", "opus_omnibus_v11", base_dir=registry_base)
+    versions = registry.list_versions("BTC/USDC", "1h", _RECIPE, base_dir=registry_base)
     assert len(versions) == 0
 
 

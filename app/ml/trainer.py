@@ -68,7 +68,9 @@ class MLStrategyTrainer:
                 key = f"{name}@{tf}"
                 art = None
                 try:
-                    art = ml_registry.resolve(symbol, tf, name, base_dir=base_dir)
+                    from app.ml.scoring import resolve_recipe_name
+                    art = ml_registry.resolve(symbol, tf, resolve_recipe_name(strat),
+                                              base_dir=base_dir)
                 except Exception as e:
                     logger.warning(f"[MLTrainer] {name}/{tf} : resolve() KO : {e}")
 
@@ -205,7 +207,7 @@ class MLStrategyTrainer:
             # ML partiellement muté.
             with self._ml_lock:
                 result = ml_policy.maybe_refresh(
-                    strat, symbol, tf, df, params=sp, recipe=name,
+                    strat, symbol, tf, df, params=sp,   # recipe dérivé de la liaison
                     gate_cfg=gate_cfg, source="live", base_dir=base_dir,
                 )
             self._log_gate_result(name, tf, result)

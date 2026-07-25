@@ -175,25 +175,70 @@ def score_amp_dir_bundle(path_prefix: str, holdout_df, *,
 GATE_SPEC_KEYS = ("label_horizons", "amp_top_pct", "metric")
 
 
-def resolve_gate_spec(strategy_or_name: Any) -> Dict[str, Any]:
-    """Lit le ``gate_spec`` déclaré par une recette (classe, instance ou nom
-    de module importable). Retourne ``{}`` si la recette n'en déclare pas —
-    les défauts de ``GateConfig`` s'appliquent alors (comportement historique).
-
-    Best-effort : jamais d'exception, une recette introuvable ou sans attribut
-    renvoie simplement ``{}``.
-    """
-    cls: Any = None
+def _as_class(strategy_or_name: Any) -> Any:
+    """Classe de stratégie depuis une instance, une classe ou un nom de module.
+    ``None`` si irrésoluble — jamais d'exception."""
     if isinstance(strategy_or_name, str):
         try:
             import importlib
-            cls = importlib.import_module(f"app.strategies.{strategy_or_name}").Strategy
+            return importlib.import_module(f"app.strategies.{strategy_or_name}").Strategy
         except Exception:
-            return {}
-    elif isinstance(strategy_or_name, type):
-        cls = strategy_or_name
-    else:
-        cls = type(strategy_or_name)
+            return None
+    if isinstance(strategy_or_name, type):
+        return strategy_or_name
+    return type(strategy_or_name)
+
+
+def resolve_recipe_name(strategy_or_name: Any,
+                        params: Optional[Dict[str, Any]] = None) -> str:
+    """Nom de la recette consommée par une stratégie — clé du registre.
+
+    C'est la correction de la fracture (b) : la clé était le NOM DE STRATÉGIE,
+    codé en dur sur quatre sites. Conséquence, « même recette ⇒ mêmes
+    artefacts » (ML-02 §5.5) était inapplicable : cinq consommateurs d'un même
+    modèle publiaient cinq lignées, et ``v12`` réentraînait la recette de
+    ``v11`` sous un autre nom.
+
+    Lève si la stratégie ne déclare aucune recette : une stratégie ML sans
+    liaison est une erreur de configuration. Retomber sur son nom
+    ressusciterait exactement le défaut qu'on vient de corriger.
+    """
+    from app.ml.recipe import primary_recipe
+    cls = _as_class(strategy_or_name)
+    name = primary_recipe(cls, params) if cls is not None else None
+    if not name:
+        label = getattr(cls, "name", None) or strategy_or_name
+        raise ValueError(
+            f"{label!r} ne déclare aucune recette : ajouter un attribut "
+            f"`models = {{'signal': '<recette>'}}` à la classe, ou un bloc "
+            f"`models:` dans son YAML (cf. app.ml.recipe)."
+        )
+    return name
+
+
+def resolve_gate_spec(strategy_or_name: Any,
+                      params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Conventions de scoring de la recette consommée par ``strategy_or_name``.
+
+    Source de vérité : le fichier ``recipes/{nom}.yaml``. L'attribut de classe
+    ``gate_spec`` reste lu en dernier recours pour une stratégie sans liaison
+    (aucune aujourd'hui) — mais il ne doit pas doubler la recette : deux
+    déclarations de la même convention finiraient par diverger, ce qui est
+    précisément l'origine du décalage 0.732 vs 0.702.
+
+    Best-effort : jamais d'exception, retourne ``{}`` si rien n'est résoluble.
+    """
+    cls = _as_class(strategy_or_name)
+    if cls is None:
+        return {}
+    try:
+        from app.ml.recipe import load_recipe, primary_recipe
+        name = primary_recipe(cls, params)
+        if name:
+            return {k: v for k, v in load_recipe(name).gate_spec().items()
+                    if k in GATE_SPEC_KEYS}
+    except Exception as e:
+        logger.warning(f"[scoring] gate_spec depuis la recette KO pour {cls} : {e}")
 
     spec = getattr(cls, "gate_spec", None) or {}
     if not isinstance(spec, dict):
