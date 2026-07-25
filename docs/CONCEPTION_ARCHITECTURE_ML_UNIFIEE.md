@@ -13,8 +13,8 @@
 > recette comme objet de premier ordre — et en tire les conséquences sur
 > l'ensemble de `app/strategies/`.
 >
-> **Périmètre** : les besoins ML d'abord (§1 à §7). Les stratégies sans modèle
-> sont traitées en §8 comme sous-objectif explicitement non prioritaire.
+> **Périmètre** : les besoins ML d'abord (§1 à §9). Les stratégies sans modèle
+> sont traitées en §10 comme sous-objectif explicitement non prioritaire.
 
 ---
 
@@ -33,7 +33,7 @@ La mesure de §1.5 est reproductible :
 `PYTHONPATH=. python scripts/compare_legacy_vs_retrained.py`.
 
 Les seules valeurs **estimées** du document sont les projections de volume de
-§7 ; elles sont dérivées de lignes mesurées et l'arithmétique est montrée.
+§9 ; elles sont dérivées de lignes mesurées et l'arithmétique est montrée.
 
 ---
 
@@ -98,6 +98,14 @@ Trois observations valident cette lecture :
    vs `min_bars_required(params)`, `_FEATURE_BUILDER.build(window)` vs
    `_build_features(_window_polars(...))`, et l'alignement des `=`. **Aucune
    règle de trading ne diffère.**
+
+4. **`opus_omnibus_v10_retrained` et `opus_omnibus_v11` ont le MÊME routing.**
+   Les 5 fonctions de cœur qu'ils partagent ont un AST identique, et leurs
+   8 setups portent les mêmes noms. Ce qui les sépare est **entièrement une
+   affaire de recette** : `gate_spec.label_horizons` vaut `[1]` pour l'un,
+   `[1, 3, 6]` pour l'autre, et v11 ajoute calibration, élagage et `di_rescue`.
+   C'est la démonstration la plus nette de la thèse de ce document — deux
+   fichiers de 952 et 756 lignes qui sont **un routing et deux recettes**.
 
 ### 1.3 Où part le code
 
@@ -211,6 +219,54 @@ ce que fait `policy.decide_gate` en production.
 +0.018 à +0.063 sur `auc_amp` — au-dessus de l'`epsilon` du gate (0.010) dans
 les trois cas. Le gate promouvrait donc le candidat partout.
 
+#### Contre-épreuve : l'AUC directionnelle par régime
+
+L'AUC globale ne suffit pas à conclure, parce que le seul endroit où V4 avait
+montré un gain était **le régime** : un modèle à 0.48 global peut valoir 0.58
+en Trend Down et 0.44 ailleurs, ce qui justifierait de le garder pour ce
+régime-là. La ventilation par régime est donc la vraie question.
+
+Les deux artefacts sont ventilés sur le même holdout, mêmes labels, même
+classification (`features.classify_regime`, ADX > 20, `di_rescue` = 10). Les
+AUC par régime portant sur 235 à 579 barres, chaque écart est accompagné d'un
+**IC 95 % bootstrap apparié** (2 000 tirages, mêmes indices pour les deux
+modèles) — sans quoi on lirait du bruit comme un signal.
+
+| TF | régime | n | LEGACY `dir` | RETRAIN `dir` | écart | IC 95 % (legacy − retrain) |
+|---|---|---:|---:|---:|---:|---|
+| 15m | Range | 579 | 0.471 | 0.510 | +0.039 | [−0.106, +0.032] bruit |
+| 15m | Trend Up | 521 | 0.474 | 0.541 | +0.066 | [−0.143, +0.012] bruit |
+| 15m | Trend Down | 374 | 0.469 | 0.501 | +0.032 | [−0.123, +0.055] bruit |
+| 15m | Choppy | 235 | 0.468 | 0.527 | +0.059 | [−0.170, +0.040] bruit |
+| 30m | Range | 487 | **0.521** | 0.488 | −0.033 | [−0.042, +0.113] bruit |
+| 30m | Trend Up | 314 | 0.539 | 0.555 | +0.015 | [−0.111, +0.081] bruit |
+| 30m | Trend Down | 549 | **0.530** | 0.528 | −0.002 | [−0.067, +0.074] bruit |
+| 30m | Choppy | 359 | 0.501 | 0.551 | +0.050 | [−0.137, +0.038] bruit |
+| 1h | Range | 371 | 0.440 | 0.503 | +0.063 | [−0.149, +0.021] bruit |
+| 1h | Trend Up | 464 | 0.483 | 0.498 | +0.015 | [−0.090, +0.059] bruit |
+| 1h | Trend Down | 547 | 0.501 | 0.559 | +0.058 | [−0.126, +0.005] bruit |
+| 1h | Choppy | 327 | 0.499 | **0.588** | +0.089 | [−0.173, −0.004] **RETRAIN significatif** |
+
+Lecture, dans l'ordre de force décroissante des affirmations :
+
+1. **Aucun régime où le pack figé est significativement meilleur.** Les deux
+   seules cellules où il devance le candidat (30m/Range +0.033, 30m/Trend Down
+   +0.002) ont des IC qui contiennent largement 0 : [−0.042, +0.113] et
+   [−0.067, +0.074]. Ce sont des écarts d'échantillonnage, pas un avantage.
+2. Le ré-entraînement gagne **10 cellules sur 12**, et c'est la seule
+   significative (1h/Choppy, +0.089) qui va dans son sens.
+3. **Le pack est sous le hasard dans 8 cellules sur 12** (`auc_dir` < 0.500) ;
+   le candidat n'y est que dans 1 sur 12.
+
+**Réserve à énoncer clairement** : les IC sont larges (± 0.10 environ). Sur un
+holdout de 1 500 barres, l'AUC par régime ne discrimine pas finement — dans un
+sens **comme dans l'autre**. La conclusion correcte est donc « aucune preuve
+que le pack sauve un régime », pas « il est prouvé qu'il n'en sauve aucun ».
+Mais combinée à la métrique de gate (§1.5, 3/3 en faveur du candidat), elle
+suffit à trancher : il n'y a rien à conserver *sur la foi des mesures
+disponibles*, et le mécanisme qui dirait le contraire un jour est le gate — pas
+cinq fichiers de stratégie.
+
 Deux corollaires que la mesure impose :
 
 - **Les littéraux de la fracture (a) surestiment fortement la performance
@@ -219,13 +275,15 @@ Deux corollaires que la mesure impose :
   0.656 / 0.600. **Jusqu'à −0.15 d'écart**, affiché dans l'UI comme s'il
   s'agissait de sa performance courante. Ce n'est pas une erreur de code : c'est
   ce que devient un chiffre d'entraînement figé qu'on recopie à la main.
-- **Sa tête directionnelle est sous le hasard.** `auc_dir` = 0.467 en 15m et
-  0.482 en 1h : moins bien qu'une pièce. C'est cohérent avec la purge
-  `dir_min`/`dir_max` décidée précédemment, et cela répond définitivement à la
-  question du `p_dir` V4 — il n'y a rien à récupérer de ce côté-là.
+- **Sa tête directionnelle est sous le hasard**, globalement (0.467 en 15m,
+  0.482 en 1h) **et par régime** (8 cellules sur 12 sous 0.500). C'est
+  cohérent avec la purge `dir_min`/`dir_max` décidée précédemment, et cela
+  répond à la question du `p_dir` V4 : il n'y a rien à récupérer de ce côté-là,
+  y compris en le cherchant régime par régime.
 
 **Réserve honnête** : un symbole, un holdout, une fenêtre. Ce n'est pas une
-campagne. Mais 3/3 avec des marges au-dessus d'`epsilon`, plus une histoire de
+campagne. Mais 3/3 sur la métrique de gate avec des marges au-dessus
+d'`epsilon`, zéro régime sauvé au test d'échantillonnage, plus une histoire de
 décroissance cohérente (entraînement mai, holdout juillet), suffit pour une
 décision d'architecture. Et si le résultat s'inversait un jour, le mécanisme
 qui le dirait est précisément le gate — pas cinq fichiers de stratégie.
@@ -279,16 +337,46 @@ dépréciés ni maintenus. Ils sont à **retirer**.
 fichiers de test.
 
 **Nuance importante — supprimer le pack ≠ supprimer les routings.** `v8`, `v9`
-et `v10` n'existent qu'en version figée. Deux options, et c'est une **décision
-produit, pas technique** :
+et `v10` n'existent qu'en version figée. `v7_pretrained` et
+`opus_stat_pretrained_v4` ont chacun un jumeau ré-entraîné vivant : pour eux la
+suppression est sans perte. Pour les trois autres, la question « les rebrancher
+sur la recette ré-entraînée ? » a une réponse mesurée, et elle diffère selon la
+génération :
 
-- **retirer** ces générations (elles sont antérieures à v11/v12, qui les
-  remplacent fonctionnellement) ; ou
-- **les rebrancher** sur la recette ré-entraînée — mais elles deviennent alors
-  des stratégies jamais backtestées sous cette forme, à re-valider.
+- **`v10` : le rebrancher produit un doublon d'un doublon.** `v10` rebranché
+  sur la recette ré-entraînée *est* `opus_omnibus_v10_retrained`, dont le
+  routing est byte-identique à celui de `v11` (§1.2 obs. 4). On obtiendrait un
+  troisième fichier pour un routing déjà présent deux fois. **Le rebrancher n'a
+  aucun sens ; le retirer non plus n'en perd aucun** — `v11` porte déjà ce
+  routing, avec une meilleure recette.
+- **`v8` et `v9` portent deux setups que la lignée vivante a abandonnés.**
+  Union des setups sur toute la famille omnibus : **10**, dont `SHORT_TD`
+  (présent en v7/v8/v9, absent de v10/v11) et `LONG_PULLBACK_TU` (v9
+  seulement).
 
-`v7_pretrained` et `opus_stat_pretrained_v4` ont chacun un jumeau ré-entraîné
-vivant : pour eux la suppression est sans perte.
+| setup | v7 | v8 | v9 | v10 | v10_retr | v11 | v11_fs |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `SIGNAL_UP` | · | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `SHORT_TD_HIGH` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **`SHORT_TD`** | ✓ | ✓ | ✓ | · | · | · | · |
+| `LONG_CHOPPY` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `SHORT_CHOPPY` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `LONG_RANGE_STRICT` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `LONG_RANGE_LIGHT` | · | · | · | ✓ | ✓ | ✓ | ✓ |
+| `LONG_TU` | · | · | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **`LONG_PULLBACK_TU`** | · | · | ✓ | · | · | · | · |
+| `LONG_EXIT_TD` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · |
+
+Ce tableau change la nature de la question. Les générations omnibus ne sont
+pas sept stratégies : ce sont **sept sous-ensembles d'un même catalogue de
+10 setups**, avec des seuils différents. Retirer `v8` et `v9` ferait perdre
+deux setups ; les rebrancher entiers coûterait deux fichiers pour les
+récupérer. **La bonne réponse n'est ni l'un ni l'autre : c'est la fusion**
+(§7).
+
+Le pack lui-même (6 `.lgb` + 3 `.meta.json`) peut rester sur disque comme
+archive morte, hors du chemin de résolution. Il ne coûte rien tant qu'aucun
+code ne le cherche.
 
 Le pack lui-même (6 `.lgb` + 3 `.meta.json`) peut rester sur disque comme
 archive morte, hors du chemin de résolution. Il ne coûte rien tant qu'aucun
@@ -566,26 +654,25 @@ et ses trois implémentations, le bloc `models:` dans les YAML de stratégie, et
 **recette par recette**, en comparant les artefacts produits avant/après sur la
 même fenêtre — le protocole de §1.5 s'y applique tel quel.
 
-**D. Fusion des routings**, par ordre de risque croissant :
-1. `omnibus_v10` — cœur de décision byte-identique, divergence purement
-   plomberie ;
-2. `opus_stat_v4`, `omnibus_v7` — routings réellement divergents
-   (`_evaluate_setup` et `_apply_setup_overrides` diffèrent pour v7) : la fusion
-   **doit trancher un comportement**, donc change des backtests ;
-3. `omnibus_v11` / `v11_followsetup` / `v12` — générations vivantes, en dernier.
+**D. Fusion du catalogue de setups omnibus** (§7) — le chantier qui absorbe
+v7 à v11 dans un routing unique portant les 10 setups.
 
-**E. `ProxyPredictor`** (§8) — absorbe les 5 variantes `_no_ml` et corrige la
+**E. `ProxyPredictor`** (§10) — absorbe les 5 variantes `_no_ml` et corrige la
 dérive (e).
 
 **F. Nettoyage induit** : cache de features unique, clé de `train_cache` sur
 `recipe_hash`, retrait de `managed_externally` (§3.3).
 
+**G. Mesurer calibration isotone et élagage de features** (§8) — dernière
+étape, une fois l'entraînement unifié : c'est seulement là que l'expérience est
+propre à monter.
+
 **Protocole de non-régression.** Le même qui a validé la factorisation des
 helpers V4 : comparaison des signaux `score()` avant/après sur des fenêtres
 réelles BTC/USDC, ancienne version chargée depuis une copie de sauvegarde via
 `importlib.util.spec_from_file_location`, **abandon de l'étape si un seul signal
-diverge**. Les fusions de D.2 et D.3 sont les seules où une divergence est
-attendue : elle doit alors être énumérée avant, pas constatée après.
+diverge**. Les fusions de D sont les seules où une divergence est attendue :
+elle doit alors être énumérée avant, pas constatée après.
 
 **Point de vigilance opérationnel.** `config.yaml` → `lifecycle.manual_active`
 référence des stratégies par nom (`opus_omnibus_v10_no_ml::1h`,
@@ -595,13 +682,156 @@ au redémarrage.
 
 ---
 
-## 7. Ce que ça donne en volume
+## 7. Chantier de fusion — un routing omnibus, dix setups
+
+C'est le pendant naturel de §3.1 : puisque les générations omnibus sont des
+sous-ensembles d'un même catalogue (tableau de §3.1), la question n'est pas
+« lesquelles garder » mais « comment n'en avoir qu'une qui les contienne
+toutes ».
+
+### 7.1 Le constat qui rend la fusion possible
+
+Trois mesures convergent :
+
+- **Union = 10 setups**, et chaque génération en est un sous-ensemble. Aucune
+  n'introduit de mécanique de sélection différente : toutes passent par le même
+  quadruplet `_apply_setup_overrides` → `_evaluate_setup` → `_select_setup` →
+  `_check_early_exit`.
+- **Les setups sont déjà des données**, pas du code : un dict de 16 clés
+  (`name`, `priority`, `direction`, `enabled`, `regime`,
+  `needs_exit_td_window`, `needs_bearish_excess`, `needs_rsi_below`,
+  `needs_adx_above`, `amp_min`, `dir_min`, `dir_max`, `tp_mult`, `sl_mult`,
+  `max_bars`, `size_factor`). La sélection est déjà pilotée par ces valeurs.
+- **La paramétrisation par YAML existe déjà, mais partiellement** : v11 expose
+  8 clés `setup_*` (suffixes `min`, `priority`), v10_retrained en expose 14
+  (`min`, `max`, `above`, `priority`). C'est le même mécanisme, complété
+  inégalement au fil des générations.
+
+### 7.2 Ce que la fusion produit
+
+**Un routing `omnibus`**, portant le catalogue des 10 setups, chacun
+`enabled: false` par défaut, entièrement décrit en YAML :
+
+```yaml
+# strategies/omnibus.yaml
+models:
+  signal: omnibus_amp_dir_v1
+setups:
+  SIGNAL_UP:        {enabled: true,  priority: -1, amp_min: 0.50, dir_min: 0.60,
+                     tp_mult: 1.0, sl_mult: 1.3, max_bars: 6,  needs_bearish_excess: true}
+  SHORT_TD_HIGH:    {enabled: true,  priority: 0,  regime: trend_down, amp_min: 0.60,
+                     dir_max: 0.30, tp_mult: 1.4, sl_mult: 1.6, max_bars: 8, size_factor: 1.5}
+  SHORT_TD:         {enabled: false}        # récupéré de v7/v8/v9
+  LONG_PULLBACK_TU: {enabled: false}        # récupéré de v9
+  ...
+```
+
+Chaque génération historique devient **un preset**, pas un fichier :
+`strategies/presets/omnibus_v9.yaml` active les 9 setups de v9 avec ses seuils.
+Ce que le bot trade est alors décrit *en clair*, dans un seul endroit, au lieu
+d'être réparti dans sept fichiers Python dont personne ne peut dire de mémoire
+lesquels partagent quoi.
+
+Gains directs, au-delà du volume :
+
+- **Deux setups reviennent d'entre les morts.** `SHORT_TD` et
+  `LONG_PULLBACK_TU` sont aujourd'hui inaccessibles à la lignée vivante ; ils
+  deviennent des options activables et donc **optimisables**.
+- **La fracture (e) se referme structurellement.** Un routing unique ne peut
+  plus dériver d'avec lui-même : les conditions `needs_bearish_excess` /
+  `needs_rsi_below` perdues côté `_no_ml` ne peuvent plus se reperdre.
+- **L'optimiseur gagne une dimension qu'il n'a jamais eue** : le choix du
+  sous-ensemble de setups. Aujourd'hui ce choix est figé dans le code source et
+  ne peut être exploré qu'en écrivant une nouvelle génération.
+
+### 7.3 Ce qui rend ce chantier risqué, et comment le tenir
+
+C'est le chantier **le plus risqué du document** et il doit être le dernier des
+fusions, pour une raison précise : contrairement à la paire v10 (divergence
+purement plomberie), les générations omnibus ont des `_evaluate_setup` et
+`_apply_setup_overrides` réellement différents. Fusionner impose de **choisir
+un comportement** là où elles divergent — donc de changer des backtests.
+
+Trois garde-fous :
+
+1. **Fusionner par paires successives, jamais les sept d'un coup.** Ordre par
+   distance de routing croissante : `v10_retrained` + `v11` (routing identique,
+   fusion à comportement constant, prouvable) → `v10` figé (supprimé en A) →
+   `v11_followsetup` → `v9` → `v8` → `v7`.
+2. **Chaque paire produit son tableau de divergences AVANT le code.** Pour
+   chaque setup et chaque condition : v_a dit X, v_b dit Y, on retient Z, et
+   pourquoi. Ce tableau est la revue ; le code n'est que son application.
+3. **Preset = équivalence prouvée.** Après fusion, `omnibus + preset_v9` doit
+   produire exactement les signaux de l'ancien `opus_omnibus_v9` sur les
+   fenêtres de test — même protocole que §6. Un preset qui ne reproduit pas son
+   ancêtre est un bug, pas un arbitrage.
+
+Si un arbitrage est jugé indésirable, la sortie de secours reste ouverte : un
+setup peut porter une variante (`SHORT_TD_HIGH_v9`) plutôt que d'être fusionné
+de force. Mieux vaut 11 setups dont deux quasi-jumeaux qu'une fusion qui perd
+un comportement en silence.
+
+### 7.4 Portée
+
+Le chantier concerne **la famille omnibus uniquement** (v7 → v12, plus les
+`_no_ml` correspondants). `opus_stat_v4`, `ml_dynamic_threshold` et
+`scoring_statistique_opus_v4/v5` ont des catalogues de décision qui n'ont rien
+à voir : ils restent des routings distincts. Le fusionner avec eux
+reproduirait, à l'échelle du dépôt, l'erreur que ce document décrit.
+
+---
+
+## 8. Mesurer calibration isotone et élagage de features
+
+Dernière étape, volontairement placée après l'unification de l'entraînement
+(§6.C) : c'est seulement à ce moment qu'une expérience propre est bon marché à
+monter — un seul chemin d'entraînement, un flag de recette à basculer.
+
+**Ce qui est mesuré aujourd'hui : rien.** `calibrate: true` et
+`prune_features: true` sont actifs par défaut dans `MLBackend`
+(`_train_impl_wrapper`) et déclarés dans les YAML des générations V11. Aucune
+mesure au dépôt ne compare leur présence à leur absence. Ils coûtent 169 lignes
+(`app/ml/backend/isotonic.py`) plus la logique de `kept_features` dans le
+trainer, et ils entrent dans `_RECIPE_PARAM_KEYS` — donc dans l'identité de la
+recette.
+
+**Protocole**, identique à §1.5 pour être comparable :
+
+- Quatre recettes ne différant que par ces deux flags — `(calibrate, prune)` ∈
+  {(T,T), (T,F), (F,T), (F,F)} ;
+- même fenêtre d'entraînement, même holdout, même graine ;
+- métriques : `auc_amp` et `auc_dir` **globales et par régime**, plus l'erreur
+  de calibration (déjà exposée dans `train_meta`) et le nombre de features
+  retenues ;
+- sur les 3 TF, et si possible un deuxième symbole pour éviter de conclure sur
+  BTC seul.
+
+**Décisions possibles à l'issue** — à énoncer avant de mesurer, pour ne pas
+ajuster le critère au résultat :
+
+- gain < 0.005 d'AUC sur les 3 TF → retirer le flag et son code ;
+- gain net → le figer à `true` dans la recette et ne plus l'exposer ;
+- gain dépendant du régime ou du TF → le laisser en paramètre de recette,
+  documenté par la mesure.
+
+La calibration a une valeur qui ne se lit pas dans l'AUC : l'AUC est invariante
+par transformation monotone, donc **calibrer ne peut pas la changer**. Son
+intérêt est que `p_event` et `p_up` soient des probabilités comparables aux
+seuils des setups (`amp_min: 0.50` doit vouloir dire quelque chose). Le
+critère de décision doit donc porter sur l'erreur de calibration et sur le
+comportement des seuils — pas sur l'AUC, qui répondra « aucun effet » par
+construction. C'est précisément le genre de piège qu'une mesure mal cadrée
+ferait passer pour un résultat.
+
+---
+
+## 9. Ce que ça donne en volume
 
 Arithmétique à partir des lignes mesurées de §1.3 (`routing` = total −
 plomberie). Les 19 fichiers des familles ML pèsent **12 963 lignes**.
 
-Après purge du legacy (v8/v9/v10 retirés), fusion des variantes et absorption
-des `_no_ml`, il reste le routing d'un représentant par génération :
+**Palier 1 — purge du legacy + prédicteur + recette (§6.A–C), sans fusion.**
+Il reste le routing d'un représentant par génération vivante :
 
 | génération | routing conservé |
 |---|---:|
@@ -619,14 +849,35 @@ Plus le code neuf : `app/ml/predictor.py` et ses adaptateurs, le chargeur de
 recettes, les `recipes/*.yaml` — de l'ordre de **400 à 600 lignes**, à comparer
 aux 86 de `lgb_logging.py` et aux 67 du chemin legacy qu'il remplace.
 
-**≈ 12 960 → ≈ 5 600 lignes, soit −57 %**, sans supprimer une seule règle de
-trading. Si `v8`/`v9`/`v10` sont rebranchés au lieu d'être retirés, ajouter
-leur routing (652 + 679 + 684 = 2 015) — mais ils devront être re-validés en
-backtest, ce qui en fait un coût, pas une économie.
+**≈ 12 960 → ≈ 5 600 lignes, soit −57 %.**
+
+**Palier 2 — avec la fusion omnibus (§7).** Les six routings omnibus
+(`v7` 607, `v10` 687, `v11` 685, `v11_followsetup` 796, `v12` 212 = 2 987)
+convergent vers un routing unique portant les 10 setups. Le catalogue lui-même
+migre en YAML ; il reste la mécanique de sélection, mesurée à ~690 lignes sur
+la génération la plus complète.
+
+| après fusion | lignes |
+|---|---:|
+| `omnibus` (routing unique, 10 setups) | ~700 |
+| `opus_stat_v4` | 478 |
+| `dyn_threshold` | 656 |
+| `scoring_stat_v4` / `_v5` | 964 |
+| code ML neuf (prédicteur, recettes) | ~500 |
+| **total** | **≈ 3 300** |
+
+**≈ 12 960 → ≈ 3 300 lignes, soit −75 %**, en **gagnant** deux setups
+(`SHORT_TD`, `LONG_PULLBACK_TU`) aujourd'hui inaccessibles, et sans supprimer
+une seule règle de trading — chaque génération survivant comme preset YAML.
+
+Ces deux projections sont les seules valeurs **estimées** du document. Le
+palier 1 est solide (somme de lignes mesurées) ; le palier 2 dépend de la
+compacité réelle du routing fusionné, d'où l'ordre de grandeur plutôt qu'un
+chiffre.
 
 ---
 
-## 8. Sous-objectif — les stratégies sans modèle
+## 10. Sous-objectif — les stratégies sans modèle
 
 Non prioritaire, traité ici parce que la mesure donne une réponse claire et
 **asymétrique** : deux populations très différentes se cachent derrière
@@ -658,7 +909,7 @@ propre au moteur.
 
 ---
 
-## 9. Ce que je ne recommande pas
+## 11. Ce que je ne recommande pas
 
 - **Unifier les familles de features.** Le catalogue V4 (462 colonnes) et le
   jeu `scoring_statistique` (48 colonnes, paramétré par `adx_threshold`) sont
@@ -678,23 +929,28 @@ propre au moteur.
 
 ---
 
-## 10. Décisions à prendre
+## 12. Décisions à prendre
 
 | # | décision | recommandation | conséquence |
 |---|---|---|---|
-| 1 | **Retirer le pack V4 figé** et son code | **oui** — mesuré obsolète (§1.5) | −~3 760 lignes ; l'archive `.lgb` peut rester hors chemin |
-| 2 | `v8` / `v9` / `v10` : **retirer** ou **rebrancher** | retirer — v11/v12 les remplacent | rebrancher = +2 015 lignes **et** re-backtests |
-| 3 | Supprimer le code de rétrocompat (§3.2) | **oui** | `ml_mode` devient obligatoire |
-| 4 | Recette + prédicteur en une passe (**B**) | **oui** | referme (a)(b)(c)(d) ; `recipe` requis, sans repli |
-| 5 | Entraînement unifié (**C**) | oui, **recette par recette** | validation artefact par artefact |
-| 6 | Fusionner **v10** (D.1) | **oui** | comportement inchangé (à prouver) |
-| 7 | Fusionner **v7 / stat_v4** (D.2) | **à trancher** | routings divergents : **change des backtests** |
-| 8 | `ProxyPredictor` (**E**) | **oui** | absorbe 5 fichiers, corrige la dérive (e) |
-| 9 | Population 2 (27 stratégies) | **ne rien faire** | l'architecture leur est neutre |
-| 10 | Dimension **symbole** des modèles | à trancher | l'exploiter ou la retirer — pas la porter à moitié |
-| 11 | Mesurer calibration / élagage | oui, une expérience | protocole de §1.5, `calibrate=False` en comparaison |
+| 1 | **Retirer le pack V4 figé** et son code | **oui** — mesuré obsolète, globalement ET par régime (§1.5) | −~3 760 lignes ; l'archive `.lgb` peut rester hors chemin |
+| 2 | `v10` figé : retirer ou rebrancher | **retirer** | le rebrancher donne `v10_retrained`, dont le routing est déjà celui de `v11` |
+| 3 | `v8` / `v9` : retirer ou rebrancher | **ni l'un ni l'autre — fusionner** (§7) | les retirer perd `SHORT_TD` et `LONG_PULLBACK_TU` ; les rebrancher coûte 2 fichiers pour les garder |
+| 4 | Supprimer le code de rétrocompat (§3.2) | **oui** | `ml_mode` devient obligatoire |
+| 5 | Recette + prédicteur en une passe (**B**) | **oui** | referme (a)(b)(c)(d) ; `recipe` requis, sans repli |
+| 6 | Entraînement unifié (**C**) | oui, **recette par recette** | validation artefact par artefact |
+| 7 | Fusion `v10_retrained` + `v11` | **oui, en premier** | routing identique : fusion à comportement constant, prouvable |
+| 8 | Fusion omnibus complète (**§7**) | **oui, par paires successives** | **change des backtests** — chaque arbitrage documenté avant le code |
+| 9 | `ProxyPredictor` (**E**) | **oui** | absorbe 5 fichiers, corrige la dérive (e) |
+| 10 | Population 2 (27 stratégies) | **ne rien faire** | l'architecture leur est neutre |
+| 11 | Dimension **symbole** des modèles | à trancher | l'exploiter ou la retirer — pas la porter à moitié |
+| 12 | Mesurer calibration / élagage (**§8**) | **oui, en dernier** | critère à fixer AVANT la mesure ; l'AUC ne peut pas juger la calibration |
 
-Les décisions **2, 7 et 10** sont les seules qui ne sont pas techniques : les
-deux premières changent ce que le bot trade, la troisième change ce qu'un
-modèle représente. Les autres sont des refactorisations à comportement
-constant, à prouver signal par signal.
+Les décisions **8 et 11** sont les seules qui ne sont pas techniques : la
+première change ce que le bot trade, la seconde change ce qu'un modèle
+représente. Les autres sont des refactorisations à comportement constant, à
+prouver signal par signal.
+
+L'ordre de valeur décroissante, si tout n'est pas fait : **1 → 5 → 7 → 9 →
+3/8 → 12**. Les trois premières suffisent à ramener le dépôt de 12 960 à
+≈ 5 600 lignes et à supprimer les métriques fausses de l'UI.

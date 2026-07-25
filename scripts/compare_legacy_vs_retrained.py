@@ -10,56 +10,147 @@ C'est exactement ce que fait ``policy.decide_gate`` en production ; ce script
 l'exécute hors gate pour trancher une question d'architecture : le pack figé
 de mai 2026 mérite-t-il encore le code qui le maintient en vie ?
 
+**AUC par régime.** L'AUC directionnelle globale masque le seul endroit où V4
+avait montré un gain : le régime. Un modèle à 0.48 global peut valoir 0.58 en
+Trend Down et 0.44 ailleurs — ce qui justifierait de le garder pour ce régime.
+Le script ventile donc ``auc_dir`` par régime (Range / Trend Up / Trend Down /
+Choppy, classification ``features.classify_regime``) pour les DEUX artefacts.
+Sans cette ventilation, la comparaison globale ne suffirait pas à conclure.
+
 Usage ::
 
     PYTHONPATH=. python scripts/compare_legacy_vs_retrained.py
 
-Résultat de référence (2026-07-25, BTC/USDC, holdout = 1500 dernières barres) ::
-
-    TF    LEGACY auc_amp   RETRAIN auc_amp   legacy dir   retrain dir
-    15m            0.598             0.638        0.467         0.529
-    30m            0.656             0.674        0.524         0.519
-    1h             0.600             0.663        0.482         0.530
-
-Le ré-entraînement gagne 3/3. Cf. docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §1.5.
+Cf. docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §1.5.
 """
 import os
 import shutil
 import sys
 import tempfile
 
+import numpy as np
+
 import app.ml.model_registry as registry
 import app.ml.policy as policy
 import app.strategies.opus_stat_retrained_v4 as retr
 from app.core.candle_store import get_store
+from app.ml.backend.features import (
+    REGIME_LABELS,
+    build_features,
+    regime_history,
+    single_horizon_labels,
+)
+from app.ml.backend.persistence import load_amp_dir_bundle
+from app.ml.backend.predictor import predict_batch_raw
+from app.ml.scoring import rank_auc
 
 HOLDOUT = 1500
 TFS = ("15m", "30m", "1h")
+ADX_THRESHOLD = 20.0
+DI_RESCUE = 10.0
+MIN_REGIME_N = 30          # sous ce seuil l'AUC d'un régime n'est pas interprétable
 
-print(f"{'TF':>4} {'n_train':>8} {'holdout':>8} {'LEGACY auc_amp':>15} "
-      f"{'RETRAIN auc_amp':>16} {'legacy dir':>11} {'retrain dir':>12}  verdict")
-print("-" * 104)
+
+def dir_auc_by_regime(path_prefix: str, holdout_df, amp_top_pct: float) -> dict:
+    """AUC directionnelle globale + ventilée par régime pour UN artefact.
+
+    Reproduit exactement le chemin de ``score_amp_dir_bundle`` (mêmes features,
+    mêmes labels, mêmes médianes d'imputation) puis ventile par régime au lieu
+    d'agréger. Retourne ``{}`` si l'artefact est illisible.
+    """
+    bundle = load_amp_dir_bundle(path_prefix)
+    if bundle is None or bundle.get("dir_model") is None or not bundle.get("features"):
+        return {}
+    feats = build_features(holdout_df)
+    if feats is None or len(feats) < 50:
+        return {}
+
+    close = feats["close"].to_numpy().astype(np.float64)
+    _, y_dir, n, _ = single_horizon_labels(close, amp_top_pct)
+    if n < 30:
+        return {}
+
+    scored = feats.head(n)
+    # V4 legacy : amp/dir peuvent porter des features/médianes distinctes.
+    dfeat = bundle.get("dir_features") if bundle.get("dir_features") is not None else bundle["features"]
+    dmed = bundle.get("dir_medians") if bundle.get("dir_medians") is not None else bundle["medians"]
+    scores = predict_batch_raw(bundle.get("dir_model"), bundle.get("dir_cal"),
+                               dfeat, dmed, scored)
+    if scores is None:
+        return {}
+
+    regimes = np.asarray(
+        regime_history(scored, n, ADX_THRESHOLD, DI_RESCUE)[0], dtype=int)
+    out = {"global": rank_auc(y_dir, scores), "n": int(n), "by_regime": {},
+           "y": y_dir, "scores": scores, "regimes": regimes}
+    for code, label in REGIME_LABELS.items():
+        m = regimes == code
+        k = int(m.sum())
+        out["by_regime"][label] = {
+            "n": k,
+            "auc": rank_auc(y_dir[m], scores[m]) if k >= MIN_REGIME_N else None,
+        }
+    return out
+
+
+def bootstrap_delta(y, s_leg, s_new, n_boot: int = 2000, seed: int = 0):
+    """IC 95 % bootstrap de (AUC_legacy − AUC_retrain) sur un sous-échantillon.
+
+    Ré-échantillonne les mêmes indices pour les deux modèles (comparaison
+    APPARIÉE : les deux voient exactement les mêmes barres à chaque tirage),
+    ce qui isole l'écart entre modèles du bruit d'échantillonnage commun.
+    Un IC qui contient 0 = écart indiscernable du bruit.
+    """
+    rng = np.random.RandomState(seed)
+    k = len(y)
+    if k < MIN_REGIME_N:
+        return None
+    deltas = []
+    for _ in range(n_boot):
+        idx = rng.randint(0, k, k)
+        a = rank_auc(y[idx], s_leg[idx])
+        b = rank_auc(y[idx], s_new[idx])
+        if a is not None and b is not None:
+            deltas.append(a - b)
+    if len(deltas) < n_boot // 2:
+        return None
+    d = np.asarray(deltas)
+    return float(np.percentile(d, 2.5)), float(np.percentile(d, 97.5))
+
+
+def fmt(v, w=6):
+    return f"{v:>{w}.3f}" if isinstance(v, float) else f"{'n/m':>{w}}"
+
 
 # La convention de labels vient de la RECETTE (gate_spec), pas d'un défaut :
 # scorer le pack V4 contre des labels multi-horizon qu'il n'a jamais appris
 # fausserait la comparaison dans son sens défavorable.
 gc_ = policy.GateConfig.from_params(policy.recipe_gate_defaults(retr.Strategy()))
-print(f"# gate_spec de la recette : label_horizons={gc_.label_horizons} "
-      f"amp_top_pct={gc_.amp_top_pct} metric={gc_.metric}\n", file=sys.stderr)
+print(f"# recette : label_horizons={gc_.label_horizons} amp_top_pct={gc_.amp_top_pct} "
+      f"metric={gc_.metric} | holdout={HOLDOUT} | régime : ADX>{ADX_THRESHOLD:.0f}, "
+      f"di_rescue={DI_RESCUE:.0f}\n", file=sys.stderr)
 
-rows = []
+print("=" * 78)
+print("1. GLOBAL — le gate promouvrait-il le candidat ?")
+print("=" * 78)
+print(f"{'TF':>4} {'n_train':>8} {'LEGACY amp':>11} {'RETRAIN amp':>12} "
+      f"{'LEGACY dir':>11} {'RETRAIN dir':>12}  verdict (métrique de gate)")
+
+per_tf = {}
+wins = 0
 for tf in TFS:
     df = get_store().load_cached("BTC/USDC", tf).sort("time")
     n = len(df)
     holdout_df = df.tail(HOLDOUT + 210)
     train_df = df.slice(0, n - HOLDOUT)
 
-    # ── Sortant : le pack legacy, tel qu'il est résolu en production
+    # ── Sortant : le pack legacy tel qu'il est résolu en production
     art = registry.resolve("BTC/USDC", tf, "opus_stat_pretrained_v4", pin="legacy")
     leg = policy.score_holdout(art.path_prefix, holdout_df,
                                strategy="opus_stat_pretrained_v4", gate_cfg=gc_)
+    leg_reg = dir_auc_by_regime(art.path_prefix, holdout_df, gc_.amp_top_pct)
 
-    # ── Candidat : même recette, ré-entraînée sur tout l'historique dispo
+    # ── Candidat : même recette, ré-entraînée sur tout l'historique disponible
     strat = retr.Strategy()
     p = {"warmup_bars": 750, "retrain_every": 10 ** 9}
     strat.fit(train_df, params={"opus_stat_retrained_v4": p})
@@ -68,18 +159,61 @@ for tf in TFS:
         prefix = os.path.join(tmp, f"opus_stat_retrained_v4_{tf}")
         strat.save_model(prefix)
         new = policy.score_holdout(prefix, holdout_df, strategy=strat, gate_cfg=gc_, params=p)
+        new_reg = dir_auc_by_regime(prefix, holdout_df, gc_.amp_top_pct)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
     la, na = leg.get("auc_amp"), new.get("auc_amp")
-    ld, nd = leg.get("auc_dir"), new.get("auc_dir")
-    verdict = "?" if la is None or na is None else (
-        "RETRAIN gagne" if na > la else "LEGACY tient")
-    fmt = lambda v: f"{v:.3f}" if isinstance(v, float) else "n/a"  # noqa: E731
-    print(f"{tf:>4} {len(train_df):>8} {len(holdout_df):>8} {fmt(la):>15} "
-          f"{fmt(na):>16} {fmt(ld):>11} {fmt(nd):>12}  {verdict}")
-    rows.append((tf, la, na))
+    ok = isinstance(la, float) and isinstance(na, float) and na >= la - gc_.epsilon
+    wins += bool(ok)
+    print(f"{tf:>4} {len(train_df):>8} {fmt(la, 11)} {fmt(na, 12)} "
+          f"{fmt(leg.get('auc_dir'), 11)} {fmt(new.get('auc_dir'), 12)}  "
+          f"{'RETRAIN promu' if ok else 'LEGACY tient'}")
+    per_tf[tf] = (leg_reg, new_reg)
 
-print("-" * 104)
-wins = sum(1 for _, la, na in rows if la is not None and na is not None and na > la)
-print(f"Le ré-entraînement bat le legacy sur {wins}/{len(rows)} timeframes.")
+print(f"\nLe gate promouvrait le ré-entraînement sur {wins}/{len(TFS)} timeframes.")
+
+print("\n" + "=" * 78)
+print("2. AUC DIRECTIONNELLE PAR RÉGIME — le pack V4 sauve-t-il un régime ?")
+print("=" * 78)
+print(f"{'TF':>4} {'régime':<12} {'n':>6} {'LEGACY dir':>11} {'RETRAIN dir':>12} "
+      f"{'écart':>8}   IC95 % de (legacy − retrain)")
+
+survivors = []
+for tf in TFS:
+    leg_reg, new_reg = per_tf[tf]
+    if not leg_reg or not new_reg:
+        print(f"{tf:>4} artefact illisible")
+        continue
+    for code, label in REGIME_LABELS.items():
+        lr = leg_reg["by_regime"].get(label, {})
+        nr = new_reg["by_regime"].get(label, {})
+        la, na = lr.get("auc"), nr.get("auc")
+        if not (isinstance(la, float) and isinstance(na, float)):
+            continue
+        m = leg_reg["regimes"] == code
+        ci = bootstrap_delta(leg_reg["y"][m], leg_reg["scores"][m], new_reg["scores"][m])
+        if ci is None:
+            verdict = "—"
+        elif ci[0] > 0:
+            verdict = f"[{ci[0]:+.3f}, {ci[1]:+.3f}]  LEGACY meilleur (significatif)"
+            survivors.append((tf, label, la, na, lr.get("n"), ci))
+        elif ci[1] < 0:
+            verdict = f"[{ci[0]:+.3f}, {ci[1]:+.3f}]  RETRAIN meilleur (significatif)"
+        else:
+            verdict = f"[{ci[0]:+.3f}, {ci[1]:+.3f}]  indiscernable du bruit"
+        print(f"{tf:>4} {label:<12} {lr.get('n', 0):>6} {fmt(la, 11)} {fmt(na, 12)} "
+              f"{na - la:>+8.3f}   {verdict}")
+
+print("\n" + "-" * 78)
+if survivors:
+    print("Régimes où le pack figé est SIGNIFICATIVEMENT meilleur :")
+    for tf, label, la, na, k, ci in survivors:
+        util = "et utile (>0.52)" if la > 0.52 else "MAIS sous 0.52 : inutile dans l'absolu"
+        print(f"  - {tf} / {label} : legacy {la:.3f} vs retrain {na:.3f} (n={k}) — {util}")
+    print("→ à discuter avant de retirer le pack.")
+else:
+    print("AUCUN régime où l'avantage du pack figé survit au test d'échantillonnage.")
+    print("→ rien à sauver, y compris pour p_dir.")
+print(f"(n/m = moins de {MIN_REGIME_N} barres : AUC non interprétable ; "
+      f"IC95 % = bootstrap apparié, 2000 tirages)")
