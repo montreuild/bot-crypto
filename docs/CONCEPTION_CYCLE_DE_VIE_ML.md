@@ -15,6 +15,11 @@
 > À lire avec : `docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md` (§ML-01/ML-02) et
 > `docs/CONCEPTION_PROMOTION_PAR_EDGE.md` (promotion des *stratégies* — le
 > présent document traite de la promotion des *modèles*, problème jumeau).
+>
+> **Suite** : `docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md` reprend §3.1 (la
+> recette comme objet de premier ordre) et §5.5 (même recette ⇒ mêmes
+> artefacts), restés non construits, et en tire les conséquences mesurées sur
+> `app/strategies/`.
 
 ---
 
