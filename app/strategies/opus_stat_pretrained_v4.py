@@ -31,10 +31,15 @@ par ``MLBackend.build_features`` (Polars, source unique).
 
 Migration phase6-pandas-removal :
   - Suppression de toute dépendance à ``pandas`` : les features V4 restent en
-    Polars de bout en bout, ``_prepare_row`` renvoie un ``np.ndarray`` direct
-    (LightGBM accepte nativement un ndarray), et le catalogue FeatureStore
-    passe de ``opus_v4_pandas`` à ``opus_v4_polars`` (version ``1``) pour
-    invalider le cache disque pandas résiduel.
+    Polars de bout en bout et ``_prepare_row`` renvoie un ``np.ndarray``
+    direct (LightGBM accepte nativement un ndarray).
+
+Catalogue FeatureStore : ``v4_polars`` (version ``1``), partagé par TOUTES les
+stratégies V4. Il existait auparavant deux catalogues (``v4_polars`` et
+``opus_v4_polars``) cachant les mêmes 462 features sous deux noms — donc deux
+fois le disque et deux fois le calcul. Le partage est légitime depuis que
+``build_features`` normalise son entrée à time+OHLCV : sa sortie ne dépend
+plus que des bougies, jamais de la façon dont l'appelant a décoré son frame.
 """
 
 import logging
@@ -379,7 +384,7 @@ class Strategy(BaseStrategyML):
             from app.core.feature_store import cached_strategy_features
             feats = cached_strategy_features(
                 getattr(self, "_bt_symbol", None), getattr(self, "_bt_tf", None), df,
-                name="opus_v4_polars", version="1",
+                name="v4_polars", version="1",
                 builder=lambda w: MLBackend.build_features(w),
                 in_kind="polars", out_kind="polars")
             self._bt_features = feats

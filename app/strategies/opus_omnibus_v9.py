@@ -387,7 +387,7 @@ class Strategy(BaseStrategyML):
             _ohlcv = ("time", "open", "high", "low", "close", "volume")
             feats = cached_strategy_features(
                 getattr(self, "_bt_symbol", None), getattr(self, "_bt_tf", None), df,
-                name="opus_v4_polars", version="1",
+                name="v4_polars", version="1",
                 builder=lambda w: self._FEATURE_BUILDER.build(
                     w.select([c for c in _ohlcv if c in w.columns])),
                 in_kind="polars", out_kind="polars")

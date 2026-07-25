@@ -344,7 +344,7 @@ class Strategy(BaseStrategyML):
             from app.core.feature_store import cached_strategy_features
             feats = cached_strategy_features(
                 getattr(self, "_bt_symbol", None), getattr(self, "_bt_tf", None), df,
-                name="opus_v4_polars", version="1",
+                name="v4_polars", version="1",
                 builder=lambda w: MLBackend.build_features(w),
                 in_kind="polars", out_kind="polars")
             self._bt_features = feats

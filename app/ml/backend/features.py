@@ -200,11 +200,25 @@ def build_features(raw_df: pl.DataFrame) -> Optional[pl.DataFrame]:
     Le DataFrame retourné contient les colonnes OHLCV+time d'origine + toutes
     les features. Les features sont causales (n'utilisent que les barres
     passées), ce qui permet leur utilisation en backtest walk-forward.
+
+    **L'entrée est normalisée à time+OHLCV.** Toute colonne supplémentaire du
+    ``raw_df`` est ignorée, pour deux raisons :
+
+      - elle serait sinon reconduite dans le frame de sortie et retenue comme
+        FEATURE par ``select_feature_columns`` (qui ne filtre que les colonnes
+        connues) — un modèle pourrait apprendre sur une colonne technique
+        entrée là par accident ;
+      - la sortie devient fonction du seul OHLCV, donc identique quel que soit
+        l'appelant. C'est ce qui rend légitime le partage d'UN cache
+        FeatureStore entre toutes les stratégies V4 : sans cette garantie,
+        deux appelants passant des frames différemment décorés se
+        partageraient une entrée de cache sans produire la même chose.
     """
     if raw_df is None or len(raw_df) < 210:
         return None
 
-    df = raw_df
+    df = raw_df.select([c for c in ("time", "open", "high", "low", "close", "volume")
+                        if c in raw_df.columns])
     if "time" in df.columns:
         df = df.sort("time")
     cast_exprs = [
