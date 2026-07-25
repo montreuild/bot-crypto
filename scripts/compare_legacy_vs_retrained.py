@@ -17,9 +17,15 @@ Le script ventile donc ``auc_dir`` par régime (Range / Trend Up / Trend Down /
 Choppy, classification ``features.classify_regime``) pour les DEUX artefacts.
 Sans cette ventilation, la comparaison globale ne suffirait pas à conclure.
 
+**Robustesse à la fenêtre** (``--sweep``). Le candidat est entraîné par défaut
+sur tout l'historique disponible moins le holdout (~50 000 barres). Si son
+avantage ne tenait qu'à ce volume, la conclusion serait un artefact du
+protocole ; ``--sweep`` rejoue donc le même holdout contre des fenêtres de
+5 000 à 40 000 barres.
+
 Usage ::
 
-    PYTHONPATH=. python scripts/compare_legacy_vs_retrained.py
+    PYTHONPATH=. python scripts/compare_legacy_vs_retrained.py [--sweep]
 
 Cf. docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §1.5.
 """
@@ -217,3 +223,51 @@ else:
     print("→ rien à sauver, y compris pour p_dir.")
 print(f"(n/m = moins de {MIN_REGIME_N} barres : AUC non interprétable ; "
       f"IC95 % = bootstrap apparié, 2000 tirages)")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  3. Robustesse à la fenêtre d'entraînement
+# ─────────────────────────────────────────────────────────────────────────────
+# Le candidat de §1 est entraîné sur TOUT l'historique disponible (~50 000
+# barres). Si son avantage ne tenait qu'à ce volume, la conclusion serait un
+# artefact du protocole et non une propriété du pack figé. On rejoue donc le
+# même holdout contre des fenêtres croissantes : le verdict doit tenir bien
+# avant d'avoir consommé tout l'historique.
+if "--sweep" in sys.argv:
+    print("\n" + "=" * 78)
+    print("3. ROBUSTESSE À LA FENÊTRE — l'avantage tient-il sur moins de données ?")
+    print("=" * 78)
+    WINDOWS = [5000, 10000, 20000, 40000, None]   # None = tout l'historique
+    print(f"{'TF':>4} {'fenêtre':>9} {'n_train':>8} {'LEGACY amp':>11} "
+          f"{'RETRAIN amp':>12} {'écart':>8}  gate")
+    for tf in TFS:
+        df = get_store().load_cached("BTC/USDC", tf).sort("time")
+        n = len(df)
+        holdout_df = df.tail(HOLDOUT + 210)
+        pre = df.slice(0, n - HOLDOUT)
+        art = registry.resolve("BTC/USDC", tf, "opus_stat_pretrained_v4", pin="legacy")
+        la = policy.score_holdout(art.path_prefix, holdout_df,
+                                  strategy="opus_stat_pretrained_v4",
+                                  gate_cfg=gc_).get("auc_amp")
+        for w in WINDOWS:
+            train_df = pre.tail(w) if w else pre
+            if len(train_df) < gc_.min_window_bars:
+                continue
+            s = retr.Strategy()
+            p = {"warmup_bars": 750, "retrain_every": 10 ** 9}
+            s.fit(train_df, params={"opus_stat_retrained_v4": p})
+            tmp = tempfile.mkdtemp(prefix="sweep_")
+            try:
+                pre_ = os.path.join(tmp, f"opus_stat_retrained_v4_{tf}")
+                s.save_model(pre_)
+                na = policy.score_holdout(pre_, holdout_df, strategy=s,
+                                          gate_cfg=gc_, params=p).get("auc_amp")
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+            ok = isinstance(la, float) and isinstance(na, float) and na >= la - gc_.epsilon
+            d = f"{na - la:+.3f}" if isinstance(la, float) and isinstance(na, float) else "n/m"
+            print(f"{tf:>4} {str(w or 'tout'):>9} {len(train_df):>8} {fmt(la, 11)} "
+                  f"{fmt(na, 12)} {d:>8}  {'promu' if ok else 'REJETÉ'}")
+        print()
+else:
+    print("\n(ajouter --sweep pour la robustesse à la fenêtre d'entraînement)")

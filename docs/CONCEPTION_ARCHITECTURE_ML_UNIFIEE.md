@@ -30,7 +30,8 @@ c'est précisément le piège qui, lors de la factorisation des helpers V4, avai
 fait passer six copies identiques pour six variantes divergentes.
 
 La mesure de §1.5 est reproductible :
-`PYTHONPATH=. python scripts/compare_legacy_vs_retrained.py`.
+`PYTHONPATH=. python scripts/compare_legacy_vs_retrained.py [--sweep]`
+(`--sweep` ajoute la robustesse à la fenêtre d'entraînement).
 
 Les seules valeurs **estimées** du document sont les projections de volume de
 §9 ; elles sont dérivées de lignes mesurées et l'arithmétique est montrée.
@@ -281,12 +282,44 @@ Deux corollaires que la mesure impose :
   répond à la question du `p_dir` V4 : il n'y a rien à récupérer de ce côté-là,
   y compris en le cherchant régime par régime.
 
-**Réserve honnête** : un symbole, un holdout, une fenêtre. Ce n'est pas une
-campagne. Mais 3/3 sur la métrique de gate avec des marges au-dessus
-d'`epsilon`, zéro régime sauvé au test d'échantillonnage, plus une histoire de
-décroissance cohérente (entraînement mai, holdout juillet), suffit pour une
-décision d'architecture. Et si le résultat s'inversait un jour, le mécanisme
-qui le dirait est précisément le gate — pas cinq fichiers de stratégie.
+#### Contre-épreuve : le verdict tient-il à une autre fenêtre d'entraînement ?
+
+Le candidat ci-dessus est entraîné sur **tout l'historique disponible moins le
+holdout** — 52 851 / 50 676 / 49 738 barres selon le TF. Si son avantage ne
+tenait qu'à ce volume, le résultat serait un artefact du protocole plutôt
+qu'une propriété du pack figé. Même holdout, mêmes labels, fenêtres
+croissantes :
+
+| fenêtre | 15m | 30m | 1h |
+|---|---:|---:|---:|
+| *legacy (référence)* | *0.598* | *0.656* | *0.600* |
+| 5 000 | 0.626 (+0.028) | 0.654 (−0.002) | 0.674 (+0.074) |
+| 10 000 | 0.623 (+0.024) | 0.678 (+0.022) | 0.666 (+0.067) |
+| 20 000 | 0.637 (+0.038) | 0.682 (+0.026) | 0.665 (+0.065) |
+| 40 000 | 0.635 (+0.037) | 0.676 (+0.020) | 0.656 (+0.057) |
+| tout (~50 000) | 0.638 (+0.039) | 0.674 (+0.018) | 0.663 (+0.064) |
+
+**Le gate promeut le candidat dans les 15 cas.** L'avantage n'est donc pas un
+effet de volume : il existe dès 5 000 barres. Le seul quasi-ex-æquo est
+30m/5 000 (−0.002, à l'intérieur d'`epsilon`).
+
+Un résultat secondaire mérite d'être noté parce qu'il va à contre-courant de
+l'intuition : **en 1h, moins d'historique fait mieux** (+0.074 à 5 000 barres
+contre +0.057 à 40 000). La série 1h remonte à mars 2020 ; les régimes anciens
+semblent contre-productifs. C'est un argument direct pour que `window.bars`
+soit un paramètre de recette balayé par `window_sweep` (§3.4) plutôt qu'un
+« tout l'historique » implicite — et c'est précisément le genre de question que
+l'architecture cible rend routinière.
+
+**Réserve honnête** : un symbole, un holdout. Ce n'est pas une campagne, et la
+fenêtre d'entraînement du pack figé reste inconnue — la comparaison répond à
+« que produirait un ré-entraînement aujourd'hui ? », pas à « qui a eu le
+meilleur protocole en mai ? ». Mais c'est bien la première question qui décide
+du sort du code. 3/3 sur la métrique de gate, robuste sur 5 fenêtres, zéro
+régime sauvé au test d'échantillonnage, plus une décroissance cohérente
+(entraînement mai, holdout juillet) : c'est suffisant pour une décision
+d'architecture. Et si le résultat s'inversait un jour, le mécanisme qui le
+dirait est le gate — pas cinq fichiers de stratégie.
 
 ---
 
