@@ -5,8 +5,11 @@ import numpy as np
 import polars as pl
 import pytest
 
-# Stratégie lourde + deps ML : skip propre si indisponible dans l'environnement.
-pytest.importorskip("sklearn")
+# Stratégie lourde : lightgbm est la seule dépendance externe nécessaire.
+# (Un ``importorskip("sklearn")`` traînait ici : le dépôt n'a plus sklearn
+# depuis phase6-sklearn-removal, donc ce test SKIPPAIT silencieusement — il ne
+# vérifiait plus rien. Ne jamais faire dépendre un skip d'un paquet volontairement
+# absent.)
 pytest.importorskip("lightgbm")
 
 
@@ -37,7 +40,7 @@ def _cfg():
                      "trail_tight": 1.0, "grace_bars": 4, "breakeven_r": 1.2,
                      "lock_r": 2.5, "tight_r": 4.0, "lock_ratio": 0.6,
                      "use_swing": False, "max_notional_pct": 0.2},
-        "strategies": {"enabled": ["opus_omnibus_v10"]}, "strategy_params": {},
+        "strategies": {"enabled": ["opus_omnibus_v11"]}, "strategy_params": {},
     }
 
 
@@ -45,7 +48,7 @@ def test_backtest_cold_vs_warm_cache_identical(tmp_path):
     import app.core.feature_store as fs
     from app.engine.backtest import Backtester
     from app.engine.engine import Engine
-    from app.strategies.opus_omnibus_v10 import Strategy
+    from app.strategies.opus_omnibus_v11 import Strategy
 
     fs.get_feature_store.set(fs.FeatureStore(base_dir=str(tmp_path)))
     df = _make_df()
@@ -55,7 +58,7 @@ def test_backtest_cold_vs_warm_cache_identical(tmp_path):
         eng = Engine()
         eng.register(Strategy(), silent=True)
         bt = Backtester(eng, cfg)
-        bt.use_pretrained_ml = False
+        bt.ml_mode = "inline"
         return bt.run(df, "BTC/USDC", "1h").to_dict()
 
     r_cold = run_once()   # build → store

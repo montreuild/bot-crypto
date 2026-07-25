@@ -6,6 +6,44 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧹 ML — Retrait du pack V4 figé (étape A de l'architecture unifiée)
+
+Le pack V4 de mai 2026 n'était conservé que sur une intuition. Mesuré sur
+holdout commun (`scripts/compare_legacy_vs_retrained.py`), un ré-entraînement
+le bat sur les **3 timeframes** — `auc_amp` 0.598→0.638 (15m), 0.656→0.674
+(30m), 0.600→0.663 (1h) — et sur **aucun régime** son avantage ne survit à un
+IC 95 % bootstrap apparié. Le verdict tient de 5 000 barres d'entraînement à
+tout l'historique (15 promotions sur 15). Détail :
+`docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md` §1.5.
+
+- **Supprimé** : `opus_stat_pretrained_v4`, `opus_omnibus_v7_pretrained`, `v8`,
+  `v9`, `v10` (+ leurs 5 YAML), `scripts/migrate_v4_to_registry.py`, le mode
+  `v8` du graphique scanner, et le chemin legacy du registre
+  (`_legacy_artifact`, `import_legacy`, champ `ArtifactRef.legacy`, repli sur
+  l'ancien layout plat, colonne « Legacy » des deux UI).
+- **Préservé** : les setups `SHORT_TD` et `LONG_PULLBACK_TU`, que seules v8/v9
+  portaient, sont repris dans `opus_omnibus_v11` **désactivés** — activables
+  par YAML, donc désormais optimisables. Neutralité et activabilité
+  verrouillées par `tests/test_omnibus_recovered_setups.py`.
+- **Archivé** : les 9 fichiers du pack vivent sous `models/_archive/`, ignoré
+  par `list_recipes()` — lisibles pour ré-examen, jamais résolus.
+- **Rétrocompat retirée** (le bot n'est pas en production) : `use_pretrained_ml`
+  — `ml_mode` devient le seul levier, avec un défaut explicite `"frozen"` — les
+  ré-exports de `app/ml/policy.py`, l'alias `recipe_gate_defaults`
+  (→ `resolve_gate_spec`), et les arguments `label_horizons`/`amp_top_pct` en
+  direct de `score_holdout`, qui permettaient de scorer avec une convention de
+  labels différente de celle déclarée par la recette.
+
+- **Deux tests morts réactivés**, découverts en cherchant les références aux
+  fichiers supprimés : `test_feature_store_integration` et
+  `test_scoring_alignment` portaient un `pytest.importorskip("sklearn")` alors
+  que le dépôt n'a plus sklearn depuis `phase6-sklearn-removal` — ils
+  skippaient donc silencieusement, sans plus rien vérifier. Ils passent
+  désormais réellement.
+
+Bilan : **−4 230 lignes nettes**, 46 → 41 stratégies, 14 → 8 stratégies ML,
+947 → **958 tests** verts (lents inclus), 0 skip.
+
 ### 🛡 Sprint 0 — Correctifs P0 sécurité financière & config
 
 - **[S0-01]** Sync spot/margin propage l'équité à l'allocateur

@@ -1,10 +1,17 @@
 # Conception — Architecture unifiée : entraînement, gestion et exploitation des modèles
 
-> **Statut** : analyse et proposition. Aucun code applicatif modifié par ce
-> document. **Révision 2** — intègre deux informations qui changent les
-> conclusions : (a) le bot n'est **pas en production**, donc aucune contrainte
-> de rétrocompatibilité ; (b) le pack V4 figé n'a de valeur que s'il bat un
-> ré-entraînement — hypothèse désormais **mesurée** (§1.5), et fausse.
+> **Statut** : **révision 3 — l'étape A est implémentée** (§6.A). Le reste
+> (B → G) est encore une proposition.
+>
+> Révision 2 avait intégré deux informations qui changeaient les conclusions :
+> (a) le bot n'est **pas en production**, donc aucune contrainte de
+> rétrocompatibilité ; (b) le pack V4 figé n'a de valeur que s'il bat un
+> ré-entraînement — hypothèse **mesurée** (§1.5), et fausse, globalement comme
+> par régime.
+>
+> Les chiffres de §1 décrivent l'état **avant** l'étape A (arbre `f6fcc2a`) :
+> ils restent la mesure qui justifie la cible et ne sont pas réécrits au fil de
+> l'implémentation. Le résultat réel de A est en §9.
 >
 > **Cadre** : fait suite à `CONCEPTION_CYCLE_DE_VIE_ML.md` (ML-02). Le socle de
 > ML-02 est livré et n'est pas remis en cause : registre daté, gate de
@@ -359,15 +366,25 @@ dépréciés ni maintenus. Ils sont à **retirer**.
 | `opus_omnibus_v8.py` | 710 | consomme le pack |
 | `opus_omnibus_v9.py` | 738 | consomme le pack |
 | `opus_omnibus_v10.py` | 743 | consomme le pack |
-| `app/ml/lgb_logging.py` | 86 | filtre `bagging_by_query` émis par les `.lgb` du pack |
 | `registry._legacy_artifact` + `import_legacy` | 67 | résolution / import du pack |
 | `_load_pretrained`, `_PRETRAINED_CACHE`, `_FeatureBuilder`, `_to_pandas_window` | ~24 réf. | accès et wrappers de compat |
 | `ArtifactRef.legacy`, `pin="legacy"`, branche legacy de `freshness_warning`, `overlap_warning` | épars | sémantique « modèle sans provenance datée » |
 | littéraux d'AUC ×5 (fracture a) | 15 | métriques recopiées à la main |
 | `scripts/migrate_v4_to_registry.py` | — | migration achevée, à usage unique |
 
-**≈ 3 760 lignes**, plus les branches éparses et les références dans 10
+**≈ 3 675 lignes**, plus les branches éparses et les références dans 10
 fichiers de test.
+
+> **Correction (à l'implémentation).** La révision 2 comptait aussi
+> `app/ml/lgb_logging.py` (86 L) dans cette liste, au motif qu'il n'existait
+> que pour taire le `bagging_by_query` du pack. **Mesure faite avant de le
+> supprimer : c'est faux.** Sans lui, un entraînement LightGBM écrit ~750
+> caractères directement sur `stdout`, hors de toute configuration de logging ;
+> avec lui, la capture est totale (0 caractère). Le motif `bagging_by_query`
+> était la *motivation* du module, pas son *périmètre* — le routage de la
+> sortie C++ est de l'infrastructure générique. **Le module est conservé** ;
+> seul son docstring a été corrigé pour ne plus se présenter comme du code
+> legacy.
 
 **Nuance importante — supprimer le pack ≠ supprimer les routings.** `v8`, `v9`
 et `v10` n'existent qu'en version figée. `v7_pretrained` et
@@ -669,11 +686,46 @@ faudra retirer ensuite. La séquence ci-dessous vise directement la cible ;
 chaque étape laisse le dépôt vert et cohérent, mais aucune ne préserve d'API
 historique.
 
-**A. Purge du legacy (§3.1 + §3.2).** À faire en premier : elle retire 5 des 19
-fichiers, donc tout ce qui suit travaille sur une surface plus petite. Prérequis :
-trancher la décision produit sur `v8`/`v9`/`v10` (retirer vs rebrancher).
-Inclut la suppression de `use_pretrained_ml`, des ré-exports de `policy.py`, du
-repli layout plat et d'`unsupported_format`. `ml_mode` devient obligatoire.
+**A. Purge du legacy (§3.1 + §3.2) — ✅ FAIT.** À faire en premier : elle retire
+5 des 19 fichiers, donc tout ce qui suit travaille sur une surface plus petite.
+
+Ce qui a réellement été livré, dans l'ordre :
+
+1. **Préservation d'abord.** `SHORT_TD` et `LONG_PULLBACK_TU` portés de v9 dans
+   `_DEFAULT_SETUPS` de v11, **désactivés** (`enabled: False` est le premier
+   test de `_evaluate_setup`, donc strictement neutre) avec leurs règles de
+   `_check_early_exit` et leurs clés YAML. `tests/test_omnibus_recovered_setups.py`
+   verrouille les deux propriétés qui rendent l'opération légitime : neutralité
+   (balayage de tout le domaine régime × p_event × p_up × RSI × ADX, aucun des
+   deux n'est jamais sélectionné) et activabilité réelle (ils déclenchent quand
+   on les active — sinon ce serait du code mort déguisé en option).
+2. **Scanner débranché.** `_setup_series_v8` (106 L) importait les stratégies
+   figées ; le mode `v8` du graphique scanner est retiré au profit de
+   `v11`/`v12`, qui servent des modèles vivants.
+3. **Suppression** des 5 fichiers + leurs 5 YAML + `scripts/migrate_v4_to_registry.py`.
+4. **Chemin legacy du registre** : `_legacy_artifact`, `import_legacy`, le champ
+   `ArtifactRef.legacy` (toujours `False` une fois le repli parti — la
+   sémantique « sans provenance datée » survit via `train_end`), le repli sur
+   l'ancien layout plat, la colonne « Legacy » des deux UI. Les 9 fichiers du
+   pack sont déplacés sous `models/_archive/`, ignoré par `list_recipes()` via
+   `_ARCHIVE_DIRNAME` — lisibles pour ré-examen, jamais résolus.
+5. **Rétrocompat** : `use_pretrained_ml` retiré (`ml_mode` seul levier, défaut
+   explicite `"frozen"`), ré-exports `# noqa: F401` de `policy.py`, alias
+   `recipe_gate_defaults` → `resolve_gate_spec`, et les arguments directs
+   `label_horizons`/`amp_top_pct` de `score_holdout`.
+
+Deux écarts assumés par rapport à la révision 2, tous deux motivés par une
+mesure ou un décompte faits au moment de l'implémentation :
+
+- **`lgb_logging` est conservé** (cf. encadré §3.1).
+- **`ml_mode` n'est pas rendu obligatoire.** Le rendre requis imposait de le
+  passer à 46 sites d'appel, dont ~36 tests de stratégies sans ML. Le défaut
+  explicite `ml_mode: str = "frozen"` dans la signature atteint l'objectif réel
+  — supprimer le SECOND levier et la dérivation implicite entre les deux — sans
+  ce bruit. Un défaut documenté n'est pas un repli silencieux.
+
+`unsupported_format` est **conservé jusqu'à l'étape B** : il ne devient sans
+objet qu'une fois que la recette déclare son `persistence:`.
 
 **B. Recette + prédicteur, en une seule passe.** Aucune raison de les séparer :
 c'est le contrat `persistence:` de la recette qui choisit le prédicteur. Livre
@@ -863,7 +915,30 @@ ferait passer pour un résultat.
 Arithmétique à partir des lignes mesurées de §1.3 (`routing` = total −
 plomberie). Les 19 fichiers des familles ML pèsent **12 963 lignes**.
 
-**Palier 1 — purge du legacy + prédicteur + recette (§6.A–C), sans fusion.**
+**Palier 0 — purge du legacy seule (§6.A) — MESURÉ, LIVRÉ.**
+
+| | |
+|---|---:|
+| lignes retirées (net) | **−4 230** (+285 / −4 515 sur 39 fichiers) |
+| fichiers de stratégie | 46 → **41** |
+| stratégies ML | 14 → **8** |
+| `app/strategies/` | 22 107 → **18 544 lignes** |
+| tests | 947 → **958**, tous verts (lents inclus), 0 skip |
+
+Les +285 lignes ajoutées sont les deux setups récupérés, leurs clés YAML, le
+fichier de test qui verrouille leur neutralité, et les deux tests du nouveau
+contrat de registre (plus de repli plat, archive jamais énumérée).
+
+**Effet de bord utile.** En traquant les références aux fichiers supprimés, deux
+tests se sont révélés MORTS : `test_feature_store_integration` et
+`test_scoring_alignment` portaient un `pytest.importorskip("sklearn")` alors que
+le dépôt n'a plus sklearn depuis `phase6-sklearn-removal`. Ils skippaient donc
+silencieusement — l'un d'eux verrouillait une régression d'alignement de
+features. Réactivés, ils passent. Leçon à retenir pour les étapes suivantes :
+**un skip conditionné à un paquet volontairement absent est un test supprimé qui
+en garde l'apparence.**
+
+**Palier 1 — + prédicteur et recette (§6.B–C), sans fusion.**
 Il reste le routing d'un représentant par génération vivante :
 
 | génération | routing conservé |
@@ -964,26 +1039,24 @@ propre au moteur.
 
 ## 12. Décisions à prendre
 
-| # | décision | recommandation | conséquence |
+| # | décision | statut | conséquence |
 |---|---|---|---|
-| 1 | **Retirer le pack V4 figé** et son code | **oui** — mesuré obsolète, globalement ET par régime (§1.5) | −~3 760 lignes ; l'archive `.lgb` peut rester hors chemin |
-| 2 | `v10` figé : retirer ou rebrancher | **retirer** | le rebrancher donne `v10_retrained`, dont le routing est déjà celui de `v11` |
-| 3 | `v8` / `v9` : retirer ou rebrancher | **ni l'un ni l'autre — fusionner** (§7) | les retirer perd `SHORT_TD` et `LONG_PULLBACK_TU` ; les rebrancher coûte 2 fichiers pour les garder |
-| 4 | Supprimer le code de rétrocompat (§3.2) | **oui** | `ml_mode` devient obligatoire |
-| 5 | Recette + prédicteur en une passe (**B**) | **oui** | referme (a)(b)(c)(d) ; `recipe` requis, sans repli |
-| 6 | Entraînement unifié (**C**) | oui, **recette par recette** | validation artefact par artefact |
-| 7 | Fusion `v10_retrained` + `v11` | **oui, en premier** | routing identique : fusion à comportement constant, prouvable |
-| 8 | Fusion omnibus complète (**§7**) | **oui, par paires successives** | **change des backtests** — chaque arbitrage documenté avant le code |
-| 9 | `ProxyPredictor` (**E**) | **oui** | absorbe 5 fichiers, corrige la dérive (e) |
+| 1 | **Retirer le pack V4 figé** et son code | ✅ **fait** | −4 230 lignes nettes ; le pack survit sous `models/_archive/` |
+| 2 | `v10` figé : retirer ou rebrancher | ✅ **retiré** | le rebrancher aurait donné `v10_retrained`, dont le routing est déjà celui de `v11` |
+| 3 | `v8` / `v9` : retirer ou rebrancher | ✅ **retirés, setups préservés** | `SHORT_TD` et `LONG_PULLBACK_TU` portés dans v11 désactivés — la fusion (§7) reste à faire |
+| 4 | Supprimer le code de rétrocompat (§3.2) | ✅ **fait** | `ml_mode` seul levier, défaut explicite (pas rendu obligatoire — cf. §6.A) |
+| 5 | Recette + prédicteur en une passe (**B**) | **à faire** | referme (a)(b)(c)(d) ; `recipe` requis, sans repli |
+| 6 | Entraînement unifié (**C**) | **à faire**, recette par recette | validation artefact par artefact |
+| 7 | Fusion `v10_retrained` + `v11` | **à faire, en premier** | routing identique : fusion à comportement constant, prouvable |
+| 8 | Fusion omnibus complète (**§7**) | **à trancher** | **change des backtests** — chaque arbitrage documenté avant le code |
+| 9 | `ProxyPredictor` (**E**) | **à faire** | absorbe 5 fichiers, corrige la dérive (e) |
 | 10 | Population 2 (27 stratégies) | **ne rien faire** | l'architecture leur est neutre |
-| 11 | Dimension **symbole** des modèles | à trancher | l'exploiter ou la retirer — pas la porter à moitié |
-| 12 | Mesurer calibration / élagage (**§8**) | **oui, en dernier** | critère à fixer AVANT la mesure ; l'AUC ne peut pas juger la calibration |
+| 11 | Dimension **symbole** des modèles | **à trancher** | l'exploiter ou la retirer — pas la porter à moitié |
+| 12 | Mesurer calibration / élagage (**§8**) | **à faire, en dernier** | critère à fixer AVANT la mesure ; l'AUC ne peut pas juger la calibration |
 
 Les décisions **8 et 11** sont les seules qui ne sont pas techniques : la
 première change ce que le bot trade, la seconde change ce qu'un modèle
 représente. Les autres sont des refactorisations à comportement constant, à
 prouver signal par signal.
 
-L'ordre de valeur décroissante, si tout n'est pas fait : **1 → 5 → 7 → 9 →
-3/8 → 12**. Les trois premières suffisent à ramener le dépôt de 12 960 à
-≈ 5 600 lignes et à supprimer les métriques fausses de l'UI.
+Ordre de valeur décroissante sur ce qui reste : **5 → 7 → 9 → 8 → 12**.

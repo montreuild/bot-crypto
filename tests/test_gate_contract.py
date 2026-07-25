@@ -38,7 +38,6 @@ def _ohlcv(n: int, seed: int = 0) -> pl.DataFrame:
 # multi-horizon [1,3,6] hérité de V11 — une cible jamais apprise.
 SINGLE_HORIZON_RECIPES = [
     "opus_stat_retrained_v4",
-    "opus_stat_pretrained_v4",
     "opus_omnibus_v7",
     "opus_omnibus_v10_retrained",
     "scoring_statistique_opus_v4",

@@ -33,12 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import app.ml.model_registry as registry
-
-# Ré-exports : ``rank_auc``/``score_holdout`` ont toujours vécu ici et restent
-# importables depuis ``app.ml.policy`` (appelants et tests existants).
-from app.ml.scoring import (  # noqa: F401
-    _rankdata_average,
-    rank_auc,
+from app.ml.scoring import (
     resolve_gate_spec,
     resolve_scorer,
     score_amp_dir_bundle,
@@ -60,8 +55,6 @@ _RECIPE_PARAM_KEYS = (
 #  Score d'un artefact sur un holdout — DISPATCH vers la recette
 # ─────────────────────────────────────────────────────────────────────────────
 def score_holdout(path_prefix: str, holdout_df, *,
-                  label_horizons: Optional[List[int]] = None,
-                  amp_top_pct: float = 0.30,
                   strategy: Any = None,
                   gate_cfg: Any = None,
                   params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -72,15 +65,14 @@ def score_holdout(path_prefix: str, holdout_df, *,
     sinon on retombe sur le scorer par défaut (bundle amplitude+direction V4).
     ``strategy`` accepte une instance, une classe ou un nom de recette.
 
-    ``label_horizons``/``amp_top_pct`` restent acceptés en direct (appelants
-    et tests historiques) et servent à fabriquer un ``gate_cfg`` minimal
-    quand aucun n'est passé.
+    Sans ``gate_cfg``, les défauts de ``GateConfig`` s'appliquent. Les anciens
+    arguments ``label_horizons``/``amp_top_pct`` en direct ont été retirés :
+    ils doublonnaient ``gate_cfg`` et permettaient de scorer avec une
+    convention de labels différente de celle déclarée par la recette — la
+    cause exacte du décalage 0.732 vs 0.702 qui a motivé ``gate_spec``.
     """
     if gate_cfg is None:
-        gate_cfg = GateConfig(
-            label_horizons=list(label_horizons or [1, 3, 6]),
-            amp_top_pct=float(amp_top_pct),
-        )
+        gate_cfg = GateConfig()
 
     if strategy is not None:
         scorer = resolve_scorer(strategy)
@@ -159,24 +151,6 @@ def decide_gate(candidate_metrics: Optional[Dict[str, Any]],
 # ─────────────────────────────────────────────────────────────────────────────
 #  Configuration de la politique (lue depuis les params résolus de la stratégie)
 # ─────────────────────────────────────────────────────────────────────────────
-def recipe_gate_defaults(strategy_or_name: Any) -> Dict[str, Any]:
-    """Défauts de gate déclarés par une recette via ``BaseStrategyML.gate_spec``.
-
-    Conservé comme alias de ``app.ml.scoring.resolve_gate_spec`` : le nom est
-    utilisé par les appelants/tests existants, mais la source de vérité est
-    désormais l'attribut déclaratif ``gate_spec`` de la recette — plus le
-    reniflage de ``fixed_params``/``_DEFAULTS`` (heuristique fragile : elle
-    devinait l'intention à partir de clés d'ENTRAÎNEMENT qui se trouvaient
-    porter le même nom).
-
-    Motivation d'origine, toujours valable : une recette single-horizon
-    (``opus_stat_retrained_v4`` — labellisation ``t+1``) était gatée contre
-    des labels multi-horizon ``[1,3,6]`` hérités de V11, qu'elle n'a jamais
-    appris à prédire (écart mesuré 0.732 auto-rapporté vs 0.702 au gate).
-    """
-    return resolve_gate_spec(strategy_or_name)
-
-
 @dataclass
 class GateConfig:
     """Hypothèses par défaut (conception §8) — à calibrer au banc (window
@@ -241,7 +215,7 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
     type d'argument, etc.) remontent.
     """
     recipe = recipe or getattr(strategy, "name", "strategy")
-    gc_ = gate_cfg or GateConfig.from_params({**recipe_gate_defaults(strategy), **(params or {})})
+    gc_ = gate_cfg or GateConfig.from_params({**resolve_gate_spec(strategy), **(params or {})})
 
     n = len(df) if df is not None else 0
     required = gc_.holdout_bars + gc_.min_window_bars
@@ -336,11 +310,11 @@ def freshness_warning(artifact: Optional["registry.ArtifactRef"], *,
                       stale_factor: float = 2.0) -> Optional[str]:
     """Message d'alerte si ``artifact`` est trop vieux par rapport à la
     cadence de rafraîchissement attendue — ``None`` si tout va bien ou si la
-    fraîcheur n'est pas mesurable (pas de provenance, ex. legacy)."""
+    fraîcheur n'est pas mesurable (artefact sans provenance datée)."""
     if artifact is None:
         return "aucun modèle chargé"
-    if artifact.legacy or not artifact.train_end:
-        return f"modèle sans provenance datée (legacy, version={artifact.version_id}) — fraîcheur non mesurable"
+    if not artifact.train_end:
+        return f"modèle sans provenance datée (version={artifact.version_id}) — fraîcheur non mesurable"
     if current_bars_ago is None or cadence_bars is None or cadence_bars <= 0:
         return None
     if current_bars_ago > stale_factor * cadence_bars:

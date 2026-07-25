@@ -107,7 +107,7 @@ def train_and_publish(strategy_name: str, symbol: str, tf: str, *,
     mod = importlib.import_module(f"app.strategies.{strategy_name}")
     strat = mod.Strategy()
     gc_ = gate_cfg or policy.GateConfig.from_params(
-        {**policy.recipe_gate_defaults(strategy_name), **p})
+        {**policy.resolve_gate_spec(strategy_name), **p})
     return policy.maybe_refresh(strat, symbol, tf, df, params=p, recipe=strategy_name,
                                 gate_cfg=gc_, source=source, base_dir=base_dir)
 
@@ -150,7 +150,7 @@ def _dry_run(strategy_name: str, symbol: str, tf: str, df: pl.DataFrame,
     import app.ml.policy as policy
 
     gc_ = gate_cfg or policy.GateConfig.from_params(
-        {**policy.recipe_gate_defaults(strategy_name), **params})
+        {**policy.resolve_gate_spec(strategy_name), **params})
     n = len(df)
     if n < gc_.holdout_bars + gc_.min_window_bars:
         return {"decision": "skipped", "reason": "insufficient_data", "n_bars": n,
@@ -206,7 +206,7 @@ def window_sweep(strategy_name: str, symbol: str, tf: str, windows: List[int], *
 
     p = dict(params or {})
     gc_ = gate_cfg or policy.GateConfig.from_params(
-        {**policy.recipe_gate_defaults(strategy_name), **p})
+        {**policy.resolve_gate_spec(strategy_name), **p})
     n = len(df)
     smallest = min(windows) if windows else 0
     if n < gc_.holdout_bars + smallest:

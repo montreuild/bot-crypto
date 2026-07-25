@@ -408,7 +408,6 @@ export interface ModelArtifact {
   source: string | null;
   created_at: string | null;
   gate_decision: string | null;
-  legacy: boolean;
   train_meta?: ModelTrainMeta;
 }
 

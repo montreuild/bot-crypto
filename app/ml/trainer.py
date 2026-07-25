@@ -247,8 +247,8 @@ class MLStrategyTrainer:
     def _freshness_warning(art, interval_h: float, stale_factor: float = _STALE_FACTOR) -> Optional[str]:
         """Message si le modèle chargé est trop vieux par rapport à
         l'intervalle de réentraînement configuré — ``None`` si frais ou si la
-        fraîcheur n'est pas mesurable (artefact legacy sans date)."""
-        if art.legacy or not art.train_end:
+        fraîcheur n'est pas mesurable (artefact sans date d'entraînement)."""
+        if not art.train_end:
             return f"modèle sans provenance datée (version={art.version_id}) — fraîcheur non mesurable"
         try:
             train_end_dt = datetime.strptime(art.train_end, "%Y-%m-%dT%H:%M:%S")

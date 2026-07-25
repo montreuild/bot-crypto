@@ -113,48 +113,6 @@ def test_pin_bypasses_gate_decision_and_as_of(tmp_path):
                             pin="does-not-exist", base_dir=base) is None
 
 
-def test_resolve_falls_back_to_legacy_flat_layout(tmp_path):
-    base = str(tmp_path / "models")
-    os.makedirs(base, exist_ok=True)
-    legacy_prefix = os.path.join(base, "opus_omnibus_v11_1h")
-    amp = _train_tiny_booster(3)
-    dir_ = _train_tiny_booster(4)
-    assert save_amp_dir_bundle(legacy_prefix, "1h", amp, dir_, ["f0"], {}, 0.58, {})
-
-    # Aucune version dans le nouveau layout -> repli sur l'ancien chemin plat,
-    # qui n'a pas de dimension symbole.
-    art = registry.resolve("BTC/USDC", "1h", "opus_omnibus_v11", base_dir=base)
-    assert art is not None
-    assert art.legacy is True
-    assert art.path_prefix == legacy_prefix
-    assert art.auc == pytest.approx(0.58)
-
-
-def test_import_legacy_is_idempotent(tmp_path):
-    base = str(tmp_path / "models")
-    os.makedirs(base, exist_ok=True)
-    legacy_prefix = os.path.join(base, "opus_stat_pretrained_v4_1h")
-    amp = _train_tiny_booster(5)
-    dir_ = _train_tiny_booster(6)
-    assert save_amp_dir_bundle(legacy_prefix, "1h", amp, dir_, ["f0"], {}, 0.76, {})
-
-    art1 = registry.import_legacy("BTC/USDC", "1h", "opus_stat_pretrained_v4",
-                                  legacy_prefix, base_dir=base)
-    assert art1 is not None
-    assert art1.meta["provenance"]["non_reproducible"] is True
-    # L'original reste lisible (copie, pas déplacement) — repli toujours possible.
-    assert os.path.exists(f"{legacy_prefix}.amp.lgb")
-
-    art2 = registry.import_legacy("BTC/USDC", "1h", "opus_stat_pretrained_v4",
-                                  legacy_prefix, base_dir=base)
-    assert art2.version_id == art1.version_id  # no-op, pas de doublon
-
-    resolved = registry.resolve("BTC/USDC", "1h", "opus_stat_pretrained_v4", base_dir=base)
-    assert resolved is not None
-    assert resolved.legacy is False  # servi depuis le nouveau layout désormais
-    assert resolved.auc == pytest.approx(0.76)
-
-
 def test_overlaps_detects_training_window_intersection():
     art = registry.ArtifactRef(
         path_prefix="x", symbol="BTC/USDC", tf="1h", recipe="r", version_id="v1",
@@ -165,11 +123,11 @@ def test_overlaps_detects_training_window_intersection():
 
 
 def test_overlaps_unknown_dates_returns_false_not_a_safety_claim():
-    legacy_art = registry.ArtifactRef(
-        path_prefix="x", symbol=None, tf="1h", recipe="r", version_id="legacy-flat",
-        train_start=None, train_end=None, legacy=True,
+    undated = registry.ArtifactRef(
+        path_prefix="x", symbol=None, tf="1h", recipe="r", version_id="undated-abc",
+        train_start=None, train_end=None,
     )
-    assert registry.overlaps(legacy_art, "2026-01-01T00:00:00", "2026-02-01T00:00:00") is False
+    assert registry.overlaps(undated, "2026-01-01T00:00:00", "2026-02-01T00:00:00") is False
 
 
 def test_list_versions_sorted_oldest_first(tmp_path):
@@ -342,21 +300,6 @@ def test_list_recipes_finds_new_layout_entries(tmp_path):
         assert len(r["versions"]) >= 1
 
 
-def test_list_recipes_finds_legacy_flat_entries(tmp_path):
-    base = str(tmp_path / "models")
-    os.makedirs(base, exist_ok=True)
-    legacy_prefix = os.path.join(base, "opus_stat_pretrained_v4_1h")
-    amp = _train_tiny_booster(3)
-    dir_ = _train_tiny_booster(4)
-    assert save_amp_dir_bundle(legacy_prefix, "1h", amp, dir_, ["f0"], {}, 0.58, {})
-
-    recipes = registry.list_recipes(base_dir=base)
-    assert len(recipes) == 1
-    assert recipes[0]["recipe"] == "opus_stat_pretrained_v4"
-    assert recipes[0]["tf"] == "1h"
-    assert recipes[0]["versions"][0].legacy is True
-
-
 def test_list_recipes_includes_rejected_only_recipes(tmp_path):
     """Un recipe dont TOUTES les versions sont rejetées doit rester visible
     dans l'énumération (l'UI doit pouvoir montrer "aucune version active"),
@@ -369,3 +312,39 @@ def test_list_recipes_includes_rejected_only_recipes(tmp_path):
     recipes = registry.list_recipes(base_dir=base)
     assert len(recipes) == 1
     assert recipes[0]["versions"][0].gate_decision == "keep"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Fin du chemin legacy (docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §3.1)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_resolve_returns_none_instead_of_falling_back_to_flat_layout(tmp_path):
+    """Un fichier à l'ancien layout plat ``{base}/{recipe}_{tf}.*`` ne doit
+    PLUS être servi. Le repli existait pour la migration V4 ; le garder
+    reviendrait à charger un artefact sans provenance datée — donc non gatable
+    et non comparable — au lieu de dire honnêtement « aucun modèle »."""
+    base = str(tmp_path / "models")
+    os.makedirs(base, exist_ok=True)
+    flat_prefix = os.path.join(base, "opus_omnibus_v11_1h")
+    assert save_amp_dir_bundle(flat_prefix, "1h", _train_tiny_booster(3),
+                               _train_tiny_booster(4), ["f0"], {}, 0.58, {})
+
+    assert registry.resolve("BTC/USDC", "1h", "opus_omnibus_v11", base_dir=base) is None
+    assert registry.list_recipes(base_dir=base) == []
+
+
+def test_archive_dir_is_never_enumerated(tmp_path):
+    """Les artefacts mis hors service vivent sous ``models/_archive/`` : ils
+    restent lisibles pour ré-examen mais ne doivent jamais réapparaître dans
+    l'UI comme s'ils servaient encore."""
+    base = str(tmp_path / "models")
+    src = _write_tmp_bundle(tmp_path, "vivant", best_auc=0.7)
+    registry.publish("BTC/USDC", "1h", "r", src, train_end="2026-01-01T00:00:00",
+                     decision="promote", base_dir=base)
+    # Même arborescence, mais sous _archive/.
+    archived = _write_tmp_bundle(tmp_path, "archive", best_auc=0.9)
+    registry.publish("BTC/USDC", "1h", "r_mort", archived,
+                     train_end="2026-01-01T00:00:00", decision="promote",
+                     base_dir=os.path.join(base, registry._ARCHIVE_DIRNAME))
+
+    recipes = registry.list_recipes(base_dir=base)
+    assert [r["recipe"] for r in recipes] == ["r"]

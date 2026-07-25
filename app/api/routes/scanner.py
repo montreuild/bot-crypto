@@ -125,14 +125,18 @@ def scanner_chart(symbol: str = DEFAULT_CONFIG_SYMBOL, timeframe: str = "1h", li
 
 @router.get("/api/scanner/setup_series", dependencies=[Depends(verify_api_key)])
 def scanner_setup_series(symbol: str = DEFAULT_CONFIG_SYMBOL, timeframe: str = "1h",
-                         limit: int = 300, strategy: str = "v8"):
+                         limit: int = 300, strategy: str = "v11"):
     """Markers des setups (entrée/TP/SL) d'une stratégie par bougie, pour le
-    graphique scanner. ``strategy`` ∈ {v8, v11, v12}."""
+    graphique scanner. ``strategy`` ∈ {v11, v12}.
+
+    Le mode ``v8`` a été retiré avec le pack V4 figé : il affichait les markers
+    d'un modèle de mai 2026 que le ré-entraînement bat sur les 3 TF
+    (docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §1.5)."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
-    strat_key = (strategy or "v8").lower()
-    if strat_key not in ("v8", "v11", "v12"):
-        raise HTTPException(400, "strategy doit être v8, v11 ou v12")
+    strat_key = (strategy or "v11").lower()
+    if strat_key not in ("v11", "v12"):
+        raise HTTPException(400, "strategy doit être v11 ou v12")
     try:
         exchange = create_exchange(state.cfg)
         scanner  = MarketScanner(exchange, state.cfg)
@@ -143,10 +147,7 @@ def scanner_setup_series(symbol: str = DEFAULT_CONFIG_SYMBOL, timeframe: str = "
         if df is None or len(df) < 230:
             raise HTTPException(404, f"Données insuffisantes pour {symbol}/{tf}")
 
-        if strat_key == "v8":
-            payload = scanner_service._setup_series_v8(df, tf, limit)
-        else:
-            payload = scanner_service._setup_series_v11(df, tf, limit, strat_key, symbol=symbol)
+        payload = scanner_service._setup_series_v11(df, tf, limit, strat_key, symbol=symbol)
 
         payload.update({"symbol": symbol, "timeframe": tf, "strategy": strat_key,
                         "n_setups": len(payload.get("markers", []))})

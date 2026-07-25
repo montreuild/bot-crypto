@@ -14,9 +14,10 @@ Layout sur disque ::
         model.meta.json      # features/medians/AUC/calibrators + provenance + gate
     {base_dir}/{symbole}/{tf}/{recette}/decisions.jsonl   # journal des gates
 
-``version_id = {train_end}_{recipe_hash8}`` (ou ``legacy_{recipe_hash8}`` si
-la date de fin d'entraînement est inconnue — modèles migrés depuis l'ancien
-format). Le nom de fichier étant lexicographiquement trié sur la date, aucun
+``version_id = {train_end}_{recipe_hash8}`` (ou ``undated_{recipe_hash8}`` si
+la date de fin d'entraînement est inconnue — ne devrait plus arriver, tout
+artefact publié passe par ``train_window_bounds``). Le nom de fichier étant
+lexicographiquement trié sur la date, aucun
 index séparé n'est nécessaire : la vérité est le système de fichiers.
 
 La **recette** identifie ce qui a produit le modèle (features/labels/HP —
@@ -51,6 +52,11 @@ DEFAULT_BASE_DIR = "models"
 # le gate : reste sur disque pour l'audit (decisions.jsonl) mais n'est jamais
 # résolu — le sortant continue de servir.
 _ELIGIBLE_DECISIONS = (None, "promote", "initial", "manual")
+
+# Sous-répertoire de mise hors service : conservé sur disque pour ré-examen,
+# jamais énuméré ni résolu. Un artefact qu'on ne veut plus servir se déplace
+# ici plutôt que de se supprimer.
+_ARCHIVE_DIRNAME = "_archive"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -123,7 +129,7 @@ def git_commit() -> Optional[str]:
 
 
 def _version_id(train_end: Optional[str], rhash: str) -> str:
-    ts = train_end.replace(":", "-") if train_end else "legacy"
+    ts = train_end.replace(":", "-") if train_end else "undated"
     return f"{ts}_{rhash[:8]}"
 
 
@@ -153,7 +159,6 @@ class ArtifactRef:
     source: Optional[str] = None
     created_at: Optional[str] = None
     gate_decision: Optional[str] = None
-    legacy: bool = False
     meta: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -164,7 +169,7 @@ class ArtifactRef:
             "n_bars": self.n_bars, "auc": round(float(self.auc), 4),
             "recipe_hash": self.recipe_hash, "git_commit": self.git_commit,
             "source": self.source, "created_at": self.created_at,
-            "gate_decision": self.gate_decision, "legacy": self.legacy,
+            "gate_decision": self.gate_decision,
             # train_meta : diagnostics d'entraînement (AUC par régime, top
             # features + importance, erreur de calibration...) — toujours
             # petit/borné (cf. app.ml.backend.trainer, jamais de features/
@@ -201,7 +206,7 @@ def _artifact_from_version_dir(version_dir: str, symbol: Optional[str], tf: str,
         n_bars=prov.get("n_bars"), auc=float(meta.get("best_auc", 0.0)),
         recipe_hash=prov.get("recipe_hash"), git_commit=prov.get("git_commit"),
         source=prov.get("source"), created_at=prov.get("created_at"),
-        gate_decision=gate.get("decision"), legacy=False, meta=meta,
+        gate_decision=gate.get("decision"), meta=meta,
     )
 
 
@@ -224,34 +229,6 @@ def list_versions(symbol: Optional[str], tf: str, recipe: str,
                 out.append(art)
     out.sort(key=lambda a: (a.train_end or "", a.version_id))
     return out
-
-
-def _legacy_artifact(tf: str, recipe: str, base_dir: str) -> Optional[ArtifactRef]:
-    """Repli sur l'ancien layout plat ``models/{recipe}_{tf}.*`` (aucune
-    dimension symbole) — utilisé tant qu'un artefact n'a pas été migré/republié
-    dans le nouveau layout. ``recipe`` ici == nom de fichier historique, en
-    général identique au nom de la stratégie."""
-    prefix = os.path.join(base_dir, f"{recipe}_{tf}")
-    meta_path = f"{prefix}.meta.json"
-    if not (os.path.exists(f"{prefix}.amp.lgb") and os.path.exists(meta_path)):
-        return None
-    try:
-        with open(meta_path, "r", encoding="utf-8") as f:
-            meta = json.load(f)
-    except Exception as e:
-        logger.warning(f"[ModelRegistry] legacy meta illisible {meta_path} : {e}")
-        meta = {}
-    prov = meta.get("provenance") or {}
-    gate = meta.get("gate") or {}
-    return ArtifactRef(
-        path_prefix=prefix, symbol=prov.get("symbol"), tf=tf, recipe=recipe,
-        version_id="legacy-flat", train_start=prov.get("train_start"),
-        train_end=prov.get("train_end"), n_bars=prov.get("n_bars"),
-        auc=float(meta.get("best_auc", 0.0)), recipe_hash=prov.get("recipe_hash"),
-        git_commit=prov.get("git_commit"), source=prov.get("source", "legacy"),
-        created_at=prov.get("created_at"), gate_decision=gate.get("decision"),
-        legacy=True, meta=meta,
-    )
 
 
 def resolve(symbol: Optional[str], tf: str, recipe: str, *,
@@ -304,10 +281,7 @@ def resolve(symbol: Optional[str], tf: str, recipe: str, *,
     if as_of is not None:
         as_of_s = to_iso(as_of)
         eligible = [v for v in eligible if not v.train_end or v.train_end <= as_of_s]
-    if eligible:
-        return eligible[-1]
-
-    return _legacy_artifact(tf, recipe, base_dir)
+    return eligible[-1] if eligible else None
 
 
 def latest_promoted(symbol: Optional[str], tf: str, recipe: str,
@@ -541,49 +515,6 @@ def set_decision(symbol: Optional[str], tf: str, recipe: str, version_id: str,
     return True
 
 
-def import_legacy(symbol: Optional[str], tf: str, recipe: str,
-                  legacy_prefix: str, *, base_dir: str = DEFAULT_BASE_DIR,
-                  version_id: str = "legacy") -> Optional[ArtifactRef]:
-    """Copie (jamais déplace — l'original reste lisible en repli) un artefact
-    de l'ancien layout plat vers le registre daté, avec ``non_reproducible:
-    true`` en meta. Utilisé par la migration V4 (script dédié) — cf. tâche
-    « Migration V4 ». Idempotent : no-op si la version existe déjà."""
-    amp_src, dir_src, meta_src = (f"{legacy_prefix}.amp.lgb", f"{legacy_prefix}.dir.lgb",
-                                  f"{legacy_prefix}.meta.json")
-    if not (os.path.exists(amp_src) and os.path.exists(dir_src) and os.path.exists(meta_src)):
-        logger.warning(f"[ModelRegistry] import_legacy : artefacts absents pour {legacy_prefix}")
-        return None
-
-    version_dir = os.path.join(_recipe_dir(base_dir, symbol, tf, recipe), version_id)
-    if os.path.isdir(version_dir) and _read_meta(version_dir) is not None:
-        logger.info(f"[ModelRegistry] import_legacy : {version_id} déjà présent, skip")
-        return _artifact_from_version_dir(version_dir, symbol, tf, recipe, version_id)
-
-    os.makedirs(version_dir, exist_ok=True)
-    try:
-        with open(meta_src, "r", encoding="utf-8") as f:
-            meta = json.load(f)
-    except Exception as e:
-        logger.error(f"[ModelRegistry] import_legacy : meta.json illisible ({e})")
-        return None
-
-    prov = dict(meta.get("provenance") or {})
-    prov.setdefault("symbol", symbol)
-    prov["non_reproducible"] = True
-    prov.setdefault("source", "legacy_import")
-    prov.setdefault("created_at", _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"))
-    meta["provenance"] = prov
-    meta.setdefault("gate", {"decision": "manual", "note": "importé depuis l'ancien layout, jamais gaté"})
-
-    shutil.copy2(amp_src, os.path.join(version_dir, "model.amp.lgb"))
-    shutil.copy2(dir_src, os.path.join(version_dir, "model.dir.lgb"))
-    with open(os.path.join(version_dir, "model.meta.json"), "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False)
-
-    logger.info(f"[ModelRegistry] import_legacy {symbol}/{tf}/{recipe} → {version_id}")
-    return _artifact_from_version_dir(version_dir, symbol, tf, recipe, version_id)
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Énumération — vue d'ensemble du registre (page « Modèles » de l'UI)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -595,21 +526,28 @@ def _dir_to_symbol_guess(symbol_dir: str) -> str:
 
 
 def list_recipes(base_dir: str = DEFAULT_BASE_DIR) -> List[Dict[str, Any]]:
-    """Énumère tous les (symbole, TF, recette) connus du registre — nouveau
-    layout daté ET ancien layout plat non migré — sans que l'appelant ait
-    besoin de les connaître à l'avance. Utilisé par la page « Modèles » de
-    l'UI pour construire sa vue d'ensemble.
+    """Énumère tous les (symbole, TF, recette) connus du registre, sans que
+    l'appelant ait besoin de les connaître à l'avance. Utilisé par la page
+    « Modèles » de l'UI pour construire sa vue d'ensemble.
 
     Retourne une liste de ``{"symbol", "tf", "recipe", "versions": [ArtifactRef]}``
     — toutes les versions trouvées, triées du plus ancien au plus récent (y
     compris rejetées : c'est à l'appelant de calculer la version ACTIVE via
     ``resolve()``, qui applique correctement pin/gate/as_of).
+
+    ``_ARCHIVE_DIRNAME`` est ignoré : c'est là que vivent les artefacts mis
+    hors service (ex. le pack V4 figé, retiré après mesure — cf.
+    docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §1.5). Les garder sur disque
+    permet de les ré-examiner ; les lister les remettrait dans l'UI comme
+    s'ils servaient encore.
     """
     out: List[Dict[str, Any]] = []
     if not os.path.isdir(base_dir):
         return out
 
     for symbol_dir in sorted(os.listdir(base_dir)):
+        if symbol_dir == _ARCHIVE_DIRNAME:
+            continue
         sym_path = os.path.join(base_dir, symbol_dir)
         if not os.path.isdir(sym_path):
             continue
@@ -636,18 +574,6 @@ def list_recipes(base_dir: str = DEFAULT_BASE_DIR) -> List[Dict[str, Any]]:
                 symbol = versions[-1].symbol or symbol_guess
                 out.append({"symbol": symbol, "tf": tf, "recipe": recipe, "versions": versions})
 
-    # Ancien layout plat : {base}/{recipe}_{tf}.meta.json (aucune dimension symbole).
-    for fname in sorted(os.listdir(base_dir)):
-        if not fname.endswith(".meta.json"):
-            continue
-        prefix = fname[: -len(".meta.json")]
-        if "_" not in prefix:
-            continue
-        recipe, tf = prefix.rsplit("_", 1)
-        art = _legacy_artifact(tf, recipe, base_dir)
-        if art is not None:
-            out.append({"symbol": art.symbol, "tf": tf, "recipe": recipe, "versions": [art]})
-
     return out
 
 
@@ -659,10 +585,10 @@ def overlaps(artifact: ArtifactRef, window_start: Any, window_end: Any) -> bool:
     ``[window_start, window_end]`` — signal qu'un backtest ``frozen``
     évaluerait le modèle sur des données qu'il a vues à l'entraînement.
 
-    Si l'une des dates est inconnue (artefact legacy sans provenance), le
+    Si l'une des dates est inconnue (artefact sans provenance datée), le
     chevauchement ne peut pas être vérifié : retourne ``False`` (mesure
     impossible, PAS absence de risque constatée — l'appelant doit le
-    signaler séparément, cf. ``ArtifactRef.legacy``)."""
+    signaler séparément, en testant ``train_end``)."""
     if not artifact.train_start or not artifact.train_end:
         return False
     ws, we = to_iso(window_start), to_iso(window_end)

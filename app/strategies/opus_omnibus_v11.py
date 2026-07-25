@@ -132,6 +132,28 @@ _DEFAULT_SETUPS: Tuple[Dict[str, Any], ...] = (
         "amp_min": 0.50, "dir_max": None, "dir_min": 0.55,
         "tp_mult": 0.7, "sl_mult": 1.0, "max_bars": 4, "size_factor": 0.6,
     },
+    # ── Setups repris de V9, DÉSACTIVÉS par défaut ──────────────────────────
+    # La lignée V10/V11 les avait abandonnés ; ils n'existaient plus que dans
+    # opus_omnibus_v8/v9, supprimés avec le pack V4 figé (cf.
+    # docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §3.1). Les conserver ici les
+    # rend de nouveau activables — et donc optimisables — au lieu de les perdre.
+    # ``enabled: False`` est neutre : c'est le tout premier test de
+    # ``_evaluate_setup``. Valeurs reprises telles quelles de V9 (V8 utilisait
+    # 0.50 / 0.40 pour SHORT_TD).
+    {
+        "name": "SHORT_TD", "priority": 7, "direction": -1, "enabled": False,
+        "regime": REGIME_TREND_DN, "needs_exit_td_window": False,
+        "needs_bearish_excess": False, "needs_rsi_below": None, "needs_adx_above": None,
+        "amp_min": 0.55, "dir_max": 0.35, "dir_min": None,
+        "tp_mult": 1.2, "sl_mult": 1.6, "max_bars": 8, "size_factor": 1.0,
+    },
+    {
+        "name": "LONG_PULLBACK_TU", "priority": 8, "direction": 1, "enabled": False,
+        "regime": REGIME_TREND_UP, "needs_exit_td_window": False,
+        "needs_bearish_excess": False, "needs_rsi_below": 50.0, "needs_adx_above": None,
+        "amp_min": 0.40, "dir_max": None, "dir_min": 0.55,
+        "tp_mult": 1.2, "sl_mult": 1.2, "max_bars": 8, "size_factor": 1.0,
+    },
 )
 
 
@@ -203,7 +225,7 @@ def _check_early_exit(setup_name: str, regime: int, p_up: float,
             return "p_dir_drop"
         if regime == REGIME_TREND_DN:
             return "to_TD"
-    elif setup_name == "SHORT_TD_HIGH":
+    elif setup_name in ("SHORT_TD_HIGH", "SHORT_TD"):
         if regime != REGIME_TREND_DN:
             return "regime_exit_TD"
         if p_up > dir_inv_short:
@@ -218,7 +240,7 @@ def _check_early_exit(setup_name: str, regime: int, p_up: float,
             return "regime_exit_choppy"
         if p_up > 0.58:
             return "p_dir_inversion"
-    elif setup_name == "LONG_TU":
+    elif setup_name in ("LONG_TU", "LONG_PULLBACK_TU"):
         if regime == REGIME_TREND_DN:
             return "to_TD"
         if p_up < dir_inv_long:

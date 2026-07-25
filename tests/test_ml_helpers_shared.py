@@ -72,12 +72,22 @@ def test_strategy_reuses_backend_helper(strategy, local, backend_name):
     )
 
 
-def test_pretrained_v4_also_delegates_feature_building():
-    """opus_stat_pretrained_v4 enveloppe le builder (garde son propre garde de
-    longueur minimale) : on vérifie l'équivalence de sortie, pas l'identité."""
-    import app.strategies.opus_stat_pretrained_v4 as pt
-    df = _ohlcv(400)
-    assert pt._build_features(df).equals(backend.build_features(df))
+def test_no_strategy_reintroduces_a_local_feature_builder():
+    """Aucune stratégie ne doit redéfinir ``_build_features`` localement.
+
+    Remplace l'ancien test sur ``opus_stat_pretrained_v4`` (supprimé avec le
+    pack V4 figé). La seule exception légitime est la collision de NOM de
+    ``scoring_statistique_opus_v4/v5``, verrouillée par le test suivant.
+    """
+    import pathlib
+    import re
+    allowed = {"scoring_statistique_opus_v4", "scoring_statistique_opus_v5"}
+    offenders = [
+        f.stem for f in pathlib.Path("app/strategies").glob("*.py")
+        if f.stem not in allowed
+        and re.search(r"^def _build_features\b", f.read_text(encoding="utf-8"), re.M)
+    ]
+    assert offenders == [], f"builder local réintroduit dans : {offenders}"
 
 
 def test_scoring_statistique_opus_v4_is_not_a_duplicate():

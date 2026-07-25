@@ -25,11 +25,11 @@ import type {
 // ── Badges ──────────────────────────────────────────────────────────────────
 
 function AucBadge({ auc, trainEnd }: { auc: number | null | undefined; trainEnd?: string | null }) {
-  // auc=0 sans date d'entraînement = non mesurée (artefact legacy importé sans
-  // provenance), PAS un modèle mesuré mauvais — distinct d'un vrai 0.000 (qui
+  // auc=0 sans date d'entraînement = non mesurée (artefact sans provenance
+  // datée), PAS un modèle mesuré mauvais — distinct d'un vrai 0.000 (qui
   // aurait une date). Éviter le rouge trompeur dans les deux cas.
   if (auc == null || (auc === 0 && !trainEnd)) {
-    return <Badge title="AUC non mesurée (ex. artefact legacy sans provenance)">n/m</Badge>;
+    return <Badge title="AUC non mesurée (artefact sans provenance datée)">n/m</Badge>;
   }
   const variant = auc >= 0.65 ? 'success' : auc >= 0.55 ? 'warning' : 'danger';
   return <Badge variant={variant}>{auc.toFixed(3)}</Badge>;
@@ -89,7 +89,6 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
       <td className="p-2 text-right font-mono">{version.n_bars ?? '—'}</td>
       <td className="p-2"><AucBadge auc={version.auc} trainEnd={version.train_end} /></td>
       <td className="p-2"><DecisionBadge decision={version.gate_decision} /></td>
-      <td className="p-2 text-dim">{version.legacy ? 'oui' : '—'}</td>
       <td className="p-2">
         <div className="flex flex-wrap gap-1.5">
           <Button
@@ -417,7 +416,6 @@ function RegistryRow({ entry }: { entry: ModelRegistryEntry }) {
                       <th className="p-2 font-medium text-right">N barres</th>
                       <th className="p-2 font-medium">AUC</th>
                       <th className="p-2 font-medium">Décision</th>
-                      <th className="p-2 font-medium">Legacy</th>
                       <th className="p-2 font-medium">Actions</th>
                     </tr>
                   </thead>

@@ -10,10 +10,10 @@ import app.ml.model_registry as registry
 from app.ml.policy import (
     decide_gate,
     maybe_refresh,
-    rank_auc,
-    recipe_gate_defaults,
+    resolve_gate_spec,
     score_holdout,
 )
+from app.ml.scoring import rank_auc
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -188,41 +188,42 @@ def test_maybe_refresh_skips_when_insufficient_data(tmp_path):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  recipe_gate_defaults — le gate doit évaluer un candidat sur LA MÊME
+#  resolve_gate_spec — le gate doit évaluer un candidat sur LA MÊME
 #  définition de labels que celle utilisée à son entraînement (régression
 #  trouvée : opus_stat_retrained_v4 est single-horizon t+1, mais était gaté
 #  contre des labels multi-horizon [1,3,6] pensés pour V11).
 # ─────────────────────────────────────────────────────────────────────────────
-def test_recipe_gate_defaults_single_horizon_strategy_by_name():
-    d = recipe_gate_defaults("opus_stat_retrained_v4")
+def test_resolve_gate_spec_single_horizon_strategy_by_name():
+    d = resolve_gate_spec("opus_stat_retrained_v4")
     assert d.get("label_horizons") == [1]
     assert d.get("amp_top_pct") == pytest.approx(0.30)
 
 
-def test_recipe_gate_defaults_frozen_pretrained_strategy_by_name():
-    d = recipe_gate_defaults("opus_stat_pretrained_v4")
-    assert d.get("label_horizons") == [1]
+def test_resolve_gate_spec_unknown_strategy_is_empty():
+    """Recette introuvable : ``{}``, pas d'exception — les défauts de
+    ``GateConfig`` s'appliquent alors."""
+    assert resolve_gate_spec("strategie_qui_nexiste_pas") == {}
 
 
-def test_recipe_gate_defaults_multi_horizon_strategy_unaffected():
-    d = recipe_gate_defaults("opus_omnibus_v11")
+def test_resolve_gate_spec_multi_horizon_strategy_unaffected():
+    d = resolve_gate_spec("opus_omnibus_v11")
     assert d.get("label_horizons") == [1, 3, 6]
 
 
-def test_recipe_gate_defaults_by_instance_matches_by_name():
+def test_resolve_gate_spec_by_instance_matches_by_name():
     strat = _v11_strategy()
-    assert recipe_gate_defaults(strat) == recipe_gate_defaults("opus_omnibus_v11")
+    assert resolve_gate_spec(strat) == resolve_gate_spec("opus_omnibus_v11")
 
 
-def test_recipe_gate_defaults_unknown_recipe_returns_empty():
-    assert recipe_gate_defaults("this_strategy_does_not_exist") == {}
+def test_resolve_gate_spec_unknown_recipe_returns_empty():
+    assert resolve_gate_spec("this_strategy_does_not_exist") == {}
 
 
-def test_recipe_gate_defaults_explicit_params_override_recipe_default():
+def test_resolve_gate_spec_explicit_params_override_recipe_default():
     # GateConfig.from_params applique les params explicites APRÈS les défauts
     # de recette — un appelant qui force label_horizons doit toujours gagner.
     from app.ml.policy import GateConfig
-    merged = {**recipe_gate_defaults("opus_stat_retrained_v4"), "label_horizons": [1, 3]}
+    merged = {**resolve_gate_spec("opus_stat_retrained_v4"), "label_horizons": [1, 3]}
     gc_ = GateConfig.from_params(merged)
     assert gc_.label_horizons == [1, 3]
 

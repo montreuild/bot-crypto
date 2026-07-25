@@ -4,26 +4,27 @@ LightGBM écrit ses messages depuis sa couche C++, hors du système de logging
 Python : ni ``logging`` ni ``warnings.filterwarnings`` ne les atteignent.
 ``lgb.register_logger()`` est le seul point d'accroche officiel.
 
-Motivation concrète — le chargement des boosters V4 historiques affichait, à
-chaque appel :
+Ce module a **deux effets distincts**, tous deux indépendants de l'artefact
+qui a motivé son écriture :
 
-    [LightGBM] [Warning] Ignoring unrecognized parameter 'bagging_by_query'
-    found in model string.
+1. **Capture de la sortie C++.** Mesuré : un entraînement LightGBM écrit
+   ~750 caractères directement sur ``stdout``, hors de tout contrôle de
+   l'application. Après ``register_logger``, la capture est totale (0
+   caractère sur ``stdout``) et les messages passent par la configuration de
+   logging du bot. C'est la raison principale de garder ce module.
 
-Ce message est **structurellement inoffensif** : LightGBM énumère les
-paramètres trouvés dans l'en-tête du fichier modèle et signale ceux que la
-version courante ne connaît pas, AVANT de les ignorer. Un paramètre ignoré
-n'influence par définition aucune prédiction (vérifié : prédictions
-byte-identiques après retrait du paramètre du fichier). C'est un signal de
-"modèle produit par une autre version/configuration de LightGBM", pas une
-anomalie — exactement ce à quoi il faut s'attendre d'un artefact legacy ou
-importé.
+2. **Dégradation d'un motif inoffensif en DEBUG.** LightGBM énumère les
+   paramètres trouvés dans l'en-tête du fichier modèle et signale ceux que la
+   version courante ne connaît pas, AVANT de les ignorer. Un paramètre ignoré
+   n'influence par définition aucune prédiction (vérifié : prédictions
+   byte-identiques après retrait du paramètre du fichier). C'est un signal de
+   "modèle produit par une autre version/configuration de LightGBM", pas une
+   anomalie — attendu de tout artefact importé ou produit par une autre
+   version.
 
-Plutôt que de patcher les fichiers un par un (ce qui ne couvre que les
-artefacts déjà présents), on dégrade CE motif en DEBUG pour tout modèle,
-présent ou futur. Les autres messages LightGBM gardent leur niveau — on ne
-veut pas rendre le backend muet, seulement cesser de traiter un fait normal
-comme un avertissement.
+Les autres messages LightGBM gardent leur niveau : on ne veut pas rendre le
+backend muet, seulement cesser de traiter un fait normal comme un
+avertissement.
 """
 from __future__ import annotations
 

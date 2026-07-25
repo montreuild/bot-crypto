@@ -115,10 +115,10 @@ function fmtAge(iso){
   return d.toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
 }
 function aucBadge(auc,trainEnd){
-  // auc=0 sans date d'entraînement = non mesurée (ex. import legacy V4, cf.
+  // auc=0 sans date d'entraînement = non mesurée (artefact sans provenance, cf.
   // script de migration), PAS un modèle mesuré mauvais — distinct d'un vrai
   // 0.000 (qui aurait une date). Éviter le rouge trompeur dans les deux cas.
-  if(auc==null||(auc===0&&!trainEnd))return '<span class="mdl-badge" title="AUC non mesurée (ex. artefact legacy sans provenance)">n/m</span>';
+  if(auc==null||(auc===0&&!trainEnd))return '<span class="mdl-badge" title="AUC non mesurée (artefact sans provenance datée)">n/m</span>';
   const cls=auc>=0.65?'mdl-ok':auc>=0.55?'mdl-warn':'mdl-empty';
   return '<span class="mdl-badge '+cls+'">'+auc.toFixed(3)+'</span>';
 }
@@ -285,11 +285,11 @@ async function loadDetail(m){
     const decisions=(await dRes.json()).decisions||[];
     el.innerHTML=
       '<div class="mdl-sub-hdr">Versions</div>'+
-      '<table class="mdl-sub-tbl"><thead><tr><th>Version</th><th>Entraînée jusqu\'au</th><th>N barres</th><th>AUC</th><th>Décision</th><th>Legacy</th><th>Actions</th></tr></thead><tbody>'+
+      '<table class="mdl-sub-tbl"><thead><tr><th>Version</th><th>Entraînée jusqu\'au</th><th>N barres</th><th>AUC</th><th>Décision</th><th>Actions</th></tr></thead><tbody>'+
       versions.map(v=>{
         const isPinned=m.pinned_version_id===v.version_id;
         return '<tr><td>'+esc(v.version_id)+'</td><td>'+fmtAge(v.train_end)+'</td><td>'+(v.n_bars??'—')+'</td>'+
-          '<td>'+aucBadge(v.auc,v.train_end)+'</td><td>'+decisionBadge(v.gate_decision)+'</td><td>'+(v.legacy?'oui':'—')+'</td>'+
+          '<td>'+aucBadge(v.auc,v.train_end)+'</td><td>'+decisionBadge(v.gate_decision)+'</td>'+
           '<td>'+
           '<button class="mdl-btn ghost sm mdl-pin-btn" data-symbol="'+esc(m.symbol)+'" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'">'+(isPinned?'📌 retirer':'📌 épingler')+'</button> '+
           '<button class="mdl-btn ghost sm mdl-promote-btn" data-symbol="'+esc(m.symbol)+'" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'" data-decision="manual">promouvoir</button> '+

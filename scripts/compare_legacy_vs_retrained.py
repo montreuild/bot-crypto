@@ -131,7 +131,7 @@ def fmt(v, w=6):
 # La convention de labels vient de la RECETTE (gate_spec), pas d'un défaut :
 # scorer le pack V4 contre des labels multi-horizon qu'il n'a jamais appris
 # fausserait la comparaison dans son sens défavorable.
-gc_ = policy.GateConfig.from_params(policy.recipe_gate_defaults(retr.Strategy()))
+gc_ = policy.GateConfig.from_params(policy.resolve_gate_spec(retr.Strategy()))
 print(f"# recette : label_horizons={gc_.label_horizons} amp_top_pct={gc_.amp_top_pct} "
       f"metric={gc_.metric} | holdout={HOLDOUT} | régime : ADX>{ADX_THRESHOLD:.0f}, "
       f"di_rescue={DI_RESCUE:.0f}\n", file=sys.stderr)

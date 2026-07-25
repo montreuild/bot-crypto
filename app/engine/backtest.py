@@ -114,7 +114,7 @@ def _resolve_frozen_ml_model(strat, symbol: Optional[str], tf: Optional[str],
         "resolved": True, "fallback_to_inline": False,
         "version_id": art.version_id, "train_start": art.train_start,
         "train_end": art.train_end, "auc": round(float(art.auc), 4),
-        "legacy": art.legacy, "overlap_warning": overlap,
+        "undated": not art.train_end, "overlap_warning": overlap,
     })
     return entry
 
@@ -293,32 +293,29 @@ class Backtester:
       antérieur au début de la fenêtre backtestée (``as_of``) — rapide,
       déterministe, sans fuite temporelle. Repli visible sur l'entraînement
       inline si aucun modèle n'est résoluble (cf. ``result.ml_info``).
-    - ``"inline"`` : réentraînement walk-forward par la stratégie elle-même
-      (comportement historique de ``use_pretrained_ml=False``) — utilisé par
-      l'optimiseur et les tests qui évaluent le comportement réel de la ML.
+    - ``"inline"`` : réentraînement walk-forward par la stratégie elle-même —
+      utilisé par l'optimiseur et les tests qui évaluent le comportement réel
+      de la ML.
     - ``"simulated_live"`` : rejoue la politique de rafraîchissement complète
       (``app.ml.policy.maybe_refresh`` — entraînement + gate + registre) aux
       frontières de cadence de chaque stratégie, comme si le backtest était
       vécu en live. Pour une stratégie sans cadence configurée (modèle figé
       pour toujours), se comporte comme ``"frozen"``.
 
-    ``use_pretrained_ml`` (bool) reste accepté pour compatibilité ascendante :
-    ``True``/``False`` équivalent à ``ml_mode="frozen"``/``"inline"``. Certains
-    appelants mutent l'attribut ``use_pretrained_ml`` après construction (avant
-    ``run()``) — ce chemin continue de fonctionner : ``ml_mode`` explicite est
-    prioritaire uniquement s'il a été passé au constructeur.
+    ``ml_mode`` est le SEUL levier. Le booléen historique
+    ``use_pretrained_ml`` a été retiré : deux réglages pour un même concept,
+    dont l'un se traduisait silencieusement dans l'autre, sont exactement ce
+    qui rendait le mode effectif difficile à lire depuis un appelant.
     """
     def __init__(self, engine: Engine, cfg: dict,
                  cancel_event: Optional[threading.Event] = None,
-                 use_pretrained_ml: bool = True,
-                 ml_mode: Optional[str] = None):
+                 ml_mode: str = "frozen"):
         self.engine             = engine
         self.cfg                = cfg
         self._cancel_event      = cancel_event
-        self.use_pretrained_ml  = use_pretrained_ml
-        if ml_mode is not None and ml_mode not in _ML_MODES:
+        if ml_mode not in _ML_MODES:
             raise ValueError(f"ml_mode invalide : {ml_mode!r} (attendu parmi {_ML_MODES})")
-        self._ml_mode_explicit  = ml_mode
+        self.ml_mode            = ml_mode
         bcfg = cfg.get("backtest", {})
         tcfg = cfg.get("trading",  {})
 
@@ -735,10 +732,9 @@ class Backtester:
         # elle existe, sinon les params de base (séparation des configs).
         strat_params = resolve_strategy_params(self.cfg, timeframe, symbol)
 
-        # ML-02 : mode effectif — l'attribut ``use_pretrained_ml`` est relu ICI
-        # (pas caché à __init__) pour rester compatible avec les appelants qui
-        # le mutent après construction (cf. docstring de la classe).
-        ml_mode = self._ml_mode_explicit or ("frozen" if self.use_pretrained_ml else "inline")
+        # ML-02 : relu ICI plutôt que figé à __init__ — un appelant peut poser
+        # ``bt.ml_mode = "inline"`` entre deux ``run()`` (optimiseur, tests).
+        ml_mode = self.ml_mode
         symbol_key      = symbol or DEFAULT_CONFIG_SYMBOL
         window_start_iso = _iso_of(df, 0)
         window_end_iso   = _iso_of(df, -1)

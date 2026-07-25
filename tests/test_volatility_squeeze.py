@@ -110,7 +110,7 @@ class TestSqueezeBacktest:
     def test_integrates(self):
         eng = Engine()
         eng.register(Strategy(), silent=True)
-        d = Backtester(eng, _cfg(), use_pretrained_ml=False).run(
+        d = Backtester(eng, _cfg(), ml_mode="inline").run(
             _df_squeeze_then_break(600), "BTC/USDC", timeframe="4h").to_dict()
         assert "total_pnl" in d and d["total_trades"] >= 0
 

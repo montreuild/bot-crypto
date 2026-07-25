@@ -93,7 +93,7 @@ class TestHarmonicBacktest:
     def test_integrates_with_backtester(self):
         eng = Engine()
         eng.register(Strategy(), silent=True)
-        bt = Backtester(eng, _cfg(), use_pretrained_ml=False)
+        bt = Backtester(eng, _cfg(), ml_mode="inline")
         res = bt.run(_df(600, "up"), "BTC/USDC", timeframe="4h")
         d = res.to_dict()
         assert "total_pnl" in d

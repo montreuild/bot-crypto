@@ -23,11 +23,11 @@ from app.ml.backend.trainer import (
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  _rank_auc — doit coïncider avec app.ml.policy.rank_auc (même formule,
+#  _rank_auc — doit coïncider avec app.ml.scoring.rank_auc (même formule,
 #  dupliquée pour garder app.ml.backend indépendant de app.ml.policy).
 # ─────────────────────────────────────────────────────────────────────────────
 def test_rank_auc_matches_policy_rank_auc():
-    from app.ml.policy import rank_auc as policy_rank_auc
+    from app.ml.scoring import rank_auc as policy_rank_auc
     rng = np.random.RandomState(0)
     y = rng.randint(0, 2, 200)
     scores = rng.rand(200)

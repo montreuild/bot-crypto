@@ -86,10 +86,10 @@ def test_resolve_symbol_empty_symbols_returns_none():
 # ─────────────────────────────────────────────────────────────────────────────
 #  _freshness_warning
 # ─────────────────────────────────────────────────────────────────────────────
-def _art(train_end=None, legacy=False, version_id="v1"):
+def _art(train_end=None, version_id="v1"):
     return registry.ArtifactRef(path_prefix="x", symbol="BTC/USDC", tf="1h",
                                 recipe="r", version_id=version_id,
-                                train_end=train_end, legacy=legacy)
+                                train_end=train_end)
 
 
 def test_freshness_warning_none_for_fresh_model():
@@ -105,8 +105,10 @@ def test_freshness_warning_flags_stale_model():
     assert "vieux" in warn
 
 
-def test_freshness_warning_legacy_artifact_is_non_measurable():
-    warn = MLStrategyTrainer._freshness_warning(_art(train_end=None, legacy=True), interval_h=6.0)
+def test_freshness_warning_undated_artifact_is_non_measurable():
+    """Sans ``train_end``, la fraîcheur n'est pas mesurable — il faut le DIRE,
+    pas retourner None (qui signifierait « modèle frais »)."""
+    warn = MLStrategyTrainer._freshness_warning(_art(train_end=None), interval_h=6.0)
     assert warn is not None
     assert "non mesurable" in warn
 

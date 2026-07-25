@@ -76,14 +76,15 @@ def test_invalid_ml_mode_raises():
         Backtester(eng, _cfg(), ml_mode="bogus")
 
 
-def test_use_pretrained_ml_bool_still_drives_mode_when_ml_mode_omitted(tmp_path):
+def test_ml_mode_is_the_only_lever(tmp_path):
+    """``use_pretrained_ml`` a été retiré : un seul réglage pilote le mode."""
     df = _make_ohlcv(1400)
     strat = _v11()
     strat.model_dir = str(tmp_path / "models")  # isole du vrai models/ du dépôt
     eng = Engine()
     eng.register(strat, silent=True)
 
-    bt = Backtester(eng, _cfg(), use_pretrained_ml=False)  # compat ascendante
+    bt = Backtester(eng, _cfg(), ml_mode="inline")
     result = bt.run(df, "BTC/USDC", "1h")
     assert result.ml_info["mode"] == "inline"
 
