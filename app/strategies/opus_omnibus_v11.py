@@ -64,6 +64,7 @@ from app.ml.backend import (
 from app.ml.backend import (
     window_polars as _window_polars,
 )
+from app.ml.backend.mixin import MLBackendMixin
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Alias publics (compatibilité : scanner_service et autres consommateurs
@@ -273,7 +274,7 @@ _TRAIN_LOG_PATH = os.path.join("logs", "opus_omnibus_v11_train.jsonl")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-class Strategy(BaseStrategyML):
+class Strategy(MLBackendMixin, BaseStrategyML):
     """OMNIBUS V11 — routing V10 + multi-horizon, régime enrichi, importance,
     calibration. Modèles LightGBM entraînés inline via MLBackend."""
 
@@ -348,15 +349,10 @@ class Strategy(BaseStrategyML):
 
     retrain_interval_h: int = 6
 
-    def __init__(self):
-        # Composition : tout le ML est délégué au backend générique.
-        self.ml = MLBackend(
-            name=self.name,
-            model_dir=self.model_dir,
-            calibrate=True,
-            prune_features=True,
-            multi_horizon=True,
-        )
+    # Recette omnibus_v4_multi : multi-horizon, calibré, élagué.
+    ml_calibrate = True
+    ml_prune_features = True
+    ml_multi_horizon = True
 
     # ── Compatibilité cached_train (les attributs état doivent être mutables
     #    sur la Strategy pour que train_cache puisse snapshot/restaurer).
@@ -364,76 +360,10 @@ class Strategy(BaseStrategyML):
     _TRAIN_STATE_ATTRS = MLBackend._TRAIN_STATE_ATTRS
     _TRAIN_PARAM_KEYS  = MLBackend._TRAIN_PARAM_KEYS
 
-    @property
-    def _amp_models(self):       return self.ml.state.amp_models
-    @property
-    def _dir_models(self):       return self.ml.state.dir_models
-    @property
-    def _amp_cal(self):          return self.ml.state.amp_cal
-    @property
-    def _dir_cal(self):          return self.ml.state.dir_cal
-    @property
-    def _feature_cols(self):     return self.ml.state.feature_cols
-    @property
-    def _kept_features(self):    return self.ml.state.kept_features
-    @property
-    def _medians(self):          return self.ml.state.medians
-    @property
-    def _trained_tfs(self):      return self.ml.state.trained_tfs
-    @property
-    def _best_auc_per_tf(self):  return self.ml.state.best_auc_per_tf
-    @property
-    def _train_meta(self):       return self.ml.state.train_meta
-    @property
-    def _last_retrain(self):     return self.ml.state.last_retrain
-    @property
-    def _call_cnt(self):         return self.ml.state.call_cnt
-    @property
-    def _best_auc(self):         return self.ml.state.best_auc
-    @_best_auc.setter
-    def _best_auc(self, v):      self.ml.state.best_auc = float(v)
-    @property
-    def _managed_externally(self): return self.ml.state.managed_externally
-    @_managed_externally.setter
-    def _managed_externally(self, v): self.ml.state.managed_externally = bool(v)
-
-    # Cache backtest (délègue au backend)
-    @property
-    def _bt_features(self):      return self.ml._bt_features
-    @property
-    def _bt_features_len(self):  return self.ml._bt_features_len
-    @property
-    def _bt_train_offset(self):  return self.ml._bt_train_offset
-    @_bt_train_offset.setter
-    def _bt_train_offset(self, v): self.ml._bt_train_offset = v
-
-    @property
-    def _lock(self): return self.ml._lock
-
-    # ── Cycle de vie ML (délègue au backend) ───────────────────────────────
-    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
-        self.ml.prepare_for_backtest(df, getattr(self, "_bt_symbol", None),
-                                     getattr(self, "_bt_tf", None))
-
-    @property
-    def is_trained(self) -> bool:
-        return self.ml.is_trained
-
-    @property
-    def managed_externally(self) -> bool:
-        return self.ml.managed_externally
-
-    @managed_externally.setter
-    def managed_externally(self, v: bool) -> None:
-        self.ml.managed_externally = v
-
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get(self.name, {})
         warmup = int(p.get("warmup_bars", self._DEFAULTS["warmup_bars"]))
         return max(230, warmup + 30)
-
-    def reset_model(self) -> None:
-        self.ml.reset_model()
 
     # ── Persistance (délègue au backend) ───────────────────────────────────
     def save_model(self, path: str) -> None:
@@ -486,10 +416,6 @@ class Strategy(BaseStrategyML):
             self._append_train_log(tf_key, self.ml.train_meta.get(tf_key, {}))
         return ok
 
-    def _train_impl(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
-        # Délègue au backend (sans cached_train ici — déjà géré par _train).
-        return self.ml._train_impl_wrapper(df, tf_key, params)
-
     def _append_train_log(self, tf_key: str, meta: dict) -> None:
         try:
             os.makedirs(os.path.dirname(_TRAIN_LOG_PATH) or ".", exist_ok=True)
@@ -499,10 +425,6 @@ class Strategy(BaseStrategyML):
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception as e:
             logger.debug(f"[OmnibusV11] log entraînement KO : {e}")
-
-    # ── Prédictions (délègue au backend) ───────────────────────────────────
-    def _predict(self, features_df: pl.DataFrame, tf: str, target: str) -> Optional[float]:
-        return self.ml.predict_single(features_df, tf, target)
 
     #: ``False`` pour un preset dont la recette ne produit aucun artefact
     #: (prédicteur proxy) : ni entraînement, ni garde « pas encore entraîné ».
@@ -521,19 +443,6 @@ class Strategy(BaseStrategyML):
         """
         return (self.predict_amplitude(features, tf),
                 self.predict_direction(features, tf))
-
-    def predict_amplitude(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
-        return self.ml.predict_amplitude(features_df, tf)
-
-    def predict_direction(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
-        return self.ml.predict_direction(features_df, tf)
-
-    def _predict_series(self, features_df: pl.DataFrame, tf: str,
-                        target: str) -> Optional[np.ndarray]:
-        return self.ml.predict_series(features_df, tf, target)
-
-    def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
-        return self.score(df, params)
 
     # ── Score V11 (routing conservé) ───────────────────────────────────────
     def score(self, df: pl.DataFrame, params: dict = None,

@@ -20,10 +20,7 @@ Optimisations mémoire :
   - ``gc.collect()`` explicite entre trainings.
 """
 
-import gc
 import logging
-import os
-import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -43,6 +40,7 @@ from app.ml.backend.features import impute_inplace as _bk_impute_inplace
 from app.ml.backend.features import last_bar_hour_dow as _bk_last_bar_hour_dow
 from app.ml.backend.features import select_feature_columns as _bk_select_feature_columns
 from app.ml.backend.features import window_polars as _bk_window_polars
+from app.ml.backend.mixin import MLBackendMixin
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Helpers V4 partagés — implémentation unique dans app/ml/backend/features.py.
@@ -255,7 +253,7 @@ def _check_early_exit(setup_name: str, regime: int, p_up: float,
 #  Strategy
 # ─────────────────────────────────────────────────────────────────────────────
 
-class Strategy(BaseStrategyML):
+class Strategy(MLBackendMixin, BaseStrategyML):
     """OMNIBUS V7 — 6 setups avec routing par priorité, sur modèles V4
     entraînés inline (mêmes paramètres LightGBM que ``opus_stat_retrained_v4``,
     mais code dupliqué pour rester autonome)."""
@@ -324,329 +322,26 @@ class Strategy(BaseStrategyML):
 
     retrain_interval_h: int = 6
 
+    # Recette omnibus_v4_single : t+1, sans calibration ni élagage.
+    ml_calibrate = False
+    ml_prune_features = False
+    ml_multi_horizon = False
+
     def __init__(self):
-        self._lock = threading.Lock()
-        self._amp_models:    Dict[str, Any]              = {}
-        self._dir_models:    Dict[str, Any]              = {}
-        self._feature_cols:  Dict[str, List[str]]        = {}
-        self._medians:       Dict[str, Dict[str, float]] = {}
-        self._trained_tfs:   set                         = set()
-        self._managed_externally: bool                   = False
-        self._call_cnt:      Dict[str, int]              = {}
-        self._last_retrain:  Dict[str, int]              = {}
-        self._best_auc:        float            = 0.0
-        self._best_auc_per_tf: Dict[str, float] = {}
-        self._train_meta:      Dict[str, dict]  = {}
+        # Tout l'état ML vit dans le backend — cf. MLBackendMixin.
+        MLBackendMixin.__init__(self)
         self._cancel_event = None
-        # Cache backtest : voir prepare_for_backtest.
-        self._bt_features: Optional[pl.DataFrame] = None
-        self._bt_features_len: int = 0
-
-    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
-        """Pré-calcule les features V4 (polars) pour toute la fenêtre.
-
-        Évite ~5000 rebuilds redondants dans la boucle backtest.
-        """
-        try:
-            # Catalogue partagé "v4_polars" (build identique entre v7/v10_rt/v11/stat_rt).
-            from app.core.feature_store import cached_strategy_features
-            feats = cached_strategy_features(
-                getattr(self, "_bt_symbol", None), getattr(self, "_bt_tf", None), df,
-                name="v4_polars", version="1",
-                builder=lambda w: _build_features(_window_polars(w, n=len(w))),
-                in_kind="polars", out_kind="polars")
-            self._bt_features = feats
-            self._bt_features_len = len(df) if feats is not None else 0
-            logger.info(
-                f"[OmnibusV7-RT] backtest : features pré-calculées sur "
-                f"{self._bt_features_len} bougies "
-                f"({(len(feats.columns) if feats is not None else 0)} colonnes)"
-            )
-        except Exception as e:
-            logger.warning(f"[OmnibusV7-RT] prepare_for_backtest KO : {e}")
-            self._bt_features = None
-            self._bt_features_len = 0
-
-    # ── Cycle de vie ML ────────────────────────────────────────────────────
-    @property
-    def is_trained(self) -> bool:
-        return bool(self._trained_tfs)
-
-    @property
-    def managed_externally(self) -> bool:
-        return self._managed_externally
-
-    @managed_externally.setter
-    def managed_externally(self, v: bool) -> None:
-        self._managed_externally = bool(v)
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get(self.name, {})
         warmup = int(p.get("warmup_bars", self._DEFAULTS["warmup_bars"]))
         return max(230, warmup + 30)
 
-    def reset_model(self) -> None:
-        with self._lock:
-            self._amp_models.clear()
-            self._dir_models.clear()
-            self._feature_cols.clear()
-            self._medians.clear()
-            self._trained_tfs.clear()
-            self._best_auc_per_tf.clear()
-            self._train_meta.clear()
-            self._last_retrain.clear()
-            self._managed_externally = False
-            self._best_auc = 0.0
-        self._bt_features = None
-        self._bt_features_len = 0
-        gc.collect()
-
-    # ── Persistance par TF ─────────────────────────────────────────────────
-    @staticmethod
-    def _tf_from_path(path: str) -> str:
-        base = os.path.splitext(os.path.basename(path))[0]
-        return base.rsplit("_", 1)[-1]
-
-    def save_model(self, path: str, extra_meta: dict = None) -> None:
-        from app.ml.backend.persistence import save_amp_dir_bundle
-        tf_key = self._tf_from_path(path)
-        with self._lock:
-            amp_m = self._amp_models.get(tf_key)
-            dir_m = self._dir_models.get(tf_key)
-            feats = self._feature_cols.get(tf_key)
-            meds  = self._medians.get(tf_key)
-            auc   = self._best_auc_per_tf.get(tf_key, 0.0)
-            meta  = self._train_meta.get(tf_key, {})
-        if amp_m is None or dir_m is None:
-            logger.debug(f"[OmnibusV7-RT] save_model({path}) : pas de modèle pour {tf_key}")
-            return
-        if save_amp_dir_bundle(path, tf_key, amp_m, dir_m, feats, meds, auc, meta,
-                               extra_meta=extra_meta):
-            logger.info(f"[OmnibusV7-RT] Modèles sauvegardés → {path} (AUC={auc:.3f})")
-
-    def load_model(self, path: str) -> bool:
-        from app.ml.backend.persistence import load_amp_dir_bundle
-        data = load_amp_dir_bundle(path)
-        if data is None or data.get("amp_model") is None or data.get("dir_model") is None:
-            return False
-        tf_key = self._tf_from_path(path)
-        with self._lock:
-            self._amp_models[tf_key]      = data["amp_model"]
-            self._dir_models[tf_key]      = data["dir_model"]
-            self._feature_cols[tf_key]    = list(data.get("features") or [])
-            self._medians[tf_key]         = dict(data.get("medians") or {})
-            self._best_auc_per_tf[tf_key] = float(data.get("best_auc", 0.0))
-            self._train_meta[tf_key]      = dict(data.get("train_meta") or {})
-            self._trained_tfs.add(tf_key)
-            self._best_auc = max(self._best_auc, self._best_auc_per_tf[tf_key])
-        logger.info(
-            f"[OmnibusV7-RT] Modèle {tf_key} chargé depuis {path} "
-            f"(AUC={self._best_auc_per_tf[tf_key]:.3f})"
-        )
-        return True
-
-    # ── Entraînement ───────────────────────────────────────────────────────
-    def fit(self, df: pl.DataFrame, params: dict = None) -> None:
-        tf = _detect_timeframe(df) or "default"
-        p  = (params or {}).get(self.name, {})
-        self._train(df, tf_key=tf, params=p)
-
     # Entraînement avec cache process-wide (cf. app/core/train_cache.py) :
     # les retrains identiques (même fenêtre, mêmes hyperparams d'entraînement)
     # sont réutilisés entre les trials de l'optimiseur au lieu d'être relancés.
     _TRAIN_STATE_ATTRS = ('_amp_models', '_dir_models', '_feature_cols', '_medians', '_best_auc_per_tf', '_train_meta')
     _TRAIN_PARAM_KEYS  = ('amp_top_pct', 'n_estimators', 'num_leaves', 'learning_rate')
-
-    def _train(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
-        from app.core.train_cache import cached_train
-        return cached_train(self, df, tf_key, params, self._train_impl,
-                            self._TRAIN_STATE_ATTRS, self._TRAIN_PARAM_KEYS)
-
-    def _train_impl(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
-        try:
-            import lightgbm as lgb
-        except ImportError:
-            logger.error("[OmnibusV7-RT] lightgbm requis : pip install lightgbm")
-            return False
-
-        amp_top_pct   = float(params.get("amp_top_pct",   self._DEFAULTS["amp_top_pct"]))
-        n_estimators  = int(params.get("n_estimators",    self._DEFAULTS["n_estimators"]))
-        num_leaves    = int(params.get("num_leaves",      self._DEFAULTS["num_leaves"]))
-        learning_rate = float(params.get("learning_rate", self._DEFAULTS["learning_rate"]))
-
-        n_keep = max(2200, len(df))
-        # Réutilise le cache backtest si dispo (features causales,
-        # même contrat que v11 — voir commit 0d0e02d). ``_bt_train_offset``
-        # (posé par score() avant _train) repère la position de la fenêtre
-        # d'entraînement dans la fenêtre complète : sans lui, head(len(df))
-        # lisait les PREMIÈRES lignes des features alors que train_df est une
-        # tranche de FIN — le walk-forward s'entraînait sur les plus vieilles
-        # données.
-        _off = int(getattr(self, "_bt_train_offset", None) or 0)
-        if (self._bt_features is not None and
-                self._bt_features_len > 0 and
-                _off + len(df) <= self._bt_features_len):
-            feats = self._bt_features.slice(_off, len(df))
-        else:
-            feats = _build_features(_window_polars(df, n=n_keep))
-        if feats is None or len(feats) < 250:
-            logger.warning(f"[OmnibusV7-RT] {tf_key} : données insuffisantes")
-            return False
-
-        feature_cols = _select_feature_columns(feats)
-        if not feature_cols:
-            logger.warning(f"[OmnibusV7-RT] {tf_key} : aucune feature exploitable")
-            return False
-
-        close = feats["close"].to_numpy().astype(np.float64)
-        n     = len(close) - 1
-        if n < 200:
-            logger.warning(f"[OmnibusV7-RT] {tf_key} : pas assez de barres labélisables")
-            return False
-        ret_t1  = (close[1:] - close[:n]) / np.maximum(close[:n], 1e-9)
-        abs_ret = np.abs(ret_t1)
-        amp_thr = float(np.quantile(abs_ret, 1.0 - amp_top_pct))
-        y_amp   = (abs_ret >= amp_thr).astype(np.int8)
-        y_dir   = (ret_t1 > 0).astype(np.int8)
-
-        X_full = feats.head(n).select(feature_cols).to_numpy().astype(np.float32)
-
-        split = max(int(n * 0.8), 100)
-        split = min(split, n - 50)
-        if split < 100 or n - split < 50:
-            logger.warning(f"[OmnibusV7-RT] {tf_key} : split impossible (n={n})")
-            return False
-
-        medians: Dict[str, float] = {}
-        for j, col in enumerate(feature_cols):
-            col_train = X_full[:split, j]
-            mask = np.isfinite(col_train)
-            medians[col] = float(np.median(col_train[mask])) if mask.any() else 0.0
-
-        X_train = X_full[:split].copy()
-        X_valid = X_full[split:n].copy()
-        del X_full
-        _impute_inplace(X_train, feature_cols, medians)
-        _impute_inplace(X_valid, feature_cols, medians)
-
-        common = dict(
-            objective="binary", metric="auc",
-            num_leaves=num_leaves, learning_rate=learning_rate,
-            min_child_samples=20, subsample=0.8, subsample_freq=5,
-            colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=0.5,
-            max_bin=63, force_col_wise=True,
-            verbosity=-1, n_jobs=1,
-        )
-        # Fix : ne PAS partager la liste de callbacks entre lgb.train(amp) et
-        # lgb.train(dir). early_stopping est stateful (compteur _no_improvement_count),
-        # sa réutilisation après le 1er entraînement déclenche un arrêt immédiat
-        # du 2e (dir) → modèle dégénéré, p_up ≈ 0.5 partout. Les callbacks sont
-        # désormais instanciés frais dans chaque lgb.train ci-dessous.
-
-        with self._lock:
-            self._amp_models.pop(tf_key, None)
-            self._dir_models.pop(tf_key, None)
-        gc.collect()
-
-        ds_train_amp = lgb.Dataset(X_train, label=y_amp[:split], feature_name=feature_cols,
-                                   free_raw_data=False)
-        ds_valid_amp = lgb.Dataset(X_valid, label=y_amp[split:n], reference=ds_train_amp,
-                                   feature_name=feature_cols, free_raw_data=False)
-        try:
-            booster_amp = lgb.train(
-                {**common, "scale_pos_weight":
-                    (y_amp[:split] == 0).sum() / max((y_amp[:split] == 1).sum(), 1)},
-                ds_train_amp, num_boost_round=n_estimators,
-                valid_sets=[ds_valid_amp],
-                callbacks=[lgb.early_stopping(20, verbose=False),
-                           lgb.log_evaluation(-1)],
-            )
-        except Exception as e:
-            logger.warning(f"[OmnibusV7-RT] {tf_key} : entraînement amp KO ({e})")
-            del ds_train_amp, ds_valid_amp
-            gc.collect()
-            return False
-        auc_amp = booster_amp.best_score.get("valid_0", {}).get("auc", 0.0)
-        del ds_train_amp, ds_valid_amp
-
-        ds_train_dir = lgb.Dataset(X_train, label=y_dir[:split], feature_name=feature_cols,
-                                   free_raw_data=False)
-        ds_valid_dir = lgb.Dataset(X_valid, label=y_dir[split:n], reference=ds_train_dir,
-                                   feature_name=feature_cols, free_raw_data=False)
-        try:
-            booster_dir = lgb.train(
-                {**common, "scale_pos_weight":
-                    (y_dir[:split] == 0).sum() / max((y_dir[:split] == 1).sum(), 1)},
-                ds_train_dir, num_boost_round=n_estimators,
-                valid_sets=[ds_valid_dir],
-                callbacks=[lgb.early_stopping(20, verbose=False),
-                           lgb.log_evaluation(-1)],
-            )
-        except Exception as e:
-            logger.warning(f"[OmnibusV7-RT] {tf_key} : entraînement dir KO ({e})")
-            del ds_train_dir, ds_valid_dir
-            gc.collect()
-            return False
-        auc_dir = booster_dir.best_score.get("valid_0", {}).get("auc", 0.0)
-        del ds_train_dir, ds_valid_dir, X_train, X_valid
-
-        auc_combined = (auc_amp + auc_dir) / 2.0
-        with self._lock:
-            self._amp_models[tf_key]      = booster_amp
-            self._dir_models[tf_key]      = booster_dir
-            self._feature_cols[tf_key]    = feature_cols
-            self._medians[tf_key]         = medians
-            self._trained_tfs.add(tf_key)
-            self._best_auc_per_tf[tf_key] = auc_combined
-            self._best_auc                = max(self._best_auc, auc_combined)
-            self._train_meta[tf_key] = {
-                "n_train":     int(split),
-                "n_valid":     int(n - split),
-                "n_features":  len(feature_cols),
-                "auc_amp":     round(float(auc_amp), 4),
-                "auc_dir":     round(float(auc_dir), 4),
-                "amp_thr_pct": round(float(amp_thr) * 100, 3),
-                "amp_top_pct": amp_top_pct,
-            }
-        gc.collect()
-        logger.info(
-            f"[OmnibusV7-RT] {tf_key} entraîné : {split} train / {n - split} val | "
-            f"{len(feature_cols)} features | AUC amp={auc_amp:.3f} dir={auc_dir:.3f} | "
-            f"amp_thr={amp_thr * 100:.2f}%"
-        )
-        return True
-
-    # ── Prédictions ────────────────────────────────────────────────────────
-    def _predict(self, features_df: pl.DataFrame, tf: str, target: str) -> Optional[float]:
-        with self._lock:
-            booster   = (self._amp_models if target == "amp" else self._dir_models).get(tf)
-            feat_cols = self._feature_cols.get(tf)
-            medians   = self._medians.get(tf, {})
-        if booster is None or not feat_cols:
-            return None
-        try:
-            # Extraction de la derniere ligne en UN appel (dict col->valeur) au
-            # lieu d'un acces colonne polars par feature (~440 get_column par
-            # prediction, x2/barre). row.get(c)=None pour les colonnes absentes
-            # -> repli sur la mediane d'entrainement.
-            row  = features_df.tail(1).row(0, named=True)
-            vals = np.empty(len(feat_cols), dtype=np.float32)
-            for j, c in enumerate(feat_cols):
-                v = row.get(c)
-                vals[j] = v if (v is not None and np.isfinite(v)) else medians.get(c, 0.0)
-            return float(booster.predict(vals.reshape(1, -1))[0])
-        except Exception as e:
-            logger.warning(f"[OmnibusV7-RT] Prédiction {tf}/{target} KO : {e}")
-            return None
-
-    def predict_amplitude(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
-        return self._predict(features_df, tf, "amp")
-
-    def predict_direction(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
-        return self._predict(features_df, tf, "dir")
-
-    def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
-        return self.score(df, params)
 
     # ── Sortie anticipée V7 ────────────────────────────────────────────────
     def check_early_exit(self, df: pl.DataFrame, position: dict,

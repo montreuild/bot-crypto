@@ -760,10 +760,28 @@ propre jeu de paramètres de recette :
 
 Les trois sont **strictement identiques**. La suppression de leur
 `_train_impl` au profit de `MLBackend` ne change donc pas le modèle produit :
-l'étape C cesse d'être un pari. Ce qui reste à faire est mécanique — donner un
-`MLBackend` à `opus_omnibus_v7` et `opus_omnibus_v11_followsetup` (qui n'en ont
-pas encore) et rebrancher `save`/`load`/`predict` dessus, comme
-`opus_omnibus_v11` le fait déjà.
+l'étape C a cessé d'être un pari, et a été exécutée sur cette base.
+
+**Livré** : `app/ml/backend/mixin.py` (189 lignes) porte le cycle de vie ML
+— état par TF, entraînement, persistance, inférence, cache de backtest —
+extrait de `opus_omnibus_v11` qui l'avait déjà en composition. Quatre
+stratégies l'utilisent désormais, `v11` compris :
+
+| stratégie | avant | après |
+|---|---:|---:|
+| `opus_stat_retrained_v4` | 767 | **445** |
+| `opus_omnibus_v7` | 877 | **572** |
+| `opus_omnibus_v11_followsetup` | 1093 | **777** |
+| `opus_omnibus_v11` | 797 | **706** |
+
+Soit **−1 034 lignes** pour 189 lignes de mixin. L'équivalence a été
+re-vérifiée après chaque bascule (écart 0.000000 maintenu), et les presets de
+V11 restent identiques (60/60 barres de décision).
+
+Deux corrections de bugs voyagent avec le mixin et sont verrouillées par test :
+la fusion des `_DEFAULTS` dans `_train` (sans elle, `score()` entraînait avec
+les valeurs du constructeur du backend) et la réconciliation des noms d'état
+avec/sans underscore côté `train_cache`.
 
 **D. Fusion du catalogue de setups omnibus** (§7) — le chantier qui absorbe
 v7 à v11 dans un routing unique portant les 10 setups.

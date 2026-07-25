@@ -44,6 +44,14 @@ class Strategy(_V11Strategy):
 
     name = "opus_omnibus_v10_retrained"
     models: Dict[str, str] = {"signal": "omnibus_v4_single"}
+
+    # Drapeaux du backend alignés sur la recette : hérités de V11, ils
+    # auraient annoncé multi-horizon calibré alors que omnibus_v4_single dit
+    # l'inverse. Ce ne sont qu'un repli — les _DEFAULTS gagnent à
+    # l'entraînement — mais un repli qui ment est pire que pas de repli.
+    ml_calibrate = False
+    ml_prune_features = False
+    ml_multi_horizon = False
     timeframes: List[str] = list(_SUPPORTED_TFS)
 
     # Espace de recherche V10 : plus large que celui de V11 sur les bornes

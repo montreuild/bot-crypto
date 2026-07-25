@@ -25,11 +25,9 @@ pour qu'une suppression de la branche V11 ne casse jamais cette stratégie.
 """
 
 import datetime as _dt
-import gc
 import json
 import logging
 import os
-import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -49,6 +47,7 @@ from app.ml.backend.features import impute_inplace as _bk_impute_inplace
 from app.ml.backend.features import last_bar_hour_dow as _bk_last_bar_hour_dow
 from app.ml.backend.features import select_feature_columns as _bk_select_feature_columns
 from app.ml.backend.features import window_polars as _bk_window_polars
+from app.ml.backend.mixin import MLBackendMixin
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Helpers V4 partagés — implémentation unique dans app/ml/backend/features.py.
@@ -290,7 +289,7 @@ def _multi_horizon_labels(close: np.ndarray, horizons: List[int],
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-class Strategy(BaseStrategyML):
+class Strategy(MLBackendMixin, BaseStrategyML):
     """OMNIBUS V11 FollowSetup — pas de TP/SL/trailing actifs, sortie pilotée
     par le flip de direction du setup courant."""
 
@@ -383,136 +382,23 @@ class Strategy(BaseStrategyML):
 
     retrain_interval_h: int = 6
 
+    # Recette omnibus_v4_multi_nopruning : multi-horizon, calibré, SANS élagage.
+    ml_calibrate = True
+    ml_prune_features = False
+    ml_multi_horizon = True
+
     def __init__(self):
-        self._lock = threading.Lock()
-        self._amp_models:   Dict[str, Any]              = {}
-        self._dir_models:   Dict[str, Any]              = {}
-        self._amp_cal:      Dict[str, Any]              = {}
-        self._dir_cal:      Dict[str, Any]              = {}
-        self._feature_cols: Dict[str, List[str]]        = {}
-        self._medians:      Dict[str, Dict[str, float]] = {}
-        self._trained_tfs:  set                         = set()
-        self._managed_externally: bool                  = False
-        self._call_cnt:     Dict[str, int]              = {}
-        self._last_retrain: Dict[str, int]              = {}
-        self._best_auc:        float            = 0.0
-        self._best_auc_per_tf: Dict[str, float] = {}
-        self._train_meta:      Dict[str, dict]  = {}
+        # Tout l'état ML vit dans le backend — cf. MLBackendMixin.
+        MLBackendMixin.__init__(self)
         self._cancel_event = None
-        self._bt_features: Optional[pl.DataFrame] = None
-        self._bt_features_len: int = 0
         # Cooldown post-flip : compteur de bougies (cnt) au moment du dernier
         # flip par TF, pour gel temporaire de l'ouverture côté score().
         self._last_flip_cnt: Dict[str, int] = {}
-
-    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
-        try:
-            # Cache partagé "v4_polars" : identique au _build_features de
-            # v7/v10_retrained/v11/opus_stat_retrained_v4 → calcul mutualisé.
-            from app.core.feature_store import cached_strategy_features
-            feats = cached_strategy_features(
-                getattr(self, "_bt_symbol", None), getattr(self, "_bt_tf", None), df,
-                name="v4_polars", version="1",
-                builder=lambda w: _build_features(_window_polars(w, n=len(w))),
-                in_kind="polars", out_kind="polars")
-            self._bt_features = feats
-            self._bt_features_len = len(df) if feats is not None else 0
-            logger.info(
-                f"[OmnibusV11-FollowSetup] backtest : features pré-calculées sur "
-                f"{self._bt_features_len} bougies "
-                f"({(len(feats.columns) if feats is not None else 0)} colonnes)"
-            )
-        except Exception as e:
-            logger.warning(f"[OmnibusV11-FollowSetup] prepare_for_backtest KO : {e}")
-            self._bt_features = None
-            self._bt_features_len = 0
-
-    # ── Cycle de vie ML ──────────────────────────────────────────────────────
-    @property
-    def is_trained(self) -> bool:
-        return bool(self._trained_tfs)
-
-    @property
-    def managed_externally(self) -> bool:
-        return self._managed_externally
-
-    @managed_externally.setter
-    def managed_externally(self, v: bool) -> None:
-        self._managed_externally = bool(v)
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get(self.name, {})
         warmup = int(p.get("warmup_bars", self._DEFAULTS["warmup_bars"]))
         return max(230, warmup + 30)
-
-    def reset_model(self) -> None:
-        with self._lock:
-            self._amp_models.clear()
-            self._dir_models.clear()
-            self._amp_cal.clear()
-            self._dir_cal.clear()
-            self._feature_cols.clear()
-            self._medians.clear()
-            self._trained_tfs.clear()
-            self._best_auc_per_tf.clear()
-            self._train_meta.clear()
-            self._last_retrain.clear()
-            self._last_flip_cnt.clear()
-            self._managed_externally = False
-            self._best_auc = 0.0
-        self._bt_features = None
-        self._bt_features_len = 0
-        gc.collect()
-
-    # ── Persistance par TF ────────────────────────────────────────────────────
-    @staticmethod
-    def _tf_from_path(path: str) -> str:
-        base = os.path.splitext(os.path.basename(path))[0]
-        return base.rsplit("_", 1)[-1]
-
-    def save_model(self, path: str, extra_meta: dict = None) -> None:
-        from app.ml.backend.persistence import save_amp_dir_bundle
-        tf = self._tf_from_path(path)
-        with self._lock:
-            amp_m = self._amp_models.get(tf)
-            dir_m = self._dir_models.get(tf)
-            amp_c = self._amp_cal.get(tf)
-            dir_c = self._dir_cal.get(tf)
-            feats = self._feature_cols.get(tf)
-            meds  = self._medians.get(tf)
-            auc   = self._best_auc_per_tf.get(tf, 0.0)
-            meta  = self._train_meta.get(tf, {})
-        if amp_m is None or dir_m is None:
-            return
-        if save_amp_dir_bundle(path, tf, amp_m, dir_m, feats, meds, auc, meta,
-                               amp_cal=amp_c, dir_cal=dir_c, extra_meta=extra_meta):
-            logger.info(f"[OmnibusV11-FollowSetup] Modèles sauvegardés → {path} "
-                        f"(AUC={auc:.3f})")
-
-    def load_model(self, path: str) -> bool:
-        from app.ml.backend.persistence import load_amp_dir_bundle
-        data = load_amp_dir_bundle(path)
-        if data is None or data.get("amp_model") is None or data.get("dir_model") is None:
-            return False
-        tf = self._tf_from_path(path)
-        with self._lock:
-            self._amp_models[tf]   = data["amp_model"]
-            self._dir_models[tf]   = data["dir_model"]
-            self._amp_cal[tf]      = data.get("amp_cal")
-            self._dir_cal[tf]      = data.get("dir_cal")
-            self._feature_cols[tf] = list(data.get("features") or [])
-            self._medians[tf]      = dict(data.get("medians") or {})
-            self._best_auc_per_tf[tf] = float(data.get("best_auc", 0.0))
-            self._train_meta[tf]   = dict(data.get("train_meta") or {})
-            self._trained_tfs.add(tf)
-            self._best_auc = max(self._best_auc, self._best_auc_per_tf[tf])
-        logger.info(f"[OmnibusV11-FollowSetup] Modèle {tf} chargé depuis {path}")
-        return True
-
-    def fit(self, df: pl.DataFrame, params: dict = None) -> None:
-        tf = _detect_timeframe(df) or "default"
-        p  = (params or {}).get(self.name, {})
-        self._train(df, tf_key=tf, params=p)
 
     # ── Entraînement (sans importance/pruning) ───────────────────────────────
     # Entraînement avec cache process-wide (cf. app/core/train_cache.py) :
@@ -523,172 +409,6 @@ class Strategy(BaseStrategyML):
     _TRAIN_PARAM_KEYS  = ('amp_top_pct', 'n_estimators', 'num_leaves', 'learning_rate',
                          'label_horizons', 'calibrate')
 
-    def _train(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
-        from app.core.train_cache import cached_train
-        return cached_train(self, df, tf_key, params, self._train_impl,
-                            self._TRAIN_STATE_ATTRS, self._TRAIN_PARAM_KEYS)
-
-    def _train_impl(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
-        try:
-            import lightgbm as lgb
-        except ImportError:
-            logger.error("[OmnibusV11-FollowSetup] lightgbm requis : pip install lightgbm")
-            return False
-
-        amp_top_pct   = float(params.get("amp_top_pct",   self._DEFAULTS["amp_top_pct"]))
-        n_estimators  = int(params.get("n_estimators",    self._DEFAULTS["n_estimators"]))
-        num_leaves    = int(params.get("num_leaves",      self._DEFAULTS["num_leaves"]))
-        learning_rate = float(params.get("learning_rate", self._DEFAULTS["learning_rate"]))
-        horizons      = list(params.get("label_horizons", self._DEFAULTS["label_horizons"]))
-        calibrate     = bool(params.get("calibrate",      self._DEFAULTS["calibrate"]))
-        log_training  = bool(params.get("log_training",   self._DEFAULTS["log_training"]))
-
-        n_keep = max(2200, len(df))
-        # Cache backtest si dispo (alimenté par prepare_for_backtest).
-        # ``_bt_train_offset`` (posé par score() avant _train) repère la
-        # position de la fenêtre d'entraînement dans la fenêtre complète :
-        # sans lui, head(len(df)) lisait les PREMIÈRES lignes des features
-        # alors que train_df est une tranche de FIN.
-        _off = int(getattr(self, "_bt_train_offset", None) or 0)
-        if (self._bt_features is not None and
-                self._bt_features_len > 0 and
-                _off + len(df) <= self._bt_features_len):
-            feats = self._bt_features.slice(_off, len(df))
-        else:
-            feats = _build_features(_window_polars(df, n=n_keep))
-        if feats is None or len(feats) < 250:
-            logger.warning(f"[OmnibusV11-FollowSetup] {tf_key} : données insuffisantes")
-            return False
-
-        feature_cols = _select_feature_columns(feats)
-        if not feature_cols:
-            logger.warning(f"[OmnibusV11-FollowSetup] {tf_key} : aucune feature exploitable")
-            return False
-
-        close = feats["close"].to_numpy().astype(np.float64)
-        y_amp, y_dir, n, amp_thr, lbl_stats = _multi_horizon_labels(
-            close, horizons, amp_top_pct,
-        )
-        if n < 200:
-            logger.warning(f"[OmnibusV11-FollowSetup] {tf_key} : pas assez de barres labélisables (n={n})")
-            return False
-
-        X_full = feats.head(n).select(feature_cols).to_numpy().astype(np.float32)
-        split = max(int(n * 0.8), 100)
-        split = min(split, n - 50)
-        if split < 100 or n - split < 50:
-            logger.warning(f"[OmnibusV11-FollowSetup] {tf_key} : split impossible (n={n})")
-            return False
-
-        medians: Dict[str, float] = {}
-        for j, col in enumerate(feature_cols):
-            col_train = X_full[:split, j]
-            mask = np.isfinite(col_train)
-            medians[col] = float(np.median(col_train[mask])) if mask.any() else 0.0
-
-        X_train = X_full[:split].copy()
-        X_valid = X_full[split:n].copy()
-        del X_full
-        _impute_inplace(X_train, feature_cols, medians)
-        _impute_inplace(X_valid, feature_cols, medians)
-
-        if len(np.unique(y_amp[:split])) < 2 or len(np.unique(y_dir[:split])) < 2:
-            from app.core.log_throttle import log_throttled
-            log_throttled(logger, f"omnibusv11fs:monoclass:{tf_key}",
-                          f"[OmnibusV11-FollowSetup] {tf_key} : labels mono-classe, fit ignoré")
-            return False
-
-        common = dict(
-            objective="binary", metric="auc",
-            num_leaves=num_leaves, learning_rate=learning_rate,
-            min_child_samples=20, subsample=0.8, subsample_freq=5,
-            colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=0.5,
-            max_bin=63, force_col_wise=True, verbosity=-1, n_jobs=1,
-        )
-
-        boosters: Dict[str, Any] = {}
-        aucs: Dict[str, float] = {}
-        cal_err: Dict[str, float] = {}
-        calibrators: Dict[str, Any] = {}
-
-        for target, y in (("amp", y_amp), ("dir", y_dir)):
-            spw = (y[:split] == 0).sum() / max((y[:split] == 1).sum(), 1)
-            ds_tr = lgb.Dataset(X_train, label=y[:split], feature_name=feature_cols,
-                                free_raw_data=False)
-            ds_va = lgb.Dataset(X_valid, label=y[split:n], reference=ds_tr,
-                                feature_name=feature_cols, free_raw_data=False)
-            try:
-                booster = lgb.train(
-                    {**common, "scale_pos_weight": spw},
-                    ds_tr, num_boost_round=n_estimators, valid_sets=[ds_va],
-                    callbacks=[lgb.early_stopping(20, verbose=False),
-                               lgb.log_evaluation(-1)],
-                )
-            except Exception as e:
-                logger.warning(f"[OmnibusV11-FollowSetup] {tf_key} : entraînement {target} KO ({e})")
-                del ds_tr, ds_va
-                gc.collect()
-                return False
-            aucs[target] = float(booster.best_score.get("valid_0", {}).get("auc", 0.0))
-            boosters[target] = booster
-
-            if calibrate:
-                try:
-                    from app.ml.backend.isotonic import IsotonicRegression
-                    raw_va = booster.predict(X_valid)
-                    y_va = y[split:n]
-                    if len(np.unique(y_va)) >= 2:
-                        iso = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
-                        iso.fit(raw_va, y_va)
-                        cal_va = iso.predict(raw_va)
-                        cal_err[target] = round(float(np.mean(np.abs(cal_va - y_va))), 4)
-                        calibrators[target] = iso
-                except Exception as ce:
-                    logger.debug(f"[OmnibusV11-FollowSetup] {tf_key} calibration {target} KO : {ce}")
-
-            del ds_tr, ds_va
-            gc.collect()
-
-        del X_train, X_valid
-
-        auc_combined = (aucs.get("amp", 0.0) + aucs.get("dir", 0.0)) / 2.0
-        meta = {
-            "n_train":      int(split),
-            "n_valid":      int(n - split),
-            "n_features":   len(feature_cols),
-            "auc_amp":      round(aucs.get("amp", 0.0), 4),
-            "auc_dir":      round(aucs.get("dir", 0.0), 4),
-            "amp_thr_pct":  round(float(amp_thr) * 100, 4),
-            "amp_top_pct":  amp_top_pct,
-            "horizons":     lbl_stats.get("horizons"),
-            "label_stats":  lbl_stats,
-            "calibrated":   bool(calibrators),
-            "cal_err":      cal_err,
-        }
-
-        with self._lock:
-            self._amp_models[tf_key] = boosters["amp"]
-            self._dir_models[tf_key] = boosters["dir"]
-            self._amp_cal[tf_key]    = calibrators.get("amp")
-            self._dir_cal[tf_key]    = calibrators.get("dir")
-            self._feature_cols[tf_key] = feature_cols
-            self._medians[tf_key]    = medians
-            self._trained_tfs.add(tf_key)
-            self._best_auc_per_tf[tf_key] = auc_combined
-            self._best_auc = max(self._best_auc, auc_combined)
-            self._train_meta[tf_key] = meta
-        gc.collect()
-
-        logger.info(
-            f"[OmnibusV11-FollowSetup] {tf_key} entraîné : {split} train / {n - split} val | "
-            f"{len(feature_cols)} feats | "
-            f"AUC amp={aucs.get('amp', 0):.3f} dir={aucs.get('dir', 0):.3f} | "
-            f"horizons={meta['horizons']} | calib={meta['calibrated']} cal_err={cal_err}"
-        )
-        if log_training:
-            self._append_train_log(tf_key, meta)
-        return True
-
     def _append_train_log(self, tf_key: str, meta: dict) -> None:
         try:
             os.makedirs(os.path.dirname(_TRAIN_LOG_PATH) or ".", exist_ok=True)
@@ -698,42 +418,6 @@ class Strategy(BaseStrategyML):
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception as e:
             logger.debug(f"[OmnibusV11-FollowSetup] log entraînement KO : {e}")
-
-    # ── Prédictions (avec calibration) ────────────────────────────────────────
-    def _predict(self, features_df: pl.DataFrame, tf: str, target: str) -> Optional[float]:
-        with self._lock:
-            booster   = (self._amp_models if target == "amp" else self._dir_models).get(tf)
-            cal       = (self._amp_cal if target == "amp" else self._dir_cal).get(tf)
-            feat_cols = self._feature_cols.get(tf)
-            medians   = self._medians.get(tf, {})
-        if booster is None or not feat_cols:
-            return None
-        try:
-            # Extraction de la derniere ligne en UN appel (dict col->valeur) au
-            # lieu d'un acces colonne polars par feature (~440 get_column par
-            # prediction, x2/barre). row.get(c)=None pour les colonnes absentes
-            # -> repli sur la mediane d'entrainement.
-            row  = features_df.tail(1).row(0, named=True)
-            vals = np.empty(len(feat_cols), dtype=np.float32)
-            for j, c in enumerate(feat_cols):
-                v = row.get(c)
-                vals[j] = v if (v is not None and np.isfinite(v)) else medians.get(c, 0.0)
-            raw = float(booster.predict(vals.reshape(1, -1))[0])
-            if cal is not None:
-                return float(cal.predict([raw])[0])
-            return raw
-        except Exception as e:
-            logger.warning(f"[OmnibusV11-FollowSetup] Prédiction {tf}/{target} KO : {e}")
-            return None
-
-    def predict_amplitude(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
-        return self._predict(features_df, tf, "amp")
-
-    def predict_direction(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
-        return self._predict(features_df, tf, "dir")
-
-    def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
-        return self.score(df, params)
 
     # ── Helpers : régime + bearish excess + features sur la dernière bougie ──
     def _compute_features(self, df: pl.DataFrame, params) -> Optional[pl.DataFrame]:
