@@ -1,10 +1,18 @@
 # Conception — Architecture unifiée : entraînement, gestion et exploitation des modèles
 
-> **Statut** : **révision 5** — étapes **A, B, C, D.1, E, F, G livrées**, et
-> la décision 11 (dimension symbole) tranchée par la mesure (§8bis : retirée de
-> la clé du registre, conservée en provenance). Restent **D.2** (fusion omnibus
-> complète, décision 8 — la seule qui change des backtests) et les 4 variantes
-> `_no_ml` non encore converties.
+> **Statut** : **révision 6** — étapes **A, B, C, D.1, D.2, E, F, G livrées**.
+> Décision 11 (dimension symbole) tranchée par la mesure : retirée de la clé du
+> registre, conservée en provenance (§8bis). Décision 8 (fusion omnibus) :
+> `opus_omnibus_v7` fusionné avec équivalence prouvée, `v11_followsetup`
+> délibérément laissé de côté et `v12` hors périmètre — motifs en §7.3bis.
+>
+> Reste ouvert, et c'est le point le plus important du document à ce stade :
+> **§8ter — le dépôt porte deux ADX incompatibles**. `_pre_adx14` lisse en
+> `span=14` (α = 2/15) là où l'ADX de Wilder veut α = 1/14 ; les deux séries
+> corrèlent à 0.75 et le verdict `ADX ≥ 20` diffère sur 21,6 % des barres.
+> 17 stratégies lisent la version trop réactive. Trouvé et mesuré ici, **pas
+> corrigé** : la correction touche 17 stratégies d'un coup et invalide leurs
+> seuils optimisés.
 >
 > Trois bugs préexistants ont été trouvés *par* ce travail, tous silencieux :
 > snapshot vide du cache d'entraînement (V11/V12 perdaient leur modèle à chaque
@@ -902,6 +910,78 @@ setup peut porter une variante (`SHORT_TD_HIGH_v9`) plutôt que d'être fusionn�
 de force. Mieux vaut 11 setups dont deux quasi-jumeaux qu'une fusion qui perd
 un comportement en silence.
 
+### 7.3bis Résultat de D.2 — ce qui a fusionné, ce qui reste, et pourquoi
+
+Le tableau de divergences exigé par le garde-fou 2 est produit
+**mécaniquement** par `scripts/omnibus_divergence_table.py`, à partir des
+`_DEFAULT_SETUPS` réellement déclarés — pas d'une lecture à l'œil qui raterait
+un champ. Ce qu'il montre :
+
+| | v7 | v11 | followsetup |
+|---|---|---|---|
+| setups déclarés | 6 | **10** (8 actifs + 2 désactivés) | 7 |
+| signature `_evaluate_setup` | 5 args | **8 args** | 7 args |
+
+**V11 est déjà l'union.** Les 10 setups y sont, et sa signature
+`_evaluate_setup(setup, regime, p_event, p_up, exit_td, bearish_excess, rsi,
+adx)` est un **sur-ensemble** des deux autres : v7 lui manque les trois
+derniers arguments, followsetup lui manque `exit_td`. Comme les conditions
+correspondantes sont inertes quand le setup dit `needs_… = None`, le catalogue
+V11 absorbe les deux mécaniques sans branche supplémentaire. C'est ce qui rend
+la fusion possible *en valeurs* pour v7 — pas pour followsetup, voir plus bas.
+
+#### v7 → preset de v11 ✅
+
+Fait. Divergences retenues et leur arbitrage :
+
+| divergence | v7 | v11 | retenu dans le preset |
+|---|---|---|---|
+| `SHORT_TD` | actif, prio 1, amp 0.50, dir_max 0.40 | désactivé, prio 7, amp 0.55, dir_max 0.35 | **v7** (4 surcharges) |
+| `SIGNAL_UP` / `LONG_TU` / `LONG_RANGE_LIGHT` | absents | actifs | **v7** (`enabled: false`) |
+| `LONG_EXIT_TD` priorité | 3 | 4 | **v7** — l'ordre relatif compte, `LONG_TU` s'était inséré en 3 |
+| `LONG_RANGE_STRICT` priorité | 4 | 5 | **v7**, même raison |
+| rattrapage DI | absent | `di_rescue: 10` | **v7** (`inf`) |
+| `warmup_bars` | 2000 | 750 | **v7** |
+
+Aucun arbitrage n'a eu à trancher *contre* v7 : ses six setups sont, champ par
+champ, ceux de v11. **Équivalence prouvée** conformément au garde-fou 3 —
+7 744 combinaisons du domaine (régime × `p_event` × `p_up` × fenêtre `exit_td`
+× excès baissier × RSI × ADX), sélection **identique dans 100 % des cas**, dont
+36,9 % où un setup se déclenche. Contre-épreuve : sans les surcharges, les deux
+catalogues divergent sur 892 combinaisons — le test discrimine.
+572 → 133 lignes, et `SHORT_TD` redevient optimisable.
+
+#### `opus_omnibus_v11_followsetup` → **non fusionné**, motivé
+
+Ce n'est pas la même mécanique de sortie. V11 ferme sur TP, SL, trailing ou
+`max_bars` ; followsetup ne ferme **que** sur setup opposé confirmé, derrière
+un appareil anti-whipsaw complet (confirmation sur K bougies, cooldown
+post-flip, score minimum du setup cible, marge d'hystérésis, timeout dur de
+sécurité). Ses setups n'ont d'ailleurs ni `tp_mult`, ni `sl_mult`, ni
+`max_bars` — le tableau de divergences le montre : ces champs valent `None`
+chez lui et un nombre partout ailleurs.
+
+Fusionner voudrait donc dire porter dans v11 un **mode `follow_setup`** avec sa
+machine à états — du code, pas des valeurs. C'est faisable et souhaitable, mais
+c'est un arbitrage de comportement à part entière qui mérite son propre tour de
+mesure ; le mêler à la fusion v7 (à comportement prouvé constant) rendrait les
+deux illisibles dans le même diff. Le garde-fou 1 dit exactement cela :
+fusionner par paires, jamais d'un bloc.
+
+Ce qui a quand même été fait pour lui : `opus_omnibus_v11_followsetup` a reçu
+les trois points d'injection de v11 (`_predict_heads`, garde `uses_artifact`,
+fusion des `_DEFAULTS`), ce qui a permis à sa variante `_no_ml` de devenir un
+preset. Ce travail n'est pas perdu par une fusion ultérieure : c'est le contrat
+que le mode `follow_setup` devra respecter.
+
+#### `opus_omnibus_v12` → **hors périmètre**, et ce n'est pas un report
+
+V12 est **déjà** une sous-classe de v11 (228 lignes). Ce n'est pas une
+génération omnibus à fusionner, c'est une **composition** : v11 plus un filtre
+de confirmation par `ml_dynamic_threshold` (accord → score renforcé ; désaccord
+marqué → veto ; neutre → taille réduite). Il n'a ni catalogue de setups propre
+ni routing propre. Le fusionner n'a pas de sens ; il est déjà à sa place.
+
 ### 7.4 Portée
 
 Le chantier concerne **la famille omnibus uniquement** (v7 → v12, plus les
@@ -1305,7 +1385,7 @@ propre au moteur.
 | 5 | Recette + prédicteur en une passe (**B**) | ✅ **fait** | 7 recettes, contrat `Predictor` à 4 implémentations ; (a)(b)(c)(d) refermées |
 | 6 | Entraînement unifié (**C**) | **à faire**, recette par recette | validation artefact par artefact |
 | 7 | Fusion `v10_retrained` + `v11` | ✅ **fait** | 952 → 93 lignes ; équivalence prouvée sur 3 plans |
-| 8 | Fusion omnibus complète (**§7**) | **à trancher** | **change des backtests** — chaque arbitrage documenté avant le code |
+| 8 | Fusion omnibus complète (**§7**) | ✅ **v7 fusionné** (§7.3bis) | 572 → 133 lignes, sélection identique sur 7 744 combinaisons ; `followsetup` motivé non fusionné, `v12` hors périmètre |
 | 9 | `ProxyPredictor` (**E**) | ✅ **fait, 4 variantes sur 5** | 1 491 → 262 lignes ; `dynamic_threshold_no_ml` reste un fork, motivé (§6.E) |
 | 10 | Population 2 (27 stratégies) | **ne rien faire** | l'architecture leur est neutre |
 | 11 | Dimension **symbole** des modèles | ✅ **retirée de la clé** (§8bis) | 17/18 cellules indiscernables ; reste en provenance (`train_symbol`) |

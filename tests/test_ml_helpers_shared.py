@@ -38,13 +38,13 @@ SHARED = {
     "_ewm_alpha_np": "_ewm_alpha_np",
 }
 # Stratégies qui construisent encore leurs features elles-mêmes.
-# Sont volontairement absentes : V11 (délègue tout à MLBackend, donc n'importe
-# même plus ces helpers) et opus_omnibus_v10_retrained (devenue un PRESET,
-# sous-classe de V11, sans aucun code de features). Les y inscrire testerait
-# l'absence d'imports qu'on vient de supprimer à dessein ; la propriété « pas
-# de copie locale » reste couverte par le test global ci-dessous.
+# Sont volontairement absentes les PRESETS (sous-classes de V11 sans aucun
+# code de features : v7, v10_retrained, les quatre variantes _no_ml) et V11
+# lui-même, qui délègue tout à MLBackend et n'importe même plus ces helpers.
+# Les y inscrire testerait l'absence d'imports qu'on vient de supprimer à
+# dessein ; la propriété « pas de copie locale » reste couverte par le test
+# global ci-dessous.
 FACTORED_STRATEGIES = [
-    "opus_omnibus_v7",
     "opus_omnibus_v11_followsetup",
     "opus_stat_retrained_v4",
 ]
