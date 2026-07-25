@@ -472,6 +472,14 @@ class Strategy(BaseStrategyML):
     # ── Entraînement (délègue au backend, préserve cached_train) ───────────
     def _train(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
         from app.core.train_cache import cached_train
+        # ``score()`` entraîne par ici, pas par ``fit()`` : sans cette fusion,
+        # les paramètres d'ENTRAÎNEMENT non passés explicitement à ``score()``
+        # (label_horizons, calibrate, prune_features…) n'atteignaient jamais le
+        # backend, qui appliquait alors ses propres valeurs de constructeur.
+        # Une sous-classe-preset (opus_omnibus_v10_retrained) s'entraînait donc
+        # avec les réglages de V11, en contradiction silencieuse avec ses
+        # ``_DEFAULTS`` — et avec la recette qu'elle déclare.
+        params = {**self._DEFAULTS, **(params or {})}
         ok = cached_train(self, df, tf_key, params, self._train_impl,
                           self._TRAIN_STATE_ATTRS, self._TRAIN_PARAM_KEYS)
         if ok and params.get("log_training", self._DEFAULTS["log_training"]):

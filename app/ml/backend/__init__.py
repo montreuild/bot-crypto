@@ -260,7 +260,14 @@ class MLBackend:
                       cache est désactivé (chaque fit retrain depuis zéro).
         """
         tf = detect_timeframe(df) or "default"
-        p  = (params or {}).get(self.name, {})
+        # ``defaults`` était accepté puis IGNORÉ : les paramètres
+        # d'entraînement ne venaient que de l'appel, avec repli sur les flags
+        # du constructeur MLBackend. Une stratégie qui déclarait
+        # ``calibrate: False`` ou ``label_horizons: [1]`` dans ses
+        # ``_DEFAULTS`` s'entraînait donc quand même avec les valeurs du
+        # backend — silencieusement, puisque rien ne signalait l'écart.
+        # L'appel explicite reste prioritaire sur les défauts de la recette.
+        p = {**(defaults or {}), **((params or {}).get(self.name, {}))}
         self.train(df, tf_key=tf, params=p,
                    defaults=defaults or {},
                    strategy=strategy or self)

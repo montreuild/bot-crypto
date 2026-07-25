@@ -20,6 +20,11 @@ hp:
   n_estimators: 500
   num_leaves: 31
   learning_rate: 0.03
+  # Déclarés EXPLICITEMENT : la génération V10 n'a jamais calibré ni élagué.
+  # Les laisser implicites laissait le backend appliquer ses propres valeurs
+  # (True/True), donc entraîner un autre modèle que celui décrit ici.
+  calibrate: false
+  prune_features: false
 
 window:
   bars:
