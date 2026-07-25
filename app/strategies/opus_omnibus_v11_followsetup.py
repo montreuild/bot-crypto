@@ -396,7 +396,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
         self._last_flip_cnt: Dict[str, int] = {}
 
     def min_bars_required(self, params: dict = None) -> int:
-        p = (params or {}).get(self.name, {})
+        p = {**self._DEFAULTS, **((params or {}).get(self.name, {}))}
         warmup = int(p.get("warmup_bars", self._DEFAULTS["warmup_bars"]))
         return max(230, warmup + 30)
 
@@ -448,13 +448,30 @@ class Strategy(MLBackendMixin, BaseStrategyML):
         ) if sma20_v > 0 else False
         return consec_red or rsi_excess or price_below_sma20
 
+    # ── Point d'injection de prédiction ─────────────────────────────────────
+    def _predict_heads(self, df: pl.DataFrame, features: pl.DataFrame,
+                       tf: str, params: Dict[str, Any]
+                       ) -> Tuple[Optional[float], Optional[float]]:
+        """``(p_event, p_up)`` — SEUL point par lequel le routing consulte une
+        source de prédiction (même contrat que ``opus_omnibus_v11``).
+
+        Reçoit à la fois les bougies brutes et le catalogue V4 construit : un
+        prédicteur d'artefact lit le second, un ``ProxyPredictor`` lit le
+        premier (colonnes ``_pre_*``).
+        """
+        return (self.predict_amplitude(features, tf),
+                self.predict_direction(features, tf))
+
     # ── Score : entrée selon le setup actif ──────────────────────────────────
     def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         if df is None or len(df) < self.min_bars_required(params):
             return self._none(f"Données insuffisantes ({len(df) if df is not None else 0})")
 
-        p = (params or {}).get(self.name, {})
+        # ``_DEFAULTS`` fusionnés SOUS les paramètres reçus : sans cela, un
+        # preset ne peut redéfinir que ce qui est lu par ``p.get(k, defaut)``,
+        # jamais ce qui est lu directement dans ``p`` (surcharges de setups).
+        p = {**self._DEFAULTS, **((params or {}).get(self.name, {}))}
         adx_threshold     = float(p.get("adx_threshold",     self._DEFAULTS["adx_threshold"]))
         di_rescue         = float(p.get("di_rescue",         self._DEFAULTS["di_rescue"]))
         safety_sl_mult    = float(p.get("safety_sl_atr_mult", self._DEFAULTS["safety_sl_atr_mult"]))
@@ -473,7 +490,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
         self._call_cnt[tf] = cnt
         last       = self._last_retrain.get(tf, 0)
         need_train = (tf not in self._trained_tfs) or (cnt - last >= retrain_every)
-        if need_train and not self._managed_externally:
+        if need_train and not self._managed_externally and self.uses_artifact:
             from app.core.train_cache import aligned_train_window
             n_train = min(len(df) - 1, warmup_bars * 2)
             train_df, self._bt_train_offset = aligned_train_window(
@@ -483,7 +500,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
             if ok:
                 self._last_retrain[tf] = cnt
 
-        if tf not in self._trained_tfs:
+        if self.uses_artifact and tf not in self._trained_tfs:
             return self._none("Modèle pas encore entraîné (warmup en cours)")
 
         # Cooldown post-flip : gel des entrées pendant N bougies après un flip
@@ -510,8 +527,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
         regime, regime_sub = _last_regime(features, adx_threshold, di_rescue)
         regime_lbl = REGIME_LABELS[regime]
 
-        p_event = self.predict_amplitude(features, tf)
-        p_up    = self.predict_direction(features, tf)
+        p_event, p_up = self._predict_heads(df, features, tf, p)
         if p_event is None or p_up is None:
             return self._none(f"Modèle {tf} indisponible")
 
@@ -620,7 +636,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
         if df is None or len(df) < self.min_bars_required(params):
             return None
 
-        p = (params or {}).get(self.name, {})
+        p = {**self._DEFAULTS, **((params or {}).get(self.name, {}))}
         adx_threshold        = float(p.get("adx_threshold", self._DEFAULTS["adx_threshold"]))
         di_rescue            = float(p.get("di_rescue",     self._DEFAULTS["di_rescue"]))
         confirm_bars         = int(p.get("flip_confirm_bars",
@@ -631,7 +647,9 @@ class Strategy(MLBackendMixin, BaseStrategyML):
                                             self._DEFAULTS["flip_hysteresis_margin"]))
 
         tf = _detect_timeframe(df)
-        if tf not in _SUPPORTED_TFS or tf not in self._trained_tfs:
+        if tf not in _SUPPORTED_TFS:
+            return None
+        if self.uses_artifact and tf not in self._trained_tfs:
             return None
 
         try:
@@ -645,8 +663,7 @@ class Strategy(MLBackendMixin, BaseStrategyML):
                 return None
 
             regime, regime_sub = _last_regime(features, adx_threshold, di_rescue)
-            p_event   = self.predict_amplitude(features, tf)
-            p_up      = self.predict_direction(features, tf)
+            p_event, p_up = self._predict_heads(df, features, tf, p)
             if p_event is None or p_up is None:
                 return None
 

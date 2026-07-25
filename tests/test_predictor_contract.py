@@ -157,18 +157,33 @@ def test_proxy_functions_are_the_no_ml_ones_verbatim():
     """Les 5 variantes ``*_no_ml`` portaient un AST identique de ces deux
     fonctions. Une divergence ici changerait les signaux de toutes.
 
-    Référence : ``opus_omnibus_v10_no_ml``, encore un fork autonome —
-    ``opus_omnibus_v11_no_ml`` est devenu un preset et ne porte plus de copie
-    locale. Le jour où il n'en restera aucun, ce test aura fait son office et
-    pourra disparaître avec eux."""
-    import app.strategies.opus_omnibus_v10_no_ml as noml
+    Référence : ``dynamic_threshold_no_ml``, dernier fork à porter une copie
+    locale — les quatre variantes omnibus sont devenues des presets. Celui-ci
+    reste autonome pour une raison de fond (cf. sa docstring : il porte une
+    porte de volatilité que son jumeau ML n'a pas), donc ce test garde un
+    point de comparaison réel. Il n'a que ``_proxy_p_up`` : sa décision est
+    purement directionnelle, sans tête d'amplitude."""
+    import app.strategies.dynamic_threshold_no_ml as noml
     kw_up = dict(pdi=25.0, ndi=15.0, rsi=58.0, macd_hist=0.4, atr=1.2, roc=1.8,
                  c=105.0, sma50=100.0, rsi_vel=3.0, range_pos=0.7, body=0.004,
                  gain=3.0)
     assert proxy_p_up(**kw_up) == pytest.approx(noml._proxy_p_up(**kw_up))
-    kw_ev = dict(atr_pct_r=1.4, range_r=1.2, volstd_r=1.1, volr=1.6, adx=28.0,
-                 body_abs_r=1.3, center=0.45, gain=5.0)
-    assert proxy_p_event(**kw_ev) == pytest.approx(noml._proxy_p_event(**kw_ev))
+
+
+def test_proxy_p_event_value_is_locked():
+    """``proxy_p_event`` n'a plus de fork de référence — les quatre variantes
+    omnibus sont des presets et ``dynamic_threshold_no_ml`` n'a jamais eu de
+    tête d'amplitude.
+
+    Cette valeur témoin a été relevée sur l'implémentation issue de ces forks
+    (AST vérifié identique dans les cinq au moment de l'extraction). Ce n'est
+    plus une comparaison à une source indépendante — c'est un verrou de
+    non-régression : les seuils de setup (``amp_min: 0.50``…) ont été réglés
+    sous CETTE échelle, un changement de pondération les décalerait tous en
+    silence."""
+    v = proxy_p_event(atr_pct_r=1.4, range_r=1.2, volstd_r=1.1, volr=1.6,
+                      adx=28.0, body_abs_r=1.3, center=0.45, gain=5.0)
+    assert v == pytest.approx(0.518992688805358, abs=1e-12)
 
 
 def test_proxy_predictor_needs_no_artifact():

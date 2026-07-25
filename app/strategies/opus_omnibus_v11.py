@@ -331,6 +331,12 @@ class Strategy(MLBackendMixin, BaseStrategyML):
         "bearish_excess_rsi_threshold": 38.0,
         "bearish_excess_sma_pct":        1.5,
         "signal_up_dynamic_risk":        True,
+        # Sorties anticipées — valeurs V10/V11. Déclarées ici plutôt qu'en
+        # littéraux dans ``check_early_exit`` pour qu'un preset puisse les
+        # redéfinir (V8 : ``early_exit_dir_inv_long: 0.45``).
+        "early_exit_dir_inv_short":      0.55,
+        "early_exit_dir_inv_long":       0.42,
+        "early_exit_dir_drop_range":     0.40,
         # V11 ML
         "label_horizons":   [1, 3, 6],
         "calibrate":        True,
@@ -450,7 +456,13 @@ class Strategy(MLBackendMixin, BaseStrategyML):
         if df is None or len(df) < self.min_bars_required(params):
             return self._none(f"Données insuffisantes ({len(df) if df is not None else 0})")
 
-        p = (params or {}).get(self.name, {})
+        # ``_DEFAULTS`` fusionnés SOUS les paramètres reçus. Sans cette fusion,
+        # un preset ne pouvait redéfinir que ce qui est lu par
+        # ``p.get(k, self._DEFAULTS[k])`` — jamais ce qui est lu directement
+        # dans ``p``, au premier rang duquel les surcharges de setups
+        # (``_apply_setup_overrides``). Un preset déclarant
+        # ``setup_long_tu_enabled: False`` voyait quand même LONG_TU tirer.
+        p = {**self._DEFAULTS, **((params or {}).get(self.name, {}))}
         enable_hour_filter  = bool(p.get("enable_hour_filter",  self._DEFAULTS["enable_hour_filter"]))
         active_hours_utc    = list(p.get("active_hours_utc",    self._DEFAULTS["active_hours_utc"]))
         active_days         = list(p.get("active_days",         self._DEFAULTS["active_days"]))
@@ -652,15 +664,29 @@ class Strategy(MLBackendMixin, BaseStrategyML):
         if df is None or len(df) < self.min_bars_required(params):
             return None
 
-        p = (params or {}).get(self.name, {})
+        p = {**self._DEFAULTS, **((params or {}).get(self.name, {}))}
         adx_threshold  = float(p.get("adx_threshold", self._DEFAULTS["adx_threshold"]))
         di_rescue      = float(p.get("di_rescue",     self._DEFAULTS["di_rescue"]))
-        dir_inv_short  = float(p.get("early_exit_dir_inv_short",  0.55))
-        dir_inv_long   = float(p.get("early_exit_dir_inv_long",   0.42))
-        dir_drop_range = float(p.get("early_exit_dir_drop_range", 0.40))
+        # Repli sur ``_DEFAULTS``, pas sur des littéraux : un preset qui
+        # déclare un seuil de sortie différent (V8 : ``dir_inv_long: 0.45``)
+        # doit être entendu. Des littéraux ici rendaient la déclaration
+        # silencieusement inopérante.
+        dir_inv_short  = float(p.get("early_exit_dir_inv_short",
+                                     self._DEFAULTS["early_exit_dir_inv_short"]))
+        dir_inv_long   = float(p.get("early_exit_dir_inv_long",
+                                     self._DEFAULTS["early_exit_dir_inv_long"]))
+        dir_drop_range = float(p.get("early_exit_dir_drop_range",
+                                     self._DEFAULTS["early_exit_dir_drop_range"]))
 
         tf = _detect_timeframe(df)
-        if tf not in _SUPPORTED_TFS or tf not in self.ml.state.trained_tfs:
+        if tf not in _SUPPORTED_TFS:
+            return None
+        # La garde « pas encore entraîné » ne vaut que pour un preset qui
+        # consomme un artefact : un prédicteur proxy n'entraîne rien et ne
+        # peuplera jamais ``trained_tfs``. Sans ce test, les variantes sans ML
+        # ne déclenchaient AUCUNE sortie anticipée (mesuré : 0 sur 320 appels
+        # contre 164 pour le fork qu'elles remplacent).
+        if self.uses_artifact and tf not in self.ml.state.trained_tfs:
             return None
 
         try:
@@ -678,7 +704,9 @@ class Strategy(MLBackendMixin, BaseStrategyML):
                 features, n_last=2, adx_threshold=adx_threshold, di_rescue=di_rescue,
             )
             regime = regimes[-1]
-            p_up = self.predict_direction(features, tf)
+            # Même point d'injection que ``score()`` : un preset proxy tire
+            # ``p_up`` de ses indicateurs, pas d'un artefact absent.
+            _, p_up = self._predict_heads(df, features, tf, p)
             if p_up is None:
                 return None
         except Exception as e:

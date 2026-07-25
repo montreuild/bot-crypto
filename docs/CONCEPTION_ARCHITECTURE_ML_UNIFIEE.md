@@ -1092,6 +1092,81 @@ vérité générale sur le ML multi-actifs, c'est un résultat sur ce panier-ci.
 
 ---
 
+## 8ter. Deux ADX incompatibles dans le dépôt — trouvé, mesuré, PAS corrigé
+
+### Ce que c'est
+
+Le dépôt calcule l'ADX à deux endroits, et les deux ne mesurent pas la même
+chose :
+
+| | fichier | lissage | α |
+|---|---|---|---|
+| `_pre_adx14` | `app/core/indicators_precompute.py` | `ewm_mean(span=14)` | **2/15 ≈ 0.133** |
+| `ADX` (V4) | `app/ml/backend/features.py` | `_ewm_alpha_np(x, 1/14)` | **1/14 ≈ 0.071** |
+
+L'ADX de Wilder est défini avec α = 1/N. **`features.py` est donc le bon**, et
+`_pre_adx14` est presque deux fois trop réactif : un `span=14` équivaut à un
+Wilder de période **7,5**, pas 14. Vérifié numériquement plutôt que déduit du
+code — `_ewm_alpha_np(x, 2/15)` reproduit `ewm_mean(span=14)` à 0.000000 près.
+
+Le même défaut touche `_pre_atr14`, `_pre_pdi14` et `_pre_ndi14`, calculés avec
+le même `span=14`.
+
+### L'ampleur, mesurée
+
+Sur 5 999 barres BTC/USDC 1h :
+
+| | `_pre_adx14` | `ADX` V4 |
+|---|---|---|
+| moyenne | 35.39 | 28.17 |
+| médiane | 33.08 | 25.76 |
+
+* écart absolu moyen **9.50 points** (médian 8.50, max 65.96) ;
+* corrélation **0.7533** — pas deux implémentations d'une même quantité ;
+* le verdict `ADX ≥ 20` **diffère sur 21,6 % des barres**, et pas à la marge :
+  distance médiane au seuil 4.78 points.
+
+Un seuil comme `needs_adx_above: 25.0` ne veut donc pas dire la même chose
+selon la stratégie qui le lit. **17 fichiers de stratégie lisent
+`_pre_adx14`** ; toute la famille ML lit l'ADX V4.
+
+### Comment il a été trouvé
+
+Par la conversion des variantes `_no_ml` (§6.E). Le premier chiffre —
+« 76,7 % de décisions identiques » — était attribué à la dérive de routing du
+fork. La ventilation champ par champ dit autre chose :
+
+| champ | écarts / 120 |
+|---|---|
+| `p_event` | **0** |
+| `p_up` | **0** |
+| `regime` | **28** |
+
+Les proxys sont rigoureusement identiques ; c'est le régime qui bouge, donc
+l'ADX. La même ventilation sur `opus_omnibus_v11_no_ml` (converti plus tôt)
+donne 0 / 0 / 38 : **l'attribution initiale de cet écart aux conditions de
+setup perdues était fausse** — ces conditions ont bien été rétablies, mais ce
+n'est pas ce qui domine le chiffre. Les docstrings des deux fichiers ont été
+corrigées.
+
+### Pourquoi ce n'est pas corrigé ici
+
+Corriger `_pre_adx14` change le comportement de 17 stratégies d'un coup, dont
+plusieurs actives (`config.yaml: manual_active`), et invalide les paramètres
+optimisés sous l'ancienne échelle — tous les seuils ADX de ces stratégies ont
+été réglés contre un ADX gonflé. C'est un chantier à part entière, avec son
+propre protocole de mesure. Le mêler à une factorisation le rendrait
+indétectable dans le diff.
+
+**Ce qui a été fait ici** : les quatre variantes omnibus converties passent à
+l'ADX correct (c'est mécanique — elles héritent du routing V11), et chacune le
+déclare dans sa docstring avec l'ampleur mesurée. **Ce qui reste à faire** :
+décider du sort de `_pre_adx14`/`_pre_atr14`/`_pre_pdi14`/`_pre_ndi14` pour les
+13 autres stratégies. Recommandation : aligner sur Wilder et ré-optimiser les
+seuils concernés, plutôt que documenter un indicateur qui ment sur sa période.
+
+---
+
 ## 9. Ce que ça donne en volume
 
 Arithmétique à partir des lignes mesurées de §1.3 (`routing` = total −
@@ -1231,10 +1306,11 @@ propre au moteur.
 | 6 | Entraînement unifié (**C**) | **à faire**, recette par recette | validation artefact par artefact |
 | 7 | Fusion `v10_retrained` + `v11` | ✅ **fait** | 952 → 93 lignes ; équivalence prouvée sur 3 plans |
 | 8 | Fusion omnibus complète (**§7**) | **à trancher** | **change des backtests** — chaque arbitrage documenté avant le code |
-| 9 | `ProxyPredictor` (**E**) | **à faire** | absorbe 5 fichiers ; nécessite l'injection de prédicteur dans `score()` |
+| 9 | `ProxyPredictor` (**E**) | ✅ **fait, 4 variantes sur 5** | 1 491 → 262 lignes ; `dynamic_threshold_no_ml` reste un fork, motivé (§6.E) |
 | 10 | Population 2 (27 stratégies) | **ne rien faire** | l'architecture leur est neutre |
 | 11 | Dimension **symbole** des modèles | ✅ **retirée de la clé** (§8bis) | 17/18 cellules indiscernables ; reste en provenance (`train_symbol`) |
 | 12 | Mesurer calibration / élagage (**§8**) | ✅ **fait** (§8.1) | calibration : garder, mais **désactiver en 1h**. Élagage : non mesurable par ce protocole |
+| 13 | Deux ADX incompatibles (**§8ter**) | **trouvé, non corrigé** | 21,6 % de verdicts `ADX≥20` divergents sur 17 stratégies — chantier à part |
 
 La décision **8** est la seule qui reste non technique : elle change ce que le
 bot trade. La 11 l'était aussi — elle changeait ce qu'un modèle représente — et

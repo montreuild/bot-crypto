@@ -120,3 +120,67 @@ def test_recovered_setups_have_early_exit_rules():
     assert v11._check_early_exit("SHORT_TD", v11.REGIME_TREND_DN, 0.99) == "p_dir_inversion"
     assert v11._check_early_exit("LONG_PULLBACK_TU", v11.REGIME_TREND_DN, 0.5) == "to_TD"
     assert v11._check_early_exit("LONG_PULLBACK_TU", v11.REGIME_TREND_UP, 0.01) == "p_dir_drop"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Sorties anticipées sur un preset SANS artefact
+# ─────────────────────────────────────────────────────────────────────────────
+def _proxy_window(n: int = 600):
+    """Fenêtre OHLCV avec les colonnes ``_pre_*`` que lit ``ProxyPredictor``."""
+    import numpy as np
+    import polars as pl
+
+    from app.core.indicators_precompute import precompute_df
+    rng = np.random.RandomState(11)
+    close = 100.0 * np.cumprod(1 + rng.normal(0, 0.01, n))
+    t0 = __import__("datetime").datetime(2025, 1, 1)
+    td = __import__("datetime").timedelta(hours=1)
+    return precompute_df(pl.DataFrame({
+        "time":   [t0 + i * td for i in range(n)],
+        "open":   np.concatenate([[100.0], close[:-1]]),
+        "high":   close * 1.004,
+        "low":    close * 0.996,
+        "close":  close,
+        "volume": rng.uniform(1e3, 5e3, n),
+    }))
+
+
+def test_early_exit_works_without_any_artifact():
+    """Un preset proxy doit pouvoir sortir en anticipé.
+
+    ``check_early_exit`` gardait sur ``tf in trained_tfs`` et lisait ``p_up``
+    via ``predict_direction`` (donc l'artefact) : une variante sans ML ne
+    sortait JAMAIS — 0 déclenchement sur 320 appels contre 164 pour le fork
+    autonome qu'elle remplace. Les positions couraient jusqu'au TP/SL/timeout
+    au lieu d'être coupées sur inversion.
+    """
+    import app.strategies.opus_omnibus_v11_no_ml as noml
+    strat = noml.Strategy()
+    assert strat.uses_artifact is False
+    assert not strat.ml.state.trained_tfs      # rien n'est jamais « entraîné »
+
+    df = _proxy_window()
+    fired = [strat.check_early_exit(df, {"setup": s}, params={strat.name: {}})
+             for s in ("SIGNAL_UP", "SHORT_TD_HIGH", "LONG_CHOPPY",
+                       "SHORT_CHOPPY", "LONG_TU", "LONG_RANGE_STRICT")]
+    assert any(r is not None for r in fired), (
+        "aucune sortie anticipée déclenchée — la garde d'artefact est de retour"
+    )
+
+
+def test_early_exit_thresholds_come_from_defaults_not_literals():
+    """Un preset qui déclare un seuil de sortie doit être entendu.
+
+    ``check_early_exit`` repliait sur des littéraux (0.55/0.42/0.40) au lieu
+    de ``_DEFAULTS`` : V8 déclare ``early_exit_dir_inv_long: 0.45`` et cette
+    déclaration n'avait aucun effet.
+    """
+    import app.strategies.opus_omnibus_v8_no_ml as v8
+    assert v8.Strategy._DEFAULTS["early_exit_dir_inv_long"] == 0.45
+    assert v11.Strategy._DEFAULTS["early_exit_dir_inv_long"] == 0.42
+
+    # p_up = 0.43 : au-dessus du seuil V11 (0.42), en dessous du seuil V8 (0.45).
+    assert v11._check_early_exit("SIGNAL_UP", v11.REGIME_RANGE, 0.43,
+                                 dir_inv_long=0.42) is None
+    assert v11._check_early_exit("SIGNAL_UP", v11.REGIME_RANGE, 0.43,
+                                 dir_inv_long=0.45) == "p_dir_drop"

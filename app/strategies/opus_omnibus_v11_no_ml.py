@@ -19,6 +19,17 @@ retard, pas volontairement différent — mais c'est un **changement de
 comportement**, mesuré et documenté, pas une refactorisation neutre. Ampleur
 mesurable avec ``scripts/compare_no_ml_preset.py``.
 
+*Précision sur la CAUSE de cet écart*, obtenue après coup en ventilant la
+mesure champ par champ. Les conditions de setup perdues (ci-dessus) sont
+réelles, mais ce n'est pas ce qui domine le chiffre : sur 120 barres,
+``p_event`` et ``p_up`` sont **identiques** (0 écart — les proxys sont les
+mêmes des deux côtés) tandis que ``regime`` diffère **38 fois**. Le moteur du
+changement est donc la **source de l'ADX** : le fork lisait ``_pre_adx14``
+(lissage ``span=14``, α = 2/15), V11 lit l'``ADX`` du catalogue V4 (α = 1/14,
+le lissage de Wilder). Les deux séries ne mesurent pas la même chose —
+corrélation 0.75, verdict ``ADX ≥ 20`` différent sur 21,6 % des barres. Cf.
+docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §8ter.
+
 Ce que le preset garde en propre : les gains des proxys, qui sont ses vrais
 paramètres de réglage et n'ont aucun équivalent côté ML.
 """
