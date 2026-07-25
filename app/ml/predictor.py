@@ -288,7 +288,10 @@ PROXY_SPEC: Dict[str, float] = {
     "_pre_volratio20": 1.0, "_pre_body_abs_r": 1.0, "_pre_sma20": 0.0,
 }
 
-_PROXY_DEFAULTS = {"p_up_gain": 3.0, "p_event_center": 0.45, "p_event_gain": 5.0}
+# Repli SEULEMENT si l'appelant ne fournit rien. Les valeurs qui comptent sont
+# celles de la stratégie consommatrice : les variantes ``*_no_ml`` n'ont pas
+# toutes les mêmes, et les confondre change leurs signaux.
+_PROXY_DEFAULTS = {"p_up_gain": 2.0, "p_event_center": 0.42, "p_event_gain": 3.0}
 
 
 class ProxyPredictor:

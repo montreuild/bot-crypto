@@ -504,6 +504,24 @@ class Strategy(BaseStrategyML):
     def _predict(self, features_df: pl.DataFrame, tf: str, target: str) -> Optional[float]:
         return self.ml.predict_single(features_df, tf, target)
 
+    #: ``False`` pour un preset dont la recette ne produit aucun artefact
+    #: (prédicteur proxy) : ni entraînement, ni garde « pas encore entraîné ».
+    uses_artifact: bool = True
+
+    def _predict_heads(self, df: pl.DataFrame, features: pl.DataFrame,
+                       tf: str, params: Dict[str, Any]
+                       ) -> Tuple[Optional[float], Optional[float]]:
+        """``(p_event, p_up)`` — SEUL point par lequel le routing consulte une
+        source de prédiction.
+
+        Reçoit à la fois les bougies brutes et le catalogue V4 construit :
+        un prédicteur d'artefact lit le second, un ``ProxyPredictor`` lit le
+        premier (colonnes ``_pre_*``). Sans ce double passage, brancher un
+        proxy obligerait à convertir des indicateurs en features V4 pour rien.
+        """
+        return (self.predict_amplitude(features, tf),
+                self.predict_direction(features, tf))
+
     def predict_amplitude(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
         return self.ml.predict_amplitude(features_df, tf)
 
@@ -554,7 +572,7 @@ class Strategy(BaseStrategyML):
         ml_state.call_cnt[tf] = cnt
         last       = ml_state.last_retrain.get(tf, 0)
         need_train = (tf not in ml_state.trained_tfs) or (cnt - last >= retrain_every)
-        if need_train and not ml_state.managed_externally:
+        if need_train and not ml_state.managed_externally and self.uses_artifact:
             from app.core.train_cache import aligned_train_window
             n_train = min(len(df) - 1, warmup_bars * 2)
             train_df, self.ml._bt_train_offset = aligned_train_window(
@@ -564,7 +582,7 @@ class Strategy(BaseStrategyML):
             if ok:
                 ml_state.last_retrain[tf] = cnt
 
-        if tf not in ml_state.trained_tfs:
+        if self.uses_artifact and tf not in ml_state.trained_tfs:
             return self._none("Modèle pas encore entraîné (warmup en cours)")
 
         bt_feats = self.ml._bt_features
@@ -594,8 +612,7 @@ class Strategy(BaseStrategyML):
         regime_lbl = REGIME_LABELS[regime]
         exit_td_active = _exit_td_window_active(regimes, exit_td_window_bars)
 
-        p_event = self.predict_amplitude(features, tf)
-        p_up    = self.predict_direction(features, tf)
+        p_event, p_up = self._predict_heads(df, features, tf, p)
         if p_event is None or p_up is None:
             return self._none(f"Modèle {tf} indisponible")
 

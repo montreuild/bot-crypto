@@ -155,8 +155,13 @@ def test_scaler_predictor_takes_a_matrix_not_a_frame(tmp_path):
 # ─────────────────────────────────────────────────────────────────────────────
 def test_proxy_functions_are_the_no_ml_ones_verbatim():
     """Les 5 variantes ``*_no_ml`` portaient un AST identique de ces deux
-    fonctions. Une divergence ici changerait les signaux de toutes."""
-    import app.strategies.opus_omnibus_v11_no_ml as noml
+    fonctions. Une divergence ici changerait les signaux de toutes.
+
+    Référence : ``opus_omnibus_v10_no_ml``, encore un fork autonome —
+    ``opus_omnibus_v11_no_ml`` est devenu un preset et ne porte plus de copie
+    locale. Le jour où il n'en restera aucun, ce test aura fait son office et
+    pourra disparaître avec eux."""
+    import app.strategies.opus_omnibus_v10_no_ml as noml
     kw_up = dict(pdi=25.0, ndi=15.0, rsi=58.0, macd_hist=0.4, atr=1.2, roc=1.8,
                  c=105.0, sma50=100.0, rsi_vel=3.0, range_pos=0.7, body=0.004,
                  gain=3.0)
