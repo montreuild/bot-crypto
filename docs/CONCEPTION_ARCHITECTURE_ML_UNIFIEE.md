@@ -1164,11 +1164,44 @@ publications de symboles différents cohabitent comme **deux versions de la mêm
 entrée** — pas comme deux entrées parallèles — et `resolve()` ne dépend que de
 `(TF, recette)`.
 
-**Ce que cette mesure ne dit pas.** Elle porte sur deux symboles entraînables,
-tous deux large-cap et fortement corrélés. Si le bot passe à un panier plus
-large et moins corrélé, c'est **cette mesure qu'il faut rejouer** — le script
-est committé pour ça — avant de réintroduire la dimension. Ce n'est pas une
-vérité générale sur le ML multi-actifs, c'est un résultat sur ce panier-ci.
+### Ce que cette mesure ne dit pas — mesuré, pas supposé
+
+La première rédaction de cette section disait « deux symboles entraînables,
+tous deux large-cap et fortement corrélés ». C'était vrai de la paire
+entraînable, mais trop vague sur le panier. Le script mesure désormais les
+corrélations de rendements sur le holdout, ce qui donne un portrait plus net —
+et plus nuancé :
+
+| paire | corrélation (1h, holdout) | statut |
+|---|---|---|
+| BTC ~ ETH | **0.76** | tous deux entraînables |
+| BTC ~ XRP | **0.31** | XRP évaluable seulement |
+| ETH ~ XRP | **0.32** | XRP évaluable seulement |
+
+Il faut donc distinguer deux populations, et la distinction change ce qu'on a
+le droit de conclure :
+
+* **Paires entraînables** (BTC ~ ETH, 0.76) — la seule population où la
+  question « son propre modèle ferait-il mieux ? » est *testable*, puisqu'il
+  faut pouvoir entraîner les deux. Ce sous-panier est homogène : qu'un modèle
+  y transfère n'a rien d'étonnant.
+* **Paires évaluées seulement** (XRP, ~0.31) — le modèle BTC transfère vers un
+  actif **faiblement corrélé** sans perte mesurable, ce qui est plus fort que
+  prévu. Mais XRP n'a pas assez d'historique pour un modèle propre : on
+  observe donc qu'un modèle étranger *marche*, jamais qu'un modèle local
+  ferait *mieux*. **Il manque le contrefactuel**, et c'est la limite réelle.
+
+Autrement dit, la décision repose sur un test conduit sur une seule paire
+homogène, plus un indice sur un actif hétérogène mais non testable. C'est
+suffisant pour ne pas construire aujourd'hui une machinerie par symbole ; ce
+n'est pas suffisant pour affirmer que la dimension ne servira jamais.
+
+**Quand rejouer.** Dès qu'un actif d'une **autre classe** et doté d'assez
+d'historique (≥ 8 000 barres) entre dans le bot — actions CAC/Nasdaq, ETF,
+matières premières. Il rejoindra alors les paires *entraînables*, et c'est là
+seulement que le verdict pourra s'inverser. Aucune édition n'est nécessaire :
+le script **découvre les symboles depuis le store**, calcule les corrélations
+et signale lui-même la portée de son propre verdict.
 
 ---
 
@@ -1240,10 +1273,71 @@ indétectable dans le diff.
 
 **Ce qui a été fait ici** : les quatre variantes omnibus converties passent à
 l'ADX correct (c'est mécanique — elles héritent du routing V11), et chacune le
-déclare dans sa docstring avec l'ampleur mesurée. **Ce qui reste à faire** :
-décider du sort de `_pre_adx14`/`_pre_atr14`/`_pre_pdi14`/`_pre_ndi14` pour les
-13 autres stratégies. Recommandation : aligner sur Wilder et ré-optimiser les
-seuils concernés, plutôt que documenter un indicateur qui ment sur sa période.
+déclare dans sa docstring avec l'ampleur mesurée.
+
+### La sur-réactivité est-elle ce qui FAIT MARCHER ces stratégies ?
+
+C'est la bonne objection, et elle inverse la charge de la preuve : les seuils
+de ces stratégies ont été optimisés **contre cette échelle**, et un indicateur
+plus réactif n'est pas mécaniquement moins bon en trading. Peut-être que
+`span=14` est ce qui produit leurs bons scores de backtest.
+
+Deux pièges de méthode, évités explicitement :
+
+1. **Comparer à paramètres constants serait truqué.** Un `adx_min: 20` réglé
+   face à un ADX qui vaut 35 en moyenne devient beaucoup plus sélectif face à
+   un ADX qui vaut 28. Rejouer les paramètres actuels sous Wilder mesurerait le
+   désaccordage des seuils, pas Wilder. Chaque variante est donc
+   **réoptimisée** séparément, même budget.
+2. **Comparer sur l'OOS serait truqué aussi**, puisque l'optimiseur choisit son
+   meilleur essai *sur* l'OOS. D'où trois fenêtres : IS (apprentissage), OOS
+   (sélection), **VAL — jamais vue par l'optimiseur** — où les deux variantes
+   sont comparées avec les paramètres que chacune a retenus.
+
+Un piège d'implémentation a failli invalider la mesure : les workers de
+l'optimiseur sont **spawnés** et n'héritent d'aucun global du parent. Sans
+relais explicite par `cfg["indicators"]["wilder_atr_adx"]`, le bras « Wilder »
+aurait tourné intégralement en `span=14` et conclu à une absence d'effet.
+
+#### Résultat (`scripts/compare_adx_smoothing.py`, 40 essais/variante)
+
+| stratégie | TF | span=14 | Wilder | écart | trades VAL |
+|---|---|---|---|---|---|
+| `pullback_trend` | 1h | −0.111 | −0.089 | **+0.022** | 196 / 132 |
+| `scoring_statistique_opus` | 1h | −0.026 | −0.034 | **−0.009** | 107 / 109 |
+| `scoring_statistique_opus_v2` | 4h | −0.119 | −0.110 | **+0.009** | 56 / 67 |
+| `multi_tf_sr` | 1d | 0.724 | 0.389 | −0.335 | **2 / 3** ⚠ |
+
+**La dernière ligne ne compte pas** : un score sur 2 trades mesure deux
+tirages, pas une stratégie. C'est pourtant elle qui porte l'écart le plus
+spectaculaire — d'où un garde-fou `MIN_VAL_TRADES` dans le script, plutôt
+qu'une note de bas de page.
+
+Sur les **3 cibles interprétables**, l'écart maximum est de **0.022** et le
+signe change (Wilder gagne 2 fois sur 3). Verdict : **la convention de lissage
+n'est pas ce qui fait vivre ces stratégies.** L'hypothèse « leurs bons scores
+tiennent à la sur-réactivité » n'est pas confirmée ; aligner sur Wilder est
+alors une correction à coût quasi nul, à condition de **réoptimiser** — c'est
+le désaccordage des seuils, pas la convention, qui coûterait cher.
+
+#### Une observation adjacente, qui mérite son propre examen
+
+Sur la fenêtre VAL, **trois des quatre cibles sont en score négatif sous les
+deux conventions** (`multi_tf_sr` étant hors sujet avec ses 2 trades). Ce
+n'est pas le protocole d'optimisation réel du bot — 40 essais de recherche
+aléatoire, score composite, une seule paire symbole/TF — donc ce n'est pas un
+verdict sur ces stratégies. Mais c'est un signal à ne pas laisser passer : les
+bons scores dont elles se prévalent viennent d'IS/OOS, et le dernier tiers de
+l'historique leur est nettement moins favorable. À instruire séparément.
+
+### Ce qui reste à faire
+
+Décider du sort de `_pre_adx14`/`_pre_atr14`/`_pre_pdi14`/`_pre_ndi14` pour les
+13 stratégies restantes. La mesure ci-dessus lève l'objection principale ;
+recommandation : **aligner sur Wilder puis réoptimiser**, plutôt que garder un
+indicateur qui ment sur sa période. Le commutateur
+`indicators_precompute.set_wilder_atr_adx` est en place et le défaut reste
+l'historique — rien ne bouge tant que la décision n'est pas prise.
 
 ---
 
@@ -1388,9 +1482,9 @@ propre au moteur.
 | 8 | Fusion omnibus complète (**§7**) | ✅ **v7 fusionné** (§7.3bis) | 572 → 133 lignes, sélection identique sur 7 744 combinaisons ; `followsetup` motivé non fusionné, `v12` hors périmètre |
 | 9 | `ProxyPredictor` (**E**) | ✅ **fait, 4 variantes sur 5** | 1 491 → 262 lignes ; `dynamic_threshold_no_ml` reste un fork, motivé (§6.E) |
 | 10 | Population 2 (27 stratégies) | **ne rien faire** | l'architecture leur est neutre |
-| 11 | Dimension **symbole** des modèles | ✅ **retirée de la clé** (§8bis) | 17/18 cellules indiscernables ; reste en provenance (`train_symbol`) |
+| 11 | Dimension **symbole** des modèles | ✅ **retirée de la clé** (§8bis) — **à rejouer** hors crypto | 17/18 cellules indiscernables ; reste en provenance. Testable sur une seule paire homogène (0.76) : à revoir dès qu'un actif d'une autre classe est entraînable |
 | 12 | Mesurer calibration / élagage (**§8**) | ✅ **fait** (§8.1) | calibration : garder, mais **désactiver en 1h**. Élagage : non mesurable par ce protocole |
-| 13 | Deux ADX incompatibles (**§8ter**) | **trouvé, non corrigé** | 21,6 % de verdicts `ADX≥20` divergents sur 17 stratégies — chantier à part |
+| 13 | Deux ADX incompatibles (**§8ter**) | **mesuré ; correction recommandée, non appliquée** | la sur-réactivité n'explique PAS les scores : écart ≤ 0.022 sur VAL, signe variable. Aligner sur Wilder + réoptimiser |
 
 La décision **8** est la seule qui reste non technique : elle change ce que le
 bot trade. La 11 l'était aussi — elle changeait ce qu'un modèle représente — et

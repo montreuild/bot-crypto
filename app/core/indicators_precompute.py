@@ -36,14 +36,65 @@ def set_precompute_maxsize(n: int) -> None:
     _PRECOMPUTE_MAXSIZE = max(1, int(n))
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  Lissage ATR/ADX/DI — span=14 (historique) ou Wilder (α = 1/14)
+# ══════════════════════════════════════════════════════════════════════════════
+# Ces trois familles d'indicateurs sont lissées ici en ``ewm_mean(span=14)``,
+# soit α = 2/15 ≈ 0.133, alors que la définition de Wilder — celle de l'ADX et
+# de l'ATR — veut α = 1/N ≈ 0.071. Un ``span=14`` équivaut à un Wilder de
+# période **7,5** : les séries produites sont presque deux fois plus réactives
+# que leur nom ne l'annonce.
+#
+# Que ce soit un écart involontaire ne fait guère de doute : le RSI, dans cette
+# même fonction, est bien calculé en ``alpha=1/14``. Mais un indicateur trop
+# réactif n'est pas mécaniquement moins bon en trading — et les seuils des
+# stratégies concernées ont été optimisés CONTRE cette échelle. Basculer sans
+# mesurer remplacerait un défaut par une régression.
+#
+# D'où ce commutateur : il permet de rejouer une optimisation complète sous
+# chaque variante et de comparer les résultats OOS
+# (``scripts/compare_adx_smoothing.py``). Le défaut reste l'historique — rien
+# ne change tant que la mesure n'a pas tranché.
+#
+# Cf. docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §8ter.
+_WILDER_ATR_ADX = False
+
+
+def set_wilder_atr_adx(enabled: bool) -> None:
+    """Bascule le lissage ATR/ADX/DI entre ``span=14`` et Wilder (α = 1/14).
+
+    Vide le cache de pré-calcul : les colonnes ``_pre_*`` déjà mémoïsées ont
+    été produites sous l'autre convention, les servir après bascule
+    mélangerait les deux dans la même mesure.
+    """
+    global _WILDER_ATR_ADX
+    _WILDER_ATR_ADX = bool(enabled)
+    with _PRECOMPUTE_LOCK:
+        _PRECOMPUTE_CACHE.clear()
+
+
+def wilder_atr_adx() -> bool:
+    """Convention de lissage ATR/ADX/DI actuellement active."""
+    return _WILDER_ATR_ADX
+
+
+def _smooth14(series: pl.Series) -> pl.Series:
+    """Lissage à 14 périodes selon la convention active."""
+    if _WILDER_ATR_ADX:
+        return series.ewm_mean(alpha=1 / 14, adjust=False)
+    return series.ewm_mean(span=14, adjust=False)
+
+
 def _precompute_key(df: pl.DataFrame):
-    """Empreinte bon marché d'une plage OHLCV (taille + bornes temporelles + dernier close)."""
+    """Empreinte bon marché d'une plage OHLCV (taille + bornes temporelles +
+    dernier close), plus la convention de lissage active — sans elle, une
+    bascule servirait des colonnes calculées sous l'autre convention."""
     try:
         n = df.height
         if n == 0 or "time" not in df.columns:
             return None
         return (n, df.width, str(df["time"][0]), str(df["time"][-1]),
-                float(df["close"][-1]))
+                float(df["close"][-1]), _WILDER_ATR_ADX)
     except Exception:
         return None
 
@@ -117,8 +168,8 @@ def _precompute_df_impl(df: pl.DataFrame) -> pl.DataFrame:
     dn_safe   = dn.clip(lower_bound=1e-10)
     pre_rsi14 = 100 - 100 / (1 + g / dn_safe)
 
-    # ATR(14)
-    pre_atr14 = tr.ewm_mean(span=14, adjust=False)
+    # ATR(14) — convention de lissage pilotée par ``_smooth14`` (cf. supra)
+    pre_atr14 = _smooth14(tr)
 
     # ADX(14) — multiplication booléenne, clip pour division sécurisée
     up       = h.diff(1).clip(lower_bound=0)
@@ -126,8 +177,8 @@ def _precompute_df_impl(df: pl.DataFrame) -> pl.DataFrame:
     pdm      = up   * (up > down).cast(pl.Float64)
     ndm      = down * (down > up).cast(pl.Float64)
     atr_safe = pre_atr14.clip(lower_bound=1e-10)
-    dip      = 100 * pdm.ewm_mean(span=14, adjust=False) / atr_safe
-    dim      = 100 * ndm.ewm_mean(span=14, adjust=False) / atr_safe
+    dip      = 100 * _smooth14(pdm) / atr_safe
+    dim      = 100 * _smooth14(ndm) / atr_safe
     sum_di   = (dip + dim).clip(lower_bound=1e-10)
     dx       = 100 * (dip - dim).abs() / sum_di
 
@@ -197,7 +248,7 @@ def _precompute_df_impl(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns([
         pre_rsi14.alias("_pre_rsi14"),
         pre_atr14.alias("_pre_atr14"),
-        dx.ewm_mean(span=14, adjust=False).fill_null(0).alias("_pre_adx14"),
+        _smooth14(dx).fill_null(0).alias("_pre_adx14"),
         dip.fill_null(0).alias("_pre_pdi14"),
         dim.fill_null(0).alias("_pre_ndi14"),
         ml.alias("_pre_macd_line"),
