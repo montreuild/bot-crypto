@@ -44,6 +44,75 @@ tout l'historique (15 promotions sur 15). Détail :
 Bilan : **−4 230 lignes nettes**, 46 → 41 stratégies, 14 → 8 stratégies ML,
 947 → **958 tests** verts (lents inclus), 0 skip.
 
+### 📐 ML — Indicateurs : ATR/ADX/DI passent au lissage de Wilder (décision 13)
+
+Le dépôt lissait ATR/ADX/DI en `ewm_mean(span=n)` — α = 2/(n+1) — là où la
+définition de Wilder veut α = 1/n. Pour n=14 : **un Wilder de période 7,5 sous
+un nom qui annonce 14**. Le RSI voisin était déjà en α = 1/n, ce qui ne laissait
+guère de doute sur l'involontaire. Deux ADX incompatibles cohabitaient donc :
+corrélation **0.75**, écart absolu moyen 9.5 points, verdict `ADX ≥ 20`
+différent sur **21,6 %** des barres.
+
+Corrigé **après mesure**, pas par principe : réoptimisation complète sous
+chaque convention puis comparaison sur une fenêtre jamais vue par l'optimiseur
+(`scripts/compare_adx_smoothing.py`) — écart ≤ **0.022** de score, de signe
+variable. La sur-réactivité n'était pas ce qui faisait vivre ces stratégies.
+
+- `indicators_core.atr`/`atr_series`/`atr_val` délèguent à `atr_wilder`,
+  désormais **l'unique implémentation** du lissage Wilder ; `adx`/`adx_val`
+  passent en α = 1/n **aux quatre étages** (ATR, +DI, −DI, ligne ADX) ;
+  `supertrend` suit. `indicators_precompute` a Wilder par défaut.
+- **Moteur SMC exclu, et vérifié** : il ne lit aucune colonne `_pre_*` et était
+  déjà en Wilder délibérément (alignement `ta.atr`). L'empreinte SHA256 de
+  `smc.analyze` sur 3 000 barres est **identique avant/après**. Un test
+  interdit à tout module SMC de lire `_pre_atr14`/`_pre_adx14`.
+- **Action restante** : les seuils ADX des YAML sont désaccordés (choisis face
+  à un ADX qui valait 35, appliqués à un ADX qui vaut 28) — **réoptimiser**.
+
+### 🔑 ML — La dimension symbole quitte la clé du registre (décision 11)
+
+Le registre rangeait par `(symbole, TF, recette)` alors que le trainer live
+n'entraînait que sur BTC et que le pipeline servait ce modèle à **tous** les
+symboles : un artefact sous `BTC_USDC/` décidait en réalité sur ETH et XRP. La
+dimension nommait une partition inexistante.
+
+Mesuré avant de trancher (`scripts/measure_symbol_transfer.py`) : matrice de
+transfert, coupure temporelle commune, IC 95 % bootstrap apparié, 3 TF.
+**17 des 18 cellules indiscernables du bruit** ; ETH ne gagne rien à son propre
+modèle (0.634 vs 0.638 en 1h) et XRP n'a pas de quoi s'en entraîner un.
+
+- Layout : `{base_dir}/{tf}/{recette}/{version_id}/`. Le symbole
+  d'entraînement subsiste en **provenance** (`ArtifactRef.train_symbol`).
+- `load_models()` n'a plus besoin de `scanner` — ce paramètre produisait un
+  « pas de modèle » silencieux suivi d'un réentraînement inutile.
+- Le script découvre les symboles depuis le store et mesure les corrélations :
+  **à rejouer tel quel** quand un actif d'une autre classe entre dans le bot.
+
+### 🧩 ML — Étapes B à G : recette, prédicteur, presets, fusion omnibus
+
+- **B** — La recette devient un objet de premier ordre (`app/ml/recipe.py`,
+  7 fichiers `recipes/*.yaml`) et le contrat `Predictor` gagne
+  4 implémentations (`app/ml/predictor.py`).
+- **C** — Le cycle de vie ML devient un mixin partagé (`MLBackendMixin`) après
+  preuve que les `_train_impl` autonomes produisaient des modèles
+  **byte-identiques** à `MLBackend` (écart 0.000000, corrélation 1.0000).
+- **E** — `ProxyPredictor` absorbe 4 variantes `_no_ml` sur 5 : **1 491 → 262
+  lignes**. `dynamic_threshold_no_ml` reste un fork, motivé.
+- **D.1/D.2** — `opus_omnibus_v10_retrained` (952 → 101 L) et `opus_omnibus_v7`
+  (572 → 129 L) deviennent des presets de V11, équivalence prouvée par
+  énumération du domaine (2 520 puis 7 744 combinaisons, avec contre-épreuve).
+  `SHORT_TD` redevient optimisable.
+- **G** — Calibration isotone et élagage mesurés : calibration à garder mais
+  **à désactiver en 1h** (ECE +461 % contre −47 %/−67 % ailleurs) — *décision
+  écrite, application encore à faire*. Élagage : non mesurable par ce protocole.
+
+**Trois bugs silencieux préexistants** trouvés par ce travail : snapshot vide du
+cache d'entraînement (V11/V12 perdaient leur modèle dès le 2ᵉ essai
+d'optimisation → zéro signal), `defaults` ignoré par `MLBackend.fit` (une
+stratégie déclarant `calibrate: False` s'entraînait calibrée), et sorties
+anticipées mortes sur les variantes sans ML (0 déclenchement sur 320 contre 164
+pour le fork remplacé).
+
 ### 🛡 Sprint 0 — Correctifs P0 sécurité financière & config
 
 - **[S0-01]** Sync spot/margin propage l'équité à l'allocateur

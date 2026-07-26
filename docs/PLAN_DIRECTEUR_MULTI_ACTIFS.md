@@ -7,7 +7,30 @@
 > directives détaillées**, mais **c'est ici la source de vérité** sur ce qui est
 > fait et ce qui reste à faire.
 >
-> **Dernière mise à jour : 2026-07-23** — branche `claude/apply-patch-sn96hj`
+> **Dernière mise à jour : 2026-07-26** — branche
+> `claude/ml-training-optimization-ofqd0t`, chantier **architecture ML
+> unifiée** (`docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md`, étapes A→G,
+> décisions 1-13). Changements de statut apportés par cette passe :
+>
+> * **DEAD-01 ✅ RÉSOLU** (§3.1) — mais par **factorisation**, pas par
+>   suppression : 5 fichiers supprimés, 6 devenus des presets de 84 à 129
+>   lignes, aucun setup perdu (ceux de V9 sont portés dans V11, désactivés).
+>   Le pack V4 figé a été retiré après mesure, ce qui a levé le « ne pas
+>   toucher » qui pesait sur `v8`/`v10`/`opus_stat_pretrained_v4`.
+> * **ARCH-01 ✅ largement absorbé** — `MLBackendMixin` est l'« OpusBase »
+>   que cet item réclamait ; le routing V10 partagé ne vit plus qu'à un seul
+>   endroit.
+> * **Registre ML : la dimension symbole a été RETIRÉE de la clé** (décision
+>   11, mesurée) — impact direct sur ce plan, cf. §4.2bis.
+> * **Deux ADX incompatibles, corrigés** (décision 13) — `_pre_adx14` lissait
+>   en `span=14` là où Wilder veut α = 1/14. **Action restante pour
+>   l'utilisateur : réoptimiser les seuils ADX**, désaccordés par la
+>   correction (§3.7).
+> * **Trois bugs silencieux préexistants** trouvés et corrigés en chemin
+>   (snapshot vide du cache d'entraînement, `defaults` ignoré par
+>   `MLBackend.fit`, sorties anticipées mortes sur les variantes sans ML).
+>
+> **Mise à jour 2026-07-23** — branche `claude/apply-patch-sn96hj`
 > (PR #155), après le **refactoring structurel Phases 1-6** (MLBackend, suppression
 > de 5 façades, éclatement des fichiers-dieux, format ML natif RCE-safe,
 > suppression de pandas/pyarrow/scikit-learn) et la **remise au vert de la CI**.
@@ -64,7 +87,8 @@
 | **Sécurité désérialisation (RCE)** | ✅ **Clos** | Plus **aucun** `pickle`/`joblib` dans le code (actif comme mort) : format 100 % LightGBM natif (`.lgb` + `.meta.json`) partout. Le `RestrictedUnpickler` de compat legacy a été supprimé (plus de `.pkl` à lire). |
 | **Dépendances** | ✅ Allégé | `pandas`, `pyarrow`, `scikit-learn` supprimés (~23 Mo + scipy/joblib transitifs). Polars + LightGBM natif partout. |
 | **Couches** | ✅ Strictes | `core → engine → live → api → strategies`, 0 import circulaire (vérifié par grep). |
-| **Stratégies actives** | 15 (`manual_active`) | Sur ~45 fichiers `app/strategies/` — dont **8 morts** à supprimer (DEAD-01). |
+| **Stratégies actives** | 15 (`manual_active`) | Sur **42** fichiers `app/strategies/` (45 → 42 : 5 supprimés, 2 ajoutés). DEAD-01 clos par factorisation, plus de code mort Opus/stat. |
+| **Tests (2026-07-26)** | ✅ 1 051 verts, 3 skipped | `pytest -m "not slow"`, ruff et `tsc --noEmit` propres. |
 
 ### Note d'exécution — flakiness environnementale (rappel)
 
@@ -136,7 +160,7 @@ Travaux consolidés et vérifiés lors des passes précédentes (détail dans
 | Audit Vagues 0-2 | Régressions per-symbole, sécurité/intégrité (auth, watchdog, notifs, parquet atomique), intégrité de la mesure (Monte-Carlo, IS/OOS, WF gate, garde-fous d'apply) | ✅ |
 | Audit Vague 4 | Architecture : couches strictes, `param_resolution`, `timeframes`, `execution.py` (parité BT/live), découpage `live_trader`/scanner/smc | ✅ |
 | Audit Vague 5 | Recherche d'edge SMC/ICT (inducement BTC 4h activé ; le reste `off`, sans preuve OOS) | ✅ |
-| Audit Vague 6 | UX/a11y/docs, tests LiveTrader/API/lifecycle, découpe CHANGELOG | ✅ (sauf TEST-11, bloqué par DEAD-01) |
+| Audit Vague 6 | UX/a11y/docs, tests LiveTrader/API/lifecycle, découpe CHANGELOG | ✅ (TEST-11 débloqué depuis : DEAD-01 clos) |
 | Sprint 7 | Nettoyage code mort partiel (`scoring_v3`, pyflakes, imports morts), **CI + ruff.toml + mypy.ini + pytest.ini** | ✅ (hors DEAD-01) |
 | Sprint 8 | Quick wins financiers/sécu : benchmark B&H, compteur de frais, slippage paper, rate-limit par endpoint, backup auto, `audit_param_space.py` | ✅ (hors FIN-01) |
 | Post-8 | Parallélisme réel de l'optimiseur (`n_jobs` câblé, refonte `param_search_optim`), résorption dette lint pré-existante (773 → 0) | ✅ |
@@ -147,36 +171,43 @@ Travaux consolidés et vérifiés lors des passes précédentes (détail dans
 
 Grille : 🟢 quick win · 🔵 bet structurant · 🟡 itératif.
 
-### 3.1 🟢 DEAD-01 — Supprimer les 8 stratégies Opus/stat mortes
+### 3.1 ✅ DEAD-01 — RÉSOLU, mais autrement que prévu (2026-07-26)
 
-**Le chantier de nettoyage le plus rentable, et il débloque plusieurs autres.**
-Analyse comparative (fonctionnelle + empirique sur 5 TF) déjà livrée ;
-**décision de suppression utilisateur en attente**. Aucun fichier supprimé à ce
-jour.
+**Le plan prévoyait de supprimer 8 fichiers. Ce qui a été fait : en supprimer
+5 et transformer les autres en presets** — la comparaison ayant montré que
+leurs routings n'étaient pas 8 stratégies différentes, mais **une seule
+déclinée en valeurs**. Supprimer aurait perdu des setups ; factoriser les
+préserve et les rend de nouveau optimisables.
 
-Candidates (aucune dans `manual_active`, ~7 569 L au total) :
+Détail dans `docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md` (étapes A à G,
+décisions 1-13). Résultat fichier par fichier :
 
-| Fichier | Lignes | Verdict analyse |
-|---|---:|---|
-| `opus_omnibus_v7.py` | 1266 | suppression nette |
-| `opus_omnibus_v7_pretrained.py` | 640 | suppression nette |
-| `opus_omnibus_v9.py` | 738 | suppression nette |
-| `opus_omnibus_v10_retrained.py` | 1323 | suppression nette |
-| `opus_omnibus_v11_no_ml.py` | 545 | suppression nette |
-| `opus_omnibus_v11_followsetup.py` | 1444 | discutable (seule paire positive sur 1j, échantillon faible) |
-| `opus_omnibus_v11_followsetup_no_ml.py` | 492 | discutable |
-| `opus_stat_retrained_v4.py` | 1121 | suppression nette |
+| Fichier | plan (L) | aujourd'hui | ce qui a été fait |
+|---|---:|---|---|
+| `opus_omnibus_v7.py` | 1266 | **129 L** | preset de V11 — équivalence de sélection prouvée sur 7 744 combinaisons |
+| `opus_omnibus_v7_pretrained.py` | 640 | supprimé | pack V4 figé retiré après mesure (§1.5) |
+| `opus_omnibus_v9.py` | 738 | supprimé | ses 2 setups exclusifs (`SHORT_TD`, `LONG_PULLBACK_TU`) **portés dans V11**, désactivés |
+| `opus_omnibus_v10_retrained.py` | 1323 | **101 L** | preset de V11 — équivalence prouvée sur 3 plans |
+| `opus_omnibus_v11_no_ml.py` | 545 | **90 L** | preset + `ProxyPredictor` |
+| `opus_omnibus_v11_followsetup.py` | 1444 | 794 L | **conservé** — sa mécanique de sortie est du code, pas des valeurs (§7.3bis) |
+| `opus_omnibus_v11_followsetup_no_ml.py` | 492 | **91 L** | preset |
+| `opus_stat_retrained_v4.py` | 1121 | 445 L | plomberie ML extraite dans `MLBackendMixin` |
 
-⚠ **Ne pas toucher** `opus_omnibus_v8`, `opus_omnibus_v10`,
-`opus_stat_pretrained_v4` (dépendances réelles, dont le scanner V8).
+Les trois « ne pas toucher » (`opus_omnibus_v8`, `v10`,
+`opus_stat_pretrained_v4`) **ont finalement été supprimés** : leur seule
+dépendance réelle était le pack V4 figé, dont la mesure a montré qu'il ne bat
+plus un ré-entraînement (3/3 TF, robuste sur 5 fenêtres, aucun régime sauvé).
+Le scanner en a été débranché avant suppression.
 
-> **Note** : ces stratégies ont été migrées hors de `joblib` vers le format
-> natif LGB+JSON (§2.3, 2026-07-23), donc **SEC-020 est déjà clos** et elles ne
-> crashent plus à la sauvegarde. Leur suppression est désormais un nettoyage de
-> **code mort « pur »**, sans enjeu sécurité résiduel.
->
-> **Débloque** : TEST-11 (smoke tests stratégies) et ARCH-01 (OpusBase — moins
-> de variantes à factoriser).
+Deux variantes ont rejoint la famille depuis, également en presets :
+`opus_omnibus_v8_no_ml` (84 L) et `opus_omnibus_v10_no_ml` (87 L).
+`dynamic_threshold_no_ml` (218 L) reste un fork **motivé** : il applique la
+porte de volatilité en inférence là où son jumeau ML l'utilise pour
+labelliser — en faire un preset ajouterait au parent une branche qu'il
+n'emprunte jamais.
+
+> **Débloque, comme prévu** : TEST-11 (smoke tests) et ARCH-01 — ce dernier est
+> largement absorbé, `MLBackendMixin` étant l'« OpusBase » qu'il appelait.
 
 ### 3.2 🟢 Durcissement sécurité (audit externe SEC)
 
@@ -207,16 +238,16 @@ Aucun équivalent existant (fichiers/dépendances absents, vérifié) :
 
 | ID | Item | Dépend de |
 |---|---|---|
-| **ARCH-01** (OpusBase) | Factoriser le routing V10 partagé (setups, `_select_setup`, `_check_early_exit`) des variantes **survivantes** (v8/v10/v11/v12/pretrained_v4). `MLBackend` a déjà extrait le ML ; ~600 L de routing restent dupliquées | DEAD-01 |
+| **ARCH-01** (OpusBase) | ✅ **absorbé (2026-07-26)** — le routing V10 partagé ne vit plus qu'à un endroit : `opus_omnibus_v11`. Les variantes sont des presets qui ne déclarent que des valeurs. `MLBackendMixin` joue le rôle d'« OpusBase » côté plomberie ML. **Reste** : `opus_omnibus_v11_followsetup` (794 L), dont la mécanique de sortie est du code et non des valeurs — cf. §3.7 | ✅ |
 | **STRAT-01** | Champ `status: experimental\|validated\|production\|archived` dans chaque YAML (distinct du lifecycle runtime) | — |
-| **STRAT-02** | Versioning modèles ML (hash features + date, `models/index.json`) | — |
+| **STRAT-02** | ✅ **fait** — registre daté et versionné (`app/ml/model_registry.py`, clé `(TF, recette)`), provenance complète (hash de recette, commit git, dates, symbole d'entraînement). `models/index.json` n'a pas été créé : le système de fichiers EST l'index | ✅ |
 | ARCH-05 | Réduire `smart_money.py` (838 L) et `smart_money_signals.py` (891 L) — dette de lisibilité, pas d'urgence | — |
 
 ### 3.5 🟡 Tests, docs, DX
 
 | ID | Item |
 |---|---|
-| TEST-11 | Smoke tests paramétrés pour les stratégies survivantes (après DEAD-01) |
+| TEST-11 | Smoke tests paramétrés pour les stratégies survivantes — **débloqué** (DEAD-01 clos) |
 | TEST-05 | Tests d'ordres live mockés complets (idempotence clientOrderId, partial fills, réconciliation frais, restauration crash) |
 | TEST-04 | `pytest-cov` + seuil de couverture en CI ; ajouter mypy/security-scan à la CI |
 | DOC-005/006 | 4 guides référencés au README mais inexistants ; 0 ADR |
@@ -230,6 +261,29 @@ FIN-01 (frais VIP OKX dynamiques), FIN-02 (borrow dynamique), FIN-05
 (Sharpe/Sortino/Calmar/VaR temps réel), FIN-08 (réconciliation PnL quotidienne),
 RES-01 (regime detection HMM), RES-02 (backtest portefeuille multi-actifs). Au
 fil de l'eau.
+
+### 3.7 🔴 Suites du chantier ML unifié (2026-07-26)
+
+Le chantier a livré A→G et tranché 13 décisions ; ce qu'il laisse ouvert, par
+valeur décroissante. Détail et chiffres :
+`docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md` §12.
+
+| ID | Item | Effort | Pourquoi c'est là |
+|---|---|---|---|
+| **ML-10** 🔴 | **Réoptimiser les seuils ADX** des YAML (`adx_min`, `adx_threshold`, `needs_adx_above`, `adx_len`) | M | Suite obligée de la décision 13 : ces seuils ont été choisis face à un ADX qui valait 35 en moyenne, ils s'appliquent à un ADX qui vaut 28. Rien n'est cassé, rien n'est réglé. **Seul item qui bloque la confiance dans les stratégies actives.** Rien à purger : `optimizer_results` est vide |
+| **ML-11** 🔴 | **Désactiver la calibration isotone en 1h** | S | Mesuré (ECE **+461 %** en 1h contre −47 %/−67 % en 15m/30m), conclusion écrite… et jamais appliquée : `omnibus_v4_multi.yaml` porte toujours `calibrate: true` sans dérogation par TF. **Écart entre ce que le doc affirme et ce que le code fait.** Sous-décision ouverte : une recette par TF, ou un bloc `hp` par TF |
+| **ML-12** 🟠 | Instruire les scores négatifs sur la fenêtre de validation | M | 3 des 4 cibles mesurées perdent sur le dernier tiers de l'historique, **sous les deux conventions d'ADX**. Protocole réduit (40 essais, une paire symbole/TF) donc pas un verdict — mais leurs bons scores viennent d'IS/OOS |
+| **ML-13** 🔵 | Mode `follow_setup` dans V11 | M | Dernier morceau de la fusion omnibus. Sa machine anti-whipsaw (confirmation K bougies, cooldown, hystérésis) est du **code**, pas des valeurs : mérite son propre tour de mesure, d'où le report délibéré |
+| **ML-14** 🔵 | Entraînement unifié des 3 dernières stratégies ML | L | `ml_dynamic_threshold` (`dyn_threshold_v1`, tête unique) et `scoring_statistique_opus_v4/v5` (`stat48_*`, 48 colonnes) ont un catalogue de features et une persistance différents. Suppose de rendre `MLBackend` **agnostique du catalogue** |
+| **ML-15** 🔵 | Rejouer la mesure de la dimension symbole | S | Automatique dès qu'un actif d'une autre classe (action, ETF) avec ≥ 8 000 barres entre dans le store — cf. §4.2bis |
+
+Deux points attendent un arbitrage utilisateur, pas du travail :
+
+* **Supertrend** — son ATR interne a été inclus dans la correction Wilder, ce
+  qui dépasse la lettre de la demande (« ADX »). Même défaut, et `ta.supertrend`
+  en Pine utilise `ta.atr` ; une ligne à annuler si non souhaité.
+* **`dynamic_threshold_no_ml`** — reste un fork, motivé (porte de volatilité en
+  inférence là où le jumeau ML labellise). Le convertir dégraderait le parent.
 
 ---
 
@@ -254,7 +308,42 @@ reste à brancher.*
 |---|---|
 | **Calendrier de marché** (le plus structurant) | `app/core/market_calendar.py` (wrapper `exchange_calendars` XPAR), gating `_cycle()`/`CandleStore`/forward-test, seuil de gap par classe d'actif, `close_at_session_end`. La boucle live suppose encore un marché 24/7. |
 | **Sizing & coûts par venue** | `compute_size` en fractions continues → sizing entier (`lot_size`, `tick_size`) ; frais par venue (fixe + % + **TTF française 0,4 %**) partagés backtest/live. |
-| **Provider actions** | `YFinanceProvider` (data-only, tickers `.PA`) → CandleStore ; `data/universe/sbf120.yaml` ; scanner mode equity ; ML par instrument (retirer le `"BTC" in s` codé en dur). |
+| **Provider actions** | `YFinanceProvider` (data-only, tickers `.PA`) → CandleStore ; `data/universe/sbf120.yaml` ; scanner mode equity. ⚠ « ML par instrument » : **prémisse revue**, cf. §4.2bis. |
+
+### 4.2bis Le ML par instrument n'est plus un prérequis — c'est une question ouverte
+
+Ce plan supposait qu'aller vers les actions imposerait un **modèle par
+instrument**, et listait « retirer le `"BTC" in s` codé en dur » comme travail
+à faire. La décision 11 du chantier ML a mesuré cette prémisse au lieu de la
+suivre, et le résultat la renverse — pour la crypto au moins.
+
+**Ce qui a été mesuré** (`scripts/measure_symbol_transfer.py`, §8bis de la
+conception ML) : matrice de transfert modèle-BTC contre modèle-ETH, évalués
+sur les holdouts BTC/ETH/XRP, 3 timeframes, coupure temporelle commune, IC 95 %
+bootstrap apparié. **17 des 18 cellules indiscernables du bruit** ; ETH ne
+gagne rien à son propre modèle (0.634 contre 0.638 en 1h).
+
+**Ce qui en a été tiré** : le symbole est sorti de la clé du registre
+(`{base_dir}/{tf}/{recette}/`) et ne subsiste qu'en **provenance**
+(`ArtifactRef.train_symbol`). `_resolve_symbol` reste, mais documenté pour ce
+qu'il est — le choix du **jeu d'entraînement**, pas l'identité du modèle. Ce
+n'est donc plus « un codage en dur à retirer », c'est un choix assumé et
+mesuré.
+
+**Ce que ça ne dit pas, et qui concerne directement ce plan.** La mesure porte
+sur **une seule paire entraînable** (BTC ~ ETH, corrélation de rendements
+**0.76**) plus un indice non testable (XRP, corrélé à **0.31**, mais sans assez
+d'historique pour avoir un modèle propre — il manque le contrefactuel). Trois
+cryptos ne disent rien d'un panier actions/ETF.
+
+> **Déclencheur explicite** : dès qu'un actif d'une autre classe et doté d'au
+> moins 8 000 barres entre dans le store (SBF120, Nasdaq, ETF), **rejouer
+> `scripts/measure_symbol_transfer.py`**. Il découvre les symboles depuis le
+> store, mesure les corrélations, sépare paires *entraînables* et *évaluables
+> seulement*, et annonce lui-même la portée de son verdict — aucune édition
+> nécessaire. **C'est là seulement que la conclusion peut s'inverser**, et si
+> elle s'inverse, réintroduire la dimension symbole dans la clé du registre
+> devient un chantier de ce plan (item ML-15, §3.7).
 
 ### 4.3 Exécution réelle actions — G3 (Phase 3)
 
