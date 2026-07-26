@@ -52,6 +52,27 @@ logger = logging.getLogger(__name__)
 _BUNDLE_PERSISTENCE = ("lgbm_amp_dir_bundle", "lgbm_scaler")
 _SINGLE_PERSISTENCE = ("lgbm_single",)
 
+#: Réglages LightGBM par défaut — ceux de ``app.ml.backend.trainer.train``,
+#: pour qu'une recette omnibus qui n'en déclare aucun produise EXACTEMENT le
+#: même modèle qu'aujourd'hui. Noter l'absence de ``seed`` : MLBackend n'en
+#: passe pas, et le fixer produirait des arbres différents des siens.
+_LGB_DEFAULTS: Dict[str, Any] = dict(
+    objective="binary", metric="auc",
+    num_leaves=31, learning_rate=0.05,
+    min_child_samples=20, subsample=0.8, subsample_freq=5,
+    colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=0.5,
+    max_bin=63, force_col_wise=True, verbosity=-1, n_jobs=1,
+)
+
+#: Clés du bloc ``hp:`` d'une recette transmises telles quelles à LightGBM.
+#: Coder ``max_bin``/``force_col_wise`` en dur ici reproduirait le défaut même
+#: qu'on corrige : une recette doit pouvoir décrire son modèle en entier,
+#: y compris pour reproduire un modèle historique aux réglages différents.
+_LGB_KEYS: tuple = tuple(_LGB_DEFAULTS) + (
+    "min_data_in_leaf", "feature_fraction", "bagging_fraction", "bagging_freq",
+    "lambda_l1", "lambda_l2", "min_sum_hessian_in_leaf", "max_depth", "seed",
+)
+
 
 @dataclass
 class TrainedRecipe:
@@ -229,19 +250,16 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
     impute_inplace(X_train, names, medians)
     impute_inplace(X_valid, names, medians)
 
-    # Réglages repris À L'IDENTIQUE de app.ml.backend.trainer.train : c'est ce
-    # qui rend la bascule d'une recette omnibus sans effet sur le modèle.
-    # Ne pas passer `seed` ici — MLBackend ne le fait pas, et le fixer
-    # produirait des arbres différents des siens.
-    common = dict(
-        objective="binary", metric="auc",
-        num_leaves=int(p.get("num_leaves", 31)),
-        learning_rate=float(p.get("learning_rate", 0.05)),
-        min_child_samples=20, subsample=0.8, subsample_freq=5,
-        colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=0.5,
-        max_bin=63, force_col_wise=True, verbosity=-1, n_jobs=1,
-    )
+    common = {**_LGB_DEFAULTS,
+              **{k: p[k] for k in _LGB_KEYS if k in p and p[k] is not None}}
+    # ``force_col_wise: false`` doit pouvoir DÉSACTIVER le drapeau, pas
+    # seulement l'omettre : LightGBM refuse force_col_wise et force_row_wise
+    # simultanément, et une recette qui reproduit un modèle historique a besoin
+    # de le retirer.
+    if p.get("force_col_wise") is False:
+        common.pop("force_col_wise", None)
     n_estimators = int(p.get("n_estimators", 300))
+    early_stopping = int(p.get("early_stopping_rounds", 20))
     calibrate = bool(p.get("calibrate", False))
 
     boosters: Dict[str, Any] = {}
@@ -271,7 +289,8 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
         booster = lgb.train(
             {**common, "scale_pos_weight": spw}, ds_tr,
             num_boost_round=n_estimators, valid_sets=[ds_va],
-            callbacks=[lgb.early_stopping(20, verbose=False), lgb.log_evaluation(-1)],
+            callbacks=[lgb.early_stopping(early_stopping, verbose=False),
+                       lgb.log_evaluation(-1)],
         )
         boosters[head] = booster
         meta[f"auc_{head}"] = round(

@@ -286,6 +286,31 @@ class Strategy(BaseStrategyML):
             builder=lambda w, t=adx_threshold: _build_features(_pc(w), t),
             in_kind="polars", out_kind="numpy")
 
+    def _features_for_training(self, df: pl.DataFrame,
+                               adx_threshold: float) -> Optional[np.ndarray]:
+        """Features sur TOUTE la fenêtre reçue — chemin d'ENTRAÎNEMENT.
+
+        ``_get_or_build_features`` retombe, hors backtest, sur un slice des
+        **250 dernières barres**. C'est le bon compromis pour ``score()``, qui
+        ne lit que la dernière ligne. Pour ``_train`` c'était un défaut
+        silencieux et coûteux : quelle que soit la fenêtre passée à ``fit()``
+        — 3 400 barres depuis le gate, 8 000 depuis le runner — le modèle
+        n'apprenait que sur 250 lignes, soit 200 en entraînement et 50 en
+        validation, alors que la recette annonce ``min_bars: 2000``. Aucun
+        message ne le signalait.
+
+        Le cache de backtest reste utilisé quand il couvre la fenêtre : il est
+        semé par ``prepare_for_backtest`` sur le frame complet, et
+        ``X[:len(df)]`` l'aligne sur le préfixe courant.
+        """
+        if self._bt_features_len and len(df) <= self._bt_features_len:
+            key = round(float(adx_threshold), 6)
+            X = self._bt_features_cache.get(key)
+            if X is not None and len(X) >= len(df):
+                return X[: len(df)]
+        return _build_features(df, adx_threshold)
+
+
     def _get_or_build_features(self, df: pl.DataFrame,
                                adx_threshold: float) -> Optional[np.ndarray]:
         """Retourne ``X[:len(df)]`` aligné sur ``df`` (cf. v4 pour le détail du
@@ -359,7 +384,7 @@ class Strategy(BaseStrategyML):
         # Réutilise le cache backtest si présent (pré-peuplé par
         # ``prepare_for_backtest`` pour toutes les valeurs d'adx_threshold
         # du param_space en optim).
-        X = self._get_or_build_features(df, adx_threshold)
+        X = self._features_for_training(df, adx_threshold)
         if X is None:
             return False
 

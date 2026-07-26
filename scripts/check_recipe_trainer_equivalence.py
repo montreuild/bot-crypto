@@ -20,25 +20,33 @@ Basculer une recette omnibus ne change donc PAS le modèle produit. C'est la
 mesure qui rend la bascule sûre, au sens du protocole de non-régression.
 Verrouillée par ``tests/test_recipe_trainer.py::TestMLBackendEquivalence``.
 
-**Famille stat48 — divergence, et elle est explicable** ::
+**Famille stat48 — équivalence exacte, après correction de DEUX défauts** ::
 
-    stat48_v5   amp  écart max 0.579  corr -0.075
-                dir  écart max 0.433  corr  0.012
+    stat48_v5   amp  écart max 0.000000  corr 1.0000
+                dir  écart max 0.000000  corr 1.0000
 
-Deux causes, toutes deux du côté de la stratégie :
+Le premier diagnostic accusait ``n_estimators`` (300 codé en dur côté
+stratégie contre 500 déclaré par la recette). **C'était faux** : l'early
+stopping tranche bien avant 300, cet écart n'avait aucun effet mesurable. Les
+vraies causes étaient ailleurs, une de chaque côté :
 
-1. elle code en dur ``num_boost_round=300`` alors que la recette déclare
-   ``n_estimators: 500`` — autrement dit la recette ne décrivait pas ce que la
-   stratégie faisait, et le chemin recette la rend enfin vraie ;
-2. son early stopping s'arrête sur un jeu de validation construit à partir de
-   features anonymes, là où le chemin recette les nomme.
+1. **La fenêtre d'entraînement de 250 barres** (côté stratégie, cause
+   dominante). ``_get_or_build_features`` retombe, hors backtest, sur les 250
+   DERNIÈRES barres — dimensionnement correct pour ``score()``, qui ne lit que
+   la dernière ligne, mais ``_train`` l'empruntait aussi. Quelle que soit la
+   fenêtre passée à ``fit()``, le modèle n'apprenait donc que sur 200 lignes
+   plus 50 de validation, alors que la recette annonce ``min_bars: 2000``.
+   Aucun message ne le signalait. Corrigé par ``_features_for_training``, qui
+   construit sur toute la fenêtre reçue et laisse ``score()`` intact.
+2. **``max_bin`` codé en dur** (côté ``recipe_trainer``). Le module imposait le
+   63 de MLBackend, si bien qu'aucune recette ne pouvait décrire un modèle au
+   défaut LightGBM (255) — histogrammes différents, donc arbres et point
+   d'arrêt différents. Les réglages LightGBM viennent désormais du bloc ``hp:``
+   de la recette, et ``stat48_v4``/``stat48_v5`` déclarent ``max_bin: 255``.
 
-Conséquence opérationnelle : basculer ``stat48_v4``/``stat48_v5`` **change le
-modèle produit**. C'est une décision, pas un détail d'implémentation — d'où
-l'absence de bascule automatique. Ce que la bascule apporte en échange est
-mesurable : l'artefact porte enfin ses noms de features, donc le gate sait le
-scorer (``unsupported_format`` disparaît) et la recette devient promouvable,
-ce qu'elle n'a jamais été.
+Autrement dit, la recette ne décrivait pas ce que la stratégie faisait, et le
+module générique ne lui permettait pas de le décrire. Les deux sont réglés :
+basculer stat48 sur le chemin recette ne change plus le modèle produit.
 
 Usage ::
 
@@ -128,9 +136,9 @@ def main() -> int:
         diverged |= gap > 1e-6
         print(f"{head:6} {gap:10.6f} {corr:12.4f} {p_old.mean():12.3f} {p_new.mean():13.3f}")
 
-    print("\n" + ("Les deux chemins DIVERGENT — cf. les trois causes énumérées "
-                  "dans la docstring de ce script. Basculer cette recette change "
-                  "le modèle produit : c'est une décision d'exploitation."
+    print("\n" + ("Les deux chemins DIVERGENT — cf. les causes énumérées dans la "
+                  "docstring de ce script. Basculer cette recette change le "
+                  "modèle produit : c'est une décision d'exploitation."
                   if diverged else
                   "Les deux chemins sont équivalents (écart < 1e-6) : la bascule "
                   "ne change pas le modèle produit."))

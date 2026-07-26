@@ -54,15 +54,33 @@ donne deux résultats opposés, et c'est le point :
 - **`omnibus_v4_multi` : écart 0.00000000, corrélation 1.000000** face à
   `MLBackend`. Basculer une recette omnibus ne change PAS le modèle produit —
   c'est la mesure qui rend la bascule sûre. Verrouillé par test.
-- **`stat48_v5` : amp 0.579, dir 0.433, corrélations ~0.** Divergence réelle,
-  mais explicable : la stratégie code en dur 300 rounds là où la recette
-  déclare `n_estimators: 500`. La recette ne décrivait pas ce que la stratégie
-  faisait ; le chemin recette la rend vraie.
+- **`stat48_v5` : écart 0.000000, corrélation 1.0000** — après correction de
+  deux défauts, un de chaque côté (voir ci-dessous).
 
-Aucune bascule automatique : les `_train` autonomes restent en place. Changer
-la recette d'une stratégie est une décision d'exploitation, prise recette par
-recette — la conception exige que toute divergence soit énumérée avant, pas
-constatée après.
+Aucune bascule automatique pour autant : les `_train` autonomes restent en
+place. Changer le chemin d'une recette reste une décision d'exploitation.
+
+### 🐛 Deux défauts trouvés en cherchant l'origine de la divergence stat48
+
+Le premier diagnostic accusait `n_estimators` (300 codé en dur contre 500
+déclaré). **C'était faux** : l'early stopping tranche bien avant 300.
+
+- **`scoring_statistique_opus_v4/v5` — entraînement sur 250 barres.**
+  `_get_or_build_features` retombe, hors backtest, sur les 250 dernières
+  barres : dimensionnement correct pour `score()`, qui ne lit que la dernière
+  ligne, mais `_train` l'empruntait aussi. **Quelle que soit la fenêtre passée
+  à `fit()` — 3 400 barres depuis le gate, 8 000 depuis le runner — le modèle
+  n'apprenait que sur 200 lignes plus 50 de validation**, alors que la recette
+  annonce `min_bars: 2000`. Aucun message ne le signalait. Nouveau
+  `_features_for_training`, qui construit sur toute la fenêtre reçue ;
+  `score()` garde sa fenêtre courte, y bâtir des milliers de barres à chaque
+  appel coûterait cher pour une seule ligne lue.
+- **`recipe_trainer` — `max_bin` codé en dur.** Le module imposait le 63 de
+  MLBackend, donc aucune recette ne pouvait décrire un modèle au défaut
+  LightGBM (255) : c'était reproduire le défaut même qu'on corrige. Les
+  réglages LightGBM viennent maintenant du bloc `hp:` de la recette
+  (`_LGB_KEYS`), et `stat48_v4`/`stat48_v5` déclarent `max_bin: 255` — ce que
+  leurs stratégies utilisent réellement.
 
 ### 🏛 G2 — les actions SBF 120 sont activées (données, pas exécution)
 

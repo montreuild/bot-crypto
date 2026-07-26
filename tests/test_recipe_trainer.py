@@ -290,3 +290,63 @@ class TestMLBackendEquivalence:
         out = rt.train("omnibus_v4_multi", ohlcv.slice(0, 3000), "1h",
                        params={"prune_features": True, "kept_features": ["ret", "ret_intra"]})
         assert out.train_meta["n_features"] > 50
+
+
+class TestStat48Equivalence:
+    """La divergence stat48 est corrigée — et ses deux causes verrouillées.
+
+    Ni l'une ni l'autre n'était celle annoncée au premier diagnostic
+    (« la stratégie code 300 rounds là où la recette déclare 500 ») : l'early
+    stopping tranche bien avant 300, cet écart n'avait aucun effet.
+    """
+
+    def test_training_uses_the_whole_window_not_a_250_bar_tail(self, ohlcv):
+        """Cause dominante. ``_get_or_build_features`` retombe, hors backtest,
+        sur les 250 DERNIÈRES barres — bon pour ``score()`` qui ne lit que la
+        dernière ligne, silencieusement destructeur pour ``_train`` : quelle
+        que soit la fenêtre passée à ``fit()``, le modèle n'apprenait que sur
+        200 lignes + 50 de validation, alors que la recette annonce
+        ``min_bars: 2000``."""
+        import importlib
+        for mod in ("scoring_statistique_opus_v4", "scoring_statistique_opus_v5"):
+            strat = importlib.import_module(f"app.strategies.{mod}").Strategy()
+            window = ohlcv.slice(0, 3000)
+            X = strat._features_for_training(window, 20.0)
+            assert X is not None and len(X) == len(window), (
+                f"{mod} : {len(X)} lignes pour une fenêtre de {len(window)}")
+
+    def test_scoring_path_still_uses_the_short_window(self, ohlcv):
+        """Le correctif ne doit PAS toucher ``score()`` : y construire les
+        features sur des milliers de barres à chaque appel coûterait cher pour
+        une seule ligne lue."""
+        import importlib
+        strat = importlib.import_module(
+            "app.strategies.scoring_statistique_opus_v5").Strategy()
+        X = strat._get_or_build_features(ohlcv.slice(0, 3000), 20.0)
+        assert len(X) == 250
+
+    def test_recipe_declares_the_max_bin_the_strategy_actually_uses(self):
+        """Seconde cause, et elle était de mon côté : ``recipe_trainer`` codait
+        en dur le ``max_bin=63`` de MLBackend, donc aucune recette ne pouvait
+        décrire un modèle au défaut LightGBM (255). Histogrammes différents ⇒
+        arbres et point d'arrêt différents."""
+        assert load_recipe("stat48_v5").hp.get("max_bin") == 255
+        assert load_recipe("stat48_v4").hp.get("max_bin") == 255
+        # …et le réglage est bien transmis, pas absorbé par les défauts.
+        assert "max_bin" in rt._LGB_KEYS
+
+    def test_predictions_now_match_the_strategy_exactly(self, ohlcv):
+        from app.strategies.scoring_statistique_opus_v5 import Strategy
+
+        train_df, holdout = ohlcv.slice(0, 3000), ohlcv.tail(900)
+        strat = Strategy()
+        strat.fit(train_df, params={strat.name: {}})
+        out = rt.train("stat48_v5", train_df, "1h")
+        assert out is not None
+
+        X = fc.build("stat48@1", holdout, {"adx_threshold": 20.0}).matrix().astype(np.float64)
+        for head, store in (("amp", strat._amp_models), ("dir", strat._dir_models)):
+            ref = store.get("default") or store.get("1h")
+            assert ref is not None, f"la stratégie n'a pas de modèle {head}"
+            gap = float(np.max(np.abs(ref.predict(X) - out.boosters[head].predict(X))))
+            assert gap == pytest.approx(0.0, abs=1e-9), f"tête {head} : écart {gap}"
