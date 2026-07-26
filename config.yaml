@@ -10,35 +10,35 @@ venues:
   # valeurs identiques aux défauts implicites précédents, aucun changement de
   # comportement.
   #
-  # ── Activer les actions SBF 120 en paper (G2) ────────────────────────────
-  # 1. décommenter la venue `euronext-paper` ci-dessous ;
-  # 2. décommenter `scanner.universe` et `providers.yfinance` plus bas ;
-  # 3. assigner les instruments à la venue :
-  #      assign: {"AIR.PA": euronext-paper}
-  #    ou, plus simple, assigner l'univers entier via un préfixe de venue par
-  #    symbole (une ligne par titre — c'est volontaire : rien n'est implicite).
-  # Tant que rien n'est décommenté, le bot reste strictement crypto.
+  # ── Actions SBF 120 en paper (G2) — ACTIVÉ ───────────────────────────────
+  # La venue `euronext-paper` ci-dessous est data-only (`can_execute: false`) :
+  # AUCUN ordre n'est transmis, le bot émet une notification de trade et suit
+  # la position comme en paper. Passer à l'exécution réelle est le chantier G3.
   #
-  #   euronext-paper:
-  #     market_type: spot
-  #     exchange: euronext
-  #     asset_class: equity
-  #     quote_currency: EUR
-  #     fractional: false          # une action ne s'achète pas en fractions
-  #     allow_short: false         # pas de SRD → pas de vente à découvert
-  #     tick_size: 0.001
-  #     min_notional: 200          # sous ce montant, les frais fixes mangent l'edge
-  #     calendar: XPAR             # Euronext Paris — 09:00-17:30, fériés inclus
-  #     data_provider: yfinance    # data-only (cf. providers.yfinance)
-  #     can_execute: false         # G3 non livré → NOTIFICATION de trade
-  #     close_at_session_end: true # pas de risque overnight non modélisé
-  #     close_before_close_min: 5
-  #     fee_pct: 0.001             # commission courtier (0,10 %)
-  #     fee_fixed: 0.0             # + part fixe éventuelle par ordre
-  #     fee_min: 2.0               # plancher de courtage
-  #     transaction_tax_pct: 0.004 # TTF française — VÉRIFIER le taux en vigueur
-  #     tax_on_buy_only: true      # la TTF ne frappe que les acquisitions
+  # Les instruments ne sont PAS listés un par un dans `assign` : chaque fichier
+  # `data/universe/*.yaml` déclare sa propre clé `venue:`, que `resolve_venue`
+  # consulte pour les univers activés dans `scanner.universe`. Un `assign`
+  # explicite prime toujours sur cette déclaration.
   defs:
+    euronext-paper:
+      market_type: spot
+      exchange: euronext
+      asset_class: equity
+      quote_currency: EUR
+      fractional: false          # une action ne s'achète pas en fractions
+      allow_short: false         # pas de SRD → pas de vente à découvert
+      tick_size: 0.001
+      min_notional: 200          # sous ce montant, les frais fixes mangent l'edge
+      calendar: XPAR             # Euronext Paris — 09:00-17:30, fériés inclus
+      data_provider: yfinance    # data-only (cf. providers.yfinance)
+      can_execute: false         # G3 non livré → NOTIFICATION de trade
+      close_at_session_end: true # pas de risque overnight non modélisé
+      close_before_close_min: 5
+      fee_pct: 0.001             # commission courtier (0,10 %)
+      fee_fixed: 0.0             # + part fixe éventuelle par ordre
+      fee_min: 2.0               # plancher de courtage
+      transaction_tax_pct: 0.004 # TTF française — VÉRIFIER le taux en vigueur
+      tax_on_buy_only: true      # la TTF ne frappe que les acquisitions
     spot:
       market_type: spot
       exchange: okx
@@ -118,25 +118,33 @@ scanner:
     - XRP/USDC
   # G2 — univers statiques versionnés (data/universe/*.yaml), cumulés avec
   # `symbols` ci-dessus. Sur actions, la liste des instruments est un choix,
-  # pas une découverte exchange : `universe: [sbf120]`.
-  # universe: [sbf120]
+  # pas une découverte exchange.
+  # ⚠️ data/universe/sbf120.yaml porte `verified: false` : instantané constitué
+  # hors ligne, à recouper avec la composition officielle Euronext. Pré-vol :
+  #     python scripts/check_universe.py sbf120
+  universe: [sbf120]
   #
   # Le seuil de liquidité crypto (5 M$/24 h) exclurait tout le SBF 120 : il
   # est surchargeable par classe d'actif.
-  # min_volume_by_asset_class:
-  #   equity: 1000000
+  min_volume_by_asset_class:
+    equity: 1000000
   top_n: 20
   symbols_cache_ttl: 300
 # Fournisseurs de données alternatifs (G2). Une venue les référence via
 # `data_provider`. Sans venue qui en déclare, ce bloc est ignoré et aucun
 # code de routage n'est chargé.
-# providers:
-#   yfinance:
-#     suffix: .PA               # AIR → AIR.PA (ignoré si le ticker a déjà un point)
-#     min_request_interval: 1.0 # secondes entre deux requêtes (Yahoo renvoie 429 en rafale)
-#     cache_ttl: 60             # TTL du cache de réponses
-#     max_retries: 3
-#     prefer_yfinance: true     # utiliser le paquet yfinance s'il est installé
+providers:
+  yfinance:
+    suffix: .PA               # AIR → AIR.PA (ignoré si le ticker a déjà un point)
+    min_request_interval: 1.0 # secondes entre deux requêtes (Yahoo renvoie 429 en rafale)
+    cache_ttl: 60             # TTL du cache de réponses
+    max_retries: 3
+    # Le paquet `yfinance` n'est PAS une dépendance du projet : il
+    # réinstallerait pandas, retiré en phase 6. Le provider fonctionne sans
+    # lui via l'API chart publique (requests). Laisser `true` reste utile —
+    # si vous installez yfinance à la main, il gère cookie/crumb, ce que
+    # l'endpoint brut exige de plus en plus souvent.
+    prefer_yfinance: true
 # Calendriers de marché supplémentaires (XPAR est livré en dur).
 # calendars:
 #   XAMS:

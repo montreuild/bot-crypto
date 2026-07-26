@@ -6,6 +6,36 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🏛 G2 — les actions SBF 120 sont activées (données, pas exécution)
+
+Tout le code G2 était livré ; il restait inactivé, et un maillon manquait.
+
+- **`app/core/bot_identity.py`** — `resolve_venue` gagne un échelon
+  « univers » : la clé `venue:` d'un `data/universe/*.yaml` **activé dans
+  `scanner.universe`** route ses membres. `universe_venue()` existait et était
+  testé, mais aucun code de production ne l'appelait : activer `scanner.universe`
+  ajoutait bien les 120 instruments au scanner, tous résolus sur la venue crypto
+  par défaut — donc cherchés chez OKX et jamais chez le provider actions. La
+  seule alternative documentée était d'écrire une ligne d'`assign` par titre.
+  Précédence : `assign` explicite (slot, puis symbole) > univers > `assign`
+  par stratégie > `venues.default`. Un univers non référencé ne route rien.
+- **`config.yaml`** — venue `euronext-paper` (XPAR, EUR, `fractional: false`,
+  TTF, plancher de courtage), `scanner.universe: [sbf120]`,
+  `min_volume_by_asset_class.equity` (le seuil crypto de 5 M$/24 h excluait
+  tout le SBF 120) et le bloc `providers.yfinance`. `can_execute: false` :
+  **aucun ordre n'est transmis**, le bot émet une notification de trade — G3
+  reste à faire.
+- **Nouveau — `scripts/backfill_equities.py`** : amorce le cache Parquet pour
+  un univers. Le runner ML ne fetch jamais (il lit le cache, d'où sa
+  reproductibilité) ; sur crypto le scanner remplit le cache tout seul, sur
+  actions rien ne l'avait jamais fait. Incrémental et réentrant, un titre en
+  échec n'interrompt pas les autres, et il annonce à l'avance les troncatures
+  imposées par Yahoo (1 h → 730 j, 15 m/30 m → 60 j, journalier illimité).
+
+Le paquet `yfinance` **n'est pas** ajouté aux dépendances : il réinstallerait
+pandas, retiré en phase 6. Le provider fonctionne via l'API chart publique
+(`requests`) ; `prefer_yfinance: true` reste utile si vous l'installez à la main.
+
 ### 🔬 Page « Modèles » — les diagnostics d'entraînement deviennent visibles là où on expérimente
 
 Le panneau de diagnostics (top features + gain pour amplitude et direction,
