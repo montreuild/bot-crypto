@@ -6,13 +6,19 @@
 > `opus_omnibus_v7` fusionné avec équivalence prouvée, `v11_followsetup`
 > délibérément laissé de côté et `v12` hors périmètre — motifs en §7.3bis.
 >
-> Reste ouvert, et c'est le point le plus important du document à ce stade :
-> **§8ter — le dépôt porte deux ADX incompatibles**. `_pre_adx14` lisse en
-> `span=14` (α = 2/15) là où l'ADX de Wilder veut α = 1/14 ; les deux séries
-> corrèlent à 0.75 et le verdict `ADX ≥ 20` diffère sur 21,6 % des barres.
-> 17 stratégies lisent la version trop réactive. Trouvé et mesuré ici, **pas
-> corrigé** : la correction touche 17 stratégies d'un coup et invalide leurs
-> seuils optimisés.
+> **§8ter — les deux ADX incompatibles sont réunifiés.** `_pre_adx14` lissait
+> en `span=14` (α = 2/15) là où l'ADX de Wilder veut α = 1/14 ; les deux séries
+> corrélaient à 0.75 et le verdict `ADX ≥ 20` différait sur 21,6 % des barres.
+> Mesuré d'abord (réoptimisation par convention, comparaison sur une fenêtre
+> jamais vue par l'optimiseur : écart ≤ 0.022, signe variable), corrigé
+> ensuite. Wilder est le défaut partout **sauf dans le moteur SMC**, qui était
+> déjà correct et dont la sortie est prouvée identique (SHA256).
+>
+> **Action restante pour l'utilisateur** : les seuils ADX des YAML de stratégie
+> sont désormais désaccordés (choisis face à un ADX qui valait 35, appliqués à
+> un ADX qui vaut 28) — il faut **réoptimiser** avant de se fier de nouveau à
+> ces stratégies. Rien n'est persisté dans `optimizer_results`, donc rien à
+> purger.
 >
 > Trois bugs préexistants ont été trouvés *par* ce travail, tous silencieux :
 > snapshot vide du cache d'entraînement (V11/V12 perdaient leur modèle à chaque
@@ -1330,14 +1336,79 @@ verdict sur ces stratégies. Mais c'est un signal à ne pas laisser passer : les
 bons scores dont elles se prévalent viennent d'IS/OOS, et le dernier tiers de
 l'historique leur est nettement moins favorable. À instruire séparément.
 
-### Ce qui reste à faire
+### La correction, appliquée
 
-Décider du sort de `_pre_adx14`/`_pre_atr14`/`_pre_pdi14`/`_pre_ndi14` pour les
-13 stratégies restantes. La mesure ci-dessus lève l'objection principale ;
-recommandation : **aligner sur Wilder puis réoptimiser**, plutôt que garder un
-indicateur qui ment sur sa période. Le commutateur
-`indicators_precompute.set_wilder_atr_adx` est en place et le défaut reste
-l'historique — rien ne bouge tant que la décision n'est pas prise.
+Wilder est devenu le **défaut**, partout sauf dans le moteur SMC. Cinq sites
+étaient concernés — tous dans deux fichiers, aucun ailleurs :
+
+| site | avant | après |
+|---|---|---|
+| `indicators_core.atr` / `atr_series` / `atr_val` | `span=n` | délèguent à `atr_wilder` |
+| `indicators_core.adx` / `adx_val` | `span=n` aux 4 étages | α = 1/n aux 4 étages |
+| `indicators_core.supertrend` (ATR interne) | `span=period` | `atr_wilder` |
+| `indicators_precompute` (`_pre_atr14/adx14/pdi14/ndi14`) | `span=14` | α = 1/14 |
+| `indicators_core.atr_wilder` | déjà correct | **inchangé** |
+
+`atr_wilder` devient l'unique implémentation du lissage Wilder et les autres
+en dépendent — la dépendance va dans ce sens précisément parce que c'est le
+contrat dont le SMC a besoin : on ne peut plus le casser en « corrigeant »
+`atr`.
+
+**Le moteur SMC est hors périmètre, et c'est vérifié, pas supposé.** Il ne lit
+aucune colonne `_pre_*` et calculait déjà son ATR en Wilder
+(`smc_primitives._wilder_atr` → `indicators_core.atr_wilder`), délibérément,
+pour s'aligner sur `ta.atr` de TradingView. Contrôle : l'empreinte SHA256 de
+la sortie complète de `smc.analyze` sur 3 000 barres BTC/USDC 1h est
+**identique avant et après** (`a9ee8db1…`). Un test interdit désormais à tout
+module SMC de lire `_pre_atr14`/`_pre_adx14`, pour que cette indépendance ne
+se perde pas en silence.
+
+Les trois sources d'ADX du dépôt convergent maintenant : `_pre_adx14` 28.30,
+`indicators_core.adx` 28.30, features V4 28.17 (l'écart résiduel est du
+warmup — corrélation 0.994). Les trois chemins d'ATR sont, eux, **exactement**
+identiques.
+
+### Ce que la correction coûte — mesuré, à paramètres constants
+
+Les seuils de ces stratégies ont été réglés contre l'ancienne échelle. À
+paramètres **inchangés**, un ADX moins réactif est donc plus sélectif, et le
+résultat se dégrade sur la plupart d'entre elles (BTC/USDC, 12 000 dernières
+barres) :
+
+| stratégie | TF | trades span→Wilder | PnL span→Wilder |
+|---|---|---|---|
+| `multi_tf_sr` | 1d | 24 → 15 | **+122.14 → −12.70** |
+| `scoring_statistique_opus` | 1h | 116 → 116 | **+10.56 → −19.43** |
+| `pullback_trend` | 1h | 211 → 133 | −9.87 → −27.26 |
+| `fft_spectral` | 1d | 53 → 56 | −55.09 → −101.96 |
+| `trend_rider` | 4h | 165 → 165 | +77.76 → +59.62 |
+| `harmonic_regime` | 1h | 396 → 271 | −101.25 → **−62.79** |
+| `momentum_blitz` | 1h | 132 → 101 | −113.96 → **−94.47** |
+| `volatility_squeeze` | 1h | 61 → 25 | −8.47 → **−3.02** |
+| `trend` | 1h | 131 → 63 | −18.68 → **−12.24** |
+| `supertrend_macd` | 1h | 6 → 5 | +1.08 → **+3.16** |
+
+**Ce tableau n'est pas un verdict** — c'est exactement la comparaison biaisée
+que §8ter s'interdit. Il mesure le *désaccordage des seuils*, pas la
+convention : avec réoptimisation, l'écart tombait à ≤ 0.022 de score et
+changeait de signe. Il est ici pour une autre raison : **dire ce que la
+correction impose comme travail**.
+
+### Conséquence opérationnelle
+
+Les seuils ADX inscrits dans les YAML de stratégie (`adx_min`, `adx_threshold`,
+`needs_adx_above`, `adx_len`…) sont désormais **désaccordés** : ils ont été
+choisis face à un ADX qui valait 35 en moyenne, ils s'appliquent maintenant à
+un ADX qui vaut 28. Rien n'est cassé, mais rien n'est réglé non plus.
+
+**À faire avant de se fier de nouveau à ces stratégies : les réoptimiser.**
+Les paramètres n'étaient pas persistés dans `optimizer_results` (vide), donc
+il n'y a rien à purger — c'est une réoptimisation, pas une migration.
+
+Le commutateur `indicators_precompute.set_wilder_atr_adx` reste disponible
+pour rejouer la comparaison ou reproduire un backtest antérieur à la
+correction. Ce n'est pas un réglage de production : le seul défaut est
+Wilder.
 
 ---
 
@@ -1484,7 +1555,7 @@ propre au moteur.
 | 10 | Population 2 (27 stratégies) | **ne rien faire** | l'architecture leur est neutre |
 | 11 | Dimension **symbole** des modèles | ✅ **retirée de la clé** (§8bis) — **à rejouer** hors crypto | 17/18 cellules indiscernables ; reste en provenance. Testable sur une seule paire homogène (0.76) : à revoir dès qu'un actif d'une autre classe est entraînable |
 | 12 | Mesurer calibration / élagage (**§8**) | ✅ **fait** (§8.1) | calibration : garder, mais **désactiver en 1h**. Élagage : non mesurable par ce protocole |
-| 13 | Deux ADX incompatibles (**§8ter**) | **mesuré ; correction recommandée, non appliquée** | la sur-réactivité n'explique PAS les scores : écart ≤ 0.022 sur VAL, signe variable. Aligner sur Wilder + réoptimiser |
+| 13 | Deux ADX incompatibles (**§8ter**) | ✅ **corrigé partout sauf SMC** | Wilder par défaut ; SMC prouvé inchangé (SHA256 identique). **Reste à faire : réoptimiser les seuils ADX**, désaccordés par la correction |
 
 La décision **8** est la seule qui reste non technique : elle change ce que le
 bot trade. La 11 l'était aussi — elle changeait ce qu'un modèle représente — et

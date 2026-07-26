@@ -37,31 +37,44 @@ def set_precompute_maxsize(n: int) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Lissage ATR/ADX/DI — span=14 (historique) ou Wilder (α = 1/14)
+#  Lissage ATR/ADX/DI — Wilder (α = 1/14) par défaut
 # ══════════════════════════════════════════════════════════════════════════════
-# Ces trois familles d'indicateurs sont lissées ici en ``ewm_mean(span=14)``,
+# Ces trois familles d'indicateurs étaient lissées ici en ``ewm_mean(span=14)``,
 # soit α = 2/15 ≈ 0.133, alors que la définition de Wilder — celle de l'ADX et
 # de l'ATR — veut α = 1/N ≈ 0.071. Un ``span=14`` équivaut à un Wilder de
-# période **7,5** : les séries produites sont presque deux fois plus réactives
-# que leur nom ne l'annonce.
+# période **7,5** : les séries produites étaient presque deux fois plus
+# réactives que leur nom ne l'annonçait.
 #
-# Que ce soit un écart involontaire ne fait guère de doute : le RSI, dans cette
-# même fonction, est bien calculé en ``alpha=1/14``. Mais un indicateur trop
-# réactif n'est pas mécaniquement moins bon en trading — et les seuils des
-# stratégies concernées ont été optimisés CONTRE cette échelle. Basculer sans
-# mesurer remplacerait un défaut par une régression.
+# Que ce soit un écart involontaire ne faisait guère de doute : le RSI, dans
+# cette même fonction, était déjà en ``alpha=1/14``. Mais un indicateur trop
+# réactif n'est pas mécaniquement moins bon en trading, et les seuils des
+# stratégies concernées avaient été optimisés CONTRE cette échelle — corriger
+# sans mesurer aurait pu remplacer un défaut par une régression.
 #
-# D'où ce commutateur : il permet de rejouer une optimisation complète sous
-# chaque variante et de comparer les résultats OOS
-# (``scripts/compare_adx_smoothing.py``). Le défaut reste l'historique — rien
-# ne change tant que la mesure n'a pas tranché.
+# La mesure a donc précédé la correction (``scripts/compare_adx_smoothing.py``,
+# §8ter) : réoptimisation complète sous chaque convention, comparaison sur une
+# fenêtre jamais vue par l'optimiseur. Écart maximum **0.022** de score, de
+# signe variable sur les cibles interprétables — la sur-réactivité n'était pas
+# ce qui faisait vivre ces stratégies. **Wilder est donc devenu le défaut.**
+#
+# Le commutateur survit pour une seule raison : rejouer la comparaison, ou
+# reproduire un backtest antérieur à la correction. Il n'est pas un réglage.
+#
+# Le moteur Smart Money n'est PAS concerné : il ne lit aucune colonne
+# ``_pre_*`` et calculait déjà son ATR en Wilder via
+# ``indicators_core.atr_wilder`` (``smc_primitives._wilder_atr``), délibérément,
+# pour s'aligner sur ``ta.atr`` de TradingView.
 #
 # Cf. docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §8ter.
-_WILDER_ATR_ADX = False
+_WILDER_ATR_ADX = True
 
 
 def set_wilder_atr_adx(enabled: bool) -> None:
-    """Bascule le lissage ATR/ADX/DI entre ``span=14`` et Wilder (α = 1/14).
+    """Bascule le lissage ATR/ADX/DI entre Wilder (α = 1/14, défaut) et
+    l'ancien ``span=14``.
+
+    Réservé à la mesure et à la reproduction d'un backtest historique — ce
+    n'est pas un réglage de production.
 
     Vide le cache de pré-calcul : les colonnes ``_pre_*`` déjà mémoïsées ont
     été produites sous l'autre convention, les servir après bascule
