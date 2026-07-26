@@ -1548,7 +1548,7 @@ propre au moteur.
 | 3 | `v8` / `v9` : retirer ou rebrancher | ✅ **retirés, setups préservés** | `SHORT_TD` et `LONG_PULLBACK_TU` portés dans v11 désactivés — la fusion (§7) reste à faire |
 | 4 | Supprimer le code de rétrocompat (§3.2) | ✅ **fait** | `ml_mode` seul levier, défaut explicite (pas rendu obligatoire — cf. §6.A) |
 | 5 | Recette + prédicteur en une passe (**B**) | ✅ **fait** | 7 recettes, contrat `Predictor` à 4 implémentations ; (a)(b)(c)(d) refermées |
-| 6 | Entraînement unifié (**C**) | **à faire**, recette par recette | validation artefact par artefact |
+| 6 | Entraînement unifié (**C**) | ✅ **fait pour la famille omnibus** ; 3 stratégies restantes sur 2 autres recettes | plus aucun `_train_impl` autonome côté omnibus. `ml_dynamic_threshold` (`dyn_threshold_v1`, tête unique) et `scoring_statistique_opus_v4/v5` (`stat48_*`, 48 colonnes) ont un catalogue de features et une persistance différents : les absorber demande de rendre `MLBackend` agnostique du catalogue |
 | 7 | Fusion `v10_retrained` + `v11` | ✅ **fait** | 952 → 93 lignes ; équivalence prouvée sur 3 plans |
 | 8 | Fusion omnibus complète (**§7**) | ✅ **v7 fusionné** (§7.3bis) | 572 → 133 lignes, sélection identique sur 7 744 combinaisons ; `followsetup` motivé non fusionné, `v12` hors périmètre |
 | 9 | `ProxyPredictor` (**E**) | ✅ **fait, 4 variantes sur 5** | 1 491 → 262 lignes ; `dynamic_threshold_no_ml` reste un fork, motivé (§6.E) |
@@ -1562,5 +1562,22 @@ bot trade. La 11 l'était aussi — elle changeait ce qu'un modèle représente 
 a été tranchée par la mesure (§8bis) plutôt que par arbitrage. Les autres sont
 des refactorisations à comportement constant, à prouver signal par signal.
 
-Ordre de valeur décroissante sur ce qui reste : **8** (fusion omnibus), puis
-les 4 variantes `_no_ml` restantes.
+Ce qui reste, par valeur décroissante :
+
+1. **Réoptimiser les seuils ADX** (suite de la décision 13) — les seuils des
+   YAML ont été réglés face à un ADX qui valait 35 et s'appliquent à un ADX
+   qui vaut 28. C'est la seule tâche qui bloque la confiance dans les
+   stratégies actives.
+2. **Désactiver la calibration en 1h** (décision 12) — mesuré (ECE +461 % en
+   1h contre −47 %/−67 % en 15m/30m) mais **non appliqué** : `omnibus_v4_multi`
+   porte toujours `calibrate: true` sans dérogation par TF. Sous-décision
+   ouverte : recette par TF, ou bloc `hp` par TF dans la même recette.
+3. **Instruire les scores négatifs sur VAL** (§8ter) — 3 des 4 cibles mesurées
+   perdent sur le dernier tiers de l'historique, sous les deux conventions
+   d'ADX. Pas un verdict (protocole réduit), mais un signal.
+4. **Mode `follow_setup` dans V11** (reste de la décision 8) — la seule fusion
+   omnibus qui demande du code et non des valeurs.
+5. **Entraînement unifié des 3 stratégies restantes** (décision 6) — suppose
+   de rendre `MLBackend` agnostique du catalogue de features.
+6. **Rejouer la mesure du symbole** (décision 11) dès qu'un actif d'une autre
+   classe est entraînable — automatique, le script découvre les symboles.
