@@ -123,6 +123,25 @@ def default_venue_from_cfg(cfg: dict) -> Venue:
     )
 
 
+def _universe_venue_for(cfg: dict, symbol: str) -> Optional[str]:
+    """Venue déclarée par l'univers qui liste ``symbol``, ou ``None``.
+
+    Ne consulte que les univers effectivement activés dans
+    ``scanner.universe`` : un fichier présent dans ``data/universe/`` mais non
+    référencé ne doit router aucun symbole. Best-effort — une erreur de
+    lecture d'univers ne doit jamais empêcher de résoudre une venue crypto.
+    """
+    names = ((cfg.get("scanner") or {}).get("universe")) or []
+    if not names:
+        return None
+    try:
+        from app.core.universe import symbol_venue_index
+        return symbol_venue_index(names).get(symbol)
+    except Exception as e:  # pragma: no cover — défensif
+        logger.debug(f"[Venue] index d'univers illisible : {e}")
+        return None
+
+
 def resolve_venue(cfg: dict, strategy: Optional[str] = None,
                   tf: Optional[str] = None, symbol: Optional[str] = None) -> Venue:
     """Résout la venue d'un bot.
@@ -131,8 +150,18 @@ def resolve_venue(cfg: dict, strategy: Optional[str] = None,
     ``venues.assign["strategy::tf"]`` > ``venues.assign[symbol]`` (S2-02 —
     un instrument porte sa venue indépendamment de la stratégie qui le
     trade, ex. assigner "AIR.PA" à une venue actions sans lister chaque
-    stratégie) > ``venues.assign[strategy]`` > ``venues.default`` > venue
-    dérivée des globales (``default_venue_from_cfg``).
+    stratégie) > **clé ``venue:`` de l'univers qui liste le symbole** >
+    ``venues.assign[strategy]`` > ``venues.default`` > venue dérivée des
+    globales (``default_venue_from_cfg``).
+
+    L'échelon « univers » (G2) évite d'écrire 120 lignes d'``assign`` pour
+    activer le SBF 120 : le fichier ``data/universe/sbf120.yaml`` déclare déjà
+    ``venue: euronext-paper``, cette information était lue (``universe_venue``)
+    mais n'atteignait pas la résolution. Sans elle, activer ``scanner.universe``
+    ajoutait bien les 120 instruments au scanner — mais tous résolus sur la
+    venue crypto par défaut, donc cherchés chez OKX et jamais chez le provider
+    actions. Un ``assign`` explicite continue de primer : le déclaratif ne
+    reprend jamais la main sur ce qu'un opérateur a écrit à la main.
     """
     venues = cfg.get("venues") or {}
     defs = venues.get("defs") or {}
@@ -141,6 +170,8 @@ def resolve_venue(cfg: dict, strategy: Optional[str] = None,
                 if strategy and tf and symbol else None)
     slot_key = f"{strategy}::{tf}" if strategy and tf else None
 
+    uni_venue = _universe_venue_for(cfg, symbol) if symbol else None
+
     vname = None
     if slot_sym and slot_sym in assign:
         vname = assign[slot_sym]
@@ -148,6 +179,8 @@ def resolve_venue(cfg: dict, strategy: Optional[str] = None,
         vname = assign[slot_key]
     elif symbol and symbol in assign:
         vname = assign[symbol]
+    elif uni_venue:
+        vname = uni_venue
     elif strategy and strategy in assign:
         vname = assign[strategy]
     elif venues.get("default"):

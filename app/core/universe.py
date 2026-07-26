@@ -145,7 +145,43 @@ def resolve_universes(names) -> List[str]:
     return out
 
 
+#: Index inverse symbole → venue, mémoïsé par tuple de noms d'univers.
+#: ``resolve_venue`` est appelé par symbole ET par cycle de scan : reconstruire
+#: la table à chaque appel coûterait une boucle sur tout l'indice.
+_venue_index: Dict[tuple, Dict[str, str]] = {}
+
+
+def symbol_venue_index(names) -> Dict[str, str]:
+    """Table ``{symbole: venue}`` déduite de la clé ``venue:`` des univers.
+
+    Le premier univers qui déclare un symbole gagne — même règle d'ordre que
+    ``resolve_universes``, pour qu'un instrument listé deux fois ne change pas
+    de venue selon le chemin de lecture.
+    """
+    if not names:
+        return {}
+    if isinstance(names, str):
+        names = [names]
+    key = tuple(str(n) for n in names)
+    with _cache_lock:
+        cached = _venue_index.get(key)
+    if cached is not None:
+        return cached
+
+    index: Dict[str, str] = {}
+    for uni in key:
+        venue = universe_venue(uni)
+        if not venue:
+            continue
+        for symbol in universe_symbols(uni):
+            index.setdefault(symbol, venue)
+    with _cache_lock:
+        _venue_index[key] = index
+    return index
+
+
 def clear_cache() -> None:
     """Vide le cache mémoire (tests, édition à chaud d'un fichier d'univers)."""
     with _cache_lock:
         _cache.clear()
+        _venue_index.clear()

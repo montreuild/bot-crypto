@@ -229,5 +229,54 @@ def test_train_job_runs_and_completes_dry_run(client, tmp_path, monkeypatch):
         assert job is not None
         assert job["status"] == "done", job
         assert job["result"]["decision"].startswith("dry_run_would_")
+        # Les diagnostics traversent bien le job asynchrone jusqu'à l'UI :
+        # c'est tout ce que la page « Modèles » a pour afficher les top
+        # features d'un dry-run, qui n'écrit aucune version au registre.
+        tm = job["result"].get("train_meta") or {}
+        assert tm.get("feature_importance_amp"), job["result"]
     finally:
         candle_store_mod.get_store.set(None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Résolution du nom envoyé par l'UI (recette vs stratégie) et du timeframe
+# ─────────────────────────────────────────────────────────────────────────────
+def test_train_accepts_a_recipe_name(client, monkeypatch):
+    """La page « Modèles » est indexée par RECETTE : recopier `dyn_threshold_v1`
+    dans le champ « Stratégie » donnait « Stratégie inconnue » alors qu'une
+    seule stratégie déclare cette recette. On la résout au lieu de refuser."""
+    seen = {}
+
+    def _fake_start(strategy, symbol, tf, **kw):
+        seen.update(strategy=strategy, symbol=symbol, tf=tf)
+        return "job-1"
+
+    import app.engine.ml_jobs as ml_jobs
+    monkeypatch.setattr(ml_jobs, "start_train_job", _fake_start)
+
+    r = client.post("/api/ml/train", json={"strategy": "dyn_threshold_v1", "tf": "1h"})
+    assert r.status_code == 200, r.text
+    assert seen["strategy"] == "ml_dynamic_threshold"
+
+
+def test_train_ambiguous_recipe_400_lists_candidates(client):
+    """`omnibus_v4_multi` est déclarée par v11 ET v12 : refuser, mais en disant
+    entre quoi choisir — deviner publierait sous une lignée non demandée."""
+    r = client.post("/api/ml/train", json={"strategy": "omnibus_v4_multi", "tf": "1h"})
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert "opus_omnibus_v11" in detail and "opus_omnibus_v12" in detail
+
+
+def test_train_unknown_tf_400(client):
+    """« 15min » pour « 15m » partait en job de fond et échouait une minute
+    plus tard sur un « aucune donnée en cache » qui accusait le cache."""
+    r = client.post("/api/ml/train", json={"strategy": "opus_omnibus_v11", "tf": "15min"})
+    assert r.status_code == 400
+    assert "15m" in r.json()["detail"]
+
+
+def test_sweep_unknown_tf_400(client):
+    r = client.post("/api/ml/sweep", json={"strategy": "opus_omnibus_v11",
+                                           "tf": "15min", "windows": [5000]})
+    assert r.status_code == 400

@@ -37,6 +37,7 @@ from app.ml.scoring import (
     resolve_gate_spec,
     resolve_recipe_name,
     resolve_scorer,
+    resolve_train_meta,
     score_amp_dir_bundle,
 )
 
@@ -262,12 +263,34 @@ def maybe_refresh(strategy: Any, train_symbol: str, tf: str, df, *,
                     "incumbent_version": incumbent.version_id if incumbent else None}
 
         strategy.save_model(tmp_prefix)
+        # Vérifier ICI que l'artefact existe. Sans ce contrôle, un save_model()
+        # no-op (magasin de modèles indexé autrement que par TF) se propageait
+        # en deux symptômes trompeurs : un score_holdout sur un préfixe vide,
+        # rapporté comme « auc indisponible (labels mono-classe / holdout
+        # dégénéré) », puis un « artefacts absents » du registre — deux
+        # messages qui accusaient les données alors que rien n'avait été écrit.
+        missing = registry.missing_artifacts(recipe, tmp_prefix)
+        if missing:
+            logger.error(
+                f"[MLPolicy] {tf}/{recipe} : save_model() n'a produit aucun artefact "
+                f"exploitable (manquants : {missing})"
+            )
+            return {"decision": "failed",
+                    "reason": f"save_model n'a écrit aucun artefact (manquants : {missing})",
+                    "recipe": recipe, "train_symbol": train_symbol, "tf": tf,
+                    "incumbent_version": incumbent.version_id if incumbent else None}
+
         candidate_metrics = score_holdout(
             tmp_prefix, holdout_df,
             strategy=strategy, gate_cfg=gc_, params=params,
         )
         gate = decide_gate(candidate_metrics, incumbent_metrics,
                            auc_floor=gc_.auc_floor, epsilon=gc_.epsilon, metric=gc_.metric)
+        # Capturé ICI, avant le reset_model() de la branche "keep" plus bas :
+        # ce sont les diagnostics du CANDIDAT, et c'est justement quand il est
+        # rejeté qu'on veut voir pourquoi. Après restauration du sortant, ils
+        # ne seraient plus les siens.
+        candidate_train_meta = resolve_train_meta(strategy, tf)
 
         bounds = registry.train_window_bounds(train_df)
         recipe_cfg = {k: params.get(k) for k in _RECIPE_PARAM_KEYS if k in params}
@@ -307,6 +330,7 @@ def maybe_refresh(strategy: Any, train_symbol: str, tf: str, df, *,
         "published_version": published.version_id if published else None,
         "incumbent_version": incumbent.version_id if incumbent else None,
         "recipe": recipe, "train_symbol": train_symbol, "tf": tf,
+        "train_meta": candidate_train_meta,
     }
 
 

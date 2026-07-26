@@ -6,6 +6,121 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🏛 G2 — les actions SBF 120 sont activées (données, pas exécution)
+
+Tout le code G2 était livré ; il restait inactivé, et un maillon manquait.
+
+- **`app/core/bot_identity.py`** — `resolve_venue` gagne un échelon
+  « univers » : la clé `venue:` d'un `data/universe/*.yaml` **activé dans
+  `scanner.universe`** route ses membres. `universe_venue()` existait et était
+  testé, mais aucun code de production ne l'appelait : activer `scanner.universe`
+  ajoutait bien les 120 instruments au scanner, tous résolus sur la venue crypto
+  par défaut — donc cherchés chez OKX et jamais chez le provider actions. La
+  seule alternative documentée était d'écrire une ligne d'`assign` par titre.
+  Précédence : `assign` explicite (slot, puis symbole) > univers > `assign`
+  par stratégie > `venues.default`. Un univers non référencé ne route rien.
+- **`config.yaml`** — venue `euronext-paper` (XPAR, EUR, `fractional: false`,
+  TTF, plancher de courtage), `scanner.universe: [sbf120]`,
+  `min_volume_by_asset_class.equity` (le seuil crypto de 5 M$/24 h excluait
+  tout le SBF 120) et le bloc `providers.yfinance`. `can_execute: false` :
+  **aucun ordre n'est transmis**, le bot émet une notification de trade — G3
+  reste à faire.
+- **Nouveau — `scripts/backfill_equities.py`** : amorce le cache Parquet pour
+  un univers. Le runner ML ne fetch jamais (il lit le cache, d'où sa
+  reproductibilité) ; sur crypto le scanner remplit le cache tout seul, sur
+  actions rien ne l'avait jamais fait. Incrémental et réentrant, un titre en
+  échec n'interrompt pas les autres, et il annonce à l'avance les troncatures
+  imposées par Yahoo (1 h → 730 j, 15 m/30 m → 60 j, journalier illimité).
+
+Le paquet `yfinance` **n'est pas** ajouté aux dépendances : il réinstallerait
+pandas, retiré en phase 6. Le provider fonctionne via l'API chart publique
+(`requests`) ; `prefer_yfinance: true` reste utile si vous l'installez à la main.
+
+### 🔬 Page « Modèles » — les diagnostics d'entraînement deviennent visibles là où on expérimente
+
+Le panneau de diagnostics (top features + gain pour amplitude et direction,
+état et erreur de calibration, AUC direction par régime, importances par
+régime, similarité de Spearman entre régimes) existait déjà dans les deux UI
+et était produit par `app/ml/backend/trainer.py`. Il n'était simplement
+atteignable dans aucun des deux moments où l'on en a besoin.
+
+- **Après un entraînement** — la carte de job n'affichait que décision /
+  raison / AUC. En **dry-run** c'est particulièrement coûteux : ce mode
+  n'écrit rien au registre, il n'existe donc aucune version où aller lire les
+  diagnostics ensuite, alors que c'est le mode fait pour expérimenter. Les
+  résultats de `train_and_publish`, `maybe_refresh` et `window_sweep` (sur la
+  meilleure fenêtre) portent désormais `train_meta`, affiché par les deux UI.
+- **Sur un candidat rejeté** — le panneau ne lisait que la version ACTIVE
+  (`m.active.train_meta`), masquant exactement le cas où l'on enquête : un
+  candidat publié en `keep` qu'on hésite à promouvoir. Chaque ligne de
+  l'historique de versions gagne un bouton « diagnostics » ;
+  `/api/ml/registry/versions` renvoyait déjà `train_meta` par version, aucun
+  changement d'API n'était nécessaire.
+- **`app/ml/policy.py`** — les diagnostics du candidat sont capturés **avant**
+  le `reset_model()` de la branche « keep ». Ce reset vide `_train_meta` : une
+  lecture plus tardive aurait rendu `{}` précisément sur les rejets.
+- **Nouveau — `app.ml.scoring.resolve_train_meta`** : lit `_train_meta` avec
+  le même repli de clé que `save_model` et pour la même raison (`fit()` indexe
+  sous `"default"`, `score()` sous le symbole). Ambigu ⇒ `{}` : afficher les
+  diagnostics d'un autre modèle sous ce nom serait pire que de n'en afficher
+  aucun.
+
+Limite inchangée : seules les recettes entraînées par `MLBackend` (les quatre
+stratégies à mixin) instrumentent leur entraînement. `stat48_v4/v5` n'écrivent
+que `n_train/n_valid/auc_*`, `dyn_threshold_v1` rien — leur panneau reste
+vide tant que l'entraînement n'est pas unifié.
+
+### 🐛 Cycle d'entraînement ML — un entraînement lancé depuis l'UI produit enfin un artefact
+
+Cinq défauts indépendants se combinaient pour qu'aucun entraînement lancé
+depuis la page « Modèles » n'aboutisse, chacun se signalant par un message qui
+désignait la mauvaise cause.
+
+- **`app/api/routes/ml.py`** — le champ « Stratégie » était validé contre les
+  noms de MODULE (`opus_omnibus_v11`) alors que la table du registre, juste
+  au-dessus dans la même page, est indexée par RECETTE (`omnibus_v4_multi`) :
+  recopier une ligne du tableau donnait « Stratégie inconnue ». Un nom de
+  recette est désormais résolu vers la stratégie qui le déclare ; une recette
+  partagée par plusieurs stratégies reste refusée, mais en nommant les
+  candidates. Le timeframe est validé avant de lancer le job (« 15min » pour
+  « 15m » échouait une minute plus tard sur un « aucune donnée en cache » qui
+  accusait le cache).
+- **`app/ml/train_runner.py`** — `load_offline_ohlcv` sert le cache Parquet
+  brut, sans les colonnes `_pre_*` que le chemin live reçoit de
+  `scanner.fetch_ohlcv`. Les stratégies « bespoke » (`scoring_statistique_
+  opus_v4/v5`) échouaient donc en `fit()` depuis l'UI seulement. Pré-calcul
+  idempotent ajouté à la source.
+- **`app/ml/model_registry.py`** — `publish()` exigeait un bundle
+  `.amp.lgb` + `.dir.lgb` quelle que soit la recette : `dyn_threshold_v1`
+  (`persistence: lgbm_single`, un seul booster `.lgb`) ne pouvait
+  **structurellement pas** être publiée, entraînement réussi ou non. Le layout
+  suit maintenant le `persistence:` de la recette (`model_suffixes`), et
+  `missing_artifacts()` permet à l'appelant de constater l'absence au moment
+  où elle se produit.
+- **`scoring_statistique_opus_v4/v5`, `ml_dynamic_threshold`** — `save_model()`
+  indexait le magasin de modèles par le TF déduit du nom de fichier, alors que
+  `fit()` y écrit sous `"default"` (et `score()` sous le symbole). Sans
+  correspondance, l'écriture était un no-op **silencieux**, révélé deux couches
+  plus loin par un « auc_amp indisponible (labels mono-classe / holdout
+  dégénéré) » puis un « artefacts absents » — deux diagnostics qui accusaient
+  les données. Repli de clé explicite + WARNING au lieu du silence, et
+  `policy.maybe_refresh` / `train_runner` vérifient l'artefact juste après
+  l'écriture.
+- **`app/live/auto_opt_mixin.py`** — le validateur de nom de stratégie
+  n'acceptait que les minuscules et écartait donc `breakout_filtreHor`, un
+  module bien réel de `app/strategies/`, invisible au live sans autre signal
+  qu'un WARNING au démarrage. La garde (pas de `.`, `/`, `\`) est conservée ;
+  la casse n'y contribuait pas.
+- **UI (`models.html` + `frontend/src/app/models/page.tsx`)** — les champs
+  « Stratégie » et « Timeframe » deviennent des listes fermées (stratégies
+  découvertes sur disque via `/api/config`, timeframes de la table canonique),
+  ce qui supprime la confusion recette/stratégie à la source.
+
+Limite connue inchangée : les artefacts `stat48_v4`/`stat48_v5` sont publiés
+mais restent en `keep`, le scorer générique ne sachant pas lire le format
+`save_lgb_with_scaler` (pas de liste de features sérialisée) — promotion
+manuelle depuis la page « Modèles ».
+
 ### 🏛 G2 — Actions SBF 120 en paper (calendrier, sizing, frais, provider, notification de trade)
 
 Lève les **3 points de couplage** listés au plan directeur §4.2 (calendrier de

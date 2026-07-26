@@ -547,18 +547,46 @@ class Strategy(BaseStrategyML):
     def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
         return self.score(df, params)
 
+    def _save_key(self, tf_key: str) -> Optional[str]:
+        """Clé du magasin de modèles à persister pour ``tf_key``.
+
+        Le magasin est indexé selon l'appelant : ``fit()`` (chemin registre/
+        gate) écrit sous ``"default"`` faute de TF, ``score()`` sous le
+        SYMBOLE. ``save_model`` ne connaît, lui, que le TF déduit du nom de
+        fichier — sans repli il ne trouvait rien et sortait en silence, ce qui
+        se manifestait beaucoup plus loin par un « artefacts absents » du
+        registre. Repli explicite : TF demandé, puis ``"default"``, puis
+        l'unique modèle entraîné s'il n'y en a qu'un.
+        """
+        with self._lock:
+            if tf_key in self._amp_models and tf_key in self._dir_models:
+                return tf_key
+            if "default" in self._amp_models and "default" in self._dir_models:
+                return "default"
+            keys = [k for k in self._amp_models if k in self._dir_models]
+        return keys[0] if len(keys) == 1 else None
+
     def save_model(self, path: str) -> None:
         tf_key = os.path.splitext(os.path.basename(path))[0].rsplit("_", 1)[-1]
+        key    = self._save_key(tf_key)
+        if key is None:
+            logger.warning(
+                f"[V4] save_model({path}) : aucun modèle entraîné à persister "
+                f"(TF demandé={tf_key!r}, clés disponibles={sorted(self._amp_models)})"
+            )
+            return
         with self._lock:
-            amp  = self._amp_models.get(tf_key)
-            dir_ = self._dir_models.get(tf_key)
-            auc  = self._best_auc_per_tf.get(tf_key, 0.0)
-            meta = self._train_meta.get(tf_key, {})
+            amp  = self._amp_models.get(key)
+            dir_ = self._dir_models.get(key)
+            auc  = self._best_auc_per_tf.get(key, 0.0)
+            meta = self._train_meta.get(key, {})
         if amp is None or dir_ is None:
             return
         # phase6 : plus de StandardScaler — on utilise save_lgb_with_scaler
         # avec scaler=None (rétro-compat avec le format existant).
         from app.ml.backend.persistence import save_lgb_with_scaler
+        # Le meta porte le TF DEMANDÉ : c'est celui sous lequel l'artefact est
+        # publié et rechargé, pas la clé interne dont il a été tiré.
         if save_lgb_with_scaler(amp, dir_, None, path, tf_key, auc, meta):
             logger.info(f"[V4] Modèles sauvegardés → {path} (AUC combiné={auc:.3f})")
 

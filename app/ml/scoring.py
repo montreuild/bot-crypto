@@ -278,3 +278,34 @@ def resolve_scorer(strategy_or_name: Any):
     except Exception:
         return None
     return fn
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Diagnostics d'entraînement d'une instance fraîchement entraînée
+# ─────────────────────────────────────────────────────────────────────────────
+def resolve_train_meta(strategy: Any, tf: str) -> Dict[str, Any]:
+    """Diagnostics du modèle que ``strategy`` vient d'entraîner pour ``tf``.
+
+    C'est ce que la page « Modèles » affiche (top features + gain, erreur de
+    calibration, AUC par régime) : produit par ``app.ml.backend.trainer`` et
+    déposé dans ``_train_meta``, dict indexé PAR TF.
+
+    Le repli de clé est le même que celui de ``save_model`` et pour la même
+    raison : l'indexation dépend de l'appelant — ``fit()`` écrit sous
+    ``"default"`` faute de TF, ``score()`` sous le symbole. Lire la seule clé
+    ``tf`` ne rendrait rien sur le chemin d'entraînement offline, et un
+    panneau vide se lit comme « ce modèle n'a pas de diagnostics » alors qu'il
+    en a.
+
+    Best-effort : ``{}`` si la stratégie n'expose rien d'exploitable — toutes
+    les recettes n'instrumentent pas leur entraînement (cf. docstring module).
+    """
+    meta = getattr(strategy, "_train_meta", None)
+    if not isinstance(meta, dict) or not meta:
+        return {}
+    for key in (tf, "default"):
+        entry = meta.get(key)
+        if isinstance(entry, dict) and entry:
+            return dict(entry)
+    entries = [v for v in meta.values() if isinstance(v, dict) and v]
+    return dict(entries[0]) if len(entries) == 1 else {}
