@@ -350,3 +350,79 @@ class TestStat48Equivalence:
             assert ref is not None, f"la stratégie n'a pas de modèle {head}"
             gap = float(np.max(np.abs(ref.predict(X) - out.boosters[head].predict(X))))
             assert gap == pytest.approx(0.0, abs=1e-9), f"tête {head} : écart {gap}"
+
+
+class TestMultiSymbolPooling:
+    """G2 — une recette entraînée sur plusieurs symboles mis en commun.
+
+    Sur Euronext (~256 séances/an), ``min_bars: 2000`` plus un holdout de 1500
+    demandent ~13,7 ans d'historique PAR TITRE. Le pooling n'est donc pas un
+    raffinement pour les actions : c'est la condition d'existence du modèle.
+    """
+
+    @staticmethod
+    def _daily(seed: int, n: int = 1200, offset: int = 0) -> pl.DataFrame:
+        from app.core.indicators import precompute_df
+        rng = np.random.RandomState(seed)
+        times = [dt.datetime(2021, 1, 1) + dt.timedelta(days=i + offset) for i in range(n)]
+        close = 100 * np.cumprod(1 + rng.normal(0.0003, 0.018, n))
+        open_ = np.concatenate([[100.0], close[:-1]])
+        return precompute_df(pl.DataFrame({
+            "time": times, "open": open_, "close": close,
+            "high": np.maximum(open_, close) * 1.01,
+            "low": np.minimum(open_, close) * 0.99,
+            "volume": rng.uniform(1e5, 1e6, n)}))
+
+    def test_pooling_trains_where_a_single_symbol_cannot(self):
+        frames = {f"T{i}.PA": self._daily(i) for i in range(1, 9)}
+        # Chaque titre est SOUS min_bars — seul, il ne peut pas être entraîné.
+        assert rt.train("stat48_v5", frames["T1.PA"], "1d",
+                        params={"n_estimators": 20}) is None
+        out = rt.train_multi("stat48_v5", frames, "1d",
+                             params={"n_estimators": 20, "num_leaves": 7})
+        assert out is not None
+        assert out.train_meta["n_symbols"] == 8
+        assert out.train_meta["n_train"] > 5000
+
+    def test_split_is_temporal_not_positional(self):
+        """Couper à 80 % des LIGNES mettrait le premier symbole entièrement en
+        entraînement et le dernier en validation. La coupure suit donc une date
+        commune, et elle se déplace quand les historiques se décalent."""
+        base = rt.train_multi("stat48_v5", {"A.PA": self._daily(1), "B.PA": self._daily(2)},
+                              "1d", params={"n_estimators": 20, "num_leaves": 7})
+        shifted = rt.train_multi("stat48_v5",
+                                 {"A.PA": self._daily(1), "B.PA": self._daily(2, offset=900)},
+                                 "1d", params={"n_estimators": 20, "num_leaves": 7})
+        assert base.train_meta["label_stats"]["split_at"] \
+            != shifted.train_meta["label_stats"]["split_at"]
+
+    def test_a_too_short_symbol_is_skipped_without_failing_the_run(self):
+        frames = {f"T{i}.PA": self._daily(i) for i in range(1, 5)}
+        frames["COURT.PA"] = self._daily(99, n=60)
+        out = rt.train_multi("stat48_v5", frames, "1d",
+                             params={"n_estimators": 20, "num_leaves": 7})
+        assert out is not None
+        assert "COURT.PA" in out.train_meta["label_stats"]["skipped_symbols"]
+        assert out.train_meta["n_symbols"] == 4
+
+    def test_provenance_names_the_pooled_symbols(self):
+        frames = {f"T{i}.PA": self._daily(i) for i in range(1, 4)}
+        out = rt.train_multi("stat48_v5", frames, "1d",
+                             params={"n_estimators": 20, "num_leaves": 7})
+        assert out.train_meta["pooled_symbols"] == ["T1.PA", "T2.PA", "T3.PA"]
+        assert set(out.train_meta["label_stats"]["bars_per_symbol"]) == set(frames)
+
+    def test_empty_input_is_refused(self):
+        assert rt.train_multi("stat48_v5", {}, "1d") is None
+
+
+def test_polars_datetime_to_numpy_is_avoided():
+    """polars 1.0.0 (version épinglée) SEGFAULTE sur ``Series.to_numpy()`` d'une
+    colonne Datetime — pas d'exception, le process meurt. Le découpage temporel
+    passe donc par ``.dt.epoch("s")``. Test de garde : si une montée de version
+    corrige le segfault, ce test le dira, mais rien ne presse de revenir en
+    arrière."""
+    import inspect
+    src = inspect.getsource(rt.train_multi)
+    assert 'dt.epoch("s")' in src
+    assert '["time"].to_numpy()' not in src

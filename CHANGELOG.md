@@ -60,6 +60,37 @@ donne deux résultats opposés, et c'est le point :
 Aucune bascule automatique pour autant : les `_train` autonomes restent en
 place. Changer le chemin d'une recette reste une décision d'exploitation.
 
+### 🧬 Étape C (suite) — les `_train` autonomes disparaissent, et le pooling multi-symboles
+
+- **`scoring_statistique_opus_v4/v5` : 257 lignes de boucle LightGBM supprimées.**
+  `_train` délègue à `recipe_trainer` et ne garde que ce qui appartient
+  légitimement à la stratégie : le cache de features du backtest et l'état ML
+  en mémoire. `recipe_trainer.train()` accepte désormais un `FeatureSet` déjà
+  construit (`features_catalog.from_matrix`), sans quoi router `score()` par
+  lui aurait recalculé les features à chaque réentraînement walk-forward — un
+  correctif payé d'une régression de performance sur la boucle chaude.
+  Équivalence vérifiée sur **les deux** chemins : `fit()` (écart 0.000000) et
+  `score()` (10 fenêtres, **0 divergence** de signal, `p_event`/`p_up` à 6
+  décimales).
+- **Nouveau — `recipe_trainer.train_multi(recipe, {symbole: df}, tf)`.** Une
+  recette entraînée sur plusieurs symboles mis en commun. Trois pièges traités
+  explicitement : les features sont construites **par symbole** (une fenêtre
+  glissante ne doit jamais traverser une jointure entre deux titres — ce sont
+  les matrices X/y qui sont empilées, jamais les bougies) ; le découpage est
+  **temporel et commun**, pas indiciel (couper à 80 % des lignes mettrait le
+  premier symbole en entraînement et le dernier en validation) ; les niveaux de
+  prix n'entrent pas dans la matrice, les labels étant des rendements. Un titre
+  trop court est écarté avec sa raison sans faire échouer le lot, et la
+  provenance nomme les symboles poolés.
+
+  Vérifié : 8 titres de 1 200 barres journalières, **chacun sous `min_bars`
+  donc inentraînable seul**, produisent ensemble 7 672 lignes d'entraînement.
+
+- **Piège polars signalé** : `Series.to_numpy()` sur une colonne `Datetime`
+  **segfaute** en polars 1.0.0 (la version épinglée) — pas d'exception, le
+  process meurt. Le découpage temporel passe par `.dt.epoch("s")`. Aucun autre
+  site du dépôt n'utilise ce motif ; un test de garde le verrouille.
+
 ### 🐛 Deux défauts trouvés en cherchant l'origine de la divergence stat48
 
 Le premier diagnostic accusait `n_estimators` (300 codé en dur contre 500

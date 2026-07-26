@@ -176,7 +176,7 @@ def supports(recipe_name: str) -> Optional[str]:
 
 def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
           params: Optional[Dict[str, Any]] = None,
-          seed: int = 42) -> Optional[TrainedRecipe]:
+          features: Optional[Any] = None) -> Optional[TrainedRecipe]:
     """Entraîne la recette ``recipe_name`` sur ``df``. Aucune stratégie importée.
 
     ``params`` surcharge les valeurs de la recette (hyperparamètres, paramètres
@@ -186,12 +186,6 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
     Retourne ``None`` si l'historique est insuffisant ou les labels dégénérés ;
     ces cas sont journalisés avec leur cause, jamais silencieux.
     """
-    try:
-        import lightgbm as lgb
-    except ImportError:
-        logger.error("[RecipeTrainer] lightgbm requis : pip install lightgbm")
-        return None
-
     from app.ml import features_catalog, labelling
     from app.ml.recipe import load_recipe
 
@@ -203,7 +197,13 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
     r = load_recipe(recipe_name)
     p: Dict[str, Any] = {**r.train_params(), **(params or {})}
 
-    fs = features_catalog.build(r.features_catalog, df, p)
+    # ``features`` fourni : l'appelant possède déjà la matrice (cache de
+    # backtest de scoring_statistique_opus_v4/v5, semé par
+    # prepare_for_backtest pour chaque adx_threshold du param_space). La
+    # reconstruire ici transformerait un correctif en régression de perf sur
+    # la boucle walk-forward.
+    fs = features if features is not None else features_catalog.build(
+        r.features_catalog, df, p)
     if fs is None or len(fs) < r.min_bars:
         logger.warning(
             f"[RecipeTrainer] {recipe_name}/{tf} : features insuffisantes "
@@ -239,6 +239,26 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
         logger.warning(f"[RecipeTrainer] {recipe_name}/{tf} : split impossible (n={lab.n})")
         return None
 
+    return _fit_heads(recipe_name, r, p, tf, names, X_full,
+                      {h: lab.y[h][:lab.n] for h in heads},
+                      split, lab.n, heads, dict(lab.stats))
+
+
+def _fit_heads(recipe_name: str, r, p: Dict[str, Any], tf: str,
+               names: List[str], X_full, y_by_head: Dict[str, Any],
+               split: int, n: int, heads: List[str],
+               lab_stats: Dict[str, Any]) -> Optional["TrainedRecipe"]:
+    """Cœur d'entraînement, partagé par ``train`` (un symbole) et
+    ``train_multi`` (plusieurs). Reçoit une matrice et des cibles DÉJÀ
+    alignées et découpées : la façon dont le découpage a été décidé —
+    par index sur un symbole, par coupure temporelle commune sur
+    plusieurs — appartient à l'appelant."""
+    try:
+        import lightgbm as lgb
+    except ImportError:
+        logger.error("[RecipeTrainer] lightgbm requis : pip install lightgbm")
+        return None
+
     from app.ml.backend.features import impute_inplace
     medians: Dict[str, float] = {}
     for j, col in enumerate(names):
@@ -246,7 +266,7 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
         mask = np.isfinite(col_train)
         medians[col] = float(np.median(col_train[mask])) if mask.any() else 0.0
 
-    X_train, X_valid = X_full[:split].copy(), X_full[split:lab.n].copy()
+    X_train, X_valid = X_full[:split].copy(), X_full[split:n].copy()
     impute_inplace(X_train, names, medians)
     impute_inplace(X_valid, names, medians)
 
@@ -267,17 +287,17 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
     cal_err: Dict[str, float] = {}
     importances: Dict[str, List[tuple]] = {}
     meta: Dict[str, Any] = {
-        "n_train": int(split), "n_valid": int(lab.n - split),
-        "n_features": len(names), "horizons": lab.stats.get("horizons"),
-        "label_stats": lab.stats, "recipe": recipe_name,
+        "n_train": int(split), "n_valid": int(n - split),
+        "n_features": len(names), "horizons": lab_stats.get("horizons"),
+        "label_stats": lab_stats, "recipe": recipe_name,
         "label_scheme": r.label_scheme, "features_catalog": r.features_catalog,
         "source": "recipe_trainer",
     }
     top_n = int(p.get("importance_top_n", 20))
 
     for head in heads:
-        y = lab.y[head][:lab.n]
-        y_tr, y_va = y[:split], y[split:lab.n]
+        y = y_by_head[head][:n]
+        y_tr, y_va = y[:split], y[split:n]
         if len(np.unique(y_tr)) < 2:
             logger.warning(f"[RecipeTrainer] {recipe_name}/{tf} : labels mono-classe "
                            f"pour la tête {head!r}, entraînement ignoré")
@@ -322,7 +342,7 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
     meta["cal_err"] = cal_err
 
     logger.info(
-        f"[RecipeTrainer] {recipe_name}/{tf} : {split} train / {lab.n - split} val | "
+        f"[RecipeTrainer] {recipe_name}/{tf} : {split} train / {n - split} val | "
         f"{len(names)} feats (gardées {len(meta['kept_features'])}) | calib="
         f"{meta['calibrated']} | "
         + " ".join(f"AUC {h}={meta.get(f'auc_{h}', 0):.3f}" for h in heads)
@@ -330,3 +350,139 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
     return TrainedRecipe(recipe=recipe_name, tf=tf, boosters=boosters,
                          feature_names=names, medians=medians, train_meta=meta,
                          calibrators=calibrators)
+
+
+def train_multi(recipe_name: str, frames: Dict[str, pl.DataFrame], tf: str, *,
+                params: Optional[Dict[str, Any]] = None) -> Optional[TrainedRecipe]:
+    """Entraîne UNE recette sur PLUSIEURS symboles mis en commun (pooling).
+
+    Motivation mesurée (G2). Les recettes du dépôt demandent ``min_bars``
+    1500–2000 plus un holdout de 1500 ; sur Euronext (~256 séances/an), un titre
+    seul ne fournit ces 3 500 barres journalières qu'après **~13,7 ans**. Le
+    pooling n'est donc pas un raffinement pour les actions : c'est la condition
+    d'existence du modèle. Sur crypto il reste optionnel — la matrice de
+    transfert (``scripts/measure_symbol_transfer.py``) montre qu'un modèle par
+    symbole n'y apporte rien de mesurable.
+
+    **Trois pièges, traités explicitement.**
+
+    1. *Ne jamais concaténer les OHLCV.* Les features sont construites PAR
+       symbole : une fenêtre glissante qui traverserait la jointure entre deux
+       titres produirait des valeurs qui ne correspondent à aucun marché. Ce
+       sont les matrices X/y qui sont mises bout à bout, jamais les bougies.
+    2. *Le découpage doit être TEMPOREL, pas indiciel.* ``train`` coupe à 80 %
+       des lignes ; appliqué à un empilement, cela mettrait le premier symbole
+       entièrement en entraînement et le dernier en validation. On coupe donc à
+       une DATE commune, et chaque ligne rejoint l'un ou l'autre côté selon son
+       horodatage — même protocole que ``measure_symbol_transfer``, qui avait
+       mesuré cinq mois de fuite temporelle sur une version indexée.
+    3. *Les niveaux de prix ne sont pas comparables entre titres.* Ce n'est pas
+       un problème ici : les labels sont des RENDEMENTS et les features des
+       grandeurs normalisées ou stationnaires. Aucun prix absolu n'entre dans
+       la matrice.
+
+    ``frames`` : ``{symbole: DataFrame}``. Un symbole dont l'historique est trop
+    court est ignoré avec un avertissement plutôt que de faire échouer le tout.
+    """
+    why = supports(recipe_name)
+    if why:
+        logger.error(f"[RecipeTrainer] {recipe_name} non pris en charge : {why}")
+        return None
+    if not frames:
+        logger.error("[RecipeTrainer] train_multi : aucun symbole fourni")
+        return None
+
+    from app.ml import features_catalog, labelling
+    from app.ml.recipe import load_recipe
+
+    r = load_recipe(recipe_name)
+    p: Dict[str, Any] = {**r.train_params(), **(params or {})}
+
+    names: Optional[List[str]] = None
+    parts: List[tuple] = []          # (symbole, times, X, {tête: y})
+    skipped: Dict[str, str] = {}
+    for symbol, df in frames.items():
+        fs = features_catalog.build(r.features_catalog, df, p)
+        if fs is None:
+            skipped[symbol] = "features non constructibles"
+            continue
+        lab = labelling.build(r.label_scheme, fs.frame, p)
+        # Même plancher que ``train`` sur un symbole unique : sous 200 barres
+        # labellisables, un titre n'apporte que du bruit au jeu commun.
+        if lab is None or lab.n < 200:
+            skipped[symbol] = f"trop peu de barres labellisables ({0 if lab is None else lab.n})"
+            continue
+        if names is None:
+            names = list(fs.names)
+        elif list(fs.names) != names:
+            # Deux catalogues divergents sous une même recette empileraient des
+            # colonnes qui ne désignent pas la même chose.
+            skipped[symbol] = "colonnes de features incompatibles"
+            continue
+        if "time" not in fs.frame.columns:
+            skipped[symbol] = "pas de colonne 'time' — découpage temporel impossible"
+            continue
+        # ``.dt.epoch("s")`` et non ``.to_numpy()`` : sur une colonne Datetime,
+        # polars 1.0.0 (version épinglée du dépôt) SEGFAULTE — pas d'exception,
+        # le process meurt. Les secondes epoch suffisent au découpage temporel.
+        times = fs.frame["time"].dt.epoch("s").to_numpy()[:lab.n]
+        parts.append((symbol, times,
+                      fs.frame.select(names).to_numpy().astype(np.float32)[:lab.n],
+                      {h: lab.y[h][:lab.n] for h in r.heads if h in lab.y}))
+
+    if skipped:
+        logger.warning(f"[RecipeTrainer] {recipe_name}/{tf} : {len(skipped)} symbole(s) "
+                       f"écarté(s) — {skipped}")
+    if not parts or names is None:
+        logger.error(f"[RecipeTrainer] {recipe_name}/{tf} : aucun symbole exploitable")
+        return None
+
+    heads = [h for h in r.heads if all(h in ys for _, _, _, ys in parts)]
+    if not heads:
+        logger.error(f"[RecipeTrainer] {recipe_name} : têtes {r.heads} absentes "
+                     f"des labels produits")
+        return None
+
+    # Coupure TEMPORELLE commune (secondes epoch) : le 80e centile des
+    # horodatages mis en commun. Couper à 80 % des LIGNES mettrait le premier
+    # symbole en entraînement et le dernier en validation.
+    all_times = np.concatenate([t for _, t, _, _ in parts])
+    cut_ts = np.int64(np.quantile(all_times, 0.8))
+
+    tr_X, va_X = [], []
+    tr_y: Dict[str, list] = {h: [] for h in heads}
+    va_y: Dict[str, list] = {h: [] for h in heads}
+    per_symbol: Dict[str, int] = {}
+    for symbol, times, X, ys in parts:
+        m_tr, m_va = times < cut_ts, times >= cut_ts
+        tr_X.append(X[m_tr])
+        va_X.append(X[m_va])
+        for h in heads:
+            tr_y[h].append(ys[h][m_tr])
+            va_y[h].append(ys[h][m_va])
+        per_symbol[symbol] = int(len(X))
+
+    X_tr = np.concatenate(tr_X)
+    X_va = np.concatenate(va_X)
+    split, n = len(X_tr), len(X_tr) + len(X_va)
+    if split < 100 or n - split < 50:
+        logger.warning(f"[RecipeTrainer] {recipe_name}/{tf} : découpage temporel "
+                       f"impraticable ({split} train / {n - split} val)")
+        return None
+
+    X_full = np.concatenate([X_tr, X_va])
+    y_by_head = {h: np.concatenate([np.concatenate(tr_y[h]), np.concatenate(va_y[h])])
+                 for h in heads}
+    stats = {"horizons": r.label_horizons, "n_labels": n,
+             "pooled_symbols": sorted(per_symbol), "bars_per_symbol": per_symbol,
+             "split_at": str(np.array(cut_ts).astype("datetime64[s]")),
+             "skipped_symbols": skipped}
+
+    out = _fit_heads(recipe_name, r, p, tf, names, X_full, y_by_head,
+                     split, n, heads, stats)
+    if out is not None:
+        out.train_meta["pooled_symbols"] = sorted(per_symbol)
+        out.train_meta["n_symbols"] = len(per_symbol)
+        logger.info(f"[RecipeTrainer] {recipe_name}/{tf} : pooling de "
+                    f"{len(per_symbol)} symboles, coupure au {stats['split_at']}")
+    return out

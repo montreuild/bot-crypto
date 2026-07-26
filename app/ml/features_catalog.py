@@ -180,3 +180,38 @@ def _build_dyn_threshold(df: pl.DataFrame, **_ignored) -> Optional[FeatureSet]:
 register_catalog("v4_polars@1", _build_v4_polars)
 register_catalog("stat48@1", _build_stat48)
 register_catalog("dyn_threshold@1", _build_dyn_threshold)
+
+
+def from_matrix(catalog: str, X, frame: pl.DataFrame) -> FeatureSet:
+    """Emballe une matrice DÉJÀ construite dans le contrat du catalogue.
+
+    Sert aux appelants qui possèdent leur propre cache de features — le
+    backtest en tête, dont ``prepare_for_backtest`` pré-calcule la matrice pour
+    chaque valeur d'``adx_threshold`` du param_space. Sans ce point d'entrée,
+    router leur entraînement par ``recipe_trainer`` reconstruirait les features
+    à chaque réentraînement walk-forward : correction fonctionnelle payée d'une
+    régression de performance sur la boucle chaude.
+
+    ``frame`` fournit les colonnes de labellisation (``close``, ``time``) ;
+    seules ses ``len(X)`` premières lignes sont retenues, la matrice faisant foi.
+    """
+    names = _NAMES_BY_CATALOG.get(str(catalog).strip())
+    if names is None:
+        raise KeyError(f"Catalogue {catalog!r} sans nommage statique — "
+                       f"connus : {sorted(_NAMES_BY_CATALOG)}")
+    cols = names()
+    if X.shape[1] != len(cols):
+        raise RuntimeError(f"{catalog} : {X.shape[1]} colonnes pour {len(cols)} noms")
+    out = pl.DataFrame({n: X[:, j] for j, n in enumerate(cols)})
+    passthrough = [c for c in ("time", "close") if c in frame.columns]
+    if passthrough:
+        out = pl.concat([frame.select(passthrough).head(len(X)), out], how="horizontal")
+    return FeatureSet(frame=out, names=cols)
+
+
+#: Catalogues dont les noms de colonnes sont connus sans construire la matrice.
+#: Seul ``stat48`` en a besoin : les deux autres rendent déjà un frame nommé,
+#: donc n'ont aucune raison de passer par ``from_matrix``.
+_NAMES_BY_CATALOG: Dict[str, Callable[[], List[str]]] = {
+    "stat48@1": stat48_feature_names,
+}
