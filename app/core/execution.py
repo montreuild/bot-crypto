@@ -56,17 +56,98 @@ def net_pnl(side: str, entry: float, exit_price: float, size: float,
 
 def close_pnl(side: str, entry: float, exit_price: float, size: float,
               notional: float, fee_rate: float, daily_rate: float,
-              hours_held: float, periods_per_day: int = 24) -> tuple:
+              hours_held: float, periods_per_day: int = 24,
+              venue=None) -> tuple:
     """Décompte complet d'une clôture, partagé backtest ↔ live.
 
     Retourne ``(pnl_net, fees_sortie, cout_emprunt)`` :
-      fees   = exit_price × size × fee_rate
+      fees   = coût du fill de sortie (cf. :func:`venue_trade_cost`)
       borrow = intérêts composés margin sur le notional
       pnl    = brut directionnel − fees − borrow
+
+    ``venue`` (G2, optionnel) fait passer les frais par le modèle de coûts de
+    la venue (fixe + plancher + taxe de transaction). ``None`` = frais
+    strictement proportionnels, comportement historique.
     """
-    fees   = trade_fees(exit_price, size, fee_rate)
+    fees   = venue_trade_cost(exit_price, size, fee_rate, side=side,
+                              venue=venue, is_entry=False)
     borrow = borrow_cost(notional, daily_rate, hours_held, periods_per_day)
     return net_pnl(side, entry, exit_price, size, fees, borrow), fees, borrow
+
+
+# ── Contraintes et coûts par venue (G2 — actions) ───────────────────────────
+#
+# Une action ne s'achète pas en fractions (lot_size/fractional), son prix vit
+# sur une grille (tick_size), et son coût d'entrée n'est pas qu'un pourcentage :
+# commission fixe, plancher de courtage, et taxe sur les transactions
+# financières (TTF française, due à l'achat seulement). Ces trois formules sont
+# ici — donc partagées backtest ↔ live comme le reste du module — et **neutres
+# quand la venue est None ou crypto** (défauts : lot_size=0, tick_size=0,
+# fractional=True, fee_pct=None, fee_fixed=0, taxe=0).
+
+
+def quantize_size(size: float, venue=None) -> float:
+    """Arrondit une quantité aux contraintes de la venue (à la baisse).
+
+    ``fractional=False`` (actions) → entier ; ``lot_size > 0`` → multiple du
+    lot. Toujours **vers le bas** : dépasser la taille voulue augmenterait le
+    risque engagé au-delà de ce que le sizing a autorisé.
+    """
+    size = float(size)
+    if venue is None or size <= 0:
+        return size
+    lot = float(getattr(venue, "lot_size", 0.0) or 0.0)
+    if lot <= 0 and not getattr(venue, "fractional", True):
+        lot = 1.0
+    if lot <= 0:
+        return size
+    return (size // lot) * lot
+
+
+def quantize_price(price: float, venue=None) -> float:
+    """Aligne un prix sur la grille de cotation (``tick_size``) de la venue."""
+    price = float(price)
+    if venue is None or price <= 0:
+        return price
+    tick = float(getattr(venue, "tick_size", 0.0) or 0.0)
+    if tick <= 0:
+        return price
+    return round(round(price / tick) * tick, 10)
+
+
+def venue_trade_cost(price: float, size: float, fee_rate: float,
+                     side: str = "long", venue=None,
+                     is_entry: bool = True) -> float:
+    """Coût total d'un fill : commission + plancher + taxe de transaction.
+
+    ``fee_rate`` reste le taux de repli (``trading.taker_fee``) : une venue qui
+    ne déclare pas de ``fee_pct`` le conserve. Sans venue, le résultat est
+    **exactement** ``trade_fees(price, size, fee_rate)`` — les chemins crypto
+    ne changent pas d'un centime.
+
+    Taxe de transaction (TTF) : assise sur le **notionnel**, appliquée à
+    l'acquisition uniquement quand ``tax_on_buy_only`` (le cas français), donc
+    à l'entrée d'un long et à la sortie d'un short.
+    """
+    notional = float(price) * float(size)
+    if venue is None:
+        return notional * float(fee_rate)
+
+    pct = getattr(venue, "fee_pct", None)
+    rate = float(fee_rate) if pct is None else float(pct)
+    commission = notional * rate + float(getattr(venue, "fee_fixed", 0.0) or 0.0)
+    fee_min = float(getattr(venue, "fee_min", 0.0) or 0.0)
+    if notional > 0:
+        commission = max(commission, fee_min)
+
+    tax_pct = float(getattr(venue, "transaction_tax_pct", 0.0) or 0.0)
+    tax = 0.0
+    if tax_pct > 0:
+        buy_only = bool(getattr(venue, "tax_on_buy_only", True))
+        is_buy = (side == "long") == bool(is_entry)
+        if not buy_only or is_buy:
+            tax = notional * tax_pct
+    return commission + tax
 
 
 def risk_position_size(capital: float, risk_pct: float, entry: float,

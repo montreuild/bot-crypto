@@ -6,6 +6,102 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🏛 G2 — Actions SBF 120 en paper (calendrier, sizing, frais, provider, notification de trade)
+
+Lève les **3 points de couplage** listés au plan directeur §4.2 (calendrier de
+marché, sizing/coûts par venue, provider actions). Principe suivi de bout en
+bout : **rien de spécifique aux actions dans le moteur** — tout est porté par la
+`Venue`, dont les défauts reproduisent exactement le comportement crypto. Une
+configuration crypto existante n'emprunte aucun code nouveau (le routeur de
+providers n'est même pas instancié tant qu'aucune venue n'en déclare un).
+
+**Notification de trade** — le livrable central tant que l'exécution réelle
+(G3) n'est pas branchée. Une venue `can_execute: false` ne transmet **aucun**
+ordre : le bot calcule le trade, le suit comme une position paper, et émet un
+ticket portant **symbole, direction, prix d'ouverture, stop-loss,
+take-profit**, plus quantité, notionnel, R:R, stratégie et venue. Envoyé en
+**synchrone** et jamais throttlé — c'est le seul chemin vers l'exécution, il ne
+peut pas être perdu dans une queue saturée. Le message « position ouverte »
+habituel est volontairement supprimé dans ce cas : il laisserait croire à un
+fill réel. Symétrique à la sortie (« TRADE À SOLDER »). La décision est prise
+dans `_open_position`/`_close_position`, donc valable quel que soit le câblage
+— y compris sans routeur.
+
+- **Nouveau — `app/core/market_calendar.py`** : protocole `MarketCalendar`,
+  `AlwaysOpenCalendar` (défaut de toute venue → 24/7, comportement historique
+  strictement inchangé), moteur `SessionCalendar` déclaratif (fuseau, plusieurs
+  plages par jour, fériés à date fixe **et mobiles** via un comput de Pâques
+  sans dépendance, demi-séances), `XPAR` livré en dur, adaptateur
+  `exchange_calendars` utilisé s'il est installé. Toute autre place se déclare
+  dans `config.yaml › calendars`, sans toucher au code.
+- **Nouveau — `app/live/market_hours_mixin.py`** : filtre les entrées hors
+  séance (log throttlé à 15 min/symbole), garde-fou par signal, et clôture
+  avant fin de séance (`close_at_session_end`). Les positions **déjà ouvertes
+  restent gérées** marché fermé — le trailing doit se recalculer et un stop
+  touché au gap d'ouverture doit être constaté ; seules les *entrées* sont
+  bloquées. Un calendrier qui lève est traité comme « ouvert » : un calendrier
+  cassé ne doit pas geler le trading en silence.
+- **Nouveau — `app/core/yfinance_provider.py`** : provider actions data-only,
+  deux backends (le paquet `yfinance` s'il est installé, sinon l'API chart
+  publique via `requests`) — **aucune dépendance obligatoire ajoutée**.
+  Limitations Yahoo traitées explicitement plutôt que subies : profondeur
+  plafonnée par granularité (1 m → 7 j, intraday → 60 j, 1 h → 730 j) avec
+  troncature **avertie une seule fois** par symbole/TF ; intervalles inexistants
+  (3 m, 2 h, 4 h, 6 h, 8 h, 12 h) ré-agrégés depuis l'intervalle de base et
+  **ancrés sur l'epoch** pour que le cache Parquet incrémental déduplique ;
+  throttling process-wide + backoff exponentiel sur 429 + cache TTL ;
+  dégradation gracieuse (liste vide, jamais d'exception qui tue un cycle).
+- **Nouveau — `app/core/provider_router.py`** : route chaque appel marché vers
+  le provider de la venue du symbole, derrière la **même** interface que
+  `RobustExchange` — aucun site d'appel modifié. `build_market_provider` rend
+  l'exchange **inchangé** si aucune venue ne déclare de `data_provider`.
+- **Nouveau — `app/core/universe.py` + `data/universe/sbf120.yaml`** : univers
+  d'instruments versionnés, cumulés avec `scanner.symbols` via
+  `scanner.universe`. ⚠ Le fichier SBF 120 est un instantané constitué **hors
+  ligne** et marqué `verified: false` — la composition de l'indice est révisée
+  trimestriellement. **Nouveau `scripts/check_universe.py`** interroge le
+  provider ticker par ticker pour repérer les radiés/renommés (un ticker mort
+  ne lève aucune erreur : il produit un symbole qui ne score jamais).
+- **`app/core/execution.py`** : `quantize_size` (arrondi **à la baisse** au
+  lot / à l'unité entière — arrondir au-dessus engagerait plus de risque que le
+  sizing n'autorise), `quantize_price` (grille `tick_size`), `venue_trade_cost`
+  (commission % + fixe + plancher + taxe de transaction, assiette à l'achat
+  pour la TTF). Appliqués sur les **trois** chemins — ouverture, scale-in,
+  clôture — côté live *et* backtest, pour que la parité tienne.
+- **`app/core/bot_identity.py`** : `Venue` gagne `calendar`, `data_provider`,
+  `can_execute`, `close_at_session_end`, `close_before_close_min`, `fee_pct`,
+  `fee_fixed`, `fee_min`, `transaction_tax_pct`, `tax_on_buy_only`,
+  `min_notional`. Tous neutres par défaut.
+- **`app/core/candle_store.py` — deux hypothèses crypto retirées**, elles
+  auraient troué l'historique actions en silence : le plancher `since` à
+  2017 (fondation d'OKX — une action cote souvent depuis les années 1990) et
+  le rejet des barres à volume nul (signe de données cassées en crypto,
+  parfaitement normal sur une valeur peu liquide). Désormais pilotés par le
+  provider (`min_since_ms`, `drop_zero_volume`), défauts inchangés.
+- **`app/engine/scanner.py`** : mode univers, et seuil de liquidité
+  surchargeable **par classe d'actif** (`scanner.min_volume_by_asset_class`) —
+  le seuil crypto de 5 M$/24 h exclurait la quasi-totalité du SBF 120.
+- **`config.yaml`** : venue `euronext-paper`, `scanner.universe`,
+  `providers.yfinance` et `calendars` fournis **en commentaire** — rien n'est
+  activé par défaut, la marche à suivre est décrite sur place.
+- **Tests** : 6 fichiers, **121 tests** (`test_market_calendar`,
+  `test_venue_costs`, `test_universe`, `test_yfinance_provider`,
+  `test_provider_router`, `test_equity_paper_flow` — ce dernier monte un vrai
+  `LiveTrader` et vérifie le parcours complet). Chaque comportement actions a
+  son pendant « non-régression crypto ». Suite : 1 051 → **1 172 verts**, zéro
+  régression.
+
+> ⚠️ **Limitation méthodologique, à arbitrer avant d'entraîner du ML sur
+> actions** : Yahoo plafonne l'intraday à ~60 jours (15 m) et ~2 ans (1 h). Les
+> fenêtres d'entraînement calibrées sur la crypto (~40 k barres) ne sont donc
+> pas atteignables en intraday actions — soit du journalier, soit un
+> fournisseur payant (EOD Historical Data).
+>
+> **Non traité, assumé** : `bars_per_year` reste calé sur 365 j × 24 h, donc le
+> Sharpe annualisé d'un backtest actions est sous-estimé (séance Euronext :
+> 8,5 h, 252 j/an). Les comparaisons restent valides à classe d'actif
+> constante, pas entre crypto et actions. À corriger avec G3.
+
 ### 🧹 ML — Retrait du pack V4 figé (étape A de l'architecture unifiée)
 
 Le pack V4 de mai 2026 n'était conservé que sur une intuition. Mesuré sur

@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from app.core.bot_identity import build_slot_key
 from app.core.config import DEFAULT_TAKER_FEE
 from app.core.database import persist_open_position, session_scope
-from app.core.execution import trade_fees
+from app.core.execution import quantize_size, venue_trade_cost
 from app.core.indicators import atr_val as _compute_atr
 from app.core.timeframes import TF_SECONDS as _TF_SECS
 from app.core.trailing import TrailingStopManager
@@ -383,6 +383,15 @@ class PositionManageMixin:
             threshold=strat_threshold, size_factor=sf,
             stop_dist=add_stop_dist,
         )
+        # G2 : quantification par la venue (lot/unité entière) — mêmes bornes
+        # qu'à l'ouverture et qu'au backtest. Le notionnel n'est recalculé que
+        # si l'arrondi a effectivement bougé la taille : en crypto, où c'est un
+        # no-op, on conserve exactement le notionnel de ``compute_size``.
+        venue = self._venue_for(symbol, pos.get("strategy", ""),
+                                pos.get("timeframe", self.tf))
+        q_size = quantize_size(add_size, venue)
+        if q_size != add_size:
+            add_size, add_notional = q_size, round(q_size * price, 4)
         if add_size <= 0 or add_notional <= 0:
             return
 
@@ -411,7 +420,8 @@ class PositionManageMixin:
             exec_price *= (1 + slip) if side == "long" else (1 - slip)
 
         fee_rate = self.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE)
-        add_fees = trade_fees(exec_price, add_size, fee_rate)
+        add_fees = venue_trade_cost(exec_price, add_size, fee_rate,
+                                    side=side, venue=venue, is_entry=True)
         with self._capital_lock:
             if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
                 self._paper_base -= add_fees

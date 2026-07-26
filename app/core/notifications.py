@@ -35,6 +35,10 @@ except ImportError:
 _DEFAULT_EVENTS = {
     "on_trade_open":      True,
     "on_trade_close":     True,
+    # G2 : venue sans exécution branchée (actions en paper) — le bot calcule le
+    # trade et l'envoie à exécuter à la main. Actif par défaut : sans lui,
+    # l'utilisateur ne verrait tout simplement pas passer ses trades actions.
+    "on_trade_signal":    True,
     "on_circuit_breaker": True,
     "on_dd_warning":      True,
     "on_position_loss":   True,
@@ -172,14 +176,81 @@ class Notifier:
             return
         side  = pos.get("side", "?")
         emoji = "🟢" if side == "long" else "🔴"
+        tp    = pos.get("take_profit")
+        tp_txt = f" | TP : `{tp:.4f}`" if tp else " | TP : `trailing`"
         self.send(
             f"{emoji} *Position ouverte*\n"
             f"Pair      : `{pos.get('symbol','?')}`\n"
             f"Side      : `{side.upper()}` — Stratégie : `{pos.get('strategy','?')}`\n"
-            f"Entrée    : `{pos.get('entry',0):.4f}` | Stop : `{pos.get('stop',0):.4f}`\n"
+            f"Entrée    : `{pos.get('entry',0):.4f}` | Stop : `{pos.get('stop',0):.4f}`"
+            f"{tp_txt}\n"
             f"Notionnel : `${pos.get('notional',0):.2f}` | Score : `{pos.get('score',0):.2f}`\n"
             f"Raison    : _{pos.get('reason','—')}_"
         )
+
+    def notify_trade_signal(self, pos: dict, venue: str = "",
+                            action: str = "open") -> None:
+        """Trade à exécuter **à la main** — venue sans exécution branchée (G2).
+
+        Tant que l'exécution réelle actions n'est pas livrée (G3), le bot
+        calcule et suit la position mais n'envoie aucun ordre : cette
+        notification EST le passage à l'acte. Elle porte donc tout ce qu'il
+        faut pour saisir l'ordre chez son courtier — symbole, sens, prix
+        d'ouverture, stop, take-profit — et non un simple avis d'information.
+
+        ``action`` : ``"open"`` (entrée) ou ``"close"`` (sortie à solder).
+        Jamais throttlée (deux trades distincts ne doivent jamais fusionner) et
+        envoyée **en synchrone** : c'est le seul chemin vers l'exécution, il ne
+        peut pas être perdu dans une queue saturée ou un arrêt du process.
+        """
+        if not self._events.get("on_trade_signal"):
+            return
+        side = str(pos.get("side", "?"))
+        symbol = pos.get("symbol", "?")
+        entry = float(pos.get("entry", 0) or 0)
+        stop = float(pos.get("stop", 0) or 0)
+        tp = pos.get("take_profit")
+        size = float(pos.get("size", 0) or 0)
+
+        if action == "close":
+            direction = "VENDRE" if side == "long" else "RACHETER"
+            self.send(
+                f"📤 *TRADE À SOLDER — {direction}*\n"
+                f"Symbole   : `{symbol}`\n"
+                f"Sens      : `{direction}` `{size:g}` (clôture {side.upper()})\n"
+                f"Prix ind. : `{float(pos.get('exit', entry) or entry):.4f}`\n"
+                f"Motif     : _{pos.get('exit_reason', '—')}_\n"
+                f"Venue     : `{venue or '—'}` — _aucun ordre transmis, à exécuter manuellement._",
+                async_=False, level="warning",
+                key=f"signal_close::{pos.get('id', symbol)}", throttle=False,
+            )
+            return
+
+        direction = "ACHAT" if side == "long" else "VENTE"
+        emoji = "🟢" if side == "long" else "🔴"
+        risk = abs(entry - stop)
+        lines = [
+            f"{emoji} *TRADE À EXÉCUTER — {direction}*",
+            f"Symbole   : `{symbol}`",
+            f"Sens      : `{direction}` (`{side.upper()}`)",
+            f"Ouverture : `{entry:.4f}`",
+            f"Stop-loss : `{stop:.4f}`" + (f" (`-{risk / entry * 100:.2f}%`)" if entry > 0 else ""),
+        ]
+        if tp:
+            tp = float(tp)
+            rr = abs(tp - entry) / risk if risk > 0 else 0.0
+            lines.append(f"Take-profit: `{tp:.4f}`" + (f" (R:R `{rr:.2f}`)" if rr else ""))
+        else:
+            lines.append("Take-profit: `—` (_sortie pilotée par le trailing stop_)")
+        lines += [
+            f"Quantité  : `{size:g}` | Notionnel : `{float(pos.get('notional', 0) or 0):.2f}`",
+            f"Stratégie : `{pos.get('strategy','?')}`@`{pos.get('timeframe','?')}` "
+            f"| Score : `{float(pos.get('score', 0) or 0):.2f}`",
+            f"Venue     : `{venue or '—'}`",
+            "_Aucun ordre n'a été transmis : à saisir chez votre courtier._",
+        ]
+        self.send("\n".join(lines), async_=False, level="warning",
+                  key=f"signal_open::{pos.get('id', symbol)}", throttle=False)
 
     def notify_trade(self, trade: dict):
         if not self._events.get("on_trade_close"):

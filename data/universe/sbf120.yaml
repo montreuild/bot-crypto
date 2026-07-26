@@ -1,0 +1,139 @@
+# ============================================================================
+#  Univers SBF 120 — Euronext Paris (G2)
+# ============================================================================
+#
+#  ⚠️  INSTANTANÉ NON VÉRIFIÉ (`verified: false`).
+#
+#  La composition du SBF 120 est révisée trimestriellement par le conseil
+#  scientifique d'Euronext : entrées, sorties, fusions et changements de
+#  mnémonique. Ce fichier a été constitué hors ligne, sans accès à la
+#  publication officielle — il faut donc le considérer comme un POINT DE
+#  DÉPART opérationnel, pas comme une source de vérité.
+#
+#  Avant de trader dessus, exécuter :
+#
+#      python scripts/check_universe.py sbf120
+#
+#  qui interroge le provider pour chaque ticker et signale ceux qui ne
+#  renvoient aucune donnée (radiés, renommés, mal orthographiés). Puis
+#  recouper avec la composition officielle publiée par Euronext (« CAC
+#  Family index composition »).
+#
+#  Format : cf. app/core/universe.py. Un membre peut s'écrire en forme courte
+#  (`- AIR.PA`) ou longue (`- {symbol: AIR.PA, name: Airbus}`).
+# ============================================================================
+
+name: SBF 120
+venue: euronext-paper
+asset_class: equity
+quote_currency: EUR
+calendar: XPAR
+as_of: 2026-07-26
+verified: false
+source: >
+  Constitué de mémoire (CAC 40 + principaux composants du SBF 120), sans accès
+  à la publication Euronext. À valider avec scripts/check_universe.py puis
+  contre la composition officielle.
+
+members:
+  # ── CAC 40 ──────────────────────────────────────────────────────────────
+  - {symbol: AC.PA,     name: Accor}
+  - {symbol: ACA.PA,    name: Crédit Agricole}
+  - {symbol: AI.PA,     name: Air Liquide}
+  - {symbol: AIR.PA,    name: Airbus}
+  - {symbol: BN.PA,     name: Danone}
+  - {symbol: BNP.PA,    name: BNP Paribas}
+  - {symbol: BVI.PA,    name: Bureau Veritas}
+  - {symbol: CA.PA,     name: Carrefour}
+  - {symbol: CAP.PA,    name: Capgemini}
+  - {symbol: CS.PA,     name: AXA}
+  - {symbol: DG.PA,     name: Vinci}
+  - {symbol: DSY.PA,    name: Dassault Systèmes}
+  - {symbol: EDEN.PA,   name: Edenred}
+  - {symbol: EL.PA,     name: EssilorLuxottica}
+  - {symbol: EN.PA,     name: Bouygues}
+  - {symbol: ENGI.PA,   name: Engie}
+  - {symbol: ERF.PA,    name: Eurofins Scientific}
+  - {symbol: GLE.PA,    name: Société Générale}
+  - {symbol: HO.PA,     name: Thales}
+  - {symbol: KER.PA,    name: Kering}
+  - {symbol: LR.PA,     name: Legrand}
+  - {symbol: MC.PA,     name: LVMH}
+  - {symbol: ML.PA,     name: Michelin}
+  - {symbol: MT.PA,     name: ArcelorMittal}
+  - {symbol: OR.PA,     name: L'Oréal}
+  - {symbol: ORA.PA,    name: Orange}
+  - {symbol: PUB.PA,    name: Publicis Groupe}
+  - {symbol: RI.PA,     name: Pernod Ricard}
+  - {symbol: RMS.PA,    name: Hermès International}
+  - {symbol: RNO.PA,    name: Renault}
+  - {symbol: SAF.PA,    name: Safran}
+  - {symbol: SAN.PA,    name: Sanofi}
+  - {symbol: SGO.PA,    name: Saint-Gobain}
+  - {symbol: STLAP.PA,  name: Stellantis}
+  - {symbol: STMPA.PA,  name: STMicroelectronics}
+  - {symbol: SU.PA,     name: Schneider Electric}
+  - {symbol: TEP.PA,    name: Teleperformance}
+  - {symbol: TTE.PA,    name: TotalEnergies}
+  - {symbol: URW.PA,    name: Unibail-Rodamco-Westfield}
+  - {symbol: VIE.PA,    name: Veolia Environnement}
+
+  # ── Reste du SBF 120 ────────────────────────────────────────────────────
+  - {symbol: AF.PA,     name: Air France-KLM}
+  - {symbol: AKE.PA,    name: Arkema}
+  - {symbol: ALO.PA,    name: Alstom}
+  - {symbol: AMUN.PA,   name: Amundi}
+  - {symbol: ATE.PA,    name: Alten}
+  - {symbol: AYV.PA,    name: Ayvens}
+  - {symbol: BB.PA,     name: Société BIC}
+  - {symbol: BEN.PA,    name: Bénéteau}
+  - {symbol: BIM.PA,    name: bioMérieux}
+  - {symbol: CLARI.PA,  name: Clariane}
+  - {symbol: COFA.PA,   name: Coface}
+  - {symbol: COV.PA,    name: Covivio}
+  - {symbol: DBG.PA,    name: Derichebourg}
+  - {symbol: DEC.PA,    name: JCDecaux}
+  - {symbol: DIM.PA,    name: Sartorius Stedim Biotech}
+  - {symbol: ELIOR.PA,  name: Elior Group}
+  - {symbol: ELIS.PA,   name: Elis}
+  - {symbol: EMEIS.PA,  name: Emeis}
+  - {symbol: ERA.PA,    name: Eramet}
+  - {symbol: FDJ.PA,    name: FDJ United}
+  - {symbol: FGR.PA,    name: Eiffage}
+  - {symbol: FRVIA.PA,  name: Forvia}
+  - {symbol: GET.PA,    name: Getlink}
+  - {symbol: GFC.PA,    name: Gecina}
+  - {symbol: GTT.PA,    name: GTT}
+  - {symbol: ICAD.PA,   name: Icade}
+  - {symbol: IPN.PA,    name: Ipsen}
+  - {symbol: IPS.PA,    name: Ipsos}
+  - {symbol: ITP.PA,    name: Interparfums}
+  - {symbol: LI.PA,     name: Klépierre}
+  - {symbol: MERY.PA,   name: Mercialys}
+  - {symbol: MF.PA,     name: Wendel}
+  - {symbol: MMB.PA,    name: Lagardère}
+  - {symbol: MMT.PA,    name: Métropole Télévision}
+  - {symbol: NEX.PA,    name: Nexans}
+  - {symbol: NK.PA,     name: Imerys}
+  - {symbol: NXI.PA,    name: Nexity}
+  - {symbol: OPM.PA,    name: OPmobility}
+  - {symbol: OVH.PA,    name: OVHcloud}
+  - {symbol: RCO.PA,    name: Rémy Cointreau}
+  - {symbol: RUI.PA,    name: Rubis}
+  - {symbol: RXL.PA,    name: Rexel}
+  - {symbol: SCR.PA,    name: SCOR}
+  - {symbol: SK.PA,     name: SEB}
+  - {symbol: SOI.PA,    name: Soitec}
+  - {symbol: SPIE.PA,   name: SPIE}
+  - {symbol: SW.PA,     name: Sodexo}
+  - {symbol: TE.PA,     name: Technip Energies}
+  - {symbol: TFI.PA,    name: TF1}
+  - {symbol: TKO.PA,    name: Tikehau Capital}
+  - {symbol: TRI.PA,    name: Trigano}
+  - {symbol: UBI.PA,    name: Ubisoft Entertainment}
+  - {symbol: VCT.PA,    name: Vicat}
+  - {symbol: VIRP.PA,   name: Virbac}
+  - {symbol: VK.PA,     name: Vallourec}
+  - {symbol: VLA.PA,    name: Valneva}
+  - {symbol: VRLA.PA,   name: Verallia}
+  - {symbol: WLN.PA,    name: Worldline}

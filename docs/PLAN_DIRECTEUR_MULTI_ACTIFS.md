@@ -8,6 +8,27 @@
 > fait et ce qui reste à faire.
 >
 > **Dernière mise à jour : 2026-07-26** — branche
+> `claude/plan-directeur-sprint-g2-n0ima2`, **sprint G2 : actions SBF 120 en
+> paper**. Changements de statut apportés par cette passe :
+>
+> * **G2 ✅ FAIT** (§4.5bis) — les **3 points de couplage** de §4.2 sont levés :
+>   calendrier de marché générique (`market_calendar.py` + `MarketHoursMixin`),
+>   sizing entier et coûts par venue (`execution.py`, partagés backtest ↔ live),
+>   provider actions data-only (`yfinance_provider.py`) routé par venue
+>   (`provider_router.py`), univers statiques (`universe.py` +
+>   `data/universe/sbf120.yaml`).
+> * **Notification de trade** (demande explicite du sprint) — une venue
+>   `can_execute: false` ne transmet **aucun** ordre et émet à la place un
+>   ticket portant symbole / direction / ouverture / SL / TP. G3 se réduit
+>   désormais à brancher un `ExecutionProvider` et basculer un booléen.
+> * **Deux hypothèses crypto retirées du `CandleStore`** (plancher `since` à
+>   2017, rejet des barres à volume nul) — elles auraient troué l'historique
+>   actions en silence.
+> * **Actions requises avant d'activer G2** : vérifier la composition de
+>   `data/universe/sbf120.yaml` (`verified: false`, `scripts/check_universe.py`)
+>   et le taux de TTF retenu — cf. §4.5bis et §6.
+>
+> **Mise à jour 2026-07-26 (matin)** — branche
 > `claude/ml-training-optimization-ofqd0t`, chantier **architecture ML
 > unifiée** (`docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md`, étapes A→G,
 > décisions 1-13). Changements de statut apportés par cette passe :
@@ -88,7 +109,7 @@
 | **Dépendances** | ✅ Allégé | `pandas`, `pyarrow`, `scikit-learn` supprimés (~23 Mo + scipy/joblib transitifs). Polars + LightGBM natif partout. |
 | **Couches** | ✅ Strictes | `core → engine → live → api → strategies`, 0 import circulaire (vérifié par grep). |
 | **Stratégies actives** | 15 (`manual_active`) | Sur **42** fichiers `app/strategies/` (45 → 42 : 5 supprimés, 2 ajoutés). DEAD-01 clos par factorisation, plus de code mort Opus/stat. |
-| **Tests (2026-07-26)** | ✅ 1 051 verts, 3 skipped | `pytest -m "not slow"`, ruff et `tsc --noEmit` propres. |
+| **Tests (2026-07-26, après G2)** | ✅ 1 172 verts, 3 skipped | `pytest -m "not slow"` + `ruff check .` propres. 1 051 → 1 172 : +121 tests G2, **zéro régression**. |
 
 ### Note d'exécution — flakiness environnementale (rappel)
 
@@ -302,13 +323,15 @@ reste à brancher.*
 - Couplage ccxt confiné à ~5 fichiers (`exchange`, `candle_store`, `derivatives`,
   `position_*`, `routes/derivatives`).
 
-### 4.2 Les 3 points de couplage restants
+### 4.2 Les 3 points de couplage — ✅ LEVÉS (G2, 2026-07-26)
 
-| Point | À faire |
+| Point | État |
 |---|---|
-| **Calendrier de marché** (le plus structurant) | `app/core/market_calendar.py` (wrapper `exchange_calendars` XPAR), gating `_cycle()`/`CandleStore`/forward-test, seuil de gap par classe d'actif, `close_at_session_end`. La boucle live suppose encore un marché 24/7. |
-| **Sizing & coûts par venue** | `compute_size` en fractions continues → sizing entier (`lot_size`, `tick_size`) ; frais par venue (fixe + % + **TTF française 0,4 %**) partagés backtest/live. |
-| **Provider actions** | `YFinanceProvider` (data-only, tickers `.PA`) → CandleStore ; `data/universe/sbf120.yaml` ; scanner mode equity. ⚠ « ML par instrument » : **prémisse revue**, cf. §4.2bis. |
+| **Calendrier de marché** (le plus structurant) | ✅ `app/core/market_calendar.py` — protocole `MarketCalendar`, `AlwaysOpenCalendar` (défaut = comportement 24/7 inchangé), moteur `SessionCalendar` déclaratif (fuseau, séances multiples, fériés fixes **et mobiles** via Pâques, demi-séances), `XPAR` livré en dur, adaptateur `exchange_calendars` si installé. Gating câblé dans `_cycle()` (`MarketHoursMixin`) + `close_at_session_end`. |
+| **Sizing & coûts par venue** | ✅ `execution.quantize_size` / `quantize_price` / `venue_trade_cost` — sizing entier (`lot_size`, `fractional`), grille de cotation (`tick_size`), coûts fixe + % + plancher + **TTF** (assiette à l'achat). Partagés backtest ↔ live, appliqués sur les 3 chemins (ouverture, scale-in, clôture). |
+| **Provider actions** | ✅ `app/core/yfinance_provider.py` (data-only) + `app/core/provider_router.py` (routage par venue) + `app/core/universe.py` + `data/universe/sbf120.yaml` + mode univers du scanner. ⚠ « ML par instrument » : **prémisse revue**, cf. §4.2bis. |
+
+Détail d'exécution : §4.5bis.
 
 ### 4.2bis Le ML par instrument n'est plus un prérequis — c'est une question ouverte
 
@@ -384,8 +407,8 @@ SRD/short : chantier séparé, hors périmètre.
 | 3 | **ARCH-01** | OpusBase (routing partagé) sur les variantes survivantes | DEAD-01 |
 | 4 | **Observabilité** | Prometheus, logs JSON, `/health` enrichi | — |
 | 5 | **Tests** | TEST-11 (smoke), TEST-05 (ordres mockés), coverage CI | DEAD-01 |
-| 6 | **G2** | Actions SBF120 en paper (calendrier, sizing, frais, provider) | G1 (fait) |
-| 7 | **G3** | Exécution réelle actions (IBKR/Saxo) | G2 validé |
+| ~~6~~ | **G2** | ✅ **FAIT (2026-07-26)** — Actions SBF120 en paper (calendrier, sizing, frais, provider, **notification de trade**), cf. §4.5bis | G1 (fait) |
+| 7 | **G3** | Exécution réelle actions (IBKR/Saxo) — la venue passe `can_execute: true`, le reste est déjà en place | G2 **validé en paper** (cf. §4.5bis, « ce qu'il reste à faire ») |
 | — | Itératif | Financier, DX, recherche (§3.5-3.6) | au fil de l'eau |
 
 
@@ -522,8 +545,98 @@ Plan C :
   - ➕ **Spec détaillée** : `docs/CONCEPTION_CYCLE_DE_VIE_ML.md` — architecture **recette / registre / politique de rafraîchissement**, §7 tient à jour le statut précis de chaque étape (E1-E7) et ce qui reste (passe de confirmation optimiseur, feature freezing, purge direction étendue aux stratégies sœurs, UI Modèles — E7 non commencé).
 
 
+### 4.5bis 🟢 G2 — actions SBF 120 en paper — ✅ FAIT (2026-07-26)
+
+Lève les **3 points de couplage** de §4.2. Principe directeur : rien de
+spécifique aux actions dans le moteur — tout passe par la **venue**, et les
+défauts de venue reproduisent exactement le comportement crypto historique.
+Une configuration crypto existante n'emprunte aucun code nouveau (le routeur
+n'est même pas instancié tant qu'aucune venue ne déclare de provider).
+
+**Ce qui a été livré**
+
+| Brique | Fichier | Rôle |
+|---|---|---|
+| Calendrier de marché | `app/core/market_calendar.py` | Protocole + `AlwaysOpenCalendar` (défaut) + moteur `SessionCalendar` déclaratif + `XPAR` + adaptateur `exchange_calendars` optionnel |
+| Gating de la boucle live | `app/live/market_hours_mixin.py` | Filtre les entrées hors séance (log throttlé), garde-fou par signal, clôture avant fin de séance. **Les positions ouvertes restent gérées marché fermé** (trailing, stop au gap) |
+| Contraintes & coûts venue | `app/core/execution.py` | `quantize_size`, `quantize_price`, `venue_trade_cost` — partagés backtest ↔ live |
+| Modèle de venue étendu | `app/core/bot_identity.py` | `calendar`, `data_provider`, `can_execute`, `close_at_session_end`, `fee_pct/fixed/min`, `transaction_tax_pct`, `min_notional` |
+| Provider actions | `app/core/yfinance_provider.py` | Data-only, deux backends (paquet `yfinance` ou API chart via `requests`) |
+| Routage multi-provider | `app/core/provider_router.py` | Aiguille par venue ; **inerte** si aucune venue ne déclare de provider |
+| Univers statiques | `app/core/universe.py`, `data/universe/sbf120.yaml` | Liste versionnée d'instruments, cumulée avec `scanner.symbols` |
+| Vérification d'univers | `scripts/check_universe.py` | Interroge le provider ticker par ticker (radiés/renommés) |
+| Notification de trade | `app/core/notifications.py` | `notify_trade_signal` — **le livrable central** ci-dessous |
+
+**Notification de trade (exigence explicite du sprint).** Tant que l'exécution
+réelle n'est pas branchée, une venue `can_execute: false` ne transmet **aucun**
+ordre : le bot calcule le trade, le suit comme une position paper, et émet un
+*ticket* portant **symbole, direction, prix d'ouverture, stop-loss,
+take-profit**, plus quantité, notionnel, R:R, stratégie et venue. Envoyé en
+**synchrone** et jamais throttlé (c'est le seul chemin vers l'exécution, il ne
+peut pas être perdu dans une queue). Le message « position ouverte » habituel
+est volontairement **supprimé** dans ce cas : il laisserait croire à un fill
+réel. Symétrique à la sortie (« TRADE À SOLDER »). Décision prise dans
+`_open_position`/`_close_position` — donc valable même sans routeur.
+
+**Deux hypothèses crypto retirées du `CandleStore`** (elles auraient troué
+l'historique actions en silence) : le plancher `since` à 2017 (fondation
+d'OKX) et le rejet des barres à volume nul — désormais pilotés par le provider
+(`min_since_ms`, `drop_zero_volume`).
+
+**Limitations de l'API Yahoo, traitées explicitement** (elles se manifestent
+autrement par des réponses vides inexpliquées) : profondeur plafonnée par
+granularité (1 m → 7 j, intraday → 60 j, 1 h → 730 j, 1 j → illimité) avec
+troncature **avertie une fois** par symbole/TF ; intervalles inexistants
+(3 m, 2 h, 4 h, 6 h, 8 h, 12 h) ré-agrégés depuis l'intervalle de base, ancrés
+sur l'epoch pour que le cache Parquet incrémental déduplique ; throttling
+process-wide + backoff exponentiel sur 429 + cache TTL ; dégradation gracieuse
+(liste vide, jamais d'exception qui tue un cycle).
+
+> ⚠️ **Conséquence méthodologique** : un backtest actions en 15 m ne peut pas
+> dépasser ~60 jours d'historique, et ~2 ans en 1 h. Les fenêtres
+> d'entraînement ML calibrées sur la crypto (~40 k barres) ne sont donc **pas**
+> atteignables en intraday actions. À arbitrer avant d'entraîner quoi que ce
+> soit sur SBF 120 : soit du journalier, soit un fournisseur payant (EOD
+> Historical Data, cf. §4.4).
+
+**Ce qu'il reste à faire avant de faire tourner G2 pour de vrai**
+
+1. **Vérifier l'univers** : `data/universe/sbf120.yaml` est un instantané
+   constitué **hors ligne** (`verified: false`) — la composition de l'indice est
+   révisée trimestriellement. Lancer `python scripts/check_universe.py sbf120`
+   puis recouper avec la publication Euronext. Le fichier est délibérément
+   marqué non vérifié plutôt que présenté comme faisant autorité.
+2. **Vérifier le taux de TTF** (`transaction_tax_pct`, posé à 0,4 % dans
+   l'exemple de `config.yaml` d'après ce plan) et les frais réels du courtier
+   (`fee_pct`, `fee_fixed`, `fee_min`) — ils pilotent directement le seuil de
+   rentabilité et le `min_notional`.
+3. **Décommenter** la venue `euronext-paper`, `scanner.universe` et
+   `providers.yfinance` dans `config.yaml`, puis assigner les instruments
+   (`venues.assign`). Rien n'est activé par défaut.
+4. **Rejouer `scripts/measure_symbol_transfer.py`** dès qu'un titre atteint
+   8 000 barres dans le store — c'est le déclencheur explicite posé en §4.2bis,
+   et le seul moment où la décision « symbole hors de la clé du registre »
+   peut s'inverser.
+
+**Non traité (hors périmètre, assumé)** : `bars_per_year` reste calé sur
+365 j × 24 h, donc le Sharpe annualisé d'un backtest actions est sous-estimé
+(une séance Euronext fait 8,5 h, 252 jours par an) — les comparaisons
+inter-stratégies restent valides à classe d'actif constante, pas entre crypto
+et actions. Correction à porter en même temps que G3.
+
+**Tests** : 6 nouveaux fichiers, 121 tests — `test_market_calendar.py`,
+`test_venue_costs.py`, `test_universe.py`, `test_yfinance_provider.py`,
+`test_provider_router.py`, `test_equity_paper_flow.py` (parcours bout à bout
+sur un vrai `LiveTrader`). Chaque comportement actions a son pendant
+« non-régression crypto ».
+
+---
+
 ## 6. Décisions produit en attente
 
+- **G2 / univers SBF 120** : valider la composition de
+  `data/universe/sbf120.yaml` (`verified: false`) et le taux de TTF retenu —
+  cf. §4.5bis, « ce qu'il reste à faire ».
 - **DEAD-01** : feu vert pour supprimer les 8 stratégies mortes (analyse
   livrée). Bloque plusieurs chantiers en aval.
 - **FIN-01** : implémenter les frais VIP OKX dynamiques (exclu des sprints

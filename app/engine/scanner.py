@@ -23,8 +23,23 @@ class MarketScanner:
         self.min_vol  = cfg["trading"].get(
             "min_volume_quote_24h", cfg["trading"].get("min_volume_usdc_24h", 5_000_000)
         )
+        # G2 : un seuil de liquidité crypto (5 M$/24 h) exclurait la quasi-
+        # totalité du SBF 120. Le seuil est donc surchargeable PAR CLASSE
+        # D'ACTIF — `scanner.min_volume_by_asset_class: {equity: 1_000_000}` —
+        # sans toucher au seuil crypto historique.
+        self._min_vol_by_class: Dict[str, float] = {
+            str(k): float(v)
+            for k, v in (self.scfg.get("min_volume_by_asset_class") or {}).items()
+        }
         self._symbols_cache: Optional[List[str]] = None
         self._symbols_cache_ts: float = 0.0
+
+    def min_volume_for(self, symbol: str) -> float:
+        """Seuil de volume 24 h applicable au symbole (par classe d'actif)."""
+        if not self._min_vol_by_class:
+            return self.min_vol
+        asset_class = resolve_venue(self.cfg, symbol=symbol).asset_class
+        return self._min_vol_by_class.get(asset_class, self.min_vol)
 
     def get_symbols(self, ttl: float = 0.0) -> List[str]:
         """
@@ -40,7 +55,17 @@ class MarketScanner:
             if (time.time() - self._symbols_cache_ts) < ttl:
                 return self._symbols_cache
 
-        symbols = self.scfg.get("symbols", [DEFAULT_CONFIG_SYMBOL, "ETH/USDC"])
+        symbols = list(self.scfg.get("symbols", [DEFAULT_CONFIG_SYMBOL, "ETH/USDC"]))
+        # G2 — mode « univers » : sur actions, la liste des instruments est un
+        # choix versionné (data/universe/*.yaml), pas une découverte exchange.
+        # Les deux sources se cumulent : on peut trader BTC et le SBF 120.
+        universe_names = self.scfg.get("universe")
+        if universe_names:
+            from app.core.universe import resolve_universes
+            extra = [s for s in resolve_universes(universe_names) if s not in symbols]
+            if extra:
+                logger.info(f"[Scanner] Univers {universe_names} : +{len(extra)} instruments")
+            symbols += extra
         if self.scfg.get("dynamic_scan"):
             try:
                 return self._dynamic_symbols(self.scfg.get("top_n", 20))
@@ -62,7 +87,7 @@ class MarketScanner:
         for sym in symbols:
             t   = tickers.get(sym, {})
             vol = t.get("quoteVolume") or 0.0
-            if vol >= self.min_vol:
+            if vol >= self.min_volume_for(sym):
                 ranked.append((sym, vol))
         ranked.sort(key=lambda x: x[1], reverse=True)
         top_n = self.scfg.get("vol_rank_top_n", 0)
@@ -175,7 +200,7 @@ class MarketScanner:
             try:
                 indicators = self.compute_indicators(df)
                 volume_24h = _estimate_volume_24h(df, timeframe)
-                if volume_24h < self.min_vol:
+                if volume_24h < self.min_volume_for(symbol):
                     return None
                 adx     = indicators.get("adx", 0)
                 atr_pct = indicators.get("atr_pct", 0)

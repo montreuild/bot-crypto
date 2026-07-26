@@ -165,13 +165,19 @@ class PositionCloseMixin:
         if ex_fill is None and pos.get("stop_order_id"):
             ex_fill = self._cancel_exchange_stop(pos)
 
+        # G2 : `venue` porte le modèle de coûts de sortie ET la capacité
+        # d'exécution — None-safe et strictement neutre en crypto.
+        venue = self._venue_for(pos["symbol"], pos.get("strategy", ""),
+                                pos.get("timeframe", self.tf))
+
         close_side = "sell" if pos["side"] == "long" else "buy"
         if ex_fill is not None:
             order      = ex_fill
             exec_price = ex_fill.get("average") or ex_fill.get("price") or exit_price
         else:
-            order = self.exchange.create_order(
-                pos["symbol"], "market", close_side, pos["size"]
+            order = self._execute_order(
+                venue, pos["symbol"], "market", close_side, pos["size"],
+                price=exit_price,
             )
             if _order_failed(order):
                 # La position a déjà été retirée de self.open_positions (ligne 959) :
@@ -226,6 +232,7 @@ class PositionCloseMixin:
             daily_rate=self.cfg["trading"].get("borrow_rate_daily", 0.0002),
             hours_held=hours_held,
             periods_per_day=self.cfg["trading"].get("borrow_periods_per_day", 24),
+            venue=venue,
         )
         # Réconciliation avec les coûts RÉELS de l'exchange (live uniquement) :
         # frais du fill de clôture via fetch_my_trades, intérêts d'emprunt réels
@@ -314,6 +321,11 @@ class PositionCloseMixin:
             self._cooldown[pos["symbol"]] = time.time() + cooldown_secs
 
         self.notif.notify_trade(trade)
+        # G2 : venue data-only — aucun ordre de vente n'est parti, il faut le
+        # dire explicitement, sinon le PnL affiché correspondrait à une sortie
+        # que l'utilisateur n'a pas passée.
+        if not venue.can_execute:
+            self.notif.notify_trade_signal(trade, venue=venue.name, action="close")
         logger.info(
             f"[CLOSE] {pos['side'].upper()} {pos['symbol']} @ {exec_price:.4f} "
             f"| PnL={pnl:+.4f} | Strat={pos.get('strategy', '')}@{pos.get('timeframe', '?')}"
