@@ -394,3 +394,60 @@ def test_publish_without_train_symbol_is_allowed(tmp_path):
                            base_dir=base)
     assert art is not None and art.train_symbol is None
     assert registry.resolve("4h", "reco", base_dir=base).version_id == art.version_id
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Layout d'artefacts par persistance de recette
+# ─────────────────────────────────────────────────────────────────────────────
+def _write_tmp_single(tmp_path, tag: str) -> str:
+    """Écrit un artefact `lgbm_single` ({prefix}.lgb + {prefix}.meta.json),
+    ce que produit ml_dynamic_threshold.save_model()."""
+    import json
+    prefix = str(tmp_path / f"single_{tag}")
+    _train_tiny_booster(1).save_model(f"{prefix}.lgb")
+    with open(f"{prefix}.meta.json", "w", encoding="utf-8") as f:
+        json.dump({"tf": "1h", "features": ["f0", "f1", "f2"], "best_auc": 0.61}, f)
+    return prefix
+
+
+def test_model_suffixes_follows_recipe_persistence():
+    """Les recettes du dépôt déclarent deux layouts distincts — publish() doit
+    suivre `persistence:` et non supposer le bundle amp+dir partout."""
+    assert registry.model_suffixes("dyn_threshold_v1") == (".lgb",)
+    assert registry.model_suffixes("omnibus_v4_multi") == (".amp.lgb", ".dir.lgb")
+    assert registry.model_suffixes("stat48_v5") == (".amp.lgb", ".dir.lgb")
+
+
+def test_model_suffixes_unknown_recipe_falls_back_to_bundle():
+    """Recette absente du disque : repli sur le format historique plutôt
+    qu'une exception — les tests et scripts publient sans fichier de recette."""
+    assert registry.model_suffixes("aucune_recette_de_ce_nom") == (".amp.lgb", ".dir.lgb")
+
+
+def test_publish_single_head_recipe(tmp_path):
+    """Régression : `dyn_threshold_v1` persiste un booster unique ({prefix}.lgb).
+    publish() exigeait .amp.lgb + .dir.lgb et rejetait donc TOUT entraînement
+    de cette recette avec « artefacts absents », entraînement réussi ou non."""
+    base = str(tmp_path / "models")
+    src = _write_tmp_single(tmp_path, "v1")
+
+    art = registry.publish("1h", "dyn_threshold_v1", src,
+                           train_end="2026-02-01T00:00:00", decision="promote",
+                           base_dir=base)
+    assert art is not None, "un artefact lgbm_single valide doit être publiable"
+    assert os.path.exists(f"{art.path_prefix}.lgb")
+    assert os.path.exists(f"{art.path_prefix}.meta.json")
+    # Déplacé, pas copié : les sources ne traînent pas dans le tmp du gate.
+    assert not os.path.exists(f"{src}.lgb")
+    assert registry.resolve("1h", "dyn_threshold_v1", base_dir=base).version_id == art.version_id
+
+
+def test_missing_artifacts_names_what_is_absent(tmp_path):
+    """L'appelant doit pouvoir constater un save_model() no-op au moment où il
+    se produit — pas deux couches plus loin sur un score de holdout vide."""
+    assert registry.missing_artifacts("dyn_threshold_v1", str(tmp_path / "rien")) == [
+        "rien.lgb", "rien.meta.json"]
+    assert registry.missing_artifacts("dyn_threshold_v1", _write_tmp_single(tmp_path, "ok")) == []
+    # Un artefact single ne satisfait PAS une recette bundle.
+    assert registry.missing_artifacts("omnibus_v4_multi", _write_tmp_single(tmp_path, "x")) == [
+        "single_x.amp.lgb", "single_x.dir.lgb"]

@@ -9,8 +9,8 @@ immuable, retrouvable par date et comparable à son prédécesseur.
 Layout sur disque ::
 
     {base_dir}/{tf}/{recette}/{version_id}/
-        model.amp.lgb
-        model.dir.lgb
+        model.amp.lgb        # ou model.lgb seul selon le `persistence:` de la
+        model.dir.lgb        # recette (cf. `model_suffixes`)
         model.meta.json      # features/medians/AUC/calibrators + provenance + gate
     {base_dir}/{tf}/{recette}/decisions.jsonl   # journal des gates
 
@@ -79,6 +79,43 @@ _ELIGIBLE_DECISIONS = (None, "promote", "initial", "manual")
 # jamais énuméré ni résolu. Un artefact qu'on ne veut plus servir se déplace
 # ici plutôt que de se supprimer.
 _ARCHIVE_DIRNAME = "_archive"
+
+# Fichiers modèle attendus par format de persistance, hors ``.meta.json``
+# (toujours requis). Doit rester aligné sur ``app.ml.predictor._BY_PERSISTENCE``
+# — un format que le prédicteur sait lire mais que ``publish()`` ne sait pas
+# déplacer produit un « artefacts absents » alors que l'entraînement a réussi.
+_MODEL_SUFFIXES: Dict[str, tuple] = {
+    "lgbm_amp_dir_bundle": (".amp.lgb", ".dir.lgb"),
+    "lgbm_scaler":         (".amp.lgb", ".dir.lgb"),
+    "lgbm_single":         (".lgb",),
+}
+_DEFAULT_MODEL_SUFFIXES = _MODEL_SUFFIXES["lgbm_amp_dir_bundle"]
+
+
+def model_suffixes(recipe: str) -> tuple:
+    """Suffixes des fichiers modèle d'une recette, d'après son ``persistence:``.
+
+    Best-effort : une recette introuvable ou illisible retombe sur le bundle
+    amplitude+direction (le format historique), ce qui préserve le
+    comportement des appelants qui publient sans fichier de recette (tests,
+    scripts de recherche)."""
+    try:
+        from app.ml.recipe import load_recipe
+        persistence = load_recipe(recipe).persistence
+    except Exception:
+        return _DEFAULT_MODEL_SUFFIXES
+    return _MODEL_SUFFIXES.get(persistence, _DEFAULT_MODEL_SUFFIXES)
+
+
+def missing_artifacts(recipe: str, path_prefix: str) -> List[str]:
+    """Noms de fichiers attendus par ``recipe`` et absents à ``path_prefix``.
+
+    Permet à l'appelant de constater qu'un ``save_model()`` n'a rien écrit AU
+    MOMENT où c'est arrivé, plutôt que de le découvrir au ``publish()`` après
+    avoir scoré un artefact inexistant."""
+    suffixes = tuple(model_suffixes(recipe)) + (".meta.json",)
+    return [os.path.basename(f"{path_prefix}{sfx}")
+            for sfx in suffixes if not os.path.exists(f"{path_prefix}{sfx}")]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -420,11 +457,15 @@ def publish(tf: str, recipe: str, tmp_path_prefix: str, *,
            recipe_cfg: Optional[Dict[str, Any]] = None, source: str = "unknown",
            decision: str = "initial", decision_metrics: Optional[Dict[str, Any]] = None,
            base_dir: str = DEFAULT_BASE_DIR, keep_source: bool = False) -> Optional[ArtifactRef]:
-    """Publie un artefact fraîchement écrit (``tmp_path_prefix.{amp,dir}.lgb`` +
-    ``.meta.json``, produits par ``strategy.save_model(tmp_path_prefix)``)
-    dans le registre daté.
+    """Publie un artefact fraîchement écrit par ``strategy.save_model(
+    tmp_path_prefix)`` dans le registre daté.
 
-    Déplace les 3 fichiers vers ``{base_dir}/{tf}/{recipe}/{version_id}/``,
+    Les fichiers modèle attendus dépendent du ``persistence:`` de la recette
+    (``model_suffixes``) : ``.amp.lgb`` + ``.dir.lgb`` pour les bundles
+    amplitude+direction, ``.lgb`` seul pour ``lgbm_single``. ``.meta.json``
+    est toujours requis.
+
+    Déplace ces fichiers vers ``{base_dir}/{tf}/{recipe}/{version_id}/``,
     enrichit ``model.meta.json`` avec la provenance (dates, git commit, hash
     de recette) et la décision de gate, journalise dans ``decisions.jsonl``.
 
@@ -433,11 +474,17 @@ def publish(tf: str, recipe: str, tmp_path_prefix: str, *,
     pas (cf. ``_ELIGIBLE_DECISIONS``). Retourne ``None`` si les fichiers
     source sont absents (entraînement KO en amont — rien à publier).
     """
-    amp_src  = f"{tmp_path_prefix}.amp.lgb"
-    dir_src  = f"{tmp_path_prefix}.dir.lgb"
+    suffixes = model_suffixes(recipe)
     meta_src = f"{tmp_path_prefix}.meta.json"
-    if not (os.path.exists(amp_src) and os.path.exists(dir_src) and os.path.exists(meta_src)):
-        logger.warning(f"[ModelRegistry] publish : artefacts absents pour {tmp_path_prefix}")
+    srcs     = [(f"{tmp_path_prefix}{sfx}", f"model{sfx}") for sfx in suffixes]
+    missing  = missing_artifacts(recipe, tmp_path_prefix)
+    if missing:
+        logger.warning(
+            f"[ModelRegistry] publish : artefacts absents pour {tmp_path_prefix} — "
+            f"manquants : {missing} "
+            f"(attendus pour {tf}/{recipe} : {list(suffixes) + ['.meta.json']}) — "
+            f"save_model() n'a rien écrit, l'entraînement en amont a-t-il abouti ?"
+        )
         return None
 
     train_start_s = to_iso(train_start)
@@ -464,8 +511,8 @@ def publish(tf: str, recipe: str, tmp_path_prefix: str, *,
 
     mover = shutil.copy2 if keep_source else shutil.move
     try:
-        mover(amp_src, os.path.join(version_dir, "model.amp.lgb"))
-        mover(dir_src, os.path.join(version_dir, "model.dir.lgb"))
+        for src, dest_name in srcs:
+            mover(src, os.path.join(version_dir, dest_name))
     except Exception as e:
         logger.error(f"[ModelRegistry] publish : déplacement artefacts KO ({e})")
         return None

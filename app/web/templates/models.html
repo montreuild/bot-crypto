@@ -68,9 +68,9 @@ table.mdl-tbl{width:100%;border-collapse:collapse;font-size:.78rem;}
   <div class="mdl-card">
     <h2>🚀 Entraîner un modèle</h2>
     <div class="mdl-form">
-      <div class="mdl-fld"><label>Stratégie</label><input id="tr-strat" placeholder="ex. opus_omnibus_v11" value="opus_omnibus_v11"></div>
+      <div class="mdl-fld"><label>Stratégie</label><select id="tr-strat"><option value="opus_omnibus_v11">opus_omnibus_v11</option></select></div>
       <div class="mdl-fld"><label>Symbole</label><input id="tr-symbol" value="BTC/USDC"></div>
-      <div class="mdl-fld"><label>Timeframe</label><input id="tr-tf" value="1h"></div>
+      <div class="mdl-fld"><label>Timeframe</label><select id="tr-tf"><option value="1h">1h</option></select></div>
       <div class="mdl-fld"><label>Fenêtre (barres)<span class="mdl-hint" style="margin:0">0 = tout dispo</span></label><input id="tr-window" type="number" value="0" min="0"></div>
       <div class="mdl-fld"><label>Date de fin d'entraînement (optionnel)<span class="mdl-hint" style="margin:0">fige l'entraînement à cette date passée (rejoue une décision historique)</span></label><input id="tr-asof" placeholder="2026-06-01T00:00:00" title="Ne garde que les bougies antérieures à cette date pour l'entraînement ET le holdout du gate. Vide = tout l'historique disponible jusqu'à maintenant."></div>
       <div class="mdl-fld" style="flex-direction:row;align-items:center;gap:6px">
@@ -89,9 +89,9 @@ table.mdl-tbl{width:100%;border-collapse:collapse;font-size:.78rem;}
   <div class="mdl-card">
     <h2>📊 Window sweep</h2>
     <div class="mdl-form">
-      <div class="mdl-fld"><label>Stratégie</label><input id="sw-strat" value="opus_omnibus_v11"></div>
+      <div class="mdl-fld"><label>Stratégie</label><select id="sw-strat"><option value="opus_omnibus_v11">opus_omnibus_v11</option></select></div>
       <div class="mdl-fld"><label>Symbole</label><input id="sw-symbol" value="BTC/USDC"></div>
-      <div class="mdl-fld"><label>Timeframe</label><input id="sw-tf" value="1h"></div>
+      <div class="mdl-fld"><label>Timeframe</label><select id="sw-tf"><option value="1h">1h</option></select></div>
       <div class="mdl-fld"><label>Fenêtres (barres, CSV)</label><input id="sw-windows" value="10000,20000,40000" style="min-width:180px"></div>
       <div class="mdl-fld" style="flex-direction:row;align-items:center;gap:6px">
         <input type="checkbox" id="sw-publish" style="width:14px;height:14px">
@@ -432,6 +432,33 @@ async function startSweep(){
   finally{btn.disabled=false;}
 }
 
+// ── Listes de choix : stratégies découvertes sur disque + TFs supportés ─────
+// La table du registre est indexée par RECETTE (omnibus_v4_multi…) alors que
+// l'entraînement attend une STRATÉGIE (opus_omnibus_v11…). Recopier un nom de
+// recette dans un champ libre donnait « Stratégie inconnue » : des listes
+// fermées suppriment la confusion à la source.
+const MDL_TFS=['1m','3m','5m','15m','30m','1h','2h','4h','6h','8h','12h','1d'];
+
+function fillSelect(id,values,selected){
+  const el=document.getElementById(id); if(!el||!values.length)return;
+  const keep=el.value||selected;
+  el.innerHTML=values.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');
+  el.value=values.includes(keep)?keep:values[0];
+}
+
+async function loadChoices(){
+  fillSelect('tr-tf',MDL_TFS,'1h');
+  fillSelect('sw-tf',MDL_TFS,'1h');
+  try{
+    const r=await apiFetch('/api/config');
+    if(!r.ok)return;
+    const strats=(await r.json()).all_strategies||[];
+    fillSelect('tr-strat',strats,'opus_omnibus_v11');
+    fillSelect('sw-strat',strats,'opus_omnibus_v11');
+  }catch(e){/* liste indisponible : le défaut du gabarit reste sélectionnable */}
+}
+
+loadChoices();
 loadRegistry();
 </script>
 {% endblock %}

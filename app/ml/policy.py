@@ -262,6 +262,23 @@ def maybe_refresh(strategy: Any, train_symbol: str, tf: str, df, *,
                     "incumbent_version": incumbent.version_id if incumbent else None}
 
         strategy.save_model(tmp_prefix)
+        # Vérifier ICI que l'artefact existe. Sans ce contrôle, un save_model()
+        # no-op (magasin de modèles indexé autrement que par TF) se propageait
+        # en deux symptômes trompeurs : un score_holdout sur un préfixe vide,
+        # rapporté comme « auc indisponible (labels mono-classe / holdout
+        # dégénéré) », puis un « artefacts absents » du registre — deux
+        # messages qui accusaient les données alors que rien n'avait été écrit.
+        missing = registry.missing_artifacts(recipe, tmp_prefix)
+        if missing:
+            logger.error(
+                f"[MLPolicy] {tf}/{recipe} : save_model() n'a produit aucun artefact "
+                f"exploitable (manquants : {missing})"
+            )
+            return {"decision": "failed",
+                    "reason": f"save_model n'a écrit aucun artefact (manquants : {missing})",
+                    "recipe": recipe, "train_symbol": train_symbol, "tf": tf,
+                    "incumbent_version": incumbent.version_id if incumbent else None}
+
         candidate_metrics = score_holdout(
             tmp_prefix, holdout_df,
             strategy=strategy, gate_cfg=gc_, params=params,

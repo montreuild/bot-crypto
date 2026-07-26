@@ -882,12 +882,22 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         """
         tf = os.path.basename(path).rsplit("_", 1)[-1].split(".")[0]
         with self._model_lock:
-            booster   = self._boosters.get(tf)
-            best_p    = self._best_params_per_tf.get(tf, {})
-            auc       = self._best_auc_per_tf.get(tf, 0.0)
-            feat_cols = self._feature_cols_per_tf.get(tf, [])
+            # Repli sur l'unique booster entraîné : ``fit()`` indexe sur le TF
+            # INFÉRÉ des bougies (``_detect_tf``), qui peut retomber sur
+            # "unknown"/"custom_Ns" là où ``save_model`` déduit le TF du nom de
+            # fichier. Sans repli l'écriture était un no-op silencieux, et
+            # l'échec ne se voyait qu'au « artefacts absents » du registre.
+            key = tf if tf in self._boosters else (
+                next(iter(self._boosters)) if len(self._boosters) == 1 else tf)
+            booster   = self._boosters.get(key)
+            best_p    = self._best_params_per_tf.get(key, {})
+            auc       = self._best_auc_per_tf.get(key, 0.0)
+            feat_cols = self._feature_cols_per_tf.get(key, [])
         if booster is None:
-            logger.debug(f"[{self.name}] save_model: aucun booster pour {tf}, skip")
+            logger.warning(
+                f"[{self.name}] save_model({path}) : aucun booster à persister "
+                f"(TF demandé={tf!r}, clés disponibles={sorted(self._boosters)})"
+            )
             return
         try:
             import json

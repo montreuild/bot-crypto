@@ -162,3 +162,16 @@ def test_window_sweep_no_cached_data_returns_error(seeded_store, tmp_path):
     result = window_sweep("opus_omnibus_v11", "BTC/USDC", "1h", [800, 1200],
                           params=_FAST_PARAMS, base_dir=str(tmp_path / "models"))
     assert "error" in result
+
+
+def test_load_offline_ohlcv_precomputes_shared_indicator_columns(seeded_store):
+    """Le cache Parquet ne stocke que l'OHLCV brut, mais les stratégies
+    « bespoke » (scoring_statistique_opus_v4/v5…) attendent les colonnes
+    ``_pre_*`` en entrée de ``fit()`` — le chemin LIVE les reçoit de
+    ``scanner.fetch_ohlcv``. Sans elles, entraîner depuis l'UI échouait par
+    « _build_features=None » là où le live entraînait la même recette."""
+    _seed(seeded_store, "BTC/USDC", "1h", _make_ohlcv(300))
+    got = load_offline_ohlcv("BTC/USDC", "1h")
+    assert got is not None
+    assert "_pre_atr14" in got.columns
+    assert len(got) == 300, "le pré-calcul ne doit ni tronquer ni réordonner"

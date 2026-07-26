@@ -80,8 +80,25 @@ class TestInstantiation:
         # AutoOptMixin._load_all_strategies).
         from app.engine.optimizer_search import PARAM_SPACES
         assert "trend_rider" in trader._loaded_strategies
-        # -1 : 'breakout_filtreHor' est rejeté par le validateur de nom (camelCase).
-        assert len(trader._loaded_strategies) >= len(PARAM_SPACES) - 1
+        assert len(trader._loaded_strategies) >= len(PARAM_SPACES)
+
+    def test_camel_case_strategy_name_is_loaded(self, trader):
+        # Régression : le validateur de nom n'acceptait que les minuscules et
+        # écartait donc `breakout_filtreHor` — un module bien réel de
+        # app/strategies/, invisible au live sans autre signal qu'un WARNING.
+        # La garde protège de l'injection de module (pas de `.`, `/`, `\`) ;
+        # la casse n'y contribue pas.
+        assert "breakout_filtreHor" in trader._loaded_strategies
+
+    def test_path_traversal_strategy_names_still_rejected(self, tmp_path):
+        from app.live.auto_opt_mixin import AutoOptMixin
+        trader = LiveTrader(_make_cfg(str(tmp_path / "traversal.db")), MockExchange())
+        trader.cfg["strategies"]["enabled"] = [
+            "../../etc/passwd", "os.path", "a/b", "a\\b", "_private", "1bad",
+        ]
+        before = dict(trader._loaded_strategies)
+        AutoOptMixin._load_all_strategies(trader)
+        assert set(trader._loaded_strategies) - set(before) == set()
 
 
 # ── _build_active_per_tf ─────────────────────────────────────────────────

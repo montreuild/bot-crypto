@@ -40,9 +40,13 @@ class AutoOptMixin:
         from app.engine.optimizer_search import PARAM_SPACES
         to_load = set(PARAM_SPACES.keys()) | set(self.cfg["strategies"].get("enabled", []))
         for name in to_load:
-            # Validation du nom : lettres minuscules, chiffres et underscores uniquement.
-            # Protège contre l'injection de modules arbitraires via le fichier de config.
-            if not _re.match(r'^[a-z][a-z0-9_]*$', name):
+            # Validation du nom : lettres (les deux casses), chiffres et
+            # underscores uniquement. Protège contre l'injection de modules
+            # arbitraires via le fichier de config — ce qui compte est
+            # l'absence de `.`, `/` et `\`, pas la casse : `breakout_filtreHor`
+            # est un module légitime de app/strategies/ et le refuser le
+            # rendait invisible au live sans que rien d'autre ne le signale.
+            if not _re.match(r'^[A-Za-z][A-Za-z0-9_]*$', name):
                 logger.warning(f"[LiveTrader] Nom de stratégie invalide ignoré : {name!r}")
                 continue
             try:

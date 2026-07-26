@@ -11,6 +11,7 @@ import {
   useMLRegistry, useMLRegistryVersions, useMLRegistryDecisions,
   usePinModel, useUnpinModel, usePromoteModel,
   useStartMLTrain, useMLTrainStatus, useStartMLSweep, useMLSweepStatus,
+  useConfig,
 } from '@/hooks/use-api';
 import {
   Loader2, Database, AlertCircle, Pin, PinOff, ChevronDown, ChevronRight,
@@ -529,6 +530,40 @@ function JobResult({ job }: { job: MLJobStatus }) {
   );
 }
 
+// ── Listes fermées : stratégies + timeframes ────────────────────────────────
+// La table du registre est indexée par RECETTE (omnibus_v4_multi…) alors que
+// l'entraînement attend une STRATÉGIE (opus_omnibus_v11…). Recopier un nom de
+// recette dans un champ libre donnait « Stratégie inconnue » — et « 15min »
+// pour « 15m » un job qui échouait plus tard sur un cache prétendument vide.
+const TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d'];
+
+const SELECT_CLASS =
+  'w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono';
+
+function StrategySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { data: config } = useConfig();
+  const strategies: string[] = config?.all_strategies ?? [];
+  // Garder la valeur courante sélectionnable tant que la config n'est pas
+  // arrivée (ou si elle ne la contient pas) : le select ne doit jamais se
+  // vider sous les doigts de l'utilisateur.
+  const options = strategies.includes(value) || !strategies.length
+    ? (strategies.length ? strategies : [value])
+    : [value, ...strategies];
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLASS}>
+      {options.map((s) => <option key={s} value={s}>{s}</option>)}
+    </select>
+  );
+}
+
+function TimeframeSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLASS}>
+      {TIMEFRAMES.map((t) => <option key={t} value={t}>{t}</option>)}
+    </select>
+  );
+}
+
 // ── Formulaire d'entraînement ────────────────────────────────────────────────
 
 function TrainForm() {
@@ -576,11 +611,7 @@ function TrainForm() {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <div>
             <label className="text-xs text-dim block mb-1.5">Stratégie</label>
-            <input
-              value={strategy} onChange={(e) => setStrategy(e.target.value)}
-              placeholder="ex. opus_omnibus_v11"
-              className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
-            />
+            <StrategySelect value={strategy} onChange={setStrategy} />
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">Symbole</label>
@@ -591,10 +622,7 @@ function TrainForm() {
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">Timeframe</label>
-            <input
-              value={tf} onChange={(e) => setTf(e.target.value)}
-              className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
-            />
+            <TimeframeSelect value={tf} onChange={setTf} />
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">
@@ -688,10 +716,7 @@ function SweepForm() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div>
             <label className="text-xs text-dim block mb-1.5">Stratégie</label>
-            <input
-              value={strategy} onChange={(e) => setStrategy(e.target.value)}
-              className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
-            />
+            <StrategySelect value={strategy} onChange={setStrategy} />
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">Symbole</label>
@@ -702,10 +727,7 @@ function SweepForm() {
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">Timeframe</label>
-            <input
-              value={tf} onChange={(e) => setTf(e.target.value)}
-              className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
-            />
+            <TimeframeSelect value={tf} onChange={setTf} />
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">Fenêtres (barres, CSV)</label>

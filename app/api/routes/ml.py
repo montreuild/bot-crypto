@@ -1,5 +1,6 @@
 """Routes ML — informations sur les modèles BaseStrategyML chargés, et
 registre de modèles daté (ML-02 — page « Modèles »)."""
+import importlib
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -55,14 +56,69 @@ def candles_stats():
 # ─────────────────────────────────────────────────────────────────────────────
 #  Registre de modèles (ML-02 — page « Modèles »)
 # ─────────────────────────────────────────────────────────────────────────────
-def _require_known_strategy(name: str) -> None:
-    """Valide ``name`` contre les stratégies découvertes sur disque avant tout
+def _strategies_by_recipe() -> Dict[str, List[str]]:
+    """Index inverse recette → stratégies qui la déclarent.
+
+    Construit en important les modules de ``app/strategies`` (déjà tous
+    importés par le LiveTrader en fonctionnement normal) et en lisant leur
+    liaison ``models:``. N'est appelé que sur le chemin d'erreur, quand le nom
+    reçu n'est pas une stratégie."""
+    from app.ml.recipe import strategy_models
+    index: Dict[str, List[str]] = {}
+    for strat_name in sorted(_discover_strategies()):
+        try:
+            mod = importlib.import_module(f"app.strategies.{strat_name}")
+            declared = strategy_models(getattr(mod, "Strategy", None))
+        except Exception as e:
+            logger.debug(f"[ML] index des recettes : {strat_name} illisible ({e})")
+            continue
+        for recipe in declared.values():
+            index.setdefault(recipe, []).append(strat_name)
+    return index
+
+
+def _resolve_strategy_name(name: str) -> str:
+    """Nom de stratégie à entraîner, à partir de ce que l'UI a envoyé.
+
+    Valide contre les stratégies découvertes sur disque avant tout
     ``importlib.import_module`` — même garde que l'optimiseur/scanner (qui
     font déjà ``import_module(f"app.strategies.{name}")`` avec un nom fourni
-    par l'API), appliquée ici pour cohérence plutôt que pour combler une
-    lacune propre à ce module."""
-    if name not in _discover_strategies():
-        raise HTTPException(400, f"Stratégie inconnue : {name!r}")
+    par l'API).
+
+    Accepte aussi un nom de **recette** et le résout vers la stratégie qui la
+    déclare : la page « Modèles » est indexée par recette (c'est la clé du
+    registre), il est donc naturel d'y recopier ``omnibus_v4_multi`` alors que
+    l'entraînement, lui, a besoin d'une classe ``Strategy`` à instancier. Une
+    recette partagée par plusieurs stratégies reste une erreur — mais une
+    erreur qui dit lesquelles choisir.
+    """
+    known = _discover_strategies()
+    if name in known:
+        return name
+
+    owners = _strategies_by_recipe().get(name, [])
+    if len(owners) == 1:
+        logger.info(f"[ML] recette {name!r} → stratégie {owners[0]!r}")
+        return owners[0]
+    if len(owners) > 1:
+        raise HTTPException(400, f"{name!r} est une recette partagée par plusieurs "
+                                 f"stratégies : indiquez laquelle entraîner parmi "
+                                 f"{owners}")
+    raise HTTPException(400, f"Stratégie inconnue : {name!r} — attendu un nom de "
+                             f"stratégie parmi {sorted(known)}, ou une recette "
+                             f"rattachée à une stratégie")
+
+
+def _require_known_tf(tf: str) -> None:
+    """Rejette un timeframe hors table canonique AVANT de lancer le job.
+
+    Sans ce contrôle, un libellé approximatif (« 15min » pour « 15m ») partait
+    en tâche de fond pour échouer une minute plus tard sur un « aucune donnée
+    en cache » qui accusait le cache plutôt que la saisie."""
+    from app.core.timeframes import TF_SECONDS
+    if tf not in TF_SECONDS:
+        raise HTTPException(400, f"Timeframe inconnu : {tf!r} — attendu parmi "
+                                 f"{sorted(TF_SECONDS, key=lambda t: TF_SECONDS[t])}")
 
 
 @router.get("/api/ml/registry", dependencies=[Depends(verify_api_key)])
@@ -190,9 +246,10 @@ def ml_train_start(request: Request, body: _TrainBody):
     n'est écrit au registre ; ``publish=true`` : gate + publication réelle,
     même chemin que le live/backtest simulated_live). Retourne un ``job_id``
     à interroger via ``GET /api/ml/train/status``."""
-    _require_known_strategy(body.strategy)
+    strategy = _resolve_strategy_name(body.strategy)
+    _require_known_tf(body.tf)
     from app.engine.ml_jobs import start_train_job
-    job_id = start_train_job(body.strategy, body.symbol, body.tf, as_of=body.as_of,
+    job_id = start_train_job(strategy, body.symbol, body.tf, as_of=body.as_of,
                              window_bars=body.window_bars, params=body.params,
                              publish=body.publish)
     if body.publish:
@@ -227,11 +284,12 @@ def ml_sweep_start(request: Request, body: _SweepBody):
     commun. ``publish_best=false`` (défaut) : comparaison seule, rien n'est
     écrit. ``publish_best=true`` : publie uniquement le meilleur candidat,
     lui-même gaté contre le sortant courant."""
-    _require_known_strategy(body.strategy)
+    strategy = _resolve_strategy_name(body.strategy)
+    _require_known_tf(body.tf)
     if not body.windows:
         raise HTTPException(400, "windows ne peut pas être vide")
     from app.engine.ml_jobs import start_sweep_job
-    job_id = start_sweep_job(body.strategy, body.symbol, body.tf, body.windows,
+    job_id = start_sweep_job(strategy, body.symbol, body.tf, body.windows,
                              as_of=body.as_of, params=body.params,
                              publish_best=body.publish_best)
     if body.publish_best:

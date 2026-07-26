@@ -6,6 +6,57 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 Cycle d'entraînement ML — un entraînement lancé depuis l'UI produit enfin un artefact
+
+Cinq défauts indépendants se combinaient pour qu'aucun entraînement lancé
+depuis la page « Modèles » n'aboutisse, chacun se signalant par un message qui
+désignait la mauvaise cause.
+
+- **`app/api/routes/ml.py`** — le champ « Stratégie » était validé contre les
+  noms de MODULE (`opus_omnibus_v11`) alors que la table du registre, juste
+  au-dessus dans la même page, est indexée par RECETTE (`omnibus_v4_multi`) :
+  recopier une ligne du tableau donnait « Stratégie inconnue ». Un nom de
+  recette est désormais résolu vers la stratégie qui le déclare ; une recette
+  partagée par plusieurs stratégies reste refusée, mais en nommant les
+  candidates. Le timeframe est validé avant de lancer le job (« 15min » pour
+  « 15m » échouait une minute plus tard sur un « aucune donnée en cache » qui
+  accusait le cache).
+- **`app/ml/train_runner.py`** — `load_offline_ohlcv` sert le cache Parquet
+  brut, sans les colonnes `_pre_*` que le chemin live reçoit de
+  `scanner.fetch_ohlcv`. Les stratégies « bespoke » (`scoring_statistique_
+  opus_v4/v5`) échouaient donc en `fit()` depuis l'UI seulement. Pré-calcul
+  idempotent ajouté à la source.
+- **`app/ml/model_registry.py`** — `publish()` exigeait un bundle
+  `.amp.lgb` + `.dir.lgb` quelle que soit la recette : `dyn_threshold_v1`
+  (`persistence: lgbm_single`, un seul booster `.lgb`) ne pouvait
+  **structurellement pas** être publiée, entraînement réussi ou non. Le layout
+  suit maintenant le `persistence:` de la recette (`model_suffixes`), et
+  `missing_artifacts()` permet à l'appelant de constater l'absence au moment
+  où elle se produit.
+- **`scoring_statistique_opus_v4/v5`, `ml_dynamic_threshold`** — `save_model()`
+  indexait le magasin de modèles par le TF déduit du nom de fichier, alors que
+  `fit()` y écrit sous `"default"` (et `score()` sous le symbole). Sans
+  correspondance, l'écriture était un no-op **silencieux**, révélé deux couches
+  plus loin par un « auc_amp indisponible (labels mono-classe / holdout
+  dégénéré) » puis un « artefacts absents » — deux diagnostics qui accusaient
+  les données. Repli de clé explicite + WARNING au lieu du silence, et
+  `policy.maybe_refresh` / `train_runner` vérifient l'artefact juste après
+  l'écriture.
+- **`app/live/auto_opt_mixin.py`** — le validateur de nom de stratégie
+  n'acceptait que les minuscules et écartait donc `breakout_filtreHor`, un
+  module bien réel de `app/strategies/`, invisible au live sans autre signal
+  qu'un WARNING au démarrage. La garde (pas de `.`, `/`, `\`) est conservée ;
+  la casse n'y contribuait pas.
+- **UI (`models.html` + `frontend/src/app/models/page.tsx`)** — les champs
+  « Stratégie » et « Timeframe » deviennent des listes fermées (stratégies
+  découvertes sur disque via `/api/config`, timeframes de la table canonique),
+  ce qui supprime la confusion recette/stratégie à la source.
+
+Limite connue inchangée : les artefacts `stat48_v4`/`stat48_v5` sont publiés
+mais restent en `keep`, le scorer générique ne sachant pas lire le format
+`save_lgb_with_scaler` (pas de liste de features sérialisée) — promotion
+manuelle depuis la page « Modèles ».
+
 ### 🏛 G2 — Actions SBF 120 en paper (calendrier, sizing, frais, provider, notification de trade)
 
 Lève les **3 points de couplage** listés au plan directeur §4.2 (calendrier de

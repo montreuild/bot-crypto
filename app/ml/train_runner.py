@@ -72,7 +72,23 @@ def load_offline_ohlcv(symbol: str, tf: str, *, as_of: Optional[str] = None,
     if window_bars:
         df = df.tail(int(window_bars))
 
-    return df if len(df) > 0 else None
+    if len(df) == 0:
+        return None
+
+    # Colonnes ``_pre_*`` partagées : le cache Parquet ne stocke que l'OHLCV
+    # brut, alors que les stratégies « bespoke » (scoring_statistique_opus_v4/
+    # v5…) les attendent en entrée de ``fit()`` — le chemin LIVE les reçoit de
+    # ``scanner.fetch_ohlcv``, pas ce chemin offline. Sans elles, entraîner
+    # depuis l'UI échouait avec « _build_features=None (colonnes _pre_*
+    # manquantes) » là où le live entraînait la même recette sans broncher.
+    # ``precompute_df`` est idempotent et mémoïsé : sans effet sur les recettes
+    # qui construisent leurs features depuis le seul OHLCV.
+    from app.core.indicators import precompute_df
+    try:
+        df = precompute_df(df)
+    except Exception as e:
+        logger.warning(f"[train_runner] precompute_df KO ({e}) — df brut conservé")
+    return df
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -114,7 +130,7 @@ def train_and_publish(strategy_name: str, symbol: str, tf: str, *,
 
 def _train_candidate_and_score(strategy_name: str, tf: str, train_df: pl.DataFrame,
                                holdout_df: pl.DataFrame, params: Dict[str, Any],
-                               gate_cfg) -> tuple:
+                               gate_cfg, recipe_name: str) -> tuple:
     """Entraîne un candidat sur ``train_df``, le score sur ``holdout_df``.
 
     Retourne ``(strat_ou_None, metrics_dict)`` — ``strat`` est ``None`` si
@@ -123,6 +139,7 @@ def _train_candidate_and_score(strategy_name: str, tf: str, train_df: pl.DataFra
     """
     import importlib
 
+    import app.ml.model_registry as registry
     import app.ml.policy as policy
     mod = importlib.import_module(f"app.strategies.{strategy_name}")
     strat = mod.Strategy()
@@ -137,6 +154,13 @@ def _train_candidate_and_score(strategy_name: str, tf: str, train_df: pl.DataFra
     try:
         tmp_prefix = os.path.join(tmp_dir, f"{strategy_name}_{tf}")
         strat.save_model(tmp_prefix)
+        # Un save_model() no-op donnerait un score_holdout sur un préfixe vide,
+        # rapporté comme un holdout dégénéré : dire ce qui s'est réellement
+        # passé plutôt que de laisser accuser les données.
+        missing = registry.missing_artifacts(recipe_name, tmp_prefix)
+        if missing:
+            return None, {"skipped": f"save_model n'a écrit aucun artefact "
+                                     f"(manquants : {missing})"}
         metrics = policy.score_holdout(tmp_prefix, holdout_df, strategy=strat,
                                        gate_cfg=gate_cfg, params=params)
     finally:
@@ -162,7 +186,7 @@ def _dry_run(strategy_name: str, symbol: str, tf: str, df: pl.DataFrame,
     train_df   = df.slice(0, n - gc_.holdout_bars)
 
     strat, candidate_metrics = _train_candidate_and_score(
-        strategy_name, tf, train_df, holdout_df, params, gc_)
+        strategy_name, tf, train_df, holdout_df, params, gc_, recipe_name)
     if strat is None:
         return {"decision": "failed", "reason": candidate_metrics.get("skipped"), "n_bars": n}
 
@@ -228,7 +252,7 @@ def window_sweep(strategy_name: str, symbol: str, tf: str, windows: List[int], *
                                "skipped": "historique insuffisant pour ce window"})
             continue
         strat, metrics = _train_candidate_and_score(
-            strategy_name, tf, train_df, holdout_df, p, gc_)
+            strategy_name, tf, train_df, holdout_df, p, gc_, recipe_name)
         if strat is None:
             candidates.append({"window_bars": w, "n_train": len(train_df), **metrics})
             continue
