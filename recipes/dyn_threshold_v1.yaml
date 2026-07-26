@@ -16,6 +16,10 @@ features:
 labels:
   horizons: [3]
   amp_top_pct: 0.30
+  # Seuil ADAPTATIF à la volatilité réalisée, pas un quantile d'amplitude —
+  # c'est ce que cette recette revendique, et la raison pour laquelle le
+  # scoring ne peut pas être universel. cf. app/ml/labelling.py
+  scheme: vol_adaptive_dir
 
 heads: [dir]
 

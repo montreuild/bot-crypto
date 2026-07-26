@@ -6,6 +6,47 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧬 Étape C — entraîner depuis la seule recette, sans classe `Strategy`
+
+`features.catalog` était déclaré par les recettes depuis l'étape B mais
+**n'était dispatché nulle part** : il n'entrait que dans `Recipe.hash()`. Seule
+une classe `Strategy` savait construire des features, d'où l'asymétrie relevée
+par §2 de la conception — lecture pilotée par la recette (`build_predictor`),
+écriture pilotée par la stratégie (`Strategy().fit`). C'est la raison pour
+laquelle la page « Modèles », indexée par recette, doit demander une stratégie.
+
+- **Nouveau — `app/ml/features_catalog.py`** : registre de catalogues, contrat
+  uniforme `FeatureSet` (frame aligné + noms). Les trois catalogues du dépôt
+  sont branchés. `stat48` construisait un `np.ndarray` **anonyme** ; ses 56
+  colonnes sont désormais nommées dans l'ordre exact de construction, verrouillé
+  par test contre la sortie réelle du constructeur.
+- **Nouveau — `app/ml/labelling.py`** : registre de schémas de labellisation.
+  `amp_dir_quantile` (quantile d'amplitude, deux têtes) et `vol_adaptive_dir`
+  (seuil adaptatif à la volatilité, une tête — ce que `dyn_threshold_v1`
+  revendique). Le schéma est **déclaré** (`labels.scheme:`), pas déduit des
+  têtes : deux recettes à tête unique peuvent viser des cibles différentes.
+- **Nouveau — `app/ml/recipe_trainer.py`** : `train(recipe, df, tf)` n'importe
+  aucune stratégie — verrouillé par un test qui fait échouer tout import de
+  `app.strategies.*` pendant l'entraînement. `supports()` refuse explicitement
+  ce qu'il ne sait pas reproduire (calibration isotone, élagage de features,
+  recettes `proxy`) plutôt que de produire silencieusement un autre modèle.
+
+**Le gain mesurable** : `save_lgb_with_scaler` ne sérialise ni features ni
+médianes, donc le scorer générique rapportait `unsupported_format` et le gate
+concluait « keep » quoi qu'il arrive — `stat48_v4`/`stat48_v5` n'étaient
+**jamais promouvables**. L'artefact produit par le chemin recette porte ses
+noms de colonnes : le gate le score enfin.
+
+**Aucune bascule automatique.** `scripts/check_recipe_trainer_equivalence.py`
+mesure l'écart avec le `_train` autonome de `stat48_v5` : amp 0.579, dir 0.433,
+corrélations ~0 — **les deux chemins ne sont pas équivalents**, et les trois
+causes sont énumérées (la stratégie code en dur 300 rounds + early stopping là
+où la recette déclare 500 ; elle ajoute un `scale_pos_weight` non déclaré ; le
+nouveau chemin fixe `seed`/`max_bin`). Basculer une recette change donc le
+modèle produit : c'est une décision d'exploitation, prise recette par recette.
+`omnibus_v4_multi` (recette de production de v11) est refusée par `supports()`
+et reste sur `MLBackend` — rien de ce qui tourne aujourd'hui n'est touché.
+
 ### 🏛 G2 — les actions SBF 120 sont activées (données, pas exécution)
 
 Tout le code G2 était livré ; il restait inactivé, et un maillon manquait.

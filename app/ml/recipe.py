@@ -62,6 +62,10 @@ class Recipe:
     features_params: Dict[str, Any] = field(default_factory=dict)
     label_horizons: List[int] = field(default_factory=lambda: [1, 3, 6])
     amp_top_pct: float = 0.30
+    #: Schéma de labellisation (``app.ml.labelling``). Déclaré et non déduit
+    #: des têtes : deux recettes à tête unique peuvent viser des cibles
+    #: différentes. Défaut = comportement historique (quantile d'amplitude).
+    label_scheme: str = "amp_dir_quantile"
     heads: List[str] = field(default_factory=lambda: ["amp", "dir"])
     hp: Dict[str, Any] = field(default_factory=dict)
     window_bars: Dict[str, Any] = field(default_factory=dict)
@@ -87,6 +91,7 @@ class Recipe:
             "features_params": self.features_params,
             "label_horizons": sorted(int(h) for h in self.label_horizons),
             "amp_top_pct": round(float(self.amp_top_pct), 6),
+            "label_scheme": self.label_scheme,
             "heads": sorted(self.heads),
             "hp": self.hp,
             "window_bars": self.window_bars,
@@ -156,6 +161,7 @@ def _coerce(name: str, raw: Dict[str, Any]) -> Recipe:
         features_params=dict(feats.get("params") or {}),
         label_horizons=[int(h) for h in (labels.get("horizons") or [1, 3, 6])],
         amp_top_pct=float(labels.get("amp_top_pct", 0.30)),
+        label_scheme=str(labels.get("scheme", "amp_dir_quantile")),
         heads=list(raw.get("heads") or ["amp", "dir"]),
         hp=dict(raw.get("hp") or {}),
         window_bars=dict(window.get("bars") or {}),
