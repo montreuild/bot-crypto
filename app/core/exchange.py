@@ -343,7 +343,15 @@ _ALLOWED_EXCHANGES: frozenset = frozenset([
 ])
 
 
-def create_exchange(cfg: dict) -> RobustExchange:
+def create_exchange(cfg: dict):
+    """Construit l'accès marché du bot.
+
+    Retourne un ``RobustExchange`` (ccxt) dans le cas nominal. Si — et
+    seulement si — une venue déclare un ``data_provider`` alternatif (G2 :
+    actions via yfinance), l'objet est enveloppé dans un ``ProviderRouter`` qui
+    expose la **même** interface et aiguille chaque symbole vers son provider.
+    Aucun appelant n'a donc à connaître la classe d'actif qu'il manipule.
+    """
     name = cfg["exchange"]["name"].lower()
     if name not in _ALLOWED_EXCHANGES:
         raise ValueError(
@@ -383,4 +391,10 @@ def create_exchange(cfg: dict) -> RobustExchange:
     # set_sandbox_mode non activé : le paper trading est simulé localement par RobustExchange.
     margin      = cfg["exchange"].get("margin", False) or cfg["trading"].get("margin_mode") is not None
     margin_mode = cfg["trading"].get("margin_mode", "isolated")  # "isolated" | "cross"
-    return RobustExchange(ex, paper=paper, margin=margin, margin_mode=margin_mode)
+    robust = RobustExchange(ex, paper=paper, margin=margin, margin_mode=margin_mode)
+
+    # Import local : le routeur n'est chargé que si une venue le réclame, et
+    # `provider_router` importe `bot_identity` — un import au niveau module
+    # créerait un cycle avec les modules qui importent `exchange`.
+    from app.core.provider_router import build_market_provider
+    return build_market_provider(cfg, robust)

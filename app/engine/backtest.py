@@ -16,8 +16,9 @@ import polars as pl
 
 from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
 from app.core.execution import close_pnl as _close_pnl
+from app.core.execution import quantize_size as _quantize_size
 from app.core.execution import size_impact_cost as _size_impact_cost
-from app.core.execution import trade_fees as _trade_fees
+from app.core.execution import venue_trade_cost as _venue_trade_cost
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, resolve_strategy_params
 from app.core.risk_curve import risk_multiplier as _risk_multiplier
 from app.core.timeframes import TF_MINUTES as _TF_MINUTES
@@ -348,6 +349,10 @@ class Backtester:
         self.slippage_k     = float(bcfg.get("slippage_k", 1.0))
         self.partial_fill = bcfg.get("partial_fill_pct",  0.95)
         self.max_notional_pct = float(bcfg.get("max_notional_pct", 0.20))  # BT-03 : aligné sur le live (risk.py)
+        # G2 : venue de l'instrument backtesté (quantification des tailles,
+        # frais fixes, TTF). Résolue par symbole dans run() — None jusque-là,
+        # ce qui signifie « comportement crypto historique » partout.
+        self._venue = None
 
     def _find_strategy(self, name: str):
         """Récupère l'instance Strategy par son nom (pour les hooks comme
@@ -396,6 +401,7 @@ class Backtester:
             fee_rate=(self.maker_fee if maker else self.taker_fee),
             daily_rate=self.borrow_rate, hours_held=hours_held,
             periods_per_day=self.borrow_periods,
+            venue=self._venue,
         )
         impact = self._impact_cost(ctx, i, position["notional"])   # BT-10
         if impact:
@@ -577,8 +583,11 @@ class Backtester:
                     if add_notional > room:
                         add_notional = max(room, 0.0)
                         add_size = add_notional / add_price
+                    add_size = _quantize_size(add_size, self._venue)   # G2
+                    add_notional = add_size * add_price
                     if add_notional >= 1.0 and add_size > 0:
-                        add_fees = self._fees(add_price, add_size, maker=False)
+                        add_fees = self._fees(add_price, add_size, maker=False,
+                                              side=position["side"], is_entry=True)
                         add_fees += self._impact_cost(ctx, i, add_notional)  # BT-10
                         ctx.capital -= add_fees
                         new_size = position["size"] + add_size
@@ -606,6 +615,13 @@ class Backtester:
         if atr_v <= 0:
             diag["rejected_atr_zero"] += 1
             logger.debug(f"[Backtest] bar {i} : trade rejeté (ATR<=0)")
+            return None
+
+        # G2 — parité avec le live : une venue au comptant sans SRD refuse les
+        # shorts. Les laisser passer en backtest produirait un edge fantôme.
+        if signal["side"] == "short" and self._venue is not None \
+                and not self._venue.allow_short:
+            diag["rejected_venue"] = diag.get("rejected_venue", 0) + 1
             return None
 
         exec_price = float(df["open"][i + 1])
@@ -669,8 +685,21 @@ class Backtester:
         size       *= size_factor
 
         size       *= self.partial_fill
+        # G2 — quantification par la venue (lot/unité entière) : mêmes bornes
+        # qu'à l'exécution live, sinon le backtest actions surestime le PnL en
+        # tradant des fractions de titre. No-op en crypto (lot_size = 0).
+        q_size = _quantize_size(size, self._venue)
+        if q_size <= 0:
+            diag["rejected_notional"] += 1
+            logger.debug(
+                f"[Backtest] bar {i} : trade rejeté (taille {size:.6f} < 1 unité "
+                f"négociable sur la venue)"
+            )
+            return None
+        size        = q_size
         notional    = size * exec_price
-        entry_fees  = self._fees(exec_price, size, maker=False)
+        entry_fees  = self._fees(exec_price, size, maker=False,
+                                 side=signal["side"], is_entry=True)
         entry_fees += self._impact_cost(ctx, i, notional)   # BT-10
         ctx.capital -= entry_fees
         ctx.trade_id += 1
@@ -733,6 +762,13 @@ class Backtester:
         # celle de BTC/USDC ; les autres symboles prennent leur config dédiée si
         # elle existe, sinon les params de base (séparation des configs).
         strat_params = resolve_strategy_params(self.cfg, timeframe, symbol)
+
+        # G2 : la venue de l'instrument pilote la quantification des tailles et
+        # le modèle de coûts. Résolue au niveau du SYMBOLE (une action porte sa
+        # venue quelle que soit la stratégie qui la trade, cf. resolve_venue) —
+        # neutre tant qu'aucune venue actions n'est déclarée.
+        from app.core.bot_identity import resolve_venue as _resolve_venue
+        self._venue = _resolve_venue(self.cfg, tf=timeframe, symbol=symbol)
 
         # ML-02 : relu ICI plutôt que figé à __init__ — un appelant peut poser
         # ``bt.ml_mode = "inline"`` entre deux ``run()`` (optimiseur, tests).
@@ -1101,8 +1137,14 @@ class Backtester:
             return 0.0
         return _size_impact_cost(notional, self.spread_pct, self.slippage_k, float(qv[i]))
 
-    def _fees(self, price: float, size: float, maker: bool = False) -> float:
-        return _trade_fees(price, size, self.maker_fee if maker else self.taker_fee)
+    def _fees(self, price: float, size: float, maker: bool = False,
+              side: str = "long", is_entry: bool = True) -> float:
+        """Coût d'un fill. Passe par le modèle de la venue quand il y en a une
+        (G2 : commission fixe, plancher, TTF) — sinon frais proportionnels,
+        strictement comme avant."""
+        rate = self.maker_fee if maker else self.taker_fee
+        return _venue_trade_cost(price, size, rate, side=side,
+                                 venue=self._venue, is_entry=is_entry)
 
 
 # ── Ré-exports (compat ascendante — ARCH-010) ────────────────────────────────

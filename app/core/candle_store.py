@@ -24,7 +24,30 @@ logger = logging.getLogger(__name__)
 # REJETTE en renvoyant une liste vide → « premier fetch : 0 bougie » sur les gros
 # timeframes. OKX renvoie les plus anciennes bougies DISPONIBLES pour un `since`
 # antérieur au listing, mais pas pour un `since` d'avant sa création.
+#
+# G2 : c'est une contrainte d'exchange crypto, pas une vérité de marché — une
+# action cote souvent depuis les années 1990. Un provider peut donc l'abaisser
+# via l'attribut `min_since_ms` (cf. YFinanceProvider).
 _MIN_SINCE_MS = 1_483_228_800_000  # 2017-01-01 UTC
+
+
+def _min_since(exchange) -> int:
+    """Plancher de `since` applicable au provider (défaut : fondation d'OKX)."""
+    return int(getattr(exchange, "min_since_ms", _MIN_SINCE_MS))
+
+
+def _valid_bars(df: pl.DataFrame, exchange) -> pl.DataFrame:
+    """Écarte les barres inexploitables, selon ce que le provider garantit.
+
+    En crypto, une bougie à volume nul signale des données cassées. Sur
+    actions, elle est parfaitement normale (valeur peu liquide, séance sans
+    échange) : la rejeter trouerait l'historique. Le provider tranche via
+    `drop_zero_volume` (défaut True = comportement crypto historique).
+    """
+    valid = pl.col("close") > 0
+    if bool(getattr(exchange, "drop_zero_volume", True)):
+        valid = valid & (pl.col("volume") > 0)
+    return df.filter(valid).drop_nulls()
 
 # Schéma Parquet — time stocké en ms pour cohérence avec ccxt
 _OHLCV_SCHEMA = {
@@ -99,12 +122,9 @@ class CandleStore:
             # Merge + persistance si nouvelles données
             if new_raw:
                 df_new    = self._raw_to_df(new_raw)
-                df_merged = (
-                    pl.concat([df_cached, df_new])
-                    .unique("time")
-                    .sort("time")
-                    .filter((pl.col("volume") > 0) & (pl.col("close") > 0))
-                    .drop_nulls()
+                df_merged = _valid_bars(
+                    pl.concat([df_cached, df_new]).unique("time").sort("time"),
+                    exchange,
                 )
                 self._save(path, df_merged)
                 df_cached = df_merged
@@ -125,12 +145,9 @@ class CandleStore:
                 old_raw = self._fetch_historical(exchange, symbol, tf, first_ms, missing)
                 if old_raw:
                     df_old    = self._raw_to_df(old_raw)
-                    df_merged = (
-                        pl.concat([df_cached, df_old])
-                        .unique("time")
-                        .sort("time")
-                        .filter((pl.col("volume") > 0) & (pl.col("close") > 0))
-                        .drop_nulls()
+                    df_merged = _valid_bars(
+                        pl.concat([df_cached, df_old]).unique("time").sort("time"),
+                        exchange,
                     )
                     self._save(path, df_merged)
                     df_cached = df_merged
@@ -233,10 +250,11 @@ class CandleStore:
         # Point de départ : assez loin dans le passé pour couvrir les bougies manquantes.
         # On clampe à _MIN_SINCE_MS (2017-01-01) : un `since` trop ancien (ex. 1d × 20000
         # ⇒ avant le listing) fait rejeter la requête OHLCV par l'exchange (liste vide).
+        floor_ms = _min_since(exchange)
         if before_ms is not None:
-            since = max(_MIN_SINCE_MS, before_ms - needed * tf_ms)
+            since = max(floor_ms, before_ms - needed * tf_ms)
         else:
-            since = max(_MIN_SINCE_MS, int(exchange.milliseconds()) - needed * tf_ms)
+            since = max(floor_ms, int(exchange.milliseconds()) - needed * tf_ms)
 
         all_raw = []
         seen_ts = set()
@@ -290,7 +308,7 @@ class CandleStore:
             logger.warning(f"[CandleStore] parse_timeframe '{tf}' KO : {e} — fallback 1h")
             tf_ms = 3_600_000  # fallback 1h en ms
 
-        since   = max(_MIN_SINCE_MS, exchange.milliseconds() - total * tf_ms)
+        since   = max(_min_since(exchange), exchange.milliseconds() - total * tf_ms)
         all_raw = []
         seen_ts = set()
 

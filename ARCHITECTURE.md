@@ -78,13 +78,39 @@ Sources uniques (ne jamais recopier ces littéraux) :
   partagé backtest/live, S4-01/S4-02).
 - **Venue / classe d'actif** : `app/core/bot_identity.py` (`Venue` étendue
   S2-02 : `asset_class`, `quote_currency`, `tick_size`, `lot_size`,
-  `fractional`, `allow_short` ; `resolve_venue` accepte aussi
+  `fractional`, `allow_short` ; G2 : `calendar`, `data_provider`,
+  `can_execute`, `close_at_session_end`, `fee_pct`/`fee_fixed`/`fee_min`,
+  `transaction_tax_pct`, `min_notional` ; `resolve_venue` accepte aussi
   `venues.assign[symbol]`). Protocoles d'accès marché/exécution :
   `app/core/providers.py` (`MarketDataProvider`, `ExecutionProvider`, S2-01
   — `RobustExchange` s'y conforme structurellement). Les stratégies déclarent
   `asset_classes` (`BaseStrategy`, défaut crypto+equity ; `funding_flow`/
   `derivatives_reversion` = crypto only), filtré par
   `AutoOptMixin._filter_by_asset_class`.
+
+  **La venue est le seul point d'extension multi-actifs** : aucun module du
+  moteur ne teste une classe d'actif ni un suffixe de ticker. Les défauts de
+  `Venue` reproduisent le comportement crypto historique, donc tout ce qui
+  suit est inerte tant qu'aucune venue actions n'est déclarée.
+
+- **Horaires de marché (G2)** : `app/core/market_calendar.py`
+  (`get_calendar` → `AlwaysOpenCalendar` 24/7 par défaut, `SessionCalendar`
+  déclaratif, `XPAR` livré, adaptateur `exchange_calendars` optionnel).
+  Résolution symbole → calendrier : `provider_router.market_calendar_for`
+  (source unique) ; consommée par `app/live/market_hours_mixin.py`, qui
+  mémoïse par venue et gate **les entrées seulement** (les positions ouvertes
+  restent gérées marché fermé).
+- **Contraintes et coûts d'instrument (G2)** : `app/core/execution.py`
+  (`quantize_size`, `quantize_price`, `venue_trade_cost`) — partagés
+  backtest ↔ live comme le reste du module, appliqués à l'ouverture, au
+  scale-in et à la clôture des deux côtés.
+- **Routage de providers (G2)** : `app/core/provider_router.py`
+  (`build_market_provider` rend l'exchange **inchangé** si aucune venue ne
+  déclare de `data_provider` ; `register_provider` pour en brancher un autre).
+  Provider actions data-only : `app/core/yfinance_provider.py`.
+- **Univers d'instruments (G2)** : `app/core/universe.py` +
+  `data/universe/*.yaml` — liste statique versionnée, cumulée avec
+  `scanner.symbols`. Le scan dynamique par volume reste un concept crypto.
 - **Trailing live** : section `live.trailing` de config.yaml (S1-08) —
   dédiée, indépendante de `backtest.*` (repli sur `backtest.*` + WARNING si
   absente, pour compat).
@@ -112,6 +138,8 @@ Sources uniques (ne jamais recopier ces littéraux) :
 - `live_trader.py` — init, boucle principale, cycle, wrappers OHLCV.
 - `position_mixin.py` — cycle de vie des positions + chemin unique
   d'ouverture (`_try_open_from_signal`, gating risque→slot→budget).
+- `market_hours_mixin.py` — calendrier de marché (G2) : filtre les entrées
+  hors séance, clôture avant fin de séance. **Inerte en crypto** (venue 24/7).
 - `balance_sync.py` — synchronisation du capital (paper/spot/margin).
 - `auto_opt_mixin.py` — registre de stratégies, auto-optimisation
   planifiée, forward-test glissant (exécuté par

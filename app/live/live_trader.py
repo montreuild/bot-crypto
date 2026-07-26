@@ -11,6 +11,9 @@ Architecture (V4-J / ARCH-06 : un fichier par responsabilité ;
   - PositionManageMixin  : suivi tick-by-tick (trailing, scale-in, exchange stops)
   - PositionCloseMixin   : clôture (ordre + PnL + BDD + notifications)
   - PositionRestoreMixin : restauration au démarrage depuis la BDD
+  - MarketHoursMixin     : calendrier de marché (gating des entrées hors
+                           séance, clôture avant fin de séance) — inerte en
+                           crypto, où la venue par défaut est 24/7
   - BalanceSyncMixin     : synchronisation du capital (paper/spot/margin)
   - AutoOptMixin         : portefeuille de stratégies, auto-optimisation,
                            forward-test glissant, cycle de vie des bots
@@ -40,6 +43,7 @@ from app.live.auto_opt_mixin import AutoOptMixin
 from app.live.balance_sync import BalanceSyncMixin
 from app.live.capital_allocator import CapitalAllocator
 from app.live.health_mixin import HealthMixin
+from app.live.market_hours_mixin import MarketHoursMixin
 from app.live.ohlcv_cache import OHLCVCache
 from app.live.position_close_mixin import PositionCloseMixin
 from app.live.position_manage_mixin import PositionManageMixin
@@ -51,7 +55,8 @@ logger = logging.getLogger(__name__)
 
 
 class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
-                 PositionRestoreMixin, BalanceSyncMixin, AutoOptMixin, HealthMixin):
+                 PositionRestoreMixin, BalanceSyncMixin, AutoOptMixin,
+                 MarketHoursMixin, HealthMixin):
     """
     Orchestrateur de la boucle de trading live.
 
@@ -366,6 +371,9 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
         self.ohlcv_cache.update_volatility_brake()
 
         # 3. Gestion des positions ouvertes
+        # Marché fermé ne veut pas dire position oubliée : le trailing continue
+        # de se recalculer et un stop touché au gap d'ouverture doit être
+        # constaté. Seules les ENTRÉES sont soumises au calendrier (étapes 4-5).
         for pos_id in list(self.open_positions.keys()):
             try:
                 self._manage_position(pos_id)
@@ -374,6 +382,12 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
                     f"[Cycle] Erreur gestion position {pos_id} : {e}", exc_info=True
                 )
 
+        # 3bis. Clôture avant fin de séance (venues qui refusent l'overnight).
+        try:
+            self._close_positions_at_session_end()
+        except Exception as e:
+            logger.error(f"[Cycle] Clôture de séance KO : {e}", exc_info=True)
+
         # 4. Pipeline signaux : collecte + ranking
         _symbols_ttl = float(self.cfg.get("scanner", {}).get("symbols_cache_ttl", 300))
         try:
@@ -381,27 +395,37 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
         except Exception as _sc_err:
             logger.warning(f"[Cycle] get_symbols KO : {_sc_err}")
             return
+        # G2 : ne scorer que les places ouvertes. No-op en crypto (24/7).
+        # La synchro de solde et le rééquilibrage (étapes 6-7) restent joués
+        # même toutes places fermées — l'équité doit continuer de vivre la nuit.
+        symbols = self._tradable_symbols(symbols)
         self.last_scan_time       = datetime.now(timezone.utc)
         self.last_symbols_scanned = list(symbols)
 
-        try:
-            signals = self.pipeline.collect(
-                symbols=symbols,
-                active_per_tf=self._active_per_tf,
-                ohlcv_fn=self._get_ohlcv,
-                open_positions=self.open_positions,
-                cooldowns=self._cooldown,
-                signal_log=self.signal_log,
-            )
-        except Exception as e:
-            logger.error(f"[Cycle] Erreur pipeline signaux : {e}", exc_info=True)
-            signals = []
+        signals = []
+        if symbols:
+            try:
+                signals = self.pipeline.collect(
+                    symbols=symbols,
+                    active_per_tf=self._active_per_tf,
+                    ohlcv_fn=self._get_ohlcv,
+                    open_positions=self.open_positions,
+                    cooldowns=self._cooldown,
+                    signal_log=self.signal_log,
+                )
+            except Exception as e:
+                logger.error(f"[Cycle] Erreur pipeline signaux : {e}", exc_info=True)
+                signals = []
 
         # 5. Exécution des signaux rankés
         for sig in signals:
             slot_key = sig.slot_key
             pos_key  = build_pos_key(sig.symbol, sig.strategy, sig.tf)
             if pos_key in self.open_positions:
+                continue
+            # Garde-fou par signal : le filtre ci-dessus travaille sur la liste
+            # du scanner, un signal peut venir d'ailleurs (API, scan direct).
+            if not self._market_open(sig.symbol, sig.strategy, sig.tf):
                 continue
 
             strat_threshold = self._strat_thresholds.get(sig.strategy, self.threshold)

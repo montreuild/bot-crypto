@@ -28,10 +28,15 @@ from datetime import datetime, timezone
 
 import polars as pl
 
-from app.core.bot_identity import build_pos_key, build_slot_key
+from app.core.bot_identity import build_pos_key, build_slot_key, resolve_venue
 from app.core.config import DEFAULT_TAKER_FEE
 from app.core.database import persist_open_position, session_scope
-from app.core.execution import size_impact_cost, trade_fees
+from app.core.execution import (
+    quantize_price,
+    quantize_size,
+    size_impact_cost,
+    venue_trade_cost,
+)
 from app.core.indicators import atr_val as _compute_atr
 from app.core.timeframes import HTF_MAP as _HTF_MAP
 from app.core.trailing import TrailingStopManager
@@ -166,9 +171,39 @@ class PositionOpenMixin:
 
     # ── Ouverture ──────────────────────────────────────────────────────────
 
+    # ── Venue (G2) ─────────────────────────────────────────────────────────
+
+    def _venue_for(self, symbol: str, strategy: str = None, tf: str = None):
+        """Venue applicable au trade — crypto par défaut (aucun changement)."""
+        return resolve_venue(self.cfg, strategy, tf, symbol)
+
+    def _execute_order(self, venue, symbol: str, order_type: str, side: str,
+                       amount: float, price: float = None,
+                       params: dict = None) -> dict:
+        """Transmet l'ordre, ou le simule si la venue n'a pas d'exécution.
+
+        Décision prise **ici**, au plus près du trade, et pas seulement dans
+        ``ProviderRouter`` : une venue peut très bien lire ses données via ccxt
+        (donc sans routeur) tout en n'ayant aucun courtier branché. Le garde-fou
+        doit tenir dans tous les câblages, y compris quand un test ou un script
+        injecte directement un exchange.
+        """
+        if venue is not None and not venue.can_execute:
+            logger.warning(
+                f"[OPEN] {symbol} — venue '{venue.name}' sans exécution branchée : "
+                f"ordre {side} {amount} NON transmis, notification de trade émise."
+            )
+            return {"id": f"signal_{int(time.time() * 1000)}", "status": "closed",
+                    "symbol": symbol, "side": side, "amount": amount,
+                    "price": price or 0, "filled": amount,
+                    "simulated": True, "venue": venue.name}
+        return self.exchange.create_order(symbol, order_type, side, amount,
+                                          price, params)
+
     def _open_position(self, pos_key: str, symbol: str, signal: dict,
                        price: float, size: float, notional: float,
                        atr: float, leverage: float, tf: str) -> None:
+        venue            = self._venue_for(symbol, signal.get("name", ""), tf)
         trail_override   = signal.get("trail_override") or {}
         disable_trailing = bool(signal.get("disable_trailing", False))
         trail_cfg        = _apply_trail_override(self._trailing_cfg, trail_override)
@@ -198,8 +233,17 @@ class PositionOpenMixin:
             take_profit = float(signal["tp_hint"])
         else:
             take_profit = None
-        order     = self.exchange.create_order(
-            symbol, "market", signal["side"], size,
+
+        # Stop et TP calculés par le bot : les aligner sur la grille de cotation
+        # de la venue (no-op en crypto, tick_size=0) — un stop hors grille est
+        # rejeté par un carnet actions, et fausse le prix affiché dans la
+        # notification de trade que l'utilisateur va saisir à la main.
+        stop = quantize_price(stop, venue)
+        if take_profit is not None:
+            take_profit = quantize_price(take_profit, venue)
+
+        order     = self._execute_order(
+            venue, symbol, "market", signal["side"], size,
             params={"leverage": int(leverage)}
         )
         if _order_failed(order):
@@ -239,7 +283,11 @@ class PositionOpenMixin:
                 pass
 
         fee_rate = self.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE)
-        fees     = trade_fees(exec_price, size, fee_rate)
+        # Coûts d'entrée par venue (G2) : commission % + fixe + plancher +
+        # taxe de transaction (TTF à l'achat). Sans venue actions déclarée, le
+        # résultat est identique au `trade_fees` proportionnel d'avant.
+        fees     = venue_trade_cost(exec_price, size, fee_rate,
+                                    side=signal["side"], venue=venue, is_entry=True)
         with self._capital_lock:
             if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
                 self._paper_base -= fees
@@ -270,6 +318,7 @@ class PositionOpenMixin:
             # Indicators + setup conservés pour les hooks (check_early_exit V6.1)
             "indicators":     signal.get("indicators") or {},
             "setup":          signal.get("setup"),
+            "venue":          venue.name,
             "_trailing":      trailing,
         }
         with self._positions_lock:
@@ -279,8 +328,10 @@ class PositionOpenMixin:
             persist_open_position(_sess, pos)
 
         # Stop-loss côté exchange (filet de sécurité si le bot tombe) —
-        # le stop logiciel/trailing reste la référence de gestion.
-        if self._exchange_stops_enabled():
+        # le stop logiciel/trailing reste la référence de gestion. Sans venue
+        # d'exécution branchée (G2), il n'y a aucun ordre à protéger : le stop
+        # part dans la notification de trade, à saisir avec l'ordre.
+        if venue.can_execute and self._exchange_stops_enabled():
             self._place_exchange_stop(pos)
 
         strat_threshold = self._strat_thresholds.get(strat_name, self.threshold)
@@ -307,7 +358,14 @@ class PositionOpenMixin:
             f"| Strat={strat_name}@{tf} | Score={signal['score']:.2f} "
             f"| Sizing={score_factor * 100:.0f}% | Size={size:.6f} | Stop={stop:.4f}"
         )
-        self.notif.notify_trade_open(pos)
+        # G2 : une venue data-only n'a reçu AUCUN ordre — la notification de
+        # trade (symbole / sens / ouverture / SL / TP) est le seul chemin vers
+        # l'exécution tant que G3 n'est pas livré. On n'envoie donc pas le
+        # « position ouverte » habituel, qui laisserait croire à un fill réel.
+        if venue.can_execute:
+            self.notif.notify_trade_open(pos)
+        else:
+            self.notif.notify_trade_signal(pos, venue=venue.name, action="open")
 
         # WebSocket temps réel — publish non bloquant (jamais critique)
         try:
@@ -361,6 +419,14 @@ class PositionOpenMixin:
             })
             return False
 
+        venue = self._venue_for(symbol, strategy_name, tf)
+
+        # 0. Contraintes de la venue (G2) — une action au comptant ne se vend
+        # pas à découvert : mieux vaut refuser ici que produire un ticket de
+        # trade inexécutable chez le courtier.
+        if side == "short" and not venue.allow_short:
+            return _reject("venue", f"short interdit sur la venue '{venue.name}'")
+
         # 1. Risque global
         ok_global, reason_global = self.risk.can_trade(side)
         if not ok_global:
@@ -390,9 +456,8 @@ class PositionOpenMixin:
         if getattr(self.allocator, "per_bot_sizing", False):
             b = self.allocator.slot_budget_usdc(slot_key)
             if b and b > 0:
-                from app.core.bot_identity import resolve_venue
                 budget_usdc = b
-                max_lev = resolve_venue(self.cfg, strategy_name, tf, symbol).max_leverage
+                max_lev = venue.max_leverage
         # Distance au stop initial → sizing par le risque réel (parité backtest),
         # au lieu de l'ATR brut qui sur-risquait d'un facteur = multiple du stop.
         stop_dist = self._initial_stop_distance(side, price, atr, signal_dict)
@@ -402,6 +467,23 @@ class PositionOpenMixin:
             budget=budget_usdc, max_leverage=max_lev,
             stop_dist=stop_dist,
         )
+        # Quantification par la venue (G2) : arrondi à la baisse au lot/à
+        # l'unité entière quand l'instrument n'est pas fractionnable. No-op en
+        # crypto — mais sur actions, une taille de 3,7 titres n'existe pas, et
+        # un capital trop faible pour 1 titre doit être refusé ici plutôt que
+        # de partir en ordre impossible.
+        q_size = quantize_size(size, venue)
+        if q_size <= 0:
+            return _reject(
+                "venue",
+                f"taille {size:.6f} < 1 unité négociable sur '{venue.name}' "
+                f"(prix {price:.4f}, capital insuffisant pour ce symbole)",
+            )
+        if q_size != size:
+            size, notional = q_size, round(q_size * price, 4)
+        if venue.min_notional > 0 and notional < venue.min_notional:
+            return _reject("venue",
+                           f"notionnel {notional:.2f} < minimum {venue.min_notional:.2f}")
         leverage = self.risk.compute_leverage(notional)
 
         # 6. Budget

@@ -44,6 +44,16 @@ class Venue:
     ``allow_short`` — tous par défaut alignés sur le comportement crypto
     historique (rétro-compatibilité totale des ``venues.defs`` existants qui
     ne renseignent pas ces clés).
+
+    Champs G2 (actions en paper) : ``calendar`` (code de calendrier de marché,
+    vide = 24/7), ``data_provider`` (fournisseur de données, vide = l'exchange
+    ccxt par défaut), ``can_execute`` (False = venue **data-only** : le bot
+    calcule le trade et **notifie** au lieu d'envoyer un ordre),
+    ``close_at_session_end`` + ``close_before_close_min`` (fermer avant la
+    clôture plutôt que de porter le risque overnight), et le modèle de coûts
+    (``fee_pct``, ``fee_fixed``, ``fee_min``, ``transaction_tax_pct``,
+    ``tax_on_buy_only``, ``min_notional``). Tous neutres par défaut : une
+    venue crypto se comporte exactement comme avant.
     """
     name: str
     market_type: str = "spot"          # spot | margin | perp
@@ -57,12 +67,26 @@ class Venue:
     lot_size: float = 0.0              # 0.0 = pas de contrainte (fractionnable)
     fractional: bool = True            # False = quantité entière requise (actions)
     allow_short: bool = True
+    # ── G2 : horaires, provider, exécution, coûts ──────────────────────────
+    calendar: str = ""                 # "" = 24/7 ; ex. "XPAR" (Euronext Paris)
+    data_provider: str = ""            # "" = exchange ccxt ; ex. "yfinance"
+    can_execute: bool = True           # False = data-only → notification de trade
+    close_at_session_end: bool = False # fermer les positions avant la clôture
+    close_before_close_min: float = 5.0
+    fee_pct: Optional[float] = None    # None = repli sur trading.taker_fee
+    fee_fixed: float = 0.0             # commission fixe par ordre (courtiers actions)
+    fee_min: float = 0.0               # plancher de commission par ordre
+    transaction_tax_pct: float = 0.0   # ex. TTF française sur les achats d'actions
+    tax_on_buy_only: bool = True       # la TTF ne frappe que les acquisitions
+    min_notional: float = 0.0          # notionnel minimum accepté par la venue
 
     def describe(self) -> str:
         lev = f"×{self.max_leverage:g}" if self.max_leverage and self.max_leverage > 1 else "1×"
         mm = f"/{self.margin_mode}" if self.margin_mode else ""
         hm = " hedge" if self.hedge_mode else ""
-        return f"{self.exchange}:{self.market_type}{mm} {lev}{hm}"
+        cal = f" [{self.calendar}]" if self.calendar else ""
+        exe = "" if self.can_execute else " (data-only)"
+        return f"{self.exchange}:{self.market_type}{mm} {lev}{hm}{cal}{exe}"
 
     def to_dict(self) -> dict:
         return {
@@ -72,6 +96,15 @@ class Venue:
             "asset_class": self.asset_class, "quote_currency": self.quote_currency,
             "tick_size": self.tick_size, "lot_size": self.lot_size,
             "fractional": self.fractional, "allow_short": self.allow_short,
+            "calendar": self.calendar, "data_provider": self.data_provider,
+            "can_execute": self.can_execute,
+            "close_at_session_end": self.close_at_session_end,
+            "close_before_close_min": self.close_before_close_min,
+            "fee_pct": self.fee_pct, "fee_fixed": self.fee_fixed,
+            "fee_min": self.fee_min,
+            "transaction_tax_pct": self.transaction_tax_pct,
+            "tax_on_buy_only": self.tax_on_buy_only,
+            "min_notional": self.min_notional,
         }
 
 
@@ -123,6 +156,7 @@ def resolve_venue(cfg: dict, strategy: Optional[str] = None,
     if vname and vname in defs:
         d = defs[vname] or {}
         mt = d.get("market_type", "spot")
+        _fee_pct = d.get("fee_pct")
         return Venue(
             name=vname,
             market_type=mt if mt in MARKET_TYPES else "spot",
@@ -136,6 +170,17 @@ def resolve_venue(cfg: dict, strategy: Optional[str] = None,
             lot_size=float(d.get("lot_size", 0.0) or 0.0),
             fractional=bool(d.get("fractional", True)),
             allow_short=bool(d.get("allow_short", True)),
+            calendar=str(d.get("calendar", "") or ""),
+            data_provider=str(d.get("data_provider", "") or ""),
+            can_execute=bool(d.get("can_execute", True)),
+            close_at_session_end=bool(d.get("close_at_session_end", False)),
+            close_before_close_min=float(d.get("close_before_close_min", 5.0) or 0.0),
+            fee_pct=(None if _fee_pct is None else float(_fee_pct)),
+            fee_fixed=float(d.get("fee_fixed", 0.0) or 0.0),
+            fee_min=float(d.get("fee_min", 0.0) or 0.0),
+            transaction_tax_pct=float(d.get("transaction_tax_pct", 0.0) or 0.0),
+            tax_on_buy_only=bool(d.get("tax_on_buy_only", True)),
+            min_notional=float(d.get("min_notional", 0.0) or 0.0),
         )
     return default_venue_from_cfg(cfg)
 
