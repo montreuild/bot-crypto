@@ -9,9 +9,14 @@ import pytest
 
 pytest.importorskip("lightgbm")
 
+
 import app.ml.model_registry as registry
 from app.ml.backend.persistence import save_amp_dir_bundle
 from app.ml.trainer import MLStrategyTrainer
+
+# Clé de registre = RECETTE, plus nom de stratégie (fracture b).
+# opus_omnibus_v11 consomme omnibus_v4_multi.
+_RECIPE = "omnibus_v4_multi"
 
 
 def _train_tiny_booster(seed: int):
@@ -27,8 +32,9 @@ def _publish_toy_model(tmp_path, symbol, tf, recipe, train_end):
     prefix = str(tmp_path / "toy_src")
     amp, dir_ = _train_tiny_booster(1), _train_tiny_booster(2)
     save_amp_dir_bundle(prefix, tf, amp, dir_, ["f0", "f1", "f2"], {}, 0.6, {})
-    return registry.publish(symbol, tf, recipe, prefix, train_end=train_end,
-                            decision="promote", base_dir=str(tmp_path / "models"))
+    return registry.publish(tf, recipe, prefix, train_symbol=symbol,
+                            train_end=train_end, decision="promote",
+                            base_dir=str(tmp_path / "models"))
 
 
 def _v11():
@@ -86,10 +92,10 @@ def test_resolve_symbol_empty_symbols_returns_none():
 # ─────────────────────────────────────────────────────────────────────────────
 #  _freshness_warning
 # ─────────────────────────────────────────────────────────────────────────────
-def _art(train_end=None, legacy=False, version_id="v1"):
-    return registry.ArtifactRef(path_prefix="x", symbol="BTC/USDC", tf="1h",
+def _art(train_end=None, version_id="v1"):
+    return registry.ArtifactRef(path_prefix="x", train_symbol="BTC/USDC", tf="1h",
                                 recipe="r", version_id=version_id,
-                                train_end=train_end, legacy=legacy)
+                                train_end=train_end)
 
 
 def test_freshness_warning_none_for_fresh_model():
@@ -105,8 +111,10 @@ def test_freshness_warning_flags_stale_model():
     assert "vieux" in warn
 
 
-def test_freshness_warning_legacy_artifact_is_non_measurable():
-    warn = MLStrategyTrainer._freshness_warning(_art(train_end=None, legacy=True), interval_h=6.0)
+def test_freshness_warning_undated_artifact_is_non_measurable():
+    """Sans ``train_end``, la fraîcheur n'est pas mesurable — il faut le DIRE,
+    pas retourner None (qui signifierait « modèle frais »)."""
+    warn = MLStrategyTrainer._freshness_warning(_art(train_end=None), interval_h=6.0)
     assert warn is not None
     assert "non mesurable" in warn
 
@@ -116,16 +124,15 @@ def test_freshness_warning_legacy_artifact_is_non_measurable():
 # ─────────────────────────────────────────────────────────────────────────────
 def test_load_models_resolves_from_registry_and_schedules_future_retrain(tmp_path):
     registry_base = str(tmp_path / "models")
-    art = _publish_toy_model(tmp_path, "BTC/USDC", "1h", "opus_omnibus_v11",
+    art = _publish_toy_model(tmp_path, "BTC/USDC", "1h", _RECIPE,
                              train_end="2020-01-01T00:00:00")
     assert art is not None
 
     strat = _v11()
     strat.model_dir = registry_base
     trainer = MLStrategyTrainer({"strategy_params": {}})
-    scanner = _FakeScanner(["BTC/USDC"])
 
-    trainer.load_models({"opus_omnibus_v11": strat}, ["1h"], scanner=scanner)
+    trainer.load_models({"opus_omnibus_v11": strat}, ["1h"])
 
     assert strat.is_trained
     key = "opus_omnibus_v11@1h"
@@ -137,20 +144,37 @@ def test_load_models_no_model_schedules_immediate_retrain(tmp_path):
     strat = _v11()
     strat.model_dir = str(tmp_path / "models_empty")
     trainer = MLStrategyTrainer({"strategy_params": {}})
-    scanner = _FakeScanner(["BTC/USDC"])
 
-    trainer.load_models({"opus_omnibus_v11": strat}, ["1h"], scanner=scanner)
+    trainer.load_models({"opus_omnibus_v11": strat}, ["1h"])
 
     assert trainer._retrain_at["opus_omnibus_v11@1h"] == 0
     assert not strat.is_trained
 
 
-def test_load_models_without_scanner_does_not_crash(tmp_path):
+def test_load_models_serves_a_model_whatever_symbol_it_was_trained_on(tmp_path):
+    """Un artefact entraîné sur ETH est servi tel quel — le registre ne range
+    pas par symbole.
+
+    C'est la propriété que la suppression de la dimension symbole doit
+    garantir. Avant, la résolution passait par ``_resolve_symbol(scanner)``
+    qui répondait BTC : un modèle publié sous ETH était introuvable, et un
+    appelant sans scanner ne trouvait jamais RIEN (résolution à
+    ``symbol=None``) — un « pas de modèle » silencieux suivi d'un
+    réentraînement inutile.
+    """
+    registry_base = str(tmp_path / "models")
+    art = _publish_toy_model(tmp_path, "ETH/USDC", "1h", _RECIPE,
+                             train_end="2020-01-01T00:00:00")
+    assert art is not None
+    assert art.train_symbol == "ETH/USDC"   # provenance conservée
+
     strat = _v11()
-    strat.model_dir = str(tmp_path / "models_empty")
+    strat.model_dir = registry_base
     trainer = MLStrategyTrainer({"strategy_params": {}})
-    trainer.load_models({"opus_omnibus_v11": strat}, ["1h"], scanner=None)
-    assert trainer._retrain_at["opus_omnibus_v11@1h"] == 0
+    trainer.load_models({"opus_omnibus_v11": strat}, ["1h"])
+
+    assert strat.is_trained
+    assert trainer._retrain_at["opus_omnibus_v11@1h"] > 0   # pas de retrain immédiat
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -172,7 +196,7 @@ def test_retrain_thread_trains_and_publishes_when_enough_data(tmp_path):
     trainer._retrain_thread("opus_omnibus_v11", strat, strat_params, "1h", scanner)
 
     assert strat.is_trained
-    versions = registry.list_versions("BTC/USDC", "1h", "opus_omnibus_v11", base_dir=registry_base)
+    versions = registry.list_versions("1h", _RECIPE, base_dir=registry_base)
     assert len(versions) >= 1
 
 
@@ -190,7 +214,7 @@ def test_retrain_thread_insufficient_data_does_not_crash_or_publish(tmp_path):
     trainer._retrain_thread("opus_omnibus_v11", strat, strat_params, "1h", scanner)
 
     assert not strat.is_trained
-    versions = registry.list_versions("BTC/USDC", "1h", "opus_omnibus_v11", base_dir=registry_base)
+    versions = registry.list_versions("1h", _RECIPE, base_dir=registry_base)
     assert len(versions) == 0
 
 

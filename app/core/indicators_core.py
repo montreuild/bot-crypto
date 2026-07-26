@@ -124,31 +124,51 @@ def bb_squeeze(close: pl.Series, lookback: int = 15,
 #  ATR  — deux variantes : Series (pour build_features) et scalaire (stratégies)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def atr_wilder(df: pl.DataFrame, n: int = 14) -> pl.Series:
+    """ATR(n), lissage de **Wilder** (RMA, α = 1/n) — la définition de l'ATR,
+    et celle de ``ta.atr`` en Pine.
+
+    **Source unique de vérité du lissage Wilder dans le dépôt** — ne pas
+    ré-implémenter en local. Le moteur Smart Money (``app/core/smc.py``,
+    ``smc_primitives._wilder_atr``) et le portage PineScript
+    (``liquidity_sweep_vol``) en dépendent explicitement pour que leurs seuils
+    « ×ATR » correspondent au même ATR que TradingView.
+
+    ``atr``/``atr_series``/``atr_val`` délèguent ici depuis la correction du
+    lissage (cf. ``atr``) : une seule implémentation, donc pas de dérive
+    possible entre le contrat du SMC et le reste du dépôt.
+    """
+    return _true_range(df).ewm_mean(alpha=1.0 / n, adjust=False)
+
+
 def atr(df: pl.DataFrame, n: int = 14) -> pl.Series:
-    """ATR(n) — retourne une Series complète (compatible build_features)."""
-    return _true_range(df).ewm_mean(span=n, adjust=False)
+    """ATR(n) — retourne une Series complète (compatible build_features).
+
+    Lissé en **Wilder** (α = 1/n). Auparavant ``ewm_mean(span=n)``, soit
+    α = 2/(n+1) : pour n=14, 0.133 au lieu de 0.071 — un ATR presque deux fois
+    plus réactif que son nom ne l'annonce, l'équivalent d'un Wilder de période
+    7,5. Le RSI voisin, lui, était déjà en α = 1/n, ce qui ne laissait guère de
+    doute sur le caractère involontaire de l'écart.
+
+    La correction a été précédée d'une mesure, pas décrétée : réoptimisation
+    complète de chaque variante puis comparaison sur une fenêtre jamais vue par
+    l'optimiseur (``scripts/compare_adx_smoothing.py``). Écart maximum 0.022 de
+    score, de signe variable — la sur-réactivité n'était pas ce qui faisait
+    vivre les stratégies concernées. Cf.
+    docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §8ter.
+    """
+    return atr_wilder(df, n)
 
 
 def atr_series(df: pl.DataFrame, period: int = 14) -> pl.Series:
     """Alias explicite pour atr() → pl.Series."""
-    return _true_range(df).ewm_mean(span=period, adjust=False)
+    return atr_wilder(df, period)
 
 
 def atr_val(df: pl.DataFrame, n: int = 14) -> float:
     """ATR(n) — retourne le scalaire de la dernière barre (usage live/stratégies)."""
     v = atr(df, n)[-1]
     return float(v) if v is not None and float(v) > 0 else 0.0
-
-
-def atr_wilder(df: pl.DataFrame, n: int = 14) -> pl.Series:
-    """ATR(n) lissage de **Wilder** (RMA, alpha = 1/n) — la variante de
-    ``ta.atr`` en Pine, distincte de :func:`atr` (EMA span=n, alpha=2/(n+1)).
-
-    Utilisée par le moteur Smart Money (``app/core/smc.py``) et le portage
-    PineScript (``liquidity_sweep_vol``) pour que les seuils « ×ATR » de ces
-    modules correspondent au même ATR que TradingView. Source unique de vérité
-    du lissage Wilder — ne pas ré-implémenter en local."""
-    return _true_range(df).ewm_mean(alpha=1.0 / n, adjust=False)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -163,6 +183,14 @@ def adx(df: pl.DataFrame, n: int = 14) -> Tuple[pl.Series, pl.Series, pl.Series]
       pdm = up   si up > dn, sinon 0  →  up  * (up > dn).cast(Float64)
       ndm = dn   si dn > up, sinon 0  →  dn  * (dn > up).cast(Float64)
     Divisions sécurisées via .clip(lower_bound=1e-10).
+
+    **Lissage de Wilder (α = 1/n) aux quatre étages** — ATR, +DI, −DI et la
+    ligne ADX elle-même. C'est la définition de l'ADX. Auparavant
+    ``ewm_mean(span=n)`` partout, soit α = 2/(n+1) : mesuré sur BTC/USDC 1h,
+    l'ADX moyen tombait de 35.4 à 28.2 après correction, et le verdict
+    ``ADX ≥ 20`` changeait sur 21,6 % des barres. Cf.
+    docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §8ter et :func:`atr` pour la
+    mesure qui a précédé la correction.
     """
     if len(df) < n * 2:
         z = pl.Series([0.0] * len(df))
@@ -174,15 +202,16 @@ def adx(df: pl.DataFrame, n: int = 14) -> Tuple[pl.Series, pl.Series, pl.Series]
     pdm  = up  * (up > dn).cast(pl.Float64)
     ndm  = dn  * (dn > up).cast(pl.Float64)
 
-    atr14    = _true_range(df).ewm_mean(span=n, adjust=False)
+    a        = 1.0 / n
+    atr14    = atr_wilder(df, n)
     atr_safe = atr14.clip(lower_bound=1e-10)
 
-    pdi     = 100 * pdm.ewm_mean(span=n, adjust=False) / atr_safe
-    ndi     = 100 * ndm.ewm_mean(span=n, adjust=False) / atr_safe
+    pdi     = 100 * pdm.ewm_mean(alpha=a, adjust=False) / atr_safe
+    ndi     = 100 * ndm.ewm_mean(alpha=a, adjust=False) / atr_safe
     sum_di  = (pdi + ndi).clip(lower_bound=1e-10)
     dx      = 100 * (pdi - ndi).abs() / sum_di
 
-    adx_line = dx.ewm_mean(span=n, adjust=False).fill_null(0)
+    adx_line = dx.ewm_mean(alpha=a, adjust=False).fill_null(0)
     return adx_line, pdi.fill_null(0), ndi.fill_null(0)
 
 
@@ -235,8 +264,10 @@ def supertrend(df: pl.DataFrame, period: int = 10,
     incontournable (upper[i] dépend de upper[i-1]).
     Optimized: pre-shift close array and use contiguous float64 arrays.
     """
-    # TR et ATR via Polars (pas de round-trip sur cette partie)
-    atr_arr = _true_range(df).ewm_mean(span=period, adjust=False).to_numpy().astype(np.float64)
+    # TR et ATR via Polars (pas de round-trip sur cette partie). Lissage de
+    # Wilder comme partout ailleurs depuis §8ter — c'est aussi ce qu'utilise
+    # ``ta.supertrend`` en Pine, dont ``mult`` est censé être comparable.
+    atr_arr = atr_wilder(df, period).to_numpy().astype(np.float64)
 
     high  = df["high"].to_numpy().astype(np.float64)
     low   = df["low"].to_numpy().astype(np.float64)

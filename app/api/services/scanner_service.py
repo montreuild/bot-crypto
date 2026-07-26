@@ -9,9 +9,6 @@ import importlib
 import logging
 import math
 
-import numpy as np
-import polars as pl
-
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.engine.engine import BaseStrategyML
 
@@ -157,112 +154,6 @@ def _tp_sl(side: str, entry: float, atr: float, tp_mult: float, sl_mult: float):
     return entry - tp_mult * atr, entry + sl_mult * atr
 
 
-def _setup_series_v8(df, tf: str, limit: int) -> dict:
-    """Markers de setups V8 par bougie (modèles V4 pré-entraînés), avec TP/SL."""
-    from app.core.indicators import bearish_excess_series
-    from app.ml.backend import MLBackend
-    from app.strategies.opus_omnibus_v8 import (
-        _DEFAULT_SETUPS,
-        REGIME_CHOPPY,
-        REGIME_LABELS,
-        _classify_regime,
-        _evaluate_setup,
-    )
-    from app.strategies.opus_stat_pretrained_v4 import (
-        _detect_timeframe,
-        _FeatureBuilder,
-        _load_pretrained,
-    )
-
-    tf_detected = _detect_timeframe(df)
-    if tf_detected not in ("15m", "30m", "1h"):
-        return {"supported": False, "reason": f"Timeframe {tf_detected} non supporté par V8",
-                "markers": []}
-
-    # Phase6 : _FeatureBuilder.build prend/retourne du Polars maintenant.
-    window = MLBackend.window_polars(df, n=len(df))
-    feats  = _FeatureBuilder().build(window)
-    if feats is None or len(feats) == 0:
-        return {"supported": False, "reason": "Construction des features V4 impossible",
-                "markers": []}
-
-    models, medians_all = _load_pretrained()
-    amp_entry = models.get((tf_detected, "amp", "single"))
-    dir_entry = models.get((tf_detected, "dir", "single"))
-    if amp_entry is None or dir_entry is None:
-        return {"supported": False, "reason": f"Modèles V4 indisponibles pour {tf_detected}",
-                "markers": []}
-
-    def _batch(entry, target):
-        # Phase6 : batch prediction Polars → ndarray 2D (n_rows, n_features)
-        # avec imputation des NaN/inf par les médianes du train.
-        feat_names = list(entry["features"])
-        med = medians_all.get((tf_detected, target), {})
-        cols_present = [c for c in feat_names if c in feats.columns]
-        arr = feats.select(cols_present).to_numpy()
-        # Replace inf by NaN puis impute colonne par colonne
-        arr = np.where(np.isfinite(arr), arr, np.nan)
-        for j, col in enumerate(cols_present):
-            col_data = arr[:, j]
-            mask = ~np.isfinite(col_data)
-            if mask.any():
-                col_data[mask] = float(med.get(col, 0.0))
-        # Booster natif LightGBM : predict() retourne P(class=1) en binaire.
-        return entry["model"].predict(arr)
-
-    p_amp = _batch(amp_entry, "amp")
-    p_up  = _batch(dir_entry, "dir")
-
-    adx_arr  = feats["ADX"].fill_null(0.0).to_numpy()
-    bull_arr = feats["MM_bullish_align"].fill_null(0).cast(pl.Int64).to_numpy()
-    bear_arr = feats["MM_bearish_align"].fill_null(0).cast(pl.Int64).to_numpy()
-    n_feats  = len(feats)
-    regimes  = [_classify_regime(float(adx_arr[i]), int(bull_arr[i]),
-                                 int(bear_arr[i]), 20.0) for i in range(n_feats)]
-
-    be_series  = bearish_excess_series(df, rsi_threshold=38.0, price_dev_pct=1.5).to_numpy().astype(bool)
-    offset     = len(df) - n_feats
-    be_aligned = be_series[offset:] if offset > 0 else be_series[:n_feats]
-    setups_def = sorted([dict(s) for s in _DEFAULT_SETUPS], key=lambda s: s["priority"])
-    times      = df["time"].dt.epoch(time_unit="s").to_list()
-    closes     = df["close"].to_list()
-
-    markers, start, last_seen = [], max(0, n_feats - limit), None
-    for i in range(n_feats):
-        be_val = bool(be_aligned[i]) if i < len(be_aligned) else False
-        chosen = None
-        for s in setups_def:
-            if _evaluate_setup(s, regimes[i], float(p_amp[i]), float(p_up[i]), False, be_val):
-                chosen = s
-                break
-        if i < start:
-            last_seen = chosen["name"] if chosen else None
-            continue
-        if chosen is None:
-            last_seen = None
-            continue
-        if chosen["name"] == last_seen:
-            continue
-        last_seen = chosen["name"]
-        di    = offset + i
-        entry = float(closes[di] or 0.0)
-        atr   = _atr_at(df, di)
-        if entry <= 0 or atr <= 0:
-            continue
-        side  = "long" if chosen["direction"] == 1 else "short"
-        tp, sl = _tp_sl(side, entry, atr, float(chosen["tp_mult"]), float(chosen["sl_mult"]))
-        confluence = (chosen["name"] == "SIGNAL_UP" and regimes[i] == REGIME_CHOPPY
-                      and p_up[i] > 0.58 and p_amp[i] > 0.50)
-        markers.append({
-            "time": int(times[di]), "setup": chosen["name"], "side": side,
-            "entry": round(entry, 8), "tp": round(tp, 8), "sl": round(sl, 8),
-            "p_event": round(float(p_amp[i]), 4), "p_up": round(float(p_up[i]), 4),
-            "regime_lbl": REGIME_LABELS.get(regimes[i], "?"),
-            "confluence": bool(confluence),
-        })
-    return {"supported": True, "reason": "", "markers": markers}
-
-
 def _setup_series_v11(df, tf: str, limit: int, strategy: str,
                       symbol: str = DEFAULT_CONFIG_SYMBOL) -> dict:
     """Markers de setups V11/V12 par bougie, avec TP/SL.
@@ -299,7 +190,7 @@ def _setup_series_v11(df, tf: str, limit: int, strategy: str,
     strat = _S()
     strat.managed_externally = False
     name = strat.name
-    art = ml_registry.resolve(symbol, tf_detected, name,
+    art = ml_registry.resolve(tf_detected, name,
                               base_dir=getattr(strat, "model_dir", "models"))
     if art is not None:
         strat.load_model(art.path_prefix)
@@ -743,7 +634,7 @@ def build_signals_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
             # Stratégies ML : charger la dernière version promue du registre
             # ou marquer skipped.
             if isinstance(inst, BaseStrategyML):
-                art = ml_registry.resolve(symbol, tf, name,
+                art = ml_registry.resolve(tf, name,
                                           base_dir=getattr(inst, "model_dir", "models"))
                 if art is None or not inst.load_model(art.path_prefix):
                     signals.append({

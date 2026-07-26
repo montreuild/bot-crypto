@@ -103,7 +103,7 @@ class TestBlitzBacktest:
     def test_integrates_with_backtester(self):
         eng = Engine()
         eng.register(Strategy(), silent=True)
-        bt = Backtester(eng, _cfg(), use_pretrained_ml=False)
+        bt = Backtester(eng, _cfg(), ml_mode="inline")
         d = bt.run(_df(700, "up"), "BTC/USDC", timeframe="4h").to_dict()
         assert "total_pnl" in d and d["total_trades"] >= 0
 

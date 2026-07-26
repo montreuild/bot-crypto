@@ -1,0 +1,39 @@
+recipe: omnibus_v4_multi
+version: 1
+description: >
+  Recette omnibus multi-horizon — le modèle de la lignée vivante (V11/V12).
+  Labellisation sur 3 horizons : capte les mouvements qui se développent sur
+  plusieurs bougies, pas seulement le pas suivant.
+
+features:
+  catalog: v4_polars@1
+  params: {}                      # tout ce qui change les FEATURES vit ici
+
+labels:
+  horizons: [1, 3, 6]
+  amp_top_pct: 0.30
+
+heads: [amp, dir]
+
+hp:
+  n_estimators: 500
+  num_leaves: 31
+  learning_rate: 0.03
+  calibrate: true
+  prune_features: true
+
+window:
+  bars:
+    default: max                  # mesuré : en 1h, moins d'historique fait
+                                  # parfois mieux (§1.5) — à balayer par
+                                  # window_sweep avant de figer un chiffre.
+  min_bars: 2000
+  cadence_bars: 800
+
+gate:
+  metric: auc_amp
+  holdout_bars: 1500
+  auc_floor: 0.55
+  epsilon: 0.01
+
+persistence: lgbm_amp_dir_bundle

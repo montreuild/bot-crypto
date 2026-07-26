@@ -427,6 +427,9 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
     - managed_externally=True (live) : le LiveTrader planifie fit() en arrière-plan.
     """
     name = "ml_dynamic_threshold"
+    # Recette(s) consommée(s) — surchargeable par le bloc `models:`
+    # du YAML (cf. app.ml.recipe.strategy_models).
+    models: Dict[str, str] = {"signal": "dyn_threshold_v1"}
     retrain_interval_h: int = 6
     model_dir: str = "models"
 
@@ -450,6 +453,79 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         "hyper_search_every": 20,
         "max_train_window": 6000,
     }
+
+    @classmethod
+    def score_holdout(cls, path_prefix: str, holdout_df, *,
+                      gate_cfg: Any = None, params: dict = None) -> Dict[str, Any]:
+        """Scorer dédié — le format de CETTE recette diffère du bundle V4 sur
+        les trois plans à la fois :
+
+          - **persistance** : un seul ``{path}.lgb`` (+ ``.meta.json``), pas
+            de paire amplitude/direction ;
+          - **features** : ``compute_features`` (~30 colonnes : VWAP,
+            micro-structure, volatilité réalisée…), pas le catalogue V4 ;
+          - **labels** : ``compute_labels`` — hausse au-delà d'un seuil
+            *adaptatif à la volatilité*, pas un quantile d'amplitude fixe.
+
+        Le scorer par défaut ne pouvait donc rien en tirer et le gate
+        rapportait un trompeur « labels mono-classe / holdout dégénéré ».
+        Retourne ``{"n": …, "auc_dir": …}`` — cohérent avec ``gate_spec``.
+
+        classmethod : ne touche jamais l'état ML de l'instance courante (on
+        score un artefact sur disque, souvent le SORTANT, pas ce qui est en
+        mémoire).
+        """
+        import json
+
+        from app.ml.scoring import rank_auc
+
+        lgb_path, meta_path = f"{path_prefix}.lgb", f"{path_prefix}.meta.json"
+        if not (os.path.exists(lgb_path) and os.path.exists(meta_path)):
+            return {}
+        try:
+            import lightgbm as lgb
+            booster = lgb.Booster(model_file=lgb_path)
+            with open(meta_path, "r", encoding="utf-8") as f:
+                feat_cols = list(json.load(f).get("features") or [])
+        except Exception as e:
+            logger.warning(f"[{cls.name}] score_holdout : artefact illisible ({e})")
+            return {}
+        if not feat_cols:
+            return {}
+
+        p = params or {}
+        lookahead = int(p.get("lookahead", 3))
+        vol_multiplier = float(p.get("vol_multiplier", 0.6))
+
+        feats = compute_features(holdout_df)
+        if feats is None or len(feats) == 0:
+            return {}
+        labels = compute_labels(holdout_df, lookahead, vol_multiplier)
+
+        # Même troncature qu'à l'entraînement (_fit_impl) : les dernières
+        # barres n'ont pas de futur observable dans le holdout.
+        n_valid = max(0, len(holdout_df) - 2 * lookahead)
+        if n_valid < 30:
+            return {}
+        y = labels[:n_valid].fill_null(0).to_numpy().astype(np.int64)
+
+        missing = [c for c in feat_cols if c not in feats.columns]
+        if missing:
+            logger.warning(
+                f"[{cls.name}] score_holdout : {len(missing)} features absentes "
+                f"du holdout (ex. {missing[:3]}) — artefact incompatible"
+            )
+            return {}
+        X = np.nan_to_num(
+            feats[:n_valid].select(feat_cols).to_numpy().astype(np.float64),
+            nan=0.0, posinf=1.0, neginf=-1.0,
+        )
+        try:
+            proba = booster.predict(X)
+        except Exception as e:
+            logger.warning(f"[{cls.name}] score_holdout : prédiction KO ({e})")
+            return {}
+        return {"n": int(n_valid), "auc_dir": rank_auc(y, np.asarray(proba, dtype=float))}
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get(self.name, {})

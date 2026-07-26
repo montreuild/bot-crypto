@@ -6,6 +6,113 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧹 ML — Retrait du pack V4 figé (étape A de l'architecture unifiée)
+
+Le pack V4 de mai 2026 n'était conservé que sur une intuition. Mesuré sur
+holdout commun (`scripts/compare_legacy_vs_retrained.py`), un ré-entraînement
+le bat sur les **3 timeframes** — `auc_amp` 0.598→0.638 (15m), 0.656→0.674
+(30m), 0.600→0.663 (1h) — et sur **aucun régime** son avantage ne survit à un
+IC 95 % bootstrap apparié. Le verdict tient de 5 000 barres d'entraînement à
+tout l'historique (15 promotions sur 15). Détail :
+`docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md` §1.5.
+
+- **Supprimé** : `opus_stat_pretrained_v4`, `opus_omnibus_v7_pretrained`, `v8`,
+  `v9`, `v10` (+ leurs 5 YAML), `scripts/migrate_v4_to_registry.py`, le mode
+  `v8` du graphique scanner, et le chemin legacy du registre
+  (`_legacy_artifact`, `import_legacy`, champ `ArtifactRef.legacy`, repli sur
+  l'ancien layout plat, colonne « Legacy » des deux UI).
+- **Préservé** : les setups `SHORT_TD` et `LONG_PULLBACK_TU`, que seules v8/v9
+  portaient, sont repris dans `opus_omnibus_v11` **désactivés** — activables
+  par YAML, donc désormais optimisables. Neutralité et activabilité
+  verrouillées par `tests/test_omnibus_recovered_setups.py`.
+- **Archivé** : les 9 fichiers du pack vivent sous `models/_archive/`, ignoré
+  par `list_recipes()` — lisibles pour ré-examen, jamais résolus.
+- **Rétrocompat retirée** (le bot n'est pas en production) : `use_pretrained_ml`
+  — `ml_mode` devient le seul levier, avec un défaut explicite `"frozen"` — les
+  ré-exports de `app/ml/policy.py`, l'alias `recipe_gate_defaults`
+  (→ `resolve_gate_spec`), et les arguments `label_horizons`/`amp_top_pct` en
+  direct de `score_holdout`, qui permettaient de scorer avec une convention de
+  labels différente de celle déclarée par la recette.
+
+- **Deux tests morts réactivés**, découverts en cherchant les références aux
+  fichiers supprimés : `test_feature_store_integration` et
+  `test_scoring_alignment` portaient un `pytest.importorskip("sklearn")` alors
+  que le dépôt n'a plus sklearn depuis `phase6-sklearn-removal` — ils
+  skippaient donc silencieusement, sans plus rien vérifier. Ils passent
+  désormais réellement.
+
+Bilan : **−4 230 lignes nettes**, 46 → 41 stratégies, 14 → 8 stratégies ML,
+947 → **958 tests** verts (lents inclus), 0 skip.
+
+### 📐 ML — Indicateurs : ATR/ADX/DI passent au lissage de Wilder (décision 13)
+
+Le dépôt lissait ATR/ADX/DI en `ewm_mean(span=n)` — α = 2/(n+1) — là où la
+définition de Wilder veut α = 1/n. Pour n=14 : **un Wilder de période 7,5 sous
+un nom qui annonce 14**. Le RSI voisin était déjà en α = 1/n, ce qui ne laissait
+guère de doute sur l'involontaire. Deux ADX incompatibles cohabitaient donc :
+corrélation **0.75**, écart absolu moyen 9.5 points, verdict `ADX ≥ 20`
+différent sur **21,6 %** des barres.
+
+Corrigé **après mesure**, pas par principe : réoptimisation complète sous
+chaque convention puis comparaison sur une fenêtre jamais vue par l'optimiseur
+(`scripts/compare_adx_smoothing.py`) — écart ≤ **0.022** de score, de signe
+variable. La sur-réactivité n'était pas ce qui faisait vivre ces stratégies.
+
+- `indicators_core.atr`/`atr_series`/`atr_val` délèguent à `atr_wilder`,
+  désormais **l'unique implémentation** du lissage Wilder ; `adx`/`adx_val`
+  passent en α = 1/n **aux quatre étages** (ATR, +DI, −DI, ligne ADX) ;
+  `supertrend` suit. `indicators_precompute` a Wilder par défaut.
+- **Moteur SMC exclu, et vérifié** : il ne lit aucune colonne `_pre_*` et était
+  déjà en Wilder délibérément (alignement `ta.atr`). L'empreinte SHA256 de
+  `smc.analyze` sur 3 000 barres est **identique avant/après**. Un test
+  interdit à tout module SMC de lire `_pre_atr14`/`_pre_adx14`.
+- **Action restante** : les seuils ADX des YAML sont désaccordés (choisis face
+  à un ADX qui valait 35, appliqués à un ADX qui vaut 28) — **réoptimiser**.
+
+### 🔑 ML — La dimension symbole quitte la clé du registre (décision 11)
+
+Le registre rangeait par `(symbole, TF, recette)` alors que le trainer live
+n'entraînait que sur BTC et que le pipeline servait ce modèle à **tous** les
+symboles : un artefact sous `BTC_USDC/` décidait en réalité sur ETH et XRP. La
+dimension nommait une partition inexistante.
+
+Mesuré avant de trancher (`scripts/measure_symbol_transfer.py`) : matrice de
+transfert, coupure temporelle commune, IC 95 % bootstrap apparié, 3 TF.
+**17 des 18 cellules indiscernables du bruit** ; ETH ne gagne rien à son propre
+modèle (0.634 vs 0.638 en 1h) et XRP n'a pas de quoi s'en entraîner un.
+
+- Layout : `{base_dir}/{tf}/{recette}/{version_id}/`. Le symbole
+  d'entraînement subsiste en **provenance** (`ArtifactRef.train_symbol`).
+- `load_models()` n'a plus besoin de `scanner` — ce paramètre produisait un
+  « pas de modèle » silencieux suivi d'un réentraînement inutile.
+- Le script découvre les symboles depuis le store et mesure les corrélations :
+  **à rejouer tel quel** quand un actif d'une autre classe entre dans le bot.
+
+### 🧩 ML — Étapes B à G : recette, prédicteur, presets, fusion omnibus
+
+- **B** — La recette devient un objet de premier ordre (`app/ml/recipe.py`,
+  7 fichiers `recipes/*.yaml`) et le contrat `Predictor` gagne
+  4 implémentations (`app/ml/predictor.py`).
+- **C** — Le cycle de vie ML devient un mixin partagé (`MLBackendMixin`) après
+  preuve que les `_train_impl` autonomes produisaient des modèles
+  **byte-identiques** à `MLBackend` (écart 0.000000, corrélation 1.0000).
+- **E** — `ProxyPredictor` absorbe 4 variantes `_no_ml` sur 5 : **1 491 → 262
+  lignes**. `dynamic_threshold_no_ml` reste un fork, motivé.
+- **D.1/D.2** — `opus_omnibus_v10_retrained` (952 → 101 L) et `opus_omnibus_v7`
+  (572 → 129 L) deviennent des presets de V11, équivalence prouvée par
+  énumération du domaine (2 520 puis 7 744 combinaisons, avec contre-épreuve).
+  `SHORT_TD` redevient optimisable.
+- **G** — Calibration isotone et élagage mesurés : calibration à garder mais
+  **à désactiver en 1h** (ECE +461 % contre −47 %/−67 % ailleurs) — *décision
+  écrite, application encore à faire*. Élagage : non mesurable par ce protocole.
+
+**Trois bugs silencieux préexistants** trouvés par ce travail : snapshot vide du
+cache d'entraînement (V11/V12 perdaient leur modèle dès le 2ᵉ essai
+d'optimisation → zéro signal), `defaults` ignoré par `MLBackend.fit` (une
+stratégie déclarant `calibrate: False` s'entraînait calibrée), et sorties
+anticipées mortes sur les variantes sans ML (0 déclenchement sur 320 contre 164
+pour le fork remplacé).
+
 ### 🛡 Sprint 0 — Correctifs P0 sécurité financière & config
 
 - **[S0-01]** Sync spot/margin propage l'équité à l'allocateur
@@ -758,6 +865,113 @@ UI Modèles (E7) et passe de confirmation post-optimisation non construites
 dans cette passe — cf. `CONCEPTION_CYCLE_DE_VIE_ML.md` §7 pour le détail
 exact de ce qui reste. 66 tests ajoutés, 812 tests OK (0 régression sur les
 746 préexistants).
+
+### 🤖 ML-02/E7 : pages « Modèles » (Jinja + Next.js) + corrections du gate
+
+UI Modèles construite dans les deux surfaces web (registre, historique de
+versions/décisions, pin/promotion manuelle, entraînement + window sweep
+asynchrones). En la testant en conditions réelles, plusieurs écarts ont été
+trouvés et corrigés dans le gate lui-même :
+
+- **`app/ml/policy.recipe_gate_defaults`** : le gate scorait TOUJOURS les
+  candidats sur des labels multi-horizon `[1,3,6]` (pensés pour V11), y
+  compris pour `opus_stat_retrained_v4`/`opus_stat_pretrained_v4` qui
+  labellisent en single-horizon (`t+1`) — écart mesuré : AUC auto-rapporté à
+  l'entraînement 0.732 vs AUC gate holdout 0.702 sur le MÊME modèle (labels
+  différents, pas du bruit). Les deux stratégies déclarent maintenant
+  `label_horizons: [1]` dans leur `fixed_params`, introspecté par le gate.
+- **`policy.score_holdout`** : les recettes à persistance non-V4 (ex.
+  `ml_dynamic_threshold`, un seul `{path}.lgb`) faisaient échouer
+  silencieusement le scoring, avec le message trompeur "labels mono-classe /
+  holdout dégénéré" (suggère un problème de données, pas d'architecture).
+  Diagnostic distinct maintenant renvoyé : format de persistance non reconnu
+  par ce scorer générique.
+- **Warning LightGBM `bagging_by_query`** au chargement des 6 boosters
+  legacy V4 : paramètre inerte (valeur 0, propre au ranking, sans effet sur
+  un objectif binaire) hérité de l'entraînement original — retiré du texte
+  des `.lgb` après vérification des prédictions byte-identiques avant/après.
+- **Métadonnées registre V4 enrichies** : `best_auc` (0.0 → AUC amplitude
+  réelle par TF) + `train_meta` (AUC direction par régime, lift horaire/jour,
+  formule EV) recouvrés d'une analyse quantitative externe fournie par
+  l'utilisateur — corrige le badge "n/m" trompeur dans les deux UI.
+- **Sizing horaire gradué** (`opus_stat_pretrained_v4`/`opus_stat_retrained_v4`)
+  : le filtre binaire (13h-20h UTC ou skip) est complété par un multiplicateur
+  de taille continu dérivé du lift empirique par heure (pic ×2.43 à 14h UTC,
+  plancher 0.2 la nuit) — dégradé au lieu d'un plateau plat à l'intérieur de
+  la fenêtre active.
+- **AUC direction par régime instrumentée dans V11/V12**
+  (`app/ml/backend/trainer.py`, `train_meta["auc_dir_by_regime"]`) pour
+  trancher si la purge `dir_min`/`dir_max` de l'optimiseur (ci-dessus) est
+  justifiée pour CES modèles précisément (pas seulement par analogie avec le
+  pkl V4 autonome). **Résultat mesuré (BTC/USDC, 15m/30m/1h, fenêtres de 20k-
+  40k barres, labels single ET multi-horizon) : AUC direction par régime
+  0.47-0.54 partout, y compris Trend Down — pas de signal régime-conditionnel
+  reproduit sur les modèles propres de V11/V12**, contrairement au pkl V4
+  (0.86-0.88 en Trend Down sur son propre test OOS). La purge reste donc
+  justifiée en l'état ; `param_space` non modifié. Hypothèse la plus probable :
+  méthodologie d'entraînement différente (features/pruning/calibration) plutôt
+  qu'un artefact de la seule granularité des labels (testé et écarté).
+
+### 🤖 ML-02 : le scoring du gate devient un contrat porté par la recette
+
+Les correctifs de la passe précédente étaient des cas particuliers empilés
+dans le gate (une recette single-horizon ici, un format non lu là, un
+paramètre LightGBM patché à la main dans 6 fichiers). Le problème de fond :
+`policy.score_holdout` **supposait** un format de persistance (bundle
+amplitude+direction V4), un catalogue de features (V4) et une définition de
+labels — chaque écart devenait une exception à coder.
+
+Le scoring appartient désormais à la recette (`app/ml/scoring.py`) :
+
+- **`gate_spec`** (déclaratif, sur `BaseStrategyML`) — `label_horizons`,
+  `amp_top_pct`, `metric` : pour les recettes qui utilisent le scorer par
+  défaut avec d'autres conventions. Les clés d'exploitation (seuils,
+  fenêtre) restent au YAML, et `gate_metric` prime sur le `metric` déclaré.
+- **`score_holdout()`** (classmethod surchargeable) — pour les recettes dont
+  le format diffère réellement. `classmethod` par construction : on score un
+  artefact sur disque (souvent le sortant), jamais l'état en mémoire.
+- `policy.score_holdout` devient un dispatcher, avec repli sur le scorer par
+  défaut si la recette n'a rien surchargé.
+
+Ce que le contrat a révélé — **le bug touchait 6 stratégies, pas 2** :
+`opus_omnibus_v7`, `opus_omnibus_v10_retrained`, `scoring_statistique_opus_v4`
+et `v5` labellisent aussi en `t+1` et étaient gatées contre `[1,3,6]`, comme
+`opus_stat_retrained_v4`. Toutes déclarent maintenant leur convention ;
+`opus_omnibus_v12` hérite de celle de v11 sans duplication, et v11 dérive la
+sienne de `fixed_params` pour que les deux ne puissent pas diverger.
+
+- **`ml_dynamic_threshold` est réellement gatable** (au lieu de « format non
+  supporté ») : scorer dédié qui charge son booster unique, construit SES
+  features et SES labels à seuil de volatilité adaptatif, et arbitre sur
+  `auc_dir` — la recette n'a pas de modèle d'amplitude.
+- **`scoring_statistique_opus_v4/v5`** : leur format (`save_lgb_with_scaler`)
+  ne sérialise ni features ni médianes → diagnostic honnête au lieu d'un
+  `auc_amp` silencieusement absent.
+- **Warning LightGBM générique** (`app/ml/lgb_logging.py`) : les messages
+  passent par `register_logger` vers le logging Python, et le motif
+  « Ignoring unrecognized parameter » est dégradé en DEBUG. Il est inoffensif
+  par construction (LightGBM énumère puis ignore — prédictions vérifiées
+  identiques). Le patch manuel des 6 `.lgb` legacy est **annulé** : le
+  correctif est dans le code et couvre tout artefact futur.
+
+### 🔬 Importance des features par régime (V11/V12) — réponse mesurée
+
+L'importance « gain » de LightGBM est globale et ne peut pas dire si le
+modèle lit d'autres signaux selon le régime. Les attributions par échantillon
+(`predict(..., pred_contrib=True)`, moyennées par bucket de régime) le
+peuvent — ajoutées à `train_meta` avec une similarité inter-régimes
+(Spearman sur le vecteur complet + recouvrement des tops), exposée dans les
+deux UI.
+
+**Mesure réelle (BTC/USDC 15m/30m/1h, fenêtres 20k–40k barres) : Spearman
+0.93–0.999 entre TOUTES les paires de régimes**, recouvrement des top-15 de
+60–93 %. Le modèle direction de V11 hiérarchise les mêmes features partout —
+la paire la moins similaire est bien `trend_up`/`trend_down` (sens attendu)
+mais très loin d'une spécialisation. Cohérent avec l'AUC par régime
+(0.47–0.54 partout, mesurée à la passe précédente) : le modèle ne se contente
+pas de mal performer par régime, il ne *regarde* pas autre chose. La purge
+`dir_min`/`dir_max` de l'optimiseur reste donc justifiée pour V11/V12 ;
+`param_space` inchangé.
 
 ---
 

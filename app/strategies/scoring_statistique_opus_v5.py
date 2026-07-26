@@ -189,6 +189,9 @@ def _get_hour(df: pl.DataFrame) -> int:
 
 class Strategy(BaseStrategyML):
     name      = "scoring_statistique_opus_v5"
+    # Recette(s) consommée(s) — surchargeable par le bloc `models:`
+    # du YAML (cf. app.ml.recipe.strategy_models).
+    models: Dict[str, str] = {"signal": "stat48_v5"}
     model_dir = "models"
 
     timeframes: List[str] = ["15m", "30m", "1h"]

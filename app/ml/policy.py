@@ -16,11 +16,12 @@ le live (``app.ml.trainer.MLStrategyTrainer``), le backtest ``simulated_live``
 
 Le gate ne dépend d'AUCUNE spécificité de backend ML : il s'appuie uniquement
 sur le contrat ``BaseStrategyML`` (``fit``, ``save_model``, ``is_trained``,
-``load_model``, ``reset_model``) + le format de persistance universel à 3
-fichiers (``app.ml.backend.persistence`` — toutes les stratégies ML du dépôt
-y écrivent, cf. ``save_model``/``save_amp_dir_bundle``). Aucun sklearn/scipy
-(cf. phase6-sklearn-removal) : l'AUC est calculée par rang (Mann-Whitney),
-implémentation numpy pure.
+``load_model``, ``reset_model``, et pour le scoring ``gate_spec`` /
+``score_holdout``). Le SCORING lui-même n'est pas universel et n'essaie plus
+de l'être : il est porté par la recette (cf. ``app.ml.scoring``), avec le
+bundle amplitude+direction V4 comme implémentation par défaut. Aucun
+sklearn/scipy (cf. phase6-sklearn-removal) : l'AUC est calculée par rang
+(Mann-Whitney), implémentation numpy pure.
 """
 from __future__ import annotations
 
@@ -31,11 +32,13 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-import numpy as np
-
 import app.ml.model_registry as registry
-from app.ml.backend.persistence import load_amp_dir_bundle
-from app.ml.backend.predictor import predict_batch_raw
+from app.ml.scoring import (
+    resolve_gate_spec,
+    resolve_recipe_name,
+    resolve_scorer,
+    score_amp_dir_bundle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,108 +53,43 @@ _RECIPE_PARAM_KEYS = (
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  AUC par rang (Mann-Whitney), sans sklearn/scipy
-# ─────────────────────────────────────────────────────────────────────────────
-def _rankdata_average(a: np.ndarray) -> np.ndarray:
-    """Rangs moyens (méthode "average", équivalent ``scipy.stats.rankdata``) —
-    dépôt sans scipy (phase6-sklearn-removal), implémentation numpy pure via
-    un double argsort + moyenne par groupe de valeurs égales."""
-    n = len(a)
-    sorter = np.argsort(a, kind="mergesort")
-    a_sorted = a[sorter]
-    ordinal = np.arange(1, n + 1, dtype=np.float64)
-    is_new_group = np.empty(n, dtype=bool)
-    is_new_group[0] = True
-    if n > 1:
-        is_new_group[1:] = a_sorted[1:] != a_sorted[:-1]
-    group_id = np.cumsum(is_new_group) - 1
-    sum_per_group = np.bincount(group_id, weights=ordinal)
-    cnt_per_group = np.bincount(group_id)
-    avg_rank_sorted = (sum_per_group / cnt_per_group)[group_id]
-    ranks = np.empty(n, dtype=np.float64)
-    ranks[sorter] = avg_rank_sorted
-    return ranks
-
-
-def rank_auc(y_true: np.ndarray, scores: np.ndarray) -> Optional[float]:
-    """AUC ROC via la statistique de Mann-Whitney U (équivalente à l'AUC,
-    Wilcoxon rank-sum) — ``None`` si une seule classe est présente (AUC non
-    définie, PAS 0.5 : ne pas confondre "pas de signal" et "pas mesurable")."""
-    y = np.asarray(y_true)
-    s = np.asarray(scores, dtype=np.float64)
-    if len(y) == 0 or len(y) != len(s):
-        return None
-    n_pos = int((y == 1).sum())
-    n_neg = int((y == 0).sum())
-    if n_pos == 0 or n_neg == 0:
-        return None
-    finite = np.isfinite(s)
-    if not finite.all():
-        y, s = y[finite], s[finite]
-        n_pos, n_neg = int((y == 1).sum()), int((y == 0).sum())
-        if n_pos == 0 or n_neg == 0:
-            return None
-    ranks = _rankdata_average(s)
-    sum_ranks_pos = float(ranks[y == 1].sum())
-    u = sum_ranks_pos - n_pos * (n_pos + 1) / 2.0
-    return u / (n_pos * n_neg)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Score d'un artefact sur un holdout (features + labels calculés
-#  UNIQUEMENT sur le holdout — aucun look-ahead au-delà)
+#  Score d'un artefact sur un holdout — DISPATCH vers la recette
 # ─────────────────────────────────────────────────────────────────────────────
 def score_holdout(path_prefix: str, holdout_df, *,
-                  label_horizons: Optional[List[int]] = None,
-                  amp_top_pct: float = 0.30) -> Dict[str, Any]:
-    """Charge l'artefact à ``path_prefix`` (format universel 3-fichiers) et
-    calcule son AUC réalisée (amp + dir) sur ``holdout_df``.
+                  strategy: Any = None,
+                  gate_cfg: Any = None,
+                  params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Score l'artefact à ``path_prefix`` sur ``holdout_df``.
 
-    Features et labels sont dérivés de ``holdout_df`` seul : le label d'un
-    horizon ``h`` d'une barre proche de la fin du holdout nécessite ``h``
-    barres *après elle mais toujours dans le holdout* — jamais au-delà (les
-    fonctions de labellisation tronquent silencieusement les dernières
-    ``max(horizons)`` barres, non labellisables). Retourne ``{}`` si
-    l'artefact est illisible ou le holdout trop court.
+    Le scoring appartient à la RECETTE, pas au gate (cf. ``app.ml.scoring``) :
+    si ``strategy`` est fourni et surcharge ``score_holdout``, on l'appelle ;
+    sinon on retombe sur le scorer par défaut (bundle amplitude+direction V4).
+    ``strategy`` accepte une instance, une classe ou un nom de recette.
+
+    Sans ``gate_cfg``, les défauts de ``GateConfig`` s'appliquent. Les anciens
+    arguments ``label_horizons``/``amp_top_pct`` en direct ont été retirés :
+    ils doublonnaient ``gate_cfg`` et permettaient de scorer avec une
+    convention de labels différente de celle déclarée par la recette — la
+    cause exacte du décalage 0.732 vs 0.702 qui a motivé ``gate_spec``.
     """
-    from app.ml.backend.features import (
-        build_features,
-        multi_horizon_labels,
-        single_horizon_labels,
+    if gate_cfg is None:
+        gate_cfg = GateConfig()
+
+    if strategy is not None:
+        scorer = resolve_scorer(strategy)
+        if scorer is not None:
+            try:
+                return scorer(path_prefix, holdout_df, gate_cfg=gate_cfg, params=params or {})
+            except Exception as e:
+                logger.warning(
+                    f"[MLPolicy] scorer dédié de {getattr(strategy, 'name', strategy)!r} "
+                    f"KO sur {path_prefix} : {e} — repli sur le scorer par défaut"
+                )
+
+    return score_amp_dir_bundle(
+        path_prefix, holdout_df,
+        label_horizons=gate_cfg.label_horizons, amp_top_pct=gate_cfg.amp_top_pct,
     )
-
-    bundle = load_amp_dir_bundle(path_prefix)
-    if bundle is None or bundle.get("amp_model") is None:
-        return {}
-
-    feats = build_features(holdout_df)
-    if feats is None or len(feats) < 50:
-        return {}
-
-    close = feats["close"].to_numpy().astype(np.float64)
-    hs = list(label_horizons or [1, 3, 6])
-    if len(hs) > 1:
-        y_amp, y_dir, n, _, _ = multi_horizon_labels(close, hs, amp_top_pct)
-    else:
-        y_amp, y_dir, n, _ = single_horizon_labels(close, amp_top_pct)
-    if n < 30:
-        return {}
-
-    scored_feats = feats.head(n)
-    out: Dict[str, Any] = {"n": int(n)}
-    amp_scores = predict_batch_raw(bundle["amp_model"], bundle.get("amp_cal"),
-                                   bundle["features"], bundle["medians"], scored_feats)
-    if amp_scores is not None:
-        out["auc_amp"] = rank_auc(y_amp, amp_scores)
-    # V4 legacy : amp/dir peuvent avoir des features/médianes distinctes
-    # (cf. persistence.save_amp_dir_bundle) — None = partagées (cas courant).
-    dir_feats = bundle.get("dir_features") if bundle.get("dir_features") is not None else bundle["features"]
-    dir_meds  = bundle.get("dir_medians") if bundle.get("dir_medians") is not None else bundle["medians"]
-    dir_scores = predict_batch_raw(bundle.get("dir_model"), bundle.get("dir_cal"),
-                                   dir_feats, dir_meds, scored_feats)
-    if dir_scores is not None:
-        out["auc_dir"] = rank_auc(y_dir, dir_scores)
-    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -179,6 +117,13 @@ def decide_gate(candidate_metrics: Optional[Dict[str, Any]],
     non scorable (holdout dégénéré) — deux cas distincts, cf. docstring
     module. Le plancher ``auc_floor`` s'applique dans tous les cas ;
     ``epsilon`` ne joue que si un sortant comparable existe."""
+    if (candidate_metrics or {}).get("unsupported_format"):
+        return GateResult(
+            "keep",
+            "candidat : format de persistance non reconnu par le scorer générique "
+            "(pas de bundle amplitude+direction V4, cf. score_holdout) — cette recette "
+            "n'a pas encore de scoring de gate dédié, comparaison manuelle requise",
+            candidate_metrics or {}, incumbent_metrics)
     cand_auc = (candidate_metrics or {}).get(metric)
     if cand_auc is None:
         return GateResult("keep",
@@ -223,6 +168,15 @@ class GateConfig:
 
     @classmethod
     def from_params(cls, p: Dict[str, Any]) -> "GateConfig":
+        """``p`` = ``{**gate_spec_de_la_recette, **params_résolus}``.
+
+        Deux origines se rencontrent ici, avec des préséances différentes :
+        la RECETTE déclare ses conventions (``metric``, ``label_horizons``,
+        ``amp_top_pct`` — cf. ``gate_spec``), l'EXPLOITATION règle les seuils
+        (clés préfixées ``gate_``, lues du YAML). ``gate_metric`` gagne donc
+        sur le ``metric`` de la recette : un opérateur doit pouvoir arbitrer
+        sur une autre métrique sans toucher au code de la stratégie.
+        """
         p = p or {}
         wb = p.get("window_bars")
         return cls(
@@ -231,7 +185,7 @@ class GateConfig:
             min_window_bars=int(p.get("gate_min_window_bars", 2000)),
             auc_floor=float(p.get("gate_auc_floor", 0.55)),
             epsilon=float(p.get("gate_epsilon", 0.01)),
-            metric=str(p.get("gate_metric", "auc_amp")),
+            metric=str(p.get("gate_metric", p.get("metric", "auc_amp"))),
             label_horizons=list(p.get("label_horizons", [1, 3, 6])),
             amp_top_pct=float(p.get("amp_top_pct", 0.30)),
         )
@@ -240,7 +194,7 @@ class GateConfig:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Orchestration — appelée par le live trainer et le backtest simulated_live
 # ─────────────────────────────────────────────────────────────────────────────
-def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
+def maybe_refresh(strategy: Any, train_symbol: str, tf: str, df, *,
                   params: Dict[str, Any],
                   recipe: Optional[str] = None,
                   gate_cfg: Optional[GateConfig] = None,
@@ -250,6 +204,11 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
     now"), le compare au sortant publié via un holdout partagé, publie le
     résultat dans le registre, et s'assure que ``strategy`` termine avec le
     modèle GAGNANT chargé en mémoire (jamais un candidat rejeté).
+
+    ``train_symbol`` est le symbole d'où vient ``df``. Il n'entre PAS dans la
+    clé du registre (qui est ``(tf, recette)``) : il est enregistré en
+    provenance de l'artefact publié, parce que l'artefact servira ensuite tous
+    les symboles tradés — cf. la docstring de ``app.ml.model_registry``.
 
     ``df`` doit être strictement antérieur à l'instant de décision (aucune
     barre "future" par rapport à ce que l'appelant sait déjà) — c'est
@@ -261,26 +220,26 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
     ``decision="failed"``) ; seules les erreurs de programmation (mauvais
     type d'argument, etc.) remontent.
     """
-    recipe = recipe or getattr(strategy, "name", "strategy")
-    gc_ = gate_cfg or GateConfig.from_params(params)
+    recipe = recipe or resolve_recipe_name(strategy, params)
+    gc_ = gate_cfg or GateConfig.from_params({**resolve_gate_spec(strategy), **(params or {})})
 
     n = len(df) if df is not None else 0
     required = gc_.holdout_bars + gc_.min_window_bars
     if n < required:
         return {"decision": "skipped", "reason": "insufficient_data",
                 "n_bars": n, "required_bars": required,
-                "recipe": recipe, "symbol": symbol, "tf": tf}
+                "recipe": recipe, "train_symbol": train_symbol, "tf": tf}
 
     holdout_df = df.tail(gc_.holdout_bars + 210)
     pre_holdout = df.slice(0, n - gc_.holdout_bars)
     train_df = pre_holdout.tail(gc_.window_bars) if gc_.window_bars else pre_holdout
 
-    incumbent = registry.latest_promoted(symbol, tf, recipe, base_dir=base_dir)
+    incumbent = registry.latest_promoted(tf, recipe, base_dir=base_dir)
     incumbent_metrics = None
     if incumbent is not None:
         incumbent_metrics = score_holdout(
             incumbent.path_prefix, holdout_df,
-            label_horizons=gc_.label_horizons, amp_top_pct=gc_.amp_top_pct,
+            strategy=strategy, gate_cfg=gc_, params=params,
         )
 
     tmp_dir = tempfile.mkdtemp(prefix="ml_gate_")
@@ -293,19 +252,19 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
         try:
             strategy.fit(train_df, params={getattr(strategy, "name", recipe): params})
         except Exception as e:
-            logger.error(f"[MLPolicy] {symbol}/{tf}/{recipe} : fit() candidat KO : {e}")
+            logger.error(f"[MLPolicy] {tf}/{recipe} : fit() candidat KO : {e}")
             return {"decision": "failed", "reason": f"fit KO : {e}",
-                    "recipe": recipe, "symbol": symbol, "tf": tf,
+                    "recipe": recipe, "train_symbol": train_symbol, "tf": tf,
                     "incumbent_version": incumbent.version_id if incumbent else None}
         if not getattr(strategy, "is_trained", False):
             return {"decision": "failed", "reason": "fit n'a produit aucun modèle exploitable",
-                    "recipe": recipe, "symbol": symbol, "tf": tf,
+                    "recipe": recipe, "train_symbol": train_symbol, "tf": tf,
                     "incumbent_version": incumbent.version_id if incumbent else None}
 
         strategy.save_model(tmp_prefix)
         candidate_metrics = score_holdout(
             tmp_prefix, holdout_df,
-            label_horizons=gc_.label_horizons, amp_top_pct=gc_.amp_top_pct,
+            strategy=strategy, gate_cfg=gc_, params=params,
         )
         gate = decide_gate(candidate_metrics, incumbent_metrics,
                            auc_floor=gc_.auc_floor, epsilon=gc_.epsilon, metric=gc_.metric)
@@ -316,7 +275,7 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
                            "auc_floor": gc_.auc_floor, "epsilon": gc_.epsilon})
 
         published = registry.publish(
-            symbol, tf, recipe, tmp_prefix,
+            tf, recipe, tmp_prefix, train_symbol=train_symbol,
             train_start=bounds["train_start"], train_end=bounds["train_end"],
             n_bars=bounds["n_bars"], recipe_cfg=recipe_cfg, source=source,
             decision=gate.decision,
@@ -340,14 +299,14 @@ def maybe_refresh(strategy: Any, symbol: str, tf: str, df, *,
             strategy.load_model(incumbent.path_prefix)
 
     logger.info(
-        f"[MLPolicy] {symbol}/{tf}/{recipe} : {gate.decision} — {gate.reason}"
+        f"[MLPolicy] {tf}/{recipe} : {gate.decision} — {gate.reason}"
     )
     return {
         "decision": gate.decision, "reason": gate.reason,
         "candidate": candidate_metrics, "incumbent": incumbent_metrics,
         "published_version": published.version_id if published else None,
         "incumbent_version": incumbent.version_id if incumbent else None,
-        "recipe": recipe, "symbol": symbol, "tf": tf,
+        "recipe": recipe, "train_symbol": train_symbol, "tf": tf,
     }
 
 
@@ -357,11 +316,11 @@ def freshness_warning(artifact: Optional["registry.ArtifactRef"], *,
                       stale_factor: float = 2.0) -> Optional[str]:
     """Message d'alerte si ``artifact`` est trop vieux par rapport à la
     cadence de rafraîchissement attendue — ``None`` si tout va bien ou si la
-    fraîcheur n'est pas mesurable (pas de provenance, ex. legacy)."""
+    fraîcheur n'est pas mesurable (artefact sans provenance datée)."""
     if artifact is None:
         return "aucun modèle chargé"
-    if artifact.legacy or not artifact.train_end:
-        return f"modèle sans provenance datée (legacy, version={artifact.version_id}) — fraîcheur non mesurable"
+    if not artifact.train_end:
+        return f"modèle sans provenance datée (version={artifact.version_id}) — fraîcheur non mesurable"
     if current_bars_ago is None or cadence_bars is None or cadence_bars <= 0:
         return None
     if current_bars_ago > stale_factor * cadence_bars:

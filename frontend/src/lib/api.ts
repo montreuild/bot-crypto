@@ -173,27 +173,27 @@ export const api = {
 
   // ── ML Model Registry (ML-02) ────────────────────────────────────────────
   getMLRegistry: () => apiFetch<{ models: ModelRegistryEntry[] }>('/ml/registry'),
-  getMLRegistryVersions: (symbol: string, tf: string, recipe: string) =>
+  getMLRegistryVersions: (tf: string, recipe: string) =>
     apiFetch<{ versions: ModelArtifact[] }>(
-      `/ml/registry/versions?${new URLSearchParams({ symbol, tf, recipe })}`,
+      `/ml/registry/versions?${new URLSearchParams({ tf, recipe })}`,
     ),
-  getMLRegistryDecisions: (symbol: string, tf: string, recipe: string, limit = 20) =>
+  getMLRegistryDecisions: (tf: string, recipe: string, limit = 20) =>
     apiFetch<{ decisions: ModelDecision[] }>(
-      `/ml/registry/decisions?${new URLSearchParams({ symbol, tf, recipe, limit: String(limit) })}`,
+      `/ml/registry/decisions?${new URLSearchParams({ tf, recipe, limit: String(limit) })}`,
     ),
-  pinModel: (symbol: string, tf: string, recipe: string, versionId: string) =>
+  pinModel: (tf: string, recipe: string, versionId: string) =>
     apiFetch<{ status: string }>('/ml/registry/pin', {
-      method: 'POST', body: JSON.stringify({ symbol, tf, recipe, version_id: versionId }),
+      method: 'POST', body: JSON.stringify({ tf, recipe, version_id: versionId }),
     }),
-  unpinModel: (symbol: string, tf: string, recipe: string) =>
+  unpinModel: (tf: string, recipe: string) =>
     apiFetch<{ status: string }>('/ml/registry/unpin', {
-      method: 'POST', body: JSON.stringify({ symbol, tf, recipe }),
+      method: 'POST', body: JSON.stringify({ tf, recipe }),
     }),
-  promoteModel: (symbol: string, tf: string, recipe: string, versionId: string, decision: 'manual' | 'keep') =>
+  promoteModel: (tf: string, recipe: string, versionId: string, decision: 'manual' | 'keep') =>
     apiFetch<{ status: string }>('/ml/registry/promote', {
       method: 'POST',
       body: JSON.stringify({
-        symbol, tf, recipe, version_id: versionId, decision,
+        tf, recipe, version_id: versionId, decision,
         reason: 'Action manuelle depuis la page Modèles (frontend)',
       }),
     }),

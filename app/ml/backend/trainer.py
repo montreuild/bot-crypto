@@ -22,15 +22,155 @@ import numpy as np
 import polars as pl
 
 from app.ml.backend.features import (
+    REGIME_LABELS,
     build_features,
     impute_inplace,
     multi_horizon_labels,
+    regime_history,
     select_feature_columns,
     single_horizon_labels,
     window_polars,
 )
+from app.ml.scoring import _rankdata_average, rank_auc
 
 logger = logging.getLogger(__name__)
+
+
+# AUC par rang (Mann-Whitney) et rangs moyens : implémentation unique dans
+# ``app.ml.scoring`` (module feuille — n'importe rien de ``app.ml.backend`` au
+# niveau module, donc pas de cycle). Alias locaux pour la lisibilité du reste
+# du fichier.
+_rank_auc = rank_auc
+_rankdata = _rankdata_average
+
+
+def _regime_key(label: str) -> str:
+    """"Trend Down" -> "trend_down" — clé stable pour les dicts de diagnostic."""
+    return label.lower().replace(" ", "_")
+
+
+def _auc_dir_by_regime(regimes: List[int], y_dir_valid: np.ndarray,
+                       raw_dir_valid: np.ndarray) -> Dict[str, Any]:
+    """AUC direction ventilée par régime sur le SET DE VALIDATION.
+
+    Répond à la question ML-02 laissée ouverte par la purge des seuils
+    direction de l'optimiseur (commit d6eb9db) : l'AUC direction *globale*
+    mesurée (~0.53-0.54, quasi hasard) mélange 4 régimes dont la
+    prévisibilité diffère fortement d'après l'analyse V4 externe recouvrée
+    (AUC ≈0.86-0.88 en Trend Down, ≈0.50 en Trend Up) — jamais vérifié sur
+    les modèles PROPRES de V11 (entraînement multi-horizon, features et
+    labels différents du pkl V4 autonome). Cette fonction calcule l'AUC par
+    régime sur repli identique afin de trancher avec des chiffres V11 réels
+    plutôt que par analogie.
+    """
+    regimes_arr = np.asarray(regimes[:len(y_dir_valid)])
+    out: Dict[str, Any] = {}
+    for code, label in REGIME_LABELS.items():
+        if code < 0:
+            continue
+        mask = regimes_arr == code
+        n = int(mask.sum())
+        if n < 15:
+            out[_regime_key(label)] = {"n": n, "auc": None}
+            continue
+        auc = _rank_auc(y_dir_valid[mask], raw_dir_valid[mask])
+        out[_regime_key(label)] = {"n": n, "auc": auc}
+    return out
+
+
+# ── Importance des features PAR RÉGIME (attributions LightGBM) ───────────────
+# L'importance "gain" d'un booster est GLOBALE : elle agrège tous les
+# échantillons et ne peut pas dire si le modèle s'appuie sur des features
+# différentes selon le régime de marché. ``predict(..., pred_contrib=True)``
+# donne en revanche une attribution PAR ÉCHANTILLON (valeurs de Shapley, une
+# colonne par feature + une colonne de valeur de base) : moyenner
+# |contribution| à l'intérieur de chaque bucket de régime produit une
+# importance conditionnelle au régime, exactement ce qu'il faut pour tester
+# l'hypothèse « le modèle direction lit d'autres signaux en Trend Down ».
+_CONTRIB_MAX_SAMPLES_PER_REGIME = 2000
+
+
+def _feature_importance_by_regime(booster, X_valid: np.ndarray,
+                                  feature_cols: List[str],
+                                  regimes: List[int],
+                                  top_n: int = 15,
+                                  seed: int = 0) -> Dict[str, Any]:
+    """Importance des features ventilée par régime, via ``pred_contrib``.
+
+    Retourne ``{regime: {"n": …, "top": [{"feature", "contrib"}…]}}``.
+    Échantillonné à ``_CONTRIB_MAX_SAMPLES_PER_REGIME`` par régime : la
+    matrice d'attributions est dense en ``(n, n_features+1)`` (≈ 7 Mo par
+    régime à 2000×438 en float64), donc bornée explicitement plutôt que
+    laissée croître avec la fenêtre d'entraînement.
+    """
+    regimes_arr = np.asarray(regimes[:len(X_valid)])
+    rng = np.random.RandomState(seed)
+    out: Dict[str, Any] = {}
+    for code, label in REGIME_LABELS.items():
+        if code < 0:
+            continue
+        key = _regime_key(label)
+        idx = np.flatnonzero(regimes_arr == code)
+        if len(idx) < 15:
+            out[key] = {"n": int(len(idx)), "top": []}
+            continue
+        if len(idx) > _CONTRIB_MAX_SAMPLES_PER_REGIME:
+            idx = rng.choice(idx, _CONTRIB_MAX_SAMPLES_PER_REGIME, replace=False)
+        try:
+            contrib = np.asarray(booster.predict(X_valid[idx], pred_contrib=True))
+        except Exception as e:
+            logger.debug(f"[MLBackend] pred_contrib KO ({label}) : {e}")
+            out[key] = {"n": int(len(idx)), "top": []}
+            continue
+        # Dernière colonne = valeur de base (biais), pas une feature.
+        mean_abs = np.abs(contrib[:, :-1]).mean(axis=0)
+        order = np.argsort(-mean_abs)[:top_n]
+        out[key] = {
+            "n": int(len(idx)),
+            "top": [{"feature": feature_cols[j], "contrib": round(float(mean_abs[j]), 6)}
+                    for j in order],
+            "_full": mean_abs,   # retiré avant sérialisation (cf. _regime_similarity)
+        }
+    return out
+
+
+def _spearman(a: np.ndarray, b: np.ndarray) -> Optional[float]:
+    """Corrélation de rang de Spearman (Pearson sur les rangs) — sans scipy."""
+    if len(a) != len(b) or len(a) < 3:
+        return None
+    ra, rb = _rankdata(np.asarray(a, float)), _rankdata(np.asarray(b, float))
+    ra = ra - ra.mean()
+    rb = rb - rb.mean()
+    denom = float(np.sqrt((ra ** 2).sum() * (rb ** 2).sum()))
+    return float((ra * rb).sum() / denom) if denom > 0 else None
+
+
+def _regime_similarity(by_regime: Dict[str, Any], top_n: int = 15) -> Dict[str, Any]:
+    """Compare les importances entre régimes deux à deux.
+
+    Répond à « y a-t-il une corrélation ? » avec deux angles complémentaires :
+
+      - ``spearman`` sur le VECTEUR COMPLET d'importances — proche de 1 = le
+        modèle hiérarchise les features de la même façon dans les deux
+        régimes (donc pas de spécialisation) ;
+      - ``top_overlap`` = |intersection| / top_n sur les top-N — plus
+        interprétable en pratique (« combien de features en commun en tête »).
+    """
+    keys = [k for k, v in by_regime.items() if v.get("top")]
+    out: Dict[str, Any] = {}
+    for i, ka in enumerate(keys):
+        for kb in keys[i + 1:]:
+            va, vb = by_regime[ka], by_regime[kb]
+            fa = {f["feature"] for f in va["top"][:top_n]}
+            fb = {f["feature"] for f in vb["top"][:top_n]}
+            entry: Dict[str, Any] = {
+                "top_overlap": round(len(fa & fb) / max(len(fa | set()), 1), 3),
+            }
+            if va.get("_full") is not None and vb.get("_full") is not None:
+                rho = _spearman(va["_full"], vb["_full"])
+                entry["spearman"] = round(rho, 4) if rho is not None else None
+            out[f"{ka}__vs__{kb}"] = entry
+    return out
 
 
 # ── Configuration d'entraînement ────────────────────────────────────────────
@@ -56,7 +196,9 @@ class TrainConfig:
                  importance_top_n: int = 15,
                  warmup_bars: int = 750,
                  retrain_every: int = 800,
-                 min_bars: int = 230):
+                 min_bars: int = 230,
+                 adx_threshold: float = 20.0,
+                 di_rescue: float = 10.0):
         self.amp_top_pct      = float(amp_top_pct)
         self.n_estimators     = int(n_estimators)
         self.num_leaves       = int(num_leaves)
@@ -69,6 +211,14 @@ class TrainConfig:
         self.warmup_bars      = int(warmup_bars)
         self.retrain_every    = int(retrain_every)
         self.min_bars         = int(min_bars)
+        # Servent UNIQUEMENT à la ventilation par régime de l'AUC direction
+        # sur le set de validation (cf. _auc_dir_by_regime) — pas au routing
+        # de setups lui-même (géré par la stratégie appelante, ex. V11
+        # score()). Défauts alignés sur opus_omnibus_v11._DEFAULTS pour que
+        # la ventilation reflète le MÊME découpage de régime que le routing
+        # réel, sans dupliquer un flag redondant si l'appelant en a déjà un.
+        self.adx_threshold    = float(adx_threshold)
+        self.di_rescue        = float(di_rescue)
 
     @classmethod
     def from_params(cls, params: Dict[str, Any], defaults: Dict[str, Any]) -> "TrainConfig":
@@ -87,6 +237,8 @@ class TrainConfig:
             warmup_bars      = int(g("warmup_bars", 750)),
             retrain_every    = int(g("retrain_every", 800)),
             min_bars         = int(g("min_bars", 230)),
+            adx_threshold    = float(g("adx_threshold", 20.0)),
+            di_rescue        = float(g("di_rescue", 10.0)),
         )
 
 
@@ -250,6 +402,7 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
     cal_err: Dict[str, float] = {}
     calibrators: Dict[str, Any] = {}
     importances: Dict[str, List[tuple]] = {}
+    raw_va_by_target: Dict[str, np.ndarray] = {}
 
     for target, y in (("amp", y_amp), ("dir", y_dir)):
         spw = (y[:split] == 0).sum() / max((y[:split] == 1).sum(), 1)
@@ -271,11 +424,15 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
             aucs[target] = float(booster.best_score.get("valid_0", {}).get("auc", 0.0))
             boosters[target] = booster
 
+            # Prédictions brutes de validation — réutilisées par la calibration
+            # ET par la ventilation d'AUC direction par régime (ci-dessous).
+            raw_va = booster.predict(X_valid)
+            raw_va_by_target[target] = raw_va
+
             # Calibration isotone sur le set de validation.
             if cfg.calibrate:
                 try:
                     from app.ml.backend.isotonic import IsotonicRegression
-                    raw_va = booster.predict(X_valid)
                     y_va = y[split:n]
                     if len(np.unique(y_va)) >= 2:
                         iso = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
@@ -297,7 +454,41 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
             del ds_tr, ds_va
             gc.collect()
 
-    del X_train, X_valid
+    del X_train
+
+    # ── Diagnostics conditionnels au régime (set de validation) ─────────────
+    # N'affectent ni l'entraînement ni le routing — purement loggés/persistés,
+    # pour trancher la question ML-02 laissée ouverte par la purge des seuils
+    # direction de l'optimiseur (d6eb9db) : l'AUC direction GLOBALE (~0.53)
+    # mélange 4 régimes dont la prévisibilité pourrait différer fortement.
+    auc_dir_by_regime: Dict[str, Any] = {}
+    fi_by_regime: Dict[str, Any] = {}
+    regime_similarity: Dict[str, Any] = {}
+    try:
+        n_valid_n = n - split
+        regimes, _ = regime_history(feats.head(n), n_last=n_valid_n,
+                                    adx_threshold=cfg.adx_threshold, di_rescue=cfg.di_rescue)
+        y_dir_valid = y_dir[split:n]
+        raw_dir_valid = raw_va_by_target.get("dir")
+        if raw_dir_valid is not None and len(regimes) == len(y_dir_valid):
+            auc_dir_by_regime = _auc_dir_by_regime(regimes, y_dir_valid, raw_dir_valid)
+        # Importance des features par régime (pred_contrib) + similarité entre
+        # régimes : le modèle direction s'appuie-t-il sur d'AUTRES features
+        # selon le régime, ou hiérarchise-t-il les mêmes partout ?
+        if boosters.get("dir") is not None and len(regimes) == len(X_valid):
+            fi_by_regime = _feature_importance_by_regime(
+                boosters["dir"], X_valid, feature_cols, regimes,
+                top_n=cfg.importance_top_n,
+            )
+            regime_similarity = _regime_similarity(fi_by_regime, top_n=cfg.importance_top_n)
+            # ``_full`` (vecteur d'importances complet) sert au Spearman
+            # ci-dessus mais n'a pas à être sérialisé dans meta.json.
+            for v in fi_by_regime.values():
+                v.pop("_full", None)
+    except Exception as e:
+        logger.debug(f"[MLBackend] {tf_key} : diagnostics par régime KO : {e}")
+
+    del X_valid
 
     # Pruning : features avec gain > 0 sur au moins un des deux modèles.
     kept_set = set()
@@ -312,12 +503,23 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
         tgt: [c for c, _ in importances.get(tgt, [])[:cfg.importance_top_n]]
         for tgt in ("amp", "dir")
     }
+    # Nom + gain (pas seulement le nom) — pour l'affichage "Top features avec
+    # importance" de la page Modèles (E7). top_features_amp/dir (noms seuls,
+    # ci-dessous) restent inchangés pour compat des lecteurs existants (logs).
+    feature_importance = {
+        tgt: [{"feature": c, "gain": round(float(g), 2)}
+             for c, g in importances.get(tgt, [])[:cfg.importance_top_n]]
+        for tgt in ("amp", "dir")
+    }
     meta = {
         "n_train":      int(split),
         "n_valid":      int(n - split),
         "n_features":   len(feature_cols),
         "auc_amp":      round(aucs.get("amp", 0.0), 4),
         "auc_dir":      round(aucs.get("dir", 0.0), 4),
+        "auc_dir_by_regime": auc_dir_by_regime,
+        "feature_importance_dir_by_regime": fi_by_regime,
+        "regime_feature_similarity": regime_similarity,
         "amp_thr_pct":  round(float(amp_thr) * 100, 4),
         "amp_top_pct":  cfg.amp_top_pct,
         "horizons":     lbl_stats.get("horizons"),
@@ -325,6 +527,8 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
         "calibrated":   bool(calibrators),
         "cal_err":      cal_err,
         "n_kept_features": len(kept_features),
+        "feature_importance_amp": feature_importance["amp"],
+        "feature_importance_dir": feature_importance["dir"],
         "top_features_amp": top_feats["amp"],
         "top_features_dir": top_feats["dir"],
     }
@@ -343,11 +547,15 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
         state.train_meta[tf_key]    = meta
     gc.collect()
 
+    regime_auc_str = ", ".join(
+        f"{lbl}={v['auc']:.3f}(n={v['n']})" if v.get("auc") is not None else f"{lbl}=n/a(n={v['n']})"
+        for lbl, v in auc_dir_by_regime.items()
+    )
     logger.info(
         f"[MLBackend] {tf_key} entraîné : {split} train / {n - split} val | "
         f"{len(feature_cols)} feats (gardées {len(kept_features)}) | "
         f"AUC amp={aucs.get('amp', 0):.3f} dir={aucs.get('dir', 0):.3f} | "
         f"horizons={meta['horizons']} | calib={meta['calibrated']} cal_err={cal_err} | "
-        f"top_dir={top_feats['dir'][:5]}"
+        f"top_dir={top_feats['dir'][:5]} | AUC dir/régime : {regime_auc_str}"
     )
     return True

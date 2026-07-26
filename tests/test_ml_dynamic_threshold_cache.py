@@ -94,7 +94,11 @@ def test_different_routing_unrelated_params_still_hit_cache():
 
     a._fit(df, "1h")
     b._fit(df, "1h")
-    assert train_cache.stats() == {"hits": 1, "misses": 1, "entries": 1, "max": train_cache._MAX}
+    # Comparaison par sous-ensemble : ``stats()`` peut gagner des compteurs
+    # (ex. ``empty_snapshots``) sans que ce test ait à le savoir.
+    st = train_cache.stats()
+    assert {k: st[k] for k in ("hits", "misses", "entries")} == {
+        "hits": 1, "misses": 1, "entries": 1}
 
 
 def test_get_or_build_features_offset_slices_not_head():

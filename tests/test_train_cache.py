@@ -90,3 +90,121 @@ def test_failed_train_not_cached():
     assert not train_cache.cached_train(
         a, df, "1h", {}, a._train_impl, a._TRAIN_STATE_ATTRS, ())
     assert train_cache.stats()["entries"] == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Régression : un cache hit ne doit JAMAIS rendre une stratégie « entraînée
+#  sans modèle » (découvert en fusionnant v10_retrained dans v11)
+# ─────────────────────────────────────────────────────────────────────────────
+class _StratUnderscoreAttrs:
+    """Stratégie qui expose son état AVEC underscore — cas de V11/V12, qui
+    héritent des ``_TRAIN_STATE_ATTRS`` de ``TrainState`` (sans underscore)."""
+
+    def __init__(self):
+        self._amp_models = {}
+        self._feature_cols = {}
+        self._best_auc_per_tf = {}
+        self._trained_tfs = set()
+        self._best_auc = 0.0
+
+    def _train_impl(self, df, tf_key, params):
+        self._amp_models[tf_key] = f"booster-{tf_key}"
+        self._feature_cols[tf_key] = ["f0", "f1"]
+        self._best_auc_per_tf[tf_key] = 0.61
+        self._trained_tfs.add(tf_key)
+        return True
+
+
+# Noms SANS underscore, comme TrainState.STATE_ATTRS.
+_STATE_ATTRS_NO_UNDERSCORE = ("amp_models", "feature_cols", "best_auc_per_tf")
+
+
+def test_cache_hit_restores_the_model_not_just_the_trained_flag():
+    """Le snapshot cherchait ``amp_models`` sur une stratégie qui expose
+    ``_amp_models`` : il repartait vide, et le hit suivant marquait le TF
+    entraîné SANS aucun modèle. En optimisation (plusieurs essais dans un même
+    process), tous les essais après le premier produisaient donc « Modèle
+    indisponible » et zéro signal."""
+    train_cache.clear()
+    df = _df()
+    params = {"n_estimators": 10}
+
+    a = _StratUnderscoreAttrs()
+    assert train_cache.cached_train(a, df, "1h", params, a._train_impl,
+                                    _STATE_ATTRS_NO_UNDERSCORE, ("n_estimators",))
+    assert a._amp_models["1h"] == "booster-1h"
+
+    b = _StratUnderscoreAttrs()
+    assert train_cache.cached_train(b, df, "1h", params, b._train_impl,
+                                    _STATE_ATTRS_NO_UNDERSCORE, ("n_estimators",))
+    assert train_cache.stats()["hits"] == 1, "le 2e appel doit être un hit"
+    assert "1h" in b._trained_tfs
+    assert b._amp_models.get("1h") == "booster-1h", \
+        "hit sans modèle restauré : la stratégie se croit entraînée à vide"
+    assert b._feature_cols.get("1h") == ["f0", "f1"]
+
+
+class _StratNoState:
+    """Aucun attribut d'état reconnaissable — le snapshot ne peut rien capter."""
+
+    def __init__(self):
+        self._trained_tfs = set()
+        self.calls = 0
+
+    def _train_impl(self, df, tf_key, params):
+        self.calls += 1
+        self._trained_tfs.add(tf_key)
+        return True
+
+
+def test_empty_snapshot_is_never_cached():
+    """Garde-fou indépendant du nommage : ne rien mettre en cache est toujours
+    correct, mettre en cache un état vide ne l'est jamais."""
+    train_cache.clear()
+    df = _df()
+    a = _StratNoState()
+    train_cache.cached_train(a, df, "1h", {}, a._train_impl, ("amp_models",), ())
+    assert train_cache.stats()["entries"] == 0
+    assert train_cache.stats()["empty_snapshots"] == 1
+
+    # Le second appel doit RÉELLEMENT réentraîner, pas récupérer un état vide.
+    b = _StratNoState()
+    train_cache.cached_train(b, df, "1h", {}, b._train_impl, ("amp_models",), ())
+    assert b.calls == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Clé = recette, pas classe : « même recette ⇒ un seul entraînement »
+# ─────────────────────────────────────────────────────────────────────────────
+def test_two_strategies_sharing_a_recipe_train_once():
+    """opus_omnibus_v11 et v12 consomment omnibus_v4_multi (même hash). La clé
+    étant la CLASSE, chacun entraînait sa propre copie du même modèle — la
+    « duplication de fait » que ML-02 §5.5 décrivait sans pouvoir la corriger.
+    """
+    import app.strategies.opus_omnibus_v11 as v11
+    import app.strategies.opus_omnibus_v12 as v12
+    from app.ml.recipe import primary_recipe
+
+    assert primary_recipe(v11.Strategy) == primary_recipe(v12.Strategy)
+    a = train_cache._recipe_identity(v11.Strategy())
+    b = train_cache._recipe_identity(v12.Strategy())
+    assert a == b, "recette partagée mais identités de cache distinctes"
+    assert a.startswith("recipe:")
+
+
+def test_distinct_recipes_keep_distinct_cache_identities():
+    """Le partage ne doit pas déborder : deux recettes différentes restent
+    deux lignées d'entraînement."""
+    import app.strategies.opus_omnibus_v10_retrained as v10
+    import app.strategies.opus_omnibus_v11 as v11
+    assert (train_cache._recipe_identity(v10.Strategy())
+            != train_cache._recipe_identity(v11.Strategy()))
+
+
+def test_strategy_without_recipe_falls_back_to_module():
+    """Une stratégie sans recette doit rester cachable — le repli conserve
+    l'ancien comportement plutôt que de refuser de cacher."""
+    class _Anon:
+        pass
+    ident = train_cache._recipe_identity(_Anon())
+    assert ident.startswith("module:")

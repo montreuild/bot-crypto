@@ -17,6 +17,27 @@ via une sigmoïde. On conserve :
 Autonome : aucune dépendance à un autre module de stratégie ni à un modèle. Tous
 les indicateurs proviennent de ``app.core.indicators`` (colonnes ``_pre_*`` via
 ``precompute_df``, repli idempotent si absentes) → coût O(1).
+
+**Pourquoi ce fichier reste un fork** (les quatre variantes ``_no_ml`` de la
+famille omnibus sont devenues des presets — pas celle-ci). Ce n'est pas un
+oubli : la transformation en preset serait une régression d'architecture.
+
+La *porte de volatilité* ci-dessus n'existe **pas** dans le jumeau ML. Chez
+lui, ``vol_20·sqrt(lookahead)·vol_multiplier`` sert à **labelliser**
+(``compute_labels``, à l'entraînement) : le modèle apprend le seuil et sa
+``proba_up`` l'incorpore. Ici, faute de modèle, la même formule est appliquée
+à l'**inférence**, comme filtre de décision. Même expression, rôle opposé.
+
+En faire un preset obligerait donc à ajouter à ``ml_dynamic_threshold`` une
+branche de décision qu'il n'emprunte jamais, uniquement pour vider ce
+fichier-ci : ce serait déplacer de la complexité vers le parent partagé, soit
+l'inverse d'une factorisation. S'y ajoute que le parent n'expose pas les
+mêmes prises que la famille omnibus — paramètres en attributs d'instance
+(``setattr``) plutôt qu'en ``_DEFAULTS``, et pas de point d'injection unique
+pour la prédiction.
+
+Ce fichier reste donc autonome tant que la porte de volatilité est un choix
+délibéré. Si elle devait disparaître, la conversion redeviendrait possible.
 """
 
 import logging
@@ -84,6 +105,9 @@ class Strategy(BaseStrategy):
     """Seuil dynamique sans ML — proxy directionnel + filtre ADX + porte de volatilité."""
 
     name = "dynamic_threshold_no_ml"
+    # Recette(s) consommée(s) — surchargeable par le bloc `models:`
+    # du YAML (cf. app.ml.recipe.strategy_models).
+    models: Dict[str, str] = {"signal": "proxy_indicators"}
     timeframes: List[str] = ["5m", "15m", "1h"]
 
     param_space: Dict[str, List] = {

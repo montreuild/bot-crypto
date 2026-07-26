@@ -16,16 +16,20 @@ import {
   Loader2, Database, AlertCircle, Pin, PinOff, ChevronDown, ChevronRight,
   Rocket, BarChart3, RefreshCw, ThumbsUp, ThumbsDown,
 } from 'lucide-react';
-import type { ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus } from '@/types';
+import type {
+  ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
+  ModelFeatureImportance, ModelRegimeAuc, ModelTrainMeta,
+  ModelRegimeFeatureImportance, ModelRegimeSimilarity,
+} from '@/types';
 
 // ── Badges ──────────────────────────────────────────────────────────────────
 
 function AucBadge({ auc, trainEnd }: { auc: number | null | undefined; trainEnd?: string | null }) {
-  // auc=0 sans date d'entraînement = non mesurée (artefact legacy importé sans
-  // provenance), PAS un modèle mesuré mauvais — distinct d'un vrai 0.000 (qui
+  // auc=0 sans date d'entraînement = non mesurée (artefact sans provenance
+  // datée), PAS un modèle mesuré mauvais — distinct d'un vrai 0.000 (qui
   // aurait une date). Éviter le rouge trompeur dans les deux cas.
   if (auc == null || (auc === 0 && !trainEnd)) {
-    return <Badge title="AUC non mesurée (ex. artefact legacy sans provenance)">n/m</Badge>;
+    return <Badge title="AUC non mesurée (artefact sans provenance datée)">n/m</Badge>;
   }
   const variant = auc >= 0.65 ? 'success' : auc >= 0.55 ? 'warning' : 'danger';
   return <Badge variant={variant}>{auc.toFixed(3)}</Badge>;
@@ -49,11 +53,11 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
   const handlePinToggle = async () => {
     try {
       if (isPinned) {
-        await unpin.mutateAsync({ symbol: entry.symbol, tf: entry.tf, recipe: entry.recipe });
+        await unpin.mutateAsync({ tf: entry.tf, recipe: entry.recipe });
         toast.success('Pin retiré');
       } else {
         await pin.mutateAsync({
-          symbol: entry.symbol, tf: entry.tf, recipe: entry.recipe, versionId: version.version_id,
+          tf: entry.tf, recipe: entry.recipe, versionId: version.version_id,
         });
         toast.success('Version épinglée');
       }
@@ -64,12 +68,12 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
 
   const handlePromote = async (decision: 'manual' | 'keep') => {
     const verb = decision === 'manual' ? 'Promouvoir' : 'Rejeter';
-    if (!window.confirm(`${verb} la version ${version.version_id} pour ${entry.symbol}/${entry.tf}/${entry.recipe} ?`)) {
+    if (!window.confirm(`${verb} la version ${version.version_id} pour ${entry.tf}/${entry.recipe} ?`)) {
       return;
     }
     try {
       await promote.mutateAsync({
-        symbol: entry.symbol, tf: entry.tf, recipe: entry.recipe,
+        tf: entry.tf, recipe: entry.recipe,
         versionId: version.version_id, decision,
       });
       toast.success('Décision mise à jour');
@@ -85,7 +89,6 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
       <td className="p-2 text-right font-mono">{version.n_bars ?? '—'}</td>
       <td className="p-2"><AucBadge auc={version.auc} trainEnd={version.train_end} /></td>
       <td className="p-2"><DecisionBadge decision={version.gate_decision} /></td>
-      <td className="p-2 text-dim">{version.legacy ? 'oui' : '—'}</td>
       <td className="p-2">
         <div className="flex flex-wrap gap-1.5">
           <Button
@@ -139,15 +142,216 @@ function DecisionsTable({ decisions }: { decisions: ModelDecision[] }) {
   );
 }
 
+// ── Diagnostics (version active) : top features + AUC direction par régime ──
+
+const REGIME_LABELS: Record<string, string> = {
+  range: 'Range', trend_up: 'Trend Up', trend_down: 'Trend Down', choppy: 'Choppy',
+};
+
+function FeatureImportanceTable({ items }: { items?: ModelFeatureImportance[] }) {
+  if (!items || items.length === 0) {
+    return <div className="text-xs text-dim">Non disponible.</div>;
+  }
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-left text-dim border-b border-border/50">
+          <th className="p-2 font-medium">Feature</th>
+          <th className="p-2 font-medium text-right">Importance (gain)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((f, i) => (
+          <tr key={`${f.feature}-${i}`} className="border-b border-border/20">
+            <td className="p-2 font-mono">{f.feature}</td>
+            <td className="p-2 text-right font-mono">{f.gain}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function RegimeAucTable({ byRegime }: { byRegime?: Record<string, ModelRegimeAuc> }) {
+  const keys = Object.keys(byRegime || {}).filter((k) => REGIME_LABELS[k]);
+  if (keys.length === 0) {
+    return <div className="text-xs text-dim">Non disponible.</div>;
+  }
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-left text-dim border-b border-border/50">
+          <th className="p-2 font-medium">Régime</th>
+          <th className="p-2 font-medium">N</th>
+          <th className="p-2 font-medium">AUC direction</th>
+        </tr>
+      </thead>
+      <tbody>
+        {keys.map((k) => {
+          const v = (byRegime || {})[k] || { n: null, auc: null };
+          return (
+            <tr key={k} className="border-b border-border/20">
+              <td className="p-2">{REGIME_LABELS[k]}</td>
+              <td className="p-2 font-mono text-muted">
+                {v.n != null ? v.n : v.approx_n != null ? `~${v.approx_n} (population régime)` : '—'}
+              </td>
+              <td className="p-2">
+                {v.auc != null ? <AucBadge auc={v.auc} trainEnd="x" /> : <Badge>n/a</Badge>}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+/** Importance des features PAR RÉGIME (attributions `pred_contrib`) — permet de
+ *  voir si le modèle direction s'appuie sur des signaux différents selon le
+ *  régime de marché, ce que l'importance « gain » globale ne peut pas dire. */
+function RegimeFeatureColumns({ byRegime }: { byRegime?: Record<string, ModelRegimeFeatureImportance> }) {
+  const keys = Object.keys(byRegime || {}).filter(
+    (k) => REGIME_LABELS[k] && ((byRegime || {})[k].top || []).length > 0,
+  );
+  if (keys.length === 0) return null;
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {keys.map((k) => {
+        const v = (byRegime || {})[k];
+        return (
+          <div key={k}>
+            <div className="text-xs text-muted mb-1.5">
+              {REGIME_LABELS[k]} <span className="text-dim">(n={v.n})</span>
+            </div>
+            <table className="w-full text-xs">
+              <tbody>
+                {v.top.slice(0, 8).map((f, i) => (
+                  <tr key={`${f.feature}-${i}`} className="border-b border-border/20">
+                    <td className="p-1.5 font-mono">{f.feature}</td>
+                    <td className="p-1.5 text-right font-mono text-muted">{f.contrib}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Similarité des importances entre régimes : Spearman ≈ 1 signifie que le
+ *  modèle hiérarchise les features de la même façon partout (donc aucune
+ *  spécialisation par régime à exploiter). */
+function RegimeSimilarityTable({ sim }: { sim?: Record<string, ModelRegimeSimilarity> }) {
+  const keys = Object.keys(sim || {});
+  if (keys.length === 0) return null;
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-left text-dim border-b border-border/50">
+          <th className="p-2 font-medium">Paire de régimes</th>
+          <th className="p-2 font-medium">Spearman</th>
+          <th className="p-2 font-medium">Overlap top</th>
+        </tr>
+      </thead>
+      <tbody>
+        {keys.map((k) => {
+          const v = (sim || {})[k];
+          const [a, b] = k.split('__vs__');
+          const rho = v.spearman;
+          const variant = rho == null ? 'default'
+            : rho >= 0.9 ? 'danger' : rho >= 0.7 ? 'warning' : 'success';
+          return (
+            <tr key={k} className="border-b border-border/20">
+              <td className="p-2">{(REGIME_LABELS[a] || a)} ↔ {(REGIME_LABELS[b] || b)}</td>
+              <td className="p-2">
+                {rho == null ? <Badge>n/a</Badge> : <Badge variant={variant}>{rho.toFixed(3)}</Badge>}
+              </td>
+              <td className="p-2 font-mono text-muted">
+                {v.top_overlap != null ? `${(v.top_overlap * 100).toFixed(0)}%` : '—'}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function DiagnosticsPanel({ trainMeta }: { trainMeta?: ModelTrainMeta }) {
+  if (!trainMeta || Object.keys(trainMeta).length === 0) return null;
+  const hasFeats = (trainMeta.feature_importance_amp?.length || trainMeta.feature_importance_dir?.length);
+  const hasRegime = trainMeta.auc_dir_by_regime && Object.keys(trainMeta.auc_dir_by_regime).length > 0;
+  const fiReg = trainMeta.feature_importance_dir_by_regime;
+  const hasFiReg = fiReg && Object.keys(fiReg).some((k) => (fiReg[k].top || []).length > 0);
+  const sim = trainMeta.regime_feature_similarity;
+  const hasSim = sim && Object.keys(sim).length > 0;
+  if (!hasFeats && !hasRegime && !hasFiReg) return null;
+
+  return (
+    <div className="mt-4">
+      <div className="text-[10px] uppercase tracking-wider text-dim font-semibold mb-2">
+        Diagnostics (version active)
+      </div>
+      <div className="text-xs text-muted mb-3">
+        {trainMeta.calibrated
+          ? `Calibré ✓${trainMeta.cal_err ? ` — erreur moyenne : amp=${trainMeta.cal_err.amp ?? '—'} dir=${trainMeta.cal_err.dir ?? '—'}` : ''}`
+          : 'Non calibré'}
+        {trainMeta.n_features ? ` · ${trainMeta.n_features} features` : ''}
+        {trainMeta.horizons ? ` · horizons=${JSON.stringify(trainMeta.horizons)}` : ''}
+      </div>
+      {hasRegime && (
+        <div className="mb-4">
+          <div className="text-xs text-muted mb-1.5">AUC direction par régime</div>
+          <RegimeAucTable byRegime={trainMeta.auc_dir_by_regime} />
+        </div>
+      )}
+      {hasFiReg && (
+        <div className="mb-4">
+          <div className="text-xs text-muted mb-1.5">
+            Top features direction PAR RÉGIME{' '}
+            <span className="text-dim">(attributions moyennes |contribution|)</span>
+          </div>
+          <RegimeFeatureColumns byRegime={fiReg} />
+        </div>
+      )}
+      {hasSim && (
+        <div className="mb-4">
+          <div className="text-xs text-muted mb-1.5">Similarité des importances entre régimes</div>
+          <RegimeSimilarityTable sim={sim} />
+          <p className="text-xs text-dim mt-1.5">
+            Spearman ≈ 1 = le modèle classe les features de la même façon dans les deux régimes
+            (pas de spécialisation exploitable). Un écart net serait la piste d'un routing
+            conditionnel au régime.
+          </p>
+        </div>
+      )}
+      {hasFeats && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <div className="text-xs text-muted mb-1.5">Top features — amplitude</div>
+            <FeatureImportanceTable items={trainMeta.feature_importance_amp} />
+          </div>
+          <div>
+            <div className="text-xs text-muted mb-1.5">Top features — direction</div>
+            <FeatureImportanceTable items={trainMeta.feature_importance_dir} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Registry row (recette + détail dépliable) ───────────────────────────────
 
 function RegistryRow({ entry }: { entry: ModelRegistryEntry }) {
   const [expanded, setExpanded] = useState(false);
   const { data: versionsData, isLoading: versionsLoading } = useMLRegistryVersions(
-    expanded ? entry.symbol : null, expanded ? entry.tf : null, expanded ? entry.recipe : null,
+    expanded ? entry.tf : null, expanded ? entry.recipe : null,
   );
   const { data: decisionsData } = useMLRegistryDecisions(
-    expanded ? entry.symbol : null, expanded ? entry.tf : null, expanded ? entry.recipe : null,
+    expanded ? entry.tf : null, expanded ? entry.recipe : null,
   );
 
   const active = entry.active;
@@ -155,9 +359,9 @@ function RegistryRow({ entry }: { entry: ModelRegistryEntry }) {
   return (
     <>
       <tr className="border-b border-border/30 hover:bg-card-hover">
-        <td className="p-3 font-mono font-semibold">{entry.symbol}</td>
         <td className="p-3"><Badge variant="purple">{entry.tf}</Badge></td>
         <td className="p-3 font-mono text-xs">{entry.recipe}</td>
+        <td className="p-3 font-mono text-xs text-muted">{entry.train_symbol ?? '—'}</td>
         <td className="p-3 font-mono text-xs">
           {active ? active.version_id : <span className="text-dim">aucune</span>}
         </td>
@@ -212,7 +416,6 @@ function RegistryRow({ entry }: { entry: ModelRegistryEntry }) {
                       <th className="p-2 font-medium text-right">N barres</th>
                       <th className="p-2 font-medium">AUC</th>
                       <th className="p-2 font-medium">Décision</th>
-                      <th className="p-2 font-medium">Legacy</th>
                       <th className="p-2 font-medium">Actions</th>
                     </tr>
                   </thead>
@@ -228,6 +431,7 @@ function RegistryRow({ entry }: { entry: ModelRegistryEntry }) {
               Décisions récentes
             </div>
             <DecisionsTable decisions={decisionsData?.decisions || []} />
+            <DiagnosticsPanel trainMeta={entry.active?.train_meta} />
           </td>
         </tr>
       )}
@@ -244,9 +448,11 @@ function RegistryTable({ entries }: { entries: ModelRegistryEntry[] }) {
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs text-dim border-b border-border">
-            <th className="p-3 font-medium">Symbole</th>
             <th className="p-3 font-medium">TF</th>
             <th className="p-3 font-medium">Recette</th>
+            <th className="p-3 font-medium" title="Symbole dont proviennent les bougies d&apos;entraînement — le modèle sert tous les symboles tradés">
+              Entraîné sur
+            </th>
             <th className="p-3 font-medium">Version active</th>
             <th className="p-3 font-medium">Entraînée jusqu'au</th>
             <th className="p-3 font-medium">AUC</th>
@@ -258,7 +464,7 @@ function RegistryTable({ entries }: { entries: ModelRegistryEntry[] }) {
         </thead>
         <tbody>
           {entries.map((e) => (
-            <RegistryRow key={`${e.symbol}|${e.tf}|${e.recipe}`} entry={e} />
+            <RegistryRow key={`${e.tf}|${e.recipe}`} entry={e} />
           ))}
         </tbody>
       </table>
@@ -402,10 +608,16 @@ function TrainForm() {
             />
           </div>
           <div>
-            <label className="text-xs text-dim block mb-1.5">as_of (ISO, optionnel)</label>
+            <label className="text-xs text-dim block mb-1.5">
+              Date de fin d'entraînement (optionnel)
+              <span className="block normal-case text-[10px] text-dim font-normal">
+                fige l'entraînement à cette date passée
+              </span>
+            </label>
             <input
               value={asOf} onChange={(e) => setAsOf(e.target.value)}
               placeholder="2026-06-01T00:00:00"
+              title="Ne garde que les bougies antérieures à cette date pour l'entraînement ET le holdout du gate. Vide = tout l'historique disponible jusqu'à maintenant."
               className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
             />
           </div>

@@ -12,10 +12,12 @@ Solution : un cache LRU au niveau du process, partagé entre les instances de
 stratégie. Les workers de l'optimiseur étant persistants
 (ProcessPoolExecutor + _worker_init), le cache survit d'un trial à l'autre.
 
-Clé = (classe, tf, empreinte de la fenêtre d'entraînement, params
-d'entraînement). Valeur = snapshot de l'état par TF (modèles, feature_cols,
-medians, AUC, meta). Les objets modèles sont partagés par référence (lecture
-seule en prédiction) ; les dicts/listes sont copiés à la restauration.
+Clé = (identité de RECETTE, tf, empreinte de la fenêtre d'entraînement,
+params d'entraînement). La recette plutôt que la classe : deux stratégies qui
+consomment le même modèle doivent l'entraîner une seule fois (ML-02 §5.5).
+Valeur = snapshot de l'état par TF (modèles, feature_cols, medians, AUC,
+meta). Les objets modèles sont partagés par référence (lecture seule en
+prédiction) ; les dicts/listes sont copiés à la restauration.
 
 Dimensionnement : TRAIN_CACHE_MAX entrées (env var, défaut 160 ≈ une passe
 complète de retrains sur 50k bougies à retrain_every=800, plusieurs jeux de
@@ -32,7 +34,7 @@ logger = logging.getLogger(__name__)
 _MAX = int(os.environ.get("TRAIN_CACHE_MAX", "160"))
 _cache: "OrderedDict[tuple, dict]" = OrderedDict()
 _lock = threading.Lock()
-_stats = {"hits": 0, "misses": 0}
+_stats = {"hits": 0, "misses": 0, "empty_snapshots": 0}
 
 
 def _df_fingerprint(df) -> tuple:
@@ -68,6 +70,46 @@ def aligned_train_window(df, retrain_every: int, n_train: int):
     return df.slice(start, end - start), start
 
 
+
+
+def _recipe_identity(strategy) -> str:
+    """Identité du MODÈLE que ``strategy`` entraîne — clé de partage du cache.
+
+    La clé était ``type(strategy).__module__``, donc deux stratégies
+    consommant la MÊME recette entraînaient deux fois le même modèle : mesuré
+    sur ``opus_omnibus_v11`` et ``opus_omnibus_v12``, qui partagent
+    ``omnibus_v4_multi`` (même hash) — deux misses, aucun hit. C'est le
+    « partage de fait non géré » de ML-02 §5.5, devenu corrigeable maintenant
+    que la recette est un objet.
+
+    Repli sur le module si la stratégie ne déclare pas de recette : conserver
+    l'ancien comportement vaut mieux que refuser de cacher.
+    """
+    try:
+        from app.ml.recipe import load_recipe, primary_recipe
+        name = primary_recipe(type(strategy))
+        if name:
+            return f"recipe:{name}@{load_recipe(name).hash()}"
+    except Exception as e:
+        logger.debug(f"[TrainCache] identité de recette indisponible : {e}")
+    return f"module:{type(strategy).__module__}"
+
+
+def _state_dict(strategy, attr: str):
+    """Dict d'état par TF, que la stratégie le nomme ``attr`` ou ``_attr``.
+
+    ``TrainState.STATE_ATTRS`` liste des noms SANS underscore
+    (``amp_models``) parce qu'ils décrivent l'état du backend ; les stratégies
+    qui composent ``MLBackend`` les exposent AVEC (``_amp_models``). Chercher
+    les deux évite de faire dépendre la correction du cache d'une convention
+    de nommage — c'est ce décalage qui vidait le snapshot de V11/V12.
+    """
+    d = getattr(strategy, attr, None)
+    if isinstance(d, dict):
+        return d
+    return getattr(strategy, f"_{attr.lstrip('_')}", None)
+
+
 def cached_train(strategy, df, tf_key: str, params: dict,
                  train_impl: Callable[..., bool],
                  state_attrs: Iterable[str],
@@ -91,7 +133,7 @@ def cached_train(strategy, df, tf_key: str, params: dict,
         return v
 
     key = (
-        type(strategy).__module__,
+        _recipe_identity(strategy),
         tf_key,
         _df_fingerprint(df),
         tuple((k, _hashable(params.get(k))) for k in sorted(param_keys)),
@@ -105,14 +147,14 @@ def cached_train(strategy, df, tf_key: str, params: dict,
 
     if snap is not None:
         for attr, value in snap.items():
-            d = getattr(strategy, attr, None)
+            d = _state_dict(strategy, attr)
             if isinstance(d, dict):
                 d[tf_key] = dict(value) if isinstance(value, dict) \
                     else list(value) if isinstance(value, list) else value
         trained = getattr(strategy, "_trained_tfs", None)
         if isinstance(trained, set):
             trained.add(tf_key)
-        auc_map = getattr(strategy, "_best_auc_per_tf", None)
+        auc_map = _state_dict(strategy, "best_auc_per_tf")
         if isinstance(auc_map, dict) and tf_key in auc_map:
             strategy._best_auc = max(
                 getattr(strategy, "_best_auc", 0.0) or 0.0, auc_map[tf_key])
@@ -126,11 +168,33 @@ def cached_train(strategy, df, tf_key: str, params: dict,
 
     snap = {}
     for attr in state_attrs:
-        d = getattr(strategy, attr, None)
+        d = _state_dict(strategy, attr)
         if isinstance(d, dict) and tf_key in d:
             v = d[tf_key]
             snap[attr] = dict(v) if isinstance(v, dict) \
                 else list(v) if isinstance(v, list) else v
+
+    # Un snapshot VIDE après un entraînement réussi ne peut pas être
+    # légitime : le restaurer marquerait la stratégie « entraînée » sans lui
+    # rendre le moindre modèle. C'est exactement ce qui se produisait pour
+    # opus_omnibus_v11/v12, dont les ``_TRAIN_STATE_ATTRS`` sont ceux de
+    # ``TrainState`` (``amp_models``) alors que la stratégie expose
+    # ``_amp_models`` : chaque hit produisait un « Modèle indisponible », donc
+    # zéro signal à partir du 2e essai de l'optimiseur dans un même process.
+    # Ne rien mettre en cache est toujours correct ; mettre en cache un état
+    # vide ne l'est jamais.
+    if not snap:
+        logger.warning(
+            f"[TrainCache] snapshot vide pour {type(strategy).__name__}/{tf_key} "
+            f"(attributs cherchés : {tuple(state_attrs)}) — mise en cache refusée. "
+            f"Vérifiez _TRAIN_STATE_ATTRS : les noms doivent correspondre aux "
+            f"attributs réellement portés par la stratégie."
+        )
+        with _lock:
+            _stats["misses"] += 1
+            _stats["empty_snapshots"] += 1
+        return ok
+
     with _lock:
         _stats["misses"] += 1
         _cache[key] = snap
@@ -148,4 +212,4 @@ def stats() -> Dict[str, int]:
 def clear() -> None:
     with _lock:
         _cache.clear()
-        _stats["hits"] = _stats["misses"] = 0
+        _stats["hits"] = _stats["misses"] = _stats["empty_snapshots"] = 0

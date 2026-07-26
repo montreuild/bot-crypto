@@ -1,0 +1,1583 @@
+# Conception — Architecture unifiée : entraînement, gestion et exploitation des modèles
+
+> **Statut** : **révision 6** — étapes **A, B, C, D.1, D.2, E, F, G livrées**.
+> Décision 11 (dimension symbole) tranchée par la mesure : retirée de la clé du
+> registre, conservée en provenance (§8bis). Décision 8 (fusion omnibus) :
+> `opus_omnibus_v7` fusionné avec équivalence prouvée, `v11_followsetup`
+> délibérément laissé de côté et `v12` hors périmètre — motifs en §7.3bis.
+>
+> **§8ter — les deux ADX incompatibles sont réunifiés.** `_pre_adx14` lissait
+> en `span=14` (α = 2/15) là où l'ADX de Wilder veut α = 1/14 ; les deux séries
+> corrélaient à 0.75 et le verdict `ADX ≥ 20` différait sur 21,6 % des barres.
+> Mesuré d'abord (réoptimisation par convention, comparaison sur une fenêtre
+> jamais vue par l'optimiseur : écart ≤ 0.022, signe variable), corrigé
+> ensuite. Wilder est le défaut partout **sauf dans le moteur SMC**, qui était
+> déjà correct et dont la sortie est prouvée identique (SHA256).
+>
+> **Action restante pour l'utilisateur** : les seuils ADX des YAML de stratégie
+> sont désormais désaccordés (choisis face à un ADX qui valait 35, appliqués à
+> un ADX qui vaut 28) — il faut **réoptimiser** avant de se fier de nouveau à
+> ces stratégies. Rien n'est persisté dans `optimizer_results`, donc rien à
+> purger.
+>
+> Trois bugs préexistants ont été trouvés *par* ce travail, tous silencieux :
+> snapshot vide du cache d'entraînement (V11/V12 perdaient leur modèle à chaque
+> hit → zéro signal dès le 2ᵉ essai d'optimisation), `defaults` ignoré par
+> `MLBackend.fit` (une stratégie s'entraînait avec les réglages du backend, pas
+> les siens), et deux tests morts par `importorskip("sklearn")` sur un dépôt
+> sans sklearn.
+>
+> Révision 2 avait intégré deux informations qui changeaient les conclusions :
+> (a) le bot n'est **pas en production**, donc aucune contrainte de
+> rétrocompatibilité ; (b) le pack V4 figé n'a de valeur que s'il bat un
+> ré-entraînement — hypothèse **mesurée** (§1.5), et fausse, globalement comme
+> par régime.
+>
+> Les chiffres de §1 décrivent l'état **avant** l'étape A (arbre `f6fcc2a`) :
+> ils restent la mesure qui justifie la cible et ne sont pas réécrits au fil de
+> l'implémentation. Le résultat réel de A est en §9.
+>
+> **Cadre** : fait suite à `CONCEPTION_CYCLE_DE_VIE_ML.md` (ML-02). Le socle de
+> ML-02 est livré et n'est pas remis en cause : registre daté, gate de
+> promotion, politique unique, `ml_mode`, page Modèles. Ce document traite ce
+> que ML-02 avait **posé en §3.1 et §5.5 sans jamais le construire** — la
+> recette comme objet de premier ordre — et en tire les conséquences sur
+> l'ensemble de `app/strategies/`.
+>
+> **Périmètre** : les besoins ML d'abord (§1 à §9). Les stratégies sans modèle
+> sont traitées en §10 comme sous-objectif explicitement non prioritaire.
+
+---
+
+## 0. Méthode
+
+Tout chiffre de ce document est mesuré sur l'arbre à `f6fcc2a`, pas estimé.
+Les mesures structurelles (identité de fonctions, lignes par responsabilité)
+sont faites par comparaison d'AST — deux fonctions sont dites identiques si
+leur AST sérialisé est égal, ce qui ignore commentaires et mise en forme mais
+**pas** les renommages de variables. Quand une comparaison d'AST suggère une
+divergence, le diff textuel est lu avant d'en conclure quoi que ce soit :
+c'est précisément le piège qui, lors de la factorisation des helpers V4, avait
+fait passer six copies identiques pour six variantes divergentes.
+
+La mesure de §1.5 est reproductible :
+`PYTHONPATH=. python scripts/compare_legacy_vs_retrained.py [--sweep]`
+(`--sweep` ajoute la robustesse à la fenêtre d'entraînement).
+
+Les seules valeurs **estimées** du document sont les projections de volume de
+§9 ; elles sont dérivées de lignes mesurées et l'arithmétique est montrée.
+
+---
+
+## 1. État des lieux mesuré
+
+### 1.1 Le décompte
+
+| | |
+|---|---|
+| Fichiers de stratégie | 46 (`app/strategies/*.py`) |
+| Fichiers de paramètres | 45 (`strategies/*.yaml`) |
+| Stratégies ML | **14** |
+| Fichiers portant les familles ML et leurs variantes | **19**, soit **12 963 lignes = 58 %** du répertoire |
+| Modules ML | 13, 4 187 lignes (`app/ml/`) |
+| **Artefacts présents dans le registre** | **3** — `BTC_USDC/{15m,30m,1h}/opus_stat_pretrained_v4/legacy` |
+| Fichiers modèle sur disque | 6 `.lgb` + 3 `.meta.json` |
+
+**13 000 lignes de stratégies ML tournent aujourd'hui autour de trois
+artefacts, tous `legacy`, tous issus du même pack V4 de mai 2026.** Le poids
+est dans le code de liaison, pas dans les modèles.
+
+### 1.2 Trois axes de duplication superposés
+
+Les 19 fichiers ne sont pas 19 idées. Ils sont **10 générations de routing**
+croisées avec **la manière dont le modèle est obtenu** :
+
+| Génération de routing | modèle figé (pack V4) | modèle ré-entraîné | proxy d'indicateurs |
+|---|---|---|---|
+| `opus_stat_v4` | `opus_stat_pretrained_v4` | `opus_stat_retrained_v4` | — |
+| `omnibus_v7` | `opus_omnibus_v7_pretrained` | `opus_omnibus_v7` | — |
+| `omnibus_v8` | `opus_omnibus_v8` | — | `opus_omnibus_v8_no_ml` |
+| `omnibus_v9` | `opus_omnibus_v9` | — | — |
+| `omnibus_v10` | `opus_omnibus_v10` | `opus_omnibus_v10_retrained` | `opus_omnibus_v10_no_ml` |
+| `omnibus_v11` | — | `opus_omnibus_v11` | `opus_omnibus_v11_no_ml` |
+| `omnibus_v11_followsetup` | — | `opus_omnibus_v11_followsetup` | `opus_omnibus_v11_followsetup_no_ml` |
+| `omnibus_v12` | — | `opus_omnibus_v12` | — |
+| `dyn_threshold` | — | `ml_dynamic_threshold` | `dynamic_threshold_no_ml` |
+| `scoring_stat` | — | `scoring_statistique_opus_v4`, `_v5` | — |
+
+**La colonne n'est pas une idée de stratégie : c'est une source de
+prédiction.** Aujourd'hui elle coûte un fichier complet.
+
+Trois observations valident cette lecture :
+
+1. **Cinq stratégies, un seul artefact.** `opus_stat_pretrained_v4`,
+   `opus_omnibus_v7_pretrained`, `v8`, `v9` et `v10` appellent le même
+   `_load_pretrained()` (`opus_stat_pretrained_v4.py:130`, importé par les
+   quatre autres) → `registry.resolve(pin="legacy")`. Un modèle, cinq
+   routings, cinq fichiers. `app/api/services/scanner_service.py:189` s'y
+   branche aussi directement.
+
+2. **Les setups sont déjà identiques.** Les huit setups (`SIGNAL_UP`,
+   `SHORT_TD_HIGH`, `LONG_CHOPPY`, `SHORT_CHOPPY`, `LONG_RANGE_STRICT`,
+   `LONG_RANGE_LIGHT`, `LONG_TU`, `LONG_EXIT_TD`) sont les mêmes dans
+   `opus_omnibus_v10`, `v10_retrained`, `v10_no_ml`, `v11` et `v11_no_ml`.
+
+3. **Ce qui diverge dans une paire, c'est l'accès au modèle, pas la décision.**
+   Pour la paire v10, le cœur de décision est **byte-identique** :
+   `_evaluate_setup`, `_select_setup`, `_apply_setup_overrides`,
+   `_check_early_exit`. `score()` diffère sur 113 lignes, mais le diff ne
+   contient que le garde `_ensure_loaded()` (chemin figé), `min_bars_required()`
+   vs `min_bars_required(params)`, `_FEATURE_BUILDER.build(window)` vs
+   `_build_features(_window_polars(...))`, et l'alignement des `=`. **Aucune
+   règle de trading ne diffère.**
+
+4. **`opus_omnibus_v10_retrained` et `opus_omnibus_v11` ont le MÊME routing.**
+   Les 5 fonctions de cœur qu'ils partagent ont un AST identique, et leurs
+   8 setups portent les mêmes noms. Ce qui les sépare est **entièrement une
+   affaire de recette** : `gate_spec.label_horizons` vaut `[1]` pour l'un,
+   `[1, 3, 6]` pour l'autre, et v11 ajoute calibration, élagage et `di_rescue`.
+   C'est la démonstration la plus nette de la thèse de ce document — deux
+   fichiers de 952 et 756 lignes qui sont **un routing et deux recettes**.
+
+### 1.3 Où part le code
+
+Classement par AST de chaque fonction en **plomberie ML** (cycle de vie du
+modèle) ou en **routing** (setups, seuils, sizing, sorties) :
+
+| stratégie | total | plomberie | routing | % plomberie |
+|---|---:|---:|---:|---:|
+| `opus_stat_pretrained_v4` | 754 | 84 | 670 | 11 % |
+| `opus_stat_retrained_v4` | 773 | **295** | 478 | **38 %** |
+| `opus_omnibus_v7` | 883 | **276** | 607 | **31 %** |
+| `opus_omnibus_v7_pretrained` | 640 | 64 | 576 | 10 % |
+| `opus_omnibus_v8` | 710 | 58 | 652 | 8 % |
+| `opus_omnibus_v9` | 738 | 59 | 679 | 8 % |
+| `opus_omnibus_v10` | 743 | 59 | 684 | 8 % |
+| `opus_omnibus_v10_retrained` | 952 | **265** | 687 | **28 %** |
+| `opus_omnibus_v11` | 756 | 71 | 685 | 9 % |
+| `opus_omnibus_v11_followsetup` | 1099 | **303** | 796 | **28 %** |
+| `opus_omnibus_v12` | 228 | 16 | 212 | 7 % |
+| `ml_dynamic_threshold` | 972 | **316** | 656 | **33 %** |
+| `scoring_statistique_opus_v4` | 784 | **287** | 497 | **37 %** |
+| `scoring_statistique_opus_v5` | 710 | **243** | 467 | **34 %** |
+| **TOTAL** | **10 742** | **2 396** | **8 346** | **22 %** |
+
+**Les stratégies qui composent `MLBackend` paient 7–11 % de plomberie ; celles
+qui ne le font pas en paient 28–38 %.** `MLBackend` résout déjà le problème —
+il n'est utilisé que par 5 stratégies sur 14, et même là via une couche de
+propriétés de transfert (`opus_omnibus_v11.py:352-395` expose 20 propriétés qui
+ne font que relayer `self.ml.state.*`).
+
+### 1.4 Les fractures actuelles
+
+**(a) Des métriques fabriquées, dupliquées cinq fois.** Les cinq stratégies
+figées écrivent des littéraux dans leur `train_meta` :
+
+```python
+self._best_auc_per_tf = {"15m": 0.626, "30m": 0.597, "1h": 0.603}
+"auc_amp": {"15m": 0.749, "30m": 0.690, "1h": 0.676}.get(tf, 0.0),
+"auc_dir": {"15m": 0.503, "30m": 0.504, "1h": 0.530}.get(tf, 0.0),
+```
+
+Copié-collé identique dans `opus_stat_pretrained_v4.py:413`,
+`opus_omnibus_v7_pretrained.py:346`, `v8.py:372`, `v9.py:415`, `v10.py:406`.
+Ces nombres vivent aussi dans les `model.meta.json`. Deux sources de vérité,
+dont une en dur dans cinq fichiers — et c'est celle-là qui remonte dans l'UI.
+**§1.5 montre qu'elle est en plus fausse aujourd'hui.**
+
+**(b) La clé de registre est le nom de la stratégie, pas la recette.**
+
+```
+app/ml/policy.py:243        recipe = recipe or getattr(strategy, "name", "strategy")
+app/engine/backtest.py:972  params=sle["params"], recipe=sle["strat"].name,
+app/ml/trainer.py:209       ..., params=sp, recipe=name, ...
+app/ml/train_runner.py:111  ..., recipe=strategy_name, ...
+```
+
+Quatre sites, aucun paramétrable. « Même recette ⇒ mêmes artefacts »
+(ML-02 §5.5) est donc inapplicable : cinq consommateurs du pack V4 ne peuvent
+pas partager une entrée de registre, et `v12` réentraîne une recette
+strictement identique à celle de `v11`.
+
+**(c) La recette n'existe pas comme objet.** ML-02 §3.1 spécifiait un bloc
+`model:` dans le YAML de stratégie. Vérification : **45 YAML, aucun bloc
+`model:` ; pas de répertoire `recipes/` ; ni `recipe_version`, ni
+`features_catalog`, ni `feature_list`, ni `cadence_bars` n'existent dans le
+code.** Ce qui en tient lieu est un mélange, dans le même espace de noms
+`params:`, des seuils de décision et des hyperparamètres d'entraînement —
+`strategies/opus_omnibus_v11.yaml` fait cohabiter `setup_signal_up_amp_min` et
+`n_estimators`.
+
+**(d) L'optimiseur peut changer la recette sans que le registre le sache.**
+Trois stratégies exposent à l'optimiseur des clés qui entrent dans
+l'entraînement : `adx_threshold` (`scoring_statistique_opus_v4`, `_v5` — c'est
+un argument de `_build_features(df, adx_threshold)`, donc les features
+changent) et `lookahead` (`ml_dynamic_threshold` — horizon de labellisation).
+Or `_RECIPE_PARAM_KEYS` (`app/ml/policy.py:53`) ne contient ni l'un ni l'autre.
+Deux essais produisent donc **des modèles différents, sous la même clé de
+registre et le même `recipe_hash`.**
+
+**(e) Les variantes `_no_ml` ont dérivé en silence.** Sur les 9 fonctions
+communes à `opus_omnibus_v11` et `opus_omnibus_v11_no_ml`, **8 divergent**.
+Une partie est cosmétique (`setup` → `s`), mais pas tout : la variante `_no_ml`
+a perdu les conditions `needs_bearish_excess` et `needs_rsi_below`, et a
+fusionné le test `regime == REGIME_TREND_DN` dans la garde `exit_td`. Les huit
+setups sont pourtant déclarés identiques. **Ce sont des forks figés d'un
+routing qui a continué d'évoluer** — un écart de comportement non documenté.
+
+**(f) Deux couches de cache de features en parallèle.** Le `FeatureStore`
+(disque, partagé, indexé par catalogue) coexiste avec un cache par instance
+`_bt_features` / `_bt_features_len` / `_bt_train_offset` — **86 occurrences
+dans `app/strategies/`**, et `prepare_for_backtest` réimplémenté dans **13
+stratégies ML** (31 stratégies au total). Les deux stockent les mêmes 462
+colonnes.
+
+### 1.5 Le pack V4 legacy ne gagne plus — mesuré
+
+C'est le test décisif : ce pack ne mérite le code qui le maintient en vie que
+s'il bat un ré-entraînement. Protocole — les deux artefacts scorés sur le
+**même holdout** (1 500 dernières barres BTC/USDC), avec la **même convention
+de labels** (`label_horizons=[1]`, `amp_top_pct=0.30`, celle déclarée par la
+recette V4), candidat entraîné strictement avant le holdout. C'est exactement
+ce que fait `policy.decide_gate` en production.
+
+| TF | n_train | LEGACY `auc_amp` | RETRAIN `auc_amp` | LEGACY `auc_dir` | RETRAIN `auc_dir` |
+|---|---:|---:|---:|---:|---:|
+| 15m | 52 851 | 0.598 | **0.638** | 0.467 | **0.529** |
+| 30m | 50 676 | 0.656 | **0.674** | 0.524 | 0.519 |
+| 1h  | 49 738 | 0.600 | **0.663** | 0.482 | **0.530** |
+
+**Le ré-entraînement bat le pack figé sur 3 TF / 3**, avec des marges de
++0.018 à +0.063 sur `auc_amp` — au-dessus de l'`epsilon` du gate (0.010) dans
+les trois cas. Le gate promouvrait donc le candidat partout.
+
+#### Contre-épreuve : l'AUC directionnelle par régime
+
+L'AUC globale ne suffit pas à conclure, parce que le seul endroit où V4 avait
+montré un gain était **le régime** : un modèle à 0.48 global peut valoir 0.58
+en Trend Down et 0.44 ailleurs, ce qui justifierait de le garder pour ce
+régime-là. La ventilation par régime est donc la vraie question.
+
+Les deux artefacts sont ventilés sur le même holdout, mêmes labels, même
+classification (`features.classify_regime`, ADX > 20, `di_rescue` = 10). Les
+AUC par régime portant sur 235 à 579 barres, chaque écart est accompagné d'un
+**IC 95 % bootstrap apparié** (2 000 tirages, mêmes indices pour les deux
+modèles) — sans quoi on lirait du bruit comme un signal.
+
+| TF | régime | n | LEGACY `dir` | RETRAIN `dir` | écart | IC 95 % (legacy − retrain) |
+|---|---|---:|---:|---:|---:|---|
+| 15m | Range | 579 | 0.471 | 0.510 | +0.039 | [−0.106, +0.032] bruit |
+| 15m | Trend Up | 521 | 0.474 | 0.541 | +0.066 | [−0.143, +0.012] bruit |
+| 15m | Trend Down | 374 | 0.469 | 0.501 | +0.032 | [−0.123, +0.055] bruit |
+| 15m | Choppy | 235 | 0.468 | 0.527 | +0.059 | [−0.170, +0.040] bruit |
+| 30m | Range | 487 | **0.521** | 0.488 | −0.033 | [−0.042, +0.113] bruit |
+| 30m | Trend Up | 314 | 0.539 | 0.555 | +0.015 | [−0.111, +0.081] bruit |
+| 30m | Trend Down | 549 | **0.530** | 0.528 | −0.002 | [−0.067, +0.074] bruit |
+| 30m | Choppy | 359 | 0.501 | 0.551 | +0.050 | [−0.137, +0.038] bruit |
+| 1h | Range | 371 | 0.440 | 0.503 | +0.063 | [−0.149, +0.021] bruit |
+| 1h | Trend Up | 464 | 0.483 | 0.498 | +0.015 | [−0.090, +0.059] bruit |
+| 1h | Trend Down | 547 | 0.501 | 0.559 | +0.058 | [−0.126, +0.005] bruit |
+| 1h | Choppy | 327 | 0.499 | **0.588** | +0.089 | [−0.173, −0.004] **RETRAIN significatif** |
+
+Lecture, dans l'ordre de force décroissante des affirmations :
+
+1. **Aucun régime où le pack figé est significativement meilleur.** Les deux
+   seules cellules où il devance le candidat (30m/Range +0.033, 30m/Trend Down
+   +0.002) ont des IC qui contiennent largement 0 : [−0.042, +0.113] et
+   [−0.067, +0.074]. Ce sont des écarts d'échantillonnage, pas un avantage.
+2. Le ré-entraînement gagne **10 cellules sur 12**, et c'est la seule
+   significative (1h/Choppy, +0.089) qui va dans son sens.
+3. **Le pack est sous le hasard dans 8 cellules sur 12** (`auc_dir` < 0.500) ;
+   le candidat n'y est que dans 1 sur 12.
+
+**Réserve à énoncer clairement** : les IC sont larges (± 0.10 environ). Sur un
+holdout de 1 500 barres, l'AUC par régime ne discrimine pas finement — dans un
+sens **comme dans l'autre**. La conclusion correcte est donc « aucune preuve
+que le pack sauve un régime », pas « il est prouvé qu'il n'en sauve aucun ».
+Mais combinée à la métrique de gate (§1.5, 3/3 en faveur du candidat), elle
+suffit à trancher : il n'y a rien à conserver *sur la foi des mesures
+disponibles*, et le mécanisme qui dirait le contraire un jour est le gate — pas
+cinq fichiers de stratégie.
+
+Deux corollaires que la mesure impose :
+
+- **Les littéraux de la fracture (a) surestiment fortement la performance
+  actuelle.** Le pack s'auto-déclare `auc_amp` = 0.749 / 0.690 / 0.676 (chiffres
+  de son entraînement de mai) ; sur un holdout de juillet il obtient 0.598 /
+  0.656 / 0.600. **Jusqu'à −0.15 d'écart**, affiché dans l'UI comme s'il
+  s'agissait de sa performance courante. Ce n'est pas une erreur de code : c'est
+  ce que devient un chiffre d'entraînement figé qu'on recopie à la main.
+- **Sa tête directionnelle est sous le hasard**, globalement (0.467 en 15m,
+  0.482 en 1h) **et par régime** (8 cellules sur 12 sous 0.500). C'est
+  cohérent avec la purge `dir_min`/`dir_max` décidée précédemment, et cela
+  répond à la question du `p_dir` V4 : il n'y a rien à récupérer de ce côté-là,
+  y compris en le cherchant régime par régime.
+
+#### Contre-épreuve : le verdict tient-il à une autre fenêtre d'entraînement ?
+
+Le candidat ci-dessus est entraîné sur **tout l'historique disponible moins le
+holdout** — 52 851 / 50 676 / 49 738 barres selon le TF. Si son avantage ne
+tenait qu'à ce volume, le résultat serait un artefact du protocole plutôt
+qu'une propriété du pack figé. Même holdout, mêmes labels, fenêtres
+croissantes :
+
+| fenêtre | 15m | 30m | 1h |
+|---|---:|---:|---:|
+| *legacy (référence)* | *0.598* | *0.656* | *0.600* |
+| 5 000 | 0.626 (+0.028) | 0.654 (−0.002) | 0.674 (+0.074) |
+| 10 000 | 0.623 (+0.024) | 0.678 (+0.022) | 0.666 (+0.067) |
+| 20 000 | 0.637 (+0.038) | 0.682 (+0.026) | 0.665 (+0.065) |
+| 40 000 | 0.635 (+0.037) | 0.676 (+0.020) | 0.656 (+0.057) |
+| tout (~50 000) | 0.638 (+0.039) | 0.674 (+0.018) | 0.663 (+0.064) |
+
+**Le gate promeut le candidat dans les 15 cas.** L'avantage n'est donc pas un
+effet de volume : il existe dès 5 000 barres. Le seul quasi-ex-æquo est
+30m/5 000 (−0.002, à l'intérieur d'`epsilon`).
+
+Un résultat secondaire mérite d'être noté parce qu'il va à contre-courant de
+l'intuition : **en 1h, moins d'historique fait mieux** (+0.074 à 5 000 barres
+contre +0.057 à 40 000). La série 1h remonte à mars 2020 ; les régimes anciens
+semblent contre-productifs. C'est un argument direct pour que `window.bars`
+soit un paramètre de recette balayé par `window_sweep` (§3.4) plutôt qu'un
+« tout l'historique » implicite — et c'est précisément le genre de question que
+l'architecture cible rend routinière.
+
+**Réserve honnête** : un symbole, un holdout. Ce n'est pas une campagne, et la
+fenêtre d'entraînement du pack figé reste inconnue — la comparaison répond à
+« que produirait un ré-entraînement aujourd'hui ? », pas à « qui a eu le
+meilleur protocole en mai ? ». Mais c'est bien la première question qui décide
+du sort du code. 3/3 sur la métrique de gate, robuste sur 5 fenêtres, zéro
+régime sauvé au test d'échantillonnage, plus une décroissance cohérente
+(entraînement mai, holdout juillet) : c'est suffisant pour une décision
+d'architecture. Et si le résultat s'inversait un jour, le mécanisme qui le
+dirait est le gate — pas cinq fichiers de stratégie.
+
+---
+
+## 2. Diagnostic : une seule cause
+
+Les six fractures ont la même racine :
+
+> **La classe de stratégie est propriétaire de son modèle.**
+
+Elle possède aujourd'hui, dans un seul fichier : le routing, la construction
+des features, la boucle d'entraînement, le format de persistance, le cache de
+features, l'état ML en mémoire, la clé de registre, l'espace de recherche de
+l'optimiseur et le slot de cycle de vie. Toucher **un** de ces axes impose un
+nouveau fichier — d'où les trois axes de duplication de §1.2.
+
+ML-02 a correctement extrait **l'artefact** (registre) et **la décision de
+promotion** (gate). Il n'a extrait ni **la recette** ni **le prédicteur**. Que
+le travail récent ait dû procéder par contrats rapportés à la classe
+(`gate_spec`, `score_holdout` surchargeable) confirme le diagnostic : on décrit
+à la stratégie ce que la recette devrait porter.
+
+---
+
+## 3. Ce qui complique sans rien apporter — à supprimer
+
+Sans contrainte de production, ces éléments n'ont pas à être migrés,
+dépréciés ni maintenus. Ils sont à **retirer**.
+
+### 3.1 Tout ce qui existe pour le pack V4 figé
+
+§1.5 le rend obsolète. Ce qui disparaît avec lui :
+
+| élément | lignes | rôle |
+|---|---:|---|
+| `opus_stat_pretrained_v4.py` | 754 | consomme le pack |
+| `opus_omnibus_v7_pretrained.py` | 640 | consomme le pack |
+| `opus_omnibus_v8.py` | 710 | consomme le pack |
+| `opus_omnibus_v9.py` | 738 | consomme le pack |
+| `opus_omnibus_v10.py` | 743 | consomme le pack |
+| `registry._legacy_artifact` + `import_legacy` | 67 | résolution / import du pack |
+| `_load_pretrained`, `_PRETRAINED_CACHE`, `_FeatureBuilder`, `_to_pandas_window` | ~24 réf. | accès et wrappers de compat |
+| `ArtifactRef.legacy`, `pin="legacy"`, branche legacy de `freshness_warning`, `overlap_warning` | épars | sémantique « modèle sans provenance datée » |
+| littéraux d'AUC ×5 (fracture a) | 15 | métriques recopiées à la main |
+| `scripts/migrate_v4_to_registry.py` | — | migration achevée, à usage unique |
+
+**≈ 3 675 lignes**, plus les branches éparses et les références dans 10
+fichiers de test.
+
+> **Correction (à l'implémentation).** La révision 2 comptait aussi
+> `app/ml/lgb_logging.py` (86 L) dans cette liste, au motif qu'il n'existait
+> que pour taire le `bagging_by_query` du pack. **Mesure faite avant de le
+> supprimer : c'est faux.** Sans lui, un entraînement LightGBM écrit ~750
+> caractères directement sur `stdout`, hors de toute configuration de logging ;
+> avec lui, la capture est totale (0 caractère). Le motif `bagging_by_query`
+> était la *motivation* du module, pas son *périmètre* — le routage de la
+> sortie C++ est de l'infrastructure générique. **Le module est conservé** ;
+> seul son docstring a été corrigé pour ne plus se présenter comme du code
+> legacy.
+
+**Nuance importante — supprimer le pack ≠ supprimer les routings.** `v8`, `v9`
+et `v10` n'existent qu'en version figée. `v7_pretrained` et
+`opus_stat_pretrained_v4` ont chacun un jumeau ré-entraîné vivant : pour eux la
+suppression est sans perte. Pour les trois autres, la question « les rebrancher
+sur la recette ré-entraînée ? » a une réponse mesurée, et elle diffère selon la
+génération :
+
+- **`v10` : le rebrancher produit un doublon d'un doublon.** `v10` rebranché
+  sur la recette ré-entraînée *est* `opus_omnibus_v10_retrained`, dont le
+  routing est byte-identique à celui de `v11` (§1.2 obs. 4). On obtiendrait un
+  troisième fichier pour un routing déjà présent deux fois. **Le rebrancher n'a
+  aucun sens ; le retirer non plus n'en perd aucun** — `v11` porte déjà ce
+  routing, avec une meilleure recette.
+- **`v8` et `v9` portent deux setups que la lignée vivante a abandonnés.**
+  Union des setups sur toute la famille omnibus : **10**, dont `SHORT_TD`
+  (présent en v7/v8/v9, absent de v10/v11) et `LONG_PULLBACK_TU` (v9
+  seulement).
+
+| setup | v7 | v8 | v9 | v10 | v10_retr | v11 | v11_fs |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `SIGNAL_UP` | · | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `SHORT_TD_HIGH` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **`SHORT_TD`** | ✓ | ✓ | ✓ | · | · | · | · |
+| `LONG_CHOPPY` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `SHORT_CHOPPY` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `LONG_RANGE_STRICT` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `LONG_RANGE_LIGHT` | · | · | · | ✓ | ✓ | ✓ | ✓ |
+| `LONG_TU` | · | · | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **`LONG_PULLBACK_TU`** | · | · | ✓ | · | · | · | · |
+| `LONG_EXIT_TD` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · |
+
+Ce tableau change la nature de la question. Les générations omnibus ne sont
+pas sept stratégies : ce sont **sept sous-ensembles d'un même catalogue de
+10 setups**, avec des seuils différents. Retirer `v8` et `v9` ferait perdre
+deux setups ; les rebrancher entiers coûterait deux fichiers pour les
+récupérer. **La bonne réponse n'est ni l'un ni l'autre : c'est la fusion**
+(§7).
+
+Le pack lui-même (6 `.lgb` + 3 `.meta.json`) peut rester sur disque comme
+archive morte, hors du chemin de résolution. Il ne coûte rien tant qu'aucun
+code ne le cherche.
+
+Le pack lui-même (6 `.lgb` + 3 `.meta.json`) peut rester sur disque comme
+archive morte, hors du chemin de résolution. Il ne coûte rien tant qu'aucun
+code ne le cherche.
+
+### 3.2 Le code de rétrocompatibilité pur
+
+Écrit pour ne pas casser des appelants ; sans production, il n'y a rien à ne
+pas casser.
+
+- **`use_pretrained_ml`** (7 réf. dans `backtest.py`) — booléen historique
+  traduit en `ml_mode`. `ml_mode` devient l'unique levier, **obligatoire** :
+  un mode implicite est précisément ce qui a produit le « repli silencieux »
+  que ML-02 §4.1 voulait supprimer.
+- **Ré-exports et alias de `app/ml/policy.py`** — le bloc
+  `from app.ml.scoring import (...)  # noqa: F401` et `recipe_gate_defaults`,
+  documentés « conservés pour les appelants et tests existants ». Les appelants
+  importent `app.ml.scoring`.
+- **Arguments directs `label_horizons` / `amp_top_pct` de `score_holdout`** —
+  doublon de `gate_cfg`, gardés pour « appelants et tests historiques ».
+- **Repli sur l'ancien layout plat** dans `resolve()` — `models/{recipe}_{tf}.*`
+  n'existe plus sur disque.
+- **`unsupported_format`** (4 réf., `scoring.py` → `policy.py` → les deux UI) —
+  une devinette de format. Avec `persistence:` déclaré dans la recette (§4.3),
+  le format est **connu**, jamais reniflé.
+
+### 3.3 Ce que l'architecture cible rend caduc
+
+Pas à supprimer aujourd'hui, mais à ne pas reconstruire :
+
+- **`managed_externally`** — drapeau qui dit à une stratégie « ne te
+  ré-entraîne pas toi-même, quelqu'un d'autre te gère ». Il n'existe que parce
+  que la stratégie décide de s'entraîner. Avec l'injection de prédicteur, elle
+  ne décide plus rien : le drapeau n'a plus d'objet.
+- **La double couche de cache de features** (fracture f) — `prepare_for_backtest`
+  et le triplet `_bt_features` / `_bt_features_len` / `_bt_train_offset`
+  disparaissent des stratégies ; le `FeatureStore` reste seul, indexé par
+  catalogue de recette.
+- **La clé de `train_cache`** (`type(strategy).__module__`,
+  `app/core/train_cache.py:94`) — après fusion des routings, elle cesserait de
+  discriminer. Elle doit devenir `recipe_hash` + fenêtre, sinon le cache
+  produit des faux positifs.
+
+### 3.4 Ce qui pose question mais n'est pas tranché ici
+
+Signalé par honnêteté, sans recommandation faute de mesure :
+
+- **Calibration isotone** (`app/ml/backend/isotonic.py`, 169 L) et **élagage de
+  features** (`prune_features`) sont activés par défaut. Aucune mesure au dépôt
+  ne montre leur apport. Ils sont peu coûteux à garder ; ils méritent **une**
+  expérience (même protocole que §1.5, `calibrate=False` / `prune_features=False`
+  en comparaison) avant d'être considérés comme acquis.
+- **La dimension `symbole` du registre** est portée de bout en bout, mais le
+  live l'écrase : `_resolve_symbol` « préfère BTC » (`app/ml/trainer.py:233`).
+  Une dimension présente dans les chemins et jamais renseignée est un piège —
+  elle donne l'illusion d'un modèle par symbole. **Soit l'exploiter, soit la
+  retirer** ; la porter à moitié est le pire des trois.
+- **`window_sweep`** (module + API + UI, 31 réf.) est un vrai outil (choisir la
+  fenêtre d'entraînement sur holdout commun). Il n'est pas en cause ; il est
+  simplement à rebrancher sur la recette plutôt que sur le nom de stratégie.
+
+### 3.5 Ce qui est validé et reste tel quel
+
+- **Le registre et le gate.** L'expérience de §1.5 *est* `decide_gate`. Le fait
+  qu'elle réponde à une question d'architecture en dix minutes est la
+  démonstration de leur valeur.
+- **`ml_mode` et ses trois valeurs**, `simulated_live` compris : c'est le seul
+  moyen de backtester la politique de rafraîchissement.
+- **`app/ml/backend/`** — features, trainer, predictor, persistance. Bon
+  découpage ; il gagne des appelants, il n'en perd pas.
+- **Le contenu des routings.** Rien ici ne propose de retoucher une règle de
+  trading.
+
+---
+
+## 4. Architecture cible
+
+### 4.1 Quatre objets, quatre responsabilités
+
+```
+        RECETTE  (fichier git, nommée, hachée)
+        « quelles features, quels labels, quels HP, quelle fenêtre, quel gate »
+             │
+             │ entraînement (une seule implémentation)
+             ▼
+        ARTEFACT  (registre, immuable, daté)          ← existe déjà (ML-02)
+        « ce modèle-là, entraîné le …, sur …, promu parce que … »
+             │
+             │ résolution : ml_mode (frozen | inline | simulated_live) + as_of + pin
+             ▼
+        PRÉDICTEUR  (objet runtime, contrat unique)
+        « features → {amp: …, dir: …} »
+             │
+             │ injection
+             ▼
+        ROUTING  (app/strategies/*.py — et rien d'autre)
+        « setups, seuils, sizing, sorties »
+```
+
+L'artefact et la politique de résolution existent. **Les deux objets à créer
+sont la recette et le prédicteur** — et c'est le prédicteur qui fait
+disparaître les colonnes du tableau §1.2.
+
+### 4.2 Le contrat de prédicteur
+
+```python
+# app/ml/predictor.py
+class Predictor(Protocol):
+    heads: tuple[str, ...]          # ("amp", "dir") ; ("dir",) pour dyn_threshold
+    recipe: str | None              # None = aucun artefact (proxy)
+    version_id: str | None          # traçabilité UI / ml_info
+
+    def predict_last(self, features, tf: str) -> dict[str, float]: ...
+    def predict_series(self, features, tf: str) -> dict[str, np.ndarray]: ...
+```
+
+Trois implémentations, **toutes déjà présentes dans le code, à extraire** —
+la quatrième (`ScalerLgbm`, pour le pack figé) meurt avec §3.1 :
+
+| implémentation | source actuelle | consommateurs |
+|---|---|---|
+| `LgbmBundlePredictor` | `persistence.load_amp_dir_bundle` | v7, v10, v11, v11_followsetup, stat_v4 |
+| `LgbmScalerPredictor` | `persistence.load_lgb_with_scaler` | `scoring_statistique_opus_v4`, `_v5` |
+| `LgbmSinglePredictor` | `.lgb` + `.meta.json` de `ml_dynamic_threshold` | `ml_dynamic_threshold` |
+| `ProxyPredictor` | `_proxy_p_up` / `_proxy_p_event` | les 5 variantes `_no_ml` (§8) |
+
+La dernière ligne unifie tout : `_proxy_p_up(...) -> float` a **exactement la
+signature de sortie de `predict_direction`**. Une variante « sans ML » n'est pas
+une autre stratégie — c'est le même routing branché sur un prédicteur qui ne
+consulte aucun artefact.
+
+Ce contrat remplace, par stratégie : `_predict`, `predict_amplitude`,
+`predict_direction`, `_predict_series`, `load_model`, `save_model`,
+`reset_model`, `is_trained`, `managed_externally`, `_tf_from_path`,
+`prepare_for_backtest` — l'essentiel des **2 396 lignes** de §1.3.
+
+### 4.3 La recette comme fichier
+
+`recipes/omnibus_amp_dir_v1.yaml` — l'objet de ML-02 §3.1, enfin construit :
+
+```yaml
+recipe: omnibus_amp_dir_v1
+version: 1                          # bump manuel → nouveau hash → nouvelle lignée
+features:
+  catalog: v4_polars@1              # catalogue FeatureStore existant
+  params: {}                        # tout ce qui change les features vit ICI
+labels:
+  horizons: [1, 3, 6]
+  amp_top_pct: 0.30
+heads: [amp, dir]
+hp:
+  n_estimators: 500
+  num_leaves: 31
+  learning_rate: 0.03
+  seed: 42
+window:
+  bars: {15m: 40000, 30m: 40000, 1h: 25000, default: max}
+  min_bars: 20000
+  cadence_bars: 3000
+gate:
+  metric: auc_amp
+  holdout_bars: 1500
+  auc_floor: 0.55
+  epsilon: 0.01
+persistence: lgbm_amp_dir_bundle    # ← choisit le Predictor au chargement
+```
+
+Trois propriétés que le modèle actuel n'a pas :
+
+- **`recipe_hash` couvre tout ce qui change le modèle**, `features.params`
+  compris — ce qui referme la fracture (d). Balayer `adx_threshold` devient
+  balayer des **recettes**, chacune avec sa lignée d'artefacts.
+- **La recette est indépendante de la stratégie**, donc « même recette ⇒ mêmes
+  artefacts » devient exécutable : un entraînement, un gate, une alerte de
+  fraîcheur, une ligne d'UI par recette. Les littéraux de la fracture (a)
+  disparaissent — seule source : `model.meta.json`.
+- **`persistence:` désigne le prédicteur**, ce qui supprime `unsupported_format`.
+
+### 4.4 La liaison, et ce que devient une stratégie
+
+Dans `strategies/opus_omnibus_v10.yaml` :
+
+```yaml
+models:
+  signal: omnibus_amp_dir_v1        # nom de recette, ou "proxy:indicators"
+params:
+  setup_signal_up_amp_min: 0.50     # seuils de DÉCISION — plus aucun HP ici
+```
+
+Et la stratégie :
+
+```python
+class Strategy(BaseStrategy):        # BaseStrategy, plus BaseStrategyML
+    name = "opus_omnibus_v10"
+    models = {"signal": "omnibus_amp_dir_v1"}    # défaut, surchargeable par YAML
+
+    def score(self, df, params=None, df_htf=None, symbol=""):
+        pred = self.predictors["signal"]          # injecté par le runtime
+        out  = pred.predict_last(self.features(df), tf)
+        p_event, p_up = out["amp"], out["dir"]
+        ...                                       # routing pur, inchangé
+```
+
+Le tableau §1.2 devient de la configuration :
+
+| aujourd'hui | demain |
+|---|---|
+| `opus_omnibus_v10_retrained` | `opus_omnibus_v10` + `models: {signal: omnibus_amp_dir_v1}` |
+| `opus_omnibus_v10_no_ml` | `opus_omnibus_v10` + `models: {signal: proxy:indicators}` |
+| `opus_omnibus_v10` (figé) | *supprimé* (§3.1) |
+
+Une correction du routing v10 s'applique désormais aux deux — ce qui referme
+la fracture (e) par construction.
+
+`v12` illustre le cas multi-modèles, prévu par ML-02 §5.5 :
+
+```yaml
+models:
+  signal: omnibus_amp_dir_v1        # partagé avec v11 — fini le double entraînement
+  filter: dyn_threshold_v1
+```
+
+---
+
+## 5. Ce que ça change pour les quatre consommateurs
+
+**Backtest.** `ml_mode` garde ses trois valeurs et devient **obligatoire** (plus
+de repli sur `use_pretrained_ml`). Il choisit comment le prédicteur est
+fabriqué : `frozen` → `registry.resolve(as_of=…)` ; `inline` → entraînement de
+la recette sur la fenêtre ; `simulated_live` → `policy.maybe_refresh` aux
+frontières de cadence. `ml_info` gagne `recipe` et `version_id` par tête.
+
+**Optimiseur.** Deux gains. La surface de recherche cesse d'être gonflée par
+les variantes — de 19 fichiers découverts par `_discover_strategies()` à 7 ou 9
+routings selon la décision de §3.1. Et la séparation `params:` / recette rend
+explicite la question « optimise-t-on les seuils, ou la recette ? », aujourd'hui
+tranchée par accident (fracture d).
+
+**Live.** `MLStrategyTrainer` itère sur les **recettes distinctes** référencées
+par les stratégies actives, pas sur les stratégies : un timer, un gate, une
+alerte de fraîcheur par recette. À trancher au passage : la dimension symbole
+(§3.4).
+
+**UI Modèles.** Elle liste des recettes plutôt que des stratégies — ce que
+`registry.list_recipes()` renvoie déjà, à ceci près que « recette » y vaut
+aujourd'hui « nom de stratégie ». Chaque ligne gagne ses consommateurs. Les
+métriques viennent d'une seule source, et cessent donc d'afficher 0.749 pour un
+modèle qui vaut 0.598 (§1.5).
+
+---
+
+## 6. Migration — cible directe, pas paliers de compatibilité
+
+La révision 1 proposait six paliers rétrocompatibles. **Sans production, c'est
+du coût pur** : chaque palier compatible demande un chemin de repli qu'il
+faudra retirer ensuite. La séquence ci-dessous vise directement la cible ;
+chaque étape laisse le dépôt vert et cohérent, mais aucune ne préserve d'API
+historique.
+
+**A. Purge du legacy (§3.1 + §3.2) — ✅ FAIT.** À faire en premier : elle retire
+5 des 19 fichiers, donc tout ce qui suit travaille sur une surface plus petite.
+
+Ce qui a réellement été livré, dans l'ordre :
+
+1. **Préservation d'abord.** `SHORT_TD` et `LONG_PULLBACK_TU` portés de v9 dans
+   `_DEFAULT_SETUPS` de v11, **désactivés** (`enabled: False` est le premier
+   test de `_evaluate_setup`, donc strictement neutre) avec leurs règles de
+   `_check_early_exit` et leurs clés YAML. `tests/test_omnibus_recovered_setups.py`
+   verrouille les deux propriétés qui rendent l'opération légitime : neutralité
+   (balayage de tout le domaine régime × p_event × p_up × RSI × ADX, aucun des
+   deux n'est jamais sélectionné) et activabilité réelle (ils déclenchent quand
+   on les active — sinon ce serait du code mort déguisé en option).
+2. **Scanner débranché.** `_setup_series_v8` (106 L) importait les stratégies
+   figées ; le mode `v8` du graphique scanner est retiré au profit de
+   `v11`/`v12`, qui servent des modèles vivants.
+3. **Suppression** des 5 fichiers + leurs 5 YAML + `scripts/migrate_v4_to_registry.py`.
+4. **Chemin legacy du registre** : `_legacy_artifact`, `import_legacy`, le champ
+   `ArtifactRef.legacy` (toujours `False` une fois le repli parti — la
+   sémantique « sans provenance datée » survit via `train_end`), le repli sur
+   l'ancien layout plat, la colonne « Legacy » des deux UI. Les 9 fichiers du
+   pack sont déplacés sous `models/_archive/`, ignoré par `list_recipes()` via
+   `_ARCHIVE_DIRNAME` — lisibles pour ré-examen, jamais résolus.
+5. **Rétrocompat** : `use_pretrained_ml` retiré (`ml_mode` seul levier, défaut
+   explicite `"frozen"`), ré-exports `# noqa: F401` de `policy.py`, alias
+   `recipe_gate_defaults` → `resolve_gate_spec`, et les arguments directs
+   `label_horizons`/`amp_top_pct` de `score_holdout`.
+
+Deux écarts assumés par rapport à la révision 2, tous deux motivés par une
+mesure ou un décompte faits au moment de l'implémentation :
+
+- **`lgb_logging` est conservé** (cf. encadré §3.1).
+- **`ml_mode` n'est pas rendu obligatoire.** Le rendre requis imposait de le
+  passer à 46 sites d'appel, dont ~36 tests de stratégies sans ML. Le défaut
+  explicite `ml_mode: str = "frozen"` dans la signature atteint l'objectif réel
+  — supprimer le SECOND levier et la dérivation implicite entre les deux — sans
+  ce bruit. Un défaut documenté n'est pas un repli silencieux.
+
+`unsupported_format` est **conservé jusqu'à l'étape B** : il ne devient sans
+objet qu'une fois que la recette déclare son `persistence:`.
+
+**B. Recette + prédicteur, en une seule passe.** Aucune raison de les séparer :
+c'est le contrat `persistence:` de la recette qui choisit le prédicteur. Livre
+`recipes/*.yaml`, le chargeur, `recipe_hash` canonique, `app/ml/predictor.py`
+et ses trois implémentations, le bloc `models:` dans les YAML de stratégie, et
+`recipe` en **paramètre requis** aux quatre sites de la fracture (b). Referme
+(a), (b), (c), (d).
+
+**C. Entraînement unifié — préparé, non exécuté.** Un seul chemin
+`train(recipe, df, tf)` ; les `_train_impl` autonomes (~150 lignes chacun)
+disparaissent. C'était l'étape la plus sensible : elle touche l'entraînement
+lui-même, et rien ne garantissait a priori que `MLBackend` produise le même
+modèle que les implémentations recopiées.
+
+**Cette garantie est désormais mesurée** — `scripts/check_train_impl_equivalence.py`,
+BTC/USDC 1h, 4 000 barres, chaque stratégie comparée à `MLBackend` sur son
+propre jeu de paramètres de recette :
+
+| stratégie | écart max `amp` | écart max `dir` | corrélation |
+|---|---:|---:|---:|
+| `opus_stat_retrained_v4` | 0.000000 | 0.000000 | 1.0000 |
+| `opus_omnibus_v7` | 0.000000 | 0.000000 | 1.0000 |
+| `opus_omnibus_v11_followsetup` | 0.000000 | 0.000000 | 1.0000 |
+
+Les trois sont **strictement identiques**. La suppression de leur
+`_train_impl` au profit de `MLBackend` ne change donc pas le modèle produit :
+l'étape C a cessé d'être un pari, et a été exécutée sur cette base.
+
+**Livré** : `app/ml/backend/mixin.py` (189 lignes) porte le cycle de vie ML
+— état par TF, entraînement, persistance, inférence, cache de backtest —
+extrait de `opus_omnibus_v11` qui l'avait déjà en composition. Quatre
+stratégies l'utilisent désormais, `v11` compris :
+
+| stratégie | avant | après |
+|---|---:|---:|
+| `opus_stat_retrained_v4` | 767 | **445** |
+| `opus_omnibus_v7` | 877 | **572** |
+| `opus_omnibus_v11_followsetup` | 1093 | **777** |
+| `opus_omnibus_v11` | 797 | **706** |
+
+Soit **−1 034 lignes** pour 189 lignes de mixin. L'équivalence a été
+re-vérifiée après chaque bascule (écart 0.000000 maintenu), et les presets de
+V11 restent identiques (60/60 barres de décision).
+
+Deux corrections de bugs voyagent avec le mixin et sont verrouillées par test :
+la fusion des `_DEFAULTS` dans `_train` (sans elle, `score()` entraînait avec
+les valeurs du constructeur du backend) et la réconciliation des noms d'état
+avec/sans underscore côté `train_cache`.
+
+**D. Fusion du catalogue de setups omnibus** (§7) — le chantier qui absorbe
+v7 à v11 dans un routing unique portant les 10 setups.
+
+**E. `ProxyPredictor`** (§10) — absorbe les 5 variantes `_no_ml` et corrige la
+dérive (e).
+
+**F. Nettoyage induit** : cache de features unique, clé de `train_cache` sur
+`recipe_hash`, retrait de `managed_externally` (§3.3).
+
+**G. Mesurer calibration isotone et élagage de features** (§8) — dernière
+étape, une fois l'entraînement unifié : c'est seulement là que l'expérience est
+propre à monter.
+
+**Protocole de non-régression.** Le même qui a validé la factorisation des
+helpers V4 : comparaison des signaux `score()` avant/après sur des fenêtres
+réelles BTC/USDC, ancienne version chargée depuis une copie de sauvegarde via
+`importlib.util.spec_from_file_location`, **abandon de l'étape si un seul signal
+diverge**. Les fusions de D sont les seules où une divergence est attendue :
+elle doit alors être énumérée avant, pas constatée après.
+
+**Point de vigilance opérationnel.** `config.yaml` → `lifecycle.manual_active`
+référence des stratégies par nom (`opus_omnibus_v10_no_ml::1h`,
+`opus_omnibus_v8_no_ml::1h`, `opus_omnibus_v12::30m`, …). Toute étape A ou D
+doit migrer ces entrées dans le même commit, sinon des bots actifs disparaissent
+au redémarrage.
+
+---
+
+## 7. Chantier de fusion — un routing omnibus, dix setups
+
+C'est le pendant naturel de §3.1 : puisque les générations omnibus sont des
+sous-ensembles d'un même catalogue (tableau de §3.1), la question n'est pas
+« lesquelles garder » mais « comment n'en avoir qu'une qui les contienne
+toutes ».
+
+### 7.1 Le constat qui rend la fusion possible
+
+Trois mesures convergent :
+
+- **Union = 10 setups**, et chaque génération en est un sous-ensemble. Aucune
+  n'introduit de mécanique de sélection différente : toutes passent par le même
+  quadruplet `_apply_setup_overrides` → `_evaluate_setup` → `_select_setup` →
+  `_check_early_exit`.
+- **Les setups sont déjà des données**, pas du code : un dict de 16 clés
+  (`name`, `priority`, `direction`, `enabled`, `regime`,
+  `needs_exit_td_window`, `needs_bearish_excess`, `needs_rsi_below`,
+  `needs_adx_above`, `amp_min`, `dir_min`, `dir_max`, `tp_mult`, `sl_mult`,
+  `max_bars`, `size_factor`). La sélection est déjà pilotée par ces valeurs.
+- **La paramétrisation par YAML existe déjà, mais partiellement** : v11 expose
+  8 clés `setup_*` (suffixes `min`, `priority`), v10_retrained en expose 14
+  (`min`, `max`, `above`, `priority`). C'est le même mécanisme, complété
+  inégalement au fil des générations.
+
+### 7.2 Ce que la fusion produit
+
+**Un routing `omnibus`**, portant le catalogue des 10 setups, chacun
+`enabled: false` par défaut, entièrement décrit en YAML :
+
+```yaml
+# strategies/omnibus.yaml
+models:
+  signal: omnibus_amp_dir_v1
+setups:
+  SIGNAL_UP:        {enabled: true,  priority: -1, amp_min: 0.50, dir_min: 0.60,
+                     tp_mult: 1.0, sl_mult: 1.3, max_bars: 6,  needs_bearish_excess: true}
+  SHORT_TD_HIGH:    {enabled: true,  priority: 0,  regime: trend_down, amp_min: 0.60,
+                     dir_max: 0.30, tp_mult: 1.4, sl_mult: 1.6, max_bars: 8, size_factor: 1.5}
+  SHORT_TD:         {enabled: false}        # récupéré de v7/v8/v9
+  LONG_PULLBACK_TU: {enabled: false}        # récupéré de v9
+  ...
+```
+
+Chaque génération historique devient **un preset**, pas un fichier :
+`strategies/presets/omnibus_v9.yaml` active les 9 setups de v9 avec ses seuils.
+Ce que le bot trade est alors décrit *en clair*, dans un seul endroit, au lieu
+d'être réparti dans sept fichiers Python dont personne ne peut dire de mémoire
+lesquels partagent quoi.
+
+Gains directs, au-delà du volume :
+
+- **Deux setups reviennent d'entre les morts.** `SHORT_TD` et
+  `LONG_PULLBACK_TU` sont aujourd'hui inaccessibles à la lignée vivante ; ils
+  deviennent des options activables et donc **optimisables**.
+- **La fracture (e) se referme structurellement.** Un routing unique ne peut
+  plus dériver d'avec lui-même : les conditions `needs_bearish_excess` /
+  `needs_rsi_below` perdues côté `_no_ml` ne peuvent plus se reperdre.
+- **L'optimiseur gagne une dimension qu'il n'a jamais eue** : le choix du
+  sous-ensemble de setups. Aujourd'hui ce choix est figé dans le code source et
+  ne peut être exploré qu'en écrivant une nouvelle génération.
+
+### 7.3 Ce qui rend ce chantier risqué, et comment le tenir
+
+C'est le chantier **le plus risqué du document** et il doit être le dernier des
+fusions, pour une raison précise : contrairement à la paire v10 (divergence
+purement plomberie), les générations omnibus ont des `_evaluate_setup` et
+`_apply_setup_overrides` réellement différents. Fusionner impose de **choisir
+un comportement** là où elles divergent — donc de changer des backtests.
+
+Trois garde-fous :
+
+1. **Fusionner par paires successives, jamais les sept d'un coup.** Ordre par
+   distance de routing croissante : `v10_retrained` + `v11` (routing identique,
+   fusion à comportement constant, prouvable) → `v10` figé (supprimé en A) →
+   `v11_followsetup` → `v9` → `v8` → `v7`.
+2. **Chaque paire produit son tableau de divergences AVANT le code.** Pour
+   chaque setup et chaque condition : v_a dit X, v_b dit Y, on retient Z, et
+   pourquoi. Ce tableau est la revue ; le code n'est que son application.
+3. **Preset = équivalence prouvée.** Après fusion, `omnibus + preset_v9` doit
+   produire exactement les signaux de l'ancien `opus_omnibus_v9` sur les
+   fenêtres de test — même protocole que §6. Un preset qui ne reproduit pas son
+   ancêtre est un bug, pas un arbitrage.
+
+Si un arbitrage est jugé indésirable, la sortie de secours reste ouverte : un
+setup peut porter une variante (`SHORT_TD_HIGH_v9`) plutôt que d'être fusionné
+de force. Mieux vaut 11 setups dont deux quasi-jumeaux qu'une fusion qui perd
+un comportement en silence.
+
+### 7.3bis Résultat de D.2 — ce qui a fusionné, ce qui reste, et pourquoi
+
+Le tableau de divergences exigé par le garde-fou 2 est produit
+**mécaniquement** par `scripts/omnibus_divergence_table.py`, à partir des
+`_DEFAULT_SETUPS` réellement déclarés — pas d'une lecture à l'œil qui raterait
+un champ. Ce qu'il montre :
+
+| | v7 | v11 | followsetup |
+|---|---|---|---|
+| setups déclarés | 6 | **10** (8 actifs + 2 désactivés) | 7 |
+| signature `_evaluate_setup` | 5 args | **8 args** | 7 args |
+
+**V11 est déjà l'union.** Les 10 setups y sont, et sa signature
+`_evaluate_setup(setup, regime, p_event, p_up, exit_td, bearish_excess, rsi,
+adx)` est un **sur-ensemble** des deux autres : v7 lui manque les trois
+derniers arguments, followsetup lui manque `exit_td`. Comme les conditions
+correspondantes sont inertes quand le setup dit `needs_… = None`, le catalogue
+V11 absorbe les deux mécaniques sans branche supplémentaire. C'est ce qui rend
+la fusion possible *en valeurs* pour v7 — pas pour followsetup, voir plus bas.
+
+#### v7 → preset de v11 ✅
+
+Fait. Divergences retenues et leur arbitrage :
+
+| divergence | v7 | v11 | retenu dans le preset |
+|---|---|---|---|
+| `SHORT_TD` | actif, prio 1, amp 0.50, dir_max 0.40 | désactivé, prio 7, amp 0.55, dir_max 0.35 | **v7** (4 surcharges) |
+| `SIGNAL_UP` / `LONG_TU` / `LONG_RANGE_LIGHT` | absents | actifs | **v7** (`enabled: false`) |
+| `LONG_EXIT_TD` priorité | 3 | 4 | **v7** — l'ordre relatif compte, `LONG_TU` s'était inséré en 3 |
+| `LONG_RANGE_STRICT` priorité | 4 | 5 | **v7**, même raison |
+| rattrapage DI | absent | `di_rescue: 10` | **v7** (`inf`) |
+| `warmup_bars` | 2000 | 750 | **v7** |
+
+Aucun arbitrage n'a eu à trancher *contre* v7 : ses six setups sont, champ par
+champ, ceux de v11. **Équivalence prouvée** conformément au garde-fou 3 —
+7 744 combinaisons du domaine (régime × `p_event` × `p_up` × fenêtre `exit_td`
+× excès baissier × RSI × ADX), sélection **identique dans 100 % des cas**, dont
+36,9 % où un setup se déclenche. Contre-épreuve : sans les surcharges, les deux
+catalogues divergent sur 892 combinaisons — le test discrimine.
+572 → 133 lignes, et `SHORT_TD` redevient optimisable.
+
+#### `opus_omnibus_v11_followsetup` → **non fusionné**, motivé
+
+Ce n'est pas la même mécanique de sortie. V11 ferme sur TP, SL, trailing ou
+`max_bars` ; followsetup ne ferme **que** sur setup opposé confirmé, derrière
+un appareil anti-whipsaw complet (confirmation sur K bougies, cooldown
+post-flip, score minimum du setup cible, marge d'hystérésis, timeout dur de
+sécurité). Ses setups n'ont d'ailleurs ni `tp_mult`, ni `sl_mult`, ni
+`max_bars` — le tableau de divergences le montre : ces champs valent `None`
+chez lui et un nombre partout ailleurs.
+
+Fusionner voudrait donc dire porter dans v11 un **mode `follow_setup`** avec sa
+machine à états — du code, pas des valeurs. C'est faisable et souhaitable, mais
+c'est un arbitrage de comportement à part entière qui mérite son propre tour de
+mesure ; le mêler à la fusion v7 (à comportement prouvé constant) rendrait les
+deux illisibles dans le même diff. Le garde-fou 1 dit exactement cela :
+fusionner par paires, jamais d'un bloc.
+
+Ce qui a quand même été fait pour lui : `opus_omnibus_v11_followsetup` a reçu
+les trois points d'injection de v11 (`_predict_heads`, garde `uses_artifact`,
+fusion des `_DEFAULTS`), ce qui a permis à sa variante `_no_ml` de devenir un
+preset. Ce travail n'est pas perdu par une fusion ultérieure : c'est le contrat
+que le mode `follow_setup` devra respecter.
+
+#### `opus_omnibus_v12` → **hors périmètre**, et ce n'est pas un report
+
+V12 est **déjà** une sous-classe de v11 (228 lignes). Ce n'est pas une
+génération omnibus à fusionner, c'est une **composition** : v11 plus un filtre
+de confirmation par `ml_dynamic_threshold` (accord → score renforcé ; désaccord
+marqué → veto ; neutre → taille réduite). Il n'a ni catalogue de setups propre
+ni routing propre. Le fusionner n'a pas de sens ; il est déjà à sa place.
+
+### 7.4 Portée
+
+Le chantier concerne **la famille omnibus uniquement** (v7 → v12, plus les
+`_no_ml` correspondants). `opus_stat_v4`, `ml_dynamic_threshold` et
+`scoring_statistique_opus_v4/v5` ont des catalogues de décision qui n'ont rien
+à voir : ils restent des routings distincts. Le fusionner avec eux
+reproduirait, à l'échelle du dépôt, l'erreur que ce document décrit.
+
+---
+
+## 8. Mesurer calibration isotone et élagage de features
+
+Dernière étape, volontairement placée après l'unification de l'entraînement
+(§6.C) : c'est seulement à ce moment qu'une expérience propre est bon marché à
+monter — un seul chemin d'entraînement, un flag de recette à basculer.
+
+**Ce qui est mesuré aujourd'hui : rien.** `calibrate: true` et
+`prune_features: true` sont actifs par défaut dans `MLBackend`
+(`_train_impl_wrapper`) et déclarés dans les YAML des générations V11. Aucune
+mesure au dépôt ne compare leur présence à leur absence. Ils coûtent 169 lignes
+(`app/ml/backend/isotonic.py`) plus la logique de `kept_features` dans le
+trainer, et ils entrent dans `_RECIPE_PARAM_KEYS` — donc dans l'identité de la
+recette.
+
+**Protocole**, identique à §1.5 pour être comparable :
+
+- Quatre recettes ne différant que par ces deux flags — `(calibrate, prune)` ∈
+  {(T,T), (T,F), (F,T), (F,F)} ;
+- même fenêtre d'entraînement, même holdout, même graine ;
+- métriques : `auc_amp` et `auc_dir` **globales et par régime**, plus l'erreur
+  de calibration (déjà exposée dans `train_meta`) et le nombre de features
+  retenues ;
+- sur les 3 TF, et si possible un deuxième symbole pour éviter de conclure sur
+  BTC seul.
+
+### 8.1 Résultat mesuré (2026-07-25)
+
+`scripts/measure_calibration_and_pruning.py`, V11 sur BTC/USDC, holdout 1500,
+labels `[1,3,6]`, ECE sur 10 bins.
+
+| TF | ECE sans calibration | ECE avec | variation | écart d'AUC |
+|---|---:|---:|---:|---:|
+| 15m | 0.0797 | **0.0420** | −47 % | +0.0000 |
+| 30m | 0.1495 | **0.0499** | −67 % | +0.0000 |
+| 1h | **0.0247** | 0.1387 | **+461 %** | +0.0000 |
+
+**L'écart d'AUC est nul à 1e-4 partout**, exactement comme l'invariance
+monotone le prédit : c'est le contrôle qui valide que la mesure est bien
+posée, et la démonstration que juger la calibration à l'AUC n'aurait rien dit.
+
+**Verdict — l'effet dépend du TF, et il n'est pas toujours favorable.** La
+calibration divise l'erreur par deux ou trois en 15m et 30m, mais la
+**multiplie par 5,6 en 1h**, où le modèle brut était déjà le mieux calibré des
+trois (0.0247). Ce n'est pas anodin : un `p_event` mal calibré vide de sens les
+seuils des setups — `amp_min: 0.50` cesse de vouloir dire « une chance sur
+deux ». Application du critère n°3 fixé à l'avance : **garder la calibration en
+paramètre de recette, et la désactiver en 1h.** À trancher : une recette par
+TF, ou un bloc `hp` par TF dans la recette.
+
+**L'élagage n'est PAS mesuré, et ne peut pas l'être par ce protocole.** Il
+retire les features à gain nul *au cycle d'entraînement suivant* ; le script ne
+fait qu'un `fit()`. Vérifié : `kept_features` vaut 324/437 que le flag soit à
+`True` ou `False`, et `feature_cols` reste à 437 dans les deux cas — l'écart
+d'AUC nul reflète l'absence de mécanisme exercé, pas l'absence d'effet.
+Conclure « à retirer » sur cette base reviendrait à prendre une non-mesure pour
+un résultat. Trancher demande un walk-forward à au moins deux retrains
+successifs, ce qui reste à faire.
+
+**Décisions possibles à l'issue** — à énoncer avant de mesurer, pour ne pas
+ajuster le critère au résultat :
+
+- gain < 0.005 d'AUC sur les 3 TF → retirer le flag et son code ;
+- gain net → le figer à `true` dans la recette et ne plus l'exposer ;
+- gain dépendant du régime ou du TF → le laisser en paramètre de recette,
+  documenté par la mesure.
+
+La calibration a une valeur qui ne se lit pas dans l'AUC : l'AUC est invariante
+par transformation monotone, donc **calibrer ne peut pas la changer**. Son
+intérêt est que `p_event` et `p_up` soient des probabilités comparables aux
+seuils des setups (`amp_min: 0.50` doit vouloir dire quelque chose). Le
+critère de décision doit donc porter sur l'erreur de calibration et sur le
+comportement des seuils — pas sur l'AUC, qui répondra « aucun effet » par
+construction. C'est précisément le genre de piège qu'une mesure mal cadrée
+ferait passer pour un résultat.
+
+---
+
+## 8bis. La dimension symbole (décision 11) — mesurée, puis retirée
+
+### Le constat de départ
+
+Le registre rangeait par `(symbole, TF, recette)`. Or :
+
+* le trainer live n'entraîne **que sur BTC** — `MLStrategyTrainer._resolve_symbol`
+  retourne `next((s for s in symbols if "BTC" in s), …)` ;
+* le pipeline de signaux score **ce modèle sur tous les symboles** du scanner —
+  `signal_pipeline.collect` boucle sur `get_symbols()` (BTC/USDC, ETH/USDC,
+  XRP/USDC en config) et appelle `strategy.score(…, symbol=symbol)` sur la
+  **même instance**, dont l'état ML n'a pas de dimension symbole.
+
+Un artefact rangé sous `BTC_USDC/` décidait donc en réalité sur ETH et XRP. La
+dimension nommait une partition qui n'existait pas. Deux conséquences
+concrètes, pas seulement esthétiques :
+
+* `load_models(scanner=None)` résolvait `symbol=None`, ne trouvait jamais rien,
+  et planifiait un réentraînement immédiat en croyant qu'aucun modèle
+  n'existait ;
+* un modèle publié sous un autre symbole était invisible du live.
+
+### Le protocole
+
+`scripts/measure_symbol_transfer.py`. Deux candidats de la recette V11, mêmes
+paramètres, l'un entraîné sur BTC, l'autre sur ETH ; les deux scorés sur le
+holdout de **chaque** symbole tradé. IC 95 % bootstrap **apparié** (mêmes
+barres tirées pour les deux modèles).
+
+Un détail du protocole a changé la conclusion et mérite d'être noté : la
+première version découpait chaque symbole à `len − 1500`, ce qui donne des
+périodes d'évaluation différentes par symbole — les séries n'ont ni la même
+longueur ni la même densité. Le holdout XRP 1h démarrait alors le 2025-12-10
+alors que l'entraînement BTC allait jusqu'au 2026-05-03 : **cinq mois de fuite
+temporelle** dans la colonne XRP, et une cellule BTC faussement significative.
+La version retenue coupe à une **date commune** (la plus tardive des coupures
+des symboles d'entraînement). Sans cette correction, la mesure aurait conclu
+l'inverse sur au moins une cellule.
+
+### Le résultat (18 cellules : 3 TF × 3 holdouts × 2 têtes)
+
+| TF | holdout | AUC amp ← BTC | ← ETH | IC 95 % (ETH − BTC) |
+|---|---|---|---|---|
+| 15m | BTC | 0.627 | 0.616 | [−0.030, +0.007] indiscernable |
+| 15m | ETH | 0.619 | 0.614 | [−0.019, +0.008] indiscernable |
+| 15m | XRP | 0.609 | 0.605 | [−0.022, +0.014] indiscernable |
+| 30m | BTC | 0.642 | 0.641 | [−0.011, +0.010] indiscernable |
+| 30m | ETH | 0.663 | 0.663 | [−0.010, +0.008] indiscernable |
+| 30m | XRP | 0.533 | 0.545 | [−0.015, +0.041] indiscernable |
+| 1h | BTC | 0.630 | 0.618 | [−0.030, +0.006] indiscernable |
+| 1h | ETH | 0.638 | 0.634 | [−0.016, +0.007] indiscernable |
+| 1h | XRP | 0.542 | 0.562 | [−0.002, +0.042] indiscernable |
+
+Sur la tête `dir`, une seule cellule est significative (15m / XRP :
+0.529 → 0.581 en faveur du modèle ETH). **17 des 18 cellules sont
+indiscernables du bruit** ; à 95 %, une significative sur 18 est exactement ce
+que le hasard produit (0,9 attendue). Aucune preuve de spécificité par symbole.
+
+Deux faits s'ajoutent au tableau :
+
+* **ETH ne gagne rien à son propre modèle** — 0.634 contre 0.638 pour le modèle
+  BTC en 1h. C'est la cellule décisive : c'est le seul symbole, en plus de BTC,
+  qui a de quoi s'entraîner.
+* **XRP ne peut pas avoir de modèle propre** : 2 220 barres 1h pour 7 303 heures
+  d'historique (30 % de couverture ; 10 % en 15m, 5 % en 30m). Un tiers des
+  symboles tradés sert forcément un modèle étranger, quelle que soit la
+  décision.
+
+### La décision
+
+**Retirer le symbole de la clé, le garder en provenance.** Le layout devient
+`{base_dir}/{tf}/{recette}/{version_id}/`, et `provenance.symbol` — exposé par
+`ArtifactRef.train_symbol`, alimenté par `publish(…, train_symbol=…)` — dit sur
+quelles données l'artefact a été construit. Savoir cela est de la traçabilité ;
+l'utiliser comme index prétendrait à une partition qui n'existe pas.
+
+Ce que ça change concrètement :
+
+* `resolve/publish/list_versions/read_decisions/{get,set,clear}_pin/set_decision`
+  perdent leur premier argument ;
+* `load_models(strategies, timeframes)` n'a plus besoin de `scanner` — le
+  paramètre n'existait que pour dériver un symbole de résolution, et c'est lui
+  qui produisait le « pas de modèle » silencieux ;
+* `_resolve_symbol` reste, mais documenté pour ce qu'il est : le choix du **jeu
+  d'entraînement**, pas l'identité du modèle. Préférer BTC est maintenant un
+  choix justifié (historique le plus profond et le plus dense) plutôt qu'un
+  héritage ;
+* les deux UI « Modèles » affichent le symbole en colonne « Entraîné sur »
+  au lieu de l'utiliser comme clé de ligne.
+
+Deux tests verrouillent l'invariant (`test_model_registry.py`) : deux
+publications de symboles différents cohabitent comme **deux versions de la même
+entrée** — pas comme deux entrées parallèles — et `resolve()` ne dépend que de
+`(TF, recette)`.
+
+### Ce que cette mesure ne dit pas — mesuré, pas supposé
+
+La première rédaction de cette section disait « deux symboles entraînables,
+tous deux large-cap et fortement corrélés ». C'était vrai de la paire
+entraînable, mais trop vague sur le panier. Le script mesure désormais les
+corrélations de rendements sur le holdout, ce qui donne un portrait plus net —
+et plus nuancé :
+
+| paire | corrélation (1h, holdout) | statut |
+|---|---|---|
+| BTC ~ ETH | **0.76** | tous deux entraînables |
+| BTC ~ XRP | **0.31** | XRP évaluable seulement |
+| ETH ~ XRP | **0.32** | XRP évaluable seulement |
+
+Il faut donc distinguer deux populations, et la distinction change ce qu'on a
+le droit de conclure :
+
+* **Paires entraînables** (BTC ~ ETH, 0.76) — la seule population où la
+  question « son propre modèle ferait-il mieux ? » est *testable*, puisqu'il
+  faut pouvoir entraîner les deux. Ce sous-panier est homogène : qu'un modèle
+  y transfère n'a rien d'étonnant.
+* **Paires évaluées seulement** (XRP, ~0.31) — le modèle BTC transfère vers un
+  actif **faiblement corrélé** sans perte mesurable, ce qui est plus fort que
+  prévu. Mais XRP n'a pas assez d'historique pour un modèle propre : on
+  observe donc qu'un modèle étranger *marche*, jamais qu'un modèle local
+  ferait *mieux*. **Il manque le contrefactuel**, et c'est la limite réelle.
+
+Autrement dit, la décision repose sur un test conduit sur une seule paire
+homogène, plus un indice sur un actif hétérogène mais non testable. C'est
+suffisant pour ne pas construire aujourd'hui une machinerie par symbole ; ce
+n'est pas suffisant pour affirmer que la dimension ne servira jamais.
+
+**Quand rejouer.** Dès qu'un actif d'une **autre classe** et doté d'assez
+d'historique (≥ 8 000 barres) entre dans le bot — actions CAC/Nasdaq, ETF,
+matières premières. Il rejoindra alors les paires *entraînables*, et c'est là
+seulement que le verdict pourra s'inverser. Aucune édition n'est nécessaire :
+le script **découvre les symboles depuis le store**, calcule les corrélations
+et signale lui-même la portée de son propre verdict.
+
+---
+
+## 8ter. Deux ADX incompatibles dans le dépôt — trouvé, mesuré, PAS corrigé
+
+### Ce que c'est
+
+Le dépôt calcule l'ADX à deux endroits, et les deux ne mesurent pas la même
+chose :
+
+| | fichier | lissage | α |
+|---|---|---|---|
+| `_pre_adx14` | `app/core/indicators_precompute.py` | `ewm_mean(span=14)` | **2/15 ≈ 0.133** |
+| `ADX` (V4) | `app/ml/backend/features.py` | `_ewm_alpha_np(x, 1/14)` | **1/14 ≈ 0.071** |
+
+L'ADX de Wilder est défini avec α = 1/N. **`features.py` est donc le bon**, et
+`_pre_adx14` est presque deux fois trop réactif : un `span=14` équivaut à un
+Wilder de période **7,5**, pas 14. Vérifié numériquement plutôt que déduit du
+code — `_ewm_alpha_np(x, 2/15)` reproduit `ewm_mean(span=14)` à 0.000000 près.
+
+Le même défaut touche `_pre_atr14`, `_pre_pdi14` et `_pre_ndi14`, calculés avec
+le même `span=14`.
+
+### L'ampleur, mesurée
+
+Sur 5 999 barres BTC/USDC 1h :
+
+| | `_pre_adx14` | `ADX` V4 |
+|---|---|---|
+| moyenne | 35.39 | 28.17 |
+| médiane | 33.08 | 25.76 |
+
+* écart absolu moyen **9.50 points** (médian 8.50, max 65.96) ;
+* corrélation **0.7533** — pas deux implémentations d'une même quantité ;
+* le verdict `ADX ≥ 20` **diffère sur 21,6 % des barres**, et pas à la marge :
+  distance médiane au seuil 4.78 points.
+
+Un seuil comme `needs_adx_above: 25.0` ne veut donc pas dire la même chose
+selon la stratégie qui le lit. **17 fichiers de stratégie lisent
+`_pre_adx14`** ; toute la famille ML lit l'ADX V4.
+
+### Comment il a été trouvé
+
+Par la conversion des variantes `_no_ml` (§6.E). Le premier chiffre —
+« 76,7 % de décisions identiques » — était attribué à la dérive de routing du
+fork. La ventilation champ par champ dit autre chose :
+
+| champ | écarts / 120 |
+|---|---|
+| `p_event` | **0** |
+| `p_up` | **0** |
+| `regime` | **28** |
+
+Les proxys sont rigoureusement identiques ; c'est le régime qui bouge, donc
+l'ADX. La même ventilation sur `opus_omnibus_v11_no_ml` (converti plus tôt)
+donne 0 / 0 / 38 : **l'attribution initiale de cet écart aux conditions de
+setup perdues était fausse** — ces conditions ont bien été rétablies, mais ce
+n'est pas ce qui domine le chiffre. Les docstrings des deux fichiers ont été
+corrigées.
+
+### Pourquoi ce n'est pas corrigé ici
+
+Corriger `_pre_adx14` change le comportement de 17 stratégies d'un coup, dont
+plusieurs actives (`config.yaml: manual_active`), et invalide les paramètres
+optimisés sous l'ancienne échelle — tous les seuils ADX de ces stratégies ont
+été réglés contre un ADX gonflé. C'est un chantier à part entière, avec son
+propre protocole de mesure. Le mêler à une factorisation le rendrait
+indétectable dans le diff.
+
+**Ce qui a été fait ici** : les quatre variantes omnibus converties passent à
+l'ADX correct (c'est mécanique — elles héritent du routing V11), et chacune le
+déclare dans sa docstring avec l'ampleur mesurée.
+
+### La sur-réactivité est-elle ce qui FAIT MARCHER ces stratégies ?
+
+C'est la bonne objection, et elle inverse la charge de la preuve : les seuils
+de ces stratégies ont été optimisés **contre cette échelle**, et un indicateur
+plus réactif n'est pas mécaniquement moins bon en trading. Peut-être que
+`span=14` est ce qui produit leurs bons scores de backtest.
+
+Deux pièges de méthode, évités explicitement :
+
+1. **Comparer à paramètres constants serait truqué.** Un `adx_min: 20` réglé
+   face à un ADX qui vaut 35 en moyenne devient beaucoup plus sélectif face à
+   un ADX qui vaut 28. Rejouer les paramètres actuels sous Wilder mesurerait le
+   désaccordage des seuils, pas Wilder. Chaque variante est donc
+   **réoptimisée** séparément, même budget.
+2. **Comparer sur l'OOS serait truqué aussi**, puisque l'optimiseur choisit son
+   meilleur essai *sur* l'OOS. D'où trois fenêtres : IS (apprentissage), OOS
+   (sélection), **VAL — jamais vue par l'optimiseur** — où les deux variantes
+   sont comparées avec les paramètres que chacune a retenus.
+
+Un piège d'implémentation a failli invalider la mesure : les workers de
+l'optimiseur sont **spawnés** et n'héritent d'aucun global du parent. Sans
+relais explicite par `cfg["indicators"]["wilder_atr_adx"]`, le bras « Wilder »
+aurait tourné intégralement en `span=14` et conclu à une absence d'effet.
+
+#### Résultat (`scripts/compare_adx_smoothing.py`, 40 essais/variante)
+
+| stratégie | TF | span=14 | Wilder | écart | trades VAL |
+|---|---|---|---|---|---|
+| `pullback_trend` | 1h | −0.111 | −0.089 | **+0.022** | 196 / 132 |
+| `scoring_statistique_opus` | 1h | −0.026 | −0.034 | **−0.009** | 107 / 109 |
+| `scoring_statistique_opus_v2` | 4h | −0.119 | −0.110 | **+0.009** | 56 / 67 |
+| `multi_tf_sr` | 1d | 0.724 | 0.389 | −0.335 | **2 / 3** ⚠ |
+
+**La dernière ligne ne compte pas** : un score sur 2 trades mesure deux
+tirages, pas une stratégie. C'est pourtant elle qui porte l'écart le plus
+spectaculaire — d'où un garde-fou `MIN_VAL_TRADES` dans le script, plutôt
+qu'une note de bas de page.
+
+Sur les **3 cibles interprétables**, l'écart maximum est de **0.022** et le
+signe change (Wilder gagne 2 fois sur 3). Verdict : **la convention de lissage
+n'est pas ce qui fait vivre ces stratégies.** L'hypothèse « leurs bons scores
+tiennent à la sur-réactivité » n'est pas confirmée ; aligner sur Wilder est
+alors une correction à coût quasi nul, à condition de **réoptimiser** — c'est
+le désaccordage des seuils, pas la convention, qui coûterait cher.
+
+#### Une observation adjacente, qui mérite son propre examen
+
+Sur la fenêtre VAL, **trois des quatre cibles sont en score négatif sous les
+deux conventions** (`multi_tf_sr` étant hors sujet avec ses 2 trades). Ce
+n'est pas le protocole d'optimisation réel du bot — 40 essais de recherche
+aléatoire, score composite, une seule paire symbole/TF — donc ce n'est pas un
+verdict sur ces stratégies. Mais c'est un signal à ne pas laisser passer : les
+bons scores dont elles se prévalent viennent d'IS/OOS, et le dernier tiers de
+l'historique leur est nettement moins favorable. À instruire séparément.
+
+### La correction, appliquée
+
+Wilder est devenu le **défaut**, partout sauf dans le moteur SMC. Cinq sites
+étaient concernés — tous dans deux fichiers, aucun ailleurs :
+
+| site | avant | après |
+|---|---|---|
+| `indicators_core.atr` / `atr_series` / `atr_val` | `span=n` | délèguent à `atr_wilder` |
+| `indicators_core.adx` / `adx_val` | `span=n` aux 4 étages | α = 1/n aux 4 étages |
+| `indicators_core.supertrend` (ATR interne) | `span=period` | `atr_wilder` |
+| `indicators_precompute` (`_pre_atr14/adx14/pdi14/ndi14`) | `span=14` | α = 1/14 |
+| `indicators_core.atr_wilder` | déjà correct | **inchangé** |
+
+`atr_wilder` devient l'unique implémentation du lissage Wilder et les autres
+en dépendent — la dépendance va dans ce sens précisément parce que c'est le
+contrat dont le SMC a besoin : on ne peut plus le casser en « corrigeant »
+`atr`.
+
+**Le moteur SMC est hors périmètre, et c'est vérifié, pas supposé.** Il ne lit
+aucune colonne `_pre_*` et calculait déjà son ATR en Wilder
+(`smc_primitives._wilder_atr` → `indicators_core.atr_wilder`), délibérément,
+pour s'aligner sur `ta.atr` de TradingView. Contrôle : l'empreinte SHA256 de
+la sortie complète de `smc.analyze` sur 3 000 barres BTC/USDC 1h est
+**identique avant et après** (`a9ee8db1…`). Un test interdit désormais à tout
+module SMC de lire `_pre_atr14`/`_pre_adx14`, pour que cette indépendance ne
+se perde pas en silence.
+
+Les trois sources d'ADX du dépôt convergent maintenant : `_pre_adx14` 28.30,
+`indicators_core.adx` 28.30, features V4 28.17 (l'écart résiduel est du
+warmup — corrélation 0.994). Les trois chemins d'ATR sont, eux, **exactement**
+identiques.
+
+### Ce que la correction coûte — mesuré, à paramètres constants
+
+Les seuils de ces stratégies ont été réglés contre l'ancienne échelle. À
+paramètres **inchangés**, un ADX moins réactif est donc plus sélectif, et le
+résultat se dégrade sur la plupart d'entre elles (BTC/USDC, 12 000 dernières
+barres) :
+
+| stratégie | TF | trades span→Wilder | PnL span→Wilder |
+|---|---|---|---|
+| `multi_tf_sr` | 1d | 24 → 15 | **+122.14 → −12.70** |
+| `scoring_statistique_opus` | 1h | 116 → 116 | **+10.56 → −19.43** |
+| `pullback_trend` | 1h | 211 → 133 | −9.87 → −27.26 |
+| `fft_spectral` | 1d | 53 → 56 | −55.09 → −101.96 |
+| `trend_rider` | 4h | 165 → 165 | +77.76 → +59.62 |
+| `harmonic_regime` | 1h | 396 → 271 | −101.25 → **−62.79** |
+| `momentum_blitz` | 1h | 132 → 101 | −113.96 → **−94.47** |
+| `volatility_squeeze` | 1h | 61 → 25 | −8.47 → **−3.02** |
+| `trend` | 1h | 131 → 63 | −18.68 → **−12.24** |
+| `supertrend_macd` | 1h | 6 → 5 | +1.08 → **+3.16** |
+
+**Ce tableau n'est pas un verdict** — c'est exactement la comparaison biaisée
+que §8ter s'interdit. Il mesure le *désaccordage des seuils*, pas la
+convention : avec réoptimisation, l'écart tombait à ≤ 0.022 de score et
+changeait de signe. Il est ici pour une autre raison : **dire ce que la
+correction impose comme travail**.
+
+### Conséquence opérationnelle
+
+Les seuils ADX inscrits dans les YAML de stratégie (`adx_min`, `adx_threshold`,
+`needs_adx_above`, `adx_len`…) sont désormais **désaccordés** : ils ont été
+choisis face à un ADX qui valait 35 en moyenne, ils s'appliquent maintenant à
+un ADX qui vaut 28. Rien n'est cassé, mais rien n'est réglé non plus.
+
+**À faire avant de se fier de nouveau à ces stratégies : les réoptimiser.**
+Les paramètres n'étaient pas persistés dans `optimizer_results` (vide), donc
+il n'y a rien à purger — c'est une réoptimisation, pas une migration.
+
+Le commutateur `indicators_precompute.set_wilder_atr_adx` reste disponible
+pour rejouer la comparaison ou reproduire un backtest antérieur à la
+correction. Ce n'est pas un réglage de production : le seul défaut est
+Wilder.
+
+---
+
+## 9. Ce que ça donne en volume
+
+Arithmétique à partir des lignes mesurées de §1.3 (`routing` = total −
+plomberie). Les 19 fichiers des familles ML pèsent **12 963 lignes**.
+
+**Palier 0 — purge du legacy seule (§6.A) — MESURÉ, LIVRÉ.**
+
+| | |
+|---|---:|
+| lignes retirées (net) | **−4 230** (+285 / −4 515 sur 39 fichiers) |
+| fichiers de stratégie | 46 → **41** |
+| stratégies ML | 14 → **8** |
+| `app/strategies/` | 22 107 → **18 544 lignes** |
+| tests | 947 → **958**, tous verts (lents inclus), 0 skip |
+
+Les +285 lignes ajoutées sont les deux setups récupérés, leurs clés YAML, le
+fichier de test qui verrouille leur neutralité, et les deux tests du nouveau
+contrat de registre (plus de repli plat, archive jamais énumérée).
+
+**Effet de bord utile.** En traquant les références aux fichiers supprimés, deux
+tests se sont révélés MORTS : `test_feature_store_integration` et
+`test_scoring_alignment` portaient un `pytest.importorskip("sklearn")` alors que
+le dépôt n'a plus sklearn depuis `phase6-sklearn-removal`. Ils skippaient donc
+silencieusement — l'un d'eux verrouillait une régression d'alignement de
+features. Réactivés, ils passent. Leçon à retenir pour les étapes suivantes :
+**un skip conditionné à un paquet volontairement absent est un test supprimé qui
+en garde l'apparence.**
+
+**Palier 1 — + prédicteur et recette (§6.B–C), sans fusion.**
+Il reste le routing d'un représentant par génération vivante :
+
+| génération | routing conservé |
+|---|---:|
+| `opus_stat_v4` | 478 |
+| `omnibus_v7` | 607 |
+| `omnibus_v10` | 687 |
+| `omnibus_v11` | 685 |
+| `omnibus_v11_followsetup` | 796 |
+| `omnibus_v12` | 212 |
+| `dyn_threshold` | 656 |
+| `scoring_stat_v4` / `_v5` | 964 |
+| **total routing** | **5 085** |
+
+Plus le code neuf : `app/ml/predictor.py` et ses adaptateurs, le chargeur de
+recettes, les `recipes/*.yaml` — de l'ordre de **400 à 600 lignes**, à comparer
+aux 86 de `lgb_logging.py` et aux 67 du chemin legacy qu'il remplace.
+
+**≈ 12 960 → ≈ 5 600 lignes, soit −57 %.**
+
+**Palier 2 — avec la fusion omnibus (§7).** Les six routings omnibus
+(`v7` 607, `v10` 687, `v11` 685, `v11_followsetup` 796, `v12` 212 = 2 987)
+convergent vers un routing unique portant les 10 setups. Le catalogue lui-même
+migre en YAML ; il reste la mécanique de sélection, mesurée à ~690 lignes sur
+la génération la plus complète.
+
+| après fusion | lignes |
+|---|---:|
+| `omnibus` (routing unique, 10 setups) | ~700 |
+| `opus_stat_v4` | 478 |
+| `dyn_threshold` | 656 |
+| `scoring_stat_v4` / `_v5` | 964 |
+| code ML neuf (prédicteur, recettes) | ~500 |
+| **total** | **≈ 3 300** |
+
+**≈ 12 960 → ≈ 3 300 lignes, soit −75 %**, en **gagnant** deux setups
+(`SHORT_TD`, `LONG_PULLBACK_TU`) aujourd'hui inaccessibles, et sans supprimer
+une seule règle de trading — chaque génération survivant comme preset YAML.
+
+Ces deux projections sont les seules valeurs **estimées** du document. Le
+palier 1 est solide (somme de lignes mesurées) ; le palier 2 dépend de la
+compacité réelle du routing fusionné, d'où l'ordre de grandeur plutôt qu'un
+chiffre.
+
+---
+
+## 10. Sous-objectif — les stratégies sans modèle
+
+Non prioritaire, traité ici parce que la mesure donne une réponse claire et
+**asymétrique** : deux populations très différentes se cachent derrière
+« stratégie sans modèle ».
+
+**Population 1 — les variantes `_no_ml` (5 fichiers, 2 221 lignes).** Elles
+entrent dans l'architecture **sans rien y ajouter**. `_proxy_p_up` et
+`_proxy_p_event` retournent des `float` dans `[0,1]` sur exactement le contrat
+de `predict_direction` / `predict_amplitude`, et leurs setups sont identiques à
+ceux du jumeau ML. Un `ProxyPredictor` (`recipe = None`, aucun artefact, aucun
+entraînement, aucun gate) les absorbe, et l'opération **corrige au passage la
+dérive (e)** : le routing redevient unique, donc `needs_bearish_excess` et
+`needs_rsi_below`, perdues côté `_no_ml`, reviennent. Meilleur rapport
+valeur/risque du document après la purge du legacy.
+
+**Population 2 — les ~27 stratégies classiques** (`breakout`, `tvr_trend`,
+`smart_money`, `fft_spectral`, `harmonic_regime`, …). Elles n'ont **pas** de
+prédicteur : leur décision n'est pas « un score continu passé à des seuils »,
+c'est une logique d'indicateurs de bout en bout. Les faire entrer dans le
+contrat `Predictor` reviendrait à leur inventer une frontière qui n'existe pas.
+
+**Recommandation : ne pas les toucher.** L'architecture leur est neutre —
+`models: {}` signifie « aucun prédicteur à injecter », et rien d'autre ne
+change. Une architecture qui n'impose rien aux 27 stratégies non concernées
+vaut mieux qu'une abstraction qui les enrôlerait de force. Une seule chose les
+concerne, et elle est indépendante du ML : `prepare_for_backtest` est
+réimplémenté dans 31 stratégies (fracture f), ce qui relève d'un nettoyage
+propre au moteur.
+
+---
+
+## 11. Ce que je ne recommande pas
+
+- **Unifier les familles de features.** Le catalogue V4 (462 colonnes) et le
+  jeu `scoring_statistique` (48 colonnes, paramétré par `adx_threshold`) sont
+  deux modèles différents, pas deux versions du même. La recette doit *nommer*
+  le catalogue, jamais l'imposer. Le test
+  `test_scoring_statistique_opus_v4_is_not_a_duplicate` verrouille cette
+  frontière ; il faut la garder.
+- **Réécrire les routings pendant la migration.** Déplacer et réécrire dans le
+  même commit rend toute divergence indiagnosticable.
+- **Faire de `ml_mode` un attribut de stratégie.** C'est une décision
+  d'exploitation, pas une propriété du routing. Il reste un paramètre d'appel —
+  désormais obligatoire.
+- **Garder un chemin de repli « au cas où ».** C'est ce qui a produit le repli
+  silencieux `use_pretrained_ml`, la double couche de cache et le layout plat.
+  Sans production, un chemin de repli est une dette contractée sans
+  contrepartie.
+
+---
+
+## 12. Décisions à prendre
+
+| # | décision | statut | conséquence |
+|---|---|---|---|
+| 1 | **Retirer le pack V4 figé** et son code | ✅ **fait** | −4 230 lignes nettes ; le pack survit sous `models/_archive/` |
+| 2 | `v10` figé : retirer ou rebrancher | ✅ **retiré** | le rebrancher aurait donné `v10_retrained`, dont le routing est déjà celui de `v11` |
+| 3 | `v8` / `v9` : retirer ou rebrancher | ✅ **retirés, setups préservés** | `SHORT_TD` et `LONG_PULLBACK_TU` portés dans v11 désactivés — la fusion (§7) reste à faire |
+| 4 | Supprimer le code de rétrocompat (§3.2) | ✅ **fait** | `ml_mode` seul levier, défaut explicite (pas rendu obligatoire — cf. §6.A) |
+| 5 | Recette + prédicteur en une passe (**B**) | ✅ **fait** | 7 recettes, contrat `Predictor` à 4 implémentations ; (a)(b)(c)(d) refermées |
+| 6 | Entraînement unifié (**C**) | ✅ **fait pour la famille omnibus** ; 3 stratégies restantes sur 2 autres recettes | plus aucun `_train_impl` autonome côté omnibus. `ml_dynamic_threshold` (`dyn_threshold_v1`, tête unique) et `scoring_statistique_opus_v4/v5` (`stat48_*`, 48 colonnes) ont un catalogue de features et une persistance différents : les absorber demande de rendre `MLBackend` agnostique du catalogue |
+| 7 | Fusion `v10_retrained` + `v11` | ✅ **fait** | 952 → 93 lignes ; équivalence prouvée sur 3 plans |
+| 8 | Fusion omnibus complète (**§7**) | ✅ **v7 fusionné** (§7.3bis) | 572 → 133 lignes, sélection identique sur 7 744 combinaisons ; `followsetup` motivé non fusionné, `v12` hors périmètre |
+| 9 | `ProxyPredictor` (**E**) | ✅ **fait, 4 variantes sur 5** | 1 491 → 262 lignes ; `dynamic_threshold_no_ml` reste un fork, motivé (§6.E) |
+| 10 | Population 2 (27 stratégies) | **ne rien faire** | l'architecture leur est neutre |
+| 11 | Dimension **symbole** des modèles | ✅ **retirée de la clé** (§8bis) — **à rejouer** hors crypto | 17/18 cellules indiscernables ; reste en provenance. Testable sur une seule paire homogène (0.76) : à revoir dès qu'un actif d'une autre classe est entraînable |
+| 12 | Mesurer calibration / élagage (**§8**) | ✅ **fait** (§8.1) | calibration : garder, mais **désactiver en 1h**. Élagage : non mesurable par ce protocole |
+| 13 | Deux ADX incompatibles (**§8ter**) | ✅ **corrigé partout sauf SMC** | Wilder par défaut ; SMC prouvé inchangé (SHA256 identique). **Reste à faire : réoptimiser les seuils ADX**, désaccordés par la correction |
+
+La décision **8** est la seule qui reste non technique : elle change ce que le
+bot trade. La 11 l'était aussi — elle changeait ce qu'un modèle représente — et
+a été tranchée par la mesure (§8bis) plutôt que par arbitrage. Les autres sont
+des refactorisations à comportement constant, à prouver signal par signal.
+
+Ce qui reste, par valeur décroissante :
+
+1. **Réoptimiser les seuils ADX** (suite de la décision 13) — les seuils des
+   YAML ont été réglés face à un ADX qui valait 35 et s'appliquent à un ADX
+   qui vaut 28. C'est la seule tâche qui bloque la confiance dans les
+   stratégies actives.
+2. **Désactiver la calibration en 1h** (décision 12) — mesuré (ECE +461 % en
+   1h contre −47 %/−67 % en 15m/30m) mais **non appliqué** : `omnibus_v4_multi`
+   porte toujours `calibrate: true` sans dérogation par TF. Sous-décision
+   ouverte : recette par TF, ou bloc `hp` par TF dans la même recette.
+3. **Instruire les scores négatifs sur VAL** (§8ter) — 3 des 4 cibles mesurées
+   perdent sur le dernier tiers de l'historique, sous les deux conventions
+   d'ADX. Pas un verdict (protocole réduit), mais un signal.
+4. **Mode `follow_setup` dans V11** (reste de la décision 8) — la seule fusion
+   omnibus qui demande du code et non des valeurs.
+5. **Entraînement unifié des 3 stratégies restantes** (décision 6) — suppose
+   de rendre `MLBackend` agnostique du catalogue de features.
+6. **Rejouer la mesure du symbole** (décision 11) dès qu'un actif d'une autre
+   classe est entraînable — automatique, le script découvre les symboles.

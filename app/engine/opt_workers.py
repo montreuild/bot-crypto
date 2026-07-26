@@ -119,6 +119,20 @@ def _worker_init(strategy_name: str, cfg_yaml: str,
 
     _W["strategy_name"] = strategy_name
     _W["cfg"]           = _yaml.safe_load(cfg_yaml)
+    # AVANT tout pré-calcul de features : la convention de lissage ATR/ADX/DI
+    # doit être posée d'abord, sinon les colonnes ``_pre_*`` capturées dans le
+    # snapshot ci-dessous seraient figées sous la mauvaise convention pour tous
+    # les trials de ce worker (cf. §8ter).
+    #
+    # Surcharge SEULEMENT si la clé est présente : le worker est un process
+    # neuf, son défaut de module est déjà le bon (Wilder). Forcer un défaut
+    # ``False`` ici ferait tourner tous les workers en ancienne convention
+    # pendant que le parent, lui, serait en Wilder — divergence silencieuse
+    # entre optimisation parallèle et backtest in-process.
+    _w = (_W["cfg"].get("indicators") or {}).get("wilder_atr_adx")
+    if _w is not None:
+        from app.core.indicators_precompute import set_wilder_atr_adx as _swaa
+        _swaa(bool(_w))
     _W["df_is"]         = _pl.read_ipc(io.BytesIO(df_is_ipc))
     _W["df_oos"]        = _pl.read_ipc(io.BytesIO(df_oos_ipc))
     _W["symbol"]        = symbol
@@ -287,6 +301,15 @@ def _eval_worker(args: tuple) -> dict:
         # faire traverser la frontière de process : _cfg contient déjà tout
         # cfg["optimizer"] via le YAML dumpé par l'engine.
         _ml_mode = (_cfg.get("optimizer") or {}).get("ml_mode", "inline")
+        # Convention de lissage ATR/ADX/DI — même mécanisme que ml_mode : le
+        # worker est spawné, donc il n'hérite AUCUN global du parent. Absente
+        # de cfg, le défaut de module (Wilder) s'applique ; présente, elle
+        # gagne — c'est ce qui permet à la mesure §8ter de forcer l'ancienne
+        # convention sur un bras de comparaison.
+        _w = (_cfg.get("indicators") or {}).get("wilder_atr_adx")
+        if _w is not None:
+            from app.core.indicators_precompute import set_wilder_atr_adx as _swaa
+            _swaa(bool(_w))
         _bt = _Backtester(_eng, _cfg_copy, ml_mode=_ml_mode)
 
         _res_is  = _bt.run(_df_is,  symbol, timeframe=timeframe)

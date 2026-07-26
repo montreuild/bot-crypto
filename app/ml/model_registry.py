@@ -1,4 +1,4 @@
-"""Registre de modèles ML — daté, versionné, rangé par (symbole, TF, recette).
+"""Registre de modèles ML — daté, versionné, rangé par (TF, recette).
 
 Concrétise **ML-02** (`docs/CONCEPTION_CYCLE_DE_VIE_ML.md` §3.2) : remplace le
 slot unique `models/{stratégie}_{tf}.*`, écrasé sans comparaison par trois
@@ -8,15 +8,38 @@ immuable, retrouvable par date et comparable à son prédécesseur.
 
 Layout sur disque ::
 
-    {base_dir}/{symbole}/{tf}/{recette}/{version_id}/
+    {base_dir}/{tf}/{recette}/{version_id}/
         model.amp.lgb
         model.dir.lgb
         model.meta.json      # features/medians/AUC/calibrators + provenance + gate
-    {base_dir}/{symbole}/{tf}/{recette}/decisions.jsonl   # journal des gates
+    {base_dir}/{tf}/{recette}/decisions.jsonl   # journal des gates
 
-``version_id = {train_end}_{recipe_hash8}`` (ou ``legacy_{recipe_hash8}`` si
-la date de fin d'entraînement est inconnue — modèles migrés depuis l'ancien
-format). Le nom de fichier étant lexicographiquement trié sur la date, aucun
+**Pourquoi pas de dimension symbole.** Le layout en portait une
+(``{base_dir}/{symbole}/{tf}/…``) alors que le trainer live n'entraînait que
+sur BTC et que le pipeline de signaux servait CE modèle à tous les symboles du
+scanner : un artefact rangé sous ``BTC_USDC/`` décidait en réalité sur ETH et
+XRP. La dimension nommait donc une partition qui n'existait pas.
+
+Elle a été retirée après mesure, pas par goût de la simplicité. Protocole et
+chiffres : ``scripts/measure_symbol_transfer.py`` — matrice de transfert
+(modèle BTC vs modèle ETH, évalués sur les holdouts BTC/ETH/XRP, coupure
+temporelle commune, IC 95 % bootstrap apparié) sur 3 timeframes. **17 des 18
+cellules sont indiscernables du bruit**, la 18e étant ce que le hasard produit
+à 95 % ; en particulier ETH ne gagne rien à son propre modèle (0.634 vs 0.638
+en 1h) et XRP n'a pas assez d'historique pour en avoir un. Un modèle par
+symbole coûterait N× le temps de réentraînement pour un gain nul là où il est
+mesurable.
+
+Le symbole d'ENTRAÎNEMENT reste écrit dans ``provenance.symbol`` (``publish(…,
+train_symbol=…)``, exposé par ``ArtifactRef.train_symbol``) : savoir sur quelles
+données un artefact a été construit est de la traçabilité, pas une clé de
+rangement. Si un jour la mesure change — davantage de symboles, moins corrélés
+— c'est cette mesure qu'il faudra rejouer avant de réintroduire la dimension.
+
+``version_id = {train_end}_{recipe_hash8}`` (ou ``undated_{recipe_hash8}`` si
+la date de fin d'entraînement est inconnue — ne devrait plus arriver, tout
+artefact publié passe par ``train_window_bounds``). Le nom de fichier étant
+lexicographiquement trié sur la date, aucun
 index séparé n'est nécessaire : la vérité est le système de fichiers.
 
 La **recette** identifie ce qui a produit le modèle (features/labels/HP —
@@ -52,17 +75,15 @@ DEFAULT_BASE_DIR = "models"
 # résolu — le sortant continue de servir.
 _ELIGIBLE_DECISIONS = (None, "promote", "initial", "manual")
 
+# Sous-répertoire de mise hors service : conservé sur disque pour ré-examen,
+# jamais énuméré ni résolu. Un artefact qu'on ne veut plus servir se déplace
+# ici plutôt que de se supprimer.
+_ARCHIVE_DIRNAME = "_archive"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Helpers
 # ─────────────────────────────────────────────────────────────────────────────
-def symbol_to_dir(symbol: Optional[str]) -> str:
-    """``BTC/USDC`` → ``BTC_USDC`` (même convention que ``data/ohlcv/``)."""
-    if not symbol:
-        return "_unknown"
-    return str(symbol).replace("/", "_").replace(":", "_")
-
-
 def to_iso(ts: Any) -> Optional[str]:
     """Normalise un timestamp (str/datetime/polars scalar) en ISO tronqué à
     la seconde, seul format comparé lexicographiquement par ce module."""
@@ -123,12 +144,12 @@ def git_commit() -> Optional[str]:
 
 
 def _version_id(train_end: Optional[str], rhash: str) -> str:
-    ts = train_end.replace(":", "-") if train_end else "legacy"
+    ts = train_end.replace(":", "-") if train_end else "undated"
     return f"{ts}_{rhash[:8]}"
 
 
-def _recipe_dir(base_dir: str, symbol: Optional[str], tf: str, recipe: str) -> str:
-    return os.path.join(base_dir, symbol_to_dir(symbol), tf, recipe)
+def _recipe_dir(base_dir: str, tf: str, recipe: str) -> str:
+    return os.path.join(base_dir, tf, recipe)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -140,7 +161,10 @@ class ArtifactRef:
     (``path_prefix``) et pour décider (dates, AUC, décision de gate) sans
     relire le disque."""
     path_prefix: str
-    symbol: Optional[str]
+    #: Symbole sur lequel l'artefact a été ENTRAÎNÉ — provenance, jamais une
+    #: clé : le registre ne range pas par symbole et l'artefact sert tous les
+    #: symboles tradés (cf. docstring du module).
+    train_symbol: Optional[str]
     tf: str
     recipe: str
     version_id: str
@@ -153,18 +177,25 @@ class ArtifactRef:
     source: Optional[str] = None
     created_at: Optional[str] = None
     gate_decision: Optional[str] = None
-    legacy: bool = False
     meta: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "path_prefix": self.path_prefix, "symbol": self.symbol, "tf": self.tf,
+            "path_prefix": self.path_prefix, "train_symbol": self.train_symbol,
+            "tf": self.tf,
             "recipe": self.recipe, "version_id": self.version_id,
             "train_start": self.train_start, "train_end": self.train_end,
             "n_bars": self.n_bars, "auc": round(float(self.auc), 4),
             "recipe_hash": self.recipe_hash, "git_commit": self.git_commit,
             "source": self.source, "created_at": self.created_at,
-            "gate_decision": self.gate_decision, "legacy": self.legacy,
+            "gate_decision": self.gate_decision,
+            # train_meta : diagnostics d'entraînement (AUC par régime, top
+            # features + importance, erreur de calibration...) — toujours
+            # petit/borné (cf. app.ml.backend.trainer, jamais de features/
+            # médianes/calibrators bruts dedans), donc exposé tel quel plutôt
+            # que par une liste de clés à maintenir à la main. Page Modèles
+            # (E7) : historique de versions + panneau "top features".
+            "train_meta": (self.meta or {}).get("train_meta") or {},
         }
 
 
@@ -180,7 +211,7 @@ def _read_meta(version_dir: str, meta_filename: str = "model.meta.json") -> Opti
         return None
 
 
-def _artifact_from_version_dir(version_dir: str, symbol: Optional[str], tf: str,
+def _artifact_from_version_dir(version_dir: str, tf: str,
                                recipe: str, version_id: str) -> Optional[ArtifactRef]:
     meta = _read_meta(version_dir)
     if meta is None:
@@ -189,68 +220,40 @@ def _artifact_from_version_dir(version_dir: str, symbol: Optional[str], tf: str,
     gate = meta.get("gate") or {}
     return ArtifactRef(
         path_prefix=os.path.join(version_dir, "model"),
-        symbol=prov.get("symbol", symbol), tf=tf, recipe=recipe, version_id=version_id,
+        train_symbol=prov.get("symbol"), tf=tf, recipe=recipe, version_id=version_id,
         train_start=prov.get("train_start"), train_end=prov.get("train_end"),
         n_bars=prov.get("n_bars"), auc=float(meta.get("best_auc", 0.0)),
         recipe_hash=prov.get("recipe_hash"), git_commit=prov.get("git_commit"),
         source=prov.get("source"), created_at=prov.get("created_at"),
-        gate_decision=gate.get("decision"), legacy=False, meta=meta,
+        gate_decision=gate.get("decision"), meta=meta,
     )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Lecture
 # ─────────────────────────────────────────────────────────────────────────────
-def list_versions(symbol: Optional[str], tf: str, recipe: str,
+def list_versions(tf: str, recipe: str,
                   base_dir: str = DEFAULT_BASE_DIR) -> List[ArtifactRef]:
-    """Toutes les versions connues pour (symbole, TF, recette), triées du
+    """Toutes les versions connues pour (TF, recette), triées du
     plus ancien au plus récent (``train_end`` puis ``version_id``)."""
-    rdir = _recipe_dir(base_dir, symbol, tf, recipe)
+    rdir = _recipe_dir(base_dir, tf, recipe)
     out: List[ArtifactRef] = []
     if os.path.isdir(rdir):
         for vid in sorted(os.listdir(rdir)):
             vdir = os.path.join(rdir, vid)
             if not os.path.isdir(vdir):
                 continue
-            art = _artifact_from_version_dir(vdir, symbol, tf, recipe, vid)
+            art = _artifact_from_version_dir(vdir, tf, recipe, vid)
             if art is not None:
                 out.append(art)
     out.sort(key=lambda a: (a.train_end or "", a.version_id))
     return out
 
 
-def _legacy_artifact(tf: str, recipe: str, base_dir: str) -> Optional[ArtifactRef]:
-    """Repli sur l'ancien layout plat ``models/{recipe}_{tf}.*`` (aucune
-    dimension symbole) — utilisé tant qu'un artefact n'a pas été migré/republié
-    dans le nouveau layout. ``recipe`` ici == nom de fichier historique, en
-    général identique au nom de la stratégie."""
-    prefix = os.path.join(base_dir, f"{recipe}_{tf}")
-    meta_path = f"{prefix}.meta.json"
-    if not (os.path.exists(f"{prefix}.amp.lgb") and os.path.exists(meta_path)):
-        return None
-    try:
-        with open(meta_path, "r", encoding="utf-8") as f:
-            meta = json.load(f)
-    except Exception as e:
-        logger.warning(f"[ModelRegistry] legacy meta illisible {meta_path} : {e}")
-        meta = {}
-    prov = meta.get("provenance") or {}
-    gate = meta.get("gate") or {}
-    return ArtifactRef(
-        path_prefix=prefix, symbol=prov.get("symbol"), tf=tf, recipe=recipe,
-        version_id="legacy-flat", train_start=prov.get("train_start"),
-        train_end=prov.get("train_end"), n_bars=prov.get("n_bars"),
-        auc=float(meta.get("best_auc", 0.0)), recipe_hash=prov.get("recipe_hash"),
-        git_commit=prov.get("git_commit"), source=prov.get("source", "legacy"),
-        created_at=prov.get("created_at"), gate_decision=gate.get("decision"),
-        legacy=True, meta=meta,
-    )
-
-
-def resolve(symbol: Optional[str], tf: str, recipe: str, *,
+def resolve(tf: str, recipe: str, *,
            as_of: Any = None, pin: Optional[str] = None,
            base_dir: str = DEFAULT_BASE_DIR) -> Optional[ArtifactRef]:
-    """Résout l'artefact à charger pour (symbole, TF, recette).
+    """Résout l'artefact à charger pour (TF, recette).
 
     - ``pin`` : version_id exact pour CETTE résolution (override ponctuel) —
       ignore le filtre de date et la décision de gate. Différent du pin
@@ -274,46 +277,43 @@ def resolve(symbol: Optional[str], tf: str, recipe: str, *,
     Retourne ``None`` si rien n'est trouvable nulle part.
     """
     if pin:
-        vdir = os.path.join(_recipe_dir(base_dir, symbol, tf, recipe), pin)
-        art = _artifact_from_version_dir(vdir, symbol, tf, recipe, pin) if os.path.isdir(vdir) else None
+        vdir = os.path.join(_recipe_dir(base_dir, tf, recipe), pin)
+        art = _artifact_from_version_dir(vdir, tf, recipe, pin) if os.path.isdir(vdir) else None
         if art is None:
-            logger.warning(f"[ModelRegistry] pin={pin!r} introuvable pour {symbol}/{tf}/{recipe}")
+            logger.warning(f"[ModelRegistry] pin={pin!r} introuvable pour {tf}/{recipe}")
         return art
 
     if as_of is None:
-        sticky = get_pin(symbol, tf, recipe, base_dir=base_dir)
+        sticky = get_pin(tf, recipe, base_dir=base_dir)
         if sticky:
-            vdir = os.path.join(_recipe_dir(base_dir, symbol, tf, recipe), sticky)
-            art = _artifact_from_version_dir(vdir, symbol, tf, recipe, sticky) if os.path.isdir(vdir) else None
+            vdir = os.path.join(_recipe_dir(base_dir, tf, recipe), sticky)
+            art = _artifact_from_version_dir(vdir, tf, recipe, sticky) if os.path.isdir(vdir) else None
             if art is not None:
                 return art
             logger.warning(
                 f"[ModelRegistry] pin persistant {sticky!r} introuvable pour "
-                f"{symbol}/{tf}/{recipe} — repli sur la dernière version éligible"
+                f"{tf}/{recipe} — repli sur la dernière version éligible"
             )
 
-    versions = list_versions(symbol, tf, recipe, base_dir=base_dir)
+    versions = list_versions(tf, recipe, base_dir=base_dir)
     eligible = [v for v in versions if v.gate_decision in _ELIGIBLE_DECISIONS]
     if as_of is not None:
         as_of_s = to_iso(as_of)
         eligible = [v for v in eligible if not v.train_end or v.train_end <= as_of_s]
-    if eligible:
-        return eligible[-1]
-
-    return _legacy_artifact(tf, recipe, base_dir)
+    return eligible[-1] if eligible else None
 
 
-def latest_promoted(symbol: Optional[str], tf: str, recipe: str,
+def latest_promoted(tf: str, recipe: str,
                     base_dir: str = DEFAULT_BASE_DIR) -> Optional[ArtifactRef]:
     """Alias explicite de ``resolve(as_of=None)`` — la version courante en
-    production pour ce (symbole, TF, recette)."""
-    return resolve(symbol, tf, recipe, as_of=None, base_dir=base_dir)
+    production pour ce (TF, recette)."""
+    return resolve(tf, recipe, as_of=None, base_dir=base_dir)
 
 
-def read_decisions(symbol: Optional[str], tf: str, recipe: str, *,
+def read_decisions(tf: str, recipe: str, *,
                    limit: int = 50, base_dir: str = DEFAULT_BASE_DIR) -> List[dict]:
     """Dernières décisions de gate journalisées (le plus récent en dernier)."""
-    path = os.path.join(_recipe_dir(base_dir, symbol, tf, recipe), "decisions.jsonl")
+    path = os.path.join(_recipe_dir(base_dir, tf, recipe), "decisions.jsonl")
     if not os.path.exists(path):
         return []
     out: List[dict] = []
@@ -339,15 +339,15 @@ def read_decisions(symbol: Optional[str], tf: str, recipe: str, *,
 #  resolve() reste capable de fonctionner sans lui (repli sur la dernière
 #  version éligible si absent ou introuvable).
 # ─────────────────────────────────────────────────────────────────────────────
-def _pin_path(base_dir: str, symbol: Optional[str], tf: str, recipe: str) -> str:
-    return os.path.join(_recipe_dir(base_dir, symbol, tf, recipe), "pinned.json")
+def _pin_path(base_dir: str, tf: str, recipe: str) -> str:
+    return os.path.join(_recipe_dir(base_dir, tf, recipe), "pinned.json")
 
 
-def get_pin(symbol: Optional[str], tf: str, recipe: str,
+def get_pin(tf: str, recipe: str,
            base_dir: str = DEFAULT_BASE_DIR) -> Optional[str]:
-    """``version_id`` actuellement épinglé pour (symbole, TF, recette), ou
+    """``version_id`` actuellement épinglé pour (TF, recette), ou
     ``None`` si aucun pin n'est posé."""
-    path = _pin_path(base_dir, symbol, tf, recipe)
+    path = _pin_path(base_dir, tf, recipe)
     if not os.path.exists(path):
         return None
     try:
@@ -358,21 +358,21 @@ def get_pin(symbol: Optional[str], tf: str, recipe: str,
         return None
 
 
-def set_pin(symbol: Optional[str], tf: str, recipe: str, version_id: str,
+def set_pin(tf: str, recipe: str, version_id: str,
            base_dir: str = DEFAULT_BASE_DIR) -> bool:
-    """Épingle ``version_id`` comme version active pour (symbole, TF, recette)
+    """Épingle ``version_id`` comme version active pour (TF, recette)
     — ``resolve(as_of=None)`` la retournera prioritairement, jusqu'à
     ``clear_pin`` ou un nouveau ``set_pin``. Usage : rollback manuel, ou
     déploiement progressif (garder une version pendant qu'une autre est
     validée). Retourne ``False`` si ``version_id`` n'existe pas."""
-    vdir = os.path.join(_recipe_dir(base_dir, symbol, tf, recipe), version_id)
+    vdir = os.path.join(_recipe_dir(base_dir, tf, recipe), version_id)
     if not os.path.isdir(vdir) or _read_meta(vdir) is None:
         logger.warning(
             f"[ModelRegistry] set_pin : version {version_id!r} introuvable "
-            f"pour {symbol}/{tf}/{recipe}"
+            f"pour {tf}/{recipe}"
         )
         return False
-    path = _pin_path(base_dir, symbol, tf, recipe)
+    path = _pin_path(base_dir, tf, recipe)
     payload = {"version_id": version_id,
               "pinned_at": _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}
     try:
@@ -381,18 +381,18 @@ def set_pin(symbol: Optional[str], tf: str, recipe: str, version_id: str,
     except Exception as e:
         logger.error(f"[ModelRegistry] écriture pinned.json KO : {e}")
         return False
-    logger.info(f"[ModelRegistry] pin {symbol}/{tf}/{recipe} → {version_id}")
+    logger.info(f"[ModelRegistry] pin {tf}/{recipe} → {version_id}")
     return True
 
 
-def clear_pin(symbol: Optional[str], tf: str, recipe: str,
+def clear_pin(tf: str, recipe: str,
              base_dir: str = DEFAULT_BASE_DIR) -> None:
     """Retire le pin persistant — ``resolve(as_of=None)`` retrouve son
     comportement par défaut (dernière version éligible). No-op si absent."""
-    path = _pin_path(base_dir, symbol, tf, recipe)
+    path = _pin_path(base_dir, tf, recipe)
     try:
         os.remove(path)
-        logger.info(f"[ModelRegistry] pin retiré pour {symbol}/{tf}/{recipe}")
+        logger.info(f"[ModelRegistry] pin retiré pour {tf}/{recipe}")
     except FileNotFoundError:
         pass
     except OSError as e:
@@ -402,9 +402,9 @@ def clear_pin(symbol: Optional[str], tf: str, recipe: str,
 # ─────────────────────────────────────────────────────────────────────────────
 #  Écriture
 # ─────────────────────────────────────────────────────────────────────────────
-def _append_decision(base_dir: str, symbol: Optional[str], tf: str, recipe: str,
+def _append_decision(base_dir: str, tf: str, recipe: str,
                      record: dict) -> None:
-    rdir = _recipe_dir(base_dir, symbol, tf, recipe)
+    rdir = _recipe_dir(base_dir, tf, recipe)
     os.makedirs(rdir, exist_ok=True)
     path = os.path.join(rdir, "decisions.jsonl")
     try:
@@ -414,7 +414,8 @@ def _append_decision(base_dir: str, symbol: Optional[str], tf: str, recipe: str,
         logger.warning(f"[ModelRegistry] écriture decisions.jsonl KO : {e}")
 
 
-def publish(symbol: Optional[str], tf: str, recipe: str, tmp_path_prefix: str, *,
+def publish(tf: str, recipe: str, tmp_path_prefix: str, *,
+           train_symbol: Optional[str] = None,
            train_start: Any = None, train_end: Any = None, n_bars: Optional[int] = None,
            recipe_cfg: Optional[Dict[str, Any]] = None, source: str = "unknown",
            decision: str = "initial", decision_metrics: Optional[Dict[str, Any]] = None,
@@ -423,7 +424,7 @@ def publish(symbol: Optional[str], tf: str, recipe: str, tmp_path_prefix: str, *
     ``.meta.json``, produits par ``strategy.save_model(tmp_path_prefix)``)
     dans le registre daté.
 
-    Déplace les 3 fichiers vers ``{base_dir}/{symbole}/{tf}/{recipe}/{version_id}/``,
+    Déplace les 3 fichiers vers ``{base_dir}/{tf}/{recipe}/{version_id}/``,
     enrichit ``model.meta.json`` avec la provenance (dates, git commit, hash
     de recette) et la décision de gate, journalise dans ``decisions.jsonl``.
 
@@ -444,7 +445,7 @@ def publish(symbol: Optional[str], tf: str, recipe: str, tmp_path_prefix: str, *
     rhash = recipe_hash(recipe_cfg)
     created_at = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     version_id = _version_id(train_end_s, rhash)
-    version_dir = os.path.join(_recipe_dir(base_dir, symbol, tf, recipe), version_id)
+    version_dir = os.path.join(_recipe_dir(base_dir, tf, recipe), version_id)
     os.makedirs(version_dir, exist_ok=True)
 
     try:
@@ -455,7 +456,7 @@ def publish(symbol: Optional[str], tf: str, recipe: str, tmp_path_prefix: str, *
         return None
 
     meta["provenance"] = {
-        "symbol": symbol, "train_start": train_start_s, "train_end": train_end_s,
+        "symbol": train_symbol, "train_start": train_start_s, "train_end": train_end_s,
         "n_bars": n_bars, "recipe_name": recipe, "recipe_hash": rhash,
         "git_commit": git_commit(), "source": source, "created_at": created_at,
     }
@@ -476,20 +477,20 @@ def publish(symbol: Optional[str], tf: str, recipe: str, tmp_path_prefix: str, *
         except OSError:
             pass
 
-    _append_decision(base_dir, symbol, tf, recipe, {
+    _append_decision(base_dir, tf, recipe, {
         "ts": created_at, "version_id": version_id, "decision": decision,
         "train_start": train_start_s, "train_end": train_end_s, "n_bars": n_bars,
         "source": source, **(decision_metrics or {}),
     })
 
     logger.info(
-        f"[ModelRegistry] publish {symbol}/{tf}/{recipe} → {version_id} "
+        f"[ModelRegistry] publish {tf}/{recipe} → {version_id} "
         f"(decision={decision}, AUC={meta.get('best_auc', 0):.3f}, source={source})"
     )
-    return _artifact_from_version_dir(version_dir, symbol, tf, recipe, version_id)
+    return _artifact_from_version_dir(version_dir, tf, recipe, version_id)
 
 
-def set_decision(symbol: Optional[str], tf: str, recipe: str, version_id: str,
+def set_decision(tf: str, recipe: str, version_id: str,
                  decision: str, *, reason: str = "manual override",
                  base_dir: str = DEFAULT_BASE_DIR) -> bool:
     """Modifie la décision de gate d'une version déjà publiée — promotion ou
@@ -502,12 +503,12 @@ def set_decision(symbol: Optional[str], tf: str, recipe: str, version_id: str,
     le gate automatique) après revue humaine, ou au contraire dépromouvoir un
     modèle en production suite à une dégradation constatée hors bande.
     """
-    vdir = os.path.join(_recipe_dir(base_dir, symbol, tf, recipe), version_id)
+    vdir = os.path.join(_recipe_dir(base_dir, tf, recipe), version_id)
     meta = _read_meta(vdir)
     if meta is None:
         logger.warning(
             f"[ModelRegistry] set_decision : version {version_id!r} introuvable "
-            f"pour {symbol}/{tf}/{recipe}"
+            f"pour {tf}/{recipe}"
         )
         return False
     gate = dict(meta.get("gate") or {})
@@ -522,124 +523,67 @@ def set_decision(symbol: Optional[str], tf: str, recipe: str, version_id: str,
         logger.error(f"[ModelRegistry] set_decision : écriture meta.json KO ({e})")
         return False
 
-    _append_decision(base_dir, symbol, tf, recipe, {
+    _append_decision(base_dir, tf, recipe, {
         "ts": _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "version_id": version_id, "decision": decision, "source": "manual",
         "reason": reason, "previous_decision": previous,
     })
     logger.info(
-        f"[ModelRegistry] set_decision {symbol}/{tf}/{recipe}/{version_id} : "
+        f"[ModelRegistry] set_decision {tf}/{recipe}/{version_id} : "
         f"{previous} → {decision} ({reason})"
     )
     return True
 
 
-def import_legacy(symbol: Optional[str], tf: str, recipe: str,
-                  legacy_prefix: str, *, base_dir: str = DEFAULT_BASE_DIR,
-                  version_id: str = "legacy") -> Optional[ArtifactRef]:
-    """Copie (jamais déplace — l'original reste lisible en repli) un artefact
-    de l'ancien layout plat vers le registre daté, avec ``non_reproducible:
-    true`` en meta. Utilisé par la migration V4 (script dédié) — cf. tâche
-    « Migration V4 ». Idempotent : no-op si la version existe déjà."""
-    amp_src, dir_src, meta_src = (f"{legacy_prefix}.amp.lgb", f"{legacy_prefix}.dir.lgb",
-                                  f"{legacy_prefix}.meta.json")
-    if not (os.path.exists(amp_src) and os.path.exists(dir_src) and os.path.exists(meta_src)):
-        logger.warning(f"[ModelRegistry] import_legacy : artefacts absents pour {legacy_prefix}")
-        return None
-
-    version_dir = os.path.join(_recipe_dir(base_dir, symbol, tf, recipe), version_id)
-    if os.path.isdir(version_dir) and _read_meta(version_dir) is not None:
-        logger.info(f"[ModelRegistry] import_legacy : {version_id} déjà présent, skip")
-        return _artifact_from_version_dir(version_dir, symbol, tf, recipe, version_id)
-
-    os.makedirs(version_dir, exist_ok=True)
-    try:
-        with open(meta_src, "r", encoding="utf-8") as f:
-            meta = json.load(f)
-    except Exception as e:
-        logger.error(f"[ModelRegistry] import_legacy : meta.json illisible ({e})")
-        return None
-
-    prov = dict(meta.get("provenance") or {})
-    prov.setdefault("symbol", symbol)
-    prov["non_reproducible"] = True
-    prov.setdefault("source", "legacy_import")
-    prov.setdefault("created_at", _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"))
-    meta["provenance"] = prov
-    meta.setdefault("gate", {"decision": "manual", "note": "importé depuis l'ancien layout, jamais gaté"})
-
-    shutil.copy2(amp_src, os.path.join(version_dir, "model.amp.lgb"))
-    shutil.copy2(dir_src, os.path.join(version_dir, "model.dir.lgb"))
-    with open(os.path.join(version_dir, "model.meta.json"), "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False)
-
-    logger.info(f"[ModelRegistry] import_legacy {symbol}/{tf}/{recipe} → {version_id}")
-    return _artifact_from_version_dir(version_dir, symbol, tf, recipe, version_id)
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  Énumération — vue d'ensemble du registre (page « Modèles » de l'UI)
 # ─────────────────────────────────────────────────────────────────────────────
-def _dir_to_symbol_guess(symbol_dir: str) -> str:
-    """Repli best-effort ``BTC_USDC`` → ``BTC/USDC`` (un seul underscore
-    remplacé) — utilisé seulement si aucune version n'a de ``provenance.symbol``
-    exploitable ; sinon la valeur authentique de la provenance gagne."""
-    return symbol_dir.replace("_", "/", 1)
-
-
 def list_recipes(base_dir: str = DEFAULT_BASE_DIR) -> List[Dict[str, Any]]:
-    """Énumère tous les (symbole, TF, recette) connus du registre — nouveau
-    layout daté ET ancien layout plat non migré — sans que l'appelant ait
-    besoin de les connaître à l'avance. Utilisé par la page « Modèles » de
+    """Énumère tous les (TF, recette) connus du registre, sans que l'appelant
+    ait besoin de les connaître à l'avance. Utilisé par la page « Modèles » de
     l'UI pour construire sa vue d'ensemble.
 
-    Retourne une liste de ``{"symbol", "tf", "recipe", "versions": [ArtifactRef]}``
-    — toutes les versions trouvées, triées du plus ancien au plus récent (y
+    Retourne une liste de ``{"tf", "recipe", "train_symbol", "versions"}`` —
+    toutes les versions trouvées, triées du plus ancien au plus récent (y
     compris rejetées : c'est à l'appelant de calculer la version ACTIVE via
     ``resolve()``, qui applique correctement pin/gate/as_of).
+    ``train_symbol`` est celui de la version la plus récente : une information
+    d'affichage, pas un critère de regroupement.
+
+    ``_ARCHIVE_DIRNAME`` est ignoré : c'est là que vivent les artefacts mis
+    hors service (ex. le pack V4 figé, retiré après mesure — cf.
+    docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §1.5). Les garder sur disque
+    permet de les ré-examiner ; les lister les remettrait dans l'UI comme
+    s'ils servaient encore.
     """
     out: List[Dict[str, Any]] = []
     if not os.path.isdir(base_dir):
         return out
 
-    for symbol_dir in sorted(os.listdir(base_dir)):
-        sym_path = os.path.join(base_dir, symbol_dir)
-        if not os.path.isdir(sym_path):
+    for tf in sorted(os.listdir(base_dir)):
+        if tf == _ARCHIVE_DIRNAME:
             continue
-        symbol_guess = _dir_to_symbol_guess(symbol_dir)
-        for tf in sorted(os.listdir(sym_path)):
-            tf_path = os.path.join(sym_path, tf)
-            if not os.path.isdir(tf_path):
+        tf_path = os.path.join(base_dir, tf)
+        if not os.path.isdir(tf_path):
+            continue
+        for recipe in sorted(os.listdir(tf_path)):
+            recipe_path = os.path.join(tf_path, recipe)
+            if not os.path.isdir(recipe_path):
                 continue
-            for recipe in sorted(os.listdir(tf_path)):
-                recipe_path = os.path.join(tf_path, recipe)
-                if not os.path.isdir(recipe_path):
+            versions = []
+            for vid in sorted(os.listdir(recipe_path)):
+                vdir = os.path.join(recipe_path, vid)
+                if not os.path.isdir(vdir):
                     continue
-                versions = []
-                for vid in sorted(os.listdir(recipe_path)):
-                    vdir = os.path.join(recipe_path, vid)
-                    if not os.path.isdir(vdir):
-                        continue
-                    art = _artifact_from_version_dir(vdir, symbol_guess, tf, recipe, vid)
-                    if art is not None:
-                        versions.append(art)
-                if not versions:
-                    continue
-                versions.sort(key=lambda a: (a.train_end or "", a.version_id))
-                symbol = versions[-1].symbol or symbol_guess
-                out.append({"symbol": symbol, "tf": tf, "recipe": recipe, "versions": versions})
-
-    # Ancien layout plat : {base}/{recipe}_{tf}.meta.json (aucune dimension symbole).
-    for fname in sorted(os.listdir(base_dir)):
-        if not fname.endswith(".meta.json"):
-            continue
-        prefix = fname[: -len(".meta.json")]
-        if "_" not in prefix:
-            continue
-        recipe, tf = prefix.rsplit("_", 1)
-        art = _legacy_artifact(tf, recipe, base_dir)
-        if art is not None:
-            out.append({"symbol": art.symbol, "tf": tf, "recipe": recipe, "versions": [art]})
+                art = _artifact_from_version_dir(vdir, tf, recipe, vid)
+                if art is not None:
+                    versions.append(art)
+            if not versions:
+                continue
+            versions.sort(key=lambda a: (a.train_end or "", a.version_id))
+            out.append({"tf": tf, "recipe": recipe,
+                        "train_symbol": versions[-1].train_symbol,
+                        "versions": versions})
 
     return out
 
@@ -652,10 +596,10 @@ def overlaps(artifact: ArtifactRef, window_start: Any, window_end: Any) -> bool:
     ``[window_start, window_end]`` — signal qu'un backtest ``frozen``
     évaluerait le modèle sur des données qu'il a vues à l'entraînement.
 
-    Si l'une des dates est inconnue (artefact legacy sans provenance), le
+    Si l'une des dates est inconnue (artefact sans provenance datée), le
     chevauchement ne peut pas être vérifié : retourne ``False`` (mesure
     impossible, PAS absence de risque constatée — l'appelant doit le
-    signaler séparément, cf. ``ArtifactRef.legacy``)."""
+    signaler séparément, en testant ``train_end``)."""
     if not artifact.train_start or not artifact.train_end:
         return False
     ws, we = to_iso(window_start), to_iso(window_end)

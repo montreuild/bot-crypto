@@ -61,9 +61,8 @@ def test_eval_constructs_backtester_with_configured_ml_mode(monkeypatch):
         alpha = 0.0
 
     class _FakeBacktester:
-        def __init__(self, eng, cfg, cancel_event=None, use_pretrained_ml=True, ml_mode=None):
+        def __init__(self, eng, cfg, cancel_event=None, ml_mode="frozen"):
             captured["ml_mode"] = ml_mode
-            captured["use_pretrained_ml"] = use_pretrained_ml
 
         def run(self, df, symbol, timeframe=None):
             return _FakeResult()
@@ -89,7 +88,7 @@ def test_eval_defaults_to_inline_backtester_when_unconfigured(monkeypatch):
         alpha = 0.0
 
     class _FakeBacktester:
-        def __init__(self, eng, cfg, cancel_event=None, use_pretrained_ml=True, ml_mode=None):
+        def __init__(self, eng, cfg, cancel_event=None, ml_mode="frozen"):
             captured["ml_mode"] = ml_mode
 
         def run(self, df, symbol, timeframe=None):
@@ -101,7 +100,7 @@ def test_eval_defaults_to_inline_backtester_when_unconfigured(monkeypatch):
     opt = _make_opt()  # pas de cfg["optimizer"]["ml_mode"]
     opt._eval({"p": 1})
 
-    assert captured["ml_mode"] == "inline"  # comportement historique (use_pretrained_ml=False)
+    assert captured["ml_mode"] == "inline"  # comportement historique (ml_mode="inline")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -123,7 +122,7 @@ def test_eval_worker_derives_ml_mode_from_cfg(monkeypatch):
         alpha = 0.0
 
     class _FakeBacktester:
-        def __init__(self, eng, cfg, cancel_event=None, use_pretrained_ml=True, ml_mode=None):
+        def __init__(self, eng, cfg, cancel_event=None, ml_mode="frozen"):
             captured["ml_mode"] = ml_mode
 
         def run(self, df, symbol, timeframe=None):

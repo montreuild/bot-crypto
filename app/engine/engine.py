@@ -77,6 +77,45 @@ class BaseStrategyML(BaseStrategy):
     retrain_interval_h: int = 6
     model_dir: str = "models"
 
+    # ── Contrat de gate (ML-02) ────────────────────────────────────────────
+    # Déclaratif : conventions de labels/métrique de CETTE recette, quand elle
+    # utilise le scorer par défaut (bundle amplitude+direction V4) mais avec
+    # d'autres réglages que ceux hérités de V11. Clés reconnues :
+    #   label_horizons : horizons de labellisation (ex. [1] = single-horizon)
+    #   amp_top_pct    : quantile définissant un "événement" d'amplitude
+    #   metric         : métrique sur laquelle le gate arbitre ("auc_amp"…)
+    # Vide = défauts de ``app.ml.policy.GateConfig`` (comportement historique).
+    # Une recette dont le FORMAT diffère surcharge plutôt ``score_holdout``.
+    gate_spec: Dict[str, Any] = {}
+
+    @classmethod
+    def score_holdout(cls, path_prefix: str, holdout_df, *,
+                      gate_cfg: Any = None, params: dict = None) -> Dict[str, Any]:
+        """Charge l'artefact à ``path_prefix`` et retourne ses métriques sur
+        ``holdout_df`` — utilisé par le gate de promotion pour comparer un
+        candidat au sortant sur un holdout commun (``app.ml.policy``).
+
+        Implémentation par défaut : format bundle 3-fichiers + features V4
+        (``app.ml.scoring.score_amp_dir_bundle``), qui couvre la grande
+        majorité des recettes du dépôt — ne surcharger que si le format de
+        persistance, les features ou les labels diffèrent réellement.
+
+        **classmethod délibérément** : le scoring porte sur un artefact SUR
+        DISQUE (souvent le sortant, pas ce qui est chargé en mémoire), et ne
+        doit jamais muter l'état ML de l'instance courante. Les réglages
+        variables passent par ``gate_cfg`` (knobs de gate) et ``params``
+        (params résolus de la stratégie).
+
+        Retourne un dict de métriques (``{"n": …, "auc_amp": …}``) ; ``{}``
+        si l'artefact est illisible ou le holdout inexploitable.
+        """
+        from app.ml.scoring import score_amp_dir_bundle
+        return score_amp_dir_bundle(
+            path_prefix, holdout_df,
+            label_horizons=getattr(gate_cfg, "label_horizons", None),
+            amp_top_pct=getattr(gate_cfg, "amp_top_pct", 0.30),
+        )
+
     def fit(self, df: pl.DataFrame, params: dict = None) -> None:
         """Entraîne le modèle sur df avec les paramètres fournis."""
         raise NotImplementedError

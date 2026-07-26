@@ -67,48 +67,51 @@ def _require_known_strategy(name: str) -> None:
 
 @router.get("/api/ml/registry", dependencies=[Depends(verify_api_key)])
 def ml_registry_overview():
-    """Vue d'ensemble du registre : tous les (symbole, TF, recette) connus,
-    avec leur version active résolue (pin/gate inclus) et une alerte de
-    fraîcheur — construit la table principale de la page « Modèles »."""
+    """Vue d'ensemble du registre : tous les (TF, recette) connus, avec leur
+    version active résolue (pin/gate inclus) et une alerte de fraîcheur —
+    construit la table principale de la page « Modèles ».
+
+    ``train_symbol`` accompagne chaque ligne : c'est le symbole sur lequel
+    l'artefact actif a été entraîné (provenance). Il ne partitionne rien — le
+    modèle sert tous les symboles tradés."""
     import app.ml.model_registry as ml_registry
     from app.ml.policy import freshness_warning
 
     out: List[Dict[str, Any]] = []
     for r in ml_registry.list_recipes():
-        symbol, tf, recipe = r["symbol"], r["tf"], r["recipe"]
-        active = ml_registry.resolve(symbol, tf, recipe)
-        pinned = ml_registry.get_pin(symbol, tf, recipe)
+        tf, recipe = r["tf"], r["recipe"]
+        active = ml_registry.resolve(tf, recipe)
+        pinned = ml_registry.get_pin(tf, recipe)
         out.append({
-            "symbol": symbol, "tf": tf, "recipe": recipe,
+            "tf": tf, "recipe": recipe, "train_symbol": r.get("train_symbol"),
             "n_versions": len(r["versions"]),
             "active": active.to_dict() if active else None,
             "pinned_version_id": pinned,
             "freshness_warning": (freshness_warning(active) if active
                                   else "aucune version active (toutes rejetées ou absentes)"),
         })
-    out.sort(key=lambda x: (x["symbol"] or "", x["tf"], x["recipe"]))
+    out.sort(key=lambda x: (x["tf"], x["recipe"]))
     return {"models": out}
 
 
 @router.get("/api/ml/registry/versions", dependencies=[Depends(verify_api_key)])
-def ml_registry_versions(symbol: str, tf: str, recipe: str):
+def ml_registry_versions(tf: str, recipe: str):
     """Historique complet des versions (plus récent en premier) pour un
-    (symbole, TF, recette) donné."""
+    (TF, recette) donné."""
     import app.ml.model_registry as ml_registry
-    versions = ml_registry.list_versions(symbol, tf, recipe)
+    versions = ml_registry.list_versions(tf, recipe)
     return {"versions": [v.to_dict() for v in reversed(versions)]}
 
 
 @router.get("/api/ml/registry/decisions", dependencies=[Depends(verify_api_key)])
-def ml_registry_decisions(symbol: str, tf: str, recipe: str, limit: int = 50):
+def ml_registry_decisions(tf: str, recipe: str, limit: int = 50):
     """Journal des décisions de gate (plus récent en premier)."""
     import app.ml.model_registry as ml_registry
-    decisions = ml_registry.read_decisions(symbol, tf, recipe, limit=min(limit, 500))
+    decisions = ml_registry.read_decisions(tf, recipe, limit=min(limit, 500))
     return {"decisions": list(reversed(decisions))}
 
 
 class _RecipeKey(BaseModel):
-    symbol: str
     tf: str
     recipe: str
 
@@ -123,10 +126,10 @@ def ml_registry_pin(request: Request, body: _PinBody):
     resolve(as_of=None) jusqu'à un nouveau pin ou un unpin explicite (rollback
     manuel, déploiement progressif)."""
     import app.ml.model_registry as ml_registry
-    ok = ml_registry.set_pin(body.symbol, body.tf, body.recipe, body.version_id)
+    ok = ml_registry.set_pin(body.tf, body.recipe, body.version_id)
     if not ok:
         raise HTTPException(404, f"Version {body.version_id!r} introuvable pour "
-                                 f"{body.symbol}/{body.tf}/{body.recipe}")
+                                 f"{body.tf}/{body.recipe}")
     audit_log("ml.registry.pin", ip=request.client.host if request.client else "",
              details=body.model_dump())
     return {"status": "pinned", **body.model_dump()}
@@ -137,7 +140,7 @@ def ml_registry_unpin(request: Request, body: _RecipeKey):
     """Retire le pin — resolve(as_of=None) retrouve son comportement par
     défaut (dernière version éligible)."""
     import app.ml.model_registry as ml_registry
-    ml_registry.clear_pin(body.symbol, body.tf, body.recipe)
+    ml_registry.clear_pin(body.tf, body.recipe)
     audit_log("ml.registry.unpin", ip=request.client.host if request.client else "",
              details=body.model_dump())
     return {"status": "unpinned", **body.model_dump()}
@@ -157,11 +160,11 @@ def ml_registry_promote(request: Request, body: _PromoteBody):
     import app.ml.model_registry as ml_registry
     if body.decision not in ("manual", "keep"):
         raise HTTPException(400, "decision doit être 'manual' (promotion) ou 'keep' (rejet)")
-    ok = ml_registry.set_decision(body.symbol, body.tf, body.recipe, body.version_id,
+    ok = ml_registry.set_decision(body.tf, body.recipe, body.version_id,
                                   body.decision, reason=body.reason)
     if not ok:
         raise HTTPException(404, f"Version {body.version_id!r} introuvable pour "
-                                 f"{body.symbol}/{body.tf}/{body.recipe}")
+                                 f"{body.tf}/{body.recipe}")
     audit_log("ml.registry.set_decision", ip=request.client.host if request.client else "",
              details=body.model_dump())
     return {"status": "ok", **body.model_dump()}

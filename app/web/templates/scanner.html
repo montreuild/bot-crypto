@@ -216,8 +216,7 @@
       <!-- Toggle des stratégies de setups (juste sous les indicateurs) -->
       <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <span style="font-size:.68rem;color:var(--dim);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Stratégie :</span>
-        <button id="setup-strat-v8"  class="chart-tf-btn active" style="font-size:.65rem;padding:3px 9px" onclick="setSetupStrategy('v8')">V8</button>
-        <button id="setup-strat-v11" class="chart-tf-btn" style="font-size:.65rem;padding:3px 9px" onclick="setSetupStrategy('v11')">V11</button>
+        <button id="setup-strat-v11" class="chart-tf-btn active" style="font-size:.65rem;padding:3px 9px" onclick="setSetupStrategy('v11')">V11</button>
         <button id="setup-strat-v12" class="chart-tf-btn" style="font-size:.65rem;padding:3px 9px" onclick="setSetupStrategy('v12')">V12</button>
       </div>
       <div class="panel-body" style="gap:0;padding:0">
@@ -846,9 +845,10 @@ const V7_SETUP_COLORS = {
   LONG_RANGE_LIGHT: '#60a5fa',   // V11/V12 — long range léger
 };
 
-// Stratégie de setups sélectionnée : 'v8' (défaut), 'v11' ou 'v12'
-let _setupStrat = 'v8';
-const _SETUP_STRATS = ['v8', 'v11', 'v12'];
+// Stratégie de setups sélectionnée : 'v11' (défaut) ou 'v12'. Le mode V8 a été
+// retiré avec le pack V4 figé (docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §1.5).
+let _setupStrat = 'v11';
+const _SETUP_STRATS = ['v11', 'v12'];
 // Price lines TP/SL/entrée du dernier setup (pour pouvoir les retirer au refresh)
 let _setupPriceLines = [];
 

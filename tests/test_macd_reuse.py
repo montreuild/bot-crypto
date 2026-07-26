@@ -48,7 +48,7 @@ def _run(strategy_name, strat_params, disable_reuse=False):
         "strategies": {"enabled": [strategy_name]},
         "strategy_params": {strategy_name: strat_params},
     }
-    res = Backtester(eng, cfg, use_pretrained_ml=False).run(
+    res = Backtester(eng, cfg, ml_mode="inline").run(
         _ohlcv(), "BTC/USDC", timeframe="15m")
     return res.total_trades, round(res.total_pnl, 6)
 

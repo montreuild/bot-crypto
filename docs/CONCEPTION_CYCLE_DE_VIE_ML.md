@@ -15,6 +15,11 @@
 > À lire avec : `docs/PLAN_DIRECTEUR_MULTI_ACTIFS.md` (§ML-01/ML-02) et
 > `docs/CONCEPTION_PROMOTION_PAR_EDGE.md` (promotion des *stratégies* — le
 > présent document traite de la promotion des *modèles*, problème jumeau).
+>
+> **Suite** : `docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md` reprend §3.1 (la
+> recette comme objet de premier ordre) et §5.5 (même recette ⇒ mêmes
+> artefacts), restés non construits, et en tire les conséquences mesurées sur
+> `app/strategies/`.
 
 ---
 
@@ -153,7 +158,7 @@ Trois objets, trois responsabilités :
 ```
 RECETTE (git, YAML)      ──produit──►  ARTEFACT (registre, immuable, daté)
   features, labels, HP,                  modèles + meta complète
-  fenêtre, cadence, gate                 par (symbole, TF, stratégie, date)
+  fenêtre, cadence, gate                 par (TF, recette, date)
         │                                        ▲
         └──────── POLITIQUE (un seul code) ──────┘
                   « faut-il rafraîchir ? entraîne, compare au sortant,
@@ -220,8 +225,19 @@ models/
   `seed`, `data_fingerprint` (réutiliser `train_cache._df_fingerprint`),
   `source` (`live|runner|backtest_sim|optimizer`), `gate` (décision et
   métriques vs sortant), `created_at`.
-- **API** : `publish(...)`, `resolve(symbol, tf, strategy, as_of=None,
-  pin=None)`, `latest_promoted(...)`, `list_versions(...)`. `resolve` commence
+- **API** : `publish(...)`, `resolve(tf, recipe, as_of=None, pin=None)`,
+  `latest_promoted(...)`, `list_versions(...)`.
+
+  > ⚠️ **La dimension symbole a été RETIRÉE de la clé** (2026-07-26, décision
+  > 11 — `docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md` §8bis). Ce document la
+  > décrivait comme un axe de rangement ; la mesure a montré qu'elle nommait
+  > une partition inexistante — le trainer live n'entraînait que sur BTC et le
+  > pipeline servait CE modèle à tous les symboles. 17 des 18 cellules de la
+  > matrice de transfert sont indiscernables du bruit. Le symbole subsiste en
+  > **provenance** (`ArtifactRef.train_symbol`, `publish(train_symbol=…)`) :
+  > savoir sur quoi un artefact a été construit est de la traçabilité, pas une
+  > clé. À rejouer si un actif d'une autre classe devient entraînable.
+ `resolve` commence
   par traduire la stratégie vers sa (ses) recette(s) via le YAML : deux
   stratégies référençant la même recette obtiennent le même artefact. **La vérité est
   le système de fichiers** (scan des meta, cache mtime) ; `index.json`
@@ -230,14 +246,16 @@ models/
 - **`resolve(as_of=T)`** retourne la dernière version promue dont
   `train_end ≤ T`. C'est la primitive qui supprime les fuites 3 et rend le
   walk-forward correct par construction.
-- **Compat** : `resolve` sait lire l'ancien layout plat `models/{name}_{tf}.*`
-  comme version « non datée, non promue » pendant la migration.
-- **V4** : migré dans le registre (`models/BTC_USDC/{tf}/opus_stat_pretrained_v4/
-  2025-xx_legacy/`) avec meta backfillée (`non_reproductible: true`, AUC et
-  dates reconstituées) ; `opus_stat_pretrained_v4.py` cesse de pointer sur
-  `app/strategies/opus_stat_pretrained_v4_data` (`_DATA_DIR`) et passe par
-  `resolve(pin="legacy")`. Répond au point de vigilance « v4 au même endroit
-  que les autres ».
+- ~~**Compat** : `resolve` sait lire l'ancien layout plat~~ — **supprimé**
+  (2026-07-26, décision 4) : le bot n'étant pas en production, un chemin de
+  repli était une dette contractée sans contrepartie. `resolve` ne connaît
+  plus qu'un seul layout.
+- ~~**V4**~~ — **le pack V4 figé a été retiré** (2026-07-26, décision 1) après
+  mesure : il ne bat plus un ré-entraînement sur 3/3 timeframes, le résultat
+  tient sur 5 fenêtres d'entraînement, et **aucun régime** ne le sauve (IC
+  bootstrap appariés). Ses AUC auto-déclarées surestimaient jusqu'à 0.15. Il
+  survit sous `models/_archive/`, jamais énuméré ni résolu.
+  `opus_stat_pretrained_v4.py` a été supprimé avec 4 autres stratégies figées.
 - **Rétention** : garder toutes les versions promues + N candidates
   récentes ; les artefacts de simulation partagent le même cache (clé
   recette×fenêtre) et sont GC-ables. `models/` runtime reste hors git (état
@@ -247,8 +265,8 @@ models/
 ### 3.3 La politique — `app/ml/policy.py`, une seule implémentation
 
 ```python
-def maybe_refresh(symbol, tf, strategy, recipe, data_up_to_T) -> Decision:
-    incumbent = registry.resolve(symbol, tf, strategy, as_of=T)
+def maybe_refresh(strategy, train_symbol, tf, df, ...) -> Decision:
+    incumbent = registry.latest_promoted(tf, recipe)   # train_symbol = provenance
     if incumbent and bars_since(incumbent.train_end, T) < recipe.cadence_bars:
         return Keep(incumbent)                      # pas dû
     candidate = runner.train(recipe, window_ending=T - holdout)   # cf. §3.4
@@ -357,7 +375,7 @@ tranche » de la Solution 2 — jugé sur l'avant-tranche, jamais sur la tranche
 
 - `load_models` → `resolve(latest_promoted)` + **warning de fraîcheur** si
   `âge > 2 × cadence_bars`.
-- `retrain_due` → `policy.maybe_refresh` par (symbole, TF, stratégie) avec
+- `retrain_due` → `policy.maybe_refresh` par (TF, recette) avec
   la fenêtre de la recette (fetch borné par l'historique local :
   `min_window_bars` non atteint ⇒ on n'entraîne pas, on alerte — plus de
   modèle « au rabais » entraîné sur 1560 barres faute de mieux,
@@ -467,7 +485,8 @@ même recette ne diversifient pas), et la passe de confirmation post-promotion
 `next_retrain`) et décliner dans `app/web/templates/ml.html` +
 `frontend/src/app/ml/` :
 
-- **Registre** : tableau par (symbole, TF, stratégie) — version active, âge
+- **Registre** : tableau par (TF, recette) — colonne « entraîné sur »
+  (provenance), version active, âge
   (barres/jours), AUC/cal_err de validation, recette (hash + résumé),
   historique des versions et des décisions de gate (promu/refusé, pourquoi).
 - **Actions** : « Entraîner maintenant » (wrapper du runner), window sweep,
@@ -491,7 +510,7 @@ même recette ne diversifient pas), et la passe de confirmation post-promotion
 | # | Étape | Effort | Statut | Contenu / risque |
 |---|---|---|---|---|
 | E1 | Meta v2 + `ml_info` + warning fraîcheur | S | ✅ fait | `persistence.py` (`provenance`/`gate` optionnels, rétro-compat v1), `BacktestResult.ml_info`, `MLStrategyTrainer._freshness_warning` |
-| E2 | Registre + layout symbole/TF + `resolve(as_of)` + garde anti-chevauchement + migration V4 | M | ✅ fait | `app/ml/model_registry.py` ; V4 déplacé dans `models/BTC_USDC/{tf}/opus_stat_pretrained_v4/legacy/`, prédictions vérifiées byte-identiques ; repli sur l'ancien layout plat conservé tant qu'une recette n'est pas migrée |
+| E2 | Registre + layout `(TF, recette)` + `resolve(as_of)` + garde anti-chevauchement | M | ✅ fait | `app/ml/model_registry.py`. **Révisé 2026-07-26** : la dimension symbole a quitté la clé (décision 11), le repli sur l'ancien layout plat a été supprimé (décision 4) et le pack V4 a été archivé après mesure (décision 1) |
 | E3 | Runner CLI committé + window sweep | S | ✅ fait | `app/ml/train_runner.py` + `scripts/train_model.py` — dry-run par défaut (rien n'est écrit), `--publish` pour la publication gatée réelle, `--windows` pour le sweep sur holdout commun |
 | E4 | Gate + `decisions.jsonl` + cadence en barres dans le trainer live | M | ✅ fait (cadence **partielle**) | `app/ml/policy.py` (`decide_gate`, `maybe_refresh`, AUC par rang sans sklearn/scipy) câblé dans le live trainer et le runner. Le live trainer garde une cadence **horloge murale** (`retrain_interval_h`, inchangé) plutôt que barres — voir note ci-dessous |
 | E5 | `ml_mode=simulated_live` (Backtester + WalkForward) avec cache registre | M/L | ✅ fait | `Backtester.ml_mode` (`frozen`/`inline`/`simulated_live`) ; rafraîchissement périodique à même la boucle bar-par-bar, publication registre à chaque frontière de cadence ; `WalkForwardAnalyzer` transmet `ml_mode` par fold (la fuite `as_of` par fold est corrigée par construction, sans code spécifique aux folds) |
@@ -543,11 +562,19 @@ la cadence elle-même en barres aurait nécessité de faire correspondre le
 scheduler live à la grille de bougies par TF, un chantier plus large
 (recoupe le "chantier connexe" ci-dessous) volontairement laissé de côté ici.
 
-Chantier connexe à séquencer à part : **état ML par (symbole, TF)** au lieu
-de TF seul (TrainState/predictor keyés `tf`) — prérequis pour des modèles
-réellement par symbole ; d'ici là le registre reste honnête en écrivant
-`symbol` dans la meta (état de fait actuel, enfin explicite) sans que
-l'inférence elle-même distingue encore les symboles en mémoire.
+~~Chantier connexe : **état ML par (symbole, TF)**~~ — **abandonné après
+mesure** (2026-07-26, décision 11). Ce chantier était présenté comme le
+prérequis de « modèles réellement par symbole ». La mesure a montré que ces
+modèles n'apportent rien de mesurable sur le panier actuel : 17 des 18
+cellules de la matrice de transfert sont indiscernables du bruit, ETH ne gagne
+rien à son propre modèle, et XRP n'a pas assez d'historique pour en avoir un.
+L'état ML keyé `tf` seul n'est donc plus une approximation à corriger — c'est
+la bonne granularité, et le registre a été aligné dessus (le symbole a quitté
+la clé pour la provenance).
+
+À rejouer — et alors seulement à rouvrir — si un actif d'une **autre classe**
+(action, ETF) et doté d'assez d'historique entre dans le bot :
+`scripts/measure_symbol_transfer.py`.
 
 ## 8. Défauts proposés — hypothèses, pas des réglages
 

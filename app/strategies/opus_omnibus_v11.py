@@ -64,6 +64,7 @@ from app.ml.backend import (
 from app.ml.backend import (
     window_polars as _window_polars,
 )
+from app.ml.backend.mixin import MLBackendMixin
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Alias publics (compatibilité : scanner_service et autres consommateurs
@@ -131,6 +132,28 @@ _DEFAULT_SETUPS: Tuple[Dict[str, Any], ...] = (
         "needs_bearish_excess": False, "needs_rsi_below": None, "needs_adx_above": None,
         "amp_min": 0.50, "dir_max": None, "dir_min": 0.55,
         "tp_mult": 0.7, "sl_mult": 1.0, "max_bars": 4, "size_factor": 0.6,
+    },
+    # ── Setups repris de V9, DÉSACTIVÉS par défaut ──────────────────────────
+    # La lignée V10/V11 les avait abandonnés ; ils n'existaient plus que dans
+    # opus_omnibus_v8/v9, supprimés avec le pack V4 figé (cf.
+    # docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md §3.1). Les conserver ici les
+    # rend de nouveau activables — et donc optimisables — au lieu de les perdre.
+    # ``enabled: False`` est neutre : c'est le tout premier test de
+    # ``_evaluate_setup``. Valeurs reprises telles quelles de V9 (V8 utilisait
+    # 0.50 / 0.40 pour SHORT_TD).
+    {
+        "name": "SHORT_TD", "priority": 7, "direction": -1, "enabled": False,
+        "regime": REGIME_TREND_DN, "needs_exit_td_window": False,
+        "needs_bearish_excess": False, "needs_rsi_below": None, "needs_adx_above": None,
+        "amp_min": 0.55, "dir_max": 0.35, "dir_min": None,
+        "tp_mult": 1.2, "sl_mult": 1.6, "max_bars": 8, "size_factor": 1.0,
+    },
+    {
+        "name": "LONG_PULLBACK_TU", "priority": 8, "direction": 1, "enabled": False,
+        "regime": REGIME_TREND_UP, "needs_exit_td_window": False,
+        "needs_bearish_excess": False, "needs_rsi_below": 50.0, "needs_adx_above": None,
+        "amp_min": 0.40, "dir_max": None, "dir_min": 0.55,
+        "tp_mult": 1.2, "sl_mult": 1.2, "max_bars": 8, "size_factor": 1.0,
     },
 )
 
@@ -203,7 +226,7 @@ def _check_early_exit(setup_name: str, regime: int, p_up: float,
             return "p_dir_drop"
         if regime == REGIME_TREND_DN:
             return "to_TD"
-    elif setup_name == "SHORT_TD_HIGH":
+    elif setup_name in ("SHORT_TD_HIGH", "SHORT_TD"):
         if regime != REGIME_TREND_DN:
             return "regime_exit_TD"
         if p_up > dir_inv_short:
@@ -218,7 +241,7 @@ def _check_early_exit(setup_name: str, regime: int, p_up: float,
             return "regime_exit_choppy"
         if p_up > 0.58:
             return "p_dir_inversion"
-    elif setup_name == "LONG_TU":
+    elif setup_name in ("LONG_TU", "LONG_PULLBACK_TU"):
         if regime == REGIME_TREND_DN:
             return "to_TD"
         if p_up < dir_inv_long:
@@ -251,11 +274,14 @@ _TRAIN_LOG_PATH = os.path.join("logs", "opus_omnibus_v11_train.jsonl")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-class Strategy(BaseStrategyML):
+class Strategy(MLBackendMixin, BaseStrategyML):
     """OMNIBUS V11 — routing V10 + multi-horizon, régime enrichi, importance,
     calibration. Modèles LightGBM entraînés inline via MLBackend."""
 
     name      = "opus_omnibus_v11"
+    # Recette(s) consommée(s) — surchargeable par le bloc `models:`
+    # du YAML (cf. app.ml.recipe.strategy_models).
+    models: Dict[str, str] = {"signal": "omnibus_v4_multi"}
     model_dir = "models"
 
     timeframes: List[str] = list(_SUPPORTED_TFS)
@@ -305,6 +331,12 @@ class Strategy(BaseStrategyML):
         "bearish_excess_rsi_threshold": 38.0,
         "bearish_excess_sma_pct":        1.5,
         "signal_up_dynamic_risk":        True,
+        # Sorties anticipées — valeurs V10/V11. Déclarées ici plutôt qu'en
+        # littéraux dans ``check_early_exit`` pour qu'un preset puisse les
+        # redéfinir (V8 : ``early_exit_dir_inv_long: 0.45``).
+        "early_exit_dir_inv_short":      0.55,
+        "early_exit_dir_inv_long":       0.42,
+        "early_exit_dir_drop_range":     0.40,
         # V11 ML
         "label_horizons":   [1, 3, 6],
         "calibrate":        True,
@@ -323,15 +355,10 @@ class Strategy(BaseStrategyML):
 
     retrain_interval_h: int = 6
 
-    def __init__(self):
-        # Composition : tout le ML est délégué au backend générique.
-        self.ml = MLBackend(
-            name=self.name,
-            model_dir=self.model_dir,
-            calibrate=True,
-            prune_features=True,
-            multi_horizon=True,
-        )
+    # Recette omnibus_v4_multi : multi-horizon, calibré, élagué.
+    ml_calibrate = True
+    ml_prune_features = True
+    ml_multi_horizon = True
 
     # ── Compatibilité cached_train (les attributs état doivent être mutables
     #    sur la Strategy pour que train_cache puisse snapshot/restaurer).
@@ -339,76 +366,10 @@ class Strategy(BaseStrategyML):
     _TRAIN_STATE_ATTRS = MLBackend._TRAIN_STATE_ATTRS
     _TRAIN_PARAM_KEYS  = MLBackend._TRAIN_PARAM_KEYS
 
-    @property
-    def _amp_models(self):       return self.ml.state.amp_models
-    @property
-    def _dir_models(self):       return self.ml.state.dir_models
-    @property
-    def _amp_cal(self):          return self.ml.state.amp_cal
-    @property
-    def _dir_cal(self):          return self.ml.state.dir_cal
-    @property
-    def _feature_cols(self):     return self.ml.state.feature_cols
-    @property
-    def _kept_features(self):    return self.ml.state.kept_features
-    @property
-    def _medians(self):          return self.ml.state.medians
-    @property
-    def _trained_tfs(self):      return self.ml.state.trained_tfs
-    @property
-    def _best_auc_per_tf(self):  return self.ml.state.best_auc_per_tf
-    @property
-    def _train_meta(self):       return self.ml.state.train_meta
-    @property
-    def _last_retrain(self):     return self.ml.state.last_retrain
-    @property
-    def _call_cnt(self):         return self.ml.state.call_cnt
-    @property
-    def _best_auc(self):         return self.ml.state.best_auc
-    @_best_auc.setter
-    def _best_auc(self, v):      self.ml.state.best_auc = float(v)
-    @property
-    def _managed_externally(self): return self.ml.state.managed_externally
-    @_managed_externally.setter
-    def _managed_externally(self, v): self.ml.state.managed_externally = bool(v)
-
-    # Cache backtest (délègue au backend)
-    @property
-    def _bt_features(self):      return self.ml._bt_features
-    @property
-    def _bt_features_len(self):  return self.ml._bt_features_len
-    @property
-    def _bt_train_offset(self):  return self.ml._bt_train_offset
-    @_bt_train_offset.setter
-    def _bt_train_offset(self, v): self.ml._bt_train_offset = v
-
-    @property
-    def _lock(self): return self.ml._lock
-
-    # ── Cycle de vie ML (délègue au backend) ───────────────────────────────
-    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
-        self.ml.prepare_for_backtest(df, getattr(self, "_bt_symbol", None),
-                                     getattr(self, "_bt_tf", None))
-
-    @property
-    def is_trained(self) -> bool:
-        return self.ml.is_trained
-
-    @property
-    def managed_externally(self) -> bool:
-        return self.ml.managed_externally
-
-    @managed_externally.setter
-    def managed_externally(self, v: bool) -> None:
-        self.ml.managed_externally = v
-
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get(self.name, {})
         warmup = int(p.get("warmup_bars", self._DEFAULTS["warmup_bars"]))
         return max(230, warmup + 30)
-
-    def reset_model(self) -> None:
-        self.ml.reset_model()
 
     # ── Persistance (délègue au backend) ───────────────────────────────────
     def save_model(self, path: str) -> None:
@@ -447,15 +408,19 @@ class Strategy(BaseStrategyML):
     # ── Entraînement (délègue au backend, préserve cached_train) ───────────
     def _train(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
         from app.core.train_cache import cached_train
+        # ``score()`` entraîne par ici, pas par ``fit()`` : sans cette fusion,
+        # les paramètres d'ENTRAÎNEMENT non passés explicitement à ``score()``
+        # (label_horizons, calibrate, prune_features…) n'atteignaient jamais le
+        # backend, qui appliquait alors ses propres valeurs de constructeur.
+        # Une sous-classe-preset (opus_omnibus_v10_retrained) s'entraînait donc
+        # avec les réglages de V11, en contradiction silencieuse avec ses
+        # ``_DEFAULTS`` — et avec la recette qu'elle déclare.
+        params = {**self._DEFAULTS, **(params or {})}
         ok = cached_train(self, df, tf_key, params, self._train_impl,
                           self._TRAIN_STATE_ATTRS, self._TRAIN_PARAM_KEYS)
         if ok and params.get("log_training", self._DEFAULTS["log_training"]):
             self._append_train_log(tf_key, self.ml.train_meta.get(tf_key, {}))
         return ok
-
-    def _train_impl(self, df: pl.DataFrame, tf_key: str, params: dict) -> bool:
-        # Délègue au backend (sans cached_train ici — déjà géré par _train).
-        return self.ml._train_impl_wrapper(df, tf_key, params)
 
     def _append_train_log(self, tf_key: str, meta: dict) -> None:
         try:
@@ -467,22 +432,23 @@ class Strategy(BaseStrategyML):
         except Exception as e:
             logger.debug(f"[OmnibusV11] log entraînement KO : {e}")
 
-    # ── Prédictions (délègue au backend) ───────────────────────────────────
-    def _predict(self, features_df: pl.DataFrame, tf: str, target: str) -> Optional[float]:
-        return self.ml.predict_single(features_df, tf, target)
+    #: ``False`` pour un preset dont la recette ne produit aucun artefact
+    #: (prédicteur proxy) : ni entraînement, ni garde « pas encore entraîné ».
+    uses_artifact: bool = True
 
-    def predict_amplitude(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
-        return self.ml.predict_amplitude(features_df, tf)
+    def _predict_heads(self, df: pl.DataFrame, features: pl.DataFrame,
+                       tf: str, params: Dict[str, Any]
+                       ) -> Tuple[Optional[float], Optional[float]]:
+        """``(p_event, p_up)`` — SEUL point par lequel le routing consulte une
+        source de prédiction.
 
-    def predict_direction(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
-        return self.ml.predict_direction(features_df, tf)
-
-    def _predict_series(self, features_df: pl.DataFrame, tf: str,
-                        target: str) -> Optional[np.ndarray]:
-        return self.ml.predict_series(features_df, tf, target)
-
-    def predict(self, df: pl.DataFrame, params: dict = None) -> Dict[str, Any]:
-        return self.score(df, params)
+        Reçoit à la fois les bougies brutes et le catalogue V4 construit :
+        un prédicteur d'artefact lit le second, un ``ProxyPredictor`` lit le
+        premier (colonnes ``_pre_*``). Sans ce double passage, brancher un
+        proxy obligerait à convertir des indicateurs en features V4 pour rien.
+        """
+        return (self.predict_amplitude(features, tf),
+                self.predict_direction(features, tf))
 
     # ── Score V11 (routing conservé) ───────────────────────────────────────
     def score(self, df: pl.DataFrame, params: dict = None,
@@ -490,7 +456,13 @@ class Strategy(BaseStrategyML):
         if df is None or len(df) < self.min_bars_required(params):
             return self._none(f"Données insuffisantes ({len(df) if df is not None else 0})")
 
-        p = (params or {}).get(self.name, {})
+        # ``_DEFAULTS`` fusionnés SOUS les paramètres reçus. Sans cette fusion,
+        # un preset ne pouvait redéfinir que ce qui est lu par
+        # ``p.get(k, self._DEFAULTS[k])`` — jamais ce qui est lu directement
+        # dans ``p``, au premier rang duquel les surcharges de setups
+        # (``_apply_setup_overrides``). Un preset déclarant
+        # ``setup_long_tu_enabled: False`` voyait quand même LONG_TU tirer.
+        p = {**self._DEFAULTS, **((params or {}).get(self.name, {}))}
         enable_hour_filter  = bool(p.get("enable_hour_filter",  self._DEFAULTS["enable_hour_filter"]))
         active_hours_utc    = list(p.get("active_hours_utc",    self._DEFAULTS["active_hours_utc"]))
         active_days         = list(p.get("active_days",         self._DEFAULTS["active_days"]))
@@ -521,7 +493,7 @@ class Strategy(BaseStrategyML):
         ml_state.call_cnt[tf] = cnt
         last       = ml_state.last_retrain.get(tf, 0)
         need_train = (tf not in ml_state.trained_tfs) or (cnt - last >= retrain_every)
-        if need_train and not ml_state.managed_externally:
+        if need_train and not ml_state.managed_externally and self.uses_artifact:
             from app.core.train_cache import aligned_train_window
             n_train = min(len(df) - 1, warmup_bars * 2)
             train_df, self.ml._bt_train_offset = aligned_train_window(
@@ -531,7 +503,7 @@ class Strategy(BaseStrategyML):
             if ok:
                 ml_state.last_retrain[tf] = cnt
 
-        if tf not in ml_state.trained_tfs:
+        if self.uses_artifact and tf not in ml_state.trained_tfs:
             return self._none("Modèle pas encore entraîné (warmup en cours)")
 
         bt_feats = self.ml._bt_features
@@ -561,8 +533,7 @@ class Strategy(BaseStrategyML):
         regime_lbl = REGIME_LABELS[regime]
         exit_td_active = _exit_td_window_active(regimes, exit_td_window_bars)
 
-        p_event = self.predict_amplitude(features, tf)
-        p_up    = self.predict_direction(features, tf)
+        p_event, p_up = self._predict_heads(df, features, tf, p)
         if p_event is None or p_up is None:
             return self._none(f"Modèle {tf} indisponible")
 
@@ -693,15 +664,29 @@ class Strategy(BaseStrategyML):
         if df is None or len(df) < self.min_bars_required(params):
             return None
 
-        p = (params or {}).get(self.name, {})
+        p = {**self._DEFAULTS, **((params or {}).get(self.name, {}))}
         adx_threshold  = float(p.get("adx_threshold", self._DEFAULTS["adx_threshold"]))
         di_rescue      = float(p.get("di_rescue",     self._DEFAULTS["di_rescue"]))
-        dir_inv_short  = float(p.get("early_exit_dir_inv_short",  0.55))
-        dir_inv_long   = float(p.get("early_exit_dir_inv_long",   0.42))
-        dir_drop_range = float(p.get("early_exit_dir_drop_range", 0.40))
+        # Repli sur ``_DEFAULTS``, pas sur des littéraux : un preset qui
+        # déclare un seuil de sortie différent (V8 : ``dir_inv_long: 0.45``)
+        # doit être entendu. Des littéraux ici rendaient la déclaration
+        # silencieusement inopérante.
+        dir_inv_short  = float(p.get("early_exit_dir_inv_short",
+                                     self._DEFAULTS["early_exit_dir_inv_short"]))
+        dir_inv_long   = float(p.get("early_exit_dir_inv_long",
+                                     self._DEFAULTS["early_exit_dir_inv_long"]))
+        dir_drop_range = float(p.get("early_exit_dir_drop_range",
+                                     self._DEFAULTS["early_exit_dir_drop_range"]))
 
         tf = _detect_timeframe(df)
-        if tf not in _SUPPORTED_TFS or tf not in self.ml.state.trained_tfs:
+        if tf not in _SUPPORTED_TFS:
+            return None
+        # La garde « pas encore entraîné » ne vaut que pour un preset qui
+        # consomme un artefact : un prédicteur proxy n'entraîne rien et ne
+        # peuplera jamais ``trained_tfs``. Sans ce test, les variantes sans ML
+        # ne déclenchaient AUCUNE sortie anticipée (mesuré : 0 sur 320 appels
+        # contre 164 pour le fork qu'elles remplacent).
+        if self.uses_artifact and tf not in self.ml.state.trained_tfs:
             return None
 
         try:
@@ -719,7 +704,9 @@ class Strategy(BaseStrategyML):
                 features, n_last=2, adx_threshold=adx_threshold, di_rescue=di_rescue,
             )
             regime = regimes[-1]
-            p_up = self.predict_direction(features, tf)
+            # Même point d'injection que ``score()`` : un preset proxy tire
+            # ``p_up`` de ses indicateurs, pas d'un artefact absent.
+            _, p_up = self._predict_heads(df, features, tf, p)
             if p_up is None:
                 return None
         except Exception as e:

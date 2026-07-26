@@ -85,21 +85,35 @@ def _run(strategy_name: str) -> dict:
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  Valeurs témoins — mises à jour une fois, pour une raison nommée
+# ─────────────────────────────────────────────────────────────────────────────
+# Ces deux stratégies lisent l'ADX/ATR de ``indicators_core``. La correction du
+# lissage (§8ter : α = 2/(n+1) → α = 1/n, la définition de Wilder) change donc
+# légitimement leurs signaux, et ces témoins ont été recapturés à cette
+# occasion — c'est le SEUL motif de changement admis ici.
+#
+#   trend_rider     3 trades / pnl −5.1440  →  2 trades / pnl −2.3265
+#   pullback_trend  9 trades / pnl −16.9821 →  8 trades / pnl −14.4664
+#
+# Un futur écart sur ces chiffres n'est PAS à réaligner sans avoir identifié la
+# cause : le rôle de ce test est de rendre visible un changement de
+# comportement, pas de le suivre.
 def test_trend_rider_backtest_parity_on_synthetic_btc_data():
     result = _run("trend_rider")
     assert result == {
-        "total_trades": 3,
+        "total_trades": 2,
         "win_rate": 0.0,
-        "total_pnl": -5.144,
-        "final_equity": 994.856,
+        "total_pnl": -2.3265,
+        "final_equity": 997.6735,
     }
 
 
 def test_pullback_trend_backtest_parity_on_synthetic_btc_data():
     result = _run("pullback_trend")
     assert result == {
-        "total_trades": 9,
-        "win_rate": 11.1,
-        "total_pnl": -16.9821,
-        "final_equity": 983.0179,
+        "total_trades": 8,
+        "win_rate": 0.0,
+        "total_pnl": -14.4664,
+        "final_equity": 985.5336,
     }

@@ -50,7 +50,7 @@ table.mdl-tbl{width:100%;border-collapse:collapse;font-size:.78rem;}
     <div style="overflow-x:auto">
       <table class="mdl-tbl">
         <thead><tr>
-          <th scope="col">Symbole</th><th scope="col">TF</th><th scope="col">Recette</th>
+          <th scope="col">TF</th><th scope="col">Recette</th><th scope="col" title="Symbole dont proviennent les bougies d'entraînement — le modèle sert tous les symboles tradés">Entraîné sur</th>
           <th scope="col">Version active</th><th scope="col">Entraînée jusqu'au</th>
           <th scope="col">AUC</th><th scope="col">Décision</th><th scope="col">Fraîcheur</th>
           <th scope="col">Versions</th><th scope="col">Actions</th>
@@ -72,7 +72,7 @@ table.mdl-tbl{width:100%;border-collapse:collapse;font-size:.78rem;}
       <div class="mdl-fld"><label>Symbole</label><input id="tr-symbol" value="BTC/USDC"></div>
       <div class="mdl-fld"><label>Timeframe</label><input id="tr-tf" value="1h"></div>
       <div class="mdl-fld"><label>Fenêtre (barres)<span class="mdl-hint" style="margin:0">0 = tout dispo</span></label><input id="tr-window" type="number" value="0" min="0"></div>
-      <div class="mdl-fld"><label>as_of (ISO, optionnel)</label><input id="tr-asof" placeholder="2026-06-01T00:00:00"></div>
+      <div class="mdl-fld"><label>Date de fin d'entraînement (optionnel)<span class="mdl-hint" style="margin:0">fige l'entraînement à cette date passée (rejoue une décision historique)</span></label><input id="tr-asof" placeholder="2026-06-01T00:00:00" title="Ne garde que les bougies antérieures à cette date pour l'entraînement ET le holdout du gate. Vide = tout l'historique disponible jusqu'à maintenant."></div>
       <div class="mdl-fld" style="flex-direction:row;align-items:center;gap:6px">
         <input type="checkbox" id="tr-publish" style="width:14px;height:14px">
         <label for="tr-publish" style="text-transform:none;font-size:.78rem;color:var(--text)">Publier réellement (sinon dry-run)</label>
@@ -115,10 +115,10 @@ function fmtAge(iso){
   return d.toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
 }
 function aucBadge(auc,trainEnd){
-  // auc=0 sans date d'entraînement = non mesurée (ex. import legacy V4, cf.
+  // auc=0 sans date d'entraînement = non mesurée (artefact sans provenance, cf.
   // script de migration), PAS un modèle mesuré mauvais — distinct d'un vrai
   // 0.000 (qui aurait une date). Éviter le rouge trompeur dans les deux cas.
-  if(auc==null||(auc===0&&!trainEnd))return '<span class="mdl-badge" title="AUC non mesurée (ex. artefact legacy sans provenance)">n/m</span>';
+  if(auc==null||(auc===0&&!trainEnd))return '<span class="mdl-badge" title="AUC non mesurée (artefact sans provenance datée)">n/m</span>';
   const cls=auc>=0.65?'mdl-ok':auc>=0.55?'mdl-warn':'mdl-empty';
   return '<span class="mdl-badge '+cls+'">'+auc.toFixed(3)+'</span>';
 }
@@ -145,7 +145,7 @@ async function loadRegistry(){
   }catch(e){body.innerHTML='<tr><td colspan="10" style="color:#f87171">Erreur : '+esc(e.message)+'</td></tr>';}
 }
 
-function rowKey(m){return m.symbol+'|'+m.tf+'|'+m.recipe;}
+function rowKey(m){return m.tf+'|'+m.recipe;}
 
 function renderRegistry(){
   const body=document.getElementById('mdl-body');
@@ -156,7 +156,8 @@ function renderRegistry(){
     const pinTag=m.pinned_version_id?'<div class="mdl-badge mdl-pin" style="display:inline-block;margin-top:3px" title="Épinglé sur '+esc(m.pinned_version_id)+'">📌 pin</div>':'';
     const expanded=_expanded.has(key);
     const row='<tr>'+
-      '<td>'+esc(m.symbol)+'</td><td>'+esc(m.tf)+'</td><td>'+esc(m.recipe)+'</td>'+
+      '<td>'+esc(m.tf)+'</td><td>'+esc(m.recipe)+'</td>'+
+      '<td style="color:var(--muted)">'+esc(m.train_symbol||'—')+'</td>'+
       '<td>'+(a?esc(a.version_id):'<span style="color:var(--dim)">aucune</span>')+'</td>'+
       '<td>'+(a?fmtAge(a.train_end):'—')+'</td>'+
       '<td>'+(a?aucBadge(a.auc,a.train_end):'—')+'</td>'+
@@ -187,11 +188,97 @@ document.getElementById('mdl-body').addEventListener('click', async ev=>{
   }
 });
 
+function featureImportanceTbl(list){
+  if(!list||!list.length)return '<div style="color:var(--dim);font-size:.7rem">Non disponible.</div>';
+  return '<table class="mdl-sub-tbl"><thead><tr><th>Feature</th><th>Importance (gain)</th></tr></thead><tbody>'+
+    list.map(f=>'<tr><td>'+esc(f.feature)+'</td><td>'+esc(String(f.gain))+'</td></tr>').join('')+
+    '</tbody></table>';
+}
+function regimeAucTbl(byRegime){
+  const labels={range:'Range',trend_up:'Trend Up',trend_down:'Trend Down',choppy:'Choppy'};
+  const keys=Object.keys(byRegime||{}).filter(k=>labels[k]);
+  if(!keys.length)return '<div style="color:var(--dim);font-size:.7rem">Non disponible.</div>';
+  return '<table class="mdl-sub-tbl"><thead><tr><th>Régime</th><th>N</th><th>AUC direction</th></tr></thead><tbody>'+
+    keys.map(k=>{
+      const v=byRegime[k]||{};
+      const nCell=v.n!=null?String(v.n):(v.approx_n!=null?'~'+v.approx_n+' (population régime)':'—');
+      return '<tr><td>'+esc(labels[k])+'</td><td>'+esc(nCell)+'</td><td>'+
+        (v.auc!=null?aucBadge(v.auc,'x'):'<span class="mdl-badge">n/a</span>')+'</td></tr>';
+    }).join('')+'</tbody></table>';
+}
+const _REGIME_LBL={range:'Range',trend_up:'Trend Up',trend_down:'Trend Down',choppy:'Choppy'};
+
+// Importance des features PAR RÉGIME (attributions pred_contrib) : une colonne
+// par régime, pour lire d'un coup d'œil si le modèle direction s'appuie sur des
+// signaux différents selon le régime de marché — ou sur les mêmes partout.
+function regimeFeatureCols(byRegime){
+  const keys=Object.keys(byRegime||{}).filter(k=>_REGIME_LBL[k]&&(byRegime[k].top||[]).length);
+  if(!keys.length)return '';
+  return '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:6px">'+
+    keys.map(k=>{
+      const v=byRegime[k];
+      return '<div style="flex:1;min-width:190px">'+
+        '<div style="font-size:.66rem;color:var(--muted);margin-bottom:4px">'+esc(_REGIME_LBL[k])+
+        ' <span style="color:var(--dim)">(n='+(v.n??'—')+')</span></div>'+
+        '<table class="mdl-sub-tbl"><tbody>'+
+        v.top.slice(0,8).map(f=>'<tr><td>'+esc(f.feature)+'</td><td style="text-align:right">'+esc(String(f.contrib))+'</td></tr>').join('')+
+        '</tbody></table></div>';
+    }).join('')+'</div>';
+}
+
+// Similarité des importances entre régimes. Spearman proche de 1 = le modèle
+// hiérarchise les features de la MÊME façon dans les deux régimes (aucune
+// spécialisation) ; overlap = features communes dans le top.
+function regimeSimilarityTbl(sim){
+  const keys=Object.keys(sim||{});
+  if(!keys.length)return '';
+  return '<table class="mdl-sub-tbl"><thead><tr><th>Paire de régimes</th><th>Spearman</th><th>Overlap top</th></tr></thead><tbody>'+
+    keys.map(k=>{
+      const v=sim[k]||{};
+      const [a,b]=k.split('__vs__');
+      const rho=v.spearman;
+      // ≥0.9 = quasi identique (rouge : pas de spécialisation exploitable) ;
+      // <0.7 = hiérarchies nettement distinctes (vert : piste à creuser).
+      const cls=rho==null?'':(rho>=0.9?'mdl-empty':rho>=0.7?'mdl-warn':'mdl-ok');
+      return '<tr><td>'+esc((_REGIME_LBL[a]||a)+' ↔ '+(_REGIME_LBL[b]||b))+'</td>'+
+        '<td>'+(rho==null?'<span class="mdl-badge">n/a</span>':'<span class="mdl-badge '+cls+'">'+rho.toFixed(3)+'</span>')+'</td>'+
+        '<td>'+(v.top_overlap!=null?(v.top_overlap*100).toFixed(0)+'%':'—')+'</td></tr>';
+    }).join('')+'</tbody></table>';
+}
+
+function diagnosticsPanel(tm){
+  if(!tm||!Object.keys(tm).length)return '';
+  const hasFeats=(tm.feature_importance_amp&&tm.feature_importance_amp.length)||(tm.feature_importance_dir&&tm.feature_importance_dir.length);
+  const hasRegime=tm.auc_dir_by_regime&&Object.keys(tm.auc_dir_by_regime).length;
+  const fiReg=tm.feature_importance_dir_by_regime;
+  const hasFiReg=fiReg&&Object.keys(fiReg).some(k=>(fiReg[k].top||[]).length);
+  const hasSim=tm.regime_feature_similarity&&Object.keys(tm.regime_feature_similarity).length;
+  const calTxt=tm.calibrated
+    ? 'Calibré ✓'+(tm.cal_err?' — erreur moyenne : amp='+(tm.cal_err.amp??'—')+' dir='+(tm.cal_err.dir??'—'):'')
+    : 'Non calibré';
+  if(!hasFeats && !hasRegime && !hasFiReg)return '';
+  return '<div class="mdl-sub-hdr">Diagnostics (version active)</div>'+
+    '<div class="mdl-hint" style="margin-bottom:8px">'+esc(calTxt)+
+    (tm.n_features?' · '+tm.n_features+' features':'')+
+    (tm.horizons?' · horizons='+esc(JSON.stringify(tm.horizons)):'')+'</div>'+
+    (hasRegime?'<div style="font-size:.68rem;color:var(--muted);margin-bottom:4px">AUC direction par régime</div>'+regimeAucTbl(tm.auc_dir_by_regime):'')+
+    (hasFeats?'<div class="two-col-feats" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px">'+
+      '<div style="flex:1;min-width:220px"><div style="font-size:.68rem;color:var(--muted);margin-bottom:4px">Top features — amplitude</div>'+featureImportanceTbl(tm.feature_importance_amp)+'</div>'+
+      '<div style="flex:1;min-width:220px"><div style="font-size:.68rem;color:var(--muted);margin-bottom:4px">Top features — direction</div>'+featureImportanceTbl(tm.feature_importance_dir)+'</div>'+
+      '</div>':'')+
+    (hasFiReg?'<div style="font-size:.68rem;color:var(--muted);margin:12px 0 2px">Top features direction PAR RÉGIME '+
+      '<span style="color:var(--dim)">(attributions moyennes |contribution|)</span></div>'+regimeFeatureCols(fiReg):'')+
+    (hasSim?'<div style="font-size:.68rem;color:var(--muted);margin:12px 0 2px">Similarité des importances entre régimes</div>'+
+      regimeSimilarityTbl(tm.regime_feature_similarity)+
+      '<div class="mdl-hint">Spearman ≈ 1 = le modèle classe les features de la même façon dans les deux régimes '+
+      '(pas de spécialisation exploitable). Un écart net serait la piste d\'un routing conditionnel au régime.</div>':'');
+}
+
 async function loadDetail(m){
   const el=document.getElementById('detail-'+cssEscape(rowKey(m)));
   if(!el)return;
   try{
-    const q='symbol='+encodeURIComponent(m.symbol)+'&tf='+encodeURIComponent(m.tf)+'&recipe='+encodeURIComponent(m.recipe);
+    const q='tf='+encodeURIComponent(m.tf)+'&recipe='+encodeURIComponent(m.recipe);
     const [vRes,dRes]=await Promise.all([
       apiFetch('/api/ml/registry/versions?'+q), apiFetch('/api/ml/registry/decisions?'+q+'&limit=20'),
     ]);
@@ -199,39 +286,40 @@ async function loadDetail(m){
     const decisions=(await dRes.json()).decisions||[];
     el.innerHTML=
       '<div class="mdl-sub-hdr">Versions</div>'+
-      '<table class="mdl-sub-tbl"><thead><tr><th>Version</th><th>Entraînée jusqu\'au</th><th>N barres</th><th>AUC</th><th>Décision</th><th>Legacy</th><th>Actions</th></tr></thead><tbody>'+
+      '<table class="mdl-sub-tbl"><thead><tr><th>Version</th><th>Entraînée jusqu\'au</th><th>N barres</th><th>AUC</th><th>Décision</th><th>Actions</th></tr></thead><tbody>'+
       versions.map(v=>{
         const isPinned=m.pinned_version_id===v.version_id;
         return '<tr><td>'+esc(v.version_id)+'</td><td>'+fmtAge(v.train_end)+'</td><td>'+(v.n_bars??'—')+'</td>'+
-          '<td>'+aucBadge(v.auc,v.train_end)+'</td><td>'+decisionBadge(v.gate_decision)+'</td><td>'+(v.legacy?'oui':'—')+'</td>'+
+          '<td>'+aucBadge(v.auc,v.train_end)+'</td><td>'+decisionBadge(v.gate_decision)+'</td>'+
           '<td>'+
-          '<button class="mdl-btn ghost sm mdl-pin-btn" data-symbol="'+esc(m.symbol)+'" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'">'+(isPinned?'📌 retirer':'📌 épingler')+'</button> '+
-          '<button class="mdl-btn ghost sm mdl-promote-btn" data-symbol="'+esc(m.symbol)+'" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'" data-decision="manual">promouvoir</button> '+
-          '<button class="mdl-btn ghost sm danger mdl-promote-btn" data-symbol="'+esc(m.symbol)+'" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'" data-decision="keep">rejeter</button>'+
+          '<button class="mdl-btn ghost sm mdl-pin-btn" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'">'+(isPinned?'📌 retirer':'📌 épingler')+'</button> '+
+          '<button class="mdl-btn ghost sm mdl-promote-btn" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'" data-decision="manual">promouvoir</button> '+
+          '<button class="mdl-btn ghost sm danger mdl-promote-btn" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'" data-decision="keep">rejeter</button>'+
           '</td></tr>';
       }).join('')+'</tbody></table>'+
       '<div class="mdl-sub-hdr">Décisions récentes</div>'+
       (decisions.length?'<table class="mdl-sub-tbl"><thead><tr><th>Date</th><th>Version</th><th>Décision</th><th>Source</th><th>Raison</th></tr></thead><tbody>'+
         decisions.map(d=>'<tr><td>'+fmtAge(d.ts)+'</td><td>'+esc(d.version_id)+'</td>'+decisionBadge(d.decision)+'<td>'+esc(d.source||'—')+'</td><td>'+esc(d.reason||'—')+'</td></tr>').join('')+
-        '</tbody></table>':'<div style="color:var(--dim);font-size:.7rem">Aucune décision journalisée.</div>');
+        '</tbody></table>':'<div style="color:var(--dim);font-size:.7rem">Aucune décision journalisée.</div>')+
+      diagnosticsPanel(m.active&&m.active.train_meta);
   }catch(e){el.innerHTML='<span style="color:#f87171">Erreur : '+esc(e.message)+'</span>';}
 }
 
 document.addEventListener('click', async ev=>{
   const pinBtn=ev.target.closest('.mdl-pin-btn');
   if(pinBtn){
-    const {symbol,tf,recipe,version}=pinBtn.dataset;
+    const {tf,recipe,version}=pinBtn.dataset;
     const isPinned=pinBtn.textContent.includes('retirer');
     pinBtn.disabled=true;
     try{
       const url=isPinned?'/api/ml/registry/unpin':'/api/ml/registry/pin';
-      const body=isPinned?{symbol,tf,recipe}:{symbol,tf,recipe,version_id:version};
+      const body=isPinned?{tf,recipe}:{tf,recipe,version_id:version};
       const r=await apiFetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json().catch(()=>({}));
       if(!r.ok){toast('Erreur : '+(d.detail||r.status),true);return;}
       toast(isPinned?'Pin retiré':'Version épinglée');
       await loadRegistry();
-      const key=symbol+'|'+tf+'|'+recipe;
+      const key=tf+'|'+recipe;
       if(_expanded.has(key)){
         const m=_registryCache.find(x=>rowKey(x)===key);
         if(m)await loadDetail(m);
@@ -242,17 +330,17 @@ document.addEventListener('click', async ev=>{
   }
   const promBtn=ev.target.closest('.mdl-promote-btn');
   if(promBtn){
-    const {symbol,tf,recipe,version,decision}=promBtn.dataset;
-    if(!confirm((decision==='manual'?'Promouvoir':'Rejeter')+' la version '+version+' pour '+symbol+'/'+tf+'/'+recipe+' ?'))return;
+    const {tf,recipe,version,decision}=promBtn.dataset;
+    if(!confirm((decision==='manual'?'Promouvoir':'Rejeter')+' la version '+version+' pour '+tf+'/'+recipe+' ?'))return;
     promBtn.disabled=true;
     try{
       const r=await apiFetch('/api/ml/registry/promote',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({symbol,tf,recipe,version_id:version,decision,reason:'Action manuelle depuis la page Modèles'})});
+        body:JSON.stringify({tf,recipe,version_id:version,decision,reason:'Action manuelle depuis la page Modèles'})});
       const d=await r.json().catch(()=>({}));
       if(!r.ok){toast('Erreur : '+(d.detail||r.status),true);return;}
       toast('Décision mise à jour');
       await loadRegistry();
-      const key=symbol+'|'+tf+'|'+recipe;
+      const key=tf+'|'+recipe;
       if(_expanded.has(key)){
         const m=_registryCache.find(x=>rowKey(x)===key);
         if(m)await loadDetail(m);

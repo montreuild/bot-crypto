@@ -1,0 +1,39 @@
+recipe: stat48_v4
+version: 1
+description: >
+  Scoring statistique Opus — 48 features construites en ndarray, pas le
+  catalogue V4 de 462 colonnes. Collision de NOM avec _build_features du
+  backend, pas duplication : signature et sortie différentes. Ne jamais
+  fusionner avec le catalogue V4 — ce sont deux modèles, pas deux versions.
+
+features:
+  catalog: stat48@1
+  params:
+    adx_threshold: 20.0           # ARGUMENT du builder de features : le
+                                  # balayer produit d'autres features, donc
+                                  # une autre recette. C'est la fracture (d).
+
+labels:
+  horizons: [1]
+  amp_top_pct: 0.30
+
+heads: [amp, dir]
+
+hp:
+  n_estimators: 500
+  num_leaves: 31
+  learning_rate: 0.03
+
+window:
+  bars:
+    default: max
+  min_bars: 2000
+  cadence_bars: 800
+
+gate:
+  metric: auc_amp
+  holdout_bars: 1500
+  auc_floor: 0.55
+  epsilon: 0.01
+
+persistence: lgbm_scaler

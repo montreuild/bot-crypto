@@ -38,23 +38,21 @@ class MLStrategyTrainer:
         self._retrain_at: Dict[str, float] = {}
 
     # ── Démarrage ─────────────────────────────────────────────────────────
-    def load_models(self, strategies: dict, timeframes, scanner=None) -> None:
+    def load_models(self, strategies: dict, timeframes) -> None:
         """Charge la dernière version PROMUE du registre pour chaque (stratégie,
         TF) et active ``managed_externally``.
 
-        ``scanner`` : nécessaire pour dériver le symbole d'entraînement (même
-        sélection que ``_retrain_thread`` — préfère BTC). ``None`` (tests, ou
-        appelant qui ne connaît pas encore de scanner) : résolution tentée
-        sans dimension symbole (``symbol=None``) — ne trouvera un modèle que
-        s'il a été publié sans symbole (legacy) ; sinon comportement identique
-        à « pas de modèle » (réentraînement immédiat planifié), sans lever.
+        Aucun scanner requis : la clé du registre est ``(TF, recette)``. Ce
+        paramètre existait pour dériver un symbole de résolution ; sans lui,
+        un appelant qui ne connaissait pas encore de scanner résolvait
+        ``symbol=None`` et ne trouvait jamais rien — un « pas de modèle »
+        silencieux qui déclenchait un réentraînement inutile.
         """
         import app.ml.model_registry as ml_registry
         from app.engine.engine import BaseStrategyML
         if isinstance(timeframes, str):
             timeframes = [timeframes]
 
-        symbol = self._resolve_symbol(scanner)
         strat_params = self.cfg.get("strategy_params", {})
         for name, strat in strategies.items():
             if not isinstance(strat, BaseStrategyML):
@@ -68,7 +66,9 @@ class MLStrategyTrainer:
                 key = f"{name}@{tf}"
                 art = None
                 try:
-                    art = ml_registry.resolve(symbol, tf, name, base_dir=base_dir)
+                    from app.ml.scoring import resolve_recipe_name
+                    art = ml_registry.resolve(tf, resolve_recipe_name(strat),
+                                              base_dir=base_dir)
                 except Exception as e:
                     logger.warning(f"[MLTrainer] {name}/{tf} : resolve() KO : {e}")
 
@@ -205,7 +205,7 @@ class MLStrategyTrainer:
             # ML partiellement muté.
             with self._ml_lock:
                 result = ml_policy.maybe_refresh(
-                    strat, symbol, tf, df, params=sp, recipe=name,
+                    strat, symbol, tf, df, params=sp,   # recipe dérivé de la liaison
                     gate_cfg=gate_cfg, source="live", base_dir=base_dir,
                 )
             self._log_gate_result(name, tf, result)
@@ -231,9 +231,19 @@ class MLStrategyTrainer:
     # ── Helpers ────────────────────────────────────────────────────────────
     @staticmethod
     def _resolve_symbol(scanner) -> Optional[str]:
-        """Symbole d'entraînement — préfère BTC (même sélection historique
-        que l'ancien ``_retrain_thread``, cf. commentaire d'origine).
-        ``None`` si aucun scanner ou aucun symbole disponible."""
+        """Symbole dont on prend les bougies pour ENTRAÎNER — préfère BTC.
+
+        Ce n'est pas le symbole « du modèle » : l'artefact produit sert ensuite
+        tous les symboles du scanner (``signal_pipeline.collect`` boucle sur
+        ``get_symbols()`` avec la même instance de stratégie), et le registre
+        ne range pas par symbole. Préférer BTC est un choix de **jeu
+        d'entraînement**, mesuré : sur 18 cellules de la matrice de transfert
+        (``scripts/measure_symbol_transfer.py``), aucune ne montre qu'un
+        symbole gagnerait à son propre modèle, et BTC est celui dont
+        l'historique est le plus profond et le plus dense.
+
+        ``None`` si aucun scanner ou aucun symbole disponible.
+        """
         if scanner is None:
             return None
         try:
@@ -247,8 +257,8 @@ class MLStrategyTrainer:
     def _freshness_warning(art, interval_h: float, stale_factor: float = _STALE_FACTOR) -> Optional[str]:
         """Message si le modèle chargé est trop vieux par rapport à
         l'intervalle de réentraînement configuré — ``None`` si frais ou si la
-        fraîcheur n'est pas mesurable (artefact legacy sans date)."""
-        if art.legacy or not art.train_end:
+        fraîcheur n'est pas mesurable (artefact sans date d'entraînement)."""
+        if not art.train_end:
             return f"modèle sans provenance datée (version={art.version_id}) — fraîcheur non mesurable"
         try:
             train_end_dt = datetime.strptime(art.train_end, "%Y-%m-%dT%H:%M:%S")

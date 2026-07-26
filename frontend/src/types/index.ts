@@ -355,9 +355,49 @@ export interface MLStrategyInfo {
 
 // ── ML Model Registry (ML-02) ───────────────────────────────────────────────
 
+export interface ModelFeatureImportance {
+  feature: string;
+  gain: number;
+}
+
+export interface ModelRegimeAuc {
+  n: number | null;
+  auc: number | null;
+  approx_n?: number;
+}
+
+export interface ModelRegimeFeatureImportance {
+  n: number;
+  top: { feature: string; contrib: number }[];
+}
+
+export interface ModelRegimeSimilarity {
+  /** Spearman sur le vecteur complet d'importances : ≈1 = mêmes priorités. */
+  spearman?: number | null;
+  /** Part de features communes dans le top-N (0..1). */
+  top_overlap: number;
+}
+
+export interface ModelTrainMeta {
+  n_features?: number;
+  n_train?: number;
+  n_valid?: number;
+  horizons?: number[];
+  calibrated?: boolean;
+  cal_err?: { amp?: number; dir?: number };
+  auc_dir_by_regime?: Record<string, ModelRegimeAuc>;
+  feature_importance_amp?: ModelFeatureImportance[];
+  feature_importance_dir?: ModelFeatureImportance[];
+  feature_importance_dir_by_regime?: Record<string, ModelRegimeFeatureImportance>;
+  regime_feature_similarity?: Record<string, ModelRegimeSimilarity>;
+  [key: string]: unknown;
+}
+
 export interface ModelArtifact {
   path_prefix: string;
-  symbol: string | null;
+  /** Symbole d'ENTRAÎNEMENT (provenance) — le registre ne range pas par
+   *  symbole, l'artefact sert tous les symboles tradés. */
+  train_symbol: string | null;
   tf: string;
   recipe: string;
   version_id: string;
@@ -370,13 +410,14 @@ export interface ModelArtifact {
   source: string | null;
   created_at: string | null;
   gate_decision: string | null;
-  legacy: boolean;
+  train_meta?: ModelTrainMeta;
 }
 
 export interface ModelRegistryEntry {
-  symbol: string;
   tf: string;
   recipe: string;
+  /** Provenance de la version active — affichage seul, pas une clé. */
+  train_symbol: string | null;
   n_versions: number;
   active: ModelArtifact | null;
   pinned_version_id: string | null;

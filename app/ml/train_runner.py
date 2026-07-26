@@ -106,8 +106,9 @@ def train_and_publish(strategy_name: str, symbol: str, tf: str, *,
     import app.ml.policy as policy
     mod = importlib.import_module(f"app.strategies.{strategy_name}")
     strat = mod.Strategy()
-    gc_ = gate_cfg or policy.GateConfig.from_params(p)
-    return policy.maybe_refresh(strat, symbol, tf, df, params=p, recipe=strategy_name,
+    gc_ = gate_cfg or policy.GateConfig.from_params(
+        {**policy.resolve_gate_spec(strategy_name), **p})
+    return policy.maybe_refresh(strat, symbol, tf, df, params=p,
                                 gate_cfg=gc_, source=source, base_dir=base_dir)
 
 
@@ -136,9 +137,8 @@ def _train_candidate_and_score(strategy_name: str, tf: str, train_df: pl.DataFra
     try:
         tmp_prefix = os.path.join(tmp_dir, f"{strategy_name}_{tf}")
         strat.save_model(tmp_prefix)
-        metrics = policy.score_holdout(tmp_prefix, holdout_df,
-                                       label_horizons=gate_cfg.label_horizons,
-                                       amp_top_pct=gate_cfg.amp_top_pct)
+        metrics = policy.score_holdout(tmp_prefix, holdout_df, strategy=strat,
+                                       gate_cfg=gate_cfg, params=params)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     return strat, metrics
@@ -149,7 +149,10 @@ def _dry_run(strategy_name: str, symbol: str, tf: str, df: pl.DataFrame,
     import app.ml.model_registry as registry
     import app.ml.policy as policy
 
-    gc_ = gate_cfg or policy.GateConfig.from_params(params)
+    gc_ = gate_cfg or policy.GateConfig.from_params(
+        {**policy.resolve_gate_spec(strategy_name), **params})
+    # La clé du registre est la RECETTE, pas le nom de stratégie (fracture b).
+    recipe_name = policy.resolve_recipe_name(strategy_name, params)
     n = len(df)
     if n < gc_.holdout_bars + gc_.min_window_bars:
         return {"decision": "skipped", "reason": "insufficient_data", "n_bars": n,
@@ -163,12 +166,12 @@ def _dry_run(strategy_name: str, symbol: str, tf: str, df: pl.DataFrame,
     if strat is None:
         return {"decision": "failed", "reason": candidate_metrics.get("skipped"), "n_bars": n}
 
-    incumbent = registry.latest_promoted(symbol, tf, strategy_name, base_dir=base_dir)
+    incumbent = registry.latest_promoted(tf, recipe_name, base_dir=base_dir)
     incumbent_metrics = None
     if incumbent is not None:
         incumbent_metrics = policy.score_holdout(incumbent.path_prefix, holdout_df,
-                                                 label_horizons=gc_.label_horizons,
-                                                 amp_top_pct=gc_.amp_top_pct)
+                                                 strategy=strategy_name,
+                                                 gate_cfg=gc_, params=params)
     gate = policy.decide_gate(candidate_metrics, incumbent_metrics,
                               auc_floor=gc_.auc_floor, epsilon=gc_.epsilon, metric=gc_.metric)
     return {
@@ -204,7 +207,9 @@ def window_sweep(strategy_name: str, symbol: str, tf: str, windows: List[int], *
         return {"error": f"aucune donnée en cache pour {symbol}/{tf}"}
 
     p = dict(params or {})
-    gc_ = gate_cfg or policy.GateConfig.from_params(p)
+    gc_ = gate_cfg or policy.GateConfig.from_params(
+        {**policy.resolve_gate_spec(strategy_name), **p})
+    recipe_name = policy.resolve_recipe_name(strategy_name, p)
     n = len(df)
     smallest = min(windows) if windows else 0
     if n < gc_.holdout_bars + smallest:
@@ -246,12 +251,12 @@ def window_sweep(strategy_name: str, symbol: str, tf: str, windows: List[int], *
         return result
 
     best_strat = trained[best_w]
-    incumbent = registry.latest_promoted(symbol, tf, strategy_name, base_dir=base_dir)
+    incumbent = registry.latest_promoted(tf, recipe_name, base_dir=base_dir)
     incumbent_metrics = None
     if incumbent is not None:
         incumbent_metrics = policy.score_holdout(incumbent.path_prefix, holdout_df,
-                                                 label_horizons=gc_.label_horizons,
-                                                 amp_top_pct=gc_.amp_top_pct)
+                                                 strategy=strategy_name,
+                                                 gate_cfg=gc_, params=p)
     candidate_metrics = {k: v for k, v in best.items() if k not in ("window_bars", "n_train")}
     gate = policy.decide_gate(candidate_metrics, incumbent_metrics,
                               auc_floor=gc_.auc_floor, epsilon=gc_.epsilon, metric=gc_.metric)
@@ -262,7 +267,7 @@ def window_sweep(strategy_name: str, symbol: str, tf: str, windows: List[int], *
         best_strat.save_model(tmp_prefix)
         bounds = registry.train_window_bounds(pre_holdout.tail(best_w))
         published = registry.publish(
-            symbol, tf, strategy_name, tmp_prefix,
+            tf, recipe_name, tmp_prefix, train_symbol=symbol,
             train_start=bounds["train_start"], train_end=bounds["train_end"],
             n_bars=bounds["n_bars"], recipe_cfg={**p, "window_bars": best_w},
             source=source, decision=gate.decision,

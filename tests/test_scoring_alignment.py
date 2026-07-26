@@ -12,7 +12,10 @@ import numpy as np
 import polars as pl
 import pytest
 
-pytest.importorskip("sklearn")
+# Un ``importorskip("sklearn")`` traînait ici : le dépôt n'a plus sklearn depuis
+# phase6-sklearn-removal, donc ce test SKIPPAIT silencieusement — il ne
+# vérifiait plus la régression qu'il documente. Ne jamais faire dépendre un skip
+# d'un paquet volontairement absent.
 pytest.importorskip("lightgbm")
 
 
