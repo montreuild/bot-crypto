@@ -80,3 +80,47 @@ def test_save_model_without_training_warns_instead_of_silent_noop(tmp_path, capl
 
     assert not os.path.exists(f"{prefix}.amp.lgb")
     assert "aucun modèle entraîné à persister" in caplog.text
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  resolve_train_meta — même repli de clé que save_model, et pour la même raison
+# ─────────────────────────────────────────────────────────────────────────────
+class _FakeStrat:
+    def __init__(self, meta):
+        self._train_meta = meta
+
+
+def test_resolve_train_meta_prefers_the_requested_tf():
+    from app.ml.scoring import resolve_train_meta
+    s = _FakeStrat({"1h": {"auc_amp": 0.6}, "default": {"auc_amp": 0.1}})
+    assert resolve_train_meta(s, "1h") == {"auc_amp": 0.6}
+
+
+def test_resolve_train_meta_falls_back_to_default_key():
+    """``fit()`` (chemin registre/gate) indexe sous "default" faute de TF :
+    lire la seule clé ``tf`` ne rendrait rien, et un panneau vide se lit comme
+    « ce modèle n'a pas de diagnostics » alors qu'il en a."""
+    from app.ml.scoring import resolve_train_meta
+    assert resolve_train_meta(_FakeStrat({"default": {"auc_amp": 0.6}}), "1h") == {"auc_amp": 0.6}
+
+
+def test_resolve_train_meta_falls_back_to_the_sole_entry():
+    from app.ml.scoring import resolve_train_meta
+    assert resolve_train_meta(_FakeStrat({"BTC/USDC": {"auc_amp": 0.6}}), "1h") == {"auc_amp": 0.6}
+
+
+def test_resolve_train_meta_is_ambiguous_with_several_unrelated_keys():
+    """Plusieurs entrées, aucune ne correspondant : deviner afficherait les
+    diagnostics d'un AUTRE modèle sous le nom de celui-ci."""
+    from app.ml.scoring import resolve_train_meta
+    s = _FakeStrat({"BTC/USDC": {"auc_amp": 0.6}, "ETH/USDC": {"auc_amp": 0.2}})
+    assert resolve_train_meta(s, "1h") == {}
+
+
+def test_resolve_train_meta_tolerates_strategies_without_instrumentation():
+    """Toutes les recettes n'instrumentent pas leur entraînement (ml_dynamic_
+    threshold n'expose aucun train_meta) — best-effort, jamais d'exception."""
+    from app.ml.scoring import resolve_train_meta
+    assert resolve_train_meta(object(), "1h") == {}
+    assert resolve_train_meta(_FakeStrat({}), "1h") == {}
+    assert resolve_train_meta(_FakeStrat(None), "1h") == {}

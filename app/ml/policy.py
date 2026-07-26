@@ -37,6 +37,7 @@ from app.ml.scoring import (
     resolve_gate_spec,
     resolve_recipe_name,
     resolve_scorer,
+    resolve_train_meta,
     score_amp_dir_bundle,
 )
 
@@ -285,6 +286,11 @@ def maybe_refresh(strategy: Any, train_symbol: str, tf: str, df, *,
         )
         gate = decide_gate(candidate_metrics, incumbent_metrics,
                            auc_floor=gc_.auc_floor, epsilon=gc_.epsilon, metric=gc_.metric)
+        # Capturé ICI, avant le reset_model() de la branche "keep" plus bas :
+        # ce sont les diagnostics du CANDIDAT, et c'est justement quand il est
+        # rejeté qu'on veut voir pourquoi. Après restauration du sortant, ils
+        # ne seraient plus les siens.
+        candidate_train_meta = resolve_train_meta(strategy, tf)
 
         bounds = registry.train_window_bounds(train_df)
         recipe_cfg = {k: params.get(k) for k in _RECIPE_PARAM_KEYS if k in params}
@@ -324,6 +330,7 @@ def maybe_refresh(strategy: Any, train_symbol: str, tf: str, df, *,
         "published_version": published.version_id if published else None,
         "incumbent_version": incumbent.version_id if incumbent else None,
         "recipe": recipe, "train_symbol": train_symbol, "tf": tf,
+        "train_meta": candidate_train_meta,
     }
 
 

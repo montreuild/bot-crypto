@@ -229,6 +229,11 @@ def test_train_job_runs_and_completes_dry_run(client, tmp_path, monkeypatch):
         assert job is not None
         assert job["status"] == "done", job
         assert job["result"]["decision"].startswith("dry_run_would_")
+        # Les diagnostics traversent bien le job asynchrone jusqu'à l'UI :
+        # c'est tout ce que la page « Modèles » a pour afficher les top
+        # features d'un dry-run, qui n'écrit aucune version au registre.
+        tm = job["result"].get("train_meta") or {}
+        assert tm.get("feature_importance_amp"), job["result"]
     finally:
         candle_store_mod.get_store.set(None)
 

@@ -175,3 +175,48 @@ def test_load_offline_ohlcv_precomputes_shared_indicator_columns(seeded_store):
     assert got is not None
     assert "_pre_atr14" in got.columns
     assert len(got) == 300, "le pré-calcul ne doit ni tronquer ni réordonner"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Diagnostics d'entraînement remontés dans le résultat de job
+# ─────────────────────────────────────────────────────────────────────────────
+def test_dry_run_carries_train_meta(seeded_store, tmp_path):
+    """Un dry-run n'écrit RIEN au registre : sans ce champ, les diagnostics de
+    l'expérience (top features, calibration, AUC par régime) mourraient avec
+    l'instance — alors que c'est justement le mode fait pour expérimenter."""
+    _seed(seeded_store, "BTC/USDC", "1h", _make_ohlcv(4200, seed=11))
+    res = train_and_publish(
+        "opus_omnibus_v11", "BTC/USDC", "1h", publish=False,
+        base_dir=str(tmp_path / "models"),
+        params={"gate_holdout_bars": 900, "gate_min_window_bars": 1200,
+                "gate_auc_floor": 0.0, "n_estimators": 20, "num_leaves": 7},
+    )
+    assert res["decision"].startswith("dry_run_would_"), res
+    tm = res.get("train_meta") or {}
+    assert tm.get("feature_importance_amp"), "top features amplitude attendues"
+    assert tm.get("feature_importance_dir"), "top features direction attendues"
+    assert "calibrated" in tm
+    # Le format attendu par la page Modèles : {feature, gain}, pas un nom seul.
+    assert set(tm["feature_importance_amp"][0]) == {"feature", "gain"}
+
+
+def test_publish_carries_candidate_train_meta_even_when_rejected(seeded_store, tmp_path):
+    """Les diagnostics doivent être ceux du CANDIDAT, capturés AVANT le
+    ``reset_model()`` de la branche « keep » — c'est précisément quand il est
+    rejeté qu'on veut voir pourquoi.
+
+    Le plancher à 0.99 force le rejet : c'est le seul moyen d'exercer
+    réellement cette branche (deux passes successives promeuvent). Le test est
+    porteur — ``reset_model()`` vide bel et bien ``_train_meta``, donc une
+    capture faite après le gate rendrait ``{}``.
+    """
+    _seed(seeded_store, "BTC/USDC", "1h", _make_ohlcv(4200, seed=12))
+    res = train_and_publish(
+        "opus_omnibus_v11", "BTC/USDC", "1h", publish=True,
+        base_dir=str(tmp_path / "models"),
+        params={"gate_holdout_bars": 900, "gate_min_window_bars": 1200,
+                "gate_auc_floor": 0.99, "n_estimators": 20, "num_leaves": 7},
+    )
+    assert res["decision"] == "keep", res["reason"]
+    assert (res.get("train_meta") or {}).get("feature_importance_amp"), (
+        "diagnostics du candidat rejeté perdus — capturés après reset_model() ?")

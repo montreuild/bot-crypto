@@ -6,6 +6,40 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔬 Page « Modèles » — les diagnostics d'entraînement deviennent visibles là où on expérimente
+
+Le panneau de diagnostics (top features + gain pour amplitude et direction,
+état et erreur de calibration, AUC direction par régime, importances par
+régime, similarité de Spearman entre régimes) existait déjà dans les deux UI
+et était produit par `app/ml/backend/trainer.py`. Il n'était simplement
+atteignable dans aucun des deux moments où l'on en a besoin.
+
+- **Après un entraînement** — la carte de job n'affichait que décision /
+  raison / AUC. En **dry-run** c'est particulièrement coûteux : ce mode
+  n'écrit rien au registre, il n'existe donc aucune version où aller lire les
+  diagnostics ensuite, alors que c'est le mode fait pour expérimenter. Les
+  résultats de `train_and_publish`, `maybe_refresh` et `window_sweep` (sur la
+  meilleure fenêtre) portent désormais `train_meta`, affiché par les deux UI.
+- **Sur un candidat rejeté** — le panneau ne lisait que la version ACTIVE
+  (`m.active.train_meta`), masquant exactement le cas où l'on enquête : un
+  candidat publié en `keep` qu'on hésite à promouvoir. Chaque ligne de
+  l'historique de versions gagne un bouton « diagnostics » ;
+  `/api/ml/registry/versions` renvoyait déjà `train_meta` par version, aucun
+  changement d'API n'était nécessaire.
+- **`app/ml/policy.py`** — les diagnostics du candidat sont capturés **avant**
+  le `reset_model()` de la branche « keep ». Ce reset vide `_train_meta` : une
+  lecture plus tardive aurait rendu `{}` précisément sur les rejets.
+- **Nouveau — `app.ml.scoring.resolve_train_meta`** : lit `_train_meta` avec
+  le même repli de clé que `save_model` et pour la même raison (`fit()` indexe
+  sous `"default"`, `score()` sous le symbole). Ambigu ⇒ `{}` : afficher les
+  diagnostics d'un autre modèle sous ce nom serait pire que de n'en afficher
+  aucun.
+
+Limite inchangée : seules les recettes entraînées par `MLBackend` (les quatre
+stratégies à mixin) instrumentent leur entraînement. `stat48_v4/v5` n'écrivent
+que `n_train/n_valid/auc_*`, `dyn_threshold_v1` rien — leur panneau reste
+vide tant que l'entraînement n'est pas unifié.
+
 ### 🐛 Cycle d'entraînement ML — un entraînement lancé depuis l'UI produit enfin un artefact
 
 Cinq défauts indépendants se combinaient pour qu'aucun entraînement lancé

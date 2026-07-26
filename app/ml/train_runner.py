@@ -203,6 +203,11 @@ def _dry_run(strategy_name: str, symbol: str, tf: str, df: pl.DataFrame,
         "candidate": candidate_metrics, "incumbent": incumbent_metrics,
         "incumbent_version": incumbent.version_id if incumbent else None,
         "n_bars": n, "n_train": len(train_df),
+        # Diagnostics du candidat (top features, calibration, AUC par régime).
+        # Un dry-run n'écrit RIEN au registre : sans ce champ, les seuls
+        # diagnostics de l'expérience mourraient avec l'instance — alors que
+        # c'est le mode fait pour expérimenter.
+        "train_meta": policy.resolve_train_meta(strat, tf),
         "note": "dry-run : rien n'a été écrit au registre — relancez avec "
                 "publish=True (--publish en CLI) pour publier réellement.",
     }
@@ -269,6 +274,11 @@ def window_sweep(strategy_name: str, symbol: str, tf: str, windows: List[int], *
     best_w = best["window_bars"]
     result["best_window_bars"] = best_w
     result["best_metrics"] = {k: v for k, v in best.items() if k not in ("window_bars", "n_train")}
+    # Diagnostics de la MEILLEURE fenêtre seulement : comparer des top-features
+    # entre fenêtres est l'usage même du sweep, mais n'en renvoyer qu'un garde
+    # la réponse bornée — les autres instances restent dans ``trained``.
+    if best_w in trained:
+        result["train_meta"] = policy.resolve_train_meta(trained[best_w], tf)
 
     if not publish_best:
         result["note"] = "comparaison seule (publish_best=False) — rien n'a été écrit au registre."

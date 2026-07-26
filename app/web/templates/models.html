@@ -246,7 +246,7 @@ function regimeSimilarityTbl(sim){
     }).join('')+'</tbody></table>';
 }
 
-function diagnosticsPanel(tm){
+function diagnosticsPanel(tm,title){
   if(!tm||!Object.keys(tm).length)return '';
   const hasFeats=(tm.feature_importance_amp&&tm.feature_importance_amp.length)||(tm.feature_importance_dir&&tm.feature_importance_dir.length);
   const hasRegime=tm.auc_dir_by_regime&&Object.keys(tm.auc_dir_by_regime).length;
@@ -257,7 +257,7 @@ function diagnosticsPanel(tm){
     ? 'Calibré ✓'+(tm.cal_err?' — erreur moyenne : amp='+(tm.cal_err.amp??'—')+' dir='+(tm.cal_err.dir??'—'):'')
     : 'Non calibré';
   if(!hasFeats && !hasRegime && !hasFiReg)return '';
-  return '<div class="mdl-sub-hdr">Diagnostics (version active)</div>'+
+  return '<div class="mdl-sub-hdr">'+esc(title||'Diagnostics (version active)')+'</div>'+
     '<div class="mdl-hint" style="margin-bottom:8px">'+esc(calTxt)+
     (tm.n_features?' · '+tm.n_features+' features':'')+
     (tm.horizons?' · horizons='+esc(JSON.stringify(tm.horizons)):'')+'</div>'+
@@ -289,13 +289,22 @@ async function loadDetail(m){
       '<table class="mdl-sub-tbl"><thead><tr><th>Version</th><th>Entraînée jusqu\'au</th><th>N barres</th><th>AUC</th><th>Décision</th><th>Actions</th></tr></thead><tbody>'+
       versions.map(v=>{
         const isPinned=m.pinned_version_id===v.version_id;
+        // Diagnostics PAR VERSION : /api/ml/registry/versions renvoie déjà
+        // train_meta pour chacune. N'afficher que ceux de la version active
+        // masquait précisément le cas où on en a besoin — un candidat rejeté
+        // par le gate, qu'on cherche à comprendre avant de le promouvoir.
+        const hasDiag=v.train_meta&&Object.keys(v.train_meta).length;
+        const vid=cssEscape(rowKey(m)+'|'+v.version_id);
         return '<tr><td>'+esc(v.version_id)+'</td><td>'+fmtAge(v.train_end)+'</td><td>'+(v.n_bars??'—')+'</td>'+
           '<td>'+aucBadge(v.auc,v.train_end)+'</td><td>'+decisionBadge(v.gate_decision)+'</td>'+
           '<td>'+
           '<button class="mdl-btn ghost sm mdl-pin-btn" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'">'+(isPinned?'📌 retirer':'📌 épingler')+'</button> '+
           '<button class="mdl-btn ghost sm mdl-promote-btn" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'" data-decision="manual">promouvoir</button> '+
           '<button class="mdl-btn ghost sm danger mdl-promote-btn" data-tf="'+esc(m.tf)+'" data-recipe="'+esc(m.recipe)+'" data-version="'+esc(v.version_id)+'" data-decision="keep">rejeter</button>'+
-          '</td></tr>';
+          (hasDiag?' <button class="mdl-btn ghost sm mdl-diag-btn" data-target="vdiag-'+vid+'">🔬 diagnostics</button>':'')+
+          '</td></tr>'+
+          (hasDiag?'<tr id="vdiag-'+vid+'" style="display:none"><td colspan="6">'+
+            diagnosticsPanel(v.train_meta,'Diagnostics — '+v.version_id)+'</td></tr>':'');
       }).join('')+'</tbody></table>'+
       '<div class="mdl-sub-hdr">Décisions récentes</div>'+
       (decisions.length?'<table class="mdl-sub-tbl"><thead><tr><th>Date</th><th>Version</th><th>Décision</th><th>Source</th><th>Raison</th></tr></thead><tbody>'+
@@ -306,6 +315,12 @@ async function loadDetail(m){
 }
 
 document.addEventListener('click', async ev=>{
+  const diagBtn=ev.target.closest('.mdl-diag-btn');
+  if(diagBtn){
+    const row=document.getElementById(diagBtn.dataset.target);
+    if(row)row.style.display=row.style.display==='none'?'':'none';
+    return;
+  }
   const pinBtn=ev.target.closest('.mdl-pin-btn');
   if(pinBtn){
     const {tf,recipe,version}=pinBtn.dataset;
@@ -370,18 +385,23 @@ async function pollJob(kind,jobId,container){
     }
     if(d.status==='error'){container.innerHTML=jobCardHtml('error','Échec : '+esc(d.error));return;}
     const res=d.result||{};
+    // Diagnostics du candidat qui vient d'être entraîné. Indispensable en
+    // dry-run : ce mode n'écrit rien au registre, il n'y a donc aucune
+    // version où aller les lire ensuite — et c'est le mode fait pour
+    // expérimenter.
+    const diag=diagnosticsPanel(res.train_meta,'Diagnostics du candidat entraîné');
     if(res.decision){
       container.innerHTML=jobCardHtml('done',
         '<b>'+esc(res.decision)+'</b> — '+esc(res.reason||'')+
         (res.candidate?'<br>Candidat : AUC amp='+((res.candidate.auc_amp??0)).toFixed?.(3)??'—':'')+
-        (res.published_version?'<br>Version publiée : '+esc(res.published_version):''));
+        (res.published_version?'<br>Version publiée : '+esc(res.published_version):''))+diag;
     } else if(res.candidates){
       const rows=res.candidates.map(c=>c.window_bars+' barres : '+(c.auc_amp!=null?c.auc_amp.toFixed(3):(c.skipped||'—'))).join('<br>');
       container.innerHTML=jobCardHtml('done',
         rows+(res.best_window_bars?'<br><b>Meilleure fenêtre : '+res.best_window_bars+'</b>':'')+
-        (res.published_version?'<br>Version publiée : '+esc(res.published_version):(res.note?'<br>'+esc(res.note):'')));
+        (res.published_version?'<br>Version publiée : '+esc(res.published_version):(res.note?'<br>'+esc(res.note):'')))+diag;
     } else {
-      container.innerHTML=jobCardHtml('done','Terminé.');
+      container.innerHTML=jobCardHtml('done','Terminé.')+diag;
     }
     await loadRegistry();
     return;

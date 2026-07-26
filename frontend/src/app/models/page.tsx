@@ -15,7 +15,7 @@ import {
 } from '@/hooks/use-api';
 import {
   Loader2, Database, AlertCircle, Pin, PinOff, ChevronDown, ChevronRight,
-  Rocket, BarChart3, RefreshCw, ThumbsUp, ThumbsDown,
+  Rocket, BarChart3, RefreshCw, ThumbsUp, ThumbsDown, Microscope,
 } from 'lucide-react';
 import type {
   ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
@@ -50,6 +50,12 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
   const promote = usePromoteModel();
   const isPinned = entry.pinned_version_id === version.version_id;
   const busy = pin.isPending || unpin.isPending || promote.isPending;
+  // Diagnostics PAR VERSION : /api/ml/registry/versions renvoie déjà
+  // train_meta pour chacune. N'afficher que ceux de la version active
+  // masquait précisément le cas où on en a besoin — un candidat rejeté par le
+  // gate, qu'on cherche à comprendre avant de le promouvoir.
+  const [showDiag, setShowDiag] = useState(false);
+  const hasDiag = !!version.train_meta && Object.keys(version.train_meta).length > 0;
 
   const handlePinToggle = async () => {
     try {
@@ -84,32 +90,50 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
   };
 
   return (
-    <tr className="border-b border-border/20">
-      <td className="p-2 font-mono">{version.version_id}</td>
-      <td className="p-2 text-muted font-mono">{formatDateTime(version.train_end)}</td>
-      <td className="p-2 text-right font-mono">{version.n_bars ?? '—'}</td>
-      <td className="p-2"><AucBadge auc={version.auc} trainEnd={version.train_end} /></td>
-      <td className="p-2"><DecisionBadge decision={version.gate_decision} /></td>
-      <td className="p-2">
-        <div className="flex flex-wrap gap-1.5">
-          <Button
-            size="sm" variant="outline" onClick={handlePinToggle} disabled={busy}
-            className={isPinned ? 'text-purple-400 border-purple-500/40 bg-purple-500/10' : ''}
-          >
-            {isPinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
-            {isPinned ? 'Retirer' : 'Épingler'}
-          </Button>
-          <Button size="sm" variant="success" onClick={() => handlePromote('manual')} disabled={busy}>
-            <ThumbsUp className="w-3 h-3" />
-            Promouvoir
-          </Button>
-          <Button size="sm" variant="danger" onClick={() => handlePromote('keep')} disabled={busy}>
-            <ThumbsDown className="w-3 h-3" />
-            Rejeter
-          </Button>
-        </div>
-      </td>
-    </tr>
+    <>
+      <tr className="border-b border-border/20">
+        <td className="p-2 font-mono">{version.version_id}</td>
+        <td className="p-2 text-muted font-mono">{formatDateTime(version.train_end)}</td>
+        <td className="p-2 text-right font-mono">{version.n_bars ?? '—'}</td>
+        <td className="p-2"><AucBadge auc={version.auc} trainEnd={version.train_end} /></td>
+        <td className="p-2"><DecisionBadge decision={version.gate_decision} /></td>
+        <td className="p-2">
+          <div className="flex flex-wrap gap-1.5">
+            <Button
+              size="sm" variant="outline" onClick={handlePinToggle} disabled={busy}
+              className={isPinned ? 'text-purple-400 border-purple-500/40 bg-purple-500/10' : ''}
+            >
+              {isPinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
+              {isPinned ? 'Retirer' : 'Épingler'}
+            </Button>
+            <Button size="sm" variant="success" onClick={() => handlePromote('manual')} disabled={busy}>
+              <ThumbsUp className="w-3 h-3" />
+              Promouvoir
+            </Button>
+            <Button size="sm" variant="danger" onClick={() => handlePromote('keep')} disabled={busy}>
+              <ThumbsDown className="w-3 h-3" />
+              Rejeter
+            </Button>
+            {hasDiag && (
+              <Button size="sm" variant="ghost" onClick={() => setShowDiag((v) => !v)}>
+                <Microscope className="w-3 h-3" />
+                Diagnostics
+              </Button>
+            )}
+          </div>
+        </td>
+      </tr>
+      {hasDiag && showDiag && (
+        <tr className="border-b border-border/20">
+          <td colSpan={6} className="p-2">
+            <DiagnosticsPanel
+              trainMeta={version.train_meta}
+              title={`Diagnostics — ${version.version_id}`}
+            />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -280,7 +304,7 @@ function RegimeSimilarityTable({ sim }: { sim?: Record<string, ModelRegimeSimila
   );
 }
 
-function DiagnosticsPanel({ trainMeta }: { trainMeta?: ModelTrainMeta }) {
+function DiagnosticsPanel({ trainMeta, title }: { trainMeta?: ModelTrainMeta; title?: string }) {
   if (!trainMeta || Object.keys(trainMeta).length === 0) return null;
   const hasFeats = (trainMeta.feature_importance_amp?.length || trainMeta.feature_importance_dir?.length);
   const hasRegime = trainMeta.auc_dir_by_regime && Object.keys(trainMeta.auc_dir_by_regime).length > 0;
@@ -293,7 +317,7 @@ function DiagnosticsPanel({ trainMeta }: { trainMeta?: ModelTrainMeta }) {
   return (
     <div className="mt-4">
       <div className="text-[10px] uppercase tracking-wider text-dim font-semibold mb-2">
-        Diagnostics (version active)
+        {title ?? 'Diagnostics (version active)'}
       </div>
       <div className="text-xs text-muted mb-3">
         {trainMeta.calibrated
@@ -524,6 +548,14 @@ function JobResult({ job }: { job: MLJobStatus }) {
             </>
           )}
           {!res.decision && !res.candidates && <div>Terminé.</div>}
+          {/* Diagnostics du candidat qui vient d'être entraîné. Indispensable
+              en dry-run : ce mode n'écrit rien au registre, il n'y a donc
+              aucune version où aller les lire ensuite — et c'est le mode fait
+              pour expérimenter. */}
+          <DiagnosticsPanel
+            trainMeta={res.train_meta as ModelTrainMeta | undefined}
+            title="Diagnostics du candidat entraîné"
+          />
         </div>
       )}
     </div>
