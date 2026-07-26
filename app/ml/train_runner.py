@@ -317,3 +317,113 @@ def window_sweep(strategy_name: str, symbol: str, tf: str, windows: List[int], *
     result["gate_reason"] = gate.reason
     result["published_version"] = published.version_id if published else None
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Entraînement piloté par la RECETTE (étape C — sans classe Strategy)
+# ─────────────────────────────────────────────────────────────────────────────
+def train_recipe_and_publish(recipe_name: str, symbol: str, tf: str, *,
+                             as_of: Optional[str] = None,
+                             window_bars: Optional[int] = None,
+                             params: Optional[Dict[str, Any]] = None,
+                             publish: bool = False,
+                             base_dir: str = "models",
+                             source: str = "runner_recipe") -> Dict[str, Any]:
+    """Même contrat que ``train_and_publish``, mais la clé d'entrée est la
+    RECETTE — aucune stratégie n'est importée ni instanciée.
+
+    C'est ce qui permet à la page « Modèles », indexée par recette, de cesser
+    de demander une stratégie : le formulaire parlait un vocabulaire que le
+    tableau juste au-dessus n'utilisait pas.
+
+    Le gate est identique au chemin stratégie (mêmes seuils, même
+    ``decide_gate``, même registre) : seule change la façon dont le candidat
+    est produit.
+    """
+    import app.ml.model_registry as registry
+    import app.ml.policy as policy
+    from app.ml import recipe_trainer
+    from app.ml.recipe import load_recipe
+
+    why = recipe_trainer.supports(recipe_name)
+    if why:
+        return {"decision": "failed", "reason": why, "recipe": recipe_name, "tf": tf}
+
+    df = load_offline_ohlcv(symbol, tf, as_of=as_of, window_bars=window_bars)
+    if df is None:
+        return {"decision": "failed", "recipe": recipe_name, "tf": tf,
+                "reason": f"aucune donnée en cache pour {symbol}/{tf}"}
+
+    r = load_recipe(recipe_name)
+    p = {**r.train_params(), **(params or {})}
+    gc_ = policy.GateConfig.from_params({**r.gate_spec(), **r.gate_params(), **p})
+
+    n = len(df)
+    if n < gc_.holdout_bars + gc_.min_window_bars:
+        return {"decision": "skipped", "reason": "insufficient_data", "n_bars": n,
+                "required_bars": gc_.holdout_bars + gc_.min_window_bars,
+                "recipe": recipe_name, "tf": tf}
+
+    holdout_df = df.tail(gc_.holdout_bars + 210)
+    train_df = df.slice(0, n - gc_.holdout_bars)
+    if gc_.window_bars:
+        train_df = train_df.tail(gc_.window_bars)
+
+    trained = recipe_trainer.train(recipe_name, train_df, tf, params=p)
+    if trained is None:
+        return {"decision": "failed", "recipe": recipe_name, "tf": tf,
+                "reason": "l'entraînement n'a produit aucun modèle exploitable"}
+
+    incumbent = registry.latest_promoted(tf, recipe_name, base_dir=base_dir)
+    incumbent_metrics = None
+    if incumbent is not None:
+        incumbent_metrics = policy.score_holdout(incumbent.path_prefix, holdout_df,
+                                                 strategy=recipe_name, gate_cfg=gc_,
+                                                 params=p)
+
+    tmp_dir = tempfile.mkdtemp(prefix="ml_recipe_")
+    try:
+        # Suffixe "_{tf}" : contrat partagé avec save_model/load_model, qui
+        # déduisent le TF du nom de fichier.
+        tmp_prefix = os.path.join(tmp_dir, f"{recipe_name}_{tf}")
+        if not trained.save(tmp_prefix):
+            return {"decision": "failed", "recipe": recipe_name, "tf": tf,
+                    "reason": "l'écriture de l'artefact a échoué"}
+        candidate_metrics = policy.score_holdout(tmp_prefix, holdout_df,
+                                                 strategy=recipe_name, gate_cfg=gc_,
+                                                 params=p)
+        gate = policy.decide_gate(candidate_metrics, incumbent_metrics,
+                                  auc_floor=gc_.auc_floor, epsilon=gc_.epsilon,
+                                  metric=gc_.metric)
+        out: Dict[str, Any] = {
+            "recipe": recipe_name, "tf": tf, "train_symbol": symbol,
+            "reason": gate.reason, "candidate": candidate_metrics,
+            "incumbent": incumbent_metrics, "n_bars": n, "n_train": len(train_df),
+            "train_meta": trained.train_meta,
+            "incumbent_version": incumbent.version_id if incumbent else None,
+        }
+        if not publish:
+            out["decision"] = f"dry_run_would_{gate.decision}"
+            out["note"] = ("dry-run : rien n'a été écrit au registre — relancez "
+                           "avec publish=True pour publier réellement.")
+            return out
+
+        bounds = registry.train_window_bounds(train_df)
+        published = registry.publish(
+            tf, recipe_name, tmp_prefix, train_symbol=symbol,
+            train_start=bounds["train_start"], train_end=bounds["train_end"],
+            n_bars=bounds["n_bars"],
+            recipe_cfg={**{k: p.get(k) for k in ("n_estimators", "num_leaves",
+                                                 "learning_rate", "amp_top_pct")
+                           if k in p},
+                        "recipe_hash": r.hash()},
+            source=source, decision=gate.decision,
+            decision_metrics={"candidate": candidate_metrics,
+                              "incumbent": incumbent_metrics, "reason": gate.reason},
+            base_dir=base_dir,
+        )
+        out["decision"] = gate.decision
+        out["published_version"] = published.version_id if published else None
+        return out
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

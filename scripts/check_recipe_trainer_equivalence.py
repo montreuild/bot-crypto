@@ -6,27 +6,39 @@ et même protocole : entraîner les deux chemins sur la MÊME fenêtre, comparer
 les prédictions sur un holdout commun. La conception exige que toute
 divergence soit **énumérée avant** la bascule, pas constatée après.
 
-Résultat de référence (BTC/USDC 1h synthétique, 3 400 barres d'entraînement) :
+Résultats de référence (BTC/USDC 1h synthétique, 3 400 barres d'entraînement).
+
+**Famille omnibus — équivalence EXACTE.** ``omnibus_v4_multi`` passe par
+``v4_polars@1`` + ``amp_dir_quantile``, et ``recipe_trainer`` reprend les
+réglages de ``app.ml.backend.trainer`` à l'identique (``scale_pos_weight``,
+early stopping 20, ``max_bin=63``, aucun ``seed`` explicite) ::
+
+    omnibus_v4_multi   amp  écart max 0.00000000  corr 1.000000
+                       dir  écart max 0.00000000  corr 1.000000
+
+Basculer une recette omnibus ne change donc PAS le modèle produit. C'est la
+mesure qui rend la bascule sûre, au sens du protocole de non-régression.
+Verrouillée par ``tests/test_recipe_trainer.py::TestMLBackendEquivalence``.
+
+**Famille stat48 — divergence, et elle est explicable** ::
 
     stat48_v5   amp  écart max 0.579  corr -0.075
                 dir  écart max 0.433  corr  0.012
 
-**Les deux chemins ne sont PAS équivalents**, et les causes sont connues :
+Deux causes, toutes deux du côté de la stratégie :
 
-1. la stratégie code en dur ``num_boost_round=300`` + ``early_stopping(20)``
-   alors que la recette déclare ``n_estimators: 500`` — autrement dit la
-   recette ne décrivait pas ce que la stratégie faisait ;
-2. la stratégie ajoute ``scale_pos_weight`` sur la tête amplitude, que la
-   recette ne déclare pas ;
-3. ``recipe_trainer`` fixe ``seed`` et ``max_bin=63`` (défauts de MLBackend),
-   la stratégie laisse les défauts LightGBM.
+1. elle code en dur ``num_boost_round=300`` alors que la recette déclare
+   ``n_estimators: 500`` — autrement dit la recette ne décrivait pas ce que la
+   stratégie faisait, et le chemin recette la rend enfin vraie ;
+2. son early stopping s'arrête sur un jeu de validation construit à partir de
+   features anonymes, là où le chemin recette les nomme.
 
-Conséquence opérationnelle : basculer ``stat48_v4``/``stat48_v5`` sur le
-chemin recette **change le modèle produit**. C'est une décision, pas un
-détail d'implémentation — d'où l'absence de bascule automatique. Ce que la
-bascule apporte en échange est mesurable : l'artefact porte enfin ses noms de
-features, donc le gate sait le scorer (``unsupported_format`` disparaît) et la
-recette devient promouvable, ce qu'elle n'a jamais été.
+Conséquence opérationnelle : basculer ``stat48_v4``/``stat48_v5`` **change le
+modèle produit**. C'est une décision, pas un détail d'implémentation — d'où
+l'absence de bascule automatique. Ce que la bascule apporte en échange est
+mesurable : l'artefact porte enfin ses noms de features, donc le gate sait le
+scorer (``unsupported_format`` disparaît) et la recette devient promouvable,
+ce qu'elle n'a jamais été.
 
 Usage ::
 

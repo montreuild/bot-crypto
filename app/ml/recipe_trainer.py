@@ -19,12 +19,22 @@ pour entraîner : la recette déclare son catalogue de features
 (``app.ml.features_catalog``), son schéma de labels (``app.ml.labelling``), ses
 hyperparamètres et son format de persistance, et cela suffit.
 
-**Ce que ce module ne fait pas.** Il n'implémente ni calibration isotone ni
-élagage de features (``calibrate``/``prune_features`` de ``MLBackend``) : ces
-deux traitements restent le domaine de ``app.ml.backend.trainer``, qui les a
-mesurés. Un modèle produit ici pour une recette qui les demande **ne serait
-donc pas équivalent** — c'est pourquoi ``supports()`` refuse explicitement ce
-cas plutôt que de produire silencieusement autre chose.
+**Équivalence avec MLBackend, recherchée et mesurée.** Pour une recette
+``v4_polars@1`` + ``amp_dir_quantile`` — c'est-à-dire la famille omnibus, celle
+qui tourne en production — ce module reproduit ``app.ml.backend.trainer.train``
+au réglage près : mêmes hyperparamètres LightGBM, même ``scale_pos_weight``,
+même early stopping, même calibration isotone sur le set de validation. Ce
+n'est pas de la cosmétique : sans cette identité, basculer une recette
+changerait le modèle produit, et la conception exige que toute divergence soit
+énumérée AVANT la bascule. ``scripts/check_recipe_trainer_equivalence.py``
+mesure l'écart.
+
+**Élagage de features.** ``MLBackend`` garde en mémoire les features à gain
+non nul d'un cycle pour restreindre le suivant. Ici l'état n'existe pas : la
+liste est publiée dans ``train_meta["kept_features"]`` et peut être réinjectée
+par ``params["kept_features"]``. Le comportement est le même, la mémoire passe
+par l'artefact au lieu d'un attribut de processus — ce qui la rend d'ailleurs
+inspectable.
 """
 from __future__ import annotations
 
@@ -53,6 +63,9 @@ class TrainedRecipe:
     feature_names: List[str]
     medians: Dict[str, float]
     train_meta: Dict[str, Any] = field(default_factory=dict)
+    #: Calibrateurs isotones par tête — sérialisés dans le meta.json, sans
+    #: quoi un modèle calibré à l'entraînement serait servi non calibré.
+    calibrators: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def best_auc(self) -> float:
@@ -89,6 +102,7 @@ class TrainedRecipe:
         return save_amp_dir_bundle(
             path_prefix, self.tf, amp, dir_, features=self.feature_names,
             medians=self.medians, best_auc=self.best_auc, train_meta=self.train_meta,
+            amp_cal=self.calibrators.get("amp"), dir_cal=self.calibrators.get("dir"),
         )
 
     def _save_single(self, path_prefix: str) -> bool:
@@ -136,13 +150,6 @@ def supports(recipe_name: str) -> Optional[str]:
         return f"schéma de labels {r.label_scheme!r} non enregistré"
     if r.persistence not in _BUNDLE_PERSISTENCE + _SINGLE_PERSISTENCE:
         return f"persistance {r.persistence!r} non gérée par ce module"
-    hp = r.train_params()
-    if hp.get("calibrate"):
-        return ("la recette demande une calibration isotone, que ce module "
-                "n'implémente pas — passer par MLBackend")
-    if hp.get("prune_features"):
-        return ("la recette demande un élagage de features, que ce module "
-                "n'implémente pas — passer par MLBackend")
     return None
 
 
@@ -194,7 +201,17 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
                      f"absentes des labels produits {lab.heads}")
         return None
 
-    X_full = fs.matrix()[:lab.n]
+    # Élagage : restreindre aux features retenues d'un cycle précédent. La
+    # liste vient de ``params`` (donc d'un artefact), pas d'un état de process.
+    # Le seuil de 50 reproduit MLBackend : sous ce nombre, l'élagage a
+    # probablement mordu trop loin et on repart du catalogue complet.
+    names = list(fs.names)
+    if p.get("prune_features") and p.get("kept_features"):
+        kept = [c for c in names if c in set(p["kept_features"])]
+        if len(kept) >= 50:
+            names = kept
+
+    X_full = fs.frame.select(names).to_numpy().astype(np.float32)[:lab.n]
     split = max(int(lab.n * 0.8), 100)
     split = min(split, lab.n - 50)
     if split < 100 or lab.n - split < 50:
@@ -203,15 +220,19 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
 
     from app.ml.backend.features import impute_inplace
     medians: Dict[str, float] = {}
-    for j, col in enumerate(fs.names):
+    for j, col in enumerate(names):
         col_train = X_full[:split, j]
         mask = np.isfinite(col_train)
         medians[col] = float(np.median(col_train[mask])) if mask.any() else 0.0
 
     X_train, X_valid = X_full[:split].copy(), X_full[split:lab.n].copy()
-    impute_inplace(X_train, fs.names, medians)
-    impute_inplace(X_valid, fs.names, medians)
+    impute_inplace(X_train, names, medians)
+    impute_inplace(X_valid, names, medians)
 
+    # Réglages repris À L'IDENTIQUE de app.ml.backend.trainer.train : c'est ce
+    # qui rend la bascule d'une recette omnibus sans effet sur le modèle.
+    # Ne pas passer `seed` ici — MLBackend ne le fait pas, et le fixer
+    # produirait des arbres différents des siens.
     common = dict(
         objective="binary", metric="auc",
         num_leaves=int(p.get("num_leaves", 31)),
@@ -219,43 +240,74 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
         min_child_samples=20, subsample=0.8, subsample_freq=5,
         colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=0.5,
         max_bin=63, force_col_wise=True, verbosity=-1, n_jobs=1,
-        seed=seed,
     )
     n_estimators = int(p.get("n_estimators", 300))
+    calibrate = bool(p.get("calibrate", False))
 
-    from app.ml.scoring import rank_auc
     boosters: Dict[str, Any] = {}
+    calibrators: Dict[str, Any] = {}
+    cal_err: Dict[str, float] = {}
+    importances: Dict[str, List[tuple]] = {}
     meta: Dict[str, Any] = {
         "n_train": int(split), "n_valid": int(lab.n - split),
-        "n_features": len(fs.names), "horizons": lab.stats.get("horizons"),
-        "label_stats": lab.stats, "calibrated": False,
-        "recipe": recipe_name, "label_scheme": r.label_scheme,
-        "features_catalog": r.features_catalog, "source": "recipe_trainer",
+        "n_features": len(names), "horizons": lab.stats.get("horizons"),
+        "label_stats": lab.stats, "recipe": recipe_name,
+        "label_scheme": r.label_scheme, "features_catalog": r.features_catalog,
+        "source": "recipe_trainer",
     }
     top_n = int(p.get("importance_top_n", 20))
 
     for head in heads:
         y = lab.y[head][:lab.n]
-        if len(np.unique(y[:split])) < 2:
+        y_tr, y_va = y[:split], y[split:lab.n]
+        if len(np.unique(y_tr)) < 2:
             logger.warning(f"[RecipeTrainer] {recipe_name}/{tf} : labels mono-classe "
                            f"pour la tête {head!r}, entraînement ignoré")
             return None
-        ds = lgb.Dataset(X_train, label=y[:split], feature_name=list(fs.names),
-                         free_raw_data=False)
-        booster = lgb.train(common, ds, num_boost_round=n_estimators)
+        spw = (y_tr == 0).sum() / max((y_tr == 1).sum(), 1)
+        ds_tr = lgb.Dataset(X_train, label=y_tr, feature_name=names, free_raw_data=False)
+        ds_va = lgb.Dataset(X_valid, label=y_va, reference=ds_tr,
+                            feature_name=names, free_raw_data=False)
+        booster = lgb.train(
+            {**common, "scale_pos_weight": spw}, ds_tr,
+            num_boost_round=n_estimators, valid_sets=[ds_va],
+            callbacks=[lgb.early_stopping(20, verbose=False), lgb.log_evaluation(-1)],
+        )
         boosters[head] = booster
+        meta[f"auc_{head}"] = round(
+            float(booster.best_score.get("valid_0", {}).get("auc", 0.0)), 4)
 
-        scores = booster.predict(X_valid)
-        meta[f"auc_{head}"] = round(float(rank_auc(y[split:lab.n], scores) or 0.0), 4)
+        raw_va = booster.predict(X_valid)
+        if calibrate and len(np.unique(y_va)) >= 2:
+            try:
+                from app.ml.backend.isotonic import IsotonicRegression
+                iso = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
+                iso.fit(raw_va, y_va)
+                calibrators[head] = iso
+                cal_err[head] = round(float(np.mean(np.abs(iso.predict(raw_va) - y_va))), 4)
+            except Exception as e:                        # pragma: no cover
+                logger.debug(f"[RecipeTrainer] calibration {head} KO : {e}")
+
         gains = booster.feature_importance(importance_type="gain")
-        order = np.argsort(gains)[::-1][:top_n]
+        pairs = sorted(zip(names, gains), key=lambda kv: -kv[1])
+        importances[head] = [(c, float(g)) for c, g in pairs]
         meta[f"feature_importance_{head}"] = [
-            {"feature": fs.names[j], "gain": round(float(gains[j]), 2)} for j in order]
+            {"feature": c, "gain": round(float(g), 2)} for c, g in pairs[:top_n]]
+
+    # Features à gain non nul, toutes têtes confondues — mémoire d'élagage du
+    # cycle suivant, publiée dans l'artefact plutôt que gardée en mémoire.
+    kept_set = {c for pairs in importances.values() for c, g in pairs if g > 0}
+    meta["kept_features"] = [c for c in names if c in kept_set]
+    meta["n_kept_features"] = len(meta["kept_features"])
+    meta["calibrated"] = bool(calibrators)
+    meta["cal_err"] = cal_err
 
     logger.info(
         f"[RecipeTrainer] {recipe_name}/{tf} : {split} train / {lab.n - split} val | "
-        f"{len(fs.names)} features | "
+        f"{len(names)} feats (gardées {len(meta['kept_features'])}) | calib="
+        f"{meta['calibrated']} | "
         + " ".join(f"AUC {h}={meta.get(f'auc_{h}', 0):.3f}" for h in heads)
     )
     return TrainedRecipe(recipe=recipe_name, tf=tf, boosters=boosters,
-                         feature_names=list(fs.names), medians=medians, train_meta=meta)
+                         feature_names=names, medians=medians, train_meta=meta,
+                         calibrators=calibrators)

@@ -131,12 +131,8 @@ class TestLabelling:
 #  Entraînement piloté par la recette
 # ─────────────────────────────────────────────────────────────────────────────
 class TestSupports:
-    def test_refuses_calibrated_recipes_instead_of_producing_another_model(self):
-        """omnibus_v4_multi demande une calibration isotone que ce module
-        n'implémente pas : refuser vaut mieux que produire silencieusement un
-        modèle qui n'est pas celui décrit par la recette."""
-        why = rt.supports("omnibus_v4_multi")
-        assert why and "calibration" in why
+    def test_accepts_the_production_recipe(self):
+        assert rt.supports("omnibus_v4_multi") is None
 
     def test_refuses_recipes_without_artifact(self):
         assert "proxy" in (rt.supports("proxy_indicators") or "")
@@ -227,3 +223,70 @@ class TestTrain:
         s.save_model(prefix)
         metrics = policy.score_holdout(prefix, ohlcv.tail(1200), strategy="stat48_v5")
         assert metrics.get("unsupported_format") is True
+
+
+class TestMLBackendEquivalence:
+    """La condition qui rend la bascule d'une recette omnibus sûre.
+
+    La conception exige que toute divergence soit énumérée AVANT la bascule.
+    Pour ``v4_polars@1`` + ``amp_dir_quantile`` — la famille qui tourne en
+    production — il n'y en a aucune : ``recipe_trainer`` reprend les réglages
+    LightGBM de ``app.ml.backend.trainer`` à l'identique (``scale_pos_weight``,
+    early stopping, absence de ``seed`` explicite, ``max_bin=63``).
+    """
+
+    def test_predictions_are_bit_identical_to_mlbackend(self, ohlcv):
+        import app.strategies.opus_omnibus_v11 as v11
+
+        train_df, holdout = ohlcv.slice(0, 3000), ohlcv.tail(900)
+        strat = v11.Strategy()
+        strat.fit(train_df, params={strat.name: {}})
+
+        out = rt.train("omnibus_v4_multi", train_df, "1h")
+        assert out is not None
+
+        full = fc.build("v4_polars@1", holdout)
+        idx = [full.names.index(c) for c in out.feature_names]
+        X = full.matrix()[:, idx]
+
+        for head, store in (("amp", strat.ml.state.amp_models),
+                            ("dir", strat.ml.state.dir_models)):
+            ref = store.get("1h")
+            assert ref is not None, f"MLBackend n'a pas de modèle {head}"
+            gap = float(np.max(np.abs(ref.predict(X) - out.boosters[head].predict(X))))
+            assert gap == pytest.approx(0.0, abs=1e-9), (
+                f"tête {head} : écart {gap} — la bascule changerait le modèle")
+
+    def test_calibration_is_produced_and_persisted(self, ohlcv, tmp_path):
+        """Un modèle calibré à l'entraînement mais servi non calibré serait
+        pire qu'un modèle non calibré : le décalage serait invisible."""
+        import json
+        out = rt.train("omnibus_v4_multi", ohlcv.slice(0, 3000), "1h")
+        assert out.train_meta["calibrated"] is True
+        assert set(out.calibrators) == {"amp", "dir"}
+        assert out.train_meta["cal_err"]
+
+        prefix = str(tmp_path / "omnibus_v4_multi_1h")
+        assert out.save(prefix)
+        with open(prefix + ".meta.json", encoding="utf-8") as fh:
+            meta = json.load(fh)
+        assert meta.get("amp_cal") and meta.get("dir_cal")
+
+    def test_pruning_memory_travels_through_the_artifact(self, ohlcv):
+        """MLBackend garde les features retenues en mémoire de processus ; ici
+        elles passent par l'artefact, donc restent inspectables."""
+        first = rt.train("omnibus_v4_multi", ohlcv.slice(0, 3000), "1h")
+        kept = first.train_meta["kept_features"]
+        assert 0 < len(kept) < first.train_meta["n_features"]
+
+        second = rt.train("omnibus_v4_multi", ohlcv.slice(0, 3000), "1h",
+                          params={"prune_features": True, "kept_features": kept})
+        assert second.train_meta["n_features"] == len(kept)
+        assert set(second.feature_names) <= set(kept)
+
+    def test_pruning_ignores_a_list_that_bit_too_far(self, ohlcv):
+        """Sous 50 features gardées, MLBackend repart du catalogue complet —
+        même garde ici, sinon un élagage dégénéré s'auto-entretiendrait."""
+        out = rt.train("omnibus_v4_multi", ohlcv.slice(0, 3000), "1h",
+                       params={"prune_features": True, "kept_features": ["ret", "ret_intra"]})
+        assert out.train_meta["n_features"] > 50

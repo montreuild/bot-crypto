@@ -37,15 +37,32 @@ concluait « keep » quoi qu'il arrive — `stat48_v4`/`stat48_v5` n'étaient
 **jamais promouvables**. L'artefact produit par le chemin recette porte ses
 noms de colonnes : le gate le score enfin.
 
-**Aucune bascule automatique.** `scripts/check_recipe_trainer_equivalence.py`
-mesure l'écart avec le `_train` autonome de `stat48_v5` : amp 0.579, dir 0.433,
-corrélations ~0 — **les deux chemins ne sont pas équivalents**, et les trois
-causes sont énumérées (la stratégie code en dur 300 rounds + early stopping là
-où la recette déclare 500 ; elle ajoute un `scale_pos_weight` non déclaré ; le
-nouveau chemin fixe `seed`/`max_bin`). Basculer une recette change donc le
-modèle produit : c'est une décision d'exploitation, prise recette par recette.
-`omnibus_v4_multi` (recette de production de v11) est refusée par `supports()`
-et reste sur `MLBackend` — rien de ce qui tourne aujourd'hui n'est touché.
+**Calibration isotone et élagage** sont désormais portés : `supports()` accepte
+`omnibus_v4_multi`, la recette de production. L'élagage passe par l'artefact
+(`train_meta["kept_features"]`, réinjectable via `params`) plutôt que par un
+attribut de processus — même comportement, mais inspectable.
+
+**`/api/ml/train` accepte `recipe=`** et un nouveau `GET /api/ml/recipes` liste
+les recettes avec leur entraînabilité. La page « Modèles » propose donc les
+recettes en tête de liste : le formulaire parle enfin le vocabulaire de la
+table de registre juste au-dessus. Le sweep reste piloté par la stratégie —
+`window_sweep` n'a pas encore de variante recette.
+
+**Équivalence mesurée.** `scripts/check_recipe_trainer_equivalence.py`
+donne deux résultats opposés, et c'est le point :
+
+- **`omnibus_v4_multi` : écart 0.00000000, corrélation 1.000000** face à
+  `MLBackend`. Basculer une recette omnibus ne change PAS le modèle produit —
+  c'est la mesure qui rend la bascule sûre. Verrouillé par test.
+- **`stat48_v5` : amp 0.579, dir 0.433, corrélations ~0.** Divergence réelle,
+  mais explicable : la stratégie code en dur 300 rounds là où la recette
+  déclare `n_estimators: 500`. La recette ne décrivait pas ce que la stratégie
+  faisait ; le chemin recette la rend vraie.
+
+Aucune bascule automatique : les `_train` autonomes restent en place. Changer
+la recette d'une stratégie est une décision d'exploitation, prise recette par
+recette — la conception exige que toute divergence soit énumérée avant, pas
+constatée après.
 
 ### 🏛 G2 — les actions SBF 120 sont activées (données, pas exécution)
 

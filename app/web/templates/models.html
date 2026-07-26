@@ -68,7 +68,7 @@ table.mdl-tbl{width:100%;border-collapse:collapse;font-size:.78rem;}
   <div class="mdl-card">
     <h2>🚀 Entraîner un modèle</h2>
     <div class="mdl-form">
-      <div class="mdl-fld"><label>Stratégie</label><select id="tr-strat"><option value="opus_omnibus_v11">opus_omnibus_v11</option></select></div>
+      <div class="mdl-fld"><label>Recette / Stratégie<span class="mdl-hint" style="margin:0">les recettes sont les clés du registre ci-dessus</span></label><select id="tr-strat"><option value="opus_omnibus_v11">opus_omnibus_v11</option></select></div>
       <div class="mdl-fld"><label>Symbole</label><input id="tr-symbol" value="BTC/USDC"></div>
       <div class="mdl-fld"><label>Timeframe</label><select id="tr-tf"><option value="1h">1h</option></select></div>
       <div class="mdl-fld"><label>Fenêtre (barres)<span class="mdl-hint" style="margin:0">0 = tout dispo</span></label><input id="tr-window" type="number" value="0" min="0"></div>
@@ -420,8 +420,10 @@ async function startTrain(){
   if(!strategy||!symbol||!tf){toast('Stratégie/symbole/TF requis',true);return;}
   btn.disabled=true;
   try{
+    const isRecipe=_RECIPES.has(strategy);
     const r=await apiFetch('/api/ml/train',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      strategy,symbol,tf,window_bars:windowBars>0?windowBars:null,as_of:asOf||null,publish,
+      strategy:isRecipe?null:strategy, recipe:isRecipe?strategy:null,
+      symbol,tf,window_bars:windowBars>0?windowBars:null,as_of:asOf||null,publish,
     })});
     const d=await r.json().catch(()=>({}));
     if(!r.ok){toast('Erreur : '+(d.detail||r.status),true);return;}
@@ -466,16 +468,33 @@ function fillSelect(id,values,selected){
   el.value=values.includes(keep)?keep:values[0];
 }
 
+// Recettes entraînables (préfixées « recette : ») EN TÊTE de liste, puis les
+// stratégies. Depuis l'étape C une recette suffit à entraîner, et c'est le
+// vocabulaire de la table du registre — la proposer d'abord supprime le
+// détour par le nom de la stratégie qui la déclare.
+_RECIPES=new Set();
+
 async function loadChoices(){
   fillSelect('tr-tf',MDL_TFS,'1h');
   fillSelect('sw-tf',MDL_TFS,'1h');
+  let recipes=[],strats=[];
+  try{
+    const rr=await apiFetch('/api/ml/recipes');
+    if(rr.ok){
+      const all=(await rr.json()).recipes||[];
+      recipes=all.filter(x=>x.trainable).map(x=>x.recipe);
+      recipes.forEach(n=>_RECIPES.add(n));
+    }
+  }catch(e){/* liste indisponible */}
   try{
     const r=await apiFetch('/api/config');
-    if(!r.ok)return;
-    const strats=(await r.json()).all_strategies||[];
-    fillSelect('tr-strat',strats,'opus_omnibus_v11');
-    fillSelect('sw-strat',strats,'opus_omnibus_v11');
-  }catch(e){/* liste indisponible : le défaut du gabarit reste sélectionnable */}
+    if(r.ok)strats=(await r.json()).all_strategies||[];
+  }catch(e){/* idem : le défaut du gabarit reste sélectionnable */}
+  const opts=recipes.concat(strats);
+  fillSelect('tr-strat',opts,recipes[0]||'opus_omnibus_v11');
+  // Le sweep reste piloté par la stratégie : window_sweep n'a pas encore de
+  // variante recette (cf. train_recipe_and_publish, qui ne couvre que train).
+  fillSelect('sw-strat',strats,'opus_omnibus_v11');
 }
 
 loadChoices();

@@ -109,6 +109,24 @@ def _resolve_strategy_name(name: str) -> str:
                              f"rattachée à une stratégie")
 
 
+def _require_trainable_recipe(name: str) -> str:
+    """Valide une recette AVANT de lancer le job de fond.
+
+    ``recipe_trainer.supports()`` sait dire pourquoi une recette n'est pas
+    entraînable (persistance ``proxy``, catalogue non enregistré…) : autant
+    rendre cette réponse à l'appelant tout de suite plutôt que de la lui
+    faire découvrir une minute plus tard dans un statut de job."""
+    from app.ml.recipe import available_recipes
+    from app.ml.recipe_trainer import supports
+    if name not in available_recipes():
+        raise HTTPException(400, f"Recette inconnue : {name!r} — disponibles : "
+                                 f"{available_recipes()}")
+    why = supports(name)
+    if why:
+        raise HTTPException(400, f"Recette {name!r} non entraînable : {why}")
+    return name
+
+
 def _require_known_tf(tf: str) -> None:
     """Rejette un timeframe hors table canonique AVANT de lancer le job.
 
@@ -119,6 +137,29 @@ def _require_known_tf(tf: str) -> None:
     if tf not in TF_SECONDS:
         raise HTTPException(400, f"Timeframe inconnu : {tf!r} — attendu parmi "
                                  f"{sorted(TF_SECONDS, key=lambda t: TF_SECONDS[t])}")
+
+
+@router.get("/api/ml/recipes", dependencies=[Depends(verify_api_key)])
+def ml_recipes():
+    """Recettes du dépôt et leur entraînabilité — alimente la liste déroulante
+    de la page « Modèles », qui parle désormais le même vocabulaire que sa
+    table de registre."""
+    from app.ml.recipe import available_recipes, load_recipe
+    from app.ml.recipe_trainer import supports
+
+    out: List[Dict[str, Any]] = []
+    for name in available_recipes():
+        why = supports(name)
+        try:
+            r = load_recipe(name)
+            catalog, scheme, heads = r.features_catalog, r.label_scheme, r.heads
+        except Exception:
+            catalog = scheme = None
+            heads = []
+        out.append({"recipe": name, "trainable": why is None, "reason": why,
+                    "features_catalog": catalog, "label_scheme": scheme,
+                    "heads": heads})
+    return {"recipes": out}
 
 
 @router.get("/api/ml/registry", dependencies=[Depends(verify_api_key)])
@@ -230,7 +271,13 @@ def ml_registry_promote(request: Request, body: _PromoteBody):
 #  Entraînement / window sweep (jobs asynchrones)
 # ─────────────────────────────────────────────────────────────────────────────
 class _TrainBody(BaseModel):
-    strategy: str
+    # ``strategy`` reste optionnel depuis l'étape C : une RECETTE suffit à
+    # entraîner (app.ml.recipe_trainer). C'est ce qui permet à la page
+    # « Modèles », indexée par recette, de cesser de demander une stratégie —
+    # le formulaire parlait un vocabulaire que le tableau juste au-dessus
+    # n'utilisait pas.
+    strategy: Optional[str] = None
+    recipe: Optional[str] = None
     symbol: str = DEFAULT_CONFIG_SYMBOL
     tf: str
     as_of: Optional[str] = None
@@ -246,12 +293,13 @@ def ml_train_start(request: Request, body: _TrainBody):
     n'est écrit au registre ; ``publish=true`` : gate + publication réelle,
     même chemin que le live/backtest simulated_live). Retourne un ``job_id``
     à interroger via ``GET /api/ml/train/status``."""
-    strategy = _resolve_strategy_name(body.strategy)
     _require_known_tf(body.tf)
+    recipe = _require_trainable_recipe(body.recipe) if body.recipe else None
+    strategy = None if recipe else _resolve_strategy_name(body.strategy or "")
     from app.engine.ml_jobs import start_train_job
-    job_id = start_train_job(strategy, body.symbol, body.tf, as_of=body.as_of,
+    job_id = start_train_job(strategy or "", body.symbol, body.tf, as_of=body.as_of,
                              window_bars=body.window_bars, params=body.params,
-                             publish=body.publish)
+                             publish=body.publish, recipe=recipe)
     if body.publish:
         audit_log("ml.train.publish", ip=request.client.host if request.client else "",
                  details=body.model_dump())

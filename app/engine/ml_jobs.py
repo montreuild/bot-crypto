@@ -62,25 +62,34 @@ def start_train_job(strategy: str, symbol: str, tf: str, *,
                     window_bars: Optional[int] = None,
                     params: Optional[Dict[str, Any]] = None,
                     publish: bool = False,
-                    base_dir: str = "models") -> str:
-    job_id = _register_job("train", strategy=strategy, symbol=symbol, tf=tf,
-                           publish=publish)
+                    base_dir: str = "models",
+                    recipe: Optional[str] = None) -> str:
+    """``recipe`` non nul : entraînement piloté par la recette (étape C), sans
+    instancier de stratégie. ``strategy`` ne sert alors qu'à étiqueter le job."""
+    job_id = _register_job("train", strategy=recipe or strategy, symbol=symbol,
+                           tf=tf, publish=publish, recipe=recipe)
     threading.Thread(
         target=_run_train, daemon=True,
         args=(job_id, strategy, symbol, tf),
         kwargs={"as_of": as_of, "window_bars": window_bars, "params": params,
-               "publish": publish, "base_dir": base_dir},
+               "publish": publish, "base_dir": base_dir, "recipe": recipe},
     ).start()
     return job_id
 
 
-def _run_train(job_id: str, strategy: str, symbol: str, tf: str, **kwargs: Any) -> None:
-    from app.ml.train_runner import train_and_publish
+def _run_train(job_id: str, strategy: str, symbol: str, tf: str,
+               recipe: Optional[str] = None, **kwargs: Any) -> None:
+    from app.ml.train_runner import train_and_publish, train_recipe_and_publish
+    label = recipe or strategy
     try:
-        result = train_and_publish(strategy, symbol, tf, **kwargs)
+        if recipe:
+            kwargs.pop("gate_cfg", None)
+            result = train_recipe_and_publish(recipe, symbol, tf, **kwargs)
+        else:
+            result = train_and_publish(strategy, symbol, tf, **kwargs)
         _update_job(job_id, status="done", result=result, finished_at=time.time())
     except Exception as e:
-        logger.error(f"[MLJobs] train {job_id} ({strategy}/{symbol}/{tf}) KO : {e}")
+        logger.error(f"[MLJobs] train {job_id} ({label}/{symbol}/{tf}) KO : {e}")
         _update_job(job_id, status="error", error=str(e), finished_at=time.time())
 
 
