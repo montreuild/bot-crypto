@@ -70,7 +70,11 @@ lightgbm==4.4.0
 optuna==4.0.0
 
 # -- Notifications ---------------------------------------------------
-requests==2.32.0
+# ccxt épingle EXACTEMENT requests==2.34.2 depuis la 4.4 : garder 2.32.0 ici
+# rendait la résolution impossible (CI rouge). 2.32.0 était de toute façon
+# YANKÉ sur PyPI — « conflits avec la mitigation CVE-2024-35195 » — donc ce
+# pin était déjà un problème latent, indépendant de ccxt.
+requests==2.34.2
 
 # -- Multi-actifs / actions (G2) — OPTIONNEL -------------------------
 # Rien n'est requis pour trader des actions : le provider Yahoo
