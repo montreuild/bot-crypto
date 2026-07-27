@@ -19,11 +19,8 @@ Ce qui est verrouillé ici, et pourquoi :
 import json
 import logging
 import threading
-import warnings
 
 import pytest
-
-warnings.filterwarnings("ignore")
 
 from app.core.log_context import (
     CorrelationFilter,

@@ -13,11 +13,7 @@ Ce que ces tests protègent, dans l'ordre de ce qui casserait le plus vite :
 3. **La dégradation propre.** ``prometheus-client`` est optionnel : sans lui
    le bot démarre et trade, ``/metrics`` répond 503 en disant quoi installer.
 """
-import warnings
-
 import pytest
-
-warnings.filterwarnings("ignore")
 
 from app.core import metrics
 
