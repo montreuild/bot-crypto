@@ -146,6 +146,12 @@ providers:
     min_request_interval: 1.0 # secondes entre deux requêtes (Yahoo renvoie 429 en rafale)
     cache_ttl: 60             # TTL du cache de réponses
     max_retries: 3
+    # Une action ne cote pas la nuit ni le week-end : 500 bougies de 15 min
+    # couvrent ~25 jours calendaires, pas 5. Sans cette conversion, le cache
+    # n'atteint jamais le compte visé et le bot redemande à chaque cycle.
+    # Valeurs par défaut = Euronext Paris (09:00-17:30, 5 jours sur 7).
+    session_hours: 8.5
+    trading_days_per_week: 5
     # Le provider passe par le paquet `yfinance`, désormais dépendance du
     # projet (requirements.txt) : lui seul gère l'authentification
     # cookie/crumb que Yahoo exige. L'ancien repli « API chart publique »

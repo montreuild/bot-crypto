@@ -88,12 +88,15 @@ requests==2.34.2
 # YFinanceProvider._fetch_bars() — aucun autre module du bot ne l'importe, et
 # le reste de la chaîne ne voit que des listes [ts, o, h, l, c, v].
 yfinance==1.5.2
-#
-exchange_calendars>=4.5
-#   Calendriers officiels (fériés, demi-séances, changements historiques
-#   d'horaires) pour toutes les places. Sans lui, XPAR utilise le moteur
-#   interne (app/core/market_calendar.py) — correct, mais à maintenir à la main
-#   si Euronext change ses horaires.
+
+# exchange_calendars : calendriers officiels (fériés, demi-séances, changements
+# historiques d'horaires) pour toutes les places. Sans lui, XPAR retombe sur le
+# moteur interne (app/core/market_calendar.py) — correct, mais à maintenir à la
+# main si Euronext change ses horaires.
+# Épinglé en version exacte comme le reste du fichier : « >=4.5 » laissait la CI
+# et la production diverger silencieusement sur un composant qui décide quand le
+# bot a le droit d'entrer en position.
+exchange_calendars==4.13.2
 
 # -- Development / Debug (optional) ----------------------------------
 pytest==8.2.0

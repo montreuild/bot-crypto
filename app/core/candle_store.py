@@ -36,6 +36,33 @@ def _min_since(exchange) -> int:
     return int(getattr(exchange, "min_since_ms", _MIN_SINCE_MS))
 
 
+def _bars_span_ms(exchange, tf: str, count: int, tf_ms: int) -> int:
+    """Temps calendaire à remonter pour espérer `count` bougies de `tf`.
+
+    En crypto c'est `count × durée` : le marché ne ferme jamais. Sur une place
+    à séances, non — une bougie de 15 m consomme ~1 h de calendrier une fois
+    les nuits, week-ends et fériés déduits, et reculer de `count × 15 m` ne
+    ramène qu'un quart des bougies demandées. Le cache reste alors sous le
+    compte visé et le store redemande à chaque cycle, indéfiniment.
+
+    Le provider tranche via `bars_span_ms` (cf. YFinanceProvider) ; sans elle,
+    le comportement crypto historique est conservé à l'identique.
+    """
+    fn = getattr(exchange, "bars_span_ms", None)
+    if callable(fn):
+        try:
+            return int(fn(tf, count))
+        except Exception as e:
+            logger.debug(f"[CandleStore] bars_span_ms {tf} KO : {e} — défaut calendaire")
+    return count * tf_ms
+
+
+#: Délai avant de retenter un historique que le provider a déclaré épuisé.
+#: Sans mémo, les 98 titres × 5 TF du SBF 120 rejouaient la même requête
+#: perdante à chaque cycle de scan — la boucle visible dans les logs.
+_NO_HISTORY_RETRY_S = 6 * 3600.0
+
+
 def _valid_bars(df: pl.DataFrame, exchange) -> pl.DataFrame:
     """Écarte les barres inexploitables, selon ce que le provider garantit.
 
@@ -82,6 +109,12 @@ class CandleStore:
 
     def __init__(self, base_dir: str = OHLCV_DIR):
         self._base = Path(base_dir)
+        #: `(symbol, tf) → (plus vieille bougie connue, instant de réessai)`.
+        #: Mémorise qu'un backfill historique n'a RIEN ramené, pour ne pas le
+        #: rejouer à chaque cycle. Invalidé dès que la borne basse du cache
+        #: bouge — si de l'historique arrive par une autre voie, on retente.
+        self._no_history: Dict[tuple, tuple] = {}
+        self._no_history_lock = threading.Lock()
         logger.info(f"[CandleStore] Initialisation — répertoire : {self._base.resolve()}")
 
     # ── API publique ──────────────────────────────────────────────────────────
@@ -137,12 +170,20 @@ class CandleStore:
             if len(df_cached) < total:
                 missing   = total - len(df_cached)
                 first_ms  = int(df_cached["time"].min().timestamp() * 1000) if len(df_cached) > 0 else None
-                logger.info(
-                    f"[CandleStore] {symbol}/{tf} — cache insuffisant "
-                    f"({len(df_cached)}/{total} bougies) — "
-                    f"tentative de récupération de {missing} bougies historiques"
-                )
-                old_raw = self._fetch_historical(exchange, symbol, tf, first_ms, missing)
+                if self._history_exhausted(symbol, tf, first_ms):
+                    logger.debug(
+                        f"[CandleStore] {symbol}/{tf} — backfill historique ignoré "
+                        f"({len(df_cached)}/{total}) : le provider l'a déjà déclaré "
+                        f"épuisé et la borne basse du cache n'a pas bougé"
+                    )
+                    old_raw = []
+                else:
+                    logger.info(
+                        f"[CandleStore] {symbol}/{tf} — cache insuffisant "
+                        f"({len(df_cached)}/{total} bougies) — "
+                        f"tentative de récupération de {missing} bougies historiques"
+                    )
+                    old_raw = self._fetch_historical(exchange, symbol, tf, first_ms, missing)
                 if old_raw:
                     df_old    = self._raw_to_df(old_raw)
                     df_merged = _valid_bars(
@@ -151,14 +192,18 @@ class CandleStore:
                     )
                     self._save(path, df_merged)
                     df_cached = df_merged
+                    self._forget_exhausted(symbol, tf)
                     logger.info(
                         f"[CandleStore] {symbol}/{tf} : +{len(old_raw)} bougies historiques "
                         f"→ {len(df_cached)} stockées au total"
                     )
-                else:
+                elif not self._history_exhausted(symbol, tf, first_ms):
+                    self._mark_exhausted(symbol, tf, first_ms)
                     logger.info(
                         f"[CandleStore] {symbol}/{tf} — aucune bougie historique supplémentaire "
-                        f"disponible sur l'exchange (cache : {len(df_cached)} bougies)"
+                        f"disponible sur l'exchange (cache : {len(df_cached)} bougies) — "
+                        f"la demande ne sera pas rejouée avant "
+                        f"{_NO_HISTORY_RETRY_S / 3600:.0f} h"
                     )
 
         if len(df_cached) == 0:
@@ -196,6 +241,31 @@ class CandleStore:
             symbol = parquet.parent.name.replace("_", "/", 1)
             results.append(self.stats(symbol, tf))
         return results
+
+    # ── Mémo « plus d'historique disponible » ─────────────────────────────────
+
+    def _history_exhausted(self, symbol: str, tf: str,
+                           first_ms: Optional[int]) -> bool:
+        with self._no_history_lock:
+            entry = self._no_history.get((symbol, tf))
+        if entry is None:
+            return False
+        marked_first, retry_at = entry
+        if time.time() >= retry_at:
+            return False        # le provider a peut-être publié de l'historique
+        # La borne basse a bougé : de l'historique est arrivé par une autre
+        # voie (backfill hors ligne, autre timeframe). Le mémo ne vaut plus.
+        return marked_first == first_ms
+
+    def _mark_exhausted(self, symbol: str, tf: str,
+                        first_ms: Optional[int]) -> None:
+        with self._no_history_lock:
+            self._no_history[(symbol, tf)] = (first_ms,
+                                              time.time() + _NO_HISTORY_RETRY_S)
+
+    def _forget_exhausted(self, symbol: str, tf: str) -> None:
+        with self._no_history_lock:
+            self._no_history.pop((symbol, tf), None)
 
     # ── Fetch interne ─────────────────────────────────────────────────────────
 
@@ -258,10 +328,11 @@ class CandleStore:
         # On clampe à _MIN_SINCE_MS (2017-01-01) : un `since` trop ancien (ex. 1d × 20000
         # ⇒ avant le listing) fait rejeter la requête OHLCV par l'exchange (liste vide).
         floor_ms = _min_since(exchange)
+        span_ms  = _bars_span_ms(exchange, tf, needed, tf_ms)
         if before_ms is not None:
-            since = max(floor_ms, before_ms - needed * tf_ms)
+            since = max(floor_ms, before_ms - span_ms)
         else:
-            since = max(floor_ms, int(exchange.milliseconds()) - needed * tf_ms)
+            since = max(floor_ms, int(exchange.milliseconds()) - span_ms)
 
         all_raw = []
         seen_ts = set()
@@ -319,7 +390,8 @@ class CandleStore:
             logger.warning(f"[CandleStore] parse_timeframe '{tf}' KO : {e} — fallback 1h")
             tf_ms = 3_600_000  # fallback 1h en ms
 
-        since   = max(_min_since(exchange), exchange.milliseconds() - total * tf_ms)
+        since   = max(_min_since(exchange),
+                      exchange.milliseconds() - _bars_span_ms(exchange, tf, total, tf_ms))
         all_raw = []
         seen_ts = set()
 

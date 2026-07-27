@@ -216,6 +216,123 @@ class TestRobustness:
         p.fetch_ohlcv("AIR.PA", "1h", limit=5)
         assert calls["n"] == 1, "un cycle live rescanne le même symbole en boucle"
 
+    def test_a_deeper_window_is_not_served_from_a_shallower_cache(self):
+        """LE bug de la boucle « aucune bougie historique supplémentaire ».
+
+        Le CandleStore fait deux appels par cycle : d'abord l'incrémental
+        (fenêtre étroite, depuis la dernière bougie connue), puis le backfill
+        historique (fenêtre profonde). La clé de cache ignorant la profondeur,
+        le second était servi par la réponse du premier — donc sans la moindre
+        bougie ancienne, ce que le store lit comme « le fournisseur n'a rien de
+        plus ». Et il repose la question au cycle suivant, indéfiniment.
+        """
+        p = _provider(cache_ttl=60.0)
+        windows = []
+
+        def record(_ticker, _interval, period1, _period2):
+            windows.append(period1)
+            return _bars(5)
+        p._fetch_bars = record
+
+        now_ms = p.milliseconds()
+        p.fetch_ohlcv("AIR.PA", "1h", limit=1000, since=now_ms - 2 * HOUR_MS)
+        p.fetch_ohlcv("AIR.PA", "1h", limit=1000, since=now_ms - 400 * HOUR_MS)
+        assert len(windows) == 2, "la demande profonde doit repartir sur le réseau"
+        assert windows[1] < windows[0]
+
+    def test_a_shallower_window_is_still_served_from_cache(self):
+        """L'inverse doit rester vrai, sinon le cache ne sert plus à rien : une
+        entrée profonde couvre toutes les demandes plus étroites."""
+        p = _provider(cache_ttl=60.0)
+        calls = {"n": 0}
+
+        def counted(*_a):
+            calls["n"] += 1
+            return _bars(5)
+        p._fetch_bars = counted
+
+        now_ms = p.milliseconds()
+        p.fetch_ohlcv("AIR.PA", "1h", limit=1000, since=now_ms - 400 * HOUR_MS)
+        p.fetch_ohlcv("AIR.PA", "1h", limit=1000, since=now_ms - 2 * HOUR_MS)
+        assert calls["n"] == 1
+
+    def test_a_shallow_refresh_does_not_evict_a_deep_window(self):
+        """Le cycle suivant refait un incrémental étroit. S'il écrasait l'entrée
+        profonde, le backfill d'après repartirait sur le réseau pour rien."""
+        p = _provider(cache_ttl=60.0)
+        calls = {"n": 0}
+
+        def counted(*_a):
+            calls["n"] += 1
+            return _bars(5)
+        p._fetch_bars = counted
+
+        now_ms = p.milliseconds()
+        p.fetch_ohlcv("AIR.PA", "1h", limit=1000, since=now_ms - 400 * HOUR_MS)
+        p.fetch_ohlcv("AIR.PA", "1h", limit=1000, since=now_ms - 2 * HOUR_MS)
+        p.fetch_ohlcv("AIR.PA", "1h", limit=1000, since=now_ms - 400 * HOUR_MS)
+        assert calls["n"] == 1, "la fenêtre profonde doit survivre au rafraîchissement"
+
+
+# ── Temps calendaire vs temps de cotation ──────────────────────────────────
+
+class TestTradingTimeSpan:
+    """Une action ne cote pas la nuit ni le week-end. Reculer de `n × durée`
+    ne ramène donc qu'une fraction de `n` bougies — le cache reste sous le
+    compte visé et le store redemande à chaque cycle."""
+
+    def test_intraday_span_is_inflated_beyond_calendar_time(self):
+        p = _provider()
+        raw = 500 * 15 * 60 * 1000
+        assert p.bars_span_ms("15m", 500) > 3 * raw
+
+    def test_daily_span_only_corrects_for_non_trading_days(self):
+        """Une bougie journalière EST une séance : seuls les jours non cotés
+        comptent, pas les heures de fermeture. La correction doit donc être
+        bien plus faible qu'en intraday."""
+        p = _provider()
+        raw = 500 * 86_400_000
+        span = p.bars_span_ms("1d", 500)
+        assert 1.2 * raw < span < 1.8 * raw
+
+    def test_crypto_venue_configuration_is_a_passthrough(self):
+        """Une place ouverte en continu ne doit subir aucune inflation."""
+        p = _provider(session_hours=24, trading_days_per_week=7)
+        raw = 500 * 3_600_000
+        assert p.bars_span_ms("1h", 500) == pytest.approx(raw * 1.15 / 0.96, rel=0.01)
+
+    def test_a_bar_count_actually_yields_that_many_bars(self):
+        """Le test de bout en bout : une séance XPAR sur un faux Yahoo profond.
+        Avant correction, 500 bougies demandées en rendaient ~117."""
+        p = _provider()
+        session = _xpar_session_stamps(step_s=900, days=120,
+                                       now_s=p.milliseconds() // 1000)
+
+        def deep(_ticker, _interval, period1, period2):
+            keep = [s for s in session if period1 <= s <= period2]
+            return [[s * 1000, 10.0, 11.0, 9.0, 10.5, 100.0] for s in keep]
+        p._fetch_bars = deep
+        assert len(p.fetch_ohlcv("AIR.PA", "15m", limit=500)) == 500
+
+
+def _xpar_session_stamps(step_s, days, now_s):
+    """Horodatages de séance 09:00–17:30, jours ouvrés uniquement."""
+    import datetime as dt
+    out = []
+    today = dt.datetime.fromtimestamp(now_s, dt.timezone.utc).date()
+    for d in range(days, -1, -1):
+        day = today - dt.timedelta(days=d)
+        if day.weekday() >= 5:
+            continue
+        base = dt.datetime(day.year, day.month, day.day,
+                           tzinfo=dt.timezone.utc).timestamp()
+        t, end = base + 9 * 3600, base + 17.5 * 3600
+        while t < end:
+            if t <= now_s:
+                out.append(int(t))
+            t += step_s
+    return out
+
     def test_throttle_spaces_requests_process_wide(self):
         p = _provider(min_request_interval=0.05)
         p._fetch_bars = lambda *_a: _bars(2)
