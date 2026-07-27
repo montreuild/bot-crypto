@@ -280,3 +280,69 @@ def test_sweep_unknown_tf_400(client):
     r = client.post("/api/ml/sweep", json={"strategy": "opus_omnibus_v11",
                                            "tf": "15min", "windows": [5000]})
     assert r.status_code == 400
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Étape C — entraîner par RECETTE, sans stratégie
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.fixture
+def recipes_visible(tmp_path):
+    """``recipes/`` est résolu relativement à la CWD (comme ``models/`` et
+    ``data/`` — convention du dépôt), or ``_isolate_registry`` déplace la CWD.
+    On y rend l'arborescence de recettes visible plutôt que de contourner
+    l'isolation du registre, qui protège le models/ réel."""
+    import os
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    link = tmp_path / "recipes"
+    if not link.exists():
+        os.symlink(os.path.join(repo, "recipes"), link)
+    yield
+
+
+def test_recipes_endpoint_reports_trainability(client, recipes_visible):
+    r = client.get("/api/ml/recipes")
+    assert r.status_code == 200
+    by_name = {x["recipe"]: x for x in r.json()["recipes"]}
+    assert by_name["omnibus_v4_multi"]["trainable"] is True
+    assert by_name["omnibus_v4_multi"]["features_catalog"] == "v4_polars@1"
+    assert by_name["dyn_threshold_v1"]["label_scheme"] == "vol_adaptive_dir"
+    # proxy_indicators n'a pas d'artefact : non entraînable, avec la raison.
+    assert by_name["proxy_indicators"]["trainable"] is False
+    assert by_name["proxy_indicators"]["reason"]
+
+
+def test_train_accepts_a_recipe_without_any_strategy(client, monkeypatch, recipes_visible):
+    """Le but du chantier : la page « Modèles », indexée par recette, n'a plus
+    à traduire vers un nom de stratégie."""
+    seen = {}
+
+    def _fake_start(strategy, symbol, tf, **kw):
+        seen.update(strategy=strategy, recipe=kw.get("recipe"))
+        return "job-r"
+
+    import app.engine.ml_jobs as ml_jobs
+    monkeypatch.setattr(ml_jobs, "start_train_job", _fake_start)
+
+    r = client.post("/api/ml/train", json={"recipe": "omnibus_v4_multi", "tf": "1h"})
+    assert r.status_code == 200, r.text
+    assert seen["recipe"] == "omnibus_v4_multi"
+    assert not seen["strategy"]
+
+
+def test_train_rejects_an_untrainable_recipe_with_its_reason(client, recipes_visible):
+    """Répondre tout de suite plutôt que de laisser découvrir l'échec une
+    minute plus tard dans un statut de job."""
+    r = client.post("/api/ml/train", json={"recipe": "proxy_indicators", "tf": "1h"})
+    assert r.status_code == 400
+    assert "proxy" in r.json()["detail"]
+
+
+def test_train_rejects_an_unknown_recipe(client):
+    r = client.post("/api/ml/train", json={"recipe": "nexiste_pas", "tf": "1h"})
+    assert r.status_code == 400
+    assert "inconnue" in r.json()["detail"]
+
+
+def test_train_without_strategy_nor_recipe_is_refused(client):
+    r = client.post("/api/ml/train", json={"tf": "1h"})
+    assert r.status_code == 400

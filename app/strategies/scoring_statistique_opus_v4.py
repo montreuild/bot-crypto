@@ -307,6 +307,31 @@ class Strategy(BaseStrategyML):
             builder=lambda w, t=adx_threshold: _build_features(_pc(w), t),
             in_kind="polars", out_kind="numpy")
 
+    def _features_for_training(self, df: pl.DataFrame,
+                               adx_threshold: float) -> Optional[np.ndarray]:
+        """Features sur TOUTE la fenêtre reçue — chemin d'ENTRAÎNEMENT.
+
+        ``_get_or_build_features`` retombe, hors backtest, sur un slice des
+        **250 dernières barres**. C'est le bon compromis pour ``score()``, qui
+        ne lit que la dernière ligne. Pour ``_train`` c'était un défaut
+        silencieux et coûteux : quelle que soit la fenêtre passée à ``fit()``
+        — 3 400 barres depuis le gate, 8 000 depuis le runner — le modèle
+        n'apprenait que sur 250 lignes, soit 200 en entraînement et 50 en
+        validation, alors que la recette annonce ``min_bars: 2000``. Aucun
+        message ne le signalait.
+
+        Le cache de backtest reste utilisé quand il couvre la fenêtre : il est
+        semé par ``prepare_for_backtest`` sur le frame complet, et
+        ``X[:len(df)]`` l'aligne sur le préfixe courant.
+        """
+        if self._bt_features_len and len(df) <= self._bt_features_len:
+            key = round(float(adx_threshold), 6)
+            X = self._bt_features_cache.get(key)
+            if X is not None and len(X) >= len(df):
+                return X[: len(df)]
+        return _build_features(df, adx_threshold)
+
+
     def _get_or_build_features(self, df: pl.DataFrame,
                                adx_threshold: float) -> Optional[np.ndarray]:
         """Retourne ``X[:len(df)]`` aligné sur ``df``.
@@ -406,141 +431,57 @@ class Strategy(BaseStrategyML):
     def _train(self, df: pl.DataFrame, tf_key: str,
                adx_threshold: float = 20.0,
                amp_top_pct: float = 0.30) -> bool:
-        """Entraîne séparément le modèle d'amplitude et de direction.
+        """Entraîne amplitude + direction — délègue à ``app.ml.recipe_trainer``.
 
-        Suit §4.1 et §4.2 du rapport :
-          - Labels amplitude : |return_t+1| > seuil (top amp_top_pct des amplitudes)
-          - Labels direction : return_t+1 > 0
-          - Split temporel 80/20 (train/val)
+        Étape C : ~141 lignes de boucle LightGBM (Dataset, scale_pos_weight,
+        early stopping, calibration) vivaient ici, dupliquées d'une stratégie à
+        l'autre. Elles appartiennent à la RECETTE, pas à la stratégie — c'est
+        le diagnostic §2 de la conception, « la classe de stratégie est
+        propriétaire de son modèle ».
+
+        Ce qui RESTE ici est ce qui appartient légitimement à la stratégie :
+        le cache de features du backtest (``_features_for_training``) et l'état
+        ML en mémoire, indexé par ``tf_key`` — le TF hors ligne, le SYMBOLE
+        depuis ``score()``.
+
+        Équivalence vérifiée avant bascule : prédictions identiques à
+        l'ancienne implémentation (``scripts/check_recipe_trainer_equivalence.py``).
         """
-        try:
-            import lightgbm as lgb
-        except ImportError:
-            logger.error("[V4] pip install lightgbm")
-            return False
+        from app.ml import features_catalog as _fc
+        from app.ml import recipe_trainer as _rt
 
-        if len(df) < 200:
-            logger.warning(f"[V4] {tf_key} : training annulé — df trop court ({len(df)} < 200)")
-            return False
-
-        # Réutilise le cache backtest si présent (sinon rebuild classique).
-        # En optim, ``prepare_for_backtest`` pré-peuple le cache pour toutes
-        # les valeurs d'adx_threshold du param_space → 0 rebuild ici.
-        X = self._get_or_build_features(df, adx_threshold)
+        X = self._features_for_training(df, adx_threshold)
         if X is None:
-            missing = [c for c in _AMP_BASE_COLS + _DIR_BASE_COLS if c not in df.columns]
-            logger.warning(
-                f"[V4] {tf_key} : training annulé — _build_features=None "
-                f"(colonnes _pre_* manquantes : {missing})"
-            )
             return False
-
-        close   = df["close"].cast(pl.Float64).to_numpy()
-        # Aligne strictement features et labels : X peut être plus court que
-        # len(close)-1 (warmup / cache de features). Sans borner n par len(X),
-        # le jeu de validation et ses labels divergent en taille et LightGBM lève
-        # « Length of labels differs from the length of #data ».
-        n       = min(len(X), len(close) - 1)
-        if n < 150:
+        recipe = (self.models or {}).get("signal")
+        if not recipe:
+            logger.error("[V4] aucune recette déclarée (models['signal'])")
             return False
-        X_train = X[:n]
-        ret_t1  = (close[1:n + 1] - close[:n]) / np.maximum(close[:n], 1e-9)
-        abs_ret = np.abs(ret_t1)
-
-        # Label amplitude : top amp_top_pct des amplitudes (rapport §3.1, §4.1)
-        amp_thr  = np.quantile(abs_ret, 1.0 - amp_top_pct)
-        y_amp    = (abs_ret >= amp_thr).astype(np.int8)
-        # Label direction : hausse / baisse à t+1
-        y_dir    = (ret_t1 > 0).astype(np.int8)
-
-        # Split temporel 80/20 (rapport §2)
-        split = max(int(n * 0.8), 100)
-        if split >= n - 50:
-            split = n - 50
-
-        # LightGBM est invariant aux transformations monotones des features :
-        # pas besoin de StandardScaler (supprimé en phase6-sklearn-removal).
-        X_s = X_train
-
-        params_lgb = {
-            "objective":         "binary",
-            "metric":            "auc",
-            "num_leaves":        31,
-            "learning_rate":     0.03,
-            "min_child_samples": 20,
-            "subsample":         0.8,
-            "subsample_freq":    5,
-            "colsample_bytree":  0.8,
-            "reg_alpha":         0.1,
-            "reg_lambda":        0.5,
-            "verbosity":         -1,
-            "n_jobs":            1,
-        }
-        # Fix : callbacks instanciés frais dans chaque lgb.train (early_stopping
-        # est stateful, sa réutilisation entre amp et dir cassait le 2e modèle).
-
-        # ── Modèle amplitude ─────────────────────────────────────────────
-        ds_train_amp = lgb.Dataset(X_s[:split],  label=y_amp[:split])
-        ds_valid_amp = lgb.Dataset(X_s[split:n], label=y_amp[split:n],
-                                   reference=ds_train_amp)
         try:
-            booster_amp = lgb.train(
-                {**params_lgb,
-                 "scale_pos_weight": (y_amp[:split] == 0).sum() / max((y_amp[:split] == 1).sum(), 1)},
-                ds_train_amp,
-                num_boost_round=300,
-                valid_sets=[ds_valid_amp],
-                callbacks=[lgb.early_stopping(20, verbose=False),
-                           lgb.log_evaluation(-1)],
-            )
+            fs = _fc.from_matrix("stat48@1", X, df)
         except Exception as e:
-            logger.warning(f"[V4] Entraînement amplitude échoué : {e}")
+            logger.warning("[V4] %s : emballage des features KO : %s" % (tf_key, e))
             return False
 
-        auc_amp = booster_amp.best_score.get("valid_0", {}).get("auc", 0.0)
-
-        # ── Modèle direction ─────────────────────────────────────────────
-        ds_train_dir = lgb.Dataset(X_s[:split],  label=y_dir[:split])
-        ds_valid_dir = lgb.Dataset(X_s[split:n], label=y_dir[split:n],
-                                   reference=ds_train_dir)
-        try:
-            booster_dir = lgb.train(
-                {**params_lgb,
-                 "scale_pos_weight": (y_dir[:split] == 0).sum() / max((y_dir[:split] == 1).sum(), 1)},
-                ds_train_dir,
-                num_boost_round=300,
-                valid_sets=[ds_valid_dir],
-                callbacks=[lgb.early_stopping(20, verbose=False),
-                           lgb.log_evaluation(-1)],
-            )
-        except Exception as e:
-            logger.warning(f"[V4] Entraînement direction échoué : {e}")
+        out = _rt.train(recipe, df, tf_key, features=fs,
+                        params={"adx_threshold": adx_threshold,
+                                "amp_top_pct": amp_top_pct})
+        if out is None or "amp" not in out.boosters or "dir" not in out.boosters:
             return False
 
-        auc_dir = booster_dir.best_score.get("valid_0", {}).get("auc", 0.0)
-
-        # AUC composite = moyenne (l'API ML lit _best_auc)
-        auc_combined = (auc_amp + auc_dir) / 2.0
-
+        auc_amp = float(out.train_meta.get("auc_amp", 0.0))
+        auc_dir = float(out.train_meta.get("auc_dir", 0.0))
         with self._lock:
-            self._amp_models[tf_key]      = booster_amp
-            self._dir_models[tf_key]      = booster_dir
+            self._amp_models[tf_key]      = out.boosters["amp"]
+            self._dir_models[tf_key]      = out.boosters["dir"]
             self._trained_tfs.add(tf_key)
-            self._best_auc_per_tf[tf_key] = auc_combined
-            self._best_auc                = auc_combined
-            self._train_meta[tf_key] = {
-                "n_train":     int(split),
-                "n_valid":     int(n - split),
-                "auc_amp":     round(float(auc_amp), 4),
-                "auc_dir":     round(float(auc_dir), 4),
-                "amp_thr_pct": round(float(amp_thr) * 100, 3),
-                "amp_top_pct": amp_top_pct,
-            }
-
+            self._best_auc_per_tf[tf_key] = (auc_amp + auc_dir) / 2.0
+            self._train_meta[tf_key]      = dict(out.train_meta)
+            self._best_auc = (auc_amp + auc_dir) / 2.0
         logger.info(
-            f"[V4] {tf_key} entraîné : {split} train / {n - split} val | "
-            f"AUC amp={auc_amp:.3f} dir={auc_dir:.3f} | "
-            f"amp_thr={amp_thr * 100:.2f}%"
+            "[V4] %s entraîné : %s train / %s val | AUC amp=%.3f dir=%.3f"
+            % (tf_key, out.train_meta.get("n_train"), out.train_meta.get("n_valid"),
+               auc_amp, auc_dir)
         )
         return True
 

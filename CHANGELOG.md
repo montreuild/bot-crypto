@@ -6,6 +6,113 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧬 Étape C — entraîner depuis la seule recette, sans classe `Strategy`
+
+`features.catalog` était déclaré par les recettes depuis l'étape B mais
+**n'était dispatché nulle part** : il n'entrait que dans `Recipe.hash()`. Seule
+une classe `Strategy` savait construire des features, d'où l'asymétrie relevée
+par §2 de la conception — lecture pilotée par la recette (`build_predictor`),
+écriture pilotée par la stratégie (`Strategy().fit`). C'est la raison pour
+laquelle la page « Modèles », indexée par recette, doit demander une stratégie.
+
+- **Nouveau — `app/ml/features_catalog.py`** : registre de catalogues, contrat
+  uniforme `FeatureSet` (frame aligné + noms). Les trois catalogues du dépôt
+  sont branchés. `stat48` construisait un `np.ndarray` **anonyme** ; ses 56
+  colonnes sont désormais nommées dans l'ordre exact de construction, verrouillé
+  par test contre la sortie réelle du constructeur.
+- **Nouveau — `app/ml/labelling.py`** : registre de schémas de labellisation.
+  `amp_dir_quantile` (quantile d'amplitude, deux têtes) et `vol_adaptive_dir`
+  (seuil adaptatif à la volatilité, une tête — ce que `dyn_threshold_v1`
+  revendique). Le schéma est **déclaré** (`labels.scheme:`), pas déduit des
+  têtes : deux recettes à tête unique peuvent viser des cibles différentes.
+- **Nouveau — `app/ml/recipe_trainer.py`** : `train(recipe, df, tf)` n'importe
+  aucune stratégie — verrouillé par un test qui fait échouer tout import de
+  `app.strategies.*` pendant l'entraînement. `supports()` refuse explicitement
+  ce qu'il ne sait pas reproduire (calibration isotone, élagage de features,
+  recettes `proxy`) plutôt que de produire silencieusement un autre modèle.
+
+**Le gain mesurable** : `save_lgb_with_scaler` ne sérialise ni features ni
+médianes, donc le scorer générique rapportait `unsupported_format` et le gate
+concluait « keep » quoi qu'il arrive — `stat48_v4`/`stat48_v5` n'étaient
+**jamais promouvables**. L'artefact produit par le chemin recette porte ses
+noms de colonnes : le gate le score enfin.
+
+**Calibration isotone et élagage** sont désormais portés : `supports()` accepte
+`omnibus_v4_multi`, la recette de production. L'élagage passe par l'artefact
+(`train_meta["kept_features"]`, réinjectable via `params`) plutôt que par un
+attribut de processus — même comportement, mais inspectable.
+
+**`/api/ml/train` accepte `recipe=`** et un nouveau `GET /api/ml/recipes` liste
+les recettes avec leur entraînabilité. La page « Modèles » propose donc les
+recettes en tête de liste : le formulaire parle enfin le vocabulaire de la
+table de registre juste au-dessus. Le sweep reste piloté par la stratégie —
+`window_sweep` n'a pas encore de variante recette.
+
+**Équivalence mesurée.** `scripts/check_recipe_trainer_equivalence.py`
+donne deux résultats opposés, et c'est le point :
+
+- **`omnibus_v4_multi` : écart 0.00000000, corrélation 1.000000** face à
+  `MLBackend`. Basculer une recette omnibus ne change PAS le modèle produit —
+  c'est la mesure qui rend la bascule sûre. Verrouillé par test.
+- **`stat48_v5` : écart 0.000000, corrélation 1.0000** — après correction de
+  deux défauts, un de chaque côté (voir ci-dessous).
+
+Aucune bascule automatique pour autant : les `_train` autonomes restent en
+place. Changer le chemin d'une recette reste une décision d'exploitation.
+
+### 🧬 Étape C (suite) — les `_train` autonomes disparaissent, et le pooling multi-symboles
+
+- **`scoring_statistique_opus_v4/v5` : 257 lignes de boucle LightGBM supprimées.**
+  `_train` délègue à `recipe_trainer` et ne garde que ce qui appartient
+  légitimement à la stratégie : le cache de features du backtest et l'état ML
+  en mémoire. `recipe_trainer.train()` accepte désormais un `FeatureSet` déjà
+  construit (`features_catalog.from_matrix`), sans quoi router `score()` par
+  lui aurait recalculé les features à chaque réentraînement walk-forward — un
+  correctif payé d'une régression de performance sur la boucle chaude.
+  Équivalence vérifiée sur **les deux** chemins : `fit()` (écart 0.000000) et
+  `score()` (10 fenêtres, **0 divergence** de signal, `p_event`/`p_up` à 6
+  décimales).
+- **Nouveau — `recipe_trainer.train_multi(recipe, {symbole: df}, tf)`.** Une
+  recette entraînée sur plusieurs symboles mis en commun. Trois pièges traités
+  explicitement : les features sont construites **par symbole** (une fenêtre
+  glissante ne doit jamais traverser une jointure entre deux titres — ce sont
+  les matrices X/y qui sont empilées, jamais les bougies) ; le découpage est
+  **temporel et commun**, pas indiciel (couper à 80 % des lignes mettrait le
+  premier symbole en entraînement et le dernier en validation) ; les niveaux de
+  prix n'entrent pas dans la matrice, les labels étant des rendements. Un titre
+  trop court est écarté avec sa raison sans faire échouer le lot, et la
+  provenance nomme les symboles poolés.
+
+  Vérifié : 8 titres de 1 200 barres journalières, **chacun sous `min_bars`
+  donc inentraînable seul**, produisent ensemble 7 672 lignes d'entraînement.
+
+- **Piège polars signalé** : `Series.to_numpy()` sur une colonne `Datetime`
+  **segfaute** en polars 1.0.0 (la version épinglée) — pas d'exception, le
+  process meurt. Le découpage temporel passe par `.dt.epoch("s")`. Aucun autre
+  site du dépôt n'utilise ce motif ; un test de garde le verrouille.
+
+### 🐛 Deux défauts trouvés en cherchant l'origine de la divergence stat48
+
+Le premier diagnostic accusait `n_estimators` (300 codé en dur contre 500
+déclaré). **C'était faux** : l'early stopping tranche bien avant 300.
+
+- **`scoring_statistique_opus_v4/v5` — entraînement sur 250 barres.**
+  `_get_or_build_features` retombe, hors backtest, sur les 250 dernières
+  barres : dimensionnement correct pour `score()`, qui ne lit que la dernière
+  ligne, mais `_train` l'empruntait aussi. **Quelle que soit la fenêtre passée
+  à `fit()` — 3 400 barres depuis le gate, 8 000 depuis le runner — le modèle
+  n'apprenait que sur 200 lignes plus 50 de validation**, alors que la recette
+  annonce `min_bars: 2000`. Aucun message ne le signalait. Nouveau
+  `_features_for_training`, qui construit sur toute la fenêtre reçue ;
+  `score()` garde sa fenêtre courte, y bâtir des milliers de barres à chaque
+  appel coûterait cher pour une seule ligne lue.
+- **`recipe_trainer` — `max_bin` codé en dur.** Le module imposait le 63 de
+  MLBackend, donc aucune recette ne pouvait décrire un modèle au défaut
+  LightGBM (255) : c'était reproduire le défaut même qu'on corrige. Les
+  réglages LightGBM viennent maintenant du bloc `hp:` de la recette
+  (`_LGB_KEYS`), et `stat48_v4`/`stat48_v5` déclarent `max_bin: 255` — ce que
+  leurs stratégies utilisent réellement.
+
 ### 🏛 G2 — les actions SBF 120 sont activées (données, pas exécution)
 
 Tout le code G2 était livré ; il restait inactivé, et un maillon manquait.

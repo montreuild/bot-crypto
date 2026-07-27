@@ -1,6 +1,21 @@
 # Conception — Architecture unifiée : entraînement, gestion et exploitation des modèles
 
-> **Statut** : **révision 6** — étapes **A, B, C, D.1, D.2, E, F, G livrées**.
+> **Statut** : **révision 7** — étapes **A, B, C, D.1, D.2, E, F, G livrées**.
+>
+> **§13 — l'étape C est achevée : entraîner ne demande plus qu'une recette.**
+> La révision 6 déclarait C livrée, mais elle ne l'était qu'à moitié : le mixin
+> `MLBackend` avait bien absorbé quatre stratégies, l'entrée restait
+> `Strategy().fit()`. `features.catalog` était déclaré par les recettes depuis
+> l'étape B et **dispatché nulle part** — il n'entrait que dans `Recipe.hash()`.
+> `app/ml/{features_catalog,labelling,recipe_trainer}.py` ferment cette moitié,
+> avec équivalence **0.000000** mesurée face à `MLBackend` et aux `_train`
+> autonomes, sur les chemins `fit()` **et** `score()`. Détail en §13.
+>
+> **Action restante pour l'utilisateur (2e du genre)** : `scoring_statistique_
+> opus_v4/v5` s'entraînaient sur **250 barres** quelle que soit la fenêtre
+> demandée (§13.2). C'est corrigé, donc le modèle produit change — il faut
+> **réoptimiser** ces deux stratégies avant de s'y fier de nouveau, exactement
+> comme après la réunification des ADX.
 > Décision 11 (dimension symbole) tranchée par la mesure : retirée de la clé du
 > registre, conservée en provenance (§8bis). Décision 8 (fusion omnibus) :
 > `opus_omnibus_v7` fusionné avec équivalence prouvée, `v11_followsetup`
@@ -1581,3 +1596,128 @@ Ce qui reste, par valeur décroissante :
    de rendre `MLBackend` agnostique du catalogue de features.
 6. **Rejouer la mesure du symbole** (décision 11) dès qu'un actif d'une autre
    classe est entraînable — automatique, le script découvre les symboles.
+
+
+---
+
+## 13. Étape C achevée — le catalogue de features devient déclaratif
+
+*Ajouté en révision 7 (2026-07-27). §6 annonçait « un seul chemin
+`train(recipe, df, tf)` » ; voici ce qui a été livré, et ce que le livrer a fait
+apparaître.*
+
+### 13.1 Ce qui manquait vraiment
+
+Les recettes déclarent `features.catalog` (`v4_polars@1`, `stat48@1`,
+`dyn_threshold@1`) depuis l'étape B. **Aucun code ne savait le lire.** Le nom
+n'entrait que dans `Recipe.hash()` : la recette disait quelles features elle
+voulait, et seule une classe `Strategy` savait les construire, chacune à sa
+façon. C'était la moitié écriture de l'asymétrie de §2 :
+
+| | pilote |
+|---|---|
+| lecture | `build_predictor(persistence, path)` → **la recette** |
+| écriture | `mod.Strategy().fit(df, …)` → **la stratégie** |
+
+Conséquence visible en exploitation : la page « Modèles », indexée par recette,
+devait demander une **stratégie** — le formulaire parlait un vocabulaire que sa
+propre table n'utilisait pas.
+
+Trois modules ferment cette moitié :
+
+* **`app/ml/features_catalog.py`** — registre de catalogues, contrat uniforme
+  `FeatureSet` (frame aligné portant `close`, plus les noms de colonnes).
+  `from_matrix` permet à un appelant qui possède déjà sa matrice — le cache de
+  backtest — de l'y injecter sans la reconstruire.
+* **`app/ml/labelling.py`** — registre de schémas. `amp_dir_quantile` (quantile
+  d'amplitude, deux têtes) et `vol_adaptive_dir` (seuil adaptatif à la
+  volatilité, une tête). Le schéma est **déclaré** (`labels.scheme:`) et non
+  déduit des têtes : deux recettes à tête unique peuvent viser des cibles
+  différentes, et deviner rejouerait la confusion que la recette lève.
+* **`app/ml/recipe_trainer.py`** — `train(recipe, df, tf)` et
+  `train_multi(recipe, {symbole: df}, tf)`. Verrouillé par un test qui fait
+  **échouer tout import de `app.strategies.*`** pendant l'entraînement.
+
+### 13.2 Trois défauts trouvés en cherchant une divergence
+
+Le premier diagnostic accusait `n_estimators` (300 codé en dur côté stratégie
+contre 500 déclaré par la recette). **C'était faux** — l'early stopping tranche
+bien avant 300, forcer 300 ne déplace pas une prédiction. Les vraies causes :
+
+1. **L'entraînement sur 250 barres.** `_get_or_build_features` retombe, hors
+   backtest, sur les 250 dernières barres. Dimensionnement correct pour
+   `score()`, qui ne lit que la dernière ligne ; silencieusement destructeur
+   pour `_train`, qui l'empruntait aussi. Quelle que soit la fenêtre passée à
+   `fit()` — 3 400 barres depuis le gate, 8 000 depuis le runner — le modèle
+   n'apprenait que sur **200 lignes plus 50 de validation**, alors que la recette
+   annonce `min_bars: 2000`. Le log affichait « 200 train / 50 val » sans que
+   rien n'indique que la fenêtre reçue en contenait quinze fois plus.
+2. **`max_bin` codé en dur dans le module générique** (63, valeur de
+   `MLBackend`) : aucune recette ne pouvait décrire un modèle au défaut
+   LightGBM. C'était reproduire le défaut même que ce chantier corrige. Les
+   réglages LightGBM viennent désormais du bloc `hp:` — ce qui **débloque
+   ML-11** au passage (désactiver la calibration en 1h ne demande plus de code).
+3. **`Series.to_numpy()` sur une colonne `Datetime` segfaute** en polars 1.0.0,
+   la version épinglée : pas d'exception, le process meurt. Le code passe par
+   `.dt.epoch("s")`, et un test de garde le verrouille.
+
+Ordre de grandeur : (1) explique la quasi-totalité de la divergence, (2) le
+reste, (3) n'a rien à voir avec le ML mais aurait tué n'importe quel appelant.
+
+### 13.3 Équivalences mesurées
+
+Le protocole de §6 exige qu'une divergence soit énumérée **avant** la bascule.
+
+| Recette | Face à | Écart max | Corrélation |
+|---|---|---:|---:|
+| `omnibus_v4_multi` | `MLBackend` | **0.00000000** | 1.000000 |
+| `stat48_v5` — `fit()` | `_train` autonome | **0.000000** | 1.0000 |
+| `stat48_v5` — `score()` | idem, 10 fenêtres réelles | **0 divergence de signal** | — |
+
+Sur cette base, les `_train` autonomes de `scoring_statistique_opus_v4/v5`
+(**257 lignes**) ont été supprimés : `_train` délègue et ne garde que ce qui
+appartient légitimement à la stratégie — le cache de features du backtest et
+l'état ML en mémoire. Rejouable :
+`scripts/check_recipe_trainer_equivalence.py`.
+
+### 13.4 Deux corrections de côté
+
+* **`stat48` a 56 features, pas 48.** Le bloc BB (largeur + rang centile ×
+  4 lags) a été ajouté sans que le décompte suive. Le nom `stat48_*` des
+  recettes est conservé : c'est une clé de registre, la renommer romprait la
+  lignée d'artefacts pour une correction cosmétique.
+* **`stat48_v4/v5` deviennent promouvables.** `save_lgb_with_scaler` ne
+  sérialisait ni features ni médianes : le scorer générique rapportait
+  `unsupported_format` et le gate concluait « keep » quoi qu'il arrive. Ces
+  recettes n'avaient donc **jamais** pu être promues. Les artefacts produits par
+  le chemin recette portent leurs noms de colonnes.
+
+### 13.5 Pooling multi-symboles (§8bis revisité pour les actions)
+
+`train_multi` entraîne une recette sur plusieurs symboles mis en commun. §8bis
+avait retiré la dimension symbole après mesure — **sur crypto**. Pour les
+actions, l'arithmétique impose l'inverse : `min_bars` 2000 plus un holdout de
+1500 demandent ~3 500 barres, soit **~13,7 ans par titre** en journalier sur
+Euronext (~256 séances/an). Le pooling n'est pas un raffinement, c'est la
+condition d'existence du modèle.
+
+Trois pièges traités explicitement :
+
+1. les features sont construites **par symbole** — une fenêtre glissante qui
+   traverserait la jointure entre deux titres produirait des valeurs ne
+   correspondant à aucun marché ; ce sont les matrices X/y qui sont empilées,
+   **jamais les bougies** ;
+2. le découpage est **temporel et commun**, pas indiciel — couper à 80 % des
+   lignes d'un empilement mettrait le premier symbole en entraînement et le
+   dernier en validation, exactement la fuite que `measure_symbol_transfer`
+   avait mesurée sur sa version indexée ;
+3. les niveaux de prix ne polluent rien, les labels étant des rendements et les
+   features des grandeurs stationnaires ou normalisées.
+
+Vérifié sur 8 titres de 1 200 barres journalières, **chacun sous `min_bars` donc
+inentraînable seul** : 7 672 lignes d'entraînement une fois mis en commun.
+
+**Limite honnête** : mesuré sur séries synthétiques uniquement. Les hôtes Yahoo
+sont refusés par la politique d'egress de l'environnement d'agent, donc aucune
+donnée action réelle n'a pu être téléchargée (ML-17). Et le pooling n'est câblé
+nulle part — ni API, ni UI, ni backfill (ML-16).

@@ -292,17 +292,74 @@ valeur décroissante. Détail et chiffres :
 | ID | Item | Effort | Pourquoi c'est là |
 |---|---|---|---|
 | **ML-10** 🔴 | **Réoptimiser les seuils ADX** des YAML (`adx_min`, `adx_threshold`, `needs_adx_above`, `adx_len`) | M | Suite obligée de la décision 13 : ces seuils ont été choisis face à un ADX qui valait 35 en moyenne, ils s'appliquent à un ADX qui vaut 28. Rien n'est cassé, rien n'est réglé. **Seul item qui bloque la confiance dans les stratégies actives.** Rien à purger : `optimizer_results` est vide |
-| **ML-11** 🔴 | **Désactiver la calibration isotone en 1h** | S | Mesuré (ECE **+461 %** en 1h contre −47 %/−67 % en 15m/30m), conclusion écrite… et jamais appliquée : `omnibus_v4_multi.yaml` porte toujours `calibrate: true` sans dérogation par TF. **Écart entre ce que le doc affirme et ce que le code fait.** Sous-décision ouverte : une recette par TF, ou un bloc `hp` par TF |
+| **ML-11** 🔴 | **Désactiver la calibration isotone en 1h** | S (débloqué) | Mesuré (ECE **+461 %** en 1h contre −47 %/−67 % en 15m/30m), conclusion écrite… et jamais appliquée : `omnibus_v4_multi.yaml` porte toujours `calibrate: true` sans dérogation par TF. **Écart entre ce que le doc affirme et ce que le code fait.** Sous-décision ouverte : une recette par TF, ou un bloc `hp` par TF. **Débloqué par ML-14** : tous les réglages LightGBM (`calibrate`, `max_bin`, `early_stopping_rounds`…) se déclarent maintenant dans le bloc `hp:` d'une recette, donc désactiver la calibration en 1h ne demande plus de toucher au code |
 | **ML-12** 🟠 | Instruire les scores négatifs sur la fenêtre de validation | M | 3 des 4 cibles mesurées perdent sur le dernier tiers de l'historique, **sous les deux conventions d'ADX**. Protocole réduit (40 essais, une paire symbole/TF) donc pas un verdict — mais leurs bons scores viennent d'IS/OOS |
 | **ML-13** 🔵 | Mode `follow_setup` dans V11 | M | Dernier morceau de la fusion omnibus. Sa machine anti-whipsaw (confirmation K bougies, cooldown, hystérésis) est du **code**, pas des valeurs : mérite son propre tour de mesure, d'où le report délibéré |
-| **ML-14** 🔵 | Entraînement unifié des 3 dernières stratégies ML | L | `ml_dynamic_threshold` (`dyn_threshold_v1`, tête unique) et `scoring_statistique_opus_v4/v5` (`stat48_*`, 48 colonnes) ont un catalogue de features et une persistance différents. Suppose de rendre `MLBackend` **agnostique du catalogue** |
+| ~~**ML-14**~~ ✅ | ~~Entraînement unifié des 3 dernières stratégies ML~~ | — | **FAIT** (2026-07-27) — voir §3.7bis. `app/ml/features_catalog.py` rend le catalogue déclaratif, `app/ml/labelling.py` le schéma de labels, `app/ml/recipe_trainer.py` entraîne depuis la seule recette. Les `_train` autonomes de `stat48_v4/v5` (257 lignes) sont supprimés, équivalence 0.000000 mesurée. Au passage : `stat48` a **56 colonnes, pas 48** |
 | **ML-15** 🔵 | Rejouer la mesure de la dimension symbole | S | Automatique dès qu'un actif d'une autre classe (action, ETF) avec ≥ 8 000 barres entre dans le store — cf. §4.2bis |
+
+### 3.7bis ✅ ML-14 livré — et trois défauts trouvés en le livrant (2026-07-27)
+
+L'entraînement est **piloté par la recette** : `train(recipe, df, tf)` n'importe
+aucune stratégie (verrouillé par un test qui fait échouer tout import de
+`app.strategies.*` pendant l'entraînement). `features.catalog` était déclaré par
+les recettes depuis l'étape B mais n'était **dispatché nulle part** — il n'entrait
+que dans `Recipe.hash()`. C'était la moitié écriture de l'asymétrie de §2 :
+lecture pilotée par la recette (`build_predictor`), écriture par la stratégie.
+
+Équivalences mesurées avant toute bascule, conformément au protocole :
+
+| Recette | Face à | Écart max | Corrélation |
+|---|---|---:|---:|
+| `omnibus_v4_multi` | `MLBackend` | **0.00000000** | 1.000000 |
+| `stat48_v5` (`fit`) | `_train` autonome | **0.000000** | 1.0000 |
+| `stat48_v5` (`score`) | idem, 10 fenêtres | **0 divergence de signal** | — |
+
+**Trois défauts trouvés en cherchant l'origine d'une divergence**, aucun n'étant
+la cause annoncée au premier diagnostic (`n_estimators` 300 vs 500 — l'early
+stopping tranche bien avant, cet écart n'avait aucun effet) :
+
+1. **`scoring_statistique_opus_v4/v5` s'entraînaient sur 250 barres.**
+   `_get_or_build_features` retombe, hors backtest, sur les 250 dernières barres
+   — bon pour `score()`, qui ne lit que la dernière ligne, mais `_train`
+   l'empruntait aussi. Quelle que soit la fenêtre passée à `fit()`, le modèle
+   n'apprenait que sur 200 lignes plus 50 de validation, alors que la recette
+   annonce `min_bars: 2000`. Aucun message ne le signalait. **Corrigé — mais cela
+   change le modèle produit en exploitation : réoptimiser avant de s'y fier,
+   même logique que ML-10.**
+2. **`stat48` produit 56 features, pas 48.** Le bloc BB (largeur + rang centile
+   × 4 lags) a été ajouté sans que le décompte ni la docstring suivent. Le nom
+   des recettes `stat48_*` est conservé : c'est une clé de registre.
+3. **`Series.to_numpy()` sur une colonne `Datetime` segfaute en polars 1.0.0**
+   (la version épinglée) — pas d'exception, le process meurt. Trouvé en écrivant
+   le découpage temporel du pooling. Aucun autre site du dépôt n'utilise ce
+   motif ; un test de garde le verrouille.
+
+**Gain de côté :** `save_lgb_with_scaler` ne sérialisait ni features ni médianes,
+donc le scorer générique rapportait `unsupported_format` et le gate concluait
+« keep » quoi qu'il arrive — `stat48_v4/v5` n'étaient **jamais promouvables**.
+Les artefacts produits par le chemin recette portent leurs noms de colonnes.
+
+**Pooling multi-symboles** (`train_multi`) : une recette entraînée sur plusieurs
+symboles mis en commun, features construites par symbole et découpage temporel
+commun. Sur Euronext, `min_bars` + holdout demandent ~13,7 ans par titre en
+journalier — le pooling est la condition d'existence du modèle actions, pas un
+raffinement. Vérifié sur 8 titres inentraînables seuls.
 
 Deux points attendent un arbitrage utilisateur, pas du travail :
 
 * **Supertrend** — son ATR interne a été inclus dans la correction Wilder, ce
   qui dépasse la lettre de la demande (« ADX »). Même défaut, et `ta.supertrend`
   en Pine utilise `ta.atr` ; une ligne à annuler si non souhaité.
+### 3.7ter 🟠 Ce que ML-14 laisse ouvert
+
+| ID | Item | Effort | Pourquoi |
+|---|---|---|---|
+| **ML-16** 🟠 | Câbler `train_multi` à l'API et à l'UI | M | Le pooling est une brique **testée mais appelée par personne** : ni `/api/ml/train`, ni la page « Modèles », ni le backfill actions ne l'utilisent. Sans ce câblage, G2 ne peut pas produire son premier modèle actions |
+| **ML-17** 🟠 | Valider le pooling sur des données actions RÉELLES | S | Mesuré uniquement sur séries synthétiques : les hôtes Yahoo sont refusés par la politique d'egress de l'environnement d'agent. À rejouer depuis une machine ayant accès, après `scripts/backfill_equities.py` |
+| **ML-18** 🔵 | Variante recette de `window_sweep` | S | Le sweep reste piloté par la stratégie ; seul `train` a sa variante recette |
+| **ML-19** 🔵 | Basculer les stratégies bespoke sur le chemin recette | M | `_train` délègue déjà, mais `fit()`/`score()` passent encore par la classe. Décision d'exploitation, recette par recette — l'équivalence est acquise, plus le modèle qui change |
+
 * **`dynamic_threshold_no_ml`** — reste un fork, motivé (porte de volatilité en
   inférence là où le jumeau ML labellise). Le convertir dégraderait le parent.
 

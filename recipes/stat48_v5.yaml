@@ -20,9 +20,17 @@ labels:
 heads: [amp, dir]
 
 hp:
-  n_estimators: 500
+  # Ces valeurs décrivent ce que la stratégie fait RÉELLEMENT — la recette
+  # annonçait n_estimators: 500 alors que scoring_statistique_opus_v4/v5 code
+  # en dur 300 rounds ; l'early stopping tranchant bien avant, l'écart était
+  # sans effet, mais la recette mentait.
+  n_estimators: 300
   num_leaves: 31
   learning_rate: 0.03
+  # max_bin : la stratégie laisse le défaut LightGBM (255). Ne PAS hériter du
+  # 63 de MLBackend — c'est le seul réglage qui faisait diverger les deux
+  # chemins (histogrammes différents, donc arbres et early stopping différents).
+  max_bin: 255
 
 window:
   bars:

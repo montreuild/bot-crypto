@@ -218,3 +218,62 @@ class TestBackfillPath:
         df = store.fetch(router, "AIR.PA", "1d", 300)
         assert len(df) == 300, "les barres à volume nul ont été éliminées"
         assert float(df["volume"].sum()) == 0.0
+
+
+class TestRateLimitCircuitBreaker:
+    """Un quota Yahoo atteint coûtait ``max_retries`` requêtes PAR symbole et
+    PAR timeframe. Sur 98 titres × 5 TF, un cycle de scan passait de quelques
+    secondes à une demi-heure — à ne rien rapporter."""
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        import app.core.yfinance_provider as yp
+        yp._RATE_STATE.update({"consecutive": 0.0, "until": 0.0})
+        yield
+        yp._RATE_STATE.update({"consecutive": 0.0, "until": 0.0})
+
+    def _provider(self):
+        from app.core.yfinance_provider import YFinanceProvider
+        return YFinanceProvider({"providers": {"yfinance": {"min_request_interval": 0.0,
+                                                            "max_retries": 1}}})
+
+    def test_repeated_429_opens_the_breaker_and_stops_calling(self, monkeypatch):
+        import app.core.yfinance_provider as yp
+        p = self._provider()
+        calls = {"n": 0}
+
+        def _boom(*a, **k):
+            calls["n"] += 1
+            raise RuntimeError("HTTP 429 — quota Yahoo atteint, backoff")
+
+        monkeypatch.setattr(p, "_fetch_via_chart_api", _boom)
+        for _ in range(yp._RATE_TRIP_AFTER):
+            p._fetch_raw("X.PA", "1d", 0, 1)
+        assert p._cooldown_remaining() > 0, "le disjoncteur devait s'ouvrir"
+
+        before = calls["n"]
+        for _ in range(20):
+            assert p._fetch_raw("Y.PA", "1d", 0, 1) == []
+        assert calls["n"] == before, "aucun appel ne doit partir disjoncteur ouvert"
+
+    def test_a_success_resets_the_counter(self, monkeypatch):
+        import app.core.yfinance_provider as yp
+        p = self._provider()
+        monkeypatch.setattr(p, "_fetch_via_chart_api",
+                            lambda *a, **k: (_ for _ in ()).throw(
+                                RuntimeError("HTTP 429 — quota")))
+        p._fetch_raw("X.PA", "1d", 0, 1)
+        assert yp._RATE_STATE["consecutive"] == 1
+        monkeypatch.setattr(p, "_fetch_via_chart_api",
+                            lambda *a, **k: [[0, 1.0, 1.0, 1.0, 1.0, 0.0]])
+        assert p._fetch_raw("X.PA", "1d", 0, 1)
+        assert yp._RATE_STATE["consecutive"] == 0
+
+    def test_a_non_429_error_does_not_trip_the_breaker(self, monkeypatch):
+        p = self._provider()
+        monkeypatch.setattr(p, "_fetch_via_chart_api",
+                            lambda *a, **k: (_ for _ in ()).throw(
+                                RuntimeError("timeout réseau")))
+        for _ in range(10):
+            p._fetch_raw("X.PA", "1d", 0, 1)
+        assert p._cooldown_remaining() == 0

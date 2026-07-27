@@ -212,7 +212,14 @@ class CandleStore:
             try:
                 batch = exchange.fetch_ohlcv(symbol, tf, since=since, limit=LIMIT)
             except Exception as e:
-                logger.warning(f"[CandleStore] fetch_incr {symbol}/{tf} : {e}")
+                # Une TypeError/AttributeError ici n'est PAS un incident réseau :
+                # c'est un défaut de code dans la pile de fetch, et le message
+                # seul ("unsupported operand type(s) for +") ne dit pas où. On
+                # journalise la trace pour ces cas, sans noyer les logs sous les
+                # timeouts et rate-limits, qui sont attendus et fréquents.
+                logger.warning(f"[CandleStore] fetch_incr {symbol}/{tf} : {e}",
+                               exc_info=isinstance(e, (TypeError, AttributeError,
+                                                       KeyError, ValueError)))
                 break
 
             if not batch:
@@ -299,7 +306,11 @@ class CandleStore:
             try:
                 return exchange.fetch_ohlcv(symbol, tf, limit=total) or []
             except Exception as e:
-                logger.warning(f"[CandleStore] fetch_full {symbol}/{tf} : {e}")
+                # Même parti pris qu'en incrémental : trace pour les défauts de
+                # code, message seul pour les aléas réseau.
+                logger.warning(f"[CandleStore] fetch_full {symbol}/{tf} : {e}",
+                               exc_info=isinstance(e, (TypeError, AttributeError,
+                                                       KeyError, ValueError)))
                 return []
 
         try:
