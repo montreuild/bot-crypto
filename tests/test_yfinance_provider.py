@@ -315,6 +315,65 @@ class TestTradingTimeSpan:
         assert len(p.fetch_ohlcv("AIR.PA", "15m", limit=500)) == 500
 
 
+class TestCcxtLimitSemantics:
+    """`limit` ne tronque pas du même côté selon la question posée.
+
+    ccxt : avec `since`, ce sont les `limit` premières bougies À PARTIR de
+    `since` ; sans `since`, les `limit` DERNIÈRES. Rendre la queue dans les
+    deux cas — ce que faisait ce provider — casse tout ce qui regarde vers le
+    passé : le backfill historique recevait des bougies qu'il avait déjà, en
+    concluait « rien de plus ancien », et le cache n'avançait qu'au
+    compte-gouttes avant de plafonner pile à `limit`.
+    """
+
+    def _deep(self, n=3000):
+        p = _provider()
+        rows = [[i * HOUR_MS, 1.0, 1.0, 1.0, 1.0, 1.0] for i in range(n)]
+        p._fetch_bars = lambda *_a: rows
+        return p, rows
+
+    def test_since_returns_the_head_not_the_tail(self):
+        p, _ = self._deep()
+        out = p.fetch_ohlcv("AIR.PA", "1h", limit=1000, since=500 * HOUR_MS)
+        assert out[0][0] == 500 * HOUR_MS
+        assert out[-1][0] == 1499 * HOUR_MS
+
+    def test_without_since_returns_the_most_recent(self):
+        p, rows = self._deep()
+        out = p.fetch_ohlcv("AIR.PA", "1h", limit=1000)
+        assert out[-1][0] == rows[-1][0]
+        assert len(out) == 1000
+
+    def test_since_zero_is_a_bound_not_an_absence(self):
+        """`min_since_ms` vaut 0 sur actions (une action cote avant 2017) : la
+        valeur 0 circule vraiment, et `if since:` la traitait comme « pas de
+        borne » — donc troncature par la queue."""
+        p, _ = self._deep()
+        out = p.fetch_ohlcv("AIR.PA", "1h", limit=1000, since=0)
+        assert out[0][0] == 0, "since=0 doit signifier « depuis l'origine »"
+
+    def test_a_backward_window_actually_yields_older_bars(self):
+        """Le scénario du CandleStore : le cache commence à la bougie 500, on
+        demande une fenêtre partant avant. Le backfill DOIT recevoir les 500
+        bougies antérieures."""
+        p, _ = self._deep()
+        cache_starts_at = 500 * HOUR_MS
+        out = p.fetch_ohlcv("AIR.PA", "1h", limit=1000, since=0)
+        older = [r for r in out if r[0] < cache_starts_at]
+        assert len(older) == 500
+
+    def test_pagination_advances_instead_of_jumping_to_the_end(self):
+        """`CandleStore` pagine par `since = batch[-1][0] + 1`. Avec une
+        troncature par la queue, le premier lot finissait sur la DERNIÈRE
+        bougie disponible : la pagination sautait tout l'intervalle."""
+        p, _ = self._deep()
+        first = p.fetch_ohlcv("AIR.PA", "1h", limit=100, since=0)
+        second = p.fetch_ohlcv("AIR.PA", "1h", limit=100,
+                               since=first[-1][0] + 1)
+        assert first[-1][0] == 99 * HOUR_MS
+        assert second[0][0] == 100 * HOUR_MS
+
+
 class TestMaxDepth:
     """`period='max'` : Yahoo décide de sa profondeur, on ne la devine plus."""
 

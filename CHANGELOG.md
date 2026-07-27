@@ -143,6 +143,45 @@ Le paquet `yfinance` **n'était pas** ajouté aux dépendances : il réinstalle
 pandas, retiré en phase 6. Ce choix a été **repris ci-dessous** — l'API chart
 publique ne ramène plus de données.
 
+### 🐛 Actions — `limit` tronquait du mauvais côté, le backfill n'avançait qu'au compte-gouttes
+
+Symptôme : en relançant le backfill, le cache 15 m grandissait un peu à chaque
+fois — 612 → 816 → 952 → 1000 — puis **plafonnait pile à 1000**, la valeur de
+`limit`. Le 1 h, lui, restait bloqué à 897 barres.
+
+`fetch_ohlcv` violait la sémantique ccxt. Avec un `since`, ccxt rend les
+`limit` premières bougies **à partir de** `since` ; sans `since`, les `limit`
+**dernières**. Le provider rendait la queue dans les deux cas. Toute demande
+tournée vers le passé recevait donc la tranche la plus récente — c'est-à-dire
+des bougies déjà en cache. Le backfill en concluait « rien de plus ancien » et
+n'engrangeait que le mince résidu antérieur au cache, de moins en moins à
+chaque passe, jusqu'à plus rien au-delà de `limit` bougies.
+
+La preuve était dans les données sans qu'on la voie : **le 4 h remontait au
+2025-04-02 (480 jours) alors que le cache 1 h du même titre s'arrêtait au
+2026-02-17 (160 jours)**. Or le 4 h est agrégé depuis le 1 h — même donnée
+Yahoo, quatre fois plus de profondeur, uniquement parce que l'agrégation
+divise le nombre de bougies **avant** la troncature.
+
+- `_finalize` tronque désormais par la tête quand `since` est fourni, par la
+  queue sinon. La pagination du `CandleStore` (`since = batch[-1][0] + 1`)
+  reposait déjà sur ce contrat : elle sautait jusqu'à la dernière bougie
+  disponible au lieu d'avancer d'un lot.
+- `since=0` n'est plus confondu avec « pas de borne ». `if since:` traitait
+  zéro comme absent, or le provider actions abaisse `min_since_ms` à 0 — une
+  action cote avant 2017 — donc la valeur circule réellement.
+
+Mesuré, cache court au départ, source profonde, cinq relances : `1000 → 1000
+→ …` avant, `2370` dès la première après. Combiné au chemin profond ci-dessous,
+la profondeur complète est atteinte en une passe.
+
+### 🛑 `backfill_equities.py` refuse un timeframe inconnu avant la première requête
+
+Un `--tf` mal découpé (coquille, virgule manquante, shell qui scinde
+l'argument) lançait tout de même les 121 titres, avec deux avertissements par
+symbole et « 0 barres » partout. Le timeframe est maintenant validé d'emblée,
+avec la liste des valeurs acceptées.
+
 ### 📥 Amorçage actions — `period='max'` : la source décide de sa profondeur
 
 `bars_span_ms` traduit un nombre de bougies en fenêtre calendaire, mais reste

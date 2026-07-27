@@ -350,6 +350,12 @@ class CandleStore:
                 rows = []
             older = ([r for r in rows if r[0] < before_ms]
                      if before_ms is not None else rows)
+            if rows:
+                logger.info(
+                    f"[CandleStore] {symbol}/{tf} — profondeur maximale de la "
+                    f"source : {len(rows)} bougies, dont {len(older)} antérieures "
+                    f"au cache"
+                )
             if older:
                 older.sort(key=lambda x: x[0])
                 return older
