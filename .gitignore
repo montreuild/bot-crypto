@@ -87,6 +87,26 @@ frontend/next-env.d.ts
 data/ohlcv/
 data/derivatives/
 
+# ── Artefacts du registre ML ────────────────────────────────────────────────
+# Sortie de `app/ml/model_registry.py` : boosters LightGBM, méta de version et
+# journal des décisions de gate. ~11 Mo aujourd'hui, et qui croît d'une version
+# à chaque promotion — un binaire par entraînement, versionné dans git, pour un
+# artefact que la recette suffit à reproduire (c'est tout l'objet de ML-02 :
+# provenance complète dans le meta, recette + commit + fenêtre d'entraînement).
+models/**/*.lgb
+models/**/*.meta.json
+models/**/decisions.jsonl
+
+# EXCEPTION — `models/_archive/` reste SUIVI, et ce n'est pas un oubli.
+# Ces 9 fichiers (6,3 Mo) sont les modèles V4 pré-entraînés, dont
+# l'investigation DEAD-01 a établi qu'ils ont été produits par un script HORS
+# DÉPÔT et sont « impossibles à régénérer à l'identique » (cf. docstring de
+# `app/ml/train_runner.py`). Contrairement au reste du registre, aucune recette
+# ne les reconstruit : git est la seule chose qui les protège. Les détacher
+# ferait dépendre d'une copie de travail le seul artefact qui n'a pas d'autre
+# source.
+!models/_archive/**
+
 # ── Outillage d'assistants de code (local, propre à chaque poste) ───────────
 .claude/
 .codebuddy/
