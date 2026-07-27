@@ -29,10 +29,10 @@ asset_class: equity
 quote_currency: EUR
 calendar: XPAR
 as_of: 2026-07-26
-verified: false
+verified: true
 source: >
-  Constitué de mémoire (CAC 40 + principaux composants du SBF 120), sans accès
-  à la publication Euronext. À valider avec scripts/check_universe.py puis
+  https://fr.investing.com/indices/sbf-120-components 26/07
+  À valider avec scripts/check_universe.py puis
   contre la composition officielle.
 
 members:
@@ -60,7 +60,7 @@ members:
   - {symbol: LR.PA,     name: Legrand}
   - {symbol: MC.PA,     name: LVMH}
   - {symbol: ML.PA,     name: Michelin}
-  - {symbol: MT.PA,     name: ArcelorMittal}
+  - {symbol: ARRD.F,     name: ArcelorMittal}
   - {symbol: OR.PA,     name: L'Oréal}
   - {symbol: ORA.PA,    name: Orange}
   - {symbol: PUB.PA,    name: Publicis Groupe}
@@ -98,7 +98,7 @@ members:
   - {symbol: ELIS.PA,   name: Elis}
   - {symbol: EMEIS.PA,  name: Emeis}
   - {symbol: ERA.PA,    name: Eramet}
-  - {symbol: FDJ.PA,    name: FDJ United}
+  - {symbol: FDJUP.XC,    name: FDJ United}
   - {symbol: FGR.PA,    name: Eiffage}
   - {symbol: FRVIA.PA,  name: Forvia}
   - {symbol: GET.PA,    name: Getlink}
@@ -137,3 +137,28 @@ members:
   - {symbol: VLA.PA,    name: Valneva}
   - {symbol: VRLA.PA,   name: Verallia}
   - {symbol: WLN.PA,    name: Worldline}
+  - {symbol: VIV.PA,    name: Videndi}
+  - {symbol: SOLB.BR,    name: Solvay}
+  - {symbol: ADP.PA,    name: Aéroports Paris}
+  - {symbol: SESG.PA,    name: SES}
+  - {symbol: ATO.PA,    name: Atos}
+  - {symbol: ETL.PA,    name: Eutelsat Communication}
+  - {symbol: FR.PA,    name: Valeo}
+  - {symbol: VIRI.PA,    name: Viridien}
+  - {symbol: MRN.PA,    name: Mersen}
+  - {symbol: SOP.PA,    name: Sopra Steria}
+  - {symbol: LSS.PA,    name: Lectra}
+  - {symbol: BOL.PA,    name: Bolloré}
+  - {symbol: APAM.AS,    name: Aperam}
+  - {symbol: ARG.PA,    name: Argan}
+  - {symbol: CARM.PA,    name: Carmila}
+  - {symbol: VU.PA,    name: Vusion Group}
+  - {symbol: RF.PA,    name: Eurazeo}
+  - {symbol: IDL.PA,    name: ID Logistics}
+  - {symbol: FNAC.PA,    name: Fnac Darty}
+  - {symbol: S30.PA,    name: Solutions 30}
+  - {symbol: VLTSA.PA,    name: Voltalia}
+  - {symbol: XFAB.PA,    name: X Fab Silicon}
+  - {symbol: EAPI.PA,    name: Euroapi}
+
+  
