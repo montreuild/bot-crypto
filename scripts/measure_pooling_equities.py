@@ -73,6 +73,9 @@ def main() -> int:
     ap.add_argument("--tf", default="1d")
     ap.add_argument("--max-symbols", type=int, default=16,
                     help="borne le pool (coût d'entraînement), plus longs d'abord")
+    ap.add_argument("--max-solo", type=int, default=8,
+                    help="titres comparés solo vs poolé — un entraînement solo "
+                         "chacun, donc le poste le plus coûteux du script")
     args = ap.parse_args()
 
     import app.ml.policy as policy
@@ -158,7 +161,12 @@ def main() -> int:
         print("  n'a pas d'alternative à laquelle être comparé.")
         return 0
 
-    for symbol in solo_ok:
+    # Restreint aux titres RÉELLEMENT poolés : comparer un modèle solo à un
+    # poolé dont le titre n'a pas fait partie du pool comparerait deux choses
+    # différentes (généralisation hors-échantillon vs ajustement au pool).
+    comparable = [s for s in solo_ok if s in per][:args.max_solo]
+    deltas = []
+    for symbol in comparable:
         df = load_offline_ohlcv(symbol, args.tf)
         n = len(df)
         holdout = df.tail(gc_.holdout_bars + 210)
@@ -177,17 +185,27 @@ def main() -> int:
             shutil.rmtree(tmp, ignore_errors=True)
         m_pool = per.get(symbol) or {}
         a_solo, a_pool = m_solo.get("auc_amp"), m_pool.get("auc_amp")
-        print(f"  {symbol} ({n} barres) — holdout commun de {gc_.holdout_bars} barres")
-        print(f"     solo  : auc_amp={a_solo}")
-        print(f"     poolé : auc_amp={a_pool}")
-        if a_solo is not None and a_pool is not None:
-            delta = a_pool - a_solo
-            verdict = ("le pooling AIDE" if delta > 0.01 else
-                       "le pooling COÛTE" if delta < -0.01 else "équivalent")
-            print(f"     écart : {delta:+.3f} → {verdict}")
-    print("\n  Lecture : un seul titre permet cette comparaison. Un écart mesuré")
-    print("  sur n=1 n'est pas un verdict — c'est un garde-fou contre une")
-    print("  dégradation grossière, pas une preuve de gain.")
+        if a_solo is None or a_pool is None:
+            print(f"  {symbol:<10} non scorable")
+            continue
+        delta = a_pool - a_solo
+        deltas.append(delta)
+        verdict = ("pooling AIDE " if delta > 0.01 else
+                   "pooling COÛTE" if delta < -0.01 else "équivalent  ")
+        print(f"  {symbol:<10} ({n:>5} barres)  solo={a_solo:.3f}  "
+              f"poolé={a_pool:.3f}  écart={delta:+.3f}  {verdict}")
+
+    if deltas:
+        helps = sum(1 for d in deltas if d > 0.01)
+        costs = sum(1 for d in deltas if d < -0.01)
+        print(f"\n  Sur {len(deltas)} titres : {helps} où le pooling aide, "
+              f"{costs} où il coûte, {len(deltas) - helps - costs} équivalents.")
+        print(f"  Écart moyen {sum(deltas) / len(deltas):+.3f}, "
+              f"médian {sorted(deltas)[len(deltas) // 2]:+.3f}.")
+        print("\n  Lecture : ces titres sont ceux qui ont ASSEZ d'historique pour")
+        print("  se passer du pooling. Le gain n'y est donc pas la raison d'être")
+        print("  du pooling — celle-ci est en (1), pour les titres qui n'ont pas")
+        print("  ce luxe. Ce que ces chiffres écartent, c'est une dégradation.")
     return 0
 
 

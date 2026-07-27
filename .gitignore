@@ -65,3 +65,42 @@ frontend/*.tsbuildinfo
 frontend/next-env.d.ts
 # Added by code-review-graph
 .code-review-graph/
+
+# ── Caches de données de marché ─────────────────────────────────────────────
+# `data/ohlcv/` et `data/derivatives/` sont des CACHES : le bot les reconstruit
+# depuis l'exchange ou Yahoo (`CandleStore`, `scripts/backfill_equities.py`).
+# 405 Mo sur disque, dont l'immense majorité n'était déjà pas suivie — les 79
+# fichiers qui l'étaient produisaient un diff binaire à chaque cycle de scan,
+# noyant les changements de code sans rien apporter : un parquet d'OHLCV n'est
+# pas relisible, et sa version d'hier n'a aucune valeur d'archive.
+#
+# NE SONT PAS ignorés, et restent suivis à dessein :
+#   data/universe/          — définition de l'univers, une entrée de config
+#   data/oos_tracker.json   — état de suivi out-of-sample
+#   data/backtest_history.json
+# Ceux-là sont écrits par décision, pas par accumulation.
+#
+# Conséquence assumée : un clone neuf démarre avec un cache VIDE. C'est le
+# comportement correct — `CandleStore` amorce au premier cycle — mais un
+# déploiement qui comptait sur `git pull` pour être servi en bougies doit
+# désormais lancer le backfill.
+data/ohlcv/
+data/derivatives/
+
+# ── Outillage d'assistants de code (local, propre à chaque poste) ───────────
+.claude/
+.codebuddy/
+.cursorrules
+.gemini/
+.kiro/
+.qoder/
+.windsurfrules
+.mcp.json
+AGENTS.md
+CODEBUDDY.md
+Claude.md
+GEMINI.md
+QODER.md
+
+# Verrou de l'optimiseur — état d'exécution local
+.optimize_runner.lock

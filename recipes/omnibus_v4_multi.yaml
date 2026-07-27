@@ -52,7 +52,18 @@ window:
 
 gate:
   metric: auc_amp
-  holdout_bars: 1500
+  # 1500 → 1400. Mesuré (cf. §3.7ter du plan directeur) : sur les 120 titres
+  # actions du cache, le seuil d'éligibilité au pooling passe de 1750 à 1650
+  # barres, ce qui fait entrer 2 titres de plus en journalier (114 → 116).
+  #
+  # Ce réglage NE débloque PAS le 4h ni le 15m, contrairement à ce qu'on
+  # pouvait espérer : le plafond y est celui de Yahoo, pas le nôtre. La
+  # rétention est de 60 jours en 15m/30m et de 730 jours en 1h (dont le 4h est
+  # ré-agrégé), soit au mieux 1428 barres en 15m et 1445 en 4h — sous le seuil
+  # de 1650 quoi qu'il arrive. Aucun backfill ne peut aller les chercher.
+  # Débloquer ces TF demanderait un holdout PAR TF (~300), donc un bloc
+  # `gate_by_tf` qui n'existe pas : décision ouverte, pas oubli.
+  holdout_bars: 1400
   auc_floor: 0.55
   epsilon: 0.01
 

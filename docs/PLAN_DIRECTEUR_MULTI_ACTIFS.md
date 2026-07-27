@@ -356,65 +356,94 @@ Deux points attendent un arbitrage utilisateur, pas du travail :
 | ID | Item | Effort | Pourquoi |
 |---|---|---|---|
 | ~~**ML-16**~~ ✅ | ~~Câbler `train_multi` à l'API et à l'UI~~ — **FAIT (2026-07-27)** : `train_runner.train_multi_and_publish`, `symbols[]` sur `/api/ml/train` (exige une recette, refusé à l'entrée sinon), champ « Pooling multi-symboles » sur la page Modèles. Le holdout est prélevé PAR SYMBOLE avant l'entraînement, et le gate arbitre sur la **moyenne non pondérée** des scores par titre — pondérer par le nombre de barres laisserait le plus long historique décider seul, ce que le pooling cherche justement à éviter. Le détail par symbole reste dans `candidate.per_symbol` |
-| ~~**ML-17**~~ ✅ | ~~Valider le pooling sur des données actions RÉELLES~~ — **FAIT (2026-07-27)**, `scripts/measure_pooling_equities.py`. **L'obstacle d'egress ne s'appliquait plus** : 117 actions `.PA` en 1d étaient déjà dans le cache Parquet local. Résultats — voir §3.7ter |
+| ~~**ML-17**~~ ✅ | ~~Valider le pooling sur des données actions RÉELLES~~ — **FAIT (2026-07-27, re-mesuré le 2026-07-28 après backfill)**, `scripts/measure_pooling_equities.py`. **L'obstacle d'egress ne s'appliquait plus** : les actions `.PA` étaient déjà dans le cache Parquet local. Le pooling ne dégrade pas les titres riches (n = 8 : +0,016 en moyenne) et reste nécessaire pour 17 titres en 1d. Résultats — voir §3.7ter |
+| **ML-20** 🟠 *(nouveau, 2026-07-28)* | **`gate_by_tf` — holdout déclinable par timeframe** | S | Découvert en mesurant ML-17 : en 15m/30m/4h, **aucun** titre actions n'atteint le seuil d'éligibilité, et le plafond est celui de Yahoo (60 j en 15m/30m, 730 j en 1h dont le 4h est ré-agrégé), pas le nôtre — 1 428 / 714 / 1 445 barres au mieux. Descendre `holdout_bars` globalement ne peut pas régler ça sans dégrader le 1h et le 1d, qui ont dix fois plus d'historique. Il faut un bloc `gate_by_tf`, sur le modèle de `hp_by_tf` (ML-11). **Arbitrage à poser avant de coder** : 300 barres de holdout en 15m valent ~9 séances — assez pour promouvoir un modèle ? |
 | **ML-18** 🔵 | Variante recette de `window_sweep` | S | Le sweep reste piloté par la stratégie ; seul `train` a sa variante recette |
 | ~~**ML-19**~~ ✅ | ~~Basculer les stratégies bespoke sur le chemin recette~~ — **FAIT (2026-07-27)** pour `stat48_v4` et `stat48_v5`. Le point qui restait n'était pas `fit()`/`score()` mais l'**écriture** : `save_model` appelait encore `save_lgb_with_scaler`, qui produit un meta.json `format_version: 1` SANS features ni médianes — la cause exacte de l'`unsupported_format` qui rendait ces recettes non promouvables par le gate. `_train` conserve désormais le `TrainedRecipe` complet et `save_model` délègue à `TrainedRecipe.save`. Mesuré avant/après : `{'unsupported_format': True}` → `{'auc_amp': …, 'auc_dir': …}`. Repli sur l'ancien format conservé pour un modèle rechargé depuis le disque (pas de `TrainedRecipe` en mémoire). **`ml_dynamic_threshold` reste dehors** : contrairement à ce que supposait cet item, son `_train` n'a jamais été migré (il entraîne encore via son propre `_train_lgbm`), donc l'équivalence n'y est PAS acquise — le basculer serait un pari, pas une décision d'exploitation |
 
 * **`dynamic_threshold_no_ml`** — reste un fork, motivé (porte de volatilité en
   inférence là où le jumeau ML labellise). Le convertir dégraderait le parent.
 
-### 3.7ter ✅ ML-17 livré — le pooling mesuré sur actions réelles (2026-07-27)
+### 3.7ter ✅ ML-17 livré — le pooling mesuré sur actions réelles
 
 `scripts/measure_pooling_equities.py`, univers = cache Parquet local, aucun
 appel réseau. Recette `omnibus_v4_multi`, TF 1d, 16 titres poolés.
 
-**1. Le pooling n'est pas un raffinement, c'est la condition d'existence.**
+> **Mesure refaite le 2026-07-28.** La première passe (2026-07-27) concluait
+> que **116 titres sur 117** ne pouvaient produire aucun modèle seuls. Ce
+> chiffre est caduc : `scripts/backfill_equities.py` a tourné entre-temps et a
+> approfondi le cache journalier — la médiane est passée de ~1 000 à
+> **6 824 barres**. La conclusion s'inverse en 1d et tient en 15m/30m/4h. Les
+> chiffres ci-dessous sont ceux de la seconde passe ; ceux de la première ne
+> décrivaient qu'un cache incomplet, pas une propriété du marché.
 
-| | |
-|---|---:|
-| Titres `.PA` en cache (1d) | 117 |
-| Entraînables SEULS (≥ 3 500 barres = holdout 1 500 + fenêtre min 2 000) | **1** (AC.PA) |
-| Éligibles au pool (≥ 1 750 barres) | 16 |
-| Exclus même du pool (≤ 1 000 barres) | 101 |
+**1. Couverture — le backfill a réglé le journalier, pas l'intraday.**
 
-**116 titres sur 117 ne peuvent produire aucun modèle sans pooling.** La
-prédiction de §3.7 (« ~13,7 ans pour un titre seul ») est confirmée par la
-mesure, pas par le calcul.
+| TF | titres | barres (min / méd. / max) | entraînables **seuls** (≥ 3 400) | éligibles au **pool** (≥ 1 650) |
+|---|---:|---|---:|---:|
+| 15m | 120 | 73 / 1 424 / **1 428** | **0** | **0** |
+| 30m | 120 | 73 / 714 / **714** | **0** | **0** |
+| 1h | 120 | 1 218 / 4 459 / 4 463 | 118 | 119 |
+| 4h | 120 | 467 / 1 442 / **1 445** | **0** | **0** |
+| 1d | 120 | 838 / 6 824 / 9 684 | 103 | 116 |
 
-**2. Le modèle poolé tient sur un holdout jamais vu.** 15 545 lignes
-d'entraînement / 3 888 de validation, coupure temporelle commune au
-2019-09-25, 437 features (302 gardées).
+En journalier, le pooling n'est plus une condition d'existence : 103 titres sur
+120 s'entraînent seuls. Il reste nécessaire pour les 17 autres — introductions
+récentes, valeurs peu suivies.
+
+**En 15m, 30m et 4h, AUCUN titre n'est éligible, et aucun réglage du gate n'y
+changera rien.** Le plafond est celui de **Yahoo**, pas le nôtre : rétention de
+60 jours en 15m/30m, de 730 jours en 1h — dont le 4h est ré-agrégé côté client
+(`app/core/yfinance_provider.py`, table `_INTERVALS`). Cela borne à 1 428 barres
+en 15m, 714 en 30m et 1 445 en 4h. Aucun backfill ne peut aller chercher plus
+loin ; il n'y a rien de plus à la source.
+
+**2. Le modèle poolé tient sur un holdout jamais vu.** 88 273 lignes
+d'entraînement / 22 076 de validation, coupure temporelle commune au
+2015-09-07, 437 features (288 gardées).
 
 | | AUC amp | AUC dir |
 |---|---:|---:|
-| Validation (interne) | 0,764 | 0,519 |
-| **Holdout, moyenne 16 titres** | **0,641** | 0,505 |
-| Dispersion holdout | min 0,534 · médiane 0,642 · max 0,713 | — |
+| Validation (interne) | 0,685 | 0,509 |
+| **Holdout, moyenne 16 titres** | **0,630** | 0,500 |
+| Dispersion holdout | min 0,547 · médiane 0,641 · max 0,786 | — |
 
-15 titres sur 16 passent le plancher de 0,55 ; seul CA.PA reste dessous
-(0,534). La direction est **au niveau du hasard** (0,505) — cohérent avec la
-mesure ML-02 sur crypto (0,53-0,54), et une raison de plus de ne pas balayer
-les seuils `dir_*`.
+14 titres sur 16 passent le plancher de 0,55 (ERF.PA à 0,547 et VIRP.PA à
+0,548 restent juste dessous). La direction est **exactement au niveau du
+hasard** (0,500) — cohérent avec la mesure ML-02 sur crypto (0,53-0,54), et
+une raison de plus de ne pas balayer les seuils `dir_*`.
 
-**3. Solo vs poolé, même titre, même holdout.** Possible sur un seul titre —
-c'est le résultat (1) qui l'impose :
+**3. Solo vs poolé, même titre, même holdout — n = 8.**
 
-| AC.PA (6 824 barres) | AUC amp |
-|---|---:|
-| Modèle solo | 0,700 |
-| Modèle poolé | 0,713 |
-| Écart | **+0,013** |
+| Titre | barres | solo | poolé | écart |
+|---|---:|---:|---:|---:|
+| GFC.PA | 8 778 | 0,638 | 0,681 | **+0,043** |
+| MF.PA | 9 500 | 0,619 | 0,658 | **+0,039** |
+| CS.PA | 9 265 | 0,609 | 0,641 | **+0,031** |
+| LI.PA | 8 777 | 0,759 | 0,786 | **+0,028** |
+| EN.PA | 9 169 | 0,568 | 0,588 | +0,020 |
+| TEP.PA | 8 805 | 0,638 | 0,650 | +0,012 |
+| BN.PA | 9 684 | 0,628 | 0,622 | −0,006 |
+| VIRP.PA | 8 779 | 0,585 | 0,548 | **−0,037** |
 
-Le pooling ne dégrade pas, et gagne légèrement. **Un écart mesuré sur n = 1
-n'est pas un verdict** : c'est un garde-fou contre une dégradation grossière,
-pas une preuve de gain. Il n'existe pas d'univers où cette comparaison puisse
-être répétée tant que les historiques ne s'allongent pas.
+6 titres où le pooling aide, 1 où il coûte, 1 équivalent. Écart moyen
+**+0,016**, médian +0,028.
 
-**Ce que la mesure révèle en passant** — le gate lui-même est un obstacle sur
-actions. `holdout_bars: 1500` vaut ~6 ans de séances Euronext ; c'est ce seuil,
-et non la recette, qui exclut 101 titres du pool. Un `gate.holdout_bars` par
-classe d'actifs est le prochain arbitrage à poser (non fait ici : c'est une
-décision d'exploitation, pas un correctif).
+**Précaution de lecture** : ces huit titres sont précisément ceux qui ont assez
+d'historique pour se passer du pooling. Le gain mesuré ici n'est donc pas sa
+raison d'être — celle-ci est en (1), pour les titres qui n'ont pas ce luxe. Ce
+que ces chiffres établissent, c'est l'**absence de dégradation** sur les titres
+riches, ce qui autorise à servir tout l'univers avec un modèle unique plutôt
+qu'à maintenir deux régimes.
+
+**`gate.holdout_bars` : 1 500 → 1 400 (2026-07-28).** Fait passer le seuil
+d'éligibilité de 1 750 à 1 650 barres, ce qui ajoute 2 titres en journalier
+(114 → 116). **Ce réglage ne débloque pas le 4h ni le 15m** — cf. (1) : il
+faudrait descendre à ~300, donc un holdout **par TF**, alors que `gate:` n'est
+pas déclinable par timeframe (contrairement à `hp_by_tf`, livré avec ML-11).
+Un bloc `gate_by_tf` est le prochain arbitrage, et c'en est un : 300 barres de
+holdout en 15m valent ~9 séances, ce qui est mince pour juger une promotion.
+Décision ouverte, pas oubli.
 
 ---
 

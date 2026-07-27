@@ -28,6 +28,16 @@
 
 # -- Web / API -------------------------------------------------------
 fastapi==0.115.0
+# starlette : transitive de fastapi, épinglée ICI malgré la règle « seules les
+# dépendances directes sont épinglées » (cf. en-tête). La règle suppose que les
+# transitives sont contraintes par leur parent — ce n'est vrai que d'un côté :
+# fastapi 0.115.0 demande `starlette>=0.37.2,<0.39.0`, mais rien n'empêche une
+# réinstallation de résoudre vers une version incompatible si un AUTRE paquet
+# la tire. C'est arrivé : l'environnement de dev s'est retrouvé en starlette
+# 1.3.1, et `APIRouter()` levait `TypeError: Router.__init__() got an
+# unexpected keyword argument 'on_startup'` — toute la collecte des tests API
+# échouait, sur un composant que personne n'avait touché.
+starlette==0.38.6
 uvicorn[standard]==0.30.0
 # SEC-010 : 3.1.4 est vulnérable (CVE-2024-56201 / CVE-2024-56326, contournement
 # du bac à sable de template). Le plancher de l'audit était 3.1.5 — on prend 3.1.6
