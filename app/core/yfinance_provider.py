@@ -59,6 +59,13 @@ except Exception:                          # pragma: no cover — dépendance op
     _yf = None
     _HAS_YFINANCE = False
 
+#: Disjoncteur de quota, PARTAGÉ PAR PROCESSUS — les threads du scanner
+#: interrogent Yahoo sous le même quota, donc doivent s'arrêter ensemble.
+_RATE_LOCK = threading.Lock()
+_RATE_STATE: Dict[str, float] = {"consecutive": 0.0, "until": 0.0}
+_RATE_TRIP_AFTER = 5        # 429 consécutifs avant ouverture
+_RATE_COOLDOWN_S = 900.0    # 15 min — Yahoo ne desserre pas plus vite
+
 _CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 _USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -273,9 +280,45 @@ class YFinanceProvider:
             rows = [r for r in rows if r[0] >= int(since)]
         return rows[-int(limit):] if limit and len(rows) > int(limit) else rows
 
+    def _cooldown_remaining(self) -> float:
+        """Secondes restantes avant de réessayer après une salve de 429."""
+        with _RATE_LOCK:
+            return max(0.0, _RATE_STATE["until"] - time.time())
+
+    def _note_rate_limit(self) -> None:
+        """Compte les 429 consécutifs et ouvre le disjoncteur au-delà du seuil.
+
+        Sans lui, un quota Yahoo atteint coûte ``max_retries`` requêtes PAR
+        symbole et PAR timeframe : sur un univers de 98 titres et 5 TF, un cycle
+        de scan passe de quelques secondes à une demi-heure, à ne rien
+        rapporter. Le compteur est au niveau du PROCESSUS — les threads du
+        scanner partagent le même quota, donc doivent partager le disjoncteur.
+        """
+        with _RATE_LOCK:
+            _RATE_STATE["consecutive"] += 1
+            if _RATE_STATE["consecutive"] >= _RATE_TRIP_AFTER:
+                _RATE_STATE["until"] = time.time() + _RATE_COOLDOWN_S
+                _RATE_STATE["consecutive"] = 0
+                logger.warning(
+                    f"[{self.id}] quota Yahoo atteint {_RATE_TRIP_AFTER} fois de "
+                    f"suite — pause de {_RATE_COOLDOWN_S:.0f}s pour tout le "
+                    f"processus. Les symboles concernés sont ignorés jusque-là ; "
+                    f"pour peupler le cache hors ligne : "
+                    f"python scripts/backfill_equities.py"
+                )
+
+    def _note_success(self) -> None:
+        with _RATE_LOCK:
+            _RATE_STATE["consecutive"] = 0
+
     def _fetch_raw(self, ticker: str, interval: str,
                    period1: int, period2: int) -> List[list]:
         """Une requête (avec retry) vers le backend disponible."""
+        remaining = self._cooldown_remaining()
+        if remaining > 0:
+            logger.debug(f"[{self.id}] {ticker}/{interval} ignoré — disjoncteur "
+                         f"de quota actif encore {remaining:.0f}s")
+            return []
         delay = 2.0
         for attempt in range(1, self._max_retries + 1):
             self._throttle()
@@ -285,12 +328,20 @@ class YFinanceProvider:
                 else:
                     rows = self._fetch_via_chart_api(ticker, interval, period1, period2)
                 if rows:
+                    self._note_success()
                     return rows
                 logger.debug(
                     f"[{self.id}] {ticker}/{interval} — réponse vide "
                     f"(tentative {attempt}/{self._max_retries})"
                 )
             except Exception as e:
+                rate_limited = "429" in str(e)
+                if rate_limited:
+                    self._note_rate_limit()
+                    if self._cooldown_remaining() > 0:
+                        # Disjoncteur ouvert pendant nos propres retries :
+                        # insister ne fera qu'aggraver le quota.
+                        return []
                 logger.warning(
                     f"[{self.id}] {ticker}/{interval} KO ({attempt}/{self._max_retries}) : {e}"
                 )

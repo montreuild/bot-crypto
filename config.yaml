@@ -122,6 +122,13 @@ scanner:
   # ⚠️ data/universe/sbf120.yaml porte `verified: false` : instantané constitué
   # hors ligne, à recouper avec la composition officielle Euronext. Pré-vol :
   #     python scripts/check_universe.py sbf120
+  #
+  # ⚠️⚠️ AVANT D'ACTIVER : peupler le cache HORS LIGNE, sinon le premier cycle
+  # de scan tente 98 titres × chaque timeframe contre Yahoo, qui répond 429.
+  #     python scripts/backfill_equities.py --tf 1d --years 20
+  # Un disjoncteur de quota (app/core/yfinance_provider) coupe les appels 15 min
+  # après 5 refus consécutifs, mais il limite les dégâts — il ne remplace pas
+  # l'amorçage. Pour revenir en crypto pur : commenter la ligne ci-dessous.
   universe: [sbf120]
   #
   # Le seuil de liquidité crypto (5 M$/24 h) exclurait tout le SBF 120 : il
