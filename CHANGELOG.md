@@ -6,6 +6,52 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧹 Les caches de marché sortent du dépôt, `starlette` est épinglé
+
+`data/ohlcv/` et `data/derivatives/` sont des **caches** que le bot reconstruit
+seul. 79 fichiers y étaient suivis pour 14 Mo, produisant un diff binaire à
+chaque cycle de scan — 180 fichiers modifiés en permanence, noyant les
+changements de code sans rien apporter : un parquet d'OHLCV n'est pas
+relisible, et sa version d'hier n'a aucune valeur d'archive. Ils sont
+désormais ignorés et détachés (les fichiers restent sur disque). Restent suivis
+à dessein : `data/universe/`, `data/oos_tracker.json`,
+`data/backtest_history.json` — écrits par décision, pas par accumulation.
+Conséquence assumée : **un clone neuf démarre avec un cache vide**, à amorcer
+par `scripts/backfill_equities.py` ou le premier cycle du scanner.
+
+`starlette==0.38.6` est épinglé alors que c'est une transitive de `fastapi`,
+contre la règle d'en-tête du fichier. La règle suppose que les transitives sont
+tenues par leur parent ; ce n'est vrai que d'un côté. L'environnement de dev
+s'est retrouvé en starlette 1.3.1 — incompatible avec `fastapi==0.115.0`, qui
+demande `<0.39` — et `APIRouter()` levait `TypeError: Router.__init__() got an
+unexpected keyword argument 'on_startup'` : toute la collecte des tests API
+échouait, sur un composant que personne n'avait touché.
+
+### 🎯 `gate.holdout_bars` 1500 → 1400, et ce que la mesure a démenti
+
+Le seuil d'éligibilité au pooling passe de 1 750 à 1 650 barres, ce qui fait
+entrer 2 titres de plus en journalier (114 → 116 sur 120).
+
+**Ce réglage ne débloque pas le 4h ni le 15m**, contrairement à ce qu'on
+pouvait attendre — et aucun réglage du gate ne le fera. Le plafond y est celui
+de **Yahoo** : rétention de 60 jours en 15m/30m et de 730 jours en 1h, dont le
+4h est ré-agrégé côté client. Cela borne à **1 428** barres en 15m, **714** en
+30m et **1 445** en 4h, sous le seuil quoi qu'on fasse. Aucun backfill ne peut
+aller chercher ce qui n'existe pas à la source. Débloquer ces TF demanderait un
+holdout **par timeframe** (~300), donc un bloc `gate_by_tf` sur le modèle de
+`hp_by_tf` — inscrit au plan comme ML-20, avec l'arbitrage qu'il suppose :
+300 barres en 15m valent ~9 séances.
+
+La mesure ML-17 a été **rejouée** après passage de `backfill_equities.py`, qui
+a approfondi le cache journalier (médiane ~1 000 → **6 824** barres). Le constat
+de la veille — « 116 titres sur 117 ne peuvent produire aucun modèle seuls » —
+est caduc : ils sont maintenant 17 sur 120. La comparaison solo vs poolé passe
+de n = 1 à **n = 8** : 6 titres où le pooling aide, 1 où il coûte, 1 équivalent,
+écart moyen **+0,016**. Ces huit titres étant précisément ceux qui ont assez
+d'historique pour s'en passer, ce que le chiffre établit n'est pas un gain mais
+l'**absence de dégradation** — ce qui autorise à servir tout l'univers avec un
+modèle unique au lieu de maintenir deux régimes.
+
 ### 🔒 Sécurité — l'alerte de crash exfiltrait le log, les sauvegardes étaient world-readable
 
 `notify-crash.py` envoyait les 20 dernières lignes de `bot.log` à Telegram et

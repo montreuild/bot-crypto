@@ -65,3 +65,62 @@ frontend/*.tsbuildinfo
 frontend/next-env.d.ts
 # Added by code-review-graph
 .code-review-graph/
+
+# ── Caches de données de marché ─────────────────────────────────────────────
+# `data/ohlcv/` et `data/derivatives/` sont des CACHES : le bot les reconstruit
+# depuis l'exchange ou Yahoo (`CandleStore`, `scripts/backfill_equities.py`).
+# 405 Mo sur disque, dont l'immense majorité n'était déjà pas suivie — les 79
+# fichiers qui l'étaient produisaient un diff binaire à chaque cycle de scan,
+# noyant les changements de code sans rien apporter : un parquet d'OHLCV n'est
+# pas relisible, et sa version d'hier n'a aucune valeur d'archive.
+#
+# NE SONT PAS ignorés, et restent suivis à dessein :
+#   data/universe/          — définition de l'univers, une entrée de config
+#   data/oos_tracker.json   — état de suivi out-of-sample
+#   data/backtest_history.json
+# Ceux-là sont écrits par décision, pas par accumulation.
+#
+# Conséquence assumée : un clone neuf démarre avec un cache VIDE. C'est le
+# comportement correct — `CandleStore` amorce au premier cycle — mais un
+# déploiement qui comptait sur `git pull` pour être servi en bougies doit
+# désormais lancer le backfill.
+data/ohlcv/
+data/derivatives/
+
+# ── Artefacts du registre ML ────────────────────────────────────────────────
+# Sortie de `app/ml/model_registry.py` : boosters LightGBM, méta de version et
+# journal des décisions de gate. ~11 Mo aujourd'hui, et qui croît d'une version
+# à chaque promotion — un binaire par entraînement, versionné dans git, pour un
+# artefact que la recette suffit à reproduire (c'est tout l'objet de ML-02 :
+# provenance complète dans le meta, recette + commit + fenêtre d'entraînement).
+models/**/*.lgb
+models/**/*.meta.json
+models/**/decisions.jsonl
+
+# EXCEPTION — `models/_archive/` reste SUIVI, et ce n'est pas un oubli.
+# Ces 9 fichiers (6,3 Mo) sont les modèles V4 pré-entraînés, dont
+# l'investigation DEAD-01 a établi qu'ils ont été produits par un script HORS
+# DÉPÔT et sont « impossibles à régénérer à l'identique » (cf. docstring de
+# `app/ml/train_runner.py`). Contrairement au reste du registre, aucune recette
+# ne les reconstruit : git est la seule chose qui les protège. Les détacher
+# ferait dépendre d'une copie de travail le seul artefact qui n'a pas d'autre
+# source.
+!models/_archive/**
+
+# ── Outillage d'assistants de code (local, propre à chaque poste) ───────────
+.claude/
+.codebuddy/
+.cursorrules
+.gemini/
+.kiro/
+.qoder/
+.windsurfrules
+.mcp.json
+AGENTS.md
+CODEBUDDY.md
+Claude.md
+GEMINI.md
+QODER.md
+
+# Verrou de l'optimiseur — état d'exécution local
+.optimize_runner.lock

@@ -37,7 +37,7 @@ window:
 gate:
   metric: auc_dir                 # pas d'amplitude : arbitrer sur auc_amp
                                   # rapporterait un faux « indisponible »
-  holdout_bars: 1500
+  holdout_bars: 1400
   auc_floor: 0.55
   epsilon: 0.01
 

@@ -95,8 +95,16 @@ class TestRunner:
         from app.ml.train_runner import train_multi_and_publish
         train_multi_and_publish("omnibus_v4_multi", ["A.PA", "B.PA"], "1d",
                                 publish=False, base_dir=str(tmp_path))
-        # holdout_bars=1500 pour omnibus_v4_multi, historique de 2400.
-        assert seen == {"A.PA": 900, "B.PA": 900}
+        # Attendu DÉRIVÉ de la recette, pas codé en dur : `gate.holdout_bars`
+        # est un réglage d'exploitation qui bouge (1500 → 1400 en 2026-07-28).
+        # Figer 900 ici faisait échouer ce test à chaque arbitrage sur le gate,
+        # alors que ce qu'il vérifie — la retenue du holdout — est invariant.
+        import app.ml.policy as policy
+        from app.ml.recipe import load_recipe
+        r = load_recipe("omnibus_v4_multi")
+        gc_ = policy.GateConfig.from_params({**r.gate_spec(), **r.gate_params()})
+        expected = 2400 - gc_.holdout_bars
+        assert seen == {"A.PA": expected, "B.PA": expected}
 
     def test_empty_symbol_list_is_refused_clearly(self, tmp_path):
         from app.ml.train_runner import train_multi_and_publish

@@ -31,7 +31,7 @@ window:
 
 gate:
   metric: auc_amp
-  holdout_bars: 1500
+  holdout_bars: 1400
   auc_floor: 0.55
   epsilon: 0.01
 
