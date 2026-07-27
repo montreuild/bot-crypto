@@ -241,8 +241,8 @@ Non traités par le refactoring (hors périmètre). Effort faible, impact réel 
 | **SEC-004** | Retirer `"testclient"` de la whitelist localhost WebSocket | `app/api/routes/ws.py` |
 | **SEC-005** | Retirer `auth_basic off;` sur `/api/optimize/stream` | `deploy/nginx.conf` |
 | **SEC-006** | Docs OpenAPI (`/api/docs`, `/api/openapi.json`) non protégées → désactiver en prod (`ENV=prod`) | `app/api/main.py` |
-| SEC-009/010 | Bumps CVE : `sqlalchemy>=2.0.32`, `jinja2>=3.1.5` | `requirements.txt` |
-| SEC-007/008 | `notify-crash.py` (fuite de logs vers Telegram), `backup.sh` (chmod 600) | `deploy/` |
+| ~~SEC-009/010~~ ✅ | ~~Bumps CVE~~ — **FAIT (2026-07-27)** : `sqlalchemy==2.0.32` (plancher exact de l'audit), `jinja2==3.1.6` (et non 3.1.5, elle-même vulnérable à CVE-2025-27516) | `requirements.txt` |
+| ~~SEC-007/008~~ ✅ | **FAIT (2026-07-27)** — `notify-crash.py` ne transmet plus le log par défaut (`notifications.crash_include_log: false`) ; l'ancien filtre par motifs ne protégeait que ce qui RESSEMBLE à un secret, pas les données d'exploitation. `backup.sh` : `umask 077` + `chmod 600` sur chaque archive, `700` sur le répertoire, rattrapage des archives antérieures | `deploy/` |
 
 ### 3.3 🔵 Observabilité (score le plus faible, ~4/10)
 
@@ -250,8 +250,8 @@ Aucun équivalent existant (fichiers/dépendances absents, vérifié) :
 
 | ID | Item | Effort |
 |---|---|---|
-| OBS-01 | Métriques Prometheus (`prometheus-client`, `app/core/metrics.py`) | M |
-| OBS-02 | Logs JSON structurés + correlation IDs (`contextvars`) — remplace les f-strings | M |
+| ~~OBS-01~~ ✅ | **FAIT (2026-07-27)** — `app/core/metrics.py`, endpoint `/metrics`, `prometheus-client==0.26.0` (optionnel : sans lui tout est no-op et `/metrics` répond 503). Les métriques MÉTIER sont dérivées de `EventHub.publish`, point de branchement unique, plutôt que semées dans `live_trader`/`position_manager` | M |
+| ~~OBS-02~~ ✅ | **FAIT (2026-07-27)** — `app/core/log_context.py` (JSON Lines + correlation IDs `contextvars`), handler FICHIER en JSON par défaut (`logging.format`), console inchangée. `run_with_correlation` transporte l'identifiant à travers les threads de jobs — un `ContextVar` ne les traverse pas. **Les f-strings ne sont PAS réécrites** (≈900 appels) : le structuré s'ajoute autour, via `extra=`. Au passage : `_ColorFormatter` mutait `record.levelname`, donc les séquences ANSI finissaient dans `bot.log` — corrigé | M |
 | OBS-06/07 | `/health` enrichi + alerting sur seuils critiques | M |
 | OBS-03/04/05 | Grafana, AlertManager, tracing OpenTelemetry (dépendent d'OBS-01) | M/L |
 
@@ -292,7 +292,7 @@ valeur décroissante. Détail et chiffres :
 | ID | Item | Effort | Pourquoi c'est là |
 |---|---|---|---|
 | **ML-10** 🔴 | **Réoptimiser les seuils ADX** des YAML (`adx_min`, `adx_threshold`, `needs_adx_above`, `adx_len`) | M | Suite obligée de la décision 13 : ces seuils ont été choisis face à un ADX qui valait 35 en moyenne, ils s'appliquent à un ADX qui vaut 28. Rien n'est cassé, rien n'est réglé. **Seul item qui bloque la confiance dans les stratégies actives.** Rien à purger : `optimizer_results` est vide |
-| **ML-11** 🔴 | **Désactiver la calibration isotone en 1h** | S (débloqué) | Mesuré (ECE **+461 %** en 1h contre −47 %/−67 % en 15m/30m), conclusion écrite… et jamais appliquée : `omnibus_v4_multi.yaml` porte toujours `calibrate: true` sans dérogation par TF. **Écart entre ce que le doc affirme et ce que le code fait.** Sous-décision ouverte : une recette par TF, ou un bloc `hp` par TF. **Débloqué par ML-14** : tous les réglages LightGBM (`calibrate`, `max_bin`, `early_stopping_rounds`…) se déclarent maintenant dans le bloc `hp:` d'une recette, donc désactiver la calibration en 1h ne demande plus de toucher au code |
+| ~~**ML-11**~~ ✅ | ~~**Désactiver la calibration isotone en 1h**~~ — **FAIT (2026-07-27)**. Sous-décision tranchée : **un bloc `hp_by_tf:` par TF**, et non une recette par TF. `omnibus_v4_multi.yaml` porte `hp_by_tf: {1h: {calibrate: false}}`. Précédence VOLONTAIREMENT inversée (le bloc par TF gagne sur les `params` reçus) : chaque stratégie recopie `hp` dans ses `_DEFAULTS` et ses `fixed_params`, valeurs sans timeframe qui arrivent toujours dans `params` — traité comme un défaut, le bloc n'aurait jamais été appliqué et on aurait écrit un réglage inerte. Appliqué sur les DEUX chemins d'entraînement (`recipe_trainer` et `MLBackend._train_impl_wrapper`) | S (débloqué) | Mesuré (ECE **+461 %** en 1h contre −47 %/−67 % en 15m/30m), conclusion écrite… et jamais appliquée : `omnibus_v4_multi.yaml` porte toujours `calibrate: true` sans dérogation par TF. **Écart entre ce que le doc affirme et ce que le code fait.** Sous-décision ouverte : une recette par TF, ou un bloc `hp` par TF. **Débloqué par ML-14** : tous les réglages LightGBM (`calibrate`, `max_bin`, `early_stopping_rounds`…) se déclarent maintenant dans le bloc `hp:` d'une recette, donc désactiver la calibration en 1h ne demande plus de toucher au code |
 | **ML-12** 🟠 | Instruire les scores négatifs sur la fenêtre de validation | M | 3 des 4 cibles mesurées perdent sur le dernier tiers de l'historique, **sous les deux conventions d'ADX**. Protocole réduit (40 essais, une paire symbole/TF) donc pas un verdict — mais leurs bons scores viennent d'IS/OOS |
 | **ML-13** 🔵 | Mode `follow_setup` dans V11 | M | Dernier morceau de la fusion omnibus. Sa machine anti-whipsaw (confirmation K bougies, cooldown, hystérésis) est du **code**, pas des valeurs : mérite son propre tour de mesure, d'où le report délibéré |
 | ~~**ML-14**~~ ✅ | ~~Entraînement unifié des 3 dernières stratégies ML~~ | — | **FAIT** (2026-07-27) — voir §3.7bis. `app/ml/features_catalog.py` rend le catalogue déclaratif, `app/ml/labelling.py` le schéma de labels, `app/ml/recipe_trainer.py` entraîne depuis la seule recette. Les `_train` autonomes de `stat48_v4/v5` (257 lignes) sont supprimés, équivalence 0.000000 mesurée. Au passage : `stat48` a **56 colonnes, pas 48** |
@@ -355,13 +355,66 @@ Deux points attendent un arbitrage utilisateur, pas du travail :
 
 | ID | Item | Effort | Pourquoi |
 |---|---|---|---|
-| **ML-16** 🟠 | Câbler `train_multi` à l'API et à l'UI | M | Le pooling est une brique **testée mais appelée par personne** : ni `/api/ml/train`, ni la page « Modèles », ni le backfill actions ne l'utilisent. Sans ce câblage, G2 ne peut pas produire son premier modèle actions |
-| **ML-17** 🟠 | Valider le pooling sur des données actions RÉELLES | S | Mesuré uniquement sur séries synthétiques : les hôtes Yahoo sont refusés par la politique d'egress de l'environnement d'agent. À rejouer depuis une machine ayant accès, après `scripts/backfill_equities.py` |
+| ~~**ML-16**~~ ✅ | ~~Câbler `train_multi` à l'API et à l'UI~~ — **FAIT (2026-07-27)** : `train_runner.train_multi_and_publish`, `symbols[]` sur `/api/ml/train` (exige une recette, refusé à l'entrée sinon), champ « Pooling multi-symboles » sur la page Modèles. Le holdout est prélevé PAR SYMBOLE avant l'entraînement, et le gate arbitre sur la **moyenne non pondérée** des scores par titre — pondérer par le nombre de barres laisserait le plus long historique décider seul, ce que le pooling cherche justement à éviter. Le détail par symbole reste dans `candidate.per_symbol` |
+| ~~**ML-17**~~ ✅ | ~~Valider le pooling sur des données actions RÉELLES~~ — **FAIT (2026-07-27)**, `scripts/measure_pooling_equities.py`. **L'obstacle d'egress ne s'appliquait plus** : 117 actions `.PA` en 1d étaient déjà dans le cache Parquet local. Résultats — voir §3.7ter |
 | **ML-18** 🔵 | Variante recette de `window_sweep` | S | Le sweep reste piloté par la stratégie ; seul `train` a sa variante recette |
-| **ML-19** 🔵 | Basculer les stratégies bespoke sur le chemin recette | M | `_train` délègue déjà, mais `fit()`/`score()` passent encore par la classe. Décision d'exploitation, recette par recette — l'équivalence est acquise, plus le modèle qui change |
+| ~~**ML-19**~~ ✅ | ~~Basculer les stratégies bespoke sur le chemin recette~~ — **FAIT (2026-07-27)** pour `stat48_v4` et `stat48_v5`. Le point qui restait n'était pas `fit()`/`score()` mais l'**écriture** : `save_model` appelait encore `save_lgb_with_scaler`, qui produit un meta.json `format_version: 1` SANS features ni médianes — la cause exacte de l'`unsupported_format` qui rendait ces recettes non promouvables par le gate. `_train` conserve désormais le `TrainedRecipe` complet et `save_model` délègue à `TrainedRecipe.save`. Mesuré avant/après : `{'unsupported_format': True}` → `{'auc_amp': …, 'auc_dir': …}`. Repli sur l'ancien format conservé pour un modèle rechargé depuis le disque (pas de `TrainedRecipe` en mémoire). **`ml_dynamic_threshold` reste dehors** : contrairement à ce que supposait cet item, son `_train` n'a jamais été migré (il entraîne encore via son propre `_train_lgbm`), donc l'équivalence n'y est PAS acquise — le basculer serait un pari, pas une décision d'exploitation |
 
 * **`dynamic_threshold_no_ml`** — reste un fork, motivé (porte de volatilité en
   inférence là où le jumeau ML labellise). Le convertir dégraderait le parent.
+
+### 3.7ter ✅ ML-17 livré — le pooling mesuré sur actions réelles (2026-07-27)
+
+`scripts/measure_pooling_equities.py`, univers = cache Parquet local, aucun
+appel réseau. Recette `omnibus_v4_multi`, TF 1d, 16 titres poolés.
+
+**1. Le pooling n'est pas un raffinement, c'est la condition d'existence.**
+
+| | |
+|---|---:|
+| Titres `.PA` en cache (1d) | 117 |
+| Entraînables SEULS (≥ 3 500 barres = holdout 1 500 + fenêtre min 2 000) | **1** (AC.PA) |
+| Éligibles au pool (≥ 1 750 barres) | 16 |
+| Exclus même du pool (≤ 1 000 barres) | 101 |
+
+**116 titres sur 117 ne peuvent produire aucun modèle sans pooling.** La
+prédiction de §3.7 (« ~13,7 ans pour un titre seul ») est confirmée par la
+mesure, pas par le calcul.
+
+**2. Le modèle poolé tient sur un holdout jamais vu.** 15 545 lignes
+d'entraînement / 3 888 de validation, coupure temporelle commune au
+2019-09-25, 437 features (302 gardées).
+
+| | AUC amp | AUC dir |
+|---|---:|---:|
+| Validation (interne) | 0,764 | 0,519 |
+| **Holdout, moyenne 16 titres** | **0,641** | 0,505 |
+| Dispersion holdout | min 0,534 · médiane 0,642 · max 0,713 | — |
+
+15 titres sur 16 passent le plancher de 0,55 ; seul CA.PA reste dessous
+(0,534). La direction est **au niveau du hasard** (0,505) — cohérent avec la
+mesure ML-02 sur crypto (0,53-0,54), et une raison de plus de ne pas balayer
+les seuils `dir_*`.
+
+**3. Solo vs poolé, même titre, même holdout.** Possible sur un seul titre —
+c'est le résultat (1) qui l'impose :
+
+| AC.PA (6 824 barres) | AUC amp |
+|---|---:|
+| Modèle solo | 0,700 |
+| Modèle poolé | 0,713 |
+| Écart | **+0,013** |
+
+Le pooling ne dégrade pas, et gagne légèrement. **Un écart mesuré sur n = 1
+n'est pas un verdict** : c'est un garde-fou contre une dégradation grossière,
+pas une preuve de gain. Il n'existe pas d'univers où cette comparaison puisse
+être répétée tant que les historiques ne s'allongent pas.
+
+**Ce que la mesure révèle en passant** — le gate lui-même est un obstacle sur
+actions. `holdout_bars: 1500` vaut ~6 ans de séances Euronext ; c'est ce seuil,
+et non la recette, qui exclut 101 titres du pool. Un `gate.holdout_bars` par
+classe d'actifs est le prochain arbitrage à poser (non fait ici : c'est une
+décision d'exploitation, pas un correctif).
 
 ---
 
@@ -565,8 +618,8 @@ vérifié) :
 
 | ID | Item | Effort | Impact |
 |---|---|---|---|
-| **OBS-01** | Métriques Prometheus (`prometheus-client` absent de `requirements.txt`, `app/core/metrics.py` inexistant) | M | 5 |
-| **OBS-02** | Logs JSON + correlation IDs (`contextvars`) | M | 4 |
+| ~~**OBS-01**~~ | ✅ **FAIT (2026-07-27)** — cf. §3.3 | M | 5 |
+| ~~**OBS-02**~~ | ✅ **FAIT (2026-07-27)** — cf. §3.3 | M | 4 |
 | **OBS-03** | Dashboard Grafana (dépend OBS-01) | M | 4 |
 | **OBS-04** | Alertes Prometheus AlertManager (dépend OBS-01) | M | 4 |
 | **OBS-05** | Tracing OpenTelemetry | L | 2 (backlog) |

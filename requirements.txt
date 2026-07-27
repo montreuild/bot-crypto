@@ -29,7 +29,11 @@
 # -- Web / API -------------------------------------------------------
 fastapi==0.115.0
 uvicorn[standard]==0.30.0
-jinja2==3.1.4
+# SEC-010 : 3.1.4 est vulnérable (CVE-2024-56201 / CVE-2024-56326, contournement
+# du bac à sable de template). Le plancher de l'audit était 3.1.5 — on prend 3.1.6
+# parce que 3.1.5 est elle-même vulnérable à CVE-2025-27516 (même famille) : viser
+# le plancher exact aurait imposé un second bump immédiat.
+jinja2==3.1.6
 python-multipart==0.0.22
 slowapi==0.1.9
 
@@ -49,7 +53,11 @@ pyyaml==6.0.2
 ruamel.yaml==0.18.6
 
 # -- Database --------------------------------------------------------
-sqlalchemy==2.0.30
+# SEC-009 : plancher de l'audit = 2.0.32. Pin exact au plancher plutôt qu'au
+# dernier patch de la ligne 2.0 (2.0.51) — la note d'en-tête impose de tester
+# avant de monter, et 19 patchs d'écart ne se justifient pas pour un correctif
+# de sécurité.
+sqlalchemy==2.0.32
 
 # -- Monitoring / ressources -----------------------------------------
 # psutil : introspection mémoire pour le cap anti-OOM de l'optimiseur.
@@ -68,6 +76,13 @@ lightgbm==4.4.0
 # Optionnel — l'optimiseur retombe sur une heuristique random+perturbation si la
 # librairie est absente. Recommandé pour une vraie recherche informée (TPE).
 optuna==4.0.0
+
+# -- Observabilité (OBS-01) ------------------------------------------
+# prometheus-client : exposition de /metrics (app/core/metrics.py).
+# OPTIONNEL — sans lui, /metrics répond 503 et toutes les fonctions du module
+# sont des no-op. Aucune autre partie du bot ne l'importe : l'observabilité ne
+# doit pas pouvoir empêcher le trading de démarrer.
+prometheus-client==0.26.0
 
 # -- Notifications ---------------------------------------------------
 # ccxt épingle EXACTEMENT requests==2.34.2 depuis la 4.4 : garder 2.32.0 ici

@@ -89,6 +89,15 @@ class EventHub:
         # Historique
         self._history.append(event)
 
+        # OBS-01 — point de branchement UNIQUE des métriques métier. Placé ici
+        # et non dans les appelants : le hub voit déjà passer chaque ouverture,
+        # clôture, signal et événement de risque. Placé AVANT le test
+        # `_subscribers` car les métriques doivent être comptées même quand
+        # aucun navigateur n'est connecté — c'est justement la nuit, sans
+        # personne devant l'écran, qu'on veut pouvoir relire ce qui s'est passé.
+        from app.core.metrics import record_event
+        record_event(event)
+
         if not self._subscribers:
             return
 

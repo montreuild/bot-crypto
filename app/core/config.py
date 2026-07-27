@@ -68,8 +68,10 @@ DEFAULTS = {
                   # S4-03 : "full" (IS+OOS, historique) vs "is_only" — cf.
                   # docstring de _save_ml_model_post_opt (auto_optimizer.py).
                   "ml_final_train_mode": "full"},
+    # OBS-02 : "format" pilote le seul handler FICHIER — "json" (défaut) ou
+    # "text" pour revenir à l'ancien format ligne.
     "logging":   {"level": "INFO", "debug": False, "max_bytes": 10_485_760, "backup_count": 5,
-                  "log_file": "logs/bot.log"},
+                  "log_file": "logs/bot.log", "format": "json"},
     "web":       {"host": "127.0.0.1", "port": 8000, "refresh_interval": 5, "api_key": ""},
     "scanner":   {"symbols": [DEFAULT_CONFIG_SYMBOL,"ETH/USDC","SOL/USDC"], "dynamic_scan": False, "top_n": 20},
     # Dérivés (funding/OI/long-short/taker) accumulés au fil de l'eau dans
