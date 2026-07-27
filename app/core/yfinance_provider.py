@@ -283,6 +283,38 @@ class YFinanceProvider:
 
     # ── Récupération OHLCV ─────────────────────────────────────────────────
 
+    def fetch_ohlcv_max(self, symbol: str, timeframe: str) -> List[list]:
+        """Tout l'historique que Yahoo accepte de rendre pour ce granularité.
+
+        Traduit ``yf.Ticker(t).history(period='max', interval=...)`` : Yahoo
+        reçoit ``range=max`` et **décide lui-même** de la profondeur. C'est
+        strictement meilleur que de déduire une fenêtre d'un nombre de bougies
+        (cf. ``bars_span_ms``), qui reste une estimation — heures de séance,
+        jours fériés, ancienneté de l'introduction. Sur un amorçage à froid on
+        veut le maximum, pas une estimation du maximum.
+
+        Les fenêtres calculées restent nécessaires pour les appels bornés
+        (incrémental, backfill ciblé) ; celle-ci sert l'amorçage, où la seule
+        bonne réponse est « tout ».
+        """
+        spec = _INTERVALS.get(timeframe)
+        if spec is None:
+            logger.warning(f"[{self.id}] Timeframe '{timeframe}' non supporté par Yahoo.")
+            return []
+        interval, _max_days, factor = spec
+        ticker = self.to_provider_symbol(symbol)
+
+        # `period1=None` == « pas de borne basse » : l'entrée couvre donc
+        # n'importe quelle demande ultérieure, d'où le 0 mémorisé.
+        cached = self._cached(ticker, interval, 0)
+        if cached is not None:
+            return self._finalize(cached, timeframe, factor, None, 0)
+
+        rows = self._fetch_raw(ticker, interval, None, None)
+        if rows:
+            self._remember(ticker, interval, 0, rows)
+        return self._finalize(rows, timeframe, factor, None, 0)
+
     def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 100,
                     since: Optional[int] = None) -> List[list]:
         """Bougies au format ccxt ``[ts_ms, open, high, low, close, volume]``.
@@ -411,8 +443,8 @@ class YFinanceProvider:
         return isinstance(exc, YFRateLimitError) or "429" in str(exc)
 
     def _fetch_raw(self, ticker: str, interval: str,
-                   period1: int, period2: int) -> List[list]:
-        """Une requête (avec retry) vers Yahoo."""
+                   period1: Optional[int], period2: Optional[int]) -> List[list]:
+        """Une requête (avec retry) vers Yahoo. ``period1=None`` → profondeur max."""
         remaining = self._cooldown_remaining()
         if remaining > 0:
             logger.debug(f"[{self.id}] {ticker}/{interval} ignoré — disjoncteur "
@@ -454,17 +486,23 @@ class YFinanceProvider:
             return obj
 
     def _fetch_bars(self, ticker: str, interval: str,
-                    period1: int, period2: int) -> List[list]:
+                    period1: Optional[int], period2: Optional[int]) -> List[list]:
         """Chemin ``yfinance``. **Seul endroit** où pandas apparaît.
+
+        ``period1=None`` demande ``period='max'`` : Yahoo reçoit ``range=max``
+        et rend toute la profondeur qu'il autorise pour cette granularité, sans
+        qu'on ait à la deviner. Sinon, fenêtre explicite ``start``/``end``.
 
         ``raise_errors`` n'est plus passé : il est déprécié depuis yfinance 1.5
         et le comportement par défaut est exactement celui qu'on veut — les
         erreurs ordinaires donnent une trame vide (le retry s'en charge),
         ``YFRateLimitError`` est relancée pour nourrir le disjoncteur.
         """
+        bounds = ({"period": "max"} if period1 is None
+                  else {"start": period1, "end": period2})
         hist = self._ticker(ticker).history(
-            start=period1, end=period2, interval=interval,
-            auto_adjust=False, actions=False, timeout=self._timeout,
+            interval=interval, auto_adjust=False, actions=False,
+            timeout=self._timeout, **bounds,
         )
         if hist is None or len(hist) == 0:
             return []

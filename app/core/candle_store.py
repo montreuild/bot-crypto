@@ -115,6 +115,9 @@ class CandleStore:
         #: bouge — si de l'historique arrive par une autre voie, on retente.
         self._no_history: Dict[tuple, tuple] = {}
         self._no_history_lock = threading.Lock()
+        #: Nombre d'amorçages profonds réussis — sert à savoir si le
+        #: premier fetch a déjà ramené toute la profondeur disponible.
+        self._deep_fetches = 0
         logger.info(f"[CandleStore] Initialisation — répertoire : {self._base.resolve()}")
 
     # ── API publique ──────────────────────────────────────────────────────────
@@ -145,12 +148,15 @@ class CandleStore:
                 return df_cached.tail(total)
 
             # Fetch incrémental ou complet
+            bootstrapped_deep = False
             if len(df_cached) > 0:
                 last_ms  = int(df_cached["time"].max().timestamp() * 1000)
                 new_raw  = self._fetch_incremental(exchange, symbol, tf, last_ms + 1)
             else:
                 logger.info(f"[CandleStore] {symbol}/{tf} — premier fetch ({total} bougies)")
-                new_raw  = self._fetch_full(exchange, symbol, tf, total)
+                before = self._deep_fetches
+                new_raw = self._fetch_full(exchange, symbol, tf, total)
+                bootstrapped_deep = self._deep_fetches > before and bool(new_raw)
 
             # Merge + persistance si nouvelles données
             if new_raw:
@@ -170,7 +176,18 @@ class CandleStore:
             if len(df_cached) < total:
                 missing   = total - len(df_cached)
                 first_ms  = int(df_cached["time"].min().timestamp() * 1000) if len(df_cached) > 0 else None
-                if self._history_exhausted(symbol, tf, first_ms):
+                if bootstrapped_deep:
+                    # L'amorçage vient de ramener TOUT ce que la source
+                    # possède : chercher plus ancien derrière est une requête
+                    # dont on connaît déjà la réponse.
+                    self._mark_exhausted(symbol, tf, first_ms)
+                    logger.info(
+                        f"[CandleStore] {symbol}/{tf} — {len(df_cached)}/{total} "
+                        f"bougies : c'est tout l'historique publié par la source "
+                        f"pour cette granularité"
+                    )
+                    old_raw = []
+                elif self._history_exhausted(symbol, tf, first_ms):
                     logger.debug(
                         f"[CandleStore] {symbol}/{tf} — backfill historique ignoré "
                         f"({len(df_cached)}/{total}) : le provider l'a déjà déclaré "
@@ -318,6 +335,29 @@ class CandleStore:
         LIMIT      = 1000
         rate_sleep = getattr(exchange, "rateLimit", 1200) / 1000
 
+        # Même raisonnement qu'à l'amorçage : quand le provider sait rendre
+        # toute sa profondeur en une requête, la question « as-tu quelque chose
+        # avant telle date ? » reçoit une réponse DÉFINITIVE, au lieu d'une
+        # réponse relative à la fenêtre qu'on a devinée. Un cache déjà amorcé —
+        # par le script de backfill, par une version antérieure du bot — passe
+        # aussi par ici, et c'est le seul moyen qu'il rattrape sa profondeur.
+        deep = getattr(exchange, "fetch_ohlcv_max", None)
+        if callable(deep):
+            try:
+                rows = deep(symbol, tf) or []
+            except Exception as e:
+                logger.warning(f"[CandleStore] fetch_max {symbol}/{tf} : {e}")
+                rows = []
+            older = ([r for r in rows if r[0] < before_ms]
+                     if before_ms is not None else rows)
+            if older:
+                older.sort(key=lambda x: x[0])
+                return older
+            if rows:
+                # Le provider a répondu, et il n'a rien de plus ancien. C'est
+                # une réponse, pas un échec : inutile de retenter en borné.
+                return []
+
         try:
             tf_ms = exchange.parse_timeframe(tf) * 1000
         except Exception as e:
@@ -372,6 +412,30 @@ class CandleStore:
         """Fetch complet paginé — premier chargement uniquement."""
         LIMIT      = 1000
         rate_sleep = getattr(exchange, "rateLimit", 1200) / 1000
+
+        # Amorçage : si le provider sait rendre TOUT son historique en une
+        # requête, c'est la bonne réponse. Deviner une fenêtre à partir d'un
+        # nombre de bougies reste une estimation (heures de séance, fériés,
+        # date d'introduction) ; là, c'est la source qui décide de sa
+        # profondeur. Une seule requête, et le cache part complet — donc plus
+        # de backfill perdant au cycle suivant. Absent en ccxt : la crypto
+        # garde exactement le chemin paginé ci-dessous.
+        deep = getattr(exchange, "fetch_ohlcv_max", None)
+        if callable(deep):
+            try:
+                rows = deep(symbol, tf) or []
+            except Exception as e:
+                logger.warning(f"[CandleStore] fetch_max {symbol}/{tf} : {e}",
+                               exc_info=isinstance(e, (TypeError, AttributeError,
+                                                       KeyError, ValueError)))
+                rows = []
+            if rows:
+                self._deep_fetches += 1
+                logger.info(f"[CandleStore] {symbol}/{tf} — amorçage profond : "
+                            f"{len(rows)} bougies (tout l'historique disponible)")
+                return rows
+            # Liste vide : quota, réseau ou timeframe non supporté. On retombe
+            # sur le chemin borné plutôt que de renvoyer un cache vide.
 
         if total <= LIMIT:
             try:

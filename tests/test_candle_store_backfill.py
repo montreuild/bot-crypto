@@ -215,6 +215,99 @@ class TestNoHistoryMemo:
             assert not store._no_history
 
 
+# ── Amorçage profond (`period='max'` côté provider) ────────────────────────
+
+class _DeepExchange(_SessionExchange):
+    """Provider sachant rendre TOUTE sa profondeur en une requête."""
+
+    def __init__(self, depth=5_000):
+        super().__init__(depth=depth)
+        self.max_calls = 0
+
+    def fetch_ohlcv_max(self, symbol, tf):
+        self.max_calls += 1
+        return self._all()
+
+
+class TestDeepBootstrap:
+    def test_cold_start_takes_everything_in_one_request(self):
+        ex = _DeepExchange()
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            store.fetch(ex, "AIR/EUR", "15m", total=500)
+            cached = store.load_cached("AIR/EUR", "15m")
+        assert ex.max_calls == 1
+        assert len(cached) == ex.depth, (
+            "l'amorçage doit CONSERVER toute la profondeur obtenue, pas la "
+            "retailler au nombre de bougies demandé"
+        )
+
+    def test_an_already_seeded_cache_catches_up_its_depth(self):
+        """Cas réel : un cache peuplé par une version antérieure, resté court.
+        Le backfill doit rattraper via le chemin profond, pas s'entêter sur
+        une fenêtre calculée."""
+        ex = _DeepExchange()
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            shallow = ex._all()[-100:]
+            store._save(store._path("AIR/EUR", "15m"), store._raw_to_df(shallow))
+            store.fetch(ex, "AIR/EUR", "15m", total=500)
+            assert len(store.load_cached("AIR/EUR", "15m")) == ex.depth
+
+    def test_a_provider_without_the_hook_keeps_the_paginated_path(self):
+        """La crypto (ccxt) n'expose pas `fetch_ohlcv_max` : rien ne change."""
+        ex = _SessionExchange()
+        assert not hasattr(ex, "fetch_ohlcv_max")
+        with tempfile.TemporaryDirectory() as d:
+            df = _store(d).fetch(ex, "AIR/EUR", "15m", total=500)
+        assert df is not None and len(df) == 500
+
+    def test_an_empty_deep_response_falls_back_instead_of_emptying_the_cache(self):
+        """Quota atteint ou timeframe non servi : le chemin profond rend une
+        liste vide. Retourner ça tel quel laisserait le cache vide alors que
+        le chemin borné, lui, aurait pu servir."""
+        class _Silent(_DeepExchange):
+            def fetch_ohlcv_max(self, symbol, tf):
+                self.max_calls += 1
+                return []
+        ex = _Silent()
+        with tempfile.TemporaryDirectory() as d:
+            df = _store(d).fetch(ex, "AIR/EUR", "15m", total=500)
+        assert ex.max_calls >= 1
+        assert df is not None and len(df) == 500
+
+    def test_a_raising_deep_path_does_not_break_the_cycle(self):
+        class _Boom(_DeepExchange):
+            def fetch_ohlcv_max(self, symbol, tf):
+                raise RuntimeError("429")
+        ex = _Boom()
+        with tempfile.TemporaryDirectory() as d:
+            df = _store(d).fetch(ex, "AIR/EUR", "15m", total=500)
+        assert df is not None and len(df) == 500
+
+    def test_a_definitive_no_older_answer_skips_the_bounded_retry(self):
+        """Le provider a répondu et n'a rien de plus ancien : c'est une
+        réponse, pas un échec. Relancer une requête bornée derrière ne ferait
+        que consommer du quota pour le même « non »."""
+        ex = _DeepExchange(depth=120)
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            store.fetch(ex, "NEWCO/EUR", "15m", total=500)
+            floor_ms = int(store.load_cached("NEWCO/EUR", "15m")["time"]
+                           .min().timestamp() * 1000)
+            store._forget_exhausted("NEWCO/EUR", "15m")   # force un 2e backfill
+            ex.calls.clear()
+            store.fetch(ex, "NEWCO/EUR", "15m", total=500)
+
+        assert ex.max_calls == 2, "le 2e backfill doit repasser par le chemin profond"
+        reaching_back = [c for c in ex.calls
+                         if c[2] is not None and c[2] < floor_ms]
+        assert reaching_back == [], (
+            f"aucune requête bornée ne doit repartir chercher avant "
+            f"{floor_ms}, obtenu {reaching_back}"
+        )
+
+
 # ── Le cas nominal ne doit pas régresser ───────────────────────────────────
 
 class TestDeepHistoryStillWorks:

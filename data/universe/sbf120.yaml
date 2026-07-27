@@ -103,7 +103,7 @@ members:
   - {symbol: ELIS.PA,   name: Elis}
   - {symbol: EMEIS.PA,  name: Emeis}
   - {symbol: ERA.PA,    name: Eramet}
-  - {symbol: FDJUP.XC,    name: FDJ United}
+  - {symbol: FDJU.PA,     name: FDJ United}
   - {symbol: FGR.PA,    name: Eiffage}
   - {symbol: FRVIA.PA,  name: Forvia}
   - {symbol: GET.PA,    name: Getlink}

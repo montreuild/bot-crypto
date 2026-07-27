@@ -29,6 +29,14 @@ Le script est **incrémental et réentrant** : ``CandleStore.fetch`` fusionne su
 ``time`` et déduplique, donc le relancer complète le cache au lieu de le
 réécrire. Un titre en échec n'interrompt pas les autres — le rapport final
 liste ce qui manque.
+
+⚠️ ``--years`` n'est plus une limite sur actions. Le store amorce désormais un
+cache vide par ``fetch_ohlcv_max`` (``yfinance``: ``period='max'``), qui laisse
+**Yahoo** décider de sa profondeur au lieu de la déduire d'un nombre de bougies.
+On récupère donc systématiquement tout le disponible pour la granularité, et
+``--years`` ne sert plus qu'à dimensionner le compte visé dans le rapport. C'est
+voulu : sur un amorçage, la seule bonne réponse à « quelle profondeur ? » est
+« toute celle qui existe ».
 """
 from __future__ import annotations
 
