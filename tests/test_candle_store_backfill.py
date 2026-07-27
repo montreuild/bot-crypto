@@ -144,6 +144,28 @@ class TestNoHistoryMemo:
         noise = [r for r in caplog.records if "cache insuffisant" in r.message]
         assert len(noise) == 1
 
+    def test_the_memo_never_blocks_the_incremental_fetch(self):
+        """LE point à ne jamais casser : le mémo ne gèle QUE le backfill des
+        bougies ANCIENNES. Le fetch incrémental — celui qui ramène les bougies
+        qui viennent de se fermer — part à chaque cycle, mémo ou pas. Sans
+        cette garantie, un mémo de 6 h sur du 15 min ferait manquer 24 bougies
+        au live, ce qui serait bien pire que le bruit de log qu'il supprime.
+        """
+        ex = self._Shallow()
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            store.fetch(ex, "NEWCO/EUR", "15m", total=500)
+            assert store._no_history, "le mémo doit être posé"
+            seen = []
+            for _ in range(3):
+                ex._now += ex.tf_ms       # une nouvelle bougie se ferme
+                ex.depth += 1
+                df = store.fetch(ex, "NEWCO/EUR", "15m", total=500)
+                seen.append(len(df))
+        assert seen == [121, 122, 123], (
+            f"chaque nouvelle bougie doit arriver malgré le mémo, obtenu {seen}"
+        )
+
     def test_data_is_still_served_while_the_memo_holds(self):
         """Le mémo coupe la REQUÊTE, pas le service : les bougies en cache
         doivent continuer d'être rendues."""
