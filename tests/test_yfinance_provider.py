@@ -14,6 +14,7 @@ from app.core.yfinance_provider import (
     ExecutionNotSupported,
     YFinanceProvider,
     _aggregate,
+    _clean,
 )
 
 HOUR_MS = 3_600_000
@@ -22,7 +23,7 @@ HOUR_MS = 3_600_000
 def _provider(**overrides):
     cfg = {"providers": {"yfinance": {"suffix": ".PA", "min_request_interval": 0.0,
                                       "cache_ttl": 0.0, "max_retries": 1,
-                                      "prefer_yfinance": False, **overrides}}}
+                                      **overrides}}}
     return YFinanceProvider(cfg)
 
 
@@ -105,7 +106,7 @@ class TestDepthLimits:
             seen.update(ticker=ticker, interval=interval,
                         period1=period1, period2=period2)
             return _bars(5)
-        provider._fetch_via_chart_api = fake
+        provider._fetch_bars = fake
         return seen
 
     def test_one_minute_window_capped_at_seven_days(self, caplog):
@@ -154,7 +155,7 @@ class TestAggregation:
         def fake(ticker, interval, period1, period2):
             captured["interval"] = interval
             return _bars(8, start_ms=0, step_ms=HOUR_MS)
-        p._fetch_via_chart_api = fake
+        p._fetch_bars = fake
 
         rows = p.fetch_ohlcv("AIR.PA", "4h", limit=10)
         assert captured["interval"] == "1h", "Yahoo ne cote pas le 4 h"
@@ -186,7 +187,7 @@ class TestRobustness:
 
         def boom(*_a):
             raise RuntimeError("HTTP 429 — quota Yahoo atteint")
-        p._fetch_via_chart_api = boom
+        p._fetch_bars = boom
         with caplog.at_level("WARNING"):
             assert p.fetch_ohlcv("AIR.PA", "1h", limit=10) == []
 
@@ -199,7 +200,7 @@ class TestRobustness:
             if calls["n"] < 2:
                 raise RuntimeError("429")
             return _bars(3)
-        p._fetch_via_chart_api = flaky
+        p._fetch_bars = flaky
         assert len(p.fetch_ohlcv("AIR.PA", "1h", limit=10)) == 3
         assert calls["n"] == 2
 
@@ -210,14 +211,14 @@ class TestRobustness:
         def counted(*_a):
             calls["n"] += 1
             return _bars(5)
-        p._fetch_via_chart_api = counted
+        p._fetch_bars = counted
         p.fetch_ohlcv("AIR.PA", "1h", limit=5)
         p.fetch_ohlcv("AIR.PA", "1h", limit=5)
         assert calls["n"] == 1, "un cycle live rescanne le même symbole en boucle"
 
     def test_throttle_spaces_requests_process_wide(self):
         p = _provider(min_request_interval=0.05)
-        p._fetch_via_chart_api = lambda *_a: _bars(2)
+        p._fetch_bars = lambda *_a: _bars(2)
         started = time.time()
         p.fetch_ohlcv("AIR.PA", "1h", limit=2)
         p.fetch_ohlcv("MC.PA", "1h", limit=2)
@@ -226,7 +227,7 @@ class TestRobustness:
     def test_limit_and_since_are_honoured(self):
         p = _provider()
         rows = _bars(20, start_ms=0)
-        p._fetch_via_chart_api = lambda *_a: rows
+        p._fetch_bars = lambda *_a: rows
         assert len(p.fetch_ohlcv("AIR.PA", "1h", limit=5)) == 5
         since = 10 * HOUR_MS
         assert all(r[0] >= since
@@ -234,7 +235,7 @@ class TestRobustness:
 
     def test_ticker_falls_back_across_timeframes(self):
         p = _provider()
-        p._fetch_via_chart_api = lambda ticker, interval, *_a: (
+        p._fetch_bars = lambda ticker, interval, *_a: (
             _bars(2) if interval == "1d" else []
         )
         ticker = p.fetch_ticker("AIR.PA")
@@ -244,7 +245,7 @@ class TestRobustness:
 
     def test_ticker_without_data_is_neutral_not_an_exception(self):
         p = _provider()
-        p._fetch_via_chart_api = lambda *_a: []
+        p._fetch_bars = lambda *_a: []
         assert p.fetch_ticker("ZZZZ.PA")["last"] == 0.0
 
     def test_fetch_tickers_without_symbols_returns_empty(self):
@@ -252,54 +253,103 @@ class TestRobustness:
         assert _provider().fetch_tickers() == {}
 
 
-# ── Parsing de la réponse chart ────────────────────────────────────────────
+# ── Chemin yfinance ────────────────────────────────────────────────────────
 
-class TestChartApiParsing:
-    class _Resp:
-        status_code = 200
+class _FakeFrame:
+    """Le strict minimum de l'API DataFrame consommée par ``_fetch_bars``.
 
-        def __init__(self, payload):
-            self._payload = payload
+    Un vrai DataFrame pandas ferait le même travail, mais le test resterait
+    vert si ``_fetch_bars`` cessait d'appeler yfinance : ce qu'on veut vérifier
+    ici c'est la conversion trame → lignes ccxt, pas pandas.
+    """
 
-        def raise_for_status(self):
-            pass
+    class _Col(list):
+        def tolist(self):
+            return list(self)
 
-        def json(self):
-            return self._payload
+    def __init__(self, stamps_s, opens, highs, lows, closes, volumes):
+        self.index = [_FakeTs(s) for s in stamps_s]
+        self._cols = {"Open": opens, "High": highs, "Low": lows,
+                      "Close": closes, "Volume": volumes}
 
-    def _session(self, payload):
-        class _S:
-            headers = {}
+    def __len__(self):
+        return len(self.index)
 
-            def update(self, *_a):
-                pass
+    def __getitem__(self, key):
+        return _FakeFrame._Col(self._cols[key])
 
-            def get(_self, *_a, **_kw):
-                return TestChartApiParsing._Resp(payload)
-        s = _S()
-        s.headers = type("H", (), {"update": lambda *_a: None})()
-        return s
 
-    def test_holes_in_the_quote_arrays_are_skipped(self):
-        """Suspension de cotation : Yahoo renvoie des None, pas moins de points."""
-        payload = {"chart": {"result": [{
-            "timestamp": [1_700_000_000, 1_700_003_600, 1_700_007_200],
-            "indicators": {"quote": [{
-                "open":  [10.0, None, 12.0],
-                "high":  [11.0, None, 13.0],
-                "low":   [9.0,  None, 11.0],
-                "close": [10.5, None, 12.5],
-                "volume": [100, None, 200],
-            }]},
-        }]}}
+class _FakeTs:
+    def __init__(self, seconds):
+        self._s = seconds
+
+    def timestamp(self):
+        return float(self._s)
+
+
+class TestYFinancePath:
+    def _patch(self, provider, frame_or_exc):
+        class _Ticker:
+            def history(_self, **_kw):
+                if isinstance(frame_or_exc, BaseException):
+                    raise frame_or_exc
+                return frame_or_exc
+        provider._tickers["AIR.PA"] = _Ticker()
+        provider._tickers["ZZZZ.PA"] = _Ticker()
+
+    def test_frame_is_converted_to_ccxt_rows(self):
         p = _provider()
-        p._session = self._session(payload)
-        rows = p._fetch_via_chart_api("AIR.PA", "1h", 0, 9_999_999_999)
-        assert len(rows) == 2
+        self._patch(p, _FakeFrame([1_700_000_000, 1_700_003_600],
+                                  [10.0, 12.0], [11.0, 13.0], [9.0, 11.0],
+                                  [10.5, 12.5], [100.0, 200.0]))
+        rows = p._fetch_bars("AIR.PA", "1h", 0, 9_999_999_999)
+        assert rows == [[1_700_000_000_000, 10.0, 11.0, 9.0, 10.5, 100.0],
+                        [1_700_003_600_000, 12.0, 13.0, 11.0, 12.5, 200.0]]
+
+    def test_nan_bars_are_dropped_not_propagated(self):
+        """Suspension de cotation : pandas met NaN, pas moins de points. Or
+        ``nan <= 0`` est faux — sans test explicite, la barre passait le filtre
+        de prix et empoisonnait les indicateurs bien plus loin."""
+        nan = float("nan")
+        p = _provider()
+        self._patch(p, _FakeFrame([1_700_000_000, 1_700_003_600, 1_700_007_200],
+                                  [10.0, nan, 12.0], [11.0, nan, 13.0],
+                                  [9.0, nan, 11.0], [10.5, nan, 12.5],
+                                  [100.0, nan, 200.0]))
+        rows = p._fetch_bars("AIR.PA", "1h", 0, 9_999_999_999)
         assert [r[0] for r in rows] == [1_700_000_000_000, 1_700_007_200_000]
 
-    def test_yahoo_error_payload_raises_for_retry(self):
+    def test_nan_volume_becomes_zero(self):
         p = _provider()
-        p._session = self._session({"chart": {"error": {"code": "Not Found"}}})
-        with pytest.raises(RuntimeError):
-            p._fetch_via_chart_api("ZZZZ.PA", "1h", 0, 9_999_999_999)
+        self._patch(p, _FakeFrame([1_700_000_000], [10.0], [11.0], [9.0],
+                                  [10.5], [float("nan")]))
+        assert p._fetch_bars("AIR.PA", "1h", 0, 9_999_999_999)[0][5] == 0.0
+
+    def test_empty_frame_is_not_an_error(self):
+        p = _provider()
+        self._patch(p, _FakeFrame([], [], [], [], [], []))
+        assert p._fetch_bars("AIR.PA", "1h", 0, 9_999_999_999) == []
+
+    def test_ticker_objects_are_reused(self):
+        """Le premier appel sur un ticker résout son fuseau — une requête
+        réseau qu'il serait absurde de refaire à chaque bougie demandée."""
+        p = _provider()
+        assert p._ticker("MC.PA") is p._ticker("MC.PA")
+
+    def test_yfinance_rate_limit_type_is_recognised(self):
+        """``YFRateLimitError`` ne contient pas « 429 » dans son message : le
+        disjoncteur doit reconnaître le TYPE, sinon il ne s'ouvre jamais."""
+        from yfinance.exceptions import YFRateLimitError
+        assert "429" not in str(YFRateLimitError())
+        assert YFinanceProvider._is_rate_limited(YFRateLimitError())
+        assert YFinanceProvider._is_rate_limited(RuntimeError("HTTP 429"))
+        assert not YFinanceProvider._is_rate_limited(RuntimeError("timeout"))
+
+    def test_clean_drops_non_finite_and_duplicates(self):
+        nan = float("nan")
+        rows = [[2, 1.0, 1.0, 1.0, 1.0, 1.0],
+                [1, 1.0, 1.0, 1.0, 1.0, 1.0],
+                [1, 1.0, 1.0, 1.0, 1.0, 1.0],
+                [3, nan, 1.0, 1.0, 1.0, 1.0],
+                [4, 1.0, 1.0, 1.0, 0.0, 1.0]]
+        assert [r[0] for r in _clean(rows)] == [1, 2]

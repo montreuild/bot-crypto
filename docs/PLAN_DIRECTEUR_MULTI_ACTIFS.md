@@ -618,7 +618,7 @@ n'est même pas instancié tant qu'aucune venue ne déclare de provider).
 | Gating de la boucle live | `app/live/market_hours_mixin.py` | Filtre les entrées hors séance (log throttlé), garde-fou par signal, clôture avant fin de séance. **Les positions ouvertes restent gérées marché fermé** (trailing, stop au gap) |
 | Contraintes & coûts venue | `app/core/execution.py` | `quantize_size`, `quantize_price`, `venue_trade_cost` — partagés backtest ↔ live |
 | Modèle de venue étendu | `app/core/bot_identity.py` | `calendar`, `data_provider`, `can_execute`, `close_at_session_end`, `fee_pct/fixed/min`, `transaction_tax_pct`, `min_notional` |
-| Provider actions | `app/core/yfinance_provider.py` | Data-only, deux backends (paquet `yfinance` ou API chart via `requests`) |
+| Provider actions | `app/core/yfinance_provider.py` | Data-only, chemin unique via le paquet `yfinance` (dépendance depuis 2026-07-27 — l'API chart publique répond 429 sans cookie/crumb) |
 | Routage multi-provider | `app/core/provider_router.py` | Aiguille par venue ; **inerte** si aucune venue ne déclare de provider |
 | Univers statiques | `app/core/universe.py`, `data/universe/sbf120.yaml` | Liste versionnée d'instruments, cumulée avec `scanner.symbols` |
 | Vérification d'univers | `scripts/check_universe.py` | Interroge le provider ticker par ticker (radiés/renommés) |

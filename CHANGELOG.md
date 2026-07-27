@@ -139,9 +139,51 @@ Tout le code G2 était livré ; il restait inactivé, et un maillon manquait.
   échec n'interrompt pas les autres, et il annonce à l'avance les troncatures
   imposées par Yahoo (1 h → 730 j, 15 m/30 m → 60 j, journalier illimité).
 
-Le paquet `yfinance` **n'est pas** ajouté aux dépendances : il réinstallerait
-pandas, retiré en phase 6. Le provider fonctionne via l'API chart publique
-(`requests`) ; `prefer_yfinance: true` reste utile si vous l'installez à la main.
+Le paquet `yfinance` **n'était pas** ajouté aux dépendances : il réinstalle
+pandas, retiré en phase 6. Ce choix a été **repris ci-dessous** — l'API chart
+publique ne ramène plus de données.
+
+### 🌐 Provider actions — `yfinance` devient le chemin unique (fin des 429 Yahoo)
+
+Sur une machine sans le paquet `yfinance`, le provider retombait sur l'API
+chart publique de Yahoo, appelée avec `requests`. Ce repli ne fonctionne plus :
+Yahoo exige désormais un couple **cookie/crumb** sur cet endpoint et répond
+`429` sans lui — quel que soit le throttling, et sur le premier appel. Le
+disjoncteur de quota jouait alors son rôle (5 refus → 15 min de coupure) mais
+sur un provider qui ne pouvait de toute façon rien ramener : le bot annonçait
+`backend=API chart` puis passait 98 titres en silence.
+
+- **`app/core/yfinance_provider.py`** : `import yfinance` **direct**, en tête de
+  module. Plus de `try/except ImportError`, plus de bascule `prefer_yfinance`,
+  plus de `_fetch_via_chart_api` — un seul chemin, donc un seul comportement à
+  expliquer. Un paquet manquant échoue maintenant à l'import, avec le nom du
+  paquet, au lieu de dégrader en silence vers un chemin mort.
+- **`requirements.txt`** : `yfinance==1.5.2` devient une dépendance du projet.
+  ⚠ Il **réinstalle pandas** (~23 Mo avec ses transitives). Contrepartie
+  assumée : c'est le prix des actions. La frontière pandas ne dépasse pas
+  `YFinanceProvider._fetch_bars()`, aucun autre module ne l'importe, et la
+  résolution reste sans conflit (`yfinance` demande `requests>=2.31`, `ccxt`
+  épingle `2.34.2`).
+- **Détection du quota corrigée** : `yfinance` signale le 429 par
+  `YFRateLimitError`, dont le **message ne contient pas « 429 »**. Le test
+  `"429" in str(e)` — écrit pour l'API chart — ne l'aurait jamais reconnu : le
+  disjoncteur ne se serait plus jamais ouvert. La détection porte désormais sur
+  le type (`_is_rate_limited`), le test sur la chaîne restant pour les erreurs
+  réseau brutes remontées par `curl_cffi`.
+- **Message du disjoncteur corrigé** : il annonçait « pause de 900s pour tout
+  le processus », ce qui se lit comme un `sleep` global — et qu'on cherchait
+  ensuite en vain dans les logs, puisque le cycle continuait à pleine vitesse.
+  Il annonce maintenant ce qui se passe réellement : les appels Yahoo sont
+  court-circuités (retour immédiat, aucune attente) pendant la fenêtre, les
+  actions étant servies par le seul cache Parquet.
+- **Barres `NaN`** : pandas remplit les trous de cotation par `NaN` là où l'API
+  chart renvoyait `None`. Or `nan <= 0` vaut `False` : le filtre de prix
+  existant les laissait passer, et elles seraient ressorties dans les
+  indicateurs bien plus loin. `_clean` teste maintenant la finitude, et un
+  volume `NaN` retombe à `0.0` (`NaN or 0.0` renvoie `NaN`, `NaN` étant « vrai »).
+- Les objets `yfinance.Ticker` sont réutilisés par symbole : le premier appel
+  résout le fuseau de la place, une requête réseau qu'il serait absurde de
+  refaire à chaque bougie demandée.
 
 ### 🔬 Page « Modèles » — les diagnostics d'entraînement deviennent visibles là où on expérimente
 
@@ -266,6 +308,9 @@ dans `_open_position`/`_close_position`, donc valable quel que soit le câblage
 - **Nouveau — `app/core/yfinance_provider.py`** : provider actions data-only,
   deux backends (le paquet `yfinance` s'il est installé, sinon l'API chart
   publique via `requests`) — **aucune dépendance obligatoire ajoutée**.
+  *(Révisé depuis : le repli API chart a été retiré et `yfinance` est devenu
+  une dépendance — voir « Provider actions — `yfinance` devient le chemin
+  unique » plus haut.)*
   Limitations Yahoo traitées explicitement plutôt que subies : profondeur
   plafonnée par granularité (1 m → 7 j, intraday → 60 j, 1 h → 730 j) avec
   troncature **avertie une seule fois** par symbole/TF ; intervalles inexistants
