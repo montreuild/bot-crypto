@@ -262,6 +262,12 @@ watchdog:
 logging:
   level: INFO
   debug: false
+  # OBS-02 — format du fichier de log UNIQUEMENT (la console reste colorée et
+  # lisible à l'œil). `json` = une ligne = un objet JSON, avec le
+  # correlation_id qui relie entre elles toutes les lignes d'une même requête
+  # ou d'un même job. `text` restaure l'ancien format si un outillage externe
+  # en dépendait.
+  format: json
   log_file: logs/bot.log
   max_bytes: 10485760
   backup_count: 5
@@ -282,6 +288,11 @@ perf:
   # (PERF-01). 128 par défaut (avant : 16 fixe, non configurable).
   precompute_cache_size: 128
 notifications:
+  # SEC-007 — joindre les dernières lignes de bot.log à l'alerte de crash
+  # (deploy/notify-crash.py). false par défaut : Telegram et CallMeBot sont des
+  # tiers, et le log porte symboles, tailles de position et soldes. Passer à
+  # true est un choix explicite, pas un réglage de confort.
+  crash_include_log: false
   telegram_enabled: false
   telegram_bot_token: ''
   telegram_chat_id: ''

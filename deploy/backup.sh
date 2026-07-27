@@ -21,6 +21,20 @@
 
 set -euo pipefail
 
+# ── SEC-008 : permissions restrictives ──────────────────────────
+#  Ce que ce script recopie n'est pas anodin : config.yaml porte les clés API
+#  exchange et les tokens de notification, trades.db l'historique complet des
+#  positions. Avec le umask par défaut (022) les archives sortaient en 0644,
+#  donc lisibles par tout compte de la machine — la sauvegarde était un
+#  contournement des permissions du fichier d'origine.
+#
+#  umask 077 couvre TOUT ce qui est créé ensuite, y compris le fichier écrit
+#  par le sous-processus Python (sqlite3.backup()) que l'on ne peut pas
+#  chmod-er avant son existence. Les chmod explicites plus bas ne sont donc
+#  pas redondants par excès de prudence : ils rattrapent aussi les archives
+#  déjà présentes, créées par une version antérieure de ce script.
+umask 077
+
 # ── Variables — adapter si nécessaire ───────────────────────────
 APP_DIR="${APP_DIR:-/opt/crypto_bot}"
 BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/backups}"
@@ -35,6 +49,7 @@ ok()    { echo "[ OK ]  $*"; }
 warn()  { echo "[WARN]  $*"; }
 
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 
 # ── trades.db (sqlite3.backup() — cohérent même sous écriture WAL) ─
 DB_PATH="$APP_DIR/trades.db"
@@ -49,6 +64,7 @@ with dst:
 src.close()
 dst.close()
 " "$DB_PATH" "$DB_OUT"
+    chmod 600 "$DB_OUT"
     ok "trades.db -> $DB_OUT"
 else
     warn "trades.db introuvable ($DB_PATH), backup ignoré"
@@ -58,6 +74,7 @@ fi
 CONFIG_PATH="$APP_DIR/config.yaml"
 if [[ -f "$CONFIG_PATH" ]]; then
     cp "$CONFIG_PATH" "$BACKUP_DIR/config_${DATE_TAG}.yaml"
+    chmod 600 "$BACKUP_DIR/config_${DATE_TAG}.yaml"
     ok "config.yaml -> $BACKUP_DIR/config_${DATE_TAG}.yaml"
 else
     warn "config.yaml introuvable ($CONFIG_PATH), backup ignoré"
@@ -68,10 +85,16 @@ STRATEGIES_DIR="$APP_DIR/strategies"
 if [[ -d "$STRATEGIES_DIR" ]]; then
     STRAT_OUT="$BACKUP_DIR/strategies_${DATE_TAG}.tar.gz"
     tar -czf "$STRAT_OUT" -C "$APP_DIR" strategies
+    chmod 600 "$STRAT_OUT"
     ok "strategies/*.yaml -> $STRAT_OUT"
 else
     warn "strategies/ introuvable ($STRATEGIES_DIR), backup ignoré"
 fi
+
+# ── SEC-008 : rattrapage des archives créées avant ce correctif ──
+find "$BACKUP_DIR" -maxdepth 1 -type f \
+    \( -name 'trades_*.db' -o -name 'config_*.yaml' -o -name 'strategies_*.tar.gz' \) \
+    ! -perm 600 -exec chmod 600 {} + 2>/dev/null || true
 
 # ── Rétention : purge des sauvegardes plus vieilles que RETENTION_DAYS ─
 find "$BACKUP_DIR" -maxdepth 1 -type f \

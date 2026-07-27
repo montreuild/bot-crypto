@@ -68,6 +68,12 @@ class Recipe:
     label_scheme: str = "amp_dir_quantile"
     heads: List[str] = field(default_factory=lambda: ["amp", "dir"])
     hp: Dict[str, Any] = field(default_factory=dict)
+    #: Surcharges d'hyperparamètres PAR TIMEFRAME, superposées à ``hp``
+    #: (ML-11). Même parti pris que ``window.bars``, qui règle déjà la fenêtre
+    #: d'entraînement par TF : un réglage mesuré comme bon en 15m peut être
+    #: mesuré comme nuisible en 1h, et la recette doit pouvoir le dire sans
+    #: qu'on duplique le fichier entier pour un seul booléen.
+    hp_by_tf: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     window_bars: Dict[str, Any] = field(default_factory=dict)
     min_bars: int = 2000
     cadence_bars: int = 0
@@ -94,6 +100,10 @@ class Recipe:
             "label_scheme": self.label_scheme,
             "heads": sorted(self.heads),
             "hp": self.hp,
+            # ``hp_by_tf`` entre EN ENTIER, pas seulement le bloc du TF courant :
+            # le hash identifie la recette, et le registre est déjà indexé par
+            # (TF, recette). Même traitement que ``window_bars``, per-TF lui aussi.
+            "hp_by_tf": self.hp_by_tf,
             "window_bars": self.window_bars,
             "min_bars": int(self.min_bars),
             "persistence": self.persistence,
@@ -131,6 +141,27 @@ class Recipe:
         p.update(self.features_params)
         return p
 
+    def hp_for_tf(self, tf: Optional[str]) -> Dict[str, Any]:
+        """Surcharges déclarées pour CE timeframe — dict vide si aucune.
+
+        Renvoyé séparément de ``train_params()`` parce que sa PRÉCÉDENCE est
+        différente, et c'est tout l'objet de ML-11. Le reste de la recette
+        fournit des défauts que l'appelant peut écraser ; ce bloc-ci écrase
+        l'appelant. La raison est mécanique, pas philosophique : chaque
+        consommateur recopie ``hp`` dans ses ``_DEFAULTS`` de classe et dans
+        ses ``fixed_params``, valeurs sans timeframe qui arrivent donc TOUJOURS
+        dans ``params``. Traité comme un défaut, un bloc par TF ne serait
+        jamais appliqué — on aurait écrit un réglage inerte, exactement le
+        genre d'écart entre le doc et le code que ML-11 corrige.
+
+        Un appelant qui veut malgré tout imposer sa valeur passe par la
+        recette (c'est un fichier versionné, pas du code) ou bascule sur une
+        recette dédiée.
+        """
+        if not tf:
+            return {}
+        return dict(self.hp_by_tf.get(tf) or {})
+
     def window_for(self, tf: str) -> Optional[int]:
         """Taille de fenêtre d'entraînement pour ce TF. ``None`` = tout
         l'historique fourni. Mesuré en 1h : plus n'est pas toujours mieux
@@ -164,6 +195,8 @@ def _coerce(name: str, raw: Dict[str, Any]) -> Recipe:
         label_scheme=str(labels.get("scheme", "amp_dir_quantile")),
         heads=list(raw.get("heads") or ["amp", "dir"]),
         hp=dict(raw.get("hp") or {}),
+        hp_by_tf={str(tf): dict(block or {})
+                  for tf, block in (raw.get("hp_by_tf") or {}).items()},
         window_bars=dict(window.get("bars") or {}),
         min_bars=int(window.get("min_bars", 2000)),
         cadence_bars=int(window.get("cadence_bars", 0)),
@@ -197,6 +230,24 @@ def load_recipe(name: str, recipes_dir: str = DEFAULT_RECIPES_DIR) -> Recipe:
             f"le nom de fichier est la clé du registre, il fait foi"
         )
     return _coerce(name, raw)
+
+
+def tf_hp_overrides(recipe_name: Optional[str], tf: Optional[str],
+                    recipes_dir: str = DEFAULT_RECIPES_DIR) -> Dict[str, Any]:
+    """``hp_by_tf[tf]`` de ``recipe_name``, ou ``{}`` — jamais d'exception.
+
+    Pendant tolérant de ``load_recipe``, destiné aux appelants qui ne peuvent
+    pas échouer sur une recette absente : ``MLBackend`` s'entraîne aussi dans
+    des tests et des scripts qui n'ont pas de ``recipes/`` sous la main. Ne
+    rien surcharger y est le bon repli — c'est le comportement d'avant ML-11.
+    """
+    if not recipe_name or not tf:
+        return {}
+    try:
+        return load_recipe(recipe_name, recipes_dir).hp_for_tf(tf)
+    except Exception as e:
+        logger.debug(f"[Recipe] hp_by_tf indisponible pour {recipe_name!r}/{tf} : {e}")
+        return {}
 
 
 def available_recipes(recipes_dir: str = DEFAULT_RECIPES_DIR) -> List[str]:

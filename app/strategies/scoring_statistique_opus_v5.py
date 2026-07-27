@@ -232,6 +232,12 @@ class Strategy(BaseStrategyML):
         self._best_auc:        float            = 0.0
         self._best_auc_per_tf: Dict[str, float] = {}
         self._train_meta:      Dict[str, dict]  = {}
+        # ML-19 — le ``TrainedRecipe`` complet rendu par ``recipe_trainer``,
+        # conservé par clé d'entraînement. ``_train`` n'en gardait que les
+        # boosters ; noms de features et médianes étaient jetés, alors que
+        # c'est exactement ce que l'artefact doit porter pour être relisible
+        # par le scorer générique (cf. ``save_model``).
+        self._trained_recipes: Dict[str, Any] = {}
         # Cache backtest : voir scoring_statistique_opus_v4 pour la motivation.
         self._bt_features_cache: Dict[float, np.ndarray] = {}
         self._bt_features_len: int = 0
@@ -350,6 +356,7 @@ class Strategy(BaseStrategyML):
             self._trained_tfs.clear()
             self._best_auc_per_tf.clear()
             self._train_meta.clear()
+            self._trained_recipes.clear()
             self._last_retrain.clear()
             self._managed_externally = False
             self._best_auc = 0.0
@@ -419,6 +426,7 @@ class Strategy(BaseStrategyML):
             self._trained_tfs.add(tf_key)
             self._best_auc_per_tf[tf_key] = (auc_amp + auc_dir) / 2.0
             self._train_meta[tf_key]      = dict(out.train_meta)
+            self._trained_recipes[tf_key] = out          # ML-19
             self._best_auc = (auc_amp + auc_dir) / 2.0
         logger.info(
             "[V5] %s entraîné : %s train / %s val | AUC amp=%.3f dir=%.3f"
@@ -450,6 +458,21 @@ class Strategy(BaseStrategyML):
         return keys[0] if len(keys) == 1 else None
 
     def save_model(self, path: str) -> None:
+        """Écrit l'artefact par le chemin RECETTE quand c'est possible (ML-19).
+
+        ``_train`` déléguait déjà à ``recipe_trainer``, mais l'écriture restait
+        celle de la classe : ``save_lgb_with_scaler`` produit un meta.json
+        ``format_version: 1`` SANS liste de features ni médianes. Or c'est
+        précisément cette absence qui rendait les artefacts ``stat48_*``
+        illisibles par le scorer générique (``unsupported_format``) — le gate
+        ne pouvait pas les comparer et retombait sur « comparaison manuelle
+        requise ». ``TrainedRecipe.save`` écrit toujours features + médianes.
+
+        Le repli sur l'ancien format reste nécessaire pour un modèle CHARGÉ
+        depuis le disque puis re-sauvegardé : il n'y a alors pas de
+        ``TrainedRecipe`` en mémoire, seulement deux boosters. Le supprimer
+        transformerait un aller-retour en perte de modèle.
+        """
         tf_key = os.path.splitext(os.path.basename(path))[0].rsplit("_", 1)[-1]
         key    = self._save_key(tf_key)
         if key is None:
@@ -459,10 +482,24 @@ class Strategy(BaseStrategyML):
             )
             return
         with self._lock:
+            trained = self._trained_recipes.get(key)
             amp  = self._amp_models.get(key)
             dir_ = self._dir_models.get(key)
             auc  = self._best_auc_per_tf.get(key, 0.0)
             meta = self._train_meta.get(key, {})
+
+        if trained is not None:
+            import dataclasses
+            # Le TF écrit est celui DEMANDÉ, pas la clé interne dont l'objet a
+            # été tiré (``score()`` indexe par symbole) : c'est sous ce TF que
+            # l'artefact sera republié et rechargé.
+            if dataclasses.replace(trained, tf=tf_key).save(path):
+                logger.info(f"[V5] Modèles sauvegardés (chemin recette) → {path} "
+                            f"(AUC={auc:.3f})")
+                return
+            logger.warning(f"[V5] écriture par la recette KO pour {path} — "
+                           f"repli sur le format historique")
+
         if amp is None or dir_ is None:
             return
         # phase6 : plus de StandardScaler — on passe scaler=None.
@@ -486,6 +523,10 @@ class Strategy(BaseStrategyML):
                     self._best_auc_per_tf[key] = float(data.get("best_auc", 0.0))
                     self._train_meta[key]      = data.get("train_meta", {})
                     self._trained_tfs.add(key)
+                    # Un modèle rechargé n'a pas de TrainedRecipe : purger une
+                    # entrée d'un entraînement PRÉCÉDENT, sans quoi un
+                    # save_model ultérieur réécrirait l'ancien modèle.
+                    self._trained_recipes.pop(key, None)
                 self._best_auc = float(data.get("best_auc", 0.0))
             logger.info(f"[V5] Modèles chargés depuis {path}")
             return True

@@ -136,12 +136,16 @@ class MLBackend:
     def __init__(self, name: str, model_dir: str = "models",
                  calibrate: bool = True,
                  prune_features: bool = True,
-                 multi_horizon: bool = True):
+                 multi_horizon: bool = True,
+                 recipe: Optional[str] = None):
         self.name        = name
         self.model_dir   = model_dir
         self._calibrate  = bool(calibrate)
         self._prune      = bool(prune_features)
         self._multi_h    = bool(multi_horizon)
+        #: Recette consommée — sert UNIQUEMENT à lire ``hp_by_tf`` (ML-11).
+        #: ``None`` = comportement d'avant ML-11 (aucune surcharge par TF).
+        self.recipe      = recipe
 
         self._lock  = threading.Lock()
         self._state = TrainState()
@@ -304,6 +308,20 @@ class MLBackend:
             p.setdefault("label_horizons", [1, 3, 6])
         else:
             p.setdefault("label_horizons", [1])
+
+        # ML-11 — surcharges par TIMEFRAME de la recette. Appliquées EN
+        # DERNIER, donc prioritaires sur ``params`` : cf. ``Recipe.hp_for_tf``
+        # pour le pourquoi (les valeurs de ``params`` sont sans timeframe, un
+        # bloc par TF traité comme défaut ne s'appliquerait jamais).
+        # ``_train_impl_wrapper`` est le seul point que traversent LES DEUX
+        # chemins d'entraînement — ``fit()`` via ``MLBackend.train`` et
+        # ``score()`` via ``MLBackendMixin._train`` — d'où ce choix de site.
+        from app.ml.recipe import tf_hp_overrides
+        tf_hp = tf_hp_overrides(self.recipe, tf_key)
+        if tf_hp:
+            logger.info(f"[MLBackend] {self.name}/{tf_key} : surcharges de recette "
+                        f"pour ce TF — {tf_hp}")
+            p.update(tf_hp)
         return _train_impl(
             self._state, self._lock, df, tf_key, p,
             defaults=p,  # params contient déjà les valeurs résolues

@@ -54,6 +54,29 @@ def _register_job(kind: str, **fields: Any) -> str:
     return job_id
 
 
+def _spawn(target: Any, args: tuple, kwargs: Dict[str, Any]) -> None:
+    """Démarre le thread du job en lui transportant l'identifiant de corrélation.
+
+    OBS-02 — un ``ContextVar`` ne traverse pas ``threading.Thread`` : sans ce
+    relais, la requête HTTP qui lance un entraînement serait tracée et
+    l'entraînement lui-même — la partie qui dure des minutes et qui produit
+    les lignes intéressantes — repartirait sur un contexte vierge. C'est
+    exactement la coupure que la corrélation est censée supprimer.
+
+    Un identifiant NEUF est posé quand il n'y en a pas (job déclenché hors
+    requête HTTP : CLI, retrain automatique). Un job sans trace du tout serait
+    le cas le moins exploitable.
+    """
+    from app.core.log_context import (
+        get_correlation_id,
+        new_correlation_id,
+        run_with_correlation,
+    )
+    cid = get_correlation_id() or new_correlation_id()
+    threading.Thread(target=run_with_correlation, daemon=True,
+                     args=(cid, target, *args), kwargs=kwargs).start()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Entraînement simple (dry-run ou publication gatée)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -63,33 +86,56 @@ def start_train_job(strategy: str, symbol: str, tf: str, *,
                     params: Optional[Dict[str, Any]] = None,
                     publish: bool = False,
                     base_dir: str = "models",
-                    recipe: Optional[str] = None) -> str:
+                    recipe: Optional[str] = None,
+                    symbols: Optional[List[str]] = None) -> str:
     """``recipe`` non nul : entraînement piloté par la recette (étape C), sans
-    instancier de stratégie. ``strategy`` ne sert alors qu'à étiqueter le job."""
-    job_id = _register_job("train", strategy=recipe or strategy, symbol=symbol,
-                           tf=tf, publish=publish, recipe=recipe)
-    threading.Thread(
-        target=_run_train, daemon=True,
-        args=(job_id, strategy, symbol, tf),
-        kwargs={"as_of": as_of, "window_bars": window_bars, "params": params,
-               "publish": publish, "base_dir": base_dir, "recipe": recipe},
-    ).start()
+    instancier de stratégie. ``strategy`` ne sert alors qu'à étiqueter le job.
+
+    ``symbols`` non vide : entraînement POOLÉ multi-symboles (ML-16). Exige
+    une recette — le pooling n'a de sens que sur le chemin recette, le seul
+    qui sache entraîner sans instancier une stratégie par symbole.
+    """
+    pooled = [s for s in dict.fromkeys(symbols or []) if s]
+    job_id = _register_job("train", strategy=recipe or strategy,
+                           symbol=(f"pooled:{len(pooled)}" if pooled else symbol),
+                           tf=tf, publish=publish, recipe=recipe,
+                           pooled_symbols=pooled or None)
+    _spawn(_run_train, (job_id, strategy, symbol, tf),
+           {"as_of": as_of, "window_bars": window_bars, "params": params,
+            "publish": publish, "base_dir": base_dir, "recipe": recipe,
+            "symbols": pooled})
     return job_id
 
 
 def _run_train(job_id: str, strategy: str, symbol: str, tf: str,
-               recipe: Optional[str] = None, **kwargs: Any) -> None:
-    from app.ml.train_runner import train_and_publish, train_recipe_and_publish
+               recipe: Optional[str] = None,
+               symbols: Optional[List[str]] = None, **kwargs: Any) -> None:
+    from app.core.metrics import observe_training, timed
+    from app.ml.train_runner import (
+        train_and_publish,
+        train_multi_and_publish,
+        train_recipe_and_publish,
+    )
     label = recipe or strategy
     try:
-        if recipe:
-            kwargs.pop("gate_cfg", None)
-            result = train_recipe_and_publish(recipe, symbol, tf, **kwargs)
-        else:
-            result = train_and_publish(strategy, symbol, tf, **kwargs)
+        with timed() as t:
+            if recipe and symbols:
+                kwargs.pop("gate_cfg", None)
+                result = train_multi_and_publish(recipe, symbols, tf, **kwargs)
+            elif recipe:
+                kwargs.pop("gate_cfg", None)
+                result = train_recipe_and_publish(recipe, symbol, tf, **kwargs)
+            else:
+                result = train_and_publish(strategy, symbol, tf, **kwargs)
+        # OBS-01 : la décision de gate est le libellé qui compte — c'est elle
+        # qui dit si un entraînement a servi à quelque chose. Un `refresh`
+        # devenu rare, ou un `keep` systématique, se lisent alors dans le temps.
+        observe_training(label, tf, str((result or {}).get("decision", "unknown")),
+                         t.seconds)
         _update_job(job_id, status="done", result=result, finished_at=time.time())
     except Exception as e:
         logger.error(f"[MLJobs] train {job_id} ({label}/{symbol}/{tf}) KO : {e}")
+        observe_training(label, tf, "error", 0.0)
         _update_job(job_id, status="error", error=str(e), finished_at=time.time())
 
 
@@ -103,12 +149,9 @@ def start_sweep_job(strategy: str, symbol: str, tf: str, windows: List[int], *,
                     base_dir: str = "models") -> str:
     job_id = _register_job("sweep", strategy=strategy, symbol=symbol, tf=tf,
                            windows=windows, publish_best=publish_best)
-    threading.Thread(
-        target=_run_sweep, daemon=True,
-        args=(job_id, strategy, symbol, tf, windows),
-        kwargs={"as_of": as_of, "params": params, "publish_best": publish_best,
-               "base_dir": base_dir},
-    ).start()
+    _spawn(_run_sweep, (job_id, strategy, symbol, tf, windows),
+           {"as_of": as_of, "params": params, "publish_best": publish_best,
+            "base_dir": base_dir})
     return job_id
 
 

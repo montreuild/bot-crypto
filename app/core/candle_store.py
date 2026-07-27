@@ -7,6 +7,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -31,12 +32,55 @@ logger = logging.getLogger(__name__)
 _MIN_SINCE_MS = 1_483_228_800_000  # 2017-01-01 UTC
 
 
-def _min_since(exchange) -> int:
+def epoch_ms(value) -> Optional[int]:
+    """Datetime **naïf** du schéma OHLCV → epoch ms, lu en UTC.
+
+    `datetime.timestamp()` interprète un datetime naïf en heure LOCALE. Or la
+    colonne `time` est un `Datetime("ms")` naïf qui porte de l'UTC (cf.
+    `_raw_to_df`, `pl.from_epoch`). Sur une machine à UTC+1, la conversion
+    retirait donc une heure aux bornes du cache, et ce décalage n'était pas
+    inoffensif : `before_ms` (borne basse) partait une heure trop tôt, si bien
+    que le backfill historique s'arrêtait AVANT les bougies qui touchent le
+    cache. Il restait un TROU permanent d'une heure à la jonction, que rien ne
+    venait jamais combler — invisible en UTC, systématique à Paris.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, datetime):
+        return int(value.replace(tzinfo=timezone.utc).timestamp() * 1000)
+    return None
+
+
+def _provider_for(exchange, symbol: str):
+    """Provider RÉELLEMENT interrogé pour ce symbole.
+
+    `exchange` peut être un `ProviderRouter` (cf. app/core/provider_router.py) :
+    il route `fetch_ohlcv` par symbole, mais son `__getattr__` renvoie tout le
+    reste à l'exchange par défaut — l'exchange crypto. Interroger le routeur
+    pour `min_since_ms`, `bars_span_ms`, `drop_zero_volume` ou
+    `fetch_ohlcv_max` répondait donc systématiquement « ccxt » : le contrat que
+    YFinanceProvider expose au store était invisible, et les actions étaient
+    servies avec les hypothèses de la crypto (plancher 2017, temps calendaire
+    continu, barres à volume nul rejetées, aucun amorçage profond).
+    """
+    resolve = getattr(exchange, "provider_for", None)
+    if callable(resolve):
+        try:
+            return resolve(symbol)
+        except Exception as e:
+            logger.debug(f"[CandleStore] provider_for('{symbol}') KO : {e}")
+    return exchange
+
+
+def _min_since(exchange, symbol: str) -> int:
     """Plancher de `since` applicable au provider (défaut : fondation d'OKX)."""
-    return int(getattr(exchange, "min_since_ms", _MIN_SINCE_MS))
+    return int(getattr(_provider_for(exchange, symbol),
+                       "min_since_ms", _MIN_SINCE_MS))
 
 
-def _bars_span_ms(exchange, tf: str, count: int, tf_ms: int) -> int:
+def _bars_span_ms(exchange, symbol: str, tf: str, count: int, tf_ms: int) -> int:
     """Temps calendaire à remonter pour espérer `count` bougies de `tf`.
 
     En crypto c'est `count × durée` : le marché ne ferme jamais. Sur une place
@@ -48,7 +92,7 @@ def _bars_span_ms(exchange, tf: str, count: int, tf_ms: int) -> int:
     Le provider tranche via `bars_span_ms` (cf. YFinanceProvider) ; sans elle,
     le comportement crypto historique est conservé à l'identique.
     """
-    fn = getattr(exchange, "bars_span_ms", None)
+    fn = getattr(_provider_for(exchange, symbol), "bars_span_ms", None)
     if callable(fn):
         try:
             return int(fn(tf, count))
@@ -63,7 +107,7 @@ def _bars_span_ms(exchange, tf: str, count: int, tf_ms: int) -> int:
 _NO_HISTORY_RETRY_S = 6 * 3600.0
 
 
-def _valid_bars(df: pl.DataFrame, exchange) -> pl.DataFrame:
+def _valid_bars(df: pl.DataFrame, exchange, symbol: str) -> pl.DataFrame:
     """Écarte les barres inexploitables, selon ce que le provider garantit.
 
     En crypto, une bougie à volume nul signale des données cassées. Sur
@@ -72,7 +116,7 @@ def _valid_bars(df: pl.DataFrame, exchange) -> pl.DataFrame:
     `drop_zero_volume` (défaut True = comportement crypto historique).
     """
     valid = pl.col("close") > 0
-    if bool(getattr(exchange, "drop_zero_volume", True)):
+    if bool(getattr(_provider_for(exchange, symbol), "drop_zero_volume", True)):
         valid = valid & (pl.col("volume") > 0)
     return df.filter(valid).drop_nulls()
 
@@ -150,7 +194,7 @@ class CandleStore:
             # Fetch incrémental ou complet
             bootstrapped_deep = False
             if len(df_cached) > 0:
-                last_ms  = int(df_cached["time"].max().timestamp() * 1000)
+                last_ms  = epoch_ms(df_cached["time"].max())
                 new_raw  = self._fetch_incremental(exchange, symbol, tf, last_ms + 1)
             else:
                 logger.info(f"[CandleStore] {symbol}/{tf} — premier fetch ({total} bougies)")
@@ -163,7 +207,7 @@ class CandleStore:
                 df_new    = self._raw_to_df(new_raw)
                 df_merged = _valid_bars(
                     pl.concat([df_cached, df_new]).unique("time").sort("time"),
-                    exchange,
+                    exchange, symbol,
                 )
                 self._save(path, df_merged)
                 df_cached = df_merged
@@ -175,7 +219,7 @@ class CandleStore:
             # Si le cache est insuffisant, tenter de récupérer des bougies historiques plus anciennes
             if len(df_cached) < total:
                 missing   = total - len(df_cached)
-                first_ms  = int(df_cached["time"].min().timestamp() * 1000) if len(df_cached) > 0 else None
+                first_ms  = epoch_ms(df_cached["time"].min()) if len(df_cached) > 0 else None
                 if bootstrapped_deep:
                     # L'amorçage vient de ramener TOUT ce que la source
                     # possède : chercher plus ancien derrière est une requête
@@ -205,7 +249,7 @@ class CandleStore:
                     df_old    = self._raw_to_df(old_raw)
                     df_merged = _valid_bars(
                         pl.concat([df_cached, df_old]).unique("time").sort("time"),
-                        exchange,
+                        exchange, symbol,
                     )
                     self._save(path, df_merged)
                     df_cached = df_merged
@@ -341,7 +385,7 @@ class CandleStore:
         # réponse relative à la fenêtre qu'on a devinée. Un cache déjà amorcé —
         # par le script de backfill, par une version antérieure du bot — passe
         # aussi par ici, et c'est le seul moyen qu'il rattrape sa profondeur.
-        deep = getattr(exchange, "fetch_ohlcv_max", None)
+        deep = getattr(_provider_for(exchange, symbol), "fetch_ohlcv_max", None)
         if callable(deep):
             try:
                 rows = deep(symbol, tf) or []
@@ -373,8 +417,8 @@ class CandleStore:
         # Point de départ : assez loin dans le passé pour couvrir les bougies manquantes.
         # On clampe à _MIN_SINCE_MS (2017-01-01) : un `since` trop ancien (ex. 1d × 20000
         # ⇒ avant le listing) fait rejeter la requête OHLCV par l'exchange (liste vide).
-        floor_ms = _min_since(exchange)
-        span_ms  = _bars_span_ms(exchange, tf, needed, tf_ms)
+        floor_ms = _min_since(exchange, symbol)
+        span_ms  = _bars_span_ms(exchange, symbol, tf, needed, tf_ms)
         if before_ms is not None:
             since = max(floor_ms, before_ms - span_ms)
         else:
@@ -426,7 +470,7 @@ class CandleStore:
         # profondeur. Une seule requête, et le cache part complet — donc plus
         # de backfill perdant au cycle suivant. Absent en ccxt : la crypto
         # garde exactement le chemin paginé ci-dessous.
-        deep = getattr(exchange, "fetch_ohlcv_max", None)
+        deep = getattr(_provider_for(exchange, symbol), "fetch_ohlcv_max", None)
         if callable(deep):
             try:
                 rows = deep(symbol, tf) or []
@@ -460,8 +504,9 @@ class CandleStore:
             logger.warning(f"[CandleStore] parse_timeframe '{tf}' KO : {e} — fallback 1h")
             tf_ms = 3_600_000  # fallback 1h en ms
 
-        since   = max(_min_since(exchange),
-                      exchange.milliseconds() - _bars_span_ms(exchange, tf, total, tf_ms))
+        since   = max(_min_since(exchange, symbol),
+                      exchange.milliseconds()
+                      - _bars_span_ms(exchange, symbol, tf, total, tf_ms))
         all_raw = []
         seen_ts = set()
 

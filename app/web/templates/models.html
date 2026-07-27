@@ -69,7 +69,8 @@ table.mdl-tbl{width:100%;border-collapse:collapse;font-size:.78rem;}
     <h2>🚀 Entraîner un modèle</h2>
     <div class="mdl-form">
       <div class="mdl-fld"><label>Recette / Stratégie<span class="mdl-hint" style="margin:0">les recettes sont les clés du registre ci-dessus</span></label><select id="tr-strat"><option value="opus_omnibus_v11">opus_omnibus_v11</option></select></div>
-      <div class="mdl-fld"><label>Symbole</label><input id="tr-symbol" value="BTC/USDC"></div>
+      <div class="mdl-fld"><label>Symbole<span class="mdl-hint" style="margin:0">ignoré si des symboles poolés sont saisis</span></label><input id="tr-symbol" value="BTC/USDC"></div>
+      <div class="mdl-fld"><label>Pooling multi-symboles (optionnel)<span class="mdl-hint" style="margin:0">liste séparée par des virgules — exige une recette</span></label><input id="tr-symbols" placeholder="AC.PA, ACA.PA, AI.PA, AIR.PA" title="Entraîne UNE recette sur plusieurs symboles mis en commun. Sur actions c'est le seul mode praticable : un titre Euronext seul mettrait ~13,7 ans à fournir l'historique requis. Le holdout est prélevé par symbole et le gate arbitre sur la moyenne des scores."></div>
       <div class="mdl-fld"><label>Timeframe</label><select id="tr-tf"><option value="1h">1h</option></select></div>
       <div class="mdl-fld"><label>Fenêtre (barres)<span class="mdl-hint" style="margin:0">0 = tout dispo</span></label><input id="tr-window" type="number" value="0" min="0"></div>
       <div class="mdl-fld"><label>Date de fin d'entraînement (optionnel)<span class="mdl-hint" style="margin:0">fige l'entraînement à cette date passée (rejoue une décision historique)</span></label><input id="tr-asof" placeholder="2026-06-01T00:00:00" title="Ne garde que les bougies antérieures à cette date pour l'entraînement ET le holdout du gate. Vide = tout l'historique disponible jusqu'à maintenant."></div>
@@ -391,8 +392,18 @@ async function pollJob(kind,jobId,container){
     // expérimenter.
     const diag=diagnosticsPanel(res.train_meta,'Diagnostics du candidat entraîné');
     if(res.decision){
+      // ML-16 — en mode poolé, dire sur QUOI le modèle a été entraîné et ce
+      // qui a été écarté : un symbole silencieusement absent du pool ferait
+      // croire à une couverture qui n'existe pas.
+      const skipped=res.skipped_symbols&&Object.keys(res.skipped_symbols).length
+        ? Object.entries(res.skipped_symbols).map(([s,why])=>esc(s)+' ('+esc(why)+')').join(', ') : '';
+      const pooled=res.pooled_symbols&&res.pooled_symbols.length
+        ? '<br>Poolé sur '+res.pooled_symbols.length+' symbole(s) : '+esc(res.pooled_symbols.join(', '))
+          +(res.candidate&&res.candidate.n_scored_symbols?' — scoré sur '+res.candidate.n_scored_symbols:'')
+          +(skipped?'<br><span style="color:var(--muted)">Écartés : '+skipped+'</span>':'')
+        : '';
       container.innerHTML=jobCardHtml('done',
-        '<b>'+esc(res.decision)+'</b> — '+esc(res.reason||'')+
+        '<b>'+esc(res.decision)+'</b> — '+esc(res.reason||'')+pooled+
         (res.candidate?'<br>Candidat : AUC amp='+((res.candidate.auc_amp??0)).toFixed?.(3)??'—':'')+
         (res.published_version?'<br>Version publiée : '+esc(res.published_version):''))+diag;
     } else if(res.candidates){
@@ -413,17 +424,22 @@ async function startTrain(){
   const btn=document.getElementById('tr-btn'); const container=document.getElementById('tr-job');
   const strategy=document.getElementById('tr-strat').value.trim();
   const symbol=document.getElementById('tr-symbol').value.trim();
+  const symbols=document.getElementById('tr-symbols').value.split(',').map(s=>s.trim()).filter(Boolean);
   const tf=document.getElementById('tr-tf').value.trim();
   const windowBars=parseInt(document.getElementById('tr-window').value)||0;
   const asOf=document.getElementById('tr-asof').value.trim();
   const publish=document.getElementById('tr-publish').checked;
-  if(!strategy||!symbol||!tf){toast('Stratégie/symbole/TF requis',true);return;}
+  const isRecipe=_RECIPES.has(strategy);
+  if(!strategy||!tf||(!symbol&&!symbols.length)){toast('Stratégie/symbole/TF requis',true);return;}
+  // Dit tout de suite ce que l'API refuserait de toute façon : le pooling
+  // n'existe que sur le chemin recette.
+  if(symbols.length&&!isRecipe){toast('Le pooling multi-symboles exige une recette, pas une stratégie',true);return;}
   btn.disabled=true;
   try{
-    const isRecipe=_RECIPES.has(strategy);
     const r=await apiFetch('/api/ml/train',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       strategy:isRecipe?null:strategy, recipe:isRecipe?strategy:null,
-      symbol,tf,window_bars:windowBars>0?windowBars:null,as_of:asOf||null,publish,
+      symbol,symbols:symbols.length?symbols:null,
+      tf,window_bars:windowBars>0?windowBars:null,as_of:asOf||null,publish,
     })});
     const d=await r.json().catch(()=>({}));
     if(!r.ok){toast('Erreur : '+(d.detail||r.status),true);return;}

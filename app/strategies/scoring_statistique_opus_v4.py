@@ -239,6 +239,11 @@ class Strategy(BaseStrategyML):
         self._best_auc:        float            = 0.0
         self._best_auc_per_tf: Dict[str, float] = {}
         self._train_meta:      Dict[str, dict]  = {}
+        # ML-19 — le ``TrainedRecipe`` complet rendu par ``recipe_trainer``.
+        # ``_train`` n'en gardait que les boosters ; noms de features et
+        # médianes étaient jetés, alors que c'est ce que l'artefact doit
+        # porter pour rester relisible par le scorer générique.
+        self._trained_recipes: Dict[str, Any] = {}
         # Cache backtest : voir prepare_for_backtest. Clé = ``adx_threshold``
         # car ``_build_features`` dépend de ce paramètre pour le régime.
         self._bt_features_cache: Dict[float, np.ndarray] = {}
@@ -379,6 +384,7 @@ class Strategy(BaseStrategyML):
             self._trained_tfs.clear()
             self._best_auc_per_tf.clear()
             self._train_meta.clear()
+            self._trained_recipes.clear()
             self._last_retrain.clear()
             self._managed_externally = False
             self._best_auc = 0.0
@@ -477,6 +483,7 @@ class Strategy(BaseStrategyML):
             self._trained_tfs.add(tf_key)
             self._best_auc_per_tf[tf_key] = (auc_amp + auc_dir) / 2.0
             self._train_meta[tf_key]      = dict(out.train_meta)
+            self._trained_recipes[tf_key] = out          # ML-19
             self._best_auc = (auc_amp + auc_dir) / 2.0
         logger.info(
             "[V4] %s entraîné : %s train / %s val | AUC amp=%.3f dir=%.3f"
@@ -508,6 +515,16 @@ class Strategy(BaseStrategyML):
         return keys[0] if len(keys) == 1 else None
 
     def save_model(self, path: str) -> None:
+        """Écrit l'artefact par le chemin RECETTE quand c'est possible (ML-19).
+
+        Même bascule que ``scoring_statistique_opus_v5`` : ``_train`` déléguait
+        déjà à ``recipe_trainer``, mais l'écriture restait celle de la classe.
+        ``save_lgb_with_scaler`` produit un meta.json sans liste de features ni
+        médianes — l'absence exacte qui rendait les artefacts ``stat48_*``
+        illisibles par le scorer générique (``unsupported_format``), donc
+        incomparables par le gate. Repli conservé pour un modèle rechargé
+        depuis le disque, qui n'a pas de ``TrainedRecipe`` en mémoire.
+        """
         tf_key = os.path.splitext(os.path.basename(path))[0].rsplit("_", 1)[-1]
         key    = self._save_key(tf_key)
         if key is None:
@@ -517,10 +534,21 @@ class Strategy(BaseStrategyML):
             )
             return
         with self._lock:
+            trained = self._trained_recipes.get(key)
             amp  = self._amp_models.get(key)
             dir_ = self._dir_models.get(key)
             auc  = self._best_auc_per_tf.get(key, 0.0)
             meta = self._train_meta.get(key, {})
+
+        if trained is not None:
+            import dataclasses
+            if dataclasses.replace(trained, tf=tf_key).save(path):
+                logger.info(f"[V4] Modèles sauvegardés (chemin recette) → {path} "
+                            f"(AUC combiné={auc:.3f})")
+                return
+            logger.warning(f"[V4] écriture par la recette KO pour {path} — "
+                           f"repli sur le format historique")
+
         if amp is None or dir_ is None:
             return
         # phase6 : plus de StandardScaler — on utilise save_lgb_with_scaler
@@ -545,6 +573,10 @@ class Strategy(BaseStrategyML):
                     self._best_auc_per_tf[key] = float(data.get("best_auc", 0.0))
                     self._train_meta[key]      = data.get("train_meta", {})
                     self._trained_tfs.add(key)
+                    # Un modèle rechargé n'a pas de TrainedRecipe : purger une
+                    # entrée d'un entraînement PRÉCÉDENT, sans quoi un
+                    # save_model ultérieur réécrirait l'ancien modèle.
+                    self._trained_recipes.pop(key, None)
                 self._best_auc = float(data.get("best_auc", 0.0))
             logger.info(f"[V4] Modèles chargés depuis {path}")
             return True

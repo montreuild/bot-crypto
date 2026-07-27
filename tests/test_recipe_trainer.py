@@ -214,15 +214,28 @@ class TestTrain:
         gate = policy.decide_gate(metrics, None, auc_floor=0.0, metric="auc_amp")
         assert gate.decision == "initial", gate.reason
 
-    def test_old_path_is_still_unscoreable_which_is_why_this_matters(self, ohlcv, tmp_path):
-        """Contrôle : sans ce chantier, le même artefact reste illisible."""
+    def test_the_strategy_now_writes_a_scoreable_artifact_too(self, ohlcv, tmp_path):
+        """ML-19 a refermé l'écart que ce test constatait.
+
+        Il vérifiait auparavant que ``Strategy().save_model`` produisait un
+        artefact ILLISIBLE (``unsupported_format``) — le contrôle négatif de
+        l'étape C : le chemin recette savait écrire un artefact scorable, le
+        chemin stratégie non. ``save_model`` délègue désormais à
+        ``TrainedRecipe.save`` et les deux chemins convergent.
+
+        L'assertion est donc inversée, pas supprimée : ce qui était la preuve
+        du défaut devient la preuve du correctif. Le contrôle négatif survit
+        dans ``tests/test_bespoke_recipe_path.py``, où le repli historique est
+        forcé explicitement.
+        """
         from app.strategies.scoring_statistique_opus_v5 import Strategy
         s = Strategy()
         s.fit(ohlcv.slice(0, 3000), params={s.name: {}})
         prefix = str(tmp_path / "old_stat48_v5_1h")
         s.save_model(prefix)
         metrics = policy.score_holdout(prefix, ohlcv.tail(1200), strategy="stat48_v5")
-        assert metrics.get("unsupported_format") is True
+        assert not metrics.get("unsupported_format"), metrics
+        assert metrics.get("auc_amp") is not None, metrics
 
 
 class TestMLBackendEquivalence:
@@ -259,14 +272,19 @@ class TestMLBackendEquivalence:
 
     def test_calibration_is_produced_and_persisted(self, ohlcv, tmp_path):
         """Un modèle calibré à l'entraînement mais servi non calibré serait
-        pire qu'un modèle non calibré : le décalage serait invisible."""
+        pire qu'un modèle non calibré : le décalage serait invisible.
+
+        Mesuré en 15m et non plus en 1h : depuis ML-11, ``omnibus_v4_multi``
+        déclare ``calibrate: false`` pour le seul TF 1h. Ce test porte sur la
+        PERSISTANCE du calibrateur, pas sur le TF — le déplacer préserve son
+        objet, l'y laisser en aurait fait un test de la valeur par défaut."""
         import json
-        out = rt.train("omnibus_v4_multi", ohlcv.slice(0, 3000), "1h")
+        out = rt.train("omnibus_v4_multi", ohlcv.slice(0, 3000), "15m")
         assert out.train_meta["calibrated"] is True
         assert set(out.calibrators) == {"amp", "dir"}
         assert out.train_meta["cal_err"]
 
-        prefix = str(tmp_path / "omnibus_v4_multi_1h")
+        prefix = str(tmp_path / "omnibus_v4_multi_15m")
         assert out.save(prefix)
         with open(prefix + ".meta.json", encoding="utf-8") as fh:
             meta = json.load(fh)

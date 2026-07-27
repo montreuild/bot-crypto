@@ -279,6 +279,11 @@ class _TrainBody(BaseModel):
     strategy: Optional[str] = None
     recipe: Optional[str] = None
     symbol: str = DEFAULT_CONFIG_SYMBOL
+    #: ML-16 — entraînement POOLÉ. Non vide, ``symbol`` est ignoré et la
+    #: recette est entraînée sur tous ces symboles mis en commun. Sur actions,
+    #: c'est le seul mode qui produise un modèle : un titre Euronext seul
+    #: mettrait ~13,7 ans à fournir les 3 500 barres journalières requises.
+    symbols: Optional[List[str]] = None
     tf: str
     as_of: Optional[str] = None
     window_bars: Optional[int] = None
@@ -292,14 +297,26 @@ def ml_train_start(request: Request, body: _TrainBody):
     """Lance un entraînement (dry-run par défaut — ``publish=false`` : rien
     n'est écrit au registre ; ``publish=true`` : gate + publication réelle,
     même chemin que le live/backtest simulated_live). Retourne un ``job_id``
-    à interroger via ``GET /api/ml/train/status``."""
+    à interroger via ``GET /api/ml/train/status``.
+
+    ``symbols`` non vide déclenche le mode POOLÉ (ML-16) : une recette
+    entraînée sur plusieurs symboles mis en commun, holdout prélevé par
+    symbole, gate sur la moyenne des scores."""
     _require_known_tf(body.tf)
     recipe = _require_trainable_recipe(body.recipe) if body.recipe else None
+    pooled = [s for s in dict.fromkeys(body.symbols or []) if s]
+    # Refusé TÔT plutôt que découvert dans un statut de job : le pooling
+    # n'existe que sur le chemin recette, qui seul sait entraîner sans
+    # instancier une classe Strategy par symbole.
+    if pooled and not recipe:
+        raise HTTPException(400, "l'entraînement poolé (symbols) exige une "
+                                 "recette — le chemin stratégie entraîne un "
+                                 "symbole à la fois")
     strategy = None if recipe else _resolve_strategy_name(body.strategy or "")
     from app.engine.ml_jobs import start_train_job
     job_id = start_train_job(strategy or "", body.symbol, body.tf, as_of=body.as_of,
                              window_bars=body.window_bars, params=body.params,
-                             publish=body.publish, recipe=recipe)
+                             publish=body.publish, recipe=recipe, symbols=pooled)
     if body.publish:
         audit_log("ml.train.publish", ip=request.client.host if request.client else "",
                  details=body.model_dump())

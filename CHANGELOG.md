@@ -6,6 +6,145 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔒 Sécurité — l'alerte de crash exfiltrait le log, les sauvegardes étaient world-readable
+
+`notify-crash.py` envoyait les 20 dernières lignes de `bot.log` à Telegram et
+CallMeBot. Le filtre en place ne masquait que ce qui **ressemble** à un secret
+(`token=`, hexadécimal long) ; il n'a jamais protégé symboles, tailles de
+position et soldes — qui sont la vraie fuite. Le log n'est plus transmis par
+défaut : `notifications.crash_include_log: false`, et l'alerte dit où regarder
+sur la machine. Un défaut sûr doit être le silence, pas la confiance dans un
+filtre par motifs.
+
+`backup.sh` recopiait `config.yaml` (clés API exchange, tokens de notification)
+et `trades.db` avec le umask par défaut, soit `0644` : la sauvegarde était un
+contournement des permissions du fichier d'origine. `umask 077` + `chmod
+600`/`700`, avec rattrapage des archives déjà écrites par les versions
+antérieures.
+
+Bumps CVE : `jinja2` 3.1.4 → **3.1.6** (et non 3.1.5, elle-même vulnérable à
+CVE-2025-27516), `sqlalchemy` 2.0.30 → 2.0.32.
+
+### 📊 Observabilité — métriques Prometheus et logs structurés
+
+`/metrics` expose l'état du bot (`app/core/metrics.py`). Les métriques **métier**
+sont dérivées de `EventHub.publish` plutôt que semées dans `live_trader` et
+`position_manager` : le hub voit déjà passer chaque ouverture, clôture, signal et
+événement de risque, donc l'instrumenter une fois garantit que métriques et flux
+WebSocket racontent la même histoire. `prometheus-client` reste **optionnel** —
+sans lui tout est no-op et `/metrics` répond 503. Les requêtes HTTP sont
+libellées par *template* de route, jamais par URL concrète : c'est le mode de
+panne classique d'une instrumentation Prometheus, silencieux jusqu'à ce que la
+mémoire du serveur enfle des semaines plus tard.
+
+Le handler **fichier** écrit maintenant du JSON Lines (`logging.format`, `text`
+pour revenir en arrière) ; la console garde son format coloré. Chaque ligne porte
+un `correlation_id` qui relie entre elles toutes celles d'une même requête ou
+d'un même job — avec trader, retrain et optimiseur écrivant dans le même
+fichier, l'entrelacement rendait jusqu'ici impossible de suivre une opération.
+Un `ContextVar` ne traversant pas un thread, les jobs de fond transportent
+l'identifiant explicitement (`run_with_correlation`). Les ~900 f-strings du
+dépôt ne sont **pas** réécrites : le structuré s'ajoute autour, via `extra=`.
+
+Au passage : `_ColorFormatter` mutait `record.levelname`, si bien que les
+séquences ANSI finissaient dans `bot.log` — visible dans les rotations archivées
+(`[[32mINFO[0m]`). Le fichier n'était grep-able qu'en connaissant les codes
+d'échappement.
+
+### 🎚️ La calibration isotone était activée en 1 h malgré la mesure contraire
+
+`omnibus_v4_multi` portait `calibrate: true` pour **tous** les timeframes, alors
+que la mesure (ECE **+461 %** en 1 h contre −47 % / −67 % en 15 m / 30 m) était
+écrite depuis longtemps. Les recettes acceptent désormais un bloc `hp_by_tf:`,
+et la sous-décision ouverte est tranchée en sa faveur plutôt qu'une recette par
+TF.
+
+Sa précédence est **volontairement inversée** : le bloc par TF l'emporte sur les
+`params` reçus. La raison est mécanique, pas philosophique — chaque stratégie
+recopie `hp` dans ses `_DEFAULTS` et ses `fixed_params`, valeurs sans timeframe
+qui arrivent donc toujours dans `params`. Traité comme un simple défaut, le bloc
+n'aurait jamais été appliqué : on aurait écrit un réglage inerte, exactement
+l'écart entre le doc et le code qu'on corrigeait. Appliqué sur les **deux**
+chemins d'entraînement (`recipe_trainer` et `MLBackend._train_impl_wrapper`).
+
+### 🧺 Le pooling multi-symboles était testé mais appelé par personne
+
+`recipe_trainer.train_multi` avait ses tests et aucun chemin depuis l'API ou
+l'UI. `train_multi_and_publish` le branche : `symbols[]` sur `/api/ml/train`
+(exige une recette), champ « Pooling multi-symboles » sur la page Modèles. Le
+holdout est prélevé **par symbole avant** l'entraînement, et le gate arbitre sur
+la moyenne **non pondérée** des scores par titre — pondérer par le nombre de
+barres laisserait le titre au plus long historique décider seul, ce que le
+pooling cherche précisément à éviter.
+
+**Mesuré sur données actions réelles** (`scripts/measure_pooling_equities.py`,
+depuis le cache local, sans réseau) : sur 117 titres `.PA` en 1 d, **un seul**
+(AC.PA) a l'historique requis pour un modèle solo. Les 116 autres ne peuvent
+produire aucun modèle sans pooling — la prédiction « ~13,7 ans pour un titre
+seul » est confirmée par la mesure, pas par le calcul. Le modèle poolé sur 16
+titres rend **AUC amp 0,641** sur un holdout jamais vu (0,764 en validation),
+15/16 au-dessus du plancher 0,55. La direction reste **au niveau du hasard**
+(0,505), cohérent avec la mesure crypto. Solo vs poolé sur AC.PA — seule
+comparaison possible : 0,700 → 0,713, soit un garde-fou contre une dégradation
+et non une preuve de gain, sur n = 1.
+
+Ce que la mesure révèle en passant : c'est `gate.holdout_bars: 1500` (~6 ans de
+séances Euronext), et non la recette, qui exclut 101 titres du pool.
+
+### 🧾 Les artefacts `stat48_*` n'étaient pas promouvables par le gate
+
+`_train` déléguait à `recipe_trainer` depuis l'étape C, mais l'**écriture**
+restait celle de la classe : `save_lgb_with_scaler` produit un meta.json
+`format_version: 1` sans liste de features ni médianes. Le scorer générique ne
+pouvait donc pas reconstruire la matrice d'entrée du holdout, retournait
+`unsupported_format`, et le gate concluait « comparaison manuelle requise » quoi
+qu'il arrive. `scoring_statistique_opus_v4`/`v5` conservent désormais le
+`TrainedRecipe` complet et `save_model` délègue à `TrainedRecipe.save`. Mesuré
+sur le même artefact : `{'unsupported_format': True}` → `{'auc_amp': …}`.
+
+`ml_dynamic_threshold` reste en dehors : son `_train` n'a jamais été migré (il
+entraîne encore via son propre `_train_lgbm`), donc l'équivalence n'y est pas
+acquise et la bascule y serait un pari.
+
+### 🧭 Le routeur de venues masquait tout le contrat du provider actions
+
+Symptôme : `scripts/backfill_equities.py --tf 1d` plafonnait **chaque** titre du
+SBF 120 à ~2447 barres depuis `2017-01-01` — la fondation d'OKX — alors que
+Yahoo sert AC.PA depuis le 3 janvier 2000. En 1 h, même mécanique : ~900 barres
+au lieu des 730 jours servis par Yahoo.
+
+`ProviderRouter` route `fetch_ohlcv` par symbole, mais son `__getattr__` renvoie
+**tout le reste** à l'exchange par défaut, c'est-à-dire l'exchange crypto. Les
+quatre points de contrat que `YFinanceProvider` expose au `CandleStore` étaient
+donc systématiquement lus sur ccxt : `min_since_ms` (plancher 2017 au lieu de 0),
+`bars_span_ms` (temps calendaire continu au lieu du temps de séance),
+`drop_zero_volume` (barres à volume nul rejetées, alors qu'elles sont légitimes
+sur une valeur peu liquide) et `fetch_ohlcv_max` (**absent** : l'amorçage
+`period='max'` livré juste avant n'était jamais emprunté en live).
+
+`CandleStore` résout maintenant le provider réellement interrogé pour le symbole
+(`_provider_for`) avant de lire l'un de ces quatre attributs. Les venues crypto
+ne voient aucun changement — le routeur leur rend l'exchange par défaut, comme
+avant. Après correction, AC.PA passe de 2447 à **6824 barres journalières**
+(2000-01-02 → 2026-07-26) et de 897 à **4459 barres horaires**.
+
+### 🕐 Les bornes du cache OHLCV se lisaient en heure locale
+
+La colonne `time` est un `Datetime` **naïf** qui porte de l'UTC.
+`datetime.timestamp()` la relisait en heure **locale** : sur une machine à UTC+1,
+les bornes du cache repartaient une heure trop tôt. Ce n'était pas inoffensif —
+`before_ms` trop bas faisait s'arrêter le backfill historique **avant** les
+bougies qui touchent le cache, laissant un trou permanent d'un fuseau à la
+jonction, que rien ne venait jamais combler. Le test
+`test_an_already_seeded_cache_catches_up_its_depth` échouait déjà pour cette
+raison, invisible sur un CI en UTC.
+
+Même bug dans `OHLCVCache._drop_forming_candle` : la dernière bougie paraissant
+plus vieille d'un fuseau, une bougie 15 m / 30 m / 1 h en formation n'était
+**jamais** élaguée à Paris — le live scorait sur un `close` provisoire (repaint)
+que le backtest, lui, ne voit pas. Un helper unique `candle_store.epoch_ms()`
+porte désormais la conversion.
+
 ### 🧬 Étape C — entraîner depuis la seule recette, sans classe `Strategy`
 
 `features.catalog` était déclaré par les recettes depuis l'étape B mais

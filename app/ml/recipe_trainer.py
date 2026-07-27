@@ -195,7 +195,8 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
         return None
 
     r = load_recipe(recipe_name)
-    p: Dict[str, Any] = {**r.train_params(), **(params or {})}
+    # ``hp_for_tf`` en DERNIER — cf. ``Recipe.hp_for_tf`` (ML-11).
+    p: Dict[str, Any] = {**r.train_params(), **(params or {}), **r.hp_for_tf(tf)}
 
     # ``features`` fourni : l'appelant possède déjà la matrice (cache de
     # backtest de scoring_statistique_opus_v4/v5, semé par
@@ -396,7 +397,7 @@ def train_multi(recipe_name: str, frames: Dict[str, pl.DataFrame], tf: str, *,
     from app.ml.recipe import load_recipe
 
     r = load_recipe(recipe_name)
-    p: Dict[str, Any] = {**r.train_params(), **(params or {})}
+    p: Dict[str, Any] = {**r.train_params(), **(params or {}), **r.hp_for_tf(tf)}
 
     names: Optional[List[str]] = None
     parts: List[tuple] = []          # (symbole, times, X, {tête: y})

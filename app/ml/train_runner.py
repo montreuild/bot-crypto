@@ -355,7 +355,9 @@ def train_recipe_and_publish(recipe_name: str, symbol: str, tf: str, *,
                 "reason": f"aucune donnée en cache pour {symbol}/{tf}"}
 
     r = load_recipe(recipe_name)
-    p = {**r.train_params(), **(params or {})}
+    # ML-11 : mêmes surcharges par TF que ``recipe_trainer`` — le gate doit
+    # lire les paramètres RÉELLEMENT utilisés, pas ceux d'avant surcharge.
+    p = {**r.train_params(), **(params or {}), **r.hp_for_tf(tf)}
     gc_ = policy.GateConfig.from_params({**r.gate_spec(), **r.gate_params(), **p})
 
     n = len(df)
@@ -417,6 +419,187 @@ def train_recipe_and_publish(recipe_name: str, symbol: str, tf: str, *,
                                                  "learning_rate", "amp_top_pct")
                            if k in p},
                         "recipe_hash": r.hash()},
+            source=source, decision=gate.decision,
+            decision_metrics={"candidate": candidate_metrics,
+                              "incumbent": incumbent_metrics, "reason": gate.reason},
+            base_dir=base_dir,
+        )
+        out["decision"] = gate.decision
+        out["published_version"] = published.version_id if published else None
+        return out
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Entraînement POOLÉ multi-symboles (ML-16)
+# ─────────────────────────────────────────────────────────────────────────────
+def _pooled_holdout_metrics(prefix: str, holdouts: Dict[str, pl.DataFrame],
+                            recipe_name: str, gc_, p: Dict[str, Any]) -> Dict[str, Any]:
+    """Score un artefact poolé sur le holdout de CHAQUE symbole, puis agrège.
+
+    Pourquoi pas un holdout unique concaténé : ``score_holdout`` reconstruit
+    des labels à partir de rendements sur fenêtre glissante. Coller bout à bout
+    les holdouts de deux titres fabriquerait, à la jointure, des rendements
+    qui n'ont existé sur aucun marché — le piège n°1 de ``train_multi``, qui
+    ne concatène jamais d'OHLCV. On score donc séparément.
+
+    L'agrégation est une moyenne NON PONDÉRÉE des métriques numériques. C'est
+    un choix, et il est discutable : pondérer par le nombre de barres
+    laisserait le titre au plus long historique décider seul de la promotion,
+    ce qui est exactement ce que le pooling cherche à éviter. Le détail par
+    symbole est conservé dans ``per_symbol`` — un modèle bon en moyenne mais
+    mauvais sur la moitié des titres reste lisible.
+    """
+    import app.ml.policy as policy
+
+    per_symbol: Dict[str, Any] = {}
+    for symbol, hdf in holdouts.items():
+        try:
+            per_symbol[symbol] = policy.score_holdout(
+                prefix, hdf, strategy=recipe_name, gate_cfg=gc_, params=p)
+        except Exception as e:                                  # pragma: no cover
+            logger.warning(f"[train_runner] holdout {symbol} KO : {e}")
+            per_symbol[symbol] = {"skipped": str(e)}
+
+    scored = [m for m in per_symbol.values() if isinstance(m, dict) and "skipped" not in m]
+    if not scored:
+        return {"skipped": "aucun symbole n'a pu être scoré", "per_symbol": per_symbol}
+
+    keys = {k for m in scored for k, v in m.items() if isinstance(v, (int, float))
+            and not isinstance(v, bool)}
+    agg: Dict[str, Any] = {}
+    for k in keys:
+        vals = [float(m[k]) for m in scored if isinstance(m.get(k), (int, float))
+                and not isinstance(m.get(k), bool)]
+        if vals:
+            agg[k] = round(sum(vals) / len(vals), 6)
+    agg["n_scored_symbols"] = len(scored)
+    agg["per_symbol"] = per_symbol
+    return agg
+
+
+def train_multi_and_publish(recipe_name: str, symbols: List[str], tf: str, *,
+                            as_of: Optional[str] = None,
+                            window_bars: Optional[int] = None,
+                            params: Optional[Dict[str, Any]] = None,
+                            publish: bool = False,
+                            base_dir: str = "models",
+                            source: str = "runner_pooled") -> Dict[str, Any]:
+    """Entraîne UNE recette sur PLUSIEURS symboles mis en commun, puis gate.
+
+    ML-16 — ``recipe_trainer.train_multi`` existait, testé, et n'était appelé
+    par personne : ni l'API, ni la page « Modèles ». C'est le chaînon qui
+    manquait pour que G2 puisse produire son premier modèle actions, où le
+    pooling n'est pas un raffinement mais la condition d'existence du modèle
+    (~13,7 ans d'historique nécessaires pour un titre Euronext seul).
+
+    Le holdout est prélevé PAR SYMBOLE avant l'entraînement, jamais après :
+    laisser ``train_multi`` voir les dernières barres puis les réutiliser pour
+    juger le modèle produirait le score de complaisance habituel.
+    """
+    import app.ml.model_registry as registry
+    import app.ml.policy as policy_mod
+    from app.ml import recipe_trainer
+    from app.ml.recipe import load_recipe
+
+    why = recipe_trainer.supports(recipe_name)
+    if why:
+        return {"decision": "failed", "reason": why, "recipe": recipe_name, "tf": tf}
+
+    wanted = [s for s in dict.fromkeys(symbols or []) if s]
+    if not wanted:
+        return {"decision": "failed", "recipe": recipe_name, "tf": tf,
+                "reason": "aucun symbole fourni"}
+
+    r = load_recipe(recipe_name)
+    p = {**r.train_params(), **(params or {}), **r.hp_for_tf(tf)}
+    gc_ = policy_mod.GateConfig.from_params({**r.gate_spec(), **r.gate_params(), **p})
+
+    train_frames: Dict[str, pl.DataFrame] = {}
+    holdouts: Dict[str, pl.DataFrame] = {}
+    skipped: Dict[str, str] = {}
+    for symbol in wanted:
+        df = load_offline_ohlcv(symbol, tf, as_of=as_of, window_bars=window_bars)
+        if df is None:
+            skipped[symbol] = "aucune donnée en cache"
+            continue
+        n = len(df)
+        # Un symbole trop court est ÉCARTÉ, pas fatal : c'est tout l'intérêt
+        # du pooling de tolérer des historiques inégaux. Le refuser en bloc
+        # rendrait l'univers actions inutilisable, puisque les introductions
+        # récentes y côtoient des titres cotés depuis vingt ans.
+        if n < gc_.holdout_bars + 250:
+            skipped[symbol] = (f"historique trop court ({n} barres < "
+                               f"{gc_.holdout_bars + 250})")
+            continue
+        holdouts[symbol] = df.tail(gc_.holdout_bars + 210)
+        train_frames[symbol] = df.slice(0, n - gc_.holdout_bars)
+
+    if not train_frames:
+        return {"decision": "failed", "recipe": recipe_name, "tf": tf,
+                "reason": "aucun symbole exploitable", "skipped_symbols": skipped}
+
+    trained = recipe_trainer.train_multi(recipe_name, train_frames, tf, params=p)
+    if trained is None:
+        return {"decision": "failed", "recipe": recipe_name, "tf": tf,
+                "reason": "l'entraînement poolé n'a produit aucun modèle exploitable",
+                "skipped_symbols": skipped}
+
+    incumbent = registry.latest_promoted(tf, recipe_name, base_dir=base_dir)
+
+    tmp_dir = tempfile.mkdtemp(prefix="ml_recipe_pooled_")
+    try:
+        tmp_prefix = os.path.join(tmp_dir, f"{recipe_name}_{tf}")
+        if not trained.save(tmp_prefix):
+            return {"decision": "failed", "recipe": recipe_name, "tf": tf,
+                    "reason": "l'écriture de l'artefact a échoué"}
+
+        candidate_metrics = _pooled_holdout_metrics(tmp_prefix, holdouts,
+                                                    recipe_name, gc_, p)
+        incumbent_metrics = None
+        if incumbent is not None:
+            # Le sortant est scoré sur LE MÊME protocole — mêmes holdouts,
+            # même agrégation. Comparer une moyenne multi-symboles à un score
+            # mono-symbole trancherait sur une différence de mesure.
+            incumbent_metrics = _pooled_holdout_metrics(
+                incumbent.path_prefix, holdouts, recipe_name, gc_, p)
+
+        gate = policy_mod.decide_gate(candidate_metrics, incumbent_metrics,
+                                      auc_floor=gc_.auc_floor, epsilon=gc_.epsilon,
+                                      metric=gc_.metric)
+        pooled = trained.train_meta.get("pooled_symbols", sorted(train_frames))
+        out: Dict[str, Any] = {
+            "recipe": recipe_name, "tf": tf, "pooled_symbols": pooled,
+            "n_symbols": len(pooled), "skipped_symbols": skipped,
+            "reason": gate.reason, "candidate": candidate_metrics,
+            "incumbent": incumbent_metrics, "train_meta": trained.train_meta,
+            "incumbent_version": incumbent.version_id if incumbent else None,
+        }
+        if not publish:
+            out["decision"] = f"dry_run_would_{gate.decision}"
+            out["note"] = ("dry-run : rien n'a été écrit au registre — relancez "
+                           "avec publish=True pour publier réellement.")
+            return out
+
+        # Bornes temporelles de l'UNION : le premier début et la dernière fin
+        # de toutes les fenêtres poolées. Prendre celles d'un symbole
+        # arbitraire mentirait sur la couverture réelle du modèle.
+        bounds_all = [registry.train_window_bounds(f) for f in train_frames.values()]
+        starts = [b["train_start"] for b in bounds_all if b["train_start"]]
+        ends = [b["train_end"] for b in bounds_all if b["train_end"]]
+        published = registry.publish(
+            tf, recipe_name, tmp_prefix,
+            # ``train_symbol`` est un champ d'affichage : la liste complète vit
+            # dans ``recipe_cfg`` et dans ``train_meta``, tous deux archivés.
+            train_symbol=f"pooled:{len(pooled)}",
+            train_start=min(starts) if starts else None,
+            train_end=max(ends) if ends else None,
+            n_bars=sum(b["n_bars"] for b in bounds_all),
+            recipe_cfg={**{k: p.get(k) for k in ("n_estimators", "num_leaves",
+                                                 "learning_rate", "amp_top_pct")
+                           if k in p},
+                        "recipe_hash": r.hash(), "pooled_symbols": pooled},
             source=source, decision=gate.decision,
             decision_metrics={"candidate": candidate_metrics,
                               "incumbent": incumbent_metrics, "reason": gate.reason},

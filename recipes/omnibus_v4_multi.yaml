@@ -22,6 +22,26 @@ hp:
   calibrate: true
   prune_features: true
 
+# ML-11 — surcharges par timeframe, superposées à `hp` ci-dessus et
+# PRIORITAIRES sur les paramètres reçus (cf. Recipe.hp_for_tf).
+hp_by_tf:
+  1h:
+    # Mesuré par scripts/measure_calibration_and_pruning.py : la calibration
+    # isotone dégrade l'ECE de +461 % en 1h, alors qu'elle l'améliore de
+    # −47 % en 15m et −67 % en 30m. La conclusion était écrite depuis
+    # longtemps sans jamais être appliquée — cette recette portait
+    # `calibrate: true` pour TOUS les TF.
+    #
+    # Pourquoi 1h et pas les autres : le calibrateur est ajusté sur le set de
+    # VALIDATION, et en 1h ce set contient trop peu d'événements positifs pour
+    # que l'isotone y apprenne autre chose que sa propre partition. Elle
+    # n'ajoute pas du biais, elle recopie du bruit.
+    #
+    # L'AUC n'est pas concernée : la calibration est monotone, elle ne peut
+    # pas changer un classement. Ce qui change est la probabilité affichée —
+    # donc les seuils de décision qui la lisent.
+    calibrate: false
+
 window:
   bars:
     default: max                  # mesuré : en 1h, moins d'historique fait

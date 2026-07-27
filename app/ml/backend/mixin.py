@@ -59,12 +59,22 @@ class MLBackendMixin:
     uses_artifact: bool = True
 
     def __init__(self):
+        # La recette est lue depuis l'attribut de classe ``models`` (ML-11) :
+        # elle sert au backend à retrouver ses surcharges ``hp_by_tf``. Le
+        # rebranchement par YAML (``params["models"]``) n'est pas visible ici —
+        # il ne l'est nulle part à la construction — mais il porte sur la
+        # LIAISON stratégie→recette, pas sur les réglages par TF d'une recette
+        # donnée : une stratégie rebranchée lit les surcharges de l'ancienne
+        # recette. C'est une limite connue, pas un oubli ; la corriger
+        # demanderait de reconstruire le backend à chaque appel de fit().
+        from app.ml.recipe import primary_recipe
         self.ml = MLBackend(
             name=self.name,
             model_dir=self.model_dir,
             calibrate=self.ml_calibrate,
             prune_features=self.ml_prune_features,
             multi_horizon=self.ml_multi_horizon,
+            recipe=primary_recipe(type(self)),
         )
 
     # ── État ML — exposé sur la Strategy pour ``train_cache`` ────────────────

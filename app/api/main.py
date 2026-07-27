@@ -111,6 +111,30 @@ def health_check():
     }
 
 
+# ── Métriques Prometheus (OBS-01, sans auth) ──────────────────────────────
+@app.get("/metrics")
+def prometheus_metrics():
+    """Exposition Prometheus au format texte.
+
+    Sans authentification, comme ``/health`` : un scrapeur Prometheus ne sait
+    pas porter d'en-tête ``X-API-Key`` sans configuration supplémentaire, et
+    l'endpoint ne divulgue aucun secret. Il divulgue en revanche l'activité de
+    trading (capital, positions, PnL) — **à restreindre au réseau
+    d'administration côté nginx**, comme les autres endpoints d'exploitation.
+    """
+    from starlette.responses import Response
+
+    from app.core.metrics import render
+    payload, content_type = render()
+    if payload is None:
+        return CleanJSONResponse(
+            status_code=503,
+            content={"detail": "prometheus-client absent — "
+                               "pip install prometheus-client"},
+        )
+    return Response(content=payload, media_type=content_type)
+
+
 # ── Pages web ──────────────────────────────────────────────────────────────
 def _tpl(name: str, request: Request, extra: dict = None):
     ctx = {"request": request, **(extra or {})}

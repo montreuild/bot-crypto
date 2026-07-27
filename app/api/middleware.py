@@ -64,6 +64,87 @@ async def https_redirect(request: Request, call_next):
     return await call_next(request)
 
 
+# ── OBS-02 : identifiant de corrélation ───────────────────────────────────
+#: En-tête accepté en entrée et renvoyé en sortie. Un reverse-proxy ou un
+#: client qui en pose déjà un voit sa valeur RÉUTILISÉE : la trace traverse
+#: alors nginx et le bot sous un seul identifiant.
+CORRELATION_HEADER = "X-Request-ID"
+
+#: Longueur maximale acceptée d'un identifiant fourni par le client. La valeur
+#: arrive dans chaque ligne de log : sans borne, un client hostile écrit ce
+#: qu'il veut, aussi long qu'il veut, dans le fichier de log du serveur.
+_MAX_CID = 64
+
+
+def _incoming_correlation_id(request: Request) -> str:
+    """Identifiant fourni par l'appelant, assaini — sinon un neuf.
+
+    Ne garde que ``[A-Za-z0-9._-]`` : la valeur est écrite telle quelle dans
+    les logs, et un identifiant porteur de sauts de ligne permettrait d'y
+    injecter des entrées entières (log forging).
+    """
+    from app.core.log_context import new_correlation_id
+    raw = (request.headers.get(CORRELATION_HEADER) or "")[:_MAX_CID]
+    clean = "".join(c for c in raw if c.isalnum() or c in "._-")
+    return clean or new_correlation_id()
+
+
+async def correlation_middleware(request: Request, call_next):
+    """Rattache toutes les lignes de log d'une requête à un même identifiant."""
+    from app.core.log_context import correlation_scope
+    with correlation_scope(_incoming_correlation_id(request)) as cid:
+        # Exposé sur ``request.state`` pour que les routes puissent le
+        # transmettre aux jobs de fond qu'elles démarrent (cf. ml_jobs).
+        request.state.correlation_id = cid
+        response = await call_next(request)
+        response.headers[CORRELATION_HEADER] = cid
+        return response
+
+
+# ── OBS-01 : métriques HTTP ───────────────────────────────────────────────
+def _route_template(request: Request) -> str:
+    """Template de route (``/api/ml/registry/versions``), jamais l'URL concrète.
+
+    Libeller une métrique par ``request.url.path`` ferait une série temporelle
+    par valeur de paramètre — un id de job, un symbole, un version_id. C'est le
+    mode de panne le plus courant d'une instrumentation Prometheus : la
+    cardinalité explose côté serveur, longtemps après la mise en production.
+
+    ``scope["route"]`` n'est posé qu'APRÈS le routage, donc cette fonction ne
+    peut être appelée qu'une fois ``call_next`` revenu. Sur un 404, aucune
+    route ne correspond : on renvoie un libellé constant plutôt que le chemin
+    demandé, qui est justement de la donnée non bornée — et contrôlée par
+    l'appelant.
+    """
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    if path:
+        return str(path)
+    return "__unmatched__"
+
+
+async def metrics_middleware(request: Request, call_next):
+    """Compte et chronomètre chaque requête servie.
+
+    L'erreur est enregistrée puis RE-LEVÉE : le handler global reste
+    responsable de la réponse 500. Une exception avalée ici produirait une
+    métrique juste et une réponse cassée.
+    """
+    import time
+
+    from app.core.metrics import observe_http
+    t0 = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        observe_http(request.method, _route_template(request), 500,
+                     time.perf_counter() - t0)
+        raise
+    observe_http(request.method, _route_template(request),
+                 response.status_code, time.perf_counter() - t0)
+    return response
+
+
 def _compute_allowed_origins() -> list:
     """Whitelist localhost par défaut (dev) ; ``ALLOWED_ORIGINS`` en production.
 
@@ -110,6 +191,18 @@ def setup_middleware(app: FastAPI) -> None:
         allow_methods=["GET", "POST", "DELETE", "PUT"],
         allow_headers=["X-API-Key", "Content-Type"],
     )
+
+    # OBS-01 — métriques HTTP. Ajouté après CORS/GZip donc plus externe
+    # qu'eux : la latence mesurée inclut la compression, qui fait partie du
+    # temps que le client attend réellement.
+    app.middleware("http")(metrics_middleware)
+
+    # OBS-02 — corrélation. Ajouté APRÈS les métriques, donc plus externe
+    # qu'elles : l'identifiant doit être posé avant tout le reste, sans quoi
+    # les logs du middleware de métriques et ceux du handler d'exceptions
+    # tomberaient hors de la trace — or ce sont les plus utiles quand quelque
+    # chose se passe mal.
+    app.middleware("http")(correlation_middleware)
 
     # HTTPS redirect — dernier ajouté, donc middleware le plus externe
     # (appelé en premier sur chaque requête entrante).

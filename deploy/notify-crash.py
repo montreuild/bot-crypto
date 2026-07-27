@@ -4,11 +4,25 @@ notify-crash.sh — Notification de crash envoyée par systemd via ExecStopPost.
 
 Ce script est appelé automatiquement par systemd après chaque arrêt anormal
 du bot. Il lit config.yaml, extrait les tokens Telegram/WhatsApp et envoie
-une alerte avec la cause du crash (dernières lignes de log).
+une alerte décrivant la cause du crash.
 
 Appelé par systemd : ExecStopPost=/opt/crypto_bot/deploy/notify-crash.sh
 Les variables d'environnement MAINPID, EXIT_CODE, EXIT_STATUS sont injectées
 automatiquement par systemd.
+
+SEC-007 — l'alerte ne transporte PLUS le contenu du log par défaut.
+Telegram et CallMeBot sont des tiers : tout ce qui part dans le message quitte
+la machine, est stocké chez eux et reste lisible par quiconque a accès au
+canal. Or `bot.log` porte des symboles, des tailles de position, des soldes,
+des identifiants d'ordre — et, en cas de crash pendant un appel exchange, des
+fragments de requête. Le filtre `_sanitize_log` ne rattrapait que ce qui
+RESSEMBLE à un secret (`token=`, hexadécimal long) : il n'a jamais protégé les
+données d'exploitation, qui sont la vraie fuite.
+
+Le comportement historique reste accessible pour qui l'assume, via
+``notifications.crash_include_log: true`` dans config.yaml. Il est désactivé
+par défaut parce qu'un défaut sûr doit être le silence, pas la confiance dans
+un filtre par motifs.
 """
 import logging
 import os
@@ -55,7 +69,13 @@ def read_config() -> dict:
 
 
 def tail_log(n: int = MAX_LOG_TAIL) -> str:
-    """Retourne les N dernières lignes du log, après sanitisation des données sensibles."""
+    """Retourne les N dernières lignes du log, après sanitisation des données sensibles.
+
+    N'est appelée QUE si ``notifications.crash_include_log`` vaut ``true`` —
+    cf. l'en-tête du module (SEC-007). La sanitisation reste appliquée sur ce
+    chemin, mais elle ne doit pas être confondue avec une garantie : elle
+    masque des motifs de secrets, pas des données d'exploitation.
+    """
     try:
         result = subprocess.run(
             ["tail", "-n", str(n), LOG_PATH],
@@ -140,9 +160,20 @@ def main():
         logger.info("Aucun canal activé, pas de notification.")
         sys.exit(0)
 
-    log_tail    = tail_log()
+    # SEC-007 : opt-in explicite. Absent de config.yaml ⇒ aucun contenu de log
+    # ne quitte la machine.
+    include_log = bool(notif.get("crash_include_log", False))
+    log_tail    = tail_log() if include_log else ""
     restarts    = get_restart_count()
     ts          = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+
+    # Sans le log, l'alerte doit dire OÙ regarder — sinon elle prévient d'un
+    # crash sans donner le moyen de l'instruire.
+    detail = (f"📋 *Dernières lignes de log :*\n```\n{log_tail[-800:]}\n```"
+              if include_log else
+              f"🔒 Log non transmis (`notifications.crash_include_log: false`).\n"
+              f"Sur la machine : `tail -n 50 {LOG_PATH}` "
+              f"ou `journalctl -u {service} -n 50`")
 
     message = (
         f"🚨 *{BOT_NAME} — CRASH DÉTECTÉ*\n"
@@ -151,8 +182,7 @@ def main():
         f"Exit code  : `{exit_code}` / `{exit_status}`\n"
         f"Redémarrages : `{restarts}`\n"
         f"_systemd redémarre automatiquement dans 30s_\n\n"
-        f"📋 *Dernières lignes de log :*\n"
-        f"```\n{log_tail[-800:]}\n```"
+        f"{detail}"
     )
 
     if tg_enabled and tg_token and tg_chat:
@@ -167,7 +197,8 @@ def main():
             f"Exit: {exit_code}/{exit_status}\n"
             f"Redémarrages: {restarts}\n"
             f"Redémarrage auto dans 30s\n\n"
-            f"Log:\n{log_tail[-400:]}"
+            + (f"Log:\n{log_tail[-400:]}" if include_log
+               else f"Log non transmis — voir {LOG_PATH} sur la machine")
         )
         ok = send_whatsapp(wa_token, wa_number, msg_plain)
         logger.info(f"WhatsApp : {'✅ envoyé' if ok else '❌ échec'}")
