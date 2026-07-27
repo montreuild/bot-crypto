@@ -118,6 +118,18 @@ def main() -> int:
         return 1
 
     tfs = [t.strip() for t in args.tf.split(",") if t.strip()]
+    # Un timeframe inconnu — coquille, virgule manquante, shell qui découpe
+    # l'argument — lançait tout de même les 121 titres, un avertissement par
+    # symbole et « 0 barres » partout. Le refuser AVANT la première requête
+    # coûte une ligne et évite de brûler du quota pour rien.
+    unknown = [t for t in tfs if t not in _BARS_PER_YEAR and t not in _MAX_DAYS]
+    if unknown:
+        logger.error(
+            f"Timeframe(s) inconnu(s) : {', '.join(unknown)}. "
+            f"Valeurs acceptées : {', '.join(sorted(_MAX_DAYS))}. "
+            f"(--tf attend une liste séparée par des virgules, ex. --tf 15m,1h,1d)"
+        )
+        return 1
 
     from app.core.bot_identity import resolve_venue
     equities = [s for s in symbols if resolve_venue(cfg, symbol=s).asset_class == "equity"]

@@ -385,13 +385,42 @@ class YFinanceProvider:
 
     def _finalize(self, rows: List[list], timeframe: str, factor: int,
                   since: Optional[int], limit: int) -> List[list]:
+        """Agrège, filtre sur ``since`` et applique ``limit`` **à la ccxt**.
+
+        Le sens de la troncature dépend de la question posée, et c'est tout
+        sauf un détail :
+
+        * ``since`` fourni → « ``limit`` bougies **à partir de** ``since`` ».
+          On garde donc la TÊTE. C'est ce contrat que suppose toute la
+          pagination du ``CandleStore`` (``since = batch[-1][0] + 1``) et,
+          surtout, son backfill historique : il demande une fenêtre partant
+          avant le cache pour récupérer des bougies ANCIENNES.
+        * pas de ``since`` → « les ``limit`` **dernières** bougies ». On garde
+          la queue.
+
+        Garder la queue dans les deux cas — ce que faisait ce code — rendait
+        systématiquement la tranche la plus récente. Le backfill recevait donc
+        des bougies qu'il avait déjà, en concluait « rien de plus ancien », et
+        n'avançait qu'au compte-gouttes : le cache grandissait d'un peu à
+        chaque relance puis plafonnait pile à ``limit``. Le 4 h le prouvait
+        sans qu'on le voie : agrégé depuis le 1 h AVANT la troncature, il
+        remontait 480 jours là où le cache 1 h du même titre plafonnait à
+        160 — même donnée Yahoo, quatre fois plus de profondeur.
+        """
         if not rows:
             return []
         if factor > 1:
             rows = _aggregate(rows, _TF_MS.get(timeframe) or 3_600_000)
-        if since:
+        # `is not None` et non la véracité : `since=0` signifie « depuis
+        # l'origine », pas « pas de borne ». Le provider actions abaisse
+        # justement `min_since_ms` à 0 (une action cote avant 2017), donc la
+        # valeur 0 circule réellement.
+        bounded = since is not None
+        if bounded:
             rows = [r for r in rows if r[0] >= int(since)]
-        return rows[-int(limit):] if limit and len(rows) > int(limit) else rows
+        if not limit or len(rows) <= int(limit):
+            return rows
+        return rows[:int(limit)] if bounded else rows[-int(limit):]
 
     def _cooldown_remaining(self) -> float:
         """Secondes restantes avant de réessayer après une salve de 429."""
