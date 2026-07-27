@@ -12,10 +12,18 @@ indépendantes, testées séparément ci-dessous.
 """
 import tempfile
 import time
+from datetime import datetime, timezone
 
 import pytest
 
-from app.core.candle_store import CandleStore, _bars_span_ms
+from app.core.candle_store import (
+    _MIN_SINCE_MS,
+    CandleStore,
+    _bars_span_ms,
+    _min_since,
+    epoch_ms,
+)
+from app.core.provider_router import build_market_provider, register_provider
 
 MIN_MS = 60_000
 
@@ -88,18 +96,18 @@ class TestTradingTimeSpan:
     def test_default_is_the_historical_crypto_behaviour(self):
         """Un exchange sans `bars_span_ms` (ccxt) ne doit RIEN voir changer."""
         ex = _FakeExchange()
-        assert _bars_span_ms(ex, "15m", 500, ex.tf_ms) == 500 * ex.tf_ms
+        assert _bars_span_ms(ex, "AIR/EUR", "15m", 500, ex.tf_ms) == 500 * ex.tf_ms
 
     def test_a_provider_can_widen_the_window(self):
         ex = _SessionExchange()
-        assert _bars_span_ms(ex, "15m", 500, ex.tf_ms) == 500 * ex.tf_ms * 4
+        assert _bars_span_ms(ex, "AIR/EUR", "15m", 500, ex.tf_ms) == 500 * ex.tf_ms * 4
 
     def test_a_broken_provider_hook_falls_back_instead_of_crashing(self):
         class _Broken(_FakeExchange):
             def bars_span_ms(self, tf, count):
                 raise RuntimeError("boom")
         ex = _Broken()
-        assert _bars_span_ms(ex, "15m", 500, ex.tf_ms) == 500 * ex.tf_ms
+        assert _bars_span_ms(ex, "AIR/EUR", "15m", 500, ex.tf_ms) == 500 * ex.tf_ms
 
     def test_historical_backfill_reaches_far_enough_on_a_session_venue(self):
         """Le `since` du backfill doit tenir compte des heures de fermeture,
@@ -201,8 +209,7 @@ class TestNoHistoryMemo:
             store.fetch(ex, "NEWCO/EUR", "15m", total=500)
             assert store._history_exhausted(
                 "NEWCO/EUR", "15m",
-                int(store.load_cached("NEWCO/EUR", "15m")["time"]
-                    .min().timestamp() * 1000))
+                epoch_ms(store.load_cached("NEWCO/EUR", "15m")["time"].min()))
             assert not store._history_exhausted("NEWCO/EUR", "15m", 1)
 
     def test_a_successful_backfill_clears_the_memo(self):
@@ -293,8 +300,7 @@ class TestDeepBootstrap:
         with tempfile.TemporaryDirectory() as d:
             store = _store(d)
             store.fetch(ex, "NEWCO/EUR", "15m", total=500)
-            floor_ms = int(store.load_cached("NEWCO/EUR", "15m")["time"]
-                           .min().timestamp() * 1000)
+            floor_ms = epoch_ms(store.load_cached("NEWCO/EUR", "15m")["time"].min())
             store._forget_exhausted("NEWCO/EUR", "15m")   # force un 2e backfill
             ex.calls.clear()
             store.fetch(ex, "NEWCO/EUR", "15m", total=500)
@@ -326,3 +332,169 @@ class TestDeepHistoryStillWorks:
             store.fetch(ex, "AIR/EUR", "15m", total=total)
             store.fetch(ex, "AIR/EUR", "15m", total=total)
         assert backfills == [], "le premier fetch doit déjà suffire"
+
+
+# ── Le routeur multi-venues ne doit rien masquer ───────────────────────────
+#
+# Symptôme réel : `scripts/backfill_equities.py --tf 1d` plafonnait tous les
+# titres du SBF 120 à 2447 barres depuis 2017-01-01 — la fondation d'OKX —
+# alors que Yahoo sert AC.PA depuis 2000-01-03. En live, le store reçoit un
+# `ProviderRouter` : il route `fetch_ohlcv` par symbole, mais son `__getattr__`
+# renvoie tout le reste à l'exchange crypto par défaut. Les quatre points de
+# contrat que le provider actions expose au store étaient donc invisibles.
+
+class _CryptoDefault(_FakeExchange):
+    """Exchange par défaut du routeur — valeurs volontairement distinctes de
+    celles du provider actions, pour que toute confusion se voie."""
+
+    drop_zero_volume = True
+    min_since_ms = _MIN_SINCE_MS
+
+
+class _RoutedEquityProvider:
+    """Provider actions derrière le routeur — contrat de `YFinanceProvider`.
+
+    Volume nul sur toutes les barres (légitime sur une valeur peu liquide) :
+    si le store interroge le routeur au lieu du provider, il applique la règle
+    crypto et le cache ressort **vide**.
+    """
+
+    instances: list = []
+    drop_zero_volume = False
+    min_since_ms = 0
+
+    def __init__(self, cfg=None, depth: int = 5_000, tf_ms: int = 15 * MIN_MS):
+        self.depth = depth
+        self.tf_ms = tf_ms
+        self.max_calls = 0
+        self.bounded_calls: list = []
+        self._now = 1_800_000_000_000
+        _RoutedEquityProvider.instances.append(self)
+
+    def _all(self):
+        first = self._now - self.depth * self.tf_ms
+        return [[first + i * self.tf_ms, 10.0, 11.0, 9.0, 10.5, 0.0]
+                for i in range(self.depth)]
+
+    def bars_span_ms(self, tf, count):
+        return int(count * self.tf_ms / 0.25)
+
+    def fetch_ohlcv_max(self, symbol, tf):
+        self.max_calls += 1
+        return self._all()
+
+    def fetch_ohlcv(self, symbol, tf, since=None, limit=100):
+        self.bounded_calls.append((symbol, tf, since, limit))
+        rows = self._all()
+        if since is not None:
+            rows = [r for r in rows if r[0] >= since]
+        return rows[:limit]
+
+
+register_provider("fake_routed_equity", f"{__name__}:_RoutedEquityProvider")
+
+_ROUTED_CFG = {
+    "exchange": {"name": "okx"},
+    "trading": {},
+    "venues": {
+        "defs": {
+            "spot": {"market_type": "spot"},
+            "euronext-paper": {
+                "asset_class": "equity", "quote_currency": "EUR",
+                "data_provider": "fake_routed_equity", "can_execute": False,
+                "calendar": "XPAR",
+            },
+        },
+        "assign": {"AIR.PA": "euronext-paper"},
+    },
+}
+
+
+class TestRoutedProviderContract:
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        _RoutedEquityProvider.instances.clear()
+        yield
+
+    def _router(self):
+        return build_market_provider(_ROUTED_CFG, _CryptoDefault())
+
+    def test_the_history_floor_comes_from_the_symbols_provider(self):
+        """LA cause du plafond 2017-01-01 : le plancher crypto s'appliquait
+        aux actions, qui cotent bien avant la fondation d'OKX."""
+        router = self._router()
+        assert _min_since(router, "AIR.PA") == 0
+        assert _min_since(router, "BTC/USDC") == _MIN_SINCE_MS
+
+    def test_the_session_span_comes_from_the_symbols_provider(self):
+        router = self._router()
+        tf_ms = 15 * MIN_MS
+        assert _bars_span_ms(router, "AIR.PA", "15m", 500, tf_ms) == 500 * tf_ms * 4
+        assert _bars_span_ms(router, "BTC/USDC", "15m", 500, tf_ms) == 500 * tf_ms
+
+    def test_the_deep_bootstrap_survives_the_router(self):
+        router = self._router()
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            store.fetch(router, "AIR.PA", "15m", total=500)
+            cached = store.load_cached("AIR.PA", "15m")
+        provider = _RoutedEquityProvider.instances[0]
+        assert provider.max_calls == 1, (
+            "`fetch_ohlcv_max` était invisible derrière le routeur : le store "
+            "retombait sur une fenêtre estimée et bornée à 2017"
+        )
+        assert len(cached) == provider.depth
+
+    def test_zero_volume_bars_survive_the_router(self):
+        router = self._router()
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            store.fetch(router, "AIR.PA", "15m", total=500)
+            cached = store.load_cached("AIR.PA", "15m")
+        assert len(cached) > 0, (
+            "la règle crypto « volume nul = donnée cassée » ne doit pas "
+            "s'appliquer à une action peu liquide"
+        )
+
+    def test_a_crypto_symbol_keeps_the_exchange_contract(self):
+        """Le pendant à ne jamais casser : rien ne change côté crypto."""
+        exchange = _CryptoDefault()
+        router = build_market_provider(_ROUTED_CFG, exchange)
+        with tempfile.TemporaryDirectory() as d:
+            df = _store(d).fetch(router, "BTC/USDC", "15m", total=500)
+        assert df is not None and len(df) == 500
+        assert _RoutedEquityProvider.instances == []
+
+
+# ── Les bornes du cache se lisent en UTC ───────────────────────────────────
+
+class TestCacheBoundsAreUTC:
+    """La colonne `time` est un `Datetime` NAÏF qui porte de l'UTC.
+
+    `datetime.timestamp()` la relisait en heure locale : sur une machine à
+    UTC+1, les bornes du cache repartaient une heure trop tôt. Conséquence
+    concrète — et invisible sur un CI en UTC : le backfill s'arrêtait avant
+    les bougies qui touchent le cache, laissant un trou permanent d'un fuseau
+    à la jonction.
+    """
+
+    def test_epoch_ms_ignores_the_machine_timezone(self):
+        naive = datetime(2027, 1, 15, 7, 45)
+        assert epoch_ms(naive) == int(
+            naive.replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+    def test_a_seeded_cache_is_backfilled_without_a_gap(self):
+        """Le cas qui échouait : cache amorcé sur les 100 dernières bougies,
+        backfill profond derrière — les deux blocs doivent se toucher."""
+        ex = _DeepExchange()
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            store._save(store._path("AIR/EUR", "15m"),
+                        store._raw_to_df(ex._all()[-100:]))
+            store.fetch(ex, "AIR/EUR", "15m", total=500)
+            cached = store.load_cached("AIR/EUR", "15m")
+        assert len(cached) == ex.depth
+        stamps = [epoch_ms(t) for t in cached["time"].to_list()]
+        gaps = [b - a for a, b in zip(stamps, stamps[1:]) if b - a != ex.tf_ms]
+        assert gaps == [], f"trou(s) à la jonction du backfill : {gaps}"

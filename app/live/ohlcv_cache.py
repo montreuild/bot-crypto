@@ -28,7 +28,7 @@ from typing import Dict, Optional, Tuple
 
 import polars as pl
 
-from app.core.candle_store import get_store
+from app.core.candle_store import epoch_ms, get_store
 from app.core.indicators import atr_val as _compute_atr
 from app.core.indicators import precompute_df
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
@@ -138,12 +138,13 @@ class OHLCVCache:
         if not tf_ms or df is None or df.height <= 1:
             return df
         try:
-            last_raw = df["time"][-1]
-            last_ms = (
-                int(last_raw.timestamp() * 1000) if hasattr(last_raw, "timestamp")
-                else int(last_raw) if isinstance(last_raw, (int, float))
-                else None
-            )
+            # `epoch_ms` et non `.timestamp()` : la colonne `time` est naïve
+            # mais porte de l'UTC. Lue en heure locale, la dernière bougie
+            # paraissait plus vieille d'un fuseau — à Paris, une bougie 15 m /
+            # 30 m / 1 h en formation n'était donc JAMAIS élaguée, et le live
+            # scorait sur un `close` provisoire (repaint) que le backtest, lui,
+            # ne voit pas.
+            last_ms = epoch_ms(df["time"][-1])
             if last_ms is None:
                 return df
             now_ms = int(time.time() * 1000)
@@ -206,12 +207,7 @@ class OHLCVCache:
 
             # Filtre "nouvelle bougie" — skip si même ts et pas de position ouverte
             try:
-                last_ts_raw = df["time"][-1]
-                last_ts = (
-                    int(last_ts_raw.timestamp() * 1000) if hasattr(last_ts_raw, "timestamp")
-                    else int(last_ts_raw) if isinstance(last_ts_raw, (int, float))
-                    else 0
-                )
+                last_ts  = epoch_ms(df["time"][-1]) or 0
                 prev_ts  = self._last_candle_ts.get(key, 0)
                 has_open = open_positions is None or bool(open_positions)
                 if last_ts == prev_ts and not has_open:

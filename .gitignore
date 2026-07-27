@@ -63,3 +63,5 @@ frontend/out/
 frontend/.env.local
 frontend/*.tsbuildinfo
 frontend/next-env.d.ts
+# Added by code-review-graph
+.code-review-graph/

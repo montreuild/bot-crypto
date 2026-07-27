@@ -6,6 +6,45 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧭 Le routeur de venues masquait tout le contrat du provider actions
+
+Symptôme : `scripts/backfill_equities.py --tf 1d` plafonnait **chaque** titre du
+SBF 120 à ~2447 barres depuis `2017-01-01` — la fondation d'OKX — alors que
+Yahoo sert AC.PA depuis le 3 janvier 2000. En 1 h, même mécanique : ~900 barres
+au lieu des 730 jours servis par Yahoo.
+
+`ProviderRouter` route `fetch_ohlcv` par symbole, mais son `__getattr__` renvoie
+**tout le reste** à l'exchange par défaut, c'est-à-dire l'exchange crypto. Les
+quatre points de contrat que `YFinanceProvider` expose au `CandleStore` étaient
+donc systématiquement lus sur ccxt : `min_since_ms` (plancher 2017 au lieu de 0),
+`bars_span_ms` (temps calendaire continu au lieu du temps de séance),
+`drop_zero_volume` (barres à volume nul rejetées, alors qu'elles sont légitimes
+sur une valeur peu liquide) et `fetch_ohlcv_max` (**absent** : l'amorçage
+`period='max'` livré juste avant n'était jamais emprunté en live).
+
+`CandleStore` résout maintenant le provider réellement interrogé pour le symbole
+(`_provider_for`) avant de lire l'un de ces quatre attributs. Les venues crypto
+ne voient aucun changement — le routeur leur rend l'exchange par défaut, comme
+avant. Après correction, AC.PA passe de 2447 à **6824 barres journalières**
+(2000-01-02 → 2026-07-26) et de 897 à **4459 barres horaires**.
+
+### 🕐 Les bornes du cache OHLCV se lisaient en heure locale
+
+La colonne `time` est un `Datetime` **naïf** qui porte de l'UTC.
+`datetime.timestamp()` la relisait en heure **locale** : sur une machine à UTC+1,
+les bornes du cache repartaient une heure trop tôt. Ce n'était pas inoffensif —
+`before_ms` trop bas faisait s'arrêter le backfill historique **avant** les
+bougies qui touchent le cache, laissant un trou permanent d'un fuseau à la
+jonction, que rien ne venait jamais combler. Le test
+`test_an_already_seeded_cache_catches_up_its_depth` échouait déjà pour cette
+raison, invisible sur un CI en UTC.
+
+Même bug dans `OHLCVCache._drop_forming_candle` : la dernière bougie paraissant
+plus vieille d'un fuseau, une bougie 15 m / 30 m / 1 h en formation n'était
+**jamais** élaguée à Paris — le live scorait sur un `close` provisoire (repaint)
+que le backtest, lui, ne voit pas. Un helper unique `candle_store.epoch_ms()`
+porte désormais la conversion.
+
 ### 🧬 Étape C — entraîner depuis la seule recette, sans classe `Strategy`
 
 `features.catalog` était déclaré par les recettes depuis l'étape B mais
