@@ -315,6 +315,87 @@ class TestTradingTimeSpan:
         assert len(p.fetch_ohlcv("AIR.PA", "15m", limit=500)) == 500
 
 
+class TestMaxDepth:
+    """`period='max'` : Yahoo décide de sa profondeur, on ne la devine plus."""
+
+    def test_max_asks_yahoo_without_a_computed_window(self):
+        p = _provider()
+        seen = {}
+
+        def record(_ticker, interval, period1, period2):
+            seen.update(interval=interval, period1=period1, period2=period2)
+            return _bars(9)
+        p._fetch_bars = record
+        assert len(p.fetch_ohlcv_max("AIR.PA", "1h")) == 9
+        assert seen["period1"] is None, "aucune borne basse ne doit être imposée"
+        assert seen["period2"] is None
+
+    def test_max_is_not_truncated_by_the_bar_count(self):
+        """`fetch_ohlcv` retaille à `limit` ; `fetch_ohlcv_max` ne retaille
+        pas — sinon l'amorçage jetterait la profondeur qu'il vient de payer."""
+        p = _provider()
+        p._fetch_bars = lambda *_a: _bars(5000)
+        assert len(p.fetch_ohlcv_max("AIR.PA", "1h")) == 5000
+
+    def test_max_still_aggregates_intervals_yahoo_does_not_quote(self):
+        p = _provider()
+        seen = {}
+
+        def record(_ticker, interval, *_a):
+            seen["interval"] = interval
+            return _bars(8, start_ms=0, step_ms=HOUR_MS)
+        p._fetch_bars = record
+        assert len(p.fetch_ohlcv_max("AIR.PA", "4h")) == 2
+        assert seen["interval"] == "1h"
+
+    def test_max_response_then_serves_any_narrower_window_from_cache(self):
+        """Une réponse `max` couvre tout : plus aucune requête ne doit partir
+        derrière, quelle que soit la profondeur demandée."""
+        p = _provider(cache_ttl=60.0)
+        calls = {"n": 0}
+
+        def counted(*_a):
+            calls["n"] += 1
+            return _bars(50)
+        p._fetch_bars = counted
+        p.fetch_ohlcv_max("AIR.PA", "1h")
+        p.fetch_ohlcv("AIR.PA", "1h", limit=1000,
+                      since=p.milliseconds() - 9999 * HOUR_MS)
+        assert calls["n"] == 1
+
+    def test_unsupported_timeframe_returns_empty(self, caplog):
+        with caplog.at_level("WARNING"):
+            assert _provider().fetch_ohlcv_max("AIR.PA", "7s") == []
+
+    def test_period_max_is_what_reaches_yfinance(self):
+        """Le paramètre effectivement passé à yfinance — c'est LUI qui fait la
+        différence, le reste n'est que plomberie."""
+        p = _provider()
+        seen = {}
+
+        class _Ticker:
+            def history(_self, **kw):
+                seen.update(kw)
+                return None
+        p._tickers["AIR.PA"] = _Ticker()
+        p._fetch_bars("AIR.PA", "1d", None, None)
+        assert seen.get("period") == "max"
+        assert "start" not in seen and "end" not in seen
+
+    def test_a_bounded_window_still_uses_start_end(self):
+        p = _provider()
+        seen = {}
+
+        class _Ticker:
+            def history(_self, **kw):
+                seen.update(kw)
+                return None
+        p._tickers["AIR.PA"] = _Ticker()
+        p._fetch_bars("AIR.PA", "1d", 111, 222)
+        assert (seen.get("start"), seen.get("end")) == (111, 222)
+        assert "period" not in seen
+
+
 def _xpar_session_stamps(step_s, days, now_s):
     """Horodatages de séance 09:00–17:30, jours ouvrés uniquement."""
     import datetime as dt

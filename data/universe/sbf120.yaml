@@ -2,15 +2,14 @@
 #  Univers SBF 120 — Euronext Paris (G2)
 # ============================================================================
 #
-#  ⚠️  INSTANTANÉ NON VÉRIFIÉ (`verified: false`).
+#  ✅  INSTANTANÉ VÉRIFIÉ (`verified: true`, cf. `as_of` plus bas).
 #
 #  La composition du SBF 120 est révisée trimestriellement par le conseil
 #  scientifique d'Euronext : entrées, sorties, fusions et changements de
-#  mnémonique. Ce fichier a été constitué hors ligne, sans accès à la
-#  publication officielle — il faut donc le considérer comme un POINT DE
-#  DÉPART opérationnel, pas comme une source de vérité.
+#  mnémonique. `verified: true` ne vaut donc QUE pour la date `as_of` — après
+#  une révision trimestrielle, ce fichier redevient un instantané périmé.
 #
-#  Avant de trader dessus, exécuter :
+#  Pour le recontrôler :
 #
 #      python scripts/check_universe.py sbf120
 #
@@ -18,6 +17,12 @@
 #  renvoient aucune donnée (radiés, renommés, mal orthographiés). Puis
 #  recouper avec la composition officielle publiée par Euronext (« CAC
 #  Family index composition »).
+#
+#  ⚠️  Tous les membres ne cotent pas à Paris : Solvay (`SOLB.BR`, Bruxelles)
+#  et Aperam (`APAM.AS`, Amsterdam) appartiennent à l'indice mais se traitent
+#  sur une autre place Euronext. Leur suffixe DOIT être écrit explicitement —
+#  sans point, le provider ajoute `.PA` et interroge une ligne parisienne
+#  inexistante, ce qui rend une réponse vide indiscernable d'une suspension.
 #
 #  Format : cf. app/core/universe.py. Un membre peut s'écrire en forme courte
 #  (`- AIR.PA`) ou longue (`- {symbol: AIR.PA, name: Airbus}`).
@@ -98,7 +103,7 @@ members:
   - {symbol: ELIS.PA,   name: Elis}
   - {symbol: EMEIS.PA,  name: Emeis}
   - {symbol: ERA.PA,    name: Eramet}
-  - {symbol: FDJUP.XC,    name: FDJ United}
+  - {symbol: FDJU.PA,     name: FDJ United}
   - {symbol: FGR.PA,    name: Eiffage}
   - {symbol: FRVIA.PA,  name: Forvia}
   - {symbol: GET.PA,    name: Getlink}

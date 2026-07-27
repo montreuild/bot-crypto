@@ -143,6 +143,39 @@ Le paquet `yfinance` **n'était pas** ajouté aux dépendances : il réinstalle
 pandas, retiré en phase 6. Ce choix a été **repris ci-dessous** — l'API chart
 publique ne ramène plus de données.
 
+### 📥 Amorçage actions — `period='max'` : la source décide de sa profondeur
+
+`bars_span_ms` traduit un nombre de bougies en fenêtre calendaire, mais reste
+une **estimation** : heures de séance, jours fériés, ancienneté de
+l'introduction. Sur un amorçage à froid, la seule bonne réponse à « quelle
+profondeur ? » est « toute celle qui existe » — et Yahoo sait la donner
+directement via `range=max`, sans qu'on ait à la deviner.
+
+- **`YFinanceProvider.fetch_ohlcv_max(symbol, tf)`** : traduit
+  `yf.Ticker(t).history(period='max', interval=...)`. Retaille pas la réponse
+  (l'amorçage jetterait la profondeur qu'il vient de payer), agrège toujours
+  les intervalles que Yahoo ne cote pas (4 h ← 1 h), et alimente le cache de
+  réponses avec une borne basse nulle — donc toute demande ultérieure, si
+  profonde soit-elle, part du cache.
+- **`CandleStore`** l'utilise à deux endroits : l'amorçage d'un cache vide, et
+  le backfill d'un cache déjà peuplé mais resté court (script de backfill,
+  version antérieure du bot) — c'est le seul moyen qu'un cache existant
+  rattrape sa profondeur. Le contrat est optionnel : **ccxt ne l'expose pas, la
+  crypto garde exactement le chemin paginé précédent.**
+- Quand l'amorçage profond a réussi, le backfill historique qui suivait est
+  **supprimé** : on connaît déjà sa réponse. Une requête au lieu de deux.
+- Un chemin profond qui rend une liste vide (quota, granularité non servie) ou
+  qui lève retombe sur le chemin borné, au lieu de laisser le cache vide.
+
+Les fenêtres calculées restent nécessaires pour les appels **bornés** —
+incrémental, backfill ciblé — où l'on demande volontairement une tranche.
+
+### 🏷️ Univers — `FDJUP.XC` corrigé en `FDJU.PA`
+
+Le ticker rendait 1 bougie en 15 m et 50 en 1 h là où les autres membres en
+ont plusieurs centaines : il brûlait du quota Yahoo pour rien à chaque cycle.
+Son cache Parquet erroné est supprimé.
+
 ### 🔁 Actions — fin de la boucle « cache insuffisant / aucune bougie supplémentaire »
 
 Les logs répétaient sans fin, pour chacun des 98 titres du SBF 120 et chaque

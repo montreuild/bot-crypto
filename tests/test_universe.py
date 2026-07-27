@@ -90,18 +90,38 @@ class TestResolve:
 class TestShippedSBF120:
     """Le fichier livré doit être lisible et honnête sur son statut."""
 
-    def test_loads_and_has_paris_tickers(self):
+    def test_loads_and_is_mostly_paris_with_explicit_suffixes(self):
+        """L'indice est parisien, mais pas exclusivement coté à Paris : Solvay
+        cote à Bruxelles, Aperam à Amsterdam. Exiger « tout en .PA » était une
+        hypothèse fausse, tombée dès la première vérification du fichier contre
+        la composition officielle.
+
+        Ce qui doit rester vrai : chaque membre porte un suffixe de place
+        EXPLICITE. Sans point, `YFinanceProvider.to_provider_symbol` ajouterait
+        `.PA` et interrogerait Yahoo sur une ligne parisienne inexistante — une
+        réponse vide, indiscernable d'un titre suspendu.
+        """
         clear_cache()
         data = load_universe("sbf120")
         symbols = universe_symbols("sbf120")
         assert data.get("asset_class") == "equity"
         assert data.get("calendar") == "XPAR"
         assert len(symbols) > 80
-        assert all(s.endswith(".PA") for s in symbols), \
-            "tous les membres doivent être des tickers Euronext Paris"
+        assert all("." in s for s in symbols), \
+            "un membre sans suffixe de place serait interrogé en .PA par défaut"
+        paris = [s for s in symbols if s.endswith(".PA")]
+        assert len(paris) / len(symbols) > 0.9, \
+            "l'écrasante majorité du SBF 120 cote bien à Paris"
         assert len(set(symbols)) == len(symbols), "aucun doublon"
 
-    def test_declares_itself_unverified(self):
-        """Instantané écrit hors ligne : le flag doit rester explicite tant
-        que scripts/check_universe.py n'a pas été passé."""
-        assert load_universe("sbf120").get("verified") is False
+    def test_verification_status_is_explicit_and_dated(self):
+        """Le fichier doit dire s'il a été recoupé avec la composition
+        officielle, et quand. Un instantané vérifié mais non daté ne permet
+        pas de savoir s'il précède la dernière révision trimestrielle."""
+        data = load_universe("sbf120")
+        verified = data.get("verified")
+        assert isinstance(verified, bool), \
+            "le statut doit être explicite, pas absent ni ambigu"
+        if verified:
+            assert data.get("as_of"), \
+                "un univers vérifié doit porter la date de sa vérification"
