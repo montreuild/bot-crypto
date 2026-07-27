@@ -146,12 +146,10 @@ providers:
     min_request_interval: 1.0 # secondes entre deux requêtes (Yahoo renvoie 429 en rafale)
     cache_ttl: 60             # TTL du cache de réponses
     max_retries: 3
-    # Le paquet `yfinance` n'est PAS une dépendance du projet : il
-    # réinstallerait pandas, retiré en phase 6. Le provider fonctionne sans
-    # lui via l'API chart publique (requests). Laisser `true` reste utile —
-    # si vous installez yfinance à la main, il gère cookie/crumb, ce que
-    # l'endpoint brut exige de plus en plus souvent.
-    prefer_yfinance: true
+    # Le provider passe par le paquet `yfinance`, désormais dépendance du
+    # projet (requirements.txt) : lui seul gère l'authentification
+    # cookie/crumb que Yahoo exige. L'ancien repli « API chart publique »
+    # a été retiré — il répondait 429 quoi qu'il arrive.
 # Calendriers de marché supplémentaires (XPAR est livré en dur).
 # calendars:
 #   XAMS:

@@ -6,14 +6,17 @@ la poignée d'attributs que ``CandleStore`` attend d'un exchange ccxt
 pas une réécriture — le store Parquet, le cache OHLCV, le scanner et les
 stratégies fonctionnent sans le savoir.
 
-Deux chemins d'accès, dans cet ordre :
+Un seul chemin d'accès : le paquet ``yfinance``, **dépendance obligatoire**
+depuis que les actions sont activées. L'ancien repli « API chart publique via
+``requests`` » a été retiré : Yahoo exige désormais un couple cookie/crumb sur
+cet endpoint et répond ``429`` sans lui, quel que soit le throttling. Le repli
+donnait donc l'illusion d'un provider fonctionnel tout en ne ramenant jamais
+une bougie, et le message ``backend=API chart`` était le seul indice qu'on
+tournait sur le mauvais chemin.
 
-1. le paquet ``yfinance`` s'il est installé (gère cookie/crumb, ce que
-   l'endpoint brut exige de plus en plus souvent) ;
-2. sinon l'API chart publique via ``requests`` (déjà une dépendance) — le bot
-   n'ajoute donc **aucune dépendance obligatoire**. ``yfinance`` réinstallerait
-   pandas, supprimé du projet en phase 6 : c'est un choix laissé à
-   l'utilisateur, et la frontière pandas ne dépasse pas ``_fetch_via_yfinance``.
+Contrepartie assumée : ``yfinance`` réinstalle pandas, retiré du projet en
+phase 6 (~23 Mo avec ses transitives). La frontière pandas ne dépasse pas
+``_fetch_bars`` — le reste du bot ne voit que des listes ``[ts, o, h, l, c, v]``.
 
 Limitations de l'API Yahoo, prises en charge explicitement
 ----------------------------------------------------------
@@ -39,25 +42,18 @@ Limitations de l'API Yahoo, prises en charge explicitement
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from typing import Dict, List, Optional, Tuple
 
+import yfinance as _yf
+from yfinance.exceptions import YFRateLimitError
+
+# Durée d'un timeframe en secondes — source unique du projet.
+from app.core.timeframes import TF_MS as _TF_MS
+
 logger = logging.getLogger(__name__)
-
-try:
-    import requests as _requests
-    _HAS_REQUESTS = True
-except ImportError:                        # pragma: no cover
-    _requests = None
-    _HAS_REQUESTS = False
-
-try:
-    import yfinance as _yf  # type: ignore[import-not-found]
-    _HAS_YFINANCE = True
-except Exception:                          # pragma: no cover — dépendance optionnelle
-    _yf = None
-    _HAS_YFINANCE = False
 
 #: Disjoncteur de quota, PARTAGÉ PAR PROCESSUS — les threads du scanner
 #: interrogent Yahoo sous le même quota, donc doivent s'arrêter ensemble.
@@ -65,13 +61,6 @@ _RATE_LOCK = threading.Lock()
 _RATE_STATE: Dict[str, float] = {"consecutive": 0.0, "until": 0.0}
 _RATE_TRIP_AFTER = 5        # 429 consécutifs avant ouverture
 _RATE_COOLDOWN_S = 900.0    # 15 min — Yahoo ne desserre pas plus vite
-
-_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-_USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-               "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
-
-# Durée d'un timeframe en secondes — source unique du projet.
-from app.core.timeframes import TF_MS as _TF_MS  # noqa: E402
 
 
 class ExecutionNotSupported(RuntimeError):
@@ -131,7 +120,6 @@ class YFinanceProvider:
         self._cache_ttl = float(pcfg.get("cache_ttl", 60.0))
         self._max_retries = int(pcfg.get("max_retries", 3))
         self._timeout = float(pcfg.get("timeout", 20.0))
-        self._prefer_yfinance = bool(pcfg.get("prefer_yfinance", True))
 
         # ``rateLimit`` en ms — lu par CandleStore pour espacer ses pages.
         self.rateLimit = int(self._min_interval * 1000)
@@ -141,11 +129,13 @@ class YFinanceProvider:
         self._cache: Dict[Tuple[str, str], Tuple[float, List[list]]] = {}
         self._cache_lock = threading.Lock()
         self._truncation_warned: set = set()
-        self._session = None
+        #: ``yfinance.Ticker`` réutilisés : le premier appel sur un ticker
+        #: résout son fuseau (une requête réseau, mise en cache par yfinance).
+        self._tickers: Dict[str, object] = {}
+        self._tickers_lock = threading.Lock()
 
-        backend = "yfinance" if (self._prefer_yfinance and _HAS_YFINANCE) else "API chart"
         logger.info(
-            f"[{self.id}] Provider actions data-only — backend={backend}, "
+            f"[{self.id}] Provider actions data-only — yfinance {_yf.__version__}, "
             f"throttle={self._min_interval:.1f}s, cache={self._cache_ttl:.0f}s"
         )
 
@@ -299,21 +289,39 @@ class YFinanceProvider:
             if _RATE_STATE["consecutive"] >= _RATE_TRIP_AFTER:
                 _RATE_STATE["until"] = time.time() + _RATE_COOLDOWN_S
                 _RATE_STATE["consecutive"] = 0
+                # Formulation volontairement explicite : RIEN NE DORT ici. Le
+                # bot continue son cycle à pleine vitesse, ce sont les appels
+                # Yahoo qui sont court-circuités (retour immédiat, liste vide)
+                # pendant la fenêtre. Dire « pause » laissait croire à un
+                # time.sleep global qu'on cherchait ensuite en vain dans les
+                # logs.
                 logger.warning(
                     f"[{self.id}] quota Yahoo atteint {_RATE_TRIP_AFTER} fois de "
-                    f"suite — pause de {_RATE_COOLDOWN_S:.0f}s pour tout le "
-                    f"processus. Les symboles concernés sont ignorés jusque-là ; "
-                    f"pour peupler le cache hors ligne : "
-                    f"python scripts/backfill_equities.py"
+                    f"suite — disjoncteur ouvert : les appels Yahoo sont ignorés "
+                    f"(retour immédiat, aucune attente) pendant "
+                    f"{_RATE_COOLDOWN_S:.0f}s pour tout le processus. Les actions "
+                    f"seront servies par le cache Parquet uniquement ; pour le "
+                    f"peupler hors ligne : python scripts/backfill_equities.py"
                 )
 
     def _note_success(self) -> None:
         with _RATE_LOCK:
             _RATE_STATE["consecutive"] = 0
 
+    @staticmethod
+    def _is_rate_limited(exc: BaseException) -> bool:
+        """``yfinance`` remonte le quota par un type dédié, pas par « 429 ».
+
+        ``YFRateLimitError`` est relancée par ``history()`` même quand les
+        autres erreurs sont avalées : c'est le signal fiable. Le test sur la
+        chaîne reste utile pour les erreurs réseau brutes (``curl_cffi``
+        remonte parfois le statut HTTP tel quel).
+        """
+        return isinstance(exc, YFRateLimitError) or "429" in str(exc)
+
     def _fetch_raw(self, ticker: str, interval: str,
                    period1: int, period2: int) -> List[list]:
-        """Une requête (avec retry) vers le backend disponible."""
+        """Une requête (avec retry) vers Yahoo."""
         remaining = self._cooldown_remaining()
         if remaining > 0:
             logger.debug(f"[{self.id}] {ticker}/{interval} ignoré — disjoncteur "
@@ -323,10 +331,7 @@ class YFinanceProvider:
         for attempt in range(1, self._max_retries + 1):
             self._throttle()
             try:
-                if self._prefer_yfinance and _HAS_YFINANCE:
-                    rows = self._fetch_via_yfinance(ticker, interval, period1, period2)
-                else:
-                    rows = self._fetch_via_chart_api(ticker, interval, period1, period2)
+                rows = self._fetch_bars(ticker, interval, period1, period2)
                 if rows:
                     self._note_success()
                     return rows
@@ -335,8 +340,7 @@ class YFinanceProvider:
                     f"(tentative {attempt}/{self._max_retries})"
                 )
             except Exception as e:
-                rate_limited = "429" in str(e)
-                if rate_limited:
+                if self._is_rate_limited(e):
                     self._note_rate_limit()
                     if self._cooldown_remaining() > 0:
                         # Disjoncteur ouvert pendant nos propres retries :
@@ -350,12 +354,26 @@ class YFinanceProvider:
                 delay *= 2      # Yahoo répond 429 en rafale : backoff exponentiel
         return []
 
-    def _fetch_via_yfinance(self, ticker: str, interval: str,
-                            period1: int, period2: int) -> List[list]:
-        """Chemin ``yfinance``. **Seul endroit** où pandas peut apparaître."""
-        hist = _yf.Ticker(ticker).history(
+    def _ticker(self, ticker: str):
+        with self._tickers_lock:
+            obj = self._tickers.get(ticker)
+            if obj is None:
+                obj = _yf.Ticker(ticker)
+                self._tickers[ticker] = obj
+            return obj
+
+    def _fetch_bars(self, ticker: str, interval: str,
+                    period1: int, period2: int) -> List[list]:
+        """Chemin ``yfinance``. **Seul endroit** où pandas apparaît.
+
+        ``raise_errors`` n'est plus passé : il est déprécié depuis yfinance 1.5
+        et le comportement par défaut est exactement celui qu'on veut — les
+        erreurs ordinaires donnent une trame vide (le retry s'en charge),
+        ``YFRateLimitError`` est relancée pour nourrir le disjoncteur.
+        """
+        hist = self._ticker(ticker).history(
             start=period1, end=period2, interval=interval,
-            auto_adjust=False, actions=False, raise_errors=False,
+            auto_adjust=False, actions=False, timeout=self._timeout,
         )
         if hist is None or len(hist) == 0:
             return []
@@ -363,54 +381,12 @@ class YFinanceProvider:
         highs = [float(v) for v in hist["High"].tolist()]
         lows = [float(v) for v in hist["Low"].tolist()]
         closes = [float(v) for v in hist["Close"].tolist()]
-        volumes = [float(v or 0.0) for v in hist["Volume"].tolist()]
+        # ``NaN or 0.0`` renvoie NaN (NaN est « vrai ») : il faut le tester.
+        volumes = [0.0 if v is None or not math.isfinite(float(v)) else float(v)
+                   for v in hist["Volume"].tolist()]
         stamps = [int(ts.timestamp() * 1000) for ts in hist.index]
         rows = [[stamps[i], opens[i], highs[i], lows[i], closes[i], volumes[i]]
                 for i in range(len(stamps))]
-        return _clean(rows)
-
-    def _fetch_via_chart_api(self, ticker: str, interval: str,
-                             period1: int, period2: int) -> List[list]:
-        """Chemin sans dépendance : API chart publique via ``requests``."""
-        if not _HAS_REQUESTS:
-            raise RuntimeError("'requests' est requis pour le provider actions")
-        if self._session is None:
-            self._session = _requests.Session()
-            self._session.headers.update({"User-Agent": _USER_AGENT,
-                                          "Accept": "application/json"})
-        resp = self._session.get(
-            _CHART_URL.format(symbol=ticker),
-            params={"period1": period1, "period2": period2, "interval": interval,
-                    "includePrePost": "false"},
-            timeout=self._timeout,
-        )
-        if resp.status_code == 429:
-            raise RuntimeError("HTTP 429 — quota Yahoo atteint, backoff")
-        resp.raise_for_status()
-        payload = resp.json() or {}
-        chart = payload.get("chart") or {}
-        if chart.get("error"):
-            raise RuntimeError(f"Yahoo : {chart['error']}")
-        results = chart.get("result") or []
-        if not results:
-            return []
-        result = results[0]
-        stamps = result.get("timestamp") or []
-        quote = ((result.get("indicators") or {}).get("quote") or [{}])[0]
-        opens, highs = quote.get("open") or [], quote.get("high") or []
-        lows, closes = quote.get("low") or [], quote.get("close") or []
-        volumes = quote.get("volume") or []
-        rows = []
-        for i, ts in enumerate(stamps):
-            try:
-                o, h, lo, c = opens[i], highs[i], lows[i], closes[i]
-            except IndexError:
-                break
-            if None in (o, h, lo, c):
-                continue                    # barre creuse (suspension, illiquidité)
-            vol = volumes[i] if i < len(volumes) and volumes[i] is not None else 0.0
-            rows.append([int(ts) * 1000, float(o), float(h), float(lo),
-                         float(c), float(vol)])
         return _clean(rows)
 
     # ── Tickers ────────────────────────────────────────────────────────────
@@ -482,11 +458,18 @@ class YFinanceProvider:
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _clean(rows: List[list]) -> List[list]:
-    """Trie, déduplique et écarte les barres non cotées (prix nul/négatif)."""
+    """Trie, déduplique et écarte les barres non cotées.
+
+    Deux formes de barre creuse à écarter : le prix nul/négatif, et le ``NaN``
+    que pandas met à la place des trous (suspension de cotation, illiquidité).
+    Le ``NaN`` doit être testé explicitement — ``nan <= 0`` vaut ``False``, il
+    passerait donc le filtre de prix et empoisonnerait les indicateurs bien
+    plus loin dans la chaîne.
+    """
     seen: set = set()
     out: List[list] = []
     for r in sorted(rows, key=lambda x: x[0]):
-        if r[0] in seen or r[4] <= 0:
+        if r[0] in seen or not all(math.isfinite(v) for v in r[1:5]) or r[4] <= 0:
             continue
         seen.add(r[0])
         out.append(r)
