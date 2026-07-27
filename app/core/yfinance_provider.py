@@ -91,6 +91,24 @@ _INTERVALS: Dict[str, _YahooSpec] = {
 
 _DAY_MS = 86_400_000
 
+# ── Temps calendaire vs temps de cotation ──────────────────────────────────
+#
+# Une bougie crypto occupe exactement sa durée : 500 × 15 m = 125 h de mur.
+# Une action ne cote que pendant sa séance — 8 h 30 sur XPAR, 5 jours sur 7,
+# fériés déduits — soit ~25 % du temps calendaire. Demander « 500 bougies de
+# 15 m » en reculant de 125 h n'en ramène donc qu'une centaine, et le cache
+# ne se remplit jamais : à chaque cycle le CandleStore constate qu'il en
+# manque, redemande, et Yahoo lui renvoie la même chose.
+#
+# Ces fractions convertissent un nombre de bougies en fenêtre calendaire.
+# Surestimer est gratuit (une seule requête, la profondeur reste plafonnée
+# par Yahoo et la réponse est retaillée à l'arrivée) ; sous-estimer produit
+# exactement la boucle décrite ci-dessus. D'où la marge de 15 %.
+_SESSION_HOURS_DEFAULT = 8.5      # 09:00–17:30, Euronext Paris
+_TRADING_DAYS_PER_WEEK_DEFAULT = 5
+_HOLIDAY_FACTOR = 0.96            # ~9 fériés par an
+_SPAN_SAFETY = 1.15
+
 
 class YFinanceProvider:
     """Données de marché actions via Yahoo Finance. Aucune exécution d'ordre.
@@ -120,13 +138,20 @@ class YFinanceProvider:
         self._cache_ttl = float(pcfg.get("cache_ttl", 60.0))
         self._max_retries = int(pcfg.get("max_retries", 3))
         self._timeout = float(pcfg.get("timeout", 20.0))
+        self._session_hours = float(pcfg.get("session_hours",
+                                             _SESSION_HOURS_DEFAULT))
+        self._trading_days = float(pcfg.get("trading_days_per_week",
+                                            _TRADING_DAYS_PER_WEEK_DEFAULT))
 
         # ``rateLimit`` en ms — lu par CandleStore pour espacer ses pages.
         self.rateLimit = int(self._min_interval * 1000)
 
         self._throttle_lock = threading.Lock()
         self._last_request_at = 0.0
-        self._cache: Dict[Tuple[str, str], Tuple[float, List[list]]] = {}
+        #: ``(ticker, intervalle) → (instant, period1 couvert, lignes)``. Le
+        #: ``period1`` fait partie de la VALEUR et non de la clé : une entrée
+        #: ne sert que les demandes qu'elle couvre réellement (cf. ``_cached``).
+        self._cache: Dict[Tuple[str, str], Tuple[float, int, List[list]]] = {}
         self._cache_lock = threading.Lock()
         self._truncation_warned: set = set()
         #: ``yfinance.Ticker`` réutilisés : le premier appel sur un ticker
@@ -192,6 +217,29 @@ class YFinanceProvider:
 
     # ── Fenêtre de requête ─────────────────────────────────────────────────
 
+    def bars_span_ms(self, timeframe: str, count: int) -> int:
+        """Temps calendaire couvert par ``count`` bougies de ``timeframe``.
+
+        Contrat volontairement exposé (le ``CandleStore`` s'en sert pour viser
+        assez loin dans le passé) : sur un exchange crypto, ouvert en continu,
+        la réponse est exactement ``count × durée``, et c'est le comportement
+        par défaut du store quand le provider n'offre pas cette méthode. Sur
+        une place à séances, elle ne l'est pas — une bougie de 15 m consomme
+        environ 1 heure de calendrier une fois les nuits, week-ends et fériés
+        pris en compte.
+        """
+        tf_ms = _TF_MS.get(timeframe) or 3_600_000
+        raw = max(int(count), 1) * tf_ms
+        week = self._trading_days / 7.0
+        if tf_ms >= _DAY_MS:
+            # Une bougie journalière = une séance : seuls les jours non cotés
+            # comptent, pas les heures de fermeture.
+            fraction = week * _HOLIDAY_FACTOR
+        else:
+            fraction = week * (self._session_hours / 24.0) * _HOLIDAY_FACTOR
+        fraction = min(max(fraction, 0.01), 1.0)
+        return int(raw / fraction * _SPAN_SAFETY)
+
     def _resolve_window(self, symbol: str, timeframe: str, limit: int,
                         since: Optional[int]) -> Optional[Tuple[str, int, int, int]]:
         """(intervalle Yahoo, facteur d'agrégation, period1_s, period2_s).
@@ -208,8 +256,10 @@ class YFinanceProvider:
 
         tf_ms = _TF_MS.get(timeframe) or 3_600_000
         now_ms = self.milliseconds()
-        span_ms = max(int(limit), 1) * tf_ms
-        start_ms = int(since) if since else now_ms - span_ms
+        # `since` est un point absolu voulu par l'appelant : on le respecte tel
+        # quel. C'est seulement quand la fenêtre est DÉDUITE d'un nombre de
+        # bougies qu'il faut la traduire en temps calendaire (cf. bars_span_ms).
+        start_ms = int(since) if since else now_ms - self.bars_span_ms(timeframe, limit)
         # Marge d'une bougie : Yahoo exclut parfois la borne basse.
         start_ms -= tf_ms
 
@@ -247,18 +297,59 @@ class YFinanceProvider:
         interval, factor, period1, period2 = window
         ticker = self.to_provider_symbol(symbol)
 
-        cache_key = (ticker, interval)
-        with self._cache_lock:
-            cached = self._cache.get(cache_key)
-            if cached and (time.time() - cached[0]) < self._cache_ttl:
-                rows = list(cached[1])
-                return self._finalize(rows, timeframe, factor, since, limit)
+        cached = self._cached(ticker, interval, period1)
+        if cached is not None:
+            return self._finalize(cached, timeframe, factor, since, limit)
 
         rows = self._fetch_raw(ticker, interval, period1, period2)
         if rows:
-            with self._cache_lock:
-                self._cache[cache_key] = (time.time(), list(rows))
+            self._remember(ticker, interval, period1, rows)
         return self._finalize(rows, timeframe, factor, since, limit)
+
+    def _cached(self, ticker: str, interval: str,
+                period1: int) -> Optional[List[list]]:
+        """Réponse en cache **couvrant** la fenêtre demandée, sinon ``None``.
+
+        La profondeur fait partie de la question posée. Une entrée obtenue
+        pour « depuis hier » ne répond pas à « depuis six mois » : la servir
+        quand même renvoie une liste sans la moindre bougie ancienne, ce que
+        l'appelant lit comme « le fournisseur n'a rien de plus » — et le
+        CandleStore repose alors la même question à chaque cycle, pour
+        toujours. D'où la comparaison de ``period1`` avant de servir.
+        """
+        with self._cache_lock:
+            entry = self._cache.get((ticker, interval))
+            if entry is None:
+                return None
+            stamped, covered_from, rows = entry
+            if (time.time() - stamped) >= self._cache_ttl:
+                return None
+            if covered_from > period1:
+                return None
+            return list(rows)
+
+    def _remember(self, ticker: str, interval: str,
+                  period1: int, rows: List[list]) -> None:
+        """Mémorise la réponse, en gardant la fenêtre la PLUS profonde.
+
+        Sans ce garde-fou, le fetch incrémental du cycle suivant (fenêtre
+        étroite) écraserait un historique profond tout juste payé, et la
+        demande profonde d'après repartirait sur le réseau.
+        """
+        with self._cache_lock:
+            entry = self._cache.get((ticker, interval))
+            if entry is not None:
+                stamped, covered_from, previous = entry
+                fresh = (time.time() - stamped) < self._cache_ttl
+                if fresh and covered_from < period1:
+                    merged = {r[0]: r for r in previous}
+                    merged.update({r[0]: r for r in rows})
+                    self._cache[(ticker, interval)] = (
+                        time.time(), covered_from,
+                        [merged[k] for k in sorted(merged)],
+                    )
+                    return
+            self._cache[(ticker, interval)] = (time.time(), period1, list(rows))
 
     def _finalize(self, rows: List[list], timeframe: str, factor: int,
                   since: Optional[int], limit: int) -> List[list]:

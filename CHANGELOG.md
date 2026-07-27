@@ -143,6 +143,68 @@ Le paquet `yfinance` **n'était pas** ajouté aux dépendances : il réinstalle
 pandas, retiré en phase 6. Ce choix a été **repris ci-dessous** — l'API chart
 publique ne ramène plus de données.
 
+### 🔁 Actions — fin de la boucle « cache insuffisant / aucune bougie supplémentaire »
+
+Les logs répétaient sans fin, pour chacun des 98 titres du SBF 120 et chaque
+timeframe :
+
+```
+[CandleStore] STLAP.PA/15m — cache insuffisant (361/500 bougies) — tentative de récupération de 139 bougies historiques
+[CandleStore] STLAP.PA/15m — aucune bougie historique supplémentaire disponible sur l'exchange (cache : 361 bougies)
+```
+
+Deux causes indépendantes, chacune reproduite avant correction.
+
+**1. La fenêtre demandée était calculée en temps calendaire.** Une bougie
+crypto occupe exactement sa durée — 500 × 15 min = 125 h de mur. Une action ne
+cote que pendant sa séance : 8 h 30 sur XPAR, 5 jours sur 7, fériés déduits,
+soit **~25 % du temps calendaire**. Reculer de 125 h ne ramenait donc qu'une
+centaine de bougies. Mesuré sur un faux Yahoo à historique profond : **500
+demandées, 117 rendues**. Le cache restait sous le compte visé, et le cycle
+suivant reposait la même question.
+
+- Nouveau contrat `bars_span_ms(tf, count)` sur le provider : « combien de
+  temps de mur couvrent `count` bougies ici ». `CandleStore._fetch_full` et
+  `_fetch_historical` s'en servent pour viser assez loin. **Un exchange qui ne
+  l'expose pas — tout ccxt — conserve exactement le comportement précédent**
+  (`count × durée`), la crypto ne ferme jamais.
+- Réglable par venue : `session_hours` et `trading_days_per_week` dans
+  `providers.yfinance`. Surestimer est gratuit (une seule requête, la
+  profondeur reste plafonnée par Yahoo, la réponse est retaillée à l'arrivée) ;
+  sous-estimer produit la boucle. D'où une marge de 15 %.
+
+**2. Le cache de réponses ignorait la profondeur demandée.** La clé était
+`(ticker, intervalle)`. Or le store fait **deux** appels par cycle : d'abord
+l'incrémental (fenêtre étroite, depuis la dernière bougie connue), puis le
+backfill historique (fenêtre profonde). Le second était servi par la réponse
+du premier — donc sans la moindre bougie ancienne, ce que le store lit comme
+« le fournisseur n'a rien de plus ». **Le backfill historique n'a jamais
+fonctionné sur actions**, et aucune requête ne partait pour le prouver.
+
+- `period1` entre dans la **valeur** de l'entrée, pas dans la clé : une entrée
+  ne sert que les demandes qu'elle couvre réellement. Une demande plus étroite
+  continue donc de faire mouche (le cache garde son intérêt), une demande plus
+  profonde repart sur le réseau.
+- Le rafraîchissement incrémental n'écrase plus une fenêtre profonde tout juste
+  payée : les deux réponses sont fusionnées en gardant la borne basse.
+
+**3. La question était reposée à chaque cycle.** Quand la profondeur maximale
+est réellement atteinte — titre récemment introduit, plafond Yahoo — le compte
+visé est hors d'atteinte *pour toujours* : redemander ne coûte que du quota, et
+c'est ce qui alimentait les 429. `CandleStore` mémorise désormais qu'un
+backfill n'a rien ramené et ne le rejoue pas avant 6 h. Le mémo tombe dès que
+la borne basse du cache recule (historique arrivé par une autre voie) et il est
+**daté**, parce qu'un 429 pendant le backfill est indiscernable d'un historique
+épuisé — sans expiration, un incident réseau gèlerait le symbole définitivement.
+
+Mesuré de bout en bout sur trois cycles, faux Yahoo à historique profond :
+
+| | avant | après |
+|---|---|---|
+| Bougies rendues (500 demandées) | 185 → 219 → 314 | **500 dès le 1ᵉʳ cycle** |
+| Ligne « cache insuffisant » | à chaque cycle | aucune |
+| Titre réellement plafonné (120 bougies) | 2 requêtes + 2 lignes par cycle, sans fin | 1 requête, 1 ligne, **puis silence** |
+
 ### 🌐 Provider actions — `yfinance` devient le chemin unique (fin des 429 Yahoo)
 
 Sur une machine sans le paquet `yfinance`, le provider retombait sur l'API
