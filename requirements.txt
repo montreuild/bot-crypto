@@ -34,7 +34,7 @@ python-multipart==0.0.22
 slowapi==0.1.9
 
 # -- Exchange --------------------------------------------------------
-ccxt==4.3.1
+ccxt==4.5.68
 
 # -- Data / Compute --------------------------------------------------
 # Polars: main library (Rust, Arrow, multi-threaded, 5-50x faster than Pandas)

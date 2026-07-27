@@ -370,6 +370,7 @@ def create_exchange(cfg: dict):
         opts["options"] = {"defaultType": "future"}
     elif cfg["exchange"].get("margin"):
         opts["options"] = {"defaultType": "margin"}
+
     api_key    = cfg["exchange"].get("api_key", "")
     api_secret = cfg["exchange"].get("api_secret", "")
     if api_key not in ("", "YOUR_KEY"):
