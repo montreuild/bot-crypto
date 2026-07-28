@@ -113,8 +113,7 @@ def add_symbol(request: Request, name: str, body: _AddSymbolBody):
     Refuse un doublon plutôt que de l'ignorer : l'appelant a demandé une
     modification, lui répondre 200 sans rien changer serait un succès menteur.
     """
-    from app.core.universe import clear_cache, universe_path, universe_symbols
-    from app.core.yaml_io import dump_yaml, load_yaml
+    from app.core.universe import add_member, universe_symbols
 
     if name not in _list_universe_files():
         raise HTTPException(404, f"Univers inconnu : {name!r}")
@@ -126,38 +125,24 @@ def add_symbol(request: Request, name: str, body: _AddSymbolBody):
     if symbol in universe_symbols(name):
         raise HTTPException(409, f"{symbol} est déjà dans l'univers {name!r}")
 
-    path = universe_path(name)
-    data = load_yaml(path, default={}) or {}
-    members = data.get("members")
-    if members is None:
-        members = []
-        data["members"] = members
-    if not isinstance(members, list):
-        raise HTTPException(500, f"{path} : la clé 'members' n'est pas une liste")
-
-    entry: Dict[str, Any] = {"symbol": symbol}
-    if body.name:
-        entry["name"] = body.name
+    extra: Dict[str, Any] = {}
     if body.sector:
-        entry["sector"] = body.sector
+        extra["sector"] = body.sector
     if body.provider_symbol:
-        entry["provider_symbol"] = body.provider_symbol
-    members.append(entry)
-
+        extra["provider_symbol"] = body.provider_symbol
     try:
-        dump_yaml(path, data)
+        total = add_member(name, symbol, body.name or "", **extra)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     except Exception as e:
-        logger.error(f"[Universe] écriture de {path} KO : {e}")
+        logger.error(f"[Universe] écriture de l'univers {name} KO : {e}")
         raise HTTPException(500, f"Écriture impossible : {e}")
 
-    # Sans cette purge, le symbole reste invisible jusqu'au redémarrage : le
-    # module mémoïse les univers pour la boucle live.
-    clear_cache()
     audit_log("universe.symbol.add", ip=request.client.host if request.client else "",
-              details={"universe": name, **entry})
-    logger.info(f"[Universe] {symbol} ajouté à {name} ({len(members)} membres)")
+              details={"universe": name, "symbol": symbol, "name": body.name, **extra})
+    logger.info(f"[Universe] {symbol} ajouté à {name} ({total} membres)")
     return {"status": "added", "universe": name, "symbol": symbol,
-            "n_symbols": len(members)}
+            "n_symbols": total}
 
 
 @router.delete("/api/universe/{name}/symbols/{symbol:path}",
@@ -167,25 +152,20 @@ def remove_symbol(request: Request, name: str, symbol: str):
     """Retire un symbole. Le cache Parquet du symbole n'est PAS supprimé —
     sortir un titre de l'univers est une décision de suivi, pas un ordre
     d'effacement, et le récupérer coûterait un nouveau backfill complet."""
-    from app.core.universe import clear_cache, universe_path
-    from app.core.yaml_io import dump_yaml, load_yaml
+    from app.core.universe import remove_member
 
     if name not in _list_universe_files():
         raise HTTPException(404, f"Univers inconnu : {name!r}")
+    try:
+        total = remove_member(name, symbol)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        logger.error(f"[Universe] écriture de l'univers {name} KO : {e}")
+        raise HTTPException(500, f"Écriture impossible : {e}")
 
-    path = universe_path(name)
-    data = load_yaml(path, default={}) or {}
-    members = data.get("members") or []
-    kept = [m for m in members
-            if (m if isinstance(m, str) else str(m.get("symbol", ""))).strip() != symbol]
-    if len(kept) == len(members):
-        raise HTTPException(404, f"{symbol} absent de l'univers {name!r}")
-
-    data["members"] = kept
-    dump_yaml(path, data)
-    clear_cache()
     audit_log("universe.symbol.remove",
               ip=request.client.host if request.client else "",
               details={"universe": name, "symbol": symbol})
     return {"status": "removed", "universe": name, "symbol": symbol,
-            "n_symbols": len(kept)}
+            "n_symbols": total}

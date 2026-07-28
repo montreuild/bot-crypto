@@ -24,8 +24,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -178,6 +179,129 @@ def symbol_venue_index(names) -> Dict[str, str]:
     with _cache_lock:
         _venue_index[key] = index
     return index
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Édition — insertion TEXTUELLE, pas round-trip YAML
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Pourquoi pas `yaml_io.dump_yaml` comme partout ailleurs : mesuré sur
+# `sbf120.yaml`, un aller-retour ruamel préserve les commentaires d'en-tête mais
+# RÉÉCRIT les 122 lignes de `members:` — il perd l'alignement en colonnes tenu à
+# la main et le commentaire de section « ── Reste du SBF 120 ── » posé au milieu
+# de la liste. Ajouter un titre produisait donc un diff de 122 lignes dont une
+# seule était voulue, sur un fichier que l'on relit et révise trimestriellement.
+#
+# L'insertion textuelle ne touche que la ligne ajoutée. Elle suppose la forme
+# « une entrée par ligne » — celle du dépôt ; toute autre forme fait échouer
+# proprement plutôt que de réécrire à l'aveugle.
+_MEMBER_LINE = re.compile(r"^(\s*)-\s*(\{.*\}|\S.*)$")
+
+
+def _members_block(lines: List[str]) -> tuple:
+    """``(index_première, index_dernière, indentation)`` du bloc ``members:``.
+
+    Lève ``ValueError`` si le bloc est absent ou n'est pas une liste d'entrées
+    ligne à ligne : mieux vaut refuser que deviner.
+    """
+    start = next((i for i, ln in enumerate(lines)
+                  if re.match(r"^members:\s*$", ln.rstrip("\n"))), None)
+    if start is None:
+        raise ValueError("clé 'members:' introuvable ou non vide sur sa ligne")
+    first = last = None
+    indent = "  "
+    for i in range(start + 1, len(lines)):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        m = _MEMBER_LINE.match(lines[i].rstrip("\n"))
+        if m:
+            if first is None:
+                first, indent = i, m.group(1)
+            last = i
+            continue
+        if not lines[i].startswith((" ", "\t")):
+            break            # nouvelle clé de premier niveau : fin du bloc
+    if first is None or last is None:
+        raise ValueError("bloc 'members:' vide ou de forme non reconnue")
+    return first, last, indent
+
+
+def add_member(name: str, symbol: str, label: str = "",
+               **extra: Any) -> int:
+    """Ajoute une entrée au fichier d'univers. Retourne le nouveau total.
+
+    Lève ``ValueError`` sur doublon ou format non reconnu.
+    """
+    if symbol in universe_symbols(name):
+        raise ValueError(f"{symbol} est déjà dans l'univers {name!r}")
+
+    path = universe_path(name)
+    # ``newline=""`` À LA LECTURE AUSSI : sans lui, Python traduit les CRLF en
+    # LF en entrée, l'écriture brute les ressort en LF, et le diff porte sur les
+    # 168 lignes du fichier au lieu de la seule ajoutée. Le fichier du dépôt est
+    # en CRLF ; la règle ici est de ne rien changer qu'on n'a pas demandé.
+    with open(path, "r", encoding="utf-8", newline="") as fh:
+        lines = fh.readlines()
+    _, last, indent = _members_block(lines)
+
+    fields = [f"symbol: {symbol}"]
+    if label:
+        fields.append(f"name: {label}")
+    fields.extend(f"{k}: {v}" for k, v in extra.items() if v is not None)
+
+    # Reprendre la fin de ligne du VOISIN plutôt que d'imposer "\n" : le
+    # fichier est en CRLF, une entrée en LF y ferait une ligne dépareillée.
+    eol = "\r\n" if lines[last].endswith("\r\n") else "\n"
+    entry = f"{indent}- {{{', '.join(fields)}}}{eol}"
+
+    # Le fichier peut ne pas finir par un saut de ligne (c'est le cas ici) :
+    # insérer après la dernière entrée collerait les deux sur la même ligne.
+    if not lines[last].endswith(("\n", "\r")):
+        lines[last] += eol
+    lines.insert(last + 1, entry)
+
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.writelines(lines)
+    clear_cache()
+    return len(universe_symbols(name))
+
+
+def remove_member(name: str, symbol: str) -> int:
+    """Retire une entrée. Retourne le nouveau total.
+
+    Ne touche PAS au cache de bougies du symbole : sortir un titre de l'univers
+    est une décision de suivi, pas un ordre d'effacement, et le récupérer
+    coûterait un backfill complet.
+    """
+    path = universe_path(name)
+    # ``newline=""`` À LA LECTURE AUSSI : sans lui, Python traduit les CRLF en
+    # LF en entrée, l'écriture brute les ressort en LF, et le diff porte sur les
+    # 168 lignes du fichier au lieu de la seule ajoutée. Le fichier du dépôt est
+    # en CRLF ; la règle ici est de ne rien changer qu'on n'a pas demandé.
+    with open(path, "r", encoding="utf-8", newline="") as fh:
+        lines = fh.readlines()
+    first, last, _ = _members_block(lines)
+
+    target = None
+    for i in range(first, last + 1):
+        m = _MEMBER_LINE.match(lines[i].rstrip("\n"))
+        if not m:
+            continue
+        body = m.group(2)
+        found = re.search(r"symbol:\s*([^,}\s]+)", body)
+        candidate = found.group(1) if found else body.strip().strip("{}\"'")
+        if candidate == symbol:
+            target = i
+            break
+    if target is None:
+        raise ValueError(f"{symbol} absent de l'univers {name!r}")
+
+    lines.pop(target)
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.writelines(lines)
+    clear_cache()
+    return len(universe_symbols(name))
 
 
 def clear_cache() -> None:
