@@ -1,794 +1,449 @@
-# Plan Directeur — État des lieux & Feuille de route
+# Plan directeur — bot-crypto
 
-> **Document de référence unique** du bot (améliorations + généralisation
-> multi-actifs). Il remplace et fusionne les plans historiques dispersés
-> (`AUDIT.md`, `docs/audit/00-INDEX.md` + 7 fichiers domaine, les audits
-> externes successifs). Ces fichiers restent consultables comme **archive des
-> directives détaillées**, mais **c'est ici la source de vérité** sur ce qui est
-> fait et ce qui reste à faire.
+> **À quoi sert ce document.** Il répond à une seule question : *qu'est-ce qui
+> reste à faire, et pourquoi ça n'est pas encore fait ?* Tout le reste — ce qui
+> a été livré, les mesures, les décisions écartées — n'est là que pour éviter de
+> rouvrir un débat déjà tranché.
 >
-> **Dernière mise à jour : 2026-07-26** — branche
-> `claude/plan-directeur-sprint-g2-n0ima2`, **sprint G2 : actions SBF 120 en
-> paper**. Changements de statut apportés par cette passe :
+> **Comment il est tenu.** Un item ne passe à « fait » que si le CODE le
+> montre, pas si un commit l'annonce. Cette règle n'est pas de la méfiance
+> gratuite : ce plan a déjà affirmé que la calibration isotone était désactivée
+> en 1 h pendant des semaines alors que `omnibus_v4_multi.yaml` portait
+> `calibrate: true` (ML-11), et annoncé « 116 titres sur 117 inaptes au modèle
+> solo » sur un cache incomplet (ML-17). Les deux ont été corrigés en
+> re-mesurant, pas en relisant.
 >
-> * **G2 ✅ FAIT** (§4.5bis) — les **3 points de couplage** de §4.2 sont levés :
->   calendrier de marché générique (`market_calendar.py` + `MarketHoursMixin`),
->   sizing entier et coûts par venue (`execution.py`, partagés backtest ↔ live),
->   provider actions data-only (`yfinance_provider.py`) routé par venue
->   (`provider_router.py`), univers statiques (`universe.py` +
->   `data/universe/sbf120.yaml`).
-> * **Notification de trade** (demande explicite du sprint) — une venue
->   `can_execute: false` ne transmet **aucun** ordre et émet à la place un
->   ticket portant symbole / direction / ouverture / SL / TP. G3 se réduit
->   désormais à brancher un `ExecutionProvider` et basculer un booléen.
-> * **Deux hypothèses crypto retirées du `CandleStore`** (plancher `since` à
->   2017, rejet des barres à volume nul) — elles auraient troué l'historique
->   actions en silence.
-> * **Actions requises avant d'activer G2** : vérifier la composition de
->   `data/universe/sbf120.yaml` (`verified: false`, `scripts/check_universe.py`)
->   et le taux de TTF retenu — cf. §4.5bis et §6.
->
-> **Mise à jour 2026-07-26 (matin)** — branche
-> `claude/ml-training-optimization-ofqd0t`, chantier **architecture ML
-> unifiée** (`docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md`, étapes A→G,
-> décisions 1-13). Changements de statut apportés par cette passe :
->
-> * **DEAD-01 ✅ RÉSOLU** (§3.1) — mais par **factorisation**, pas par
->   suppression : 5 fichiers supprimés, 6 devenus des presets de 84 à 129
->   lignes, aucun setup perdu (ceux de V9 sont portés dans V11, désactivés).
->   Le pack V4 figé a été retiré après mesure, ce qui a levé le « ne pas
->   toucher » qui pesait sur `v8`/`v10`/`opus_stat_pretrained_v4`.
-> * **ARCH-01 ✅ largement absorbé** — `MLBackendMixin` est l'« OpusBase »
->   que cet item réclamait ; le routing V10 partagé ne vit plus qu'à un seul
->   endroit.
-> * **Registre ML : la dimension symbole a été RETIRÉE de la clé** (décision
->   11, mesurée) — impact direct sur ce plan, cf. §4.2bis.
-> * **Deux ADX incompatibles, corrigés** (décision 13) — `_pre_adx14` lissait
->   en `span=14` là où Wilder veut α = 1/14. **Action restante pour
->   l'utilisateur : réoptimiser les seuils ADX**, désaccordés par la
->   correction (§3.7).
-> * **Trois bugs silencieux préexistants** trouvés et corrigés en chemin
->   (snapshot vide du cache d'entraînement, `defaults` ignoré par
->   `MLBackend.fit`, sorties anticipées mortes sur les variantes sans ML).
->
-> **Mise à jour 2026-07-23** — branche `claude/apply-patch-sn96hj`
-> (PR #155), après le **refactoring structurel Phases 1-6** (MLBackend, suppression
-> de 5 façades, éclatement des fichiers-dieux, format ML natif RCE-safe,
-> suppression de pandas/pyarrow/scikit-learn) et la **remise au vert de la CI**.
->
-> **Mise à jour 2026-07-20** (branche `claude/sprint-7-8-planning-xb12m0`,
-> commits `5022b69`…`3bbcd55`) : voir `CHANGELOG.md` § « Post-Sprint 8 » pour
-> le détail technique. Résumé des changements de statut apportés par cette
-> passe : **PERF-02** (Plan C, §4.5) marqué **FAIT** (parallélisme réel de
-> l'optimiseur + refonte `param_search_optim`, détail §4.1bis) ; **TEST-01**
-> nuancé — le job CI `lint` existait depuis Sprint 7 mais n'était **jamais
-> passé** (773 erreurs pré-existantes, aucune liée à un sprint de ce
-> document) jusqu'à cette passe, désormais vert ; **DEAD-01** toujours
-> ouvert mais son **analyse est maintenant livrée et re-confirmée** (deux
-> passes de comparatif fonctionnel + empirique des 15 variantes opus_omnibus/
-> opus_stat sur 5 timeframes — la seconde avec un dimensionnement de fenêtre
-> calqué sur la production et sans aucune stratégie sautée, rapports HTML
-> remis à l'utilisateur) — la décision de suppression elle-même reste en
-> attente, aucun fichier supprimé. Découverte annexe hors périmètre DEAD-01 :
-> `v11`/`v12` (actives) sous-performent sur leur TF de production (1h) dans
-> ce test, signalé pour examen séparé (§4.1). Garde-fou ajouté : `/api/
-> backtest` et `/api/optimize/start` se refusent désormais mutuellement
-> pendant que l'autre tourne (contention CPU/mémoire constatée en pratique).
-> **Verdict DEAD-01 révisé après discussion** : `opus_omnibus_v9` retiré de
-> la liste (classé à tort sur un motif de versioning — cf. §4.1) ; le pkl
-> figé V4 (dépendance de `v7_pretrained`/`v8`/`v9`/`v10`) a été soumis à un
-> test de fuite (aucune fuite trouvée) et à une expérience de gel de la
-> recette V11 sur 40 000 barres (hypothèse réfutée — le V4 figé reste
-> supérieur à volume de trades égal) ; nouveau backlog item **ML-01** (§4.5)
-> sur le gating de promotion `manual_active`.
-> Convention de statut : **✅ FAIT** (preuve : commit + vérif code/tests),
-> **🟡 PARTIEL**, **❌ RESTE À FAIRE**, **⛔ DÉCLINÉ** (décision utilisateur ou
-> prémisse obsolète).
+> **Refonte du 2026-07-28.** La version précédente avait accumulé six mois de
+> `bis` et de `ter` : deux sections numérotées `3.7ter`, quatre sections `4.x`
+> dupliquées entre les chapitres 4 et 5, et 69 items terminés mêlés aux items
+> ouverts. Le backlog et le journal sont désormais séparés, et un index unique
+> donne l'état de chaque identifiant.
 
 ---
 
 ## Table des matières
 
-1. [État de santé actuel](#1-état-de-santé-actuel)
-2. [Ce qui a été fait](#2-ce-qui-a-été-fait)
-3. [Ce qui reste à faire — backlog priorisé](#3-ce-qui-reste-à-faire--backlog-priorisé)
-4. [Généralisation multi-actifs (crypto → actions SBF120)](#4-généralisation-multi-actifs-crypto--actions-sbf120)
-5. [Roadmap par sprints](#5-roadmap-par-sprints)
-6. [Décisions produit en attente](#6-décisions-produit-en-attente)
+1. [Santé du dépôt](#1-santé-du-dépôt)
+2. [Backlog — ce qui reste](#2-backlog--ce-qui-reste)
+   - [2.1 Sécurité — le seul bloc à traiter en priorité](#21-sécurité--le-seul-bloc-à-traiter-en-priorité)
+   - [2.2 ML & recherche](#22-ml--recherche)
+   - [2.3 Multi-actifs — G3 et au-delà](#23-multi-actifs--g3-et-au-delà)
+   - [2.4 Observabilité](#24-observabilité)
+   - [2.5 Tests, docs, DX](#25-tests-docs-dx)
+   - [2.6 Itératif — sans urgence](#26-itératif--sans-urgence)
+3. [Index des items](#3-index-des-items)
+4. [Journal — ce qui a été livré](#4-journal--ce-qui-a-été-livré)
+5. [Décisions produit en attente](#5-décisions-produit-en-attente)
+6. [Déclinés / obsolètes](#6-déclinés--obsolètes)
 
 ---
 
-## 1. État de santé actuel
+## 1. Santé du dépôt
 
 | Indicateur | État | Détail |
 |---|---|---|
-| **CI** (`.github/workflows/ci.yml`) | ✅ **Verte** | Jobs `lint` (ruff) + `test` (pytest `-m "not slow"`). Run #19 = success sur `a601400`. |
-| **Tests** | ✅ 746 verts, 2 skipped | Vérifié hors `sklearn`/`pandas`/`joblib` (conditions CI réelles). |
-| **Lint** | ✅ `ruff check .` = 0 erreur | 25 erreurs introduites par le refactoring ont été résorbées. |
-| **Sécurité désérialisation (RCE)** | ✅ **Clos** | Plus **aucun** `pickle`/`joblib` dans le code (actif comme mort) : format 100 % LightGBM natif (`.lgb` + `.meta.json`) partout. Le `RestrictedUnpickler` de compat legacy a été supprimé (plus de `.pkl` à lire). |
-| **Dépendances** | ✅ Allégé | `pandas`, `pyarrow`, `scikit-learn` supprimés (~23 Mo + scipy/joblib transitifs). Polars + LightGBM natif partout. |
-| **Couches** | ✅ Strictes | `core → engine → live → api → strategies`, 0 import circulaire (vérifié par grep). |
-| **Stratégies actives** | 15 (`manual_active`) | Sur **42** fichiers `app/strategies/` (45 → 42 : 5 supprimés, 2 ajoutés). DEAD-01 clos par factorisation, plus de code mort Opus/stat. |
-| **Tests (2026-07-26, après G2)** | ✅ 1 172 verts, 3 skipped | `pytest -m "not slow"` + `ruff check .` propres. 1 051 → 1 172 : +121 tests G2, **zéro régression**. |
+| **CI** | 🟢 verte | `lint` (ruff 0.15.8) + `test` (pytest `-m "not slow"`) |
+| **Tests** | 🟢 ~1 364 verts | 3 skipped. Voir la note d'exécution ci-dessous |
+| **Lint** | 🟢 `ruff check .` = 0 | — |
+| **Sécurité désérialisation** | 🟢 close | Plus aucun `pickle`/`joblib` : format 100 % LightGBM natif (`.lgb` + `.meta.json`) |
+| **Durcissement API/déploiement** | 🔴 **5 items ouverts** | SEC-002 à SEC-006, vérifiés présents dans le code au 2026-07-28 — cf. §2.1 |
+| **Observabilité** | 🟡 en progrès | OBS-01/02 livrés (métriques + logs structurés). Grafana, alerting et tracing restent |
+| **Couches** | 🟢 strictes | `core → engine → live → api → strategies`, 0 import circulaire |
+| **Stratégies actives** | 15 `manual_active` | sur 42 fichiers `app/strategies/` |
+| **Multi-actifs** | 🟢 G1+G2 livrés | 120 titres SBF 120 en paper, data-only. G3 (exécution réelle) non commencé |
 
-### Note d'exécution — flakiness environnementale (rappel)
+### Note d'exécution — défauts d'environnement, pas de code
 
-La suite complète en un seul process peut se bloquer de façon non-déterministe
-en environnement sandboxé chargé (throttling CPU cgroup) — reproductible sur du
-code antérieur, donc **non lié** aux évolutions récentes. La CI GitHub n'est pas
-affectée. Mitigation recommandée si cela réapparaît : `pytest-timeout` pour
-convertir un blocage en échec explicite.
+Trois échecs et erreurs sont **spécifiques à Windows** et n'apparaissent pas sur
+le runner Linux. Les documenter évite de les rediagnostiquer à chaque session :
+
+| Test | Cause | Portée |
+|---|---|---|
+| `test_funding_flow::test_no_ml_dependency` | `open()` sans `encoding` sur une console cp1252 | Windows seulement |
+| `test_ml_routes` (3 erreurs) | `os.symlink` exige un privilège Windows | Windows seulement |
+| `test_trade_aggregates::test_get_trades_since_filter` | `NotADirectoryError` | Windows seulement |
+| `test_lgb_logging` | abort LightGBM à la fermeture de l'interpréteur | Windows ; oblige à `--ignore` ce fichier pour obtenir un signal local |
+
+Aucun n'est lié aux évolutions récentes ; ils sont reproductibles sur du code
+antérieur. Les corriger relève de TEST-12 (nouveau, §2.5).
 
 ---
 
-## 2. Ce qui a été fait
+## 2. Backlog — ce qui reste
 
-### 2.1 Refactoring structurel — Phases 1-6 (2026-07-23, PR #155)
+Priorité : 🔴 à traiter · 🟠 utile à court terme · 🔵 structurant, sans urgence.
+Effort : S (heures) · M (jours) · L (semaine+).
 
-Objectif : réduire la dette (fichiers-dieux, duplication ML, façades),
-supprimer le risque RCE des `.pkl`, et alléger les dépendances. **Tout vérifié
-contre le code de la branche.**
+### 2.1 Sécurité — le seul bloc à traiter en priorité
 
-| Thème | Livré | Preuve |
-|---|---|---|
-| **MLBackend générique** | `app/ml/backend/` : `features.py` (features V4 Polars ~462 col.), `trainer.py`, `predictor.py`, `persistence.py`, `isotonic.py` (IsotonicRegression native PAV), `__init__.py` (façade thread-safe) | 6 modules, V11 migrée |
-| **Format ML natif RCE-safe** | `v4_models.pkl` (8,8 Mo) → 8 × `.lgb` + 8 × `.json` ; `save_lgb_with_scaler`/`load_model` natifs ; `RestrictedUnpickler` en défense-profondeur pour le legacy | 8 `.lgb` présents |
-| **Suppression pandas/pyarrow/sklearn** | `ml_dynamic_threshold` refondu (LightGBM natif, plus de `StandardScaler`/`Pipeline`), `_FeatureBuilder` pandas supprimé, 5 stratégies Opus passées à Polars | `requirements.txt`, 0 import top-level résiduel |
-| **Éclatement des god-classes** | `position_mixin.py` (1399 L) → 4 mixins (open/manage/close/restore) ; `risk.py` (667 L) → `risk_gate`+`risk_sizer`+`risk_notifier`+`risk_state` ; `optimizer.py` → `optimizer_search`+`optimizer_applier` ; `backtest.py` → +`walk_forward`+`monte_carlo` ; `_signal_at` SMC 542 → 24 L (dispatcher) | 4 façades supprimées |
-| **Éclatement API** | `routes/config.py` (684 L) → 4 routers + `_config_helpers` ; middlewares FastAPI → `middleware.py` ; `main.py` 346 → 279 L | façade `config.py` supprimée |
-| **Artefact mort** | `logs/ml_strategy.pkl` (549 Ko, dernier `.pkl` RCE committé) désindexé de git + `.gitignore` | supprimé |
+**Vérifié dans le code le 2026-07-28** : ces cinq items sont bien ouverts, ce
+ne sont pas des reliquats de documentation.
 
-**5 façades supprimées** : `risk.py`, `optimizer.py`, `position_mixin.py`,
-`routes/config.py`, `_FeatureBuilder` pandas.
+| ID | Item | Fichier | Effort |
+|---|---|---|---|
+| **SEC-002** 🔴 | Path traversal via `tf` non validé → whitelist de timeframes dans `CandleStore._path` + `resolve().is_relative_to` | `app/core/candle_store.py` | S |
+| **SEC-003** 🔴 | `web.allow_insecure: true` committé par défaut → opt-in par flag CLI/env, jamais via YAML | `config.yaml` | S |
+| **SEC-004** 🔴 | Retirer `"testclient"` de la whitelist localhost WebSocket | `app/api/routes/ws.py` | S |
+| **SEC-005** 🔴 | Retirer `auth_basic off;` sur `/api/optimize/stream` | `deploy/nginx.conf` | S |
+| **SEC-006** 🔴 | Docs OpenAPI (`/api/docs`, `/api/openapi.json`) non protégées → désactiver quand `ENV=prod` | `app/api/main.py` | S |
 
-### 2.2 Remise au vert de la CI (2026-07-23)
-
-Le refactoring avait rendu la CI rouge sur ses deux jobs. Corrigé :
-
-- **Lint** : 25 erreurs ruff (imports non triés `I001`, imports inutilisés
-  `F401`, `E701` multi-instructions, `F841` variable inutilisée). Les
-  ré-exports de compat de `backtest.py` (`WalkForwardAnalyzer`, `MonteCarlo`)
-  reçoivent un `# noqa: F401` explicite.
-- **Test `test_freezes_via_partial_fixed_sampler`** : la suppression de
-  scikit-learn a cassé le gel de paramètres du chemin **Optuna**, qui reposait
-  sur l'estimateur d'importance **fANOVA** (RandomForestRegressor sklearn en
-  interne). Correctif : ajout de **PedANOVA** (évaluateur d'importance Optuna
-  *sklearn-free*) comme repli entre fANOVA et l'estimateur marginal
-  (`_optuna_param_importances`). fANOVA reste prioritaire si sklearn est présent
-  (dev). *Découvert par reproduction fidèle des conditions CI, hors sklearn.*
-
-### 2.3 Persistance des stratégies « retrained » : joblib → natif (2026-07-23)
-
-Les 4 stratégies retrained encore inactives (`opus_omnibus_v7`,
-`_v10_retrained`, `_v11_followsetup`, `opus_stat_retrained_v4`) persistaient
-leurs modèles via `joblib.dump`/`joblib.load` — dernier code dépendant de
-`joblib` (supprimé avec sklearn) et de pickle (RCE). Migré vers le format natif
-LGB+JSON via deux helpers factorisés `save_amp_dir_bundle`/`load_amp_dir_bundle`
-(`app/ml/backend/persistence.py`, calibrators isotoniques sérialisés en JSON).
-Dans la foulée, **toute la machinerie pickle a été supprimée** du backend
-(`RestrictedUnpickler`, `restricted_pickle_load`, `import pickle`) et le suffixe
-`.pkl` des chemins de modèle est remplacé par un préfixe natif — il n'existe
-plus aucun `.pkl` ni pickle dans le code. Ces stratégies restent candidates à
-DEAD-01, mais ne dépendent plus de joblib. **SEC-020 est désormais clos.**
-
-### 2.4 Historique antérieur (résumé)
-
-Travaux consolidés et vérifiés lors des passes précédentes (détail dans
-`CHANGELOG.md` et les fichiers `docs/audit/*` d'archive) :
-
-| Lot | Contenu | Statut |
-|---|---|---|
-| Audit Vagues 0-2 | Régressions per-symbole, sécurité/intégrité (auth, watchdog, notifs, parquet atomique), intégrité de la mesure (Monte-Carlo, IS/OOS, WF gate, garde-fous d'apply) | ✅ |
-| Audit Vague 4 | Architecture : couches strictes, `param_resolution`, `timeframes`, `execution.py` (parité BT/live), découpage `live_trader`/scanner/smc | ✅ |
-| Audit Vague 5 | Recherche d'edge SMC/ICT (inducement BTC 4h activé ; le reste `off`, sans preuve OOS) | ✅ |
-| Audit Vague 6 | UX/a11y/docs, tests LiveTrader/API/lifecycle, découpe CHANGELOG | ✅ (TEST-11 débloqué depuis : DEAD-01 clos) |
-| Sprint 7 | Nettoyage code mort partiel (`scoring_v3`, pyflakes, imports morts), **CI + ruff.toml + mypy.ini + pytest.ini** | ✅ (hors DEAD-01) |
-| Sprint 8 | Quick wins financiers/sécu : benchmark B&H, compteur de frais, slippage paper, rate-limit par endpoint, backup auto, `audit_param_space.py` | ✅ (hors FIN-01) |
-| Post-8 | Parallélisme réel de l'optimiseur (`n_jobs` câblé, refonte `param_search_optim`), résorption dette lint pré-existante (773 → 0) | ✅ |
-
----
-
-## 3. Ce qui reste à faire — backlog priorisé
-
-Grille : 🟢 quick win · 🔵 bet structurant · 🟡 itératif.
-
-### 3.1 ✅ DEAD-01 — RÉSOLU, mais autrement que prévu (2026-07-26)
-
-**Le plan prévoyait de supprimer 8 fichiers. Ce qui a été fait : en supprimer
-5 et transformer les autres en presets** — la comparaison ayant montré que
-leurs routings n'étaient pas 8 stratégies différentes, mais **une seule
-déclinée en valeurs**. Supprimer aurait perdu des setups ; factoriser les
-préserve et les rend de nouveau optimisables.
-
-Détail dans `docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md` (étapes A à G,
-décisions 1-13). Résultat fichier par fichier :
-
-| Fichier | plan (L) | aujourd'hui | ce qui a été fait |
-|---|---:|---|---|
-| `opus_omnibus_v7.py` | 1266 | **129 L** | preset de V11 — équivalence de sélection prouvée sur 7 744 combinaisons |
-| `opus_omnibus_v7_pretrained.py` | 640 | supprimé | pack V4 figé retiré après mesure (§1.5) |
-| `opus_omnibus_v9.py` | 738 | supprimé | ses 2 setups exclusifs (`SHORT_TD`, `LONG_PULLBACK_TU`) **portés dans V11**, désactivés |
-| `opus_omnibus_v10_retrained.py` | 1323 | **101 L** | preset de V11 — équivalence prouvée sur 3 plans |
-| `opus_omnibus_v11_no_ml.py` | 545 | **90 L** | preset + `ProxyPredictor` |
-| `opus_omnibus_v11_followsetup.py` | 1444 | 794 L | **conservé** — sa mécanique de sortie est du code, pas des valeurs (§7.3bis) |
-| `opus_omnibus_v11_followsetup_no_ml.py` | 492 | **91 L** | preset |
-| `opus_stat_retrained_v4.py` | 1121 | 445 L | plomberie ML extraite dans `MLBackendMixin` |
-
-Les trois « ne pas toucher » (`opus_omnibus_v8`, `v10`,
-`opus_stat_pretrained_v4`) **ont finalement été supprimés** : leur seule
-dépendance réelle était le pack V4 figé, dont la mesure a montré qu'il ne bat
-plus un ré-entraînement (3/3 TF, robuste sur 5 fenêtres, aucun régime sauvé).
-Le scanner en a été débranché avant suppression.
-
-Deux variantes ont rejoint la famille depuis, également en presets :
-`opus_omnibus_v8_no_ml` (84 L) et `opus_omnibus_v10_no_ml` (87 L).
-`dynamic_threshold_no_ml` (218 L) reste un fork **motivé** : il applique la
-porte de volatilité en inférence là où son jumeau ML l'utilise pour
-labelliser — en faire un preset ajouterait au parent une branche qu'il
-n'emprunte jamais.
-
-> **Débloque, comme prévu** : TEST-11 (smoke tests) et ARCH-01 — ce dernier est
-> largement absorbé, `MLBackendMixin` étant l'« OpusBase » qu'il appelait.
-
-### 3.2 🟢 Durcissement sécurité (audit externe SEC)
-
-Non traités par le refactoring (hors périmètre). Effort faible, impact réel :
-
-| ID | Item | Fichier |
-|---|---|---|
-| **SEC-002** | Path traversal via `tf` non validé → whitelist de timeframes dans `CandleStore._path` (+ `resolve().is_relative_to`) | `app/core/candle_store.py` |
-| **SEC-003** | Retirer `web.allow_insecure: true` committé par défaut → opt-in par flag CLI/env, jamais via YAML | `config.yaml` |
-| **SEC-004** | Retirer `"testclient"` de la whitelist localhost WebSocket | `app/api/routes/ws.py` |
-| **SEC-005** | Retirer `auth_basic off;` sur `/api/optimize/stream` | `deploy/nginx.conf` |
-| **SEC-006** | Docs OpenAPI (`/api/docs`, `/api/openapi.json`) non protégées → désactiver en prod (`ENV=prod`) | `app/api/main.py` |
-| ~~SEC-009/010~~ ✅ | ~~Bumps CVE~~ — **FAIT (2026-07-27)** : `sqlalchemy==2.0.32` (plancher exact de l'audit), `jinja2==3.1.6` (et non 3.1.5, elle-même vulnérable à CVE-2025-27516) | `requirements.txt` |
-| ~~SEC-007/008~~ ✅ | **FAIT (2026-07-27)** — `notify-crash.py` ne transmet plus le log par défaut (`notifications.crash_include_log: false`) ; l'ancien filtre par motifs ne protégeait que ce qui RESSEMBLE à un secret, pas les données d'exploitation. `backup.sh` : `umask 077` + `chmod 600` sur chaque archive, `700` sur le répertoire, rattrapage des archives antérieures | `deploy/` |
-
-### 3.3 🔵 Observabilité (score le plus faible, ~4/10)
-
-Aucun équivalent existant (fichiers/dépendances absents, vérifié) :
+Cinq items S qui tiennent en une demi-journée. Ils traînent depuis l'audit
+externe ; c'est le plus mauvais rapport effort/risque du backlog.
 
 | ID | Item | Effort |
 |---|---|---|
-| ~~OBS-01~~ ✅ | **FAIT (2026-07-27)** — `app/core/metrics.py`, endpoint `/metrics`, `prometheus-client==0.26.0` (optionnel : sans lui tout est no-op et `/metrics` répond 503). Les métriques MÉTIER sont dérivées de `EventHub.publish`, point de branchement unique, plutôt que semées dans `live_trader`/`position_manager` | M |
-| ~~OBS-02~~ ✅ | **FAIT (2026-07-27)** — `app/core/log_context.py` (JSON Lines + correlation IDs `contextvars`), handler FICHIER en JSON par défaut (`logging.format`), console inchangée. `run_with_correlation` transporte l'identifiant à travers les threads de jobs — un `ContextVar` ne les traverse pas. **Les f-strings ne sont PAS réécrites** (≈900 appels) : le structuré s'ajoute autour, via `extra=`. Au passage : `_ColorFormatter` mutait `record.levelname`, donc les séquences ANSI finissaient dans `bot.log` — corrigé | M |
-| OBS-06/07 | `/health` enrichi + alerting sur seuils critiques | M |
-| OBS-03/04/05 | Grafana, AlertManager, tracing OpenTelemetry (dépendent d'OBS-01) | M/L |
+| **SEC-01** 🔵 | Rotation des secrets via vault (protocole `SecretProvider`) | M |
+| **SEC-03** 🔵 | Validation Pydantic systématique des payloads API (`app/api/schemas.py` inexistant) | M |
+| **SEC-06** 🔵 | Migrations SQLite via Alembic. **Nuance** : `_migrate_schema` idempotent existe déjà — ce serait un upgrade d'outillage, pas un manque | M |
 
-### 3.4 🔵 Refactor stratégies avancé
-
-| ID | Item | Dépend de |
-|---|---|---|
-| **ARCH-01** (OpusBase) | ✅ **absorbé (2026-07-26)** — le routing V10 partagé ne vit plus qu'à un endroit : `opus_omnibus_v11`. Les variantes sont des presets qui ne déclarent que des valeurs. `MLBackendMixin` joue le rôle d'« OpusBase » côté plomberie ML. **Reste** : `opus_omnibus_v11_followsetup` (794 L), dont la mécanique de sortie est du code et non des valeurs — cf. §3.7 | ✅ |
-| **STRAT-01** | Champ `status: experimental\|validated\|production\|archived` dans chaque YAML (distinct du lifecycle runtime) | — |
-| **STRAT-02** | ✅ **fait** — registre daté et versionné (`app/ml/model_registry.py`, clé `(TF, recette)`), provenance complète (hash de recette, commit git, dates, symbole d'entraînement). `models/index.json` n'a pas été créé : le système de fichiers EST l'index | ✅ |
-| ARCH-05 | Réduire `smart_money.py` (838 L) et `smart_money_signals.py` (891 L) — dette de lisibilité, pas d'urgence | — |
-
-### 3.5 🟡 Tests, docs, DX
-
-| ID | Item |
-|---|---|
-| TEST-11 | Smoke tests paramétrés pour les stratégies survivantes — **débloqué** (DEAD-01 clos) |
-| TEST-05 | Tests d'ordres live mockés complets (idempotence clientOrderId, partial fills, réconciliation frais, restauration crash) |
-| TEST-04 | `pytest-cov` + seuil de couverture en CI ; ajouter mypy/security-scan à la CI |
-| DOC-005/006 | 4 guides référencés au README mais inexistants ; 0 ADR |
-| DOC-mAj | `ARCHITECTURE.md` : refléter `MLBackend` et la suppression des façades |
-| DX-01 | `Dockerfile` + `docker-compose` |
-| WKFLOW | pre-commit hooks, Dependabot/Renovate, release workflow |
-
-### 3.6 🟡 Financier & recherche (itératif)
-
-FIN-01 (frais VIP OKX dynamiques), FIN-02 (borrow dynamique), FIN-05
-(Sharpe/Sortino/Calmar/VaR temps réel), FIN-08 (réconciliation PnL quotidienne),
-RES-01 (regime detection HMM), RES-02 (backtest portefeuille multi-actifs). Au
-fil de l'eau.
-
-### 3.7 🔴 Suites du chantier ML unifié (2026-07-26)
-
-Le chantier a livré A→G et tranché 13 décisions ; ce qu'il laisse ouvert, par
-valeur décroissante. Détail et chiffres :
-`docs/CONCEPTION_ARCHITECTURE_ML_UNIFIEE.md` §12.
-
-| ID | Item | Effort | Pourquoi c'est là |
-|---|---|---|---|
-| **ML-10** 🔴 | **Réoptimiser les seuils ADX** des YAML (`adx_min`, `adx_threshold`, `needs_adx_above`, `adx_len`) | M | Suite obligée de la décision 13 : ces seuils ont été choisis face à un ADX qui valait 35 en moyenne, ils s'appliquent à un ADX qui vaut 28. Rien n'est cassé, rien n'est réglé. **Seul item qui bloque la confiance dans les stratégies actives.** Rien à purger : `optimizer_results` est vide |
-| ~~**ML-11**~~ ✅ | ~~**Désactiver la calibration isotone en 1h**~~ — **FAIT (2026-07-27)**. Sous-décision tranchée : **un bloc `hp_by_tf:` par TF**, et non une recette par TF. `omnibus_v4_multi.yaml` porte `hp_by_tf: {1h: {calibrate: false}}`. Précédence VOLONTAIREMENT inversée (le bloc par TF gagne sur les `params` reçus) : chaque stratégie recopie `hp` dans ses `_DEFAULTS` et ses `fixed_params`, valeurs sans timeframe qui arrivent toujours dans `params` — traité comme un défaut, le bloc n'aurait jamais été appliqué et on aurait écrit un réglage inerte. Appliqué sur les DEUX chemins d'entraînement (`recipe_trainer` et `MLBackend._train_impl_wrapper`) | S (débloqué) | Mesuré (ECE **+461 %** en 1h contre −47 %/−67 % en 15m/30m), conclusion écrite… et jamais appliquée : `omnibus_v4_multi.yaml` porte toujours `calibrate: true` sans dérogation par TF. **Écart entre ce que le doc affirme et ce que le code fait.** Sous-décision ouverte : une recette par TF, ou un bloc `hp` par TF. **Débloqué par ML-14** : tous les réglages LightGBM (`calibrate`, `max_bin`, `early_stopping_rounds`…) se déclarent maintenant dans le bloc `hp:` d'une recette, donc désactiver la calibration en 1h ne demande plus de toucher au code |
-| **ML-12** 🟠 | Instruire les scores négatifs sur la fenêtre de validation | M | 3 des 4 cibles mesurées perdent sur le dernier tiers de l'historique, **sous les deux conventions d'ADX**. Protocole réduit (40 essais, une paire symbole/TF) donc pas un verdict — mais leurs bons scores viennent d'IS/OOS |
-| **ML-13** 🔵 | Mode `follow_setup` dans V11 | M | Dernier morceau de la fusion omnibus. Sa machine anti-whipsaw (confirmation K bougies, cooldown, hystérésis) est du **code**, pas des valeurs : mérite son propre tour de mesure, d'où le report délibéré |
-| ~~**ML-14**~~ ✅ | ~~Entraînement unifié des 3 dernières stratégies ML~~ | — | **FAIT** (2026-07-27) — voir §3.7bis. `app/ml/features_catalog.py` rend le catalogue déclaratif, `app/ml/labelling.py` le schéma de labels, `app/ml/recipe_trainer.py` entraîne depuis la seule recette. Les `_train` autonomes de `stat48_v4/v5` (257 lignes) sont supprimés, équivalence 0.000000 mesurée. Au passage : `stat48` a **56 colonnes, pas 48** |
-| **ML-15** 🔵 | Rejouer la mesure de la dimension symbole | S | Automatique dès qu'un actif d'une autre classe (action, ETF) avec ≥ 8 000 barres entre dans le store — cf. §4.2bis |
-
-### 3.7bis ✅ ML-14 livré — et trois défauts trouvés en le livrant (2026-07-27)
-
-L'entraînement est **piloté par la recette** : `train(recipe, df, tf)` n'importe
-aucune stratégie (verrouillé par un test qui fait échouer tout import de
-`app.strategies.*` pendant l'entraînement). `features.catalog` était déclaré par
-les recettes depuis l'étape B mais n'était **dispatché nulle part** — il n'entrait
-que dans `Recipe.hash()`. C'était la moitié écriture de l'asymétrie de §2 :
-lecture pilotée par la recette (`build_predictor`), écriture par la stratégie.
-
-Équivalences mesurées avant toute bascule, conformément au protocole :
-
-| Recette | Face à | Écart max | Corrélation |
-|---|---|---:|---:|
-| `omnibus_v4_multi` | `MLBackend` | **0.00000000** | 1.000000 |
-| `stat48_v5` (`fit`) | `_train` autonome | **0.000000** | 1.0000 |
-| `stat48_v5` (`score`) | idem, 10 fenêtres | **0 divergence de signal** | — |
-
-**Trois défauts trouvés en cherchant l'origine d'une divergence**, aucun n'étant
-la cause annoncée au premier diagnostic (`n_estimators` 300 vs 500 — l'early
-stopping tranche bien avant, cet écart n'avait aucun effet) :
-
-1. **`scoring_statistique_opus_v4/v5` s'entraînaient sur 250 barres.**
-   `_get_or_build_features` retombe, hors backtest, sur les 250 dernières barres
-   — bon pour `score()`, qui ne lit que la dernière ligne, mais `_train`
-   l'empruntait aussi. Quelle que soit la fenêtre passée à `fit()`, le modèle
-   n'apprenait que sur 200 lignes plus 50 de validation, alors que la recette
-   annonce `min_bars: 2000`. Aucun message ne le signalait. **Corrigé — mais cela
-   change le modèle produit en exploitation : réoptimiser avant de s'y fier,
-   même logique que ML-10.**
-2. **`stat48` produit 56 features, pas 48.** Le bloc BB (largeur + rang centile
-   × 4 lags) a été ajouté sans que le décompte ni la docstring suivent. Le nom
-   des recettes `stat48_*` est conservé : c'est une clé de registre.
-3. **`Series.to_numpy()` sur une colonne `Datetime` segfaute en polars 1.0.0**
-   (la version épinglée) — pas d'exception, le process meurt. Trouvé en écrivant
-   le découpage temporel du pooling. Aucun autre site du dépôt n'utilise ce
-   motif ; un test de garde le verrouille.
-
-**Gain de côté :** `save_lgb_with_scaler` ne sérialisait ni features ni médianes,
-donc le scorer générique rapportait `unsupported_format` et le gate concluait
-« keep » quoi qu'il arrive — `stat48_v4/v5` n'étaient **jamais promouvables**.
-Les artefacts produits par le chemin recette portent leurs noms de colonnes.
-
-**Pooling multi-symboles** (`train_multi`) : une recette entraînée sur plusieurs
-symboles mis en commun, features construites par symbole et découpage temporel
-commun. Sur Euronext, `min_bars` + holdout demandent ~13,7 ans par titre en
-journalier — le pooling est la condition d'existence du modèle actions, pas un
-raffinement. Vérifié sur 8 titres inentraînables seuls.
-
-Deux points attendent un arbitrage utilisateur, pas du travail :
-
-* **Supertrend** — son ATR interne a été inclus dans la correction Wilder, ce
-  qui dépasse la lettre de la demande (« ADX »). Même défaut, et `ta.supertrend`
-  en Pine utilise `ta.atr` ; une ligne à annuler si non souhaité.
-### 3.7ter 🟠 Ce que ML-14 laisse ouvert
+### 2.2 ML & recherche
 
 | ID | Item | Effort | Pourquoi |
 |---|---|---|---|
-| ~~**ML-16**~~ ✅ | ~~Câbler `train_multi` à l'API et à l'UI~~ — **FAIT (2026-07-27)** : `train_runner.train_multi_and_publish`, `symbols[]` sur `/api/ml/train` (exige une recette, refusé à l'entrée sinon), champ « Pooling multi-symboles » sur la page Modèles. Le holdout est prélevé PAR SYMBOLE avant l'entraînement, et le gate arbitre sur la **moyenne non pondérée** des scores par titre — pondérer par le nombre de barres laisserait le plus long historique décider seul, ce que le pooling cherche justement à éviter. Le détail par symbole reste dans `candidate.per_symbol` |
-| ~~**ML-17**~~ ✅ | ~~Valider le pooling sur des données actions RÉELLES~~ — **FAIT (2026-07-27, re-mesuré le 2026-07-28 après backfill)**, `scripts/measure_pooling_equities.py`. **L'obstacle d'egress ne s'appliquait plus** : les actions `.PA` étaient déjà dans le cache Parquet local. Le pooling ne dégrade pas les titres riches (n = 8 : +0,016 en moyenne) et reste nécessaire pour 17 titres en 1d. Résultats — voir §3.7ter |
-| **ML-20** 🟠 *(nouveau, 2026-07-28)* | **`gate_by_tf` — holdout déclinable par timeframe** | S | Découvert en mesurant ML-17 : en 15m/30m/4h, **aucun** titre actions n'atteint le seuil d'éligibilité, et le plafond est celui de Yahoo (60 j en 15m/30m, 730 j en 1h dont le 4h est ré-agrégé), pas le nôtre — 1 428 / 714 / 1 445 barres au mieux. Descendre `holdout_bars` globalement ne peut pas régler ça sans dégrader le 1h et le 1d, qui ont dix fois plus d'historique. Il faut un bloc `gate_by_tf`, sur le modèle de `hp_by_tf` (ML-11). **Arbitrage à poser avant de coder** : 300 barres de holdout en 15m valent ~9 séances — assez pour promouvoir un modèle ? |
-| **ML-18** 🔵 | Variante recette de `window_sweep` | S | Le sweep reste piloté par la stratégie ; seul `train` a sa variante recette |
-| ~~**ML-19**~~ ✅ | ~~Basculer les stratégies bespoke sur le chemin recette~~ — **FAIT (2026-07-27)** pour `stat48_v4` et `stat48_v5`. Le point qui restait n'était pas `fit()`/`score()` mais l'**écriture** : `save_model` appelait encore `save_lgb_with_scaler`, qui produit un meta.json `format_version: 1` SANS features ni médianes — la cause exacte de l'`unsupported_format` qui rendait ces recettes non promouvables par le gate. `_train` conserve désormais le `TrainedRecipe` complet et `save_model` délègue à `TrainedRecipe.save`. Mesuré avant/après : `{'unsupported_format': True}` → `{'auc_amp': …, 'auc_dir': …}`. Repli sur l'ancien format conservé pour un modèle rechargé depuis le disque (pas de `TrainedRecipe` en mémoire). **`ml_dynamic_threshold` reste dehors** : contrairement à ce que supposait cet item, son `_train` n'a jamais été migré (il entraîne encore via son propre `_train_lgbm`), donc l'équivalence n'y est PAS acquise — le basculer serait un pari, pas une décision d'exploitation |
+| **ML-10** 🔴 | **Réoptimiser les seuils ADX** des YAML (`adx_min`, `adx_threshold`, `needs_adx_above`, `adx_len`) | M | Ces seuils ont été choisis face à un ADX qui valait 35 en moyenne ; ils s'appliquent à un ADX qui vaut 28. Rien n'est cassé, rien n'est réglé. **Seul item qui bloque la confiance dans les stratégies actives** |
+| **ML-12** 🟠 | Instruire les scores négatifs sur la fenêtre de validation | M | 3 des 4 cibles mesurées perdent sur le dernier tiers de l'historique, sous les deux conventions d'ADX. Protocole réduit (40 essais, une paire) donc pas un verdict — mais leurs bons scores viennent d'IS/OOS |
+| **ML-20** 🟠 | **`gate_by_tf` — holdout déclinable par timeframe** | S | Découvert en mesurant ML-17. En 15m/30m/4h, **aucun** titre actions n'atteint le seuil d'éligibilité, et le plafond est celui de Yahoo (60 j en 15m/30m ; 730 j en 1 h, dont le 4 h est ré-agrégé), pas le nôtre : 1 428 / 714 / 1 445 barres au mieux. Baisser `holdout_bars` globalement dégraderait le 1 h et le 1 d, qui ont dix fois plus d'historique. **Arbitrage à poser avant de coder** : 300 barres de holdout en 15 m valent ~9 séances — assez pour promouvoir un modèle ? |
+| **ML-21** 🟠 | **Découpler la profondeur de cache visée du `total` par cycle** | M | Le backfill se déclenche sur `len(cache) < total`, où `total` est la demande du cycle courant (500) et non la profondeur dont les recettes ont besoin (2 000 pour la fenêtre minimale, 3 400 pour un modèle solo). Un cache à 1 000 barres est donc « suffisant » pour le scanner et très court pour l'entraînement — et rien ne le rattrape hors `backfill_equities.py` lancé à la main. Constaté le 2026-07-28 : `AC.PA/1d` est resté à 1 000 barres après réouverture alors que 15m et 4h se re-remplissaient |
+| **ML-13** 🔵 | Mode `follow_setup` dans V11 | M | Dernier morceau de la fusion omnibus. Sa machine anti-whipsaw (confirmation K bougies, cooldown, hystérésis) est du **code**, pas des valeurs : mérite son propre tour de mesure |
+| **ML-15** 🔵 | Rejouer la mesure de la dimension symbole | S | Débloqué : le store contient désormais des titres à ≥ 8 000 barres (`BN.PA` 9 684, `MF.PA` 9 500). La mesure de 2026-07 concluait qu'un modèle par symbole n'apporte rien sur crypto ; à rejouer sur actions |
+| **ML-18** 🔵 | Variante recette de `window_sweep` | S | Le sweep reste piloté par la stratégie ; seul `train` a sa variante recette. C'est la raison pour laquelle la page « Modèles » propose encore des stratégies dans ce formulaire-là |
+| **ML-19b** 🔵 | Basculer `ml_dynamic_threshold` sur le chemin recette | M | Reste dehors de ML-19 : contrairement à ce que supposait l'item, son `_train` n'a jamais été migré — il entraîne via son propre `_train_lgbm`. L'équivalence n'y est donc **pas** acquise, et la bascule serait un pari, pas une décision d'exploitation |
+| **ML-01** 🔵 | Gating de promotion par walk-forward multi-fenêtres | M | `oos_score` sur un seul split : constaté sur `opus_omnibus_v8_no_ml`/`v10_no_ml` un `oos_score` de production positif (0,76-0,77) mais un backtest fenêtre complète nettement négatif (PnL −95/−110) |
 
-* **`dynamic_threshold_no_ml`** — reste un fork, motivé (porte de volatilité en
-  inférence là où le jumeau ML labellise). Le convertir dégraderait le parent.
+### 2.3 Multi-actifs — G3 et au-delà
 
-### 3.7ter ✅ ML-17 livré — le pooling mesuré sur actions réelles
+**G1** (abstractions) et **G2** (SBF 120 en paper, data-only) sont livrés — cf.
+§4. Ce qui suit reste ouvert.
 
-`scripts/measure_pooling_equities.py`, univers = cache Parquet local, aucun
-appel réseau. Recette `omnibus_v4_multi`, TF 1d, 16 titres poolés.
+| ID | Item | Effort | Détail |
+|---|---|---|---|
+| **G3** 🟠 | **Exécution réelle actions** | L | Aujourd'hui `can_execute: false` : le bot émet une notification de trade et suit la position comme en paper, aucun ordre n'est transmis. Suppose un courtier avec API (IBKR, Saxo, Degiro non documenté), la gestion du carnet et des horaires de séance, et le rapprochement des frais réels (courtage + TTF) |
+| **G4** 🔵 | **Univers Nasdaq et ETF mondiaux** | M | *(nouveau, 2026-07-28)* — voir ci-dessous |
 
-> **Mesure refaite le 2026-07-28.** La première passe (2026-07-27) concluait
-> que **116 titres sur 117** ne pouvaient produire aucun modèle seuls. Ce
-> chiffre est caduc : `scripts/backfill_equities.py` a tourné entre-temps et a
-> approfondi le cache journalier — la médiane est passée de ~1 000 à
-> **6 824 barres**. La conclusion s'inverse en 1d et tient en 15m/30m/4h. Les
-> chiffres ci-dessous sont ceux de la seconde passe ; ceux de la première ne
-> décrivaient qu'un cache incomplet, pas une propriété du marché.
+#### G4 — récupération des actions Nasdaq et des ETF mondiaux
 
-**1. Couverture — le backfill a réglé le journalier, pas l'intraday.**
+**L'intention.** Étendre l'univers au-delà d'Euronext : valeurs Nasdaq
+(AAPL, MSFT, NVDA…) et ETF mondiaux (indiciels larges, sectoriels, obligataires).
+L'intérêt n'est pas seulement d'avoir plus d'instruments — c'est que le pooling
+multi-symboles (ML-16) devient bien plus riche quand les titres poolés ne
+partagent pas tous le même régime macro qu'un unique indice national.
 
-| TF | titres | barres (min / méd. / max) | entraînables **seuls** (≥ 3 400) | éligibles au **pool** (≥ 1 650) |
-|---|---:|---|---:|---:|
-| 15m | 120 | 73 / 1 424 / **1 428** | **0** | **0** |
-| 30m | 120 | 73 / 714 / **714** | **0** | **0** |
-| 1h | 120 | 1 218 / 4 459 / 4 463 | 118 | 119 |
-| 4h | 120 | 467 / 1 442 / **1 445** | **0** | **0** |
-| 1d | 120 | 838 / 6 824 / 9 684 | 103 | 116 |
+**Ce qui marche déjà.** `yfinance` sert les tickers américains sans travail
+supplémentaire, `exchange_calendars` connaît XNYS et XNAS, `Instrument` et
+`VenueRegistry` sont neutres en devise, et un univers se déclare par un simple
+fichier `data/universe/<nom>.yaml`. L'ajout d'un symbole depuis l'UI existe
+depuis le 2026-07-28.
 
-En journalier, le pooling n'est plus une condition d'existence : 103 titres sur
-120 s'entraînent seuls. Il reste nécessaire pour les 17 autres — introductions
-récentes, valeurs peu suivies.
+**Les quatre obstacles réels, vérifiés dans le code.**
 
-**En 15m, 30m et 4h, AUCUN titre n'est éligible, et aucun réglage du gate n'y
-changera rien.** Le plafond est celui de **Yahoo**, pas le nôtre : rétention de
-60 jours en 15m/30m, de 730 jours en 1h — dont le 4h est ré-agrégé côté client
-(`app/core/yfinance_provider.py`, table `_INTERVALS`). Cela borne à 1 428 barres
-en 15m, 714 en 30m et 1 445 en 4h. Aucun backfill ne peut aller chercher plus
-loin ; il n'y a rien de plus à la source.
+1. **`suffix` est global au provider, pas à la venue.** `config.yaml` déclare
+   `providers.yfinance.suffix: .PA`, et `YFinanceProvider.provider_symbol()`
+   l'applique à tout ticker sans point. `AAPL` deviendrait donc `AAPL.PA` —
+   une ligne parisienne inexistante, dont la réponse vide est indiscernable
+   d'une suspension de cotation. C'est le blocage principal. Deux issues :
+   déclarer plusieurs instances de provider (`yfinance-eu`, `yfinance-us`)
+   indexées par venue, ou renseigner `provider_symbol` pour chaque membre —
+   ce que le format d'univers accepte déjà, mais qui alourdit un fichier de
+   plusieurs centaines de lignes.
+2. **`session_hours: 8.5` est une constante Euronext.** Le NYSE cote 6,5 h.
+   Cette valeur alimente `bars_span_ms`, donc la fenêtre calendaire du
+   backfill : la laisser telle quelle ferait viser trop court sur les titres
+   américains, et le cache n'atteindrait jamais la profondeur demandée — le
+   défaut exact que `bars_span_ms` avait été introduit pour corriger.
+3. **La devise n'est plus celle du capital.** Un univers USD adossé à un
+   capital EUR introduit une exposition de change non modélisée. `venues.defs`
+   porte déjà `quote_currency`, mais rien ne convertit le PnL ni ne dimensionne
+   la position en tenant compte du taux. À trancher : couvrir, ignorer et
+   documenter, ou refuser le multi-devises (**FIN-09** traite déjà ce sujet et
+   devient un prérequis de G4).
+4. **Le plafond de rétention Yahoo s'applique à l'identique.** 60 jours en
+   15m/30m, 730 jours en 1 h. Les ETF récents et les titres récemment
+   introduits seront donc inéligibles au pooling dans les mêmes conditions
+   qu'en 15m/4h sur Euronext — cf. ML-20.
 
-**2. Le modèle poolé tient sur un holdout jamais vu.** 88 273 lignes
-d'entraînement / 22 076 de validation, coupure temporelle commune au
-2015-09-07, 437 features (288 gardées).
+**Spécifique aux ETF.** Trois points que les actions n'ont pas : les
+distributions (un ETF distribuant décroche du prix à chaque détachement, ce que
+l'OHLCV brut ne signale pas), les ETF **synthétiques** dont le sous-jacent est
+un swap (le volume coté ne reflète pas la liquidité réelle), et les
+capitalisants dont le rendement total n'est pas dans la série de prix. Le
+labelleur travaille sur des rendements : un détachement non ajusté produit un
+faux signal de baisse. À instruire avant d'entraîner quoi que ce soit dessus.
 
-| | AUC amp | AUC dir |
+**Découpage suggéré** : G4a = un univers Nasdaq restreint (~30 titres liquides)
+avec provider par venue, pour lever l'obstacle 1 et 2 sans traiter le change ;
+G4b = les ETF, après arbitrage sur les distributions ; G4c = le multi-devises,
+qui dépend de FIN-09.
+
+### 2.4 Observabilité
+
+OBS-01 (métriques Prometheus) et OBS-02 (logs JSON + correlation IDs) sont
+livrés — cf. §4.
+
+| ID | Item | Effort | Dépend de |
+|---|---|---|---|
+| **OBS-03** 🔵 | Dashboard Grafana | M | OBS-01 |
+| **OBS-04** 🔵 | Alertes Prometheus AlertManager | M | OBS-01 |
+| **OBS-06/07** 🔵 | `/health` enrichi + alerting sur seuils critiques | M | — |
+| **OBS-05** 🔵 | Tracing OpenTelemetry | L | backlog |
+
+### 2.5 Tests, docs, DX
+
+| ID | Item | Effort |
+|---|---|---|
+| **TEST-12** 🟠 *(nouveau)* | Corriger les 4 défauts de test spécifiques à Windows recensés au §1 — `encoding` explicite, symlinks conditionnels, abort LightGBM. Ils obligent aujourd'hui à ignorer un fichier entier pour obtenir un signal local | S |
+| **TEST-04** 🟠 | `pytest-cov` + seuil de couverture en CI ; ajouter mypy et un scan de sécurité | M |
+| **TEST-11** 🟡 | Smoke tests paramétrés pour les stratégies survivantes | M |
+| **TEST-05** 🔵 | Tests d'ordres live mockés complets (idempotence `clientOrderId`, partial fills, réconciliation des frais, restauration après crash) | L |
+| **TEST-06** 🔵 | Fixtures de non-régression backtest byte-identique. Partiellement couvert par `test_execution_parity.py` | M |
+| **DX-01** 🟡 | `Dockerfile` + `docker-compose` (absents, vérifié) | M |
+| **DOC-005/006** 🟡 | 4 guides référencés au README mais inexistants ; 0 ADR | M |
+| **STRAT-01** 🔵 | Champ `status: experimental\|validated\|production\|archived` dans chaque YAML de stratégie — distinct du `SlotLifecycleManager` runtime | M |
+| **ARCH-05** 🔵 | Réduire `app/strategies/smart_money.py` (838 L) et `smart_money_signals.py` (891 L). Dette de lisibilité, pas d'urgence | M |
+| **UI-02** 🔵 | Refonte navigation 3 sections + `/onboarding` | M |
+| **WKFLOW-01/02/03** 🔵 | Conventional commits, pre-commit, templates issues/PR | S |
+
+### 2.6 Itératif — sans urgence
+
+- **FIN-01** (frais VIP OKX dynamiques), **FIN-02** (borrow rate dynamique),
+  **FIN-03** (reporting fiscal FIFO, dépend SEC-06), **FIN-05**
+  (Sharpe/Sortino/Calmar/VaR/CVaR temps réel), **FIN-08** (réconciliation PnL
+  quotidienne), **FIN-09** (multi-devises — **devient un prérequis de G4c**).
+- **DX-02** (setup interactif), **DX-03** (hot-reload dev), **DX-04** (ADR),
+  **DX-05** (profiling intégré), **DX-06** (OpenAPI enrichi).
+- **PERF-03** (PostgreSQL), **PERF-04** (streaming SSE des backtests).
+- **LIFE-01** (tests transitions cycle de vie), **LIFE-02** (timeline UI),
+  **LIFE-03** (auto-re-optimisation), **LIFE-04** (allocation graduelle).
+- **RES-01** (détection de régime HMM), **RES-02** (backtest portefeuille
+  multi-actifs), **RES-03** (sentiment F&G), **RES-04** (extension de l'usage
+  des dérivés).
+- **ARCH-03/12** (`AppState` dataclass) — l'audit avait conclu que
+  l'encapsulation actuelle suffit ; à ne faire que sur besoin concret.
+
+---
+
+## 3. Index des items
+
+État : ✅ livré · 🔴🟠🟡🔵 ouvert (priorité) · ⛔ décliné.
+
+| ID | État | Où |
+|---|---|---|
+| ARCH-01 (`setup_router`) | ✅ | §4 — absorbé par `opus_omnibus_v11` + `MLBackendMixin` |
+| ARCH-03 / ARCH-12 | 🔵 | §2.6 |
+| ARCH-05 | 🔵 | §2.5 |
+| ARCH-07 | ✅ | §4 |
+| BT-05 / STRAT-03 | ✅ | §4 |
+| BT-11 | ⛔ | §6 |
+| BT-13 / STRAT-06 | ✅ | §4 |
+| DEAD-01 | ✅ | §4 — clos par factorisation |
+| DEAD-03 | ✅ | §4 — **décision inversée** le 2026-07-28 |
+| DOC-005/006 | 🟡 | §2.5 |
+| DX-01 | 🟡 | §2.5 |
+| DX-02…06 | 🔵 | §2.6 |
+| FIN-01, FIN-02, FIN-03, FIN-05, FIN-08, FIN-09 | 🔵 | §2.6 |
+| FIN-04, FIN-06, FIN-07 | ✅ | §4 |
+| **G1**, **G2** | ✅ | §4 |
+| **G3** | 🟠 | §2.3 |
+| **G4** (Nasdaq + ETF) | 🔵 | §2.3 — **nouveau** |
+| LIFE-01…04 | 🔵 | §2.6 |
+| ML-01 | 🔵 | §2.2 |
+| ML-02 | ✅ | §4 — registre, provenance, gate |
+| **ML-10** | 🔴 | §2.2 |
+| ML-11 | ✅ | §4 — `hp_by_tf` |
+| ML-12 | 🟠 | §2.2 |
+| ML-13 | 🔵 | §2.2 |
+| ML-14 | ✅ | §4 — entraînement piloté par la recette |
+| ML-15 | 🔵 | §2.2 — débloqué |
+| ML-16 | ✅ | §4 — pooling câblé API + UI |
+| ML-17 | ✅ | §4 — mesuré sur actions réelles |
+| ML-18 | 🔵 | §2.2 |
+| ML-19 | ✅ | §4 — `stat48_v4`/`v5` seulement |
+| **ML-19b** | 🔵 | §2.2 — `ml_dynamic_threshold` reste dehors |
+| **ML-20** | 🟠 | §2.2 — **nouveau** (2026-07-28) |
+| **ML-21** | 🟠 | §2.2 — **nouveau** (2026-07-28) |
+| OBS-01, OBS-02 | ✅ | §4 |
+| OBS-03, OBS-04, OBS-05, OBS-06/07 | 🔵 | §2.4 |
+| PERF-01, PERF-02 | ✅ | §4 |
+| PERF-03, PERF-04 | 🔵 | §2.6 |
+| RES-01…04 | 🔵 | §2.6 |
+| SEC-001 (HMAC `.pkl`) | ⛔ | §6 — sans objet |
+| **SEC-002 → SEC-006** | 🔴 | §2.1 |
+| SEC-007/008, SEC-009/010 | ✅ | §4 |
+| SEC-01, SEC-03, SEC-06 | 🔵 | §2.1 |
+| SEC-04, SEC-05, SEC-020 | ✅ | §4 |
+| STRAT-01 | 🔵 | §2.5 |
+| STRAT-02 | ✅ | §4 — registre daté et versionné |
+| TEST-01/02/03 | ✅ | §4 |
+| TEST-04 | 🟠 | §2.5 |
+| TEST-05, TEST-06, TEST-11 | 🟡/🔵 | §2.5 |
+| **TEST-12** | 🟠 | §2.5 — **nouveau** |
+| UI-02 | 🔵 | §2.5 |
+| WKFLOW-01/02/03 | 🔵 | §2.5 |
+
+---
+
+## 4. Journal — ce qui a été livré
+
+Antéchronologique. Seules les livraisons dont la conclusion **change une
+décision future** sont détaillées ; les autres tiennent en une ligne.
+
+### 2026-07-28 — CandleStore : les trous intérieurs et un log qui mentait
+
+Deux défauts trouvés en instruisant des logs de réouverture de marché.
+
+**Les trous intérieurs n'étaient comblés par aucun chemin.** Le fetch
+incrémental ne regarde qu'après la dernière barre connue ; le backfill
+historique ne gardait que ce qui précède la première. Entre les deux, un trou
+restait un trou pour toujours — même quand la source publiait les barres
+manquantes dans la même réponse, aussitôt jetées. Mesuré sur `AC.PA/4h` : la
+source annonçait 1 522 bougies, le cache en stockait 1 442, l'écart de 80 ne
+bougeait plus. Après correctif : **1 523 barres**.
+
+**Le log annonçait une chose et en faisait une autre** — « tentative de
+récupération de 126 bougies » puis « +1054 » : le chemin profond ignore la
+borne `missing`. Le compte-rendu donne désormais le delta réel après
+déduplication.
+
+Livré aussi : gestion de l'univers d'instruments depuis la page Données (ajout,
+retrait, profondeur de cache par TF), pooling choisi **par univers** au lieu
+d'une saisie de 120 mnémoniques, comparaison solo vs poolé par titre dans l'UI,
+liste d'entraînement réduite aux recettes.
+
+> **Leçon d'outillage, à ne pas réapprendre.** `gh pr merge` fait un
+> `checkout` + `pull` local. Des fichiers qui passent de suivis à ignorés sont
+> donc **supprimés du disque** au fast-forward. C'est arrivé aux 79 parquets de
+> cache, restaurés ensuite depuis git — donc dans leur version d'avant backfill,
+> ce qui a provoqué une matinée de re-téléchargement et des logs alarmants.
+> Avant de fusionner une PR qui dé-versionne des données : sauvegarder hors
+> git, ou vérifier le contenu avant de restaurer.
+
+### 2026-07-27/28 — Lot de huit items du plan
+
+**ML-11 — calibration isotone désactivée en 1 h.** Sous-décision tranchée : un
+bloc **`hp_by_tf:`** par TF, pas une recette par TF. Sa précédence est
+volontairement **inversée** (il l'emporte sur les `params` reçus), pour une
+raison mécanique : chaque stratégie recopie `hp` dans ses `_DEFAULTS` et ses
+`fixed_params`, valeurs sans timeframe qui arrivent donc toujours dans `params`.
+Traité comme un simple défaut, le bloc n'aurait jamais été appliqué — on aurait
+écrit un réglage inerte, exactement l'écart doc/code qu'on corrigeait.
+
+**ML-16 — pooling câblé.** `train_multi` était testé et appelé par personne.
+Holdout prélevé **par symbole avant** l'entraînement, gate sur la moyenne **non
+pondérée** — pondérer par le nombre de barres laisserait le titre au plus long
+historique décider seul, ce que le pooling cherche à éviter.
+
+**ML-17 — pooling mesuré sur actions réelles** (`scripts/measure_pooling_equities.py`,
+cache local, sans réseau). L'obstacle d'egress supposé n'existait plus.
+
+| | |
+|---|---:|
+| Titres `.PA` en cache (1 d) | 120 |
+| Entraînables **seuls** (≥ 3 400 barres) | 103 |
+| Dépendants du pooling | **17** |
+
+| Modèle poolé (16 titres) | AUC amp | AUC dir |
 |---|---:|---:|
-| Validation (interne) | 0,685 | 0,509 |
-| **Holdout, moyenne 16 titres** | **0,630** | 0,500 |
-| Dispersion holdout | min 0,547 · médiane 0,641 · max 0,786 | — |
+| Validation interne | 0,685 | 0,509 |
+| **Holdout jamais vu** | **0,630** | 0,500 |
 
-14 titres sur 16 passent le plancher de 0,55 (ERF.PA à 0,547 et VIRP.PA à
-0,548 restent juste dessous). La direction est **exactement au niveau du
-hasard** (0,500) — cohérent avec la mesure ML-02 sur crypto (0,53-0,54), et
-une raison de plus de ne pas balayer les seuils `dir_*`.
+Solo vs poolé sur 8 titres : 6 où le pooling aide, 1 où il coûte, 1 équivalent,
+écart moyen **+0,016**. Ces huit titres étant précisément ceux qui ont assez
+d'historique pour s'en passer, ce que le chiffre établit n'est **pas un gain**
+mais l'absence de dégradation — ce qui autorise à servir tout l'univers avec un
+modèle unique au lieu de maintenir deux régimes. La direction reste à 0,500,
+soit exactement le hasard : une raison de plus de ne pas balayer les seuils
+`dir_*`.
 
-**3. Solo vs poolé, même titre, même holdout — n = 8.**
+> Une première passe (2026-07-27) concluait « 116 titres sur 117 inaptes au
+> modèle solo ». Ce chiffre décrivait un cache incomplet, pas une propriété du
+> marché : `backfill_equities.py` a tourné entre les deux mesures et la médiane
+> journalière est passée de ~1 000 à 6 824 barres.
 
-| Titre | barres | solo | poolé | écart |
-|---|---:|---:|---:|---:|
-| GFC.PA | 8 778 | 0,638 | 0,681 | **+0,043** |
-| MF.PA | 9 500 | 0,619 | 0,658 | **+0,039** |
-| CS.PA | 9 265 | 0,609 | 0,641 | **+0,031** |
-| LI.PA | 8 777 | 0,759 | 0,786 | **+0,028** |
-| EN.PA | 9 169 | 0,568 | 0,588 | +0,020 |
-| TEP.PA | 8 805 | 0,638 | 0,650 | +0,012 |
-| BN.PA | 9 684 | 0,628 | 0,622 | −0,006 |
-| VIRP.PA | 8 779 | 0,585 | 0,548 | **−0,037** |
+**ML-19 — artefacts `stat48_*` promouvables.** Le point restant n'était pas
+`fit()`/`score()` mais l'**écriture** : `save_lgb_with_scaler` produit un
+meta.json sans features ni médianes, cause exacte de l'`unsupported_format` qui
+faisait conclure « comparaison manuelle requise » au gate quoi qu'il arrive.
+Mesuré avant/après : `{'unsupported_format': True}` → `{'auc_amp': …}`.
 
-6 titres où le pooling aide, 1 où il coûte, 1 équivalent. Écart moyen
-**+0,016**, médian +0,028.
+**OBS-01 — métriques Prometheus.** Les métriques métier sont dérivées de
+`EventHub.publish`, point de branchement unique, plutôt que semées dans le
+trader. Cardinalité protégée : libellé par **template** de route, jamais par URL.
 
-**Précaution de lecture** : ces huit titres sont précisément ceux qui ont assez
-d'historique pour se passer du pooling. Le gain mesuré ici n'est donc pas sa
-raison d'être — celle-ci est en (1), pour les titres qui n'ont pas ce luxe. Ce
-que ces chiffres établissent, c'est l'**absence de dégradation** sur les titres
-riches, ce qui autorise à servir tout l'univers avec un modèle unique plutôt
-qu'à maintenir deux régimes.
+**OBS-02 — logs JSON + correlation IDs.** JSON Lines sur le handler fichier,
+console inchangée. Un `ContextVar` ne traverse pas un thread : les jobs de fond
+transportent l'identifiant explicitement. Les ~900 f-strings ne sont **pas**
+réécrites. Au passage, `_ColorFormatter` mutait `record.levelname` : les
+séquences ANSI finissaient dans `bot.log`.
 
-**`gate.holdout_bars` : 1 500 → 1 400 (2026-07-28).** Fait passer le seuil
-d'éligibilité de 1 750 à 1 650 barres, ce qui ajoute 2 titres en journalier
-(114 → 116). **Ce réglage ne débloque pas le 4h ni le 15m** — cf. (1) : il
-faudrait descendre à ~300, donc un holdout **par TF**, alors que `gate:` n'est
-pas déclinable par timeframe (contrairement à `hp_by_tf`, livré avec ML-11).
-Un bloc `gate_by_tf` est le prochain arbitrage, et c'en est un : 300 barres de
-holdout en 15m valent ~9 séances, ce qui est mince pour juger une promotion.
-Décision ouverte, pas oubli.
+**SEC-007/008** — l'alerte de crash ne transmet plus le log par défaut ; le
+filtre existant ne masquait que ce qui *ressemble* à un secret, jamais les
+données d'exploitation. Sauvegardes en `600`/`700`.
+**SEC-009/010** — `jinja2` 3.1.6 (et non 3.1.5, elle-même vulnérable),
+`sqlalchemy` 2.0.32.
 
----
+**Hygiène du dépôt** — caches `data/ohlcv` et `data/derivatives` et artefacts
+du registre ML sortis de git, **sauf `models/_archive/`** : ces 9 fichiers
+viennent d'un script hors dépôt et sont impossibles à régénérer, git est leur
+seule protection. `starlette==0.38.6` épinglé après une dérive en 1.3.1 qui
+cassait toute la collecte des tests API. `gate.holdout_bars` 1500 → 1400.
 
-## 4. Généralisation multi-actifs (crypto → actions SBF120)
+### 2026-07-26/27 — ML-14, G2, DEAD-01
 
-*Objectif produit distinct de la dette technique : faire tourner le bot sur des
-actions (SBF120) en plus de la crypto. Les abstractions sont posées, l'exécution
-reste à brancher.*
+**ML-14 — entraînement piloté par la recette.** `train(recipe, df, tf)`
+n'importe aucune stratégie, verrouillé par un test qui fait échouer tout import
+de `app.strategies.*` pendant l'entraînement. Équivalences mesurées avant
+bascule : écart max **0.00000000** face à `MLBackend`, **0 divergence de
+signal** sur 10 fenêtres. Au passage : `stat48` a **56 colonnes, pas 48**.
 
-### 4.1 Déjà générique — G1 ✅ FAIT
+**G2 — actions SBF 120 en paper**, data-only (`can_execute: false`).
+**DEAD-01** clos par factorisation plutôt que par suppression.
+**ML-02** — registre daté et versionné, provenance complète (hash de recette,
+commit git, dates, symbole d'entraînement).
 
-- `app/core/providers.py` : protocoles `MarketDataProvider`/`ExecutionProvider`.
-- `Instrument` + `VenueRegistry` (extension `venues.defs`), devise de cotation neutralisée.
-- `BaseStrategy.asset_classes` + marquage des stratégies crypto-only + filtre câblé.
-- Golden test de parité (`tests/test_generic_parity.py`).
-- Couplage ccxt confiné à ~5 fichiers (`exchange`, `candle_store`, `derivatives`,
-  `position_*`, `routes/derivatives`).
+### Antérieur (résumé)
 
-### 4.2 Les 3 points de couplage — ✅ LEVÉS (G2, 2026-07-26)
-
-| Point | État |
-|---|---|
-| **Calendrier de marché** (le plus structurant) | ✅ `app/core/market_calendar.py` — protocole `MarketCalendar`, `AlwaysOpenCalendar` (défaut = comportement 24/7 inchangé), moteur `SessionCalendar` déclaratif (fuseau, séances multiples, fériés fixes **et mobiles** via Pâques, demi-séances), `XPAR` livré en dur, adaptateur `exchange_calendars` si installé. Gating câblé dans `_cycle()` (`MarketHoursMixin`) + `close_at_session_end`. |
-| **Sizing & coûts par venue** | ✅ `execution.quantize_size` / `quantize_price` / `venue_trade_cost` — sizing entier (`lot_size`, `fractional`), grille de cotation (`tick_size`), coûts fixe + % + plancher + **TTF** (assiette à l'achat). Partagés backtest ↔ live, appliqués sur les 3 chemins (ouverture, scale-in, clôture). |
-| **Provider actions** | ✅ `app/core/yfinance_provider.py` (data-only) + `app/core/provider_router.py` (routage par venue) + `app/core/universe.py` + `data/universe/sbf120.yaml` + mode univers du scanner. ⚠ « ML par instrument » : **prémisse revue**, cf. §4.2bis. |
-
-Détail d'exécution : §4.5bis.
-
-### 4.2bis Le ML par instrument n'est plus un prérequis — c'est une question ouverte
-
-Ce plan supposait qu'aller vers les actions imposerait un **modèle par
-instrument**, et listait « retirer le `"BTC" in s` codé en dur » comme travail
-à faire. La décision 11 du chantier ML a mesuré cette prémisse au lieu de la
-suivre, et le résultat la renverse — pour la crypto au moins.
-
-**Ce qui a été mesuré** (`scripts/measure_symbol_transfer.py`, §8bis de la
-conception ML) : matrice de transfert modèle-BTC contre modèle-ETH, évalués
-sur les holdouts BTC/ETH/XRP, 3 timeframes, coupure temporelle commune, IC 95 %
-bootstrap apparié. **17 des 18 cellules indiscernables du bruit** ; ETH ne
-gagne rien à son propre modèle (0.634 contre 0.638 en 1h).
-
-**Ce qui en a été tiré** : le symbole est sorti de la clé du registre
-(`{base_dir}/{tf}/{recette}/`) et ne subsiste qu'en **provenance**
-(`ArtifactRef.train_symbol`). `_resolve_symbol` reste, mais documenté pour ce
-qu'il est — le choix du **jeu d'entraînement**, pas l'identité du modèle. Ce
-n'est donc plus « un codage en dur à retirer », c'est un choix assumé et
-mesuré.
-
-**Ce que ça ne dit pas, et qui concerne directement ce plan.** La mesure porte
-sur **une seule paire entraînable** (BTC ~ ETH, corrélation de rendements
-**0.76**) plus un indice non testable (XRP, corrélé à **0.31**, mais sans assez
-d'historique pour avoir un modèle propre — il manque le contrefactuel). Trois
-cryptos ne disent rien d'un panier actions/ETF.
-
-> **Déclencheur explicite** : dès qu'un actif d'une autre classe et doté d'au
-> moins 8 000 barres entre dans le store (SBF120, Nasdaq, ETF), **rejouer
-> `scripts/measure_symbol_transfer.py`**. Il découvre les symboles depuis le
-> store, mesure les corrélations, sépare paires *entraînables* et *évaluables
-> seulement*, et annonce lui-même la portée de son verdict — aucune édition
-> nécessaire. **C'est là seulement que la conclusion peut s'inverser**, et si
-> elle s'inverse, réintroduire la dimension symbole dans la clé du registre
-> devient un chantier de ce plan (item ML-15, §3.7).
-
-### 4.3 Exécution réelle actions — G3 (Phase 3)
-
-`IBKRExecutionProvider` (`ib_insync`) ou Saxo OpenAPI (idempotence `orderRef`),
-`BalanceSyncMixin` multi-venue (EUR+USDC), exposition par classe d'actif.
-SRD/short : chantier séparé, hors périmètre.
-
-### 4.4 Fournisseurs recommandés
-
-| Rôle | Recommandé | Alternative |
-|---|---|---|
-| Données 1h/1d | `yfinance` (`.PA`, gratuit) | EOD Historical Data |
-| Exécution | Interactive Brokers (`ib_insync`) | Saxo OpenAPI |
-| Calendrier | `exchange_calendars` (XPAR) | `pandas_market_calendars` |
-| Univers | `data/universe/sbf120.yaml` statique | Scraping Euronext (à éviter) |
+Phases 1-6 de refactoring structurel · remise au vert de la CI · persistance
+native LightGBM (fin des `.pkl`) · **PERF-02** parallélisme réel de
+l'optimiseur · **SEC-04** rate-limiting granulaire · **SEC-05** backup
+automatique · **FIN-04/06/07** · **BT-05**, **BT-13** · **ARCH-07** ·
+**TEST-01/02/03** · **STRAT-02** · **PERF-01**.
 
 ---
 
-## 5. Roadmap par sprints
+## 5. Décisions produit en attente
 
-### Terminés
-
-| Sprint | Contenu |
-|---|---|
-| 0-2, 4 | Correctifs P0/P1 sécurité-config, abstractions multi-actifs (G1), qualité métriques |
-| Audit V0-6 | Régressions, sécurité, mesure, architecture, edge SMC, UX/docs |
-| 7 | Nettoyage code mort partiel + **CI/lint/mypy/pytest configs** |
-| 8 | Quick wins financiers & sécurité |
-| Post-8 | Parallélisme optimiseur + dette lint |
-| **Refactoring 1-6** | **MLBackend, 5 façades supprimées, format ML natif, suppression pandas/sklearn, CI remise au vert** (2026-07-23, PR #155) |
-
-### À venir (ordre suggéré)
-
-| Priorité | Sprint | Contenu | Dépend de |
-|---|---|---|---| 
-| 1 | **DEAD-01** | Supprimer les 8 stratégies mortes (décision utilisateur) → clôt SEC-020, débloque TEST-11 + ARCH-01 | décision |
-| 2 | **Sécurité** | SEC-002/003/004/005/006 + bumps CVE | — |
-| 3 | **ARCH-01** | OpusBase (routing partagé) sur les variantes survivantes | DEAD-01 |
-| 4 | **Observabilité** | Prometheus, logs JSON, `/health` enrichi | — |
-| 5 | **Tests** | TEST-11 (smoke), TEST-05 (ordres mockés), coverage CI | DEAD-01 |
-| ~~6~~ | **G2** | ✅ **FAIT (2026-07-26)** — Actions SBF120 en paper (calendrier, sizing, frais, provider, **notification de trade**), cf. §4.5bis | G1 (fait) |
-| 7 | **G3** | Exécution réelle actions (IBKR/Saxo) — la venue passe `can_execute: true`, le reste est déjà en place | G2 **validé en paper** (cf. §4.5bis, « ce qu'il reste à faire ») |
-| — | Itératif | Financier, DX, recherche (§3.5-3.6) | au fil de l'eau |
-
-
-claude/sprint-7-8-planning-xb12m0
-| **DEAD-01** (audit) | Supprimer 8 générations Opus/stat jamais promues — liste **révisée** (7 restants, cf. note) — **8005 lignes** mortes au total avec DEAD-02. ⚠ NE PAS toucher `v8`, `v10`, `opus_stat_pretrained_v4` (dépendances réelles) | M | 🟡 **Analyse livrée (2026-07-19/20), re-confirmée le 2026-07-20 avec méthodologie de production, verdict révisé le 2026-07-20 après discussion utilisateur** — comparatif fonctionnel + empirique des 15 variantes sur 5 TF (15m/30m/1h/4h/1j), **re-run intégral** avec dimensionnement de fenêtre calqué sur la production (`auto_fetch_limit`/`split_is_oos`, plus de cap arbitraire) et **sans aucune stratégie sautée** (les 4 précédemment en timeout — v9/v10/v11_followsetup/v12 — ont maintenant un résultat optimisé complet), rapport HTML mis à jour remis à l'utilisateur (hors dépôt). **`opus_omnibus_v9` retiré de la liste DEAD-01** : classé « supprimer » à tort sur le seul motif que `v10` n'en hérite pas (versioning, pas qualité) — les chiffres montrent au contraire le signal le plus fort de toute la lignée v7-v10 (1h : PnL +561.5, Sharpe 49.4, supérieur à `v8` ET `v10`), avec deux setups Trend-Up réels (`LONG_TU`/`LONG_PULLBACK_TU`) que `v10` a explicitement écartés (jugement délibéré, mais non confirmé sur cette fenêtre de données). Verdict final : suppression nette pour **5/7** restants (`v7`, `v7_pretrained`, `v10_retrained`, `v11_no_ml`, `opus_stat_retrained_v4`), 2 « discutables » (`v11_followsetup[_no_ml]`) — le dossier a changé de forme lors du re-run : la variante *no_ml* se renforce (1h optimisé passe positif), la variante ML s'affaiblit (score OOS de recherche positif partout mais aucun gain traduit sur le backtest complet, signal probable de surapprentissage à 10 essais). **Découvertes hors périmètre DEAD-01** : (1) `v11`/`v12` (actives en production) ressortent négatives sur leur TF de production (1h) dans ce test, positives seulement sur 4h — signalé pour examen séparé, non tranché ; (2) l'écart ML vs no_ml (`v8`/`v8_no_ml`, `v11`/`v11_no_ml`) s'explique par des seuils de setup identiques mais des probabilités non calibrées côté proxy (sigmoïde à gain fixe non entraînée) contre un modèle ML calibré sur historique réel — 6-9× plus de trades, WR proche du hasard côté proxy. **Aucun fichier supprimé.** |
-| **DEAD-02** (audit) | Supprimer `scoring_statistique_opus_v3.py` (579 L, aucun appelant) | S | ✅ FAIT — fichier + yaml supprimés, 0 référence |
-| **DEAD-05** (audit) | Corriger le bug pyflakes `del ds_tr, ds_va` dans `opus_omnibus_v11.py:1065,1093` — **stratégie ACTIVE** (`manual_active: opus_omnibus_v11::30m`) | S | ✅ FAIT — try/finally englobant remplace les deux `del` dupliqués |
-| **DEAD-06** (audit) | Supprimer 5 fonctions publiques jamais appelées : `config.strategy_file_path`, `execution.cap_notional`, `database.get_lifecycle_events`, `feature_store.get_provider`/`list_providers` | S | ✅ FAIT — les 5 supprimées |
-| **DEAD-07** (audit) | 67 imports inutilisés (pyflakes, hors façade `indicators.py`) | M | ✅ FAIT — `ruff --select F` : 73 imports + 15 f-strings auto-fixés, 17 variables locales mortes retirées à la main |
-| **DEAD-09** (audit) | Nettoyer `scripts/__pycache__` orphelin | S | ✅ Déjà propre — vérifié, rien à faire |
-| **TEST-01** (audit + Plan C, doublon exact) | CI GitHub Actions (`pytest -m "not slow"`, lint) | S/M | ✅ FAIT — `.github/workflows/ci.yml` (lint ruff + pytest). **Nuance (2026-07-20)** : le job `lint` existait depuis Sprint 7 mais n'était **jamais passé** (773 erreurs `ruff check .` pré-existantes sur 163 fichiers, aucune liée à un sprint de ce document, jamais résorbées) — désormais **vert pour la première fois**, cf. §4.1bis |
-| **TEST-04/05** (audit) = **TEST-02** (Plan C) | Config ruff (remplace flake8/mypy dispersés) : `ruff.toml`, `mypy.ini` | S/M | ✅ FAIT — `ruff.toml` + `mypy.ini`, `flake8` remplacé par `ruff` dans `requirements.txt` |
-| **TEST-06** (audit) = **TEST-03** (Plan C) | Markers `pytest.ini` (`slow`, `strategy_smoke`), isoler les tests dépendant de `data/ohlcv` versionné | S/M | ✅ FAIT — `pytest.ini` avec les 2 markers ; aucun test ne dépend en fait de données versionnées (vérifié, tout est synthétique/`tmp_path`) |
-| **TEST-11** (audit) = **TEST-04** (Plan C) | Tests smoke paramétrés pour les stratégies survivantes (~13/53 testées) | L | ❌ **Exclu explicitement de Sprint 7** — toujours bloqué par DEAD-01 |
-| **DEAD-03** (audit) | Sort de `XRP_USDC` (données présentes, absent de `scanner.symbols`) | S | ✅ FAIT — **décision : ajouté à `scanner.symbols`** (`config.yaml`) ; pas de données `data/derivatives` pour XRP (gap connu, non bloquant) |
-
-689/689 tests verts (649 avant Sprint 7 + 40 nouveaux Sprints 7/8).
-
-### 4.1bis 🟢 PERF-02 (Plan C) — parallélisme réel de l'optimiseur — ✅ FAIT (2026-07-20)
-
-Travail réalisé hors sprint numéroté, en marge de la préparation de la
-décision DEAD-01 (nécessitait de faire tourner l'optimiseur sur les 15
-variantes candidates × 5 timeframes en un temps raisonnable). Détail
-technique complet dans `CHANGELOG.md` § « Post-Sprint 8 ». Résumé :
-
-- `_SUPPORTED_TFS`/`_detect_timeframe` étendus à 4h/1j (14 fichiers,
-  n'autorisaient que 15m/30m/1h en dur — exécution silencieuse sans signal
-  au-delà).
-- Cache d'entraînement process-wide branché sur `ml_dynamic_threshold`
-  (sous-modèle de `opus_omnibus_v12`) — évitait jusqu'à ~40-60 % de coût par
-  trial en retrains redondants. `random_search(n_trials=10)` sur 1h/8000
-  barres : de « n'aboutit jamais en 300 s » à 67 s.
-- **`random_search` : `n_jobs` réellement câblé** sur l'infra
-  `ProcessPoolExecutor` déjà utilisée par `bayesian_search` (contexte
-  `spawn`, cap mémoire anti-OOM, repli séquentiel) — la boucle restait
-  séquentielle malgré le paramètre accepté. Mesuré ×3.0 sur 3 workers.
-- `rolling_slope`/`rolling_hurst` (`app/core/indicators_market.py`)
-  vectorisés (boucle Python O(n·window) → noyau/forme fermée), bit-exacts
-  contre l'original. Mesuré ×233 / ×57.
-- **Refonte de `param_search_optim`** (option de gel des paramètres à
-  faible impact sur `random_search`/`bayesian_search`/`grid_search`, PAS un
-  4e mode) : dépistage désormais **en budget** (les premiers essais de la
-  recherche elle-même, jamais un essai en plus) et **pool de process
-  partagé** entre dépistage et recherche (`_open_pool`/`_submit_wave`,
-  remplace 3 blocs de création de pool quasi identiques). Mesuré sur
-  `opus_omnibus_v12` : 137-140 s → ~63 s. Garde-fou `_MIN_SCREEN_PER_PARAM`
-  ajouté après avoir mesuré que trop peu d'essais de dépistage vs nombre de
-  paramètres gelait des paramètres sur un signal non fiable (mode
-  facultatif uniquement — le mode grid, réduction obligatoire, n'est pas
-  concerné).
-- **Revue de code approfondie post-refonte** (pas seulement les tests
-  unitaires) : 3 défauts trouvés et corrigés avant tout autre travail —
-  `_run_parallel` comptait les succès au lieu des tentatives (ré-
-  échantillonnage au-delà du budget, risque de `StopIteration` en mode
-  grid) ; comptabilité fragile à la réutilisation d'instance de
-  l'optimiseur ; `optimize_two_phase` ne propageait pas `param_search_optim`
-  à `_dispatch` (toggle utilisateur silencieusement ignoré pour les jobs
-  `ml_tune_hp`).
-- 743/743 tests verts (+54 nouveaux/réécrits au total sur cet ensemble de
-  travaux).
-
-### 4.2 🟢 Quick wins financiers & sécurité — ✅ FAIT (Sprint 8), sauf FIN-01
-
-Sprint 8 exécuté le 2026-07-18, **hors FIN-01** (exclu explicitement).
-
-| ID (Plan C) | Item | Effort | Impact | État |
-|---|---|---|---|---|
-| **FIN-01** | Frais dynamiques par palier VIP OKX (`exchange.fee_schedule`, opt-in) | S | 5 | ❌ **Exclu explicitement de Sprint 8** — reste à faire |
-| **FIN-04** | Benchmark vs Buy & Hold BTC (`app/core/performance.py`) | S | 4 | ✅ FAIT — déjà largement implémenté (`Backtester._add_buy_and_hold`) ; correctif du warmup figé à 210 (désynchronisé du warmup dynamique réel) |
-| **FIN-06** | Compteur de frais par catégorie (taker/maker/borrow/stop) | S | 4 | ✅ FAIT — `Trade.fee_taker`/`fee_maker`/`exit_reason` (migration auto), `get_fee_breakdown()`, `GET /api/stats/fees` ; `exit_reason` distingue enfin clôture ≠ ouverture sur les 9 chemins de fermeture live |
-| **FIN-07** | Slippage paper proportionnel à la taille | S | 3 | ✅ FAIT — `trading.paper_slippage_model: size` (défaut `static`), formule d'impact partagée avec le backtest (`app.core.execution.size_impact_cost`), volume lu depuis `OHLCVCache` |
-| **STRAT-06** (Plan C) = **BT-13** (audit, jamais fait) | Compteur diagnostique `tp_sl_ambiguous_bars` (mesure, ne change pas la décision) | S | 3 | ✅ FAIT — `diagnostics.tp_sl_ambiguous_bars`, résolution stop-prioritaire inchangée |
-| **SEC-04** | Rate-limiting granulaire par endpoint (au lieu du seul `default_limits` global `slowapi`) | S | 3 | ✅ FAIT — `Limiter` déplacé dans `app/api/state.py`, ~25 endpoints décorés `@state.limiter.limit(...)` |
-| **SEC-05** | Backup automatique `trades.db` + `config.yaml` + `strategies/*.yaml` | S | 4 | ✅ FAIT — `deploy/backup.sh` (sqlite3.backup() Python, cohérent WAL), rétention automatique |
-| **ARCH-07** (Plan C, partiel — §1.3.1) | Finir la migration des 16 littéraux `"BTC/USDC"` résiduels vers `DEFAULT_CONFIG_SYMBOL` | S | 2 | ✅ FAIT — les 3 sites de CODE Python migrés (`ohlcv_cache.py`, `config.py`) ; le reste (~28 occurrences) sont des docstrings/commentaires/valeurs par défaut UI HTML, hors scope Python |
-| **BT-05** (audit, jamais fait) = **STRAT-03** (Plan C) | `scripts/audit_param_space.py` : lister chaque stratégie avec taille du param_space vs `n_trials`, warning si couverture < 1e-4 | M | 4 | ✅ FAIT — script + tests, `--strict` pour CI |
-| **PERF-01** (Plan C) | Cache précompute indicateurs : 16 → 128 entrées, configurable | S | 3 | ✅ FAIT — `config.yaml:perf.precompute_cache_size` (défaut 128) |
-
-### 4.3 🟡 Nettoyage résiduel architecture (effort réduit vs Plan C original)
-
-| ID | Item | Effort réel | Note |
-|---|---|---|---|
-| **ARCH-05** (Plan C, partiel — §1.3.1) | Réduire `smart_money.py` (836 L) et `smart_money_signals.py` (702 L) sous 450 L chacun | M (pas L — la séparation en modules existe déjà, il s'agit d'extraire encore, pas de créer l'architecture) | Aucune urgence fonctionnelle, dette de lisibilité pure |
-| **ARCH-03** (Plan C) = **ARCH-12** (audit, jamais fait, jugé optionnel) | `app/core/state.py::AppState` dataclass pour remplacer `app/api/state.py` | L | L'audit avait déjà conclu « l'encapsulation AppState complète reste optionnelle (aucune inversion restante) » après ARCH-04 audit — à ne faire que si un besoin concret apparaît (ex. plusieurs instances de bot par process) |
-| **ARCH-01** (Plan C) | Extraire une stratégie maître unique **`setup_router`** (renommé depuis « OpusBase » 2026-07-20 — trop spécifique au nommage de la lignée existante ; le composant réel route le régime vers une table de setups configurable, avec source de signal — pkl figé / ré-entraîné / proxy / ML V11 — et mode de sortie, tous enfichables) pour les variantes Opus **survivantes** (v8, v9, v10, v11, v12, `opus_stat_pretrained_v4`) | L | À faire **après** DEAD-01 (réduit le nombre de fichiers à traiter). Chaque variante actuelle devient un *preset* YAML du moteur unique (10 setups, 3 axes de conception : routing/source-signal/sortie — cf. carte structurelle remise à l'utilisateur, hors dépôt) |
-| **STRAT-01** (Plan C) | Champ `status: experimental\|validated\|production\|archived` dans chaque YAML stratégie | M | Concept **distinct** du `SlotLifecycleManager` runtime existant (candidat/essai/actif/retiré, calculé) — ceci est une déclaration statique de maturité, filtrable dans l'UI `/config` |
-| **STRAT-02** (Plan C) | Versioning modèles ML (hash features + date, `models/index.json`) | M | Aucun équivalent existant |
-| **SEC-06** (Plan C) | Migrations SQLite via Alembic | M | **Nuance** : `_migrate_schema` idempotent (`ALTER TABLE` auto) existe déjà depuis OPS-08 (audit, Vague 4) — Alembic serait un upgrade d'outillage, pas un correctif de bug. Impact réel réduit vs la description du Plan C |
-| **TEST-05** (Plan C) | Tests d'ordres live mockés (`MockExchange` complet : idempotence clientOrderId, partial fills, réconciliation frais, restauration crash) | L | Aucun équivalent — les tests actuels (`test_live_trader.py`, `test_position_lifecycle.py`) couvrent des scénarios plus étroits |
-| **TEST-06** (Plan C) | Fixtures de non-régression backtest byte-identique (3 configs de référence, JSON snapshot) | M | Partiellement couvert par `test_execution_parity.py`/`test_generic_parity.py` mais pas de snapshot global multi-métriques |
-
-### 4.4 🔵 Bets structurants — observabilité, sécurité avancée, DX
-
-Aucun équivalent dans l'audit initial ni dans ce plan directeur — intégralement
-issus du Plan C, tous confirmés **non démarrés** (fichiers/dépendances absents,
-vérifié) :
-
-| ID | Item | Effort | Impact |
-|---|---|---|---|
-| ~~**OBS-01**~~ | ✅ **FAIT (2026-07-27)** — cf. §3.3 | M | 5 |
-| ~~**OBS-02**~~ | ✅ **FAIT (2026-07-27)** — cf. §3.3 | M | 4 |
-| **OBS-03** | Dashboard Grafana (dépend OBS-01) | M | 4 |
-| **OBS-04** | Alertes Prometheus AlertManager (dépend OBS-01) | M | 4 |
-| **OBS-05** | Tracing OpenTelemetry | L | 2 (backlog) |
-| **DX-01** | Docker + docker-compose (`Dockerfile` absent) | M | 5 |
-| **SEC-01** | Rotation secrets via vault (`SecretProvider` Protocol) | M | 4 |
-| **SEC-03** | Validation Pydantic des payloads API (`app/api/schemas.py` inexistant) | M | 4 |
-| **UI-02** | Refonte navigation 3 sections + `/onboarding` (`onboarding.html` inexistant — seul le regroupement sidebar a été fait par le rewrite frontend, confirmé par la note du Plan C lui-même §0.4) | M | 4 |
-
-### 4.5 🟡 Itératif — reste du backlog Plan C (non re-vérifié en détail)
-
-Ces items n'ont pas été vérifiés ligne à ligne contre le code dans cette
-session (faible risque d'être déjà faits vu qu'ils créent tous des fichiers
-absents du repo — `app/core/regime.py`, `sentiment.py`, `tax_report.py`,
-`app/ml/trainer.py` versioning, etc. — confirmé par `ls` négatif sur les
-cibles principales). Conservés tels quels, priorité inchangée par rapport au
-Plan C :
-
-- **FIN-02** (borrow rate dynamique), **FIN-03** (reporting fiscal FIFO, dépend SEC-06), **FIN-05** (Sharpe/Sortino/Calmar/VaR/CVaR temps réel), **FIN-08** (réconciliation PnL quotidienne), **FIN-09** (multi-devises, backlog).
-- **DX-02** (setup interactif), **DX-03** (hot-reload dev), **DX-04** (ADR), **DX-05** (profiling intégré), **DX-06** (OpenAPI enrichi).
-- ~~**PERF-02** (parallélisation optimiseur)~~ — ✅ **FAIT** (2026-07-20, cf. §4.1bis), retiré de ce backlog. **PERF-03** (PostgreSQL, backlog), **PERF-04** (streaming SSE backtests).
-- **LIFE-01** (tests transitions cycle de vie), **LIFE-02** (timeline UI), **LIFE-03** (auto-re-opt, backlog), **LIFE-04** (allocation graduelle, backlog).
-- **WKFLOW-01/02/03** (conventional commits, pre-commit, templates issues/PR).
-- **RES-01** (regime detection HMM), **RES-02** (backtest portfolio multi-actifs), **RES-03** (sentiment F&G, backlog), **RES-04** (extension usage dérivés).
-- **ML-01** *(nouveau, découvert 2026-07-20 lors de l'investigation légitimité pkl §DEAD-01)* — Gating de promotion `manual_active` par walk-forward multi-fenêtres plutôt qu'un `oos_score` sur un seul split. Constaté sur `opus_omnibus_v8_no_ml`/`v10_no_ml` (déjà actives) : `oos_score` de production positif (0.76-0.77) mais backtest fenêtre complète nettement négatif (PnL −95/−110) — même divergence surapprentissage que `v11_followsetup`. Pas de suppression ni de retrait de `manual_active` proposé ici, juste un chantier de fiabilisation du critère de promotion.
-- **ML-02** *(nouveau 2026-07-20, mis à jour 2026-07-24 — 🟢 majoritairement implémenté)* — **Gestion du cycle de vie des modèles ML** (entraînement, provenance, fraîcheur, reproductibilité). Chantier structurant issu de l'investigation légitimité du modèle V4 figé (§DEAD-01, rapport HTML §06). Effort M/L.
-  > Note terminologique : les constats ci-dessous datent d'avant la bascule vers le format natif LightGBM (`.lgb` + `.meta.json`, sans pickle) — remplacer mentalement « pkl » par « modèle » partout où le mot apparaît encore ; il n'y a plus aucun `.pkl` dans le dépôt (cf. « Déclinés/obsolètes » ci-dessous, HMAC .pkl rendu sans objet).
-  - **Dimensionnement de la fenêtre d'entraînement.** ✅ Configurable — `MLStrategyTrainer._retrain_thread` couvre désormais explicitement le plancher du gate (`holdout_bars+min_window_bars`) et accepte un knob `live_fetch_bars` par stratégie pour viser une fenêtre bien plus large (l'edge mesuré du V4 figé vient d'un entraînement sur ~40k barres) — aucune stratégie n'y est forcée par défaut (valeur restant à calibrer au banc, cf. conception §8).
-  - **Provenance / métadonnées.** ✅ Fait — `meta.json` v2 (`provenance` : symbole, dates début/fin, n_bars, hash de recette, commit git ; `gate` : décision de promotion). Absorbe **STRAT-02** (`models/index.json` devient un cache reconstruisible du registre, pas un fichier à maintenir).
-  - **Reproductibilité.** ✅ Fait — `app/ml/train_runner.py` + `scripts/train_model.py`, committé, paramétré (fenêtre/as_of/hyperparamètres), dry-run par défaut.
-  - **Ré-entraînement périodique sur GRANDE fenêtre + gate de promotion.** ✅ Fait — `app/ml/policy.py` (`maybe_refresh`, `decide_gate`) : candidat entraîné puis comparé au sortant sur un holdout partagé, promu seulement s'il ne régresse pas ; audit trail dans `decisions.jsonl`. Cadence encore en heures (`retrain_interval_h`), pas en barres, côté live — cf. détail dans la conception §7.
-    ⚠️ Ne couvre PAS **ML-01** : ML-01 gate la promotion d'une **stratégie** vers `manual_active` (machine à états `slot_lifecycle.py`, walk-forward multi-fenêtres sur le PnL) ; ce qui précède gate la promotion d'un **modèle** (artefact ML au sein du registre, AUC sur holdout). Deux mécanismes distincts à la même philosophie (comparer sur une fenêtre tenue à l'écart plutôt qu'accepter un score unique) — ML-01 reste un chantier séparé, non traité ici. La mention « absorbe ML-01 » de la spec détaillée (`CONCEPTION_CYCLE_DE_VIE_ML.md`, écrite avant implémentation) était erronée sur ce point précis — corrigée dans le document.
-  - **Optimiser contre un modèle figé.** ✅ Fait (opt-in, pas par défaut) — `OptimizerSearchEngine.ml_mode` lu depuis `cfg["optimizer"]["ml_mode"]` (in-process et workers). Reste `"inline"` par défaut (flip de méthodologie non imposé silencieusement).
-  - ➕ **Spec détaillée** : `docs/CONCEPTION_CYCLE_DE_VIE_ML.md` — architecture **recette / registre / politique de rafraîchissement**, §7 tient à jour le statut précis de chaque étape (E1-E7) et ce qui reste (passe de confirmation optimiseur, feature freezing, purge direction étendue aux stratégies sœurs, UI Modèles — E7 non commencé).
-
-
-### 4.5bis 🟢 G2 — actions SBF 120 en paper — ✅ FAIT (2026-07-26)
-
-Lève les **3 points de couplage** de §4.2. Principe directeur : rien de
-spécifique aux actions dans le moteur — tout passe par la **venue**, et les
-défauts de venue reproduisent exactement le comportement crypto historique.
-Une configuration crypto existante n'emprunte aucun code nouveau (le routeur
-n'est même pas instancié tant qu'aucune venue ne déclare de provider).
-
-**Ce qui a été livré**
-
-| Brique | Fichier | Rôle |
-|---|---|---|
-| Calendrier de marché | `app/core/market_calendar.py` | Protocole + `AlwaysOpenCalendar` (défaut) + moteur `SessionCalendar` déclaratif + `XPAR` + adaptateur `exchange_calendars` optionnel |
-| Gating de la boucle live | `app/live/market_hours_mixin.py` | Filtre les entrées hors séance (log throttlé), garde-fou par signal, clôture avant fin de séance. **Les positions ouvertes restent gérées marché fermé** (trailing, stop au gap) |
-| Contraintes & coûts venue | `app/core/execution.py` | `quantize_size`, `quantize_price`, `venue_trade_cost` — partagés backtest ↔ live |
-| Modèle de venue étendu | `app/core/bot_identity.py` | `calendar`, `data_provider`, `can_execute`, `close_at_session_end`, `fee_pct/fixed/min`, `transaction_tax_pct`, `min_notional` |
-| Provider actions | `app/core/yfinance_provider.py` | Data-only, chemin unique via le paquet `yfinance` (dépendance depuis 2026-07-27 — l'API chart publique répond 429 sans cookie/crumb) |
-| Routage multi-provider | `app/core/provider_router.py` | Aiguille par venue ; **inerte** si aucune venue ne déclare de provider |
-| Univers statiques | `app/core/universe.py`, `data/universe/sbf120.yaml` | Liste versionnée d'instruments, cumulée avec `scanner.symbols` |
-| Vérification d'univers | `scripts/check_universe.py` | Interroge le provider ticker par ticker (radiés/renommés) |
-| Notification de trade | `app/core/notifications.py` | `notify_trade_signal` — **le livrable central** ci-dessous |
-
-**Notification de trade (exigence explicite du sprint).** Tant que l'exécution
-réelle n'est pas branchée, une venue `can_execute: false` ne transmet **aucun**
-ordre : le bot calcule le trade, le suit comme une position paper, et émet un
-*ticket* portant **symbole, direction, prix d'ouverture, stop-loss,
-take-profit**, plus quantité, notionnel, R:R, stratégie et venue. Envoyé en
-**synchrone** et jamais throttlé (c'est le seul chemin vers l'exécution, il ne
-peut pas être perdu dans une queue). Le message « position ouverte » habituel
-est volontairement **supprimé** dans ce cas : il laisserait croire à un fill
-réel. Symétrique à la sortie (« TRADE À SOLDER »). Décision prise dans
-`_open_position`/`_close_position` — donc valable même sans routeur.
-
-**Deux hypothèses crypto retirées du `CandleStore`** (elles auraient troué
-l'historique actions en silence) : le plancher `since` à 2017 (fondation
-d'OKX) et le rejet des barres à volume nul — désormais pilotés par le provider
-(`min_since_ms`, `drop_zero_volume`).
-
-**Limitations de l'API Yahoo, traitées explicitement** (elles se manifestent
-autrement par des réponses vides inexpliquées) : profondeur plafonnée par
-granularité (1 m → 7 j, intraday → 60 j, 1 h → 730 j, 1 j → illimité) avec
-troncature **avertie une fois** par symbole/TF ; intervalles inexistants
-(3 m, 2 h, 4 h, 6 h, 8 h, 12 h) ré-agrégés depuis l'intervalle de base, ancrés
-sur l'epoch pour que le cache Parquet incrémental déduplique ; throttling
-process-wide + backoff exponentiel sur 429 + cache TTL ; dégradation gracieuse
-(liste vide, jamais d'exception qui tue un cycle).
-
-> ⚠️ **Conséquence méthodologique** : un backtest actions en 15 m ne peut pas
-> dépasser ~60 jours d'historique, et ~2 ans en 1 h. Les fenêtres
-> d'entraînement ML calibrées sur la crypto (~40 k barres) ne sont donc **pas**
-> atteignables en intraday actions. À arbitrer avant d'entraîner quoi que ce
-> soit sur SBF 120 : soit du journalier, soit un fournisseur payant (EOD
-> Historical Data, cf. §4.4).
-
-**Ce qu'il reste à faire avant de faire tourner G2 pour de vrai**
-
-1. **Vérifier l'univers** : `data/universe/sbf120.yaml` est un instantané
-   constitué **hors ligne** (`verified: false`) — la composition de l'indice est
-   révisée trimestriellement. Lancer `python scripts/check_universe.py sbf120`
-   puis recouper avec la publication Euronext. Le fichier est délibérément
-   marqué non vérifié plutôt que présenté comme faisant autorité.
-2. **Vérifier le taux de TTF** (`transaction_tax_pct`, posé à 0,4 % dans
-   l'exemple de `config.yaml` d'après ce plan) et les frais réels du courtier
-   (`fee_pct`, `fee_fixed`, `fee_min`) — ils pilotent directement le seuil de
-   rentabilité et le `min_notional`.
-3. **Décommenter** la venue `euronext-paper`, `scanner.universe` et
-   `providers.yfinance` dans `config.yaml`, puis assigner les instruments
-   (`venues.assign`). Rien n'est activé par défaut.
-4. **Rejouer `scripts/measure_symbol_transfer.py`** dès qu'un titre atteint
-   8 000 barres dans le store — c'est le déclencheur explicite posé en §4.2bis,
-   et le seul moment où la décision « symbole hors de la clé du registre »
-   peut s'inverser.
-
-**Non traité (hors périmètre, assumé)** : `bars_per_year` reste calé sur
-365 j × 24 h, donc le Sharpe annualisé d'un backtest actions est sous-estimé
-(une séance Euronext fait 8,5 h, 252 jours par an) — les comparaisons
-inter-stratégies restent valides à classe d'actif constante, pas entre crypto
-et actions. Correction à porter en même temps que G3.
-
-**Tests** : 6 nouveaux fichiers, 121 tests — `test_market_calendar.py`,
-`test_venue_costs.py`, `test_universe.py`, `test_yfinance_provider.py`,
-`test_provider_router.py`, `test_equity_paper_flow.py` (parcours bout à bout
-sur un vrai `LiveTrader`). Chaque comportement actions a son pendant
-« non-régression crypto ».
+- **ML-20 — quel holdout par timeframe ?** 300 barres en 15 m valent ~9
+  séances. Assez pour promouvoir un modèle, ou faut-il renoncer à promouvoir
+  automatiquement sur les TF intraday actions ? Rien ne peut avancer sans cet
+  arbitrage.
+- **G4 — le multi-devises est-il dans le périmètre ?** Un univers Nasdaq en USD
+  adossé à un capital EUR crée une exposition de change. Couvrir, ignorer et
+  documenter, ou refuser ? Détermine si G4c existe.
+- **G4 — les ETF distribuants sont-ils acceptés ?** Sans ajustement des
+  détachements, le labelleur lira un faux signal de baisse à chaque
+  distribution.
+- **Univers SBF 120** : la composition porte `verified: true` au 2026-07-26,
+  mais l'indice est révisé trimestriellement — à recontrôler
+  (`scripts/check_universe.py sbf120`). Le taux de TTF retenu (0,4 %) reste à
+  confirmer.
+- **FIN-01** : implémenter les frais VIP OKX dynamiques.
 
 ---
 
-## 6. Décisions produit en attente
+## 6. Déclinés / obsolètes
 
-- **G2 / univers SBF 120** : valider la composition de
-  `data/universe/sbf120.yaml` (`verified: false`) et le taux de TTF retenu —
-  cf. §4.5bis, « ce qu'il reste à faire ».
-- **DEAD-01** : feu vert pour supprimer les 8 stratégies mortes (analyse
-  livrée). Bloque plusieurs chantiers en aval.
-- **FIN-01** : implémenter les frais VIP OKX dynamiques (exclu des sprints
-  précédents).
-
-### Déclinés / obsolètes (ne pas rouvrir sans confirmation)
+Ne pas rouvrir sans confirmation explicite.
 
 - ⛔ **BT-11 / plafond d'exposition BTC+ETH corrélés** — décliné par
   l'utilisateur (multi-crypto corrélé assumé).
-- ⛔ **DEAD-03 / dé-versionner `data/`** — les parquets sont poussés
-  volontairement depuis la machine de l'utilisateur ; ne pas exécuter sans
-  accord explicite. (Sort de `XRP_USDC` déjà tranché : ajouté à `scanner.symbols`.)
-- ⛔ **HMAC de signature des `.pkl`** (ancien SEC-001) — rendu **sans objet** :
-  il n'y a plus aucun `.pkl` ni pickle dans le code (format 100 % LightGBM natif).
+- ⛔ **HMAC de signature des `.pkl`** (ancien SEC-001) — sans objet : il n'y a
+  plus aucun `.pkl` ni pickle dans le code.
 - ⛔ **Encapsulation `AppState` complète** — optionnelle, aucune inversion de
   couche restante ; à ne faire que sur besoin concret (multi-instances).
+- ✅ **DEAD-03 / dé-versionner `data/`** — **décision inversée le 2026-07-28**.
+  L'entrée précédente disait « les parquets sont poussés volontairement, ne pas
+  exécuter sans accord explicite » ; cet accord a été donné. Les caches
+  `data/ohlcv` et `data/derivatives` sont désormais ignorés et détachés, les
+  fichiers restant sur disque. Restent suivis à dessein : `data/universe/`,
+  `data/oos_tracker.json`, `data/backtest_history.json` — écrits par décision,
+  pas par accumulation. **Conséquence** : un clone neuf démarre avec un cache
+  vide, à amorcer par `scripts/backfill_equities.py`.
