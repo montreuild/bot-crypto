@@ -82,9 +82,14 @@ def _spy_backfill(store):
     seen = []
     original = store._fetch_historical
 
-    def spy(exchange, symbol, tf, before_ms, needed):
+    # ``**kw`` et non une signature figée : ce spy n'observe QUE la cadence
+    # d'appel, il n'a pas à connaître les arguments que `_fetch_historical`
+    # gagne au fil du temps (`known_ts` en est un). Une signature exacte le
+    # transformait en test de signature, qui échoue sur une évolution
+    # rétro-compatible.
+    def spy(exchange, symbol, tf, before_ms, needed, **kw):
         seen.append((symbol, tf, before_ms, needed))
-        return original(exchange, symbol, tf, before_ms, needed)
+        return original(exchange, symbol, tf, before_ms, needed, **kw)
 
     store._fetch_historical = spy
     return seen
@@ -498,3 +503,53 @@ class TestCacheBoundsAreUTC:
         stamps = [epoch_ms(t) for t in cached["time"].to_list()]
         gaps = [b - a for a, b in zip(stamps, stamps[1:]) if b - a != ex.tf_ms]
         assert gaps == [], f"trou(s) à la jonction du backfill : {gaps}"
+
+
+class TestInteriorGaps:
+    """Les trous INTÉRIEURS — barres absentes du cache alors qu'elles tombent
+    dans sa plage — n'étaient comblés par aucun chemin.
+
+    Le fetch incrémental ne regarde qu'après la dernière barre connue. Le
+    backfill historique ne gardait que ce qui précède la première. Entre les
+    deux, un trou restait un trou pour toujours, même quand la source venait
+    de publier les barres manquantes dans la même réponse.
+
+    Constaté en production sur `AC.PA/4h` : la source annonçait 1522 bougies,
+    le cache en stockait 1442, et l'écart de 80 ne bougeait plus.
+    """
+
+    def _holed_cache(self, store, ex, symbol="HOLE/EUR", tf="15m"):
+        """Cache couvrant toute la plage, mais amputé en son milieu."""
+        rows = ex._all()
+        kept = rows[:50] + rows[80:]          # 30 barres manquantes au milieu
+        store._save(store._path(symbol, tf), store._raw_to_df(kept))
+        return len(kept), len(rows)
+
+    def test_an_interior_gap_is_filled(self):
+        ex = _DeepExchange(depth=400)
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            kept, total = self._holed_cache(store, ex)
+            assert kept == total - 30, "le cache de départ doit bien être troué"
+            store.fetch(ex, "HOLE/EUR", "15m", total=500)
+            cached = store.load_cached("HOLE/EUR", "15m")
+        assert len(cached) == total, (
+            f"{total - len(cached)} barre(s) toujours manquante(s) — le chemin "
+            f"profond avait la réponse et la jetait")
+        stamps = [epoch_ms(t) for t in cached["time"].to_list()]
+        gaps = [b - a for a, b in zip(stamps, stamps[1:]) if b - a != ex.tf_ms]
+        assert gaps == [], f"trou(s) résiduel(s) : {gaps}"
+
+    def test_a_complete_cache_triggers_no_write(self):
+        """Le pendant : sans trou ni barre plus ancienne, le chemin profond
+        doit conclure « rien de neuf » et laisser le memo d'épuisement se
+        poser — sinon on réécrirait le parquet à chaque cycle."""
+        ex = _DeepExchange(depth=400)
+        with tempfile.TemporaryDirectory() as d:
+            store = _store(d)
+            store._save(store._path("FULL/EUR", "15m"),
+                        store._raw_to_df(ex._all()))
+            store.fetch(ex, "FULL/EUR", "15m", total=500)
+            store.fetch(ex, "FULL/EUR", "15m", total=500)
+            cached = store.load_cached("FULL/EUR", "15m")
+        assert len(cached) == ex.depth

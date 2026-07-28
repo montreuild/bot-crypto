@@ -49,6 +49,17 @@ from typing import Dict, List, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# La console Windows est en cp1252 : les flèches du rapport de plan (« 1d → ~5100
+# barres ») faisaient lever UnicodeEncodeError AVANT le premier téléchargement,
+# donc `--help` et `--plan` étaient inutilisables sur le poste qui lance
+# justement ce script. `errors="replace"` plutôt que renoncer aux caractères :
+# un rapport légèrement dégradé vaut mieux qu'un script qui refuse de démarrer.
+try:                                                        # pragma: no cover
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, OSError):
+    pass
+
 logger = logging.getLogger("backfill")
 
 #: Barres par an et par TF sur une séance XPAR (8,5 h, ~256 séances) — sert à

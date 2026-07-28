@@ -36,6 +36,7 @@ from app.api.routes import (
     replay,
     scanner,
     trades,
+    universe,
     ws,
 )
 from app.core.database import init_db
@@ -303,5 +304,6 @@ app.include_router(replay.router)
 app.include_router(derivatives.router)
 app.include_router(portfolio.router)
 app.include_router(data.router)
+app.include_router(universe.router)  # Univers d'instruments (lecture + édition)
 app.include_router(ws.router)  # WebSocket temps réel + /api/ws/status
 app.include_router(audit_log.router)  # Journal d'audit /api/audit/log

@@ -241,11 +241,17 @@ class CandleStore:
                 else:
                     logger.info(
                         f"[CandleStore] {symbol}/{tf} — cache insuffisant "
-                        f"({len(df_cached)}/{total} bougies) — "
-                        f"tentative de récupération de {missing} bougies historiques"
+                        f"({len(df_cached)}/{total} bougies) — recherche de "
+                        f"bougies manquantes (il en faudrait {missing} de plus)"
                     )
-                    old_raw = self._fetch_historical(exchange, symbol, tf, first_ms, missing)
+                    # Les horodatages connus permettent au chemin profond de
+                    # distinguer un trou intérieur d'une barre déjà en cache.
+                    known_ts = (set(df_cached["time"].dt.epoch("ms").to_list())
+                                if len(df_cached) else set())
+                    old_raw = self._fetch_historical(exchange, symbol, tf, first_ms,
+                                                     missing, known_ts=known_ts)
                 if old_raw:
+                    n_before  = len(df_cached)
                     df_old    = self._raw_to_df(old_raw)
                     df_merged = _valid_bars(
                         pl.concat([df_cached, df_old]).unique("time").sort("time"),
@@ -254,8 +260,15 @@ class CandleStore:
                     self._save(path, df_merged)
                     df_cached = df_merged
                     self._forget_exhausted(symbol, tf)
+                    # Le DELTA RÉEL, pas la taille du lot reçu. L'ancien message
+                    # annonçait « tentative de récupération de 126 bougies » puis
+                    # « +1054 » : le chemin profond ignore la borne `missing`, si
+                    # bien que l'intention affichée et l'action ne parlaient pas
+                    # de la même chose. Après déduplication, seul ce delta décrit
+                    # ce qui a réellement changé sur disque.
                     logger.info(
-                        f"[CandleStore] {symbol}/{tf} : +{len(old_raw)} bougies historiques "
+                        f"[CandleStore] {symbol}/{tf} : +{len(df_cached) - n_before} "
+                        f"bougies ({len(old_raw)} reçues, le reste déjà en cache) "
                         f"→ {len(df_cached)} stockées au total"
                     )
                 elif not self._history_exhausted(symbol, tf, first_ms):
@@ -374,8 +387,19 @@ class CandleStore:
         return all_raw
 
     def _fetch_historical(self, exchange, symbol: str, tf: str,
-                          before_ms: Optional[int], needed: int) -> List[list]:
-        """Fetch des bougies antérieures à before_ms pour compléter le cache."""
+                          before_ms: Optional[int], needed: int,
+                          known_ts: Optional[set] = None) -> List[list]:
+        """Fetch des bougies manquantes pour compléter le cache.
+
+        ``known_ts`` : horodatages DÉJÀ en cache. Sans eux, seul le critère
+        « antérieur à ``before_ms`` » distingue le neuf du connu — et il laisse
+        échapper les **trous intérieurs**, ces barres absentes du cache alors
+        qu'elles tombent dans sa plage. Le chemin profond ci-dessous les avait
+        pourtant sous la main et les jetait : sur `AC.PA/4h`, la source publiait
+        1522 barres, le cache en stockait 1442, et l'écart de 80 ne se comblait
+        jamais — aucun autre chemin ne le pouvait, le fetch incrémental ne
+        regardant qu'après la dernière barre connue.
+        """
         LIMIT      = 1000
         rate_sleep = getattr(exchange, "rateLimit", 1200) / 1000
 
@@ -392,20 +416,25 @@ class CandleStore:
             except Exception as e:
                 logger.warning(f"[CandleStore] fetch_max {symbol}/{tf} : {e}")
                 rows = []
-            older = ([r for r in rows if r[0] < before_ms]
-                     if before_ms is not None else rows)
+            known = known_ts or set()
+            older = [r for r in rows
+                     if before_ms is not None and r[0] < before_ms]
+            gaps = [r for r in rows
+                    if (before_ms is None or r[0] >= before_ms)
+                    and r[0] not in known]
+            fresh = older + gaps
             if rows:
                 logger.info(
                     f"[CandleStore] {symbol}/{tf} — profondeur maximale de la "
-                    f"source : {len(rows)} bougies, dont {len(older)} antérieures "
-                    f"au cache"
+                    f"source : {len(rows)} bougies ; {len(older)} antérieures au "
+                    f"cache, {len(gaps)} comblant des trous intérieurs"
                 )
-            if older:
-                older.sort(key=lambda x: x[0])
-                return older
+            if fresh:
+                fresh.sort(key=lambda x: x[0])
+                return fresh
             if rows:
-                # Le provider a répondu, et il n'a rien de plus ancien. C'est
-                # une réponse, pas un échec : inutile de retenter en borné.
+                # Le provider a répondu, et il n'a rien que le cache ignore.
+                # C'est une réponse, pas un échec : inutile de retenter en borné.
                 return []
 
         try:
