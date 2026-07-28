@@ -87,7 +87,8 @@ def start_train_job(strategy: str, symbol: str, tf: str, *,
                     publish: bool = False,
                     base_dir: str = "models",
                     recipe: Optional[str] = None,
-                    symbols: Optional[List[str]] = None) -> str:
+                    symbols: Optional[List[str]] = None,
+                    compare_solo: int = 0) -> str:
     """``recipe`` non nul : entraînement piloté par la recette (étape C), sans
     instancier de stratégie. ``strategy`` ne sert alors qu'à étiqueter le job.
 
@@ -103,13 +104,14 @@ def start_train_job(strategy: str, symbol: str, tf: str, *,
     _spawn(_run_train, (job_id, strategy, symbol, tf),
            {"as_of": as_of, "window_bars": window_bars, "params": params,
             "publish": publish, "base_dir": base_dir, "recipe": recipe,
-            "symbols": pooled})
+            "symbols": pooled, "compare_solo": int(compare_solo or 0)})
     return job_id
 
 
 def _run_train(job_id: str, strategy: str, symbol: str, tf: str,
                recipe: Optional[str] = None,
-               symbols: Optional[List[str]] = None, **kwargs: Any) -> None:
+               symbols: Optional[List[str]] = None,
+               compare_solo: int = 0, **kwargs: Any) -> None:
     from app.core.metrics import observe_training, timed
     from app.ml.train_runner import (
         train_and_publish,
@@ -121,7 +123,8 @@ def _run_train(job_id: str, strategy: str, symbol: str, tf: str,
         with timed() as t:
             if recipe and symbols:
                 kwargs.pop("gate_cfg", None)
-                result = train_multi_and_publish(recipe, symbols, tf, **kwargs)
+                result = train_multi_and_publish(recipe, symbols, tf,
+                                                 compare_solo=compare_solo, **kwargs)
             elif recipe:
                 kwargs.pop("gate_cfg", None)
                 result = train_recipe_and_publish(recipe, symbol, tf, **kwargs)

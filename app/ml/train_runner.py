@@ -479,12 +479,70 @@ def _pooled_holdout_metrics(prefix: str, holdouts: Dict[str, pl.DataFrame],
     return agg
 
 
+def _solo_vs_pooled(recipe_name: str, tf: str, gc_, p: Dict[str, Any],
+                    train_frames: Dict[str, pl.DataFrame],
+                    holdouts: Dict[str, pl.DataFrame],
+                    pooled_per_symbol: Dict[str, Any],
+                    limit: int) -> List[Dict[str, Any]]:
+    """Pour chaque titre, l'écart entre un modèle POOLÉ et un modèle DÉDIÉ.
+
+    C'est la question que se pose l'exploitant devant un pool : « ce titre
+    gagne-t-il à être servi par le modèle commun, ou méritait-il le sien ? ».
+    La moyenne agrégée que le gate arbitre ne peut pas y répondre — elle peut
+    recouvrir douze titres homogènes comme six bons et six mauvais.
+
+    Coûteux par construction : un entraînement complet par titre. D'où
+    ``limit``, et le caractère opt-in côté API. Les titres dont l'historique
+    ne permet pas un modèle solo sont rapportés comme tels plutôt qu'omis —
+    « le pooling est ta seule option ici » est une réponse, pas un trou.
+    """
+    from app.ml import recipe_trainer
+
+    out: List[Dict[str, Any]] = []
+    for symbol in list(train_frames)[:max(0, int(limit))]:
+        pooled_auc = (pooled_per_symbol.get(symbol) or {}).get(gc_.metric)
+        row: Dict[str, Any] = {"symbol": symbol, "pooled": pooled_auc,
+                               "n_bars": len(train_frames[symbol])}
+        if len(train_frames[symbol]) < gc_.min_window_bars:
+            row["solo"] = None
+            row["note"] = (f"historique insuffisant pour un modèle dédié "
+                           f"({len(train_frames[symbol])} < {gc_.min_window_bars})")
+            out.append(row)
+            continue
+        solo = recipe_trainer.train(recipe_name, train_frames[symbol], tf, params=p)
+        if solo is None:
+            row["solo"] = None
+            row["note"] = "entraînement dédié sans résultat exploitable"
+            out.append(row)
+            continue
+        tmp = tempfile.mkdtemp(prefix="ml_solo_")
+        try:
+            prefix = os.path.join(tmp, f"{recipe_name}_{tf}")
+            if not solo.save(prefix):
+                row["solo"] = None
+                row["note"] = "écriture de l'artefact dédié impossible"
+                out.append(row)
+                continue
+            import app.ml.policy as policy
+            m = policy.score_holdout(prefix, holdouts[symbol], strategy=recipe_name,
+                                     gate_cfg=gc_, params=p)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        row["solo"] = m.get(gc_.metric)
+        if row["solo"] is not None and pooled_auc is not None:
+            row["delta"] = round(float(pooled_auc) - float(row["solo"]), 4)
+        out.append(row)
+    out.sort(key=lambda r: (r.get("delta") is None, -(r.get("delta") or 0)))
+    return out
+
+
 def train_multi_and_publish(recipe_name: str, symbols: List[str], tf: str, *,
                             as_of: Optional[str] = None,
                             window_bars: Optional[int] = None,
                             params: Optional[Dict[str, Any]] = None,
                             publish: bool = False,
                             base_dir: str = "models",
+                            compare_solo: int = 0,
                             source: str = "runner_pooled") -> Dict[str, Any]:
     """Entraîne UNE recette sur PLUSIEURS symboles mis en commun, puis gate.
 
@@ -576,6 +634,11 @@ def train_multi_and_publish(recipe_name: str, symbols: List[str], tf: str, *,
             "incumbent": incumbent_metrics, "train_meta": trained.train_meta,
             "incumbent_version": incumbent.version_id if incumbent else None,
         }
+        if compare_solo:
+            out["solo_vs_pooled"] = _solo_vs_pooled(
+                recipe_name, tf, gc_, p, train_frames, holdouts,
+                (candidate_metrics or {}).get("per_symbol") or {}, compare_solo)
+            out["metric"] = gc_.metric
         if not publish:
             out["decision"] = f"dry_run_would_{gate.decision}"
             out["note"] = ("dry-run : rien n'a été écrit au registre — relancez "

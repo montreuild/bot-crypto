@@ -280,15 +280,53 @@ class _TrainBody(BaseModel):
     recipe: Optional[str] = None
     symbol: str = DEFAULT_CONFIG_SYMBOL
     #: ML-16 — entraînement POOLÉ. Non vide, ``symbol`` est ignoré et la
-    #: recette est entraînée sur tous ces symboles mis en commun. Sur actions,
-    #: c'est le seul mode qui produise un modèle : un titre Euronext seul
-    #: mettrait ~13,7 ans à fournir les 3 500 barres journalières requises.
+    #: recette est entraînée sur tous ces symboles mis en commun.
     symbols: Optional[List[str]] = None
+    #: Nom d'un univers (``sbf120``) — alternative à ``symbols``, et la seule
+    #: praticable depuis l'UI : personne ne saisit 120 mnémoniques à la main.
+    #: Les deux peuvent se combiner ; l'union est prise, sans doublon.
+    universe: Optional[str] = None
+    #: Borne le pool aux N titres les mieux dotés en historique. 0 = tous.
+    #: Un pool de 120 titres coûte cher ; pouvoir en prendre 20 rend
+    #: l'expérimentation possible sans écrire la liste.
+    max_symbols: int = 0
+    #: Entraîne aussi un modèle DÉDIÉ pour les N premiers titres et rapporte
+    #: l'écart avec le poolé. Opt-in : c'est un entraînement complet par titre.
+    compare_solo: int = 0
     tf: str
     as_of: Optional[str] = None
     window_bars: Optional[int] = None
     params: Dict[str, Any] = {}
     publish: bool = False
+
+
+def _resolve_pool(body: "_TrainBody") -> List[str]:
+    """Symboles du pool : union de ``symbols`` et des membres de ``universe``.
+
+    ``max_symbols`` trie par PROFONDEUR D'HISTORIQUE décroissante avant de
+    couper. Prendre les N premiers dans l'ordre du fichier d'univers donnerait
+    un pool ordonné alphabétiquement, donc arbitraire — alors que la profondeur
+    est exactement ce qui décide de l'éligibilité d'un titre. Un titre trop
+    court n'est pas écarté ici : ``train_multi_and_publish`` le fait, et il sait
+    dire pourquoi.
+    """
+    out: List[str] = [s.strip() for s in (body.symbols or []) if s and s.strip()]
+    if body.universe:
+        from app.core.universe import universe_symbols
+        members = universe_symbols(body.universe)
+        if not members:
+            raise HTTPException(400, f"Univers {body.universe!r} inconnu ou vide")
+        out.extend(members)
+    out = list(dict.fromkeys(out))
+
+    if body.max_symbols and len(out) > body.max_symbols:
+        depth: Dict[str, int] = {}
+        for s in get_store().all_stats():
+            if s.get("tf") == body.tf:
+                depth[s["symbol"]] = int(s.get("bars") or 0)
+        out.sort(key=lambda sym: -depth.get(sym, 0))
+        out = out[:body.max_symbols]
+    return out
 
 
 @router.post("/api/ml/train", dependencies=[Depends(verify_api_key)])
@@ -304,19 +342,20 @@ def ml_train_start(request: Request, body: _TrainBody):
     symbole, gate sur la moyenne des scores."""
     _require_known_tf(body.tf)
     recipe = _require_trainable_recipe(body.recipe) if body.recipe else None
-    pooled = [s for s in dict.fromkeys(body.symbols or []) if s]
+    pooled = _resolve_pool(body)
     # Refusé TÔT plutôt que découvert dans un statut de job : le pooling
     # n'existe que sur le chemin recette, qui seul sait entraîner sans
     # instancier une classe Strategy par symbole.
     if pooled and not recipe:
-        raise HTTPException(400, "l'entraînement poolé (symbols) exige une "
-                                 "recette — le chemin stratégie entraîne un "
+        raise HTTPException(400, "l'entraînement poolé (symbols/universe) exige "
+                                 "une recette — le chemin stratégie entraîne un "
                                  "symbole à la fois")
     strategy = None if recipe else _resolve_strategy_name(body.strategy or "")
     from app.engine.ml_jobs import start_train_job
     job_id = start_train_job(strategy or "", body.symbol, body.tf, as_of=body.as_of,
                              window_bars=body.window_bars, params=body.params,
-                             publish=body.publish, recipe=recipe, symbols=pooled)
+                             publish=body.publish, recipe=recipe, symbols=pooled,
+                             compare_solo=body.compare_solo)
     if body.publish:
         audit_log("ml.train.publish", ip=request.client.host if request.client else "",
                  details=body.model_dump())

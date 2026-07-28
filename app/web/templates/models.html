@@ -68,9 +68,17 @@ table.mdl-tbl{width:100%;border-collapse:collapse;font-size:.78rem;}
   <div class="mdl-card">
     <h2>🚀 Entraîner un modèle</h2>
     <div class="mdl-form">
-      <div class="mdl-fld"><label>Recette / Stratégie<span class="mdl-hint" style="margin:0">les recettes sont les clés du registre ci-dessus</span></label><select id="tr-strat"><option value="opus_omnibus_v11">opus_omnibus_v11</option></select></div>
-      <div class="mdl-fld"><label>Symbole<span class="mdl-hint" style="margin:0">ignoré si des symboles poolés sont saisis</span></label><input id="tr-symbol" value="BTC/USDC"></div>
-      <div class="mdl-fld"><label>Pooling multi-symboles (optionnel)<span class="mdl-hint" style="margin:0">liste séparée par des virgules — exige une recette</span></label><input id="tr-symbols" placeholder="AC.PA, ACA.PA, AI.PA, AIR.PA" title="Entraîne UNE recette sur plusieurs symboles mis en commun. Sur actions c'est le seul mode praticable : un titre Euronext seul mettrait ~13,7 ans à fournir l'historique requis. Le holdout est prélevé par symbole et le gate arbitre sur la moyenne des scores."></div>
+      <div class="mdl-fld"><label>Recette<span class="mdl-hint" style="margin:0">clé du registre ci-dessus</span></label><select id="tr-strat"></select></div>
+      <div class="mdl-fld"><label>Source des données<span class="mdl-hint" style="margin:0">un titre, ou un univers mis en commun</span></label>
+        <select id="tr-mode" onchange="syncTrainMode()">
+          <option value="single">Un seul symbole</option>
+          <option value="universe">Univers entier (pooling)</option>
+        </select>
+      </div>
+      <div class="mdl-fld" id="tr-single-wrap"><label>Symbole</label><input id="tr-symbol" value="BTC/USDC"></div>
+      <div class="mdl-fld" id="tr-universe-wrap" style="display:none"><label>Univers<span class="mdl-hint" style="margin:0" id="tr-universe-hint">—</span></label><select id="tr-universe" onchange="describeUniverse()"></select></div>
+      <div class="mdl-fld" id="tr-max-wrap" style="display:none"><label>Limiter à N titres<span class="mdl-hint" style="margin:0">0 = tous ; les plus profonds d'abord</span></label><input id="tr-max" type="number" value="16" min="0" title="Un pool de 120 titres coûte cher à entraîner. La sélection prend les titres les mieux dotés en historique, pas les premiers de l'alphabet."></div>
+      <div class="mdl-fld" id="tr-compare-wrap" style="display:none"><label>Comparer solo vs poolé<span class="mdl-hint" style="margin:0">0 = non ; N = les N premiers titres</span></label><input id="tr-compare" type="number" value="0" min="0" title="Entraîne AUSSI un modèle dédié par titre et affiche l'écart avec le modèle poolé. Coûteux : un entraînement complet par titre."></div>
       <div class="mdl-fld"><label>Timeframe</label><select id="tr-tf"><option value="1h">1h</option></select></div>
       <div class="mdl-fld"><label>Fenêtre (barres)<span class="mdl-hint" style="margin:0">0 = tout dispo</span></label><input id="tr-window" type="number" value="0" min="0"></div>
       <div class="mdl-fld"><label>Date de fin d'entraînement (optionnel)<span class="mdl-hint" style="margin:0">fige l'entraînement à cette date passée (rejoue une décision historique)</span></label><input id="tr-asof" placeholder="2026-06-01T00:00:00" title="Ne garde que les bougies antérieures à cette date pour l'entraînement ET le holdout du gate. Vide = tout l'historique disponible jusqu'à maintenant."></div>
@@ -405,7 +413,8 @@ async function pollJob(kind,jobId,container){
       container.innerHTML=jobCardHtml('done',
         '<b>'+esc(res.decision)+'</b> — '+esc(res.reason||'')+pooled+
         (res.candidate?'<br>Candidat : AUC amp='+((res.candidate.auc_amp??0)).toFixed?.(3)??'—':'')+
-        (res.published_version?'<br>Version publiée : '+esc(res.published_version):''))+diag;
+        (res.published_version?'<br>Version publiée : '+esc(res.published_version):''))
+        +soloVsPooledHtml(res.solo_vs_pooled,res.metric)+diag;
     } else if(res.candidates){
       const rows=res.candidates.map(c=>c.window_bars+' barres : '+(c.auc_amp!=null?c.auc_amp.toFixed(3):(c.skipped||'—'))).join('<br>');
       container.innerHTML=jobCardHtml('done',
@@ -420,25 +429,99 @@ async function pollJob(kind,jobId,container){
   container.innerHTML=jobCardHtml('error','Délai dépassé — vérifiez les logs serveur.');
 }
 
+// ── Mode « un symbole » vs « univers poolé » ───────────────────────────────
+// L'ancien formulaire posait les deux côte à côte — un champ « Symbole » et un
+// champ « Pooling multi-symboles » — sans dire lequel gagnait. On ne saisit pas
+// 120 mnémoniques à la main, et deux champs concurrents pour une même question
+// laissent l'utilisateur deviner. Un mode explicite tranche : un seul jeu de
+// champs est visible à la fois.
+_UNIVERSES=[];
+
+function syncTrainMode(){
+  const pooling=document.getElementById('tr-mode').value==='universe';
+  document.getElementById('tr-single-wrap').style.display=pooling?'none':'';
+  for(const id of ['tr-universe-wrap','tr-max-wrap','tr-compare-wrap'])
+    document.getElementById(id).style.display=pooling?'':'none';
+  if(pooling)describeUniverse();
+}
+
+function describeUniverse(){
+  const id=document.getElementById('tr-universe').value;
+  const u=_UNIVERSES.find(x=>x.id===id);
+  const hint=document.getElementById('tr-universe-hint');
+  if(!u){hint.textContent='—';return;}
+  // Dire ce que l'univers contient AVANT de lancer un entraînement de plusieurs
+  // minutes : le nombre de titres et la fraîcheur de l'instantané décident si
+  // le pool a du sens.
+  hint.textContent=u.n_symbols+' titres · '+(u.venue||'venue ?')+
+    (u.as_of?' · au '+u.as_of:'')+(u.verified?' ✓':' (non vérifié)');
+}
+
+async function loadUniverses(){
+  try{
+    const r=await apiFetch('/api/universe');
+    if(!r.ok)return;
+    _UNIVERSES=(await r.json()).universes||[];
+    fillSelect('tr-universe',_UNIVERSES.map(u=>u.id),_UNIVERSES[0]&&_UNIVERSES[0].id);
+    describeUniverse();
+  }catch(e){/* l'entraînement mono-symbole reste utilisable */}
+}
+
+// ── Tableau solo vs poolé ──────────────────────────────────────────────────
+function soloVsPooledHtml(rows,metric){
+  if(!rows||!rows.length)return '';
+  const fmt=v=>(v==null?'—':(+v).toFixed(3));
+  const cells=rows.map(r=>{
+    const d=r.delta;
+    const col=d==null?'var(--muted)':(d>0.01?'#3fb950':(d<-0.01?'#f85149':'var(--muted)'));
+    const verdict=d==null?(r.note||'—'):(d>0.01?'le pool aide':(d<-0.01?'le pool coûte':'équivalent'));
+    return '<tr><td>'+esc(r.symbol)+'</td>'+
+      '<td style="text-align:right;color:var(--muted)">'+(r.n_bars||'—')+'</td>'+
+      '<td style="text-align:right">'+fmt(r.solo)+'</td>'+
+      '<td style="text-align:right">'+fmt(r.pooled)+'</td>'+
+      '<td style="text-align:right;color:'+col+'">'+(d==null?'—':(d>0?'+':'')+d.toFixed(3))+'</td>'+
+      '<td style="color:'+col+'">'+esc(verdict)+'</td></tr>';
+  }).join('');
+  const scored=rows.filter(r=>r.delta!=null);
+  const mean=scored.length?scored.reduce((a,r)=>a+r.delta,0)/scored.length:null;
+  return '<div class="mdl-card" style="margin-top:10px">'+
+    '<h3 style="margin:0 0 6px">Modèle dédié vs modèle poolé — '+esc(metric||'auc')+'</h3>'+
+    '<div class="mdl-hint" style="margin:0 0 8px">Ces titres ont assez d\'historique pour se passer du pooling : '+
+    'ce que l\'écart mesure n\'est donc pas la raison d\'être du pool, mais l\'absence de dégradation.</div>'+
+    '<div style="overflow-x:auto"><table class="mdl-table"><thead><tr>'+
+    '<th>Titre</th><th style="text-align:right">barres</th><th style="text-align:right">dédié</th>'+
+    '<th style="text-align:right">poolé</th><th style="text-align:right">écart</th><th>verdict</th>'+
+    '</tr></thead><tbody>'+cells+'</tbody></table></div>'+
+    (mean!=null?'<div class="mdl-hint">Écart moyen sur '+scored.length+' titres : <b>'+
+      (mean>0?'+':'')+mean.toFixed(3)+'</b></div>':'')+
+    '</div>';
+}
+
 async function startTrain(){
   const btn=document.getElementById('tr-btn'); const container=document.getElementById('tr-job');
   const strategy=document.getElementById('tr-strat').value.trim();
+  const mode=document.getElementById('tr-mode').value;
   const symbol=document.getElementById('tr-symbol').value.trim();
-  const symbols=document.getElementById('tr-symbols').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const universe=document.getElementById('tr-universe').value;
+  const maxSymbols=parseInt(document.getElementById('tr-max').value)||0;
+  const compareSolo=parseInt(document.getElementById('tr-compare').value)||0;
   const tf=document.getElementById('tr-tf').value.trim();
   const windowBars=parseInt(document.getElementById('tr-window').value)||0;
   const asOf=document.getElementById('tr-asof').value.trim();
   const publish=document.getElementById('tr-publish').checked;
-  const isRecipe=_RECIPES.has(strategy);
-  if(!strategy||!tf||(!symbol&&!symbols.length)){toast('Stratégie/symbole/TF requis',true);return;}
-  // Dit tout de suite ce que l'API refuserait de toute façon : le pooling
-  // n'existe que sur le chemin recette.
-  if(symbols.length&&!isRecipe){toast('Le pooling multi-symboles exige une recette, pas une stratégie',true);return;}
+  const pooling=(mode==='universe');
+  if(!strategy||!tf){toast('Recette et timeframe requis',true);return;}
+  if(pooling&&!universe){toast('Choisissez un univers',true);return;}
+  if(!pooling&&!symbol){toast('Symbole requis',true);return;}
   btn.disabled=true;
   try{
     const r=await apiFetch('/api/ml/train',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      strategy:isRecipe?null:strategy, recipe:isRecipe?strategy:null,
-      symbol,symbols:symbols.length?symbols:null,
+      // La liste ne propose plus que des recettes : plus de branche `isRecipe`.
+      recipe:strategy,
+      symbol:pooling?null:symbol,
+      universe:pooling?universe:null,
+      max_symbols:pooling?maxSymbols:0,
+      compare_solo:pooling?compareSolo:0,
       tf,window_bars:windowBars>0?windowBars:null,as_of:asOf||null,publish,
     })});
     const d=await r.json().catch(()=>({}));
@@ -506,14 +589,28 @@ async function loadChoices(){
     const r=await apiFetch('/api/config');
     if(r.ok)strats=(await r.json()).all_strategies||[];
   }catch(e){/* idem : le défaut du gabarit reste sélectionnable */}
-  const opts=recipes.concat(strats);
-  fillSelect('tr-strat',opts,recipes[0]||'opus_omnibus_v11');
-  // Le sweep reste piloté par la stratégie : window_sweep n'a pas encore de
-  // variante recette (cf. train_recipe_and_publish, qui ne couvre que train).
+  // Entraînement : RECETTES uniquement. La liste offrait aussi les stratégies,
+  // ce qui laissait le formulaire parler un vocabulaire que le tableau du
+  // registre juste au-dessus n'utilise pas — et faisait entraîner par le chemin
+  // stratégie une recette qui savait s'entraîner seule. Depuis l'étape C, la
+  // recette suffit ; depuis ML-16 elle est le SEUL chemin qui sache pooler.
+  if(!recipes.length){
+    // Ne pas retomber sur un nom de stratégie : ce serait réintroduire
+    // silencieusement le vocabulaire qu'on vient d'écarter.
+    fillSelect('tr-strat',[],'');
+    toast('Aucune recette entraînable — vérifiez recipes/ et /api/ml/recipes',true);
+  } else {
+    fillSelect('tr-strat',recipes,recipes[0]);
+  }
+  // Le sweep reste piloté par la STRATÉGIE, et c'est assumé : `window_sweep`
+  // n'a pas de variante recette (ML-18). Le mélange n'était un défaut que sur
+  // le formulaire d'entraînement, où les deux vocabulaires se concurrençaient.
   fillSelect('sw-strat',strats,'opus_omnibus_v11');
 }
 
 loadChoices();
+loadUniverses();
+syncTrainMode();
 loadRegistry();
 </script>
 {% endblock %}
