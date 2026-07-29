@@ -30,11 +30,14 @@ export default function ConfigPage() {
   const [editingParams, setEditingParams] = useState<Record<string, Record<string, any>>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
-  // Liste des symboles disponibles depuis le status (scanner)
+  // Liste des symboles disponibles depuis la config + trades récents + last_scan.
+  // On évite d'utiliser `status.scanner` qui n'existe pas sur BotStatus —
+  // à la place on combine les symboles de la config + last_symbols_scanned
+  // (présents sur BotStatus quand le bot tourne) + un fallback par défaut.
   const availableSymbols: Symbol[] = useMemo(() => {
-    const fromStatus = status?.scanner?.symbols || [];
-    const fromConfig = config?.scanner?.symbols || [];
-    const all = new Set<string>([...fromStatus, ...fromConfig]);
+    const fromConfig: Symbol[] = config?.scanner?.symbols || [];
+    const fromStatus: Symbol[] = status?.last_symbols_scanned || [];
+    const all = new Set<string>([...fromConfig, ...fromStatus]);
     if (all.size === 0) return ['BTC/USDC', 'ETH/USDC', 'XRP/USDC'];
     return Array.from(all).sort();
   }, [status, config]);

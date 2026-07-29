@@ -51,23 +51,41 @@ detect_os() {
 }
 
 # ── Vérification des prérequis ───────────────────────────────────────────────
+# S0-fix : `check_python` met à jour des variables globales `PY_CMD` (commande
+# simple, ex. "py" ou "python3.14") et `PY_ARGS` (args, ex. "-3.14" ou "")
+# au lieu d'utiliser `echo "$cmd"` qui casse quand la commande contient un
+# espace (ex. "py -3.14" est traité comme un seul exécutable littéral).
 check_python() {
     section "Vérification Python 3.14+"
-    local py_cmd=""
+    PY_CMD=""
+    PY_ARGS=""
     # Windows: try `py -3.14` first (Python launcher), then unix-style
     if [ "$OS" = "windows" ]; then
-        for cmd in "py -3.14" "py -3.13" "py -3.12" python3.14 python3.13 python3.12 python; do
-            if command -v "${cmd%% *}" &>/dev/null; then
-                local ver
-                ver=$(${cmd} --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
-                local major=${ver%%.*}
-                local minor=${ver#*.}
-                if [ "$major" = "3" ] && [ "$minor" -ge 14 ]; then
-                    py_cmd="$cmd"
-                    success "Python $ver trouvé ($cmd)"
-                    echo "$cmd"
-                    return 0
-                fi
+        # Liste de tuples (cmd, args) — bash 4+ ne supporte pas les tableaux
+        # de tableaux, on itère sur une chaîne structurée.
+        local candidates=("py:-3.14" "py:-3.13" "py:-3.12" "python3.14:" "python3.13:" "python3.12:" "python:")
+        for entry in "${candidates[@]}"; do
+            local cand_cmd="${entry%%:*}"
+            local cand_args="${entry#*:}"
+            if [ "$cand_cmd" = "py" ] && ! command -v py &>/dev/null; then
+                continue
+            fi
+            if [ "$cand_cmd" != "py" ] && ! command -v "$cand_cmd" &>/dev/null; then
+                continue
+            fi
+            local ver
+            if [ -n "$cand_args" ]; then
+                ver=$("$cand_cmd" "$cand_args" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+            else
+                ver=$("$cand_cmd" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+            fi
+            local major=${ver%%.*}
+            local minor=${ver#*.}
+            if [ "$major" = "3" ] && [ "$minor" -ge 14 ]; then
+                PY_CMD="$cand_cmd"
+                PY_ARGS="$cand_args"
+                success "Python $ver trouvé ($cand_cmd ${cand_args:-})"
+                return 0
             fi
         done
     else
@@ -78,9 +96,9 @@ check_python() {
                 local major=${ver%%.*}
                 local minor=${ver#*.}
                 if [ "$major" = "3" ] && [ "$minor" -ge 14 ]; then
-                    py_cmd="$cmd"
+                    PY_CMD="$cmd"
+                    PY_ARGS=""
                     success "Python $ver trouvé ($cmd)"
-                    echo "$cmd"
                     return 0
                 fi
             fi
@@ -214,8 +232,15 @@ check_git() {
 install_backend() {
     section "Installation du backend Python"
 
-    local py_cmd
-    py_cmd=$(check_python) || exit 1
+    # check_python met à jour PY_CMD (ex. "py" ou "python3.14") et PY_ARGS
+    # (ex. "-3.14" ou "") en globals. On n'utilise plus `py_cmd=$(check_python)`
+    # qui casse quand la commande contient un espace ("py -3.14" traité comme
+    # un seul exécutable littéral sous Git Bash).
+    check_python || exit 1
+    if [ -z "$PY_CMD" ]; then
+        error "Aucune commande Python 3.14+ détectée."
+        exit 1
+    fi
 
     # Détection de la racine du projet (répertoire parent du dossier scripts/)
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -228,10 +253,16 @@ install_backend() {
         exit 1
     fi
 
-    # Création du venv
+    # Création du venv — on passe PY_ARGS en argument optionnel séparé
+    # pour que "py -3.14 -m venv .venv" soit bien 4 mots, pas "py -3.14"
+    # comme un seul exécutable.
     if [ ! -d ".venv" ]; then
         log "Création du venv Python 3.14..."
-        "$py_cmd" -m venv .venv
+        if [ -n "$PY_ARGS" ]; then
+            "$PY_CMD" "$PY_ARGS" -m venv .venv
+        else
+            "$PY_CMD" -m venv .venv
+        fi
         success "Venv créé"
     else
         success "Venv existant (.venv)"
