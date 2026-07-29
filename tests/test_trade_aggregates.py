@@ -72,12 +72,18 @@ def test_get_trades_since_filter():
     import os
     import tempfile
     with tempfile.TemporaryDirectory() as d:
-        _, SessionLocal = init_db(f"sqlite:///{os.path.join(d, 'db.sqlite')}")
-        with session_scope(SessionLocal) as sess:
-            _insert(sess, pnl=1.0, days_ago=60)
-            _insert(sess, pnl=2.0, days_ago=1)
-        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
-        with session_scope(SessionLocal) as sess:
-            rows = get_trades(sess, since=cutoff)
-        assert len(rows) == 1
-        assert rows[0].pnl == 2.0
+        engine, SessionLocal = init_db(f"sqlite:///{os.path.join(d, 'db.sqlite')}")
+        try:
+            with session_scope(SessionLocal) as sess:
+                _insert(sess, pnl=1.0, days_ago=60)
+                _insert(sess, pnl=2.0, days_ago=1)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+            with session_scope(SessionLocal) as sess:
+                rows = get_trades(sess, since=cutoff)
+            assert len(rows) == 1
+            assert rows[0].pnl == 2.0
+        finally:
+            # Windows refuse de supprimer un fichier encore ouvert : sans ce
+            # dispose(), le pool garde db.sqlite ouvert et le nettoyage du
+            # TemporaryDirectory lève PermissionError (WinError 32).
+            engine.dispose()

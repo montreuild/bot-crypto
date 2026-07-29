@@ -88,7 +88,10 @@ class TestFundingFlow:
 
     def test_no_ml_dependency(self):
         import app.strategies.funding_flow as mod
-        src = open(mod.__file__).read()
+        # `encoding` explicite : sans lui, Python retombe sur l'encodage local
+        # (cp1252 sous Windows) et les accents du source lèvent un
+        # UnicodeDecodeError.
+        src = open(mod.__file__, encoding="utf-8").read()
         assert "lightgbm" not in src and "sklearn" not in src
 
 

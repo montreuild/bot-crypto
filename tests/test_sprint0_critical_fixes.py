@@ -36,6 +36,13 @@ class TestSizingParity:
                 "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20,
             },
             "risk": {},
+            # ⚠ Indispensable : `max_notional_pct` vaut 0.20 par défaut, soit un
+            # notionnel plafonné à 200 pour 1000 de capital — donc size ≤ 2 à
+            # entry=100. Ce plafond mordait dans les DEUX branches (avec et sans
+            # stop_dist), les ramenait toutes deux à 2.0 et rendait ces tests
+            # vacants : ils ne pouvaient plus distinguer le sizing correct du
+            # bug de sur-risque 2,5× qu'ils sont censés verrouiller.
+            "backtest": {"max_notional_pct": 1.0},
         }
         rm = RiskGate(cfg)
         # entry=100, atr=2, stop_dist=5 (2,5×ATR)
@@ -62,6 +69,13 @@ class TestSizingParity:
                 "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20,
             },
             "risk": {},
+            # ⚠ Indispensable : `max_notional_pct` vaut 0.20 par défaut, soit un
+            # notionnel plafonné à 200 pour 1000 de capital — donc size ≤ 2 à
+            # entry=100. Ce plafond mordait dans les DEUX branches (avec et sans
+            # stop_dist), les ramenait toutes deux à 2.0 et rendait ces tests
+            # vacants : ils ne pouvaient plus distinguer le sizing correct du
+            # bug de sur-risque 2,5× qu'ils sont censés verrouiller.
+            "backtest": {"max_notional_pct": 1.0},
         }
         rm = RiskGate(cfg)
         # Sans stop_dist : size = 10 / 2 = 5 (ATR brut)
@@ -87,6 +101,13 @@ class TestSizingParity:
                 "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20,
             },
             "risk": {},
+            # ⚠ Indispensable : `max_notional_pct` vaut 0.20 par défaut, soit un
+            # notionnel plafonné à 200 pour 1000 de capital — donc size ≤ 2 à
+            # entry=100. Ce plafond mordait dans les DEUX branches (avec et sans
+            # stop_dist), les ramenait toutes deux à 2.0 et rendait ces tests
+            # vacants : ils ne pouvaient plus distinguer le sizing correct du
+            # bug de sur-risque 2,5× qu'ils sont censés verrouiller.
+            "backtest": {"max_notional_pct": 1.0},
         }
         rm = RiskGate(cfg)
         # Sans stop_dist (ATR brut)
@@ -254,7 +275,10 @@ class TestInsecureDefaultRejected:
             "  api_key: ''\n"
             "  allow_insecure: false\n"
             "database:\n"
-            "  url: sqlite:///:memory:\n",
+            # Quoté : non quoté, le `:` final rend le scalaire ambigu pour YAML
+            # (« mapping values are not allowed here ») — la fixture n'était pas
+            # parsable, donc ces deux tests n'avaient jamais pu s'exécuter.
+            '  url: "sqlite:///:memory:"\n',
             encoding="utf-8",
         )
         monkeypatch.delenv("ALLOW_INSECURE_WEB", raising=False)
@@ -295,7 +319,10 @@ class TestInsecureDefaultRejected:
             "  api_key: ''\n"
             "  allow_insecure: true\n"
             "database:\n"
-            "  url: sqlite:///:memory:\n",
+            # Quoté : non quoté, le `:` final rend le scalaire ambigu pour YAML
+            # (« mapping values are not allowed here ») — la fixture n'était pas
+            # parsable, donc ces deux tests n'avaient jamais pu s'exécuter.
+            '  url: "sqlite:///:memory:"\n',
             encoding="utf-8",
         )
         # Doit passer (warning mais pas raise)

@@ -292,10 +292,19 @@ def recipes_visible(tmp_path):
     On y rend l'arborescence de recettes visible plutôt que de contourner
     l'isolation du registre, qui protège le models/ réel."""
     import os
+    import shutil
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = os.path.join(repo, "recipes")
     link = tmp_path / "recipes"
     if not link.exists():
-        os.symlink(os.path.join(repo, "recipes"), link)
+        try:
+            os.symlink(src, link)
+        except OSError:
+            # Windows refuse les liens symboliques sans privilège (WinError
+            # 1314) hors mode développeur ou session admin. La copie donne le
+            # même résultat ici : la fixture est en lecture seule et tmp_path
+            # est jeté après le test.
+            shutil.copytree(src, link)
     yield
 
 
