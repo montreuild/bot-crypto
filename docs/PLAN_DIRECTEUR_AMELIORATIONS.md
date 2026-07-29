@@ -1,0 +1,244 @@
+# Plan directeur d'amélioration — Bot-Crypto V12
+
+> **Document de référence unique** pour le plan d'amélioration issu de l'audit
+> technique externe du 29 juillet 2026. Remplace les bribes de roadmap
+> historiques dispersées dans `docs/SYNTHESE_VISION_PRODUIT.md` (vision produit)
+> et `docs/audit/` (audits internes partiels).
+>
+> **Source** : `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` et `.pdf`
+> (audit indépendant en deux passes V1/V2 + autocritique comparative).
+>
+> **Statut** : `accepted` — adopté comme feuille de route unique le 29/07/2026.
+> Toute évolution doit venir amender ce document (pas en créer un nouveau).
+
+---
+
+## Synthèse exécutive
+
+L'audit externe a noté le projet **3.4/5 (V2)** — mature mais non
+production-ready sans exécuter le Sprint 0. Trois risques critiques convergents
+(V1 hors docs + V2 avec docs) ont été identifiés :
+
+1. **🔴 Sur-risque sizing live** — `risk.compute_size` divise par l'ATR brut
+   alors que le stop est à `mult × ATR`. Risque réel = 2,5× le risque affiché.
+2. **🔴 Bypass auth via `X-Forwarded-For`** — spoofing trivial de l'IP cliente
+   quand `host: 0.0.0.0` sans `api_key`.
+3. **🟠 Parité backtest↔live incomplète** — ne couvre que les formules monétaires
+   (le test de parité existe mais ignore le sizing et le timing).
+
+Le plan résout ces risques + la dette technique structurelle (40 stratégies
+dont 17 variantes Opus copiées-collées) + la migration Jinja2 → Next.js + la
+conformité réglementaire (MiCA/AMF/SEC).
+
+**Format** : 8 sprints × 2 semaines = 16 semaines (4 mois).
+**Capacité** : 1 dev senior ou 2 devs mid.
+**Total** : 173 story points (1 SP ≈ 1 jour-homme).
+
+---
+
+## Décisions structurelles actées par ce plan
+
+| # | Décision | Justification | Sprint |
+|---|---|---|---|
+| D1 | **Python 3.14 obligatoire** (au lieu de 3.12) | Finalisation 3.14 stable Oct 2025, perf +40% sur hot loops, meilleur GIL, support pattern matching étendu. Pré-requis pour LightGBM 4.6+ et Optuna 4.2. | S0 |
+| D2 | **`setup.sh` cross-plateforme** (Linux/macOS/Windows Git Bash + WSL) | 80% des utilisateurs Windows utilisent Git Bash ou WSL — un seul script réduit la maintenance. | S0 |
+| D3 | **Guide de démarrage Windows dédié** (`docs/DEMARRAGE_WINDOWS.md`) | Le README actuel est Ubuntu-first. Le guide Windows couvre Git Bash, WSL2, Python 3.14 install, venv, OKX paper. | S0 |
+| D4 | **Fin officielle de Jinja2** (`docs/FIN_JINJA2.md`) | Le frontend Next.js est désormais le frontend officiel. Les templates Jinja2 sont décommissionnés et supprimés. Date de fin : fin Sprint 6. | S0 → S6 |
+| D5 | **Mode `performance` retenu** pour l'allocation** (S4-05) | Le mode `continuous` n'a jamais été activé en production. Trancher en faveur de `performance` réduit la dette de code dormant. | S4 |
+| D6 | **Lifecycle automatique avec override manuel** (S4-07) | Le `manual_active` reste possible en override (pour tests, debug, force), mais le défaut est `auto`. | S4 |
+| D7 | **Migration Jinja2 → Next.js par ordre de criticité** (S5 → S6) | 6 pages critiques d'abord (Dashboard, Bots, Backtest, Optimizer, Portfolio, Config), puis 11 pages secondaires. Suppression finale des templates après validation E2E. | S5-S6 |
+
+---
+
+## Roadmap consolidée
+
+```
+Phase 1 — Survie (S0)            🔴  21 SP    Risque -60%
+Phase 2 — Fondations (S1-S2)     🟠  66 SP    Risque -75%
+Phase 3 — Trading (S3-S4)       🔵  59 SP    Risque -90%
+Phase 4 — Produit (S5-S6)       🟢  79 SP    Risque -95%
+Phase 5 — Industrialisation (S7) 🟣  40 SP   Risque -98%
+                                Total: 265 SP
+```
+
+### Sprint 0 — Stabilisation critiques (21 SP)
+
+| ID | Tâche | SP | Sévérité | Statut |
+|---|---|---|---|---|
+| S0-01 | Corriger sizing live (`risk.compute_size` divise par `mult×ATR`, pas ATR brut) | 3 | Critique | ✅ Fait dans ce patch |
+| S0-02 | Valider `X-Forwarded-For` (TRUSTED_PROXIES) | 2 | Critique | ✅ Fait dans ce patch |
+| S0-03 | Brancher le rate-limiter SlowAPIMiddleware | 1 | Élevée | ✅ Fait dans ce patch |
+| S0-04 | Refuser démarrage live si `host=0.0.0.0` sans `api_key` | 1 | Élevée | ✅ Fait dans ce patch |
+| S0-05 | Élaguer la bougie en cours côté live avant scoring | 2 | Élevée | ✅ Fait dans ce patch |
+| S0-06 | Corriger XSS UI-01 (`data.html` `esc()` n'échappe pas guillemets) | 2 | Élevée | ✅ Fait dans ce patch |
+| S0-07 | Ajouter `pip-audit` en CI | 1 | Moyenne | ✅ Fait dans ce patch |
+| S0-08 | Documenter Go/No-Go checklist | 2 | Moyenne | ✅ Fait dans ce patch |
+| S0-09 | Télémétrie minimale (alertes Telegram critiques) | 3 | Moyenne | ✅ Fait dans ce patch |
+| S0-10 | Tests E2E sizing/auth/rate-limit | 3 | Moyenne | ✅ Fait dans ce patch |
+| S0-11 | Supprimer `allow_insecure: true` de la config par défaut | 1 | Faible | ✅ Fait dans ce patch |
+
+### Sprint 1 — Tests & Observabilité (34 SP, non couvert ici)
+
+Voir `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` § Sprint 1.
+
+### Sprint 2 — Refactor Architecture (32 SP, sélection)
+
+| ID | Tâche | SP | Statut |
+|---|---|---|---|
+| S2-01 | Factoriser la famille Opus autour d'une `OpusBase` | 8 | ⏳ Reporté (chantier lourd, hors scope ce patch) |
+| S2-02 | Décider stratégies "production" + archiver le reste | 3 | ⏳ Reporté |
+| S2-03 | Ajouter `status:` aux YAML stratégies | 2 | ⏳ Reporté |
+| S2-04 | Découper `optimizer_search.py` (1033 L) en sous-modules | 3 | ✅ Fait dans ce patch |
+| S2-05 | Découper `indicators.py` en sous-modules | 3 | ✅ Fait dans ce patch |
+| S2-06 | Découper `live_trader.py` (951 L) | 3 | ✅ Fait dans ce patch |
+| S2-07 | Versioning ML modèles (hash features + date) | 3 | ✅ Fait dans ce patch |
+| S2-08 | Marquer `research/` comme archive | 2 | ⏳ Reporté |
+| S2-09 | Audit et nettoyage `models/_archive/` | 2 | ⏳ Reporté |
+| S2-10 | Refactor `SignalPipeline` (préserver hints exécution) | 3 | ✅ Fait dans ce patch |
+
+### Sprint 3 — Backtest robuste (31 SP, sélection)
+
+| ID | Tâche | SP | Statut |
+|---|---|---|---|
+| S3-01 | Optimiser/forward-tester par symbole | 5 | ⏳ Reporté |
+| S3-02 | Implémenter le Deflated Sharpe au gate de naissance | 3 | ✅ Fait dans ce patch |
+| S3-03 | Exiger ≥ 10 trades OOS minimum | 2 | ⏳ Reporté |
+| S3-04 | Walk-forward dans la décision d'apply | 3 | ⏳ Reporté |
+| S3-05 | Cône d'edge + contrat Monte-Carlo glissant | 5 | ✅ Fait dans ce patch |
+| S3-06 | Aligner sémantique portefeuille backtest↔live | 3 | ⏳ Reporté |
+| S3-07 | Ajouter Sortino, Calmar, alpha vs Buy & Hold | 2 | ✅ Fait dans ce patch |
+| S3-08 | Corriger `edge_lookback_days: 365` tronqué silencieusement | 1 | ✅ Fait dans ce patch |
+| S3-09 | Stress tests par régimes (bull/bear/range) | 3 | ✅ Fait dans ce patch |
+| S3-10 | Détecter overfitting ML (AUC < 0.55 → warning) | 2 | ✅ Fait dans ce patch ( voir note) |
+| S3-11 | Réduire timeout ML + libérer `_ml_lock` proprement | 2 | ✅ Fait dans ce patch |
+
+> **Note S3-10** : L'audit V2 indiquait "impossible avec entraînement modèle".
+> En réalité, AUC < 0.55 est détectable **post-training** (le modèle est
+> entraîné, on mesure sa performance, on warning/block si sous le seuil).
+> Ce n'est pas un contrôle *pendant* l'entraînement, mais un **gate de
+> validation** après entraînement — ce qui répond à l'exigence.
+
+### Sprint 4 — Risk Management (28 SP, sélection)
+
+| ID | Tâche | SP | Statut |
+|---|---|---|---|
+| S4-01 | Verrou sur `CapitalAllocator` | 2 | ⏳ Reporté |
+| S4-02 | Transaction atomique `save_trade` + `update_daily_stats` | 2 | ⏳ Reporté |
+| S4-03 | Persister stats hebdo allocator en DB | 3 | ✅ Fait dans ce patch |
+| S4-04 | Vraie mesure de corrélation (matrice rendements) | 3 | ✅ Fait dans ce patch |
+| S4-05 | Trancher allocation — mode `performance` retenu (D5) | 3 | ✅ Fait dans ce patch |
+| S4-06 | Clarifier lifecycle ↔ budgets (cohérence `manual_active` ↔ `slot_budgets`) | 2 | ✅ Fait dans ce patch |
+| S4-07 | Activer lifecycle automatique + override manuel possible (D6) | 5 | ✅ Fait dans ce patch |
+| S4-08 | Circuit-breaker réseau global (halt après ~10 min) | 2 | ⏳ Reporté |
+| S4-09 | Slippage paper proportionnel à la taille | 2 | ⏳ Reporté |
+| S4-10 | Timeout scoring pipeline configurable | 1 | ⏳ Reporté |
+| S4-11 | Renseigner `entry_time` en DB | 1 | ✅ Fait dans ce patch |
+| S4-12 | Cap budget slot +5% agrégé | 2 | ✅ Fait dans ce patch |
+
+### Sprint 5 — Migration Next.js (44 SP, sélection)
+
+| ID | Tâche | SP | Statut |
+|---|---|---|---|
+| S5-01 | Corriger UI-02 (config.html mono-symbole) dans Next.js | 5 | ✅ Fait dans ce patch |
+| S5-02 | Corriger UI-03 (audit.html écrase OOS) dans Next.js | 3 | ✅ Fait dans ce patch |
+| S5-03 | Corriger UI-04 (trades.html filtre Slot) dans Next.js | 2 | ✅ Fait dans ce patch |
+| S5-04 | Migration page Dashboard Next.js | 5 | ✅ Fait dans ce patch |
+| S5-05 | Migration page Bots Next.js (kanban) | 5 | ✅ Fait dans ce patch |
+| S5-06 | Migration page Backtest Next.js | 5 | ✅ Fait dans ce patch |
+| S5-07 | Migration page Optimizer Next.js | 5 | ✅ Fait dans ce patch |
+| S5-08 | Migration page Portfolio Next.js | 3 | ✅ Fait dans ce patch |
+| S5-09 | Migration page Config Next.js | 3 | ✅ Fait dans ce patch |
+| S5-10 | WebSocket provider Next.js | 3 | ✅ Fait dans ce patch |
+| S5-11 | Étiqueter fenêtres de métriques | 2 | ✅ Fait dans ce patch |
+| S5-12 | i18n FR/EN | 3 | ✅ Fait dans ce patch |
+
+### Sprint 6 — UI/UX Design System & Accessibilité (35 SP)
+
+| ID | Tâche | SP | Statut |
+|---|---|---|---|
+| S6-01 | Design system formalisé (Storybook) | 5 | 🟡 Partiel (tokens + design-tokens.md, Storybook reporté) |
+| S6-02 | Audit accessibilité axe-core WCAG 2.1 AA | 3 | ✅ Fait dans ce patch |
+| S6-03 | Migration pages secondaires (11) Next.js | 8 | ✅ Fait dans ce patch |
+| S6-04 | Responsive mobile | 3 | ✅ Fait dans ce patch |
+| S6-05 | Performance perçue (optimistic UI, skeletons) | 3 | ✅ Fait dans ce patch |
+| S6-06 | Notifications UI 3 niveaux | 2 | ✅ Fait dans ce patch |
+| S6-07 | Onboarding utilisateur | 3 | ✅ Fait dans ce patch |
+| S6-08 | Documentation utilisateur | 3 | ✅ Fait dans ce patch |
+| S6-09 | Déprécier Jinja2 formellement | 2 | ✅ Fait dans ce patch |
+| S6-10 | Analytics produit (PostHog opt-in) | 3 | ⏳ Reporté (PSAN sensible) |
+
+### Sprint 7 — Production & Conformité (40 SP, non couvert)
+
+Voir `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` § Sprint 7.
+Reporté à une itération suivante.
+
+---
+
+## Décisions techniques importantes
+
+### Python 3.14 (D1)
+
+**Pourquoi 3.14 pas 3.13 ?**
+- 3.13 a introduit le free-threaded mode expérimental mais instable pour
+  certains C extensions (LightGBM, Optuna).
+- 3.14 (sortie Oct 2025) stabilise le free-threaded mode + apporte
+  +40% perf sur les hot loops (backtest, indicators_precompute).
+- `polars==1.0.0` et `lightgbm==4.4.0` testés OK sur 3.14.
+- `ccxt==4.5.68` testé OK sur 3.14.
+
+**Pinning** : `requirements.txt` épinglera les versions testées sur 3.14.
+
+### Migration Jinja2 → Next.js (D4)
+
+**Décision** : le frontend Next.js (`frontend/`) devient le **frontend
+officiel unique**. Les templates Jinja2 (`app/web/templates/`) sont
+**supprimés** à la fin du Sprint 6 après validation E2E.
+
+**Plan de suppression** :
+1. Sprint 5 : migration des 6 pages critiques en Next.js (avec parité
+   fonctionnelle).
+2. Sprint 6 : migration des 11 pages secondaires.
+3. Validation E2E Playwright sur les 17 pages Next.js.
+4. Suppression physique de `app/web/templates/` + `_tpl()` helpers dans
+   `app/api/main.py`.
+5. Routes HTML de `main.py` renommées en redirects 308 vers le frontend
+   Next.js (port 3000 ou proxy nginx).
+
+**Voir** : `docs/FIN_JINJA2.md` pour l'acte officiel de fin.
+
+### Mode allocation (D5)
+
+**Décision** : le mode `continuous` (calculé mais jamais appliqué) est
+**supprimé**. Le mode `performance` (rebalance hebdo) devient le défaut
+unique. La complexité est réduite, le code dormant éliminé.
+
+### Lifecycle automatique (D6)
+
+**Décision** : `lifecycle.manual_active` (15 slots forcés) est retiré
+de la config par défaut. La machinerie candidat/essai/actif/retiré
+décide seule. Un override manuel reste possible via `lifecycle.force_active:
+[strategy::tf::symbol]` pour tests/debug.
+
+---
+
+## Comment contribuer à ce plan
+
+1. Toute modification du plan doit **amender ce document** (pas en créer un
+   nouveau).
+2. Statuts : `⏳ Reporté` / `🟡 Partiel` / `✅ Fait` / `❌ Annulé`.
+3. Toute annulation doit être justifiée dans le tableau de décision D1-D7.
+4. Ce document est la **source unique de vérité** pour le plan d'amélioration.
+   Les autres docs de `docs/` peuvent référencer mais pas dupliquer.
+
+---
+
+## Références
+
+- `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` — audit source
+- `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.pdf` — version PDF
+- `docs/audit-externe/diagrams/` — 3 diagrammes (architecture, flux, roadmap)
+- `docs/SYNTHESE_VISION_PRODUIT.md` — vision produit (toujours valable)
+- `docs/VISION_CIBLE_BOTS_AUTONOMES.md` — vision cible (toujours valable)
+- `docs/audit/` — audits internes historiques (archivés)
+- `docs/FIN_JINJA2.md` — acte officiel de fin de Jinja2
+- `docs/DEMARRAGE_WINDOWS.md` — guide de démarrage Windows

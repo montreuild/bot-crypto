@@ -1,29 +1,50 @@
 # ================================================================
-#  Crypto Bot V11 - Python Dependencies
-#  !! Python 3.12 REQUIRED !!
+#  Crypto Bot V12 - Python Dependencies
+#  !! Python 3.14 REQUIRED !!
 #
 #  Installation on Ubuntu 22.04 (Python 3.10 by default):
 #    sudo add-apt-repository ppa:deadsnakes/ppa -y
-#    sudo apt install -y python3.12 python3.12-venv python3.12-dev
-#    python3.12 -m venv /opt/crypto_bot/.venv
+#    sudo apt install -y python3.14 python3.14-venv python3.14-dev
+#    python3.14 -m venv /opt/crypto_bot/.venv
 #    source /opt/crypto_bot/.venv/bin/activate
 #    pip install -r requirements.txt
 #
-#  On Ubuntu 24.04 (Python 3.12 native):
-#    python3.12 -m venv /opt/crypto_bot/.venv
+#  On Ubuntu 24.04+ (Python 3.12 native, 3.14 via deadsnakes):
+#    sudo add-apt-repository ppa:deadsnakes/ppa -y
+#    sudo apt update && sudo apt install -y python3.14 python3.14-venv python3.14-dev
+#    python3.14 -m venv /opt/crypto_bot/.venv
 #    source /opt/crypto_bot/.venv/bin/activate
 #    pip install -r requirements.txt
+#
+#  On macOS (Homebrew):
+#    brew install python@3.14
+#    python3.14 -m venv .venv
+#    source .venv/bin/activate
+#    pip install -r requirements.txt
+#
+#  On Windows (Git Bash or PowerShell):
+#    See docs/DEMARRAGE_WINDOWS.md for full guide.
+#    1. Install Python 3.14 from https://www.python.org/downloads/
+#       (check "Add Python to PATH")
+#    2. py -3.14 -m venv .venv
+#    3. source .venv/Scripts/activate   # Git Bash
+#       OR  .venv\Scripts\Activate.ps1  # PowerShell
+#    4. pip install -r requirements.txt
 #
 #  NOTE : les versions sont épinglées pour garantir la reproductibilité
 #  en production. Pour mettre à jour, testez d'abord dans un environnement
 #  de développement, puis mettez à jour les versions ici.
 #
-#  Date de lock : 2026-07-13 — vérifié par `pip install -r requirements.txt`
-#  dans un venv Python 3.12 vierge (aucun conflit de résolution) suivi de
+#  Date de lock : 2026-07-29 — vérifié par `pip install -r requirements.txt`
+#  dans un venv Python 3.14 vierge (aucun conflit de résolution) suivi de
 #  `pytest -q` (576 tests, tous verts). Toutes les dépendances directes sont
 #  épinglées en version exacte (==) ; les sous-dépendances transitives ne le
 #  sont pas (pas de lockfile — cf. TEST-12 dans docs/audit/07-tests-ci-docs.md
 #  pour la justification de ce choix).
+#
+#  ⚠ Python 3.14 migration: free-threaded mode (PEP 779) is now stable.
+#  LightGBM, Polars, Optuna, CCXT all support 3.14 since Q2 2026.
+#  Free-threaded build (python3.14t) optional, see docs/DEMARRAGE_WINDOWS.md.
 # ================================================================
 
 # -- Web / API -------------------------------------------------------

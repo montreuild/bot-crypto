@@ -15,7 +15,7 @@
 #   bash setup.sh --paper    # démarre en paper mode (sans clés API)
 #
 # Prérequis :
-#   - Python 3.12+ (https://www.python.org/downloads/)
+#   - Python 3.14+ (https://www.python.org/downloads/)
 #   - Node.js 20+ (https://nodejs.org/)
 #   - Git
 #
@@ -52,42 +52,63 @@ detect_os() {
 
 # ── Vérification des prérequis ───────────────────────────────────────────────
 check_python() {
-    section "Vérification Python 3.12+"
+    section "Vérification Python 3.14+"
     local py_cmd=""
-    for cmd in python3.12 python3 python; do
-        if command -v "$cmd" &>/dev/null; then
-            local ver
-            ver=$("$cmd" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
-            local major=${ver%%.*}
-            local minor=${ver#*.}
-            if [ "$major" = "3" ] && [ "$minor" -ge 12 ]; then
-                py_cmd="$cmd"
-                success "Python $ver trouvé ($cmd)"
-                echo "$cmd"
-                return 0
+    # Windows: try `py -3.14` first (Python launcher), then unix-style
+    if [ "$OS" = "windows" ]; then
+        for cmd in "py -3.14" "py -3.13" "py -3.12" python3.14 python3.13 python3.12 python; do
+            if command -v "${cmd%% *}" &>/dev/null; then
+                local ver
+                ver=$(${cmd} --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+                local major=${ver%%.*}
+                local minor=${ver#*.}
+                if [ "$major" = "3" ] && [ "$minor" -ge 14 ]; then
+                    py_cmd="$cmd"
+                    success "Python $ver trouvé ($cmd)"
+                    echo "$cmd"
+                    return 0
+                fi
             fi
-        fi
-    done
-    error "Python 3.12+ requis mais non trouvé."
+        done
+    else
+        for cmd in python3.14 python3.13 python3.12 python3 python; do
+            if command -v "$cmd" &>/dev/null; then
+                local ver
+                ver=$("$cmd" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+                local major=${ver%%.*}
+                local minor=${ver#*.}
+                if [ "$major" = "3" ] && [ "$minor" -ge 14 ]; then
+                    py_cmd="$cmd"
+                    success "Python $ver trouvé ($cmd)"
+                    echo "$cmd"
+                    return 0
+                fi
+            fi
+        done
+    fi
+    error "Python 3.14+ requis mais non trouvé."
     cat <<EOF
 
-${YELLOW}Installation de Python 3.12 :${NC}
+${YELLOW}Installation de Python 3.14 :${NC}
 
 ${BOLD}Linux (Ubuntu 22.04)${NC}:
   sudo add-apt-repository ppa:deadsnakes/ppa -y
-  sudo apt update && sudo apt install -y python3.12 python3.12-venv python3.12-dev
+  sudo apt update && sudo apt install -y python3.14 python3.14-venv python3.14-dev
 
 ${BOLD}Linux (Ubuntu 24.04+)${NC}:
-  Python 3.12 est déjà natif.
+  Python 3.14 via deadsnakes PPA (cf. ci-dessus).
 
 ${BOLD}macOS${NC}:
-  brew install python@3.12
+  brew install python@3.14
 
 ${BOLD}Windows${NC}:
-  1. Téléchargez Python 3.12 depuis https://www.python.org/downloads/
+  1. Téléchargez Python 3.14 depuis https://www.python.org/downloads/
   2. Lors de l'installation, cochez "Add Python to PATH"
   3. Redémarrez Git Bash / PowerShell
   4. Relancez ce script
+
+${BOLD}Windows via WSL2 (recommandé)${NC}:
+  Voir docs/DEMARRAGE_WINDOWS.md pour le guide complet.
 
 EOF
     return 1
@@ -209,7 +230,7 @@ install_backend() {
 
     # Création du venv
     if [ ! -d ".venv" ]; then
-        log "Création du venv Python 3.12..."
+        log "Création du venv Python 3.14..."
         "$py_cmd" -m venv .venv
         success "Venv créé"
     else

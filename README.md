@@ -2,6 +2,12 @@
 
 Bot de trading algorithmique multi-stratégies avec interface web, backtest avancé et optimiseur de paramètres.
 
+> **⚠ Mises à jour V12.18+ (29/07/2026)** :
+> - **Python 3.14 obligatoire** (au lieu de 3.12) — voir `docs/DEMARRAGE_WINDOWS.md`
+> - **Frontend Next.js officiel unique** — Jinja2 décommissionné (voir `docs/FIN_JINJA2.md`)
+> - **Plan d'amélioration** — `docs/PLAN_DIRECTEUR_AMELIORATIONS.md` (8 sprints, 173 SP)
+> - **Audit externe** — `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` (54 p.)
+
 ---
 
 ## 📋 Fonctionnalités
@@ -9,16 +15,18 @@ Bot de trading algorithmique multi-stratégies avec interface web, backtest avan
 - **Live / Paper trading** — Exécution sur OKX (et autres exchanges via CCXT) avec gestion du risque, circuit breaker, trailing stop
 - **Backtest avancé** — Jusqu'à 8 000 bougies, Walk-Forward Analysis, Monte-Carlo, comparaison multi-stratégies, graphique de prix avec signaux
 - **Optimiseur** — Random Search / Bayesian UCB / Grid Search IS/OOS avec détection d'overfitting, application directe dans `config.yaml`
-- **ML** — Stratégie basée sur Random Forest / Logistic Regression (optionnel)
+- **ML** — Stratégie basée sur LightGBM + Isotonic calibration (scikit-learn supprimé)
 - **Notifications** — Telegram et WhatsApp
-- **Interface web** — 5 pages (Dashboard Live, Backtest, Optimiseur, Scanner, Configuration)
+- **Interface web** — **Next.js 15 / React 19** (frontend officiel), 20 pages
 
 ---
 
 ## ⚙️ Prérequis
 
-- **Python 3.12 OBLIGATOIRE** (voir [Installation](#installation-détaillée) pour Ubuntu 22.04 / 24.04)
+- **Python 3.14 OBLIGATOIRE** (voir [Installation](#installation-détaillée) pour Ubuntu 22.04 / 24.04 / Windows / macOS)
+- Node.js 20+ (pour le frontend Next.js)
 - pip
+
 
 ---
 
@@ -28,10 +36,10 @@ Bot de trading algorithmique multi-stratégies avec interface web, backtest avan
 # 1. Cloner / décompresser le projet
 cd crypto_bot_v12
 
-# 2. Créer un environnement virtuel Python 3.12
-python3.12 -m venv .venv
+# 2. Créer un environnement virtuel Python 3.14
+python3.14 -m venv .venv
 source .venv/bin/activate      # Linux / macOS
-.venv\Scripts\activate         # Windows
+.venv\Scripts\activate         # Windows (Git Bash)
 
 # 3. Installer les dépendances
 pip install -r requirements.txt
@@ -41,25 +49,61 @@ cp config.yaml config.yaml.example  # Garder une trace
 # Éditer config.yaml avec vos clés API, capital, etc.
 ```
 
+> 💡 **Recommandé** : exécuter `bash scripts/setup.sh` qui automatise tout
+> (détection OS, venv 3.14, .env avec WEB_API_KEY, frontend Next.js).
+
 ### Installation détaillée par OS
 
 **Ubuntu 22.04 (Python 3.10 par défaut):**
 ```bash
 sudo add-apt-repository ppa:deadsnakes/ppa -y
-sudo apt update && sudo apt install -y python3.12 python3.12-venv python3.12-dev
-python3.12 -m venv /opt/crypto_bot/.venv
+sudo apt update && sudo apt install -y python3.14 python3.14-venv python3.14-dev
+python3.14 -m venv /opt/crypto_bot/.venv
 source /opt/crypto_bot/.venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**Ubuntu 24.04 (Python 3.12 natif):**
+**Ubuntu 24.04 (Python 3.12 natif, 3.14 via deadsnakes):**
 ```bash
-python3.12 -m venv /opt/crypto_bot/.venv
+sudo add-apt-repository ppa:deadsnakes/ppa -y
+sudo apt update && sudo apt install -y python3.14 python3.14-venv python3.14-dev
+python3.14 -m venv /opt/crypto_bot/.venv
 source /opt/crypto_bot/.venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**macOS / Windows:** Utiliser Python 3.12 depuis [python.org](https://www.python.org/downloads/), puis créer venv.
+**macOS:**
+```bash
+brew install python@3.14
+python3.14 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+**Windows:** Voir [`docs/DEMARRAGE_WINDOWS.md`](docs/DEMARRAGE_WINDOWS.md) pour le guide
+complet (Git Bash, WSL2, PowerShell). Résumé :
+
+```powershell
+# Git Bash ou PowerShell
+py -3.14 -m venv .venv
+source .venv/Scripts/activate   # Git Bash
+# OU  .venv\Scripts\Activate.ps1   # PowerShell
+pip install -r requirements.txt
+```
+
+### Frontend Next.js (frontend officiel)
+
+```bash
+cd frontend
+npm install
+npm run dev    # http://localhost:3000
+# OU
+npm run build  # build de production
+```
+
+Voir `docs/FIN_JINJA2.md` pour la fin officielle de Jinja2 (frontend Next.js
+devient l'unique frontend). Les templates Jinja2 (`app/web/templates/`) sont
+décommissionnés et seront supprimés à la fin du Sprint 6.
 
 ---
 

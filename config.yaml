@@ -278,7 +278,10 @@ web:
   api_key: ${WEB_API_KEY}
   # Dev LOCAL uniquement : autorise host ouvert sans api_key (sinon le
   # démarrage est refusé — OPS-02). À retirer avant toute exposition réseau.
-  allow_insecure: true
+  # ⚠ S0-11 (29/07/2026) : la valeur par défaut est désormais `false`.
+  # Pour du dev local uniquement, mettre `true` explicitement dans ce fichier
+  # ou exporter `ALLOW_INSECURE_WEB=1`.
+  allow_insecure: false
 ui:
   risk_preset:
   expert_mode: false

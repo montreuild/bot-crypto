@@ -104,9 +104,24 @@ export const api = {
 
   // ── Config ──────────────────────────────────────────────────────────────
   getConfig: () => apiFetch<any>('/config'),
+  // S5-01 : étendu pour accepter un `symbol` optionnel (override par symbole).
+  // Si symbol est fourni, le backend écrit dans optimizer_results[tf][symbol]
+  // au lieu de la section globale strategy_params.
+  setStrategyParams: (strategy: string, params: Record<string, any>, symbol?: string) =>
+    apiFetch('/config/strategy-params', {
+      method: 'POST',
+      body: JSON.stringify({ strategy, params, symbol }),
+    }),
+  // S5-01 : activation/désactivation de TF par symbole.
+  toggleStrategyTimeframe: (tf: string, enable: boolean, symbol?: string) =>
+    apiFetch('/config/strategy-timeframe', {
+      method: 'POST',
+      body: JSON.stringify({ tf, enable, symbol }),
+    }),
+  // Legacy aliases (compat with existing code)
   updateStrategyParams: (payload: any) =>
     apiFetch('/config/strategy-params', { method: 'POST', body: JSON.stringify(payload) }),
-  toggleStrategyTimeframe: (payload: any) =>
+  toggleStrategyTimeframeLegacy: (payload: any) =>
     apiFetch('/config/strategy-timeframe', { method: 'POST', body: JSON.stringify(payload) }),
   setStrategies: (enabled: string[]) =>
     apiFetch(`/config/strategies?enabled=${enabled.join(',')}`, { method: 'POST' }),
