@@ -8,18 +8,36 @@ import { cn, lifecycleStyle, parseSlotKey, formatUSD } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Bot as BotIcon, RefreshCw, Zap, Star, AlertCircle } from 'lucide-react';
 import { useState } from 'react';
+import { QueryBoundary } from '@/components/ui/query-state';
 
 export default function BotsPage() {
-  const { data, isLoading } = useBots();
+  const { data, isLoading, error, refetch, isRefetching } = useBots();
   const forceActive = useForceBotActive();
   const runForward = useRunForwardTest();
   const [filter, setFilter] = useState<string>('all');
 
-  if (isLoading || !data) {
+  // S6-12 : le titre reste monté même sans données, et l'échec est réessayable.
+  const header = (
+    <div>
+      <h1 className="text-2xl font-bold tracking-tight">Mes Bots</h1>
+      <p className="text-sm text-muted mt-1">
+        Portefeuille de stratégies avec cycle de vie automatique
+      </p>
+    </div>
+  );
+
+  if (error || isLoading || !data) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-12 h-12 rounded-full border-2 border-primary-400 border-t-transparent animate-spin" />
-      </div>
+      <QueryBoundary
+        title={header}
+        error={error}
+        isLoading={isLoading || !data}
+        loadingLabel="Chargement des bots…"
+        onRetry={() => refetch()}
+        isRetrying={isRefetching}
+      >
+        {null}
+      </QueryBoundary>
     );
   }
 
@@ -48,12 +66,7 @@ export default function BotsPage() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Mes Bots</h1>
-        <p className="text-sm text-muted mt-1">
-          Portefeuille de stratégies avec cycle de vie automatique
-        </p>
-      </div>
+      {header}
 
       {/* Lifecycle counts */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

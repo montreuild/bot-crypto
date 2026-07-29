@@ -10,36 +10,50 @@ import { SignalsFeed } from '@/components/cards/signals-feed';
 import { AllocationsGrid } from '@/components/cards/allocations-grid';
 import { RiskPanel } from '@/components/cards/risk-panel';
 import { useBotStatus } from '@/hooks/use-api';
+import { QueryBoundary } from '@/components/ui/query-state';
 
 export default function DashboardPage() {
-  const { data: status, isLoading } = useBotStatus();
+  const { data: status, isLoading, error, refetch, isRefetching } = useBotStatus();
 
-  if (isLoading || !status) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <div className="w-12 h-12 mx-auto mb-4 rounded-full border-2 border-primary-400 border-t-transparent animate-spin" />
-          <div className="text-sm text-muted">Chargement du dashboard...</div>
-        </div>
+  // S6-12 : le titre est monté avant la garde — la page garde son `h1` même
+  // backend éteint, et l'échec s'affiche au lieu de tourner indéfiniment.
+  const header = (
+    <div className="flex items-end justify-between">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+        <p className="text-sm text-muted mt-1">
+          {status
+            ? `Vue temps réel du trading · ${status.timeframes?.length || 0} TFs · ${status.strategies?.length || 0} stratégies actives`
+            : 'Vue temps réel du trading'}
+        </p>
       </div>
+      {status && (
+        <div className="flex items-center gap-2 text-xs text-dim font-mono">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          Live · mis à jour il y a {status.last_scan_time ? 'quelques secondes' : '—'}
+        </div>
+      )}
+    </div>
+  );
+
+  if (error || isLoading || !status) {
+    return (
+      <QueryBoundary
+        title={header}
+        error={error}
+        isLoading={isLoading || !status}
+        loadingLabel="Chargement du dashboard…"
+        onRetry={() => refetch()}
+        isRetrying={isRefetching}
+      >
+        {null}
+      </QueryBoundary>
     );
   }
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Page header */}
-      <div className="flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted mt-1">
-            Vue temps réel du trading · {status.timeframes?.length || 0} TFs · {status.strategies?.length || 0} stratégies actives
-          </p>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-dim font-mono">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          Live · mis à jour il y a {status.last_scan_time ? 'quelques secondes' : '—'}
-        </div>
-      </div>
+      {header}
 
       {/* KPIs row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">

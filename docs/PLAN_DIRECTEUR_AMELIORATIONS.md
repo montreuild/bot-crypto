@@ -161,8 +161,9 @@ Voir `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` § Sprint 1.
 | S6-09 | Déprécier Jinja2 formellement → **SUPPRIMÉ physiquement** | 2 | ✅ Fait (templates + routes supprimés, redirects 308) |
 | S6-10 | Analytics produit (PostHog opt-in) | 3 | ⏳ Reporté (PSAN sensible) |
 | S6-11 | Outiller réellement l'accessibilité (`@axe-core/playwright` sur les 20 routes) | 3 | ⏳ À faire — `axe-core` n'est dans aucun `package.json` (cf. S6-02) |
-| S6-12 | États d'erreur des pages : `/dashboard`, `/bots`, `/config` bouclent sur un spinner infini quand l'API est injoignable | 3 | ⏳ À faire — voir « Vérification post-migration » |
-| S6-13 | Jouer les tests E2E Playwright en CI (job `e2e` dans `ci.yml`) | 3 | ⏳ Bloqué par S6-12 |
+| S6-12 | États d'erreur des pages (spinner infini quand l'API est injoignable) | 3 | ✅ Fait (`components/ui/query-state.tsx`, bandeau global, timeout `apiFetch`) |
+| S6-13 | Jouer les tests E2E Playwright en CI (job `e2e` dans `ci.yml`) | 3 | ✅ Fait — débloqué par S6-12, 20/20 verts backend éteint |
+| S6-14 | Le lint frontend n'a jamais tourné : aucune config ESLint dans `frontend/` | 2 | ⏳ À faire — `npm run lint` (step CI `frontend`) est interactif, donc cassé ; l'activer révèle 8 erreurs `react/no-unescaped-entities` pré-existantes à corriger |
 
 ### Sprint 7 — Production & Conformité (40 SP, non couvert)
 
@@ -223,14 +224,23 @@ page, route ou ressource Jinja2 n'a été oubliée :
 
 1. **`/models` n'était pas couvert par les tests E2E** alors que c'est une page
    migrée depuis `models.html` → corrigé dans `frontend/e2e/tests/pages.spec.ts`.
-2. **`/dashboard`, `/bots`, `/config` bouclent sur un spinner infini quand
+2. **`/dashboard`, `/bots`, `/config` bouclaient sur un spinner infini quand
    l'API est injoignable** (`if (isLoading || !data)` : sur erreur réseau
    `isLoading` repasse à `false` mais `data` reste `undefined`). Ni titre, ni
    message d'erreur, ni bouton de réessai. Les pages Jinja2, rendues côté
-   serveur, n'avaient pas ce mode de défaillance → **S6-12**.
-3. **Les tests E2E ne tournent dans aucun job CI** — `ci.yml` couvre ruff,
-   pytest, pip-audit, lint/type-check/build frontend, mais pas Playwright.
-   Le job est bloqué par S6-12 (4 pages rouges sans backend) → **S6-13**.
+   serveur, n'avaient pas ce mode de défaillance → **S6-12, corrigé**.
+
+   Deuxième cause, plus vicieuse : **`fetch` n'avait aucune échéance**. Selon la
+   configuration réseau, un backend éteint refuse le SYN (échec immédiat) ou le
+   laisse filtrer — observé en dev Windows, connexions bloquées en `SYN_SENT`.
+   La requête n'était alors *jamais* résolue : react-query restait `pending`,
+   `error` jamais peuplé, et même un état d'erreur correct n'aurait rien
+   affiché. `apiFetch` borne désormais chaque requête (15 s par défaut,
+   `timeoutMs: 0` pour les traitements longs : backtest, replay, forward-test,
+   refetch OHLCV, fast-analysis).
+3. **Les tests E2E ne tournaient dans aucun job CI** — `ci.yml` couvrait ruff,
+   pytest, pip-audit, lint/type-check/build frontend, mais pas Playwright
+   → **S6-13, corrigé** (débloqué par S6-12 : 20/20 verts backend éteint).
 4. **`axe-core` n'est installé nulle part** : S6-02 documentait les règles WCAG
    dans `DESIGN_SYSTEM.md` sans jamais les outiller → **S6-11**.
 

@@ -8,6 +8,7 @@ import {
 } from '@/lib/utils';
 import { toast } from 'sonner';
 import { usePortfolio, useNotifications, useBots } from '@/hooks/use-api';
+import { QueryBoundary } from '@/components/ui/query-state';
 import { api } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -131,7 +132,7 @@ function ActivityFeed({ items }: { items: any[] }) {
 // ── Main page ───────────────────────────────────────────────────────────────
 
 export default function PortfolioPage() {
-  const { data: portfolio, isLoading, isError } = usePortfolio();
+  const { data: portfolio, isLoading, isError, error, refetch, isRefetching } = usePortfolio();
   const { data: notifData } = useNotifications(30, 'info');
   const { data: botsData } = useBots();
   const qc = useQueryClient();
@@ -173,22 +174,27 @@ export default function PortfolioPage() {
     }
   };
 
-  if (isLoading) {
+  // S6-12 : titre monté en permanence + cause réelle de l'erreur et réessai,
+  // au lieu d'un « Erreur lors du chargement » sans détail ni recours.
+  if (isError || isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-12 h-12 text-primary-400 animate-spin" />
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center text-red-400">
-          <AlertCircle className="w-12 h-12 mx-auto mb-3" />
-          <div className="text-sm">Erreur lors du chargement du portfolio</div>
-        </div>
-      </div>
+      <QueryBoundary
+        title={
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Portefeuille</h1>
+            <p className="text-sm text-muted mt-1">
+              Vue détaillée fonds · allocation réelle vs shadow · lifecycle · risk
+            </p>
+          </div>
+        }
+        error={isError ? error : undefined}
+        isLoading={isLoading}
+        loadingLabel="Chargement du portefeuille…"
+        onRetry={() => refetch()}
+        isRetrying={isRefetching}
+      >
+        {null}
+      </QueryBoundary>
     );
   }
 

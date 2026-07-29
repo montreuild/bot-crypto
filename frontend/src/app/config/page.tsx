@@ -14,11 +14,12 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useState, useMemo } from 'react';
 import { Save, RotateCcw, Shield, Settings, Activity, DollarSign, Globe } from 'lucide-react';
+import { QueryBoundary } from '@/components/ui/query-state';
 
 type Symbol = string; // ex. "BTC/USDC"
 
 export default function ConfigPage() {
-  const { data: config, isLoading } = useConfig();
+  const { data: config, isLoading, error, refetch, isRefetching } = useConfig();
   const { data: presets } = usePresets();
   const { data: status } = useApiStatus();
   const setPreset = useSetRiskPreset();
@@ -42,11 +43,27 @@ export default function ConfigPage() {
     return Array.from(all).sort();
   }, [status, config]);
 
-  if (isLoading || !config) {
+  // S6-12 : le titre reste monté même sans config chargée, et l'échec est
+  // affiché/réessayable au lieu d'un spinner qui ne s'arrête jamais.
+  if (error || isLoading || !config) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="w-12 h-12 rounded-full border-2 border-primary-400 border-t-transparent animate-spin" />
-      </div>
+      <QueryBoundary
+        title={
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Configuration</h1>
+            <p className="text-sm text-muted mt-1">
+              Gérez vos stratégies, paramètres de risque et notifications
+            </p>
+          </div>
+        }
+        error={error}
+        isLoading={isLoading || !config}
+        loadingLabel="Chargement de la configuration…"
+        onRetry={() => refetch()}
+        isRetrying={isRefetching}
+      >
+        {null}
+      </QueryBoundary>
     );
   }
 
