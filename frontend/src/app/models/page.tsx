@@ -347,7 +347,7 @@ function DiagnosticsPanel({ trainMeta, title }: { trainMeta?: ModelTrainMeta; ti
           <RegimeSimilarityTable sim={sim} />
           <p className="text-xs text-dim mt-1.5">
             Spearman ≈ 1 = le modèle classe les features de la même façon dans les deux régimes
-            (pas de spécialisation exploitable). Un écart net serait la piste d'un routing
+            (pas de spécialisation exploitable). Un écart net serait la piste d&apos;un routing
             conditionnel au régime.
           </p>
         </div>
@@ -437,7 +437,7 @@ function RegistryRow({ entry }: { entry: ModelRegistryEntry }) {
                   <thead>
                     <tr className="text-left text-dim border-b border-border/50">
                       <th className="p-2 font-medium">Version</th>
-                      <th className="p-2 font-medium">Entraînée jusqu'au</th>
+                      <th className="p-2 font-medium">Entraînée jusqu&apos;au</th>
                       <th className="p-2 font-medium text-right">N barres</th>
                       <th className="p-2 font-medium">AUC</th>
                       <th className="p-2 font-medium">Décision</th>
@@ -479,7 +479,7 @@ function RegistryTable({ entries }: { entries: ModelRegistryEntry[] }) {
               Entraîné sur
             </th>
             <th className="p-3 font-medium">Version active</th>
-            <th className="p-3 font-medium">Entraînée jusqu'au</th>
+            <th className="p-3 font-medium">Entraînée jusqu&apos;au</th>
             <th className="p-3 font-medium">AUC</th>
             <th className="p-3 font-medium">Décision</th>
             <th className="p-3 font-medium">Fraîcheur</th>
@@ -669,9 +669,9 @@ function TrainForm() {
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">
-              Date de fin d'entraînement (optionnel)
+              Date de fin d&apos;entraînement (optionnel)
               <span className="block normal-case text-[10px] text-dim font-normal">
-                fige l'entraînement à cette date passée
+                fige l&apos;entraînement à cette date passée
               </span>
             </label>
             <input
@@ -693,9 +693,9 @@ function TrainForm() {
           </Button>
         </div>
         <p className="text-xs text-muted">
-          Dry-run (par défaut) : entraîne un candidat, le compare au sortant sur un holdout, n'écrit rien.
+          Dry-run (par défaut) : entraîne un candidat, le compare au sortant sur un holdout, n&apos;écrit rien.
           « Publier » déclenche le gate réel (promotion seulement si le candidat ne régresse pas) — mêmes
-          règles qu'en live.
+          règles qu&apos;en live.
         </p>
         {job && <JobResult job={job} />}
       </CardContent>
@@ -784,7 +784,7 @@ function SweepForm() {
         </div>
         <p className="text-xs text-muted">
           Compare chaque fenêtre sur un holdout COMMUN — comparaison légitime entre tailles. Sans « Publier »,
-          rien n'est écrit au registre.
+          rien n&apos;est écrit au registre.
         </p>
         {job && <JobResult job={job} />}
       </CardContent>
@@ -843,7 +843,7 @@ export default function ModelsPage() {
             « Version active » = ce que <code className="font-mono text-foreground">resolve()</code> retournerait
             maintenant (pin persistant prioritaire, sinon dernière version promue). Une recette sans version
             active a vu tous ses candidats rejetés par le gate — entraînez-en un nouveau ou promouvez
-            manuellement un candidat existant depuis l'historique.
+            manuellement un candidat existant depuis l&apos;historique.
           </div>
         </CardContent>
       </Card>

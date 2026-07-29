@@ -79,7 +79,9 @@ test.describe('Search (Cmd+K)', () => {
   test('opens with Cmd+K', async ({ page }) => {
     await page.goto('/dashboard');
     await page.waitForTimeout(2000);
-    await page.keyboard.press('Meta+K');
+    // `Meta` = touche Windows sous Windows/Linux : le raccourci ne se
+    // déclenchait jamais hors macOS. `ControlOrMeta` mappe sur la bonne touche.
+    await page.keyboard.press('ControlOrMeta+k');
     await expect(page.locator('input[placeholder*="Rechercher"]')).toBeVisible({ timeout: 5000 });
     await page.keyboard.press('Escape');
   });
@@ -87,7 +89,9 @@ test.describe('Search (Cmd+K)', () => {
   test('can search and navigate', async ({ page }) => {
     await page.goto('/dashboard');
     await page.waitForTimeout(2000);
-    await page.keyboard.press('Meta+K');
+    // `Meta` = touche Windows sous Windows/Linux : le raccourci ne se
+    // déclenchait jamais hors macOS. `ControlOrMeta` mappe sur la bonne touche.
+    await page.keyboard.press('ControlOrMeta+k');
     await page.fill('input[placeholder*="Rechercher"]', 'backtest');
     await page.keyboard.press('Enter');
     await page.waitForURL('**/backtest', { timeout: 5000 });
@@ -111,7 +115,11 @@ test.describe('Settings', () => {
   test('displays risk presets', async ({ page }) => {
     await page.goto('/settings');
     await page.waitForTimeout(3000);
-    await expect(page.locator('text=Prudent').or(page.locator('text=Équilibré')).or(page.locator('text=Agressif'))).toBeVisible({ timeout: 10000 });
+    // `.first()` : les trois presets sont rendus simultanément, donc le
+    // locator résout 3 éléments → strict mode violation sans ça.
+    await expect(
+      page.locator('text=Prudent').or(page.locator('text=Équilibré')).or(page.locator('text=Agressif')).first(),
+    ).toBeVisible({ timeout: 10000 });
   });
 });
 
@@ -136,8 +144,10 @@ test.describe('Audit Log', () => {
   test('displays audit table', async ({ page }) => {
     await page.goto('/audit-log');
     await page.waitForTimeout(3000);
-    await expect(page.locator('text=Journal')).toBeVisible({ timeout: 10000 });
-    await expect(page.locator('table')).toBeVisible({ timeout: 10000 });
+    // `.first()` : « Journal » apparaît aussi dans la nav latérale, ce qui
+    // faisait échouer le locator en strict mode (2 éléments).
+    await expect(page.locator('text=Journal').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('table').first()).toBeVisible({ timeout: 10000 });
   });
 });
 
@@ -145,6 +155,8 @@ test.describe('Compare', () => {
   test('has compare button', async ({ page }) => {
     await page.goto('/compare');
     await page.waitForTimeout(2000);
-    await expect(page.locator('text=Comparer').or(page.locator('text=Comparatif'))).toBeVisible({ timeout: 10000 });
+    // `.first()` : « Comparatif » figure aussi dans la nav latérale (3 éléments
+    // au total) — strict mode violation sans ça.
+    await expect(page.locator('text=Comparer').or(page.locator('text=Comparatif')).first()).toBeVisible({ timeout: 10000 });
   });
 });

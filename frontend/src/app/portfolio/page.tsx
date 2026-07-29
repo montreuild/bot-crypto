@@ -282,7 +282,7 @@ export default function PortfolioPage() {
           {!continuousAllocation && (
             <div className="mt-4 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-center gap-2">
               <Zap className="w-3.5 h-3.5" />
-              continuous_allocation = false — utilisez le bouton "Force rebalance" en haut de page.
+              continuous_allocation = false — utilisez le bouton &quot;Force rebalance&quot; en haut de page.
             </div>
           )}
         </CardContent>

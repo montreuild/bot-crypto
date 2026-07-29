@@ -24,7 +24,10 @@ export default function TradesPage() {
   const [slotFilter, setSlotFilter] = useState('');
   const { data, isLoading } = useTrades({ limit, symbol: symbolFilter || undefined, strategy: strategyFilter || undefined });
 
-  const trades = data?.trades || [];
+  // Mémoïsé : `data?.trades || []` crée un tableau neuf à chaque render, ce qui
+  // invalidait les useMemo de filtrage/agrégation en aval à chaque tick du
+  // sondage (15 s) même quand les trades n'avaient pas changé.
+  const trades = useMemo(() => data?.trades || [], [data]);
   const total = data?.total || 0;
 
   // Filtrage par slot 3-parties en client (l'API ne supporte pas slot=...)

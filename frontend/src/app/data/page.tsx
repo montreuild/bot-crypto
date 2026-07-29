@@ -227,7 +227,7 @@ export default function DataPage() {
               Peuple le cache OHLCV des actions des univers activés dans
               <code className="ml-1 text-xs bg-card-hover px-1 py-0.5 rounded">scanner.universe</code>
               (ex. <code className="text-xs bg-card-hover px-1 py-0.5 rounded">sbf120</code>).
-              Lance en arrière-plan — suit l'avancement ci-dessous.
+              Lance en arrière-plan — suit l&apos;avancement ci-dessous.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
               <div>
@@ -243,7 +243,7 @@ export default function DataPage() {
                 </select>
               </div>
               <div>
-                <label className="text-xs text-dim block mb-1.5">Années d'historique</label>
+                <label className="text-xs text-dim block mb-1.5">Années d&apos;historique</label>
                 <input
                   type="number"
                   value={backfillYears}

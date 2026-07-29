@@ -113,11 +113,9 @@ export function ErrorState({
               python cli.py --web
             </code>
             <p className="mt-2 leading-relaxed">
-              L&apos;API est attendue sur{' '}
-              <span className="font-mono text-foreground">
-                {process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}
-              </span>{' '}
-              — ajustable via <span className="font-mono">NEXT_PUBLIC_API_URL</span>.
+              Les appels passent par le proxy <span className="font-mono">/api</span> de
+              Next.js, qui cible <span className="font-mono text-foreground">http://localhost:8000</span>{' '}
+              — ajustable via <span className="font-mono">BOT_API_URL</span>.
             </p>
           </div>
         )}

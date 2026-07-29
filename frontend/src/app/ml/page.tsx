@@ -211,7 +211,7 @@ export default function MLPage() {
               <p className="font-semibold text-foreground mb-1">Lecture seule</p>
               <p>
                 Cette page est en lecture seule. Les modèles ML sont entraînés et retrainés
-                automatiquement par le backend selon la configuration du scheduler. L'AUC reflète
+                automatiquement par le backend selon la configuration du scheduler. L&apos;AUC reflète
                 la qualité de discrimination du modèle (0.5 = aléatoire, 1.0 = parfait).
               </p>
             </div>

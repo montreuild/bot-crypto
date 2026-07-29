@@ -365,7 +365,7 @@ export default function SettingsPage() {
           {notifPermission === 'granted' && (
             <div className="text-xs text-emerald-400 mt-3 flex items-center gap-2">
               <CheckCircle2 className="w-3 h-3" />
-              Notifications natives activées — alertes temps réel (trade fermé, circuit breaker) reçues même sur d'autres onglets.
+              Notifications natives activées — alertes temps réel (trade fermé, circuit breaker) reçues même sur d&apos;autres onglets.
             </div>
           )}
         </CardContent>

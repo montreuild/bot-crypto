@@ -13,9 +13,15 @@ import type {
   ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
 } from '@/types';
 
-const API_BASE = typeof window !== 'undefined'
-  ? (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '') + '/api'
-  : '/api';
+/**
+ * Toujours relatif : les appels passent par le proxy same-origin
+ * `src/app/api/[...path]/route.ts`, qui injecte `X-API-Key` côté serveur et
+ * évite tout CORS. Avant, le navigateur tapait `NEXT_PUBLIC_API_URL` en absolu
+ * (http://localhost:8000) : cross-origin — donc préflight à chaque lecture et
+ * whitelist d'origines à tenir — et surtout aucun moyen d'authentifier depuis
+ * la suppression du cookie posé par Jinja2.
+ */
+const API_BASE = '/api';
 
 /**
  * `status: 0` = le backend n'a pas répondu du tout (process arrêté, mauvais
@@ -88,6 +94,12 @@ async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Pro
       const body = await res.json();
       detail = body.detail || body.message || JSON.stringify(body);
     } catch {}
+    // Le proxy same-origin répond 503 quand il n'atteint pas FastAPI : on le
+    // ramène au même statut 0 qu'un échec réseau direct, pour que l'UI affiche
+    // « Backend injoignable » plutôt qu'une erreur HTTP générique.
+    if (res.status === 503 && /injoignable/i.test(String(detail))) {
+      throw new ApiError(0, String(detail));
+    }
     throw new ApiError(res.status, `${endpoint}: ${detail}`);
   }
 
@@ -248,10 +260,8 @@ export const api = {
     apiFetch<any>(`/optimize/job?job_id=${jobId}`, { method: 'DELETE' }),
   getOptimizeResults: () => apiFetch<any>('/optimize/results'),
   getOptimizeSpaces: () => apiFetch<any>('/optimize/spaces'),
-  optimizeStreamUrl: (jobId: string) => {
-    const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
-    return `${base}/api/optimize/stream?job_id=${jobId}`;
-  },
+  // Same-origin comme le reste : passe par le proxy, donc authentifié.
+  optimizeStreamUrl: (jobId: string) => `${API_BASE}/optimize/stream?job_id=${jobId}`,
 
   // ── ML ──────────────────────────────────────────────────────────────────
   getMLStrategyInfo: () => apiFetch<{ strategies: Record<string, any> }>('/ml/strategy-info'),

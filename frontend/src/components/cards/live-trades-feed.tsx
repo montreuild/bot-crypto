@@ -29,7 +29,7 @@ export function LiveTradesFeed() {
           <div className="text-center py-8 text-sm text-muted">
             Aucun trade temps réel pour le moment.
             <div className="text-xs text-dim mt-2">
-              Les ouvertures/fermetures apparaîtront ici dès qu'elles se produisent.
+              Les ouvertures/fermetures apparaîtront ici dès qu&apos;elles se produisent.
             </div>
           </div>
         ) : (
