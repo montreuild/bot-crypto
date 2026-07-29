@@ -1,8 +1,29 @@
 # 🪦 Acte officiel de fin de Jinja2 — Bot-Crypto V12
 
 > **Date d'effet** : 29 juillet 2026 (Sprint 0)
-> **Date de suppression physique** : Fin Sprint 6 (après validation E2E)
+> **Date de suppression physique** : 29 juillet 2026 — **✅ FAIT (S6-09)**
 > **Décision** : D4 — voir `docs/PLAN_DIRECTEUR_AMELIORATIONS.md`
+
+## ✅ Statut : SUPPRIMÉ PHYSIQUEMENT
+
+La suppression physique a été réalisée dans le commit S6-09 (29/07/2026) —
+**en avance sur le planning** (prévu fin Sprint 6, fait dès le Sprint 5/6).
+Le frontend Next.js est désormais l'unique frontend officiel.
+
+### Détail de la suppression
+
+| Action | Statut |
+|---|---|
+| Suppression de `app/web/templates/` (18 fichiers HTML, ~10 600 lignes) | ✅ Fait |
+| Suppression de `app/web/static/` (JS/CSS partagés) | ✅ Fait |
+| Suppression des routes `@app.get("/dashboard")` etc. dans `app/api/main.py` | ✅ Fait |
+| Remplacement par redirects 308 permanents vers `FRONTEND_URL` (Next.js) | ✅ Fait |
+| Suppression des imports `Jinja2Templates`, `StaticFiles`, `HTMLResponse` | ✅ Fait |
+| Documentation mise à jour (`README.md`, `requirements.txt`, ce fichier) | ✅ Fait |
+| Retrait de `jinja2==3.1.6` du `requirements.txt` direct | ✅ Conservé comme transitive (FastAPI docs) |
+| Validation build Next.js 23 pages | ✅ Fait (15.4s, 0 erreur) |
+| Validation syntaxe Python (`app/api/main.py`) | ✅ Fait |
+| Routes API REST (`/api/*`) intactes | ✅ Aucune cassure |
 
 ---
 

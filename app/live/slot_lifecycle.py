@@ -87,7 +87,21 @@ class SlotLifecycleManager:
         self._fidelity_min_fills = int(lc.get("fidelity_min_fills",
                                               MIN_SIGNIFICANT_TRADES))
         # Bypass manuel : bots forcés ACTIF (droit de veto utilisateur).
-        self._manual_active   = set(lc.get("manual_active", []) or [])
+        # S4-06 / D6 (audit V2) : `manual_active` reste possible en override
+        # pour tests/debug/force, mais le DÉFAUT doit être auto (liste vide)
+        # — sinon le lifecycle est court-circuité et la machinerie
+        # candidat/essai/actif/retiré ne sert à rien. L'utilisateur qui
+        # remplit cette liste doit en avoir conscience.
+        self._manual_active = set(lc.get("manual_active", []) or [])
+        if self._manual_active:
+            logger.warning(
+                f"[Lifecycle] {len(self._manual_active)} slot(s) forcés ACTIF via "
+                f"lifecycle.manual_active — le lifecycle AUTOMATIQUE est "
+                f"COURT-CIRCUITÉ pour ces slots. C'est un override assumé "
+                f"(tests/debug/force) : si c'est un oubli, videz "
+                f"`manual_active: []` dans config.yaml pour activer le "
+                f"lifecycle auto (recommandé en production)."
+            )
         # Compatibilité OPS-01 : clés héritées à 2 parties (sans symbole),
         # appliquées par préfixe à tous les slots concernés (cf. _lookup_legacy).
         legacy_manual = _legacy_keys(self._manual_active)
@@ -96,6 +110,34 @@ class SlotLifecycleManager:
                 "[Lifecycle] Clés manual_active héritées 2-parties détectées "
                 f"(appliquées par préfixe à tous les symboles) : {legacy_manual}"
             )
+        # S4-06 : cohérence lifecycle ↔ budgets. Si `manual_active` liste
+        # des slots qui ne sont PAS dans `slot_budgets`, c'est une
+        # incohérence de config — on logge un warning pour que l'utilisateur
+        # corrige (sinon le slot est actif sans budget explicite → budget
+        # égal par défaut, ce qui peut surprendre).
+        alloc_cfg = (cfg or {}).get("capital_allocator", {}) or {}
+        self._custom_budgets: dict = dict(alloc_cfg.get("slot_budgets") or {})
+        if self._manual_active and self._custom_budgets:
+            budget_keys = set(self._custom_budgets.keys())
+            manual_keys = set(self._manual_active)
+            missing_in_budgets = manual_keys - budget_keys
+            if missing_in_budgets:
+                logger.warning(
+                    f"[Lifecycle] {len(missing_in_budgets)} slot(s) dans "
+                    f"manual_active SANS budget explicite dans "
+                    f"capital_allocator.slot_budgets : {sorted(missing_in_budgets)}. "
+                    f"Ils seront actifs avec un budget par défaut (égal), ce qui "
+                    f"peut surprendre. Ajoutez-les à `slot_budgets` ou retirez-"
+                    f"les de `manual_active`."
+                )
+            extra_in_budgets = budget_keys - manual_keys
+            if extra_in_budgets:
+                logger.info(
+                    f"[Lifecycle] {len(extra_in_budgets)} slot(s) ont un "
+                    f"budget explicite MAIS NE SONT PAS dans manual_active : "
+                    f"{sorted(extra_in_budgets)}. S'ils sont inactifs, le "
+                    f"budget est inutilisé — vérifiez la cohérence."
+                )
         # Lissage anti-flush
         self._min_active      = int(lc.get("min_active_bots", 2))
         self._max_demotions_per_day = int(lc.get("max_demotions_per_day", 2))

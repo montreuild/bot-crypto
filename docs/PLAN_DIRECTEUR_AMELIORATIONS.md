@@ -91,7 +91,7 @@ Voir `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` § Sprint 1.
 | S2-04 | Découper `optimizer_search.py` (1033 L) en sous-modules | 3 | ✅ Fait dans ce patch |
 | S2-05 | Découper `indicators.py` en sous-modules | 3 | ✅ Fait dans ce patch |
 | S2-06 | Découper `live_trader.py` (951 L) | 3 | ✅ Fait dans ce patch |
-| S2-07 | Versioning ML modèles (hash features + date) | 3 | ✅ Fait dans ce patch |
+| S2-07 | Versioning ML modèles (hash features + date) | 3 | ✅ Fait (app/ml/model_versioning.py) |
 | S2-08 | Marquer `research/` comme archive | 2 | ⏳ Reporté |
 | S2-09 | Audit et nettoyage `models/_archive/` | 2 | ⏳ Reporté |
 | S2-10 | Refactor `SignalPipeline` (préserver hints exécution) | 3 | ✅ Fait dans ce patch |
@@ -101,22 +101,16 @@ Voir `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` § Sprint 1.
 | ID | Tâche | SP | Statut |
 |---|---|---|---|
 | S3-01 | Optimiser/forward-tester par symbole | 5 | ⏳ Reporté |
-| S3-02 | Implémenter le Deflated Sharpe au gate de naissance | 3 | ✅ Fait dans ce patch |
+| S3-02 | Implémenter le Deflated Sharpe au gate de naissance | 3 | ✅ Fait (app/core/deflated_sharpe.py) |
 | S3-03 | Exiger ≥ 10 trades OOS minimum | 2 | ⏳ Reporté |
 | S3-04 | Walk-forward dans la décision d'apply | 3 | ⏳ Reporté |
-| S3-05 | Cône d'edge + contrat Monte-Carlo glissant | 5 | ✅ Fait dans ce patch |
+| S3-05 | Cône d'edge + contrat Monte-Carlo glissant | 5 | ✅ Déjà fait (app/core/oos_tracker.py) |
 | S3-06 | Aligner sémantique portefeuille backtest↔live | 3 | ⏳ Reporté |
-| S3-07 | Ajouter Sortino, Calmar, alpha vs Buy & Hold | 2 | ✅ Fait dans ce patch |
-| S3-08 | Corriger `edge_lookback_days: 365` tronqué silencieusement | 1 | ✅ Fait dans ce patch |
-| S3-09 | Stress tests par régimes (bull/bear/range) | 3 | ✅ Fait dans ce patch |
-| S3-10 | Détecter overfitting ML (AUC < 0.55 → warning) | 2 | ✅ Fait dans ce patch ( voir note) |
-| S3-11 | Réduire timeout ML + libérer `_ml_lock` proprement | 2 | ✅ Fait dans ce patch |
-
-> **Note S3-10** : L'audit V2 indiquait "impossible avec entraînement modèle".
-> En réalité, AUC < 0.55 est détectable **post-training** (le modèle est
-> entraîné, on mesure sa performance, on warning/block si sous le seuil).
-> Ce n'est pas un contrôle *pendant* l'entraînement, mais un **gate de
-> validation** après entraînement — ce qui répond à l'exigence.
+| S3-07 | Ajouter Sortino, Calmar, alpha vs Buy & Hold | 2 | ✅ Fait (app/core/performance_metrics.py) |
+| S3-08 | Corriger `edge_lookback_days: 365` tronqué silencieusement | 1 | ✅ Fait (warning explicite dans forward_test.py) |
+| S3-09 | Stress tests par régimes (bull/bear/range) | 3 | ✅ Fait (app/engine/regime_stress_test.py) |
+| S3-10 | Détecter overfitting ML (AUC < 0.55 → warning) | 2 | ✅ Fait (app/ml/overfitting_gate.py) |
+| S3-11 | Réduire timeout ML + libérer `_ml_lock` proprement | 2 | ✅ Fait (app/ml/trainer.py — _retrain_with_timeout) |
 
 ### Sprint 4 — Risk Management (28 SP, sélection)
 
@@ -124,47 +118,47 @@ Voir `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` § Sprint 1.
 |---|---|---|---|
 | S4-01 | Verrou sur `CapitalAllocator` | 2 | ⏳ Reporté |
 | S4-02 | Transaction atomique `save_trade` + `update_daily_stats` | 2 | ⏳ Reporté |
-| S4-03 | Persister stats hebdo allocator en DB | 3 | ✅ Fait dans ce patch |
-| S4-04 | Vraie mesure de corrélation (matrice rendements) | 3 | ✅ Fait dans ce patch |
-| S4-05 | Trancher allocation — mode `performance` retenu (D5) | 3 | ✅ Fait dans ce patch |
-| S4-06 | Clarifier lifecycle ↔ budgets (cohérence `manual_active` ↔ `slot_budgets`) | 2 | ✅ Fait dans ce patch |
-| S4-07 | Activer lifecycle automatique + override manuel possible (D6) | 5 | ✅ Fait dans ce patch |
+| S4-03 | Persister stats hebdo allocator en DB | 3 | ✅ Déjà fait (capital_allocator.py `_persist_weekly_stats`) |
+| S4-04 | Vraie mesure de corrélation (matrice rendements) | 3 | ✅ Fait (app/core/correlation_matrix.py) |
+| S4-05 | Trancher allocation — mode `performance` retenu (D5) | 3 | ✅ Fait (décision actée) |
+| S4-06 | Clarifier lifecycle ↔ budgets (cohérence `manual_active` ↔ `slot_budgets`) | 2 | ✅ Fait (slot_lifecycle.py warnings) |
+| S4-07 | Activer lifecycle automatique + override manuel possible (D6) | 5 | ✅ Fait (warnings + override possible) |
 | S4-08 | Circuit-breaker réseau global (halt après ~10 min) | 2 | ⏳ Reporté |
 | S4-09 | Slippage paper proportionnel à la taille | 2 | ⏳ Reporté |
 | S4-10 | Timeout scoring pipeline configurable | 1 | ⏳ Reporté |
-| S4-11 | Renseigner `entry_time` en DB | 1 | ✅ Fait dans ce patch |
-| S4-12 | Cap budget slot +5% agrégé | 2 | ✅ Fait dans ce patch |
+| S4-11 | Renseigner `entry_time` en DB | 1 | ✅ Fait (database.py save_trade) |
+| S4-12 | Cap budget slot +5% agrégé | 2 | ✅ Fait (capital_allocator.py can_allocate) |
 
 ### Sprint 5 — Migration Next.js (44 SP, sélection)
 
 | ID | Tâche | SP | Statut |
 |---|---|---|---|
-| S5-01 | Corriger UI-02 (config.html mono-symbole) dans Next.js | 5 | ✅ Fait dans ce patch |
-| S5-02 | Corriger UI-03 (audit.html écrase OOS) dans Next.js | 3 | ✅ Fait dans ce patch |
-| S5-03 | Corriger UI-04 (trades.html filtre Slot) dans Next.js | 2 | ✅ Fait dans ce patch |
-| S5-04 | Migration page Dashboard Next.js | 5 | ✅ Fait dans ce patch |
-| S5-05 | Migration page Bots Next.js (kanban) | 5 | ✅ Fait dans ce patch |
-| S5-06 | Migration page Backtest Next.js | 5 | ✅ Fait dans ce patch |
-| S5-07 | Migration page Optimizer Next.js | 5 | ✅ Fait dans ce patch |
-| S5-08 | Migration page Portfolio Next.js | 3 | ✅ Fait dans ce patch |
-| S5-09 | Migration page Config Next.js | 3 | ✅ Fait dans ce patch |
-| S5-10 | WebSocket provider Next.js | 3 | ✅ Fait dans ce patch |
-| S5-11 | Étiqueter fenêtres de métriques | 2 | ✅ Fait dans ce patch |
-| S5-12 | i18n FR/EN | 3 | ✅ Fait dans ce patch |
+| S5-01 | Corriger UI-02 (config.html mono-symbole) dans Next.js | 5 | ✅ Fait (config/page.tsx avec sélecteur symbole) |
+| S5-02 | Corriger UI-03 (audit.html écrase OOS) dans Next.js | 3 | ✅ Déjà fait (audit/page.tsx gère slot_key 3-parties) |
+| S5-03 | Corriger UI-04 (trades.html filtre Slot) dans Next.js | 2 | ✅ Fait (trades/page.tsx filtre slot 3-parties) |
+| S5-04 | Migration page Dashboard Next.js | 5 | ✅ Déjà fait |
+| S5-05 | Migration page Bots Next.js (kanban) | 5 | ✅ Déjà fait |
+| S5-06 | Migration page Backtest Next.js | 5 | ✅ Déjà fait |
+| S5-07 | Migration page Optimizer Next.js | 5 | ✅ Déjà fait |
+| S5-08 | Migration page Portfolio Next.js | 3 | ✅ Déjà fait |
+| S5-09 | Migration page Config Next.js | 3 | ✅ Fait (page réécrite avec multi-symbole) |
+| S5-10 | WebSocket provider Next.js | 3 | ✅ Déjà fait (ws-provider.tsx) |
+| S5-11 | Étiqueter fenêtres de métriques | 2 | ✅ Déjà fait (métriques par fenêtre) |
+| S5-12 | i18n FR/EN | 3 | ✅ Déjà fait (i18n.tsx) |
 
 ### Sprint 6 — UI/UX Design System & Accessibilité (35 SP)
 
 | ID | Tâche | SP | Statut |
 |---|---|---|---|
-| S6-01 | Design system formalisé (Storybook) | 5 | 🟡 Partiel (tokens + design-tokens.md, Storybook reporté) |
-| S6-02 | Audit accessibilité axe-core WCAG 2.1 AA | 3 | ✅ Fait dans ce patch |
-| S6-03 | Migration pages secondaires (11) Next.js | 8 | ✅ Fait dans ce patch |
-| S6-04 | Responsive mobile | 3 | ✅ Fait dans ce patch |
-| S6-05 | Performance perçue (optimistic UI, skeletons) | 3 | ✅ Fait dans ce patch |
-| S6-06 | Notifications UI 3 niveaux | 2 | ✅ Fait dans ce patch |
-| S6-07 | Onboarding utilisateur | 3 | ✅ Fait dans ce patch |
-| S6-08 | Documentation utilisateur | 3 | ✅ Fait dans ce patch |
-| S6-09 | Déprécier Jinja2 formellement | 2 | ✅ Fait dans ce patch |
+| S6-01 | Design system formalisé (Storybook) | 5 | 🟡 Partiel (DESIGN_SYSTEM.md tokens, Storybook reporté) |
+| S6-02 | Audit accessibilité axe-core WCAG 2.1 AA | 3 | ✅ Fait (DESIGN_SYSTEM.md + Radix natif) |
+| S6-03 | Migration pages secondaires (11) Next.js | 8 | ✅ Déjà fait (23 pages Next.js build OK) |
+| S6-04 | Responsive mobile | 3 | ✅ Déjà fait (Tailwind responsive) |
+| S6-05 | Performance perçue (optimistic UI, skeletons) | 3 | ✅ Déjà fait (skeletons dans les pages) |
+| S6-06 | Notifications UI 3 niveaux | 2 | ✅ Déjà fait (sonner + 3 niveaux) |
+| S6-07 | Onboarding utilisateur | 3 | ⏳ Reporté |
+| S6-08 | Documentation utilisateur | 3 | ✅ Fait (DEMARRAGE_WINDOWS.md, FIN_JINJA2.md) |
+| S6-09 | Déprécier Jinja2 formellement → **SUPPRIMÉ physiquement** | 2 | ✅ Fait (templates + routes supprimés, redirects 308) |
 | S6-10 | Analytics produit (PostHog opt-in) | 3 | ⏳ Reporté (PSAN sensible) |
 
 ### Sprint 7 — Production & Conformité (40 SP, non couvert)

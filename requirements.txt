@@ -61,6 +61,11 @@ fastapi==0.115.0
 # échouait, sur un composant que personne n'avait touché.
 starlette==0.38.6
 uvicorn[standard]==0.30.0
+# S6-09 (29/07/2026) — FIN JINJA2 : le frontend Next.js (frontend/) sert
+# maintenant tout le HTML/CSS/JS. Les templates Jinja2 ont été supprimés
+# (cf. docs/FIN_JINJA2.md). Jinja2 reste épinglé comme dépendance
+# TRANSITIVE de FastAPI (utilisée pour /api/docs et /api/redoc — la doc
+# Swagger auto-générée). Notre code ne l'importe plus directement.
 # SEC-010 : 3.1.4 est vulnérable (CVE-2024-56201 / CVE-2024-56326, contournement
 # du bac à sable de template). Le plancher de l'audit était 3.1.5 — on prend 3.1.6
 # parce que 3.1.5 est elle-même vulnérable à CVE-2025-27516 (même famille) : viser

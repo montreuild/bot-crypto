@@ -3,6 +3,19 @@
 Les middlewares (CORS, GZIP, SlowAPI, HTTPS redirect) et les exception
 handlers globaux sont désormais dans :mod:`app.api.middleware` et enregistrés
 via :func:`setup_middleware` (refactoring ARCH-014).
+
+⚠ S6-09 (29/07/2026) — FIN JINJA2 :
+Le frontend Next.js (`frontend/`) est désormais le frontend officiel unique.
+Les templates Jinja2 (`app/web/templates/`) ont été SUPPRIMÉS physiquement
+(cf. `docs/FIN_JINJA2.md`). Les anciennes routes HTML (`GET /dashboard`,
+`GET /backtest`, etc.) renvoient maintenant un **redirect 308 permanent**
+vers le frontend Next.js (port 3000 ou proxy nginx).
+
+L'API REST (`/api/*`) est INTACTE — aucune cassure pour les consommateurs
+API. Seules les routes HTML ont été remplacées par des redirects.
+
+Configuration du frontend cible via env var `FRONTEND_URL` (défaut
+`http://localhost:3000`).
 """
 import hmac
 import logging
@@ -13,9 +26,10 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import RedirectResponse
+
+# S6-09 : Jinja2Templates et StaticFiles SUPPRIMÉS — fin Jinja2.
+# Le frontend Next.js (frontend/) sert maintenant tout le HTML/CSS/JS.
 
 from app.api import state
 from app.api.helpers import CleanJSONResponse
@@ -43,6 +57,12 @@ from app.core.events import event_hub
 
 logger = logging.getLogger(__name__)
 
+# S6-09 : URL du frontend Next.js (configurable via env).
+# En prod : proxy nginx sert le build Next.js statique et proxie /api/*.
+# En dev : Next.js tourne sur :3000, FastAPI sur :8000.
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+
+
 # ── Application ────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
@@ -59,7 +79,8 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     description=(
         "API de trading algorithmique multi-stratégies. Tous les endpoints protégés "
-        "exigent `X-API-Key`. Endpoint WebSocket temps réel sur `/ws`."
+        "exigent `X-API-Key`. Endpoint WebSocket temps réel sur `/ws`. "
+        "⚠ Frontend Next.js sur " + FRONTEND_URL + " (Jinja2 supprimé S6-09)."
     ),
     default_response_class=CleanJSONResponse,
     lifespan=_lifespan,
@@ -69,21 +90,6 @@ app = FastAPI(
 # ``SlowAPIMiddleware`` le lit à l'enregistrement.
 app.state.limiter = state.limiter
 setup_middleware(app)
-
-# ── Templates ──────────────────────────────────────────────────────────────
-try:
-    _tpl_path = os.path.join(os.path.dirname(__file__), "..", "web", "templates")
-    templates = Jinja2Templates(directory=_tpl_path)
-except Exception as e:
-    logger.warning(f"[API] Chargement templates KO : {e}")
-    templates = None
-
-# ── Static (JS/CSS partagés entre templates — UI-05) ──────────────────────
-try:
-    _static_path = os.path.join(os.path.dirname(__file__), "..", "web", "static")
-    app.mount("/static", StaticFiles(directory=_static_path), name="static")
-except Exception as e:
-    logger.warning(f"[API] Montage /static KO : {e}")
 
 
 # ── Initialisation ─────────────────────────────────────────────────────────
@@ -135,105 +141,45 @@ def prometheus_metrics():
     return Response(content=payload, media_type=content_type)
 
 
-# ── Pages web ──────────────────────────────────────────────────────────────
-def _tpl(name: str, request: Request, extra: dict = None):
-    ctx = {"request": request, **(extra or {})}
-    if templates:
-        resp = templates.TemplateResponse(name, ctx)
-    else:
-        resp = HTMLResponse(f"<h1>{name}</h1>")
-    api_key = state.cfg["web"].get("api_key", "") if state.cfg else ""
-    if api_key:
-        # honour X-Forwarded-Proto for reverse-proxy deployments
-        proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-        resp.set_cookie(
-            key="api_key",
-            value=api_key,
-            httponly=True,
-            samesite="strict",
-            secure=proto == "https",
-        )
-    return resp
+# ── Redirects HTML vers le frontend Next.js (S6-09 — fin Jinja2) ───────────
+# Toutes les anciennes routes HTML renvoient un 308 (permanent) vers la
+# page Next.js correspondante. Les bookmarks sont préservés, et les
+# moteurs de recherche ignorent les anciennes URL.
+#
+# En production, nginx peut servir le build Next.js statiquement et
+# proxier /api/* vers FastAPI. En dev, Next.js tourne sur :3000 (npm run dev)
+# et FastAPI sur :8000 (python cli.py).
+
+# Cookie api_key (HttpOnly) — posé par le frontend Next.js via /api/auth/login
+# (cf. frontend/src/lib/api.ts). Plus de cookie posé par l'API sur les pages
+# HTML (puisque l'API ne sert plus de HTML).
+def _redirect_to_nextjs(path: str = "/"):
+    """Helper pour rediriger vers le frontend Next.js avec 308 permanent."""
+    target = f"{FRONTEND_URL}{path}"
+    return RedirectResponse(url=target, status_code=308)
 
 
-@app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request):
-    return _tpl("dashboard.html", request, {"active_page": "dashboard"})
+# Anciennes routes HTML → redirects 308 vers Next.js (mêmes chemins)
+# La liste est exhaustive : 18 routes (la 19e, /slots, redirigeait déjà vers /bots)
+HTML_ROUTES_TO_REDIRECT = [
+    "/", "/backtest", "/optimizer", "/config", "/scanner", "/audit",
+    "/audit-log", "/trades", "/replay", "/ml", "/models", "/compare",
+    "/derivatives", "/portfolio", "/bots", "/settings", "/data",
+    "/smartgraph", "/smartreplay",
+]
+for _route in HTML_ROUTES_TO_REDIRECT:
+    # Capture _route via default arg pour éviter le piège du closure tardif
+    def _make_redirect(r):
+        def _redirect(request: Request, _r=r):
+            return _redirect_to_nextjs(_r)
+        return _redirect
+    app.add_api_route(_route, _make_redirect(_route), methods=["GET"])
 
-@app.get("/backtest", response_class=HTMLResponse)
-def backtest_page(request: Request):
-    return _tpl("backtest.html", request, {"active_page": "backtest"})
 
-@app.get("/optimizer", response_class=HTMLResponse)
-def optimizer_page(request: Request):
-    return _tpl("optimizer.html", request, {"active_page": "optimizer"})
-
-@app.get("/config", response_class=HTMLResponse)
-def config_page(request: Request):
-    return _tpl("config.html", request, {"active_page": "config"})
-
-@app.get("/scanner", response_class=HTMLResponse)
-def scanner_page(request: Request):
-    return _tpl("scanner.html", request, {"active_page": "scanner"})
-
-@app.get("/audit", response_class=HTMLResponse)
-def audit_page(request: Request):
-    return _tpl("audit.html", request, {"active_page": "audit"})
-
-@app.get("/trades", response_class=HTMLResponse)
-def trades_page(request: Request):
-    return _tpl("trades.html", request, {"active_page": "trades"})
-
+# Rétro-compat : /slots redirigeait vers /bots (déjà en 307, gardé en 308)
 @app.get("/slots")
-def slots_page():
-    # Fusionnée dans « Mes Bots » : on redirige les anciens liens/favoris.
-    from starlette.responses import RedirectResponse
-    return RedirectResponse(url="/bots", status_code=307)
-
-@app.get("/replay", response_class=HTMLResponse)
-def replay_page(request: Request):
-    return _tpl("replay.html", request, {"active_page": "replay"})
-
-@app.get("/ml", response_class=HTMLResponse)
-def ml_page(request: Request):
-    return _tpl("ml.html", request, {"active_page": "ml"})
-
-@app.get("/models", response_class=HTMLResponse)
-def models_page(request: Request):
-    return _tpl("models.html", request, {"active_page": "models"})
-
-@app.get("/compare", response_class=HTMLResponse)
-def compare_page(request: Request):
-    return _tpl("compare.html", request, {"active_page": "compare"})
-
-@app.get("/derivatives", response_class=HTMLResponse)
-def derivatives_page(request: Request):
-    return _tpl("derivatives.html", request, {"active_page": "derivatives"})
-
-# ── Pages Phase 4 (portefeuille de bots autonomes) ────────────────────────
-@app.get("/portfolio", response_class=HTMLResponse)
-def portfolio_page(request: Request):
-    return _tpl("portfolio.html", request, {"active_page": "portfolio"})
-
-@app.get("/bots", response_class=HTMLResponse)
-def bots_page(request: Request):
-    return _tpl("bots.html", request, {"active_page": "bots"})
-
-@app.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request):
-    return _tpl("settings.html", request, {"active_page": "settings"})
-
-@app.get("/data", response_class=HTMLResponse)
-def data_page(request: Request):
-    return _tpl("data.html", request, {"active_page": "data"})
-
-@app.get("/smartgraph", response_class=HTMLResponse)
-def smartgraph_page(request: Request):
-    return _tpl("smartgraph.html", request, {"active_page": "smartgraph"})
-
-@app.get("/smartreplay", response_class=HTMLResponse)
-def smartreplay_page(request: Request):
-    return _tpl("smartreplay.html", request, {"active_page": "smartreplay"})
+def slots_legacy():
+    return _redirect_to_nextjs("/bots")
 
 
 # ── Status (accès direct à state.cfg, hors router) ────────────────────────

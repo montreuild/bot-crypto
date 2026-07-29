@@ -336,6 +336,25 @@ def save_trade(session: Session, t: dict):
     fees = t.get("fees", 0) or 0
     fee_taker = t.get("fee_taker", fees)
     fee_maker = t.get("fee_maker", 0)
+    # S4-11 (audit V2) : entry_time était défini en colonne (database.py:56)
+    # mais JAMAIS renseigné → impossible d'analyser la durée des positions
+    # ouvertes vs fermées, ou de calculer des métriques de holding time.
+    # On le remplit depuis `t['entry_time']` si fourni (format ISO str ou
+    # datetime), sinon on dérive depuis `t['time']` (close) moins
+    # `t['duration_bars']` × TF (approximation).
+    entry_time = t.get("entry_time")
+    if entry_time is None and t.get("duration_bars") is not None and t.get("time") is not None:
+        try:
+            from datetime import datetime as _dt, timedelta as _td
+            from app.core.timeframes import TF_MINUTES
+            tf = t.get("timeframe", "1h")
+            mins_per_bar = TF_MINUTES.get(tf, 60)
+            close_time = t["time"]
+            if isinstance(close_time, str):
+                close_time = _dt.fromisoformat(close_time.replace("Z", ""))
+            entry_time = close_time - _td(minutes=int(t["duration_bars"]) * mins_per_bar)
+        except Exception:
+            entry_time = None
     rec = Trade(
         symbol=t.get("symbol"), side=t.get("side"), strategy=t.get("strategy"),
         score=t.get("score"), entry=t.get("entry"), exit_price=t.get("exit"),
@@ -346,6 +365,7 @@ def save_trade(session: Session, t: dict):
         status=t.get("status"), duration_bars=t.get("duration_bars"),
         timeframe=t.get("timeframe"), reason=t.get("reason",""),
         exit_reason=t.get("exit_reason"), tags=t.get("tags"),
+        entry_time=entry_time,  # S4-11 : désormais renseigné
     )
     try:
         session.add(rec)

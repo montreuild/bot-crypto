@@ -317,17 +317,41 @@ class CapitalAllocator:
         """
         Vérifie si le slot dispose du budget nécessaire pour une nouvelle position.
         Retourne (ok, reason). Ne vérifie PAS l'état enabled/disabled (voir is_slot_enabled).
+
+        Garde-fous (dans l'ordre) :
+        1. Budget slot individuel + tolérance 5% (garde historique).
+        2. **S4-12 (audit V2)** : Cap agrégé — la somme des tolérances
+           (+5% par slot) peut sur-allouer l'agrégat de N×5%. On vérifie
+           aussi que l'utilisation totale tous slots actifs ne dépasse
+           pas `capital × 1.05` (5% de marge globale), pour éviter qu'un
+           flush simultané de N slots à +5% ne surcharge l'agrégat.
         """
         slot = self._slots.get(slot_key)
         if slot is None:
             return False, f"Slot '{slot_key}' inconnu"
 
         max_exposure = self.capital * slot.budget_pct
-        if slot.used_notional + notional > max_exposure * 1.05:  # tolérance 5%
+        if slot.used_notional + notional > max_exposure * 1.05:  # tolérance 5% slot
             return False, (
                 f"Budget slot {slot_key} épuisé "
                 f"({slot.used_notional:.1f}+{notional:.1f} > {max_exposure:.1f} USDC)"
             )
+
+        # S4-12 : cap agrégé — somme des used_notional tous slots actifs.
+        # On autorise 5% de marge globale (cohérent avec la tolérance
+        # individuelle), mais pas plus — sinon un ordre simultané sur 10
+        # slots peut engager 10×5% = 50% de plus que le capital.
+        total_used = sum(s.used_notional for s in self._slots.values() if s.enabled)
+        total_after = total_used + notional
+        capital_max = self.capital * 1.05  # 5% de marge globale
+        if total_after > capital_max:
+            return False, (
+                f"Cap agrégé dépassé : total {total_used:.1f} + {notional:.1f} "
+                f"= {total_after:.1f} > capital×1.05 = {capital_max:.1f} USDC. "
+                f"Trop de slots saturés simultanément — réduire "
+                f"max_positions ou max_budget_step, ou attendre des clôtures."
+            )
+
         return True, ""
 
     @_locked
