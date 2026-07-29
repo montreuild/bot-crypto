@@ -153,6 +153,26 @@ export const api = {
   getDataStatus: () => apiFetch<any>('/data/status'),
   refetchData: (symbol: string, tf: string) =>
     apiFetch<any>(`/data/refetch?symbol=${encodeURIComponent(symbol)}&tf=${tf}`, { method: 'POST' }),
+  // S5 (audit V2) : backfill des actions depuis l'UI (équivalent du bouton
+  // qui existait dans la page Jinja2 /data). Lance en async côté backend.
+  startBackfillEquities: (tf: string = '1d', years: number = 20) =>
+    apiFetch<{ job_id: string; status: string; tf: string; years: number; univers: string[] }>(
+      `/data/backfill-equities?tf=${tf}&years=${years}`,
+      { method: 'POST' },
+    ),
+  getBackfillStatus: (jobId: string) =>
+    apiFetch<{
+      job_id: string;
+      status: 'started' | 'done' | 'error';
+      started_at: string;
+      finished_at?: string;
+      tf: string;
+      years: number;
+      univers: string[];
+      progress: { done: number; total: number; current_symbol: string | null };
+      results: Array<{ symbol: string; tf: string; bars: number; ok: boolean; error?: string }>;
+      error: string | null;
+    }>(`/data/backfill-status/${jobId}`),
 
   // ── Optimizer ───────────────────────────────────────────────────────────
   getOptimizeStatus: (jobId?: string) =>

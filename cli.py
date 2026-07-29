@@ -245,6 +245,27 @@ def main():
     else:
         logger.info(f"[Main] Serveur web seul -- http://{host}:{port}")
 
+    # ── Windows Python 3.14 : filtrer le bruit asyncio WinError 10054 ──────
+    # Le proactor event loop de Windows lève une exception cosmétique
+    # ConnectionResetError (WinError 10054) quand le client ferme une
+    # connexion WebSocket brutalement (refresh page, dev tools). C'est
+    # inoffensif mais spamme les logs. On filtre le logger asyncio.
+    import sys as _sys
+    if _sys.platform == "win32":
+        import logging as _logging
+        _asyncio_logger = _logging.getLogger("asyncio")
+        # Stocke l'ancien handler pour ne pas dupliquer
+        class _WinError10054Filter(_logging.Filter):
+            def filter(self, record):
+                msg = record.getMessage()
+                if "ConnectionResetError" in msg or "WinError 10054" in msg:
+                    return False
+                if "_ProactorBasePipeTransport._call_connection_lost" in msg:
+                    return False
+                return True
+        _asyncio_logger.addFilter(_WinError10054Filter())
+        logger.info("[Main] Windows détecté : filtre asyncio WinError 10054 actif")
+
     print(f"\n  Crypto Bot V11 -- http://{host}:{port}\n")
     uvicorn.run(fastapi_app, host=host, port=port, log_level="warning")
 

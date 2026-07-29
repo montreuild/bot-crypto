@@ -126,6 +126,7 @@ scanner:
   #
   # ⚠️⚠️ AVANT D'ACTIVER : peupler le cache HORS LIGNE, sinon le premier cycle
   # de scan tente 98 titres × chaque timeframe contre Yahoo, qui répond 429.
+  # Utiliser la page /data → "Backfill actions" (depuis l'UI Next.js) ou :
   #     python scripts/backfill_equities.py --tf 1d --years 20
   # Un disjoncteur de quota (app/core/yfinance_provider) coupe les appels 15 min
   # après 5 refus consécutifs, mais il limite les dégâts — il ne remplace pas
@@ -136,12 +137,7 @@ scanner:
   # Yahoo). Sur TF courts, le bot demande 500 bougies, n'en obtient que 88,
   # et fait un backoff 6h (comportement normal, cf. CandleStore). Pour
   # trader des actions FR en intraday, utiliser TF ≥ 1d (historique 20 ans).
-  # Pour trader le crypto uniquement, COMMENTER la ligne ci-dessous.
-  #
-  # S6-09 (29/07/2026) : universe COMMENTÉ par défaut pour éviter le bruit
-  # de logs (121 actions × 5 TF = 605 fetch yfinance au démarrage) si
-  # l'utilisateur ne veut que le crypto. Décommenter pour activer SBF 120.
-  # universe: [sbf120]
+  universe: [sbf120]
   #
   # Le seuil de liquidité crypto (5 M$/24 h) exclurait tout le SBF 120 : il
   # est surchargeable par classe d'actif.
