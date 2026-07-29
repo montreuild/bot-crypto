@@ -17,6 +17,7 @@ const PAGES = [
   { path: '/derivatives', title: 'Dériv' },
   { path: '/data', title: 'Données' },
   { path: '/ml', title: 'ML' },
+  { path: '/models', title: 'Modèles' },
   { path: '/config', title: 'Configuration' },
   { path: '/settings', title: 'Réglages' },
 ];
@@ -30,6 +31,17 @@ test.describe('Page loading', () => {
       await expect(h1).toBeVisible({ timeout: 10000 });
     });
   }
+});
+
+// S6-09 : la racine `/` remplace l'ancienne route Jinja2 `GET /` (dashboard.html).
+// Elle doit rediriger vers /dashboard — sinon les redirects 308 du backend
+// (`HTML_ROUTES_TO_REDIRECT`) pointent vers une page morte.
+test.describe('Racine', () => {
+  test('/ redirige vers /dashboard', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForURL('**/dashboard', { timeout: 10000 });
+    await expect(page).toHaveURL(/\/dashboard/);
+  });
 });
 
 test.describe('Dashboard', () => {

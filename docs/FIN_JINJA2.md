@@ -14,9 +14,9 @@ Le frontend Next.js est désormais l'unique frontend officiel.
 
 | Action | Statut |
 |---|---|
-| Suppression de `app/web/templates/` (18 fichiers HTML, ~10 600 lignes) | ✅ Fait |
+| Suppression de `app/web/templates/` (19 fichiers HTML dont `base.html`, ~10 600 lignes) | ✅ Fait |
 | Suppression de `app/web/static/` (JS/CSS partagés) | ✅ Fait |
-| Suppression des routes `@app.get("/dashboard")` etc. dans `app/api/main.py` | ✅ Fait |
+| Suppression des routes HTML (`@app.get("/")`, `/backtest`, … ) dans `app/api/main.py` | ✅ Fait |
 | Remplacement par redirects 308 permanents vers `FRONTEND_URL` (Next.js) | ✅ Fait |
 | Suppression des imports `Jinja2Templates`, `StaticFiles`, `HTMLResponse` | ✅ Fait |
 | Documentation mise à jour (`README.md`, `requirements.txt`, ce fichier) | ✅ Fait |
@@ -24,6 +24,19 @@ Le frontend Next.js est désormais l'unique frontend officiel.
 | Validation build Next.js 23 pages | ✅ Fait (15.4s, 0 erreur) |
 | Validation syntaxe Python (`app/api/main.py`) | ✅ Fait |
 | Routes API REST (`/api/*`) intactes | ✅ Aucune cassure |
+
+> ⚠ Précision : l'ancien FastAPI servait le dashboard sur `/`. La route
+> `@app.get("/dashboard")` **n'a jamais existé** côté backend — les
+> commentaires de `app/api/main.py` qui la citent en exemple sont
+> historiquement inexacts. `HTML_ROUTES_TO_REDIRECT` est bien exhaustif.
+
+### Audit de complétude (29/07/2026, commit `0101fe9`)
+
+Migration vérifiée **complète** : parité 18 pages ↔ 18 routes Next.js, 0
+orphelin, 0 import Jinja2 résiduel, `build` 23/23 pages, `type-check` 0 erreur,
+22 tests API verts. Le détail des contrôles et les 4 écarts trouvés (aucun
+bloquant) sont dans `docs/PLAN_DIRECTEUR_AMELIORATIONS.md`
+§ « Vérification post-migration » → items **S6-11 / S6-12 / S6-13**.
 
 ---
 

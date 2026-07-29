@@ -151,7 +151,7 @@ Voir `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` § Sprint 1.
 | ID | Tâche | SP | Statut |
 |---|---|---|---|
 | S6-01 | Design system formalisé (Storybook) | 5 | 🟡 Partiel (DESIGN_SYSTEM.md tokens, Storybook reporté) |
-| S6-02 | Audit accessibilité axe-core WCAG 2.1 AA | 3 | ✅ Fait (DESIGN_SYSTEM.md + Radix natif) |
+| S6-02 | Audit accessibilité axe-core WCAG 2.1 AA | 3 | 🟡 Partiel — **règles écrites, jamais outillées** (voir S6-11) |
 | S6-03 | Migration pages secondaires (11) Next.js | 8 | ✅ Déjà fait (23 pages Next.js build OK) |
 | S6-04 | Responsive mobile | 3 | ✅ Déjà fait (Tailwind responsive) |
 | S6-05 | Performance perçue (optimistic UI, skeletons) | 3 | ✅ Déjà fait (skeletons dans les pages) |
@@ -160,6 +160,9 @@ Voir `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` § Sprint 1.
 | S6-08 | Documentation utilisateur | 3 | ✅ Fait (DEMARRAGE_WINDOWS.md, FIN_JINJA2.md) |
 | S6-09 | Déprécier Jinja2 formellement → **SUPPRIMÉ physiquement** | 2 | ✅ Fait (templates + routes supprimés, redirects 308) |
 | S6-10 | Analytics produit (PostHog opt-in) | 3 | ⏳ Reporté (PSAN sensible) |
+| S6-11 | Outiller réellement l'accessibilité (`@axe-core/playwright` sur les 20 routes) | 3 | ⏳ À faire — `axe-core` n'est dans aucun `package.json` (cf. S6-02) |
+| S6-12 | États d'erreur des pages : `/dashboard`, `/bots`, `/config` bouclent sur un spinner infini quand l'API est injoignable | 3 | ⏳ À faire — voir « Vérification post-migration » |
+| S6-13 | Jouer les tests E2E Playwright en CI (job `e2e` dans `ci.yml`) | 3 | ⏳ Bloqué par S6-12 |
 
 ### Sprint 7 — Production & Conformité (40 SP, non couvert)
 
@@ -199,6 +202,37 @@ officiel unique**. Les templates Jinja2 (`app/web/templates/`) sont
    Next.js (port 3000 ou proxy nginx).
 
 **Voir** : `docs/FIN_JINJA2.md` pour l'acte officiel de fin.
+
+#### Vérification post-migration (29/07/2026, commit `0101fe9`)
+
+Audit de complétude mené après S6-09. **La migration est complète** — aucune
+page, route ou ressource Jinja2 n'a été oubliée :
+
+| Contrôle | Résultat |
+|---|---|
+| `app/web/templates/` et `app/web/static/` supprimés | ✅ `app/web/` ne contient plus que `__init__.py` |
+| Parité des pages | ✅ 19 templates supprimés (dont `base.html`) → **18 pages, 18 routes Next.js**, 0 orphelin |
+| Imports `Jinja2Templates` / `StaticFiles` / `HTMLResponse` | ✅ Aucun — seuls des commentaires historiques subsistent |
+| Redirects `HTML_ROUTES_TO_REDIRECT` | ✅ Exhaustifs vs. les 18 anciennes routes + `/slots` (l'ancien `/` servait le dashboard ; `/dashboard` n'a **jamais** existé côté FastAPI) |
+| `jinja2==3.1.6` dans `requirements.txt` | ✅ Volontaire — transitive FastAPI (`/api/docs`), épinglée pour SEC-010 |
+| Tests Python référençant du HTML Jinja2 | ✅ Aucun ; `tests/test_api_routes.py` + `test_vizion.py` → **22 passed** |
+| `npm run type-check` | ✅ 0 erreur |
+| `npm run build` | ✅ 23/23 pages statiques générées |
+
+**Écarts trouvés** (aucun ne remet en cause la migration, tous tracés ci-dessus) :
+
+1. **`/models` n'était pas couvert par les tests E2E** alors que c'est une page
+   migrée depuis `models.html` → corrigé dans `frontend/e2e/tests/pages.spec.ts`.
+2. **`/dashboard`, `/bots`, `/config` bouclent sur un spinner infini quand
+   l'API est injoignable** (`if (isLoading || !data)` : sur erreur réseau
+   `isLoading` repasse à `false` mais `data` reste `undefined`). Ni titre, ni
+   message d'erreur, ni bouton de réessai. Les pages Jinja2, rendues côté
+   serveur, n'avaient pas ce mode de défaillance → **S6-12**.
+3. **Les tests E2E ne tournent dans aucun job CI** — `ci.yml` couvre ruff,
+   pytest, pip-audit, lint/type-check/build frontend, mais pas Playwright.
+   Le job est bloqué par S6-12 (4 pages rouges sans backend) → **S6-13**.
+4. **`axe-core` n'est installé nulle part** : S6-02 documentait les règles WCAG
+   dans `DESIGN_SYSTEM.md` sans jamais les outiller → **S6-11**.
 
 ### Mode allocation (D5)
 
