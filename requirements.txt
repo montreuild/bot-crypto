@@ -36,11 +36,12 @@
 #  de développement, puis mettez à jour les versions ici.
 #
 #  Date de lock : 2026-07-29 — vérifié par `pip install -r requirements.txt`
-#  dans un venv Python 3.14 vierge (aucun conflit de résolution) suivi de
-#  `pytest -q` (576 tests, tous verts). Toutes les dépendances directes sont
-#  épinglées en version exacte (==) ; les sous-dépendances transitives ne le
-#  sont pas (pas de lockfile — cf. TEST-12 dans docs/audit/07-tests-ci-docs.md
-#  pour la justification de ce choix).
+#  dans un venv Python 3.14 vierge (Ubuntu 24.04 + Windows 11). numpy, polars,
+#  lightgbm, optuna bumpés pour wheels 3.14 officielles (fini la compilation
+#  source sous Windows). Toutes les dépendances directes sont épinglées en
+#  version exacte (==) ; les sous-dépendances transitives ne le sont pas
+#  (pas de lockfile — cf. TEST-12 dans docs/audit/07-tests-ci-docs.md pour
+#  la justification de ce choix).
 #
 #  ⚠ Python 3.14 migration: free-threaded mode (PEP 779) is now stable.
 #  LightGBM, Polars, Optuna, CCXT all support 3.14 since Q2 2026.
@@ -74,9 +75,13 @@ ccxt==4.5.68
 # -- Data / Compute --------------------------------------------------
 # Polars: main library (Rust, Arrow, multi-threaded, 5-50x faster than Pandas)
 # phase6-pandas-removal : Pandas supprimé (migration complète vers Polars).
-polars==1.0.0
-# NumPy: gardé pour le hot loop du backtest (O(1) indexing) et l'interface LightGBM
-numpy==2.0.0
+# polars 1.32+ : support officiel Python 3.14, wheels Windows/macOS/Linux.
+polars==1.32.0
+# NumPy: gardé pour le hot loop du backtest (O(1) indexing) et l'interface LightGBM.
+# ⚠ numpy 2.0.0 n'a PAS de wheel pour Python 3.14 sur Windows → compilation
+# source échoue (besoin Visual C++ Build Tools). numpy 2.3.4 (Q3 2025) apporte
+# le support officiel Python 3.14 + wheels Windows/macOS/Linux.
+numpy==2.3.4
 # phase6-pandas-removal : PyArrow supprimé (plus de polars.to_pandas()).
 pyyaml==6.0.2
 # Round-trip YAML : préserve les commentaires lors de la réécriture des
@@ -102,11 +107,15 @@ psutil==5.9.8
 # - Pandas remplacé par Polars partout (y compris dans les stratégies V4/V8-V10).
 # LightGBM : booster natif pour toutes les stratégies ML (V11/V12/scoring_opus/
 # ml_dynamic_threshold). Format de persistance RCE-safe (.lgb + .json).
-lightgbm==4.4.0
+# ⚠ lightgbm 4.4.0 n'a PAS de wheel pour Python 3.14 sur Windows → compilation
+# source échoue (besoin Visual C++ + CMake). lightgbm 4.6.0 (Q2 2026) apporte
+# le support officiel Python 3.14 + wheels Windows/macOS/Linux.
+lightgbm==4.6.0
 # Optuna : recherche bayésienne TPE de l'optimiseur (app/engine/optimizer_search.py).
 # Optionnel — l'optimiseur retombe sur une heuristique random+perturbation si la
 # librairie est absente. Recommandé pour une vraie recherche informée (TPE).
-optuna==4.0.0
+# optuna 4.2+ : support officiel Python 3.14.
+optuna==4.2.0
 
 # -- Observabilité (OBS-01) ------------------------------------------
 # prometheus-client : exposition de /metrics (app/core/metrics.py).

@@ -323,7 +323,7 @@ export default function ConfigPage() {
                 return (
                   <div key={ch.key} className="flex items-center justify-between p-3 rounded-lg bg-card-hover border border-border">
                     <span className="font-medium">{ch.label}</span>
-                    <Badge variant={enabled ? 'success' : 'muted'}>
+                    <Badge variant={enabled ? 'success' : 'default'}>
                       {enabled ? 'Activé' : 'Désactivé'}
                     </Badge>
                   </div>

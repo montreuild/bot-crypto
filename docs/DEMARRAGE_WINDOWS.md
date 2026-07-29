@@ -220,6 +220,57 @@ et installez "Desktop development with C++".
 
 Alternative : utilisez WSL2 (Option A) où LightGBM s'installe sans build.
 
+### ⚠ NumPy / Polars / LightGBM : "Unknown compiler(s)" ou compilation source
+
+Si vous voyez ce type d'erreur pendant `pip install -r requirements.txt` :
+
+```
+Preparing metadata (pyproject.toml) did not run successfully
+..meson.build:1:0: ERROR: Unknown compiler(s): [['icl'], ['cl'], ['cc'], ['gcc'], ['clang'], ['clang-cl'], ['pgcc']]
+```
+
+C'est que la version épinglée dans `requirements.txt` n'a **pas de wheel**
+pour Python 3.14 sur Windows. pip tente donc de compiler depuis le source
+et échoue car il n'y a pas de compilateur C (Visual C++ Build Tools).
+
+**Solution** : `requirements.txt` a été mis à jour (29/07/2026) avec des
+versions qui ont des wheels officielles pour Python 3.14 :
+
+| Package | Avant (cassé) | Après (corrigé) |
+|---|---|---|
+| `numpy` | 2.0.0 | **2.3.4** (support 3.14 depuis 2.3.0) |
+| `polars` | 1.0.0 | **1.32.0** (support 3.14 officiel) |
+| `lightgbm` | 4.4.0 | **4.6.0** (support 3.14 depuis 4.6) |
+| `optuna` | 4.0.0 | **4.2.0** (support 3.14 depuis 4.2) |
+
+Si vous avez déjà un venv `.venv` avec l'ancienne config, supprimez-le et
+recréez-le :
+
+```bash
+# Dans Git Bash
+rm -rf .venv
+py -3.14 -m venv .venv
+source .venv/Scripts/activate
+pip install -r requirements.txt
+```
+
+**Si une autre dépendance tente de se compiler** (ex. `pandas`, `pyarrow`,
+`scipy`), deux options :
+
+1. **Installer Visual C++ Build Tools** : https://visualstudio.microsoft.com/visual-cpp-build-tools/ — cochez "Desktop development with C++" (~6 Go).
+2. **Utiliser WSL2** (cf. Option A plus haut) — Linux a ses propres
+   compilateurs préinstallés et toutes les wheels sont disponibles.
+
+Pour vérifier si une wheel existe pour votre version Python :
+```bash
+# Lister les wheels disponibles pour numpy sur PyPI
+py -3.14 -m pip install --dry-run numpy==2.3.4 --only-binary :all:
+# Si "Could not find a version that satisfies the requirement"
+# → pas de wheel pour votre plateforme
+```
+
+### EOL / CRLF : `ruff check` échoue
+
 ### Polars trop lent sur Windows natif
 
 Polars utilise le filesystem Windows qui est plus lent que Linux.
