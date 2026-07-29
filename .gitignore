@@ -124,3 +124,7 @@ QODER.md
 
 # Verrou de l'optimiseur — état d'exécution local
 .optimize_runner.lock
+
+trades.db
+trades.db-shm
+trades.db-wal

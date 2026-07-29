@@ -165,5 +165,7 @@ members:
   - {symbol: VLTSA.PA,    name: Voltalia}
   - {symbol: XFAB.PA,    name: X Fab Silicon}
   - {symbol: EAPI.PA,    name: Euroapi}
+  - {symbol: ALCPB.PA,    name: Capital B}
+
 
   
