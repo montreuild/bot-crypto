@@ -4,19 +4,66 @@ Crypto Bot V11 — Point d'entrée principal.
 import argparse
 import importlib
 import logging
+import os
+import sys
 import threading
 
-import uvicorn
 
-from app.api.main import app as fastapi_app
-from app.api.main import init_app
-from app.core.candle_store import get_store
-from app.core.config import load_config
-from app.core.exchange import create_exchange
-from app.core.indicators_precompute import set_precompute_maxsize
-from app.core.logger import setup_logging
-from app.engine.backtest import Backtester, MonteCarlo, WalkForwardAnalyzer
-from app.engine.engine import Engine
+def _fail_if_venv_missing(exc: ModuleNotFoundError) -> None:
+    """Transforme un `ModuleNotFoundError` d'import en diagnostic actionnable.
+
+    Cas le plus fréquent sous Windows : `python cli.py` résout vers le Python
+    système (ou celui du Store) au lieu du venv du projet, et l'utilisateur
+    reçoit un `No module named 'fastapi'` qui ne dit pas quoi faire.
+    """
+    venv = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv")
+    scripts = "Scripts" if os.name == "nt" else "bin"
+    python = os.path.join(venv, scripts, "python.exe" if os.name == "nt" else "python")
+
+    lines = [
+        f"✖ Dépendance manquante : {exc.name}",
+        "",
+        f"  Interpréteur utilisé : {sys.executable}",
+    ]
+    if os.path.isfile(python):
+        lines += [
+            "",
+            "  Le venv du projet existe mais n'est pas actif. Lancez plutôt :",
+            "",
+            f"    {python} cli.py " + " ".join(sys.argv[1:]),
+            "",
+            "  ou activez-le d'abord :",
+            "",
+            f"    {os.path.join(venv, scripts, 'Activate.ps1' if os.name == 'nt' else 'activate')}",
+        ]
+    else:
+        lines += [
+            "",
+            "  Aucun venv détecté. Créez-le puis installez les dépendances :",
+            "",
+            "    py -3.14 -m venv .venv" if os.name == "nt" else "    python3.14 -m venv .venv",
+            f"    {os.path.join('.venv', scripts, 'Activate.ps1' if os.name == 'nt' else 'activate')}",
+            "    pip install -r requirements.txt",
+        ]
+    lines += ["", "  Voir docs/DEMARRAGE_WINDOWS.md pour le détail."]
+    print("\n".join(lines), file=sys.stderr)
+    raise SystemExit(1)
+
+
+try:
+    import uvicorn
+
+    from app.api.main import app as fastapi_app
+    from app.api.main import init_app
+    from app.core.candle_store import get_store
+    from app.core.config import load_config
+    from app.core.exchange import create_exchange
+    from app.core.indicators_precompute import set_precompute_maxsize
+    from app.core.logger import setup_logging
+    from app.engine.backtest import Backtester, MonteCarlo, WalkForwardAnalyzer
+    from app.engine.engine import Engine
+except ModuleNotFoundError as exc:  # venv non actif / dépendances absentes
+    _fail_if_venv_missing(exc)
 
 # Nombre de minutes par timeframe — utilisé pour convertir des mois en nombre de bougies
 _TF_MINUTES = {

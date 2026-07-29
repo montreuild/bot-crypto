@@ -73,6 +73,10 @@ uvicorn[standard]==0.30.0
 jinja2==3.1.6
 python-multipart==0.0.22
 slowapi==0.1.9
+# Charge le `.env` généré par setup.sh (WEB_API_KEY, clés exchange) avant
+# l'expansion des `${VAR}` de config.yaml. Sans lui le fichier était écrit
+# puis ignoré, et le démarrage web échouait sur la garde OPS-02.
+python-dotenv==1.1.1
 
 # -- Exchange --------------------------------------------------------
 ccxt==4.5.68
