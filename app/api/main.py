@@ -141,25 +141,153 @@ def prometheus_metrics():
     return Response(content=payload, media_type=content_type)
 
 
-# ── Redirects HTML vers le frontend Next.js (S6-09 — fin Jinja2) ───────────
-# Toutes les anciennes routes HTML renvoient un 308 (permanent) vers la
-# page Next.js correspondante. Les bookmarks sont préservés, et les
-# moteurs de recherche ignorent les anciennes URL.
+# ── Routes HTML → redirect 308 vers Next.js OU page d'aide ─────────────────
+# S6-09 (29/07/2026) — Fin Jinja2 : le frontend Next.js sert maintenant
+# tout le HTML. Les anciennes routes HTML (`/dashboard`, `/backtest`, etc.)
+# doivent rediriger vers le frontend Next.js.
 #
-# En production, nginx peut servir le build Next.js statiquement et
-# proxier /api/* vers FastAPI. En dev, Next.js tourne sur :3000 (npm run dev)
-# et FastAPI sur :8000 (python cli.py).
+# ⚠ Mais si le frontend Next.js n'est PAS démarré (cas fréquent en dev :
+# l'utilisateur a lancé `python cli.py` mais pas `cd frontend && npm run dev`),
+# un 308 vers `localhost:3000` qui ne répond pas provoque un "site inaccessible"
+# + warnings uvicorn "Invalid HTTP request received".
+#
+# Solution : on ping le frontend au démarrage (et toutes les 60s). S'il
+# répond, on 308 redirect. S'il ne répond pas, on sert une **page d'aide
+# HTML** qui explique comment le démarrer + liens vers /api/docs.
+# Ça donne un retour visible à l'utilisateur au lieu d'un "site inaccessible".
 
-# Cookie api_key (HttpOnly) — posé par le frontend Next.js via /api/auth/login
-# (cf. frontend/src/lib/api.ts). Plus de cookie posé par l'API sur les pages
-# HTML (puisque l'API ne sert plus de HTML).
-def _redirect_to_nextjs(path: str = "/"):
-    """Helper pour rediriger vers le frontend Next.js avec 308 permanent."""
-    target = f"{FRONTEND_URL}{path}"
-    return RedirectResponse(url=target, status_code=308)
+import socket
+import time as _time
+
+_frontend_reachable_cache: dict = {"ts": 0.0, "ok": False}
+_FRONTEND_CHECK_TTL = 60.0  # cache 60s pour éviter un ping par request
 
 
-# Anciennes routes HTML → redirects 308 vers Next.js (mêmes chemins)
+def _is_frontend_reachable() -> bool:
+    """Ping TCP rapide du frontend Next.js (cache 60s)."""
+    now = _time.monotonic()
+    if now - _frontend_reachable_cache["ts"] < _FRONTEND_CHECK_TTL:
+        return _frontend_reachable_cache["ok"]
+
+    # Parse host + port depuis FRONTEND_URL
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(FRONTEND_URL)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except Exception:
+        host, port = "localhost", 3000
+
+    ok = False
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            ok = True
+    except (OSError, socket.timeout):
+        ok = False
+
+    _frontend_reachable_cache["ts"] = now
+    _frontend_reachable_cache["ok"] = ok
+    return ok
+
+
+def _route_frontend_or_help(path: str):
+    """Redirige 308 vers le frontend si joignable, sinon sert la page d'aide."""
+    if _is_frontend_reachable():
+        return RedirectResponse(url=f"{FRONTEND_URL}{path}", status_code=308)
+    # Frontend non joignable : sert la page d'aide HTML (status 200, pas de redirect)
+    from starlette.responses import Response
+    return Response(
+        content=_frontend_help_page_html(path),
+        media_type="text/html",
+        status_code=200,
+    )
+
+
+def _frontend_help_page_html(path: str) -> str:
+    """Renvoie le HTML de la page d'aide (string)."""
+    return f"""<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<title>Bot-Crypto — Frontend non démarré</title>
+<style>
+  body {{ font-family: -apple-system, system-ui, sans-serif; max-width: 720px;
+         margin: 80px auto; padding: 0 24px; color: #1f2937; line-height: 1.6; }}
+  h1 {{ color: #256a8c; margin-bottom: 8px; }}
+  .badge {{ display: inline-block; padding: 4px 12px; background: #fef3c7;
+           color: #92400e; border-radius: 4px; font-size: 12px; font-weight: 600;
+           margin-bottom: 16px; }}
+  code, pre {{ background: #f4f5f5; padding: 2px 6px; border-radius: 4px;
+              font-family: 'JetBrains Mono', monospace; font-size: 13px; }}
+  pre {{ padding: 16px; overflow-x: auto; }}
+  a {{ color: #256a8c; }}
+  a:hover {{ text-decoration: underline; }}
+  .step {{ background: #f9fafb; border-left: 3px solid #256a8c;
+          padding: 12px 16px; margin: 12px 0; border-radius: 0 6px 6px 0; }}
+  .step strong {{ color: #256a8c; }}
+  ul {{ padding-left: 20px; }}
+  li {{ margin: 4px 0; }}
+</style></head><body>
+<div class="badge">⚠ Frontend Next.js non démarré</div>
+<h1>Backend OK, mais le frontend n'est pas accessible</h1>
+
+<p>Le backend FastAPI tourne correctement sur le port <code>8000</code>,
+mais le frontend Next.js (port <code>3000</code>) ne répond pas.</p>
+
+<p><strong>Configuration actuelle :</strong>
+<code>FRONTEND_URL = {FRONTEND_URL}</code></p>
+
+<h2>Comment démarrer le frontend</h2>
+
+<div class="step">
+  <strong>Étape 1 — Ouvrir un nouveau terminal</strong> (garder le bot en route
+  dans le premier).
+</div>
+
+<div class="step">
+  <strong>Étape 2 — Installer les dépendances frontend</strong> (première fois
+  seulement) :
+  <pre>cd frontend
+npm install</pre>
+</div>
+
+<div class="step">
+  <strong>Étape 3 — Démarrer le serveur de développement Next.js</strong> :
+  <pre>npm run dev</pre>
+  Le frontend sera accessible sur <a href="http://localhost:3000{path}">http://localhost:3000{path}</a>.
+</div>
+
+<h2>Alternatives</h2>
+
+<ul>
+  <li><a href="/api/docs"><strong>API Swagger UI</strong></a> — documentation
+      interactive de l'API REST (<code>/api/*</code>) sur le port 8000.</li>
+  <li><a href="/health"><strong>Health check</strong></a> — statut du bot.</li>
+  <li><a href="/api/status"><strong>Status</strong></a> — capital, positions,
+      PnL (peut nécessiter <code>X-API-Key</code>).</li>
+  <li><strong>Build de production</strong> :
+      <pre>cd frontend
+npm run build
+npm start</pre>
+      Next.js sert le build optimisé sur <code>:3000</code>.</li>
+  <li><strong>Production avec nginx</strong> : nginx sert le build statique
+      Next.js et proxie <code>/api/*</code> vers FastAPI. Voir
+      <code>deploy/nginx.conf</code>.</li>
+</ul>
+
+<h2>Configurer FRONTEND_URL</h2>
+
+<p>Si le frontend tourne sur une URL différente (ex. en production), définir
+la variable d'environnement <code>FRONTEND_URL</code> :</p>
+<pre># .env ou shell
+FRONTEND_URL=https://bot.mondomaine.com</pre>
+
+<p style="margin-top: 32px; font-size: 12px; color: #94a3b8;">
+  Bot-Crypto V12 — S6-09 fin Jinja2 — Page d'aide générée par FastAPI car
+  le frontend Next.js n'est pas joignable sur {FRONTEND_URL}.
+</p>
+</body></html>"""
+
+
+# Anciennes routes HTML → redirect 308 vers Next.js si joignable, sinon page d'aide
 # La liste est exhaustive : 18 routes (la 19e, /slots, redirigeait déjà vers /bots)
 HTML_ROUTES_TO_REDIRECT = [
     "/", "/backtest", "/optimizer", "/config", "/scanner", "/audit",
@@ -169,17 +297,17 @@ HTML_ROUTES_TO_REDIRECT = [
 ]
 for _route in HTML_ROUTES_TO_REDIRECT:
     # Capture _route via default arg pour éviter le piège du closure tardif
-    def _make_redirect(r):
-        def _redirect(request: Request, _r=r):
-            return _redirect_to_nextjs(_r)
-        return _redirect
-    app.add_api_route(_route, _make_redirect(_route), methods=["GET"])
+    def _make_handler(r):
+        def _handler(request: Request, _r=r):
+            return _route_frontend_or_help(_r)
+        return _handler
+    app.add_api_route(_route, _make_handler(_route), methods=["GET"])
 
 
 # Rétro-compat : /slots redirigeait vers /bots (déjà en 307, gardé en 308)
 @app.get("/slots")
 def slots_legacy():
-    return _redirect_to_nextjs("/bots")
+    return _route_frontend_or_help("/bots")
 
 
 # ── Status (accès direct à state.cfg, hors router) ────────────────────────
