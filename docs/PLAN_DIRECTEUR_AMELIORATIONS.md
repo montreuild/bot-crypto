@@ -163,7 +163,10 @@ Voir `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` § Sprint 1.
 | S6-11 | Outiller réellement l'accessibilité (`@axe-core/playwright` sur les 20 routes) | 3 | ⏳ À faire — `axe-core` n'est dans aucun `package.json` (cf. S6-02) |
 | S6-12 | États d'erreur des pages (spinner infini quand l'API est injoignable) | 3 | ✅ Fait (`components/ui/query-state.tsx`, bandeau global, timeout `apiFetch`) |
 | S6-13 | Jouer les tests E2E Playwright en CI (job `e2e` dans `ci.yml`) | 3 | ✅ Fait — débloqué par S6-12, 20/20 verts backend éteint |
-| S6-14 | Le lint frontend n'a jamais tourné : aucune config ESLint dans `frontend/` | 2 | ⏳ À faire — `npm run lint` (step CI `frontend`) est interactif, donc cassé ; l'activer révèle 8 erreurs `react/no-unescaped-entities` pré-existantes à corriger |
+| S6-14 | Le lint frontend n'a jamais tourné : aucune config ESLint dans `frontend/` | 2 | ✅ Fait — `.eslintrc.json` + 22 erreurs et 3 avertissements corrigés, `npm run lint` vert |
+| S6-15 | Auth du frontend Next.js : proxy same-origin injectant `X-API-Key` côté serveur | 5 | ✅ Fait (`src/app/api/[...path]/route.ts`) — supprime aussi tout CORS |
+| S6-16 | `.env` généré par setup.sh mais jamais lu par l'application | 2 | ✅ Fait (`_ensure_dotenv` dans `load_config`) |
+| S6-17 | 6 tests cassés sur `main`, dont 2 vacants sur le correctif critique S0-01 | 3 | ✅ Fait — suite 1380/1380 |
 
 ### Sprint 7 — Production & Conformité (40 SP, non couvert)
 
@@ -241,6 +244,25 @@ page, route ou ressource Jinja2 n'a été oubliée :
 3. **Les tests E2E ne tournaient dans aucun job CI** — `ci.yml` couvrait ruff,
    pytest, pip-audit, lint/type-check/build frontend, mais pas Playwright
    → **S6-13, corrigé** (débloqué par S6-12 : 20/20 verts backend éteint).
+
+   La suite complète comptait par ailleurs **5 tests qui n'étaient jamais
+   passés** : `Meta+K` ne fonctionne que sur macOS, et trois locators
+   violaient le strict mode en résolvant plusieurs éléments (le libellé
+   figure aussi dans la nav latérale). Corrigés → 32/32.
+
+4. **Le frontend ne pouvait pas s'authentifier** → **S6-15**. Dès que
+   `web.api_key` est renseigné, `verify_api_key` exige la clé ; or plus rien
+   ne posait le cookie HttpOnly depuis la suppression de `_tpl()` avec les
+   templates. Toutes les routes protégées répondaient 403. `next.config.mjs`
+   déclarait pourtant un proxy `/api/:path*` « pour éviter les problèmes
+   CORS », mais `api.ts` le contournait en tapant `NEXT_PUBLIC_API_URL` en
+   absolu depuis le navigateur : le proxy existait, personne ne l'utilisait.
+   Remplacé par un route handler qui injecte `X-API-Key` côté serveur — la
+   clé ne transite jamais par le bundle, et les appels deviennent
+   same-origin, donc sans CORS ni whitelist d'origines à maintenir.
+
+   Au passage : la whitelist CORS ne contenait pas le port 3000 (elle datait
+   de l'ère Jinja2, où l'UI était servie par FastAPI sur 8000/8001).
 4. **`axe-core` n'est installé nulle part** : S6-02 documentait les règles WCAG
    dans `DESIGN_SYSTEM.md` sans jamais les outiller → **S6-11**.
 
