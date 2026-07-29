@@ -11,7 +11,8 @@ import { useState } from 'react';
 import { QueryBoundary } from '@/components/ui/query-state';
 
 export default function BotsPage() {
-  const { data, isLoading, error, refetch, isRefetching } = useBots();
+  const query = useBots();
+  const { data } = query;
   const forceActive = useForceBotActive();
   const runForward = useRunForwardTest();
   const [filter, setFilter] = useState<string>('all');
@@ -26,15 +27,13 @@ export default function BotsPage() {
     </div>
   );
 
-  if (error || isLoading || !data) {
+  if (!data) {
     return (
       <QueryBoundary
         title={header}
-        error={error}
-        isLoading={isLoading || !data}
+        query={query}
         loadingLabel="Chargement des bots…"
-        onRetry={() => refetch()}
-        isRetrying={isRefetching}
+        onRetry={() => query.refetch()}
       >
         {null}
       </QueryBoundary>

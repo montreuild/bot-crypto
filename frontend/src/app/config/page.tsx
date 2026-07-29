@@ -19,7 +19,8 @@ import { QueryBoundary } from '@/components/ui/query-state';
 type Symbol = string; // ex. "BTC/USDC"
 
 export default function ConfigPage() {
-  const { data: config, isLoading, error, refetch, isRefetching } = useConfig();
+  const configQuery = useConfig();
+  const { data: config } = configQuery;
   const { data: presets } = usePresets();
   const { data: status } = useApiStatus();
   const setPreset = useSetRiskPreset();
@@ -45,7 +46,7 @@ export default function ConfigPage() {
 
   // S6-12 : le titre reste monté même sans config chargée, et l'échec est
   // affiché/réessayable au lieu d'un spinner qui ne s'arrête jamais.
-  if (error || isLoading || !config) {
+  if (!config) {
     return (
       <QueryBoundary
         title={
@@ -56,11 +57,9 @@ export default function ConfigPage() {
             </p>
           </div>
         }
-        error={error}
-        isLoading={isLoading || !config}
+        query={configQuery}
         loadingLabel="Chargement de la configuration…"
-        onRetry={() => refetch()}
-        isRetrying={isRefetching}
+        onRetry={() => configQuery.refetch()}
       >
         {null}
       </QueryBoundary>

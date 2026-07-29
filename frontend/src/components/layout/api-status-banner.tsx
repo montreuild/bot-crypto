@@ -15,12 +15,15 @@ import { PlugZap, X } from 'lucide-react';
 import { useState } from 'react';
 import { useBotStatus } from '@/hooks/use-api';
 import { isBackendUnreachable } from '@/lib/api';
+import { useStickyError } from '@/components/ui/query-state';
 
 export function ApiStatusBanner() {
-  const { error } = useBotStatus();
+  const query = useBotStatus();
   const [dismissed, setDismissed] = useState(false);
 
-  const down = isBackendUnreachable(error);
+  // Erreur persistante : le sondage 3 s remet `error` à null entre deux
+  // tentatives, ce qui ferait clignoter le bandeau (cf. useStickyError).
+  const down = isBackendUnreachable(useStickyError(query));
 
   // Ajustement d'état pendant le render (motif React « adjusting state when a
   // prop changes ») : au retour du backend on réarme le bandeau, pour qu'un

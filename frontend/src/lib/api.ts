@@ -52,8 +52,13 @@ type ApiFetchOptions = RequestInit & { timeoutMs?: number };
 
 async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Promise<T> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, ...init } = options;
+
+  // `Content-Type: application/json` sur une requête sans corps suffit à la
+  // faire sortir des « simple requests » CORS : le navigateur émet alors un
+  // préflight OPTIONS pour chaque lecture. Inutile ici, et coûteux vu le
+  // sondage à 3 s. On ne pose l'en-tête que s'il y a effectivement un corps.
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     ...((init.headers as Record<string, string>) || {}),
   };
 

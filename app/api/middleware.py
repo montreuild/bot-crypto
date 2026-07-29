@@ -151,14 +151,31 @@ def _compute_allowed_origins() -> list:
     ``ALLOWED_ORIGINS`` est une liste séparée par des virgules — ex.
     ``ALLOWED_ORIGINS=https://bot.mondomaine.com`` pour restreindre au(x)
     domaine(s) réel(s) en prod.
+
+    ⚠ S6-09 — la liste par défaut datait de l'ère Jinja2, où l'UI était servie
+    par FastAPI lui-même (ports 8000/8001) : elle n'était donc pas cross-origin.
+    Depuis la migration, le frontend Next.js tourne sur **3000** et n'y figurait
+    pas — le préflight `OPTIONS /api/*` était rejeté en 400 et *aucun* appel API
+    n'aboutissait, backend allumé ou non. On ajoute 3000 (et 3001, port de repli
+    de `next dev` quand 3000 est pris) ainsi que ``FRONTEND_URL`` s'il est défini.
     """
-    return [
+    explicit = [
         o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()
-    ] or [
+    ]
+    if explicit:
+        return explicit
+
+    defaults = [
         "http://localhost",      "http://127.0.0.1",
+        "http://localhost:3000", "http://127.0.0.1:3000",
+        "http://localhost:3001", "http://127.0.0.1:3001",
         "http://localhost:8000", "http://127.0.0.1:8000",
         "http://localhost:8001", "http://127.0.0.1:8001",
     ]
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    if frontend and frontend not in defaults:
+        defaults.append(frontend)
+    return defaults
 
 
 def setup_middleware(app: FastAPI) -> None:

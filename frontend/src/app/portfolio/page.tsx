@@ -132,7 +132,8 @@ function ActivityFeed({ items }: { items: any[] }) {
 // ── Main page ───────────────────────────────────────────────────────────────
 
 export default function PortfolioPage() {
-  const { data: portfolio, isLoading, isError, error, refetch, isRefetching } = usePortfolio();
+  const portfolioQuery = usePortfolio();
+  const { data: portfolio } = portfolioQuery;
   const { data: notifData } = useNotifications(30, 'info');
   const { data: botsData } = useBots();
   const qc = useQueryClient();
@@ -176,7 +177,7 @@ export default function PortfolioPage() {
 
   // S6-12 : titre monté en permanence + cause réelle de l'erreur et réessai,
   // au lieu d'un « Erreur lors du chargement » sans détail ni recours.
-  if (isError || isLoading) {
+  if (!portfolio) {
     return (
       <QueryBoundary
         title={
@@ -187,11 +188,9 @@ export default function PortfolioPage() {
             </p>
           </div>
         }
-        error={isError ? error : undefined}
-        isLoading={isLoading}
+        query={portfolioQuery}
         loadingLabel="Chargement du portefeuille…"
-        onRetry={() => refetch()}
-        isRetrying={isRefetching}
+        onRetry={() => portfolioQuery.refetch()}
       >
         {null}
       </QueryBoundary>

@@ -13,7 +13,8 @@ import { useBotStatus } from '@/hooks/use-api';
 import { QueryBoundary } from '@/components/ui/query-state';
 
 export default function DashboardPage() {
-  const { data: status, isLoading, error, refetch, isRefetching } = useBotStatus();
+  const query = useBotStatus();
+  const { data: status } = query;
 
   // S6-12 : le titre est monté avant la garde — la page garde son `h1` même
   // backend éteint, et l'échec s'affiche au lieu de tourner indéfiniment.
@@ -36,15 +37,13 @@ export default function DashboardPage() {
     </div>
   );
 
-  if (error || isLoading || !status) {
+  if (!status) {
     return (
       <QueryBoundary
         title={header}
-        error={error}
-        isLoading={isLoading || !status}
+        query={query}
         loadingLabel="Chargement du dashboard…"
-        onRetry={() => refetch()}
-        isRetrying={isRefetching}
+        onRetry={() => query.refetch()}
       >
         {null}
       </QueryBoundary>

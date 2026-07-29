@@ -15,9 +15,42 @@
  */
 
 import { AlertTriangle, Loader2, PlugZap, RefreshCw } from 'lucide-react';
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { isBackendUnreachable } from '@/lib/api';
 import { cn } from '@/lib/utils';
+
+/** Sous-ensemble de `UseQueryResult` dont dépendent les états de page. */
+export type QueryLike = {
+  data?: unknown;
+  error?: unknown;
+  failureReason?: unknown;
+  isFetching?: boolean;
+};
+
+/**
+ * Retient la dernière erreur jusqu'au prochain succès.
+ *
+ * Nécessaire parce que nos queries ont un `refetchInterval` court (3 s pour le
+ * statut). Une nouvelle tentative repart avant que la séquence de retry ne se
+ * stabilise : react-query repasse en `pending` et remet `error`/`failureReason`
+ * à `null` le temps du vol. Une vue qui lit `error` directement alterne donc
+ * erreur → spinner → erreur à chaque tick, ce qui donne un clignotement — et,
+ * quand les tentatives s'enchaînent assez vite, l'erreur n'apparaît jamais.
+ *
+ * On mémorise l'échec et on ne l'efface qu'à l'arrivée de données réelles.
+ */
+export function useStickyError(query: QueryLike): unknown {
+  const live = query.error ?? query.failureReason ?? null;
+  const hasData = query.data !== undefined;
+  const [sticky, setSticky] = useState<unknown>(live);
+
+  useEffect(() => {
+    if (hasData) setSticky(null);
+    else if (live) setSticky(live);
+  }, [live, hasData]);
+
+  return hasData ? null : (sticky ?? live);
+}
 
 export function LoadingState({ label = 'Chargement…', className }: { label?: string; className?: string }) {
   return (
@@ -122,27 +155,28 @@ export function EmptyState({ label = 'Aucune donnée disponible', className }: {
  * qu'une page a toujours un `h1`, y compris backend éteint.
  */
 export function QueryBoundary({
-  isLoading,
-  error,
+  query,
   isEmpty,
   onRetry,
-  isRetrying,
   loadingLabel,
   title,
   children,
 }: {
-  isLoading: boolean;
-  error?: unknown;
+  query: QueryLike;
   isEmpty?: boolean;
   onRetry?: () => void;
-  isRetrying?: boolean;
   loadingLabel?: string;
   title?: ReactNode;
   children: ReactNode;
 }) {
+  // L'erreur persiste jusqu'au prochain succès : sans ça, le `refetchInterval`
+  // ferait alterner erreur et spinner à chaque tentative (cf. useStickyError).
+  const error = useStickyError(query);
+  const hasData = query.data !== undefined;
+
   let body: ReactNode;
-  if (error) body = <ErrorState error={error} onRetry={onRetry} isRetrying={isRetrying} />;
-  else if (isLoading) body = <LoadingState label={loadingLabel} />;
+  if (error) body = <ErrorState error={error} onRetry={onRetry} isRetrying={query.isFetching} />;
+  else if (!hasData) body = <LoadingState label={loadingLabel} />;
   else if (isEmpty) body = <EmptyState />;
   else body = children;
 
