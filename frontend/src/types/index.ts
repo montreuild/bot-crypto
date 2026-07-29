@@ -165,6 +165,7 @@ export interface Trade {
   symbol: string;
   side: 'long' | 'short';
   strategy: string;
+  timeframe?: string;  // UI-04 : ajouté pour le filtre slot 3-parties
   entry: number;
   exit: number;
   pnl: number;

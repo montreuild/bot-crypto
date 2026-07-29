@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -308,8 +308,10 @@ export default function OptimizerPage() {
   const { data: resultsData } = useOptimizeResults();
   const startOptimize = useStartOptimize();
 
-  // All known strategies from param space (fallback to defaults)
-  const allStrategies = spaces ? Object.keys(spaces) : [];
+  // All known strategies from param space (fallback to defaults).
+  // Mémoïsé : ce tableau alimente les deps d'un useEffect plus bas ; recréé à
+  // chaque render, il relançait l'effet en boucle.
+  const allStrategies = useMemo(() => (spaces ? Object.keys(spaces) : []), [spaces]);
 
   // Form state
   const [selectedStrategies, setSelectedStrategies] = useState<string[]>([]);
@@ -554,7 +556,7 @@ export default function OptimizerPage() {
             ) : (
               <Play className="w-4 h-4" fill="currentColor" />
             )}
-            Lancer l'optimisation
+            Lancer l&apos;optimisation
           </Button>
         </CardContent>
       </Card>
@@ -612,7 +614,7 @@ export default function OptimizerPage() {
           <Card>
             <CardContent className="text-center py-12 text-muted text-sm">
               <Zap className="w-8 h-8 mx-auto mb-2 text-dim" />
-              Aucun job d'optimisation. Lancez-en un ci-dessus.
+              Aucun job d&apos;optimisation. Lancez-en un ci-dessus.
             </CardContent>
           </Card>
         ) : (

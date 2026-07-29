@@ -13,26 +13,80 @@ import type {
   ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
 } from '@/types';
 
-const API_BASE = typeof window !== 'undefined'
-  ? (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '') + '/api'
-  : '/api';
+/**
+ * Toujours relatif : les appels passent par le proxy same-origin
+ * `src/app/api/[...path]/route.ts`, qui injecte `X-API-Key` côté serveur et
+ * évite tout CORS. Avant, le navigateur tapait `NEXT_PUBLIC_API_URL` en absolu
+ * (http://localhost:8000) : cross-origin — donc préflight à chaque lecture et
+ * whitelist d'origines à tenir — et surtout aucun moyen d'authentifier depuis
+ * la suppression du cookie posé par Jinja2.
+ */
+const API_BASE = '/api';
 
-class ApiError extends Error {
-  constructor(public status: number, message: string) {
-    super(message);
+/**
+ * `status: 0` = le backend n'a pas répondu du tout (process arrêté, mauvais
+ * port, DNS, CORS). C'est le cas le plus fréquent en dev — `fetch` lève alors
+ * un `TypeError: Failed to fetch` opaque, indistinguable d'un bug applicatif.
+ * On le normalise ici pour que l'UI puisse afficher « backend injoignable »
+ * plutôt qu'un message technique (cf. `isBackendUnreachable`).
+ */
+export class ApiError extends Error {
+  constructor(public status: number, message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'ApiError';
   }
 }
 
-async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+export function isBackendUnreachable(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 0;
+}
+
+/**
+ * Sans échéance, un backend éteint ne produit PAS d'erreur exploitable : selon
+ * la configuration réseau, le SYN est refusé (échec immédiat) ou silencieusement
+ * filtré — auquel cas `fetch` reste pendu jusqu'au timeout TCP de l'OS. Observé
+ * en dev Windows : connexions bloquées en `SYN_SENT`, requête jamais résolue,
+ * donc react-query reste `pending` et l'UI tourne indéfiniment.
+ *
+ * On borne donc chaque requête. `timeoutMs: 0` désactive l'échéance pour les
+ * appels réellement longs ; les traitements lourds (sweep ML, backfill) sont
+ * déjà asynchrones (`job_id` + polling) et n'en ont pas besoin.
+ */
+const DEFAULT_TIMEOUT_MS = 15_000;
+
+type ApiFetchOptions = RequestInit & { timeoutMs?: number };
+
+async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Promise<T> {
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...init } = options;
+
+  // `Content-Type: application/json` sur une requête sans corps suffit à la
+  // faire sortir des « simple requests » CORS : le navigateur émet alors un
+  // préflight OPTIONS pour chaque lecture. Inutile ici, et coûteux vu le
+  // sondage à 3 s. On ne pose l'en-tête que s'il y a effectivement un corps.
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...((options.headers as Record<string, string>) || {}),
+    ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    ...((init.headers as Record<string, string>) || {}),
   };
 
-  const res = await fetch(`${API_BASE}${endpoint}`, {
-    ...options, headers, cache: 'no-store', credentials: 'include',
-  });
+  // Le signal fourni par l'appelant prime ; sinon on pose notre échéance.
+  const signal = init.signal
+    ?? (timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${endpoint}`, {
+      ...init, headers, signal, cache: 'no-store', credentials: 'include',
+    });
+  } catch (cause) {
+    const timedOut = cause instanceof DOMException && cause.name === 'TimeoutError';
+    throw new ApiError(
+      0,
+      timedOut
+        ? `Backend injoignable sur ${API_BASE || 'origine courante'} — aucune réponse en ${timeoutMs / 1000} s. Le serveur FastAPI est-il démarré ?`
+        : `Backend injoignable sur ${API_BASE || 'origine courante'} — le serveur FastAPI est-il démarré ?`,
+      { cause },
+    );
+  }
 
   if (!res.ok) {
     let detail = res.statusText;
@@ -40,6 +94,12 @@ async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise
       const body = await res.json();
       detail = body.detail || body.message || JSON.stringify(body);
     } catch {}
+    // Le proxy same-origin répond 503 quand il n'atteint pas FastAPI : on le
+    // ramène au même statut 0 qu'un échec réseau direct, pour que l'UI affiche
+    // « Backend injoignable » plutôt qu'une erreur HTTP générique.
+    if (res.status === 503 && /injoignable/i.test(String(detail))) {
+      throw new ApiError(0, String(detail));
+    }
     throw new ApiError(res.status, `${endpoint}: ${detail}`);
   }
 
@@ -86,7 +146,7 @@ export const api = {
   forceBotActive: (slotKey: string, enabled = true) =>
     apiFetch(`/bots/${encodeURIComponent(slotKey)}/force-active?enabled=${enabled}`, { method: 'POST' }),
   runBotForwardTest: (slotKey: string) =>
-    apiFetch(`/bots/${encodeURIComponent(slotKey)}/forward-test`, { method: 'POST' }),
+    apiFetch(`/bots/${encodeURIComponent(slotKey)}/forward-test`, { method: 'POST', timeoutMs: 0 }),
   getOosTracker: () => apiFetch<any>('/oos-tracker'),
 
   // ── Slots ───────────────────────────────────────────────────────────────
@@ -104,9 +164,24 @@ export const api = {
 
   // ── Config ──────────────────────────────────────────────────────────────
   getConfig: () => apiFetch<any>('/config'),
+  // S5-01 : étendu pour accepter un `symbol` optionnel (override par symbole).
+  // Si symbol est fourni, le backend écrit dans optimizer_results[tf][symbol]
+  // au lieu de la section globale strategy_params.
+  setStrategyParams: (strategy: string, params: Record<string, any>, symbol?: string) =>
+    apiFetch('/config/strategy-params', {
+      method: 'POST',
+      body: JSON.stringify({ strategy, params, symbol }),
+    }),
+  // S5-01 : activation/désactivation de TF par symbole.
+  toggleStrategyTimeframe: (tf: string, enable: boolean, symbol?: string) =>
+    apiFetch('/config/strategy-timeframe', {
+      method: 'POST',
+      body: JSON.stringify({ tf, enable, symbol }),
+    }),
+  // Legacy aliases (compat with existing code)
   updateStrategyParams: (payload: any) =>
     apiFetch('/config/strategy-params', { method: 'POST', body: JSON.stringify(payload) }),
-  toggleStrategyTimeframe: (payload: any) =>
+  toggleStrategyTimeframeLegacy: (payload: any) =>
     apiFetch('/config/strategy-timeframe', { method: 'POST', body: JSON.stringify(payload) }),
   setStrategies: (enabled: string[]) =>
     apiFetch(`/config/strategies?enabled=${enabled.join(',')}`, { method: 'POST' }),
@@ -124,20 +199,43 @@ export const api = {
 
   // ── Backtest ────────────────────────────────────────────────────────────
   getBacktestSettings: () => apiFetch<any>('/backtest/settings'),
+  // `timeoutMs: 0` : traitement synchrone potentiellement long (plusieurs
+  // minutes selon la plage et le nombre de stratégies) — pas d'échéance.
   runBacktest: (payload: any) =>
     apiFetch<BacktestResult | BacktestResult[]>('/backtest', {
       method: 'POST',
       body: JSON.stringify(payload),
+      timeoutMs: 0,
     }),
 
   // ── Scanner ─────────────────────────────────────────────────────────────
   fastAnalysis: (symbol: string, tf = '1h') =>
-    apiFetch<any>(`/scanner/fast-analysis?symbol=${encodeURIComponent(symbol)}&tf=${tf}`),
+    apiFetch<any>(`/scanner/fast-analysis?symbol=${encodeURIComponent(symbol)}&tf=${tf}`, { timeoutMs: 0 }),
 
   // ── Data ────────────────────────────────────────────────────────────────
   getDataStatus: () => apiFetch<any>('/data/status'),
   refetchData: (symbol: string, tf: string) =>
-    apiFetch<any>(`/data/refetch?symbol=${encodeURIComponent(symbol)}&tf=${tf}`, { method: 'POST' }),
+    apiFetch<any>(`/data/refetch?symbol=${encodeURIComponent(symbol)}&tf=${tf}`, { method: 'POST', timeoutMs: 0 }),
+  // S5 (audit V2) : backfill des actions depuis l'UI (équivalent du bouton
+  // qui existait dans la page Jinja2 /data). Lance en async côté backend.
+  startBackfillEquities: (tf: string = '1d', years: number = 20) =>
+    apiFetch<{ job_id: string; status: string; tf: string; years: number; univers: string[] }>(
+      `/data/backfill-equities?tf=${tf}&years=${years}`,
+      { method: 'POST' },
+    ),
+  getBackfillStatus: (jobId: string) =>
+    apiFetch<{
+      job_id: string;
+      status: 'started' | 'done' | 'error';
+      started_at: string;
+      finished_at?: string;
+      tf: string;
+      years: number;
+      univers: string[];
+      progress: { done: number; total: number; current_symbol: string | null };
+      results: Array<{ symbol: string; tf: string; bars: number; ok: boolean; error?: string }>;
+      error: string | null;
+    }>(`/data/backfill-status/${jobId}`),
 
   // ── Optimizer ───────────────────────────────────────────────────────────
   getOptimizeStatus: (jobId?: string) =>
@@ -162,10 +260,8 @@ export const api = {
     apiFetch<any>(`/optimize/job?job_id=${jobId}`, { method: 'DELETE' }),
   getOptimizeResults: () => apiFetch<any>('/optimize/results'),
   getOptimizeSpaces: () => apiFetch<any>('/optimize/spaces'),
-  optimizeStreamUrl: (jobId: string) => {
-    const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
-    return `${base}/api/optimize/stream?job_id=${jobId}`;
-  },
+  // Same-origin comme le reste : passe par le proxy, donc authentifié.
+  optimizeStreamUrl: (jobId: string) => `${API_BASE}/optimize/stream?job_id=${jobId}`,
 
   // ── ML ──────────────────────────────────────────────────────────────────
   getMLStrategyInfo: () => apiFetch<{ strategies: Record<string, any> }>('/ml/strategy-info'),
@@ -225,7 +321,7 @@ export const api = {
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null) q.set(k, String(v));
     });
-    return apiFetch<any>(`/replay?${q.toString()}`, { method: 'POST' });
+    return apiFetch<any>(`/replay?${q.toString()}`, { method: 'POST', timeoutMs: 0 });
   },
   cancelReplay: () => apiFetch<any>('/replay/cancel', { method: 'POST' }),
 
@@ -254,5 +350,3 @@ export const api = {
   getSignals: (symbol = 'BTC/USDC', timeframe = '1h', limit = 300) =>
     apiFetch<any>(`/scanner/signals?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`),
 };
-
-export { ApiError };

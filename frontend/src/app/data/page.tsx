@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,8 +8,10 @@ import { Badge } from '@/components/ui/badge';
 import { cn, formatDateTime } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useDataStatus, useRefetchData } from '@/hooks/use-api';
+import { api } from '@/lib/api';
 import {
   Loader2, RefreshCw, Database, AlertCircle, ExternalLink, HardDrive,
+  TrendingUp, Play, CheckCircle2, XCircle,
 } from 'lucide-react';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -81,6 +83,49 @@ export default function DataPage() {
 
   const [manualSymbol, setManualSymbol] = useState('BTC/USDC');
   const [manualTf, setManualTf] = useState('1h');
+
+  // ── Backfill des actions (S5 — équivalent du bouton Jinja2 /data) ────────
+  const [backfillTf, setBackfillTf] = useState('1d');
+  const [backfillYears, setBackfillYears] = useState(20);
+  const [backfillJob, setBackfillJob] = useState<any>(null);
+  const [backfillPolling, setBackfillPolling] = useState(false);
+
+  const pollBackfill = useCallback(async (jobId: string) => {
+    try {
+      const status = await api.getBackfillStatus(jobId);
+      setBackfillJob(status);
+      if (status.status === 'started') {
+        // Continue polling toutes les 2s
+        setTimeout(() => pollBackfill(jobId), 2000);
+      } else {
+        setBackfillPolling(false);
+        if (status.status === 'done') {
+          const ok = status.results.filter((r) => r.ok).length;
+          toast.success(`Backfill terminé : ${ok}/${status.results.length} symboles`);
+        } else if (status.status === 'error') {
+          toast.error(`Backfill échoué : ${status.error}`);
+        }
+      }
+    } catch (e: any) {
+      setBackfillPolling(false);
+      toast.error(`Suivi backfill échoué : ${e.message}`);
+    }
+  }, []);
+
+  const handleStartBackfill = async () => {
+    try {
+      const res = await api.startBackfillEquities(backfillTf, backfillYears);
+      setBackfillJob(res);
+      setBackfillPolling(true);
+      toast.info(
+        `Backfill démarré : ${res.univers.join(', ')} — TF ${res.tf}, ${res.years} ans`,
+      );
+      // Démarre le polling
+      setTimeout(() => pollBackfill(res.job_id), 2000);
+    } catch (e: any) {
+      toast.error(`Backfill échoué : ${e.message}`);
+    }
+  };
 
   const datasets = flattenDatasets(data);
   const totalBars = datasets.reduce((s, d) => s + (d.count || 0), 0);
@@ -166,6 +211,123 @@ export default function DataPage() {
               )}
               Refetch
             </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Backfill des actions (S5 — équivalent du bouton Jinja2 /data) ──── */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Backfill des actions (yfinance)</CardTitle>
+          <TrendingUp className="w-4 h-4 text-primary-400" />
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <p className="text-sm text-muted">
+              Peuple le cache OHLCV des actions des univers activés dans
+              <code className="ml-1 text-xs bg-card-hover px-1 py-0.5 rounded">scanner.universe</code>
+              (ex. <code className="text-xs bg-card-hover px-1 py-0.5 rounded">sbf120</code>).
+              Lance en arrière-plan — suit l&apos;avancement ci-dessous.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+              <div>
+                <label className="text-xs text-dim block mb-1.5">Timeframe</label>
+                <select
+                  value={backfillTf}
+                  onChange={(e) => setBackfillTf(e.target.value)}
+                  className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"
+                >
+                  <option value="1d">1d (recommandé — 20 ans dispo)</option>
+                  <option value="1h">1h (⚠ limite Yahoo ~88 bougies EU)</option>
+                  <option value="15m">15m (⚠ limite Yahoo ~88 bougies EU)</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-dim block mb-1.5">Années d&apos;historique</label>
+                <input
+                  type="number"
+                  value={backfillYears}
+                  onChange={(e) => setBackfillYears(Number(e.target.value))}
+                  min={1}
+                  max={20}
+                  className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"
+                />
+              </div>
+              <Button
+                onClick={handleStartBackfill}
+                disabled={backfillPolling}
+                variant="primary"
+              >
+                {backfillPolling ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Play className="w-4 h-4" />
+                )}
+                {backfillPolling ? 'Backfill en cours...' : 'Lancer le backfill'}
+              </Button>
+            </div>
+
+            {/* Avancement du backfill */}
+            {backfillJob && (
+              <div className="border border-border rounded-lg p-4 bg-card-hover space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {backfillJob.status === 'started' && (
+                      <Loader2 className="w-4 h-4 text-primary-400 animate-spin" />
+                    )}
+                    {backfillJob.status === 'done' && (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    )}
+                    {backfillJob.status === 'error' && (
+                      <XCircle className="w-4 h-4 text-red-400" />
+                    )}
+                    <span className="font-medium">
+                      Job {backfillJob.job_id} — {backfillJob.status}
+                    </span>
+                  </div>
+                  <Badge variant="info">
+                    {backfillJob.progress.done}/{backfillJob.progress.total || '?'}
+                  </Badge>
+                </div>
+                {backfillJob.progress.current_symbol && (
+                  <div className="text-xs text-muted font-mono">
+                    En cours : {backfillJob.progress.current_symbol}
+                  </div>
+                )}
+                {backfillJob.univers && (
+                  <div className="text-xs text-dim">
+                    Univers : {backfillJob.univers.join(', ')} — TF {backfillJob.tf}, {backfillJob.years} ans
+                  </div>
+                )}
+                {/* Barre de progression */}
+                {backfillJob.progress.total > 0 && (
+                  <div className="w-full bg-card rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className="h-full bg-primary-400 transition-all"
+                      style={{
+                        width: `${(backfillJob.progress.done / backfillJob.progress.total) * 100}%`,
+                      }}
+                    />
+                  </div>
+                )}
+                {/* Stats finales */}
+                {backfillJob.status === 'done' && backfillJob.results && (
+                  <div className="text-xs text-muted">
+                    <span className="text-emerald-400 font-medium">
+                      {backfillJob.results.filter((r: any) => r.ok).length} OK
+                    </span>
+                    {' · '}
+                    <span className="text-red-400 font-medium">
+                      {backfillJob.results.filter((r: any) => !r.ok).length} échoués
+                    </span>
+                    {' · '}
+                    <span>
+                      {backfillJob.results.reduce((s: number, r: any) => s + r.bars, 0).toLocaleString()} bougies
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

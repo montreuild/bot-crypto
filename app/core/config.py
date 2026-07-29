@@ -13,10 +13,38 @@ from pathlib import Path
 from typing import Any, Tuple
 
 import yaml
+from dotenv import load_dotenv
 
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 logger = logging.getLogger(__name__)
+
+# Racine du dépôt : app/core/config.py → app/core → app → <racine>
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_dotenv_loaded = False
+
+
+def _ensure_dotenv() -> None:
+    """Charge `.env` dans l'environnement, une seule fois par process.
+
+    `setup.sh` génère un `.env` contenant une `WEB_API_KEY` aléatoire et les
+    clés exchange, mais rien ne le lisait : `${WEB_API_KEY}` restait vide, et
+    `web.host: 0.0.0.0` sans `api_key` faisait *refuser le démarrage* (garde
+    OPS-02). Le fichier était donc écrit puis ignoré.
+
+    `override=False` : une variable déjà exportée dans le shell (ou injectée
+    par systemd/Docker) reste prioritaire sur le fichier — le `.env` est un
+    filet pour le dev local, pas une source d'autorité en production.
+    """
+    global _dotenv_loaded
+    if _dotenv_loaded:
+        return
+    _dotenv_loaded = True
+
+    env_path = _REPO_ROOT / ".env"
+    if env_path.is_file():
+        load_dotenv(env_path, override=False)
+        logger.debug(f"[Config] .env chargé depuis {env_path}")
 
 REQUIRED_FIELDS = [
     ("exchange", "name"),
@@ -226,6 +254,10 @@ def _bootstrap_strategy_files(strategies_dir: str) -> None:
 
 
 def load_config(path: str = "config.yaml") -> dict:
+    # Avant toute expansion `${VAR}` : sans ça, les valeurs du `.env` généré
+    # par setup.sh ne sont jamais visibles (cf. `_ensure_dotenv`).
+    _ensure_dotenv()
+
     if not os.path.exists(path):
         raise FileNotFoundError(f"Fichier de configuration introuvable : {path}")
 

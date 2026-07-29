@@ -135,20 +135,107 @@ class MLStrategyTrainer:
                                tf: str, scanner, timeout: float) -> None:
         """Lance _retrain_thread dans un executor et applique un timeout.
 
-        Note : en cas de timeout, le thread sous-jacent continue jusqu'à la fin
-        de l'opération en cours (fit/IO) puis se termine ; _ml_lock sera relâché
-        normalement. Le résultat est simplement ignoré.
+        S3-11 (audit V2) : en cas de timeout, le thread sous-jacent continue
+        en arrière-plan (Python ne peut pas tuer un thread), MAIS il tient
+        `_ml_lock` jusqu'à la fin de `maybe_refresh`. Pendant ce temps,
+        l'inférence est bloquée → le live peut score sur des features
+        périmées.
+
+        Fix : **acquire `_ml_lock` AVEC un timeout** dans `_retrain_with_timeout`
+        (pas dans `_retrain_thread`). Si le lock n'est pas obtenu dans le
+        délai, on logge et on abandonne le réentraînement — l'inférence
+        actuelle garde le lock exclusif.
+
+        Le `_ml_lock` du `thread.Thread` sous-jacent est supprimé : c'est
+        l'executor qui le détient, pas le thread interne. Quand le future
+        timeout se déclenche, l'executor relâche le lock à la fin du
+        context manager `with self._ml_lock`.
         """
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(self._retrain_thread, name, strat, strat_params, tf, scanner)
-            try:
-                future.result(timeout=timeout)
-            except FuturesTimeoutError:
-                logger.error(
-                    f"[MLTrainer] Réentraînement {name}/{tf} timeout ({timeout}s) — annulé"
+        # S3-11 : acquire avec timeout. Si on ne peut pas prendre le lock
+        # dans le délai, abandonner — un réentraînement concurrent est en
+        # cours et on ne veut pas bloquer plus longtemps.
+        if not self._ml_lock.acquire(timeout=5.0):
+            logger.warning(
+                f"[MLTrainer] Réentraînement {name}/{tf} SKIPPÉ — "
+                f"_ml_lock indisponible après 5s (un autre retrain en cours ?)"
+            )
+            return
+
+        try:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(self._retrain_thread_no_lock,
+                                     name, strat, strat_params, tf, scanner)
+                try:
+                    future.result(timeout=timeout)
+                except FuturesTimeoutError:
+                    logger.error(
+                        f"[MLTrainer] Réentraînement {name}/{tf} timeout ({timeout}s) — "
+                        f"le thread interne continue en arrière-plan, mais le "
+                        f"_ml_lock sera relâché quand maybe_refresh terminera. "
+                        f"L'inférence est temporairement bloquée — surveiller les "
+                        f"latencies."
+                    )
+                except Exception as e:
+                    logger.error(f"[MLTrainer] Réentraînement {name}/{tf} KO : {e}")
+        finally:
+            self._ml_lock.release()
+
+    def _retrain_thread_no_lock(self, name: str, strat, strat_params: dict,
+                                 tf: str, scanner) -> None:
+        """Variante de _retrain_thread SANS acquire du _ml_lock — c'est
+        l'appelant (_retrain_with_timeout) qui le détient.
+
+        S3-11 : le verrou est pris au niveau de l'executor pour garantir
+        qu'il sera relâché même en cas de timeout du future (le
+        context manager `try/finally` dans _retrain_with_timeout le
+        garantit). L'ancienne implémentation prenait le lock DANS
+        _retrain_thread, ce qui le rendait inaccessible en cas de
+        timeout du future (le thread continuait mais personne ne pouvait
+        interrompre le lock).
+        """
+        logger.info(f"[MLTrainer] Début réentraînement {name}/{tf}…")
+        try:
+            import app.ml.policy as ml_policy
+
+            symbol = self._resolve_symbol(scanner)
+            if not symbol:
+                logger.warning(f"[MLTrainer] {name}/{tf} : aucun symbole disponible")
+                return
+
+            sp = strat_params.get(name, {})
+            gate_cfg = ml_policy.GateConfig.from_params(sp)
+            need = int(strat.min_bars_required(strat_params))
+            gate_min_n = gate_cfg.holdout_bars + gate_cfg.min_window_bars
+            fetch_n = max(need + 200, 2 * need, gate_min_n, int(sp.get("live_fetch_bars", 0)), 1000)
+
+            logger.info(
+                f"[MLTrainer] {name}/{tf} : fetch {symbol} — demande {fetch_n} bougies "
+                f"(min stratégie={need}, plancher gate={gate_min_n})"
+            )
+            df = scanner.fetch_ohlcv(symbol, tf, fetch_n)
+            got = 0 if df is None else len(df)
+            if df is None or got < gate_min_n:
+                logger.warning(
+                    f"[MLTrainer] {name}/{tf} : données insuffisantes pour {symbol} — "
+                    f"reçu {got} bougies, requis ≥{gate_min_n} pour évaluer le gate "
+                    f"(le store local a-t-il un historique suffisant ? "
+                    f"sinon laissez tourner le live un moment avant de réentraîner)"
                 )
-            except Exception as e:
-                logger.error(f"[MLTrainer] Réentraînement {name}/{tf} KO : {e}")
+                return
+            logger.info(
+                f"[MLTrainer] {name}/{tf} : {got} bougies dispo pour {symbol} — "
+                f"entraînement + gate en cours…"
+            )
+            base_dir = getattr(strat, "model_dir", "models") or "models"
+            # S3-11 : pas de acquire ici — _ml_lock est détenu par
+            # _retrain_with_timeout via context manager try/finally.
+            result = ml_policy.maybe_refresh(
+                strat, symbol, tf, df, params=sp,
+                gate_cfg=gate_cfg, source="live", base_dir=base_dir,
+            )
+            self._log_gate_result(name, tf, result)
+        except Exception as e:
+            logger.error(f"[MLTrainer] Réentraînement {name}/{tf} KO : {e}")
 
     # ── Thread interne ─────────────────────────────────────────────────────
     def _retrain_thread(self, name: str, strat, strat_params: dict,

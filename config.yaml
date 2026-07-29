@@ -119,16 +119,24 @@ scanner:
   # G2 — univers statiques versionnés (data/universe/*.yaml), cumulés avec
   # `symbols` ci-dessus. Sur actions, la liste des instruments est un choix,
   # pas une découverte exchange.
+  #
   # ⚠️ data/universe/sbf120.yaml porte `verified: false` : instantané constitué
   # hors ligne, à recouper avec la composition officielle Euronext. Pré-vol :
   #     python scripts/check_universe.py sbf120
   #
   # ⚠️⚠️ AVANT D'ACTIVER : peupler le cache HORS LIGNE, sinon le premier cycle
   # de scan tente 98 titres × chaque timeframe contre Yahoo, qui répond 429.
+  # Utiliser la page /data → "Backfill actions" (depuis l'UI Next.js) ou :
   #     python scripts/backfill_equities.py --tf 1d --years 20
   # Un disjoncteur de quota (app/core/yfinance_provider) coupe les appels 15 min
   # après 5 refus consécutifs, mais il limite les dégâts — il ne remplace pas
-  # l'amorçage. Pour revenir en crypto pur : commenter la ligne ci-dessous.
+  # l'amorçage.
+  #
+  # ⚠️⚠️⚠️ SBF 120 + yfinance 15m/30m/1h : Yahoo Finance ne fournit qu'~88
+  # bougies d'historique intraday pour les actions européennes (limite
+  # Yahoo). Sur TF courts, le bot demande 500 bougies, n'en obtient que 88,
+  # et fait un backoff 6h (comportement normal, cf. CandleStore). Pour
+  # trader des actions FR en intraday, utiliser TF ≥ 1d (historique 20 ans).
   universe: [sbf120]
   #
   # Le seuil de liquidité crypto (5 M$/24 h) exclurait tout le SBF 120 : il
@@ -278,7 +286,10 @@ web:
   api_key: ${WEB_API_KEY}
   # Dev LOCAL uniquement : autorise host ouvert sans api_key (sinon le
   # démarrage est refusé — OPS-02). À retirer avant toute exposition réseau.
-  allow_insecure: true
+  # ⚠ S0-11 (29/07/2026) : la valeur par défaut est désormais `false`.
+  # Pour du dev local uniquement, mettre `true` explicitement dans ce fichier
+  # ou exporter `ALLOW_INSECURE_WEB=1`.
+  allow_insecure: false
 ui:
   risk_preset:
   expert_mode: false

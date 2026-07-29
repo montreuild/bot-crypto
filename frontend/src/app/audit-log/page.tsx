@@ -58,7 +58,7 @@ export default function AuditLogPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <ScrollText className="w-6 h-6 text-primary-400" />
-            Journal d'Audit
+            Journal d&apos;Audit
           </h1>
           <p className="text-sm text-muted mt-1">
             Traçabilité des actions sensibles — {total} événement{total > 1 ? 's' : ''} au total
@@ -158,7 +158,7 @@ export default function AuditLogPage() {
                   <tr><td colSpan={8} className="p-8 text-center text-muted">Chargement...</td></tr>
                 ) : events.length === 0 ? (
                   <tr><td colSpan={8} className="p-8 text-center text-muted">
-                    Aucun événement d'audit. Les actions sensibles (start/stop bot, apply params, etc.) apparaîtront ici.
+                    Aucun événement d&apos;audit. Les actions sensibles (start/stop bot, apply params, etc.) apparaîtront ici.
                   </td></tr>
                 ) : (
                   events.map((evt: any) => {

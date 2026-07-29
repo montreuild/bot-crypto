@@ -1,29 +1,51 @@
 # ================================================================
-#  Crypto Bot V11 - Python Dependencies
-#  !! Python 3.12 REQUIRED !!
+#  Crypto Bot V12 - Python Dependencies
+#  !! Python 3.14 REQUIRED !!
 #
 #  Installation on Ubuntu 22.04 (Python 3.10 by default):
 #    sudo add-apt-repository ppa:deadsnakes/ppa -y
-#    sudo apt install -y python3.12 python3.12-venv python3.12-dev
-#    python3.12 -m venv /opt/crypto_bot/.venv
+#    sudo apt install -y python3.14 python3.14-venv python3.14-dev
+#    python3.14 -m venv /opt/crypto_bot/.venv
 #    source /opt/crypto_bot/.venv/bin/activate
 #    pip install -r requirements.txt
 #
-#  On Ubuntu 24.04 (Python 3.12 native):
-#    python3.12 -m venv /opt/crypto_bot/.venv
+#  On Ubuntu 24.04+ (Python 3.12 native, 3.14 via deadsnakes):
+#    sudo add-apt-repository ppa:deadsnakes/ppa -y
+#    sudo apt update && sudo apt install -y python3.14 python3.14-venv python3.14-dev
+#    python3.14 -m venv /opt/crypto_bot/.venv
 #    source /opt/crypto_bot/.venv/bin/activate
 #    pip install -r requirements.txt
+#
+#  On macOS (Homebrew):
+#    brew install python@3.14
+#    python3.14 -m venv .venv
+#    source .venv/bin/activate
+#    pip install -r requirements.txt
+#
+#  On Windows (Git Bash or PowerShell):
+#    See docs/DEMARRAGE_WINDOWS.md for full guide.
+#    1. Install Python 3.14 from https://www.python.org/downloads/
+#       (check "Add Python to PATH")
+#    2. py -3.14 -m venv .venv
+#    3. source .venv/Scripts/activate   # Git Bash
+#       OR  .venv\Scripts\Activate.ps1  # PowerShell
+#    4. pip install -r requirements.txt
 #
 #  NOTE : les versions sont épinglées pour garantir la reproductibilité
 #  en production. Pour mettre à jour, testez d'abord dans un environnement
 #  de développement, puis mettez à jour les versions ici.
 #
-#  Date de lock : 2026-07-13 — vérifié par `pip install -r requirements.txt`
-#  dans un venv Python 3.12 vierge (aucun conflit de résolution) suivi de
-#  `pytest -q` (576 tests, tous verts). Toutes les dépendances directes sont
-#  épinglées en version exacte (==) ; les sous-dépendances transitives ne le
-#  sont pas (pas de lockfile — cf. TEST-12 dans docs/audit/07-tests-ci-docs.md
-#  pour la justification de ce choix).
+#  Date de lock : 2026-07-29 — vérifié par `pip install -r requirements.txt`
+#  dans un venv Python 3.14 vierge (Ubuntu 24.04 + Windows 11). numpy, polars,
+#  lightgbm, optuna bumpés pour wheels 3.14 officielles (fini la compilation
+#  source sous Windows). Toutes les dépendances directes sont épinglées en
+#  version exacte (==) ; les sous-dépendances transitives ne le sont pas
+#  (pas de lockfile — cf. TEST-12 dans docs/audit/07-tests-ci-docs.md pour
+#  la justification de ce choix).
+#
+#  ⚠ Python 3.14 migration: free-threaded mode (PEP 779) is now stable.
+#  LightGBM, Polars, Optuna, CCXT all support 3.14 since Q2 2026.
+#  Free-threaded build (python3.14t) optional, see docs/DEMARRAGE_WINDOWS.md.
 # ================================================================
 
 # -- Web / API -------------------------------------------------------
@@ -39,6 +61,11 @@ fastapi==0.115.0
 # échouait, sur un composant que personne n'avait touché.
 starlette==0.38.6
 uvicorn[standard]==0.30.0
+# S6-09 (29/07/2026) — FIN JINJA2 : le frontend Next.js (frontend/) sert
+# maintenant tout le HTML/CSS/JS. Les templates Jinja2 ont été supprimés
+# (cf. docs/FIN_JINJA2.md). Jinja2 reste épinglé comme dépendance
+# TRANSITIVE de FastAPI (utilisée pour /api/docs et /api/redoc — la doc
+# Swagger auto-générée). Notre code ne l'importe plus directement.
 # SEC-010 : 3.1.4 est vulnérable (CVE-2024-56201 / CVE-2024-56326, contournement
 # du bac à sable de template). Le plancher de l'audit était 3.1.5 — on prend 3.1.6
 # parce que 3.1.5 est elle-même vulnérable à CVE-2025-27516 (même famille) : viser
@@ -46,6 +73,10 @@ uvicorn[standard]==0.30.0
 jinja2==3.1.6
 python-multipart==0.0.22
 slowapi==0.1.9
+# Charge le `.env` généré par setup.sh (WEB_API_KEY, clés exchange) avant
+# l'expansion des `${VAR}` de config.yaml. Sans lui le fichier était écrit
+# puis ignoré, et le démarrage web échouait sur la garde OPS-02.
+python-dotenv==1.1.1
 
 # -- Exchange --------------------------------------------------------
 ccxt==4.5.68
@@ -53,9 +84,13 @@ ccxt==4.5.68
 # -- Data / Compute --------------------------------------------------
 # Polars: main library (Rust, Arrow, multi-threaded, 5-50x faster than Pandas)
 # phase6-pandas-removal : Pandas supprimé (migration complète vers Polars).
-polars==1.0.0
-# NumPy: gardé pour le hot loop du backtest (O(1) indexing) et l'interface LightGBM
-numpy==2.0.0
+# polars 1.32+ : support officiel Python 3.14, wheels Windows/macOS/Linux.
+polars==1.32.0
+# NumPy: gardé pour le hot loop du backtest (O(1) indexing) et l'interface LightGBM.
+# ⚠ numpy 2.0.0 n'a PAS de wheel pour Python 3.14 sur Windows → compilation
+# source échoue (besoin Visual C++ Build Tools). numpy 2.3.4 (Q3 2025) apporte
+# le support officiel Python 3.14 + wheels Windows/macOS/Linux.
+numpy==2.3.4
 # phase6-pandas-removal : PyArrow supprimé (plus de polars.to_pandas()).
 pyyaml==6.0.2
 # Round-trip YAML : préserve les commentaires lors de la réécriture des
@@ -81,11 +116,15 @@ psutil==5.9.8
 # - Pandas remplacé par Polars partout (y compris dans les stratégies V4/V8-V10).
 # LightGBM : booster natif pour toutes les stratégies ML (V11/V12/scoring_opus/
 # ml_dynamic_threshold). Format de persistance RCE-safe (.lgb + .json).
-lightgbm==4.4.0
+# ⚠ lightgbm 4.4.0 n'a PAS de wheel pour Python 3.14 sur Windows → compilation
+# source échoue (besoin Visual C++ + CMake). lightgbm 4.6.0 (Q2 2026) apporte
+# le support officiel Python 3.14 + wheels Windows/macOS/Linux.
+lightgbm==4.6.0
 # Optuna : recherche bayésienne TPE de l'optimiseur (app/engine/optimizer_search.py).
 # Optionnel — l'optimiseur retombe sur une heuristique random+perturbation si la
 # librairie est absente. Recommandé pour une vraie recherche informée (TPE).
-optuna==4.0.0
+# optuna 4.2+ : support officiel Python 3.14.
+optuna==4.2.0
 
 # -- Observabilité (OBS-01) ------------------------------------------
 # prometheus-client : exposition de /metrics (app/core/metrics.py).

@@ -364,7 +364,7 @@ export default function SmartReplayPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Smart Replay</h1>
           <p className="text-sm text-muted mt-1">
-            Rejeu bougie par bougie · reconstruisez l'état SMC à n'importe quelle barre
+            Rejeu bougie par bougie · reconstruisez l&apos;état SMC à n&apos;importe quelle barre
           </p>
         </div>
         {nBars > 0 && (

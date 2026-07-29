@@ -8,6 +8,7 @@ import {
 } from '@/lib/utils';
 import { toast } from 'sonner';
 import { usePortfolio, useNotifications, useBots } from '@/hooks/use-api';
+import { QueryBoundary } from '@/components/ui/query-state';
 import { api } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -131,7 +132,8 @@ function ActivityFeed({ items }: { items: any[] }) {
 // ── Main page ───────────────────────────────────────────────────────────────
 
 export default function PortfolioPage() {
-  const { data: portfolio, isLoading, isError } = usePortfolio();
+  const portfolioQuery = usePortfolio();
+  const { data: portfolio } = portfolioQuery;
   const { data: notifData } = useNotifications(30, 'info');
   const { data: botsData } = useBots();
   const qc = useQueryClient();
@@ -173,22 +175,25 @@ export default function PortfolioPage() {
     }
   };
 
-  if (isLoading) {
+  // S6-12 : titre monté en permanence + cause réelle de l'erreur et réessai,
+  // au lieu d'un « Erreur lors du chargement » sans détail ni recours.
+  if (!portfolio) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-12 h-12 text-primary-400 animate-spin" />
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center text-red-400">
-          <AlertCircle className="w-12 h-12 mx-auto mb-3" />
-          <div className="text-sm">Erreur lors du chargement du portfolio</div>
-        </div>
-      </div>
+      <QueryBoundary
+        title={
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Portefeuille</h1>
+            <p className="text-sm text-muted mt-1">
+              Vue détaillée fonds · allocation réelle vs shadow · lifecycle · risk
+            </p>
+          </div>
+        }
+        query={portfolioQuery}
+        loadingLabel="Chargement du portefeuille…"
+        onRetry={() => portfolioQuery.refetch()}
+      >
+        {null}
+      </QueryBoundary>
     );
   }
 
@@ -277,7 +282,7 @@ export default function PortfolioPage() {
           {!continuousAllocation && (
             <div className="mt-4 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 flex items-center gap-2">
               <Zap className="w-3.5 h-3.5" />
-              continuous_allocation = false — utilisez le bouton "Force rebalance" en haut de page.
+              continuous_allocation = false — utilisez le bouton &quot;Force rebalance&quot; en haut de page.
             </div>
           )}
         </CardContent>

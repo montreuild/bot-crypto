@@ -1,5 +1,10 @@
 'use client';
 
+// UI-04 fix (Sprint 5) : filtre Slot en 3 parties (strategy::tf::symbol),
+// aligné sur bots.html / portfolio.html. Le filtre regroupe maintenant
+// les bots distincts (un slot par stratégie+TF+symbole) au lieu de les
+// mélanger sous une clé 2-parties.
+
 import { useTrades } from '@/hooks/use-api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,23 +12,62 @@ import { Badge } from '@/components/ui/badge';
 import { cn, formatUSD, formatPct, formatDateTime } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { Download, ArrowUp, ArrowDown } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 
 export default function TradesPage() {
   const [limit, setLimit] = useState(100);
   const [symbolFilter, setSymbolFilter] = useState('');
   const [strategyFilter, setStrategyFilter] = useState('');
+  const [tfFilter, setTfFilter] = useState('');
+  // UI-04 : filtre slot en 3 parties (strategy::tf::symbol) pour ne plus
+  // mélanger les symboles sous une clé 2-parties.
+  const [slotFilter, setSlotFilter] = useState('');
   const { data, isLoading } = useTrades({ limit, symbol: symbolFilter || undefined, strategy: strategyFilter || undefined });
 
-  const trades = data?.trades || [];
+  // Mémoïsé : `data?.trades || []` crée un tableau neuf à chaque render, ce qui
+  // invalidait les useMemo de filtrage/agrégation en aval à chaque tick du
+  // sondage (15 s) même quand les trades n'avaient pas changé.
+  const trades = useMemo(() => data?.trades || [], [data]);
   const total = data?.total || 0;
+
+  // Filtrage par slot 3-parties en client (l'API ne supporte pas slot=...)
+  // Construit la clé 3-parties pour chaque trade puis filtre par slotFilter.
+  const filteredTrades = useMemo(() => {
+    if (!slotFilter && !tfFilter) return trades;
+    return trades.filter((t) => {
+      // Slot key 3-parties : strategy::timeframe::symbol
+      // UI-04 : timeframe peut être absent des anciens trades (avant la
+      // colonne TF) — on repli sur chaîne vide pour ne pas crasher.
+      const tf = t.timeframe || '';
+      const slot = `${t.strategy}::${tf}::${t.symbol}`;
+      if (slotFilter && !slot.toLowerCase().includes(slotFilter.toLowerCase())) {
+        return false;
+      }
+      if (tfFilter && tf !== tfFilter) {
+        return false;
+      }
+      return true;
+    });
+  }, [trades, slotFilter, tfFilter]);
+
+  // Liste des slots uniques (pour l'autocomplétion)
+  const availableSlots = useMemo(() => {
+    const slots = new Set<string>();
+    trades.forEach((t) => {
+      const tf = t.timeframe || '';
+      slots.add(`${t.strategy}::${tf}::${t.symbol}`);
+    });
+    return Array.from(slots).sort();
+  }, [trades]);
 
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Trades</h1>
-          <p className="text-sm text-muted mt-1">{total} trades au total</p>
+          <p className="text-sm text-muted mt-1">
+            {total} trades au total · {filteredTrades.length} affichés
+          </p>
         </div>
         <a href={api.exportTradesCsv()}>
           <Button variant="outline" size="sm">
@@ -33,7 +77,7 @@ export default function TradesPage() {
         </a>
       </div>
 
-      {/* Filters */}
+      {/* Filters — UI-04 : filtre Slot 3-parties ajouté */}
       <Card>
         <CardContent className="flex flex-wrap items-end gap-3">
           <div>
@@ -55,6 +99,39 @@ export default function TradesPage() {
               placeholder="trend_rider"
               className="px-3 py-1.5 bg-card-hover border border-border rounded-md text-sm w-40"
             />
+          </div>
+          <div>
+            <label className="text-xs text-dim block mb-1">Timeframe</label>
+            <select
+              value={tfFilter}
+              onChange={(e) => setTfFilter(e.target.value)}
+              className="px-3 py-1.5 bg-card-hover border border-border rounded-md text-sm"
+            >
+              <option value="">Toutes</option>
+              <option value="15m">15m</option>
+              <option value="30m">30m</option>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+              <option value="1d">1d</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-dim block mb-1">
+              Slot (strategy::tf·paire) <Badge variant="info" className="ml-1 text-[10px]">UI-04</Badge>
+            </label>
+            <input
+              type="text"
+              value={slotFilter}
+              onChange={(e) => setSlotFilter(e.target.value)}
+              placeholder="trend_rider::1h::BTC/USDC"
+              list="available-slots"
+              className="px-3 py-1.5 bg-card-hover border border-border rounded-md text-sm w-72 font-mono text-xs"
+            />
+            <datalist id="available-slots">
+              {availableSlots.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
           </div>
           <div>
             <label className="text-xs text-dim block mb-1">Limite</label>
@@ -83,6 +160,7 @@ export default function TradesPage() {
                   <th className="p-3 font-medium">Symbol</th>
                   <th className="p-3 font-medium">Side</th>
                   <th className="p-3 font-medium">Strategy</th>
+                  <th className="p-3 font-medium">TF</th>
                   <th className="p-3 font-medium text-right">Entry</th>
                   <th className="p-3 font-medium text-right">Exit</th>
                   <th className="p-3 font-medium text-right">PnL</th>
@@ -94,18 +172,18 @@ export default function TradesPage() {
               <tbody>
                 {isLoading ? (
                   <tr>
-                    <td colSpan={10} className="p-8 text-center text-muted">
+                    <td colSpan={11} className="p-8 text-center text-muted">
                       Chargement...
                     </td>
                   </tr>
-                ) : trades.length === 0 ? (
+                ) : filteredTrades.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="p-8 text-center text-muted">
-                      Aucun trade
+                    <td colSpan={11} className="p-8 text-center text-muted">
+                      Aucun trade {slotFilter && `(slot: ${slotFilter})`}
                     </td>
                   </tr>
                 ) : (
-                  trades.map((trade) => {
+                  filteredTrades.map((trade) => {
                     const isLong = trade.side === 'long';
                     const isWin = trade.pnl >= 0;
                     return (
@@ -119,6 +197,7 @@ export default function TradesPage() {
                           </span>
                         </td>
                         <td className="p-3 text-xs text-muted font-mono">{trade.strategy}</td>
+                        <td className="p-3 text-xs text-dim font-mono">{trade.timeframe || '—'}</td>
                         <td className="p-3 text-right font-mono">${trade.entry.toFixed(2)}</td>
                         <td className="p-3 text-right font-mono">${trade.exit.toFixed(2)}</td>
                         <td className={cn('p-3 text-right font-mono font-semibold', isWin ? 'text-emerald-400' : 'text-red-400')}>

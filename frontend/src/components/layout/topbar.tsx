@@ -30,7 +30,9 @@ export function Topbar() {
   // Raccourci clavier Cmd/Ctrl+K pour la recherche
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      // `toLowerCase()` : avec CapsLock (ou Shift) `e.key` vaut 'K', et le
+      // raccourci ne se déclenchait pas.
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setSearchOpen((v) => !v);
       }

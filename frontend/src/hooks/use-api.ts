@@ -188,6 +188,38 @@ export function useConfig() {
   });
 }
 
+// S5-01 : Permettre de sauver des params de stratégie par symbole (override).
+// Le backend étend /api/config/strategy-params pour accepter un `symbol` optionnel.
+export function useSetStrategyParams() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { strategy: string; params: Record<string, any>; symbol?: string }) =>
+      api.setStrategyParams(args.strategy, args.params, args.symbol),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['config'] });
+      qc.invalidateQueries({ queryKey: ['audit'] });
+    },
+  });
+}
+
+// S5-01 : Activation/désactivation d'une TF par symbole.
+export function useToggleStrategyTimeframe() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { tf: string; enable: boolean; symbol?: string }) =>
+      api.toggleStrategyTimeframe(args.tf, args.enable, args.symbol),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['config'] });
+      qc.invalidateQueries({ queryKey: ['status'] });
+    },
+  });
+}
+
+// S5-01 : alias pour useBotStatus (pour la page Config qui a besoin des symboles du scanner).
+export function useApiStatus() {
+  return useBotStatus();
+}
+
 // ── Audit ───────────────────────────────────────────────────────────────────
 export function useAuditResults() {
   return useQuery({

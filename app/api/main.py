@@ -3,6 +3,19 @@
 Les middlewares (CORS, GZIP, SlowAPI, HTTPS redirect) et les exception
 handlers globaux sont désormais dans :mod:`app.api.middleware` et enregistrés
 via :func:`setup_middleware` (refactoring ARCH-014).
+
+⚠ S6-09 (29/07/2026) — FIN JINJA2 :
+Le frontend Next.js (`frontend/`) est désormais le frontend officiel unique.
+Les templates Jinja2 (`app/web/templates/`) ont été SUPPRIMÉS physiquement
+(cf. `docs/FIN_JINJA2.md`). Les anciennes routes HTML (`GET /dashboard`,
+`GET /backtest`, etc.) renvoient maintenant un **redirect 308 permanent**
+vers le frontend Next.js (port 3000 ou proxy nginx).
+
+L'API REST (`/api/*`) est INTACTE — aucune cassure pour les consommateurs
+API. Seules les routes HTML ont été remplacées par des redirects.
+
+Configuration du frontend cible via env var `FRONTEND_URL` (défaut
+`http://localhost:3000`).
 """
 import hmac
 import logging
@@ -13,9 +26,10 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import RedirectResponse
+
+# S6-09 : Jinja2Templates et StaticFiles SUPPRIMÉS — fin Jinja2.
+# Le frontend Next.js (frontend/) sert maintenant tout le HTML/CSS/JS.
 
 from app.api import state
 from app.api.helpers import CleanJSONResponse
@@ -44,6 +58,12 @@ from app.core.events import event_hub
 
 logger = logging.getLogger(__name__)
 
+# S6-09 : URL du frontend Next.js (configurable via env).
+# En prod : proxy nginx sert le build Next.js statique et proxie /api/*.
+# En dev : Next.js tourne sur :3000, FastAPI sur :8000.
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+
+
 # ── Application ────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
@@ -60,7 +80,8 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     description=(
         "API de trading algorithmique multi-stratégies. Tous les endpoints protégés "
-        "exigent `X-API-Key`. Endpoint WebSocket temps réel sur `/ws`."
+        "exigent `X-API-Key`. Endpoint WebSocket temps réel sur `/ws`. "
+        "⚠ Frontend Next.js sur " + FRONTEND_URL + " (Jinja2 supprimé S6-09)."
     ),
     default_response_class=CleanJSONResponse,
     lifespan=_lifespan,
@@ -70,21 +91,6 @@ app = FastAPI(
 # ``SlowAPIMiddleware`` le lit à l'enregistrement.
 app.state.limiter = state.limiter
 setup_middleware(app)
-
-# ── Templates ──────────────────────────────────────────────────────────────
-try:
-    _tpl_path = os.path.join(os.path.dirname(__file__), "..", "web", "templates")
-    templates = Jinja2Templates(directory=_tpl_path)
-except Exception as e:
-    logger.warning(f"[API] Chargement templates KO : {e}")
-    templates = None
-
-# ── Static (JS/CSS partagés entre templates — UI-05) ──────────────────────
-try:
-    _static_path = os.path.join(os.path.dirname(__file__), "..", "web", "static")
-    app.mount("/static", StaticFiles(directory=_static_path), name="static")
-except Exception as e:
-    logger.warning(f"[API] Montage /static KO : {e}")
 
 
 # ── Initialisation ─────────────────────────────────────────────────────────
@@ -136,105 +142,173 @@ def prometheus_metrics():
     return Response(content=payload, media_type=content_type)
 
 
-# ── Pages web ──────────────────────────────────────────────────────────────
-def _tpl(name: str, request: Request, extra: dict = None):
-    ctx = {"request": request, **(extra or {})}
-    if templates:
-        resp = templates.TemplateResponse(name, ctx)
-    else:
-        resp = HTMLResponse(f"<h1>{name}</h1>")
-    api_key = state.cfg["web"].get("api_key", "") if state.cfg else ""
-    if api_key:
-        # honour X-Forwarded-Proto for reverse-proxy deployments
-        proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-        resp.set_cookie(
-            key="api_key",
-            value=api_key,
-            httponly=True,
-            samesite="strict",
-            secure=proto == "https",
-        )
-    return resp
+# ── Routes HTML → redirect 308 vers Next.js OU page d'aide ─────────────────
+# S6-09 (29/07/2026) — Fin Jinja2 : le frontend Next.js sert maintenant
+# tout le HTML. Les anciennes routes HTML (`/dashboard`, `/backtest`, etc.)
+# doivent rediriger vers le frontend Next.js.
+#
+# ⚠ Mais si le frontend Next.js n'est PAS démarré (cas fréquent en dev :
+# l'utilisateur a lancé `python cli.py` mais pas `cd frontend && npm run dev`),
+# un 308 vers `localhost:3000` qui ne répond pas provoque un "site inaccessible"
+# + warnings uvicorn "Invalid HTTP request received".
+#
+# Solution : on ping le frontend au démarrage (et toutes les 60s). S'il
+# répond, on 308 redirect. S'il ne répond pas, on sert une **page d'aide
+# HTML** qui explique comment le démarrer + liens vers /api/docs.
+# Ça donne un retour visible à l'utilisateur au lieu d'un "site inaccessible".
+
+import socket
+import time as _time
+
+_frontend_reachable_cache: dict = {"ts": 0.0, "ok": False}
+_FRONTEND_CHECK_TTL = 60.0  # cache 60s pour éviter un ping par request
 
 
-@app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request):
-    return _tpl("dashboard.html", request, {"active_page": "dashboard"})
+def _is_frontend_reachable() -> bool:
+    """Ping TCP rapide du frontend Next.js (cache 60s)."""
+    now = _time.monotonic()
+    if now - _frontend_reachable_cache["ts"] < _FRONTEND_CHECK_TTL:
+        return _frontend_reachable_cache["ok"]
 
-@app.get("/backtest", response_class=HTMLResponse)
-def backtest_page(request: Request):
-    return _tpl("backtest.html", request, {"active_page": "backtest"})
+    # Parse host + port depuis FRONTEND_URL
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(FRONTEND_URL)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except Exception:
+        host, port = "localhost", 3000
 
-@app.get("/optimizer", response_class=HTMLResponse)
-def optimizer_page(request: Request):
-    return _tpl("optimizer.html", request, {"active_page": "optimizer"})
+    ok = False
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            ok = True
+    except (OSError, socket.timeout):
+        ok = False
 
-@app.get("/config", response_class=HTMLResponse)
-def config_page(request: Request):
-    return _tpl("config.html", request, {"active_page": "config"})
+    _frontend_reachable_cache["ts"] = now
+    _frontend_reachable_cache["ok"] = ok
+    return ok
 
-@app.get("/scanner", response_class=HTMLResponse)
-def scanner_page(request: Request):
-    return _tpl("scanner.html", request, {"active_page": "scanner"})
 
-@app.get("/audit", response_class=HTMLResponse)
-def audit_page(request: Request):
-    return _tpl("audit.html", request, {"active_page": "audit"})
+def _route_frontend_or_help(path: str):
+    """Redirige 308 vers le frontend si joignable, sinon sert la page d'aide."""
+    if _is_frontend_reachable():
+        return RedirectResponse(url=f"{FRONTEND_URL}{path}", status_code=308)
+    # Frontend non joignable : sert la page d'aide HTML (status 200, pas de redirect)
+    from starlette.responses import Response
+    return Response(
+        content=_frontend_help_page_html(path),
+        media_type="text/html",
+        status_code=200,
+    )
 
-@app.get("/trades", response_class=HTMLResponse)
-def trades_page(request: Request):
-    return _tpl("trades.html", request, {"active_page": "trades"})
 
+def _frontend_help_page_html(path: str) -> str:
+    """Renvoie le HTML de la page d'aide (string)."""
+    return f"""<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<title>Bot-Crypto — Frontend non démarré</title>
+<style>
+  body {{ font-family: -apple-system, system-ui, sans-serif; max-width: 720px;
+         margin: 80px auto; padding: 0 24px; color: #1f2937; line-height: 1.6; }}
+  h1 {{ color: #256a8c; margin-bottom: 8px; }}
+  .badge {{ display: inline-block; padding: 4px 12px; background: #fef3c7;
+           color: #92400e; border-radius: 4px; font-size: 12px; font-weight: 600;
+           margin-bottom: 16px; }}
+  code, pre {{ background: #f4f5f5; padding: 2px 6px; border-radius: 4px;
+              font-family: 'JetBrains Mono', monospace; font-size: 13px; }}
+  pre {{ padding: 16px; overflow-x: auto; }}
+  a {{ color: #256a8c; }}
+  a:hover {{ text-decoration: underline; }}
+  .step {{ background: #f9fafb; border-left: 3px solid #256a8c;
+          padding: 12px 16px; margin: 12px 0; border-radius: 0 6px 6px 0; }}
+  .step strong {{ color: #256a8c; }}
+  ul {{ padding-left: 20px; }}
+  li {{ margin: 4px 0; }}
+</style></head><body>
+<div class="badge">⚠ Frontend Next.js non démarré</div>
+<h1>Backend OK, mais le frontend n'est pas accessible</h1>
+
+<p>Le backend FastAPI tourne correctement sur le port <code>8000</code>,
+mais le frontend Next.js (port <code>3000</code>) ne répond pas.</p>
+
+<p><strong>Configuration actuelle :</strong>
+<code>FRONTEND_URL = {FRONTEND_URL}</code></p>
+
+<h2>Comment démarrer le frontend</h2>
+
+<div class="step">
+  <strong>Étape 1 — Ouvrir un nouveau terminal</strong> (garder le bot en route
+  dans le premier).
+</div>
+
+<div class="step">
+  <strong>Étape 2 — Installer les dépendances frontend</strong> (première fois
+  seulement) :
+  <pre>cd frontend
+npm install</pre>
+</div>
+
+<div class="step">
+  <strong>Étape 3 — Démarrer le serveur de développement Next.js</strong> :
+  <pre>npm run dev</pre>
+  Le frontend sera accessible sur <a href="http://localhost:3000{path}">http://localhost:3000{path}</a>.
+</div>
+
+<h2>Alternatives</h2>
+
+<ul>
+  <li><a href="/api/docs"><strong>API Swagger UI</strong></a> — documentation
+      interactive de l'API REST (<code>/api/*</code>) sur le port 8000.</li>
+  <li><a href="/health"><strong>Health check</strong></a> — statut du bot.</li>
+  <li><a href="/api/status"><strong>Status</strong></a> — capital, positions,
+      PnL (peut nécessiter <code>X-API-Key</code>).</li>
+  <li><strong>Build de production</strong> :
+      <pre>cd frontend
+npm run build
+npm start</pre>
+      Next.js sert le build optimisé sur <code>:3000</code>.</li>
+  <li><strong>Production avec nginx</strong> : nginx sert le build statique
+      Next.js et proxie <code>/api/*</code> vers FastAPI. Voir
+      <code>deploy/nginx.conf</code>.</li>
+</ul>
+
+<h2>Configurer FRONTEND_URL</h2>
+
+<p>Si le frontend tourne sur une URL différente (ex. en production), définir
+la variable d'environnement <code>FRONTEND_URL</code> :</p>
+<pre># .env ou shell
+FRONTEND_URL=https://bot.mondomaine.com</pre>
+
+<p style="margin-top: 32px; font-size: 12px; color: #94a3b8;">
+  Bot-Crypto V12 — S6-09 fin Jinja2 — Page d'aide générée par FastAPI car
+  le frontend Next.js n'est pas joignable sur {FRONTEND_URL}.
+</p>
+</body></html>"""
+
+
+# Anciennes routes HTML → redirect 308 vers Next.js si joignable, sinon page d'aide
+# La liste est exhaustive : 18 routes (la 19e, /slots, redirigeait déjà vers /bots)
+HTML_ROUTES_TO_REDIRECT = [
+    "/", "/backtest", "/optimizer", "/config", "/scanner", "/audit",
+    "/audit-log", "/trades", "/replay", "/ml", "/models", "/compare",
+    "/derivatives", "/portfolio", "/bots", "/settings", "/data",
+    "/smartgraph", "/smartreplay",
+]
+for _route in HTML_ROUTES_TO_REDIRECT:
+    # Capture _route via default arg pour éviter le piège du closure tardif
+    def _make_handler(r):
+        def _handler(request: Request, _r=r):
+            return _route_frontend_or_help(_r)
+        return _handler
+    app.add_api_route(_route, _make_handler(_route), methods=["GET"])
+
+
+# Rétro-compat : /slots redirigeait vers /bots (déjà en 307, gardé en 308)
 @app.get("/slots")
-def slots_page():
-    # Fusionnée dans « Mes Bots » : on redirige les anciens liens/favoris.
-    from starlette.responses import RedirectResponse
-    return RedirectResponse(url="/bots", status_code=307)
-
-@app.get("/replay", response_class=HTMLResponse)
-def replay_page(request: Request):
-    return _tpl("replay.html", request, {"active_page": "replay"})
-
-@app.get("/ml", response_class=HTMLResponse)
-def ml_page(request: Request):
-    return _tpl("ml.html", request, {"active_page": "ml"})
-
-@app.get("/models", response_class=HTMLResponse)
-def models_page(request: Request):
-    return _tpl("models.html", request, {"active_page": "models"})
-
-@app.get("/compare", response_class=HTMLResponse)
-def compare_page(request: Request):
-    return _tpl("compare.html", request, {"active_page": "compare"})
-
-@app.get("/derivatives", response_class=HTMLResponse)
-def derivatives_page(request: Request):
-    return _tpl("derivatives.html", request, {"active_page": "derivatives"})
-
-# ── Pages Phase 4 (portefeuille de bots autonomes) ────────────────────────
-@app.get("/portfolio", response_class=HTMLResponse)
-def portfolio_page(request: Request):
-    return _tpl("portfolio.html", request, {"active_page": "portfolio"})
-
-@app.get("/bots", response_class=HTMLResponse)
-def bots_page(request: Request):
-    return _tpl("bots.html", request, {"active_page": "bots"})
-
-@app.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request):
-    return _tpl("settings.html", request, {"active_page": "settings"})
-
-@app.get("/data", response_class=HTMLResponse)
-def data_page(request: Request):
-    return _tpl("data.html", request, {"active_page": "data"})
-
-@app.get("/smartgraph", response_class=HTMLResponse)
-def smartgraph_page(request: Request):
-    return _tpl("smartgraph.html", request, {"active_page": "smartgraph"})
-
-@app.get("/smartreplay", response_class=HTMLResponse)
-def smartreplay_page(request: Request):
-    return _tpl("smartreplay.html", request, {"active_page": "smartreplay"})
+def slots_legacy():
+    return _route_frontend_or_help("/bots")
 
 
 # ── Status (accès direct à state.cfg, hors router) ────────────────────────

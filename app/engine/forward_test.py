@@ -46,10 +46,32 @@ _MAX_BARS = 4000
 _MAX_EDGE_BARS = 12000
 
 
-def _bars_for_lookback(tf: str, lookback_days: int, max_bars: int = _MAX_BARS) -> int:
+def _bars_for_lookback(tf: str, lookback_days: int, max_bars: int = _MAX_BARS,
+                        warn_truncation: bool = False,
+                        slot_label: str = "") -> int:
+    """Calcule le nombre de bougies pour `lookback_days` sur le TF `tf`.
+
+    S3-08 : quand la demande dépasse `max_bars`, la fenêtre est tronquée
+    silencieusement (l'edge est alors calculé sur moins de jours que demandé).
+    Si `warn_truncation=True`, on émet un WARNING explicite — l'appelant sait
+    qu'il doit soit baisser `edge_lookback_days`, soit monter `_MAX_EDGE_BARS`
+    (configurable), soit accepter que l'edge soit calculé sur une fenêtre
+    plus courte.
+    """
     minutes = _TF_MINUTES.get(tf, 60)
     bars = int(math.ceil(lookback_days * 1440 / minutes)) + _WARMUP_BARS
-    return max(_WARMUP_BARS + 30, min(bars, max_bars))
+    actual = max(_WARMUP_BARS + 30, min(bars, max_bars))
+    if warn_truncation and bars > max_bars:
+        actual_days = max(0, (actual - _WARMUP_BARS) * minutes / 1440)
+        logger.warning(
+            f"[ForwardTest] {slot_label or 'slot'} : edge_lookback_days={lookback_days} "
+            f"exige {bars} bougies en {tf}, plafonné à {max_bars} "
+            f"(≈{actual_days:.0f} jours réels). L'edge est calculé sur "
+            f"une fenêtre PLUS COURTE que demandé. Solutions : (a) baisser "
+            f"edge_lookback_days dans config.yaml → lifecycle, (b) monter "
+            f"_MAX_EDGE_BARS dans app/engine/forward_test.py, (c) accepter."
+        )
+    return actual
 
 
 # ── Forward-test d'un slot ─────────────────────────────────────────────────
@@ -128,7 +150,11 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
     edge_returns = sim_returns
     if edge_lookback_days and edge_lookback_days > lookback_days:
         try:
-            e_bars = _bars_for_lookback(timeframe, edge_lookback_days, max_bars=_MAX_EDGE_BARS)
+            slot_label = f"{strategy}@{timeframe}::{symbol or ''}"
+            e_bars = _bars_for_lookback(timeframe, edge_lookback_days,
+                                          max_bars=_MAX_EDGE_BARS,
+                                          warn_truncation=True,
+                                          slot_label=slot_label)
             edge_df = fetch_ohlcv(symbol, timeframe, limit=e_bars)
             if edge_df is not None and len(edge_df) >= _WARMUP_BARS + 30:
                 e_eng = Engine()
