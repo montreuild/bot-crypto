@@ -5,6 +5,7 @@ import { useState, useEffect, ReactNode } from 'react';
 import { WebSocketProvider } from '@/lib/ws-provider';
 import { I18nProvider } from '@/lib/i18n';
 import { TooltipProvider } from '@radix-ui/react-tooltip';
+import { getStoredTheme } from '@/lib/utils';
 
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -20,8 +21,14 @@ export function Providers({ children }: { children: ReactNode }) {
       }),
   );
 
+  // S0-F1-US2 — Applique le thème stocké AVANT paint pour éviter FOUC et
+  // permettre au light theme de persister entre les refreshs.
+  // Avant : useEffect(() => document.documentElement.classList.add('dark'), [])
+  // forçait systématiquement `dark` au mount, écrasant la préférence utilisateur.
   useEffect(() => {
-    document.documentElement.classList.add('dark');
+    const theme = getStoredTheme();
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.classList.toggle('light', theme === 'light');
   }, []);
 
   return (

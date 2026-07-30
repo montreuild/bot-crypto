@@ -3,7 +3,7 @@
 import { Card } from '@/components/ui/card';
 import { cn, formatUSD, formatPct, formatNumber } from '@/lib/utils';
 import { LucideIcon, TrendingUp, TrendingDown, Wallet, Activity, Percent, Trophy, Zap } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface KPICardProps {
   label: string;
@@ -20,18 +20,28 @@ export function KPICard({
   label, value, sublabel, icon: Icon, trend, trendValue, flashOnChange = true, format = 'usd',
 }: KPICardProps) {
   const [flashClass, setFlashClass] = useState('');
-  const prevValue = useState<string>(format === 'usd' ? formatUSD(Number(value)) : format === 'pct' ? formatPct(Number(value)) : String(value))[0];
+
+  // S0-F1-US3 — `prevValue` était capturé une seule fois au premier render via
+  // useState(() => formatValue(value))[0] — le flash ne se déclenchait plus
+  // après le 2e changement. On utilise maintenant un useRef mis à jour à chaque
+  // render pour comparer à la valeur précédente.
+  const prevRef = useRef<string>('');
+  const currentFormatted = typeof value === 'number'
+    ? (format === 'usd' ? formatUSD(value) : format === 'pct' ? formatPct(value) : formatNumber(value))
+    : String(value);
 
   useEffect(() => {
     if (!flashOnChange) return;
-    const formatted = format === 'usd' ? formatUSD(Number(value)) : format === 'pct' ? formatPct(Number(value)) : String(value);
-    if (formatted !== prevValue) {
-      const isUp = Number(value) > Number(prevValue.replace(/[^0-9.-]/g, ''));
+    if (prevRef.current && currentFormatted !== prevRef.current) {
+      const prevNum = Number(prevRef.current.replace(/[^0-9.-]/g, ''));
+      const currNum = Number(currentFormatted.replace(/[^0-9.-]/g, ''));
+      const isUp = currNum > prevNum;
       setFlashClass(isUp ? 'flash-profit' : 'flash-loss');
       const t = setTimeout(() => setFlashClass(''), 800);
       return () => clearTimeout(t);
     }
-  }, [value, flashOnChange, format, prevValue]);
+    prevRef.current = currentFormatted;
+  }, [currentFormatted, flashOnChange]);
 
   const displayValue = typeof value === 'number'
     ? (format === 'usd' ? formatUSD(value) : format === 'pct' ? formatPct(value) : formatNumber(value))

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { useWebSocket } from '@/lib/ws-provider';
 import {
   LayoutDashboard, Bot, LineChart, Settings, Activity,
   Zap, Database, Network, Sparkles, Repeat,
@@ -54,6 +55,17 @@ const NAV_GROUPS = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  // S0-F1-US5 — Le footer "Connected" était hardcodé et mentait quand le
+  // backend était down. On consomme maintenant l'état réel du WS.
+  const { status: wsStatus } = useWebSocket();
+
+  const wsLabel = wsStatus === 'connected' ? 'Connected'
+    : wsStatus === 'connecting' ? 'Connecting...'
+    : wsStatus === 'error' ? 'Error'
+    : 'Disconnected';
+  const wsColor = wsStatus === 'connected' ? 'bg-emerald-400'
+    : wsStatus === 'connecting' ? 'bg-amber-400 animate-pulse'
+    : 'bg-red-400';
 
   return (
     <aside className="w-60 flex-shrink-0 bg-surface border-r border-border flex flex-col">
@@ -100,12 +112,12 @@ export function Sidebar() {
         ))}
       </nav>
 
-      {/* Footer */}
+      {/* Footer — état réel du WS */}
       <div className="border-t border-border p-4">
         <div className="text-[10px] text-dim font-mono">
-          <div className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Connected
+          <div className="flex items-center gap-2" aria-label={`WebSocket: ${wsLabel}`}>
+            <span className={cn('w-1.5 h-1.5 rounded-full', wsColor)} />
+            {wsLabel}
           </div>
         </div>
       </div>

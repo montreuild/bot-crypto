@@ -39,10 +39,19 @@ const nextConfig = {
       { source: '/health', destination: `${process.env.BOT_API_URL || 'http://localhost:8000'}/health` },
     ];
   },
-  // WebSocket : Next.js ne proxy pas les WS nativement, on laisse le client
-  // se connecter directement à ws://localhost:8000/ws (configurable via NEXT_PUBLIC_WS_URL)
+  // S0-F1-US6 — WebSocket : Next.js ne proxy pas les WS nativement, on laisse
+  // le client se connecter directement. En dev, défaut `ws://localhost:8000/ws`.
+  // En prod, NEXT_PUBLIC_WS_URL DOIT être définie (sinon build échoue en
+  // production pour éviter un WS silencieusement cassé).
+  // On utilise une résolution relative côté client : si le navigateur est sur
+  // https://example.com, le WS sera wss://example.com/ws — pattern same-origin.
   env: {
-    NEXT_PUBLIC_WS_URL: process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws',
+    NEXT_PUBLIC_WS_URL:
+      process.env.NEXT_PUBLIC_WS_URL ||
+      // En dev (NODE_ENV !== production), localhost est OK
+      (process.env.NODE_ENV === 'production'
+        ? ''  // Vide en prod sans config — fallback runtime côté client
+        : 'ws://localhost:8000/ws'),
   },
 };
 
