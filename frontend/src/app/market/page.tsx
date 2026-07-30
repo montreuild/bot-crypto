@@ -17,6 +17,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Network, CandlestickChart, Film, TrendingUp, ArrowRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { OpportunitiesWidget } from '@/components/cards/opportunities-widget';
 
 export default function MarketPage() {
   const router = useRouter();
@@ -70,48 +71,53 @@ export default function MarketPage() {
   );
 }
 
-// ── Scanner Tab (placeholder avec lien vers /scanner) ─────────────────────
+// ── Scanner Tab (avec Top opportunités + paires cliquables) ───────────────
 
 function MarketScannerTab({ onAnalyze }: { onAnalyze: (symbol: string, tf: string) => void }) {
   return (
-    <Card>
-      <CardContent className="p-6 space-y-4">
-        <div className="flex items-start gap-3">
-          <Network className="w-8 h-8 text-primary-400 flex-shrink-0" />
-          <div className="flex-1">
-            <h3 className="text-base font-semibold mb-1">Scanner de marché</h3>
-            <p className="text-sm text-muted">
-              Screen multi-symboles avec filtres (régime, ADX, ATR%, RSI). Top opportunités
-              par score combiné 40% volume 24h + 60% ATR%. Lien direct vers Laboratoire pour
-              analyser une paire.
-            </p>
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Paires cliquables + scanner complet */}
+      <Card className="lg:col-span-2">
+        <CardContent className="p-6 space-y-4">
+          <div className="flex items-start gap-3">
+            <Network className="w-8 h-8 text-primary-400 flex-shrink-0" />
+            <div className="flex-1">
+              <h3 className="text-base font-semibold mb-1">Scanner de marché</h3>
+              <p className="text-sm text-muted">
+                Screen multi-symboles avec filtres (régime, ADX, ATR%, RSI).
+                Lien direct vers Laboratoire pour analyser une paire.
+              </p>
+            </div>
           </div>
-        </div>
 
-        {/* Démo : quelques paires cliquables */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-2">
-          {['BTC/USDC', 'ETH/USDC', 'XRP/USDC', 'SOL/USDC'].map((s) => (
-            <Button
-              key={s}
-              variant="outline"
-              size="sm"
-              onClick={() => onAnalyze(s, '1h')}
-              className="justify-between font-mono"
-            >
-              {s}
-              <ArrowRight className="w-3 h-3" />
+          {/* Paires cliquables */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-2">
+            {['BTC/USDC', 'ETH/USDC', 'XRP/USDC', 'SOL/USDC'].map((s) => (
+              <Button
+                key={s}
+                variant="outline"
+                size="sm"
+                onClick={() => onAnalyze(s, '1h')}
+                className="justify-between font-mono"
+              >
+                {s}
+                <ArrowRight className="w-3 h-3" />
+              </Button>
+            ))}
+          </div>
+
+          <div className="pt-3 border-t border-border">
+            <Button variant="ghost" onClick={() => window.location.href = '/scanner'}>
+              Aller au scanner complet
+              <ArrowRight className="w-4 h-4 ml-1" />
             </Button>
-          ))}
-        </div>
+          </div>
+        </CardContent>
+      </Card>
 
-        <div className="pt-3 border-t border-border">
-          <Button variant="ghost" onClick={() => window.location.href = '/scanner'}>
-            Aller au scanner complet
-            <ArrowRight className="w-4 h-4 ml-1" />
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+      {/* S8-F4-US2 — Top opportunités */}
+      <OpportunitiesWidget timeframe="1h" limit={10} />
+    </div>
   );
 }
 

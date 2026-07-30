@@ -216,6 +216,37 @@ export const api = {
   fastAnalysis: (symbol: string, tf = '1h') =>
     apiFetch<any>(`/scanner/fast-analysis?symbol=${encodeURIComponent(symbol)}&tf=${tf}`, { timeoutMs: 0 }),
 
+  // S8-F4-US1 — Scanner multi-symboles
+  scanMarket: (timeframe = '1h', limit = 50) =>
+    apiFetch<any>(`/scanner?timeframe=${timeframe}&limit=${limit}`),
+  // S8-F4-US2 — Top opportunités
+  getOpportunities: (timeframe = '1h', limit = 10) =>
+    apiFetch<any>(`/scanner/opportunities?timeframe=${timeframe}&limit=${limit}`),
+  // S8-F4-US3 — Setups V11/V12 markers
+  getSetupSeries: (symbol: string, timeframe = '1h', limit = 500, strategy = 'v11') =>
+    apiFetch<any>(`/scanner/setup_series?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}&strategy=${strategy}`),
+  // S8-F4-US4 — Signaux récents
+  getSignals: (symbol: string, timeframe = '1h', limit = 300) =>
+    apiFetch<any>(`/scanner/signals?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`),
+  // S8-F4-US5 — Config scanner
+  getScannerConfig: () => apiFetch<any>('/scanner/config'),
+
+  // ── Univers ─────────────────────────────────────────────────────────────
+  // S8-F2-US1 — Liste des univers
+  getUniverses: () => apiFetch<any>('/universe'),
+  // S8-F2-US2 — Membres d'un univers
+  getUniverse: (name: string) => apiFetch<any>(`/universe/${encodeURIComponent(name)}`),
+  // S8-F2-US3 — Ajouter/retirer symbole
+  addUniverseSymbol: (universe: string, body: { symbol: string; name?: string; sector?: string; provider_symbol?: string }) =>
+    apiFetch<any>(`/universe/${encodeURIComponent(universe)}/symbols`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  removeUniverseSymbol: (universe: string, symbol: string) =>
+    apiFetch<any>(`/universe/${encodeURIComponent(universe)}/symbols/${encodeURIComponent(symbol)}`, {
+      method: 'DELETE',
+    }),
+
   // ── Data ────────────────────────────────────────────────────────────────
   getDataStatus: () => apiFetch<any>('/data/status'),
   refetchData: (symbol: string, tf: string) =>

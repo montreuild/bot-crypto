@@ -28,6 +28,7 @@ import {
   Wallet, Bell, Database, ScrollText, Settings as SettingsIcon,
   Shield, Check, AlertTriangle, Loader2,
 } from 'lucide-react';
+import { UniverseManager } from '@/components/cards/universe-manager';
 
 const PRESETS = [
   {
@@ -232,17 +233,19 @@ export default function SettingsV2Page() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="data">
+        <TabsContent value="data" className="space-y-4">
+          {/* S8-F2-US1/2/3 — Gestionnaire d'univers inline */}
+          <UniverseManager />
+
           <Card>
-            <CardContent className="p-8 text-center">
-              <Database className="w-10 h-10 mx-auto text-primary-400 mb-3" />
-              <h3 className="text-base font-semibold mb-1">Données & Univers</h3>
-              <p className="text-sm text-muted max-w-md mx-auto mb-4">
-                Cache OHLCV, refetch manuel, backfill yfinance async. Gestion des univers
-                (SBF120, etc.) avec ajout/retrait de symboles.
+            <CardContent className="p-6 text-center">
+              <Database className="w-8 h-8 mx-auto text-primary-400 mb-2" />
+              <h3 className="text-base font-semibold mb-1">Données OHLCV</h3>
+              <p className="text-sm text-muted max-w-md mx-auto mb-3">
+                Cache OHLCV, refetch manuel, backfill yfinance async.
               </p>
               <Button variant="outline" onClick={() => window.location.href = '/data'}>
-                Gérer les données
+                Gérer les bougies OHLCV
               </Button>
             </CardContent>
           </Card>
