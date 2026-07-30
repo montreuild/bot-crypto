@@ -27,6 +27,7 @@ const NAV_GROUPS = [
     label: 'Recherche',
     items: [
       { href: '/lab', label: 'Laboratoire', icon: Sparkles },
+      { href: '/market', label: 'Marché', icon: Network },
       { href: '/backtest', label: 'Backtest', icon: LineChart },
       { href: '/scanner', label: 'Scanner', icon: Network },
       { href: '/replay', label: 'Replay', icon: Repeat },
@@ -50,8 +51,9 @@ const NAV_GROUPS = [
   {
     label: 'Configuration',
     items: [
+      { href: '/settings-v2', label: 'Réglages v2', icon: Cpu },
       { href: '/config', label: 'Configuration', icon: Settings },
-      { href: '/settings', label: 'Réglages', icon: Cpu },
+      { href: '/settings', label: 'Réglages (ancien)', icon: Cpu },
     ],
   },
 ];
