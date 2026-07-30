@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { cn, formatDateTime } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
@@ -73,11 +74,20 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
     }
   };
 
-  const handlePromote = async (decision: 'manual' | 'keep') => {
-    const verb = decision === 'manual' ? 'Promouvoir' : 'Rejeter';
-    if (!window.confirm(`${verb} la version ${version.version_id} pour ${entry.tf}/${entry.recipe} ?`)) {
-      return;
-    }
+  // S1-F2-US8 — Remplace window.confirm par une modale stylée et accessible.
+  // Avant : window.confirm(`${verb} la version ${version.version_id}...`)
+  // Maintenant : ConfirmDialog avec variant success/danger selon l'action.
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean;
+    decision: 'manual' | 'keep';
+  }>({ open: false, decision: 'manual' });
+
+  const openConfirm = (decision: 'manual' | 'keep') => {
+    setConfirmState({ open: true, decision });
+  };
+
+  const handlePromote = async () => {
+    const { decision } = confirmState;
     try {
       await promote.mutateAsync({
         tf: entry.tf, recipe: entry.recipe,
@@ -86,6 +96,8 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
       toast.success('Décision mise à jour');
     } catch (e: any) {
       toast.error(`Erreur : ${e.message}`);
+    } finally {
+      setConfirmState({ open: false, decision });
     }
   };
 
@@ -106,11 +118,11 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
               {isPinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
               {isPinned ? 'Retirer' : 'Épingler'}
             </Button>
-            <Button size="sm" variant="success" onClick={() => handlePromote('manual')} disabled={busy}>
+            <Button size="sm" variant="success" onClick={() => openConfirm('manual')} disabled={busy}>
               <ThumbsUp className="w-3 h-3" />
               Promouvoir
             </Button>
-            <Button size="sm" variant="danger" onClick={() => handlePromote('keep')} disabled={busy}>
+            <Button size="sm" variant="danger" onClick={() => openConfirm('keep')} disabled={busy}>
               <ThumbsDown className="w-3 h-3" />
               Rejeter
             </Button>
@@ -133,6 +145,16 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
           </td>
         </tr>
       )}
+      <ConfirmDialog
+        open={confirmState.open}
+        onOpenChange={(open) => setConfirmState((s) => ({ ...s, open }))}
+        title={`${confirmState.decision === 'manual' ? 'Promouvoir' : 'Rejeter'} la version ${version.version_id} ?`}
+        description={`Cette action marquera la version ${version.version_id} pour ${entry.tf}/${entry.recipe} comme décision ${confirmState.decision === 'manual' ? 'manuelle (promue)' : 'conservée (rejetée)'}. L'action est journalisée dans l'audit log.`}
+        confirmLabel={confirmState.decision === 'manual' ? 'Promouvoir' : 'Rejeter'}
+        variant={confirmState.decision === 'manual' ? 'success' : 'danger'}
+        isLoading={promote.isPending}
+        onConfirm={handlePromote}
+      />
     </>
   );
 }

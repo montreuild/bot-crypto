@@ -19,7 +19,9 @@ const config: Config = {
         'border-hi': '#374151',
         foreground: '#e5e7eb',
         muted: '#9ca3af',
-        dim: '#6b7280',
+        // S2-F3-US4 — Contraste AA : #6b7280 sur bg-card (#141a23) = 4.0:1, sous
+        // le seuil 4.5:1 pour texte normal. Aligné sur #94a3b8 (slate-400, 5.3:1).
+        dim: '#94a3b8',
         // S1-F2-US1 — tokens additionnels pour les composants Radix wrappés
         popover: '#141a23',
         'popover-foreground': '#e5e7eb',

@@ -23,5 +23,14 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
+    // S2-F3-US1 — Tests multi-viewports pour vérifier le responsive
+    {
+      name: 'mobile-chromium',
+      use: { ...devices['Pixel 5'] },
+    },
+    {
+      name: 'tablet-chromium',
+      use: { ...devices['iPad (gen 7)'] },
+    },
   ],
 });

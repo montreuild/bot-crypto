@@ -74,12 +74,19 @@ export default function RootLayout({
       <body className="font-sans antialiased min-h-screen bg-background text-foreground">
         <Providers>
           <NotificationPermissionProvider>
+            {/* S2-F3-US5 — Skip-to-content link pour l'accessibilité clavier */}
+            <a
+              href="#main-content"
+              className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-primary-500 focus:text-white focus:rounded-md focus:shadow-lg"
+            >
+              Aller au contenu principal
+            </a>
             <div className="flex h-screen overflow-hidden">
               <Sidebar />
               <div className="flex-1 flex flex-col overflow-hidden">
                 <Topbar />
                 <ApiStatusBanner />
-                <main className="flex-1 overflow-y-auto p-4 md:p-6">
+                <main id="main-content" className="flex-1 overflow-y-auto p-4 md:p-6">
                   {children}
                 </main>
               </div>
