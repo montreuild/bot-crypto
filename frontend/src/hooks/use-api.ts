@@ -44,6 +44,15 @@ export function useDailyStats(days = 30) {
   });
 }
 
+// S3-F1-US4 — Ventilation des frais (taker/maker/borrow/stop)
+export function useFeesBreakdown(days = 30) {
+  return useQuery({
+    queryKey: ['feesBreakdown', days],
+    queryFn: () => api.getFeesBreakdown(days),
+    refetchInterval: 60000,
+  });
+}
+
 // ── Bots ────────────────────────────────────────────────────────────────────
 export function useBots() {
   return useQuery({

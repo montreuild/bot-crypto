@@ -32,6 +32,8 @@ import { SignalsFeed } from '@/components/cards/signals-feed';
 import { RiskPanel } from '@/components/cards/risk-panel';
 import { HealthBanner } from '@/components/cards/health-banner';
 import { AllocationDonut } from '@/components/cards/allocation-donut';
+import { HaltBanner } from '@/components/cards/halt-banner';
+import { FeesBreakdown } from '@/components/cards/fees-breakdown';
 import { Button } from '@/components/ui/button';
 import { QueryBoundary } from '@/components/ui/query-state';
 import { useBotStatus, usePortfolio } from '@/hooks/use-api';
@@ -135,6 +137,13 @@ export default function PortfolioV2Page() {
       {/* Bandeau de santé en français */}
       <HealthBanner status={status} portfolio={portfolio} />
 
+      {/* S3-F3-US3 — Bandeau HALT avec acquittement (si circuit breaker actif) */}
+      <HaltBanner
+        halted={!!status.circuit_breaker_active}
+        reason={status.circuit_breaker_reason}
+        killSwitch={portfolio?.risk?.kill_switch}
+      />
+
       {/* KPIs row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <CapitalCard value={status.capital || 1000} />
@@ -164,10 +173,17 @@ export default function PortfolioV2Page() {
         </div>
       </div>
 
-      {/* Positions + Signals */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* S3-F1-US4 — Ventilation des frais + Signaux */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <FeesBreakdown days={30} />
+        <div className="lg:col-span-2">
+          <SignalsFeed />
+        </div>
+      </div>
+
+      {/* Positions */}
+      <div className="grid grid-cols-1 gap-4">
         <PositionsTable />
-        <SignalsFeed />
       </div>
 
       {/* Performance par stratégie (si données) */}

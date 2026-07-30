@@ -139,6 +139,8 @@ export const api = {
   },
   exportTradesCsv: () => `${API_BASE}/trades/export?limit=50000`,
   getDailyStats: (days = 30) => apiFetch<any[]>(`/stats/daily?days=${days}`),
+  // S3-F1-US4 — Ventilation des frais (taker/maker/borrow/stop)
+  getFeesBreakdown: (days = 30) => apiFetch<any>(`/stats/fees?days=${days}`),
 
   // ── Bots / Portfolio ────────────────────────────────────────────────────
   getBots: () => apiFetch<{ bots: Bot[]; counts: Record<string, number>; reopt_queue: string[]; thresholds: any }>('/bots'),
