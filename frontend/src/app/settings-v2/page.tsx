@@ -26,9 +26,35 @@ import { usePresets, useSetRiskPreset, useSetExpertMode, useConfig } from '@/hoo
 import { toast } from 'sonner';
 import {
   Wallet, Bell, Database, ScrollText, Settings as SettingsIcon,
-  Shield, Check, AlertTriangle, Loader2,
+  Shield, Check, AlertTriangle, Loader2, Send,
 } from 'lucide-react';
 import { UniverseManager } from '@/components/cards/universe-manager';
+import { api } from '@/lib/api';
+
+/**
+ * S9-F3-US4 — Bouton « Tester l'envoi de notification ».
+ * Consomme POST /api/config/notifications/test.
+ */
+function TestNotificationButton() {
+  const [loading, setLoading] = useState(false);
+  const handleTest = async () => {
+    setLoading(true);
+    try {
+      await api.testNotifications();
+      toast.success('Notification de test envoyée — vérifiez vos canaux');
+    } catch (e: any) {
+      toast.error(`Erreur : ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <Button variant="outline" onClick={handleTest} disabled={loading}>
+      {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+      Tester l&apos;envoi
+    </Button>
+  );
+}
 
 const PRESETS = [
   {
@@ -217,18 +243,21 @@ export default function SettingsV2Page() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="notifications">
+        <TabsContent value="notifications" className="space-y-4">
           <Card>
             <CardContent className="p-8 text-center">
               <Bell className="w-10 h-10 mx-auto text-primary-400 mb-3" />
               <h3 className="text-base font-semibold mb-1">Notifications</h3>
               <p className="text-sm text-muted max-w-md mx-auto mb-4">
                 Telegram, WhatsApp (CallMeBot/Twilio), Email SMTP. 3 niveaux
-                (info/warning/critical). Bouton de test.
+                (info/warning/critical).
               </p>
-              <Button variant="outline" onClick={() => window.location.href = '/config'}>
-                Configurer les notifications
-              </Button>
+              <div className="flex justify-center gap-2">
+                <Button variant="outline" onClick={() => window.location.href = '/config'}>
+                  Configurer
+                </Button>
+                <TestNotificationButton />
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

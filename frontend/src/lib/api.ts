@@ -301,6 +301,12 @@ export const api = {
   // ── ML ──────────────────────────────────────────────────────────────────
   getMLStrategyInfo: () => apiFetch<{ strategies: Record<string, any> }>('/ml/strategy-info'),
   getCandlesStats: () => apiFetch<{ store: any }>('/candles/stats'),
+  // S9-F3-US1 — Recettes ML disponibles
+  getMLRecipes: () => apiFetch<{ recipes: any[] }>('/ml/recipes'),
+
+  // ── Config (S9-F3-US3 changelog optimizer + S9-F3-US4 test notif) ──────
+  getConfigChangelog: (limit = 100) => apiFetch<any>(`/config/changelog?limit=${limit}`),
+  testNotifications: () => apiFetch<{ status: string }>('/config/notifications/test', { method: 'POST' }),
 
   // ── ML Model Registry (ML-02) ────────────────────────────────────────────
   getMLRegistry: () => apiFetch<{ models: ModelRegistryEntry[] }>('/ml/registry'),

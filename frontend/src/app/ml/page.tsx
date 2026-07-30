@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn, timeAgo, formatDateTime } from '@/lib/utils';
 import { useMLStrategyInfo, useCandlesStats } from '@/hooks/use-api';
+import { MLRecipesList } from '@/components/cards/ml-recipes-list';
 import {
   Loader2, BrainCircuit, Database, CheckCircle2, XCircle,
   AlertCircle, Cpu,
@@ -201,6 +202,9 @@ export default function MLPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* S9-F3-US1 — Recettes ML disponibles */}
+      <MLRecipesList />
 
       {/* Info card */}
       <Card>
