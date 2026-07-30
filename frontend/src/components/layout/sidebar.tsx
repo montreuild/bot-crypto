@@ -16,9 +16,10 @@ const NAV_GROUPS = [
     label: 'Trading',
     items: [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { href: '/portfolio-v2', label: 'Portefeuille v2', icon: Wallet },
       { href: '/bots', label: 'Mes Bots', icon: Bot },
       { href: '/trades', label: 'Trades', icon: Activity },
-      { href: '/portfolio', label: 'Portefeuille', icon: Wallet },
+      { href: '/portfolio', label: 'Portefeuille (ancien)', icon: Wallet },
     ],
   },
   {
