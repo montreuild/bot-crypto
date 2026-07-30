@@ -139,10 +139,31 @@ export function ErrorState({
   );
 }
 
-export function EmptyState({ label = 'Aucune donnée disponible', className }: { label?: string; className?: string }) {
+export function EmptyState({
+  label = 'Aucune donnée disponible',
+  description,
+  icon: Icon,
+  action,
+  className,
+}: {
+  label?: string;
+  description?: string;
+  icon?: React.ComponentType<{ className?: string }>;
+  action?: ReactNode;
+  className?: string;
+}) {
   return (
     <div className={cn('flex items-center justify-center min-h-[40vh]', className)}>
-      <div className="text-sm text-muted">{label}</div>
+      <div className="text-center max-w-sm">
+        {Icon && (
+          <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-card-hover flex items-center justify-center">
+            <Icon className="w-6 h-6 text-muted" />
+          </div>
+        )}
+        <div className="text-sm font-medium text-foreground mb-1">{label}</div>
+        {description && <div className="text-xs text-muted">{description}</div>}
+        {action && <div className="mt-4">{action}</div>}
+      </div>
     </div>
   );
 }
@@ -151,12 +172,16 @@ export function EmptyState({ label = 'Aucune donnée disponible', className }: {
  * Enveloppe une vue de page : affiche le chargement, l'erreur (réessayable) ou
  * le contenu. `title` reste monté dans les trois cas — c'est ce qui garantit
  * qu'une page a toujours un `h1`, y compris backend éteint.
+ *
+ * S1-F2-US3 — Étendu avec `skeleton` : au lieu d'un spinner générique, peut
+ * afficher un squelette structurel qui donne une impression de rapidité.
  */
 export function QueryBoundary({
   query,
   isEmpty,
   onRetry,
   loadingLabel,
+  skeleton,
   title,
   children,
 }: {
@@ -164,6 +189,7 @@ export function QueryBoundary({
   isEmpty?: boolean;
   onRetry?: () => void;
   loadingLabel?: string;
+  skeleton?: ReactNode;
   title?: ReactNode;
   children: ReactNode;
 }) {
@@ -174,7 +200,7 @@ export function QueryBoundary({
 
   let body: ReactNode;
   if (error) body = <ErrorState error={error} onRetry={onRetry} isRetrying={query.isFetching} />;
-  else if (!hasData) body = <LoadingState label={loadingLabel} />;
+  else if (!hasData) body = skeleton ?? <LoadingState label={loadingLabel} />;
   else if (isEmpty) body = <EmptyState />;
   else body = children;
 
