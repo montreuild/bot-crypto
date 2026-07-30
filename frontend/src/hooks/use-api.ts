@@ -92,6 +92,15 @@ export function useSlots() {
   });
 }
 
+// S3-F3-US1 — OOS tracker pour le cône Monte-Carlo par bot.
+export function useOosTracker() {
+  return useQuery({
+    queryKey: ['oos-tracker'],
+    queryFn: api.getOosTracker,
+    refetchInterval: 30000,
+  });
+}
+
 export function useSetSlotBudget() {
   const qc = useQueryClient();
   return useMutation({
@@ -107,6 +116,18 @@ export function useToggleSlot() {
     mutationFn: ({ slotKey, enabled }: { slotKey: string; enabled: boolean }) =>
       api.toggleSlot(slotKey, enabled),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['slots'] }),
+  });
+}
+
+// S4-F2-US1 — Reset slot CB (pour le drawer Mes Bots v2)
+export function useResetSlot() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slotKey: string) => api.resetSlot(slotKey),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['slots'] });
+      qc.invalidateQueries({ queryKey: ['bots'] });
+    },
   });
 }
 
