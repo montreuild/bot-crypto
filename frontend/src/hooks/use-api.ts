@@ -282,6 +282,13 @@ export function useRunBacktest() {
   });
 }
 
+// S5-F3-US1 — Cancel backtest (pour le Laboratoire)
+export function useCancelBacktest() {
+  return useMutation({
+    mutationFn: () => api.cancelBacktest(),
+  });
+}
+
 // ── Strategy performance ────────────────────────────────────────────────────
 export function useStrategyPerformance(slotKey: string | null) {
   return useQuery({

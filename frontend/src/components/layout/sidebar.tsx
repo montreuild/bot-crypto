@@ -26,6 +26,7 @@ const NAV_GROUPS = [
   {
     label: 'Recherche',
     items: [
+      { href: '/lab', label: 'Laboratoire', icon: Sparkles },
       { href: '/backtest', label: 'Backtest', icon: LineChart },
       { href: '/scanner', label: 'Scanner', icon: Network },
       { href: '/replay', label: 'Replay', icon: Repeat },

@@ -207,6 +207,8 @@ export const api = {
       body: JSON.stringify(payload),
       timeoutMs: 0,
     }),
+  // S5-F3-US1 — Cancel backtest
+  cancelBacktest: () => apiFetch<{ status: string }>('/backtest/cancel', { method: 'POST' }),
 
   // ── Scanner ─────────────────────────────────────────────────────────────
   fastAnalysis: (symbol: string, tf = '1h') =>
