@@ -1691,8 +1691,20 @@ lint/type-check/build frontend et un smoke e2e. Trois manques comblés :
 |---|---|---|
 | `frontend` | `npm test` (Vitest) — **la suite unitaire n'était jouée nulle part** ; celle livrée en S2 échouait à 7/9 sans que rien ne l'attrape. Elle couvre aussi les contrats d'API | oui |
 | `e2e` | Le filtre passe à `loads\|redirige\|reste accessible` : les 11 routes volontairement non redirigées sont désormais surveillées — leur perte serait invisible autrement | oui |
-| `a11y` | Nouveau job : axe-core WCAG 2.1 AA sur les 24 pages | non (`continue-on-error`) |
-| `visual` | Nouveau job : régression visuelle | non (`continue-on-error`) |
+| `a11y` | Nouveau job : axe-core WCAG 2.1 AA sur les 24 pages | oui |
+| `visual` | Nouveau job : régression visuelle, références Linux commitées | oui |
+| `lint` | Réparé : 22 erreurs ruff préexistantes, le job échouait sur `main` | oui |
+| `security` | Réparé : 16 CVE, cf. §Montées de version de sécurité | oui |
+
+**Les 7 jobs sont bloquants et passent.** Un défaut du projet était que deux
+jobs (`lint`, `security`) échouaient en permanence sur `main` : un pipeline
+durablement rouge n'est pas un garde-fou, il apprend à ignorer les alertes.
+
+Un défaut structurel a par ailleurs été corrigé : le projet Playwright
+`tablet-chromium` (S2) utilisait `devices['iPad (gen 7)']`, un device **WebKit**,
+alors que la CI n'installe que chromium — **tous** ses tests échouaient
+instantanément. Le livrable « multi-viewports » était configuré mais
+inexécutable. Moteur forcé sur chromium, géométrie iPad conservée.
 
 **Tests visuels — substitution assumée à Chromatic/Storybook.** Le plan citait
 « Chromatic/Storybook ». Storybook ajoute ~40 paquets et une seconde arborescence
@@ -1708,11 +1720,15 @@ variation de marché.
 
 ⚠ **Les références visuelles sont générées par plateforme** (`-linux.png`,
 `-win32.png`) : celles produites sous Windows ne valent pas sous l'ubuntu-latest
-de la CI. Le job `visual` est donc en `continue-on-error` et publie les captures
-en artefact. **À faire après le premier run CI** : récupérer l'artefact
-`visual-snapshots`, committer les `.png` sous
-`frontend/e2e/tests/visual.spec.ts-snapshots/`, puis retirer
-`continue-on-error`. Tant que ce n'est pas fait, le job ne protège de rien.
+de la CI. Les 5 références Linux ont donc été générées par le job lui-même puis
+commitées sous `frontend/e2e/tests/visual.spec.ts-snapshots/`. Après un
+changement visuel volontaire : relancer avec `--update-snapshots`, récupérer
+l'artefact `visual-snapshots` et committer les PNG.
+
+Le test du drawer de `/bots-v2` est ignoré explicitement quand le backend est
+éteint : il ne peut pas s'ouvrir sans données, et les jobs CI ne démarrent que
+le frontend. Un test rouge par absence de données n'apprend rien et masquerait
+une vraie régression sur les cinq autres captures.
 
 Ces sprints sont moins urgents que S0-S9 (qui traitaient les bugs P1 et la dette design system) et peuvent être planifiés après validation utilisateur des 5 pages méta.
 
@@ -1833,6 +1849,68 @@ Vérifié en exécution : aucun avertissement `[api]` sur les pages v2 face au
 backend réel, ce qui confirme que les schémas décrivent le backend et non une
 seconde invention.
 
+### Accessibilité — 52 violations relevées, 0 restante
+
+Le job CI `a11y` a produit le premier relevé WCAG 2.1 AA du projet (24 pages).
+État initial, puis traitement :
+
+| Règle axe | Départ | Gravité | Traitement |
+|---|---|---|---|
+| `color-contrast` | 22 | serious | `text-white` sur `bg-primary-500` (#06b6d4) ne donnait que **2.43:1**. Le bouton principal étant présent sur presque toutes les pages, il expliquait à lui seul l'essentiel du total. Texte sombre dessus : 7.97:1 au repos, 5.25:1 au survol, couleur de marque préservée (`Button`, `ConfirmDialog`, skip-link) |
+| `select-name` | 16 | critical | 34 champs `<select>`/`<input>` bruts avaient un `<label>` visible juste au-dessus, sans association. `aria-label` reprenant le libellé |
+| `label` | 10 | critical | idem |
+| `button-name` | 2 | critical | Le `Toggle` de `/settings` ne contenait qu'un `<span>` décoratif — un lecteur d'écran annonçait « bouton, non coché » sans dire de quoi. Prop `label` rendue obligatoire. Bouton de thème de la topbar : `aria-label` ajouté (il n'avait qu'un `title`) |
+| `scrollable-region-focusable` | 2 | serious | `<main>` défile (`overflow-y-auto`) sans être atteignable au clavier : sur une page sans élément focusable, son contenu devenait inaccessible sans souris. `tabIndex={0}` — il est par ailleurs la cible du skip-link |
+
+**Constat de départ à retenir : les pages de la refonte étaient déjà quasi
+propres.** `/portfolio-v2`, `/lab`, `/market` et `/settings-v2` ne remontaient
+aucune violation ; `/bots-v2` une seule. Les 14 pages en défaut étaient les
+anciennes. Le design system livré en S1-S2 tenait ses promesses — la dette
+était dans l'UI héritée.
+
+Deux pièges de méthode rencontrés, notés pour la prochaine fois :
+
+1. **`violations.length` compte des règles, pas des éléments.** Le rapport
+   indiquait « 1 violation » là où des dizaines de nœuds étaient concernés, et
+   ne disait pas *où*. Le spec journalise désormais le sélecteur, l'extrait HTML
+   et le `failureSummary` (valeurs mesurées) de chaque nœud.
+2. **axe échantillonnait une frame de `animate-fade-in`.** Les 3 dernières
+   violations de contraste portaient sur le même bouton avec un ratio différent
+   à chaque exécution (3.12, 3.25, 3.81) : la couleur mesurée était fondue,
+   l'état stabilisé étant conforme. Les animations sont maintenant neutralisées
+   avant l'analyse, comme dans `visual.spec.ts`.
+
+⚠ Le relevé est fait **backend éteint** (les jobs CI ne démarrent que le
+frontend) : il porte sur l'état d'erreur/vide des pages. Un second passage avec
+backend reste à faire.
+
+### Montées de version de sécurité
+
+`pip-audit` remontait 16 vulnérabilités sur 4 paquets, et le job `security`
+échouait sur `main` depuis plusieurs runs :
+
+| Paquet | Avant | Après | Vulnérabilités |
+|---|---|---|---|
+| `starlette` | 0.38.6 | 1.3.1 | 8 (PYSEC-2026-161, -248, -249, -1941, -1943, -2280, -2281) |
+| `python-multipart` | 0.0.22 | 0.0.32 | 5 (PYSEC-2026-3036 à -3040) |
+| `python-dotenv` | 1.1.1 | 1.2.2 | 1 (PYSEC-2026-2270) |
+| `pytest` | 8.2.0 | 9.1.1 | 1 (PYSEC-2026-1845) |
+| `fastapi` | 0.115.0 | 0.141.1 | — (imposé par starlette) |
+
+La montée de FastAPI était le verrou : 0.115.0 demandait
+`starlette>=0.37.2,<0.39.0`, ce qui rendait toute correction de starlette
+impossible. 0.141.1 demande `starlette>=0.46.0` sans borne haute.
+
+`requirements.txt` documentait qu'une précédente tentative de passage en
+starlette 1.3.1 avait cassé la collecte des tests sur `Router.__init__() got an
+unexpected keyword argument 'on_startup'`. **La cause a disparu** : plus aucune
+occurrence de `on_startup` / `on_shutdown` / `@app.on_event` dans `app/`, le
+cycle de vie passe par `lifespan`. Vérifié : 1392 tests passés, 3 ignorés, à
+l'identique d'avant la montée.
+
+Le job CI passait `--ignore-vuln GHSA-xxxx`, un identifiant placeholder qui ne
+masquait rien tout en laissant croire qu'une exception était en place — retiré.
+
 ### Réserves non traitées
 
 - **Couverture de tests** : la refonte ajoute ~5 000 lignes de TSX pour 9 tests
@@ -1840,36 +1918,17 @@ seconde invention.
   ni `MonteCarloCone`, `AllocationDonut`, `UniverseManager`, `FeesBreakdown`
   n'est testée. Le seuil de couverture de `vitest.config.ts` (60 %) n'est pas
   atteignable en l'état et n'est vérifié par aucune CI.
-- **Accessibilité — première mesure disponible.** `a11y.spec.ts` ne ciblait que
-  les 19 anciennes routes ; les 5 pages méta ont été ajoutées (24 pages) et le
-  job CI `a11y` a produit le premier relevé WCAG du projet :
-
-  | Règle axe | Occurrences | Gravité |
-  |---|---|---|
-  | `color-contrast` | 22 | serious |
-  | `select-name` (select sans nom accessible) | 16 | critical |
-  | `label` (champ sans libellé) | 10 | critical |
-  | `scrollable-region-focusable` | 2 | serious |
-  | `button-name` | 2 | critical |
-
-  **Résultat notable : les pages de la refonte sont quasi propres.**
-  `/portfolio-v2`, `/lab`, `/market` et `/settings-v2` passent sans aucune
-  violation ; `/bots-v2` en a **une** (color-contrast, serious). Les 14 pages en
-  défaut sont les anciennes (Scanner, Optimiseur, Registre modèles, Données
-  OHLCV à 3 violations chacune…). Le design system livré en S1-S2 tient donc
-  ses promesses ; la dette est dans l'UI héritée.
-
-  ⚠ Ces chiffres sont mesurés **backend éteint** (les jobs CI ne démarrent que
-  le frontend) : ils portent donc sur l'état d'erreur/vide des pages, pas sur
-  leur état peuplé. Un second relevé avec backend est à prévoir.
-
-  Le job reste en `continue-on-error`. **Prochain arbitrage : traiter les 28
-  violations critical (`select-name`, `label`, `button-name`) — mécaniques et à
-  fort impact lecteur d'écran — puis retirer `continue-on-error`.**
+- ~~**Accessibilité**~~ — traité, cf. §Accessibilité ci-dessous. Le job CI
+  `a11y` est bloquant et passe à zéro violation sur les 24 pages.
 - **Redirections 308 : 3 posées sur 14** — voir §Bascule S10 ci-dessous.
 - ~~**Réponses d'API non typées**~~ — traité, cf. §Typage des réponses d'API.
-  Reste à étendre aux endpoints non couverts (`optimize/*`, `ml/registry`,
-  `replay`, `derivatives`, `smc`), au fil des besoins plutôt que d'un bloc.
+  L'extension aux endpoints restants (`optimize/*`, `ml/registry`, `replay`,
+  `derivatives`, `scanner/smc*`) est faite. Trois pièges supplémentaires du même
+  genre que R15 ont été documentés et testés au passage :
+  `/optimize/status` sans `job_id` renvoie un **dictionnaire** indexé par job_id
+  (`get_all_jobs()`) ; `/optimize/results` est un dictionnaire à **deux
+  niveaux** (stratégie → timeframe) ; `_series_payload` de `derivatives` renvoie
+  **`null`** quand la série est vide, donc chaque métrique est nullable.
 - **Données Monte-Carlo dégénérées** : sur le jeu de données de vérification,
   les 145 slots ont `P5 = P95` et 0 trade live — la bande se réduit à un point
   et le verdict est toujours « pas assez de trades réels ». L'affichage est
