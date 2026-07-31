@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { useWebSocket } from '@/lib/ws-provider';
 import {
   LayoutDashboard, Bot, LineChart, Settings, Activity,
   Zap, Database, Network, Sparkles, Repeat,
@@ -14,16 +15,27 @@ const NAV_GROUPS = [
   {
     label: 'Trading',
     items: [
-      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { href: '/bots', label: 'Mes Bots', icon: Bot },
+      // S10 — /dashboard et /bots sont désormais en 308 vers les pages v2 :
+      // on pointe directement dessus pour éviter le saut de redirection.
+      { href: '/portfolio-v2', label: 'Portefeuille', icon: Wallet },
+      { href: '/bots-v2', label: 'Mes Bots', icon: Bot },
       { href: '/trades', label: 'Trades', icon: Activity },
-      { href: '/portfolio', label: 'Portefeuille', icon: Wallet },
+      // /portfolio garde un journal de notifications et une vue par bot que
+      // /portfolio-v2 ne reprend pas encore — pas de 308 tant que ce n'est pas
+      // porté (cf. docs/audit-ui-ux-bot-crypto.md §Bascule S10).
+      { href: '/portfolio', label: 'Portefeuille (détail)', icon: Wallet },
     ],
   },
   {
     label: 'Recherche',
     items: [
-      { href: '/backtest', label: 'Backtest', icon: LineChart },
+      { href: '/lab', label: 'Laboratoire', icon: Sparkles },
+      { href: '/market', label: 'Marché', icon: Network },
+      // /backtest est en 308 vers l'onglet Backtest du Laboratoire — seul
+      // onglet du Lab qui soit une vraie réimplémentation. Les entrées
+      // ci-dessous restent nécessaires : les onglets Optimizer / Replay /
+      // Compare du Lab et Smart Graph / Smart Replay / Dérivés du Marché sont
+      // des cartes de renvoi vers ces pages.
       { href: '/scanner', label: 'Scanner', icon: Network },
       { href: '/replay', label: 'Replay', icon: Repeat },
       { href: '/smartgraph', label: 'Smart Graph', icon: CandlestickChart },
@@ -46,14 +58,26 @@ const NAV_GROUPS = [
   {
     label: 'Configuration',
     items: [
+      { href: '/settings-v2', label: 'Réglages v2', icon: Cpu },
       { href: '/config', label: 'Configuration', icon: Settings },
-      { href: '/settings', label: 'Réglages', icon: Cpu },
+      { href: '/settings', label: 'Réglages (ancien)', icon: Cpu },
     ],
   },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
+  // S0-F1-US5 — Le footer "Connected" était hardcodé et mentait quand le
+  // backend était down. On consomme maintenant l'état réel du WS.
+  const { status: wsStatus } = useWebSocket();
+
+  const wsLabel = wsStatus === 'connected' ? 'Connected'
+    : wsStatus === 'connecting' ? 'Connecting...'
+    : wsStatus === 'error' ? 'Error'
+    : 'Disconnected';
+  const wsColor = wsStatus === 'connected' ? 'bg-emerald-400'
+    : wsStatus === 'connecting' ? 'bg-amber-400 animate-pulse'
+    : 'bg-red-400';
 
   return (
     <aside className="w-60 flex-shrink-0 bg-surface border-r border-border flex flex-col">
@@ -100,12 +124,12 @@ export function Sidebar() {
         ))}
       </nav>
 
-      {/* Footer */}
+      {/* Footer — état réel du WS */}
       <div className="border-t border-border p-4">
         <div className="text-[10px] text-dim font-mono">
-          <div className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Connected
+          <div className="flex items-center gap-2" aria-label={`WebSocket: ${wsLabel}`}>
+            <span className={cn('w-1.5 h-1.5 rounded-full', wsColor)} />
+            {wsLabel}
           </div>
         </div>
       </div>

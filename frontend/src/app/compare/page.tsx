@@ -284,6 +284,7 @@ export default function ComparePage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Symbole</label>
               <input
+                aria-label="Symbole"
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value)}
                 className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
@@ -293,6 +294,7 @@ export default function ComparePage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Timeframe</label>
               <select
+                aria-label="Timeframe"
                 value={timeframe}
                 onChange={(e) => setTimeframe(e.target.value)}
                 className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"
@@ -303,6 +305,7 @@ export default function ComparePage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Bougies</label>
               <select
+                aria-label="Bougies"
                 value={limit}
                 onChange={(e) => setLimit(Number(e.target.value))}
                 className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"

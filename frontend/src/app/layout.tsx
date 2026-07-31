@@ -74,12 +74,25 @@ export default function RootLayout({
       <body className="font-sans antialiased min-h-screen bg-background text-foreground">
         <Providers>
           <NotificationPermissionProvider>
+            {/* S2-F3-US5 — Skip-to-content link pour l'accessibilité clavier */}
+            <a
+              href="#main-content"
+              className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-primary-500 focus:text-background focus:rounded-md focus:shadow-lg"
+            >
+              Aller au contenu principal
+            </a>
             <div className="flex h-screen overflow-hidden">
               <Sidebar />
               <div className="flex-1 flex flex-col overflow-hidden">
                 <Topbar />
                 <ApiStatusBanner />
-                <main className="flex-1 overflow-y-auto p-4 md:p-6">
+                {/* `tabIndex={0}` : `<main>` défile (`overflow-y-auto`) et doit
+                    donc être atteignable au clavier — sinon son contenu est
+                    inaccessible à la molette près quand la page ne contient
+                    aucun élément focusable (axe : scrollable-region-focusable,
+                    relevé sur /ml). Il est par ailleurs la cible du skip-link,
+                    ce qui rend le point de focus cohérent. */}
+                <main id="main-content" tabIndex={0} className="flex-1 overflow-y-auto p-4 md:p-6">
                   {children}
                 </main>
               </div>

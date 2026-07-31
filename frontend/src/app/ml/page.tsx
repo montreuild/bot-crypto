@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn, timeAgo, formatDateTime } from '@/lib/utils';
 import { useMLStrategyInfo, useCandlesStats } from '@/hooks/use-api';
+import { MLRecipesList } from '@/components/cards/ml-recipes-list';
 import {
   Loader2, BrainCircuit, Database, CheckCircle2, XCircle,
   AlertCircle, Cpu,
@@ -17,8 +18,12 @@ function StrategyTable({ strategies }: { strategies: Record<string, MLStrategyIn
   if (entries.length === 0) {
     return <div className="text-sm text-muted text-center py-6">Aucune stratégie ML</div>;
   }
+  // `tabIndex={0}` : une zone défilable doit être atteignable au clavier, sinon
+  // son contenu est inaccessible sans souris (axe : scrollable-region-focusable).
+  // `role="group"` + `aria-label` évitent qu'un lecteur d'écran annonce un
+  // conteneur anonyme focusable.
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto" tabIndex={0} role="group" aria-label="Tableau défilable">
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs text-dim border-b border-border">
@@ -93,8 +98,12 @@ function CandlesStatsTable({ store }: { store: any }) {
   }
   rows.sort((a, b) => a.symbol.localeCompare(b.symbol) || a.tf.localeCompare(b.tf));
 
+  // `tabIndex={0}` : une zone défilable doit être atteignable au clavier, sinon
+  // son contenu est inaccessible sans souris (axe : scrollable-region-focusable).
+  // `role="group"` + `aria-label` évitent qu'un lecteur d'écran annonce un
+  // conteneur anonyme focusable.
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto" tabIndex={0} role="group" aria-label="Tableau défilable">
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs text-dim border-b border-border">
@@ -201,6 +210,9 @@ export default function MLPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* S9-F3-US1 — Recettes ML disponibles */}
+      <MLRecipesList />
 
       {/* Info card */}
       <Card>

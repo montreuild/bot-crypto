@@ -44,7 +44,7 @@ export function AllocationsGrid() {
             return (
               <button
                 key={slot.slot_key}
-                onClick={() => router.push('/bots')}
+                onClick={() => router.push('/bots-v2')}
                 className={cn(
                   'text-left p-3 rounded-lg border bg-card-hover transition-all hover:border-border-hi hover:scale-[1.02]',
                   isPaused && 'border-red-500/30 bg-red-500/5',

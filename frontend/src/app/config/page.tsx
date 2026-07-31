@@ -150,6 +150,7 @@ export default function ConfigPage() {
         <div className="flex items-center gap-2">
           <label className="text-xs text-muted uppercase tracking-wider">Symbole</label>
           <select
+            aria-label="Symbole"
             value={selectedSymbol}
             onChange={(e) => setSelectedSymbol(e.target.value as Symbol | 'all')}
             className="px-3 py-1.5 bg-card border border-border rounded-lg text-sm focus:outline-none focus:border-primary-400"

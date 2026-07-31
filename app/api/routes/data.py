@@ -131,10 +131,9 @@ def data_backfill_equities(request: Request, tf: str = "1d", years: int = 20):
     # Lance en thread daemon (évite de bloquer l'API)
     def _run_backfill(job_dict):
         try:
+            from app.core.timeframes import TF_MINUTES
             from app.core.universe import load_universe
             from app.core.yfinance_provider import YFinanceProvider
-            from app.core.market_calendar import get_calendar
-            from app.core.timeframes import TF_MINUTES
 
             # Calcule le nombre de bougies à fetcher
             minutes_per_bar = TF_MINUTES.get(tf, 1440)
@@ -152,7 +151,6 @@ def data_backfill_equities(request: Request, tf: str = "1d", years: int = 20):
             job_dict["progress"]["total"] = len(all_symbols)
 
             provider = YFinanceProvider(cfg)
-            store = get_store()
             done = 0
             for sym in all_symbols:
                 job_dict["progress"]["current_symbol"] = sym

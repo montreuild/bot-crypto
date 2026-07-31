@@ -8,10 +8,9 @@ Couvre les 3 risques critiques qui ont motivé le Sprint 0 :
 Ces tests sont les "garde-fous" qui empêchent une régression silencieuse
 des fixes du Sprint 0.
 """
-import os
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
+import pytest
 
 # ─────────────────────────────────────────────────────────────────────────────
 # S0-01 : Sizing live = risk_amount / stop_dist (parité backtest)
@@ -196,8 +195,9 @@ class TestRateLimitWired:
 
     def test_slowapi_middleware_registered(self):
         """SlowAPIMiddleware doit être enregistré sur l'app FastAPI."""
-        from app.api.main import app
         from slowapi.middleware import SlowAPIMiddleware
+
+        from app.api.main import app
         # Vérifie que le middleware est dans la pile
         middleware_types = [m.cls for m in app.user_middleware]
         assert SlowAPIMiddleware in middleware_types, (
@@ -341,7 +341,9 @@ class TestFormingCandleDropped:
     def test_drop_forming_candle_removes_last_incomplete_bar(self):
         """Si la dernière bougie est encore en formation, elle est retirée."""
         from datetime import datetime, timedelta
+
         import polars as pl
+
         from app.live.ohlcv_cache import OHLCVCache
         # Construit un DF avec 10 bougies 1h, la dernière en formation
         now = datetime.utcnow()
@@ -368,7 +370,9 @@ class TestFormingCandleDropped:
     def test_drop_forming_candle_noop_when_last_closed(self):
         """Si la dernière bougie est clôturée, aucune action."""
         from datetime import datetime, timedelta
+
         import polars as pl
+
         from app.live.ohlcv_cache import OHLCVCache
         now = datetime.utcnow()
         # 10 bougies toutes clôturées (la dernière il y a 1h+1s)

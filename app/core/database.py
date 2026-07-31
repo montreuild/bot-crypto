@@ -345,7 +345,9 @@ def save_trade(session: Session, t: dict):
     entry_time = t.get("entry_time")
     if entry_time is None and t.get("duration_bars") is not None and t.get("time") is not None:
         try:
-            from datetime import datetime as _dt, timedelta as _td
+            from datetime import datetime as _dt
+            from datetime import timedelta as _td
+
             from app.core.timeframes import TF_MINUTES
             tf = t.get("timeframe", "1h")
             mins_per_bar = TF_MINUTES.get(tf, 60)

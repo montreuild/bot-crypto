@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { CsvExportButton, JsonExportButton } from '@/components/ui/export-buttons';
 import { cn, formatDateTime } from '@/lib/utils';
 import { useAuditResults } from '@/hooks/use-api';
 import {
@@ -162,10 +163,29 @@ export default function AuditPage() {
             Résultats OOS (Out-of-Sample) des optimisations appliquées
           </p>
         </div>
-        <Badge variant="info">
-          <ClipboardList className="w-3 h-3" />
-          {payload?.total ?? 0} entrées
-        </Badge>
+        <div className="flex items-center gap-2">
+          {/* S9-F4-US3/5 — Les composants d'export étaient livrés mais montés
+              nulle part (leur en-tête annonçait pourtant « Utilisé par : page
+              backtest, page audit, page compare »). Ils exportent ici ce que
+              l'utilisateur voit réellement, filtre appliqué. */}
+          <CsvExportButton
+            filename="audit_oos"
+            rows={filtered}
+            headers={{
+              strategy: 'Stratégie',
+              tf: 'TF',
+              symbol: 'Symbole',
+              slot_key: 'Slot',
+              run_date: 'Run date',
+              oos_score: 'OOS Score',
+            }}
+          />
+          <JsonExportButton filename="audit_oos" data={filtered} />
+          <Badge variant="info">
+            <ClipboardList className="w-3 h-3" />
+            {payload?.total ?? 0} entrées
+          </Badge>
+        </div>
       </div>
 
       {/* Filters */}

@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { cn, formatDateTime } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
@@ -73,11 +74,20 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
     }
   };
 
-  const handlePromote = async (decision: 'manual' | 'keep') => {
-    const verb = decision === 'manual' ? 'Promouvoir' : 'Rejeter';
-    if (!window.confirm(`${verb} la version ${version.version_id} pour ${entry.tf}/${entry.recipe} ?`)) {
-      return;
-    }
+  // S1-F2-US8 — Remplace window.confirm par une modale stylée et accessible.
+  // Avant : window.confirm(`${verb} la version ${version.version_id}...`)
+  // Maintenant : ConfirmDialog avec variant success/danger selon l'action.
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean;
+    decision: 'manual' | 'keep';
+  }>({ open: false, decision: 'manual' });
+
+  const openConfirm = (decision: 'manual' | 'keep') => {
+    setConfirmState({ open: true, decision });
+  };
+
+  const handlePromote = async () => {
+    const { decision } = confirmState;
     try {
       await promote.mutateAsync({
         tf: entry.tf, recipe: entry.recipe,
@@ -86,6 +96,8 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
       toast.success('Décision mise à jour');
     } catch (e: any) {
       toast.error(`Erreur : ${e.message}`);
+    } finally {
+      setConfirmState({ open: false, decision });
     }
   };
 
@@ -106,11 +118,11 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
               {isPinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
               {isPinned ? 'Retirer' : 'Épingler'}
             </Button>
-            <Button size="sm" variant="success" onClick={() => handlePromote('manual')} disabled={busy}>
+            <Button size="sm" variant="success" onClick={() => openConfirm('manual')} disabled={busy}>
               <ThumbsUp className="w-3 h-3" />
               Promouvoir
             </Button>
-            <Button size="sm" variant="danger" onClick={() => handlePromote('keep')} disabled={busy}>
+            <Button size="sm" variant="danger" onClick={() => openConfirm('keep')} disabled={busy}>
               <ThumbsDown className="w-3 h-3" />
               Rejeter
             </Button>
@@ -133,6 +145,16 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
           </td>
         </tr>
       )}
+      <ConfirmDialog
+        open={confirmState.open}
+        onOpenChange={(open) => setConfirmState((s) => ({ ...s, open }))}
+        title={`${confirmState.decision === 'manual' ? 'Promouvoir' : 'Rejeter'} la version ${version.version_id} ?`}
+        description={`Cette action marquera la version ${version.version_id} pour ${entry.tf}/${entry.recipe} comme décision ${confirmState.decision === 'manual' ? 'manuelle (promue)' : 'conservée (rejetée)'}. L'action est journalisée dans l'audit log.`}
+        confirmLabel={confirmState.decision === 'manual' ? 'Promouvoir' : 'Rejeter'}
+        variant={confirmState.decision === 'manual' ? 'success' : 'danger'}
+        isLoading={promote.isPending}
+        onConfirm={handlePromote}
+      />
     </>
   );
 }
@@ -432,7 +454,7 @@ function RegistryRow({ entry }: { entry: ModelRegistryEntry }) {
                 <Loader2 className="w-4 h-4 animate-spin text-primary-400" />
               </div>
             ) : (
-              <div className="overflow-x-auto mb-4">
+              <div className="overflow-x-auto mb-4" tabIndex={0} role="group" aria-label="Tableau défilable">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="text-left text-dim border-b border-border/50">
@@ -469,7 +491,7 @@ function RegistryTable({ entries }: { entries: ModelRegistryEntry[] }) {
     return <div className="text-sm text-muted text-center py-6">Aucun modèle dans le registre.</div>;
   }
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto" tabIndex={0} role="group" aria-label="Tableau défilable">
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs text-dim border-b border-border">
@@ -582,7 +604,7 @@ function StrategySelect({ value, onChange }: { value: string; onChange: (v: stri
     ? (strategies.length ? strategies : [value])
     : [value, ...strategies];
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLASS}>
+    <select aria-label="Stratégie" value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLASS}>
       {options.map((s) => <option key={s} value={s}>{s}</option>)}
     </select>
   );
@@ -590,7 +612,7 @@ function StrategySelect({ value, onChange }: { value: string; onChange: (v: stri
 
 function TimeframeSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLASS}>
+    <select aria-label="Timeframe" value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLASS}>
       {TIMEFRAMES.map((t) => <option key={t} value={t}>{t}</option>)}
     </select>
   );
@@ -648,6 +670,7 @@ function TrainForm() {
           <div>
             <label className="text-xs text-dim block mb-1.5">Symbole</label>
             <input
+              aria-label="Symbole"
               value={symbol} onChange={(e) => setSymbol(e.target.value)}
               className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
             />
@@ -662,6 +685,7 @@ function TrainForm() {
               <span className="block normal-case text-[10px] text-dim font-normal">0 = tout dispo</span>
             </label>
             <input
+              aria-label="Fenêtre (barres)"
               type="number" min={0} value={windowBars}
               onChange={(e) => setWindowBars(Math.max(0, Number(e.target.value) || 0))}
               className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
@@ -675,6 +699,7 @@ function TrainForm() {
               </span>
             </label>
             <input
+              aria-label="Entraîner comme au (as-of)"
               value={asOf} onChange={(e) => setAsOf(e.target.value)}
               placeholder="2026-06-01T00:00:00"
               title="Ne garde que les bougies antérieures à cette date pour l'entraînement ET le holdout du gate. Vide = tout l'historique disponible jusqu'à maintenant."
@@ -753,6 +778,7 @@ function SweepForm() {
           <div>
             <label className="text-xs text-dim block mb-1.5">Symbole</label>
             <input
+              aria-label="Symbole"
               value={symbol} onChange={(e) => setSymbol(e.target.value)}
               className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
             />
@@ -764,6 +790,7 @@ function SweepForm() {
           <div>
             <label className="text-xs text-dim block mb-1.5">Fenêtres (barres, CSV)</label>
             <input
+              aria-label="Fenêtres (barres, CSV)"
               value={windowsStr} onChange={(e) => setWindowsStr(e.target.value)}
               className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
             />

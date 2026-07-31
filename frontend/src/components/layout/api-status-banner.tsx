@@ -12,7 +12,7 @@
  */
 
 import { PlugZap, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useBotStatus } from '@/hooks/use-api';
 import { isBackendUnreachable } from '@/lib/api';
 import { useStickyError } from '@/components/ui/query-state';
@@ -25,14 +25,16 @@ export function ApiStatusBanner() {
   // tentatives, ce qui ferait clignoter le bandeau (cf. useStickyError).
   const down = isBackendUnreachable(useStickyError(query));
 
-  // Ajustement d'état pendant le render (motif React « adjusting state when a
-  // prop changes ») : au retour du backend on réarme le bandeau, pour qu'un
-  // masquage manuel ne vaille que pour la coupure en cours.
+  // S0-F1-US4 — Avant : ajustement d'état pendant le render (anti-pattern React
+  // strict mode). Maintenant : useEffect synchronise `wasDown` après render,
+  // et réarme `dismissed` au retour du backend.
   const [wasDown, setWasDown] = useState(down);
-  if (down !== wasDown) {
-    setWasDown(down);
-    if (!down) setDismissed(false);
-  }
+  useEffect(() => {
+    if (down !== wasDown) {
+      setWasDown(down);
+      if (!down) setDismissed(false);
+    }
+  }, [down, wasDown]);
 
   if (!down || dismissed) return null;
 

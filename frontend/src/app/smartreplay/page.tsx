@@ -380,6 +380,7 @@ export default function SmartReplayPage() {
           <div>
             <label className="text-xs text-dim block mb-1.5">Symbole</label>
             <input
+              aria-label="Symbole"
               value={symbol}
               onChange={(e) => setSymbol(e.target.value)}
               className="w-40 px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
@@ -592,6 +593,7 @@ export default function SmartReplayPage() {
               <div className="flex items-center gap-2">
                 <label className="text-xs text-dim">Vitesse</label>
                 <select
+                  aria-label="Vitesse"
                   value={speedIdx}
                   onChange={(e) => setSpeedIdx(Number(e.target.value))}
                   className="px-2 py-1 bg-card-hover border border-border rounded-md text-xs font-mono"

@@ -209,6 +209,7 @@ export default function DerivativesPage() {
           <div>
             <label className="text-xs text-dim block mb-1.5">Symbole</label>
             <select
+              aria-label="Symbole"
               value={symbol}
               onChange={(e) => setSymbol(e.target.value)}
               className="px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
@@ -219,6 +220,7 @@ export default function DerivativesPage() {
           <div>
             <label className="text-xs text-dim block mb-1.5">Période</label>
             <select
+              aria-label="Période"
               value={period}
               onChange={(e) => setPeriod(e.target.value)}
               className="px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"

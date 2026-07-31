@@ -19,7 +19,13 @@ const config: Config = {
         'border-hi': '#374151',
         foreground: '#e5e7eb',
         muted: '#9ca3af',
-        dim: '#6b7280',
+        // S2-F3-US4 — Contraste AA : #6b7280 sur bg-card (#141a23) = 4.0:1, sous
+        // le seuil 4.5:1 pour texte normal. Aligné sur #94a3b8 (slate-400, 5.3:1).
+        dim: '#94a3b8',
+        // S1-F2-US1 — tokens additionnels pour les composants Radix wrappés
+        popover: '#141a23',
+        'popover-foreground': '#e5e7eb',
+        input: '#1f2937',
         // Accent colors
         primary: {
           50: '#ecfeff',
@@ -56,14 +62,20 @@ const config: Config = {
       },
       animation: {
         'fade-in': 'fadeIn 0.3s ease-out',
+        'fade-out': 'fadeOut 0.15s ease-out',
         'slide-up': 'slideUp 0.3s ease-out',
         'slide-down': 'slideDown 0.3s ease-out',
         'pulse-glow': 'pulseGlow 2s ease-in-out infinite',
         'flash-green': 'flashGreen 0.6s ease-out',
         'flash-red': 'flashRed 0.6s ease-out',
+        'accordion-down': 'accordionDown 0.2s ease-out',
+        'accordion-up': 'accordionUp 0.2s ease-out',
+        'zoom-in-95': 'zoomIn95 0.2s ease-out',
+        'zoom-out-95': 'zoomOut95 0.15s ease-out',
       },
       keyframes: {
         fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+        fadeOut: { '0%': { opacity: '1' }, '100%': { opacity: '0' } },
         slideUp: { '0%': { opacity: '0', transform: 'translateY(8px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
         slideDown: { '0%': { opacity: '0', transform: 'translateY(-8px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
         pulseGlow: {
@@ -77,6 +89,22 @@ const config: Config = {
         flashRed: {
           '0%': { backgroundColor: 'rgba(239, 68, 68, 0.3)' },
           '100%': { backgroundColor: 'transparent' },
+        },
+        accordionDown: {
+          from: { height: '0', opacity: '0' },
+          to: { height: 'var(--radix-accordion-content-height)', opacity: '1' },
+        },
+        accordionUp: {
+          from: { height: 'var(--radix-accordion-content-height)', opacity: '1' },
+          to: { height: '0', opacity: '0' },
+        },
+        zoomIn95: {
+          '0%': { opacity: '0', transform: 'scale(0.95)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
+        zoomOut95: {
+          '0%': { opacity: '1', transform: 'scale(1)' },
+          '100%': { opacity: '0', transform: 'scale(0.95)' },
         },
       },
     },

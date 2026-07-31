@@ -13,7 +13,13 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantClasses: Record<Variant, string> = {
   default: 'bg-card text-foreground border border-border hover:bg-card-hover',
-  primary: 'bg-primary-500 text-white hover:bg-primary-600',
+  // S10-a11y — `text-white` sur `bg-primary-500` (#06b6d4) ne donnait que
+  // 2.43:1, sous le seuil AA de 4.5:1. C'était la source des 22 violations
+  // `color-contrast` relevées par axe-core : le bouton principal est présent
+  // sur presque toutes les pages. Le cyan est trop clair pour du texte blanc.
+  // Texte sombre dessus : 7.97:1 au repos, 5.25:1 au survol — et la couleur de
+  // marque est préservée.
+  primary: 'bg-primary-500 text-background hover:bg-primary-600',
   success: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20',
   danger: 'bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20',
   ghost: 'bg-transparent text-muted hover:bg-card-hover hover:text-foreground',

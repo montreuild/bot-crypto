@@ -7,7 +7,28 @@
 import { useEffect, useRef, useState, useCallback, createContext, useContext, ReactNode } from 'react';
 import type { WSEvent, TradeOpenedData, TradeClosedData, SignalData, RiskData, CycleUpdateData, TickerData } from '@/types';
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws';
+/**
+ * S0-F1-US6 — Résolution de l'URL WebSocket.
+ *
+ * Priorité :
+ * 1. `NEXT_PUBLIC_WS_URL` définie explicitement (dev = ws://localhost:8000/ws)
+ * 2. Fallback same-origin runtime : si la page est sur https://example.com,
+ *    le WS sera wss://example.com/ws — pattern recommandé en prod.
+ * 3. Dernier fallback : ws://localhost:8000/ws (dev local sans config).
+ */
+function resolveWsUrl(): string {
+  const configured = process.env.NEXT_PUBLIC_WS_URL;
+  if (configured) return configured;
+
+  if (typeof window !== 'undefined') {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.host}/ws`;
+  }
+
+  return 'ws://localhost:8000/ws';
+}
+
+const WS_URL = resolveWsUrl();
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 

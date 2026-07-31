@@ -20,6 +20,8 @@ Configuration du frontend cible via env var `FRONTEND_URL` (défaut
 import hmac
 import logging
 import os
+import socket
+import time as _time
 
 # phase6-sklearn-removal : plus de warning sklearn à filtrer (sklearn supprimé
 # du repo). Le bloc try/except qui suivait est retiré.
@@ -30,7 +32,6 @@ from fastapi.responses import RedirectResponse
 
 # S6-09 : Jinja2Templates et StaticFiles SUPPRIMÉS — fin Jinja2.
 # Le frontend Next.js (frontend/) sert maintenant tout le HTML/CSS/JS.
-
 from app.api import state
 from app.api.helpers import CleanJSONResponse
 from app.api.middleware import setup_middleware
@@ -156,9 +157,6 @@ def prometheus_metrics():
 # répond, on 308 redirect. S'il ne répond pas, on sert une **page d'aide
 # HTML** qui explique comment le démarrer + liens vers /api/docs.
 # Ça donne un retour visible à l'utilisateur au lieu d'un "site inaccessible".
-
-import socket
-import time as _time
 
 _frontend_reachable_cache: dict = {"ts": 0.0, "ok": False}
 _FRONTEND_CHECK_TTL = 60.0  # cache 60s pour éviter un ping par request

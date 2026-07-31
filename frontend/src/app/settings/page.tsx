@@ -94,15 +94,23 @@ function Toggle({
   checked,
   onChange,
   disabled,
+  label,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
+  /**
+   * Nom accessible du switch. Sans lui, le bouton ne contient qu'un `<span>`
+   * décoratif : axe-core levait `button-name` (critical) et un lecteur d'écran
+   * annonçait « bouton, non coché » sans dire de quoi.
+   */
+  label: string;
 }) {
   return (
     <button
       role="switch"
       aria-checked={checked}
+      aria-label={label}
       onClick={() => onChange(!checked)}
       disabled={disabled}
       className={cn(
@@ -273,6 +281,7 @@ export default function SettingsPage() {
               </div>
             </div>
             <Toggle
+              label="Activer le mode expert"
               checked={expertMode}
               onChange={handleExpertMode}
               disabled={setExpertMode.isPending}

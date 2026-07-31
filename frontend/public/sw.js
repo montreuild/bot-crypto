@@ -2,12 +2,26 @@
  * Service Worker — cache offline pour les assets statiques.
  *
  * Stratégie :
- * - Cache-first pour les assets statiques (CSS, JS, fonts, images)
  * - Network-first pour les pages HTML (toujours fraîches si online)
+ * - Network-first pour les bundles `/_next/` (voir ci-dessous)
+ * - Cache-first pour les vrais assets statiques (fonts, images, manifest)
  * - Pas de cache pour /api/* (données toujours fraîches)
+ *
+ * Pourquoi `/_next/` n'est PAS en cache-first :
+ * en développement les chunks ne sont pas hashés (`/_next/static/chunks/app/
+ * bots-v2/page.js` garde le même nom à chaque édition). Le cache-first les
+ * figeait définitivement : le navigateur continuait de servir l'ancien bundle
+ * malgré un redémarrage du serveur et la suppression de `.next`. Le même piège
+ * s'appliquait après un déploiement pour tout client ayant déjà visité le site :
+ * il restait sur l'UI précédente. En production, `/_next/static/` est déjà servi
+ * avec `Cache-Control: immutable` — le cache HTTP fait le travail, le Service
+ * Worker n'apportait rien de plus que le risque.
+ *
+ * `CACHE_NAME` doit être incrémenté à chaque changement de stratégie : le
+ * handler `activate` purge alors les caches aux anciens noms.
  */
 
-const CACHE_NAME = 'crypto-bot-v1';
+const CACHE_NAME = 'crypto-bot-v2';
 const STATIC_ASSETS = [
   '/',
   '/dashboard',
@@ -39,6 +53,22 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws')) return;
   if (url.pathname.startsWith('/_next/webpack-hmr')) return;
+
+  // Bundles applicatifs : toujours le réseau, avec repli sur le cache hors ligne.
+  if (url.pathname.startsWith('/_next/')) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok && response.type === 'basic') {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request)),
+    );
+    return;
+  }
 
   if (request.headers.get('accept')?.includes('text/html')) {
     event.respondWith(

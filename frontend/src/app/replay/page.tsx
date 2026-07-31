@@ -261,6 +261,7 @@ export default function ReplayPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Symbole</label>
               <input
+                aria-label="Symbole"
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value)}
                 placeholder="BTC/USDC"
@@ -270,6 +271,7 @@ export default function ReplayPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Months (0.5-24)</label>
               <input
+                aria-label="Months (0.5-24)"
                 type="number"
                 step={0.5}
                 min={0.5}
@@ -282,6 +284,7 @@ export default function ReplayPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Timeframes (CSV)</label>
               <input
+                aria-label="Timeframes (CSV)"
                 value={timeframes}
                 onChange={(e) => setTimeframes(e.target.value)}
                 placeholder="15m,1h,4h"
@@ -291,6 +294,7 @@ export default function ReplayPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Strategies (CSV ou vide = toutes)</label>
               <input
+                aria-label="Strategies (CSV ou vide = toutes)"
                 value={strategies}
                 onChange={(e) => setStrategies(e.target.value)}
                 placeholder="trend_rider,breakout"

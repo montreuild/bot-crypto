@@ -12,6 +12,13 @@ import type {
   BotStatus, Trade, Bot, SlotBudget, BacktestResult,
   ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
 } from '@/types';
+import {
+  BotStatusSchema, BotsResponseSchema, OosTrackerSchema, MlRecipesResponseSchema,
+  DailyStatsSchema, FeesBreakdownSchema, HealthSchema, UniversesSchema,
+  OptimizeStatusSchema, OptimizeResultsSchema, OptimizeSpacesSchema,
+  MlRegistrySchema, DerivativesDataSchema, SmcSchema, ScannerSignalsSchema,
+  ScannerConfigSchema,
+} from '@/lib/schemas';
 
 /**
  * Toujours relatif : les appels passent par le proxy same-origin
@@ -54,10 +61,27 @@ export function isBackendUnreachable(error: unknown): boolean {
  */
 const DEFAULT_TIMEOUT_MS = 15_000;
 
-type ApiFetchOptions = RequestInit & { timeoutMs?: number };
+/**
+ * `base` permet de sortir du préfixe `/api` pour les rares routes montées à la
+ * racine du backend — aujourd'hui `/health` et `/metrics`, volontairement sans
+ * auth (cf. `app/api/main.py`). `next.config.mjs` proxifie déjà `/health` vers
+ * le backend via `rewrites()`, il n'y a donc rien de plus à câbler.
+ */
+/**
+ * `schema` valide la forme de la réponse. Volontairement **non bloquant** :
+ * en cas d'écart on journalise et on renvoie la donnée brute, plutôt que de
+ * faire échouer la requête. L'objectif est de transformer un crash de page en
+ * avertissement traçable — c'est exactement le scénario qui a fait tomber
+ * `/ml` et le drawer de `/bots-v2` (cf. `schemas.ts`).
+ */
+type ApiFetchOptions = RequestInit & {
+  timeoutMs?: number;
+  base?: string;
+  schema?: { safeParse: (data: unknown) => { success: boolean; data?: unknown; error?: unknown } };
+};
 
 async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Promise<T> {
-  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...init } = options;
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, base = API_BASE, schema, ...init } = options;
 
   // `Content-Type: application/json` sur une requête sans corps suffit à la
   // faire sortir des « simple requests » CORS : le navigateur émet alors un
@@ -74,7 +98,7 @@ async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Pro
 
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${endpoint}`, {
+    res = await fetch(`${base}${endpoint}`, {
       ...init, headers, signal, cache: 'no-store', credentials: 'include',
     });
   } catch (cause) {
@@ -82,8 +106,8 @@ async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Pro
     throw new ApiError(
       0,
       timedOut
-        ? `Backend injoignable sur ${API_BASE || 'origine courante'} — aucune réponse en ${timeoutMs / 1000} s. Le serveur FastAPI est-il démarré ?`
-        : `Backend injoignable sur ${API_BASE || 'origine courante'} — le serveur FastAPI est-il démarré ?`,
+        ? `Backend injoignable sur ${base || 'origine courante'} — aucune réponse en ${timeoutMs / 1000} s. Le serveur FastAPI est-il démarré ?`
+        : `Backend injoignable sur ${base || 'origine courante'} — le serveur FastAPI est-il démarré ?`,
       { cause },
     );
   }
@@ -104,13 +128,33 @@ async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Pro
   }
 
   if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+
+  const payload = await res.json();
+  if (!schema) return payload as T;
+
+  const parsed = schema.safeParse(payload);
+  if (parsed.success) return parsed.data as T;
+
+  // Contrat rompu : on ne casse pas l'UI, mais l'écart doit être visible.
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[api] ${endpoint} : la réponse ne correspond pas au schéma attendu. ` +
+      'Les composants qui en dépendent peuvent se comporter anormalement.',
+    parsed.error,
+  );
+  return payload as T;
 }
 
 export const api = {
   // ── Status / Health ─────────────────────────────────────────────────────
-  getStatus: () => apiFetch<BotStatus>('/status'),
-  getHealth: () => apiFetch<{ status: string; db: boolean; exchange: boolean; trader: boolean }>('/health'),
+  getStatus: () => apiFetch<BotStatus>('/status', { schema: BotStatusSchema }),
+  // `/health` est monté à la RACINE du backend, pas sous `/api` : l'appeler via
+  // le préfixe donnait `/api/health` → 404 systématique, et l'indicateur de
+  // santé de la topbar restait donc éternellement vide.
+  getHealth: () =>
+    apiFetch<{ status: string; db: boolean; exchange: boolean; trader: boolean }>(
+      '/health', { base: '', schema: HealthSchema },
+    ),
 
   // ── Bot control ─────────────────────────────────────────────────────────
   startBot: () => apiFetch<{ status: string }>('/bot/start', { method: 'POST' }),
@@ -138,16 +182,18 @@ export const api = {
     );
   },
   exportTradesCsv: () => `${API_BASE}/trades/export?limit=50000`,
-  getDailyStats: (days = 30) => apiFetch<any[]>(`/stats/daily?days=${days}`),
+  getDailyStats: (days = 30) => apiFetch<any[]>(`/stats/daily?days=${days}`, { schema: DailyStatsSchema }),
+  // S3-F1-US4 — Ventilation des frais (taker/maker/borrow/stop)
+  getFeesBreakdown: (days = 30) => apiFetch<any>(`/stats/fees?days=${days}`, { schema: FeesBreakdownSchema }),
 
   // ── Bots / Portfolio ────────────────────────────────────────────────────
-  getBots: () => apiFetch<{ bots: Bot[]; counts: Record<string, number>; reopt_queue: string[]; thresholds: any }>('/bots'),
+  getBots: () => apiFetch<{ bots: Bot[]; counts: Record<string, number>; reopt_queue: string[]; thresholds: any }>('/bots', { schema: BotsResponseSchema }),
   getPortfolio: () => apiFetch<any>('/portfolio'),
   forceBotActive: (slotKey: string, enabled = true) =>
     apiFetch(`/bots/${encodeURIComponent(slotKey)}/force-active?enabled=${enabled}`, { method: 'POST' }),
   runBotForwardTest: (slotKey: string) =>
     apiFetch(`/bots/${encodeURIComponent(slotKey)}/forward-test`, { method: 'POST', timeoutMs: 0 }),
-  getOosTracker: () => apiFetch<any>('/oos-tracker'),
+  getOosTracker: () => apiFetch<any>('/oos-tracker', { schema: OosTrackerSchema }),
 
   // ── Slots ───────────────────────────────────────────────────────────────
   getSlots: () => apiFetch<{ capital: number; config: any; slots: SlotBudget[] }>('/slots'),
@@ -207,10 +253,47 @@ export const api = {
       body: JSON.stringify(payload),
       timeoutMs: 0,
     }),
+  // S5-F3-US1 — Cancel backtest
+  cancelBacktest: () => apiFetch<{ status: string }>('/backtest/cancel', { method: 'POST' }),
 
   // ── Scanner ─────────────────────────────────────────────────────────────
   fastAnalysis: (symbol: string, tf = '1h') =>
-    apiFetch<any>(`/scanner/fast-analysis?symbol=${encodeURIComponent(symbol)}&tf=${tf}`, { timeoutMs: 0 }),
+    // La route backend est `/api/scanner/fast_analysis` (underscore, cf.
+    // app/api/routes/scanner.py:23). Le tiret utilisé ici renvoyait un 404 :
+    // le bouton « Analyse rapide » de /scanner ne fonctionnait pas.
+    apiFetch<any>(`/scanner/fast_analysis?symbol=${encodeURIComponent(symbol)}&tf=${tf}`, { timeoutMs: 0 }),
+
+  // S8-F4-US1 — Scanner multi-symboles
+  scanMarket: (timeframe = '1h', limit = 50) =>
+    apiFetch<any>(`/scanner?timeframe=${timeframe}&limit=${limit}`),
+  // S8-F4-US2 — Top opportunités
+  getOpportunities: (timeframe = '1h', limit = 10) =>
+    apiFetch<any>(`/scanner/opportunities?timeframe=${timeframe}&limit=${limit}`),
+  // S8-F4-US3 — Setups V11/V12 markers
+  getSetupSeries: (symbol: string, timeframe = '1h', limit = 500, strategy = 'v11') =>
+    apiFetch<any>(`/scanner/setup_series?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}&strategy=${strategy}`),
+  // S8-F4-US4 — Signaux récents : déjà exposé plus bas dans la section
+  // « SMC / Scanner » (`getSignals`). Le redéclarer ici créait une clé dupliquée
+  // dans le littéral d'objet — la seconde définition écrasait celle-ci en
+  // silence et `tsc` échouait (TS1117).
+  // S8-F4-US5 — Config scanner
+  getScannerConfig: () => apiFetch<any>('/scanner/config', { schema: ScannerConfigSchema }),
+
+  // ── Univers ─────────────────────────────────────────────────────────────
+  // S8-F2-US1 — Liste des univers
+  getUniverses: () => apiFetch<any>('/universe', { schema: UniversesSchema }),
+  // S8-F2-US2 — Membres d'un univers
+  getUniverse: (name: string) => apiFetch<any>(`/universe/${encodeURIComponent(name)}`),
+  // S8-F2-US3 — Ajouter/retirer symbole
+  addUniverseSymbol: (universe: string, body: { symbol: string; name?: string; sector?: string; provider_symbol?: string }) =>
+    apiFetch<any>(`/universe/${encodeURIComponent(universe)}/symbols`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  removeUniverseSymbol: (universe: string, symbol: string) =>
+    apiFetch<any>(`/universe/${encodeURIComponent(universe)}/symbols/${encodeURIComponent(symbol)}`, {
+      method: 'DELETE',
+    }),
 
   // ── Data ────────────────────────────────────────────────────────────────
   getDataStatus: () => apiFetch<any>('/data/status'),
@@ -239,7 +322,7 @@ export const api = {
 
   // ── Optimizer ───────────────────────────────────────────────────────────
   getOptimizeStatus: (jobId?: string) =>
-    apiFetch<any>(`/optimize/status${jobId ? `?job_id=${jobId}` : ''}`),
+    apiFetch<any>(`/optimize/status${jobId ? `?job_id=${jobId}` : ''}`, { schema: OptimizeStatusSchema }),
   startOptimize: (params: {
     symbol?: string; symbols?: string; strategies?: string; timeframes?: string;
     method?: string; n_trials?: number; limit?: number; auto_apply?: boolean;
@@ -258,17 +341,23 @@ export const api = {
     apiFetch<any>(`/optimize/cancel?job_id=${jobId}`, { method: 'POST' }),
   deleteOptimizeJob: (jobId: string) =>
     apiFetch<any>(`/optimize/job?job_id=${jobId}`, { method: 'DELETE' }),
-  getOptimizeResults: () => apiFetch<any>('/optimize/results'),
-  getOptimizeSpaces: () => apiFetch<any>('/optimize/spaces'),
+  getOptimizeResults: () => apiFetch<any>('/optimize/results', { schema: OptimizeResultsSchema }),
+  getOptimizeSpaces: () => apiFetch<any>('/optimize/spaces', { schema: OptimizeSpacesSchema }),
   // Same-origin comme le reste : passe par le proxy, donc authentifié.
   optimizeStreamUrl: (jobId: string) => `${API_BASE}/optimize/stream?job_id=${jobId}`,
 
   // ── ML ──────────────────────────────────────────────────────────────────
   getMLStrategyInfo: () => apiFetch<{ strategies: Record<string, any> }>('/ml/strategy-info'),
   getCandlesStats: () => apiFetch<{ store: any }>('/candles/stats'),
+  // S9-F3-US1 — Recettes ML disponibles
+  getMLRecipes: () => apiFetch<{ recipes: any[] }>('/ml/recipes', { schema: MlRecipesResponseSchema }),
+
+  // ── Config (S9-F3-US3 changelog optimizer + S9-F3-US4 test notif) ──────
+  getConfigChangelog: (limit = 100) => apiFetch<any>(`/config/changelog?limit=${limit}`),
+  testNotifications: () => apiFetch<{ status: string }>('/config/notifications/test', { method: 'POST' }),
 
   // ── ML Model Registry (ML-02) ────────────────────────────────────────────
-  getMLRegistry: () => apiFetch<{ models: ModelRegistryEntry[] }>('/ml/registry'),
+  getMLRegistry: () => apiFetch<{ models: ModelRegistryEntry[] }>('/ml/registry', { schema: MlRegistrySchema }),
   getMLRegistryVersions: (tf: string, recipe: string) =>
     apiFetch<{ versions: ModelArtifact[] }>(
       `/ml/registry/versions?${new URLSearchParams({ tf, recipe })}`,
@@ -308,7 +397,7 @@ export const api = {
 
   // ── Derivatives ─────────────────────────────────────────────────────────
   getDerivativesData: (symbol = 'BTC/USDC', period = '1h', limit = 1000, refresh = false) =>
-    apiFetch<any>(`/derivatives/data?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${limit}&refresh=${refresh}`),
+    apiFetch<any>(`/derivatives/data?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${limit}&refresh=${refresh}`, { schema: DerivativesDataSchema }),
   getDerivativesStatus: (symbol = 'BTC/USDC') =>
     apiFetch<any>(`/derivatives/status?symbol=${encodeURIComponent(symbol)}`),
 
@@ -344,9 +433,9 @@ export const api = {
 
   // ── SMC / Scanner ───────────────────────────────────────────────────────
   getSMC: (symbol = 'BTC/USDC', timeframe = '1h', limit = 1000) =>
-    apiFetch<any>(`/scanner/smc?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`),
+    apiFetch<any>(`/scanner/smc?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`, { schema: SmcSchema }),
   getSMCReplay: (symbol = 'BTC/USDC', timeframe = '4h', limit = 800) =>
-    apiFetch<any>(`/scanner/smc_replay?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`),
+    apiFetch<any>(`/scanner/smc_replay?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`, { schema: SmcSchema }),
   getSignals: (symbol = 'BTC/USDC', timeframe = '1h', limit = 300) =>
-    apiFetch<any>(`/scanner/signals?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`),
+    apiFetch<any>(`/scanner/signals?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`, { schema: ScannerSignalsSchema }),
 };

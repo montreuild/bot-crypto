@@ -44,6 +44,15 @@ export function useDailyStats(days = 30) {
   });
 }
 
+// S3-F1-US4 — Ventilation des frais (taker/maker/borrow/stop)
+export function useFeesBreakdown(days = 30) {
+  return useQuery({
+    queryKey: ['feesBreakdown', days],
+    queryFn: () => api.getFeesBreakdown(days),
+    refetchInterval: 60000,
+  });
+}
+
 // ── Bots ────────────────────────────────────────────────────────────────────
 export function useBots() {
   return useQuery({
@@ -92,6 +101,15 @@ export function useSlots() {
   });
 }
 
+// S3-F3-US1 — OOS tracker pour le cône Monte-Carlo par bot.
+export function useOosTracker() {
+  return useQuery({
+    queryKey: ['oos-tracker'],
+    queryFn: api.getOosTracker,
+    refetchInterval: 30000,
+  });
+}
+
 export function useSetSlotBudget() {
   const qc = useQueryClient();
   return useMutation({
@@ -107,6 +125,18 @@ export function useToggleSlot() {
     mutationFn: ({ slotKey, enabled }: { slotKey: string; enabled: boolean }) =>
       api.toggleSlot(slotKey, enabled),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['slots'] }),
+  });
+}
+
+// S4-F2-US1 — Reset slot CB (pour le drawer Mes Bots v2)
+export function useResetSlot() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slotKey: string) => api.resetSlot(slotKey),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['slots'] });
+      qc.invalidateQueries({ queryKey: ['bots'] });
+    },
   });
 }
 
@@ -258,6 +288,13 @@ export function useBacktestSettings() {
 export function useRunBacktest() {
   return useMutation({
     mutationFn: (payload: any) => api.runBacktest(payload),
+  });
+}
+
+// S5-F3-US1 — Cancel backtest (pour le Laboratoire)
+export function useCancelBacktest() {
+  return useMutation({
+    mutationFn: () => api.cancelBacktest(),
   });
 }
 

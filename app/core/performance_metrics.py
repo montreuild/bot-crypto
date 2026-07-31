@@ -18,8 +18,8 @@ Références :
     - CAPM alpha : Sharpe, W. (1964). "Capital Asset Prices."
 """
 import math
-from typing import Optional
 from statistics import mean, stdev
+from typing import Optional
 
 
 def sortino_ratio(returns: list, risk_free_rate: float = 0.0,

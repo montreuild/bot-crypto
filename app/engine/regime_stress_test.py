@@ -23,7 +23,7 @@ Référence :
 import logging
 import math
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import polars as pl
 
@@ -109,8 +109,8 @@ def detect_volatility_regime(df: pl.DataFrame, atr_period: int = 14,
     # ATR simple
     tr = []
     for i in range(1, n):
-        h, l, c_prev = highs[i], lows[i], closes[i - 1]
-        tr.append(max(h - l, abs(h - c_prev), abs(l - c_prev)))
+        h, lo, c_prev = highs[i], lows[i], closes[i - 1]
+        tr.append(max(h - lo, abs(h - c_prev), abs(lo - c_prev)))
     tr = [0.0] + tr
 
     # EMA ATR
