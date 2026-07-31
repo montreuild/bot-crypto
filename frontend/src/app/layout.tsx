@@ -77,7 +77,7 @@ export default function RootLayout({
             {/* S2-F3-US5 — Skip-to-content link pour l'accessibilité clavier */}
             <a
               href="#main-content"
-              className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-primary-500 focus:text-white focus:rounded-md focus:shadow-lg"
+              className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-primary-500 focus:text-background focus:rounded-md focus:shadow-lg"
             >
               Aller au contenu principal
             </a>

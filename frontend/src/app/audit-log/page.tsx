@@ -108,6 +108,7 @@ export default function AuditLogPage() {
           <div>
             <label className="text-xs text-dim block mb-1">Filtre action</label>
             <input
+              aria-label="Filtre action"
               type="text"
               value={actionFilter}
               onChange={(e) => setActionFilter(e.target.value)}
@@ -118,6 +119,7 @@ export default function AuditLogPage() {
           <div>
             <label className="text-xs text-dim block mb-1">Limite</label>
             <select
+              aria-label="Limite"
               value={limit}
               onChange={(e) => setLimit(Number(e.target.value))}
               className="px-3 py-1.5 bg-card-hover border border-border rounded-md text-sm"

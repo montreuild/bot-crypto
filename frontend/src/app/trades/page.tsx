@@ -83,6 +83,7 @@ export default function TradesPage() {
           <div>
             <label className="text-xs text-dim block mb-1">Symbole</label>
             <input
+              aria-label="Symbole"
               type="text"
               value={symbolFilter}
               onChange={(e) => setSymbolFilter(e.target.value)}
@@ -93,6 +94,7 @@ export default function TradesPage() {
           <div>
             <label className="text-xs text-dim block mb-1">Stratégie</label>
             <input
+              aria-label="Stratégie"
               type="text"
               value={strategyFilter}
               onChange={(e) => setStrategyFilter(e.target.value)}
@@ -103,6 +105,7 @@ export default function TradesPage() {
           <div>
             <label className="text-xs text-dim block mb-1">Timeframe</label>
             <select
+              aria-label="Timeframe"
               value={tfFilter}
               onChange={(e) => setTfFilter(e.target.value)}
               className="px-3 py-1.5 bg-card-hover border border-border rounded-md text-sm"
@@ -136,6 +139,7 @@ export default function TradesPage() {
           <div>
             <label className="text-xs text-dim block mb-1">Limite</label>
             <select
+              aria-label="Limite"
               value={limit}
               onChange={(e) => setLimit(Number(e.target.value))}
               className="px-3 py-1.5 bg-card-hover border border-border rounded-md text-sm"

@@ -42,8 +42,12 @@ jobs:
           cache: pip
       - name: Install pip-audit
         run: pip install pip-audit
+      # `--ignore-vuln GHSA-xxxx` était un identifiant placeholder : il ne
+      # masquait rien et laissait croire qu'une exception était en place.
+      # Toute exception future doit porter un vrai identifiant PYSEC/GHSA et la
+      # raison de son acceptation.
       - name: Audit dependencies for CVEs
-        run: pip-audit -r requirements.txt --ignore-vuln GHSA-xxxx  # placeholder for known false positives
+        run: pip-audit -r requirements.txt
 
   frontend:
     runs-on: ubuntu-latest

@@ -43,6 +43,7 @@ export default function ScannerPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Symbole</label>
               <input
+                aria-label="Symbole"
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value)}
                 className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
@@ -51,6 +52,7 @@ export default function ScannerPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Timeframe</label>
               <select
+                aria-label="Timeframe"
                 value={tf}
                 onChange={(e) => setTf(e.target.value)}
                 className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"

@@ -42,7 +42,9 @@ interface ConfirmDialogProps {
 }
 
 const variantClass: Record<Variant, string> = {
-  default: 'bg-primary-500 hover:bg-primary-600 text-white',
+  // Même correction de contraste que `Button` (cf. button.tsx) : blanc sur
+  // primary-500 = 2.43:1, texte sombre = 7.97:1.
+  default: 'bg-primary-500 hover:bg-primary-600 text-background',
   danger: 'bg-red-600 hover:bg-red-700 text-white',
   success: 'bg-emerald-600 hover:bg-emerald-700 text-white',
 };

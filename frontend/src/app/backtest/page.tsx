@@ -65,6 +65,7 @@ export default function BacktestPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Stratégie</label>
               <select
+                aria-label="Stratégie"
                 value={strategy}
                 onChange={(e) => setStrategy(e.target.value)}
                 className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"
@@ -75,6 +76,7 @@ export default function BacktestPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Symbole</label>
               <select
+                aria-label="Symbole"
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value)}
                 className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"
@@ -85,6 +87,7 @@ export default function BacktestPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Timeframe</label>
               <select
+                aria-label="Timeframe"
                 value={timeframe}
                 onChange={(e) => setTimeframe(e.target.value)}
                 className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"
@@ -95,6 +98,7 @@ export default function BacktestPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Bougies</label>
               <select
+                aria-label="Bougies"
                 value={limit}
                 onChange={(e) => setLimit(Number(e.target.value))}
                 className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"

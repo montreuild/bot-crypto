@@ -14,6 +14,11 @@ import {
   MlRecipesResponseSchema,
   FeesBreakdownSchema,
   HealthSchema,
+  OptimizeStatusSchema,
+  OptimizeResultsSchema,
+  OptimizeSpacesSchema,
+  DerivativesDataSchema,
+  MlRegistrySchema,
 } from '@/lib/schemas';
 
 describe('BotStatus', () => {
@@ -111,6 +116,60 @@ describe('MlRecipes', () => {
       recipes: [{ recipe: 'x', features_catalog: ['rsi', 'atr'] }],
     });
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe('Optimize', () => {
+  it('status sans job_id est un dictionnaire indexé par job_id', () => {
+    // `get_all_jobs()` (auto_optimizer.py:208) renvoie un dict — même piège que
+    // oos-tracker. Le confondre avec un tableau casserait la page /optimizer.
+    const parsed = OptimizeStatusSchema.parse({ ab12cd: { job_id: 'ab12cd', status: 'running' } });
+    expect(Array.isArray(parsed)).toBe(false);
+  });
+
+  it('status avec job_id est un job unique', () => {
+    expect(OptimizeStatusSchema.safeParse({ job_id: 'ab12cd', status: 'done' }).success).toBe(true);
+  });
+
+  it('results est un dictionnaire à DEUX niveaux : stratégie -> timeframe', () => {
+    const parsed = OptimizeResultsSchema.parse({ trend_rider: { '1h': { score: 1.2 }, '4h': { score: 0.8 } } });
+    expect(Object.keys(parsed.trend_rider)).toEqual(['1h', '4h']);
+  });
+
+  it('spaces est indexé par nom de stratégie', () => {
+    const parsed = OptimizeSpacesSchema.parse({
+      breakout: { params: {}, timeframes: ['1h', '4h', '1d'], n_combos: 240, is_ml: false },
+    });
+    expect(parsed.breakout.timeframes).toHaveLength(3);
+  });
+});
+
+describe('Derivatives', () => {
+  it('une métrique sans données vaut null, pas un tableau vide', () => {
+    // `_series_payload` (derivatives.py:35) renvoie `None` si la série est vide.
+    // Itérer dessus sans garde plante sur `.time.length`.
+    const parsed = DerivativesDataSchema.parse({
+      symbol: 'BTC/USDC', period: '1h',
+      metrics: { funding: null, open_interest: { time: [1], value: [2.5], count: 1 } },
+    });
+    expect(parsed.metrics.funding).toBeNull();
+    expect(parsed.metrics.open_interest?.value).toEqual([2.5]);
+  });
+
+  it('accepte des valeurs nulles dans une série', () => {
+    expect(
+      DerivativesDataSchema.safeParse({ metrics: { x: { time: [1, 2], value: [1.0, null], count: 2 } } }).success,
+    ).toBe(true);
+  });
+});
+
+describe('MlRegistry', () => {
+  it('accepte un registre vide et un modèle sans version active', () => {
+    expect(MlRegistrySchema.parse({ models: [] }).models).toEqual([]);
+    const p = MlRegistrySchema.parse({
+      models: [{ tf: '1h', recipe: 'v4_polars', n_versions: 3, active: null, pinned_version_id: null }],
+    });
+    expect(p.models[0].active).toBeNull();
   });
 });
 

@@ -181,6 +181,7 @@ export default function DataPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Symbole</label>
               <input
+                aria-label="Symbole"
                 value={manualSymbol}
                 onChange={(e) => setManualSymbol(e.target.value)}
                 placeholder="BTC/USDC"
@@ -190,6 +191,7 @@ export default function DataPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Timeframe</label>
               <select
+                aria-label="Timeframe"
                 value={manualTf}
                 onChange={(e) => setManualTf(e.target.value)}
                 className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"
@@ -233,6 +235,7 @@ export default function DataPage() {
               <div>
                 <label className="text-xs text-dim block mb-1.5">Timeframe</label>
                 <select
+                  aria-label="Timeframe"
                   value={backfillTf}
                   onChange={(e) => setBackfillTf(e.target.value)}
                   className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"
@@ -245,6 +248,7 @@ export default function DataPage() {
               <div>
                 <label className="text-xs text-dim block mb-1.5">Années d&apos;historique</label>
                 <input
+                  aria-label="Années d&apos;historique"
                   type="number"
                   value={backfillYears}
                   onChange={(e) => setBackfillYears(Number(e.target.value))}

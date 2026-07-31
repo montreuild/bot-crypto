@@ -670,6 +670,7 @@ function TrainForm() {
           <div>
             <label className="text-xs text-dim block mb-1.5">Symbole</label>
             <input
+              aria-label="Symbole"
               value={symbol} onChange={(e) => setSymbol(e.target.value)}
               className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
             />
@@ -775,6 +776,7 @@ function SweepForm() {
           <div>
             <label className="text-xs text-dim block mb-1.5">Symbole</label>
             <input
+              aria-label="Symbole"
               value={symbol} onChange={(e) => setSymbol(e.target.value)}
               className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
             />
@@ -786,6 +788,7 @@ function SweepForm() {
           <div>
             <label className="text-xs text-dim block mb-1.5">Fenêtres (barres, CSV)</label>
             <input
+              aria-label="Fenêtres (barres, CSV)"
               value={windowsStr} onChange={(e) => setWindowsStr(e.target.value)}
               className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
             />

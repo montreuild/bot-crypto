@@ -15,6 +15,9 @@ import type {
 import {
   BotStatusSchema, BotsResponseSchema, OosTrackerSchema, MlRecipesResponseSchema,
   DailyStatsSchema, FeesBreakdownSchema, HealthSchema, UniversesSchema,
+  OptimizeStatusSchema, OptimizeResultsSchema, OptimizeSpacesSchema,
+  MlRegistrySchema, DerivativesDataSchema, SmcSchema, ScannerSignalsSchema,
+  ScannerConfigSchema,
 } from '@/lib/schemas';
 
 /**
@@ -274,7 +277,7 @@ export const api = {
   // dans le littéral d'objet — la seconde définition écrasait celle-ci en
   // silence et `tsc` échouait (TS1117).
   // S8-F4-US5 — Config scanner
-  getScannerConfig: () => apiFetch<any>('/scanner/config'),
+  getScannerConfig: () => apiFetch<any>('/scanner/config', { schema: ScannerConfigSchema }),
 
   // ── Univers ─────────────────────────────────────────────────────────────
   // S8-F2-US1 — Liste des univers
@@ -319,7 +322,7 @@ export const api = {
 
   // ── Optimizer ───────────────────────────────────────────────────────────
   getOptimizeStatus: (jobId?: string) =>
-    apiFetch<any>(`/optimize/status${jobId ? `?job_id=${jobId}` : ''}`),
+    apiFetch<any>(`/optimize/status${jobId ? `?job_id=${jobId}` : ''}`, { schema: OptimizeStatusSchema }),
   startOptimize: (params: {
     symbol?: string; symbols?: string; strategies?: string; timeframes?: string;
     method?: string; n_trials?: number; limit?: number; auto_apply?: boolean;
@@ -338,8 +341,8 @@ export const api = {
     apiFetch<any>(`/optimize/cancel?job_id=${jobId}`, { method: 'POST' }),
   deleteOptimizeJob: (jobId: string) =>
     apiFetch<any>(`/optimize/job?job_id=${jobId}`, { method: 'DELETE' }),
-  getOptimizeResults: () => apiFetch<any>('/optimize/results'),
-  getOptimizeSpaces: () => apiFetch<any>('/optimize/spaces'),
+  getOptimizeResults: () => apiFetch<any>('/optimize/results', { schema: OptimizeResultsSchema }),
+  getOptimizeSpaces: () => apiFetch<any>('/optimize/spaces', { schema: OptimizeSpacesSchema }),
   // Same-origin comme le reste : passe par le proxy, donc authentifié.
   optimizeStreamUrl: (jobId: string) => `${API_BASE}/optimize/stream?job_id=${jobId}`,
 
@@ -354,7 +357,7 @@ export const api = {
   testNotifications: () => apiFetch<{ status: string }>('/config/notifications/test', { method: 'POST' }),
 
   // ── ML Model Registry (ML-02) ────────────────────────────────────────────
-  getMLRegistry: () => apiFetch<{ models: ModelRegistryEntry[] }>('/ml/registry'),
+  getMLRegistry: () => apiFetch<{ models: ModelRegistryEntry[] }>('/ml/registry', { schema: MlRegistrySchema }),
   getMLRegistryVersions: (tf: string, recipe: string) =>
     apiFetch<{ versions: ModelArtifact[] }>(
       `/ml/registry/versions?${new URLSearchParams({ tf, recipe })}`,
@@ -394,7 +397,7 @@ export const api = {
 
   // ── Derivatives ─────────────────────────────────────────────────────────
   getDerivativesData: (symbol = 'BTC/USDC', period = '1h', limit = 1000, refresh = false) =>
-    apiFetch<any>(`/derivatives/data?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${limit}&refresh=${refresh}`),
+    apiFetch<any>(`/derivatives/data?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${limit}&refresh=${refresh}`, { schema: DerivativesDataSchema }),
   getDerivativesStatus: (symbol = 'BTC/USDC') =>
     apiFetch<any>(`/derivatives/status?symbol=${encodeURIComponent(symbol)}`),
 
@@ -430,9 +433,9 @@ export const api = {
 
   // ── SMC / Scanner ───────────────────────────────────────────────────────
   getSMC: (symbol = 'BTC/USDC', timeframe = '1h', limit = 1000) =>
-    apiFetch<any>(`/scanner/smc?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`),
+    apiFetch<any>(`/scanner/smc?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`, { schema: SmcSchema }),
   getSMCReplay: (symbol = 'BTC/USDC', timeframe = '4h', limit = 800) =>
-    apiFetch<any>(`/scanner/smc_replay?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`),
+    apiFetch<any>(`/scanner/smc_replay?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`, { schema: SmcSchema }),
   getSignals: (symbol = 'BTC/USDC', timeframe = '1h', limit = 300) =>
-    apiFetch<any>(`/scanner/signals?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`),
+    apiFetch<any>(`/scanner/signals?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`, { schema: ScannerSignalsSchema }),
 };

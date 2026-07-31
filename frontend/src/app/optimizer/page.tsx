@@ -490,6 +490,7 @@ export default function OptimizerPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">Méthode</label>
               <select
+                aria-label="Méthode"
                 value={method}
                 onChange={(e) => setMethod(e.target.value as (typeof METHODS)[number])}
                 className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"
@@ -500,6 +501,7 @@ export default function OptimizerPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">n_trials</label>
               <input
+                aria-label="n_trials"
                 type="number"
                 min={5}
                 max={500}
@@ -511,6 +513,7 @@ export default function OptimizerPage() {
             <div>
               <label className="text-xs text-dim block mb-1.5">n_jobs</label>
               <input
+                aria-label="n_jobs"
                 type="number"
                 min={1}
                 max={16}

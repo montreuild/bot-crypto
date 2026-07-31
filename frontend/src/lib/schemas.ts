@@ -186,6 +186,127 @@ export const UniversesSchema = z
   })
   .passthrough();
 
+// ── /api/optimize/* ─────────────────────────────────────────────────────────
+
+/**
+ * ⚠ Sans `job_id`, `/api/optimize/status` renvoie `get_all_jobs()`, soit un
+ * **dictionnaire indexé par job_id** (app/engine/auto_optimizer.py:208) — même
+ * piège que `oos-tracker`. Avec `job_id`, c'est un job unique.
+ * Les deux formes passent par le même appel côté front, d'où l'union.
+ */
+export const OptimizeJobSchema = z
+  .object({
+    job_id: z.string().optional(),
+    status: z.string().optional(),
+    progress: z.unknown().optional(),
+    error: z.string().nullish(),
+  })
+  .passthrough();
+
+export const OptimizeStatusSchema = z.union([
+  z.record(z.string(), OptimizeJobSchema),
+  OptimizeJobSchema,
+]);
+
+/**
+ * ⚠ Dictionnaire **à deux niveaux** : stratégie → timeframe → entrée
+ * (app/api/routes/optimizer.py:415). Ni l'un ni l'autre n'est un tableau.
+ */
+export const OptimizeResultsSchema = z.record(
+  z.string(),
+  z.record(z.string(), z.unknown()),
+);
+
+/** ⚠ Dictionnaire indexé par nom de stratégie. */
+export const OptimizeSpacesSchema = z.record(
+  z.string(),
+  z
+    .object({
+      params: z.unknown().optional(),
+      timeframes: z.array(z.string()).default([]),
+      n_combos: num,
+      is_ml: z.boolean().optional(),
+    })
+    .passthrough(),
+);
+
+// ── /api/ml/registry ────────────────────────────────────────────────────────
+
+export const MlRegistrySchema = z
+  .object({
+    models: z
+      .array(
+        z
+          .object({
+            tf: z.string().optional(),
+            recipe: z.string().optional(),
+            train_symbol: z.string().nullish(),
+            n_versions: num,
+            active: z.unknown().nullish(),
+            pinned_version_id: z.string().nullish(),
+            freshness_warning: z.unknown().nullish(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
+  .passthrough();
+
+// ── /api/derivatives/* ──────────────────────────────────────────────────────
+
+/**
+ * ⚠ `_series_payload` (app/api/routes/derivatives.py:35) renvoie **`null`**
+ * quand la série est vide. Chaque entrée de `metrics` est donc nullable : la
+ * parcourir sans garde plante sur `.time.length`.
+ */
+export const DerivativesSeriesSchema = z
+  .object({
+    time: z.array(z.number()).default([]),
+    value: z.array(z.number().nullable()).default([]),
+    count: num,
+    first: z.string().optional(),
+    last: z.string().optional(),
+  })
+  .passthrough()
+  .nullable();
+
+export const DerivativesDataSchema = z
+  .object({
+    symbol: z.string().optional(),
+    period: z.string().optional(),
+    metrics: z.record(z.string(), DerivativesSeriesSchema).default({}),
+    price: z
+      .object({ time: z.array(z.number()), close: z.array(z.number()) })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+
+// ── /api/scanner/* (SMC) ────────────────────────────────────────────────────
+
+/**
+ * Les payloads SMC sont volumineux et très variables selon les overlays
+ * activés. On ne verrouille que l'enveloppe : le détail reste `passthrough`,
+ * sinon le schéma deviendrait plus fragile que le code qu'il protège.
+ */
+export const SmcSchema = z
+  .object({
+    symbol: z.string().optional(),
+    timeframe: z.string().optional(),
+    candles: z.array(z.unknown()).optional(),
+  })
+  .passthrough();
+
+export const ScannerSignalsSchema = z
+  .object({ signals: z.array(z.unknown()).optional() })
+  .passthrough();
+
+export const ScannerConfigSchema = z.object({}).passthrough();
+
+// ── /api/replay ─────────────────────────────────────────────────────────────
+
+export const ReplaySchema = z.object({}).passthrough();
+
 export type BotStatusOut = z.infer<typeof BotStatusSchema>;
 export type BotsResponseOut = z.infer<typeof BotsResponseSchema>;
 export type OosTrackerOut = z.infer<typeof OosTrackerSchema>;

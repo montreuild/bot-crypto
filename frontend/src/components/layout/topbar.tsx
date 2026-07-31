@@ -195,6 +195,11 @@ export function Topbar() {
       <button
         onClick={toggleTheme}
         className="p-2 rounded-lg hover:bg-card-hover text-muted hover:text-foreground transition-colors"
+        // Bouton à icône seule : `title` seul est un nom accessible faible
+        // (pas d'infobulle au tactile, restitution inégale selon les lecteurs
+        // d'écran). `aria-label` le rend explicite — le bouton est dans la
+        // topbar, donc sur toutes les pages.
+        aria-label={theme === 'dark' ? 'Passer en mode clair' : 'Passer en mode sombre'}
         title={theme === 'dark' ? 'Passer en mode clair' : 'Passer en mode sombre'}
       >
         {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
