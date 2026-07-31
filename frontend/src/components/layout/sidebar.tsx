@@ -15,12 +15,15 @@ const NAV_GROUPS = [
   {
     label: 'Trading',
     items: [
-      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { href: '/portfolio-v2', label: 'Portefeuille v2', icon: Wallet },
-      { href: '/bots-v2', label: 'Mes Bots v2', icon: Bot },
-      { href: '/bots', label: 'Mes Bots (ancien)', icon: Bot },
+      // S10 — /dashboard et /bots sont désormais en 308 vers les pages v2 :
+      // on pointe directement dessus pour éviter le saut de redirection.
+      { href: '/portfolio-v2', label: 'Portefeuille', icon: Wallet },
+      { href: '/bots-v2', label: 'Mes Bots', icon: Bot },
       { href: '/trades', label: 'Trades', icon: Activity },
-      { href: '/portfolio', label: 'Portefeuille (ancien)', icon: Wallet },
+      // /portfolio garde un journal de notifications et une vue par bot que
+      // /portfolio-v2 ne reprend pas encore — pas de 308 tant que ce n'est pas
+      // porté (cf. docs/audit-ui-ux-bot-crypto.md §Bascule S10).
+      { href: '/portfolio', label: 'Portefeuille (détail)', icon: Wallet },
     ],
   },
   {
@@ -28,7 +31,11 @@ const NAV_GROUPS = [
     items: [
       { href: '/lab', label: 'Laboratoire', icon: Sparkles },
       { href: '/market', label: 'Marché', icon: Network },
-      { href: '/backtest', label: 'Backtest', icon: LineChart },
+      // /backtest est en 308 vers l'onglet Backtest du Laboratoire — seul
+      // onglet du Lab qui soit une vraie réimplémentation. Les entrées
+      // ci-dessous restent nécessaires : les onglets Optimizer / Replay /
+      // Compare du Lab et Smart Graph / Smart Replay / Dérivés du Marché sont
+      // des cartes de renvoi vers ces pages.
       { href: '/scanner', label: 'Scanner', icon: Network },
       { href: '/replay', label: 'Replay', icon: Repeat },
       { href: '/smartgraph', label: 'Smart Graph', icon: CandlestickChart },

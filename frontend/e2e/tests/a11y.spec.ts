@@ -15,11 +15,10 @@ import AxeBuilder from '@axe-core/playwright';
 
 // Pages à tester — liste exhaustive des routes principales
 const PAGES = [
-  { url: '/dashboard', name: 'Dashboard' },
-  { url: '/bots', name: 'Mes Bots' },
+  // S10 — /dashboard, /bots et /backtest sont en 308 vers les pages v2 listées
+  // plus bas : les inclure ici auditerait deux fois la même page.
   { url: '/trades', name: 'Trades' },
   { url: '/portfolio', name: 'Portefeuille' },
-  { url: '/backtest', name: 'Backtest' },
   { url: '/scanner', name: 'Scanner' },
   { url: '/replay', name: 'Replay' },
   { url: '/smartgraph', name: 'Smart Graph' },
@@ -79,7 +78,7 @@ test.describe('Accessibilité WCAG 2.1 AA', () => {
 
 test.describe('Skip-to-content link', () => {
   test('le skip-link est présent et focusable', async ({ page }) => {
-    await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
+    await page.goto('/portfolio-v2', { waitUntil: 'domcontentloaded' });
 
     // Le skip-link est sr-only par défaut, visible au focus
     const skipLink = page.locator('a[href="#main-content"]').first();
@@ -92,7 +91,7 @@ test.describe('Skip-to-content link', () => {
 
 test.describe('Navigation clavier', () => {
   test('Tab passe par tous les éléments interactifs dans l\'ordre', async ({ page }) => {
-    await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
+    await page.goto('/portfolio-v2', { waitUntil: 'domcontentloaded' });
 
     // Premier Tab devrait focus le skip-link (s'il est sr-only focusable)
     await page.keyboard.press('Tab');

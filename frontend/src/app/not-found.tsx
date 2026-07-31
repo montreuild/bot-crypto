@@ -20,22 +20,23 @@ export default function NotFound() {
         Vérifiez l&apos;URL ou revenez à une page connue.
       </p>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-2xl w-full">
+        {/* S10 — cibles v2 directes : /dashboard, /bots et /backtest sont en 308. */}
         <Link
-          href="/dashboard"
+          href="/portfolio-v2"
           className="flex flex-col items-center gap-2 p-4 rounded-lg border border-border bg-card hover:border-primary-400/50 hover:bg-card-hover transition-colors"
         >
           <Home className="w-5 h-5 text-primary-400" />
-          <span className="text-sm">Dashboard</span>
+          <span className="text-sm">Portefeuille</span>
         </Link>
         <Link
-          href="/bots"
+          href="/bots-v2"
           className="flex flex-col items-center gap-2 p-4 rounded-lg border border-border bg-card hover:border-primary-400/50 hover:bg-card-hover transition-colors"
         >
           <Bot className="w-5 h-5 text-primary-400" />
           <span className="text-sm">Mes Bots</span>
         </Link>
         <Link
-          href="/backtest"
+          href="/lab?tab=backtest"
           className="flex flex-col items-center gap-2 p-4 rounded-lg border border-border bg-card hover:border-primary-400/50 hover:bg-card-hover transition-colors"
         >
           <LineChart className="w-5 h-5 text-primary-400" />

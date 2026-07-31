@@ -39,6 +39,33 @@ const nextConfig = {
       { source: '/health', destination: `${process.env.BOT_API_URL || 'http://localhost:8000'}/health` },
     ];
   },
+
+  /**
+   * S10 — Bascule strangler fig : les anciennes routes cèdent la place aux pages
+   * méta. `permanent: true` émet un **308**.
+   *
+   * ⚠ Seules les routes dont la page v2 est un VRAI remplacement figurent ici.
+   * Les 11 autres redirections décrites dans le plan de refonte
+   * (`/optimizer`, `/ml`, `/replay`, `/compare` → `/lab` ;
+   *  `/scanner`, `/smartgraph`, `/smartreplay`, `/derivatives` → `/market` ;
+   *  `/config`, `/settings` → `/settings-v2` ; `/portfolio` → `/portfolio-v2`)
+   * sont VOLONTAIREMENT absentes : les onglets correspondants des pages méta
+   * sont des cartes de renvoi qui pointent vers ces mêmes anciennes pages
+   * (`window.location.href = '/optimizer'`, `RedirectCard href="/smartgraph"`…).
+   * Les poser ici créerait une boucle et rendrait inaccessibles ~4 200 lignes
+   * de fonctionnalités. Voir docs/audit-ui-ux-bot-crypto.md §Bascule S10.
+   *
+   * ⚠ Un 308 est mis en cache durablement par les navigateurs. Repasser en
+   * arrière exige de vider le cache côté client : basculer `permanent` à
+   * `false` (307) tant que la validation utilisateur n'est pas faite.
+   */
+  async redirects() {
+    return [
+      { source: '/dashboard', destination: '/portfolio-v2', permanent: true },
+      { source: '/bots', destination: '/bots-v2', permanent: true },
+      { source: '/backtest', destination: '/lab?tab=backtest', permanent: true },
+    ];
+  },
   // S0-F1-US6 — WebSocket : Next.js ne proxy pas les WS nativement, on laisse
   // le client se connecter directement. En dev, défaut `ws://localhost:8000/ws`.
   // En prod, NEXT_PUBLIC_WS_URL DOIT être définie (sinon build échoue en

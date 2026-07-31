@@ -209,11 +209,12 @@ export function Topbar() {
 // ── Search modal (cmd+K) ────────────────────────────────────────────────────
 
 const SEARCH_PAGES = [
-  { href: '/dashboard', label: 'Dashboard', desc: 'Vue temps réel du trading', keywords: ['live', 'trading', 'positions', 'pnl'] },
-  { href: '/bots', label: 'Mes Bots', desc: 'Portefeuille de stratégies', keywords: ['stratégies', 'lifecycle', 'candidat', 'essai', 'actif'] },
+  // S10 — cibles v2 directes : /dashboard, /bots et /backtest sont en 308.
+  { href: '/portfolio-v2', label: 'Portefeuille', desc: 'Vue consolidée temps réel', keywords: ['live', 'trading', 'positions', 'pnl', 'dashboard', 'allocation', 'frais'] },
+  { href: '/bots-v2', label: 'Mes Bots', desc: 'Portefeuille de stratégies', keywords: ['stratégies', 'lifecycle', 'candidat', 'essai', 'actif', 'kanban'] },
   { href: '/trades', label: 'Trades', desc: 'Historique des trades', keywords: ['historique', 'export', 'csv'] },
-  { href: '/portfolio', label: 'Portefeuille', desc: 'Vue fonds détaillée', keywords: ['allocation', 'shadow', 'lifecycle', 'risk'] },
-  { href: '/backtest', label: 'Backtest', desc: 'Test de stratégies sur données historiques', keywords: ['walk-forward', 'monte-carlo', 'test'] },
+  { href: '/portfolio', label: 'Portefeuille (détail)', desc: 'Vue fonds détaillée + notifications', keywords: ['allocation', 'shadow', 'lifecycle', 'risk', 'notifications'] },
+  { href: '/lab?tab=backtest', label: 'Backtest', desc: 'Test de stratégies sur données historiques', keywords: ['walk-forward', 'monte-carlo', 'test', 'laboratoire'] },
   { href: '/scanner', label: 'Scanner', desc: 'Fast Analyse SMC/ICT', keywords: ['patterns', 'smc', 'ict', 'fvg', 'ob'] },
   { href: '/smartgraph', label: 'Smart Graph', desc: 'Analyse SMC avancée', keywords: ['smc', 'order block', 'liquidity', 'fvg', 'bos', 'choch'] },
   { href: '/smartreplay', label: 'Smart Replay', desc: 'Rejeu bougie par bougie', keywords: ['rejeu', 'smc', 'barre', 'slider', 'play'] },

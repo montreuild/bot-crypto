@@ -1662,14 +1662,14 @@ Aucune modification backend n'a été nécessaire pour les sprints S0-S9. Le bac
 
 ### Stratégie de migration
 
-La stratégie strangler fig a été suivie : les nouvelles pages (`/portfolio-v2`, `/bots-v2`, `/lab`, `/market`, `/settings-v2`) coexistent avec les anciennes. Une fois validées par les utilisateurs, les redirections 308 seront posées :
+La stratégie strangler fig a été suivie : les nouvelles pages (`/portfolio-v2`, `/bots-v2`, `/lab`, `/market`, `/settings-v2`) coexistent avec les anciennes. Le plan initial prévoyait 14 redirections 308 une fois les pages validées :
 - `/dashboard` → `/portfolio-v2` (puis `/portfolio`)
 - `/bots` → `/bots-v2` (puis `/bots`)
 - `/backtest`, `/optimizer`, `/ml`, `/replay`, `/compare` → `/lab`
 - `/scanner`, `/smartgraph`, `/smartreplay`, `/derivatives` → `/market`
 - `/settings`, `/config` → `/settings-v2`
 
-Cette approche permet un rollback facile et une validation utilisateur progressive.
+**3 de ces 14 redirections ont pu être posées.** Les 11 autres sont bloquées : voir §Bascule S10.
 
 ### Prochaines étapes (S10-S12)
 
@@ -1765,9 +1765,7 @@ Corrigées au passage car elles empêchent l'UI de fonctionner :
   (24 pages), mais la suite n'a **pas** été exécutée dans cette revue : elle
   exige les deux serveurs et `npx playwright install`. Résultat WCAG des pages
   v2 donc inconnu à ce stade.
-- **Redirections 308 non posées** : les anciennes pages restent la porte
-  d'entrée (`/` → `/dashboard`). La stratégie strangler fig est donc au milieu
-  du gué — à trancher en S10.
+- **Redirections 308 : 3 posées sur 14** — voir §Bascule S10 ci-dessous.
 - **Réponses d'API non typées** : `api.ts` renvoie `any` partout. C'est la cause
   racine de R15-R17 et le prochain chantier à planifier (schémas zod sur les
   endpoints consommés par les pages v2, au minimum `oos-tracker`, `ml/recipes`,
@@ -1777,3 +1775,74 @@ Corrigées au passage car elles empêchent l'UI de fonctionner :
   et le verdict est toujours « pas assez de trades réels ». L'affichage est
   correct, mais la valeur produit de la visualisation reste à confirmer sur un
   tracker alimenté.
+
+## Annexe — Bascule S10 : redirections 308
+
+### Ce qui a été posé
+
+`frontend/next.config.mjs`, bloc `redirects()` — `permanent: true` émet un 308 :
+
+| Source | Cible | Justification |
+|---|---|---|
+| `/dashboard` | `/portfolio-v2` | `/portfolio-v2` reprend tout `/dashboard` ; `AllocationsGrid` y est remplacé par `AllocationDonut` (segments cliquables + shadow targets) |
+| `/bots` | `/bots-v2` | `/bots-v2` est un sur-ensemble strict — aucun hook ni composant de `/bots` n'y manque |
+| `/backtest` | `/lab?tab=backtest` | L'onglet Backtest du Laboratoire est le **seul** onglet du Lab qui soit une vraie réimplémentation |
+
+`/` pointe désormais sur `/portfolio-v2` (au lieu de `/dashboard`), sans saut de
+redirection intermédiaire. Sidebar, recherche Cmd+K, page 404 et
+`AllocationsGrid` ciblent directement les routes v2.
+
+### Ce qui reste bloqué, et pourquoi
+
+Les 11 autres redirections **ne peuvent pas** être posées en l'état : les
+onglets correspondants des pages méta ne sont pas des implémentations, ce sont
+des **cartes de renvoi vers les anciennes pages**. Poser la 308 créerait une
+boucle et rendrait la fonctionnalité inatteignable.
+
+| Redirection prévue | Blocage constaté | Lignes rendues inaccessibles |
+|---|---|---|
+| `/optimizer` → `/lab` | `OptimizerTab` : bouton « Aller à l'optimiseur existant » → `window.location.href = '/optimizer'` (commentaire du code : « intégration native prévue au Sprint 7 ») | 630 |
+| `/replay` → `/lab` | `ReplayTab` : « Aller au replay existant » → `/replay` | 463 |
+| `/compare` → `/lab` | `CompareTab` : « Aller au comparatif existant » → `/compare` | 517 |
+| `/ml` → `/lab` | `MLTab` : boutons « Modèles ML » → `/ml` et « Registre » → `/models` (« intégration native prévue au Sprint 9 ») | 227 |
+| `/smartgraph` → `/market` | `RedirectCard href="/smartgraph"` | 1 155 |
+| `/smartreplay` → `/market` | `RedirectCard href="/smartreplay"` | 671 |
+| `/derivatives` → `/market` | `RedirectCard href="/derivatives"` | 368 |
+| `/scanner` → `/market` | L'onglet Scanner de `/market` est un teaser 4 symboles + « Aller au scanner complet » → `/scanner` | 137 |
+| `/config` → `/settings-v2` | `/settings-v2` : « Ouvrir la configuration avancée » → `window.location.href = '/config'`. L'éditeur de params par stratégie (`useSetStrategyParams`, `useToggleStrategyTimeframe`) n'existe que sur `/config` | 401 |
+| `/settings` → `/settings-v2` | `/settings` est le **seul** endroit qui enregistre le Service Worker (`navigator.serviceWorker.register('/sw.js')`) et qui demande réellement la permission de notification. Le switch « Notifications navigateur » de `/settings-v2` est un placeholder `defaultChecked` sans handler | 421 |
+| `/portfolio` → `/portfolio-v2` | `/portfolio` porte un journal de notifications (`useNotifications`) et une vue par bot (`useBots`) que `/portfolio-v2` ne reprend pas | 483 |
+
+**Total : ~5 470 lignes** de fonctionnalités qui deviendraient inaccessibles si
+les 11 redirections étaient posées telles quelles.
+
+Autrement dit : le plan de refonte annonce S5-S9 « ✅ Complet », mais les pages
+`/lab` et `/market` sont, pour 8 de leurs 9 onglets, des menus vers l'ancienne
+UI. La fusion annoncée reste à faire.
+
+### Conditions de levée, par lot
+
+1. **Lot Marché** (`/scanner`, `/smartgraph`, `/smartreplay`, `/derivatives`) —
+   porter le contenu des 4 pages dans les onglets de `/market`, supprimer
+   `RedirectCard`, puis poser les 4 redirections. ~2 300 lignes à déplacer ;
+   `/smartgraph` (1 155 l.) est le gros morceau.
+2. **Lot Laboratoire** (`/optimizer`, `/replay`, `/compare`, `/ml`) — idem dans
+   `/lab`. Attention : `/models` (877 l.) n'est pas dans le plan de fusion et
+   doit rester une page à part entière.
+3. **Lot Réglages** (`/config`, `/settings`) — porter l'éditeur de params par
+   stratégie dans l'onglet Capital, câbler pour de bon le switch
+   « Notifications navigateur », et **déplacer l'enregistrement du Service
+   Worker hors de `/settings`** (il ne devrait pas dépendre de la visite d'une
+   page : aujourd'hui un utilisateur qui ne va jamais dans les Réglages n'a
+   jamais de SW).
+4. **Lot Portefeuille** (`/portfolio`) — porter le journal de notifications et
+   la vue par bot dans `/portfolio-v2`.
+
+### Note sur le code 308
+
+Un 308 est une redirection **permanente** : les navigateurs la mettent en cache
+durablement, y compris après retrait côté serveur. Le plan initial affirmait que
+« cette approche permet un rollback facile » — c'est inexact pour un 308. Tant
+que la validation utilisateur des pages v2 n'est pas faite, passer
+`permanent: false` (307) dans `next.config.mjs` conserve un retour arrière
+immédiat, au prix d'un signal SEO plus faible — sans objet pour une UI interne.
