@@ -13,7 +13,6 @@ convergé), mais un **gate après entraînement** : si le modèle ne
 généralise pas, il n'est pas persisté/promu.
 """
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

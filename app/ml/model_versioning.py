@@ -160,8 +160,8 @@ def validate_model_compatibility(
             return True, "modèle ancien sans hash (compat rétroactive)", None, expected_hash
         return (
             False,
-            f"meta.json sans features_hash — refusé en mode strict. "
-            f"Re-entraîner pour ajouter le hash.",
+            "meta.json sans features_hash — refusé en mode strict. "
+            "Re-entraîner pour ajouter le hash.",
             None,
             expected_hash,
         )

@@ -15,9 +15,8 @@ Référence :
     Outperform Out-of-Sample." Journal of Portfolio Management 42(4): 59-69.
 """
 import logging
-import math
-from typing import Dict, List, Optional
 from statistics import mean, stdev
+from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
