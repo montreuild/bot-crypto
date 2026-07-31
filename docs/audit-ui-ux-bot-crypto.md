@@ -1840,13 +1840,32 @@ seconde invention.
   ni `MonteCarloCone`, `AllocationDonut`, `UniverseManager`, `FeesBreakdown`
   n'est testée. Le seuil de couverture de `vitest.config.ts` (60 %) n'est pas
   atteignable en l'état et n'est vérifié par aucune CI.
-- **Tests a11y non exécutés localement** : `e2e/tests/a11y.spec.ts` ne ciblait
-  que les 19 **anciennes** routes. Les 5 pages méta ont été ajoutées (24 pages)
-  et un job CI `a11y` les exécute désormais à chaque PR — mais en
-  `continue-on-error`, car le résultat WCAG des pages v2 n'a jamais été mesuré
-  et rougir la CI sur une dette qu'on découvre n'aurait pas de sens. **Premier
-  arbitrage à faire après le merge : lire le rapport, traiter les violations,
-  puis retirer `continue-on-error`.**
+- **Accessibilité — première mesure disponible.** `a11y.spec.ts` ne ciblait que
+  les 19 anciennes routes ; les 5 pages méta ont été ajoutées (24 pages) et le
+  job CI `a11y` a produit le premier relevé WCAG du projet :
+
+  | Règle axe | Occurrences | Gravité |
+  |---|---|---|
+  | `color-contrast` | 22 | serious |
+  | `select-name` (select sans nom accessible) | 16 | critical |
+  | `label` (champ sans libellé) | 10 | critical |
+  | `scrollable-region-focusable` | 2 | serious |
+  | `button-name` | 2 | critical |
+
+  **Résultat notable : les pages de la refonte sont quasi propres.**
+  `/portfolio-v2`, `/lab`, `/market` et `/settings-v2` passent sans aucune
+  violation ; `/bots-v2` en a **une** (color-contrast, serious). Les 14 pages en
+  défaut sont les anciennes (Scanner, Optimiseur, Registre modèles, Données
+  OHLCV à 3 violations chacune…). Le design system livré en S1-S2 tient donc
+  ses promesses ; la dette est dans l'UI héritée.
+
+  ⚠ Ces chiffres sont mesurés **backend éteint** (les jobs CI ne démarrent que
+  le frontend) : ils portent donc sur l'état d'erreur/vide des pages, pas sur
+  leur état peuplé. Un second relevé avec backend est à prévoir.
+
+  Le job reste en `continue-on-error`. **Prochain arbitrage : traiter les 28
+  violations critical (`select-name`, `label`, `button-name`) — mécaniques et à
+  fort impact lecteur d'écran — puis retirer `continue-on-error`.**
 - **Redirections 308 : 3 posées sur 14** — voir §Bascule S10 ci-dessous.
 - ~~**Réponses d'API non typées**~~ — traité, cf. §Typage des réponses d'API.
   Reste à étendre aux endpoints non couverts (`optimize/*`, `ml/registry`,
