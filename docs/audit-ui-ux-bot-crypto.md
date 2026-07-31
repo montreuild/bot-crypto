@@ -1578,7 +1578,9 @@ Création des composants UI manquants pour cohérence visuelle :
 - **Card bot enrichie** : indicateur de confiance (🟢🟠🔴) basé sur edge CI low + n trades
 - **Drawer latéral** (Radix Dialog) avec synchronisation URL (`?slot=...`)
 - **LifecycleFrieze** : frise de cycle de vie avec 4 étapes et dots colorés animés
-- **MonteCarloCone** : cône IC 95% + ligne sim P50 + ligne live colorée (verdict ok/bad/na)
+- **MonteCarloCone** : bande [P5, P95] + repère sim (moyenne) + repère live coloré
+  (verdict ok/bad/na). Livré en cône temporel contre un contrat d'API inexistant,
+  donc vide pour tous les bots — réécrit sur les agrégats réels (cf. R17)
 - **Hook `useOosTracker`** : consomme `/api/oos-tracker`
 - **Filtre « N'afficher que les bots forcés en actif »** — corrigé après revue : le
   filtre livré (« Voir les bots gelés », `manual_active: false`) inversait la
@@ -1619,6 +1621,8 @@ Création des composants UI manquants pour cohérence visuelle :
 #### Sprint 9 — ML & Registry avancés + Exports (8 SP)
 
 - **MLRecipesList** : liste des recettes LightGBM avec features_catalog, label_scheme, heads
+  (`features_catalog` est un identifiant de catalogue, pas une liste de features —
+  le traiter comme un tableau faisait planter `/ml`, cf. R16)
 - **TestNotificationButton** : test envoi notification in-app
 - **ExportButtons** : composants réutilisables (`JsonExportButton`, `CsvExportButton`, `PdfExportButton`)
 - **3 endpoints consommés** : `/api/ml/recipes`, `/api/config/changelog`, `/api/config/notifications/test`
@@ -1682,7 +1686,15 @@ Les 11 patches ont été rejoués sur `feat/refonte-ui-ux-s0-s9` puis vérifiés
 `tsc --noEmit`, `vitest run`, `next lint`, `next build`, `pytest -m "not slow"`,
 et exécution réelle des 5 pages méta contre le backend FastAPI. Cette annexe
 liste ce que la vérification a trouvé — la série telle que livrée **ne
-compilait pas** (`next build` en échec) et deux pages étaient inutilisables.
+compilait pas** (`next build` en échec), et une fois compilée, `/ml` plantait
+au chargement tandis que le drawer de `/bots-v2` plantait à l'ouverture.
+
+Enseignement transverse : **les erreurs les plus graves (R15-R17) étaient
+invisibles à la compilation**. `api.ts` type toutes ses réponses en `any`, si
+bien que trois composants ont été écrits contre une forme de payload imaginée
+sans que `tsc` ni le build ne bronchent. Seule l'exécution face au vrai backend
+les a révélées. Typer les réponses d'API (zod est déjà une dépendance) est le
+correctif structurel à programmer.
 
 ### Anomalies bloquantes
 
@@ -1705,6 +1717,18 @@ compilait pas** (`next build` en échec) et deux pages étaient inutilisables.
 | R10 | S2 | `test:e2e` / `test:a11y` lançaient `playwright test` depuis `frontend/`, où il n'y a ni binaire ni config (tout est sous `frontend/e2e/`) | Scripts inopérants | `--config e2e/playwright.config.ts` |
 | R11 | S4 | Le patch S4 embarquait un passage `100644 → 100755` sur **519 fichiers** sans rapport (sources Python, YAML de stratégies, `data/*.json`) | Bruit de diff massif, `data/` marqué modifié | Modes rétablis ; `data/` strictement identique à `main` |
 
+### Contrats d'API supposés au lieu d'être vérifiés
+
+Trois composants ont été écrits contre une forme de réponse imaginée. Aucun
+n'était détectable par `tsc` — `api.ts` type tout en `any` — ni par le build :
+il a fallu ouvrir les pages avec le backend en face.
+
+| Réf | Sprint | Constat | Impact | Correctif |
+|---|---|---|---|---|
+| R15 | S4 | `/bots-v2` faisait `oosData.slots.find(...)`, or `/api/oos-tracker` renvoie `slots` comme **dictionnaire** indexé par `slot_key`, pas comme tableau | `TypeError: oosData.slots.find is not a function` — **ouvrir un bot faisait tomber toute la page dans l'ErrorBoundary**. Le drawer (frise de cycle de vie + cône Monte-Carlo), cœur de S4, n'a jamais pu s'afficher | Accès par clé, avec repli tableau si le contrat évolue |
+| R16 | S9 | `MLRecipesList` traitait `features_catalog` comme un tableau de features, or c'est un **identifiant de catalogue** (`"dyn_threshold@1"`) | `TypeError: …slice(...).map is not a function` — **la page `/ml` entière plantait**. Avant le crash, le badge affichait la longueur de la chaîne (« 15 features ») | Affiche l'identifiant du catalogue, le `label_scheme` et les `heads` |
+| R17 | S4 | `MonteCarloCone` attendait des **séries temporelles** (`labels`, `median`, `ci_lower`, `ci_upper`, `live`) pour tracer un cône. L'API ne fournit que des **agrégats scalaires** (`return_p5_pct`, `return_mean_pct`, `return_p95_pct`, `prob_profit`, `max_dd_p95_pct`) | `chartData` toujours vide → « Pas encore de données OOS pour ce bot » affiché pour **tous** les bots, en permanence | Composant réécrit en bande [P5, P95] avec repères sim et live, verdict tiré de `contract.in_band`. Le cône temporel exigerait un nouvel endpoint exposant la trajectoire d'équité par run |
+
 ### Anomalies hors périmètre S0-S9 (préexistantes sur `main`)
 
 Corrigées au passage car elles empêchent l'UI de fonctionner :
@@ -1726,6 +1750,7 @@ Corrigées au passage car elles empêchent l'UI de fonctionner :
 | `pytest -m "not slow"` | ✅ 1392 passés, 3 ignorés — aucune régression backend |
 | Endpoints de l'annexe d'exécution | ✅ 13/13 répondent (`/api/scanner/opportunities` en 503 « Config non chargée » tant que le trader n'est pas démarré — comportement attendu) |
 | Rendu live des 5 pages méta | ✅ `/portfolio-v2`, `/bots-v2`, `/lab`, `/market`, `/settings-v2` — 0 erreur console |
+| Parcours interactifs vérifiés | ✅ drawer `/bots-v2` (frise + bande MC), onglets `/lab` et `/market`, onglet Données de `/settings-v2` (122 symboles SBF 120 listés), `/ml` (7 recettes) |
 
 ### Réserves non traitées
 
@@ -1743,3 +1768,12 @@ Corrigées au passage car elles empêchent l'UI de fonctionner :
 - **Redirections 308 non posées** : les anciennes pages restent la porte
   d'entrée (`/` → `/dashboard`). La stratégie strangler fig est donc au milieu
   du gué — à trancher en S10.
+- **Réponses d'API non typées** : `api.ts` renvoie `any` partout. C'est la cause
+  racine de R15-R17 et le prochain chantier à planifier (schémas zod sur les
+  endpoints consommés par les pages v2, au minimum `oos-tracker`, `ml/recipes`,
+  `bots` et `stats/*`).
+- **Données Monte-Carlo dégénérées** : sur le jeu de données de vérification,
+  les 145 slots ont `P5 = P95` et 0 trade live — la bande se réduit à un point
+  et le verdict est toujours « pas assez de trades réels ». L'affichage est
+  correct, mais la valeur produit de la visualisation reste à confirmer sur un
+  tracker alimenté.

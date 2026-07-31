@@ -47,8 +47,14 @@ export function MLRecipesList() {
           <div className="space-y-3">
             {data.recipes.map((recipe: any) => {
               const trainable = recipe.trainable !== false;
-              const featuresCount = recipe.features_catalog?.length ?? 0;
-              const headsCount = recipe.heads?.length ?? 0;
+              // `features_catalog` est un **identifiant** de catalogue
+              // (« dyn_threshold@1 »), pas la liste des features. La version
+              // livrée le traitait comme un tableau : le badge affichait la
+              // longueur de la chaîne (« 15 features ») et le dépliant
+              // « Voir les features » appelait `.slice().map()` dessus, ce qui
+              // faisait planter toute la page /ml dans l'ErrorBoundary.
+              const heads: string[] = Array.isArray(recipe.heads) ? recipe.heads : [];
+              const headsCount = heads.length;
               return (
                 <div
                   key={recipe.recipe}
@@ -96,34 +102,22 @@ export function MLRecipesList() {
                     </p>
                   )}
 
-                  {/* Stats features + heads */}
+                  {/* Catalogue de features + schéma de labels + heads */}
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Badge variant="muted" className="text-[9px]">
-                      {featuresCount} features
-                    </Badge>
-                    {headsCount > 0 && (
-                      <Badge variant="info" className="text-[9px]">
-                        {headsCount} heads
+                    {recipe.features_catalog && (
+                      <Badge variant="muted" className="text-[9px] font-mono">
+                        {recipe.features_catalog}
                       </Badge>
                     )}
-                    {recipe.features_catalog && recipe.features_catalog.length > 0 && (
-                      <details className="text-[10px] text-muted">
-                        <summary className="cursor-pointer hover:text-foreground">
-                          Voir les features
-                        </summary>
-                        <div className="mt-1 ml-3 flex flex-wrap gap-1">
-                          {recipe.features_catalog.slice(0, 10).map((f: string) => (
-                            <span key={f} className="font-mono text-[9px] text-dim bg-card-hover px-1 py-0.5 rounded">
-                              {f}
-                            </span>
-                          ))}
-                          {recipe.features_catalog.length > 10 && (
-                            <span className="text-[9px] text-dim">
-                              +{recipe.features_catalog.length - 10} autres
-                            </span>
-                          )}
-                        </div>
-                      </details>
+                    {recipe.label_scheme && (
+                      <Badge variant="purple" className="text-[9px] font-mono">
+                        {recipe.label_scheme}
+                      </Badge>
+                    )}
+                    {headsCount > 0 && (
+                      <Badge variant="info" className="text-[9px]">
+                        {heads.join(' · ')}
+                      </Badge>
                     )}
                   </div>
                 </div>

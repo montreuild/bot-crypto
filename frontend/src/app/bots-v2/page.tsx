@@ -141,9 +141,19 @@ function BotsV2Content() {
 
   // Bot sélectionné (pour drawer)
   const selectedBot = bots.find((b) => b.slot_key === selectedSlotKey);
-  const selectedOosSlot = selectedSlotKey && oosData?.slots
-    ? oosData.slots.find((s: any) => s.slot_key === selectedSlotKey)
-    : undefined;
+  // `/api/oos-tracker` renvoie `slots` sous forme de **dictionnaire** indexé par
+  // slot_key, pas de tableau. Le `.find()` d'origine levait donc
+  // « oosData.slots.find is not a function » : ouvrir un bot faisait tomber
+  // toute la page dans l'ErrorBoundary — le drawer (frise + cône Monte-Carlo),
+  // c'est-à-dire le cœur de S4, n'a jamais pu s'afficher. On gère les deux
+  // formes pour rester robuste si le contrat évolue.
+  const selectedOosSlot = (() => {
+    const slots = oosData?.slots;
+    if (!selectedSlotKey || !slots) return undefined;
+    return Array.isArray(slots)
+      ? slots.find((s: any) => s.slot_key === selectedSlotKey)
+      : slots[selectedSlotKey];
+  })();
 
   const handleCardClick = (bot: Bot) => {
     setDrawerOpen(true);
