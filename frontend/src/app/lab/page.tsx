@@ -18,7 +18,7 @@
  *  - /api/backtest (pour compare)
  */
 
-import { useState, Suspense } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,7 +30,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Switch } from '@/components/ui/switch';
 import { QueryBoundary } from '@/components/ui/query-state';
 import { useBacktestSettings, useRunBacktest, useCancelBacktest } from '@/hooks/use-api';
-import { useConfig } from '@/hooks/use-api';
+import { useConfig, usePresets, useSetExpertMode } from '@/hooks/use-api';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
@@ -55,13 +55,29 @@ function LabContent() {
   const intent = searchParams.get('intent'); // 'create' si arrivé depuis /bots-v2
   const [tab, setTab] = useState(initialTab);
 
-  // Mode expert — lu depuis localStorage (synchro avec /settings)
-  const [expertMode, setExpertMode] = useState(false);
-  useState(() => {
-    if (typeof window !== 'undefined') {
-      setExpertMode(localStorage.getItem('expert_mode') === 'true');
+  // Mode expert — source de vérité = le backend (`/api/settings/presets`), comme
+  // sur /settings-v2. Cette page lisait auparavant uniquement `localStorage`, via
+  // un `useState(initializer)` détourné en effet : le flag divergeait dès que le
+  // mode expert était basculé depuis /settings (qui n'écrit que côté backend), et
+  // repartait à `false` sur un autre navigateur. localStorage n'est plus qu'un
+  // cache d'affichage le temps que la requête réponde.
+  const presetsQuery = usePresets();
+  const setExpertModeMutation = useSetExpertMode();
+  const [localExpert, setLocalExpert] = useState(false);
+  useEffect(() => {
+    setLocalExpert(localStorage.getItem('expert_mode') === 'true');
+  }, []);
+  const expertMode = presetsQuery.data ? !!presetsQuery.data.expert_mode : localExpert;
+
+  const handleExpertToggle = async (checked: boolean) => {
+    setLocalExpert(checked);
+    localStorage.setItem('expert_mode', String(checked));
+    try {
+      await setExpertModeMutation.mutateAsync(checked);
+    } catch (e: any) {
+      toast.error(`Mode expert non enregistré : ${e.message}`);
     }
-  });
+  };
 
   const header = (
     <div className="flex items-end justify-between flex-wrap gap-4">
@@ -81,12 +97,7 @@ function LabContent() {
         <label className="flex items-center gap-2 text-xs cursor-pointer">
           <Switch
             checked={expertMode}
-            onCheckedChange={(checked) => {
-              setExpertMode(checked);
-              if (typeof window !== 'undefined') {
-                localStorage.setItem('expert_mode', String(checked));
-              }
-            }}
+            onCheckedChange={handleExpertToggle}
             aria-label="Mode expert"
           />
           <span className="text-muted">Mode expert</span>

@@ -34,6 +34,16 @@ const PAGES = [
   { url: '/models', name: 'Registre modèles' },
   { url: '/config', name: 'Configuration' },
   { url: '/settings', name: 'Réglages' },
+
+  // Pages méta issues de la refonte S3-S6. Elles étaient absentes de cette
+  // liste alors qu'elles concentrent l'essentiel du nouveau code (kanban,
+  // drawer, tabs, donut, dialogues de confirmation) : ce sont précisément
+  // celles dont l'accessibilité n'avait jamais été vérifiée.
+  { url: '/portfolio-v2', name: 'Portefeuille v2' },
+  { url: '/bots-v2', name: 'Mes Bots v2' },
+  { url: '/lab', name: 'Laboratoire' },
+  { url: '/market', name: 'Marché' },
+  { url: '/settings-v2', name: 'Réglages v2' },
 ];
 
 test.describe('Accessibilité WCAG 2.1 AA', () => {

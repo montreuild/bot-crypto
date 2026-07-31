@@ -11,7 +11,7 @@
  *  - Drawer latéral au clic sur une card (Radix Dialog side variant)
  *    contenant : frise cycle de vie + cône Monte-Carlo + actions contextuelles
  *  - Bouton « Recruter un nouveau bot » → redirige vers /lab?intent=create
- *  - Filtre « Gelés » (bots manual_active: false)
+ *  - Filtre « forcés en actif » (bots manual_active: true)
  *  - Kanban 4 colonnes (Candidats/Essai/Actifs/Retirés) + filtre
  */
 
@@ -70,7 +70,14 @@ function BotsV2Content() {
   const { data: oosData } = oosQuery;
 
   const [filter, setFilter] = useState<string>('all');
-  const [showFrozen, setShowFrozen] = useState(false);
+  // `manual_active` (cf. app/api/routes/portfolio.py:152) vaut `true` quand le
+  // slot est FORCÉ en actif via `lifecycle.manual_active` — `false` est donc
+  // l'état normal de tout bot piloté par le cycle de vie automatique, pas un
+  // « gel ». Le filtre d'origine (`showFrozen`) masquait par défaut tout bot
+  // `manual_active !== true` : sur un déploiement réel (240 candidats, aucun
+  // forçage) le kanban s'affichait entièrement vide alors que l'en-tête
+  // annonçait « 240 candidats ». On expose maintenant la sémantique réelle.
+  const [onlyForced, setOnlyForced] = useState(false);
 
   // Slot sélectionné via URL (?slot=...) ou clic sur card
   const selectedSlotKey = searchParams.get('slot');
@@ -91,6 +98,32 @@ function BotsV2Content() {
     </div>
   );
 
+  // Ces useMemo étaient placés APRÈS le retour anticipé `if (!data)` ci-dessous.
+  // Au premier render (requête en vol) React n'enregistrait donc pas ces deux
+  // hooks, puis les voyait apparaître une fois les données arrivées : « Rendered
+  // more hooks than during the previous render » — la page plantait dès que
+  // /api/bots répondait. Tous les hooks sont maintenant appelés inconditionnellement.
+  // `bots` est mémoïsé pour rester une référence stable en dépendance.
+  const bots = useMemo<Bot[]>(() => data?.bots || [], [data]);
+
+  // Filtres : état + override manuel
+  const filtered = useMemo(() => {
+    let result = filter === 'all' ? bots : bots.filter((b) => b.state === filter);
+    if (onlyForced) {
+      result = result.filter((b) => b.manual_active === true);
+    }
+    return result;
+  }, [bots, filter, onlyForced]);
+
+  // Grouper par colonne (kanban)
+  const botsByColumn = useMemo(() => {
+    const map: Record<string, Bot[]> = { candidat: [], essai: [], actif: [], retire: [] };
+    filtered.forEach((b) => {
+      if (map[b.state]) map[b.state].push(b);
+    });
+    return map;
+  }, [filtered]);
+
   if (!data) {
     return (
       <QueryBoundary
@@ -104,26 +137,7 @@ function BotsV2Content() {
     );
   }
 
-  const bots = data.bots || [];
   const counts = data.counts || {};
-
-  // Filtres : état + gelés
-  const filtered = useMemo(() => {
-    let result = filter === 'all' ? bots : bots.filter((b) => b.state === filter);
-    if (!showFrozen) {
-      result = result.filter((b) => b.manual_active !== false || b.state === 'actif');
-    }
-    return result;
-  }, [bots, filter, showFrozen]);
-
-  // Grouper par colonne (kanban)
-  const botsByColumn = useMemo(() => {
-    const map: Record<string, Bot[]> = { candidat: [], essai: [], actif: [], retire: [] };
-    filtered.forEach((b) => {
-      if (map[b.state]) map[b.state].push(b);
-    });
-    return map;
-  }, [filtered]);
 
   // Bot sélectionné (pour drawer)
   const selectedBot = bots.find((b) => b.slot_key === selectedSlotKey);
@@ -203,16 +217,18 @@ function BotsV2Content() {
         })}
       </div>
 
-      {/* Toggle « Voir les gelés » */}
+      {/* Toggle « forçage manuel » */}
       <div className="flex items-center gap-3 text-xs">
         <label className="flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"
-            checked={showFrozen}
-            onChange={(e) => setShowFrozen(e.target.checked)}
+            checked={onlyForced}
+            onChange={(e) => setOnlyForced(e.target.checked)}
             className="rounded border-border"
           />
-          <span className="text-muted">Voir les bots gelés (manual_active: false)</span>
+          <span className="text-muted">
+            N&apos;afficher que les bots forcés en actif (override manuel)
+          </span>
         </label>
       </div>
 
@@ -254,7 +270,7 @@ function BotsV2Content() {
         <EmptyState
           icon={AlertCircle}
           label="Aucun bot dans cet état"
-          description="Essayez un autre filtre ou activez « Voir les bots gelés »"
+          description="Essayez un autre filtre ou décochez « bots forcés en actif »"
         />
       )}
 
@@ -282,8 +298,8 @@ function BotsV2Content() {
                   }>
                     {lifecycleStyle(selectedBot.state).label}
                   </Badge>
-                  {selectedBot.manual_active === false && (
-                    <Badge variant="muted">Gelé manuellement</Badge>
+                  {selectedBot.manual_active === true && (
+                    <Badge variant="warning">Forcé en actif (manuel)</Badge>
                   )}
                 </DialogDescription>
               </DialogHeader>

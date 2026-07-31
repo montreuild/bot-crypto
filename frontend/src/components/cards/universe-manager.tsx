@@ -261,7 +261,9 @@ export function UniverseManager() {
           confirmLabel="Retirer"
           variant="danger"
           isLoading={removeSymbol.isPending}
-          onConfirm={() => removeTarget && removeSymbol.mutate(removeTarget)}
+          onConfirm={() => {
+            if (removeTarget) removeSymbol.mutate(removeTarget);
+          }}
         />
       </CardContent>
     </Card>

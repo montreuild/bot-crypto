@@ -3,10 +3,15 @@
 import { cn } from '@/lib/utils';
 import { HTMLAttributes } from 'react';
 
-type Variant = 'default' | 'success' | 'danger' | 'warning' | 'info' | 'purple';
+type Variant = 'default' | 'muted' | 'success' | 'danger' | 'warning' | 'info' | 'purple';
 
 const variants: Record<Variant, string> = {
   default: 'bg-card-hover text-foreground border-border',
+  // Badge neutre atténué — utilisé pour les états passifs (« Gelé manuellement »,
+  // « Expert requis », compteurs de features). Introduit en S4/S6/S9 sans avoir
+  // été déclaré ici : `variants[variant]` renvoyait `undefined` et le badge
+  // s'affichait sans aucun style.
+  muted: 'bg-card-hover/60 text-dim border-border',
   success: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
   danger: 'bg-red-500/10 text-red-400 border-red-500/30',
   warning: 'bg-amber-500/10 text-amber-400 border-amber-500/30',

@@ -1580,13 +1580,19 @@ Création des composants UI manquants pour cohérence visuelle :
 - **LifecycleFrieze** : frise de cycle de vie avec 4 étapes et dots colorés animés
 - **MonteCarloCone** : cône IC 95% + ligne sim P50 + ligne live colorée (verdict ok/bad/na)
 - **Hook `useOosTracker`** : consomme `/api/oos-tracker`
-- **Filtre « Voir les bots gelés »**
+- **Filtre « N'afficher que les bots forcés en actif »** — corrigé après revue : le
+  filtre livré (« Voir les bots gelés », `manual_active: false`) inversait la
+  sémantique du champ et masquait par défaut la totalité du kanban (cf. §Revue
+  d'intégration, R6)
 
 #### Sprint 5 — Page Laboratoire (14 SP)
 
 - **Page `/lab`** : fusion Backtest + Optimizer + ML + Replay + Compare en 5 tabs
 - **Composant `Verdict`** : analyse le résultat et produit un message lisible (« Edge significatif sur trend_rider avec 47 trades, Sharpe 1.8... »)
-- **Mode expert opt-in** : toggle Switch dans topbar, persisté dans localStorage
+- **Mode expert opt-in** : toggle Switch dans l'en-tête de `/lab` (et non dans la
+  topbar globale) + section « Préférences UI » de `/settings-v2`. Source de
+  vérité = `GET /api/settings/presets` (`expert_mode`) depuis la revue
+  d'intégration ; `localStorage` ne sert plus que de cache d'affichage (cf. R7)
 - **Bouton « Créer le bot (Essai) »** si verdict positif
 - **Hook `useCancelBacktest`** + `api.cancelBacktest`
 
@@ -1669,3 +1675,71 @@ Les sprints restants du plan (S10-S12) concernent l'industrialisation :
 - **S12** : Conformité PSAN (AMF), restriction géographique IP US, analytics opt-in (reporté)
 
 Ces sprints sont moins urgents que S0-S9 (qui traitaient les bugs P1 et la dette design system) et peuvent être planifiés après validation utilisateur des 5 pages méta.
+
+## Annexe — Revue d'intégration des patches S0-S9
+
+Les 11 patches ont été rejoués sur `feat/refonte-ui-ux-s0-s9` puis vérifiés :
+`tsc --noEmit`, `vitest run`, `next lint`, `next build`, `pytest -m "not slow"`,
+et exécution réelle des 5 pages méta contre le backend FastAPI. Cette annexe
+liste ce que la vérification a trouvé — la série telle que livrée **ne
+compilait pas** (`next build` en échec) et deux pages étaient inutilisables.
+
+### Anomalies bloquantes
+
+| Réf | Sprint | Constat | Impact | Correctif |
+|---|---|---|---|---|
+| R1 | S4 | `useMemo` appelés **après** le retour anticipé `if (!data)` dans `/bots-v2` | `next build` échoue (`react-hooks/rules-of-hooks`) ; en dev, « Rendered more hooks than during the previous render » dès que `/api/bots` répond → page morte | Hooks remontés avant le retour anticipé ; `bots` mémoïsé |
+| R2 | S1 | `@radix-ui/react-accordion` importé par `components/ui/accordion.tsx` mais absent de `package.json` | Build impossible sur une installation propre | Dépendance déclarée (`^1.2.2`) |
+| R3 | S2/S8/S9 | `package-lock.json` jamais régénéré malgré 7 nouvelles devDependencies | `npm ci` échoue en CI | Lockfile régénéré (`npm install`) |
+| R4 | S8 | `getSignals` déclaré deux fois dans le littéral `api` (l. 229 et 391) | `tsc` échoue (TS1117) ; la 2ᵉ définition écrasait la 1ʳᵉ | Doublon S8 supprimé |
+| R5 | S4/S6/S9 | `<Badge variant="muted">` utilisé 4 fois, variante jamais déclarée | `tsc` échoue ; `variants[variant]` valait `undefined` → badge sans style | Variante `muted` ajoutée à `Badge` |
+
+### Anomalies fonctionnelles
+
+| Réf | Sprint | Constat | Impact | Correctif |
+|---|---|---|---|---|
+| R6 | S4 | Le filtre « gelés » lisait `manual_active: false` comme « bot gelé ». Le backend (`app/api/routes/portfolio.py:152`) pose `manual_active = slot ∈ lifecycle.manual_active`, soit « **forcé en actif** » — `false` est l'état normal | Sur le déploiement réel (240 candidats, 0 forçage) le kanban s'affichait **entièrement vide** sous un en-tête « 240 candidats » | Filtre inversé en « n'afficher que les bots forcés en actif », badge drawer corrigé |
+| R7 | S5/S7 | `/lab` lisait le mode expert **uniquement** dans `localStorage`, via un `useState(initializer)` détourné en effet, alors que `/settings-v2` et `/settings` écrivent côté backend | Mode expert divergent entre les pages, perdu d'un navigateur à l'autre | `/lab` lit `usePresets()` et écrit via `useSetExpertMode()` ; `localStorage` = cache d'affichage |
+| R8 | S3 | `HealthBanner` testait `status.paper_mode` sans repli. Tant que le trader n'est pas démarré, `/api/status` ne renvoie que `{status: "not_started"}` | Le bandeau annonçait « 🔴 Mode live » sur un bot à l'arrêt, en contradiction avec le badge « PAPER » de la topbar juste au-dessus | Repli `?? true` aligné sur la topbar ; le mode n'est plus affirmé quand il est inconnu |
+| R9 | S2 | Les 2 tests unitaires livrés sur `Button` affirmaient `bg-red-600` et `h-10`, valeurs absentes du composant réel | `vitest run` échouait (2/9) — la suite n'avait jamais été exécutée | Assertions alignées sur l'implémentation (`bg-red-500/10`, `h-12`) |
+| R10 | S2 | `test:e2e` / `test:a11y` lançaient `playwright test` depuis `frontend/`, où il n'y a ni binaire ni config (tout est sous `frontend/e2e/`) | Scripts inopérants | `--config e2e/playwright.config.ts` |
+| R11 | S4 | Le patch S4 embarquait un passage `100644 → 100755` sur **519 fichiers** sans rapport (sources Python, YAML de stratégies, `data/*.json`) | Bruit de diff massif, `data/` marqué modifié | Modes rétablis ; `data/` strictement identique à `main` |
+
+### Anomalies hors périmètre S0-S9 (préexistantes sur `main`)
+
+Corrigées au passage car elles empêchent l'UI de fonctionner :
+
+| Réf | Constat | Impact | Correctif |
+|---|---|---|---|
+| R12 | `public/sw.js` appliquait un **cache-first permanent** à tout GET non-HTML, `CACHE_NAME` figé à `crypto-bot-v1` | Le Service Worker servait indéfiniment les anciens bundles : après déploiement, un utilisateur ayant déjà ouvert l'app **ne voit jamais la refonte**. Reproduit pendant la revue : redémarrage serveur + suppression de `.next` + onglet neuf servaient toujours l'ancien code | `/_next/` passé en network-first, `CACHE_NAME` → `crypto-bot-v2` (purge les caches obsolètes à l'activation) |
+| R13 | `api.getHealth()` appelait `/api/health` ; la route est montée à la **racine** (`app/api/main.py:108`), volontairement sans auth | 404 systématique — l'indicateur de santé de la topbar restait vide | Option `base` sur `apiFetch` ; `getHealth` cible `/health` (déjà proxifié par `next.config.mjs`) |
+| R14 | `api.fastAnalysis()` appelait `/scanner/fast-analysis` ; la route est `/api/scanner/fast_analysis` | 404 — le bouton « Analyse rapide » de `/scanner` ne fonctionnait pas | Chemin corrigé |
+
+### État de vérification après correctifs
+
+| Contrôle | Résultat |
+|---|---|
+| `tsc --noEmit` | ✅ 0 erreur (6 avant) |
+| `vitest run` | ✅ 9/9 (7/9 avant) |
+| `next lint` | ✅ 0 warning, 0 erreur |
+| `next build` | ✅ 28 routes générées (échec avant) |
+| `pytest -m "not slow"` | ✅ 1392 passés, 3 ignorés — aucune régression backend |
+| Endpoints de l'annexe d'exécution | ✅ 13/13 répondent (`/api/scanner/opportunities` en 503 « Config non chargée » tant que le trader n'est pas démarré — comportement attendu) |
+| Rendu live des 5 pages méta | ✅ `/portfolio-v2`, `/bots-v2`, `/lab`, `/market`, `/settings-v2` — 0 erreur console |
+
+### Réserves non traitées
+
+- **Couverture de tests** : la refonte ajoute ~5 000 lignes de TSX pour 9 tests
+  unitaires portant sur `Button`/`Badge`/`Card`/`cn`. Aucune des 5 pages méta,
+  ni `MonteCarloCone`, `AllocationDonut`, `UniverseManager`, `FeesBreakdown`
+  n'est testée. Le seuil de couverture de `vitest.config.ts` (60 %) n'est pas
+  atteignable en l'état et n'est vérifié par aucune CI.
+- **Tests a11y non exécutés** : `e2e/tests/a11y.spec.ts` ne ciblait que les 19
+  **anciennes** routes — aucune des 5 pages v2, c'est-à-dire l'essentiel du
+  nouveau code, n'était vérifiée. Les 5 pages méta ont été ajoutées à la liste
+  (24 pages), mais la suite n'a **pas** été exécutée dans cette revue : elle
+  exige les deux serveurs et `npx playwright install`. Résultat WCAG des pages
+  v2 donc inconnu à ce stade.
+- **Redirections 308 non posées** : les anciennes pages restent la porte
+  d'entrée (`/` → `/dashboard`). La stratégie strangler fig est donc au milieu
+  du gué — à trancher en S10.

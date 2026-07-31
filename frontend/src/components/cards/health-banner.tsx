@@ -38,6 +38,15 @@ export function HealthBanner({ status, portfolio, expert = false }: HealthBanner
   const pnlPct = status.total_pnl_pct ?? 0;
   const isPositive = pnl >= 0;
   const isRunning = status.status === 'running';
+  // Tant que le trader n'est pas démarré, `/api/status` ne renvoie que
+  // `{status: "not_started"}` : `paper_mode` est alors `undefined`. Le tester
+  // directement faisait tomber le bandeau dans la branche « Mode live » et
+  // affichait le point rouge — annonçant du trading réel alors que la topbar,
+  // juste au-dessus, affichait « PAPER » (elle applique `?? true`). On aligne
+  // le repli défensif sur celui de la topbar, et on n'affirme rien quand
+  // l'information est réellement absente.
+  const paperMode = status.paper_mode ?? true;
+  const modeKnown = status.paper_mode !== undefined;
 
   // Détection des alertes
   const hasCircuitBreaker = status.circuit_breaker_active;
@@ -69,7 +78,7 @@ export function HealthBanner({ status, portfolio, expert = false }: HealthBanner
   } else if (!isRunning) {
     icon = <Activity className="w-5 h-5 text-muted" />;
     tone = 'neutral';
-    message = `Bot à l'arrêt. ${status.paper_mode ? 'Mode paper.' : 'Mode live.'} Démarre le trader pour reprendre.`;
+    message = `Bot à l'arrêt.${modeKnown ? (paperMode ? ' Mode paper.' : ' Mode live.') : ''} Démarre le trader pour reprendre.`;
   } else if (isPositive) {
     icon = <TrendingUp className="w-5 h-5 text-emerald-400" />;
     tone = 'positive';
@@ -107,7 +116,7 @@ export function HealthBanner({ status, portfolio, expert = false }: HealthBanner
           tone === 'negative' && 'text-red-400',
           tone === 'alert' && 'text-amber-400',
         )}>
-          {status.paper_mode ? '📝 ' : '🔴 '}
+          {paperMode ? '📝 ' : '🔴 '}
         </span>
         <span className="text-foreground">{message}</span>
       </p>

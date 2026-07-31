@@ -11,6 +11,7 @@ export * from './card';
 export * from './accordion';
 export * from './confirm-dialog';
 export * from './dialog';
+export * from './export-buttons';
 export * from './input';
 export * from './label';
 export * from './query-state';

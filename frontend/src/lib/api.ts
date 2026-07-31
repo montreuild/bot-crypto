@@ -54,10 +54,16 @@ export function isBackendUnreachable(error: unknown): boolean {
  */
 const DEFAULT_TIMEOUT_MS = 15_000;
 
-type ApiFetchOptions = RequestInit & { timeoutMs?: number };
+/**
+ * `base` permet de sortir du préfixe `/api` pour les rares routes montées à la
+ * racine du backend — aujourd'hui `/health` et `/metrics`, volontairement sans
+ * auth (cf. `app/api/main.py`). `next.config.mjs` proxifie déjà `/health` vers
+ * le backend via `rewrites()`, il n'y a donc rien de plus à câbler.
+ */
+type ApiFetchOptions = RequestInit & { timeoutMs?: number; base?: string };
 
 async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Promise<T> {
-  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...init } = options;
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, base = API_BASE, ...init } = options;
 
   // `Content-Type: application/json` sur une requête sans corps suffit à la
   // faire sortir des « simple requests » CORS : le navigateur émet alors un
@@ -74,7 +80,7 @@ async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Pro
 
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${endpoint}`, {
+    res = await fetch(`${base}${endpoint}`, {
       ...init, headers, signal, cache: 'no-store', credentials: 'include',
     });
   } catch (cause) {
@@ -82,8 +88,8 @@ async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Pro
     throw new ApiError(
       0,
       timedOut
-        ? `Backend injoignable sur ${API_BASE || 'origine courante'} — aucune réponse en ${timeoutMs / 1000} s. Le serveur FastAPI est-il démarré ?`
-        : `Backend injoignable sur ${API_BASE || 'origine courante'} — le serveur FastAPI est-il démarré ?`,
+        ? `Backend injoignable sur ${base || 'origine courante'} — aucune réponse en ${timeoutMs / 1000} s. Le serveur FastAPI est-il démarré ?`
+        : `Backend injoignable sur ${base || 'origine courante'} — le serveur FastAPI est-il démarré ?`,
       { cause },
     );
   }
@@ -110,7 +116,13 @@ async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Pro
 export const api = {
   // ── Status / Health ─────────────────────────────────────────────────────
   getStatus: () => apiFetch<BotStatus>('/status'),
-  getHealth: () => apiFetch<{ status: string; db: boolean; exchange: boolean; trader: boolean }>('/health'),
+  // `/health` est monté à la RACINE du backend, pas sous `/api` : l'appeler via
+  // le préfixe donnait `/api/health` → 404 systématique, et l'indicateur de
+  // santé de la topbar restait donc éternellement vide.
+  getHealth: () =>
+    apiFetch<{ status: string; db: boolean; exchange: boolean; trader: boolean }>(
+      '/health', { base: '' },
+    ),
 
   // ── Bot control ─────────────────────────────────────────────────────────
   startBot: () => apiFetch<{ status: string }>('/bot/start', { method: 'POST' }),
@@ -214,7 +226,10 @@ export const api = {
 
   // ── Scanner ─────────────────────────────────────────────────────────────
   fastAnalysis: (symbol: string, tf = '1h') =>
-    apiFetch<any>(`/scanner/fast-analysis?symbol=${encodeURIComponent(symbol)}&tf=${tf}`, { timeoutMs: 0 }),
+    // La route backend est `/api/scanner/fast_analysis` (underscore, cf.
+    // app/api/routes/scanner.py:23). Le tiret utilisé ici renvoyait un 404 :
+    // le bouton « Analyse rapide » de /scanner ne fonctionnait pas.
+    apiFetch<any>(`/scanner/fast_analysis?symbol=${encodeURIComponent(symbol)}&tf=${tf}`, { timeoutMs: 0 }),
 
   // S8-F4-US1 — Scanner multi-symboles
   scanMarket: (timeframe = '1h', limit = 50) =>
@@ -225,9 +240,10 @@ export const api = {
   // S8-F4-US3 — Setups V11/V12 markers
   getSetupSeries: (symbol: string, timeframe = '1h', limit = 500, strategy = 'v11') =>
     apiFetch<any>(`/scanner/setup_series?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}&strategy=${strategy}`),
-  // S8-F4-US4 — Signaux récents
-  getSignals: (symbol: string, timeframe = '1h', limit = 300) =>
-    apiFetch<any>(`/scanner/signals?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`),
+  // S8-F4-US4 — Signaux récents : déjà exposé plus bas dans la section
+  // « SMC / Scanner » (`getSignals`). Le redéclarer ici créait une clé dupliquée
+  // dans le littéral d'objet — la seconde définition écrasait celle-ci en
+  // silence et `tsc` échouait (TS1117).
   // S8-F4-US5 — Config scanner
   getScannerConfig: () => apiFetch<any>('/scanner/config'),
 

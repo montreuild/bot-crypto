@@ -22,7 +22,7 @@ describe('Button', () => {
     expect(screen.getByRole('button')).toHaveClass('bg-primary-500');
 
     rerender(<Button variant="danger">Danger</Button>);
-    expect(screen.getByRole('button')).toHaveClass('bg-red-600');
+    expect(screen.getByRole('button')).toHaveClass('bg-red-500/10');
   });
 
   it('applique les sizes correctement', () => {
@@ -30,7 +30,7 @@ describe('Button', () => {
     expect(screen.getByRole('button')).toHaveClass('h-8');
 
     rerender(<Button size="lg">Large</Button>);
-    expect(screen.getByRole('button')).toHaveClass('h-10');
+    expect(screen.getByRole('button')).toHaveClass('h-12');
   });
 
   it('désactive le bouton avec disabled', () => {
