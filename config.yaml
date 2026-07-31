@@ -246,7 +246,21 @@ lifecycle:
   # (app/core/stats_thresholds.py). Ancienne valeur : 2 (bruit statistique).
   fidelity_min_fills: 10
   manual_active:
-    - breakout::1d
+    - fft_spectral::1d
+    - ml_dynamic_threshold::1h
+    - ml_dynamic_threshold::4h
+    - multi_tf_sr::1d
+    - opus_omnibus_v10_no_ml::1h
+    - opus_omnibus_v11::30m
+    - opus_omnibus_v12::30m
+    - opus_omnibus_v8_no_ml::1h
+    - pullback_trend::1h
+    - scoring_statistique_opus::1h
+    - scoring_statistique_opus_v2::4h
+    - snowball_pyramid::1h
+    - snowball_pyramid::30m
+    - tvr_trend::1h
+    - tvr_trend::30m
   min_active_bots: 2
   max_demotions_per_day: 2
   auto_reopt: false
