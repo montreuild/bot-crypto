@@ -64,10 +64,26 @@ test.describe('Accessibilité WCAG 2.1 AA', () => {
       );
 
       if (significantViolations.length > 0) {
-        console.log(`\n❌ ${page.name} — ${significantViolations.length} violation(s):`);
+        // `violations.length` compte des RÈGLES, pas des éléments : une seule
+        // « violation » peut porter sur des dizaines de nœuds. Sans le détail
+        // par nœud, le rapport CI indique quelle règle échoue mais pas où —
+        // ce qui rend la correction impossible sans rejouer axe localement.
+        console.log(`\n❌ ${page.name} — ${significantViolations.length} règle(s) en défaut:`);
         for (const v of significantViolations) {
           console.log(`  - [${v.impact}] ${v.id}: ${v.description}`);
           console.log(`    Help: ${v.helpUrl}`);
+          console.log(`    ${v.nodes.length} élément(s) concerné(s) :`);
+          for (const node of v.nodes.slice(0, 5)) {
+            console.log(`      · ${node.target.join(' ')}`);
+            console.log(`        ${node.html.slice(0, 160)}`);
+            // `failureSummary` donne les valeurs mesurées (ex. ratio de
+            // contraste constaté vs attendu) — c'est ce qui manquait pour
+            // corriger sans deviner.
+            if (node.failureSummary) {
+              console.log(`        ${node.failureSummary.replace(/\n/g, '\n        ')}`);
+            }
+          }
+          if (v.nodes.length > 5) console.log(`      … et ${v.nodes.length - 5} autre(s)`);
         }
       }
 
