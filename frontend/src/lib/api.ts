@@ -12,6 +12,10 @@ import type {
   BotStatus, Trade, Bot, SlotBudget, BacktestResult,
   ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
 } from '@/types';
+import {
+  BotStatusSchema, BotsResponseSchema, OosTrackerSchema, MlRecipesResponseSchema,
+  DailyStatsSchema, FeesBreakdownSchema, HealthSchema, UniversesSchema,
+} from '@/lib/schemas';
 
 /**
  * Toujours relatif : les appels passent par le proxy same-origin
@@ -60,10 +64,21 @@ const DEFAULT_TIMEOUT_MS = 15_000;
  * auth (cf. `app/api/main.py`). `next.config.mjs` proxifie déjà `/health` vers
  * le backend via `rewrites()`, il n'y a donc rien de plus à câbler.
  */
-type ApiFetchOptions = RequestInit & { timeoutMs?: number; base?: string };
+/**
+ * `schema` valide la forme de la réponse. Volontairement **non bloquant** :
+ * en cas d'écart on journalise et on renvoie la donnée brute, plutôt que de
+ * faire échouer la requête. L'objectif est de transformer un crash de page en
+ * avertissement traçable — c'est exactement le scénario qui a fait tomber
+ * `/ml` et le drawer de `/bots-v2` (cf. `schemas.ts`).
+ */
+type ApiFetchOptions = RequestInit & {
+  timeoutMs?: number;
+  base?: string;
+  schema?: { safeParse: (data: unknown) => { success: boolean; data?: unknown; error?: unknown } };
+};
 
 async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Promise<T> {
-  const { timeoutMs = DEFAULT_TIMEOUT_MS, base = API_BASE, ...init } = options;
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, base = API_BASE, schema, ...init } = options;
 
   // `Content-Type: application/json` sur une requête sans corps suffit à la
   // faire sortir des « simple requests » CORS : le navigateur émet alors un
@@ -110,18 +125,32 @@ async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Pro
   }
 
   if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+
+  const payload = await res.json();
+  if (!schema) return payload as T;
+
+  const parsed = schema.safeParse(payload);
+  if (parsed.success) return parsed.data as T;
+
+  // Contrat rompu : on ne casse pas l'UI, mais l'écart doit être visible.
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[api] ${endpoint} : la réponse ne correspond pas au schéma attendu. ` +
+      'Les composants qui en dépendent peuvent se comporter anormalement.',
+    parsed.error,
+  );
+  return payload as T;
 }
 
 export const api = {
   // ── Status / Health ─────────────────────────────────────────────────────
-  getStatus: () => apiFetch<BotStatus>('/status'),
+  getStatus: () => apiFetch<BotStatus>('/status', { schema: BotStatusSchema }),
   // `/health` est monté à la RACINE du backend, pas sous `/api` : l'appeler via
   // le préfixe donnait `/api/health` → 404 systématique, et l'indicateur de
   // santé de la topbar restait donc éternellement vide.
   getHealth: () =>
     apiFetch<{ status: string; db: boolean; exchange: boolean; trader: boolean }>(
-      '/health', { base: '' },
+      '/health', { base: '', schema: HealthSchema },
     ),
 
   // ── Bot control ─────────────────────────────────────────────────────────
@@ -150,18 +179,18 @@ export const api = {
     );
   },
   exportTradesCsv: () => `${API_BASE}/trades/export?limit=50000`,
-  getDailyStats: (days = 30) => apiFetch<any[]>(`/stats/daily?days=${days}`),
+  getDailyStats: (days = 30) => apiFetch<any[]>(`/stats/daily?days=${days}`, { schema: DailyStatsSchema }),
   // S3-F1-US4 — Ventilation des frais (taker/maker/borrow/stop)
-  getFeesBreakdown: (days = 30) => apiFetch<any>(`/stats/fees?days=${days}`),
+  getFeesBreakdown: (days = 30) => apiFetch<any>(`/stats/fees?days=${days}`, { schema: FeesBreakdownSchema }),
 
   // ── Bots / Portfolio ────────────────────────────────────────────────────
-  getBots: () => apiFetch<{ bots: Bot[]; counts: Record<string, number>; reopt_queue: string[]; thresholds: any }>('/bots'),
+  getBots: () => apiFetch<{ bots: Bot[]; counts: Record<string, number>; reopt_queue: string[]; thresholds: any }>('/bots', { schema: BotsResponseSchema }),
   getPortfolio: () => apiFetch<any>('/portfolio'),
   forceBotActive: (slotKey: string, enabled = true) =>
     apiFetch(`/bots/${encodeURIComponent(slotKey)}/force-active?enabled=${enabled}`, { method: 'POST' }),
   runBotForwardTest: (slotKey: string) =>
     apiFetch(`/bots/${encodeURIComponent(slotKey)}/forward-test`, { method: 'POST', timeoutMs: 0 }),
-  getOosTracker: () => apiFetch<any>('/oos-tracker'),
+  getOosTracker: () => apiFetch<any>('/oos-tracker', { schema: OosTrackerSchema }),
 
   // ── Slots ───────────────────────────────────────────────────────────────
   getSlots: () => apiFetch<{ capital: number; config: any; slots: SlotBudget[] }>('/slots'),
@@ -249,7 +278,7 @@ export const api = {
 
   // ── Univers ─────────────────────────────────────────────────────────────
   // S8-F2-US1 — Liste des univers
-  getUniverses: () => apiFetch<any>('/universe'),
+  getUniverses: () => apiFetch<any>('/universe', { schema: UniversesSchema }),
   // S8-F2-US2 — Membres d'un univers
   getUniverse: (name: string) => apiFetch<any>(`/universe/${encodeURIComponent(name)}`),
   // S8-F2-US3 — Ajouter/retirer symbole
@@ -318,7 +347,7 @@ export const api = {
   getMLStrategyInfo: () => apiFetch<{ strategies: Record<string, any> }>('/ml/strategy-info'),
   getCandlesStats: () => apiFetch<{ store: any }>('/candles/stats'),
   // S9-F3-US1 — Recettes ML disponibles
-  getMLRecipes: () => apiFetch<{ recipes: any[] }>('/ml/recipes'),
+  getMLRecipes: () => apiFetch<{ recipes: any[] }>('/ml/recipes', { schema: MlRecipesResponseSchema }),
 
   // ── Config (S9-F3-US3 changelog optimizer + S9-F3-US4 test notif) ──────
   getConfigChangelog: (limit = 100) => apiFetch<any>(`/config/changelog?limit=${limit}`),

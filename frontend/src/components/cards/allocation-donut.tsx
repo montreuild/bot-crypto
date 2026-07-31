@@ -8,8 +8,9 @@
  */
 
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useMemo } from 'react';
 import { formatPct } from '@/lib/utils';
 import type { SlotBudget } from '@/types';
@@ -26,7 +27,11 @@ const COLORS = [
   '#84cc16', '#06b6d4', '#6366f1', '#d946ef',
 ];
 
+/** Fiche du bot correspondant — le drawer de /bots-v2 s'ouvre sur `?slot=`. */
+const slotHref = (slotKey: string) => `/bots-v2?slot=${encodeURIComponent(slotKey)}`;
+
 export function AllocationDonut({ slots, capital, shadowAllocation }: AllocationDonutProps) {
+  const router = useRouter();
   const data = useMemo(() => {
     if (!slots || slots.length === 0) return [];
     return slots
@@ -75,12 +80,17 @@ export function AllocationDonut({ slots, capital, shadowAllocation }: Allocation
                   paddingAngle={2}
                   dataKey="value"
                 >
+                  {/* S3-F1-US3 — « segments cliquables ». Seule la légende
+                      l'était : les `Cell` n'avaient aucun handler, alors même
+                      que `slotKey` était déjà transporté dans les données. */}
                   {chartData.map((entry, idx) => (
                     <Cell
                       key={`cell-${idx}`}
                       fill={entry.color}
                       stroke="#0a0e14"
                       strokeWidth={1.5}
+                      className={entry.slotKey ? 'cursor-pointer focus:outline-none' : undefined}
+                      onClick={entry.slotKey ? () => router.push(slotHref(entry.slotKey!)) : undefined}
                     />
                   ))}
                 </Pie>
@@ -114,7 +124,7 @@ export function AllocationDonut({ slots, capital, shadowAllocation }: Allocation
             {data.map((d, i) => (
               <Link
                 key={d.slotKey}
-                href={`/bots?slot=${encodeURIComponent(d.slotKey)}`}
+                href={slotHref(d.slotKey)}
                 className="flex items-center gap-2 text-xs hover:bg-card-hover rounded px-1.5 py-0.5 transition-colors"
               >
                 <span

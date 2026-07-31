@@ -1673,10 +1673,46 @@ La stratégie strangler fig a été suivie : les nouvelles pages (`/portfolio-v2
 
 ### Prochaines étapes (S10-S12)
 
-Les sprints restants du plan (S10-S12) concernent l'industrialisation :
-- **S10** : Tests visuels (Chromatic/Storybook), CI GitHub Actions, page d'accueil → /portfolio-v2
+- **S10** — ✅ réalisé, cf. §Sprint 10 ci-dessous.
 - **S11** : Onboarding utilisateur (tour guidé 5 pages), i18n EN complet
 - **S12** : Conformité PSAN (AMF), restriction géographique IP US, analytics opt-in (reporté)
+
+#### Sprint 10 — Industrialisation
+
+**Page d'accueil → `/portfolio-v2`** : `/` pointe directement sur la page méta,
+sans passer par la 308 de `/dashboard`. Les 3 redirections posables le sont
+(cf. §Bascule S10) ; les 11 autres restent bloquées par les onglets en carte de
+renvoi.
+
+**CI GitHub Actions** — le workflow existant couvrait ruff, pytest, pip-audit,
+lint/type-check/build frontend et un smoke e2e. Trois manques comblés :
+
+| Job | Ajout | Bloquant ? |
+|---|---|---|
+| `frontend` | `npm test` (Vitest) — **la suite unitaire n'était jouée nulle part** ; celle livrée en S2 échouait à 7/9 sans que rien ne l'attrape. Elle couvre aussi les contrats d'API | oui |
+| `e2e` | Le filtre passe à `loads\|redirige\|reste accessible` : les 11 routes volontairement non redirigées sont désormais surveillées — leur perte serait invisible autrement | oui |
+| `a11y` | Nouveau job : axe-core WCAG 2.1 AA sur les 24 pages | non (`continue-on-error`) |
+| `visual` | Nouveau job : régression visuelle | non (`continue-on-error`) |
+
+**Tests visuels — substitution assumée à Chromatic/Storybook.** Le plan citait
+« Chromatic/Storybook ». Storybook ajoute ~40 paquets et une seconde arborescence
+de composants à maintenir ; Chromatic exige un compte externe, un token en secret
+CI et publie les captures chez un tiers — pour une UI de trading interne, c'est
+un coût et une surface d'exposition disproportionnés.
+`e2e/tests/visual.spec.ts` utilise `toHaveScreenshot()` de Playwright, déjà
+présent : même besoin couvert, références versionnées dans le dépôt, aucune
+dépendance nouvelle. Couvre les 5 pages méta plus le drawer de `/bots-v2` (le
+composant qui a le plus souffert pendant S0-S9), avec masquage des zones
+volatiles — le test doit détecter un changement de mise en page, pas une
+variation de marché.
+
+⚠ **Les références visuelles sont générées par plateforme** (`-linux.png`,
+`-win32.png`) : celles produites sous Windows ne valent pas sous l'ubuntu-latest
+de la CI. Le job `visual` est donc en `continue-on-error` et publie les captures
+en artefact. **À faire après le premier run CI** : récupérer l'artefact
+`visual-snapshots`, committer les `.png` sous
+`frontend/e2e/tests/visual.spec.ts-snapshots/`, puis retirer
+`continue-on-error`. Tant que ce n'est pas fait, le job ne protège de rien.
 
 Ces sprints sont moins urgents que S0-S9 (qui traitaient les bugs P1 et la dette design system) et peuvent être planifiés après validation utilisateur des 5 pages méta.
 
@@ -1752,6 +1788,51 @@ Corrigées au passage car elles empêchent l'UI de fonctionner :
 | Rendu live des 5 pages méta | ✅ `/portfolio-v2`, `/bots-v2`, `/lab`, `/market`, `/settings-v2` — 0 erreur console |
 | Parcours interactifs vérifiés | ✅ drawer `/bots-v2` (frise + bande MC), onglets `/lab` et `/market`, onglet Données de `/settings-v2` (122 symboles SBF 120 listés), `/ml` (7 recettes) |
 
+### Seconde passe : reprise exhaustive des 47 livrables S0-S9
+
+Une vérification livrable par livrable (et non plus sprint par sprint) a été
+menée après les correctifs R1-R17. **45 des 47 livrables annoncés sont bien
+présents.** Deux ne l'étaient pas :
+
+| Réf | Sprint | Constat | Correctif |
+|---|---|---|---|
+| R18 | S3 | `AllocationDonut` était annoncé avec des « segments cliquables » et son en-tête indiquait « Clique sur un segment → redirige vers la fiche bot ». Seule la **légende** était cliquable ; les `Cell` du `PieChart` n'avaient aucun handler, alors même que `slotKey` était déjà transporté dans les données | `onClick` posé sur les `Cell` + curseur ; la légende et les segments pointent désormais sur `/bots-v2?slot=` (ils visaient `/bots`, la route héritée) |
+| R19 | S9 | `ExportButtons` (`JsonExportButton`, `CsvExportButton`, `PdfExportButton`) était livré et son en-tête annonçait « Utilisé par : page backtest, page audit, page compare » — **il n'était monté nulle part**, donc entièrement mort | Monté sur `/audit` (CSV + JSON des résultats OOS, filtre appliqué) et sur l'onglet Backtest de `/lab` (JSON du résultat + CSV par stratégie) |
+
+`PdfExportButton` reste volontairement non monté : c'est un placeholder qui
+affiche « à implémenter (jsPDF + html2canvas) ». L'exposer reviendrait à donner
+à l'utilisateur un bouton mort.
+
+Tous les autres livrables ont été vérifiés présents, y compris ceux qui n'avaient
+pas été contrôlés lors de la première passe : les 7 wrappers Radix, les 4 patterns
+de Skeleton, la prop `skeleton` de `QueryBoundary`, les extensions d'`EmptyState`,
+les 5 tokens Tailwind, les 3 viewports Playwright, les pages 404/erreur, la
+migration de `window.confirm`, le composant `Verdict`, `useCancelBacktest`, le
+journal des signaux avec rejets et filtre par raison, les hints de `FeesBreakdown`,
+le bouton « Acquitter » de `HaltBanner`, et les 9 endpoints scanner/univers.
+
+### Typage des réponses d'API (cause racine de R15-R17)
+
+`frontend/src/lib/schemas.ts` introduit des schémas zod sur les endpoints
+consommés par les pages v2 : `status`, `bots`, `oos-tracker`, `ml/recipes`,
+`stats/daily`, `stats/fees`, `health`, `universe`.
+
+Principe retenu : **validation permissive et non bloquante**. Les schémas sont
+en `.passthrough()` avec des champs très majoritairement optionnels — le but
+n'est pas de rejeter les réponses du backend mais de garantir la forme des
+champs que l'UI manipule (un tableau reste un tableau, un dictionnaire reste un
+dictionnaire). En cas d'écart, `apiFetch` journalise un avertissement `[api]` et
+renvoie la donnée brute : on préfère une UI dégradée à une UI qui plante.
+
+`frontend/src/lib/__tests__/schemas.test.ts` verrouille les trois contrats qui
+avaient réellement cassé une page (11 tests), avec les payloads copiés des
+réponses réelles du backend — dont les tests négatifs qui rejettent les formes
+supposées à tort (`slots` en tableau, `features_catalog` en tableau).
+
+Vérifié en exécution : aucun avertissement `[api]` sur les pages v2 face au
+backend réel, ce qui confirme que les schémas décrivent le backend et non une
+seconde invention.
+
 ### Réserves non traitées
 
 - **Couverture de tests** : la refonte ajoute ~5 000 lignes de TSX pour 9 tests
@@ -1759,17 +1840,17 @@ Corrigées au passage car elles empêchent l'UI de fonctionner :
   ni `MonteCarloCone`, `AllocationDonut`, `UniverseManager`, `FeesBreakdown`
   n'est testée. Le seuil de couverture de `vitest.config.ts` (60 %) n'est pas
   atteignable en l'état et n'est vérifié par aucune CI.
-- **Tests a11y non exécutés** : `e2e/tests/a11y.spec.ts` ne ciblait que les 19
-  **anciennes** routes — aucune des 5 pages v2, c'est-à-dire l'essentiel du
-  nouveau code, n'était vérifiée. Les 5 pages méta ont été ajoutées à la liste
-  (24 pages), mais la suite n'a **pas** été exécutée dans cette revue : elle
-  exige les deux serveurs et `npx playwright install`. Résultat WCAG des pages
-  v2 donc inconnu à ce stade.
+- **Tests a11y non exécutés localement** : `e2e/tests/a11y.spec.ts` ne ciblait
+  que les 19 **anciennes** routes. Les 5 pages méta ont été ajoutées (24 pages)
+  et un job CI `a11y` les exécute désormais à chaque PR — mais en
+  `continue-on-error`, car le résultat WCAG des pages v2 n'a jamais été mesuré
+  et rougir la CI sur une dette qu'on découvre n'aurait pas de sens. **Premier
+  arbitrage à faire après le merge : lire le rapport, traiter les violations,
+  puis retirer `continue-on-error`.**
 - **Redirections 308 : 3 posées sur 14** — voir §Bascule S10 ci-dessous.
-- **Réponses d'API non typées** : `api.ts` renvoie `any` partout. C'est la cause
-  racine de R15-R17 et le prochain chantier à planifier (schémas zod sur les
-  endpoints consommés par les pages v2, au minimum `oos-tracker`, `ml/recipes`,
-  `bots` et `stats/*`).
+- ~~**Réponses d'API non typées**~~ — traité, cf. §Typage des réponses d'API.
+  Reste à étendre aux endpoints non couverts (`optimize/*`, `ml/registry`,
+  `replay`, `derivatives`, `smc`), au fil des besoins plutôt que d'un bloc.
 - **Données Monte-Carlo dégénérées** : sur le jeu de données de vérification,
   les 145 slots ont `P5 = P95` et 0 trade live — la bande se réduit à un point
   et le verdict est toujours « pas assez de trades réels ». L'affichage est

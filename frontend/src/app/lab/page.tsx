@@ -29,6 +29,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { QueryBoundary } from '@/components/ui/query-state';
+import { CsvExportButton, JsonExportButton } from '@/components/ui/export-buttons';
 import { useBacktestSettings, useRunBacktest, useCancelBacktest } from '@/hooks/use-api';
 import { useConfig, usePresets, useSetExpertMode } from '@/hooks/use-api';
 import { api } from '@/lib/api';
@@ -461,10 +462,30 @@ function BacktestResults({ result, expertMode }: { result: any; expertMode: bool
   const byStrategy = r?.by_strategy || {};
   const strategies = Object.entries(byStrategy);
 
+  // S9-F4-US3/5 — Export du résultat de backtest. Les composants existaient
+  // mais n'étaient montés nulle part.
+  const csvRows = strategies.map(([name, stats]: [string, any]) => ({ strategy: name, ...stats }));
+
   return (
     <div className="space-y-4">
       {/* Verdict en clair */}
       <Verdict result={result} />
+
+      <div className="flex items-center justify-end gap-2">
+        <CsvExportButton
+          filename="backtest"
+          rows={csvRows}
+          headers={{
+            strategy: 'Stratégie',
+            total_trades: 'Trades',
+            win_rate: 'Win rate',
+            total_pnl: 'PnL',
+            sharpe: 'Sharpe',
+            max_drawdown: 'Max DD',
+          }}
+        />
+        <JsonExportButton filename="backtest" data={result} />
+      </div>
 
       {/* KPIs par stratégie */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">

@@ -9,9 +9,12 @@
  *  - ExportPdfButton : placeholder pour future implémentation jsPDF
  *
  * Utilisé par :
- *  - Page backtest (export JSON complet du résultat)
- *  - Page audit (export CSV)
- *  - Page compare (export CSV)
+ *  - `/lab`, onglet Backtest (JSON complet du résultat + CSV par stratégie)
+ *  - `/audit` (CSV et JSON des résultats OOS, filtre appliqué)
+ *
+ * `PdfExportButton` n'est monté nulle part : c'est un placeholder qui affiche
+ * « à implémenter ». Le brancher reviendrait à exposer un bouton mort à
+ * l'utilisateur. À monter une fois jsPDF + html2canvas réellement câblés.
  */
 
 import { Button } from '@/components/ui/button';
