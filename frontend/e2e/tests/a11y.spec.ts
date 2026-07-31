@@ -54,6 +54,20 @@ test.describe('Accessibilité WCAG 2.1 AA', () => {
       // Laisser le temps aux queries de se résoudre
       await browser.waitForTimeout(1000);
 
+      // Les pages entrent en `animate-fade-in`. Sans neutralisation, axe
+      // échantillonne une frame intermédiaire et mesure une couleur fondue :
+      // le même bouton ressortait à 3.12, 3.25 puis 3.81 selon les exécutions,
+      // alors que son état stabilisé est conforme. On fige les animations pour
+      // mesurer l'état réellement présenté à l'utilisateur.
+      await browser.addStyleTag({
+        content: `*, *::before, *::after {
+          animation-duration: 0s !important;
+          animation-delay: 0s !important;
+          transition-duration: 0s !important;
+        }`,
+      });
+      await browser.waitForTimeout(200);
+
       const results = await new AxeBuilder({ page: browser })
         .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
         .analyze();

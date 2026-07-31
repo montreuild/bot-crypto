@@ -86,7 +86,13 @@ export default function RootLayout({
               <div className="flex-1 flex flex-col overflow-hidden">
                 <Topbar />
                 <ApiStatusBanner />
-                <main id="main-content" className="flex-1 overflow-y-auto p-4 md:p-6">
+                {/* `tabIndex={0}` : `<main>` défile (`overflow-y-auto`) et doit
+                    donc être atteignable au clavier — sinon son contenu est
+                    inaccessible à la molette près quand la page ne contient
+                    aucun élément focusable (axe : scrollable-region-focusable,
+                    relevé sur /ml). Il est par ailleurs la cible du skip-link,
+                    ce qui rend le point de focus cohérent. */}
+                <main id="main-content" tabIndex={0} className="flex-1 overflow-y-auto p-4 md:p-6">
                   {children}
                 </main>
               </div>
