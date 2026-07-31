@@ -124,12 +124,13 @@ jobs:
 
   # S10-F2 — Accessibilité WCAG 2.1 AA sur les 24 pages, dont les 5 pages méta
   # de la refonte qui n'étaient couvertes par rien.
-  # Non bloquant pour l'instant : le résultat des pages v2 n'a jamais été
-  # mesuré, on ne rougit pas la CI sur une dette qu'on découvre. Retirer
-  # `continue-on-error` une fois les violations traitées.
+  #
+  # Bloquant : le premier relevé remontait 52 violations sur 5 règles
+  # (color-contrast, select-name, label, button-name,
+  # scrollable-region-focusable) ; elles sont toutes traitées, le job passe à
+  # zéro violation. Il protège donc désormais d'une régression réelle.
   a11y:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -166,13 +167,14 @@ jobs:
 
   # S10-F1 — Régression visuelle (substitut à Chromatic/Storybook, cf.
   # e2e/tests/visual.spec.ts pour la justification).
-  # Non bloquant tant que les références Linux ne sont pas commitées : la
-  # première exécution les génère. Les récupérer depuis l'artefact, les
-  # committer sous e2e/tests/visual.spec.ts-snapshots/, puis retirer
-  # `continue-on-error`.
+  #
+  # Bloquant : les références Linux des 5 pages méta sont commitées sous
+  # `e2e/tests/visual.spec.ts-snapshots/`. Elles ont été générées par ce job
+  # même — une baseline produite sous Windows ne vaut pas ici (rendu des
+  # polices différent). Pour les régénérer après un changement visuel
+  # volontaire : relancer avec `--update-snapshots` et committer l'artefact.
   visual:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
