@@ -253,6 +253,87 @@ def _bootstrap_strategy_files(strategies_dir: str) -> None:
             logger.warning(f"[Config] Bootstrap strategies/{module_name}.yaml KO : {exc}")
 
 
+def _validate_venues(cfg: dict) -> None:
+    """Cohérence du modèle de venue (S11) — la venue est la source de vérité.
+
+    Trois garde-fous, du plus dur au plus souple :
+
+    1. **``venues.default`` obligatoire** dès que ``venues.defs`` est renseigné.
+       Sans lui, la résolution retombait sur ``default_venue_from_cfg``, qui
+       fabriquait une venue à partir des globales ``exchange.margin`` /
+       ``trading.margin_mode`` / ``trading.max_leverage`` — parfois **homonyme**
+       d'une entrée de ``defs`` mais avec d'autres valeurs (levier notamment).
+       Deux sources de vérité concurrentes et silencieuses : refusé au
+       démarrage.
+    2. **Toute venue référencée doit exister** dans ``defs`` (``assign`` et
+       ``default``) — une faute de frappe ne doit pas router un bot vers les
+       globales sans que personne ne le voie.
+    3. **Les globales margin doivent s'accorder** avec la venue par défaut,
+       sinon WARNING : elles ne pilotent plus rien dès que ``venues.default``
+       existe, et les laisser mentir induit en erreur le prochain lecteur.
+    """
+    venues = cfg.get("venues") or {}
+    defs = venues.get("defs") or {}
+    default = venues.get("default")
+    assign = venues.get("assign") or {}
+
+    if defs and not default:
+        raise ValueError(
+            "venues.defs est renseigné mais venues.default est vide : la venue "
+            "des symboles non assignés serait dérivée des globales "
+            "(exchange.margin / trading.margin_mode / trading.max_leverage), "
+            "en concurrence silencieuse avec venues.defs. Déclarez "
+            f"venues.default parmi : {sorted(defs)}."
+        )
+
+    unknown = sorted({v for v in ([default] if default else []) + list(assign.values())
+                      if v and v not in defs})
+    if unknown:
+        raise ValueError(
+            f"venues : référence(s) inconnue(s) {unknown} — absentes de "
+            f"venues.defs ({sorted(defs)}). Corrigez venues.default/assign."
+        )
+
+    if not default:
+        return
+
+    d = defs.get(default) or {}
+    market = d.get("market_type", "spot")
+    borrows = market in ("margin", "perp")
+    t = cfg["trading"]
+    globals_margin = bool(cfg.get("exchange", {}).get("margin") or t.get("margin_mode"))
+
+    if globals_margin != borrows:
+        logger.warning(
+            "⚠ [Config] les globales margin (exchange.margin=%s, "
+            "trading.margin_mode=%s) contredisent la venue par défaut '%s' "
+            "(market_type=%s). Depuis S11 ce sont les venues qui font foi — "
+            "alignez les globales pour ne pas induire en erreur.",
+            cfg.get("exchange", {}).get("margin"), t.get("margin_mode"),
+            default, market,
+        )
+
+    lev = float(d.get("max_leverage", 1) or 1)
+    if borrows and lev <= 1:
+        logger.warning(
+            f"⚠ [Config] venue par défaut '{default}' en {market} avec "
+            f"max_leverage={lev:g} : l'emprunt est facturé mais le levier ne "
+            f"sera jamais utilisé. Pour du spot pur, déclarez "
+            f"market_type: spot ; pour du margin réel, max_leverage > 1."
+        )
+
+    if borrows and t.get("paper_mode"):
+        logger.warning(
+            f"⚠ [Config] paper_mode + venue par défaut '{default}' en {market} : "
+            f"les coûts d'emprunt sont simulés au taux "
+            f"trading.borrow_rate_daily={t.get('borrow_rate_daily')} mais aucun "
+            f"emprunt réel n'a lieu — les PnL paper et live divergeront. Pour un "
+            f"paper représentatif du comptant, basculez venues.default sur une "
+            f"venue market_type: spot (mettre exchange.margin: false ne suffit "
+            f"PAS : le taux d'emprunt est porté par la venue)."
+        )
+
+
 def load_config(path: str = "config.yaml") -> dict:
     # Avant toute expansion `${VAR}` : sans ça, les valeurs du `.env` généré
     # par setup.sh ne sont jamais visibles (cf. `_ensure_dotenv`).
@@ -372,23 +453,7 @@ def load_config(path: str = "config.yaml") -> dict:
             f"les appels authentifiés échoueront en live."
         )
 
-    # ── Cohérence margin / levier / paper (garde-fous production) ────────────
-    margin_on = bool(cfg.get("exchange", {}).get("margin")
-                     or cfg["trading"].get("margin_mode"))
-    if margin_on and float(cfg["trading"].get("max_leverage", 1)) <= 1:
-        logger.warning(
-            "⚠ [Config] exchange.margin actif mais trading.max_leverage <= 1 : "
-            "le levier ne sera jamais utilisé (l'emprunt margin reste actif — "
-            "tdMode margin sur OKX). Pour du spot "
-            "pur : margin: false ET margin_mode: null ; pour du margin réel : "
-            "max_leverage > 1."
-        )
-    if margin_on and cfg["trading"].get("paper_mode"):
-        logger.warning(
-            "⚠ [Config] paper_mode + margin simultanés : les coûts d'emprunt sont "
-            "simulés mais aucun emprunt réel n'a lieu — les PnL paper et live "
-            "divergeront. Désactivez margin pour un paper trading représentatif."
-        )
+    _validate_venues(cfg)
 
     # ── Sécurité API web (OPS-02 : BLOQUANT) ─────────────────────────────────
     # Sans web.api_key, l'auth retombe sur un filtre « localhost only » basé

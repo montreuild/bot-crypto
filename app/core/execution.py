@@ -38,6 +38,29 @@ def borrow_cost(notional: float, daily_rate: float, hours_held: float,
     return float(notional) * ((1 + r_period) ** n_periods - 1)
 
 
+def venue_borrow_rate(daily_rate: float, venue=None) -> float:
+    """Taux d'emprunt journalier applicable à un trade sur ``venue`` (S11).
+
+    Sans venue : ``daily_rate`` tel quel (comportement historique, chemins
+    crypto inchangés). Avec venue : c'est **elle** qui tranche — un marché spot
+    (spot crypto comme actions au comptant) n'emprunte rien, donc 0.
+
+    Avant S11, ``trading.borrow_rate_daily`` était appliqué inconditionnellement
+    des deux côtés (``backtest.py`` et ``position_close_mixin.py``) : chaque
+    trade SBF 120 payait 0,072 %/jour d'intérêt fictif — ~30 %/an sur un achat
+    comptant, de quoi effacer l'edge d'une stratégie actions en journalier.
+    """
+    if venue is None:
+        return float(daily_rate)
+    fn = getattr(venue, "effective_borrow_rate", None)
+    if callable(fn):
+        return float(fn(daily_rate))
+    # Venue « canard » (test double, dict-like) : on retombe sur le marché.
+    if getattr(venue, "market_type", "spot") in ("margin", "perp"):
+        return float(daily_rate)
+    return 0.0
+
+
 def gross_pnl(side: str, entry: float, exit_price: float, size: float) -> float:
     """PnL brut directionnel (hors frais et emprunt)."""
     direction = 1.0 if side == "long" else -1.0
@@ -66,12 +89,15 @@ def close_pnl(side: str, entry: float, exit_price: float, size: float,
       pnl    = brut directionnel − fees − borrow
 
     ``venue`` (G2, optionnel) fait passer les frais par le modèle de coûts de
-    la venue (fixe + plancher + taxe de transaction). ``None`` = frais
-    strictement proportionnels, comportement historique.
+    la venue (fixe + plancher + taxe de transaction) **et** gouverne le coût
+    d'emprunt (S11 : 0 sur une venue spot — cf. :func:`venue_borrow_rate`).
+    ``None`` = frais proportionnels + emprunt au taux global, comportement
+    historique.
     """
     fees   = venue_trade_cost(exit_price, size, fee_rate, side=side,
                               venue=venue, is_entry=False)
-    borrow = borrow_cost(notional, daily_rate, hours_held, periods_per_day)
+    borrow = borrow_cost(notional, venue_borrow_rate(daily_rate, venue),
+                         hours_held, periods_per_day)
     return net_pnl(side, entry, exit_price, size, fees, borrow), fees, borrow
 
 

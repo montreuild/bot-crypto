@@ -16,6 +16,10 @@ from app.core.execution import (
 )
 
 CRYPTO = Venue(name="spot")                       # tous défauts = comportement historique
+# S11 : c'est le `market_type` qui décide de l'emprunt — une venue spot ne paie
+# aucun intérêt, une venue margin oui. Les deux fixtures sont donc nécessaires.
+CRYPTO_MARGIN = Venue(name="margin-isolated", market_type="margin",
+                      margin_mode="isolated", max_leverage=3)
 EQUITY = Venue(
     name="euronext-paper", asset_class="equity", quote_currency="EUR",
     fractional=False, allow_short=False, tick_size=0.001,
@@ -118,11 +122,32 @@ class TestVenueTradeCost:
 
 
 class TestClosePnlVenue:
-    def test_venue_none_matches_historical_result(self):
+    def test_margin_venue_matches_historical_result(self):
+        """Sur un marché qui emprunte, rien ne change : frais et intérêts
+        identiques au chemin sans venue (comportement d'avant S11)."""
         args = dict(side="long", entry=100.0, exit_price=110.0, size=2.0,
                     notional=200.0, fee_rate=0.001, daily_rate=0.0002,
                     hours_held=5.0)
-        assert close_pnl(**args) == close_pnl(**args, venue=CRYPTO)
+        assert close_pnl(**args) == close_pnl(**args, venue=CRYPTO_MARGIN)
+
+    def test_spot_venue_charges_no_borrow(self):
+        """S11 — une venue spot n'emprunte pas : intérêts nuls, frais inchangés.
+
+        Le taux global reste renseigné (``daily_rate``) : c'est bien la venue,
+        et non la config, qui annule le coût. Sans ce garde-fou, un achat au
+        comptant (spot crypto ou action SBF 120) payait ~30 %/an d'intérêts
+        fictifs, des deux côtés backtest et live.
+        """
+        args = dict(side="long", entry=100.0, exit_price=110.0, size=2.0,
+                    notional=200.0, fee_rate=0.001, daily_rate=0.0002,
+                    hours_held=5.0)
+        pnl_spot, fees_spot, borrow_spot = close_pnl(**args, venue=CRYPTO)
+        pnl_margin, fees_margin, borrow_margin = close_pnl(**args, venue=CRYPTO_MARGIN)
+
+        assert borrow_spot == 0.0
+        assert borrow_margin > 0.0
+        assert fees_spot == fees_margin
+        assert pnl_spot == pytest.approx(pnl_margin + borrow_margin)
 
     def test_equity_venue_charges_the_floor_on_exit(self):
         pnl, fees, borrow = close_pnl(

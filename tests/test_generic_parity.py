@@ -96,6 +96,16 @@ def _run(strategy_name: str) -> dict:
 #   trend_rider     3 trades / pnl −5.1440  →  2 trades / pnl −2.3265
 #   pullback_trend  9 trades / pnl −16.9821 →  8 trades / pnl −14.4664
 #
+# S11 — coût d'emprunt porté par la venue (2e recapture, motif nommé). Cette
+# config ne déclare ni `venues` ni `exchange.margin` : la venue résolue est donc
+# du SPOT, qui n'emprunte pas. Le `borrow_rate_daily: 0.0002` ci-dessus était
+# jusqu'ici facturé quand même, sur chaque trade. Les signaux, le nombre de
+# trades et le win rate sont INCHANGÉS — seul le PnL remonte, exactement du
+# montant des intérêts fictifs supprimés :
+#
+#   trend_rider     pnl −2.3265  →  −2.2815   (Δ +0.0450)
+#   pullback_trend  pnl −14.4664 →  −14.2505  (Δ +0.2159)
+#
 # Un futur écart sur ces chiffres n'est PAS à réaligner sans avoir identifié la
 # cause : le rôle de ce test est de rendre visible un changement de
 # comportement, pas de le suivre.
@@ -104,8 +114,8 @@ def test_trend_rider_backtest_parity_on_synthetic_btc_data():
     assert result == {
         "total_trades": 2,
         "win_rate": 0.0,
-        "total_pnl": -2.3265,
-        "final_equity": 997.6735,
+        "total_pnl": -2.2815,
+        "final_equity": 997.7185,
     }
 
 
@@ -114,6 +124,6 @@ def test_pullback_trend_backtest_parity_on_synthetic_btc_data():
     assert result == {
         "total_trades": 8,
         "win_rate": 0.0,
-        "total_pnl": -14.4664,
-        "final_equity": 985.5336,
+        "total_pnl": -14.2505,
+        "final_equity": 985.7495,
     }

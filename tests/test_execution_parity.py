@@ -96,8 +96,14 @@ def _backtest_close_pnl() -> float:
     return pnl
 
 
-def _live_close_pnl() -> float:
-    """Clôture du même trade via PositionCloseMixin._close_position (paper)."""
+def _live_close_pnl(margin: bool = True) -> float:
+    """Clôture du même trade via PositionCloseMixin._close_position (paper).
+
+    ``margin`` pilote la venue résolue pour le trade (S11) : c'est elle, et non
+    plus ``trading.borrow_rate_daily`` seul, qui décide si l'emprunt est
+    facturé. ``True`` = venue margin (cas de référence pour la parité, le
+    backtest chargeant l'emprunt) ; ``False`` = venue spot ⇒ emprunt nul.
+    """
     from app.live.position_close_mixin import PositionCloseMixin
     from app.live.position_open_mixin import PositionOpenMixin
 
@@ -109,7 +115,8 @@ def _live_close_pnl() -> float:
                 "taker_fee": FEE_RATE, "borrow_rate_daily": BORROW_RATE,
                 "borrow_periods_per_day": PERIODS,
                 "reentry_cooldown_bars": 0,
-            }}
+                **({"margin_mode": "isolated"} if margin else {}),
+            }, "exchange": {"name": "okx", "margin": margin}}
             self.exchange = MagicMock()
             self.exchange.create_order.return_value = {"price": EXIT, "id": "x"}
             self.risk = MagicMock()
@@ -155,3 +162,20 @@ def test_backtest_and_live_close_same_net_pnl():
     assert pnl_bt == pytest.approx(pnl_ref, abs=1e-9)
     assert pnl_live == pytest.approx(pnl_ref, abs=1e-4)
     assert pnl_bt == pytest.approx(pnl_live, abs=1e-4)
+
+
+def test_spot_venue_charges_no_borrow_on_the_live_path():
+    """S11 — sur une venue spot, le coût d'emprunt est nul.
+
+    Avant, ``trading.borrow_rate_daily`` était facturé quelle que soit la
+    venue : un achat comptant (spot crypto comme action SBF 120) payait des
+    intérêts d'emprunt qui n'existent pas. L'écart attendu est exactement le
+    coût d'emprunt du même trade en margin.
+    """
+    pnl_margin = _live_close_pnl(margin=True)
+    pnl_spot   = _live_close_pnl(margin=False)
+    expected_borrow = borrow_cost(ENTRY * SIZE, BORROW_RATE, HOURS_HELD, PERIODS)
+
+    assert expected_borrow > 0
+    assert pnl_spot > pnl_margin
+    assert pnl_spot - pnl_margin == pytest.approx(expected_borrow, abs=1e-4)
