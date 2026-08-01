@@ -9,7 +9,7 @@
  *  - Ajouter un symbole (POST /api/universe/{name}/symbols)
  *  - Retirer un symbole (DELETE /api/universe/{name}/symbols/{symbol})
  *
- * S'intègre dans la page /data (Données OHLCV) ou /settings-v2 (Données & Univers).
+ * S'intègre dans la page /data (Données OHLCV) ou /settings (Données & Univers).
  */
 
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';

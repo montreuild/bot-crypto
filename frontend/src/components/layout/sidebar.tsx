@@ -19,9 +19,9 @@ const NAV_GROUPS = [
       // on pointe directement dessus pour éviter le saut de redirection.
       // Lot Portefeuille — l'entrée « Portefeuille (détail) » vers /portfolio
       // disparaît : le journal de notifications et la vue par bot qu'elle
-      // seule donnait sont maintenant sur /portfolio-v2, qui est en 308.
-      { href: '/portfolio-v2', label: 'Portefeuille', icon: Wallet },
-      { href: '/bots-v2', label: 'Mes Bots', icon: Bot },
+      // seule donnait sont maintenant sur /portfolio, qui est en 308.
+      { href: '/portfolio', label: 'Portefeuille', icon: Wallet },
+      { href: '/bots', label: 'Mes Bots', icon: Bot },
       { href: '/trades', label: 'Trades', icon: Activity },
     ],
   },
@@ -55,10 +55,10 @@ const NAV_GROUPS = [
     label: 'Configuration',
     items: [
       // Lot Réglages — /config et /settings sont en 308 vers les onglets de
-      // /settings-v2, qui porte maintenant l'éditeur de params par stratégie,
+      // /settings, qui porte maintenant l'éditeur de params par stratégie,
       // le thème et les notifications navigateur. Une seule entrée subsiste,
       // et elle n'a plus à s'appeler « v2 » : il n'y a plus d'ancienne page.
-      { href: '/settings-v2', label: 'Réglages', icon: Settings },
+      { href: '/settings', label: 'Réglages', icon: Settings },
     ],
   },
 ];

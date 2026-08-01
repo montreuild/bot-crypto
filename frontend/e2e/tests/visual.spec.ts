@@ -40,11 +40,11 @@
 import { test, expect } from '@playwright/test';
 
 const PAGES = [
-  { url: '/portfolio-v2', name: 'portefeuille' },
-  { url: '/bots-v2', name: 'bots' },
+  { url: '/portfolio', name: 'portefeuille' },
+  { url: '/bots', name: 'bots' },
   { url: '/lab', name: 'laboratoire' },
   { url: '/market', name: 'marche' },
-  { url: '/settings-v2', name: 'reglages' },
+  { url: '/settings', name: 'reglages' },
 ];
 
 // Sélecteurs dont le contenu bouge à chaque exécution.
@@ -85,7 +85,7 @@ test.describe('Régression visuelle — design system', () => {
   test('drawer bot : frise + bande Monte-Carlo', async ({ page }) => {
     // Le drawer est le composant qui a le plus souffert pendant S0-S9 (il
     // plantait à l'ouverture) : il mérite sa propre référence visuelle.
-    await page.goto('/bots-v2?slot=breakout%3A%3A1h', { waitUntil: 'networkidle' });
+    await page.goto('/bots?slot=breakout%3A%3A1h', { waitUntil: 'networkidle' });
     await page.addStyleTag({
       content: '*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; }',
     });

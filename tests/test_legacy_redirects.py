@@ -66,6 +66,44 @@ def test_backend_targets_final_destination(source: str):
     )
 
 
+V2_ALIASES = {"/portfolio-v2": "/portfolio",
+              "/bots-v2": "/bots",
+              "/settings-v2": "/settings"}
+
+
+@pytest.mark.parametrize("alias,cible", sorted(V2_ALIASES.items()))
+def test_v2_aliases_redirect_to_the_canonical_page(alias, cible):
+    """S11 — le suffixe `-v2` datait de la coexistence avec les pages Jinja2 ;
+    la migration finie, il ne veut plus rien dire. Les anciennes URLs ont vécu
+    en prod (favoris, 308 déjà en cache navigateur) : elles doivent survivre en
+    redirection, dans les DEUX tables."""
+    assert _next_redirects().get(alias) == cible
+    assert HTML_ROUTES_TO_REDIRECT.get(alias) == cible
+
+
+def test_canonical_pages_are_not_redirected_away():
+    """Le sens de la redirection est bien inversé : `/bots` EST la page, pas un
+    alias. L'oublier créerait une boucle `/bots → /bots-v2 → /bots`."""
+    next_redirects = _next_redirects()
+    for cible in V2_ALIASES.values():
+        assert cible not in next_redirects, (
+            f"{cible} est redirigée alors qu'elle porte la page : boucle 308")
+        assert HTML_ROUTES_TO_REDIRECT.get(cible) == cible
+
+
+def test_no_v2_path_remains_in_the_frontend_sources():
+    """Aucun lien interne ne doit encore pointer sur une URL `-v2` : ça
+    fonctionnerait (308) mais ferait payer un aller-retour à chaque navigation,
+    et la migration resterait visiblement inachevée."""
+    src = NEXT_CONFIG.parent / "src"
+    coupables = []
+    for f in list(src.rglob("*.ts")) + list(src.rglob("*.tsx")):
+        for i, ligne in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if "-v2" in ligne:
+                coupables.append(f"{f.relative_to(src)}:{i}")
+    assert not coupables, f"URLs -v2 encore référencées : {coupables}"
+
+
 def test_no_backend_target_is_itself_redirected():
     """Aucune cible du backend ne doit être une source de redirection Next :
     ce serait précisément le double saut qu'on cherche à éliminer."""

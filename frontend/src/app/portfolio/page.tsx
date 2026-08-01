@@ -5,7 +5,7 @@
  *
  * Stratégie strangler fig : cette page coexiste avec /dashboard et /portfolio
  * existants. Une fois validée par les utilisateurs, une redirection 308 sera
- * posée depuis /dashboard et /portfolio vers /portfolio-v2, puis cette page
+ * posée depuis /dashboard et /portfolio vers /portfolio, puis cette page
  * deviendra /portfolio (page d'accueil).
  *
  * Différences vs Dashboard actuel :
@@ -223,7 +223,7 @@ export default function PortfolioV2Page() {
         qui bloquaient sa 308. `ActivityFeed` (journal persisté des
         notifications, avec niveaux) complète `LiveTradesFeed` ci-dessus, qui
         ne lit que le flux WS des trades ; `SignificantBotsTable` répond à la
-        question que `/bots-v2` ne pose pas : lesquels gagnent hors bruit.
+        question que `/bots` ne pose pas : lesquels gagnent hors bruit.
       */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <ActivityFeed />

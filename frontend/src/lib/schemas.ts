@@ -8,7 +8,7 @@
  * qu'à l'exécution face au backend :
  *
  *   - `/api/oos-tracker` renvoie `slots` en **dictionnaire** indexé par
- *     slot_key ; `/bots-v2` faisait `slots.find(...)` → la page tombait dans
+ *     slot_key ; `/bots` faisait `slots.find(...)` → la page tombait dans
  *     l'ErrorBoundary à l'ouverture d'un bot.
  *   - `/api/ml/recipes` renvoie `features_catalog` en **chaîne** (identifiant
  *     de catalogue) ; `MLRecipesList` faisait `.slice().map()` dessus → la page
@@ -135,7 +135,7 @@ export const OosSlotSchema = z
 
 /**
  * ⚠ `slots` est un **dictionnaire** indexé par slot_key, pas un tableau.
- * C'est précisément l'erreur qui faisait planter `/bots-v2`.
+ * C'est précisément l'erreur qui faisait planter `/bots`.
  */
 export const OosTrackerSchema = z
   .object({ slots: z.record(z.string(), OosSlotSchema).default({}) })

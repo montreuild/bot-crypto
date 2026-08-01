@@ -161,12 +161,12 @@ function BotsV2Content() {
     setDrawerOpen(true);
     const params = new URLSearchParams(searchParams);
     params.set('slot', bot.slot_key);
-    router.replace(`/bots-v2?${params.toString()}`, { scroll: false });
+    router.replace(`/bots?${params.toString()}`, { scroll: false });
   };
 
   const handleCloseDrawer = () => {
     setDrawerOpen(false);
-    router.replace('/bots-v2', { scroll: false });
+    router.replace('/bots', { scroll: false });
   };
 
   const handleForce = async (slotKey: string, enabled: boolean) => {

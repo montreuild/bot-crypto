@@ -27,8 +27,8 @@ const COLORS = [
   '#84cc16', '#06b6d4', '#6366f1', '#d946ef',
 ];
 
-/** Fiche du bot correspondant — le drawer de /bots-v2 s'ouvre sur `?slot=`. */
-const slotHref = (slotKey: string) => `/bots-v2?slot=${encodeURIComponent(slotKey)}`;
+/** Fiche du bot correspondant — le drawer de /bots s'ouvre sur `?slot=`. */
+const slotHref = (slotKey: string) => `/bots?slot=${encodeURIComponent(slotKey)}`;
 
 export function AllocationDonut({ slots, capital, shadowAllocation }: AllocationDonutProps) {
   const router = useRouter();

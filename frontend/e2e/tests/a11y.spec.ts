@@ -27,8 +27,8 @@ const PAGES = [
   // liste alors qu'elles concentrent l'essentiel du nouveau code (kanban,
   // drawer, tabs, donut, dialogues de confirmation) : ce sont précisément
   // celles dont l'accessibilité n'avait jamais été vérifiée.
-  { url: '/portfolio-v2', name: 'Portefeuille' },
-  { url: '/bots-v2', name: 'Mes Bots' },
+  { url: '/portfolio', name: 'Portefeuille' },
+  { url: '/bots', name: 'Mes Bots' },
   // Lots de fusion — les anciennes pages sont devenues des onglets de /market
   // et /lab, et leurs routes sont en 308. Radix ne monte QUE l'onglet actif :
   // auditer `/market` ou `/lab` seuls ne couvrirait que le premier onglet, on
@@ -43,11 +43,11 @@ const PAGES = [
   { url: '/lab?tab=ml', name: 'Laboratoire — ML' },
   { url: '/lab?tab=replay', name: 'Laboratoire — Replay' },
   { url: '/lab?tab=compare', name: 'Laboratoire — Compare' },
-  { url: '/settings-v2?tab=capital', name: 'Réglages — Capital' },
-  { url: '/settings-v2?tab=notifications', name: 'Réglages — Notifications' },
-  { url: '/settings-v2?tab=data', name: 'Réglages — Données' },
-  { url: '/settings-v2?tab=audit', name: 'Réglages — Audit' },
-  { url: '/settings-v2?tab=ui', name: 'Réglages — UI' },
+  { url: '/settings?tab=capital', name: 'Réglages — Capital' },
+  { url: '/settings?tab=notifications', name: 'Réglages — Notifications' },
+  { url: '/settings?tab=data', name: 'Réglages — Données' },
+  { url: '/settings?tab=audit', name: 'Réglages — Audit' },
+  { url: '/settings?tab=ui', name: 'Réglages — UI' },
 ];
 
 test.describe('Accessibilité WCAG 2.1 AA', () => {
@@ -113,7 +113,7 @@ test.describe('Accessibilité WCAG 2.1 AA', () => {
 
 test.describe('Skip-to-content link', () => {
   test('le skip-link est présent et focusable', async ({ page }) => {
-    await page.goto('/portfolio-v2', { waitUntil: 'domcontentloaded' });
+    await page.goto('/portfolio', { waitUntil: 'domcontentloaded' });
 
     // Le skip-link est sr-only par défaut, visible au focus
     const skipLink = page.locator('a[href="#main-content"]').first();
@@ -126,7 +126,7 @@ test.describe('Skip-to-content link', () => {
 
 test.describe('Navigation clavier', () => {
   test('Tab passe par tous les éléments interactifs dans l\'ordre', async ({ page }) => {
-    await page.goto('/portfolio-v2', { waitUntil: 'domcontentloaded' });
+    await page.goto('/portfolio', { waitUntil: 'domcontentloaded' });
 
     // Premier Tab devrait focus le skip-link (s'il est sr-only focusable)
     await page.keyboard.press('Tab');

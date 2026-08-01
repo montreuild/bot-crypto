@@ -96,11 +96,11 @@ function LabContent() {
   const initialTab = TABS.includes(requestedTab as (typeof TABS)[number])
     ? requestedTab!
     : 'backtest';
-  const intent = searchParams.get('intent'); // 'create' si arrivé depuis /bots-v2
+  const intent = searchParams.get('intent'); // 'create' si arrivé depuis /bots
   const [tab, setTab] = useState(initialTab);
 
   // Mode expert — source de vérité = le backend (`/api/settings/presets`), comme
-  // sur /settings-v2. Cette page lisait auparavant uniquement `localStorage`, via
+  // sur /settings. Cette page lisait auparavant uniquement `localStorage`, via
   // un `useState(initializer)` détourné en effet : le flag divergeait dès que le
   // mode expert était basculé depuis /settings (qui n'écrit que côté backend), et
   // repartait à `false` sur un autre navigateur. localStorage n'est plus qu'un

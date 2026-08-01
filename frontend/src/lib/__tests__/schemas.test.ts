@@ -77,7 +77,7 @@ describe('Bots', () => {
 
 describe('OosTracker', () => {
   it('slots est un dictionnaire indexé par slot_key, pas un tableau', () => {
-    // /bots-v2 faisait `slots.find(...)` → « oosData.slots.find is not a
+    // /bots faisait `slots.find(...)` → « oosData.slots.find is not a
     // function » et toute la page tombait dans l'ErrorBoundary.
     const parsed = OosTrackerSchema.parse({
       slots: { 'breakout::1h': { slot_key: 'breakout::1h' } },

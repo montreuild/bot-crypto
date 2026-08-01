@@ -7,14 +7,14 @@
 // et l'activation par timeframe.
 //
 // Lot Réglages : c'était la page `/config`, vers laquelle l'onglet Capital de
-// `/settings-v2` se contentait de renvoyer (« Ouvrir la configuration
+// `/settings` se contentait de renvoyer (« Ouvrir la configuration
 // avancée »). Ses 4 onglets internes sont devenus 4 sections exportées,
 // montées dans les onglets Capital et Notifs. `/config` est en 308 vers
-// `/settings-v2?tab=capital`.
+// `/settings?tab=capital`.
 //
 // Chaque section lit la config elle-même plutôt que de la recevoir en prop :
 // react-query dédoublonne la requête, et cela permet de les monter dans des
-// onglets différents sans faire remonter l'état dans `/settings-v2`.
+// onglets différents sans faire remonter l'état dans `/settings`.
 
 import {
   useConfig, useSetStrategyParams, useToggleStrategyTimeframe, useApiStatus,
@@ -276,7 +276,7 @@ function StrategiesSection({ config }: { config: any }) {
 // `(presets || [...]).map(...)` sur le retour de `usePresets()`, qui est un
 // objet `{presets, current, expert_mode}` et non un tableau. `.map` n'existe
 // pas dessus : l'onglet Risk de /config plantait au rendu dès que la requête
-// aboutissait. Les cartes de preset de l'onglet Capital de /settings-v2
+// aboutissait. Les cartes de preset de l'onglet Capital de /settings
 // couvrent le besoin, et correctement.
 
 export function ConfigRiskView() {

@@ -310,8 +310,15 @@ HTML_ROUTES_TO_REDIRECT = {
     "/trades": "/trades",
     "/models": "/models",
     "/data": "/data",
-    # S10
-    "/bots": "/bots-v2",
+    # S11 — les pages canoniques n'ont plus de suffixe `-v2` : /bots, /portfolio
+    # et /settings SONT les pages. Les anciennes URLs restent redirigees (elles
+    # ont vecu en prod et sont dans des 308 deja mises en cache).
+    "/bots": "/bots",
+    "/portfolio": "/portfolio",
+    "/settings": "/settings",
+    "/bots-v2": "/bots",
+    "/portfolio-v2": "/portfolio",
+    "/settings-v2": "/settings",
     "/backtest": "/lab?tab=backtest",
     # Lot Laboratoire
     "/optimizer": "/lab?tab=optimizer",
@@ -324,10 +331,7 @@ HTML_ROUTES_TO_REDIRECT = {
     "/smartreplay": "/market?tab=smartreplay",
     "/derivatives": "/market?tab=derivatives",
     # Lot Réglages
-    "/config": "/settings-v2?tab=capital",
-    "/settings": "/settings-v2?tab=capital",
-    # Lot Portefeuille
-    "/portfolio": "/portfolio-v2",
+    "/config": "/settings?tab=capital",
 }
 for _route, _target in HTML_ROUTES_TO_REDIRECT.items():
     # Capture _target via default arg pour éviter le piège du closure tardif
@@ -338,11 +342,11 @@ for _route, _target in HTML_ROUTES_TO_REDIRECT.items():
     app.add_api_route(_route, _make_handler(_target), methods=["GET"])
 
 
-# Rétro-compat : /slots redirigeait vers /bots, lui-même en 308 vers /bots-v2
-# depuis S10 — on vise la cible finale plutôt que d'enchaîner deux sauts.
+# Rétro-compat : /slots redirigeait vers /bots. On vise la cible finale plutôt
+# que d'enchaîner deux sauts.
 @app.get("/slots")
 def slots_legacy():
-    return _route_frontend_or_help("/bots-v2")
+    return _route_frontend_or_help("/bots")
 
 
 # ── Status (accès direct à state.cfg, hors router) ────────────────────────

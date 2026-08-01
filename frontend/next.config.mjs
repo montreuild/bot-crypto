@@ -60,8 +60,15 @@ const nextConfig = {
    */
   async redirects() {
     return [
-      { source: '/dashboard', destination: '/portfolio-v2', permanent: true },
-      { source: '/bots', destination: '/bots-v2', permanent: true },
+      // S11 — fin de la migration : les pages canoniques perdent le suffixe
+      // `-v2`, qui datait de la coexistence avec les pages Jinja2. Les URLs
+      // `-v2` restent redirigées : elles ont vécu en prod, sont dans les
+      // favoris et dans des 308 déjà mises en cache par les navigateurs.
+      { source: '/portfolio-v2', destination: '/portfolio', permanent: true },
+      { source: '/bots-v2', destination: '/bots', permanent: true },
+      { source: '/settings-v2', destination: '/settings', permanent: true },
+
+      { source: '/dashboard', destination: '/portfolio', permanent: true },
       { source: '/backtest', destination: '/lab?tab=backtest', permanent: true },
 
       // Lot Marché
@@ -80,11 +87,9 @@ const nextConfig = {
       // Lot Réglages. `/settings` comme `/config` atterrissent sur Capital :
       // c'était le premier bloc des deux pages (presets de risque d'un côté,
       // stratégies de l'autre). Thème et notifications sont dans l'onglet UI.
-      { source: '/config', destination: '/settings-v2?tab=capital', permanent: true },
-      { source: '/settings', destination: '/settings-v2?tab=capital', permanent: true },
-
-      // Lot Portefeuille — dernière des 14 redirections du plan de refonte.
-      { source: '/portfolio', destination: '/portfolio-v2', permanent: true },
+      // `/config` atterrit sur Capital : c'était le premier bloc des deux
+      // pages. `/settings` n'est plus une redirection — c'est la page.
+      { source: '/config', destination: '/settings?tab=capital', permanent: true },
     ];
   },
   // S0-F1-US6 — WebSocket : Next.js ne proxy pas les WS nativement, on laisse
