@@ -19,6 +19,11 @@ import {
   OptimizeSpacesSchema,
   DerivativesDataSchema,
   MlRegistrySchema,
+  WalkForwardSchema,
+  MonteCarloSchema,
+  BacktestSchema,
+  SmcSchema,
+  ScannerSignalsSchema,
 } from '@/lib/schemas';
 
 describe('BotStatus', () => {
@@ -182,5 +187,152 @@ describe('Divers', () => {
     expect(
       HealthSchema.safeParse({ status: 'degraded', db: false, exchange: false, trader: false }).success,
     ).toBe(true);
+  });
+});
+
+// ── Backtest : Walk-Forward / Monte-Carlo ───────────────────────────────────
+//
+// Ces deux contrats n'avaient jamais été vérifiés. `/lab` lisait des champs
+// qui n'existent dans AUCUNE réponse du backend, si bien que le résumé
+// affichait « 0 folds » et « P5: $0.00 · P50: $0.00 · P95: $0.00 » quel que
+// soit le résultat — sans que `tsc`, `next build` ni l'exécution ne signalent
+// quoi que ce soit (pas de crash : juste des zéros crédibles).
+
+describe('WalkForward', () => {
+  // Payload calqué sur WalkForwardAnalyzer.run() (app/engine/walk_forward.py).
+  const real = {
+    n_folds: 4,
+    avg_oos_pnl: 128.4312,
+    avg_oos_sharpe: 1.21,
+    avg_oos_wr: 54.3,
+    consistency: 75.0,
+    in_sample: [{ total_pnl: 900.1, win_rate: 61.2, sharpe: 2.1, total_trades: 42, max_drawdown: -8.4 }],
+    out_of_sample: [{ total_pnl: 128.4, win_rate: 54.3, sharpe: 1.21, total_trades: 11, max_drawdown: -12.7 }],
+  };
+
+  it('accepte la réponse réelle', () => {
+    const parsed = WalkForwardSchema.safeParse(real);
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejette la forme supposée à tort (`folds` / `oos_pnl`)', () => {
+    // C'est exactement ce que /lab lisait.
+    expect(WalkForwardSchema.safeParse({ folds: [{}, {}], oos_pnl: 128.4 }).success).toBe(false);
+  });
+
+  it('accepte la branche erreur (données insuffisantes)', () => {
+    expect(
+      WalkForwardSchema.safeParse({
+        error: 'IS trop court pour les stratégies EMA (120 barres/fold · min 200 requis)',
+        n_bars: 600, fold_n: 120, min_required: 1200,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('expose les folds OOS sous `out_of_sample`, jamais sous `folds`', () => {
+    const parsed = WalkForwardSchema.parse(real) as typeof real;
+    expect(parsed.out_of_sample).toHaveLength(1);
+    expect((parsed as Record<string, unknown>).folds).toBeUndefined();
+  });
+});
+
+describe('MonteCarlo', () => {
+  // Payload calqué sur MonteCarlo.run() (app/engine/monte_carlo.py).
+  const real = {
+    runs: 200,
+    confidence: 0.95,
+    final_equity_mean: 10842.31,
+    final_equity_p5: 9231.04,
+    final_equity_p95: 12488.9,
+    max_dd_p95: 18.42,
+    prob_profit: 71.5,
+    prob_ruin_10pct: 12.0,
+  };
+
+  it('accepte la réponse réelle', () => {
+    expect(MonteCarloSchema.safeParse(real).success).toBe(true);
+  });
+
+  it('rejette la forme supposée à tort (`p5` / `p50` / `p95`)', () => {
+    // C'est exactement ce que /lab lisait.
+    expect(MonteCarloSchema.safeParse({ p5: 9231, p50: 10842, p95: 12488 }).success).toBe(false);
+  });
+
+  it('n’expose que des agrégats scalaires — aucune série temporelle', () => {
+    // Verrouille la leçon de R17 : tracer un cône P5/P50/P95 dans le temps
+    // n'est pas possible avec ce contrat, il faudrait un nouvel endpoint.
+    const parsed = MonteCarloSchema.parse(real) as Record<string, unknown>;
+    for (const k of ['labels', 'median', 'ci_lower', 'ci_upper', 'equity_curves']) {
+      expect(parsed[k]).toBeUndefined();
+    }
+    expect(typeof parsed.final_equity_p5).toBe('number');
+  });
+
+  it('accepte la branche erreur (aucun trade fermé)', () => {
+    expect(MonteCarloSchema.safeParse({ error: 'Aucun trade fermé' }).success).toBe(true);
+  });
+});
+
+describe('Backtest', () => {
+  it('`by_strategy` est un dictionnaire, pas un tableau', () => {
+    const ok = BacktestSchema.safeParse({
+      symbol: 'BTC/USDC', timeframe: '1h',
+      by_strategy: { trend_rider: { total_trades: 12, total_pnl: 340.2, equity_curve: [10000, 10120] } },
+    });
+    expect(ok.success).toBe(true);
+    expect(BacktestSchema.safeParse({ by_strategy: [{ total_trades: 12 }] }).success).toBe(false);
+  });
+
+  it('`equity_curve` reste un tableau de nombres', () => {
+    expect(
+      BacktestSchema.safeParse({ by_strategy: { s: { equity_curve: ['10000'] } } }).success,
+    ).toBe(false);
+  });
+
+  it('accepte un trade complet et son horodatage ISO ou epoch', () => {
+    const mk = (t: string | number) => BacktestSchema.safeParse({
+      by_strategy: { s: { trades: [{ side: 'long', entry: 42000.5, pnl: 12.4, entry_time: t }] } },
+    }).success;
+    expect(mk('2026-07-30T12:00:00Z')).toBe(true);
+    expect(mk(1753876800000)).toBe(true);
+  });
+});
+
+describe('TradePlans & Prédictions', () => {
+  it('`trade_plans` porte bien status/gain_pct/distance_pct/score_min', () => {
+    // Les 4 colonnes qui manquaient à la table de /smartgraph.
+    const parsed = SmcSchema.parse({
+      symbol: 'BTC/USDC', timeframe: '1h',
+      trade_plans: [{
+        status: 'pending', side: 'long', setup: 'ob_retest', score_min: 0.62,
+        entry: 41800, stop: 41200, tp: 43000, gain_pct: 2.87, rr: 2.0,
+        distance_pct: 0.45, trigger: 'clôture > 41800', reason: 'OB frais aligné',
+      }],
+    });
+    const p = parsed.trade_plans![0];
+    expect(p.status).toBe('pending');
+    expect(p.score_min).toBe(0.62);
+    expect(p.distance_pct).toBe(0.45);
+  });
+
+  it('`trade_plans` doit rester un tableau', () => {
+    expect(SmcSchema.safeParse({ trade_plans: { 0: { side: 'long' } } }).success).toBe(false);
+  });
+
+  it('les probabilités des signaux sont des fractions nullables', () => {
+    const parsed = ScannerSignalsSchema.parse({
+      symbol: 'BTC/USDC', timeframe: '1h',
+      signals: [
+        { strategy: 'trend_rider', side: 'long', score: 0.71, p_event: 0.62, p_up: 0.58, active: true, skipped: false },
+        { strategy: 'ml_v4', side: 'none', score: null, reason: 'Aucun modèle entraîné', skipped: true, active: false },
+      ],
+    });
+    expect(parsed.signals).toHaveLength(2);
+    expect(parsed.signals![1].skipped).toBe(true);
+    expect(parsed.signals![1].score).toBeNull();
+  });
+
+  it('`signals` doit rester un tableau', () => {
+    expect(ScannerSignalsSchema.safeParse({ signals: { a: {} } }).success).toBe(false);
   });
 });

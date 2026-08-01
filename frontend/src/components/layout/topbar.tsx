@@ -169,12 +169,38 @@ export function Topbar() {
         )}
       </div>
 
-      {/* Health */}
+      {/*
+        Health — les pastilles n'étaient rendues QUE si le service était UP
+        (`{health.db && <dot/>}`). Un service tombé ne devenait donc pas rouge :
+        il disparaissait purement et simplement, ce qui rendait la panne
+        indiscernable d'un backend qui ne renvoie pas le champ. L'état est
+        désormais explicite (vert/rouge) et porte un nom accessible.
+      */}
       {health && (
-        <div className="flex items-center gap-1 text-xs">
-          {health.db && <span title="DB OK" className="w-2 h-2 rounded-full bg-emerald-400" />}
-          {health.exchange && <span title="Exchange OK" className="w-2 h-2 rounded-full bg-emerald-400" />}
-          {health.trader && <span title="Trader OK" className="w-2 h-2 rounded-full bg-emerald-400" />}
+        <div
+          className="flex items-center gap-1 text-xs"
+          role="group"
+          aria-label="Santé du backend"
+        >
+          <HealthDot label="Base de données" ok={!!health.db} />
+          <HealthDot label="Exchange" ok={!!health.exchange} />
+          <HealthDot label="Trader" ok={!!health.trader} />
+          {/* E3-F1-US5 — latence API mesurée côté client sur /health. */}
+          {typeof health.client_latency_ms === 'number' && (
+            <span
+              className={cn(
+                'ml-1 font-mono text-[10px] tabular-nums hidden lg:inline',
+                health.client_latency_ms > 500 ? 'text-amber-400' : 'text-dim',
+              )}
+              title={
+                health.client_latency_ms > 500
+                  ? `Latence API élevée : ${health.client_latency_ms} ms`
+                  : `Latence API : ${health.client_latency_ms} ms`
+              }
+            >
+              {health.client_latency_ms} ms
+            </span>
+          )}
         </div>
       )}
 
@@ -208,6 +234,25 @@ export function Topbar() {
       {/* Search modal */}
       {searchOpen && <SearchModal onClose={() => setSearchOpen(false)} />}
     </header>
+  );
+}
+
+/**
+ * Pastille de santé d'un sous-système du backend.
+ *
+ * La couleur seule ne suffit pas (WCAG 1.4.1 « Use of Color ») et une pastille
+ * décorative n'est pas restituée par un lecteur d'écran : l'état est donc porté
+ * par un texte `sr-only` en plus de la couleur.
+ */
+function HealthDot({ label, ok }: { label: string; ok: boolean }) {
+  return (
+    <span className="inline-flex items-center" title={`${label} : ${ok ? 'OK' : 'indisponible'}`}>
+      <span
+        aria-hidden="true"
+        className={cn('w-2 h-2 rounded-full', ok ? 'bg-emerald-400' : 'bg-red-500')}
+      />
+      <span className="sr-only">{`${label} : ${ok ? 'OK' : 'indisponible'}`}</span>
+    </span>
   );
 }
 

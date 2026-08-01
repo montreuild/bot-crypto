@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn, formatUSD, formatTime, formatDateTime, formatPct } from '@/lib/utils';
 import { useSMC } from '@/hooks/use-api';
+import { TradePlansTable } from '@/components/cards/trade-plans-table';
 import { toast } from 'sonner';
 import {
   Loader2, RefreshCw, AlertCircle, Activity,
@@ -837,47 +838,14 @@ export default function SmartGraphPage() {
         </div>
       )}
 
-      {/* Trade plans */}
-      {!isLoading && !isError && data?.trade_plans && data.trade_plans.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Trade Plans ({data.trade_plans.length})</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto max-h-80">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-card">
-                  <tr className="text-left text-dim border-b border-border">
-                    <th className="p-2 font-medium">Side</th>
-                    <th className="p-2 font-medium">Setup</th>
-                    <th className="p-2 font-medium text-right">Entry</th>
-                    <th className="p-2 font-medium text-right">Stop</th>
-                    <th className="p-2 font-medium text-right">TP</th>
-                    <th className="p-2 font-medium text-right">RR</th>
-                    <th className="p-2 font-medium">Reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.trade_plans.slice(0, 20).map((tp: any, i: number) => (
-                    <tr key={i} className="border-b border-border/30 hover:bg-card-hover">
-                      <td className="p-2">
-                        <span className={cn('font-semibold', tp.side === 'long' ? 'text-emerald-400' : 'text-red-400')}>
-                          {tp.side?.toUpperCase()}
-                        </span>
-                      </td>
-                      <td className="p-2 text-cyan-400 font-mono">{tp.setup || '—'}</td>
-                      <td className="p-2 text-right font-mono">{formatUSD(Number(tp.entry ?? 0))}</td>
-                      <td className="p-2 text-right font-mono text-red-400">{formatUSD(Number(tp.stop ?? 0))}</td>
-                      <td className="p-2 text-right font-mono text-emerald-400">{formatUSD(Number(tp.tp ?? 0))}</td>
-                      <td className="p-2 text-right font-mono text-muted">{Number(tp.rr ?? 0).toFixed(2)}</td>
-                      <td className="p-2 text-muted truncate max-w-xs">{tp.reason || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+      {/*
+        Plans recommandés — la table inline précédente n'exposait que 7 des 10
+        colonnes de l'ancienne UI (ni Statut, ni Gain, ni Dist, ni Score) et
+        tronquait à 20 lignes sans tri, ce qui masquait potentiellement les
+        meilleurs plans.
+      */}
+      {!isLoading && !isError && data?.trade_plans?.length > 0 && (
+        <TradePlansTable plans={data.trade_plans} />
       )}
 
       {/* Bottom tables: all SMC entities */}

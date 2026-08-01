@@ -613,8 +613,43 @@ class Strategy(BaseStrategy):
         max_ob_age = int(p["ob_max_age"])
         plans: List[dict] = []
 
+        # La colonne `time` est un datetime polars : il faut la convertir en
+        # epoch comme le fait `scanner_service` (`.dt.epoch(time_unit="s")`).
+        # `to_list()` seul renvoie des `datetime`, non sérialisables tels quels
+        # et non convertibles par `int()` — le champ retombait à None.
+        # Le repli couvre les sources où la colonne est déjà numérique.
+        times_arr = None
+        if "time" in win.columns:
+            try:
+                times_arr = win["time"].dt.epoch(time_unit="s").to_list()
+            except Exception:
+                try:
+                    times_arr = win["time"].to_list()
+                except Exception:
+                    times_arr = None
+
+        def _plan_time(idx) -> Optional[int]:
+            """Horodatage de la barre à laquelle le plan est ancré.
+
+            ⚠ Les index manipulés dans cette méthode sont relatifs à ``win``
+            (fenêtre glissante des ``max_window`` dernières barres), PAS à
+            ``df``. La conversion doit donc se faire ici, pendant que ``win``
+            est en portée : la faire côté API avec les temps du df complet
+            décalerait chaque date de ``len(df) - len(win)`` barres.
+            """
+            if times_arr is None or idx is None:
+                return None
+            k = int(idx)
+            if not (0 <= k < len(times_arr)):
+                return None
+            v = times_arr[k]
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+
         def _add(plan: Optional[dict], status: str, trigger: str,
-                 zone_lo=None, zone_hi=None):
+                 zone_lo=None, zone_hi=None, anchor=None):
             if plan is None:
                 return
             entry = plan.get("entry")
@@ -630,6 +665,13 @@ class Strategy(BaseStrategy):
                 "distance_pct": round(dist, 3),
                 "trigger": trigger, "reason": plan["reason"],
                 "zone_low": zone_lo, "zone_high": zone_hi,
+                # Epoch SECONDES, cohérent avec les autres entités SMC
+                # sérialisées par `build_smc_payload` (`time_start`/`time_end`).
+                # « immediate » → bougie courante (le signal vient de tomber) ;
+                # « pending »   → bougie de FORMATION de la zone, c'est-à-dire
+                # le moment où le setup a été détecté, pas le moment
+                # hypothétique de son déclenchement (encore inconnu).
+                "signal_time": _plan_time(anchor),
             })
 
         # ── 1. Signal immédiat (bougie courante) ─────────────────────────────
@@ -638,7 +680,8 @@ class Strategy(BaseStrategy):
             sig = dict(sig)
             sig["entry"] = price
             _add(sig, "immediate",
-                 "Déclenché sur la bougie courante — entrée au prochain open")
+                 "Déclenché sur la bougie courante — entrée au prochain open",
+                 anchor=i)
 
         # ── 2. Retests d'order blocks / rejection blocks FRAIS alignés ───────
         pending_zones = list(res["_all_obs"])
@@ -664,7 +707,8 @@ class Strategy(BaseStrategy):
                 _add(plan, "pending",
                      f"Attendre le retour du prix dans la zone de demande "
                      f"[{ob['bottom']:.6g}–{ob['top']:.6g}] + bougie de rejet",
-                     zone_lo=ob["bottom"], zone_hi=ob["top"])
+                     zone_lo=ob["bottom"], zone_hi=ob["top"],
+                     anchor=ob["created_at"])
             elif ob["kind"] == "bearish" and price < ob["bottom"] \
                     and self._dir_gate("short", trend, zone, short_ema_ok, short_htf_ok):
                 sc = 0.50 + 0.10 + (0.10 if ob.get("strength", 1) >= 2 else 0.0) \
@@ -680,7 +724,8 @@ class Strategy(BaseStrategy):
                 _add(plan, "pending",
                      f"Attendre le retour du prix dans la zone d'offre "
                      f"[{ob['bottom']:.6g}–{ob['top']:.6g}] + bougie de rejet",
-                     zone_lo=ob["bottom"], zone_hi=ob["top"])
+                     zone_lo=ob["bottom"], zone_hi=ob["top"],
+                     anchor=ob["created_at"])
 
         # ── 3. Sweeps potentiels des poches de liquidité actives ─────────────
         for pool in reversed(res["_all_pools"]):
@@ -701,7 +746,8 @@ class Strategy(BaseStrategy):
                 _add(plan, "pending",
                      f"Attendre une mèche SOUS les equal lows {lvl:.6g} "
                      f"(×{len(pool['indices'])}) avec clôture au-dessus (rejet)",
-                     zone_lo=pool["bottom"], zone_hi=pool["top"])
+                     zone_lo=pool["bottom"], zone_hi=pool["top"],
+                     anchor=pool["formed_at"])
             elif pool["kind"] == "buy_side" and lvl > price \
                     and self._dir_gate("short", trend, zone, short_ema_ok, short_htf_ok):
                 sc = 0.50 + 0.10 + 0.10 + (0.10 if zone == "discount" else 0.0)
@@ -714,7 +760,8 @@ class Strategy(BaseStrategy):
                 _add(plan, "pending",
                      f"Attendre une mèche AU-DESSUS des equal highs {lvl:.6g} "
                      f"(×{len(pool['indices'])}) avec clôture en dessous (rejet)",
-                     zone_lo=pool["bottom"], zone_hi=pool["top"])
+                     zone_lo=pool["bottom"], zone_hi=pool["top"],
+                     anchor=pool["formed_at"])
 
         # Tri : signal immédiat d'abord, puis plans les plus proches du prix.
         plans.sort(key=lambda x: (x["status"] != "immediate",

@@ -430,18 +430,21 @@ function BotCardV2({ bot, onClick, onForce, onForward, forceLoading, forwardLoad
   const usedPct = bot.budget?.used_pct || 0;
 
   return (
+    /*
+      La carte portait `role="button"` + tabIndex tout en contenant de vrais
+      boutons d'action (« Forcer en actif », « Relancer le forward-test ») :
+      axe le remonte en `nested-interactive` (serious) — un contrôle ne peut
+      pas en contenir d'autres, et un lecteur d'écran ne sait plus quoi
+      annoncer ni comment atteindre les actions internes.
+
+      La carte redevient donc un simple conteneur ; c'est le NOM du bot qui
+      devient le contrôle d'ouverture de la fiche. Le `onClick` de la carte est
+      conservé pour le confort à la souris, mais il n'est plus le seul chemin :
+      le bouton de nom offre l'équivalent clavier.
+    */
     <Card
       className={cn('hover:border-border-hi transition-all cursor-pointer group', style.bg)}
       onClick={onClick}
-      role="button"
-      tabIndex={0}
-      aria-label={`Bot ${strategy} ${tf} ${symbol || ''} — état ${style.label}`}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onClick();
-        }
-      }}
     >
       <CardContent className="space-y-2.5 p-3">
         {/* Header : strategy + tf + confidence */}
@@ -451,7 +454,14 @@ function BotCardV2({ bot, onClick, onForce, onForward, forceLoading, forwardLoad
               <span aria-label={`Confiance: ${confidence.level}`} title={`Confiance ${confidence.level}`}>
                 {confidence.icon}
               </span>
-              <span className="font-mono text-sm font-semibold truncate">{strategy}</span>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onClick(); }}
+                aria-label={`Ouvrir la fiche du bot ${strategy} ${tf}${symbol ? ` ${symbol}` : ''} — état ${style.label}`}
+                className="font-mono text-sm font-semibold truncate text-left hover:text-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400 rounded"
+              >
+                {strategy}
+              </button>
             </div>
             <div className="text-[11px] text-muted mt-0.5 font-mono">
               {tf}{symbol ? ` · ${symbol}` : ''}

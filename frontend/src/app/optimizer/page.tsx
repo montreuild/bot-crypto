@@ -274,6 +274,13 @@ function JobCard({ job }: { job: OptimizeJob }) {
               variant="ghost"
               onClick={handleDelete}
               disabled={del.isPending}
+              // Bouton à icône seule : sans nom accessible, axe le remonte en
+              // `button-name` (critique) et un lecteur d'écran n'annonce que
+              // « bouton ». C'est l'item #26 de l'audit, donné pour traité en
+              // S2 mais jamais appliqué ici — et le job a11y de la CI est
+              // depuis passé bloquant.
+              aria-label="Supprimer ce job d'optimisation"
+              title="Supprimer ce job"
             >
               <Trash2 className="w-3 h-3" />
             </Button>
@@ -334,9 +341,26 @@ export default function OptimizerPage() {
   const jobs: OptimizeJob[] = (() => {
     const d = jobsData as any;
     if (!d) return [];
-    if (Array.isArray(d?.jobs)) return d.jobs;
     if (Array.isArray(d)) return d;
-    return d ? [d] : [];
+    if (Array.isArray(d.jobs)) return d.jobs;
+    // Forme « job unique » : la réponse porte directement `job_id`
+    // (appel `/api/optimize/status?job_id=…`).
+    if (typeof d.job_id === 'string') return [d];
+    /*
+      Sinon la réponse est le DICTIONNAIRE indexé par job_id renvoyé par
+      `get_all_jobs()` (app/engine/auto_optimizer.py:208) — c'est d'ailleurs ce
+      que documente déjà `OptimizeStatusSchema`.
+
+      Le repli précédent (`return d ? [d] : []`) emballait le dictionnaire
+      ENTIER comme s'il s'agissait d'un seul job : sans job en cours, `{}` est
+      truthy, donc la page rendait une carte fantôme au `job_id` undefined
+      (d'où l'avertissement React « unique key prop »), et avec des jobs réels
+      elle en affichait un seul, illisible. Même famille que R15/R16.
+    */
+    return Object.entries(d).map(([job_id, job]: [string, any]) => ({
+      job_id,
+      ...(job && typeof job === 'object' ? job : {}),
+    })) as OptimizeJob[];
   })();
   const jobsError = jobsIsError
     ? (jobsErrorObj as any)?.message || 'Erreur de chargement'

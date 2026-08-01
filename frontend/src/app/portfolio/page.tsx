@@ -147,7 +147,33 @@ export default function PortfolioPage() {
 
   // Real vs shadow allocation
   const realSlots: any[] = p.real_allocation || p.slots || p.allocation || [];
-  const shadowSlots: any[] = p.shadow_allocation?.slots || p.shadow_allocation || [];
+  /*
+    `shadow_allocation` n'est NI un tableau NI un dictionnaire indexé par
+    slot_key : `compute_shadow_allocation` (app/live/capital_allocator.py:604)
+    renvoie `{targets, current, reserve_pct, dropped, notes, delta}`, où seul
+    `targets` porte le mapping slot_key → budget cible.
+
+    L'expression précédente (`?.slots || shadow_allocation || []`) retombait
+    donc sur l'objet entier. Comme `{}.length` vaut `undefined`, la garde
+    `slots.length === 0` d'`AllocationTable` ne se déclenchait pas et
+    `slots.map()` levait « slots.map is not a function » : la page /portfolio
+    tombait entièrement dans l'ErrorBoundary. Même famille que R15/R16 — un
+    dictionnaire pris pour un tableau.
+
+    ⚠ Unités : `get_status()` renvoie déjà `budget_pct` en POURCENT
+    (`round(s.budget_pct * 100, 1)`, ligne 788) alors que les `targets` du
+    shadow sont des FRACTIONS (`round(v, 4)`). `AllocationTable` formate en
+    `.toFixed(1) + '%'` : il faut donc ramener les cibles à la même échelle,
+    sinon un budget de 12 % s'afficherait « 0.1 % ».
+  */
+  const shadowRaw: any = p.shadow_allocation;
+  const shadowSlots: any[] = Array.isArray(shadowRaw)
+    ? shadowRaw
+    : Array.isArray(shadowRaw?.slots)
+      ? shadowRaw.slots
+      : Object.entries((shadowRaw?.targets ?? {}) as Record<string, number>).map(
+          ([slot_key, pct]) => ({ slot_key, budget_pct: Number(pct) * 100 }),
+        );
 
   // Lifecycle
   const lifecycle = p.lifecycle || {};
@@ -441,7 +467,9 @@ function RiskIndicator({
 // ── Allocation table ────────────────────────────────────────────────────────
 
 function AllocationTable({ slots }: { slots: any[] }) {
-  if (!slots || slots.length === 0) {
+  // `Array.isArray` et pas seulement `length === 0` : sur un objet, `length`
+  // vaut `undefined`, la garde laissait donc passer et `.map()` plantait.
+  if (!Array.isArray(slots) || slots.length === 0) {
     return <div className="text-sm text-muted text-center py-6">Aucun slot</div>;
   }
   return (
