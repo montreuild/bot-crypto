@@ -1723,9 +1723,20 @@ variation de marché.
 ⚠ **Les références visuelles sont générées par plateforme** (`-linux.png`,
 `-win32.png`) : celles produites sous Windows ne valent pas sous l'ubuntu-latest
 de la CI. Les 5 références Linux ont donc été générées par le job lui-même puis
-commitées sous `frontend/e2e/tests/visual.spec.ts-snapshots/`. Après un
-changement visuel volontaire : relancer avec `--update-snapshots`, récupérer
-l'artefact `visual-snapshots` et committer les PNG.
+commitées sous `frontend/e2e/tests/visual.spec.ts-snapshots/`.
+
+Pour en régénérer une après un changement visuel volontaire, **supprimer le PNG
+concerné et pousser** : sans fichier de référence, Playwright écrit la capture
+puis échoue, et l'artefact `visual-snapshots` la remonte (l'upload est en
+`if: always()`). On récupère le PNG et on le committe. Le job passe au vert au
+run suivant.
+
+Cette méthode est préférable à `--update-snapshots`, que le job CI ne passe
+pas : l'utiliser supposerait de modifier le workflow le temps d'un run, puis de
+penser à l'enlever — un `--update-snapshots` oublié rendrait le job incapable
+d'échouer, donc inutile. Ne supprimer que les références réellement hors
+tolérance : `maxDiffPixelRatio` vaut 2 %, et un changement de barre latérale
+passe généralement dessous.
 
 Le test du drawer de `/bots-v2` est ignoré explicitement quand le backend est
 éteint : il ne peut pas s'ouvrir sans données, et les jobs CI ne démarrent que
@@ -2044,6 +2055,30 @@ Les ~5 470 lignes du constat initial sont toutes joignables : ~2 330 par le lot
 Marché, ~1 840 par le Laboratoire, ~820 par les Réglages, ~480 par le
 Portefeuille.
 
+### Le double 308 du backend
+
+Poser les redirections côté Next en a créé un effet de bord que les 4 lots
+n'avaient pas traité. `app/api/main.py` sert les 18 anciennes routes HTML et
+redirigeait chacune vers **le même chemin** côté Next — lequel la redirigeait à
+son tour depuis la fusion. Un `GET /smartgraph` sur le port 8000 coûtait donc
+deux 308 : FastAPI → Next `/smartgraph` → Next `/market?tab=smartgraph`.
+
+`HTML_ROUTES_TO_REDIRECT` passe de liste à mapping `route → cible finale`. Les
+13 routes concernées visent directement leur destination ; les 5 qui sont de
+vraies pages Next (`/audit`, `/audit-log`, `/trades`, `/models`, `/data`)
+gardent leur chemin. `/slots`, qui visait `/bots`, vise `/bots-v2`. `/` reste
+sur `/` : ce n'est pas un alias hérité mais la racine de l'app, et c'est
+`frontend/src/app/page.tsx` qui décide de la page d'entrée — le dupliquer dans
+le backend en ferait un second endroit à changer.
+
+Cette table double le bloc `redirects()` de `next.config.mjs` : c'est le prix
+d'avoir deux serveurs qui connaissent la même bascule.
+`tests/test_legacy_redirects.py` lit `next.config.mjs` et vérifie qu'elles ne
+divergent pas — une redirection posée côté Next sans être répercutée côté
+backend recréerait le double saut, invisible en test comme à l'œil. Le test
+vérifie aussi qu'aucune cible du backend n'est elle-même une source de
+redirection Next.
+
 ### Conditions de levée, par lot
 
 1. ~~**Lot Marché**~~ (`/scanner`, `/smartgraph`, `/smartreplay`,
@@ -2059,8 +2094,14 @@ Portefeuille.
    Deux conséquences sur les tests, à ne pas confondre avec des régressions :
    le job `a11y` ouvre maintenant les 4 onglets par leur `?tab=` (Radix ne
    monte que l'onglet actif — auditer `/market` seul ne couvrirait que
-   Scanner), et **les 5 références visuelles sont à régénérer** puisque la
-   barre latérale perd 4 entrées, ce qui décale toutes les captures `fullPage`.
+   Scanner), et **la référence visuelle de `/market` a été régénérée**.
+
+   Sur ce dernier point, la CI a corrigé une prévision trop prudente : le
+   retrait d'entrées de la barre latérale décale bien toutes les captures
+   `fullPage`, mais reste sous le seuil de 2 % (`maxDiffPixelRatio`) sur 4 des
+   5 pages méta. Seule `marche.png` sortait de la tolérance — 19 434 pixels,
+   ratio 0,03 — parce que son onglet Scanner passe d'un teaser à la vue
+   complète. Les 4 autres références restent valides et n'ont pas été touchées.
 2. ~~**Lot Laboratoire**~~ (`/optimizer`, `/replay`, `/compare`, `/ml`) —
    **fait**, sur le même modèle que le lot Marché : vues sous
    `frontend/src/components/views/`, montées dans les onglets, 4 redirections
