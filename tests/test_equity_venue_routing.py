@@ -12,7 +12,6 @@ Ces tests verrouillent l'échelon « univers » de la précédence, et le fait q
 """
 import polars as pl
 import pytest
-import yaml
 
 import app.core.universe as universe_mod
 from app.core.bot_identity import resolve_venue

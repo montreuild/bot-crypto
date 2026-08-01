@@ -22,7 +22,6 @@ from app.core.bot_identity import (
 )
 from app.core.config import _validate_venues
 
-
 # ── 1. Repli sur les globales : identifiable, jamais homonyme ────────────────
 
 class TestDerivedVenue:
