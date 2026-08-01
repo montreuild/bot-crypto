@@ -10,7 +10,6 @@ const PAGES = [
   { path: '/market', title: 'Marché' },
   { path: '/settings-v2', title: 'Réglages' },
   { path: '/trades', title: 'Trades' },
-  { path: '/portfolio', title: 'Portefeuille' },
   { path: '/audit', title: 'Audit' },
   { path: '/audit-log', title: 'Journal' },
   { path: '/data', title: 'Données' },
@@ -59,6 +58,8 @@ test.describe('Redirections S10', () => {
     // Lot Réglages
     { from: '/config', to: /\/settings-v2\?tab=capital/ },
     { from: '/settings', to: /\/settings-v2\?tab=capital/ },
+    // Lot Portefeuille — dernière des 14 redirections du plan.
+    { from: '/portfolio', to: /\/portfolio-v2/ },
   ];
 
   for (const r of REDIRECTS) {
@@ -71,11 +72,11 @@ test.describe('Redirections S10', () => {
     });
   }
 
-  // Les routes volontairement NON redirigées doivent rester servies en direct :
-  // les onglets des pages méta y renvoient explicitement.
-  // `/models` est dans cette liste par choix d'architecture, pas par blocage :
-  // le registre versionné n'est pas dans le plan de fusion.
-  const KEPT = ['/models', '/portfolio'];
+  // Les 14 redirections du plan de refonte sont désormais toutes posées.
+  // `/models` reste servi en direct par choix d'architecture, pas par blocage :
+  // le registre versionné n'est pas dans le plan de fusion, et l'onglet ML du
+  // Laboratoire y renvoie explicitement.
+  const KEPT = ['/models'];
   for (const path of KEPT) {
     test(`${path} reste accessible (pas de 308)`, async ({ page }) => {
       const response = await page.goto(path);

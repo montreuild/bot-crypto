@@ -1662,16 +1662,16 @@ Aucune modification backend n'a été nécessaire pour les sprints S0-S9. Le bac
 
 ### Stratégie de migration
 
-La stratégie strangler fig a été suivie : les nouvelles pages (`/portfolio-v2`, `/bots-v2`, `/lab`, `/market`, `/settings-v2`) coexistent avec les anciennes. Le plan initial prévoyait 14 redirections 308 une fois les pages validées :
+La stratégie strangler fig a été menée à son terme : les 5 pages méta (`/portfolio-v2`, `/bots-v2`, `/lab`, `/market`, `/settings-v2`) ont d'abord coexisté avec les anciennes, puis les ont remplacées. Le plan prévoyait 14 redirections 308 une fois les pages validées :
 - `/dashboard` → `/portfolio-v2` (puis `/portfolio`)
 - `/bots` → `/bots-v2` (puis `/bots`)
 - `/backtest`, `/optimizer`, `/ml`, `/replay`, `/compare` → `/lab`
 - `/scanner`, `/smartgraph`, `/smartreplay`, `/derivatives` → `/market`
 - `/settings`, `/config` → `/settings-v2`
 
-**13 de ces 14 redirections sont posées** (3 en S10, 4 par le lot Marché, 4 par
-le lot Laboratoire, 2 par le lot Réglages). La dernière reste en attente de son
-lot de fusion : voir §Bascule S10.
+**Les 14 redirections sont posées** (3 en S10, 4 par le lot Marché, 4 par
+le lot Laboratoire, 2 par le lot Réglages, 1 par le lot Portefeuille). Détail :
+voir §Bascule S10.
 
 ### Prochaines étapes (S10-S12)
 
@@ -1922,7 +1922,8 @@ masquait rien tout en laissant croire qu'une exception était en place — retir
   atteignable en l'état et n'est vérifié par aucune CI.
 - ~~**Accessibilité**~~ — traité, cf. §Accessibilité ci-dessous. Le job CI
   `a11y` est bloquant et passe à zéro violation sur les 24 pages.
-- **Redirections 308 : 13 posées sur 14** — voir §Bascule S10 ci-dessous.
+- ~~**Redirections 308**~~ — traité : les 14 redirections du plan sont posées,
+  cf. §Bascule S10 ci-dessous.
 - ~~**Réponses d'API non typées**~~ — traité, cf. §Typage des réponses d'API.
   L'extension aux endpoints restants (`optimize/*`, `ml/registry`, `replay`,
   `derivatives`, `scanner/smc*`) est faite. Trois pièges supplémentaires du même
@@ -2013,18 +2014,35 @@ Deux suppressions volontaires :
 redirection intermédiaire. Sidebar, recherche Cmd+K, page 404 et
 `AllocationsGrid` ciblent directement les routes v2.
 
+**Lot Portefeuille** — la dernière des 14 :
+
+| Source | Cible | Ce qui a été porté |
+|---|---|---|
+| `/portfolio` | `/portfolio-v2` | `ActivityFeed` (journal de notifications) et `SignificantBotsTable` (vue par bot), extraits en composants sous `components/cards/` |
+
+Le bouton **Force rebalance** a été porté en plus des deux blocs listés par
+l'audit : il n'existait que sur `/portfolio` et ne s'affiche que lorsque
+`continuous_allocation = false`, c'est-à-dire précisément quand le capital
+n'est pas réalloué tout seul. Rediriger sans lui aurait supprimé la seule
+commande de rééquilibrage de l'UI — un manque qu'aucun test n'aurait vu.
+
+`ActivityFeed` ne fait pas doublon avec `LiveTradesFeed`, déjà monté sur
+`/portfolio-v2` : celui-ci lit le flux WebSocket des trades, celui-là
+l'historique persisté des notifications (halt, kill switch, drawdown) avec ses
+niveaux info / warning / critical.
+
 ### Ce qui reste bloqué, et pourquoi
 
-Une redirection n'est posable que lorsque l'onglet visé porte réellement la
-fonctionnalité. Tant qu'il s'agit d'une **carte de renvoi vers l'ancienne
-page**, la 308 boucle et rend la fonctionnalité inatteignable.
+**Plus rien.** Les 14 redirections du plan de refonte sont posées.
 
-| Redirection prévue | Blocage constaté | Lignes rendues inaccessibles |
-|---|---|---|
-| `/portfolio` → `/portfolio-v2` | `/portfolio` porte un journal de notifications (`useNotifications`) et une vue par bot (`useBots`) que `/portfolio-v2` ne reprend pas | 483 |
+Seul `/models` reste servi en direct, **par choix d'architecture et non par
+blocage** : le registre versionné (882 l.) n'est pas dans le plan de fusion.
+L'onglet ML du Laboratoire y renvoie explicitement, et le test e2e le classe
+en « reste accessible » pour cette raison.
 
-**Reste ~480 lignes** à porter sur les ~5 470 du constat initial. Le lot Marché
-en a traité ~2 330, le lot Laboratoire ~1 840, le lot Réglages ~820.
+Les ~5 470 lignes du constat initial sont toutes joignables : ~2 330 par le lot
+Marché, ~1 840 par le Laboratoire, ~820 par les Réglages, ~480 par le
+Portefeuille.
 
 ### Conditions de levée, par lot
 
@@ -2068,8 +2086,15 @@ en a traité ~2 330, le lot Laboratoire ~1 840, le lot Réglages ~820.
    une 308 dans l'autre sens et casserait les favoris fraîchement redirigés.
    Son entrée de nav, elle, s'appelle simplement « Réglages » — il n'y a plus
    d'ancienne page dont la distinguer.
-4. **Lot Portefeuille** (`/portfolio`) — porter le journal de notifications et
-   la vue par bot dans `/portfolio-v2`.
+4. ~~**Lot Portefeuille**~~ (`/portfolio`) — **fait**. Journal de notifications
+   et vue par bot extraits en composants (`ActivityFeed`,
+   `SignificantBotsTable`) et montés dans `/portfolio-v2`, plus le bouton
+   Force rebalance que l'audit n'avait pas relevé.
+
+**Les 4 lots sont livrés ; les 14 redirections du plan sont posées.** Le
+constat « les pages `/lab` et `/market` sont, pour 8 de leurs 9 onglets, des
+menus vers l'ancienne UI » n'est plus vrai : il ne reste aucune carte de
+renvoi, seulement le lien assumé de l'onglet ML vers `/models`.
 
 ### Note sur le code 308
 

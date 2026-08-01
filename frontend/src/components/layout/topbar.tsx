@@ -263,7 +263,11 @@ const SEARCH_PAGES = [
   { href: '/portfolio-v2', label: 'Portefeuille', desc: 'Vue consolidée temps réel', keywords: ['live', 'trading', 'positions', 'pnl', 'dashboard', 'allocation', 'frais'] },
   { href: '/bots-v2', label: 'Mes Bots', desc: 'Portefeuille de stratégies', keywords: ['stratégies', 'lifecycle', 'candidat', 'essai', 'actif', 'kanban'] },
   { href: '/trades', label: 'Trades', desc: 'Historique des trades', keywords: ['historique', 'export', 'csv'] },
-  { href: '/portfolio', label: 'Portefeuille (détail)', desc: 'Vue fonds détaillée + notifications', keywords: ['allocation', 'shadow', 'lifecycle', 'risk', 'notifications'] },
+  // Lot Portefeuille — /portfolio est en 308 vers /portfolio-v2, qui porte
+  // désormais son journal de notifications et sa vue par bot. L'entrée reste
+  // pour que « notifications » et « allocation » restent des mots-clés
+  // trouvables, mais elle cible la page unique.
+  { href: '/portfolio-v2', label: 'Activité & bots', desc: 'Journal de notifications et bots à edge significatif', keywords: ['allocation', 'shadow', 'lifecycle', 'risk', 'notifications', 'activité', 'edge'] },
   { href: '/lab?tab=backtest', label: 'Backtest', desc: 'Test de stratégies sur données historiques', keywords: ['walk-forward', 'monte-carlo', 'test', 'laboratoire'] },
   // Lot Marché — ces quatre entrées sont des onglets de /market depuis la
   // fusion ; elles gardent leur nom propre dans la recherche pour rester

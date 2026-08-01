@@ -82,6 +82,9 @@ const nextConfig = {
       // stratégies de l'autre). Thème et notifications sont dans l'onglet UI.
       { source: '/config', destination: '/settings-v2?tab=capital', permanent: true },
       { source: '/settings', destination: '/settings-v2?tab=capital', permanent: true },
+
+      // Lot Portefeuille — dernière des 14 redirections du plan de refonte.
+      { source: '/portfolio', destination: '/portfolio-v2', permanent: true },
     ];
   },
   // S0-F1-US6 — WebSocket : Next.js ne proxy pas les WS nativement, on laisse

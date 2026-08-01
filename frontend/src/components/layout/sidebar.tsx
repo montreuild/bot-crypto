@@ -17,13 +17,12 @@ const NAV_GROUPS = [
     items: [
       // S10 — /dashboard et /bots sont désormais en 308 vers les pages v2 :
       // on pointe directement dessus pour éviter le saut de redirection.
+      // Lot Portefeuille — l'entrée « Portefeuille (détail) » vers /portfolio
+      // disparaît : le journal de notifications et la vue par bot qu'elle
+      // seule donnait sont maintenant sur /portfolio-v2, qui est en 308.
       { href: '/portfolio-v2', label: 'Portefeuille', icon: Wallet },
       { href: '/bots-v2', label: 'Mes Bots', icon: Bot },
       { href: '/trades', label: 'Trades', icon: Activity },
-      // /portfolio garde un journal de notifications et une vue par bot que
-      // /portfolio-v2 ne reprend pas encore — pas de 308 tant que ce n'est pas
-      // porté (cf. docs/audit-ui-ux-bot-crypto.md §Bascule S10).
-      { href: '/portfolio', label: 'Portefeuille (détail)', icon: Wallet },
     ],
   },
   {
