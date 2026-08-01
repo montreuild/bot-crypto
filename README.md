@@ -234,8 +234,8 @@ Accessible sur **http://127.0.0.1:8000**
 
 | Page | URL | Description |
 |------|-----|-------------|
-| 📊 Dashboard Live | `/` | Suivi du portefeuille, positions, trades, equity curve, journal des signaux |
-| 📈 Backtest | `/backtest` | Test de stratégies, Walk-Forward, Monte-Carlo, comparaison multi-stratégies |
+| 📊 Portefeuille | `/portfolio-v2` | Suivi du portefeuille, positions, trades, equity curve, journal des signaux |
+| 📈 Backtest | `/lab?tab=backtest` | Test de stratégies, Walk-Forward, Monte-Carlo, comparaison multi-stratégies |
 | ⚡ Optimiseur | `/optimizer` | Optimisation des paramètres (IS/OOS), résultats en temps réel, application directe |
 | 🔍 Scanner | `/scanner` | Screening des marchés par stratégie & timeframe |
 | ⚙️ Configuration | `/config` | Édition des stratégies, paramètres, notifications, margin trading |

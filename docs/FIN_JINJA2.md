@@ -117,8 +117,8 @@ indépendantes du frontend. Seules les routes **HTML** sont supprimées :
 
 | Route HTML Jinja2 (à supprimer) | Équivalent Next.js (nouveau) |
 |---|---|
-| `GET /` | `frontend/src/app/dashboard/page.tsx` |
-| `GET /backtest` | `frontend/src/app/backtest/page.tsx` |
+| `GET /` | `frontend/src/app/portfolio-v2/page.tsx` |
+| `GET /backtest` | `frontend/src/app/lab/page.tsx` (onglet `?tab=backtest`) |
 | `GET /optimizer` | `frontend/src/app/optimizer/page.tsx` |
 | `GET /scanner` | `frontend/src/app/scanner/page.tsx` |
 | `GET /config` | `frontend/src/app/config/page.tsx` |
@@ -130,7 +130,7 @@ indépendantes du frontend. Seules les routes **HTML** sont supprimées :
 | `GET /compare` | `frontend/src/app/compare/page.tsx` |
 | `GET /derivatives` | `frontend/src/app/derivatives/page.tsx` |
 | `GET /portfolio` | `frontend/src/app/portfolio/page.tsx` |
-| `GET /bots` | `frontend/src/app/bots/page.tsx` |
+| `GET /bots` | `frontend/src/app/bots-v2/page.tsx` |
 | `GET /settings` | `frontend/src/app/settings/page.tsx` |
 | `GET /data` | `frontend/src/app/data/page.tsx` |
 | `GET /smartgraph` | `frontend/src/app/smartgraph/page.tsx` |
@@ -139,6 +139,12 @@ indépendantes du frontend. Seules les routes **HTML** sont supprimées :
 
 Pendant la transition, les anciennes routes renverront un redirect 307
 vers la nouvelle page Next.js (backward compat pour les bookmarks).
+
+> **Mise à jour S10.** Les cibles de `GET /`, `GET /backtest` et `GET /bots`
+> ci-dessus ont changé : les pages `app/dashboard`, `app/backtest` et `app/bots`
+> ont été remplacées par les pages méta `portfolio-v2`, `lab` et `bots-v2`, puis
+> supprimées. Les trois chemins sont désormais des redirections 308 déclarées
+> dans `frontend/next.config.mjs`.
 
 ## Impact dépendances
 
