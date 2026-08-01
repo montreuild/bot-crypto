@@ -2,7 +2,7 @@
   "name": "Crypto Bot — Trading Algorithmique",
   "short_name": "Crypto Bot",
   "description": "Dashboard temps réel pour bot de trading crypto multi-stratégies",
-  "start_url": "/dashboard",
+  "start_url": "/portfolio-v2",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#0a0e14",
@@ -26,21 +26,21 @@
   ],
   "shortcuts": [
     {
-      "name": "Dashboard",
+      "name": "Portefeuille",
       "short_name": "Live",
-      "url": "/dashboard",
+      "url": "/portfolio-v2",
       "description": "Vue temps réel du trading"
     },
     {
       "name": "Mes Bots",
       "short_name": "Bots",
-      "url": "/bots",
+      "url": "/bots-v2",
       "description": "Portefeuille de stratégies"
     },
     {
       "name": "Backtest",
       "short_name": "BT",
-      "url": "/backtest",
+      "url": "/lab?tab=backtest",
       "description": "Test de stratégies"
     }
   ]

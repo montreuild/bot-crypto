@@ -19,12 +19,19 @@
  *
  * `CACHE_NAME` doit être incrémenté à chaque changement de stratégie : le
  * handler `activate` purge alors les caches aux anciens noms.
+ *
+ * `STATIC_ASSETS` liste des URL servies en 200 direct, pas des redirections.
+ * Depuis S10, `/` et `/dashboard` renvoient un 308 vers `/portfolio-v2` (cf.
+ * `redirects()` dans next.config.mjs) : `addAll` suivait la redirection et
+ * stockait le HTML de `/portfolio-v2` sous deux clés qui ne sont jamais
+ * redemandées, au prix d'un aller-retour supplémentaire à l'installation.
+ * On précache donc la cible réelle. Le repli hors ligne du handler HTML suit
+ * la même clé.
  */
 
-const CACHE_NAME = 'crypto-bot-v2';
+const CACHE_NAME = 'crypto-bot-v3';
 const STATIC_ASSETS = [
-  '/',
-  '/dashboard',
+  '/portfolio-v2',
   '/manifest.json',
 ];
 
@@ -78,7 +85,7 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
           return response;
         })
-        .catch(() => caches.match(request).then((cached) => cached || caches.match('/')))
+        .catch(() => caches.match(request).then((cached) => cached || caches.match('/portfolio-v2')))
     );
     return;
   }

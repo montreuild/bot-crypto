@@ -19,12 +19,17 @@ Frontend moderne pour le bot de trading crypto, avec streaming temps réel via W
 
 | Route | Description |
 |---|---|
-| `/dashboard` | Vue temps réel : KPIs, equity curve, positions, trades live, signals feed, allocations, risk panel |
-| `/bots` | Portefeuille de stratégies avec cycle de vie (candidat → essai → actif → retiré) |
+| `/portfolio-v2` | Vue temps réel : KPIs, equity curve, positions, trades live, signals feed, allocations, risk panel |
+| `/bots-v2` | Portefeuille de stratégies avec cycle de vie (candidat → essai → actif → retiré) |
 | `/trades` | Historique des trades avec filtres + export CSV |
-| `/backtest` | Backtest interactif avec Walk-Forward + Monte-Carlo |
+| `/lab?tab=backtest` | Backtest interactif avec Walk-Forward + Monte-Carlo |
 | `/config` | Configuration par onglets (stratégies, risk, notifications, exchange) |
 | `/scanner` | Fast Analyse SMC/ICT |
+
+Depuis le sprint S10, `/dashboard`, `/bots` et `/backtest` sont redirigées en 308
+vers les trois routes ci-dessus (cf. `redirects()` dans `next.config.mjs`). Les
+pages correspondantes ont été supprimées : ces chemins n'existent plus qu'en tant
+que redirections de compatibilité.
 
 ## Démarrage rapide
 
