@@ -6,9 +6,9 @@ import { cn } from '@/lib/utils';
 import { useWebSocket } from '@/lib/ws-provider';
 import {
   Bot, Settings, Activity,
-  Zap, Database, Network, Sparkles, Repeat,
-  BrainCircuit, ClipboardList, Wallet, Cpu,
-  GitCompare, ScrollText, Archive,
+  Zap, Database, Network, Sparkles,
+  ClipboardList, Wallet, Cpu,
+  ScrollText, Archive,
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -31,15 +31,14 @@ const NAV_GROUPS = [
     items: [
       { href: '/lab', label: 'Laboratoire', icon: Sparkles },
       { href: '/market', label: 'Marché', icon: Network },
-      // Lot Marché — Scanner, Smart Graph, Smart Replay et Dérivés ne sont
-      // plus des pages : ce sont les quatre onglets de « Marché », et les
+      // Lots Marché et Laboratoire — Scanner / Smart Graph / Smart Replay /
+      // Dérivés et Optimiseur / ML / Replay / Comparatif ne sont plus des
+      // pages : ce sont les onglets de « Marché » et « Laboratoire », et les
       // anciennes routes sont en 308 vers eux. Leurs entrées de nav sont
       // retirées ici (l'état actif se calcule sur le seul `pathname`, elles
-      // pointeraient toutes sur /market sans jamais s'allumer) ; la recherche
-      // Cmd+K continue de les référencer par leur nom, onglet compris.
-      { href: '/replay', label: 'Replay', icon: Repeat },
-      { href: '/compare', label: 'Comparatif', icon: GitCompare },
-      { href: '/optimizer', label: 'Optimiseur', icon: Sparkles },
+      // pointeraient toutes sur /market ou /lab sans jamais s'allumer) ; la
+      // recherche Cmd+K continue de les référencer par leur nom, onglet
+      // compris.
       { href: '/audit', label: 'Audit OOS', icon: ClipboardList },
       { href: '/audit-log', label: 'Journal Audit', icon: ScrollText },
     ],
@@ -48,7 +47,8 @@ const NAV_GROUPS = [
     label: 'Données',
     items: [
       { href: '/data', label: 'Bougies OHLCV', icon: Database },
-      { href: '/ml', label: 'Modèles ML', icon: BrainCircuit },
+      // /models n'est PAS dans le plan de fusion : le registre versionné
+      // reste une page à part entière, et garde donc son entrée.
       { href: '/models', label: 'Registre modèles', icon: Archive },
     ],
   },

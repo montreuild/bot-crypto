@@ -69,6 +69,13 @@ const nextConfig = {
       { source: '/smartgraph', destination: '/market?tab=smartgraph', permanent: true },
       { source: '/smartreplay', destination: '/market?tab=smartreplay', permanent: true },
       { source: '/derivatives', destination: '/market?tab=derivatives', permanent: true },
+
+      // Lot Laboratoire. ⚠ `/models` n'y figure PAS : le registre versionné
+      // n'est pas dans le plan de fusion et reste une page à part entière.
+      { source: '/optimizer', destination: '/lab?tab=optimizer', permanent: true },
+      { source: '/ml', destination: '/lab?tab=ml', permanent: true },
+      { source: '/replay', destination: '/lab?tab=replay', permanent: true },
+      { source: '/compare', destination: '/lab?tab=compare', permanent: true },
     ];
   },
   // S0-F1-US6 — WebSocket : Next.js ne proxy pas les WS nativement, on laisse

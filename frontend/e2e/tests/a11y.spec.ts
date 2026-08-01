@@ -19,13 +19,9 @@ const PAGES = [
   // plus bas : les inclure ici auditerait deux fois la même page.
   { url: '/trades', name: 'Trades' },
   { url: '/portfolio', name: 'Portefeuille' },
-  { url: '/replay', name: 'Replay' },
-  { url: '/compare', name: 'Comparatif' },
-  { url: '/optimizer', name: 'Optimiseur' },
   { url: '/audit', name: 'Audit OOS' },
   { url: '/audit-log', name: 'Journal Audit' },
   { url: '/data', name: 'Données OHLCV' },
-  { url: '/ml', name: 'Modèles ML' },
   { url: '/models', name: 'Registre modèles' },
   { url: '/config', name: 'Configuration' },
   { url: '/settings', name: 'Réglages' },
@@ -36,18 +32,22 @@ const PAGES = [
   // celles dont l'accessibilité n'avait jamais été vérifiée.
   { url: '/portfolio-v2', name: 'Portefeuille v2' },
   { url: '/bots-v2', name: 'Mes Bots v2' },
-  { url: '/lab', name: 'Laboratoire' },
   { url: '/settings-v2', name: 'Réglages v2' },
 
-  // Lot Marché — Scanner / Smart Graph / Smart Replay / Dérivés sont devenus
-  // les onglets de /market et leurs anciennes routes sont en 308. Radix ne
-  // monte QUE l'onglet actif : auditer `/market` seul ne couvrirait que
-  // Scanner, on ouvre donc chaque onglet par son `?tab=`. La couverture reste
-  // celle des 4 anciennes pages.
+  // Lots de fusion — les anciennes pages sont devenues des onglets de /market
+  // et /lab, et leurs routes sont en 308. Radix ne monte QUE l'onglet actif :
+  // auditer `/market` ou `/lab` seuls ne couvrirait que le premier onglet, on
+  // ouvre donc chacun par son `?tab=`. La couverture reste celle des pages
+  // d'origine.
   { url: '/market?tab=scanner', name: 'Marché — Scanner' },
   { url: '/market?tab=smartgraph', name: 'Marché — Smart Graph' },
   { url: '/market?tab=smartreplay', name: 'Marché — Smart Replay' },
   { url: '/market?tab=derivatives', name: 'Marché — Dérivés' },
+  { url: '/lab?tab=backtest', name: 'Laboratoire — Backtest' },
+  { url: '/lab?tab=optimizer', name: 'Laboratoire — Optimizer' },
+  { url: '/lab?tab=ml', name: 'Laboratoire — ML' },
+  { url: '/lab?tab=replay', name: 'Laboratoire — Replay' },
+  { url: '/lab?tab=compare', name: 'Laboratoire — Compare' },
 ];
 
 test.describe('Accessibilité WCAG 2.1 AA', () => {

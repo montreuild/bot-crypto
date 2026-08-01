@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * Onglet Replay de `/lab` — rejeu multi-timeframe, Walk-Forward + Monte-Carlo.
+ *
+ * Lot Laboratoire : cette vue était la page `/replay`, vers laquelle l'onglet
+ * se contentait de renvoyer. `/replay` est désormais en 308 vers
+ * `/lab?tab=replay`.
+ */
+
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -181,9 +189,9 @@ function CrossTfSummaryTable({ rows }: { rows: ReplayResult['cross_tf_summary'] 
   );
 }
 
-// ── Main page ───────────────────────────────────────────────────────────────
+// ── Vue ─────────────────────────────────────────────────────────────────────
 
-export default function ReplayPage() {
+export function ReplayView() {
   const runReplay = useRunReplay();
   const cancelReplay = useCancelReplay();
   const [result, setResult] = useState<ReplayResult | null>(null);
@@ -233,11 +241,11 @@ export default function ReplayPage() {
   const byTfEntries = Object.entries(result?.by_timeframe || {});
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Replay Multi-Timeframe</h1>
+          <h2 className="text-lg font-semibold tracking-tight">Replay Multi-Timeframe</h2>
           <p className="text-sm text-muted mt-1">
             Rejoue les stratégies sur plusieurs TFs simultanément · Walk-Forward + Monte-Carlo
           </p>

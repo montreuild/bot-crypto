@@ -11,13 +11,9 @@ const PAGES = [
   { path: '/settings-v2', title: 'Réglages' },
   { path: '/trades', title: 'Trades' },
   { path: '/portfolio', title: 'Portefeuille' },
-  { path: '/replay', title: 'Replay' },
-  { path: '/compare', title: 'Comparatif' },
-  { path: '/optimizer', title: 'Optimiseur' },
   { path: '/audit', title: 'Audit' },
   { path: '/audit-log', title: 'Journal' },
   { path: '/data', title: 'Données' },
-  { path: '/ml', title: 'ML' },
   { path: '/models', title: 'Modèles' },
   { path: '/config', title: 'Configuration' },
   { path: '/settings', title: 'Réglages' },
@@ -57,6 +53,11 @@ test.describe('Redirections S10', () => {
     { from: '/smartgraph', to: /\/market\?tab=smartgraph/ },
     { from: '/smartreplay', to: /\/market\?tab=smartreplay/ },
     { from: '/derivatives', to: /\/market\?tab=derivatives/ },
+    // Lot Laboratoire
+    { from: '/optimizer', to: /\/lab\?tab=optimizer/ },
+    { from: '/ml', to: /\/lab\?tab=ml/ },
+    { from: '/replay', to: /\/lab\?tab=replay/ },
+    { from: '/compare', to: /\/lab\?tab=compare/ },
   ];
 
   for (const r of REDIRECTS) {
@@ -71,7 +72,9 @@ test.describe('Redirections S10', () => {
 
   // Les routes volontairement NON redirigées doivent rester servies en direct :
   // les onglets des pages méta y renvoient explicitement.
-  const KEPT = ['/optimizer', '/replay', '/compare', '/ml', '/config', '/settings', '/portfolio'];
+  // `/models` est dans cette liste par choix d'architecture, pas par blocage :
+  // le registre versionné n'est pas dans le plan de fusion.
+  const KEPT = ['/models', '/config', '/settings', '/portfolio'];
   for (const path of KEPT) {
     test(`${path} reste accessible (pas de 308)`, async ({ page }) => {
       const response = await page.goto(path);
@@ -81,19 +84,23 @@ test.describe('Redirections S10', () => {
   }
 });
 
-// Lot Marché — le contenu des 4 anciennes pages doit être joignable dans les
+// Lots de fusion — le contenu des anciennes pages doit être joignable dans les
 // onglets. Sans ça, une 308 vers un onglet vide passerait les tests ci-dessus.
-test.describe('Marché — onglets fusionnés', () => {
+test.describe('Onglets fusionnés', () => {
   const TABS = [
-    { tab: 'scanner', heading: 'Scanner' },
-    { tab: 'smartgraph', heading: 'Smart Graph SMC' },
-    { tab: 'smartreplay', heading: 'Smart Replay' },
-    { tab: 'derivatives', heading: 'Données dérivées' },
+    { page: 'market', tab: 'scanner', heading: 'Scanner' },
+    { page: 'market', tab: 'smartgraph', heading: 'Smart Graph SMC' },
+    { page: 'market', tab: 'smartreplay', heading: 'Smart Replay' },
+    { page: 'market', tab: 'derivatives', heading: 'Données dérivées' },
+    { page: 'lab', tab: 'optimizer', heading: 'Optimiseur' },
+    { page: 'lab', tab: 'ml', heading: 'Modèles ML' },
+    { page: 'lab', tab: 'replay', heading: 'Replay Multi-Timeframe' },
+    { page: 'lab', tab: 'compare', heading: 'Comparatif Stratégies' },
   ];
 
   for (const t of TABS) {
-    test(`onglet ${t.tab} monte le contenu de l'ancienne page`, async ({ page }) => {
-      await page.goto(`/market?tab=${t.tab}`);
+    test(`/${t.page}?tab=${t.tab} monte le contenu de l'ancienne page`, async ({ page }) => {
+      await page.goto(`/${t.page}?tab=${t.tab}`);
       await expect(page.getByRole('heading', { name: t.heading, level: 2 })).toBeVisible({
         timeout: 10000,
       });
@@ -212,11 +219,12 @@ test.describe('Audit Log', () => {
 });
 
 test.describe('Compare', () => {
+  // Lot Laboratoire — /compare redirige vers l'onglet Compare du Laboratoire.
   test('has compare button', async ({ page }) => {
     await page.goto('/compare');
     await page.waitForTimeout(2000);
-    // `.first()` : « Comparatif » figure aussi dans la nav latérale (3 éléments
-    // au total) — strict mode violation sans ça.
+    // `.first()` : « Comparatif » figure aussi dans l'onglet — strict mode
+    // violation sans ça.
     await expect(page.locator('text=Comparer').or(page.locator('text=Comparatif')).first()).toBeVisible({ timeout: 10000 });
   });
 });

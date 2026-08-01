@@ -1669,8 +1669,9 @@ La stratégie strangler fig a été suivie : les nouvelles pages (`/portfolio-v2
 - `/scanner`, `/smartgraph`, `/smartreplay`, `/derivatives` → `/market`
 - `/settings`, `/config` → `/settings-v2`
 
-**7 de ces 14 redirections sont posées** (3 en S10, 4 par le lot Marché). Les 7
-autres restent en attente de leur lot de fusion : voir §Bascule S10.
+**11 de ces 14 redirections sont posées** (3 en S10, 4 par le lot Marché, 4 par
+le lot Laboratoire). Les 3 autres restent en attente de leur lot de fusion :
+voir §Bascule S10.
 
 ### Prochaines étapes (S10-S12)
 
@@ -1921,7 +1922,7 @@ masquait rien tout en laissant croire qu'une exception était en place — retir
   atteignable en l'état et n'est vérifié par aucune CI.
 - ~~**Accessibilité**~~ — traité, cf. §Accessibilité ci-dessous. Le job CI
   `a11y` est bloquant et passe à zéro violation sur les 24 pages.
-- **Redirections 308 : 7 posées sur 14** — voir §Bascule S10 ci-dessous.
+- **Redirections 308 : 11 posées sur 14** — voir §Bascule S10 ci-dessous.
 - ~~**Réponses d'API non typées**~~ — traité, cf. §Typage des réponses d'API.
   L'extension aux endpoints restants (`optimize/*`, `ml/registry`, `replay`,
   `derivatives`, `scanner/smc*`) est faite. Trois pièges supplémentaires du même
@@ -1958,6 +1959,20 @@ réel des anciennes pages, extrait sous `frontend/src/components/views/` :
 | `/smartreplay` | `/market?tab=smartreplay` | `smart-replay-view.tsx` (ex-`/smartreplay`, 671 l.) |
 | `/derivatives` | `/market?tab=derivatives` | `derivatives-view.tsx` (ex-`/derivatives`, 368 l.) |
 
+**Lot Laboratoire** — même traitement pour les 4 onglets non-Backtest de
+`/lab` :
+
+| Source | Cible | Vue montée |
+|---|---|---|
+| `/optimizer` | `/lab?tab=optimizer` | `optimizer-view.tsx` (ex-`/optimizer`, 657 l.) |
+| `/ml` | `/lab?tab=ml` | `ml-view.tsx` (ex-`/ml`, 235 l.) |
+| `/replay` | `/lab?tab=replay` | `replay-view.tsx` (ex-`/replay`, 467 l.) |
+| `/compare` | `/lab?tab=compare` | `compare-view.tsx` (ex-`/compare`, 520 l.) |
+
+`/models` **n'a pas** de 308 : le registre versionné n'est pas dans le plan de
+fusion et reste une page à part entière. L'onglet ML y renvoie explicitement —
+c'est le seul renvoi qui subsiste, et il est assumé.
+
 `/` pointe désormais sur `/portfolio-v2` (au lieu de `/dashboard`), sans saut de
 redirection intermédiaire. Sidebar, recherche Cmd+K, page 404 et
 `AllocationsGrid` ciblent directement les routes v2.
@@ -1970,16 +1985,12 @@ page**, la 308 boucle et rend la fonctionnalité inatteignable.
 
 | Redirection prévue | Blocage constaté | Lignes rendues inaccessibles |
 |---|---|---|
-| `/optimizer` → `/lab` | `OptimizerTab` : bouton « Aller à l'optimiseur existant » → `window.location.href = '/optimizer'` (commentaire du code : « intégration native prévue au Sprint 7 ») | 630 |
-| `/replay` → `/lab` | `ReplayTab` : « Aller au replay existant » → `/replay` | 463 |
-| `/compare` → `/lab` | `CompareTab` : « Aller au comparatif existant » → `/compare` | 517 |
-| `/ml` → `/lab` | `MLTab` : boutons « Modèles ML » → `/ml` et « Registre » → `/models` (« intégration native prévue au Sprint 9 ») | 227 |
 | `/config` → `/settings-v2` | `/settings-v2` : « Ouvrir la configuration avancée » → `window.location.href = '/config'`. L'éditeur de params par stratégie (`useSetStrategyParams`, `useToggleStrategyTimeframe`) n'existe que sur `/config` | 401 |
 | `/settings` → `/settings-v2` | `/settings` est le **seul** endroit qui enregistre le Service Worker (`navigator.serviceWorker.register('/sw.js')`) et qui demande réellement la permission de notification. Le switch « Notifications navigateur » de `/settings-v2` est un placeholder `defaultChecked` sans handler | 421 |
 | `/portfolio` → `/portfolio-v2` | `/portfolio` porte un journal de notifications (`useNotifications`) et une vue par bot (`useBots`) que `/portfolio-v2` ne reprend pas | 483 |
 
-**Reste ~3 140 lignes** à porter sur les ~5 470 du constat initial. Le lot
-Marché en a traité ~2 330.
+**Reste ~1 300 lignes** à porter sur les ~5 470 du constat initial. Le lot
+Marché en a traité ~2 330, le lot Laboratoire ~1 840.
 
 ### Conditions de levée, par lot
 
@@ -1998,9 +2009,20 @@ Marché en a traité ~2 330.
    monte que l'onglet actif — auditer `/market` seul ne couvrirait que
    Scanner), et **les 5 références visuelles sont à régénérer** puisque la
    barre latérale perd 4 entrées, ce qui décale toutes les captures `fullPage`.
-2. **Lot Laboratoire** (`/optimizer`, `/replay`, `/compare`, `/ml`) — idem dans
-   `/lab`. Attention : `/models` (877 l.) n'est pas dans le plan de fusion et
-   doit rester une page à part entière.
+2. ~~**Lot Laboratoire**~~ (`/optimizer`, `/replay`, `/compare`, `/ml`) —
+   **fait**, sur le même modèle que le lot Marché : vues sous
+   `frontend/src/components/views/`, montées dans les onglets, 4 redirections
+   posées, `?tab=` validé contre la liste des onglets.
+
+   `/models` (882 l.) n'est pas dans le plan de fusion et **reste une page à
+   part entière** : pas de 308, entrée de nav conservée, et l'onglet ML y
+   renvoie explicitement. C'est le seul renvoi qui subsiste dans les pages
+   méta, et il est assumé — à ne pas confondre avec les cartes de renvoi que
+   ces lots ont supprimées.
+
+   Le prop `expertMode` disparaît des 4 onglets : il ne servait qu'à afficher
+   la mention « intégration native prévue au Sprint 7/9 » sous les teasers.
+   Il reste actif sur l'onglet Backtest, où il gouverne de vraies options.
 3. **Lot Réglages** (`/config`, `/settings`) — porter l'éditeur de params par
    stratégie dans l'onglet Capital, câbler pour de bon le switch
    « Notifications navigateur », et **déplacer l'enregistrement du Service
