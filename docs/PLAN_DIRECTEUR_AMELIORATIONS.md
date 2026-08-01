@@ -45,7 +45,7 @@ conformité réglementaire (MiCA/AMF/SEC).
 | D3 | **Guide de démarrage Windows dédié** (`docs/DEMARRAGE_WINDOWS.md`) | Le README actuel est Ubuntu-first. Le guide Windows couvre Git Bash, WSL2, Python 3.14 install, venv, OKX paper. | S0 |
 | D4 | **Fin officielle de Jinja2** (`docs/FIN_JINJA2.md`) | Le frontend Next.js est désormais le frontend officiel. Les templates Jinja2 sont décommissionnés et supprimés. Date de fin : fin Sprint 6. | S0 → S6 |
 | D5 | **Mode `performance` retenu** pour l'allocation** (S4-05) | Le mode `continuous` n'a jamais été activé en production. Trancher en faveur de `performance` réduit la dette de code dormant. | S4 |
-| D6 | **Lifecycle automatique avec override manuel** (S4-07) | Le `manual_active` reste possible en override (pour tests, debug, force), mais le défaut est `auto`. | S4 |
+| D6 | **Lifecycle automatique avec override manuel** (S4-07) | ✅ **Appliquée (S11)** : les 15 slots forcés sont retirés de `config.yaml`, la clé est renommée `lifecycle.force_active` (l'ancien nom `manual_active` reste lu, déprécié). Le défaut est `[]` : la machinerie candidat/essai/actif/retiré décide seule. | S4 → S11 |
 | D7 | **Migration Jinja2 → Next.js par ordre de criticité** (S5 → S6) | 6 pages critiques d'abord (Dashboard, Bots, Backtest, Optimizer, Portfolio, Config), puis 11 pages secondaires. Suppression finale des templates après validation E2E. | S5-S6 |
 
 ---
@@ -121,8 +121,8 @@ Voir `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` § Sprint 1.
 | S4-03 | Persister stats hebdo allocator en DB | 3 | ✅ Déjà fait (capital_allocator.py `_persist_weekly_stats`) |
 | S4-04 | Vraie mesure de corrélation (matrice rendements) | 3 | ✅ Fait (app/core/correlation_matrix.py) |
 | S4-05 | Trancher allocation — mode `performance` retenu (D5) | 3 | ✅ Fait (décision actée) |
-| S4-06 | Clarifier lifecycle ↔ budgets (cohérence `manual_active` ↔ `slot_budgets`) | 2 | ✅ Fait (slot_lifecycle.py warnings) |
-| S4-07 | Activer lifecycle automatique + override manuel possible (D6) | 5 | ✅ Fait (warnings + override possible) |
+| S4-06 | Clarifier lifecycle ↔ budgets (cohérence `force_active` ↔ `slot_budgets`) | 2 | ✅ Fait (slot_lifecycle.py warnings) |
+| S4-07 | Activer lifecycle automatique + override manuel possible (D6) | 5 | ✅ **Fait (S11)** — liste vidée, clé renommée `force_active`, `set_force_active()` + alias déprécié |
 | S4-08 | Circuit-breaker réseau global (halt après ~10 min) | 2 | ⏳ Reporté |
 | S4-09 | Slippage paper proportionnel à la taille | 2 | ⏳ Reporté |
 | S4-10 | Timeout scoring pipeline configurable | 1 | ⏳ Reporté |
@@ -278,6 +278,27 @@ unique. La complexité est réduite, le code dormant éliminé.
 de la config par défaut. La machinerie candidat/essai/actif/retiré
 décide seule. Un override manuel reste possible via `lifecycle.force_active:
 [strategy::tf::symbol]` pour tests/debug.
+
+**✅ Appliquée en S11.** Trois précisions relevées à l'implémentation, qui ne
+figuraient dans aucun des audits :
+
+1. **La liste ne décidait pas quels bots tradent.** La sélection vient du
+   classement OOS (`optimizer_results` + seuil `MIN_VIABLE_SCORE` +
+   `trading.top_strategies_per_tf`, cf.
+   `app/engine/opt_persistence.py::get_active_strategies_per_tf`). Les audits
+   V12 et `ANALYSE_CRITIQUE` en concluaient un risque de « trader des setups
+   non validés OOS » : c'est inexact, le classement OOS s'appliquait déjà.
+2. **Le forçage bloquait aussi le RETRAIT.** Le bypass court-circuitait les
+   deux règles de sortie (budget effondré, live qui contredit la simulation en
+   perdant) : un slot forcé n'était jamais retiré, même perdant, et n'entrait
+   donc jamais dans la file de ré-optimisation. C'est le vrai coût du forçage,
+   désormais verrouillé par `test_force_active_also_blocks_the_retrait`.
+3. **Les 15 clés étaient au format hérité 2-parties** (`strategy::tf`), donc
+   appliquées par préfixe à **tous les symboles**.
+
+Incohérence `manual_active` (15) ↔ `slot_budgets` : les audits annonçaient
+7 slots budgétés, le fichier n'en portait qu'**un** (`trend_rider::1h::BTC/USDC`),
+lui-même absent de `manual_active`. Le retrait de la liste dissout la question.
 
 ---
 

@@ -93,6 +93,32 @@ Sources uniques (ne jamais recopier ces littéraux) :
   `Venue` reproduisent le comportement crypto historique, donc tout ce qui
   suit est inerte tant qu'aucune venue actions n'est déclarée.
 
+  **La venue est aussi la source UNIQUE de vérité spot/margin (S11).**
+  `venues.default` est obligatoire dès que `venues.defs` existe, et toute venue
+  référencée doit exister — `app/core/config.py::_validate_venues` refuse le
+  démarrage sinon. Avant, une `venues.default` vide faisait retomber la
+  résolution sur `default_venue_from_cfg`, qui fabriquait une venue à partir
+  des globales `exchange.margin` / `trading.margin_mode` /
+  `trading.max_leverage` : sur la config livrée, cette venue portait le nom
+  `margin-isolated` — celui d'une entrée de `venues.defs` — avec un levier
+  différent. Deux objets homonymes et divergents. Ce repli existe toujours
+  (config sans bloc `venues:`) mais son nom est préfixé `auto:`.
+
+  Deux garde-fous complètent le modèle :
+  - `_enforce_market_coherence` : une venue `spot` ne peut porter ni levier, ni
+    `margin_mode`, ni taux d'emprunt — ces clés sont ramenées à leur valeur
+    neutre et journalisées, plutôt qu'honorées à moitié ;
+  - `Venue.borrows` / `Venue.effective_borrow_rate` : **le marché décide de
+    l'emprunt**. `margin` et `perp` empruntent, le spot jamais — ni le spot
+    crypto, ni les actions au comptant. Avant, `trading.borrow_rate_daily`
+    était facturé inconditionnellement des deux côtés (backtest et live) :
+    chaque trade SBF 120 payait ~30 %/an d'intérêt fictif sur un achat
+    comptant.
+
+  Le bot ne connaît **pas** les enveloppes fiscales (CTO, PEA) : c'est une
+  notion de compte, pas de moteur. Une venue actions, c'est `market_type: spot`
+  + `max_leverage: 1` + `allow_short: false`.
+
 - **Horaires de marché (G2)** : `app/core/market_calendar.py`
   (`get_calendar` → `AlwaysOpenCalendar` 24/7 par défaut, `SessionCalendar`
   déclaratif, `XPAR` livré, adaptateur `exchange_calendars` optionnel).
@@ -125,8 +151,23 @@ Sources uniques (ne jamais recopier ces littéraux) :
 - **Données** : `app/core/config.py` (`DATA_ROOT`) → `OHLCV_DIR`,
   `FEATURES_DIR`, `DERIVATIVES_DIR` ; singletons via
   `app/core/singleton.py::lazy_singleton`.
-- **Écriture config.yaml** : `app/core/yaml_io.py::update_config_yaml`
-  (verrou unique partagé api/live).
+- **Configuration découpée (S11)** : `config.yaml` ne porte que le sommaire
+  (`include:`) ; chaque fichier de `config/` est aligné sur une brique —
+  `venues.yaml` (exchange, venues), `risk.yaml` (trading, risk, live),
+  `data.yaml` (scanner, providers, derivatives), `lifecycle.yaml` (lifecycle,
+  capital_allocator, optimizer, forward_test, backtest), `ops.yaml` (web,
+  logging, database, notifications, watchdog, ui, perf). Fusion :
+  `app/core/config.py::_load_and_merge`. **Une section vit dans un seul
+  fichier** — la déclarer deux fois fait échouer le chargement, plutôt que de
+  laisser l'ordre de lecture trancher en silence. Une config monolithique
+  (sans `include:`) reste valide.
+- **Écriture config** : `app/core/yaml_io.py::update_config_yaml`
+  (verrou unique partagé api/live). Route chaque section modifiée vers le
+  fichier qui la porte, ne réécrit que les fichiers touchés, et préserve les
+  commentaires (la vue fusionnée référence les objets mêmes des documents
+  ruamel, donc les mutations en place atteignent le document d'origine).
+- **Timeframes actifs** : `app/core/config.py::active_timeframes` — source
+  unique (`trading.timeframes`, repli `trading.timeframe`).
 - **Split IS/OOS** : `app/core/is_oos.py` ; seuils statistiques :
   `app/core/stats_thresholds.py` ; courbe de risque DD :
   `app/core/risk_curve.py`.
@@ -319,8 +360,21 @@ CANDIDAT ──edge prouvée sur backtest──▶ ESSAI ──fidélité live c
   re-optimisation (réversible).
 
 Les transitions sont **dérivées automatiquement**, jamais choisies à la
-main — sauf forçage explicite via `manual_active` (droit de veto
+main — sauf forçage explicite via `lifecycle.force_active` (droit de veto
 utilisateur, outrepasse la machine à états). Cf. `app/live/slot_lifecycle.py`.
+
+⚠ **Ce que le cycle de vie ne fait pas** : il ne décide pas quels bots tradent.
+La sélection vient du classement OOS — `optimizer_results` (strategies/*.yaml)
++ seuil `MIN_VIABLE_SCORE` + `trading.top_strategies_per_tf`, dans
+`app/engine/opt_persistence.py::get_active_strategies_per_tf`. Le cycle de vie
+pilote l'**état** d'un bot, son budget et sa mise en file de ré-optimisation.
+
+⚠ **Portée du forçage** (D6, S11) : `force_active` court-circuite la promotion
+par edge **et** les deux règles de retrait (budget effondré, live qui contredit
+la simulation en perdant). Un slot forcé n'est donc jamais retiré, même
+perdant, et n'entre jamais dans la file de ré-optimisation. Le défaut est `[]`
+(liste vide) : 15 slots y étaient figés jusqu'en S11. L'ancien nom
+`manual_active` reste lu, déprécié.
 
 ### Allocation de capital (`CapitalAllocator`)
 

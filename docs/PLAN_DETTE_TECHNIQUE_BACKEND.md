@@ -196,7 +196,7 @@ si une refonte modulaire du backend est décidée par ailleurs.
 **Total : 4 à 5 jours**, dont environ un tiers d'investigation produit et deux
 tiers de nettoyage. À arbitrer contre le chantier de typage des réponses d'API,
 qui a une valeur défensive supérieure : c'est lui qui aurait évité les crashs de
-`/ml` et du drawer `/bots-v2`.
+`/ml` et du drawer `/bots`.
 
 ---
 

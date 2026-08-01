@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
-#  backup.sh — Sauvegarde datée de trades.db + config.yaml + strategies/*.yaml
+#  backup.sh — Sauvegarde datée de trades.db + config.yaml + config/ + strategies/*.yaml
 #
 #  Remplace les one-liners cron ad hoc de DEPLOY.md §9 par un script
 #  unique et idempotent. Utilise l'API sqlite3.backup() de Python (pas un
@@ -22,7 +22,7 @@
 set -euo pipefail
 
 # ── SEC-008 : permissions restrictives ──────────────────────────
-#  Ce que ce script recopie n'est pas anodin : config.yaml porte les clés API
+#  Ce que ce script recopie n'est pas anodin : config/venues.yaml porte les clés API
 #  exchange et les tokens de notification, trades.db l'historique complet des
 #  positions. Avec le umask par défaut (022) les archives sortaient en 0644,
 #  donc lisibles par tout compte de la machine — la sauvegarde était un
@@ -70,12 +70,20 @@ else
     warn "trades.db introuvable ($DB_PATH), backup ignoré"
 fi
 
-# ── config.yaml ───────────────────────────────────────────────────
+# ── config.yaml + config/ (S11 : la config est découpée) ──────────
+# Sauvegarder le seul config.yaml ne ramènerait plus que le sommaire
+# `include:` — ni les clés API, ni le capital, ni les venues.
 CONFIG_PATH="$APP_DIR/config.yaml"
+CONFIG_DIR="$APP_DIR/config"
 if [[ -f "$CONFIG_PATH" ]]; then
-    cp "$CONFIG_PATH" "$BACKUP_DIR/config_${DATE_TAG}.yaml"
-    chmod 600 "$BACKUP_DIR/config_${DATE_TAG}.yaml"
-    ok "config.yaml -> $BACKUP_DIR/config_${DATE_TAG}.yaml"
+    CONF_OUT="$BACKUP_DIR/config_${DATE_TAG}.tar.gz"
+    if [[ -d "$CONFIG_DIR" ]]; then
+        tar -czf "$CONF_OUT" -C "$APP_DIR" config.yaml config
+    else
+        tar -czf "$CONF_OUT" -C "$APP_DIR" config.yaml
+    fi
+    chmod 600 "$CONF_OUT"
+    ok "config.yaml + config/ -> $CONF_OUT"
 else
     warn "config.yaml introuvable ($CONFIG_PATH), backup ignoré"
 fi
@@ -93,12 +101,14 @@ fi
 
 # ── SEC-008 : rattrapage des archives créées avant ce correctif ──
 find "$BACKUP_DIR" -maxdepth 1 -type f \
-    \( -name 'trades_*.db' -o -name 'config_*.yaml' -o -name 'strategies_*.tar.gz' \) \
+    \( -name 'trades_*.db' -o -name 'config_*.yaml' -o -name 'config_*.tar.gz' \
+       -o -name 'strategies_*.tar.gz' \) \
     ! -perm 600 -exec chmod 600 {} + 2>/dev/null || true
 
 # ── Rétention : purge des sauvegardes plus vieilles que RETENTION_DAYS ─
 find "$BACKUP_DIR" -maxdepth 1 -type f \
-    \( -name 'trades_*.db' -o -name 'config_*.yaml' -o -name 'strategies_*.tar.gz' \) \
+    \( -name 'trades_*.db' -o -name 'config_*.yaml' -o -name 'config_*.tar.gz' \
+       -o -name 'strategies_*.tar.gz' \) \
     -mtime "+$RETENTION_DAYS" -print -delete | while read -r f; do
     info "purgé (> ${RETENTION_DAYS}j) : $f"
 done

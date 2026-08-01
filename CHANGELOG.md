@@ -6,6 +6,131 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🏛 La venue devient la source unique de vérité spot/margin
+
+`venues.default` était **vide** et `venues.assign` aussi : tout symbole crypto
+retombait sur `default_venue_from_cfg`, qui fabriquait une venue à partir des
+globales `exchange.margin` / `trading.margin_mode` / `trading.max_leverage`. Sur
+la config livrée, cette venue s'appelait **`margin-isolated`** — le nom exact
+d'une entrée de `venues.defs`, mais avec un levier différent (1 au lieu de 3).
+Deux objets homonymes et divergents, indiscernables dans les logs et sur les
+positions ; les trois `defs` du fichier n'étaient jamais lues.
+
+`venues.default` est désormais **obligatoire** dès que `venues.defs` existe, et
+toute venue référencée doit exister — `_validate_venues` refuse le démarrage
+sinon. Le repli sur les globales subsiste pour une config sans bloc `venues:`,
+mais son nom est préfixé `auto:` : plus jamais homonyme.
+
+Deuxième défaut, plus coûteux : **le coût d'emprunt était facturé sans regarder
+la venue**. `borrow_cost` était appelé inconditionnellement des deux côtés
+(`backtest.py` et `position_close_mixin.py`), donc chaque trade SBF 120 payait
+`trading.borrow_rate_daily` = 0,072 %/jour, soit **~30 %/an d'intérêt fictif sur
+un achat au comptant**. C'est maintenant la venue qui tranche
+(`Venue.borrows` / `effective_borrow_rate`) : `margin` et `perp` empruntent, le
+spot jamais — ni en crypto, ni en actions. Au passage, le warning
+« paper + margin » annonçait un remède inopérant (`margin: false` ne supprimait
+pas l'emprunt, porté par le taux global) ; il pointe désormais vers
+`venues.default`.
+
+Le bot ne connaît **pas** les enveloppes fiscales (CTO, PEA) : c'est une notion
+de compte, pas de moteur. Une venue actions, c'est `market_type: spot` +
+`max_leverage: 1` + `allow_short: false`. Un garde-fou
+(`_enforce_market_coherence`) ramène à leur valeur neutre le levier, le
+`margin_mode` et le taux d'emprunt déclarés sur une venue spot, en le
+journalisant, plutôt que de les honorer à moitié.
+
+Comportement inchangé sur la config livrée : `default: margin-isolated` à
+levier 1 = ce que produisait le repli. Les témoins de `test_generic_parity` ont
+bougé du seul montant des intérêts fictifs supprimés (signaux et nombre de
+trades identiques).
+
+### 🔄 D6 — le lifecycle décide seul, `manual_active` devient `force_active`
+
+Les **15 slots forcés ACTIF** dans `config.yaml` sont retirés : la machinerie
+candidat → essai → actif → retiré décide seule. La clé est renommée
+`lifecycle.force_active` (l'ancien nom reste lu, avec un WARNING de
+dépréciation) — `manual_active` sonnait comme un réglage de routine alors que
+c'est un court-circuit du cycle de vie.
+
+Deux précisions que ni l'audit V12 ni `ANALYSE_CRITIQUE` n'avaient relevées :
+
+1. **La liste ne décidait pas quels bots tradent.** Les audits en concluaient un
+   risque de « trader des setups non validés OOS » : inexact. La sélection vient
+   du classement OOS (`optimizer_results` + `MIN_VIABLE_SCORE` +
+   `trading.top_strategies_per_tf`, cf. `get_active_strategies_per_tf`), qui
+   s'appliquait déjà. Ce que la liste pilotait, c'est l'**état** et les
+   transitions.
+2. **Le forçage bloquait aussi le RETRAIT.** `_propose` retourne `ACTIF` avant
+   toute autre règle : un slot forcé échappait aux deux règles de sortie (budget
+   effondré, live qui contredit la simulation en perdant). Un bot forcé perdant
+   n'était **jamais** retiré, donc jamais ré-optimisé. C'est le vrai coût du
+   forçage ; il est désormais verrouillé par un test.
+
+L'incohérence `manual_active` (15) ↔ `slot_budgets` annoncée à 7 slots par les
+audits n'en comptait en réalité qu'**un** (`trend_rider::1h::BTC/USDC`),
+lui-même absent de `manual_active`.
+
+### 🗂 La configuration est découpée par responsabilité
+
+`config.yaml` (342 lignes) mélangeait cinq responsabilités sans rapport. Il ne
+porte plus que le sommaire (`include:`) ; chaque fichier de `config/` est aligné
+sur une brique du code : `venues.yaml`, `risk.yaml`, `data.yaml`,
+`lifecycle.yaml`, `ops.yaml`. La config effective est **identique** à la version
+monolithique (vérifié section par section), et une config sans `include:` reste
+valide.
+
+Une section vit dans **un seul** fichier : la déclarer deux fois fait échouer le
+chargement, plutôt que de laisser l'ordre de lecture trancher en silence.
+
+Le point délicat était l'**écriture** : l'UI persiste budgets, forçages et
+params optimisés via `update_config_yaml(fn)`. Celui-ci route maintenant chaque
+section modifiée vers son fichier propriétaire, ne réécrit que les fichiers
+touchés, et préserve les commentaires. `deploy/backup.sh` archive `config/`
+autant que `config.yaml` — sauvegarder le seul fichier racine ne ramènerait plus
+que le sommaire.
+
+### 🔗 Le maillon manquant entre le sizing et le stop réellement posé
+
+`_initial_stop_distance` — la fonction qui fournit `stop_dist` à `compute_size`
+en live — n'apparaissait dans **aucun test**. `compute_size(stop_dist=…)` était
+verrouillé d'un côté, le stop posé à l'ouverture de l'autre, mais rien ne
+vérifiait que les deux parlent de la même distance. Les deux chemins recopient
+la même chaîne de priorité (`sl_atr_mult` → `stop_hint` → trailing) dans deux
+fichiers distincts : une divergence silencieuse de facteur 2,5 était possible
+sans qu'un test tombe.
+
+Vérification faite, le repli est correct — il lit bien `live.trailing.trail_wide`
+et non un 2,5 en dur — et le sur-risque annoncé par l'audit n'existe que sur le
+chemin dégradé (stop illisible → `stop_dist = 0` → ATR brut), désormais chiffré
+plutôt que commenté. S'y ajoute la parité « même signal ⇒ même distance au stop
+des deux côtés », sur six signaux représentatifs.
+
+### 🏷 Les pages canoniques perdent le suffixe `-v2`
+
+`-v2` datait de la coexistence avec les pages Jinja2, supprimées depuis : le
+suffixe ne distinguait plus rien. `/portfolio`, `/bots` et `/settings` sont les
+pages ; les anciennes URLs restent redirigées en 308 (elles ont vécu en prod, et
+un 308 est mis en cache durablement par les navigateurs). Sidebar, palette de
+commandes, manifest PWA et specs e2e alignés.
+
+### 🧹 `app/web`, la structure `timeframes` morte et des commentaires périmés
+
+`app/web/` ne contenait plus qu'un `__init__.py` **vide** depuis la suppression
+des templates Jinja2, sans aucun `import app.web` nulle part.
+
+La structure racine `cfg["timeframes"]` était **fabriquée** à chaque chargement à
+partir du seul `trading.timeframe`, alors que le bot tourne sur
+`trading.timeframes` (5 TF). Personne ne la lisait sauf le log de démarrage, qui
+annonçait donc `TF=['1h']` pendant que le scanner couvrait 15m/30m/1h/4h/1d. Le
+schéma hérité reste lu ; il n'est simplement plus inventé.
+
+Le bloc d'avertissement SBF 120 de `config.yaml` annonçait `verified: false` et
+un backfill à faire : les deux étaient faux — `data/universe/sbf120.yaml` porte
+`verified: true` (as_of 2026-07-26) et le cache contient 15m/30m/1h/4h/1d pour
+~120 titres. L'avertissement « machine neuve » et la limite Yahoo (~88 bougies
+intraday sur actions européennes) restent, eux, valables.
+
+
 ### 🧹 Les caches de marché sortent du dépôt, `starlette` est épinglé
 
 `data/ohlcv/` et `data/derivatives/` sont des **caches** que le bot reconstruit

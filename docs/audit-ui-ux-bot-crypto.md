@@ -203,10 +203,10 @@ Le frontend Next.js ne porte jamais la clé API dans le bundle JS : le proxy `sr
 | GET | `/audit`, `/audit-log`, `/trades`, `/models`, `/data` | Non | 308 → même chemin côté Next | Vraies pages Next |
 | GET | `/backtest`, `/optimizer`, `/ml`, `/replay`, `/compare` | Non | 308 → `/lab?tab=…` | Onglets du Laboratoire |
 | GET | `/scanner`, `/smartgraph`, `/smartreplay`, `/derivatives` | Non | 308 → `/market?tab=…` | Onglets du Marché |
-| GET | `/config`, `/settings` | Non | 308 → `/settings-v2?tab=capital` | Onglets des Réglages |
-| GET | `/portfolio` | Non | 308 → `/portfolio-v2` | Page méta |
-| GET | `/bots` | Non | 308 → `/bots-v2` | Page méta |
-| GET | `/slots` | Non | 308 → `/bots-v2` | Alias legacy |
+| GET | `/config` | Non | 308 → `/settings?tab=capital` | Onglet des Réglages |
+| GET | `/portfolio`, `/bots`, `/settings` | Non | même chemin côté Next | Pages méta (S11 : plus de suffixe `-v2`) |
+| GET | `/portfolio-v2`, `/bots-v2`, `/settings-v2` | Non | 308 → page sans suffixe | Anciennes URLs, conservées |
+| GET | `/slots` | Non | 308 → `/bots` | Alias legacy |
 
 Les cibles sont les destinations **finales** : depuis les lots de fusion,
 viser l'ancien chemin côté Next coûterait un second 308 (cf. §Le double 308 du
