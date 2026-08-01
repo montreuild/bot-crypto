@@ -200,8 +200,18 @@ Le frontend Next.js ne porte jamais la clé API dans le bundle JS : le proxy `sr
 | GET | `/metrics` | Non | Prometheus text/plain | Métriques Prometheus |
 | GET | `/api/status` | Optionnel | `{status, paper_mode, timeframe, timeframes, strategies, capital, total_pnl, positions, by_strategy, signal_log, circuit_breaker_active, daily_pnl_pct, global_dd_pct, capital_allocation, slot_states}` | Statut global bot |
 | GET | `/` | Non | 308 redirect → FRONTEND_URL ou page d'aide HTML | Redirige vers Next.js |
-| GET | `/backtest`, `/optimizer`, `/config`, `/scanner`, `/audit`, `/audit-log`, `/trades`, `/replay`, `/ml`, `/models`, `/compare`, `/derivatives`, `/portfolio`, `/bots`, `/settings`, `/data`, `/smartgraph`, `/smartreplay` | Non | 308 redirect HTML→Next.js | 18 redirects legacy |
-| GET | `/slots` | Non | 308 → `/bots` | Alias legacy |
+| GET | `/audit`, `/audit-log`, `/trades`, `/models`, `/data` | Non | 308 → même chemin côté Next | Vraies pages Next |
+| GET | `/backtest`, `/optimizer`, `/ml`, `/replay`, `/compare` | Non | 308 → `/lab?tab=…` | Onglets du Laboratoire |
+| GET | `/scanner`, `/smartgraph`, `/smartreplay`, `/derivatives` | Non | 308 → `/market?tab=…` | Onglets du Marché |
+| GET | `/config`, `/settings` | Non | 308 → `/settings-v2?tab=capital` | Onglets des Réglages |
+| GET | `/portfolio` | Non | 308 → `/portfolio-v2` | Page méta |
+| GET | `/bots` | Non | 308 → `/bots-v2` | Page méta |
+| GET | `/slots` | Non | 308 → `/bots-v2` | Alias legacy |
+
+Les cibles sont les destinations **finales** : depuis les lots de fusion,
+viser l'ancien chemin côté Next coûterait un second 308 (cf. §Le double 308 du
+backend). `tests/test_legacy_redirects.py` verrouille l'alignement avec
+`next.config.mjs`.
 
 ### 2.3 Cartographie endpoint par endpoint
 

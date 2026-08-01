@@ -232,13 +232,20 @@ python cli.py --config my_config.yaml
 
 Accessible sur **http://127.0.0.1:8000**
 
+L'UI tient en 5 pages méta à onglets. Les anciennes routes (`/scanner`,
+`/optimizer`, `/config`…) restent valables : ce sont des redirections 308 vers
+l'onglet correspondant.
+
 | Page | URL | Description |
 |------|-----|-------------|
-| 📊 Portefeuille | `/portfolio-v2` | Suivi du portefeuille, positions, trades, equity curve, journal des signaux |
-| 📈 Backtest | `/lab?tab=backtest` | Test de stratégies, Walk-Forward, Monte-Carlo, comparaison multi-stratégies |
-| ⚡ Optimiseur | `/optimizer` | Optimisation des paramètres (IS/OOS), résultats en temps réel, application directe |
-| 🔍 Scanner | `/scanner` | Screening des marchés par stratégie & timeframe |
-| ⚙️ Configuration | `/config` | Édition des stratégies, paramètres, notifications, margin trading |
+| 📊 Portefeuille | `/portfolio-v2` | Suivi du portefeuille, positions, trades, equity curve, journal des signaux et des notifications |
+| 🤖 Mes Bots | `/bots-v2` | Portefeuille de stratégies et cycle de vie (candidat → essai → actif → retiré) |
+| 🧪 Laboratoire | `/lab` | Backtest, optimiseur (IS/OOS temps réel), entraînement ML, replay, comparatif — un onglet chacun |
+| 🔍 Marché | `/market` | Scanner SMC/ICT, Smart Graph, Smart Replay, dérivés (funding, OI, LSR) |
+| ⚙️ Réglages | `/settings-v2` | Presets de risque, params par stratégie, notifications, données, audit, préférences UI |
+
+Lien profond vers un onglet précis : `/lab?tab=optimizer`,
+`/market?tab=smartgraph`, `/settings-v2?tab=ui`…
 
 ---
 
@@ -273,7 +280,8 @@ strategies:
 
 ## 🎯 Optimiseur — Guide rapide
 
-1. Ouvrir `http://localhost:8000/optimizer`
+1. Ouvrir `http://localhost:3000/lab?tab=optimizer` (l'onglet Optimizer du
+   Laboratoire ; `http://localhost:8000/optimizer` y redirige aussi)
 2. Sélectionner les stratégies et timeframes
 3. Choisir la méthode (**Bayesian** recommandé) et le nombre de trials (40-100)
 4. Lancer — résultats IS/OOS en temps réel via Server-Sent Events

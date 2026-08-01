@@ -119,32 +119,40 @@ indépendantes du frontend. Seules les routes **HTML** sont supprimées :
 |---|---|
 | `GET /` | `frontend/src/app/portfolio-v2/page.tsx` |
 | `GET /backtest` | `frontend/src/app/lab/page.tsx` (onglet `?tab=backtest`) |
-| `GET /optimizer` | `frontend/src/app/optimizer/page.tsx` |
-| `GET /scanner` | `frontend/src/app/scanner/page.tsx` |
-| `GET /config` | `frontend/src/app/config/page.tsx` |
-| `GET /audit` | `frontend/src/app/audit/page.tsx` |
-| `GET /trades` | `frontend/src/app/trades/page.tsx` |
-| `GET /replay` | `frontend/src/app/replay/page.tsx` |
-| `GET /ml` | `frontend/src/app/ml/page.tsx` |
-| `GET /models` | `frontend/src/app/models/page.tsx` |
-| `GET /compare` | `frontend/src/app/compare/page.tsx` |
-| `GET /derivatives` | `frontend/src/app/derivatives/page.tsx` |
-| `GET /portfolio` | `frontend/src/app/portfolio/page.tsx` |
+| `GET /optimizer` | `frontend/src/app/lab/page.tsx` (onglet `?tab=optimizer`) |
+| `GET /ml` | `frontend/src/app/lab/page.tsx` (onglet `?tab=ml`) |
+| `GET /replay` | `frontend/src/app/lab/page.tsx` (onglet `?tab=replay`) |
+| `GET /compare` | `frontend/src/app/lab/page.tsx` (onglet `?tab=compare`) |
+| `GET /scanner` | `frontend/src/app/market/page.tsx` (onglet `?tab=scanner`) |
+| `GET /smartgraph` | `frontend/src/app/market/page.tsx` (onglet `?tab=smartgraph`) |
+| `GET /smartreplay` | `frontend/src/app/market/page.tsx` (onglet `?tab=smartreplay`) |
+| `GET /derivatives` | `frontend/src/app/market/page.tsx` (onglet `?tab=derivatives`) |
+| `GET /config` | `frontend/src/app/settings-v2/page.tsx` (onglet `?tab=capital`) |
+| `GET /settings` | `frontend/src/app/settings-v2/page.tsx` (onglet `?tab=capital`) |
+| `GET /portfolio` | `frontend/src/app/portfolio-v2/page.tsx` |
 | `GET /bots` | `frontend/src/app/bots-v2/page.tsx` |
-| `GET /settings` | `frontend/src/app/settings/page.tsx` |
-| `GET /data` | `frontend/src/app/data/page.tsx` |
-| `GET /smartgraph` | `frontend/src/app/smartgraph/page.tsx` |
-| `GET /smartreplay` | `frontend/src/app/smartreplay/page.tsx` |
+| `GET /audit` | `frontend/src/app/audit/page.tsx` |
 | `GET /audit-log` | `frontend/src/app/audit-log/page.tsx` |
+| `GET /trades` | `frontend/src/app/trades/page.tsx` |
+| `GET /models` | `frontend/src/app/models/page.tsx` |
+| `GET /data` | `frontend/src/app/data/page.tsx` |
 
-Pendant la transition, les anciennes routes renverront un redirect 307
-vers la nouvelle page Next.js (backward compat pour les bookmarks).
-
-> **Mise à jour S10.** Les cibles de `GET /`, `GET /backtest` et `GET /bots`
-> ci-dessus ont changé : les pages `app/dashboard`, `app/backtest` et `app/bots`
-> ont été remplacées par les pages méta `portfolio-v2`, `lab` et `bots-v2`, puis
-> supprimées. Les trois chemins sont désormais des redirections 308 déclarées
-> dans `frontend/next.config.mjs`.
+> **Mise à jour S10 et lots de fusion.** Le tableau ci-dessus a été aligné sur
+> l'état réel du code. Les 14 premières routes n'ont plus de page dédiée : leur
+> contenu a été porté dans les 5 pages méta (`portfolio-v2`, `bots-v2`, `lab`,
+> `market`, `settings-v2`) et les anciens fichiers `app/scanner/page.tsx`,
+> `app/config/page.tsx`, `app/smartgraph/page.tsx`… ont été supprimés. Les 14
+> chemins sont désormais des **redirections 308** déclarées dans
+> `frontend/next.config.mjs`, et non plus des 307 comme le prévoyait le plan
+> initial de cette note.
+>
+> Les 5 dernières routes (`/audit`, `/audit-log`, `/trades`, `/models`,
+> `/data`) restent de vraies pages Next et ne sont pas redirigées.
+>
+> Côté FastAPI, `HTML_ROUTES_TO_REDIRECT` (`app/api/main.py`) vise directement
+> ces cibles finales pour éviter un double 308 ;
+> `tests/test_legacy_redirects.py` vérifie que les deux tables ne divergent
+> pas. Détail dans `docs/audit-ui-ux-bot-crypto.md` §Bascule S10.
 
 ## Impact dépendances
 
