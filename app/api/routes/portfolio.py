@@ -89,7 +89,9 @@ def get_bots():
     lc = cfg.get("lifecycle", {}) or {}
     edge_min = int(lc.get("edge_min_trades", 20))
     max_worst = float(lc.get("max_worst_trade_pct", 50.0))
-    manual_set = set(lc.get("manual_active", []) or [])
+    # D6 : `force_active` est la clé canonique ; `manual_active` reste lue pour
+    # les configs non migrées.
+    forced_set = set(lc.get("force_active") or lc.get("manual_active") or [])
 
     # États du cycle de vie : snapshot live, sinon base.
     states = {}
@@ -126,11 +128,11 @@ def get_bots():
 
     # Union des slots connus (oos ∪ states ∪ budgets).
     # Overlay des forçages manuels (droit de veto) : état affiché = actif.
-    for key in manual_set:
+    for key in forced_set:
         states[key] = "candidat" if key not in states else states[key]
         states[key] = "actif"
 
-    keys = set(oos) | set(states) | set(budgets) | set(identities) | manual_set
+    keys = set(oos) | set(states) | set(budgets) | set(identities) | forced_set
     bots = []
     for key in sorted(keys):
         rec = oos.get(key, {})
@@ -149,7 +151,10 @@ def get_bots():
             "monte_carlo":  rec.get("monte_carlo"),
             "edge":         edge,
             "edge_significant": _edge_significant(edge, edge_min, max_worst),
-            "manual_active": key in manual_set,
+            # D6 : `force_active` est le nom canonique ; `manual_active` reste
+            # émis à l'identique le temps que les clients migrent.
+            "force_active":  key in forced_set,
+            "manual_active": key in forced_set,
             "live":         rec.get("live"),
             "contract":     contract,
             "verdict":      contract.get("verdict"),
@@ -174,29 +179,43 @@ def get_bots():
 @state.limiter.limit("30/minute")
 def force_active(request: Request, slot_key: str, enabled: bool = True):
     """Force (``enabled=true``) ou libère (``false``) l'activation manuelle d'un
-    bot. Persisté dans ``config.yaml`` (lifecycle.manual_active) et appliqué au
-    cycle de vie en cours s'il tourne."""
+    bot. Persisté dans ``config.yaml`` (lifecycle.force_active) et appliqué au
+    cycle de vie en cours s'il tourne.
+
+    D6 : la clé écrite est ``force_active``. Une éventuelle ``manual_active``
+    héritée est reprise puis SUPPRIMÉE du fichier, pour ne pas laisser deux
+    listes de forçage cohabiter — elles divergeraient au premier écart.
+    """
     cfg = state.cfg or {}
     lc = cfg.setdefault("lifecycle", {})
-    manual = [k for k in lc.get("manual_active", []) if k != slot_key]
+    current = lc.get("force_active")
+    if current is None:
+        current = lc.get("manual_active") or []
+    forced = [k for k in current if k != slot_key]
     if enabled:
-        manual.append(slot_key)
-    manual = sorted(set(manual))
-    lc["manual_active"] = manual
+        forced.append(slot_key)
+    forced = sorted(set(forced))
+    lc["force_active"] = forced
+    lc.pop("manual_active", None)
+
+    def _write(d: dict) -> None:
+        section = d.setdefault("lifecycle", {})
+        section["force_active"] = forced
+        section.pop("manual_active", None)
 
     try:
         from app.api.routes._config_helpers import _save_yaml
-        _save_yaml(lambda d: d.setdefault("lifecycle", {}).update(
-            {"manual_active": manual}))
+        _save_yaml(_write)
     except Exception as e:
-        logger.warning(f"[bots] sauvegarde manual_active KO : {e}")
+        logger.warning(f"[bots] sauvegarde force_active KO : {e}")
 
     tr = _trader()
     if tr and getattr(tr, "_lifecycle", None):
-        tr._lifecycle.set_manual_active(slot_key, enabled)
+        tr._lifecycle.set_force_active(slot_key, enabled)
 
     logger.info(f"[bots] {slot_key} : forçage manuel ACTIF = {enabled}")
-    return {"slot_key": slot_key, "manual_active": enabled, "all": manual}
+    return {"slot_key": slot_key, "force_active": enabled,
+            "manual_active": enabled, "all": forced}
 
 
 # ── Forcer un forward-test (recalcul de l'edge) pour un bot ──────────────────

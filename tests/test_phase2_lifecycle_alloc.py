@@ -71,24 +71,73 @@ def test_active_floor_blocks_full_flush():
     assert snap["counts"][LifecycleState.RETIRE] == 0
 
 
-def test_manual_active_bypass():
+def test_force_active_bypass():
     # Forçage via config : un bot sans edge est quand même Actif.
+    m = SlotLifecycleManager(_lc_cfg(force_active=["x::1h"]))
+    snap = m.evaluate({"x::1h": {"live_trades": 0, "budget_pct": 0.1}})
+    assert snap["states"]["x::1h"] == LifecycleState.ACTIF
+
+
+def test_manual_active_is_still_read_as_force_active():
+    """D6 — rétro-compat : une config non migrée continue de forcer ses slots."""
     m = SlotLifecycleManager(_lc_cfg(manual_active=["x::1h"]))
     snap = m.evaluate({"x::1h": {"live_trades": 0, "budget_pct": 0.1}})
     assert snap["states"]["x::1h"] == LifecycleState.ACTIF
 
 
-def test_set_manual_active_runtime():
+def test_force_active_wins_over_the_legacy_key():
+    """Si les deux clés coexistent, `force_active` fait foi — sinon la liste
+    dépréciée ressusciterait des forçages que l'utilisateur a levés."""
+    m = SlotLifecycleManager(_lc_cfg(force_active=[], manual_active=["x::1h"]))
+    snap = m.evaluate({"x::1h": {"live_trades": 0, "budget_pct": 0.1}})
+    assert snap["states"]["x::1h"] == LifecycleState.CANDIDAT
+
+
+def test_force_active_also_blocks_the_retrait():
+    """Ce que le forçage court-circuite VRAIMENT, au-delà de la promotion.
+
+    Un slot forcé dont le budget s'est effondré reste ACTIF : ni retrait, ni
+    entrée dans la file de ré-optimisation. C'est la raison de fond du retrait
+    des 15 slots de config.yaml (D6) — un bot forcé perdant ne sort jamais.
+    """
+    healthy   = _edge_active()
+    collapsed = {"live_trades": 5, "budget_pct": 0.001}
+
+    # Le slot existe déjà (sinon la chute passe par le chemin « création », qui
+    # ne compte pas comme une rétrogradation et n'alimente pas la file).
+    m = SlotLifecycleManager(_lc_cfg(force_active=["x::1h"], min_active_bots=0))
+    m.evaluate({"x::1h": healthy})
+    snap = m.evaluate({"x::1h": collapsed})
+    assert snap["states"]["x::1h"] == LifecycleState.ACTIF
+    assert "x::1h" not in snap["reopt_queue"]
+
+    # Même trajectoire sans forçage → retrait + file de ré-optimisation.
+    auto = SlotLifecycleManager(_lc_cfg(min_active_bots=0))
+    auto.evaluate({"x::1h": healthy})
+    snap_auto = auto.evaluate({"x::1h": collapsed})
+    assert snap_auto["states"]["x::1h"] == LifecycleState.RETIRE
+    assert "x::1h" in snap_auto["reopt_queue"]
+
+
+def test_set_force_active_runtime():
     m = SlotLifecycleManager(_lc_cfg())
     snap = m.evaluate({"x::1h": {"live_trades": 0, "budget_pct": 0.1}})
     assert snap["states"]["x::1h"] == LifecycleState.CANDIDAT
-    m.set_manual_active("x::1h", True)
+    m.set_force_active("x::1h", True)
     snap2 = m.evaluate({"x::1h": {"live_trades": 0, "budget_pct": 0.1}})
     assert snap2["states"]["x::1h"] == LifecycleState.ACTIF
-    m.set_manual_active("x::1h", False)
+    m.set_force_active("x::1h", False)
     snap3 = m.evaluate({"x::1h": {"live_trades": 0, "budget_pct": 0.1}})
     # Libéré : retombe vers Candidat (pas d'edge) — au prochain quota de rétrogradation.
     assert snap3["states"]["x::1h"] in (LifecycleState.CANDIDAT, LifecycleState.ACTIF)
+
+
+def test_set_manual_active_alias_still_works():
+    """L'alias déprécié reste appelable (appelants historiques, route API)."""
+    m = SlotLifecycleManager(_lc_cfg())
+    m.set_manual_active("x::1h", True)
+    snap = m.evaluate({"x::1h": {"live_trades": 0, "budget_pct": 0.1}})
+    assert snap["states"]["x::1h"] == LifecycleState.ACTIF
 
 
 def test_lifecycle_persistence_roundtrip(tmp_path):

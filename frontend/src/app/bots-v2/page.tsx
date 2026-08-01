@@ -11,7 +11,7 @@
  *  - Drawer latéral au clic sur une card (Radix Dialog side variant)
  *    contenant : frise cycle de vie + cône Monte-Carlo + actions contextuelles
  *  - Bouton « Recruter un nouveau bot » → redirige vers /lab?intent=create
- *  - Filtre « forcés en actif » (bots manual_active: true)
+ *  - Filtre « forcés en actif » (bots force_active: true)
  *  - Kanban 4 colonnes (Candidats/Essai/Actifs/Retirés) + filtre
  */
 
@@ -34,6 +34,7 @@ import { QueryBoundary, EmptyState } from '@/components/ui/query-state';
 import { LifecycleFrieze } from '@/components/cards/lifecycle-frieze';
 import { MonteCarloCone } from '@/components/cards/monte-carlo-cone';
 import type { Bot } from '@/types';
+import { isForcedActive } from '@/lib/schemas';
 
 const COLUMN_STATES = ['candidat', 'essai', 'actif', 'retire'] as const;
 
@@ -70,13 +71,14 @@ function BotsV2Content() {
   const { data: oosData } = oosQuery;
 
   const [filter, setFilter] = useState<string>('all');
-  // `manual_active` (cf. app/api/routes/portfolio.py:152) vaut `true` quand le
-  // slot est FORCÉ en actif via `lifecycle.manual_active` — `false` est donc
+  // `force_active` (D6, cf. app/api/routes/portfolio.py) vaut `true` quand le
+  // slot est FORCÉ en actif via `lifecycle.force_active` — `false` est donc
   // l'état normal de tout bot piloté par le cycle de vie automatique, pas un
   // « gel ». Le filtre d'origine (`showFrozen`) masquait par défaut tout bot
-  // `manual_active !== true` : sur un déploiement réel (240 candidats, aucun
-  // forçage) le kanban s'affichait entièrement vide alors que l'en-tête
-  // annonçait « 240 candidats ». On expose maintenant la sémantique réelle.
+  // non forcé : sur un déploiement réel (240 candidats, aucun forçage) le
+  // kanban s'affichait entièrement vide alors que l'en-tête annonçait
+  // « 240 candidats ». On expose maintenant la sémantique réelle.
+  // `isForcedActive` lit les deux noms le temps de la migration.
   const [onlyForced, setOnlyForced] = useState(false);
 
   // Slot sélectionné via URL (?slot=...) ou clic sur card
@@ -110,7 +112,7 @@ function BotsV2Content() {
   const filtered = useMemo(() => {
     let result = filter === 'all' ? bots : bots.filter((b) => b.state === filter);
     if (onlyForced) {
-      result = result.filter((b) => b.manual_active === true);
+      result = result.filter((b) => isForcedActive(b));
     }
     return result;
   }, [bots, filter, onlyForced]);
@@ -263,7 +265,7 @@ function BotsV2Content() {
                       key={bot.slot_key}
                       bot={bot}
                       onClick={() => handleCardClick(bot)}
-                      onForce={() => handleForce(bot.slot_key, !bot.manual_active)}
+                      onForce={() => handleForce(bot.slot_key, !isForcedActive(bot))}
                       onForward={() => handleForward(bot.slot_key)}
                       forceLoading={forceActive.isPending}
                       forwardLoading={runForward.isPending}
@@ -308,7 +310,7 @@ function BotsV2Content() {
                   }>
                     {lifecycleStyle(selectedBot.state).label}
                   </Badge>
-                  {selectedBot.manual_active === true && (
+                  {isForcedActive(selectedBot) && (
                     <Badge variant="warning">Forcé en actif (manuel)</Badge>
                   )}
                 </DialogDescription>
@@ -376,13 +378,13 @@ function BotsV2Content() {
                 {/* Actions contextuelles */}
                 <div className="space-y-2 pt-2 border-t border-border">
                   <Button
-                    variant={selectedBot.manual_active === false ? 'success' : 'danger'}
+                    variant={isForcedActive(selectedBot) ? 'danger' : 'success'}
                     className="w-full"
-                    onClick={() => handleForce(selectedBot.slot_key, selectedBot.manual_active === false)}
+                    onClick={() => handleForce(selectedBot.slot_key, !isForcedActive(selectedBot))}
                     disabled={forceActive.isPending}
                   >
                     <Star className="w-4 h-4" />
-                    {selectedBot.manual_active === false ? 'Forcer en actif' : 'Lever le forçage'}
+                    {isForcedActive(selectedBot) ? 'Lever le forçage' : 'Forcer en actif'}
                   </Button>
                   <div className="grid grid-cols-2 gap-2">
                     <Button
@@ -510,10 +512,10 @@ function BotCardV2({ bot, onClick, onForce, onForward, forceLoading, forwardLoad
             onClick={(e) => { e.stopPropagation(); onForce(); }}
             disabled={forceLoading}
             className="h-7 px-2 text-[10px] flex-1"
-            aria-label={bot.manual_active === false ? 'Forcer en actif' : 'Lever le forçage'}
+            aria-label={isForcedActive(bot) ? 'Lever le forçage' : 'Forcer en actif'}
           >
             <Star className="w-3 h-3" />
-            {bot.manual_active === false ? 'Forcer' : 'Libérer'}
+            {isForcedActive(bot) ? 'Libérer' : 'Forcer'}
           </Button>
           <Button
             size="sm"

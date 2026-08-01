@@ -194,7 +194,10 @@ export interface Bot {
     worst_trade_pct?: number;
   };
   edge_significant: boolean;
-  manual_active: boolean;
+  /** Slot forcé ACTIF via `lifecycle.force_active` (D6). */
+  force_active?: boolean;
+  /** @deprecated Ancien nom de `force_active` — encore émis par l'API. */
+  manual_active?: boolean;
   live?: any;
   contract?: {
     verdict?: string;

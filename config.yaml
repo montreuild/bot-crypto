@@ -276,22 +276,28 @@ lifecycle:
   # BT-06 : seuil de promotion ACTIF aligné sur MIN_SIGNIFICANT_TRADES
   # (app/core/stats_thresholds.py). Ancienne valeur : 2 (bruit statistique).
   fidelity_min_fills: 10
-  manual_active:
-    - fft_spectral::1d
-    - ml_dynamic_threshold::1h
-    - ml_dynamic_threshold::4h
-    - multi_tf_sr::1d
-    - opus_omnibus_v10_no_ml::1h
-    - opus_omnibus_v11::30m
-    - opus_omnibus_v12::30m
-    - opus_omnibus_v8_no_ml::1h
-    - pullback_trend::1h
-    - scoring_statistique_opus::1h
-    - scoring_statistique_opus_v2::4h
-    - snowball_pyramid::1h
-    - snowball_pyramid::30m
-    - tvr_trend::1h
-    - tvr_trend::30m
+  # ── D6 : lifecycle automatique ────────────────────────────────────────────
+  # Les 15 slots qui étaient forcés ACTIF ici sont retirés : la machinerie
+  # candidat → essai → actif → retiré décide seule (promotion par edge
+  # significative + fidélité live, cf. docs/CONCEPTION_PROMOTION_PAR_EDGE.md).
+  #
+  # Ce que le forçage court-circuitait, et qui reprend donc effet :
+  #   - la promotion par edge (edge_min_trades, edge_conf, max_worst_trade_pct) ;
+  #   - le RETRAIT sur budget effondré ou live qui contredit la simulation en
+  #     perdant — un slot forcé n'était jamais retiré, même perdant ;
+  #   - la file de ré-optimisation des bots retirés.
+  #
+  # À NOTER : cette liste ne décidait PAS quels bots tradent. La sélection des
+  # bots actifs vient du classement OOS (`optimizer_results` + seuil
+  # MIN_VIABLE_SCORE + trading.top_strategies_per_tf) — cf.
+  # app/engine/opt_persistence.py::get_active_strategies_per_tf. Ce que la liste
+  # pilotait, c'est l'ÉTAT affiché et les transitions de cycle de vie.
+  #
+  # Forçage ponctuel (tests/debug) : ajouter la clé 3-parties du slot, ex.
+  #   force_active: [tvr_trend::1h::BTC/USDC]
+  # ou passer par le bouton « forcer actif » de /bots (persisté ici).
+  # L'ancien nom `manual_active` reste lu, mais est déprécié.
+  force_active: []
   min_active_bots: 2
   max_demotions_per_day: 2
   auto_reopt: false
