@@ -151,23 +151,29 @@ scanner:
   # `symbols` ci-dessus. Sur actions, la liste des instruments est un choix,
   # pas une découverte exchange.
   #
-  # ⚠️ data/universe/sbf120.yaml porte `verified: false` : instantané constitué
-  # hors ligne, à recouper avec la composition officielle Euronext. Pré-vol :
+  # ÉTAT AU 01/08/2026 :
+  #   - data/universe/sbf120.yaml porte `verified: true` (as_of 2026-07-26) ;
+  #   - le backfill est FAIT : 15m / 30m / 1h / 4h / 1d présents en cache pour
+  #     ~120 titres (data/ohlcv/*.PA/).
+  #
+  # Après chaque révision trimestrielle du SBF 120 par Euronext, l'instantané
+  # redevient périmé — le recontrôler avec :
   #     python scripts/check_universe.py sbf120
   #
-  # ⚠️⚠️ AVANT D'ACTIVER : peupler le cache HORS LIGNE, sinon le premier cycle
-  # de scan tente 98 titres × chaque timeframe contre Yahoo, qui répond 429.
-  # Utiliser la page /data → "Backfill actions" (depuis l'UI Next.js) ou :
+  # ⚠️ Sur une machine NEUVE (cache vide), peupler le cache AVANT le premier
+  # cycle : sinon le scan tente ~120 titres × chaque timeframe contre Yahoo,
+  # qui répond 429. Page /data → « Backfill actions », ou :
   #     python scripts/backfill_equities.py --tf 1d --years 20
   # Un disjoncteur de quota (app/core/yfinance_provider) coupe les appels 15 min
   # après 5 refus consécutifs, mais il limite les dégâts — il ne remplace pas
   # l'amorçage.
   #
-  # ⚠️⚠️⚠️ SBF 120 + yfinance 15m/30m/1h : Yahoo Finance ne fournit qu'~88
-  # bougies d'historique intraday pour les actions européennes (limite
-  # Yahoo). Sur TF courts, le bot demande 500 bougies, n'en obtient que 88,
-  # et fait un backoff 6h (comportement normal, cf. CandleStore). Pour
-  # trader des actions FR en intraday, utiliser TF ≥ 1d (historique 20 ans).
+  # ⚠️⚠️ SBF 120 + yfinance 15m/30m/1h : Yahoo ne fournit qu'~88 bougies
+  # d'historique intraday sur les actions européennes. Le cache est amorcé,
+  # mais il ne se creusera pas au-delà : sur ces TF le bot demande 500 bougies
+  # et n'en obtiendra jamais que ~88, d'où un backoff 6 h (comportement normal,
+  # cf. CandleStore). Pour de l'intraday actions, préférer TF ≥ 1d (20 ans
+  # d'historique disponible).
   universe: [sbf120]
   #
   # Le seuil de liquidité crypto (5 M$/24 h) exclurait tout le SBF 120 : il

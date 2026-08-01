@@ -253,6 +253,19 @@ def _bootstrap_strategy_files(strategies_dir: str) -> None:
             logger.warning(f"[Config] Bootstrap strategies/{module_name}.yaml KO : {exc}")
 
 
+def active_timeframes(cfg: dict) -> list:
+    """Timeframes réellement scannés par le bot — ``trading.timeframes``.
+
+    Source unique : c'est cette liste que lit ``get_active_strategies_per_tf``.
+    ``trading.timeframe`` (singulier) n'est qu'un repli mono-TF.
+    """
+    t = cfg.get("trading", {}) or {}
+    tfs = t.get("timeframes")
+    if tfs:
+        return list(tfs)
+    return [t.get("timeframe", "1h")]
+
+
 def _validate_venues(cfg: dict) -> None:
     """Cohérence du modèle de venue (S11) — la venue est la source de vérité.
 
@@ -496,28 +509,30 @@ def load_config(path: str = "config.yaml") -> dict:
                 "dans notifications: avant de trader en réel."
             )
 
-    # Compatibilité multi-TF
+    # ── Compatibilité multi-TF ───────────────────────────────────────────────
+    # Schéma HÉRITÉ : une clé racine `timeframes:` mappant chaque TF vers sa
+    # liste de stratégies. Encore acceptée en lecture, plus jamais fabriquée :
+    # elle l'était systématiquement en repli, à partir du SEUL
+    # `trading.timeframe`, alors que le bot tourne sur `trading.timeframes`
+    # (5 TF dans la config livrée). Personne ne la lisait sauf le log de
+    # démarrage, qui annonçait donc « TF=['1h'] » pendant que le bot scannait
+    # 15m/30m/1h/4h/1d.
     _VALID_TIMEFRAMES = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
-    if "timeframes" in cfg and cfg["timeframes"]:
+    if cfg.get("timeframes"):
         all_strats = []
         for tf_cfg in cfg["timeframes"].values():
-            all_strats.extend(tf_cfg.get("strategies", []))
+            all_strats.extend((tf_cfg or {}).get("strategies", []))
         if "strategies" not in cfg:
             cfg["strategies"] = {}
         cfg["strategies"].setdefault("enabled", list(dict.fromkeys(all_strats)))
         cfg["trading"].setdefault("timeframe", next(iter(cfg["timeframes"])))
-    else:
-        tf = cfg["trading"].get("timeframe", "1h")
-        if tf not in _VALID_TIMEFRAMES:
-            logger.warning(f"[Config] Timeframe '{tf}' non standard — valides : {sorted(_VALID_TIMEFRAMES)}")
-        strats = cfg.get("strategies", {}).get("enabled", [])
-        cfg.setdefault("timeframes", {tf: {
-            "strategies": strats,
-            "limit": 1500,
-            "scan_interval": cfg["trading"].get("scan_interval", 60),
-        }})
 
-    tfs = list(cfg.get("timeframes", {}).keys())
+    tfs = active_timeframes(cfg)
+    for tf in tfs:
+        if tf not in _VALID_TIMEFRAMES:
+            logger.warning(f"[Config] Timeframe '{tf}' non standard — "
+                           f"valides : {sorted(_VALID_TIMEFRAMES)}")
+
     logger.info(f"Config chargée : {path} | Capital={cfg['trading']['capital']} "
                 f"| TF={tfs} | Paper={cfg['trading']['paper_mode']}")
     return cfg
