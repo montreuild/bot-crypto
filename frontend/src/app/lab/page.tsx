@@ -30,6 +30,10 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Switch } from '@/components/ui/switch';
 import { QueryBoundary } from '@/components/ui/query-state';
 import { CsvExportButton, JsonExportButton } from '@/components/ui/export-buttons';
+import { WalkForwardTable } from '@/components/charts/walk-forward-table';
+import { MonteCarloPanel } from '@/components/charts/monte-carlo-panel';
+import { TradesScatter } from '@/components/charts/trades-scatter';
+import { BacktestEquityChart } from '@/components/charts/backtest-equity-chart';
 import { useBacktestSettings, useRunBacktest, useCancelBacktest } from '@/hooks/use-api';
 import { useConfig, usePresets, useSetExpertMode } from '@/hooks/use-api';
 import { api } from '@/lib/api';
@@ -299,20 +303,36 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
               <div className="text-[10px] uppercase tracking-wider text-dim font-semibold">
                 Options avancées
               </div>
-              <label className="flex items-center gap-2 text-xs cursor-pointer">
+              {/*
+                Radix `Switch` rend un <button role="switch"> : l'englober dans
+                un <label> ne lui donne AUCUN nom accessible (label/htmlFor ne
+                nomme que les contrôles de formulaire natifs). Ces deux
+                interrupteurs étaient donc anonymes pour un lecteur d'écran —
+                violation axe `button-name`, de gravité critique, sur une page
+                couverte par le job a11y désormais bloquant.
+              */}
+              <div className="flex items-center gap-2 text-xs">
                 <Switch
+                  id="bt-walk-forward"
+                  aria-label="Walk-Forward Analysis"
                   checked={config.walk_forward}
                   onCheckedChange={(v) => setConfig({ ...config, walk_forward: v })}
                 />
-                <span>Walk-Forward Analysis</span>
-              </label>
-              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <label htmlFor="bt-walk-forward" className="cursor-pointer">
+                  Walk-Forward Analysis
+                </label>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
                 <Switch
+                  id="bt-monte-carlo"
+                  aria-label="Monte-Carlo (200 runs)"
                   checked={config.monte_carlo}
                   onCheckedChange={(v) => setConfig({ ...config, monte_carlo: v })}
                 />
-                <span>Monte-Carlo (200 runs)</span>
-              </label>
+                <label htmlFor="bt-monte-carlo" className="cursor-pointer">
+                  Monte-Carlo (200 runs)
+                </label>
+              </div>
             </div>
           )}
 
@@ -357,7 +377,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
           </Card>
         )}
 
-        {result && <BacktestResults result={result} expertMode={expertMode} />}
+        {result && <BacktestResults result={result} />}
       </div>
     </div>
   );
@@ -457,7 +477,7 @@ function Verdict({ result }: { result: any }) {
 
 // ── Backtest Results ─────────────────────────────────────────────────────
 
-function BacktestResults({ result, expertMode }: { result: any; expertMode: boolean }) {
+function BacktestResults({ result }: { result: any }) {
   const r = Array.isArray(result) ? result[0] : result;
   const byStrategy = r?.by_strategy || {};
   const strategies = Object.entries(byStrategy);
@@ -525,27 +545,53 @@ function BacktestResults({ result, expertMode }: { result: any; expertMode: bool
                 </div>
               </div>
 
-              {/* Mode expert : Walk-Forward + MC */}
-              {expertMode && stats.walk_forward && (
-                <div className="mt-3 pt-3 border-t border-border text-[10px]">
-                  <div className="text-dim uppercase mb-1">Walk-Forward</div>
-                  <div className="text-muted">
-                    {stats.walk_forward.folds?.length ?? 0} folds · OOS PnL: {formatUSD(stats.walk_forward.oos_pnl ?? 0)}
-                  </div>
-                </div>
-              )}
-              {expertMode && stats.monte_carlo && (
-                <div className="mt-2 text-[10px]">
-                  <div className="text-dim uppercase mb-1">Monte-Carlo (200 runs)</div>
-                  <div className="text-muted">
-                    P5: {formatUSD(stats.monte_carlo.p5 ?? 0)} · P50: {formatUSD(stats.monte_carlo.p50 ?? 0)} · P95: {formatUSD(stats.monte_carlo.p95 ?? 0)}
-                  </div>
-                </div>
-              )}
             </CardContent>
           </Card>
         ))}
       </div>
+
+      {/*
+        Détail par stratégie : courbe d'équité (+ Buy & Hold), Walk-Forward,
+        Monte-Carlo et scatter des trades.
+
+        Ces blocs remplacent deux lignes de résumé qui lisaient des champs
+        inexistants (`walk_forward.folds`, `walk_forward.oos_pnl`,
+        `monte_carlo.p5/.p50/.p95`) et affichaient donc « 0 folds » et « P5:
+        $0.00 · P50: $0.00 · P95: $0.00 » quel que soit le résultat. Les
+        composants ci-dessous sont écrits sur les contrats réels du backend.
+
+        Le Walk-Forward et le Monte-Carlo ne sont plus derrière `expertMode` :
+        ils ne sont calculés QUE si l'utilisateur a explicitement coché la case
+        correspondante avant de lancer. Les masquer une seconde fois revenait à
+        cacher un résultat demandé.
+      */}
+      {strategies.map(([name, stats]: [string, any]) => {
+        const trades = Array.isArray(stats?.trades) ? stats.trades : [];
+        const hasDetail = stats?.equity_curve?.length || stats?.walk_forward
+          || stats?.monte_carlo || trades.length > 0;
+        if (!hasDetail) return null;
+        return (
+          <div key={`detail-${name}`} className="space-y-4">
+            <h3 className="text-xs uppercase tracking-wide text-dim pt-2">{name}</h3>
+            <BacktestEquityChart
+              strategy={name}
+              equityCurve={stats.equity_curve}
+              initialCapital={stats.initial_capital}
+              buyAndHoldPnl={stats.buy_and_hold_pnl}
+              alpha={stats.alpha}
+            />
+            {stats.walk_forward && <WalkForwardTable data={stats.walk_forward} />}
+            {stats.monte_carlo && (
+              <MonteCarloPanel
+                data={stats.monte_carlo}
+                initialCapital={stats.initial_capital}
+                nTrades={stats.total_trades}
+              />
+            )}
+            <TradesScatter trades={trades} symbol={r?.symbol} />
+          </div>
+        );
+      })}
 
       {/* Equity curve (si disponible) */}
       {r?.ohlcv && (

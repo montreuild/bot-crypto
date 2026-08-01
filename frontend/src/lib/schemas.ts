@@ -285,6 +285,32 @@ export const DerivativesDataSchema = z
 // ── /api/scanner/* (SMC) ────────────────────────────────────────────────────
 
 /**
+ * Un plan de trade de `Strategy.trade_plans()`, exposé par `/api/scanner/smc`
+ * sous la clé `trade_plans`.
+ *
+ * `score_min` (et non `score`) : les confluences liées à la bougie de
+ * déclenchement ne sont pas connues d'avance, le backend n'expose donc qu'un
+ * score plancher. La table lit aussi `status`, `gain_pct` et `distance_pct`,
+ * absents de la version initiale de l'UI.
+ */
+export const TradePlanSchema = z
+  .object({
+    status: z.string().optional(),
+    side: z.string().optional(),
+    setup: z.string().nullish(),
+    score_min: num,
+    entry: num,
+    stop: num,
+    tp: num,
+    gain_pct: num,
+    rr: num,
+    distance_pct: num,
+    trigger: z.string().nullish(),
+    reason: z.string().nullish(),
+  })
+  .passthrough();
+
+/**
  * Les payloads SMC sont volumineux et très variables selon les overlays
  * activés. On ne verrouille que l'enveloppe : le détail reste `passthrough`,
  * sinon le schéma deviendrait plus fragile que le code qu'il protège.
@@ -294,14 +320,157 @@ export const SmcSchema = z
     symbol: z.string().optional(),
     timeframe: z.string().optional(),
     candles: z.array(z.unknown()).optional(),
+    // `trade_plans` doit rester un tableau : la table « Plans recommandés » le
+    // trie et le mappe directement.
+    trade_plans: z.array(TradePlanSchema).optional(),
+  })
+  .passthrough();
+
+/**
+ * `/api/scanner/signals` — un signal par stratégie découverte.
+ *
+ * Le panel « Prédictions par stratégie » lit `p_event` / `p_up` (fractions
+ * 0-1, pas des pourcentages) et `skipped` (stratégie ML sans modèle entraîné).
+ * `signals` doit rester un **tableau**.
+ */
+export const StrategySignalSchema = z
+  .object({
+    strategy: z.string().optional(),
+    side: z.string().optional(),
+    score: num,
+    reason: z.string().nullish(),
+    skipped: z.boolean().optional(),
+    active: z.boolean().optional(),
+    setup: z.string().nullish(),
+    regime_lbl: z.string().nullish(),
+    p_event: num,
+    p_up: num,
   })
   .passthrough();
 
 export const ScannerSignalsSchema = z
-  .object({ signals: z.array(z.unknown()).optional() })
+  .object({ signals: z.array(StrategySignalSchema).optional() })
   .passthrough();
 
 export const ScannerConfigSchema = z.object({}).passthrough();
+
+// ── /api/backtest ───────────────────────────────────────────────────────────
+
+/**
+ * Walk-Forward — sortie de `WalkForwardAnalyzer.run()`.
+ *
+ * ⚠ Contrat qui a réellement dérivé : `/lab` lisait `walk_forward.folds`
+ * (tableau) et `walk_forward.oos_pnl`. **Aucun de ces deux champs n'existe.**
+ * Le backend renvoie `out_of_sample` / `in_sample` (tableaux de
+ * `BacktestResult.to_dict()`) et `avg_oos_pnl`. Le résumé affichait donc
+ * « 0 folds · OOS PnL: $0.00 » quel que soit le résultat.
+ *
+ * `n_folds` et `out_of_sample` sont **requis** dans la branche succès : c'est
+ * ce qui fait échouer la forme imaginée et rend le test négatif utile. La
+ * validation reste non bloquante côté `apiFetch` (log + donnée brute).
+ */
+export const WalkForwardErrorSchema = z
+  .object({ error: z.string() })
+  .passthrough();
+
+export const WalkForwardSuccessSchema = z
+  .object({
+    n_folds: z.number(),
+    avg_oos_pnl: num,
+    avg_oos_sharpe: num,
+    avg_oos_wr: num,
+    consistency: num,
+    in_sample: z.array(z.unknown()).optional(),
+    out_of_sample: z.array(z.unknown()),
+  })
+  .passthrough();
+
+export const WalkForwardSchema = z.union([
+  WalkForwardErrorSchema,
+  WalkForwardSuccessSchema,
+]);
+
+/**
+ * Monte-Carlo — sortie de `MonteCarlo.run()`.
+ *
+ * ⚠ `/lab` lisait `p5` / `p50` / `p95` : ces champs n'existent pas. Le backend
+ * expose `final_equity_p5` / `final_equity_mean` / `final_equity_p95`, plus
+ * `prob_profit`, `prob_ruin_10pct` et `max_dd_p95`.
+ *
+ * Il n'y a **aucune série temporelle** : uniquement des agrégats scalaires sur
+ * l'équité finale. Tout composant qui voudrait tracer des courbes P5/P50/P95
+ * dans le temps se retrouverait vide — c'est exactement l'erreur commise sur
+ * `MonteCarloCone` en S4 (R17).
+ */
+export const MonteCarloErrorSchema = z
+  .object({ error: z.string() })
+  .passthrough();
+
+export const MonteCarloSuccessSchema = z
+  .object({
+    runs: z.number(),
+    confidence: num,
+    final_equity_mean: z.number(),
+    final_equity_p5: z.number(),
+    final_equity_p95: z.number(),
+    max_dd_p95: num,
+    prob_profit: num,
+    prob_ruin_10pct: num,
+  })
+  .passthrough();
+
+export const MonteCarloSchema = z.union([
+  MonteCarloErrorSchema,
+  MonteCarloSuccessSchema,
+]);
+
+/**
+ * Un trade de backtest. `entry_time` est `str(df["time"][i])` côté backend :
+ * selon la source c'est un ISO ou un epoch sérialisé, d'où `z.union`.
+ */
+export const BacktestTradeSchema = z
+  .object({
+    side: z.string().optional(),
+    strategy: z.string().optional(),
+    entry: num,
+    exit: num,
+    entry_time: z.union([z.string(), z.number()]).nullish(),
+    exit_time: z.union([z.string(), z.number()]).nullish(),
+    bar: num,
+    pnl: num,
+    pnl_pct: num,
+    exit_reason: z.string().nullish(),
+  })
+  .passthrough();
+
+/** Entrée de `by_strategy` — `equity_curve` doit rester un tableau de nombres. */
+export const BacktestStrategySchema = z
+  .object({
+    total_trades: num,
+    win_rate: num,
+    total_pnl: num,
+    sharpe: num,
+    max_drawdown: num,
+    profit_factor: num,
+    initial_capital: num,
+    final_equity: num,
+    equity_curve: z.array(z.number()).optional(),
+    buy_and_hold_pnl: num,
+    alpha: num,
+    trades: z.array(BacktestTradeSchema).optional(),
+    walk_forward: WalkForwardSchema.optional(),
+    monte_carlo: MonteCarloSchema.optional(),
+  })
+  .passthrough();
+
+/** `by_strategy` est un **dictionnaire** indexé par nom de stratégie. */
+export const BacktestSchema = z
+  .object({
+    symbol: z.string().optional(),
+    timeframe: z.string().optional(),
+    by_strategy: z.record(z.string(), BacktestStrategySchema).optional(),
+  })
+  .passthrough();
 
 // ── /api/replay ─────────────────────────────────────────────────────────────
 

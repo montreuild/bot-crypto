@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { useState, useMemo } from 'react';
 import { Save, RotateCcw, Shield, Settings, Activity, DollarSign, Globe } from 'lucide-react';
 import { QueryBoundary } from '@/components/ui/query-state';
+import { PaperLiveSwitch } from '@/components/cards/paper-live-switch';
 
 type Symbol = string; // ex. "BTC/USDC"
 
@@ -379,12 +380,11 @@ export default function ConfigPage() {
                 <span className="text-muted">Exchange</span>
                 <span className="font-mono uppercase">{config.exchange?.name || '—'}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted">Paper mode</span>
-                <Badge variant={config.trading?.paper_mode ? 'success' : 'danger'}>
-                  {config.trading?.paper_mode ? 'OUI' : 'NON — LIVE RÉEL'}
-                </Badge>
-              </div>
+              {/*
+                E3-F1-US8 — ce bloc était en lecture seule : le mode paper/live
+                s'affichait mais ne pouvait pas être changé depuis l'UI.
+              */}
+              <PaperLiveSwitch paperMode={config.trading?.paper_mode} />
               <div className="flex justify-between">
                 <span className="text-muted">Max leverage</span>
                 <span className="font-mono">{config.trading?.max_leverage || 1}x</span>

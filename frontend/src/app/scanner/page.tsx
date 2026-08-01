@@ -7,18 +7,32 @@ import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { Search, Loader2, TrendingUp, Activity } from 'lucide-react';
+import { PredictionsPanel } from '@/components/cards/predictions-panel';
+import { useSignals } from '@/hooks/use-api';
 
 export default function ScannerPage() {
   const [symbol, setSymbol] = useState('BTC/USDC');
   const [tf, setTf] = useState('1h');
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  // Paire réellement analysée, figée au moment du scan : `symbol`/`tf` changent
+  // à chaque frappe dans le formulaire, on ne veut pas relancer la requête de
+  // prédictions à chaque caractère saisi.
+  const [scanned, setScanned] = useState<{ symbol: string; tf: string } | null>(null);
+
+  const signalsQuery = useSignals(
+    scanned?.symbol ?? '',
+    scanned?.tf ?? '',
+    300,
+    !!scanned,
+  );
 
   const handleScan = async () => {
     setLoading(true);
     try {
       const r = await api.fastAnalysis(symbol, tf);
       setResult(r);
+      setScanned({ symbol, tf });
       toast.success(`Analyse terminée pour ${symbol} ${tf}`);
     } catch (e: any) {
       toast.error(`Erreur: ${e.message}`);
@@ -133,6 +147,20 @@ export default function ScannerPage() {
             </Card>
           )}
         </div>
+      )}
+
+      {/*
+        E3-F4-US4 — Prédictions par stratégie. `useSignals` / `api.getSignals`
+        et le schéma zod existaient depuis S8 mais n'étaient montés nulle part :
+        /api/scanner/signals était compté comme « consommé » sans qu'aucune page
+        ne l'affiche.
+      */}
+      {scanned && signalsQuery.data?.signals?.length > 0 && (
+        <PredictionsPanel
+          signals={signalsQuery.data.signals}
+          symbol={scanned.symbol}
+          timeframe={scanned.tf}
+        />
       )}
     </div>
   );

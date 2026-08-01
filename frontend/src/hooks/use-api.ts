@@ -22,7 +22,16 @@ export function useBotStatus() {
 export function useHealth() {
   return useQuery({
     queryKey: ['health'],
-    queryFn: api.getHealth,
+    // E3-F1-US5 — la latence API est mesurée ici plutôt que dans un hook
+    // séparé : `/health` est déjà interrogé toutes les 10 s et n'exige pas
+    // d'authentification, donc c'est la sonde la moins coûteuse disponible.
+    // `client_latency_ms` est préfixé côté client pour qu'on ne le confonde
+    // pas avec un champ renvoyé par le backend (il n'en renvoie aucun).
+    queryFn: async () => {
+      const t0 = performance.now();
+      const data = await api.getHealth();
+      return { ...data, client_latency_ms: Math.round(performance.now() - t0) };
+    },
     refetchInterval: 10000,
   });
 }
@@ -215,6 +224,24 @@ export function useConfig() {
   return useQuery({
     queryKey: ['config'],
     queryFn: api.getConfig,
+  });
+}
+
+/**
+ * E3-F1-US8 — Paramètres de trading globaux, dont `paper_mode`.
+ *
+ * Invalide `status` en plus de `config` : le badge PAPER/LIVE de la topbar et
+ * le bandeau de santé lisent `/api/status`, pas `/api/config`. Sans cette
+ * invalidation, la bascule paraîtrait sans effet jusqu'au prochain poll.
+ */
+export function useUpdateTradingConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.updateTradingConfig,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['config'] });
+      qc.invalidateQueries({ queryKey: ['status'] });
+    },
   });
 }
 

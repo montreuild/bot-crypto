@@ -274,6 +274,13 @@ function JobCard({ job }: { job: OptimizeJob }) {
               variant="ghost"
               onClick={handleDelete}
               disabled={del.isPending}
+              // Bouton à icône seule : sans nom accessible, axe le remonte en
+              // `button-name` (critique) et un lecteur d'écran n'annonce que
+              // « bouton ». C'est l'item #26 de l'audit, donné pour traité en
+              // S2 mais jamais appliqué ici — et le job a11y de la CI est
+              // depuis passé bloquant.
+              aria-label="Supprimer ce job d'optimisation"
+              title="Supprimer ce job"
             >
               <Trash2 className="w-3 h-3" />
             </Button>

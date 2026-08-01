@@ -17,7 +17,7 @@ import {
   DailyStatsSchema, FeesBreakdownSchema, HealthSchema, UniversesSchema,
   OptimizeStatusSchema, OptimizeResultsSchema, OptimizeSpacesSchema,
   MlRegistrySchema, DerivativesDataSchema, SmcSchema, ScannerSignalsSchema,
-  ScannerConfigSchema,
+  ScannerConfigSchema, BacktestSchema,
 } from '@/lib/schemas';
 
 /**
@@ -210,6 +210,34 @@ export const api = {
 
   // ── Config ──────────────────────────────────────────────────────────────
   getConfig: () => apiFetch<any>('/config'),
+  /**
+   * POST /api/config/trading — paramètres de trading globaux.
+   *
+   * L'endpoint existait côté backend depuis toujours et l'audit le listait
+   * « ✅ consommé (useUpdateTradingConfig) », mais aucune méthode ni aucun hook
+   * ne l'appelait : `paper_mode` n'était QUE lu et affiché dans /config. Il
+   * n'existait donc aucun moyen de basculer paper ↔ live depuis l'UI.
+   *
+   * Le backend attend des query params (pas un body JSON) et valide les bornes.
+   */
+  updateTradingConfig: (params: {
+    score_threshold?: number;
+    risk_per_trade?: number;
+    max_positions?: number;
+    paper_mode?: boolean;
+    paper_slippage?: number;
+    daily_drawdown_limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) qs.set(k, String(v));
+    }
+    return apiFetch<{
+      changed: Record<string, unknown>;
+      saved_to_disk: boolean;
+      trader_updated: boolean;
+    }>(`/config/trading?${qs.toString()}`, { method: 'POST' });
+  },
   // S5-01 : étendu pour accepter un `symbol` optionnel (override par symbole).
   // Si symbol est fourni, le backend écrit dans optimizer_results[tf][symbol]
   // au lieu de la section globale strategy_params.
@@ -247,12 +275,50 @@ export const api = {
   getBacktestSettings: () => apiFetch<any>('/backtest/settings'),
   // `timeoutMs: 0` : traitement synchrone potentiellement long (plusieurs
   // minutes selon la plage et le nombre de stratégies) — pas d'échéance.
-  runBacktest: (payload: any) =>
-    apiFetch<BacktestResult | BacktestResult[]>('/backtest', {
+  /**
+   * POST /api/backtest.
+   *
+   * ⚠ `run_backtest` (app/api/routes/backtest.py:47) déclare des paramètres
+   * SCALAIRES — FastAPI les lit donc en **query string**, jamais dans le corps.
+   * Cette méthode envoyait `JSON.stringify(payload)` en body : le backend
+   * n'en lisait rien et retombait sur ses valeurs par défaut. Concrètement,
+   * **toute la configuration de backtest de l'UI était ignorée** — symbole,
+   * timeframe, limite, sélection de stratégies, et surtout `walk_forward` /
+   * `monte_carlo`, qui restaient donc à `false` quoi que coche l'utilisateur.
+   * C'est pour cette raison que les blocs Walk-Forward et Monte-Carlo ne
+   * pouvaient de toute façon jamais s'afficher.
+   *
+   * Vérifié contre le backend : en body → 0 filtre appliqué et aucun WF/MC ;
+   * en query string → `by_strategy` réduit à la stratégie demandée, `wf` et
+   * `mc` présents.
+   *
+   * `strategy` (singulier) est l'ancien nom passé par /compare et l'ancienne
+   * page /backtest ; le backend n'accepte que `strategies` (CSV). On normalise
+   * ici plutôt que de laisser ces pages filtrer dans le vide.
+   */
+  runBacktest: (params: {
+    symbol?: string; timeframe?: string; limit?: number;
+    walk_forward?: boolean; monte_carlo?: boolean;
+    strategies?: string; strategy?: string;
+  }) => {
+    const { strategy, ...rest } = params;
+    const merged: Record<string, unknown> = { ...rest };
+    if (merged.strategies === undefined && strategy !== undefined) {
+      merged.strategies = strategy;
+    }
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(merged)) {
+      if (v !== undefined && v !== null && v !== '') q.set(k, String(v));
+    }
+    return apiFetch<BacktestResult | BacktestResult[]>(`/backtest?${q.toString()}`, {
       method: 'POST',
-      body: JSON.stringify(payload),
       timeoutMs: 0,
-    }),
+      // Verrouille `by_strategy` (dictionnaire), `equity_curve` (tableau de
+      // nombres) et surtout les sous-objets `walk_forward` / `monte_carlo`,
+      // dont `/lab` lisait des champs inexistants.
+      schema: BacktestSchema,
+    });
+  },
   // S5-F3-US1 — Cancel backtest
   cancelBacktest: () => apiFetch<{ status: string }>('/backtest/cancel', { method: 'POST' }),
 
