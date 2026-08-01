@@ -307,6 +307,12 @@ export const TradePlanSchema = z
     distance_pct: num,
     trigger: z.string().nullish(),
     reason: z.string().nullish(),
+    /**
+     * Epoch **secondes** (même unité que `time_start`/`time_end` des order
+     * blocks), et non millisecondes — le formatage doit en tenir compte.
+     * `null` si la fenêtre analysée ne porte pas de colonne `time`.
+     */
+    signal_time: num,
   })
   .passthrough();
 

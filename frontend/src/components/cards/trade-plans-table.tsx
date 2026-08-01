@@ -40,9 +40,29 @@ export interface TradePlan {
   distance_pct?: number;
   trigger?: string;
   reason?: string;
+  /** Epoch **secondes** — cf. `signal_time` dans `Strategy.trade_plans()`. */
+  signal_time?: number | null;
 }
 
-type SortKey = 'score_min' | 'rr' | 'gain_pct' | 'distance_pct';
+type SortKey = 'score_min' | 'rr' | 'gain_pct' | 'distance_pct' | 'signal_time';
+
+/**
+ * Horodatage du signal, en date + heure:minutes.
+ *
+ * Le backend sérialise les temps SMC en epoch **secondes** (comme
+ * `time_start`/`time_end` des order blocks), pas en millisecondes : passer la
+ * valeur brute à `new Date()` donnerait janvier 1970.
+ */
+function formatSignalTime(v: number | null | undefined): string | null {
+  if (v === null || v === undefined || !Number.isFinite(Number(v))) return null;
+  const n = Number(v);
+  const d = new Date(n < 1e11 ? n * 1000 : n);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString('fr-FR', {
+    day: '2-digit', month: '2-digit', year: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
 
 const STATUS_LABEL: Record<string, { label: string; variant: 'success' | 'warning' | 'muted' }> = {
   immediate: { label: 'Immédiat', variant: 'success' },
@@ -75,10 +95,12 @@ export function TradePlansTable({ plans }: { plans: TradePlan[] }) {
     }
   };
 
-  const SortableTh = ({ k, children, title }: { k: SortKey; children: React.ReactNode; title?: string }) => (
+  const SortableTh = ({ k, children, title, align = 'right' }: {
+    k: SortKey; children: React.ReactNode; title?: string; align?: 'left' | 'right';
+  }) => (
     <th
       scope="col"
-      className="p-2 font-medium text-right"
+      className={cn('p-2 font-medium', align === 'right' ? 'text-right' : 'text-left')}
       aria-sort={sortKey === k ? (asc ? 'ascending' : 'descending') : 'none'}
     >
       <button
@@ -109,6 +131,13 @@ export function TradePlansTable({ plans }: { plans: TradePlan[] }) {
             </caption>
             <thead className="sticky top-0 bg-card">
               <tr className="text-left text-dim border-b border-border">
+                <SortableTh
+                  k="signal_time"
+                  align="left"
+                  title="Bougie de référence : pour un plan immédiat, la bougie courante ; pour un plan en attente, celle où la zone s'est formée"
+                >
+                  Signal
+                </SortableTh>
                 <th scope="col" className="p-2 font-medium">Statut</th>
                 <th scope="col" className="p-2 font-medium">Sens</th>
                 <th scope="col" className="p-2 font-medium">Setup</th>
@@ -132,6 +161,9 @@ export function TradePlansTable({ plans }: { plans: TradePlan[] }) {
                 const isLong = p.side === 'long';
                 return (
                   <tr key={i} className="border-b border-border/30 hover:bg-card-hover">
+                    <td className="p-2 font-mono whitespace-nowrap text-muted">
+                      {formatSignalTime(p.signal_time) ?? '—'}
+                    </td>
                     <td className="p-2">
                       <Badge variant={st.variant}>{st.label}</Badge>
                     </td>
