@@ -115,9 +115,11 @@ def main() -> int:
     # le reste du bot est bavard au démarrage.
     logging.getLogger("app.core.candle_store").setLevel(logging.WARNING)
 
-    import yaml
-    with open(args.config, "r", encoding="utf-8") as fh:
-        cfg = yaml.safe_load(fh) or {}
+    # S11 : la config est découpée (config.yaml = sommaire `include:`). Lire le
+    # seul fichier racine ne verrait ni `providers` ni `scanner`, et le backfill
+    # tomberait silencieusement sur les défauts yfinance.
+    from app.core.config import _load_and_merge
+    cfg = _load_and_merge(args.config)
 
     if args.symbols:
         symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]

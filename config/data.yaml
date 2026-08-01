@@ -1,0 +1,91 @@
+# ============================================================================
+#  DONNÉES & UNIVERS — ce que le bot regarde
+# ============================================================================
+#
+#  Briques : app/engine/scanner.py, app/core/candle_store.py,
+#            app/core/providers.py (yfinance), app/core/derivatives.py
+#
+#  La venue d'un instrument N'EST PAS déclarée ici : chaque univers
+#  (data/universe/*.yaml) porte sa propre clé `venue:`, résolue par
+#  resolve_venue. Voir config/venues.yaml.
+#
+scanner:
+  dynamic_scan: false
+  symbols:
+    - BTC/USDC
+    - ETH/USDC
+    - XRP/USDC
+  # G2 — univers statiques versionnés (data/universe/*.yaml), cumulés avec
+  # `symbols` ci-dessus. Sur actions, la liste des instruments est un choix,
+  # pas une découverte exchange.
+  #
+  # ÉTAT AU 01/08/2026 :
+  #   - data/universe/sbf120.yaml porte `verified: true` (as_of 2026-07-26) ;
+  #   - le backfill est FAIT : 15m / 30m / 1h / 4h / 1d présents en cache pour
+  #     ~120 titres (data/ohlcv/*.PA/).
+  #
+  # Après chaque révision trimestrielle du SBF 120 par Euronext, l'instantané
+  # redevient périmé — le recontrôler avec :
+  #     python scripts/check_universe.py sbf120
+  #
+  # ⚠️ Sur une machine NEUVE (cache vide), peupler le cache AVANT le premier
+  # cycle : sinon le scan tente ~120 titres × chaque timeframe contre Yahoo,
+  # qui répond 429. Page /data → « Backfill actions », ou :
+  #     python scripts/backfill_equities.py --tf 1d --years 20
+  # Un disjoncteur de quota (app/core/yfinance_provider) coupe les appels 15 min
+  # après 5 refus consécutifs, mais il limite les dégâts — il ne remplace pas
+  # l'amorçage.
+  #
+  # ⚠️⚠️ SBF 120 + yfinance 15m/30m/1h : Yahoo ne fournit qu'~88 bougies
+  # d'historique intraday sur les actions européennes. Le cache est amorcé,
+  # mais il ne se creusera pas au-delà : sur ces TF le bot demande 500 bougies
+  # et n'en obtiendra jamais que ~88, d'où un backoff 6 h (comportement normal,
+  # cf. CandleStore). Pour de l'intraday actions, préférer TF ≥ 1d (20 ans
+  # d'historique disponible).
+  universe: [sbf120]
+  #
+  # Le seuil de liquidité crypto (5 M$/24 h) exclurait tout le SBF 120 : il
+  # est surchargeable par classe d'actif.
+  min_volume_by_asset_class:
+    equity: 1000000
+  top_n: 20
+  symbols_cache_ttl: 300
+# Fournisseurs de données alternatifs (G2). Une venue les référence via
+# `data_provider`. Sans venue qui en déclare, ce bloc est ignoré et aucun
+# code de routage n'est chargé.
+
+providers:
+  yfinance:
+    suffix: .PA               # AIR → AIR.PA (ignoré si le ticker a déjà un point)
+    min_request_interval: 1.0 # secondes entre deux requêtes (Yahoo renvoie 429 en rafale)
+    cache_ttl: 60             # TTL du cache de réponses
+    max_retries: 3
+    # Une action ne cote pas la nuit ni le week-end : 500 bougies de 15 min
+    # couvrent ~25 jours calendaires, pas 5. Sans cette conversion, le cache
+    # n'atteint jamais le compte visé et le bot redemande à chaque cycle.
+    # Valeurs par défaut = Euronext Paris (09:00-17:30, 5 jours sur 7).
+    session_hours: 8.5
+    trading_days_per_week: 5
+    # Le provider passe par le paquet `yfinance`, désormais dépendance du
+    # projet (requirements.txt) : lui seul gère l'authentification
+    # cookie/crumb que Yahoo exige. L'ancien repli « API chart publique »
+    # a été retiré — il répondait 429 quoi qu'il arrive.
+# Calendriers de marché supplémentaires (XPAR est livré en dur).
+# calendars:
+#   XAMS:
+#     timezone: Europe/Amsterdam
+#     days: [0, 1, 2, 3, 4]
+#     sessions: ["09:00-17:30"]
+#     holidays: ["01-01", {easter: -2}, {easter: 1}, "05-01", "12-25", "12-26"]
+#     early_closes: {"12-24": "14:05", "12-31": "14:05"}
+  opportunity_scan:
+    min_vol_24h_m: 10
+    min_atr_pct: 1.0
+    max_atr_pct: 10.0
+    top_n: 15
+
+derivatives:
+  enabled: true
+  period: 1h
+  refresh_interval: 300
+  z_window: 90

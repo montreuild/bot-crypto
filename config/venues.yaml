@@ -1,0 +1,106 @@
+# ============================================================================
+#  VENUES — où et comment le bot exécute (routage, marché, coûts d'exécution)
+# ============================================================================
+#
+#  Brique : app/core/bot_identity.py (resolve_venue) + app/core/execution.py
+#
+#  Depuis S11, la venue est la SOURCE UNIQUE de vérité pour : marché (spot /
+#  margin / perp), levier maximum, droit de shorter, quantification des tailles,
+#  modèle de coûts et coût d'emprunt. Les globales `exchange.margin` et
+#  `trading.margin_mode` ne sont plus qu'un repli pour une config sans bloc
+#  `venues:` — `_validate_venues` refuse le démarrage si elles se contredisent.
+#
+exchange:
+  name: okx
+  api_key: ${OKX_API_KEY}
+  api_secret: ${OKX_API_SECRET}
+  api_password: ${OKX_API_PASSWORD}   # passphrase API OKX — obligatoire en live
+  # ⚠ S11 : cette clé ne pilote PLUS la résolution de venue. Elle n'est qu'un
+  # repli pour une config sans bloc `venues:`. Ce qui décide spot vs margin,
+  # c'est `venues.default` (et `venues.assign` par bot). Laissée alignée sur la
+  # venue par défaut pour ne pas induire en erreur — `_validate_venues` le
+  # vérifie au démarrage.
+  margin: true
+
+venues:
+  # ── Venue par défaut : OBLIGATOIRE dès que `defs` est renseigné (S11) ─────
+  # Sans elle, tout symbole non assigné retombait sur une venue fabriquée à
+  # partir des globales exchange.margin/trading.margin_mode/max_leverage —
+  # homonyme de `margin-isolated` ci-dessous mais avec un levier différent.
+  # Deux sources de vérité pour la même question. Le chargement est désormais
+  # refusé si cette clé manque.
+  #
+  # Valeur choisie = comportement ANTÉRIEUR à l'identique (margin isolated,
+  # levier 1) : le crypto tourne sur compte margin, ce qui autorise le short et
+  # facture l'emprunt. Pour du spot pur (pas de short, pas d'emprunt) :
+  # `default: spot`. Pour n'en passer QU'UN bot en margin :
+  # `assign: {tvr_trend::1h::BTC/USDC: margin-isolated}`.
+  default: margin-isolated
+  # asset_class/quote_currency explicités (S2-02, généralisation multi-actifs) —
+  # valeurs identiques aux défauts implicites précédents, aucun changement de
+  # comportement.
+  #
+  # ── Actions SBF 120 en paper (G2) — ACTIVÉ ───────────────────────────────
+  # La venue `euronext-paper` ci-dessous est data-only (`can_execute: false`) :
+  # AUCUN ordre n'est transmis, le bot émet une notification de trade et suit
+  # la position comme en paper. Passer à l'exécution réelle est le chantier G3.
+  #
+  # Les instruments ne sont PAS listés un par un dans `assign` : chaque fichier
+  # `data/universe/*.yaml` déclare sa propre clé `venue:`, que `resolve_venue`
+  # consulte pour les univers activés dans `scanner.universe`. Un `assign`
+  # explicite prime toujours sur cette déclaration.
+  defs:
+    euronext-paper:
+      # Actions au comptant : `market_type: spot` ⇒ aucun coût d'emprunt (S11 —
+      # avant, chaque trade SBF 120 payait trading.borrow_rate_daily, soit
+      # ~30 %/an d'intérêt fictif sur un achat comptant). Pas de margin sur
+      # actions : le bot ne modélise ni SRD ni compte à effet de levier.
+      market_type: spot
+      exchange: euronext
+      asset_class: equity
+      quote_currency: EUR
+      fractional: false          # une action ne s'achète pas en fractions
+      allow_short: false         # pas de SRD → pas de vente à découvert
+      tick_size: 0.001
+      min_notional: 200          # sous ce montant, les frais fixes mangent l'edge
+      calendar: XPAR             # Euronext Paris — 09:00-17:30, fériés inclus
+      data_provider: yfinance    # data-only (cf. providers.yfinance)
+      can_execute: false         # G3 non livré → NOTIFICATION de trade
+      close_at_session_end: true # pas de risque overnight non modélisé
+      close_before_close_min: 5
+      fee_pct: 0.001             # commission courtier (0,10 %)
+      fee_fixed: 0.0             # + part fixe éventuelle par ordre
+      fee_min: 2.0               # plancher de courtage
+      transaction_tax_pct: 0.004 # TTF française — VÉRIFIER le taux en vigueur
+      tax_on_buy_only: true      # la TTF ne frappe que les acquisitions
+    # ── Crypto OKX ───────────────────────────────────────────────────────────
+    # `market_type` est la clé structurante (S11) : `spot` n'emprunte JAMAIS
+    # (coût d'emprunt forcé à 0, cf. execution.venue_borrow_rate), `margin` et
+    # `perp` empruntent au taux `trading.borrow_rate_daily` — surchargeable ici
+    # par venue via `borrow_rate_daily`.
+    spot:
+      market_type: spot
+      exchange: okx
+      asset_class: crypto
+      quote_currency: USDC
+      max_leverage: 1
+      allow_short: false       # pas de vente à découvert au comptant
+    margin-isolated:
+      market_type: margin
+      exchange: okx
+      margin_mode: isolated
+      asset_class: crypto
+      quote_currency: USDC
+      # Levier 1 = valeur EFFECTIVE d'avant S11 (elle venait de
+      # trading.max_leverage, pas de cette def qui portait 3 sans jamais être
+      # lue). Monter à 3 est un choix explicite, à faire ici — et à répercuter
+      # sur trading.max_leverage qui plafonne le levier global du RiskManager.
+      max_leverage: 1
+    perp-hedge-okx:
+      market_type: perp
+      exchange: okx
+      hedge_mode: true
+      asset_class: crypto
+      quote_currency: USDC
+      max_leverage: 5
+  assign: {}

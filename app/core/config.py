@@ -253,6 +253,58 @@ def _bootstrap_strategy_files(strategies_dir: str) -> None:
             logger.warning(f"[Config] Bootstrap strategies/{module_name}.yaml KO : {exc}")
 
 
+def _load_and_merge(path: str) -> dict:
+    """Charge ``path`` et les fichiers de son ``include:``, section par section.
+
+    Découpage par responsabilité (S11) : ``config.yaml`` ne garde que le
+    sommaire, chaque fichier de ``config/`` porte une brique (venues, risque,
+    données, cycle de vie, exploitation). Une config monolithique reste
+    valide — sans ``include:``, ce chargeur se comporte comme l'ancien.
+
+    Règle unique et stricte : **une section vit dans un seul fichier**. Le
+    contraire ferait dépendre le résultat de l'ordre de chargement, exactement
+    le genre d'ambiguïté silencieuse que ce chantier supprime.
+    """
+    merged: dict = {}
+    owner: dict = {}
+    base = os.path.dirname(os.path.abspath(path))
+
+    def _read(p: str) -> dict:
+        with open(p, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        return data if isinstance(data, dict) else {}
+
+    root = _read(path)
+    includes = root.pop("include", None) or []
+    files = [(path, root)]
+    for inc in includes:
+        p = inc if os.path.isabs(inc) else os.path.join(base, inc)
+        if not os.path.exists(p):
+            raise FileNotFoundError(
+                f"config.yaml déclare `include: {inc}` mais le fichier est "
+                f"introuvable ({p}). Une brique de configuration manquante "
+                f"ferait tourner le bot sur des valeurs par défaut."
+            )
+        files.append((p, _read(p)))
+
+    for fpath, data in files:
+        for section, value in data.items():
+            if section in owner:
+                raise ValueError(
+                    f"Section '{section}' déclarée à la fois dans "
+                    f"{os.path.basename(owner[section])} et "
+                    f"{os.path.basename(fpath)} : une section doit vivre dans "
+                    f"un seul fichier."
+                )
+            owner[section] = fpath
+            merged[section] = value
+
+    if includes:
+        logger.debug(f"[Config] {len(files)} fichiers fusionnés : "
+                     f"{', '.join(os.path.basename(f) for f, _ in files)}")
+    return merged
+
+
 def active_timeframes(cfg: dict) -> list:
     """Timeframes réellement scannés par le bot — ``trading.timeframes``.
 
@@ -355,10 +407,9 @@ def load_config(path: str = "config.yaml") -> dict:
     if not os.path.exists(path):
         raise FileNotFoundError(f"Fichier de configuration introuvable : {path}")
 
-    with open(path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+    cfg = _load_and_merge(path)
 
-    if not isinstance(cfg, dict):
+    if not isinstance(cfg, dict) or not cfg:
         raise ValueError("Le fichier config.yaml est vide ou invalide.")
 
     # S2-03 : alias générique min_volume_quote_24h — propage une valeur
