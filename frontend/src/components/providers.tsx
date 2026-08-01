@@ -31,6 +31,18 @@ export function Providers({ children }: { children: ReactNode }) {
     document.documentElement.classList.toggle('light', theme === 'light');
   }, []);
 
+  // Lot Réglages — l'enregistrement du Service Worker vivait dans un
+  // `useEffect` de /settings : un utilisateur qui n'ouvrait jamais les
+  // Réglages n'avait jamais de SW, donc pas de PWA installable ni de cache
+  // hors-ligne. Il ne devrait pas dépendre de la visite d'une page ; il est
+  // remonté ici, au niveau du provider racine.
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('[PWA] Service worker registration failed:', err);
+    });
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <I18nProvider>

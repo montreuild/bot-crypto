@@ -281,8 +281,10 @@ const SEARCH_PAGES = [
   { href: '/data', label: 'Données', desc: 'Cache bougies OHLCV', keywords: ['ohlcv', 'candles', 'cache', 'parquet'] },
   { href: '/lab?tab=ml', label: 'ML', desc: 'Modèles Machine Learning', keywords: ['machine', 'learning', 'lightgbm', 'random forest', 'laboratoire'] },
   { href: '/models', label: 'Registre modèles', desc: 'Registre versionné, gate de promotion, entraînement', keywords: ['registre', 'version', 'gate', 'pin', 'entraînement', 'sweep', 'promotion'] },
-  { href: '/config', label: 'Configuration', desc: 'Stratégies, risk, notifications', keywords: ['paramètres', 'risk', 'exchange'] },
-  { href: '/settings', label: 'Réglages', desc: 'Presets, thème, expert mode', keywords: ['preset', 'thème', 'clair', 'sombre'] },
+  // Lot Réglages — /config et /settings sont devenus des onglets de
+  // /settings-v2. Les deux entrées restent, chacune sur son onglet.
+  { href: '/settings-v2?tab=capital', label: 'Configuration', desc: 'Stratégies, risk, exchange', keywords: ['paramètres', 'risk', 'exchange', 'config', 'réglages'] },
+  { href: '/settings-v2?tab=ui', label: 'Réglages', desc: 'Presets, thème, expert mode, notifications', keywords: ['preset', 'thème', 'clair', 'sombre', 'expert', 'notifications'] },
 ];
 
 function SearchModal({ onClose }: { onClose: () => void }) {

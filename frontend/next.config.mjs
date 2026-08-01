@@ -76,6 +76,12 @@ const nextConfig = {
       { source: '/ml', destination: '/lab?tab=ml', permanent: true },
       { source: '/replay', destination: '/lab?tab=replay', permanent: true },
       { source: '/compare', destination: '/lab?tab=compare', permanent: true },
+
+      // Lot Réglages. `/settings` comme `/config` atterrissent sur Capital :
+      // c'était le premier bloc des deux pages (presets de risque d'un côté,
+      // stratégies de l'autre). Thème et notifications sont dans l'onglet UI.
+      { source: '/config', destination: '/settings-v2?tab=capital', permanent: true },
+      { source: '/settings', destination: '/settings-v2?tab=capital', permanent: true },
     ];
   },
   // S0-F1-US6 — WebSocket : Next.js ne proxy pas les WS nativement, on laisse

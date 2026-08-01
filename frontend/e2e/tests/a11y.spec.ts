@@ -23,8 +23,6 @@ const PAGES = [
   { url: '/audit-log', name: 'Journal Audit' },
   { url: '/data', name: 'Données OHLCV' },
   { url: '/models', name: 'Registre modèles' },
-  { url: '/config', name: 'Configuration' },
-  { url: '/settings', name: 'Réglages' },
 
   // Pages méta issues de la refonte S3-S6. Elles étaient absentes de cette
   // liste alors qu'elles concentrent l'essentiel du nouveau code (kanban,
@@ -32,8 +30,6 @@ const PAGES = [
   // celles dont l'accessibilité n'avait jamais été vérifiée.
   { url: '/portfolio-v2', name: 'Portefeuille v2' },
   { url: '/bots-v2', name: 'Mes Bots v2' },
-  { url: '/settings-v2', name: 'Réglages v2' },
-
   // Lots de fusion — les anciennes pages sont devenues des onglets de /market
   // et /lab, et leurs routes sont en 308. Radix ne monte QUE l'onglet actif :
   // auditer `/market` ou `/lab` seuls ne couvrirait que le premier onglet, on
@@ -48,6 +44,11 @@ const PAGES = [
   { url: '/lab?tab=ml', name: 'Laboratoire — ML' },
   { url: '/lab?tab=replay', name: 'Laboratoire — Replay' },
   { url: '/lab?tab=compare', name: 'Laboratoire — Compare' },
+  { url: '/settings-v2?tab=capital', name: 'Réglages — Capital' },
+  { url: '/settings-v2?tab=notifications', name: 'Réglages — Notifications' },
+  { url: '/settings-v2?tab=data', name: 'Réglages — Données' },
+  { url: '/settings-v2?tab=audit', name: 'Réglages — Audit' },
+  { url: '/settings-v2?tab=ui', name: 'Réglages — UI' },
 ];
 
 test.describe('Accessibilité WCAG 2.1 AA', () => {

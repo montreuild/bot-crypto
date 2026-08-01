@@ -1669,9 +1669,9 @@ La stratégie strangler fig a été suivie : les nouvelles pages (`/portfolio-v2
 - `/scanner`, `/smartgraph`, `/smartreplay`, `/derivatives` → `/market`
 - `/settings`, `/config` → `/settings-v2`
 
-**11 de ces 14 redirections sont posées** (3 en S10, 4 par le lot Marché, 4 par
-le lot Laboratoire). Les 3 autres restent en attente de leur lot de fusion :
-voir §Bascule S10.
+**13 de ces 14 redirections sont posées** (3 en S10, 4 par le lot Marché, 4 par
+le lot Laboratoire, 2 par le lot Réglages). La dernière reste en attente de son
+lot de fusion : voir §Bascule S10.
 
 ### Prochaines étapes (S10-S12)
 
@@ -1922,7 +1922,7 @@ masquait rien tout en laissant croire qu'une exception était en place — retir
   atteignable en l'état et n'est vérifié par aucune CI.
 - ~~**Accessibilité**~~ — traité, cf. §Accessibilité ci-dessous. Le job CI
   `a11y` est bloquant et passe à zéro violation sur les 24 pages.
-- **Redirections 308 : 11 posées sur 14** — voir §Bascule S10 ci-dessous.
+- **Redirections 308 : 13 posées sur 14** — voir §Bascule S10 ci-dessous.
 - ~~**Réponses d'API non typées**~~ — traité, cf. §Typage des réponses d'API.
   L'extension aux endpoints restants (`optimize/*`, `ml/registry`, `replay`,
   `derivatives`, `scanner/smc*`) est faite. Trois pièges supplémentaires du même
@@ -1973,6 +1973,42 @@ réel des anciennes pages, extrait sous `frontend/src/components/views/` :
 fusion et reste une page à part entière. L'onglet ML y renvoie explicitement —
 c'est le seul renvoi qui subsiste, et il est assumé.
 
+**Lot Réglages** — les deux dernières pages de configuration :
+
+| Source | Cible | Ce qui a été porté |
+|---|---|---|
+| `/config` | `/settings-v2?tab=capital` | `config-view.tsx` : ses 4 onglets internes deviennent 4 sections exportées (`ConfigStrategiesView`, `ConfigRiskView`, `ConfigNotificationsView`, `ConfigExchangeView`), montées dans Capital et Notifs |
+| `/settings` | `/settings-v2?tab=capital` | Thème (vrai sélecteur, plus un badge « Topbar »), notifications navigateur câblées, seuils de preset lus au backend |
+
+Trois choses corrigées au passage, qui n'étaient pas de simples déplacements :
+
+1. **Le Service Worker ne dépend plus d'une visite de page.** Il était
+   enregistré dans un `useEffect` de `/settings` : un utilisateur qui n'ouvrait
+   jamais les Réglages n'avait jamais de SW, donc ni PWA installable ni cache
+   hors-ligne. Il est remonté dans `Providers` (`components/providers.tsx`).
+2. **Le switch « Notifications navigateur » fonctionne.** C'était un
+   `defaultChecked` sans handler : il affichait « activé » sans jamais demander
+   la permission. Il est câblé sur les helpers de `notifications-provider` et
+   reflète la permission réelle (`Accordé` / `Refusé` / `En attente` / `Non
+   supporté`), désactivé quand elle n'est pas récupérable depuis la page.
+3. **Les seuils de preset affichés étaient faux.** `/settings-v2` les codait en
+   dur alors que `/settings` lisait `/api/settings/presets`. Dès que
+   `config.yaml` s'écartait de ces valeurs, les deux écrans affichaient des
+   chiffres différents et c'est la page méta qui mentait. Le backend prime
+   désormais ; les constantes ne servent plus que de repli avant réponse.
+
+Deux suppressions volontaires :
+
+- L'onglet Risk de `/config` faisait `(presets || [...]).map(...)` sur le retour
+  de `usePresets()`, qui est un objet `{presets, current, expert_mode}` et non
+  un tableau : **l'onglet plantait au rendu** dès que la requête aboutissait.
+  Le bloc n'est pas porté — les cartes de preset de l'onglet Capital couvrent
+  le besoin, et correctement.
+- La garde `expertMode` sur l'accès aux paramètres avancés est retirée : elle
+  désactivait un lien de navigation, pas les écritures. Un utilisateur qui
+  coupait le mode expert depuis une autre page perdait l'accès à des
+  paramètres qu'il venait de modifier, alors que l'API restait ouverte.
+
 `/` pointe désormais sur `/portfolio-v2` (au lieu de `/dashboard`), sans saut de
 redirection intermédiaire. Sidebar, recherche Cmd+K, page 404 et
 `AllocationsGrid` ciblent directement les routes v2.
@@ -1985,12 +2021,10 @@ page**, la 308 boucle et rend la fonctionnalité inatteignable.
 
 | Redirection prévue | Blocage constaté | Lignes rendues inaccessibles |
 |---|---|---|
-| `/config` → `/settings-v2` | `/settings-v2` : « Ouvrir la configuration avancée » → `window.location.href = '/config'`. L'éditeur de params par stratégie (`useSetStrategyParams`, `useToggleStrategyTimeframe`) n'existe que sur `/config` | 401 |
-| `/settings` → `/settings-v2` | `/settings` est le **seul** endroit qui enregistre le Service Worker (`navigator.serviceWorker.register('/sw.js')`) et qui demande réellement la permission de notification. Le switch « Notifications navigateur » de `/settings-v2` est un placeholder `defaultChecked` sans handler | 421 |
 | `/portfolio` → `/portfolio-v2` | `/portfolio` porte un journal de notifications (`useNotifications`) et une vue par bot (`useBots`) que `/portfolio-v2` ne reprend pas | 483 |
 
-**Reste ~1 300 lignes** à porter sur les ~5 470 du constat initial. Le lot
-Marché en a traité ~2 330, le lot Laboratoire ~1 840.
+**Reste ~480 lignes** à porter sur les ~5 470 du constat initial. Le lot Marché
+en a traité ~2 330, le lot Laboratoire ~1 840, le lot Réglages ~820.
 
 ### Conditions de levée, par lot
 
@@ -2023,12 +2057,17 @@ Marché en a traité ~2 330, le lot Laboratoire ~1 840.
    Le prop `expertMode` disparaît des 4 onglets : il ne servait qu'à afficher
    la mention « intégration native prévue au Sprint 7/9 » sous les teasers.
    Il reste actif sur l'onglet Backtest, où il gouverne de vraies options.
-3. **Lot Réglages** (`/config`, `/settings`) — porter l'éditeur de params par
-   stratégie dans l'onglet Capital, câbler pour de bon le switch
-   « Notifications navigateur », et **déplacer l'enregistrement du Service
-   Worker hors de `/settings`** (il ne devrait pas dépendre de la visite d'une
-   page : aujourd'hui un utilisateur qui ne va jamais dans les Réglages n'a
-   jamais de SW).
+3. ~~**Lot Réglages**~~ (`/config`, `/settings`) — **fait**. Les trois
+   conditions posées ici sont remplies : l'éditeur de params par stratégie est
+   dans l'onglet Capital, le switch « Notifications navigateur » est câblé, et
+   l'enregistrement du Service Worker est remonté dans `Providers`. Deux
+   correctifs non prévus s'y sont ajoutés (seuils de preset lus au backend,
+   onglet Risk de `/config` qui plantait) — détail ci-dessus.
+
+   `/settings-v2` garde son nom de route : la renommer `/settings` demanderait
+   une 308 dans l'autre sens et casserait les favoris fraîchement redirigés.
+   Son entrée de nav, elle, s'appelle simplement « Réglages » — il n'y a plus
+   d'ancienne page dont la distinguer.
 4. **Lot Portefeuille** (`/portfolio`) — porter le journal de notifications et
    la vue par bot dans `/portfolio-v2`.
 

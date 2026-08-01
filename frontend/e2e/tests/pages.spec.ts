@@ -15,8 +15,6 @@ const PAGES = [
   { path: '/audit-log', title: 'Journal' },
   { path: '/data', title: 'Données' },
   { path: '/models', title: 'Modèles' },
-  { path: '/config', title: 'Configuration' },
-  { path: '/settings', title: 'Réglages' },
 ];
 
 test.describe('Page loading', () => {
@@ -58,6 +56,9 @@ test.describe('Redirections S10', () => {
     { from: '/ml', to: /\/lab\?tab=ml/ },
     { from: '/replay', to: /\/lab\?tab=replay/ },
     { from: '/compare', to: /\/lab\?tab=compare/ },
+    // Lot Réglages
+    { from: '/config', to: /\/settings-v2\?tab=capital/ },
+    { from: '/settings', to: /\/settings-v2\?tab=capital/ },
   ];
 
   for (const r of REDIRECTS) {
@@ -74,7 +75,7 @@ test.describe('Redirections S10', () => {
   // les onglets des pages méta y renvoient explicitement.
   // `/models` est dans cette liste par choix d'architecture, pas par blocage :
   // le registre versionné n'est pas dans le plan de fusion.
-  const KEPT = ['/models', '/config', '/settings', '/portfolio'];
+  const KEPT = ['/models', '/portfolio'];
   for (const path of KEPT) {
     test(`${path} reste accessible (pas de 308)`, async ({ page }) => {
       const response = await page.goto(path);
@@ -96,6 +97,9 @@ test.describe('Onglets fusionnés', () => {
     { page: 'lab', tab: 'ml', heading: 'Modèles ML' },
     { page: 'lab', tab: 'replay', heading: 'Replay Multi-Timeframe' },
     { page: 'lab', tab: 'compare', heading: 'Comparatif Stratégies' },
+    // Lot Réglages — l'onglet Capital porte l'éditeur de params par
+    // stratégie, seule fonctionnalité que /config avait en propre.
+    { page: 'settings-v2', tab: 'capital', heading: 'Stratégies' },
   ];
 
   for (const t of TABS) {

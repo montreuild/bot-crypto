@@ -13,22 +13,34 @@
  *  - Préférences UI (thème, locale, mode expert, notifications navigateur)
  */
 
-import { useState } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { cn } from '@/lib/utils';
-import { usePresets, useSetRiskPreset, useSetExpertMode, useConfig } from '@/hooks/use-api';
+import { cn, getStoredTheme, setStoredTheme } from '@/lib/utils';
+import { usePresets, useSetRiskPreset, useSetExpertMode } from '@/hooks/use-api';
 import { toast } from 'sonner';
 import {
   Wallet, Bell, Database, ScrollText, Settings as SettingsIcon,
-  Shield, Check, AlertTriangle, Loader2, Send,
+  Check, Loader2, Send, Sun, Moon,
 } from 'lucide-react';
 import { UniverseManager } from '@/components/cards/universe-manager';
+import {
+  enableBrowserNotifications,
+  disableBrowserNotifications,
+  getBrowserNotificationsPermission,
+  isBrowserNotificationsEnabled,
+} from '@/components/notifications-provider';
+import {
+  ConfigStrategiesView,
+  ConfigRiskView,
+  ConfigNotificationsView,
+  ConfigExchangeView,
+} from '@/components/views/config-view';
 import { api } from '@/lib/api';
 
 /**
@@ -56,6 +68,15 @@ function TestNotificationButton() {
   );
 }
 
+/**
+ * Valeurs de repli. Lot Réglages : `/settings` lisait les seuils réels via
+ * `/api/settings/presets`, alors que cette page les affichait en dur — deux
+ * écrans donnaient donc des chiffres différents dès que `config.yaml`
+ * s'écartait de ces valeurs, et c'est celui-ci qui mentait. Les seuils du
+ * backend priment désormais ; ce tableau ne sert plus que de repli tant que
+ * la requête n'a pas répondu, et de source pour les libellés/descriptions
+ * (que l'API ne fournit pas tous).
+ */
 const PRESETS = [
   {
     key: 'prudent',
@@ -89,14 +110,93 @@ const PRESETS = [
   },
 ] as const;
 
+/**
+ * Fusionne un preset de repli avec les seuils renvoyés par
+ * `/api/settings/presets`. Chaque champ est pris du backend quand il est
+ * présent — un `0` légitime (ex. daily DD désactivé) ne doit pas retomber sur
+ * le repli, d'où le test sur `== null` plutôt qu'un `||`.
+ */
+function mergePreset(fallback: (typeof PRESETS)[number], remote: any) {
+  if (!remote) return fallback;
+  const pick = (value: unknown, dflt: number) => (value == null ? dflt : Number(value));
+  return {
+    ...fallback,
+    label: remote.label || fallback.label,
+    risk_per_trade: pick(remote.risk_per_trade, fallback.risk_per_trade),
+    max_positions: pick(remote.max_positions, fallback.max_positions),
+    daily_dd: pick(remote.daily_drawdown_limit, fallback.daily_dd),
+    global_dd: pick(remote.max_drawdown_global, fallback.global_dd),
+    kill_switch: pick(remote.equity_kill_switch_dd, fallback.kill_switch),
+  };
+}
+
+const TABS = ['capital', 'notifications', 'data', 'audit', 'ui'] as const;
+
 export default function SettingsV2Page() {
-  const [tab, setTab] = useState('capital');
+  return (
+    <Suspense fallback={<div className="p-6 text-muted">Chargement…</div>}>
+      <SettingsV2Content />
+    </Suspense>
+  );
+}
+
+function SettingsV2Content() {
+  const searchParams = useSearchParams();
+  // Un `?tab=` inconnu retombe sur Capital plutôt que d'afficher un onglet vide.
+  const requestedTab = searchParams.get('tab');
+  const [tab, setTab] = useState<string>(
+    TABS.includes(requestedTab as (typeof TABS)[number]) ? requestedTab! : 'capital',
+  );
   const presetsQuery = usePresets();
   const setPreset = useSetRiskPreset();
   const setExpertMode = useSetExpertMode();
   const { data: presets } = presetsQuery;
   const currentPreset = presets?.current || 'equilibre';
   const expertMode = presets?.expert_mode || false;
+
+  // Lot Réglages — thème et permission de notification, portés depuis
+  // /settings. Lus côté client uniquement (localStorage / API Notification).
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [notifPermission, setNotifPermission] =
+    useState<'default' | 'granted' | 'denied' | 'unsupported'>('default');
+  const [notifEnabled, setNotifEnabled] = useState(false);
+
+  useEffect(() => {
+    setTheme(getStoredTheme());
+    setNotifPermission(getBrowserNotificationsPermission());
+    setNotifEnabled(isBrowserNotificationsEnabled());
+  }, []);
+
+  const handleThemeToggle = (newTheme: 'dark' | 'light') => {
+    setStoredTheme(newTheme);
+    setTheme(newTheme);
+    toast.success(`Thème ${newTheme === 'dark' ? 'sombre' : 'clair'} activé`);
+  };
+
+  const handleBrowserNotifToggle = async (enabled: boolean) => {
+    if (!enabled) {
+      disableBrowserNotifications();
+      setNotifEnabled(false);
+      toast.info('Notifications navigateur désactivées');
+      return;
+    }
+    try {
+      const ok = await enableBrowserNotifications();
+      // La permission a pu changer pendant la demande : on la relit plutôt que
+      // de la déduire du booléen.
+      setNotifPermission(getBrowserNotificationsPermission());
+      setNotifEnabled(ok);
+      if (ok) {
+        toast.success('Notifications navigateur activées — alertes critiques en temps réel');
+      } else if (getBrowserNotificationsPermission() === 'denied') {
+        toast.warning('Notifications refusées par le navigateur — réautoriser depuis les paramètres du site');
+      } else {
+        toast.info('Demande de permission ignorée');
+      }
+    } catch (e: any) {
+      toast.error(`Erreur : ${e.message}`);
+    }
+  };
 
   const header = (
     <div>
@@ -164,7 +264,8 @@ export default function SettingsV2Page() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {PRESETS.map((p) => {
+                {PRESETS.map((fallback) => {
+                  const p = mergePreset(fallback, presets?.presets?.[fallback.key]);
                   const isActive = currentPreset === p.key;
                   return (
                     <button
@@ -218,46 +319,33 @@ export default function SettingsV2Page() {
             </CardContent>
           </Card>
 
-          {/* Paramètres avancés (redirection vers /config) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Shield className="w-4 h-4 text-amber-400" />
-                Paramètres avancés
-                {!expertMode && <Badge variant="muted" className="text-[10px]">Expert requis</Badge>}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted mb-3">
-                Score threshold, risk per trade, max positions, paper slippage, circuit breakers
-                par slot, margin, params par stratégie.
-              </p>
-              <Button
-                variant="outline"
-                onClick={() => window.location.href = '/config'}
-                disabled={!expertMode}
-              >
-                Ouvrir la configuration avancée
-              </Button>
-            </CardContent>
-          </Card>
+          {/*
+            Lot Réglages — ces trois sections étaient derrière un bouton
+            « Ouvrir la configuration avancée » vers /config, lui-même
+            désactivé hors mode expert. Elles sont montées inline.
+
+            Le mode expert ne masque plus l'éditeur de params : la garde
+            portait sur un lien de navigation, pas sur les écritures. Un
+            utilisateur qui coupait le mode expert depuis une autre page se
+            retrouvait sans accès à des paramètres qu'il venait de modifier,
+            alors que l'API restait ouverte. Les valeurs de risque et
+            l'exchange, eux, étaient déjà en lecture seule.
+          */}
+          <ConfigRiskView />
+          <ConfigStrategiesView />
+          <ConfigExchangeView />
         </TabsContent>
 
         <TabsContent value="notifications" className="space-y-4">
+          <ConfigNotificationsView />
           <Card>
-            <CardContent className="p-8 text-center">
-              <Bell className="w-10 h-10 mx-auto text-primary-400 mb-3" />
-              <h3 className="text-base font-semibold mb-1">Notifications</h3>
-              <p className="text-sm text-muted max-w-md mx-auto mb-4">
-                Telegram, WhatsApp (CallMeBot/Twilio), Email SMTP. 3 niveaux
-                (info/warning/critical).
+            <CardContent className="p-4 flex items-center justify-between gap-4 flex-wrap">
+              <p className="text-sm text-muted">
+                Telegram, WhatsApp (CallMeBot/Twilio), Email SMTP. Les identifiants se
+                règlent dans <code className="font-mono text-xs">config.yaml</code>.
               </p>
-              <div className="flex justify-center gap-2">
-                <Button variant="outline" onClick={() => window.location.href = '/config'}>
-                  Configurer
-                </Button>
-                <TestNotificationButton />
-              </div>
+              {/* S9-F3-US4 */}
+              <TestNotificationButton />
             </CardContent>
           </Card>
         </TabsContent>
@@ -318,26 +406,81 @@ export default function SettingsV2Page() {
                 />
               </div>
 
-              {/* Notifications navigateur (placeholder) */}
+              {/*
+                Lot Réglages — ce switch était un `defaultChecked` sans
+                handler : il affichait « activé » sans jamais demander la
+                permission au navigateur ni écrire quoi que ce soit. C'était
+                le seul blocage réel de la 308 de /settings, qui portait la
+                vraie implémentation. Il est désormais câblé sur les helpers
+                de `notifications-provider`, et reflète l'état de permission
+                réel plutôt qu'un défaut optimiste.
+              */}
               <div className="flex items-center justify-between pt-3 border-t border-border">
-                <div>
+                <div className="pr-4">
                   <Label htmlFor="browser-notif">Notifications navigateur</Label>
                   <p className="text-xs text-muted mt-0.5">
                     Alertes desktop sur risk.critical et trade.closed
                   </p>
+                  <div className="mt-2">
+                    <Badge variant={
+                      notifPermission === 'granted' ? 'success'
+                        : notifPermission === 'denied' ? 'danger'
+                          : notifPermission === 'unsupported' ? 'muted' : 'warning'
+                    }>
+                      {notifPermission === 'granted' ? 'Accordé'
+                        : notifPermission === 'denied' ? 'Refusé'
+                          : notifPermission === 'unsupported' ? 'Non supporté' : 'En attente'}
+                    </Badge>
+                  </div>
+                  {notifPermission === 'denied' && (
+                    <p className="text-xs text-amber-400 mt-2">
+                      Refusées par le navigateur : réinitialisez les permissions du site
+                      pour pouvoir les réactiver ici.
+                    </p>
+                  )}
                 </div>
-                <Switch id="browser-notif" defaultChecked />
+                <Switch
+                  id="browser-notif"
+                  checked={notifEnabled}
+                  onCheckedChange={handleBrowserNotifToggle}
+                  // `denied` et `unsupported` ne sont pas récupérables depuis la
+                  // page : demander la permission ne rouvrirait aucun dialogue.
+                  disabled={notifPermission === 'denied' || notifPermission === 'unsupported'}
+                />
               </div>
 
-              {/* Thème (placeholder — géré par topbar) */}
-              <div className="flex items-center justify-between pt-3 border-t border-border">
+              {/*
+                Lot Réglages — le thème renvoyait vers la topbar par un badge
+                inerte, alors que /settings offrait un vrai choix explicite.
+                Le contrôle est porté ici ; la topbar garde son raccourci.
+              */}
+              <div className="flex items-center justify-between pt-3 border-t border-border gap-4">
                 <div>
                   <Label>Thème</Label>
                   <p className="text-xs text-muted mt-0.5">
-                    Sombre / Clair / Système — toggle dans la topbar
+                    Sombre / Clair — également accessible depuis la topbar
                   </p>
                 </div>
-                <Badge variant="muted">Topbar</Badge>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant={theme === 'dark' ? 'primary' : 'outline'}
+                    size="sm"
+                    onClick={() => handleThemeToggle('dark')}
+                    aria-pressed={theme === 'dark'}
+                  >
+                    <Moon className="w-3.5 h-3.5" />
+                    Sombre
+                  </Button>
+                  <Button
+                    variant={theme === 'light' ? 'primary' : 'outline'}
+                    size="sm"
+                    onClick={() => handleThemeToggle('light')}
+                    aria-pressed={theme === 'light'}
+                  >
+                    <Sun className="w-3.5 h-3.5" />
+                    Clair
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

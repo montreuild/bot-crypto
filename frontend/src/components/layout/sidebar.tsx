@@ -55,9 +55,11 @@ const NAV_GROUPS = [
   {
     label: 'Configuration',
     items: [
-      { href: '/settings-v2', label: 'Réglages v2', icon: Cpu },
-      { href: '/config', label: 'Configuration', icon: Settings },
-      { href: '/settings', label: 'Réglages (ancien)', icon: Cpu },
+      // Lot Réglages — /config et /settings sont en 308 vers les onglets de
+      // /settings-v2, qui porte maintenant l'éditeur de params par stratégie,
+      // le thème et les notifications navigateur. Une seule entrée subsiste,
+      // et elle n'a plus à s'appeler « v2 » : il n'y a plus d'ancienne page.
+      { href: '/settings-v2', label: 'Réglages', icon: Settings },
     ],
   },
 ];
