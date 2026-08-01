@@ -164,6 +164,102 @@ def test_backtest_and_live_close_same_net_pnl():
     assert pnl_bt == pytest.approx(pnl_live, abs=1e-4)
 
 
+# ── 3. Parité de SIZING : même signal + même stop ⇒ même taille ─────────────
+#
+# Le troisième maillon, longtemps absent : les formules monétaires étaient
+# verrouillées et le stop live aussi, mais rien ne vérifiait que le backtest et
+# le live dérivent la MÊME distance au stop du même signal. Ils la calculent
+# dans deux fichiers différents (`Backtester._try_enter` et
+# `PositionOpenMixin._initial_stop_distance`), avec la même chaîne de priorité
+# recopiée : `sl_atr_mult` → `stop_hint` → trailing initial.
+
+_SIZING_ATR, _SIZING_PRICE = 2.0, 100.0
+_TRAIL_CFG = {"trail_wide": 2.5, "grace_bars": 4, "breakeven_r": 1.2,
+              "trail_tight": 1.0, "lock_r": 2.5, "tight_r": 4.0,
+              "lock_ratio": 0.60, "use_swing": False}
+
+
+def _live_stop_distance(signal: dict) -> float:
+    from app.live.position_open_mixin import PositionOpenMixin
+
+    class H(PositionOpenMixin):
+        _trailing_cfg = {
+            "mult": _TRAIL_CFG["trail_wide"], "grace_bars": _TRAIL_CFG["grace_bars"],
+            "breakeven_r": _TRAIL_CFG["breakeven_r"],
+            "trail_tight_mult": _TRAIL_CFG["trail_tight"],
+            "lock_r": _TRAIL_CFG["lock_r"], "tight_r": _TRAIL_CFG["tight_r"],
+            "lock_ratio": _TRAIL_CFG["lock_ratio"], "use_swing": _TRAIL_CFG["use_swing"],
+        }
+
+    return H()._initial_stop_distance(signal["side"], _SIZING_PRICE,
+                                      _SIZING_ATR, signal)
+
+
+def _backtest_stop_distance(signal: dict) -> float:
+    """Rejoue la dérivation du stop de ``Backtester._try_enter`` via le vrai
+    ``_make_trailing`` du Backtester (pas une recopie de la formule)."""
+    from app.engine.backtest import Backtester
+    from app.engine.engine import Engine
+
+    bt = Backtester(Engine(), {"trading": {"capital": 1000, "risk_per_trade": 0.01,
+                                           "timeframe": "1h"},
+                               "backtest": dict(_TRAIL_CFG), "strategy_params": {}})
+    if signal.get("sl_atr_mult") is not None:
+        m = float(signal["sl_atr_mult"])
+        stop = (_SIZING_PRICE - m * _SIZING_ATR) if signal["side"] == "long" \
+            else (_SIZING_PRICE + m * _SIZING_ATR)
+    elif signal.get("stop_hint") is not None:
+        stop = float(signal["stop_hint"])
+    else:
+        stop = bt._make_trailing(signal.get("trail_override")).initial_stop(
+            _SIZING_PRICE, _SIZING_ATR, signal["side"])
+    return abs(_SIZING_PRICE - stop)
+
+
+@pytest.mark.parametrize("signal", [
+    {"side": "long"},                                   # repli trailing
+    {"side": "short"},
+    {"side": "long", "sl_atr_mult": 1.5},               # stop de la stratégie
+    {"side": "short", "sl_atr_mult": 3.0},
+    {"side": "long", "stop_hint": 96.0},                # stop absolu
+    {"side": "long", "trail_override": {"trail_wide": 4.0}},
+])
+def test_same_signal_gives_the_same_stop_distance_both_sides(signal):
+    live = _live_stop_distance(signal)
+    backtest = _backtest_stop_distance(signal)
+    assert live == pytest.approx(backtest), (
+        f"stop_dist live={live} vs backtest={backtest} pour {signal} — "
+        f"le sizing des deux chemins divergerait d'autant")
+
+
+def test_same_stop_distance_gives_the_same_size():
+    """À distance au stop égale, les deux chemins dimensionnent pareil :
+    ``risk_amount / stop_dist``, plafonné au même ``max_notional_pct``."""
+    from app.core.risk_curve import risk_multiplier
+    from app.core.risk_gate import RiskGate
+
+    capital, risk_pct = 1000.0, 0.01
+    stop_dist = _live_stop_distance({"side": "long"})
+
+    rm = RiskGate({
+        "trading": {"capital": capital, "risk_per_trade": risk_pct,
+                    "max_positions": 5, "max_longs": 3, "max_shorts": 3,
+                    "max_leverage": 1, "max_trades_per_minute": 3,
+                    "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20},
+        "risk": {},
+        "backtest": {"max_notional_pct": 1.0},
+    })
+    # Score au plafond ⇒ facteur de score interne = 1 : on compare le sizing,
+    # pas la modulation par le score (que le backtest n'applique pas).
+    size_live, _ = rm.compute_size(entry=_SIZING_PRICE, atr=_SIZING_ATR,
+                                   score=1.0, threshold=0.0, size_factor=1.0,
+                                   stop_dist=stop_dist)
+    # Formule du Backtester (_try_enter), sans drawdown ni partial fill.
+    size_backtest = capital * risk_pct * risk_multiplier(0.0) / stop_dist
+
+    assert size_live == pytest.approx(size_backtest, rel=1e-6)
+
+
 def test_spot_venue_charges_no_borrow_on_the_live_path():
     """S11 — sur une venue spot, le coût d'emprunt est nul.
 
