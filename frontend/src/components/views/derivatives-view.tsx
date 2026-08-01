@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * Onglet Dérivés de `/market` — funding, OI, long/short et taker ratios.
+ *
+ * Lot Marché : cette vue était la page `/derivatives`, vers laquelle l'onglet
+ * se contentait de renvoyer par une `RedirectCard`. `/derivatives` est
+ * désormais en 308 vers `/market?tab=derivatives`.
+ */
+
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -157,9 +165,9 @@ function StatusTable({ status }: { status: any }) {
   );
 }
 
-// ── Main page ───────────────────────────────────────────────────────────────
+// ── Vue ─────────────────────────────────────────────────────────────────────
 
-export default function DerivativesPage() {
+export function DerivativesView() {
   const [symbol, setSymbol] = useState('BTC/USDC');
   const [period, setPeriod] = useState('1h');
   const [refresh, setRefresh] = useState(false);
@@ -189,11 +197,11 @@ export default function DerivativesPage() {
     : [];
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Données dérivées</h1>
+          <h2 className="text-lg font-semibold tracking-tight">Données dérivées</h2>
           <p className="text-sm text-muted mt-1">
             Funding rate · Open Interest · Long/Short Ratio · Taker Buy/Sell Ratio
           </p>

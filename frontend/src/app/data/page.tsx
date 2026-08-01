@@ -393,7 +393,7 @@ export default function DataPage() {
                               <RefreshCw className={cn('w-3 h-3', refetchData.isPending && 'animate-spin')} />
                             </Button>
                             <Link
-                              href={`/scanner?symbol=${encodeURIComponent(d.symbol)}&tf=${encodeURIComponent(d.tf)}`}
+                              href={`/market?tab=scanner&symbol=${encodeURIComponent(d.symbol)}&tf=${encodeURIComponent(d.tf)}`}
                               className="inline-flex items-center justify-center h-8 px-2 rounded-md text-xs text-muted hover:text-primary-400 hover:bg-card-hover border border-border"
                               title="Analyser dans le scanner"
                             >

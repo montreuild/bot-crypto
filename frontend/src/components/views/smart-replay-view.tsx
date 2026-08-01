@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * Onglet Smart Replay de `/market` — rejeu bougie par bougie des calques SMC.
+ *
+ * Lot Marché : cette vue était la page `/smartreplay`, vers laquelle l'onglet
+ * se contentait de renvoyer par une `RedirectCard`. `/smartreplay` est
+ * désormais en 308 vers `/market?tab=smartreplay`.
+ */
+
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -82,9 +90,9 @@ function entityAliveAt(entity: any, currentIndex: number): boolean {
   return true;
 }
 
-// ── Page ────────────────────────────────────────────────────────────────────
+// ── Vue ─────────────────────────────────────────────────────────────────────
 
-export default function SmartReplayPage() {
+export function SmartReplayView() {
   const [symbol, setSymbol] = useState('BTC/USDC');
   const [timeframe, setTimeframe] = useState<string>('4h');
   const [currentIndex, setCurrentIndex] = useState<number>(0);
@@ -358,11 +366,11 @@ export default function SmartReplayPage() {
   const currentPrice = cleanedCandles[currentIndex]?.close;
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Smart Replay</h1>
+          <h2 className="text-lg font-semibold tracking-tight">Smart Replay</h2>
           <p className="text-sm text-muted mt-1">
             Rejeu bougie par bougie · reconstruisez l&apos;état SMC à n&apos;importe quelle barre
           </p>

@@ -44,16 +44,15 @@ const nextConfig = {
    * S10 — Bascule strangler fig : les anciennes routes cèdent la place aux pages
    * méta. `permanent: true` émet un **308**.
    *
-   * ⚠ Seules les routes dont la page v2 est un VRAI remplacement figurent ici.
-   * Les 11 autres redirections décrites dans le plan de refonte
-   * (`/optimizer`, `/ml`, `/replay`, `/compare` → `/lab` ;
-   *  `/scanner`, `/smartgraph`, `/smartreplay`, `/derivatives` → `/market` ;
-   *  `/config`, `/settings` → `/settings-v2` ; `/portfolio` → `/portfolio-v2`)
-   * sont VOLONTAIREMENT absentes : les onglets correspondants des pages méta
-   * sont des cartes de renvoi qui pointent vers ces mêmes anciennes pages
-   * (`window.location.href = '/optimizer'`, `RedirectCard href="/smartgraph"`…).
-   * Les poser ici créerait une boucle et rendrait inaccessibles ~4 200 lignes
-   * de fonctionnalités. Voir docs/audit-ui-ux-bot-crypto.md §Bascule S10.
+   * ⚠ Une redirection n'est posée QUE lorsque la cible porte réellement la
+   * fonctionnalité. Tant que l'onglet visé était une carte de renvoi vers
+   * l'ancienne page, la 308 aurait bouclé — c'est pourquoi 11 des 14
+   * redirections du plan sont restées en attente jusqu'aux lots de fusion.
+   *
+   * Lot Marché : les quatre onglets de `/market` montent le contenu des
+   * anciennes pages (`src/components/views/`), les 308 sont donc posées.
+   * La query est conservée par Next : `/scanner?symbol=X&tf=Y` arrive sur
+   * `/market?tab=scanner&symbol=X&tf=Y`, que la page relit.
    *
    * ⚠ Un 308 est mis en cache durablement par les navigateurs. Repasser en
    * arrière exige de vider le cache côté client : basculer `permanent` à
@@ -64,6 +63,12 @@ const nextConfig = {
       { source: '/dashboard', destination: '/portfolio-v2', permanent: true },
       { source: '/bots', destination: '/bots-v2', permanent: true },
       { source: '/backtest', destination: '/lab?tab=backtest', permanent: true },
+
+      // Lot Marché
+      { source: '/scanner', destination: '/market?tab=scanner', permanent: true },
+      { source: '/smartgraph', destination: '/market?tab=smartgraph', permanent: true },
+      { source: '/smartreplay', destination: '/market?tab=smartreplay', permanent: true },
+      { source: '/derivatives', destination: '/market?tab=derivatives', permanent: true },
     ];
   },
   // S0-F1-US6 — WebSocket : Next.js ne proxy pas les WS nativement, on laisse

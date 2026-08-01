@@ -5,10 +5,10 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useWebSocket } from '@/lib/ws-provider';
 import {
-  LayoutDashboard, Bot, LineChart, Settings, Activity,
+  Bot, Settings, Activity,
   Zap, Database, Network, Sparkles, Repeat,
-  BrainCircuit, ClipboardList, TrendingUp, Wallet, Cpu,
-  CandlestickChart, Film, GitCompare, ScrollText, Archive,
+  BrainCircuit, ClipboardList, Wallet, Cpu,
+  GitCompare, ScrollText, Archive,
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -31,15 +31,13 @@ const NAV_GROUPS = [
     items: [
       { href: '/lab', label: 'Laboratoire', icon: Sparkles },
       { href: '/market', label: 'Marché', icon: Network },
-      // /backtest est en 308 vers l'onglet Backtest du Laboratoire — seul
-      // onglet du Lab qui soit une vraie réimplémentation. Les entrées
-      // ci-dessous restent nécessaires : les onglets Optimizer / Replay /
-      // Compare du Lab et Smart Graph / Smart Replay / Dérivés du Marché sont
-      // des cartes de renvoi vers ces pages.
-      { href: '/scanner', label: 'Scanner', icon: Network },
+      // Lot Marché — Scanner, Smart Graph, Smart Replay et Dérivés ne sont
+      // plus des pages : ce sont les quatre onglets de « Marché », et les
+      // anciennes routes sont en 308 vers eux. Leurs entrées de nav sont
+      // retirées ici (l'état actif se calcule sur le seul `pathname`, elles
+      // pointeraient toutes sur /market sans jamais s'allumer) ; la recherche
+      // Cmd+K continue de les référencer par leur nom, onglet compris.
       { href: '/replay', label: 'Replay', icon: Repeat },
-      { href: '/smartgraph', label: 'Smart Graph', icon: CandlestickChart },
-      { href: '/smartreplay', label: 'Smart Replay', icon: Film },
       { href: '/compare', label: 'Comparatif', icon: GitCompare },
       { href: '/optimizer', label: 'Optimiseur', icon: Sparkles },
       { href: '/audit', label: 'Audit OOS', icon: ClipboardList },
@@ -49,7 +47,6 @@ const NAV_GROUPS = [
   {
     label: 'Données',
     items: [
-      { href: '/derivatives', label: 'Dérivées', icon: TrendingUp },
       { href: '/data', label: 'Bougies OHLCV', icon: Database },
       { href: '/ml', label: 'Modèles ML', icon: BrainCircuit },
       { href: '/models', label: 'Registre modèles', icon: Archive },

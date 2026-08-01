@@ -109,12 +109,15 @@ jobs:
         run: npm run start &
       - name: Wait for frontend
         run: npx wait-on http://localhost:3000 --timeout 60000
-      # S10 — « reste accessible » couvre les 11 routes volontairement NON
+      # S10 — « reste accessible » couvre les routes volontairement NON
       # redirigées : leur perte serait invisible autrement (les onglets des
       # pages méta y renvoient explicitement).
+      # « monte le contenu » vérifie l'inverse pour les onglets fusionnés : une
+      # 308 vers un onglet vidé de son contenu passerait « redirige » sans que
+      # rien ne le signale.
       - name: Page-loading smoke tests
         working-directory: frontend/e2e
-        run: npx playwright test --grep "loads|redirige|reste accessible"
+        run: npx playwright test --grep "loads|redirige|reste accessible|monte le contenu"
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

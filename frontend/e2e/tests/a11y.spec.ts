@@ -19,15 +19,11 @@ const PAGES = [
   // plus bas : les inclure ici auditerait deux fois la même page.
   { url: '/trades', name: 'Trades' },
   { url: '/portfolio', name: 'Portefeuille' },
-  { url: '/scanner', name: 'Scanner' },
   { url: '/replay', name: 'Replay' },
-  { url: '/smartgraph', name: 'Smart Graph' },
-  { url: '/smartreplay', name: 'Smart Replay' },
   { url: '/compare', name: 'Comparatif' },
   { url: '/optimizer', name: 'Optimiseur' },
   { url: '/audit', name: 'Audit OOS' },
   { url: '/audit-log', name: 'Journal Audit' },
-  { url: '/derivatives', name: 'Dérivés' },
   { url: '/data', name: 'Données OHLCV' },
   { url: '/ml', name: 'Modèles ML' },
   { url: '/models', name: 'Registre modèles' },
@@ -41,8 +37,17 @@ const PAGES = [
   { url: '/portfolio-v2', name: 'Portefeuille v2' },
   { url: '/bots-v2', name: 'Mes Bots v2' },
   { url: '/lab', name: 'Laboratoire' },
-  { url: '/market', name: 'Marché' },
   { url: '/settings-v2', name: 'Réglages v2' },
+
+  // Lot Marché — Scanner / Smart Graph / Smart Replay / Dérivés sont devenus
+  // les onglets de /market et leurs anciennes routes sont en 308. Radix ne
+  // monte QUE l'onglet actif : auditer `/market` seul ne couvrirait que
+  // Scanner, on ouvre donc chaque onglet par son `?tab=`. La couverture reste
+  // celle des 4 anciennes pages.
+  { url: '/market?tab=scanner', name: 'Marché — Scanner' },
+  { url: '/market?tab=smartgraph', name: 'Marché — Smart Graph' },
+  { url: '/market?tab=smartreplay', name: 'Marché — Smart Replay' },
+  { url: '/market?tab=derivatives', name: 'Marché — Dérivés' },
 ];
 
 test.describe('Accessibilité WCAG 2.1 AA', () => {
