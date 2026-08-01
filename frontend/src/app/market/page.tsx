@@ -3,25 +3,72 @@
 /**
  * S6-F4-US1 — Page Marché (fusion Scanner + Smart Graph + Smart Replay + Dérivés).
  *
- * Stratégie strangler fig : coexiste avec les pages existantes.
- *
  * Tabs : Scanner / Smart Graph / Smart Replay / Dérivés
  *
- * Le scanner est enrichi d'un lien « Analyser cette paire au Laboratoire »
- * qui redirige vers /lab?tab=backtest&symbol=X&tf=Y.
+ * Lot Marché — les quatre onglets montent désormais le contenu réel des
+ * anciennes pages (`src/components/views/*`) et non plus des cartes de renvoi.
+ * `/scanner`, `/smartgraph`, `/smartreplay` et `/derivatives` sont en 308 vers
+ * `/market?tab=…` (cf. `next.config.mjs` et docs/audit-ui-ux-bot-crypto.md).
+ *
+ * L'onglet est piloté par `?tab=` pour que les 308 atterrissent au bon endroit
+ * et que les liens profonds restent partageables.
  */
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
+import dynamic from 'next/dynamic';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Network, CandlestickChart, Film, TrendingUp, ArrowRight } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { Network, CandlestickChart, Film, TrendingUp } from 'lucide-react';
 import { OpportunitiesWidget } from '@/components/cards/opportunities-widget';
+import { ScannerView } from '@/components/views/scanner-view';
+
+/*
+  Les trois onglets graphiques tirent `lightweight-charts` ou `recharts`. Montés
+  en import statique, ils faisaient passer le premier chargement de /market de
+  ~110 kB à 333 kB — payés même par qui n'ouvre que le Scanner, alors que Radix
+  ne monte que l'onglet actif. `dynamic` aligne le coût réseau sur ce
+  comportement : le chunk part au clic sur l'onglet.
+  `ssr: false` : les deux vues SMC instancient le chart contre le DOM.
+*/
+const loading = () => <div className="p-8 text-center text-sm text-muted">Chargement…</div>;
+
+const SmartGraphView = dynamic(
+  () => import('@/components/views/smart-graph-view').then((m) => m.SmartGraphView),
+  { ssr: false, loading },
+);
+const SmartReplayView = dynamic(
+  () => import('@/components/views/smart-replay-view').then((m) => m.SmartReplayView),
+  { ssr: false, loading },
+);
+const DerivativesView = dynamic(
+  () => import('@/components/views/derivatives-view').then((m) => m.DerivativesView),
+  { ssr: false, loading },
+);
+
+const TABS = ['scanner', 'smartgraph', 'smartreplay', 'derivatives'] as const;
 
 export default function MarketPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-muted">Chargement…</div>}>
+      <MarketContent />
+    </Suspense>
+  );
+}
+
+function MarketContent() {
   const router = useRouter();
-  const [tab, setTab] = useState('scanner');
+  const searchParams = useSearchParams();
+  // Un `?tab=` inconnu (ancien favori, faute de frappe) retombe sur Scanner
+  // plutôt que d'afficher un contenu vide.
+  const requested = searchParams.get('tab');
+  const initialTab = TABS.includes(requested as (typeof TABS)[number]) ? requested! : 'scanner';
+  const [tab, setTab] = useState<string>(initialTab);
+
+  // `/scanner?symbol=X&tf=Y` (lien « Analyser » de /data) est redirigé en 308
+  // vers `/market?tab=scanner&symbol=X&tf=Y` : Next conserve la query. On la
+  // transmet à la vue pour que le formulaire arrive pré-rempli.
+  const symbolParam = searchParams.get('symbol') ?? undefined;
+  const tfParam = searchParams.get('tf') ?? undefined;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -55,83 +102,30 @@ export default function MarketPage() {
         </TabsList>
 
         <TabsContent value="scanner">
-          <MarketScannerTab onAnalyze={(symbol, tf) => router.push(`/lab?tab=backtest&symbol=${encodeURIComponent(symbol)}&tf=${tf}`)} />
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+            <div className="lg:col-span-2">
+              <ScannerView
+                initialSymbol={symbolParam}
+                initialTf={tfParam}
+                onAnalyze={(symbol, tf) =>
+                  router.push(`/lab?tab=backtest&symbol=${encodeURIComponent(symbol)}&tf=${tf}`)
+                }
+              />
+            </div>
+            {/* S8-F4-US2 — Top opportunités */}
+            <OpportunitiesWidget timeframe="1h" limit={10} />
+          </div>
         </TabsContent>
         <TabsContent value="smartgraph">
-          <RedirectCard href="/smartgraph" title="Smart Graph (SMC)" description="Chart candlestick avec 14 overlays SMC : OB, FVG, liquidity pools, breakers, structure, premium/discount, signal entry/SL/TP." />
+          <SmartGraphView />
         </TabsContent>
         <TabsContent value="smartreplay">
-          <RedirectCard href="/smartreplay" title="Smart Replay (SMC)" description="Rejeu bougie par bougie avec calques SMC lifecycle. Contrôles play/pause/speed + slider scrubbing." />
+          <SmartReplayView />
         </TabsContent>
         <TabsContent value="derivatives">
-          <RedirectCard href="/derivatives" title="Dérivés" description="Funding rate, Open Interest, Long/Short ratio, Taker buy/sell ratio. 4 charts avec sélecteur de période." />
+          <DerivativesView />
         </TabsContent>
       </Tabs>
     </div>
-  );
-}
-
-// ── Scanner Tab (avec Top opportunités + paires cliquables) ───────────────
-
-function MarketScannerTab({ onAnalyze }: { onAnalyze: (symbol: string, tf: string) => void }) {
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      {/* Paires cliquables + scanner complet */}
-      <Card className="lg:col-span-2">
-        <CardContent className="p-6 space-y-4">
-          <div className="flex items-start gap-3">
-            <Network className="w-8 h-8 text-primary-400 flex-shrink-0" />
-            <div className="flex-1">
-              <h3 className="text-base font-semibold mb-1">Scanner de marché</h3>
-              <p className="text-sm text-muted">
-                Screen multi-symboles avec filtres (régime, ADX, ATR%, RSI).
-                Lien direct vers Laboratoire pour analyser une paire.
-              </p>
-            </div>
-          </div>
-
-          {/* Paires cliquables */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-2">
-            {['BTC/USDC', 'ETH/USDC', 'XRP/USDC', 'SOL/USDC'].map((s) => (
-              <Button
-                key={s}
-                variant="outline"
-                size="sm"
-                onClick={() => onAnalyze(s, '1h')}
-                className="justify-between font-mono"
-              >
-                {s}
-                <ArrowRight className="w-3 h-3" />
-              </Button>
-            ))}
-          </div>
-
-          <div className="pt-3 border-t border-border">
-            <Button variant="ghost" onClick={() => window.location.href = '/scanner'}>
-              Aller au scanner complet
-              <ArrowRight className="w-4 h-4 ml-1" />
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* S8-F4-US2 — Top opportunités */}
-      <OpportunitiesWidget timeframe="1h" limit={10} />
-    </div>
-  );
-}
-
-function RedirectCard({ href, title, description }: { href: string; title: string; description: string }) {
-  return (
-    <Card>
-      <CardContent className="p-8 text-center">
-        <h3 className="text-base font-semibold mb-1">{title}</h3>
-        <p className="text-sm text-muted max-w-md mx-auto mb-4">{description}</p>
-        <Button variant="outline" onClick={() => window.location.href = href}>
-          Ouvrir {title}
-          <ArrowRight className="w-4 h-4 ml-1" />
-        </Button>
-      </CardContent>
-    </Card>
   );
 }

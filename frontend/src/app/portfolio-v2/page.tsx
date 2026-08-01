@@ -34,10 +34,12 @@ import { HealthBanner } from '@/components/cards/health-banner';
 import { AllocationDonut } from '@/components/cards/allocation-donut';
 import { HaltBanner } from '@/components/cards/halt-banner';
 import { FeesBreakdown } from '@/components/cards/fees-breakdown';
+import { ActivityFeed } from '@/components/cards/activity-feed';
+import { SignificantBotsTable } from '@/components/cards/significant-bots-table';
 import { Button } from '@/components/ui/button';
 import { QueryBoundary } from '@/components/ui/query-state';
 import { useBotStatus, usePortfolio } from '@/hooks/use-api';
-import { Play, Square, AlertTriangle } from 'lucide-react';
+import { Play, Square, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { api } from '@/lib/api';
@@ -85,6 +87,30 @@ export default function PortfolioV2Page() {
   const isRunning = status?.status === 'running';
   const hasCircuitBreaker = status?.circuit_breaker_active;
 
+  /*
+    Lot Portefeuille — `continuous_allocation = false` signifie que le capital
+    n'est PAS réalloué automatiquement : sans déclenchement manuel, les budgets
+    par slot restent figés. Le bouton n'existait que sur /portfolio ; rediriger
+    sans le porter aurait supprimé la seule commande de rééquilibrage de l'UI.
+    Il ne s'affiche que dans ce mode, comme avant.
+  */
+  const continuousAllocation = portfolio?.continuous_allocation ?? true;
+  const [rebalanceLoading, setRebalanceLoading] = useState(false);
+
+  const handleForceRebalance = async () => {
+    setRebalanceLoading(true);
+    try {
+      await api.forceRebalance();
+      toast.success('Rebalance déclenché');
+      qc.invalidateQueries({ queryKey: ['portfolio'] });
+      qc.invalidateQueries({ queryKey: ['bots'] });
+    } catch (e: any) {
+      toast.error(`Erreur : ${e.message}`);
+    } finally {
+      setRebalanceLoading(false);
+    }
+  };
+
   const header = (
     <div className="flex items-end justify-between flex-wrap gap-4">
       <div>
@@ -101,6 +127,12 @@ export default function PortfolioV2Page() {
             <AlertTriangle className="w-3.5 h-3.5" />
             Circuit Breaker Actif
           </span>
+        )}
+        {!continuousAllocation && (
+          <Button onClick={handleForceRebalance} variant="outline" disabled={rebalanceLoading}>
+            <RefreshCw className={rebalanceLoading ? 'w-4 h-4 animate-spin' : 'w-4 h-4'} />
+            Force rebalance
+          </Button>
         )}
         {isRunning ? (
           <Button variant="danger" onClick={() => setStopDialogOpen(true)} disabled={stopLoading}>
@@ -184,6 +216,20 @@ export default function PortfolioV2Page() {
       {/* Positions */}
       <div className="grid grid-cols-1 gap-4">
         <PositionsTable />
+      </div>
+
+      {/*
+        Lot Portefeuille — les deux blocs que `/portfolio` avait en propre et
+        qui bloquaient sa 308. `ActivityFeed` (journal persisté des
+        notifications, avec niveaux) complète `LiveTradesFeed` ci-dessus, qui
+        ne lit que le flux WS des trades ; `SignificantBotsTable` répond à la
+        question que `/bots-v2` ne pose pas : lesquels gagnent hors bruit.
+      */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <ActivityFeed />
+        <div className="lg:col-span-2">
+          <SignificantBotsTable />
+        </div>
       </div>
 
       {/* Performance par stratégie (si données) */}

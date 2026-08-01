@@ -5,10 +5,10 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useWebSocket } from '@/lib/ws-provider';
 import {
-  LayoutDashboard, Bot, LineChart, Settings, Activity,
-  Zap, Database, Network, Sparkles, Repeat,
-  BrainCircuit, ClipboardList, TrendingUp, Wallet, Cpu,
-  CandlestickChart, Film, GitCompare, ScrollText, Archive,
+  Bot, Settings, Activity,
+  Zap, Database, Network, Sparkles,
+  ClipboardList, Wallet, Cpu,
+  ScrollText, Archive,
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -17,13 +17,12 @@ const NAV_GROUPS = [
     items: [
       // S10 — /dashboard et /bots sont désormais en 308 vers les pages v2 :
       // on pointe directement dessus pour éviter le saut de redirection.
+      // Lot Portefeuille — l'entrée « Portefeuille (détail) » vers /portfolio
+      // disparaît : le journal de notifications et la vue par bot qu'elle
+      // seule donnait sont maintenant sur /portfolio-v2, qui est en 308.
       { href: '/portfolio-v2', label: 'Portefeuille', icon: Wallet },
       { href: '/bots-v2', label: 'Mes Bots', icon: Bot },
       { href: '/trades', label: 'Trades', icon: Activity },
-      // /portfolio garde un journal de notifications et une vue par bot que
-      // /portfolio-v2 ne reprend pas encore — pas de 308 tant que ce n'est pas
-      // porté (cf. docs/audit-ui-ux-bot-crypto.md §Bascule S10).
-      { href: '/portfolio', label: 'Portefeuille (détail)', icon: Wallet },
     ],
   },
   {
@@ -31,17 +30,14 @@ const NAV_GROUPS = [
     items: [
       { href: '/lab', label: 'Laboratoire', icon: Sparkles },
       { href: '/market', label: 'Marché', icon: Network },
-      // /backtest est en 308 vers l'onglet Backtest du Laboratoire — seul
-      // onglet du Lab qui soit une vraie réimplémentation. Les entrées
-      // ci-dessous restent nécessaires : les onglets Optimizer / Replay /
-      // Compare du Lab et Smart Graph / Smart Replay / Dérivés du Marché sont
-      // des cartes de renvoi vers ces pages.
-      { href: '/scanner', label: 'Scanner', icon: Network },
-      { href: '/replay', label: 'Replay', icon: Repeat },
-      { href: '/smartgraph', label: 'Smart Graph', icon: CandlestickChart },
-      { href: '/smartreplay', label: 'Smart Replay', icon: Film },
-      { href: '/compare', label: 'Comparatif', icon: GitCompare },
-      { href: '/optimizer', label: 'Optimiseur', icon: Sparkles },
+      // Lots Marché et Laboratoire — Scanner / Smart Graph / Smart Replay /
+      // Dérivés et Optimiseur / ML / Replay / Comparatif ne sont plus des
+      // pages : ce sont les onglets de « Marché » et « Laboratoire », et les
+      // anciennes routes sont en 308 vers eux. Leurs entrées de nav sont
+      // retirées ici (l'état actif se calcule sur le seul `pathname`, elles
+      // pointeraient toutes sur /market ou /lab sans jamais s'allumer) ; la
+      // recherche Cmd+K continue de les référencer par leur nom, onglet
+      // compris.
       { href: '/audit', label: 'Audit OOS', icon: ClipboardList },
       { href: '/audit-log', label: 'Journal Audit', icon: ScrollText },
     ],
@@ -49,18 +45,20 @@ const NAV_GROUPS = [
   {
     label: 'Données',
     items: [
-      { href: '/derivatives', label: 'Dérivées', icon: TrendingUp },
       { href: '/data', label: 'Bougies OHLCV', icon: Database },
-      { href: '/ml', label: 'Modèles ML', icon: BrainCircuit },
+      // /models n'est PAS dans le plan de fusion : le registre versionné
+      // reste une page à part entière, et garde donc son entrée.
       { href: '/models', label: 'Registre modèles', icon: Archive },
     ],
   },
   {
     label: 'Configuration',
     items: [
-      { href: '/settings-v2', label: 'Réglages v2', icon: Cpu },
-      { href: '/config', label: 'Configuration', icon: Settings },
-      { href: '/settings', label: 'Réglages (ancien)', icon: Cpu },
+      // Lot Réglages — /config et /settings sont en 308 vers les onglets de
+      // /settings-v2, qui porte maintenant l'éditeur de params par stratégie,
+      // le thème et les notifications navigateur. Une seule entrée subsiste,
+      // et elle n'a plus à s'appeler « v2 » : il n'y a plus d'ancienne page.
+      { href: '/settings-v2', label: 'Réglages', icon: Settings },
     ],
   },
 ];

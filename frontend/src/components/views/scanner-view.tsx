@@ -1,18 +1,36 @@
 'use client';
 
+/**
+ * Onglet Scanner de `/market` — Fast Analyse SMC/ICT.
+ *
+ * Lot Marché : cette vue était la page `/scanner`, que l'onglet Scanner de
+ * `/market` se contentait de teaser avec 4 symboles et un bouton « Aller au
+ * scanner complet ». Le contenu est désormais monté dans l'onglet et `/scanner`
+ * est en 308 vers `/market?tab=scanner`.
+ */
+
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
-import { Search, Loader2, TrendingUp, Activity } from 'lucide-react';
+import { Search, Loader2, TrendingUp, ArrowRight } from 'lucide-react';
 import { PredictionsPanel } from '@/components/cards/predictions-panel';
 import { useSignals } from '@/hooks/use-api';
 
-export default function ScannerPage() {
-  const [symbol, setSymbol] = useState('BTC/USDC');
-  const [tf, setTf] = useState('1h');
+interface ScannerViewProps {
+  /** Symbole pré-rempli — vient de `?symbol=` (lien « Analyser » de /data). */
+  initialSymbol?: string;
+  /** Timeframe pré-rempli — vient de `?tf=`. */
+  initialTf?: string;
+  /** Ouvre le Laboratoire sur la paire analysée. */
+  onAnalyze?: (symbol: string, tf: string) => void;
+}
+
+export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerViewProps) {
+  const [symbol, setSymbol] = useState(initialSymbol || 'BTC/USDC');
+  const [tf, setTf] = useState(initialTf || '1h');
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   // Paire réellement analysée, figée au moment du scan : `symbol`/`tf` changent
@@ -42,9 +60,9 @@ export default function ScannerPage() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Scanner</h1>
+        <h2 className="text-lg font-semibold tracking-tight">Scanner</h2>
         <p className="text-sm text-muted mt-1">
           Fast Analyse SMC/ICT — détectez les setups en temps réel
         </p>
@@ -81,6 +99,20 @@ export default function ScannerPage() {
               </Button>
             </div>
           </div>
+
+          {/*
+            Le teaser que cet onglet remplaçait proposait 4 symboles cliquables
+            vers le Laboratoire. Le lien est conservé, mais sur la paire
+            réellement saisie plutôt que sur une liste figée.
+          */}
+          {onAnalyze && (
+            <div className="pt-4 mt-4 border-t border-border">
+              <Button variant="ghost" size="sm" onClick={() => onAnalyze(symbol, tf)}>
+                Analyser {symbol} au Laboratoire
+                <ArrowRight className="w-3.5 h-3.5 ml-1" />
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 

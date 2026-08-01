@@ -1,5 +1,16 @@
 'use client';
 
+/**
+ * Onglet ML Train de `/lab` — état des modèles ML et cache des bougies.
+ *
+ * Lot Laboratoire : cette vue était la page `/ml`, que l'onglet se contentait
+ * de teaser (« intégration native prévue au Sprint 9 »). `/ml` est désormais
+ * en 308 vers `/lab?tab=ml`.
+ *
+ * ⚠ `/models` (registre versionné, gate de promotion) reste une page à part
+ * entière : elle n'est pas dans le plan de fusion. L'onglet y renvoie.
+ */
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn, timeAgo, formatDateTime } from '@/lib/utils';
@@ -141,9 +152,9 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
-// ── Main page ───────────────────────────────────────────────────────────────
+// ── Vue ─────────────────────────────────────────────────────────────────────
 
-export default function MLPage() {
+export function MLView() {
   const { data: mlData, isLoading: mlLoading, isError: mlError } = useMLStrategyInfo();
   const { data: candlesData, isLoading: candlesLoading, isError: candlesError } = useCandlesStats();
 
@@ -152,11 +163,11 @@ export default function MLPage() {
   const totalCount = Object.keys(strategies).length;
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Modèles ML</h1>
+          <h2 className="text-lg font-semibold tracking-tight">Modèles ML</h2>
           <p className="text-sm text-muted mt-1">
             Gestion des modèles machine learning et cache des bougies
           </p>

@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * Onglet Compare de `/lab` — comparaison côte à côte de plusieurs stratégies.
+ *
+ * Lot Laboratoire : cette vue était la page `/compare`, vers laquelle l'onglet
+ * se contentait de renvoyer. `/compare` est désormais en 308 vers
+ * `/lab?tab=compare`.
+ */
+
 import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -102,9 +110,9 @@ function cellColor(key: SortKey, value: any): string {
   }
 }
 
-// ── Page ────────────────────────────────────────────────────────────────────
+// ── Vue ─────────────────────────────────────────────────────────────────────
 
-export default function ComparePage() {
+export function CompareView() {
   const { data: settings } = useBacktestSettings();
   const availableStrategies = settings?.strategies || DEFAULT_STRATEGIES;
 
@@ -262,10 +270,10 @@ export default function ComparePage() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Comparatif Stratégies</h1>
+        <h2 className="text-lg font-semibold tracking-tight">Comparatif Stratégies</h2>
         <p className="text-sm text-muted mt-1">
           Comparez côte à côte plusieurs stratégies sur la même fenêtre de données
         </p>

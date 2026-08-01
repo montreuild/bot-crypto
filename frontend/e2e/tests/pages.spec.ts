@@ -10,21 +10,10 @@ const PAGES = [
   { path: '/market', title: 'Marché' },
   { path: '/settings-v2', title: 'Réglages' },
   { path: '/trades', title: 'Trades' },
-  { path: '/portfolio', title: 'Portefeuille' },
-  { path: '/scanner', title: 'Scanner' },
-  { path: '/replay', title: 'Replay' },
-  { path: '/smartgraph', title: 'Smart' },
-  { path: '/smartreplay', title: 'Smart' },
-  { path: '/compare', title: 'Comparatif' },
-  { path: '/optimizer', title: 'Optimiseur' },
   { path: '/audit', title: 'Audit' },
   { path: '/audit-log', title: 'Journal' },
-  { path: '/derivatives', title: 'Dériv' },
   { path: '/data', title: 'Données' },
-  { path: '/ml', title: 'ML' },
   { path: '/models', title: 'Modèles' },
-  { path: '/config', title: 'Configuration' },
-  { path: '/settings', title: 'Réglages' },
 ];
 
 test.describe('Page loading', () => {
@@ -48,15 +37,29 @@ test.describe('Racine', () => {
   });
 });
 
-// S10 — bascule strangler fig. Seules ces trois routes sont en 308 : les pages
-// méta correspondantes remplacent réellement l'ancienne. Les 11 autres
-// redirections du plan sont bloquées (onglets en carte de renvoi), cf.
-// docs/audit-ui-ux-bot-crypto.md §Bascule S10.
+// S10 — bascule strangler fig. Une route n'est redirigée que lorsque sa cible
+// porte réellement la fonctionnalité, cf. docs/audit-ui-ux-bot-crypto.md
+// §Bascule S10. Le lot Marché ajoute les quatre routes de /market.
 test.describe('Redirections S10', () => {
   const REDIRECTS = [
     { from: '/dashboard', to: /\/portfolio-v2/ },
     { from: '/bots', to: /\/bots-v2/ },
     { from: '/backtest', to: /\/lab\?tab=backtest/ },
+    // Lot Marché
+    { from: '/scanner', to: /\/market\?tab=scanner/ },
+    { from: '/smartgraph', to: /\/market\?tab=smartgraph/ },
+    { from: '/smartreplay', to: /\/market\?tab=smartreplay/ },
+    { from: '/derivatives', to: /\/market\?tab=derivatives/ },
+    // Lot Laboratoire
+    { from: '/optimizer', to: /\/lab\?tab=optimizer/ },
+    { from: '/ml', to: /\/lab\?tab=ml/ },
+    { from: '/replay', to: /\/lab\?tab=replay/ },
+    { from: '/compare', to: /\/lab\?tab=compare/ },
+    // Lot Réglages
+    { from: '/config', to: /\/settings-v2\?tab=capital/ },
+    { from: '/settings', to: /\/settings-v2\?tab=capital/ },
+    // Lot Portefeuille — dernière des 14 redirections du plan.
+    { from: '/portfolio', to: /\/portfolio-v2/ },
   ];
 
   for (const r of REDIRECTS) {
@@ -69,14 +72,43 @@ test.describe('Redirections S10', () => {
     });
   }
 
-  // Les routes volontairement NON redirigées doivent rester servies en direct :
-  // les onglets des pages méta y renvoient explicitement.
-  const KEPT = ['/optimizer', '/replay', '/compare', '/ml', '/scanner', '/smartgraph', '/smartreplay', '/derivatives', '/config', '/settings', '/portfolio'];
+  // Les 14 redirections du plan de refonte sont désormais toutes posées.
+  // `/models` reste servi en direct par choix d'architecture, pas par blocage :
+  // le registre versionné n'est pas dans le plan de fusion, et l'onglet ML du
+  // Laboratoire y renvoie explicitement.
+  const KEPT = ['/models'];
   for (const path of KEPT) {
     test(`${path} reste accessible (pas de 308)`, async ({ page }) => {
       const response = await page.goto(path);
       expect(response?.status()).toBe(200);
       expect(page.url()).toContain(path);
+    });
+  }
+});
+
+// Lots de fusion — le contenu des anciennes pages doit être joignable dans les
+// onglets. Sans ça, une 308 vers un onglet vide passerait les tests ci-dessus.
+test.describe('Onglets fusionnés', () => {
+  const TABS = [
+    { page: 'market', tab: 'scanner', heading: 'Scanner' },
+    { page: 'market', tab: 'smartgraph', heading: 'Smart Graph SMC' },
+    { page: 'market', tab: 'smartreplay', heading: 'Smart Replay' },
+    { page: 'market', tab: 'derivatives', heading: 'Données dérivées' },
+    { page: 'lab', tab: 'optimizer', heading: 'Optimiseur' },
+    { page: 'lab', tab: 'ml', heading: 'Modèles ML' },
+    { page: 'lab', tab: 'replay', heading: 'Replay Multi-Timeframe' },
+    { page: 'lab', tab: 'compare', heading: 'Comparatif Stratégies' },
+    // Lot Réglages — l'onglet Capital porte l'éditeur de params par
+    // stratégie, seule fonctionnalité que /config avait en propre.
+    { page: 'settings-v2', tab: 'capital', heading: 'Stratégies' },
+  ];
+
+  for (const t of TABS) {
+    test(`/${t.page}?tab=${t.tab} monte le contenu de l'ancienne page`, async ({ page }) => {
+      await page.goto(`/${t.page}?tab=${t.tab}`);
+      await expect(page.getByRole('heading', { name: t.heading, level: 2 })).toBeVisible({
+        timeout: 10000,
+      });
     });
   }
 });
@@ -192,11 +224,12 @@ test.describe('Audit Log', () => {
 });
 
 test.describe('Compare', () => {
+  // Lot Laboratoire — /compare redirige vers l'onglet Compare du Laboratoire.
   test('has compare button', async ({ page }) => {
     await page.goto('/compare');
     await page.waitForTimeout(2000);
-    // `.first()` : « Comparatif » figure aussi dans la nav latérale (3 éléments
-    // au total) — strict mode violation sans ça.
+    // `.first()` : « Comparatif » figure aussi dans l'onglet — strict mode
+    // violation sans ça.
     await expect(page.locator('text=Comparer').or(page.locator('text=Comparatif')).first()).toBeVisible({ timeout: 10000 });
   });
 });

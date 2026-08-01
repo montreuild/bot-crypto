@@ -17,19 +17,39 @@ Frontend moderne pour le bot de trading crypto, avec streaming temps réel via W
 
 ## Pages
 
+L'UI tient en **5 pages méta** à onglets, plus quelques pages dédiées.
+
 | Route | Description |
 |---|---|
-| `/portfolio-v2` | Vue temps réel : KPIs, equity curve, positions, trades live, signals feed, allocations, risk panel |
+| `/portfolio-v2` | Vue temps réel : KPIs, equity curve, positions, trades live, signals feed, allocations, risk panel, journal de notifications, bots à edge significatif |
 | `/bots-v2` | Portefeuille de stratégies avec cycle de vie (candidat → essai → actif → retiré) |
+| `/lab` | Laboratoire — onglets `backtest`, `optimizer`, `ml`, `replay`, `compare` |
+| `/market` | Marché — onglets `scanner`, `smartgraph`, `smartreplay`, `derivatives` |
+| `/settings-v2` | Réglages — onglets `capital`, `notifications`, `data`, `audit`, `ui` |
 | `/trades` | Historique des trades avec filtres + export CSV |
-| `/lab?tab=backtest` | Backtest interactif avec Walk-Forward + Monte-Carlo |
-| `/config` | Configuration par onglets (stratégies, risk, notifications, exchange) |
-| `/scanner` | Fast Analyse SMC/ICT |
+| `/models` | Registre ML versionné (gate de promotion, pin, sweep) |
+| `/data` | Cache OHLCV, refetch, backfill |
+| `/audit`, `/audit-log` | Audit OOS et journal d'audit |
 
-Depuis le sprint S10, `/dashboard`, `/bots` et `/backtest` sont redirigées en 308
-vers les trois routes ci-dessus (cf. `redirects()` dans `next.config.mjs`). Les
-pages correspondantes ont été supprimées : ces chemins n'existent plus qu'en tant
-que redirections de compatibilité.
+L'onglet actif se pilote par `?tab=` : `/market?tab=smartgraph` est un lien
+profond partageable, et c'est la cible des redirections ci-dessous.
+
+### Routes héritées
+
+14 anciennes routes sont des **redirections 308** de compatibilité, déclarées
+dans `redirects()` de `next.config.mjs` — leurs pages ont été supprimées :
+
+| Ancienne route | Cible |
+|---|---|
+| `/dashboard`, `/portfolio` | `/portfolio-v2` |
+| `/bots` | `/bots-v2` |
+| `/backtest`, `/optimizer`, `/ml`, `/replay`, `/compare` | `/lab?tab=…` |
+| `/scanner`, `/smartgraph`, `/smartreplay`, `/derivatives` | `/market?tab=…` |
+| `/config`, `/settings` | `/settings-v2?tab=capital` |
+
+⚠ Un 308 est mis en cache durablement par les navigateurs : revenir en arrière
+exige de vider le cache côté client. Passer `permanent: false` (307) tant qu'une
+cible n'est pas validée.
 
 ## Démarrage rapide
 

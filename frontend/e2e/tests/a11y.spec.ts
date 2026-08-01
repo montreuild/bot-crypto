@@ -18,31 +18,36 @@ const PAGES = [
   // S10 — /dashboard, /bots et /backtest sont en 308 vers les pages v2 listées
   // plus bas : les inclure ici auditerait deux fois la même page.
   { url: '/trades', name: 'Trades' },
-  { url: '/portfolio', name: 'Portefeuille' },
-  { url: '/scanner', name: 'Scanner' },
-  { url: '/replay', name: 'Replay' },
-  { url: '/smartgraph', name: 'Smart Graph' },
-  { url: '/smartreplay', name: 'Smart Replay' },
-  { url: '/compare', name: 'Comparatif' },
-  { url: '/optimizer', name: 'Optimiseur' },
   { url: '/audit', name: 'Audit OOS' },
   { url: '/audit-log', name: 'Journal Audit' },
-  { url: '/derivatives', name: 'Dérivés' },
   { url: '/data', name: 'Données OHLCV' },
-  { url: '/ml', name: 'Modèles ML' },
   { url: '/models', name: 'Registre modèles' },
-  { url: '/config', name: 'Configuration' },
-  { url: '/settings', name: 'Réglages' },
 
   // Pages méta issues de la refonte S3-S6. Elles étaient absentes de cette
   // liste alors qu'elles concentrent l'essentiel du nouveau code (kanban,
   // drawer, tabs, donut, dialogues de confirmation) : ce sont précisément
   // celles dont l'accessibilité n'avait jamais été vérifiée.
-  { url: '/portfolio-v2', name: 'Portefeuille v2' },
-  { url: '/bots-v2', name: 'Mes Bots v2' },
-  { url: '/lab', name: 'Laboratoire' },
-  { url: '/market', name: 'Marché' },
-  { url: '/settings-v2', name: 'Réglages v2' },
+  { url: '/portfolio-v2', name: 'Portefeuille' },
+  { url: '/bots-v2', name: 'Mes Bots' },
+  // Lots de fusion — les anciennes pages sont devenues des onglets de /market
+  // et /lab, et leurs routes sont en 308. Radix ne monte QUE l'onglet actif :
+  // auditer `/market` ou `/lab` seuls ne couvrirait que le premier onglet, on
+  // ouvre donc chacun par son `?tab=`. La couverture reste celle des pages
+  // d'origine.
+  { url: '/market?tab=scanner', name: 'Marché — Scanner' },
+  { url: '/market?tab=smartgraph', name: 'Marché — Smart Graph' },
+  { url: '/market?tab=smartreplay', name: 'Marché — Smart Replay' },
+  { url: '/market?tab=derivatives', name: 'Marché — Dérivés' },
+  { url: '/lab?tab=backtest', name: 'Laboratoire — Backtest' },
+  { url: '/lab?tab=optimizer', name: 'Laboratoire — Optimizer' },
+  { url: '/lab?tab=ml', name: 'Laboratoire — ML' },
+  { url: '/lab?tab=replay', name: 'Laboratoire — Replay' },
+  { url: '/lab?tab=compare', name: 'Laboratoire — Compare' },
+  { url: '/settings-v2?tab=capital', name: 'Réglages — Capital' },
+  { url: '/settings-v2?tab=notifications', name: 'Réglages — Notifications' },
+  { url: '/settings-v2?tab=data', name: 'Réglages — Données' },
+  { url: '/settings-v2?tab=audit', name: 'Réglages — Audit' },
+  { url: '/settings-v2?tab=ui', name: 'Réglages — UI' },
 ];
 
 test.describe('Accessibilité WCAG 2.1 AA', () => {

@@ -18,11 +18,18 @@
  * CI (rendu des polices différent). Les références Linux des 5 pages méta sont
  * donc générées par la CI puis commitées sous `visual.spec.ts-snapshots/`.
  *
- * Après un changement visuel volontaire, les régénérer :
+ * Après un changement visuel volontaire, régénérer une référence : **supprimer
+ * le PNG concerné et pousser**. Sans fichier de référence, Playwright écrit la
+ * capture puis échoue le run, et l'artefact `visual-snapshots` la remonte
+ * (l'upload est en `if: always()`). On récupère le PNG, on le committe, le job
+ * repasse au vert.
  *
- *   npx playwright test --config e2e/playwright.config.ts visual.spec.ts --update-snapshots
+ * `--update-snapshots` ne sert que localement : le job CI ne le passe pas, et
+ * l'y ajouter le temps d'un run se solde tôt ou tard par un oubli — un job
+ * incapable d'échouer est un job inutile.
  *
- * puis récupérer l'artefact `visual-snapshots` du job CI et committer les PNG.
+ * Ne supprimer que les références réellement hors tolérance : `maxDiffPixelRatio`
+ * vaut 2 %, et un changement de barre latérale passe généralement dessous.
  *
  * ── Stabilité ─────────────────────────────────────────────────────────────
  * Ces pages affichent des données live (PnL, horodatages, compteurs). On

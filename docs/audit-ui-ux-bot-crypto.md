@@ -200,8 +200,18 @@ Le frontend Next.js ne porte jamais la clé API dans le bundle JS : le proxy `sr
 | GET | `/metrics` | Non | Prometheus text/plain | Métriques Prometheus |
 | GET | `/api/status` | Optionnel | `{status, paper_mode, timeframe, timeframes, strategies, capital, total_pnl, positions, by_strategy, signal_log, circuit_breaker_active, daily_pnl_pct, global_dd_pct, capital_allocation, slot_states}` | Statut global bot |
 | GET | `/` | Non | 308 redirect → FRONTEND_URL ou page d'aide HTML | Redirige vers Next.js |
-| GET | `/backtest`, `/optimizer`, `/config`, `/scanner`, `/audit`, `/audit-log`, `/trades`, `/replay`, `/ml`, `/models`, `/compare`, `/derivatives`, `/portfolio`, `/bots`, `/settings`, `/data`, `/smartgraph`, `/smartreplay` | Non | 308 redirect HTML→Next.js | 18 redirects legacy |
-| GET | `/slots` | Non | 308 → `/bots` | Alias legacy |
+| GET | `/audit`, `/audit-log`, `/trades`, `/models`, `/data` | Non | 308 → même chemin côté Next | Vraies pages Next |
+| GET | `/backtest`, `/optimizer`, `/ml`, `/replay`, `/compare` | Non | 308 → `/lab?tab=…` | Onglets du Laboratoire |
+| GET | `/scanner`, `/smartgraph`, `/smartreplay`, `/derivatives` | Non | 308 → `/market?tab=…` | Onglets du Marché |
+| GET | `/config`, `/settings` | Non | 308 → `/settings-v2?tab=capital` | Onglets des Réglages |
+| GET | `/portfolio` | Non | 308 → `/portfolio-v2` | Page méta |
+| GET | `/bots` | Non | 308 → `/bots-v2` | Page méta |
+| GET | `/slots` | Non | 308 → `/bots-v2` | Alias legacy |
+
+Les cibles sont les destinations **finales** : depuis les lots de fusion,
+viser l'ancien chemin côté Next coûterait un second 308 (cf. §Le double 308 du
+backend). `tests/test_legacy_redirects.py` verrouille l'alignement avec
+`next.config.mjs`.
 
 ### 2.3 Cartographie endpoint par endpoint
 
@@ -1662,14 +1672,16 @@ Aucune modification backend n'a été nécessaire pour les sprints S0-S9. Le bac
 
 ### Stratégie de migration
 
-La stratégie strangler fig a été suivie : les nouvelles pages (`/portfolio-v2`, `/bots-v2`, `/lab`, `/market`, `/settings-v2`) coexistent avec les anciennes. Le plan initial prévoyait 14 redirections 308 une fois les pages validées :
+La stratégie strangler fig a été menée à son terme : les 5 pages méta (`/portfolio-v2`, `/bots-v2`, `/lab`, `/market`, `/settings-v2`) ont d'abord coexisté avec les anciennes, puis les ont remplacées. Le plan prévoyait 14 redirections 308 une fois les pages validées :
 - `/dashboard` → `/portfolio-v2` (puis `/portfolio`)
 - `/bots` → `/bots-v2` (puis `/bots`)
 - `/backtest`, `/optimizer`, `/ml`, `/replay`, `/compare` → `/lab`
 - `/scanner`, `/smartgraph`, `/smartreplay`, `/derivatives` → `/market`
 - `/settings`, `/config` → `/settings-v2`
 
-**3 de ces 14 redirections ont pu être posées.** Les 11 autres sont bloquées : voir §Bascule S10.
+**Les 14 redirections sont posées** (3 en S10, 4 par le lot Marché, 4 par
+le lot Laboratoire, 2 par le lot Réglages, 1 par le lot Portefeuille). Détail :
+voir §Bascule S10.
 
 ### Prochaines étapes (S10-S12)
 
@@ -1680,9 +1692,9 @@ La stratégie strangler fig a été suivie : les nouvelles pages (`/portfolio-v2
 #### Sprint 10 — Industrialisation
 
 **Page d'accueil → `/portfolio-v2`** : `/` pointe directement sur la page méta,
-sans passer par la 308 de `/dashboard`. Les 3 redirections posables le sont
-(cf. §Bascule S10) ; les 11 autres restent bloquées par les onglets en carte de
-renvoi.
+sans passer par la 308 de `/dashboard`. Les 3 redirections posables à ce stade
+le sont (cf. §Bascule S10) ; les 11 autres étaient bloquées par les onglets en
+carte de renvoi, et sont levées lot par lot depuis.
 
 **CI GitHub Actions** — le workflow existant couvrait ruff, pytest, pip-audit,
 lint/type-check/build frontend et un smoke e2e. Trois manques comblés :
@@ -1721,9 +1733,20 @@ variation de marché.
 ⚠ **Les références visuelles sont générées par plateforme** (`-linux.png`,
 `-win32.png`) : celles produites sous Windows ne valent pas sous l'ubuntu-latest
 de la CI. Les 5 références Linux ont donc été générées par le job lui-même puis
-commitées sous `frontend/e2e/tests/visual.spec.ts-snapshots/`. Après un
-changement visuel volontaire : relancer avec `--update-snapshots`, récupérer
-l'artefact `visual-snapshots` et committer les PNG.
+commitées sous `frontend/e2e/tests/visual.spec.ts-snapshots/`.
+
+Pour en régénérer une après un changement visuel volontaire, **supprimer le PNG
+concerné et pousser** : sans fichier de référence, Playwright écrit la capture
+puis échoue, et l'artefact `visual-snapshots` la remonte (l'upload est en
+`if: always()`). On récupère le PNG et on le committe. Le job passe au vert au
+run suivant.
+
+Cette méthode est préférable à `--update-snapshots`, que le job CI ne passe
+pas : l'utiliser supposerait de modifier le workflow le temps d'un run, puis de
+penser à l'enlever — un `--update-snapshots` oublié rendrait le job incapable
+d'échouer, donc inutile. Ne supprimer que les références réellement hors
+tolérance : `maxDiffPixelRatio` vaut 2 %, et un changement de barre latérale
+passe généralement dessous.
 
 Le test du drawer de `/bots-v2` est ignoré explicitement quand le backend est
 éteint : il ne peut pas s'ouvrir sans données, et les jobs CI ne démarrent que
@@ -1920,7 +1943,8 @@ masquait rien tout en laissant croire qu'une exception était en place — retir
   atteignable en l'état et n'est vérifié par aucune CI.
 - ~~**Accessibilité**~~ — traité, cf. §Accessibilité ci-dessous. Le job CI
   `a11y` est bloquant et passe à zéro violation sur les 24 pages.
-- **Redirections 308 : 3 posées sur 14** — voir §Bascule S10 ci-dessous.
+- ~~**Redirections 308**~~ — traité : les 14 redirections du plan sont posées,
+  cf. §Bascule S10 ci-dessous.
 - ~~**Réponses d'API non typées**~~ — traité, cf. §Typage des réponses d'API.
   L'extension aux endpoints restants (`optimize/*`, `ml/registry`, `replay`,
   `derivatives`, `scanner/smc*`) est faite. Trois pièges supplémentaires du même
@@ -1947,55 +1971,181 @@ masquait rien tout en laissant croire qu'une exception était en place — retir
 | `/bots` | `/bots-v2` | `/bots-v2` est un sur-ensemble strict — aucun hook ni composant de `/bots` n'y manque |
 | `/backtest` | `/lab?tab=backtest` | L'onglet Backtest du Laboratoire est le **seul** onglet du Lab qui soit une vraie réimplémentation |
 
+**Lot Marché** — les quatre onglets de `/market` montent désormais le contenu
+réel des anciennes pages, extrait sous `frontend/src/components/views/` :
+
+| Source | Cible | Vue montée |
+|---|---|---|
+| `/scanner` | `/market?tab=scanner` | `scanner-view.tsx` (ex-`/scanner`, 137 l.) |
+| `/smartgraph` | `/market?tab=smartgraph` | `smart-graph-view.tsx` (ex-`/smartgraph`, 1 155 l.) |
+| `/smartreplay` | `/market?tab=smartreplay` | `smart-replay-view.tsx` (ex-`/smartreplay`, 671 l.) |
+| `/derivatives` | `/market?tab=derivatives` | `derivatives-view.tsx` (ex-`/derivatives`, 368 l.) |
+
+**Lot Laboratoire** — même traitement pour les 4 onglets non-Backtest de
+`/lab` :
+
+| Source | Cible | Vue montée |
+|---|---|---|
+| `/optimizer` | `/lab?tab=optimizer` | `optimizer-view.tsx` (ex-`/optimizer`, 657 l.) |
+| `/ml` | `/lab?tab=ml` | `ml-view.tsx` (ex-`/ml`, 235 l.) |
+| `/replay` | `/lab?tab=replay` | `replay-view.tsx` (ex-`/replay`, 467 l.) |
+| `/compare` | `/lab?tab=compare` | `compare-view.tsx` (ex-`/compare`, 520 l.) |
+
+`/models` **n'a pas** de 308 : le registre versionné n'est pas dans le plan de
+fusion et reste une page à part entière. L'onglet ML y renvoie explicitement —
+c'est le seul renvoi qui subsiste, et il est assumé.
+
+**Lot Réglages** — les deux dernières pages de configuration :
+
+| Source | Cible | Ce qui a été porté |
+|---|---|---|
+| `/config` | `/settings-v2?tab=capital` | `config-view.tsx` : ses 4 onglets internes deviennent 4 sections exportées (`ConfigStrategiesView`, `ConfigRiskView`, `ConfigNotificationsView`, `ConfigExchangeView`), montées dans Capital et Notifs |
+| `/settings` | `/settings-v2?tab=capital` | Thème (vrai sélecteur, plus un badge « Topbar »), notifications navigateur câblées, seuils de preset lus au backend |
+
+Trois choses corrigées au passage, qui n'étaient pas de simples déplacements :
+
+1. **Le Service Worker ne dépend plus d'une visite de page.** Il était
+   enregistré dans un `useEffect` de `/settings` : un utilisateur qui n'ouvrait
+   jamais les Réglages n'avait jamais de SW, donc ni PWA installable ni cache
+   hors-ligne. Il est remonté dans `Providers` (`components/providers.tsx`).
+2. **Le switch « Notifications navigateur » fonctionne.** C'était un
+   `defaultChecked` sans handler : il affichait « activé » sans jamais demander
+   la permission. Il est câblé sur les helpers de `notifications-provider` et
+   reflète la permission réelle (`Accordé` / `Refusé` / `En attente` / `Non
+   supporté`), désactivé quand elle n'est pas récupérable depuis la page.
+3. **Les seuils de preset affichés étaient faux.** `/settings-v2` les codait en
+   dur alors que `/settings` lisait `/api/settings/presets`. Dès que
+   `config.yaml` s'écartait de ces valeurs, les deux écrans affichaient des
+   chiffres différents et c'est la page méta qui mentait. Le backend prime
+   désormais ; les constantes ne servent plus que de repli avant réponse.
+
+Deux suppressions volontaires :
+
+- L'onglet Risk de `/config` faisait `(presets || [...]).map(...)` sur le retour
+  de `usePresets()`, qui est un objet `{presets, current, expert_mode}` et non
+  un tableau : **l'onglet plantait au rendu** dès que la requête aboutissait.
+  Le bloc n'est pas porté — les cartes de preset de l'onglet Capital couvrent
+  le besoin, et correctement.
+- La garde `expertMode` sur l'accès aux paramètres avancés est retirée : elle
+  désactivait un lien de navigation, pas les écritures. Un utilisateur qui
+  coupait le mode expert depuis une autre page perdait l'accès à des
+  paramètres qu'il venait de modifier, alors que l'API restait ouverte.
+
 `/` pointe désormais sur `/portfolio-v2` (au lieu de `/dashboard`), sans saut de
 redirection intermédiaire. Sidebar, recherche Cmd+K, page 404 et
 `AllocationsGrid` ciblent directement les routes v2.
 
+**Lot Portefeuille** — la dernière des 14 :
+
+| Source | Cible | Ce qui a été porté |
+|---|---|---|
+| `/portfolio` | `/portfolio-v2` | `ActivityFeed` (journal de notifications) et `SignificantBotsTable` (vue par bot), extraits en composants sous `components/cards/` |
+
+Le bouton **Force rebalance** a été porté en plus des deux blocs listés par
+l'audit : il n'existait que sur `/portfolio` et ne s'affiche que lorsque
+`continuous_allocation = false`, c'est-à-dire précisément quand le capital
+n'est pas réalloué tout seul. Rediriger sans lui aurait supprimé la seule
+commande de rééquilibrage de l'UI — un manque qu'aucun test n'aurait vu.
+
+`ActivityFeed` ne fait pas doublon avec `LiveTradesFeed`, déjà monté sur
+`/portfolio-v2` : celui-ci lit le flux WebSocket des trades, celui-là
+l'historique persisté des notifications (halt, kill switch, drawdown) avec ses
+niveaux info / warning / critical.
+
 ### Ce qui reste bloqué, et pourquoi
 
-Les 11 autres redirections **ne peuvent pas** être posées en l'état : les
-onglets correspondants des pages méta ne sont pas des implémentations, ce sont
-des **cartes de renvoi vers les anciennes pages**. Poser la 308 créerait une
-boucle et rendrait la fonctionnalité inatteignable.
+**Plus rien.** Les 14 redirections du plan de refonte sont posées.
 
-| Redirection prévue | Blocage constaté | Lignes rendues inaccessibles |
-|---|---|---|
-| `/optimizer` → `/lab` | `OptimizerTab` : bouton « Aller à l'optimiseur existant » → `window.location.href = '/optimizer'` (commentaire du code : « intégration native prévue au Sprint 7 ») | 630 |
-| `/replay` → `/lab` | `ReplayTab` : « Aller au replay existant » → `/replay` | 463 |
-| `/compare` → `/lab` | `CompareTab` : « Aller au comparatif existant » → `/compare` | 517 |
-| `/ml` → `/lab` | `MLTab` : boutons « Modèles ML » → `/ml` et « Registre » → `/models` (« intégration native prévue au Sprint 9 ») | 227 |
-| `/smartgraph` → `/market` | `RedirectCard href="/smartgraph"` | 1 155 |
-| `/smartreplay` → `/market` | `RedirectCard href="/smartreplay"` | 671 |
-| `/derivatives` → `/market` | `RedirectCard href="/derivatives"` | 368 |
-| `/scanner` → `/market` | L'onglet Scanner de `/market` est un teaser 4 symboles + « Aller au scanner complet » → `/scanner` | 137 |
-| `/config` → `/settings-v2` | `/settings-v2` : « Ouvrir la configuration avancée » → `window.location.href = '/config'`. L'éditeur de params par stratégie (`useSetStrategyParams`, `useToggleStrategyTimeframe`) n'existe que sur `/config` | 401 |
-| `/settings` → `/settings-v2` | `/settings` est le **seul** endroit qui enregistre le Service Worker (`navigator.serviceWorker.register('/sw.js')`) et qui demande réellement la permission de notification. Le switch « Notifications navigateur » de `/settings-v2` est un placeholder `defaultChecked` sans handler | 421 |
-| `/portfolio` → `/portfolio-v2` | `/portfolio` porte un journal de notifications (`useNotifications`) et une vue par bot (`useBots`) que `/portfolio-v2` ne reprend pas | 483 |
+Seul `/models` reste servi en direct, **par choix d'architecture et non par
+blocage** : le registre versionné (882 l.) n'est pas dans le plan de fusion.
+L'onglet ML du Laboratoire y renvoie explicitement, et le test e2e le classe
+en « reste accessible » pour cette raison.
 
-**Total : ~5 470 lignes** de fonctionnalités qui deviendraient inaccessibles si
-les 11 redirections étaient posées telles quelles.
+Les ~5 470 lignes du constat initial sont toutes joignables : ~2 330 par le lot
+Marché, ~1 840 par le Laboratoire, ~820 par les Réglages, ~480 par le
+Portefeuille.
 
-Autrement dit : le plan de refonte annonce S5-S9 « ✅ Complet », mais les pages
-`/lab` et `/market` sont, pour 8 de leurs 9 onglets, des menus vers l'ancienne
-UI. La fusion annoncée reste à faire.
+### Le double 308 du backend
+
+Poser les redirections côté Next en a créé un effet de bord que les 4 lots
+n'avaient pas traité. `app/api/main.py` sert les 18 anciennes routes HTML et
+redirigeait chacune vers **le même chemin** côté Next — lequel la redirigeait à
+son tour depuis la fusion. Un `GET /smartgraph` sur le port 8000 coûtait donc
+deux 308 : FastAPI → Next `/smartgraph` → Next `/market?tab=smartgraph`.
+
+`HTML_ROUTES_TO_REDIRECT` passe de liste à mapping `route → cible finale`. Les
+13 routes concernées visent directement leur destination ; les 5 qui sont de
+vraies pages Next (`/audit`, `/audit-log`, `/trades`, `/models`, `/data`)
+gardent leur chemin. `/slots`, qui visait `/bots`, vise `/bots-v2`. `/` reste
+sur `/` : ce n'est pas un alias hérité mais la racine de l'app, et c'est
+`frontend/src/app/page.tsx` qui décide de la page d'entrée — le dupliquer dans
+le backend en ferait un second endroit à changer.
+
+Cette table double le bloc `redirects()` de `next.config.mjs` : c'est le prix
+d'avoir deux serveurs qui connaissent la même bascule.
+`tests/test_legacy_redirects.py` lit `next.config.mjs` et vérifie qu'elles ne
+divergent pas — une redirection posée côté Next sans être répercutée côté
+backend recréerait le double saut, invisible en test comme à l'œil. Le test
+vérifie aussi qu'aucune cible du backend n'est elle-même une source de
+redirection Next.
 
 ### Conditions de levée, par lot
 
-1. **Lot Marché** (`/scanner`, `/smartgraph`, `/smartreplay`, `/derivatives`) —
-   porter le contenu des 4 pages dans les onglets de `/market`, supprimer
-   `RedirectCard`, puis poser les 4 redirections. ~2 300 lignes à déplacer ;
-   `/smartgraph` (1 155 l.) est le gros morceau.
-2. **Lot Laboratoire** (`/optimizer`, `/replay`, `/compare`, `/ml`) — idem dans
-   `/lab`. Attention : `/models` (877 l.) n'est pas dans le plan de fusion et
-   doit rester une page à part entière.
-3. **Lot Réglages** (`/config`, `/settings`) — porter l'éditeur de params par
-   stratégie dans l'onglet Capital, câbler pour de bon le switch
-   « Notifications navigateur », et **déplacer l'enregistrement du Service
-   Worker hors de `/settings`** (il ne devrait pas dépendre de la visite d'une
-   page : aujourd'hui un utilisateur qui ne va jamais dans les Réglages n'a
-   jamais de SW).
-4. **Lot Portefeuille** (`/portfolio`) — porter le journal de notifications et
-   la vue par bot dans `/portfolio-v2`.
+1. ~~**Lot Marché**~~ (`/scanner`, `/smartgraph`, `/smartreplay`,
+   `/derivatives`) — **fait**. Les 4 pages sont devenues des vues sous
+   `frontend/src/components/views/`, montées dans les onglets de `/market` ;
+   `RedirectCard` et le teaser Scanner ont disparu, les 4 redirections sont
+   posées. L'onglet est piloté par `?tab=`, ce qui rend les liens profonds
+   partageables et donne aux 308 une cible précise. La query est conservée par
+   Next : le lien « Analyser » de `/data` arrive sur le Scanner avec le symbole
+   et le timeframe déjà remplis — il pointait jusque-là sur `/scanner?symbol=…`
+   dont la page ignorait les paramètres.
+
+   Deux conséquences sur les tests, à ne pas confondre avec des régressions :
+   le job `a11y` ouvre maintenant les 4 onglets par leur `?tab=` (Radix ne
+   monte que l'onglet actif — auditer `/market` seul ne couvrirait que
+   Scanner), et **la référence visuelle de `/market` a été régénérée**.
+
+   Sur ce dernier point, la CI a corrigé une prévision trop prudente : le
+   retrait d'entrées de la barre latérale décale bien toutes les captures
+   `fullPage`, mais reste sous le seuil de 2 % (`maxDiffPixelRatio`) sur 4 des
+   5 pages méta. Seule `marche.png` sortait de la tolérance — 19 434 pixels,
+   ratio 0,03 — parce que son onglet Scanner passe d'un teaser à la vue
+   complète. Les 4 autres références restent valides et n'ont pas été touchées.
+2. ~~**Lot Laboratoire**~~ (`/optimizer`, `/replay`, `/compare`, `/ml`) —
+   **fait**, sur le même modèle que le lot Marché : vues sous
+   `frontend/src/components/views/`, montées dans les onglets, 4 redirections
+   posées, `?tab=` validé contre la liste des onglets.
+
+   `/models` (882 l.) n'est pas dans le plan de fusion et **reste une page à
+   part entière** : pas de 308, entrée de nav conservée, et l'onglet ML y
+   renvoie explicitement. C'est le seul renvoi qui subsiste dans les pages
+   méta, et il est assumé — à ne pas confondre avec les cartes de renvoi que
+   ces lots ont supprimées.
+
+   Le prop `expertMode` disparaît des 4 onglets : il ne servait qu'à afficher
+   la mention « intégration native prévue au Sprint 7/9 » sous les teasers.
+   Il reste actif sur l'onglet Backtest, où il gouverne de vraies options.
+3. ~~**Lot Réglages**~~ (`/config`, `/settings`) — **fait**. Les trois
+   conditions posées ici sont remplies : l'éditeur de params par stratégie est
+   dans l'onglet Capital, le switch « Notifications navigateur » est câblé, et
+   l'enregistrement du Service Worker est remonté dans `Providers`. Deux
+   correctifs non prévus s'y sont ajoutés (seuils de preset lus au backend,
+   onglet Risk de `/config` qui plantait) — détail ci-dessus.
+
+   `/settings-v2` garde son nom de route : la renommer `/settings` demanderait
+   une 308 dans l'autre sens et casserait les favoris fraîchement redirigés.
+   Son entrée de nav, elle, s'appelle simplement « Réglages » — il n'y a plus
+   d'ancienne page dont la distinguer.
+4. ~~**Lot Portefeuille**~~ (`/portfolio`) — **fait**. Journal de notifications
+   et vue par bot extraits en composants (`ActivityFeed`,
+   `SignificantBotsTable`) et montés dans `/portfolio-v2`, plus le bouton
+   Force rebalance que l'audit n'avait pas relevé.
+
+**Les 4 lots sont livrés ; les 14 redirections du plan sont posées.** Le
+constat « les pages `/lab` et `/market` sont, pour 8 de leurs 9 onglets, des
+menus vers l'ancienne UI » n'est plus vrai : il ne reste aucune carte de
+renvoi, seulement le lien assumé de l'onglet ML vers `/models`.
 
 ### Note sur le code 308
 

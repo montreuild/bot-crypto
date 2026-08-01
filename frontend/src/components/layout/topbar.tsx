@@ -263,22 +263,32 @@ const SEARCH_PAGES = [
   { href: '/portfolio-v2', label: 'Portefeuille', desc: 'Vue consolidée temps réel', keywords: ['live', 'trading', 'positions', 'pnl', 'dashboard', 'allocation', 'frais'] },
   { href: '/bots-v2', label: 'Mes Bots', desc: 'Portefeuille de stratégies', keywords: ['stratégies', 'lifecycle', 'candidat', 'essai', 'actif', 'kanban'] },
   { href: '/trades', label: 'Trades', desc: 'Historique des trades', keywords: ['historique', 'export', 'csv'] },
-  { href: '/portfolio', label: 'Portefeuille (détail)', desc: 'Vue fonds détaillée + notifications', keywords: ['allocation', 'shadow', 'lifecycle', 'risk', 'notifications'] },
+  // Lot Portefeuille — /portfolio est en 308 vers /portfolio-v2, qui porte
+  // désormais son journal de notifications et sa vue par bot. L'entrée reste
+  // pour que « notifications » et « allocation » restent des mots-clés
+  // trouvables, mais elle cible la page unique.
+  { href: '/portfolio-v2', label: 'Activité & bots', desc: 'Journal de notifications et bots à edge significatif', keywords: ['allocation', 'shadow', 'lifecycle', 'risk', 'notifications', 'activité', 'edge'] },
   { href: '/lab?tab=backtest', label: 'Backtest', desc: 'Test de stratégies sur données historiques', keywords: ['walk-forward', 'monte-carlo', 'test', 'laboratoire'] },
-  { href: '/scanner', label: 'Scanner', desc: 'Fast Analyse SMC/ICT', keywords: ['patterns', 'smc', 'ict', 'fvg', 'ob'] },
-  { href: '/smartgraph', label: 'Smart Graph', desc: 'Analyse SMC avancée', keywords: ['smc', 'order block', 'liquidity', 'fvg', 'bos', 'choch'] },
-  { href: '/smartreplay', label: 'Smart Replay', desc: 'Rejeu bougie par bougie', keywords: ['rejeu', 'smc', 'barre', 'slider', 'play'] },
-  { href: '/compare', label: 'Comparatif', desc: 'Comparaison multi-stratégies', keywords: ['comparaison', 'multi', 'stratégies', 'côte à côte'] },
-  { href: '/replay', label: 'Replay', desc: 'Rejeu multi-timeframe', keywords: ['rejeu', 'multi-tf', 'validation'] },
-  { href: '/optimizer', label: 'Optimiseur', desc: 'Optimisation des paramètres', keywords: ['bayesian', 'grid', 'random', 'trials'] },
+  // Lot Marché — ces quatre entrées sont des onglets de /market depuis la
+  // fusion ; elles gardent leur nom propre dans la recherche pour rester
+  // trouvables, mais ciblent l'onglet directement (pas de saut de 308).
+  { href: '/market?tab=scanner', label: 'Scanner', desc: 'Fast Analyse SMC/ICT', keywords: ['patterns', 'smc', 'ict', 'fvg', 'ob', 'marché'] },
+  { href: '/market?tab=smartgraph', label: 'Smart Graph', desc: 'Analyse SMC avancée', keywords: ['smc', 'order block', 'liquidity', 'fvg', 'bos', 'choch', 'marché'] },
+  { href: '/market?tab=smartreplay', label: 'Smart Replay', desc: 'Rejeu bougie par bougie', keywords: ['rejeu', 'smc', 'barre', 'slider', 'play', 'marché'] },
+  // Lot Laboratoire — mêmes remarques que pour /market : onglets de /lab.
+  { href: '/lab?tab=compare', label: 'Comparatif', desc: 'Comparaison multi-stratégies', keywords: ['comparaison', 'multi', 'stratégies', 'côte à côte', 'laboratoire'] },
+  { href: '/lab?tab=replay', label: 'Replay', desc: 'Rejeu multi-timeframe', keywords: ['rejeu', 'multi-tf', 'validation', 'laboratoire'] },
+  { href: '/lab?tab=optimizer', label: 'Optimiseur', desc: 'Optimisation des paramètres', keywords: ['bayesian', 'grid', 'random', 'trials', 'laboratoire'] },
   { href: '/audit', label: 'Audit OOS', desc: 'Résultats OOS optimiseur', keywords: ['oos', 'résultats', 'score'] },
   { href: '/audit-log', label: 'Journal Audit', desc: 'Traçabilité des actions sensibles', keywords: ['audit', 'log', 'actions', 'sécurité'] },
-  { href: '/derivatives', label: 'Dérivés', desc: 'Funding, OI, LSR, taker', keywords: ['funding', 'open interest', 'long short'] },
+  { href: '/market?tab=derivatives', label: 'Dérivés', desc: 'Funding, OI, LSR, taker', keywords: ['funding', 'open interest', 'long short', 'marché'] },
   { href: '/data', label: 'Données', desc: 'Cache bougies OHLCV', keywords: ['ohlcv', 'candles', 'cache', 'parquet'] },
-  { href: '/ml', label: 'ML', desc: 'Modèles Machine Learning', keywords: ['machine', 'learning', 'lightgbm', 'random forest'] },
+  { href: '/lab?tab=ml', label: 'ML', desc: 'Modèles Machine Learning', keywords: ['machine', 'learning', 'lightgbm', 'random forest', 'laboratoire'] },
   { href: '/models', label: 'Registre modèles', desc: 'Registre versionné, gate de promotion, entraînement', keywords: ['registre', 'version', 'gate', 'pin', 'entraînement', 'sweep', 'promotion'] },
-  { href: '/config', label: 'Configuration', desc: 'Stratégies, risk, notifications', keywords: ['paramètres', 'risk', 'exchange'] },
-  { href: '/settings', label: 'Réglages', desc: 'Presets, thème, expert mode', keywords: ['preset', 'thème', 'clair', 'sombre'] },
+  // Lot Réglages — /config et /settings sont devenus des onglets de
+  // /settings-v2. Les deux entrées restent, chacune sur son onglet.
+  { href: '/settings-v2?tab=capital', label: 'Configuration', desc: 'Stratégies, risk, exchange', keywords: ['paramètres', 'risk', 'exchange', 'config', 'réglages'] },
+  { href: '/settings-v2?tab=ui', label: 'Réglages', desc: 'Presets, thème, expert mode, notifications', keywords: ['preset', 'thème', 'clair', 'sombre', 'expert', 'notifications'] },
 ];
 
 function SearchModal({ onClose }: { onClose: () => void }) {

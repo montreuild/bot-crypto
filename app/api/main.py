@@ -288,25 +288,61 @@ FRONTEND_URL=https://bot.mondomaine.com</pre>
 
 # Anciennes routes HTML → redirect 308 vers Next.js si joignable, sinon page d'aide
 # La liste est exhaustive : 18 routes (la 19e, /slots, redirigeait déjà vers /bots)
-HTML_ROUTES_TO_REDIRECT = [
-    "/", "/backtest", "/optimizer", "/config", "/scanner", "/audit",
-    "/audit-log", "/trades", "/replay", "/ml", "/models", "/compare",
-    "/derivatives", "/portfolio", "/bots", "/settings", "/data",
-    "/smartgraph", "/smartreplay",
-]
-for _route in HTML_ROUTES_TO_REDIRECT:
-    # Capture _route via default arg pour éviter le piège du closure tardif
-    def _make_handler(r):
-        def _handler(request: Request, _r=r):
-            return _route_frontend_or_help(_r)
+#
+# La CLÉ est la route servie par FastAPI, la VALEUR le chemin Next visé. Les
+# deux différaient jusqu'ici : on redirigeait vers le même chemin côté Next,
+# qui le redirigeait à son tour depuis la fusion des pages méta. Un GET
+# `/smartgraph` coûtait donc deux 308 (FastAPI → Next `/smartgraph` → Next
+# `/market?tab=smartgraph`). On vise directement la cible finale.
+#
+# ⚠ Cette table double le bloc `redirects()` de `frontend/next.config.mjs`.
+# `tests/test_legacy_redirects.py` vérifie qu'elles ne divergent pas : c'est
+# ce test, et non la relecture, qui garantit qu'une future redirection posée
+# côté Next sera répercutée ici.
+HTML_ROUTES_TO_REDIRECT = {
+    # `/` reste sur `/` : ce n'est pas un alias hérité mais la racine de
+    # l'app, et c'est `frontend/src/app/page.tsx` qui décide de la page
+    # d'entrée. Le dupliquer ici en ferait un second endroit à changer.
+    "/": "/",
+    # Pages Next à part entière — pas de redirection côté frontend.
+    "/audit": "/audit",
+    "/audit-log": "/audit-log",
+    "/trades": "/trades",
+    "/models": "/models",
+    "/data": "/data",
+    # S10
+    "/bots": "/bots-v2",
+    "/backtest": "/lab?tab=backtest",
+    # Lot Laboratoire
+    "/optimizer": "/lab?tab=optimizer",
+    "/ml": "/lab?tab=ml",
+    "/replay": "/lab?tab=replay",
+    "/compare": "/lab?tab=compare",
+    # Lot Marché
+    "/scanner": "/market?tab=scanner",
+    "/smartgraph": "/market?tab=smartgraph",
+    "/smartreplay": "/market?tab=smartreplay",
+    "/derivatives": "/market?tab=derivatives",
+    # Lot Réglages
+    "/config": "/settings-v2?tab=capital",
+    "/settings": "/settings-v2?tab=capital",
+    # Lot Portefeuille
+    "/portfolio": "/portfolio-v2",
+}
+for _route, _target in HTML_ROUTES_TO_REDIRECT.items():
+    # Capture _target via default arg pour éviter le piège du closure tardif
+    def _make_handler(t):
+        def _handler(request: Request, _t=t):
+            return _route_frontend_or_help(_t)
         return _handler
-    app.add_api_route(_route, _make_handler(_route), methods=["GET"])
+    app.add_api_route(_route, _make_handler(_target), methods=["GET"])
 
 
-# Rétro-compat : /slots redirigeait vers /bots (déjà en 307, gardé en 308)
+# Rétro-compat : /slots redirigeait vers /bots, lui-même en 308 vers /bots-v2
+# depuis S10 — on vise la cible finale plutôt que d'enchaîner deux sauts.
 @app.get("/slots")
 def slots_legacy():
-    return _route_frontend_or_help("/bots")
+    return _route_frontend_or_help("/bots-v2")
 
 
 # ── Status (accès direct à state.cfg, hors router) ────────────────────────

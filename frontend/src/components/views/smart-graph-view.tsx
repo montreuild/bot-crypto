@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * Onglet Smart Graph de `/market` — chart candlestick et 14 overlays SMC/ICT.
+ *
+ * Lot Marché : cette vue était la page `/smartgraph` (1 155 lignes), vers
+ * laquelle l'onglet se contentait de renvoyer par une `RedirectCard`.
+ * `/smartgraph` est désormais en 308 vers `/market?tab=smartgraph`.
+ */
+
 import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -63,9 +71,9 @@ function cleanOhlcv(
   return out;
 }
 
-// ── Page ────────────────────────────────────────────────────────────────────
+// ── Vue ─────────────────────────────────────────────────────────────────────
 
-export default function SmartGraphPage() {
+export function SmartGraphView() {
   const [symbol, setSymbol] = useState('BTC/USDC');
   const [timeframe, setTimeframe] = useState<string>('1h');
   const [toggles, setToggles] = useState<OverlayToggles>({
@@ -530,11 +538,11 @@ export default function SmartGraphPage() {
   ];
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Smart Graph SMC</h1>
+          <h2 className="text-lg font-semibold tracking-tight">Smart Graph SMC</h2>
           <p className="text-sm text-muted mt-1">
             Analyse SMC/ICT complète · Order Blocks · Liquidity · FVG · Voids · Breakers · Rejections · Volume Profile · Cycle · Channel · Structure
           </p>

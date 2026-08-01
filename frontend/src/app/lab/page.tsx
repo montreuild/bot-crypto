@@ -16,9 +16,16 @@
  *  - /api/ml/* (recipes, registry, train, sweep)
  *  - /api/replay
  *  - /api/backtest (pour compare)
+ *
+ * Lot Laboratoire — les onglets Optimizer / ML / Replay / Compare montent
+ * désormais le contenu réel des anciennes pages (`src/components/views/`) et
+ * non plus des cartes de renvoi. `/optimizer`, `/ml`, `/replay` et `/compare`
+ * sont en 308 vers `/lab?tab=…` (cf. `next.config.mjs`).
  */
 
 import { useState, useEffect, Suspense } from 'react';
+import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -41,9 +48,36 @@ import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Play, Square, Loader2, FlaskConical, Sparkles, Brain, Repeat,
-  GitCompare, AlertCircle, CheckCircle2, TrendingUp, Rocket,
+  GitCompare, AlertCircle, CheckCircle2, TrendingUp, Rocket, Archive,
 } from 'lucide-react';
 import { cn, formatUSD, formatPct } from '@/lib/utils';
+
+/*
+  Les 4 vues portées valent ~1 840 lignes et tirent recharts (Replay, Compare)
+  ou un flux SSE (Optimizer). Radix ne monte que l'onglet actif : `dynamic`
+  aligne le coût réseau sur ce comportement plutôt que de faire payer les
+  quatre à qui n'ouvre que Backtest.
+*/
+const tabLoading = () => <div className="p-8 text-center text-sm text-muted">Chargement…</div>;
+
+const OptimizerView = dynamic(
+  () => import('@/components/views/optimizer-view').then((m) => m.OptimizerView),
+  { loading: tabLoading },
+);
+const MLView = dynamic(
+  () => import('@/components/views/ml-view').then((m) => m.MLView),
+  { loading: tabLoading },
+);
+const ReplayView = dynamic(
+  () => import('@/components/views/replay-view').then((m) => m.ReplayView),
+  { loading: tabLoading },
+);
+const CompareView = dynamic(
+  () => import('@/components/views/compare-view').then((m) => m.CompareView),
+  { loading: tabLoading },
+);
+
+const TABS = ['backtest', 'optimizer', 'ml', 'replay', 'compare'] as const;
 
 export default function LabPage() {
   return (
@@ -56,7 +90,12 @@ export default function LabPage() {
 function LabContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const initialTab = searchParams.get('tab') || 'backtest';
+  // Un `?tab=` inconnu (ancien favori, faute de frappe) retombe sur Backtest
+  // plutôt que d'afficher une page d'onglets vide.
+  const requestedTab = searchParams.get('tab');
+  const initialTab = TABS.includes(requestedTab as (typeof TABS)[number])
+    ? requestedTab!
+    : 'backtest';
   const intent = searchParams.get('intent'); // 'create' si arrivé depuis /bots-v2
   const [tab, setTab] = useState(initialTab);
 
@@ -143,16 +182,16 @@ function LabContent() {
           <BacktestTab expertMode={expertMode} />
         </TabsContent>
         <TabsContent value="optimizer">
-          <OptimizerTab expertMode={expertMode} />
+          <OptimizerView />
         </TabsContent>
         <TabsContent value="ml">
-          <MLTab expertMode={expertMode} />
+          <MLTab />
         </TabsContent>
         <TabsContent value="replay">
-          <ReplayTab expertMode={expertMode} />
+          <ReplayView />
         </TabsContent>
         <TabsContent value="compare">
-          <CompareTab expertMode={expertMode} />
+          <CompareView />
         </TabsContent>
       </Tabs>
     </div>
@@ -613,91 +652,34 @@ function BacktestResults({ result }: { result: any }) {
   );
 }
 
-// ── Optimizer Tab (placeholder inline pour simplifier) ───────────────────
+// ── ML Tab ───────────────────────────────────────────────────────────────
+//
+// Seul onglet du Lab qui garde un renvoi : `/models` (registre versionné,
+// gate de promotion, 882 l.) n'est PAS dans le plan de fusion et reste une
+// page à part entière. Le renvoi est donc assumé, pas un reste de teaser —
+// et `/models` n'a par conséquent aucune 308.
 
-function OptimizerTab({ expertMode }: { expertMode: boolean }) {
+function MLTab() {
   return (
-    <Card>
-      <CardContent className="p-8 text-center">
-        <Sparkles className="w-10 h-10 mx-auto text-primary-400 mb-3" />
-        <h3 className="text-base font-semibold mb-1">Optimiseur bayésien</h3>
-        <p className="text-sm text-muted max-w-md mx-auto mb-4">
-          Optimise les paramètres de tes stratégies avec méthodes Bayesian/Random/Grid.
-          L&apos;optimizer existant reste accessible via le menu latéral « Optimiseur ».
-        </p>
-        <Button variant="outline" onClick={() => window.location.href = '/optimizer'}>
-          Aller à l&apos;optimiseur existant
-        </Button>
-        {expertMode && (
-          <p className="text-xs text-dim mt-4">
-            Mode expert : intégration native dans le Laboratoire prévue au Sprint 7
+    <div className="space-y-4">
+      <MLView />
+      <Card>
+        <CardContent className="p-4 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-muted">
+            Le registre versionné (gate de promotion, pin, sweep) reste une page dédiée.
           </p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function MLTab({ expertMode }: { expertMode: boolean }) {
-  return (
-    <Card>
-      <CardContent className="p-8 text-center">
-        <Brain className="w-10 h-10 mx-auto text-purple-400 mb-3" />
-        <h3 className="text-base font-semibold mb-1">Entraînement ML</h3>
-        <p className="text-sm text-muted max-w-md mx-auto mb-4">
-          Entraîne des modèles LightGBM avec recettes déclaratives, window sweep et
-          gate de promotion. Le registre ML reste accessible via « Modèles ML ».
-        </p>
-        <div className="flex justify-center gap-2">
-          <Button variant="outline" onClick={() => window.location.href = '/ml'}>
-            Modèles ML
-          </Button>
-          <Button variant="outline" onClick={() => window.location.href = '/models'}>
-            Registre
-          </Button>
-        </div>
-        {expertMode && (
-          <p className="text-xs text-dim mt-4">
-            Mode expert : intégration native prévue au Sprint 9
-          </p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function ReplayTab({ expertMode }: { expertMode: boolean }) {
-  return (
-    <Card>
-      <CardContent className="p-8 text-center">
-        <Repeat className="w-10 h-10 mx-auto text-cyan-400 mb-3" />
-        <h3 className="text-base font-semibold mb-1">Replay multi-TF</h3>
-        <p className="text-sm text-muted max-w-md mx-auto mb-4">
-          Rejoue plusieurs timeframes en parallèle sur une période donnée.
-          Le replay existant reste accessible via le menu latéral.
-        </p>
-        <Button variant="outline" onClick={() => window.location.href = '/replay'}>
-          Aller au replay existant
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-function CompareTab({ expertMode }: { expertMode: boolean }) {
-  return (
-    <Card>
-      <CardContent className="p-8 text-center">
-        <GitCompare className="w-10 h-10 mx-auto text-emerald-400 mb-3" />
-        <h3 className="text-base font-semibold mb-1">Comparatif multi-stratégies</h3>
-        <p className="text-sm text-muted max-w-md mx-auto mb-4">
-          Compare jusqu&apos;à 12 stratégies sur une même fenêtre temporelle.
-          Le comparatif existant reste accessible via le menu latéral.
-        </p>
-        <Button variant="outline" onClick={() => window.location.href = '/compare'}>
-          Aller au comparatif existant
-        </Button>
-      </CardContent>
-    </Card>
+          {/* `Button` ne gère pas `asChild` : on style le Link directement
+              plutôt que d'imbriquer un <a> dans un <button> (HTML invalide,
+              et axe le remonte en `nested-interactive`). */}
+          <Link
+            href="/models"
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-border text-sm text-muted hover:text-foreground hover:bg-card-hover transition-colors"
+          >
+            <Archive className="w-3.5 h-3.5" />
+            Registre modèles
+          </Link>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

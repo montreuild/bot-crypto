@@ -1,5 +1,14 @@
 'use client';
 
+/**
+ * Onglet Optimizer de `/lab` — optimisation bayésienne / grid / random.
+ *
+ * Lot Laboratoire : cette vue était la page `/optimizer`, que l'onglet se
+ * contentait de teaser (« Aller à l'optimiseur existant », « intégration
+ * native prévue au Sprint 7 »). `/optimizer` est désormais en 308 vers
+ * `/lab?tab=optimizer`.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -308,9 +317,9 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ── Main page ───────────────────────────────────────────────────────────────
+// ── Vue ─────────────────────────────────────────────────────────────────────
 
-export default function OptimizerPage() {
+export function OptimizerView() {
   const { data: spaces, isLoading: spacesLoading } = useOptimizeSpaces();
   const { data: resultsData } = useOptimizeResults();
   const startOptimize = useStartOptimize();
@@ -411,11 +420,11 @@ export default function OptimizerPage() {
   const activeResults = resultsData?.active_per_tf || {};
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Optimiseur</h1>
+          <h2 className="text-lg font-semibold tracking-tight">Optimiseur</h2>
           <p className="text-sm text-muted mt-1">
             Optimisation bayésienne / grid / random des stratégies avec validation OOS
           </p>
