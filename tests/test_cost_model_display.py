@@ -181,3 +181,45 @@ class TestPropagation:
             self._run({"default": "spot", "defs": {"spot": {"market_type": "spot"}}})
         assert "[Coûts]" in caplog.text
         assert "pas d'emprunt" in caplog.text
+
+
+# ── 4. La route API expose le contexte ──────────────────────────────────────
+#
+# Piège vérifié en conditions réelles : `POST /api/backtest` construit son
+# PROPRE payload et ne renvoie PAS `BacktestResult.to_dict()`. Le champ
+# existait donc côté moteur, passait tous les tests unitaires, et n'atteignait
+# jamais l'UI — la carte restait invisible. Ce test ferme ce trou.
+
+class TestApiRoute:
+    def test_the_route_payload_exposes_the_cost_model(self):
+        from app.api import state
+        from app.api.routes.backtest import _cost_model_for
+
+        cfg = {**CFG,
+               "trading": {**CFG["trading"], "capital": 1000, "risk_per_trade": 0.01},
+               "venues": {"default": "margin-isolated",
+                          "defs": {"margin-isolated": {"market_type": "margin",
+                                                       "margin_mode": "isolated"}}}}
+        saved = getattr(state, "cfg", None)
+        state.cfg = cfg
+        try:
+            m = _cost_model_for("BTC/USDC", "1h")
+        finally:
+            state.cfg = saved
+
+        assert m, "la route doit exposer le contexte, pas un dict vide"
+        assert m["market_type"] == "margin"
+        assert m["borrows"] is True
+
+    def test_the_route_helper_never_breaks_a_backtest(self):
+        """Best-effort : un contexte indisponible masque la carte, il ne doit
+        pas faire échouer le backtest lui-même."""
+        from app.api import state
+        from app.api.routes.backtest import _cost_model_for
+
+        saved = getattr(state, "cfg", None)
+        state.cfg = None            # état non initialisé
+        try:
+            assert _cost_model_for("BTC/USDC", "1h") == {}
+        finally:
+            state.cfg = saved
