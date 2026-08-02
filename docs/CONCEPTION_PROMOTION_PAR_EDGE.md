@@ -108,18 +108,36 @@ RETIRÉ ⟺  (live_trades ≥ 1 ET budget < plancher_budget_pct)          (budge
 Lissage anti-flush conservé (plancher `min_active_bots`, quota
 `max_demotions_per_day`, file de re-optimisation).
 
-### 2.4 Bypass manuel
+### 2.4 Forçage manuel
 
-`lifecycle.manual_active: [slot_key, …]` (config.yaml, persistant). Un bot listé
-est **forcé ACTIF** quelle que soit la dérivation (sauf qu'il peut toujours être
-désactivé via le toggle de slot). C'est le **droit de veto/promotion** de
-l'utilisateur prévu par la vision. Posé/retiré via
+`lifecycle.force_active: [slot_key, …]` (`config/lifecycle.yaml`, persistant).
+Un bot listé est **forcé ACTIF** quelle que soit la dérivation (sauf qu'il peut
+toujours être désactivé via le toggle de slot). C'est le **droit de
+veto/promotion** de l'utilisateur prévu par la vision. Posé/retiré via
 `POST /api/bots/{slot_key}/force-active?enabled=true|false`.
+
+> **D6 / S11.** La clé s'appelait `manual_active` et portait **15 slots** dans
+> la config livrée ; elle est vide par défaut et l'ancien nom n'est plus lu que
+> par rétro-compatibilité (WARNING de dépréciation).
+>
+> ⚠ **Portée réelle du forçage** — plus large que la seule promotion :
+> `_propose` retourne `ACTIF` **avant** toute autre règle, donc un slot forcé
+> échappe aussi aux deux règles de RETRAIT (budget effondré sous
+> `plancher_budget_pct`, live qui contredit la simulation en perdant). Un bot
+> forcé perdant n'est jamais retiré et n'entre jamais dans la file de
+> ré-optimisation. Verrouillé par
+> `tests/test_phase2_lifecycle_alloc.py::test_force_active_also_blocks_the_retrait`.
+>
+> ⚠ **Ce que le forçage ne fait PAS** : il ne fait pas trader un bot. La
+> sélection des bots qui tournent vient du classement OOS
+> (`optimizer_results` + `MIN_VIABLE_SCORE` + `trading.top_strategies_per_tf`,
+> cf. `get_active_strategies_per_tf`). Le forçage agit sur l'**état** affiché
+> et sur les transitions, pas sur la sélection.
 
 ## 3. Machine à états (`_propose`)
 
 ```
-if manual_active:                              return ACTIF
+if force_active:                               return ACTIF   # court-circuite TOUT, retrait compris
 if live_trades ≥ 1 and budget < plancher:      return RETIRE
 if in_band is False and ret < 0
                      and live_trades ≥ eval_min: return RETIRE
@@ -134,11 +152,11 @@ if live_trades ≥ fidelity_min_fills
 | Fichier | Changement |
 |---|---|
 | `app/core/oos_tracker.py` | `_edge_contract()` : bootstrap de la moyenne sur **`n_sim`** trades → `edge = {available, n, expectancy_pct, ci_low_pct, ci_high_pct, worst_trade_pct}` ajouté à l'enregistrement. |
-| `app/live/slot_lifecycle.py` | nouveaux seuils config ; `_manual_active` + `set_manual_active()` ; `_propose()` réécrit (§3). |
+| `app/live/slot_lifecycle.py` | nouveaux seuils config ; `_force_active` + `set_force_active()` (alias déprécié `set_manual_active`) ; `_propose()` réécrit (§3). |
 | `app/live/live_trader.py` | `_lifecycle_thread` alimente `slots_data` avec `edge_ci_low`, `edge_n`, `worst_trade_pct`, `live_in_band`. |
-| `app/api/routes/portfolio.py` | `/api/bots` expose `edge`, `edge_significant`, `manual_active` (overlay des forçages) ; endpoint `force-active`. |
-| `config.yaml` | `lifecycle.edge_min_trades`, `edge_conf`, `max_worst_trade_pct`, `fidelity_min_fills`, `manual_active`. |
-| `app/web/templates/bots.html` | frise/explication basées edge+fidélité ; ligne « Edge backtest » ; bouton « Forcer Actif ». |
+| `app/api/routes/portfolio.py` | `/api/bots` expose `edge`, `edge_significant`, `force_active` (+ `manual_active` à l'identique le temps de la migration) ; endpoint `force-active`, qui écrit `force_active` et **supprime** `manual_active` du fichier — deux listes de forçage ne doivent pas cohabiter. |
+| `config/lifecycle.yaml` | `lifecycle.edge_min_trades`, `edge_conf`, `max_worst_trade_pct`, `fidelity_min_fills`, `force_active`. |
+| `frontend/src/app/bots/page.tsx` | frise/explication basées edge+fidélité ; ligne « Edge backtest » ; bouton « Forcer Actif » ; filtre via le helper `isForcedActive()`. |
 | `tests/test_phase2_lifecycle_alloc.py` | tests `_propose` mis à la nouvelle sémantique + cas edge/queue/bypass. |
 
 ## 5. Paramètres par défaut
@@ -149,7 +167,7 @@ lifecycle:
   edge_conf: 0.90             # niveau de confiance du cône (IC 90 %)
   max_worst_trade_pct: 50.0   # garde-fou de queue : pire trade simulé toléré
   fidelity_min_fills: 2       # fills live mini pour confirmer la fidélité
-  manual_active: []           # bots forcés ACTIF (droit de veto utilisateur)
+  force_active: []            # bots forcés ACTIF (droit de veto utilisateur)
 ```
 
 ## 6. Comportement attendu sur les cas limites
@@ -157,7 +175,7 @@ lifecycle:
 | Cas | Résultat |
 |---|---|
 | Stratégie fréquence normale, edge réelle (centaines de trades backtest) | **Actif en quelques fills** (plus d'attente de 10 trades live). |
-| Basse fréquence, 15 trades backtest, edge réelle | Reste **Candidat** (n < `edge_min_trades`) → **bypass manuel** si l'utilisateur est convaincu. |
+| Basse fréquence, 15 trades backtest, edge réelle | Reste **Candidat** (n < `edge_min_trades`) → **forçage manuel** si l'utilisateur est convaincu. |
 | 100 % winrate, 3 trades | **Candidat** (n trop petit + cône large). |
 | 100 % winrate, sans stop / queue énorme | **Candidat** bloqué par le garde-fou de queue, même si le cône est étroit. |
 | Edge prouvée mais live diverge fort (`in_band False`, perte, n≥eval_min) | **Retiré** → re-optimisation. |

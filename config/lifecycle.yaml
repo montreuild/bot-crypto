@@ -1,0 +1,92 @@
+# ============================================================================
+#  SÉLECTION & ALLOCATION — quels bots vivent, et avec quel capital
+# ============================================================================
+#
+#  Briques : app/live/slot_lifecycle.py (états), app/live/capital_allocator.py
+#            (budgets), app/engine/backtest.py + auto_optimizer.py (simulation
+#            et recherche de paramètres), app/engine/forward_test.py.
+#
+#  ⚠ Ce fichier ne décide PAS quels bots tradent. La sélection vient du
+#  classement OOS : optimizer_results (strategies/*.yaml) + seuil
+#  MIN_VIABLE_SCORE + trading.top_strategies_per_tf, dans
+#  app/engine/opt_persistence.py::get_active_strategies_per_tf. Le cycle de vie
+#  décrit ci-dessous pilote l'ÉTAT d'un bot (candidat/essai/actif/retiré), son
+#  budget et sa mise en file de ré-optimisation.
+#
+backtest:
+  spread_pct: 0.0005
+  latency_ms: 50
+  partial_fill_pct: 0.95
+  monte_carlo_runs: 200
+  walk_forward_folds: 5
+
+optimizer:
+  enabled: false
+  method: bayesian
+  n_trials: 40
+  out_of_sample_ratio: 0.35
+
+forward_test:
+  enabled: true
+  interval_h: 24
+  lookback_days: 45
+  edge_lookback_days: 365
+  symbol: BTC/USDC
+  initial_delay_s: 300
+
+capital_allocator:
+  mode: performance
+  max_slot_pct: 0.5
+  per_bot_sizing: false
+  reserve_pct: 0.1
+  min_notional_usdc: 10.0
+  max_budget_step: 0.25
+  active_floor: 2
+  continuous_allocation: false
+  min_trades_for_rebalance: 3
+  rebalance_interval: daily
+  max_symbol_exposure_pct: 0.25
+  max_pyramiding: 2
+  disabled_slots: []
+  slot_budgets:
+    trend_rider::1h::BTC/USDC: 0.5
+
+lifecycle:
+  enabled: true
+  interval_h: 1
+  initial_delay_s: 600
+  plancher_budget_pct: 0.02
+  trial_min_trades: 3
+  active_min_trades: 10
+  eval_min_trades: 10
+  edge_min_trades: 15
+  edge_conf: 0.85
+  max_worst_trade_pct: 50.0
+  # BT-06 : seuil de promotion ACTIF aligné sur MIN_SIGNIFICANT_TRADES
+  # (app/core/stats_thresholds.py). Ancienne valeur : 2 (bruit statistique).
+  fidelity_min_fills: 10
+  # ── D6 : lifecycle automatique ────────────────────────────────────────────
+  # Les 15 slots qui étaient forcés ACTIF ici sont retirés : la machinerie
+  # candidat → essai → actif → retiré décide seule (promotion par edge
+  # significative + fidélité live, cf. docs/CONCEPTION_PROMOTION_PAR_EDGE.md).
+  #
+  # Ce que le forçage court-circuitait, et qui reprend donc effet :
+  #   - la promotion par edge (edge_min_trades, edge_conf, max_worst_trade_pct) ;
+  #   - le RETRAIT sur budget effondré ou live qui contredit la simulation en
+  #     perdant — un slot forcé n'était jamais retiré, même perdant ;
+  #   - la file de ré-optimisation des bots retirés.
+  #
+  # À NOTER : cette liste ne décidait PAS quels bots tradent. La sélection des
+  # bots actifs vient du classement OOS (`optimizer_results` + seuil
+  # MIN_VIABLE_SCORE + trading.top_strategies_per_tf) — cf.
+  # app/engine/opt_persistence.py::get_active_strategies_per_tf. Ce que la liste
+  # pilotait, c'est l'ÉTAT affiché et les transitions de cycle de vie.
+  #
+  # Forçage ponctuel (tests/debug) : ajouter la clé 3-parties du slot, ex.
+  #   force_active: [tvr_trend::1h::BTC/USDC]
+  # ou passer par le bouton « forcer actif » de /bots (persisté ici).
+  # L'ancien nom `manual_active` reste lu, mais est déprécié.
+  force_active: []
+  min_active_bots: 2
+  max_demotions_per_day: 2
+  auto_reopt: false

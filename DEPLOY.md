@@ -187,10 +187,12 @@ sudo systemctl enable crypto-bot
 
 ### 4.2 Configurer les notifications Telegram
 
-Avant de démarrer le service, configurer les notifications dans `config.yaml` :
+Avant de démarrer le service, configurer les notifications dans
+`config/ops.yaml` (la config est découpée par responsabilité depuis S11 ;
+`config.yaml` ne porte que le sommaire `include:`) :
 
 ```bash
-nano /opt/crypto_bot/config.yaml
+nano /opt/crypto_bot/config/ops.yaml
 ```
 
 Remplir la section `notifications` :
@@ -310,7 +312,9 @@ Login : botuser / votre_mot_de_passe
 
 ## 6. Configuration du bot
 
-Éditer `/opt/crypto_bot/config.yaml` :
+Éditer `/opt/crypto_bot/config/venues.yaml` (exchange et venues) puis
+`config/risk.yaml` (capital, risque) — cf. le tableau des fichiers dans le
+README :
 
 ```yaml
 exchange:
@@ -485,8 +489,10 @@ curl http://localhost:8000/api/optimize/status
 
 `deploy/backup.sh` sauvegarde en une seule exécution `trades.db` (via
 `sqlite3.backup()`, cohérent même sous écriture WAL — un `cp` brut peut
-manquer les pages encore dans `trades.db-wal`), `config.yaml` et
-`strategies/*.yaml`, avec rétention automatique (7 jours par défaut).
+manquer les pages encore dans `trades.db-wal`), `config.yaml` **et tout
+`config/`** (archive unique — sauvegarder le seul `config.yaml` ne ramènerait
+que le sommaire `include:`), et `strategies/*.yaml`, avec rétention
+automatique (7 jours par défaut).
 Remplace les anciens one-liners cron ad hoc de cette section.
 
 ```bash
@@ -552,14 +558,16 @@ journalctl -u crypto-bot --since "7 days ago" | grep "Started\|Failed"
 sudo systemctl stop crypto-bot
 
 # Sauvegarder la config et la BDD
-cp /opt/crypto_bot/config.yaml /tmp/config_backup.yaml
+# ⚠ `config/` autant que `config.yaml` : depuis S11 le fichier racine n'est
+#   qu'un sommaire, tous les réglages vivent dans config/.
+tar -czf /tmp/config_backup.tar.gz -C /opt/crypto_bot config.yaml config
 cp /opt/crypto_bot/trades.db   /tmp/trades_backup.db
 
 # Déployer la nouvelle version
 # (répéter les étapes 3.1 et 3.2)
 
 # Restaurer la config
-cp /tmp/config_backup.yaml /opt/crypto_bot/config.yaml
+tar -xzf /tmp/config_backup.tar.gz -C /opt/crypto_bot
 
 # Mettre à jour les dépendances dans le venv existant
 source /opt/crypto_bot/.venv/bin/activate

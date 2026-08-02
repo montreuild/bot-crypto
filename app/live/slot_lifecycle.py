@@ -86,55 +86,72 @@ class SlotLifecycleManager:
         # significativité partagé (10) et non plus 2 (indiscernable du bruit).
         self._fidelity_min_fills = int(lc.get("fidelity_min_fills",
                                               MIN_SIGNIFICANT_TRADES))
-        # Bypass manuel : bots forcés ACTIF (droit de veto utilisateur).
-        # S4-06 / D6 (audit V2) : `manual_active` reste possible en override
-        # pour tests/debug/force, mais le DÉFAUT doit être auto (liste vide)
-        # — sinon le lifecycle est court-circuité et la machinerie
-        # candidat/essai/actif/retiré ne sert à rien. L'utilisateur qui
-        # remplit cette liste doit en avoir conscience.
-        self._manual_active = set(lc.get("manual_active", []) or [])
-        if self._manual_active:
+        # Forçage manuel : bots forcés ACTIF (droit de veto utilisateur).
+        #
+        # D6 (plan directeur) — la clé s'appelle `lifecycle.force_active` et le
+        # défaut est la LISTE VIDE : la machinerie candidat/essai/actif/retiré
+        # décide seule. `manual_active` reste lue en rétro-compat (configs
+        # existantes) mais est dépréciée : son nom laissait croire à un réglage
+        # de routine alors que c'est un court-circuit du cycle de vie.
+        #
+        # Ce que le forçage court-circuite réellement, au-delà de la promotion :
+        # un slot forcé n'est JAMAIS retiré, même quand son budget s'effondre ou
+        # que le live contredit la simulation en perdant — et il n'entre donc
+        # jamais dans la file de ré-optimisation.
+        forced = lc.get("force_active")
+        legacy_key_used = False
+        if forced is None:
+            forced = lc.get("manual_active")
+            legacy_key_used = forced is not None
+        self._force_active = set(forced or [])
+        if legacy_key_used and self._force_active:
             logger.warning(
-                f"[Lifecycle] {len(self._manual_active)} slot(s) forcés ACTIF via "
-                f"lifecycle.manual_active — le lifecycle AUTOMATIQUE est "
-                f"COURT-CIRCUITÉ pour ces slots. C'est un override assumé "
-                f"(tests/debug/force) : si c'est un oubli, videz "
-                f"`manual_active: []` dans config.yaml pour activer le "
-                f"lifecycle auto (recommandé en production)."
+                "[Lifecycle] `lifecycle.manual_active` est DÉPRÉCIÉE (D6) — "
+                "renommez-la `lifecycle.force_active`. Lue telle quelle pour "
+                "cette exécution."
+            )
+        if self._force_active:
+            logger.warning(
+                f"[Lifecycle] {len(self._force_active)} slot(s) forcés ACTIF via "
+                f"lifecycle.force_active — pour ces slots le lifecycle "
+                f"automatique est COURT-CIRCUITÉ : ni promotion par edge, ni "
+                f"retrait sur budget effondré ou live perdant, ni "
+                f"ré-optimisation. Override assumé (tests/debug) : en "
+                f"production, laissez `force_active: []`."
             )
         # Compatibilité OPS-01 : clés héritées à 2 parties (sans symbole),
         # appliquées par préfixe à tous les slots concernés (cf. _lookup_legacy).
-        legacy_manual = _legacy_keys(self._manual_active)
-        if legacy_manual:
+        legacy_forced = _legacy_keys(self._force_active)
+        if legacy_forced:
             logger.info(
-                "[Lifecycle] Clés manual_active héritées 2-parties détectées "
-                f"(appliquées par préfixe à tous les symboles) : {legacy_manual}"
+                "[Lifecycle] Clés force_active héritées 2-parties détectées "
+                f"(appliquées par préfixe à tous les symboles) : {legacy_forced}"
             )
-        # S4-06 : cohérence lifecycle ↔ budgets. Si `manual_active` liste
+        # S4-06 : cohérence lifecycle ↔ budgets. Si `force_active` liste
         # des slots qui ne sont PAS dans `slot_budgets`, c'est une
         # incohérence de config — on logge un warning pour que l'utilisateur
         # corrige (sinon le slot est actif sans budget explicite → budget
         # égal par défaut, ce qui peut surprendre).
         alloc_cfg = (cfg or {}).get("capital_allocator", {}) or {}
         self._custom_budgets: dict = dict(alloc_cfg.get("slot_budgets") or {})
-        if self._manual_active and self._custom_budgets:
+        if self._force_active and self._custom_budgets:
             budget_keys = set(self._custom_budgets.keys())
-            manual_keys = set(self._manual_active)
+            manual_keys = set(self._force_active)
             missing_in_budgets = manual_keys - budget_keys
             if missing_in_budgets:
                 logger.warning(
                     f"[Lifecycle] {len(missing_in_budgets)} slot(s) dans "
-                    f"manual_active SANS budget explicite dans "
+                    f"force_active SANS budget explicite dans "
                     f"capital_allocator.slot_budgets : {sorted(missing_in_budgets)}. "
                     f"Ils seront actifs avec un budget par défaut (égal), ce qui "
                     f"peut surprendre. Ajoutez-les à `slot_budgets` ou retirez-"
-                    f"les de `manual_active`."
+                    f"les de `force_active`."
                 )
             extra_in_budgets = budget_keys - manual_keys
             if extra_in_budgets:
                 logger.info(
                     f"[Lifecycle] {len(extra_in_budgets)} slot(s) ont un "
-                    f"budget explicite MAIS NE SONT PAS dans manual_active : "
+                    f"budget explicite MAIS NE SONT PAS dans force_active : "
                     f"{sorted(extra_in_budgets)}. S'ils sont inactifs, le "
                     f"budget est inutilisé — vérifiez la cohérence."
                 )
@@ -168,8 +185,9 @@ class SlotLifecycleManager:
 
     # ── Dérivation de l'état proposé ─────────────────────────────────────────
     def _propose(self, d: dict) -> str:
-        # Bypass manuel : l'utilisateur force l'activation (droit de veto).
-        if d.get("manual_active"):
+        # Forçage manuel : l'utilisateur impose l'activation (droit de veto).
+        # `manual_active` accepté en entrée pour rétro-compat des appelants.
+        if d.get("force_active") or d.get("manual_active"):
             return LifecycleState.ACTIF
 
         budget = float(d.get("budget_pct", 0.0) or 0.0)
@@ -196,21 +214,29 @@ class SlotLifecycleManager:
             return LifecycleState.ACTIF
         return LifecycleState.ESSAI
 
-    # ── Bypass manuel ─────────────────────────────────────────────────────────
-    def set_manual_active(self, slot_key: str, enabled: bool) -> None:
+    # ── Forçage manuel ────────────────────────────────────────────────────────
+    def set_force_active(self, slot_key: str, enabled: bool) -> None:
         """Force (ou libère) l'activation manuelle d'un bot. La transition est
         appliquée au prochain ``evaluate`` ; la persistance config est gérée par
         l'appelant (route API)."""
         if enabled:
-            self._manual_active.add(slot_key)
+            self._force_active.add(slot_key)
         else:
-            self._manual_active.discard(slot_key)
+            self._force_active.discard(slot_key)
             # Cf. OPS-01 : si le forçage venait d'une clé héritée 2-parties,
             # la retirer aussi — sinon la désactivation resterait sans effet
             # (le repli par préfixe re-forcerait le slot au prochain evaluate).
-            legacy = _lookup_legacy(self._manual_active, slot_key)
+            legacy = _lookup_legacy(self._force_active, slot_key)
             if legacy is not None:
-                self._manual_active.discard(legacy)
+                self._force_active.discard(legacy)
+
+    #: Alias déprécié (D6) — conservé pour les appelants historiques.
+    set_manual_active = set_force_active
+
+    @property
+    def _manual_active(self) -> set:
+        """Alias déprécié (D6) de ``_force_active`` — lecture seule."""
+        return self._force_active
 
     # ── Évaluation lissée ────────────────────────────────────────────────────
     def evaluate(self, slots_data: Dict[str, dict]) -> dict:
@@ -228,7 +254,8 @@ class SlotLifecycleManager:
             return sum(1 for s in states.values() if s != LifecycleState.RETIRE)
 
         proposed = {
-            k: self._propose({**d, "manual_active": (_lookup_legacy(self._manual_active, k) is not None)
+            k: self._propose({**d, "force_active": (_lookup_legacy(self._force_active, k) is not None)
+                              or bool(d.get("force_active"))
                               or bool(d.get("manual_active"))})
             for k, d in slots_data.items()
         }

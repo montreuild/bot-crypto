@@ -253,6 +253,152 @@ def _bootstrap_strategy_files(strategies_dir: str) -> None:
             logger.warning(f"[Config] Bootstrap strategies/{module_name}.yaml KO : {exc}")
 
 
+def _load_and_merge(path: str) -> dict:
+    """Charge ``path`` et les fichiers de son ``include:``, section par section.
+
+    Découpage par responsabilité (S11) : ``config.yaml`` ne garde que le
+    sommaire, chaque fichier de ``config/`` porte une brique (venues, risque,
+    données, cycle de vie, exploitation). Une config monolithique reste
+    valide — sans ``include:``, ce chargeur se comporte comme l'ancien.
+
+    Règle unique et stricte : **une section vit dans un seul fichier**. Le
+    contraire ferait dépendre le résultat de l'ordre de chargement, exactement
+    le genre d'ambiguïté silencieuse que ce chantier supprime.
+    """
+    merged: dict = {}
+    owner: dict = {}
+    base = os.path.dirname(os.path.abspath(path))
+
+    def _read(p: str) -> dict:
+        with open(p, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        return data if isinstance(data, dict) else {}
+
+    root = _read(path)
+    includes = root.pop("include", None) or []
+    files = [(path, root)]
+    for inc in includes:
+        p = inc if os.path.isabs(inc) else os.path.join(base, inc)
+        if not os.path.exists(p):
+            raise FileNotFoundError(
+                f"config.yaml déclare `include: {inc}` mais le fichier est "
+                f"introuvable ({p}). Une brique de configuration manquante "
+                f"ferait tourner le bot sur des valeurs par défaut."
+            )
+        files.append((p, _read(p)))
+
+    for fpath, data in files:
+        for section, value in data.items():
+            if section in owner:
+                raise ValueError(
+                    f"Section '{section}' déclarée à la fois dans "
+                    f"{os.path.basename(owner[section])} et "
+                    f"{os.path.basename(fpath)} : une section doit vivre dans "
+                    f"un seul fichier."
+                )
+            owner[section] = fpath
+            merged[section] = value
+
+    if includes:
+        logger.debug(f"[Config] {len(files)} fichiers fusionnés : "
+                     f"{', '.join(os.path.basename(f) for f, _ in files)}")
+    return merged
+
+
+def active_timeframes(cfg: dict) -> list:
+    """Timeframes réellement scannés par le bot — ``trading.timeframes``.
+
+    Source unique : c'est cette liste que lit ``get_active_strategies_per_tf``.
+    ``trading.timeframe`` (singulier) n'est qu'un repli mono-TF.
+    """
+    t = cfg.get("trading", {}) or {}
+    tfs = t.get("timeframes")
+    if tfs:
+        return list(tfs)
+    return [t.get("timeframe", "1h")]
+
+
+def _validate_venues(cfg: dict) -> None:
+    """Cohérence du modèle de venue (S11) — la venue est la source de vérité.
+
+    Trois garde-fous, du plus dur au plus souple :
+
+    1. **``venues.default`` obligatoire** dès que ``venues.defs`` est renseigné.
+       Sans lui, la résolution retombait sur ``default_venue_from_cfg``, qui
+       fabriquait une venue à partir des globales ``exchange.margin`` /
+       ``trading.margin_mode`` / ``trading.max_leverage`` — parfois **homonyme**
+       d'une entrée de ``defs`` mais avec d'autres valeurs (levier notamment).
+       Deux sources de vérité concurrentes et silencieuses : refusé au
+       démarrage.
+    2. **Toute venue référencée doit exister** dans ``defs`` (``assign`` et
+       ``default``) — une faute de frappe ne doit pas router un bot vers les
+       globales sans que personne ne le voie.
+    3. **Les globales margin doivent s'accorder** avec la venue par défaut,
+       sinon WARNING : elles ne pilotent plus rien dès que ``venues.default``
+       existe, et les laisser mentir induit en erreur le prochain lecteur.
+    """
+    venues = cfg.get("venues") or {}
+    defs = venues.get("defs") or {}
+    default = venues.get("default")
+    assign = venues.get("assign") or {}
+
+    if defs and not default:
+        raise ValueError(
+            "venues.defs est renseigné mais venues.default est vide : la venue "
+            "des symboles non assignés serait dérivée des globales "
+            "(exchange.margin / trading.margin_mode / trading.max_leverage), "
+            "en concurrence silencieuse avec venues.defs. Déclarez "
+            f"venues.default parmi : {sorted(defs)}."
+        )
+
+    unknown = sorted({v for v in ([default] if default else []) + list(assign.values())
+                      if v and v not in defs})
+    if unknown:
+        raise ValueError(
+            f"venues : référence(s) inconnue(s) {unknown} — absentes de "
+            f"venues.defs ({sorted(defs)}). Corrigez venues.default/assign."
+        )
+
+    if not default:
+        return
+
+    d = defs.get(default) or {}
+    market = d.get("market_type", "spot")
+    borrows = market in ("margin", "perp")
+    t = cfg["trading"]
+    globals_margin = bool(cfg.get("exchange", {}).get("margin") or t.get("margin_mode"))
+
+    if globals_margin != borrows:
+        logger.warning(
+            "⚠ [Config] les globales margin (exchange.margin=%s, "
+            "trading.margin_mode=%s) contredisent la venue par défaut '%s' "
+            "(market_type=%s). Depuis S11 ce sont les venues qui font foi — "
+            "alignez les globales pour ne pas induire en erreur.",
+            cfg.get("exchange", {}).get("margin"), t.get("margin_mode"),
+            default, market,
+        )
+
+    lev = float(d.get("max_leverage", 1) or 1)
+    if borrows and lev <= 1:
+        logger.warning(
+            f"⚠ [Config] venue par défaut '{default}' en {market} avec "
+            f"max_leverage={lev:g} : l'emprunt est facturé mais le levier ne "
+            f"sera jamais utilisé. Pour du spot pur, déclarez "
+            f"market_type: spot ; pour du margin réel, max_leverage > 1."
+        )
+
+    if borrows and t.get("paper_mode"):
+        logger.warning(
+            f"⚠ [Config] paper_mode + venue par défaut '{default}' en {market} : "
+            f"les coûts d'emprunt sont simulés au taux "
+            f"trading.borrow_rate_daily={t.get('borrow_rate_daily')} mais aucun "
+            f"emprunt réel n'a lieu — les PnL paper et live divergeront. Pour un "
+            f"paper représentatif du comptant, basculez venues.default sur une "
+            f"venue market_type: spot (mettre exchange.margin: false ne suffit "
+            f"PAS : le taux d'emprunt est porté par la venue)."
+        )
+
+
 def load_config(path: str = "config.yaml") -> dict:
     # Avant toute expansion `${VAR}` : sans ça, les valeurs du `.env` généré
     # par setup.sh ne sont jamais visibles (cf. `_ensure_dotenv`).
@@ -261,10 +407,9 @@ def load_config(path: str = "config.yaml") -> dict:
     if not os.path.exists(path):
         raise FileNotFoundError(f"Fichier de configuration introuvable : {path}")
 
-    with open(path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+    cfg = _load_and_merge(path)
 
-    if not isinstance(cfg, dict):
+    if not isinstance(cfg, dict) or not cfg:
         raise ValueError("Le fichier config.yaml est vide ou invalide.")
 
     # S2-03 : alias générique min_volume_quote_24h — propage une valeur
@@ -372,23 +517,7 @@ def load_config(path: str = "config.yaml") -> dict:
             f"les appels authentifiés échoueront en live."
         )
 
-    # ── Cohérence margin / levier / paper (garde-fous production) ────────────
-    margin_on = bool(cfg.get("exchange", {}).get("margin")
-                     or cfg["trading"].get("margin_mode"))
-    if margin_on and float(cfg["trading"].get("max_leverage", 1)) <= 1:
-        logger.warning(
-            "⚠ [Config] exchange.margin actif mais trading.max_leverage <= 1 : "
-            "le levier ne sera jamais utilisé (l'emprunt margin reste actif — "
-            "tdMode margin sur OKX). Pour du spot "
-            "pur : margin: false ET margin_mode: null ; pour du margin réel : "
-            "max_leverage > 1."
-        )
-    if margin_on and cfg["trading"].get("paper_mode"):
-        logger.warning(
-            "⚠ [Config] paper_mode + margin simultanés : les coûts d'emprunt sont "
-            "simulés mais aucun emprunt réel n'a lieu — les PnL paper et live "
-            "divergeront. Désactivez margin pour un paper trading représentatif."
-        )
+    _validate_venues(cfg)
 
     # ── Sécurité API web (OPS-02 : BLOQUANT) ─────────────────────────────────
     # Sans web.api_key, l'auth retombe sur un filtre « localhost only » basé
@@ -431,28 +560,30 @@ def load_config(path: str = "config.yaml") -> dict:
                 "dans notifications: avant de trader en réel."
             )
 
-    # Compatibilité multi-TF
+    # ── Compatibilité multi-TF ───────────────────────────────────────────────
+    # Schéma HÉRITÉ : une clé racine `timeframes:` mappant chaque TF vers sa
+    # liste de stratégies. Encore acceptée en lecture, plus jamais fabriquée :
+    # elle l'était systématiquement en repli, à partir du SEUL
+    # `trading.timeframe`, alors que le bot tourne sur `trading.timeframes`
+    # (5 TF dans la config livrée). Personne ne la lisait sauf le log de
+    # démarrage, qui annonçait donc « TF=['1h'] » pendant que le bot scannait
+    # 15m/30m/1h/4h/1d.
     _VALID_TIMEFRAMES = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
-    if "timeframes" in cfg and cfg["timeframes"]:
+    if cfg.get("timeframes"):
         all_strats = []
         for tf_cfg in cfg["timeframes"].values():
-            all_strats.extend(tf_cfg.get("strategies", []))
+            all_strats.extend((tf_cfg or {}).get("strategies", []))
         if "strategies" not in cfg:
             cfg["strategies"] = {}
         cfg["strategies"].setdefault("enabled", list(dict.fromkeys(all_strats)))
         cfg["trading"].setdefault("timeframe", next(iter(cfg["timeframes"])))
-    else:
-        tf = cfg["trading"].get("timeframe", "1h")
-        if tf not in _VALID_TIMEFRAMES:
-            logger.warning(f"[Config] Timeframe '{tf}' non standard — valides : {sorted(_VALID_TIMEFRAMES)}")
-        strats = cfg.get("strategies", {}).get("enabled", [])
-        cfg.setdefault("timeframes", {tf: {
-            "strategies": strats,
-            "limit": 1500,
-            "scan_interval": cfg["trading"].get("scan_interval", 60),
-        }})
 
-    tfs = list(cfg.get("timeframes", {}).keys())
+    tfs = active_timeframes(cfg)
+    for tf in tfs:
+        if tf not in _VALID_TIMEFRAMES:
+            logger.warning(f"[Config] Timeframe '{tf}' non standard — "
+                           f"valides : {sorted(_VALID_TIMEFRAMES)}")
+
     logger.info(f"Config chargée : {path} | Capital={cfg['trading']['capital']} "
                 f"| TF={tfs} | Paper={cfg['trading']['paper_mode']}")
     return cfg

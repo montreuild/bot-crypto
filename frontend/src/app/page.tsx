@@ -4,5 +4,5 @@ import { redirect } from 'next/navigation';
 // directement dessus plutôt que sur /dashboard, pour éviter le saut
 // supplémentaire par le 308.
 export default function Home() {
-  redirect('/portfolio-v2');
+  redirect('/portfolio');
 }

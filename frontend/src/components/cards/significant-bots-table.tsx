@@ -5,8 +5,8 @@
  * (`GET /api/bots`, champ `edge_significant`).
  *
  * Lot Portefeuille : cette table vivait dans `/portfolio` et était la seconde
- * des deux raisons pour lesquelles sa 308 vers `/portfolio-v2` restait
- * bloquée. `/bots-v2` liste bien tous les bots, mais ne filtre pas sur
+ * des deux raisons pour lesquelles sa 308 vers `/portfolio` restait
+ * bloquée. `/bots` liste bien tous les bots, mais ne filtre pas sur
  * l'edge : le portefeuille est le seul endroit qui répond à « lesquels
  * gagnent vraiment de l'argent, hors bruit ? ».
  */

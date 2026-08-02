@@ -109,7 +109,28 @@ décommissionnés et seront supprimés à la fin du Sprint 6.
 
 ## 🔧 Configuration
 
-Les secrets ne vivent **pas** dans `config.yaml` : le fichier référence des
+La configuration est **découpée par responsabilité** : `config.yaml` ne porte
+que le sommaire (`include:`), et chaque fichier de `config/` correspond à une
+brique du bot — c'est ce qui permet de savoir où écrire sans relire 340 lignes.
+
+| Fichier | Contenu | Brique |
+|---|---|---|
+| `config/venues.yaml` | où et comment on exécute : spot/margin OKX, actions Euronext, coûts | `app/core/bot_identity.py` |
+| `config/risk.yaml` | combien engager, quand refuser, où mettre le stop | `app/core/risk_gate.py` |
+| `config/data.yaml` | ce que le bot regarde : symboles, univers, fournisseurs | `app/engine/scanner.py` |
+| `config/lifecycle.yaml` | quels bots vivent, avec quel capital | `app/live/slot_lifecycle.py` |
+| `config/ops.yaml` | API web, logs, base, alertes | `app/api/` |
+
+Les **paramètres de stratégies** ne sont dans aucun de ces fichiers : chaque
+stratégie porte les siens dans `strategies/<nom>.yaml`, avec ses
+`optimizer_results`.
+
+Deux règles : une section YAML vit dans **un seul** fichier (la déclarer deux
+fois fait échouer le chargement, plutôt que de laisser l'ordre de lecture
+trancher en silence), et une config monolithique reste valide — sans
+`include:`, tout peut revenir dans `config.yaml`.
+
+Les secrets ne vivent **pas** dans les fichiers de config : ils référencent des
 variables d'environnement (`${VAR}`), résolues au chargement. Le plus simple
 est de laisser `scripts/setup.sh` créer un fichier **`.env`** (jamais
 versionné, cf. `.gitignore`) avec une `WEB_API_KEY` générée, puis d'y ajouter
@@ -124,22 +145,36 @@ OKX_API_PASSWORD=...                     # passphrase OKX — 3e credential, liv
 ```
 
 ```yaml
-# config.yaml (extraits)
+# config/venues.yaml (extraits)
 exchange:
   name: okx
   api_key: ${OKX_API_KEY}          # résolu depuis l'environnement / .env
   api_secret: ${OKX_API_SECRET}
   api_password: ${OKX_API_PASSWORD}
 
+venues:
+  default: margin-isolated   # ← ce qui décide spot vs margin (OBLIGATOIRE)
+  defs:
+    spot:            {market_type: spot,   max_leverage: 1, allow_short: false}
+    margin-isolated: {market_type: margin, margin_mode: isolated, max_leverage: 1}
+
+# config/risk.yaml (extraits)
 trading:
   capital: 1000         # Capital initial en USDC
   risk_per_trade: 0.01  # 1% du capital par trade
   timeframe: "1h"       # Timeframe principal
   paper_mode: true      # ← false = LIVE RÉEL ⚠️ DANGEREUX
 
+# config/ops.yaml (extraits)
 web:
   api_key: ${WEB_API_KEY}
 ```
+
+> 🏛 **Spot ou margin, c'est la venue qui décide** — pas `exchange.margin`.
+> `venues.default` est obligatoire dès que `venues.defs` existe, et le
+> démarrage est refusé si une venue référencée n'existe pas. Une venue `spot`
+> n'emprunte jamais : ni en crypto, ni sur les actions au comptant. Pour du
+> margin réel, `market_type: margin` **et** `max_leverage > 1`.
 
 > ⚠️ **En live (`paper_mode: false`), une variable `${...}` référencée mais
 > absente/vide bloque le démarrage** (erreur explicite plutôt que des
@@ -308,8 +343,8 @@ les options.
 
 | Type | Où | Modifiables par optimiseur ? |
 |------|-----|-----|
-| **Optimisés** | `config.yaml → strategy_params.<strategie>` | ✅ Oui |
-| **Globaux** | `config.yaml → trading` | ❌ Non (score_threshold, capital, risk_per_trade) |
+| **Optimisés** | `strategies/<strategie>.yaml → params` | ✅ Oui |
+| **Globaux** | `config/risk.yaml → trading` | ❌ Non (score_threshold, capital, risk_per_trade) |
 
 ---
 
@@ -342,7 +377,13 @@ les options.
 crypto_bot_v12/
 ├── cli.py                          ← Point d'entrée (CLI)
 ├── optimize_runner.py              ← Optimisation séquentielle CLI (anti-veille, verrou)
-├── config.yaml                      ← Configuration principale
+├── config.yaml                      ← Sommaire (`include:`)
+├── config/                          ← Configuration par responsabilité
+│   ├── venues.yaml                 ← Exécution : spot/margin, actions, coûts
+│   ├── risk.yaml                   ← Sizing, vetos, trailing
+│   ├── data.yaml                   ← Symboles, univers, fournisseurs
+│   ├── lifecycle.yaml              ← Cycle de vie, budgets, optimiseur
+│   └── ops.yaml                    ← Web, logs, base, notifications
 ├── requirements.txt                 ← Dépendances Python 3.12
 ├── README.md                        ← Ce fichier
 ├── ARCHITECTURE.md                  ← Documentation détaillée

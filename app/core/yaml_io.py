@@ -92,11 +92,95 @@ def dump_yaml(path: str, data) -> None:
 _config_yaml_lock = threading.Lock()
 
 
-def update_config_yaml(updates_fn, path: str = "config.yaml") -> None:
-    """Applique ``updates_fn(disk_cfg)`` et réécrit ``path`` (thread-safe).
+def config_files(path: str = "config.yaml") -> list:
+    """Fichiers composant la configuration : ``path`` puis ses ``include:``.
 
-    Round-trip (ruamel) : les commentaires du YAML sont préservés."""
+    Le découpage (S11) est déclaratif : ``config.yaml`` liste les fichiers de
+    ``config/`` qui portent chacun une responsabilité. Une config monolithique
+    (sans ``include:``) reste parfaitement valide — la liste vaut alors
+    ``[config.yaml]``.
+    """
+    root = load_yaml(path, default={})
+    files = [path]
+    base = os.path.dirname(os.path.abspath(path))
+    for inc in (root.get("include") or []):
+        p = inc if os.path.isabs(inc) else os.path.join(base, inc)
+        if os.path.exists(p):
+            files.append(p)
+        else:
+            logger.warning(f"[yaml_io] include introuvable, ignoré : {inc}")
+    return files
+
+
+def load_config_documents(path: str = "config.yaml") -> tuple:
+    """Charge tous les fichiers de config et retourne ``(docs, merged, owner)``.
+
+    - ``docs``   : ``{chemin: document}`` (CommentedMap si ruamel).
+    - ``merged`` : vue fusionnée section par section. Les valeurs sont les
+      **objets mêmes** des documents, pas des copies : muter
+      ``merged["lifecycle"]["force_active"]`` mute le document propriétaire, ce
+      qui préserve ses commentaires à la réécriture.
+    - ``owner``  : ``{section: chemin}`` — quel fichier porte quelle section.
+
+    Une section déclarée dans DEUX fichiers est une ambiguïté (laquelle gagne ?)
+    et lève : c'est la même règle que pour les venues, appliquée au découpage.
+    """
+    docs = {}
+    merged: dict = {}
+    owner: dict = {}
+    for f in config_files(path):
+        d = load_yaml(f, default={})
+        docs[f] = d
+        for section, value in d.items():
+            if section == "include":
+                continue
+            if section in owner:
+                raise ValueError(
+                    f"Section '{section}' déclarée à la fois dans "
+                    f"{os.path.basename(owner[section])} et "
+                    f"{os.path.basename(f)} : une section doit vivre dans un "
+                    f"seul fichier, sinon l'ordre de chargement décide "
+                    f"silencieusement laquelle s'applique."
+                )
+            owner[section] = f
+            merged[section] = value
+    return docs, merged, owner
+
+
+def update_config_yaml(updates_fn, path: str = "config.yaml") -> None:
+    """Applique ``updates_fn(cfg)`` et réécrit le ou les fichiers touchés.
+
+    ``cfg`` est la vue fusionnée (cf. :func:`load_config_documents`) : un
+    appelant écrit ``cfg["lifecycle"]["force_active"] = [...]`` sans savoir dans
+    quel fichier la section vit. Seuls les fichiers effectivement modifiés sont
+    réécrits ; une section nouvelle atterrit dans le fichier racine.
+
+    Round-trip (ruamel) : les commentaires des parties non modifiées sont
+    préservés.
+    """
+    import copy
+
     with _config_yaml_lock:
-        disk_cfg = load_yaml(path, default={})
-        updates_fn(disk_cfg)
-        dump_yaml(path, disk_cfg)
+        docs, merged, owner = load_config_documents(path)
+        before = copy.deepcopy(dict(merged))
+        updates_fn(merged)
+
+        dirty = set()
+        for section, value in merged.items():
+            if before.get(section) == value and section in owner:
+                continue
+            target = owner.get(section, path)
+            # Réaffectation only si l'objet a changé d'identité : sinon la
+            # mutation en place a déjà atteint le document propriétaire (et ses
+            # commentaires sont intacts).
+            if docs[target].get(section) is not value:
+                docs[target][section] = value
+            dirty.add(target)
+        # Sections supprimées par updates_fn (ex. `manual_active` de D6).
+        for section in before:
+            if section not in merged and section in owner:
+                docs[owner[section]].pop(section, None)
+                dirty.add(owner[section])
+
+        for f in sorted(dirty):
+            dump_yaml(f, docs[f])

@@ -4,11 +4,11 @@ import { test, expect } from '@playwright/test';
 // figurent plus ici (les cibles sont couvertes ci-dessous), mais leur
 // redirection est vérifiée par le bloc « Redirections S10 » en fin de fichier.
 const PAGES = [
-  { path: '/portfolio-v2', title: 'Portefeuille' },
-  { path: '/bots-v2', title: 'Mes Bots' },
+  { path: '/portfolio', title: 'Portefeuille' },
+  { path: '/bots', title: 'Mes Bots' },
   { path: '/lab', title: 'Laboratoire' },
   { path: '/market', title: 'Marché' },
-  { path: '/settings-v2', title: 'Réglages' },
+  { path: '/settings', title: 'Réglages' },
   { path: '/trades', title: 'Trades' },
   { path: '/audit', title: 'Audit' },
   { path: '/audit-log', title: 'Journal' },
@@ -28,12 +28,12 @@ test.describe('Page loading', () => {
 });
 
 // S6-09 : la racine `/` remplace l'ancienne route Jinja2 `GET /` (dashboard.html).
-// S10 : elle pointe désormais sur /portfolio-v2, la page méta d'entrée.
+// S11 : elle pointe sur /portfolio, la page méta d'entrée (suffixe `-v2` retiré).
 test.describe('Racine', () => {
-  test('/ redirige vers /portfolio-v2', async ({ page }) => {
+  test('/ redirige vers /portfolio', async ({ page }) => {
     await page.goto('/');
-    await page.waitForURL('**/portfolio-v2', { timeout: 10000 });
-    await expect(page).toHaveURL(/\/portfolio-v2/);
+    await page.waitForURL('**/portfolio', { timeout: 10000 });
+    await expect(page).toHaveURL(/\/portfolio$/);
   });
 });
 
@@ -42,8 +42,12 @@ test.describe('Racine', () => {
 // §Bascule S10. Le lot Marché ajoute les quatre routes de /market.
 test.describe('Redirections S10', () => {
   const REDIRECTS = [
-    { from: '/dashboard', to: /\/portfolio-v2/ },
-    { from: '/bots', to: /\/bots-v2/ },
+    { from: '/dashboard', to: /\/portfolio$/ },
+    // S11 — anciennes URLs `-v2` : elles ont vécu en prod, elles survivent en
+    // redirection vers la page canonique.
+    { from: '/portfolio-v2', to: /\/portfolio$/ },
+    { from: '/bots-v2', to: /\/bots$/ },
+    { from: '/settings-v2', to: /\/settings$/ },
     { from: '/backtest', to: /\/lab\?tab=backtest/ },
     // Lot Marché
     { from: '/scanner', to: /\/market\?tab=scanner/ },
@@ -56,10 +60,7 @@ test.describe('Redirections S10', () => {
     { from: '/replay', to: /\/lab\?tab=replay/ },
     { from: '/compare', to: /\/lab\?tab=compare/ },
     // Lot Réglages
-    { from: '/config', to: /\/settings-v2\?tab=capital/ },
-    { from: '/settings', to: /\/settings-v2\?tab=capital/ },
-    // Lot Portefeuille — dernière des 14 redirections du plan.
-    { from: '/portfolio', to: /\/portfolio-v2/ },
+    { from: '/config', to: /\/settings\?tab=capital/ },
   ];
 
   for (const r of REDIRECTS) {
@@ -100,7 +101,7 @@ test.describe('Onglets fusionnés', () => {
     { page: 'lab', tab: 'compare', heading: 'Comparatif Stratégies' },
     // Lot Réglages — l'onglet Capital porte l'éditeur de params par
     // stratégie, seule fonctionnalité que /config avait en propre.
-    { page: 'settings-v2', tab: 'capital', heading: 'Stratégies' },
+    { page: 'settings', tab: 'capital', heading: 'Stratégies' },
   ];
 
   for (const t of TABS) {
@@ -115,14 +116,14 @@ test.describe('Onglets fusionnés', () => {
 
 test.describe('Portefeuille', () => {
   test('displays KPIs', async ({ page }) => {
-    await page.goto('/portfolio-v2');
+    await page.goto('/portfolio');
     await page.waitForTimeout(3000);
     const kpi = page.locator('text=Capital').or(page.locator('text=PnL')).or(page.locator('text=Win Rate'));
     await expect(kpi.first()).toBeVisible({ timeout: 10000 });
   });
 
   test('has equity curve chart', async ({ page }) => {
-    await page.goto('/portfolio-v2');
+    await page.goto('/portfolio');
     await page.waitForTimeout(3000);
     const chart = page.locator('.recharts-surface').or(page.locator('svg'));
     await expect(chart.first()).toBeVisible({ timeout: 10000 });
@@ -131,22 +132,22 @@ test.describe('Portefeuille', () => {
 
 test.describe('Navigation', () => {
   test('sidebar has nav groups', async ({ page }) => {
-    await page.goto('/portfolio-v2');
+    await page.goto('/portfolio');
     await expect(page.locator('text=Trading').first()).toBeVisible();
     await expect(page.locator('text=Recherche').first()).toBeVisible();
   });
 
   test('can navigate to Bots', async ({ page }) => {
-    await page.goto('/portfolio-v2');
-    await page.click('a[href="/bots-v2"]');
-    await page.waitForURL('**/bots-v2');
-    await expect(page).toHaveURL(/\/bots-v2/);
+    await page.goto('/portfolio');
+    await page.click('a[href="/bots"]');
+    await page.waitForURL('**/bots');
+    await expect(page).toHaveURL(/\/bots/);
   });
 });
 
 test.describe('Search (Cmd+K)', () => {
   test('opens with Cmd+K', async ({ page }) => {
-    await page.goto('/portfolio-v2');
+    await page.goto('/portfolio');
     await page.waitForTimeout(2000);
     // `Meta` = touche Windows sous Windows/Linux : le raccourci ne se
     // déclenchait jamais hors macOS. `ControlOrMeta` mappe sur la bonne touche.
@@ -156,7 +157,7 @@ test.describe('Search (Cmd+K)', () => {
   });
 
   test('can search and navigate', async ({ page }) => {
-    await page.goto('/portfolio-v2');
+    await page.goto('/portfolio');
     await page.waitForTimeout(2000);
     // `Meta` = touche Windows sous Windows/Linux : le raccourci ne se
     // déclenchait jamais hors macOS. `ControlOrMeta` mappe sur la bonne touche.
@@ -170,7 +171,7 @@ test.describe('Search (Cmd+K)', () => {
 
 test.describe('Theme', () => {
   test('can toggle theme', async ({ page }) => {
-    await page.goto('/portfolio-v2');
+    await page.goto('/portfolio');
     await page.waitForTimeout(2000);
     const themeBtn = page.locator('button[title*="clair"], button[title*="sombre"]');
     await expect(themeBtn).toBeVisible();
@@ -205,7 +206,7 @@ test.describe('Backtest', () => {
 
 test.describe('WebSocket', () => {
   test('shows WS status in topbar', async ({ page }) => {
-    await page.goto('/portfolio-v2');
+    await page.goto('/portfolio');
     await page.waitForTimeout(3000);
     const wsIcon = page.locator('svg.lucide-wifi, svg.lucide-wifi-off');
     await expect(wsIcon).toBeVisible({ timeout: 10000 });

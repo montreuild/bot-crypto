@@ -72,7 +72,7 @@ const DEFAULT_TIMEOUT_MS = 15_000;
  * en cas d'écart on journalise et on renvoie la donnée brute, plutôt que de
  * faire échouer la requête. L'objectif est de transformer un crash de page en
  * avertissement traçable — c'est exactement le scénario qui a fait tomber
- * `/ml` et le drawer de `/bots-v2` (cf. `schemas.ts`).
+ * `/ml` et le drawer de `/bots` (cf. `schemas.ts`).
  */
 type ApiFetchOptions = RequestInit & {
   timeoutMs?: number;

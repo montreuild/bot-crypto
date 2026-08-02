@@ -23,6 +23,33 @@ def _trusted_proxies() -> set:
     return {p.strip() for p in raw.split(",") if p.strip()}
 
 
+def _normalize_ip(raw: str) -> str:
+    """Ramène une adresse IPv4-mappée-en-IPv6 à sa forme IPv4.
+
+    Sur une pile double, un appelant pourtant local se présente souvent comme
+    ``::ffff:127.0.0.1`` — c'est bien du loopback (``ipaddress.is_loopback``
+    vaut True), mais la comparaison littérale à ``127.0.0.1``/``::1`` le
+    manquait : le filtre « localhost only » refusait des requêtes locales avec
+    le message « requête non-locale ». Observé en dev : le proxy serveur de
+    Next.js appelle l'API sur 127.0.0.1 et se voyait répondre 403.
+
+    Normalisation seulement : l'allowlist et sa sémantique sont inchangées, ce
+    qui n'élargit l'accès à aucune adresse non-loopback.
+    """
+    if not raw:
+        return raw
+    try:
+        import ipaddress
+        # `ipv4_mapped` n'existe que sur IPv6Address — d'où le getattr plutôt
+        # qu'un accès direct, qui lèverait sur une IPv4 déjà normalisée.
+        mapped = getattr(ipaddress.ip_address(raw), "ipv4_mapped", None)
+        if mapped is not None:
+            return str(mapped)
+    except ValueError:
+        pass        # "localhost", "unknown"… : laissés tels quels
+    return raw
+
+
 def _extract_client_ip(request: Request) -> str:
     """IP cliente réelle, robuste au spoofing de ``X-Forwarded-For``.
 
@@ -32,12 +59,16 @@ def _extract_client_ip(request: Request) -> str:
     configurée (bypass d'auth). On n'honore donc le header **que** si la
     connexion provient directement d'un proxy explicitement déclaré de confiance
     (``TRUSTED_PROXIES``) ; sinon on utilise l'IP réelle du pair TCP.
+
+    Les deux chemins passent par :func:`_normalize_ip` : un proxy déclaré en
+    ``127.0.0.1`` doit être reconnu même quand la pile le présente en
+    ``::ffff:127.0.0.1``.
     """
-    peer = (getattr(request.client, "host", "") if request.client else "") or ""
+    peer = _normalize_ip((getattr(request.client, "host", "") if request.client else "") or "")
     if peer in _trusted_proxies():
         forwarded_for = request.headers.get("x-forwarded-for", "").strip()
         if forwarded_for:
-            real_ip = forwarded_for.split(",")[0].strip()
+            real_ip = _normalize_ip(forwarded_for.split(",")[0].strip())
             if real_ip:
                 return real_ip
     return peer or "unknown"

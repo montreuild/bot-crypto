@@ -1,342 +1,43 @@
-exchange:
-  name: okx
-  api_key: ${OKX_API_KEY}
-  api_secret: ${OKX_API_SECRET}
-  api_password: ${OKX_API_PASSWORD}   # passphrase API OKX — obligatoire en live
-  margin: true
-venues:
-  default:
-  # asset_class/quote_currency explicités (S2-02, généralisation multi-actifs) —
-  # valeurs identiques aux défauts implicites précédents, aucun changement de
-  # comportement.
-  #
-  # ── Actions SBF 120 en paper (G2) — ACTIVÉ ───────────────────────────────
-  # La venue `euronext-paper` ci-dessous est data-only (`can_execute: false`) :
-  # AUCUN ordre n'est transmis, le bot émet une notification de trade et suit
-  # la position comme en paper. Passer à l'exécution réelle est le chantier G3.
-  #
-  # Les instruments ne sont PAS listés un par un dans `assign` : chaque fichier
-  # `data/universe/*.yaml` déclare sa propre clé `venue:`, que `resolve_venue`
-  # consulte pour les univers activés dans `scanner.universe`. Un `assign`
-  # explicite prime toujours sur cette déclaration.
-  defs:
-    euronext-paper:
-      market_type: spot
-      exchange: euronext
-      asset_class: equity
-      quote_currency: EUR
-      fractional: false          # une action ne s'achète pas en fractions
-      allow_short: false         # pas de SRD → pas de vente à découvert
-      tick_size: 0.001
-      min_notional: 200          # sous ce montant, les frais fixes mangent l'edge
-      calendar: XPAR             # Euronext Paris — 09:00-17:30, fériés inclus
-      data_provider: yfinance    # data-only (cf. providers.yfinance)
-      can_execute: false         # G3 non livré → NOTIFICATION de trade
-      close_at_session_end: true # pas de risque overnight non modélisé
-      close_before_close_min: 5
-      fee_pct: 0.001             # commission courtier (0,10 %)
-      fee_fixed: 0.0             # + part fixe éventuelle par ordre
-      fee_min: 2.0               # plancher de courtage
-      transaction_tax_pct: 0.004 # TTF française — VÉRIFIER le taux en vigueur
-      tax_on_buy_only: true      # la TTF ne frappe que les acquisitions
-    spot:
-      market_type: spot
-      exchange: okx
-      asset_class: crypto
-      quote_currency: USDC
-      max_leverage: 1
-    margin-isolated:
-      market_type: margin
-      exchange: okx
-      margin_mode: isolated
-      asset_class: crypto
-      quote_currency: USDC
-      max_leverage: 3
-    perp-hedge-okx:
-      market_type: perp
-      exchange: okx
-      hedge_mode: true
-      asset_class: crypto
-      quote_currency: USDC
-      max_leverage: 5
-  assign: {}
-trading:
-  capital: 1000
-  paper_mode: true
-  timeframe: 1h
-  timeframes:
-    - 15m
-    - 30m
-    - 1h
-    - 4h
-    - 1d
-  scan_interval: 60
-  score_threshold: 0.55
-  risk_per_trade: 0.01
-  max_positions: 5
-  max_longs: 3
-  max_shorts: 3
-  max_leverage: 1
-  max_trades_per_minute: 3
-  daily_drawdown_limit: 0.05
-  max_drawdown_global: 0.2
-  min_volume_usdc_24h: 5000000
-  taker_fee: 0.001          # OKX spot/margin taker standard 0.10 %
-  maker_fee: 0.0008         # OKX spot/margin maker standard 0.08 %
-  spread_pct: 0.0005
-  latency_ms: 50
-  borrow_rate_daily: 0.00072   # à vérifier par actif sur OKX (taux d'emprunt margin)
-  borrow_periods_per_day: 24   # OKX facture l'intérêt margin à l'heure
-  margin_mode: isolated
-  # Seuils calibrés pour OKX : marginLevel = adjEq / mmr (ratio décimal,
-  # liquidation forcée ≈ 1.0, alerte native OKX à 3.0). alert > critical.
-  #   < 3.0 → notification (aligné sur l'alerte 300% d'OKX)
-  #   < 1.5 → HALT des nouvelles entrées (≈ 50% de marge au-dessus de la liquidation)
-  margin_level_alert: 3.0
-  margin_level_critical: 1.5
-  exchange_stop_orders: true
-  exchange_stop_limit_offset: 0.005
-  reconcile_real_costs: true
-  reentry_cooldown_bars: 2
-  top_strategies_per_tf: 2
-risk:
-  veto_mode: enforce
-  equity_kill_switch_dd: 0.35
-  consecutive_loss_limit: 3
-  consecutive_pause_secs: 1800
-  slot_daily_dd_limit: 0.03
-  win_rate_floor: 0.25
-  max_trades_per_day: 5
-  volatility_threshold: 0.05
-  adx_trend_threshold: 25.0
-  atr_volatile_threshold: 3.0
-scanner:
-  dynamic_scan: false
-  symbols:
-    - BTC/USDC
-    - ETH/USDC
-    - XRP/USDC
-  # G2 — univers statiques versionnés (data/universe/*.yaml), cumulés avec
-  # `symbols` ci-dessus. Sur actions, la liste des instruments est un choix,
-  # pas une découverte exchange.
-  #
-  # ⚠️ data/universe/sbf120.yaml porte `verified: false` : instantané constitué
-  # hors ligne, à recouper avec la composition officielle Euronext. Pré-vol :
-  #     python scripts/check_universe.py sbf120
-  #
-  # ⚠️⚠️ AVANT D'ACTIVER : peupler le cache HORS LIGNE, sinon le premier cycle
-  # de scan tente 98 titres × chaque timeframe contre Yahoo, qui répond 429.
-  # Utiliser la page /data → "Backfill actions" (depuis l'UI Next.js) ou :
-  #     python scripts/backfill_equities.py --tf 1d --years 20
-  # Un disjoncteur de quota (app/core/yfinance_provider) coupe les appels 15 min
-  # après 5 refus consécutifs, mais il limite les dégâts — il ne remplace pas
-  # l'amorçage.
-  #
-  # ⚠️⚠️⚠️ SBF 120 + yfinance 15m/30m/1h : Yahoo Finance ne fournit qu'~88
-  # bougies d'historique intraday pour les actions européennes (limite
-  # Yahoo). Sur TF courts, le bot demande 500 bougies, n'en obtient que 88,
-  # et fait un backoff 6h (comportement normal, cf. CandleStore). Pour
-  # trader des actions FR en intraday, utiliser TF ≥ 1d (historique 20 ans).
-  universe: [sbf120]
-  #
-  # Le seuil de liquidité crypto (5 M$/24 h) exclurait tout le SBF 120 : il
-  # est surchargeable par classe d'actif.
-  min_volume_by_asset_class:
-    equity: 1000000
-  top_n: 20
-  symbols_cache_ttl: 300
-# Fournisseurs de données alternatifs (G2). Une venue les référence via
-# `data_provider`. Sans venue qui en déclare, ce bloc est ignoré et aucun
-# code de routage n'est chargé.
-providers:
-  yfinance:
-    suffix: .PA               # AIR → AIR.PA (ignoré si le ticker a déjà un point)
-    min_request_interval: 1.0 # secondes entre deux requêtes (Yahoo renvoie 429 en rafale)
-    cache_ttl: 60             # TTL du cache de réponses
-    max_retries: 3
-    # Une action ne cote pas la nuit ni le week-end : 500 bougies de 15 min
-    # couvrent ~25 jours calendaires, pas 5. Sans cette conversion, le cache
-    # n'atteint jamais le compte visé et le bot redemande à chaque cycle.
-    # Valeurs par défaut = Euronext Paris (09:00-17:30, 5 jours sur 7).
-    session_hours: 8.5
-    trading_days_per_week: 5
-    # Le provider passe par le paquet `yfinance`, désormais dépendance du
-    # projet (requirements.txt) : lui seul gère l'authentification
-    # cookie/crumb que Yahoo exige. L'ancien repli « API chart publique »
-    # a été retiré — il répondait 429 quoi qu'il arrive.
-# Calendriers de marché supplémentaires (XPAR est livré en dur).
-# calendars:
-#   XAMS:
-#     timezone: Europe/Amsterdam
-#     days: [0, 1, 2, 3, 4]
-#     sessions: ["09:00-17:30"]
-#     holidays: ["01-01", {easter: -2}, {easter: 1}, "05-01", "12-25", "12-26"]
-#     early_closes: {"12-24": "14:05", "12-31": "14:05"}
-  opportunity_scan:
-    min_vol_24h_m: 10
-    min_atr_pct: 1.0
-    max_atr_pct: 10.0
-    top_n: 15
-derivatives:
-  enabled: true
-  period: 1h
-  refresh_interval: 300
-  z_window: 90
-backtest:
-  spread_pct: 0.0005
-  latency_ms: 50
-  partial_fill_pct: 0.95
-  monte_carlo_runs: 200
-  walk_forward_folds: 5
-live:
-  # Paramètres de trailing du LiveTrader — dédiés, indépendants de backtest.*
-  # (S1-08 : sans cette section, le trailing live suivait silencieusement
-  # tout changement de config backtest/walk-forward/optimiseur).
-  trailing:
-    trail_wide: 2.5
-    grace_bars: 4
-    breakeven_r: 1.2
-    trail_tight: 1.0
-    lock_r: 2.5
-    tight_r: 4.0
-    lock_ratio: 0.60
-    use_swing: true
-optimizer:
-  enabled: false
-  method: bayesian
-  n_trials: 40
-  out_of_sample_ratio: 0.35
-forward_test:
-  enabled: true
-  interval_h: 24
-  lookback_days: 45
-  edge_lookback_days: 365
-  symbol: BTC/USDC
-  initial_delay_s: 300
-database:
-  url: sqlite:///trades.db
-capital_allocator:
-  mode: performance
-  max_slot_pct: 0.5
-  per_bot_sizing: false
-  reserve_pct: 0.1
-  min_notional_usdc: 10.0
-  max_budget_step: 0.25
-  active_floor: 2
-  continuous_allocation: false
-  min_trades_for_rebalance: 3
-  rebalance_interval: daily
-  max_symbol_exposure_pct: 0.25
-  max_pyramiding: 2
-  disabled_slots: []
-  slot_budgets:
-    trend_rider::1h::BTC/USDC: 0.5
-lifecycle:
-  enabled: true
-  interval_h: 1
-  initial_delay_s: 600
-  plancher_budget_pct: 0.02
-  trial_min_trades: 3
-  active_min_trades: 10
-  eval_min_trades: 10
-  edge_min_trades: 15
-  edge_conf: 0.85
-  max_worst_trade_pct: 50.0
-  # BT-06 : seuil de promotion ACTIF aligné sur MIN_SIGNIFICANT_TRADES
-  # (app/core/stats_thresholds.py). Ancienne valeur : 2 (bruit statistique).
-  fidelity_min_fills: 10
-  manual_active:
-    - fft_spectral::1d
-    - ml_dynamic_threshold::1h
-    - ml_dynamic_threshold::4h
-    - multi_tf_sr::1d
-    - opus_omnibus_v10_no_ml::1h
-    - opus_omnibus_v11::30m
-    - opus_omnibus_v12::30m
-    - opus_omnibus_v8_no_ml::1h
-    - pullback_trend::1h
-    - scoring_statistique_opus::1h
-    - scoring_statistique_opus_v2::4h
-    - snowball_pyramid::1h
-    - snowball_pyramid::30m
-    - tvr_trend::1h
-    - tvr_trend::30m
-  min_active_bots: 2
-  max_demotions_per_day: 2
-  auto_reopt: false
-watchdog:
-  check_interval_s: 60
-  timeout_s: 300
-logging:
-  level: INFO
-  debug: false
-  # OBS-02 — format du fichier de log UNIQUEMENT (la console reste colorée et
-  # lisible à l'œil). `json` = une ligne = un objet JSON, avec le
-  # correlation_id qui relie entre elles toutes les lignes d'une même requête
-  # ou d'un même job. `text` restaure l'ancien format si un outillage externe
-  # en dépendait.
-  format: json
-  log_file: logs/bot.log
-  max_bytes: 10485760
-  backup_count: 5
-web:
-  host: 0.0.0.0
-  port: 8000
-  refresh_interval: 5
-  api_key: ${WEB_API_KEY}
-  # Dev LOCAL uniquement : autorise host ouvert sans api_key (sinon le
-  # démarrage est refusé — OPS-02). À retirer avant toute exposition réseau.
-  # ⚠ S0-11 (29/07/2026) : la valeur par défaut est désormais `false`.
-  # Pour du dev local uniquement, mettre `true` explicitement dans ce fichier
-  # ou exporter `ALLOW_INSECURE_WEB=1`.
-  allow_insecure: false
-ui:
-  risk_preset:
-  expert_mode: false
-perf:
-  # Taille du cache LRU process-wide des colonnes pré-calculées (_pre_*),
-  # partagé entre stratégies/trials tournant sur la même plage OHLCV
-  # (PERF-01). 128 par défaut (avant : 16 fixe, non configurable).
-  precompute_cache_size: 128
-notifications:
-  # SEC-007 — joindre les dernières lignes de bot.log à l'alerte de crash
-  # (deploy/notify-crash.py). false par défaut : Telegram et CallMeBot sont des
-  # tiers, et le log porte symboles, tailles de position et soldes. Passer à
-  # true est un choix explicite, pas un réglage de confort.
-  crash_include_log: false
-  telegram_enabled: false
-  telegram_bot_token: ''
-  telegram_chat_id: ''
-  whatsapp_enabled: false
-  whatsapp_mode: callmebot
-  whatsapp_number: ''
-  whatsapp_token: ''
-  twilio_account_sid: ''
-  twilio_auth_token: ''
-  twilio_from_number: ''
-  email_enabled: false
-  email_smtp: smtp.gmail.com
-  email_port: 587
-  email_user: ''
-  email_password: ''
-  email_to: ''
-  min_pnl_to_notify: 5.0
-  position_loss_warn_pct: 5.0
-  exchange_error_threshold: 3
-  dd_warning_ratio: 0.8
-  throttle_secs: 60
-  feed_size: 200
-  events:
-    on_trade_open: true
-    on_trade_close: true
-    # G2 : trade calculé sur une venue sans exécution branchée — la
-    # notification porte symbole / sens / ouverture / SL / TP et EST le
-    # passage à l'acte tant que l'exécution réelle n'est pas livrée.
-    on_trade_signal: true
-    on_circuit_breaker: true
-    on_dd_warning: true
-    on_position_loss: true
-    on_exchange_error: true
-    on_status_report: true
-    on_optimization: true
-    on_start_stop: true
+# ============================================================================
+#  bot-crypto — sommaire de configuration
+# ============================================================================
+#
+#  Ce fichier ne contient plus de réglages : il déclare les briques. Chaque
+#  fichier de `config/` porte UNE responsabilité, alignée sur une brique du
+#  code — c'est ce qui permet de savoir où écrire sans relire 340 lignes :
+#
+#    config/venues.yaml     où et comment on exécute (spot/margin, coûts,
+#                           actions Euronext)     → app/core/bot_identity.py
+#    config/risk.yaml       combien engager, quand refuser, où mettre le stop
+#                                                 → app/core/risk_gate.py
+#    config/data.yaml       ce que le bot regarde (symboles, univers,
+#                           fournisseurs)         → app/engine/scanner.py
+#    config/lifecycle.yaml  quels bots vivent et avec quel capital
+#                                                 → app/live/slot_lifecycle.py
+#    config/ops.yaml        API web, logs, base, alertes  → app/api/
+#
+#  Les PARAMÈTRES DE STRATÉGIES ne sont pas ici : chaque stratégie porte les
+#  siens dans `strategies/<nom>.yaml`, avec ses `optimizer_results`.
+#
+#  ── Règles du découpage ────────────────────────────────────────────────────
+#
+#  1. Une section YAML vit dans UN SEUL fichier. La déclarer deux fois fait
+#     échouer le chargement : sinon l'ordre de lecture déciderait en silence
+#     laquelle s'applique.
+#  2. L'ordre des `include:` n'a donc aucune importance.
+#  3. Les écritures depuis l'UI (budgets, forçages, params optimisés) sont
+#     routées vers le fichier propriétaire de la section — cf.
+#     `app/core/yaml_io.py::update_config_yaml`. Rien à faire côté appelant.
+#  4. Une config monolithique reste valide : sans `include:`, tout peut
+#     revenir dans ce fichier. Le chargeur se comporte alors comme avant.
+#
+#  Vérification rapide de ce qui est effectivement chargé :
+#      python -c "from app.core.config import load_config; \
+#                 print(sorted(load_config('config.yaml')))"
+#
+include:
+  - config/venues.yaml
+  - config/risk.yaml
+  - config/data.yaml
+  - config/lifecycle.yaml
+  - config/ops.yaml

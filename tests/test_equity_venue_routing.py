@@ -12,10 +12,10 @@ Ces tests verrouillent l'échelon « univers » de la précédence, et le fait q
 """
 import polars as pl
 import pytest
-import yaml
 
 import app.core.universe as universe_mod
 from app.core.bot_identity import resolve_venue
+from app.core.config import _load_and_merge
 from app.core.universe import clear_cache, symbol_venue_index
 
 
@@ -116,8 +116,9 @@ class TestShippedConfig:
     fait la différence entre « le code sait le faire » et « c'est activé »."""
 
     def test_sbf120_is_activated_and_routed(self):
-        with open("config.yaml", "r", encoding="utf-8") as fh:
-            cfg = yaml.safe_load(fh)
+        # S11 : la config est decoupee (config.yaml = sommaire `include:`).
+        # Lire le seul fichier racine ne verrait plus ni `scanner` ni `venues`.
+        cfg = _load_and_merge("config.yaml")
         clear_cache()
         assert "sbf120" in (cfg["scanner"].get("universe") or [])
         v = resolve_venue(cfg, symbol="AIR.PA")
@@ -128,8 +129,7 @@ class TestShippedConfig:
         assert resolve_venue(cfg, symbol="BTC/USDC").asset_class == "crypto"
 
     def test_yfinance_provider_block_is_declared(self):
-        with open("config.yaml", "r", encoding="utf-8") as fh:
-            cfg = yaml.safe_load(fh)
+        cfg = _load_and_merge("config.yaml")
         from app.core.provider_router import declared_providers
         assert "yfinance" in declared_providers(cfg)
         assert (cfg.get("providers") or {}).get("yfinance") is not None

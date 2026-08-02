@@ -60,12 +60,33 @@ if exit_code == "exited" and exit_status == "0":
 
 
 def read_config() -> dict:
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    """Lit la config, en suivant le découpage `include:` (S11).
+
+    Fusion volontairement locale et minimale : ce script tourne depuis
+    ``ExecStopPost`` de systemd, c'est-à-dire précisément quand le bot vient de
+    crasher. Importer ``app.core.config`` ferait dépendre l'alerte de crash du
+    code qui a crashé. La section utile (``notifications``) vit dans
+    ``config/ops.yaml``.
+    """
+    def _read(path: str) -> dict:
+        with open(path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
+
+    try:
+        cfg = _read(CONFIG_PATH)
     except Exception as e:
         logger.error(f"Impossible de lire config.yaml : {e}")
         return {}
+
+    base = os.path.dirname(os.path.abspath(CONFIG_PATH))
+    for inc in (cfg.pop("include", None) or []):
+        p = inc if os.path.isabs(inc) else os.path.join(base, inc)
+        try:
+            for section, value in _read(p).items():
+                cfg.setdefault(section, value)
+        except Exception as e:
+            logger.error(f"Impossible de lire {inc} : {e}")
+    return cfg
 
 
 def tail_log(n: int = MAX_LOG_TAIL) -> str:

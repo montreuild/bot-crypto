@@ -8,7 +8,7 @@
  * qu'à l'exécution face au backend :
  *
  *   - `/api/oos-tracker` renvoie `slots` en **dictionnaire** indexé par
- *     slot_key ; `/bots-v2` faisait `slots.find(...)` → la page tombait dans
+ *     slot_key ; `/bots` faisait `slots.find(...)` → la page tombait dans
  *     l'ErrorBoundary à l'ouverture d'un bot.
  *   - `/api/ml/recipes` renvoie `features_catalog` en **chaîne** (identifiant
  *     de catalogue) ; `MLRecipesList` faisait `.slice().map()` dessus → la page
@@ -63,10 +63,14 @@ export const BotSchema = z
     symbol: z.string().nullish(),
     state: z.string().optional(),
     /**
-     * `true` = slot **forcé en actif** via `lifecycle.manual_active`
-     * (cf. app/api/routes/portfolio.py:152). `false` est l'état normal d'un bot
+     * `true` = slot **forcé en actif** via `lifecycle.force_active`
+     * (cf. app/api/routes/portfolio.py). `false` est l'état normal d'un bot
      * piloté par le cycle de vie automatique — ce n'est PAS un « bot gelé ».
+     *
+     * D6 : `manual_active` est l'ancien nom, encore émis par l'API le temps de
+     * la migration. `forceActive()` ci-dessous lit l'un ou l'autre.
      */
+    force_active: z.boolean().optional(),
     manual_active: z.boolean().optional(),
     edge: z
       .object({
@@ -87,6 +91,18 @@ export const BotsResponseSchema = z
     counts: z.record(z.string(), z.number()).default({}),
   })
   .passthrough();
+
+/**
+ * Un bot est-il forcé en actif ? Lit `force_active` (D6) et retombe sur
+ * `manual_active` tant que l'API émet les deux.
+ *
+ * Passer par ce helper plutôt que par le champ brut : c'est ce qui a permis de
+ * corriger le filtre « gelés » qui lisait `manual_active === false` comme
+ * « bot gelé » et affichait un kanban vide sous un en-tête « 240 candidats ».
+ */
+export function isForcedActive(bot: { force_active?: boolean; manual_active?: boolean }): boolean {
+  return bot.force_active === true || bot.manual_active === true;
+}
 
 // ── /api/oos-tracker ────────────────────────────────────────────────────────
 
@@ -119,7 +135,7 @@ export const OosSlotSchema = z
 
 /**
  * ⚠ `slots` est un **dictionnaire** indexé par slot_key, pas un tableau.
- * C'est précisément l'erreur qui faisait planter `/bots-v2`.
+ * C'est précisément l'erreur qui faisait planter `/bots`.
  */
 export const OosTrackerSchema = z
   .object({ slots: z.record(z.string(), OosSlotSchema).default({}) })

@@ -6,6 +6,167 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧾 Backtests et optimisations annoncent ce qu'ils facturent
+
+Un PnL seul n'est pas interprétable. Le même paramétrage donne des chiffres
+très différents selon que l'instrument est résolu sur une venue **spot ou
+margin** (l'emprunt n'est facturé que sur margin) et selon le **modèle de
+frais** : une action paie une commission fixe, un plancher de courtage et une
+taxe de transaction que la crypto ignore. Rien n'affichait ce contexte — on
+pouvait comparer de bonne foi deux runs incomparables.
+
+`app/core/execution.py::cost_model` décrit le contexte **réellement appliqué**,
+depuis les mêmes sources que les formules de coût : pas de dérive possible
+entre ce qui est affiché et ce qui est facturé. Sur une venue spot il rapporte
+un emprunt à **0**, pas la valeur configurée. Trois canaux :
+
+- **log INFO du Backtester** — throttlé par contexte distinct : l'optimiseur
+  crée un Backtester par essai, un log par essai noierait tout ;
+- **annonce de l'optimiseur** avant le premier essai, pour que l'opérateur voie
+  sur quoi il lance son optimisation au moment où il la lance ;
+- **champ `cost_model`** dans `BacktestResult.to_dict()` et dans la fiche de job
+  de l'optimiseur, rendu par une carte dédiée dans le Laboratoire.
+
+```
+[Coûts] BTC/USDC 1h @ venue 'margin-isolated' — okx:margin/isolated, levier ×1, crypto/USDC
+        frais : taker 0.100 % / maker 0.080 % · spread 0.050 % · slippage static · fill partiel 95%
+        emprunt 0.0720 %/jour × 24 périodes (≈ 30.1 %/an) · notionnel max 20% du capital
+
+[Coûts] AIR.PA 1d @ venue 'euronext-paper' — euronext:spot, levier ×1, equity/EUR [XPAR] (data-only), short interdit
+        frais : taker 0.100 % / maker 0.100 % · plancher 2.00 · taxe transaction 0.400 % à l'achat · spread 0.050 %
+        pas d'emprunt (marché spot) · quantité entière · tick 0.001 · notionnel min 200.00
+```
+
+L'absence d'emprunt est **nommée** plutôt qu'omise : une ligne manquante se lit
+comme un oubli, pas comme une information. À l'inverse, les lignes propres aux
+actions (plancher, taxe, quantité entière) sont masquées en crypto, où elles
+valent zéro et n'apprendraient rien.
+
+### 🏛 La venue devient la source unique de vérité spot/margin
+
+`venues.default` était **vide** et `venues.assign` aussi : tout symbole crypto
+retombait sur `default_venue_from_cfg`, qui fabriquait une venue à partir des
+globales `exchange.margin` / `trading.margin_mode` / `trading.max_leverage`. Sur
+la config livrée, cette venue s'appelait **`margin-isolated`** — le nom exact
+d'une entrée de `venues.defs`, mais avec un levier différent (1 au lieu de 3).
+Deux objets homonymes et divergents, indiscernables dans les logs et sur les
+positions ; les trois `defs` du fichier n'étaient jamais lues.
+
+`venues.default` est désormais **obligatoire** dès que `venues.defs` existe, et
+toute venue référencée doit exister — `_validate_venues` refuse le démarrage
+sinon. Le repli sur les globales subsiste pour une config sans bloc `venues:`,
+mais son nom est préfixé `auto:` : plus jamais homonyme.
+
+Deuxième défaut, plus coûteux : **le coût d'emprunt était facturé sans regarder
+la venue**. `borrow_cost` était appelé inconditionnellement des deux côtés
+(`backtest.py` et `position_close_mixin.py`), donc chaque trade SBF 120 payait
+`trading.borrow_rate_daily` = 0,072 %/jour, soit **~30 %/an d'intérêt fictif sur
+un achat au comptant**. C'est maintenant la venue qui tranche
+(`Venue.borrows` / `effective_borrow_rate`) : `margin` et `perp` empruntent, le
+spot jamais — ni en crypto, ni en actions. Au passage, le warning
+« paper + margin » annonçait un remède inopérant (`margin: false` ne supprimait
+pas l'emprunt, porté par le taux global) ; il pointe désormais vers
+`venues.default`.
+
+Le bot ne connaît **pas** les enveloppes fiscales (CTO, PEA) : c'est une notion
+de compte, pas de moteur. Une venue actions, c'est `market_type: spot` +
+`max_leverage: 1` + `allow_short: false`. Un garde-fou
+(`_enforce_market_coherence`) ramène à leur valeur neutre le levier, le
+`margin_mode` et le taux d'emprunt déclarés sur une venue spot, en le
+journalisant, plutôt que de les honorer à moitié.
+
+Comportement inchangé sur la config livrée : `default: margin-isolated` à
+levier 1 = ce que produisait le repli. Les témoins de `test_generic_parity` ont
+bougé du seul montant des intérêts fictifs supprimés (signaux et nombre de
+trades identiques).
+
+### 🔄 D6 — le lifecycle décide seul, `manual_active` devient `force_active`
+
+Les **15 slots forcés ACTIF** dans `config.yaml` sont retirés : la machinerie
+candidat → essai → actif → retiré décide seule. La clé est renommée
+`lifecycle.force_active` (l'ancien nom reste lu, avec un WARNING de
+dépréciation) — `manual_active` sonnait comme un réglage de routine alors que
+c'est un court-circuit du cycle de vie.
+
+Deux précisions que ni l'audit V12 ni `ANALYSE_CRITIQUE` n'avaient relevées :
+
+1. **La liste ne décidait pas quels bots tradent.** Les audits en concluaient un
+   risque de « trader des setups non validés OOS » : inexact. La sélection vient
+   du classement OOS (`optimizer_results` + `MIN_VIABLE_SCORE` +
+   `trading.top_strategies_per_tf`, cf. `get_active_strategies_per_tf`), qui
+   s'appliquait déjà. Ce que la liste pilotait, c'est l'**état** et les
+   transitions.
+2. **Le forçage bloquait aussi le RETRAIT.** `_propose` retourne `ACTIF` avant
+   toute autre règle : un slot forcé échappait aux deux règles de sortie (budget
+   effondré, live qui contredit la simulation en perdant). Un bot forcé perdant
+   n'était **jamais** retiré, donc jamais ré-optimisé. C'est le vrai coût du
+   forçage ; il est désormais verrouillé par un test.
+
+L'incohérence `manual_active` (15) ↔ `slot_budgets` annoncée à 7 slots par les
+audits n'en comptait en réalité qu'**un** (`trend_rider::1h::BTC/USDC`),
+lui-même absent de `manual_active`.
+
+### 🗂 La configuration est découpée par responsabilité
+
+`config.yaml` (342 lignes) mélangeait cinq responsabilités sans rapport. Il ne
+porte plus que le sommaire (`include:`) ; chaque fichier de `config/` est aligné
+sur une brique du code : `venues.yaml`, `risk.yaml`, `data.yaml`,
+`lifecycle.yaml`, `ops.yaml`. La config effective est **identique** à la version
+monolithique (vérifié section par section), et une config sans `include:` reste
+valide.
+
+Une section vit dans **un seul** fichier : la déclarer deux fois fait échouer le
+chargement, plutôt que de laisser l'ordre de lecture trancher en silence.
+
+Le point délicat était l'**écriture** : l'UI persiste budgets, forçages et
+params optimisés via `update_config_yaml(fn)`. Celui-ci route maintenant chaque
+section modifiée vers son fichier propriétaire, ne réécrit que les fichiers
+touchés, et préserve les commentaires. `deploy/backup.sh` archive `config/`
+autant que `config.yaml` — sauvegarder le seul fichier racine ne ramènerait plus
+que le sommaire.
+
+### 🔗 Le maillon manquant entre le sizing et le stop réellement posé
+
+`_initial_stop_distance` — la fonction qui fournit `stop_dist` à `compute_size`
+en live — n'apparaissait dans **aucun test**. `compute_size(stop_dist=…)` était
+verrouillé d'un côté, le stop posé à l'ouverture de l'autre, mais rien ne
+vérifiait que les deux parlent de la même distance. Les deux chemins recopient
+la même chaîne de priorité (`sl_atr_mult` → `stop_hint` → trailing) dans deux
+fichiers distincts : une divergence silencieuse de facteur 2,5 était possible
+sans qu'un test tombe.
+
+Vérification faite, le repli est correct — il lit bien `live.trailing.trail_wide`
+et non un 2,5 en dur — et le sur-risque annoncé par l'audit n'existe que sur le
+chemin dégradé (stop illisible → `stop_dist = 0` → ATR brut), désormais chiffré
+plutôt que commenté. S'y ajoute la parité « même signal ⇒ même distance au stop
+des deux côtés », sur six signaux représentatifs.
+
+### 🏷 Les pages canoniques perdent le suffixe `-v2`
+
+`-v2` datait de la coexistence avec les pages Jinja2, supprimées depuis : le
+suffixe ne distinguait plus rien. `/portfolio`, `/bots` et `/settings` sont les
+pages ; les anciennes URLs restent redirigées en 308 (elles ont vécu en prod, et
+un 308 est mis en cache durablement par les navigateurs). Sidebar, palette de
+commandes, manifest PWA et specs e2e alignés.
+
+### 🧹 `app/web`, la structure `timeframes` morte et des commentaires périmés
+
+`app/web/` ne contenait plus qu'un `__init__.py` **vide** depuis la suppression
+des templates Jinja2, sans aucun `import app.web` nulle part.
+
+La structure racine `cfg["timeframes"]` était **fabriquée** à chaque chargement à
+partir du seul `trading.timeframe`, alors que le bot tourne sur
+`trading.timeframes` (5 TF). Personne ne la lisait sauf le log de démarrage, qui
+annonçait donc `TF=['1h']` pendant que le scanner couvrait 15m/30m/1h/4h/1d. Le
+schéma hérité reste lu ; il n'est simplement plus inventé.
+
+Le bloc d'avertissement SBF 120 de `config.yaml` annonçait `verified: false` et
+un backfill à faire : les deux étaient faux — `data/universe/sbf120.yaml` porte
+`verified: true` (as_of 2026-07-26) et le cache contient 15m/30m/1h/4h/1d pour
+~120 titres. L'avertissement « machine neuve » et la limite Yahoo (~88 bougies
+intraday sur actions européennes) restent, eux, valables.
+
+
 ### 🧹 Les caches de marché sortent du dépôt, `starlette` est épinglé
 
 `data/ohlcv/` et `data/derivatives/` sont des **caches** que le bot reconstruit
@@ -14,10 +175,16 @@ chaque cycle de scan — 180 fichiers modifiés en permanence, noyant les
 changements de code sans rien apporter : un parquet d'OHLCV n'est pas
 relisible, et sa version d'hier n'a aucune valeur d'archive. Ils sont
 désormais ignorés et détachés (les fichiers restent sur disque). Restent suivis
-à dessein : `data/universe/`, `data/oos_tracker.json`,
-`data/backtest_history.json` — écrits par décision, pas par accumulation.
-Conséquence assumée : **un clone neuf démarre avec un cache vide**, à amorcer
-par `scripts/backfill_equities.py` ou le premier cycle du scanner.
+à dessein : `data/universe/` et `data/oos_tracker.json` — écrits par décision,
+pas par accumulation. Conséquence assumée : **un clone neuf démarre avec un
+cache vide**, à amorcer par `scripts/backfill_equities.py` ou le premier cycle
+du scanner.
+
+> **Rectification (S11)** : `data/backtest_history.json` figurait dans cette
+> liste des « écrits par décision ». C'était une erreur de classement —
+> `record_backtest` y ajoute une entrée par slot à **chaque** backtest lancé, y
+> compris depuis l'UI. Un seul run sur toutes les stratégies produit ~2 000
+> lignes de diff. Il est désormais ignoré et détaché lui aussi.
 
 `starlette==0.38.6` est épinglé alors que c'est une transitive de `fastapi`,
 contre la règle d'en-tête du fichier. La règle suppose que les transitives sont

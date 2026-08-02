@@ -18,6 +18,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _cost_model_for(symbol: str, tf: str) -> dict:
+    """Contexte d'exécution facturé pour ce couple (symbole, timeframe).
+
+    Best-effort : un modèle de coûts indisponible ne doit jamais faire échouer
+    un backtest — l'UI masque simplement la carte.
+    """
+    try:
+        from app.core.bot_identity import resolve_venue
+        from app.core.execution import cost_model
+        return cost_model(state.cfg, resolve_venue(state.cfg, tf=tf, symbol=symbol))
+    except Exception as e:      # pragma: no cover — défensif
+        logger.debug(f"[API] modèle de coûts indisponible ({symbol}/{tf}) : {e}")
+        return {}
+
+
 @router.post("/api/backtest/cancel", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("30/minute")
 def cancel_backtest(request: Request):
@@ -215,6 +230,13 @@ def run_backtest(
             "score_threshold": state.cfg["trading"].get("score_threshold", 0.55),
             "ohlcv_gaps":      ohlcv_gaps[:20],
             "gaps_warning":    gaps_warning,
+            # S11 : contexte d'exécution facturé (spot/margin, levier, frais,
+            # emprunt). Cette route construit son PROPRE payload et ne renvoie
+            # pas `BacktestResult.to_dict()` : sans cette ligne, le champ existe
+            # côté moteur mais n'atteint jamais l'UI. Résolu ici plutôt que
+            # repris d'un run : il est identique pour toutes les stratégies,
+            # puisqu'il ne dépend que du couple (symbole, timeframe).
+            "cost_model":      _cost_model_for(symbol, tf),
         }
         return JSONResponse(content=_clean(payload))
     except HTTPException:

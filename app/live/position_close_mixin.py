@@ -94,7 +94,11 @@ class PositionCloseMixin:
             logger.debug(f"[Reconcile] fetch_my_trades {symbol} KO : {e}")
 
         # 2. Intérêts d'emprunt réels (margin uniquement)
-        if self.cfg.get("exchange", {}).get("margin") and borrow_est > 0:
+        # S11 : `borrow_est > 0` suffit et est plus juste que la globale
+        # `exchange.margin` — c'est la VENUE du trade qui décide s'il y a eu
+        # emprunt (cf. execution.venue_borrow_rate). La globale pouvait bloquer
+        # la réconciliation d'un trade margin quand elle était restée à false.
+        if borrow_est > 0:
             try:
                 fetch_bi = getattr(self.exchange, "fetch_borrow_interest", None)
                 if callable(fetch_bi):

@@ -4,10 +4,10 @@
  * Journal de notifications — `GET /api/notifications`.
  *
  * Lot Portefeuille : ce fil vivait dans `/portfolio` et était la première des
- * deux raisons pour lesquelles sa 308 vers `/portfolio-v2` restait bloquée.
+ * deux raisons pour lesquelles sa 308 vers `/portfolio` restait bloquée.
  *
  * ⚠ À ne pas confondre avec `LiveTradesFeed`, également monté sur
- * `/portfolio-v2` : celui-ci lit le flux WebSocket des trades, celui-là
+ * `/portfolio` : celui-ci lit le flux WebSocket des trades, celui-là
  * l'historique persisté des notifications (halt, kill switch, drawdown), avec
  * ses niveaux info / warning / critical. Les deux se complètent.
  */

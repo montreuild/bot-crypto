@@ -401,10 +401,11 @@ def optimizer_results():
     """Retourne les résultats d'optimisation classés par (strategy, tf)."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
-    import yaml as _yaml
     try:
-        with open("config.yaml", encoding="utf-8") as _f:
-            _disk_cfg = _yaml.safe_load(_f) or {}
+        # S11 : passer par la fusion — `optimizer_results` peut vivre dans
+        # config.yaml (héritage) comme dans un fichier inclus.
+        from app.core.config import _load_and_merge
+        _disk_cfg = _load_and_merge("config.yaml")
         if _disk_cfg.get("optimizer_results"):
             state.cfg["optimizer_results"] = _disk_cfg["optimizer_results"]
     except Exception as e:

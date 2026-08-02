@@ -22,7 +22,7 @@ import logging
 import math
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -32,6 +32,10 @@ _GEN_PATH = os.path.join("data", "bot_generations.json")
 _lock = threading.Lock()
 
 MARKET_TYPES = ("spot", "margin", "perp")
+
+# Marchés qui empruntent réellement des fonds → coût d'emprunt facturé (S11).
+# Le spot n'emprunte jamais : ni le spot crypto, ni les actions au comptant.
+_BORROWING_MARKETS = ("margin", "perp")
 
 
 # ── Venue ───────────────────────────────────────────────────────────────────
@@ -79,6 +83,29 @@ class Venue:
     transaction_tax_pct: float = 0.0   # ex. TTF française sur les achats d'actions
     tax_on_buy_only: bool = True       # la TTF ne frappe que les acquisitions
     min_notional: float = 0.0          # notionnel minimum accepté par la venue
+    # ── S11 : coût d'emprunt porté par la venue ─────────────────────────────
+    borrow_rate_daily: Optional[float] = None   # None = repli trading.borrow_rate_daily
+
+    @property
+    def borrows(self) -> bool:
+        """La venue emprunte-t-elle des fonds ? (→ coût d'emprunt facturé)
+
+        C'est le **marché** qui tranche : margin et perp empruntent, le spot
+        jamais — ni en crypto, ni en actions au comptant.
+        """
+        return self.market_type in _BORROWING_MARKETS
+
+    def effective_borrow_rate(self, default_rate: float = 0.0) -> float:
+        """Taux d'emprunt journalier applicable — **0 si la venue n'emprunte pas**.
+
+        Avant S11, ``trading.borrow_rate_daily`` était appliqué à TOUS les
+        trades, y compris spot crypto et actions au comptant : un trade SBF 120
+        payait 0,072 %/jour d'intérêt fictif (~30 %/an) sur un achat comptant.
+        """
+        if not self.borrows:
+            return 0.0
+        return float(self.borrow_rate_daily if self.borrow_rate_daily is not None
+                     else default_rate)
 
     def describe(self) -> str:
         lev = f"×{self.max_leverage:g}" if self.max_leverage and self.max_leverage > 1 else "1×"
@@ -105,22 +132,67 @@ class Venue:
             "transaction_tax_pct": self.transaction_tax_pct,
             "tax_on_buy_only": self.tax_on_buy_only,
             "min_notional": self.min_notional,
+            "borrows": self.borrows,
+            "borrow_rate_daily": self.borrow_rate_daily,
         }
 
 
 def default_venue_from_cfg(cfg: dict) -> Venue:
-    """Venue dérivée des globales historiques (rétro-compatibilité)."""
+    """Venue dérivée des globales historiques (rétro-compatibilité).
+
+    ⚠ Chemin de **repli**, pas une source de vérité. Il ne sert que si aucune
+    venue n'est résolue (ni ``assign``, ni univers, ni ``venues.default``) :
+    une config sans bloc ``venues:`` continue de fonctionner comme avant.
+
+    Le nom est préfixé ``auto:`` (S11) : avant, cette fonction fabriquait une
+    venue nommée ``margin-isolated`` — exactement le nom d'une entrée possible
+    de ``venues.defs``, mais avec des valeurs différentes (levier issu de
+    ``trading.max_leverage``, pas de celui de la def). Deux objets homonymes et
+    divergents, impossibles à distinguer dans les logs et les positions.
+    """
     t = cfg.get("trading", {}) or {}
     mm = t.get("margin_mode")
     exch = (cfg.get("exchange", {}) or {}).get("name", "okx")
     is_margin = bool(mm) or bool((cfg.get("exchange", {}) or {}).get("margin"))
     return Venue(
-        name=("margin-" + str(mm)) if is_margin else "spot",
+        name=("auto:margin-" + str(mm)) if is_margin else "auto:spot",
         market_type="margin" if is_margin else "spot",
         exchange=exch,
         margin_mode=mm,
         max_leverage=float(t.get("max_leverage", 1) or 1),
     )
+
+
+def _enforce_market_coherence(v: Venue) -> Venue:
+    """Rend une venue **non ambiguë** : le marché commande, la config suit.
+
+    Une venue spot ne peut ni porter de levier, ni de ``margin_mode``, ni de
+    taux d'emprunt : ces trois clés n'ont de sens que sur un marché qui
+    emprunte. Une contradiction dans la config est **corrigée** et journalisée
+    en WARNING plutôt que silencieusement honorée à moitié — c'est ce qui
+    distingue « spot » de « margin » sans laisser de zone grise.
+
+    Réciproquement, un marché margin/perp déclaré avec ``max_leverage: 1``
+    reste légal (emprunt sans levier — c'est le cas d'un short spot financé),
+    mais il est signalé : c'est presque toujours une erreur de config.
+    """
+    if v.market_type in _BORROWING_MARKETS:
+        return v
+
+    fixes = {}
+    if v.max_leverage > 1:
+        fixes["max_leverage"] = 1.0
+    if v.margin_mode:
+        fixes["margin_mode"] = None
+    if v.borrow_rate_daily:
+        fixes["borrow_rate_daily"] = None
+    if fixes:
+        logger.warning(
+            f"[Venue] '{v.name}' est déclarée en market_type=spot mais porte "
+            f"{fixes} — clés propres au margin, ignorées. Pour du levier ou de "
+            f"l'emprunt, déclarez market_type: margin.")
+        v = replace(v, **fixes)
+    return v
 
 
 def _universe_venue_for(cfg: dict, symbol: str) -> Optional[str]:
@@ -162,6 +234,13 @@ def resolve_venue(cfg: dict, strategy: Optional[str] = None,
     venue crypto par défaut, donc cherchés chez OKX et jamais chez le provider
     actions. Un ``assign`` explicite continue de primer : le déclaratif ne
     reprend jamais la main sur ce qu'un opérateur a écrit à la main.
+
+    S11 — non-ambiguïté. Le dernier échelon (``default_venue_from_cfg``) est un
+    **repli de rétro-compatibilité**, pas une source de vérité : il ne doit
+    jamais servir dès lors que ``venues.defs`` est renseigné. ``load_config``
+    exige donc ``venues.default`` dans ce cas, et la venue résolue passe par
+    ``_enforce_market_coherence`` — une venue spot ne sort jamais d'ici avec du
+    levier ou un taux d'emprunt.
     """
     venues = cfg.get("venues") or {}
     defs = venues.get("defs") or {}
@@ -186,11 +265,18 @@ def resolve_venue(cfg: dict, strategy: Optional[str] = None,
     elif venues.get("default"):
         vname = venues["default"]
 
+    if vname and vname not in defs:
+        logger.warning(
+            f"[Venue] venue '{vname}' référencée (assign/univers/default) mais "
+            f"absente de venues.defs — repli sur les globales. Venues "
+            f"déclarées : {sorted(defs) or 'aucune'}.")
+
     if vname and vname in defs:
         d = defs[vname] or {}
         mt = d.get("market_type", "spot")
         _fee_pct = d.get("fee_pct")
-        return Venue(
+        _borrow = d.get("borrow_rate_daily")
+        return _enforce_market_coherence(Venue(
             name=vname,
             market_type=mt if mt in MARKET_TYPES else "spot",
             exchange=d.get("exchange", (cfg.get("exchange", {}) or {}).get("name", "okx")),
@@ -214,7 +300,8 @@ def resolve_venue(cfg: dict, strategy: Optional[str] = None,
             transaction_tax_pct=float(d.get("transaction_tax_pct", 0.0) or 0.0),
             tax_on_buy_only=bool(d.get("tax_on_buy_only", True)),
             min_notional=float(d.get("min_notional", 0.0) or 0.0),
-        )
+            borrow_rate_daily=(None if _borrow is None else float(_borrow)),
+        ))
     return default_venue_from_cfg(cfg)
 
 

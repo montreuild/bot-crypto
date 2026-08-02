@@ -30,6 +30,7 @@ import {
   Sparkles, Cpu, Layers, Activity, Zap,
 } from 'lucide-react';
 import type { OptimizeJob, OptimizeSpaces } from '@/types';
+import { CostModelCard } from '@/components/cards/cost-model-card';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -243,6 +244,11 @@ function JobCard({ job }: { job: OptimizeJob }) {
             </div>
           </div>
         )}
+
+        {/* Contexte facturé pendant l'optimisation : un `oos_score` n'est pas
+            comparable d'un run à l'autre sans lui — deux scores très différents
+            peuvent ne différer que par la venue résolue (spot vs margin). */}
+        {isDone && result.cost_model && <CostModelCard model={result.cost_model} />}
 
         {/* Error */}
         {job.status === 'error' && job.error && (

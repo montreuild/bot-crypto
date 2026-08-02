@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
   BotStatusSchema,
   BotsResponseSchema,
+  isForcedActive,
   OosTrackerSchema,
   MlRecipesResponseSchema,
   FeesBreakdownSchema,
@@ -51,22 +52,32 @@ describe('Bots', () => {
     expect(parsed.success).toBe(true);
   });
 
-  it('manual_active: false signifie « pas de forçage », pas « bot gelé »', () => {
-    // Le filtre de /bots-v2 lisait `false` comme « gelé » et masquait les 240
+  it('force_active: false signifie « pas de forçage », pas « bot gelé »', () => {
+    // Le filtre de /bots lisait `false` comme « gelé » et masquait les 240
     // candidats : le kanban s'affichait vide. Ce test documente la sémantique.
     const parsed = BotsResponseSchema.parse({
-      bots: [{ slot_key: 'a::1h', manual_active: false }, { slot_key: 'b::1h', manual_active: true }],
+      bots: [{ slot_key: 'a::1h', force_active: false }, { slot_key: 'b::1h', force_active: true }],
       counts: {},
     });
-    const forces = parsed.bots.filter((b) => b.manual_active === true);
+    const forces = parsed.bots.filter((b) => isForcedActive(b));
     expect(forces).toHaveLength(1);
     expect(forces[0].slot_key).toBe('b::1h');
+  });
+
+  it('lit encore l\'ancien nom manual_active (D6, migration en cours)', () => {
+    // L'API émet les deux clés le temps que les clients migrent : un bot forcé
+    // ne doit pas repasser « non forcé » selon le nom utilisé par le backend.
+    const parsed = BotsResponseSchema.parse({
+      bots: [{ slot_key: 'a::1h', manual_active: true }],
+      counts: {},
+    });
+    expect(isForcedActive(parsed.bots[0])).toBe(true);
   });
 });
 
 describe('OosTracker', () => {
   it('slots est un dictionnaire indexé par slot_key, pas un tableau', () => {
-    // /bots-v2 faisait `slots.find(...)` → « oosData.slots.find is not a
+    // /bots faisait `slots.find(...)` → « oosData.slots.find is not a
     // function » et toute la page tombait dans l'ErrorBoundary.
     const parsed = OosTrackerSchema.parse({
       slots: { 'breakout::1h': { slot_key: 'breakout::1h' } },

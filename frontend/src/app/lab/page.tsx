@@ -41,6 +41,7 @@ import { WalkForwardTable } from '@/components/charts/walk-forward-table';
 import { MonteCarloPanel } from '@/components/charts/monte-carlo-panel';
 import { TradesScatter } from '@/components/charts/trades-scatter';
 import { BacktestEquityChart } from '@/components/charts/backtest-equity-chart';
+import { CostModelCard } from '@/components/cards/cost-model-card';
 import { useBacktestSettings, useRunBacktest, useCancelBacktest } from '@/hooks/use-api';
 import { useConfig, usePresets, useSetExpertMode } from '@/hooks/use-api';
 import { api } from '@/lib/api';
@@ -96,11 +97,11 @@ function LabContent() {
   const initialTab = TABS.includes(requestedTab as (typeof TABS)[number])
     ? requestedTab!
     : 'backtest';
-  const intent = searchParams.get('intent'); // 'create' si arrivé depuis /bots-v2
+  const intent = searchParams.get('intent'); // 'create' si arrivé depuis /bots
   const [tab, setTab] = useState(initialTab);
 
   // Mode expert — source de vérité = le backend (`/api/settings/presets`), comme
-  // sur /settings-v2. Cette page lisait auparavant uniquement `localStorage`, via
+  // sur /settings. Cette page lisait auparavant uniquement `localStorage`, via
   // un `useState(initializer)` détourné en effet : le flag divergeait dès que le
   // mode expert était basculé depuis /settings (qui n'écrit que côté backend), et
   // repartait à `false` sur un autre navigateur. localStorage n'est plus qu'un
@@ -529,6 +530,11 @@ function BacktestResults({ result }: { result: any }) {
     <div className="space-y-4">
       {/* Verdict en clair */}
       <Verdict result={result} />
+
+      {/* Contexte facturé : sans lui, un PnL n'est pas interprétable (spot ou
+          margin ? quel levier ? quels frais ?) et deux runs ne sont pas
+          comparables. Cf. app/core/execution.py::cost_model. */}
+      <CostModelCard model={r?.cost_model} />
 
       <div className="flex items-center justify-end gap-2">
         <CsvExportButton

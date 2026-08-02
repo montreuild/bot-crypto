@@ -77,8 +77,17 @@ frontend/next-env.d.ts
 # NE SONT PAS ignorés, et restent suivis à dessein :
 #   data/universe/          — définition de l'univers, une entrée de config
 #   data/oos_tracker.json   — état de suivi out-of-sample
-#   data/backtest_history.json
 # Ceux-là sont écrits par décision, pas par accumulation.
+#
+# `data/backtest_history.json` était dans cette liste : c'était une erreur de
+# classement. Il n'est pas écrit « par décision » — `record_backtest` y ajoute
+# une entrée par slot à CHAQUE backtest lancé, y compris depuis l'UI. Un seul
+# run sur toutes les stratégies en a produit ~2 000 lignes de diff. Le contenu
+# est borné (une entrée par `slot_key`, la dernière écrasant la précédente,
+# 204 entrées / 93 Ko aujourd'hui), mais il change dès que quelqu'un explore
+# une idée — c'est de l'état d'exploration local, pas un artefact de décision
+# à partager. `load_backtest_history()` retourne `{}` si le fichier est absent :
+# un clone neuf démarre simplement avec un historique vide.
 #
 # Conséquence assumée : un clone neuf démarre avec un cache VIDE. C'est le
 # comportement correct — `CandleStore` amorce au premier cycle — mais un
@@ -86,6 +95,7 @@ frontend/next-env.d.ts
 # désormais lancer le backfill.
 data/ohlcv/
 data/derivatives/
+data/backtest_history.json
 
 # ── Artefacts du registre ML ────────────────────────────────────────────────
 # Sortie de `app/ml/model_registry.py` : boosters LightGBM, méta de version et

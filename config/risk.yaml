@@ -1,0 +1,76 @@
+# ============================================================================
+#  RISQUE & EXÉCUTION — combien engager, quand refuser, où mettre le stop
+# ============================================================================
+#
+#  Briques : app/core/risk_gate.py + risk_sizer.py (sizing, vetos) et
+#            app/core/trailing.py (stops), via live.trailing.
+#
+#  `live.trailing` est volontairement séparé de `backtest.*` (S1-08) : sans
+#  cette section, un changement de config d'optimisation modifiait en silence
+#  le trailing du trading réel.
+#
+trading:
+  capital: 1000
+  paper_mode: true
+  timeframe: 1h
+  timeframes:
+    - 15m
+    - 30m
+    - 1h
+    - 4h
+    - 1d
+  scan_interval: 60
+  score_threshold: 0.55
+  risk_per_trade: 0.01
+  max_positions: 5
+  max_longs: 3
+  max_shorts: 3
+  max_leverage: 1
+  max_trades_per_minute: 3
+  daily_drawdown_limit: 0.05
+  max_drawdown_global: 0.2
+  min_volume_usdc_24h: 5000000
+  taker_fee: 0.001          # OKX spot/margin taker standard 0.10 %
+  maker_fee: 0.0008         # OKX spot/margin maker standard 0.08 %
+  spread_pct: 0.0005
+  latency_ms: 50
+  borrow_rate_daily: 0.00072   # à vérifier par actif sur OKX (taux d'emprunt margin)
+  borrow_periods_per_day: 24   # OKX facture l'intérêt margin à l'heure
+  margin_mode: isolated
+  # Seuils calibrés pour OKX : marginLevel = adjEq / mmr (ratio décimal,
+  # liquidation forcée ≈ 1.0, alerte native OKX à 3.0). alert > critical.
+  #   < 3.0 → notification (aligné sur l'alerte 300% d'OKX)
+  #   < 1.5 → HALT des nouvelles entrées (≈ 50% de marge au-dessus de la liquidation)
+  margin_level_alert: 3.0
+  margin_level_critical: 1.5
+  exchange_stop_orders: true
+  exchange_stop_limit_offset: 0.005
+  reconcile_real_costs: true
+  reentry_cooldown_bars: 2
+  top_strategies_per_tf: 2
+
+risk:
+  veto_mode: enforce
+  equity_kill_switch_dd: 0.35
+  consecutive_loss_limit: 3
+  consecutive_pause_secs: 1800
+  slot_daily_dd_limit: 0.03
+  win_rate_floor: 0.25
+  max_trades_per_day: 5
+  volatility_threshold: 0.05
+  adx_trend_threshold: 25.0
+  atr_volatile_threshold: 3.0
+
+live:
+  # Paramètres de trailing du LiveTrader — dédiés, indépendants de backtest.*
+  # (S1-08 : sans cette section, le trailing live suivait silencieusement
+  # tout changement de config backtest/walk-forward/optimiseur).
+  trailing:
+    trail_wide: 2.5
+    grace_bars: 4
+    breakeven_r: 1.2
+    trail_tight: 1.0
+    lock_r: 2.5
+    tight_r: 4.0
+    lock_ratio: 0.60
+    use_swing: true

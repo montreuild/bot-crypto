@@ -2,16 +2,20 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "//": "cli.py --web, PAS `uvicorn app.api.main:app` : seul cli.py appelle init_app(cfg, trader), qui injecte la config et ouvre la session BDD. Lancé via uvicorn direct, l'API démarre avec state.cfg = None — l'auth retombe alors sur le filtre « localhost only » et toutes les routes protégées répondent 403.",
       "name": "bot-web",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "uvicorn", "app.api.main:app", "--port", "8000"],
-      "port": 8000
+      "runtimeArgs": ["cli.py", "--web", "--host", "127.0.0.1", "--port", "8000"],
+      "port": 8000,
+      "url": "http://127.0.0.1:8000"
     },
     {
+      "//": "`url` explicite en 127.0.0.1 : le panneau navigateur autorise par origine, et `http://localhost:3000` n'est pas une origine approuvée — la navigation y est refusée alors que `http://127.0.0.1:3000` passe. Sans cette clé, preview_start ouvre un onglet sur localhost qui ne charge jamais.",
       "name": "bot-ui",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
-      "port": 3000
+      "port": 3000,
+      "url": "http://127.0.0.1:3000"
     }
   ]
 }
