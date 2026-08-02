@@ -16,9 +16,12 @@ import polars as pl
 
 from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
 from app.core.execution import close_pnl as _close_pnl
+from app.core.execution import cost_model as _cost_model
+from app.core.execution import format_cost_model as _format_cost_model
 from app.core.execution import quantize_size as _quantize_size
 from app.core.execution import size_impact_cost as _size_impact_cost
 from app.core.execution import venue_trade_cost as _venue_trade_cost
+from app.core.log_throttle import log_throttled
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, resolve_strategy_params
 from app.core.risk_curve import risk_multiplier as _risk_multiplier
 from app.core.timeframes import TF_MINUTES as _TF_MINUTES
@@ -280,6 +283,9 @@ class BacktestResult:
             "trades":             self.trades,
             "diagnostics":        getattr(self, "diagnostics", None),
             "ml_info":            getattr(self, "ml_info", None),
+            # Contexte d'exécution facturé (S11) : venue, spot/margin, levier,
+            # détail des frais, emprunt. Cf. app/core/execution.py::cost_model.
+            "cost_model":         getattr(self, "cost_model", None),
         }
 
 
@@ -353,6 +359,11 @@ class Backtester:
         # frais fixes, TTF). Résolue par symbole dans run() — None jusque-là,
         # ce qui signifie « comportement crypto historique » partout.
         self._venue = None
+        # S11 : décompte des coûts effectivement appliqués (spot/margin, levier,
+        # frais, emprunt). Rempli dans run(), reporté dans le résultat — sans
+        # lui, deux backtests aux chiffres très différents ne disent pas qu'ils
+        # ne diffèrent que par la venue résolue.
+        self._cost_model = None
 
     def _find_strategy(self, name: str):
         """Récupère l'instance Strategy par son nom (pour les hooks comme
@@ -770,6 +781,18 @@ class Backtester:
         from app.core.bot_identity import resolve_venue as _resolve_venue
         self._venue = _resolve_venue(self.cfg, tf=timeframe, symbol=symbol)
 
+        # S11 : annonce du contexte d'exécution facturé (spot/margin, levier,
+        # frais, emprunt). `log_throttled` avec une clé dérivée du modèle : émis
+        # une fois par contexte distinct, puis en DEBUG — l'optimiseur crée un
+        # Backtester par essai, un log par essai noierait tout.
+        self._cost_model = _cost_model(self.cfg, self._venue)
+        _key = f"cost_model:{symbol}:{timeframe}:{sorted(self._cost_model.items())}"
+        log_throttled(
+            logger, _key,
+            _format_cost_model(self._cost_model, symbol or "", timeframe or ""),
+            level=logging.INFO, ttl=3600.0,
+        )
+
         # ML-02 : relu ICI plutôt que figé à __init__ — un appelant peut poser
         # ``bt.ml_mode = "inline"`` entre deux ``run()`` (optimiseur, tests).
         ml_mode = self.ml_mode
@@ -1094,6 +1117,10 @@ class Backtester:
         result = BacktestResult(trades, equity_curve, self.initial_capital(self.cfg), timestamps, timeframe=_tf)
         result.diagnostics = diag
         result.ml_info = ml_info
+        # S11 : le résultat porte le contexte qui l'a produit — sans quoi un
+        # PnL n'est pas interprétable (spot ou margin ? quel levier ? quels
+        # frais ?), et deux runs ne sont pas comparables de bonne foi.
+        result.cost_model = self._cost_model
         return self._add_buy_and_hold(result, df, warmup)
 
     def _add_buy_and_hold(self, result: "BacktestResult", df: pl.DataFrame,

@@ -62,6 +62,45 @@ export interface Position {
   reason: string;
 }
 
+/**
+ * Contexte d'exécution facturé par un backtest / une optimisation (S11).
+ * Produit par `app/core/execution.py::cost_model` — les valeurs sont celles
+ * RÉELLEMENT appliquées : `borrow_rate_daily` vaut 0 sur une venue spot, et
+ * `fee_rate_*` reflète le `fee_pct` de la venue quand elle en déclare un.
+ */
+export interface CostModel {
+  venue: string;
+  market_type: string;
+  margin_mode?: string | null;
+  max_leverage: number;
+  asset_class: string;
+  quote_currency: string;
+  exchange?: string | null;
+  calendar?: string;
+  can_execute?: boolean;
+  allow_short?: boolean;
+  fee_rate_taker: number;
+  fee_rate_maker: number;
+  fee_pct_override?: number | null;
+  fee_fixed: number;
+  fee_min: number;
+  transaction_tax_pct: number;
+  tax_on_buy_only: boolean;
+  borrows: boolean;
+  borrow_rate_daily: number;
+  borrow_periods_per_day: number;
+  borrow_rate_annual: number;
+  spread_pct: number;
+  slippage_model: string;
+  slippage_k: number;
+  partial_fill_pct: number;
+  fractional: boolean;
+  lot_size: number;
+  tick_size: number;
+  min_notional: number;
+  max_notional_pct: number;
+}
+
 export interface StrategyStats {
   trades: number;
   wins: number;
@@ -330,6 +369,9 @@ export interface OptimizeJob {
     best_oos_trades?: number;
     best_oos_wr?: number;
     best_oos_sharpe?: number;
+    /** Contexte facturé pendant toute l'optimisation (S11) — sans lui, deux
+     *  `oos_score` ne sont pas comparables. */
+    cost_model?: CostModel;
   };
   applied?: boolean;
   error?: string;

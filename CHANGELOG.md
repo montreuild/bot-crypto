@@ -6,6 +6,42 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧾 Backtests et optimisations annoncent ce qu'ils facturent
+
+Un PnL seul n'est pas interprétable. Le même paramétrage donne des chiffres
+très différents selon que l'instrument est résolu sur une venue **spot ou
+margin** (l'emprunt n'est facturé que sur margin) et selon le **modèle de
+frais** : une action paie une commission fixe, un plancher de courtage et une
+taxe de transaction que la crypto ignore. Rien n'affichait ce contexte — on
+pouvait comparer de bonne foi deux runs incomparables.
+
+`app/core/execution.py::cost_model` décrit le contexte **réellement appliqué**,
+depuis les mêmes sources que les formules de coût : pas de dérive possible
+entre ce qui est affiché et ce qui est facturé. Sur une venue spot il rapporte
+un emprunt à **0**, pas la valeur configurée. Trois canaux :
+
+- **log INFO du Backtester** — throttlé par contexte distinct : l'optimiseur
+  crée un Backtester par essai, un log par essai noierait tout ;
+- **annonce de l'optimiseur** avant le premier essai, pour que l'opérateur voie
+  sur quoi il lance son optimisation au moment où il la lance ;
+- **champ `cost_model`** dans `BacktestResult.to_dict()` et dans la fiche de job
+  de l'optimiseur, rendu par une carte dédiée dans le Laboratoire.
+
+```
+[Coûts] BTC/USDC 1h @ venue 'margin-isolated' — okx:margin/isolated, levier ×1, crypto/USDC
+        frais : taker 0.100 % / maker 0.080 % · spread 0.050 % · slippage static · fill partiel 95%
+        emprunt 0.0720 %/jour × 24 périodes (≈ 30.1 %/an) · notionnel max 20% du capital
+
+[Coûts] AIR.PA 1d @ venue 'euronext-paper' — euronext:spot, levier ×1, equity/EUR [XPAR] (data-only), short interdit
+        frais : taker 0.100 % / maker 0.100 % · plancher 2.00 · taxe transaction 0.400 % à l'achat · spread 0.050 %
+        pas d'emprunt (marché spot) · quantité entière · tick 0.001 · notionnel min 200.00
+```
+
+L'absence d'emprunt est **nommée** plutôt qu'omise : une ligne manquante se lit
+comme un oubli, pas comme une information. À l'inverse, les lignes propres aux
+actions (plancher, taxe, quantité entière) sont masquées en crypto, où elles
+valent zéro et n'apprendraient rien.
+
 ### 🏛 La venue devient la source unique de vérité spot/margin
 
 `venues.default` était **vide** et `venues.assign` aussi : tout symbole crypto

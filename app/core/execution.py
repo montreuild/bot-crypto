@@ -176,6 +176,133 @@ def venue_trade_cost(price: float, size: float, fee_rate: float,
     return commission + tax
 
 
+# ── Description du modèle de coûts (S11) ────────────────────────────────────
+#
+# Un backtest ou une optimisation ne dit rien de ce qu'il a facturé : deux runs
+# aux chiffres très différents peuvent ne différer que par la venue résolue
+# (spot vs margin, crypto vs actions). `cost_model` rend ce contexte explicite,
+# à partir des MÊMES sources que les formules ci-dessus — pas d'un commentaire
+# qui dériverait. Consommé par le log de démarrage du Backtester, par
+# `BacktestResult.to_dict()` et par la fiche de job de l'optimiseur.
+
+
+def cost_model(cfg: dict, venue=None) -> dict:
+    """Décompte des coûts **effectivement appliqués** pour cette venue.
+
+    Chaque champ est la valeur réellement utilisée au calcul, pas la valeur
+    configurée : ``borrow_rate_daily`` vaut 0 sur une venue spot, et
+    ``fee_rate`` reflète le ``fee_pct`` de la venue quand elle en déclare un.
+    """
+    tcfg = cfg.get("trading", {}) or {}
+    bcfg = cfg.get("backtest", {}) or {}
+
+    taker = float(tcfg.get("taker_fee", 0.001))
+    maker = float(tcfg.get("maker_fee", 0.0004))
+    fee_pct = getattr(venue, "fee_pct", None) if venue is not None else None
+    borrow = venue_borrow_rate(float(tcfg.get("borrow_rate_daily", 0.0) or 0.0), venue)
+    periods = int(tcfg.get("borrow_periods_per_day", 24) or 24)
+
+    return {
+        # ── Identité de la venue ────────────────────────────────────────────
+        "venue": getattr(venue, "name", None) or "(globales)",
+        "market_type": getattr(venue, "market_type", "spot"),
+        "margin_mode": getattr(venue, "margin_mode", None),
+        "max_leverage": float(getattr(venue, "max_leverage", 1.0) or 1.0),
+        "asset_class": getattr(venue, "asset_class", "crypto"),
+        "quote_currency": getattr(venue, "quote_currency", "USDC"),
+        "exchange": getattr(venue, "exchange", None),
+        "calendar": getattr(venue, "calendar", "") or "",
+        "can_execute": bool(getattr(venue, "can_execute", True)),
+        "allow_short": bool(getattr(venue, "allow_short", True)),
+        # ── Frais ───────────────────────────────────────────────────────────
+        # `fee_rate_*` = taux réellement appliqué (override de venue prioritaire).
+        "fee_rate_taker": taker if fee_pct is None else float(fee_pct),
+        "fee_rate_maker": maker if fee_pct is None else float(fee_pct),
+        "fee_pct_override": None if fee_pct is None else float(fee_pct),
+        "fee_fixed": float(getattr(venue, "fee_fixed", 0.0) or 0.0),
+        "fee_min": float(getattr(venue, "fee_min", 0.0) or 0.0),
+        "transaction_tax_pct": float(getattr(venue, "transaction_tax_pct", 0.0) or 0.0),
+        "tax_on_buy_only": bool(getattr(venue, "tax_on_buy_only", True)),
+        # ── Emprunt ─────────────────────────────────────────────────────────
+        "borrows": bool(borrow > 0),
+        "borrow_rate_daily": borrow,
+        "borrow_periods_per_day": periods,
+        "borrow_rate_annual": ((1 + borrow / periods) ** (periods * 365) - 1
+                               if borrow > 0 else 0.0),
+        # ── Friction d'exécution ────────────────────────────────────────────
+        "spread_pct": float(bcfg.get("spread_pct", 0.0005)),
+        "slippage_model": str(bcfg.get("slippage_model", "static")),
+        "slippage_k": float(bcfg.get("slippage_k", 1.0)),
+        "partial_fill_pct": float(bcfg.get("partial_fill_pct", 0.95)),
+        # ── Contraintes d'instrument ────────────────────────────────────────
+        "fractional": bool(getattr(venue, "fractional", True)),
+        "lot_size": float(getattr(venue, "lot_size", 0.0) or 0.0),
+        "tick_size": float(getattr(venue, "tick_size", 0.0) or 0.0),
+        "min_notional": float(getattr(venue, "min_notional", 0.0) or 0.0),
+        "max_notional_pct": float(bcfg.get("max_notional_pct", 0.20)),
+    }
+
+
+def _pct(x: float, decimals: int = 3) -> str:
+    return f"{x * 100:.{decimals}f} %"
+
+
+def format_cost_model(m: dict, symbol: str = "", timeframe: str = "") -> str:
+    """Rend :func:`cost_model` lisible en trois lignes, pour les logs.
+
+    Volontairement explicite sur ce qui NE s'applique pas (« pas d'emprunt ») :
+    l'absence de ligne se lit comme un oubli, pas comme une information.
+    """
+    quoi = " ".join(x for x in (symbol, timeframe) if x)
+    lev = f"levier ×{m['max_leverage']:g}"
+    mode = f"/{m['margin_mode']}" if m.get("margin_mode") else ""
+    cal = f" [{m['calendar']}]" if m.get("calendar") else ""
+    exe = "" if m.get("can_execute", True) else " (data-only)"
+    short = "" if m.get("allow_short", True) else ", short interdit"
+
+    tete = (f"{quoi} @ venue '{m['venue']}' — {m.get('exchange') or '?'}:"
+            f"{m['market_type']}{mode}, {lev}, {m['asset_class']}/"
+            f"{m['quote_currency']}{cal}{exe}{short}")
+
+    # Frais : le détail dépend de la classe d'actif (les actions ont des frais
+    # fixes, un plancher de courtage et une taxe de transaction).
+    frais = [f"taker {_pct(m['fee_rate_taker'])} / maker {_pct(m['fee_rate_maker'])}"]
+    if m["fee_fixed"]:
+        frais.append(f"+ {m['fee_fixed']:.2f} fixe/ordre")
+    if m["fee_min"]:
+        frais.append(f"plancher {m['fee_min']:.2f}")
+    if m["transaction_tax_pct"]:
+        assiette = "à l'achat" if m["tax_on_buy_only"] else "aux deux sens"
+        frais.append(f"taxe transaction {_pct(m['transaction_tax_pct'])} {assiette}")
+    frais.append(f"spread {_pct(m['spread_pct'])}")
+    frais.append(f"slippage {m['slippage_model']}"
+                 + (f" (k={m['slippage_k']:g})" if m["slippage_model"] != "static" else ""))
+    if m["partial_fill_pct"] < 1.0:
+        frais.append(f"fill partiel {m['partial_fill_pct']:.0%}")
+
+    if m["borrows"]:
+        emprunt = (f"emprunt {_pct(m['borrow_rate_daily'], 4)}/jour "
+                   f"× {m['borrow_periods_per_day']} périodes "
+                   f"(≈ {_pct(m['borrow_rate_annual'], 1)}/an)")
+    else:
+        emprunt = f"pas d'emprunt (marché {m['market_type']})"
+
+    contraintes = []
+    if not m["fractional"]:
+        contraintes.append("quantité entière")
+    if m["lot_size"]:
+        contraintes.append(f"lot {m['lot_size']:g}")
+    if m["tick_size"]:
+        contraintes.append(f"tick {m['tick_size']:g}")
+    if m["min_notional"]:
+        contraintes.append(f"notionnel min {m['min_notional']:.2f}")
+    contraintes.append(f"notionnel max {m['max_notional_pct']:.0%} du capital")
+
+    return (f"[Coûts] {tete}\n"
+            f"        frais : {' · '.join(frais)}\n"
+            f"        {emprunt} · {' · '.join(contraintes)}")
+
+
 def risk_position_size(capital: float, risk_pct: float, entry: float,
                        stop: float, max_notional_pct: float = 1.0) -> tuple:
     """Sizing par risque fixe : taille = (capital × risque) / distance au stop,

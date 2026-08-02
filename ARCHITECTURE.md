@@ -130,6 +130,19 @@ Sources uniques (ne jamais recopier ces littéraux) :
   (`quantize_size`, `quantize_price`, `venue_trade_cost`) — partagés
   backtest ↔ live comme le reste du module, appliqués à l'ouverture, au
   scale-in et à la clôture des deux côtés.
+- **Contexte d'exécution affiché (S11)** : `app/core/execution.py`
+  (`cost_model`, `format_cost_model`). Un PnL seul n'est pas interprétable —
+  le même paramétrage donne des chiffres très différents selon que
+  l'instrument est résolu sur une venue spot ou margin (l'emprunt n'est
+  facturé que sur margin) et selon le modèle de frais (une action paie une
+  commission fixe, un plancher de courtage et une taxe de transaction que la
+  crypto ignore). `cost_model` rapporte les valeurs **réellement appliquées**,
+  depuis les mêmes sources que les formules — pas de dérive possible entre ce
+  qui est affiché et ce qui est facturé. Diffusé sur trois canaux : log INFO
+  du `Backtester` (throttlé par contexte distinct — l'optimiseur crée un
+  Backtester par essai), annonce du `ParamSearchOptimizer` avant le premier
+  essai, et champ `cost_model` de `BacktestResult.to_dict()` / de la fiche de
+  job, rendu par `frontend/src/components/cards/cost-model-card.tsx`.
 - **Routage de providers (G2)** : `app/core/provider_router.py`
   (`build_market_provider` rend l'exchange **inchangé** si aucune venue ne
   déclare de `data_provider` ; `register_provider` pour en brancher un autre).

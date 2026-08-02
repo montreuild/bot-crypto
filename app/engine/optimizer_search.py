@@ -232,6 +232,19 @@ class OptimizerSearchEngine:
         # traverser la frontière de process.
         self.ml_mode = ml_mode if ml_mode is not None else (self.cfg.get("optimizer") or {}).get("ml_mode", "inline")
 
+        # S11 : annonce le contexte facturé AVANT le premier essai. Le
+        # Backtester le journalise aussi, mais seulement au premier trial et de
+        # façon throttlée : ici l'opérateur voit sur quoi il lance son
+        # optimisation au moment où il la lance.
+        try:
+            from app.core.execution import format_cost_model
+            model = self._cost_model()
+            if model:
+                logger.info("[Optimizer] %s\n%s", strategy_name,
+                            format_cost_model(model, symbol or "", timeframe or ""))
+        except Exception as e:      # pragma: no cover — jamais bloquant
+            logger.debug(f"[Optimizer] annonce du modèle de coûts KO : {e}")
+
     def _with_hp(self, params: dict) -> dict:
         """Fusionne les hyperparamètres d'entraînement ML figés (``_fixed_ml_hp``)
         dans un jeu de params échantillonné. Injecté au niveau du sampler pour
@@ -1172,7 +1185,28 @@ class OptimizerSearchEngine:
             "overfit":        best.get("overfit", 1.0),
             "n_trials":       len(self.results),
             "top5":           top5,
+            # S11 : contexte d'exécution facturé pendant toute l'optimisation
+            # (venue, spot/margin, levier, détail des frais, emprunt). Sans lui,
+            # un `oos_score` n'est pas comparable d'un run à l'autre : deux
+            # scores très différents peuvent ne différer que par la venue.
+            "cost_model":     self._cost_model(),
         }
+
+    def _cost_model(self) -> dict:
+        """Modèle de coûts de CE couple (symbole, timeframe).
+
+        Recalculé depuis la config et la venue résolue plutôt que capturé sur un
+        trial : tous les trials partagent le même contexte (seuls les params de
+        stratégie varient), et un trial peut avoir échoué.
+        """
+        from app.core.bot_identity import resolve_venue
+        from app.core.execution import cost_model
+        try:
+            venue = resolve_venue(self.cfg, tf=self.timeframe, symbol=self.symbol)
+            return cost_model(self.cfg, venue)
+        except Exception as e:      # pragma: no cover — jamais bloquant
+            logger.debug(f"[Optimizer] modèle de coûts indisponible : {e}")
+            return {}
 
     # ── Dispatch & two-phase ML (#6) ──────────────────────────────────────────
     def _dispatch(self, method: str, n_trials: int, n_jobs: int,
