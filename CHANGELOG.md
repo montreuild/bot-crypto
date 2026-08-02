@@ -175,10 +175,16 @@ chaque cycle de scan — 180 fichiers modifiés en permanence, noyant les
 changements de code sans rien apporter : un parquet d'OHLCV n'est pas
 relisible, et sa version d'hier n'a aucune valeur d'archive. Ils sont
 désormais ignorés et détachés (les fichiers restent sur disque). Restent suivis
-à dessein : `data/universe/`, `data/oos_tracker.json`,
-`data/backtest_history.json` — écrits par décision, pas par accumulation.
-Conséquence assumée : **un clone neuf démarre avec un cache vide**, à amorcer
-par `scripts/backfill_equities.py` ou le premier cycle du scanner.
+à dessein : `data/universe/` et `data/oos_tracker.json` — écrits par décision,
+pas par accumulation. Conséquence assumée : **un clone neuf démarre avec un
+cache vide**, à amorcer par `scripts/backfill_equities.py` ou le premier cycle
+du scanner.
+
+> **Rectification (S11)** : `data/backtest_history.json` figurait dans cette
+> liste des « écrits par décision ». C'était une erreur de classement —
+> `record_backtest` y ajoute une entrée par slot à **chaque** backtest lancé, y
+> compris depuis l'UI. Un seul run sur toutes les stratégies produit ~2 000
+> lignes de diff. Il est désormais ignoré et détaché lui aussi.
 
 `starlette==0.38.6` est épinglé alors que c'est une transitive de `fastapi`,
 contre la règle d'en-tête du fichier. La règle suppose que les transitives sont
