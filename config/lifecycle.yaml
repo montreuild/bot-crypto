@@ -19,6 +19,10 @@ backtest:
   partial_fill_pct: 0.95
   monte_carlo_runs: 200
   walk_forward_folds: 5
+  # S12 — passe d'ÉTUDE (indépendante de l'allocation courante) : mesure le
+  # comportement intrinsèque d'une stratégie sur une échelle fixe, à côté de
+  # la passe LIVE (enveloppe réelle du slot) qui seule sert à la promotion.
+  reference_envelope: 1000
 
 optimizer:
   enabled: false

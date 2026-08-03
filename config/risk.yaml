@@ -2,15 +2,22 @@
 #  RISQUE & EXÉCUTION — combien engager, quand refuser, où mettre le stop
 # ============================================================================
 #
-#  Briques : app/core/risk_gate.py + risk_sizer.py (sizing, vetos) et
-#            app/core/trailing.py (stops), via live.trailing.
+#  Briques : app/core/risk_envelope.py + risk_ledger.py + risk_sizer.py
+#            (enveloppes, budgets de risque, sizing) et app/core/trailing.py
+#            (stops), via live.trailing.
 #
 #  `live.trailing` est volontairement séparé de `backtest.*` (S1-08) : sans
 #  cette section, un changement de config d'optimisation modifiait en silence
 #  le trailing du trading réel.
 #
+#  ── S12 : enveloppes de risque emboîtées venue -> symbole -> slot ─────────
+#  Le capital n'est plus global (`trading.capital` a disparu) : chaque venue
+#  porte SON enveloppe. Deux plafonds distincts par niveau :
+#    - enveloppe   (devise) : borne le NOTIONNEL — l'immobilisation de capital
+#    - budget de risque (devise) : borne la PERTE — |entrée-stop| x taille
+#  Cf. docs/CONCEPTION_ENVELOPPES_DE_RISQUE.md pour le modèle complet.
+#
 trading:
-  capital: 1000
   paper_mode: true
   timeframe: 1h
   timeframes:
@@ -21,11 +28,6 @@ trading:
     - 1d
   scan_interval: 60
   score_threshold: 0.55
-  risk_per_trade: 0.01
-  max_positions: 5
-  max_longs: 3
-  max_shorts: 3
-  max_leverage: 1
   max_trades_per_minute: 3
   daily_drawdown_limit: 0.05
   max_drawdown_global: 0.2
@@ -60,6 +62,49 @@ risk:
   volatility_threshold: 0.05
   adx_trend_threshold: 25.0
   atr_volatile_threshold: 3.0
+
+  # ── Taux de risque par trade, en % de l'enveloppe du SLOT (pas du capital
+  # global) : prudent/normal/agressif sont des profils nommés, sélectionnables
+  # sans toucher aux enveloppes par venue ci-dessous.
+  profile: normal
+  profiles:
+    prudent: 0.01
+    normal: 0.025
+    agressif: 0.05
+
+  # Plancher de poids par slot (évite des enveloppes trop petites pour
+  # franchir le notionnel minimum d'une venue) — voir n_slots_max en
+  # diagnostics.stop_pct_reference ci-dessous.
+  min_slot_weight: 0.05
+
+  # Tolérance de dérive entre l'enveloppe qui a mesuré l'edge d'un bot (dans
+  # oos_tracker) et son enveloppe courante : au-delà, la promotion est
+  # refusée — l'edge a été mesurée sur une autre échelle économique.
+  base_drift_tolerance: 0.20
+
+  diagnostics:
+    # Stop de référence pour les diagnostics de faisabilité (fenêtre de stops
+    # viables, plafond notionnel mordant) — un paramètre, pas une mesure de
+    # marché. 2,5 % ≈ trail_wide (2.5) x ATR (1 %) typique.
+    stop_pct_reference: 0.025
+
+  # ── Enveloppes par venue (S12) ─────────────────────────────────────────
+  # Une venue non déclarée ici, mais atteignable via venues.default/assign,
+  # fait REFUSER le démarrage (_validate_risk_envelopes) — aucun slot de
+  # cette venue ne pourrait sinon être dimensionné.
+  envelopes:
+    margin-isolated:
+      capital: 1000
+      # BTC (et ETH plus tard) seulement pour l'instant sur cette venue :
+      # 100 % d'exposition assumée, pas de décote entre symboles.
+      max_symbol_exposure_pct: 1.00
+      symbol_risk_pct: 0.02      # 2 % de 1000 = 20 € de perte max sur BTC
+      venue_risk_pct: 0.03       # 30 € de perte max sur la venue (décote dès un 2e symbole)
+    euronext-paper:
+      capital: 10000
+      max_symbol_exposure_pct: 0.25   # 2 500 € max par ticker
+      symbol_risk_pct: 0.02           # 50 € de perte max par ticker
+      venue_risk_pct: 0.05            # 500 € de perte max sur le livre actions
 
 live:
   # Paramètres de trailing du LiveTrader — dédiés, indépendants de backtest.*
