@@ -45,11 +45,17 @@ def _make_ohlcv(n: int = 600, seed: int = 42) -> pl.DataFrame:
 def _cfg(strategy: str) -> dict:
     return {
         "trading": {
-            "capital": 1000.0, "risk_per_trade": 0.01, "timeframe": "1h",
+            "timeframe": "1h",
             "paper_mode": True, "taker_fee": 0.001, "maker_fee": 0.0004,
             "score_threshold": 0.55, "borrow_rate_daily": 0.0002,
-            "max_notional_pct": 0.20,
         },
+        # S12 : le capital appartient à la venue, le taux de risque au profil.
+        # Profil fixé à 1 % — la valeur de l'ancien `risk_per_trade`, pour que
+        # seule la disparition du plafond `max_notional_pct` explique l'écart.
+        "venues": {"default": "v", "defs": {"v": {"max_leverage": 1}}, "assign": {}},
+        "risk": {"profile": "p", "profiles": {"p": 0.01},
+                 "envelopes": {"v": {"capital": 1000.0, "max_symbol_exposure_pct": 1.0,
+                                    "symbol_risk_pct": 0.05, "venue_risk_pct": 0.10}}},
         "backtest": {
             "spread_pct": 0.0005, "latency_ms": 0,
             "partial_fill_pct": 1.0, "monte_carlo_runs": 50,
@@ -57,7 +63,7 @@ def _cfg(strategy: str) -> dict:
             "trail_wide": 2.5, "trail_normal": 2.0, "trail_lock": 1.5,
             "trail_tight": 1.0, "grace_bars": 4, "breakeven_r": 1.2,
             "lock_r": 2.5, "tight_r": 4.0, "lock_ratio": 0.60,
-            "use_swing": False, "max_notional_pct": 0.20,
+            "use_swing": False,
         },
         "strategies": {"enabled": [strategy]},
         "strategy_params": {},
@@ -106,6 +112,21 @@ def _run(strategy_name: str) -> dict:
 #   trend_rider     pnl −2.3265  →  −2.2815   (Δ +0.0450)
 #   pullback_trend  pnl −14.4664 →  −14.2505  (Δ +0.2159)
 #
+# S12 — suppression de `backtest.max_notional_pct` (3e recapture, motif nommé).
+# L'ancien modèle plafonnait le notionnel à 20 % d'un capital global (200 €)
+# tout en calculant le risque sur ce même capital (1 % = 10 €) : deux bases
+# pour une seule décision, le défaut que cette refonte supprime. Le plafond
+# s'exprime désormais sur l'enveloppe du slot × levier (1 000 €), et le taux de
+# risque reste à 1 % — donc seul le plafond disparaît.
+#
+# Ces témoins ne sont PAS reproductibles à l'identique : aucun réglage du
+# nouveau modèle ne recrée un risque assis sur 1 000 € et un plafond assis sur
+# 200 €. Signaux, nombre de trades et win rate sont INCHANGÉS ; seule l'échelle
+# des positions bouge, là où l'ancien plafond mordait :
+#
+#   trend_rider     pnl −2.2815  →  −11.3593  (×4,98 ≈ 1 000/200)
+#   pullback_trend  pnl −14.2505 →  −56.6987  (×3,98)
+#
 # Un futur écart sur ces chiffres n'est PAS à réaligner sans avoir identifié la
 # cause : le rôle de ce test est de rendre visible un changement de
 # comportement, pas de le suivre.
@@ -114,8 +135,8 @@ def test_trend_rider_backtest_parity_on_synthetic_btc_data():
     assert result == {
         "total_trades": 2,
         "win_rate": 0.0,
-        "total_pnl": -2.2815,
-        "final_equity": 997.7185,
+        "total_pnl": -11.3593,
+        "final_equity": 988.6407,
     }
 
 
@@ -124,6 +145,6 @@ def test_pullback_trend_backtest_parity_on_synthetic_btc_data():
     assert result == {
         "total_trades": 8,
         "win_rate": 0.0,
-        "total_pnl": -14.2505,
-        "final_equity": 985.7495,
+        "total_pnl": -56.6987,
+        "final_equity": 943.3013,
     }

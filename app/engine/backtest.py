@@ -23,7 +23,11 @@ from app.core.execution import size_impact_cost as _size_impact_cost
 from app.core.execution import venue_trade_cost as _venue_trade_cost
 from app.core.log_throttle import log_throttled
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL, resolve_strategy_params
+from app.core.rejections import RejectionCounter
 from app.core.risk_curve import risk_multiplier as _risk_multiplier
+from app.core.risk_envelope import trade_risk_pct as _trade_risk_pct
+from app.core.risk_envelope import with_reference_envelope
+from app.core.risk_sizer import _floor_to
 from app.core.timeframes import TF_MINUTES as _TF_MINUTES
 from app.core.timeframes import bars_per_year as _bars_per_year
 from app.core.trailing import TrailingStopManager
@@ -125,16 +129,45 @@ def _resolve_frozen_ml_model(strat, symbol: Optional[str], tf: Optional[str],
     return entry
 
 
+def run_dual_pass(engine: Engine, cfg: dict, df, envelope, *,
+                  symbol: str = DEFAULT_CONFIG_SYMBOL, **run_kwargs) -> dict:
+    """Deux exécutions, deux questions différentes (§5.1).
+
+    - ``live``      : l'enveloppe RÉELLE du slot — « ce bot est-il promouvable ? »
+                      C'est la seule passe qui pilote promotion et parité.
+    - ``reference`` : la MÊME enveloppe à une échelle fixe
+                      (``backtest.reference_envelope``) — « cette stratégie
+                      vaut-elle quelque chose ? ». Comparable entre tous les
+                      bots, indépendante de l'allocation courante.
+
+    Le sizing étant linéaire en l'enveloppe, tout écart de PnL % entre les deux
+    passes est imputable aux contraintes ABSOLUES (notionnel minimum, lot
+    indivisible, frais fixes, saturation de budget) — et les compteurs de refus
+    disent lesquelles. Sur une venue fractionnable et sans minimum, les deux
+    passes doivent donner exactement le même PnL %.
+    """
+    reference_capital = float((cfg.get("backtest") or {}).get("reference_envelope", 1000.0))
+    out = {}
+    for pass_name, env in (("live", envelope),
+                           ("reference", with_reference_envelope(envelope, reference_capital))):
+        bt = Backtester(engine, cfg, envelope=env, **run_kwargs)
+        out[pass_name] = bt.run(df, symbol=symbol)
+    return out
+
+
 # ── BacktestResult ──
 class BacktestResult:
     def __init__(self, trades: List[dict], equity_curve: List[float],
                  initial_capital: float, timestamps: List[str] = None,
-                 timeframe: str = "1d"):
+                 timeframe: str = "1d", rejections: dict = None):
         self.trades          = trades
         self.equity_curve    = equity_curve
         self.initial_capital = initial_capital
         self.timestamps      = timestamps or []
         self._timeframe      = timeframe
+        # S12 : motifs de refus, mêmes codes que le live — sans eux, impossible
+        # de dire POURQUOI un backtest et son équivalent live divergent.
+        self.rejections      = rejections or {}
         self._compute_metrics()
 
     def _compute_metrics(self):
@@ -261,6 +294,7 @@ class BacktestResult:
         pf_safe = round(min(pf, 999.0), 3) if math.isfinite(pf) else 999.0
         return {
             "initial_capital":    self.initial_capital,
+            "rejections":         self.rejections,
             "final_equity":       round(_sf(self.final_equity, 0.0), 4),
             "total_pnl":          round(_sf(self.total_pnl, 0.0), 4),
             "total_fees":         round(_sf(self.total_fees, 0.0), 4),
@@ -318,10 +352,18 @@ class Backtester:
     """
     def __init__(self, engine: Engine, cfg: dict,
                  cancel_event: Optional[threading.Event] = None,
-                 ml_mode: str = "frozen"):
+                 ml_mode: str = "frozen",
+                 envelope=None):
         self.engine             = engine
         self.cfg                = cfg
         self._cancel_event      = cancel_event
+        # S12 : le backtest d'un bot tourne sur l'ENVELOPPE de ce bot, pas sur
+        # un capital global — c'est ce qui rend son PnL comparable au live et
+        # fait mordre `min_notional`, le lot et les frais fixes à la même
+        # échelle des deux côtés. Sans enveloppe (études libres, walk-forward
+        # historique), on retombe sur le capital de la venue par défaut.
+        self.envelope           = envelope
+        self.rejections         = RejectionCounter()
         if ml_mode not in _ML_MODES:
             raise ValueError(f"ml_mode invalide : {ml_mode!r} (attendu parmi {_ML_MODES})")
         self.ml_mode            = ml_mode
@@ -354,7 +396,8 @@ class Backtester:
         self.slippage_model = str(bcfg.get("slippage_model", "static"))
         self.slippage_k     = float(bcfg.get("slippage_k", 1.0))
         self.partial_fill = bcfg.get("partial_fill_pct",  0.95)
-        self.max_notional_pct = float(bcfg.get("max_notional_pct", 0.20))  # BT-03 : aligné sur le live (risk.py)
+        # S12 : `backtest.max_notional_pct` est supprimé — le plafond notionnel
+        # s'exprime sur l'enveloppe du slot × levier (§2.2), la bonne base.
         # G2 : venue de l'instrument backtesté (quantification des tailles,
         # frais fixes, TTF). Résolue par symbole dans run() — None jusque-là,
         # ce qui signifie « comportement crypto historique » partout.
@@ -364,6 +407,37 @@ class Backtester:
         # lui, deux backtests aux chiffres très différents ne disent pas qu'ils
         # ne diffèrent que par la venue résolue.
         self._cost_model = None
+
+    # ── Bornes économiques (S12) ───────────────────────────────────────────
+    # Portées par l'enveloppe quand elle existe, sinon par la venue résolue :
+    # les mêmes valeurs que le live consulte, pour que les contraintes
+    # absolues mordent des deux côtés au même moment.
+
+    def _sizing_base(self, ctx) -> float:
+        """Base économique du sizing — distincte de l'équité courante.
+
+        ``ctx.capital`` joue deux rôles : suivre l'équité (courbe, PnL,
+        drawdown) et servir de base au sizing. S12 les sépare dès qu'une
+        enveloppe est fournie : le live dimensionne sur une enveloppe FIXE
+        (une décision d'allocation, pas une valeur de marché), et la courbe de
+        dé-risquage est le seul mécanisme qui réduit la voilure après pertes.
+
+        Sans cette séparation, le backtest pénaliserait deux fois un
+        drawdown — base rétrécie ET multiplicateur — là où le live ne le fait
+        qu'une, et le sizing cesserait d'être linéaire en l'enveloppe, ce qui
+        ruinerait l'invariance d'échelle de la double passe (§5.1).
+        """
+        return self.envelope.slot_envelope if self.envelope is not None else ctx.capital
+
+    def _leverage(self) -> float:
+        if self.envelope is not None:
+            return max(self.envelope.max_leverage, 1.0)
+        return max(float(getattr(self._venue, "max_leverage", 1.0) or 1.0), 1.0)
+
+    def _min_notional(self) -> float:
+        if self.envelope is not None and self.envelope.min_notional > 0:
+            return self.envelope.min_notional
+        return float(getattr(self._venue, "min_notional", 0.0) or 0.0)
 
     def _find_strategy(self, name: str):
         """Récupère l'instance Strategy par son nom (pour les hooks comme
@@ -587,10 +661,11 @@ class Backtester:
                 stop_dist = abs(add_price - position["stop"])
                 if stop_dist > 0:
                     sf = max(0.0, min(float(scale.get("size_factor", 1.0)), 2.0))
-                    add_size = ctx.capital * ctx.risk / stop_dist * sf * self.partial_fill
+                    _base = self._sizing_base(ctx)
+                    add_size = _base * ctx.risk / stop_dist * sf * self.partial_fill
                     add_notional = add_size * add_price
-                    # Cap : le notional total reste sous max_notional_pct
-                    room = ctx.capital * self.max_notional_pct - position["notional"]
+                    # Cap : le notional total reste sous l'enveloppe × levier
+                    room = _base * max(self._leverage(), 1.0) - position["notional"]
                     if add_notional > room:
                         add_notional = max(room, 0.0)
                         add_size = add_notional / add_price
@@ -667,34 +742,42 @@ class Backtester:
         disable_trailing = bool(signal.get("disable_trailing", False))
 
         stop_dist    = abs(exec_price - stop)
-        # BT-09 : même courbe de dé-risquage que le live (RiskManager.compute_risk)
-        # — ×0.75 si drawdown > 5 %, ×0.5 si > 10 % (app/core/risk_curve.py).
+        if stop_dist <= 0:
+            diag["rejected_notional"] += 1
+            self.rejections.record("stop_invalide", symbol=ctx.symbol)
+            return None
+        # S12 — sizing STRICTEMENT identique au live (app/core/risk_sizer.py) :
+        # même base (l'enveloppe), même ordre des facteurs, même arrondi à la
+        # baisse. Toute divergence ici rouvrirait l'écart de base que cette
+        # refonte supprime — c'est ce que verrouille test_backtest_live_parity.
+        #
+        # BT-09 : même courbe de dé-risquage que le live — ×0.75 si drawdown
+        # > 5 %, ×0.5 si > 10 % (app/core/risk_curve.py).
         peak = getattr(ctx, "peak_capital", ctx.capital) or ctx.capital
         dd   = max(0.0, (peak - ctx.capital) / peak) if peak > 0 else 0.0
-        risk_amount  = ctx.capital * ctx.risk * _risk_multiplier(dd)
-        size         = risk_amount / stop_dist if stop_dist > 0 else 0
-        notional     = size * exec_price
-        max_notional = ctx.capital * self.max_notional_pct
-        if notional > max_notional:
-            size     = max_notional / exec_price
-            notional = max_notional
-        if notional < 1.0 or size <= 0:
+        size_factor  = max(0.0, min(float(signal.get("size_factor", 1.0)), 2.0))
+        base         = self._sizing_base(ctx)
+        risk_amount  = base * ctx.risk * size_factor * _risk_multiplier(dd)
+        # Plafond notionnel exprimé sur la base du bot, pas sur un pourcentage
+        # global d'un capital qui n'existe plus.
+        max_notional = base * max(self._leverage(), 1.0)
+        size = _floor_to(risk_amount / stop_dist, 6)
+        if size * exec_price > max_notional:
+            size = _floor_to(max_notional / exec_price, 6)
+        notional = _floor_to(size * exec_price, 4)
+
+        min_notional = self._min_notional()
+        if size <= 0 or notional < min_notional:
             diag["rejected_notional"] += 1
+            self.rejections.record("notionnel_min", symbol=ctx.symbol)
             logger.debug(
-                f"[Backtest] bar {i} : trade rejeté "
-                f"(notional={notional:.4f} size={size:.6f} capital={ctx.capital:.2f})"
+                f"[Backtest] bar {i} : trade rejeté (notional={notional:.4f} "
+                f"< min {min_notional:.2f}, size={size:.6f}, base={ctx.capital:.2f})"
             )
             return None
 
-        # Size factor (demi-Kelly côté stratégie — ex. ×confidence) :
-        # appliqué après le cap notional pour permettre à la stratégie de
-        # réduire la taille sans buter sur max_notional_pct.
-        # Cap haut à 2.0 : autorise les boosts type V7 SHORT_TD_HIGH (×1.5)
-        # tout en gardant max_notional_pct comme garde-fou de risque global.
-        size_factor = float(signal.get("size_factor", 1.0))
-        size_factor = max(0.0, min(size_factor, 2.0))
-        size       *= size_factor
-
+        # Remplissage partiel : réalisme d'exécution propre au backtest (le
+        # live, lui, réaligne la taille sur le `filled` réel de l'ordre).
         size       *= self.partial_fill
         # G2 — quantification par la venue (lot/unité entière) : mêmes bornes
         # qu'à l'exécution live, sinon le backtest actions surestime le PnL en
@@ -702,6 +785,7 @@ class Backtester:
         q_size = _quantize_size(size, self._venue)
         if q_size <= 0:
             diag["rejected_notional"] += 1
+            self.rejections.record("venue", symbol=ctx.symbol)
             logger.debug(
                 f"[Backtest] bar {i} : trade rejeté (taille {size:.6f} < 1 unité "
                 f"négociable sur la venue)"
@@ -879,8 +963,8 @@ class Backtester:
                         f"[Backtest] prepare_for_backtest('{strat.name}') KO : {e}"
                     )
 
-        capital      = self.cfg["trading"].get("capital", 1000.0)
-        risk         = self.cfg["trading"]["risk_per_trade"]
+        capital      = self.initial_capital(self.cfg)
+        risk         = _trade_risk_pct(self.cfg)
         threshold    = self.cfg["trading"].get("score_threshold", 0.60)
 
         # ``strat_params`` déjà résolu plus haut (avant prepare_for_backtest) :
@@ -1114,7 +1198,9 @@ class Backtester:
             )
 
         _tf = timeframe or self.cfg["trading"].get("timeframe", "1h")
-        result = BacktestResult(trades, equity_curve, self.initial_capital(self.cfg), timestamps, timeframe=_tf)
+        result = BacktestResult(trades, equity_curve, self.initial_capital(self.cfg),
+                                timestamps, timeframe=_tf,
+                                rejections=self.rejections.as_dict())
         result.diagnostics = diag
         result.ml_info = ml_info
         # S11 : le résultat porte le contexte qui l'a produit — sans quoi un
@@ -1150,7 +1236,15 @@ class Backtester:
         return result
 
     def initial_capital(self, cfg: dict) -> float:
-        return cfg["trading"].get("capital", 1000.0)
+        """Base économique du backtest.
+
+        S12 : l'enveloppe du slot quand elle est fournie — c'est elle qui rend
+        le PnL comparable au live. Sinon le capital de la venue par défaut
+        (études libres, walk-forward historique)."""
+        if self.envelope is not None:
+            return self.envelope.slot_envelope
+        from app.core.risk_gate import _default_venue_capital
+        return _default_venue_capital(cfg) or 1000.0
 
     def _impact_cost(self, ctx, i: int, notional: float) -> float:
         """BT-10 : coût d'impact croissant avec la taille RELATIVE du trade
