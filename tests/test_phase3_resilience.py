@@ -9,13 +9,18 @@ from app.core.risk_gate import RiskManager
 
 def _cfg(**risk_over):
     return {
-        "trading": {"capital": 1000, "paper_mode": True, "risk_per_trade": 0.01,
-                    "max_positions": 5, "max_longs": 3, "max_shorts": 3,
-                    "max_trades_per_minute": 100, "max_leverage": 1,
+        "trading": {"paper_mode": True, "max_trades_per_minute": 100,
                     "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20},
         "exchange": {"name": "okx"},
-        "backtest": {"max_notional_pct": 0.20},
-        "risk": {"equity_kill_switch_dd": 0.35, **risk_over},
+        "venues": {"default": "okx-test", "defs": {"okx-test": {"max_leverage": 1}},
+                   "assign": {}},
+        # S12 : l'équité suivie par les circuit breakers est celle de la venue
+        # par défaut.
+        "risk": {"equity_kill_switch_dd": 0.35,
+                 "envelopes": {"okx-test": {
+                     "capital": 1000, "max_symbol_exposure_pct": 1.0,
+                     "symbol_risk_pct": 0.02, "venue_risk_pct": 0.05}},
+                 **risk_over},
     }
 
 

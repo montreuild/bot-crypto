@@ -133,6 +133,34 @@ def diagnose(cfg: dict, slots_by_symbol: Dict[Tuple[str, str], Dict[str, Optiona
                 max_notional = slot_envelope * max(max_leverage, 1.0)
                 risk_amount = slot_envelope * risk_pct
 
+                # Le slot risque, à lui seul, plus que ne l'autorise le budget
+                # partagé au-dessus de lui : chaque trade sera refusé par
+                # RiskLedger, quelles que soient la volatilité et la taille.
+                # Mord dès que trade_risk_pct × poids dépasse symbol_risk_pct —
+                # donc typiquement quand un symbole se retrouve à UN seul slot
+                # actif (poids 1,0) avec un profil de risque plus agressif que
+                # le budget du symbole.
+                if risk_amount > symbol_envelope * symbol_risk_pct:
+                    out.append(Diagnostic(
+                        "error", "budget_symbole_insuffisant", f"slot:{slot_key}",
+                        f"risque par trade ({risk_amount:.2f}) > budget de risque "
+                        f"du symbole ({symbol_envelope * symbol_risk_pct:.2f}) : "
+                        f"aucun trade ne passera. Baisser risk.profile ou monter "
+                        f"symbol_risk_pct.",
+                        {"risk_amount": risk_amount, "weight": w,
+                         "symbol_risk_budget": symbol_envelope * symbol_risk_pct}))
+                    continue
+
+                if risk_amount > capital * venue_risk_pct:
+                    out.append(Diagnostic(
+                        "error", "budget_venue_insuffisant", f"slot:{slot_key}",
+                        f"risque par trade ({risk_amount:.2f}) > budget de risque "
+                        f"de la venue ({capital * venue_risk_pct:.2f}) : aucun "
+                        f"trade ne passera.",
+                        {"risk_amount": risk_amount,
+                         "venue_risk_budget": capital * venue_risk_pct}))
+                    continue
+
                 if max_notional < venue_min_notional:
                     out.append(Diagnostic(
                         "error", "trade_impossible", f"slot:{slot_key}",

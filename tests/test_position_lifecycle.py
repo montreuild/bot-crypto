@@ -57,16 +57,27 @@ class MockExchange:
         return {"free": 1000.0, "used": 0.0, "total": 1000.0, "borrowed": 0.0}
 
 
-def _make_cfg(db_path: str, max_positions: int = 5) -> dict:
+def _make_cfg(db_path: str) -> dict:
     return {
         "trading": {
-            "capital": 1000.0, "timeframes": ["1h"], "scan_interval": 60,
-            "score_threshold": 0.5, "paper_mode": True, "max_positions": max_positions,
+            "timeframes": ["1h"], "scan_interval": 60,
+            "score_threshold": 0.5, "paper_mode": True,
         },
         "database": {"url": f"sqlite:///{db_path}"},
         "exchange": {"name": "okx", "margin": False},
         "strategies": {"enabled": ["trend_rider"]},
-        "strategy_params": {}, "optimizer_results": {}, "scanner": {}, "risk": {},
+        "strategy_params": {}, "optimizer_results": {}, "scanner": {},
+        # S12 : le capital appartient à la venue ; le sizing d'un slot dérive de
+        # son enveloppe, plus d'une globale `trading.capital`.
+        "venues": {"default": "okx-test", "defs": {"okx-test": {"max_leverage": 1}},
+                   "assign": {}},
+        "risk": {
+            "profile": "normal", "profiles": {"normal": 0.02},
+            "envelopes": {"okx-test": {
+                "capital": 1000.0, "max_symbol_exposure_pct": 1.0,
+                "symbol_risk_pct": 0.02, "venue_risk_pct": 0.05,
+            }},
+        },
         "notifications": {}, "optimizer": {"enabled": False},
         "forward_test": {"enabled": False}, "lifecycle": {"enabled": False},
         "capital_allocator": {},
@@ -119,14 +130,18 @@ class TestOpen:
         assert opened is False
         assert trader.open_positions == {}
 
-    def test_try_open_from_signal_respects_max_positions(self, tmp_path):
+    def test_the_venue_risk_budget_caps_concurrent_positions(self, tmp_path):
+        """S12 : `max_positions` est supprime -- compter les positions etait un
+        proxy grossier du budget de risque de la venue, qui borne desormais la
+        perte directement (§2.2). Budget venue 50 EUR, 20 EUR risques par
+        symbole : les deux premiers passent, le troisieme est refuse."""
         exchange = MockExchange()
-        trader = LiveTrader(_make_cfg(str(tmp_path / "live.db"), max_positions=1), exchange)
-        opened1, _ = _open(trader, symbol="BTC/USDC")
-        opened2, _ = _open(trader, symbol="ETH/USDC")
-        assert opened1 is True
-        assert opened2 is False
-        assert len(trader.open_positions) == 1
+        trader = LiveTrader(_make_cfg(str(tmp_path / "live.db")), exchange)
+        assert _open(trader, symbol="BTC/USDC")[0] is True
+        assert _open(trader, symbol="ETH/USDC")[0] is True
+        assert _open(trader, symbol="SOL/USDC")[0] is False
+        assert len(trader.open_positions) == 2
+        assert trader.rejections.as_dict()["par_motif"].get("budget_venue") == 1
 
     def test_rejected_order_raises_and_leaves_no_phantom_position(self, trader_exchange):
         """S0-02 : un ordre rejeté ne doit pas être traité comme une ouverture réussie."""
@@ -213,61 +228,58 @@ class TestClose:
 
 # ── Scale-in ──────────────────────────────────────────────────────────────
 
+def _roomy_cfg(db_path: str) -> dict:
+    """Config aux budgets larges — pour exercer le pyramidage lui-même plutôt
+    que de buter sur le budget dès la première unité."""
+    cfg = _make_cfg(db_path)
+    cfg["risk"]["envelopes"]["okx-test"]["symbol_risk_pct"] = 0.06
+    cfg["risk"]["envelopes"]["okx-test"]["venue_risk_pct"] = 0.20
+    return cfg
+
+
 class TestScaleIn:
-    def test_rejected_order_raises_and_position_unchanged(self, trader_exchange):
+    def test_rejected_order_raises_and_position_unchanged(self, tmp_path):
         """S0-02 : un ordre de pyramidage rejeté ne doit pas modifier la
         taille/l'entrée moyenne de la position existante."""
-        trader, exchange = trader_exchange
+        exchange = MockExchange()
+        trader = LiveTrader(_roomy_cfg(str(tmp_path / "live.db")), exchange)
         _, pos_key = _open(trader, price=100.0, stop_hint=95.0)
         pos = trader.open_positions[pos_key]
         size_before = pos["size"]
+        engaged_before = trader.ledger.engaged()["symbol"]["okx-test::BTC/USDC"]["risk"]
 
         exchange.next_order_responses = [{"id": "o-si", "status": "rejected"}]
         with pytest.raises(RuntimeError, match="rejected"):
             trader._scale_in_position(pos_key, pos, 105.0, 1.0, {"size_factor": 1.0})
 
         assert trader.open_positions[pos_key]["size"] == size_before
+        # La réservation provisoire de l'unité refusée est rendue : un ordre
+        # échoué ne doit pas immobiliser du budget de risque.
+        assert trader.ledger.engaged()["symbol"]["okx-test::BTC/USDC"]["risk"] \
+            == pytest.approx(engaged_before)
 
-    def test_third_scale_in_rejected_when_cumulative_budget_exceeded(self, tmp_path):
-        """S4-07 (item 1.3 du plan) : can_allocate() compare le notionnel
-        CUMULÉ (position + scale-ins déjà enregistrés) au budget du slot —
-        un pyramidage agressif ne doit pas pouvoir dépasser le plafond.
-        Budget du slot = 30% de 1000 = 300 (tolérance 5% → 315). Sizing
-        forcé à 100 de notionnel par unité : ouverture (100) + 2 scale-ins
-        (100 chacun) atteignent exactement 300 ; le 3e scale-in porterait
-        le cumul à 400 > 315 → rejeté, aucun état modifié."""
-        cfg = _make_cfg(str(tmp_path / "live.db"))
-        cfg["capital_allocator"] = {
-            "mode": "manual",
-            "slot_budgets": {f"{STRATEGY}::{TF}::{SYMBOL}": 0.3},
-        }
-        exchange = MockExchange()
-        trader = LiveTrader(cfg, exchange)
-
-        # Sizing déterministe : chaque ouverture/scale-in vaut exactement
-        # 100 de notionnel, quel que soit le score/ATR réel.
-        trader.risk.compute_size = lambda *a, **kw: (1.0, 100.0)
-
+    def test_the_symbol_risk_budget_bounds_pyramiding(self, tmp_path):
+        """S12 : `max_pyramiding` est supprimé — on ajoute des unités tant que
+        le budget de risque du SYMBOLE en supporte, et pas une de plus (§2.2).
+        Compter les unités n'était qu'un proxy grossier de ce plafond."""
+        trader = LiveTrader(_roomy_cfg(str(tmp_path / "live.db")), MockExchange())
+        budget = 1000.0 * 0.06
         _, pos_key = _open(trader, price=100.0, stop_hint=95.0)
-        slot_key = build_slot_key(STRATEGY, TF, SYMBOL)
-        slot = trader.allocator._slots[slot_key]
-        assert slot.used_notional == 100.0
-
         pos = trader.open_positions[pos_key]
-        trader._scale_in_position(pos_key, pos, 105.0, 1.0, {"size_factor": 1.0})
-        assert slot.used_notional == 200.0
-        assert pos["scale_ins"] == 1
 
-        trader._scale_in_position(pos_key, pos, 110.0, 1.0, {"size_factor": 1.0})
-        assert slot.used_notional == 300.0
-        assert pos["scale_ins"] == 2
+        accepted = 0
+        for price in (105.0, 110.0, 115.0, 120.0, 125.0):
+            size_before = pos["size"]
+            trader._scale_in_position(pos_key, pos, price, 1.0, {"size_factor": 1.0})
+            if pos["size"] == size_before:
+                break
+            accepted += 1
+        assert accepted >= 1, "le budget doit permettre au moins une unité"
 
-        # 3e tentative : 300 + 100 = 400 > 315 (budget × tolérance) → rejeté,
-        # can_allocate échoue avant tout appel exchange (pas d'exception,
-        # simple no-op — cf. _scale_in_position : `if not ok_budget: return`).
-        size_before, entry_before = pos["size"], pos["entry"]
-        trader._scale_in_position(pos_key, pos, 115.0, 1.0, {"size_factor": 1.0})
-        assert slot.used_notional == 300.0
-        assert pos.get("scale_ins", 0) == 2
-        assert pos["size"] == size_before
-        assert pos["entry"] == entry_before
+        # L'unité refusée ne laisse aucune trace — ni taille, ni entrée moyenne,
+        # ni compteur — et le budget n'est jamais dépassé.
+        frozen = (pos["size"], pos["entry"], pos.get("scale_ins", 0))
+        trader._scale_in_position(pos_key, pos, 130.0, 1.0, {"size_factor": 1.0})
+        assert (pos["size"], pos["entry"], pos.get("scale_ins", 0)) == frozen
+        engaged = trader.ledger.engaged()["symbol"]["okx-test::BTC/USDC"]["risk"]
+        assert engaged <= budget + 1e-6

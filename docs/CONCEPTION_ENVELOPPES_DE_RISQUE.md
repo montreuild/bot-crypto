@@ -228,10 +228,18 @@ Règles de `reserve`, dans l'ordre (le premier refus l'emporte, code de motif
 renvoyé tel quel au compteur) :
 
 1. `notional > env.max_notional` → `enveloppe_slot`
-2. `symbol_notional + notional > env.symbol_envelope` → `enveloppe_slot`
+2. `symbol_notional + notional > env.symbol_max_notional` → `enveloppe_slot`
 3. `symbol_risk + risk > env.symbol_risk_budget` → `budget_symbole`
 4. `venue_risk + risk > env.venue_risk_budget` → `budget_venue`
 5. `notional < venue.min_notional` → `notionnel_min`
+
+La règle 2 porte sur `symbol_envelope × levier`, pas sur `symbol_envelope` :
+les enveloppes sont libellées en **capital**, les plafonds de la règle 1 et de
+la règle 2 en **notionnel**. Comme `Σ slot_envelope = symbol_envelope`, ce
+plafond vaut exactement la somme des `max_notional` des slots du symbole.
+Sans le levier, la règle 1 autoriserait à levier > 1 ce que la règle 2
+refuserait — deux bases pour une même grandeur, le défaut même que cette
+refonte supprime. Invariant vérifié par `tests/test_sizing_coherence.py`.
 
 Aucune tolérance de dépassement (les `×1.05` actuels disparaissent) :
 `reserve` est atomique sous verrou, la réservation précède l'ordre.

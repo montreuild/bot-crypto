@@ -9,26 +9,42 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.core.risk_envelope import Envelope
 from app.core.risk_gate import RiskManager
 
 
-def _cfg(capital=1000, paper=True, dd_daily=0.05, dd_global=0.20,
-         risk=0.01, max_pos=3):
+def _envelope(slot_envelope=200.0, risk_pct=0.01, leverage=1.0) -> Envelope:
+    """Enveloppe de slot minimale pour exercer le sizing."""
+    return Envelope(
+        venue="okx-test", symbol="BTC/USDC", slot_key="s::1h::BTC/USDC",
+        currency="USDC", venue_envelope=1000.0, venue_risk_budget=50.0,
+        symbol_envelope=1000.0, symbol_risk_budget=20.0,
+        slot_envelope=slot_envelope, slot_risk_amount=slot_envelope * risk_pct,
+        max_leverage=leverage, min_notional=0.0,
+        trade_risk_pct=risk_pct, weight=slot_envelope / 1000.0,
+    )
+
+
+def _cfg(capital=1000, paper=True, dd_daily=0.05, dd_global=0.20, risk=0.01):
+    """S12 : le capital et le taux de risque ne sont plus des globales de
+    `trading` — ils viennent de l'enveloppe de la venue par défaut et du
+    profil de risque."""
     return {
         "trading": {
-            "capital": capital,
             "paper_mode": paper,
             "daily_drawdown_limit": dd_daily,
             "max_drawdown_global": dd_global,
-            "risk_per_trade": risk,
-            "max_positions": max_pos,
-            "max_longs": 2,
-            "max_shorts": 2,
             "max_trades_per_minute": 10,
-            "max_leverage": 1,
-            "max_notional_pct": 0.20,
         },
-        "backtest": {"max_notional_pct": 0.20},
+        "venues": {"default": "okx-test", "defs": {"okx-test": {"max_leverage": 1}},
+                   "assign": {}},
+        "risk": {
+            "profile": "test", "profiles": {"test": risk},
+            "envelopes": {"okx-test": {
+                "capital": capital, "max_symbol_exposure_pct": 1.0,
+                "symbol_risk_pct": 0.02, "venue_risk_pct": 0.05,
+            }},
+        },
         "notifications": {"dd_warning_ratio": 0.80},
     }
 
@@ -79,15 +95,15 @@ class TestRiskManager:
         assert not rm.halted
         assert rm.halt_reason == ""
 
-    def test_can_trade_max_positions(self):
-        rm = RiskManager(_cfg(max_pos=2))
-        rm.open_positions = {
-            "p1": {"side": "long"},
-            "p2": {"side": "long"},
-        }
+    def test_open_positions_no_longer_gate_entries(self):
+        """S12 : `max_positions` est supprimé — compter les positions était un
+        proxy grossier du budget de risque de la venue, qui borne désormais la
+        perte directement (§2.2). Le refus, s'il a lieu, vient du RiskLedger."""
+        rm = RiskManager(_cfg())
+        rm.open_positions = {f"p{i}": {"side": "long"} for i in range(20)}
         can, reason = rm.can_trade("long")
-        assert not can
-        assert "Max positions" in reason
+        assert can
+        assert reason == ""
 
     def test_can_trade_ok(self):
         rm = RiskManager(_cfg())
@@ -103,17 +119,27 @@ class TestRiskManager:
         assert not can
         assert reason == "Test halt"
 
-    def test_compute_size_basic(self):
+    def test_compute_size_risks_exactly_the_slot_amount(self):
+        """S12 : la base est l'enveloppe du SLOT, plus l'équité globale."""
         rm = RiskManager(_cfg(capital=1000, risk=0.01))
-        size, notional = rm.compute_size(entry=100, atr=5)
-        assert size > 0
-        assert notional <= 1000 * 0.20
+        env = _envelope(slot_envelope=200.0, risk_pct=0.01)
+        size, notional = rm.compute_size(entry=100, stop_dist=5, env=env)
+        assert size * 5 == pytest.approx(env.slot_risk_amount)
+        assert notional <= env.max_notional
 
-    def test_compute_size_notional_capped(self):
+    def test_compute_size_notional_capped_by_the_slot_envelope(self):
         rm = RiskManager(_cfg(capital=1000))
-        # ATR très petit → size serait énorme, doit être plafonné
-        size, notional = rm.compute_size(entry=100, atr=0.001)
-        assert notional <= 1000 * 0.20 + 1e-6
+        env = _envelope(slot_envelope=200.0, risk_pct=0.01)
+        # Stop très serré → taille énorme, doit être plafonnée par l'enveloppe.
+        _, notional = rm.compute_size(entry=100, stop_dist=0.001, env=env)
+        assert notional <= env.max_notional + 1e-6
+
+    def test_compute_size_refuses_an_unusable_stop(self):
+        """Le repli sur l'ATR brut est supprimé : il faisait risquer un
+        multiple du risque annoncé."""
+        rm = RiskManager(_cfg())
+        with pytest.raises(ValueError, match="stop_dist"):
+            rm.compute_size(entry=100, stop_dist=0.0, env=_envelope())
 
     def test_daily_pnl_pct_positive(self):
         rm = RiskManager(_cfg(capital=1000))

@@ -41,14 +41,21 @@ class MockExchange:
 def _make_cfg(db_path: str, paper: bool = True) -> dict:
     return {
         "trading": {
-            "capital": 1000.0, "timeframes": ["1h"], "scan_interval": 60,
+            "timeframes": ["1h"], "scan_interval": 60,
             "score_threshold": 0.5, "paper_mode": paper,
             "margin_level_critical": 1.5, "margin_level_alert": 3.0,
         },
         "database": {"url": f"sqlite:///{db_path}"},
         "exchange": {"name": "okx", "margin": True},
         "strategies": {"enabled": ["trend_rider"]},
-        "strategy_params": {}, "optimizer_results": {}, "scanner": {}, "risk": {},
+        "strategy_params": {}, "optimizer_results": {}, "scanner": {},
+        # S12 : capital porté par la venue.
+        "venues": {"default": "okx-test", "defs": {"okx-test": {"max_leverage": 1}},
+                   "assign": {}},
+        "risk": {"envelopes": {"okx-test": {
+            "capital": 1000.0, "max_symbol_exposure_pct": 1.0,
+            "symbol_risk_pct": 0.02, "venue_risk_pct": 0.05,
+        }}},
         "notifications": {}, "optimizer": {"enabled": False},
         "forward_test": {"enabled": False}, "lifecycle": {"enabled": False},
         "capital_allocator": {},

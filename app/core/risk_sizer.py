@@ -1,97 +1,114 @@
-"""RiskSizer — mixin de sizing des positions (ARCH-011).
+"""RiskSizer — mixin de sizing des positions (ARCH-011, réécrit S12).
 
-Mixin (pas d'``__init__``, pas d'état propre) : toutes les méthodes opèrent
-sur ``self.*`` fournis par ``RiskGate.__init__`` (équity, peak_equity,
-max_leverage, max_notional_pct, base_risk, volatility_brake_factor,
-open_positions). Importé par ``app.core.risk_gate`` via héritage multiple.
+Mixin (pas d'``__init__``, pas d'état propre) : les méthodes opèrent sur
+``self.*`` fournis par ``RiskGate.__init__``. Importé par ``app.core.risk_gate``
+via héritage multiple.
 
-Responsabilité : calcul de la taille / notionnel / levier, et registration
-des positions ouvertes auprès du moteur de risque.
+S12 — une seule base : l'enveloppe du slot
+------------------------------------------
+``compute_size`` ne connaît plus ni l'équité globale, ni un « budget de bot »,
+ni ``max_notional_pct`` : tout vient de l'``Envelope`` passée en paramètre.
+C'est ce qui supprime le défaut d'origine — un notionnel calculé sur une base
+et confronté à un plafond calculé sur une autre (cf.
+docs/CONCEPTION_ENVELOPPES_DE_RISQUE.md §1). Le notionnel produit ici est,
+par construction, toujours acceptable par ``RiskLedger.reserve`` sur un
+registre vide (invariant verrouillé par ``tests/test_sizing_coherence.py``).
 """
 import logging
+import math
 
+from app.core.risk_envelope import Envelope
 from app.core.risk_state import _locked, _safe_div
 
 logger = logging.getLogger(__name__)
 
 
+def _floor_to(value: float, decimals: int) -> float:
+    """Arrondi À LA BAISSE — jamais au plus proche.
+
+    Les plafonds de ``RiskLedger.reserve`` sont stricts (aucune tolérance) :
+    un arrondi au plus proche peut franchir le plafond d'un demi-ulp et faire
+    refuser un trade que le sizer croyait conforme."""
+    factor = 10 ** decimals
+    return math.floor(value * factor) / factor
+
+
 class RiskSizer:
-    """Sizing des positions, levier et registration des positions ouvertes.
+    """Sizing des positions et registration des positions ouvertes.
 
     Aucune initialisation propre — doit être combiné à ``RiskGate`` (ou tout
-    hôte exposant les attributs ``equity``, ``peak_equity``, ``base_risk``,
-    ``max_leverage``, ``max_notional_pct``, ``volatility_brake_factor``,
-    ``open_positions``)."""
+    hôte exposant ``equity``, ``peak_equity``, ``base_risk``,
+    ``volatility_brake_factor``, ``open_positions``)."""
 
-    # ── Position sizing ────────────────────────────────────────────────────
+    # ── Courbe de dé-risquage en drawdown (BT-09) ──────────────────────────
+    def _drawdown_multiplier(self) -> float:
+        """Multiplicateur seul, sans le taux de risque.
+
+        ``compute_size`` dimensionne sur ``env.slot_risk_amount``, qui intègre
+        déjà ``trade_risk_pct`` : appliquer ``compute_risk()`` (taux × courbe)
+        compterait le taux deux fois."""
+        from app.core.risk_curve import risk_multiplier
+        return risk_multiplier(_safe_div(self.peak_equity - self.equity, self.peak_equity))
+
     @_locked
     def compute_risk(self) -> float:
-        # Courbe partagée backtest/live (BT-09) — source unique : risk_curve.py.
+        """Taux de risque courant (taux de base × courbe de drawdown).
+
+        Conservé pour l'exposé API (``status_dict()["current_risk"]``) : c'est
+        le taux affiché, pas la base de sizing — celle-ci est portée par
+        l'``Envelope``. Courbe partagée backtest/live (BT-09), source unique
+        ``risk_curve.py``."""
         from app.core.risk_curve import risk_multiplier
         dd = _safe_div(self.peak_equity - self.equity, self.peak_equity)
         return self.base_risk * risk_multiplier(dd)
 
+    # ── Position sizing ────────────────────────────────────────────────────
     @_locked
-    def compute_size(self, entry: float, atr: float,
-                     score: float = 1.0, threshold: float = 0.60,
-                     size_factor: float = 1.0,
-                     budget: float = None, max_leverage: float = None,
-                     stop_dist: float = None) -> tuple:
-        """Calcule taille et notionnel, en intégrant score_factor et volatility_brake.
+    def compute_size(self, entry: float, stop_dist: float, env: Envelope,
+                     size_factor: float = 1.0) -> tuple:
+        """(taille, notionnel) pour un trade, sur l'enveloppe du slot.
 
-        ``size_factor`` (optionnel) est un facteur multiplicatif fourni par la
-        stratégie (par ex. demi-Kelly : ×confidence ; ou boost setup V7 ×1.5).
-        Borné [0, 2] et appliqué après le facteur score interne et le frein
-        de volatilité. ``max_notional_pct`` reste la garde-fou de risque global.
+        ``stop_dist`` (distance absolue entrée→stop) est **obligatoire et
+        strictement positif** : le repli historique sur l'ATR brut est
+        supprimé — il faisait risquer ``risk% × (stop_dist / ATR)``, soit un
+        sur-risque d'un facteur 2,5 au multiplicateur de stop usuel.
+        L'appelant qui n'a pas de stop compte ``stop_invalide`` et refuse le
+        trade plutôt que de dimensionner à l'aveugle.
 
-        Sizing par la distance au stop (parité backtest)
-        ------------------------------------------------
-        Quand ``stop_dist`` (distance absolue entry→stop) est fourni, la taille
-        vaut ``risk_amount / stop_dist`` : le risque réellement engagé est alors
-        **exactement** ``risk%`` du capital, quel que soit le multiplicateur ATR
-        du stop (cf. ``app/engine/backtest.py:_try_enter``). Sans ``stop_dist``
-        (rétro-compat), on retombe sur l'ATR brut — mais le risque réel devient
-        ``risk% × (stop_dist / ATR)`` (sur-risque ~2,5× quand le stop est à
-        2,5×ATR), d'où l'importance de toujours passer la distance au stop.
+        ``size_factor`` (demi-Kelly d'une stratégie) est borné [0, 2] et
+        appliqué avant le plafond. Le facteur de score interne
+        (``0.5 + 0.5 × …``) est supprimé : il modulait la taille sans être
+        répliqué par le backtest, donc cassait la parité.
 
-        Sizing par bot (Phase 1)
-        ------------------------
-        Si ``budget`` (USDC alloué au bot) est fourni, le bot dimensionne sur
-        **son** budget et non sur l'équité globale : le montant risqué devient
-        ``budget × risk%`` et le notionnel est plafonné à ``budget × levier``
-        (cf. doc §3 « Sizing : cap notional ≤ budget × levier »). C'est la
-        fidélité au backtest — un bot ne peut engager que son budget. Sans
-        ``budget`` (None), comportement historique inchangé (sizing sur équité).
+        Le frein de volatilité et la courbe de drawdown restent appliqués —
+        ce sont des réductions conjoncturelles du risque engagé, pas une
+        seconde base de calcul.
         """
-        base         = float(budget) if budget is not None else self.equity
-        risk_amount  = base * self.compute_risk()
-        # Dénominateur de risque : distance au stop réel si connue (parité
-        # backtest → risque = risk% exact), sinon ATR brut (rétro-compat).
-        risk_per_unit = (float(stop_dist) if (stop_dist is not None and stop_dist > 0)
-                         else max(atr, 1e-8))
-        size         = risk_amount / risk_per_unit
-        notional     = size * entry
-        if budget is not None:
-            lev          = float(max_leverage) if max_leverage is not None else self.max_leverage
-            max_notional = base * max(lev, 1.0)
-        else:
-            max_notional = self.equity * self.max_notional_pct
+        if stop_dist is None or stop_dist <= 0:
+            raise ValueError(
+                f"stop_dist doit être > 0 (reçu {stop_dist!r}) — le sizing par "
+                f"l'ATR brut est supprimé (sur-risque)."
+            )
+        if entry <= 0:
+            raise ValueError(f"entry doit être > 0 (reçu {entry!r})")
 
-        score_range  = max(1.0 - threshold, 1e-9)
-        score_internal_factor = 0.5 + 0.5 * min(max(score - threshold, 0) / score_range, 1.0)
-        sf           = max(0.0, min(float(size_factor), 2.0))
-        size        *= score_internal_factor * self.volatility_brake_factor * sf
+        sf = max(0.0, min(float(size_factor), 2.0))
+        risk_amount = (env.slot_risk_amount * sf
+                       * self.volatility_brake_factor * self._drawdown_multiplier())
 
-        notional = size * entry
-        if notional > max_notional:
-            size     = max_notional / entry
-            notional = max_notional
-        return round(size, 6), round(notional, 4)
+        size = _floor_to(risk_amount / stop_dist, 6)
+        if size * entry > env.max_notional:
+            size = _floor_to(env.max_notional / entry, 6)
+        return size, _floor_to(size * entry, 4)
 
-    @_locked
-    def compute_leverage(self, notional: float) -> float:
-        lev = _safe_div(notional, self.equity)
-        return min(lev, self.max_leverage)
+    @staticmethod
+    def engaged_risk(entry: float, stop: float, size: float) -> float:
+        """Risque réellement engagé par une position : |entrée − stop| × taille.
+
+        Source unique pour ``RiskLedger.reserve`` (à l'ouverture) et
+        ``update_risk`` (quand le trailing remonte le stop) — les deux doivent
+        mesurer la même grandeur, sinon le budget se dérègle silencieusement."""
+        return abs(float(entry) - float(stop)) * float(size)
 
     # ── Positions ──────────────────────────────────────────────────────────
     @_locked

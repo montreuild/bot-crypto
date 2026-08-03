@@ -150,6 +150,11 @@ class PositionManageMixin:
             )
             if new_stop != pos["stop"]:
                 pos["stop"] = new_stop
+                # S12 : le stop qui remonte réduit la perte encourue — ce
+                # budget de risque est rendu immédiatement aux autres slots du
+                # symbole (§2.1). L'enveloppe, elle, reste consommée.
+                self.ledger.update_risk(pos_id, self.risk.engaged_risk(
+                    pos["entry"], new_stop, pos["size"]))
                 with session_scope(self.SessionLocal) as _sess:
                     persist_open_position(_sess, pos)
                 # Replace le stop exchange au nouveau niveau ; si l'ancien stop
@@ -378,38 +383,54 @@ class PositionManageMixin:
         sf = max(0.0, min(float(scale.get("size_factor", 1.0)), 2.0))
         # Sizing de l'unité par la distance au stop courant (parité backtest).
         add_stop_dist = abs(float(price) - float(pos.get("stop", 0.0)))
+        if add_stop_dist <= 0:
+            logger.debug(f"[ScaleIn] {symbol} refusé (stop_invalide)")
+            return
+        venue = self._venue_for(symbol, pos.get("strategy", ""),
+                                pos.get("timeframe", self.tf))
+        slot_key = build_slot_key(pos.get('strategy', ''),
+                                  pos.get('timeframe', self.tf),
+                                  pos.get('symbol', ''))
+        env = self._envelope_for(slot_key, symbol, venue)
         add_size, add_notional = self.risk.compute_size(
-            price, atr, score=float(pos.get("score", 0)),
-            threshold=strat_threshold, size_factor=sf,
-            stop_dist=add_stop_dist,
+            price, add_stop_dist, env, size_factor=sf,
         )
         # G2 : quantification par la venue (lot/unité entière) — mêmes bornes
         # qu'à l'ouverture et qu'au backtest. Le notionnel n'est recalculé que
         # si l'arrondi a effectivement bougé la taille : en crypto, où c'est un
         # no-op, on conserve exactement le notionnel de ``compute_size``.
-        venue = self._venue_for(symbol, pos.get("strategy", ""),
-                                pos.get("timeframe", self.tf))
         q_size = quantize_size(add_size, venue)
         if q_size != add_size:
             add_size, add_notional = q_size, round(q_size * price, 4)
         if add_size <= 0 or add_notional <= 0:
             return
 
-        slot_key = build_slot_key(pos.get('strategy', ''),
-                                  pos.get('timeframe', self.tf),
-                                  pos.get('symbol', ''))
-        ok_budget, reason_budget = self.allocator.can_allocate(slot_key, add_notional)
-        if not ok_budget:
-            logger.debug(f"[ScaleIn] {symbol} refusé (budget: {reason_budget})")
+        # L'unité ajoutée se réserve comme une entrée à part entière : c'est le
+        # budget de risque du symbole qui borne le pyramidage, plus un compteur
+        # `max_pyramiding` qui n'en était qu'un proxy grossier (§2.2).
+        add_key = f"{pos_id}#scale{pos.get('scale_ins', 0) + 1}"
+        decision = self.ledger.reserve(env, risk=add_size * add_stop_dist,
+                                       notional=add_notional, pos_key=add_key)
+        if not decision.allowed:
+            logger.debug(f"[ScaleIn] {symbol} refusé "
+                         f"({decision.reason_code}: {decision.detail})")
+            self.rejections.record(decision.reason_code, venue=venue.name,
+                                   symbol=symbol, slot_key=slot_key)
             return
         if not self._pre_execution_check(symbol, side, add_size, price, add_notional):
+            self.ledger.release(add_key)
             return
 
-        order = self.exchange.create_order(
-            symbol, "market", side, add_size,
-            params={"leverage": int(pos.get("leverage", 1))}
-        )
+        try:
+            order = self.exchange.create_order(
+                symbol, "market", side, add_size,
+                params={"leverage": int(pos.get("leverage", 1))}
+            )
+        except Exception:
+            self.ledger.release(add_key)
+            raise
         if _order_failed(order):
+            self.ledger.release(add_key)
             raise RuntimeError(
                 f"[SCALE-IN] {symbol} : ordre non exécuté — {_order_fail_reason(order)}"
             )
@@ -434,6 +455,13 @@ class PositionManageMixin:
         pos["notional"] = round(pos.get("notional", 0.0) + add_notional, 4)
         pos["fees"]     = round(pos.get("fees", 0.0) + add_fees, 6)
         pos["scale_ins"] = pos.get("scale_ins", 0) + 1
+        # Toute la position se réserve désormais sous `pos_id` : on agrandit
+        # d'abord, on libère l'incrément ensuite — l'ordre inverse ouvrirait
+        # une fenêtre où un slot concurrent verrait trop de marge.
+        self.ledger.resize(pos_id,
+                           risk=self.risk.engaged_risk(pos["entry"], pos["stop"], pos["size"]),
+                           notional=pos["notional"])
+        self.ledger.release(add_key)
         with session_scope(self.SessionLocal) as _sess:
             persist_open_position(_sess, pos)
         self.allocator.register_open(slot_key, add_notional)

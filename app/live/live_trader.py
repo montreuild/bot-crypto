@@ -36,7 +36,9 @@ from app.core.database import init_db
 from app.core.exchange import RobustExchange
 from app.core.notifications import Notifier
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.core.risk_gate import RiskManager
+from app.core.rejections import RejectionCounter
+from app.core.risk_gate import RiskManager, _default_venue_capital
+from app.core.risk_ledger import RiskLedger
 from app.engine.engine import Engine
 from app.engine.scanner import MarketScanner
 from app.live.auto_opt_mixin import AutoOptMixin
@@ -146,8 +148,10 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
         self._capital_lock    = threading.Lock()
         self.running          = False
         self.cycle_count      = 0
-        self.capital_display  = cfg["trading"]["capital"]
-        self._paper_base      = self._restore_paper_base(cfg["trading"]["capital"])
+        # S12 : le capital appartient à la venue par défaut, plus à `trading.*`.
+        _venue_capital        = _default_venue_capital(cfg)
+        self.capital_display  = _venue_capital
+        self._paper_base      = self._restore_paper_base(_venue_capital)
         self.last_scan_time   = None
         self.last_symbols_scanned: List[str] = []
 
@@ -209,6 +213,16 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
             exchange=self.exchange, cfg=cfg,
             notif=self.notif, risk=self.risk
         )
+        # ── S12 : comptabilité du risque engagé ────────────────────────────
+        # Le ledger remplace l'allocateur dans son rôle de GATING (réservation
+        # sous enveloppe et budget de risque). L'allocateur reste instancié
+        # tant que les routes API et le statut y renvoient — sa suppression est
+        # la dernière étape de la refonte, quand plus rien ne le référence.
+        self.ledger     = RiskLedger()
+        self.rejections = RejectionCounter()
+        # {slot_key: Envelope} — reconstruit par le thread de cycle de vie à
+        # partir des slots réellement actifs et de leurs edges mesurées.
+        self.envelopes: Dict[str, object] = {}
         self.allocator = CapitalAllocator(
             capital=self.capital_display,
             active_per_tf=self._active_per_tf,
