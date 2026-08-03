@@ -49,6 +49,7 @@ from app.api.routes import (
     optimizer,
     portfolio,
     replay,
+    risk,
     scanner,
     trades,
     universe,
@@ -56,6 +57,8 @@ from app.api.routes import (
 )
 from app.core.database import init_db
 from app.core.events import event_hub
+from app.core.risk_envelope import trade_risk_pct as _trade_risk_pct
+from app.core.risk_gate import _default_venue_capital
 
 logger = logging.getLogger(__name__)
 
@@ -368,7 +371,7 @@ def get_status(request: Request):
     }
     if authenticated:
         base["capital"] = (state.trader.capital_display
-                           if state.trader else state.cfg["trading"]["capital"])
+                           if state.trader else _default_venue_capital(state.cfg))
         if state.trader:
             base.update(state.trader.status)
         else:
@@ -389,7 +392,7 @@ def get_status(request: Request):
                 "daily_pnl_pct":          0.0,
                 "global_dd_pct":          0.0,
                 "current_risk":  round(
-                    state.cfg["trading"].get("risk_per_trade", 0.01) * 100, 2
+                    _trade_risk_pct(state.cfg) * 100, 2
                 ),
                 "daily_dd_limit":    state.cfg["trading"].get("daily_drawdown_limit", 0.05),
                 "global_dd_limit":   state.cfg["trading"].get("max_drawdown_global", 0.20),
@@ -405,6 +408,7 @@ def get_status(request: Request):
 app.include_router(config_global.router)
 app.include_router(config_strategies.router)
 app.include_router(config_risk.router)
+app.include_router(risk.router)  # S12 : enveloppes de risque + diagnostics
 app.include_router(config_notifications.router)
 app.include_router(trades.router)
 app.include_router(backtest.router)

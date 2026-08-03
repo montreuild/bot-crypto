@@ -11,6 +11,8 @@ from app.api import state
 from app.api.helpers import _discover_strategies, verify_api_key
 from app.api.routes._config_helpers import _save_yaml
 from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
+from app.core.risk_envelope import trade_risk_pct as _trade_risk_pct
+from app.core.risk_gate import _default_venue_capital
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -56,8 +58,6 @@ def get_config():
 def update_trading_params(
     request:              Request,
     score_threshold:      float = None,
-    risk_per_trade:       float = None,
-    max_positions:        int   = None,
     paper_mode:           bool  = None,
     paper_slippage:       float = None,
     daily_drawdown_limit: float = None,
@@ -67,10 +67,6 @@ def update_trading_params(
     # ── Validation des bornes ──
     if score_threshold is not None and not (0.0 < score_threshold < 1.0):
         raise HTTPException(400, "score_threshold doit être entre 0 et 1 (exclus)")
-    if risk_per_trade is not None and not (0.0 < risk_per_trade <= 1.0):
-        raise HTTPException(400, "risk_per_trade doit être entre 0 (exclus) et 1.0")
-    if max_positions is not None and not (1 <= max_positions <= 50):
-        raise HTTPException(400, "max_positions doit être entre 1 et 50")
     if paper_slippage is not None and not (0.0 <= paper_slippage <= 0.05):
         raise HTTPException(400, "paper_slippage doit être entre 0 et 0.05 (5%)")
     if daily_drawdown_limit is not None and not (0.0 < daily_drawdown_limit <= 0.5):
@@ -78,8 +74,6 @@ def update_trading_params(
     changed = {}
     mapping = {
         "score_threshold":      score_threshold,
-        "risk_per_trade":       risk_per_trade,
-        "max_positions":        max_positions,
         "paper_mode":           paper_mode,
         "paper_slippage":       paper_slippage,
         "daily_drawdown_limit": daily_drawdown_limit,
@@ -213,8 +207,11 @@ def backtest_settings():
         "score_threshold":      state.cfg["trading"].get("score_threshold", 0.55),
         "taker_fee":            state.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE),
         "maker_fee":            state.cfg["trading"].get("maker_fee", DEFAULT_MAKER_FEE),
-        "capital":              state.cfg["trading"]["capital"],
-        "risk_per_trade":       state.cfg["trading"]["risk_per_trade"],
+        # S12 : le capital appartient à la venue par défaut, le taux de risque
+        # au profil — `trading.capital` / `trading.risk_per_trade` n'existent
+        # plus. Les enveloppes détaillées sont servies par /api/risk.
+        "capital":              _default_venue_capital(state.cfg),
+        "risk_per_trade":       _trade_risk_pct(state.cfg),
         "spread_pct":           state.cfg.get("backtest", {}).get("spread_pct", 0.0005),
         "partial_fill_pct":     state.cfg.get("backtest", {}).get("partial_fill_pct", 0.95),
     }
