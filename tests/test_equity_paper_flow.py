@@ -124,7 +124,6 @@ def _cfg(db_path, *, can_execute=False, min_notional=0.0, allow_short=False,
         }},
         "notifications": {}, "optimizer": {"enabled": False},
         "forward_test": {"enabled": False}, "lifecycle": {"enabled": False},
-        "capital_allocator": {},
     }
 
 

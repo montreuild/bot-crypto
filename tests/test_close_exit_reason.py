@@ -25,7 +25,6 @@ def _harness(tmp_path):
             self.exchange.create_order.return_value = {"price": 101.0, "id": "x"}
             self.risk = MagicMock()
             self.notif = MagicMock()
-            self.allocator = MagicMock()
             # S12 : la clôture rend l'enveloppe et le budget de risque au
             # ledger — un vrai, pas un mock, pour que release() reste sincère.
             from app.core.rejections import RejectionCounter

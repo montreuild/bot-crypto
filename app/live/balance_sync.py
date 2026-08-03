@@ -11,7 +11,6 @@ Requiert que l'instance possède :
   self._paper_base          (initialisé via _restore_paper_base)
   self._margin_level        (initialisé à None)
   self.risk                 (RiskManager)
-  self.allocator            (CapitalAllocator)
   self.SessionLocal         (pour _restore_paper_base)
 """
 import logging
@@ -67,7 +66,6 @@ class BalanceSyncMixin:
         with self._capital_lock:
             self.capital_display = round(total, 4)
         self.risk.update_equity(self.capital_display)
-        self.allocator.update_equity(self.capital_display)
 
     # ── Synchro spot réel ─────────────────────────────────────────────────
 
@@ -90,7 +88,6 @@ class BalanceSyncMixin:
                     self.capital_display = round(total, 4)
                 self._balance_detail = detail
                 self.risk.update_equity(self.capital_display)
-                self.allocator.update_equity(self.capital_display)
         except Exception as e:
             logger.warning(f"[Spot Sync] KO : {e}")
 
@@ -162,7 +159,6 @@ class BalanceSyncMixin:
                         self.capital_display = round(total, 4)
                     self._balance_detail = detail
                     self.risk.update_equity(self.capital_display)
-                    self.allocator.update_equity(self.capital_display)
         except Exception as e:
             logger.warning(f"[MARGIN] sync KO : {e}")
 

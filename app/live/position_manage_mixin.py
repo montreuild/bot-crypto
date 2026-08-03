@@ -16,7 +16,7 @@ Requiert que l'instance possède (fournis par LiveTrader.__init__) :
   self.exchange, self.cfg, self.risk, self.notif, self.scanner
   self.open_positions, self._positions_lock, self.signal_log
   self._trailing_cfg, self._strat_thresholds, self.threshold
-  self.ohlcv_cache, self.allocator, self.tf, self.interval
+  self.ohlcv_cache, self.ledger, self.rejections, self.envelopes, self.tf
   self._loaded_strategies, self.strat_params, self._safe_ticker
   self._pre_execution_check, self._paper_slippage_fraction (PositionOpenMixin)
   self._close_position (PositionCloseMixin)
@@ -464,7 +464,6 @@ class PositionManageMixin:
         self.ledger.release(add_key)
         with session_scope(self.SessionLocal) as _sess:
             persist_open_position(_sess, pos)
-        self.allocator.register_open(slot_key, add_notional)
         # Le stop exchange couvre l'ancienne taille → replacement avec la nouvelle
         filled_stop = self._update_exchange_stop(pos)
         if filled_stop is not None:

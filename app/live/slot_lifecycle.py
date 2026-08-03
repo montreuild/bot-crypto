@@ -127,34 +127,6 @@ class SlotLifecycleManager:
                 "[Lifecycle] Clés force_active héritées 2-parties détectées "
                 f"(appliquées par préfixe à tous les symboles) : {legacy_forced}"
             )
-        # S4-06 : cohérence lifecycle ↔ budgets. Si `force_active` liste
-        # des slots qui ne sont PAS dans `slot_budgets`, c'est une
-        # incohérence de config — on logge un warning pour que l'utilisateur
-        # corrige (sinon le slot est actif sans budget explicite → budget
-        # égal par défaut, ce qui peut surprendre).
-        alloc_cfg = (cfg or {}).get("capital_allocator", {}) or {}
-        self._custom_budgets: dict = dict(alloc_cfg.get("slot_budgets") or {})
-        if self._force_active and self._custom_budgets:
-            budget_keys = set(self._custom_budgets.keys())
-            manual_keys = set(self._force_active)
-            missing_in_budgets = manual_keys - budget_keys
-            if missing_in_budgets:
-                logger.warning(
-                    f"[Lifecycle] {len(missing_in_budgets)} slot(s) dans "
-                    f"force_active SANS budget explicite dans "
-                    f"capital_allocator.slot_budgets : {sorted(missing_in_budgets)}. "
-                    f"Ils seront actifs avec un budget par défaut (égal), ce qui "
-                    f"peut surprendre. Ajoutez-les à `slot_budgets` ou retirez-"
-                    f"les de `force_active`."
-                )
-            extra_in_budgets = budget_keys - manual_keys
-            if extra_in_budgets:
-                logger.info(
-                    f"[Lifecycle] {len(extra_in_budgets)} slot(s) ont un "
-                    f"budget explicite MAIS NE SONT PAS dans force_active : "
-                    f"{sorted(extra_in_budgets)}. S'ils sont inactifs, le "
-                    f"budget est inutilisé — vérifiez la cohérence."
-                )
         # Lissage anti-flush
         self._min_active      = int(lc.get("min_active_bots", 2))
         self._max_demotions_per_day = int(lc.get("max_demotions_per_day", 2))

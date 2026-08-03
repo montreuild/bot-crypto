@@ -54,7 +54,6 @@ def _make_trader_cfg(db_path: str) -> dict:
         "strategy_params": {}, "optimizer_results": {}, "scanner": {}, "risk": {},
         "notifications": {}, "optimizer": {"enabled": False},
         "forward_test": {"enabled": False}, "lifecycle": {"enabled": False},
-        "capital_allocator": {},
     }
 
 

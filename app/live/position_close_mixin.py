@@ -13,7 +13,7 @@ Requiert que l'instance possède (fournis par LiveTrader.__init__) :
   self.open_positions, self._positions_lock, self.signal_log
   self._strat_thresholds, self.threshold, self.tf, self.interval
   self.SessionLocal, self._margin_interest, self._loss_notified, self._cooldown
-  self.allocator, self._safe_ticker
+  self.ledger, self._safe_ticker
   self._paper_slippage_fraction, _cancel_exchange_stop (autres mixins)
 """
 import logging
@@ -266,10 +266,6 @@ class PositionCloseMixin:
         # S12 : l'enveloppe ET le budget de risque du slot sont rendus — la
         # position ne consomme plus rien dès qu'elle est close.
         self.ledger.release(pos_id)
-
-        # Libération du budget du slot
-        if hasattr(self, "allocator"):
-            self.allocator.register_close(slot_key, pos.get("notional", 0), pnl)
 
         with session_scope(self.SessionLocal) as _sess:
             delete_open_position(_sess, pos_id)

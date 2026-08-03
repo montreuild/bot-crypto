@@ -11,6 +11,7 @@ from app.api import state
 from app.api.helpers import verify_api_key
 from app.core.bot_identity import build_slot_key
 from app.core.database import session_scope
+from app.core.risk_gate import _default_venue_capital
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -151,238 +152,84 @@ def reset_halt(request: Request, force: bool = False):
             "message": "Kill-switch acquitté" if was_kill else "Circuit breaker réinitialisé"}
 
 
-@router.get("/api/capital-allocation", dependencies=[Depends(verify_api_key)])
-def capital_allocation():
-    """Retourne l'allocation budgétaire par slot (strategy::tf)."""
-    if not state.trader:
-        raise HTTPException(503, "Trader non initialisé")
-    return {
-        "capital": round(state.trader.capital_display, 2),
-        "slots":   state.trader.allocator.get_status(),
-    }
-
-
 # ── Gestion des slots ─────────────────────────────────────────────────────
-
-def _build_slots_from_cfg(cfg: dict) -> tuple[list, dict]:
-    """
-    Construit la liste de slots et la config allocateur depuis la configuration
-    (utilisé quand le trader n'est pas actif).
-    Retourne (slots, alloc_config) au même format que get_status() / get_config().
-    """
-    alloc_cfg = cfg.get("capital_allocator", {})
-    capital = float(cfg.get("trading", {}).get("capital", 0))
-    strategies = cfg.get("strategies", {}).get("enabled", [])
-    timeframes = cfg.get("trading", {}).get("timeframes",
-                    [cfg.get("trading", {}).get("timeframe", "1h")])
-    disabled_slots = set(alloc_cfg.get("disabled_slots", []))
-    slot_budgets = {k: float(v) for k, v in alloc_cfg.get("slot_budgets", {}).items()}
-    mode = alloc_cfg.get("mode", "equal")
-    max_slot_pct = float(alloc_cfg.get("max_slot_pct", 0.50))
-
-    # Construire tous les slots (stratégie × timeframe)
-    # Aperçu THÉORIQUE (trader inactif) : énumération stratégie×TF sans
-    # dimension symbole — les vrais slots (3-parties) viennent de
-    # allocator.get_status() quand le trader tourne.
-    all_keys = [build_slot_key(name, tf) for name in strategies for tf in timeframes]
-    enabled_keys = [k for k in all_keys if k not in disabled_slots]
-    n_enabled = len(enabled_keys)
-
-    # Calcul du budget par slot
-    def _compute_budget(key: str, is_enabled: bool) -> float:
-        if not is_enabled:
-            return 0.0
-        if mode == "manual" and key in slot_budgets:
-            return min(slot_budgets[key], max_slot_pct)
-        if n_enabled > 0:
-            return min(1.0 / n_enabled, max_slot_pct)
-        return 0.0
-
-    slots = []
-    for name in strategies:
-        for tf in timeframes:
-            key = build_slot_key(name, tf)
-            is_enabled = key not in disabled_slots
-            bpct = _compute_budget(key, is_enabled)
-            slots.append({
-                "slot_key":          key,
-                "strategy":          name,
-                "tf":                tf,
-                "enabled":           is_enabled,
-                "budget_pct":        round(bpct * 100, 1),
-                "budget_usdc":       round(capital * bpct, 2),
-                "used_notional":     0.0,
-                "used_pct":          0.0,
-                "weekly_pnl":        0.0,
-                "weekly_trades":     0,
-                "weekly_wins":       0,
-                "next_rebalance":    "—",
-                "paused":            False,
-                "pause_reason":      "",
-                "consecutive_losses": 0,
-                "win_rate_15t":      100.0,
-                "daily_pnl":         0.0,
-            })
-
-    alloc_config = {
-        "mode":                     mode,
-        "max_slot_pct":             round(max_slot_pct * 100, 1),
-        "rebalance_interval":       alloc_cfg.get("rebalance_interval", "daily"),
-        "min_trades_for_rebalance": int(alloc_cfg.get("min_trades_for_rebalance", 3)),
-        "max_symbol_exposure_pct":  round(float(alloc_cfg.get("max_symbol_exposure_pct", 0.25)) * 100, 1),
-        "max_pyramiding":           int(alloc_cfg.get("max_pyramiding", 2)),
-        "disabled_slots":           sorted(disabled_slots),
-        "custom_budgets":           {k: round(v * 100, 1) for k, v in slot_budgets.items()},
-    }
-
-    return slots, alloc_config
-
 
 @router.get("/api/slots", dependencies=[Depends(verify_api_key)])
 def list_slots():
-    """Retourne tous les slots avec état complet (budget, CB, performance)."""
-    if not state.trader:
-        # Fallback : construire les slots depuis la config quand le bot n'est pas actif
-        if not state.cfg:
-            raise HTTPException(503, "Configuration non chargée")
-        slots, alloc_config = _build_slots_from_cfg(state.cfg)
-        capital = float(state.cfg.get("trading", {}).get("capital", 0))
-        return {
-            "capital": capital,
-            "config":  alloc_config,
-            "slots":   slots,
-        }
+    """Slots avec leur enveloppe et l'état de leur coupe-circuit.
 
-    slots = state.trader.allocator.get_status()
-    slot_states = {s["slot_key"]: s for s in state.trader.risk.get_slot_states()}
-    alloc_config = state.trader.allocator.get_config()
-    for s in slots:
-        cb = slot_states.get(s["slot_key"], {})
-        s["paused"] = cb.get("paused", False)
-        s["pause_reason"] = cb.get("pause_reason", "")
-        s["consecutive_losses"] = cb.get("consecutive_losses", 0)
-        s["win_rate_15t"] = cb.get("win_rate_15t", 100.0)
-        s["daily_pnl"] = cb.get("daily_pnl", 0.0)
-
-    # Compléter avec les slots issus de la config qui ne sont pas dans l'allocateur
-    # (ex: stratégies exclues par le filtre OOS de l'optimiseur)
-    if state.cfg:
-        existing_keys = {s["slot_key"] for s in slots}
-        cfg_slots, _ = _build_slots_from_cfg(state.cfg)
-        for s in cfg_slots:
-            if s["slot_key"] not in existing_keys:
-                s["excluded_by_optimizer"] = True
-                slots.append(s)
-
-    return {
-        "capital": round(state.trader.capital_display, 2),
-        "config":  alloc_config,
-        "slots":   slots,
-    }
-
-
-def _set_slot_budget_impl(slot_key: str, budget_pct: float) -> dict:
-    """Définit manuellement le budget d'un slot (budget_pct en fraction, ex: 0.25 = 25%).
-
-    Logique nue partagée par la route courante et l'alias legacy — évite de
-    ré-invoquer une route déjà décorée `@state.limiter.limit(...)` (double
-    comptage du rate-limit) tout en gardant chaque route indépendamment limitée.
+    S12 : le « budget » d'un slot EST son poids dans l'enveloppe de son
+    symbole — il n'y a plus de budget à rééquilibrer en parallèle des poids.
+    Le détail des trois niveaux emboîtés est servi par ``/api/risk``.
     """
-    _validate_slot_key(slot_key)
     if not state.cfg:
-        raise HTTPException(503, "Config non chargée")
-    if budget_pct <= 0 or budget_pct > 1:
-        raise HTTPException(400, "budget_pct doit être entre 0 et 1 (ex: 0.25 = 25%)")
+        raise HTTPException(503, "Configuration non chargée")
 
-    rounded = round(budget_pct, 4)
+    from app.core.risk_envelope import envelopes_for_active_slots
 
-    # Persist to config.yaml so the allocation survives restarts
-    state.cfg.setdefault("capital_allocator", {}).setdefault("slot_budgets", {})[slot_key] = rounded
-    try:
-        from app.api.routes._config_helpers import _save_yaml
-        def _upd(d):
-            d.setdefault("capital_allocator", {}).setdefault("slot_budgets", {})[slot_key] = rounded
-        _save_yaml(_upd)
-    except Exception as e:
-        logger.warning(f"[slots] sauvegarde YAML KO : {e}")
+    envelopes = (getattr(state.trader, "envelopes", None) if state.trader else None)
+    if not envelopes:
+        active = getattr(state.trader, "_active_per_tf", None) or {}
+        envelopes = envelopes_for_active_slots(state.cfg, active)
 
-    # Apply to live allocator if bot is running
-    slots_status = []
-    if state.trader:
-        ok = state.trader.allocator.set_slot_budget(slot_key, budget_pct)
-        if not ok:
-            raise HTTPException(404, f"Slot '{slot_key}' introuvable")
-        slots_status = state.trader.allocator.get_status()
+    disabled = set((state.cfg.get("risk") or {}).get("disabled_slots") or [])
+    slot_states = ({s["slot_key"]: s for s in state.trader.risk.get_slot_states()}
+                   if state.trader else {})
+    engaged = (state.trader.ledger.snapshot()["slot"]
+               if state.trader and getattr(state.trader, "ledger", None) else {})
 
+    slots = []
+    for key, env in sorted(envelopes.items()):
+        cb = slot_states.get(key, {})
+        slots.append({
+            "slot_key": key, "venue": env.venue, "symbol": env.symbol,
+            "currency": env.currency,
+            "weight": round(env.weight, 4),
+            "envelope": round(env.slot_envelope, 4),
+            "risk_amount": round(env.slot_risk_amount, 4),
+            "risk_engaged": round(engaged.get(key, {}).get("risk", 0.0), 4),
+            "enabled": key not in disabled,
+            "paused": cb.get("paused", False),
+            "pause_reason": cb.get("pause_reason", ""),
+            "consecutive_losses": cb.get("consecutive_losses", 0),
+            "win_rate_15t": cb.get("win_rate_15t", 100.0),
+            "daily_pnl": cb.get("daily_pnl", 0.0),
+        })
     return {
-        "status":     "updated",
-        "slot_key":   slot_key,
-        "budget_pct": round(budget_pct * 100, 1),
-        "slots":      slots_status,
+        "capital": (round(state.trader.capital_display, 2) if state.trader
+                    else _default_venue_capital(state.cfg)),
+        "slots": slots,
     }
-
-
-@router.post("/api/slots/{slot_key:path}/budget", dependencies=[Depends(verify_api_key)])
-@state.limiter.limit("30/minute")
-def set_slot_budget(request: Request, slot_key: str, budget_pct: float):
-    return _set_slot_budget_impl(slot_key, budget_pct)
 
 
 @router.post("/api/slots/{slot_key:path}/toggle", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("30/minute")
 def toggle_slot(request: Request, slot_key: str, enabled: bool = True):
-    """Active ou désactive un slot."""
+    """Active ou désactive un slot (``risk.disabled_slots``).
+
+    Seule clé rescapée de l'ancien bloc ``capital_allocator`` : un slot n'a
+    plus besoin d'être « connu » d'un registre pour trader, seule une
+    désactivation explicite le bloque."""
     _validate_slot_key(slot_key)
+    if not state.cfg:
+        raise HTTPException(503, "Configuration non chargée")
 
-    if not state.trader:
-        # Fallback : persister uniquement dans la config quand le bot n'est pas actif
-        if not state.cfg:
-            raise HTTPException(503, "Configuration non chargée")
-        alloc = state.cfg.setdefault("capital_allocator", {})
-        disabled = list(alloc.get("disabled_slots", []))
-        if enabled:
-            disabled = [k for k in disabled if k != slot_key]
-        else:
-            if slot_key not in disabled:
-                disabled.append(slot_key)
-        disabled = sorted(disabled)
-        alloc["disabled_slots"] = disabled
-        try:
-            from app.api.routes._config_helpers import _save_yaml
-            _save_yaml(lambda d: d.setdefault("capital_allocator", {}).update(
-                {"disabled_slots": disabled}
-            ))
-        except Exception as e:
-            logger.warning(f"[slots] sauvegarde YAML KO : {e}")
-        slots, _ = _build_slots_from_cfg(state.cfg)
-        return {
-            "status":   "toggled",
-            "slot_key": slot_key,
-            "enabled":  enabled,
-            "slots":    slots,
-        }
-
-    ok = state.trader.allocator.set_slot_enabled(slot_key, enabled)
-    if not ok:
-        raise HTTPException(404, f"Slot '{slot_key}' introuvable")
-
-    # Persist disabled_slots to config.yaml
-    disabled = state.trader.allocator.disabled_slots
-    state.cfg.setdefault("capital_allocator", {})["disabled_slots"] = disabled
+    disabled = set((state.cfg.get("risk") or {}).get("disabled_slots") or [])
+    if enabled:
+        disabled.discard(slot_key)
+    else:
+        disabled.add(slot_key)
+    ordered = sorted(disabled)
+    state.cfg.setdefault("risk", {})["disabled_slots"] = ordered
     try:
         from app.api.routes._config_helpers import _save_yaml
-        _save_yaml(lambda d: d.setdefault("capital_allocator", {}).update(
-            {"disabled_slots": disabled}
-        ))
+        _save_yaml(lambda d: d.setdefault("risk", {}).update({"disabled_slots": ordered}))
+        saved = True
     except Exception as e:
         logger.warning(f"[slots] sauvegarde YAML KO : {e}")
-
-    return {
-        "status":   "toggled",
-        "slot_key": slot_key,
-        "enabled":  enabled,
-        "slots":    state.trader.allocator.get_status(),
-    }
+        saved = False
+    return {"status": "toggled", "slot_key": slot_key, "enabled": enabled,
+            "disabled_slots": ordered, "saved_to_disk": saved}
 
 
 @router.post("/api/slots/{slot_key:path}/reset", dependencies=[Depends(verify_api_key)])
@@ -398,28 +245,6 @@ def reset_slot(request: Request, slot_key: str):
         "slot_key": slot_key,
         "message":  f"Pause du slot '{slot_key}' réinitialisée",
     }
-
-
-@router.post("/api/slots/rebalance", dependencies=[Depends(verify_api_key)])
-@state.limiter.limit("10/minute")
-def force_rebalance(request: Request):
-    """Force un rééquilibrage immédiat des budgets des slots."""
-    if not state.trader:
-        raise HTTPException(503, "Trader non initialisé")
-    state.trader.allocator.force_rebalance()
-    return {
-        "status": "rebalanced",
-        "slots":  state.trader.allocator.get_status(),
-    }
-
-
-# ── Ancien endpoint conservé pour compatibilité ──
-
-@router.post("/api/capital-allocation/set-budget", dependencies=[Depends(verify_api_key)])
-@state.limiter.limit("30/minute")
-def set_slot_budget_legacy(request: Request, slot_key: str, budget_pct: float):
-    """Ancien endpoint — redirige vers /api/slots/{slot_key}/budget."""
-    return _set_slot_budget_impl(slot_key, budget_pct)
 
 
 @router.get("/api/circuit-breakers", dependencies=[Depends(verify_api_key)])

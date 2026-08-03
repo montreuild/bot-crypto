@@ -5,7 +5,6 @@ des slots actifs, l'identité de bot et l'allocateur de capital.
 """
 from app.core.bot_identity import BotIdentity, Venue, default_venue_from_cfg, resolve_venue
 from app.engine.opt_persistence import get_active_strategies_per_tf
-from app.live.capital_allocator import CapitalAllocator
 
 
 def _cfg():
@@ -75,18 +74,26 @@ def test_resolve_venue_symbol_precedence():
     assert v2.name != "perp"
 
 
-# ── Allocateur de capital ─────────────────────────────────────────────────────
+# ── Enveloppes par symbole ────────────────────────────────────────────────────
 
-def test_allocator_per_symbol_slot_keys():
-    act = get_active_strategies_per_tf(_cfg())
-    alloc = CapitalAllocator(capital=1000.0, active_per_tf=act, cfg=_cfg())
-    keys = set(alloc._slots.keys())
+def test_envelopes_are_keyed_per_symbol():
+    """S12 : les enveloppes portent la meme cle 3-parties que les slots — un
+    meme bot sur deux symboles a deux enveloppes distinctes, jamais une seule
+    partagee."""
+    from app.core.risk_envelope import envelopes_for_active_slots
+    cfg = _cfg()
+    cfg["venues"] = {"default": "v", "defs": {"v": {"max_leverage": 1}}, "assign": {}}
+    cfg["risk"] = {"profile": "p", "profiles": {"p": 0.02},
+                   "envelopes": {"v": {"capital": 1000.0, "max_symbol_exposure_pct": 1.0,
+                                      "symbol_risk_pct": 0.05, "venue_risk_pct": 0.05}}}
+    envs = envelopes_for_active_slots(cfg, get_active_strategies_per_tf(cfg))
+    keys = set(envs)
     assert "trend_rider::4h::ETH/USDC" in keys
     assert "trend_rider::4h::BTC/USDC" in keys
     assert "smart_money::4h::BTC/USDC" in keys
     assert "smart_money::4h::ETH/USDC" not in keys
-    for k, slot in alloc._slots.items():
-        assert slot.symbol in k
+    for k, env in envs.items():
+        assert env.symbol in k
 
 
 # ── parse_slot_key (UI / routes) ──────────────────────────────────────────────

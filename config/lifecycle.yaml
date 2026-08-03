@@ -2,9 +2,15 @@
 #  SÉLECTION & ALLOCATION — quels bots vivent, et avec quel capital
 # ============================================================================
 #
-#  Briques : app/live/slot_lifecycle.py (états), app/live/capital_allocator.py
-#            (budgets), app/engine/backtest.py + auto_optimizer.py (simulation
-#            et recherche de paramètres), app/engine/forward_test.py.
+#  Briques : app/live/slot_lifecycle.py (états), app/core/risk_envelope.py
+#            (enveloppes et poids par confiance d'edge), app/engine/backtest.py
+#            + auto_optimizer.py (simulation et recherche de paramètres),
+#            app/engine/forward_test.py.
+#
+#  ⚠ S12 : le bloc `capital_allocator` a disparu. Les enveloppes par venue
+#  vivent dans config/risk.yaml, et le « budget » d'un slot EST son poids dans
+#  l'enveloppe de son symbole — pondéré par confiance d'edge, plus rien à
+#  rééquilibrer à la main. `disabled_slots` a migré vers `risk.disabled_slots`.
 #
 #  ⚠ Ce fichier ne décide PAS quels bots tradent. La sélection vient du
 #  classement OOS : optimizer_results (strategies/*.yaml) + seuil
@@ -37,23 +43,6 @@ forward_test:
   edge_lookback_days: 365
   symbol: BTC/USDC
   initial_delay_s: 300
-
-capital_allocator:
-  mode: performance
-  max_slot_pct: 0.5
-  per_bot_sizing: false
-  reserve_pct: 0.1
-  min_notional_usdc: 10.0
-  max_budget_step: 0.25
-  active_floor: 2
-  continuous_allocation: false
-  min_trades_for_rebalance: 3
-  rebalance_interval: daily
-  max_symbol_exposure_pct: 0.25
-  max_pyramiding: 2
-  disabled_slots: []
-  slot_budgets:
-    trend_rider::1h::BTC/USDC: 0.5
 
 lifecycle:
   enabled: true

@@ -58,7 +58,6 @@ def _make_cfg(db_path: str, paper: bool = True) -> dict:
         }}},
         "notifications": {}, "optimizer": {"enabled": False},
         "forward_test": {"enabled": False}, "lifecycle": {"enabled": False},
-        "capital_allocator": {},
     }
 
 
@@ -120,14 +119,14 @@ class TestSyncSpotBalance:
         # 800 (cash) + 2*110 (valeur de marché) - 0 (emprunt)
         assert trader.capital_display == 1020.0
 
-    def test_equity_propagated_to_allocator(self, tmp_path):
-        """S0-01 : le sizing par slot doit voir la même équité que le risk manager."""
+    def test_equity_is_resynchronised_from_the_exchange(self, tmp_path):
+        """S0-01 : l'équité affichée suit le solde réel de l'exchange."""
         exchange = MockExchange()
         exchange.balance_free = 950.0
         exchange.balance_borrowed = 0.0
         trader = LiveTrader(_make_cfg(str(tmp_path / "live.db"), paper=False), exchange)
         trader._sync_spot_balance()
-        assert trader.allocator.capital == trader.capital_display == 950.0
+        assert trader.capital_display == 950.0
 
 
 # ── Margin ────────────────────────────────────────────────────────────────
@@ -150,15 +149,15 @@ class TestSyncMarginAccount:
         assert trader.risk.halted is True
         assert "margin" in trader.risk.halt_reason.lower()
 
-    def test_equity_propagated_to_allocator(self, tmp_path):
-        """S0-01 : même correctif que le mode spot, appliqué au mode margin."""
+    def test_equity_is_resynchronised_in_margin_mode(self, tmp_path):
+        """S0-01 : même resynchronisation qu'en spot, appliquée au margin."""
         exchange = MockExchange()
         exchange.balance_free = 900.0
         exchange.balance_borrowed = 0.0
         exchange.margin_level = 5.0
         trader = LiveTrader(_make_cfg(str(tmp_path / "live.db"), paper=False), exchange)
         trader._sync_margin_account()
-        assert trader.allocator.capital == trader.capital_display == 900.0
+        assert trader.capital_display == 900.0
 
 
 # ── Pré-exécution ────────────────────────────────────────────────────────
