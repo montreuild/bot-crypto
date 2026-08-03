@@ -22,6 +22,7 @@ import time
 
 from app.core.bot_identity import build_slot_key
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
+from app.core.risk_envelope import base_drift, envelopes_for_active_slots
 from app.engine.optimizer_search import RECOMMENDED_LIMIT, get_active_strategies_per_tf
 
 logger = logging.getLogger(__name__)
@@ -286,6 +287,17 @@ class AutoOptMixin:
             days = self._fwd_test_lookback_days
             slots_data: dict = {}
             scores: dict = {}
+            # S12 : les enveloppes se reconstruisent ICI, à partir des slots
+            # réellement actifs et de leurs edges mesurées — les poids se
+            # répartissent par confiance d'edge, pas à parts égales entre N
+            # stratégies déclarées (§2.3). Le résultat alimente le sizing du
+            # chemin d'ouverture pour tout le cycle qui suit.
+            _edges = {k: (r.get("edge", {}) or {}).get("ci_low_pct")
+                      for k, r in oos.items()}
+            self.envelopes = envelopes_for_active_slots(
+                self.cfg, self._active_per_tf, edges=_edges,
+                default_symbol=self._fwd_test_symbol,
+            )
             for tf, slots in self._active_per_tf.items():
                 for slot in slots:
                     name = slot.get("name")
@@ -315,6 +327,14 @@ class AutoOptMixin:
                         "edge_ci_low":         edge.get("ci_low_pct"),
                         "edge_n":              edge.get("n"),
                         "worst_trade_pct":     edge.get("worst_trade_pct"),
+                        # S12 §5.2 : dérive entre la base ayant mesuré l'edge
+                        # et l'enveloppe courante. None = base inconnue (bot
+                        # antérieur à S12) — la garde ne bloque pas là-dessus.
+                        "slot_key":            key,
+                        "base_drift":          (
+                            base_drift(rec.get("base"), self.envelopes[key])
+                            if key in self.envelopes else None
+                        ),
                     }
             self._lifecycle_snapshot = self._lifecycle.evaluate(slots_data)
             # Allocation continue : appliquée si activée, sinon calculée en shadow.

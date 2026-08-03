@@ -137,6 +137,65 @@ def resolve_envelope(cfg: dict, venue: Venue, symbol: str, slot_key: str, *,
     )
 
 
+def envelopes_for_active_slots(cfg: dict, active_per_tf: dict, *,
+                               edges: Dict[str, Optional[float]] = None,
+                               default_symbol: str = "") -> Dict[str, Envelope]:
+    """``{slot_key: Envelope}`` pour tous les slots actifs.
+
+    Source unique de la résolution : le live (reconstruction périodique), le
+    forward-test (base d'edge) et ``/api/risk`` doivent voir exactement les
+    mêmes enveloppes — sinon la base sur laquelle une edge est mesurée cesse
+    d'être celle qui trade, et la garde de dérive du §5.2 ne veut plus rien
+    dire. Les poids se répartissent par symbole, jamais globalement (§2.3).
+    """
+    from app.core.bot_identity import build_slot_key, resolve_venue
+
+    edges = edges or {}
+    grouped: Dict[tuple, list] = {}
+    for tf, slots in (active_per_tf or {}).items():
+        for slot in slots or []:
+            name = slot.get("name")
+            if not name:
+                continue
+            symbol = slot.get("symbol") or default_symbol
+            slot_key = build_slot_key(name, tf, symbol)
+            venue = resolve_venue(cfg, name, tf, symbol)
+            grouped.setdefault((venue.name, symbol), []).append((slot_key, venue))
+
+    out: Dict[str, Envelope] = {}
+    for (_venue_name, symbol), members in grouped.items():
+        peers = [k for k, _ in members]
+        peer_edges = {k: edges.get(k) for k in peers}
+        for slot_key, venue in members:
+            out[slot_key] = resolve_envelope(cfg, venue, symbol, slot_key,
+                                             peers=peers, edges=peer_edges)
+    return out
+
+
+def envelope_base(env: Envelope, as_of: str = "") -> dict:
+    """Empreinte de l'échelle économique ayant servi à mesurer une edge (§5.2).
+
+    Une expectancy n'a de sens qu'accompagnée de la base sur laquelle elle a
+    été mesurée : c'est ce qui a laissé passer la divergence backtest 1 000 € /
+    live 90 € sans que rien ne la signale."""
+    return {"venue": env.venue, "slot_envelope": round(env.slot_envelope, 4),
+            "trade_risk_pct": env.trade_risk_pct, "currency": env.currency,
+            "as_of": as_of}
+
+
+def base_drift(recorded_base: dict, env: Envelope) -> Optional[float]:
+    """Dérive relative entre la base enregistrée et l'enveloppe courante.
+
+    ``None`` si aucune base n'a été enregistrée (bot antérieur à S12) : c'est
+    une information manquante, pas une dérive nulle — l'appelant décide."""
+    if not recorded_base:
+        return None
+    previous = float(recorded_base.get("slot_envelope") or 0.0)
+    if previous <= 0:
+        return None
+    return abs(env.slot_envelope - previous) / previous
+
+
 def with_reference_envelope(env: Envelope, reference_capital: float) -> Envelope:
     """Bascule sur l'enveloppe d'étude (§5.1) : fixe, indépendante du poids —
     « ce bot est-il promouvable » (enveloppe réelle) contre « cette stratégie
