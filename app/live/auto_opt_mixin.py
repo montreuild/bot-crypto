@@ -11,7 +11,7 @@ Extrait de LiveTrader (V4-J / ARCH-06). Regroupe :
 Requiert que l'instance possède (fournis par LiveTrader.__init__) :
   self.cfg, self.engine, self.scanner, self.timeframes, self.threshold,
   self.strat_params, self._loaded_strategies, self._strat_thresholds,
-  self._active_per_tf, self._ml_trainer, self.allocator, self.pipeline,
+  self._active_per_tf, self._ml_trainer, self.envelopes, self.pipeline,
   self.SessionLocal, self._lifecycle, self._auto_opt_*, self._fwd_test_*,
   self._lifecycle_*
 """
@@ -110,7 +110,6 @@ class AutoOptMixin:
     def reload_active_strategies(self) -> None:
         """Rechargement à chaud après optimisation (appelé par l'API)."""
         self._build_active_per_tf()
-        self.allocator.rebuild_slots(self._active_per_tf)
         self.pipeline.update_strategies(self._loaded_strategies)
         logger.info("[LiveTrader] Stratégies actives rechargées depuis optimizer_results")
 
@@ -140,7 +139,6 @@ class AutoOptMixin:
 
         self.cfg["strategies"]["enabled"] = list(target)
         self._build_active_per_tf()
-        self.allocator.rebuild_slots(self._active_per_tf)
         self.pipeline.update_strategies(self._loaded_strategies)
         return {
             "added": added, "removed": removed, "errors": errors,
@@ -318,7 +316,11 @@ class AutoOptMixin:
                     score = float(sim.get("avg_return_pct", 0.0) or 0.0)
                     scores[key] = score
                     slots_data[key] = {
-                        "budget_pct":          self.allocator.budget_pct(key),
+                        # S12 : le « budget » d'un slot EST son poids dans
+                        # l'enveloppe de son symbole — un seul nombre, plus un
+                        # budget a rééquilibrer en parallèle des poids.
+                        "budget_pct":          (self.envelopes[key].weight
+                                                if key in self.envelopes else 0.0),
                         "live_trades":         stats["n_trades"],
                         "live_in_band":        contract.get("in_band"),
                         "live_avg_return_pct": stats["avg_return_pct"],
@@ -337,11 +339,10 @@ class AutoOptMixin:
                         ),
                     }
             self._lifecycle_snapshot = self._lifecycle.evaluate(slots_data)
-            # Allocation continue : appliquée si activée, sinon calculée en shadow.
-            if getattr(self.allocator, "continuous_allocation", False):
-                self._shadow_alloc = self.allocator.apply_continuous_allocation(scores)
-            else:
-                self._shadow_alloc = self.allocator.compute_shadow_allocation(scores)
+            # S12 : plus d'allocation « shadow » à comparer — les poids par
+            # confiance d'edge SONT l'allocation, appliquée directement.
+            self._shadow_alloc = {k: round(e.weight, 4)
+                                  for k, e in self.envelopes.items()}
             logger.info(
                 f"[Lifecycle] états={self._lifecycle_snapshot.get('counts')} "
                 f"| file re-opt={len(self._lifecycle_snapshot.get('reopt_queue', []))}"

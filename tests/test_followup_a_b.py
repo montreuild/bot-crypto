@@ -1,6 +1,5 @@
 """Suivi A (régressions) + B (file re-opt & allocation appliquée)."""
 import app.core.bot_identity as bi
-from app.live.capital_allocator import CapitalAllocator
 from app.live.slot_lifecycle import LifecycleState, SlotLifecycleManager
 
 
@@ -22,33 +21,6 @@ def test_peek_identity_uses_preloaded_gens(tmp_path, monkeypatch):
     ident = bi.peek_identity("trend", "1h", {"x": 1}, cfg, gens=gens)
     assert ident.generation == 1
     assert calls["n"] == 0   # aucune lecture disque quand gens est fourni
-
-
-# ── B : allocation continue réellement appliquée + garde-fou collatéral ──────
-def _alloc(**over):
-    cfg = {"capital_allocator": {"mode": "manual", "max_slot_pct": 1.0,
-                                 "reserve_pct": 0.10, "min_notional_usdc": 1.0,
-                                 "max_budget_step": 1.0, "active_floor": 1,
-                                 "continuous_allocation": True, **over}}
-    active = {"1h": [{"name": "a"}, {"name": "b"}]}
-    return CapitalAllocator(capital=1000, active_per_tf=active, cfg=cfg)
-
-
-def test_apply_continuous_allocation_writes_budgets():
-    al = _alloc()
-    assert al.continuous_allocation is True
-    res = al.apply_continuous_allocation({"a::1h": 3.0, "b::1h": 1.0})
-    assert res.get("applied") is True
-    # Les budgets RÉELS suivent les cibles (a > b car meilleur score).
-    assert al._slots["a::1h"].budget_pct == res["targets"]["a::1h"]
-    assert al._slots["a::1h"].budget_pct > al._slots["b::1h"].budget_pct
-
-
-def test_apply_respects_open_position_collateral():
-    al = _alloc()
-    al._slots["b::1h"].used_notional = 400.0   # 40% du capital engagé
-    al.apply_continuous_allocation({"a::1h": 100.0, "b::1h": 0.0})  # voudrait défonder b
-    assert al._slots["b::1h"].budget_pct >= 0.40 - 1e-9   # collatéral préservé
 
 
 # ── B : la file de re-opt est consommable (pop vide la file) ─────────────────

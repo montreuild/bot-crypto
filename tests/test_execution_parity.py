@@ -121,7 +121,6 @@ def _live_close_pnl(margin: bool = True) -> float:
             self.exchange.create_order.return_value = {"price": EXIT, "id": "x"}
             self.risk = MagicMock()
             self.notif = MagicMock()
-            self.allocator = MagicMock()
             # S12 : la clôture rend l'enveloppe et le budget au ledger.
             from app.core.rejections import RejectionCounter
             from app.core.risk_ledger import RiskLedger

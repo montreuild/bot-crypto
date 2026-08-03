@@ -20,7 +20,7 @@ Architecture (V4-J / ARCH-06 : un fichier par responsabilité ;
   - HealthMixin          : heartbeat/dead-man, reprise réseau, purge, status API
   - OHLCVCache           : cache multi-TF des DataFrames OHLCV (composé)
   - SignalPipeline       : collecte et ranking des signaux
-  - CapitalAllocator     : allocation du capital par slot strategy::tf::symbol
+  - RiskLedger           : risque et notionnel engagés sous enveloppe (S12)
 """
 import logging
 import threading
@@ -43,7 +43,6 @@ from app.engine.engine import Engine
 from app.engine.scanner import MarketScanner
 from app.live.auto_opt_mixin import AutoOptMixin
 from app.live.balance_sync import BalanceSyncMixin
-from app.live.capital_allocator import CapitalAllocator
 from app.live.health_mixin import HealthMixin
 from app.live.market_hours_mixin import MarketHoursMixin
 from app.live.ohlcv_cache import OHLCVCache
@@ -71,7 +70,7 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
         cycle de vie des bots (via AutoOptMixin)
       - la santé du process et le reporting (via HealthMixin)
       - le cache OHLCV (via OHLCVCache)
-      - l'allocation du capital (via CapitalAllocator)
+      - les enveloppes de risque (via RiskLedger + risk_envelope)
     """
 
     def __init__(self, cfg: dict, exchange: RobustExchange):
@@ -223,14 +222,6 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
         # {slot_key: Envelope} — reconstruit par le thread de cycle de vie à
         # partir des slots réellement actifs et de leurs edges mesurées.
         self.envelopes: Dict[str, object] = {}
-        self.allocator = CapitalAllocator(
-            capital=self.capital_display,
-            active_per_tf=self._active_per_tf,
-            cfg=cfg,
-            session_factory=self.SessionLocal,
-        )
-        # Enregistrer le callback de persistance des budgets
-        self.allocator.set_persist_callback(self._persist_allocator_budgets)
         self.pipeline = SignalPipeline(
             loaded_strategies=self._loaded_strategies,
             cfg=cfg,
@@ -367,7 +358,6 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
             return
 
         self.risk.update_equity(self.capital_display)
-        self.allocator.update_equity(self.capital_display)
 
         if self.risk.halted:
             self.notif.notify_halt(
@@ -478,9 +468,6 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
         if self.cycle_count % 10 == 0:
             self._send_status_report()
 
-        # 7. Rééquilibrage hebdomadaire des budgets
-        self.allocator.rebalance_if_due()
-
     # ── Accès OHLCV (wrappers vers ohlcv_cache) ───────────────────────────
 
     def _get_ohlcv(self, symbol: str, tf: str) -> Optional[pl.DataFrame]:
@@ -495,34 +482,6 @@ class LiveTrader(PositionOpenMixin, PositionManageMixin, PositionCloseMixin,
         return self.ohlcv_cache.get_cached_atr(symbol)
 
     # ── Utilitaires ────────────────────────────────────────────────────────
-
-    def _persist_allocator_budgets(self, budgets: dict) -> None:
-        """
-        Callback de persistance appelé par CapitalAllocator après chaque _apply_mode().
-        Met à jour capital_allocator.slot_budgets dans state.cfg et config.yaml.
-        """
-        try:
-            # V4-D : plus aucune dépendance à app.api — self.cfg EST l'objet
-            # config partagé du process (posé par cli.py, lu par les routes),
-            # et l'écriture disque passe par le verrou unique de core/yaml_io.
-            self.cfg.setdefault("capital_allocator", {})["slot_budgets"] = budgets
-            try:
-                from app.core.yaml_io import update_config_yaml
-
-                def _upd(d):
-                    d.setdefault("capital_allocator", {})["slot_budgets"] = budgets
-                update_config_yaml(_upd)
-            except Exception as e:
-                logger.warning(f"[LiveTrader] Persistance YAML budgets KO : {e}")
-        except Exception as e:
-            logger.debug(f"[LiveTrader] _persist_allocator_budgets : {e}")
-
-    def persist_allocator_state(self) -> None:
-        """
-        Persiste manuellement l'état complet de l'allocateur (budgets + disabled_slots)
-        dans config.yaml. Utile après des modifications batch ou un redémarrage.
-        """
-        self._persist_allocator_budgets(self.allocator.enabled_budgets())
 
     def _safe_ticker(self, symbol: str) -> Optional[dict]:
         try:

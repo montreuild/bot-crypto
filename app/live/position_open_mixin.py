@@ -19,7 +19,7 @@ Requiert que l'instance possède (fournis par LiveTrader.__init__) :
   self.capital_display, self._capital_lock, self._paper_base
   self.open_positions, self.signal_log, self._positions_lock
   self._trailing_cfg, self._strat_thresholds, self.threshold
-  self.ohlcv_cache, self.allocator, self.tf, self.interval
+  self.ohlcv_cache, self.ledger, self.rejections, self.envelopes, self.tf
   self._pre_execution_check, self._safe_ticker, self._get_ohlcv
 """
 import logging
@@ -564,7 +564,6 @@ class PositionOpenMixin:
         if opened.get("size") and opened.get("stop") is not None:
             self.ledger.update_risk(pos_key, self.risk.engaged_risk(
                 opened["entry"], opened["stop"], opened["size"]))
-        self.allocator.register_open(slot_key, notional)
         return True
 
     # ── Scan direct par stratégie (conservé pour compatibilité tests) ──────

@@ -9,7 +9,7 @@ Extrait de LiveTrader (V4-J / ARCH-06). Regroupe :
 
 Requiert que l'instance possède (fournis par LiveTrader.__init__) :
   self.cfg, self.risk, self.notif, self.scanner, self.ohlcv_cache,
-  self.allocator, self.open_positions, self.signal_log, self.SessionLocal,
+  self.envelopes, self.open_positions, self.signal_log, self.SessionLocal,
   self.capital_display, self.running, self.cycle_count, self._cooldown,
   self._loss_notified, self._status_db_cache*, self._active_per_tf,
   self._lifecycle_snapshot, self._shadow_alloc, self._margin_*
@@ -218,7 +218,15 @@ class HealthMixin:
                                     if self._margin_enabled else None,
             "balance_detail":       self._balance_detail,
             "paper_mode":           self.cfg["trading"].get("paper_mode", True),
-            "capital_allocation":   self.allocator.get_status(),
+            # S12 : les enveloppes remplacent l'allocation par slot — détail
+            # complet servi par /api/risk, résumé ici pour /api/status.
+            "capital_allocation":   [
+                {"slot_key": k, "weight": round(e.weight, 4),
+                 "envelope": round(e.slot_envelope, 4),
+                 "risk_amount": round(e.slot_risk_amount, 4),
+                 "venue": e.venue, "symbol": e.symbol, "currency": e.currency}
+                for k, e in sorted(getattr(self, "envelopes", {}).items())
+            ],
             "circuit_breakers":     self.risk.get_circuit_breakers_status(),
             "slot_states":          self.risk.get_slot_states(),
             "volatility_brake":     self.risk.volatility_brake_active,

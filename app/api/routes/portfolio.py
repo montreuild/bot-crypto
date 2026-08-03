@@ -111,7 +111,8 @@ def get_bots():
         except Exception:
             states = {}
 
-    # Identités de bot + budgets allocateur.
+    # Identités de bot + enveloppes (S12 : le « budget » d'un slot EST son
+    # poids dans l'enveloppe de son symbole).
     identities = {}
     budgets = {}
     if tr:
@@ -120,11 +121,11 @@ def get_bots():
                 identities[ident["slot_key"]] = ident
         except Exception:
             pass
-        try:
-            for s in tr.allocator.get_status():
-                budgets[s["slot_key"]] = s
-        except Exception:
-            pass
+        for key, env in (getattr(tr, "envelopes", None) or {}).items():
+            budgets[key] = {"slot_key": key, "budget_pct": round(env.weight, 4),
+                           "envelope": round(env.slot_envelope, 4),
+                           "risk_amount": round(env.slot_risk_amount, 4),
+                           "currency": env.currency}
 
     # Union des slots connus (oos ∪ states ∪ budgets).
     # Overlay des forçages manuels (droit de veto) : état affiché = actif.
@@ -307,8 +308,6 @@ def get_portfolio():
         "open_positions":    st.get("positions", []),
         "allocation":        st.get("capital_allocation", []),
         "shadow_allocation": st.get("shadow_allocation", {}),
-        "continuous_allocation": bool(getattr(getattr(tr, "allocator", None),
-                                              "continuous_allocation", False)),
         "lifecycle":         st.get("lifecycle", {}),
         "bots":              st.get("bots", []),
         "risk": {

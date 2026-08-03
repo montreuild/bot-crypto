@@ -132,7 +132,7 @@ def test_repository_config_is_split_and_complete():
         "venues": "venues.yaml", "exchange": "venues.yaml",
         "trading": "risk.yaml", "risk": "risk.yaml", "live": "risk.yaml",
         "scanner": "data.yaml", "providers": "data.yaml",
-        "lifecycle": "lifecycle.yaml", "capital_allocator": "lifecycle.yaml",
+        "lifecycle": "lifecycle.yaml",
         "web": "ops.yaml", "logging": "ops.yaml", "database": "ops.yaml",
     }
     for section, fichier in attendu.items():

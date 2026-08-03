@@ -4,7 +4,7 @@ open_positions/equity/slot_states sont lus et mutés depuis le thread de
 trading (can_trade/register_open/register_close/update_equity) ET depuis les
 threads API (status_dict pour /api/status) — sans verrou, races possibles
 (compteur de trades/jour perdu par un read-modify-write non atomique, lecture
-torn d'un dict en cours de mutation). Miroir de test_allocator_thread_safety.py
+torn d'un dict en cours de mutation). Miroir du test de concurrence de RiskLedger (test_risk_ledger.py)
 (OPS-10) appliqué à RiskManager.
 """
 import threading

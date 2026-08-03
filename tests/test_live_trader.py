@@ -60,7 +60,6 @@ def _make_cfg(db_path: str) -> dict:
         "optimizer": {"enabled": False},
         "forward_test": {"enabled": False},
         "lifecycle": {"enabled": False},
-        "capital_allocator": {},
     }
 
 

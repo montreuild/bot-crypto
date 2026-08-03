@@ -636,6 +636,12 @@ sur 100 € puis appliquée à 140 € n'a pas été validée à cette échelle.
 
 ## 10. Ordre d'implémentation
 
+> **État : livré.** Les 8 étapes ci-dessous sont implémentées. Trois écarts à la
+> spec initiale, tous corrigés à la source et documentés là où ils portent :
+> le plafond notionnel du symbole porte le levier (§4.2), une garde de bruit
+> flottant relative protège les comparaisons de budget (§4.2), et la garantie
+> mono-slot est devenue une règle de validation refusant le démarrage (§3).
+
 1. `risk_envelope.py` + `risk_ledger.py` + `rejections.py` + leurs tests.
 2. `_validate_risk_envelopes` dans `config.py` + `config/risk.yaml` cible,
    puis `risk_diagnostics.py` branché au chargement (§6.2).
