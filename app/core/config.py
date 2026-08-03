@@ -48,12 +48,13 @@ def _ensure_dotenv() -> None:
 
 REQUIRED_FIELDS = [
     ("exchange", "name"),
-    ("trading", "capital"),
-    ("trading", "risk_per_trade"),
     ("database", "url"),
     # ("trading", "timeframe")  -- optionnel en mode multi-TF
     # ("strategies", "enabled") -- optionnel en mode multi-TF
 ]
+# S12 : "capital" et "risk_per_trade" ne sont plus des clés globales — le
+# capital est PAR VENUE (risk.envelopes.<venue>.capital), le risque par trade
+# vient du profil (risk.profile). Cf. _validate_risk_envelopes.
 
 # Frais par défaut (ARCH-10) — SOURCE UNIQUE : tout repli `cfg.get("taker_fee", …)`
 # ou défaut de fonction doit importer ces constantes, jamais recopier le littéral
@@ -67,7 +68,7 @@ DATA_ROOT = "data"
 
 DEFAULTS = {
     "trading": {
-        "paper_mode": True, "max_positions": 5, "max_longs": 3, "max_shorts": 3,
+        "paper_mode": True,
         "scan_interval": 60, "score_threshold": 0.55, "daily_drawdown_limit": 0.05,
         "max_trades_per_minute": 3, "min_volume_usdc_24h": 5_000_000,
         # Alias générique (S2-03, multi-actifs) — même défaut ; scanner.py lit
@@ -76,7 +77,7 @@ DEFAULTS = {
         "min_volume_quote_24h": 5_000_000,
         "taker_fee": DEFAULT_TAKER_FEE, "maker_fee": DEFAULT_MAKER_FEE,
         "borrow_rate_daily": 0.0002,
-        "max_leverage": 1, "max_drawdown_global": 0.20, "spread_pct": 0.0005,
+        "max_drawdown_global": 0.20, "spread_pct": 0.0005,
         "latency_ms": 50, "paper_slippage": 0.001,
         # FIN-07 : "static" (défaut, comportement inchangé) vs "size" (ajoute
         # un coût d'impact ~ notional/volume_moyen_20b, même formule que
@@ -86,11 +87,9 @@ DEFAULTS = {
     "backtest": {
         "spread_pct": 0.0005, "latency_ms": 50, "partial_fill_pct": 0.95,
         "monte_carlo_runs": 200, "walk_forward_folds": 5,
-        # Plafond de notionnel PAR TRADE (fraction du capital) — valeur UNIQUE
-        # partagée backtest/live (BT-03 : le backtest utilisait un repli 0.50
-        # quand le RiskManager live plafonnait à 0.20 → tailles ×2,5 invalidant
-        # la reproductibilité des backtests en réel).
-        "max_notional_pct": 0.20,
+        # S12 : le plafond de notionnel par trade vient de l'enveloppe du slot
+        # (Envelope.max_notional = slot_envelope × levier), plus d'un
+        # max_notional_pct global déconnecté du budget réel du bot.
     },
     "optimizer": {"enabled": False, "method": "bayesian", "n_trials": 50, "out_of_sample_ratio": 0.3,
                   # S4-03 : "full" (IS+OOS, historique) vs "is_only" — cf.
@@ -399,6 +398,73 @@ def _validate_venues(cfg: dict) -> None:
         )
 
 
+def _validate_risk_envelopes(cfg: dict) -> None:
+    """Cohérence du modèle d'enveloppes de risque (S12).
+
+    Trois règles dures (refus de démarrage) — cf.
+    docs/CONCEPTION_ENVELOPPES_DE_RISQUE.md §3 :
+
+    1. Toute venue ATTEIGNABLE (``venues.default`` ou ``venues.assign``) doit
+       avoir une entrée dans ``risk.envelopes`` — sans elle, aucun slot de
+       cette venue ne pourrait jamais être dimensionné (enveloppe nulle).
+    2. Les trois taux (``max_symbol_exposure_pct``, ``symbol_risk_pct``,
+       ``venue_risk_pct``) doivent rester dans des bornes raisonnables.
+    3. ``venue_risk_pct`` doit être ≥ ``symbol_risk_pct`` — sinon le budget de
+       risque symbole est structurellement inatteignable, même par un seul
+       symbole occupant toute l'enveloppe venue.
+
+    Les règles plus fines (fenêtre de stops viables, nombre de slots max,
+    décote de corrélation absente…) ont besoin de connaître les slots actifs
+    réels — une information d'``app.engine`` qu'``app.core`` ne peut pas
+    importer. Elles vivent dans ``app/core/risk_diagnostics.py``, appelé
+    depuis ``app.live`` où cette information existe (pas ici).
+    """
+    venues = cfg.get("venues") or {}
+    defs = venues.get("defs") or {}
+    if not defs:
+        return  # pas de venues.defs -> rien à valider (repli legacy S11)
+
+    default = venues.get("default")
+    assign = venues.get("assign") or {}
+    reachable = {v for v in ([default] if default else []) + list(assign.values()) if v}
+
+    envelopes = (cfg.get("risk") or {}).get("envelopes") or {}
+    missing = sorted(reachable - set(envelopes))
+    if missing:
+        raise ValueError(
+            f"venue(s) {missing} atteignable(s) via venues.default/assign "
+            f"mais sans enveloppe dans risk.envelopes — aucun slot de ces "
+            f"venues ne pourrait être dimensionné. Déclarez "
+            f"risk.envelopes.<venue> pour chacune."
+        )
+
+    for name, env in envelopes.items():
+        max_expo = float(env.get("max_symbol_exposure_pct", 1.0))
+        symbol_risk_pct = float(env.get("symbol_risk_pct", 0.02))
+        venue_risk_pct = float(env.get("venue_risk_pct", 0.03))
+        if not (0 < max_expo <= 1):
+            raise ValueError(
+                f"risk.envelopes.{name}.max_symbol_exposure_pct doit être "
+                f"dans ]0, 1] (valeur : {max_expo})"
+            )
+        if not (0 < symbol_risk_pct <= 0.10):
+            raise ValueError(
+                f"risk.envelopes.{name}.symbol_risk_pct doit être dans "
+                f"]0, 0.10] (valeur : {symbol_risk_pct})"
+            )
+        if not (0 < venue_risk_pct <= 0.20):
+            raise ValueError(
+                f"risk.envelopes.{name}.venue_risk_pct doit être dans "
+                f"]0, 0.20] (valeur : {venue_risk_pct})"
+            )
+        if venue_risk_pct < symbol_risk_pct:
+            raise ValueError(
+                f"risk.envelopes.{name} : venue_risk_pct ({venue_risk_pct}) < "
+                f"symbol_risk_pct ({symbol_risk_pct}) — le budget de risque "
+                f"symbole serait inatteignable, même par un seul symbole."
+            )
+
+
 def load_config(path: str = "config.yaml") -> dict:
     # Avant toute expansion `${VAR}` : sans ça, les valeurs du `.env` généré
     # par setup.sh ne sont jamais visibles (cf. `_ensure_dotenv`).
@@ -486,18 +552,6 @@ def load_config(path: str = "config.yaml") -> dict:
     if errors:
         raise ValueError("Configuration invalide :\n" + "\n".join(errors))
 
-    # Validation numérique des paramètres critiques
-    t = cfg["trading"]
-    try:
-        t["capital"]        = float(t["capital"])
-        t["risk_per_trade"] = float(t["risk_per_trade"])
-    except (TypeError, ValueError) as e:
-        raise ValueError(f"Valeur numérique invalide dans [trading] : {e}")
-    if t["capital"] <= 0:
-        raise ValueError(f"[trading].capital doit être > 0 (valeur : {t['capital']})")
-    if not (0 < t["risk_per_trade"] <= 1):
-        raise ValueError(f"[trading].risk_per_trade doit être entre 0 et 1 (valeur : {t['risk_per_trade']})")
-
     api_key = cfg.get("exchange", {}).get("api_key", "")
     if api_key in ("", "YOUR_KEY"):
         logger.warning("⚠ Clés API exchange non configurées — mode backtest uniquement.")
@@ -518,6 +572,7 @@ def load_config(path: str = "config.yaml") -> dict:
         )
 
     _validate_venues(cfg)
+    _validate_risk_envelopes(cfg)
 
     # ── Sécurité API web (OPS-02 : BLOQUANT) ─────────────────────────────────
     # Sans web.api_key, l'auth retombe sur un filtre « localhost only » basé
@@ -584,6 +639,11 @@ def load_config(path: str = "config.yaml") -> dict:
             logger.warning(f"[Config] Timeframe '{tf}' non standard — "
                            f"valides : {sorted(_VALID_TIMEFRAMES)}")
 
-    logger.info(f"Config chargée : {path} | Capital={cfg['trading']['capital']} "
+    # S12 : le capital est par venue (risk.envelopes.<venue>.capital) — le log
+    # annonce celui de venues.default, la venue réellement tradée par ce process.
+    _default_venue = (cfg.get("venues") or {}).get("default")
+    _envelopes = (cfg.get("risk") or {}).get("envelopes") or {}
+    _default_capital = (_envelopes.get(_default_venue) or {}).get("capital", "?")
+    logger.info(f"Config chargée : {path} | Capital({_default_venue})={_default_capital} "
                 f"| TF={tfs} | Paper={cfg['trading']['paper_mode']}")
     return cfg
