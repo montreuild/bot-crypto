@@ -158,6 +158,11 @@ class SlotLifecycleManager:
         # Lissage anti-flush
         self._min_active      = int(lc.get("min_active_bots", 2))
         self._max_demotions_per_day = int(lc.get("max_demotions_per_day", 2))
+        # S12 : au-delà de cette dérive entre la base ayant mesuré l'edge et
+        # l'enveloppe courante, la promotion est refusée (§5.2).
+        self._base_drift_tolerance = float(
+            (cfg.get("risk", {}) or {}).get("base_drift_tolerance", 0.20)
+        )
 
         self._session_factory = session_factory
         self._states: Dict[str, str] = {}   # cache de l'état courant
@@ -180,6 +185,20 @@ class SlotLifecycleManager:
         if ci_low is None or ci_low <= 0 or n_sim < self._edge_min_trades:
             return False
         if worst is not None and worst < -self._max_worst_trade:
+            return False
+        # S12 §5.2 — l'edge a-t-elle été mesurée sur l'échelle qui trade ?
+        # Une expectancy en % n'est transposable que si la base n'a pas bougé :
+        # min_notional, lot indivisible et frais fixes ne se mettent PAS à
+        # l'échelle. Au-delà de la tolérance, l'edge est réputée périmée et doit
+        # être recalculée avant de servir à promouvoir.
+        drift = d.get("base_drift")
+        if drift is not None and drift > self._base_drift_tolerance:
+            logger.warning(
+                f"[Lifecycle] {d.get('slot_key', '?')} : promotion refusée — "
+                f"l'edge a été mesurée sur une enveloppe qui a dérivé de "
+                f"{drift:.0%} (tolérance {self._base_drift_tolerance:.0%}). "
+                f"Elle sera recalculée au prochain forward-test."
+            )
             return False
         return True
 

@@ -33,6 +33,8 @@ from app.core.oos_tracker import (
     _verdict,
 )
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
+from app.core.risk_envelope import envelope_base as _envelope_base
+from app.core.risk_envelope import envelopes_for_active_slots
 from app.core.timeframes import TF_MINUTES as _TF_MINUTES
 
 logger = logging.getLogger(__name__)
@@ -77,7 +79,8 @@ def _bars_for_lookback(tf: str, lookback_days: int, max_bars: int = _MAX_BARS,
 # ── Forward-test d'un slot ─────────────────────────────────────────────────
 def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
                        cfg: dict, fetch_ohlcv, session_factory,
-                       lookback_days: int, edge_lookback_days: int = 100) -> dict | None:
+                       lookback_days: int, edge_lookback_days: int = 100,
+                       envelope=None) -> dict | None:
     """Re-backteste un slot sur données fraîches, construit le contrat MC et
     compare aux trades réels. Retourne l'enregistrement (ou None si données
     insuffisantes)."""
@@ -96,7 +99,7 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
     mod = importlib.import_module(f"app.strategies.{strategy}")
     eng = Engine()
     eng.register(mod.Strategy(), silent=True)
-    bt = Backtester(eng, cfg)
+    bt = Backtester(eng, cfg, envelope=envelope)
     res = bt.run(df, symbol, timeframe=timeframe)
     d = res.to_dict()
 
@@ -159,7 +162,8 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
             if edge_df is not None and len(edge_df) >= _WARMUP_BARS + 30:
                 e_eng = Engine()
                 e_eng.register(mod.Strategy(), silent=True)
-                e_res = Backtester(e_eng, cfg).run(edge_df, symbol, timeframe=timeframe)
+                e_res = Backtester(e_eng, cfg, envelope=envelope).run(
+                    edge_df, symbol, timeframe=timeframe)
                 e_trades = _per_trade_returns_pct(_closed_trades(e_res.to_dict().get("trades", [])))
                 if e_trades:
                     edge_returns = e_trades
@@ -187,6 +191,11 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
         },
         "monte_carlo":  mc_equity,
         "edge":         edge,
+        # S12 §5.2 — l'échelle économique sur laquelle cette edge a été
+        # mesurée. Sans elle, une expectancy en % ne dit pas de quoi.
+        "base":         _envelope_base(
+            envelope, datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        ) if envelope is not None else None,
         "live": {
             "n_trades":       len(live_returns),
             "avg_return_pct": live_mean,
@@ -220,6 +229,10 @@ def run_forward_test(cfg: dict, fetch_ohlcv, active_per_tf: dict,
     """
     results = {}
     n_slots = sum(len(v) for v in (active_per_tf or {}).values())
+    # S12 : chaque slot est re-backtesté sur SON enveloppe — c'est ce qui rend
+    # l'expectancy mesurée ici comparable au live, et c'est cette base qui est
+    # enregistrée à côté de l'edge pour la garde de dérive (§5.2).
+    envelopes = envelopes_for_active_slots(cfg, active_per_tf, default_symbol=symbol)
     logger.info(
         f"[ForwardTest] Forward-test glissant : {n_slots} slot(s), "
         f"fenêtre {lookback_days} j, symbole {symbol}."
@@ -234,6 +247,7 @@ def run_forward_test(cfg: dict, fetch_ohlcv, active_per_tf: dict,
                 rec = _forward_test_slot(
                     strategy, tf, slot_sym, cfg, fetch_ohlcv,
                     session_factory, lookback_days, edge_lookback_days,
+                    envelope=envelopes.get(build_slot_key(strategy, tf, slot_sym)),
                 )
             except Exception as e:
                 logger.error(
