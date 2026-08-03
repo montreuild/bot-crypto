@@ -98,18 +98,29 @@ risk:
   # Une venue non déclarée ici, mais atteignable via venues.default/assign,
   # fait REFUSER le démarrage (_validate_risk_envelopes) — aucun slot de
   # cette venue ne pourrait sinon être dimensionné.
+  #
+  # ⚠ `symbol_risk_pct` et le `profile` ci-dessus ne mesurent PAS la même
+  # chose, mais ils se comparent : le profil est le risque d'UN trade, le
+  # budget symbole plafonne la SOMME des risques ouverts sur le symbole. Un
+  # slot seul sur son symbole porte un poids de 1,0, donc risque
+  # `profile` % de l'enveloppe du symbole — contre `symbol_risk_pct` % de
+  # cette même enveloppe. `symbol_risk_pct < profile` rendrait ce slot
+  # incapable de passer le moindre ordre : le démarrage est refusé.
+  # Règle retenue ici : symbol_risk_pct = 2 × profile, soit deux unités de
+  # risque plein par symbole (une entrée + un pyramidage, ou deux slots
+  # simultanés).
   envelopes:
     margin-isolated:
       capital: 1000
       # BTC (et ETH plus tard) seulement pour l'instant sur cette venue :
       # 100 % d'exposition assumée, pas de décote entre symboles.
       max_symbol_exposure_pct: 1.00
-      symbol_risk_pct: 0.02      # 2 % de 1000 = 20 € de perte max sur BTC
-      venue_risk_pct: 0.03       # 30 € de perte max sur la venue (décote dès un 2e symbole)
+      symbol_risk_pct: 0.05      # 50 € de perte max sur BTC = 2 × 25 € par trade
+      venue_risk_pct: 0.05       # 50 € sur la venue (un seul symbole : pas de décote)
     euronext-paper:
       capital: 10000
       max_symbol_exposure_pct: 0.25   # 2 500 € max par ticker
-      symbol_risk_pct: 0.02           # 50 € de perte max par ticker
+      symbol_risk_pct: 0.05           # 125 € de perte max par ticker = 2 × 62,50 €
       venue_risk_pct: 0.05            # 500 € de perte max sur le livre actions
 
 live:

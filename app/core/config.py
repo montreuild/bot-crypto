@@ -438,6 +438,9 @@ def _validate_risk_envelopes(cfg: dict) -> None:
             f"risk.envelopes.<venue> pour chacune."
         )
 
+    from app.core.risk_envelope import trade_risk_pct
+    risk_pct = trade_risk_pct(cfg)
+
     for name, env in envelopes.items():
         max_expo = float(env.get("max_symbol_exposure_pct", 1.0))
         symbol_risk_pct = float(env.get("symbol_risk_pct", 0.02))
@@ -462,6 +465,22 @@ def _validate_risk_envelopes(cfg: dict) -> None:
                 f"risk.envelopes.{name} : venue_risk_pct ({venue_risk_pct}) < "
                 f"symbol_risk_pct ({symbol_risk_pct}) — le budget de risque "
                 f"symbole serait inatteignable, même par un seul symbole."
+            )
+        # Garantie « un symbole mono-slot trade toujours ». Un slot seul sur son
+        # symbole porte un poids de 1,0 : il risque `trade_risk_pct` de
+        # l'enveloppe du symbole, contre un budget de `symbol_risk_pct` de cette
+        # MÊME enveloppe. Au-delà, RiskLedger refuse chaque ordre du slot — un
+        # bot vivant qui ne trade jamais, sans rien dans les logs. C'est le
+        # défaut que S12 supprime : on refuse le démarrage plutôt que de le
+        # laisser se manifester en silence à la première promotion.
+        if risk_pct > symbol_risk_pct:
+            raise ValueError(
+                f"risk.envelopes.{name} : symbol_risk_pct ({symbol_risk_pct}) < "
+                f"risk.profile '{cfg.get('risk', {}).get('profile')}' "
+                f"({risk_pct}) — un symbole réduit à un seul slot actif ne "
+                f"pourrait plus passer aucun ordre. Monter symbol_risk_pct à "
+                f"{risk_pct} au minimum (le double pour autoriser le "
+                f"pyramidage), ou choisir un profil de risque plus prudent."
             )
 
 
