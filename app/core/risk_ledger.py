@@ -35,6 +35,20 @@ def _symbol_key(venue: str, symbol: str) -> str:
     return f"{venue}::{symbol}"
 
 
+# Garde de bruit flottant — PAS une tolérance de dépassement. Le risque
+# réservé (|entrée − stop| × taille) et le plafond (enveloppe × taux) sont
+# calculés par deux chemins différents : à l'égalité exacte, le dernier ulp
+# suffit à faire refuser un trade conforme (mesuré : 200.00000000000003 > 200).
+# L'ancien ×1.05 de CapitalAllocator était trois ordres de grandeur au-dessus
+# et laissait passer de vrais dépassements ; 1e-9 relatif n'autorise rien
+# d'économiquement observable.
+_FP_EPS = 1e-9
+
+
+def _exceeds(value: float, limit: float) -> bool:
+    return value > limit * (1.0 + _FP_EPS)
+
+
 class RiskLedger:
     """Réservation/libération atomiques sous enveloppe + budget de risque.
 
@@ -62,18 +76,18 @@ class RiskLedger:
             cur_symbol_risk     = self._symbol_risk.get(sym_key, 0.0)
             cur_venue_risk      = self._venue_risk.get(env.venue, 0.0)
 
-            if notional > env.max_notional:
+            if _exceeds(notional, env.max_notional):
                 return Decision(False, "enveloppe_slot",
                                 f"notionnel {notional:.2f} > plafond slot {env.max_notional:.2f}")
-            if cur_symbol_notional + notional > env.symbol_envelope:
+            if _exceeds(cur_symbol_notional + notional, env.symbol_max_notional):
                 return Decision(False, "enveloppe_slot",
                                 f"notionnel symbole {cur_symbol_notional + notional:.2f} "
-                                f"> enveloppe {env.symbol_envelope:.2f}")
-            if cur_symbol_risk + risk > env.symbol_risk_budget:
+                                f"> enveloppe {env.symbol_max_notional:.2f}")
+            if _exceeds(cur_symbol_risk + risk, env.symbol_risk_budget):
                 return Decision(False, "budget_symbole",
                                 f"risque symbole {cur_symbol_risk + risk:.2f} "
                                 f"> budget {env.symbol_risk_budget:.2f}")
-            if cur_venue_risk + risk > env.venue_risk_budget:
+            if _exceeds(cur_venue_risk + risk, env.venue_risk_budget):
                 return Decision(False, "budget_venue",
                                 f"risque venue {cur_venue_risk + risk:.2f} "
                                 f"> budget {env.venue_risk_budget:.2f}")
@@ -123,6 +137,29 @@ class RiskLedger:
             self._venue_risk[r.venue]       = max(0.0, self._venue_risk.get(r.venue, 0.0) + delta)
             self._symbol_risk[sym_key]      = max(0.0, self._symbol_risk.get(sym_key, 0.0) + delta)
             self._slot_risk[r.slot_key]     = max(0.0, self._slot_risk.get(r.slot_key, 0.0) + delta)
+
+    def resize(self, pos_key: str, *, risk: float, notional: float) -> None:
+        """Réexprime une réservation existante — pyramidage.
+
+        Les plafonds ne sont pas re-vérifiés : l'incrément l'a déjà été par un
+        ``reserve`` dédié. L'appelant doit *agrandir d'abord, libérer ensuite*
+        l'incrément provisoire, pour qu'un réservataire concurrent ne voie
+        jamais plus de marge qu'il n'y en a réellement.
+        """
+        with self._lock:
+            r = self._positions.get(pos_key)
+            if r is None:
+                return
+            d_risk = risk - r.risk
+            d_notional = notional - r.notional
+            r.risk, r.notional = risk, notional
+            sym_key = _symbol_key(r.venue, r.symbol)
+            self._venue_risk[r.venue]       = max(0.0, self._venue_risk.get(r.venue, 0.0) + d_risk)
+            self._symbol_risk[sym_key]      = max(0.0, self._symbol_risk.get(sym_key, 0.0) + d_risk)
+            self._slot_risk[r.slot_key]     = max(0.0, self._slot_risk.get(r.slot_key, 0.0) + d_risk)
+            self._venue_notional[r.venue]   = max(0.0, self._venue_notional.get(r.venue, 0.0) + d_notional)
+            self._symbol_notional[sym_key]  = max(0.0, self._symbol_notional.get(sym_key, 0.0) + d_notional)
+            self._slot_notional[r.slot_key] = max(0.0, self._slot_notional.get(r.slot_key, 0.0) + d_notional)
 
     def engaged(self) -> dict:
         """``{venue: {venue_name: {notional, risk}}, symbol: {...}, slot: {...}}``."""

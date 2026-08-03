@@ -87,13 +87,14 @@ def _cfg(db_path, *, can_execute=False, min_notional=0.0, allow_short=False,
          calendar=""):
     return {
         "trading": {
-            "capital": 10_000.0, "timeframes": [TF], "scan_interval": 60,
-            "score_threshold": 0.5, "paper_mode": True, "max_positions": 5,
+            "timeframes": [TF], "scan_interval": 60,
+            "score_threshold": 0.5, "paper_mode": True,
             "paper_slippage": 0.0, "taker_fee": 0.001,
         },
         "database": {"url": f"sqlite:///{db_path}"},
         "exchange": {"name": "okx", "margin": False},
         "venues": {
+            "default": "spot",
             "defs": {
                 "spot": {"market_type": "spot"},
                 "euronext-paper": {
@@ -111,7 +112,16 @@ def _cfg(db_path, *, can_execute=False, min_notional=0.0, allow_short=False,
         "strategy_params": {}, "optimizer_results": {},
         # L'allocateur dérive ses slots de scanner.symbols : les deux classes
         # d'actif doivent y figurer pour que le bot puisse les trader.
-        "scanner": {"symbols": [CRYPTO, EQUITY]}, "risk": {},
+        "scanner": {"symbols": [CRYPTO, EQUITY]},
+        # S12 : chaque venue porte son enveloppe. Budgets volontairement larges
+        # — ces tests portent sur les contraintes de VENUE (lot entier, min
+        # notionnel, taxe, calendrier), pas sur la saturation d'un budget.
+        "risk": {"envelopes": {
+            "spot": {"capital": 10_000.0, "max_symbol_exposure_pct": 1.0,
+                     "symbol_risk_pct": 0.05, "venue_risk_pct": 0.20},
+            "euronext-paper": {"capital": 10_000.0, "max_symbol_exposure_pct": 1.0,
+                               "symbol_risk_pct": 0.05, "venue_risk_pct": 0.20},
+        }},
         "notifications": {}, "optimizer": {"enabled": False},
         "forward_test": {"enabled": False}, "lifecycle": {"enabled": False},
         "capital_allocator": {},

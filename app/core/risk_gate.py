@@ -25,11 +25,23 @@ import time
 from collections import deque
 from typing import Dict
 
+from app.core.risk_envelope import trade_risk_pct
 from app.core.risk_notifier import RiskNotifier
 from app.core.risk_sizer import RiskSizer
 from app.core.risk_state import SlotRiskState, _locked, _safe_div, today_utc
 
 logger = logging.getLogger(__name__)
+
+
+def _default_venue_capital(cfg: dict) -> float:
+    """Capital de la venue par défaut — équité de départ du moteur de risque.
+
+    ``_validate_risk_envelopes`` garantit au chargement qu'une enveloppe existe
+    pour toute venue atteignable ; le repli à 0 ne sert qu'aux configs de test
+    minimales, qui n'exercent pas les circuit breakers d'équité."""
+    default = (cfg.get("venues") or {}).get("default")
+    envelopes = (cfg.get("risk") or {}).get("envelopes") or {}
+    return float((envelopes.get(default) or {}).get("capital", 0.0))
 
 
 class RiskGate(RiskSizer, RiskNotifier):
@@ -45,16 +57,17 @@ class RiskGate(RiskSizer, RiskNotifier):
         # Créé AVANT tout accès à l'état partagé (cf. ``_locked`` docstring).
         self._lock = threading.RLock()
         t = cfg["trading"]
-        self.initial_capital     = t["capital"]
+        # S12 : le capital n'est plus une globale — il appartient à la venue.
+        # L'équité suivie ici est celle de la venue par défaut, seule base des
+        # circuit breakers globaux et du kill-switch ; le sizing, lui, passe
+        # exclusivement par l'``Envelope`` du slot (cf. risk_sizer).
+        self.initial_capital     = _default_venue_capital(cfg)
         self.daily_dd_limit      = t.get("daily_drawdown_limit", 0.05)
         self.global_dd_limit     = t.get("max_drawdown_global", 0.20)
-        self.max_positions       = t.get("max_positions", 5)
-        self.max_longs           = t.get("max_longs", 3)
-        self.max_shorts          = t.get("max_shorts", 3)
         self.max_trades_per_min  = t.get("max_trades_per_minute", 3)
-        self.max_leverage        = t.get("max_leverage", 1)
-        self.max_notional_pct    = float(cfg.get("backtest", {}).get("max_notional_pct", 0.20))
-        self.base_risk           = t.get("risk_per_trade", 0.01)
+        # Taux de risque par trade (profil) — sert à l'affichage du risque
+        # courant ; la base monétaire vient de l'enveloppe du slot.
+        self.base_risk           = trade_risk_pct(cfg)
         self._dd_warn_ratio      = cfg.get("notifications", {}).get("dd_warning_ratio", 0.80)
         self._notifier           = None
 
@@ -264,23 +277,20 @@ class RiskGate(RiskSizer, RiskNotifier):
     # ── Vérifications avant entrée ─────────────────────────────────────────
     @_locked
     def can_trade(self, side: str) -> tuple[bool, str]:
+        """Vetos globaux restants : kill-switch et anti-spam.
+
+        S12 — les plafonds de capacité (``max_positions``, ``max_longs``,
+        ``max_shorts``) sont supprimés : compter les positions était un proxy
+        grossier du budget de risque venue, qui borne désormais la perte
+        directement (§2.2). ``side`` est conservé dans la signature — les
+        appelants le passent et les vetos directionnels peuvent revenir par
+        la venue (``allow_short``), pas par un compteur global.
+        """
         # Kill-switch global : TOUJOURS appliqué, même en mode shadow.
         if self.halted:
             return False, self.halt_reason
-        shadow = self._veto_shadow_active()
-        if len(self.open_positions) >= self.max_positions:
-            if not (shadow and self._shadow_allow("max_positions")):
-                return False, f"Max positions ({self.max_positions}) atteint"
-        longs  = sum(1 for p in self.open_positions.values() if p["side"] == "long")
-        shorts = sum(1 for p in self.open_positions.values() if p["side"] == "short")
-        if side == "long"  and longs  >= self.max_longs:
-            if not (shadow and self._shadow_allow("max_longs")):
-                return False, f"Max longs ({self.max_longs}) atteint"
-        if side == "short" and shorts >= self.max_shorts:
-            if not (shadow and self._shadow_allow("max_shorts")):
-                return False, f"Max shorts ({self.max_shorts}) atteint"
         if not self._check_rate():
-            if not (shadow and self._shadow_allow("anti_spam")):
+            if not (self._veto_shadow_active() and self._shadow_allow("anti_spam")):
                 return False, "Trop de trades/minute (anti-spam)"
         return True, ""
 

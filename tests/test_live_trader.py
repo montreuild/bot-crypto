@@ -38,7 +38,6 @@ class MockExchange:
 def _make_cfg(db_path: str) -> dict:
     return {
         "trading": {
-            "capital": 1000.0,
             "timeframes": ["1h"],
             "scan_interval": 60,
             "score_threshold": 0.5,
@@ -50,7 +49,13 @@ def _make_cfg(db_path: str) -> dict:
         "strategy_params": {},
         "optimizer_results": {},
         "scanner": {},
-        "risk": {},
+        # S12 : le capital est porté par la venue, plus par `trading.capital`.
+        "venues": {"default": "okx-test", "defs": {"okx-test": {"max_leverage": 1}},
+                   "assign": {}},
+        "risk": {"envelopes": {"okx-test": {
+            "capital": 1000.0, "max_symbol_exposure_pct": 1.0,
+            "symbol_risk_pct": 0.02, "venue_risk_pct": 0.05,
+        }}},
         "notifications": {},
         "optimizer": {"enabled": False},
         "forward_test": {"enabled": False},

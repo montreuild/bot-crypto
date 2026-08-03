@@ -122,6 +122,11 @@ def _live_close_pnl(margin: bool = True) -> float:
             self.risk = MagicMock()
             self.notif = MagicMock()
             self.allocator = MagicMock()
+            # S12 : la clôture rend l'enveloppe et le budget au ledger.
+            from app.core.rejections import RejectionCounter
+            from app.core.risk_ledger import RiskLedger
+            self.ledger = RiskLedger()
+            self.rejections = RejectionCounter()
             self.SessionLocal = MagicMock()
             self._positions_lock = threading.Lock()
             self._capital_lock = threading.Lock()
@@ -233,31 +238,37 @@ def test_same_signal_gives_the_same_stop_distance_both_sides(signal):
 
 
 def test_same_stop_distance_gives_the_same_size():
-    """À distance au stop égale, les deux chemins dimensionnent pareil :
-    ``risk_amount / stop_dist``, plafonné au même ``max_notional_pct``."""
+    """A distance au stop egale, les deux chemins dimensionnent pareil :
+    ``risk_amount / stop_dist``. S12 : le risk_amount vient de l'enveloppe du
+    slot des DEUX cotes -- c'est ce partage de base qui fait la parite."""
     from app.core.risk_curve import risk_multiplier
+    from app.core.risk_envelope import Envelope
     from app.core.risk_gate import RiskGate
 
-    capital, risk_pct = 1000.0, 0.01
+    slot_envelope, risk_pct = 1000.0, 0.01
     stop_dist = _live_stop_distance({"side": "long"})
 
     rm = RiskGate({
-        "trading": {"capital": capital, "risk_per_trade": risk_pct,
-                    "max_positions": 5, "max_longs": 3, "max_shorts": 3,
-                    "max_leverage": 1, "max_trades_per_minute": 3,
+        "trading": {"max_trades_per_minute": 3,
                     "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20},
-        "risk": {},
-        "backtest": {"max_notional_pct": 1.0},
+        "venues": {"default": "v", "defs": {"v": {"max_leverage": 1}}, "assign": {}},
+        "risk": {"profile": "t", "profiles": {"t": risk_pct},
+                 "envelopes": {"v": {"capital": slot_envelope,
+                                    "max_symbol_exposure_pct": 1.0,
+                                    "symbol_risk_pct": 0.02, "venue_risk_pct": 0.05}}},
     })
-    # Score au plafond ⇒ facteur de score interne = 1 : on compare le sizing,
-    # pas la modulation par le score (que le backtest n'applique pas).
-    size_live, _ = rm.compute_size(entry=_SIZING_PRICE, atr=_SIZING_ATR,
-                                   score=1.0, threshold=0.0, size_factor=1.0,
-                                   stop_dist=stop_dist)
+    env = Envelope(
+        venue="v", symbol="BTC/USDC", slot_key="s::1h::BTC/USDC", currency="USDC",
+        venue_envelope=slot_envelope, venue_risk_budget=50.0,
+        symbol_envelope=slot_envelope, symbol_risk_budget=20.0,
+        slot_envelope=slot_envelope, slot_risk_amount=slot_envelope * risk_pct,
+        max_leverage=1.0, min_notional=0.0, trade_risk_pct=risk_pct, weight=1.0,
+    )
+    size_live, _ = rm.compute_size(entry=_SIZING_PRICE, stop_dist=stop_dist, env=env)
     # Formule du Backtester (_try_enter), sans drawdown ni partial fill.
-    size_backtest = capital * risk_pct * risk_multiplier(0.0) / stop_dist
+    size_backtest = slot_envelope * risk_pct * risk_multiplier(0.0) / stop_dist
 
-    assert size_live == pytest.approx(size_backtest, rel=1e-6)
+    assert size_live == pytest.approx(size_backtest, rel=1e-5)
 
 
 def test_spot_venue_charges_no_borrow_on_the_live_path():

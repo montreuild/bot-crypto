@@ -36,6 +36,18 @@ class Envelope:
     def max_notional(self) -> float:
         return self.slot_envelope * max(self.max_leverage, 1.0)
 
+    @property
+    def symbol_max_notional(self) -> float:
+        """Plafond de notionnel agrégé du symbole.
+
+        Le levier s'applique ici comme au niveau du slot : les *enveloppes*
+        sont libellées en capital, le *notionnel* en exposition. Comme
+        ``Σ slot_envelope = symbol_envelope``, ce plafond vaut exactement la
+        somme des ``max_notional`` de ses slots — sans quoi le plafond slot
+        autoriserait, à levier > 1, ce que le plafond symbole refuserait
+        (deux bases pour une même grandeur : le défaut que S12 supprime)."""
+        return self.symbol_envelope * max(self.max_leverage, 1.0)
+
 
 def slot_weights(edges: Dict[str, Optional[float]], min_weight: float = 0.05) -> Dict[str, float]:
     """Poids par confiance d'edge (borne basse de l'IC d'expectancy).

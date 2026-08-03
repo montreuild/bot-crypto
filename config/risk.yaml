@@ -77,6 +77,12 @@ risk:
   # diagnostics.stop_pct_reference ci-dessous.
   min_slot_weight: 0.05
 
+  # Slots interdits d'entrée, quelle que soit leur edge (seule clé rescapée de
+  # l'ancien bloc `capital_allocator`). Un slot absent de cette liste n'a plus
+  # besoin d'être « connu » de qui que ce soit pour trader : son enveloppe se
+  # dérive des slots actifs de son symbole.
+  disabled_slots: []
+
   # Tolérance de dérive entre l'enveloppe qui a mesuré l'edge d'un bot (dans
   # oos_tracker) et son enveloppe courante : au-delà, la promotion est
   # refusée — l'edge a été mesurée sur une autre échelle économique.

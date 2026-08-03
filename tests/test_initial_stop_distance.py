@@ -12,7 +12,6 @@ c'est-à-dire que `_initial_stop_distance` réplique fidèlement la logique de
 Les trois chemins ont la même priorité des deux côtés :
 ``sl_atr_mult`` → ``stop_hint`` → trailing initial (``trail_wide × ATR``).
 """
-import math
 
 import pytest
 
@@ -122,28 +121,32 @@ class TestDegenerateFallback:
                                      {"side": "long", "sl_atr_mult": "abc"})
         assert d == 0.0
 
-    def test_zero_distance_makes_compute_size_use_raw_atr(self):
-        """Conséquence chiffrée du cas ci-dessus, pour qu'elle ne soit pas
-        qu'un commentaire : la taille est 2,5× trop grosse."""
+    def test_zero_distance_is_now_refused_instead_of_over_risking(self):
+        """S12 : ce chemin ne sur-risque plus — il n'existe plus.
+
+        Avant, une distance nulle faisait retomber ``compute_size`` sur l'ATR
+        brut et produisait une taille 2,5x trop grosse, en silence. Desormais
+        elle leve, et l'appelant compte ``stop_invalide`` puis refuse le trade.
+        """
+        from app.core.risk_envelope import Envelope
         from app.core.risk_gate import RiskGate
 
         rm = RiskGate({
-            "trading": {
-                "capital": 1000, "risk_per_trade": 0.01,
-                "max_positions": 5, "max_longs": 3, "max_shorts": 3,
-                "max_leverage": 1, "max_trades_per_minute": 3,
-                "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20,
-            },
-            "risk": {},
-            # Sans ce plafond relevé, `max_notional_pct: 0.20` ramène les DEUX
-            # branches à la même taille et le test devient vacant (cf. la même
-            # précaution dans test_sprint0_critical_fixes.py).
-            "backtest": {"max_notional_pct": 1.0},
+            "trading": {"max_trades_per_minute": 3,
+                        "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20},
+            "venues": {"default": "v", "defs": {"v": {"max_leverage": 1}}, "assign": {}},
+            "risk": {"profile": "t", "profiles": {"t": 0.01},
+                     "envelopes": {"v": {"capital": 1000, "max_symbol_exposure_pct": 1.0,
+                                        "symbol_risk_pct": 0.02, "venue_risk_pct": 0.05}}},
         })
-        common = dict(entry=PRICE, atr=ATR, score=1.0, threshold=0.5)
-        size_ok, _ = rm.compute_size(**common, stop_dist=TRAIL_WIDE * ATR)
-        size_degraded, _ = rm.compute_size(**common, stop_dist=0.0)
-
-        assert size_degraded > size_ok
-        assert size_degraded / size_ok == pytest.approx(TRAIL_WIDE, rel=1e-6)
-        assert not math.isclose(size_degraded, size_ok)
+        env = Envelope(
+            venue="v", symbol="BTC/USDC", slot_key="s::1h::BTC/USDC", currency="USDC",
+            venue_envelope=1000.0, venue_risk_budget=50.0,
+            symbol_envelope=1000.0, symbol_risk_budget=20.0,
+            slot_envelope=1000.0, slot_risk_amount=10.0,
+            max_leverage=1.0, min_notional=0.0, trade_risk_pct=0.01, weight=1.0,
+        )
+        size_ok, _ = rm.compute_size(entry=PRICE, stop_dist=TRAIL_WIDE * ATR, env=env)
+        assert size_ok > 0
+        with pytest.raises(ValueError, match="stop_dist"):
+            rm.compute_size(entry=PRICE, stop_dist=0.0, env=env)

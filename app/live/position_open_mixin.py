@@ -38,6 +38,7 @@ from app.core.execution import (
     venue_trade_cost,
 )
 from app.core.indicators import atr_val as _compute_atr
+from app.core.risk_envelope import resolve_envelope
 from app.core.timeframes import HTF_MAP as _HTF_MAP
 from app.core.trailing import TrailingStopManager
 
@@ -176,6 +177,51 @@ class PositionOpenMixin:
     def _venue_for(self, symbol: str, strategy: str = None, tf: str = None):
         """Venue applicable au trade — crypto par défaut (aucun changement)."""
         return resolve_venue(self.cfg, strategy, tf, symbol)
+
+    # ── Enveloppe du slot (S12) ────────────────────────────────────────────
+
+    def _slot_peers(self, symbol: str) -> list:
+        """Slots actifs du même symbole — le dénominateur de la répartition.
+
+        Les poids se répartissent À L'INTÉRIEUR d'un symbole (§2.3) : deux bots
+        sur BTC sont des quasi-substituts, pas des risques additionnels."""
+        peers = []
+        for tf, slots in (self._active_per_tf or {}).items():
+            for slot in slots:
+                name = slot.get("name")
+                if name and slot.get("symbol", symbol) == symbol:
+                    peers.append(build_slot_key(name, tf, symbol))
+        return peers
+
+    def _slot_is_disabled(self, slot_key: str) -> bool:
+        """Slot explicitement désactivé (``risk.disabled_slots``).
+
+        S12 — « inconnu de l'allocateur » n'est plus un motif de refus : les
+        slots ne sont plus un registre à tenir à jour, l'enveloppe se dérive
+        des slots réellement actifs. Seule une désactivation explicite
+        bloque."""
+        disabled = (self.cfg.get("risk") or {}).get("disabled_slots") or []
+        if slot_key in disabled:
+            return True
+        # Clé 2-parties héritée (stratégie::tf), tolérée en lecture seule.
+        parts = slot_key.split("::")
+        return len(parts) == 3 and "::".join(parts[:2]) in disabled
+
+    def _envelope_for(self, slot_key: str, symbol: str, venue):
+        """Enveloppe courante du slot.
+
+        Le cache ``self.envelopes`` est reconstruit par le thread de cycle de
+        vie (edges mesurées à jour). Le repli résout à la volée en traitant
+        toutes les edges comme inconnues — répartition égale entre les slots
+        du symbole, ce qui est exactement le régime de démarrage (§2.3)."""
+        env = self.envelopes.get(slot_key)
+        if env is not None:
+            return env
+        peers = self._slot_peers(symbol) or [slot_key]
+        if slot_key not in peers:
+            peers.append(slot_key)
+        return resolve_envelope(self.cfg, venue, symbol, slot_key,
+                                peers=peers, edges={k: None for k in peers})
 
     def _execute_order(self, venue, symbol: str, order_type: str, side: str,
                        amount: float, price: float = None,
@@ -402,14 +448,21 @@ class PositionOpenMixin:
     ) -> bool:
         """
         Chemin unique d'ouverture de position.
-        Applique dans l'ordre : global risk → slot enabled → slot CB → corrélation →
-        sizing → budget → pre_execution_check → ouverture.
+        Applique dans l'ordre : venue → global risk → slot enabled → slot CB →
+        enveloppe/sizing → réservation → pre_execution_check → ouverture.
         Retourne True si la position a été ouverte, False sinon.
+
+        S12 — un seul point de refus, un seul motif compté (§4.5). Les codes
+        sont ceux de ``app.core.rejections.REASONS``, partagés avec le
+        backtest : c'est ce qui permet d'expliquer une divergence entre les
+        deux plutôt que de la constater.
         """
         now_iso = datetime.now(timezone.utc).isoformat()
 
         def _reject(tag: str, reason: str) -> bool:
             logger.debug(f"[Trade] {symbol}/{slot_key} rejeté ({tag}: {reason})")
+            self.rejections.record(tag, venue=venue.name, symbol=symbol,
+                                   slot_key=slot_key)
             self.signal_log.append({
                 "time": now_iso, "symbol": symbol, "strategy": strategy_name,
                 "side": side, "score": round(score, 3),
@@ -432,40 +485,33 @@ class PositionOpenMixin:
         if not ok_global:
             return _reject("risk", reason_global)
 
-        # 2. Slot activé/désactivé (statut indépendant du budget)
-        ok_enabled, reason_enabled = self.allocator.is_slot_enabled(slot_key)
-        if not ok_enabled:
-            return _reject("slot_disabled", reason_enabled)
+        # 2. Slot explicitement désactivé
+        if self._slot_is_disabled(slot_key):
+            return _reject("slot_disabled", f"slot '{slot_key}' désactivé")
 
         # 3. Slot circuit breaker (pause)
         ok_slot, reason_slot = self.risk.can_slot_trade(slot_key)
         if not ok_slot:
             return _reject("slot_cb", reason_slot)
 
-        # 4. Corrélation/exposition
-        ok_corr, reason_corr = self.allocator.check_correlation(
-            side, self.open_positions, symbol=symbol
-        )
-        if not ok_corr:
-            logger.debug(f"[Trade] {symbol}/{slot_key} rejeté (corrélation: {reason_corr})")
-            return False
+        # 4. Enveloppe du slot — un poids nul signifie « edge non prouvée
+        # positive » : le slot ne trade pas tant qu'elle ne l'est pas (§2.3).
+        env = self._envelope_for(slot_key, symbol, venue)
+        if env.weight <= 0 or env.slot_envelope <= 0:
+            return _reject("slot_disabled",
+                           "poids nul (edge non prouvée positive) — enveloppe vide")
 
-        # 5. Sizing — par bot (sur son budget) si activé, sinon sur l'équité globale.
-        budget_usdc = None
-        max_lev = None
-        if getattr(self.allocator, "per_bot_sizing", False):
-            b = self.allocator.slot_budget_usdc(slot_key)
-            if b and b > 0:
-                budget_usdc = b
-                max_lev = venue.max_leverage
-        # Distance au stop initial → sizing par le risque réel (parité backtest),
-        # au lieu de l'ATR brut qui sur-risquait d'un facteur = multiple du stop.
+        # 5. Sizing par la distance au stop réel. Sans stop exploitable, on
+        # REFUSE : dimensionner sur l'ATR brut faisait risquer un multiple du
+        # risque annoncé (le sur-risque ×2,5 du modèle précédent).
         stop_dist = self._initial_stop_distance(side, price, atr, signal_dict)
+        if stop_dist <= 0:
+            return _reject("stop_invalide",
+                           "distance au stop indéterminable — trade refusé "
+                           "plutôt que dimensionné à l'aveugle")
         size, notional = self.risk.compute_size(
-            price, atr, score=score, threshold=strat_threshold,
+            price, stop_dist, env,
             size_factor=float(signal_dict.get("size_factor", 1.0)),
-            budget=budget_usdc, max_leverage=max_lev,
-            stop_dist=stop_dist,
         )
         # Quantification par la venue (G2) : arrondi à la baisse au lot/à
         # l'unité entière quand l'instrument n'est pas fractionnable. No-op en
@@ -477,34 +523,31 @@ class PositionOpenMixin:
             return _reject(
                 "venue",
                 f"taille {size:.6f} < 1 unité négociable sur '{venue.name}' "
-                f"(prix {price:.4f}, capital insuffisant pour ce symbole)",
+                f"(prix {price:.4f}, enveloppe insuffisante pour ce symbole)",
             )
         if q_size != size:
             size, notional = q_size, round(q_size * price, 4)
-        if venue.min_notional > 0 and notional < venue.min_notional:
-            return _reject("venue",
-                           f"notionnel {notional:.2f} < minimum {venue.min_notional:.2f}")
-        leverage = self.risk.compute_leverage(notional)
+        leverage = min(max(notional / env.slot_envelope, 1.0),
+                       max(env.max_leverage, 1.0))
 
-        # 6. Budget
-        ok_budget, reason_budget = self.allocator.can_allocate(slot_key, notional)
-        if not ok_budget:
-            return _reject("budget", reason_budget)
+        # 6. Réservation sous enveloppe et budget de risque. Le risque réservé
+        # est celui qui a dimensionné la position (taille × distance au stop) :
+        # toute autre expression rouvrirait l'écart de base que S12 supprime.
+        decision = self.ledger.reserve(env, risk=size * stop_dist,
+                                       notional=notional, pos_key=pos_key)
+        if not decision.allowed:
+            return _reject(decision.reason_code, decision.detail)
 
         # 7. Pre-execution check (ordres réels)
         if not self._pre_execution_check(symbol, side, size, price, notional):
+            self.ledger.release(pos_key)
             return False
 
         # 8. Vérification atomique + ouverture (protège contre les races concurrentes)
         with self._positions_lock:
             if pos_key in self.open_positions:
+                self.ledger.release(pos_key)
                 return False
-            max_pos = self.cfg["trading"].get("max_positions", 5)
-            # En mode veto shadow (paper), max_positions ne bloque plus — on a déjà
-            # compté l'écart dans risk.can_trade ; ce garde-fou atomique reste actif
-            # uniquement en mode enforce.
-            if not getattr(self.risk, "veto_shadow", False) and len(self.open_positions) >= max_pos:
-                return _reject("risk", f"Max positions ({max_pos}) atteint")
             # Réserve le slot avant de relâcher le verrou
             self.open_positions[pos_key] = {"_reserved": True}
 
@@ -513,7 +556,14 @@ class PositionOpenMixin:
         except Exception:
             with self._positions_lock:
                 self.open_positions.pop(pos_key, None)
+            self.ledger.release(pos_key)
             raise
+        # Le fill réel peut différer de la taille demandée (remplissage partiel,
+        # slippage) : réaligner le risque engagé sur la position effective.
+        opened = self.open_positions.get(pos_key) or {}
+        if opened.get("size") and opened.get("stop") is not None:
+            self.ledger.update_risk(pos_key, self.risk.engaged_risk(
+                opened["entry"], opened["stop"], opened["size"]))
         self.allocator.register_open(slot_key, notional)
         return True
 

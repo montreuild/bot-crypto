@@ -263,6 +263,10 @@ class PositionCloseMixin:
                                   pos.get('symbol', ''))
         self.risk.update_slot_result(slot_key, pnl, pnl > 0)
 
+        # S12 : l'enveloppe ET le budget de risque du slot sont rendus — la
+        # position ne consomme plus rien dès qu'elle est close.
+        self.ledger.release(pos_id)
+
         # Libération du budget du slot
         if hasattr(self, "allocator"):
             self.allocator.register_close(slot_key, pos.get("notional", 0), pnl)

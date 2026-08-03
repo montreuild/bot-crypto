@@ -26,6 +26,12 @@ def _harness(tmp_path):
             self.risk = MagicMock()
             self.notif = MagicMock()
             self.allocator = MagicMock()
+            # S12 : la clôture rend l'enveloppe et le budget de risque au
+            # ledger — un vrai, pas un mock, pour que release() reste sincère.
+            from app.core.rejections import RejectionCounter
+            from app.core.risk_ledger import RiskLedger
+            self.ledger = RiskLedger()
+            self.rejections = RejectionCounter()
             self.SessionLocal = SessionLocal
             self._positions_lock = threading.Lock()
             self._capital_lock = threading.Lock()

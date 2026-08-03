@@ -17,113 +17,57 @@ import pytest
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestSizingParity:
-    """Le sizing live doit diviser par la distance au stop, pas par l'ATR brut.
+    """Le sizing live divise par la distance au stop, jamais par l'ATR brut.
 
-    Bug critique (avant fix) : risk.compute_size divisait par ATR, mais le
-    stop était à mult×ATR → risque réel = risk% × mult (2,5× pour trail_wide=2,5).
-    Fix : passage du paramètre `stop_dist` (distance absolue entry→stop).
+    Bug d'origine : ``compute_size`` divisait par l'ATR alors que le stop était
+    à mult×ATR — risque réel = risk% × mult (2,5× pour trail_wide=2,5). S12
+    supprime la branche fautive au lieu de la corriger : sans distance au stop
+    exploitable, il n'y a plus de repli, le trade est refusé.
     """
 
-    def test_sizing_uses_stop_dist_when_provided(self):
-        """Si stop_dist est fourni, size = risk_amount / stop_dist."""
+    @staticmethod
+    def _rm_and_env():
+        from app.core.risk_envelope import Envelope
         from app.core.risk_gate import RiskGate
-        cfg = {
-            "trading": {
-                "capital": 1000, "risk_per_trade": 0.01,
-                "max_positions": 5, "max_longs": 3, "max_shorts": 3,
-                "max_leverage": 1, "max_trades_per_minute": 3,
-                "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20,
-            },
-            "risk": {},
-            # ⚠ Indispensable : `max_notional_pct` vaut 0.20 par défaut, soit un
-            # notionnel plafonné à 200 pour 1000 de capital — donc size ≤ 2 à
-            # entry=100. Ce plafond mordait dans les DEUX branches (avec et sans
-            # stop_dist), les ramenait toutes deux à 2.0 et rendait ces tests
-            # vacants : ils ne pouvaient plus distinguer le sizing correct du
-            # bug de sur-risque 2,5× qu'ils sont censés verrouiller.
-            "backtest": {"max_notional_pct": 1.0},
-        }
-        rm = RiskGate(cfg)
-        # entry=100, atr=2, stop_dist=5 (2,5×ATR)
-        # risk_amount = 1000 × 0.01 = 10
-        # size = 10 / 5 = 2 unités
-        size, notional = rm.compute_size(
-            entry=100, atr=2, score=1.0, threshold=0.6,
-            size_factor=1.0, stop_dist=5,
+        rm = RiskGate({
+            "trading": {"max_trades_per_minute": 3,
+                        "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20},
+            "venues": {"default": "v", "defs": {"v": {"max_leverage": 1}}, "assign": {}},
+            "risk": {"profile": "t", "profiles": {"t": 0.01},
+                     "envelopes": {"v": {"capital": 1000, "max_symbol_exposure_pct": 1.0,
+                                        "symbol_risk_pct": 0.02, "venue_risk_pct": 0.05}}},
+        })
+        # Enveloppe volontairement large : le plafond notionnel ne doit pas
+        # mordre, sinon le test ne distingue plus le sizing correct du bug.
+        env = Envelope(
+            venue="v", symbol="BTC/USDC", slot_key="s::1h::BTC/USDC", currency="USDC",
+            venue_envelope=1000.0, venue_risk_budget=50.0,
+            symbol_envelope=1000.0, symbol_risk_budget=20.0,
+            slot_envelope=1000.0, slot_risk_amount=10.0,
+            max_leverage=1.0, min_notional=0.0, trade_risk_pct=0.01, weight=1.0,
         )
-        # size devrait être ~2 (avec ajustements score_internal × vol_brake × sf)
-        # Au minimum, size < 4 (= 10/2 = size ATR brut) — prouve qu'on a divisé
-        # par stop_dist (plus grand que ATR) et non ATR brut.
-        assert size < 4, f"Sizing ne divise pas par stop_dist : size={size} > 4"
-        assert size > 1.5, f"Sizing trop petit : size={size}"
+        return rm, env
 
-    def test_sizing_fallback_atr_when_no_stop_dist(self):
-        """Sans stop_dist (rétro-compat), on retombe sur ATR brut — à éviter en live."""
-        from app.core.risk_gate import RiskGate
-        cfg = {
-            "trading": {
-                "capital": 1000, "risk_per_trade": 0.01,
-                "max_positions": 5, "max_longs": 3, "max_shorts": 3,
-                "max_leverage": 1, "max_trades_per_minute": 3,
-                "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20,
-            },
-            "risk": {},
-            # ⚠ Indispensable : `max_notional_pct` vaut 0.20 par défaut, soit un
-            # notionnel plafonné à 200 pour 1000 de capital — donc size ≤ 2 à
-            # entry=100. Ce plafond mordait dans les DEUX branches (avec et sans
-            # stop_dist), les ramenait toutes deux à 2.0 et rendait ces tests
-            # vacants : ils ne pouvaient plus distinguer le sizing correct du
-            # bug de sur-risque 2,5× qu'ils sont censés verrouiller.
-            "backtest": {"max_notional_pct": 1.0},
-        }
-        rm = RiskGate(cfg)
-        # Sans stop_dist : size = 10 / 2 = 5 (ATR brut)
-        size, notional = rm.compute_size(
-            entry=100, atr=2, score=1.0, threshold=0.6, size_factor=1.0,
-        )
-        # Sans facteurs de réduction, size ~ 5 ; avec score_internal_factor=1.0
-        # quand score=1.0 (max), on devrait être près de 5
-        assert size > 2, f"Sizing par ATR brut cassé : size={size}"
+    def test_size_is_exactly_the_risk_over_the_stop_distance(self):
+        """risk_amount = 10, stop_dist = 5 → size = 2, sans facteur parasite."""
+        rm, env = self._rm_and_env()
+        size, _ = rm.compute_size(entry=100, stop_dist=5, env=env)
+        assert size == pytest.approx(2.0)
 
-    def test_sizing_with_stop_dist_2_5x_atr_gives_2_5x_smaller_size(self):
-        """Test clé : stop_dist = 2,5×ATR doit donner size 2,5× plus petit que ATR brut.
+    def test_no_stop_distance_is_refused_not_silently_over_risked(self):
+        """L'ancien repli ATR brut donnait ici size=5 (2,5× trop gros) sans
+        rien signaler. Il n'existe plus."""
+        rm, env = self._rm_and_env()
+        with pytest.raises(ValueError, match="stop_dist"):
+            rm.compute_size(entry=100, stop_dist=0, env=env)
 
-        C'est exactement le bug critique : sans stop_dist, le sizing ignorait
-        le 2,5×ATR du stop → sur-risque 2,5×. Avec stop_dist, on respecte risk%.
-        """
-        from app.core.risk_gate import RiskGate
-        cfg = {
-            "trading": {
-                "capital": 1000, "risk_per_trade": 0.01,
-                "max_positions": 5, "max_longs": 3, "max_shorts": 3,
-                "max_leverage": 1, "max_trades_per_minute": 3,
-                "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20,
-            },
-            "risk": {},
-            # ⚠ Indispensable : `max_notional_pct` vaut 0.20 par défaut, soit un
-            # notionnel plafonné à 200 pour 1000 de capital — donc size ≤ 2 à
-            # entry=100. Ce plafond mordait dans les DEUX branches (avec et sans
-            # stop_dist), les ramenait toutes deux à 2.0 et rendait ces tests
-            # vacants : ils ne pouvaient plus distinguer le sizing correct du
-            # bug de sur-risque 2,5× qu'ils sont censés verrouiller.
-            "backtest": {"max_notional_pct": 1.0},
-        }
-        rm = RiskGate(cfg)
-        # Sans stop_dist (ATR brut)
-        size_atr, _ = rm.compute_size(
-            entry=100, atr=2, score=1.0, threshold=0.6, size_factor=1.0,
-        )
-        # Avec stop_dist = 2,5 × ATR
-        size_stop, _ = rm.compute_size(
-            entry=100, atr=2, score=1.0, threshold=0.6, size_factor=1.0,
-            stop_dist=5,  # 2,5 × 2
-        )
-        # Ratio attendu ~2,5 (au lieu de l'ancien 1,0 = bug)
-        ratio = size_atr / size_stop
-        assert 2.0 < ratio < 3.5, (
-            f"Sizing ne respecte pas stop_dist : ratio ATR/stop = {ratio} "
-            f"(devrait être ~2,5)"
-        )
+    def test_a_wider_stop_gives_a_proportionally_smaller_size(self):
+        """Le risque engagé est invariant : seule la taille s'ajuste."""
+        rm, env = self._rm_and_env()
+        size_tight, _ = rm.compute_size(entry=100, stop_dist=2, env=env)
+        size_wide, _ = rm.compute_size(entry=100, stop_dist=5, env=env)
+        assert size_tight / size_wide == pytest.approx(2.5)
+        assert size_tight * 2 == pytest.approx(size_wide * 5)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

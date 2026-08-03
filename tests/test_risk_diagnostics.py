@@ -152,6 +152,48 @@ class TestVenueLevelChecks:
         assert "min_slot_weight_insuffisant" not in _codes(diags)
 
 
+class TestRiskBudgetFeasibility:
+    """Le slot risque a lui seul plus que le budget partage au-dessus de lui :
+    RiskLedger refusera CHAQUE trade. Detecte en ecrivant
+    test_sizing_coherence -- exactement la classe de panne silencieuse que S12
+    existe pour supprimer."""
+
+    def test_single_slot_with_a_risk_profile_above_the_symbol_budget(self):
+        """1 slot -> poids 1,0 -> risque 25 EUR contre 20 EUR de budget
+        symbole. C'est la config LIVREE (profil normal 2,5 % contre
+        symbol_risk_pct 2 %) des qu'un symbole tombe a un seul slot actif."""
+        cfg = _cfg({"okx": {"capital": 1000, "max_symbol_exposure_pct": 1.0,
+                            "symbol_risk_pct": 0.02, "venue_risk_pct": 0.03}},
+                   {"okx": CRYPTO_DEF}, profile_pct=0.025)
+        diags = diagnose(cfg, {("okx", "BTC/USDC"): {"a::1h::BTC/USDC": None}})
+        assert "budget_symbole_insuffisant" in _codes(diags, "error")
+
+    def test_enough_slots_dilute_the_weight_and_clear_it(self):
+        """10 slots -> poids 0,1 -> risque 2,5 EUR : largement sous le budget.
+        Le meme reglage est sain ou fatal selon le nombre de slots actifs --
+        d'ou l'interet de diagnostiquer sur les slots REELS."""
+        cfg = _cfg({"okx": {"capital": 1000, "max_symbol_exposure_pct": 1.0,
+                            "symbol_risk_pct": 0.02, "venue_risk_pct": 0.03}},
+                   {"okx": CRYPTO_DEF}, profile_pct=0.025)
+        slots = {("okx", "BTC/USDC"): {f"s{i}::1h::BTC/USDC": None for i in range(10)}}
+        diags = diagnose(cfg, slots)
+        assert "budget_symbole_insuffisant" not in _codes(diags)
+
+    def test_a_profile_at_or_below_the_symbol_budget_is_safe_at_any_weight(self):
+        cfg = _cfg({"okx": {"capital": 1000, "max_symbol_exposure_pct": 1.0,
+                            "symbol_risk_pct": 0.02, "venue_risk_pct": 0.03}},
+                   {"okx": CRYPTO_DEF}, profile_pct=0.02)
+        diags = diagnose(cfg, {("okx", "BTC/USDC"): {"a::1h::BTC/USDC": None}})
+        assert "budget_symbole_insuffisant" not in _codes(diags)
+
+    def test_venue_budget_below_the_trade_risk_is_flagged(self):
+        cfg = _cfg({"okx": {"capital": 1000, "max_symbol_exposure_pct": 1.0,
+                            "symbol_risk_pct": 0.10, "venue_risk_pct": 0.01}},
+                   {"okx": CRYPTO_DEF}, profile_pct=0.05)
+        diags = diagnose(cfg, {("okx", "BTC/USDC"): {"a::1h::BTC/USDC": None}})
+        assert "budget_venue_insuffisant" in _codes(diags, "error")
+
+
 class TestSlotWithoutEdge:
     def test_slot_with_zero_weight_is_flagged(self):
         cfg = _cfg({"okx": {"capital": 1000, "max_symbol_exposure_pct": 1.0,
@@ -172,12 +214,14 @@ class TestNoFalsePositivesOnAHealthyConfig:
         validation) et declenche systematiquement decote_correlation_absente
         -- cf. test_no_correlation_discount_with_a_single_symbol. Un cas
         vraiment sain a donc besoin d'au moins deux symboles, dimensionnes
-        pour ne mordre sur aucun des 11 codes."""
+        pour ne mordre sur aucun code -- profil de risque compris (2,5 % sur
+        un slot a poids 1,0 depasserait le budget symbole de 1 %)."""
         cfg = _cfg({"okx": {"capital": 100_000, "max_symbol_exposure_pct": 0.4,
                             "symbol_risk_pct": 0.01, "venue_risk_pct": 0.015}},
                    {"okx": {"max_leverage": 5.0, "min_notional": 10.0,
                            "fee_min": 0.0, "lot_size": 0.0}},
-                   min_slot_weight=0.05, stop_pct_reference=0.01)
+                   min_slot_weight=0.05, stop_pct_reference=0.01,
+                   profile_pct=0.01)
         diags = diagnose(cfg, {("okx", "BTC/USDC"): {"a::1h::BTC/USDC": None},
                                ("okx", "ETH/USDC"): {"b::1h::ETH/USDC": None}})
         assert diags == []
