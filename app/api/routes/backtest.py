@@ -11,6 +11,7 @@ from app.api import state
 from app.api.helpers import _clean, _discover_strategies, _get_bt_exchange, detect_ohlcv_gaps, verify_api_key
 from app.core.candle_store import get_store
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
+from app.core.risk_gate import _default_venue_capital
 from app.engine.backtest import Backtester, MonteCarlo, WalkForwardAnalyzer
 from app.engine.engine import Engine
 
@@ -183,7 +184,8 @@ def run_backtest(
                     mc = MonteCarlo(
                         n_runs=state.cfg.get("backtest", {}).get("monte_carlo_runs", 200)
                     )
-                    entry["monte_carlo"] = mc.run(all_trades, state.cfg["trading"]["capital"])
+                    entry["monte_carlo"] = mc.run(all_trades,
+                                                  _default_venue_capital(state.cfg))
                 # Persiste le résumé du dernier backtest pour ce slot (strategy::tf)
                 # → consommé par la page Audit OOS. Non bloquant.
                 try:

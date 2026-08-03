@@ -11,6 +11,7 @@ from app.api import state
 from app.api.helpers import _clean, _discover_strategies, _get_bt_exchange, detect_ohlcv_gaps, verify_api_key
 from app.core.candle_store import get_store
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
+from app.core.risk_gate import _default_venue_capital
 from app.core.timeframes import TF_MINUTES as _TF_MINUTES  # V4-A : source unique
 from app.engine.backtest import Backtester, MonteCarlo, WalkForwardAnalyzer
 from app.engine.engine import Engine
@@ -159,7 +160,7 @@ def run_replay(
 
                     if mc_runner and all_trades:
                         entry["monte_carlo"] = mc_runner.run(
-                            all_trades, state.cfg["trading"]["capital"]
+                            all_trades, _default_venue_capital(state.cfg)
                         )
 
                     return name, entry
