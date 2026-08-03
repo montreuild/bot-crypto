@@ -167,6 +167,26 @@ Supprimée de `backtest.*` : `max_notional_pct`.
    aucune décote de corrélation, le budget venue ne contraint rien.
 5. WARNING si `capital × max_symbol_exposure_pct × min_slot_weight <
    venue.min_notional` : les plus petits slots ne pourront jamais trader.
+6. ERREUR si `trade_risk_pct > symbol_risk_pct` — **garantie mono-slot**.
+
+### La garantie mono-slot
+
+`risk.profile` et `symbol_risk_pct` ne mesurent pas la même chose — l'un est le
+risque d'**un** trade, l'autre plafonne la **somme** des risques ouverts sur le
+symbole — mais ils se comparent, parce qu'ils s'appliquent à la même base dès
+qu'un symbole n'a qu'un slot actif : ce slot porte un poids de 1,0, donc
+`slot_envelope = symbol_envelope`.
+
+`symbol_risk_pct < trade_risk_pct` rend alors ce slot incapable de passer le
+moindre ordre — un bot vivant, promu, qui ne trade jamais, et rien dans les
+logs pour le dire. C'est la panne silencieuse que cette refonte existe pour
+supprimer : elle est donc **refusée au chargement**, pas diagnostiquée à chaud.
+
+Corollaire de dimensionnement : avec N slots de poids `1/N`, la somme des
+risques quand tous sont en position vaut exactement `trade_risk_pct`. Le budget
+symbole *naturel* est donc `symbol_risk_pct = trade_risk_pct` ; toute marge
+au-delà achète de la capacité de pyramidage. Réglage retenu au §7.1 :
+`symbol_risk_pct = 2 × trade_risk_pct`, soit deux unités de risque plein.
 
 ---
 
@@ -523,19 +543,26 @@ passer la divergence backtest 1 000 € / live 90 €.
 
 ### 7.1 Valeurs cibles
 
+Profil de risque : `normal` ⇒ `trade_risk_pct = 0.025`.
+
 | Venue | capital | `max_symbol_exposure_pct` | `symbol_risk_pct` | `venue_risk_pct` |
 |---|---|---|---|---|
-| `okx-margin` | 1 000 € | **1.00** (BTC seul) | 0.02 → **20 €** | 0.03 → 30 € |
-| `euronext-paper` | 10 000 € | 0.25 (2 500 €/ticker) | 0.02 → **50 €** | 0.05 → 500 € |
+| `margin-isolated` | 1 000 € | **1.00** (BTC seul) | 0.05 → **50 €** | 0.05 → 50 € |
+| `euronext-paper` | 10 000 € | 0.25 (2 500 €/ticker) | 0.05 → **125 €** | 0.05 → 500 € |
 
-**BTC à 100 % ⇒ budget de risque 20 €**, pas 10 € : l'enveloppe symbole vaut le
-capital entier de la venue. Arbitré ainsi. Pour revenir à 10 €, un seul levier :
-`symbol_risk_pct: 0.01`.
+**BTC à 100 % ⇒ enveloppe symbole = capital entier de la venue.** Le risque d'un
+trade y vaut donc 25 € (2,5 % de 1 000), et le budget symbole 50 € — soit
+`2 × trade_risk_pct`, conformément à la garantie mono-slot du §3 : un slot seul
+doit pouvoir entrer *et* pyramider une fois. Un budget à 0.02 (20 €) rendrait ce
+slot incapable de passer le moindre ordre et fait désormais échouer le
+chargement.
 
-Le budget de risque **venue** (3 %) est la décote de corrélation : volontairement
-**sous** la somme des budgets symbole. Avec un seul symbole il ne mord pas ; il
-devient le garde-fou dès l'ajout d'ETH. C'est lui qui remplace la règle de
-corrélation directionnelle supprimée (§2.2).
+Le budget de risque **venue** est la décote de corrélation : volontairement
+**sous** la somme des budgets symbole dès qu'il y a plusieurs symboles. Avec un
+seul symbole il ne peut pas mordre (d'où le WARNING `decote_correlation_absente`,
+attendu ici) ; il devient le garde-fou dès l'ajout d'ETH — il faudra alors le
+tenir sous `2 × symbol_risk_pct`. C'est lui qui remplace la règle de corrélation
+directionnelle supprimée (§2.2).
 
 ### 7.2 Euronext reste `can_execute: false` — ce que ça change
 
