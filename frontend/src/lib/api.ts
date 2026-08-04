@@ -307,7 +307,7 @@ export const api = {
    */
   runBacktest: (params: {
     symbol?: string; timeframe?: string; limit?: number;
-    walk_forward?: boolean; monte_carlo?: boolean;
+    walk_forward?: boolean; monte_carlo?: boolean; dual_pass?: boolean;
     strategies?: string; strategy?: string;
   }) => {
     const { strategy, ...rest } = params;

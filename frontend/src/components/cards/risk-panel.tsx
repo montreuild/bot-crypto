@@ -91,8 +91,24 @@ export function RiskPanel() {
             </div>
           )}
 
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-card-hover text-muted text-xs">
-            Risk: {((status?.current_risk || 1) * 1).toFixed(2)}%
+          {/*
+            `current_risk` n'existe que si le moteur de risque tourne : c'est
+            le taux du profil MODULÉ par la courbe de drawdown. Le repli
+            historique `|| 1` affichait « 1.00% » bot arrêté — un chiffre
+            inventé présenté comme un fait, et faux depuis S12 où le profil
+            par défaut vaut 2,5 %. Une absence se dit, elle ne se comble pas.
+          */}
+          <div
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-card-hover text-muted text-xs"
+            title={
+              status?.current_risk != null
+                ? 'Risque par trade, en % de l’enveloppe du slot (taux du profil × courbe de drawdown)'
+                : 'Disponible quand le trader tourne — le taux courant dépend du drawdown en cours'
+            }
+          >
+            Risk: {status?.current_risk != null
+              ? `${status.current_risk.toFixed(2)}%`
+              : <span className="text-dim">—</span>}
           </div>
         </div>
 

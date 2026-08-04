@@ -38,6 +38,7 @@ import { Switch } from '@/components/ui/switch';
 import { QueryBoundary } from '@/components/ui/query-state';
 import { CsvExportButton, JsonExportButton } from '@/components/ui/export-buttons';
 import { WalkForwardTable } from '@/components/charts/walk-forward-table';
+import { StudyVsLiveCard } from '@/components/cards/study-vs-live-card';
 import { MonteCarloPanel } from '@/components/charts/monte-carlo-panel';
 import { TradesScatter } from '@/components/charts/trades-scatter';
 import { BacktestEquityChart } from '@/components/charts/backtest-equity-chart';
@@ -207,6 +208,7 @@ interface BacktestConfig {
   limit: number;
   walk_forward: boolean;
   monte_carlo: boolean;
+  dual_pass: boolean;
   strategies: string[];
 }
 
@@ -224,6 +226,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
     limit: 500,
     walk_forward: false,
     monte_carlo: false,
+    dual_pass: false,
     strategies: [],
   });
   const [result, setResult] = useState<any>(null);
@@ -237,6 +240,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
         limit: config.limit,
         walk_forward: config.walk_forward,
         monte_carlo: config.monte_carlo,
+        dual_pass: config.dual_pass,
         strategies: config.strategies.length > 0 ? config.strategies.join(',') : undefined,
       });
       setResult(res);
@@ -371,6 +375,20 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
                 />
                 <label htmlFor="bt-monte-carlo" className="cursor-pointer">
                   Monte-Carlo (200 runs)
+                </label>
+              </div>
+              {/* S12 §5.1 — coûte un run complet de plus : opt-in explicite,
+                  au même titre que le walk-forward. */}
+              <div className="flex items-center gap-2 text-xs">
+                <Switch
+                  id="bt-dual-pass"
+                  aria-label="Étude vs Réel (double passe)"
+                  checked={config.dual_pass}
+                  onCheckedChange={(v) => setConfig({ ...config, dual_pass: v })}
+                />
+                <label htmlFor="bt-dual-pass" className="cursor-pointer">
+                  Étude vs Réel
+                  <span className="text-dim ml-1">(double le temps de calcul)</span>
                 </label>
               </div>
             </div>
@@ -613,7 +631,7 @@ function BacktestResults({ result }: { result: any }) {
       {strategies.map(([name, stats]: [string, any]) => {
         const trades = Array.isArray(stats?.trades) ? stats.trades : [];
         const hasDetail = stats?.equity_curve?.length || stats?.walk_forward
-          || stats?.monte_carlo || trades.length > 0;
+          || stats?.monte_carlo || stats?.runs || trades.length > 0;
         if (!hasDetail) return null;
         return (
           <div key={`detail-${name}`} className="space-y-4">
@@ -625,6 +643,9 @@ function BacktestResults({ result }: { result: any }) {
               buyAndHoldPnl={stats.buy_and_hold_pnl}
               alpha={stats.alpha}
             />
+            {stats.runs && (
+              <StudyVsLiveCard runs={stats.runs} envelope={stats.envelope} />
+            )}
             {stats.walk_forward && <WalkForwardTable data={stats.walk_forward} />}
             {stats.monte_carlo && (
               <MonteCarloPanel
