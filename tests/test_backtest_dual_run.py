@@ -192,3 +192,55 @@ class TestResultPayload:
         df = _make_df()
         bt = Backtester(_engine(), _cfg())
         assert bt.run(df, symbol="BTC/USDC").initial_capital == 1000
+
+
+# ── La double passe est OPTIONNELLE, pilotée par l'UI ───────────────────────
+
+class TestRouteWiring:
+    """`POST /api/backtest?dual_pass=true` — la passe d'étude coûte un run
+    complet de plus. Elle est donc explicite : par défaut le comportement est
+    strictement celui d'avant, et l'optimiseur ne la déclenche jamais (§5.1)."""
+
+    def test_the_route_exposes_dual_pass_as_an_opt_in_flag(self):
+        import inspect
+
+        from app.api.routes.backtest import run_backtest
+        sig = inspect.signature(run_backtest)
+        assert "dual_pass" in sig.parameters
+        assert sig.parameters["dual_pass"].default is False, (
+            "la double passe doit être opt-in : activée par défaut, elle "
+            "doublerait le temps de chaque backtest"
+        )
+
+    def test_the_pass_summary_expresses_pnl_on_its_own_base(self):
+        """Chaque passe rapporte son PnL en % de SA base — sinon les deux ne se
+        comparent pas, ce qui est tout l'objet de l'exercice."""
+        from app.api.routes.backtest import _pass_summary
+        bt = Backtester(_engine(), _cfg(), envelope=_env(90.0))
+        summary = _pass_summary(bt.run(_make_df(), symbol="BTC/USDC"))
+        assert summary["initial_capital"] == 90.0
+        # Les deux champs sont arrondis séparément à 4 décimales : la tolérance
+        # couvre cet arrondi, pas une approximation du calcul.
+        assert summary["pnl_pct"] == pytest.approx(
+            summary["total_pnl"] / 90.0 * 100, rel=1e-4)
+        assert "rejections" in summary
+
+    def test_a_zero_base_does_not_divide_by_zero(self):
+        from app.api.routes.backtest import _pass_summary
+
+        class _Res:
+            initial_capital = 0.0
+            total_trades = 0
+            total_pnl = 0.0
+            max_drawdown = 0.0
+            rejections = {}
+        assert _pass_summary(_Res())["pnl_pct"] == 0.0
+
+    def test_the_envelope_payload_carries_the_base_alongside_the_risk(self):
+        """Règle d'affichage du §6 : jamais un montant de risque sans sa base."""
+        from app.api.routes.backtest import _envelope_payload
+        payload = _envelope_payload(_env(90.0))
+        assert payload["slot_envelope"] == 90.0
+        assert payload["risk_amount"] == pytest.approx(2.25)
+        assert payload["trade_risk_pct"] == 0.025
+        assert _envelope_payload(None) is None

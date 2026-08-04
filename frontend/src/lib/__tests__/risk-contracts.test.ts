@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { RiskSchema, RiskDiagnosticsSchema } from '@/lib/schemas';
+import { RiskSchema, RiskDiagnosticsSchema, BacktestSchema } from '@/lib/schemas';
 
 const RISK_PAYLOAD = {
   venues: [{
@@ -128,5 +128,48 @@ describe('/api/risk/diagnostics', () => {
     const parsed = RiskDiagnosticsSchema.parse(DIAG_PAYLOAD);
     const counted = parsed.diagnostics.filter((d) => d.severity === 'error').length;
     expect(parsed.errors).toBe(counted);
+  });
+});
+
+describe('/api/backtest — double passe (§5.1)', () => {
+  const RUNS = {
+    reference: { initial_capital: 1000, total_trades: 12, total_pnl: -32.0,
+                 pnl_pct: -3.2, max_drawdown: 4.1, rejections: { par_motif: {} } },
+    // Valeurs coherentes entre elles, arrondies a 4 decimales comme le backend :
+    // -4.1 / 90 * 100 = -4.5556.
+    live: { initial_capital: 90, total_trades: 8, total_pnl: -4.1,
+            pnl_pct: -4.5556, max_drawdown: 5.0,
+            rejections: { par_motif: { notionnel_min: 6 } } },
+    ecart_pnl_pct: -1.3556,
+  };
+
+  it('le bloc runs traverse BacktestSchema sans etre efface', () => {
+    // `.passthrough()` doit laisser passer `runs`/`envelope` : sans ca la
+    // carte « Étude vs Réel » ne recevrait jamais rien, en silence.
+    const parsed = BacktestSchema.parse({
+      symbol: 'AIR.PA', timeframe: '1h',
+      by_strategy: { dummy: { total_trades: 8, runs: RUNS,
+                              envelope: { slot_envelope: 90, currency: 'EUR' } } },
+    });
+    const entry: any = parsed.by_strategy!.dummy;
+    expect(entry.runs.live.pnl_pct).toBe(-4.5556);
+    expect(entry.envelope.slot_envelope).toBe(90);
+  });
+
+  it('les deux passes rapportent leur PnL sur des bases DIFFERENTES', () => {
+    // C'est le point : comparer -3.2% et -4.55% n'a de sens que parce que
+    // chacun est exprime en % de sa propre base.
+    expect(RUNS.reference.initial_capital).not.toBe(RUNS.live.initial_capital);
+    expect(RUNS.reference.pnl_pct).toBeCloseTo(
+      RUNS.reference.total_pnl / RUNS.reference.initial_capital * 100, 4);
+    expect(RUNS.live.pnl_pct).toBeCloseTo(
+      RUNS.live.total_pnl / RUNS.live.initial_capital * 100, 4);
+  });
+
+  it("l'ecart est explique par un motif de refus present cote live seulement", () => {
+    const live = RUNS.live.rejections.par_motif as Record<string, number>;
+    const ref = RUNS.reference.rejections.par_motif as Record<string, number>;
+    const causes = Object.keys(live).filter((k) => (live[k] ?? 0) > (ref[k] ?? 0));
+    expect(causes).toContain('notionnel_min');
   });
 });
