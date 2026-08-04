@@ -1,6 +1,6 @@
 'use client';
 
-import { useBotStatus, useHealth } from '@/hooks/use-api';
+import { useBotStatus, useHealth, useRiskDiagnostics } from '@/hooks/use-api';
 import { useWebSocket } from '@/lib/ws-provider';
 import { cn, formatUSD, getStoredTheme, setStoredTheme } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
@@ -13,6 +13,10 @@ import { toast } from 'sonner';
 import { useMemo, useState, useEffect } from 'react';
 
 export function Topbar() {
+  const router = useRouter();
+  const { data: diagnostics } = useRiskDiagnostics();
+  const diagErrors = diagnostics?.errors ?? 0;
+  const diagWarnings = diagnostics?.warnings ?? 0;
   const { data: status } = useBotStatus();
   const { data: health } = useHealth();
   const { status: wsStatus } = useWebSocket();
@@ -116,6 +120,29 @@ export function Topbar() {
       )}>
         {isPaperMode ? 'PAPER' : 'LIVE'}
       </div>
+
+      {/* S12 — faisabilité de la config. Un `error` signifie qu'un slot ne
+          passera JAMAIS d'ordre : c'est une panne silencieuse, elle doit se
+          voir depuis n'importe quelle page. */}
+      {(diagErrors > 0 || diagWarnings > 0) && (
+        <button
+          onClick={() => router.push('/settings?tab=risk')}
+          title={
+            diagErrors > 0
+              ? `${diagErrors} configuration(s) impossible(s) — aucun trade ne passera`
+              : `${diagWarnings} avertissement(s) de faisabilité`
+          }
+          className={cn(
+            'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors',
+            diagErrors > 0
+              ? 'bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20'
+              : 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20',
+          )}
+        >
+          <AlertTriangle className="w-3.5 h-3.5" />
+          {diagErrors > 0 ? diagErrors : diagWarnings}
+        </button>
+      )}
 
       {/* Status indicator */}
       <div className="flex items-center gap-2 text-sm">

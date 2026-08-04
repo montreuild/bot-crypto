@@ -11,13 +11,14 @@
 import type {
   BotStatus, Trade, Bot, SlotBudget, BacktestResult,
   ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
+  RiskOverview, RiskDiagnostics, VenueEnvelopeConfig,
 } from '@/types';
 import {
   BotStatusSchema, BotsResponseSchema, OosTrackerSchema, MlRecipesResponseSchema,
   DailyStatsSchema, FeesBreakdownSchema, HealthSchema, UniversesSchema,
   OptimizeStatusSchema, OptimizeResultsSchema, OptimizeSpacesSchema,
   MlRegistrySchema, DerivativesDataSchema, SmcSchema, ScannerSignalsSchema,
-  ScannerConfigSchema, BacktestSchema,
+  ScannerConfigSchema, BacktestSchema, RiskSchema, RiskDiagnosticsSchema,
 } from '@/lib/schemas';
 
 /**
@@ -195,15 +196,23 @@ export const api = {
     apiFetch(`/bots/${encodeURIComponent(slotKey)}/forward-test`, { method: 'POST', timeoutMs: 0 }),
   getOosTracker: () => apiFetch<any>('/oos-tracker', { schema: OosTrackerSchema }),
 
+  // ── Enveloppes de risque (S12) ──────────────────────────────────────────
+  getRisk: () => apiFetch<RiskOverview>('/risk', { schema: RiskSchema }),
+  getRiskDiagnostics: () =>
+    apiFetch<RiskDiagnostics>('/risk/diagnostics', { schema: RiskDiagnosticsSchema }),
+  /** `envelopes` : { venue: { capital?, max_symbol_exposure_pct?, ... } }.
+   *  Répond 400 si l'édition rendrait une config structurellement impossible. */
+  updateEnvelopes: (envelopes: Record<string, VenueEnvelopeConfig>) =>
+    apiFetch<{ envelopes: Record<string, VenueEnvelopeConfig>; saved_to_disk: boolean }>(
+      '/risk/envelopes', { method: 'POST', body: JSON.stringify(envelopes) },
+    ),
+
   // ── Slots ───────────────────────────────────────────────────────────────
-  getSlots: () => apiFetch<{ capital: number; config: any; slots: SlotBudget[] }>('/slots'),
-  setSlotBudget: (slotKey: string, budgetPct: number) =>
-    apiFetch(`/slots/${encodeURIComponent(slotKey)}/budget?budget_pct=${budgetPct}`, { method: 'POST' }),
+  getSlots: () => apiFetch<{ capital: number; slots: SlotBudget[] }>('/slots'),
   toggleSlot: (slotKey: string, enabled: boolean) =>
     apiFetch(`/slots/${encodeURIComponent(slotKey)}/toggle?enabled=${enabled}`, { method: 'POST' }),
   resetSlot: (slotKey: string) =>
     apiFetch(`/slots/${encodeURIComponent(slotKey)}/reset`, { method: 'POST' }),
-  forceRebalance: () => apiFetch('/slots/rebalance', { method: 'POST' }),
   resetSlotCircuitBreaker: (slotKey: string) =>
     apiFetch(`/circuit-breakers/reset/${encodeURIComponent(slotKey)}`, { method: 'POST' }),
   getCircuitBreakers: () => apiFetch<any>('/circuit-breakers'),

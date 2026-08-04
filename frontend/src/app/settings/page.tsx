@@ -16,6 +16,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { RiskEnvelopesEditor } from '@/components/views/risk-envelopes-editor';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +26,7 @@ import { cn, getStoredTheme, setStoredTheme } from '@/lib/utils';
 import { usePresets, useSetRiskPreset, useSetExpertMode } from '@/hooks/use-api';
 import { toast } from 'sonner';
 import {
-  Wallet, Bell, Database, ScrollText, Settings as SettingsIcon,
+  Wallet, Bell, Database, ScrollText, ShieldAlert, Settings as SettingsIcon,
   Check, Loader2, Send, Sun, Moon,
 } from 'lucide-react';
 import { UniverseManager } from '@/components/cards/universe-manager';
@@ -130,7 +131,7 @@ function mergePreset(fallback: (typeof PRESETS)[number], remote: any) {
   };
 }
 
-const TABS = ['capital', 'notifications', 'data', 'audit', 'ui'] as const;
+const TABS = ['capital', 'risk', 'notifications', 'data', 'audit', 'ui'] as const;
 
 export default function SettingsV2Page() {
   return (
@@ -233,10 +234,14 @@ function SettingsV2Content() {
       {header}
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-5 w-full max-w-2xl">
+        <TabsList className="grid grid-cols-6 w-full max-w-3xl">
           <TabsTrigger value="capital">
             <Wallet className="w-3.5 h-3.5 mr-1.5" />
             Capital
+          </TabsTrigger>
+          <TabsTrigger value="risk">
+            <ShieldAlert className="w-3.5 h-3.5 mr-1.5" />
+            Risque
           </TabsTrigger>
           <TabsTrigger value="notifications">
             <Bell className="w-3.5 h-3.5 mr-1.5" />
@@ -334,6 +339,11 @@ function SettingsV2Content() {
           <ConfigRiskView />
           <ConfigStrategiesView />
           <ConfigExchangeView />
+        </TabsContent>
+
+        {/* S12 — enveloppes de risque : édition + faisabilité. */}
+        <TabsContent value="risk" className="space-y-4">
+          <RiskEnvelopesEditor />
         </TabsContent>
 
         <TabsContent value="notifications" className="space-y-4">

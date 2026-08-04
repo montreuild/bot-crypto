@@ -86,6 +86,26 @@ class TestGetRisk:
         for v in client.get("/api/risk").json()["venues"]:
             assert 0.0 <= v["risk_pct_used"] <= 1.0
 
+    def test_declared_venues_appear_even_without_a_single_active_slot(self, client, cfg):
+        """Trouve en verifiant l'ecran : le niveau VENUE vient de la CONFIG, pas
+        des slots actifs. Une venue declaree a une enveloppe et un budget de
+        risque des qu'elle existe -- bot arrete ou aucun slot promu. Ne la
+        montrer qu'a partir des slots rendait l'ecran vide au repos, soit la
+        meme lecture trompeuse que S12 supprime, prise a l'envers."""
+        body = client.get("/api/risk").json()          # aucun trader, aucun slot
+        assert body["slots"] == []
+        assert [v["venue"] for v in body["venues"]] == ["okx-t"]
+        venue = body["venues"][0]
+        assert venue["envelope"] == 1000.0
+        assert venue["risk_budget"] == 50.0            # 5 % de 1 000
+        assert venue["risk_engaged"] == 0.0
+
+    def test_the_editable_config_block_is_served(self, client, cfg):
+        """L'onglet Reglages edite des valeurs SAISIES ; /api/config ne sert pas
+        `risk.envelopes`, donc /api/risk le porte explicitement."""
+        body = client.get("/api/risk").json()
+        assert body["envelopes_config"]["okx-t"]["symbol_risk_pct"] == 0.05
+
     def test_without_config_it_says_so(self, client, monkeypatch):
         monkeypatch.setattr(state, "cfg", None)
         assert client.get("/api/risk").status_code == 503
