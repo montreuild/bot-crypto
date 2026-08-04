@@ -82,15 +82,26 @@ def get_risk():
 
     venues, symbols = {}, {}
     slots = []
+
+    # Le niveau VENUE vient de la config, pas des slots actifs : une venue a
+    # une enveloppe et un budget de risque dès qu'elle est déclarée, même bot
+    # arrêté ou sans slot promu. Ne l'afficher qu'à partir des slots rendait
+    # l'écran vide au repos — soit exactement la lecture trompeuse que cette
+    # refonte supprime, prise à l'envers.
+    env_cfg = (state.cfg.get("risk") or {}).get("envelopes") or {}
+    venue_defs = ((state.cfg.get("venues") or {}).get("defs") or {})
+    for name, e in env_cfg.items():
+        capital = float(e.get("capital", 0.0))
+        venues[name] = {
+            "venue": name,
+            "currency": (venue_defs.get(name) or {}).get("quote_currency", ""),
+            "envelope": round(capital, 4),
+            "notional_engaged": round(engaged["venue"].get(name, {}).get("notional", 0.0), 4),
+            "risk_budget": round(capital * float(e.get("venue_risk_pct", 0.0)), 4),
+            "risk_engaged": round(engaged["venue"].get(name, {}).get("risk", 0.0), 4),
+        }
     for slot_key, env in sorted(envelopes.items()):
         sym_key = f"{env.venue}::{env.symbol}"
-        venues.setdefault(env.venue, {
-            "venue": env.venue, "currency": env.currency,
-            "envelope": round(env.venue_envelope, 4),
-            "notional_engaged": round(engaged["venue"].get(env.venue, {}).get("notional", 0.0), 4),
-            "risk_budget": round(env.venue_risk_budget, 4),
-            "risk_engaged": round(engaged["venue"].get(env.venue, {}).get("risk", 0.0), 4),
-        })
         symbols.setdefault(sym_key, {
             "venue": env.venue, "symbol": env.symbol, "currency": env.currency,
             "envelope": round(env.symbol_envelope, 4),
@@ -121,6 +132,10 @@ def get_risk():
         "slots": slots,
         "total_risk_engaged": round(sum(v["risk_engaged"] for v in venues.values()), 4),
         "rejections": rejections,
+        # Bloc éditable tel qu'il est sur disque — /api/config ne le sert pas,
+        # et l'onglet Réglages a besoin des valeurs SAISIES, pas seulement des
+        # montants dérivés.
+        "envelopes_config": env_cfg,
     }
 
 

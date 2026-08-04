@@ -12,6 +12,7 @@ from app.api import state
 from app.api.helpers import verify_api_key
 from app.core.bot_identity import parse_slot_key
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
+from app.core.risk_envelope import base_drift
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -152,6 +153,13 @@ def get_bots():
             "monte_carlo":  rec.get("monte_carlo"),
             "edge":         edge,
             "edge_significant": _edge_significant(edge, edge_min, max_worst),
+            # S12 §5.2 : l'échelle économique sur laquelle cette edge a été
+            # mesurée, et sa dérive par rapport à l'enveloppe courante. Une
+            # expectancy en % ne dit rien sans la base qui l'a produite.
+            "base":         rec.get("base"),
+            "base_drift":   (base_drift(rec.get("base"), tr.envelopes[key])
+                             if tr and key in (getattr(tr, "envelopes", None) or {})
+                             else None),
             # D6 : `force_active` est le nom canonique ; `manual_active` reste
             # émis à l'identique le temps que les clients migrent.
             "force_active":  key in forced_set,

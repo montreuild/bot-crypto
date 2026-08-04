@@ -153,6 +153,94 @@ export interface SlotBudget {
   excluded_by_optimizer?: boolean;
 }
 
+// ── S12 : enveloppes de risque emboîtées venue → symbole → slot ──────────
+//
+// Règle d'affichage que ces types servent : un montant de risque va TOUJOURS
+// avec sa base. Un risque en devise sans son enveloppe n'est pas
+// interprétable — c'est ce qui a laissé passer la divergence backtest
+// 1 000 € / live 90 € sans que rien ne la signale.
+
+export interface RiskVenue {
+  venue: string;
+  currency: string;
+  envelope: number;
+  notional_engaged: number;
+  risk_budget: number;
+  risk_engaged: number;
+  risk_pct_used: number;
+}
+
+export interface RiskSymbol {
+  venue: string;
+  symbol: string;
+  currency: string;
+  envelope: number;
+  notional_engaged: number;
+  risk_budget: number;
+  risk_engaged: number;
+}
+
+export interface RiskSlot {
+  slot_key: string;
+  venue: string;
+  symbol: string;
+  currency: string;
+  /** Poids par confiance d'edge — c'est l'allocation, pas un budget à part. */
+  weight: number;
+  envelope: number;
+  max_notional: number;
+  risk_amount: number;
+  risk_engaged: number;
+  notional_engaged: number;
+  edge_ci_low: number | null;
+}
+
+export interface RiskRejections {
+  total?: number;
+  par_motif?: Record<string, number>;
+  par_slot?: Record<string, number>;
+  par_symbole?: Record<string, number>;
+}
+
+export interface RiskOverview {
+  venues: RiskVenue[];
+  symbols: RiskSymbol[];
+  slots: RiskSlot[];
+  total_risk_engaged: number;
+  rejections: RiskRejections;
+}
+
+export interface RiskDiagnostic {
+  severity: 'error' | 'warning';
+  code: string;
+  /** `venue:<nom>` | `symbol:<sym>` | `slot:<clé>` */
+  scope: string;
+  message: string;
+  values: Record<string, number | string>;
+}
+
+export interface RiskDiagnostics {
+  diagnostics: RiskDiagnostic[];
+  errors: number;
+  warnings: number;
+}
+
+export interface VenueEnvelopeConfig {
+  capital?: number;
+  max_symbol_exposure_pct?: number;
+  symbol_risk_pct?: number;
+  venue_risk_pct?: number;
+}
+
+/** Base économique ayant mesuré une edge (§5.2). */
+export interface EdgeBase {
+  venue: string;
+  slot_envelope: number;
+  trade_risk_pct: number;
+  currency: string;
+  as_of: string;
+}
+
 export interface CircuitBreakerStatus {
   slot_key: string;
   paused: boolean;

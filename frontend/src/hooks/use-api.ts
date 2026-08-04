@@ -119,12 +119,36 @@ export function useOosTracker() {
   });
 }
 
-export function useSetSlotBudget() {
+// ── S12 : enveloppes de risque ──────────────────────────────────────────────
+
+export function useRisk() {
+  return useQuery({
+    queryKey: ['risk'],
+    queryFn: api.getRisk,
+    refetchInterval: 10000,
+  });
+}
+
+/** Diagnostics de faisabilité — analytiques, donc peu volatils : un
+ *  rafraîchissement lent suffit, ils ne bougent qu'au recalcul des poids. */
+export function useRiskDiagnostics() {
+  return useQuery({
+    queryKey: ['risk-diagnostics'],
+    queryFn: api.getRiskDiagnostics,
+    refetchInterval: 60000,
+  });
+}
+
+export function useUpdateEnvelopes() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ slotKey, budgetPct }: { slotKey: string; budgetPct: number }) =>
-      api.setSlotBudget(slotKey, budgetPct),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['slots'] }),
+    mutationFn: api.updateEnvelopes,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['risk'] });
+      qc.invalidateQueries({ queryKey: ['risk-diagnostics'] });
+      qc.invalidateQueries({ queryKey: ['slots'] });
+      qc.invalidateQueries({ queryKey: ['config'] });
+    },
   });
 }
 
@@ -133,7 +157,10 @@ export function useToggleSlot() {
   return useMutation({
     mutationFn: ({ slotKey, enabled }: { slotKey: string; enabled: boolean }) =>
       api.toggleSlot(slotKey, enabled),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['slots'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['slots'] });
+      qc.invalidateQueries({ queryKey: ['risk'] });
+    },
   });
 }
 

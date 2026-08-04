@@ -494,10 +494,86 @@ export const BacktestSchema = z
   })
   .passthrough();
 
+// ── /api/risk + /api/risk/diagnostics (S12) ─────────────────────────────────
+//
+// Ces deux payloads pilotent des décisions d'argent : la forme des champs que
+// l'UI additionne ou compare doit être garantie. Permissifs comme les autres
+// (`passthrough`), mais les numériques sont typés — un montant de risque qui
+// arriverait en chaîne casserait silencieusement les totaux.
+
+export const RiskVenueSchema = z
+  .object({
+    venue: z.string(),
+    currency: z.string().optional(),
+    envelope: num,
+    notional_engaged: num,
+    risk_budget: num,
+    risk_engaged: num,
+    risk_pct_used: num,
+  })
+  .passthrough();
+
+export const RiskSymbolSchema = z
+  .object({
+    venue: z.string(),
+    symbol: z.string(),
+    envelope: num,
+    notional_engaged: num,
+    risk_budget: num,
+    risk_engaged: num,
+  })
+  .passthrough();
+
+export const RiskSlotSchema = z
+  .object({
+    slot_key: z.string(),
+    venue: z.string().optional(),
+    symbol: z.string().optional(),
+    weight: num,
+    envelope: num,
+    risk_amount: num,
+    risk_engaged: num,
+    edge_ci_low: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+/** Les trois niveaux sont des TABLEAUX (pas des dictionnaires indexés). */
+export const RiskSchema = z
+  .object({
+    venues: z.array(RiskVenueSchema).default([]),
+    symbols: z.array(RiskSymbolSchema).default([]),
+    slots: z.array(RiskSlotSchema).default([]),
+    total_risk_engaged: num,
+    rejections: z.object({}).passthrough().optional(),
+    /** Valeurs saisies, pour l'écran d'édition — distinctes des montants dérivés. */
+    envelopes_config: z.record(z.string(), z.object({}).passthrough()).optional(),
+  })
+  .passthrough();
+
+export const RiskDiagnosticSchema = z
+  .object({
+    severity: z.enum(['error', 'warning']),
+    code: z.string(),
+    scope: z.string(),
+    message: z.string(),
+    values: z.record(z.string(), z.any()).optional(),
+  })
+  .passthrough();
+
+export const RiskDiagnosticsSchema = z
+  .object({
+    diagnostics: z.array(RiskDiagnosticSchema).default([]),
+    errors: z.number().default(0),
+    warnings: z.number().default(0),
+  })
+  .passthrough();
+
 // ── /api/replay ─────────────────────────────────────────────────────────────
 
 export const ReplaySchema = z.object({}).passthrough();
 
+export type RiskOut = z.infer<typeof RiskSchema>;
+export type RiskDiagnosticsOut = z.infer<typeof RiskDiagnosticsSchema>;
 export type BotStatusOut = z.infer<typeof BotStatusSchema>;
 export type BotsResponseOut = z.infer<typeof BotsResponseSchema>;
 export type OosTrackerOut = z.infer<typeof OosTrackerSchema>;
