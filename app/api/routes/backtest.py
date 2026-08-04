@@ -12,7 +12,7 @@ from app.api.helpers import _clean, _discover_strategies, _get_bt_exchange, dete
 from app.core.candle_store import get_store
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.core.risk_gate import _default_venue_capital
-from app.engine.backtest import Backtester, MonteCarlo, WalkForwardAnalyzer
+from app.engine.backtest import Backtester, MonteCarlo, WalkForwardAnalyzer, run_dual_pass
 from app.engine.engine import Engine
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,50 @@ def backtest_status():
 
 
 
+def _slot_envelope(strategy: str, tf: str, symbol: str):
+    """Enveloppe du slot pour la passe LIVE.
+
+    Priorité à celle du trader quand il tourne : c'est l'échelle qui trade
+    vraiment. Hors trader, on résout comme si ce bot était seul sur son
+    symbole — l'hypothèse la plus lisible pour une étude au Laboratoire.
+    """
+    from app.core.bot_identity import build_slot_key
+    from app.core.risk_envelope import envelopes_for_active_slots
+
+    key = build_slot_key(strategy, tf, symbol)
+    live = (getattr(state.trader, "envelopes", None) or {}) if state.trader else {}
+    if key in live:
+        return live[key]
+    resolved = envelopes_for_active_slots(
+        state.cfg, {tf: [{"name": strategy, "symbol": symbol}]}, default_symbol=symbol)
+    return resolved.get(key)
+
+
+def _pass_summary(res) -> dict:
+    """Résumé comparable d'une passe : le PnL est en % de SA base, sinon les
+    deux passes ne se comparent pas (c'est tout l'objet de l'exercice)."""
+    base = res.initial_capital or 0.0
+    return {
+        "initial_capital": round(base, 4),
+        "total_trades":    res.total_trades,
+        "total_pnl":       round(res.total_pnl, 4),
+        "pnl_pct":         round(res.total_pnl / base * 100, 4) if base else 0.0,
+        "max_drawdown":    round(res.max_drawdown, 4),
+        "rejections":      res.rejections,
+    }
+
+
+def _envelope_payload(env) -> dict | None:
+    if env is None:
+        return None
+    return {"venue": env.venue, "symbol": env.symbol, "currency": env.currency,
+            "slot_envelope": round(env.slot_envelope, 4),
+            "weight": round(env.weight, 4),
+            "trade_risk_pct": env.trade_risk_pct,
+            "risk_amount": round(env.slot_risk_amount, 4),
+            "min_notional": env.min_notional}
+
+
 @router.post("/api/backtest", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("10/minute")
 def run_backtest(
@@ -67,8 +111,17 @@ def run_backtest(
     timeframe:    str  = "",
     walk_forward: bool = False,
     monte_carlo:  bool = False,
+    dual_pass:    bool = False,
     strategies:   str  = "",
 ):
+    """``dual_pass`` (S12 §5.1) — OPTIONNEL, à la demande de l'UI.
+
+    Exécute la passe d'ÉTUDE (échelle fixe, « cette stratégie vaut-elle quelque
+    chose ? ») en plus de la passe LIVE (enveloppe réelle du slot, « ce bot
+    est-il promouvable ? »). Elle double le temps de calcul : la spec la
+    réserve aux runs *rapportés* et l'interdit par essai d'optimisation.
+    Désactivée, le comportement est strictement celui d'avant.
+    """
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     # Symétrique du check dans optimizer_start() : une optimisation (potentiel-
@@ -146,8 +199,21 @@ def run_backtest(
                     inst._cancel_event = state._bt_cancel_event
                 eng = Engine()
                 eng.register(inst, silent=True)
-                bt  = Backtester(eng, state.cfg, cancel_event=state._bt_cancel_event)
-                res = bt.run(df, symbol, timeframe=tf)
+                env = _slot_envelope(name, tf, symbol) if dual_pass else None
+                runs_payload = None
+                if env is not None:
+                    # La passe LIVE fait foi : c'est l'échelle qui tradera
+                    # réellement, donc celle qui pilote la promotion (§5.1).
+                    runs = run_dual_pass(eng, state.cfg, df, env, symbol=symbol,
+                                         timeframe=tf,
+                                         cancel_event=state._bt_cancel_event)
+                    res = runs["live"]
+                    runs_payload = {k: _pass_summary(r) for k, r in runs.items()}
+                    runs_payload["ecart_pnl_pct"] = round(
+                        runs_payload["live"]["pnl_pct"] - runs_payload["reference"]["pnl_pct"], 4)
+                else:
+                    bt  = Backtester(eng, state.cfg, cancel_event=state._bt_cancel_event)
+                    res = bt.run(df, symbol, timeframe=tf)
                 d   = res.to_dict()
                 strat_key  = next(iter(res.by_strategy.keys()), name) if res.by_strategy else name
                 strat_data = res.by_strategy.get(strat_key, {})
@@ -173,6 +239,10 @@ def run_backtest(
                     "days_covered":     days_covered,
                     "bars_warning":     _bars_warning,
                     "diagnostics":      d.get("diagnostics"),
+                    # S12 : motifs de refus, vocabulaire partagé avec le live.
+                    "rejections":       d.get("rejections"),
+                    "envelope":         _envelope_payload(env),
+                    "runs":             runs_payload,
                 }
                 if walk_forward and len(df) >= 200:
                     wf = WalkForwardAnalyzer(

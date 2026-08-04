@@ -130,7 +130,8 @@ def _resolve_frozen_ml_model(strat, symbol: Optional[str], tf: Optional[str],
 
 
 def run_dual_pass(engine: Engine, cfg: dict, df, envelope, *,
-                  symbol: str = DEFAULT_CONFIG_SYMBOL, **run_kwargs) -> dict:
+                  symbol: str = DEFAULT_CONFIG_SYMBOL, timeframe: str = "1d",
+                  **run_kwargs) -> dict:
     """Deux exécutions, deux questions différentes (§5.1).
 
     - ``live``      : l'enveloppe RÉELLE du slot — « ce bot est-il promouvable ? »
@@ -151,7 +152,10 @@ def run_dual_pass(engine: Engine, cfg: dict, df, envelope, *,
     for pass_name, env in (("live", envelope),
                            ("reference", with_reference_envelope(envelope, reference_capital))):
         bt = Backtester(engine, cfg, envelope=env, **run_kwargs)
-        out[pass_name] = bt.run(df, symbol=symbol)
+        # ``timeframe`` doit suivre : il pilote l'annualisation du Sharpe et
+        # le coût d'emprunt. Deux passes annualisées différemment ne seraient
+        # pas comparables — ce qui viderait l'exercice de son sens.
+        out[pass_name] = bt.run(df, symbol=symbol, timeframe=timeframe)
     return out
 
 
