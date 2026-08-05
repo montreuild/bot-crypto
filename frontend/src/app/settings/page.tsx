@@ -37,7 +37,7 @@ import {
   isBrowserNotificationsEnabled,
 } from '@/components/notifications-provider';
 import {
-  ConfigStrategiesView,
+  ConfigTimeframesView,
   ConfigRiskView,
   ConfigNotificationsView,
   ConfigExchangeView,
@@ -199,7 +199,8 @@ function SettingsV2Content() {
     <div>
       <h1 className="text-2xl font-bold tracking-tight">Réglages</h1>
       <p className="text-sm text-muted mt-1">
-        Capital, risque, notifications, données, audit et préférences UI
+        Capital (timeframes, exchange/yfinance), risque (profil, enveloppes),
+        notifications, données, audit et préférences UI
       </p>
     </div>
   );
@@ -258,7 +259,13 @@ function SettingsV2Content() {
         </TabsList>
 
         <TabsContent value="capital" className="space-y-4">
-          {/* Presets de risque */}
+          {/* Capital : timeframes + exchange / providers (yfinance). Risque → onglet Risque. */}
+          <ConfigTimeframesView />
+          <ConfigExchangeView />
+        </TabsContent>
+
+        {/* S12 — profil de risque, valeurs effectives, enveloppes + faisabilité. */}
+        <TabsContent value="risk" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="text-sm">Profil de risque</CardTitle>
@@ -320,25 +327,7 @@ function SettingsV2Content() {
             </CardContent>
           </Card>
 
-          {/*
-            Lot Réglages — ces trois sections étaient derrière un bouton
-            « Ouvrir la configuration avancée » vers /config, lui-même
-            désactivé hors mode expert. Elles sont montées inline.
-
-            Le mode expert ne masque plus l'éditeur de params : la garde
-            portait sur un lien de navigation, pas sur les écritures. Un
-            utilisateur qui coupait le mode expert depuis une autre page se
-            retrouvait sans accès à des paramètres qu'il venait de modifier,
-            alors que l'API restait ouverte. Les valeurs de risque et
-            l'exchange, eux, étaient déjà en lecture seule.
-          */}
           <ConfigRiskView />
-          <ConfigStrategiesView />
-          <ConfigExchangeView />
-        </TabsContent>
-
-        {/* S12 — enveloppes de risque : édition + faisabilité. */}
-        <TabsContent value="risk" className="space-y-4">
           <RiskEnvelopesEditor />
         </TabsContent>
 

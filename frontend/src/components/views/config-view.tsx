@@ -16,20 +16,12 @@
 // react-query dédoublonne la requête, et cela permet de les monter dans des
 // onglets différents sans faire remonter l'état dans `/settings`.
 
-import {
-  useConfig, useSetStrategyParams, useApiStatus,
-} from '@/hooks/use-api';
+import { useConfig } from '@/hooks/use-api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
-import { useState, useMemo, type ReactNode } from 'react';
-import { Save } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { QueryBoundary } from '@/components/ui/query-state';
 import { PaperLiveSwitch } from '@/components/cards/paper-live-switch';
-
-type Symbol = string; // ex. "BTC/USDC"
 
 /**
  * S6-12 : le titre reste monté même sans config chargée, et l'échec est
@@ -55,191 +47,18 @@ function ConfigGate({ title, children }: { title: string; children: (config: any
   return <>{children(config)}</>;
 }
 
-// ── Stratégies : éditeur de params par stratégie et par symbole ─────────────
+// ── Timeframes actifs (Capital) — sans liste des stratégies ─────────────────
 
-export function ConfigStrategiesView() {
+export function ConfigTimeframesView() {
   return (
-    <ConfigGate title="Stratégies">
-      {(config) => <StrategiesSection config={config} />}
-    </ConfigGate>
-  );
-}
-
-function StrategiesSection({ config }: { config: any }) {
-  const { data: status } = useApiStatus();
-  const setStrategyParams = useSetStrategyParams();
-
-  const [selectedSymbol, setSelectedSymbol] = useState<Symbol | 'all'>('all');
-  const [editingParams, setEditingParams] = useState<Record<string, Record<string, any>>>({});
-  const [savingKey, setSavingKey] = useState<string | null>(null);
-
-  // Liste des symboles disponibles depuis la config + trades récents + last_scan.
-  // On évite d'utiliser `status.scanner` qui n'existe pas sur BotStatus —
-  // à la place on combine les symboles de la config + last_symbols_scanned
-  // (présents sur BotStatus quand le bot tourne) + un fallback par défaut.
-  const availableSymbols: Symbol[] = useMemo(() => {
-    const fromConfig: Symbol[] = config?.scanner?.symbols || [];
-    const fromStatus: Symbol[] = status?.last_symbols_scanned || [];
-    const all = new Set<string>([...fromConfig, ...fromStatus]);
-    if (all.size === 0) return ['BTC/USDC', 'ETH/USDC', 'XRP/USDC'];
-    return Array.from(all).sort();
-  }, [status, config]);
-
-  const handleParamChange = (strategyName: string, paramName: string, value: any) => {
-    setEditingParams((prev) => ({
-      ...prev,
-      [strategyName]: { ...(prev[strategyName] || {}), [paramName]: value },
-    }));
-  };
-
-  const handleSaveParams = async (strategyName: string) => {
-    const params = editingParams[strategyName];
-    if (!params) return;
-    setSavingKey(strategyName);
-    try {
-      // SEC-03 : override = timeframe + symbol ensemble (sinon base params).
-      const symbol = selectedSymbol === 'all' ? undefined : selectedSymbol;
-      const timeframe = symbol
-        ? (config.trading?.timeframe || config.trading?.timeframes?.[0])
-        : undefined;
-      await setStrategyParams.mutateAsync({
-        strategy: strategyName,
-        params,
-        symbol,
-        timeframe,
-      });
-      toast.success(
-        `Paramètres de ${strategyName} sauvegardés${symbol ? ` pour ${symbol}` : ''}`,
-      );
-      setEditingParams((prev) => {
-        const next = { ...prev };
-        delete next[strategyName];
-        return next;
-      });
-    } catch (e: any) {
-      toast.error(`Erreur: ${e.message}`);
-    } finally {
-      setSavingKey(null);
-    }
-  };
-
-  // Obtenir les params d'une stratégie pour le symbole sélectionné
-  const getStrategyParams = (strategyName: string): Record<string, any> => {
-    if (selectedSymbol === 'all') {
-      return config.strategy_params?.[strategyName] || {};
-    }
-    // Override par symbole s'il existe, sinon params globaux
-    const override = config.strategy_params?.[strategyName]?.symbol_overrides?.[selectedSymbol];
-    return override || config.strategy_params?.[strategyName] || {};
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-lg font-semibold tracking-tight">Stratégies</h2>
-          <p className="text-sm text-muted mt-1">
-            Paramètres par stratégie et activation par timeframe, avec overrides par symbole
-          </p>
-        </div>
-        {/* S5-01 : sélecteur de symbole pour overrides par symbole */}
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-muted uppercase tracking-wider" htmlFor="config-symbol">
-            Symbole
-          </label>
-          <select
-            id="config-symbol"
-            aria-label="Symbole"
-            value={selectedSymbol}
-            onChange={(e) => setSelectedSymbol(e.target.value as Symbol | 'all')}
-            className="px-3 py-1.5 bg-card border border-border rounded-lg text-sm focus:outline-none focus:border-primary-400"
-          >
-            <option value="all">Tous (global)</option>
-            {availableSymbols.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-          {selectedSymbol !== 'all' && (
-            <Badge variant="info">override {selectedSymbol}</Badge>
-          )}
-        </div>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Stratégies Activées</CardTitle>
-          <Badge variant="info">{config.strategies?.enabled?.length || 0}</Badge>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            {(config.strategies?.enabled || []).map((s: string) => {
-              const params = getStrategyParams(s);
-              const hasOverride = selectedSymbol !== 'all' && params?.symbol_overrides?.[selectedSymbol];
-              return (
-                <div
-                  key={s}
-                  className={cn(
-                    'p-3 rounded-lg border',
-                    hasOverride
-                      ? 'border-primary-400 bg-primary-500/5'
-                      : 'border-border bg-card-hover',
-                  )}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-mono text-sm">{s}</span>
-                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  </div>
-                  {/* Afficher les paramètres éditables */}
-                  {Object.keys(params || {}).filter((k) => k !== 'symbol_overrides').length > 0 && (
-                    <div className="space-y-2 mt-3 pt-3 border-t border-border/50">
-                      {Object.entries(params)
-                        .filter(([k]) => k !== 'symbol_overrides')
-                        .slice(0, 3)
-                        .map(([k, v]: [string, any]) => (
-                          <div key={k} className="flex items-center gap-2">
-                            <label
-                              className="text-xs text-muted font-mono w-1/2 truncate"
-                              htmlFor={`param-${s}-${k}`}
-                            >
-                              {k}
-                            </label>
-                            <input
-                              id={`param-${s}-${k}`}
-                              type="text"
-                              value={editingParams[s]?.[k] ?? v}
-                              onChange={(e) => handleParamChange(s, k, e.target.value)}
-                              className="flex-1 px-2 py-1 bg-surface border border-border rounded text-xs font-mono focus:outline-none focus:border-primary-400"
-                            />
-                          </div>
-                        ))}
-                    </div>
-                  )}
-                  {editingParams[s] && (
-                    <Button
-                      onClick={() => handleSaveParams(s)}
-                      disabled={savingKey === s}
-                      size="sm"
-                      className="w-full mt-3"
-                    >
-                      <Save className="w-3 h-3 mr-1" />
-                      {savingKey === s ? 'Sauvegarde...' : `Sauver${selectedSymbol !== 'all' ? ` (${selectedSymbol})` : ''}`}
-                    </Button>
-                  )}
-                  {hasOverride && (
-                    <Badge variant="info" className="mt-2 text-[10px]">
-                      Override {selectedSymbol}
-                    </Badge>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Timeframes actifs (lecture) — le toggle strat×TF utilise strategy-timeframe. */}
-          <div className="mt-6">
-            <CardTitle className="mb-3 text-sm">
-              Timeframes actifs {selectedSymbol !== 'all' && <Badge variant="info" className="ml-2 text-[10px]">{selectedSymbol}</Badge>}
-            </CardTitle>
+    <ConfigGate title="Timeframes">
+      {(config) => (
+        <Card>
+          <CardHeader>
+            <CardTitle>Timeframes actifs</CardTitle>
+            <Badge variant="info">{(config.trading?.timeframes || []).length || 0}</Badge>
+          </CardHeader>
+          <CardContent>
             <div className="flex flex-wrap gap-2">
               {(config.trading?.timeframes || []).map((tf: string) => (
                 <span
@@ -250,16 +69,19 @@ function StrategiesSection({ config }: { config: any }) {
                   <span className="ml-2 text-xs">✓</span>
                 </span>
               ))}
+              {(config.trading?.timeframes || []).length === 0 && (
+                <span className="text-sm text-muted">Aucun timeframe configuré</span>
+              )}
             </div>
-            <p className="text-xs text-muted mt-2">
-              Timeframes de trading globaux. Les overrides params par symbole
-              passent par <code className="font-mono text-xs">optimizer_results[tf][symbol]</code>
-              {selectedSymbol !== 'all' ? ` (symbole ${selectedSymbol})` : ''}.
+            <p className="text-xs text-muted mt-3">
+              Timeframes de trading globaux (<code className="font-mono text-xs">trading.timeframes</code>).
+              La sélection des bots actifs par TF vient du classement OOS
+              (optimizer_results), pas d&apos;une liste manuelle ici.
             </p>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+          </CardContent>
+        </Card>
+      )}
+    </ConfigGate>
   );
 }
 
@@ -390,42 +212,119 @@ export function ConfigNotificationsView() {
   );
 }
 
-// ── Exchange : mode paper/live, levier, clé API ────────────────────────────
+// ── Exchange + venues / providers (yfinance, OKX, …) ───────────────────────
 
 export function ConfigExchangeView() {
   return (
     <ConfigGate title="Exchange">
-      {(config) => (
-        <Card>
-          <CardHeader>
-            <CardTitle>Configuration Exchange</CardTitle>
-            <Badge variant={config.exchange?.margin ? 'warning' : 'success'}>
-              {config.exchange?.margin ? 'Margin' : 'Spot'}
-            </Badge>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted">Exchange</span>
-                <span className="font-mono uppercase">{config.exchange?.name || '—'}</span>
+      {(config) => {
+        const venues = config.venues || {};
+        const defs = venues.defs || {};
+        const venueNames: string[] = Object.keys(defs);
+        const providers = config.providers || {};
+        const yf = providers.yfinance;
+        const hasYfinance =
+          Boolean(yf) ||
+          venueNames.some((n) => String(defs[n]?.data_provider || '').toLowerCase() === 'yfinance');
+
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle>Configuration Exchange &amp; données</CardTitle>
+              <Badge variant={config.exchange?.margin ? 'warning' : 'success'}>
+                {config.exchange?.margin ? 'Margin' : 'Spot'}
+              </Badge>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted">Exchange (crypto)</span>
+                  <span className="font-mono uppercase">{config.exchange?.name || '—'}</span>
+                </div>
+                <PaperLiveSwitch paperMode={config.trading?.paper_mode} />
+                <div className="flex justify-between">
+                  <span className="text-muted">Venue par défaut</span>
+                  <span className="font-mono text-xs">{venues.default || '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted">Max leverage</span>
+                  <span className="font-mono">{config.trading?.max_leverage || 1}x</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted">API key exchange</span>
+                  <span className="font-mono text-xs">
+                    {config.exchange?.api_key ? '✓ configurée' : '— (paper / env)'}
+                  </span>
+                </div>
               </div>
-              {/*
-                E3-F1-US8 — ce bloc était en lecture seule : le mode paper/live
-                s'affichait mais ne pouvait pas être changé depuis l'UI.
-              */}
-              <PaperLiveSwitch paperMode={config.trading?.paper_mode} />
-              <div className="flex justify-between">
-                <span className="text-muted">Max leverage</span>
-                <span className="font-mono">{config.trading?.max_leverage || 1}x</span>
+
+              {/* Providers de données — yfinance pour actions / data-only */}
+              <div className="mt-5 pt-4 border-t border-border/60">
+                <div className="text-xs text-muted uppercase tracking-wider mb-2">
+                  Providers de données
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between items-center gap-2">
+                    <span className="text-muted">yfinance</span>
+                    {hasYfinance ? (
+                      <Badge variant="success" className="text-[10px]">actif</Badge>
+                    ) : (
+                      <Badge variant="muted" className="text-[10px]">non déclaré</Badge>
+                    )}
+                  </div>
+                  {yf && (
+                    <ul className="text-[11px] text-dim space-y-0.5 font-mono pl-1">
+                      <li>suffixe actions : {String(yf.suffix ?? '—')}</li>
+                      <li>throttle : {String(yf.min_request_interval ?? '—')} s</li>
+                      <li>cache TTL : {String(yf.cache_ttl ?? '—')} s</li>
+                    </ul>
+                  )}
+                  <p className="text-[11px] text-muted">
+                    yfinance alimente les venues <code className="font-mono">data_provider: yfinance</code>
+                    {' '}(ex. actions Euronext paper) — data-only, sans ordres.
+                    Config : <code className="font-mono">providers.yfinance</code> +{' '}
+                    <code className="font-mono">venues.defs</code>.
+                  </p>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted">API key</span>
-                <span className="font-mono text-xs">{config.exchange?.api_key ? '✓ configurée' : '—'}</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+
+              {venueNames.length > 0 && (
+                <div className="mt-5 pt-4 border-t border-border/60">
+                  <div className="text-xs text-muted uppercase tracking-wider mb-2">
+                    Venues déclarées
+                  </div>
+                  <div className="space-y-2">
+                    {venueNames.map((name) => {
+                      const d = defs[name] || {};
+                      const provider = d.data_provider || (d.exchange === 'okx' || name.includes('okx') || name.includes('margin') || name === 'spot' || name === 'perp-hedge-okx' ? 'ccxt/' + (config.exchange?.name || 'exchange') : '—');
+                      return (
+                        <div
+                          key={name}
+                          className="flex flex-wrap items-center justify-between gap-2 p-2 rounded-md border border-border bg-card-hover text-xs"
+                        >
+                          <div className="min-w-0">
+                            <span className="font-mono font-medium">{name}</span>
+                            {venues.default === name && (
+                              <Badge variant="info" className="ml-2 text-[9px]">default</Badge>
+                            )}
+                            <div className="text-dim mt-0.5">
+                              {d.market_type || '—'} · {d.asset_class || '—'} · {d.quote_currency || '—'}
+                              {d.can_execute === false && ' · data-only'}
+                            </div>
+                          </div>
+                          <span className="font-mono text-dim shrink-0">
+                            {d.data_provider || provider}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      }}
     </ConfigGate>
   );
 }
