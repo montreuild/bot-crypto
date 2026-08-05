@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-import numpy as np
 import polars as pl
 
 from app.core import smc
+
 
 class _PlansMixin:
     def score(self, df: pl.DataFrame, params: dict = None,

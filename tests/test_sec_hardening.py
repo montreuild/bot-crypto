@@ -163,6 +163,7 @@ class TestSchemas:
             risk,
         )
         from app.api.schemas import (
+            AutoOptimizerBody,
             MarginConfigBody,
             NotificationsConfigBody,
             RiskConfigBody,
@@ -172,7 +173,6 @@ class TestSchemas:
             StrategyTimeframeBody,
             TimeframesBody,
             TradingParamsBody,
-            AutoOptimizerBody,
         )
 
         checks = [
