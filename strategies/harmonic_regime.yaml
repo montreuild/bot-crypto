@@ -91,3 +91,41 @@ optimizer_results:
       use_cycle: false
       cooldown: 2
       score_threshold: 0.65
+  15m:
+    run_date: '2026-08-05'
+    oos_score: -0.2723
+    params:
+      adx_min: 22
+      slope_lookback: 20
+      donchian: 30
+      rsi_pullback: 46
+      rsi_oversold: 35
+      vol_extreme_mult: 2.2
+      sl_atr_long: 2.0
+      sl_atr_short: 1.2
+      max_hold: 24
+      min_quality: 0.64
+      enable_short: false
+      enable_meanrev: false
+      use_cycle: true
+      cooldown: 2
+      score_threshold: 0.6
+  30m:
+    run_date: '2026-08-05'
+    oos_score: -0.185536
+    params:
+      adx_min: 28
+      slope_lookback: 20
+      donchian: 20
+      rsi_pullback: 42
+      rsi_oversold: 30
+      vol_extreme_mult: 2.6
+      sl_atr_long: 1.3
+      sl_atr_short: 1.2
+      max_hold: 48
+      min_quality: 0.56
+      enable_short: false
+      enable_meanrev: false
+      use_cycle: true
+      cooldown: 4
+      score_threshold: 0.6

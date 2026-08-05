@@ -3,7 +3,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 params:
-  adx_min: 22
+  adx_min: 20
   cooldown: 20
   ema_fast: 21
   ema_mid: 50
@@ -58,19 +58,19 @@ optimizer_results:
       cooldown: 25
       rr_min: 1.3
   15m:
-    run_date: '2026-03-19'
-    oos_score: -0.056239
+    run_date: '2026-08-05'
+    oos_score: -0.280825
     params:
-      ema_fast: 21
+      ema_fast: 34
       ema_mid: 50
       ema_slow: 100
       adx_min: 25
       pb_zone_pct: 0.003
-      rsi_pb_low: 38
+      rsi_pb_low: 30
       rsi_pb_high: 62
       vol_min: 1.0
       cooldown: 20
-      rr_min: 2.0
+      rr_min: 1.5
   5m:
     run_date: '2026-03-19'
     oos_score: -0.608997
@@ -85,3 +85,17 @@ optimizer_results:
       vol_min: 0.7
       cooldown: 20
       rr_min: 1.3
+  30m:
+    run_date: '2026-08-05'
+    oos_score: -0.342781
+    params:
+      ema_fast: 21
+      ema_mid: 50
+      ema_slow: 100
+      adx_min: 20
+      pb_zone_pct: 0.003
+      rsi_pb_low: 30
+      rsi_pb_high: 55
+      vol_min: 1.0
+      cooldown: 15
+      rr_min: 2.0

@@ -6,7 +6,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 params:
-  adx_min: 28
+  adx_min: 22
   cooldown: 15
   cross_lookback: 8
   ema200_tol: 0.035
@@ -50,19 +50,19 @@ optimizer_results:
       cooldown: 20
       rr_min: 2.0
   15m:
-    run_date: '2026-03-19'
-    oos_score: -0.017102
+    run_date: '2026-08-05'
+    oos_score: -0.029888
     params:
-      ema_fast: 21
+      ema_fast: 34
       ema_slow: 50
-      adx_min: 28
-      rsi_low: 30
-      rsi_high: 73
-      vol_min: 1.2
-      cross_lookback: 8
-      overext_pct: 0.02
+      adx_min: 25
+      rsi_low: 33
+      rsi_high: 67
+      vol_min: 0.9
+      cross_lookback: 6
+      overext_pct: 0.012
       ema200_tol: 0.035
-      cooldown: 15
+      cooldown: 20
       rr_min: 1.5
   5m:
     run_date: '2026-03-19'
@@ -94,3 +94,18 @@ optimizer_results:
       ema200_tol: 0.045
       cooldown: 25
       rr_min: 2.0
+  30m:
+    run_date: '2026-08-05'
+    oos_score: -0.140459
+    params:
+      ema_fast: 34
+      ema_slow: 50
+      adx_min: 22
+      rsi_low: 33
+      rsi_high: 67
+      vol_min: 1.2
+      cross_lookback: 8
+      overext_pct: 0.012
+      ema200_tol: 0.045
+      cooldown: 15
+      rr_min: 1.3

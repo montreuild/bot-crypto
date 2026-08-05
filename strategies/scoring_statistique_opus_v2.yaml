@@ -1,5 +1,5 @@
 params:
-  adx_threshold: 20
+  adx_threshold: 25
   # Trend Up  : formule miroir, seuils conservateurs (AUC non validé OOS)
   amp_thresh_tu: 0.50
   dir_dist_tu: 0.20
@@ -16,43 +16,29 @@ params:
 
 optimizer_results:
   15m:
-    run_date: "2026-05-14"
-    oos_score: 0.55
+    run_date: '2026-08-05'
+    oos_score: -0.571067
     params:
-      adx_threshold: 20
-      amp_thresh_tu: 0.50
-      amp_thresh_td: 0.50
-      amp_thresh_other: 0.60
-      dir_dist_tu: 0.20
-      dir_dist_td: 0.10
+      adx_threshold: 25
+      amp_thresh_tu: 0.35
+      amp_thresh_td: 0.5
+      amp_thresh_other: 0.6
+      dir_dist_tu: 0.15
+      dir_dist_td: 0.1
       dir_dist_other: 0.15
-      rr_min: 0.6
-      # 15m : beaucoup de bruit → trailing plus large, breakeven tardif
-      trail_wide: 2.0
-      grace_bars: 3
-      breakeven_r: 1.0
-      lock_r: 2.0
-      tight_r: 3.5
-      trail_tight: 0.8
+      rr_min: 0.5
   30m:
-    run_date: "2026-05-14"
-    oos_score: 0.66
+    run_date: '2026-08-05'
+    oos_score: -0.410702
     params:
-      adx_threshold: 20
-      amp_thresh_tu: 0.50
-      amp_thresh_td: 0.50
-      amp_thresh_other: 0.60
-      dir_dist_tu: 0.20
-      dir_dist_td: 0.10
-      dir_dist_other: 0.15
-      rr_min: 0.6
-      # 30m : équilibre entre rapidité et bruit — cible mouvements >0.4%
-      trail_wide: 1.5
-      grace_bars: 2
-      breakeven_r: 0.8
-      lock_r: 1.8
-      tight_r: 3.0
-      trail_tight: 0.6
+      adx_threshold: 25
+      amp_thresh_tu: 0.5
+      amp_thresh_td: 0.35
+      amp_thresh_other: 0.45
+      dir_dist_tu: 0.3
+      dir_dist_td: 0.12
+      dir_dist_other: 0.08
+      rr_min: 0.5
   1h:
     run_date: "2026-05-14"
     oos_score: 0.65

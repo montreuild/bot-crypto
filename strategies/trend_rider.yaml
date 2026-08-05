@@ -22,7 +22,7 @@ params:
   ema_slow: 50
   ema_trend: 200
   adx_len: 14
-  adx_min: 22
+  adx_min: 25
   adx_strong: 30
   chop_len: 14
   chop_max: 55.0
@@ -81,4 +81,26 @@ optimizer_results:
       trail_mult: 3.5
       min_score: 0.7
       long_only: false
+      size_by_confluence: false
+  15m:
+    run_date: '2026-08-05'
+    oos_score: -0.315372
+    params:
+      adx_min: 25
+      chop_max: 50.0
+      stop_atr: 2.0
+      trail_mult: 3.5
+      min_score: 0.5
+      long_only: true
+      size_by_confluence: false
+  30m:
+    run_date: '2026-08-05'
+    oos_score: -0.213578
+    params:
+      adx_min: 25
+      chop_max: 50.0
+      stop_atr: 2.0
+      trail_mult: 3.5
+      min_score: 0.7
+      long_only: true
       size_by_confluence: false
