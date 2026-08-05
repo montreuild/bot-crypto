@@ -70,31 +70,27 @@ function TestNotificationButton() {
 }
 
 /**
- * Valeurs de repli. Lot Réglages : `/settings` lisait les seuils réels via
- * `/api/settings/presets`, alors que cette page les affichait en dur — deux
- * écrans donnaient donc des chiffres différents dès que `config.yaml`
- * s'écartait de ces valeurs, et c'est celui-ci qui mentait. Les seuils du
- * backend priment désormais ; ce tableau ne sert plus que de repli tant que
- * la requête n'a pas répondu, et de source pour les libellés/descriptions
- * (que l'API ne fournit pas tous).
+ * Repli UI tant que `/api/settings/presets` n'a pas répondu.
+ * S12 : le sizing = risk.profile × enveloppe de slot — plus de risk_per_trade
+ * global ni max_positions. Les taux ci-dessous suivent risk.profiles livrés.
  */
 const PRESETS = [
   {
     key: 'prudent',
     label: 'Prudent',
-    description: 'Risque minimal, capital préservé',
-    risk_per_trade: 0.005,
-    max_positions: 3,
+    description: 'Risque minimal — 1 % de l’enveloppe de chaque slot',
+    profile: 'prudent',
+    trade_risk_pct: 0.01,
     daily_dd: 0.03,
-    global_dd: 0.10,
+    global_dd: 0.15,
     kill_switch: 0.25,
   },
   {
     key: 'equilibre',
     label: 'Équilibré',
-    description: 'Risque modéré, croissance équilibrée',
-    risk_per_trade: 0.01,
-    max_positions: 5,
+    description: 'Profil normal — 2,5 % de l’enveloppe de chaque slot',
+    profile: 'normal',
+    trade_risk_pct: 0.025,
     daily_dd: 0.05,
     global_dd: 0.20,
     kill_switch: 0.35,
@@ -102,20 +98,19 @@ const PRESETS = [
   {
     key: 'agressif',
     label: 'Agressif',
-    description: 'Risque élevé, croissance maximale',
-    risk_per_trade: 0.02,
-    max_positions: 8,
+    description: 'Risque élevé — 5 % de l’enveloppe de chaque slot',
+    profile: 'agressif',
+    trade_risk_pct: 0.05,
     daily_dd: 0.08,
     global_dd: 0.30,
-    kill_switch: 0.50,
+    kill_switch: 0.45,
   },
 ] as const;
 
 /**
- * Fusionne un preset de repli avec les seuils renvoyés par
- * `/api/settings/presets`. Chaque champ est pris du backend quand il est
- * présent — un `0` légitime (ex. daily DD désactivé) ne doit pas retomber sur
- * le repli, d'où le test sur `== null` plutôt qu'un `||`.
+ * Fusionne un preset de repli avec `/api/settings/presets`.
+ * N’accepte plus risk_per_trade / max_positions (legacy) même si un vieux
+ * backend les renvoyait encore.
  */
 function mergePreset(fallback: (typeof PRESETS)[number], remote: any) {
   if (!remote) return fallback;
@@ -123,8 +118,9 @@ function mergePreset(fallback: (typeof PRESETS)[number], remote: any) {
   return {
     ...fallback,
     label: remote.label || fallback.label,
-    risk_per_trade: pick(remote.risk_per_trade, fallback.risk_per_trade),
-    max_positions: pick(remote.max_positions, fallback.max_positions),
+    description: remote.description || fallback.description,
+    profile: remote.profile || fallback.profile,
+    trade_risk_pct: pick(remote.trade_risk_pct, fallback.trade_risk_pct),
     daily_dd: pick(remote.daily_drawdown_limit, fallback.daily_dd),
     global_dd: pick(remote.max_drawdown_global, fallback.global_dd),
     kill_switch: pick(remote.equity_kill_switch_dd, fallback.kill_switch),
@@ -297,12 +293,12 @@ function SettingsV2Content() {
                       <p className="text-xs text-muted mb-3">{p.description}</p>
                       <div className="space-y-1 text-[11px]">
                         <div className="flex justify-between">
-                          <span className="text-dim">Risk/trade</span>
-                          <span className="font-mono">{(p.risk_per_trade * 100).toFixed(1)}%</span>
+                          <span className="text-dim">Profil moteur</span>
+                          <span className="font-mono">{p.profile}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-dim">Max positions</span>
-                          <span className="font-mono">{p.max_positions}</span>
+                          <span className="text-dim">Risque / trade</span>
+                          <span className="font-mono">{(p.trade_risk_pct * 100).toFixed(1)}% slot</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-dim">Daily DD</span>

@@ -232,8 +232,11 @@ export function useSetRiskPreset() {
   return useMutation({
     mutationFn: (preset: string) => api.setRiskPreset(preset),
     onSuccess: () => {
+      // Preset écrit risk.profile + DD : invalider config / risk / status.
       qc.invalidateQueries({ queryKey: ['presets'] });
       qc.invalidateQueries({ queryKey: ['status'] });
+      qc.invalidateQueries({ queryKey: ['config'] });
+      qc.invalidateQueries({ queryKey: ['risk'] });
     },
   });
 }

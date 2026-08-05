@@ -272,36 +272,71 @@ function StrategiesSection({ config }: { config: any }) {
 // aboutissait. Les cartes de preset de l'onglet Capital de /settings
 // couvrent le besoin, et correctement.
 
+/** Capital de la venue par défaut (S12) — plus de trading.capital global. */
+function defaultVenueCapital(config: any): number {
+  const envelopes = config?.risk?.envelopes || {};
+  const names = Object.keys(envelopes);
+  if (names.length === 0) return 0;
+  // Préférer la venue crypto live si présente.
+  const preferred = envelopes['margin-isolated'] || envelopes[names[0]];
+  return Number(preferred?.capital ?? 0);
+}
+
+/** Taux de risque par trade depuis risk.profile (S12), jamais trading.risk_per_trade. */
+function effectiveTradeRiskPct(config: any): number {
+  const risk = config?.risk || {};
+  const profile = risk.profile || 'normal';
+  const profiles = risk.profiles || { prudent: 0.01, normal: 0.025, agressif: 0.05 };
+  const rate = profiles[profile];
+  return typeof rate === 'number' ? rate : 0.025;
+}
+
 export function ConfigRiskView() {
   return (
     <ConfigGate title="Paramètres de risque">
-      {(config) => (
-        <Card>
-          <CardHeader>
-            <CardTitle>Valeurs de risque effectives</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div>
-                <div className="text-xs text-muted uppercase tracking-wider">Capital (USDC)</div>
-                <div className="text-lg font-mono mt-1">{config.trading?.capital || 1000}</div>
+      {(config) => {
+        const capital = defaultVenueCapital(config);
+        const tradePct = effectiveTradeRiskPct(config);
+        const profile = config.risk?.profile || 'normal';
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle>Valeurs de risque effectives (S12)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <div className="text-xs text-muted uppercase tracking-wider">Capital venue</div>
+                  <div className="text-lg font-mono mt-1">{capital || '—'}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted uppercase tracking-wider">Profil / trade</div>
+                  <div className="text-lg font-mono mt-1">
+                    {profile} · {(tradePct * 100).toFixed(1)}%
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted uppercase tracking-wider">Max DD global</div>
+                  <div className="text-lg font-mono mt-1">
+                    {((config.trading?.max_drawdown_global || 0.20) * 100).toFixed(0)}%
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted uppercase tracking-wider">Daily DD limit</div>
+                  <div className="text-lg font-mono mt-1">
+                    {((config.trading?.daily_drawdown_limit || 0.05) * 100).toFixed(0)}%
+                  </div>
+                </div>
               </div>
-              <div>
-                <div className="text-xs text-muted uppercase tracking-wider">Risk per trade</div>
-                <div className="text-lg font-mono mt-1">{((config.trading?.risk_per_trade || 0.01) * 100).toFixed(1)}%</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted uppercase tracking-wider">Max DD global</div>
-                <div className="text-lg font-mono mt-1">{((config.trading?.max_drawdown_global || 0.20) * 100).toFixed(0)}%</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted uppercase tracking-wider">Daily DD limit</div>
-                <div className="text-lg font-mono mt-1">{((config.trading?.daily_drawdown_limit || 0.05) * 100).toFixed(0)}%</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              <p className="text-[11px] text-muted mt-3">
+                Le sizing utilise le % du profil sur l&apos;enveloppe de chaque slot
+                (onglet Risque). Les anciens champs risk_per_trade / max_positions
+                ne s&apos;appliquent plus.
+              </p>
+            </CardContent>
+          </Card>
+        );
+      }}
     </ConfigGate>
   );
 }
