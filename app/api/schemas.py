@@ -10,7 +10,13 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+)
 
 from app.core.timeframes import TF_SECONDS
 
@@ -60,18 +66,56 @@ class SymbolQuery(BaseModel):
 
 
 class StrategyParamsBody(BaseModel):
-    """Corps de ``POST /api/config/strategies/{strategy}/params``."""
+    """Corps de ``POST /api/config/strategy-params``."""
 
     model_config = ConfigDict(extra="forbid")
 
+    strategy: str
     params: Dict[str, Any] = Field(default_factory=dict)
     timeframe: Optional[str] = None
     symbol: Optional[str] = None
+
+    @field_validator("strategy")
+    @classmethod
+    def _strat(cls, v: str) -> str:
+        return validate_strategy_name(v)
 
     @field_validator("timeframe")
     @classmethod
     def _tf(cls, v: Optional[str]) -> Optional[str]:
         return validate_timeframe(v) if v is not None else None
+
+    @field_validator("symbol")
+    @classmethod
+    def _sym(cls, v: Optional[str]) -> Optional[str]:
+        return validate_symbol(v) if v is not None else None
+
+
+class StrategyTimeframeBody(BaseModel):
+    """Corps de ``POST /api/config/strategy-timeframe``."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    strategy: str
+    timeframe: str = Field(
+        ...,
+        validation_alias=AliasChoices("timeframe", "tf"),
+    )
+    enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices("enabled", "enable"),
+    )
+    symbol: Optional[str] = None
+
+    @field_validator("strategy")
+    @classmethod
+    def _strat(cls, v: str) -> str:
+        return validate_strategy_name(v)
+
+    @field_validator("timeframe")
+    @classmethod
+    def _tf(cls, v: str) -> str:
+        return validate_timeframe(v)
 
     @field_validator("symbol")
     @classmethod
@@ -91,11 +135,25 @@ class TradingParamsBody(BaseModel):
 
 
 class MarginConfigBody(BaseModel):
+    """Corps de ``POST /api/config/margin``."""
+
     model_config = ConfigDict(extra="forbid")
 
     margin: Optional[bool] = None
-    margin_mode: Optional[str] = Field(None, pattern=r"^(cross|isolated)?$")
+    margin_mode: Optional[str] = Field(None, pattern=r"^(cross|isolated)$")
     max_leverage: Optional[int] = Field(None, ge=1, le=125)
+
+
+class RiskConfigBody(BaseModel):
+    """Corps de ``POST /api/config/risk`` (circuit breakers par slot)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    consecutive_loss_limit: Optional[int] = Field(None, ge=1, le=20)
+    slot_daily_dd_limit: Optional[float] = Field(None, gt=0.0, le=0.5)
+    win_rate_floor: Optional[float] = Field(None, ge=0.0, le=1.0)
+    volatility_threshold: Optional[float] = Field(None, gt=0.0, le=1.0)
+    consecutive_pause_secs: Optional[int] = Field(None, ge=60, le=86400)
 
 
 class RiskEnvelopesBody(BaseModel):
@@ -115,6 +173,8 @@ class RiskEnvelopesBody(BaseModel):
 
 
 class StrategiesEnabledBody(BaseModel):
+    """Corps de ``POST /api/config/strategies``."""
+
     model_config = ConfigDict(extra="forbid")
 
     enabled: List[str] = Field(default_factory=list, max_length=64)
@@ -126,6 +186,8 @@ class StrategiesEnabledBody(BaseModel):
 
 
 class TimeframesBody(BaseModel):
+    """Corps de ``POST /api/config/timeframes``."""
+
     model_config = ConfigDict(extra="forbid")
 
     timeframes: List[str] = Field(default_factory=list, max_length=16)
@@ -134,3 +196,33 @@ class TimeframesBody(BaseModel):
     @classmethod
     def _tfs(cls, v: List[str]) -> List[str]:
         return [validate_timeframe(t) for t in v]
+
+
+class AutoOptimizerBody(BaseModel):
+    """Corps de ``POST /api/config/auto-optimizer``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    interval_h: int = Field(24, ge=1, le=168)
+
+
+class NotificationsConfigBody(BaseModel):
+    """Corps de ``POST /api/config/notifications``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    telegram_enabled: Optional[bool] = None
+    telegram_bot_token: Optional[str] = Field(None, max_length=256)
+    telegram_chat_id: Optional[str] = Field(None, max_length=64)
+    whatsapp_enabled: Optional[bool] = None
+    whatsapp_number: Optional[str] = Field(None, max_length=32)
+    whatsapp_token: Optional[str] = Field(None, max_length=256)
+    email_enabled: Optional[bool] = None
+    email_smtp: Optional[str] = Field(None, max_length=255)
+    email_port: Optional[int] = Field(None, ge=1, le=65535)
+    email_user: Optional[str] = Field(None, max_length=255)
+    email_password: Optional[str] = Field(None, max_length=256)
+    email_to: Optional[str] = Field(None, max_length=255)
+    min_pnl_to_notify: Optional[float] = Field(None, ge=0.0)
+    position_loss_warn_pct: Optional[float] = Field(None, ge=0.0, le=100.0)

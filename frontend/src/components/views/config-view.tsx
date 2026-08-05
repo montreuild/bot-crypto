@@ -17,7 +17,7 @@
 // onglets différents sans faire remonter l'état dans `/settings`.
 
 import {
-  useConfig, useSetStrategyParams, useToggleStrategyTimeframe, useApiStatus,
+  useConfig, useSetStrategyParams, useApiStatus,
 } from '@/hooks/use-api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -68,7 +68,6 @@ export function ConfigStrategiesView() {
 function StrategiesSection({ config }: { config: any }) {
   const { data: status } = useApiStatus();
   const setStrategyParams = useSetStrategyParams();
-  const toggleTf = useToggleStrategyTimeframe();
 
   const [selectedSymbol, setSelectedSymbol] = useState<Symbol | 'all'>('all');
   const [editingParams, setEditingParams] = useState<Record<string, Record<string, any>>>({});
@@ -98,11 +97,16 @@ function StrategiesSection({ config }: { config: any }) {
     if (!params) return;
     setSavingKey(strategyName);
     try {
+      // SEC-03 : override = timeframe + symbol ensemble (sinon base params).
       const symbol = selectedSymbol === 'all' ? undefined : selectedSymbol;
+      const timeframe = symbol
+        ? (config.trading?.timeframe || config.trading?.timeframes?.[0])
+        : undefined;
       await setStrategyParams.mutateAsync({
         strategy: strategyName,
         params,
-        symbol, // S5-01 : permet d'écrire un override par symbole
+        symbol,
+        timeframe,
       });
       toast.success(
         `Paramètres de ${strategyName} sauvegardés${symbol ? ` pour ${symbol}` : ''}`,
@@ -116,18 +120,6 @@ function StrategiesSection({ config }: { config: any }) {
       toast.error(`Erreur: ${e.message}`);
     } finally {
       setSavingKey(null);
-    }
-  };
-
-  const handleToggleTf = async (tf: string, enable: boolean) => {
-    try {
-      const symbol = selectedSymbol === 'all' ? undefined : selectedSymbol;
-      await toggleTf.mutateAsync({ tf, enable, symbol });
-      toast.success(
-        `Timeframe ${tf} ${enable ? 'activée' : 'désactivée'}${symbol ? ` pour ${symbol}` : ''}`,
-      );
-    } catch (e: any) {
-      toast.error(`Erreur: ${e.message}`);
     }
   };
 
@@ -243,25 +235,26 @@ function StrategiesSection({ config }: { config: any }) {
             })}
           </div>
 
-          {/* Timeframes avec activation par symbole */}
+          {/* Timeframes actifs (lecture) — le toggle strat×TF utilise strategy-timeframe. */}
           <div className="mt-6">
             <CardTitle className="mb-3 text-sm">
-              Timeframes {selectedSymbol !== 'all' && <Badge variant="info" className="ml-2 text-[10px]">{selectedSymbol}</Badge>}
+              Timeframes actifs {selectedSymbol !== 'all' && <Badge variant="info" className="ml-2 text-[10px]">{selectedSymbol}</Badge>}
             </CardTitle>
             <div className="flex flex-wrap gap-2">
               {(config.trading?.timeframes || []).map((tf: string) => (
-                <button
+                <span
                   key={tf}
-                  onClick={() => handleToggleTf(tf, true)}
-                  className="px-3 py-1.5 rounded-lg border border-primary-400 bg-primary-500/10 text-primary-400 text-sm font-medium hover:bg-primary-500/20"
+                  className="px-3 py-1.5 rounded-lg border border-primary-400 bg-primary-500/10 text-primary-400 text-sm font-medium"
                 >
                   {tf}
                   <span className="ml-2 text-xs">✓</span>
-                </button>
+                </span>
               ))}
             </div>
             <p className="text-xs text-muted mt-2">
-              Cliquez pour activer une TF {selectedSymbol !== 'all' && `pour ${selectedSymbol}`}. Les overrides par symbole sont stockés dans <code className="font-mono text-xs">optimizer_results[tf][symbol]</code>.
+              Timeframes de trading globaux. Les overrides params par symbole
+              passent par <code className="font-mono text-xs">optimizer_results[tf][symbol]</code>
+              {selectedSymbol !== 'all' ? ` (symbole ${selectedSymbol})` : ''}.
             </p>
           </div>
         </CardContent>

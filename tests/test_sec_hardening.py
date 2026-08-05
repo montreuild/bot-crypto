@@ -108,10 +108,23 @@ class TestSchemas:
 
     def test_strategy_params_body(self):
         from app.api.schemas import StrategyParamsBody
-        body = StrategyParamsBody(params={"a": 1}, timeframe="4h", symbol="ETH/USDC")
+        body = StrategyParamsBody(
+            strategy="smart_money",
+            params={"a": 1},
+            timeframe="4h",
+            symbol="ETH/USDC",
+        )
         assert body.timeframe == "4h"
+        assert body.strategy == "smart_money"
         with pytest.raises(ValidationError):
-            StrategyParamsBody(params={}, timeframe="nope", symbol="BTC/USDC")
+            StrategyParamsBody(
+                strategy="smart_money",
+                params={},
+                timeframe="nope",
+                symbol="BTC/USDC",
+            )
+        with pytest.raises(ValidationError):
+            StrategyParamsBody(strategy="../evil", params={})
 
     def test_trading_params_bounds(self):
         from app.api.schemas import TradingParamsBody
@@ -120,3 +133,62 @@ class TestSchemas:
             TradingParamsBody(score_threshold=1.5)
         with pytest.raises(ValidationError):
             TradingParamsBody(paper_slippage=0.2)
+
+    def test_strategies_and_timeframes_bodies(self):
+        from app.api.schemas import StrategiesEnabledBody, TimeframesBody
+        StrategiesEnabledBody(enabled=["smart_money", "trend_rider"])
+        with pytest.raises(ValidationError):
+            StrategiesEnabledBody(enabled=["../x"])
+        TimeframesBody(timeframes=["1h", "4h"])
+        with pytest.raises(ValidationError):
+            TimeframesBody(timeframes=["1w"])
+
+    def test_risk_config_bounds(self):
+        from app.api.schemas import RiskConfigBody
+        RiskConfigBody(consecutive_loss_limit=3, win_rate_floor=0.4)
+        with pytest.raises(ValidationError):
+            RiskConfigBody(consecutive_loss_limit=0)
+        with pytest.raises(ValidationError):
+            RiskConfigBody(slot_daily_dd_limit=0.9)
+
+    def test_routes_import_schemas(self):
+        """Les routes d'écriture critiques reçoivent bien un modèle Pydantic."""
+        import inspect
+
+        from app.api.routes import (
+            config_global,
+            config_notifications,
+            config_risk,
+            config_strategies,
+            risk,
+        )
+        from app.api.schemas import (
+            MarginConfigBody,
+            NotificationsConfigBody,
+            RiskConfigBody,
+            RiskEnvelopesBody,
+            StrategiesEnabledBody,
+            StrategyParamsBody,
+            StrategyTimeframeBody,
+            TimeframesBody,
+            TradingParamsBody,
+            AutoOptimizerBody,
+        )
+
+        checks = [
+            (config_strategies.update_strategies, StrategiesEnabledBody),
+            (config_strategies.update_timeframes, TimeframesBody),
+            (config_strategies.update_auto_optimizer, AutoOptimizerBody),
+            (config_strategies.update_strategy_params, StrategyParamsBody),
+            (config_strategies.toggle_strategy_timeframe, StrategyTimeframeBody),
+            (config_global.update_trading_params, TradingParamsBody),
+            (config_global.update_margin_config, MarginConfigBody),
+            (config_risk.update_risk_config, RiskConfigBody),
+            (config_notifications.update_notifications_config, NotificationsConfigBody),
+            (risk.update_envelopes, RiskEnvelopesBody),
+        ]
+        for fn, model in checks:
+            hints = inspect.signature(fn).parameters
+            assert any(
+                p.annotation is model for p in hints.values()
+            ), f"{fn.__name__} must take {model.__name__}"
