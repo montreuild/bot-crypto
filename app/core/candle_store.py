@@ -312,13 +312,22 @@ class CandleStore:
         }
 
     def all_stats(self) -> list:
-        """Stats de tous les fichiers Parquet dans base_dir."""
+        """Stats de tous les fichiers Parquet OHLCV dans base_dir.
+
+        Ignore les artefacts non-timeframe (ex. ``BTCUSDT__funding.parquet``
+        des dérivés) pour ne pas lever ``ValueError`` sur un TF hors whitelist.
+        """
         results = []
         for parquet in sorted(self._base.rglob("*.parquet")):
             # Structure: base/{symbol}/{tf}.parquet
             tf     = parquet.stem
             symbol = parquet.parent.name.replace("_", "/", 1)
-            results.append(self.stats(symbol, tf))
+            if tf not in TF_SECONDS:
+                continue
+            try:
+                results.append(self.stats(symbol, tf))
+            except ValueError:
+                continue
         return results
 
     # ── Mémo « plus d'historique disponible » ─────────────────────────────────
