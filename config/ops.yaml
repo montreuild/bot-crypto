@@ -38,8 +38,8 @@ web:
   # host ouvert sans api_key, exporter uniquement ALLOW_INSECURE_WEB=1.
 
 ui:
-  risk_preset:
-  expert_mode: false
+  risk_preset: equilibre
+  expert_mode: true
 
 perf:
   # Taille du cache LRU process-wide des colonnes pré-calculées (_pre_*),

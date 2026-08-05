@@ -94,7 +94,7 @@ export function ConfigTimeframesView() {
 // aboutissait. Les cartes de preset de l'onglet Capital de /settings
 // couvrent le besoin, et correctement.
 
-/** Capital de la venue par défaut (S12) — plus de trading.capital global. */
+/** Capital de la venue par défaut — plus de trading.capital global. */
 function defaultVenueCapital(config: any): number {
   const envelopes = config?.risk?.envelopes || {};
   const names = Object.keys(envelopes);
@@ -104,7 +104,7 @@ function defaultVenueCapital(config: any): number {
   return Number(preferred?.capital ?? 0);
 }
 
-/** Taux de risque par trade depuis risk.profile (S12), jamais trading.risk_per_trade. */
+/** Taux de risque par trade depuis risk.profile, jamais trading.risk_per_trade. */
 function effectiveTradeRiskPct(config: any): number {
   const risk = config?.risk || {};
   const profile = risk.profile || 'normal';
@@ -123,7 +123,7 @@ export function ConfigRiskView() {
         return (
           <Card>
             <CardHeader>
-              <CardTitle>Valeurs de risque effectives (S12)</CardTitle>
+              <CardTitle>Valeurs de risque effectives</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -221,6 +221,24 @@ export function ConfigExchangeView() {
         const venues = config.venues || {};
         const defs = venues.defs || {};
         const venueNames: string[] = Object.keys(defs);
+        const defaultVenueName: string = venues.default || '';
+        const defaultDef = (defaultVenueName && defs[defaultVenueName]) || {};
+        // Source de vérité = venue (market_type / max_leverage), pas le legacy
+        // exchange.margin qui ne fait plus que du repli.
+        const marketType = String(defaultDef.market_type || '').toLowerCase();
+        const venueLeverage = Number(defaultDef.max_leverage ?? config.trading?.max_leverage ?? 1);
+        const isSpotLike = marketType === 'spot' || (marketType === 'margin' && venueLeverage <= 1);
+        const badgeLabel = !marketType
+          ? (config.exchange?.margin ? 'Margin' : 'Spot')
+          : marketType === 'spot'
+            ? 'Spot'
+            : marketType === 'perp'
+              ? `Perp · ${venueLeverage}x`
+              : marketType === 'margin'
+                ? `Margin · ${venueLeverage}x`
+                : marketType;
+        const badgeVariant =
+          marketType === 'spot' ? 'success' : marketType === 'perp' ? 'danger' : 'warning';
         const providers = config.providers || {};
         const yf = providers.yfinance;
         const hasYfinance =
@@ -231,9 +249,7 @@ export function ConfigExchangeView() {
           <Card>
             <CardHeader>
               <CardTitle>Configuration Exchange &amp; données</CardTitle>
-              <Badge variant={config.exchange?.margin ? 'warning' : 'success'}>
-                {config.exchange?.margin ? 'Margin' : 'Spot'}
-              </Badge>
+              <Badge variant={badgeVariant as any}>{badgeLabel}</Badge>
             </CardHeader>
             <CardContent>
               <div className="space-y-2 text-sm">
@@ -244,11 +260,24 @@ export function ConfigExchangeView() {
                 <PaperLiveSwitch paperMode={config.trading?.paper_mode} />
                 <div className="flex justify-between">
                   <span className="text-muted">Venue par défaut</span>
-                  <span className="font-mono text-xs">{venues.default || '—'}</span>
+                  <span className="font-mono text-xs">{defaultVenueName || '—'}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted">Max leverage</span>
-                  <span className="font-mono">{config.trading?.max_leverage || 1}x</span>
+                  <span className="text-muted">Type de marché</span>
+                  <span className="font-mono text-xs">
+                    {marketType || '—'}
+                    {defaultDef.margin_mode ? ` · ${defaultDef.margin_mode}` : ''}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted">Levier max (venue)</span>
+                  <span className="font-mono">{venueLeverage}x</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted">Short autorisé</span>
+                  <span className="font-mono text-xs">
+                    {defaultDef.allow_short === false ? 'non' : defaultDef.allow_short === true ? 'oui' : '—'}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted">API key exchange</span>
@@ -257,6 +286,15 @@ export function ConfigExchangeView() {
                   </span>
                 </div>
               </div>
+              {isSpotLike && marketType === 'margin' && (
+                <p className="text-[11px] text-muted mt-3 p-2 rounded-md border border-border bg-card-hover/50">
+                  <strong className="text-dim">Margin @ 1× n&apos;est pas du spot.</strong>{' '}
+                  Même levier 1, le compte margin autorise le short et peut facturer
+                  l&apos;emprunt. Pour du spot pur (pas de short, pas d&apos;intérêt) :
+                  venue <code className="font-mono">spot</code> dans{' '}
+                  <code className="font-mono">venues.default</code>.
+                </p>
+              )}
 
               {/* Providers de données — yfinance pour actions / data-only */}
               <div className="mt-5 pt-4 border-t border-border/60">

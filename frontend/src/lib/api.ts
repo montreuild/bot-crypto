@@ -375,7 +375,10 @@ export const api = {
   // S8-F2-US1 — Liste des univers
   getUniverses: () => apiFetch<any>('/universe', { schema: UniversesSchema }),
   // S8-F2-US2 — Membres d'un univers
-  getUniverse: (name: string) => apiFetch<any>(`/universe/${encodeURIComponent(name)}`),
+  getUniverse: (name: string, opts?: { includeBars?: boolean }) =>
+    apiFetch<any>(
+      `/universe/${encodeURIComponent(name)}${opts?.includeBars ? '?include_bars=true' : ''}`,
+    ),
   // S8-F2-US3 — Ajouter/retirer symbole
   addUniverseSymbol: (universe: string, body: { symbol: string; name?: string; provider_symbol?: string }) =>
     apiFetch<any>(`/universe/${encodeURIComponent(universe)}/symbols`, {

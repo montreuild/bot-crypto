@@ -295,6 +295,26 @@ class CandleStore:
         """DataFrame OHLCV en cache (sans aucun appel exchange). Vide si absent."""
         return self._load(self._path(symbol, tf))
 
+    def count_bars(self, symbol: str, tf: str) -> int:
+        """Nombre de bougies en cache sans charger le DataFrame complet.
+
+        Utilise les métadonnées Parquet (row-group) — O(1) par fichier, ce qui
+        permet d'enrichir un univers de 100+ symboles sans bloquer l'UI.
+        """
+        path = self._path(symbol, tf)
+        if not path.exists():
+            return 0
+        try:
+            import pyarrow.parquet as pq
+            meta = pq.read_metadata(path)
+            return int(meta.num_rows or 0)
+        except Exception:
+            try:
+                # Repli : une seule colonne (beaucoup plus léger que stats()).
+                return int(pl.read_parquet(path, columns=["time"]).height)
+            except Exception:
+                return 0
+
     def stats(self, symbol: str, tf: str) -> dict:
         """Stats du cache Parquet pour (symbol, tf)."""
         path = self._path(symbol, tf)

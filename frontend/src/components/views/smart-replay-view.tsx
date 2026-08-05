@@ -108,11 +108,37 @@ export function SmartReplayView() {
   const priceLinesRef = useRef<ReturnType<ISeriesApi<'Candlestick'>['createPriceLine']>[]>([]);
 
   const nBars = data?.n_bars ?? 0;
-  const ohlcv = data?.ohlcv;
+  // API peut renvoyer `ohlcv` (colonnes) ou `candles` (liste d'objets).
   const cleanedCandles = useMemo<CandleRow[]>(() => {
-    if (!ohlcv) return [];
-    return cleanOhlcv(ohlcv.time || [], ohlcv.open || [], ohlcv.high || [], ohlcv.low || [], ohlcv.close || []);
-  }, [ohlcv]);
+    const ohlcv = data?.ohlcv;
+    if (ohlcv?.time?.length) {
+      return cleanOhlcv(
+        ohlcv.time || [],
+        ohlcv.open || [],
+        ohlcv.high || [],
+        ohlcv.low || [],
+        ohlcv.close || [],
+      );
+    }
+    const candles = data?.candles;
+    if (Array.isArray(candles) && candles.length > 0) {
+      const time: number[] = [];
+      const open: number[] = [];
+      const high: number[] = [];
+      const low: number[] = [];
+      const close: number[] = [];
+      for (const c of candles) {
+        if (c == null || typeof c !== 'object') continue;
+        time.push(Number((c as any).time));
+        open.push(Number((c as any).open));
+        high.push(Number((c as any).high));
+        low.push(Number((c as any).low));
+        close.push(Number((c as any).close));
+      }
+      return cleanOhlcv(time, open, high, low, close);
+    }
+    return [];
+  }, [data?.ohlcv, data?.candles]);
 
   // Clamp currentIndex when nBars changes
   useEffect(() => {

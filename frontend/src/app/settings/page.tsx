@@ -73,7 +73,7 @@ function TestNotificationButton() {
 
 /**
  * Repli UI tant que `/api/settings/presets` n'a pas répondu.
- * S12 : le sizing = risk.profile × enveloppe de slot — plus de risk_per_trade
+ * Le sizing = risk.profile × enveloppe de slot — plus de risk_per_trade
  * global ni max_positions. Les taux ci-dessous suivent risk.profiles livrés.
  */
 const PRESETS = [
@@ -113,7 +113,8 @@ const PRESETS = [
   {
     key: 'personnalise',
     label: 'Personnalisé',
-    description: 'Déverrouille les budgets de risque des enveloppes par venue',
+    description:
+      'Déverrouille les budgets de perte (risque symbole / venue). Capital et exposition max restent toujours éditables.',
     profile: null as string | null,
     trade_risk_pct: null as number | null,
     daily_dd: null as number | null,
@@ -351,7 +352,8 @@ function SettingsV2Content() {
                       )}
                       {p.custom && (
                         <p className="text-[11px] text-dim">
-                          Active l&apos;édition des budgets de risque sur Capital → Enveloppes.
+                          Active l&apos;édition libre des budgets de perte sur Capital → Enveloppes
+                          (exposition max / symbole reste toujours éditable).
                         </p>
                       )}
                     </button>

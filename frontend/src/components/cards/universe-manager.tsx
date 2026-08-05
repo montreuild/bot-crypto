@@ -33,19 +33,34 @@ export function UniverseManager() {
     refetchInterval: 60000,
   });
 
+  // Liste rapide (sans lecture Parquet). Compteurs de bougies en second plan.
   const universeDetailQuery = useQuery({
     queryKey: ['universe', selectedUniverse],
     queryFn: () => api.getUniverse(selectedUniverse!),
     enabled: !!selectedUniverse,
-    refetchInterval: 60000,
+    refetchInterval: 120000,
+    staleTime: 60_000,
     retry: 1,
   });
+
+  const universeBarsQuery = useQuery({
+    queryKey: ['universe', selectedUniverse, 'bars'],
+    queryFn: () => api.getUniverse(selectedUniverse!, { includeBars: true }),
+    enabled: !!selectedUniverse && !!universeDetailQuery.data,
+    staleTime: 120_000,
+    retry: 0,
+  });
+
+  const members = (universeBarsQuery.data?.members
+    ?? universeDetailQuery.data?.members
+    ?? []) as any[];
 
   const addSymbol = useMutation({
     mutationFn: ({ universe, body }: { universe: string; body: { symbol: string; name?: string } }) =>
       api.addUniverseSymbol(universe, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['universe', selectedUniverse] });
+      qc.invalidateQueries({ queryKey: ['universe', selectedUniverse, 'bars'] });
       qc.invalidateQueries({ queryKey: ['universes'] });
       toast.success('Symbole ajouté (YAML : commentaires préservés)');
       setShowAddForm(false);
@@ -60,6 +75,7 @@ export function UniverseManager() {
       api.removeUniverseSymbol(universe, symbol),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['universe', selectedUniverse] });
+      qc.invalidateQueries({ queryKey: ['universe', selectedUniverse, 'bars'] });
       toast.success('Symbole retiré');
       setRemoveTarget(null);
     },
@@ -200,46 +216,56 @@ export function UniverseManager() {
               <p className="text-xs text-red-400">
                 Erreur : {(universeDetailQuery.error as Error)?.message}
               </p>
-            ) : universeDetailQuery.data?.members?.length === 0 ? (
+            ) : members.length === 0 ? (
               <p className="text-xs text-muted">Univers vide</p>
             ) : (
-              <div className="border border-border rounded-md overflow-hidden max-h-80 overflow-y-auto">
-                <table className="w-full text-xs">
-                  <thead className="bg-card-hover sticky top-0">
-                    <tr className="text-left text-dim border-b border-border">
-                      <th scope="col" className="p-2 font-medium">Symbole</th>
-                      <th scope="col" className="p-2 font-medium">Nom</th>
-                      <th scope="col" className="p-2 font-medium text-right">Bougies</th>
-                      <th scope="col" className="p-2 font-medium w-8" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {universeDetailQuery.data?.members?.map((m: any) => (
-                      <tr key={m.symbol} className="border-b border-border/50 hover:bg-card-hover">
-                        <td className="p-2 font-mono font-semibold">{m.symbol}</td>
-                        <td className="p-2 text-muted truncate max-w-[120px]">{m.name || '—'}</td>
-                        <td className="p-2 text-right font-mono text-dim">
-                          {m.bars && Object.keys(m.bars).length > 0
-                            ? Object.entries(m.bars).map(([tf, n]: any) => (
-                                <span key={tf} className="ml-1 text-[10px]">
-                                  {tf}:{n as number}
-                                </span>
-                              ))
-                            : '—'}
-                        </td>
-                        <td className="p-2">
-                          <button
-                            onClick={() => setRemoveTarget({ universe: selectedUniverse, symbol: m.symbol })}
-                            className="text-dim hover:text-red-400 transition-colors"
-                            aria-label={`Retirer ${m.symbol}`}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </td>
+              <div className="space-y-1">
+                {universeBarsQuery.isFetching && (
+                  <p className="text-[10px] text-muted flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Comptage des bougies en cache…
+                  </p>
+                )}
+                <div className="border border-border rounded-md overflow-hidden max-h-80 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-card-hover sticky top-0">
+                      <tr className="text-left text-dim border-b border-border">
+                        <th scope="col" className="p-2 font-medium">Symbole</th>
+                        <th scope="col" className="p-2 font-medium">Nom</th>
+                        <th scope="col" className="p-2 font-medium text-right">Bougies</th>
+                        <th scope="col" className="p-2 font-medium w-8" />
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {members.map((m: any) => (
+                        <tr key={m.symbol} className="border-b border-border/50 hover:bg-card-hover">
+                          <td className="p-2 font-mono font-semibold">{m.symbol}</td>
+                          <td className="p-2 text-muted truncate max-w-[120px]">{m.name || '—'}</td>
+                          <td className="p-2 text-right font-mono text-dim">
+                            {m.bars && Object.keys(m.bars).length > 0
+                              ? Object.entries(m.bars).map(([tf, n]: any) => (
+                                  <span key={tf} className="ml-1 text-[10px]">
+                                    {tf}:{n as number}
+                                  </span>
+                                ))
+                              : universeBarsQuery.isFetching
+                                ? '…'
+                                : '—'}
+                          </td>
+                          <td className="p-2">
+                            <button
+                              onClick={() => setRemoveTarget({ universe: selectedUniverse, symbol: m.symbol })}
+                              className="text-dim hover:text-red-400 transition-colors"
+                              aria-label={`Retirer ${m.symbol}`}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>

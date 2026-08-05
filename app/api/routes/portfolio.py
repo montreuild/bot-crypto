@@ -28,11 +28,14 @@ _LEGACY_TRADING_KEYS = (
     "risk_per_trade", "max_positions", "max_longs", "max_shorts", "capital",
 )
 
-# Budgets enveloppe S12 : symbol_risk ≥ profile, venue_risk ≥ symbol_risk.
+# Budgets de risque par profil (symbol_risk ≥ profile, venue_risk ≥ symbol_risk).
+# `max_symbol_exposure_pct` n'est PAS dans le template : c'est une allocation
+# multi-symboles (ex. 2 titres → 0.5 chacun), indépendante du profil de risque.
+# L'UI le laisse toujours éditable ; un preset ne l'écrase plus à 100 %.
 _ENVELOPE_RISK_BY_PROFILE = {
-    "prudent":  {"symbol_risk_pct": 0.02, "venue_risk_pct": 0.02, "max_symbol_exposure_pct": 1.0},
-    "normal":   {"symbol_risk_pct": 0.05, "venue_risk_pct": 0.05, "max_symbol_exposure_pct": 1.0},
-    "agressif": {"symbol_risk_pct": 0.05, "venue_risk_pct": 0.05, "max_symbol_exposure_pct": 1.0},
+    "prudent":  {"symbol_risk_pct": 0.02, "venue_risk_pct": 0.02},
+    "normal":   {"symbol_risk_pct": 0.05, "venue_risk_pct": 0.05},
+    "agressif": {"symbol_risk_pct": 0.05, "venue_risk_pct": 0.05},
 }
 
 _RISK_PRESETS = {
@@ -77,7 +80,7 @@ _RISK_PRESETS = {
     },
     "personnalise": {
         "label": "Personnalisé",
-        "description": "Édition libre des budgets de risque par venue (S12)",
+        "description": "Édition libre des budgets de perte par venue (symbol/venue risk)",
         "profile": None,
         "trading": {},
         "risk": {},
@@ -147,7 +150,7 @@ def _apply_envelope_risk_template(risk_block: dict, profile: str) -> None:
             continue
         env["symbol_risk_pct"] = tmpl["symbol_risk_pct"]
         env["venue_risk_pct"] = tmpl["venue_risk_pct"]
-        env["max_symbol_exposure_pct"] = tmpl["max_symbol_exposure_pct"]
+        # Ne pas toucher max_symbol_exposure_pct (allocation multi-symboles).
 
 
 def _trader():

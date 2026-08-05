@@ -112,11 +112,11 @@ risk:
   envelopes:
     margin-isolated:
       capital: 1000
-      # BTC (et ETH plus tard) seulement pour l'instant sur cette venue :
-      # 100 % d'exposition assumée, pas de décote entre symboles.
-      max_symbol_exposure_pct: 1.00
-      symbol_risk_pct: 0.05      # 50 € de perte max sur BTC = 2 × 25 € par trade
-      venue_risk_pct: 0.05       # 50 € sur la venue (un seul symbole : pas de décote)
+      # BTC + ETH actifs : 2 × 50 % = 100 % de l'enveloppe venue (sinon
+      # diagnostic enveloppe_venue_depassee si 100 % par symbole).
+      max_symbol_exposure_pct: 0.5
+      symbol_risk_pct: 0.05      # 50 € de perte max sur un symbole = 2 × 25 € par trade
+      venue_risk_pct: 0.05       # 50 € sur la venue
     euronext-paper:
       capital: 10000
       max_symbol_exposure_pct: 0.25   # 2 500 € max par ticker

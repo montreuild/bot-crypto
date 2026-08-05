@@ -495,8 +495,19 @@ def build_smc_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
     except Exception as e:
         logger.warning(f"[smc] signal stratégie KO : {e}")
 
+    # Bougies pour le chart (Smart Graph) — sans ceci l'UI n'affiche rien.
+    ohlcv = {
+        "time":   [int(t) for t in times],
+        "open":   [round(float(v), 8) for v in df["open"].to_list()],
+        "high":   [round(float(v), 8) for v in df["high"].to_list()],
+        "low":    [round(float(v), 8) for v in df["low"].to_list()],
+        "close":  [round(float(v), 8) for v in df["close"].to_list()],
+        "volume": [round(float(v), 4) for v in df["volume"].to_list()],
+    }
+
     return {
         "symbol": symbol, "timeframe": tf, "n_bars": n,
+        "ohlcv": ohlcv,
         "bias": res["bias"],
         "premium_discount": res["premium_discount"],
         "order_blocks": order_blocks,
@@ -585,9 +596,20 @@ def build_smc_replay_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
                  "invalidated_at": x["invalidated_at"],
                  "strength": x.get("strength", 1)} for x in lst]
 
+    # Format colonnes (Smart Replay UI lit `ohlcv`) + liste d'objets (`candles`).
+    ohlcv = {
+        "time":   [int(times[i]) for i in range(n)],
+        "open":   [round(float(df["open"][i]), 8) for i in range(n)],
+        "high":   [round(float(df["high"][i]), 8) for i in range(n)],
+        "low":    [round(float(df["low"][i]), 8) for i in range(n)],
+        "close":  [round(float(df["close"][i]), 8) for i in range(n)],
+        "volume": [round(float(df["volume"][i]), 4) for i in range(n)],
+    }
+
     payload = {
         "symbol": symbol, "timeframe": tf, "n_bars": n,
         "start_index": max(260, int(_SMCStrategy.warmup_bars)),
+        "ohlcv": ohlcv,
         "candles": candles,
         "swings": _swings(),
         "struct_events": res["_all_struct_events"],

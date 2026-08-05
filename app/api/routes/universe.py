@@ -69,12 +69,13 @@ def list_universes():
 
 
 @router.get("/api/universe/{name}", dependencies=[Depends(verify_api_key)])
-def get_universe(name: str):
-    """Membres d'un univers, avec la profondeur de cache de chacun.
+def get_universe(name: str, include_bars: bool = False):
+    """Membres d'un univers.
 
-    ``bars`` accompagne chaque membre : c'est ce qui décide si un symbole peut
-    entrer dans un entraînement poolé. Le renvoyer ici évite à l'UI de croiser
-    elle-même deux endpoints pour afficher une liste utilisable.
+    Par défaut **sans** lecture Parquet (réponse < 100 ms pour le SBF 120).
+    ``include_bars=true`` ajoute le nombre de bougies en cache par TF — plus
+    lent sous Docker/Windows (centaines de fichiers montés). L'UI charge d'abord
+    la liste, puis peut re-fetch avec bars en arrière-plan.
     """
     from app.core.candle_store import get_store
     from app.core.universe import load_universe, universe_members
@@ -83,8 +84,20 @@ def get_universe(name: str):
         raise HTTPException(404, f"Univers inconnu : {name!r} — disponibles : "
                                  f"{_list_universe_files()}")
     members = universe_members(name)
-    # Stats par membre uniquement — `all_stats()` parcourt tout le cache
-    # Parquet (centaines de fichiers) et bloquait l'UI (spinner infini).
+    data = load_universe(name)
+
+    if not include_bars:
+        return {
+            "id": name,
+            "label": data.get("name") or name,
+            "venue": data.get("venue"),
+            "as_of": str(data.get("as_of") or ""),
+            "members": [{**m, "bars": {}} for m in members],
+            "bars_included": False,
+        }
+
+    # Un seul parcours disque + count_bars (métadonnées) uniquement sur les
+    # fichiers existants — évite 5×N appels inutiles.
     store = get_store()
     tfs = ("15m", "30m", "1h", "4h", "1d")
     enriched: List[Dict[str, Any]] = []
@@ -92,21 +105,23 @@ def get_universe(name: str):
         bars: Dict[str, int] = {}
         for tf in tfs:
             try:
-                st = store.stats(m["symbol"], tf)
-                n = int((st or {}).get("bars") or 0)
+                path = store._path(m["symbol"], tf)
+                if not path.exists():
+                    continue
+                n = int(store.count_bars(m["symbol"], tf) or 0)
                 if n > 0:
                     bars[tf] = n
             except Exception:
                 pass
         enriched.append({**m, "bars": bars})
 
-    data = load_universe(name)
     return {
         "id": name,
         "label": data.get("name") or name,
         "venue": data.get("venue"),
         "as_of": str(data.get("as_of") or ""),
         "members": enriched,
+        "bars_included": True,
     }
 
 

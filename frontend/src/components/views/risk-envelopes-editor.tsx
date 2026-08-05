@@ -1,10 +1,11 @@
 'use client';
 
 /**
- * S12 — enveloppes par venue (Capital) + faisabilité (Risque).
+ * Enveloppes par venue (Capital) + faisabilité (Risque).
  *
  * Les venues affichées = union de venues.defs (déclarées) et risk.envelopes.
- * Champs de risque grisés hors preset « Personnalisé ».
+ * Budgets de risque (symbol/venue) grisés hors preset « Personnalisé ».
+ * Exposition max / symbole toujours éditable (allocation multi-titres).
  */
 
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -35,26 +36,29 @@ function formatFeasibilityAt(ms: number | undefined): string {
   }
 }
 
-/** Champs S12 d'une enveloppe venue (capital + budgets de risque). */
+/** Champs d'une enveloppe venue (capital + allocation + budgets de risque). */
 const FIELDS: {
   key: keyof VenueEnvelopeConfig;
   label: string;
   hint: string;
   pct?: boolean;
+  /** Verrouillé hors profil Personnalisé (budgets de perte uniquement). */
   riskField?: boolean;
 }[] = [
   { key: 'capital', label: 'Capital', hint: 'enveloppe de la venue, dans sa devise' },
   {
     key: 'max_symbol_exposure_pct',
     label: 'Exposition max / symbole',
-    hint: '% du capital venue (notionnel max par symbole)',
+    // Toujours éditable : n symboles × exposition ≤ 100 % sinon alerte
+    // enveloppe_venue_depassee. Ex. 2 titres → 0,50 (50 %).
+    hint: '% du capital venue par symbole (n × ce % ≤ 100 %)',
     pct: true,
-    riskField: true,
+    riskField: false,
   },
   {
     key: 'symbol_risk_pct',
     label: 'Budget de risque / symbole',
-    hint: 'perte max sur un symbole — doit être ≥ risque/trade (profile)',
+    hint: 'perte max sur un symbole — doit être ≥ risque/trade (profil)',
     pct: true,
     riskField: true,
   },
@@ -221,11 +225,12 @@ export function VenueEnvelopesEditor() {
 
   const onSave = async () => {
     if (riskFieldsLocked) {
-      // Capital seul peut être dirty — ok
-      const onlyCapital = Object.values(draft).every((patch) =>
-        Object.keys(patch).every((k) => k === 'capital'),
+      // Capital + exposition max toujours OK ; budgets de risque → Personnalisé.
+      const allowedWhenLocked = new Set(['capital', 'max_symbol_exposure_pct']);
+      const onlyAlloc = Object.values(draft).every((patch) =>
+        Object.keys(patch).every((k) => allowedWhenLocked.has(k)),
       );
-      if (!onlyCapital) {
+      if (!onlyAlloc) {
         toast.error('Passez en profil « Personnalisé » pour éditer les budgets de risque');
         return;
       }
@@ -261,8 +266,9 @@ export function VenueEnvelopesEditor() {
       <CardContent className="space-y-6">
         <p className="text-[11px] text-muted">
           Liste alignée sur les <strong className="text-dim">venues déclarées</strong>
-          {' '}(<code className="font-mono">venues.defs</code>) et leurs enveloppes S12
-          (<code className="font-mono">risk.envelopes</code>). Les budgets de risque
+          {' '}(<code className="font-mono">venues.defs</code>) et leurs enveloppes
+          (<code className="font-mono">risk.envelopes</code>). Capital et exposition
+          max / symbole sont toujours éditables. Les budgets de risque (perte max)
           suivent le profil (Prudent / Équilibré / Agressif) sauf en mode Personnalisé.
         </p>
 
@@ -341,9 +347,9 @@ export function VenueEnvelopesEditor() {
         })}
 
         <p className="text-[11px] text-muted border-t border-border pt-3">
-          S12 : le budget symbole doit rester <strong className="text-dim">≥ risque par trade</strong>
-          {' '}(<code className="font-mono">risk.profile</code>), et le budget venue ≥ budget symbole.
-          Une édition qui rompt ces règles est refusée par l&apos;API.
+          Règles : n symboles × exposition max ≤ 100 % du capital venue ;
+          budget symbole ≥ risque par trade (<code className="font-mono">risk.profile</code>) ;
+          budget venue ≥ budget symbole. Une édition qui rompt ces règles est refusée par l&apos;API.
         </p>
       </CardContent>
     </Card>
