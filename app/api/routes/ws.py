@@ -32,6 +32,7 @@ Messages client → serveur (optionnel) :
 import asyncio
 import hmac
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional, Set
 
@@ -43,12 +44,25 @@ from app.core.events import event_hub
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+_LOCALHOST_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _is_local_ws_client(host: str) -> bool:
+    """True si la connexion est considérée locale (SEC-004).
+
+    ``testclient`` (hostname Starlette TestClient) n'est accepté que sous
+    pytest — jamais dans un process de production.
+    """
+    if host in _LOCALHOST_HOSTS:
+        return True
+    return host == "testclient" and bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# ── Auth WebSocket ───────────────────────────────────────────────────────────
+# ── Auth WebSocket ───────────────────────────────────────────────────
 def _check_ws_auth(websocket: WebSocket, api_key_query: Optional[str]) -> bool:
     """Vérifie l'auth pour une connexion WebSocket.
 
@@ -61,24 +75,21 @@ def _check_ws_auth(websocket: WebSocket, api_key_query: Optional[str]) -> bool:
     cfg = (state.cfg or {}).get("web", {})
     configured_key = cfg.get("api_key", "")
 
-    # IP du client
     client_host = websocket.client.host if websocket.client else ""
 
     if not configured_key:
-        # Pas de clé : localhost only
-        if client_host in ("127.0.0.1", "localhost", "::1", "testclient"):
+        if _is_local_ws_client(client_host):
             return True
         logger.warning(f"[WS] Connexion refusée depuis {client_host} (no API key)")
         return False
 
-    # Clé configurée : cookie HttpOnly en priorité, query param en fallback.
     token = websocket.cookies.get("api_key") or api_key_query or ""
     if not token or len(token) > 256:
         return False
     return hmac.compare_digest(token, configured_key)
 
 
-# ── Channels disponibles ─────────────────────────────────────────────────────
+# ── Channels disponibles ──────────────────────────────────────────────────
 CHANNELS = {"trades", "signals", "risk", "cycle", "ticker"}
 
 
@@ -97,7 +108,7 @@ def _event_channel(event_type: str) -> str:
     return ""
 
 
-# ── Endpoint WebSocket ───────────────────────────────────────────────────────
+# ── Endpoint WebSocket ───────────────────────────────────────────────────
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -196,7 +207,7 @@ async def websocket_endpoint(
         logger.info(f"[WS] client déconnecté (restant={event_hub.subscriber_count})")
 
 
-# ── Endpoint REST pour debug ─────────────────────────────────────────────────
+# ── Endpoint REST pour debug ───────────────────────────────────────────────
 @router.get("/api/ws/status")
 async def ws_status():
     """Status du hub WebSocket (debug, monitoring)."""
