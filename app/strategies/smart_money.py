@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 class Strategy(_AnalysisMixin, _PlansMixin, BaseStrategy):
     name = "smart_money"
 
-    timeframes: List[str] = ["2h", "4h", "1d"]
+    # Aligné sur trading.timeframes actifs (pas de 2h : non collecté / non activé).
+    # 15m/30m/1h supportés via configs strategies/smart_money.yaml (optimizer_results).
+    timeframes: List[str] = ["15m", "30m", "1h", "4h", "1d"]
     warmup_bars: int = 260
 
     param_space: Dict[str, List] = PARAM_SPACE

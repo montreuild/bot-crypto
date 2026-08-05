@@ -109,6 +109,12 @@ def init_app(config: dict, live_trader=None):
     # Initialise la table d'audit (crée la table si absente)
     from app.core.audit_log import _init_audit_db
     _init_audit_db(_engine)
+    # Job background : signaux SMC récents → data/smc_signals_recent.json
+    try:
+        from app.engine.smc_signals_scan import start_background
+        start_background(lambda: state.cfg, interval_s=30 * 60)
+    except Exception as e:
+        logger.warning(f"[API] smc_signals_scan non démarré : {e}")
 
 
 # ── Health check (sans auth) ───────────────────────────────────────────────

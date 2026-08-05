@@ -75,6 +75,8 @@ FIXED_PARAMS: Dict[str, Any] = {
     'amd_bonus': False,
     'amd_bars': 12,
     'amd_range_atr': 2.0,
+    # min_score bas par défaut : trade_plans (Smart Graph) reste riche ;
+    # le backtest applique le seuil via score_threshold / optimizer_results TF.
     'min_score': 0.0,
     'ema_filter_len': 200,
     'choch_exit': False,

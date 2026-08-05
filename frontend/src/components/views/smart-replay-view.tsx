@@ -13,7 +13,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn, formatUSD, formatPct, formatDateTime } from '@/lib/utils';
-import { useSMCReplay } from '@/hooks/use-api';
+import { useSMC, useSMCReplay } from '@/hooks/use-api';
+import {
+  TradePlansTable, RealizedTradesTable, type TradePlan,
+} from '@/components/cards/trade-plans-table';
+import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { toast } from 'sonner';
 import {
   Loader2, AlertCircle, Activity,
@@ -30,7 +35,6 @@ import {
   buildZonesFromSmc,
 } from '@/lib/smc-zones';
 
-const TIMEFRAMES = ['15m', '30m', '1h', '4h'] as const;
 const SPEEDS = [
   { label: '1x', ms: 1000 },
   { label: '2x', ms: 500 },
@@ -98,13 +102,17 @@ function entityAliveAt(entity: any, currentIndex: number): boolean {
 // ── Vue ─────────────────────────────────────────────────────────────────────
 
 export function SmartReplayView() {
+  const { defaultTf } = useTradingTimeframes('4h');
   const [symbol, setSymbol] = useState('BTC/USDC');
-  const [timeframe, setTimeframe] = useState<string>('4h');
+  const [timeframe, setTimeframe] = useState<string>(defaultTf || '4h');
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [speedIdx, setSpeedIdx] = useState<number>(1); // 2x default
+  const [selectedPlan, setSelectedPlan] = useState<TradePlan | null>(null);
 
   const { data, isLoading, isError, error } = useSMCReplay(symbol, timeframe, 800);
+  // Plans SMC (analytiques) — même source que Smart Graph
+  const { data: smcData } = useSMC(symbol, timeframe, 600);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -463,18 +471,7 @@ export function SmartReplayView() {
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">Timeframe</label>
-            <div className="flex gap-1">
-              {TIMEFRAMES.map((tf) => (
-                <Button
-                  key={tf}
-                  size="sm"
-                  variant={tf === timeframe ? 'primary' : 'default'}
-                  onClick={() => setTimeframe(tf)}
-                >
-                  {tf}
-                </Button>
-              ))}
-            </div>
+            <TimeframeButtons value={timeframe} onChange={setTimeframe} />
           </div>
           <div className="flex-1" />
           {currentPrice != null && (
@@ -704,53 +701,26 @@ export function SmartReplayView() {
         </Card>
       </div>
 
-      {/* Closed trades */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Trades fermés</CardTitle>
-          <Badge variant="default">{closedTrades.length}</Badge>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto max-h-80">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-card">
-                <tr className="text-left text-dim border-b border-border">
-                  <th className="p-2 font-medium">Side</th>
-                  <th className="p-2 font-medium text-right">Entry</th>
-                  <th className="p-2 font-medium text-right">Exit</th>
-                  <th className="p-2 font-medium text-right">PnL</th>
-                  <th className="p-2 font-medium text-right">PnL %</th>
-                  <th className="p-2 font-medium">Reason</th>
-                </tr>
-              </thead>
-              <tbody>
-                {closedTrades.length === 0 ? (
-                  <tr><td colSpan={6} className="p-4 text-center text-muted">Aucun trade fermé</td></tr>
-                ) : (
-                  closedTrades.map((t: any, i: number) => (
-                    <tr key={i} className="border-b border-border/30 hover:bg-card-hover">
-                      <td className="p-2">
-                        <span className={cn('font-semibold', t.side === 'long' ? 'text-emerald-400' : 'text-red-400')}>
-                          {t.side?.toUpperCase()}
-                        </span>
-                      </td>
-                      <td className="p-2 text-right font-mono">{formatUSD(Number(t.entry ?? t.entry_price ?? 0))}</td>
-                      <td className="p-2 text-right font-mono">{formatUSD(Number(t.exit ?? t.exit_price ?? 0))}</td>
-                      <td className={cn('p-2 text-right font-mono', (t.pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400')}>
-                        {(t.pnl ?? 0) >= 0 ? '+' : ''}{formatUSD(Number(t.pnl ?? 0))}
-                      </td>
-                      <td className={cn('p-2 text-right font-mono', (t.pnl_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400')}>
-                        {t.pnl_pct != null ? formatPct(Number(t.pnl_pct), 2, true) : '—'}
-                      </td>
-                      <td className="p-2 text-xs text-muted">{t.exit_reason || t.reason || '—'}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Aligné Smart Graph : recommandés (SMC) + réalisés (backtest replay) */}
+      <TradePlansTable
+        plans={smcData?.trade_plans || []}
+        selectedPlan={selectedPlan}
+        onSelectPlan={(p) => setSelectedPlan((prev) =>
+          prev && prev.entry === p.entry && prev.setup === p.setup ? null : p)}
+        title="Trades recommandés"
+      />
+      <RealizedTradesTable
+        trades={(data?.trades || closedTrades) as any}
+        strategy="smart_money"
+      />
+      <p className="text-[11px] text-dim">
+        <strong className="text-muted">Pourquoi N plans vs 1 trade ?</strong>{' '}
+        Les <em>recommandés</em> sont des setups SMC détectés (zones + score) —
+        pas des ordres exécutés. Les <em>réalisés</em> viennent du backtester
+        smart_money (filtres score/RR/HTF) : souvent beaucoup moins nombreux.
+        Sur 15m–1h et actions, l&apos;historique Yahoo est court (~88 bougies) :
+        le replay produit peu de trades.
+      </p>
     </div>
   );
 }

@@ -31,12 +31,13 @@ import {
 } from 'lucide-react';
 import type { OptimizeJob, OptimizeSpaces } from '@/types';
 import { CostModelCard } from '@/components/cards/cost-model-card';
+import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
+import { TimeframeButtons } from '@/components/ui/timeframe-select';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 const METHODS = ['grid', 'random', 'bayesian'] as const;
 const ALL_SYMBOLS = ['BTC/USDC', 'ETH/USDC', 'SOL/USDC', 'BNB/USDC', 'XRP/USDC'];
-const ALL_TFS = ['5m', '15m', '1h', '4h', '1d'];
 
 const STATUS_VARIANT: Record<string, 'success' | 'danger' | 'warning' | 'info' | 'default'> = {
   pending: 'warning',
@@ -329,6 +330,7 @@ export function OptimizerView() {
   const { data: spaces, isLoading: spacesLoading } = useOptimizeSpaces();
   const { data: resultsData } = useOptimizeResults();
   const startOptimize = useStartOptimize();
+  const { timeframes: activeTfs, defaultTf } = useTradingTimeframes('1h');
 
   // All known strategies from param space (fallback to defaults).
   // Mémoïsé : ce tableau alimente les deps d'un useEffect plus bas ; recréé à
@@ -337,7 +339,7 @@ export function OptimizerView() {
 
   // Form state
   const [selectedStrategies, setSelectedStrategies] = useState<string[]>([]);
-  const [selectedTfs, setSelectedTfs] = useState<string[]>(['1h']);
+  const [selectedTfs, setSelectedTfs] = useState<string[]>([]);
   const [selectedSymbols, setSelectedSymbols] = useState<string[]>(['BTC/USDC']);
   const [method, setMethod] = useState<(typeof METHODS)[number]>('bayesian');
   const [nTrials, setNTrials] = useState(60);
@@ -387,6 +389,13 @@ export function OptimizerView() {
       setSelectedStrategies(allStrategies.slice(0, 1));
     }
   }, [allStrategies, selectedStrategies.length]);
+
+  // TF actifs (config) par défaut
+  useEffect(() => {
+    if (activeTfs.length > 0 && selectedTfs.length === 0) {
+      setSelectedTfs(activeTfs.includes(defaultTf) ? [defaultTf] : [activeTfs[0]]);
+    }
+  }, [activeTfs, defaultTf, selectedTfs.length]);
 
   const toggle = (list: string[], value: string, setter: (v: string[]) => void) => {
     setter(list.includes(value) ? list.filter((x) => x !== value) : [...list, value]);
@@ -476,28 +485,14 @@ export function OptimizerView() {
             </div>
           </div>
 
-          {/* Timeframes */}
+          {/* Timeframes (multi) */}
           <div>
-            <div className="text-xs text-dim mb-2">Timeframes</div>
-            <div className="flex flex-wrap gap-2">
-              {ALL_TFS.map((tf) => {
-                const active = selectedTfs.includes(tf);
-                return (
-                  <button
-                    key={tf}
-                    onClick={() => toggle(selectedTfs, tf, setSelectedTfs)}
-                    className={cn(
-                      'px-3 py-1.5 rounded-lg text-xs font-mono border transition-all',
-                      active
-                        ? 'bg-purple-500/15 text-purple-400 border-purple-500/40'
-                        : 'bg-card-hover text-muted border-border hover:border-border-hi',
-                    )}
-                  >
-                    {tf}
-                  </button>
-                );
-              })}
-            </div>
+            <div className="text-xs text-dim mb-2">Timeframes (multi)</div>
+            <TimeframeButtons
+              multi
+              values={selectedTfs}
+              onChangeMulti={setSelectedTfs}
+            />
           </div>
 
           {/* Symbols */}

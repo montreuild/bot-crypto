@@ -18,6 +18,7 @@ import {
   Loader2, Database, AlertCircle, Pin, PinOff, ChevronDown, ChevronRight,
   Rocket, BarChart3, RefreshCw, ThumbsUp, ThumbsDown, Microscope,
 } from 'lucide-react';
+import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import type {
   ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
   ModelFeatureImportance, ModelRegimeAuc, ModelTrainMeta,
@@ -589,8 +590,6 @@ function JobResult({ job }: { job: MLJobStatus }) {
 // l'entraînement attend une STRATÉGIE (opus_omnibus_v11…). Recopier un nom de
 // recette dans un champ libre donnait « Stratégie inconnue » — et « 15min »
 // pour « 15m » un job qui échouait plus tard sur un cache prétendument vide.
-const TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d'];
-
 const SELECT_CLASS =
   'w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono';
 
@@ -606,14 +605,6 @@ function StrategySelect({ value, onChange }: { value: string; onChange: (v: stri
   return (
     <select aria-label="Stratégie" value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLASS}>
       {options.map((s) => <option key={s} value={s}>{s}</option>)}
-    </select>
-  );
-}
-
-function TimeframeSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <select aria-label="Timeframe" value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLASS}>
-      {TIMEFRAMES.map((t) => <option key={t} value={t}>{t}</option>)}
     </select>
   );
 }
@@ -677,7 +668,7 @@ function TrainForm() {
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">Timeframe</label>
-            <TimeframeSelect value={tf} onChange={setTf} />
+            <TimeframeButtons value={tf} onChange={setTf} />
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">
@@ -785,7 +776,7 @@ function SweepForm() {
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">Timeframe</label>
-            <TimeframeSelect value={tf} onChange={setTf} />
+            <TimeframeButtons value={tf} onChange={setTf} />
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">Fenêtres (barres, CSV)</label>

@@ -50,6 +50,16 @@ scanner:
     equity: 1000000
   top_n: 20
   symbols_cache_ttl: 300
+  # Top opportunités UI — lit le CACHE uniquement (pas de rafale Yahoo).
+  # min_vol en millions (crypto) : les actions passent via min_vol_equity.
+  opportunity_scan:
+    min_vol_24h_m: 2          # crypto ≥ 2 M$
+    min_vol_equity: 500000    # actions ≥ 500 k€ notional proxy
+    min_atr_pct: 0.3          # % (ATR/prix×100)
+    max_atr_pct: 25.0
+    top_n: 15
+    prefer_cache: true
+
 # Fournisseurs de données alternatifs (G2). Une venue les référence via
 # `data_provider`. Sans venue qui en déclare, ce bloc est ignoré et aucun
 # code de routage n'est chargé.
@@ -78,11 +88,6 @@ providers:
 #     sessions: ["09:00-17:30"]
 #     holidays: ["01-01", {easter: -2}, {easter: 1}, "05-01", "12-25", "12-26"]
 #     early_closes: {"12-24": "14:05", "12-31": "14:05"}
-  opportunity_scan:
-    min_vol_24h_m: 10
-    min_atr_pct: 1.0
-    max_atr_pct: 10.0
-    top_n: 15
 
 derivatives:
   enabled: true

@@ -25,9 +25,14 @@
 # frais 0.1 %/côté ; HTF aligné sur _HTF_MAP → 4h utilise le 1d) :
 #   4h : 2018→2026, 145 trades, WR 46.9 %, PnL +40.1 %, PF 1.523, Sharpe 8.2,
 #        DD −8.1 % (sous-périodes : PF 2.49 / 1.56 / 0.97).
-#   30m/1h/2h/1d : négatif avec les défauts → laissés à l'optimiseur
-#        (voir optimizer_results ci-dessous pour les meilleures configs/TF).
+#   15m/30m/1h/1d : edge faible avec les défauts → configs optimizer_results
+#        (meilleures configs TF). 2h retiré (TF non collecté / non activé).
 #   BREAKER_RETEST : −163 USDC / 220 trades sur 4h → use_breakers: false.
+#
+# Timeframes supportés (classe Strategy.timeframes) : 15m, 30m, 1h, 4h, 1d.
+# Alignement Smart Graph : trade_plans() et le backtest utilisent le même
+# moteur app/core/smc.py + smart_money_signals — seuls les seuils min_score /
+# min_rr / chop diffèrent par TF (ci-dessous).
 
 params:
   swing_len: 3            # pivots fractals : N barres de chaque côté
@@ -115,18 +120,7 @@ optimizer_results:
       vp_confluence: true
       require_inducement: true
       inducement_lookback: 12
-  2h:
-    run_date: '2026-07-04'
-    oos_score: -0.2299
-    # OOS : 104 trades, −115, PF 0.771 — NON tradable (0 config éligible sauf 3 IS-only).
-    params:
-      min_score: 0.75
-      min_rr: 2.0
-      sl_buffer_atr: 0.5
-      use_rejection_blocks: false
-      kz_bonus: true
-      amd_bonus: true
-      vp_confluence: true
+  # 2h retiré — non collecté / non activé dans trading.timeframes
   1d:
     run_date: '2026-07-04'
     oos_score: -0.0747
