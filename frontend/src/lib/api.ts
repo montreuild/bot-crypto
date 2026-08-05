@@ -360,7 +360,16 @@ export const api = {
     apiFetch<any>(`/scanner?timeframe=${timeframe}&limit=${limit}`, { timeoutMs: 0 }),
   // S8-F4-US2 — Top opportunités
   getOpportunities: (timeframe = '1h', limit = 10) =>
-    apiFetch<any>(`/scanner/opportunities?timeframe=${timeframe}&limit=${limit}`),
+    apiFetch<any>(
+      `/scanner/opportunities?timeframe=${timeframe}&limit=${limit}`,
+      { timeoutMs: 90_000 },
+    ),
+  /** Signaux SMC récents (&lt; 5 j) — job background data/smc_signals_recent.json */
+  getSmcSignalsRecent: (refresh = false) =>
+    apiFetch<any>(
+      `/scanner/smc_signals_recent?refresh=${refresh ? 'true' : 'false'}`,
+      { timeoutMs: refresh ? 180_000 : 15_000 },
+    ),
   // S8-F4-US3 — Setups V11/V12 markers
   getSetupSeries: (symbol: string, timeframe = '1h', limit = 500, strategy = 'v11') =>
     apiFetch<any>(`/scanner/setup_series?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}&strategy=${strategy}`),

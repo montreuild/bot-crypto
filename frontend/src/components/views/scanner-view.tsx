@@ -14,10 +14,13 @@ import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import {
-  Search, Loader2, TrendingUp, ArrowRight, RefreshCw, ArrowUpDown,
+  Search, Loader2, ArrowRight, RefreshCw, ArrowUpDown,
 } from 'lucide-react';
 import { PredictionsPanel } from '@/components/cards/predictions-panel';
+import { OpportunitiesWidget } from '@/components/cards/opportunities-widget';
 import { useSignals } from '@/hooks/use-api';
+import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { cn, formatUSD } from '@/lib/utils';
 import {
   createChart, ColorType, LineStyle, CrosshairMode,
@@ -54,6 +57,7 @@ function loadFilters() {
 
 export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerViewProps) {
   const saved = typeof window !== 'undefined' ? loadFilters() : null;
+  const { defaultTf } = useTradingTimeframes(initialTf || saved?.tf || '1h');
   const [tf, setTf] = useState(initialTf || saved?.tf || '1h');
   const [limit, setLimit] = useState(200);
   const [rows, setRows] = useState<ScreenRow[]>([]);
@@ -81,7 +85,7 @@ export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerView
 
   const signalsQuery = useSignals(scanned?.symbol ?? '', scanned?.tf ?? '', 300, !!scanned);
 
-  // Chart refs
+  // Chart refs (tous les hooks avant les effects)
   const priceRef = useRef<HTMLDivElement>(null);
   const volRef = useRef<HTMLDivElement>(null);
   const rsiRef = useRef<HTMLDivElement>(null);
@@ -90,6 +94,12 @@ export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerView
     price?: IChartApi; vol?: IChartApi; rsi?: IChartApi; macd?: IChartApi;
     candle?: ISeriesApi<'Candlestick'>;
   }>({});
+
+  useEffect(() => {
+    if (!initialTf && defaultTf) {
+      setTf((t: string) => (t === '1h' || !t ? defaultTf : t));
+    }
+  }, [defaultTf, initialTf]);
 
   const persistFilters = useCallback(() => {
     try {
@@ -186,17 +196,34 @@ export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerView
       borderUpColor: '#10b981', borderDownColor: '#ef4444',
       wickUpColor: '#10b981', wickDownColor: '#ef4444',
     });
-    const vol = createChart(volRef.current, { ...common, timeScale: { visible: false, borderColor: '#1f2937' } });
-    const rsi = createChart(rsiRef.current, { ...common, timeScale: { visible: false, borderColor: '#1f2937' } });
-    const macd = createChart(macdRef.current, { ...common, timeScale: { visible: false, borderColor: '#1f2937' } });
+    // timeScale visible=false mais plage TEMPORELLE partagée (pas logical :
+    // le RSI a moins de points → désync si on utilise logical range).
+    const subTs = { visible: false, borderColor: '#1f2937', timeVisible: true, secondsVisible: false };
+    const vol = createChart(volRef.current, { ...common, timeScale: subTs });
+    const rsi = createChart(rsiRef.current, { ...common, timeScale: subTs });
+    const macd = createChart(macdRef.current, { ...common, timeScale: subTs });
 
-    // Sync time scales
-    price.timeScale().subscribeVisibleLogicalRangeChange((r) => {
-      if (!r) return;
-      vol.timeScale().setVisibleLogicalRange(r);
-      rsi.timeScale().setVisibleLogicalRange(r);
-      macd.timeScale().setVisibleLogicalRange(r);
-    });
+    // Sync par plage de temps (évite RSI tronqué vs prix)
+    let syncing = false;
+    const syncFrom = (source: IChartApi) => {
+      if (syncing) return;
+      const range = source.timeScale().getVisibleRange();
+      if (!range) return;
+      syncing = true;
+      try {
+        for (const ch of [price, vol, rsi, macd]) {
+          if (ch !== source) {
+            try { ch.timeScale().setVisibleRange(range); } catch { /* hors domaine */ }
+          }
+        }
+      } finally {
+        syncing = false;
+      }
+    };
+    price.timeScale().subscribeVisibleTimeRangeChange(() => syncFrom(price));
+    vol.timeScale().subscribeVisibleTimeRangeChange(() => syncFrom(vol));
+    rsi.timeScale().subscribeVisibleTimeRangeChange(() => syncFrom(rsi));
+    macd.timeScale().subscribeVisibleTimeRangeChange(() => syncFrom(macd));
 
     chartsRef.current = { price, vol, rsi, macd, candle };
     return () => {
@@ -306,69 +333,65 @@ export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerView
             Multi-symboles · chart 4 panneaux · Fast Analyse
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={runScreen} disabled={loading}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            Scanner le marché
+        {onAnalyze && (
+          <Button variant="ghost" size="sm" onClick={() => onAnalyze(selected, tf)}>
+            Labo {selected}
+            <ArrowRight className="w-3.5 h-3.5 ml-1" />
           </Button>
-          {onAnalyze && (
-            <Button variant="ghost" size="sm" onClick={() => onAnalyze(selected, tf)}>
-              Labo {selected}
-              <ArrowRight className="w-3.5 h-3.5 ml-1" />
-            </Button>
-          )}
-        </div>
+        )}
       </div>
 
-      {/* Filtres sticky */}
+      {/* Formulaire TF + filtres + scan — entre titre et tableau Marché */}
       <Card>
-        <CardContent className="flex flex-wrap items-end gap-3 py-3">
-          <div>
-            <label className="text-[10px] text-dim block mb-1">TF</label>
-            <select aria-label="Timeframe" value={tf} onChange={(e) => setTf(e.target.value)}
-              className="px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono">
-              {['15m', '30m', '1h', '4h', '1d'].map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-[10px] text-dim block mb-1">Régime</label>
-            <select aria-label="Régime" value={fRegime} onChange={(e) => setFRegime(e.target.value)}
-              className="px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs">
-              <option value="">Tous</option>
-              <option value="trend">Trend</option>
-              <option value="range">Range</option>
-              <option value="volatile">Volatile</option>
-            </select>
-          </div>
-          <div>
-            <label className="text-[10px] text-dim block mb-1">ADX ≥</label>
-            <input aria-label="ADX min" type="number" value={fAdxMin} onChange={(e) => setFAdxMin(Number(e.target.value))}
-              className="w-16 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
-          </div>
-          <div>
-            <label className="text-[10px] text-dim block mb-1">ATR% min–max</label>
-            <div className="flex gap-1">
-              <input aria-label="ATR min" type="number" value={fAtrMin} onChange={(e) => setFAtrMin(Number(e.target.value))}
-                className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
-              <input aria-label="ATR max" type="number" value={fAtrMax} onChange={(e) => setFAtrMax(Number(e.target.value))}
-                className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
+        <CardContent className="flex flex-col gap-3 py-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="text-[10px] text-dim block mb-1">TF</label>
+              <TimeframeButtons value={tf} onChange={setTf} size="sm" />
             </div>
+            <div>
+              <label className="text-[10px] text-dim block mb-1">Régime</label>
+              <select aria-label="Régime" value={fRegime} onChange={(e) => setFRegime(e.target.value)}
+                className="px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs">
+                <option value="">Tous</option>
+                <option value="trend">Trend</option>
+                <option value="range">Range</option>
+                <option value="volatile">Volatile</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] text-dim block mb-1">ADX ≥</label>
+              <input aria-label="ADX min" type="number" value={fAdxMin} onChange={(e) => setFAdxMin(Number(e.target.value))}
+                className="w-16 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
+            </div>
+            <div>
+              <label className="text-[10px] text-dim block mb-1">ATR% min–max</label>
+              <div className="flex gap-1">
+                <input aria-label="ATR min" type="number" value={fAtrMin} onChange={(e) => setFAtrMin(Number(e.target.value))}
+                  className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
+                <input aria-label="ATR max" type="number" value={fAtrMax} onChange={(e) => setFAtrMax(Number(e.target.value))}
+                  className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] text-dim block mb-1">RSI lo–hi</label>
+              <div className="flex gap-1">
+                <input aria-label="RSI lo" type="number" value={fRsiLo} onChange={(e) => setFRsiLo(Number(e.target.value))}
+                  className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
+                <input aria-label="RSI hi" type="number" value={fRsiHi} onChange={(e) => setFRsiHi(Number(e.target.value))}
+                  className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
+              </div>
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => {
+              setFRegime(''); setFAdxMin(0); setFAtrMin(0); setFAtrMax(100); setFRsiLo(0); setFRsiHi(100);
+            }}>✕ Reset</Button>
           </div>
           <div>
-            <label className="text-[10px] text-dim block mb-1">RSI lo–hi</label>
-            <div className="flex gap-1">
-              <input aria-label="RSI lo" type="number" value={fRsiLo} onChange={(e) => setFRsiLo(Number(e.target.value))}
-                className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
-              <input aria-label="RSI hi" type="number" value={fRsiHi} onChange={(e) => setFRsiHi(Number(e.target.value))}
-                className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
-            </div>
+            <Button variant="outline" size="sm" onClick={runScreen} disabled={loading}>
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              Scanner le marché
+            </Button>
           </div>
-          <Button size="sm" variant="ghost" onClick={() => {
-            setFRegime(''); setFAdxMin(0); setFAtrMin(0); setFAtrMax(100); setFRsiLo(0); setFRsiHi(100);
-          }}>✕ Reset</Button>
-          <span className="text-[10px] text-dim ml-auto">
-            {sorted.length}/{rows.length} symboles
-          </span>
         </CardContent>
       </Card>
 
@@ -376,7 +399,15 @@ export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerView
         {/* Table multi-symboles */}
         <Card className="xl:col-span-2">
           <CardHeader>
-            <CardTitle className="text-sm">Marché</CardTitle>
+            <CardTitle className="text-sm">
+              Marché
+              {rows.length > 0 && (
+                <span className="text-dim font-normal ml-2 text-xs">
+                  {sorted.length} affiché{sorted.length > 1 ? 's' : ''}
+                  {sorted.length !== rows.length ? ` / ${rows.length}` : ''}
+                </span>
+              )}
+            </CardTitle>
             {loading && <Loader2 className="w-4 h-4 animate-spin text-primary-400" />}
           </CardHeader>
           <CardContent className="p-0">
@@ -475,38 +506,104 @@ export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerView
         </Card>
       </div>
 
-      {/* Fast Analyse result cards */}
-      {faResult && !faResult.error && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <Card>
-            <CardHeader><CardTitle className="text-sm">Tendance</CardTitle></CardHeader>
-            <CardContent className="flex items-center gap-3">
-              <TrendingUp className="w-7 h-7 text-emerald-400" />
-              <div>
-                <div className="font-semibold capitalize">{faResult.trend || '—'}</div>
-                <div className="text-xs text-muted">{faResult.trend_strength?.toFixed?.(2) ?? '—'} strength</div>
+      {/* Fast Analyse — grille d'indicateurs IS/OOS (contrat réel de l'API) */}
+      {faResult && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
+              <Search className="w-4 h-4 text-primary-400" />
+              Fast Analyse · {selected} · {tf}
+              {faResult.best && (
+                <Badge variant="success" className="text-[10px]">
+                  Meilleur OOS : {faResult.best}
+                </Badge>
+              )}
+              {faResult.bars != null && (
+                <span className="text-[10px] text-dim font-normal ml-auto">
+                  {faResult.bars} barres · OOS {faResult.oos_bars ?? '—'}
+                </span>
+              )}
+            </CardTitle>
+            <p className="text-[11px] text-muted font-normal">
+              Chaque ligne = signal d&apos;indicateur testé en backtest simple (maker/taker, full vs OOS).
+            </p>
+          </CardHeader>
+          <CardContent className="p-0">
+            {faResult.error ? (
+              <p className="text-xs text-red-400 p-4">{faResult.error}</p>
+            ) : !Array.isArray(faResult.rows) || faResult.rows.length === 0 ? (
+              <p className="text-xs text-muted p-4 text-center">
+                Aucun résultat (historique &lt; 260 barres ou erreur de calcul)
+              </p>
+            ) : (
+              <div className="overflow-x-auto max-h-80">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-card z-10">
+                    <tr className="text-left text-dim border-b border-border">
+                      <th className="p-2 font-medium">Signal</th>
+                      <th className="p-2 font-medium">Famille</th>
+                      <th className="p-2 font-medium text-right">OOS n</th>
+                      <th className="p-2 font-medium text-right">OOS PnL</th>
+                      <th className="p-2 font-medium text-right">OOS PF</th>
+                      <th className="p-2 font-medium text-right">OOS WR</th>
+                      <th className="p-2 font-medium text-right">Full PnL</th>
+                      <th className="p-2 font-medium">Edge</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {faResult.rows.slice(0, 24).map((row: any, i: number) => {
+                      const oos = row.maker?.oos || {};
+                      const full = row.maker?.full || {};
+                      const pnl = Number(oos.pnl ?? 0);
+                      const isBest = faResult.best && row.signal === faResult.best;
+                      return (
+                        <tr
+                          key={`${row.signal}-${i}`}
+                          className={cn(
+                            'border-b border-border/30',
+                            isBest && 'bg-emerald-500/10',
+                          )}
+                        >
+                          <td className="p-2 font-mono max-w-[14rem] truncate" title={row.signal}>
+                            {row.signal}
+                          </td>
+                          <td className="p-2">
+                            <Badge variant="muted" className="text-[9px]">{row.kind || '—'}</Badge>
+                          </td>
+                          <td className="p-2 text-right font-mono">{oos.n ?? '—'}</td>
+                          <td className={cn(
+                            'p-2 text-right font-mono font-semibold',
+                            pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-red-400' : 'text-muted',
+                          )}>
+                            {Number.isFinite(pnl) ? pnl.toFixed(1) : '—'}
+                          </td>
+                          <td className="p-2 text-right font-mono">
+                            {oos.pf != null ? Number(oos.pf).toFixed(2) : '—'}
+                          </td>
+                          <td className="p-2 text-right font-mono">
+                            {oos.wr != null ? `${(Number(oos.wr) * 100).toFixed(0)}%` : '—'}
+                          </td>
+                          <td className="p-2 text-right font-mono text-dim">
+                            {full.pnl != null ? Number(full.pnl).toFixed(1) : '—'}
+                          </td>
+                          <td className="p-2 text-dim text-[10px]">{row.edge || (isBest ? '★' : '—')}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader><CardTitle className="text-sm">ATR</CardTitle></CardHeader>
-            <CardContent>
-              <div className="font-mono text-xl">{faResult.atr?.toFixed?.(2) ?? '—'}</div>
-              <div className="text-xs text-muted">{faResult.atr_pct?.toFixed?.(2) ?? '—'}% du prix</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader><CardTitle className="text-sm">Volume</CardTitle></CardHeader>
-            <CardContent>
-              <div className="font-mono text-xl">{(faResult.volume || 0).toLocaleString()}</div>
-            </CardContent>
-          </Card>
-        </div>
+            )}
+          </CardContent>
+        </Card>
       )}
 
-      {scanned && signalsQuery.data?.signals?.length > 0 && (
+      {/* Top opportunités + signaux SMC */}
+      <OpportunitiesWidget timeframe={tf} limit={12} />
+
+      {scanned && (signalsQuery.data?.signals?.length > 0 || signalsQuery.isLoading) && (
         <PredictionsPanel
-          signals={signalsQuery.data.signals}
+          signals={signalsQuery.data?.signals || []}
           symbol={scanned.symbol}
           timeframe={scanned.tf}
         />

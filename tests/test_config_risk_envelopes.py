@@ -140,7 +140,8 @@ class TestShippedConfig:
         cfg = load_config("config.yaml")
         assert "margin-isolated" in cfg["risk"]["envelopes"]
         assert "euronext-paper" in cfg["risk"]["envelopes"]
-        assert cfg["risk"]["envelopes"]["margin-isolated"]["max_symbol_exposure_pct"] == 1.0
+        # risk.yaml livré : 50 % max d'exposition par symbole (margin-isolated)
+        assert cfg["risk"]["envelopes"]["margin-isolated"]["max_symbol_exposure_pct"] == 0.5
         assert "capital" not in cfg["trading"]
         assert "risk_per_trade" not in cfg["trading"]
 

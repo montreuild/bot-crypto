@@ -228,48 +228,103 @@ class MarketScanner:
         return results
 
     def opportunity_scan(self, timeframe: str = "1h") -> List[Dict]:
-        """
-        Scanne les opportunités selon score combiné vol + ATR%.
-        Retourne les meilleures paires triées par score décroissant.
-        """
-        ocfg     = self.scfg.get("opportunity_scan", {})
-        min_vol  = float(ocfg.get("min_vol_24h_m", 10)) * 1e6
-        min_atr  = float(ocfg.get("min_atr_pct", 1.0))
-        max_atr  = float(ocfg.get("max_atr_pct", 10.0))
-        top_n    = int(ocfg.get("top_n", 15))
+        """Opportunités par score vol + ATR% (UI « Top opportunités »).
 
-        raw = []
-        for symbol in self.get_symbols():
-            df = self.fetch_ohlcv(symbol, timeframe, limit=200)
-            if df is None:
-                continue
+        Par défaut **cache-only** (``prefer_cache``) : un scan live de tout
+        le SBF 120 + crypto timeout l'UI (~120 s) et vide le widget.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        ocfg = self.scfg.get("opportunity_scan") or {}
+        min_vol_crypto = float(ocfg.get("min_vol_24h_m", 2)) * 1e6
+        min_vol_equity = float(ocfg.get("min_vol_equity", 500_000))
+        min_atr = float(ocfg.get("min_atr_pct", 0.3))
+        max_atr = float(ocfg.get("max_atr_pct", 25.0))
+        top_n = int(ocfg.get("top_n", 15))
+        prefer_cache = bool(ocfg.get("prefer_cache", True))
+
+        symbols = self.get_symbols()
+        max_workers = min(len(symbols) or 1, int(self.scfg.get("scan_workers", 8)))
+
+        def _one(symbol: str) -> Optional[Dict]:
             try:
+                if prefer_cache:
+                    from app.core.candle_store import get_store
+                    df = get_store().load_cached(symbol, timeframe)
+                    if df is not None and len(df) > 200:
+                        df = df.tail(200)
+                    # load_cached renvoie l'OHLCV brut (sans _pre_*) —
+                    # compute_indicators lit ces colonnes → pré-calcul obligatoire.
+                    if df is not None and len(df) >= 60:
+                        df = precompute_df(df)
+                else:
+                    df = self.fetch_ohlcv(symbol, timeframe, limit=200)
+                if df is None or len(df) < 60:
+                    return None
                 indicators = self.compute_indicators(df)
-                vol_24h    = _estimate_volume_24h(df, timeframe)
-                atr_pct    = indicators.get("atr_pct", 0)
+                if not indicators:
+                    return None
+                vol_24h = _estimate_volume_24h(df, timeframe)
+                atr_pct = float(indicators.get("atr_pct", 0) or 0)
+                is_equity = (
+                    "." in symbol
+                    or symbol.endswith(".PA")
+                    or "/" not in symbol
+                )
+                min_vol = min_vol_equity if is_equity else min_vol_crypto
                 if vol_24h < min_vol:
-                    continue
+                    return None
                 if not (min_atr <= atr_pct <= max_atr):
-                    continue
-                raw.append({"symbol": symbol, "indicators": indicators, "volume_24h": vol_24h})
+                    return None
+                # Date « signal » = dernière bougie du cache (as-of de l'opportunité)
+                signal_time = None
+                try:
+                    if "time" in df.columns and len(df) > 0:
+                        t = df["time"][-1]
+                        if hasattr(t, "timestamp"):
+                            signal_time = int(t.timestamp())
+                        else:
+                            signal_time = int(t)
+                except Exception:
+                    signal_time = None
+                return {
+                    "symbol": symbol,
+                    "indicators": indicators,
+                    "volume_24h": vol_24h,
+                    "atr_pct": atr_pct,
+                    "close": indicators.get("close"),
+                    "signal_time": signal_time,
+                    "as_of": signal_time,
+                    "kind": "vol_atr",
+                    "kind_label": "Vol + ATR%",
+                }
             except Exception as e:
                 logger.debug(f"[OpScan] {symbol} : {e}")
+                return None
+
+        raw: List[Dict] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futs = {pool.submit(_one, s): s for s in symbols}
+            for f in as_completed(futs):
+                r = f.result()
+                if r is not None:
+                    raw.append(r)
 
         if not raw:
             return []
 
-        # Rang normalisé : 40% volume + 60% ATR%
         vols = [r["volume_24h"] for r in raw]
-        atrs = [r["indicators"].get("atr_pct", 0) for r in raw]
+        atrs = [r["atr_pct"] for r in raw]
         max_vol = max(vols) or 1
         max_atr_v = max(atrs) or 1
 
         for r in raw:
             vol_rank = r["volume_24h"] / max_vol
-            atr_rank = r["indicators"].get("atr_pct", 0) / max_atr_v
-            r["score"] = round(0.40 * vol_rank + 0.60 * atr_rank, 4)
+            atr_rank = r["atr_pct"] / max_atr_v
+            r["score"] = round(100 * (0.40 * vol_rank + 0.60 * atr_rank), 1)
+            r["combined_score"] = r["score"]
             adx = r["indicators"].get("adx", 0)
-            ap  = r["indicators"].get("atr_pct", 0)
+            ap = r["atr_pct"]
             r["regime_label"], r["strategies"] = recommend_strategy(adx, ap)
 
         raw.sort(key=lambda x: x["score"], reverse=True)

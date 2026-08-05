@@ -22,17 +22,70 @@ import {
   LineChart, Line, ResponsiveContainer, XAxis, YAxis,
   CartesianGrid, Tooltip, ReferenceLine,
 } from 'recharts';
+import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import type { TimeSeries } from '@/types';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 const SYMBOLS = ['BTC/USDC', 'ETH/USDC', 'SOL/USDC', 'BNB/USDC', 'XRP/USDC'];
-const PERIODS = ['15m', '1h', '4h', '1d'];
+
+/** Profondeur d'affichage (filtre client sur les timestamps). */
+const DEPTH_OPTIONS: { id: string; label: string; days: number | null }[] = [
+  { id: '6m', label: '6 mois', days: 182 },
+  { id: '1y', label: '1 an', days: 365 },
+  { id: '2y', label: '2 ans', days: 730 },
+  { id: 'all', label: 'Tout', days: null },
+];
+
+function filterSeriesByDepth(
+  series: TimeSeries | undefined,
+  depthDays: number | null,
+): TimeSeries | undefined {
+  if (!series?.time?.length || depthDays == null) return series;
+  const cutoff = Math.floor(Date.now() / 1000) - depthDays * 86400;
+  const times = series.time as number[];
+  const values = series.value as (number | null)[];
+  const idx: number[] = [];
+  for (let i = 0; i < times.length; i++) {
+    if (Number(times[i]) >= cutoff) idx.push(i);
+  }
+  if (idx.length === times.length) return series;
+  return {
+    ...series,
+    time: idx.map((i) => times[i]),
+    value: idx.map((i) => values[i]),
+    count: idx.length,
+  };
+}
+
+function filterPriceByDepth(
+  price: { time?: number[]; close?: number[] } | null,
+  depthDays: number | null,
+) {
+  if (!price?.time?.length || depthDays == null) return price;
+  const cutoff = Math.floor(Date.now() / 1000) - depthDays * 86400;
+  const times = price.time;
+  const close = price.close || [];
+  const nt: number[] = [];
+  const nc: number[] = [];
+  for (let i = 0; i < times.length; i++) {
+    if (Number(times[i]) >= cutoff) {
+      nt.push(times[i]);
+      nc.push(close[i]);
+    }
+  }
+  return { time: nt, close: nc };
+}
 
 function timeToLabel(unixSec: number): string {
   const d = new Date(unixSec * 1000);
   if (isNaN(d.getTime())) return '—';
-  return d.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  // jj/mm/aa (demande UI)
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yy = String(d.getFullYear()).slice(-2);
+  return `${dd}/${mm}/${yy}`;
 }
 
 function downsample(times: number[], values: (number | null)[], max = 400) {
@@ -112,8 +165,10 @@ function MetricChart({
               <LineChart data={data}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
                 <XAxis dataKey="time" stroke="#6b7280" fontSize={9} minTickGap={40} />
+                {/* Métrique à gauche ; prix OHLCV à droite (quand superposé) */}
                 <YAxis
                   yAxisId="metric"
+                  orientation="left"
                   stroke="#6b7280"
                   fontSize={9}
                   domain={['auto', 'auto']}
@@ -122,8 +177,8 @@ function MetricChart({
                 {showPrice && (
                   <YAxis
                     yAxisId="price"
-                    orientation="left"
-                    stroke="rgba(221,230,245,.45)"
+                    orientation="right"
+                    stroke="rgba(56,189,248,.85)"
                     fontSize={9}
                     domain={['auto', 'auto']}
                     tickFormatter={(v) => `$${Number(v).toFixed(0)}`}
@@ -221,16 +276,23 @@ function StatusTable({ status }: { status: any }) {
 // ── Vue ─────────────────────────────────────────────────────────────────────
 
 export function DerivativesView() {
+  const { defaultTf } = useTradingTimeframes('1h');
   const [symbol, setSymbol] = useState('BTC/USDC');
-  const [period, setPeriod] = useState('1h');
+  const [period, setPeriod] = useState(defaultTf);
+  const [depth, setDepth] = useState('1y');
   const [refresh, setRefresh] = useState(false);
   const [showPrice, setShowPrice] = useState(false);
 
   const { data, isLoading, isError, isFetching, refetch } = useDerivativesData(symbol, period, refresh);
   const { data: statusData, isLoading: statusLoading } = useDerivativesStatus(symbol);
 
-  const metrics = data?.metrics || {};
-  const priceData = data?.price || null;
+  const depthDays = DEPTH_OPTIONS.find((d) => d.id === depth)?.days ?? null;
+  const rawMetrics = data?.metrics || {};
+  const metrics: Record<string, TimeSeries | undefined> = {};
+  for (const [k, v] of Object.entries(rawMetrics)) {
+    metrics[k] = filterSeriesByDepth(v as TimeSeries, depthDays);
+  }
+  const priceData = filterPriceByDepth(data?.price || null, depthDays);
   const isEnabled = (statusData as any)?.enabled ?? (data as any)?.enabled ?? true;
 
   const handleForceRefresh = async () => {
@@ -274,15 +336,29 @@ export function DerivativesView() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-dim block mb-1.5">Période</label>
-            <select
-              aria-label="Période"
-              value={period}
-              onChange={(e) => setPeriod(e.target.value)}
-              className="px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
-            >
-              {PERIODS.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
+            <label className="text-xs text-dim block mb-1.5">Période / TF</label>
+            <TimeframeButtons value={period} onChange={setPeriod} size="sm" />
+          </div>
+          <div>
+            <label className="text-xs text-dim block mb-1.5">Profondeur</label>
+            <div className="flex flex-wrap gap-1" role="radiogroup" aria-label="Profondeur d'affichage">
+              {DEPTH_OPTIONS.map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={depth === d.id}
+                  onClick={() => setDepth(d.id)}
+                  className={
+                    depth === d.id
+                      ? 'px-2.5 py-1 rounded-md text-xs border bg-primary-500/15 text-primary-400 border-primary-500/40'
+                      : 'px-2.5 py-1 rounded-md text-xs border bg-card-hover text-muted border-border hover:border-border-hi'
+                  }
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
           </div>
           <label className="flex items-center gap-2 text-sm cursor-pointer h-10">
             <input

@@ -101,6 +101,35 @@ def scanner_opportunities(timeframe: str = None, limit: int = 200):
         raise HTTPException(500, f"Erreur interne ({err_id})")
 
 
+@router.get("/api/scanner/smc_signals_recent", dependencies=[Depends(verify_api_key)])
+def scanner_smc_signals_recent(refresh: bool = False):
+    """Signaux SMC < 5 j (job background → data/smc_signals_recent.json).
+
+    ``refresh=true`` relance un scan synchrone (peut prendre plusieurs minutes).
+    """
+    from app.engine import smc_signals_scan as _smc_scan
+    if not state.cfg:
+        raise HTTPException(503, "Config non chargée")
+    try:
+        if refresh:
+            payload = _smc_scan.scan_once(state.cfg)
+        else:
+            payload = _smc_scan.load_recent()
+            if not payload.get("signals"):
+                # Premier appel : lancer un scan léger en arrière-plan
+                threading = __import__("threading")
+                threading.Thread(
+                    target=lambda: _smc_scan.scan_once(state.cfg),
+                    name="smc-signals-on-demand",
+                    daemon=True,
+                ).start()
+        return payload
+    except Exception as e:
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} smc_signals_recent : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
+
+
 
 @router.get("/api/scanner/chart", dependencies=[Depends(verify_api_key)])
 def scanner_chart(symbol: str = DEFAULT_CONFIG_SYMBOL, timeframe: str = "1h", limit: int = 300):

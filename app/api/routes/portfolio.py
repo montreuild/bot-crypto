@@ -12,7 +12,8 @@ from app.api import state
 from app.api.helpers import verify_api_key
 from app.core.bot_identity import parse_slot_key
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.core.risk_envelope import base_drift, trade_risk_pct as _trade_risk_pct
+from app.core.risk_envelope import base_drift
+from app.core.risk_envelope import trade_risk_pct as _trade_risk_pct
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

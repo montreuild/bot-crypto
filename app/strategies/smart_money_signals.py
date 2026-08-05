@@ -438,9 +438,13 @@ def _check_ob_retest(self, ctx: _SignalCtx) -> List[dict]:
     # SMC-13 — Mitigation Blocks : zones dont l'impulsion n'a pas cassé la
     # structure (subtype "mitigation") — exclues ou pénalisées si demandé.
     mit_mode = str(p.get("mitigation_mode", "off"))
-    zone_sources = [("OB_RETEST", res["_all_obs"])]
+    zone_sources = []
+    if bool(p.get("use_ob_retest", True)):
+        zone_sources.append(("OB_RETEST", res["_all_obs"]))
     if bool(p.get("use_rejection_blocks", False)):
         zone_sources.append(("REJECTION_RETEST", res["_all_rejections"]))
+    if not zone_sources:
+        return out
     for setup_name, zone_list in zone_sources:
         for ob in zone_list:
             if ob["touched_at"] != i or i - ob["created_at"] > ctx.max_ob_age:
@@ -528,7 +532,9 @@ def _check_breaker_retest(self, ctx: _SignalCtx) -> List[dict]:
     """Setup C : Retest de breaker (OB invalidé accompagnant un CHoCH)."""
     p, res, i = ctx.p, ctx.res, ctx.i
     out: List[dict] = []
-    if not bool(p.get("use_breakers", True)):
+    # Défaut aligné FIXED_PARAMS (false) — l'ancien défaut True réactivait
+    # le setup même hors YAML.
+    if not bool(p.get("use_breakers", False)):
         return out
     for brk in res["_all_breakers"]:
         if brk["touched_at"] != i or i - brk["created_at"] > ctx.max_ob_age:
@@ -666,6 +672,10 @@ def _check_bpr_reversal(self, ctx: _SignalCtx) -> List[dict]:
 # candidates (un même setup peut produire plusieurs candidates à la même
 # barre : ex. sweep sell-side ET buy_side, ou PDL + PWL). L'orchestrateur
 # ``_signal_at`` retient la candidate au meilleur score après filtrage SMT.
+#
+# Activation par param (FIXED_PARAMS / optimizer_results) — le moteur SMC
+# produit toujours les structures ; seuls les setups cochés génèrent des
+# ordres. trade_plans / Smart Graph ne sont pas affectés.
 _SETUP_CHECKERS: Dict[str, Callable[..., List[dict]]] = {
     "SWEEP_REVERSAL":  _check_sweep_reversal,
     "CALENDAR_SWEEP":  _check_calendar_sweep,
@@ -673,6 +683,32 @@ _SETUP_CHECKERS: Dict[str, Callable[..., List[dict]]] = {
     "BREAKER_RETEST":  _check_breaker_retest,
     "BPR_REVERSAL":    _check_bpr_reversal,
 }
+
+# Flag param → setup(s). Calendar est un mode de use_calendar_liquidity.
+_SETUP_ENABLE_FLAGS: Dict[str, str] = {
+    "SWEEP_REVERSAL": "use_sweep_reversal",
+    "OB_RETEST": "use_ob_retest",
+    "BREAKER_RETEST": "use_breakers",
+    "BPR_REVERSAL": "use_bpr",
+    # CALENDAR_SWEEP : géré dans le checker via use_calendar_liquidity
+}
+
+
+def _setup_enabled(name: str, p: Dict[str, Any]) -> bool:
+    """True si le setup est autorisé pour la stratégie (défaut = on pour le cœur)."""
+    if name == "CALENDAR_SWEEP":
+        mode = p.get("use_calendar_liquidity", False)
+        return mode in (True, "sweeps")
+    if name == "OB_RETEST":
+        # OB et rejection partagent le checker ; un des deux suffit.
+        return (bool(p.get("use_ob_retest", True))
+                or bool(p.get("use_rejection_blocks", False)))
+    flag = _SETUP_ENABLE_FLAGS.get(name)
+    if flag is None:
+        return True
+    # Cœur historique on par défaut si clé absente ; breakers/bpr off.
+    default = flag in ("use_sweep_reversal", "use_ob_retest")
+    return bool(p.get(flag, default))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -741,7 +777,9 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     if ctx is None:
         return None
     candidates: List[dict] = []
-    for checker in _SETUP_CHECKERS.values():
+    for name, checker in _SETUP_CHECKERS.items():
+        if not _setup_enabled(name, p):
+            continue
         candidates.extend(checker(self, ctx))
     if not candidates:
         return None

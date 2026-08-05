@@ -548,7 +548,8 @@ export function useMLSweepStatus(jobId: string | null) {
 export function useDerivativesData(symbol = 'BTC/USDC', period = '1h', refresh = false) {
   return useQuery({
     queryKey: ['derivatives', symbol, period, refresh],
-    queryFn: () => api.getDerivativesData(symbol, period, 1000, refresh),
+    // limit élevé pour permettre le filtre profondeur 6m/1a/2a/Tout côté UI
+    queryFn: () => api.getDerivativesData(symbol, period, 5000, refresh),
     refetchInterval: 60000,
   });
 }

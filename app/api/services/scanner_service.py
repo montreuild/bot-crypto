@@ -558,16 +558,74 @@ def build_smc_replay_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
     eng = _Engine()
     eng.register(_SMCStrategy(), silent=True)
     bt_res = _Backtester(eng, cfg).run(df, symbol, timeframe=tf)
-    trades = [{
-        "entry_bar": t["bar"], "exit_bar": t.get("exit_bar"),
-        "side": t["side"], "setup": t.get("setup"),
-        "entry": t["entry"], "stop": t["stop"],
-        "tp": t.get("take_profit"),
-        "exit": t.get("exit"), "exit_reason": t.get("exit_reason"),
-        "pnl": round(t.get("pnl") or 0.0, 4),
-        "pnl_pct": t.get("pnl_pct"),
-        "score": t.get("score"), "reason": t.get("reason", ""),
-    } for t in bt_res.trades]
+    def _trade_row(t: dict) -> dict:
+        entry = t.get("entry")
+        stop = t.get("stop")
+        tp = t.get("take_profit")
+        side = t.get("side")
+        ind = t.get("indicators") or {}
+        # Gain espéré / RR depuis le plan (indicateurs signal) ou calcul entry/SL/TP
+        gain_pct = ind.get("gain_pct")
+        rr = ind.get("rr")
+        if gain_pct is None and entry and tp and entry > 0:
+            try:
+                gain_pct = abs(float(tp) - float(entry)) / float(entry) * 100.0
+            except (TypeError, ValueError, ZeroDivisionError):
+                gain_pct = None
+        if rr is None and entry and stop and tp:
+            try:
+                risk = abs(float(entry) - float(stop))
+                reward = abs(float(tp) - float(entry))
+                rr = (reward / risk) if risk > 0 else None
+            except (TypeError, ValueError, ZeroDivisionError):
+                rr = None
+        bar = t.get("bar")
+        # bar = index d'entrée côté backtester (souvent i+1) → clamp sur times
+        signal_time = None
+        if bar is not None and times:
+            try:
+                bi = int(bar)
+                # position["bar"] = i+1 à l'ouverture → time de la bougie d'entrée
+                idx = bi - 1 if bi >= 1 else bi
+                idx = max(0, min(idx, len(times) - 1))
+                signal_time = int(times[idx])
+            except (TypeError, ValueError, IndexError):
+                signal_time = None
+        if signal_time is None and t.get("entry_time") is not None:
+            # repli : ISO / string horodatée
+            et = t.get("entry_time")
+            try:
+                if hasattr(et, "timestamp"):
+                    signal_time = int(et.timestamp())
+                else:
+                    from datetime import datetime
+                    s = str(et).replace("Z", "+00:00")
+                    signal_time = int(datetime.fromisoformat(s).timestamp())
+            except Exception:
+                signal_time = None
+        score = t.get("score")
+        return {
+            "entry_bar": bar,
+            "exit_bar": t.get("exit_bar"),
+            "side": side,
+            "setup": t.get("setup"),
+            "entry": entry,
+            "stop": stop,
+            "tp": tp,
+            "exit": t.get("exit"),
+            "exit_reason": t.get("exit_reason"),
+            "pnl": round(t.get("pnl") or 0.0, 4),
+            "pnl_pct": t.get("pnl_pct"),
+            "score": score,
+            "score_min": score,
+            "reason": t.get("reason", ""),
+            "signal_time": signal_time,
+            "gain_pct": round(float(gain_pct), 3) if gain_pct is not None else None,
+            "rr": round(float(rr), 2) if rr is not None else None,
+            "distance_pct": None,  # non applicable une fois le trade clôturé
+        }
+
+    trades = [_trade_row(t) for t in bt_res.trades]
 
     candles = [{
         "time": int(times[i]),

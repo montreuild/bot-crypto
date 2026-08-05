@@ -54,6 +54,8 @@ import {
   Maximize2, FileDown, X,
 } from 'lucide-react';
 import { cn, formatUSD, formatPct } from '@/lib/utils';
+import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
+import { TimeframeButtons } from '@/components/ui/timeframe-select';
 
 /*
   Les 4 vues portées valent ~1 840 lignes et tirent recharts (Replay, Compare)
@@ -218,6 +220,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
   const runBacktest = useRunBacktest();
   const cancelBacktest = useCancelBacktest();
   const qc = useQueryClient();
+  const { defaultTf, timeframes: activeTfs } = useTradingTimeframes('1h');
 
   const { data: settings } = settingsQuery;
 
@@ -231,6 +234,14 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
     strategies: [],
   });
   const [result, setResult] = useState<any>(null);
+
+  useEffect(() => {
+    if (defaultTf) {
+      setConfig((c) =>
+        activeTfs.includes(c.timeframe) ? c : { ...c, timeframe: defaultTf },
+      );
+    }
+  }, [defaultTf, activeTfs]);
 
   const handleRun = async () => {
     setResult(null);
@@ -270,7 +281,6 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
   };
 
   const availableStrategies = settings?.strategies || [];
-  const availableTfs = settings?.available_timeframes || ['5m', '15m', '30m', '1h', '4h', '1d'];
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -292,17 +302,11 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
           </div>
 
           <div>
-            <Label htmlFor="bt-tf">Timeframe</Label>
-            <Select value={config.timeframe} onValueChange={(v) => setConfig({ ...config, timeframe: v })}>
-              <SelectTrigger id="bt-tf">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {availableTfs.map((tf: string) => (
-                  <SelectItem key={tf} value={tf}>{tf}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label>Timeframe</Label>
+            <TimeframeButtons
+              value={config.timeframe}
+              onChange={(v) => setConfig({ ...config, timeframe: v })}
+            />
           </div>
 
           <div>

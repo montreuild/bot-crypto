@@ -10,8 +10,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn, formatUSD, formatDateTime } from '@/lib/utils';
-import { useSMC } from '@/hooks/use-api';
-import { TradePlansTable, type TradePlan } from '@/components/cards/trade-plans-table';
+import { useSMC, useSMCReplay } from '@/hooks/use-api';
+import {
+  TradePlansTable, RealizedTradesTable, type TradePlan,
+} from '@/components/cards/trade-plans-table';
+import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { toast } from 'sonner';
 import {
   Loader2, RefreshCw, AlertCircle, Activity,
@@ -28,8 +32,6 @@ import {
   buildZonesFromSmc,
   type SmcZone,
 } from '@/lib/smc-zones';
-
-const TIMEFRAMES = ['15m', '30m', '1h', '4h', '1d'] as const;
 
 interface OverlayToggles {
   orderBlocks: boolean;
@@ -99,10 +101,26 @@ function normalizePd(raw: any) {
   };
 }
 
-export function SmartGraphView() {
-  const [symbol, setSymbol] = useState('BTC/USDC');
-  const [timeframe, setTimeframe] = useState<string>('1h');
+export function SmartGraphView({
+  initialSymbol,
+  initialTf,
+}: {
+  initialSymbol?: string;
+  initialTf?: string;
+} = {}) {
+  const { defaultTf } = useTradingTimeframes(initialTf || '1h');
+  const [symbol, setSymbol] = useState(initialSymbol || 'BTC/USDC');
+  const [timeframe, setTimeframe] = useState<string>(initialTf || defaultTf);
   const [selectedPlan, setSelectedPlan] = useState<TradePlan | null>(null);
+
+  // URL / props : bascule symbole + TF (clic Top opportunités)
+  useEffect(() => {
+    if (initialSymbol) setSymbol(initialSymbol);
+  }, [initialSymbol]);
+  useEffect(() => {
+    if (initialTf) setTimeframe(initialTf);
+    else setTimeframe((tf) => tf || defaultTf);
+  }, [initialTf, defaultTf]);
   const [toggles, setToggles] = useState<OverlayToggles>({
     orderBlocks: true,
     liquidityPools: true,
@@ -121,6 +139,8 @@ export function SmartGraphView() {
   });
 
   const { data, isLoading, isError, isFetching, refetch, error } = useSMC(symbol, timeframe, 1000);
+  // Trades réalisés = backtest smart_money (même moteur que Smart Replay)
+  const { data: replayData } = useSMCReplay(symbol, timeframe, 400);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -559,9 +579,10 @@ export function SmartGraphView() {
       && signalTs != null && lastTime != null
       && (lastTime as number) >= (signalTs as number)
     ) {
+      // Ligne d'entrée bien visible (bleu vif, épaisseur 4)
       const entrySeries = chart.addLineSeries({
-        color: '#38bdf8',
-        lineWidth: 3,
+        color: '#0ea5e9',
+        lineWidth: 4,
         lineStyle: LineStyle.Solid,
         priceLineVisible: true,
         lastValueVisible: true,
@@ -573,6 +594,17 @@ export function SmartGraphView() {
         { time: lastTime, value: entry },
       ]);
       planSeriesRef.current.push(entrySeries);
+      // Point d'ancrage signal
+      const anchor = chart.addLineSeries({
+        color: '#38bdf8',
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: true,
+      });
+      anchor.setData([{ time: signalTs, value: entry }]);
+      planSeriesRef.current.push(anchor);
     }
 
     // Zone d'entrée depuis le signal uniquement
@@ -677,18 +709,7 @@ export function SmartGraphView() {
           </div>
           <div>
             <label className="text-xs text-dim block mb-1.5">Timeframe</label>
-            <div className="flex gap-1">
-              {TIMEFRAMES.map((tf) => (
-                <Button
-                  key={tf}
-                  size="sm"
-                  variant={tf === timeframe ? 'primary' : 'default'}
-                  onClick={() => setTimeframe(tf)}
-                >
-                  {tf}
-                </Button>
-              ))}
-            </div>
+            <TimeframeButtons value={timeframe} onChange={setTimeframe} />
           </div>
           <div className="flex-1" />
           <div className="flex flex-wrap gap-3">
@@ -751,12 +772,26 @@ export function SmartGraphView() {
         )}
       </Card>
 
-      {!isLoading && !isError && data?.trade_plans?.length > 0 && (
-        <TradePlansTable
-          plans={data.trade_plans}
-          onSelectPlan={handleSelectPlan}
-          selectedPlan={selectedPlan}
-        />
+      {!isLoading && !isError && data && (
+        <>
+          <TradePlansTable
+            plans={data.trade_plans || []}
+            onSelectPlan={handleSelectPlan}
+            selectedPlan={selectedPlan}
+            title="Trades recommandés"
+          />
+          <RealizedTradesTable
+            trades={replayData?.trades || []}
+            strategy="smart_money"
+          />
+          <p className="text-[11px] text-dim -mt-2">
+            Recommandés = plans SMC analytiques. Réalisés = backtest{' '}
+            <code className="font-mono">smart_money</code> (même moteur que Smart Replay).
+            La stratégie smart_money est calibrée sur TF élevés (2h/4h/1d) : sur 15m–1h
+            et sur actions, peu ou pas de trades est normal (historique Yahoo ~88 bougies
+            en intraday EU).
+          </p>
+        </>
       )}
 
       {/* Meta panel — bandeau sous les plans (ex-colonne latérale) */}
