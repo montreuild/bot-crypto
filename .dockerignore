@@ -25,20 +25,21 @@ models/
 *.sqlite
 .env
 .env.*
+!.env.example
 
-# Frontend (image séparée)
+# Frontend build artefacts (le Dockerfile.frontend copie le sources)
 frontend/node_modules
 frontend/.next
 frontend/out
-
-# Research / scripts hors runtime
-research/
-scripts/
-notebooks/
-docs/audit-externe
-docs/*.pdf
-
-# Tests E2E lourds (image API légère)
 frontend/e2e
 playwright-report
 test-results
+
+# Hors runtime API
+research/
+notebooks/
+docs/audit-externe
+docs/*.pdf
+.code-review-graph
+.claude
+.cursor

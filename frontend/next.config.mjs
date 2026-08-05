@@ -31,6 +31,9 @@ loadRootEnv();
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Image Docker (Dockerfile.frontend) : build standalone minimal.
+  output: 'standalone',
+
   // ⚠ Pas de `rewrites()` vers /api : c'est le route handler
   // `src/app/api/[...path]/route.ts` qui proxifie, parce qu'un rewrite ne peut
   // pas injecter l'en-tête `X-API-Key` (cf. le commentaire du handler).

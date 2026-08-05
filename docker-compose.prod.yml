@@ -1,0 +1,34 @@
+# Surcharges production — à combiner avec le compose de base :
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d api
+#   bash scripts/docker-up.sh --prod
+#   .\scripts\docker-up.ps1 -Prod
+#
+# Avant de lancer, dans `.env` :
+#   ENV=prod
+#   WEB_API_KEY=<secret fort>
+#   ALLOW_INSECURE_WEB=0
+#   API_HOST_BIND=127.0.0.1
+#   NEXT_PUBLIC_WS_URL=wss://votre-domaine/ws
+#
+# Nginx / TLS restent sur l'hôte (deploy/nginx.conf + DEPLOY.md).
+
+services:
+  api:
+    environment:
+      ENV: prod
+      ALLOW_INSECURE_WEB: "0"
+      FRONTEND_URL: ${FRONTEND_URL:-https://localhost}
+    # Mode paper/live selon config.yaml (ne force plus --paper).
+    # Paper forcé en prod : command: ["python", "cli.py", "--paper"]
+    command: ["python", "cli.py"]
+    restart: always
+    # Volumes : hérités du compose de base (data/logs/models/config).
+    # Pour config read-only stricte, monter en :ro via un override local.
+
+  web:
+    environment:
+      BOT_API_URL: http://api:8000
+      WEB_API_KEY: ${WEB_API_KEY:?WEB_API_KEY required in production}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-wss://localhost/ws}
+    restart: always

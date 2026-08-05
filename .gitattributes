@@ -10,3 +10,8 @@
 # Parquet est déjà un format binaire (détecté automatiquement par git),
 # mais on le déclare explicitement par robustesse.
 *.parquet binary
+
+# Scripts shell / entrypoint Docker : toujours LF (sinon shebang cassé sous Linux).
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf
+
