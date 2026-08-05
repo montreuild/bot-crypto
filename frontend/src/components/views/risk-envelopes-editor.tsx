@@ -23,6 +23,19 @@ import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { AlertTriangle, Info, Save } from 'lucide-react';
 
+/** Affiche un instantané local (date + heure) pour la dernière évaluation. */
+function formatFeasibilityAt(ms: number | undefined): string {
+  if (!ms || !Number.isFinite(ms)) return '—';
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'short',
+      timeStyle: 'medium',
+    }).format(new Date(ms));
+  } catch {
+    return new Date(ms).toLocaleString();
+  }
+}
+
 const FIELDS: {
   key: keyof VenueEnvelopeConfig; label: string; hint: string; pct?: boolean;
 }[] = [
@@ -34,9 +47,12 @@ const FIELDS: {
 
 export function RiskEnvelopesEditor() {
   const { data: risk } = useRisk();
-  const { data: diagnostics } = useRiskDiagnostics();
+  const diagnosticsQuery = useRiskDiagnostics();
+  const { data: diagnostics } = diagnosticsQuery;
   const update = useUpdateEnvelopes();
   const [draft, setDraft] = useState<Record<string, VenueEnvelopeConfig>>({});
+  // Horodatage de la dernière réponse diagnostics (react-query dataUpdatedAt).
+  const feasibilityAt = formatFeasibilityAt(diagnosticsQuery.dataUpdatedAt);
 
   // Les valeurs SAISIES (pas les montants dérivés) : `/api/config` ne sert pas
   // le bloc `risk.envelopes`, `/api/risk` le porte explicitement pour cet écran.
@@ -82,16 +98,27 @@ export function RiskEnvelopesEditor() {
       <Card>
         <CardHeader>
           <CardTitle className="text-sm">Faisabilité de la configuration</CardTitle>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {errors.length > 0 && (
               <Badge variant="danger" className="text-[10px]">{errors.length} bloquant(s)</Badge>
             )}
             {warnings.length > 0 && (
               <Badge variant="warning" className="text-[10px]">{warnings.length} avertissement(s)</Badge>
             )}
-            {errors.length === 0 && warnings.length === 0 && (
+            {errors.length === 0 && warnings.length === 0 && diagnostics && (
               <Badge variant="success" className="text-[10px]">Aucun problème</Badge>
             )}
+            <time
+              className="text-[11px] text-dim font-mono tabular-nums"
+              dateTime={
+                diagnosticsQuery.dataUpdatedAt
+                  ? new Date(diagnosticsQuery.dataUpdatedAt).toISOString()
+                  : undefined
+              }
+              title="Dernière évaluation des diagnostics (heure locale)"
+            >
+              {feasibilityAt}
+            </time>
           </div>
         </CardHeader>
         <CardContent>
@@ -99,6 +126,9 @@ export function RiskEnvelopesEditor() {
             <p className="text-xs text-muted">
               Aucun slot n&apos;est structurellement empêché de trader. Ces contrôles sont
               analytiques : ils ne dépendent d&apos;aucune donnée de marché.
+              {feasibilityAt !== '—' && (
+                <> Évalué le <span className="font-mono">{feasibilityAt}</span>.</>
+              )}
             </p>
           ) : (
             <ul className="space-y-2">
