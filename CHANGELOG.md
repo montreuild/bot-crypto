@@ -6,6 +6,17 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 📐 ML-10 — recalibrage des seuils ADX (Wilder) + réentraînement modèles
+
+Campagne de mesure et recalibrage sous l'ADX Wilder (défaut prod, mean ~27–29
+sur BTC/USDC 1h/4h/1d vs ~35 historique EWM) :
+
+- `scripts/recalibrate_adx_thresholds.py` — optimise + persiste `optimizer_results`
+  et defaults ADX dans les YAML ; rapport `research/ml10_adx_recalibration.json`
+- `scripts/retrain_all_models.py` — réentraîne/publie (gate) les recettes omnibus /
+  dyn_threshold / stat48 sur BTC/USDC 15m–4h ; rapport
+  `research/retrain_all_report.json` (25 promote + 3 initial + 8 keep AUC floor)
+
 ### 🧾 Backtests et optimisations annoncent ce qu'ils facturent
 
 Un PnL seul n'est pas interprétable. Le même paramétrage donne des chiffres

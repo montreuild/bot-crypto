@@ -1,0 +1,642 @@
+{
+  "symbol": "BTC/USDC",
+  "publish": true,
+  "elapsed_s": 386.5,
+  "results": [
+    {
+      "strategy": "opus_omnibus_v7",
+      "tf": "15m",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.681 >= sortant(0.600) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.6813802669065827,
+          "auc_dir": 0.5345670218886119
+        },
+        "incumbent": {
+          "n": 1709,
+          "auc_amp": 0.599702060800459,
+          "auc_dir": 0.522102977837438
+        },
+        "incumbent_version": "2026-07-12T01-00-00_c2421444"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v7",
+      "tf": "30m",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.675 >= sortant(0.638) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.674754053472589,
+          "auc_dir": 0.5118114334237269
+        },
+        "incumbent": {
+          "n": 1709,
+          "auc_amp": 0.6383608128459387,
+          "auc_dir": 0.50924617196702
+        },
+        "incumbent_version": "2026-06-13T20-00-00_c2421444"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v7",
+      "tf": "1h",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.659 >= sortant(0.624) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.6590193432298695,
+          "auc_dir": 0.5276787083908575
+        },
+        "incumbent": {
+          "n": 1709,
+          "auc_amp": 0.6238142736998572,
+          "auc_dir": 0.4839945872504547
+        },
+        "incumbent_version": "2026-05-19T20-00-00_c2421444"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v7",
+      "tf": "4h",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.659 >= sortant(0.628) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.6585320137951717,
+          "auc_dir": 0.5332786427233185
+        },
+        "incumbent": {
+          "n": 1709,
+          "auc_amp": 0.6275605168625764,
+          "auc_dir": 0.5193024071172662
+        },
+        "incumbent_version": "2025-11-19T16-00-00_c2421444"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v10_retrained",
+      "tf": "15m",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.681 >= sortant(0.681) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.6813802669065827,
+          "auc_dir": 0.5345670218886119
+        },
+        "incumbent": {
+          "n": 1709,
+          "auc_amp": 0.6813802669065827,
+          "auc_dir": 0.5345670218886119
+        },
+        "incumbent_version": "2026-07-14T21-15-00_32986c36"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v10_retrained",
+      "tf": "30m",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.675 >= sortant(0.675) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.674754053472589,
+          "auc_dir": 0.5118114334237269
+        },
+        "incumbent": {
+          "n": 1709,
+          "auc_amp": 0.674754053472589,
+          "auc_dir": 0.5118114334237269
+        },
+        "incumbent_version": "2026-06-19T19-00-00_32986c36"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v10_retrained",
+      "tf": "1h",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.659 >= sortant(0.659) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.6590193432298695,
+          "auc_dir": 0.5276787083908575
+        },
+        "incumbent": {
+          "n": 1709,
+          "auc_amp": 0.6590193432298695,
+          "auc_dir": 0.5276787083908575
+        },
+        "incumbent_version": "2026-05-28T13-00-00_32986c36"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v10_retrained",
+      "tf": "4h",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.659 >= sortant(0.659) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.6585320137951717,
+          "auc_dir": 0.5332786427233185
+        },
+        "incumbent": {
+          "n": 1709,
+          "auc_amp": 0.6585320137951717,
+          "auc_dir": 0.5332786427233185
+        },
+        "incumbent_version": "2025-11-28T08-00-00_32986c36"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v11",
+      "tf": "15m",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.669 >= sortant(0.668) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_amp": 0.6690306960203273,
+          "auc_dir": 0.4924436286567477
+        },
+        "incumbent": {
+          "n": 1704,
+          "auc_amp": 0.6683081182960616,
+          "auc_dir": 0.5036868918626555
+        },
+        "incumbent_version": "2026-07-14T07-45-00_ebba36e8"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v11",
+      "tf": "30m",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.639 >= sortant(0.637) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_amp": 0.6385971329821873,
+          "auc_dir": 0.5161767036177117
+        },
+        "incumbent": {
+          "n": 1704,
+          "auc_amp": 0.6365393037992333,
+          "auc_dir": 0.5074152411004017
+        },
+        "incumbent_version": "2026-06-17T03-30-00_ebba36e8"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v11",
+      "tf": "1h",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.640 >= sortant(0.640) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_amp": 0.640018503238887,
+          "auc_dir": 0.4976292342978123
+        },
+        "incumbent": {
+          "n": 1704,
+          "auc_amp": 0.6399848758987112,
+          "auc_dir": 0.4976292342978123
+        },
+        "incumbent_version": "2026-05-28T13-00-00_32986c36"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v11",
+      "tf": "4h",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.634 >= sortant(0.627) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_amp": 0.6343166186315149,
+          "auc_dir": 0.48241233382804244
+        },
+        "incumbent": {
+          "n": 1704,
+          "auc_amp": 0.6271539951740666,
+          "auc_dir": 0.5131442414621341
+        },
+        "incumbent_version": "2025-12-07T12-00-00_ebba36e8"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v11_followsetup",
+      "tf": "15m",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.645 >= sortant(0.643) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_amp": 0.645393956592845,
+          "auc_dir": 0.5081664003086079
+        },
+        "incumbent": {
+          "n": 1704,
+          "auc_amp": 0.6427119711690668,
+          "auc_dir": 0.5224732723465226
+        },
+        "incumbent_version": "2026-07-14T07-45-00_c477ea79"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v11_followsetup",
+      "tf": "30m",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.643 >= sortant(0.648) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_amp": 0.6427054097368373,
+          "auc_dir": 0.5200157369856369
+        },
+        "incumbent": {
+          "n": 1704,
+          "auc_amp": 0.6477626336276683,
+          "auc_dir": 0.5066675485993118
+        },
+        "incumbent_version": "2026-06-17T03-30-00_c477ea79"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v11_followsetup",
+      "tf": "1h",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.640 >= sortant(0.645) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_amp": 0.6399848758987112,
+          "auc_dir": 0.4976292342978123
+        },
+        "incumbent": {
+          "n": 1704,
+          "auc_amp": 0.6447558573085334,
+          "auc_dir": 0.504150218330981
+        },
+        "incumbent_version": "2026-05-25T05-00-00_c477ea79"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v11_followsetup",
+      "tf": "4h",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.634 >= sortant(0.627) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_amp": 0.6343166186315149,
+          "auc_dir": 0.48241233382804244
+        },
+        "incumbent": {
+          "n": 1704,
+          "auc_amp": 0.6271539951740666,
+          "auc_dir": 0.5131442414621341
+        },
+        "incumbent_version": "2025-12-07T12-00-00_c477ea79"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v12",
+      "tf": "15m",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.645 >= sortant(0.645) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_amp": 0.645393956592845,
+          "auc_dir": 0.5081664003086079
+        },
+        "incumbent": {
+          "n": 1704,
+          "auc_amp": 0.6445540932674785,
+          "auc_dir": 0.5227818803041993
+        },
+        "incumbent_version": "2026-07-14T21-15-00_32986c36"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v12",
+      "tf": "30m",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.643 >= sortant(0.643) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_amp": 0.6427054097368373,
+          "auc_dir": 0.5200157369856369
+        },
+        "incumbent": {
+          "n": 1704,
+          "auc_amp": 0.6432073593023885,
+          "auc_dir": 0.5193432633437098
+        },
+        "incumbent_version": "2026-06-19T19-00-00_32986c36"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v12",
+      "tf": "1h",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.640 >= sortant(0.640) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_amp": 0.640018503238887,
+          "auc_dir": 0.4976292342978123
+        },
+        "incumbent": {
+          "n": 1704,
+          "auc_amp": 0.640018503238887,
+          "auc_dir": 0.4976292342978123
+        },
+        "incumbent_version": "2026-05-28T13-00-00_32986c36"
+      }
+    },
+    {
+      "strategy": "opus_omnibus_v12",
+      "tf": "4h",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.634 >= sortant(0.627) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_amp": 0.6343166186315149,
+          "auc_dir": 0.48241233382804244
+        },
+        "incumbent": {
+          "n": 1704,
+          "auc_amp": 0.6271539951740666,
+          "auc_dir": 0.5131442414621341
+        },
+        "incumbent_version": "2025-12-07T12-00-00_ebba36e8"
+      }
+    },
+    {
+      "strategy": "opus_stat_retrained_v4",
+      "tf": "15m",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.695 >= sortant(0.697) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.6946237295207547,
+          "auc_dir": 0.5261368617137848
+        },
+        "incumbent": {
+          "n": 1709,
+          "auc_amp": 0.696604829613983,
+          "auc_dir": 0.526326566951567
+        },
+        "incumbent_version": "2026-07-14T21-15-00_32986c36"
+      }
+    },
+    {
+      "strategy": "opus_stat_retrained_v4",
+      "tf": "30m",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.652 >= sortant(0.661) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.6522871886144197,
+          "auc_dir": 0.514354584674382
+        },
+        "incumbent": {
+          "n": 1709,
+          "auc_amp": 0.6612123256860098,
+          "auc_dir": 0.5163993699924673
+        },
+        "incumbent_version": "2026-06-19T19-00-00_32986c36"
+      }
+    },
+    {
+      "strategy": "opus_stat_retrained_v4",
+      "tf": "1h",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.659 >= sortant(0.659) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.6590193432298695,
+          "auc_dir": 0.5276787083908575
+        },
+        "incumbent": {
+          "n": 1709,
+          "auc_amp": 0.6590193432298695,
+          "auc_dir": 0.5276787083908575
+        },
+        "incumbent_version": "2026-05-28T13-00-00_32986c36"
+      }
+    },
+    {
+      "strategy": "opus_stat_retrained_v4",
+      "tf": "4h",
+      "decision": "promote",
+      "reason": "auc_amp candidat=0.659 >= sortant(0.659) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.6585320137951717,
+          "auc_dir": 0.5332786427233185
+        },
+        "incumbent": {
+          "n": 1709,
+          "auc_amp": 0.6585320137951717,
+          "auc_dir": 0.5332786427233185
+        },
+        "incumbent_version": "2025-11-28T08-00-00_32986c36"
+      }
+    },
+    {
+      "strategy": "ml_dynamic_threshold",
+      "tf": "15m",
+      "decision": "initial",
+      "reason": "auc_dir candidat=0.620 >= plancher=0.550 ; aucun sortant",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_dir": 0.6202819202815506
+        },
+        "incumbent": null,
+        "incumbent_version": null
+      }
+    },
+    {
+      "strategy": "ml_dynamic_threshold",
+      "tf": "30m",
+      "decision": "initial",
+      "reason": "auc_dir candidat=0.603 >= plancher=0.550 ; aucun sortant",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_dir": 0.6034883356125073
+        },
+        "incumbent": null,
+        "incumbent_version": null
+      }
+    },
+    {
+      "strategy": "ml_dynamic_threshold",
+      "tf": "1h",
+      "decision": "promote",
+      "reason": "auc_dir candidat=0.618 >= sortant(0.545) - eps(0.010)",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_dir": 0.6181744203417016
+        },
+        "incumbent": {
+          "n": 1704,
+          "auc_dir": 0.545006565136374
+        },
+        "incumbent_version": "2026-05-21T20-00-00_32986c36"
+      }
+    },
+    {
+      "strategy": "ml_dynamic_threshold",
+      "tf": "4h",
+      "decision": "initial",
+      "reason": "auc_dir candidat=0.603 >= plancher=0.550 ; aucun sortant",
+      "detail": {
+        "candidate": {
+          "n": 1704,
+          "auc_dir": 0.6032876985114751
+        },
+        "incumbent": null,
+        "incumbent_version": null
+      }
+    },
+    {
+      "strategy": "scoring_statistique_opus_v4",
+      "tf": "15m",
+      "decision": "keep",
+      "reason": "auc_amp candidat=0.500 < plancher=0.550",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.5,
+          "auc_dir": 0.5
+        },
+        "incumbent": null,
+        "incumbent_version": null
+      }
+    },
+    {
+      "strategy": "scoring_statistique_opus_v4",
+      "tf": "30m",
+      "decision": "keep",
+      "reason": "auc_amp candidat=0.500 < plancher=0.550",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.5,
+          "auc_dir": 0.5
+        },
+        "incumbent": null,
+        "incumbent_version": null
+      }
+    },
+    {
+      "strategy": "scoring_statistique_opus_v4",
+      "tf": "1h",
+      "decision": "keep",
+      "reason": "auc_amp candidat=0.500 < plancher=0.550",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.5,
+          "auc_dir": 0.5
+        },
+        "incumbent": null,
+        "incumbent_version": null
+      }
+    },
+    {
+      "strategy": "scoring_statistique_opus_v4",
+      "tf": "4h",
+      "decision": "keep",
+      "reason": "auc_amp candidat=0.500 < plancher=0.550",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.5,
+          "auc_dir": 0.5
+        },
+        "incumbent": null,
+        "incumbent_version": null
+      }
+    },
+    {
+      "strategy": "scoring_statistique_opus_v5",
+      "tf": "15m",
+      "decision": "keep",
+      "reason": "auc_amp candidat=0.500 < plancher=0.550",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.5,
+          "auc_dir": 0.5
+        },
+        "incumbent": null,
+        "incumbent_version": null
+      }
+    },
+    {
+      "strategy": "scoring_statistique_opus_v5",
+      "tf": "30m",
+      "decision": "keep",
+      "reason": "auc_amp candidat=0.500 < plancher=0.550",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.5,
+          "auc_dir": 0.5
+        },
+        "incumbent": null,
+        "incumbent_version": null
+      }
+    },
+    {
+      "strategy": "scoring_statistique_opus_v5",
+      "tf": "1h",
+      "decision": "keep",
+      "reason": "auc_amp candidat=0.500 < plancher=0.550",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.5,
+          "auc_dir": 0.5
+        },
+        "incumbent": null,
+        "incumbent_version": null
+      }
+    },
+    {
+      "strategy": "scoring_statistique_opus_v5",
+      "tf": "4h",
+      "decision": "keep",
+      "reason": "auc_amp candidat=0.500 < plancher=0.550",
+      "detail": {
+        "candidate": {
+          "n": 1709,
+          "auc_amp": 0.5,
+          "auc_dir": 0.5
+        },
+        "incumbent": null,
+        "incumbent_version": null
+      }
+    }
+  ]
+}
