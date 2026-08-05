@@ -34,43 +34,32 @@ interface DatasetRow {
 
 function flattenDatasets(data: any): DatasetRow[] {
   if (!data) return [];
-  // Try several common shapes returned by /data/status
+  // Backend `/api/data/status` → { datasets: [{ symbol, tf, bars, from, to, size_kb }] }
+  const mapRow = (d: any): DatasetRow => ({
+    symbol: d.symbol,
+    tf: d.timeframe || d.tf,
+    count: Number(d.bars ?? d.count ?? 0),
+    first: d.from ?? d.first ?? '',
+    last: d.to ?? d.last ?? '',
+    // size_kb (API) ou size_bytes (legacy)
+    size: d.size_bytes != null
+      ? Number(d.size_bytes)
+      : Math.round(Number(d.size_kb ?? 0) * 1024),
+  });
   if (Array.isArray(data.datasets)) {
-    return data.datasets.map((d: any) => ({
-      symbol: d.symbol,
-      tf: d.timeframe || d.tf,
-      count: d.count ?? 0,
-      first: d.first ?? '',
-      last: d.last ?? '',
-      size: d.size_bytes ?? 0,
-    }));
+    return data.datasets.map(mapRow);
   }
   if (data.store && typeof data.store === 'object') {
     const rows: DatasetRow[] = [];
     for (const [symbol, tfs] of Object.entries(data.store)) {
       for (const [tf, info] of Object.entries(tfs as any)) {
-        const i = info as any;
-        rows.push({
-          symbol,
-          tf,
-          count: i?.count ?? 0,
-          first: i?.first ?? '',
-          last: i?.last ?? '',
-          size: i?.size_bytes ?? 0,
-        });
+        rows.push(mapRow({ symbol, tf, ...(info as any) }));
       }
     }
     return rows;
   }
   if (Array.isArray(data)) {
-    return data.map((d: any) => ({
-      symbol: d.symbol,
-      tf: d.timeframe || d.tf,
-      count: d.count ?? 0,
-      first: d.first ?? '',
-      last: d.last ?? '',
-      size: d.size_bytes ?? 0,
-    }));
+    return data.map(mapRow);
   }
   return [];
 }

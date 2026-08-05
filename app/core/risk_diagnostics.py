@@ -100,12 +100,23 @@ def diagnose(cfg: dict, slots_by_symbol: Dict[Tuple[str, str], Dict[str, Optiona
                  "n_symbols": n_symbols}))
 
         if venue_min_notional > 0 and symbol_envelope * min_weight < venue_min_notional:
+            # Expliquer le calcul pour l'UI (sinon le code technique est opaque).
+            # enveloppe_symbole = capital_venue × max_symbol_exposure_pct
+            # plancher_slot     = enveloppe_symbole × min_slot_weight
+            floor_notional = symbol_envelope * min_weight
             out.append(Diagnostic(
                 "warning", "min_slot_weight_insuffisant", f"venue:{venue_name}",
-                f"enveloppe symbole x plancher ({symbol_envelope * min_weight:.2f}) "
-                f"< notionnel minimum ({venue_min_notional:.2f}) : les plus petits "
-                f"slots ne pourront jamais trader.",
-                {"symbol_envelope": symbol_envelope, "min_slot_weight": min_weight,
+                f"Les plus petits slots ne pourront pas ouvrir d'ordre sur "
+                f"{venue_name} : capital×exposition×plancher de poids "
+                f"({capital:.0f} × {max_expo:.0%} × {min_weight:.0%} = "
+                f"{floor_notional:.0f}) est sous le notionnel minimum de la "
+                f"venue ({venue_min_notional:.0f}). "
+                f"Remèdes : augmenter le capital de la venue, relever "
+                f"l'exposition max / symbole, baisser min_slot_weight, ou "
+                f"abaisser min_notional dans venues.defs.{venue_name}.",
+                {"capital": capital, "max_symbol_exposure_pct": max_expo,
+                 "symbol_envelope": symbol_envelope, "min_slot_weight": min_weight,
+                 "floor_notional": floor_notional,
                  "min_notional": venue_min_notional}))
 
         for symbol in symbols:

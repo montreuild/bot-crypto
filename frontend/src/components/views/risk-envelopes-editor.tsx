@@ -162,7 +162,15 @@ export function RiskFeasibilityPanel() {
                   <div className="font-mono text-[10px] text-dim">
                     {d.code} · {d.scope}
                   </div>
-                  <div className="mt-0.5">{d.message}</div>
+                  <div className="mt-0.5 leading-relaxed">{d.message}</div>
+                  {d.code === 'min_slot_weight_insuffisant' && (
+                    <p className="mt-1.5 text-[10px] text-dim">
+                      Formule : <code className="font-mono">capital × exposition_max × min_slot_weight</code>
+                      {' '}doit être ≥ <code className="font-mono">min_notional</code> de la venue
+                      (Réglages → Capital pour capital / exposition,{' '}
+                      <code className="font-mono">venues.defs</code> pour min_notional).
+                    </p>
+                  )}
                 </div>
               </li>
             ))}

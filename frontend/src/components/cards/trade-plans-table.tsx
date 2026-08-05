@@ -1,23 +1,9 @@
 'use client';
 
 /**
- * E3-F4-US5 — Table « Plans recommandés » (Smart Graph).
+ * Table « Plans recommandés » (Smart Graph).
  *
- * La table existait déjà en JSX dans `/smartgraph`, mais avec 7 des 10 colonnes
- * de l'ancienne `smartgraph.html` : **Statut**, **Gain**, **Dist** et **Score**
- * manquaient, et le tri par score n'existait pas. Or ce sont précisément ces
- * colonnes qui rendent la table actionnable — sans « Statut » on ne distingue
- * pas un signal immédiat d'un plan en attente, et sans « Dist » on ne sait pas
- * si le prix est proche de la zone d'entrée.
- *
- * Contrat réel de `Strategy.trade_plans()` (app/strategies/smart_money.py),
- * exposé tel quel par `/api/scanner/smc` sous la clé `trade_plans` :
- *   { status, side, setup, score_min, entry, stop, tp, gain_pct, rr,
- *     tp_source, distance_pct, trigger, reason, zone_low, zone_high }
- *
- * ⚠ `score_min` est un score MINIMUM : les confluences qui dépendent de la
- * bougie de déclenchement (volume, couleur) ne sont pas connues d'avance. La
- * colonne est libellée en conséquence.
+ * Clique sur une ligne → callback parent pour afficher Entry / SL / TP sur le chart.
  */
 
 import { useMemo, useState } from 'react';
@@ -40,19 +26,14 @@ export interface TradePlan {
   distance_pct?: number;
   trigger?: string;
   reason?: string;
-  /** Epoch **secondes** — cf. `signal_time` dans `Strategy.trade_plans()`. */
+  zone_low?: number;
+  zone_high?: number;
+  /** Epoch **secondes**. */
   signal_time?: number | null;
 }
 
 type SortKey = 'score_min' | 'rr' | 'gain_pct' | 'distance_pct' | 'signal_time';
 
-/**
- * Horodatage du signal, en date + heure:minutes.
- *
- * Le backend sérialise les temps SMC en epoch **secondes** (comme
- * `time_start`/`time_end` des order blocks), pas en millisecondes : passer la
- * valeur brute à `new Date()` donnerait janvier 1970.
- */
 function formatSignalTime(v: number | null | undefined): string | null {
   if (v === null || v === undefined || !Number.isFinite(Number(v))) return null;
   const n = Number(v);
@@ -64,19 +45,36 @@ function formatSignalTime(v: number | null | undefined): string | null {
   });
 }
 
+function fmtPrice(v: unknown): string {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n === 0) return '—';
+  return formatUSD(n);
+}
+
 const STATUS_LABEL: Record<string, { label: string; variant: 'success' | 'warning' | 'muted' }> = {
   immediate: { label: 'Immédiat', variant: 'success' },
   pending: { label: 'En attente', variant: 'warning' },
 };
 
-export function TradePlansTable({ plans }: { plans: TradePlan[] }) {
+function planKey(p: TradePlan): string {
+  return `${p.side}|${p.setup}|${p.entry}|${p.stop}|${p.tp}|${p.signal_time}`;
+}
+
+export function TradePlansTable({
+  plans,
+  onSelectPlan,
+  selectedPlan,
+}: {
+  plans: TradePlan[];
+  onSelectPlan?: (plan: TradePlan) => void;
+  selectedPlan?: TradePlan | null;
+}) {
   const [sortKey, setSortKey] = useState<SortKey>('score_min');
   const [asc, setAsc] = useState(false);
 
   const sorted = useMemo(() => {
     const list = Array.isArray(plans) ? [...plans] : [];
     return list.sort((a, b) => {
-      // `distance_pct` se lit à l'envers : plus c'est proche, mieux c'est.
       const dir = asc ? 1 : -1;
       const av = Number(a[sortKey] ?? 0);
       const bv = Number(b[sortKey] ?? 0);
@@ -86,11 +84,12 @@ export function TradePlansTable({ plans }: { plans: TradePlan[] }) {
 
   if (sorted.length === 0) return null;
 
+  const selectedKey = selectedPlan ? planKey(selectedPlan) : null;
+
   const toggleSort = (k: SortKey) => {
     if (k === sortKey) setAsc((v) => !v);
     else {
       setSortKey(k);
-      // Par défaut : score/RR/gain décroissants, distance croissante (le plus proche d'abord).
       setAsc(k === 'distance_pct');
     }
   };
@@ -122,6 +121,11 @@ export function TradePlansTable({ plans }: { plans: TradePlan[] }) {
           <Target className="w-3.5 h-3.5" />
           Plans recommandés ({sorted.length})
         </CardTitle>
+        {onSelectPlan && (
+          <p className="text-[11px] text-muted font-normal">
+            Cliquez une ligne pour afficher Entry / SL / TP sur le graphique
+          </p>
+        )}
       </CardHeader>
       <CardContent className="p-0">
         <div className="overflow-x-auto max-h-96">
@@ -134,7 +138,7 @@ export function TradePlansTable({ plans }: { plans: TradePlan[] }) {
                 <SortableTh
                   k="signal_time"
                   align="left"
-                  title="Bougie de référence : pour un plan immédiat, la bougie courante ; pour un plan en attente, celle où la zone s'est formée"
+                  title="Bougie de référence du plan"
                 >
                   Signal
                 </SortableTh>
@@ -149,7 +153,7 @@ export function TradePlansTable({ plans }: { plans: TradePlan[] }) {
                 <SortableTh k="distance_pct" title="Distance du prix actuel à la zone d'entrée">
                   Dist
                 </SortableTh>
-                <SortableTh k="score_min" title="Score minimum : les confluences de la bougie de déclenchement ne sont pas connues d'avance">
+                <SortableTh k="score_min" title="Score minimum">
                   Score
                 </SortableTh>
                 <th scope="col" className="p-2 font-medium">Déclencheur</th>
@@ -159,8 +163,19 @@ export function TradePlansTable({ plans }: { plans: TradePlan[] }) {
               {sorted.map((p, i) => {
                 const st = STATUS_LABEL[String(p.status ?? '')] ?? { label: p.status || '—', variant: 'muted' as const };
                 const isLong = p.side === 'long';
+                const key = planKey(p);
+                const isSelected = selectedKey === key;
                 return (
-                  <tr key={i} className="border-b border-border/30 hover:bg-card-hover">
+                  <tr
+                    key={i}
+                    onClick={() => onSelectPlan?.(p)}
+                    className={cn(
+                      'border-b border-border/30 transition-colors',
+                      onSelectPlan && 'cursor-pointer hover:bg-card-hover',
+                      isSelected && 'bg-primary-500/10 ring-1 ring-inset ring-primary-400/40',
+                    )}
+                    aria-selected={isSelected}
+                  >
                     <td className="p-2 font-mono whitespace-nowrap text-muted">
                       {formatSignalTime(p.signal_time) ?? '—'}
                     </td>
@@ -173,17 +188,21 @@ export function TradePlansTable({ plans }: { plans: TradePlan[] }) {
                       </span>
                     </td>
                     <td className="p-2 text-cyan-400 font-mono">{p.setup || '—'}</td>
-                    <td className="p-2 text-right font-mono">{formatUSD(Number(p.entry ?? 0))}</td>
-                    <td className="p-2 text-right font-mono text-red-400">{formatUSD(Number(p.stop ?? 0))}</td>
-                    <td className="p-2 text-right font-mono text-emerald-400">{formatUSD(Number(p.tp ?? 0))}</td>
-                    <td className="p-2 text-right font-mono">{Number(p.gain_pct ?? 0).toFixed(2)}%</td>
+                    <td className="p-2 text-right font-mono">{fmtPrice(p.entry)}</td>
+                    <td className="p-2 text-right font-mono text-red-400">{fmtPrice(p.stop)}</td>
+                    <td className="p-2 text-right font-mono text-emerald-400">{fmtPrice(p.tp)}</td>
+                    <td className="p-2 text-right font-mono">
+                      {Number.isFinite(Number(p.gain_pct)) ? `${Number(p.gain_pct).toFixed(2)}%` : '—'}
+                    </td>
                     <td className={cn('p-2 text-right font-mono', Number(p.rr ?? 0) >= 2 ? 'text-emerald-400' : 'text-muted')}>
-                      {Number(p.rr ?? 0).toFixed(2)}
+                      {Number.isFinite(Number(p.rr)) ? Number(p.rr).toFixed(2) : '—'}
                     </td>
                     <td className="p-2 text-right font-mono text-muted">
-                      {Number(p.distance_pct ?? 0).toFixed(2)}%
+                      {Number.isFinite(Number(p.distance_pct)) ? `${Number(p.distance_pct).toFixed(2)}%` : '—'}
                     </td>
-                    <td className="p-2 text-right font-mono">{Number(p.score_min ?? 0).toFixed(2)}</td>
+                    <td className="p-2 text-right font-mono">
+                      {Number.isFinite(Number(p.score_min)) ? Number(p.score_min).toFixed(2) : '—'}
+                    </td>
                     <td className="p-2 text-muted truncate max-w-[16rem]" title={p.trigger || p.reason || ''}>
                       {p.trigger || p.reason || '—'}
                     </td>

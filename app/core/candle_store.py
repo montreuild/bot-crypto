@@ -336,18 +336,56 @@ class CandleStore:
 
         Ignore les artefacts non-timeframe (ex. ``BTCUSDT__funding.parquet``
         des dérivés) pour ne pas lever ``ValueError`` sur un TF hors whitelist.
+
+        Compte les bougies en parallèle + cache mtime (sinon /data/status
+        dépasse 30 s sous Docker/Windows → UI « cache vide » par timeout).
         """
-        results = []
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        if not hasattr(self, "_all_stats_cache"):
+            self._all_stats_cache: Dict[str, tuple] = {}  # path -> (mtime, row)
+
+        paths: list = []
         for parquet in sorted(self._base.rglob("*.parquet")):
-            # Structure: base/{symbol}/{tf}.parquet
-            tf     = parquet.stem
-            symbol = parquet.parent.name.replace("_", "/", 1)
+            tf = parquet.stem
             if tf not in TF_SECONDS:
                 continue
+            symbol = parquet.parent.name.replace("_", "/", 1)
+            paths.append((parquet, symbol, tf))
+
+        def _one(item):
+            parquet, symbol, tf = item
             try:
-                results.append(self.stats(symbol, tf))
-            except ValueError:
-                continue
+                st = parquet.stat()
+                mtime = st.st_mtime
+                key = str(parquet)
+                hit = self._all_stats_cache.get(key)
+                if hit and hit[0] == mtime:
+                    return hit[1]
+                bars = self.count_bars(symbol, tf)
+                row = {
+                    "symbol": symbol,
+                    "tf": tf,
+                    "bars": bars,
+                    "from": None,
+                    "to": None,
+                    "size_kb": round(st.st_size / 1024, 1),
+                }
+                self._all_stats_cache[key] = (mtime, row)
+                return row
+            except Exception:
+                return None
+
+        results = []
+        # I/O bound (bind-mount Windows) : le parallélisme gagne ~3-5×.
+        workers = min(16, max(4, (len(paths) // 32) or 4))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = [pool.submit(_one, p) for p in paths]
+            for fut in as_completed(futs):
+                row = fut.result()
+                if row:
+                    results.append(row)
+        results.sort(key=lambda r: (r["symbol"], r["tf"]))
         return results
 
     # ── Mémo « plus d'historique disponible » ─────────────────────────────────

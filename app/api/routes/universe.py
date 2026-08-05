@@ -17,6 +17,7 @@ Ces routes le rendent modifiable depuis l'UI, ce qui suppose deux garanties :
 """
 import logging
 import re
+import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -34,6 +35,50 @@ router = APIRouter()
 #: borne, la valeur atterrit dans un YAML versionné et dans des chemins de
 #: fichiers du cache Parquet.
 _SYMBOL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,31}$")
+
+# Timeframes peuplés à l'ajout d'un ticker (alignés sur le trading / backfill).
+_BACKFILL_TFS = ("15m", "30m", "1h", "4h", "1d")
+# Volume max demandé par TF — yfinance tronque selon ses plafonds (ex. 60 j
+# en 15m) ; CandleStore.fetch gère la pagination / profondeur max.
+_BACKFILL_BARS = 50_000
+
+
+def _start_symbol_backfill(symbol: str, cfg: dict) -> Dict[str, Any]:
+    """Lance en thread daemon le fetch max multi-TF pour un symbole nouvellement
+    ajouté. Retourne un résumé immédiat (le travail continue en arrière-plan)."""
+    job: Dict[str, Any] = {
+        "status": "started",
+        "symbol": symbol,
+        "timeframes": list(_BACKFILL_TFS),
+        "results": [],
+    }
+
+    def _run() -> None:
+        try:
+            from app.core.candle_store import get_store
+            from app.core.exchange import create_exchange
+
+            exchange = create_exchange(cfg)
+            store = get_store()
+            for tf in _BACKFILL_TFS:
+                try:
+                    df = store.fetch(exchange, symbol, tf, total=_BACKFILL_BARS)
+                    n = int(df.height) if df is not None else 0
+                    job["results"].append({"tf": tf, "bars": n, "ok": n > 0})
+                    logger.info(f"[Universe] backfill {symbol}/{tf} → {n} bougies")
+                except Exception as e:
+                    logger.warning(f"[Universe] backfill {symbol}/{tf} KO : {e}")
+                    job["results"].append({
+                        "tf": tf, "bars": 0, "ok": False, "error": str(e)[:200],
+                    })
+            job["status"] = "done"
+        except Exception as e:
+            logger.error(f"[Universe] backfill {symbol} KO : {e}")
+            job["status"] = "error"
+            job["error"] = str(e)[:300]
+
+    threading.Thread(target=_run, daemon=True, name=f"univ-bf-{symbol}").start()
+    return job
 
 
 def _list_universe_files() -> List[str]:
@@ -172,8 +217,18 @@ def add_symbol(request: Request, name: str, body: _AddSymbolBody):
     audit_log("universe.symbol.add", ip=request.client.host if request.client else "",
               details={"universe": name, "symbol": symbol, "name": body.name, **extra})
     logger.info(f"[Universe] {symbol} ajouté à {name} ({total} membres)")
-    return {"status": "added", "universe": name, "symbol": symbol,
-            "n_symbols": total}
+
+    # Backfill max multi-TF en arrière-plan (yfinance pour actions / exchange
+    # pour crypto) — même esprit que /api/data/backfill-equities.
+    fetch_job = _start_symbol_backfill(symbol, state.cfg or {})
+
+    return {
+        "status": "added",
+        "universe": name,
+        "symbol": symbol,
+        "n_symbols": total,
+        "backfill": fetch_job,
+    }
 
 
 @router.delete("/api/universe/{name}/symbols/{symbol:path}",

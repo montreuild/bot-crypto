@@ -16,7 +16,7 @@ import { formatDateTime } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useDerivativesData, useDerivativesStatus } from '@/hooks/use-api';
 import {
-  Loader2, RefreshCw, AlertCircle, Activity, TrendingUp, Coins, Scale, BarChart2,
+  Loader2, RefreshCw, AlertCircle, Activity, Coins, Scale, BarChart2,
 } from 'lucide-react';
 import {
   LineChart, Line, ResponsiveContainer, XAxis, YAxis,
@@ -38,11 +38,29 @@ function timeToLabel(unixSec: number): string {
 function downsample(times: number[], values: (number | null)[], max = 400) {
   if (!times || times.length === 0) return [];
   const step = times.length > max ? Math.ceil(times.length / max) : 1;
-  const out: Array<{ time: string; value: number | null }> = [];
+  const out: Array<{ time: string; value: number | null; t: number }> = [];
   for (let i = 0; i < times.length; i += step) {
-    out.push({ time: timeToLabel(times[i]), value: values[i] ?? null });
+    out.push({ time: timeToLabel(times[i]), value: values[i] ?? null, t: times[i] });
   }
   return out;
+}
+
+/** Aligne le prix (close) sur les timestamps de la métrique pour dual-axis. */
+function mergePrice(
+  metric: Array<{ time: string; value: number | null; t: number }>,
+  price: { time?: number[]; close?: number[] } | null,
+) {
+  if (!price?.time?.length || !price.close?.length) return metric.map((m) => ({ ...m, price: null as number | null }));
+  const pt = price.time;
+  const pc = price.close;
+  let j = 0;
+  return metric.map((m) => {
+    while (j < pt.length - 1 && pt[j + 1] <= m.t) j += 1;
+    // nearest
+    let best = j;
+    if (j + 1 < pt.length && Math.abs(pt[j + 1] - m.t) < Math.abs(pt[j] - m.t)) best = j + 1;
+    return { ...m, price: pc[best] ?? null };
+  });
 }
 
 // ── Chart sub-component ─────────────────────────────────────────────────────
@@ -55,6 +73,9 @@ interface ChartProps {
   unit?: string;
   referenceValue?: number;
   referenceLabel?: string;
+  /** Série prix close pour overlay (dual Y-axis, style Jinja2). */
+  priceSeries?: { time?: number[]; close?: number[] } | null;
+  showPrice?: boolean;
 }
 
 function MetricChart({
@@ -65,8 +86,11 @@ function MetricChart({
   unit = '',
   referenceValue,
   referenceLabel,
+  priceSeries,
+  showPrice,
 }: ChartProps) {
-  const data = downsample(series?.time || [], series?.value || []);
+  const base = downsample(series?.time || [], series?.value || []);
+  const data = showPrice ? mergePrice(base, priceSeries || null) : base;
   const count = series?.count ?? 0;
   return (
     <Card>
@@ -83,30 +107,59 @@ function MetricChart({
             Aucune donnée
           </div>
         ) : (
-          <div className="h-44">
+          <div className="h-52">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={data}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
                 <XAxis dataKey="time" stroke="#6b7280" fontSize={9} minTickGap={40} />
                 <YAxis
+                  yAxisId="metric"
                   stroke="#6b7280"
                   fontSize={9}
                   domain={['auto', 'auto']}
                   tickFormatter={(v) => (v == null ? '—' : `${Number(v).toFixed(3)}${unit}`)}
                 />
+                {showPrice && (
+                  <YAxis
+                    yAxisId="price"
+                    orientation="left"
+                    stroke="rgba(221,230,245,.45)"
+                    fontSize={9}
+                    domain={['auto', 'auto']}
+                    tickFormatter={(v) => `$${Number(v).toFixed(0)}`}
+                  />
+                )}
                 <Tooltip
                   contentStyle={{ backgroundColor: '#141a23', border: '1px solid #1f2937', borderRadius: '8px' }}
-                  formatter={(v: any) => (v == null ? ['—', title] : [`${Number(v).toFixed(5)}${unit}`, title])}
+                  formatter={(v: any, name: string) => {
+                    if (v == null) return ['—', name];
+                    if (name === 'price') return [`$${Number(v).toFixed(2)}`, 'Prix'];
+                    return [`${Number(v).toFixed(5)}${unit}`, title];
+                  }}
                 />
                 {referenceValue != null && (
                   <ReferenceLine
+                    yAxisId="metric"
                     y={referenceValue}
                     stroke="#f59e0b"
                     strokeDasharray="4 4"
                     label={{ value: referenceLabel || '', fill: '#f59e0b', fontSize: 10 }}
                   />
                 )}
+                {showPrice && (
+                  <Line
+                    yAxisId="price"
+                    type="monotone"
+                    dataKey="price"
+                    stroke="rgba(221,230,245,.35)"
+                    strokeWidth={1}
+                    dot={false}
+                    isAnimationActive={false}
+                    connectNulls
+                  />
+                )}
                 <Line
+                  yAxisId="metric"
                   type="monotone"
                   dataKey="value"
                   stroke={color}
@@ -191,11 +244,6 @@ export function DerivativesView() {
     }
   };
 
-  // Price chart data
-  const priceChart = priceData
-    ? downsample(priceData.time || [], priceData.close || [])
-    : [];
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -276,48 +324,7 @@ export function DerivativesView() {
         </Card>
       )}
 
-      {/* Price overlay */}
-      {showPrice && priceChart.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="w-3.5 h-3.5 text-primary-400" />
-              Prix {symbol}
-            </CardTitle>
-            <Badge variant="info">{priceData?.close?.length ?? 0} pts</Badge>
-          </CardHeader>
-          <CardContent>
-            <div className="h-56">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={priceChart}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
-                  <XAxis dataKey="time" stroke="#6b7280" fontSize={10} minTickGap={40} />
-                  <YAxis
-                    stroke="#6b7280"
-                    fontSize={10}
-                    domain={['auto', 'auto']}
-                    tickFormatter={(v) => `$${Number(v).toFixed(0)}`}
-                  />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#141a23', border: '1px solid #1f2937', borderRadius: '8px' }}
-                    formatter={(v: any) => [`$${Number(v).toFixed(2)}`, 'Close']}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="value"
-                    stroke="#22d3ee"
-                    strokeWidth={1.5}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* 4 metric charts */}
+      {/* 4 metric charts — overlay prix sur chaque chart (parité Jinja2) */}
       {!isLoading && !isError && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <MetricChart
@@ -328,6 +335,8 @@ export function DerivativesView() {
             unit=""
             referenceValue={0}
             referenceLabel="0"
+            priceSeries={priceData}
+            showPrice={showPrice}
           />
           <MetricChart
             title="Open Interest"
@@ -335,6 +344,8 @@ export function DerivativesView() {
             color="#8b5cf6"
             icon={<Coins className="w-3.5 h-3.5 text-purple-400" />}
             unit=""
+            priceSeries={priceData}
+            showPrice={showPrice}
           />
           <MetricChart
             title="Long/Short Ratio"
@@ -344,6 +355,8 @@ export function DerivativesView() {
             unit=""
             referenceValue={1}
             referenceLabel="1.0"
+            priceSeries={priceData}
+            showPrice={showPrice}
           />
           <MetricChart
             title="Taker Buy/Sell Ratio"
@@ -353,6 +366,8 @@ export function DerivativesView() {
             unit=""
             referenceValue={1}
             referenceLabel="1.0"
+            priceSeries={priceData}
+            showPrice={showPrice}
           />
         </div>
       )}

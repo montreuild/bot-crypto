@@ -588,6 +588,62 @@ export function OptimizerView() {
             </div>
           </div>
 
+          {/* Preview matrice strat × TF × symbole (parité Jinja2) */}
+          {selectedStrategies.length > 0 && selectedTfs.length > 0 && selectedSymbols.length > 0 && (
+            <div className="rounded-lg border border-border bg-card-hover/50 p-3 space-y-2">
+              <div className="text-[11px] text-dim uppercase tracking-wider font-semibold">
+                Preview run — {selectedStrategies.length}×{selectedTfs.length}×{selectedSymbols.length}
+                {' = '}
+                <span className="text-foreground font-mono">
+                  {selectedStrategies.length * selectedTfs.length * selectedSymbols.length}
+                </span>
+                {' '}slots
+              </div>
+              <div className="overflow-x-auto max-h-40">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-dim border-b border-border">
+                      <th className="text-left p-1.5 font-medium">Stratégie</th>
+                      {selectedTfs.map((tf) => (
+                        <th key={tf} className="p-1.5 font-mono font-medium text-center">{tf}</th>
+                      ))}
+                      <th className="p-1.5 font-medium text-right">Combos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedStrategies.map((s) => {
+                      const info = spaces?.[s];
+                      const recTfs: string[] = info?.timeframes || [];
+                      return (
+                        <tr key={s} className="border-b border-border/40">
+                          <td className="p-1.5 font-mono font-semibold">{s}</td>
+                          {selectedTfs.map((tf) => {
+                            const rec = recTfs.length === 0 || recTfs.includes(tf);
+                            return (
+                              <td key={tf} className="p-1.5 text-center">
+                                <span className={cn(
+                                  'inline-block w-2 h-2 rounded-full',
+                                  rec ? 'bg-emerald-400' : 'bg-amber-400/70',
+                                )} title={rec ? 'TF recommandé' : 'TF hors liste recommandée'} />
+                              </td>
+                            );
+                          })}
+                          <td className="p-1.5 text-right font-mono text-muted">
+                            {info?.n_combos ?? '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[10px] text-dim">
+                Point vert = TF recommandé pour la stratégie · ambre = hors liste (sera tout de même lancé).
+                Symboles : {selectedSymbols.join(', ')} · méthode {method} · {nTrials} trials · {nJobs} worker(s)
+              </p>
+            </div>
+          )}
+
           <Button
             onClick={handleStart}
             disabled={startOptimize.isPending}

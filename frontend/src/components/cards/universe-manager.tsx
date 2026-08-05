@@ -1,10 +1,11 @@
 'use client';
 
 /**
- * S8-F2 — Gestionnaire d'univers.
+ * Gestionnaire d'univers.
  *
  * GET /api/universe, GET /api/universe/{name}, POST/DELETE symbols.
- * L'écriture YAML est textuelle côté backend (commentaires préservés).
+ * Pas de comptage de bougies ici (voir page Données OHLCV).
+ * À l'ajout d'un ticker, l'API lance un backfill yfinance multi-TF en fond.
  */
 
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -33,7 +34,6 @@ export function UniverseManager() {
     refetchInterval: 60000,
   });
 
-  // Liste rapide (sans lecture Parquet). Compteurs de bougies en second plan.
   const universeDetailQuery = useQuery({
     queryKey: ['universe', selectedUniverse],
     queryFn: () => api.getUniverse(selectedUniverse!),
@@ -43,26 +43,21 @@ export function UniverseManager() {
     retry: 1,
   });
 
-  const universeBarsQuery = useQuery({
-    queryKey: ['universe', selectedUniverse, 'bars'],
-    queryFn: () => api.getUniverse(selectedUniverse!, { includeBars: true }),
-    enabled: !!selectedUniverse && !!universeDetailQuery.data,
-    staleTime: 120_000,
-    retry: 0,
-  });
-
-  const members = (universeBarsQuery.data?.members
-    ?? universeDetailQuery.data?.members
-    ?? []) as any[];
+  const members = (universeDetailQuery.data?.members ?? []) as any[];
 
   const addSymbol = useMutation({
     mutationFn: ({ universe, body }: { universe: string; body: { symbol: string; name?: string } }) =>
       api.addUniverseSymbol(universe, body),
-    onSuccess: () => {
+    onSuccess: (res: any) => {
       qc.invalidateQueries({ queryKey: ['universe', selectedUniverse] });
-      qc.invalidateQueries({ queryKey: ['universe', selectedUniverse, 'bars'] });
       qc.invalidateQueries({ queryKey: ['universes'] });
-      toast.success('Symbole ajouté (YAML : commentaires préservés)');
+      qc.invalidateQueries({ queryKey: ['dataStatus'] });
+      const bf = res?.backfill;
+      toast.success(
+        bf?.status === 'started'
+          ? 'Symbole ajouté — backfill max multi-TF démarré (voir Données OHLCV)'
+          : 'Symbole ajouté (YAML : commentaires préservés)',
+      );
       setShowAddForm(false);
       setNewSymbol('');
       setNewName('');
@@ -75,7 +70,6 @@ export function UniverseManager() {
       api.removeUniverseSymbol(universe, symbol),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['universe', selectedUniverse] });
-      qc.invalidateQueries({ queryKey: ['universe', selectedUniverse, 'bars'] });
       toast.success('Symbole retiré');
       setRemoveTarget(null);
     },
@@ -159,6 +153,8 @@ export function UniverseManager() {
                 <div className="font-mono text-sm font-semibold">{selectedUniverse}</div>
                 <div className="text-[10px] text-muted">
                   {universeDetailQuery.data?.as_of && `As of ${universeDetailQuery.data.as_of}`}
+                  {' · '}
+                  {members.length} symboles
                 </div>
               </div>
               <Button size="sm" variant="outline" onClick={() => setShowAddForm(!showAddForm)}>
@@ -179,10 +175,9 @@ export function UniverseManager() {
                     className="font-mono text-xs"
                   />
                   <p className="text-[10px] text-muted mt-1">
-                    Indiquer le ticker <strong className="text-dim">yfinance</strong> complet
-                    (suffixe bourse inclus : <code className="font-mono">.PA</code>,{' '}
-                    <code className="font-mono">.AS</code>, <code className="font-mono">.BR</code>…).
-                    Exemple : Alstom → <code className="font-mono">ALO.PA</code>.
+                    Ticker <strong className="text-dim">yfinance</strong> complet
+                    (ex. <code className="font-mono">ALO.PA</code>). À l&apos;ajout, un
+                    backfill max est lancé pour 15m / 30m / 1h / 4h / 1d (voir Données OHLCV).
                   </p>
                 </div>
                 <div>
@@ -219,53 +214,33 @@ export function UniverseManager() {
             ) : members.length === 0 ? (
               <p className="text-xs text-muted">Univers vide</p>
             ) : (
-              <div className="space-y-1">
-                {universeBarsQuery.isFetching && (
-                  <p className="text-[10px] text-muted flex items-center gap-1">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    Comptage des bougies en cache…
-                  </p>
-                )}
-                <div className="border border-border rounded-md overflow-hidden max-h-80 overflow-y-auto">
-                  <table className="w-full text-xs">
-                    <thead className="bg-card-hover sticky top-0">
-                      <tr className="text-left text-dim border-b border-border">
-                        <th scope="col" className="p-2 font-medium">Symbole</th>
-                        <th scope="col" className="p-2 font-medium">Nom</th>
-                        <th scope="col" className="p-2 font-medium text-right">Bougies</th>
-                        <th scope="col" className="p-2 font-medium w-8" />
+              <div className="border border-border rounded-md overflow-hidden max-h-80 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-card-hover sticky top-0">
+                    <tr className="text-left text-dim border-b border-border">
+                      <th scope="col" className="p-2 font-medium">Symbole</th>
+                      <th scope="col" className="p-2 font-medium">Nom</th>
+                      <th scope="col" className="p-2 font-medium w-8" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {members.map((m: any) => (
+                      <tr key={m.symbol} className="border-b border-border/50 hover:bg-card-hover">
+                        <td className="p-2 font-mono font-semibold">{m.symbol}</td>
+                        <td className="p-2 text-muted truncate max-w-[180px]">{m.name || '—'}</td>
+                        <td className="p-2">
+                          <button
+                            onClick={() => setRemoveTarget({ universe: selectedUniverse, symbol: m.symbol })}
+                            className="text-dim hover:text-red-400 transition-colors"
+                            aria-label={`Retirer ${m.symbol}`}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {members.map((m: any) => (
-                        <tr key={m.symbol} className="border-b border-border/50 hover:bg-card-hover">
-                          <td className="p-2 font-mono font-semibold">{m.symbol}</td>
-                          <td className="p-2 text-muted truncate max-w-[120px]">{m.name || '—'}</td>
-                          <td className="p-2 text-right font-mono text-dim">
-                            {m.bars && Object.keys(m.bars).length > 0
-                              ? Object.entries(m.bars).map(([tf, n]: any) => (
-                                  <span key={tf} className="ml-1 text-[10px]">
-                                    {tf}:{n as number}
-                                  </span>
-                                ))
-                              : universeBarsQuery.isFetching
-                                ? '…'
-                                : '—'}
-                          </td>
-                          <td className="p-2">
-                            <button
-                              onClick={() => setRemoveTarget({ universe: selectedUniverse, symbol: m.symbol })}
-                              className="text-dim hover:text-red-400 transition-colors"
-                              aria-label={`Retirer ${m.symbol}`}
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>

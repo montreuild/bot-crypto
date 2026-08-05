@@ -410,7 +410,7 @@ def build_smc_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
     # swing que le signal), sinon calcule avec _smc_params (cohérence).
     htf_meta = (res_aux or {}).get("htf_meta")
     if htf_meta is None:
-        from app.strategies.smart_money import _HTF_SEC_MAP
+        from app.core.timeframes import HTF_SECONDS_MAP as _HTF_SEC_MAP
         _, htf_meta = smc.htf_trend_series(
             df, _SMCStrategy._smc_params(p_full),
             mult=int(p_full.get("htf_mult", 4)), htf_sec_map=_HTF_SEC_MAP)
@@ -548,7 +548,7 @@ def build_smc_replay_payload(cfg: dict, df, symbol: str, tf: str) -> dict:
     p_strat  = {**_SMCStrategy.fixed_params,
                 **{k: v for k, v in (resolved.get("smart_money") or {}).items()
                    if v is not None}}
-    from app.strategies.smart_money import _HTF_SEC_MAP
+    from app.core.timeframes import HTF_SECONDS_MAP as _HTF_SEC_MAP
     res = smc.analyze(df, _SMCStrategy._smc_params(p_strat))
     htf_arr, htf_meta = smc.htf_trend_series(
         df, _SMCStrategy._smc_params(p_strat),

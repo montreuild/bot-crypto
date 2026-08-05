@@ -112,17 +112,14 @@ risk:
   envelopes:
     margin-isolated:
       capital: 1000
-      # BTC + ETH actifs : 2 × 50 % = 100 % de l'enveloppe venue (sinon
-      # diagnostic enveloppe_venue_depassee si 100 % par symbole).
       max_symbol_exposure_pct: 0.5
-      symbol_risk_pct: 0.05      # 50 € de perte max sur un symbole = 2 × 25 € par trade
-      venue_risk_pct: 0.05       # 50 € sur la venue
+      symbol_risk_pct: 0.05
+      venue_risk_pct: 0.05
     euronext-paper:
       capital: 10000
-      max_symbol_exposure_pct: 0.25   # 2 500 € max par ticker
-      symbol_risk_pct: 0.05           # 125 € de perte max par ticker = 2 × 62,50 €
-      venue_risk_pct: 0.05            # 500 € de perte max sur le livre actions
-
+      max_symbol_exposure_pct: 0.2
+      symbol_risk_pct: 0.05
+      venue_risk_pct: 0.05
 live:
   # Paramètres de trailing du LiveTrader — dédiés, indépendants de backtest.*
   # (S1-08 : sans cette section, le trailing live suivait silencieusement

@@ -355,9 +355,9 @@ export const api = {
     // le bouton « Analyse rapide » de /scanner ne fonctionnait pas.
     apiFetch<any>(`/scanner/fast_analysis?symbol=${encodeURIComponent(symbol)}&tf=${tf}`, { timeoutMs: 0 }),
 
-  // S8-F4-US1 — Scanner multi-symboles
+  // S8-F4-US1 — Scanner multi-symboles (peut être long sous Docker)
   scanMarket: (timeframe = '1h', limit = 50) =>
-    apiFetch<any>(`/scanner?timeframe=${timeframe}&limit=${limit}`),
+    apiFetch<any>(`/scanner?timeframe=${timeframe}&limit=${limit}`, { timeoutMs: 0 }),
   // S8-F4-US2 — Top opportunités
   getOpportunities: (timeframe = '1h', limit = 10) =>
     apiFetch<any>(`/scanner/opportunities?timeframe=${timeframe}&limit=${limit}`),
@@ -370,6 +370,12 @@ export const api = {
   // silence et `tsc` échouait (TS1117).
   // S8-F4-US5 — Config scanner
   getScannerConfig: () => apiFetch<any>('/scanner/config', { schema: ScannerConfigSchema }),
+  // Chart multi-panneaux (OHLCV + EMA/BB/RSI/MACD/volume)
+  getScannerChart: (symbol: string, timeframe = '1h', limit = 300) =>
+    apiFetch<any>(
+      `/scanner/chart?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`,
+      { timeoutMs: 60_000 },
+    ),
 
   // ── Univers ─────────────────────────────────────────────────────────────
   // S8-F2-US1 — Liste des univers
@@ -391,7 +397,8 @@ export const api = {
     }),
 
   // ── Data ────────────────────────────────────────────────────────────────
-  getDataStatus: () => apiFetch<any>('/data/status'),
+  // Timeout élargi : inventaire multi-milliers de Parquet sous Docker/Windows.
+  getDataStatus: () => apiFetch<any>('/data/status', { timeoutMs: 60_000 }),
   refetchData: (symbol: string, tf: string) =>
     apiFetch<any>(`/data/refetch?symbol=${encodeURIComponent(symbol)}&tf=${tf}`, { method: 'POST', timeoutMs: 0 }),
   // S5 (audit V2) : backfill des actions depuis l'UI (équivalent du bouton
@@ -528,9 +535,15 @@ export const api = {
 
   // ── SMC / Scanner ───────────────────────────────────────────────────────
   getSMC: (symbol = 'BTC/USDC', timeframe = '1h', limit = 1000) =>
-    apiFetch<any>(`/scanner/smc?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`, { schema: SmcSchema }),
+    apiFetch<any>(
+      `/scanner/smc?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`,
+      { schema: SmcSchema, timeoutMs: 60_000 },
+    ),
   getSMCReplay: (symbol = 'BTC/USDC', timeframe = '4h', limit = 800) =>
-    apiFetch<any>(`/scanner/smc_replay?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`, { schema: SmcSchema }),
+    apiFetch<any>(
+      `/scanner/smc_replay?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`,
+      { schema: SmcSchema, timeoutMs: 120_000 },
+    ),
   getSignals: (symbol = 'BTC/USDC', timeframe = '1h', limit = 300) =>
     apiFetch<any>(`/scanner/signals?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&limit=${limit}`, { schema: ScannerSignalsSchema }),
 };

@@ -51,6 +51,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   Play, Square, Loader2, FlaskConical, Sparkles, Brain, Repeat,
   GitCompare, AlertCircle, CheckCircle2, TrendingUp, Rocket, Archive,
+  Maximize2, FileDown, X,
 } from 'lucide-react';
 import { cn, formatUSD, formatPct } from '@/lib/utils';
 
@@ -539,10 +540,42 @@ function BacktestResults({ result }: { result: any }) {
   const r = Array.isArray(result) ? result[0] : result;
   const byStrategy = r?.by_strategy || {};
   const strategies = Object.entries(byStrategy);
+  const [fsStrategy, setFsStrategy] = useState<string | null>(null);
 
   // S9-F4-US3/5 — Export du résultat de backtest. Les composants existaient
   // mais n'étaient montés nulle part.
   const csvRows = strategies.map(([name, stats]: [string, any]) => ({ strategy: name, ...stats }));
+
+  const exportPdf = () => {
+    // Impression / PDF navigateur (parité Jinja2 export PDF sans dépendance jspdf)
+    const w = window.open('', '_blank', 'noopener,noreferrer,width=900,height=700');
+    if (!w) {
+      toast.error('Pop-up bloquée — autorisez les fenêtres pour l’export PDF');
+      return;
+    }
+    const rows = strategies.map(([name, stats]: [string, any]) =>
+      `<tr><td>${name}</td><td>${stats.total_trades ?? '—'}</td>`
+      + `<td>${Number(stats.win_rate ?? 0).toFixed(1)}%</td>`
+      + `<td>${Number(stats.total_pnl ?? 0).toFixed(2)}</td>`
+      + `<td>${Number(stats.sharpe ?? 0).toFixed(2)}</td>`
+      + `<td>${Number(stats.max_drawdown ?? 0).toFixed(2)}%</td></tr>`,
+    ).join('');
+    w.document.write(`<!DOCTYPE html><html><head><title>Backtest</title>
+      <style>
+        body{font-family:system-ui,sans-serif;padding:24px;color:#111}
+        h1{font-size:18px} table{border-collapse:collapse;width:100%;font-size:12px}
+        th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}
+        th{background:#f3f4f6} .muted{color:#6b7280;font-size:11px}
+      </style></head><body>
+      <h1>Rapport backtest</h1>
+      <p class="muted">${new Date().toLocaleString('fr-FR')} · ${r?.symbol || ''} ${r?.timeframe || ''}</p>
+      <table><thead><tr><th>Stratégie</th><th>Trades</th><th>WR</th><th>PnL</th><th>Sharpe</th><th>Max DD</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <p class="muted">Imprimer → Enregistrer au format PDF</p>
+      <script>window.onload=function(){window.print()}</script>
+      </body></html>`);
+    w.document.close();
+  };
 
   return (
     <div className="space-y-4">
@@ -554,7 +587,7 @@ function BacktestResults({ result }: { result: any }) {
           comparables. Cf. app/core/execution.py::cost_model. */}
       <CostModelCard model={r?.cost_model} />
 
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex items-center justify-end gap-2 flex-wrap">
         <CsvExportButton
           filename="backtest"
           rows={csvRows}
@@ -568,7 +601,32 @@ function BacktestResults({ result }: { result: any }) {
           }}
         />
         <JsonExportButton filename="backtest" data={result} />
+        <Button size="sm" variant="outline" onClick={exportPdf}>
+          <FileDown className="w-3.5 h-3.5" />
+          PDF
+        </Button>
       </div>
+
+      {/* Fullscreen chart modal (complément ChartFullscreen déjà dans le composant) */}
+      {fsStrategy && byStrategy[fsStrategy] && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex flex-col p-4" role="dialog" aria-modal="true" aria-label="Chart plein écran">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-mono font-semibold text-white">{fsStrategy} — plein écran</h3>
+            <Button size="sm" variant="ghost" onClick={() => setFsStrategy(null)} aria-label="Fermer">
+              <X className="w-4 h-4" /> Fermer
+            </Button>
+          </div>
+          <div className="flex-1 min-h-0 bg-card rounded-lg border border-border p-2 overflow-auto">
+            <BacktestEquityChart
+              strategy={fsStrategy}
+              equityCurve={byStrategy[fsStrategy]?.equity_curve}
+              initialCapital={byStrategy[fsStrategy]?.initial_capital}
+              buyAndHoldPnl={byStrategy[fsStrategy]?.buy_and_hold_pnl}
+              alpha={byStrategy[fsStrategy]?.alpha}
+            />
+          </div>
+        </div>
+      )}
 
       {/* KPIs par stratégie */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -635,7 +693,13 @@ function BacktestResults({ result }: { result: any }) {
         if (!hasDetail) return null;
         return (
           <div key={`detail-${name}`} className="space-y-4">
-            <h3 className="text-xs uppercase tracking-wide text-dim pt-2">{name}</h3>
+            <div className="flex items-center justify-between pt-2">
+              <h3 className="text-xs uppercase tracking-wide text-dim">{name}</h3>
+              <Button size="sm" variant="ghost" onClick={() => setFsStrategy(name)} title="Plein écran">
+                <Maximize2 className="w-3.5 h-3.5" />
+                Plein écran
+              </Button>
+            </div>
             <BacktestEquityChart
               strategy={name}
               equityCurve={stats.equity_curve}
