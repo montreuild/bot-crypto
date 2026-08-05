@@ -32,6 +32,26 @@ Bot de trading algorithmique multi-stratégies avec interface web, backtest avan
 
 ## 🚀 Installation rapide
 
+### Option A — Docker (recommandé, environnement reproductible)
+
+```powershell
+# Windows
+.\scripts\docker-up.ps1          # API paper → http://localhost:8000
+.\scripts\docker-up.ps1 -Full    # + frontend → http://localhost:3000
+.\scripts\docker-up.ps1 -Test    # pytest dans un conteneur
+```
+
+```bash
+# Linux / macOS / WSL / Git Bash
+bash scripts/docker-up.sh
+bash scripts/docker-up.sh --full
+bash scripts/docker-up.sh --test
+```
+
+Guide détaillé : [`docs/DOCKER.md`](docs/DOCKER.md) (local, tests, production).
+
+### Option B — Installation native
+
 ```bash
 # 1. Cloner / décompresser le projet
 cd crypto_bot_v12

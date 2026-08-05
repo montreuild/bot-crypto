@@ -1,30 +1,37 @@
-# Crypto Bot — image frontend Next.js (build de production)
+# Crypto Bot — image frontend Next.js (standalone)
 #
-# Build :
-#   docker build -f Dockerfile.frontend -t crypto-bot:web ./frontend
-# Ou via docker-compose (service `web`).
+# Build (contexte = racine du dépôt) :
+#   docker build -f Dockerfile.frontend -t crypto-bot:web .
+# Ou : docker compose --profile full build web
 
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
-COPY package.json package-lock.json* ./
+COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
 
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
+COPY frontend/ .
+# URL interne du backend (réseau compose) — surchargée au runtime via env.
+ARG BOT_API_URL=http://api:8000
+ARG NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws
+ENV BOT_API_URL=$BOT_API_URL \
+    NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL \
+    NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
-    PORT=3000
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
 RUN useradd -m -u 10001 nextjs
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
 USER nextjs
 EXPOSE 3000
+# BOT_API_URL et WEB_API_KEY fournis par compose au runtime (proxy same-origin).
 CMD ["node", "server.js"]

@@ -1,0 +1,106 @@
+# Crypto Bot — environnement reproductible (local + base prod)
+#
+# Démarrage rapide :
+#   scripts/docker-up.ps1          # Windows
+#   bash scripts/docker-up.sh      # Linux / macOS / Git Bash
+#
+# Ou manuellement :
+#   cp .env.example .env   # puis renseigner WEB_API_KEY
+#   docker compose up --build api
+#
+# Profils :
+#   (défaut)  api paper + API :8000
+#   full      + frontend Next.js :3000
+#   test      pytest dans un conteneur éphémère
+
+name: crypto-bot
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: crypto-bot:api
+    container_name: crypto-bot-api
+    ports:
+      # Prod : API_HOST_BIND=127.0.0.1 (nginx devant). Local : 0.0.0.0 par défaut.
+      - "${API_HOST_BIND:-0.0.0.0}:${API_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      # Priorité sur le fichier .env si déjà exporté (override=False côté app).
+      ENV: ${ENV:-dev}
+      WEB_API_KEY: ${WEB_API_KEY:-}
+      ALLOW_INSECURE_WEB: ${ALLOW_INSECURE_WEB:-0}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      # Host Docker : l'API écoute toutes les interfaces du conteneur.
+      # La clé WEB_API_KEY protège les routes (SEC / OPS-02).
+    volumes:
+      # Données et logs persistants (jamais dans l'image).
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./models:/app/models
+      # Config editable (UI → disque) — montée pour le dev local.
+      - ./config.yaml:/app/config.yaml
+      - ./config:/app/config
+      - ./strategies:/app/strategies
+    # Paper par défaut : sûr pour un premier run. Live = compose.prod ou CLI.
+    command: ["python", "cli.py", "--paper"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 45s
+      retries: 3
+
+  web:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        BOT_API_URL: http://api:8000
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000/ws}
+    image: crypto-bot:web
+    container_name: crypto-bot-web
+    ports:
+      - "${API_HOST_BIND:-0.0.0.0}:${WEB_PORT:-3000}:3000"
+    environment:
+      BOT_API_URL: http://api:8000
+      WEB_API_KEY: ${WEB_API_KEY:-}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000/ws}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  test:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: crypto-bot:api
+    env_file:
+      - .env
+    environment:
+      # Clé fixe pour les tests qui passent par l'API ; pas d'ouverture réseau.
+      WEB_API_KEY: ${WEB_API_KEY:-test-docker-key}
+      ALLOW_INSECURE_WEB: "0"
+      ENV: test
+      PYTEST_CURRENT_TEST: "1"
+    volumes:
+      # Montage live des tests pour itérer sans rebuild.
+      - ./tests:/app/tests
+      - ./app:/app/app
+      - ./config.yaml:/app/config.yaml:ro
+      - ./config:/app/config:ro
+      - ./data:/app/data
+    # Suite rapide par défaut (exclut markers slow).
+    command:
+      [
+        "python", "-m", "pytest", "-q",
+        "-m", "not slow",
+        "--tb=line",
+      ]
+    # Pas de ports : conteneur éphémère.
