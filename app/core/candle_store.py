@@ -5,6 +5,7 @@ Fetch incrémental, thread-safe, retourne un pl.DataFrame identique à MarketSca
 
 import logging
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -15,10 +16,14 @@ import polars as pl
 
 from app.core.config import DATA_ROOT
 from app.core.singleton import lazy_singleton
+from app.core.timeframes import TF_SECONDS
 
 OHLCV_DIR = os.path.join(DATA_ROOT, "ohlcv")
 
 logger = logging.getLogger(__name__)
+
+# SEC-002 — mêmes contraintes que app/api/schemas.py (symbole + timeframe whitelist).
+_SYMBOL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./:\-]{0,31}$")
 
 # Plancher de `since` pour les fetch paginés : ~fondation d'OKX (2017-01-01).
 # Évite de calculer un `since` absurde (ex. 50000 × 4h ≈ année 2003) que l'exchange
@@ -567,8 +572,20 @@ class CandleStore:
     # ── Helpers Parquet ───────────────────────────────────────────────────────
 
     def _path(self, symbol: str, tf: str) -> Path:
+        """Chemin Parquet (symbol, tf) — refuse path-traversal et TF hors whitelist (SEC-002)."""
+        if tf not in TF_SECONDS:
+            raise ValueError(
+                f"Timeframe invalide : {tf!r}. "
+                f"Autorisés : {', '.join(sorted(TF_SECONDS))}"
+            )
+        if not symbol or not _SYMBOL_RE.fullmatch(symbol) or ".." in symbol:
+            raise ValueError(f"Symbole invalide : {symbol!r}")
         safe = symbol.replace("/", "_").replace(":", "_")
-        return self._base / safe / f"{tf}.parquet"
+        base = self._base.resolve()
+        path = (base / safe / f"{tf}.parquet").resolve()
+        if not path.is_relative_to(base):
+            raise ValueError(f"Symbole invalide : {symbol!r}")
+        return path
 
     def _load(self, path: Path) -> pl.DataFrame:
         if path.exists():

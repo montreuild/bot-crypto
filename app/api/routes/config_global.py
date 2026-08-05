@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.api import state
 from app.api.helpers import _discover_strategies, verify_api_key
 from app.api.routes._config_helpers import _save_yaml
+from app.api.schemas import MarginConfigBody, TradingParamsBody
 from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
 from app.core.risk_envelope import trade_risk_pct as _trade_risk_pct
 from app.core.risk_gate import _default_venue_capital
@@ -55,40 +56,20 @@ def get_config():
 
 @router.post("/api/config/trading", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("30/minute")
-def update_trading_params(
-    request:              Request,
-    score_threshold:      float = None,
-    paper_mode:           bool  = None,
-    paper_slippage:       float = None,
-    daily_drawdown_limit: float = None,
-):
+def update_trading_params(request: Request, body: TradingParamsBody):
+    """SEC-03 — corps JSON validé par ``TradingParamsBody``."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
-    # ── Validation des bornes ──
-    if score_threshold is not None and not (0.0 < score_threshold < 1.0):
-        raise HTTPException(400, "score_threshold doit être entre 0 et 1 (exclus)")
-    if paper_slippage is not None and not (0.0 <= paper_slippage <= 0.05):
-        raise HTTPException(400, "paper_slippage doit être entre 0 et 0.05 (5%)")
-    if daily_drawdown_limit is not None and not (0.0 < daily_drawdown_limit <= 0.5):
-        raise HTTPException(400, "daily_drawdown_limit doit être entre 0 (exclus) et 0.5")
-    changed = {}
-    mapping = {
-        "score_threshold":      score_threshold,
-        "paper_mode":           paper_mode,
-        "paper_slippage":       paper_slippage,
-        "daily_drawdown_limit": daily_drawdown_limit,
-    }
-    for key, val in mapping.items():
-        if val is not None:
-            state.cfg["trading"][key] = val
-            changed[key] = val
-            if state.trader:
-                if hasattr(state.trader, key):
-                    setattr(state.trader, key, val)
-                if hasattr(state.trader.risk, key):
-                    setattr(state.trader.risk, key, val)
-                if key == "score_threshold":
-                    state.trader.threshold = val
+    changed = body.model_dump(exclude_none=True)
+    for key, val in changed.items():
+        state.cfg["trading"][key] = val
+        if state.trader:
+            if hasattr(state.trader, key):
+                setattr(state.trader, key, val)
+            if hasattr(state.trader.risk, key):
+                setattr(state.trader.risk, key, val)
+            if key == "score_threshold":
+                state.trader.threshold = val
     try:
         _save_yaml(lambda d: d.setdefault("trading", {}).update(changed))
         saved = True
@@ -101,18 +82,13 @@ def update_trading_params(
 
 @router.post("/api/config/margin", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("30/minute")
-def update_margin_config(
-    request:      Request,
-    margin:       bool = None,
-    margin_mode:  str  = None,
-    max_leverage: int  = None,
-):
+def update_margin_config(request: Request, body: MarginConfigBody):
+    """SEC-03 — corps JSON validé par ``MarginConfigBody``."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
-    if margin_mode is not None and margin_mode not in ("isolated", "cross"):
-        raise HTTPException(400, "margin_mode doit être 'isolated' ou 'cross'")
-    if max_leverage is not None and not (1 <= max_leverage <= 125):
-        raise HTTPException(400, "max_leverage doit être entre 1 et 125")
+    margin = body.margin
+    margin_mode = body.margin_mode
+    max_leverage = body.max_leverage
     if margin is not None:
         state.cfg["exchange"]["margin"]      = margin
     if margin_mode is not None:

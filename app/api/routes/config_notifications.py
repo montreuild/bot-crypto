@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.api import state
 from app.api.helpers import verify_api_key
 from app.api.routes._config_helpers import _save_yaml
+from app.api.schemas import NotificationsConfigBody
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -43,43 +44,12 @@ def get_notifications_config():
 
 @router.post("/api/config/notifications", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("30/minute")
-def update_notifications_config(
-    request:                Request,
-    telegram_enabled:       bool  = None,
-    telegram_bot_token:     str   = None,
-    telegram_chat_id:       str   = None,
-    whatsapp_enabled:       bool  = None,
-    whatsapp_number:        str   = None,
-    whatsapp_token:         str   = None,
-    email_enabled:          bool  = None,
-    email_smtp:             str   = None,
-    email_port:             int   = None,
-    email_user:             str   = None,
-    email_password:         str   = None,
-    email_to:               str   = None,
-    min_pnl_to_notify:      float = None,
-    position_loss_warn_pct: float = None,
-):
+def update_notifications_config(request: Request, body: NotificationsConfigBody):
+    """SEC-03 — corps JSON validé par ``NotificationsConfigBody``."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
     notif = state.cfg.setdefault("notifications", {})
-    mapping = {
-        "telegram_enabled":       telegram_enabled,
-        "telegram_bot_token":     telegram_bot_token,
-        "telegram_chat_id":       telegram_chat_id,
-        "whatsapp_enabled":       whatsapp_enabled,
-        "whatsapp_number":        whatsapp_number,
-        "whatsapp_token":         whatsapp_token,
-        "email_enabled":          email_enabled,
-        "email_smtp":             email_smtp,
-        "email_port":             email_port,
-        "email_user":             email_user,
-        "email_password":         email_password,
-        "email_to":               email_to,
-        "min_pnl_to_notify":      min_pnl_to_notify,
-        "position_loss_warn_pct": position_loss_warn_pct,
-    }
-    changed = {k: v for k, v in mapping.items() if v is not None}
+    changed = body.model_dump(exclude_none=True)
     notif.update(changed)
 
     if state.trader:

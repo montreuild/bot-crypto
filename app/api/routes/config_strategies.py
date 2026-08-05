@@ -9,6 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.api import state
 from app.api.helpers import _discover_strategies, verify_api_key
 from app.api.routes._config_helpers import _save_strategy_yaml, _save_yaml
+from app.api.schemas import (
+    AutoOptimizerBody,
+    StrategiesEnabledBody,
+    StrategyParamsBody,
+    StrategyTimeframeBody,
+    TimeframesBody,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -16,12 +23,12 @@ router = APIRouter()
 
 @router.post("/api/config/strategies", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("30/minute")
-def update_strategies(request: Request, enabled: str = ""):
+def update_strategies(request: Request, body: StrategiesEnabledBody):
     """Active/désactive des stratégies en écrivant `enabled: true/false`
     dans chaque fichier strategies/{name}.yaml."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
-    strat_list = [s.strip() for s in enabled.split(",") if s.strip()]
+    strat_list = list(body.enabled)
     if not strat_list:
         raise HTTPException(400, "Aucune stratégie spécifiée")
     allowed = _discover_strategies()
@@ -54,15 +61,11 @@ def update_strategies(request: Request, enabled: str = ""):
 
 @router.post("/api/config/timeframes", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("30/minute")
-def update_timeframes(request: Request, timeframes: str = "1h"):
-    """Met à jour les timeframes actifs (CSV, ex: '5m,1h,4h')."""
+def update_timeframes(request: Request, body: TimeframesBody):
+    """Met à jour les timeframes actifs (corps JSON ``{timeframes: [...]}``)."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
-    allowed_tfs = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
-    tf_list = [t.strip() for t in timeframes.split(",") if t.strip()]
-    invalid = [t for t in tf_list if t not in allowed_tfs]
-    if invalid:
-        raise HTTPException(400, f"Timeframe(s) invalide(s) : {', '.join(invalid)}")
+    tf_list = list(body.timeframes)
     if not tf_list:
         raise HTTPException(400, "Aucun timeframe spécifié")
 
@@ -90,9 +93,11 @@ def update_timeframes(request: Request, timeframes: str = "1h"):
 
 @router.post("/api/config/auto-optimizer", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("30/minute")
-def update_auto_optimizer(request: Request, enabled: bool = False, interval_h: int = 24):
+def update_auto_optimizer(request: Request, body: AutoOptimizerBody):
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
+    enabled = body.enabled
+    interval_h = body.interval_h
     state.cfg.setdefault("optimizer", {})["enabled"]        = enabled
     state.cfg["optimizer"]["auto_interval_h"]               = interval_h
     if state.trader:
@@ -116,6 +121,11 @@ def strategy_overrides(strategy: str):
     (cf. UI-02). Une entrée héritée est présentée comme la config BTC/USDC."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
+    from app.api.schemas import validate_strategy_name
+    try:
+        strategy = validate_strategy_name(strategy)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     allowed = _discover_strategies()
     if strategy not in allowed:
         raise HTTPException(400, f"Stratégie inconnue : {strategy}")
@@ -144,14 +154,17 @@ def strategy_overrides(strategy: str):
 
 @router.post("/api/config/strategy-params", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("30/minute")
-def update_strategy_params(request: Request, strategy: str, params: dict,
-                           timeframe: str = None, symbol: str = None):
+def update_strategy_params(request: Request, body: StrategyParamsBody):
     """Sauvegarde les paramètres d'une stratégie. Sans ``timeframe``/``symbol`` :
     écrit le bloc ``params:`` de base de strategies/{strategy}.yaml. Avec les deux
     (cf. UI-02) : écrit un OVERRIDE ``optimizer_results[tf][symbole]`` via
     ``apply_best_params`` (schéma per-symbole canonique ; ``oos_score`` préservé)."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
+    strategy = body.strategy
+    params = body.params
+    timeframe = body.timeframe
+    symbol = body.symbol
     allowed = _discover_strategies()
     if strategy not in allowed:
         raise HTTPException(400, f"Stratégie inconnue : {strategy}")
@@ -201,19 +214,20 @@ def update_strategy_params(request: Request, strategy: str, params: dict,
         logger.error(f"[API] Erreur {err_id} config/strategy-params : {e}", exc_info=True)
         raise HTTPException(500, f"Erreur interne ({err_id})")
 
+
 @router.post("/api/config/strategy-timeframe", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("30/minute")
-def toggle_strategy_timeframe(request: Request, strategy: str, timeframe: str, enabled: bool = True):
+def toggle_strategy_timeframe(request: Request, body: StrategyTimeframeBody):
     """Active/désactive une stratégie sur un timeframe spécifique.
     Fonctionne via strategy_params[strategy]["disabled_timeframes"]."""
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
+    strategy = body.strategy
+    timeframe = body.timeframe
+    enabled = body.enabled
     allowed = _discover_strategies()
     if strategy not in allowed:
         raise HTTPException(400, f"Stratégie inconnue : {strategy}")
-    allowed_tfs = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"}
-    if timeframe not in allowed_tfs:
-        raise HTTPException(400, f"Timeframe invalide : {timeframe}")
 
     sp = state.cfg.setdefault("strategy_params", {}).setdefault(strategy, {})
     disabled: list = list(sp.get("disabled_timeframes", []))

@@ -272,13 +272,20 @@ export function useUpdateTradingConfig() {
   });
 }
 
-// S5-01 : Permettre de sauver des params de stratégie par symbole (override).
-// Le backend étend /api/config/strategy-params pour accepter un `symbol` optionnel.
+// S5-01 / SEC-03 : params de stratégie (base ou override tf+symbole).
 export function useSetStrategyParams() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (args: { strategy: string; params: Record<string, any>; symbol?: string }) =>
-      api.setStrategyParams(args.strategy, args.params, args.symbol),
+    mutationFn: (args: {
+      strategy: string;
+      params: Record<string, any>;
+      symbol?: string;
+      timeframe?: string;
+    }) =>
+      api.setStrategyParams(args.strategy, args.params, {
+        symbol: args.symbol,
+        timeframe: args.timeframe,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['config'] });
       qc.invalidateQueries({ queryKey: ['audit'] });
@@ -286,12 +293,16 @@ export function useSetStrategyParams() {
   });
 }
 
-// S5-01 : Activation/désactivation d'une TF par symbole.
+// S5-01 / SEC-03 : activation/désactivation d'une TF pour une stratégie.
 export function useToggleStrategyTimeframe() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (args: { tf: string; enable: boolean; symbol?: string }) =>
-      api.toggleStrategyTimeframe(args.tf, args.enable, args.symbol),
+    mutationFn: (args: {
+      strategy: string;
+      timeframe: string;
+      enabled?: boolean;
+      symbol?: string;
+    }) => api.toggleStrategyTimeframe(args),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['config'] });
       qc.invalidateQueries({ queryKey: ['status'] });

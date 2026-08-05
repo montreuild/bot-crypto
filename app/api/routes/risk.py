@@ -13,11 +13,12 @@ backtest 1 000 € / live 90 € sans que rien ne la signale.
 """
 import logging
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api import state
 from app.api.helpers import verify_api_key
 from app.api.routes._config_helpers import _save_yaml
+from app.api.schemas import RiskEnvelopesBody
 from app.core.risk_diagnostics import diagnose
 from app.core.risk_envelope import envelopes_for_active_slots
 
@@ -163,8 +164,8 @@ def get_risk_diagnostics():
 
 @router.post("/api/risk/envelopes", dependencies=[Depends(verify_api_key)])
 @state.limiter.limit("20/minute")
-def update_envelopes(request: Request, envelopes: dict = Body(...)):
-    """Met à jour ``risk.envelopes``.
+def update_envelopes(request: Request, body: RiskEnvelopesBody):
+    """Met à jour ``risk.envelopes`` (SEC-03 : ``RiskEnvelopesBody``).
 
     Refuse en 400 si l'édition produirait une configuration structurellement
     impossible — un slot dont aucun ordre ne pourrait jamais passer. Laisser
@@ -173,7 +174,11 @@ def update_envelopes(request: Request, envelopes: dict = Body(...)):
     """
     if not state.cfg:
         raise HTTPException(503, "Config non chargée")
-    if not isinstance(envelopes, dict) or not envelopes:
+    try:
+        envelopes = body.as_envelopes()
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if not envelopes:
         raise HTTPException(400, "corps attendu : {venue: {capital, ...}}")
 
     known = set((state.cfg.get("risk") or {}).get("envelopes") or {})

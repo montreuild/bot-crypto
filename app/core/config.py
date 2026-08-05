@@ -599,14 +599,14 @@ def load_config(path: str = "config.yaml") -> dict:
     # (X-Forwarded-For). Exposer 0.0.0.0 sans clé = API de trading OUVERTE
     # (start/stop du bot, écriture de config). Le démarrage est donc REFUSÉ,
     # sauf override explicite et assumé via ALLOW_INSECURE_WEB=1 (dev local).
+    # SEC-003 : web.allow_insecure dans le YAML est IGNORÉ — seul l'env compte.
     web_cfg = cfg.get("web", {})
     if not web_cfg.get("api_key") and str(web_cfg.get("host", "")) in ("0.0.0.0", "::"):
-        allow_insecure = (bool(web_cfg.get("allow_insecure"))
-                          or os.environ.get("ALLOW_INSECURE_WEB") == "1")
+        allow_insecure = os.environ.get("ALLOW_INSECURE_WEB") == "1"
         if allow_insecure:
             logger.warning(
                 "🔓 [Config] web.host=%s SANS web.api_key (override "
-                "web.allow_insecure) : l'API n'est protégée que par le filtre "
+                "ALLOW_INSECURE_WEB=1) : l'API n'est protégée que par le filtre "
                 "localhost — à réserver au développement local.", web_cfg.get("host"),
             )
         else:
@@ -614,8 +614,8 @@ def load_config(path: str = "config.yaml") -> dict:
                 f"web.host={web_cfg.get('host')} SANS web.api_key : l'API de "
                 "trading serait exposée à tout le réseau. Définissez web.api_key "
                 "(ex. : python -c \"import secrets; print(secrets.token_urlsafe(32))\") "
-                "ou, pour du développement local uniquement, mettez "
-                "web.allow_insecure: true dans config.yaml."
+                "ou, pour du développement local uniquement, exportez "
+                "ALLOW_INSECURE_WEB=1."
             )
 
     # ── Notifications en réel (OPS-04) ───────────────────────────────────────

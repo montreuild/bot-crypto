@@ -34,12 +34,8 @@ web:
   port: 8000
   refresh_interval: 5
   api_key: ${WEB_API_KEY}
-  # Dev LOCAL uniquement : autorise host ouvert sans api_key (sinon le
-  # démarrage est refusé — OPS-02). À retirer avant toute exposition réseau.
-  # ⚠ S0-11 (29/07/2026) : la valeur par défaut est désormais `false`.
-  # Pour du dev local uniquement, mettre `true` explicitement dans ce fichier
-  # ou exporter `ALLOW_INSECURE_WEB=1`.
-  allow_insecure: false
+  # SEC-003 : web.allow_insecure YAML est IGNORÉ. Pour du dev local avec
+  # host ouvert sans api_key, exporter uniquement ALLOW_INSECURE_WEB=1.
 
 ui:
   risk_preset:

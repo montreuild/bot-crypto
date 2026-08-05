@@ -67,6 +67,9 @@ logger = logging.getLogger(__name__)
 # En dev : Next.js tourne sur :3000, FastAPI sur :8000.
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
+# SEC-006 — OpenAPI /docs désactivés en production (surface d'attaque réduite).
+_IS_PROD = os.environ.get("ENV", "").strip().lower() in ("prod", "production")
+
 
 # ── Application ────────────────────────────────────────────────────────────
 @asynccontextmanager
@@ -79,9 +82,9 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Crypto Bot",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    docs_url=None if _IS_PROD else "/api/docs",
+    redoc_url=None if _IS_PROD else "/api/redoc",
+    openapi_url=None if _IS_PROD else "/api/openapi.json",
     description=(
         "API de trading algorithmique multi-stratégies. Tous les endpoints protégés "
         "exigent `X-API-Key`. Endpoint WebSocket temps réel sur `/ws`. "

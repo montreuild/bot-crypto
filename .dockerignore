@@ -1,0 +1,44 @@
+# Git / IDE
+.git
+.github
+.vscode
+.idea
+*.md
+!README.md
+
+# Python
+.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+*.egg-info
+.coverage
+htmlcov
+
+# Data & runtime (montés en volumes, pas dans l'image)
+data/
+logs/
+models/
+*.db
+*.sqlite
+.env
+.env.*
+
+# Frontend (image séparée)
+frontend/node_modules
+frontend/.next
+frontend/out
+
+# Research / scripts hors runtime
+research/
+scripts/
+notebooks/
+docs/audit-externe
+docs/*.pdf
+
+# Tests E2E lourds (image API légère)
+frontend/e2e
+playwright-report
+test-results

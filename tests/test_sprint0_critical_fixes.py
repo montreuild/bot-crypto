@@ -183,7 +183,7 @@ class TestRateLimitWired:
 
 class TestInsecureDefaultRejected:
     """Démarrage refusé si `web.host=0.0.0.0` sans `web.api_key`,
-    sauf override explicite `allow_insecure: true` ou `ALLOW_INSECURE_WEB=1`.
+    sauf override explicite `ALLOW_INSECURE_WEB=1` (SEC-003 : YAML ignoré).
     """
 
     def test_load_config_raises_on_insecure_default(self, monkeypatch, tmp_path):
@@ -230,8 +230,8 @@ class TestInsecureDefaultRejected:
         with pytest.raises(ValueError, match="API de trading serait exposée"):
             load_config(str(cfg_file))
 
-    def test_load_config_allows_insecure_with_override(self, monkeypatch, tmp_path):
-        """config.yaml avec allow_insecure: true → warning mais pas d'erreur."""
+    def test_load_config_allows_insecure_with_env_override(self, monkeypatch, tmp_path):
+        """SEC-003 : seul ALLOW_INSECURE_WEB=1 autorise l'hôte ouvert sans clé."""
         from app.core.config import load_config
         cfg_file = tmp_path / "test_config_insecure.yaml"
         cfg_file.write_text(
@@ -261,7 +261,6 @@ class TestInsecureDefaultRejected:
             "  host: 0.0.0.0\n"
             "  port: 8000\n"
             "  api_key: ''\n"
-            "  allow_insecure: true\n"
             "database:\n"
             # Quoté : non quoté, le `:` final rend le scalaire ambigu pour YAML
             # (« mapping values are not allowed here ») — la fixture n'était pas
@@ -269,9 +268,11 @@ class TestInsecureDefaultRejected:
             '  url: "sqlite:///:memory:"\n',
             encoding="utf-8",
         )
-        # Doit passer (warning mais pas raise)
+        monkeypatch.setenv("ALLOW_INSECURE_WEB", "1")
+        monkeypatch.delenv("TRUSTED_PROXIES", raising=False)
         cfg = load_config(str(cfg_file))
-        assert cfg["web"]["allow_insecure"] is True
+        assert cfg["web"]["host"] == "0.0.0.0"
+        assert not cfg["web"].get("api_key")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

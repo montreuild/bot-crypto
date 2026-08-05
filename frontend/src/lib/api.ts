@@ -220,46 +220,57 @@ export const api = {
   // ── Config ──────────────────────────────────────────────────────────────
   getConfig: () => apiFetch<any>('/config'),
   /**
-   * POST /api/config/trading — paramètres de trading globaux.
+   * POST /api/config/trading — paramètres de trading globaux (SEC-03 body JSON).
    *
    * L'endpoint existait côté backend depuis toujours et l'audit le listait
    * « ✅ consommé (useUpdateTradingConfig) », mais aucune méthode ni aucun hook
    * ne l'appelait : `paper_mode` n'était QUE lu et affiché dans /config. Il
    * n'existait donc aucun moyen de basculer paper ↔ live depuis l'UI.
-   *
-   * Le backend attend des query params (pas un body JSON) et valide les bornes.
    */
   updateTradingConfig: (params: {
     score_threshold?: number;
-    risk_per_trade?: number;
-    max_positions?: number;
     paper_mode?: boolean;
     paper_slippage?: number;
     daily_drawdown_limit?: number;
-  }) => {
-    const qs = new URLSearchParams();
-    for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined && v !== null) qs.set(k, String(v));
-    }
-    return apiFetch<{
+  }) =>
+    apiFetch<{
       changed: Record<string, unknown>;
       saved_to_disk: boolean;
       trader_updated: boolean;
-    }>(`/config/trading?${qs.toString()}`, { method: 'POST' });
-  },
-  // S5-01 : étendu pour accepter un `symbol` optionnel (override par symbole).
-  // Si symbol est fourni, le backend écrit dans optimizer_results[tf][symbol]
-  // au lieu de la section globale strategy_params.
-  setStrategyParams: (strategy: string, params: Record<string, any>, symbol?: string) =>
+    }>('/config/trading', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+  // S5-01 / SEC-03 : body StrategyParamsBody (strategy, params, timeframe?, symbol?).
+  setStrategyParams: (
+    strategy: string,
+    params: Record<string, any>,
+    opts?: { symbol?: string; timeframe?: string },
+  ) =>
     apiFetch('/config/strategy-params', {
       method: 'POST',
-      body: JSON.stringify({ strategy, params, symbol }),
+      body: JSON.stringify({
+        strategy,
+        params,
+        symbol: opts?.symbol,
+        timeframe: opts?.timeframe,
+      }),
     }),
-  // S5-01 : activation/désactivation de TF par symbole.
-  toggleStrategyTimeframe: (tf: string, enable: boolean, symbol?: string) =>
+  // S5-01 / SEC-03 : body StrategyTimeframeBody.
+  toggleStrategyTimeframe: (args: {
+    strategy: string;
+    timeframe: string;
+    enabled?: boolean;
+    symbol?: string;
+  }) =>
     apiFetch('/config/strategy-timeframe', {
       method: 'POST',
-      body: JSON.stringify({ tf, enable, symbol }),
+      body: JSON.stringify({
+        strategy: args.strategy,
+        timeframe: args.timeframe,
+        enabled: args.enabled ?? true,
+        symbol: args.symbol,
+      }),
     }),
   // Legacy aliases (compat with existing code)
   updateStrategyParams: (payload: any) =>
@@ -267,9 +278,15 @@ export const api = {
   toggleStrategyTimeframeLegacy: (payload: any) =>
     apiFetch('/config/strategy-timeframe', { method: 'POST', body: JSON.stringify(payload) }),
   setStrategies: (enabled: string[]) =>
-    apiFetch(`/config/strategies?enabled=${enabled.join(',')}`, { method: 'POST' }),
+    apiFetch('/config/strategies', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
   setTimeframes: (tfs: string[]) =>
-    apiFetch(`/config/timeframes?timeframes=${tfs.join(',')}`, { method: 'POST' }),
+    apiFetch('/config/timeframes', {
+      method: 'POST',
+      body: JSON.stringify({ timeframes: tfs }),
+    }),
 
   // ── Notifications / Settings ────────────────────────────────────────────
   getNotifications: (limit = 50, level = 'info') =>
