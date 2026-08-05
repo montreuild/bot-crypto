@@ -95,18 +95,38 @@ if [ "$TEST" -eq 1 ]; then
 fi
 
 if [ "$FULL" -eq 1 ]; then
-  echo "→ Stack complète API + web…"
+  if [ "$PROD" -eq 1 ]; then
+    echo "→ Production : API + frontend Next (ENV=prod, OpenAPI off)…"
+  else
+    echo "→ Stack complète API + web…"
+  fi
   ${COMPOSE[@]} "${FILES[@]}" --profile full up -d "${BUILD_FLAGS[@]}"
   echo ""
-  echo "  API  → http://localhost:${API_PORT:-8000}/health"
-  echo "  Web  → http://localhost:${WEB_PORT:-3000}"
-  echo "  Docs → http://localhost:${API_PORT:-8000}/api/docs  (si ENV≠prod)"
+  BIND="${API_HOST_BIND:-0.0.0.0}"
+  echo "  API  → http://${BIND}:${API_PORT:-8000}/health"
+  echo "  Web  → http://${BIND}:${WEB_PORT:-3000}  (build Next standalone)"
+  if [ "$PROD" -eq 1 ]; then
+    echo "  ENV  → prod  ·  /api/docs désactivé (SEC-006)"
+    echo "  Proxy public → nginx sur l'hôte (deploy/nginx.conf, cf. DEPLOY.md)"
+  else
+    echo "  Docs → http://localhost:${API_PORT:-8000}/api/docs  (si ENV≠prod)"
+  fi
   exit 0
 fi
 
-echo "→ API paper…"
+if [ "$PROD" -eq 1 ]; then
+  echo "→ Production : API seule (ENV=prod, OpenAPI off)…"
+  echo "  Astuce : ajoutez --full pour build + démarrer le frontend Next."
+else
+  echo "→ API paper…"
+fi
 ${COMPOSE[@]} "${FILES[@]}" up -d "${BUILD_FLAGS[@]}" api
 echo ""
-echo "  API  → http://localhost:${API_PORT:-8000}/health"
+BIND="${API_HOST_BIND:-0.0.0.0}"
+echo "  API  → http://${BIND}:${API_PORT:-8000}/health"
+if [ "$PROD" -eq 1 ]; then
+  echo "  ENV  → prod  ·  /api/docs désactivé (SEC-006)"
+  echo "  Proxy → nginx (deploy/nginx.conf) — DEPLOY.md"
+fi
 echo "  Logs → docker compose logs -f api"
 echo "  Stop → bash scripts/docker-up.sh --down"

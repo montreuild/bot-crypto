@@ -57,11 +57,17 @@ docker compose exec api bash   # ou sh
 
 ## Production
 
+Guide serveur complet (Oracle, TLS, secrets) : **[`DEPLOY.md`](../DEPLOY.md)**.
+
 ```bash
 # .env : ENV=prod, WEB_API_KEY fort, ALLOW_INSECURE_WEB=0, NEXT_PUBLIC_WS_URL=wss://…
+# API + build Next (dashboard) :
+bash scripts/docker-up.sh --prod --full
+# API seule :
 bash scripts/docker-up.sh --prod
 # ou
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  --profile full up -d --build
 ```
 
 Effets `docker-compose.prod.yml` + script `--prod` :
@@ -71,11 +77,19 @@ Effets `docker-compose.prod.yml` + script `--prod` :
 | `ENV` | `prod` → OpenAPI/docs off (SEC-006) |
 | `ALLOW_INSECURE_WEB` | forcé `0` (SEC-003) |
 | `API_HOST_BIND` | `127.0.0.1` (nginx devant, cf. `deploy/nginx.conf`) |
-| Commande | `python cli.py` (mode paper/live selon `config`) |
+| Commande API | `python cli.py` (mode paper/live selon `config`) |
+| Frontend | `Dockerfile.frontend` standalone `:3000` (`--full`) |
 | Restart | `always` |
 
-Nginx + TLS restent sur l’hôte (`DEPLOY.md`). Ne jamais exposer le port 8000
-publiquement sans reverse-proxy + `WEB_API_KEY`.
+Nginx sur l’hôte (`deploy/nginx.conf`) :
+
+| Chemin | Cible |
+|--------|--------|
+| `/`, `/api/*` | Next.js `127.0.0.1:3000` (proxy same-origin + `X-API-Key`) |
+| `/ws` | FastAPI `127.0.0.1:8000` |
+| `/health` | FastAPI `127.0.0.1:8000` |
+
+Ne jamais exposer 8000/3000 publiquement sans reverse-proxy + `WEB_API_KEY`.
 
 ## Volumes
 

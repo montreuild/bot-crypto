@@ -91,18 +91,39 @@ if ($Test) {
     exit $LASTEXITCODE
 }
 
+$bind = if ($env:API_HOST_BIND) { $env:API_HOST_BIND } else { "0.0.0.0" }
+$portApi = if ($env:API_PORT) { $env:API_PORT } else { "8000" }
+$portWeb = if ($env:WEB_PORT) { $env:WEB_PORT } else { "3000" }
+
 if ($Full) {
-    Write-Host "→ Stack complète API + web…"
+    if ($Prod) {
+        Write-Host "→ Production : API + frontend Next (ENV=prod, OpenAPI off)…"
+    } else {
+        Write-Host "→ Stack complète API + web…"
+    }
     & docker compose @files --profile full up -d @build
     Write-Host ""
-    Write-Host "  API  → http://localhost:8000/health"
-    Write-Host "  Web  → http://localhost:3000"
+    Write-Host "  API  → http://${bind}:${portApi}/health"
+    Write-Host "  Web  → http://${bind}:${portWeb}  (build Next standalone)"
+    if ($Prod) {
+        Write-Host "  ENV  → prod  ·  /api/docs désactivé (SEC-006)"
+        Write-Host "  Proxy public → nginx sur l'hôte (deploy/nginx.conf, cf. DEPLOY.md)"
+    }
     exit $LASTEXITCODE
 }
 
-Write-Host "→ API paper…"
+if ($Prod) {
+    Write-Host "→ Production : API seule (ENV=prod, OpenAPI off)…"
+    Write-Host "  Astuce : ajoutez -Full pour build + démarrer le frontend Next."
+} else {
+    Write-Host "→ API paper…"
+}
 & docker compose @files up -d @build api
 Write-Host ""
-Write-Host "  API  → http://localhost:8000/health"
+Write-Host "  API  → http://${bind}:${portApi}/health"
+if ($Prod) {
+    Write-Host "  ENV  → prod  ·  /api/docs désactivé (SEC-006)"
+    Write-Host "  Proxy → nginx (deploy/nginx.conf) — DEPLOY.md"
+}
 Write-Host "  Logs → docker compose logs -f api"
 Write-Host "  Stop → .\scripts\docker-up.ps1 -Down"
