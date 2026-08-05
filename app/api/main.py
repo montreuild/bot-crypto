@@ -363,6 +363,11 @@ def get_status(request: Request):
     api_key_cfg  = state.cfg["web"].get("api_key", "")
     token        = request.headers.get("X-API-Key") or request.cookies.get("api_key") or ""
     authenticated = not api_key_cfg or hmac.compare_digest(token, api_key_cfg)
+    try:
+        from app.ml.model_registry import git_commit as _git_commit
+        _commit = _git_commit()
+    except Exception:
+        _commit = None
     base = {
         "status":     "running" if (state.trader and state.trader.running) else "idle",
         "paper_mode": state.cfg["trading"].get("paper_mode", True),
@@ -371,6 +376,7 @@ def get_status(request: Request):
             "timeframes", [state.cfg["trading"].get("timeframe", "1h")]
         ),
         "strategies": state.cfg["strategies"]["enabled"],
+        "git_commit": _commit,
     }
     if authenticated:
         base["capital"] = (state.trader.capital_display

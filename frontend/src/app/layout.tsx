@@ -67,7 +67,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="fr" className={`dark ${inter.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
+    {/* Pas de classe `dark` figée ici : le script inline + setStoredTheme
+        gèrent light/dark. Une classe React en dur réappliquait `dark` au
+        re-render et annulait le basculement clair. */}
+    <html lang="fr" className={`${inter.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>

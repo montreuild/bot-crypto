@@ -111,6 +111,9 @@ export function getStoredTheme(): 'dark' | 'light' {
 export function setStoredTheme(theme: 'dark' | 'light') {
   if (typeof window === 'undefined') return;
   localStorage.setItem('theme', theme);
-  document.documentElement.classList.toggle('light', theme === 'light');
-  document.documentElement.classList.toggle('dark', theme === 'dark');
+  const root = document.documentElement;
+  // Remplacer explicitement les classes (toggle seul échouait si React
+  // réappliquait `dark` sur <html> via le layout).
+  root.classList.remove('light', 'dark');
+  root.classList.add(theme === 'light' ? 'light' : 'dark');
 }

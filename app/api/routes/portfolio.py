@@ -28,6 +28,13 @@ _LEGACY_TRADING_KEYS = (
     "risk_per_trade", "max_positions", "max_longs", "max_shorts", "capital",
 )
 
+# Budgets enveloppe S12 : symbol_risk ≥ profile, venue_risk ≥ symbol_risk.
+_ENVELOPE_RISK_BY_PROFILE = {
+    "prudent":  {"symbol_risk_pct": 0.02, "venue_risk_pct": 0.02, "max_symbol_exposure_pct": 1.0},
+    "normal":   {"symbol_risk_pct": 0.05, "venue_risk_pct": 0.05, "max_symbol_exposure_pct": 1.0},
+    "agressif": {"symbol_risk_pct": 0.05, "venue_risk_pct": 0.05, "max_symbol_exposure_pct": 1.0},
+}
+
 _RISK_PRESETS = {
     "prudent": {
         "label": "Prudent",
@@ -44,7 +51,7 @@ _RISK_PRESETS = {
     },
     "equilibre": {
         "label": "Équilibré",
-        "description": "Risque modéré — profil normal 2,5 % de l'enveloppe de slot",
+        "description": "Profil normal — 2,5 % de l'enveloppe de slot",
         "profile": "normal",
         "trading": {
             "daily_drawdown_limit": 0.05,
@@ -68,6 +75,13 @@ _RISK_PRESETS = {
             "equity_kill_switch_dd": 0.45,
         },
     },
+    "personnalise": {
+        "label": "Personnalisé",
+        "description": "Édition libre des budgets de risque par venue (S12)",
+        "profile": None,
+        "trading": {},
+        "risk": {},
+    },
 }
 
 # Clé UI (preset) ← profil moteur
@@ -88,17 +102,22 @@ def _strip_legacy_trading_keys(trading: dict) -> None:
 
 def _preset_public_view(key: str, p: dict) -> dict:
     """Payload API pour une carte preset — sans champs legacy."""
-    profile = p["risk"]["profile"]
-    rate = _trade_risk_pct({"risk": {"profile": profile}})
+    profile = (p.get("risk") or {}).get("profile")
+    rate = (
+        _trade_risk_pct({"risk": {"profile": profile}})
+        if profile else None
+    )
     return {
         "key": key,
         "label": p["label"],
         "description": p.get("description", ""),
         "profile": profile,
+        "custom": key == "personnalise",
         "trade_risk_pct": rate,
-        "daily_drawdown_limit": p["trading"]["daily_drawdown_limit"],
-        "max_drawdown_global": p["trading"]["max_drawdown_global"],
-        "equity_kill_switch_dd": p["risk"]["equity_kill_switch_dd"],
+        "daily_drawdown_limit": (p.get("trading") or {}).get("daily_drawdown_limit"),
+        "max_drawdown_global": (p.get("trading") or {}).get("max_drawdown_global"),
+        "equity_kill_switch_dd": (p.get("risk") or {}).get("equity_kill_switch_dd"),
+        "envelope_risk": _ENVELOPE_RISK_BY_PROFILE.get(profile) if profile else None,
     }
 
 
@@ -110,6 +129,25 @@ def _resolve_current_preset(cfg: dict) -> str | None:
         return current
     profile = ((cfg or {}).get("risk") or {}).get("profile") or "normal"
     return _PROFILE_TO_PRESET.get(str(profile), "equilibre")
+
+
+def _apply_envelope_risk_template(risk_block: dict, profile: str) -> None:
+    """Aligne les budgets de risque de chaque venue sur le template S12 du profil.
+
+    Ne touche pas au ``capital`` de venue (choix d'allocation).
+    """
+    tmpl = _ENVELOPE_RISK_BY_PROFILE.get(profile)
+    if not tmpl:
+        return
+    envs = risk_block.setdefault("envelopes", {})
+    if not isinstance(envs, dict):
+        return
+    for _name, env in envs.items():
+        if not isinstance(env, dict):
+            continue
+        env["symbol_risk_pct"] = tmpl["symbol_risk_pct"]
+        env["venue_risk_pct"] = tmpl["venue_risk_pct"]
+        env["max_symbol_exposure_pct"] = tmpl["max_symbol_exposure_pct"]
 
 
 def _trader():
@@ -428,37 +466,53 @@ def set_risk_preset(request: Request, preset: str):
     p = _RISK_PRESETS[preset]
     from app.api.routes._config_helpers import _save_yaml
 
+    is_custom = preset == "personnalise"
+    profile = (p.get("risk") or {}).get("profile")
+
     def _apply(disk):
         trading = disk.setdefault("trading", {})
-        trading.update(p["trading"])
+        if p.get("trading"):
+            trading.update(p["trading"])
         _strip_legacy_trading_keys(trading)
         risk = disk.setdefault("risk", {})
-        risk.update(p["risk"])
+        if p.get("risk"):
+            risk.update(p["risk"])
+        if profile and not is_custom:
+            _apply_envelope_risk_template(risk, profile)
         disk.setdefault("ui", {})["risk_preset"] = preset
     _save_yaml(_apply)
 
-    # Met à jour la config en mémoire (sans redémarrage).
     if state.cfg:
         trading = state.cfg.setdefault("trading", {})
-        trading.update(p["trading"])
+        if p.get("trading"):
+            trading.update(p["trading"])
         _strip_legacy_trading_keys(trading)
         risk = state.cfg.setdefault("risk", {})
-        risk.update(p["risk"])
+        if p.get("risk"):
+            risk.update(p["risk"])
+        if profile and not is_custom:
+            _apply_envelope_risk_template(risk, profile)
         state.cfg.setdefault("ui", {})["risk_preset"] = preset
+
     logger.info(
-        "[Settings] Preset risque %s → risk.profile=%s (legacy trading.risk_per_trade "
-        "non écrit)",
-        preset, p["risk"]["profile"],
+        "[Settings] Preset risque %s → risk.profile=%s custom=%s",
+        preset, profile, is_custom,
+    )
+    rate = _trade_risk_pct(state.cfg) if state.cfg else (
+        _trade_risk_pct({"risk": {"profile": profile}}) if profile else None
     )
     return {
         "applied": preset,
-        "profile": p["risk"]["profile"],
-        "trade_risk_pct": _trade_risk_pct({"risk": {"profile": p["risk"]["profile"]}}),
-        **p["trading"],
-        "equity_kill_switch_dd": p["risk"]["equity_kill_switch_dd"],
+        "profile": profile,
+        "custom": is_custom,
+        "trade_risk_pct": rate,
+        **(p.get("trading") or {}),
+        "equity_kill_switch_dd": (p.get("risk") or {}).get("equity_kill_switch_dd"),
+        "envelopes_updated": bool(profile and not is_custom),
         "note": (
-            "risk.profile appliqué ; DD kill-switch mis à jour. "
-            "Sizing effectif = trade_risk_pct × enveloppe de slot (S12)."
+            "Mode personnalisé : budgets de risque par venue éditables."
+            if is_custom else
+            "risk.profile + budgets enveloppe (S12) appliqués ; capital venue inchangé."
         ),
     }
 

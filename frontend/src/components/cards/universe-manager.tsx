@@ -1,15 +1,10 @@
 'use client';
 
 /**
- * S8-F2-US1/2/3 — Gestionnaire d'univers.
+ * S8-F2 — Gestionnaire d'univers.
  *
- * Composant qui permet de :
- *  - Lister les univers disponibles (GET /api/universe)
- *  - Voir les membres d'un univers avec bars par TF (GET /api/universe/{name})
- *  - Ajouter un symbole (POST /api/universe/{name}/symbols)
- *  - Retirer un symbole (DELETE /api/universe/{name}/symbols/{symbol})
- *
- * S'intègre dans la page /data (Données OHLCV) ou /settings (Données & Univers).
+ * GET /api/universe, GET /api/universe/{name}, POST/DELETE symbols.
+ * L'écriture YAML est textuelle côté backend (commentaires préservés).
  */
 
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -23,7 +18,6 @@ import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { useState } from 'react';
 import { Database, Plus, Trash2, ChevronRight, Loader2 } from 'lucide-react';
-import { cn } from '@/lib/utils';
 
 export function UniverseManager() {
   const qc = useQueryClient();
@@ -31,36 +25,32 @@ export function UniverseManager() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newSymbol, setNewSymbol] = useState('');
   const [newName, setNewName] = useState('');
-  const [newSector, setNewSector] = useState('');
   const [removeTarget, setRemoveTarget] = useState<{ universe: string; symbol: string } | null>(null);
 
-  // Liste des univers
   const universesQuery = useQuery({
     queryKey: ['universes'],
     queryFn: api.getUniverses,
     refetchInterval: 60000,
   });
 
-  // Détail d'un univers sélectionné
   const universeDetailQuery = useQuery({
     queryKey: ['universe', selectedUniverse],
     queryFn: () => api.getUniverse(selectedUniverse!),
     enabled: !!selectedUniverse,
     refetchInterval: 60000,
+    retry: 1,
   });
 
-  // Mutations
   const addSymbol = useMutation({
-    mutationFn: ({ universe, body }: { universe: string; body: any }) =>
+    mutationFn: ({ universe, body }: { universe: string; body: { symbol: string; name?: string } }) =>
       api.addUniverseSymbol(universe, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['universe', selectedUniverse] });
       qc.invalidateQueries({ queryKey: ['universes'] });
-      toast.success('Symbole ajouté');
+      toast.success('Symbole ajouté (YAML : commentaires préservés)');
       setShowAddForm(false);
       setNewSymbol('');
       setNewName('');
-      setNewSector('');
     },
     onError: (e: any) => toast.error(`Erreur : ${e.message}`),
   });
@@ -81,9 +71,8 @@ export function UniverseManager() {
     addSymbol.mutate({
       universe: selectedUniverse,
       body: {
-        symbol: newSymbol,
-        name: newName || undefined,
-        sector: newSector || undefined,
+        symbol: newSymbol.trim(),
+        name: newName.trim() || undefined,
       },
     });
   };
@@ -97,13 +86,16 @@ export function UniverseManager() {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {/* Liste des univers (sélection) */}
         {!selectedUniverse && (
           <div className="space-y-2">
             {universesQuery.isLoading ? (
               <div className="flex items-center justify-center py-4">
                 <Loader2 className="w-5 h-5 animate-spin text-muted" />
               </div>
+            ) : universesQuery.isError ? (
+              <p className="text-xs text-red-400">
+                Impossible de charger les univers : {(universesQuery.error as Error)?.message}
+              </p>
             ) : universesQuery.data?.universes?.length === 0 ? (
               <p className="text-xs text-muted">Aucun univers configuré</p>
             ) : (
@@ -134,11 +126,13 @@ export function UniverseManager() {
           </div>
         )}
 
-        {/* Détail d'un univers */}
         {selectedUniverse && (
           <div className="space-y-3">
             <button
-              onClick={() => setSelectedUniverse(null)}
+              onClick={() => {
+                setSelectedUniverse(null);
+                setShowAddForm(false);
+              }}
               className="text-xs text-muted hover:text-foreground transition-colors"
             >
               ← Retour à la liste
@@ -157,40 +151,33 @@ export function UniverseManager() {
               </Button>
             </div>
 
-            {/* Formulaire d'ajout */}
             {showAddForm && (
               <div className="p-3 border border-border rounded-md space-y-2 bg-card-hover">
                 <div>
-                  <Label htmlFor="univ-symbol">Symbole *</Label>
+                  <Label htmlFor="univ-symbol">Symbole yfinance *</Label>
                   <Input
                     id="univ-symbol"
                     value={newSymbol}
                     onChange={(e) => setNewSymbol(e.target.value)}
-                    placeholder="BTC/USDC"
+                    placeholder="ALO.PA"
                     className="font-mono text-xs"
                   />
+                  <p className="text-[10px] text-muted mt-1">
+                    Indiquer le ticker <strong className="text-dim">yfinance</strong> complet
+                    (suffixe bourse inclus : <code className="font-mono">.PA</code>,{' '}
+                    <code className="font-mono">.AS</code>, <code className="font-mono">.BR</code>…).
+                    Exemple : Alstom → <code className="font-mono">ALO.PA</code>.
+                  </p>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label htmlFor="univ-name">Nom</Label>
-                    <Input
-                      id="univ-name"
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
-                      placeholder="Bitcoin"
-                      className="text-xs"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="univ-sector">Secteur</Label>
-                    <Input
-                      id="univ-sector"
-                      value={newSector}
-                      onChange={(e) => setNewSector(e.target.value)}
-                      placeholder="Crypto"
-                      className="text-xs"
-                    />
-                  </div>
+                <div>
+                  <Label htmlFor="univ-name">Nom</Label>
+                  <Input
+                    id="univ-name"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="Alstom"
+                    className="text-xs"
+                  />
                 </div>
                 <Button
                   size="sm"
@@ -204,11 +191,15 @@ export function UniverseManager() {
               </div>
             )}
 
-            {/* Liste des membres */}
             {universeDetailQuery.isLoading ? (
-              <div className="flex items-center justify-center py-4">
+              <div className="flex flex-col items-center justify-center py-6 gap-2">
                 <Loader2 className="w-5 h-5 animate-spin text-muted" />
+                <span className="text-[10px] text-muted">Chargement des membres…</span>
               </div>
+            ) : universeDetailQuery.isError ? (
+              <p className="text-xs text-red-400">
+                Erreur : {(universeDetailQuery.error as Error)?.message}
+              </p>
             ) : universeDetailQuery.data?.members?.length === 0 ? (
               <p className="text-xs text-muted">Univers vide</p>
             ) : (
@@ -219,7 +210,7 @@ export function UniverseManager() {
                       <th scope="col" className="p-2 font-medium">Symbole</th>
                       <th scope="col" className="p-2 font-medium">Nom</th>
                       <th scope="col" className="p-2 font-medium text-right">Bougies</th>
-                      <th scope="col" className="p-2 font-medium w-8"></th>
+                      <th scope="col" className="p-2 font-medium w-8" />
                     </tr>
                   </thead>
                   <tbody>
@@ -228,11 +219,13 @@ export function UniverseManager() {
                         <td className="p-2 font-mono font-semibold">{m.symbol}</td>
                         <td className="p-2 text-muted truncate max-w-[120px]">{m.name || '—'}</td>
                         <td className="p-2 text-right font-mono text-dim">
-                          {m.bars ? Object.entries(m.bars).map(([tf, n]: any) => (
-                            <span key={tf} className="ml-1 text-[10px]">
-                              {tf}:{n}
-                            </span>
-                          )) : '—'}
+                          {m.bars && Object.keys(m.bars).length > 0
+                            ? Object.entries(m.bars).map(([tf, n]: any) => (
+                                <span key={tf} className="ml-1 text-[10px]">
+                                  {tf}:{n as number}
+                                </span>
+                              ))
+                            : '—'}
                         </td>
                         <td className="p-2">
                           <button
@@ -252,7 +245,6 @@ export function UniverseManager() {
           </div>
         )}
 
-        {/* ConfirmDialog pour suppression */}
         <ConfirmDialog
           open={!!removeTarget}
           onOpenChange={(open) => !open && setRemoveTarget(null)}

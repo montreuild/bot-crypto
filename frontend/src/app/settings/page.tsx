@@ -16,14 +16,17 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { RiskEnvelopesEditor } from '@/components/views/risk-envelopes-editor';
+import {
+  RiskFeasibilityPanel,
+  VenueEnvelopesEditor,
+} from '@/components/views/risk-envelopes-editor';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { cn, getStoredTheme, setStoredTheme } from '@/lib/utils';
-import { usePresets, useSetRiskPreset, useSetExpertMode } from '@/hooks/use-api';
+import { usePresets, useSetRiskPreset, useSetExpertMode, useBotStatus } from '@/hooks/use-api';
 import { toast } from 'sonner';
 import {
   Wallet, Bell, Database, ScrollText, ShieldAlert, Settings as SettingsIcon,
@@ -38,7 +41,6 @@ import {
 } from '@/components/notifications-provider';
 import {
   ConfigTimeframesView,
-  ConfigRiskView,
   ConfigNotificationsView,
   ConfigExchangeView,
 } from '@/components/views/config-view';
@@ -79,47 +81,58 @@ const PRESETS = [
     key: 'prudent',
     label: 'Prudent',
     description: 'Risque minimal — 1 % de l’enveloppe de chaque slot',
-    profile: 'prudent',
-    trade_risk_pct: 0.01,
-    daily_dd: 0.03,
-    global_dd: 0.15,
-    kill_switch: 0.25,
+    profile: 'prudent' as string | null,
+    trade_risk_pct: 0.01 as number | null,
+    daily_dd: 0.03 as number | null,
+    global_dd: 0.15 as number | null,
+    kill_switch: 0.25 as number | null,
+    custom: false,
   },
   {
     key: 'equilibre',
     label: 'Équilibré',
     description: 'Profil normal — 2,5 % de l’enveloppe de chaque slot',
-    profile: 'normal',
-    trade_risk_pct: 0.025,
-    daily_dd: 0.05,
-    global_dd: 0.20,
-    kill_switch: 0.35,
+    profile: 'normal' as string | null,
+    trade_risk_pct: 0.025 as number | null,
+    daily_dd: 0.05 as number | null,
+    global_dd: 0.20 as number | null,
+    kill_switch: 0.35 as number | null,
+    custom: false,
   },
   {
     key: 'agressif',
     label: 'Agressif',
     description: 'Risque élevé — 5 % de l’enveloppe de chaque slot',
-    profile: 'agressif',
-    trade_risk_pct: 0.05,
-    daily_dd: 0.08,
-    global_dd: 0.30,
-    kill_switch: 0.45,
+    profile: 'agressif' as string | null,
+    trade_risk_pct: 0.05 as number | null,
+    daily_dd: 0.08 as number | null,
+    global_dd: 0.30 as number | null,
+    kill_switch: 0.45 as number | null,
+    custom: false,
+  },
+  {
+    key: 'personnalise',
+    label: 'Personnalisé',
+    description: 'Déverrouille les budgets de risque des enveloppes par venue',
+    profile: null as string | null,
+    trade_risk_pct: null as number | null,
+    daily_dd: null as number | null,
+    global_dd: null as number | null,
+    kill_switch: null as number | null,
+    custom: true,
   },
 ] as const;
 
-/**
- * Fusionne un preset de repli avec `/api/settings/presets`.
- * N’accepte plus risk_per_trade / max_positions (legacy) même si un vieux
- * backend les renvoyait encore.
- */
 function mergePreset(fallback: (typeof PRESETS)[number], remote: any) {
-  if (!remote) return fallback;
-  const pick = (value: unknown, dflt: number) => (value == null ? dflt : Number(value));
+  if (!remote) return { ...fallback };
+  const pick = (value: unknown, dflt: number | null) =>
+    value == null ? dflt : Number(value);
   return {
     ...fallback,
     label: remote.label || fallback.label,
     description: remote.description || fallback.description,
-    profile: remote.profile || fallback.profile,
+    profile: remote.profile ?? fallback.profile,
+    custom: Boolean(remote.custom ?? fallback.custom),
     trade_risk_pct: pick(remote.trade_risk_pct, fallback.trade_risk_pct),
     daily_dd: pick(remote.daily_drawdown_limit, fallback.daily_dd),
     global_dd: pick(remote.max_drawdown_global, fallback.global_dd),
@@ -147,9 +160,11 @@ function SettingsV2Content() {
   const presetsQuery = usePresets();
   const setPreset = useSetRiskPreset();
   const setExpertMode = useSetExpertMode();
+  const { data: status } = useBotStatus();
   const { data: presets } = presetsQuery;
   const currentPreset = presets?.current || 'equilibre';
   const expertMode = presets?.expert_mode || false;
+  const gitCommit = (status as any)?.git_commit as string | null | undefined;
 
   // Lot Réglages — thème et permission de notification, portés depuis
   // /settings. Lus côté client uniquement (localStorage / API Notification).
@@ -259,19 +274,19 @@ function SettingsV2Content() {
         </TabsList>
 
         <TabsContent value="capital" className="space-y-4">
-          {/* Capital : timeframes + exchange / providers (yfinance). Risque → onglet Risque. */}
+          {/* Enveloppes en tête (venues déclarées fusionnées) ; timeframes ; exchange. */}
+          <VenueEnvelopesEditor />
           <ConfigTimeframesView />
           <ConfigExchangeView />
         </TabsContent>
 
-        {/* S12 — profil de risque, valeurs effectives, enveloppes + faisabilité. */}
         <TabsContent value="risk" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="text-sm">Profil de risque</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                 {PRESETS.map((fallback) => {
                   const p = mergePreset(fallback, presets?.presets?.[fallback.key]);
                   const isActive = currentPreset === p.key;
@@ -298,28 +313,47 @@ function SettingsV2Content() {
                         )}
                       </div>
                       <p className="text-xs text-muted mb-3">{p.description}</p>
-                      <div className="space-y-1 text-[11px]">
-                        <div className="flex justify-between">
-                          <span className="text-dim">Profil moteur</span>
-                          <span className="font-mono">{p.profile}</span>
+                      {!p.custom && (
+                        <div className="space-y-1 text-[11px]">
+                          <div className="flex justify-between">
+                            <span className="text-dim">Profil moteur</span>
+                            <span className="font-mono">{p.profile}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-dim">Risque / trade</span>
+                            <span className="font-mono">
+                              {p.trade_risk_pct != null
+                                ? `${(p.trade_risk_pct * 100).toFixed(1)}% slot`
+                                : '—'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-dim">Daily DD</span>
+                            <span className="font-mono">
+                              {p.daily_dd != null ? `${(p.daily_dd * 100).toFixed(0)}%` : '—'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-dim">Global DD</span>
+                            <span className="font-mono">
+                              {p.global_dd != null ? `${(p.global_dd * 100).toFixed(0)}%` : '—'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-dim">Kill-switch</span>
+                            <span className="font-mono">
+                              {p.kill_switch != null
+                                ? `${(p.kill_switch * 100).toFixed(0)}%`
+                                : '—'}
+                            </span>
+                          </div>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-dim">Risque / trade</span>
-                          <span className="font-mono">{(p.trade_risk_pct * 100).toFixed(1)}% slot</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-dim">Daily DD</span>
-                          <span className="font-mono">{(p.daily_dd * 100).toFixed(0)}%</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-dim">Global DD</span>
-                          <span className="font-mono">{(p.global_dd * 100).toFixed(0)}%</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-dim">Kill-switch</span>
-                          <span className="font-mono">{(p.kill_switch * 100).toFixed(0)}%</span>
-                        </div>
-                      </div>
+                      )}
+                      {p.custom && (
+                        <p className="text-[11px] text-dim">
+                          Active l&apos;édition des budgets de risque sur Capital → Enveloppes.
+                        </p>
+                      )}
                     </button>
                   );
                 })}
@@ -327,8 +361,7 @@ function SettingsV2Content() {
             </CardContent>
           </Card>
 
-          <ConfigRiskView />
-          <RiskEnvelopesEditor />
+          <RiskFeasibilityPanel />
         </TabsContent>
 
         <TabsContent value="notifications" className="space-y-4">
@@ -494,9 +527,11 @@ function SettingsV2Content() {
                 <span>Stack</span>
                 <span className="font-mono">Next.js 15 · React 19 · TS 5.7</span>
               </div>
-              <div className="flex justify-between">
-                <span>Repository</span>
-                <span className="font-mono">montreuild/bot-crypto</span>
+              <div className="flex justify-between gap-4">
+                <span>Commit Git</span>
+                <span className="font-mono truncate" title={gitCommit || undefined}>
+                  {gitCommit || '—'}
+                </span>
               </div>
             </CardContent>
           </Card>

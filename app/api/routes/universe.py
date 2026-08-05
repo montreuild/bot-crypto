@@ -83,10 +83,22 @@ def get_universe(name: str):
         raise HTTPException(404, f"Univers inconnu : {name!r} — disponibles : "
                                  f"{_list_universe_files()}")
     members = universe_members(name)
-    stats = get_store().all_stats()
-    by_symbol: Dict[str, Dict[str, int]] = {}
-    for s in stats:
-        by_symbol.setdefault(s["symbol"], {})[s["tf"]] = int(s["bars"])
+    # Stats par membre uniquement — `all_stats()` parcourt tout le cache
+    # Parquet (centaines de fichiers) et bloquait l'UI (spinner infini).
+    store = get_store()
+    tfs = ("15m", "30m", "1h", "4h", "1d")
+    enriched: List[Dict[str, Any]] = []
+    for m in members:
+        bars: Dict[str, int] = {}
+        for tf in tfs:
+            try:
+                st = store.stats(m["symbol"], tf)
+                n = int((st or {}).get("bars") or 0)
+                if n > 0:
+                    bars[tf] = n
+            except Exception:
+                pass
+        enriched.append({**m, "bars": bars})
 
     data = load_universe(name)
     return {
@@ -94,14 +106,15 @@ def get_universe(name: str):
         "label": data.get("name") or name,
         "venue": data.get("venue"),
         "as_of": str(data.get("as_of") or ""),
-        "members": [{**m, "bars": by_symbol.get(m["symbol"], {})} for m in members],
+        "members": enriched,
     }
 
 
 class _AddSymbolBody(BaseModel):
+    """Symbole à suivre. ``sector`` n'existe pas dans le YAML d'univers (retiré)."""
     symbol: str
     name: Optional[str] = ""
-    sector: Optional[str] = None
+    # Alias optionnel si le ticker exchange ≠ ticker provider (yfinance).
     provider_symbol: Optional[str] = None
 
 
@@ -112,6 +125,9 @@ def add_symbol(request: Request, name: str, body: _AddSymbolBody):
 
     Refuse un doublon plutôt que de l'ignorer : l'appelant a demandé une
     modification, lui répondre 200 sans rien changer serait un succès menteur.
+
+    L'écriture est textuelle (``add_member``) : commentaires et alignement du
+    YAML d'univers sont préservés (pas de round-trip PyYAML complet).
     """
     from app.core.universe import add_member, universe_symbols
 
@@ -121,13 +137,13 @@ def add_symbol(request: Request, name: str, body: _AddSymbolBody):
     symbol = (body.symbol or "").strip()
     if not _SYMBOL_RE.match(symbol):
         raise HTTPException(400, f"Symbole invalide : {symbol!r} — attendu des "
-                                 f"lettres, chiffres et . _ - / (32 max)")
+                                 f"lettres, chiffres et . _ - / (32 max). "
+                                 f"Pour les actions, utiliser le ticker yfinance "
+                                 f"(ex. ALO.PA, AIR.PA).")
     if symbol in universe_symbols(name):
         raise HTTPException(409, f"{symbol} est déjà dans l'univers {name!r}")
 
     extra: Dict[str, Any] = {}
-    if body.sector:
-        extra["sector"] = body.sector
     if body.provider_symbol:
         extra["provider_symbol"] = body.provider_symbol
     try:

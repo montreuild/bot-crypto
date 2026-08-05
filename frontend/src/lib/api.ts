@@ -377,7 +377,7 @@ export const api = {
   // S8-F2-US2 — Membres d'un univers
   getUniverse: (name: string) => apiFetch<any>(`/universe/${encodeURIComponent(name)}`),
   // S8-F2-US3 — Ajouter/retirer symbole
-  addUniverseSymbol: (universe: string, body: { symbol: string; name?: string; sector?: string; provider_symbol?: string }) =>
+  addUniverseSymbol: (universe: string, body: { symbol: string; name?: string; provider_symbol?: string }) =>
     apiFetch<any>(`/universe/${encodeURIComponent(universe)}/symbols`, {
       method: 'POST',
       body: JSON.stringify(body),
