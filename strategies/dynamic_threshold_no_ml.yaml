@@ -29,5 +29,25 @@ optimizer_results:
       proba_long: 0.65
       proba_short: 0.35
       p_up_gain: 1.8
+  15m:
+    run_date: '2026-08-05'
+    oos_score: -0.684036
+    params:
+      lookahead: 3
+      vol_multiplier: 0.6
+      adx_min: 20.0
+      proba_long: 0.65
+      proba_short: 0.35
+      p_up_gain: 1.8
+  30m:
+    run_date: '2026-08-05'
+    oos_score: -0.810459
+    params:
+      lookahead: 3
+      vol_multiplier: 0.6
+      adx_min: 25.0
+      proba_long: 0.55
+      proba_short: 0.35
+      p_up_gain: 2.2
 params:
   adx_min: 25.0

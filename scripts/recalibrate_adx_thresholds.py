@@ -52,23 +52,27 @@ SYMBOL = "BTC/USDC"
 FRAC_IS, FRAC_OOS = 0.60, 0.20
 MIN_VAL_TRADES = 15
 
-# (strategy, timeframe) — cibles ADX rules/proxy (pas les ML qui réentraînent
-# à chaque barre de backtest : v4/v5/ml_dynamic_threshold → trop lents pour
-# 40 trials random_search).
+# Stratégies ADX rules/proxy (pas les ML qui réentraînent à chaque barre :
+# v4/v5/ml_dynamic_threshold → trop lents pour random_search).
+_ADX_STRATS = [
+    "pullback_trend",
+    "scoring_statistique_opus",
+    "scoring_statistique_opus_v2",
+    "multi_tf_sr",
+    "momentum_blitz",
+    "harmonic_regime",
+    "volatility_squeeze",
+    "smart_trend_adx",
+    "dynamic_threshold_no_ml",
+    "trend",
+    "trend_rider",
+    "supertrend_macd",
+]
+# Vague 1 : 1h/4h/1d — Vague 2 : 15m/30m (cf. --tfs)
+_DEFAULT_TFS = ["15m", "30m", "1h", "4h", "1d"]
+
 TARGETS: List[Tuple[str, str]] = [
-    ("pullback_trend", "1h"),
-    ("pullback_trend", "4h"),
-    ("scoring_statistique_opus", "1h"),
-    ("scoring_statistique_opus_v2", "4h"),
-    ("multi_tf_sr", "1d"),
-    ("momentum_blitz", "1h"),
-    ("harmonic_regime", "1h"),
-    ("volatility_squeeze", "1h"),
-    ("smart_trend_adx", "1h"),
-    ("dynamic_threshold_no_ml", "1h"),
-    ("trend", "1h"),
-    ("trend_rider", "1h"),
-    ("supertrend_macd", "1h"),
+    (s, tf) for s in _ADX_STRATS for tf in _DEFAULT_TFS
 ]
 
 ADX_KEY_SUBSTR = ("adx",)
@@ -182,6 +186,8 @@ def main() -> int:
     ap.add_argument("--trials", type=int, default=40)
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--only", default=None, help="filtre nom de stratégie")
+    ap.add_argument("--tfs", default=None,
+                    help="filtre TF, ex: 15m,30m (défaut : tous les TF de TARGETS)")
     ap.add_argument("--dry-run", action="store_true",
                     help="optimise et mesure, n'écrit ni YAML ni optimizer_results")
     ap.add_argument("--report", default=str(ROOT / "research" / "ml10_adx_recalibration.json"))
@@ -191,9 +197,14 @@ def main() -> int:
     # Wilder = convention de production.
     ip.set_wilder_atr_adx(True)
 
+    tf_filter = None
+    if args.tfs:
+        tf_filter = {t.strip() for t in args.tfs.split(",") if t.strip()}
+
     log.info("=== ML-10 mesure échelle ADX (Wilder) ===")
     scales = []
-    for tf in sorted({t for _, t in TARGETS}):
+    tfs_measure = sorted(tf_filter) if tf_filter else sorted({t for _, t in TARGETS})
+    for tf in tfs_measure:
         m = measure_adx_scale(tf)
         scales.append(m)
         if "mean" in m:
@@ -204,6 +215,9 @@ def main() -> int:
 
     cfg = load_config()
     targets = [t for t in TARGETS if args.only in (None, t[0])]
+    if tf_filter:
+        targets = [t for t in targets if t[1] in tf_filter]
+    log.info("Cibles : %d (strats×TF)", len(targets))
     campaigns = []
 
     for name, tf in targets:

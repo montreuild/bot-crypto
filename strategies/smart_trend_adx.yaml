@@ -20,7 +20,7 @@ params:
   rsi_long: 40
   rsi_short: 60
   adx_len: 14
-  adx_thresh: 20
+  adx_thresh: 15
   atr_len: 14
   sl_mult: 1.2
   tp_mult: 2.5
@@ -66,3 +66,23 @@ optimizer_results:
       rsi_short: 55
       sl_mult: 1.0
       tp_mult: 2.5
+  15m:
+    run_date: '2026-08-05'
+    oos_score: -0.021045
+    params:
+      ema_len: 250
+      adx_thresh: 25
+      rsi_long: 40
+      rsi_short: 65
+      sl_mult: 1.2
+      tp_mult: 2.0
+  30m:
+    run_date: '2026-08-05'
+    oos_score: -0.006605
+    params:
+      ema_len: 200
+      adx_thresh: 15
+      rsi_long: 35
+      rsi_short: 65
+      sl_mult: 1.5
+      tp_mult: 2.0

@@ -1,0 +1,1206 @@
+{
+  "generated_at": "2026-08-05T12:30:37.664121+00:00",
+  "symbol": "BTC/USDC",
+  "wilder": true,
+  "trials": 30,
+  "dry_run": false,
+  "adx_scale": [
+    {
+      "tf": "15m",
+      "n": 56807,
+      "mean": 25.653657770595327,
+      "median": 23.461406618195152,
+      "p25": 17.41109894085642,
+      "p75": 31.775197916126942,
+      "p90": 41.298180544889405
+    },
+    {
+      "tf": "30m",
+      "n": 53404,
+      "mean": 26.591045923640767,
+      "median": 24.24272950067074,
+      "p25": 17.91178137683227,
+      "p75": 32.97680086469532,
+      "p90": 43.08972064108318
+    }
+  ],
+  "campaigns": [
+    {
+      "strategy": "pullback_trend",
+      "tf": "15m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.280825,
+      "val": {
+        "score": -0.306402,
+        "pnl": -153.200783,
+        "sharpe": -62.99467363252727,
+        "trades": 122,
+        "wr": 27.049180327868854,
+        "dd": -25.205989999999996
+      },
+      "baseline_val": {
+        "score": -0.375702,
+        "pnl": -187.85077800000002,
+        "sharpe": -67.09203685870065,
+        "trades": 139,
+        "wr": 28.05755395683453,
+        "dd": -29.663109999999993
+      },
+      "best_params": {
+        "ema_fast": 34,
+        "ema_mid": 50,
+        "ema_slow": 100,
+        "adx_min": 25,
+        "pb_zone_pct": 0.003,
+        "rsi_pb_low": 30,
+        "rsi_pb_high": 62,
+        "vol_min": 1.0,
+        "cooldown": 20,
+        "rr_min": 1.5
+      },
+      "adx_params": {
+        "adx_min": 25
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_min": {
+            "old": 22,
+            "new": 25
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "pullback_trend",
+      "tf": "30m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.342781,
+      "val": {
+        "score": 0.258327,
+        "pnl": 58.664362,
+        "sharpe": -4.473547116154251,
+        "trades": 154,
+        "wr": 35.714285714285715,
+        "dd": -14.48196792680121
+      },
+      "baseline_val": {
+        "score": -0.038864,
+        "pnl": -19.432160999999994,
+        "sharpe": -10.50829226009412,
+        "trades": 112,
+        "wr": 33.035714285714285,
+        "dd": -16.08630369231825
+      },
+      "best_params": {
+        "ema_fast": 21,
+        "ema_mid": 50,
+        "ema_slow": 100,
+        "adx_min": 20,
+        "pb_zone_pct": 0.003,
+        "rsi_pb_low": 30,
+        "rsi_pb_high": 55,
+        "vol_min": 1.0,
+        "cooldown": 15,
+        "rr_min": 2.0
+      },
+      "adx_params": {
+        "adx_min": 20
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_min": {
+            "old": 25,
+            "new": 20
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "scoring_statistique_opus",
+      "tf": "15m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_threshold"
+      ],
+      "oos_score": -0.196998,
+      "val": {
+        "score": -0.296427,
+        "pnl": -148.213738,
+        "sharpe": -63.47355038088744,
+        "trades": 90,
+        "wr": 32.22222222222222,
+        "dd": -22.379679999999997
+      },
+      "baseline_val": {
+        "score": -0.472677,
+        "pnl": -236.33856,
+        "sharpe": -91.42471352262982,
+        "trades": 110,
+        "wr": 29.09090909090909,
+        "dd": -32.406259999999996
+      },
+      "best_params": {
+        "adx_threshold": 25,
+        "amp_thresh_td": 0.45,
+        "amp_thresh_other": 0.6,
+        "dir_dist_td": 0.08,
+        "dir_dist_other": 0.15,
+        "rr_min": 0.5
+      },
+      "adx_params": {
+        "adx_threshold": 25
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": false,
+        "reason": "no adx keys in best_params or no change"
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "scoring_statistique_opus",
+      "tf": "30m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_threshold"
+      ],
+      "oos_score": -0.364353,
+      "val": {
+        "score": -0.357648,
+        "pnl": -178.824086,
+        "sharpe": -28.160397010868497,
+        "trades": 106,
+        "wr": 33.0188679245283,
+        "dd": -29.582600000000003
+      },
+      "baseline_val": {
+        "score": -0.389352,
+        "pnl": -194.675856,
+        "sharpe": -29.6969738473636,
+        "trades": 110,
+        "wr": 32.72727272727273,
+        "dd": -31.005280000000006
+      },
+      "best_params": {
+        "adx_threshold": 25,
+        "amp_thresh_td": 0.4,
+        "amp_thresh_other": 0.5,
+        "dir_dist_td": 0.12,
+        "dir_dist_other": 0.15,
+        "rr_min": 0.6
+      },
+      "adx_params": {
+        "adx_threshold": 25
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": false,
+        "reason": "no adx keys in best_params or no change"
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "scoring_statistique_opus_v2",
+      "tf": "15m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_threshold"
+      ],
+      "oos_score": -0.571067,
+      "val": {
+        "score": -0.365588,
+        "pnl": -182.794193,
+        "sharpe": -61.48953748668079,
+        "trades": 169,
+        "wr": 25.443786982248522,
+        "dd": -33.93305977299539
+      },
+      "baseline_val": {
+        "score": -0.431695,
+        "pnl": -215.847505,
+        "sharpe": -64.14961116767509,
+        "trades": 178,
+        "wr": 33.70786516853933,
+        "dd": -36.19884676184304
+      },
+      "best_params": {
+        "adx_threshold": 25,
+        "amp_thresh_tu": 0.35,
+        "amp_thresh_td": 0.5,
+        "amp_thresh_other": 0.6,
+        "dir_dist_tu": 0.15,
+        "dir_dist_td": 0.1,
+        "dir_dist_other": 0.15,
+        "rr_min": 0.5
+      },
+      "adx_params": {
+        "adx_threshold": 25
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_threshold": {
+            "old": 20,
+            "new": 25
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "scoring_statistique_opus_v2",
+      "tf": "30m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_threshold"
+      ],
+      "oos_score": -0.410702,
+      "val": {
+        "score": -0.844038,
+        "pnl": -422.01878800000003,
+        "sharpe": -62.062950307419364,
+        "trades": 187,
+        "wr": 23.52941176470588,
+        "dd": -53.35007
+      },
+      "baseline_val": {
+        "score": -0.791298,
+        "pnl": -395.649168,
+        "sharpe": -54.413938514957536,
+        "trades": 181,
+        "wr": 28.176795580110497,
+        "dd": -51.81059
+      },
+      "best_params": {
+        "adx_threshold": 25,
+        "amp_thresh_tu": 0.5,
+        "amp_thresh_td": 0.35,
+        "amp_thresh_other": 0.45,
+        "dir_dist_tu": 0.3,
+        "dir_dist_td": 0.12,
+        "dir_dist_other": 0.08,
+        "rr_min": 0.5
+      },
+      "adx_params": {
+        "adx_threshold": 25
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": false,
+        "reason": "no adx keys in best_params or no change"
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "multi_tf_sr",
+      "tf": "15m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.106743,
+      "val": {
+        "score": -0.144742,
+        "pnl": -72.370914,
+        "sharpe": -196.99319294650164,
+        "trades": 35,
+        "wr": 22.857142857142858,
+        "dd": -10.376539999999999
+      },
+      "baseline_val": {
+        "score": -0.28587,
+        "pnl": -142.934767,
+        "sharpe": -117.05483973915388,
+        "trades": 86,
+        "wr": 16.27906976744186,
+        "dd": -21.541430000000002
+      },
+      "best_params": {
+        "sr_window": 7,
+        "sr_lookback": 100,
+        "sr_cluster_pct": 0.003,
+        "sr_min_touches": 2,
+        "sr_proximity_atr": 1.0,
+        "adx_min": 25,
+        "rsi_low": 35,
+        "rsi_high": 60,
+        "vol_min": 1.0,
+        "cooldown": 10,
+        "rr_min": 1.3
+      },
+      "adx_params": {
+        "adx_min": 25
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": false,
+        "reason": "no adx keys in best_params or no change"
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "multi_tf_sr",
+      "tf": "30m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": 0.135246,
+      "val": {
+        "score": -0.401117,
+        "pnl": -200.55836299999999,
+        "sharpe": -80.34755783694679,
+        "trades": 80,
+        "wr": 16.25,
+        "dd": -26.51616
+      },
+      "baseline_val": {
+        "score": -0.297637,
+        "pnl": -148.818745,
+        "sharpe": -92.6961699804054,
+        "trades": 56,
+        "wr": 17.857142857142858,
+        "dd": -19.600959999999997
+      },
+      "best_params": {
+        "sr_window": 7,
+        "sr_lookback": 200,
+        "sr_cluster_pct": 0.008,
+        "sr_min_touches": 1,
+        "sr_proximity_atr": 1.0,
+        "adx_min": 25,
+        "rsi_low": 30,
+        "rsi_high": 70,
+        "vol_min": 1.0,
+        "cooldown": 20,
+        "rr_min": 2.0
+      },
+      "adx_params": {
+        "adx_min": 25
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": false,
+        "reason": "no adx keys in best_params or no change"
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "momentum_blitz",
+      "tf": "15m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.261971,
+      "val": {
+        "score": -0.367052,
+        "pnl": -183.52616,
+        "sharpe": -120.51793848233625,
+        "trades": 134,
+        "wr": 17.16417910447761,
+        "dd": -29.94765466458395
+      },
+      "baseline_val": {
+        "score": -0.302009,
+        "pnl": -151.004668,
+        "sharpe": -116.87015326508211,
+        "trades": 87,
+        "wr": 16.091954022988507,
+        "dd": -22.775848010502038
+      },
+      "best_params": {
+        "donchian": 20,
+        "vol_surge_min": 1.3,
+        "adx_min": 18,
+        "sl_atr_long": 1.1,
+        "sl_atr_short": 1.2,
+        "trail_wide": 4.0,
+        "tight_r": 4.0,
+        "max_hold": 24,
+        "min_quality": 0.54,
+        "max_size_factor": 2.0,
+        "enable_short": false,
+        "enable_continuation": true,
+        "require_htf": true,
+        "cooldown": 2,
+        "score_threshold": 0.52
+      },
+      "adx_params": {
+        "adx_min": 18
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_min": {
+            "old": 22,
+            "new": 18
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "momentum_blitz",
+      "tf": "30m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.301284,
+      "val": {
+        "score": -0.334917,
+        "pnl": -167.458705,
+        "sharpe": -94.27733948030244,
+        "trades": 77,
+        "wr": 22.07792207792208,
+        "dd": -23.309119999999997
+      },
+      "baseline_val": {
+        "score": -0.233771,
+        "pnl": -116.88541099999999,
+        "sharpe": -53.32002331472637,
+        "trades": 73,
+        "wr": 20.54794520547945,
+        "dd": -18.108090000000004
+      },
+      "best_params": {
+        "donchian": 20,
+        "vol_surge_min": 1.8,
+        "adx_min": 15,
+        "sl_atr_long": 1.1,
+        "sl_atr_short": 1.0,
+        "trail_wide": 4.0,
+        "tight_r": 6.0,
+        "max_hold": 16,
+        "min_quality": 0.6,
+        "max_size_factor": 2.0,
+        "enable_short": false,
+        "enable_continuation": false,
+        "require_htf": true,
+        "cooldown": 0,
+        "score_threshold": 0.58
+      },
+      "adx_params": {
+        "adx_min": 15
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_min": {
+            "old": 18,
+            "new": 15
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "harmonic_regime",
+      "tf": "15m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.2723,
+      "val": {
+        "score": -0.526131,
+        "pnl": -263.065686,
+        "sharpe": -98.75665492416826,
+        "trades": 143,
+        "wr": 19.58041958041958,
+        "dd": -37.14707
+      },
+      "baseline_val": {
+        "score": -0.581453,
+        "pnl": -290.726373,
+        "sharpe": -97.26632530652309,
+        "trades": 196,
+        "wr": 21.428571428571427,
+        "dd": -42.70089
+      },
+      "best_params": {
+        "adx_min": 22,
+        "slope_lookback": 20,
+        "donchian": 30,
+        "rsi_pullback": 46,
+        "rsi_oversold": 35,
+        "vol_extreme_mult": 2.2,
+        "sl_atr_long": 2.0,
+        "sl_atr_short": 1.2,
+        "max_hold": 24,
+        "min_quality": 0.64,
+        "enable_short": false,
+        "enable_meanrev": false,
+        "use_cycle": true,
+        "cooldown": 2,
+        "score_threshold": 0.6
+      },
+      "adx_params": {
+        "adx_min": 22
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_min": {
+            "old": 28,
+            "new": 22
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "harmonic_regime",
+      "tf": "30m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.185536,
+      "val": {
+        "score": -0.100761,
+        "pnl": -50.380582,
+        "sharpe": -25.005416288656978,
+        "trades": 72,
+        "wr": 25.0,
+        "dd": -12.741266770559934
+      },
+      "baseline_val": {
+        "score": -0.628881,
+        "pnl": -314.440724,
+        "sharpe": -46.48540590694832,
+        "trades": 247,
+        "wr": 27.530364372469634,
+        "dd": -47.39889951629912
+      },
+      "best_params": {
+        "adx_min": 28,
+        "slope_lookback": 20,
+        "donchian": 20,
+        "rsi_pullback": 42,
+        "rsi_oversold": 30,
+        "vol_extreme_mult": 2.6,
+        "sl_atr_long": 1.3,
+        "sl_atr_short": 1.2,
+        "max_hold": 48,
+        "min_quality": 0.56,
+        "enable_short": false,
+        "enable_meanrev": false,
+        "use_cycle": true,
+        "cooldown": 4,
+        "score_threshold": 0.6
+      },
+      "adx_params": {
+        "adx_min": 28
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_min": {
+            "old": 22,
+            "new": 28
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "volatility_squeeze",
+      "tf": "15m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.039473,
+      "val": {
+        "score": -0.194885,
+        "pnl": -97.442703,
+        "sharpe": -211.33841510581868,
+        "trades": 50,
+        "wr": 16.0,
+        "dd": -14.36515809694676
+      },
+      "baseline_val": {
+        "score": -0.114829,
+        "pnl": -57.414718,
+        "sharpe": -119.98976965672487,
+        "trades": 34,
+        "wr": 20.588235294117645,
+        "dd": -9.2956
+      },
+      "best_params": {
+        "squeeze_lookback": 150,
+        "squeeze_pctl": 0.3,
+        "release_window": 3,
+        "donchian": 15,
+        "adx_min": 15,
+        "sl_atr": 1.3,
+        "max_hold": 30,
+        "min_quality": 0.64,
+        "enable_short": false,
+        "require_trend": true,
+        "cooldown": 2,
+        "score_threshold": 0.55
+      },
+      "adx_params": {
+        "adx_min": 15
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_min": {
+            "old": 22,
+            "new": 15
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "volatility_squeeze",
+      "tf": "30m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.091953,
+      "val": {
+        "score": -0.071301,
+        "pnl": -35.650743,
+        "sharpe": -50.48727666751517,
+        "trades": 26,
+        "wr": 30.76923076923077,
+        "dd": -7.382512113232551
+      },
+      "baseline_val": {
+        "score": -0.175958,
+        "pnl": -87.97905999999999,
+        "sharpe": -57.28261026965839,
+        "trades": 46,
+        "wr": 28.26086956521739,
+        "dd": -14.342354343854657
+      },
+      "best_params": {
+        "squeeze_lookback": 100,
+        "squeeze_pctl": 0.3,
+        "release_window": 3,
+        "donchian": 30,
+        "adx_min": 18,
+        "sl_atr": 1.5,
+        "max_hold": 40,
+        "min_quality": 0.64,
+        "enable_short": false,
+        "require_trend": true,
+        "cooldown": 1,
+        "score_threshold": 0.55
+      },
+      "adx_params": {
+        "adx_min": 18
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_min": {
+            "old": 15,
+            "new": 18
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "smart_trend_adx",
+      "tf": "15m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_thresh"
+      ],
+      "oos_score": -0.021045,
+      "val": {
+        "score": -0.125387,
+        "pnl": -62.693733,
+        "sharpe": -157.62799393442407,
+        "trades": 29,
+        "wr": 27.586206896551722,
+        "dd": -8.893439999999998
+      },
+      "baseline_val": {
+        "score": -0.170238,
+        "pnl": -85.119125,
+        "sharpe": -112.63685437966829,
+        "trades": 58,
+        "wr": 37.93103448275862,
+        "dd": -13.6833
+      },
+      "best_params": {
+        "ema_len": 250,
+        "adx_thresh": 25,
+        "rsi_long": 40,
+        "rsi_short": 65,
+        "sl_mult": 1.2,
+        "tp_mult": 2.0
+      },
+      "adx_params": {
+        "adx_thresh": 25
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_thresh": {
+            "old": 20,
+            "new": 25
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "smart_trend_adx",
+      "tf": "30m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_thresh"
+      ],
+      "oos_score": -0.006605,
+      "val": {
+        "score": -0.073925,
+        "pnl": -36.962274,
+        "sharpe": -39.7007487026092,
+        "trades": 20,
+        "wr": 50.0,
+        "dd": -6.540208258559183
+      },
+      "baseline_val": {
+        "score": -0.04795,
+        "pnl": -23.974892999999998,
+        "sharpe": -24.985896251096303,
+        "trades": 30,
+        "wr": 36.666666666666664,
+        "dd": -8.890209067221917
+      },
+      "best_params": {
+        "ema_len": 200,
+        "adx_thresh": 15,
+        "rsi_long": 35,
+        "rsi_short": 65,
+        "sl_mult": 1.5,
+        "tp_mult": 2.0
+      },
+      "adx_params": {
+        "adx_thresh": 15
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_thresh": {
+            "old": 25,
+            "new": 15
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "dynamic_threshold_no_ml",
+      "tf": "15m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.684036,
+      "val": {
+        "score": -0.788789,
+        "pnl": -394.394424,
+        "sharpe": -74.25240547699708,
+        "trades": 258,
+        "wr": 26.356589147286826,
+        "dd": -55.52884
+      },
+      "baseline_val": {
+        "score": -0.84534,
+        "pnl": -422.670195,
+        "sharpe": -75.59715905352908,
+        "trades": 290,
+        "wr": 23.79310344827586,
+        "dd": -60.22521
+      },
+      "best_params": {
+        "lookahead": 3,
+        "vol_multiplier": 0.6,
+        "adx_min": 20.0,
+        "proba_long": 0.65,
+        "proba_short": 0.35,
+        "p_up_gain": 1.8
+      },
+      "adx_params": {
+        "adx_min": 20.0
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_min": {
+            "old": 25.0,
+            "new": 20.0
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "dynamic_threshold_no_ml",
+      "tf": "30m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.810459,
+      "val": {
+        "score": -0.634399,
+        "pnl": -317.199419,
+        "sharpe": -27.569134898451015,
+        "trades": 275,
+        "wr": 32.36363636363636,
+        "dd": -48.662729999999996
+      },
+      "baseline_val": {
+        "score": -0.745045,
+        "pnl": -372.522588,
+        "sharpe": -25.613935228651968,
+        "trades": 372,
+        "wr": 30.913978494623656,
+        "dd": -59.259640000000005
+      },
+      "best_params": {
+        "lookahead": 3,
+        "vol_multiplier": 0.6,
+        "adx_min": 25.0,
+        "proba_long": 0.55,
+        "proba_short": 0.35,
+        "p_up_gain": 2.2
+      },
+      "adx_params": {
+        "adx_min": 25.0
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_min": {
+            "old": 20.0,
+            "new": 25.0
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "trend",
+      "tf": "15m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.029888,
+      "val": {
+        "score": -0.134703,
+        "pnl": -67.351522,
+        "sharpe": -46.265791891508314,
+        "trades": 65,
+        "wr": 32.30769230769231,
+        "dd": -13.46348652907846
+      },
+      "baseline_val": {
+        "score": -0.323713,
+        "pnl": -161.856616,
+        "sharpe": -73.07949034672977,
+        "trades": 81,
+        "wr": 24.691358024691358,
+        "dd": -22.720939999999995
+      },
+      "best_params": {
+        "ema_fast": 34,
+        "ema_slow": 50,
+        "adx_min": 25,
+        "rsi_low": 33,
+        "rsi_high": 67,
+        "vol_min": 0.9,
+        "cross_lookback": 6,
+        "overext_pct": 0.012,
+        "ema200_tol": 0.035,
+        "cooldown": 20,
+        "rr_min": 1.5
+      },
+      "adx_params": {
+        "adx_min": 25
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_min": {
+            "old": 28,
+            "new": 25
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "trend",
+      "tf": "30m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.140459,
+      "val": {
+        "score": 0.167306,
+        "pnl": 1.8245500000000006,
+        "sharpe": -8.650175793794398,
+        "trades": 49,
+        "wr": 38.775510204081634,
+        "dd": -7.9757715903553255
+      },
+      "baseline_val": {
+        "score": -0.240655,
+        "pnl": -120.32757500000001,
+        "sharpe": -22.254968472603167,
+        "trades": 100,
+        "wr": 39.0,
+        "dd": -19.52256
+      },
+      "best_params": {
+        "ema_fast": 34,
+        "ema_slow": 50,
+        "adx_min": 22,
+        "rsi_low": 33,
+        "rsi_high": 67,
+        "vol_min": 1.2,
+        "cross_lookback": 8,
+        "overext_pct": 0.012,
+        "ema200_tol": 0.045,
+        "cooldown": 15,
+        "rr_min": 1.3
+      },
+      "adx_params": {
+        "adx_min": 22
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_min": {
+            "old": 25,
+            "new": 22
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "trend_rider",
+      "tf": "15m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.315372,
+      "val": {
+        "score": -0.280861,
+        "pnl": -140.430288,
+        "sharpe": -52.96184158391805,
+        "trades": 96,
+        "wr": 21.875,
+        "dd": -25.350712244514074
+      },
+      "baseline_val": {
+        "score": -0.409224,
+        "pnl": -204.61193,
+        "sharpe": -70.05643535691333,
+        "trades": 134,
+        "wr": 21.641791044776117,
+        "dd": -31.3955091856024
+      },
+      "best_params": {
+        "adx_min": 25,
+        "chop_max": 50.0,
+        "stop_atr": 2.0,
+        "trail_mult": 3.5,
+        "min_score": 0.5,
+        "long_only": true,
+        "size_by_confluence": false
+      },
+      "adx_params": {
+        "adx_min": 25
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": true,
+        "dry_run": false,
+        "changes": {
+          "adx_min": {
+            "old": 22,
+            "new": 25
+          }
+        }
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "trend_rider",
+      "tf": "30m",
+      "status": "ok",
+      "adx_keys_in_space": [
+        "adx_min"
+      ],
+      "oos_score": -0.213578,
+      "val": {
+        "score": -0.368891,
+        "pnl": -184.445387,
+        "sharpe": -38.6590327769916,
+        "trades": 84,
+        "wr": 30.952380952380953,
+        "dd": -25.19207
+      },
+      "baseline_val": {
+        "score": -0.500091,
+        "pnl": -250.045307,
+        "sharpe": -48.70314184770925,
+        "trades": 122,
+        "wr": 22.950819672131146,
+        "dd": -34.46548000000001
+      },
+      "best_params": {
+        "adx_min": 25,
+        "chop_max": 50.0,
+        "stop_atr": 2.0,
+        "trail_mult": 3.5,
+        "min_score": 0.7,
+        "long_only": true,
+        "size_by_confluence": false
+      },
+      "adx_params": {
+        "adx_min": 25
+      },
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": false,
+        "reason": "no adx keys in best_params or no change"
+      },
+      "low_trades_warning": false
+    },
+    {
+      "strategy": "supertrend_macd",
+      "tf": "15m",
+      "status": "ok",
+      "adx_keys_in_space": [],
+      "oos_score": 0.639233,
+      "val": {
+        "score": -0.021172,
+        "pnl": -10.585928,
+        "sharpe": -134.7771441658315,
+        "trades": 8,
+        "wr": 37.5,
+        "dd": -1.8116899999999987
+      },
+      "baseline_val": {
+        "score": -0.007832,
+        "pnl": -3.9158339999999994,
+        "sharpe": -88.28097396633103,
+        "trades": 6,
+        "wr": 50.0,
+        "dd": -0.9585400000000049
+      },
+      "best_params": {
+        "st_period": 10,
+        "st_mult": 3.0,
+        "macd_fast": 10,
+        "macd_slow": 28,
+        "vol_min": 1.0
+      },
+      "adx_params": {},
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": false,
+        "reason": "no adx keys in best_params or no change"
+      },
+      "low_trades_warning": true
+    },
+    {
+      "strategy": "supertrend_macd",
+      "tf": "30m",
+      "status": "ok",
+      "adx_keys_in_space": [],
+      "oos_score": 0.76585,
+      "val": {
+        "score": -0.045002,
+        "pnl": -22.501205000000002,
+        "sharpe": -57.58064219706115,
+        "trades": 8,
+        "wr": 12.5,
+        "dd": -2.99932
+      },
+      "baseline_val": {
+        "score": 0.590818,
+        "pnl": 10.789195,
+        "sharpe": 23.634166203150514,
+        "trades": 4,
+        "wr": 50.0,
+        "dd": -0.9852349481681671
+      },
+      "best_params": {
+        "st_period": 14,
+        "st_mult": 2.5,
+        "macd_fast": 14,
+        "macd_slow": 24,
+        "vol_min": 1.3
+      },
+      "adx_params": {},
+      "persisted_optimizer_results": true,
+      "yaml_adx_update": {
+        "updated": false,
+        "reason": "no adx keys in best_params or no change"
+      },
+      "low_trades_warning": true
+    }
+  ],
+  "elapsed_s": 4634.4
+}

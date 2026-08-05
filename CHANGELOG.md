@@ -13,6 +13,8 @@ sur BTC/USDC 1h/4h/1d vs ~35 historique EWM) :
 
 - `scripts/recalibrate_adx_thresholds.py` — optimise + persiste `optimizer_results`
   et defaults ADX dans les YAML ; rapport `research/ml10_adx_recalibration.json`
+- **Vague 2 (15m/30m)** : 12 stratégies × 2 TF, 30 trials, mean ADX 15m≈25.7 /
+  30m≈26.6 — `research/ml10_adx_recalibration_15m_30m.json` ; flag `--tfs`
 - `scripts/retrain_all_models.py` — réentraîne/publie (gate) les recettes omnibus /
   dyn_threshold / stat48 sur BTC/USDC 15m–4h ; rapport
   `research/retrain_all_report.json` (25 promote + 3 initial + 8 keep AUC floor)

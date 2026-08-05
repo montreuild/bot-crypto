@@ -21,7 +21,7 @@ params:
   squeeze_pctl: 0.2
   release_window: 5
   donchian: 20
-  adx_min: 22
+  adx_min: 18
   sl_atr: 1.5
   max_hold: 30
   min_quality: 0.62
@@ -80,5 +80,37 @@ optimizer_results:
       min_quality: 0.64
       enable_short: true
       require_trend: false
+      cooldown: 1
+      score_threshold: 0.55
+  15m:
+    run_date: '2026-08-05'
+    oos_score: -0.039473
+    params:
+      squeeze_lookback: 150
+      squeeze_pctl: 0.3
+      release_window: 3
+      donchian: 15
+      adx_min: 15
+      sl_atr: 1.3
+      max_hold: 30
+      min_quality: 0.64
+      enable_short: false
+      require_trend: true
+      cooldown: 2
+      score_threshold: 0.55
+  30m:
+    run_date: '2026-08-05'
+    oos_score: -0.091953
+    params:
+      squeeze_lookback: 100
+      squeeze_pctl: 0.3
+      release_window: 3
+      donchian: 30
+      adx_min: 18
+      sl_atr: 1.5
+      max_hold: 40
+      min_quality: 0.64
+      enable_short: false
+      require_trend: true
       cooldown: 1
       score_threshold: 0.55
