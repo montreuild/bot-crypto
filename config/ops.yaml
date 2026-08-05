@@ -1,6 +1,31 @@
+# ============================================================================
+#  EXPLOITATION — API web, journalisation, persistance, alertes
+# ============================================================================
+#
+#  Briques : app/api/ (FastAPI), app/core/logger.py, app/core/database.py,
+#            app/core/notifications.py, app/live/watchdog.
+#
+#  ⚠ `web.host: 0.0.0.0` sans `web.api_key` fait REFUSER le démarrage (OPS-02).
+#  /health et /metrics restent sans authentification par choix (un scrapeur
+#  Prometheus ne porte pas d'en-tête) : les filtrer au niveau du reverse proxy.
+#
+database:
+  url: sqlite:///trades.db
+
+watchdog:
+  check_interval_s: 60
+  timeout_s: 300
+
 logging:
   level: INFO
-  file: logs/bot.log
+  debug: false
+  # OBS-02 — format du fichier de log UNIQUEMENT (la console reste colorée et
+  # lisible à l'œil). `json` = une ligne = un objet JSON, avec le
+  # correlation_id qui relie entre elles toutes les lignes d'une même requête
+  # ou d'un même job. `text` restaure l'ancien format si un outillage externe
+  # en dépendait.
+  format: json
+  log_file: logs/bot.log
   max_bytes: 10485760
   backup_count: 5
 
@@ -23,8 +48,44 @@ perf:
   precompute_cache_size: 128
 
 notifications:
+  # SEC-007 — joindre les dernières lignes de bot.log à l'alerte de crash
+  # (deploy/notify-crash.py). false par défaut : Telegram et CallMeBot sont des
+  # tiers, et le log porte symboles, tailles de position et soldes. Passer à
+  # true est un choix explicite, pas un réglage de confort.
+  crash_include_log: false
   telegram_enabled: false
-  telegram_bot_token: ${TELEGRAM_BOT_TOKEN}
-  telegram_chat_id: ${TELEGRAM_CHAT_ID}
+  telegram_bot_token: ''
+  telegram_chat_id: ''
   whatsapp_enabled: false
+  whatsapp_mode: callmebot
+  whatsapp_number: ''
+  whatsapp_token: ''
+  twilio_account_sid: ''
+  twilio_auth_token: ''
+  twilio_from_number: ''
   email_enabled: false
+  email_smtp: smtp.gmail.com
+  email_port: 587
+  email_user: ''
+  email_password: ''
+  email_to: ''
+  min_pnl_to_notify: 5.0
+  position_loss_warn_pct: 5.0
+  exchange_error_threshold: 3
+  dd_warning_ratio: 0.8
+  throttle_secs: 60
+  feed_size: 200
+  events:
+    on_trade_open: true
+    on_trade_close: true
+    # G2 : trade calculé sur une venue sans exécution branchée — la
+    # notification porte symbole / sens / ouverture / SL / TP et EST le
+    # passage à l'acte tant que l'exécution réelle n'est pas livrée.
+    on_trade_signal: true
+    on_circuit_breaker: true
+    on_dd_warning: true
+    on_position_loss: true
+    on_exchange_error: true
+    on_status_report: true
+    on_optimization: true
+    on_start_stop: true
