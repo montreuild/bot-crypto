@@ -13,7 +13,10 @@ from app.api.routes.portfolio import (
 def test_presets_do_not_declare_legacy_trading_keys():
     for key, p in _RISK_PRESETS.items():
         for legacy in _LEGACY_TRADING_KEYS:
-            assert legacy not in p["trading"], f"{key} déclare encore {legacy}"
+            assert legacy not in (p.get("trading") or {}), f"{key} déclare encore {legacy}"
+        if key == "personnalise":
+            assert not (p.get("risk") or {}).get("profile")
+            continue
         assert "profile" in p["risk"]
         assert p["risk"]["profile"] in ("prudent", "normal", "agressif")
 
@@ -23,6 +26,10 @@ def test_public_view_has_no_legacy_fields():
         view = _preset_public_view(key, p)
         assert "risk_per_trade" not in view
         assert "max_positions" not in view
+        if key == "personnalise":
+            assert view["custom"] is True
+            assert view["trade_risk_pct"] is None
+            continue
         assert view["trade_risk_pct"] > 0
         assert view["profile"] == p["risk"]["profile"]
 

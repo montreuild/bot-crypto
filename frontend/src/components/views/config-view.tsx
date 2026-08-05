@@ -288,39 +288,10 @@ export function ConfigExchangeView() {
                 </div>
               </div>
 
-              {venueNames.length > 0 && (
-                <div className="mt-5 pt-4 border-t border-border/60">
-                  <div className="text-xs text-muted uppercase tracking-wider mb-2">
-                    Venues déclarées
-                  </div>
-                  <div className="space-y-2">
-                    {venueNames.map((name) => {
-                      const d = defs[name] || {};
-                      const provider = d.data_provider || (d.exchange === 'okx' || name.includes('okx') || name.includes('margin') || name === 'spot' || name === 'perp-hedge-okx' ? 'ccxt/' + (config.exchange?.name || 'exchange') : '—');
-                      return (
-                        <div
-                          key={name}
-                          className="flex flex-wrap items-center justify-between gap-2 p-2 rounded-md border border-border bg-card-hover text-xs"
-                        >
-                          <div className="min-w-0">
-                            <span className="font-mono font-medium">{name}</span>
-                            {venues.default === name && (
-                              <Badge variant="info" className="ml-2 text-[9px]">default</Badge>
-                            )}
-                            <div className="text-dim mt-0.5">
-                              {d.market_type || '—'} · {d.asset_class || '—'} · {d.quote_currency || '—'}
-                              {d.can_execute === false && ' · data-only'}
-                            </div>
-                          </div>
-                          <span className="font-mono text-dim shrink-0">
-                            {d.data_provider || provider}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              <p className="text-[11px] text-muted mt-4 pt-3 border-t border-border/60">
+                Les venues et enveloppes de capital sont gérées en tête de l&apos;onglet
+                Capital (« Enveloppes par venue »).
+              </p>
             </CardContent>
           </Card>
         );
