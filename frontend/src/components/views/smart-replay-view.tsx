@@ -561,6 +561,7 @@ export function SmartReplayView() {
               value={currentIndex}
               onChange={(e) => { setIsPlaying(false); setCurrentIndex(Number(e.target.value)); }}
               className="w-full accent-primary-400"
+              aria-label="Position dans le replay"
             />
           </div>
 

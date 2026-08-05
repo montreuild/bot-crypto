@@ -29,20 +29,20 @@ import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import app.core.indicators_precompute as ip
-from app.core.candle_store import get_store
-from app.core.config import load_config
-from app.engine.backtest import Backtester
-from app.engine.engine import Engine
-from app.engine.opt_persistence import save_optimizer_results
-from app.engine.opt_scoring import composite_score
-from app.engine.optimizer_search import OptimizerSearchEngine
-from app.core.yaml_io import dump_yaml, load_yaml
+import app.core.indicators_precompute as ip  # noqa: E402
+from app.core.candle_store import get_store  # noqa: E402
+from app.core.config import load_config  # noqa: E402
+from app.core.yaml_io import dump_yaml, load_yaml  # noqa: E402
+from app.engine.backtest import Backtester  # noqa: E402
+from app.engine.engine import Engine  # noqa: E402
+from app.engine.opt_persistence import save_optimizer_results  # noqa: E402
+from app.engine.opt_scoring import composite_score  # noqa: E402
+from app.engine.optimizer_search import OptimizerSearchEngine  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
                     datefmt="%H:%M:%S")
@@ -342,7 +342,7 @@ def main() -> int:
               f"{float(c.get('oos_score') or 0):>8.3f} "
               f"{float(v.get('score') or 0):>8.3f} "
               f"{int(v.get('trades') or 0):>6}  {c.get('adx_params')}")
-    print(f"\nÉchelles ADX (mean): " +
+    print("\nÉchelles ADX (mean): " +
           ", ".join(f"{s['tf']}={s['mean']:.1f}" for s in scales if "mean" in s))
     return 0
 

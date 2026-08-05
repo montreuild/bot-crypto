@@ -90,7 +90,7 @@ test.describe('Redirections S10', () => {
 // Lots de fusion — le contenu des anciennes pages doit être joignable dans les
 // onglets. Sans ça, une 308 vers un onglet vide passerait les tests ci-dessus.
 test.describe('Onglets fusionnés', () => {
-  const TABS = [
+  const TABS: { page: string; tab: string; heading: string; level?: number }[] = [
     { page: 'market', tab: 'scanner', heading: 'Scanner' },
     { page: 'market', tab: 'smartgraph', heading: 'Smart Graph SMC' },
     { page: 'market', tab: 'smartreplay', heading: 'Smart Replay' },
@@ -99,17 +99,16 @@ test.describe('Onglets fusionnés', () => {
     { page: 'lab', tab: 'ml', heading: 'Modèles ML' },
     { page: 'lab', tab: 'replay', heading: 'Replay Multi-Timeframe' },
     { page: 'lab', tab: 'compare', heading: 'Comparatif Stratégies' },
-    // Lot Réglages — l'onglet Capital porte l'éditeur de params par
-    // stratégie, seule fonctionnalité que /config avait en propre.
-    { page: 'settings', tab: 'capital', heading: 'Stratégies' },
+    // Capital : CardTitle h3 « Enveloppes par venue » (plus de h2 Stratégies)
+    { page: 'settings', tab: 'capital', heading: 'Enveloppes par venue', level: 3 },
   ];
 
   for (const t of TABS) {
     test(`/${t.page}?tab=${t.tab} monte le contenu de l'ancienne page`, async ({ page }) => {
       await page.goto(`/${t.page}?tab=${t.tab}`);
-      await expect(page.getByRole('heading', { name: t.heading, level: 2 })).toBeVisible({
-        timeout: 10000,
-      });
+      await expect(
+        page.getByRole('heading', { name: t.heading, level: t.level ?? 2 }),
+      ).toBeVisible({ timeout: 10000 });
     });
   }
 });
