@@ -9917,5 +9917,561 @@
       "in_band": null,
       "verdict": "pas_assez_de_trades_reels"
     }
+  },
+  "supertrend_macd::15m::BTC/USDC": {
+    "slot_key": "supertrend_macd::15m::BTC/USDC",
+    "strategy": "supertrend_macd",
+    "timeframe": "15m",
+    "symbol": "BTC/USDC",
+    "run_date": "2026-08-05 12:07",
+    "lookback_days": 45,
+    "edge_lookback_days": 365,
+    "n_bars": 4000,
+    "sim": {
+      "total_trades": 3,
+      "win_rate": 66.67,
+      "total_pnl": 0.1869,
+      "return_pct": 0.187,
+      "avg_return_pct": 0.1747,
+      "sharpe": -17.257,
+      "max_drawdown": -0.45
+    },
+    "monte_carlo": {
+      "runs": 200,
+      "return_p5_pct": -0.67,
+      "return_mean_pct": 0.2,
+      "return_p95_pct": 1.04,
+      "max_dd_p95_pct": 0.35,
+      "prob_profit": 63.0
+    },
+    "edge": {
+      "available": true,
+      "n": 7,
+      "confidence": 0.85,
+      "expectancy_pct": 0.2626,
+      "ci_low_pct": -0.0739,
+      "ci_high_pct": 0.661,
+      "worst_trade_pct": -0.32
+    },
+    "base": {
+      "venue": "margin-isolated",
+      "slot_envelope": 100.0,
+      "trade_risk_pct": 0.025,
+      "currency": "USDC",
+      "as_of": "2026-08-05"
+    },
+    "live": {
+      "n_trades": 0,
+      "avg_return_pct": null
+    },
+    "contract": {
+      "available": false,
+      "live_mean_pct": null,
+      "in_band": null,
+      "verdict": "pas_assez_de_trades_reels"
+    }
+  },
+  "derivatives_reversion::15m::BTC/USDC": {
+    "slot_key": "derivatives_reversion::15m::BTC/USDC",
+    "strategy": "derivatives_reversion",
+    "timeframe": "15m",
+    "symbol": "BTC/USDC",
+    "run_date": "2026-08-05 12:07",
+    "lookback_days": 45,
+    "edge_lookback_days": 365,
+    "n_bars": 4000,
+    "sim": {
+      "total_trades": 35,
+      "win_rate": 45.71,
+      "total_pnl": -1.5403,
+      "return_pct": -1.54,
+      "avg_return_pct": 0.048,
+      "sharpe": -51.999,
+      "max_drawdown": -5.78
+    },
+    "monte_carlo": {
+      "runs": 200,
+      "return_p5_pct": -6.61,
+      "return_mean_pct": -1.73,
+      "return_p95_pct": 3.42,
+      "max_dd_p95_pct": 2.45,
+      "prob_profit": 24.0
+    },
+    "edge": {
+      "available": true,
+      "n": 75,
+      "confidence": 0.85,
+      "expectancy_pct": 0.0109,
+      "ci_low_pct": -0.0674,
+      "ci_high_pct": 0.0948,
+      "worst_trade_pct": -0.752
+    },
+    "base": {
+      "venue": "margin-isolated",
+      "slot_envelope": 100.0,
+      "trade_risk_pct": 0.025,
+      "currency": "USDC",
+      "as_of": "2026-08-05"
+    },
+    "live": {
+      "n_trades": 0,
+      "avg_return_pct": null
+    },
+    "contract": {
+      "available": false,
+      "live_mean_pct": null,
+      "in_band": null,
+      "verdict": "pas_assez_de_trades_reels"
+    }
+  },
+  "opus_omnibus_v11_followsetup_no_ml::30m::BTC/USDC": {
+    "slot_key": "opus_omnibus_v11_followsetup_no_ml::30m::BTC/USDC",
+    "strategy": "opus_omnibus_v11_followsetup_no_ml",
+    "timeframe": "30m",
+    "symbol": "BTC/USDC",
+    "run_date": "2026-08-05 12:07",
+    "lookback_days": 45,
+    "edge_lookback_days": 365,
+    "n_bars": 2410,
+    "sim": {
+      "total_trades": 21,
+      "win_rate": 14.29,
+      "total_pnl": -19.3923,
+      "return_pct": -19.392,
+      "avg_return_pct": -1.1467,
+      "sharpe": -120.202,
+      "max_drawdown": -23.58
+    },
+    "monte_carlo": {
+      "runs": 200,
+      "return_p5_pct": -27.45,
+      "return_mean_pct": -19.38,
+      "return_p95_pct": -9.19,
+      "max_dd_p95_pct": 19.39,
+      "prob_profit": 0.5
+    },
+    "edge": {
+      "available": true,
+      "n": 76,
+      "confidence": 0.85,
+      "expectancy_pct": -0.863,
+      "ci_low_pct": -1.3796,
+      "ci_high_pct": -0.2987,
+      "worst_trade_pct": -5.42
+    },
+    "base": {
+      "venue": "margin-isolated",
+      "slot_envelope": 100.0,
+      "trade_risk_pct": 0.025,
+      "currency": "USDC",
+      "as_of": "2026-08-05"
+    },
+    "live": {
+      "n_trades": 0,
+      "avg_return_pct": null
+    },
+    "contract": {
+      "available": false,
+      "live_mean_pct": null,
+      "in_band": null,
+      "verdict": "pas_assez_de_trades_reels"
+    }
+  },
+  "gemini_trend_follow::30m::BTC/USDC": {
+    "slot_key": "gemini_trend_follow::30m::BTC/USDC",
+    "strategy": "gemini_trend_follow",
+    "timeframe": "30m",
+    "symbol": "BTC/USDC",
+    "run_date": "2026-08-05 12:07",
+    "lookback_days": 45,
+    "edge_lookback_days": 365,
+    "n_bars": 2410,
+    "sim": {
+      "total_trades": 3,
+      "win_rate": 66.67,
+      "total_pnl": 0.4382,
+      "return_pct": 0.438,
+      "avg_return_pct": 0.2743,
+      "sharpe": 38.237,
+      "max_drawdown": -0.14
+    },
+    "monte_carlo": {
+      "runs": 200,
+      "return_p5_pct": 0.01,
+      "return_mean_pct": 0.44,
+      "return_p95_pct": 0.86,
+      "max_dd_p95_pct": 0.04,
+      "prob_profit": 95.5
+    },
+    "edge": {
+      "available": true,
+      "n": 15,
+      "confidence": 0.85,
+      "expectancy_pct": -0.2308,
+      "ci_low_pct": -0.4256,
+      "ci_high_pct": -0.0274,
+      "worst_trade_pct": -0.96
+    },
+    "base": {
+      "venue": "margin-isolated",
+      "slot_envelope": 100.0,
+      "trade_risk_pct": 0.025,
+      "currency": "USDC",
+      "as_of": "2026-08-05"
+    },
+    "live": {
+      "n_trades": 0,
+      "avg_return_pct": null
+    },
+    "contract": {
+      "available": false,
+      "live_mean_pct": null,
+      "in_band": null,
+      "verdict": "pas_assez_de_trades_reels"
+    }
+  },
+  "breakout::1h::BTC/USDC": {
+    "slot_key": "breakout::1h::BTC/USDC",
+    "strategy": "breakout",
+    "timeframe": "1h",
+    "symbol": "BTC/USDC",
+    "run_date": "2026-08-05 12:07",
+    "lookback_days": 45,
+    "edge_lookback_days": 365,
+    "n_bars": 1330,
+    "sim": {
+      "total_trades": 5,
+      "win_rate": 40.0,
+      "total_pnl": -0.5688,
+      "return_pct": -0.569,
+      "avg_return_pct": 0.0344,
+      "sharpe": -23.994,
+      "max_drawdown": -2.26
+    },
+    "monte_carlo": {
+      "runs": 200,
+      "return_p5_pct": -3.47,
+      "return_mean_pct": -0.49,
+      "return_p95_pct": 2.79,
+      "max_dd_p95_pct": 1.05,
+      "prob_profit": 38.5
+    },
+    "edge": {
+      "available": true,
+      "n": 32,
+      "confidence": 0.85,
+      "expectancy_pct": 0.2525,
+      "ci_low_pct": -0.199,
+      "ci_high_pct": 0.7595,
+      "worst_trade_pct": -2.247
+    },
+    "base": {
+      "venue": "margin-isolated",
+      "slot_envelope": 100.0,
+      "trade_risk_pct": 0.025,
+      "currency": "USDC",
+      "as_of": "2026-08-05"
+    },
+    "live": {
+      "n_trades": 0,
+      "avg_return_pct": null
+    },
+    "contract": {
+      "available": false,
+      "live_mean_pct": null,
+      "in_band": null,
+      "verdict": "pas_assez_de_trades_reels"
+    }
+  },
+  "derivatives_reversion::1h::BTC/USDC": {
+    "slot_key": "derivatives_reversion::1h::BTC/USDC",
+    "strategy": "derivatives_reversion",
+    "timeframe": "1h",
+    "symbol": "BTC/USDC",
+    "run_date": "2026-08-05 12:07",
+    "lookback_days": 45,
+    "edge_lookback_days": 365,
+    "n_bars": 1330,
+    "sim": {
+      "total_trades": 7,
+      "win_rate": 28.57,
+      "total_pnl": -2.328,
+      "return_pct": -2.328,
+      "avg_return_pct": -0.2487,
+      "sharpe": -61.839,
+      "max_drawdown": -3.36
+    },
+    "monte_carlo": {
+      "runs": 200,
+      "return_p5_pct": -5.12,
+      "return_mean_pct": -2.24,
+      "return_p95_pct": 0.53,
+      "max_dd_p95_pct": 2.33,
+      "prob_profit": 10.5
+    },
+    "edge": {
+      "available": true,
+      "n": 23,
+      "confidence": 0.85,
+      "expectancy_pct": -0.1033,
+      "ci_low_pct": -0.431,
+      "ci_high_pct": 0.2064,
+      "worst_trade_pct": -2.221
+    },
+    "base": {
+      "venue": "margin-isolated",
+      "slot_envelope": 100.0,
+      "trade_risk_pct": 0.025,
+      "currency": "USDC",
+      "as_of": "2026-08-05"
+    },
+    "live": {
+      "n_trades": 0,
+      "avg_return_pct": null
+    },
+    "contract": {
+      "available": false,
+      "live_mean_pct": null,
+      "in_band": null,
+      "verdict": "pas_assez_de_trades_reels"
+    }
+  },
+  "breakout::4h::BTC/USDC": {
+    "slot_key": "breakout::4h::BTC/USDC",
+    "strategy": "breakout",
+    "timeframe": "4h",
+    "symbol": "BTC/USDC",
+    "run_date": "2026-08-05 12:07",
+    "lookback_days": 45,
+    "edge_lookback_days": 365,
+    "n_bars": 520,
+    "sim": {
+      "total_trades": 0,
+      "win_rate": 0.0,
+      "total_pnl": 0.0,
+      "return_pct": 0.0,
+      "avg_return_pct": 0.0,
+      "sharpe": 0.0,
+      "max_drawdown": 0.0
+    },
+    "monte_carlo": {},
+    "edge": {
+      "available": true,
+      "n": 9,
+      "confidence": 0.85,
+      "expectancy_pct": 0.0936,
+      "ci_low_pct": -2.9392,
+      "ci_high_pct": 3.1464,
+      "worst_trade_pct": -10.749
+    },
+    "base": {
+      "venue": "margin-isolated",
+      "slot_envelope": 100.0,
+      "trade_risk_pct": 0.025,
+      "currency": "USDC",
+      "as_of": "2026-08-05"
+    },
+    "live": {
+      "n_trades": 0,
+      "avg_return_pct": null
+    },
+    "contract": {
+      "available": false,
+      "live_mean_pct": null,
+      "in_band": null,
+      "verdict": "pas_assez_de_trades_reels"
+    }
+  },
+  "supertrend_macd::4h::BTC/USDC": {
+    "slot_key": "supertrend_macd::4h::BTC/USDC",
+    "strategy": "supertrend_macd",
+    "timeframe": "4h",
+    "symbol": "BTC/USDC",
+    "run_date": "2026-08-05 12:07",
+    "lookback_days": 45,
+    "edge_lookback_days": 365,
+    "n_bars": 520,
+    "sim": {
+      "total_trades": 0,
+      "win_rate": 0.0,
+      "total_pnl": 0.0,
+      "return_pct": 0.0,
+      "avg_return_pct": 0.0,
+      "sharpe": 0.0,
+      "max_drawdown": 0.0
+    },
+    "monte_carlo": {},
+    "edge": {
+      "available": true,
+      "n": 5,
+      "confidence": 0.85,
+      "expectancy_pct": -0.0522,
+      "ci_low_pct": -2.0068,
+      "ci_high_pct": 2.1892,
+      "worst_trade_pct": -2.604
+    },
+    "base": {
+      "venue": "margin-isolated",
+      "slot_envelope": 100.0,
+      "trade_risk_pct": 0.025,
+      "currency": "USDC",
+      "as_of": "2026-08-05"
+    },
+    "live": {
+      "n_trades": 0,
+      "avg_return_pct": null
+    },
+    "contract": {
+      "available": false,
+      "live_mean_pct": null,
+      "in_band": null,
+      "verdict": "pas_assez_de_trades_reels"
+    }
+  },
+  "trend_rider::4h::ETH/USDC": {
+    "slot_key": "trend_rider::4h::ETH/USDC",
+    "strategy": "trend_rider",
+    "timeframe": "4h",
+    "symbol": "ETH/USDC",
+    "run_date": "2026-08-05 12:07",
+    "lookback_days": 45,
+    "edge_lookback_days": 365,
+    "n_bars": 520,
+    "sim": {
+      "total_trades": 5,
+      "win_rate": 20.0,
+      "total_pnl": -54.8109,
+      "return_pct": -5.481,
+      "avg_return_pct": -0.8948,
+      "sharpe": -59.849,
+      "max_drawdown": -5.94
+    },
+    "monte_carlo": {
+      "runs": 200,
+      "return_p5_pct": -8.703,
+      "return_mean_pct": -5.612,
+      "return_p95_pct": -1.53,
+      "max_dd_p95_pct": 5.48,
+      "prob_profit": 1.5
+    },
+    "edge": {
+      "available": true,
+      "n": 28,
+      "confidence": 0.85,
+      "expectancy_pct": -0.7058,
+      "ci_low_pct": -1.5915,
+      "ci_high_pct": 0.2737,
+      "worst_trade_pct": -3.92
+    },
+    "base": {
+      "venue": "margin-isolated",
+      "slot_envelope": 1000.0,
+      "trade_risk_pct": 0.025,
+      "currency": "USDC",
+      "as_of": "2026-08-05"
+    },
+    "live": {
+      "n_trades": 0,
+      "avg_return_pct": null
+    },
+    "contract": {
+      "available": false,
+      "live_mean_pct": null,
+      "in_band": null,
+      "verdict": "pas_assez_de_trades_reels"
+    }
+  },
+  "volatility_squeeze::1d::BTC/USDC": {
+    "slot_key": "volatility_squeeze::1d::BTC/USDC",
+    "strategy": "volatility_squeeze",
+    "timeframe": "1d",
+    "symbol": "BTC/USDC",
+    "run_date": "2026-08-05 12:07",
+    "lookback_days": 45,
+    "edge_lookback_days": 365,
+    "n_bars": 295,
+    "sim": {
+      "total_trades": 0,
+      "win_rate": 0.0,
+      "total_pnl": 0.0,
+      "return_pct": 0.0,
+      "avg_return_pct": 0.0,
+      "sharpe": 0.0,
+      "max_drawdown": 0.0
+    },
+    "monte_carlo": {},
+    "edge": {
+      "available": false
+    },
+    "base": {
+      "venue": "margin-isolated",
+      "slot_envelope": 100.0,
+      "trade_risk_pct": 0.025,
+      "currency": "USDC",
+      "as_of": "2026-08-05"
+    },
+    "live": {
+      "n_trades": 0,
+      "avg_return_pct": null
+    },
+    "contract": {
+      "available": false,
+      "live_mean_pct": null,
+      "in_band": null,
+      "verdict": "pas_assez_de_trades_reels"
+    }
+  },
+  "breakout::1d::BTC/USDC": {
+    "slot_key": "breakout::1d::BTC/USDC",
+    "strategy": "breakout",
+    "timeframe": "1d",
+    "symbol": "BTC/USDC",
+    "run_date": "2026-08-05 12:07",
+    "lookback_days": 45,
+    "edge_lookback_days": 365,
+    "n_bars": 295,
+    "sim": {
+      "total_trades": 1,
+      "win_rate": 0.0,
+      "total_pnl": -2.6209,
+      "return_pct": -2.621,
+      "avg_return_pct": -8.364,
+      "sharpe": 0.0,
+      "max_drawdown": -2.65
+    },
+    "monte_carlo": {
+      "runs": 200,
+      "return_p5_pct": -2.62,
+      "return_mean_pct": -2.62,
+      "return_p95_pct": -2.62,
+      "max_dd_p95_pct": 2.62,
+      "prob_profit": 0.0
+    },
+    "edge": {
+      "available": true,
+      "n": 2,
+      "confidence": 0.85,
+      "expectancy_pct": 0.5845,
+      "ci_low_pct": -8.364,
+      "ci_high_pct": 9.533,
+      "worst_trade_pct": -8.364
+    },
+    "base": {
+      "venue": "margin-isolated",
+      "slot_envelope": 100.0,
+      "trade_risk_pct": 0.025,
+      "currency": "USDC",
+      "as_of": "2026-08-05"
+    },
+    "live": {
+      "n_trades": 0,
+      "avg_return_pct": null
+    },
+    "contract": {
+      "available": false,
+      "live_mean_pct": null,
+      "in_band": null,
+      "verdict": "pas_assez_de_trades_reels"
+    }
   }
 }
