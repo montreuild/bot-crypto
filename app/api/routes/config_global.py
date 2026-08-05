@@ -127,11 +127,14 @@ def backtest_settings():
         "score_threshold":      state.cfg["trading"].get("score_threshold", 0.55),
         "taker_fee":            state.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE),
         "maker_fee":            state.cfg["trading"].get("maker_fee", DEFAULT_MAKER_FEE),
-        # S12 : le capital appartient à la venue par défaut, le taux de risque
-        # au profil — `trading.capital` / `trading.risk_per_trade` n'existent
-        # plus. Les enveloppes détaillées sont servies par /api/risk.
+        # S12 : capital = enveloppe venue ; risque trade = risk.profile.
+        # `risk_per_trade` n'est plus une clé YAML — on expose le taux effectif
+        # sous le nom trade_risk_pct (et un alias risk_per_trade lecture seule
+        # pour d'anciens clients du Lab, sans jamais le réécrire).
         "capital":              _default_venue_capital(state.cfg),
-        "risk_per_trade":       _trade_risk_pct(state.cfg),
+        "trade_risk_pct":       _trade_risk_pct(state.cfg),
+        "risk_per_trade":       _trade_risk_pct(state.cfg),  # alias lecture seule
+        "risk_profile":         (state.cfg.get("risk") or {}).get("profile", "normal"),
         "spread_pct":           state.cfg.get("backtest", {}).get("spread_pct", 0.0005),
         "partial_fill_pct":     state.cfg.get("backtest", {}).get("partial_fill_pct", 0.95),
     }

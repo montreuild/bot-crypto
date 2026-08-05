@@ -12,33 +12,104 @@ from app.api import state
 from app.api.helpers import verify_api_key
 from app.core.bot_identity import parse_slot_key
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
-from app.core.risk_envelope import base_drift
+from app.core.risk_envelope import base_drift, trade_risk_pct as _trade_risk_pct
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# ── Presets de risque (Réglages) ─────────────────────────────────────────────
+# ── Presets de risque (Réglages) — modèle S12 ────────────────────────────────
+# Ne plus écrire ``trading.risk_per_trade`` / ``max_positions`` (clés legacy
+# supprimées par les enveloppes : sizing = risk.profile × enveloppe de slot).
+# Mapping UI → clé ``risk.profile`` (profiles dans config/risk.yaml) :
+#   prudent → prudent (1 %), equilibre → normal (2,5 %), agressif → agressif (5 %)
+
+_LEGACY_TRADING_KEYS = (
+    "risk_per_trade", "max_positions", "max_longs", "max_shorts", "capital",
+)
+
 _RISK_PRESETS = {
     "prudent": {
         "label": "Prudent",
-        "trading": {"risk_per_trade": 0.005, "max_positions": 3,
-                    "daily_drawdown_limit": 0.03, "max_drawdown_global": 0.15},
-        "risk": {"equity_kill_switch_dd": 0.25},
+        "description": "Risque minimal — profil 1 % de l'enveloppe de slot",
+        "profile": "prudent",
+        "trading": {
+            "daily_drawdown_limit": 0.03,
+            "max_drawdown_global": 0.15,
+        },
+        "risk": {
+            "profile": "prudent",
+            "equity_kill_switch_dd": 0.25,
+        },
     },
     "equilibre": {
         "label": "Équilibré",
-        "trading": {"risk_per_trade": 0.01, "max_positions": 5,
-                    "daily_drawdown_limit": 0.05, "max_drawdown_global": 0.20},
-        "risk": {"equity_kill_switch_dd": 0.35},
+        "description": "Risque modéré — profil normal 2,5 % de l'enveloppe de slot",
+        "profile": "normal",
+        "trading": {
+            "daily_drawdown_limit": 0.05,
+            "max_drawdown_global": 0.20,
+        },
+        "risk": {
+            "profile": "normal",
+            "equity_kill_switch_dd": 0.35,
+        },
     },
     "agressif": {
         "label": "Agressif",
-        "trading": {"risk_per_trade": 0.02, "max_positions": 8,
-                    "daily_drawdown_limit": 0.08, "max_drawdown_global": 0.30},
-        "risk": {"equity_kill_switch_dd": 0.45},
+        "description": "Risque élevé — profil 5 % de l'enveloppe de slot",
+        "profile": "agressif",
+        "trading": {
+            "daily_drawdown_limit": 0.08,
+            "max_drawdown_global": 0.30,
+        },
+        "risk": {
+            "profile": "agressif",
+            "equity_kill_switch_dd": 0.45,
+        },
     },
 }
+
+# Clé UI (preset) ← profil moteur
+_PROFILE_TO_PRESET = {
+    "prudent": "prudent",
+    "normal": "equilibre",
+    "agressif": "agressif",
+}
+
+
+def _strip_legacy_trading_keys(trading: dict) -> None:
+    """Retire les clés trading invalidées par S12 (évite de re-polluer le YAML)."""
+    if not isinstance(trading, dict):
+        return
+    for k in _LEGACY_TRADING_KEYS:
+        trading.pop(k, None)
+
+
+def _preset_public_view(key: str, p: dict) -> dict:
+    """Payload API pour une carte preset — sans champs legacy."""
+    profile = p["risk"]["profile"]
+    rate = _trade_risk_pct({"risk": {"profile": profile}})
+    return {
+        "key": key,
+        "label": p["label"],
+        "description": p.get("description", ""),
+        "profile": profile,
+        "trade_risk_pct": rate,
+        "daily_drawdown_limit": p["trading"]["daily_drawdown_limit"],
+        "max_drawdown_global": p["trading"]["max_drawdown_global"],
+        "equity_kill_switch_dd": p["risk"]["equity_kill_switch_dd"],
+    }
+
+
+def _resolve_current_preset(cfg: dict) -> str | None:
+    """Preset UI courant : ui.risk_preset si valide, sinon dérivé de risk.profile."""
+    ui = (cfg or {}).get("ui") or {}
+    current = ui.get("risk_preset")
+    if current in _RISK_PRESETS:
+        return current
+    profile = ((cfg or {}).get("risk") or {}).get("profile") or "normal"
+    return _PROFILE_TO_PRESET.get(str(profile), "equilibre")
 
 
 def _trader():
@@ -337,10 +408,15 @@ def get_presets():
     cfg = state.cfg or {}
     ui = cfg.get("ui", {}) or {}
     return {
-        "presets": {k: {"label": v["label"], **v["trading"], **v["risk"]}
-                    for k, v in _RISK_PRESETS.items()},
-        "current": ui.get("risk_preset"),
+        "presets": {k: _preset_public_view(k, v) for k, v in _RISK_PRESETS.items()},
+        "current": _resolve_current_preset(cfg),
+        "active_profile": (cfg.get("risk") or {}).get("profile", "normal"),
+        "active_trade_risk_pct": _trade_risk_pct(cfg) if cfg else None,
         "expert_mode": bool(ui.get("expert_mode", False)),
+        "note": (
+            "Le sizing utilise risk.profile × enveloppe de slot (S12). "
+            "Les clés trading.risk_per_trade / max_positions ne sont plus écrites."
+        ),
     }
 
 
@@ -353,19 +429,38 @@ def set_risk_preset(request: Request, preset: str):
     from app.api.routes._config_helpers import _save_yaml
 
     def _apply(disk):
-        disk.setdefault("trading", {}).update(p["trading"])
-        disk.setdefault("risk", {}).update(p["risk"])
+        trading = disk.setdefault("trading", {})
+        trading.update(p["trading"])
+        _strip_legacy_trading_keys(trading)
+        risk = disk.setdefault("risk", {})
+        risk.update(p["risk"])
         disk.setdefault("ui", {})["risk_preset"] = preset
     _save_yaml(_apply)
 
     # Met à jour la config en mémoire (sans redémarrage).
     if state.cfg:
-        state.cfg.setdefault("trading", {}).update(p["trading"])
-        state.cfg.setdefault("risk", {}).update(p["risk"])
+        trading = state.cfg.setdefault("trading", {})
+        trading.update(p["trading"])
+        _strip_legacy_trading_keys(trading)
+        risk = state.cfg.setdefault("risk", {})
+        risk.update(p["risk"])
         state.cfg.setdefault("ui", {})["risk_preset"] = preset
-    logger.info(f"[Settings] Preset de risque appliqué : {preset}")
-    return {"applied": preset, **p["trading"], **p["risk"],
-            "note": "Pris en compte au prochain (re)démarrage du trader pour le RiskManager."}
+    logger.info(
+        "[Settings] Preset risque %s → risk.profile=%s (legacy trading.risk_per_trade "
+        "non écrit)",
+        preset, p["risk"]["profile"],
+    )
+    return {
+        "applied": preset,
+        "profile": p["risk"]["profile"],
+        "trade_risk_pct": _trade_risk_pct({"risk": {"profile": p["risk"]["profile"]}}),
+        **p["trading"],
+        "equity_kill_switch_dd": p["risk"]["equity_kill_switch_dd"],
+        "note": (
+            "risk.profile appliqué ; DD kill-switch mis à jour. "
+            "Sizing effectif = trade_risk_pct × enveloppe de slot (S12)."
+        ),
+    }
 
 
 @router.post("/api/settings/expert-mode", dependencies=[Depends(verify_api_key)])

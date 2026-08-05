@@ -6,6 +6,19 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🛡 Presets risque UI alignés S12 (plus de régression risk_per_trade)
+
+Les cartes « Prudent / Équilibré / Agressif » écrivaient encore
+`trading.risk_per_trade` et `max_positions` (modèle pré-enveloppes) sans toucher
+à `risk.profile` — le sizing live restait donc sur le profil YAML tandis que
+le YAML se re-polluait de clés interdites par le test S12.
+
+- API `POST /api/settings/risk-preset` → écrit `risk.profile` + DD + kill-switch,
+  **purge** les clés legacy trading
+- `GET /api/settings/presets` expose `trade_risk_pct` / `profile` (plus de
+  max_positions)
+- Front `/settings` + `ConfigRiskView` : affichage profil / % slot, capital venue
+
 ### 📐 ML-10 — recalibrage des seuils ADX (Wilder) + réentraînement modèles
 
 Campagne de mesure et recalibrage sous l'ADX Wilder (défaut prod, mean ~27–29
