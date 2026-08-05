@@ -71,3 +71,14 @@ optimizer_results:
         min_score: 0.5
         long_only: true
         size_by_confluence: true
+  1h:
+    run_date: '2026-08-05'
+    oos_score: -0.12595
+    params:
+      adx_min: 22
+      chop_max: 50.0
+      stop_atr: 2.0
+      trail_mult: 3.5
+      min_score: 0.7
+      long_only: false
+      size_by_confluence: false

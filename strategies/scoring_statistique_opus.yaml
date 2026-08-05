@@ -1,5 +1,5 @@
 params:
-  adx_threshold: 20
+  adx_threshold: 25
   # Seuils §6.5 validés sur test OOS (rapport fév-mai 2026)
   # Trend Down  : amp≥0.50, dir≥0.10 → WR 68-75%, Sharpe 0.55-0.66
   # Range/Choppy: signal moins fiable, seuils stricts + demi-taille
@@ -31,12 +31,12 @@ optimizer_results:
       dir_dist_other: 0.15
       rr_min: 0.6
   1h:
-    run_date: "2026-05-14"
-    oos_score: 0.65  # Sharpe/trade OOS rapport (127 trades, WR 71.7%, +0.403%/trade net)
+    run_date: '2026-08-05'
+    oos_score: -0.615743
     params:
-      adx_threshold: 20
-      amp_thresh_td: 0.60    # 1h : seuil plus strict = meilleure qualité
-      amp_thresh_other: 0.65
-      dir_dist_td: 0.10
-      dir_dist_other: 0.15
-      rr_min: 0.6
+      adx_threshold: 25
+      amp_thresh_td: 0.4
+      amp_thresh_other: 0.5
+      dir_dist_td: 0.12
+      dir_dist_other: 0.12
+      rr_min: 0.5

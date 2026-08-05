@@ -1,0 +1,160 @@
+{
+  "generated_at": "2026-08-05T10:24:34.654175+00:00",
+  "item": "ML-10",
+  "wilder_adx_scale_mean": {
+    "1h": 27.5,
+    "4h": 28.0,
+    "1d": 29.3
+  },
+  "note": "Seuils reoptimises sous Wilder (defaut prod). Echelle ADX mean ~28 vs ~35 EWM historique.",
+  "campaigns": [
+    {
+      "strategy": "dynamic_threshold_no_ml",
+      "tf": "1h",
+      "oos_score": -0.47654,
+      "adx_params": {
+        "adx_min": 25.0
+      },
+      "top_level_adx": {
+        "adx_min": 25.0
+      }
+    },
+    {
+      "strategy": "harmonic_regime",
+      "tf": "1h",
+      "oos_score": -0.144126,
+      "adx_params": {
+        "adx_min": 28
+      },
+      "top_level_adx": {
+        "adx_min": 28
+      }
+    },
+    {
+      "strategy": "momentum_blitz",
+      "tf": "1h",
+      "oos_score": -0.178207,
+      "adx_params": {
+        "adx_min": 22
+      },
+      "top_level_adx": {
+        "adx_min": 22
+      }
+    },
+    {
+      "strategy": "multi_tf_sr",
+      "tf": "1d",
+      "oos_score": 0.668718,
+      "adx_params": {
+        "adx_min": 25
+      },
+      "top_level_adx": {
+        "adx_min": 25
+      }
+    },
+    {
+      "strategy": "pullback_trend",
+      "tf": "1h",
+      "oos_score": 0.187457,
+      "adx_params": {
+        "adx_min": 25
+      },
+      "top_level_adx": {
+        "adx_min": 22
+      }
+    },
+    {
+      "strategy": "pullback_trend",
+      "tf": "4h",
+      "oos_score": 0.595961,
+      "adx_params": {
+        "adx_min": 22
+      },
+      "top_level_adx": {
+        "adx_min": 22
+      }
+    },
+    {
+      "strategy": "scoring_statistique_opus",
+      "tf": "1h",
+      "oos_score": -0.615743,
+      "adx_params": {
+        "adx_threshold": 25
+      },
+      "top_level_adx": {
+        "adx_threshold": 25
+      }
+    },
+    {
+      "strategy": "scoring_statistique_opus_v2",
+      "tf": "4h",
+      "oos_score": 0.164639,
+      "adx_params": {
+        "adx_threshold": 20
+      },
+      "top_level_adx": {
+        "adx_threshold": 20
+      }
+    },
+    {
+      "strategy": "smart_trend_adx",
+      "tf": "1h",
+      "oos_score": 0.257782,
+      "adx_params": {
+        "adx_thresh": 20
+      },
+      "top_level_adx": {
+        "adx_len": 14,
+        "adx_thresh": 20
+      }
+    },
+    {
+      "strategy": "supertrend_macd",
+      "tf": "1h",
+      "oos_score": 0.414659,
+      "adx_params": {},
+      "top_level_adx": {}
+    },
+    {
+      "strategy": "trend",
+      "tf": "1h",
+      "oos_score": 0.532921,
+      "adx_params": {
+        "adx_min": 28
+      },
+      "top_level_adx": {
+        "adx_min": 28
+      }
+    },
+    {
+      "strategy": "trend_rider",
+      "tf": "1h",
+      "oos_score": -0.12595,
+      "adx_params": {
+        "adx_min": 22
+      },
+      "top_level_adx": {
+        "adx_len": 14,
+        "adx_min": 22,
+        "adx_strong": 30
+      }
+    },
+    {
+      "strategy": "volatility_squeeze",
+      "tf": "1h",
+      "oos_score": 0.431011,
+      "adx_params": {
+        "adx_min": 22
+      },
+      "top_level_adx": {
+        "adx_min": 22
+      }
+    }
+  ],
+  "retrain_report": "research/retrain_all_report.json",
+  "excluded_from_adx_opt": [
+    "scoring_statistique_opus_v4",
+    "scoring_statistique_opus_v5",
+    "ml_dynamic_threshold (slow online retrain)"
+  ]
+}

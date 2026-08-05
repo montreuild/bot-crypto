@@ -19,7 +19,7 @@
 #     après frais (backtesté : -67%). Ne pas exécuter cette stratégie en 1h.
 
 params:
-  adx_min: 24
+  adx_min: 28
   slope_lookback: 20
   donchian: 20
   rsi_pullback: 42
@@ -72,3 +72,22 @@ optimizer_results:
       use_cycle: true
       cooldown: 0
       score_threshold: 0.6
+  1h:
+    run_date: '2026-08-05'
+    oos_score: -0.144126
+    params:
+      adx_min: 28
+      slope_lookback: 20
+      donchian: 20
+      rsi_pullback: 42
+      rsi_oversold: 30
+      vol_extreme_mult: 1.8
+      sl_atr_long: 2.0
+      sl_atr_short: 1.0
+      max_hold: 24
+      min_quality: 0.6
+      enable_short: false
+      enable_meanrev: false
+      use_cycle: false
+      cooldown: 2
+      score_threshold: 0.65
