@@ -100,6 +100,22 @@ function downsample(times: number[], values: (number | null)[], max = 400) {
   return out;
 }
 
+/** Domaine Y explicite à partir des données réellement affichées (ignore les
+ * null) — un ['auto','auto'] recharts partagerait la même échelle visuelle
+ * pour les 4 métriques dès qu'elles cohabitent dans le même arbre de rendu. */
+function computeYDomain(values: Array<number | null | undefined>): [number, number] | ['auto', 'auto'] {
+  const finite = values.filter((v): v is number => v != null && Number.isFinite(v));
+  if (finite.length === 0) return ['auto', 'auto'];
+  const mn = Math.min(...finite);
+  const mx = Math.max(...finite);
+  if (mn === mx) {
+    const pad = Math.abs(mn) * 0.05 || 1;
+    return [mn - pad, mx + pad];
+  }
+  const pad = (mx - mn) * 0.08;
+  return [mn - pad, mx + pad];
+}
+
 /** Aligne le prix (close) sur les timestamps de la métrique pour dual-axis. */
 function mergePrice(
   metric: Array<{ time: string; value: number | null; t: number }>,
@@ -163,6 +179,7 @@ function MetricChart({
   }
   const data = showPrice ? mergePrice(base, priceSeries || null) : base;
   const count = data.length || series?.count || 0;
+  const yDomain = computeYDomain(data.map((d) => d.value));
   return (
     <Card>
       <CardHeader>
@@ -182,14 +199,27 @@ function MetricChart({
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={data}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
-                <XAxis dataKey="time" stroke="#6b7280" fontSize={9} minTickGap={40} />
-                {/* Métrique à gauche ; prix OHLCV à droite (quand superposé) */}
+                {/* Axe X numérique (timestamp) + domaine partagé explicite :
+                    les 4 graphiques utilisent exactement la même plage, donc
+                    un même instant tombe au même pixel sur les 4. */}
+                <XAxis
+                  dataKey="t"
+                  type="number"
+                  domain={[xTickMin ?? 'dataMin', xTickMax ?? 'dataMax']}
+                  allowDataOverflow
+                  stroke="#6b7280"
+                  fontSize={9}
+                  minTickGap={40}
+                  tickFormatter={(v) => timeToLabel(Number(v))}
+                />
+                {/* Métrique à gauche : domaine calculé sur les seules valeurs
+                    de CE graphique (indépendant des 3 autres). */}
                 <YAxis
                   yAxisId="metric"
                   orientation="left"
                   stroke="#6b7280"
                   fontSize={9}
-                  domain={['auto', 'auto']}
+                  domain={yDomain}
                   tickFormatter={(v) => (v == null ? '—' : `${Number(v).toFixed(3)}${unit}`)}
                 />
                 {showPrice && (
@@ -204,6 +234,7 @@ function MetricChart({
                 )}
                 <Tooltip
                   contentStyle={{ backgroundColor: '#141a23', border: '1px solid #1f2937', borderRadius: '8px' }}
+                  labelFormatter={(v: any) => timeToLabel(Number(v))}
                   formatter={(v: any, name: string) => {
                     if (v == null) return ['—', name];
                     if (name === 'price') return [`$${Number(v).toFixed(2)}`, 'Prix'];

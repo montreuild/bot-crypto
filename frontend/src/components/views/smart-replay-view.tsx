@@ -110,9 +110,9 @@ export function SmartReplayView() {
   const [speedIdx, setSpeedIdx] = useState<number>(1); // 2x default
   const [selectedPlan, setSelectedPlan] = useState<TradePlan | null>(null);
 
-  const { data, isLoading, isError, error } = useSMCReplay(symbol, timeframe, 800);
+  const { data, isLoading, isError, error } = useSMCReplay(symbol, timeframe, 1600);
   // Plans SMC (analytiques) — même source que Smart Graph
-  const { data: smcData } = useSMC(symbol, timeframe, 600);
+  const { data: smcData } = useSMC(symbol, timeframe, 1200);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -310,6 +310,50 @@ export function SmartReplayView() {
           title: `LP ${lp.kind}`,
         });
         priceLinesRef.current.push(pl);
+      }
+    }
+
+    // Trade actif (position ouverte à currentIndex) — Entry / SL / TP sur le chart
+    for (const t of (data.trades || [])) {
+      const entryBar = typeof t.entry_bar === 'number' ? t.entry_bar
+        : typeof t.entry_time === 'number' ? t.entry_time : null;
+      const exitBar = typeof t.exit_bar === 'number' ? t.exit_bar
+        : typeof t.exit_time === 'number' ? t.exit_time : null;
+      const isOpen = entryBar != null && currentIndex >= entryBar
+        && (exitBar == null || currentIndex < exitBar);
+      if (!isOpen) continue;
+      const entry = Number(t.entry ?? t.entry_price);
+      const stop = Number(t.stop);
+      const tp = Number(t.tp ?? t.take_profit);
+      if (Number.isFinite(entry) && entry > 0) {
+        priceLinesRef.current.push(candleSeries.createPriceLine({
+          price: entry,
+          color: '#0ea5e9',
+          lineStyle: LineStyle.Solid,
+          lineWidth: 3,
+          axisLabelVisible: true,
+          title: `Entry ${t.side === 'long' ? 'LONG' : 'SHORT'}`,
+        }));
+      }
+      if (Number.isFinite(stop) && stop > 0) {
+        priceLinesRef.current.push(candleSeries.createPriceLine({
+          price: stop,
+          color: '#f87171',
+          lineStyle: LineStyle.Solid,
+          lineWidth: 2,
+          axisLabelVisible: true,
+          title: 'SL',
+        }));
+      }
+      if (Number.isFinite(tp) && tp > 0) {
+        priceLinesRef.current.push(candleSeries.createPriceLine({
+          price: tp,
+          color: '#34d399',
+          lineStyle: LineStyle.Solid,
+          lineWidth: 2,
+          axisLabelVisible: true,
+          title: 'TP',
+        }));
       }
     }
 
@@ -571,8 +615,43 @@ export function SmartReplayView() {
         </CardContent>
       </Card>
 
-      {/* Meta bandeau (ex-colonne latérale) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+      {/* Aligné Smart Graph : recommandés (SMC) + réalisés (backtest replay) */}
+      <TradePlansTable
+        plans={smcData?.trade_plans || []}
+        selectedPlan={selectedPlan}
+        onSelectPlan={(p) => setSelectedPlan((prev) =>
+          prev && prev.entry === p.entry && prev.setup === p.setup ? null : p)}
+        title="Trades recommandés"
+      />
+      <RealizedTradesTable
+        trades={(data?.trades || closedTrades) as any}
+        strategy="smart_money"
+        onSelectTrade={(t: RealizedTrade) => {
+          const plan: TradePlan = {
+            side: t.side,
+            setup: t.setup || 'realized',
+            entry: Number(t.entry ?? t.entry_price),
+            stop: Number(t.stop),
+            tp: Number(t.tp ?? t.take_profit),
+            signal_time: t.signal_time ?? null,
+            status: 'immediate',
+          };
+          setSelectedPlan((prev) =>
+            prev && prev.entry === plan.entry && prev.setup === plan.setup ? null : plan,
+          );
+        }}
+        footnote={
+          <>
+            <strong className="text-muted">Pourquoi X Recommandés vs Y Réalisés ?</strong>{' '}
+            Les <em>recommandés</em> sont des setups SMC détectés (zones + score) —
+            pas des ordres exécutés. Les <em>réalisés</em> viennent du backtester
+            smart_money (filtres score/RR/HTF) : souvent beaucoup moins nombreux.
+          </>
+        }
+      />
+
+      {/* Meta bandeau (ex-colonne latérale) — sous les tables de trades */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm">
@@ -595,32 +674,6 @@ export function SmartReplayView() {
               </div>
             ) : (
               <div className="text-xs text-muted">Aucune structure</div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Trades ouverts</CardTitle>
-            <Badge variant={openTrades.length > 0 ? 'success' : 'default'}>{openTrades.length}</Badge>
-          </CardHeader>
-          <CardContent className="space-y-2 max-h-40 overflow-y-auto">
-            {openTrades.length === 0 ? (
-              <div className="text-xs text-muted">Aucun</div>
-            ) : (
-              openTrades.map((t: any, i: number) => (
-                <div key={i} className="text-xs space-y-0.5 border border-border rounded p-2 bg-card-hover">
-                  <div className="flex items-center gap-2">
-                    <Badge variant={t.side === 'long' ? 'success' : 'danger'}>
-                      {t.side?.toUpperCase()}
-                    </Badge>
-                    <span className="font-mono text-muted">
-                      {formatUSD(Number(t.entry ?? t.entry_price ?? 0))}
-                    </span>
-                  </div>
-                  {t.setup && <div className="text-cyan-400 font-mono">{t.setup}</div>}
-                </div>
-              ))
             )}
           </CardContent>
         </Card>
@@ -701,41 +754,6 @@ export function SmartReplayView() {
           </CardContent>
         </Card>
       </div>
-
-      {/* Aligné Smart Graph : recommandés (SMC) + réalisés (backtest replay) */}
-      <TradePlansTable
-        plans={smcData?.trade_plans || []}
-        selectedPlan={selectedPlan}
-        onSelectPlan={(p) => setSelectedPlan((prev) =>
-          prev && prev.entry === p.entry && prev.setup === p.setup ? null : p)}
-        title="Trades recommandés"
-      />
-      <RealizedTradesTable
-        trades={(data?.trades || closedTrades) as any}
-        strategy="smart_money"
-        onSelectTrade={(t: RealizedTrade) => {
-          const plan: TradePlan = {
-            side: t.side,
-            setup: t.setup || 'realized',
-            entry: Number(t.entry ?? t.entry_price),
-            stop: Number(t.stop),
-            tp: Number(t.tp ?? t.take_profit),
-            signal_time: t.signal_time ?? null,
-            status: 'immediate',
-          };
-          setSelectedPlan((prev) =>
-            prev && prev.entry === plan.entry && prev.setup === plan.setup ? null : plan,
-          );
-        }}
-      />
-      <p className="text-[11px] text-dim">
-        <strong className="text-muted">Pourquoi N plans vs 1 trade ?</strong>{' '}
-        Les <em>recommandés</em> sont des setups SMC détectés (zones + score) —
-        pas des ordres exécutés. Les <em>réalisés</em> viennent du backtester
-        smart_money (filtres score/RR/HTF) : souvent beaucoup moins nombreux.
-        Sur 15m–1h et actions, l&apos;historique Yahoo est court (~88 bougies) :
-        le replay produit peu de trades.
-      </p>
     </div>
   );
 }

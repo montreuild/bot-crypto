@@ -96,7 +96,11 @@ export function useRunForwardTest() {
   return useMutation({
     mutationFn: (slotKey: string) => api.runBotForwardTest(slotKey),
     onSuccess: () => {
+      // Le board ET les cartes lisent `useBots()` (édge/état) — un seul
+      // invalidate suffit pour les deux. `oosTracker` alimente en plus le
+      // cône Monte-Carlo du drawer, resté stale sans cette 2e invalidation.
       qc.invalidateQueries({ queryKey: ['bots'] });
+      qc.invalidateQueries({ queryKey: ['oos-tracker'] });
     },
   });
 }
