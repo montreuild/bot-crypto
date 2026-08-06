@@ -5,9 +5,10 @@
  * Partagé Scanner + Smart Graph.
  */
 
+import { useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Search } from 'lucide-react';
+import { Search, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function FastAnalysisPanel({
@@ -19,11 +20,15 @@ export function FastAnalysisPanel({
   symbol: string;
   timeframe: string;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
   if (!result) return null;
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader
+        className="cursor-pointer"
+        onClick={() => setCollapsed((c) => !c)}
+      >
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
           <Search className="w-4 h-4 text-primary-400" />
           Fast Analyse · {symbol} · {timeframe}
@@ -37,12 +42,22 @@ export function FastAnalysisPanel({
               {result.bars} barres · OOS {result.oos_bars ?? '—'}
             </span>
           )}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setCollapsed((c) => !c); }}
+            aria-label={collapsed ? 'Déplier Fast Analyse' : 'Replier Fast Analyse'}
+            aria-expanded={!collapsed}
+            className="p-0.5 rounded hover:bg-card-hover text-muted"
+          >
+            {collapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+          </button>
         </CardTitle>
         <p className="text-[11px] text-muted font-normal">
           Chaque ligne = signal d&apos;indicateur testé en backtest simple (maker/taker, full vs OOS).
           WR déjà en % (0–100).
         </p>
       </CardHeader>
+      {collapsed ? null : (
       <CardContent className="p-0">
         {result.error ? (
           <p className="text-xs text-red-400 p-4">{result.error}</p>
@@ -110,6 +125,7 @@ export function FastAnalysisPanel({
           </div>
         )}
       </CardContent>
+      )}
     </Card>
   );
 }

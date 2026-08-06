@@ -99,9 +99,6 @@ function MarketContent() {
           <ScannerView
             initialSymbol={symbolParam}
             initialTf={tfParam}
-            onAnalyze={(symbol, tf) =>
-              router.push(`/lab?tab=backtest&symbol=${encodeURIComponent(symbol)}&tf=${tf}`)
-            }
           />
         </TabsContent>
         <TabsContent value="smartgraph">

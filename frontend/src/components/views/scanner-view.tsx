@@ -1,20 +1,20 @@
 'use client';
 
 /**
- * Onglet Scanner de `/market` — parité Jinja2 scanner.html :
+ * Onglet Scanner de `/market` :
  *  - table multi-symboles triable + filtres (régime, ADX, ATR, RSI)
- *  - chart multi-panneaux (prix + EMA/BB, volume, RSI, MACD)
  *  - Fast Analyse + prédictions par stratégie
+ *  - Signaux SMC + Top opportunités (2 colonnes) et Marché en dessous
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import {
-  Search, Loader2, ArrowRight, RefreshCw, ArrowUpDown,
+  Search, Loader2, RefreshCw, ArrowUpDown,
 } from 'lucide-react';
 import { PredictionsPanel } from '@/components/cards/predictions-panel';
 import { OpportunitiesWidget } from '@/components/cards/opportunities-widget';
@@ -22,16 +22,11 @@ import { FastAnalysisPanel } from '@/components/cards/fast-analysis-panel';
 import { useSignals } from '@/hooks/use-api';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
-import { cn, formatUSD } from '@/lib/utils';
-import {
-  createChart, ColorType, LineStyle, CrosshairMode,
-  type IChartApi, type ISeriesApi, type UTCTimestamp,
-} from 'lightweight-charts';
+import { cn } from '@/lib/utils';
 
 interface ScannerViewProps {
   initialSymbol?: string;
   initialTf?: string;
-  onAnalyze?: (symbol: string, tf: string) => void;
 }
 
 type SortKey = 'symbol' | 'adx' | 'atr_pct' | 'rsi' | 'volume_24h' | 'regime';
@@ -56,7 +51,7 @@ function loadFilters() {
   return null;
 }
 
-export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerViewProps) {
+export function ScannerView({ initialSymbol, initialTf }: ScannerViewProps) {
   const saved = typeof window !== 'undefined' ? loadFilters() : null;
   const { defaultTf } = useTradingTimeframes(initialTf || saved?.tf || '1h');
   const [tf, setTf] = useState(initialTf || saved?.tf || '1h');
@@ -80,21 +75,7 @@ export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerView
   const [faLoading, setFaLoading] = useState(false);
   const [scanned, setScanned] = useState<{ symbol: string; tf: string } | null>(null);
 
-  // Chart toggles
-  const [showEma, setShowEma] = useState(true);
-  const [showBb, setShowBb] = useState(true);
-
   const signalsQuery = useSignals(scanned?.symbol ?? '', scanned?.tf ?? '', 300, !!scanned);
-
-  // Chart refs (tous les hooks avant les effects)
-  const priceRef = useRef<HTMLDivElement>(null);
-  const volRef = useRef<HTMLDivElement>(null);
-  const rsiRef = useRef<HTMLDivElement>(null);
-  const macdRef = useRef<HTMLDivElement>(null);
-  const chartsRef = useRef<{
-    price?: IChartApi; vol?: IChartApi; rsi?: IChartApi; macd?: IChartApi;
-    candle?: ISeriesApi<'Candlestick'>;
-  }>({});
 
   useEffect(() => {
     if (!initialTf && defaultTf) {
@@ -176,175 +157,29 @@ export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerView
     else { setSortKey(k); setSortAsc(k === 'symbol' || k === 'regime'); }
   };
 
-  // ── Multi-panel chart ──────────────────────────────────────────────────
-  useEffect(() => {
-    if (!priceRef.current || !volRef.current || !rsiRef.current || !macdRef.current) return;
-    const common = {
-      layout: {
-        background: { type: ColorType.Solid, color: '#0f1419' },
-        textColor: '#9ca3af',
-        fontFamily: 'var(--font-jetbrains), monospace',
-      },
-      grid: { vertLines: { color: '#1f2937' }, horzLines: { color: '#1f2937' } },
-      crosshair: { mode: CrosshairMode.Normal },
-      rightPriceScale: { borderColor: '#1f2937' },
-      timeScale: { borderColor: '#1f2937', timeVisible: true, secondsVisible: false },
-      autoSize: true,
-    };
-    const price = createChart(priceRef.current, { ...common });
-    const candle = price.addCandlestickSeries({
-      upColor: '#10b981', downColor: '#ef4444',
-      borderUpColor: '#10b981', borderDownColor: '#ef4444',
-      wickUpColor: '#10b981', wickDownColor: '#ef4444',
-    });
-    // timeScale visible=false mais plage TEMPORELLE partagée (pas logical :
-    // le RSI a moins de points → désync si on utilise logical range).
-    const subTs = { visible: false, borderColor: '#1f2937', timeVisible: true, secondsVisible: false };
-    const vol = createChart(volRef.current, { ...common, timeScale: subTs });
-    const rsi = createChart(rsiRef.current, { ...common, timeScale: subTs });
-    const macd = createChart(macdRef.current, { ...common, timeScale: subTs });
-
-    // Sync par plage de temps (évite RSI tronqué vs prix)
-    let syncing = false;
-    const syncFrom = (source: IChartApi) => {
-      if (syncing) return;
-      const range = source.timeScale().getVisibleRange();
-      if (!range) return;
-      syncing = true;
-      try {
-        for (const ch of [price, vol, rsi, macd]) {
-          if (ch !== source) {
-            try { ch.timeScale().setVisibleRange(range); } catch { /* hors domaine */ }
-          }
-        }
-      } finally {
-        syncing = false;
-      }
-    };
-    price.timeScale().subscribeVisibleTimeRangeChange(() => syncFrom(price));
-    vol.timeScale().subscribeVisibleTimeRangeChange(() => syncFrom(vol));
-    rsi.timeScale().subscribeVisibleTimeRangeChange(() => syncFrom(rsi));
-    macd.timeScale().subscribeVisibleTimeRangeChange(() => syncFrom(macd));
-
-    chartsRef.current = { price, vol, rsi, macd, candle };
-    return () => {
-      price.remove(); vol.remove(); rsi.remove(); macd.remove();
-      chartsRef.current = {};
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      const c = chartsRef.current;
-      if (!c.price || !c.candle || !c.vol || !c.rsi || !c.macd) return;
-      try {
-        const payload = await api.getScannerChart(selected, tf, 300);
-        if (cancelled) return;
-        const candles = (payload.candles || []).map((x: any) => ({
-          time: x.time as UTCTimestamp,
-          open: x.open, high: x.high, low: x.low, close: x.close,
-        }));
-        c.candle!.setData(candles);
-
-        // Clear old line series by recreating charts is heavy — remove via store of series refs
-        // Instead: remove all line series if we tracked them. Simpler: re-set data only on candle,
-        // and re-add indicators by disposing chart lines through a tag.
-        // Track indicator series on chartsRef as array
-        const prev = (chartsRef.current as any)._ind as ISeriesApi<any>[] | undefined;
-        if (prev) {
-          for (const s of prev) {
-            try { c.price?.removeSeries(s); } catch { /* */ }
-            try { c.vol?.removeSeries(s); } catch { /* */ }
-            try { c.rsi?.removeSeries(s); } catch { /* */ }
-            try { c.macd?.removeSeries(s); } catch { /* */ }
-          }
-        }
-        const indSeries: ISeriesApi<any>[] = [];
-        const ind = payload.indicators || {};
-
-        const addLine = (chart: IChartApi, data: any[], color: string, width: 1 | 2 = 1) => {
-          if (!data?.length) return;
-          const s = chart.addLineSeries({
-            color, lineWidth: width,
-            priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-          });
-          s.setData(data.map((p: any) => ({ time: p.time as UTCTimestamp, value: p.value })));
-          indSeries.push(s);
-        };
-
-        if (showEma) {
-          addLine(c.price!, ind.ema20 || [], '#22d3ee');
-          addLine(c.price!, ind.ema50 || [], '#a78bfa');
-          addLine(c.price!, ind.ema200 || [], '#f59e0b', 2);
-        }
-        if (showBb) {
-          addLine(c.price!, ind.bb_upper || [], 'rgba(148,163,184,.7)');
-          addLine(c.price!, ind.bb_mid || [], 'rgba(148,163,184,.4)');
-          addLine(c.price!, ind.bb_lower || [], 'rgba(148,163,184,.7)');
-        }
-
-        // Volume histogram
-        const volS = c.vol!.addHistogramSeries({ priceFormat: { type: 'volume' }, priceLineVisible: false });
-        volS.setData((ind.volume || []).map((p: any) => ({
-          time: p.time as UTCTimestamp,
-          value: p.value,
-          color: p.color || 'rgba(52,211,153,.4)',
-        })));
-        indSeries.push(volS);
-
-        // RSI
-        addLine(c.rsi!, ind.rsi || [], '#e879f9', 2);
-        // levels 30/70 as price lines on a dummy series
-        const rsiLine = c.rsi!.addLineSeries({ color: 'transparent', lastValueVisible: false, priceLineVisible: false });
-        if ((ind.rsi || []).length) {
-          rsiLine.setData((ind.rsi || []).map((p: any) => ({ time: p.time as UTCTimestamp, value: p.value })));
-          rsiLine.createPriceLine({ price: 70, color: 'rgba(239,68,68,.5)', lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '70' });
-          rsiLine.createPriceLine({ price: 30, color: 'rgba(16,185,129,.5)', lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '30' });
-        }
-        indSeries.push(rsiLine);
-
-        // MACD
-        addLine(c.macd!, ind.macd || [], '#22d3ee', 2);
-        addLine(c.macd!, ind.macd_signal || [], '#f59e0b');
-        const hist = c.macd!.addHistogramSeries({ priceLineVisible: false });
-        hist.setData((ind.macd_hist || []).map((p: any) => ({
-          time: p.time as UTCTimestamp,
-          value: p.value,
-          color: p.value >= 0 ? 'rgba(16,185,129,.5)' : 'rgba(239,68,68,.5)',
-        })));
-        indSeries.push(hist);
-
-        (chartsRef.current as any)._ind = indSeries;
-        c.price!.timeScale().fitContent();
-      } catch (e: any) {
-        if (!cancelled) toast.error(`Chart: ${e.message}`);
-      }
-    };
-    load();
-    return () => { cancelled = true; };
-  }, [selected, tf, showEma, showBb]);
-
   return (
     <div className="space-y-4">
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <h2 className="text-lg font-semibold tracking-tight">Scanner</h2>
           <p className="text-sm text-muted mt-1">
-            Multi-symboles · chart 4 panneaux · Fast Analyse
+            Multi-symboles · Fast Analyse
           </p>
         </div>
-        {onAnalyze && (
-          <Button variant="ghost" size="sm" onClick={() => onAnalyze(selected, tf)}>
-            Labo {selected}
-            <ArrowRight className="w-3.5 h-3.5 ml-1" />
-          </Button>
-        )}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
-        {/* Volet Marché : filtres + scan + tableau */}
-        <Card className="xl:col-span-2">
+      {/* Signaux SMC + Top opportunités — 2 colonnes */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <OpportunitiesWidget timeframe={tf} limit={12} />
+      </div>
+
+      {faResult && (
+        <FastAnalysisPanel result={faResult} symbol={selected} timeframe={tf} />
+      )}
+
+      {/* Marché : filtres + scan + tableau, pleine largeur */}
+      <div className="grid grid-cols-1 gap-4">
+        <Card>
           <CardHeader>
             <CardTitle className="text-sm">
               Marché
@@ -355,7 +190,13 @@ export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerView
                 </span>
               )}
             </CardTitle>
-            {loading && <Loader2 className="w-4 h-4 animate-spin text-primary-400" />}
+            <div className="flex items-center gap-2">
+              {loading && <Loader2 className="w-4 h-4 animate-spin text-primary-400" />}
+              <Button size="sm" variant="ghost" onClick={() => runFast(selected)} disabled={faLoading}>
+                {faLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+                Fast Analyse ({selected})
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="space-y-3 p-3 pt-0">
             {/* Formulaire TF + filtres + scan — dans le volet Marché */}
@@ -471,43 +312,7 @@ export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerView
             </div>
           </CardContent>
         </Card>
-
-        {/* Chart 4 panneaux */}
-        <Card className="xl:col-span-3 p-0 overflow-hidden">
-          <CardHeader className="px-3 py-2 border-b border-border">
-            <CardTitle className="text-sm font-mono">{selected} · {tf}</CardTitle>
-            <div className="flex items-center gap-3 text-[10px]">
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input type="checkbox" checked={showEma} onChange={(e) => setShowEma(e.target.checked)} /> EMA
-              </label>
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input type="checkbox" checked={showBb} onChange={(e) => setShowBb(e.target.checked)} /> BB
-              </label>
-              <Button size="sm" variant="ghost" onClick={() => runFast(selected)} disabled={faLoading}>
-                {faLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
-                Fast Analyse
-              </Button>
-            </div>
-          </CardHeader>
-          <div className="flex flex-col">
-            <div className="text-[9px] text-dim px-2 pt-1">Prix</div>
-            <div ref={priceRef} className="w-full h-[260px]" />
-            <div className="text-[9px] text-dim px-2">Volume</div>
-            <div ref={volRef} className="w-full h-[80px]" />
-            <div className="text-[9px] text-dim px-2">RSI</div>
-            <div ref={rsiRef} className="w-full h-[90px]" />
-            <div className="text-[9px] text-dim px-2">MACD</div>
-            <div ref={macdRef} className="w-full h-[100px]" />
-          </div>
-        </Card>
       </div>
-
-      {faResult && (
-        <FastAnalysisPanel result={faResult} symbol={selected} timeframe={tf} />
-      )}
-
-      {/* Top opportunités + signaux SMC */}
-      <OpportunitiesWidget timeframe={tf} limit={12} />
 
       {scanned && (signalsQuery.data?.signals?.length > 0 || signalsQuery.isLoading) && (
         <PredictionsPanel

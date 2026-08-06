@@ -44,6 +44,23 @@ function botTimeframe(bot: Bot): string {
   return String((bot as any).timeframe || (bot as any).tf || '');
 }
 
+/** Extrait le symbole d'un slot_key (ex. smart_money::4h::BTC/USDC → BTC/USDC). */
+function botSymbol(bot: Bot): string {
+  const fromSlot = parseSlotKey(String(bot.slot_key || ''));
+  if (fromSlot?.symbol) return String(fromSlot.symbol);
+  return String(bot.symbol || '');
+}
+
+/** Edge CI low (ou moyenne si pas de CI) — clé de tri « trier par edge ». */
+function edgeSortValue(bot: Bot): number {
+  const e = bot.edge;
+  if (!e || !e.available) return -Infinity;
+  const lo = e.ci_low_pct;
+  if (lo != null && Number.isFinite(Number(lo))) return Number(lo);
+  const mean = (e as any).mean_pct ?? (e as any).avg_return_pct;
+  return mean != null && Number.isFinite(Number(mean)) ? Number(mean) : -Infinity;
+}
+
 const COLUMN_STATES = ['candidat', 'essai', 'actif', 'retire'] as const;
 
 // Indicateur de confiance basé sur edge + forward-test + realization live
@@ -90,6 +107,7 @@ function BotsV2Content() {
   const [onlyForced, setOnlyForced] = useState(false);
   const [edgePositiveOnly, setEdgePositiveOnly] = useState(false);
   const [tfFilter, setTfFilter] = useState<string>('all');
+  const [symbolFilter, setSymbolFilter] = useState<string>('all');
   /** Slot en cours de recalcul edge (spinner par carte). */
   const [forwardingSlot, setForwardingSlot] = useState<string | null>(null);
 
@@ -126,6 +144,9 @@ function BotsV2Content() {
     if (tfFilter !== 'all') {
       result = result.filter((b) => botTimeframe(b) === tfFilter);
     }
+    if (symbolFilter !== 'all') {
+      result = result.filter((b) => botSymbol(b) === symbolFilter);
+    }
     if (edgePositiveOnly) {
       result = result.filter((b) => {
         const e = b.edge;
@@ -141,14 +162,28 @@ function BotsV2Content() {
       result = result.filter((b) => isForcedActive(b));
     }
     return result;
-  }, [bots, filter, tfFilter, edgePositiveOnly, onlyForced]);
+  }, [bots, filter, tfFilter, symbolFilter, edgePositiveOnly, onlyForced]);
 
-  // Grouper par colonne (kanban)
+  // Symboles disponibles pour le filtre (dérivés des bots chargés)
+  const availableSymbols = useMemo(() => {
+    const set = new Set<string>();
+    bots.forEach((b) => {
+      const s = botSymbol(b);
+      if (s) set.add(s);
+    });
+    return Array.from(set).sort();
+  }, [bots]);
+
+  // Grouper par colonne (kanban), triés par edge décroissant (CI low, ou
+  // moyenne si pas de CI) — les bots sans edge disponible en fin de colonne.
   const botsByColumn = useMemo(() => {
     const map: Record<string, Bot[]> = { candidat: [], essai: [], actif: [], retire: [] };
     filtered.forEach((b) => {
       if (map[b.state]) map[b.state].push(b);
     });
+    for (const state of Object.keys(map)) {
+      map[state].sort((a, b) => edgeSortValue(b) - edgeSortValue(a));
+    }
     return map;
   }, [filtered]);
 
@@ -224,7 +259,7 @@ function BotsV2Content() {
       if (sim) {
         if (sim.total_trades != null) parts.push(`${sim.total_trades} trades`);
         if (sim.return_pct != null) parts.push(`ret ${Number(sim.return_pct).toFixed(2)}%`);
-        if (sim.win_rate != null) parts.push(`WR ${(Number(sim.win_rate) * 100).toFixed(0)}%`);
+        if (sim.win_rate != null) parts.push(`WR ${Number(sim.win_rate).toFixed(0)}%`);
       }
       if (res?.contract?.verdict) parts.push(String(res.contract.verdict));
       toast.success(
@@ -304,6 +339,18 @@ function BotsV2Content() {
             onChange={(tf) => setTfFilter(tf)}
             size="sm"
           />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-dim">Symbole</span>
+          <select
+            aria-label="Filtre par symbole"
+            value={symbolFilter}
+            onChange={(e) => setSymbolFilter(e.target.value)}
+            className="px-2 py-1 bg-card-hover border border-border rounded-md text-[11px] font-mono"
+          >
+            <option value="all">Tous</option>
+            {availableSymbols.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
         </div>
         <label className="flex items-center gap-2 cursor-pointer">
           <input
@@ -514,8 +561,10 @@ function BotCardV2({ bot, onClick, onForce, onForward, forceLoading, forwardLoad
   const { strategy, tf, symbol } = parseSlotKey(bot.slot_key);
   const style = lifecycleStyle(bot.state);
   const confidence = getConfidence(bot);
-  const budgetPct = bot.budget?.budget_pct || 0;
-  const usedPct = bot.budget?.used_pct || 0;
+  // `budget_pct` (poids d'enveloppe) est une fraction 0–1 côté API — ×100
+  // pour l'affichage, comme dans le drawer (Stats edge / Budget alloué).
+  const budgetPct = (bot.budget?.budget_pct || 0) * 100;
+  const usedPct = (bot.budget?.used_pct || 0) * 100;
 
   return (
     /*

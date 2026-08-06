@@ -117,6 +117,13 @@ export function SmartGraphView({
   const [faResult, setFaResult] = useState<any>(null);
   const [faLoading, setFaLoading] = useState(false);
 
+  // EMA / BB / RSI / MACD — repris du chart Scanner (mêmes séries, même endpoint)
+  const [showEma, setShowEma] = useState(true);
+  const [showBb, setShowBb] = useState(true);
+  const [showRsi, setShowRsi] = useState(true);
+  const [showMacd, setShowMacd] = useState(true);
+  const [indicators, setIndicators] = useState<any>(null);
+
   // URL / props : bascule symbole + TF (clic Top opportunités)
   useEffect(() => {
     if (initialSymbol) setSymbol(initialSymbol);
@@ -142,9 +149,9 @@ export function SmartGraphView({
     cycle: false,
   });
 
-  const { data, isLoading, isError, isFetching, refetch, error } = useSMC(symbol, timeframe, 1000);
+  const { data, isLoading, isError, isFetching, refetch, error } = useSMC(symbol, timeframe, 2000);
   // Trades réalisés = backtest smart_money (même moteur que Smart Replay)
-  const { data: replayData } = useSMCReplay(symbol, timeframe, 400);
+  const { data: replayData, isLoading: replayLoading } = useSMCReplay(symbol, timeframe, 800);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -154,6 +161,12 @@ export function SmartGraphView({
   const planLinesRef = useRef<ReturnType<ISeriesApi<'Candlestick'>['createPriceLine']>[]>([]);
   const planSeriesRef = useRef<ISeriesApi<any>[]>([]);
   const zonesPrimRef = useRef<ZonesPrimitive | null>(null);
+  // EMA / BB (sur le chart principal) + RSI / MACD (panneaux dédiés)
+  const indSeriesRef = useRef<ISeriesApi<any>[]>([]);
+  const rsiContainerRef = useRef<HTMLDivElement>(null);
+  const macdContainerRef = useRef<HTMLDivElement>(null);
+  const rsiChartRef = useRef<IChartApi | null>(null);
+  const macdChartRef = useRef<IChartApi | null>(null);
 
   // Create chart once — autoSize pour un dimensionnement correct du conteneur.
   useEffect(() => {
@@ -194,6 +207,18 @@ export function SmartGraphView({
     });
     ro.observe(el);
 
+    // Synchronise la plage temporelle des panneaux RSI/MACD sur le chart
+    // principal (zoom/scroll) — panneaux créés/détruits dynamiquement
+    // (toggle), donc lus via ref à l'appel plutôt que capturés. Pas de
+    // désinscription explicite : `chart.remove()` en cleanup suffit (même
+    // pattern que le multi-panel de Scanner).
+    chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+      const range = chart.timeScale().getVisibleRange();
+      if (!range) return;
+      try { rsiChartRef.current?.timeScale().setVisibleRange(range); } catch { /* hors domaine */ }
+      try { macdChartRef.current?.timeScale().setVisibleRange(range); } catch { /* hors domaine */ }
+    });
+
     return () => {
       ro.disconnect();
       chart.remove();
@@ -203,6 +228,7 @@ export function SmartGraphView({
       overlaysRef.current = [];
       priceLinesRef.current = [];
       planLinesRef.current = [];
+      indSeriesRef.current = [];
     };
   }, []);
 
@@ -210,6 +236,146 @@ export function SmartGraphView({
   useEffect(() => {
     setSelectedPlan(null);
   }, [symbol, timeframe]);
+
+  // Indicateurs EMA/BB/RSI/MACD — même endpoint que le chart Scanner.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const payload = await api.getScannerChart(symbol, timeframe, 500);
+        if (!cancelled) setIndicators(payload?.indicators || null);
+      } catch {
+        if (!cancelled) setIndicators(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [symbol, timeframe]);
+
+  // EMA / BB — lignes superposées sur le chart principal (comme Scanner)
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    for (const s of indSeriesRef.current) {
+      try { chart.removeSeries(s); } catch { /* noop */ }
+    }
+    indSeriesRef.current = [];
+    if (!indicators) return;
+    const addLine = (arr: any[], color: string, width: 1 | 2 = 1) => {
+      if (!arr?.length) return;
+      const s = chart.addLineSeries({
+        color, lineWidth: width,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      });
+      s.setData(arr.map((p: any) => ({ time: p.time as UTCTimestamp, value: p.value })));
+      indSeriesRef.current.push(s);
+    };
+    if (showEma) {
+      addLine(indicators.ema20 || [], '#22d3ee');
+      addLine(indicators.ema50 || [], '#a78bfa');
+      addLine(indicators.ema200 || [], '#f59e0b', 2);
+    }
+    if (showBb) {
+      addLine(indicators.bb_upper || [], 'rgba(148,163,184,.7)');
+      addLine(indicators.bb_mid || [], 'rgba(148,163,184,.4)');
+      addLine(indicators.bb_lower || [], 'rgba(148,163,184,.7)');
+    }
+  }, [indicators, showEma, showBb]);
+
+  // RSI — panneau dédié, créé/détruit avec le toggle
+  useEffect(() => {
+    if (!showRsi || !rsiContainerRef.current) {
+      if (rsiChartRef.current) { rsiChartRef.current.remove(); rsiChartRef.current = null; }
+      return;
+    }
+    const chart = createChart(rsiContainerRef.current, {
+      autoSize: true,
+      layout: {
+        background: { type: ColorType.Solid, color: '#0f1419' },
+        textColor: '#9ca3af',
+        fontFamily: 'var(--font-jetbrains), monospace',
+      },
+      grid: { vertLines: { color: '#1f2937' }, horzLines: { color: '#1f2937' } },
+      timeScale: { borderColor: '#1f2937', timeVisible: true, secondsVisible: false },
+      rightPriceScale: { borderColor: '#1f2937' },
+    });
+    rsiChartRef.current = chart;
+    return () => { chart.remove(); rsiChartRef.current = null; };
+  }, [showRsi]);
+
+  useEffect(() => {
+    const chart = rsiChartRef.current;
+    if (!chart || !indicators) return;
+    const rsiData = (indicators.rsi || []).map((p: any) => ({ time: p.time as UTCTimestamp, value: p.value }));
+    if (!rsiData.length) return;
+    const s = chart.addLineSeries({
+      color: '#e879f9', lineWidth: 2,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    });
+    s.setData(rsiData);
+    s.createPriceLine({ price: 70, color: 'rgba(239,68,68,.5)', lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '70' });
+    s.createPriceLine({ price: 30, color: 'rgba(16,185,129,.5)', lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '30' });
+    return () => { try { chart.removeSeries(s); } catch { /* noop */ } };
+  }, [indicators, showRsi]);
+
+  // MACD — panneau dédié, créé/détruit avec le toggle
+  useEffect(() => {
+    if (!showMacd || !macdContainerRef.current) {
+      if (macdChartRef.current) { macdChartRef.current.remove(); macdChartRef.current = null; }
+      return;
+    }
+    const chart = createChart(macdContainerRef.current, {
+      autoSize: true,
+      layout: {
+        background: { type: ColorType.Solid, color: '#0f1419' },
+        textColor: '#9ca3af',
+        fontFamily: 'var(--font-jetbrains), monospace',
+      },
+      grid: { vertLines: { color: '#1f2937' }, horzLines: { color: '#1f2937' } },
+      timeScale: { borderColor: '#1f2937', timeVisible: true, secondsVisible: false },
+      rightPriceScale: { borderColor: '#1f2937' },
+    });
+    macdChartRef.current = chart;
+    return () => { chart.remove(); macdChartRef.current = null; };
+  }, [showMacd]);
+
+  useEffect(() => {
+    const chart = macdChartRef.current;
+    if (!chart || !indicators) return;
+    const series: ISeriesApi<any>[] = [];
+    const macdData = (indicators.macd || []).map((p: any) => ({ time: p.time as UTCTimestamp, value: p.value }));
+    const signalData = (indicators.macd_signal || []).map((p: any) => ({ time: p.time as UTCTimestamp, value: p.value }));
+    const histData = (indicators.macd_hist || []).map((p: any) => ({
+      time: p.time as UTCTimestamp,
+      value: p.value,
+      color: p.value >= 0 ? 'rgba(16,185,129,.5)' : 'rgba(239,68,68,.5)',
+    }));
+    if (macdData.length) {
+      const s = chart.addLineSeries({
+        color: '#22d3ee', lineWidth: 2,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      });
+      s.setData(macdData);
+      series.push(s);
+    }
+    if (signalData.length) {
+      const s = chart.addLineSeries({
+        color: '#f59e0b', lineWidth: 1,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      });
+      s.setData(signalData);
+      series.push(s);
+    }
+    if (histData.length) {
+      const hist = chart.addHistogramSeries({ priceLineVisible: false });
+      hist.setData(histData);
+      series.push(hist);
+    }
+    return () => {
+      for (const s of series) {
+        try { chart.removeSeries(s); } catch { /* noop */ }
+      }
+    };
+  }, [indicators, showMacd]);
 
   // Candles
   useEffect(() => {
@@ -750,6 +916,10 @@ export function SmartGraphView({
         </div>
       </div>
 
+      {faResult && (
+        <FastAnalysisPanel result={faResult} symbol={symbol} timeframe={timeframe} />
+      )}
+
       <Card>
         <CardContent className="flex flex-wrap items-end gap-4">
           <div>
@@ -779,6 +949,25 @@ export function SmartGraphView({
                 {label}
               </label>
             ))}
+          </div>
+          <div className="w-full flex flex-wrap gap-3 pt-2 border-t border-border">
+            <span className="text-[10px] text-dim uppercase tracking-wider self-center">Indicateurs</span>
+            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+              <input type="checkbox" checked={showEma} onChange={(e) => setShowEma(e.target.checked)} className="rounded" />
+              EMA
+            </label>
+            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+              <input type="checkbox" checked={showBb} onChange={(e) => setShowBb(e.target.checked)} className="rounded" />
+              BB
+            </label>
+            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+              <input type="checkbox" checked={showRsi} onChange={(e) => setShowRsi(e.target.checked)} className="rounded" />
+              RSI
+            </label>
+            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+              <input type="checkbox" checked={showMacd} onChange={(e) => setShowMacd(e.target.checked)} className="rounded" />
+              MACD
+            </label>
           </div>
         </CardContent>
       </Card>
@@ -826,40 +1015,70 @@ export function SmartGraphView({
         )}
       </Card>
 
-      {!isLoading && !isError && data && (
-        <>
-          <TradePlansTable
-            plans={data.trade_plans || []}
-            onSelectPlan={handleSelectPlan}
-            selectedPlan={selectedPlan}
-            title="Trades recommandés"
-          />
-          <RealizedTradesTable
-            trades={replayData?.trades || []}
-            strategy="smart_money"
-            onSelectTrade={handleSelectRealized}
-            selectedTrade={
-              selectedPlan?.setup
-                ? (replayData?.trades || []).find((t: any) =>
-                  t.entry === selectedPlan.entry
-                  && t.stop === selectedPlan.stop
-                  && (t.setup || 'realized') === selectedPlan.setup
-                ) || null
-                : null
-            }
-          />
-          <p className="text-[11px] text-dim -mt-2">
-            Recommandés = plans SMC analytiques. Réalisés = backtest{' '}
-            <code className="font-mono">smart_money</code> (même moteur que Smart Replay).
-            La stratégie smart_money est calibrée sur TF élevés (4h/1d) : sur 15m–1h
-            et sur actions, peu ou pas de trades est normal (historique Yahoo ~88 bougies
-            en intraday EU).
-          </p>
-        </>
+      {/* Panneaux RSI / MACD — sélectionnables comme EMA/BB, mêmes données que Scanner */}
+      {showRsi && (
+        <Card className="p-0 overflow-hidden">
+          <div className="text-[9px] text-dim px-2 pt-1">RSI</div>
+          <div ref={rsiContainerRef} className="w-full h-[100px]" />
+        </Card>
+      )}
+      {showMacd && (
+        <Card className="p-0 overflow-hidden">
+          <div className="text-[9px] text-dim px-2 pt-1">MACD</div>
+          <div ref={macdContainerRef} className="w-full h-[110px]" />
+        </Card>
       )}
 
-      {faResult && (
-        <FastAnalysisPanel result={faResult} symbol={symbol} timeframe={timeframe} />
+      {!isError && (
+        <>
+          {isLoading ? (
+            <Card>
+              <CardContent className="flex items-center justify-center gap-2 py-8 text-sm text-muted">
+                <Loader2 className="w-5 h-5 animate-spin text-primary-400" />
+                Chargement des trades recommandés…
+              </CardContent>
+            </Card>
+          ) : (
+            <TradePlansTable
+              plans={data?.trade_plans || []}
+              onSelectPlan={handleSelectPlan}
+              selectedPlan={selectedPlan}
+              title="Trades recommandés"
+            />
+          )}
+          {replayLoading ? (
+            <Card>
+              <CardContent className="flex items-center justify-center gap-2 py-8 text-sm text-muted">
+                <Loader2 className="w-5 h-5 animate-spin text-primary-400" />
+                Chargement des trades réalisés…
+              </CardContent>
+            </Card>
+          ) : (
+            <RealizedTradesTable
+              trades={replayData?.trades || []}
+              strategy="smart_money"
+              onSelectTrade={handleSelectRealized}
+              selectedTrade={
+                selectedPlan?.setup
+                  ? (replayData?.trades || []).find((t: any) =>
+                    t.entry === selectedPlan.entry
+                    && t.stop === selectedPlan.stop
+                    && (t.setup || 'realized') === selectedPlan.setup
+                  ) || null
+                  : null
+              }
+              footnote={
+                <>
+                  Recommandés = plans SMC analytiques. Réalisés = backtest{' '}
+                  <code className="font-mono">smart_money</code> (même moteur que Smart Replay).
+                  La stratégie smart_money est calibrée sur TF élevés (4h/1d) : sur 15m–1h
+                  et sur actions, peu ou pas de trades est normal (historique Yahoo ~88 bougies
+                  en intraday EU).
+                </>
+              }
+            />
+          )}
+        </>
       )}
 
       {/* Meta panel — bandeau sous les plans (ex-colonne latérale) */}

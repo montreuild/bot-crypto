@@ -107,7 +107,7 @@ def derivatives_status(symbol: str = DEFAULT_CONFIG_SYMBOL):
             path = store._path(symbol, metric)
             df = store._load(path)
             metrics[label] = {
-                "points": len(df),
+                "count":  len(df),
                 "first":  str(df["time"][0]) if len(df) else None,
                 "last":   str(df["time"][-1]) if len(df) else None,
                 "file":   str(path),

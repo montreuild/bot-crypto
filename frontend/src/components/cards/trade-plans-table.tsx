@@ -294,6 +294,7 @@ export function RealizedTradesTable({
   strategy = 'smart_money',
   onSelectTrade,
   selectedTrade,
+  footnote,
 }: {
   trades?: RealizedTrade[] | null;
   /** Si omis : « Trades réalisés (N — Backtest {strategy}) ». */
@@ -303,6 +304,8 @@ export function RealizedTradesTable({
   /** Clic ligne → Entry / SL / TP sur le graphique (comme Trades recommandés). */
   onSelectTrade?: (trade: RealizedTrade) => void;
   selectedTrade?: RealizedTrade | null;
+  /** Note explicative rendue directement sous le tableau, dans le bloc. */
+  footnote?: React.ReactNode;
 }) {
   type RealizedSortKey = 'signal_time' | 'gain_pct' | 'pnl_pct' | 'rr' | 'score_min';
   const [sortKey, setSortKey] = useState<RealizedSortKey>('signal_time');
@@ -495,6 +498,11 @@ export function RealizedTradesTable({
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+        {footnote && (
+          <div className="text-[11px] text-dim p-3 pt-2 border-t border-border/50">
+            {footnote}
           </div>
         )}
       </CardContent>

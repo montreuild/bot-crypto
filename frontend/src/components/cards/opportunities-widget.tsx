@@ -72,7 +72,78 @@ export function OpportunitiesWidget({ timeframe: tfProp, limit = 12 }: Opportuni
   };
 
   return (
-    <div className="space-y-4">
+    <>
+      {/* Signaux SMC récents (< 5 jours) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
+            <Target className="w-4 h-4 text-cyan-400" />
+            Signaux SMC récents
+            <Badge variant="info" className="text-[10px] font-normal">&lt; 5 j · smart_money</Badge>
+            <div className="ml-auto">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => smcQ.refetch()}
+                disabled={smcQ.isFetching}
+                aria-label="Rafraîchir SMC"
+              >
+                <RefreshCw className={cn('w-3.5 h-3.5', smcQ.isFetching && 'animate-spin')} />
+              </Button>
+            </div>
+          </CardTitle>
+          <p className="text-[11px] text-muted font-normal">
+            Plans SMC (1h / 4h / 1d) détectés sur le cache — job background.
+            {smcQ.data?.updated_at && (
+              <span className="text-dim"> · Maj {formatSignalTime(
+                smcQ.data.updated_ts ?? Date.parse(smcQ.data.updated_at) / 1000,
+              )}</span>
+            )}
+          </p>
+        </CardHeader>
+        <CardContent>
+          {smcQ.isLoading ? (
+            <div className="flex items-center justify-center py-4 gap-2 text-xs text-muted">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Chargement signaux SMC…
+            </div>
+          ) : smcSignals.length === 0 ? (
+            <p className="text-xs text-muted">
+              Aucun signal SMC récent (scan en cours ou cache insuffisant &lt; 260 barres).
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+              {smcSignals.slice(0, 18).map((s: any, idx: number) => {
+                const isLong = s.side === 'long';
+                return (
+                  <button
+                    key={`${s.symbol}-${s.timeframe}-${s.setup}-${idx}`}
+                    type="button"
+                    onClick={() => goSmartGraph(s.symbol, s.timeframe || '1h')}
+                    className="w-full flex flex-col gap-1 p-2 rounded-md hover:bg-card-hover border border-border/50 transition-colors text-left group"
+                  >
+                    <div className="flex items-center gap-2 w-full">
+                      <span className="font-mono text-sm font-semibold truncate flex-1">{s.symbol}</span>
+                      <Badge variant="muted" className="text-[9px] font-mono">{s.timeframe}</Badge>
+                      <span className={cn('text-[10px] font-semibold', isLong ? 'text-emerald-400' : 'text-red-400')}>
+                        {String(s.side || '—').toUpperCase()}
+                      </span>
+                      <ArrowRight className="w-3 h-3 text-dim opacity-0 group-hover:opacity-100" />
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px] text-dim flex-wrap">
+                      <span className="text-cyan-400 font-mono">{s.setup || 'SMC'}</span>
+                      <span>{formatSignalTime(s.signal_time)}</span>
+                      {s.score_min != null && <span>sc {Number(s.score_min).toFixed(2)}</span>}
+                      {s.rr != null && <span>RR {Number(s.rr).toFixed(1)}</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
@@ -148,77 +219,6 @@ export function OpportunitiesWidget({ timeframe: tfProp, limit = 12 }: Opportuni
           )}
         </CardContent>
       </Card>
-
-      {/* Signaux SMC récents (< 5 jours) */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
-            <Target className="w-4 h-4 text-cyan-400" />
-            Signaux SMC récents
-            <Badge variant="info" className="text-[10px] font-normal">&lt; 5 j · smart_money</Badge>
-            <div className="ml-auto">
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => smcQ.refetch()}
-                disabled={smcQ.isFetching}
-                aria-label="Rafraîchir SMC"
-              >
-                <RefreshCw className={cn('w-3.5 h-3.5', smcQ.isFetching && 'animate-spin')} />
-              </Button>
-            </div>
-          </CardTitle>
-          <p className="text-[11px] text-muted font-normal">
-            Plans SMC (1h / 4h / 1d) détectés sur le cache — job background.
-            {smcQ.data?.updated_at && (
-              <span className="text-dim"> · Maj {formatSignalTime(
-                smcQ.data.updated_ts ?? Date.parse(smcQ.data.updated_at) / 1000,
-              )}</span>
-            )}
-          </p>
-        </CardHeader>
-        <CardContent>
-          {smcQ.isLoading ? (
-            <div className="flex items-center justify-center py-4 gap-2 text-xs text-muted">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Chargement signaux SMC…
-            </div>
-          ) : smcSignals.length === 0 ? (
-            <p className="text-xs text-muted">
-              Aucun signal SMC récent (scan en cours ou cache insuffisant &lt; 260 barres).
-            </p>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
-              {smcSignals.slice(0, 18).map((s: any, idx: number) => {
-                const isLong = s.side === 'long';
-                return (
-                  <button
-                    key={`${s.symbol}-${s.timeframe}-${s.setup}-${idx}`}
-                    type="button"
-                    onClick={() => goSmartGraph(s.symbol, s.timeframe || '1h')}
-                    className="w-full flex flex-col gap-1 p-2 rounded-md hover:bg-card-hover border border-border/50 transition-colors text-left group"
-                  >
-                    <div className="flex items-center gap-2 w-full">
-                      <span className="font-mono text-sm font-semibold truncate flex-1">{s.symbol}</span>
-                      <Badge variant="muted" className="text-[9px] font-mono">{s.timeframe}</Badge>
-                      <span className={cn('text-[10px] font-semibold', isLong ? 'text-emerald-400' : 'text-red-400')}>
-                        {String(s.side || '—').toUpperCase()}
-                      </span>
-                      <ArrowRight className="w-3 h-3 text-dim opacity-0 group-hover:opacity-100" />
-                    </div>
-                    <div className="flex items-center gap-2 text-[10px] text-dim flex-wrap">
-                      <span className="text-cyan-400 font-mono">{s.setup || 'SMC'}</span>
-                      <span>{formatSignalTime(s.signal_time)}</span>
-                      {s.score_min != null && <span>sc {Number(s.score_min).toFixed(2)}</span>}
-                      {s.rr != null && <span>RR {Number(s.rr).toFixed(1)}</span>}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+    </>
   );
 }
