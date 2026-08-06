@@ -45,17 +45,31 @@ import { BacktestEquityChart } from '@/components/charts/backtest-equity-chart';
 import { CostModelCard } from '@/components/cards/cost-model-card';
 import { useBacktestSettings, useRunBacktest, useCancelBacktest } from '@/hooks/use-api';
 import { useConfig, usePresets, useSetExpertMode } from '@/hooks/use-api';
+import { useBacktestStatus, useBacktestSession } from '@/hooks/use-backtest-session';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Play, Square, Loader2, FlaskConical, Sparkles, Brain, Repeat,
   GitCompare, AlertCircle, CheckCircle2, TrendingUp, Rocket, Archive,
-  Maximize2, FileDown, X,
+  Maximize2, FileDown, X, Zap,
 } from 'lucide-react';
 import { cn, formatUSD, formatPct } from '@/lib/utils';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { PriceSignalsChart } from '@/components/charts/price-signals-chart';
+import { TradesTable } from '@/components/tables/trades-table';
+import { DiagnosticsPanel } from '@/components/cards/diagnostics-panel';
+import { BacktestRunningBanner } from '@/components/cards/backtest-running-banner';
+import { BacktestProgress } from '@/components/cards/backtest-progress';
+import { StrategyComparisonTable } from '@/components/cards/strategy-comparison-table';
+import { TradesStatsPanel } from '@/components/cards/trades-stats-panel';
+import { MLBacktestPanel } from '@/components/cards/ml-backtest-panel';
+import { limitHint } from '@/lib/limit-hint';
+import { recommendedThreshold } from '@/lib/strat-thresholds';
+import {
+  normalizeDiagnostics, equityFinal, buyHold,
+} from '@/lib/backend-normalizers';
 
 /*
   Les 4 vues portées valent ~1 840 lignes et tirent recharts (Replay, Compare)
@@ -224,6 +238,15 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
 
   const { data: settings } = settingsQuery;
 
+  // BT-004 — sync serveur + persistance session du dernier backtest.
+  // Poll `/api/backtest/status` toutes les 5 s pour détecter un run déjà actif
+  // côté serveur (autre onglet, post-reload). Restore le dernier résultat
+  // depuis `sessionStorage` au mount (TTL 30 min) pour ne pas le perdre sur un
+  // reload accidentel pendant une analyse.
+  const backtestStatus = useBacktestStatus();
+  const session = useBacktestSession();
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+
   const [config, setConfig] = useState<BacktestConfig>({
     symbol: 'BTC/USDC',
     timeframe: '1h',
@@ -243,8 +266,41 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
     }
   }, [defaultTf, activeTfs]);
 
+  // BT-004 — restauration du dernier résultat depuis sessionStorage.
+  useEffect(() => {
+    if (!session.restored) return;
+    const s = session.restored;
+    // Ne restaurer que si le config et le résultat sont compatibles
+    // (mêmes stratégies + symbole + timeframe, pour ne pas afficher un
+    // résultat qui ne correspond pas à la config courante).
+    if (s.result && s.config) {
+      setResult(s.result);
+      setConfig((c) => ({
+        ...c,
+        symbol: s.config.symbol ?? c.symbol,
+        timeframe: s.config.timeframe ?? c.timeframe,
+        limit: s.config.limit ?? c.limit,
+        strategies: s.config.strategies ?? c.strategies,
+        walk_forward: s.config.walk_forward ?? c.walk_forward,
+        monte_carlo: s.config.monte_carlo ?? c.monte_carlo,
+        dual_pass: s.config.dual_pass ?? c.dual_pass,
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.restored]);
+
+  // BT-013 — validation du symbole : `BASE/QUOTE` ou token simple (ex. BTC).
+  // Pattern ensembliste : valide `BTC/USDC`, `ETH/USDT`, `SOL`, `BNB.USDT`.
+  const SYMBOL_RE = /^[A-Z0-9]+\/[A-Z0-9]+$|^[A-Z0-9.]+$/;
+  const symbolValid = SYMBOL_RE.test(config.symbol.trim());
+
   const handleRun = async () => {
+    if (!symbolValid) {
+      toast.error('Symbole invalide — format attendu : BTC/USDC ou BTC');
+      return;
+    }
     setResult(null);
+    setStartedAt(Date.now());
     try {
       const res = await runBacktest.mutateAsync({
         symbol: config.symbol,
@@ -256,15 +312,28 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
         strategies: config.strategies.length > 0 ? config.strategies.join(',') : undefined,
       });
       setResult(res);
+      // BT-004 — persister le résultat pour restauration post-reload.
+      session.save(res, {
+        symbol: config.symbol,
+        timeframe: config.timeframe,
+        limit: config.limit,
+        strategies: config.strategies,
+        walk_forward: config.walk_forward,
+        monte_carlo: config.monte_carlo,
+        dual_pass: config.dual_pass,
+      });
       toast.success('Backtest terminé');
     } catch (e: any) {
       toast.error(`Erreur : ${e.message}`);
+    } finally {
+      setStartedAt(null);
     }
   };
 
   const handleCancel = async () => {
     try {
       await cancelBacktest.mutateAsync();
+      setStartedAt(null);
       toast.info('Backtest annulé');
     } catch (e: any) {
       toast.error(`Erreur : ${e.message}`);
@@ -280,10 +349,33 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
     }));
   };
 
-  const availableStrategies = settings?.strategies || [];
+  // BT-014 — la liste déroulante montre TOUTES les stratégies disponibles
+  // (settings.all_strategies) ; le badge `● actif` marque celles activées en
+  // live (settings.strategies = config.strategies.enabled).
+  const allStrategies = settings?.all_strategies || settings?.strategies || [];
+  const enabledStrategies: string[] = settings?.strategies || [];
+  const availableStrategies = allStrategies;
+
+  // BT-012 — presets rapides de limite de bougies.
+  const LIMIT_PRESETS = [500, 2000, 5000, 8000];
+
+  // BT-005 — la progression simulée remplace le spinner muet. C'est la même
+  // information qu'avant (run en cours) avec en plus ETA + log horodaté.
+  const isLoading = runBacktest.isPending || !!startedAt;
+  const isRunning = isLoading || backtestStatus.running;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* BT-004 — banner si un backtest tourne déjà côté serveur (autre onglet). */}
+      {backtestStatus.running && backtestStatus.startedAt && (
+        <div className="lg:col-span-3">
+          <BacktestRunningBanner
+            startedAt={backtestStatus.startedAt}
+            onCancel={handleCancel}
+          />
+        </div>
+      )}
+
       {/* Config panel */}
       <Card className="lg:col-span-1">
         <CardHeader>
@@ -295,10 +387,19 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
             <Input
               id="bt-symbol"
               value={config.symbol}
-              onChange={(e) => setConfig({ ...config, symbol: e.target.value })}
+              onChange={(e) => setConfig({ ...config, symbol: e.target.value.toUpperCase() })}
               placeholder="BTC/USDC"
               className="font-mono"
+              pattern="^[A-Z0-9]+/[A-Z0-9]+$|^[A-Z0-9.]+$"
+              aria-invalid={!symbolValid}
+              aria-describedby="bt-symbol-help"
             />
+            {/* BT-013 — message d'erreur si le symbole ne match pas le pattern. */}
+            {!symbolValid && (
+              <p id="bt-symbol-help" className="text-[10px] text-rose-400 mt-1" role="alert">
+                Format invalide — attendu « BASE/QUOTE » (ex. BTC/USDC) ou token simple (ex. BTC).
+              </p>
+            )}
           </div>
 
           <div>
@@ -320,9 +421,35 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
               value={config.limit}
               onChange={(e) => setConfig({ ...config, limit: Number(e.target.value) })}
             />
-            <p className="text-[10px] text-dim mt-1">
-              ≈ {Math.round(config.limit * (config.timeframe === '1h' ? 1 : 1))}h de données
-            </p>
+            {/* BT-012 — preset rapides + hint conversion bougies → durée. */}
+            <div className="flex flex-wrap gap-1 mt-1">
+              {LIMIT_PRESETS.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setConfig({ ...config, limit: n })}
+                  className={cn(
+                    'px-2 py-0.5 rounded text-[10px] border transition-colors',
+                    config.limit === n
+                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                      : 'bg-surface border-border text-muted hover:text-foreground hover:border-border-hi',
+                  )}
+                >
+                  {n >= 1000 ? `${n / 1000}k` : n}
+                </button>
+              ))}
+            </div>
+            {(() => {
+              const h = limitHint(config.limit, config.timeframe);
+              const toneClass = h.tone === 'green'
+                ? 'text-emerald-400'
+                : h.tone === 'amber'
+                  ? 'text-amber-400'
+                  : 'text-rose-400';
+              return (
+                <p className={cn('text-[10px] mt-1', toneClass)}>{h.text}</p>
+              );
+            })()}
           </div>
 
           {/* Stratégies */}
@@ -332,16 +459,27 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
               {availableStrategies.length === 0 ? (
                 <p className="text-xs text-dim">Chargement…</p>
               ) : (
-                availableStrategies.map((s: string) => (
-                  <label key={s} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-card-hover rounded px-1 py-0.5">
-                    <input
-                      type="checkbox"
-                      checked={config.strategies.includes(s)}
-                      onChange={() => toggleStrategy(s)}
-                    />
-                    <span className="font-mono">{s}</span>
-                  </label>
-                ))
+                availableStrategies.map((s: string) => {
+                  const isEnabled = enabledStrategies.includes(s);
+                  return (
+                    <label
+                      key={s}
+                      className="flex items-center gap-2 text-xs cursor-pointer hover:bg-card-hover rounded px-1 py-0.5"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={config.strategies.includes(s)}
+                        onChange={() => toggleStrategy(s)}
+                      />
+                      <span className="font-mono">{s}</span>
+                      {isEnabled && (
+                        <Badge variant="success" className="text-[0.55rem] px-1 py-0 ml-auto">
+                          ● actif
+                        </Badge>
+                      )}
+                    </label>
+                  );
+                })
               )}
             </div>
           </div>
@@ -402,17 +540,17 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
           <div className="flex gap-2 pt-2">
             <Button
               onClick={handleRun}
-              disabled={runBacktest.isPending}
+              disabled={isLoading || !symbolValid || backtestStatus.running}
               className="flex-1"
             >
-              {runBacktest.isPending ? (
+              {isLoading ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <Play className="w-4 h-4" />
               )}
               Analyser
             </Button>
-            {runBacktest.isPending && (
+            {isLoading && (
               <Button variant="danger" onClick={handleCancel}>
                 <Square className="w-4 h-4" />
               </Button>
@@ -423,7 +561,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
 
       {/* Results panel */}
       <div className="lg:col-span-2 space-y-4">
-        {!result && !runBacktest.isPending && (
+        {!result && !isLoading && (
           <Card>
             <CardContent className="flex items-center justify-center min-h-[300px] text-muted text-sm">
               Configure et lance un backtest pour voir les résultats
@@ -431,16 +569,21 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
           </Card>
         )}
 
-        {runBacktest.isPending && (
-          <Card>
-            <CardContent className="flex items-center justify-center min-h-[300px]">
-              <Loader2 className="w-8 h-8 animate-spin text-primary-400" />
-              <span className="ml-3 text-sm text-muted">Backtest en cours…</span>
-            </CardContent>
-          </Card>
+        {/* BT-005 — carte de progression avec ETA + log horodaté, qui remplace
+            le spinner muet. Les étapes sont simulées côté client : le backend
+            ne stream pas la progression, mais le per-strategy runtime est
+            suffisamment long (>1s) pour que l'ETA soit utile. */}
+        {isLoading && (
+          <BacktestProgress
+            startedAt={startedAt ?? Date.now()}
+            strategies={config.strategies}
+            walkForward={config.walk_forward}
+            monteCarlo={config.monte_carlo}
+            onCancel={handleCancel}
+          />
         )}
 
-        {result && <BacktestResults result={result} />}
+        {result && <BacktestResults result={result} scoreThreshold={settings?.score_threshold} />}
       </div>
     </div>
   );
@@ -540,7 +683,7 @@ function Verdict({ result }: { result: any }) {
 
 // ── Backtest Results ─────────────────────────────────────────────────────
 
-function BacktestResults({ result }: { result: any }) {
+function BacktestResults({ result, scoreThreshold }: { result: any; scoreThreshold?: number | null }) {
   const r = Array.isArray(result) ? result[0] : result;
   const byStrategy = r?.by_strategy || {};
   const strategies = Object.entries(byStrategy);
@@ -549,6 +692,19 @@ function BacktestResults({ result }: { result: any }) {
   // S9-F4-US3/5 — Export du résultat de backtest. Les composants existaient
   // mais n'étaient montés nulle part.
   const csvRows = strategies.map(([name, stats]: [string, any]) => ({ strategy: name, ...stats }));
+
+  // BT-007 — tableau comparatif si plusieurs stratégies. On reconstruit un
+  // `BacktestResult[]` à partir de `by_strategy` (la réponse backend est
+  // plate : `by_strategy[name]` porte les KPIs mais pas `strategy`/`symbol`/
+  // `timeframe`, qu'on ajoute ici pour satisfaire le contrat du composant).
+  const comparisonStrategies = strategies.length > 1
+    ? strategies.map(([name, stats]: [string, any]) => ({
+        ...(stats ?? {}),
+        strategy: name,
+        symbol: r?.symbol,
+        timeframe: r?.timeframe,
+      }))
+    : [];
 
   const exportPdf = () => {
     // Impression / PDF navigateur (parité Jinja2 export PDF sans dépendance jspdf)
@@ -591,6 +747,46 @@ function BacktestResults({ result }: { result: any }) {
           comparables. Cf. app/core/execution.py::cost_model. */}
       <CostModelCard model={r?.cost_model} />
 
+      {/* BT-011 — avertissements globaux : seuil recommandé et taille
+          d'échantillon. Affichés au-dessus des KPIs pour être vus avant tout. */}
+      {strategies.length > 0 && (() => {
+        const warnings: Array<{ tone: 'amber' | 'red'; text: string }> = [];
+        for (const [name, stats] of strategies) {
+          const rec = recommendedThreshold(name);
+          const cfgThreshold = typeof scoreThreshold === 'number' ? scoreThreshold : r?.score_threshold;
+          if (rec != null && cfgThreshold != null && cfgThreshold < rec - 0.01) {
+            warnings.push({
+              tone: 'amber',
+              text: `⚠ ${name} : score_threshold actuel (${cfgThreshold.toFixed(2)}) est inférieur au seuil recommandé (${rec.toFixed(2)}). Risque de sur-trade.`,
+            });
+          }
+          const n = (stats as any)?.total_trades ?? 0;
+          if (n > 0 && n < 30) {
+            warnings.push({
+              tone: 'amber',
+              text: `⚠ ${name} : seulement ${n} trades — échantillon insuffisant (< 30) pour valider l'edge. Sharpe et win rate ne sont pas significatifs.`,
+            });
+          }
+        }
+        if (warnings.length === 0) return null;
+        return (
+          <div className="space-y-2">
+            {warnings.map((w, i) => (
+              <div
+                key={i}
+                className={
+                  w.tone === 'red'
+                    ? 'rounded-md border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-300'
+                    : 'rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300'
+                }
+              >
+                {w.text}
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
       <div className="flex items-center justify-end gap-2 flex-wrap">
         <CsvExportButton
           filename="backtest"
@@ -610,6 +806,12 @@ function BacktestResults({ result }: { result: any }) {
           PDF
         </Button>
       </div>
+
+      {/* BT-007 — tableau comparatif multi-stratégies (best value ✦).
+          Nécessite ≥ 2 stratégies ; sinon le composant renvoie null. */}
+      {comparisonStrategies.length >= 2 && (
+        <StrategyComparisonTable strategies={comparisonStrategies} />
+      )}
 
       {/* Fullscreen chart modal (complément ChartFullscreen déjà dans le composant) */}
       {fsStrategy && byStrategy[fsStrategy] && (
@@ -632,47 +834,113 @@ function BacktestResults({ result }: { result: any }) {
         </div>
       )}
 
-      {/* KPIs par stratégie */}
+      {/* BT-006 — KPIs par stratégie. 9 métriques au lieu de 5 : PnL Net (+%),
+          Win Rate (+n trades), Sharpe (⚠ si < 30 trades), Max DD, Expectancy,
+          Profit Factor, Equity Finale, Buy & Hold (+%), Alpha. */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {strategies.map(([name, stats]: [string, any]) => (
-          <Card key={name}>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <span className="font-mono text-sm font-semibold">{name}</span>
-                <Badge variant={stats.total_pnl >= 0 ? 'success' : 'danger'}>
-                  {stats.total_pnl >= 0 ? '+' : ''}{formatUSD(stats.total_pnl)}
-                </Badge>
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <div className="text-dim">Trades</div>
-                  <div className="font-mono font-semibold">{stats.total_trades}</div>
+        {strategies.map(([name, stats]: [string, any]) => {
+          const nTrades = stats?.total_trades ?? 0;
+          const smallSample = nTrades < 30;
+          const eqFinal = equityFinal({ ...(stats ?? {}), strategy: name });
+          const bh = buyHold({ ...(stats ?? {}), strategy: name });
+          const alpha = stats?.alpha;
+          const bhPct = bh.pct;
+          const pnlPct = stats?.total_pnl && stats?.initial_capital
+            ? (stats.total_pnl / stats.initial_capital) * 100
+            : null;
+          return (
+            <Card key={name}>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="font-mono text-sm font-semibold">{name}</span>
+                  <Badge variant={stats.total_pnl >= 0 ? 'success' : 'danger'}>
+                    {stats.total_pnl >= 0 ? '+' : ''}{formatUSD(stats.total_pnl)}
+                    {pnlPct != null && (
+                      <span className="ml-1 opacity-70">
+                        ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)
+                      </span>
+                    )}
+                  </Badge>
                 </div>
-                <div>
-                  <div className="text-dim">Win Rate</div>
-                  <div className={cn('font-mono font-semibold', stats.win_rate >= 50 ? 'text-emerald-400' : 'text-red-400')}>
-                    {stats.win_rate.toFixed(1)}%
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <div className="text-dim">Trades</div>
+                    <div className="font-mono font-semibold">
+                      {nTrades}
+                      {stats?.win_rate != null && (
+                        <span className="text-dim ml-1">({Math.round((stats.win_rate / 100) * nTrades)}w)</span>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-dim">Win Rate</div>
+                    <div className={cn('font-mono font-semibold', stats.win_rate >= 50 ? 'text-emerald-400' : 'text-red-400')}>
+                      {stats.win_rate?.toFixed(1) ?? '—'}%
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-dim">Sharpe{smallSample ? ' ⚠' : ''}</div>
+                    <div
+                      className={cn(
+                        'font-mono font-semibold',
+                        smallSample ? 'text-amber-400' : '',
+                      )}
+                      title={smallSample ? '< 30 trades — Sharpe non significatif' : undefined}
+                    >
+                      {stats.sharpe?.toFixed(2) ?? '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-dim">Max DD</div>
+                    <div className="font-mono font-semibold text-red-400">
+                      {stats.max_drawdown?.toFixed(2) ?? '—'}%
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-dim">Expectancy</div>
+                    <div className={cn('font-mono font-semibold', (stats.expectancy ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                      {stats.expectancy != null
+                        ? `${stats.expectancy >= 0 ? '+' : ''}${formatUSD(stats.expectancy)}`
+                        : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-dim">PF</div>
+                    <div className="font-mono font-semibold">
+                      {stats.profit_factor === 999 ? '∞' : stats.profit_factor?.toFixed(2) ?? '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-dim">Equity Finale</div>
+                    <div className="font-mono font-semibold">
+                      {eqFinal != null ? formatUSD(eqFinal) : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-dim">Buy &amp; Hold</div>
+                    <div className={cn('font-mono font-semibold', (bh.pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                      {bh.pnl != null
+                        ? `${bh.pnl >= 0 ? '+' : ''}${formatUSD(bh.pnl)}`
+                        : '—'}
+                      {bhPct != null && (
+                        <span className="text-dim ml-1">
+                          ({bhPct >= 0 ? '+' : ''}{bhPct.toFixed(1)}%)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-dim">Alpha</div>
+                    <div className={cn('font-mono font-semibold', (alpha ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+                      {alpha != null ? `${alpha >= 0 ? '+' : ''}${alpha.toFixed(2)}%` : '—'}
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <div className="text-dim">Sharpe</div>
-                  <div className="font-mono font-semibold">{stats.sharpe?.toFixed(2) ?? '—'}</div>
-                </div>
-                <div>
-                  <div className="text-dim">Max DD</div>
-                  <div className="font-mono font-semibold text-red-400">{stats.max_drawdown?.toFixed(2) ?? '—'}%</div>
-                </div>
-                <div>
-                  <div className="text-dim">PF</div>
-                  <div className="font-mono font-semibold">
-                    {stats.profit_factor === 999 ? '∞' : stats.profit_factor?.toFixed(2) ?? '—'}
-                  </div>
-                </div>
-              </div>
 
-            </CardContent>
-          </Card>
-        ))}
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
       {/*
@@ -695,6 +963,10 @@ function BacktestResults({ result }: { result: any }) {
         const hasDetail = stats?.equity_curve?.length || stats?.walk_forward
           || stats?.monte_carlo || stats?.runs || trades.length > 0;
         if (!hasDetail) return null;
+        // BT-001 — `candles` vient de la racine (r.ohlcv), partagées par toutes
+        // les stratégies ; `trades` est filtré par stratégie via le loop.
+        const candles = r?.ohlcv;
+        const isMl = String(name).startsWith('ml_');
         return (
           <div key={`detail-${name}`} className="space-y-4">
             <div className="flex items-center justify-between pt-2">
@@ -704,6 +976,19 @@ function BacktestResults({ result }: { result: any }) {
                 Plein écran
               </Button>
             </div>
+
+            {/* BT-001 — chart prix + signaux (markers entrée/sortie + stops). */}
+            {process.env.NEXT_PUBLIC_LAB_PRICE_CHART !== 'false' && candles && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Prix &amp; signaux — {name}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <PriceSignalsChart candles={candles} trades={trades} />
+                </CardContent>
+              </Card>
+            )}
+
             <BacktestEquityChart
               strategy={name}
               equityCurve={stats.equity_curve}
@@ -715,6 +1000,36 @@ function BacktestResults({ result }: { result: any }) {
               <StudyVsLiveCard runs={stats.runs} envelope={stats.envelope} />
             )}
             {stats.walk_forward && <WalkForwardTable data={stats.walk_forward} />}
+
+            {/* BT-002 — tableau des trades (sortable, paginé, expandable, CSV). */}
+            {trades.length > 0 && (
+              <TradesTable
+                trades={trades}
+                meta={{
+                  symbol: r?.symbol ?? '',
+                  timeframe: r?.timeframe ?? '',
+                  strategy: name,
+                }}
+              />
+            )}
+
+            {/* BT-008 — statistiques agrégées des trades (par setup, par sortie). */}
+            {trades.length > 0 && (
+              <TradesStatsPanel trades={trades} />
+            )}
+
+            {/* BT-003 — diagnostics de recherche de signaux (rejets, per-strat). */}
+            <DiagnosticsPanel diagnostics={normalizeDiagnostics(stats?.diagnostics ?? r?.diagnostics)} />
+
+            {/* BT-010 — panneau ML (AUC, n_features) pour les stratégies `ml_*`. */}
+            {isMl && (
+              <MLBacktestPanel
+                mlInfo={stats?.ml_info}
+                strategy={name}
+                nTrades={stats?.total_trades ?? 0}
+              />
+            )}
+
             {stats.monte_carlo && (
               <MonteCarloPanel
                 data={stats.monte_carlo}

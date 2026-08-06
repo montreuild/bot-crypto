@@ -11,6 +11,7 @@
  * entière : elle n'est pas dans le plan de fusion. L'onglet y renvoie.
  */
 
+import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn, timeAgo, formatDateTime } from '@/lib/utils';
@@ -18,7 +19,7 @@ import { useMLStrategyInfo, useCandlesStats } from '@/hooks/use-api';
 import { MLRecipesList } from '@/components/cards/ml-recipes-list';
 import {
   Loader2, BrainCircuit, Database, CheckCircle2, XCircle,
-  AlertCircle, Cpu,
+  AlertCircle, Cpu, Sparkles,
 } from 'lucide-react';
 import type { MLStrategyInfo } from '@/types';
 
@@ -225,17 +226,34 @@ export function MLView() {
       {/* S9-F3-US1 — Recettes ML disponibles */}
       <MLRecipesList />
 
-      {/* Info card */}
-      <Card>
+      {/* ML-001 — l'optimisation ML se fait depuis l'onglet Optimizer en
+          sélectionnant une stratégie ML (badge violet `ML` à côté du chip).
+          La carte qui disait « lecture seule » est remplacée par une carte
+          d'orientation qui pointe vers le bon onglet, avec un lien profond
+          `/lab?tab=optimizer` pour éviter que l'utilisateur ne tourne en
+          rond à chercher le bouton « Lancer » ici. */}
+      <Card className="border-cyan-500/30 bg-cyan-500/5">
         <CardContent>
-          <div className="flex items-start gap-3 text-sm text-muted">
-            <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold text-foreground mb-1">Lecture seule</p>
-              <p>
-                Cette page est en lecture seule. Les modèles ML sont entraînés et retrainés
-                automatiquement par le backend selon la configuration du scheduler. L&apos;AUC reflète
-                la qualité de discrimination du modèle (0.5 = aléatoire, 1.0 = parfait).
+          <div className="flex items-start gap-3 text-sm">
+            <Sparkles className="w-5 h-5 text-cyan-400 flex-shrink-0 mt-0.5" />
+            <div className="space-y-2">
+              <p className="font-semibold text-foreground">Optimisation ML</p>
+              <p className="text-muted">
+                L&apos;optimisation ML est disponible dans l&apos;onglet{' '}
+                <Link
+                  href="/lab?tab=optimizer"
+                  className="text-cyan-300 hover:text-cyan-200 underline underline-offset-2 font-medium"
+                >
+                  Optimizer
+                </Link>
+                {' '}— sélectionnez une stratégie ML (badge violet « ML ») pour
+                activer les options dédiées, notamment <code className="font-mono">ml_tune_hp</code>{' '}
+                (réglage des hyperparamètres du LightGBM en plus des params de stratégie).
+              </p>
+              <p className="text-xs text-dim">
+                L&apos;AUC reflète la qualité de discrimination du modèle
+                (0.5 = aléatoire, 1.0 = parfait). Les modèles sont réentraînés
+                automatiquement par le backend selon la configuration du scheduler.
               </p>
             </div>
           </div>
