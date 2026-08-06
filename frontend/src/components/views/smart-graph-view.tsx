@@ -1141,8 +1141,8 @@ export function SmartGraphView({
               {bias != null && (
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-muted">TF courant</span>
-                  <Badge variant={bias === 'bullish' ? 'success' : bias === 'bearish' ? 'danger' : 'default'}>
-                    {String(bias || 'neutral').toUpperCase()}
+                  <Badge variant={bias.trend === 1 ? 'success' : bias.trend === -1 ? 'danger' : 'default'}>
+                    {String(bias.label || 'neutre').toUpperCase()}
                   </Badge>
                 </div>
               )}
