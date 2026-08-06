@@ -12,13 +12,15 @@ import { Badge } from '@/components/ui/badge';
 import { cn, formatUSD, formatDateTime } from '@/lib/utils';
 import { useSMC, useSMCReplay } from '@/hooks/use-api';
 import {
-  TradePlansTable, RealizedTradesTable, type TradePlan,
+  TradePlansTable, RealizedTradesTable, type TradePlan, type RealizedTrade,
 } from '@/components/cards/trade-plans-table';
+import { FastAnalysisPanel } from '@/components/cards/fast-analysis-panel';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
+import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import {
-  Loader2, RefreshCw, AlertCircle, Activity,
+  Loader2, RefreshCw, AlertCircle, Activity, Search,
   ArrowUp, ArrowDown, Target, Shield, Layers, Droplets, Waves, GitBranch, Sparkles,
   Box, Ban, BarChart3, TrendingUp, Recycle, Spline, Flame, CircleDot,
 } from 'lucide-react';
@@ -112,6 +114,8 @@ export function SmartGraphView({
   const [symbol, setSymbol] = useState(initialSymbol || 'BTC/USDC');
   const [timeframe, setTimeframe] = useState<string>(initialTf || defaultTf);
   const [selectedPlan, setSelectedPlan] = useState<TradePlan | null>(null);
+  const [faResult, setFaResult] = useState<any>(null);
+  const [faLoading, setFaLoading] = useState(false);
 
   // URL / props : bascule symbole + TF (clic Top opportunités)
   useEffect(() => {
@@ -641,6 +645,20 @@ export function SmartGraphView({
     }
   };
 
+  const runFastAnalysis = async () => {
+    setFaLoading(true);
+    try {
+      const r = await api.fastAnalysis(symbol, timeframe);
+      setFaResult(r);
+      toast.success(`Fast Analyse ${symbol} ${timeframe}`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Fast Analyse impossible');
+      setFaResult({ error: e?.message || 'erreur' });
+    } finally {
+      setFaLoading(false);
+    }
+  };
+
   const handleSelectPlan = (plan: TradePlan) => {
     setSelectedPlan((prev) => {
       // Re-clic = désélection
@@ -650,6 +668,36 @@ export function SmartGraphView({
       }
       toast.success(
         `Plan ${String(plan.side || '').toUpperCase()} ${plan.setup || ''} — Entry / SL / TP affichés`,
+      );
+      return plan;
+    });
+  };
+
+  /** Trade réalisé → même overlay Entry/SL/TP que les plans recommandés. */
+  const handleSelectRealized = (t: RealizedTrade) => {
+    const plan: TradePlan = {
+      side: t.side,
+      setup: t.setup || 'realized',
+      entry: Number(t.entry ?? t.entry_price),
+      stop: Number(t.stop),
+      tp: Number(t.tp ?? t.take_profit),
+      signal_time: t.signal_time ?? null,
+      reason: t.exit_reason || t.reason,
+      status: 'immediate',
+    };
+    setSelectedPlan((prev) => {
+      if (
+        prev
+        && prev.entry === plan.entry
+        && prev.stop === plan.stop
+        && prev.setup === plan.setup
+        && prev.signal_time === plan.signal_time
+      ) {
+        toast.message('Trade désélectionné');
+        return null;
+      }
+      toast.success(
+        `Trade ${String(plan.side || '').toUpperCase()} — Entry / SL / TP affichés`,
       );
       return plan;
     });
@@ -690,10 +738,16 @@ export function SmartGraphView({
             Chart full-width · cliquez un plan pour afficher Entry / SL / TP
           </p>
         </div>
-        <Button onClick={handleRefresh} disabled={isFetching} variant="primary">
-          {isFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={runFastAnalysis} disabled={faLoading} variant="outline">
+            {faLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+            Fast Analyse
+          </Button>
+          <Button onClick={handleRefresh} disabled={isFetching} variant="primary">
+            {isFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -783,15 +837,29 @@ export function SmartGraphView({
           <RealizedTradesTable
             trades={replayData?.trades || []}
             strategy="smart_money"
+            onSelectTrade={handleSelectRealized}
+            selectedTrade={
+              selectedPlan?.setup
+                ? (replayData?.trades || []).find((t: any) =>
+                  t.entry === selectedPlan.entry
+                  && t.stop === selectedPlan.stop
+                  && (t.setup || 'realized') === selectedPlan.setup
+                ) || null
+                : null
+            }
           />
           <p className="text-[11px] text-dim -mt-2">
             Recommandés = plans SMC analytiques. Réalisés = backtest{' '}
             <code className="font-mono">smart_money</code> (même moteur que Smart Replay).
-            La stratégie smart_money est calibrée sur TF élevés (2h/4h/1d) : sur 15m–1h
+            La stratégie smart_money est calibrée sur TF élevés (4h/1d) : sur 15m–1h
             et sur actions, peu ou pas de trades est normal (historique Yahoo ~88 bougies
             en intraday EU).
           </p>
         </>
+      )}
+
+      {faResult && (
+        <FastAnalysisPanel result={faResult} symbol={symbol} timeframe={timeframe} />
       )}
 
       {/* Meta panel — bandeau sous les plans (ex-colonne latérale) */}

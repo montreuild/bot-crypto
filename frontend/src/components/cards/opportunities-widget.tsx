@@ -79,7 +79,8 @@ export function OpportunitiesWidget({ timeframe: tfProp, limit = 12 }: Opportuni
             <TrendingUp className="w-4 h-4 text-emerald-400" />
             Top opportunités
             <Badge variant="muted" className="text-[10px] font-normal">Vol + ATR%</Badge>
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] text-dim font-normal">Timeframe</span>
               <TimeframeButtons value={tf} onChange={setTf} size="sm" />
               <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching} aria-label="Rafraîchir">
                 <RefreshCw className={cn('w-3.5 h-3.5', isFetching && 'animate-spin')} />

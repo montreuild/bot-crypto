@@ -292,12 +292,17 @@ export function RealizedTradesTable({
   trades,
   title,
   strategy = 'smart_money',
+  onSelectTrade,
+  selectedTrade,
 }: {
   trades?: RealizedTrade[] | null;
   /** Si omis : « Trades réalisés (N — Backtest {strategy}) ». */
   title?: string;
   /** Stratégie utilisée pour le backtest (affichée dans le titre). */
   strategy?: string;
+  /** Clic ligne → Entry / SL / TP sur le graphique (comme Trades recommandés). */
+  onSelectTrade?: (trade: RealizedTrade) => void;
+  selectedTrade?: RealizedTrade | null;
 }) {
   type RealizedSortKey = 'signal_time' | 'gain_pct' | 'pnl_pct' | 'rr' | 'score_min';
   const [sortKey, setSortKey] = useState<RealizedSortKey>('signal_time');
@@ -324,6 +329,10 @@ export function RealizedTradesTable({
   const wins = list.filter((t) => Number(t.pnl ?? 0) > 0).length;
   const displayTitle = title
     ?? `Trades réalisés (${closed} — Backtest ${strategy})`;
+
+  const selectedKey = selectedTrade
+    ? `${selectedTrade.side}|${selectedTrade.setup}|${selectedTrade.entry ?? selectedTrade.entry_price}|${selectedTrade.signal_time}`
+    : null;
 
   const toggleSort = (k: RealizedSortKey) => {
     if (k === sortKey) setAsc((v) => !v);
@@ -363,6 +372,7 @@ export function RealizedTradesTable({
           <span className="text-[10px] text-dim">
             {wins} gagnants · {closed - wins} perdants · WR{' '}
             {closed ? ((wins / closed) * 100).toFixed(0) : 0}%
+            {onSelectTrade ? ' · Cliquez une ligne pour Entry / SL / TP' : ''}
           </span>
         )}
       </CardHeader>
@@ -413,8 +423,19 @@ export function RealizedTradesTable({
                   const score = t.score_min ?? t.score;
                   const isLong = t.side === 'long';
                   const reason = t.exit_reason || t.reason || '';
+                  const rowKey = `${t.side}|${t.setup}|${t.entry ?? t.entry_price}|${t.signal_time}`;
+                  const isSelected = selectedKey === rowKey;
                   return (
-                    <tr key={i} className="border-b border-border/30 hover:bg-card-hover">
+                    <tr
+                      key={i}
+                      onClick={() => onSelectTrade?.(t)}
+                      className={cn(
+                        'border-b border-border/30 transition-colors',
+                        onSelectTrade && 'cursor-pointer hover:bg-card-hover',
+                        isSelected && 'bg-primary-500/10 ring-1 ring-inset ring-primary-400/40',
+                      )}
+                      aria-selected={isSelected}
+                    >
                       <td className="p-2 font-mono whitespace-nowrap text-muted">
                         {formatSignalTime(realizedSignalTime(t)) ?? '—'}
                       </td>

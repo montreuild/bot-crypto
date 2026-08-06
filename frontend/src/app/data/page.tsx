@@ -13,6 +13,7 @@ import {
   Loader2, RefreshCw, Database, AlertCircle, ExternalLink, HardDrive,
   TrendingUp, Play, CheckCircle2, XCircle,
 } from 'lucide-react';
+import { TimeframeButtons } from '@/components/ui/timeframe-select';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -179,16 +180,12 @@ export default function DataPage() {
             </div>
             <div>
               <label className="text-xs text-dim block mb-1.5">Timeframe</label>
-              <select
-                aria-label="Timeframe"
+              <TimeframeButtons
                 value={manualTf}
-                onChange={(e) => setManualTf(e.target.value)}
-                className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"
-              >
-                {['1m', '5m', '15m', '30m', '1h', '4h', '1d'].map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
+                onChange={setManualTf}
+                size="sm"
+                allowExtra={['1m', '5m']}
+              />
             </div>
             <Button
               onClick={handleManualRefetch}
@@ -223,16 +220,8 @@ export default function DataPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
               <div>
                 <label className="text-xs text-dim block mb-1.5">Timeframe</label>
-                <select
-                  aria-label="Timeframe"
-                  value={backfillTf}
-                  onChange={(e) => setBackfillTf(e.target.value)}
-                  className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"
-                >
-                  <option value="1d">1d (recommandé — 20 ans dispo)</option>
-                  <option value="1h">1h (⚠ limite Yahoo ~88 bougies EU)</option>
-                  <option value="15m">15m (⚠ limite Yahoo ~88 bougies EU)</option>
-                </select>
+                <TimeframeButtons value={backfillTf} onChange={setBackfillTf} size="sm" />
+                <p className="text-[10px] text-dim mt-1">1d recommandé (Yahoo LTF ≈ 88 bougies)</p>
               </div>
               <div>
                 <label className="text-xs text-dim block mb-1.5">Années d&apos;historique</label>

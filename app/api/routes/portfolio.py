@@ -399,6 +399,9 @@ def run_bot_forward_test(request: Request, slot_key: str):
         "slot_key": slot_key,
         "ran": bool(rec),
         "edge": rec.get("edge"),
+        "sim": rec.get("sim"),
+        "contract": rec.get("contract"),
+        "run_date": rec.get("run_date"),
         "trader_running": bool(tr),
         "state_reevaluated": state_changed,
     }

@@ -189,18 +189,47 @@ class MarketScanner:
         }
 
     def screen(self, timeframe: str, limit: int = 500) -> List[Dict]:
+        """Screen multi-symboles pour le tableau Marché.
+
+        Par défaut **cache-only** (``prefer_cache`` / ``screen_prefer_cache``) :
+        un fetch réseau SBF120 + crypto timeout l'UI. Même pipeline que
+        opportunity_scan : load_cached → tail → precompute_df → indicators.
+        """
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        ocfg = self.scfg.get("opportunity_scan") or {}
+        prefer_cache = bool(
+            self.scfg.get("screen_prefer_cache", ocfg.get("prefer_cache", True))
+        )
         symbols = self.get_symbols()
-        max_workers = min(len(symbols), int(self.scfg.get("scan_workers", 4)))
+        max_workers = min(len(symbols) or 1, int(self.scfg.get("scan_workers", 8)))
+        # UI n'a pas besoin de 500 barres : 200 suffit pour indicateurs
+        bar_limit = min(int(limit or 200), 250)
 
         def _process(symbol: str) -> Optional[Dict]:
-            df = self.fetch_ohlcv(symbol, timeframe, limit)
-            if df is None:
-                return None
             try:
+                if prefer_cache:
+                    df = get_store().load_cached(symbol, timeframe)
+                    if df is not None and len(df) > bar_limit:
+                        df = df.tail(bar_limit)
+                    if df is not None and len(df) >= 60:
+                        df = precompute_df(df)
+                    elif df is not None and len(df) < 60:
+                        df = None
+                else:
+                    df = self.fetch_ohlcv(symbol, timeframe, bar_limit)
+                if df is None or len(df) < 60:
+                    return None
                 indicators = self.compute_indicators(df)
+                if not indicators:
+                    return None
                 volume_24h = _estimate_volume_24h(df, timeframe)
-                if volume_24h < self.min_volume_for(symbol):
+                # Filtre volume plus souple en cache-only (évite table vide
+                # si notional proxy actions est bas)
+                min_vol = self.min_volume_for(symbol)
+                if prefer_cache:
+                    min_vol = min_vol * 0.25  # 25 % du seuil live
+                if volume_24h < min_vol:
                     return None
                 adx     = indicators.get("adx", 0)
                 atr_pct = indicators.get("atr_pct", 0)
@@ -215,7 +244,7 @@ class MarketScanner:
                     "bars":         len(df),
                 }
             except Exception as e:
-                logger.error(f"[Scanner] screen {symbol} : {e}")
+                logger.debug(f"[Scanner] screen {symbol} : {e}")
                 return None
 
         results = []
@@ -225,6 +254,7 @@ class MarketScanner:
                 r = f.result()
                 if r is not None:
                     results.append(r)
+        results.sort(key=lambda x: float(x.get("volume_24h") or 0), reverse=True)
         return results
 
     def opportunity_scan(self, timeframe: str = "1h") -> List[Dict]:

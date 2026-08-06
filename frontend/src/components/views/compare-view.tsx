@@ -24,8 +24,8 @@ import {
   CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import type { BacktestResult } from '@/types';
+import { TimeframeButtons } from '@/components/ui/timeframe-select';
 
-const TIMEFRAMES = ['15m', '30m', '1h', '4h', '1d'];
 const LIMITS = [100, 500, 1000, 2000];
 const STRATEGY_COLORS = [
   '#22d3ee', '#10b981', '#f59e0b', '#8b5cf6',
@@ -301,14 +301,7 @@ export function CompareView() {
             </div>
             <div>
               <label className="text-xs text-dim block mb-1.5">Timeframe</label>
-              <select
-                aria-label="Timeframe"
-                value={timeframe}
-                onChange={(e) => setTimeframe(e.target.value)}
-                className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"
-              >
-                {TIMEFRAMES.map((tf) => <option key={tf} value={tf}>{tf}</option>)}
-              </select>
+              <TimeframeButtons value={timeframe} onChange={setTimeframe} size="sm" />
             </div>
             <div>
               <label className="text-xs text-dim block mb-1.5">Bougies</label>

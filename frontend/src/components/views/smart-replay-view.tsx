@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn, formatUSD, formatPct, formatDateTime } from '@/lib/utils';
 import { useSMC, useSMCReplay } from '@/hooks/use-api';
 import {
-  TradePlansTable, RealizedTradesTable, type TradePlan,
+  TradePlansTable, RealizedTradesTable, type TradePlan, type RealizedTrade,
 } from '@/components/cards/trade-plans-table';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
@@ -713,6 +713,20 @@ export function SmartReplayView() {
       <RealizedTradesTable
         trades={(data?.trades || closedTrades) as any}
         strategy="smart_money"
+        onSelectTrade={(t: RealizedTrade) => {
+          const plan: TradePlan = {
+            side: t.side,
+            setup: t.setup || 'realized',
+            entry: Number(t.entry ?? t.entry_price),
+            stop: Number(t.stop),
+            tp: Number(t.tp ?? t.take_profit),
+            signal_time: t.signal_time ?? null,
+            status: 'immediate',
+          };
+          setSelectedPlan((prev) =>
+            prev && prev.entry === plan.entry && prev.setup === plan.setup ? null : plan,
+          );
+        }}
       />
       <p className="text-[11px] text-dim">
         <strong className="text-muted">Pourquoi N plans vs 1 trade ?</strong>{' '}

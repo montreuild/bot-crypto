@@ -24,6 +24,7 @@ import {
   CartesianGrid, Tooltip,
 } from 'recharts';
 import type { ReplayResult } from '@/types';
+import { TimeframeButtons } from '@/components/ui/timeframe-select';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -198,7 +199,7 @@ export function ReplayView() {
 
   const [symbol, setSymbol] = useState('BTC/USDC');
   const [months, setMonths] = useState(3);
-  const [timeframes, setTimeframes] = useState('15m,1h,4h');
+  const [selectedTfs, setSelectedTfs] = useState<string[]>(['15m', '1h', '4h']);
   const [strategies, setStrategies] = useState('');
   const [walkForward, setWalkForward] = useState(false);
   const [monteCarlo, setMonteCarlo] = useState(false);
@@ -217,7 +218,7 @@ export function ReplayView() {
       const r = await runReplay.mutateAsync({
         symbol: symbol.trim(),
         months,
-        timeframes: timeframes.trim() || undefined,
+        timeframes: selectedTfs.length ? selectedTfs.join(',') : undefined,
         strategies: strategies.trim() || undefined,
         walk_forward: walkForward,
         monte_carlo: monteCarlo,
@@ -290,13 +291,12 @@ export function ReplayView() {
               />
             </div>
             <div>
-              <label className="text-xs text-dim block mb-1.5">Timeframes (CSV)</label>
-              <input
-                aria-label="Timeframes (CSV)"
-                value={timeframes}
-                onChange={(e) => setTimeframes(e.target.value)}
-                placeholder="15m,1h,4h"
-                className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+              <label className="text-xs text-dim block mb-1.5">Timeframe (multi)</label>
+              <TimeframeButtons
+                multi
+                values={selectedTfs}
+                onChangeMulti={setSelectedTfs}
+                size="sm"
               />
             </div>
             <div>

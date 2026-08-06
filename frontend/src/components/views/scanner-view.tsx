@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { PredictionsPanel } from '@/components/cards/predictions-panel';
 import { OpportunitiesWidget } from '@/components/cards/opportunities-widget';
+import { FastAnalysisPanel } from '@/components/cards/fast-analysis-panel';
 import { useSignals } from '@/hooks/use-api';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
@@ -341,62 +342,8 @@ export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerView
         )}
       </div>
 
-      {/* Formulaire TF + filtres + scan — entre titre et tableau Marché */}
-      <Card>
-        <CardContent className="flex flex-col gap-3 py-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="text-[10px] text-dim block mb-1">TF</label>
-              <TimeframeButtons value={tf} onChange={setTf} size="sm" />
-            </div>
-            <div>
-              <label className="text-[10px] text-dim block mb-1">Régime</label>
-              <select aria-label="Régime" value={fRegime} onChange={(e) => setFRegime(e.target.value)}
-                className="px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs">
-                <option value="">Tous</option>
-                <option value="trend">Trend</option>
-                <option value="range">Range</option>
-                <option value="volatile">Volatile</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] text-dim block mb-1">ADX ≥</label>
-              <input aria-label="ADX min" type="number" value={fAdxMin} onChange={(e) => setFAdxMin(Number(e.target.value))}
-                className="w-16 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
-            </div>
-            <div>
-              <label className="text-[10px] text-dim block mb-1">ATR% min–max</label>
-              <div className="flex gap-1">
-                <input aria-label="ATR min" type="number" value={fAtrMin} onChange={(e) => setFAtrMin(Number(e.target.value))}
-                  className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
-                <input aria-label="ATR max" type="number" value={fAtrMax} onChange={(e) => setFAtrMax(Number(e.target.value))}
-                  className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
-              </div>
-            </div>
-            <div>
-              <label className="text-[10px] text-dim block mb-1">RSI lo–hi</label>
-              <div className="flex gap-1">
-                <input aria-label="RSI lo" type="number" value={fRsiLo} onChange={(e) => setFRsiLo(Number(e.target.value))}
-                  className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
-                <input aria-label="RSI hi" type="number" value={fRsiHi} onChange={(e) => setFRsiHi(Number(e.target.value))}
-                  className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
-              </div>
-            </div>
-            <Button size="sm" variant="ghost" onClick={() => {
-              setFRegime(''); setFAdxMin(0); setFAtrMin(0); setFAtrMax(100); setFRsiLo(0); setFRsiHi(100);
-            }}>✕ Reset</Button>
-          </div>
-          <div>
-            <Button variant="outline" size="sm" onClick={runScreen} disabled={loading}>
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-              Scanner le marché
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
       <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
-        {/* Table multi-symboles */}
+        {/* Volet Marché : filtres + scan + tableau */}
         <Card className="xl:col-span-2">
           <CardHeader>
             <CardTitle className="text-sm">
@@ -410,8 +357,57 @@ export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerView
             </CardTitle>
             {loading && <Loader2 className="w-4 h-4 animate-spin text-primary-400" />}
           </CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-auto max-h-[520px]">
+          <CardContent className="space-y-3 p-3 pt-0">
+            {/* Formulaire TF + filtres + scan — dans le volet Marché */}
+            <div className="flex flex-col gap-2 pb-2 border-b border-border">
+              <div className="flex flex-wrap items-end gap-2">
+                <div>
+                  <label className="text-[10px] text-dim block mb-1">Timeframe</label>
+                  <TimeframeButtons value={tf} onChange={setTf} size="sm" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-dim block mb-1">Régime</label>
+                  <select aria-label="Régime" value={fRegime} onChange={(e) => setFRegime(e.target.value)}
+                    className="px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs">
+                    <option value="">Tous</option>
+                    <option value="trend">Trend</option>
+                    <option value="range">Range</option>
+                    <option value="volatile">Volatile</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-dim block mb-1">ADX ≥</label>
+                  <input aria-label="ADX min" type="number" value={fAdxMin} onChange={(e) => setFAdxMin(Number(e.target.value))}
+                    className="w-16 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-dim block mb-1">ATR% min–max</label>
+                  <div className="flex gap-1">
+                    <input aria-label="ATR min" type="number" value={fAtrMin} onChange={(e) => setFAtrMin(Number(e.target.value))}
+                      className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
+                    <input aria-label="ATR max" type="number" value={fAtrMax} onChange={(e) => setFAtrMax(Number(e.target.value))}
+                      className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-dim block mb-1">RSI lo–hi</label>
+                  <div className="flex gap-1">
+                    <input aria-label="RSI lo" type="number" value={fRsiLo} onChange={(e) => setFRsiLo(Number(e.target.value))}
+                      className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
+                    <input aria-label="RSI hi" type="number" value={fRsiHi} onChange={(e) => setFRsiHi(Number(e.target.value))}
+                      className="w-14 px-2 py-1.5 bg-card-hover border border-border rounded-md text-xs font-mono" />
+                  </div>
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => {
+                  setFRegime(''); setFAdxMin(0); setFAtrMin(0); setFAtrMax(100); setFRsiLo(0); setFRsiHi(100);
+                }}>✕ Reset</Button>
+              </div>
+              <Button variant="outline" size="sm" onClick={runScreen} disabled={loading} className="w-fit">
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                Scanner le marché
+              </Button>
+            </div>
+            <div className="overflow-auto max-h-[480px] -mx-1">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-card z-10">
                   <tr className="text-left text-dim border-b border-border">
@@ -506,96 +502,8 @@ export function ScannerView({ initialSymbol, initialTf, onAnalyze }: ScannerView
         </Card>
       </div>
 
-      {/* Fast Analyse — grille d'indicateurs IS/OOS (contrat réel de l'API) */}
       {faResult && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
-              <Search className="w-4 h-4 text-primary-400" />
-              Fast Analyse · {selected} · {tf}
-              {faResult.best && (
-                <Badge variant="success" className="text-[10px]">
-                  Meilleur OOS : {faResult.best}
-                </Badge>
-              )}
-              {faResult.bars != null && (
-                <span className="text-[10px] text-dim font-normal ml-auto">
-                  {faResult.bars} barres · OOS {faResult.oos_bars ?? '—'}
-                </span>
-              )}
-            </CardTitle>
-            <p className="text-[11px] text-muted font-normal">
-              Chaque ligne = signal d&apos;indicateur testé en backtest simple (maker/taker, full vs OOS).
-            </p>
-          </CardHeader>
-          <CardContent className="p-0">
-            {faResult.error ? (
-              <p className="text-xs text-red-400 p-4">{faResult.error}</p>
-            ) : !Array.isArray(faResult.rows) || faResult.rows.length === 0 ? (
-              <p className="text-xs text-muted p-4 text-center">
-                Aucun résultat (historique &lt; 260 barres ou erreur de calcul)
-              </p>
-            ) : (
-              <div className="overflow-x-auto max-h-80">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-card z-10">
-                    <tr className="text-left text-dim border-b border-border">
-                      <th className="p-2 font-medium">Signal</th>
-                      <th className="p-2 font-medium">Famille</th>
-                      <th className="p-2 font-medium text-right">OOS n</th>
-                      <th className="p-2 font-medium text-right">OOS PnL</th>
-                      <th className="p-2 font-medium text-right">OOS PF</th>
-                      <th className="p-2 font-medium text-right">OOS WR</th>
-                      <th className="p-2 font-medium text-right">Full PnL</th>
-                      <th className="p-2 font-medium">Edge</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {faResult.rows.slice(0, 24).map((row: any, i: number) => {
-                      const oos = row.maker?.oos || {};
-                      const full = row.maker?.full || {};
-                      const pnl = Number(oos.pnl ?? 0);
-                      const isBest = faResult.best && row.signal === faResult.best;
-                      return (
-                        <tr
-                          key={`${row.signal}-${i}`}
-                          className={cn(
-                            'border-b border-border/30',
-                            isBest && 'bg-emerald-500/10',
-                          )}
-                        >
-                          <td className="p-2 font-mono max-w-[14rem] truncate" title={row.signal}>
-                            {row.signal}
-                          </td>
-                          <td className="p-2">
-                            <Badge variant="muted" className="text-[9px]">{row.kind || '—'}</Badge>
-                          </td>
-                          <td className="p-2 text-right font-mono">{oos.n ?? '—'}</td>
-                          <td className={cn(
-                            'p-2 text-right font-mono font-semibold',
-                            pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-red-400' : 'text-muted',
-                          )}>
-                            {Number.isFinite(pnl) ? pnl.toFixed(1) : '—'}
-                          </td>
-                          <td className="p-2 text-right font-mono">
-                            {oos.pf != null ? Number(oos.pf).toFixed(2) : '—'}
-                          </td>
-                          <td className="p-2 text-right font-mono">
-                            {oos.wr != null ? `${(Number(oos.wr) * 100).toFixed(0)}%` : '—'}
-                          </td>
-                          <td className="p-2 text-right font-mono text-dim">
-                            {full.pnl != null ? Number(full.pnl).toFixed(1) : '—'}
-                          </td>
-                          <td className="p-2 text-dim text-[10px]">{row.edge || (isBest ? '★' : '—')}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <FastAnalysisPanel result={faResult} symbol={selected} timeframe={tf} />
       )}
 
       {/* Top opportunités + signaux SMC */}

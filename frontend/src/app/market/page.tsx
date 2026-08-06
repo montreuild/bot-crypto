@@ -5,7 +5,7 @@
  * Smart Replay / Dérivés.
  */
 
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -47,6 +47,23 @@ function MarketContent() {
   const symbolParam = searchParams.get('symbol') ?? undefined;
   const tfParam = searchParams.get('tf') ?? undefined;
 
+  // Clic opportunité / SMC → URL change : synchroniser l'onglet (sinon reste sur Scanner)
+  useEffect(() => {
+    if (requested && TABS.includes(requested as (typeof TABS)[number])) {
+      setTab(requested);
+    }
+  }, [requested]);
+
+  const onTabChange = (v: string) => {
+    setTab(v);
+    // Conserver symbol/tf dans l'URL si présents
+    const q = new URLSearchParams();
+    q.set('tab', v);
+    if (symbolParam) q.set('symbol', symbolParam);
+    if (tfParam) q.set('tf', tfParam);
+    router.replace(`/market?${q.toString()}`, { scroll: false });
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-end justify-between flex-wrap gap-4">
@@ -58,7 +75,7 @@ function MarketContent() {
         </div>
       </div>
 
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs value={tab} onValueChange={onTabChange}>
         <TabsList className="grid grid-cols-4 w-full max-w-xl">
           <TabsTrigger value="scanner">
             <Network className="w-3.5 h-3.5 mr-1.5" />
@@ -79,7 +96,6 @@ function MarketContent() {
         </TabsList>
 
         <TabsContent value="scanner">
-          {/* Vue unique : scanner + top opportunités (plus de layout 2/3 + colonne vide) */}
           <ScannerView
             initialSymbol={symbolParam}
             initialTf={tfParam}
@@ -89,7 +105,12 @@ function MarketContent() {
           />
         </TabsContent>
         <TabsContent value="smartgraph">
-          <SmartGraphView initialSymbol={symbolParam} initialTf={tfParam} />
+          {/* key force le rechargement net à chaque clic opportunité (symbole+TF) */}
+          <SmartGraphView
+            key={`${symbolParam || 'none'}|${tfParam || 'none'}`}
+            initialSymbol={symbolParam}
+            initialTf={tfParam}
+          />
         </TabsContent>
         <TabsContent value="smartreplay">
           <SmartReplayView />

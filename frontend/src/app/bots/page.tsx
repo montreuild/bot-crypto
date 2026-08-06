@@ -33,8 +33,16 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { QueryBoundary, EmptyState } from '@/components/ui/query-state';
 import { LifecycleFrieze } from '@/components/cards/lifecycle-frieze';
 import { MonteCarloCone } from '@/components/cards/monte-carlo-cone';
+import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import type { Bot } from '@/types';
 import { isForcedActive } from '@/lib/schemas';
+
+/** Extrait le TF d'un slot_key (ex. smart_money::4h::BTC/USDC → 4h). */
+function botTimeframe(bot: Bot): string {
+  const fromSlot = parseSlotKey(String(bot.slot_key || ''));
+  if (fromSlot?.tf) return String(fromSlot.tf);
+  return String((bot as any).timeframe || (bot as any).tf || '');
+}
 
 const COLUMN_STATES = ['candidat', 'essai', 'actif', 'retire'] as const;
 
@@ -80,6 +88,10 @@ function BotsV2Content() {
   // « 240 candidats ». On expose maintenant la sémantique réelle.
   // `isForcedActive` lit les deux noms le temps de la migration.
   const [onlyForced, setOnlyForced] = useState(false);
+  const [edgePositiveOnly, setEdgePositiveOnly] = useState(false);
+  const [tfFilter, setTfFilter] = useState<string>('all');
+  /** Slot en cours de recalcul edge (spinner par carte). */
+  const [forwardingSlot, setForwardingSlot] = useState<string | null>(null);
 
   // Slot sélectionné via URL (?slot=...) ou clic sur card
   const selectedSlotKey = searchParams.get('slot');
@@ -108,14 +120,28 @@ function BotsV2Content() {
   // `bots` est mémoïsé pour rester une référence stable en dépendance.
   const bots = useMemo<Bot[]>(() => data?.bots || [], [data]);
 
-  // Filtres : état + override manuel
+  // Filtres : état + TF unifié + edge positif + override manuel
   const filtered = useMemo(() => {
     let result = filter === 'all' ? bots : bots.filter((b) => b.state === filter);
+    if (tfFilter !== 'all') {
+      result = result.filter((b) => botTimeframe(b) === tfFilter);
+    }
+    if (edgePositiveOnly) {
+      result = result.filter((b) => {
+        const e = b.edge;
+        if (!e || !e.available) return false;
+        // Edge positif = borne basse CI > 0 (ou moyenne si pas de CI)
+        const lo = e.ci_low_pct;
+        if (lo != null && Number.isFinite(Number(lo))) return Number(lo) > 0;
+        const mean = (e as any).mean_pct ?? (e as any).avg_return_pct;
+        return mean != null && Number(mean) > 0;
+      });
+    }
     if (onlyForced) {
       result = result.filter((b) => isForcedActive(b));
     }
     return result;
-  }, [bots, filter, onlyForced]);
+  }, [bots, filter, tfFilter, edgePositiveOnly, onlyForced]);
 
   // Grouper par colonne (kanban)
   const botsByColumn = useMemo(() => {
@@ -179,12 +205,40 @@ function BotsV2Content() {
   };
 
   const handleForward = async (slotKey: string) => {
+    setForwardingSlot(slotKey);
     try {
-      toast.info('Forward-test en cours...');
-      await runForward.mutateAsync(slotKey);
-      toast.success('Forward-test terminé');
+      toast.info('Recalcul edge en cours…');
+      const res: any = await runForward.mutateAsync(slotKey);
+      const edge = res?.edge;
+      const sim = res?.sim;
+      const parts: string[] = [];
+      if (edge?.available) {
+        const lo = edge.ci_low_pct;
+        const hi = edge.ci_high_pct;
+        if (lo != null && hi != null) {
+          parts.push(`Edge CI [${Number(lo).toFixed(2)}% ; ${Number(hi).toFixed(2)}%]`);
+        } else if (lo != null) {
+          parts.push(`Edge CI low ${Number(lo).toFixed(2)}%`);
+        }
+      }
+      if (sim) {
+        if (sim.total_trades != null) parts.push(`${sim.total_trades} trades`);
+        if (sim.return_pct != null) parts.push(`ret ${Number(sim.return_pct).toFixed(2)}%`);
+        if (sim.win_rate != null) parts.push(`WR ${(Number(sim.win_rate) * 100).toFixed(0)}%`);
+      }
+      if (res?.contract?.verdict) parts.push(String(res.contract.verdict));
+      toast.success(
+        parts.length
+          ? `Edge actualisé — ${parts.join(' · ')}`
+          : res?.ran
+            ? 'Edge actualisé (carte rafraîchie)'
+            : 'Recalcul terminé — pas de données edge',
+        { duration: 8000 },
+      );
     } catch (e: any) {
       toast.error(`Erreur: ${e.message}`);
+    } finally {
+      setForwardingSlot(null);
     }
   };
 
@@ -229,8 +283,37 @@ function BotsV2Content() {
         })}
       </div>
 
-      {/* Toggle « forçage manuel » */}
-      <div className="flex items-center gap-3 text-xs">
+      {/* Timeframe unifié + forçage manuel */}
+      <div className="flex flex-wrap items-center gap-4 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="text-dim">Timeframe</span>
+          <button
+            type="button"
+            onClick={() => setTfFilter('all')}
+            className={cn(
+              'px-2 py-1 rounded-md text-[11px] font-mono border transition-colors',
+              tfFilter === 'all'
+                ? 'bg-primary-500/15 text-primary-400 border-primary-500/40'
+                : 'bg-card-hover text-muted border-border hover:border-border-hi',
+            )}
+          >
+            Tous
+          </button>
+          <TimeframeButtons
+            value={tfFilter === 'all' ? '' : tfFilter}
+            onChange={(tf) => setTfFilter(tf)}
+            size="sm"
+          />
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={edgePositiveOnly}
+            onChange={(e) => setEdgePositiveOnly(e.target.checked)}
+            className="rounded border-border"
+          />
+          <span className="text-muted">Edge positif uniquement (CI low &gt; 0)</span>
+        </label>
         <label className="flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"
@@ -268,7 +351,7 @@ function BotsV2Content() {
                       onForce={() => handleForce(bot.slot_key, !isForcedActive(bot))}
                       onForward={() => handleForward(bot.slot_key)}
                       forceLoading={forceActive.isPending}
-                      forwardLoading={runForward.isPending}
+                      forwardLoading={forwardingSlot === bot.slot_key}
                     />
                   ))
                 )}
@@ -390,10 +473,13 @@ function BotsV2Content() {
                     <Button
                       variant="outline"
                       onClick={() => handleForward(selectedBot.slot_key)}
-                      disabled={runForward.isPending}
+                      disabled={forwardingSlot === selectedBot.slot_key}
                     >
-                      <RefreshCw className={cn('w-3 h-3', runForward.isPending && 'animate-spin')} />
-                      Forward-test
+                      <RefreshCw className={cn(
+                        'w-3 h-3',
+                        forwardingSlot === selectedBot.slot_key && 'animate-spin',
+                      )} />
+                      {forwardingSlot === selectedBot.slot_key ? 'Calcul…' : 'Actu. edge'}
                     </Button>
                     <Button
                       variant="outline"
@@ -522,12 +608,20 @@ function BotCardV2({ bot, onClick, onForce, onForward, forceLoading, forwardLoad
             variant="ghost"
             onClick={(e) => { e.stopPropagation(); onForward(); }}
             disabled={forwardLoading}
-            className="h-7 px-2 text-[10px]"
-            aria-label="Relancer le forward-test"
+            className="h-7 px-2 text-[10px] flex-1"
+            aria-label="Actualiser l'edge (recalcul stats)"
+            title="Recalcule l'edge OOS et met à jour la carte"
           >
             <RefreshCw className={cn('w-3 h-3', forwardLoading && 'animate-spin')} />
+            {forwardLoading ? 'Calcul…' : 'Actu. edge'}
           </Button>
         </div>
+        {forwardLoading && (
+          <div className="flex items-center gap-1.5 text-[10px] text-primary-400 pt-0.5">
+            <RefreshCw className="w-3 h-3 animate-spin" />
+            Recalcul edge en cours…
+          </div>
+        )}
       </CardContent>
     </Card>
   );

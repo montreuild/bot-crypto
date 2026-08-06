@@ -18,7 +18,8 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_TFS = ("1h", "4h", "1d")
+# Tous les TF trading actifs (alignés smart_money.timeframes / risk.yaml)
+_DEFAULT_TFS = ("15m", "30m", "1h", "4h", "1d")
 _DEFAULT_MAX_AGE_DAYS = 5
 _DEFAULT_INTERVAL_S = 30 * 60  # 30 min
 _OUTPUT = Path("data/smc_signals_recent.json")
@@ -54,10 +55,10 @@ def _signal_ok(signal_time: Any, max_age_s: int, now: int) -> bool:
 def scan_once(
     cfg: dict,
     *,
-    tfs: tuple = _DEFAULT_TFS,
+    tfs: tuple | None = None,
     max_age_days: float = _DEFAULT_MAX_AGE_DAYS,
     max_symbols: int = 80,
-    top_n: int = 60,
+    top_n: int = 80,
 ) -> Dict[str, Any]:
     """Exécute un scan complet et renvoie le payload (écrit aussi sur disque)."""
     from app.core.candle_store import get_store
@@ -65,6 +66,18 @@ def scan_once(
     from app.core.param_resolution import resolve_strategy_params
     from app.engine.scanner import MarketScanner
     from app.strategies.smart_money import Strategy as SMCStrategy
+
+    # TF : arg > trading.timeframes config > défauts multi-TF
+    if not tfs:
+        try:
+            cfg_tfs = (cfg.get("trading") or {}).get("timeframes") or []
+            tfs = tuple(str(x) for x in cfg_tfs) if cfg_tfs else _DEFAULT_TFS
+        except Exception:
+            tfs = _DEFAULT_TFS
+    # Toujours couvrir les TF smart_money connus
+    for extra in _DEFAULT_TFS:
+        if extra not in tfs:
+            tfs = tuple(list(tfs) + [extra])
 
     now = _epoch_now()
     max_age_s = int(max_age_days * 86400)
@@ -99,7 +112,10 @@ def scan_once(
             for tf in tfs:
                 try:
                     df = store.load_cached(symbol, tf)
-                    if df is None or len(df) < 260:
+                    # LTF (15m/30m) : historique court (Yahoo ~88 barres) —
+                    # seuil assoupli pour ne pas tout exclure.
+                    min_bars = 80 if tf in ("15m", "30m") else 200
+                    if df is None or len(df) < min_bars:
                         continue
                     if len(df) > 800:
                         df = df.tail(800)

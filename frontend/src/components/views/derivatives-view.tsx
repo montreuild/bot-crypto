@@ -32,6 +32,8 @@ const SYMBOLS = ['BTC/USDC', 'ETH/USDC', 'SOL/USDC', 'BNB/USDC', 'XRP/USDC'];
 
 /** Profondeur d'affichage (filtre client sur les timestamps). */
 const DEPTH_OPTIONS: { id: string; label: string; days: number | null }[] = [
+  { id: '1m', label: '1 mois', days: 30 },
+  { id: '3m', label: '3 mois', days: 91 },
   { id: '6m', label: '6 mois', days: 182 },
   { id: '1y', label: '1 an', days: 365 },
   { id: '2y', label: '2 ans', days: 730 },
@@ -118,7 +120,7 @@ function mergePrice(
 
 // ── Chart sub-component ─────────────────────────────────────────────────────
 
-interface ChartProps {
+interface MetricChartProps {
   title: string;
   series?: TimeSeries;
   color: string;
@@ -129,6 +131,11 @@ interface ChartProps {
   /** Série prix close pour overlay (dual Y-axis, style Jinja2). */
   priceSeries?: { time?: number[]; close?: number[] } | null;
   showPrice?: boolean;
+  /** Domaine Y prix partagé entre les 4 graphiques (même échelle). */
+  priceDomain?: [number, number] | null;
+  /** Domaine temps X partagé (même plage pour les 4). */
+  xTickMin?: number | null;
+  xTickMax?: number | null;
 }
 
 function MetricChart({
@@ -141,10 +148,21 @@ function MetricChart({
   referenceLabel,
   priceSeries,
   showPrice,
-}: ChartProps) {
-  const base = downsample(series?.time || [], series?.value || []);
+  priceDomain,
+  xTickMin,
+  xTickMax,
+}: MetricChartProps) {
+  let base = downsample(series?.time || [], series?.value || []);
+  // Filtre X partagé (profondeur déjà appliquée côté parent, re-bornes si besoin)
+  if (xTickMin != null || xTickMax != null) {
+    base = base.filter((p) => {
+      if (xTickMin != null && p.t < xTickMin) return false;
+      if (xTickMax != null && p.t > xTickMax) return false;
+      return true;
+    });
+  }
   const data = showPrice ? mergePrice(base, priceSeries || null) : base;
-  const count = series?.count ?? 0;
+  const count = data.length || series?.count || 0;
   return (
     <Card>
       <CardHeader>
@@ -180,7 +198,7 @@ function MetricChart({
                     orientation="right"
                     stroke="rgba(56,189,248,.85)"
                     fontSize={9}
-                    domain={['auto', 'auto']}
+                    domain={priceDomain || ['auto', 'auto']}
                     tickFormatter={(v) => `$${Number(v).toFixed(0)}`}
                   />
                 )}
@@ -279,7 +297,7 @@ export function DerivativesView() {
   const { defaultTf } = useTradingTimeframes('1h');
   const [symbol, setSymbol] = useState('BTC/USDC');
   const [period, setPeriod] = useState(defaultTf);
-  const [depth, setDepth] = useState('1y');
+  const [depth, setDepth] = useState('3m');
   const [refresh, setRefresh] = useState(false);
   const [showPrice, setShowPrice] = useState(false);
 
@@ -294,6 +312,35 @@ export function DerivativesView() {
   }
   const priceData = filterPriceByDepth(data?.price || null, depthDays);
   const isEnabled = (statusData as any)?.enabled ?? (data as any)?.enabled ?? true;
+
+  // Plage X partagée (min/max timestamps après filtre profondeur)
+  const sharedX = (() => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const s of Object.values(metrics)) {
+      const times = (s as TimeSeries)?.time || [];
+      for (const t of times) {
+        const n = Number(t);
+        if (Number.isFinite(n)) {
+          if (n < lo) lo = n;
+          if (n > hi) hi = n;
+        }
+      }
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { min: null as number | null, max: null as number | null, days: 0 };
+    return { min: lo, max: hi, days: Math.max(0, (hi - lo) / 86400) };
+  })();
+
+  // Domaine Y prix partagé (même échelle droite sur les 4 charts)
+  const sharedPriceDomain = (() => {
+    if (!showPrice || !priceData?.close?.length) return null;
+    const closes = priceData.close.filter((c) => c != null && Number.isFinite(Number(c))).map(Number);
+    if (!closes.length) return null;
+    const mn = Math.min(...closes);
+    const mx = Math.max(...closes);
+    const pad = (mx - mn) * 0.05 || mx * 0.01;
+    return [mn - pad, mx + pad] as [number, number];
+  })();
 
   const handleForceRefresh = async () => {
     setRefresh(true);
@@ -336,7 +383,7 @@ export function DerivativesView() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-dim block mb-1.5">Période / TF</label>
+            <label className="text-xs text-dim block mb-1.5">Timeframe</label>
             <TimeframeButtons value={period} onChange={setPeriod} size="sm" />
           </div>
           <div>
@@ -400,7 +447,20 @@ export function DerivativesView() {
         </Card>
       )}
 
-      {/* 4 metric charts — overlay prix sur chaque chart (parité Jinja2) */}
+      {/* Info profondeur réelle (souvent ~2 mois si cache court) */}
+      {!isLoading && !isError && sharedX.days > 0 && (
+        <p className="text-[11px] text-dim">
+          Plage affichée : ~{sharedX.days.toFixed(0)} j de données
+          {depthDays != null && sharedX.days + 5 < depthDays
+            ? ` (demandé ${DEPTH_OPTIONS.find((d) => d.id === depth)?.label} — cache plus court)`
+            : ''}
+          {showPrice && sharedPriceDomain
+            ? ` · échelle prix partagée $${sharedPriceDomain[0].toFixed(0)}–$${sharedPriceDomain[1].toFixed(0)}`
+            : ''}
+        </p>
+      )}
+
+      {/* 4 metric charts — même plage X + prix Y partagé */}
       {!isLoading && !isError && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <MetricChart
@@ -413,6 +473,9 @@ export function DerivativesView() {
             referenceLabel="0"
             priceSeries={priceData}
             showPrice={showPrice}
+            priceDomain={sharedPriceDomain}
+            xTickMin={sharedX.min}
+            xTickMax={sharedX.max}
           />
           <MetricChart
             title="Open Interest"
@@ -422,6 +485,9 @@ export function DerivativesView() {
             unit=""
             priceSeries={priceData}
             showPrice={showPrice}
+            priceDomain={sharedPriceDomain}
+            xTickMin={sharedX.min}
+            xTickMax={sharedX.max}
           />
           <MetricChart
             title="Long/Short Ratio"
@@ -433,6 +499,9 @@ export function DerivativesView() {
             referenceLabel="1.0"
             priceSeries={priceData}
             showPrice={showPrice}
+            priceDomain={sharedPriceDomain}
+            xTickMin={sharedX.min}
+            xTickMax={sharedX.max}
           />
           <MetricChart
             title="Taker Buy/Sell Ratio"
@@ -444,6 +513,9 @@ export function DerivativesView() {
             referenceLabel="1.0"
             priceSeries={priceData}
             showPrice={showPrice}
+            priceDomain={sharedPriceDomain}
+            xTickMin={sharedX.min}
+            xTickMax={sharedX.max}
           />
         </div>
       )}

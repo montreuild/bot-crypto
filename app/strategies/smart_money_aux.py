@@ -134,7 +134,9 @@ class _AnalysisMixin:
         return res, aux
 
     def min_bars_required(self, params: dict = None) -> int:
-        return 220
+        # 100 : laisse passer les LTF Yahoo (~88 barres) pour signaux récents ;
+        # le backtest long terme utilise toujours des historiques plus riches.
+        return 100
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         try:
