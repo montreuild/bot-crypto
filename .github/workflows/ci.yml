@@ -28,7 +28,9 @@ jobs:
           python-version: "3.14"
           cache: pip
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        # requirements-dev.txt porte pytest et l'outillage depuis qu'ils ont
+        # été sortis de l'image de production (cf. Dockerfile, cible `test`).
+        run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Run tests
         run: python -m pytest tests/ -q --tb=short -m "not slow"
 
@@ -47,7 +49,9 @@ jobs:
       # Toute exception future doit porter un vrai identifiant PYSEC/GHSA et la
       # raison de son acceptation.
       - name: Audit dependencies for CVEs
-        run: pip-audit -r requirements.txt
+        # Les deux fichiers : une CVE dans l'outillage de dev reste une CVE du
+        # dépôt, même si elle ne part pas en production.
+        run: pip-audit -r requirements.txt -r requirements-dev.txt
 
   frontend:
     runs-on: ubuntu-latest

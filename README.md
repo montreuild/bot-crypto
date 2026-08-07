@@ -63,6 +63,9 @@ source .venv/bin/activate      # Linux / macOS
 
 # 3. Installer les dépendances
 pip install -r requirements.txt
+# Pour développer (pytest, ruff, mypy, black) — inutile pour seulement faire
+# tourner le bot ; ces paquets sont hors de l'image Docker de production :
+# pip install -r requirements-dev.txt
 
 # 4. Éditer la configuration
 cp config.yaml config.yaml.example  # Garder une trace

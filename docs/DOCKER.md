@@ -117,12 +117,28 @@ Voir `.env.example`. Principales :
 
 ## Images
 
-| Service | Dockerfile | Base |
-|---------|------------|------|
-| `api` | `Dockerfile` | `python:3.14-slim-bookworm` |
-| `web` | `Dockerfile.frontend` | `node:22` → standalone Next.js |
+| Service | Dockerfile | Cible | Base | Taille |
+|---------|------------|-------|------|--------|
+| `api` | `Dockerfile` | `runtime` | `python:3.14-slim-bookworm` | ~797 Mo |
+| `web` | `Dockerfile.frontend` | — | `node:22-alpine` → standalone Next.js | ~232 Mo |
+| `test` | `Dockerfile` | `test` | `runtime` + `requirements-dev.txt` | ~870 Mo |
 
 Utilisateur non-root `bot` / `nextjs` (uid 10001).
+
+### Étages du `Dockerfile`
+
+`builder` porte `build-essential` et construit le venv ; `runtime` ne reçoit
+que ce venv. Les compilateurs (307 Mo) ne partent donc pas en production, tout
+en restant disponibles au build pour une dépendance sans wheel cp314.
+
+`test` repart de `runtime` et n'ajoute que l'outillage — on teste ainsi
+exactement ce qui est déployé. Il produit `crypto-bot:test`, **jamais**
+`crypto-bot:api` : sans ce tag distinct, lancer les tests écraserait l'image de
+production par une variante contenant pytest, ruff et mypy.
+
+> Les tailles sont mesurées dans le conteneur (`du -sx /`). `docker images`
+> donne ici des chiffres incohérents d'une image à l'autre — ne pas s'y fier
+> pour comparer.
 
 ## Dépannage
 

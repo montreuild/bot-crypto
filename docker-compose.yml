@@ -20,6 +20,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Image de production : sans compilateurs ni outillage de dev.
+      target: runtime
     image: crypto-bot:api
     container_name: crypto-bot-api
     ports:
@@ -81,7 +83,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: crypto-bot:api
+      # Cible `test` : repart de `runtime` et n'ajoute que pytest/ruff/mypy.
+      # Tag distinct — sans quoi l'outillage de dev écraserait `crypto-bot:api`,
+      # l'image de production.
+      target: test
+    image: crypto-bot:test
     env_file:
       - .env
     environment:

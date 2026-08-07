@@ -6,6 +6,64 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 📦 Images Docker : −348 Mo sur l'API, −65 Mo sur le front
+
+Mesuré à l'intérieur des conteneurs (`du -sx /`), la seule mesure fiable :
+`docker images` donnait des chiffres incohérents entre les deux images.
+
+| Image | Avant | Après |
+|---|---|---|
+| `crypto-bot:api` | 1 145 Mo | **797 Mo** (−30 %) |
+| `crypto-bot:web` | 297 Mo | **232 Mo** (−22 %) |
+
+**API — `build-essential` ne part plus en production (−307 Mo).** Le Dockerfile
+était mono-étage : gcc, g++ et les en-têtes de développement installés pour
+compiler d'éventuelles roues sans wheel restaient dans l'image finale, alors
+qu'un conteneur de trading ne compile rien. Le multi-stage garde ces outils
+dans l'étage `builder` — la compilation reste donc possible pour une dépendance
+sans wheel cp314 — et ne transmet à `runtime` que le venv construit.
+
+**API — l'outillage de développement quitte l'image (−70 Mo).** `mypy`
+(15 Mo), `pytest` et ses plugins, `black`, `ruff` et leurs transitives
+(`pygments`…) étaient dans `requirements.txt`, donc installés dans l'image de
+production. Ils vivent désormais dans `requirements-dev.txt`. Rien ne se casse :
+la cible `test` du Dockerfile les réinstalle par-dessus `runtime`, et la CI
+installe les deux fichiers (l'audit CVE aussi — une faille dans l'outillage
+reste une faille du dépôt).
+
+> Le profil compose `test` produit maintenant `crypto-bot:test`, et non plus
+> `crypto-bot:api`. Sans ce tag distinct, lancer les tests écrasait l'image de
+> production avec une variante contenant pytest.
+
+**Front — base Alpine (−65 Mo).** Les trois étages passent à `node:22-alpine`,
+pas seulement le `runner` : le bundle `standalone` embarque des modules natifs
+(sharp) et les compiler sous glibc pour les exécuter sous musl produirait un
+binaire illisible. Le gain reste modeste parce que c'est le binaire Node
+(~160 Mo) qui domine, pas la distribution.
+
+Le reste des 797 Mo est incompressible sans toucher aux fonctionnalités :
+polars (123 Mo), scipy (139 Mo, exigé par LightGBM), ccxt (69 Mo), numpy
+(70 Mo), pandas + curl_cffi (112 Mo, exigés par `yfinance` et
+`exchange_calendars`, donc par le support actions).
+
+### 🧬 Les recettes ML manquaient à l'image — l'entraînement était cassé
+
+Trouvé en vérifiant la suite de tests dans le conteneur. `recipes/` est un
+répertoire **versionné** (7 fichiers) que `.dockerignore` n'exclut pas : il
+n'était simplement jamais copié dans l'image. Or `app/ml/recipe.py::load_recipe`
+et `features_catalog` le lisent.
+
+Conséquence en production : `POST /api/ml/train` — et donc le dialog
+« Entraîner » de l'onglet ML du Laboratoire — échouait sur « recette absente ».
+Le défaut était invisible hors Docker, où le répertoire est là.
+
+Deux fichiers manquaient aussi à l'image de test, ce qui interrompait la
+**collecte** pytest (deux erreurs d'import, pas deux échecs isolés — toute la
+suite s'arrêtait) : `scripts/audit_param_space.py` et `frontend/next.config.mjs`.
+
+Bilan dans le conteneur : `docker compose --profile test run --rm test` passe
+de « collecte interrompue » à **1 596 tests verts, 0 échec**.
+
 ### 🔌 Le temps réel remarche : une seule origine, un seul chemin d'auth
 
 Le WebSocket était **mort pour toute installation standard**, et personne ne

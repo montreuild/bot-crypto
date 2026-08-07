@@ -137,8 +137,10 @@ py -3.14 -m venv .venv
 # Si erreur "scripts désactivés", autorisez temporairement :
 # Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
-# Dépendances
+# Dépendances (runtime)
 pip install -r requirements.txt
+# Outillage de développement — nécessaire pour lancer pytest, ruff ou mypy :
+pip install -r requirements-dev.txt
 
 # Générer WEB_API_KEY
 python -c "import secrets; print(f'WEB_API_KEY={secrets.token_hex(32)}')" > .env
