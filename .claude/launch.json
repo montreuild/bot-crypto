@@ -17,6 +17,22 @@
       "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
       "port": 3000,
       "url": "http://127.0.0.1:3000"
+    },
+    {
+      "//": "Serveur de PRODUCTION — c'est ce que fait l'image Docker (output standalone). À utiliser pour vérifier ce que `next dev` ne prouve pas : notamment que le rewrite `/ws` proxifie bien l'upgrade WebSocket hors dev. Exige un `npm run build` préalable.",
+      "name": "bot-ui-prod",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend", "run", "start"],
+      "port": 3000,
+      "url": "http://127.0.0.1:3000"
+    },
+    {
+      "//": "Serveur STANDALONE — la commande exacte de l'image Docker (`CMD node server.js`). Exige `npm run build` puis la copie de `public/` et `.next/static/` dans `.next/standalone/`, comme le fait le Dockerfile.",
+      "name": "bot-ui-standalone",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["frontend/.next/standalone/server.js"],
+      "port": 3000,
+      "url": "http://127.0.0.1:3000"
     }
   ]
 }
