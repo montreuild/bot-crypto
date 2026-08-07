@@ -308,7 +308,7 @@ LiveTrader(PositionMixin, BalanceSyncMixin, AutoOptMixin, HealthMixin)
 Composés (instances, pas des mixins) :
   OHLCVCache       : cache multi-TF des DataFrames OHLCV (TTL par TF)
   SignalPipeline    : collecte + ranking des signaux (thread de scoring borné)
-  CapitalAllocator  : allocation du capital par slot `strategy::tf::symbol`
+  RiskLedger        : risque et notionnel engagés sous enveloppe (S12)
 ```
 
 ### Boucle `_cycle()` (un tour = un scan)
@@ -389,18 +389,33 @@ perdant, et n'entre jamais dans la file de ré-optimisation. Le défaut est `[]`
 (liste vide) : 15 slots y étaient figés jusqu'en S11. L'ancien nom
 `manual_active` reste lu, déprécié.
 
-### Allocation de capital (`CapitalAllocator`)
+### Comptabilité du risque engagé (`RiskLedger`)
 
-- Budget par slot, en % du capital total ; 3 modes : `equal`, `manual`,
-  `performance` (pondéré par le score du bot).
-- **Shadow allocation** (par défaut) : l'allocateur calcule ce qu'il
-  *ferait* selon le score courant (exposé dans `status.shadow_allocation`)
-  **sans l'appliquer** — le budget réel ne bouge qu'au rééquilibrage
-  manuel/planifié, sauf `continuous_allocation` activé.
-- Rééquilibrage planifié (`daily`/`weekly`/`never`, `rebalance_if_due`) ou
-  forcé (`POST /api/slots/rebalance`).
-- Persistance : `capital_allocator.slot_budgets` dans `config.yaml`, écrite
-  via le callback `_persist_allocator_budgets` (verrou unique `core/yaml_io`).
+`app/core/risk_ledger.py` — instancié dans `LiveTrader.__init__` sous
+`self.ledger`.
+
+- **Réservation avant l'ordre**, pas budget par slot : `reserve(env, risk=,
+  notional=, ...)` est atomique sous `RLock`, et la réservation précède
+  l'envoi de l'ordre. `release` la rend à la clôture.
+- Trois axes de comptage simultanés — **venue**, **symbole** et **slot**
+  `strategy::tf::symbol` — chacun plafonné par l'enveloppe applicable
+  (`app/core/risk_envelope.py`).
+- **Aucune tolérance de dépassement.** `_FP_EPS = 1e-9` est un garde de bruit
+  flottant, pas une marge : risque réservé et plafond sont calculés par deux
+  chemins différents, et à l'égalité exacte le dernier ulp suffisait à refuser
+  un trade conforme.
+
+> ⚠ **`CapitalAllocator` n'existe plus** (supprimé en `e0306c2`, S12 étape
+> 8/8). Avec lui disparaissent le budget par slot en % du capital, les 3 modes
+> `equal`/`manual`/`performance`, la *shadow allocation*, le rééquilibrage
+> planifié (`rebalance_if_due`, `POST /api/slots/rebalance`) et la clé de
+> persistance `capital_allocator.slot_budgets`. Les anciens garde-fous de
+> capacité (`max_pyramiding`, `max_positions`, corrélation directionnelle)
+> tombent avec : le budget de risque par symbole les rend inutiles — *n* bots
+> sur un même symbole ne peuvent jamais perdre plus que le budget de ce
+> symbole, quel que soit leur nombre.
+>
+> Conception : `docs/CONCEPTION_ENVELOPPES_DE_RISQUE.md` §2.2 et §4.2.
 
 ---
 

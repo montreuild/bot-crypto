@@ -116,9 +116,9 @@ Voir `docs/audit-externe/AUDIT_TECHNIQUE_BOT_CRYPTO_V12.md` § Sprint 1.
 
 | ID | Tâche | SP | Statut |
 |---|---|---|---|
-| S4-01 | Verrou sur `CapitalAllocator` | 2 | ⏳ Reporté |
+| S4-01 | Verrou sur `CapitalAllocator` | 2 | ❌ Sans objet (S12) — `CapitalAllocator` supprimé en `e0306c2`, remplacé par `RiskLedger` dont `reserve`/`release` sont atomiques sous `RLock` |
 | S4-02 | Transaction atomique `save_trade` + `update_daily_stats` | 2 | ⏳ Reporté |
-| S4-03 | Persister stats hebdo allocator en DB | 3 | ✅ Déjà fait (capital_allocator.py `_persist_weekly_stats`) |
+| S4-03 | Persister stats hebdo allocator en DB | 3 | ❌ Sans objet (S12) — était fait dans `capital_allocator.py` `_persist_weekly_stats` ; il n'y a plus de budget hebdo à rééquilibrer sous `RiskLedger` |
 | S4-04 | Vraie mesure de corrélation (matrice rendements) | 3 | ✅ Fait (app/core/correlation_matrix.py) |
 | S4-05 | Trancher allocation — mode `performance` retenu (D5) | 3 | ✅ Fait (décision actée) |
 | S4-06 | Clarifier lifecycle ↔ budgets (cohérence `force_active` ↔ `slot_budgets`) | 2 | ✅ Fait (slot_lifecycle.py warnings) |

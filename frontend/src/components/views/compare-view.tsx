@@ -17,7 +17,7 @@ import { useBacktestSettings } from '@/hooks/use-api';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import {
-  Loader2, Play, Download, BarChart3, XCircle, ArrowUpDown,
+  Loader2, Play, Download, BarChart3, XCircle, Info,
 } from 'lucide-react';
 import {
   LineChart, Line, ResponsiveContainer, XAxis, YAxis,
@@ -25,6 +25,7 @@ import {
 } from 'recharts';
 import type { BacktestResult } from '@/types';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { limitHint } from '@/lib/limit-hint';
 
 const LIMITS = [100, 500, 1000, 2000];
 const STRATEGY_COLORS = [
@@ -41,7 +42,7 @@ const DEFAULT_STRATEGIES = [
 type SortKey =
   | 'strategy' | 'total_trades' | 'win_rate' | 'total_pnl'
   | 'sharpe' | 'max_drawdown' | 'profit_factor'
-  | 'expectancy' | 'best_trade' | 'worst_trade';
+  | 'expectancy' | 'best_trade' | 'worst_trade' | 'equity_final';
 
 interface ResultRow {
   strategy: string;
@@ -54,6 +55,7 @@ interface ResultRow {
   expectancy: number;
   best_trade: number;
   worst_trade: number;
+  equity_final: number | null;
   equity_curve: { time: string; equity: number }[];
   error?: string;
 }
@@ -61,16 +63,18 @@ interface ResultRow {
 type SortDir = 'asc' | 'desc';
 
 const COLUMNS: Array<{ key: SortKey; label: string; numeric: boolean; higherBetter: boolean }> = [
-  { key: 'strategy',       label: 'Stratégie',     numeric: false, higherBetter: true },
-  { key: 'total_trades',   label: 'Trades',        numeric: true,  higherBetter: true },
-  { key: 'win_rate',       label: 'Win Rate',      numeric: true,  higherBetter: true },
-  { key: 'total_pnl',      label: 'PnL Net',       numeric: true,  higherBetter: true },
-  { key: 'sharpe',         label: 'Sharpe',        numeric: true,  higherBetter: true },
-  { key: 'max_drawdown',   label: 'Max DD',        numeric: true,  higherBetter: false },
-  { key: 'profit_factor',  label: 'Profit Factor', numeric: true,  higherBetter: true },
-  { key: 'expectancy',     label: 'Expectancy',    numeric: true,  higherBetter: true },
-  { key: 'best_trade',     label: 'Best Trade',    numeric: true,  higherBetter: true },
-  { key: 'worst_trade',    label: 'Worst Trade',   numeric: true,  higherBetter: true },
+  { key: 'strategy',       label: 'Stratégie',      numeric: false, higherBetter: true },
+  { key: 'total_trades',   label: 'Trades',         numeric: true,  higherBetter: true },
+  { key: 'win_rate',       label: 'Win Rate',       numeric: true,  higherBetter: true },
+  { key: 'total_pnl',      label: 'PnL Net',        numeric: true,  higherBetter: true },
+  { key: 'sharpe',         label: 'Sharpe',         numeric: true,  higherBetter: true },
+  { key: 'max_drawdown',   label: 'Max DD',         numeric: true,  higherBetter: false },
+  { key: 'profit_factor',  label: 'Profit Factor',  numeric: true,  higherBetter: true },
+  { key: 'expectancy',     label: 'Expectancy',     numeric: true,  higherBetter: true },
+  { key: 'best_trade',     label: 'Best Trade',     numeric: true,  higherBetter: true },
+  { key: 'worst_trade',    label: 'Worst Trade',    numeric: true,  higherBetter: true },
+  // CMP-002 — colonne Equity Finale (alias backend `final_equity`/`equity_final`).
+  { key: 'equity_final',   label: 'Equity Finale',  numeric: true,  higherBetter: true },
 ];
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -85,6 +89,7 @@ function fmtCell(key: SortKey, value: any): string {
     case 'expectancy':
     case 'best_trade':
     case 'worst_trade':
+    case 'equity_final':
       return (key !== 'total_pnl' && Number(value) >= 0 ? '+' : '') + formatUSD(Number(value));
     case 'sharpe': return Number(value).toFixed(2);
     case 'max_drawdown': return `${Number(value).toFixed(2)}%`;
@@ -100,6 +105,7 @@ function cellColor(key: SortKey, value: any): string {
     case 'total_pnl':
     case 'expectancy':
     case 'best_trade':
+    case 'equity_final':
       return Number(value) >= 0 ? 'text-emerald-400' : 'text-red-400';
     case 'worst_trade': return Number(value) >= 0 ? 'text-emerald-400' : 'text-red-400';
     case 'max_drawdown': return 'text-red-400';
@@ -128,6 +134,19 @@ export function CompareView() {
 
   const toggleStrategy = (s: string) => {
     setSelected((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
+  };
+
+  // CMP-004 — raccourcis de sélection : Toutes / Aucune / Omnibus (sélectionne
+  // uniquement les stratégies `opus_omnibus*` si présentes, sinon rien).
+  const selectAll = () => setSelected(availableStrategies.slice());
+  const selectNone = () => setSelected([]);
+  const selectOmnibus = () => {
+    const omnibus = availableStrategies.filter((s: string) => s.startsWith('opus_omnibus'));
+    if (omnibus.length === 0) {
+      toast.info('Aucune stratégie `opus_omnibus*` détectée dans la liste disponible.');
+      return;
+    }
+    setSelected(omnibus);
   };
 
   const handleCompare = async () => {
@@ -159,6 +178,8 @@ export function CompareView() {
             expectancy: bt.expectancy ?? 0,
             best_trade: bt.best_trade ?? 0,
             worst_trade: bt.worst_trade ?? 0,
+            // CMP-002 — alias backend `final_equity` ou `equity_final`.
+            equity_final: bt.final_equity ?? bt.equity_final ?? null,
             equity_curve: bt.equity_curve || [],
           };
         }
@@ -167,7 +188,7 @@ export function CompareView() {
           strategy,
           total_trades: 0, win_rate: 0, total_pnl: 0, sharpe: 0,
           max_drawdown: 0, profit_factor: 0, expectancy: 0,
-          best_trade: 0, worst_trade: 0,
+          best_trade: 0, worst_trade: 0, equity_final: null,
           equity_curve: [],
           error: reason,
         };
@@ -232,6 +253,17 @@ export function CompareView() {
     return copy;
   }, [rows, sortKey, sortDir]);
 
+  // CMP-003 — rang par PnL décroissant (indépendant du tri courant). Les
+  // stratégies en erreur ont un PnL de 0 et se retrouvent en fin de classement.
+  const rankByStrategy = useMemo(() => {
+    const ranked = [...rows]
+      .filter((r) => !r.error)
+      .sort((a, b) => (b.total_pnl ?? 0) - (a.total_pnl ?? 0));
+    const map: Record<string, number> = {};
+    ranked.forEach((r, i) => { map[r.strategy] = i + 1; });
+    return map;
+  }, [rows]);
+
   // Best value per numeric column
   const bestValues = useMemo(() => {
     const map: Record<string, number> = {};
@@ -269,6 +301,13 @@ export function CompareView() {
     }
   };
 
+  // CMP-001 — hint conversion bougies → durée (partagé avec le Lab).
+  const limHint = limitHint(limit, timeframe);
+  const limHintTone =
+    limHint.tone === 'green' ? 'text-emerald-400'
+      : limHint.tone === 'amber' ? 'text-amber-400'
+        : 'text-rose-400';
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -277,6 +316,16 @@ export function CompareView() {
         <p className="text-sm text-muted mt-1">
           Comparez côte à côte plusieurs stratégies sur la même fenêtre de données
         </p>
+      </div>
+
+      {/* CMP-005 — carte d'intro. Signale la complémentarité avec l'Audit OOS
+          (robustesse out-of-sample) pour éviter de confondre les deux vues. */}
+      <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-3 py-2 text-xs text-cyan-200 flex items-start gap-2">
+        <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+        <div>
+          Comparatif de {availableStrategies.length} stratégies sur la même fenêtre de données.
+          Complémentaire de l&apos;Audit OOS qui mesure la robustesse out-of-sample.
+        </div>
       </div>
 
       {/* Config form */}
@@ -305,14 +354,19 @@ export function CompareView() {
             </div>
             <div>
               <label className="text-xs text-dim block mb-1.5">Bougies</label>
-              <select
+              {/* CMP-001 — input libre (min 200, max 50000) à la place du select
+                  limité à 4 valeurs. Le hint `limitHint` donne la durée couverte. */}
+              <input
                 aria-label="Bougies"
+                type="number"
+                min={200}
+                max={50000}
+                step={100}
                 value={limit}
-                onChange={(e) => setLimit(Number(e.target.value))}
-                className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm"
-              >
-                {LIMITS.map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
+                onChange={(e) => setLimit(Math.max(200, Math.min(50000, Number(e.target.value) || 200)))}
+                className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+              />
+              <p className={cn('text-[10px] mt-1', limHintTone)}>{limHint.text}</p>
             </div>
             <div className="flex items-end">
               <Button
@@ -325,6 +379,19 @@ export function CompareView() {
                 Comparer
               </Button>
             </div>
+          </div>
+
+          {/* CMP-004 — raccourcis de sélection en haut des chips. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={selectAll} className="h-7 text-xs">
+              Toutes ({availableStrategies.length})
+            </Button>
+            <Button size="sm" variant="outline" onClick={selectNone} className="h-7 text-xs">
+              Aucune
+            </Button>
+            <Button size="sm" variant="outline" onClick={selectOmnibus} className="h-7 text-xs">
+              Omnibus
+            </Button>
           </div>
 
           {/* Strategy chips */}
@@ -389,6 +456,10 @@ export function CompareView() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs text-dim border-b border-border">
+                    {/* CMP-003 — colonne `#` (rang par PnL desc, indépendant du tri). */}
+                    <th className="p-3 font-medium text-right whitespace-nowrap" title="Rang par PnL décroissant (indépendant du tri)">
+                      #
+                    </th>
                     {COLUMNS.map((col) => {
                       const isSorted = sortKey === col.key;
                       return (
@@ -402,7 +473,13 @@ export function CompareView() {
                         >
                           <span className="inline-flex items-center gap-1">
                             {col.label}
-                            <ArrowUpDown className={cn('w-3 h-3', isSorted ? 'text-primary-400' : 'text-dim/50')} />
+                            {/* CMP-005 — icône de tri explicite ▲/▼ au lieu de
+                                la flèche générique ArrowUpDown ambigüe. */}
+                            {isSorted && (
+                              <span className="text-primary-400">
+                                {sortDir === 'asc' ? '▲' : '▼'}
+                              </span>
+                            )}
                           </span>
                         </th>
                       );
@@ -412,8 +489,13 @@ export function CompareView() {
                 <tbody>
                   {sortedRows.map((r, idx) => {
                     const color = STRATEGY_COLORS[selected.indexOf(r.strategy) % STRATEGY_COLORS.length];
+                    const rank = rankByStrategy[r.strategy];
                     return (
                       <tr key={`${r.strategy}-${idx}`} className="border-b border-border/30 hover:bg-card-hover">
+                        {/* CMP-003 — rang par PnL. */}
+                        <td className="p-3 text-right font-mono text-xs text-muted">
+                          {rank != null ? `#${rank}` : '—'}
+                        </td>
                         {COLUMNS.map((col) => {
                           const v = (r as any)[col.key];
                           const isBest = col.numeric

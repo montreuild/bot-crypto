@@ -9,6 +9,11 @@
  *
  * ⚠ `/models` (registre versionné, gate de promotion) reste une page à part
  * entière : elle n'est pas dans le plan de fusion. L'onglet y renvoie.
+ *
+ * Sprint 4 (ML specs) — l'optimiseur ML est désormais intégré nativement
+ * (`<OptimizerView filterMl />`). Le renvoi vers `/lab?tab=optimizer` est
+ * supprimé : l'utilisateur peut lancer et appliquer une optimisation ML
+ * directement depuis l'onglet ML.
  */
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn, timeAgo, formatDateTime } from '@/lib/utils';
 import { useMLStrategyInfo, useCandlesStats } from '@/hooks/use-api';
 import { MLRecipesList } from '@/components/cards/ml-recipes-list';
+import { OptimizerView } from '@/components/views/optimizer-view';
 import {
   Loader2, BrainCircuit, Database, CheckCircle2, XCircle,
   AlertCircle, Cpu,
@@ -225,22 +231,13 @@ export function MLView() {
       {/* S9-F3-US1 — Recettes ML disponibles */}
       <MLRecipesList />
 
-      {/* Info card */}
-      <Card>
-        <CardContent>
-          <div className="flex items-start gap-3 text-sm text-muted">
-            <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold text-foreground mb-1">Lecture seule</p>
-              <p>
-                Cette page est en lecture seule. Les modèles ML sont entraînés et retrainés
-                automatiquement par le backend selon la configuration du scheduler. L&apos;AUC reflète
-                la qualité de discrimination du modèle (0.5 = aléatoire, 1.0 = parfait).
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* ML-001 — Optimiseur ML intégré nativement. `filterMl` restreint
+          les chips aux stratégies ML déclarées dans `/optimize/spaces`,
+          active le label cyan « ⬡ Lancer l'optimisation ML », le warning
+          omnibus (ML-006), le label complet du checkbox `ml_tune_hp`
+          (ML-002), la note Apply « modèle sauvegardé automatiquement »
+          (ML-007) et l'invalidation des queries ML après apply (ML-004). */}
+      <OptimizerView filterMl />
     </div>
   );
 }

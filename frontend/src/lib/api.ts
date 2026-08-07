@@ -81,7 +81,7 @@ type ApiFetchOptions = RequestInit & {
   schema?: { safeParse: (data: unknown) => { success: boolean; data?: unknown; error?: unknown } };
 };
 
-async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Promise<T> {
+export async function apiFetch<T>(endpoint: string, options: ApiFetchOptions = {}): Promise<T> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, base = API_BASE, schema, ...init } = options;
 
   // `Content-Type: application/json` sur une requête sans corps suffit à la

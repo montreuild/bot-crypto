@@ -417,7 +417,35 @@ export interface BacktestResult {
   worst_trade: number;
   trades: BacktestTrade[];
   equity_curve: { time: string; equity: number }[];
-  diagnostics?: Record<string, any>;
+  diagnostics?: BacktestDiagnostics | Record<string, any>;
+  /** BT-010 — panneau ML. Présent seulement pour les stratégies `ml_*`. */
+  ml_info?: BacktestMLInfo | Record<string, any>;
+  /** BT-006 — KPIs par stratégie. */
+  final_equity?: number;
+  /** Alias backend : `final_equity`. */
+  equity_final?: number;
+  buy_and_hold_pnl?: number;
+  buy_and_hold_pct?: number;
+  alpha?: number;
+  /** Walk-Forward, Monte-Carlo, par stratégie. */
+  walk_forward?: any;
+  monte_carlo?: any;
+  /** OHLCV brut pour le chart prix+signaux (BT-001). */
+  ohlcv?: {
+    time: (string | number)[];
+    open: number[];
+    high: number[];
+    low: number[];
+    close: number[];
+    volume?: number[];
+  };
+  /** Métadonnées pour le diagnostic d'intégrité des données. */
+  date_from?: string;
+  date_to?: string;
+  gaps_warning?: string;
+  cost_model?: CostModel;
+  /** Étude vs réel (dual_pass). */
+  runs?: any;
 }
 
 export interface BacktestTrade {
@@ -431,6 +459,78 @@ export interface BacktestTrade {
   pnl_pct: number;
   fees: number;
   reason: string;
+  /** Alias backend : `reason` est le nom backend de `signal_reason`. */
+  signal_reason?: string;
+  /** BT-001 — markers + stop lines. */
+  id?: number | string;
+  bar?: number;
+  exit_bar?: number;
+  setup?: string;
+  setup_v7?: string;
+  exit_reason?: string;
+  score?: number;
+  duration_bars?: number;
+  sl_atr_mult?: number;
+  tp_atr_mult?: number;
+  exit_after_bars?: number;
+  size_factor?: number;
+  regime_lbl?: string;
+  bearish_excess?: number;
+  size?: number;
+  notional?: number;
+  stop?: number;
+  stop_initial?: number;
+  /** Array de {bar, stop} — évolution du trailing. */
+  stop_trail?: Array<{ bar: number; stop: number }>;
+  conditions?: Array<{ label: string; passed: boolean }>;
+  indicators?: Record<string, number>;
+  disable_trailing?: boolean;
+  status?: string;
+  entry_time?: string;
+  exit_time?: string;
+  /** Pour les backtests multi-stratégies — la stratégie du trade. */
+  strategy_name?: string;
+}
+
+/** BT-003 — panneau Diagnostics. */
+export interface BacktestDiagnostics {
+  bars_total?: number;
+  bars_in_position?: number;
+  signals_accepted?: number;
+  /** Alias backend : `signal_accepted` (singulier). */
+  signal_accepted?: number;
+  trades_opened?: number;
+  rejections?: {
+    notional?: number;
+    atr_le_zero?: number;
+  };
+  /** Alias backend : clés plates `rejected_notional` / `rejected_atr_zero`. */
+  rejected_notional?: number;
+  rejected_atr_zero?: number;
+  max_bars_in_position?: number;
+  max_bars_without_signal?: number;
+  /** Alias backend : `max_bars_no_signal`. */
+  max_bars_no_signal?: number;
+  per_strategy?: Array<{
+    strategy: string;
+    evaluated?: number;
+    none?: number;
+    proposed?: number;
+    below_threshold?: number;
+    above_threshold?: number;
+    errors?: number;
+  }>;
+}
+
+/** BT-010 — panneau ML spécifique aux stratégies `ml_*`. */
+export interface BacktestMLInfo {
+  auc?: number;
+  n_features?: number;
+  lookahead?: number;
+  proba_up?: number;
+  model_version?: string;
+  last_train?: string;
+  next_retrain?: string;
 }
 
 // ── Optimizer ───────────────────────────────────────────────────────────────
@@ -457,6 +557,24 @@ export interface OptimizeJob {
     best_oos_trades?: number;
     best_oos_wr?: number;
     best_oos_sharpe?: number;
+    best_oos_dd?: number;
+    best_oos_alpha?: number;
+    overfit?: number;
+    /** Alias backend : `top5` (cf. audit §3.3). */
+    top5?: OptimizeTrial[];
+    /** Frontend-friendly alias. */
+    top_trials?: OptimizeTrial[];
+    /** Bloc consolidé pour la before/after grid (OPT-001).
+     *  Non renvoyé par le backend aujourd'hui — reconstruit côté frontend
+     *  depuis `best_oos_*` si absent. */
+    after?: {
+      trades: number;
+      pnl: number;
+      sharpe: number;
+      win_rate: number;
+      max_drawdown: number;
+      alpha: number;
+    };
     /** Contexte facturé pendant toute l'optimisation (S11) — sans lui, deux
      *  `oos_score` ne sont pas comparables. */
     cost_model?: CostModel;
@@ -465,10 +583,26 @@ export interface OptimizeJob {
   error?: string;
 }
 
+/** OPT-002 — un trial dans le top-5. */
+export interface OptimizeTrial {
+  is_score: number;
+  oos_score: number;
+  final?: number;
+  /** Alias backend : `final_score`. */
+  final_score?: number;
+  oos_pnl: number;
+  oos_wr: number;
+  oos_dd: number;
+  overfit: number;
+  params?: Record<string, any>;
+}
+
 export interface OptimizeSpaces {
   [strategy: string]: {
     params: Record<string, any>;
+    /** Alias backend : `timeframes` = TFs recommandés par la stratégie. */
     timeframes: string[];
+    recommended_tfs?: string[];
     n_combos: number;
     is_ml: boolean;
   };

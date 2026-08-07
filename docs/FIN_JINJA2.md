@@ -117,7 +117,7 @@ indépendantes du frontend. Seules les routes **HTML** sont supprimées :
 
 | Route HTML Jinja2 (à supprimer) | Équivalent Next.js (nouveau) |
 |---|---|
-| `GET /` | `frontend/src/app/portfolio-v2/page.tsx` |
+| `GET /` | `frontend/src/app/portfolio/page.tsx` |
 | `GET /backtest` | `frontend/src/app/lab/page.tsx` (onglet `?tab=backtest`) |
 | `GET /optimizer` | `frontend/src/app/lab/page.tsx` (onglet `?tab=optimizer`) |
 | `GET /ml` | `frontend/src/app/lab/page.tsx` (onglet `?tab=ml`) |
@@ -127,10 +127,10 @@ indépendantes du frontend. Seules les routes **HTML** sont supprimées :
 | `GET /smartgraph` | `frontend/src/app/market/page.tsx` (onglet `?tab=smartgraph`) |
 | `GET /smartreplay` | `frontend/src/app/market/page.tsx` (onglet `?tab=smartreplay`) |
 | `GET /derivatives` | `frontend/src/app/market/page.tsx` (onglet `?tab=derivatives`) |
-| `GET /config` | `frontend/src/app/settings-v2/page.tsx` (onglet `?tab=capital`) |
-| `GET /settings` | `frontend/src/app/settings-v2/page.tsx` (onglet `?tab=capital`) |
-| `GET /portfolio` | `frontend/src/app/portfolio-v2/page.tsx` |
-| `GET /bots` | `frontend/src/app/bots-v2/page.tsx` |
+| `GET /config` | `frontend/src/app/settings/page.tsx` (onglet `?tab=capital`) |
+| `GET /settings` | `frontend/src/app/settings/page.tsx` (onglet `?tab=capital`) |
+| `GET /portfolio` | `frontend/src/app/portfolio/page.tsx` |
+| `GET /bots` | `frontend/src/app/bots/page.tsx` |
 | `GET /audit` | `frontend/src/app/audit/page.tsx` |
 | `GET /audit-log` | `frontend/src/app/audit-log/page.tsx` |
 | `GET /trades` | `frontend/src/app/trades/page.tsx` |
@@ -139,12 +139,23 @@ indépendantes du frontend. Seules les routes **HTML** sont supprimées :
 
 > **Mise à jour S10 et lots de fusion.** Le tableau ci-dessus a été aligné sur
 > l'état réel du code. Les 14 premières routes n'ont plus de page dédiée : leur
-> contenu a été porté dans les 5 pages méta (`portfolio-v2`, `bots-v2`, `lab`,
-> `market`, `settings-v2`) et les anciens fichiers `app/scanner/page.tsx`,
+> contenu a été porté dans les 5 pages méta (`portfolio`, `bots`, `lab`,
+> `market`, `settings`) et les anciens fichiers `app/scanner/page.tsx`,
 > `app/config/page.tsx`, `app/smartgraph/page.tsx`… ont été supprimés. Les 14
 > chemins sont désormais des **redirections 308** déclarées dans
 > `frontend/next.config.mjs`, et non plus des 307 comme le prévoyait le plan
 > initial de cette note.
+>
+> **Mise à jour S11.** Les pages méta ont perdu le suffixe `-v2` (commit
+> `60b9984`) : les chemins canoniques sont `frontend/src/app/{portfolio,bots,
+> settings}/page.tsx`. Les URLs `-v2` restent servies en 308 vers la page sans
+> suffixe. Le tableau ci-dessus cite désormais les chemins réels.
+>
+> **Mise à jour 08/2026.** Le Laboratoire compte un 6ᵉ onglet, `?tab=batch`
+> (*Multi-TF*) : il n'a pas d'ancêtre Jinja2, c'est l'ancien `replay-view`
+> batch multi-TF déplacé là quand `?tab=replay` est devenu le replay
+> interactif bougie-par-bougie (cf. `docs/SPECS_JINJA2_VS_NEXT_MARCHE_LAB.md`
+> §8).
 >
 > Les 5 dernières routes (`/audit`, `/audit-log`, `/trades`, `/models`,
 > `/data`) restent de vraies pages Next et ne sont pas redirigées.

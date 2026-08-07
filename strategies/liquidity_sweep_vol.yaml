@@ -32,14 +32,15 @@ optimizer_results:
       tp_mult: 2.5
       vol_mult: 1.5
   1h:
-    run_date: '2026-07-01'
-    oos_score: -0.000777
-    params:
-      bb_mult: 2.0
-      ema_len: 150
-      sl_mult: 2.0
-      tp_mult: 3.0
-      vol_mult: 2.0
+    BTC/USDC:
+      run_date: '2026-08-07'
+      oos_score: 0.500099
+      params:
+        ema_len: 200
+        bb_mult: 2.2
+        vol_mult: 2.0
+        sl_mult: 2.0
+        tp_mult: 3.0
   2h:
     run_date: '2026-07-01'
     oos_score: 0.627852

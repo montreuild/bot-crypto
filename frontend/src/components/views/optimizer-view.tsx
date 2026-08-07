@@ -9,7 +9,8 @@
  * `/lab?tab=optimizer`.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -27,12 +28,17 @@ import {
 } from '@/hooks/use-api';
 import {
   Play, Loader2, CheckCircle2, XCircle, Trash2, StopCircle,
-  Sparkles, Cpu, Layers, Activity, Zap,
+  Sparkles, Cpu, Layers, Activity, Zap, ChevronDown, ChevronRight, Info,
 } from 'lucide-react';
 import type { OptimizeJob, OptimizeSpaces } from '@/types';
 import { CostModelCard } from '@/components/cards/cost-model-card';
+import { BeforeAfterGrid } from '@/components/cards/before-after-grid';
+import { TopTrialsTable } from '@/components/tables/top-trials-table';
+import { OptimizerWarnings } from '@/components/cards/optimizer-warnings';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { isOosHint } from '@/lib/limit-hint';
+import { normalizeBaseline, deriveAfter, normalizeTopTrials } from '@/lib/backend-normalizers';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -57,10 +63,18 @@ const STATUS_LABEL: Record<string, string> = {
 
 function LiveProgress({ job }: { job: OptimizeJob }) {
   const [live, setLive] = useState<Partial<OptimizeJob> | null>(null);
+  // OPT-006 — pour l'ETA on a besoin du timestamp du premier trial reçu.
+  // Sans lui, on ne saurait pas combien de temps a pris chaque trial.
+  const firstTrialAtRef = useRef<number | null>(null);
+  const firstTrialDoneRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (job.status !== 'running') {
       setLive(null);
+      // Reset des refs à la fermeture pour qu'un éventuel second run reparte
+      // d'un ETA vierge.
+      firstTrialAtRef.current = null;
+      firstTrialDoneRef.current = null;
       return;
     }
     const url = api.optimizeStreamUrl(job.job_id);
@@ -89,6 +103,24 @@ function LiveProgress({ job }: { job: OptimizeJob }) {
   const nTrials = live?.n_trials ?? job.n_trials ?? 0;
   const isRunning = (live?.status ?? job.status) === 'running';
 
+  // OPT-006 — ETA = (nTrials - trialsDone) * avg_trial_duration.
+  // avg_trial_duration = (now - firstTrialAt) / (trialsDone - firstTrialDone).
+  // On cache le timestamp du premier trial vu pour la première fois ; on
+  // ignore les 5 premières secondes (warmup) pour ne pas afficher un ETA
+  // erratique sur 1-2 trials.
+  let etaText: string | null = null;
+  const startTs = job.started_at ? job.started_at * 1000 : null;
+  const elapsedMs = startTs ? Date.now() - startTs : 0;
+  if (isRunning && trialsDone > 0 && elapsedMs > 5000 && nTrials > 0) {
+    const avgPerTrialMs = elapsedMs / Math.max(1, trialsDone);
+    const remainingMs = (nTrials - trialsDone) * avgPerTrialMs;
+    if (remainingMs < 60_000) {
+      etaText = `~${Math.max(1, Math.ceil(remainingMs / 1000))}s restant`;
+    } else {
+      etaText = `~${Math.ceil(remainingMs / 60_000)}min restant`;
+    }
+  }
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-xs">
@@ -99,7 +131,10 @@ function LiveProgress({ job }: { job: OptimizeJob }) {
         <span className="text-muted">
           Best score: <span className="font-mono text-primary-400">{bestScore.toFixed(4)}</span>
         </span>
-        <span className="font-mono text-muted">{progress.toFixed(1)}%</span>
+        <span className="font-mono text-muted">
+          {progress.toFixed(1)}%
+          {etaText && <span className="ml-2 text-amber-400">{etaText}</span>}
+        </span>
       </div>
       <div className="h-1.5 bg-card-hover rounded-full overflow-hidden">
         <div
@@ -169,15 +204,42 @@ function ParamSpaceTable({ spaces }: { spaces: OptimizeSpaces }) {
 
 // ── Job card ────────────────────────────────────────────────────────────────
 
-function JobCard({ job }: { job: OptimizeJob }) {
+function JobCard({
+  job,
+  defaultExpanded,
+  filterMl = false,
+}: {
+  job: OptimizeJob;
+  defaultExpanded?: boolean;
+  /** ML-004/ML-007 — mode ML : le tooltip Apply mentionne l'entraînement du
+   *  modèle, et la note « modèle sauvegardé automatiquement » s'affiche près
+   *  du bouton Apply. En cas de succès, on invalide aussi les queries
+   *  `mlInfo` et `ml-recipes` pour que la StrategyTable du tab ML se
+   *  rafraîchisse (le backend réentraîne le modèle pendant l'apply). */
+  filterMl?: boolean;
+}) {
   const apply = useApplyOptimize();
   const cancel = useCancelOptimize();
   const del = useDeleteOptimizeJob();
+  const qc = useQueryClient();
+
+  // OPT-007 — carte repliable : dépliée par défaut pour les jobs en cours,
+  // repliée pour les jobs terminés/annulés en erreur (le verdict OOS tient
+  // en 5 KPIs dans l'en-tête ; le détail est volumineux).
+  const [expanded, setExpanded] = useState<boolean>(defaultExpanded ?? job.status === 'running');
 
   const handleApply = async () => {
     try {
       await apply.mutateAsync({ jobId: job.job_id });
       toast.success('Paramètres appliqués au slot');
+      // ML-004 — en mode ML, l'apply déclenche aussi l'entraînement du modèle
+      // côté backend. On invalide les queries consommées par le tab ML pour
+      // que la StrategyTable (statut Entraîné/Non entraîné, AUC) se
+      // rafraîchisse sans attendre le prochain poll de 30 s.
+      if (filterMl) {
+        qc.invalidateQueries({ queryKey: ['mlInfo'] });
+        qc.invalidateQueries({ queryKey: ['ml-recipes'] });
+      }
     } catch (e: any) {
       toast.error(`Apply failed: ${e.message}`);
     }
@@ -206,101 +268,162 @@ function JobCard({ job }: { job: OptimizeJob }) {
   const isDone = job.status === 'done';
   const result = job.result || {};
 
+  // OPT-001/002 — détail avant/après + top-5 trials. Reconstruits via les
+  // normalizers car le backend ne renvoie pas toujours le bloc `after` (cf.
+  // audit §3.2) et `top5` est l'alias legacy de `top_trials`.
+  const baseline = normalizeBaseline(job.baseline);
+  const after = deriveAfter(job);
+  const trials = normalizeTopTrials(job.result);
+  const baselineSource = (job.baseline as any)?.baseline_source ?? (job.baseline as any)?.source;
+
   return (
     <Card className="space-y-3">
       <CardContent className="space-y-3">
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="flex-1 min-w-0 text-left"
+            aria-expanded={expanded}
+            aria-label={expanded ? 'Réduire la carte job' : 'Déplier la carte job'}
+          >
             <div className="flex items-center gap-2">
+              {expanded
+                ? <ChevronDown className="w-3.5 h-3.5 text-muted flex-shrink-0" />
+                : <ChevronRight className="w-3.5 h-3.5 text-muted flex-shrink-0" />}
               <Cpu className="w-4 h-4 text-primary-400 flex-shrink-0" />
               <span className="font-mono text-sm font-semibold truncate">{job.strategy}</span>
               <span className="text-xs text-muted">{job.timeframe}</span>
               {job.symbol && <span className="text-xs text-dim">· {job.symbol}</span>}
             </div>
-            <div className="text-[10px] text-dim mt-1 font-mono">
+            <div className="text-[10px] text-dim mt-1 font-mono pl-6">
               {job.job_id} · {job.method} · started {job.started_at ? timeAgoShort(job.started_at) : '—'}
             </div>
-          </div>
+          </button>
           <Badge variant={variant}>{STATUS_LABEL[job.status] || job.status}</Badge>
         </div>
 
-        {/* Progress */}
+        {/* Progress — toujours visible (même replié, l'utilisateur voit si ça tourne). */}
         <LiveProgress job={job} />
 
-        {/* Result */}
-        {isDone && result.best_params && (
-          <div className="rounded-lg bg-card-hover border border-border p-3 space-y-2">
-            <div className="flex items-center gap-2 text-xs text-emerald-400 font-semibold">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Résultat OOS
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-              <Metric label="Score" value={(result.best_oos_score ?? 0).toFixed(4)} />
-              <Metric label="PnL" value={formatUSD(result.best_oos_pnl ?? 0)} />
-              <Metric label="Trades" value={String(result.best_oos_trades ?? 0)} />
-              <Metric label="Win rate" value={`${((result.best_oos_wr ?? 0) * 100).toFixed(1)}%`} />
-              <Metric label="Sharpe" value={(result.best_oos_sharpe ?? 0).toFixed(2)} />
-              <Metric label="Apply" value={job.applied ? 'Oui' : 'Non'} />
-            </div>
-          </div>
-        )}
+        {expanded && (
+          <>
+            {/* Result */}
+            {isDone && result.best_params && (
+              <div className="rounded-lg bg-card-hover border border-border p-3 space-y-2">
+                <div className="flex items-center gap-2 text-xs text-emerald-400 font-semibold">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Résultat OOS
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                  <Metric label="Score" value={(result.best_oos_score ?? 0).toFixed(4)} />
+                  <Metric label="PnL" value={formatUSD(result.best_oos_pnl ?? 0)} />
+                  <Metric label="Trades" value={String(result.best_oos_trades ?? 0)} />
+                  <Metric label="Win rate" value={`${((result.best_oos_wr ?? 0) * 100).toFixed(1)}%`} />
+                  <Metric label="Sharpe" value={(result.best_oos_sharpe ?? 0).toFixed(2)} />
+                  <Metric label="Apply" value={job.applied ? 'Oui' : 'Non'} />
+                </div>
+              </div>
+            )}
 
-        {/* Contexte facturé pendant l'optimisation : un `oos_score` n'est pas
-            comparable d'un run à l'autre sans lui — deux scores très différents
-            peuvent ne différer que par la venue résolue (spot vs margin). */}
-        {isDone && result.cost_model && <CostModelCard model={result.cost_model} />}
+            {/* OPT-003 — warnings anti-surapprentissage (overfit, OOS trades, score). */}
+            {isDone && (
+              <OptimizerWarnings
+                overfit={result.overfit}
+                oosTrades={result.best_oos_trades}
+                oosScore={result.best_oos_score}
+              />
+            )}
 
-        {/* Error */}
-        {job.status === 'error' && job.error && (
-          <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded p-2">
-            {job.error}
-          </div>
+            {/* OPT-001 — Avant/Après (baseline vs OOS après optimisation). */}
+            {isDone && (baseline || after) && (
+              <BeforeAfterGrid
+                baseline={baseline}
+                baselineSource={baselineSource}
+                after={after}
+              />
+            )}
+
+            {/* OPT-002 — Top-5 trials + best params. */}
+            {isDone && (trials.length > 0 || result.best_params) && (
+              <TopTrialsTable
+                trials={trials}
+                bestParams={result.best_params ?? null}
+              />
+            )}
+
+            {/* Contexte facturé pendant l'optimisation : un `oos_score` n'est pas
+                comparable d'un run à l'autre sans lui — deux scores très différents
+                peuvent ne différer que par la venue résolue (spot vs margin). */}
+            {isDone && result.cost_model && <CostModelCard model={result.cost_model} />}
+
+            {/* Error */}
+            {job.status === 'error' && job.error && (
+              <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded p-2">
+                {job.error}
+              </div>
+            )}
+          </>
         )}
 
         {/* Actions */}
-        <div className="flex gap-2 pt-1 border-t border-border">
-          {isDone && !job.applied && (
-            <Button
-              size="sm"
-              variant="success"
-              onClick={handleApply}
-              disabled={apply.isPending}
-              className="flex-1"
-            >
-              <CheckCircle2 className="w-3 h-3" />
-              Apply
-            </Button>
+        <div className="space-y-2 pt-1 border-t border-border">
+          {/* ML-007 — note « modèle ML sauvegardé automatiquement » près du
+              bouton Apply : rappelle que l'apply n'écrase que les params
+              optimisés (le modèle est géré par le backend). */}
+          {filterMl && isDone && !job.applied && (
+            <p className="text-[10px] text-cyan-300/80 italic">
+              Écrase uniquement les params optimisés — le modèle ML est sauvegardé automatiquement.
+            </p>
           )}
-          {isRunning && (
-            <Button
-              size="sm"
-              variant="danger"
-              onClick={handleCancel}
-              disabled={cancel.isPending}
-              className="flex-1"
-            >
-              <StopCircle className="w-3 h-3" />
-              Annuler
-            </Button>
-          )}
-          {!isRunning && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleDelete}
-              disabled={del.isPending}
-              // Bouton à icône seule : sans nom accessible, axe le remonte en
-              // `button-name` (critique) et un lecteur d'écran n'annonce que
-              // « bouton ». C'est l'item #26 de l'audit, donné pour traité en
-              // S2 mais jamais appliqué ici — et le job a11y de la CI est
-              // depuis passé bloquant.
-              aria-label="Supprimer ce job d'optimisation"
-              title="Supprimer ce job"
-            >
-              <Trash2 className="w-3 h-3" />
-            </Button>
-          )}
+          <div className="flex gap-2">
+            {isDone && !job.applied && (
+              <Button
+                size="sm"
+                variant="success"
+                onClick={handleApply}
+                disabled={apply.isPending}
+                className="flex-1"
+                // ML-004 — en mode ML, l'apply entraîne aussi le modèle : le
+                // tooltip l'indique pour éviter la confusion avec un apply
+                // classique qui ne touche qu'aux params.
+                title={filterMl ? 'Applique les params + entraîne le modèle' : undefined}
+              >
+                <CheckCircle2 className="w-3 h-3" />
+                Apply
+              </Button>
+            )}
+            {isRunning && (
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={handleCancel}
+                disabled={cancel.isPending}
+                className="flex-1"
+              >
+                <StopCircle className="w-3 h-3" />
+                Annuler
+              </Button>
+            )}
+            {!isRunning && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleDelete}
+                disabled={del.isPending}
+                // Bouton à icône seule : sans nom accessible, axe le remonte en
+                // `button-name` (critique) et un lecteur d'écran n'annonce que
+                // « bouton ». C'est l'item #26 de l'audit, donné pour traité en
+                // S2 mais jamais appliqué ici — et le job a11y de la CI est
+                // depuis passé bloquant.
+                aria-label="Supprimer ce job d'optimisation"
+                title="Supprimer ce job"
+              >
+                <Trash2 className="w-3 h-3" />
+              </Button>
+            )}
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -326,7 +449,14 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 // ── Vue ─────────────────────────────────────────────────────────────────────
 
-export function OptimizerView() {
+/**
+ * ML-001 — `filterMl` restreint la vue aux stratégies ML et active les
+ * affordances dédiées (label de bouton cyan « ⬇ Lancer l'optimisation ML »,
+ * warning omnibus ML-006, ml_tune_hp labellisé, note Apply ML-007). Utilisé
+ * par `ml-view.tsx` pour intégrer l'optimiseur ML directement dans l'onglet
+ * ML au lieu de renvoyer vers l'onglet Optimizer.
+ */
+export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
   const { data: spaces, isLoading: spacesLoading } = useOptimizeSpaces();
   const { data: resultsData } = useOptimizeResults();
   const startOptimize = useStartOptimize();
@@ -337,6 +467,17 @@ export function OptimizerView() {
   // chaque render, il relançait l'effet en boucle.
   const allStrategies = useMemo(() => (spaces ? Object.keys(spaces) : []), [spaces]);
 
+  // ML-001 — en mode ML, on ne propose QUE les stratégies marquées `is_ml`
+  // par le backend (`/optimize/spaces`). On garde une passe défensive sur
+  // `is_ml` (booléen attendu, mais on tolère une string "true"/falsy).
+  const visibleStrategies = useMemo(() => {
+    if (!filterMl) return allStrategies;
+    return allStrategies.filter((s) => {
+      const info = spaces?.[s];
+      return !!(info?.is_ml);
+    });
+  }, [allStrategies, filterMl, spaces]);
+
   // Form state
   const [selectedStrategies, setSelectedStrategies] = useState<string[]>([]);
   const [selectedTfs, setSelectedTfs] = useState<string[]>([]);
@@ -346,6 +487,26 @@ export function OptimizerView() {
   const [nJobs, setNJobs] = useState(1);
   const [autoApply, setAutoApply] = useState(false);
   const [paramSearchOptim, setParamSearchOptim] = useState(true);
+  // OPT-004 — trois nouvelles options d'optimisation. `early_stopping` et
+  // `limit_per_tf` sont des inputs numériques ; `ml_tune_hp` n'est visible
+  // que si une stratégie ML est sélectionnée.
+  const [earlyStopping, setEarlyStopping] = useState(0);
+  const [limitPerTf, setLimitPerTf] = useState(0);
+  const [mlTuneHp, setMlTuneHp] = useState(false);
+
+  // OPT-007 — état global "tout déplié / tout replié". Bascule l'état par
+  // défaut passé aux JobCards ; le toggle lui-même est au-dessus de la grille.
+  const [allExpanded, setAllExpanded] = useState(false);
+
+  // OPT-008 — feedback immédiat après « Lancer l'optimisation » :
+  // carte ambre "Récupération des bougies en cours…" pendant l'appel, puis
+  // carte verte "✓ N job(s) lancé(s)" avec le détail des bougies reçues par
+  // TF et les combinaisons ignorées.
+  type LaunchFeedback =
+    | { kind: 'fetching' }
+    | { kind: 'ok'; nJobs: number; receivedBars?: Record<string, number>; fetchDetails?: Record<string, number>; skipped?: any[] }
+    | null;
+  const [launchFeedback, setLaunchFeedback] = useState<LaunchFeedback>(null);
 
   // Jobs list — polled via the useOptimizeStatus hook (no jobId = all jobs)
   const {
@@ -385,10 +546,10 @@ export function OptimizerView() {
 
   // Sync default strategies selection once spaces load
   useEffect(() => {
-    if (allStrategies.length > 0 && selectedStrategies.length === 0) {
-      setSelectedStrategies(allStrategies.slice(0, 1));
+    if (visibleStrategies.length > 0 && selectedStrategies.length === 0) {
+      setSelectedStrategies(visibleStrategies.slice(0, 1));
     }
-  }, [allStrategies, selectedStrategies.length]);
+  }, [visibleStrategies, selectedStrategies.length]);
 
   // TF actifs (config) par défaut
   useEffect(() => {
@@ -400,6 +561,28 @@ export function OptimizerView() {
   const toggle = (list: string[], value: string, setter: (v: string[]) => void) => {
     setter(list.includes(value) ? list.filter((x) => x !== value) : [...list, value]);
   };
+
+  // OPT-011 — détermine si une stratégie a au moins un TF sélectionné hors de
+  // sa liste recommandée (pour afficher le badge ambre ⚠ à côté du chip).
+  const hasNonRecommendedTf = (s: string): boolean => {
+    const info = spaces?.[s];
+    if (!info) return false;
+    const recTfs: string[] = info.recommended_tfs ?? info.timeframes ?? [];
+    if (recTfs.length === 0) return false;
+    return selectedTfs.some((tf) => !recTfs.includes(tf));
+  };
+  const recommendedTfsFor = (s: string): string[] => {
+    const info = spaces?.[s];
+    if (!info) return [];
+    return info.recommended_tfs ?? info.timeframes ?? [];
+  };
+
+  // OPT-004 — ml_tune_hp n'a de sens que si une stratégie ML est sélectionnée.
+  const hasMlSelected = selectedStrategies.some((s) => spaces?.[s]?.is_ml);
+  // ML-006 — détection d'une recette « omnibus » (multi-têtes) pour le warning
+  // bougies ≥ 2200. On fait matcher le nom en sous-chaîne : les recettes
+  // connues (`opus_omnibus_v11`, `omnibus_v2`…) contiennent toutes `omnibus`.
+  const hasOmnibusSelected = selectedStrategies.some((s) => /omnibus/i.test(s));
 
   const handleStart = async () => {
     if (selectedStrategies.length === 0) {
@@ -414,9 +597,9 @@ export function OptimizerView() {
       toast.error('Sélectionnez au moins un symbole');
       return;
     }
+    setLaunchFeedback({ kind: 'fetching' });
     try {
-      toast.info('Optimisation lancée...');
-      await startOptimize.mutateAsync({
+      const res: any = await startOptimize.mutateAsync({
         strategies: selectedStrategies.join(','),
         timeframes: selectedTfs.join(','),
         symbols: selectedSymbols.join(','),
@@ -425,23 +608,68 @@ export function OptimizerView() {
         n_jobs: nJobs,
         auto_apply: autoApply,
         param_search_optim: paramSearchOptim,
+        // OPT-004 — early_stopping (alias backend `early_stop_patience`).
+        early_stop_patience: earlyStopping,
+        // OPT-004 — limit_per_tf : le backend n'a qu'un seul paramètre `limit`
+        // appliqué à chaque TF. On lui passe donc `limit` (renommage frontend).
+        limit: limitPerTf > 0 ? limitPerTf : undefined,
+        // OPT-004 — ml_tune_hp : n'est envoyé que si une stratégie ML est
+        // sélectionnée, pour éviter de changer le comportement des stratégies
+        // classiques (le backend l'ignore si False, mais on reste explicite).
+        ml_tune_hp: hasMlSelected ? mlTuneHp : undefined,
       });
-      toast.success('Job démarré');
+      const nCreated = typeof res?.n_jobs_created === 'number'
+        ? res.n_jobs_created
+        : Array.isArray(res?.job_ids) ? res.job_ids.length : 0;
+      setLaunchFeedback({
+        kind: 'ok',
+        nJobs: nCreated,
+        receivedBars: res?.received_bars,
+        fetchDetails: res?.fetch_details,
+        skipped: res?.skipped,
+      });
+      toast.success(`${nCreated} job(s) lancé(s)`);
     } catch (e: any) {
+      setLaunchFeedback(null);
       toast.error(`Erreur: ${e.message}`);
     }
   };
 
   const activeResults = resultsData?.active_per_tf || {};
 
+  // OPT-007 — groupes de jobs par statut. Ordre : En cours > Erreurs >
+  // Annulés > Terminés (les plus actionnables d'abord).
+  const jobGroups = useMemo(() => {
+    const groups: Array<{ key: string; label: string; jobs: OptimizeJob[]; defaultExpanded: boolean }> = [
+      { key: 'running', label: 'En cours', jobs: [], defaultExpanded: true },
+      { key: 'error', label: 'Erreurs', jobs: [], defaultExpanded: true },
+      { key: 'cancelled', label: 'Annulés', jobs: [], defaultExpanded: false },
+      { key: 'done', label: 'Terminés', jobs: [], defaultExpanded: false },
+    ];
+    const map: Record<string, typeof groups[number]> = Object.fromEntries(groups.map((g) => [g.key, g]));
+    for (const j of jobs) {
+      const g = map[j.status] ?? map.done;
+      g.jobs.push(j);
+    }
+    return groups.filter((g) => g.jobs.length > 0);
+  }, [jobs]);
+  // OPT-007 — état d'expansion par groupe.
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const toggleGroup = (key: string) =>
+    setCollapsedGroups((s) => ({ ...s, [key]: !s[key] }));
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-end justify-between">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Optimiseur</h2>
+          <h2 className="text-lg font-semibold tracking-tight">
+            {filterMl ? 'Optimiseur ML' : 'Optimiseur'}
+          </h2>
           <p className="text-sm text-muted mt-1">
-            Optimisation bayésienne / grid / random des stratégies avec validation OOS
+            {filterMl
+              ? 'Optimisation bayésienne / grid / random des stratégies ML avec validation OOS et entraînement LightGBM'
+              : 'Optimisation bayésienne / grid / random des stratégies avec validation OOS'}
           </p>
         </div>
         <Badge variant="info">
@@ -460,18 +688,32 @@ export function OptimizerView() {
           {/* Strategies */}
           <div>
             <div className="text-xs text-dim mb-2 flex items-center gap-2">
-              <Layers className="w-3 h-3" /> Stratégies
+              <Layers className="w-3 h-3" /> {filterMl ? 'Stratégies ML' : 'Stratégies'}
             </div>
             <div className="flex flex-wrap gap-2">
-              {(allStrategies.length > 0 ? allStrategies : ['pullback_trend', 'trend_rider', 'breakout', 'smart_money']).map((s) => {
+              {/* ML-001 — en mode ML, on ne propose QUE les stratégies ML
+                  chargées depuis `/optimize/spaces`. Le fallback legacy
+                  (`pullback_trend`…) ne contient aucune stratégie ML : l'afficher
+                  en mode ML tromperait l'utilisateur avec des chips qui ne
+                  peuvent pas lancer d'optimisation ML. */}
+              {(filterMl
+                ? visibleStrategies
+                : (allStrategies.length > 0
+                    ? allStrategies
+                    : ['pullback_trend', 'trend_rider', 'breakout', 'smart_money'])
+              ).map((s) => {
                 const active = selectedStrategies.includes(s);
                 const isMl = spaces?.[s]?.is_ml;
+                // OPT-011 — badges TF recommandés (cyan) + warning si un TF
+                // sélectionné n'est pas dans la liste recommandée (ambre ⚠).
+                const recTfs = recommendedTfsFor(s);
+                const hasWarn = active && hasNonRecommendedTf(s);
                 return (
                   <button
                     key={s}
                     onClick={() => toggle(selectedStrategies, s, setSelectedStrategies)}
                     className={cn(
-                      'px-3 py-1.5 rounded-lg text-xs font-mono border transition-all',
+                      'px-3 py-1.5 rounded-lg text-xs font-mono border transition-all inline-flex items-center gap-1',
                       active
                         ? 'bg-primary-500/15 text-primary-400 border-primary-500/40'
                         : 'bg-card-hover text-muted border-border hover:border-border-hi',
@@ -479,10 +721,39 @@ export function OptimizerView() {
                   >
                     {s}
                     {isMl && <span className="ml-1 text-purple-400">ML</span>}
+                    {active && recTfs.length > 0 && (
+                      <span className="ml-1 inline-flex gap-0.5">
+                        {recTfs.slice(0, 3).map((tf) => (
+                          <span
+                            key={tf}
+                            className="px-1 rounded text-[0.55rem] bg-cyan-500/15 text-cyan-300 border border-cyan-500/30"
+                            title={`TF recommandé : ${tf}`}
+                          >
+                            {tf}
+                          </span>
+                        ))}
+                        {hasWarn && (
+                          <span
+                            className="px-1 rounded text-[0.55rem] bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                            title="Au moins un TF sélectionné n'est pas recommandé pour cette stratégie"
+                          >
+                            ⚠
+                          </span>
+                        )}
+                      </span>
+                    )}
                   </button>
                 );
               })}
             </div>
+            {/* ML-001 — en mode ML sans stratégies chargées (espaces non
+                encore disponibless ou aucune strat ML déclarée), un message
+                évite d'avoir une zone vide sans explication. */}
+            {filterMl && visibleStrategies.length === 0 && (
+              <p className="text-[11px] text-muted italic mt-2">
+                Aucune stratégie ML déclarée dans <code className="font-mono">/optimize/spaces</code>.
+              </p>
+            )}
           </div>
 
           {/* Timeframes (multi) */}
@@ -493,6 +764,39 @@ export function OptimizerView() {
               values={selectedTfs}
               onChangeMulti={setSelectedTfs}
             />
+            {/* OPT-005 — hint IS/OOS pour chaque TF coché. Calcule la
+                répartition 65/35 et signale le plafond OKX (8000 1h ≈ 333j). */}
+            {limitPerTf > 0 && selectedTfs.length > 0 && (
+              <div className="mt-2 space-y-0.5">
+                {selectedTfs.map((tf) => {
+                  const h = isOosHint(limitPerTf, tf);
+                  return (
+                    <div
+                      key={tf}
+                      className={cn(
+                        'text-[10px] font-mono',
+                        h.capped ? 'text-amber-400' : 'text-dim',
+                      )}
+                    >
+                      {h.text}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {/* ML-006 — les recettes omnibus (e.g. `opus_omnibus_v11`)
+                entraînent un LightGBM multi-tâches sur toutes les têtes : un
+                entraînement fiable exige ≥ 2200 bougies. Sans ce warning,
+                l'utilisateur peut soumettre un run sur 1500 bougies et obtenir
+                un AUC trompeur (surapprentissage sur peu d'échantillons). */}
+            {filterMl && hasOmnibusSelected && (
+              <div className="mt-2 text-[10px] text-amber-400 flex items-start gap-1.5">
+                <span aria-hidden>⚠</span>
+                <span>
+                  Les recettes omnibus exigent ≥ 2200 bougies pour un entraînement fiable.
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Symbols */}
@@ -583,6 +887,79 @@ export function OptimizerView() {
             </div>
           </div>
 
+          {/* OPT-004 — options avancées : early_stopping, limit_per_tf, ml_tune_hp. */}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 pt-2 border-t border-border">
+            <div>
+              <label
+                className="text-xs text-dim block mb-1.5"
+                title="Arrête la recherche si aucun gain de score n'est observé pendant N essais. 0 = désactivé."
+              >
+                early_stopping (patience)
+              </label>
+              <input
+                aria-label="early_stopping"
+                type="number"
+                min={0}
+                max={50}
+                value={earlyStopping}
+                onChange={(e) => setEarlyStopping(Math.max(0, Math.min(50, Number(e.target.value) || 0)))}
+                className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+              />
+            </div>
+            <div>
+              <label
+                className="text-xs text-dim block mb-1.5"
+                title="Nombre de bougies demandées par TF. 0 = auto (calculé selon les stratégies)."
+              >
+                limit_per_tf
+              </label>
+              <input
+                aria-label="limit_per_tf"
+                type="number"
+                min={0}
+                max={8000}
+                step={100}
+                value={limitPerTf}
+                onChange={(e) => setLimitPerTf(Math.max(0, Math.min(8000, Number(e.target.value) || 0)))}
+                className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+              />
+            </div>
+            <div className="flex items-end">
+              {/* ML-002 — en mode ML, le checkbox n'est visible QUE si une
+                  stratégie ML est sélectionnée (sinon il n'a aucun sens et
+                  l'utilisateur le verrait grillé sans comprendre pourquoi).
+                  Hors mode ML, on garde le comportement existant : toujours
+                  visible mais désactivé si aucune strat ML n'est sélectionnée.
+                  Le label « ml_tune_hp » reste technique hors ML ; en ML on
+                  affiche la description fonctionnelle complète pour rendre
+                  évident que cocher allonge la durée (two-phase). */}
+              {(!filterMl || hasMlSelected) && (
+                <label
+                  className={cn(
+                    'flex items-center gap-2 text-sm cursor-pointer h-10',
+                    !hasMlSelected && 'opacity-50 cursor-not-allowed',
+                  )}
+                  title={
+                    hasMlSelected
+                      ? 'Réglage des hyperparamètres du modèle ML (n_estimators, learning_rate…) en plus des params de stratégie.'
+                      : 'Sélectionnez une stratégie ML pour activer cette option.'
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={mlTuneHp}
+                    onChange={(e) => setMlTuneHp(e.target.checked)}
+                    disabled={!hasMlSelected}
+                    className="rounded"
+                  />
+                  {filterMl
+                    ? 'Régler aussi les hyperparamètres d\'entraînement (two-phase, plus lent)'
+                    : 'ml_tune_hp'}
+                </label>
+              )}
+            </div>
+          </div>
+
           {/* Preview matrice strat × TF × symbole (parité Jinja2) */}
           {selectedStrategies.length > 0 && selectedTfs.length > 0 && selectedSymbols.length > 0 && (
             <div className="rounded-lg border border-border bg-card-hover/50 p-3 space-y-2">
@@ -608,7 +985,7 @@ export function OptimizerView() {
                   <tbody>
                     {selectedStrategies.map((s) => {
                       const info = spaces?.[s];
-                      const recTfs: string[] = info?.timeframes || [];
+                      const recTfs: string[] = info?.recommended_tfs ?? info?.timeframes ?? [];
                       return (
                         <tr key={s} className="border-b border-border/40">
                           <td className="p-1.5 font-mono font-semibold">{s}</td>
@@ -639,6 +1016,35 @@ export function OptimizerView() {
             </div>
           )}
 
+          {/* OPT-008 — feedback immédiat : carte ambre "Récupération…" pendant
+              l'appel, puis carte verte "✓ N job(s) lancé(s)" avec le détail
+              des bougies reçues par TF et les combinaisons ignorées. */}
+          {launchFeedback?.kind === 'fetching' && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300 flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Récupération des bougies en cours…
+            </div>
+          )}
+          {launchFeedback?.kind === 'ok' && (
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300 space-y-1">
+              <div className="flex items-center gap-2 font-semibold">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                ✓ {launchFeedback.nJobs} job(s) lancé(s)
+              </div>
+              {launchFeedback.receivedBars && Object.keys(launchFeedback.receivedBars).length > 0 && (
+                <div className="font-mono text-[0.65rem] opacity-80">
+                  Bougies reçues :{' '}
+                  {Object.entries(launchFeedback.receivedBars).map(([tf, n]) => `${tf}=${n}`).join(' · ')}
+                </div>
+              )}
+              {Array.isArray(launchFeedback.skipped) && launchFeedback.skipped.length > 0 && (
+                <div className="font-mono text-[0.65rem] text-amber-300">
+                  ⚠ {launchFeedback.skipped.length} combinaison(s) ignorée(s) (espace vide ou stratégie sans params).
+                </div>
+              )}
+            </div>
+          )}
+
           <Button
             onClick={handleStart}
             disabled={startOptimize.isPending}
@@ -649,8 +1055,26 @@ export function OptimizerView() {
             ) : (
               <Play className="w-4 h-4" fill="currentColor" />
             )}
-            Lancer l&apos;optimisation
+            {/* ML-001 — label dédié en mode ML : le bouton primary est déjà
+                cyan par le thème (cf. button.tsx), on ne change que le texte. */}
+            {filterMl ? '⬡ Lancer l\'optimisation ML' : 'Lancer l\'optimisation'}
           </Button>
+
+          {/* OPT-010 — rappel des params globaux non modifiés par l'optimiseur.
+              Sans lui, un utilisateur peut penser que `score_threshold` est
+              optimisé alors qu'il ne l'est pas (laissant un faux espoir d'edge
+              mesuré alors que le seuil reste celui du YAML). */}
+          <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-3 py-2 text-xs text-cyan-200 flex items-start gap-2">
+            <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+            <div>
+              Les paramètres globaux ne sont jamais modifiés par l&apos;optimiseur :{' '}
+              <code className="font-mono">score_threshold</code>,{' '}
+              <code className="font-mono">risk_per_trade</code>,{' '}
+              <code className="font-mono">capital</code>,{' '}
+              <code className="font-mono">timeframe</code>,{' '}
+              <code className="font-mono">paper_mode</code>.
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -686,11 +1110,25 @@ export function OptimizerView() {
         </CardContent>
       </Card>
 
-      {/* Jobs list */}
+      {/* Jobs list — OPT-007 : grouped by status, collapsible, with a
+          "Tout ouvrir / Réduire tout" toggle. */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">Jobs</h2>
-          <span className="text-xs text-dim font-mono">{jobs.length}</span>
+          <div className="flex items-center gap-3">
+            {jobs.length > 0 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setAllExpanded((v) => !v)}
+                className="h-7 text-xs"
+                aria-label={allExpanded ? 'Réduire toutes les cartes' : 'Déplier toutes les cartes'}
+              >
+                {allExpanded ? 'Réduire tout' : 'Tout ouvrir'}
+              </Button>
+            )}
+            <span className="text-xs text-dim font-mono">{jobs.length}</span>
+          </div>
         </div>
         {jobsLoading ? (
           <div className="flex items-center justify-center py-12">
@@ -710,11 +1148,46 @@ export function OptimizerView() {
               Aucun job d&apos;optimisation. Lancez-en un ci-dessus.
             </CardContent>
           </Card>
+        ) : jobGroups.length === 0 ? (
+          <Card>
+            <CardContent className="text-center py-12 text-muted text-sm">
+              <Zap className="w-8 h-8 mx-auto mb-2 text-dim" />
+              Aucun job d&apos;optimisation. Lancez-en un ci-dessus.
+            </CardContent>
+          </Card>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {jobs.map((job) => (
-              <JobCard key={job.job_id} job={job} />
-            ))}
+          <div className="space-y-4">
+            {jobGroups.map((g) => {
+              const isCollapsed = collapsedGroups[g.key] ?? !g.defaultExpanded;
+              return (
+                <div key={g.key}>
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(g.key)}
+                    className="w-full flex items-center gap-2 py-1.5 text-xs uppercase tracking-wider text-muted hover:text-foreground"
+                    aria-expanded={!isCollapsed}
+                  >
+                    {isCollapsed
+                      ? <ChevronRight className="w-3.5 h-3.5" />
+                      : <ChevronDown className="w-3.5 h-3.5" />}
+                    <span className="font-semibold">{g.label}</span>
+                    <Badge variant="default" className="text-[0.55rem]">{g.jobs.length}</Badge>
+                  </button>
+                  {!isCollapsed && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-2">
+                      {g.jobs.map((job) => (
+                        <JobCard
+                          key={job.job_id}
+                          job={job}
+                          defaultExpanded={allExpanded || g.key === 'running'}
+                          filterMl={filterMl}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
