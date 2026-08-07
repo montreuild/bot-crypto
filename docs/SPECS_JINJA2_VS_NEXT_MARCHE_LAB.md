@@ -376,7 +376,7 @@ Légende : estimation qualitative sur le **périmètre métier** (pas le pixel-p
 | Multi-TF | ✅ | ✅ |
 | Workers / early-stop | ✅ | ✅ `early_stopping` (OPT-004) |
 | Param search optim (gel) | ✅ | ⚠️ à vérifier |
-| Preview matrice TF×strat | ✅ | ✅ (OPT-005 / ML-005) |
+| Preview matrice TF×strat | ✅ | ✅ (préexistante ; héritée par l'onglet ML via ML-005) |
 | Jobs cards progress + top5 | ✅ | ✅ `TopTrialsTable` (OPT-002) |
 | Avant / après métriques | ⚠️ | ✅ `BeforeAfterGrid` (OPT-001) |
 | Warnings overfit / trades / score | ❌ | ✅ `OptimizerWarnings` (OPT-003) |
@@ -531,6 +531,7 @@ Classés par impact utilisateur sur le périmètre demandé.
 
 | Document | Contenu |
 |----------|---------|
+| `docs/SPECIFICATIONS_RATTRAPAGE_LAB_NEXTJS.md` | **Spec d'origine du rattrapage du Lab** — 52 specs détaillées, critères d'acceptation, annexe A (extraits Jinja2 de référence), annexe B (index des composants) |
 | `docs/FIN_JINJA2.md` | Acte de fin, raisons, checklist suppression |
 | `docs/audit-ui-ux-bot-crypto.md` §3 | Inventaire 19 templates, graphs, 27 gaps |
 | `docs/PLAN_DIRECTEUR_AMELIORATIONS.md` | Décision D4, vision 5 pages |
@@ -560,14 +561,17 @@ Classés par impact utilisateur sur le périmètre demandé.
 
 ## 8ter. Rattrapage du Laboratoire — registre des specs (2026-08-07)
 
-> **Pourquoi ce registre.** Les commits `9483dde` et `d203bb4` référencent un
-> document `SPECIFICATIONS_RATTRAPAGE_LAB_NEXTJS.md` qui **n'a jamais été
-> versionné** : il n'existe dans aucun commit du dépôt. Les identifiants
-> `BT-*`, `OPT-*`, `CMP-*`, `ML-*` et `RPL-*` sont pourtant cités dans les
-> en-têtes de la quasi-totalité des fichiers livrés (`lib/limit-hint.ts`,
-> `hooks/use-replay-engine.ts`, `components/cards/*`…). Sans cette table, ces
-> références ne mènent nulle part. Elle est reconstituée depuis les messages
-> de commit, qui sont la seule source subsistante.
+> **Source.** La spécification d'origine est désormais versionnée :
+> **`docs/SPECIFICATIONS_RATTRAPAGE_LAB_NEXTJS.md`** (52 specs, 2 838 lignes,
+> annexes A et B incluses). Elle avait été perdue — référencée par les commits
+> `9483dde` et `d203bb4` sans jamais être commitée — alors que les identifiants
+> `BT-*`, `OPT-*`, `CMP-*`, `ML-*` et `RPL-*` sont cités dans les en-têtes de la
+> quasi-totalité des fichiers livrés. Cette table reste utile comme **index
+> inverse** : spec → fichier qui la porte, ce que la spec elle-même ne donne pas.
+>
+> ⚠ Deux erreurs de comptage subsistent dans le §8.3 de la spec d'origine : les
+> sous-totaux annoncés (HIGH 14, MEDIUM 16, LOW 8) ne correspondent pas aux
+> listes (15, 17, 6). Le total de 52 est juste.
 
 **Livré dans `9483dde`** — quick wins + Sprints 1, 2, 5, 6 :
 
@@ -587,7 +591,10 @@ Classés par impact utilisateur sur le périmètre demandé.
 | BT-012 | Hint limit ↔ durée + presets de bougies | `lib/limit-hint.ts` |
 | BT-013 | Validation regex du symbole côté client | `lab/page.tsx` |
 | BT-014 | Badge « ● actif » sur les stratégies activées | `lab/page.tsx` |
-| BT-015→018 | Palette, toggles, badges, markers | couverts par BT-001 |
+| BT-015 | Tabs par stratégie en couleur persistante | couvert par BT-007 (palette `STRAT_PALETTE`) |
+| BT-016 | Toggle line/candles du chart prix | couvert par BT-001 (`localStorage` clé `bt.chartType`) |
+| BT-017 | Badges `exit_reason` colorés | `lib/exit-reason-badges.ts` (BT-002 + BT-001) |
+| BT-018 | Markers de setup abrégés (↑SIG, ↓TDH) | couvert par BT-001 |
 | OPT-001 | Grille avant/après, 6 métriques, delta coloré | `cards/before-after-grid.tsx` |
 | OPT-002 | Top-5 des trials + bloc des meilleurs params | `tables/top-trials-table.tsx` |
 | OPT-003 | Warnings overfit / trades / score effondré | `cards/optimizer-warnings.tsx` |
@@ -626,7 +633,32 @@ Classés par impact utilisateur sur le périmètre demandé.
 | RPL-006 | Slider Mois (1–24) + hint bougies | `lib/limit-hint.ts` (`monthsToBougies`) |
 | RPL-007 | Layout plein écran | `views/replay-view.tsx` |
 | RPL-008 | Sélecteur de stratégie overlay | `views/replay-view.tsx` |
-| RPL-009 | Welcome screen + log panel | ⏭ exclu ; welcome intégré au `replay-view` (4 tips cards) |
+| RPL-009 | Welcome screen + log panel horodaté | ⚠️ **à moitié** — les 4 tips cards sont dans `views/replay-view.tsx` ; le log panel `HH:MM:SS · niveau · message` n'existe pas |
+
+### Audit de conformité aux critères d'acceptation (2026-08-07)
+
+Les critères d'acceptation de la spec d'origine ont été confrontés au code.
+**48 specs sur 52 sont conformes** ; 4 écarts, tous sur des critères secondaires
+d'une spec par ailleurs livrée — aucune fonctionnalité principale ne manque.
+
+| Spec | Critère non tenu | État réel |
+|------|------------------|-----------|
+| **BT-004** | « Bouton *Effacer* vide la session » | `useBacktestSession()` **expose** `clear`, mais `lab/page.tsx` n'utilise que `restored` et `save` : aucun bouton ne l'appelle. `clear` est du code mort et la session ne peut pas être purgée depuis l'UI. |
+| **BT-011** | « Le lien *Ajuster dans Config* redirige vers `/settings?tab=strategies&strategy=<name>` » | Les deux warnings sont rendus en `<div>` de texte brut ([lab/page.tsx](../frontend/src/app/lab/page.tsx)) — pas de lien. L'utilisateur doit naviguer à la main. |
+| **BT-003** | « Le tableau per-strategy est triable par *Évalué* / *Proposé* / *Erreurs* » | Les `<th>` de [diagnostics-panel.tsx](../frontend/src/components/cards/diagnostics-panel.tsx) sont statiques : ni `onClick`, ni état de tri. Le tableau s'affiche dans l'ordre backend. |
+| **RPL-009** | « Log panel horodaté `HH:MM:SS · niveau · message` » | Seule la moitié *welcome screen* est livrée (4 tips cards). Le commit `d203bb4` annonce RPL-009 comme « exclu par l'utilisateur » : c'est exact pour le log panel, inexact pour le welcome. |
+
+Écart cosmétique, sans critère associé : la spec RPL-002 demande des sorties
+marquées `✓`/`✗` ; [replay-candlestick-chart.tsx](../frontend/src/components/charts/replay-candlestick-chart.tsx)
+utilise la forme `circle` de lightweight-charts. Les trois critères de RPL-002
+(markers progressifs, reconstruction au seek, pas de doublon) sont tenus.
+
+Vérifié conforme par lecture du code, entre autres : persistance `localStorage`
+du toggle line/candles et message « Aucun trade pour cette stratégie » (BT-001) ;
+pagination 20/page et filtres Tous/Long/Short/Win/Loss (BT-002) ; masquage du
+panneau si `bars_total == 0` (BT-003) ; encart « Pas de baseline disponible »
+(OPT-001) ; masquage du bloc si `top_trials` et `best_params` sont vides
+(OPT-002) ; colonne Equity Finale triable et présente au CSV (CMP-002).
 
 ### Écarts backend assumés
 
@@ -665,14 +697,22 @@ Le décommissionnement Jinja2 a **conservé l’API** et **restructuré l’UI**
 
 **Reprises restantes**, par ordre d'impact :
 
-1. Distribution PnL et cumul des trades au backtest — les deux seuls écarts
-   fonctionnels subsistants du Laboratoire (§4.2).
-2. Layout 2 colonnes et `n_jobs` guidé à l'optimiseur (OPT-012 / OPT-013,
+1. Les 4 critères d'acceptation non tenus (§8ter, audit de conformité) — tous
+   petits, tous isolés : bouton *Effacer* de la session (BT-004, le `clear`
+   existe déjà et n'attend qu'un bouton), lien *Ajuster dans Config* (BT-011),
+   tri du tableau per-strategy (BT-003), log panel horodaté (RPL-009).
+2. Distribution PnL et cumul des trades au backtest — les deux seuls écarts
+   de périmètre subsistants du Laboratoire (§4.2).
+3. Layout 2 colonnes et `n_jobs` guidé à l'optimiseur (OPT-012 / OPT-013,
    reportés en S7).
-3. Revérifier les sections `/market` de ce document contre le code : elles
+4. Revérifier les sections `/market` de ce document contre le code : elles
    datent du 05/08 et n'ont pas été réauditées depuis.
-4. Réduire `lib/backend-normalizers.ts` en alignant les noms de champs côté
+5. Réduire `lib/backend-normalizers.ts` en alignant les noms de champs côté
    backend, plutôt que d'épaissir la couche de traduction côté client.
+
+Aucun test ne couvre les 5 881 lignes livrées par les deux sprints : les 63
+tests verts portent sur des fichiers antérieurs. `useReplayEngine` et
+`lib/limit-hint.ts` sont purement fonctionnels et se testent sans DOM.
 
 Les items marqués « volontairement non traité » (markers setups V8/V11/V12 sur
 le scanner, TF 2h Smart Graph) restent hors périmètre tant qu'ils n'ont pas été

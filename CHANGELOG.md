@@ -55,9 +55,17 @@ dialog sur place au lieu de renvoyer vers `/models`.
 > **faire maigrir** en alignant le backend, pas à épaissir. Inventaire complet
 > dans `docs/SPECS_JINJA2_VS_NEXT_MARCHE_LAB.md` §8ter.
 
-Écarts fonctionnels subsistants au Laboratoire : distribution de PnL et cumul
+La spécification d'origine des 52 items est versionnée en
+`docs/SPECIFICATIONS_RATTRAPAGE_LAB_NEXTJS.md`. Ses critères d'acceptation ont
+été confrontés au code : **48 specs conformes sur 52**. Les 4 écarts portent sur
+des critères secondaires de specs par ailleurs livrées — bouton « Effacer » de
+la session (BT-004), lien « Ajuster dans Config » (BT-011), tri du tableau
+per-strategy (BT-003), log panel horodaté du replay (RPL-009). Détail et
+constat de vérification dans le §8ter du document de parité.
+
+Écarts de périmètre subsistants au Laboratoire : distribution de PnL et cumul
 des trades (non portés), layout 2 colonnes et `n_jobs` guidé de l'optimiseur
-(reportés).
+(reportés). Aucun test ne couvre le code livré.
 
 ### 🗃 Le scan SMC cesse de polluer l'historique git
 
