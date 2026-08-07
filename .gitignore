@@ -44,12 +44,22 @@ Thumbs.db
 
 # Bot runtime
 logs/*.log
+# Rotation de `logs/bot.log` : le handler suffixe un index (`bot.log.1` … `.5`),
+# que `logs/*.log` ne couvre pas — les fichiers tournés remontaient donc en
+# untracked à chaque redémarrage.
+logs/*.log.*
 logs/*.jsonl
 logs/*.pkl
 data/heartbeat.json
 data/KILL_SWITCH
 data/features/
 backups/
+
+# Sorties console des scripts de recherche (`scripts/recalibrate_adx_thresholds.py`,
+# `scripts/retrain_all_models.py`). Les RÉSULTATS de ces scripts sont les JSON
+# voisins (`research/*.json`), qui restent suivis ; le `.log` n'est que la trace
+# d'exécution d'un poste, réécrite à chaque run.
+research/*.log
 
 # Secrets (clés API générées par scripts/setup.sh, credentials exchange)
 .env
@@ -89,6 +99,16 @@ frontend/next-env.d.ts
 # à partager. `load_backtest_history()` retourne `{}` si le fichier est absent :
 # un clone neuf démarre simplement avec un historique vide.
 #
+# `data/smc_signals_recent.json` relève exactement du même motif, et sort du
+# suivi pour la même raison. Ce n'est pas une entrée de config : c'est la sortie
+# du job background `app/engine/smc_signals_scan.py`, réécrite en entier à
+# chaque passe de scan. Une seule journée d'exécution produit ~1 800 lignes de
+# diff, qui noient les changements de code sans rien apporter — un instantané
+# des signaux SMC de moins de 5 jours n'a aucune valeur d'archive dès le
+# lendemain. `load_recent()` renvoie `{"count": 0, "signals": [], ...}` si le
+# fichier est absent, et `/api/scanner/smc_signals_recent` relance alors un scan
+# de son propre chef : un clone neuf se réamorce seul.
+#
 # Conséquence assumée : un clone neuf démarre avec un cache VIDE. C'est le
 # comportement correct — `CandleStore` amorce au premier cycle — mais un
 # déploiement qui comptait sur `git pull` pour être servi en bougies doit
@@ -96,6 +116,7 @@ frontend/next-env.d.ts
 data/ohlcv/
 data/derivatives/
 data/backtest_history.json
+data/smc_signals_recent.json
 
 # ── Artefacts du registre ML ────────────────────────────────────────────────
 # Sortie de `app/ml/model_registry.py` : boosters LightGBM, méta de version et
