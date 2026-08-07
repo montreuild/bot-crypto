@@ -2,7 +2,12 @@
 
 > **Périmètre** : Optimisateur, Backtests, Scanner, Smart Graph, Smart Replay, Dérivés  
 > **Sources** : templates `ecc87b2^:app/web/templates/*` (commit de suppression `ecc87b2`, 29/07/2026), `docs/FIN_JINJA2.md`, `docs/audit-ui-ux-bot-crypto.md` §3, code `frontend/src/app/{lab,market}/` + `components/views/*`  
-> **Date** : 2026-08-05  
+> **Date** : 2026-08-07 (§3.1, §4.1, §4.2, §7 et §8ter révisés après `9483dde` et `d203bb4`)  
+>
+> ⚠ **Fraîcheur inégale.** Les sections portant sur `/lab` ont été vérifiées
+> contre le code au 07/08/2026. Celles portant sur `/market` (Scanner, Smart
+> Graph, Smart Replay, Dérivés) datent du 05/08 et n'ont pas été revérifiées
+> depuis — les sprints de rattrapage n'ont touché que le Laboratoire.
 
 ---
 
@@ -232,31 +237,66 @@ Chaque chart : série métrique + **overlay prix** semi-transparent.
 
 ### 3.1 Laboratoire — `/lab`
 
-| Onglet | Composant | Rôle |
-|--------|-----------|------|
-| Backtest | `lab/page.tsx` (inline) | Formulaire + résultats + charts + WF/MC |
-| Optimizer | `optimizer-view.tsx` | Optimisation bayesian/grid/random |
-| ML | `ml-view.tsx` | Train / sweep (hors périmètre Jinja optimizer non-ML) |
-| Replay | `replay-view.tsx` | Replay stratégie (≠ Smart Replay SMC) |
-| Compare | `compare-view.tsx` | Comparatif multi-stratégies |
+**6 onglets** (`?tab=`) :
+
+| Onglet | `tab=` | Composant | Rôle |
+|--------|--------|-----------|------|
+| Backtest | `backtest` | `lab/page.tsx` (inline) | Formulaire + résultats + charts + WF/MC |
+| Optimizer | `optimizer` | `optimizer-view.tsx` | Optimisation bayesian/grid/random |
+| ML | `ml` | `ml-view.tsx` | `OptimizerView` avec `filterMl` + entraînement de recettes |
+| Replay | `replay` | `replay-view.tsx` | Replay **interactif** bougie-par-bougie (≠ Smart Replay SMC) |
+| Multi-TF | `batch` | `multi-tf-batch-view.tsx` | Replay batch multi-TF (ancien `replay-view`) |
+| Compare | `compare` | `compare-view.tsx` | Comparatif multi-stratégies |
+
+> Le 6ᵉ onglet est né du découpage de `d203bb4` : `?tab=replay` est devenu le
+> replay interactif, et le replay batch multi-TF qui l'occupait a été déplacé
+> tel quel sous `?tab=batch`. Aucune capacité perdue.
 
 #### Backtest Next (état actuel)
-- Config : symbole, TF, limit, stratégies, options expert  
+- Config : symbole, TF, limit (+ presets 500/2k/5k/8k et hint durée), stratégies, options expert  
+- Validation regex du symbole, badge « ● actif » sur les stratégies activées  
 - Charts : equity, scatter, OHLCV markers (`BacktestEquityChart`, `TradesScatter`)  
+- **Prix + signaux** : `PriceSignalsChart` (candlestick, markers ▲▼●, lignes de stop)  
+- **Trades** : `TradesTable` (triable, paginée, filtrable, dépliable) + `TradesStatsPanel`  
+- **Diagnostics** : `DiagnosticsPanel` (9 KPIs, warnings, détail par stratégie)  
+- **Comparatif** : `StrategyComparisonTable`  
+- **ML** : `MLBacktestPanel` (AUC, `n_features`, lookahead, `proba_up`)  
 - **Walk-Forward** : `WalkForwardTable`  
 - **Monte-Carlo** : `MonteCarloPanel`  
+- Progression : `BacktestProgress` (barre + ETA) et `BacktestRunningBanner`  
+- Reprise de session : `useBacktestStatus` (poll serveur) + `useBacktestSession` (`sessionStorage`, TTL 30 min)  
 - Study vs Live : `StudyVsLiveCard`  
 - Cost model : `CostModelCard`  
-- Export CSV/JSON  
+- Export CSV (19 colonnes, BOM UTF-8) / JSON / PDF (impression navigateur)  
+- Fullscreen chart (`ChartFullscreen`)  
 - Bouton « Créer le bot (Essai) » (pipeline vers lifecycle)
 
 #### Optimizer Next
 - Méthodes grid/random/bayesian  
-- Multi-symboles / multi-TFs  
-- SSE stream progression  
-- Jobs : start / cancel / apply / delete  
+- Multi-symboles / multi-TFs, `early_stopping`, `limit_per_tf`, `ml_tune_hp`  
+- SSE stream progression + ETA  
+- **Avant/après** : `BeforeAfterGrid` (6 métriques, delta coloré)  
+- **Top-5** : `TopTrialsTable` + bloc des meilleurs paramètres  
+- **Garde-fous** : `OptimizerWarnings` (overfit, trades insuffisants, score effondré)  
+- Hint IS/OOS par TF coché, badges de compatibilité TF par stratégie  
+- Jobs : groupés par statut, repliables, start / cancel / apply / delete  
 - Cost model card  
-- **Pas** de séparation stricte ML vs non-ML dans la même vue (ML a son onglet)
+- Séparation ML / non-ML par la prop `filterMl` — même composant, deux onglets
+
+#### ML Next
+- `OptimizerView` monté avec `filterMl` : ne liste que les stratégies `is_ml`  
+- `TrainRecipeDialog` : entraînement d'une recette in-place (remplace le renvoi vers `/models`), polling `useMLTrainStatus`  
+- Avertissement omnibus ≥ 2 200 bougies  
+- Apply : applique les paramètres **et** entraîne le modèle (sauvegardé automatiquement)
+
+#### Replay Next (interactif)
+- `useReplayEngine` : position, play/pause, `step`, `seekTo`, 7 vitesses (0.5× → MAX)  
+- `ReplayCandlestickChart` plein écran + markers entrée ▲▼ / sortie ●, filtrés par barre  
+- `PlaybackControls` + barre de progression scrubbable  
+- `ReplaySignalLog` (plus récent en tête) et `ReplayStatsPanel` (trades, WR, PnL accumulés)  
+- `useReplayKeyboard` : Espace, ← → (Shift = ±10), Home/End, 1/2/5/0  
+- Sélecteur de mois (1–24) converti en bougies via `monthsToBougies`  
+- Données issues de `runBacktest` (OHLCV + trades avec `bar`/`exit_bar`) — le replay est **100 % côté client** après chargement
 
 ---
 
@@ -309,14 +349,19 @@ Chaque chart : série métrique + **overlay prix** semi-transparent.
 
 | Page | Parité fonctionnelle | Commentaire |
 |------|---------------------|-------------|
-| **Optimizer** | **~85 %** | Core jobs/SSE/apply OK ; UX cartes jobs un peu moins riche |
-| **Backtest** | **~80 %** | WF/MC/scatter revenus ; fullscreen modal & PDF absents ou partiels |
+| **Optimizer** | **~95 %** | Avant/après, top-5, warnings, ETA, groupes repliables livrés (S2) ; reste layout 2 colonnes et `n_jobs` guidé |
+| **Backtest** | **~95 %** | Trades table, diagnostics, prix+signaux, CSV, fullscreen, PDF livrés (S1) ; reste distribution PnL et cumul trades |
 | **Scanner** | **~40 %** | Fast Analyse + prédictions + opportunités ; manque scan table + multi-panneaux |
 | **Smart Graph** | **~75 %** | Calques + plans + clic plan OK ; zones non remplies ; layout modernisé |
 | **Smart Replay** | **~70 %** | Replay causal OK ; layout modernisé ; shortcuts / zones remplies manquants |
 | **Dérivés** | **~80 %** | 4 séries OK ; lib Recharts ; overlay prix manquant |
 
 Légende : estimation qualitative sur le **périmètre métier** (pas le pixel-perfect).
+
+> ⚠ Les lignes **Smart Graph**, **Smart Replay**, **Scanner** et **Dérivés**
+> décrivent `/market` et n'ont **pas** été retouchées par les sprints de
+> rattrapage du Laboratoire (`9483dde`, `d203bb4`), qui ne portent que sur
+> `/lab`. Ne pas les lire comme un état vérifié à la date de ce document.
 
 ---
 
@@ -329,32 +374,50 @@ Légende : estimation qualitative sur le **périmètre métier** (pas le pixel-p
 | Méthodes grid/random/bayesian | ✅ | ✅ |
 | Multi-stratégies checkboxes | ✅ | ✅ |
 | Multi-TF | ✅ | ✅ |
-| Workers / early-stop | ✅ | ✅ |
+| Workers / early-stop | ✅ | ✅ `early_stopping` (OPT-004) |
 | Param search optim (gel) | ✅ | ⚠️ à vérifier |
-| Preview matrice TF×strat | ✅ | ⚠️ partiel |
-| Jobs cards progress + top5 | ✅ | ✅ |
+| Preview matrice TF×strat | ✅ | ✅ (OPT-005 / ML-005) |
+| Jobs cards progress + top5 | ✅ | ✅ `TopTrialsTable` (OPT-002) |
+| Avant / après métriques | ⚠️ | ✅ `BeforeAfterGrid` (OPT-001) |
+| Warnings overfit / trades / score | ❌ | ✅ `OptimizerWarnings` (OPT-003) |
+| Hint IS/OOS par TF | ❌ | ✅ (OPT-005) |
+| ETA sur progress bar | ❌ | ✅ (OPT-006) |
+| Groupes par statut + repli | ❌ | ✅ (OPT-007) |
+| Feedback post-lancement | ⚠️ | ✅ bougies/TF + combinaisons ignorées (OPT-008) |
+| Badges compatibilité TF | ❌ | ✅ (OPT-011) |
 | SSE live progress | ⚠️ / poll | ✅ EventSource |
 | Apply / cancel / delete | ✅ | ✅ |
 | Auto-apply en fin de run | ✅ | ⚠️ |
+| Layout 2 colonnes (config sticky) | ✅ | ❌ (OPT-012, reporté S7) |
+| `n_jobs` select guidé | ✅ | ❌ (OPT-013, reporté S7) |
 | Cost model | ❌ | ✅ `CostModelCard` |
-| Filtrage strict non-ML | ✅ | ✅ (ML séparé) |
+| Filtrage strict non-ML | ✅ | ✅ (prop `filterMl`, ML séparé) |
 
 #### Backtest
 
 | Fonction | Jinja2 | Next `/lab?tab=backtest` |
 |----------|:------:|:------------------------:|
 | Multi-stratégies | ✅ | ✅ |
-| Limit bougies + hints durée | ✅ | ✅ |
+| Limit bougies + hints durée | ✅ | ✅ + presets 500/2k/5k/8k (BT-012) |
 | Walk-Forward folds | ✅ | ✅ `WalkForwardTable` |
 | Monte-Carlo IC | ✅ | ✅ `MonteCarloPanel` |
 | Equity + buy&hold | ✅ | ✅ |
-| Distrib PnL | ✅ | ⚠️ |
+| KPIs Expectancy / B&H / Alpha / Equity finale | ✅ | ✅ (BT-006) |
+| Distrib PnL | ✅ | ⚠️ chips par setup et par raison de sortie (`TradesStatsPanel`), pas d'histogramme |
 | Cumul trades | ✅ | ❌ |
-| Prix + markers | ✅ | ✅ |
+| Prix + markers | ✅ | ✅ `PriceSignalsChart` + lignes de stop (BT-001) |
+| Table des trades | ✅ | ✅ `TradesTable` 14 colonnes, triable/paginée/dépliable (BT-002) |
+| Diagnostics d'exécution | ✅ | ✅ `DiagnosticsPanel` 9 KPIs + par stratégie (BT-003) |
+| Comparatif par stratégie | ✅ | ✅ `StrategyComparisonTable` (BT-007) |
+| Panel ML (AUC, features, `proba_up`) | ⚠️ | ✅ `MLBacktestPanel` (BT-010) |
+| Warnings threshold / échantillon < 30 | ✅ | ✅ (BT-011) |
+| Progression + ETA + log | ✅ | ✅ `BacktestProgress` (BT-005) |
+| Reprise après reload / autre onglet | ❌ | ✅ `useBacktestStatus` + `useBacktestSession` (BT-004) |
 | Scatter Chart.js | ✅ | ✅ Recharts |
-| Fullscreen modal | ✅ | ❌ |
+| Fullscreen modal | ✅ | ✅ `ChartFullscreen` |
 | Export JSON | ✅ | ✅ |
-| Export PDF | ✅ | ❌ |
+| Export CSV trades | ✅ | ✅ 19 colonnes, BOM UTF-8 (BT-009) |
+| Export PDF | ✅ | ✅ via impression navigateur (sans dépendance jsPDF) |
 | Study vs Live | ❌ | ✅ |
 | Créer bot Essai | ❌ | ✅ |
 
@@ -454,7 +517,7 @@ Classés par impact utilisateur sur le périmètre demandé.
 ## 7. Architecture cible (déjà en place)
 
 ```
-/lab?tab=backtest|optimizer|ml|replay|compare
+/lab?tab=backtest|optimizer|ml|replay|batch|compare
 /market?tab=scanner|smartgraph|smartreplay|derivatives
 ```
 
@@ -493,12 +556,124 @@ Classés par impact utilisateur sur le périmètre demandé.
 | 9 | Jump ±10 Replay | ✅ boutons + clavier |
 | 10 | Preview matrice optimizer | ✅ strat×TF×symboles |
 
+---
+
+## 8ter. Rattrapage du Laboratoire — registre des specs (2026-08-07)
+
+> **Pourquoi ce registre.** Les commits `9483dde` et `d203bb4` référencent un
+> document `SPECIFICATIONS_RATTRAPAGE_LAB_NEXTJS.md` qui **n'a jamais été
+> versionné** : il n'existe dans aucun commit du dépôt. Les identifiants
+> `BT-*`, `OPT-*`, `CMP-*`, `ML-*` et `RPL-*` sont pourtant cités dans les
+> en-têtes de la quasi-totalité des fichiers livrés (`lib/limit-hint.ts`,
+> `hooks/use-replay-engine.ts`, `components/cards/*`…). Sans cette table, ces
+> références ne mènent nulle part. Elle est reconstituée depuis les messages
+> de commit, qui sont la seule source subsistante.
+
+**Livré dans `9483dde`** — quick wins + Sprints 1, 2, 5, 6 :
+
+| ID | Objet | Porté par |
+|----|-------|-----------|
+| BT-001 | Chart prix + signaux (markers ▲▼●, lignes de stop) | `charts/price-signals-chart.tsx` |
+| BT-002 | Table des trades triable/paginée/dépliable, 14 colonnes | `tables/trades-table.tsx` |
+| BT-003 | Diagnostics : 9 KPIs, 3 warnings, détail par stratégie | `cards/diagnostics-panel.tsx` |
+| BT-004 | Sync serveur + persistance de session | `hooks/use-backtest-session.ts` |
+| BT-005 | Barre de progression + ETA + log horodaté | `cards/backtest-progress.tsx`, `cards/backtest-running-banner.tsx` |
+| BT-006 | KPIs Expectancy / Buy&Hold / Alpha / Equity finale | `lab/page.tsx` |
+| BT-007 | Comparatif des stratégies, 10 colonnes | `cards/strategy-comparison-table.tsx` |
+| BT-008 | Stats de trades par setup et par raison de sortie | `cards/trades-stats-panel.tsx`, `lib/exit-reason-badges.ts` |
+| BT-009 | Export CSV 19 colonnes, BOM UTF-8 | `lib/trades-csv.ts` |
+| BT-010 | Panel ML du backtest (AUC, features, `proba_up`) | `cards/ml-backtest-panel.tsx` |
+| BT-011 | Warnings seuil de score et échantillon < 30 trades | `lib/strat-thresholds.ts` |
+| BT-012 | Hint limit ↔ durée + presets de bougies | `lib/limit-hint.ts` |
+| BT-013 | Validation regex du symbole côté client | `lab/page.tsx` |
+| BT-014 | Badge « ● actif » sur les stratégies activées | `lab/page.tsx` |
+| BT-015→018 | Palette, toggles, badges, markers | couverts par BT-001 |
+| OPT-001 | Grille avant/après, 6 métriques, delta coloré | `cards/before-after-grid.tsx` |
+| OPT-002 | Top-5 des trials + bloc des meilleurs params | `tables/top-trials-table.tsx` |
+| OPT-003 | Warnings overfit / trades / score effondré | `cards/optimizer-warnings.tsx` |
+| OPT-004 | Champs `early_stopping`, `limit_per_tf`, `ml_tune_hp` | `views/optimizer-view.tsx` |
+| OPT-005 | Hint IS/OOS dynamique par TF coché | `lib/limit-hint.ts` |
+| OPT-006 | ETA sur la progress bar | `views/optimizer-view.tsx` |
+| OPT-007 | Groupes par statut + tout ouvrir / réduire | `views/optimizer-view.tsx` |
+| OPT-008 | Feedback post-lancement (bougies/TF, combinaisons ignorées) | `views/optimizer-view.tsx` |
+| OPT-009 | Symbole libre | encadré, non généralisé |
+| OPT-010 | Note « Globaux non-optimisés » | `views/optimizer-view.tsx` |
+| OPT-011 | Badges de compatibilité TF par stratégie | `views/optimizer-view.tsx` |
+| OPT-012 | Layout 2 colonnes (config sticky) | ⏭ reporté S7 |
+| OPT-013 | `n_jobs` en select guidé | ⏭ reporté S7 |
+| CMP-001 | Input bougies libre (200–50 000) | `views/compare-view.tsx` |
+| CMP-002 | Colonne Equity finale | `views/compare-view.tsx` |
+| CMP-003 | Rang #1, #2… par stratégie | `views/compare-view.tsx` |
+| CMP-004 | Raccourcis « toutes / aucune / omnibus » | `views/compare-view.tsx` |
+| CMP-005 | Intro card + indicateur ▼▲ sur colonne triée | `views/compare-view.tsx` |
+
+**Livré dans `d203bb4`** — Sprints 3 (Replay) et 4 (ML) :
+
+| ID | Objet | Porté par |
+|----|-------|-----------|
+| ML-001 | Optimiseur ML complet via prop `filterMl` | `views/optimizer-view.tsx`, `views/ml-view.tsx` |
+| ML-002 | Checkbox `ml_tune_hp` | `views/optimizer-view.tsx` |
+| ML-003 | Dialog d'entraînement de recette (remplace le renvoi vers `/models`) | `cards/train-recipe-dialog.tsx`, `cards/ml-recipes-list.tsx` |
+| ML-004 | Tooltip Apply + invalidation `mlInfo` / `ml-recipes` | `views/optimizer-view.tsx` |
+| ML-005 | Preview matrix héritée de l'optimiseur | `views/optimizer-view.tsx` |
+| ML-006 | Warning omnibus ≥ 2 200 bougies | `views/optimizer-view.tsx` |
+| ML-007 | Note « modèle ML sauvegardé automatiquement » | `views/optimizer-view.tsx` |
+| RPL-001 | Moteur de replay interactif + chart + contrôles | `hooks/use-replay-engine.ts`, `charts/replay-candlestick-chart.tsx`, `controls/playback-controls.tsx` |
+| RPL-002 | Markers entrée ▲▼ / sortie ●, filtrés par barre | `views/replay-view.tsx` |
+| RPL-003 | Journal des signaux temps réel | `cards/replay-signal-log.tsx` |
+| RPL-004 | Stats accumulées (trades, WR, PnL) | `cards/replay-stats-panel.tsx` |
+| RPL-005 | Raccourcis clavier | `hooks/use-replay-keyboard.ts` |
+| RPL-006 | Slider Mois (1–24) + hint bougies | `lib/limit-hint.ts` (`monthsToBougies`) |
+| RPL-007 | Layout plein écran | `views/replay-view.tsx` |
+| RPL-008 | Sélecteur de stratégie overlay | `views/replay-view.tsx` |
+| RPL-009 | Welcome screen + log panel | ⏭ exclu ; welcome intégré au `replay-view` (4 tips cards) |
+
+### Écarts backend assumés
+
+Aucun fichier backend n'a été modifié par ces deux commits. Les divergences de
+nommage sont absorbées côté client par `lib/backend-normalizers.ts` :
+
+| Champ attendu | Champ réellement renvoyé | Traitement |
+|---------------|--------------------------|------------|
+| `signal_reason` | `reason` | `normalizeTrade` |
+| `equity_final` | `final_equity` | `equityFinal` |
+| `top_trials` | `top5` | `normalizeTopTrials` |
+| `recommended_tfs` | `timeframes` | vue optimiseur |
+| bloc `after` consolidé | `best_oos_*` épars | `deriveAfter` |
+| `baseline.win_rate` / `.max_drawdown` | `.wr` / `.dd` | `normalizeBaseline` |
+| `ml_info` | non propagé au client | `normalizeMlInfo` + repli défensif |
+
+> Ces normalisations sont une **dette assumée**, pas une architecture : le jour
+> où le backend s'aligne sur ces noms, `backend-normalizers.ts` doit maigrir
+> d'autant, pas se doubler d'une seconde couche.
+
 ## 9. Conclusion
 
-Le décommissionnement Jinja2 a **conservé l’API** et **restructuré l’IA** en deux hubs (Lab / Marché).  
+Le décommissionnement Jinja2 a **conservé l’API** et **restructuré l’UI** en deux hubs (Lab / Marché).
 
-- **Optimizer & Backtest** : bonne parité, enrichis (cost model, study vs live, create bot).  
-- **Smart Graph / Replay / Dérivés** : usage quotidien viable ; écarts sur rendu zones, raccourcis, overlay prix.  
-- **Scanner** : le plus grand écart — Next = **Fast Analyse mono-symbole** ; Jinja2 = **cockpit multi-symboles + multi-indicateurs**.  
+- **Optimizer & Backtest** : parité atteinte pour l'essentiel après les sprints
+  de rattrapage, et enrichis au-delà de Jinja2 (cost model, study vs live,
+  create bot, reprise de session, diagnostics).  
+- **Replay Laboratoire** : capacité **nouvelle** — le replay interactif
+  bougie-par-bougie n'a pas d'équivalent Jinja2 ; le replay batch multi-TF
+  qu'il remplace reste accessible sous `?tab=batch`.  
+- **Smart Graph / Replay / Dérivés** : usage quotidien viable ; écarts
+  résiduels sur le rendu des zones et l'overlay prix.  
+- **Scanner** : reste le plus grand écart de périmètre par rapport à Jinja2
+  (cockpit multi-symboles + multi-indicateurs), même si la table multi-symboles
+  et le chart 4 panneaux ont été livrés (§8bis, items 1 et 2).
 
-Toute reprise prioritaire doit commencer par le **Scanner table + chart 4 panneaux** et les **zones SMC remplies**, pour retrouver le niveau d’analyse de marché de l’ancienne UI sans revenir à Jinja2.
+**Reprises restantes**, par ordre d'impact :
+
+1. Distribution PnL et cumul des trades au backtest — les deux seuls écarts
+   fonctionnels subsistants du Laboratoire (§4.2).
+2. Layout 2 colonnes et `n_jobs` guidé à l'optimiseur (OPT-012 / OPT-013,
+   reportés en S7).
+3. Revérifier les sections `/market` de ce document contre le code : elles
+   datent du 05/08 et n'ont pas été réauditées depuis.
+4. Réduire `lib/backend-normalizers.ts` en alignant les noms de champs côté
+   backend, plutôt que d'épaissir la couche de traduction côté client.
+
+Les items marqués « volontairement non traité » (markers setups V8/V11/V12 sur
+le scanner, TF 2h Smart Graph) restent hors périmètre tant qu'ils n'ont pas été
+redemandés.

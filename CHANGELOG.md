@@ -6,6 +6,75 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧪 Le Laboratoire rattrape — et dépasse — l'ancienne UI Jinja2
+
+La suppression de Jinja2 (`ecc87b2`) avait laissé le Laboratoire en retrait de
+ce que les templates offraient : on lançait un backtest, on obtenait une courbe
+d'équité et des KPIs, mais **pas les trades**. Impossible de savoir *pourquoi*
+un run gagnait ou perdait — quel setup, quelle raison de sortie, combien de
+signaux refusés et sur quel motif. L'optimiseur souffrait du symétrique :
+il produisait un score sans dire à quoi le comparer.
+
+Deux sprints comblent l'écart (`9483dde`, `d203bb4`), sans toucher une ligne de
+backend.
+
+**Backtest** — le run devient lisible :
+- `PriceSignalsChart` : bougies, markers d'entrée ▲▼ et de sortie ●, lignes de
+  stop initial et suiveur
+- `TradesTable` : 14 colonnes, triable, paginée, filtrable, chaque ligne
+  dépliable ; export CSV 19 colonnes avec BOM UTF-8 pour Excel FR
+- `DiagnosticsPanel` : 9 KPIs d'exécution, dont les **rejets par motif**
+  (notionnel, ATR ≤ 0) et le détail par stratégie
+- `TradesStatsPanel` : répartition par setup et par raison de sortie
+- `MLBacktestPanel` : AUC, nombre de features, lookahead, `proba_up`
+- Warnings : seuil de score par stratégie, échantillon < 30 trades
+- Reprise de session : un reload accidentel ou un second onglet ne perdent plus
+  le résultat (`sessionStorage`, TTL 30 min, + poll de l'état serveur)
+
+**Optimiseur** — le score devient interprétable :
+- `BeforeAfterGrid` : 6 métriques avant/après avec delta coloré
+- `TopTrialsTable` : les 5 meilleurs essais et leurs paramètres
+- `OptimizerWarnings` : overfit, trades insuffisants, score effondré
+- Hint IS/OOS par timeframe, badges de compatibilité, ETA, jobs groupés par
+  statut et repliables
+
+**Replay** — capacité nouvelle, sans équivalent Jinja2 : un moteur interactif
+bougie-par-bougie (`useReplayEngine`), 7 vitesses de 0,5× à MAX, journal des
+signaux et statistiques accumulées en temps réel, raccourcis clavier. Le replay
+**batch multi-TF** qui occupait cet onglet n'a pas disparu : il est déplacé tel
+quel sous un 6ᵉ onglet, `/lab?tab=batch`.
+
+**ML** — l'onglet cesse d'être en lecture seule : il monte le même
+`OptimizerView` avec `filterMl`, et l'entraînement d'une recette se fait dans un
+dialog sur place au lieu de renvoyer vers `/models`.
+
+> ⚠ **Dette assumée.** Le backend n'ayant pas été modifié, les divergences de
+> nommage (`reason` vs `signal_reason`, `final_equity` vs `equity_final`, `top5`
+> vs `top_trials`, `ml_info` non propagé…) sont absorbées côté client par
+> `frontend/src/lib/backend-normalizers.ts`. C'est une couche de traduction à
+> **faire maigrir** en alignant le backend, pas à épaissir. Inventaire complet
+> dans `docs/SPECS_JINJA2_VS_NEXT_MARCHE_LAB.md` §8ter.
+
+Écarts fonctionnels subsistants au Laboratoire : distribution de PnL et cumul
+des trades (non portés), layout 2 colonnes et `n_jobs` guidé de l'optimiseur
+(reportés).
+
+### 🗃 Le scan SMC cesse de polluer l'historique git
+
+`data/smc_signals_recent.json` était suivi alors que le job background
+`smc_signals_scan` le réécrit **en entier** à chaque passe : ~1 800 lignes de
+diff par journée d'exécution, qui noyaient les changements de code sans rien
+apporter — un instantané des signaux de moins de 5 jours n'a aucune valeur
+d'archive le lendemain. Même motif que `data/backtest_history.json`, même
+traitement : sorti du suivi, documenté dans `.gitignore`. `load_recent()`
+tolère l'absence du fichier et la route scanner relance un scan de son propre
+chef, donc un clone neuf se réamorce seul.
+
+Deux trous du `.gitignore` comblés au passage : `logs/*.log` ne couvrait pas
+les fichiers tournés (`bot.log.1` … `.5`), et les traces console des scripts de
+recherche (`research/*.log`) remontaient en untracked — leurs **résultats**,
+les `research/*.json`, restent eux suivis.
+
 ### 🛡 Presets risque UI alignés S12 (plus de régression risk_per_trade)
 
 Les cartes « Prudent / Équilibré / Agressif » écrivaient encore

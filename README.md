@@ -293,14 +293,21 @@ l'onglet correspondant.
 
 | Page | URL | Description |
 |------|-----|-------------|
-| 📊 Portefeuille | `/portfolio-v2` | Suivi du portefeuille, positions, trades, equity curve, journal des signaux et des notifications |
-| 🤖 Mes Bots | `/bots-v2` | Portefeuille de stratégies et cycle de vie (candidat → essai → actif → retiré) |
-| 🧪 Laboratoire | `/lab` | Backtest, optimiseur (IS/OOS temps réel), entraînement ML, replay, comparatif — un onglet chacun |
+| 📊 Portefeuille | `/portfolio` | Suivi du portefeuille, positions, trades, equity curve, journal des signaux et des notifications |
+| 🤖 Mes Bots | `/bots` | Portefeuille de stratégies et cycle de vie (candidat → essai → actif → retiré) |
+| 🧪 Laboratoire | `/lab` | Backtest, optimiseur (IS/OOS temps réel), entraînement ML, replay interactif, batch multi-TF, comparatif — un onglet chacun |
 | 🔍 Marché | `/market` | Scanner SMC/ICT, Smart Graph, Smart Replay, dérivés (funding, OI, LSR) |
-| ⚙️ Réglages | `/settings-v2` | Presets de risque, params par stratégie, notifications, données, audit, préférences UI |
+| ⚙️ Réglages | `/settings` | Presets de risque, params par stratégie, notifications, données, audit, préférences UI |
+
+Les anciennes URLs suffixées (`/portfolio-v2`, `/bots-v2`, `/settings-v2`)
+restent valables : ce sont des redirections 308 vers la page sans suffixe,
+retiré en S11.
+
+Onglets du Laboratoire : `backtest`, `optimizer`, `ml`, `replay`, `batch`
+(*Multi-TF*), `compare`.
 
 Lien profond vers un onglet précis : `/lab?tab=optimizer`,
-`/market?tab=smartgraph`, `/settings-v2?tab=ui`…
+`/lab?tab=batch`, `/market?tab=smartgraph`, `/settings?tab=ui`…
 
 ---
 
