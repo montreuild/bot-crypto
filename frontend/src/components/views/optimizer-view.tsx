@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -203,10 +204,24 @@ function ParamSpaceTable({ spaces }: { spaces: OptimizeSpaces }) {
 
 // ── Job card ────────────────────────────────────────────────────────────────
 
-function JobCard({ job, defaultExpanded }: { job: OptimizeJob; defaultExpanded?: boolean }) {
+function JobCard({
+  job,
+  defaultExpanded,
+  filterMl = false,
+}: {
+  job: OptimizeJob;
+  defaultExpanded?: boolean;
+  /** ML-004/ML-007 — mode ML : le tooltip Apply mentionne l'entraînement du
+   *  modèle, et la note « modèle sauvegardé automatiquement » s'affiche près
+   *  du bouton Apply. En cas de succès, on invalide aussi les queries
+   *  `mlInfo` et `ml-recipes` pour que la StrategyTable du tab ML se
+   *  rafraîchisse (le backend réentraîne le modèle pendant l'apply). */
+  filterMl?: boolean;
+}) {
   const apply = useApplyOptimize();
   const cancel = useCancelOptimize();
   const del = useDeleteOptimizeJob();
+  const qc = useQueryClient();
 
   // OPT-007 — carte repliable : dépliée par défaut pour les jobs en cours,
   // repliée pour les jobs terminés/annulés en erreur (le verdict OOS tient
@@ -217,6 +232,14 @@ function JobCard({ job, defaultExpanded }: { job: OptimizeJob; defaultExpanded?:
     try {
       await apply.mutateAsync({ jobId: job.job_id });
       toast.success('Paramètres appliqués au slot');
+      // ML-004 — en mode ML, l'apply déclenche aussi l'entraînement du modèle
+      // côté backend. On invalide les queries consommées par le tab ML pour
+      // que la StrategyTable (statut Entraîné/Non entraîné, AUC) se
+      // rafraîchisse sans attendre le prochain poll de 30 s.
+      if (filterMl) {
+        qc.invalidateQueries({ queryKey: ['mlInfo'] });
+        qc.invalidateQueries({ queryKey: ['ml-recipes'] });
+      }
     } catch (e: any) {
       toast.error(`Apply failed: ${e.message}`);
     }
@@ -345,48 +368,62 @@ function JobCard({ job, defaultExpanded }: { job: OptimizeJob; defaultExpanded?:
         )}
 
         {/* Actions */}
-        <div className="flex gap-2 pt-1 border-t border-border">
-          {isDone && !job.applied && (
-            <Button
-              size="sm"
-              variant="success"
-              onClick={handleApply}
-              disabled={apply.isPending}
-              className="flex-1"
-            >
-              <CheckCircle2 className="w-3 h-3" />
-              Apply
-            </Button>
+        <div className="space-y-2 pt-1 border-t border-border">
+          {/* ML-007 — note « modèle ML sauvegardé automatiquement » près du
+              bouton Apply : rappelle que l'apply n'écrase que les params
+              optimisés (le modèle est géré par le backend). */}
+          {filterMl && isDone && !job.applied && (
+            <p className="text-[10px] text-cyan-300/80 italic">
+              Écrase uniquement les params optimisés — le modèle ML est sauvegardé automatiquement.
+            </p>
           )}
-          {isRunning && (
-            <Button
-              size="sm"
-              variant="danger"
-              onClick={handleCancel}
-              disabled={cancel.isPending}
-              className="flex-1"
-            >
-              <StopCircle className="w-3 h-3" />
-              Annuler
-            </Button>
-          )}
-          {!isRunning && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleDelete}
-              disabled={del.isPending}
-              // Bouton à icône seule : sans nom accessible, axe le remonte en
-              // `button-name` (critique) et un lecteur d'écran n'annonce que
-              // « bouton ». C'est l'item #26 de l'audit, donné pour traité en
-              // S2 mais jamais appliqué ici — et le job a11y de la CI est
-              // depuis passé bloquant.
-              aria-label="Supprimer ce job d'optimisation"
-              title="Supprimer ce job"
-            >
-              <Trash2 className="w-3 h-3" />
-            </Button>
-          )}
+          <div className="flex gap-2">
+            {isDone && !job.applied && (
+              <Button
+                size="sm"
+                variant="success"
+                onClick={handleApply}
+                disabled={apply.isPending}
+                className="flex-1"
+                // ML-004 — en mode ML, l'apply entraîne aussi le modèle : le
+                // tooltip l'indique pour éviter la confusion avec un apply
+                // classique qui ne touche qu'aux params.
+                title={filterMl ? 'Applique les params + entraîne le modèle' : undefined}
+              >
+                <CheckCircle2 className="w-3 h-3" />
+                Apply
+              </Button>
+            )}
+            {isRunning && (
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={handleCancel}
+                disabled={cancel.isPending}
+                className="flex-1"
+              >
+                <StopCircle className="w-3 h-3" />
+                Annuler
+              </Button>
+            )}
+            {!isRunning && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleDelete}
+                disabled={del.isPending}
+                // Bouton à icône seule : sans nom accessible, axe le remonte en
+                // `button-name` (critique) et un lecteur d'écran n'annonce que
+                // « bouton ». C'est l'item #26 de l'audit, donné pour traité en
+                // S2 mais jamais appliqué ici — et le job a11y de la CI est
+                // depuis passé bloquant.
+                aria-label="Supprimer ce job d'optimisation"
+                title="Supprimer ce job"
+              >
+                <Trash2 className="w-3 h-3" />
+              </Button>
+            )}
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -412,7 +449,14 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 // ── Vue ─────────────────────────────────────────────────────────────────────
 
-export function OptimizerView() {
+/**
+ * ML-001 — `filterMl` restreint la vue aux stratégies ML et active les
+ * affordances dédiées (label de bouton cyan « ⬇ Lancer l'optimisation ML »,
+ * warning omnibus ML-006, ml_tune_hp labellisé, note Apply ML-007). Utilisé
+ * par `ml-view.tsx` pour intégrer l'optimiseur ML directement dans l'onglet
+ * ML au lieu de renvoyer vers l'onglet Optimizer.
+ */
+export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
   const { data: spaces, isLoading: spacesLoading } = useOptimizeSpaces();
   const { data: resultsData } = useOptimizeResults();
   const startOptimize = useStartOptimize();
@@ -422,6 +466,17 @@ export function OptimizerView() {
   // Mémoïsé : ce tableau alimente les deps d'un useEffect plus bas ; recréé à
   // chaque render, il relançait l'effet en boucle.
   const allStrategies = useMemo(() => (spaces ? Object.keys(spaces) : []), [spaces]);
+
+  // ML-001 — en mode ML, on ne propose QUE les stratégies marquées `is_ml`
+  // par le backend (`/optimize/spaces`). On garde une passe défensive sur
+  // `is_ml` (booléen attendu, mais on tolère une string "true"/falsy).
+  const visibleStrategies = useMemo(() => {
+    if (!filterMl) return allStrategies;
+    return allStrategies.filter((s) => {
+      const info = spaces?.[s];
+      return !!(info?.is_ml);
+    });
+  }, [allStrategies, filterMl, spaces]);
 
   // Form state
   const [selectedStrategies, setSelectedStrategies] = useState<string[]>([]);
@@ -491,10 +546,10 @@ export function OptimizerView() {
 
   // Sync default strategies selection once spaces load
   useEffect(() => {
-    if (allStrategies.length > 0 && selectedStrategies.length === 0) {
-      setSelectedStrategies(allStrategies.slice(0, 1));
+    if (visibleStrategies.length > 0 && selectedStrategies.length === 0) {
+      setSelectedStrategies(visibleStrategies.slice(0, 1));
     }
-  }, [allStrategies, selectedStrategies.length]);
+  }, [visibleStrategies, selectedStrategies.length]);
 
   // TF actifs (config) par défaut
   useEffect(() => {
@@ -524,6 +579,10 @@ export function OptimizerView() {
 
   // OPT-004 — ml_tune_hp n'a de sens que si une stratégie ML est sélectionnée.
   const hasMlSelected = selectedStrategies.some((s) => spaces?.[s]?.is_ml);
+  // ML-006 — détection d'une recette « omnibus » (multi-têtes) pour le warning
+  // bougies ≥ 2200. On fait matcher le nom en sous-chaîne : les recettes
+  // connues (`opus_omnibus_v11`, `omnibus_v2`…) contiennent toutes `omnibus`.
+  const hasOmnibusSelected = selectedStrategies.some((s) => /omnibus/i.test(s));
 
   const handleStart = async () => {
     if (selectedStrategies.length === 0) {
@@ -604,9 +663,13 @@ export function OptimizerView() {
       {/* Header */}
       <div className="flex items-end justify-between">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Optimiseur</h2>
+          <h2 className="text-lg font-semibold tracking-tight">
+            {filterMl ? 'Optimiseur ML' : 'Optimiseur'}
+          </h2>
           <p className="text-sm text-muted mt-1">
-            Optimisation bayésienne / grid / random des stratégies avec validation OOS
+            {filterMl
+              ? 'Optimisation bayésienne / grid / random des stratégies ML avec validation OOS et entraînement LightGBM'
+              : 'Optimisation bayésienne / grid / random des stratégies avec validation OOS'}
           </p>
         </div>
         <Badge variant="info">
@@ -625,10 +688,20 @@ export function OptimizerView() {
           {/* Strategies */}
           <div>
             <div className="text-xs text-dim mb-2 flex items-center gap-2">
-              <Layers className="w-3 h-3" /> Stratégies
+              <Layers className="w-3 h-3" /> {filterMl ? 'Stratégies ML' : 'Stratégies'}
             </div>
             <div className="flex flex-wrap gap-2">
-              {(allStrategies.length > 0 ? allStrategies : ['pullback_trend', 'trend_rider', 'breakout', 'smart_money']).map((s) => {
+              {/* ML-001 — en mode ML, on ne propose QUE les stratégies ML
+                  chargées depuis `/optimize/spaces`. Le fallback legacy
+                  (`pullback_trend`…) ne contient aucune stratégie ML : l'afficher
+                  en mode ML tromperait l'utilisateur avec des chips qui ne
+                  peuvent pas lancer d'optimisation ML. */}
+              {(filterMl
+                ? visibleStrategies
+                : (allStrategies.length > 0
+                    ? allStrategies
+                    : ['pullback_trend', 'trend_rider', 'breakout', 'smart_money'])
+              ).map((s) => {
                 const active = selectedStrategies.includes(s);
                 const isMl = spaces?.[s]?.is_ml;
                 // OPT-011 — badges TF recommandés (cyan) + warning si un TF
@@ -673,6 +746,14 @@ export function OptimizerView() {
                 );
               })}
             </div>
+            {/* ML-001 — en mode ML sans stratégies chargées (espaces non
+                encore disponibless ou aucune strat ML déclarée), un message
+                évite d'avoir une zone vide sans explication. */}
+            {filterMl && visibleStrategies.length === 0 && (
+              <p className="text-[11px] text-muted italic mt-2">
+                Aucune stratégie ML déclarée dans <code className="font-mono">/optimize/spaces</code>.
+              </p>
+            )}
           </div>
 
           {/* Timeframes (multi) */}
@@ -701,6 +782,19 @@ export function OptimizerView() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+            {/* ML-006 — les recettes omnibus (e.g. `opus_omnibus_v11`)
+                entraînent un LightGBM multi-tâches sur toutes les têtes : un
+                entraînement fiable exige ≥ 2200 bougies. Sans ce warning,
+                l'utilisateur peut soumettre un run sur 1500 bougies et obtenir
+                un AUC trompeur (surapprentissage sur peu d'échantillons). */}
+            {filterMl && hasOmnibusSelected && (
+              <div className="mt-2 text-[10px] text-amber-400 flex items-start gap-1.5">
+                <span aria-hidden>⚠</span>
+                <span>
+                  Les recettes omnibus exigent ≥ 2200 bougies pour un entraînement fiable.
+                </span>
               </div>
             )}
           </div>
@@ -831,26 +925,38 @@ export function OptimizerView() {
               />
             </div>
             <div className="flex items-end">
-              <label
-                className={cn(
-                  'flex items-center gap-2 text-sm cursor-pointer h-10',
-                  !hasMlSelected && 'opacity-50 cursor-not-allowed',
-                )}
-                title={
-                  hasMlSelected
-                    ? 'Réglage des hyperparamètres du modèle ML (n_estimators, learning_rate…) en plus des params de stratégie.'
-                    : 'Sélectionnez une stratégie ML pour activer cette option.'
-                }
-              >
-                <input
-                  type="checkbox"
-                  checked={mlTuneHp}
-                  onChange={(e) => setMlTuneHp(e.target.checked)}
-                  disabled={!hasMlSelected}
-                  className="rounded"
-                />
-                ml_tune_hp
-              </label>
+              {/* ML-002 — en mode ML, le checkbox n'est visible QUE si une
+                  stratégie ML est sélectionnée (sinon il n'a aucun sens et
+                  l'utilisateur le verrait grillé sans comprendre pourquoi).
+                  Hors mode ML, on garde le comportement existant : toujours
+                  visible mais désactivé si aucune strat ML n'est sélectionnée.
+                  Le label « ml_tune_hp » reste technique hors ML ; en ML on
+                  affiche la description fonctionnelle complète pour rendre
+                  évident que cocher allonge la durée (two-phase). */}
+              {(!filterMl || hasMlSelected) && (
+                <label
+                  className={cn(
+                    'flex items-center gap-2 text-sm cursor-pointer h-10',
+                    !hasMlSelected && 'opacity-50 cursor-not-allowed',
+                  )}
+                  title={
+                    hasMlSelected
+                      ? 'Réglage des hyperparamètres du modèle ML (n_estimators, learning_rate…) en plus des params de stratégie.'
+                      : 'Sélectionnez une stratégie ML pour activer cette option.'
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={mlTuneHp}
+                    onChange={(e) => setMlTuneHp(e.target.checked)}
+                    disabled={!hasMlSelected}
+                    className="rounded"
+                  />
+                  {filterMl
+                    ? 'Régler aussi les hyperparamètres d\'entraînement (two-phase, plus lent)'
+                    : 'ml_tune_hp'}
+                </label>
+              )}
             </div>
           </div>
 
@@ -949,7 +1055,9 @@ export function OptimizerView() {
             ) : (
               <Play className="w-4 h-4" fill="currentColor" />
             )}
-            Lancer l&apos;optimisation
+            {/* ML-001 — label dédié en mode ML : le bouton primary est déjà
+                cyan par le thème (cf. button.tsx), on ne change que le texte. */}
+            {filterMl ? '⬡ Lancer l\'optimisation ML' : 'Lancer l\'optimisation'}
           </Button>
 
           {/* OPT-010 — rappel des params globaux non modifiés par l'optimiseur.
@@ -1072,6 +1180,7 @@ export function OptimizerView() {
                           key={job.job_id}
                           job={job}
                           defaultExpanded={allExpanded || g.key === 'running'}
+                          filterMl={filterMl}
                         />
                       ))}
                     </div>

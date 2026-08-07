@@ -52,7 +52,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   Play, Square, Loader2, FlaskConical, Sparkles, Brain, Repeat,
   GitCompare, AlertCircle, CheckCircle2, TrendingUp, Rocket, Archive,
-  Maximize2, FileDown, X, Zap,
+  Maximize2, FileDown, X, Zap, Layers,
 } from 'lucide-react';
 import { cn, formatUSD, formatPct } from '@/lib/utils';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
@@ -91,12 +91,16 @@ const ReplayView = dynamic(
   () => import('@/components/views/replay-view').then((m) => m.ReplayView),
   { loading: tabLoading },
 );
+const MultiTfBatchView = dynamic(
+  () => import('@/components/views/multi-tf-batch-view').then((m) => m.MultiTfBatchView),
+  { loading: tabLoading },
+);
 const CompareView = dynamic(
   () => import('@/components/views/compare-view').then((m) => m.CompareView),
   { loading: tabLoading },
 );
 
-const TABS = ['backtest', 'optimizer', 'ml', 'replay', 'compare'] as const;
+const TABS = ['backtest', 'optimizer', 'ml', 'replay', 'batch', 'compare'] as const;
 
 export default function LabPage() {
   return (
@@ -174,7 +178,7 @@ function LabContent() {
       {header}
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-5 w-full max-w-2xl">
+        <TabsList className="grid grid-cols-6 w-full max-w-3xl">
           <TabsTrigger value="backtest">
             <FlaskConical className="w-3.5 h-3.5 mr-1.5" />
             Backtest
@@ -190,6 +194,10 @@ function LabContent() {
           <TabsTrigger value="replay">
             <Repeat className="w-3.5 h-3.5 mr-1.5" />
             Replay
+          </TabsTrigger>
+          <TabsTrigger value="batch">
+            <Layers className="w-3.5 h-3.5 mr-1.5" />
+            Multi-TF
           </TabsTrigger>
           <TabsTrigger value="compare">
             <GitCompare className="w-3.5 h-3.5 mr-1.5" />
@@ -208,6 +216,9 @@ function LabContent() {
         </TabsContent>
         <TabsContent value="replay">
           <ReplayView />
+        </TabsContent>
+        <TabsContent value="batch">
+          <MultiTfBatchView />
         </TabsContent>
         <TabsContent value="compare">
           <CompareView />

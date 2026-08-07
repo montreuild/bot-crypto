@@ -9,17 +9,22 @@
  *
  * ⚠ `/models` (registre versionné, gate de promotion) reste une page à part
  * entière : elle n'est pas dans le plan de fusion. L'onglet y renvoie.
+ *
+ * Sprint 4 (ML specs) — l'optimiseur ML est désormais intégré nativement
+ * (`<OptimizerView filterMl />`). Le renvoi vers `/lab?tab=optimizer` est
+ * supprimé : l'utilisateur peut lancer et appliquer une optimisation ML
+ * directement depuis l'onglet ML.
  */
 
-import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn, timeAgo, formatDateTime } from '@/lib/utils';
 import { useMLStrategyInfo, useCandlesStats } from '@/hooks/use-api';
 import { MLRecipesList } from '@/components/cards/ml-recipes-list';
+import { OptimizerView } from '@/components/views/optimizer-view';
 import {
   Loader2, BrainCircuit, Database, CheckCircle2, XCircle,
-  AlertCircle, Cpu, Sparkles,
+  AlertCircle, Cpu,
 } from 'lucide-react';
 import type { MLStrategyInfo } from '@/types';
 
@@ -226,39 +231,13 @@ export function MLView() {
       {/* S9-F3-US1 — Recettes ML disponibles */}
       <MLRecipesList />
 
-      {/* ML-001 — l'optimisation ML se fait depuis l'onglet Optimizer en
-          sélectionnant une stratégie ML (badge violet `ML` à côté du chip).
-          La carte qui disait « lecture seule » est remplacée par une carte
-          d'orientation qui pointe vers le bon onglet, avec un lien profond
-          `/lab?tab=optimizer` pour éviter que l'utilisateur ne tourne en
-          rond à chercher le bouton « Lancer » ici. */}
-      <Card className="border-cyan-500/30 bg-cyan-500/5">
-        <CardContent>
-          <div className="flex items-start gap-3 text-sm">
-            <Sparkles className="w-5 h-5 text-cyan-400 flex-shrink-0 mt-0.5" />
-            <div className="space-y-2">
-              <p className="font-semibold text-foreground">Optimisation ML</p>
-              <p className="text-muted">
-                L&apos;optimisation ML est disponible dans l&apos;onglet{' '}
-                <Link
-                  href="/lab?tab=optimizer"
-                  className="text-cyan-300 hover:text-cyan-200 underline underline-offset-2 font-medium"
-                >
-                  Optimizer
-                </Link>
-                {' '}— sélectionnez une stratégie ML (badge violet « ML ») pour
-                activer les options dédiées, notamment <code className="font-mono">ml_tune_hp</code>{' '}
-                (réglage des hyperparamètres du LightGBM en plus des params de stratégie).
-              </p>
-              <p className="text-xs text-dim">
-                L&apos;AUC reflète la qualité de discrimination du modèle
-                (0.5 = aléatoire, 1.0 = parfait). Les modèles sont réentraînés
-                automatiquement par le backend selon la configuration du scheduler.
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* ML-001 — Optimiseur ML intégré nativement. `filterMl` restreint
+          les chips aux stratégies ML déclarées dans `/optimize/spaces`,
+          active le label cyan « ⬡ Lancer l'optimisation ML », le warning
+          omnibus (ML-006), le label complet du checkbox `ml_tune_hp`
+          (ML-002), la note Apply « modèle sauvegardé automatiquement »
+          (ML-007) et l'invalidation des queries ML après apply (ML-004). */}
+      <OptimizerView filterMl />
     </div>
   );
 }
