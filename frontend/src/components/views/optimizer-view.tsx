@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -478,6 +479,9 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
     });
   }, [allStrategies, filterMl, spaces]);
 
+  // BT-011 — cible éventuelle passée en query (`?strategy=<nom>`).
+  const searchParams = useSearchParams();
+
   // Form state
   const [selectedStrategies, setSelectedStrategies] = useState<string[]>([]);
   const [selectedTfs, setSelectedTfs] = useState<string[]>([]);
@@ -544,12 +548,20 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
     ? (jobsErrorObj as any)?.message || 'Erreur de chargement'
     : null;
 
-  // Sync default strategies selection once spaces load
+  // Sync default strategies selection once spaces load.
+  // BT-011 : `?strategy=<nom>` présélectionne la stratégie visée — sans quoi
+  // le lien « Optimiser cette stratégie » des avertissements du backtest
+  // atterrissait ici sur la première stratégie de la liste, pas sur celle qui
+  // a déclenché l'avertissement.
   useEffect(() => {
-    if (visibleStrategies.length > 0 && selectedStrategies.length === 0) {
+    if (visibleStrategies.length === 0 || selectedStrategies.length > 0) return;
+    const wanted = searchParams.get('strategy');
+    if (wanted && visibleStrategies.includes(wanted)) {
+      setSelectedStrategies([wanted]);
+    } else {
       setSelectedStrategies(visibleStrategies.slice(0, 1));
     }
-  }, [visibleStrategies, selectedStrategies.length]);
+  }, [visibleStrategies, selectedStrategies.length, searchParams]);
 
   // TF actifs (config) par défaut
   useEffect(() => {

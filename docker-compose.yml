@@ -61,7 +61,8 @@ services:
       dockerfile: Dockerfile.frontend
       args:
         BOT_API_URL: http://api:8000
-        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000/ws}
+        # Vide = same-origin (`/ws` proxifié par Next). Cf. .env.example.
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
     image: crypto-bot:web
     container_name: crypto-bot-web
     ports:
@@ -69,7 +70,7 @@ services:
     environment:
       BOT_API_URL: http://api:8000
       WEB_API_KEY: ${WEB_API_KEY:-}
-      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000/ws}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
     depends_on:
       api:
         condition: service_healthy

@@ -6,6 +6,77 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔌 Le temps réel remarche : une seule origine, un seul chemin d'auth
+
+Le WebSocket était **mort pour toute installation standard**, et personne ne
+pouvait le voir autrement que par un panneau qui ne bougeait jamais : Trades
+live, Signaux temps réel et Activité récente restaient vides indéfiniment.
+
+La cause remonte à la suppression de Jinja2 (`ecc87b2`). Le credential du WS
+est le cookie HttpOnly `api_key` — c'est ce que lit `_check_ws_auth`. Ce cookie
+était posé par `_tpl()`, le rendu de template, parti avec Jinja2 : `set_cookie`
+n'existait plus **nulle part** dans `app/`. Dès que `web.api_key` est renseigné
+— ce que fait `scripts/setup.sh` en écrivant `WEB_API_KEY` dans `.env`, donc le
+chemin d'installation normal — le backend refusait la poignée de main par un
+403 sans log. Le REST, lui, marchait : il transite par le proxy Next, qui
+injecte `X-API-Key` côté serveur. Le navigateur ne peut pas en faire autant
+pour un `new WebSocket()`.
+
+Le comportement est désormais **le même partout** :
+
+- le WS se connecte en **same-origin** (`ws(s)://<page>/ws`), comme le REST.
+  En dev un rewrite `/ws` de `next.config.mjs` le proxifie ; en prod
+  `location /ws` de `deploy/nginx.conf` le faisait déjà. Le défaut
+  `ws://localhost:8000/ws`, qui forçait une connexion cross-origin et laissait
+  le cookie derrière, est supprimé de `.env.example`, `Dockerfile.frontend`,
+  `docker-compose.yml` et `docker-compose.prod.yml` ;
+- le proxy `/api/[...path]`, qui détient déjà la clé côté serveur, **repose le
+  cookie** `api_key` en `HttpOnly; SameSite=Lax` (+ `Secure` en HTTPS). La clé
+  n'entre jamais dans le bundle client et reste illisible en JS.
+
+`NEXT_PUBLIC_WS_URL` reste honorée pour un déploiement qui exposerait
+réellement le WS sur un autre hôte — ce n'est plus le défaut.
+
+### 🔍 Quatre écarts de spec du Laboratoire, et deux bugs trouvés en les corrigeant
+
+Confrontation des 52 critères d'acceptation de
+`docs/SPECIFICATIONS_RATTRAPAGE_LAB_NEXTJS.md` au code, puis correction :
+
+- **BT-004** — le bouton « Effacer » n'existait pas : `useBacktestSession()`
+  exposait `clear` sans appelant. La session persistée ne pouvait pas être
+  purgée avant l'expiration du TTL de 30 min.
+- **BT-003** — le tableau per-strategy des diagnostics n'était pas triable.
+  En-têtes cliquables sur les 7 colonnes, avec `aria-sort`.
+- **RPL-009** — le journal horodaté du replay manquait (seul le welcome screen
+  avait été livré). `cards/replay-load-log.tsx` : lignes
+  `HH:MM:SS · niveau · message`, conservé après chargement.
+- **BT-011** — le lien « Ajuster dans Config » visait
+  `/settings?tab=strategies`, **route inexistante**. Il pointe vers
+  l'optimiseur, qui présélectionne maintenant la stratégie via `?strategy=`.
+
+Deux bugs préexistants sont tombés en exerçant ces specs :
+
+- **le tableau per-strategy ne s'était jamais affiché** — le backend écrit
+  `per_strategy` en dict, le front le typait en tableau, et la garde
+  `.length > 0` sur un dict est toujours fausse. Le panneau omettait le tableau
+  en silence depuis son ajout. `normalizePerStrategy` accepte les deux formes ;
+- **warning React de clé manquante dans `TradesTable`** — le `.map()` renvoyait
+  un fragment `<>` sans clé alors qu'une ligne dépliée en rend deux.
+
+Enfin, `_discover_strategies()` listait tout `app/strategies/*.py` sans vérifier
+qu'il s'agissait d'une stratégie : `smart_money_params`, `smart_money_aux`,
+`smart_money_plans` et `smart_money_signals` — les modules extraits de
+`smart_money.py` au découpage ARCH-05 — étaient proposés à la sélection dans le
+Laboratoire et l'optimiseur. Les choisir faisait échouer le chargement. Le
+filtre exige désormais une classe `Strategy`, le contrat qu'appliquent tous les
+chargeurs (40 stratégies au lieu de 44).
+
+> ⚠ **Dette ouverte.** Aucune UI ne permet d'éditer les paramètres d'une
+> stratégie : `POST /api/config/strategy-params` et `api.updateStrategyParams`
+> existent, rien ne les appelle. L'éditeur a disparu avec `config.html` sans
+> être reconstruit — c'est ce qui a rendu le critère de BT-011 inatteignable
+> tel qu'écrit.
+
 ### 🧪 Le Laboratoire rattrape — et dépasse — l'ancienne UI Jinja2
 
 La suppression de Jinja2 (`ecc87b2`) avait laissé le Laboratoire en retrait de

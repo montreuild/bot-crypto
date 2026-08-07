@@ -15,8 +15,13 @@
  *    préflight `OPTIONS`, plus de whitelist d'origines à tenir à jour.
  *
  * Un `rewrites()` ne permet pas d'ajouter un en-tête, d'où le handler.
- * Le WebSocket reste en direct (Next ne proxifie pas les WS) — cf.
- * `NEXT_PUBLIC_WS_URL`.
+ *
+ * 3. **Cookie du WebSocket** — le navigateur ouvre le WS lui-même et ne peut
+ *    pas poser d'en-tête : son seul credential est le cookie de l'origine.
+ *    Ce proxy repose donc l'`api_key` HttpOnly que `_tpl()` posait avant la
+ *    fin de Jinja2 (cf. le bloc dédié plus bas). Le WS passe par la même
+ *    origine que les pages — rewrite `/ws` en dev, `location /ws` de nginx en
+ *    prod — donc le cookie l'accompagne.
  */
 
 import { NextRequest } from 'next/server';
@@ -77,6 +82,27 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
       outHeaders.set(key, value);
     }
   });
+
+  // ── Cookie d'auth pour le WebSocket ──────────────────────────────────────
+  //
+  // Le REST passe par ce proxy, qui injecte `X-API-Key` côté serveur. Le
+  // WebSocket, lui, est ouvert par le NAVIGATEUR : il ne peut pas poser
+  // d'en-tête, et le seul credential qu'un `new WebSocket()` transporte est le
+  // cookie de l'origine. C'est exactement ce que `_check_ws_auth` attend
+  // (`websocket.cookies.get("api_key")`), et ce que posait `_tpl()` avant la
+  // suppression de Jinja2 — depuis, plus personne.
+  //
+  // On le repose ici, sur l'origine Next, la même que celle du `/ws`
+  // same-origin (rewrite en dev, nginx en prod). `HttpOnly` : le bundle client
+  // ne peut pas le lire, la clé ne fuit pas dans le JS. `SameSite=Lax` : pas
+  // d'envoi sur une navigation tierce.
+  if (API_KEY) {
+    const secure = req.nextUrl.protocol === 'https:' ? '; Secure' : '';
+    outHeaders.append(
+      'set-cookie',
+      `api_key=${encodeURIComponent(API_KEY)}; Path=/; HttpOnly; SameSite=Lax${secure}`,
+    );
+  }
 
   return new Response(upstream.body, {
     status: upstream.status,

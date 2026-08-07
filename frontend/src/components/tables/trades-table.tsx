@@ -7,7 +7,7 @@
  * pagination 20/page, lignes expandables (raison/conditions/indicateurs/sizing/position).
  */
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -195,15 +195,17 @@ export function TradesTable({ trades, meta, onRowClick }: Props) {
             <tbody>
               {slice.map((t, i) => {
                 const isWin = (t.pnl ?? 0) >= 0;
-                const expanded = expandedId === (t.id ?? `${i}-${t.entry_time ?? ''}`);
-                const badge = exitReasonBadge(t.exit_reason);
                 const rowKey = t.id ?? `${i}-${t.entry_time ?? ''}`;
+                const expanded = expandedId === rowKey;
+                const badge = exitReasonBadge(t.exit_reason);
                 const scorePct = Math.round((t.score ?? 0) * 100);
                 const scoreColor = (t.score ?? 0) >= 0.7 ? '#34d399' : (t.score ?? 0) >= 0.55 ? '#ffd166' : '#5a7099';
                 return (
-                  <>
+                  // La clé va sur le Fragment, pas sur le <tr> : une ligne
+                  // dépliée en rend deux, et React réconcilie sur l'élément
+                  // racine retourné par le map.
+                  <Fragment key={rowKey}>
                     <tr
-                      key={rowKey}
                       className="border-b border-border/50 hover:bg-muted/20 cursor-pointer"
                       onClick={() => onRowClick?.(t)}
                     >
@@ -271,13 +273,13 @@ export function TradesTable({ trades, meta, onRowClick }: Props) {
                       </td>
                     </tr>
                     {expanded && (
-                      <tr key={`${rowKey}-detail`}>
+                      <tr>
                         <td colSpan={hasSetup ? 13 : 12} className="py-2 px-3 bg-surface/50">
                           <TradeDetail trade={t} />
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>

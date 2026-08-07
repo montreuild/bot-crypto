@@ -33,6 +33,7 @@ import { ReplayCandlestickChart } from '@/components/charts/replay-candlestick-c
 import { PlaybackControls } from '@/components/controls/playback-controls';
 import { ReplaySignalLog } from '@/components/cards/replay-signal-log';
 import { ReplayStatsPanel } from '@/components/cards/replay-stats-panel';
+import { ReplayLoadLog, type ReplayLogEntry } from '@/components/cards/replay-load-log';
 import { normalizeTrade } from '@/lib/backend-normalizers';
 import type { BacktestResult, BacktestTrade } from '@/types';
 
@@ -67,6 +68,14 @@ export function ReplayView() {
 
   const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
   const [crosshairCandle, setCrosshairCandle] = useState<CandleRow | null>(null);
+
+  // RPL-009 — journal horodaté du chargement. Un fetch de 8 000 bougies peut
+  // durer plusieurs dizaines de secondes : un spinner muet ne dit pas si on
+  // attend le réseau, le backtest, ou si quelque chose a déjà échoué.
+  const [loadLog, setLoadLog] = useState<ReplayLogEntry[]>([]);
+  const pushLog = useCallback((level: ReplayLogEntry['level'], message: string) => {
+    setLoadLog((prev) => [...prev, { at: Date.now(), level, message }]);
+  }, []);
 
   const runBacktest = useRunBacktest();
   const cancelBacktest = useCancelBacktest();
@@ -125,8 +134,13 @@ export function ReplayView() {
     }
     // Estime le nombre de bougies à partir des mois + TF.
     const limit = Math.min(8000, Math.max(500, monthsToBougies(months, timeframe)));
+    const started = Date.now();
+    setLoadLog([]);
+    pushLog('info', `${symbol.trim()} · ${timeframe} · ${months} mois → ${limit} bougies demandées`);
+    pushLog('info', `Stratégie overlay : ${effectiveStrategy}`);
     try {
       toast.info(`Chargement des données (${limit} bougies ${timeframe})…`);
+      pushLog('info', 'Backtest en cours côté serveur — fetch OHLCV puis évaluation…');
       const r = await runBacktest.mutateAsync({
         symbol: symbol.trim(),
         timeframe,
@@ -136,12 +150,25 @@ export function ReplayView() {
       // Si la réponse est un array (multi-strat), prends la première.
       const result = Array.isArray(r) ? r[0] : r;
       setBacktestResult(result);
+      const elapsed = ((Date.now() - started) / 1000).toFixed(1);
       if (!result?.ohlcv?.time?.length) {
+        pushLog('warn', `Réponse reçue en ${elapsed}s mais sans OHLCV — replay impossible`);
         toast.warning('Pas de données OHLCV dans la réponse — replay impossible');
       } else {
-        toast.success(`${result.ohlcv.time.length} bougies chargées · ${result.trades?.length ?? 0} trades`);
+        const nCandles = result.ohlcv.time.length;
+        const nTrades = result.trades?.length ?? 0;
+        pushLog('ok', `${nCandles} bougies · ${nTrades} trades — reçu en ${elapsed}s`);
+        if (nCandles < limit) {
+          pushLog('warn', `${limit - nCandles} bougies manquantes : historique plus court que demandé`);
+        }
+        if (nTrades === 0) {
+          pushLog('warn', 'Aucun trade sur la période — le replay défilera sans marker');
+        }
+        pushLog('info', 'Moteur de replay prêt — Espace pour lancer');
+        toast.success(`${nCandles} bougies chargées · ${nTrades} trades`);
       }
     } catch (e: any) {
+      pushLog('error', e?.message ?? 'Erreur inconnue');
       toast.error(`Erreur: ${e.message}`);
     }
   };
@@ -149,8 +176,10 @@ export function ReplayView() {
   const handleCancel = async () => {
     try {
       await cancelBacktest.mutateAsync();
+      pushLog('warn', 'Chargement annulé par l’utilisateur');
       toast.success('Chargement annulé');
     } catch (e: any) {
+      pushLog('error', `Annulation KO : ${e?.message ?? 'erreur inconnue'}`);
       toast.error(`Erreur: ${e.message}`);
     }
   };
@@ -195,6 +224,10 @@ export function ReplayView() {
           ))}
         </div>
 
+        {/* RPL-009 — si un chargement précédent a échoué, le journal reste
+            visible sur le welcome screen : c'est là qu'est la raison de l'échec. */}
+        <ReplayLoadLog entries={loadLog} />
+
         <Card>
           <CardContent className="text-center py-12 text-muted-foreground text-sm">
             <TrendingUp className="h-10 w-10 mx-auto mb-3 text-dim" />
@@ -230,6 +263,8 @@ export function ReplayView() {
             <span className="text-sm text-muted-foreground">Chargement des données en cours…</span>
           </CardContent>
         </Card>
+        {/* RPL-009 — journal horodaté pendant le fetch et le calcul initial. */}
+        <ReplayLoadLog entries={loadLog} />
       </div>
     );
   }
@@ -343,6 +378,12 @@ export function ReplayView() {
 
           {/* Signal log */}
           <ReplaySignalLog entries={engine.signalLog} />
+
+          {/* RPL-009 — le journal reste consultable une fois le replay chargé :
+              c'est là qu'il porte l'information durable (durée du fetch,
+              bougies manquantes, période sans aucun trade). Le masquer à
+              l'arrivée des données le réduirait à un clignotement. */}
+          <ReplayLoadLog entries={loadLog} title="Journal de chargement" />
         </div>
       </div>
     </div>

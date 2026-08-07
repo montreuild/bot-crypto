@@ -4,7 +4,8 @@
     {
       "//": "cli.py --web, PAS `uvicorn app.api.main:app` : seul cli.py appelle init_app(cfg, trader), qui injecte la config et ouvre la session BDD. Lancé via uvicorn direct, l'API démarre avec state.cfg = None — l'auth retombe alors sur le filtre « localhost only » et toutes les routes protégées répondent 403.",
       "name": "bot-web",
-      "runtimeExecutable": "python",
+      "//2": "Interpréteur du venv en dur : `python` nu résout vers C:\\Python314\\python.exe, qui n'a pas uvicorn — le garde-fou de cli.py refuse alors de démarrer.",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
       "runtimeArgs": ["cli.py", "--web", "--host", "127.0.0.1", "--port", "8000"],
       "port": 8000,
       "url": "http://127.0.0.1:8000"

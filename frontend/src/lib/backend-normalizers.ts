@@ -27,6 +27,29 @@ export function normalizeTrade(t: BacktestTrade): BacktestTrade {
   };
 }
 
+/** BT-003 — `per_strategy` en tableau, quelle que soit la forme reçue.
+ *
+ *  Le backend écrit un DICT `{nom: stats}` (`backtest.py::per_strategy_stats`,
+ *  typé `Dict[str, Dict[str, int]]`), alors que le front attend un tableau.
+ *  Un dict n'ayant pas de `.length`, la garde `per_strategy.length > 0` du
+ *  panneau était toujours fausse : le tableau par stratégie ne s'est jamais
+ *  affiché depuis son ajout. On accepte les deux formes plutôt que de parier
+ *  sur l'une d'elles. */
+export function normalizePerStrategy(
+  per: unknown,
+): NonNullable<BacktestDiagnostics['per_strategy']> {
+  if (!per) return [];
+  if (Array.isArray(per)) {
+    return per.filter((e) => e && typeof e === 'object');
+  }
+  if (typeof per === 'object') {
+    return Object.entries(per as Record<string, any>)
+      .filter(([, stats]) => stats && typeof stats === 'object')
+      .map(([strategy, stats]) => ({ strategy, ...(stats as Record<string, number>) }));
+  }
+  return [];
+}
+
 /** BT-003 — normalise `diagnostics` (alias backend → frontend). */
 export function normalizeDiagnostics(
   d: BacktestDiagnostics | Record<string, any> | null | undefined,
@@ -44,7 +67,7 @@ export function normalizeDiagnostics(
     },
     max_bars_in_position: raw.max_bars_in_position ?? raw.maxBarsInPosition,
     max_bars_without_signal: raw.max_bars_without_signal ?? raw.max_bars_no_signal,
-    per_strategy: raw.per_strategy ?? raw.perStrategy,
+    per_strategy: normalizePerStrategy(raw.per_strategy ?? raw.perStrategy),
   };
 }
 

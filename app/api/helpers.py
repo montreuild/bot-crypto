@@ -3,6 +3,7 @@ import glob
 import hmac
 import logging
 import os
+import re
 import time
 
 from fastapi import HTTPException, Request
@@ -114,8 +115,39 @@ def _get_bt_exchange(cfg: dict):
 
 # ── Découverte des stratégies ──────────────────────────────────────────────
 
+#: Un module d'``app/strategies/`` n'est une stratégie que s'il expose une
+#: classe ``Strategy`` — c'est le contrat qu'appliquent tous les chargeurs
+#: (``mod.Strategy()`` dans ``auto_opt_mixin``, ``auto_optimizer``,
+#: ``forward_test``, ``opt_workers``…).
+_STRATEGY_CLASS_RE = re.compile(r"^class\s+Strategy\b", re.MULTILINE)
+
+
+def _module_defines_strategy(path: str) -> bool:
+    """True si le fichier définit ``class Strategy``.
+
+    Le test se fait sur le TEXTE, pas par import : importer les ~45 modules
+    de stratégies à chaque expiration de cache coûterait plusieurs secondes
+    (LightGBM, polars…) et exécuterait leur code au niveau module pour une
+    simple question de nommage.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return bool(_STRATEGY_CLASS_RE.search(fh.read()))
+    except OSError as e:
+        logger.warning(f"[Strategies] Lecture impossible de {path} : {e}")
+        return False
+
+
 def _discover_strategies() -> frozenset:
-    """Retourne les noms de stratégies valides sur disque (cache 60 s)."""
+    """Retourne les noms de stratégies valides sur disque (cache 60 s).
+
+    Filtre sur la présence d'une classe ``Strategy`` : le glob seul remontait
+    aussi les modules d'appoint d'``app/strategies/`` — ``smart_money_params``,
+    ``smart_money_aux``, ``smart_money_plans`` et ``smart_money_signals``,
+    extraits de ``smart_money.py`` lors du découpage ARCH-05. Ils étaient
+    proposés à la sélection dans le Laboratoire et l'optimiseur alors qu'ils
+    n'ont pas de ``Strategy`` : les choisir faisait échouer le chargement.
+    """
     now = time.monotonic()
     if (state._strategies_cache is not None
             and (now - state._strategies_cache_ts) < state._STRATEGIES_CACHE_TTL):
@@ -124,7 +156,7 @@ def _discover_strategies() -> frozenset:
     result = frozenset(
         os.path.splitext(os.path.basename(f))[0]
         for f in glob.glob(os.path.join(strat_dir, "*.py"))
-        if not os.path.basename(f).startswith("__")
+        if not os.path.basename(f).startswith("__") and _module_defines_strategy(f)
     )
     state._strategies_cache    = result
     state._strategies_cache_ts = now

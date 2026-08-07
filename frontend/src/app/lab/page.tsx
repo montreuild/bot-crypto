@@ -300,6 +300,14 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.restored]);
 
+  // BT-004 — purge : vide le résultat affiché ET la session persistée.
+  const handleClearSession = () => {
+    setResult(null);
+    setStartedAt(null);
+    session.clear();
+    toast.success('Résultat et session effacés');
+  };
+
   // BT-013 — validation du symbole : `BASE/QUOTE` ou token simple (ex. BTC).
   // Pattern ensembliste : valide `BTC/USDC`, `ETH/USDT`, `SOL`, `BNB.USDT`.
   const SYMBOL_RE = /^[A-Z0-9]+\/[A-Z0-9]+$|^[A-Z0-9.]+$/;
@@ -566,6 +574,19 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
                 <Square className="w-4 h-4" />
               </Button>
             )}
+            {/* BT-004 — purge de la session persistée. Sans ce bouton, un
+                résultat restauré depuis `sessionStorage` restait affiché
+                jusqu'à expiration du TTL (30 min) sans moyen de s'en défaire. */}
+            {result && !isLoading && (
+              <Button
+                variant="outline"
+                onClick={handleClearSession}
+                title="Efface le résultat affiché et la session sauvegardée"
+              >
+                <X className="w-4 h-4" />
+                Effacer
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -761,7 +782,10 @@ function BacktestResults({ result, scoreThreshold }: { result: any; scoreThresho
       {/* BT-011 — avertissements globaux : seuil recommandé et taille
           d'échantillon. Affichés au-dessus des KPIs pour être vus avant tout. */}
       {strategies.length > 0 && (() => {
-        const warnings: Array<{ tone: 'amber' | 'red'; text: string }> = [];
+        // `strategy` porte le nom quand le warning est actionnable dans Config
+        // (seuil ajustable) ; null quand il ne l'est pas (taille d'échantillon,
+        // qui se corrige en allongeant la période, pas dans les réglages).
+        const warnings: Array<{ tone: 'amber' | 'red'; text: string; strategy: string | null }> = [];
         for (const [name, stats] of strategies) {
           const rec = recommendedThreshold(name);
           const cfgThreshold = typeof scoreThreshold === 'number' ? scoreThreshold : r?.score_threshold;
@@ -769,6 +793,7 @@ function BacktestResults({ result, scoreThreshold }: { result: any; scoreThresho
             warnings.push({
               tone: 'amber',
               text: `⚠ ${name} : score_threshold actuel (${cfgThreshold.toFixed(2)}) est inférieur au seuil recommandé (${rec.toFixed(2)}). Risque de sur-trade.`,
+              strategy: name,
             });
           }
           const n = (stats as any)?.total_trades ?? 0;
@@ -776,6 +801,7 @@ function BacktestResults({ result, scoreThreshold }: { result: any; scoreThresho
             warnings.push({
               tone: 'amber',
               text: `⚠ ${name} : seulement ${n} trades — échantillon insuffisant (< 30) pour valider l'edge. Sharpe et win rate ne sont pas significatifs.`,
+              strategy: null,
             });
           }
         }
@@ -791,7 +817,25 @@ function BacktestResults({ result, scoreThreshold }: { result: any; scoreThresho
                     : 'rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300'
                 }
               >
-                {w.text}
+                <span>{w.text}</span>
+                {/* BT-011 — rendre le warning actionnable.
+                    La spec demandait un lien vers `/settings?tab=strategies&
+                    strategy=<nom>` : cet onglet N'EXISTE PAS. Le front n'a
+                    aucun éditeur de `strategy_params` — `api.updateStrategyParams`
+                    est défini dans `lib/api.ts` mais aucun composant ne l'appelle,
+                    et l'éditeur Jinja2 (`config.html`) n'a jamais été reporté.
+                    Pointer vers cette route donnerait un lien mort. On envoie donc
+                    vers l'optimiseur, seul chemin en place pour recalculer puis
+                    appliquer les paramètres d'une stratégie. */}
+                {w.strategy && (
+                  <Link
+                    href={`/lab?tab=optimizer&strategy=${encodeURIComponent(w.strategy)}`}
+                    className="ml-2 underline underline-offset-2 font-medium hover:no-underline whitespace-nowrap"
+                    title={`Optimiser ${w.strategy} puis appliquer les paramètres`}
+                  >
+                    Optimiser cette stratégie →
+                  </Link>
+                )}
               </div>
             ))}
           </div>

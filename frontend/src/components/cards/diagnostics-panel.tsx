@@ -5,13 +5,34 @@
  * Affiche 9 KPIs, 3 warnings contextuels, et un tableau per-strategy.
  */
 
+'use client';
+
+import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { normalizePerStrategy } from '@/lib/backend-normalizers';
 import type { BacktestDiagnostics } from '@/types';
 
 interface Props {
   diagnostics: BacktestDiagnostics | null;
 }
+
+/** Colonnes triables du tableau per-strategy (BT-003). */
+type SortKey =
+  | 'strategy' | 'evaluated' | 'none' | 'proposed'
+  | 'below_threshold' | 'above_threshold' | 'errors';
+
+const PER_STRATEGY_COLS: Array<{
+  key: SortKey; label: string; title: string; numeric: boolean;
+}> = [
+  { key: 'strategy',        label: 'Stratégie',  title: 'Nom de la stratégie.', numeric: false },
+  { key: 'evaluated',       label: 'Évalué ?',   title: 'Nombre de bougies évaluées par la stratégie.', numeric: true },
+  { key: 'none',            label: 'side=none',  title: 'Signaux neutres (pas de direction).', numeric: true },
+  { key: 'proposed',        label: 'Proposé',    title: 'Signaux avec direction (long ou short).', numeric: true },
+  { key: 'below_threshold', label: '< seuil',    title: 'Signaux filtrés par score_threshold.', numeric: true },
+  { key: 'above_threshold', label: '≥ seuil',    title: 'Signaux passés le seuil.', numeric: true },
+  { key: 'errors',          label: 'Erreurs',    title: 'Exceptions levées pendant l’évaluation.', numeric: true },
+];
 
 function kpi(label: string, value: string | number, tone?: 'green' | 'amber' | 'red') {
   const color = tone === 'green' ? 'text-emerald-400' : tone === 'amber' ? 'text-amber-400' : tone === 'red' ? 'text-rose-400' : '';
@@ -26,6 +47,46 @@ function kpi(label: string, value: string | number, tone?: 'green' | 'amber' | '
 }
 
 export function DiagnosticsPanel({ diagnostics }: Props) {
+  // BT-003 — tri du tableau per-strategy. Les hooks précèdent les retours
+  // anticipés ci-dessous : les appeler après violerait les règles des hooks
+  // (le panneau est masqué quand `bars_total == 0`, donc le nombre de hooks
+  // rendus changerait d'un rendu à l'autre).
+  const [sortKey, setSortKey] = useState<SortKey>('proposed');
+  const [sortAsc, setSortAsc] = useState(false);
+
+  // Le panneau peut recevoir des diagnostics bruts (non passés par
+  // `normalizeDiagnostics`) : on renormalise ici plutôt que de supposer
+  // la forme. Le backend renvoie un dict, pas un tableau.
+  const perStrategy = diagnostics?.per_strategy;
+  const sortedPerStrategy = useMemo(() => {
+    const rows = normalizePerStrategy(perStrategy);
+    if (rows.length === 0) return [];
+    const arr = [...rows];
+    arr.sort((a, b) => {
+      const av = (a as Record<string, unknown>)[sortKey];
+      const bv = (b as Record<string, unknown>)[sortKey];
+      if (typeof av === 'string' || typeof bv === 'string') {
+        const cmp = String(av ?? '').localeCompare(String(bv ?? ''), 'fr');
+        return sortAsc ? cmp : -cmp;
+      }
+      const an = typeof av === 'number' ? av : -Infinity;
+      const bn = typeof bv === 'number' ? bv : -Infinity;
+      return sortAsc ? an - bn : bn - an;
+    });
+    return arr;
+  }, [perStrategy, sortKey, sortAsc]);
+
+  const toggleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortAsc((v) => !v);
+    } else {
+      setSortKey(key);
+      // Texte croissant par défaut, chiffres décroissants (le plus parlant
+      // en tête : la stratégie qui propose le plus, qui erreur le plus).
+      setSortAsc(key === 'strategy');
+    }
+  };
+
   if (!diagnostics) return null;
   const d = diagnostics;
   const barsTotal = d.bars_total ?? 0;
@@ -80,22 +141,40 @@ export function DiagnosticsPanel({ diagnostics }: Props) {
         </div>
 
         {/* Tableau per-strategy */}
-        {d.per_strategy && d.per_strategy.length > 0 && (
+        {sortedPerStrategy.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border text-muted-foreground">
-                  <th className="text-left py-1 px-2">Stratégie</th>
-                  <th className="text-right py-1 px-2" title="Nombre de bougies évaluées par la stratégie.">Évalué ?</th>
-                  <th className="text-right py-1 px-2" title="Signaux neutres (pas de direction).">side=none</th>
-                  <th className="text-right py-1 px-2" title="Signaux avec direction (long ou short).">Proposé</th>
-                  <th className="text-right py-1 px-2" title="Signaux filtrés par score_threshold.">&lt; seuil</th>
-                  <th className="text-right py-1 px-2" title="Signaux passés le seuil.">≥ seuil</th>
-                  <th className="text-right py-1 px-2" title="Exceptions levées pendant l'évaluation.">Erreurs</th>
+                  {PER_STRATEGY_COLS.map((c) => (
+                    <th
+                      key={c.key}
+                      title={c.title}
+                      aria-sort={
+                        sortKey === c.key
+                          ? sortAsc ? 'ascending' : 'descending'
+                          : 'none'
+                      }
+                      className={`py-1 px-2 ${c.numeric ? 'text-right' : 'text-left'}`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleSort(c.key)}
+                        className={`inline-flex items-center gap-1 hover:text-foreground transition-colors ${
+                          sortKey === c.key ? 'text-foreground font-semibold' : ''
+                        }`}
+                      >
+                        {c.label}
+                        <span aria-hidden className="text-[0.6rem] opacity-70">
+                          {sortKey === c.key ? (sortAsc ? '▲' : '▼') : '↕'}
+                        </span>
+                      </button>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {d.per_strategy.map((s) => (
+                {sortedPerStrategy.map((s) => (
                   <tr key={s.strategy} className="border-b border-border/50">
                     <td className="py-1 px-2 font-mono">{s.strategy}</td>
                     <td className="text-right py-1 px-2 font-mono">{s.evaluated ?? '—'}</td>

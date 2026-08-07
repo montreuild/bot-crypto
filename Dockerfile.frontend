@@ -15,7 +15,10 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY frontend/ .
 # URL interne du backend (réseau compose) — surchargée au runtime via env.
 ARG BOT_API_URL=http://api:8000
-ARG NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws
+# WS : vide par défaut = same-origin (`ws(s)://<page>/ws`), servi par le rewrite
+# `/ws` de next.config.mjs. Un défaut cross-origin laisserait le cookie d'auth
+# HttpOnly derrière et le backend refuserait la connexion par un 403.
+ARG NEXT_PUBLIC_WS_URL=
 ENV BOT_API_URL=$BOT_API_URL \
     NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL \
     NEXT_TELEMETRY_DISABLED=1

@@ -151,6 +151,21 @@ indépendantes du frontend. Seules les routes **HTML** sont supprimées :
 > settings}/page.tsx`. Les URLs `-v2` restent servies en 308 vers la page sans
 > suffixe. Le tableau ci-dessus cite désormais les chemins réels.
 >
+> **Orphelin trouvé 07/08/2026 — le cookie d'authentification.** La note
+> ci-dessus dit la migration « complète » ; elle ne l'était pas tout à fait.
+> `_tpl()` ne faisait pas que rendre des templates : il posait le cookie
+> HttpOnly `api_key`, seul credential qu'un `new WebSocket()` puisse
+> transporter. Sa suppression a laissé `set_cookie` absent de tout `app/`, donc
+> le WebSocket temps réel refusé par un 403 muet dès que `web.api_key` est
+> renseigné. Le REST n'a rien vu passer : il transite par le proxy Next, qui
+> injecte `X-API-Key` côté serveur. Le cookie est désormais reposé par ce même
+> proxy, et le WS ramené en same-origin. Cf. CHANGELOG, « Le temps réel
+> remarche ».
+>
+> Second orphelin, non résolu : l'éditeur de paramètres par stratégie de
+> `config.html` n'a jamais été reporté. `POST /api/config/strategy-params`
+> répond toujours, mais aucune page ne l'appelle.
+
 > **Mise à jour 08/2026.** Le Laboratoire compte un 6ᵉ onglet, `?tab=batch`
 > (*Multi-TF*) : il n'a pas d'ancêtre Jinja2, c'est l'ancien `replay-view`
 > batch multi-TF déplacé là quand `?tab=replay` est devenu le replay

@@ -638,27 +638,47 @@ Classés par impact utilisateur sur le périmètre demandé.
 ### Audit de conformité aux critères d'acceptation (2026-08-07)
 
 Les critères d'acceptation de la spec d'origine ont été confrontés au code.
-**48 specs sur 52 sont conformes** ; 4 écarts, tous sur des critères secondaires
-d'une spec par ailleurs livrée — aucune fonctionnalité principale ne manque.
+L'audit a relevé 4 écarts, **tous corrigés depuis** et vérifiés dans
+l'application en fonctionnement : **52 specs sur 52 conformes**.
 
-| Spec | Critère non tenu | État réel |
-|------|------------------|-----------|
-| **BT-004** | « Bouton *Effacer* vide la session » | `useBacktestSession()` **expose** `clear`, mais `lab/page.tsx` n'utilise que `restored` et `save` : aucun bouton ne l'appelle. `clear` est du code mort et la session ne peut pas être purgée depuis l'UI. |
-| **BT-011** | « Le lien *Ajuster dans Config* redirige vers `/settings?tab=strategies&strategy=<name>` » | Les deux warnings sont rendus en `<div>` de texte brut ([lab/page.tsx](../frontend/src/app/lab/page.tsx)) — pas de lien. L'utilisateur doit naviguer à la main. |
-| **BT-003** | « Le tableau per-strategy est triable par *Évalué* / *Proposé* / *Erreurs* » | Les `<th>` de [diagnostics-panel.tsx](../frontend/src/components/cards/diagnostics-panel.tsx) sont statiques : ni `onClick`, ni état de tri. Le tableau s'affiche dans l'ordre backend. |
-| **RPL-009** | « Log panel horodaté `HH:MM:SS · niveau · message` » | Seule la moitié *welcome screen* est livrée (4 tips cards). Le commit `d203bb4` annonce RPL-009 comme « exclu par l'utilisateur » : c'est exact pour le log panel, inexact pour le welcome. |
+| Spec | Critère qui manquait | Correctif |
+|------|----------------------|-----------|
+| **BT-004** | « Bouton *Effacer* vide la session » | `useBacktestSession()` exposait `clear` sans qu'aucun bouton ne l'appelle — code mort, session impurgeable. Bouton ajouté dans `lab/page.tsx` : vide le résultat affiché **et** `sessionStorage`. |
+| **BT-011** | Lien « *Ajuster dans Config* » vers `/settings?tab=strategies&strategy=<nom>` | Cette route **n'existe pas** : `/settings` n'a pas d'onglet `strategies`, et le front n'a aucun éditeur de `strategy_params` (`api.updateStrategyParams` est défini dans `lib/api.ts`, jamais appelé — l'éditeur Jinja2 `config.html` n'a pas été reporté). Plutôt qu'un lien mort, le warning pointe vers `/lab?tab=optimizer&strategy=<nom>`, seul chemin en place pour recalculer puis appliquer les paramètres. `optimizer-view` consomme désormais ce paramètre et présélectionne la stratégie. |
+| **BT-003** | Tableau per-strategy triable | En-têtes rendues cliquables, tri sur les 7 colonnes avec `aria-sort`. |
+| **RPL-009** | Log panel horodaté `HH:MM:SS · niveau · message` | Composant `cards/replay-load-log.tsx` : journal scrollable, `aria-live`, visible pendant le fetch **et** conservé une fois le replay chargé (c'est là qu'il porte l'info utile — durée, bougies manquantes, période sans trade). |
 
-Écart cosmétique, sans critère associé : la spec RPL-002 demande des sorties
-marquées `✓`/`✗` ; [replay-candlestick-chart.tsx](../frontend/src/components/charts/replay-candlestick-chart.tsx)
-utilise la forme `circle` de lightweight-charts. Les trois critères de RPL-002
-(markers progressifs, reconstruction au seek, pas de doublon) sont tenus.
+> ⚠ **BT-011 laisse une dette ouverte.** Aucune UI ne permet d'éditer les
+> paramètres d'une stratégie : l'endpoint `POST /api/config/strategy-params`
+> existe, le client `api.updateStrategyParams` aussi, mais rien ne les appelle.
+> L'éditeur a disparu avec `config.html` et n'a jamais été reconstruit. Le
+> README affirme encore que `/settings` porte les « params par stratégie » —
+> c'est faux.
 
-Vérifié conforme par lecture du code, entre autres : persistance `localStorage`
-du toggle line/candles et message « Aucun trade pour cette stratégie » (BT-001) ;
-pagination 20/page et filtres Tous/Long/Short/Win/Loss (BT-002) ; masquage du
-panneau si `bars_total == 0` (BT-003) ; encart « Pas de baseline disponible »
-(OPT-001) ; masquage du bloc si `top_trials` et `best_params` sont vides
-(OPT-002) ; colonne Equity Finale triable et présente au CSV (CMP-002).
+Deux bugs préexistants ont été trouvés en exerçant ces specs, et corrigés :
+
+- **Le tableau per-strategy ne s'était jamais affiché.** Le backend écrit
+  `per_strategy` en **dict** (`backtest.py::per_strategy_stats`, typé
+  `Dict[str, Dict[str, int]]`) alors que le front le typait en tableau. Un dict
+  n'ayant pas de `.length`, la garde `per_strategy.length > 0` était toujours
+  fausse et le tableau silencieusement omis. `normalizePerStrategy` accepte
+  désormais les deux formes.
+- **Warning React de clé manquante dans `TradesTable`** : le `.map()` renvoyait
+  un `<>` sans clé (une ligne dépliée en rend deux). Remplacé par un
+  `<Fragment key>`.
+
+Écart cosmétique assumé : la spec RPL-002 demande des sorties marquées `✓`/`✗` ;
+le code utilise la forme `circle` de lightweight-charts. Les trois critères de
+RPL-002 (markers progressifs, reconstruction au seek, pas de doublon) sont tenus.
+
+Vérifié conforme dans l'application en fonctionnement : persistance
+`localStorage` du toggle line/candles et message « Aucun trade pour cette
+stratégie » (BT-001) ; pagination 20/page et filtres Tous/Long/Short/Win/Loss
+(BT-002) ; masquage du panneau si `bars_total == 0` puis tri effectif du
+tableau (BT-003) ; purge de session (BT-004) ; badges « ● actif » (BT-014) ;
+encart « Pas de baseline disponible » (OPT-001) ; masquage du bloc si
+`top_trials` et `best_params` sont vides (OPT-002) ; colonne Equity Finale
+triable et présente au CSV (CMP-002) ; journal de chargement du replay (RPL-009).
 
 ### Écarts backend assumés
 
@@ -697,12 +717,12 @@ Le décommissionnement Jinja2 a **conservé l’API** et **restructuré l’UI**
 
 **Reprises restantes**, par ordre d'impact :
 
-1. Les 4 critères d'acceptation non tenus (§8ter, audit de conformité) — tous
-   petits, tous isolés : bouton *Effacer* de la session (BT-004, le `clear`
-   existe déjà et n'attend qu'un bouton), lien *Ajuster dans Config* (BT-011),
-   tri du tableau per-strategy (BT-003), log panel horodaté (RPL-009).
-2. Distribution PnL et cumul des trades au backtest — les deux seuls écarts
-   de périmètre subsistants du Laboratoire (§4.2).
+1. **Reconstruire l'éditeur de paramètres par stratégie.** L'endpoint
+   `POST /api/config/strategy-params` et le client `api.updateStrategyParams`
+   existent ; aucune UI ne les appelle depuis la disparition de `config.html`.
+   C'est le seul trou fonctionnel réel identifié (§8ter, BT-011).
+2. Distribution PnL et cumul des trades au backtest — les deux écarts de
+   périmètre subsistants du Laboratoire (§4.2).
 3. Layout 2 colonnes et `n_jobs` guidé à l'optimiseur (OPT-012 / OPT-013,
    reportés en S7).
 4. Revérifier les sections `/market` de ce document contre le code : elles

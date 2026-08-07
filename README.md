@@ -297,7 +297,7 @@ l'onglet correspondant.
 | 🤖 Mes Bots | `/bots` | Portefeuille de stratégies et cycle de vie (candidat → essai → actif → retiré) |
 | 🧪 Laboratoire | `/lab` | Backtest, optimiseur (IS/OOS temps réel), entraînement ML, replay interactif, batch multi-TF, comparatif — un onglet chacun |
 | 🔍 Marché | `/market` | Scanner SMC/ICT, Smart Graph, Smart Replay, dérivés (funding, OI, LSR) |
-| ⚙️ Réglages | `/settings` | Presets de risque, params par stratégie, notifications, données, audit, préférences UI |
+| ⚙️ Réglages | `/settings` | Presets de risque, timeframes, exchange, notifications, données, audit, préférences UI |
 
 Les anciennes URLs suffixées (`/portfolio-v2`, `/bots-v2`, `/settings-v2`)
 restent valables : ce sont des redirections 308 vers la page sans suffixe,
@@ -305,6 +305,11 @@ retiré en S11.
 
 Onglets du Laboratoire : `backtest`, `optimizer`, `ml`, `replay`, `batch`
 (*Multi-TF*), `compare`.
+
+> ⚠ Les **paramètres par stratégie** ne sont éditables par aucune page :
+> l'éditeur a disparu avec `config.html` (fin de Jinja2) sans être reconstruit.
+> Passer par l'optimiseur (qui calcule puis applique) ou par les fichiers
+> `strategies/*.yaml`.
 
 Lien profond vers un onglet précis : `/lab?tab=optimizer`,
 `/lab?tab=batch`, `/market?tab=smartgraph`, `/settings?tab=ui`…

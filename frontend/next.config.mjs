@@ -38,8 +38,20 @@ const nextConfig = {
   // `src/app/api/[...path]/route.ts` qui proxifie, parce qu'un rewrite ne peut
   // pas injecter l'en-tête `X-API-Key` (cf. le commentaire du handler).
   async rewrites() {
+    const backend = process.env.BOT_API_URL || 'http://localhost:8000';
     return [
-      { source: '/health', destination: `${process.env.BOT_API_URL || 'http://localhost:8000'}/health` },
+      { source: '/health', destination: `${backend}/health` },
+      // WebSocket temps réel — MÊME ORIGINE que les pages, comme le reste.
+      //
+      // Le client se connectait auparavant en direct sur `ws://localhost:8000`,
+      // donc sur une AUTRE origine que la page (`:3000`). Deux conséquences :
+      // le cookie d'auth `api_key`, posé sur l'origine Next, n'était jamais
+      // envoyé, et le backend refusait la poignée de main par un 403 muet.
+      //
+      // En production, `deploy/nginx.conf` fait déjà exactement ça (`location
+      // /ws` → :8000) : ce rewrite aligne le dev sur la prod au lieu de laisser
+      // les deux diverger.
+      { source: '/ws', destination: `${backend}/ws` },
     ];
   },
 
@@ -95,19 +107,20 @@ const nextConfig = {
       { source: '/config', destination: '/settings?tab=capital', permanent: true },
     ];
   },
-  // S0-F1-US6 — WebSocket : Next.js ne proxy pas les WS nativement, on laisse
-  // le client se connecter directement. En dev, défaut `ws://localhost:8000/ws`.
-  // En prod, NEXT_PUBLIC_WS_URL DOIT être définie (sinon build échoue en
-  // production pour éviter un WS silencieusement cassé).
-  // On utilise une résolution relative côté client : si le navigateur est sur
-  // https://example.com, le WS sera wss://example.com/ws — pattern same-origin.
+  // S0-F1-US6 — WebSocket : plus de valeur par défaut cross-origin.
+  //
+  // Le défaut `ws://localhost:8000/ws` faisait sortir le WS de l'origine de la
+  // page (`:3000`), alors que tout le reste y transite : le REST par le route
+  // handler `/api/[...path]`, `/health` et `/ws` par rewrite en dev, `/ws` par
+  // nginx en prod. Conséquence directe : le cookie d'authentification, posé sur
+  // l'origine Next, n'accompagnait jamais la poignée de main.
+  //
+  // Le client retombe désormais sur le same-origin (`ws(s)://<page>/ws`) —
+  // une seule règle, un seul chemin d'authentification, en dev comme en prod.
+  // `NEXT_PUBLIC_WS_URL` reste honorée si un déploiement expose réellement le
+  // WS sur un autre hôte ; ce n'est plus le comportement par défaut.
   env: {
-    NEXT_PUBLIC_WS_URL:
-      process.env.NEXT_PUBLIC_WS_URL ||
-      // En dev (NODE_ENV !== production), localhost est OK
-      (process.env.NODE_ENV === 'production'
-        ? ''  // Vide en prod sans config — fallback runtime côté client
-        : 'ws://localhost:8000/ws'),
+    NEXT_PUBLIC_WS_URL: process.env.NEXT_PUBLIC_WS_URL || '',
   },
 };
 
