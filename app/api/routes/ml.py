@@ -409,3 +409,117 @@ def ml_sweep_status(job_id: str):
     if not job:
         raise HTTPException(404, f"Job {job_id!r} introuvable")
     return job
+
+
+# ── P0-5 : Route d'audit versioning (model_versioning.migration_check) ────────
+@router.get("/api/ml/versioning/audit", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("5/minute")
+def ml_versioning_audit(request: Request):
+    """Audit global du versioning des modèles ML.
+
+    Appelle ``app.ml.model_versioning.migration_check()`` qui scanne le
+    répertoire ``models/`` et retourne ``{total, with_hash, without_hash,
+    incompatible}``. Permet à l'UI de signaler les modèles sans hash de
+    features (à re-entraîner pour activer le versioning) et les modèles
+    incompatibles (hash ne correspondant plus aux features actuelles).
+
+    Route d'admin — rate-limit 5/min (scan FS potentiellement lourd).
+    """
+    try:
+        from app.ml.model_versioning import migration_check
+        result = migration_check(models_dir="models")
+        # `migration_check` renvoie `without_hash`/`incompatible` sous forme de
+        # LISTES de chemins. `audit` les expose telles quelles (le détail est
+        # utile pour savoir quoi re-entraîner) ; `summary` n'expose que des
+        # compteurs — mélanger les deux ferait afficher un chemin de fichier là
+        # où l'UI attend un nombre.
+        without_hash = result.get("without_hash") or []
+        incompatible = result.get("incompatible") or []
+        total = int(result.get("total", 0) or 0)
+        with_hash = int(result.get("with_hash", 0) or 0)
+        return {
+            "status": "ok",
+            "audit": result,
+            # Indicateurs synthétiques pour l'UI (compteurs uniquement)
+            "summary": {
+                "total": total,
+                "with_hash": with_hash,
+                "without_hash": len(without_hash),
+                "incompatible": len(incompatible),
+                "coverage_pct": round(100.0 * with_hash / total, 1) if total else 0.0,
+            },
+        }
+    except Exception as e:
+        logger.error(f"[API] ml/versioning/audit KO : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne : {e}")
+
+
+# ── P1-2 : Route pour lister les jobs ML récents ──────────────────────────────
+@router.get("/api/ml/jobs", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("30/minute")
+def ml_jobs_list(request: Request, status: str = "", kind: str = "", limit: int = 50):
+    """Liste les jobs ML récents (train + sweep).
+
+    Expose ``app.engine.ml_jobs.get_all_jobs()`` qui était jusque-là invisible
+    côté UI. Permet à l'utilisateur de retrouver un job après fermeture du
+    dialog (jobs orphelins) et de suivre les entraînements en cours.
+
+    Parameters
+    ----------
+    status : str
+        Filtre par statut (running/done/error). Vide = tous.
+    kind : str
+        Filtre par type (train/sweep). Vide = tous.
+    limit : int
+        Nombre max de jobs à retourner (défaut 50, max 200).
+
+    Returns
+    -------
+    dict
+        ``{jobs: [...], total, running_count}``
+    """
+    try:
+        from app.engine.ml_jobs import get_all_jobs
+        all_jobs = get_all_jobs()
+        # Filtrage
+        jobs = list(all_jobs.values())
+        if status.strip():
+            jobs = [j for j in jobs if j.get("status") == status.strip()]
+        if kind.strip():
+            jobs = [j for j in jobs if j.get("kind") == kind.strip()]
+        # Tri par started_at décroissant (plus récent d'abord)
+        jobs.sort(key=lambda j: j.get("started_at", 0), reverse=True)
+        # Limit
+        limit = max(1, min(limit, 200))
+        jobs = jobs[:limit]
+        running_count = sum(1 for j in all_jobs.values() if j.get("status") == "running")
+        return {
+            "jobs": jobs,
+            "total": len(all_jobs),
+            "running_count": running_count,
+        }
+    except Exception as e:
+        logger.error(f"[API] ml/jobs KO : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne : {e}")
+
+
+# ── P1-2 : Route pour supprimer un job ML ────────────────────────────────────
+@router.delete("/api/ml/jobs/{job_id}", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("30/minute")
+def ml_jobs_delete(request: Request, job_id: str):
+    """Supprime un job ML de la liste (uniquement si terminé/error/cancelled)."""
+    try:
+        from app.engine.ml_jobs import delete_job, get_job
+        job = get_job(job_id)
+        if not job:
+            raise HTTPException(404, f"Job {job_id!r} introuvable")
+        if job.get("status") == "running":
+            raise HTTPException(400, "Impossible de supprimer un job en cours — annulez-le d'abord")
+        if not delete_job(job_id):
+            raise HTTPException(400, "Suppression impossible")
+        return {"status": "deleted", "job_id": job_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[API] ml/jobs/{job_id} DELETE KO : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne : {e}")

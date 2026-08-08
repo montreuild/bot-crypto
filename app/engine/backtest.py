@@ -293,6 +293,74 @@ class BacktestResult:
 
             d["trades"] = strat_trades
 
+        # ── QW-1 : métriques étendues (Sortino, Calmar, CAGR, alpha vs B&H) ──
+        self._compute_extended_metrics()
+
+        # ── QW-3 : agrégats de coûts (borrow + slippage) pour analyse frais ──
+        # Exigence 4 (estimation frais/levier) : sans ces agrégats, l'utilisateur
+        # ne peut pas savoir quelle part du PnL est mangée par le borrow margin
+        # vs le slippage. On les calcule à partir des trades fermés.
+        try:
+            self.total_borrow_cost = round(_sf(float(sum(
+                t.get("borrow_cost", 0) for t in closed
+            )), 0.0), 4)
+            # Slippage estimé par trade = (spread_pct/2) × notional — déjà
+            # compté dans `fees` côté backtest (cf. _fees() qui inclut le spread),
+            # mais on l'isole pour l'analyse what-if.
+            # Note : `fees` agrège déjà taker/maker + spread, donc on expose
+            # séparément le `borrow_cost` (qui n'est PAS dans fees) pour permettre
+            # la comparaison spot vs margin.
+            self.total_slippage_cost = 0.0  # pas de champ isolé dans le trade — laissé à 0
+        except Exception:
+            self.total_borrow_cost = 0.0
+            self.total_slippage_cost = 0.0
+
+    def _compute_extended_metrics(self):
+        """QW-1 — Sortino, Calmar, CAGR et alpha vs Buy & Hold (S3-07).
+
+        `app/core/performance_metrics.py` était écrit et testé unitairement mais
+        jamais appelé : ces 4 métriques alimentent le comparatif multi-stratégies
+        (exigence 7) et les recommandations (exigence 8).
+
+        Appelée deux fois : une première depuis `_compute_metrics()` (dans
+        `__init__`), puis une seconde depuis `_add_buy_and_hold()` une fois que
+        `_close_prices` est disponible. L'alpha vs B&H a besoin de la série des
+        prix, qui n'est connue qu'après le run — sans ce second appel il
+        resterait silencieusement à 0 (`alpha_vs_buy_hold` renvoie 0 quand le
+        benchmark est vide). L'opération est idempotente et peu coûteuse.
+        """
+        try:
+            from app.core.performance_metrics import compute_extended_metrics
+            closed = [t for t in self.trades if t.get("status", "").startswith("closed")]
+            prices = getattr(self, "_close_prices", None) or []
+            years = None
+            if self._timeframe:
+                # years = bars / bars_per_year (ex: 2000 bars / (365*24) pour 1h crypto)
+                years = len(self.equity_curve) / max(_bars_per_year(self._timeframe), 1)
+            ext = compute_extended_metrics(
+                trades=closed,
+                equity_curve=self.equity_curve,
+                initial_capital=self.initial_capital,
+                prices=prices,
+                years=years,
+                periods_per_year=_bars_per_year(self._timeframe) or 252,
+            )
+            self.sortino = ext["sortino"]
+            self.calmar = ext["calmar"]
+            self.cagr = ext["cagr"]
+            self.alpha_vs_bh = ext["alpha_vs_bh"]
+        except Exception as _ext_err:
+            # Ne jamais planter le backtest à cause des métriques étendues —
+            # on logge et on dégrade vers 0 (comportement inchangé avant QW-1).
+            logger.warning(
+                f"[BacktestResult] compute_extended_metrics KO ({_ext_err}) — "
+                f"Sortino/Calmar/CAGR/alpha_vs_bh mis à 0"
+            )
+            self.sortino = 0.0
+            self.calmar = 0.0
+            self.cagr = 0.0
+            self.alpha_vs_bh = 0.0
+
     def to_dict(self) -> dict:
         pf = self.profit_factor
         pf_safe = round(min(pf, 999.0), 3) if math.isfinite(pf) else 999.0
@@ -302,10 +370,18 @@ class BacktestResult:
             "final_equity":       round(_sf(self.final_equity, 0.0), 4),
             "total_pnl":          round(_sf(self.total_pnl, 0.0), 4),
             "total_fees":         round(_sf(self.total_fees, 0.0), 4),
+            # QW-3 : agrégats de coûts pour analyse what-if frais/levier
+            "total_borrow_cost":  round(_sf(getattr(self, "total_borrow_cost", 0.0), 0.0), 4),
+            "total_slippage_cost": round(_sf(getattr(self, "total_slippage_cost", 0.0), 0.0), 4),
             "total_trades":       self.total_trades,
             "win_rate":           round(_sf(self.win_rate, 0.0), 2),
             "max_drawdown":       round(_sf(self.max_drawdown, 0.0), 2),
             "sharpe":             round(_sf(self.sharpe, 0.0), 3),
+            # QW-1 : métriques étendues (S3-07 — branchement a posteriori)
+            "sortino":            round(_sf(getattr(self, "sortino", 0.0), 0.0), 3),
+            "calmar":             round(_sf(getattr(self, "calmar", 0.0), 0.0), 3),
+            "cagr":               round(_sf(getattr(self, "cagr", 0.0), 0.0), 3),
+            "alpha_vs_bh":        round(_sf(getattr(self, "alpha_vs_bh", 0.0), 0.0), 4),
             "expectancy":         round(_sf(self.expectancy, 0.0), 4),
             "avg_mae":            round(_sf(self.avg_mae, 0.0), 4),
             "avg_mfe":            round(_sf(self.avg_mfe, 0.0), 4),
@@ -324,6 +400,9 @@ class BacktestResult:
             # Contexte d'exécution facturé (S11) : venue, spot/margin, levier,
             # détail des frais, emprunt. Cf. app/core/execution.py::cost_model.
             "cost_model":         getattr(self, "cost_model", None),
+            # QW-6 (étape 6) — diagnostics du risk gate (circuit breakers)
+            "realistic_risk":     getattr(self, "realistic_risk", False),
+            "realistic_risk_diagnostics": getattr(self, "realistic_risk_diagnostics", None),
         }
 
 
@@ -357,7 +436,8 @@ class Backtester:
     def __init__(self, engine: Engine, cfg: dict,
                  cancel_event: Optional[threading.Event] = None,
                  ml_mode: str = "frozen",
-                 envelope=None):
+                 envelope=None,
+                 realistic_risk: bool = False):
         self.engine             = engine
         self.cfg                = cfg
         self._cancel_event      = cancel_event
@@ -371,6 +451,12 @@ class Backtester:
         if ml_mode not in _ML_MODES:
             raise ValueError(f"ml_mode invalide : {ml_mode!r} (attendu parmi {_ML_MODES})")
         self.ml_mode            = ml_mode
+        # QW-6 (étape 6) — mode realistic_risk : active les circuit breakers
+        # (consecutive losses, slot daily DD, max trades/day, volatility brake,
+        # kill-switch global). Opt-in pour préserver la parité avec les
+        # backtests existants. Cf. app/engine/backtest_risk_gate.py.
+        self.realistic_risk     = bool(realistic_risk)
+        self._risk_gate         = None  # initialisé dans run() quand realistic_risk=True
         bcfg = cfg.get("backtest", {})
         tcfg = cfg.get("trading",  {})
 
@@ -520,6 +606,23 @@ class Backtester:
         ctx.equity_curve.append(round(ctx.capital, 4))
         if append_ts:
             ctx.timestamps.append(ts)
+
+        # QW-6 (étape 6) — notifier le risk gate du résultat du trade
+        # (pour incrémenter les compteurs consecutive_losses, daily_pnl, etc.)
+        gate = getattr(ctx, "risk_gate", None)
+        if gate is not None:
+            from app.core.bot_identity import build_slot_key
+            strat_name = position.get("strategy", "")
+            slot_key = build_slot_key(strat_name, ctx.timeframe, ctx.symbol)
+            try:
+                close_ts = df["time"][i]
+                day_key = str(close_ts)[:10] if close_ts is not None else ""
+            except Exception:
+                day_key = ""
+            # capital_before = capital avant ce trade (approximation : capital - pnl)
+            capital_before = ctx.capital - pnl
+            gate.record_trade_result(i, slot_key, pnl, day_key, capital_before)
+
         return pnl
 
     def _manage_open_position(self, ctx, position: dict, i: int):
@@ -700,6 +803,28 @@ class Backtester:
         frais d'entrée. Retourne le dict position ou None si rejeté."""
         df   = ctx.df
         diag = ctx.diag
+
+        # QW-6 (étape 6) — circuit breakers si realistic_risk=True
+        gate = getattr(ctx, "risk_gate", None)
+        if gate is not None:
+            from app.core.bot_identity import build_slot_key
+            strat_name = signal.get("strategy", "")
+            slot_key = build_slot_key(strat_name, ctx.timeframe, ctx.symbol)
+            # day_key depuis le timestamp de la bougie
+            try:
+                ts = df["time"][i]
+                day_key = str(ts)[:10] if ts is not None else ""
+            except Exception:
+                day_key = ""
+            ok, reason = gate.can_slot_trade(
+                i, slot_key, day_key, ctx.capital,
+                getattr(ctx, "peak_capital", ctx.capital),
+            )
+            if not ok:
+                diag["rejected_circuit_breaker"] = diag.get("rejected_circuit_breaker", 0) + 1
+                self.rejections.record("circuit_breaker", symbol=ctx.symbol)
+                logger.debug(f"[Backtest] bar {i} : trade rejeté (circuit_breaker) — {reason}")
+                return None
 
         atr_v = float(ctx.atr_arr[i])
         if atr_v <= 0:
@@ -1057,6 +1182,9 @@ class Backtester:
             atr_arr=atr_arr, low_arr=low_arr, high_arr=high_arr,
             close_arr=close_arr,
             bars_current_position=_bars_current_position,
+            # QW-6 (étape 6) — risk gate pour le mode realistic_risk.
+            # Initialisé plus bas (après know si realistic_risk=True).
+            risk_gate=None,
         )
         # BT-10 : volume quote moyen (20 barres, causal) pour le modèle "size".
         if self.slippage_model == "size" and "volume" in df.columns:
@@ -1064,6 +1192,19 @@ class Backtester:
                 .fill_null(0.0).to_numpy().astype(float)
         else:
             ctx.qvol_arr = None
+
+        # QW-6 (étape 6) — initialiser le risk gate si realistic_risk=True
+        if self.realistic_risk:
+            from app.engine.backtest_risk_gate import BacktestRiskGate
+            self._risk_gate = BacktestRiskGate.from_config(self.cfg)
+            ctx.risk_gate = self._risk_gate
+            logger.info(
+                f"[Backtest] Mode realistic_risk ACTIF — circuit breakers "
+                f"(consec_loss={self._risk_gate.consec_loss_limit}, "
+                f"slot_daily_dd={self._risk_gate.slot_daily_dd_limit:.1%}, "
+                f"max_trades/day={self._risk_gate.max_trades_per_day}, "
+                f"global_dd={self._risk_gate.global_dd_limit:.1%})"
+            )
 
         for i in range(warmup, len(df) - 1):
             diag["bars_total"] += 1
@@ -1211,6 +1352,12 @@ class Backtester:
         # PnL n'est pas interprétable (spot ou margin ? quel levier ? quels
         # frais ?), et deux runs ne sont pas comparables de bonne foi.
         result.cost_model = self._cost_model
+        # QW-6 (étape 6) — diagnostics du risk gate si realistic_risk=True
+        if self._risk_gate is not None:
+            result.realistic_risk_diagnostics = self._risk_gate.to_diagnostics()
+            result.realistic_risk = True
+        else:
+            result.realistic_risk = False
         return self._add_buy_and_hold(result, df, warmup)
 
     def _add_buy_and_hold(self, result: "BacktestResult", df: pl.DataFrame,
@@ -1222,6 +1369,10 @@ class Backtester:
         déclare un ``warmup_bars``/``min_bars`` plus grand) — un warmup figé à
         210 désynchronisait le prix de départ du Buy & Hold de la première
         barre réellement tradée, faussant l'alpha calculé.
+
+        QW-1 : stocke aussi la série des prix close (post-warmup) sur le
+        résultat pour que ``_compute_metrics`` puisse calculer l'alpha vs
+        Buy & Hold annualisé via ``compute_extended_metrics``.
         """
         try:
             if len(df) <= warmup:
@@ -1235,6 +1386,15 @@ class Backtester:
             result.buy_and_hold_pnl = round(bnh_pnl, 4)
             result.buy_and_hold_pct = round(bnh_pct, 3)
             result.alpha            = round(result.total_pnl - bnh_pnl, 4)
+            # QW-1 : série des close post-warmup pour compute_extended_metrics.
+            # `_compute_metrics()` a déjà tourné (dans `__init__`) sans ces prix :
+            # on recalcule les métriques étendues maintenant, sinon `alpha_vs_bh`
+            # resterait à 0 pour tous les backtests.
+            try:
+                result._close_prices = [float(x) for x in df["close"][warmup:].to_list()]
+                result._compute_extended_metrics()
+            except Exception:
+                result._close_prices = []
         except Exception as e:
             logger.debug(f"[BnH] Calcul benchmark KO : {e}")
         return result

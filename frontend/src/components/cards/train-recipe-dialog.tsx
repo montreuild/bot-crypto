@@ -31,12 +31,13 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { api } from '@/lib/api';
 import { useMLTrainStatus } from '@/hooks/use-api';
 import { toast } from 'sonner';
 import {
-  Loader2, Rocket, CheckCircle2, XCircle, ExternalLink, AlertCircle,
+  Loader2, Rocket, CheckCircle2, XCircle, ExternalLink, AlertCircle, AlertTriangle,
 } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
@@ -68,6 +69,12 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
   const [symbol, setSymbol] = useState(DEFAULT_SYMBOL);
   const [tf, setTf] = useState(DEFAULT_TF);
   const [windowBars, setWindowBars] = useState(DEFAULT_WINDOW_BARS);
+  // P0-1 : publish=false par défaut (dry-run). L'utilisateur doit cocher
+  // explicitement pour publier au registre — sinon le run est silencieux.
+  const [publish, setPublish] = useState(false);
+  // P0-2 : as_of optionnel (ISO date). Permet de rejouer un entraînement à
+  // une date passée pour comparaison. Vide = maintenant.
+  const [asOf, setAsOf] = useState('');
   const [phase, setPhase] = useState<Phase>('idle');
   const [jobId, setJobId] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
@@ -87,6 +94,8 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
       setSymbol(DEFAULT_SYMBOL);
       setTf(DEFAULT_TF);
       setWindowBars(DEFAULT_WINDOW_BARS);
+      setPublish(false);
+      setAsOf('');
       setPhase('idle');
       setJobId(null);
       setStartError(null);
@@ -151,6 +160,10 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
         symbol: symbol.trim(),
         tf: tf.trim(),
         window_bars: windowBars > 0 ? windowBars : null,
+        // P0-1 : transmet publish (false = dry-run, true = publier au registre)
+        publish,
+        // P0-2 : transmet as_of si fourni (rejoue un entraînement à une date passée)
+        as_of: asOf.trim() || undefined,
       });
       setJobId(res.job_id);
       setPhase('polling');
@@ -221,9 +234,10 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
           </div>
         </div>
 
-        {/* Inputs : symbole, TF, bougies. Defaults BTC/USDC · 1h · 2000,
+        {/* Inputs : symbole, TF, bougies, as_of. Defaults BTC/USDC · 1h · 2000,
             minimum 1500 bougies (sous ce seuil, LightGBM n'a pas assez
-            d'échantillons pour un entraînement fiable). */}
+            d'échantillons pour un entraînement fiable). P0-2 : as_of
+            optionnel permet de rejouer un entraînement à une date passée. */}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           <div className="space-y-1.5">
             <Label htmlFor="train-recipe-symbol">Symbole</Label>
@@ -262,6 +276,64 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
               className="font-mono"
             />
           </div>
+          <div className="space-y-1.5 md:col-span-3">
+            <Label htmlFor="train-recipe-as-of">
+              As-of (optionnel)
+              <span className="block normal-case text-[10px] text-dim font-normal">
+                Date ISO — ex: 2024-06-01. Vide = maintenant.
+              </span>
+            </Label>
+            <Input
+              id="train-recipe-as-of"
+              type="date"
+              value={asOf}
+              onChange={(e) => setAsOf(e.target.value)}
+              disabled={isRunning}
+              className="font-mono"
+            />
+          </div>
+        </div>
+
+        {/* P0-1 : Switch publish — dry-run par défaut (false). L'utilisateur
+            doit explicitement cocher pour publier au registre. Avertissement
+            visible tant que non coché. */}
+        <div className="rounded-lg border border-border p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <Switch
+              id="train-recipe-publish"
+              aria-label="Publier au registre"
+              checked={publish}
+              onCheckedChange={setPublish}
+              disabled={isRunning}
+            />
+            <label htmlFor="train-recipe-publish" className="text-sm cursor-pointer">
+              Publier au registre
+              <span className="text-dim ml-1 text-xs">
+                (sinon : dry-run — rien n&apos;est écrit)
+              </span>
+            </label>
+          </div>
+          {!publish && (
+            <div className="flex items-start gap-2 text-[11px] text-amber-400">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>
+                <strong>Dry-run :</strong> le modèle sera entraîné mais pas
+                écrit au registre. Aucune version ne sera créée. Cochez cette
+                option pour publier et rendre le modèle disponible pour le
+                live et le backtest.
+              </span>
+            </div>
+          )}
+          {publish && (
+            <div className="flex items-start gap-2 text-[11px] text-emerald-400">
+              <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>
+                Le modèle sera publié au registre via la gate de promotion
+                (AUC floor 0.55, comparaison vs sortant). Disponible
+                immédiatement pour le live et le backtest.
+              </span>
+            </div>
+          )}
         </div>
 
         {/* État du job : Idle / Démarrage / Running / Done / Error. On

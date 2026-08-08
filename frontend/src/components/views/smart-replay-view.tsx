@@ -34,6 +34,8 @@ import {
   ensureZonesPrimitive,
   buildZonesFromSmc,
 } from '@/lib/smc-zones';
+// F2 — cleanOhlcv factorisé dans lib/ohlcv.ts (avant : copie locale)
+import { cleanOhlcv, type CandleRow } from '@/lib/ohlcv';
 
 const SPEEDS = [
   { label: '1x', ms: 1000 },
@@ -44,34 +46,7 @@ const SPEEDS = [
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-interface CandleRow {
-  time: UTCTimestamp;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-}
-
-function cleanOhlcv(
-  time: number[],
-  open: number[],
-  high: number[],
-  low: number[],
-  close: number[],
-): CandleRow[] {
-  const seen = new Set<number>();
-  const out: CandleRow[] = [];
-  for (let i = 0; i < time.length; i++) {
-    const t = time[i];
-    if (!Number.isFinite(t)) continue;
-    if (seen.has(t)) continue;
-    if (out.length > 0 && t < (out[out.length - 1].time as number)) continue;
-    seen.add(t);
-    out.push({ time: t as UTCTimestamp, open: open[i], high: high[i], low: low[i], close: close[i] });
-  }
-  return out;
-}
-
+// cleanOhlcv et CandleRow sont importés depuis @/lib/ohlcv (F2).
 /** Resolve any "index-like" field on a replay entity to a bar index. */
 function entityBarIndex(entity: any, fallbackKeys: string[] = ['created_at', 'index', 'confirmed_at']): number | null {
   if (!entity || typeof entity !== 'object') return null;

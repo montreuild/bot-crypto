@@ -446,6 +446,75 @@ export interface BacktestResult {
   cost_model?: CostModel;
   /** Étude vs réel (dual_pass). */
   runs?: any;
+  // ── QW-1 : métriques étendues (S3-07 — branchement a posteriori) ──────────
+  /** Sortino ratio annualisé (volatilité downside uniquement). */
+  sortino?: number;
+  /** Calmar ratio (CAGR / |Max DD|). */
+  calmar?: number;
+  /** CAGR en % (Compound Annual Growth Rate). */
+  cagr?: number;
+  /** Alpha annualisé vs Buy & Hold en %. */
+  alpha_vs_bh?: number;
+  // ── QW-3 : agrégats de coûts pour analyse what-if frais/levier ────────────
+  /** Coût total d'emprunt margin sur la période. */
+  total_borrow_cost?: number;
+  /** Coût total de slippage estimé (si isolé). */
+  total_slippage_cost?: number;
+  // ── QW-5 : recommandations d'amélioration post-backtest ───────────────────
+  /** Liste ordonnée de recommandations (sévérité critical > warning > info > positive). */
+  recommendations?: BacktestRecommendation[];
+  /** Synthèse des recommandations (compteurs + verdict global). */
+  recommendations_summary?: BacktestRecommendationsSummary;
+  // ── QW-6 : mode realistic_risk (circuit breakers en backtest) ──────────────
+  /** True si le backtest a été lancé avec realistic_risk=True. */
+  realistic_risk?: boolean;
+  /** Diagnostics du risk gate (circuit breakers déclenchés, slots pausés, etc.). */
+  realistic_risk_diagnostics?: {
+    halted: boolean;
+    halt_reason: string;
+    volatility_brake_active: boolean;
+    n_slots_paused: number;
+    slots: Record<string, {
+      consecutive_losses: number;
+      daily_pnl: number;
+      daily_trades: number;
+      paused: boolean;
+      pause_reason: string;
+    }>;
+  };
+}
+
+export interface BacktestRecommendation {
+  /** 'critical' | 'warning' | 'info' | 'positive'. */
+  severity: 'critical' | 'warning' | 'info' | 'positive';
+  /** Code machine (ex: 'OUTLIER_CONCENTRATION', 'EXCELLENT_SHARPE'). */
+  code: string;
+  /** Titre court (ex: 'Concentration sur 3 trades'). */
+  title: string;
+  /** Explication détaillée. */
+  message: string;
+  /** Action recommandée (ex: 'Réduire risk_per_trade'). */
+  action: string;
+  /** Lien d'action optionnel (ex: '/settings?tab=risk'). */
+  action_link?: string;
+  /** Chiffres spécifiques à la reco (variable selon le code). */
+  metrics?: Record<string, any>;
+}
+
+export interface BacktestRecommendationsSummary {
+  /** Compteurs par sévérité. */
+  counts: {
+    critical: number;
+    warning: number;
+    info: number;
+    positive: number;
+  };
+  /** Verdict global : 'critical' | 'risky' | 'neutral' | 'positive'. */
+  verdict: 'critical' | 'risky' | 'neutral' | 'positive';
+  /** Libellé humain du verdict. */
+  verdict_label: string;
+  /** Nombre total de recommandations. */
+  total: number;
 }
 
 export interface BacktestTrade {
@@ -540,7 +609,7 @@ export interface OptimizeJob {
   strategy: string;
   timeframe: string;
   symbol?: string;
-  status: 'pending' | 'running' | 'done' | 'error' | 'cancelled';
+  status: 'pending' | 'running' | 'done' | 'error' | 'cancelled' | 'queued' | 'skipped';
   progress: number;
   best_score: number;
   trials_done: number;
@@ -550,6 +619,14 @@ export interface OptimizeJob {
   finished_at?: number;
   baseline?: Record<string, any>;
   trials?: any[];
+  /** P0-3 — Walk-Forward consistency (%) calculée par auto_optimizer._wf_consistent.
+   * Stockée sur le job côté backend (auto_optimizer.py:577). */
+  wf_consistency?: number;
+  /** P0-2 — Deflated Sharpe Ratio (probabilité que le Sharpe soit réellement > 0,
+   * corrigée du biais de sélection multiple). Calculé par opt_scoring.deflated_sharpe_ratio. */
+  deflated_sharpe?: number;
+  /** P0-2 — raison du refus apply (cf. beats_baseline). Présent si apply refusé. */
+  apply_refused_reason?: string;
   result?: {
     best_params?: Record<string, any>;
     best_oos_score?: number;
@@ -560,6 +637,8 @@ export interface OptimizeJob {
     best_oos_dd?: number;
     best_oos_alpha?: number;
     overfit?: number;
+    /** P0-2 — Deflated Sharpe dans le résultat (alias pour compat). */
+    deflated_sharpe?: number;
     /** Alias backend : `top5` (cf. audit §3.3). */
     top5?: OptimizeTrial[];
     /** Frontend-friendly alias. */
@@ -703,8 +782,10 @@ export interface ModelDecision {
 }
 
 export interface MLJobStatus {
+  /** P1-2 : job_id présent dans la liste /api/ml/jobs (pas dans /status single). */
+  job_id?: string;
   kind: 'train' | 'sweep';
-  status: 'running' | 'done' | 'error';
+  status: 'running' | 'done' | 'error' | 'cancelled' | 'pending' | 'queued' | 'skipped';
   strategy: string;
   symbol: string;
   tf: string;

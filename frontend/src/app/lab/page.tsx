@@ -52,7 +52,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   Play, Square, Loader2, FlaskConical, Sparkles, Brain, Repeat,
   GitCompare, AlertCircle, CheckCircle2, TrendingUp, Rocket, Archive,
-  Maximize2, FileDown, X, Zap, Layers,
+  Maximize2, FileDown, X, Zap, Layers, Shield,
 } from 'lucide-react';
 import { cn, formatUSD, formatPct } from '@/lib/utils';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
@@ -60,11 +60,13 @@ import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { PriceSignalsChart } from '@/components/charts/price-signals-chart';
 import { TradesTable } from '@/components/tables/trades-table';
 import { DiagnosticsPanel } from '@/components/cards/diagnostics-panel';
+import { RecommendationsPanel } from '@/components/cards/recommendations-panel';
 import { BacktestRunningBanner } from '@/components/cards/backtest-running-banner';
 import { BacktestProgress } from '@/components/cards/backtest-progress';
 import { StrategyComparisonTable } from '@/components/cards/strategy-comparison-table';
 import { TradesStatsPanel } from '@/components/cards/trades-stats-panel';
 import { MLBacktestPanel } from '@/components/cards/ml-backtest-panel';
+import { CostSimulatorPanel } from '@/components/cards/cost-simulator-panel';
 import { limitHint } from '@/lib/limit-hint';
 import { recommendedThreshold } from '@/lib/strat-thresholds';
 import {
@@ -237,6 +239,10 @@ interface BacktestConfig {
   walk_forward: boolean;
   monte_carlo: boolean;
   dual_pass: boolean;
+  /** QW-6 — active les circuit breakers (consecutive losses, slot daily DD,
+   * max trades/day, volatility brake, kill-switch global) dans le backtest.
+   * Opt-in pour préserver la parité avec les backtests existants. */
+  realistic_risk: boolean;
   strategies: string[];
 }
 
@@ -265,6 +271,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
     walk_forward: false,
     monte_carlo: false,
     dual_pass: false,
+    realistic_risk: false,
     strategies: [],
   });
   const [result, setResult] = useState<any>(null);
@@ -295,6 +302,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
         walk_forward: s.config.walk_forward ?? c.walk_forward,
         monte_carlo: s.config.monte_carlo ?? c.monte_carlo,
         dual_pass: s.config.dual_pass ?? c.dual_pass,
+        realistic_risk: s.config.realistic_risk ?? c.realistic_risk,
       }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -328,6 +336,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
         walk_forward: config.walk_forward,
         monte_carlo: config.monte_carlo,
         dual_pass: config.dual_pass,
+        realistic_risk: config.realistic_risk,
         strategies: config.strategies.length > 0 ? config.strategies.join(',') : undefined,
       });
       setResult(res);
@@ -340,6 +349,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
         walk_forward: config.walk_forward,
         monte_carlo: config.monte_carlo,
         dual_pass: config.dual_pass,
+        realistic_risk: config.realistic_risk,
       });
       toast.success('Backtest terminé');
     } catch (e: any) {
@@ -551,6 +561,25 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
                 <label htmlFor="bt-dual-pass" className="cursor-pointer">
                   Étude vs Réel
                   <span className="text-dim ml-1">(double le temps de calcul)</span>
+                </label>
+              </div>
+              {/* QW-6 — Mode realistic_risk : active les circuit breakers
+                  (consecutive losses, slot daily DD, max trades/day, vol brake,
+                  kill-switch global) pour évaluer la robustesse face aux
+                  pauses de slot. Opt-in pour préserver la parité avec les
+                  backtests existants. */}
+              <div className="flex items-center gap-2 text-xs">
+                <Switch
+                  id="bt-realistic-risk"
+                  aria-label="Mode realistic_risk (circuit breakers)"
+                  checked={config.realistic_risk}
+                  onCheckedChange={(v) => setConfig({ ...config, realistic_risk: v })}
+                />
+                <label htmlFor="bt-realistic-risk" className="cursor-pointer">
+                  Mode realistic_risk
+                  <span className="text-dim ml-1">
+                    (circuit breakers : 3 pertes consécutives → pause, DD journalier, kill-switch)
+                  </span>
                 </label>
               </div>
             </div>
@@ -774,10 +803,96 @@ function BacktestResults({ result, scoreThreshold }: { result: any; scoreThresho
       {/* Verdict en clair */}
       <Verdict result={result} />
 
+      {/* QW-6 — Badge realistic_risk + diagnostics du risk gate si actif */}
+      {r?.realistic_risk && (
+        <Card className="border-l-4 border-l-blue-500">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Shield className="w-4 h-4 text-blue-400" />
+              Mode realistic_risk actif
+              <Badge variant="info" className="text-[10px]">QW-6</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs">
+            <p className="text-muted-foreground">
+              Les circuit breakers (consecutive losses, slot daily DD, max
+              trades/day, volatility brake, kill-switch global) ont été
+              appliqués pendant le backtest. Les refus sont comptés dans les
+              diagnostics ci-dessous.
+            </p>
+            {r?.realistic_risk_diagnostics && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+                <div className="p-2 rounded-md bg-card-hover/30">
+                  <div className="text-[10px] text-dim uppercase">HALT global</div>
+                  <div className={cn('font-mono font-semibold', r.realistic_risk_diagnostics.halted ? 'text-red-400' : 'text-emerald-400')}>
+                    {r.realistic_risk_diagnostics.halted ? 'OUI' : 'Non'}
+                  </div>
+                </div>
+                <div className="p-2 rounded-md bg-card-hover/30">
+                  <div className="text-[10px] text-dim uppercase">Slots pausés</div>
+                  <div className="font-mono font-semibold text-amber-400">
+                    {r.realistic_risk_diagnostics.n_slots_paused ?? 0}
+                  </div>
+                </div>
+                <div className="p-2 rounded-md bg-card-hover/30">
+                  <div className="text-[10px] text-dim uppercase">Vol brake</div>
+                  <div className={cn('font-mono font-semibold', r.realistic_risk_diagnostics.volatility_brake_active ? 'text-amber-400' : 'text-emerald-400')}>
+                    {r.realistic_risk_diagnostics.volatility_brake_active ? 'ACTIF' : 'Inactif'}
+                  </div>
+                </div>
+                <div className="p-2 rounded-md bg-card-hover/30">
+                  <div className="text-[10px] text-dim uppercase">Slots monitorés</div>
+                  <div className="font-mono font-semibold">
+                    {Object.keys(r.realistic_risk_diagnostics.slots ?? {}).length}
+                  </div>
+                </div>
+              </div>
+            )}
+            {r?.realistic_risk_diagnostics?.halted && (
+              <div className="p-2 rounded-md bg-red-500/10 border border-red-500/30 mt-2">
+                <span className="text-red-400 font-semibold text-xs">⚠ HALT :</span>{' '}
+                <span className="text-red-300 text-xs">{r.realistic_risk_diagnostics.halt_reason}</span>
+              </div>
+            )}
+            {r?.realistic_risk_diagnostics?.slots && Object.entries(r.realistic_risk_diagnostics.slots as Record<string, any>)
+              .filter(([, s]: [string, any]) => s.paused)
+              .map(([slotKey, s]: [string, any]) => (
+                <div key={slotKey} className="p-2 rounded-md bg-amber-500/10 border border-amber-500/30">
+                  <span className="text-amber-400 font-semibold text-xs">⏸ Slot pausé :</span>{' '}
+                  <span className="text-amber-300 text-xs font-mono">{slotKey}</span>{' '}
+                  <span className="text-amber-300/80 text-xs">— {s.pause_reason}</span>
+                </div>
+              ))}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Contexte facturé : sans lui, un PnL n'est pas interprétable (spot ou
           margin ? quel levier ? quels frais ?) et deux runs ne sont pas
           comparables. Cf. app/core/execution.py::cost_model. */}
       <CostModelCard model={r?.cost_model} />
+
+      {/* QW-4 — Simulateur de coûts : compare 3 presets (spot, margin×3,
+          margin×10) en relançant des backtests avec cost_override. */}
+      <CostSimulatorPanel
+        symbol={r?.symbol ?? ''}
+        timeframe={r?.timeframe ?? ''}
+        strategies={strategies.map(([n]: [string, any]) => n).join(',')}
+        limit={r?.limit ?? 500}
+        currentCostModel={r?.cost_model}
+      />
+
+      {/* QW-5 — Recommandations d'amélioration post-backtest (12 règles :
+          échantillon, PnL, outliers, frais, Sharpe, DD, alpha, win-rate,
+          borrow, régimes, points forts). Affichées par stratégie. */}
+      {Object.entries(byStrategy).map(([name, stats]: [string, any]) => (
+        <RecommendationsPanel
+          key={`reco-${name}`}
+          strategy={name}
+          recommendations={stats?.recommendations}
+          summary={stats?.recommendations_summary}
+        />
+      ))}
 
       {/* BT-011 — avertissements globaux : seuil recommandé et taille
           d'échantillon. Affichés au-dessus des KPIs pour être vus avant tout. */}

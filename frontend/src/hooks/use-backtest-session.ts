@@ -52,6 +52,8 @@ export interface BacktestSessionData {
     walk_forward?: boolean;
     monte_carlo?: boolean;
     dual_pass?: boolean;
+    /** QW-6 — mode realistic_risk (circuit breakers en backtest). */
+    realistic_risk?: boolean;
   };
   timestamp: number;
 }

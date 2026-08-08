@@ -217,6 +217,13 @@ class ArtifactRef:
     meta: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
+        meta = self.meta or {}
+        # P0-4 : exposer overfitting_gate.level dans l'ArtifactRef pour que
+        # l'UI puisse afficher le badge block/warn/good/strong à côté de l'AUC.
+        # Le champ est calculé par policy.maybe_refresh() et rangé dans
+        # decision_metrics.overfitting_gate (cf. app/ml/policy.py L304-330).
+        decision_metrics = meta.get("decision_metrics") or {}
+        overfitting_gate = decision_metrics.get("overfitting_gate")
         return {
             "path_prefix": self.path_prefix, "train_symbol": self.train_symbol,
             "tf": self.tf,
@@ -226,13 +233,15 @@ class ArtifactRef:
             "recipe_hash": self.recipe_hash, "git_commit": self.git_commit,
             "source": self.source, "created_at": self.created_at,
             "gate_decision": self.gate_decision,
+            # P0-4 : diagnostics overfitting_gate (level block/warn/good/strong)
+            "overfitting_gate": overfitting_gate,
             # train_meta : diagnostics d'entraînement (AUC par régime, top
             # features + importance, erreur de calibration...) — toujours
             # petit/borné (cf. app.ml.backend.trainer, jamais de features/
             # médianes/calibrators bruts dedans), donc exposé tel quel plutôt
             # que par une liste de clés à maintenir à la main. Page Modèles
             # (E7) : historique de versions + panneau "top features".
-            "train_meta": (self.meta or {}).get("train_meta") or {},
+            "train_meta": meta.get("train_meta") or {},
         }
 
 

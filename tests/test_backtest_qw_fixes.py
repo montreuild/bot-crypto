@@ -1,0 +1,108 @@
+"""Régressions sur les quick wins backtest QW-1 et QW-2.
+
+Deux défauts silencieux — le pire genre : la fonctionnalité est exposée dans
+l'API et dans l'UI, mais elle ne calcule rien.
+
+- QW-1 : ``alpha_vs_bh`` valait TOUJOURS 0. ``_compute_metrics()`` tourne dans
+  ``__init__``, alors que la série de prix (``_close_prices``) n'est posée qu'à
+  la fin du run par ``_add_buy_and_hold()``. Sans benchmark,
+  ``alpha_vs_buy_hold()`` renvoie 0 par convention.
+- QW-2 : le filtre ``start_date``/``end_date`` ne filtrait RIEN. La colonne
+  ``time`` du CandleStore est ``datetime[ms]`` sans timezone ; le littéral
+  construit était tz-aware, polars levait un ``SchemaError``, et le
+  ``except`` renvoyait le DataFrame complet. L'utilisateur croyait backtester
+  sa plage et backtestait tout l'historique.
+"""
+from datetime import datetime
+
+import polars as pl
+import pytest
+from fastapi import HTTPException
+
+from app.api.routes.backtest import _filter_df_by_date_range
+from app.engine.backtest import Backtester, BacktestResult
+
+# ── QW-2 : filtre par plage de dates ─────────────────────────────────────────
+
+def _df_naif(n: int = 100):
+    """OHLCV avec un ``time`` naïf, comme le Parquet du CandleStore."""
+    return pl.DataFrame({
+        "time": pl.datetime_range(
+            pl.datetime(2024, 1, 1), pl.datetime(2024, 4, 9),
+            interval="1d", eager=True, time_unit="ms",
+        )[:n],
+        "close": [100.0 + i for i in range(n)],
+    })
+
+
+def test_filtre_dates_borne_reellement_le_dataframe():
+    df = _df_naif()
+    out, used_start, used_end = _filter_df_by_date_range(df, "2024-02-01", "2024-02-29")
+
+    assert len(out) < len(df), "le DataFrame doit être réduit, pas renvoyé entier"
+    assert out["time"].min() >= datetime(2024, 2, 1)
+    assert out["time"].max() <= datetime(2024, 3, 1)
+    assert used_start.startswith("2024-02-01")
+    assert used_end.startswith("2024-02-29")
+
+
+def test_filtre_dates_accepte_un_offset_et_le_ramene_en_utc():
+    df = _df_naif()
+    out, used_start, _ = _filter_df_by_date_range(df, "2024-02-01T02:00:00+02:00", "")
+    # 02:00+02:00 == 00:00 UTC → la bougie du 1er février est incluse.
+    assert used_start == "2024-02-01T00:00"
+    assert len(out) < len(df)
+
+
+def test_filtre_dates_sans_borne_renvoie_le_df_inchange():
+    df = _df_naif()
+    out, used_start, used_end = _filter_df_by_date_range(df, "", "")
+    assert out is df
+    assert (used_start, used_end) == ("", "")
+
+
+def test_filtre_dates_invalide_leve_une_400_plutot_que_de_tout_renvoyer():
+    """Une date illisible doit être signalée, pas absorbée en silence."""
+    with pytest.raises(HTTPException) as exc:
+        _filter_df_by_date_range(_df_naif(), "pas-une-date", "")
+    assert exc.value.status_code == 400
+
+
+# ── QW-1 : alpha vs Buy & Hold ───────────────────────────────────────────────
+
+def _resultat_gagnant():
+    trades = [
+        {"status": "closed", "pnl": 20.0, "fees": 0.1},
+        {"status": "closed", "pnl": 15.0, "fees": 0.1},
+        {"status": "closed", "pnl": -5.0, "fees": 0.1},
+    ]
+    equity = [1000.0 + 3 * i for i in range(60)]
+    return BacktestResult(trades, equity, 1000.0, timeframe="1d")
+
+
+def test_alpha_vs_bh_est_nul_tant_que_les_prix_sont_inconnus():
+    """Contrat : sans série de prix, pas de benchmark donc pas d'alpha."""
+    res = _resultat_gagnant()
+    assert res.alpha_vs_bh == 0.0
+
+
+def test_alpha_vs_bh_est_recalcule_une_fois_les_prix_connus():
+    """Régression : `_add_buy_and_hold` doit relancer les métriques étendues.
+
+    `_add_buy_and_hold` n'utilise pas `self` — on l'appelle en méthode non liée
+    pour éviter de monter un Engine complet dans un test unitaire.
+    """
+    res = _resultat_gagnant()
+    df = pl.DataFrame({
+        "time": pl.datetime_range(
+            pl.datetime(2024, 1, 1), pl.datetime(2024, 3, 10),
+            interval="1d", eager=True, time_unit="ms",
+        )[:70],
+        "close": [100.0 + 0.5 * i for i in range(70)],
+    })
+
+    Backtester._add_buy_and_hold(None, res, df, warmup=10)
+
+    assert res._close_prices, "la série de close doit être stockée sur le résultat"
+    assert res.alpha_vs_bh != 0.0, "l'alpha doit être recalculé avec le benchmark"
+    assert res.to_dict()["alpha_vs_bh"] == pytest.approx(res.alpha_vs_bh, abs=1e-4)

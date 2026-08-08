@@ -355,3 +355,45 @@ def test_train_rejects_an_unknown_recipe(client):
 def test_train_without_strategy_nor_recipe_is_refused(client):
     r = client.post("/api/ml/train", json={"tf": "1h"})
     assert r.status_code == 400
+
+
+def test_versioning_audit_summary_expose_des_compteurs_pas_des_chemins(client, tmp_path):
+    """`/api/ml/versioning/audit` : `summary` ne contient que des nombres.
+
+    Régression : `migration_check()` renvoie `without_hash` et `incompatible`
+    sous forme de LISTES de chemins. Le `summary` les recopiait telles quelles,
+    alors que l'UI (`ml-versioning-audit.tsx`) les traite comme des compteurs —
+    elle affichait donc un chemin de fichier à la place d'un nombre, et le test
+    `incompatible > 0` était toujours faux (comparaison sur un tableau JS).
+    """
+    models = tmp_path / "models"
+    models.mkdir()
+    # Un modèle avec hash, un sans → 1/2 = 50% de couverture.
+    (models / "avec.meta.json").write_text('{"features_hash": "abc123"}', encoding="utf-8")
+    (models / "sans.meta.json").write_text('{}', encoding="utf-8")
+
+    r = client.get("/api/ml/versioning/audit")
+    assert r.status_code == 200
+    payload = r.json()
+
+    summary = payload["summary"]
+    for key in ("total", "with_hash", "without_hash", "incompatible", "coverage_pct"):
+        assert isinstance(summary[key], (int, float)), f"{key} doit être un nombre"
+    assert summary["total"] == 2
+    assert summary["with_hash"] == 1
+    assert summary["without_hash"] == 1
+    assert summary["coverage_pct"] == 50.0
+
+    # Le détail (chemins) reste disponible sous `audit`, pour savoir quoi
+    # re-entraîner.
+    assert isinstance(payload["audit"]["without_hash"], list)
+    assert len(payload["audit"]["without_hash"]) == 1
+
+
+def test_versioning_audit_sans_modele_ne_divise_pas_par_zero(client):
+    r = client.get("/api/ml/versioning/audit")
+    assert r.status_code == 200
+    assert r.json()["summary"] == {
+        "total": 0, "with_hash": 0, "without_hash": 0,
+        "incompatible": 0, "coverage_pct": 0.0,
+    }

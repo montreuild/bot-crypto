@@ -548,6 +548,37 @@ export function useMLSweepStatus(jobId: string | null) {
   });
 }
 
+// P0-5 — Audit versioning des modèles ML (route /api/ml/versioning/audit)
+export function useMLVersioningAudit() {
+  return useQuery({
+    queryKey: ['mlVersioningAudit'],
+    queryFn: () => api.getMLVersioningAudit(),
+    staleTime: 5 * 60 * 1000, // 5 min — scan FS, pas besoin de rafraîchir souvent
+  });
+}
+
+// P1-2 — Liste des jobs ML récents (route /api/ml/jobs)
+export function useMLJobs(params?: { status?: string; kind?: string; limit?: number }) {
+  return useQuery({
+    queryKey: ['mlJobs', params?.status ?? '', params?.kind ?? '', params?.limit ?? 50],
+    queryFn: () => api.getMLJobs(params),
+    // Polling : 5 s si au moins un job running, 60 s sinon (économise le serveur en idle)
+    refetchInterval: (query) =>
+      query.state.data && query.state.data.running_count > 0 ? 5000 : 60000,
+  });
+}
+
+// P1-2 — Supprimer un job ML
+export function useDeleteMLJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => api.deleteMLJob(jobId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['mlJobs'] });
+    },
+  });
+}
+
 // ── Derivatives ─────────────────────────────────────────────────────────────
 export function useDerivativesData(symbol = 'BTC/USDC', period = '1h', refresh = false) {
   return useQuery({

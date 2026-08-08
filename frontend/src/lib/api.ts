@@ -326,6 +326,24 @@ export const api = {
     symbol?: string; timeframe?: string; limit?: number;
     walk_forward?: boolean; monte_carlo?: boolean; dual_pass?: boolean;
     strategies?: string; strategy?: string;
+    /** QW-2 : plage temporelle (ISO 8601). Prime sur `limit` si fournie. */
+    start_date?: string;
+    /** QW-2 : plage temporelle (ISO 8601, inclusif). */
+    end_date?: string;
+    /** QW-3 : force un fetch réseau (refresh incrémental du cache). */
+    refresh?: boolean;
+    /**
+     * QW-4 : override ponctuelle du cost_model pour ce run uniquement.
+     * Format CSV "key=value" : "taker_fee=0.001,maker_fee=0.0008,max_leverage=3"
+     * Permet de comparer frais/levier sans modifier config.yaml.
+     */
+    cost_override?: string;
+    /**
+     * QW-6 : active les circuit breakers (consecutive losses, slot daily DD,
+     * max trades/day, volatility brake, kill-switch global) dans le backtest.
+     * Opt-in pour préserver la parité avec les backtests existants.
+     */
+    realistic_risk?: boolean;
   }) => {
     const { strategy, ...rest } = params;
     const merged: Record<string, unknown> = { ...rest };
@@ -347,6 +365,19 @@ export const api = {
   },
   // S5-F3-US1 — Cancel backtest
   cancelBacktest: () => apiFetch<{ status: string }>('/backtest/cancel', { method: 'POST' }),
+
+  // QW-2 — Plage temporelle disponible (pour le bouton « Max disponible »)
+  backtestRange: (symbol: string, timeframe: string = '1h') =>
+    apiFetch<{
+      symbol: string;
+      timeframe: string;
+      from: string | null;
+      to: string | null;
+      bars: number;
+      available: boolean;
+    }>(`/backtest/range?${new URLSearchParams({ symbol, timeframe }).toString()}`, {
+      method: 'GET',
+    }),
 
   // ── Scanner ─────────────────────────────────────────────────────────────
   fastAnalysis: (symbol: string, tf = '1h') =>
@@ -505,6 +536,34 @@ export const api = {
   }) => apiFetch<{ job_id: string }>('/ml/sweep', { method: 'POST', body: JSON.stringify(params) }),
   getMLSweepStatus: (jobId: string) =>
     apiFetch<MLJobStatus>(`/ml/sweep/status?${new URLSearchParams({ job_id: jobId })}`),
+
+  // P0-5 — Audit versioning des modèles ML (migration_check)
+  getMLVersioningAudit: () =>
+    apiFetch<{
+      status: string;
+      /** Détail brut : `without_hash`/`incompatible` sont des LISTES de chemins. */
+      audit: { total: number; with_hash: number; without_hash: string[]; incompatible: string[] };
+      summary: { total: number; with_hash: number; without_hash: number; incompatible: number; coverage_pct: number };
+    }>('/ml/versioning/audit'),
+
+  // P1-2 — Liste des jobs ML récents (train + sweep)
+  getMLJobs: (params?: { status?: string; kind?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.status) q.set('status', params.status);
+    if (params?.kind) q.set('kind', params.kind);
+    if (params?.limit) q.set('limit', String(params.limit));
+    return apiFetch<{
+      jobs: MLJobStatus[];
+      total: number;
+      running_count: number;
+    }>(`/ml/jobs${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+
+  // P1-2 — Supprimer un job ML
+  deleteMLJob: (jobId: string) =>
+    apiFetch<{ status: string; job_id: string }>(`/ml/jobs/${encodeURIComponent(jobId)}`, {
+      method: 'DELETE',
+    }),
 
   // ── Derivatives ─────────────────────────────────────────────────────────
   getDerivativesData: (symbol = 'BTC/USDC', period = '1h', limit = 1000, refresh = false) =>
