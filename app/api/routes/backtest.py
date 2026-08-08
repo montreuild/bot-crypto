@@ -477,6 +477,12 @@ def run_backtest(
                     "total_slippage_cost": d.get("total_slippage_cost", 0.0),
                     "max_drawdown":     strat_data.get("max_drawdown",  d["max_drawdown"]),
                     "sharpe":           strat_data.get("sharpe",        d["sharpe"]),
+                    # QW-6 : diagnostics des circuit breakers. Chaque stratégie
+                    # a SON `Backtester`, donc son propre gate : les
+                    # diagnostics sont par stratégie, pas globaux. Sans cette
+                    # recopie ils ne quittaient jamais le backend, et le
+                    # panneau de l'UI restait vide en permanence.
+                    "realistic_risk_diagnostics": d.get("realistic_risk_diagnostics"),
                     # QW-1 : métriques étendues (S3-07 — branchement)
                     "sortino":          d.get("sortino", 0.0),
                     "calmar":           d.get("calmar", 0.0),

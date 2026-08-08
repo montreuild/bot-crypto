@@ -130,4 +130,49 @@ describe('DataTable', () => {
     // 5 rows, pas d'erreur de key dupliquée
     expect(trs.length).toBeGreaterThanOrEqual(5);
   });
+
+  // ── Accessibilité du tri ──────────────────────────────────────────────────
+  // Régression : les tables du dépôt triaient via un vrai <button> dans le
+  // <th>. En migrant vers <DataTable>, le tri est devenu un `onClick` posé sur
+  // le <th> lui-même — donc inaccessible au clavier, et non annoncé comme
+  // actionnable. Les 3 tables migrées avaient ainsi perdu leur tri au clavier.
+
+  it('expose le tri comme un bouton activable au clavier', () => {
+    render(<DataTable columns={columns} rows={sampleRows} sortable />);
+    const bouton = screen.getByRole('button', { name: /PnL/i });
+    expect(bouton).toBeInTheDocument();
+
+    // Activable au clavier : un <button> répond à Enter/Espace nativement,
+    // ce que jsdom traduit en événement click.
+    bouton.focus();
+    expect(bouton).toHaveFocus();
+  });
+
+  it('annonce une colonne triable inactive avec aria-sort="none"', () => {
+    const { container } = render(<DataTable columns={columns} rows={sampleRows} sortable />);
+    // `none` — et non l'absence d'attribut — est ce qui signale à une
+    // technologie d'assistance que la colonne EST triable.
+    const ths = [...container.querySelectorAll('th')];
+    expect(ths.every((th) => th.getAttribute('aria-sort') === 'none')).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: /PnL/i }));
+    const pnlTh = ths.find((th) => th.textContent?.includes('PnL'));
+    expect(pnlTh?.getAttribute('aria-sort')).toBe('ascending');
+  });
+
+  it('ne rend pas de bouton sur une colonne noSort', () => {
+    const cols: DataTableColumn<Row>[] = [
+      { key: 'id', header: 'ID', render: (r) => r.id, noSort: true },
+    ];
+    const { container } = render(<DataTable columns={cols} rows={sampleRows} sortable />);
+    expect(container.querySelector('th button')).toBeNull();
+    // Pas triable => pas d'aria-sort du tout (l'attribut ne s'applique pas).
+    expect(container.querySelector('th')?.hasAttribute('aria-sort')).toBe(false);
+  });
+
+  it('donne un scope aux en-têtes de colonne', () => {
+    const { container } = render(<DataTable columns={columns} rows={sampleRows} />);
+    const ths = [...container.querySelectorAll('th')];
+    expect(ths.every((th) => th.getAttribute('scope') === 'col')).toBe(true);
+  });
 });

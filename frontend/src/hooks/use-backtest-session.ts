@@ -59,6 +59,8 @@ export interface BacktestSessionData {
     /** QW-2 — bornes `yyyy-mm-dd` du mode « plage de dates ». */
     start_date?: string;
     end_date?: string;
+    /** QW-3 — un fetch réseau a été forcé avant le run. */
+    refresh?: boolean;
   };
   timestamp: number;
 }

@@ -808,7 +808,15 @@ class Backtester:
         gate = getattr(ctx, "risk_gate", None)
         if gate is not None:
             from app.core.bot_identity import build_slot_key
-            strat_name = signal.get("strategy", "")
+            # Le signal porte le nom de la stratégie sous `name` — c'est de là
+            # que vient le `"strategy"` de la position (cf. construction du
+            # trade plus bas). Lire `signal["strategy"]` renvoyait toujours ""
+            # et fabriquait un slot fantôme « ::tf::symbole » : les entrées
+            # étaient contrôlées sur ce slot vide pendant que les pertes
+            # s'enregistraient sur le vrai. Les trois breakers par slot
+            # (pertes consécutives, DD journalier, trades/jour) ne pouvaient
+            # donc JAMAIS se déclencher.
+            strat_name = signal.get("name") or signal.get("strategy") or ""
             slot_key = build_slot_key(strat_name, ctx.timeframe, ctx.symbol)
             # day_key depuis le timestamp de la bougie
             try:

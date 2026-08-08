@@ -157,23 +157,45 @@ export function DataTable<T>({
             {columns.map((col) => {
               const isSorted = sortKey === col.key;
               const canSort = sortable && !col.noSort;
+              // Le tri passe par un vrai <button> et non par un onClick posé
+              // sur le <th> : un <th> cliquable n'est ni focusable ni activable
+              // au clavier, et aucune technologie d'assistance ne l'annonce
+              // comme actionnable. C'est le pattern qu'utilisaient déjà les
+              // tables du dépôt avant leur migration ici.
+              // `aria-sort="none"` (et non `undefined`) sur une colonne triable
+              // mais inactive : c'est ce qui signale QU'ELLE est triable.
+              const label = (
+                <span className="inline-flex items-center gap-1">
+                  {col.header}
+                  {canSort && isSorted && (
+                    <span className="text-cyan-400">
+                      {sortAsc ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </span>
+                  )}
+                </span>
+              );
               return (
                 <th
                   key={col.key}
-                  className={`py-1 px-2 ${alignClass(col.align)} ${col.className ?? ''} ${
-                    canSort ? 'cursor-pointer select-none hover:text-foreground' : ''
-                  }`}
-                  onClick={() => toggleSort(col.key, col.noSort)}
-                  aria-sort={isSorted ? (sortAsc ? 'ascending' : 'descending') : undefined}
+                  scope="col"
+                  className={`py-1 px-2 ${alignClass(col.align)} ${col.className ?? ''}`}
+                  aria-sort={
+                    canSort
+                      ? (isSorted ? (sortAsc ? 'ascending' : 'descending') : 'none')
+                      : undefined
+                  }
                 >
-                  <span className="inline-flex items-center gap-1">
-                    {col.header}
-                    {canSort && isSorted && (
-                      <span className="text-cyan-400">
-                        {sortAsc ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                      </span>
-                    )}
-                  </span>
+                  {canSort ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(col.key, col.noSort)}
+                      className="inline-flex items-center gap-1 select-none hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500/60 rounded"
+                    >
+                      {label}
+                    </button>
+                  ) : (
+                    label
+                  )}
                 </th>
               );
             })}
