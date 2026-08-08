@@ -43,7 +43,7 @@ import { MonteCarloPanel } from '@/components/charts/monte-carlo-panel';
 import { TradesScatter } from '@/components/charts/trades-scatter';
 import { BacktestEquityChart } from '@/components/charts/backtest-equity-chart';
 import { CostModelCard } from '@/components/cards/cost-model-card';
-import { useBacktestSettings, useRunBacktest, useCancelBacktest } from '@/hooks/use-api';
+import { useBacktestSettings, useRunBacktest, useCancelBacktest, useBacktestRange } from '@/hooks/use-api';
 import { useConfig, usePresets, useSetExpertMode } from '@/hooks/use-api';
 import { useBacktestStatus, useBacktestSession } from '@/hooks/use-backtest-session';
 import { api } from '@/lib/api';
@@ -55,6 +55,7 @@ import {
   Maximize2, FileDown, X, Zap, Layers, Shield,
 } from 'lucide-react';
 import { cn, formatUSD, formatPct } from '@/lib/utils';
+import { toDateInputValue, validateDateRange, rangeDurationDays } from '@/lib/backtest-range';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { PriceSignalsChart } from '@/components/charts/price-signals-chart';
@@ -236,6 +237,17 @@ interface BacktestConfig {
   symbol: string;
   timeframe: string;
   limit: number;
+  /** QW-2 — comment borner la période analysée.
+   *
+   * Les deux modes sont EXCLUSIFS, parce que le backend l'est : dès qu'une
+   * borne de date est fournie, `limit` est ignoré (forcé au maximum, puis le
+   * DataFrame est filtré). Afficher les deux réglages ensemble laisserait
+   * croire qu'ils se combinent. */
+  dateMode: 'bars' | 'range';
+  /** QW-2 — borne basse, format `yyyy-mm-dd` (vide = début du cache). */
+  start_date: string;
+  /** QW-2 — borne haute, format `yyyy-mm-dd`, inclusive (vide = fin du cache). */
+  end_date: string;
   walk_forward: boolean;
   monte_carlo: boolean;
   dual_pass: boolean;
@@ -268,6 +280,9 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
     symbol: 'BTC/USDC',
     timeframe: '1h',
     limit: 500,
+    dateMode: 'bars',
+    start_date: '',
+    end_date: '',
     walk_forward: false,
     monte_carlo: false,
     dual_pass: false,
@@ -298,6 +313,9 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
         symbol: s.config.symbol ?? c.symbol,
         timeframe: s.config.timeframe ?? c.timeframe,
         limit: s.config.limit ?? c.limit,
+        dateMode: s.config.dateMode ?? c.dateMode,
+        start_date: s.config.start_date ?? c.start_date,
+        end_date: s.config.end_date ?? c.end_date,
         strategies: s.config.strategies ?? c.strategies,
         walk_forward: s.config.walk_forward ?? c.walk_forward,
         monte_carlo: s.config.monte_carlo ?? c.monte_carlo,
@@ -321,10 +339,38 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
   const SYMBOL_RE = /^[A-Z0-9]+\/[A-Z0-9]+$|^[A-Z0-9.]+$/;
   const symbolValid = SYMBOL_RE.test(config.symbol.trim());
 
+  // QW-2 — plage de dates. La requête n'est lancée qu'en mode « range » (et
+  // sur un symbole valide) : inutile d'interroger le cache tant que
+  // l'utilisateur raisonne en nombre de bougies.
+  const useRange = config.dateMode === 'range';
+  const rangeQuery = useBacktestRange(
+    config.symbol.trim(), config.timeframe, useRange && symbolValid,
+  );
+  const available = rangeQuery.data ?? null;
+  const rangeCheck = validateDateRange(config.start_date, config.end_date, available);
+  const rangeDays = rangeDurationDays(config.start_date, config.end_date);
+
+  /** Bouton « Max disponible » — recopie les bornes du cache dans le formulaire. */
+  const fillMaxRange = () => {
+    if (!available?.available) return;
+    setConfig((c) => ({
+      ...c,
+      start_date: toDateInputValue(available.from),
+      end_date: toDateInputValue(available.to),
+    }));
+  };
+
   const handleRun = async () => {
     if (!symbolValid) {
       toast.error('Symbole invalide — format attendu : BTC/USDC ou BTC');
       return;
+    }
+    if (useRange) {
+      if (!rangeCheck.ok) {
+        toast.error(rangeCheck.error ?? 'Plage de dates invalide');
+        return;
+      }
+      if (rangeCheck.warning) toast.warning(rangeCheck.warning);
     }
     setResult(null);
     setStartedAt(Date.now());
@@ -332,7 +378,11 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
       const res = await runBacktest.mutateAsync({
         symbol: config.symbol,
         timeframe: config.timeframe,
-        limit: config.limit,
+        // Les deux modes s'excluent : n'envoyer que les paramètres du mode
+        // actif évite que le backend arbitre à notre place.
+        ...(useRange
+          ? { start_date: config.start_date, end_date: config.end_date }
+          : { limit: config.limit }),
         walk_forward: config.walk_forward,
         monte_carlo: config.monte_carlo,
         dual_pass: config.dual_pass,
@@ -345,6 +395,9 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
         symbol: config.symbol,
         timeframe: config.timeframe,
         limit: config.limit,
+        dateMode: config.dateMode,
+        start_date: config.start_date,
+        end_date: config.end_date,
         strategies: config.strategies,
         walk_forward: config.walk_forward,
         monte_carlo: config.monte_carlo,
@@ -439,6 +492,106 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
             />
           </div>
 
+          {/* QW-2 — période analysée : deux modes exclusifs (cf. BacktestConfig). */}
+          <div>
+            <Label>Période analysée</Label>
+            <div
+              role="radiogroup"
+              aria-label="Mode de sélection de la période"
+              className="grid grid-cols-2 gap-1 mt-1 p-0.5 bg-surface border border-border rounded-md"
+            >
+              {([
+                { key: 'bars', label: 'Dernières bougies' },
+                { key: 'range', label: 'Plage de dates' },
+              ] as const).map((m) => (
+                <button
+                  key={m.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={config.dateMode === m.key}
+                  onClick={() => setConfig({ ...config, dateMode: m.key })}
+                  className={cn(
+                    'px-2 py-1 rounded text-[11px] transition-colors',
+                    config.dateMode === m.key
+                      ? 'bg-cyan-500/20 text-cyan-300'
+                      : 'text-muted hover:text-foreground',
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {useRange ? (
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="bt-start-date">Du / au</Label>
+                <button
+                  type="button"
+                  onClick={fillMaxRange}
+                  disabled={!available?.available}
+                  className={cn(
+                    'px-2 py-0.5 rounded text-[10px] border transition-colors',
+                    available?.available
+                      ? 'bg-surface border-border text-muted hover:text-foreground hover:border-border-hi'
+                      : 'bg-surface border-border text-dim cursor-not-allowed opacity-50',
+                  )}
+                >
+                  Max disponible
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                <Input
+                  id="bt-start-date"
+                  type="date"
+                  aria-label="Date de début"
+                  value={config.start_date}
+                  min={toDateInputValue(available?.from) || undefined}
+                  max={toDateInputValue(available?.to) || undefined}
+                  onChange={(e) => setConfig({ ...config, start_date: e.target.value })}
+                />
+                <Input
+                  id="bt-end-date"
+                  type="date"
+                  aria-label="Date de fin"
+                  value={config.end_date}
+                  min={toDateInputValue(available?.from) || undefined}
+                  max={toDateInputValue(available?.to) || undefined}
+                  onChange={(e) => setConfig({ ...config, end_date: e.target.value })}
+                />
+              </div>
+
+              {/* État du cache : ce que l'utilisateur peut réellement demander. */}
+              {rangeQuery.isLoading && (
+                <p className="text-[10px] text-dim mt-1">Lecture du cache…</p>
+              )}
+              {available?.available && (
+                <p className="text-[10px] text-dim mt-1">
+                  Cache : {toDateInputValue(available.from)} → {toDateInputValue(available.to)}
+                  {' '}· {available.bars.toLocaleString('fr-FR')} bougies
+                </p>
+              )}
+
+              {/* Erreur bloquante, avertissement, ou durée — jamais les trois. */}
+              {rangeCheck.error ? (
+                <p className="text-[10px] text-rose-400 mt-1" role="alert">
+                  {rangeCheck.error}
+                </p>
+              ) : rangeCheck.warning ? (
+                <p className="text-[10px] text-amber-400 mt-1">{rangeCheck.warning}</p>
+              ) : rangeDays ? (
+                <p className="text-[10px] text-emerald-400 mt-1">
+                  {rangeDays.toLocaleString('fr-FR')} jour{rangeDays > 1 ? 's' : ''} couvert
+                  {rangeDays > 1 ? 's' : ''}
+                </p>
+              ) : (
+                <p className="text-[10px] text-dim mt-1">
+                  Une borne vide s&apos;étend jusqu&apos;au bout du cache.
+                </p>
+              )}
+            </div>
+          ) : (
           <div>
             <Label htmlFor="bt-limit">Nombre de bougies</Label>
             <Input
@@ -480,6 +633,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
               );
             })()}
           </div>
+          )}
 
           {/* Stratégies */}
           <div>
@@ -588,7 +742,10 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
           <div className="flex gap-2 pt-2">
             <Button
               onClick={handleRun}
-              disabled={isLoading || !symbolValid || backtestStatus.running}
+              disabled={
+                isLoading || !symbolValid || backtestStatus.running
+                || (useRange && !rangeCheck.ok)
+              }
               className="flex-1"
             >
               {isLoading ? (
@@ -1221,6 +1378,14 @@ function BacktestResults({ result, scoreThreshold }: { result: any; scoreThresho
           <CardContent>
             <p className="text-xs text-muted">
               {r.n_bars} bougies · {r.date_from} → {r.date_to}
+              {/* QW-2 — rappeler la plage DEMANDÉE à côté de la plage OBTENUE.
+                  Les deux diffèrent dès que le cache est plus court que la
+                  demande ; sans ce rappel, l'écart passe inaperçu. */}
+              {(r.requested_start_date || r.requested_end_date) && (
+                <span className="text-dim ml-2">
+                  (demandé : {r.requested_start_date || '…'} → {r.requested_end_date || '…'})
+                </span>
+              )}
               {r.gaps_warning && (
                 <span className="text-amber-400 ml-2">⚠ {r.gaps_warning}</span>
               )}
