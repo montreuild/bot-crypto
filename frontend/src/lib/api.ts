@@ -541,7 +541,8 @@ export const api = {
   getMLVersioningAudit: () =>
     apiFetch<{
       status: string;
-      audit: { total: number; with_hash: number; without_hash: number; incompatible: number };
+      /** Détail brut : `without_hash`/`incompatible` sont des LISTES de chemins. */
+      audit: { total: number; with_hash: number; without_hash: string[]; incompatible: string[] };
       summary: { total: number; with_hash: number; without_hash: number; incompatible: number; coverage_pct: number };
     }>('/ml/versioning/audit'),
 

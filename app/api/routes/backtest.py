@@ -3,6 +3,7 @@ import importlib
 import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -60,32 +61,24 @@ def backtest_range(request: Request, symbol: str, timeframe: str = "1h"):
         raise HTTPException(503, "Config non chargée")
     try:
         tf = timeframe.strip() or state.cfg["trading"].get("timeframe", "1h")
-        exchange = _get_bt_exchange(state.cfg)
-        df = get_store().fetch(exchange, symbol, tf, total=10, prefer_cache=True)
-        if df is None or len(df) == 0:
+        # `stats()` lit le Parquet complet : il donne la VRAIE plage du cache.
+        # Ne pas la dériver d'un `fetch(total=N)`, qui ne renvoie que les N
+        # dernières bougies et rapporterait donc une plage tronquée.
+        stats = get_store().stats(symbol, tf) or {}
+        bars = int(stats.get("bars") or 0)
+        if bars == 0:
             return {"symbol": symbol, "timeframe": tf, "from": None, "to": None,
                     "bars": 0, "available": False}
-        # Lire les stats du cache pour avoir la taille réelle (pas juste 10)
-        try:
-            stats = get_store().stats(symbol, tf)
-            bars = stats.get("bars", len(df)) if stats else len(df)
-            from_ms = stats.get("from_ms") if stats else None
-            to_ms = stats.get("to_ms") if stats else None
-        except Exception:
-            bars = len(df)
-            from_ms = None
-            to_ms = None
-        from datetime import datetime, timezone
-        if from_ms:
-            from_iso = datetime.fromtimestamp(from_ms / 1000, tz=timezone.utc).isoformat()[:16]
-        else:
-            from_iso = str(df["time"][0])[:16]
-        if to_ms:
-            to_iso = datetime.fromtimestamp(to_ms / 1000, tz=timezone.utc).isoformat()[:16]
-        else:
-            to_iso = str(df["time"][-1])[:16]
-        return {"symbol": symbol, "timeframe": tf, "from": from_iso, "to": to_iso,
-                "bars": int(bars), "available": True}
+        return {
+            "symbol": symbol,
+            "timeframe": tf,
+            # `stats()` renvoie déjà des datetimes stringifiés (UTC implicite) ;
+            # on tronque au format "YYYY-MM-DDTHH:MM" attendu par l'UI.
+            "from": str(stats.get("from") or "")[:16] or None,
+            "to": str(stats.get("to") or "")[:16] or None,
+            "bars": bars,
+            "available": True,
+        }
     except Exception as e:
         logger.warning(f"[API] backtest/range KO ({symbol}/{timeframe}) : {e}")
         raise HTTPException(500, f"Erreur interne : {e}")
@@ -184,38 +177,50 @@ def _filter_df_by_date_range(df, start_date: str = "", end_date: str = ""):
     if not start_date and not end_date:
         return df, "", ""
     import polars as pl
-    from datetime import datetime, timezone
-    try:
-        used_start = ""
-        used_end = ""
-        mask = pl.lit(True)
-        if start_date:
-            # Parser ISO et convertir en datetime pour comparaison
-            try:
-                # Essayer format avec heure, sinon date seule
-                try:
-                    start_dt = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
-                except ValueError:
-                    start_dt = datetime.fromisoformat(start_date + "T00:00:00").replace(tzinfo=timezone.utc)
-                mask = mask & (pl.col("time") >= start_dt)
-                used_start = start_dt.isoformat()[:16]
-            except Exception as _e:
-                logger.warning(f"[backtest] start_date '{start_date}' invalide : {_e}")
-        if end_date:
-            try:
-                try:
-                    end_dt = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
-                except ValueError:
-                    end_dt = datetime.fromisoformat(end_date + "T23:59:59").replace(tzinfo=timezone.utc)
-                mask = mask & (pl.col("time") <= end_dt)
-                used_end = end_dt.isoformat()[:16]
-            except Exception as _e:
-                logger.warning(f"[backtest] end_date '{end_date}' invalide : {_e}")
-        df_filtered = df.filter(mask)
-        return df_filtered, used_start, used_end
-    except Exception as e:
-        logger.warning(f"[backtest] filtre date range KO ({e}) — retour DF complet")
-        return df, "", ""
+
+    def _parse(raw: str, end_of_day: bool):
+        """Parse une date ISO en datetime NAÏF (UTC implicite).
+
+        La colonne ``time`` du CandleStore est un ``datetime[ms]`` sans
+        timezone (UTC implicite). Comparer une colonne naïve à un littéral
+        tz-aware lève un ``SchemaError`` polars — d'où le parsing naïf ici.
+        """
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            # Date seule ("2024-01-01") → borne basse à 00:00, haute à 23:59:59
+            dt = datetime.fromisoformat(
+                raw + ("T23:59:59" if end_of_day else "T00:00:00")
+            )
+        # Une date fournie avec un offset ("2024-01-01T00:00+02:00") est
+        # ramenée en UTC puis dénaturalisée, pour rester comparable.
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+
+    used_start = ""
+    used_end = ""
+    mask = pl.lit(True)
+    if start_date:
+        try:
+            start_dt = _parse(start_date, end_of_day=False)
+        except Exception as _e:
+            raise HTTPException(400, f"start_date '{start_date}' invalide (ISO 8601 attendu) : {_e}")
+        mask = mask & (pl.col("time") >= start_dt)
+        used_start = start_dt.isoformat()[:16]
+    if end_date:
+        try:
+            end_dt = _parse(end_date, end_of_day=True)
+        except Exception as _e:
+            raise HTTPException(400, f"end_date '{end_date}' invalide (ISO 8601 attendu) : {_e}")
+        mask = mask & (pl.col("time") <= end_dt)
+        used_end = end_dt.isoformat()[:16]
+
+    # Volontairement SANS try/except : un filtre qui échoue silencieusement
+    # rendrait le DataFrame complet, et l'utilisateur croirait avoir backtesté
+    # sa plage alors qu'il a backtesté tout l'historique. Mieux vaut un 500
+    # explicite qu'un résultat faux présenté comme juste.
+    return df.filter(mask), used_start, used_end
 
 
 def _apply_cost_override(cfg: dict, cost_override: dict) -> dict:
@@ -442,9 +447,13 @@ def run_backtest(
                 if env is not None:
                     # La passe LIVE fait foi : c'est l'échelle qui tradera
                     # réellement, donc celle qui pilote la promotion (§5.1).
+                    # `realistic_risk` doit suivre les deux passes : sans lui,
+                    # la réponse annoncerait `realistic_risk: true` alors que
+                    # les circuit breakers n'auraient pas tourné.
                     runs = run_dual_pass(eng, effective_cfg, df, env, symbol=symbol,
                                          timeframe=tf,
-                                         cancel_event=state._bt_cancel_event)
+                                         cancel_event=state._bt_cancel_event,
+                                         realistic_risk=realistic_risk)
                     res = runs["live"]
                     runs_payload = {k: _pass_summary(r) for k, r in runs.items()}
                     runs_payload["ecart_pnl_pct"] = round(
@@ -517,9 +526,7 @@ def run_backtest(
                 # frais, Sharpe, DD, alpha, win-rate, borrow, régimes, points
                 # forts) et produit une liste ordonnée + une synthèse verdict.
                 try:
-                    from app.engine.recommendations import (
-                        generate_recommendations, summarize_recommendations
-                    )
+                    from app.engine.recommendations import generate_recommendations, summarize_recommendations
                     # Construire le contexte complet pour le moteur : on inclut
                     # ohlcv (pour l'analyse par régime) + les métriques agrégées.
                     reco_ctx = {

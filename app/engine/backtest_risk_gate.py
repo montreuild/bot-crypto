@@ -37,9 +37,8 @@ stratégie face aux circuit breakers.
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +51,13 @@ class _SlotState:
     daily_trades: int = 0
     day_key: str = ""  # YYYY-MM-DD dérivé de la bougie (pas time.time())
     paused: bool = False
-    pause_reason: str = ""
-    pause_until_bar: int = -1  # index de bougie jusqu'où la pause tient
+    pause_reason: str = ""       # message lisible (affiché dans les diagnostics)
+    # Nature de la pause, en clair machine. Sert à décider COMMENT la pause se
+    # lève : "consec_loss" expire après `pause_bars` bougies, "daily_dd" se lève
+    # au changement de jour. Ne JAMAIS déduire ce type en re-parsant
+    # `pause_reason` — c'est un texte destiné à l'humain, il change librement.
+    pause_kind: str = ""         # "" | "consec_loss" | "daily_dd"
+    pause_until_bar: int = -1    # index de bougie jusqu'où la pause tient
 
 
 @dataclass
@@ -97,8 +101,9 @@ class BacktestRiskGate:
     def from_config(cls, cfg: dict) -> "BacktestRiskGate":
         """Construit le gate depuis la config `risk` du bot.
 
-        Retourne None si la config n'a pas de section `risk` — l'appelant
-        peut alors décider de ne pas activer le mode realistic_risk.
+        Si la config n'a pas de section `risk`, retourne un gate aux valeurs
+        par défaut (jamais None) — le mode realistic_risk reste donc utilisable
+        sur une config minimale.
         """
         risk_cfg = cfg.get("risk") or {}
         if not risk_cfg:
@@ -168,10 +173,13 @@ class BacktestRiskGate:
             state.daily_pnl = 0.0
             state.daily_trades = 0
             state.day_key = day_key
-            # Si le slot était pausé pour la journée, on lève la pause
-            if state.paused and state.pause_reason.startswith("daily_dd"):
+            # Une pause « DD journalier » ne dure que la journée : le changement
+            # de jour la lève, quel que soit `pause_until_bar`.
+            if state.paused and state.pause_kind == "daily_dd":
                 state.paused = False
                 state.pause_reason = ""
+                state.pause_kind = ""
+                state.pause_until_bar = -1
 
         # Pause encore active ?
         if state.paused:
@@ -181,6 +189,8 @@ class BacktestRiskGate:
                 # Pause expirée
                 state.paused = False
                 state.pause_reason = ""
+                state.pause_kind = ""
+                state.pause_until_bar = -1
 
         # Limite trades/jour
         if self.max_trades_per_day > 0 and state.daily_trades >= self.max_trades_per_day:
@@ -236,6 +246,7 @@ class BacktestRiskGate:
         # Pause sur consecutive losses
         if state.consecutive_losses >= self.consec_loss_limit and not state.paused:
             state.paused = True
+            state.pause_kind = "consec_loss"
             state.pause_reason = (
                 f"{state.consecutive_losses} pertes consécutives "
                 f"(≥ {self.consec_loss_limit})"
@@ -251,12 +262,17 @@ class BacktestRiskGate:
             daily_dd = abs(min(0, state.daily_pnl)) / capital_before
             if daily_dd >= self.slot_daily_dd_limit and not state.paused:
                 state.paused = True
+                state.pause_kind = "daily_dd"
                 state.pause_reason = (
                     f"DD journalier {daily_dd:.1%} ≥ {self.slot_daily_dd_limit:.1%}"
                 )
-                # Pause jusqu'au prochain jour (on ne connaît pas l'index exact,
-                # on met un grand nombre — le reset du day_key lèvera la pause)
-                state.pause_until_bar = i + 100000
+                # Pause jusqu'au prochain jour : on ne connaît pas l'index de la
+                # première bougie de J+1, donc la levée se fait sur le changement
+                # de `day_key` dans `can_slot_trade` (cf. pause_kind == "daily_dd").
+                # `pause_until_bar` n'est ici qu'un garde-fou si le day_key reste
+                # constant (df sans timestamps exploitables) : sans lui la pause
+                # serait définitive.
+                state.pause_until_bar = i + self.pause_bars
                 logger.info(
                     f"[BacktestRiskGate] Slot {slot_key} pausé "
                     f"({state.pause_reason}) jusqu'au prochain jour"
@@ -301,6 +317,7 @@ class BacktestRiskGate:
                     "daily_trades": v.daily_trades,
                     "paused": v.paused,
                     "pause_reason": v.pause_reason,
+                    "pause_kind": v.pause_kind,
                 }
                 for k, v in self._slots.items()
             },

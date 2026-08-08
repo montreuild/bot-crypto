@@ -294,15 +294,44 @@ class BacktestResult:
             d["trades"] = strat_trades
 
         # ── QW-1 : métriques étendues (Sortino, Calmar, CAGR, alpha vs B&H) ──
-        # S3-07 : `app/core/performance_metrics.py` était écrit et testé
-        # unitairement, mais JAMAIS appelé par `BacktestResult._compute_metrics()`.
-        # On le branche ici — quick win qui enrichit le payload backtest avec 4
-        # métriques majeures pour le comparatif multi-stratégies (exigence 7) et
-        # les recommandations (exigence 8).
+        self._compute_extended_metrics()
+
+        # ── QW-3 : agrégats de coûts (borrow + slippage) pour analyse frais ──
+        # Exigence 4 (estimation frais/levier) : sans ces agrégats, l'utilisateur
+        # ne peut pas savoir quelle part du PnL est mangée par le borrow margin
+        # vs le slippage. On les calcule à partir des trades fermés.
+        try:
+            self.total_borrow_cost = round(_sf(float(sum(
+                t.get("borrow_cost", 0) for t in closed
+            )), 0.0), 4)
+            # Slippage estimé par trade = (spread_pct/2) × notional — déjà
+            # compté dans `fees` côté backtest (cf. _fees() qui inclut le spread),
+            # mais on l'isole pour l'analyse what-if.
+            # Note : `fees` agrège déjà taker/maker + spread, donc on expose
+            # séparément le `borrow_cost` (qui n'est PAS dans fees) pour permettre
+            # la comparaison spot vs margin.
+            self.total_slippage_cost = 0.0  # pas de champ isolé dans le trade — laissé à 0
+        except Exception:
+            self.total_borrow_cost = 0.0
+            self.total_slippage_cost = 0.0
+
+    def _compute_extended_metrics(self):
+        """QW-1 — Sortino, Calmar, CAGR et alpha vs Buy & Hold (S3-07).
+
+        `app/core/performance_metrics.py` était écrit et testé unitairement mais
+        jamais appelé : ces 4 métriques alimentent le comparatif multi-stratégies
+        (exigence 7) et les recommandations (exigence 8).
+
+        Appelée deux fois : une première depuis `_compute_metrics()` (dans
+        `__init__`), puis une seconde depuis `_add_buy_and_hold()` une fois que
+        `_close_prices` est disponible. L'alpha vs B&H a besoin de la série des
+        prix, qui n'est connue qu'après le run — sans ce second appel il
+        resterait silencieusement à 0 (`alpha_vs_buy_hold` renvoie 0 quand le
+        benchmark est vide). L'opération est idempotente et peu coûteuse.
+        """
         try:
             from app.core.performance_metrics import compute_extended_metrics
-            # Récupération des prix (close) pour l'alpha vs B&H — stockés sur
-            # l'instance par `Backtester.run()` via `self._close_prices`.
+            closed = [t for t in self.trades if t.get("status", "").startswith("closed")]
             prices = getattr(self, "_close_prices", None) or []
             years = None
             if self._timeframe:
@@ -323,8 +352,7 @@ class BacktestResult:
         except Exception as _ext_err:
             # Ne jamais planter le backtest à cause des métriques étendues —
             # on logge et on dégrade vers 0 (comportement inchangé avant QW-1).
-            import logging as _logging
-            _logging.getLogger(__name__).warning(
+            logger.warning(
                 f"[BacktestResult] compute_extended_metrics KO ({_ext_err}) — "
                 f"Sortino/Calmar/CAGR/alpha_vs_bh mis à 0"
             )
@@ -332,25 +360,6 @@ class BacktestResult:
             self.calmar = 0.0
             self.cagr = 0.0
             self.alpha_vs_bh = 0.0
-
-        # ── QW-3 : agrégats de coûts (borrow + slippage) pour analyse frais ──
-        # Exigence 4 (estimation frais/levier) : sans ces agrégats, l'utilisateur
-        # ne peut pas savoir quelle part du PnL est mangée par le borrow margin
-        # vs le slippage. On les calcule à partir des trades fermés.
-        try:
-            self.total_borrow_cost = round(_sf(float(sum(
-                t.get("borrow_cost", 0) for t in closed
-            )), 0.0), 4)
-            # Slippage estimé par trade = (spread_pct/2) × notional — déjà
-            # compté dans `fees` côté backtest (cf. _fees() qui inclut le spread),
-            # mais on l'isole pour l'analyse what-if.
-            # Note : `fees` agrège déjà taker/maker + spread, donc on expose
-            # séparément le `borrow_cost` (qui n'est PAS dans fees) pour permettre
-            # la comparaison spot vs margin.
-            self.total_slippage_cost = 0.0  # pas de champ isolé dans le trade — laissé à 0
-        except Exception:
-            self.total_borrow_cost = 0.0
-            self.total_slippage_cost = 0.0
 
     def to_dict(self) -> dict:
         pf = self.profit_factor
@@ -1377,9 +1386,13 @@ class Backtester:
             result.buy_and_hold_pnl = round(bnh_pnl, 4)
             result.buy_and_hold_pct = round(bnh_pct, 3)
             result.alpha            = round(result.total_pnl - bnh_pnl, 4)
-            # QW-1 : série des close post-warmup pour compute_extended_metrics
+            # QW-1 : série des close post-warmup pour compute_extended_metrics.
+            # `_compute_metrics()` a déjà tourné (dans `__init__`) sans ces prix :
+            # on recalcule les métriques étendues maintenant, sinon `alpha_vs_bh`
+            # resterait à 0 pour tous les backtests.
             try:
                 result._close_prices = [float(x) for x in df["close"][warmup:].to_list()]
+                result._compute_extended_metrics()
             except Exception:
                 result._close_prices = []
         except Exception as e:

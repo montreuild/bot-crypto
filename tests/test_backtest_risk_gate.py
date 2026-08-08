@@ -13,7 +13,7 @@ Couvre l'exigence 3 « close to live » — le backtest doit appliquer les
 mêmes circuit breakers que le live pour évaluer la robustesse d'une
 stratégie face aux pauses de slot.
 """
-from app.engine.backtest_risk_gate import BacktestRiskGate, _SlotState
+from app.engine.backtest_risk_gate import BacktestRiskGate
 
 
 def test_from_config_avec_risk_cfg():
@@ -246,3 +246,62 @@ def test_halt_bloque_tous_slots():
     )
     assert ok is False
     assert "DD global" in reason or "HALT" in reason
+
+
+def test_pause_daily_dd_est_levee_au_changement_de_jour():
+    """La pause « DD journalier » ne dure QUE la journée.
+
+    Régression : la levée de pause testait ``pause_reason.startswith("daily_dd")``
+    alors que le motif rédigé commence par « DD journalier ». La condition
+    n'était donc jamais vraie et le slot restait pausé jusqu'à la bougie
+    ``i + 100000`` — c'est-à-dire toute la durée du backtest. Un seul mauvais
+    jour tuait le slot définitivement, rendant le mode realistic_risk bien plus
+    pessimiste que le RiskGate live qu'il est censé répliquer.
+    """
+    gate = BacktestRiskGate(slot_daily_dd_limit=0.03, consec_loss_limit=99)
+    slot_key = "trend@1h@BTC/USDC"
+
+    # DD journalier de 4% > 3% → pause
+    gate.record_trade_result(i=10, slot_key=slot_key, pnl=-40,
+                             day_key="2024-01-01", capital_before=1000)
+    assert gate._slots[slot_key].paused
+    assert gate._slots[slot_key].pause_kind == "daily_dd"
+
+    # Même jour → toujours pausé
+    ok, _ = gate.can_slot_trade(i=11, slot_key=slot_key, day_key="2024-01-01",
+                                current_capital=960, peak_capital=1000)
+    assert ok is False
+
+    # Jour suivant → la pause est levée
+    ok, reason = gate.can_slot_trade(i=12, slot_key=slot_key, day_key="2024-01-02",
+                                     current_capital=960, peak_capital=1000)
+    assert ok is True, f"le slot devait repartir à J+1, refusé : {reason}"
+    assert gate._slots[slot_key].paused is False
+    assert gate._slots[slot_key].pause_kind == ""
+
+
+def test_pause_consec_loss_expire_apres_pause_bars_et_pas_avant():
+    """La pause « pertes consécutives » expire au bout de `pause_bars` bougies.
+
+    Contrairement à la pause DD journalier, elle ne doit PAS être levée par un
+    simple changement de jour — les deux mécanismes ont des durées distinctes.
+    """
+    gate = BacktestRiskGate(consec_loss_limit=2, pause_bars=24,
+                            slot_daily_dd_limit=1.0)
+    slot_key = "trend@1h@BTC/USDC"
+
+    gate.record_trade_result(i=0, slot_key=slot_key, pnl=-1,
+                             day_key="2024-01-01", capital_before=1000)
+    gate.record_trade_result(i=1, slot_key=slot_key, pnl=-1,
+                             day_key="2024-01-01", capital_before=999)
+    assert gate._slots[slot_key].pause_kind == "consec_loss"
+
+    # Jour suivant mais pause_bars pas encore écoulées → toujours pausé
+    ok, _ = gate.can_slot_trade(i=10, slot_key=slot_key, day_key="2024-01-02",
+                                current_capital=998, peak_capital=1000)
+    assert ok is False
+
+    # Au-delà de pause_bars → repart
+    ok, _ = gate.can_slot_trade(i=25, slot_key=slot_key, day_key="2024-01-02",
+                                current_capital=998, peak_capital=1000)
+    assert ok is True

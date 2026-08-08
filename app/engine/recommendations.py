@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 import math
 import statistics
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -434,7 +434,7 @@ def _rule_regime_analysis(result: dict, df_prices: Optional[list] = None) -> Lis
             "time": pl.from_epoch(times, time_unit="s") if times else None,
             "close": closes,
         })
-        from app.engine.regime_stress_test import stress_test_by_regime, regime_summary
+        from app.engine.regime_stress_test import regime_summary, stress_test_by_regime
         segments = stress_test_by_regime(df, regime_type='trend', min_segment_bars=50)
         if not segments:
             return []

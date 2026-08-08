@@ -433,7 +433,6 @@ def optimizer_results():
 
 @router.get("/api/optimize/spaces", dependencies=[Depends(verify_api_key)])
 def optimizer_spaces():
-    import math
     from app.engine.auto_optimizer import _is_ml_strategy
     from app.engine.optimizer_search import PARAM_SPACES, STRATEGY_TIMEFRAMES
     # P0-1 : calculer la vraie cardinalité de l'espace de params au lieu du

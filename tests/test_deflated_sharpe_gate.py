@@ -14,7 +14,6 @@ López de Prado 2014) au gate de naissance.
 """
 from app.engine.opt_scoring import beats_baseline
 
-
 # ── Rétrocompatibilité : gate DS désactivé par défaut ────────────────────────
 
 def test_beats_baseline_retrocompatible_sans_n_trials():

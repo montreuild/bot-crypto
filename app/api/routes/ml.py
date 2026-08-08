@@ -428,18 +428,25 @@ def ml_versioning_audit(request: Request):
     try:
         from app.ml.model_versioning import migration_check
         result = migration_check(models_dir="models")
+        # `migration_check` renvoie `without_hash`/`incompatible` sous forme de
+        # LISTES de chemins. `audit` les expose telles quelles (le détail est
+        # utile pour savoir quoi re-entraîner) ; `summary` n'expose que des
+        # compteurs — mélanger les deux ferait afficher un chemin de fichier là
+        # où l'UI attend un nombre.
+        without_hash = result.get("without_hash") or []
+        incompatible = result.get("incompatible") or []
+        total = int(result.get("total", 0) or 0)
+        with_hash = int(result.get("with_hash", 0) or 0)
         return {
             "status": "ok",
             "audit": result,
-            # Indicateurs synthétiques pour l'UI
+            # Indicateurs synthétiques pour l'UI (compteurs uniquement)
             "summary": {
-                "total": result.get("total", 0),
-                "with_hash": result.get("with_hash", 0),
-                "without_hash": result.get("without_hash", 0),
-                "incompatible": result.get("incompatible", 0),
-                "coverage_pct": round(
-                    100.0 * result.get("with_hash", 0) / max(result.get("total", 1), 1), 1
-                ),
+                "total": total,
+                "with_hash": with_hash,
+                "without_hash": len(without_hash),
+                "incompatible": len(incompatible),
+                "coverage_pct": round(100.0 * with_hash / total, 1) if total else 0.0,
             },
         }
     except Exception as e:
