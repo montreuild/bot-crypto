@@ -370,6 +370,23 @@ export function useCancelBacktest() {
   });
 }
 
+// QW-2 — Plage temporelle disponible en cache pour un (symbole, timeframe).
+// Alimente le mode « Plage de dates » du Laboratoire : bornes du sélecteur,
+// bouton « Max disponible », et avertissement quand le cache est vide.
+// Lecture pure du Parquet côté serveur — aucun fetch réseau déclenché, d'où
+// un `staleTime` généreux : la plage ne bouge qu'au rythme des backfills.
+export function useBacktestRange(symbol: string, timeframe: string, enabled = true) {
+  return useQuery({
+    queryKey: ['backtestRange', symbol, timeframe],
+    queryFn: () => api.backtestRange(symbol, timeframe),
+    enabled: enabled && Boolean(symbol && timeframe),
+    staleTime: 5 * 60 * 1000,
+    // Un cache absent n'est pas une panne : la route répond `available: false`.
+    // Inutile d'insister si le symbole n'existe pas côté serveur.
+    retry: false,
+  });
+}
+
 // ── Strategy performance ────────────────────────────────────────────────────
 export function useStrategyPerformance(slotKey: string | null) {
   return useQuery({
