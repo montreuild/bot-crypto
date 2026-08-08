@@ -248,6 +248,9 @@ interface BacktestConfig {
   start_date: string;
   /** QW-2 — borne haute, format `yyyy-mm-dd`, inclusive (vide = fin du cache). */
   end_date: string;
+  /** QW-3 — force un fetch réseau avant le run pour compléter le cache local.
+   * Coûteux (appel exchange) : opt-in, jamais par défaut. */
+  refresh: boolean;
   walk_forward: boolean;
   monte_carlo: boolean;
   dual_pass: boolean;
@@ -283,6 +286,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
     dateMode: 'bars',
     start_date: '',
     end_date: '',
+    refresh: false,
     walk_forward: false,
     monte_carlo: false,
     dual_pass: false,
@@ -316,6 +320,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
         dateMode: s.config.dateMode ?? c.dateMode,
         start_date: s.config.start_date ?? c.start_date,
         end_date: s.config.end_date ?? c.end_date,
+        refresh: s.config.refresh ?? c.refresh,
         strategies: s.config.strategies ?? c.strategies,
         walk_forward: s.config.walk_forward ?? c.walk_forward,
         monte_carlo: s.config.monte_carlo ?? c.monte_carlo,
@@ -383,6 +388,7 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
         ...(useRange
           ? { start_date: config.start_date, end_date: config.end_date }
           : { limit: config.limit }),
+        refresh: config.refresh,
         walk_forward: config.walk_forward,
         monte_carlo: config.monte_carlo,
         dual_pass: config.dual_pass,
@@ -398,12 +404,18 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
         dateMode: config.dateMode,
         start_date: config.start_date,
         end_date: config.end_date,
+        refresh: config.refresh,
         strategies: config.strategies,
         walk_forward: config.walk_forward,
         monte_carlo: config.monte_carlo,
         dual_pass: config.dual_pass,
         realistic_risk: config.realistic_risk,
       });
+      // QW-3 — un refresh a potentiellement étendu le cache : les bornes
+      // affichées par le mode « Plage de dates » sont périmées.
+      if (config.refresh) {
+        qc.invalidateQueries({ queryKey: ['backtestRange'] });
+      }
       toast.success('Backtest terminé');
     } catch (e: any) {
       toast.error(`Erreur : ${e.message}`);
@@ -634,6 +646,25 @@ function BacktestTab({ expertMode }: { expertMode: boolean }) {
             })()}
           </div>
           )}
+
+          {/* QW-3 — fraîcheur des données (exigence 6). Placé avec la période
+              plutôt qu'avec les options avancées : c'est une question de
+              données, pas de méthode d'analyse. */}
+          <div className="flex items-start gap-2 text-xs">
+            <Switch
+              id="bt-refresh"
+              aria-label="Rafraîchir les données avant le backtest"
+              checked={config.refresh}
+              onCheckedChange={(v) => setConfig({ ...config, refresh: v })}
+            />
+            <label htmlFor="bt-refresh" className="cursor-pointer leading-tight">
+              Rafraîchir les données
+              <span className="block text-dim text-[10px] mt-0.5">
+                Complète le cache local depuis l&apos;exchange avant de lancer. Ajoute
+                un appel réseau — à activer pour backtester jusqu&apos;à maintenant.
+              </span>
+            </label>
+          </div>
 
           {/* Stratégies */}
           <div>
@@ -972,54 +1003,66 @@ function BacktestResults({ result, scoreThreshold }: { result: any; scoreThresho
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
             <p className="text-muted-foreground">
-              Les circuit breakers (consecutive losses, slot daily DD, max
-              trades/day, volatility brake, kill-switch global) ont été
-              appliqués pendant le backtest. Les refus sont comptés dans les
-              diagnostics ci-dessous.
+              Les circuit breakers (pertes consécutives, DD journalier par slot,
+              trades/jour, DD journalier global, DD depuis le pic, volatility
+              brake) ont été appliqués pendant le backtest.
             </p>
-            {r?.realistic_risk_diagnostics && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
-                <div className="p-2 rounded-md bg-card-hover/30">
-                  <div className="text-[10px] text-dim uppercase">HALT global</div>
-                  <div className={cn('font-mono font-semibold', r.realistic_risk_diagnostics.halted ? 'text-red-400' : 'text-emerald-400')}>
-                    {r.realistic_risk_diagnostics.halted ? 'OUI' : 'Non'}
+            {/* Chaque stratégie a son propre `Backtester`, donc son propre
+                gate : les diagnostics sont PAR STRATÉGIE. Les lire à la racine
+                du résultat ne renvoyait jamais rien. */}
+            {Object.entries(byStrategy).map(([stratName, stats]: [string, any]) => {
+              const diag = stats?.realistic_risk_diagnostics;
+              if (!diag) return null;
+              const slots = (diag.slots ?? {}) as Record<string, any>;
+              const pausedSlots = Object.entries(slots).filter(([, s]: [string, any]) => s.paused);
+              return (
+                <div key={`rr-${stratName}`} className="pt-2 border-t border-border first:border-t-0 first:pt-0">
+                  <div className="text-[10px] uppercase tracking-wide text-dim font-mono mb-1">
+                    {stratName}
                   </div>
-                </div>
-                <div className="p-2 rounded-md bg-card-hover/30">
-                  <div className="text-[10px] text-dim uppercase">Slots pausés</div>
-                  <div className="font-mono font-semibold text-amber-400">
-                    {r.realistic_risk_diagnostics.n_slots_paused ?? 0}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div className="p-2 rounded-md bg-card-hover/30">
+                      <div className="text-[10px] text-dim uppercase">HALT</div>
+                      <div className={cn('font-mono font-semibold', diag.halted ? 'text-red-400' : 'text-emerald-400')}>
+                        {diag.halted ? (diag.halt_kind === 'daily_dd' ? 'JOUR' : 'DÉFINITIF') : 'Non'}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded-md bg-card-hover/30">
+                      <div className="text-[10px] text-dim uppercase">Slots pausés</div>
+                      <div className="font-mono font-semibold text-amber-400">
+                        {diag.n_slots_paused ?? 0}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded-md bg-card-hover/30">
+                      <div className="text-[10px] text-dim uppercase">Vol brake</div>
+                      <div className={cn('font-mono font-semibold', (diag.volatility_brake_bars ?? 0) > 0 ? 'text-amber-400' : 'text-emerald-400')}>
+                        {/* Le nombre de bougies freinées, pas l'état à la
+                            dernière bougie : c'est ce qui dit si le frein a
+                            pesé sur le run. */}
+                        {diag.volatility_brake_bars ?? 0} bougies
+                      </div>
+                    </div>
+                    <div className="p-2 rounded-md bg-card-hover/30">
+                      <div className="text-[10px] text-dim uppercase">Slots monitorés</div>
+                      <div className="font-mono font-semibold">{Object.keys(slots).length}</div>
+                    </div>
                   </div>
+                  {diag.halted && (
+                    <div className="p-2 rounded-md bg-red-500/10 border border-red-500/30 mt-2">
+                      <span className="text-red-400 font-semibold text-xs">⚠ HALT :</span>{' '}
+                      <span className="text-red-300 text-xs">{diag.halt_reason}</span>
+                    </div>
+                  )}
+                  {pausedSlots.map(([slotKey, s]: [string, any]) => (
+                    <div key={slotKey} className="p-2 rounded-md bg-amber-500/10 border border-amber-500/30 mt-2">
+                      <span className="text-amber-400 font-semibold text-xs">⏸ Slot pausé :</span>{' '}
+                      <span className="text-amber-300 text-xs font-mono">{slotKey}</span>{' '}
+                      <span className="text-amber-300/80 text-xs">— {s.pause_reason}</span>
+                    </div>
+                  ))}
                 </div>
-                <div className="p-2 rounded-md bg-card-hover/30">
-                  <div className="text-[10px] text-dim uppercase">Vol brake</div>
-                  <div className={cn('font-mono font-semibold', r.realistic_risk_diagnostics.volatility_brake_active ? 'text-amber-400' : 'text-emerald-400')}>
-                    {r.realistic_risk_diagnostics.volatility_brake_active ? 'ACTIF' : 'Inactif'}
-                  </div>
-                </div>
-                <div className="p-2 rounded-md bg-card-hover/30">
-                  <div className="text-[10px] text-dim uppercase">Slots monitorés</div>
-                  <div className="font-mono font-semibold">
-                    {Object.keys(r.realistic_risk_diagnostics.slots ?? {}).length}
-                  </div>
-                </div>
-              </div>
-            )}
-            {r?.realistic_risk_diagnostics?.halted && (
-              <div className="p-2 rounded-md bg-red-500/10 border border-red-500/30 mt-2">
-                <span className="text-red-400 font-semibold text-xs">⚠ HALT :</span>{' '}
-                <span className="text-red-300 text-xs">{r.realistic_risk_diagnostics.halt_reason}</span>
-              </div>
-            )}
-            {r?.realistic_risk_diagnostics?.slots && Object.entries(r.realistic_risk_diagnostics.slots as Record<string, any>)
-              .filter(([, s]: [string, any]) => s.paused)
-              .map(([slotKey, s]: [string, any]) => (
-                <div key={slotKey} className="p-2 rounded-md bg-amber-500/10 border border-amber-500/30">
-                  <span className="text-amber-400 font-semibold text-xs">⏸ Slot pausé :</span>{' '}
-                  <span className="text-amber-300 text-xs font-mono">{slotKey}</span>{' '}
-                  <span className="text-amber-300/80 text-xs">— {s.pause_reason}</span>
-                </div>
-              ))}
+              );
+            })}
           </CardContent>
         </Card>
       )}
@@ -1385,6 +1428,14 @@ function BacktestResults({ result, scoreThreshold }: { result: any; scoreThresho
                 <span className="text-dim ml-2">
                   (demandé : {r.requested_start_date || '…'} → {r.requested_end_date || '…'})
                 </span>
+              )}
+              {/* QW-3 — distinguer un run sur cache d'un run sur données
+                  fraîchement récupérées : la même config peut donner deux
+                  résultats différents selon ce que le cache contenait. */}
+              {r.refreshed && (
+                <Badge variant="success" className="text-[0.55rem] px-1 py-0 ml-2 align-middle">
+                  données rafraîchies
+                </Badge>
               )}
               {r.gaps_warning && (
                 <span className="text-amber-400 ml-2">⚠ {r.gaps_warning}</span>

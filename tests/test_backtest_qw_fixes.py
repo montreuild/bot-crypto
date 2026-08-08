@@ -13,6 +13,7 @@ l'API et dans l'UI, mais elle ne calcule rien.
   ``except`` renvoyait le DataFrame complet. L'utilisateur croyait backtester
   sa plage et backtestait tout l'historique.
 """
+import inspect
 from datetime import datetime
 
 import polars as pl
@@ -106,3 +107,35 @@ def test_alpha_vs_bh_est_recalcule_une_fois_les_prix_connus():
     assert res._close_prices, "la série de close doit être stockée sur le résultat"
     assert res.alpha_vs_bh != 0.0, "l'alpha doit être recalculé avec le benchmark"
     assert res.to_dict()["alpha_vs_bh"] == pytest.approx(res.alpha_vs_bh, abs=1e-4)
+
+
+# ── QW-6 : cohérence de la clé de slot du risk gate ──────────────────────────
+
+def test_le_gate_utilise_la_meme_cle_de_slot_a_l_entree_et_a_la_cloture():
+    """Régression : `_try_enter` et `_close_at` visaient deux slots différents.
+
+    Le signal porte le nom de la stratégie sous `name` ; c'est de là que vient
+    le `"strategy"` de la position. `_try_enter` lisait `signal["strategy"]`,
+    absent, donc toujours "" — d'où un slot fantôme « ::tf::symbole » sur
+    lequel les entrées étaient contrôlées, pendant que `_close_at` enregistrait
+    les pertes sur « breakout::tf::symbole ». Le slot contrôlé n'accumulait
+    jamais rien : pertes consécutives, DD journalier par slot et trades/jour ne
+    pouvaient pas se déclencher.
+
+    Le diagnostic d'un run réel montrait les deux clés côte à côte, l'une avec
+    0 trade (celle qui gardait la porte) et l'autre avec l'historique complet.
+    """
+    import app.engine.backtest as bt_mod
+    src = inspect.getsource(bt_mod.Backtester._try_enter)
+    assert 'signal.get("name")' in src, (
+        "_try_enter doit lire le nom sous `name`, comme la construction du trade"
+    )
+
+    # Les deux chemins doivent produire une clé identique pour un même bot.
+    from app.core.bot_identity import build_slot_key
+    signal = {"name": "breakout", "side": "long"}
+    position = {"strategy": signal.get("name", "")}
+    entree = build_slot_key(signal.get("name") or signal.get("strategy") or "", "1d", "BTC/USDC")
+    cloture = build_slot_key(position.get("strategy", ""), "1d", "BTC/USDC")
+    assert entree == cloture
+    assert not entree.startswith("::"), "un slot sans nom de stratégie est un slot fantôme"

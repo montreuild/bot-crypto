@@ -14,15 +14,15 @@
  *     equityCurve={...} initialCapital={...}
  *     buyAndHoldPnl={...} alpha={...} />
  *
- * Migration progressive : les composants existants (`equity-curve.tsx`,
- * `backtest-equity-chart.tsx`) restent disponibles pour ne pas casser les
- * imports actuels. Ils pourront être migrés vers `EquityChart` dans les
- * prochaines itérations.
+ * `equity-curve.tsx` et `backtest-equity-chart.tsx` sont désormais de simples
+ * enveloppes (~40 lignes) au-dessus de ce composant : leur API publique est
+ * conservée, donc `/portfolio` et `/lab` n'ont pas eu à changer. C'est ici, et
+ * nulle part ailleurs, que se corrige le rendu des deux courbes.
  */
 
 'use client';
 
-import { useMemo } from 'react';
+import { useId, useMemo } from 'react';
 import {
   Area, AreaChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAxis, YAxis,
   ComposedChart, ReferenceLine,
@@ -142,6 +142,14 @@ export function EquityChart({
     return end >= start ? '#10b981' : '#ef4444';
   }, [variant, liveSeries, backtestData]);
 
+  // Un id de dégradé DOIT être unique dans le document : `/lab` rend un chart
+  // par stratégie backtestée (boucle sur `byStrategy`), plus un dans la modale
+  // plein écran. Avec un id figé, tous les `url(#...)` de la page pointaient
+  // vers le PREMIER dégradé — une stratégie perdante héritait du vert d'une
+  // stratégie gagnante rendue avant elle. Le défaut préexistait à la
+  // factorisation ; il n'y a plus qu'un endroit où le corriger.
+  const gradientId = `equityGradient-${variant}-${useId().replace(/[^\w-]/g, '')}`;
+
   const displayTitle = title ?? (variant === 'live' ? 'Equity Curve' : `Equity — ${strategy ?? 'backtest'}`);
 
   // ── États vides / loading / error (variant live seulement) ────────────────
@@ -196,7 +204,7 @@ export function EquityChart({
     <ResponsiveContainer width="100%" height={h}>
       <AreaChart data={liveSeries} margin={{ top: 5, right: 5, bottom: 0, left: 0 }}>
         <defs>
-          <linearGradient id="equityGradientLive" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={color} stopOpacity={0.3} />
             <stop offset="95%" stopColor={color} stopOpacity={0} />
           </linearGradient>
@@ -214,14 +222,14 @@ export function EquityChart({
           formatter={(value: number) => [formatUSD(Number(value)), 'Equity']}
         />
         <Area type="monotone" dataKey="equity" stroke={color} strokeWidth={2}
-              fill="url(#equityGradientLive)" animationDuration={500} />
+              fill={`url(#${gradientId})`} animationDuration={500} />
       </AreaChart>
     </ResponsiveContainer>
   ) : (
     <ResponsiveContainer width="100%" height={h}>
       <ComposedChart data={backtestData} margin={{ top: 5, right: 5, bottom: 0, left: 0 }}>
         <defs>
-          <linearGradient id="equityGradientBt" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={color} stopOpacity={0.3} />
             <stop offset="95%" stopColor={color} stopOpacity={0} />
           </linearGradient>
@@ -245,7 +253,7 @@ export function EquityChart({
         <ReferenceLine y={Number(initialCapital ?? 0)} stroke="#6b7280"
                        strokeDasharray="3 3" fontSize={9} />
         <Area type="monotone" dataKey="equity" stroke={color} strokeWidth={2}
-              fill="url(#equityGradientBt)" animationDuration={500} />
+              fill={`url(#${gradientId})`} animationDuration={500} />
         <Line type="monotone" dataKey="bh" stroke="#9ca3af" strokeWidth={1}
               strokeDasharray="4 2" dot={false} animationDuration={500} />
       </ComposedChart>

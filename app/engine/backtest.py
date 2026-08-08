@@ -808,7 +808,15 @@ class Backtester:
         gate = getattr(ctx, "risk_gate", None)
         if gate is not None:
             from app.core.bot_identity import build_slot_key
-            strat_name = signal.get("strategy", "")
+            # Le signal porte le nom de la stratégie sous `name` — c'est de là
+            # que vient le `"strategy"` de la position (cf. construction du
+            # trade plus bas). Lire `signal["strategy"]` renvoyait toujours ""
+            # et fabriquait un slot fantôme « ::tf::symbole » : les entrées
+            # étaient contrôlées sur ce slot vide pendant que les pertes
+            # s'enregistraient sur le vrai. Les trois breakers par slot
+            # (pertes consécutives, DD journalier, trades/jour) ne pouvaient
+            # donc JAMAIS se déclencher.
+            strat_name = signal.get("name") or signal.get("strategy") or ""
             slot_key = build_slot_key(strat_name, ctx.timeframe, ctx.symbol)
             # day_key depuis le timestamp de la bougie
             try:
@@ -887,6 +895,13 @@ class Backtester:
         size_factor  = max(0.0, min(float(signal.get("size_factor", 1.0)), 2.0))
         base         = self._sizing_base(ctx)
         risk_amount  = base * ctx.risk * size_factor * _risk_multiplier(dd)
+        # QW-6 — volatility brake : marché agité → ×0.5, comme le live. Ne
+        # s'applique QU'EN mode realistic_risk (hors de ce mode, `risk_gate`
+        # est None et le facteur vaut 1.0), donc la parité des backtests
+        # existants est préservée.
+        _gate = getattr(ctx, "risk_gate", None)
+        if _gate is not None:
+            risk_amount *= _gate.volatility_brake_factor
         # Plafond notionnel exprimé sur la base du bot, pas sur un pourcentage
         # global d'un capital qui n'existe plus.
         max_notional = base * max(self._leverage(), 1.0)
@@ -1196,18 +1211,30 @@ class Backtester:
         # QW-6 (étape 6) — initialiser le risk gate si realistic_risk=True
         if self.realistic_risk:
             from app.engine.backtest_risk_gate import BacktestRiskGate
-            self._risk_gate = BacktestRiskGate.from_config(self.cfg)
+            # `timeframe` est requis : il convertit la durée de pause du live
+            # (en secondes) en nombre de bougies.
+            self._risk_gate = BacktestRiskGate.from_config(self.cfg, timeframe=timeframe)
             ctx.risk_gate = self._risk_gate
             logger.info(
                 f"[Backtest] Mode realistic_risk ACTIF — circuit breakers "
-                f"(consec_loss={self._risk_gate.consec_loss_limit}, "
+                f"(consec_loss={self._risk_gate.consec_loss_limit} → pause "
+                f"{self._risk_gate.pause_bars} bougies, "
                 f"slot_daily_dd={self._risk_gate.slot_daily_dd_limit:.1%}, "
                 f"max_trades/day={self._risk_gate.max_trades_per_day}, "
-                f"global_dd={self._risk_gate.global_dd_limit:.1%})"
+                f"daily_dd={self._risk_gate.daily_dd_limit:.1%}, "
+                f"global_dd={self._risk_gate.global_dd_limit:.1%}, "
+                f"vol_brake={self._risk_gate.volatility_threshold:.1%})"
             )
 
         for i in range(warmup, len(df) - 1):
             diag["bars_total"] += 1
+            # QW-6 — alimenter le volatility brake AVANT toute décision de la
+            # bougie : sans cet appel, `volatility_brake_factor` restait à 1.0
+            # pour toujours et le breaker n'existait que dans la documentation.
+            if self._risk_gate is not None:
+                _px = float(close_arr[i])
+                if _px > 0:
+                    self._risk_gate.update_volatility(float(atr_arr[i]) / _px)
             _had_position_at_start = position is not None
             # Transition close : la barre précédente avait une position, plus
             # maintenant. On ferme le compteur de durée et on met à jour le max.

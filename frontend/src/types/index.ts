@@ -448,6 +448,8 @@ export interface BacktestResult {
   // trouvées : un écart signale un cache plus court que la plage demandée.
   requested_start_date?: string;
   requested_end_date?: string;
+  /** QW-3 — un fetch réseau a été forcé avant ce run (données à jour). */
+  refreshed?: boolean;
   gaps_warning?: string;
   cost_model?: CostModel;
   /** Étude vs réel (dual_pass). */
@@ -475,10 +477,19 @@ export interface BacktestResult {
   /** True si le backtest a été lancé avec realistic_risk=True. */
   realistic_risk?: boolean;
   /** Diagnostics du risk gate (circuit breakers déclenchés, slots pausés, etc.). */
+  /**
+   * QW-6 — diagnostics des circuit breakers. Renseigné PAR STRATÉGIE (chaque
+   * stratégie a son propre `Backtester`, donc son propre gate), jamais à la
+   * racine du résultat.
+   */
   realistic_risk_diagnostics?: {
     halted: boolean;
     halt_reason: string;
+    /** "daily_dd" = levé le lendemain ; "global_dd" = arrêt définitif. */
+    halt_kind: '' | 'daily_dd' | 'global_dd';
     volatility_brake_active: boolean;
+    /** Bougies pendant lesquelles le frein a mordu — mesure son effet réel. */
+    volatility_brake_bars: number;
     n_slots_paused: number;
     slots: Record<string, {
       consecutive_losses: number;
@@ -486,6 +497,7 @@ export interface BacktestResult {
       daily_trades: number;
       paused: boolean;
       pause_reason: string;
+      pause_kind: '' | 'consec_loss' | 'daily_dd';
     }>;
   };
 }
