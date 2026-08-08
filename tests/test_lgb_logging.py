@@ -67,6 +67,21 @@ def test_importing_app_ml_installs_the_filter():
 #  de WARNING au chargement (cas réel des boosters V4 historiques).
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.slow
+@pytest.mark.skip(
+    reason=(
+        "Incompatible avec lightgbm==4.6.0 (version épinglée dans "
+        "requirements.txt). Ce test partait du principe qu'un paramètre inconnu "
+        "dans la section `parameters:` du fichier modèle était ignoré avec un "
+        "simple warning « Ignoring unrecognized parameter ». Depuis la 4.6.0 le "
+        "parseur est strict : il émet un [Fatal] « Model format error, expect a "
+        "tree here » et ABORT le processus natif — ce qui ne se manifeste pas "
+        "comme un échec de test mais tue tout le run pytest (les ~1600 tests "
+        "suivants ne s'exécutent jamais). "
+        "La couverture du filtre de logs reste assurée par les tests ci-dessus, "
+        "qui lui soumettent directement les messages LightGBM. "
+        "À ré-évaluer si le pin lightgbm change."
+    )
+)
 def test_loading_model_with_unknown_parameter_emits_no_warning(tmp_path, caplog):
     import lightgbm as lgb
     import numpy as np
