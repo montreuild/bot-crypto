@@ -442,6 +442,12 @@ export interface BacktestResult {
   /** Métadonnées pour le diagnostic d'intégrité des données. */
   date_from?: string;
   date_to?: string;
+  // ── QW-2 : bornes de plage réellement appliquées ─────────────────────────
+  // Vides si le run s'est fait en mode « dernières N bougies ». À comparer
+  // avec `date_from`/`date_to`, qui décrivent les données effectivement
+  // trouvées : un écart signale un cache plus court que la plage demandée.
+  requested_start_date?: string;
+  requested_end_date?: string;
   gaps_warning?: string;
   cost_model?: CostModel;
   /** Étude vs réel (dual_pass). */

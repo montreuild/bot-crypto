@@ -54,6 +54,11 @@ export interface BacktestSessionData {
     dual_pass?: boolean;
     /** QW-6 — mode realistic_risk (circuit breakers en backtest). */
     realistic_risk?: boolean;
+    /** QW-2 — mode de bornage de la période : N bougies ou plage de dates. */
+    dateMode?: 'bars' | 'range';
+    /** QW-2 — bornes `yyyy-mm-dd` du mode « plage de dates ». */
+    start_date?: string;
+    end_date?: string;
   };
   timestamp: number;
 }
