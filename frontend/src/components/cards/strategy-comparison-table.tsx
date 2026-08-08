@@ -2,11 +2,20 @@
  * BT-007 — Tableau comparatif multi-stratégies (best value ✦).
  *
  * Extrait du template Jinja2 `backtest.html:757-768` (`buildCmp`).
- * 10 colonnes : Trades, Win Rate, PnL net, Max DD, Sharpe, Expectancy,
- * Profit Factor, Avg Win, Avg Loss, Alpha.
+ *
+ * F1 (refactor) : la table est désormais rendue par le composant générique
+ * `<DataTable>`. Stratégies en lignes, métriques en colonnes — pattern naturel
+ * pour DataTable et cohérent avec `compare-view.tsx` qui a la même structure.
+ *
+ * 11 colonnes : Strategy, Trades, Win Rate, PnL net, Max DD, Sharpe, Sortino,
+ * Calmar, Expectancy, Profit Factor, Alpha. Les 3 nouvelles colonnes (Sortino,
+ * Calmar, alpha_vs_bh) viennent du QW-1 (métriques étendues S3-07).
+ *
+ * La meilleure valeur de chaque colonne est surlignée (✦).
  */
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import type { BacktestResult } from '@/types';
 
 interface Props {
@@ -18,7 +27,11 @@ function fmt(v: number | null | undefined, decimals = 2, prefix = '', suffix = '
   return `${prefix}${v.toFixed(decimals)}${suffix}`;
 }
 
-function isBest(value: number | null | undefined, all: Array<number | null | undefined>, higherIsBetter = true): boolean {
+function isBest(
+  value: number | null | undefined,
+  all: Array<number | null | undefined>,
+  higherIsBetter = true,
+): boolean {
   if (value == null) return false;
   const valid = all.filter((v) => v != null && Number.isFinite(v as number));
   if (valid.length === 0) return false;
@@ -29,68 +42,123 @@ function isBest(value: number | null | undefined, all: Array<number | null | und
 export function StrategyComparisonTable({ strategies }: Props) {
   if (strategies.length < 2) return null;
 
+  // Pour chaque métrique, on calcule la liste des valeurs pour détecter le best.
   const allTrades = strategies.map((s) => s.total_trades);
   const allWr = strategies.map((s) => s.win_rate);
   const allPnl = strategies.map((s) => s.total_pnl);
   const allDd = strategies.map((s) => s.max_drawdown);
   const allSharpe = strategies.map((s) => s.sharpe);
+  const allSortino = strategies.map((s) => s.sortino ?? 0);
+  const allCalmar = strategies.map((s) => s.calmar ?? 0);
   const allExp = strategies.map((s) => s.expectancy);
   const allPf = strategies.map((s) => s.profit_factor);
   const allAlpha = strategies.map((s) => s.alpha ?? 0);
-  const allBestTrade = strategies.map((s) => s.best_trade);
-  const allWorstTrade = strategies.map((s) => s.worst_trade);
 
-  const row = (label: string, values: Array<number | null | undefined>, format: (v: number) => string, higherIsBetter = true) => (
-    <tr className="border-b border-border/50">
-      <td className="py-1 px-2 font-medium">{label}</td>
-      {strategies.map((s, i) => {
-        const v = values[i];
-        const best = isBest(v, values, higherIsBetter);
-        return (
-          <td
-            key={s.strategy}
-            className={`text-right py-1 px-2 font-mono ${best ? 'bg-emerald-500/10 text-emerald-400 font-bold' : ''}`}
-          >
-            {v == null ? '—' : format(v as number)}
-            {best && <span className="ml-1">✦</span>}
-          </td>
-        );
-      })}
-    </tr>
-  );
+  // Helper pour rendre une cellule avec surlignage best.
+  const renderCell = (
+    value: number | null | undefined,
+    all: Array<number | null | undefined>,
+    format: (v: number) => string,
+    higherIsBetter = true,
+  ) => {
+    const best = isBest(value, all, higherIsBetter);
+    return (
+      <span className={`font-mono ${best ? 'text-emerald-400 font-bold' : ''}`}>
+        {value == null ? '—' : format(value as number)}
+        {best && <span className="ml-1">✦</span>}
+      </span>
+    );
+  };
+
+  const columns: DataTableColumn<BacktestResult>[] = [
+    {
+      key: 'strategy',
+      header: 'Stratégie',
+      align: 'left',
+      render: (s) => <span className="font-medium text-cyan-400">{s.strategy}</span>,
+    },
+    {
+      key: 'total_trades',
+      header: 'Trades',
+      align: 'right',
+      render: (s) => renderCell(s.total_trades, allTrades, (v) => String(v)),
+    },
+    {
+      key: 'win_rate',
+      header: 'Win Rate',
+      align: 'right',
+      render: (s) => renderCell(s.win_rate, allWr, (v) => `${(v * 100).toFixed(1)}%`),
+    },
+    {
+      key: 'total_pnl',
+      header: 'PnL net',
+      align: 'right',
+      sortValue: (s) => s.total_pnl,
+      render: (s) =>
+        renderCell(s.total_pnl, allPnl, (v) => fmt(v, 2, v >= 0 ? '+' : '', '$')),
+    },
+    {
+      key: 'max_drawdown',
+      header: 'Max DD',
+      align: 'right',
+      render: (s) => renderCell(s.max_drawdown, allDd, (v) => `-${(v * 100).toFixed(1)}%`, false),
+    },
+    {
+      key: 'sharpe',
+      header: 'Sharpe',
+      align: 'right',
+      render: (s) => renderCell(s.sharpe, allSharpe, (v) => v.toFixed(2)),
+    },
+    {
+      key: 'sortino',
+      header: 'Sortino',
+      align: 'right',
+      render: (s) => renderCell(s.sortino ?? 0, allSortino, (v) => v.toFixed(2)),
+    },
+    {
+      key: 'calmar',
+      header: 'Calmar',
+      align: 'right',
+      render: (s) => renderCell(s.calmar ?? 0, allCalmar, (v) => v.toFixed(2)),
+    },
+    {
+      key: 'expectancy',
+      header: 'Expectancy',
+      align: 'right',
+      render: (s) =>
+        renderCell(s.expectancy, allExp, (v) => fmt(v, 2, v >= 0 ? '+' : '', '$')),
+    },
+    {
+      key: 'profit_factor',
+      header: 'Profit Factor',
+      align: 'right',
+      render: (s) => renderCell(s.profit_factor, allPf, (v) => v.toFixed(2)),
+    },
+    {
+      key: 'alpha',
+      header: 'Alpha',
+      align: 'right',
+      render: (s) => renderCell(s.alpha ?? 0, allAlpha, (v) => fmt(v, 1, v >= 0 ? '+' : '', '%')),
+    },
+  ];
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm">📊 Comparatif — {strategies.length} stratégies</CardTitle>
+        <CardTitle className="text-sm">
+          📊 Comparatif — {strategies.length} stratégies
+        </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-border text-muted-foreground">
-                <th className="text-left py-1 px-2">Métrique</th>
-                {strategies.map((s) => (
-                  <th key={s.strategy} className="text-right py-1 px-2 font-mono">
-                    {s.strategy}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {row('Trades', allTrades, (v) => String(v))}
-              {row('Win Rate', allWr, (v) => `${(v * 100).toFixed(1)}%`)}
-              {row('PnL net', allPnl, (v) => fmt(v, 2, v >= 0 ? '+' : '', '$'))}
-              {row('Max DD', allDd, (v) => `-${(v * 100).toFixed(1)}%`, false)}
-              {row('Sharpe', allSharpe, (v) => v.toFixed(2))}
-              {row('Expectancy', allExp, (v) => fmt(v, 2, v >= 0 ? '+' : '', '$'))}
-              {row('Profit Factor', allPf, (v) => v.toFixed(2))}
-              {row('Best Trade', allBestTrade, (v) => fmt(v, 2, '+', '$'))}
-              {row('Worst Trade', allWorstTrade, (v) => fmt(v, 2, '', '$'), false)}
-              {row('Alpha', allAlpha, (v) => fmt(v, 1, v >= 0 ? '+' : '', '%'))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={columns}
+          rows={strategies}
+          sortable
+          initialSortKey="total_pnl"
+          initialSortAsc={false}
+          rowKey={(s) => `strat-${s.strategy}`}
+          emptyLabel="Aucune stratégie à comparer"
+        />
       </CardContent>
     </Card>
   );

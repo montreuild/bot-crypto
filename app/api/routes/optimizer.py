@@ -337,6 +337,13 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
         result.get("best_oos_trades", 0), result.get("best_oos_pnl", 0),
         result.get("best_oos_wr", 0), result.get("best_oos_sharpe", 0),
         job.get("baseline", {}),
+        # P0 — Deflated Sharpe gate (cf. auto_optimizer.py)
+        n_trials=int(job.get("n_trials", 1)) or 1,
+        min_deflated_sharpe=(
+            float(state.cfg.get("optimizer", {}).get("deflated_sharpe_min", 0.5))
+            if state.cfg.get("optimizer", {}).get("deflated_sharpe_gate", True)
+            else None
+        ),
     )
     if not ok_quality and not force:
         raise HTTPException(
@@ -426,13 +433,33 @@ def optimizer_results():
 
 @router.get("/api/optimize/spaces", dependencies=[Depends(verify_api_key)])
 def optimizer_spaces():
+    import math
     from app.engine.auto_optimizer import _is_ml_strategy
     from app.engine.optimizer_search import PARAM_SPACES, STRATEGY_TIMEFRAMES
+    # P0-1 : calculer la vraie cardinalité de l'espace de params au lieu du
+    # placeholder hardcodé "n_combos": 1. Pour chaque paramètre, on compte le
+    # nombre de valeurs distinctes dans l'espace (ex: {ema_fast: [10,15,20,25]}
+    # → 4 valeurs). Le produit donne le nombre total de combinaisons.
+    # Pour les espaces continus (bornes min/max/step), on calcule aussi.
+    def _count_combos(space: dict) -> int:
+        n = 1
+        for k, v in space.items():
+            if isinstance(v, (list, tuple)):
+                n *= len(v)
+            elif isinstance(v, dict) and 'values' in v:
+                n *= len(v['values'])
+            elif isinstance(v, dict) and all(k2 in v for k2 in ('min', 'max', 'step')):
+                step = float(v.get('step', 1))
+                if step > 0:
+                    n *= max(1, int((float(v['max']) - float(v['min'])) / step) + 1)
+            # sinon : paramètre non dénombrable (ex: bool, const) → n *= 1
+        return max(1, n)
     return {
         strat: {
             "params":     {k: v for k, v in space.items()},
             "timeframes": STRATEGY_TIMEFRAMES.get(strat, []),
-            "n_combos":   1,
+            # P0-1 : cardinalité réelle de l'espace (avant : hardcodé 1)
+            "n_combos":   _count_combos(space),
             "is_ml":      _is_ml_strategy(strat),
         }
         for strat, space in PARAM_SPACES.items()

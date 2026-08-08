@@ -21,6 +21,8 @@ import { Badge } from '@/components/ui/badge';
 import { cn, timeAgo, formatDateTime } from '@/lib/utils';
 import { useMLStrategyInfo, useCandlesStats } from '@/hooks/use-api';
 import { MLRecipesList } from '@/components/cards/ml-recipes-list';
+import { RecentMlJobs } from '@/components/cards/recent-ml-jobs';
+import { MLVersioningAudit } from '@/components/cards/ml-versioning-audit';
 import { OptimizerView } from '@/components/views/optimizer-view';
 import {
   Loader2, BrainCircuit, Database, CheckCircle2, XCircle,
@@ -184,52 +186,68 @@ export function MLView() {
         </Badge>
       </div>
 
-      {/* ML strategy info */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Stratégies ML</CardTitle>
-          <Cpu className="w-4 h-4 text-purple-400" />
-        </CardHeader>
-        <CardContent className="p-0">
-          {mlLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-8 h-8 text-primary-400 animate-spin" />
-            </div>
-          ) : mlError ? (
-            <div className="text-center py-8 text-red-400 text-sm">
-              <AlertCircle className="w-8 h-8 mx-auto mb-2" />
-              Erreur lors du chargement des stratégies ML
-            </div>
-          ) : (
-            <StrategyTable strategies={strategies} />
-          )}
-        </CardContent>
-      </Card>
+      {/* P2-1 — Layout 2 colonnes sur desktop (lg+), empilé sur mobile.
+          Gauche : Stratégies ML vivantes + Cache bougies.
+          Droite : Recettes ML + Audit versioning.
+          Bas (pleine largeur) : Jobs récents + Optimiseur ML. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Colonne gauche : runtime */}
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Stratégies ML</CardTitle>
+              <Cpu className="w-4 h-4 text-purple-400" />
+            </CardHeader>
+            <CardContent className="p-0">
+              {mlLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 text-primary-400 animate-spin" />
+                </div>
+              ) : mlError ? (
+                <div className="text-center py-8 text-red-400 text-sm">
+                  <AlertCircle className="w-8 h-8 mx-auto mb-2" />
+                  Erreur lors du chargement des stratégies ML
+                </div>
+              ) : (
+                <StrategyTable strategies={strategies} />
+              )}
+            </CardContent>
+          </Card>
 
-      {/* Candles cache */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Cache bougies (datasets)</CardTitle>
-          <Database className="w-4 h-4 text-primary-400" />
-        </CardHeader>
-        <CardContent className="p-0">
-          {candlesLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-8 h-8 text-primary-400 animate-spin" />
-            </div>
-          ) : candlesError ? (
-            <div className="text-center py-8 text-red-400 text-sm">
-              <AlertCircle className="w-8 h-8 mx-auto mb-2" />
-              Erreur lors du chargement du cache
-            </div>
-          ) : (
-            <CandlesStatsTable store={candlesData?.store} />
-          )}
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Cache bougies (datasets)</CardTitle>
+              <Database className="w-4 h-4 text-primary-400" />
+            </CardHeader>
+            <CardContent className="p-0">
+              {candlesLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 text-primary-400 animate-spin" />
+                </div>
+              ) : candlesError ? (
+                <div className="text-center py-8 text-red-400 text-sm">
+                  <AlertCircle className="w-8 h-8 mx-auto mb-2" />
+                  Erreur lors du chargement du cache
+                </div>
+              ) : (
+                <CandlesStatsTable store={candlesData?.store} />
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
-      {/* S9-F3-US1 — Recettes ML disponibles */}
-      <MLRecipesList />
+        {/* Colonne droite : recettes + audit */}
+        <div className="space-y-6">
+          {/* S9-F3-US1 — Recettes ML disponibles */}
+          <MLRecipesList />
+
+          {/* P0-5 — Audit versioning des modèles (migration_check) */}
+          <MLVersioningAudit />
+        </div>
+      </div>
+
+      {/* P1-2 — Jobs ML récents (pleine largeur) */}
+      <RecentMlJobs limit={20} />
 
       {/* ML-001 — Optimiseur ML intégré nativement. `filterMl` restreint
           les chips aux stratégies ML déclarées dans `/optimize/spaces`,

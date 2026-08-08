@@ -2,9 +2,15 @@
  * OPT-002 — Top-5 trials table + best params block.
  *
  * Extrait du template Jinja2 `optimizer.html:673-698`.
+ *
+ * F1 (refactor) : la table est désormais rendue par le composant générique
+ * `<DataTable>` (frontend/src/components/ui/data-table.tsx). On déclare
+ * uniquement les colonnes et leur render — plus de logique de tri/pagination
+ * dupliquée. La carte « Best params » reste inchangée (pas une table).
  */
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import type { OptimizeTrial } from '@/types';
 
 interface Props {
@@ -21,6 +27,84 @@ export function TopTrialsTable({ trials, bestParams }: Props) {
   if ((!trials || trials.length === 0) && (!bestParams || Object.keys(bestParams).length === 0)) {
     return null;
   }
+
+  // Colonnes pour <DataTable> — triable sur les métriques numériques.
+  // On prend les 5 meilleurs trials (le backend les trie déjà par final score).
+  const top5 = (trials ?? []).slice(0, 5);
+
+  const columns: DataTableColumn<OptimizeTrial & { _rank: number }>[] = [
+    {
+      key: 'rank',
+      header: '#',
+      align: 'left',
+      noSort: true,
+      render: (t) => (
+        <span className="font-mono">
+          {t._rank === 0 ? '🏆' : ''} {t._rank + 1}
+        </span>
+      ),
+    },
+    {
+      key: 'is_score',
+      header: 'IS Score',
+      align: 'right',
+      render: (t) => <span className="font-mono">{fmt(t.is_score)}</span>,
+    },
+    {
+      key: 'oos_score',
+      header: 'OOS Score',
+      align: 'right',
+      render: (t) => <span className="font-mono">{fmt(t.oos_score)}</span>,
+    },
+    {
+      key: 'final',
+      header: 'Final',
+      align: 'right',
+      sortValue: (t) => t.final ?? t.final_score ?? 0,
+      render: (t) => {
+        const final = t.final ?? t.final_score;
+        return <span className="font-mono font-bold">{fmt(final)}</span>;
+      },
+    },
+    {
+      key: 'oos_pnl',
+      header: 'OOS PnL',
+      align: 'right',
+      render: (t) => (
+        <span className={`font-mono ${t.oos_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+          {t.oos_pnl >= 0 ? '+' : ''}${t.oos_pnl.toFixed(2)}
+        </span>
+      ),
+    },
+    {
+      key: 'oos_wr',
+      header: 'OOS WR',
+      align: 'right',
+      render: (t) => <span className="font-mono">{(t.oos_wr * 100).toFixed(1)}%</span>,
+    },
+    {
+      key: 'oos_dd',
+      header: 'OOS DD',
+      align: 'right',
+      render: (t) => (
+        <span className="font-mono text-rose-400">-{(t.oos_dd * 100).toFixed(1)}%</span>
+      ),
+    },
+    {
+      key: 'overfit',
+      header: 'Overfit',
+      align: 'right',
+      render: (t) => (
+        <span className={`font-mono ${t.overfit > 2 ? 'text-amber-400' : 'text-emerald-400'}`}>
+          {fmt(t.overfit)}
+          {t.overfit > 2 ? ' ⚠' : ' ✓'}
+        </span>
+      ),
+    },
+  ];
+
+  // On enrichit chaque trial avec son rang pour le rendu de la colonne #.
+  const rows = top5.map((t, i) => ({ ...t, _rank: i }));
 
   return (
     <div className="space-y-3">
@@ -45,65 +129,19 @@ export function TopTrialsTable({ trials, bestParams }: Props) {
         </Card>
       )}
 
-      {trials && trials.length > 0 && (
+      {top5.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-sm">🏆 Top-5 trials</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border text-muted-foreground">
-                    <th className="text-left py-1 px-2">#</th>
-                    <th className="text-right py-1 px-2">IS Score</th>
-                    <th className="text-right py-1 px-2">OOS Score</th>
-                    <th className="text-right py-1 px-2">Final</th>
-                    <th className="text-right py-1 px-2">OOS PnL</th>
-                    <th className="text-right py-1 px-2">OOS WR</th>
-                    <th className="text-right py-1 px-2">OOS DD</th>
-                    <th className="text-right py-1 px-2">Overfit</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trials.slice(0, 5).map((t, i) => {
-                    const final = t.final ?? t.final_score;
-                    return (
-                      <tr
-                        key={i}
-                        className={`border-b border-border/50 ${i === 0 ? 'bg-emerald-500/5' : ''}`}
-                      >
-                        <td className="py-1 px-2 font-mono">
-                          {i === 0 ? '🏆' : ''} {i + 1}
-                        </td>
-                        <td className="text-right py-1 px-2 font-mono">{fmt(t.is_score)}</td>
-                        <td className="text-right py-1 px-2 font-mono">{fmt(t.oos_score)}</td>
-                        <td className="text-right py-1 px-2 font-mono font-bold">{fmt(final)}</td>
-                        <td
-                          className={`text-right py-1 px-2 font-mono ${
-                            t.oos_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                          }`}
-                        >
-                          {t.oos_pnl >= 0 ? '+' : ''}${t.oos_pnl.toFixed(2)}
-                        </td>
-                        <td className="text-right py-1 px-2 font-mono">{(t.oos_wr * 100).toFixed(1)}%</td>
-                        <td className="text-right py-1 px-2 font-mono text-rose-400">
-                          -{(t.oos_dd * 100).toFixed(1)}%
-                        </td>
-                        <td
-                          className={`text-right py-1 px-2 font-mono ${
-                            t.overfit > 2 ? 'text-amber-400' : 'text-emerald-400'
-                          }`}
-                        >
-                          {fmt(t.overfit)}
-                          {t.overfit > 2 ? ' ⚠' : ' ✓'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              columns={columns}
+              rows={rows}
+              sortable
+              rowKey={(t) => `trial-${t._rank}`}
+              emptyLabel="Aucun trial"
+            />
           </CardContent>
         </Card>
       )}

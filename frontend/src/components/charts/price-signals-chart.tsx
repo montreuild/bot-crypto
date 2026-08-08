@@ -28,6 +28,11 @@ import {
 import { Button } from '@/components/ui/button';
 import { Maximize2, X } from 'lucide-react';
 import { exitReasonBadge, setupAbbr } from '@/lib/exit-reason-badges';
+// F2 — type CandleRow factorisé dans lib/ohlcv.ts. La fonction cleanOhlcv
+// locale reste pour l'instant car elle gère un cas plus large (timeArr mix
+// string ISO + epoch secondes, volume optionnel) que la version factorisée.
+// Une harmonisation est prévue mais non cassante (cf. audit F2).
+import type { CandleRow as SharedCandleRow } from '@/lib/ohlcv';
 import type { BacktestTrade, BacktestResult } from '@/types';
 
 // ── Couleurs (BT-001 § Bloc 1 & 5) ──────────────────────────────────────────
@@ -58,12 +63,9 @@ function toSec(t: string | number | null | undefined): number | null {
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
 }
 
-interface CandleRow {
-  time: UTCTimestamp;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
+// F2 : CandleRow étend le type partagé avec un champ `volume?` optionnel
+// (la version factorisée dans lib/ohlcv.ts ne l'a pas — harmonisation future).
+interface CandleRow extends SharedCandleRow {
   volume?: number;
 }
 

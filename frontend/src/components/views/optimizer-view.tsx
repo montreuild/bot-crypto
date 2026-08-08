@@ -30,12 +30,15 @@ import {
 import {
   Play, Loader2, CheckCircle2, XCircle, Trash2, StopCircle,
   Sparkles, Cpu, Layers, Activity, Zap, ChevronDown, ChevronRight, Info,
+  AlertTriangle, History,
 } from 'lucide-react';
 import type { OptimizeJob, OptimizeSpaces } from '@/types';
 import { CostModelCard } from '@/components/cards/cost-model-card';
 import { BeforeAfterGrid } from '@/components/cards/before-after-grid';
 import { TopTrialsTable } from '@/components/tables/top-trials-table';
 import { OptimizerWarnings } from '@/components/cards/optimizer-warnings';
+import { OptimizerHistory } from '@/components/cards/optimizer-history';
+import { TrialsChart } from '@/components/charts/trials-chart';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { isOosHint } from '@/lib/limit-hint';
@@ -46,12 +49,16 @@ import { normalizeBaseline, deriveAfter, normalizeTopTrials } from '@/lib/backen
 const METHODS = ['grid', 'random', 'bayesian'] as const;
 const ALL_SYMBOLS = ['BTC/USDC', 'ETH/USDC', 'SOL/USDC', 'BNB/USDC', 'XRP/USDC'];
 
+// P0-4 : ajout de 'queued' et 'skipped' (manquants — tombaient sur 'default'
+// et le label brut). Le backend auto_optimizer.py peut produire ces statuts.
 const STATUS_VARIANT: Record<string, 'success' | 'danger' | 'warning' | 'info' | 'default'> = {
   pending: 'warning',
   running: 'info',
   done: 'success',
   error: 'danger',
   cancelled: 'default',
+  queued: 'warning',
+  skipped: 'default',
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -60,6 +67,8 @@ const STATUS_LABEL: Record<string, string> = {
   done: 'Terminé',
   error: 'Erreur',
   cancelled: 'Annulé',
+  queued: 'En file',
+  skipped: 'Ignoré',
 };
 
 function LiveProgress({ job }: { job: OptimizeJob }) {
@@ -323,8 +332,38 @@ function JobCard({
                   <Metric label="Trades" value={String(result.best_oos_trades ?? 0)} />
                   <Metric label="Win rate" value={`${((result.best_oos_wr ?? 0) * 100).toFixed(1)}%`} />
                   <Metric label="Sharpe" value={(result.best_oos_sharpe ?? 0).toFixed(2)} />
+                  {/* P0-2 : Deflated Sharpe (probabilité que le Sharpe soit réel,
+                      corrigée du biais de sélection multiple). */}
+                  <Metric
+                    label="Deflated Sharpe"
+                    value={job.deflated_sharpe != null
+                      ? `${(job.deflated_sharpe * 100).toFixed(1)}%`
+                      : '—'}
+                  />
+                  {/* P0-3 : Walk-Forward consistency (% de folds OOS positifs
+                      avec les best_params figés). */}
+                  <Metric
+                    label="WF Consistency"
+                    value={job.wf_consistency != null
+                      ? `${job.wf_consistency.toFixed(0)}%`
+                      : '—'}
+                  />
                   <Metric label="Apply" value={job.applied ? 'Oui' : 'Non'} />
                 </div>
+                {/* P0-2 : warning si Deflated Sharpe < 50% (edge probablement nul) */}
+                {job.deflated_sharpe != null && job.deflated_sharpe < 0.5 && (
+                  <div className="flex items-center gap-1.5 text-[10px] text-amber-400">
+                    <AlertTriangle className="w-3 h-3" />
+                    Deflated Sharpe &lt; 50% — edge probablement nul (biais de sélection)
+                  </div>
+                )}
+                {/* P0-3 : warning si WF consistency < 60% (params non robustes) */}
+                {job.wf_consistency != null && job.wf_consistency < 60 && (
+                  <div className="flex items-center gap-1.5 text-[10px] text-amber-400">
+                    <AlertTriangle className="w-3 h-3" />
+                    WF Consistency &lt; 60% — best_params non robustes sur fenêtres glissantes
+                  </div>
+                )}
               </div>
             )}
 
@@ -352,6 +391,12 @@ function JobCard({
                 trials={trials}
                 bestParams={result.best_params ?? null}
               />
+            )}
+
+            {/* P1-3 — Courbe d'apprentissage (final_score + overfit au fil des trials).
+                Affichée seulement si ≥ 3 trials (sinon pas lisible). */}
+            {isDone && trials.length >= 3 && (
+              <TrialsChart trials={trials} />
             )}
 
             {/* Contexte facturé pendant l'optimisation : un `oos_score` n'est pas
@@ -899,8 +944,13 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
             </div>
           </div>
 
-          {/* OPT-004 — options avancées : early_stopping, limit_per_tf, ml_tune_hp. */}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 pt-2 border-t border-border">
+          {/* P1-9 — Options avancées collapsible (early_stopping, limit_per_tf,
+              ml_tune_hp). Replié par défaut pour désencombrer la config. */}
+          <details className="pt-2 border-t border-border">
+            <summary className="text-[10px] uppercase tracking-wider text-dim font-semibold cursor-pointer hover:text-foreground py-2">
+              Options avancées
+            </summary>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 pt-2">
             <div>
               <label
                 className="text-xs text-dim block mb-1.5"
@@ -970,7 +1020,8 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
                 </label>
               )}
             </div>
-          </div>
+            </div>
+          </details>
 
           {/* Preview matrice strat × TF × symbole (parité Jinja2) */}
           {selectedStrategies.length > 0 && selectedTfs.length > 0 && selectedSymbols.length > 0 && (
@@ -1202,6 +1253,10 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
             })}
           </div>
         )}
+
+        {/* P0-5 — Historique des optimisations (changelog des apply).
+            Replié par défaut — l'utilisateur le déplie pour voir l'historique. */}
+        <OptimizerHistory />
       </div>
     </div>
   );

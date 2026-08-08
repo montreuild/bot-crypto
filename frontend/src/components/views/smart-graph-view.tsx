@@ -34,6 +34,8 @@ import {
   buildZonesFromSmc,
   type SmcZone,
 } from '@/lib/smc-zones';
+// F2 — cleanOhlcv factorisé dans lib/ohlcv.ts (avant : copie locale)
+import { cleanOhlcv, type CandleRow } from '@/lib/ohlcv';
 
 interface OverlayToggles {
   orderBlocks: boolean;
@@ -52,38 +54,13 @@ interface OverlayToggles {
   cycle: boolean;
 }
 
-interface CandleRow {
-  time: UTCTimestamp;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-}
+// CandleRow et cleanOhlcv sont importés depuis @/lib/ohlcv (F2).
 
 /** Prix UI : « — » si absent / non fini (évite les $0.00 trompeurs). */
 function formatPrice(v: unknown, decimals = 2): string {
   const n = typeof v === 'number' ? v : Number(v);
   if (!Number.isFinite(n) || n === 0) return '—';
   return formatUSD(n, { decimals });
-}
-
-function cleanOhlcv(
-  time: number[], open: number[], high: number[], low: number[], close: number[],
-): CandleRow[] {
-  const seen = new Set<number>();
-  const out: CandleRow[] = [];
-  for (let i = 0; i < time.length; i++) {
-    const t = time[i];
-    if (!Number.isFinite(t)) continue;
-    if (seen.has(t)) continue;
-    if (out.length > 0 && t < (out[out.length - 1].time as number)) continue;
-    seen.add(t);
-    out.push({
-      time: t as UTCTimestamp,
-      open: open[i], high: high[i], low: low[i], close: close[i],
-    });
-  }
-  return out;
 }
 
 /** Normalise premium/discount (API : range_high/range_low/zone). */

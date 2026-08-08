@@ -6,6 +6,7 @@ Module sans état ni dépendance lourde : importable par les workers spawn.
 import logging
 import math
 from statistics import NormalDist
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +152,9 @@ _overfitting_ratio = overfitting_ratio
 
 def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
                    oos_sharpe: float, baseline: dict,
-                   min_trades: int = MIN_SIGNIFICANT_TRADES) -> tuple:
+                   min_trades: int = MIN_SIGNIFICANT_TRADES,
+                   n_trials: int = 1,
+                   min_deflated_sharpe: Optional[float] = None) -> tuple:
     """Garde-fou UNIQUE d'application d'un paramétrage optimisé (BT-04/BT-06).
 
     Retourne ``(ok, raison)``. Partagé par l'auto-apply (AutoOptimizer) et
@@ -162,7 +165,14 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
        (défaut ``MIN_SIGNIFICANT_TRADES`` — cf. app/core/stats_thresholds.py) ;
     2. PnL OOS strictement positif ;
     3. PnL OOS strictement meilleur que le baseline (params actuels) ;
-    4. amélioration d'au moins un critère de qualité (win-rate OU Sharpe).
+    4. amélioration d'au moins un critère de qualité (win-rate OU Sharpe) ;
+    5. **Deflated Sharpe** (P0 — câblage du module ``app/core/deflated_sharpe.py``)
+       si ``n_trials > 1`` et ``min_deflated_sharpe`` fourni > 0 : corrige le
+       biais de multiple testing (López de Prado 2014). Un Sharpe OOS élevé
+       obtenu après 50 essais est beaucoup moins significatif que le même
+       Sharpe obtenu au premier essai — le Deflated Sharpe pénalise cela.
+       Désactivable via ``min_deflated_sharpe=None`` ou ``n_trials=1`` (par
+       défaut, préserve la rétrocompatibilité).
     """
     baseline = baseline or {}
     b_pnl    = baseline.get("pnl", float("-inf"))
@@ -178,6 +188,31 @@ def beats_baseline(oos_trades: int, oos_pnl: float, oos_wr: float,
     if not (oos_wr > b_wr or oos_sharpe > b_sharpe):
         return False, (f"aucune amélioration de qualité (WR {oos_wr:.1f}% vs "
                        f"{b_wr:.1f}%, Sharpe {oos_sharpe:.2f} vs {b_sharpe:.2f})")
+
+    # ── 5. Deflated Sharpe gate (P0 — câblage TODO auto_optimizer.py:521) ──
+    # Ne s'active QUE si n_trials > 1 (sinon pas de biais de sélection à
+    # corriger) ET min_deflated_sharpe est fourni (> 0). En cas d'erreur de
+    # calcul (Sharpe NaN, etc.), on n'échoue pas silencieusement : on logge
+    # et on accepte (préserve la rétrocompatibilité — un gate trop strict
+    # silencieux serait pire qu'un gate absent).
+    if n_trials and n_trials > 1 and min_deflated_sharpe is not None and min_deflated_sharpe > 0:
+        try:
+            from app.core.deflated_sharpe import is_deflated_sharpe_significant
+            ds_ok, ds_val, ds_reason = is_deflated_sharpe_significant(
+                sharpe_observed=float(oos_sharpe),
+                n_trials=int(n_trials),
+                min_deflated_sharpe=float(min_deflated_sharpe),
+            )
+            if not ds_ok:
+                return False, (f"Deflated Sharpe gate refusé : {ds_reason} "
+                               f"(DS={ds_val:.2f}, seuil={min_deflated_sharpe:.2f}, "
+                               f"n_trials={n_trials})")
+        except Exception as _ds_err:
+            logger.warning(
+                f"[beats_baseline] Deflated Sharpe KO ({_ds_err}) — gate ignoré "
+                f"(n_trials={n_trials}, sharpe={oos_sharpe})"
+            )
+
     return True, "ok"
 
 

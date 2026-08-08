@@ -19,6 +19,9 @@ import {
   Rocket, BarChart3, RefreshCw, ThumbsUp, ThumbsDown, Microscope,
 } from 'lucide-react';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { RecentMlJobs } from '@/components/cards/recent-ml-jobs';
+import { MLVersioningAudit } from '@/components/cards/ml-versioning-audit';
+import { OverfittingGateBadge } from '@/components/cards/overfitting-gate-badge';
 import type {
   ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
   ModelFeatureImportance, ModelRegimeAuc, ModelTrainMeta,
@@ -108,7 +111,11 @@ function VersionRow({ entry, version }: { entry: ModelRegistryEntry; version: Mo
         <td className="p-2 font-mono">{version.version_id}</td>
         <td className="p-2 text-muted font-mono">{formatDateTime(version.train_end)}</td>
         <td className="p-2 text-right font-mono">{version.n_bars ?? '—'}</td>
-        <td className="p-2"><AucBadge auc={version.auc} trainEnd={version.train_end} /></td>
+        <td className="p-2 space-x-1.5">
+          <AucBadge auc={version.auc} trainEnd={version.train_end} />
+          {/* P0-4 : badge overfitting_gate (block/warn/good/strong) */}
+          <OverfittingGateBadge overfittingGate={(version as any).overfitting_gate} size="sm" showAuc={false} />
+        </td>
         <td className="p-2"><DecisionBadge decision={version.gate_decision} /></td>
         <td className="p-2">
           <div className="flex flex-wrap gap-1.5">
@@ -868,6 +875,12 @@ export default function ModelsPage() {
 
       <TrainForm />
       <SweepForm />
+
+      {/* P0-5 — Audit versioning des modèles (migration_check) */}
+      <MLVersioningAudit />
+
+      {/* P1-2 — Jobs ML récents (route /api/ml/jobs) */}
+      <RecentMlJobs limit={20} />
     </div>
   );
 }

@@ -10,6 +10,8 @@ export * from './button';
 export * from './card';
 export * from './accordion';
 export * from './confirm-dialog';
+// F1 — DataTable générique (factorisation des tables spécialisées)
+export * from './data-table';
 export * from './dialog';
 export * from './export-buttons';
 export * from './input';

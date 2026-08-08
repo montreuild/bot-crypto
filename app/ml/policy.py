@@ -286,6 +286,54 @@ def maybe_refresh(strategy: Any, train_symbol: str, tf: str, df, *,
         )
         gate = decide_gate(candidate_metrics, incumbent_metrics,
                            auc_floor=gc_.auc_floor, epsilon=gc_.epsilon, metric=gc_.metric)
+
+        # ── P0-2 : branchement de l'overfitting gate (S3-10 écrit, non câblé) ──
+        # `overfitting_gate.validate_model_quality` enrichit les diagnostics du
+        # gate avec un `level` structuré (block/warn/good/strong) et un `reason`
+        # humainement lisible. Il NE CHANGE PAS la décision finale (qui reste
+        # basée sur `decide_gate` — déjà implémente le plancher AUC + epsilon vs
+        # sortant), mais il :
+        #   1. logge un warning explicite si AUC < 0.55 (edge faible) ou < 0.50
+        #      (pire que aléatoire) — `decide_gate` logge seulement via le
+        #      reason du GateResult, moins visible ;
+        #   2. enrichit `decision_metrics` dans le registre pour audit futur ;
+        #   3. permet à un système de notification (Telegram, audit log) de
+        #      réagir au `level` sans re-parser le reason.
+        # En cas d'erreur du module (données inattendues), on n'échoue pas —
+        # on logge et on continue (le gate principal `decide_gate` reste actif).
+        overfitting_diagnostics: Optional[Dict[str, Any]] = None
+        try:
+            from app.ml.overfitting_gate import validate_model_quality
+            cand_auc = (candidate_metrics or {}).get(gc_.metric)
+            if cand_auc is not None:
+                # n_trials d'optimisation : non connu ici (le gate de promotion
+                # ML est indépendant de l'optimiseur de paramètres), on passe 1
+                # (pas de correction Deflated Sharpe au niveau ML — le DSR est
+                # déjà appliqué au gate de l'optimiseur, cf. opt_scoring.py).
+                overfitting_diagnostics = validate_model_quality(
+                    auc_oos=float(cand_auc),
+                    strategy_name=getattr(strategy, "name", recipe) or recipe,
+                    n_oos_samples=int(gc_.holdout_bars),
+                    n_trials_optimization=1,
+                )
+                # Si le gate overfitting dit "block" mais que decide_gate a dit
+                # "promote" (cas rare : AUC ≥ auc_floor mais < AUC_WEAK par
+                # convention différente), on logge un warning critique — sans
+                # surcharger decide_gate (l'opérateur peut ajuster auc_floor).
+                if overfitting_diagnostics.get("level") == "block" and gate.decision in ("promote", "initial"):
+                    logger.warning(
+                        f"[MLPolicy] {tf}/{recipe} : decide_gate={gate.decision} "
+                        f"mais overfitting_gate=block "
+                        f"({overfitting_diagnostics.get('reason')}) — "
+                        f"vérifier la cohérence de gate_auc_floor ({gc_.auc_floor}) "
+                        f"vs AUC_WEAK (0.55) dans app/ml/overfitting_gate.py"
+                    )
+        except Exception as _og_err:
+            logger.warning(
+                f"[MLPolicy] {tf}/{recipe} : overfitting_gate.validate_model_quality "
+                f"KO ({_og_err}) — diagnostics non enrichis, gate principal intact"
+            )
+
         # Capturé ICI, avant le reset_model() de la branche "keep" plus bas :
         # ce sont les diagnostics du CANDIDAT, et c'est justement quand il est
         # rejeté qu'on veut voir pourquoi. Après restauration du sortant, ils
@@ -306,6 +354,8 @@ def maybe_refresh(strategy: Any, train_symbol: str, tf: str, df, *,
                 "candidate": candidate_metrics, "incumbent": incumbent_metrics,
                 "reason": gate.reason,
                 "incumbent_version": incumbent.version_id if incumbent else None,
+                # P0-2 : diagnostics enrichis par overfitting_gate
+                "overfitting_gate": overfitting_diagnostics,
             },
             base_dir=base_dir,
         )
@@ -331,6 +381,9 @@ def maybe_refresh(strategy: Any, train_symbol: str, tf: str, df, *,
         "incumbent_version": incumbent.version_id if incumbent else None,
         "recipe": recipe, "train_symbol": train_symbol, "tf": tf,
         "train_meta": candidate_train_meta,
+        # P0-2 : exposer les diagnostics de l'overfitting gate au caller
+        # (trainer, backtest simulated_live) pour audit/notification.
+        "overfitting_gate": overfitting_diagnostics,
     }
 
 

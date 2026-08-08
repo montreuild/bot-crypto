@@ -518,13 +518,24 @@ class AutoOptimizer:
             # ≥ MIN_SIGNIFICANT_TRADES (10, cf. app/core/stats_thresholds.py,
             # remplace l'ancien seuil 3 du TODO), PnL OOS positif ET meilleur
             # que le baseline, plus une amélioration de qualité (WR ou Sharpe).
-            # TODO(Phase 0) restant : seuil de **Deflated Sharpe** (Bailey &
-            # López de Prado) au gate de naissance (biais multiple-testing).
+            # P0 (câblage TODO ci-dessous) : seuil de **Deflated Sharpe**
+            # (Bailey & López de Prado 2014) au gate de naissance — corrige le
+            # biais de multiple testing quand n_trials > 1. Désactivable via
+            # `optimizer.deflated_sharpe_gate: false` dans config.yaml.
             from app.engine.opt_scoring import beats_baseline as _bb
+
+            # Lecture de la config du gate Deflated Sharpe (P0)
+            _opt_cfg = (self.cfg.get("optimizer") or {})
+            _ds_gate_enabled = bool(_opt_cfg.get("deflated_sharpe_gate", True))
+            _ds_min = float(_opt_cfg.get("deflated_sharpe_min", 0.5))
+            _ds_n_trials = int(self.n_trials) if _ds_gate_enabled else 1
+            _ds_min_arg = _ds_min if _ds_gate_enabled else None
 
             def _beats_baseline() -> bool:
                 ok, reason = _bb(oos_trades, best_oos_pnl, best_oos_wr,
-                                 best_oos_sharpe, _baseline)
+                                 best_oos_sharpe, _baseline,
+                                 n_trials=_ds_n_trials,
+                                 min_deflated_sharpe=_ds_min_arg)
                 if not ok:
                     logger.info(f"[AutoOpt] {job_id} : gate d'apply refusé — {reason}")
                 return ok
