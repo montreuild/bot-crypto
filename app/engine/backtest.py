@@ -328,22 +328,30 @@ class BacktestResult:
         prix, qui n'est connue qu'après le run — sans ce second appel il
         resterait silencieusement à 0 (`alpha_vs_buy_hold` renvoie 0 quand le
         benchmark est vide). L'opération est idempotente et peu coûteuse.
+
+        La durée du backtest se déduit du nombre de BOUGIES, jamais du nombre
+        de points d'équité : `equity_curve` ne reçoit un point qu'à chaque trade
+        clôturé (cf. `_close_at`). Compter 9 points comme 9 périodes donnait
+        « 0,025 an » pour un run de 5,5 ans, et un CAGR de 3 809 %/an.
         """
         try:
             from app.core.performance_metrics import compute_extended_metrics
             closed = [t for t in self.trades if t.get("status", "").startswith("closed")]
             prices = getattr(self, "_close_prices", None) or []
-            years = None
-            if self._timeframe:
-                # years = bars / bars_per_year (ex: 2000 bars / (365*24) pour 1h crypto)
-                years = len(self.equity_curve) / max(_bars_per_year(self._timeframe), 1)
+            bars_per_year = _bars_per_year(self._timeframe) or 252
+            # `_bars_elapsed` est posé par `_add_buy_and_hold` en même temps que
+            # `_close_prices`. Au premier appel (depuis `__init__`) il est absent :
+            # CAGR/Calmar/alpha restent à 0 jusqu'au second passage, plutôt que
+            # d'être calculés sur une durée inventée.
+            n_bars = getattr(self, "_bars_elapsed", 0) or len(prices)
+            years = (n_bars / bars_per_year) if n_bars and bars_per_year else None
             ext = compute_extended_metrics(
                 trades=closed,
                 equity_curve=self.equity_curve,
                 initial_capital=self.initial_capital,
                 prices=prices,
                 years=years,
-                periods_per_year=_bars_per_year(self._timeframe) or 252,
+                periods_per_year=bars_per_year,
             )
             self.sortino = ext["sortino"]
             self.calmar = ext["calmar"]
@@ -1419,9 +1427,14 @@ class Backtester:
             # resterait à 0 pour tous les backtests.
             try:
                 result._close_prices = [float(x) for x in df["close"][warmup:].to_list()]
+                # Durée réelle du backtest, en bougies effectivement parcourues.
+                # C'est la seule mesure de temps fiable ici : l'équity curve, elle,
+                # est échantillonnée par trade.
+                result._bars_elapsed = max(0, len(df) - warmup)
                 result._compute_extended_metrics()
             except Exception:
                 result._close_prices = []
+                result._bars_elapsed = 0
         except Exception as e:
             logger.debug(f"[BnH] Calcul benchmark KO : {e}")
         return result

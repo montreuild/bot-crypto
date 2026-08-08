@@ -174,6 +174,23 @@ def buy_hold_returns(prices: list) -> list:
     return returns
 
 
+def annualized_excess_vs_buy_hold(prices: list, cagr_strategy: float,
+                                  years: Optional[float]) -> float:
+    """Excès de rendement annualisé de la stratégie sur le Buy & Hold, en %.
+
+    Repli du CAPM alpha quand la série de la stratégie et celle du benchmark
+    ne sont PAS sur le même axe temporel (cf. ``compute_extended_metrics``).
+    Un bêta calculé entre deux axes différents n'a aucun sens ; la différence
+    de rendements annualisés, elle, reste bien définie — elle répond à
+    « la stratégie a-t-elle battu l'achat-conservation, et de combien par an ? »
+    sans prétendre corriger du risque de marché.
+    """
+    if not prices or len(prices) < 2 or not years or years <= 0:
+        return 0.0
+    bh_cagr = compute_cagr(prices[0], prices[-1], years)
+    return round(cagr_strategy - bh_cagr, 4)
+
+
 def compute_extended_metrics(
         trades: list,
         equity_curve: list,
@@ -182,20 +199,33 @@ def compute_extended_metrics(
         years: Optional[float] = None,
         periods_per_year: int = 252,
         risk_free_rate: float = 0.0,
+        equity_periods_per_year: Optional[float] = None,
 ) -> dict:
     """Calcule l'ensemble des métriques étendues.
+
+    ⚠ Les deux séries n'ont pas forcément la même fréquence
+    ------------------------------------------------------
+    ``prices`` est échantillonné **par bougie**, alors que ``equity_curve``,
+    telle que produite par le ``Backtester``, ne reçoit un point **qu'à chaque
+    trade clôturé**. Confondre les deux fréquences est la source d'erreurs
+    d'échelle spectaculaires : un backtest de 2 000 bougies journalières
+    comptant 8 trades donnait un CAGR de 3 809 %/an au lieu de 1,66 %, parce
+    que la durée était déduite du nombre de points d'équité (9 / 365 ≈ 0,025 an)
+    au lieu de la durée réelle (2 000 / 365 ≈ 5,5 ans).
+
+    D'où trois paramètres distincts, à ne pas mélanger :
+
+    - ``years`` : durée RÉELLE couverte par le backtest. À fournir par
+      l'appelant, qui seul connaît le nombre de bougies. Sans elle, CAGR et
+      Calmar valent 0 — mieux vaut un zéro visible qu'un nombre absurde.
+    - ``periods_per_year`` : fréquence des ``prices`` (bougies par an).
+    - ``equity_periods_per_year`` : fréquence de ``equity_curve`` (trades par
+      an). Déduite de ``len(returns) / years`` si non fournie.
 
     Returns
     -------
     dict
-        {
-            'sortino': float,
-            'calmar': float,
-            'cagr': float,
-            'alpha_vs_bh': float,
-            'beta_vs_bh': float,
-            'sortino_annualized': float,
-        }
+        {'sortino', 'calmar', 'cagr', 'alpha_vs_bh', 'max_drawdown_pct'}
     """
     # Rendements de l'équity curve
     if len(equity_curve) >= 2:
@@ -207,13 +237,20 @@ def compute_extended_metrics(
     else:
         strat_returns = []
 
-    # Sortino
-    sortino = sortino_ratio(strat_returns, risk_free_rate, periods_per_year)
+    # Fréquence d'échantillonnage de l'équité. Annualiser une série de
+    # rendements PAR TRADE avec un facteur « bougies par an » gonfle le Sortino
+    # d'un facteur sqrt(bougies/trades) — ici environ ×15.
+    if equity_periods_per_year is None:
+        if years and years > 0 and strat_returns:
+            equity_periods_per_year = len(strat_returns) / years
+        else:
+            equity_periods_per_year = periods_per_year
 
-    # CAGR + Calmar
+    sortino = sortino_ratio(strat_returns, risk_free_rate, equity_periods_per_year)
+
+    # CAGR + Calmar. Pas de repli sur `len(equity_curve) / periods_per_year` :
+    # c'était précisément le calcul faux.
     final_capital = equity_curve[-1] if equity_curve else initial_capital
-    if years is None and len(equity_curve) > 1:
-        years = len(equity_curve) / periods_per_year
     cagr = compute_cagr(initial_capital, final_capital, years) if years else 0.0
 
     # Max DD depuis l'équity curve
@@ -226,9 +263,16 @@ def compute_extended_metrics(
             max_dd = max(max_dd, dd)
     calmar = calmar_ratio(cagr, -max_dd)
 
-    # Alpha vs Buy & Hold
+    # Alpha vs Buy & Hold. Le CAPM exige deux séries alignées période par
+    # période ; ce n'est le cas que si l'équité est échantillonnée comme les
+    # prix. Sinon, `zip` apparierait le trade n°3 avec la 3ᵉ bougie — un bêta
+    # calculé sur ce couplage ne mesure rien.
     bh_returns = buy_hold_returns(prices) if prices else []
-    alpha = alpha_vs_buy_hold(strat_returns, bh_returns, risk_free_rate, periods_per_year)
+    if bh_returns and len(bh_returns) == len(strat_returns):
+        alpha = alpha_vs_buy_hold(strat_returns, bh_returns,
+                                  risk_free_rate, periods_per_year)
+    else:
+        alpha = annualized_excess_vs_buy_hold(prices or [], cagr, years)
 
     return {
         'sortino': sortino,
