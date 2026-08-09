@@ -22,6 +22,30 @@ from statistics import mean, stdev
 from typing import Optional
 
 
+def returns_per_year(n_returns: int, years: Optional[float],
+                     max_per_year: float = 252.0) -> float:
+    """Cadence annuelle d'une série de rendements, plafonnée.
+
+    Annualiser une série exige de savoir à quelle cadence elle est
+    échantillonnée. C'est l'évidence que le dépôt a manquée à trois endroits :
+    la courbe d'équité du backtest — comme celle du live — ne reçoit un point
+    qu'à chaque trade clôturé, mais elle était annualisée avec « bougies par
+    an ». Un bot qui prend 8 trades en 5,5 ans se voyait attribuer la cadence
+    de 365 observations annuelles : Sharpe et Sortino gonflés d'un facteur
+    sqrt(bougies / trades), soit environ ×15 dans ce cas.
+
+    ``max_per_year`` est à la fois le repli quand la durée est inconnue ET un
+    plafond. Passer la cadence des bougies exprime un fait, pas une politique :
+    une série dérivée des trades ne peut pas avoir plus d'observations
+    indépendantes que la série de bougies qui les engendre. Sans ce plafond,
+    trois trades en deux heures donneraient 13 140 observations par an et un
+    Sharpe qui explose sur un échantillon minuscule.
+    """
+    if years and years > 0 and n_returns > 0:
+        return min(n_returns / years, max_per_year)
+    return max_per_year
+
+
 def sortino_ratio(returns: list, risk_free_rate: float = 0.0,
                   periods_per_year: int = 252) -> float:
     """Sortino ratio (rendement - sans risque) / volatilité downside.
@@ -241,10 +265,8 @@ def compute_extended_metrics(
     # rendements PAR TRADE avec un facteur « bougies par an » gonfle le Sortino
     # d'un facteur sqrt(bougies/trades) — ici environ ×15.
     if equity_periods_per_year is None:
-        if years and years > 0 and strat_returns:
-            equity_periods_per_year = len(strat_returns) / years
-        else:
-            equity_periods_per_year = periods_per_year
+        equity_periods_per_year = returns_per_year(
+            len(strat_returns), years, periods_per_year)
 
     sortino = sortino_ratio(strat_returns, risk_free_rate, equity_periods_per_year)
 

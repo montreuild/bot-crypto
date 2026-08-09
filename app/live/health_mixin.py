@@ -24,6 +24,28 @@ from app.live.utils import _safe_float, _sanitize
 
 logger = logging.getLogger(__name__)
 
+_SECONDS_PER_YEAR = 365.0 * 24 * 3600
+
+
+def _years_spanned(times: list) -> float | None:
+    """Durée couverte par une liste d'horodatages de trades, en années.
+
+    Renvoie None si elle n'est pas mesurable (moins de deux trades, dates
+    illisibles, ou tous les trades au même instant). L'appelant retombe alors
+    sur une cadence conventionnelle plutôt que de diviser par zéro.
+
+    Les dates viennent de SQLAlchemy et peuvent mélanger naïf et tz-aware selon
+    l'ancienneté de la ligne ; on compare donc des timestamps POSIX.
+    """
+    if not times or len(times) < 2:
+        return None
+    try:
+        stamps = sorted(t.timestamp() for t in times)
+    except Exception:
+        return None
+    span = stamps[-1] - stamps[0]
+    return (span / _SECONDS_PER_YEAR) if span > 0 else None
+
 
 class HealthMixin:
     """Santé, résilience et reporting (voir docstring module)."""
@@ -273,13 +295,19 @@ class HealthMixin:
                     if sname not in by_strategy:
                         by_strategy[sname] = {
                             "trades": 0, "wins": 0,
-                            "pnl": 0.0, "fees": 0.0, "pnls": [], "timeframes": [],
+                            "pnl": 0.0, "fees": 0.0, "pnls": [],
+                            "timeframes": [], "times": [],
                         }
                     by_strategy[sname]["trades"] += 1
                     by_strategy[sname]["pnl"]    += p
                     by_strategy[sname]["fees"]   += fee
                     by_strategy[sname]["pnls"].append(p)
                     by_strategy[sname]["timeframes"].append(t.timeframe or "1h")
+                    # Horodatage du trade : sans lui, impossible de connaître la
+                    # durée réellement couverte, donc impossible d'annualiser
+                    # honnêtement (cf. `returns_per_year`).
+                    if getattr(t, "time", None) is not None:
+                        by_strategy[sname]["times"].append(t.time)
                     if p > 0:
                         by_strategy[sname]["wins"] += 1
         except Exception as e:
@@ -293,8 +321,9 @@ class HealthMixin:
         initial_capital = float(getattr(self.risk, "initial_capital", 0.0) or 0.0)
         for sname, d in by_strategy.items():
             n    = d["trades"]
-            pnls = d.pop("pnls", [])
-            tfs  = d.pop("timeframes", [])
+            pnls  = d.pop("pnls", [])
+            tfs   = d.pop("timeframes", [])
+            times = d.pop("times", [])
             gw   = sum(p for p in pnls if p > 0)
             gl   = abs(sum(p for p in pnls if p < 0))
             d["win_rate"]      = round(d["wins"] / n * 100, 1) if n > 0 else 0.0
@@ -305,9 +334,14 @@ class HealthMixin:
             # S4-01 : Sharpe aligné sur BacktestResult._compute_metrics()
             # (engine/backtest.py) — courbe d'équité synthétique PAR TRADE
             # (pas les PnL bruts en $), retours relatifs au capital avant
-            # chaque trade, annualisation par bars_per_year() du TF dominant
-            # de la stratégie (pas un sqrt(252) fixe indépendant du TF réel).
-            # Les deux Sharpe (live/backtest) redeviennent comparables.
+            # chaque trade. Les deux Sharpe (live/backtest) doivent rester
+            # comparables : c'est pourquoi la correction d'annualisation qui
+            # touche le backtest DOIT toucher celui-ci en même temps.
+            #
+            # L'annualisation se fait à la cadence réelle des trades — leur
+            # nombre rapporté à la durée écoulée entre le premier et le dernier
+            # — et non par `bars_per_year` du TF dominant, qui supposait que la
+            # stratégie produisait un point d'équité à chaque bougie.
             if len(pnls) >= 3 and initial_capital > 0:
                 eq = [initial_capital]
                 cap = initial_capital
@@ -319,8 +353,11 @@ class HealthMixin:
                 rets   = _np.diff(eq_arr) / denom
                 std    = float(rets.std())
                 if std > 0:
+                    from app.core.performance_metrics import returns_per_year
                     dominant_tf = Counter(tfs).most_common(1)[0][0] if tfs else "1h"
-                    ann = float(_np.sqrt(_bars_per_year(dominant_tf)))
+                    ann = float(_np.sqrt(returns_per_year(
+                        len(rets), _years_spanned(times),
+                        _bars_per_year(dominant_tf))))
                     raw = float(rets.mean() / std * ann)
                     d["sharpe"] = round(_safe_float(raw, 0.0), 3)
                 else:

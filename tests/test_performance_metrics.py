@@ -143,3 +143,30 @@ def test_un_benchmark_plat_laisse_l_alpha_egal_au_cagr():
         years=ANNEES_REELLES, periods_per_year=BARS_PER_YEAR_1D,
     )
     assert m["alpha_vs_bh"] == pytest.approx(m["cagr"], abs=1e-3)
+
+
+# ── Cadence d'une série de rendements ────────────────────────────────────────
+
+def test_returns_per_year_mesure_la_cadence_reelle():
+    """8 trades en 5,48 ans → ~1,5 observation par an, pas 365."""
+    from app.core.performance_metrics import returns_per_year
+    assert returns_per_year(8, ANNEES_REELLES, BARS_PER_YEAR_1D) == pytest.approx(1.46, abs=0.01)
+
+
+def test_returns_per_year_est_plafonne_par_la_cadence_des_bougies():
+    """Une série issue des trades ne peut pas battre celle des bougies.
+
+    Trois trades en deux heures donneraient 13 140 observations par an — un
+    Sharpe qui explose sur un échantillon minuscule. Le plafond exprime un
+    fait : il n'y a pas plus de clôtures possibles que de bougies.
+    """
+    from app.core.performance_metrics import returns_per_year
+    deux_heures = 2 / (365 * 24)
+    assert returns_per_year(3, deux_heures, max_per_year=8760.0) == 8760.0
+
+
+def test_returns_per_year_retombe_sur_le_plafond_sans_duree():
+    from app.core.performance_metrics import returns_per_year
+    assert returns_per_year(10, None, 365.0) == 365.0
+    assert returns_per_year(10, 0, 365.0) == 365.0
+    assert returns_per_year(0, 5.0, 365.0) == 365.0

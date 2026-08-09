@@ -163,16 +163,35 @@ def run_dual_pass(engine: Engine, cfg: dict, df, envelope, *,
 class BacktestResult:
     def __init__(self, trades: List[dict], equity_curve: List[float],
                  initial_capital: float, timestamps: List[str] = None,
-                 timeframe: str = "1d", rejections: dict = None):
+                 timeframe: str = "1d", rejections: dict = None,
+                 n_bars: int = 0):
         self.trades          = trades
         self.equity_curve    = equity_curve
         self.initial_capital = initial_capital
         self.timestamps      = timestamps or []
         self._timeframe      = timeframe
+        # Nombre de bougies effectivement parcourues. C'est la SEULE mesure de
+        # temps fiable d'un backtest : `equity_curve` ne reçoit un point qu'à
+        # chaque trade clôturé, elle ne dit donc rien de la durée écoulée.
+        # Sans cette valeur, toute annualisation (Sharpe, Sortino, CAGR) est
+        # calculée sur une durée inventée.
+        self._n_bars         = int(n_bars or 0)
         # S12 : motifs de refus, mêmes codes que le live — sans eux, impossible
         # de dire POURQUOI un backtest et son équivalent live divergent.
         self.rejections      = rejections or {}
         self._compute_metrics()
+
+    def _years(self) -> Optional[float]:
+        """Durée du backtest en années, ou None si elle n'est pas connue.
+
+        None plutôt qu'une valeur par défaut : un ratio annualisé sur une durée
+        supposée est un chiffre faux d'apparence crédible, ce qui est pire
+        qu'une absence de chiffre.
+        """
+        bpy = _bars_per_year(self._timeframe)
+        if not self._n_bars or not bpy:
+            return None
+        return self._n_bars / bpy
 
     def _compute_metrics(self):
         closed = [t for t in self.trades if t.get("status", "").startswith("closed")]
@@ -194,8 +213,14 @@ class BacktestResult:
             self.max_drawdown = _sf(float(drawdowns.min()), 0.0)
             returns           = np.diff(eq) / np.where(eq[:-1] > 0, eq[:-1], 1.0)
             std               = float(returns.std())
-            # Annualization factor based on timeframe (crypto: 365×24h)
-            ann_factor        = np.sqrt(_bars_per_year(self._timeframe))
+            # Annualisation à la cadence RÉELLE de la série. `equity_curve` a un
+            # point par trade clôturé, pas un par bougie : l'annualiser avec
+            # `bars_per_year` supposait 365 observations/an là où le bot en
+            # produit 1,5, et gonflait le Sharpe de sqrt(bougies/trades) — ×15
+            # sur un run de 8 trades en 5,5 ans (Sharpe affiché 9,5).
+            from app.core.performance_metrics import returns_per_year
+            ann_factor        = np.sqrt(returns_per_year(
+                len(returns), self._years(), _bars_per_year(self._timeframe)))
             raw_sharpe        = float(returns.mean() / std * ann_factor) if std > 0 else 0.0
             self.sharpe       = _sf(raw_sharpe, 0.0)
         else:
@@ -284,7 +309,12 @@ class BacktestResult:
                 rets_s = np.diff(eq_arr) / denom
             else:
                 rets_s = np.array([0.0])
-            ann_s  = np.sqrt(_bars_per_year(self._timeframe))
+            # Même correction que le Sharpe global : `eq_s` est construite trade
+            # par trade juste au-dessus, sa cadence est celle des trades DE CETTE
+            # stratégie — qui peut différer de celle du portefeuille entier.
+            from app.core.performance_metrics import returns_per_year as _rpy
+            ann_s  = np.sqrt(_rpy(len(rets_s), self._years(),
+                                  _bars_per_year(self._timeframe)))
             std_s  = float(rets_s.std())
             if std_s > 0:
                 d["sharpe"] = round(_sf(float(rets_s.mean() / std_s * ann_s), 0.0), 3)
@@ -339,12 +369,9 @@ class BacktestResult:
             closed = [t for t in self.trades if t.get("status", "").startswith("closed")]
             prices = getattr(self, "_close_prices", None) or []
             bars_per_year = _bars_per_year(self._timeframe) or 252
-            # `_bars_elapsed` est posé par `_add_buy_and_hold` en même temps que
-            # `_close_prices`. Au premier appel (depuis `__init__`) il est absent :
-            # CAGR/Calmar/alpha restent à 0 jusqu'au second passage, plutôt que
-            # d'être calculés sur une durée inventée.
-            n_bars = getattr(self, "_bars_elapsed", 0) or len(prices)
-            years = (n_bars / bars_per_year) if n_bars and bars_per_year else None
+            # `_n_bars` est fourni au constructeur : la durée est connue dès le
+            # premier appel, plus besoin d'attendre `_add_buy_and_hold`.
+            years = self._years()
             ext = compute_extended_metrics(
                 trades=closed,
                 equity_curve=self.equity_curve,
@@ -1380,7 +1407,11 @@ class Backtester:
         _tf = timeframe or self.cfg["trading"].get("timeframe", "1h")
         result = BacktestResult(trades, equity_curve, self.initial_capital(self.cfg),
                                 timestamps, timeframe=_tf,
-                                rejections=self.rejections.as_dict())
+                                rejections=self.rejections.as_dict(),
+                                # Durée réelle du run : les bougies parcourues,
+                                # hors warmup. Indispensable à toute
+                                # annualisation (cf. BacktestResult._years).
+                                n_bars=max(0, len(df) - warmup))
         result.diagnostics = diag
         result.ml_info = ml_info
         # S11 : le résultat porte le contexte qui l'a produit — sans quoi un
@@ -1427,14 +1458,9 @@ class Backtester:
             # resterait à 0 pour tous les backtests.
             try:
                 result._close_prices = [float(x) for x in df["close"][warmup:].to_list()]
-                # Durée réelle du backtest, en bougies effectivement parcourues.
-                # C'est la seule mesure de temps fiable ici : l'équity curve, elle,
-                # est échantillonnée par trade.
-                result._bars_elapsed = max(0, len(df) - warmup)
                 result._compute_extended_metrics()
             except Exception:
                 result._close_prices = []
-                result._bars_elapsed = 0
         except Exception as e:
             logger.debug(f"[BnH] Calcul benchmark KO : {e}")
         return result
