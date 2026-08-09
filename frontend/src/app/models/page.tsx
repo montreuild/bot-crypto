@@ -755,6 +755,8 @@ function SweepForm() {
   const [tf, setTf] = useState('1h');
   const [windowsStr, setWindowsStr] = useState('10000,20000,40000');
   const [publishBest, setPublishBest] = useState(false);
+  // P1-6 : as_of optionnel (rejouer un sweep à une date passée)
+  const [asOf, setAsOf] = useState('');
 
   useEffect(() => {
     if (job?.status === 'done') qc.invalidateQueries({ queryKey: ['mlRegistry'] });
@@ -763,13 +765,15 @@ function SweepForm() {
   const handleSubmit = async () => {
     const windows = windowsStr.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => n > 0);
     if (!strategy.trim() || !symbol.trim() || !tf.trim() || windows.length === 0) {
-      toast.error('Stratégie/symbole/TF/fenêtres requis');
+      toast.error('Recette/symbole/TF/fenêtres requis');
       return;
     }
     try {
       const res = await startSweep.mutateAsync({
         strategy: strategy.trim(), symbol: symbol.trim(), tf: tf.trim(),
         windows, publish_best: publishBest,
+        // P1-6 : transmet as_of si fourni
+        as_of: asOf.trim() || null,
       });
       setJobId(res.job_id);
     } catch (e: any) {
@@ -809,6 +813,22 @@ function SweepForm() {
               className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
             />
           </div>
+        </div>
+        {/* P1-6 : champ as_of optionnel pour rejouer un sweep à une date passée */}
+        <div>
+          <label className="text-xs text-dim block mb-1.5">
+            As-of (optionnel)
+            <span className="normal-case text-[10px] text-dim font-normal ml-1">
+              Date ISO — vide = maintenant. Permet de comparer les fenêtres à une date passée.
+            </span>
+          </label>
+          <input
+            aria-label="As-of"
+            type="date"
+            value={asOf}
+            onChange={(e) => setAsOf(e.target.value)}
+            className="w-full max-w-xs px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
+          />
         </div>
         <div className="flex items-center justify-between flex-wrap gap-3">
           <label className="flex items-center gap-2 text-sm cursor-pointer">

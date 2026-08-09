@@ -678,6 +678,10 @@ export interface OptimizeJob {
   };
   applied?: boolean;
   error?: string;
+  /** P2-8 : true si le TF utilisé n'est pas dans les TFs recommandés par la stratégie. */
+  is_recommended?: boolean;
+  /** P2-8 : TFs recommandés par la stratégie (stockés sur le job par auto_optimizer). */
+  recommended_tfs?: string[];
 }
 
 /** OPT-002 — un trial dans le top-5. */
