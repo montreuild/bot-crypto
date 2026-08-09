@@ -565,6 +565,28 @@ export const api = {
       method: 'DELETE',
     }),
 
+  // P1-3 — Audit trail global des décisions ML (toutes recettes)
+  getMLDecisionsRecent: (limit = 100) =>
+    apiFetch<{ decisions: any[]; total: number }>(`/ml/registry/decisions/recent?limit=${limit}`),
+
+  // P1-4 — Garde anti-chevauchement (fuite temporelle frozen)
+  getMLOverlaps: (tf: string, recipe: string, windowStart: string, windowEnd: string) =>
+    apiFetch<{
+      overlaps: boolean; reason: string; active_version: string | null;
+      train_end: string | null; window_start: string; window_end: string;
+    }>(`/ml/registry/overlaps?${new URLSearchParams({ tf, recipe, window_start: windowStart, window_end: windowEnd })}`),
+
+  // Opt P1-4 — Valider best_params (Monte-Carlo ou Regime)
+  optimizeValidate: (jobId: string, method: 'monte_carlo' | 'regime' = 'monte_carlo') =>
+    apiFetch<any>(`/optimize/validate?${new URLSearchParams({ job_id: jobId, method })}`, { method: 'POST' }),
+
+  // Opt P1-11 — Purger les jobs anciens
+  optimizePurge: (maxAgeHours = 24, keepLast = 200) =>
+    apiFetch<{ status: string; purged: number; remaining: number }>(
+      `/optimize/purge?${new URLSearchParams({ max_age_hours: String(maxAgeHours), keep_last: String(keepLast) })}`,
+      { method: 'POST' },
+    ),
+
   // ── Derivatives ─────────────────────────────────────────────────────────
   getDerivativesData: (symbol = 'BTC/USDC', period = '1h', limit = 1000, refresh = false) =>
     apiFetch<any>(`/derivatives/data?symbol=${encodeURIComponent(symbol)}&period=${period}&limit=${limit}&refresh=${refresh}`, { schema: DerivativesDataSchema }),
