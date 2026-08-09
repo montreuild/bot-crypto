@@ -71,20 +71,34 @@ def test_filtre_dates_invalide_leve_une_400_plutot_que_de_tout_renvoyer():
 
 # ── QW-1 : alpha vs Buy & Hold ───────────────────────────────────────────────
 
-def _resultat_gagnant():
+def _resultat_gagnant(n_bars: int = 60):
     trades = [
         {"status": "closed", "pnl": 20.0, "fees": 0.1},
         {"status": "closed", "pnl": 15.0, "fees": 0.1},
         {"status": "closed", "pnl": -5.0, "fees": 0.1},
     ]
     equity = [1000.0 + 3 * i for i in range(60)]
-    return BacktestResult(trades, equity, 1000.0, timeframe="1d")
+    # `n_bars` = durée réelle du run. Sans elle, aucune annualisation n'est
+    # possible et les métriques restent volontairement à 0.
+    return BacktestResult(trades, equity, 1000.0, timeframe="1d", n_bars=n_bars)
 
 
 def test_alpha_vs_bh_est_nul_tant_que_les_prix_sont_inconnus():
     """Contrat : sans série de prix, pas de benchmark donc pas d'alpha."""
     res = _resultat_gagnant()
     assert res.alpha_vs_bh == 0.0
+
+
+def test_sans_n_bars_aucune_metrique_annualisee_n_est_inventee():
+    """La durée est fournie par l'appelant ; à défaut, on ne devine pas.
+
+    Un CAGR calculé sur une durée supposée est un chiffre faux d'apparence
+    crédible — c'est exactement ce qui produisait 3 809 %/an.
+    """
+    res = _resultat_gagnant(n_bars=0)
+    assert res._years() is None
+    assert res.cagr == 0.0
+    assert res.calmar == 0.0
 
 
 def test_alpha_vs_bh_est_recalcule_une_fois_les_prix_connus():
@@ -139,3 +153,26 @@ def test_le_gate_utilise_la_meme_cle_de_slot_a_l_entree_et_a_la_cloture():
     cloture = build_slot_key(position.get("strategy", ""), "1d", "BTC/USDC")
     assert entree == cloture
     assert not entree.startswith("::"), "un slot sans nom de stratégie est un slot fantôme"
+
+
+def test_sharpe_annualise_a_la_cadence_des_trades_et_non_des_bougies():
+    """Le Sharpe historique souffrait du même défaut d'échelle que le CAGR.
+
+    `BacktestResult._compute_metrics` annualisait des rendements PAR TRADE avec
+    sqrt(bougies par an) : sur un run de 8 trades en 5,5 ans, cela supposait
+    365 observations annuelles là où le bot en produit 1,5, et affichait un
+    Sharpe de 9,5 — du même ordre d'invraisemblance que le Calmar de 3 961.
+    """
+    trades = [{"status": "closed", "pnl": p, "fees": 0.1}
+              for p in (10, -5, 35, -10, 30, -10, 30, 14.6)]
+    equity = [1000.0, 1010, 1005, 1040, 1030, 1060, 1050, 1080, 1094.6]
+
+    # 2 000 bougies journalières ≈ 5,48 ans → ~1,5 trade/an.
+    res = BacktestResult(trades, equity, 1000.0, timeframe="1d", n_bars=2000)
+    # Même série, mais annualisée comme avant (365 obs/an) : le rapport des
+    # deux Sharpe vaut sqrt(365 / 1,46) ≈ 15.
+    gonfle = BacktestResult(trades, equity, 1000.0, timeframe="1d", n_bars=8)
+
+    assert abs(res.sharpe) < abs(gonfle.sharpe)
+    assert abs(gonfle.sharpe / res.sharpe) == pytest.approx(15.0, abs=1.0)
+    assert abs(res.sharpe) < 3.0, f"Sharpe encore implausible : {res.sharpe}"
