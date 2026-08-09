@@ -309,6 +309,47 @@ retiré en S11.
 Onglets du Laboratoire : `backtest`, `optimizer`, `ml`, `replay`, `batch`
 (*Multi-TF*), `compare`.
 
+#### Nouvelles fonctionnalités Laboratoire
+
+**Onglet Backtest** :
+- **Plage temporelle** : mode « Bougies » (N dernières) ou « Plage de dates »
+  (start_date/end_date ISO). Bouton « Max disponible » pré-remplit depuis le
+  cache.
+- **Refresh** : force un fetch réseau pour backtester sur les dernières
+  bougies disponibles.
+- **Mode realistic_risk** (options avancées) : rejoue les circuit breakers du
+  live (pertes consécutives, DD journalier, kill-switch, volatility brake).
+- **Simulateur de coûts** : compare 3 presets (Spot/Lever 1, Margin/Lever 3,
+  Margin/Lever 10) en relançant des backtests parallèles.
+- **Recommandations** : 15 règles analysent le résultat (échantillon, PnL,
+  outliers, frais, Sharpe, DD, alpha, régimes) et proposent des actions.
+- **Métriques étendues** : Sortino, Calmar, CAGR, alpha vs Buy & Hold.
+
+**Onglet Optimizer** :
+- **Presets** : Rapide (20 trials), Équilibré (60 trials), Approfondi (150
+  trials + ML HP). Modifier un champ passe en mode Custom.
+- **Symbols dynamiques** : lus depuis `config.yaml` (plus hardcodés).
+- **Deflated Sharpe + WF Consistency** : affichés dans la JobCard avec
+  warnings si < 50% / < 60%.
+- **Courbe d'apprentissage** : `TrialsChart` montre l'évolution du score et de
+  l'overfit au fil des essais.
+- **Historique des optimisations** : `OptimizerHistory` affiche les apply
+  passés (params avant→après, score, timestamp).
+- **Force apply** : si le gate refuse, un dialog propose de forcer
+  l'application en connaissance de cause.
+
+**Onglet ML** :
+- **Pool multi-symboles (ML-16)** : entraîne sur N symboles poolés pour une
+  meilleure généralisation. Toggle « Symbole unique » vs « Pool ».
+- **Publish / Dry-run** : le dialog d'entraînement distingue explicitement le
+  dry-run (rien n'est écrit) de la publication au registre.
+- **Audit versioning** : carte dédiée affiche la couverture du versioning par
+  hash de features + alerte si modèles incompatibles (features drift).
+- **Jobs récents** : liste des entraînements récents avec filtres, polling
+  adaptatif, suppression. Résout les jobs orphelins après fermeture du dialog.
+- **Badge overfitting gate** : `block`/`warn`/`good`/`strong` à côté de l'AUC
+  dans le registre de modèles.
+
 > ⚠ Les **paramètres par stratégie** ne sont éditables par aucune page :
 > l'éditeur a disparu avec `config.html` (fin de Jinja2) sans être reconstruit.
 > Passer par l'optimiseur (qui calcule puis applique) ou par les fichiers
@@ -391,12 +432,21 @@ les options.
 | `GET` | `/api/trades` | Liste des trades (filtres: symbol, strategy, limit) |
 | `GET` | `/api/trades/export` | Export CSV des trades |
 | `GET` | `/api/stats/daily` | Stats journalières (30 jours) |
-| `POST` | `/api/backtest` | Lance un backtest |
-| `GET` | `/api/backtest/settings` | Paramètres disponibles |
-| `POST` | `/api/optimize/start` | Lance l'optimisation (async) |
+| `POST` | `/api/backtest` | Lance un backtest (params: start_date, end_date, refresh, cost_override, realistic_risk) |
+| `GET` | `/api/backtest/range` | Plage temporelle disponible dans le cache (symbole, TF) |
+| `GET` | `/api/backtest/status` | Indique si un backtest est en cours |
+| `POST` | `/api/backtest/cancel` | Annule le backtest en cours |
+| `POST` | `/api/optimize/start` | Lance l'optimisation (async, multi-symbole) |
 | `GET` | `/api/optimize/status` | État des jobs d'optimisation |
 | `GET` | `/api/optimize/stream` | SSE : progression temps réel |
-| `POST` | `/api/optimize/apply` | Applique les meilleurs params |
+| `POST` | `/api/optimize/apply` | Applique les meilleurs params (force=true pour outrepasser le gate) |
+| `GET` | `/api/optimize/spaces` | Espaces de paramètres + cardinalité réelle (`n_combos`) |
+| `GET` | `/api/ml/strategy-info` | État des stratégies ML (entraînées, AUC, prochain retrain) |
+| `GET` | `/api/ml/recipes` | Recettes ML disponibles (features, labels, heads) |
+| `GET` | `/api/ml/registry` | Registre de modèles (versions, gate, pin, fraîcheur) |
+| `POST` | `/api/ml/train` | Lance un entraînement (params: symbols, max_symbols, compare_solo, publish, as_of) |
+| `GET` | `/api/ml/jobs` | Jobs ML récents (train + sweep, filtrables) |
+| `GET` | `/api/ml/versioning/audit` | Audit du versioning (modèles avec/sans hash, incompatibles) |
 | `GET` | `/api/config` | Configuration actuelle du bot |
 | `POST` | `/api/config/strategies` | Change les stratégies activées |
 | `POST` | `/api/config/timeframes` | Change les timeframes actifs |

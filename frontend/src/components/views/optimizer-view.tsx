@@ -26,11 +26,12 @@ import {
   useApplyOptimize,
   useCancelOptimize,
   useDeleteOptimizeJob,
+  useConfig,
 } from '@/hooks/use-api';
 import {
   Play, Loader2, CheckCircle2, XCircle, Trash2, StopCircle,
   Sparkles, Cpu, Layers, Activity, Zap, ChevronDown, ChevronRight, Info,
-  AlertTriangle, History,
+  AlertTriangle, History, FileDown,
 } from 'lucide-react';
 import type { OptimizeJob, OptimizeSpaces } from '@/types';
 import { CostModelCard } from '@/components/cards/cost-model-card';
@@ -39,6 +40,7 @@ import { TopTrialsTable } from '@/components/tables/top-trials-table';
 import { OptimizerWarnings } from '@/components/cards/optimizer-warnings';
 import { OptimizerHistory } from '@/components/cards/optimizer-history';
 import { TrialsChart } from '@/components/charts/trials-chart';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { isOosHint } from '@/lib/limit-hint';
@@ -47,7 +49,19 @@ import { normalizeBaseline, deriveAfter, normalizeTopTrials } from '@/lib/backen
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 const METHODS = ['grid', 'random', 'bayesian'] as const;
-const ALL_SYMBOLS = ['BTC/USDC', 'ETH/USDC', 'SOL/USDC', 'BNB/USDC', 'XRP/USDC'];
+// P1-7 : symbols dynamiques depuis la config (plus hardcodés). Fallback
+// sur la liste historique si la config n'est pas chargée.
+const FALLBACK_SYMBOLS = ['BTC/USDC', 'ETH/USDC', 'SOL/USDC', 'BNB/USDC', 'XRP/USDC'];
+
+// P1-2 : Presets d'optimisation (Rapide/Équilibré/Approfondi). L'utilisateur
+// ne sait pas forcément régler n_trials/n_jobs/early_stopping — ces presets
+// couvrent les 3 cas d'usage principaux.
+const PRESETS = {
+  fast: { nTrials: 20, nJobs: 1, earlyStopping: 10, mlTuneHp: false, label: 'Rapide', description: '20 trials, 1 worker — ~2 min' },
+  balanced: { nTrials: 60, nJobs: 2, earlyStopping: 15, mlTuneHp: false, label: 'Équilibré', description: '60 trials, 2 workers — ~10 min' },
+  deep: { nTrials: 150, nJobs: 2, earlyStopping: 0, mlTuneHp: true, label: 'Approfondi', description: '150 trials, 2 workers, ML HP — ~45 min' },
+} as const;
+type PresetKey = keyof typeof PRESETS;
 
 // P0-4 : ajout de 'queued' et 'skipped' (manquants — tombaient sur 'default'
 // et le label brut). Le backend auto_optimizer.py peut produire ces statuts.
@@ -91,20 +105,41 @@ function LiveProgress({ job }: { job: OptimizeJob }) {
     // withCredentials : envoie le cookie HttpOnly api_key même en dev
     // (frontend/backend sur des ports différents = origines distinctes) —
     // S1-05, plus de clé API en query string.
-    const es = new EventSource(url, { withCredentials: true });
-    es.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        setLive(data);
-        if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
-          es.close();
+    // P2-7 : reconnexion SSE avec backoff exponentiel (1s/2s/4s/8s/16s, max 5 essais).
+    let retryCount = 0;
+    const MAX_RETRIES = 5;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let es: EventSource | null = null;
+
+    const connect = () => {
+      es = new EventSource(url, { withCredentials: true });
+      es.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          setLive(data);
+          retryCount = 0; // reset sur succès
+          if (data.status === 'done' || data.status === 'error' || data.status === 'cancelled') {
+            es?.close();
+          }
+        } catch {
+          // ignore malformed SSE frames
         }
-      } catch {
-        // ignore malformed SSE frames
-      }
+      };
+      es.onerror = () => {
+        es?.close();
+        if (retryCount < MAX_RETRIES) {
+          const delay = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s, 8s, 16s
+          retryCount++;
+          retryTimer = setTimeout(connect, delay);
+        }
+        // Si max retries atteint, le polling /status prend le relais
+      };
     };
-    es.onerror = () => es.close();
-    return () => es.close();
+    connect();
+    return () => {
+      es?.close();
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [job.job_id, job.status]);
 
   const progress = live?.progress ?? job.progress ?? 0;
@@ -251,7 +286,33 @@ function JobCard({
         qc.invalidateQueries({ queryKey: ['ml-recipes'] });
       }
     } catch (e: any) {
-      toast.error(`Apply failed: ${e.message}`);
+      // P1-8 : si le gate refuse (409), afficher un ConfirmDialog avec la
+      // raison et un bouton "Forcer l'application" (force=true).
+      const msg = e?.message ?? '';
+      if (msg.includes('409') || msg.includes('refusé') || msg.includes('refused')) {
+        setForceApplyDialog({ jobId: job.job_id, reason: msg, strategy: job.strategy, tf: job.timeframe });
+      } else {
+        toast.error(`Apply failed: ${msg}`);
+      }
+    }
+  };
+
+  // P1-8 : état du dialog "Forcer l'application" (quand le gate refuse)
+  const [forceApplyDialog, setForceApplyDialog] = useState<{ jobId: string; reason: string; strategy: string; tf: string } | null>(null);
+
+  const handleForceApply = async () => {
+    if (!forceApplyDialog) return;
+    try {
+      await apply.mutateAsync({ jobId: forceApplyDialog.jobId, force: true });
+      toast.success('Paramètres forcés au slot (override gate)');
+      if (filterMl) {
+        qc.invalidateQueries({ queryKey: ['mlInfo'] });
+        qc.invalidateQueries({ queryKey: ['ml-recipes'] });
+      }
+    } catch (e: any) {
+      toast.error(`Force apply failed: ${e.message}`);
+    } finally {
+      setForceApplyDialog(null);
     }
   };
 
@@ -472,6 +533,27 @@ function JobCard({
           </div>
         </div>
       </CardContent>
+
+      {/* P1-8 : ConfirmDialog "Forcer l'application" quand le gate refuse.
+          Affiche la raison du refus (Deflated Sharpe, échantillon insuffisant,
+          PnL non amélioré) et propose un bouton "Forcer" (force=true). */}
+      <ConfirmDialog
+        open={!!forceApplyDialog}
+        onOpenChange={(open) => { if (!open) setForceApplyDialog(null); }}
+        title="⚠ Application refusée par le gate"
+        description={
+          forceApplyDialog
+            ? `Le gate de qualité a refusé l'application des paramètres pour ${forceApplyDialog.strategy}@${forceApplyDialog.tf}. ` +
+              `Raison : ${forceApplyDialog.reason}. ` +
+              `Forcer l'application outrepasse le gate (Deflated Sharpe, échantillon minimum, PnL vs baseline). ` +
+              `À utiliser en connaissance de cause — le paramétrage refusé deviendra actif.`
+            : ''
+        }
+        confirmLabel="Forcer l'application"
+        cancelLabel="Annuler"
+        variant="danger"
+        onConfirm={handleForceApply}
+      />
     </Card>
   );
 }
@@ -536,12 +618,39 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
   const [nJobs, setNJobs] = useState(1);
   const [autoApply, setAutoApply] = useState(false);
   const [paramSearchOptim, setParamSearchOptim] = useState(true);
+  // P1-2 : preset actif (null = custom). Changer de preset set nTrials/nJobs/etc.
+  const [activePreset, setActivePreset] = useState<PresetKey | null>(null);
   // OPT-004 — trois nouvelles options d'optimisation. `early_stopping` et
   // `limit_per_tf` sont des inputs numériques ; `ml_tune_hp` n'est visible
   // que si une stratégie ML est sélectionnée.
   const [earlyStopping, setEarlyStopping] = useState(0);
   const [limitPerTf, setLimitPerTf] = useState(0);
   const [mlTuneHp, setMlTuneHp] = useState(false);
+
+  // P1-7 : symbols dynamiques depuis la config. Lit `useConfig()` qui tape
+  // sur /api/config et expose scanner.symbols. Fallback sur FALLBACK_SYMBOLS.
+  const { data: configData } = useConfig();
+  const availableSymbols = useMemo(() => {
+    const scannerSymbols = (configData as any)?.scanner?.symbols;
+    if (Array.isArray(scannerSymbols) && scannerSymbols.length > 0) {
+      return scannerSymbols;
+    }
+    return FALLBACK_SYMBOLS;
+  }, [configData]);
+
+  // P1-2 : appliquer un preset set les valeurs et marque le preset actif.
+  // Modifier manuellement un champ set activePreset=null (custom).
+  function applyPreset(key: PresetKey) {
+    const p = PRESETS[key];
+    setNTrials(p.nTrials);
+    setNJobs(p.nJobs);
+    setEarlyStopping(p.earlyStopping);
+    setMlTuneHp(p.mlTuneHp);
+    setActivePreset(key);
+  }
+  function markCustom() {
+    if (activePreset !== null) setActivePreset(null);
+  }
 
   // OPT-007 — état global "tout déplié / tout replié". Bascule l'état par
   // défaut passé aux JobCards ; le toggle lui-même est au-dessus de la grille.
@@ -592,6 +701,38 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
   const jobsError = jobsIsError
     ? (jobsErrorObj as any)?.message || 'Erreur de chargement'
     : null;
+
+  // P1-6 : filtre/recherche sur la liste de jobs
+  const [jobsSearch, setJobsSearch] = useState('');
+  const [jobsStatusFilter, setJobsStatusFilter] = useState('');
+  const filteredJobs = jobs.filter((j) => {
+    if (jobsStatusFilter && j.status !== jobsStatusFilter) return false;
+    if (jobsSearch) {
+      const q = jobsSearch.toLowerCase();
+      if (!j.strategy?.toLowerCase().includes(q) &&
+          !j.job_id?.toLowerCase().includes(q) &&
+          !j.symbol?.toLowerCase().includes(q) &&
+          !j.timeframe?.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  // P2-5 : export CSV des jobs
+  const exportJobsCsv = () => {
+    const headers = ['job_id', 'strategy', 'timeframe', 'symbol', 'status', 'progress', 'best_score', 'trials_done', 'n_trials', 'method', 'applied'];
+    const rows = filteredJobs.map((j) => [
+      j.job_id, j.strategy, j.timeframe, j.symbol ?? '', j.status,
+      j.progress, j.best_score, j.trials_done, j.n_trials, j.method, j.applied ? 'oui' : 'non',
+    ]);
+    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `optimizer-jobs-${new Date().toISOString().slice(0, 19)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   // Sync default strategies selection once spaces load.
   // BT-011 : `?strategy=<nom>` présélectionne la stratégie visée — sans quoi
@@ -704,12 +845,12 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
       { key: 'done', label: 'Terminés', jobs: [], defaultExpanded: false },
     ];
     const map: Record<string, typeof groups[number]> = Object.fromEntries(groups.map((g) => [g.key, g]));
-    for (const j of jobs) {
+    for (const j of filteredJobs) {
       const g = map[j.status] ?? map.done;
       g.jobs.push(j);
     }
     return groups.filter((g) => g.jobs.length > 0);
-  }, [jobs]);
+  }, [filteredJobs]);
   // OPT-007 — état d'expansion par groupe.
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const toggleGroup = (key: string) =>
@@ -856,11 +997,16 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
             )}
           </div>
 
-          {/* Symbols */}
+          {/* Symbols — P1-7 : dynamiques depuis config (plus hardcodés) */}
           <div>
-            <div className="text-xs text-dim mb-2">Symboles</div>
+            <div className="text-xs text-dim mb-2">
+              Symboles
+              {availableSymbols !== FALLBACK_SYMBOLS && (
+                <span className="text-[10px] text-emerald-400 ml-1">(depuis config)</span>
+              )}
+            </div>
             <div className="flex flex-wrap gap-2">
-              {ALL_SYMBOLS.map((sym) => {
+              {availableSymbols.map((sym) => {
                 const active = selectedSymbols.includes(sym);
                 return (
                   <button
@@ -877,6 +1023,42 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
                   </button>
                 );
               })}
+            </div>
+          </div>
+
+          {/* P1-2 : Presets d'optimisation (Rapide/Équilibré/Approfondi).
+              L'utilisateur clique sur un preset pour set nTrials/nJobs/etc.
+              en une fois. Modifier manuellement un champ passe en mode Custom. */}
+          <div>
+            <div className="text-xs text-dim mb-2">Presets</div>
+            <div className="flex flex-wrap gap-2">
+              {(Object.keys(PRESETS) as PresetKey[]).map((key) => {
+                const p = PRESETS[key];
+                const active = activePreset === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => applyPreset(key)}
+                    className={cn(
+                      'px-3 py-1.5 rounded-lg text-xs border transition-all text-left',
+                      active
+                        ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/40'
+                        : 'bg-card-hover text-muted border-border hover:border-border-hi',
+                    )}
+                    title={p.description}
+                  >
+                    <div className="font-semibold">{p.label}</div>
+                    <div className="text-[10px] text-dim">{p.description}</div>
+                  </button>
+                );
+              })}
+              {activePreset === null && (
+                <div className="px-3 py-1.5 rounded-lg text-xs border bg-amber-500/10 text-amber-400 border-amber-500/30">
+                  <div className="font-semibold">Custom</div>
+                  <div className="text-[10px] text-dim">Configuration manuelle</div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -901,7 +1083,7 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
                 min={5}
                 max={500}
                 value={nTrials}
-                onChange={(e) => setNTrials(Math.max(1, Number(e.target.value) || 1))}
+                onChange={(e) => { setNTrials(Math.max(1, Number(e.target.value) || 1)); markCustom(); }}
                 className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
               />
             </div>
@@ -913,7 +1095,7 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
                 min={1}
                 max={16}
                 value={nJobs}
-                onChange={(e) => setNJobs(Math.max(1, Number(e.target.value) || 1))}
+                onChange={(e) => { setNJobs(Math.max(1, Number(e.target.value) || 1)); markCustom(); }}
                 className="w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono"
               />
             </div>
@@ -1174,12 +1356,26 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
       </Card>
 
       {/* Jobs list — OPT-007 : grouped by status, collapsible, with a
-          "Tout ouvrir / Réduire tout" toggle. */}
+          "Tout ouvrir / Réduire tout" toggle.
+          P1-6 : filtres/recherche + P2-5 : export CSV */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">Jobs</h2>
           <div className="flex items-center gap-3">
-            {jobs.length > 0 && (
+            {/* P2-5 : export CSV */}
+            {filteredJobs.length > 0 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={exportJobsCsv}
+                className="h-7 text-xs"
+                title="Exporter les jobs en CSV"
+              >
+                <FileDown className="w-3 h-3" />
+                CSV
+              </Button>
+            )}
+            {filteredJobs.length > 0 && (
               <Button
                 size="sm"
                 variant="ghost"
@@ -1190,9 +1386,39 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
                 {allExpanded ? 'Réduire tout' : 'Tout ouvrir'}
               </Button>
             )}
-            <span className="text-xs text-dim font-mono">{jobs.length}</span>
+            <span className="text-xs text-dim font-mono">
+              {filteredJobs.length}{jobsSearch || jobsStatusFilter ? `/${jobs.length}` : ''}
+            </span>
           </div>
         </div>
+        {/* P1-6 : filtres/recherche sur les jobs */}
+        {jobs.length > 3 && (
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <input
+              type="text"
+              value={jobsSearch}
+              onChange={(e) => setJobsSearch(e.target.value)}
+              placeholder="Rechercher (stratégie, symbole, job_id…)"
+              className="px-3 py-1.5 bg-card-hover border border-border rounded-md text-xs w-56"
+            />
+            <div className="flex items-center gap-1">
+              {['', 'running', 'done', 'error', 'cancelled'].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setJobsStatusFilter(s)}
+                  className={cn(
+                    'text-[10px] px-2 py-0.5 rounded-md border transition-colors',
+                    jobsStatusFilter === s
+                      ? 'bg-primary-500/10 border-primary-500/30 text-primary-400'
+                      : 'bg-card-hover/30 border-border text-muted hover:text-foreground',
+                  )}
+                >
+                  {s === '' ? 'Tous' : STATUS_LABEL[s] ?? s}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {jobsLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 text-primary-400 animate-spin" />

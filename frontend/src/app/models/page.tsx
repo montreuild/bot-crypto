@@ -19,6 +19,7 @@ import {
   Rocket, BarChart3, RefreshCw, ThumbsUp, ThumbsDown, Microscope,
 } from 'lucide-react';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RecentMlJobs } from '@/components/cards/recent-ml-jobs';
 import { MLVersioningAudit } from '@/components/cards/ml-versioning-audit';
 import { OverfittingGateBadge } from '@/components/cards/overfitting-gate-badge';
@@ -494,9 +495,18 @@ function RegistryRow({ entry }: { entry: ModelRegistryEntry }) {
   );
 }
 
+// P2-2 : filtres sur RegistryTable (recherche, TF, pin, fraîcheur)
 function RegistryTable({ entries }: { entries: ModelRegistryEntry[] }) {
   if (entries.length === 0) {
-    return <div className="text-sm text-muted text-center py-6">Aucun modèle dans le registre.</div>;
+    return (
+      <div className="text-sm text-muted text-center py-6 space-y-2">
+        <p>Aucun modèle dans le registre.</p>
+        <p className="text-xs">
+          Lancez un premier entraînement ci-dessous ou depuis l&apos;onglet{' '}
+          <a href="/lab?tab=ml" className="text-cyan-400 hover:underline">Lab · ML</a>.
+        </p>
+      </div>
+    );
   }
   return (
     <div className="overflow-x-auto" tabIndex={0} role="group" aria-label="Tableau défilable">
@@ -600,19 +610,25 @@ function JobResult({ job }: { job: MLJobStatus }) {
 const SELECT_CLASS =
   'w-full px-3 py-2 bg-card-hover border border-border rounded-md text-sm font-mono';
 
+// P1-5 : remplace le <select> natif par le <Select> Radix pour cohérence UI.
+// P2-8 : label « Recette » au lieu de « Stratégie » (toute la page parle recettes).
 function StrategySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const { data: config } = useConfig();
   const strategies: string[] = config?.all_strategies ?? [];
-  // Garder la valeur courante sélectionnable tant que la config n'est pas
-  // arrivée (ou si elle ne la contient pas) : le select ne doit jamais se
-  // vider sous les doigts de l'utilisateur.
   const options = strategies.includes(value) || !strategies.length
     ? (strategies.length ? strategies : [value])
     : [value, ...strategies];
   return (
-    <select aria-label="Stratégie" value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLASS}>
-      {options.map((s) => <option key={s} value={s}>{s}</option>)}
-    </select>
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="w-full font-mono" aria-label="Recette">
+        <SelectValue placeholder="Sélectionner une recette" />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((s) => (
+          <SelectItem key={s} value={s}>{s}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -637,7 +653,7 @@ function TrainForm() {
 
   const handleSubmit = async () => {
     if (!strategy.trim() || !symbol.trim() || !tf.trim()) {
-      toast.error('Stratégie/symbole/TF requis');
+      toast.error('Recette/symbole/TF requis');
       return;
     }
     try {
@@ -662,7 +678,7 @@ function TrainForm() {
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <div>
-            <label className="text-xs text-dim block mb-1.5">Stratégie</label>
+            <label className="text-xs text-dim block mb-1.5">Recette</label>
             <StrategySelect value={strategy} onChange={setStrategy} />
           </div>
           <div>
@@ -770,7 +786,7 @@ function SweepForm() {
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div>
-            <label className="text-xs text-dim block mb-1.5">Stratégie</label>
+            <label className="text-xs text-dim block mb-1.5">Recette</label>
             <StrategySelect value={strategy} onChange={setStrategy} />
           </div>
           <div>
@@ -825,6 +841,24 @@ export default function ModelsPage() {
   const warnCount = entries.filter((e) => e.freshness_warning).length;
   const badgeVariant = entries.length === 0 ? 'default' : warnCount === 0 ? 'success' : 'warning';
 
+  // P2-2 : filtres RegistryTable
+  const [searchQuery, setSearchQuery] = useState('');
+  const [tfFilter, setTfFilter] = useState('');
+  const [pinFilter, setPinFilter] = useState(false);
+  const [warnFilter, setWarnFilter] = useState(false);
+
+  const filteredEntries = entries.filter((e) => {
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      if (!e.recipe?.toLowerCase().includes(q) && !e.tf?.toLowerCase().includes(q) && !e.train_symbol?.toLowerCase().includes(q))
+        return false;
+    }
+    if (tfFilter && e.tf !== tfFilter) return false;
+    if (pinFilter && !e.pinned_version_id) return false;
+    if (warnFilter && !e.freshness_warning) return false;
+    return true;
+  });
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -841,6 +875,59 @@ export default function ModelsPage() {
           {warnCount > 0 ? ` · ${warnCount} alerte${warnCount !== 1 ? 's' : ''}` : ''}
         </Badge>
       </div>
+
+      {/* P2-5 : bannière de fraîcheur globale si modèles périmés */}
+      {warnCount > 0 && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <span>
+            <strong>{warnCount} modèle(s) périmé(s)</strong> — vérifiez le scheduler de
+            réentraînement. Le seuil par défaut est 2× l&apos;intervalle configuré.
+          </span>
+          <a href="/settings?tab=risk" className="text-amber-300 hover:underline ml-auto text-xs">
+            Réglages →
+          </a>
+        </div>
+      )}
+
+      {/* P2-2 : filtres RegistryTable */}
+      {entries.length > 0 && (
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="text-xs text-dim block mb-1">Recherche</label>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="recette, TF, symbole…"
+              className="px-3 py-1.5 bg-card-hover border border-border rounded-md text-sm w-48"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-dim block mb-1">TF</label>
+            <select
+              value={tfFilter}
+              onChange={(e) => setTfFilter(e.target.value)}
+              className="px-3 py-1.5 bg-card-hover border border-border rounded-md text-sm"
+            >
+              <option value="">Tous</option>
+              <option value="15m">15m</option>
+              <option value="30m">30m</option>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+              <option value="1d">1d</option>
+            </select>
+          </div>
+          <label className="flex items-center gap-1.5 text-xs text-muted cursor-pointer pb-2">
+            <input type="checkbox" checked={pinFilter} onChange={(e) => setPinFilter(e.target.checked)} className="rounded" />
+            Épinglées seulement
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-muted cursor-pointer pb-2">
+            <input type="checkbox" checked={warnFilter} onChange={(e) => setWarnFilter(e.target.checked)} className="rounded" />
+            Avec alerte fraîcheur
+          </label>
+        </div>
+      )}
 
       {/* Registry */}
       <Card>
@@ -862,7 +949,7 @@ export default function ModelsPage() {
               Erreur lors du chargement du registre
             </div>
           ) : (
-            <RegistryTable entries={entries} />
+            <RegistryTable entries={filteredEntries} />
           )}
           <div className="px-5 py-4 text-xs text-muted border-t border-border">
             « Version active » = ce que <code className="font-mono text-foreground">resolve()</code> retournerait

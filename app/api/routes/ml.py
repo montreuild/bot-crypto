@@ -523,3 +523,100 @@ def ml_jobs_delete(request: Request, job_id: str):
     except Exception as e:
         logger.error(f"[API] ml/jobs/{job_id} DELETE KO : {e}", exc_info=True)
         raise HTTPException(500, f"Erreur interne : {e}")
+
+
+# ── P1-3 : Audit trail global des décisions ML (toutes recettes confondues) ──
+@router.get("/api/ml/registry/decisions/recent", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("30/minute")
+def ml_registry_decisions_recent(request: Request, limit: int = 100):
+    """Agrège les décisions récentes de TOUTES les recettes du registre.
+
+    Permet à l'UI d'afficher un audit trail global sans devoir déplier chaque
+    recette une par une. Lit les ``decisions.jsonl`` de chaque répertoire de
+    recette via ``model_registry.list_recipes()`` + ``read_decisions()``.
+    """
+    try:
+        import app.ml.model_registry as registry
+        recipes = registry.list_recipes()
+        all_decisions = []
+        for recipe_name in recipes:
+            try:
+                # Lire les décisions pour tous les TFs de cette recette
+                versions = registry.list_versions(None, recipe_name)
+                tfs_seen = set()
+                for v in versions:
+                    if v.tf and v.tf not in tfs_seen:
+                        tfs_seen.add(v.tf)
+                        decs = registry.read_decisions(v.tf, recipe_name, limit=50)
+                        for d in (decs or []):
+                            d["_recipe"] = recipe_name
+                            d["_tf"] = v.tf
+                            all_decisions.append(d)
+            except Exception:
+                continue
+        # Trier par timestamp décroissant (plus récent d'abord)
+        all_decisions.sort(
+            key=lambda d: d.get("ts", d.get("timestamp", "")),
+            reverse=True,
+        )
+        limit = max(1, min(limit, 500))
+        return {
+            "decisions": all_decisions[:limit],
+            "total": len(all_decisions),
+        }
+    except Exception as e:
+        logger.error(f"[API] ml/registry/decisions/recent KO : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne : {e}")
+
+
+# ── P1-4 : Garde anti-chevauchement pour backtest frozen ─────────────────────
+@router.get("/api/ml/registry/overlaps", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("30/minute")
+def ml_registry_overlaps(
+    request: Request,
+    tf: str,
+    recipe: str,
+    window_start: str = "",
+    window_end: str = "",
+):
+    """Vérifie si la fenêtre d'évaluation chevauche le train_end de l'artefact actif.
+
+    Permet au frontend backtest d'afficher une bannière d'alerte si le backtest
+    évalue un modèle frozen entraîné sur des données qui chevauchent la fenêtre
+    de test — risquant une fuite temporelle (data leakage).
+    """
+    try:
+        import app.ml.model_registry as registry
+        # Pas de chargement de config ici : le registre lit ses artefacts sur
+        # disque et n'en a pas besoin. Un `load_config()` par requête serait de
+        # l'I/O pure perte sur une route appelée à chaque ouverture de backtest.
+        active = registry.latest_promoted(tf, recipe)
+        if active is None:
+            return {"overlaps": False, "reason": "Aucun artefact actif", "active_version": None}
+        # Si pas de fenêtre fournie, on ne peut pas vérifier
+        if not window_start or not window_end:
+            return {
+                "overlaps": False,
+                "reason": "Pas de fenêtre d'évaluation fournie",
+                "active_version": active.version_id,
+                "train_end": active.train_end,
+            }
+        # Vérifier le chevauchement
+        does_overlap = registry.overlaps(active, window_start, window_end)
+        return {
+            "overlaps": does_overlap,
+            "reason": (
+                f"Le backtest [{window_start} → {window_end}] chevauche les données "
+                f"d'entraînement du modèle (train_end={active.train_end}) — risque "
+                f"de fuite temporelle (data leakage)."
+                if does_overlap
+                else "Pas de chevauchement — le backtest est causalement valide."
+            ),
+            "active_version": active.version_id,
+            "train_end": active.train_end,
+            "window_start": window_start,
+            "window_end": window_end,
+        }
+    except Exception as e:
+        logger.error(f"[API] ml/registry/overlaps KO : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne : {e}")

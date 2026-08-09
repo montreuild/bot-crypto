@@ -401,7 +401,23 @@ export function useOptimizeStatus(jobId?: string) {
   return useQuery({
     queryKey: ['optimizeStatus', jobId],
     queryFn: () => api.getOptimizeStatus(jobId),
-    refetchInterval: 1500, // polling rapide pour suivi temps réel
+    // P1-5 : polling adaptatif — 1.5 s si au moins un job running, 30 s sinon.
+    // Évite une charge serveur inutile en idle (95% des réponses inchangées).
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return 1500;
+      // Si on suit un job spécifique, poll rapide tant qu'il est running
+      if (jobId) {
+        const job = (data as any)?.[jobId] ?? data;
+        return job?.status === 'running' ? 1500 : false;
+      }
+      // Sinon, vérifier si au moins un job est running
+      const allJobs = data as Record<string, any>;
+      const hasRunning = Object.values(allJobs).some(
+        (j: any) => j?.status === 'running' || j?.status === 'pending' || j?.status === 'queued'
+      );
+      return hasRunning ? 1500 : 30000;
+    },
   });
 }
 
@@ -592,6 +608,45 @@ export function useDeleteMLJob() {
     mutationFn: (jobId: string) => api.deleteMLJob(jobId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['mlJobs'] });
+    },
+  });
+}
+
+// P1-3 — Audit trail global des décisions ML
+export function useMLDecisionsRecent(limit = 100) {
+  return useQuery({
+    queryKey: ['mlDecisionsRecent', limit],
+    queryFn: () => api.getMLDecisionsRecent(limit),
+    staleTime: 30 * 1000,
+  });
+}
+
+// P1-4 — Garde anti-chevauchement frozen
+export function useMLOverlaps(tf: string, recipe: string, windowStart: string, windowEnd: string, enabled = true) {
+  return useQuery({
+    queryKey: ['mlOverlaps', tf, recipe, windowStart, windowEnd],
+    queryFn: () => api.getMLOverlaps(tf, recipe, windowStart, windowEnd),
+    enabled: enabled && !!tf && !!recipe && !!windowStart && !!windowEnd,
+    staleTime: 60 * 1000,
+  });
+}
+
+// Opt P1-4 — Valider best_params (Monte-Carlo ou Regime)
+export function useOptimizeValidate() {
+  return useMutation({
+    mutationFn: ({ jobId, method }: { jobId: string; method: 'monte_carlo' | 'regime' }) =>
+      api.optimizeValidate(jobId, method),
+  });
+}
+
+// Opt P1-11 — Purger les jobs anciens
+export function useOptimizePurge() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ maxAgeHours, keepLast }: { maxAgeHours?: number; keepLast?: number }) =>
+      api.optimizePurge(maxAgeHours, keepLast),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['optimizeStatus'] });
     },
   });
 }

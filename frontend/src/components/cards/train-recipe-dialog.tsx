@@ -7,9 +7,9 @@
  * l'utilisateur expert peut lancer l'entraînement sans quitter l'onglet ML.
  *
  * Pipeline :
- * 1. `api.startMLTrain({ strategy: recipe, symbol, tf, window_bars })` → renvoie `job_id`.
- *    (L'API backend attend `strategy` ; le `recipe` est passé tel quel car
- *    les recettes sont des stratégies ML.)
+ * 1. `api.startMLTrain({ strategy: recipe, symbol, tf, window_bars, publish, as_of })` → renvoie `job_id`.
+ *    P2-10 : l'API backend accepte désormais `recipe` directement (ml.py L343-353),
+ *    mais on garde `strategy` pour rétrocompatibilité — le backend résout les deux.
  * 2. Polling `api.getMLTrainStatus(jobId)` toutes les ~1,5 s via
  *    `useMLTrainStatus` (le hook existe déjà ; le SSE n'existe pas côté
  *    backend, cf. audit ML). Le polling s'arrête automatiquement quand
@@ -63,6 +63,7 @@ const DEFAULT_WINDOW_BARS = 2000;
 const MIN_WINDOW_BARS = 1500;
 
 type Phase = 'idle' | 'starting' | 'polling' | 'done' | 'error';
+type TrainMode = 'single' | 'pool';
 
 export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDialogProps) {
   const qc = useQueryClient();
@@ -75,6 +76,12 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
   // P0-2 : as_of optionnel (ISO date). Permet de rejouer un entraînement à
   // une date passée pour comparaison. Vide = maintenant.
   const [asOf, setAsOf] = useState('');
+  // P1-1 : Pool multi-symboles (ML-16). Mode 'single' par défaut (rétrocompatible).
+  // Mode 'pool' : entraîne sur N symboles poolés (meilleure généralisation).
+  const [trainMode, setTrainMode] = useState<TrainMode>('single');
+  const [poolSymbols, setPoolSymbols] = useState('BTC/USDC,ETH/USDC,SOL/USDC');
+  const [maxSymbols, setMaxSymbols] = useState(5);
+  const [compareSolo, setCompareSolo] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
   const [jobId, setJobId] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
@@ -96,6 +103,10 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
       setWindowBars(DEFAULT_WINDOW_BARS);
       setPublish(false);
       setAsOf('');
+      setTrainMode('single');
+      setPoolSymbols('BTC/USDC,ETH/USDC,SOL/USDC');
+      setMaxSymbols(5);
+      setCompareSolo(false);
       setPhase('idle');
       setJobId(null);
       setStartError(null);
@@ -144,8 +155,16 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
       });
       return;
     }
-    if (!symbol.trim() || !tf.trim()) {
-      toast.error('Symbole et timeframe requis');
+    if (trainMode === 'single' && !symbol.trim()) {
+      toast.error('Symbole requis');
+      return;
+    }
+    if (trainMode === 'pool' && !poolSymbols.trim()) {
+      toast.error('Au moins un symbole requis pour le pool');
+      return;
+    }
+    if (!tf.trim()) {
+      toast.error('Timeframe requis');
       return;
     }
     if (windowBars < MIN_WINDOW_BARS) {
@@ -155,16 +174,24 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
     setPhase('starting');
     setStartError(null);
     try {
-      const res = await api.startMLTrain({
+      // P1-1 : en mode pool, on envoie symbols + max_symbols + compare_solo.
+      // Le backend résout le pool (top-N par profondeur d'historique) et
+      // entraîne sur la concaténation des symboles (coupure temporelle commune).
+      const params: any = {
         strategy: recipe.recipe,
-        symbol: symbol.trim(),
         tf: tf.trim(),
         window_bars: windowBars > 0 ? windowBars : null,
-        // P0-1 : transmet publish (false = dry-run, true = publier au registre)
         publish,
-        // P0-2 : transmet as_of si fourni (rejoue un entraînement à une date passée)
         as_of: asOf.trim() || undefined,
-      });
+      };
+      if (trainMode === 'single') {
+        params.symbol = symbol.trim();
+      } else {
+        params.symbols = poolSymbols.split(',').map((s) => s.trim()).filter(Boolean).join(',');
+        params.max_symbols = maxSymbols;
+        params.compare_solo = compareSolo;
+      }
+      const res = await api.startMLTrain(params);
       setJobId(res.job_id);
       setPhase('polling');
     } catch (e: any) {
@@ -234,13 +261,47 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
           </div>
         </div>
 
+        {/* P1-1 : Toggle mode d'entraînement — Single vs Pool multi-symboles.
+            Le pool (ML-16) entraîne sur N symboles poolés pour une meilleure
+            généralisation. Le backend accepte déjà symbols/max_symbols/compare_solo. */}
+        <div className="flex items-center gap-2 text-xs">
+          <button
+            type="button"
+            onClick={() => setTrainMode('single')}
+            className={cn(
+              'px-3 py-1 rounded-md border transition-colors',
+              trainMode === 'single'
+                ? 'bg-primary-500/10 border-primary-500/30 text-primary-400'
+                : 'bg-card-hover/30 border-border text-muted hover:text-foreground',
+            )}
+          >
+            Symbole unique
+          </button>
+          <button
+            type="button"
+            onClick={() => setTrainMode('pool')}
+            className={cn(
+              'px-3 py-1 rounded-md border transition-colors',
+              trainMode === 'pool'
+                ? 'bg-primary-500/10 border-primary-500/30 text-primary-400'
+                : 'bg-card-hover/30 border-border text-muted hover:text-foreground',
+            )}
+          >
+            Pool multi-symboles
+            <Badge variant="info" className="ml-1.5 text-[9px]">ML-16</Badge>
+          </button>
+        </div>
+
         {/* Inputs : symbole, TF, bougies, as_of. Defaults BTC/USDC · 1h · 2000,
             minimum 1500 bougies (sous ce seuil, LightGBM n'a pas assez
             d'échantillons pour un entraînement fiable). P0-2 : as_of
-            optionnel permet de rejouer un entraînement à une date passée. */}
+            optionnel permet de rejouer un entraînement à une date passée.
+            P1-1 : en mode pool, le champ symbole est remplacé par une liste
+            CSV de symboles + max_symbols + compare_solo. */}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="train-recipe-symbol">Symbole</Label>
+          {trainMode === 'single' ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="train-recipe-symbol">Symbole</Label>
             <Input
               id="train-recipe-symbol"
               value={symbol}
@@ -248,7 +309,50 @@ export function TrainRecipeDialog({ recipe, open, onOpenChange }: TrainRecipeDia
               disabled={isRunning}
               className="font-mono"
             />
-          </div>
+            </div>
+          ) : (
+            <div className="space-y-1.5 md:col-span-2">
+              <Label htmlFor="train-recipe-pool-symbols">
+                Symboles poolés (CSV)
+                <span className="block normal-case text-[10px] text-dim font-normal">
+                  Le backend sélectionnera les {maxSymbols} meilleurs par profondeur d&apos;historique
+                </span>
+              </Label>
+              <Input
+                id="train-recipe-pool-symbols"
+                value={poolSymbols}
+                onChange={(e) => setPoolSymbols(e.target.value)}
+                disabled={isRunning}
+                className="font-mono"
+                placeholder="BTC/USDC,ETH/USDC,SOL/USDC"
+              />
+              <div className="flex items-center gap-3 mt-1">
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="train-recipe-max-symbols" className="text-[10px] text-dim">Max symboles</Label>
+                  <Input
+                    id="train-recipe-max-symbols"
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={maxSymbols}
+                    onChange={(e) => setMaxSymbols(Math.max(1, Math.min(20, Number(e.target.value) || 5)))}
+                    disabled={isRunning}
+                    className="font-mono w-16 h-7 text-xs"
+                  />
+                </div>
+                <label className="flex items-center gap-1.5 text-[10px] text-dim cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={compareSolo}
+                    onChange={(e) => setCompareSolo(e.target.checked)}
+                    disabled={isRunning}
+                    className="rounded"
+                  />
+                  Comparer pool vs solo (plus lent)
+                </label>
+              </div>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>Timeframe</Label>
             <TimeframeButtons

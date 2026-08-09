@@ -463,3 +463,138 @@ def optimizer_spaces():
         }
         for strat, space in PARAM_SPACES.items()
     }
+
+
+# ── P1-4 : Route validate (Monte-Carlo + Regime Stress Test post-optimisation) ─
+@router.post("/api/optimize/validate", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("5/minute")
+def optimizer_validate(
+    request: Request,
+    job_id: str,
+    method: str = "monte_carlo",
+):
+    """Valide les best_params d'un job terminé via Monte-Carlo ou Regime Stress Test.
+
+    Prend les ``best_params`` d'un job terminé, lance l'analyse de robustesse,
+    et retourne le dict résultat. Évite à l'utilisateur de relancer un backtest
+    manuel pour estimer la probabilité de ruine ou la performance par régime.
+
+    Parameters
+    ----------
+    job_id : str
+        ID du job terminé dont on veut valider les best_params.
+    method : str
+        ``monte_carlo`` (défaut) ou ``regime``.
+    """
+    from app.core.candle_store import get_store
+    from app.core.exchange import create_exchange
+    from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
+    from app.engine.auto_optimizer import get_job
+
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, f"Job '{job_id}' introuvable")
+    if job.get("status") != "done":
+        raise HTTPException(400, "Job non terminé")
+    result = job.get("result", {})
+    best_params = result.get("best_params", {})
+    if not best_params:
+        raise HTTPException(400, "Aucun meilleur paramètre")
+    strat = job.get("strategy", "")
+    tf = job.get("timeframe", "")
+    symbol = job.get("symbol") or DEFAULT_CONFIG_SYMBOL
+
+    try:
+        # Récupérer les données
+        exchange = create_exchange(state.cfg)
+        from app.engine.optimizer_search import auto_fetch_limit
+        fetch_limit = auto_fetch_limit(tf, [strat])
+        df = get_store().fetch(exchange, symbol, tf, total=fetch_limit, prefer_cache=True)
+        if df is None or len(df) == 0:
+            raise HTTPException(400, f"Aucune donnée pour {symbol}/{tf}")
+
+        # Appliquer les best_params et lancer le backtest
+        import importlib
+
+        from app.core.config import load_config as _reload_cfg
+        from app.engine.backtest import Backtester
+        from app.engine.engine import Engine
+        cfg = _reload_cfg("config.yaml")
+        # Override avec best_params
+        sp = dict(cfg.get("strategy_params", {}))
+        sp[strat] = {**(sp.get(strat, {})), **best_params}
+        cfg["strategy_params"] = sp
+        cfg["optimizer_results"] = {}  # pas d'overlay
+
+        mod = importlib.import_module(f"app.strategies.{strat}")
+        eng = Engine()
+        eng.register(mod.Strategy(), silent=True)
+        bt = Backtester(eng, cfg)
+        res = bt.run(df, symbol, timeframe=tf)
+        trades = [t for t in res.trades if t.get("status", "").startswith("closed")]
+
+        if not trades:
+            raise HTTPException(400, "Le backtest avec les best_params n'a produit aucun trade")
+
+        if method == "monte_carlo":
+            from app.core.risk_gate import _default_venue_capital
+            from app.engine.monte_carlo import MonteCarlo
+            mc = MonteCarlo(n_runs=cfg.get("backtest", {}).get("monte_carlo_runs", 200))
+            mc_result = mc.run(trades, _default_venue_capital(cfg))
+            return {"method": "monte_carlo", "result": mc_result, "n_trades": len(trades)}
+
+        elif method == "regime":
+            from app.engine.regime_stress_test import regime_summary, stress_test_by_regime
+            segments = stress_test_by_regime(df, regime_type='trend', min_segment_bars=50)
+            summary = regime_summary(segments)
+            return {
+                "method": "regime",
+                "segments": [
+                    {"regime": s.regime, "start_time": s.start_time, "end_time": s.end_time,
+                     "n_bars": s.n_bars, "metrics": s.metrics}
+                    for s in segments
+                ],
+                "summary": summary,
+                "n_trades": len(trades),
+            }
+        else:
+            raise HTTPException(400, f"Méthode inconnue: {method} (attendu: monte_carlo ou regime)")
+    except HTTPException:
+        raise
+    except Exception as e:
+        err_id = uuid.uuid4()
+        logger.error(f"[API] Erreur {err_id} optimize/validate : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne ({err_id})")
+
+
+# ── P1-11 : Purge automatique des jobs backend ───────────────────────────────
+@router.post("/api/optimize/purge", dependencies=[Depends(verify_api_key)])
+@state.limiter.limit("5/minute")
+def optimizer_purge(request: Request, max_age_hours: int = 24, keep_last: int = 200):
+    """Purge les jobs terminés de plus de ``max_age_hours`` heures.
+
+    Garde toujours les ``keep_last`` jobs les plus récents, quel que soit leur âge.
+    Les jobs en cours (running/pending) ne sont jamais purgés.
+    """
+    import time as _time
+
+    from app.engine.auto_optimizer import delete_job, get_all_jobs
+    try:
+        all_jobs = get_all_jobs()
+        now = _time.time()
+        cutoff = now - max_age_hours * 3600
+        purged = 0
+        # Trier par started_at (plus ancien d'abord)
+        sorted_jobs = sorted(all_jobs.items(), key=lambda x: x[1].get("started_at", 0))
+        for jid, job in sorted_jobs:
+            if job.get("status") in ("running", "pending", "queued"):
+                continue
+            if len(all_jobs) - purged <= keep_last:
+                break
+            if job.get("started_at", 0) < cutoff:
+                if delete_job(jid):
+                    purged += 1
+        return {"status": "ok", "purged": purged, "remaining": len(all_jobs) - purged}
+    except Exception as e:
+        logger.error(f"[API] optimize/purge KO : {e}", exc_info=True)
+        raise HTTPException(500, f"Erreur interne : {e}")

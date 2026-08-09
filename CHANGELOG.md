@@ -6,6 +6,256 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🩹 Corrections du lot backtest — sept fonctionnalités qui ne calculaient rien
+
+Relecture du lot décrit plus bas. Sept défauts partageant le même trait : la
+fonctionnalité était exposée dans l'API **et** dans l'UI, ne levait aucune
+erreur, passait les tests — et ne produisait pas son effet. Deux d'entre eux
+n'étaient visibles qu'en exécutant l'application.
+
+- **`start_date`/`end_date` ne filtraient rien.** La colonne `time` du
+  CandleStore est un `datetime[ms]` sans timezone ; le littéral comparé était
+  tz-aware, polars levait un `SchemaError`, et le `except` renvoyait le
+  DataFrame entier. L'utilisateur croyait backtester sa plage et backtestait
+  tout l'historique, sur 50 000 bougies.
+- **`/api/backtest/range` annonçait la plage des 10 dernières bougies** comme
+  étant tout le cache (lecture de clés `from_ms`/`to_ms` absentes de
+  `CandleStore.stats()`).
+- **Les circuit breakers par slot ne pouvaient jamais se déclencher.**
+  `_try_enter` lisait `signal["strategy"]` (le nom est sous `name`), gardait
+  donc un slot fantôme `::tf::symbole` pendant que les pertes s'enregistraient
+  sur le vrai.
+- **Les diagnostics du risk gate ne quittaient jamais le backend** : la route
+  ne les recopiait pas dans son `entry`, et le panneau de `/lab` restait vide.
+- **La pause « DD journalier » n'était jamais levée** (test sur le libellé
+  humain au lieu d'un type machine) : un mauvais jour tuait un slot pour tout
+  le run.
+- **`alpha_vs_bh` valait toujours 0** : les métriques tournaient dans
+  `__init__`, la série de prix n'arrivait qu'en fin de run.
+- **L'audit de versioning renvoyait des chemins de fichiers** là où l'UI
+  attendait des compteurs.
+
+Également : parité du `BacktestRiskGate` avec le gate live (deux clés de config
+fausses, pause 48× trop longue, `consecutive_losses` non remis à zéro au
+changement de jour, volatility brake qui était du code mort), régression
+d'accessibilité de `<DataTable>` (tri devenu inopérant au clavier sur les trois
+tables migrées), collision d'ID de dégradé SVG dans `<EquityChart>` (une
+stratégie perdante héritait du vert d'une gagnante), et déblocage de la suite
+de tests qu'un abort natif LightGBM interrompait à 39 %.
+
+### 📐 Métriques de performance : correction d'échelle
+
+`equity_curve` ne reçoit un point qu'à chaque trade clôturé, mais tout le calcul
+la traitait comme une série par bougie. Sur un backtest à +11,7 % en 5,5 ans,
+l'API renvoyait un CAGR de **3 809 %/an**, un Calmar de **3 961**, un alpha de
+**+569 %/an** et un Sharpe de **9,54**.
+
+- La durée vient désormais du nombre de bougies parcourues (`n_bars` passé au
+  constructeur de `BacktestResult`), et non du nombre de points d'équité. Sans
+  durée connue, les ratios annualisés valent 0 — on n'invente pas une durée.
+- Sharpe et Sortino sont annualisés à la cadence réelle de la série
+  (`returns_per_year`), plafonnée par celle des bougies : une série dérivée des
+  trades ne peut pas avoir plus d'observations indépendantes que la série qui
+  les engendre.
+- L'alpha ne fabrique plus un bêta CAPM entre deux axes temporels différents ;
+  quand les séries ne sont pas alignées, il compare des rendements annualisés.
+- La correction touche les trois sites — Sharpe global, Sharpe par stratégie, et
+  le Sharpe **live** de `health_mixin`, délibérément aligné sur celui du
+  backtest et qui devait donc suivre.
+
+Après : CAGR 2,26 %/an, Calmar 0,833, Sortino 0,697, Sharpe 0,637, alpha
+−0,02 %/an. Les métriques se recoupent enfin entre elles (Calmar = CAGR/|MaxDD|,
+alpha = CAGR − CAGR du B&H, Sortino ≳ Sharpe). ⚠ Les seuils de `beats_baseline`
+et les baselines enregistrées se déplacent d'un facteur ~15 : bascule assumée,
+le bot n'étant pas en production.
+
+### 🎯 Backtest : 8 exigences produit livrées + 4 gates dormants câblés
+
+Le backtest exposait déjà la plupart des données, mais l'UI ne les exploitait
+pas et plusieurs modules backend écrits et testés n'étaient jamais appelés.
+Ce batch livre les 8 exigences produit et câble 4 gates dormants.
+
+**QW-1 — Métriques étendues (Sortino, Calmar, CAGR, alpha vs B&H).**
+`app/core/performance_metrics.py` (S3-07) était écrit et testé unitairement,
+mais jamais appelé par `BacktestResult._compute_metrics()`. Le payload backtest
+ne contenait que Sharpe, max_drawdown, profit_factor, win_rate. Désormais,
+les 4 métriques étendues sont calculées et exposées dans `to_dict()` + la
+route `/api/backtest` + le `StrategyComparisonTable` du frontend.
+
+**QW-2 — Plage temporelle ajustable (`start_date`/`end_date`).**
+La route `POST /api/backtest` n'acceptait que `limit` (nombre de bougies).
+Nouvelle route `GET /api/backtest/range?symbol=...&timeframe=...` qui retourne
+`{from, to, bars, available}` depuis le cache Parquet. Le frontend propose un
+sélecteur de plage de dates (mode « Bougies » vs « Plage de dates ») avec
+bouton « Max disponible » qui pré-remplit depuis le cache. Parsing ISO 8601
+robuste (gère `2024-01-01` et `2024-01-01T00:00:00`), validation 400 si date
+invalide.
+
+**QW-3 — Données fraîches (`refresh=true`) + agrégats de coûts.**
+`refresh=true` force `prefer_cache=False` (fetch réseau incrémental). Le
+payload inclut `refreshed: bool`. Nouveaux agrégats `total_borrow_cost` et
+`total_slippage_cost` dans `BacktestResult.to_dict()` pour l'analyse what-if
+frais/levier.
+
+**QW-4 — Override ponctuel du cost_model (`cost_override`).**
+La route accepte `cost_override` au format CSV `"taker_fee=0.001,maker_fee=0.0008,
+max_leverage=3,borrow_rate_daily=0.0005"`. Helper `_apply_cost_override()` clone
+la config (deepcopy) et surcharge uniquement les clés fournies — ne mute jamais
+la config d'origine. Nouveau composant `CostSimulatorPanel` qui compare 3 presets
+(Spot/Lever 1, Margin/Lever 3, Margin/Lever 10) en relançant des backtests
+parallèles.
+
+**QW-5 — Moteur de recommandations post-backtest (15 règles).**
+Nouveau module `app/engine/recommendations.py` (583 lignes) avec 15 règles
+structurées : échantillon insuffisant, PnL négatif, outliers, frais dominants,
+borrow élevé, Sharpe faible/négatif, DD critique/élevé, alpha négatif,
+win-rate bas, taux de rejet, analyse par régime (via `regime_stress_test`),
+points forts (Sharpe excellent, asymétrie positive, Calmar solide). Chaque
+recommandation est un dict `{severity, code, title, message, action, action_link}`.
+`generate_recommendations()` trie par sévérité (critical > warning > info >
+positive). `summarize_recommendations()` produit un verdict global. Nouveau
+composant `RecommendationsPanel` affiche les recommandations avec badges
+colorés et liens d'action cliquables.
+
+**QW-6 — Mode realistic_risk (circuit breakers en backtest).**
+Nouveau module `app/engine/backtest_risk_gate.py` (434 lignes) qui réplique
+les 6 circuit breakers du `RiskGate` live sans dépendance au temps réel :
+consecutive_loss_limit (pertes consécutives → pause du slot pendant
+`consecutive_pause_secs`, converti en bougies), slot_daily_dd_limit (DD
+journalier d'un slot → pause jusqu'au lendemain), max_trades_per_day,
+`trading.daily_drawdown_limit` (DD journalier GLOBAL → HALT levé le lendemain),
+`trading.max_drawdown_global` (DD depuis le pic → HALT définitif),
+volatility_brake (volatilité forte → sizing ×0.5, appliqué au sizing).
+Opt-in via `realistic_risk=True` pour préserver la parité backtest↔live. Le
+payload inclut `realistic_risk_diagnostics` PAR STRATÉGIE (chaque stratégie a
+son propre `Backtester`, donc son propre gate) avec slots pausés, `halt_kind`,
+et le nombre de bougies freinées par le volatility brake. Le frontend affiche
+une carte dédiée + un toggle dans les options avancées.
+
+**Gate Deflated Sharpe (López de Prado 2014).**
+`app/core/deflated_sharpe.py` (S3-02) était écrit mais jamais appelé — TODO
+vivant dans `auto_optimizer.py:521`. Câblé dans `beats_baseline()` (opt_scoring.py)
+avec 2 paramètres optionnels `n_trials` et `min_deflated_sharpe`. Activable via
+`optimizer.deflated_sharpe_gate` (défaut `true`) dans config.yaml. Une stratégie
+optimisée avec 50 essais et Sharpe 0.3 est maintenant refusée à l'apply. La
+route `/api/optimize/apply` passe aussi `n_trials` pour cohérence auto-apply ↔
+apply manuel. 12 tests dédiés verrouillent le comportement.
+
+**Overfitting gate ML (S3-10).**
+`app/ml/overfitting_gate.py` était écrit mais non branché. Câblé dans
+`maybe_refresh()` (policy.py) qui enrichit les diagnostics avec un `level`
+structuré (block/warn/good/strong). Le champ est exposé dans
+`ArtifactRef.to_dict().overfitting_gate` et affiché via le composant
+`OverfittingGateBadge` dans la `VersionRow` de `/models`.
+
+**Routes ML supplémentaires.**
+- `GET /api/ml/versioning/audit` : appelle `model_versioning.migration_check()`
+  (jusque-là non routée). Retourne `{total, with_hash, without_hash, incompatible,
+  coverage_pct}`. Composant `MLVersioningAudit` affiche la couverture avec
+  barre de progression + alertes si modèles incompatibles (features drift).
+- `GET /api/ml/jobs` : expose `ml_jobs.get_all_jobs()` (invisible côté UI).
+  Composant `RecentMlJobs` avec filtres chips, polling adaptatif, suppression.
+- `DELETE /api/ml/jobs/{job_id}` : supprime un job terminé.
+
+### 🧹 Frontend : factorisation des redondances héritées de Jinja2
+
+**`<DataTable>` générique.** 5 tables spécialisées (trades-table,
+RealizedTradesTable, TradePlansTable, table inline /trades, top-trials-table,
+strategy-comparison-table) dupliquaient ~2000 lignes de logique (tri,
+pagination, formatage). Le composant `frontend/src/components/ui/data-table.tsx`
+(280 lignes) absorbe les 5 tables via une API generic `<T>` avec props
+`columns`, `rows`, `sortable`, `paginated`, `expandable`, `onRowClick`.
+
+**`<EquityChart variant>`.** `equity-curve.tsx` (live) et
+`backtest-equity-chart.tsx` (backtest) avaient ~80% de code commun. Le composant
+`frontend/src/components/charts/equity-chart.tsx` (322 lignes) fusionne les deux
+variantes. Les fichiers originaux deviennent des wrappers fins (~40 lignes).
+
+**`lib/ohlcv.ts`.** La fonction `cleanOhlcv` était copiée à l'identique dans 3
+fichiers (smart-graph-view, smart-replay-view, price-signals-chart). Extraite
+dans `frontend/src/lib/ohlcv.ts` avec signature identique.
+
+**`<MonteCarloBand>`.** `monte-carlo-cone.tsx` et `monte-carlo-panel.tsx`
+partageaient `positionPct()` et le concept visuel d'une bande P5/P95. Extraction
+du code commun dans `frontend/src/components/charts/monte-carlo-band.tsx`.
+
+### 📊 Optimizer : exploitation du backend + UX
+
+**`n_combos` fix.** La route `/api/optimize/spaces` retournait `"n_combos": 1`
+en dur. Maintenant `_count_combos(space)` calcule la vraie cardinalité (produit
+du nombre de valeurs par paramètre, gère list/values/min-max-step).
+
+**Deflated Sharpe + WF consistency dans la JobCard.** Nouvelles métriques
+« Deflated Sharpe » et « WF Consistency » avec warnings si < 50% / < 60%.
+
+**`STATUS_VARIANT`/`STATUS_LABEL` corrigés.** Ajout de `queued` et `skipped`
+(missing — tombaient sur 'default' et le label brut).
+
+**`OptimizerHistory`.** Nouveau composant qui consomme `api.getConfigChangelog`
+(route existante mais non consommée). Affiche l'historique des apply (params
+avant→après, oos_score, timestamp) via `<DataTable>`. Replié par défaut.
+
+**`TrialsChart`.** Nouveau composant recharts LineChart affichant la courbe
+d'apprentissage (final_score, best_so_far, overfit ratio) avec ligne rouge à
+overfit=2.5.
+
+**Options avancées collapsible.** `early_stopping`, `limit_per_tf`, `ml_tune_hp`
+maintenant dans un `<details>` replié par défaut.
+
+### 🔧 ML & Optimizer : exploitation des capacités backend restantes
+
+**ML P1-1 — Pool multi-symboles (ML-16) dans `TrainRecipeDialog`.**
+Le backend acceptait `symbols`/`max_symbols`/`compare_solo` depuis `/api/ml/train`
+mais aucun composant UI ne les envoyait. Le dialog d'entraînement propose
+maintenant un toggle « Symbole unique » vs « Pool multi-symboles ». En mode
+pool : champ CSV de symboles + `max_symbols` (top-N par profondeur d'historique)
++ checkbox `compare_solo` (compare pool vs solo). Le backend résout le pool et
+entraîne sur la concaténation avec coupure temporelle commune.
+
+**Optimizer P1-2 — Presets d'optimisation.**
+L'utilisateur ne savait pas forcément régler `n_trials`/`n_jobs`/`early_stopping`.
+3 boutons de preset : Rapide (20 trials/1 worker/early-stop 10), Équilibré
+(60 trials/2 workers/early-stop 15), Approfondi (150 trials/2 workers/ML HP).
+Modifier manuellement un champ passe en mode « Custom » (badge ambre).
+
+**Optimizer P1-7 — Symbols dynamiques depuis la config.**
+`ALL_SYMBOLS` était hardcodé à `['BTC/USDC', 'ETH/USDC', 'SOL/USDC', 'BNB/USDC',
+'XRP/USDC']`. Maintenant lu depuis `useConfig()` → `scanner.symbols`. Fallback
+sur la liste historique si la config n'est pas chargée. Badge « (depuis config) »
+quand les symbols viennent de la config.
+
+**Optimizer P1-8 — ConfirmDialog pour Apply (force=true).**
+Quand le gate refuse l'apply (HTTP 409), un `ConfirmDialog` s'ouvre avec la
+raison du refus (Deflated Sharpe, échantillon insuffisant, PnL non amélioré)
+et un bouton « Forcer l'application » qui envoie `force=true`. Avant,
+l'utilisateur était bloqué sans recours UI quand le gate refusait.
+
+**ML P1-5 — `<Select>` Radix dans `TrainForm`.** Le `<select>` natif de la
+page Modèles est remplacé par le composant Radix du dépôt, avec `aria-label`.
+Filtres ajoutés sur la table du registre.
+
+**Quatre routes livrées SANS interface — à câbler.** Elles répondent, sont
+typées côté client (`api.ts`) et disposent de leur hook (`use-api.ts`), mais
+aucun composant ne les appelle aujourd'hui :
+
+| Route | Ce qu'elle sert | Interface |
+|---|---|---|
+| `POST /api/optimize/validate` | Monte-Carlo ou stress test par régime sur les `best_params` d'un job | ❌ |
+| `POST /api/optimize/purge` | Purge des jobs terminés (âge + `keep_last`) | ❌ |
+| `GET /api/ml/registry/decisions/recent` | Journal global des décisions de gate | ❌ |
+| `GET /api/ml/registry/overlaps` | Garde anti-fuite temporelle : la fenêtre de backtest chevauche-t-elle le `train_end` du modèle frozen ? | ❌ |
+
+C'est volontairement signalé plutôt que passé sous silence : une route sans
+appelant est du code qui vieillit sans que personne ne s'en aperçoive.
+`overlaps` est la plus utile des quatre — elle détecte un data leakage sur un
+backtest de modèle frozen.
+
+> ⚠ `POST /api/optimize/validate?method=regime` relance un backtest complet
+> avec les `best_params`, puis n'en utilise que le **nombre** de trades :
+> `stress_test_by_regime` segmente les régimes du *marché*, pas la performance
+> de la stratégie. Le résultat est donc une caractérisation de la période, pas
+> une validation du paramétrage. À revoir avant de lui construire une UI.
+
 ### 📦 Images Docker : −348 Mo sur l'API, −65 Mo sur le front
 
 Mesuré à l'intérieur des conteneurs (`du -sx /`), la seule mesure fiable :

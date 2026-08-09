@@ -247,17 +247,33 @@ section « Live Trading Loop » plus bas.
 ### Backtest (Backtester)
 
 ```
-Backtester(engine, cfg)
+Backtester(engine, cfg, realistic_risk=False)
   ├─> CandleStore.fetch()        ← V12 : depuis le cache local si disponible
   │     ├─> Lecture Parquet      (instantané si déjà fetché par le live trader)
   │     └─> Fetch exchange       (uniquement si nouvelles bougies)
+  ├─> _filter_df_by_date_range() ← QW-2 : filtre par start_date/end_date
+  ├─> _apply_cost_override()     ← QW-4 : surcharge ponctuelle du cost_model
   ├─> Polars DataFrame processing
   ├─> For each candle:
-  │    └─> Engine.signal()
-  │        └─> Update equity
-  │        └─> Record trades
-  └─> Results (by_strategy stats)
+  │    ├─> BacktestRiskGate.can_slot_trade()  ← QW-6 : circuit breakers (opt-in)
+  │    ├─> Engine.signal()
+  │    │    └─> Update equity (avec volatility_brake_factor si realistic_risk)
+  │    ├─> BacktestRiskGate.record_trade_result()  ← met à jour consecutive_losses
+  │    └─> Record trades
+  ├─> _compute_extended_metrics()  ← QW-1 : Sortino, Calmar, CAGR, alpha
+  ├─> generate_recommendations()   ← QW-5 : 15 règles de recommandation
+  └─> Results (by_strategy stats + recommendations + realistic_risk_diagnostics)
 ```
+
+**Nouveaux modules backtest** :
+- `app/engine/backtest_risk_gate.py` — circuit breakers pour backtest
+  (réplique les 5 breakers du `RiskGate` live sans dépendance temps réel).
+- `app/engine/recommendations.py` — moteur de recommandations post-backtest
+  (15 règles : échantillon, PnL, outliers, frais, Sharpe, DD, alpha, régimes).
+- `app/core/performance_metrics.py` — métriques étendues (S3-07, désormais
+  appelé par `BacktestResult._compute_metrics()`).
+- `app/core/deflated_sharpe.py` — Deflated Sharpe Ratio (López de Prado 2014),
+  câblé dans `opt_scoring.beats_baseline()` comme gate de naissance.
 
 ### CandleStore — Flux de données V12
 
