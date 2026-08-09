@@ -1144,9 +1144,9 @@ function BacktestResults({ result, scoreThreshold }: { result: any; scoreThresho
                     appliquer les paramètres d'une stratégie. */}
                 {w.strategy && (
                   <Link
-                    href={`/lab?tab=optimizer&strategy=${encodeURIComponent(w.strategy)}`}
+                    href={`/lab?tab=optimizer&strategy=${encodeURIComponent(w.strategy)}${r?.symbol ? `&symbol=${encodeURIComponent(r.symbol)}` : ''}${r?.timeframe ? `&tf=${encodeURIComponent(r.timeframe)}` : ''}`}
                     className="ml-2 underline underline-offset-2 font-medium hover:no-underline whitespace-nowrap"
-                    title={`Optimiser ${w.strategy} puis appliquer les paramètres`}
+                    title={`Optimiser ${w.strategy}${r?.symbol ? ` sur ${r.symbol}` : ''}${r?.timeframe ? ` en ${r.timeframe}` : ''} puis appliquer les paramètres`}
                   >
                     Optimiser cette stratégie →
                   </Link>

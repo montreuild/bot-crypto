@@ -31,7 +31,7 @@ import {
 import {
   Play, Loader2, CheckCircle2, XCircle, Trash2, StopCircle,
   Sparkles, Cpu, Layers, Activity, Zap, ChevronDown, ChevronRight, Info,
-  AlertTriangle, History, FileDown,
+  AlertTriangle, History, FileDown, GitCompare,
 } from 'lucide-react';
 import type { OptimizeJob, OptimizeSpaces } from '@/types';
 import { CostModelCard } from '@/components/cards/cost-model-card';
@@ -41,6 +41,7 @@ import { OptimizerWarnings } from '@/components/cards/optimizer-warnings';
 import { OptimizerHistory } from '@/components/cards/optimizer-history';
 import { TrialsChart } from '@/components/charts/trials-chart';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { ParamSpaceTable } from '@/components/optimizer/param-space-table';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { isOosHint } from '@/lib/limit-hint';
@@ -194,58 +195,7 @@ function LiveProgress({ job }: { job: OptimizeJob }) {
   );
 }
 
-// ── Param space recap ───────────────────────────────────────────────────────
-
-function ParamSpaceTable({ spaces }: { spaces: OptimizeSpaces }) {
-  const entries = Object.entries(spaces || {});
-  if (entries.length === 0) return null;
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Espaces de paramètres</CardTitle>
-        <Badge variant="info">{entries.length} stratégies</Badge>
-      </CardHeader>
-      <CardContent className="p-0">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-dim border-b border-border">
-                <th className="p-3 font-medium">Stratégie</th>
-                <th className="p-3 font-medium">Type</th>
-                <th className="p-3 font-medium">Paramètres</th>
-                <th className="p-3 font-medium text-right">Combinaisons</th>
-                <th className="p-3 font-medium">Timeframes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map(([name, info]) => (
-                <tr key={name} className="border-b border-border/30 hover:bg-card-hover">
-                  <td className="p-3 font-mono font-semibold">{name}</td>
-                  <td className="p-3">
-                    <Badge variant={info.is_ml ? 'purple' : 'default'}>
-                      {info.is_ml ? 'ML' : 'Classique'}
-                    </Badge>
-                  </td>
-                  <td className="p-3 text-xs text-muted">
-                    {info.params ? Object.keys(info.params).join(', ') : '—'}
-                  </td>
-                  <td className="p-3 text-right font-mono">{info.n_combos ?? '—'}</td>
-                  <td className="p-3">
-                    <div className="flex flex-wrap gap-1">
-                      {(info.timeframes || []).map((tf) => (
-                        <Badge key={tf} variant="default">{tf}</Badge>
-                      ))}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+// ── Param space recap (P1-1 : extrait dans @/components/optimizer/param-space-table) ──
 
 // ── Job card ────────────────────────────────────────────────────────────────
 
@@ -253,15 +203,17 @@ function JobCard({
   job,
   defaultExpanded,
   filterMl = false,
+  compareMode = false,
+  compareSelected = false,
+  onCompareToggle,
 }: {
   job: OptimizeJob;
   defaultExpanded?: boolean;
-  /** ML-004/ML-007 — mode ML : le tooltip Apply mentionne l'entraînement du
-   *  modèle, et la note « modèle sauvegardé automatiquement » s'affiche près
-   *  du bouton Apply. En cas de succès, on invalide aussi les queries
-   *  `mlInfo` et `ml-recipes` pour que la StrategyTable du tab ML se
-   *  rafraîchisse (le backend réentraîne le modèle pendant l'apply). */
   filterMl?: boolean;
+  /** P1-10 : mode comparaison — affiche une checkbox au lieu du bouton expand. */
+  compareMode?: boolean;
+  compareSelected?: boolean;
+  onCompareToggle?: (jobId: string) => void;
 }) {
   const apply = useApplyOptimize();
   const cancel = useCancelOptimize();
@@ -370,6 +322,12 @@ function JobCard({
             </div>
             <div className="text-[10px] text-dim mt-1 font-mono pl-6">
               {job.job_id} · {job.method} · started {job.started_at ? timeAgoShort(job.started_at) : '—'}
+              {/* P2-8 : badge si TF non recommandé */}
+              {job.is_recommended === false && (
+                <span className="text-amber-400 ml-2" title={`TFs recommandés: ${job.recommended_tfs?.join(', ') ?? '?'}`}>
+                  ⚠ TF non recommandé
+                </span>
+              )}
             </div>
           </button>
           <Badge variant={variant}>{STATUS_LABEL[job.status] || job.status}</Badge>
@@ -705,6 +663,16 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
   // P1-6 : filtre/recherche sur la liste de jobs
   const [jobsSearch, setJobsSearch] = useState('');
   const [jobsStatusFilter, setJobsStatusFilter] = useState('');
+  // P1-10 : mode comparaison de jobs (max 4)
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const toggleCompare = (jobId: string) => {
+    setCompareIds((prev) =>
+      prev.includes(jobId)
+        ? prev.filter((id) => id !== jobId)
+        : prev.length < 4 ? [...prev, jobId] : prev,
+    );
+  };
   const filteredJobs = jobs.filter((j) => {
     if (jobsStatusFilter && j.status !== jobsStatusFilter) return false;
     if (jobsSearch) {
@@ -716,6 +684,7 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
     }
     return true;
   });
+  const compareJobs = filteredJobs.filter((j) => compareIds.includes(j.job_id));
 
   // P2-5 : export CSV des jobs
   const exportJobsCsv = () => {
@@ -1375,6 +1344,19 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
                 CSV
               </Button>
             )}
+            {/* P1-10 : bouton mode comparaison */}
+            {filteredJobs.length >= 2 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => { setCompareMode(!compareMode); if (compareMode) setCompareIds([]); }}
+                className={cn('h-7 text-xs', compareMode && 'text-cyan-400')}
+                title="Comparer les jobs côte à côte (max 4)"
+              >
+                <GitCompare className="w-3 h-3" />
+                {compareMode ? `Annuler (${compareIds.length})` : 'Comparer'}
+              </Button>
+            )}
             {filteredJobs.length > 0 && (
               <Button
                 size="sm"
@@ -1470,6 +1452,9 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
                           job={job}
                           defaultExpanded={allExpanded || g.key === 'running'}
                           filterMl={filterMl}
+                          compareMode={compareMode}
+                          compareSelected={compareIds.includes(job.job_id)}
+                          onCompareToggle={toggleCompare}
                         />
                       ))}
                     </div>
@@ -1478,6 +1463,97 @@ export function OptimizerView({ filterMl = false }: { filterMl?: boolean }) {
               );
             })}
           </div>
+        )}
+
+        {/* P1-10 : Panneau de comparaison des jobs (max 4).
+            Affiché quand au moins 2 jobs sont sélectionnés en mode comparaison. */}
+        {compareMode && compareJobs.length >= 2 && (
+          <Card className="border-cyan-500/30">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <GitCompare className="w-4 h-4 text-cyan-400" />
+                Comparaison ({compareJobs.length}/4)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-left text-dim border-b border-border">
+                      <th className="p-2">Métrique</th>
+                      {compareJobs.map((j) => (
+                        <th key={j.job_id} className="p-2 text-right font-mono">
+                          {j.strategy}<span className="text-dim">@{j.timeframe}</span>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-border/30">
+                      <td className="p-2 text-muted">OOS Score</td>
+                      {compareJobs.map((j) => (
+                        <td key={j.job_id} className="p-2 text-right font-mono text-emerald-400">
+                          {(j.result?.best_oos_score ?? 0).toFixed(4)}
+                        </td>
+                      ))}
+                    </tr>
+                    <tr className="border-b border-border/30">
+                      <td className="p-2 text-muted">OOS PnL</td>
+                      {compareJobs.map((j) => (
+                        <td key={j.job_id} className="p-2 text-right font-mono">
+                          {formatUSD(j.result?.best_oos_pnl ?? 0)}
+                        </td>
+                      ))}
+                    </tr>
+                    <tr className="border-b border-border/30">
+                      <td className="p-2 text-muted">Trades</td>
+                      {compareJobs.map((j) => (
+                        <td key={j.job_id} className="p-2 text-right font-mono">
+                          {j.result?.best_oos_trades ?? 0}
+                        </td>
+                      ))}
+                    </tr>
+                    <tr className="border-b border-border/30">
+                      <td className="p-2 text-muted">Sharpe</td>
+                      {compareJobs.map((j) => (
+                        <td key={j.job_id} className="p-2 text-right font-mono">
+                          {(j.result?.best_oos_sharpe ?? 0).toFixed(2)}
+                        </td>
+                      ))}
+                    </tr>
+                    <tr className="border-b border-border/30">
+                      <td className="p-2 text-muted">Overfit</td>
+                      {compareJobs.map((j) => (
+                        <td key={j.job_id} className={`p-2 text-right font-mono ${(j.result?.overfit ?? 0) > 2.5 ? 'text-amber-400' : ''}`}>
+                          {(j.result?.overfit ?? 0).toFixed(2)}
+                        </td>
+                      ))}
+                    </tr>
+                    {compareJobs.some((j) => j.deflated_sharpe != null) && (
+                      <tr className="border-b border-border/30">
+                        <td className="p-2 text-muted">Deflated Sharpe</td>
+                        {compareJobs.map((j) => (
+                          <td key={j.job_id} className="p-2 text-right font-mono">
+                            {j.deflated_sharpe != null ? `${(j.deflated_sharpe * 100).toFixed(1)}%` : '—'}
+                          </td>
+                        ))}
+                      </tr>
+                    )}
+                    {compareJobs.some((j) => j.wf_consistency != null) && (
+                      <tr className="border-b border-border/30">
+                        <td className="p-2 text-muted">WF Consistency</td>
+                        {compareJobs.map((j) => (
+                          <td key={j.job_id} className="p-2 text-right font-mono">
+                            {j.wf_consistency != null ? `${j.wf_consistency.toFixed(0)}%` : '—'}
+                          </td>
+                        ))}
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         {/* P0-5 — Historique des optimisations (changelog des apply).

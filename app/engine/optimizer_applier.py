@@ -9,9 +9,14 @@ Extrait de ``optimizer.py`` (découpage ARCH-007). Responsabilités :
     qui écrit sous ``optimizer_results[tf][symbol]`` SANS toucher au bloc
     ``params:`` (configuration par défaut réglée à la main).
 
-Le garde-fou et l'application sont désormais exposés via une classe unique
-``OptimizerResultApplier`` — l'auto-apply et la route API peuvent l'utiliser
-pour éviter de dupliquer la logique de décision.
+.. deprecated:: P2-1
+    ``OptimizerResultApplier`` est du **code mort** : ni la route ``/api/optimize/apply``
+    ni ``auto_optimizer._run_one_job`` n'utilisent cette classe — ils appellent
+    directement ``opt_scoring.beats_baseline`` + ``opt_persistence.apply_best_params``.
+    Créée pour factoriser mais jamais câblée. Conservée pour les tests
+    ``test_optimizer_applier.py`` qui valident la logique de garde-fou indépendamment.
+    À supprimer dans une future refactorisation une fois les tests migrés vers
+    ``test_opt_scoring.py``.
 """
 import logging
 from typing import Optional, Tuple
