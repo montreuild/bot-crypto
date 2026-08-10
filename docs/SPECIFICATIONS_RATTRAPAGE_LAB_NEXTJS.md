@@ -1085,7 +1085,7 @@ Page actuelle : `frontend/src/components/views/optimizer-view.tsx` (724 l.).
 
 #### Non-régression
 
-- [ ] Vérifier backend : `result.baseline` déjà renvoyé ? Si non, ajouter dans `app/engine/optimizer_applier.py` ou `opt_persistence.py`.
+- [ ] Vérifier backend : `result.baseline` déjà renvoyé ? Si non, ajouter dans `opt_persistence.py` (`optimizer_applier.py` a été supprimé — code mort).
 
 #### Plan de migration
 

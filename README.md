@@ -362,6 +362,13 @@ Lien profond vers un onglet précis : `/lab?tab=optimizer`,
 
 ## 📚 Stratégies disponibles
 
+Le dépôt compte **44 fichiers** dans `app/strategies/`, pour une vingtaine de
+stratégies réellement distinctes — la famille Opus Omnibus en représente à elle
+seule une quinzaine de variantes très proches. La liste ci-dessous n'est donc
+pas exhaustive : elle donne les archétypes. La liste faisant foi est celle que
+l'application découvre au démarrage, visible via `GET /api/config`
+(`all_strategies`) ou dans le sélecteur du Laboratoire.
+
 | Fichier | Nom | Description | Paramètres optimisables |
 |---------|-----|-------------|-------------------------|
 | `trend.py` | `trend` | EMA cross + ADX + filtre EMA200 | ema_fast, ema_slow, adx_min |
@@ -458,80 +465,55 @@ les options.
 
 ## 📁 Architecture du projet
 
+Arborescence réelle (vérifiée sur le dépôt). `ARCHITECTURE.md` détaille les
+couches, les invariants de dépendance et les sources uniques.
+
 ```
-crypto_bot_v12/
-├── cli.py                          ← Point d'entrée (CLI)
-├── optimize_runner.py              ← Optimisation séquentielle CLI (anti-veille, verrou)
-├── config.yaml                      ← Sommaire (`include:`)
-├── config/                          ← Configuration par responsabilité
-│   ├── venues.yaml                 ← Exécution : spot/margin, actions, coûts
-│   ├── risk.yaml                   ← Sizing, vetos, trailing
-│   ├── data.yaml                   ← Symboles, univers, fournisseurs
-│   ├── lifecycle.yaml              ← Cycle de vie, budgets, optimiseur
-│   └── ops.yaml                    ← Web, logs, base, notifications
-├── requirements.txt                 ← Dépendances Python 3.14
-├── README.md                        ← Ce fichier
-├── ARCHITECTURE.md                  ← Documentation détaillée
-├── CHANGELOG.md                     ← Historique des versions
-├── CONTRIBUTING.md                  ← Guide contributeurs
-├── docs/
-│   ├── SETUP.md                    ← Installation détaillée
-│   ├── API.md                      ← Documentation API
-│   ├── STRATEGIES.md               ← Écrire une stratégie
-│   └── TROUBLESHOOTING.md          ← Dépannage
+bot-crypto/
+├── cli.py                       ← Point d'entrée (CLI)
+├── optimize_runner.py           ← Optimisation séquentielle CLI (anti-veille, verrou)
+├── config.yaml                  ← Sommaire (`include:`)
+├── config/                      ← Configuration par responsabilité (S11)
+│   ├── venues.yaml              ← Exécution : spot/margin, actions, coûts
+│   ├── risk.yaml                ← Sizing, vetos, trailing
+│   ├── data.yaml                ← Symboles, univers, fournisseurs
+│   ├── lifecycle.yaml           ← Cycle de vie, budgets, optimiseur
+│   └── ops.yaml                 ← Web, logs, base, notifications
+├── requirements.txt             ← Dépendances (Python 3.14)
+├── requirements-dev.txt         ← Outillage de test (pytest, ruff, mypy)
 ├── app/
-│   ├── __init__.py
-│   ├── api/
-│   │   └── main.py                 ← Routes FastAPI (v12)
-│   ├── core/
-│   │   ├── config.py               ← Chargement config YAML
-│   │   ├── logger.py               ← Setup logging structuré
-│   │   ├── database.py             ← SQLAlchemy ORM
-│   │   ├── exchange.py             ← Connexion CCXT
-│   │   ├── indicators.py           ← RSI, EMA, ADX, ATR…
-│   │   ├── risk.py                 ← Gestion risque, circuit breaker
-│   │   ├── trailing.py             ← Trailing stop
-│   │   └── notifications.py        ← Telegram, WhatsApp, Email
-│   ├── engine/
-│   │   ├── engine.py               ← Moteur de signal
-│   │   ├── backtest.py             ← Backtester, WalkForward, MonteCarlo
-│   │   └── scanner.py              ← Scanner de marché
-│   ├── strategies/
-│   │   ├── base.py                 ← Classe de base
-│   │   ├── indicators.py           ← Lib indicateurs partagés
-│   │   ├── trend.py
-│   │   ├── pullback_trend.py
-│   │   ├── supertrend_macd.py
-│   │   ├── breakout.py
-│   │   └── ml_dynamic_threshold.py
-│   ├── optimizer/
-│   │   ├── optimizer.py            ← Grid/Random/Bayesian search
-│   │   └── auto_optimizer.py       ← Jobs async, SSE
-│   ├── live/
-│   │   └── live_trader.py          ← Boucle live/paper trading
-│   ├── ml/
-│   │   └── trainer.py              ← MLStrategyTrainer (cycle de vie BaseStrategyML)
-│   ├── utils/
-│   │   ├── serializers.py          ← Fonctions sérialisation JSON
-│   │   └── cache.py                ← Caching stratégies découvertes
-│   └── web/
-│       └── templates/
-│           ├── base.html           ← Template de base (Jinja2)
-│           ├── dashboard.html      ← Page Live
-│           ├── backtest.html       ← Page Backtest
-│           ├── optimizer.html      ← Page Optimiseur
-│           ├── scanner.html        ← Page Scanner
-│           └── config.html         ← Page Config
-├── tests/
-│   ├── test_backtest.py
-│   ├── test_optimizer.py
-│   ├── test_api.py
-│   └── test_strategies.py
-├── logs/                            ← Logs (créé automatiquement)
-└── deploy/                          ← Scripts déploiement
-    ├── systemd/crypto-bot.service  ← Service Ubuntu
-    └── docker/Dockerfile           ← Conteneur Docker
+│   ├── api/                     ← FastAPI : main, middleware, helpers,
+│   │   ├── routes/              ← 99 routes réparties par domaine
+│   │   └── services/            ← Logique métier des routes (scanner…)
+│   ├── core/         (57 mod.)  ← Socle : config, exécution, risque, données,
+│   │                               indicateurs, SMC, notifications
+│   ├── engine/       (18 mod.)  ← Backtest, optimiseur, walk-forward,
+│   │                               Monte-Carlo, recommandations, risk gate
+│   ├── live/         (15 mod.)  ← LiveTrader et ses mixins (position, balance,
+│   │                               auto-opt, santé)
+│   ├── ml/           (14 mod.)  ← Registre versionné, recettes, gate de
+│   │   └── backend/                promotion, features, entraînement
+│   └── strategies/   (44 str.)  ← Stratégies auto-découvertes
+├── frontend/                    ← Next.js 15 / React 19
+│   ├── src/app/                 ← 9 pages (portfolio, bots, lab, market,
+│   │                               settings, models, trades, data, audit)
+│   ├── src/components/          ← cartes, charts, views, primitives UI
+│   ├── src/hooks/ src/lib/ src/types/
+│   └── e2e/                     ← Playwright (a11y, visuel, parcours)
+├── recipes/                     ← Recettes ML (YAML)
+├── strategies/                  ← Paramètres par stratégie (YAML)
+├── models/                      ← Registre de modèles ML (versions.jsonl…)
+├── data/                        ← Cache Parquet OHLCV / dérivés / features
+├── tests/            (141 fic.) ← Suite pytest
+├── docs/                        ← Conception, plans, audits, archive/
+├── deploy/                      ← systemd, nginx, backup, watchdog
+├── Dockerfile  Dockerfile.frontend  docker-compose*.yml
+└── ARCHITECTURE.md  CHANGELOG.md  CONTRIBUTING.md  DEPLOY.md
+    PRODUCTION_READINESS.md
 ```
+
+> Les pages Jinja2 (`app/web/templates/`) ont été supprimées avec la fin de la
+> migration vers Next.js (S6-09) ; elles n'existent plus dans le dépôt.
 
 ---
 

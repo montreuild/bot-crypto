@@ -6,6 +6,70 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔒 Sécurité : trois routes de lecture n'étaient pas authentifiées
+
+`GET /api/risk`, `GET /api/risk/diagnostics` et `GET /api/ws/status` étaient
+servies sans `verify_api_key`. La première exposait le capital, les enveloppes
+par venue/symbole/slot et le risque engagé à un visiteur anonyme — alors que
+`POST /api/risk/envelopes`, l'écriture, était protégée. L'asymétrie n'avait pas
+de raison d'être.
+
+Les trois sont fermées. Un invariant (`tests/test_api_auth_invariant.py`) fait
+désormais échouer la suite si une route de `app/api/routes/` est déclarée sans
+`verify_api_key` : énumérer les trois routes fautives n'aurait rien protégé de
+la quatrième.
+
+### 🧰 Dettes soldées
+
+**`OptimizerResultApplier` supprimé.** La classe n'a jamais eu d'appelant : ni
+la route `/api/optimize/apply`, ni `auto_optimizer._run_one_job`, qui composent
+directement `beats_baseline` et `apply_best_params`. Ce qui bloquait la
+suppression, c'étaient ses quatre tests — mais ils validaient un orchestrateur
+mort. Ils sont remplacés par `tests/test_optimizer_apply_route.py`, qui exerce
+la vraie route (application, refus 409 sans écriture partielle, override
+`force`, job sans best_params, job inconnu). Au passage, `force=true` n'était
+couvert sur le chemin réel que par un `assert "force" in src` — un grep sur le
+code source. Il l'est maintenant par un test de comportement.
+
+Défaut trouvé en écrivant ces tests : `/api/optimize/apply` lisait
+`state.cfg.get(...)` sans garde et levait un `AttributeError` remonté en 500
+quand l'API démarre sans config, là où les routes voisines répondent 503.
+
+**Éditeur de `strategy_params` réellement accessible.** Le composant
+`strategy-params-editor.tsx` existait mais aucune page ne le rendait — le
+symptôme d'origine (« la route et le hook existent, personne ne les appelle »)
+était simplement décalé d'un cran. Nouvel onglet « Stratégies » dans
+`/settings`, alimenté par `strategy-params-panel.tsx`.
+
+**`positionPct` : duplication éliminée pour de bon.** `monte-carlo-cone.tsx`
+avait été migré vers le module partagé, mais `monte-carlo-panel.tsx` gardait sa
+copie locale. Les deux consomment maintenant `monte-carlo-band.tsx`.
+
+**`AUDIT.md` archivé** dans `docs/archive/AUDIT_2026-06-10.md` : il s'auto-
+déclarait archive tout en restant à la racine.
+
+### ⚠️ Découpage des monolithes : annoncé, pas fait
+
+Treize fichiers ont été retirés parce qu'ils annonçaient un découpage qui n'a
+pas eu lieu :
+
+- `types/{backtest,ml,optimizer,risk,websocket}.ts` et
+  `hooks/use-api-{backtest,ml,optimizer,risk}.ts` — des barils de 6 à 9 lignes
+  ré-exportant depuis `index.ts` et `use-api.ts`, importés par personne.
+- `scanner_facade.py`, `optimizer_utils.py` — mêmes façades côté Python.
+- `backtest_metrics.py` — passe-plat qui omettait `equity_periods_per_year`, le
+  paramètre d'annualisation ajouté lors de la correction d'échelle.
+- `backtest-view.tsx` — n'exportait pas un composant mais une chaîne de
+  caractères décrivant le plan d'extraction.
+
+Un module sans appelant ne factorise rien : il ajoute un chemin d'import qui
+dérive dès que quelqu'un modifie l'original, et il fait croire le travail fait.
+
+**L'état réel reste donc :** `types/index.ts` 911 lignes, `use-api.ts` 727,
+`optimizer_search.py` 1 292, `scanner_service.py` 778, `lab/page.tsx` 1 481,
+`optimizer-view.tsx` ~1 565. 26 fichiers Python et 16 fichiers TS/TSX dépassent
+500 lignes. Le découpage est à faire, pas à déclarer.
+
 ### 🩹 Corrections du lot backtest — sept fonctionnalités qui ne calculaient rien
 
 Relecture du lot décrit plus bas. Sept défauts partageant le même trait : la
