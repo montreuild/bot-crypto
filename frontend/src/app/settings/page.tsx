@@ -30,9 +30,10 @@ import { usePresets, useSetRiskPreset, useSetExpertMode, useBotStatus } from '@/
 import { toast } from 'sonner';
 import {
   Wallet, Bell, Database, ScrollText, ShieldAlert, Settings as SettingsIcon,
-  Check, Loader2, Send, Sun, Moon,
+  Check, Loader2, Send, Sun, Moon, SlidersHorizontal,
 } from 'lucide-react';
 import { UniverseManager } from '@/components/cards/universe-manager';
+import { StrategyParamsPanel } from '@/components/cards/strategy-params-panel';
 import {
   enableBrowserNotifications,
   disableBrowserNotifications,
@@ -141,7 +142,7 @@ function mergePreset(fallback: (typeof PRESETS)[number], remote: any) {
   };
 }
 
-const TABS = ['capital', 'risk', 'notifications', 'data', 'audit', 'ui'] as const;
+const TABS = ['capital', 'risk', 'strategies', 'notifications', 'data', 'audit', 'ui'] as const;
 
 export default function SettingsV2Page() {
   return (
@@ -247,7 +248,7 @@ function SettingsV2Content() {
       {header}
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-6 w-full max-w-3xl">
+        <TabsList className="grid grid-cols-7 w-full max-w-3xl">
           <TabsTrigger value="capital">
             <Wallet className="w-3.5 h-3.5 mr-1.5" />
             Capital
@@ -255,6 +256,10 @@ function SettingsV2Content() {
           <TabsTrigger value="risk">
             <ShieldAlert className="w-3.5 h-3.5 mr-1.5" />
             Risque
+          </TabsTrigger>
+          <TabsTrigger value="strategies">
+            <SlidersHorizontal className="w-3.5 h-3.5 mr-1.5" />
+            Stratégies
           </TabsTrigger>
           <TabsTrigger value="notifications">
             <Bell className="w-3.5 h-3.5 mr-1.5" />
@@ -364,6 +369,12 @@ function SettingsV2Content() {
           </Card>
 
           <RiskFeasibilityPanel />
+        </TabsContent>
+
+        {/* P0-3 : éditeur de strategy_params — la route et le hook existaient,
+            il manquait l'écran qui les appelle. */}
+        <TabsContent value="strategies" className="space-y-4">
+          <StrategyParamsPanel />
         </TabsContent>
 
         <TabsContent value="notifications" className="space-y-4">
