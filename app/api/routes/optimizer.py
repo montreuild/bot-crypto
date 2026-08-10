@@ -333,6 +333,12 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
     if not best or not strat:
         raise HTTPException(400, "Aucun meilleur paramètre")
 
+    # `state.cfg` peut être None (API démarrée sans config chargée) : y accéder
+    # directement levait un AttributeError remonté en 500 « Exception non gérée »,
+    # là où les routes voisines répondent un 503 explicite. On lit la section
+    # `optimizer` de façon défensive plutôt que de faire échouer l'apply sur un
+    # réglage optionnel.
+    _opt_cfg = (state.cfg or {}).get("optimizer", {}) or {}
     ok_quality, reason = beats_baseline(
         result.get("best_oos_trades", 0), result.get("best_oos_pnl", 0),
         result.get("best_oos_wr", 0), result.get("best_oos_sharpe", 0),
@@ -340,8 +346,8 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
         # P0 — Deflated Sharpe gate (cf. auto_optimizer.py)
         n_trials=int(job.get("n_trials", 1)) or 1,
         min_deflated_sharpe=(
-            float(state.cfg.get("optimizer", {}).get("deflated_sharpe_min", 0.5))
-            if state.cfg.get("optimizer", {}).get("deflated_sharpe_gate", True)
+            float(_opt_cfg.get("deflated_sharpe_min", 0.5))
+            if _opt_cfg.get("deflated_sharpe_gate", True)
             else None
         ),
     )

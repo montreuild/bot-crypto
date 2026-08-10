@@ -2,8 +2,8 @@
 
 Découpage ARCH-007 (recherche / persistance / scoring / workers) :
   - ``optimizer_search.py``   : constantes + ``OptimizerSearchEngine`` (grid/random/bayesian)
-  - ``optimizer_applier.py``  : ``OptimizerResultApplier`` (apply_best_params + garde-fou beats_baseline)
-  - ``opt_scoring.py``        : score composite IS/OOS, ratio de surapprentissage
+  - ``opt_scoring.py``        : score composite IS/OOS, ratio de surapprentissage,
+                                ``beats_baseline`` (garde-fou d'application)
   - ``opt_persistence.py``    : YAML stratégies, changelog, stratégies actives par TF
   - ``opt_workers.py``        : workers ProcessPoolExecutor (état partagé, cap mémoire)
 
