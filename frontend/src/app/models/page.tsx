@@ -10,6 +10,7 @@ import { Loader2, Database, AlertCircle, RefreshCw } from 'lucide-react';
 import { RecentMlJobs } from '@/components/cards/recent-ml-jobs';
 import { MLVersioningAudit } from '@/components/cards/ml-versioning-audit';
 import { MLDecisionsRecent } from '@/components/cards/ml-decisions-recent';
+import { MLLeakageChecker } from '@/components/cards/ml-leakage-checker';
 import { RegistryTable } from '@/components/models/ml-registry-components';
 import { TrainForm, SweepForm } from '@/components/models/ml-forms';
 import type { ModelRegistryEntry } from '@/types';
@@ -141,6 +142,10 @@ export default function ModelsPage() {
 
       <TrainForm />
       <SweepForm />
+
+      {/* P1-1 — Fuite temporelle : la fenêtre à backtester recouvre-t-elle
+          l'entraînement du modèle actif ? */}
+      <MLLeakageChecker entries={entries} />
 
       {/* P0-5 — Audit versioning des modèles (migration_check) */}
       <MLVersioningAudit />

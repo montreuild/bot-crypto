@@ -72,38 +72,63 @@ export function normalizeDiagnostics(
 }
 
 /** BT-010 — normalise `ml_info` (le backend renvoie un dict par modèle). */
-export function normalizeMlInfo(
-  mlInfo: any,
-  strategy: string,
-): {
+export interface NormalizedMlInfo {
   auc: number | null;
   n_features: number | null;
   lookahead: number | null;
   proba_up: number | null;
   model_version: string | null;
-} | null {
+  /** Fenêtre d'entraînement du modèle figé effectivement chargé. */
+  train_start: string | null;
+  train_end: string | null;
+  /**
+   * Le backtest a détecté que la fenêtre d'entraînement du modèle recouvre la
+   * fenêtre évaluée — fuite temporelle. Calculé côté serveur par
+   * `_resolve_frozen_ml_model` via `model_registry.overlaps()`, sur l'artefact
+   * RÉELLEMENT chargé (et non sur la version active du moment).
+   */
+  overlap_warning: boolean;
+  /** Aucun modèle résoluble : la stratégie s'est entraînée en ligne. */
+  fallback_to_inline: boolean;
+}
+
+function _fromEntry(entry: any): NormalizedMlInfo {
+  return {
+    auc: entry.auc ?? null,
+    n_features: entry.n_features ?? entry.nFeatures ?? null,
+    lookahead: entry.lookahead ?? null,
+    proba_up: entry.proba_up ?? entry.probaUp ?? null,
+    model_version: entry.version_id ?? entry.model_version ?? null,
+    train_start: entry.train_start ?? null,
+    train_end: entry.train_end ?? null,
+    overlap_warning: Boolean(entry.overlap_warning),
+    fallback_to_inline: Boolean(entry.fallback_to_inline),
+  };
+}
+
+export function normalizeMlInfo(
+  mlInfo: any,
+  strategy: string,
+): NormalizedMlInfo | null {
   if (!mlInfo || typeof mlInfo !== 'object') return null;
-  // Si c'est un dict par modèle (cas backend), prendre le premier ou celui
-  // qui matche la stratégie.
+
   if (Array.isArray(mlInfo)) {
     const entry = mlInfo.find((m: any) => m?.strategy === strategy) ?? mlInfo[0];
-    if (!entry) return null;
-    return {
-      auc: entry.auc ?? null,
-      n_features: entry.n_features ?? entry.nFeatures ?? null,
-      lookahead: entry.lookahead ?? null,
-      proba_up: entry.proba_up ?? entry.probaUp ?? null,
-      model_version: entry.version_id ?? entry.model_version ?? null,
-    };
+    return entry ? _fromEntry(entry) : null;
   }
-  // Si c'est déjà un objet plat (frontend-friendly).
-  return {
-    auc: mlInfo.auc ?? null,
-    n_features: mlInfo.n_features ?? mlInfo.nFeatures ?? null,
-    lookahead: mlInfo.lookahead ?? null,
-    proba_up: mlInfo.proba_up ?? mlInfo.probaUp ?? null,
-    model_version: mlInfo.version_id ?? mlInfo.model_version ?? null,
-  };
+
+  // Forme réelle du backend : `{mode, symbol, timeframe, models: {nom: entry}}`
+  // (cf. `Backtester.run`). Elle n'était pas reconnue : on retombait sur la
+  // branche « objet plat » et on lisait `mlInfo.auc`, absent à ce niveau — le
+  // panneau ML affichait donc « — » sur les quatre indicateurs, à chaque fois.
+  if (mlInfo.models && typeof mlInfo.models === 'object') {
+    const models = mlInfo.models as Record<string, any>;
+    const entry = models[strategy] ?? Object.values(models)[0];
+    return entry ? _fromEntry(entry) : null;
+  }
+
+  // Objet déjà aplati (déjà normalisé en amont, ou payload legacy).
+  return _fromEntry(mlInfo);
 }
 
 /** OPT-001 — reconstruit le bloc `after` depuis `best_oos_*` si le backend

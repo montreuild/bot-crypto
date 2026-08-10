@@ -12,6 +12,7 @@ import type {
   BotStatus, Trade, Bot, SlotBudget, BacktestResult,
   ModelRegistryEntry, ModelArtifact, ModelDecision, MLJobStatus,
   RiskOverview, RiskDiagnostics, VenueEnvelopeConfig,
+  OptimizeValidateResult,
 } from '@/types';
 import {
   BotStatusSchema, BotsResponseSchema, OosTrackerSchema, MlRecipesResponseSchema,
@@ -572,13 +573,22 @@ export const api = {
   // P1-4 — Garde anti-chevauchement (fuite temporelle frozen)
   getMLOverlaps: (tf: string, recipe: string, windowStart: string, windowEnd: string) =>
     apiFetch<{
-      overlaps: boolean; reason: string; active_version: string | null;
-      train_end: string | null; window_start: string; window_end: string;
+      overlaps: boolean;
+      /** 'leak' | 'posterior' | 'unknown' | 'ok' — plus fin que `overlaps`,
+       *  qui ne teste qu'une intersection et laisse donc passer le cas d'un
+       *  modèle entraîné entièrement APRÈS la fenêtre évaluée. */
+      verdict: 'leak' | 'posterior' | 'unknown' | 'ok';
+      reason: string; active_version: string | null;
+      train_start: string | null; train_end: string | null;
+      window_start: string; window_end: string;
     }>(`/ml/registry/overlaps?${new URLSearchParams({ tf, recipe, window_start: windowStart, window_end: windowEnd })}`),
 
   // Opt P1-4 — Valider best_params (Monte-Carlo ou Regime)
   optimizeValidate: (jobId: string, method: 'monte_carlo' | 'regime' = 'monte_carlo') =>
-    apiFetch<any>(`/optimize/validate?${new URLSearchParams({ job_id: jobId, method })}`, { method: 'POST' }),
+    apiFetch<OptimizeValidateResult>(
+      `/optimize/validate?${new URLSearchParams({ job_id: jobId, method })}`,
+      { method: 'POST' },
+    ),
 
   // Opt P1-11 — Purger les jobs anciens
   optimizePurge: (maxAgeHours = 24, keepLast = 200) =>

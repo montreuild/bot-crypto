@@ -69,6 +69,38 @@ export function MLBacktestPanel({ mlInfo, strategy, nTrades }: Props) {
           </div>
         </div>
 
+        {/* Fuite temporelle : le backtest a chargé un modèle dont la fenêtre
+            d'entraînement recouvre la fenêtre évaluée. Le serveur le détecte
+            depuis toujours (`model_registry.overlaps`) mais ne le disait qu'au
+            log — un résultat flatteur pouvait donc être lu comme valide.
+            La source est l'artefact RÉELLEMENT chargé, pas la version active
+            du moment : c'est ce qui rend l'avertissement exact. */}
+        {info.overlap_warning && (
+          <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300 space-y-1">
+            <div className="font-semibold">⚠ Fuite temporelle probable</div>
+            <div>
+              Le modèle {info.model_version ? <code className="font-mono">{info.model_version}</code> : 'chargé'}
+              {info.train_start && info.train_end
+                ? <> a été entraîné sur <span className="font-mono">{info.train_start} → {info.train_end}</span>, période qui recouvre la fenêtre backtestée.</>
+                : <> a été entraîné sur une période qui recouvre la fenêtre backtestée.</>}
+              {' '}Il a donc déjà vu une partie des données sur lesquelles il est évalué :
+              ces performances sont optimistes et ne se reproduiront pas en live.
+            </div>
+            <div className="text-rose-300/80">
+              Backtestez une fenêtre postérieure à <span className="font-mono">{info.train_end ?? "l'entraînement"}</span>,
+              ou entraînez un modèle sur une fenêtre antérieure.
+            </div>
+          </div>
+        )}
+
+        {info.fallback_to_inline && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+            ⚠ Aucun modèle publié n&apos;était résoluble pour ce timeframe : la stratégie s&apos;est
+            entraînée en ligne pendant le backtest. Le résultat ne reflète pas le modèle figé
+            qui tournerait en live.
+          </div>
+        )}
+
         {nTrades === 0 && (
           <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
             ⚠ Aucun signal ML généré — le modèle n&apos;a pas pu produire de trades. Causes possibles :

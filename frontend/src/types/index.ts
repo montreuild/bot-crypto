@@ -909,3 +909,50 @@ export interface Notification {
   message: string;
   title?: string;
 }
+
+// ── P1-4 : validation d'un paramétrage optimisé ─────────────────────────────
+// `POST /api/optimize/validate` rejoue les `best_params` d'un job terminé.
+
+/** Tenue de la STRATÉGIE sur les segments d'un régime donné. */
+export interface RegimeStrategyPerf {
+  n_trades: number;
+  pnl: number;
+  win_rate: number;
+  avg_pnl: number;
+  best: number;
+  worst: number;
+}
+
+/** Comportement du MARCHÉ sur les segments d'un régime — contexte, pas mesure. */
+export interface RegimeMarketSummary {
+  n_segments: number;
+  total_bars: number;
+  avg_return_pct: number;
+  best_return_pct: number;
+  worst_return_pct: number;
+  avg_sharpe: number;
+  worst_max_dd: number;
+}
+
+export interface OptimizeValidateResult {
+  method: 'monte_carlo' | 'regime';
+  n_trades: number;
+  /** method="monte_carlo" — sortie de `MonteCarlo.run`. */
+  result?: Record<string, number>;
+  /** method="regime" — segments détectés sur la série de prix. */
+  segments?: Array<{
+    regime: string;
+    start_time: string;
+    end_time: string;
+    n_bars: number;
+    metrics: Record<string, number>;
+  }>;
+  /** method="regime" — contexte marché par régime. */
+  market?: Record<string, RegimeMarketSummary>;
+  /**
+   * method="regime" — performance de la stratégie par régime. C'est la seule
+   * partie qui dépend des `best_params` : `market` et `segments` seraient
+   * identiques pour n'importe quel paramétrage.
+   */
+  by_strategy?: Record<string, RegimeStrategyPerf>;
+}
