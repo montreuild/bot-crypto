@@ -1,8 +1,8 @@
 # ═══════════════════════════════════════════════════════════════
 #  crypto-bot.service — Systemd unit pour le bot de trading
 #
-#  Prérequis : le venv Python 3.12 doit être créé à l'avance :
-#    python3.12 -m venv /opt/crypto_bot/.venv
+#  Prérequis : le venv Python 3.14 doit être créé à l'avance :
+#    python3.14 -m venv /opt/crypto_bot/.venv
 #    source /opt/crypto_bot/.venv/bin/activate
 #    pip install -r requirements.txt
 #
@@ -15,7 +15,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 [Unit]
-Description=Crypto Trading Bot (Python 3.12)
+Description=Crypto Trading Bot (Python 3.14)
 Documentation=https://github.com/ton-repo/crypto-bot
 After=network-online.target
 Wants=network-online.target
@@ -28,7 +28,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/crypto_bot
 
-# ── Commandes — utilise EXCLUSIVEMENT le venv Python 3.12 ───
+# ── Commandes — utilise EXCLUSIVEMENT le venv Python 3.14 ───
 ExecStart=/opt/crypto_bot/.venv/bin/python cli.py
 ExecStop=/bin/kill -TERM $MAINPID
 

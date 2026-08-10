@@ -16,10 +16,12 @@
 import { useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { ChevronDown, ChevronRight, History, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { ChevronDown, ChevronRight, History, Loader2, Trash2 } from 'lucide-react';
 import { formatDateTime } from '@/lib/utils';
 
 interface ChangelogEntry {
@@ -35,6 +37,21 @@ interface ChangelogEntry {
 
 export function OptimizerHistory({ className }: { className?: string }) {
   const [expanded, setExpanded] = useState(false);
+  const qc = useQueryClient();
+  const [purging, setPurging] = useState(false);
+
+  const handlePurge = async () => {
+    setPurging(true);
+    try {
+      const res = await api.optimizePurge(24, 200);
+      toast.success(`${res.purged} job(s) purgé(s), ${res.remaining} restant(s)`);
+      qc.invalidateQueries({ queryKey: ['optimizeStatus'] });
+    } catch (e: any) {
+      toast.error(`Erreur purge : ${e.message}`);
+    } finally {
+      setPurging(false);
+    }
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: ['configChangelog', 100],
@@ -148,9 +165,15 @@ export function OptimizerHistory({ className }: { className?: string }) {
             Historique des optimisations
           </span>
           {entries.length > 0 && (
-            <Badge variant="muted" className="text-[10px]">
-              {entries.length} entrée{entries.length > 1 ? 's' : ''}
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="muted" className="text-[10px]">
+                {entries.length} entrée{entries.length > 1 ? 's' : ''}
+              </Badge>
+              <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); handlePurge(); }} disabled={purging}
+                className="h-6 text-[10px] text-muted hover:text-danger" title="Purger les jobs > 24h (garde 200)">
+                {purging ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Purger
+              </Button>
+            </div>
           )}
         </CardTitle>
         {expanded && (

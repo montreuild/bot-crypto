@@ -10,23 +10,23 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Palette inspirée trading moderne (Bloomberg + Linear + Vercel)
-        background: '#0a0e14',
-        surface: '#0f1419',
-        card: '#141a23',
-        'card-hover': '#1a212c',
-        border: '#1f2937',
-        'border-hi': '#374151',
-        foreground: '#e5e7eb',
-        muted: '#9ca3af',
-        // S2-F3-US4 — Contraste AA : #6b7280 sur bg-card (#141a23) = 4.0:1, sous
-        // le seuil 4.5:1 pour texte normal. Aligné sur #94a3b8 (slate-400, 5.3:1).
-        dim: '#94a3b8',
-        // S1-F2-US1 — tokens additionnels pour les composants Radix wrappés
-        popover: '#141a23',
-        'popover-foreground': '#e5e7eb',
-        input: '#1f2937',
-        // Accent colors
+        // P0-5 : palette claire par défaut (audit sobre — Deloitte/BCG)
+        // Le dark mode reste disponible via `darkMode: 'class'` + `<html class="dark">`.
+        // Les composants utilisent les tokens sémantiques (background, card, border…)
+        // qui sont résolus par CSS variables dans globals.css.
+        background: 'var(--bg)',
+        surface: 'var(--surface)',
+        card: 'var(--card)',
+        'card-hover': 'var(--card-hover)',
+        border: 'var(--border)',
+        'border-hi': 'var(--border-hi)',
+        foreground: 'var(--fg)',
+        muted: 'var(--muted)',
+        dim: 'var(--dim)',
+        popover: 'var(--card)',
+        'popover-foreground': 'var(--fg)',
+        input: 'var(--border)',
+        // Accent colors (identiques en clair et sombre)
         primary: {
           50: '#ecfeff',
           100: '#cffafe',

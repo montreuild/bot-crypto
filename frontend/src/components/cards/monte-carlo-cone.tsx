@@ -29,6 +29,7 @@
 
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { positionPct } from '@/components/charts/monte-carlo-band';
 
 interface OosMonteCarlo {
   runs?: number;
@@ -58,11 +59,7 @@ interface MonteCarloConeProps {
   className?: string;
 }
 
-/** Position en % sur la bande, bornée à [0, 100]. */
-function positionPct(value: number, min: number, max: number): number {
-  if (!Number.isFinite(value) || max <= min) return 50;
-  return Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
-}
+// P0-2 : positionPct importé depuis @/components/charts/monte-carlo-band
 
 export function MonteCarloCone({ slotKey, oosData, className }: MonteCarloConeProps) {
   const mc = oosData?.monte_carlo;

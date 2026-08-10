@@ -9,6 +9,7 @@ import { useMLRegistry } from '@/hooks/use-api';
 import { Loader2, Database, AlertCircle, RefreshCw } from 'lucide-react';
 import { RecentMlJobs } from '@/components/cards/recent-ml-jobs';
 import { MLVersioningAudit } from '@/components/cards/ml-versioning-audit';
+import { MLDecisionsRecent } from '@/components/cards/ml-decisions-recent';
 import { RegistryTable } from '@/components/models/ml-registry-components';
 import { TrainForm, SweepForm } from '@/components/models/ml-forms';
 import type { ModelRegistryEntry } from '@/types';
@@ -143,6 +144,9 @@ export default function ModelsPage() {
 
       {/* P0-5 — Audit versioning des modèles (migration_check) */}
       <MLVersioningAudit />
+
+      {/* P1-2 — Décisions ML récentes (audit trail global) */}
+      <MLDecisionsRecent />
 
       {/* P1-2 — Jobs ML récents (route /api/ml/jobs) */}
       <RecentMlJobs limit={20} />

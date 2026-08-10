@@ -86,7 +86,7 @@ source /opt/crypto_bot/.venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**Ubuntu 24.04 (Python 3.12 natif, 3.14 via deadsnakes):**
+**Ubuntu 24.04 (Python 3.12 natif, 3.14 via deadsnakes PPA):**
 ```bash
 sudo add-apt-repository ppa:deadsnakes/ppa -y
 sudo apt update && sudo apt install -y python3.14 python3.14-venv python3.14-dev
@@ -469,7 +469,7 @@ crypto_bot_v12/
 │   ├── data.yaml                   ← Symboles, univers, fournisseurs
 │   ├── lifecycle.yaml              ← Cycle de vie, budgets, optimiseur
 │   └── ops.yaml                    ← Web, logs, base, notifications
-├── requirements.txt                 ← Dépendances Python 3.12
+├── requirements.txt                 ← Dépendances Python 3.14
 ├── README.md                        ← Ce fichier
 ├── ARCHITECTURE.md                  ← Documentation détaillée
 ├── CHANGELOG.md                     ← Historique des versions
@@ -565,7 +565,7 @@ crypto_bot_v12/
 - Utiliser moins de trials pour optimiseur (40 au lieu de 100)
 - Vérifier CPU/RAM disponible
 
-Voir [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) pour plus de détails.
+Voir [DEMARRAGE_WINDOWS.md](docs/DEMARRAGE_WINDOWS.md) et [DOCKER.md](docs/DOCKER.md) pour plus de détails.
 
 ---
 
@@ -574,9 +574,13 @@ Voir [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) pour plus de détails.
 - [**ARCHITECTURE.md**](ARCHITECTURE.md) — Vue d'ensemble technique
 - [**CHANGELOG.md**](CHANGELOG.md) — Historique V7 → V8 → V9 → V10 → V11 → V12
 - [**CONTRIBUTING.md**](CONTRIBUTING.md) — Contribution au projet
-- [**docs/SETUP.md**](docs/SETUP.md) — Installation détaillée par OS
-- [**docs/API.md**](docs/API.md) — Documentation API complète
-- [**docs/STRATEGIES.md**](docs/STRATEGIES.md) — Écrire une stratégie personnalisée
+- [**DEPLOY.md**](DEPLOY.md) — Déploiement en production (systemd, Docker, backup)
+- [**PRODUCTION_READINESS.md**](PRODUCTION_READINESS.md) — Checklist Go/No-Go live
+- [**docs/DEMARRAGE_WINDOWS.md**](docs/DEMARRAGE_WINDOWS.md) — Installation détaillée par OS
+- [**docs/DOCKER.md**](docs/DOCKER.md) — Guide Docker (local, tests, production)
+- [**docs/MIGRATION_OKX.md**](docs/MIGRATION_OKX.md) — Migration depuis Binance (MiCA)
+- [**docs/DESIGN_SYSTEM.md**](docs/DESIGN_SYSTEM.md) — Design system frontend
+- [**docs/audit-externe/**](docs/audit-externe/) — Audit technique externe V12
 
 ---
 

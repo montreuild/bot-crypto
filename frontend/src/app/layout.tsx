@@ -38,24 +38,25 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#0a0e14',
+  themeColor: '#f8fafc',
   width: 'device-width',
   initialScale: 1,
   maximumScale: 5,
 };
 
 // Script inline pour appliquer le thème avant le render (évite le flash)
+// P0-5 : la palette claire est la valeur par défaut (si pas de préférence stockée).
 const themeScript = `
 (function() {
   try {
     var stored = localStorage.getItem('theme');
-    var theme = stored || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
-    if (theme === 'light') {
-      document.documentElement.classList.add('light');
-      document.documentElement.classList.remove('dark');
-    } else {
+    var theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    if (theme === 'dark') {
       document.documentElement.classList.add('dark');
       document.documentElement.classList.remove('light');
+    } else {
+      document.documentElement.classList.add('light');
+      document.documentElement.classList.remove('dark');
     }
   } catch (e) {}
 })();
