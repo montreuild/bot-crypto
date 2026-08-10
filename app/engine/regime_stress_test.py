@@ -308,3 +308,69 @@ def regime_summary(segments: List[RegimeSegment]) -> dict:
             'worst_max_dd': round(max(agg['max_dds']), 2),
         }
     return summary
+
+
+def strategy_performance_by_regime(segments: List[RegimeSegment],
+                                    trades: List[dict]) -> dict:
+    """Performance de la STRATÉGIE, ventilée par régime de marché.
+
+    ``regime_summary`` décrit ce qu'a fait le MARCHÉ pendant chaque segment
+    (rendement du sous-jacent, Sharpe du prix, drawdown du prix). C'est une
+    caractérisation de la période, pas une évaluation du paramétrage : deux
+    stratégies opposées donneraient exactement le même résumé.
+
+    Cette fonction répond à la question qu'on se pose réellement en validant
+    des ``best_params`` — « ce paramétrage tient-il en marché baissier ? » — en
+    rattachant chaque trade clôturé au segment qui contient sa date d'entrée.
+
+    Les segments ne couvrent pas toute la série : ceux plus courts que
+    ``min_segment_bars`` sont écartés par ``stress_test_by_regime``. Les trades
+    qui tombent dans ces trous sont comptés sous ``unassigned`` plutôt que
+    silencieusement perdus — sans quoi la somme des PnL par régime ne
+    correspondrait pas au PnL total et personne ne saurait pourquoi.
+
+    Parameters
+    ----------
+    segments : list of RegimeSegment
+        Sortie de ``stress_test_by_regime``.
+    trades : list of dict
+        Trades du backtest. Seuls les clôturés sont pris en compte.
+
+    Returns
+    -------
+    dict
+        ``{regime: {n_trades, pnl, win_rate, avg_pnl, best, worst}}``, plus une
+        entrée ``unassigned`` si des trades tombent hors segment.
+    """
+    closed = [t for t in trades if str(t.get("status", "")).startswith("closed")]
+
+    def _regime_de(trade: dict) -> str:
+        # Les bornes de segment sont des dates (`YYYY-MM-DD`), l'entrée d'un
+        # trade un datetime : on tronque pour comparer sur la même granularité.
+        jour = str(trade.get("entry_time", ""))[:10]
+        if not jour:
+            return "unassigned"
+        for seg in segments:
+            if seg.start_time <= jour <= seg.end_time:
+                return seg.regime
+        return "unassigned"
+
+    par_regime: dict = {}
+    for t in closed:
+        r = _regime_de(t)
+        bucket = par_regime.setdefault(r, {"pnls": []})
+        bucket["pnls"].append(float(t.get("pnl") or 0.0))
+
+    out = {}
+    for regime, bucket in par_regime.items():
+        pnls = bucket["pnls"]
+        gagnants = [p for p in pnls if p > 0]
+        out[regime] = {
+            "n_trades": len(pnls),
+            "pnl": round(sum(pnls), 4),
+            "win_rate": round(len(gagnants) / len(pnls) * 100, 1) if pnls else 0.0,
+            "avg_pnl": round(sum(pnls) / len(pnls), 4) if pnls else 0.0,
+            "best": round(max(pnls), 4) if pnls else 0.0,
+            "worst": round(min(pnls), 4) if pnls else 0.0,
+        }
+    return out

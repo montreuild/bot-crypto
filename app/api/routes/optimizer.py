@@ -550,9 +550,18 @@ def optimizer_validate(
             return {"method": "monte_carlo", "result": mc_result, "n_trades": len(trades)}
 
         elif method == "regime":
-            from app.engine.regime_stress_test import regime_summary, stress_test_by_regime
+            # `regime_summary` décrit ce qu'a fait le MARCHÉ sur chaque segment
+            # (rendement, Sharpe et drawdown du PRIX). Pris seul, il ne valide
+            # aucun paramétrage : deux stratégies opposées produiraient le même
+            # résumé, et le backtest lancé juste au-dessus n'aurait servi qu'à
+            # compter les trades. C'est ce que `by_strategy` corrige — il
+            # rattache chaque trade au régime dans lequel il a été ouvert.
+            from app.engine.regime_stress_test import (
+                regime_summary,
+                strategy_performance_by_regime,
+                stress_test_by_regime,
+            )
             segments = stress_test_by_regime(df, regime_type='trend', min_segment_bars=50)
-            summary = regime_summary(segments)
             return {
                 "method": "regime",
                 "segments": [
@@ -560,7 +569,10 @@ def optimizer_validate(
                      "n_bars": s.n_bars, "metrics": s.metrics}
                     for s in segments
                 ],
-                "summary": summary,
+                # Contexte : comportement du sous-jacent par régime.
+                "market": regime_summary(segments),
+                # Réponse à la question posée : tenue de la STRATÉGIE par régime.
+                "by_strategy": strategy_performance_by_regime(segments, res.trades),
                 "n_trades": len(trades),
             }
         else:

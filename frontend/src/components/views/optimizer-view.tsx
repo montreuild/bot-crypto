@@ -40,6 +40,7 @@ import { TopTrialsTable } from '@/components/tables/top-trials-table';
 import { OptimizerWarnings } from '@/components/cards/optimizer-warnings';
 import { OptimizerHistory } from '@/components/cards/optimizer-history';
 import { TrialsChart } from '@/components/charts/trials-chart';
+import { OptimizerValidatePanel } from '@/components/cards/optimizer-validate-panel';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ParamSpaceTable } from '@/components/optimizer/param-space-table';
 import { timeAgoShort, Metric } from '@/components/optimizer/optimizer-utils';
@@ -423,6 +424,12 @@ function JobCard({
                 comparable d'un run à l'autre sans lui — deux scores très différents
                 peuvent ne différer que par la venue résolue (spot vs margin). */}
             {isDone && result.cost_model && <CostModelCard model={result.cost_model} />}
+
+            {/* P1-4 : éprouver le paramétrage retenu (Monte-Carlo, régimes).
+                Réservé aux jobs terminés — la route exige un `best_params`. */}
+            {isDone && result.best_params && (
+              <OptimizerValidatePanel jobId={job.job_id} />
+            )}
 
             {/* Error */}
             {job.status === 'error' && job.error && (

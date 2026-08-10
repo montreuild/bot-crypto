@@ -6,6 +6,47 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧪 Les deux dernières routes sans interface sont câblées
+
+**Fuite temporelle (`/api/ml/registry/overlaps`).** Nouvelle carte sur `/models` :
+on saisit la fenêtre qu'on compte backtester, chaque recette dit si son modèle
+actif la recouvre.
+
+En la câblant, un angle mort est apparu : `model_registry.overlaps()` ne teste
+qu'une **intersection** de fenêtres. Un modèle entraîné *entièrement après* la
+période évaluée en sortait donc « sans chevauchement », alors que c'est le
+look-ahead le plus extrême — il n'existait pas à la date testée. Sur les données
+du dépôt, une fenêtre 2024 face à des modèles entraînés en 2026 était annoncée
+« causalement valide ». La route renvoie maintenant un `verdict` à quatre états
+(`leak`, `posterior`, `unknown`, `ok`) et rappelle qu'elle interroge le modèle
+actif du moment, pas celui qu'un backtest causal résoudrait.
+
+**Le backtest disait déjà la vérité, mais seulement au log.**
+`_resolve_frozen_ml_model` calcule `overlap_warning` depuis toujours sur
+l'artefact réellement chargé. `MLBacktestPanel` l'affiche désormais, avec la
+fenêtre d'entraînement et la marche à suivre — un résultat flatteur ne peut plus
+être lu comme valide. Le repli sur entraînement inline est signalé de même.
+
+Au passage : `normalizeMlInfo` ne reconnaissait pas la forme réelle du backend
+(`{mode, symbol, timeframe, models: {…}}`). Elle retombait sur la branche
+« objet plat » et lisait `mlInfo.auc`, absent à ce niveau — le panneau ML
+affichait donc « — » sur ses quatre indicateurs à **chaque** backtest de
+stratégie ML, depuis toujours.
+
+**Validation d'un paramétrage (`/api/optimize/validate`).** Nouveau panneau dans
+la JobCard de l'optimiseur : Monte-Carlo (dispersion, probabilité de ruine) et
+tenue par régime de marché.
+
+La réserve posée au moment de livrer cette route est levée. Elle relançait un
+backtest complet avec les `best_params` puis n'en gardait que le **nombre** de
+trades : `regime_summary` décrit le rendement, le Sharpe et le drawdown du
+*prix*, si bien que deux paramétrages opposés auraient produit la même réponse.
+Nouvelle fonction `strategy_performance_by_regime()` : chaque trade est rattaché
+au régime dans lequel il a été ouvert, et la réponse sépare `market` (contexte)
+de `by_strategy` (la mesure). Les trades tombant hors des segments retenus sont
+comptés sous `unassigned` plutôt que perdus — sans quoi la somme des PnL par
+régime ne vaudrait plus le PnL total sans qu'on sache pourquoi.
+
 ### 🔒 Sécurité : trois routes de lecture n'étaient pas authentifiées
 
 `GET /api/risk`, `GET /api/risk/diagnostics` et `GET /api/ws/status` étaient

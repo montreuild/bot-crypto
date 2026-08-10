@@ -601,18 +601,50 @@ def ml_registry_overlaps(
                 "active_version": active.version_id,
                 "train_end": active.train_end,
             }
-        # Vérifier le chevauchement
         does_overlap = registry.overlaps(active, window_start, window_end)
-        return {
-            "overlaps": does_overlap,
-            "reason": (
+
+        # `overlaps()` ne détecte QUE l'intersection des deux fenêtres. Il rend
+        # donc `False` dans le cas le plus extrême de look-ahead : un modèle
+        # entraîné ENTIÈREMENT APRÈS la fenêtre évaluée. Cette route interroge
+        # `latest_promoted()` — le modèle actif aujourd'hui — et non
+        # `resolve(as_of=window_start)` comme le ferait un backtest causal :
+        # sans distinction, on répondrait « causalement valide » à propos d'un
+        # modèle qui n'existait même pas à la date testée.
+        ws = registry.to_iso(window_start)
+        posterieur = bool(
+            active.train_start and ws and not does_overlap and active.train_start > ws
+        )
+        if does_overlap:
+            verdict, reason = "leak", (
                 f"Le backtest [{window_start} → {window_end}] chevauche les données "
                 f"d'entraînement du modèle (train_end={active.train_end}) — risque "
                 f"de fuite temporelle (data leakage)."
-                if does_overlap
-                else "Pas de chevauchement — le backtest est causalement valide."
-            ),
+            )
+        elif posterieur:
+            verdict, reason = "posterior", (
+                f"Le modèle actif a été entraîné APRÈS la fenêtre testée "
+                f"(train_start={active.train_start} > {window_start}) : il n'existait "
+                f"pas à cette date. Un backtest frozen résoudrait un artefact plus "
+                f"ancien — ce verdict ne porte donc pas sur le modèle qui serait "
+                f"réellement utilisé."
+            )
+        elif not active.train_start or not active.train_end:
+            verdict, reason = "unknown", (
+                "Artefact sans provenance datée : le chevauchement n'est pas "
+                "vérifiable (absence de mesure, pas absence de risque)."
+            )
+        else:
+            verdict, reason = "ok", (
+                "Fenêtre d'entraînement antérieure et disjointe — le backtest est "
+                "causalement valide."
+            )
+
+        return {
+            "overlaps": does_overlap,
+            "verdict": verdict,
+            "reason": reason,
             "active_version": active.version_id,
+            "train_start": active.train_start,
             "train_end": active.train_end,
             "window_start": window_start,
             "window_end": window_end,

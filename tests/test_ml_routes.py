@@ -397,3 +397,58 @@ def test_versioning_audit_sans_modele_ne_divise_pas_par_zero(client):
         "total": 0, "with_hash": 0, "without_hash": 0,
         "incompatible": 0, "coverage_pct": 0.0,
     }
+
+
+# ── P1-1 : verdict de fuite temporelle ──────────────────────────────────────
+
+def _artefact(train_start, train_end, version="v1"):
+    class _A:
+        pass
+    a = _A()
+    a.version_id = version
+    a.train_start = train_start
+    a.train_end = train_end
+    return a
+
+
+def test_overlaps_distingue_fuite_posterieur_et_valide(client, monkeypatch):
+    """`overlaps()` ne teste qu'une intersection de fenêtres.
+
+    Un modèle entraîné ENTIÈREMENT APRÈS la fenêtre évaluée en sort donc « sans
+    chevauchement » — alors que c'est le look-ahead le plus extrême : il
+    n'existait pas à la date testée. La route ajoute un `verdict` qui sépare les
+    trois situations, sans quoi l'UI afficherait « causalement valide » sur le
+    pire des cas.
+    """
+    import app.ml.model_registry as registry
+
+    cas = [
+        # (train_start, train_end, fenêtre, verdict attendu)
+        ("2023-01-01", "2024-03-01", ("2024-01-01", "2024-06-01"), "leak"),
+        ("2026-01-01", "2026-07-01", ("2024-01-01", "2024-06-01"), "posterior"),
+        ("2022-01-01", "2023-06-01", ("2024-01-01", "2024-06-01"), "ok"),
+        (None, None, ("2024-01-01", "2024-06-01"), "unknown"),
+    ]
+    for train_start, train_end, (ws, we), attendu in cas:
+        monkeypatch.setattr(registry, "latest_promoted",
+                            lambda tf, recipe, ts=train_start, te=train_end: _artefact(ts, te))
+        r = client.get("/api/ml/registry/overlaps", params={
+            "tf": "1h", "recipe": "omnibus_v4_multi",
+            "window_start": ws, "window_end": we,
+        })
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["verdict"] == attendu, (
+            f"{train_start}..{train_end} → {d['verdict']} "
+            f"(attendu {attendu}) : {d['reason']}"
+        )
+
+
+def test_overlaps_sans_artefact_actif(client, monkeypatch):
+    import app.ml.model_registry as registry
+    monkeypatch.setattr(registry, "latest_promoted", lambda tf, recipe: None)
+    r = client.get("/api/ml/registry/overlaps",
+                   params={"tf": "1h", "recipe": "x",
+                           "window_start": "2024-01-01", "window_end": "2024-06-01"})
+    assert r.status_code == 200
+    assert r.json()["active_version"] is None
