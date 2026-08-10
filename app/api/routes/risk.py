@@ -71,7 +71,7 @@ def _edges() -> dict:
 
 # ── GET /api/risk ──────────────────────────────────────────────────────────
 
-@router.get("/api/risk")
+@router.get("/api/risk", dependencies=[Depends(verify_api_key)])
 def get_risk():
     """Enveloppes et risque engagé aux trois niveaux."""
     if not state.cfg:
@@ -142,7 +142,7 @@ def get_risk():
 
 # ── GET /api/risk/diagnostics ──────────────────────────────────────────────
 
-@router.get("/api/risk/diagnostics")
+@router.get("/api/risk/diagnostics", dependencies=[Depends(verify_api_key)])
 def get_risk_diagnostics():
     """Faisabilité analytique : ce qui ne pourra jamais passer, et pourquoi."""
     if not state.cfg:

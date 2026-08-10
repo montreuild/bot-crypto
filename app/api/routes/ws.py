@@ -36,9 +36,10 @@ import os
 from datetime import datetime, timezone
 from typing import Optional, Set
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
 from app.api import state
+from app.api.helpers import verify_api_key
 from app.core.events import event_hub
 
 logger = logging.getLogger(__name__)
@@ -208,7 +209,7 @@ async def websocket_endpoint(
 
 
 # ── Endpoint REST pour debug ───────────────────────────────────────────────
-@router.get("/api/ws/status")
+@router.get("/api/ws/status", dependencies=[Depends(verify_api_key)])
 async def ws_status():
     """Status du hub WebSocket (debug, monitoring)."""
     return {

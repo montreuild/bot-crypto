@@ -249,16 +249,30 @@ def test_ws_history_replay():
             assert found, "Event historique non replayé"
 
 
-def test_ws_status_endpoint():
-    """L'endpoint REST /api/ws/status retourne l'état du hub."""
+def test_ws_status_endpoint_exige_une_authentification():
+    """P0-1 : `/api/ws/status` était ouvert à tous.
+
+    La route expose le nombre d'abonnés, la taille de l'historique et les
+    canaux — peu sensible pris isolément, mais elle renseignait un visiteur
+    non authentifié sur l'activité du bot. Elle porte désormais
+    `Depends(verify_api_key)` comme le reste de l'API.
+    """
+    from app.api.helpers import verify_api_key
     with TestClient(app) as client:
-        r = client.get("/api/ws/status")
-        assert r.status_code == 200
-        data = r.json()
-        assert "subscribers" in data
-        assert "history_size" in data
-        assert "channels" in data
-        assert isinstance(data["channels"], list)
+        assert client.get("/api/ws/status").status_code == 403
+
+    app.dependency_overrides[verify_api_key] = lambda: None
+    try:
+        with TestClient(app) as client:
+            r = client.get("/api/ws/status")
+            assert r.status_code == 200
+            data = r.json()
+            assert "subscribers" in data
+            assert "history_size" in data
+            assert "channels" in data
+            assert isinstance(data["channels"], list)
+    finally:
+        app.dependency_overrides.pop(verify_api_key, None)
 
 
 def test_ws_multiple_subscribers():

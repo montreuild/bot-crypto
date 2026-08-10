@@ -42,6 +42,7 @@ import { OptimizerHistory } from '@/components/cards/optimizer-history';
 import { TrialsChart } from '@/components/charts/trials-chart';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ParamSpaceTable } from '@/components/optimizer/param-space-table';
+import { timeAgoShort, Metric } from '@/components/optimizer/optimizer-utils';
 import { useTradingTimeframes } from '@/hooks/use-trading-timeframes';
 import { TimeframeButtons } from '@/components/ui/timeframe-select';
 import { isOosHint } from '@/lib/limit-hint';
@@ -516,22 +517,7 @@ function JobCard({
   );
 }
 
-function timeAgoShort(unixSec: number): string {
-  const secs = Math.floor(Date.now() / 1000 - unixSec);
-  if (secs < 60) return `${secs}s`;
-  if (secs < 3600) return `${Math.floor(secs / 60)}min`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h`;
-  return `${Math.floor(secs / 86400)}j`;
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-dim">{label}</div>
-      <div className="font-mono font-semibold">{value}</div>
-    </div>
-  );
-}
+// P2-4 : timeAgoShort et Metric extraits vers @/components/optimizer/optimizer-utils
 
 // ── Vue ─────────────────────────────────────────────────────────────────────
 

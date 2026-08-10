@@ -26,6 +26,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, Dices } from 'lucide-react';
 import { cn, formatUSD } from '@/lib/utils';
+import { positionPct } from '@/components/charts/monte-carlo-band';
 
 export interface MonteCarloData {
   error?: string;
@@ -81,8 +82,10 @@ export function MonteCarloPanel({
   // est d'un seul côté.
   const lo = Math.min(p5, capital || p5);
   const hi = Math.max(p95, capital || p95);
-  const span = hi - lo || 1;
-  const pos = (v: number) => Math.min(Math.max((v - lo) / span, 0), 1) * 100;
+  // P0-2 : `positionPct` partagé avec `monte-carlo-cone.tsx`. La copie locale
+  // qui vivait ici était la moitié restante de la duplication que
+  // `monte-carlo-band.tsx` avait été créé pour absorber.
+  const pos = (v: number) => positionPct(v, lo, hi);
 
   // < 30 trades : le rééchantillonnage porte sur trop peu d'observations pour
   // que les percentiles soient interprétables (avertissement prévu par l'audit).
