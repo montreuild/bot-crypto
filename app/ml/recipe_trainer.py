@@ -111,9 +111,30 @@ class TrainedRecipe:
             return self._save_single(path_prefix)
         return self._save_bundle(path_prefix)
 
+    #: Têtes que le format bundle sait écrire. Toute autre tête entraînée est
+    #: PERDUE à la sauvegarde — d'où l'avertissement dans ``_save_bundle``.
+    _TETES_BUNDLE = ("amp", "dir")
+
     def _save_bundle(self, path_prefix: str) -> bool:
         from app.ml.backend.persistence import save_amp_dir_bundle
         amp, dir_ = self.boosters.get("amp"), self.boosters.get("dir")
+
+        # Une tête entraînée que le format ne sait pas écrire disparaît sans
+        # rien casser : l'entraînement réussit, l'artefact est valide, et la
+        # tête n'existe simplement pas à l'inférence. C'est le pire mode de
+        # défaillance — celui qu'aucun test ne voit et qui se découvre en
+        # cherchant pourquoi une stratégie n'exploite pas un signal. On le dit.
+        perdues = [t for t in sorted(self.boosters) if t not in self._TETES_BUNDLE]
+        if perdues:
+            logger.warning(
+                f"[RecipeTrainer] {self.recipe} : tête(s) {perdues} entraînée(s) "
+                f"mais NON ÉCRITE(S) — le format {self.recipe!r} "
+                f"(lgbm_amp_dir_bundle) ne stocke que {list(self._TETES_BUNDLE)}. "
+                f"Leur AUC reste dans train_meta pour la mesure, mais elles ne "
+                f"seront pas servies à l'inférence : servir ces têtes demande un "
+                f"format de persistance multi-têtes."
+            )
+
         if amp is None or dir_ is None:
             logger.error(
                 f"[RecipeTrainer] {self.recipe} : format bundle demandé mais têtes "

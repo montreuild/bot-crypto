@@ -6,6 +6,74 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🏛️ Structure de marché dans le ML — la tête `dir` passe de 0.53 à 0.60
+
+Le dépôt contenait ~1 240 lignes de moteur Smart Money Concepts / ICT
+(`app/core/smc*.py`) que la couche ML n'utilisait **pas du tout** : zéro colonne
+SMC dans les catalogues, zéro import depuis `app/ml/`. Le modèle voyait RSI,
+MACD, ADX, 53 colonnes de moyennes mobiles — et rien de la structure de marché.
+
+Nouveau catalogue **`v5_smc@1`** : 437 colonnes v4 + **21 colonnes SMC** +
+6 colonnes de régime = 464. Écarts contre `v4` seul, ablation sur 4 jeux
+indépendants (BTC/USDC et ETH/USDC, 1h et 30m) :
+
+| Jeu | Δ AUC amp | Δ AUC dir |
+|---|---:|---:|
+| BTC/USDC 1h | +0.0099 | **+0.0756** |
+| ETH/USDC 1h | +0.0067 | **+0.0643** |
+| BTC/USDC 30m | +0.0053 | **+0.0885** |
+| ETH/USDC 30m | +0.0071 | **+0.0640** |
+
+La tête `dir` passe d'environ **0.53 à 0.60** — d'un pile ou face à peine biaisé
+à un edge directionnel réel. C'était la limite structurante d'`omnibus_full`,
+documentée comme telle, et c'est elle qui cède.
+
+Le mécanisme est lisible : les deux colonnes qui dominent la tête `dir` sont les
+distances au FVG non comblé le plus proche, au-dessus et en dessous. Leur
+rapport dit de quel côté se trouve le déséquilibre non comblé — la thèse
+centrale d'ICT, que le modèle retrouve seul.
+
+**Deux hypothèses infirmées, conservées avec leurs chiffres :**
+
+- **le bloc régime n'apporte rien** (−0.0025 sur `amp`, −0.0002 sur `dir`).
+  LightGBM reconstruit déjà `classify_regime` sans peine : c'est une poignée de
+  comparaisons de seuils sur des colonnes présentes. Conservé (6 colonnes sur
+  464, ne dégrade rien, rend le régime lisible), mais le gain n'est pas là ;
+- **la tête triple-barrière `tb` est moins bien discriminée que `dir`** sur les
+  4 jeux (−0.020 à −0.046). La cible est plus difficile — il faut avoir raison
+  sur le sens, l'ampleur ET l'ordre d'arrivée des barrières. Réserve : l'AUC
+  mesure le classement, pas la rentabilité ; trancher demande un backtest.
+
+**Absence de fuite temporelle vérifiée par test de préfixe** — les features sont
+recalculées sur `df[:4000]` et comparées au calcul sur `df[:6000]` tronqué.
+20 des 21 colonnes sont identiques au bit près. Ce test a trouvé deux défauts
+réels qu'aucun test de valeur n'aurait vus :
+
+- un ordre de clés rendait la validité d'un FVG dépendante de la longueur de la
+  série analysée (`filled_at` masquait `mitigated_at` selon la fenêtre) ;
+- sans péremption, les compteurs de zones devenaient des **horloges** —
+  `smc_breaker_n_fresh` corrélait à **0.96** avec l'indice de barre, ce qui
+  aurait laissé le modèle mémoriser l'époque du jeu d'entraînement.
+
+**Correctif hors périmètre : `labels.params` n'était lu par personne.**
+`load_recipe` lisait `features.params` mais pas son pendant côté labels. Un bloc
+`labels: params: {...}` était silencieusement ignoré — la recette aurait décrit
+une cible et l'entraînement en aurait construit une autre. `label_params` est
+ajouté et **entre dans `Recipe.hash()`** : deux jeux de barrières définissent
+deux cibles, les laisser hors du hash leur ferait partager une lignée
+d'artefacts.
+
+**Garde-fou :** `TrainedRecipe._save_bundle` avertit désormais quand une tête
+entraînée n'est pas écrite par le format de persistance, au lieu de la laisser
+disparaître en silence (`lgbm_amp_dir_bundle` ne stocke que `amp` et `dir`).
+
+Recette recommandée : **`recipes/omnibus_smc.yaml`**. Mesures complètes et
+limites : `docs/ML_ABLATION_SMC.md`. 38 tests ajoutés.
+
+⚠️ Aucun backtest n'a encore été fait : tout ceci est de l'AUC, donc de la
+qualité de classement. La conversion en rentabilité nette de frais dépend de la
+stratégie qui exploitera la recette.
+
 ### 🧬 Nouvelle recette ML `omnibus_full` — mesurée, pas supposée
 
 Recette de référence exploitant toute la surface réellement câblée de la couche

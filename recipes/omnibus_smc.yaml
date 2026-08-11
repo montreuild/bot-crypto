@@ -1,0 +1,117 @@
+recipe: omnibus_smc
+version: 1
+description: >
+  `omnibus_full` augmentée de la structure de marché. UN SEUL écart avec elle :
+  le catalogue passe de `v4_polars@1` (437 colonnes) à `v5_smc@1` (464), qui
+  ajoute 21 colonnes Smart Money Concepts / ICT et 6 colonnes de régime.
+
+  Tout le reste — horizons, `amp_top_pct`, hyperparamètres, fenêtre, gate — est
+  repris à l'identique. C'est délibéré : si un seul réglage bougeait en même
+  temps que le catalogue, l'écart mesuré ne serait attribuable à rien.
+
+  MOTIVATION. Le dépôt a ~1 240 lignes de moteur SMC (`app/core/smc*.py`) que
+  la couche ML n'utilisait pas du tout : zéro colonne SMC dans les catalogues,
+  zéro import depuis `app/ml/`. Le modèle voyait RSI, MACD, ADX, 53 colonnes de
+  moyennes mobiles, du volume — et rien de la structure. De même, aucune
+  colonne ne portait le RÉGIME : ses six ingrédients étaient présents, mais le
+  modèle devait redécouvrir `classify_regime` à partir d'eux.
+
+  RÉSULTAT MESURÉ — ablation sur 4 jeux indépendants (BTC/USDC et ETH/USDC,
+  1h et 30m, 47 000 à 54 000 barres chacun), écarts contre `v4` seul :
+
+      jeu             Δ AUC amp    Δ AUC dir
+      BTC/USDC 1h      +0.0099      +0.0756
+      ETH/USDC 1h      +0.0067      +0.0643
+      BTC/USDC 30m     +0.0053      +0.0885
+      ETH/USDC 30m     +0.0071      +0.0640
+      moyenne          +0.0073      +0.0731
+
+  La tête `dir` passe d'environ 0.53 à 0.60 : d'un pile ou face à peine biaisé
+  à un edge directionnel réel. C'était la limite structurante d'`omnibus_full`,
+  et c'est elle qui cède. Le gain est du même ordre sur les quatre jeux, ce qui
+  écarte l'accident sur un symbole ou un timeframe.
+
+  D'OÙ VIENT LE GAIN. Les deux colonnes qui dominent la tête `dir` sont les
+  distances au FVG non comblé le plus proche, au-dessus et en dessous (gains
+  5918 et 5737, contre 3322 pour la meilleure colonne v4). Leur rapport dit de
+  quel côté se trouve le déséquilibre non comblé le plus proche — la thèse
+  centrale d'ICT, que le modèle retrouve seul. Sur `amp`, l'ATR domine comme
+  toujours, mais `smc_killzone` monte au 6ᵉ rang : les killzones de Londres et
+  New York sont bien les moments où les grands mouvements arrivent.
+
+  ⚠ LE BLOC RÉGIME NE SERT À RIEN, et c'est mesuré : −0.0025 sur `amp`,
+  −0.0002 sur `dir` en moyenne quand on l'ajoute seul ; +0.0018 sur `dir` et
+  −0.0006 sur `amp` quand on l'ajoute par-dessus SMC, avec un signe qui change
+  d'un jeu à l'autre. LightGBM reconstruit déjà `classify_regime` sans peine —
+  c'est une poignée de comparaisons de seuils sur des colonnes présentes,
+  c'est-à-dire exactement ce qu'un arbre fait nativement.
+
+  Il est conservé parce qu'il coûte 6 colonnes sur 464, ne dégrade rien et rend
+  le régime lisible dans les diagnostics. Mais il ne faut pas lui attribuer le
+  gain : TOUT le gain vient du bloc SMC.
+
+  Détail des mesures et vérification d'absence de fuite : `docs/ML_ABLATION_SMC.md`.
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Features
+# ─────────────────────────────────────────────────────────────────────────────
+features:
+  catalog: v5_smc@1
+
+  # Les deux bascules valent `true` par défaut dans le constructeur ; on les
+  # écrit quand même, parce qu'un paramètre implicite n'entre pas dans le hash
+  # de la recette de façon lisible et qu'une ablation doit être explicite.
+  params:
+    smc: true
+    regime: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Labels — repris tels quels d'`omnibus_full` (mesurés là-bas)
+# ─────────────────────────────────────────────────────────────────────────────
+labels:
+  scheme: amp_dir_quantile
+  horizons: [1, 2, 3, 6]
+  amp_top_pct: 0.20
+
+heads: [amp, dir]
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Hyperparamètres — repris tels quels d'`omnibus_full`
+# ─────────────────────────────────────────────────────────────────────────────
+hp:
+  n_estimators: 1200
+  learning_rate: 0.02
+  num_leaves: 31
+
+  # Encore plus nécessaire ici qu'avec v4 : 464 colonnes pour quelques milliers
+  # de lignes. L'élagage sert aussi de MESURE — le rang des colonnes SMC dans
+  # les importances dit si le bloc porte du signal ou seulement du bruit.
+  prune_features: true
+
+  calibrate: true
+  importance_top_n: 40      # 30 chez omnibus_full : il y a 27 colonnes de plus,
+                            # et on veut voir si les nouvelles entrent au top.
+  log_training: true
+
+hp_by_tf:
+  1h:
+    calibrate: false        # même raison qu'`omnibus_full` : l'isotone dégrade
+                            # l'ECE de +461 % en 1h (trop peu de positifs dans
+                            # le set de validation).
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Fenêtre et gate — identiques à `omnibus_full`
+# ─────────────────────────────────────────────────────────────────────────────
+window:
+  bars:
+    default: max
+  min_bars: 2000
+  cadence_bars: 800
+
+gate:
+  metric: auc_amp
+  holdout_bars: 1400
+  auc_floor: 0.55
+  epsilon: 0.01
+
+persistence: lgbm_amp_dir_bundle

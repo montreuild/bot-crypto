@@ -1,0 +1,114 @@
+recipe: omnibus_smc_tb
+version: 1
+description: >
+  `omnibus_smc` avec une TROISIÈME TÊTE : `tb`, la cible triple-barrière.
+
+  Un seul écart avec `omnibus_smc` — le schéma de labellisation passe de
+  `amp_dir_quantile` à `triple_barrier`, qui produit `amp` et `dir` à
+  l'identique plus `tb`. Les features, les hyperparamètres, la fenêtre et le
+  gate sont inchangés, pour que l'écart mesuré soit attribuable à la cible.
+
+  CE QUE `tb` CORRIGE. `dir` demande « le rendement à t+h est-il positif ? ».
+  Cette question ignore le CHEMIN : un mouvement qui finit à +2 % après être
+  passé par −3 % est un succès pour `dir` et une position stoppée pour le bot.
+  `tb` demande « une position longue ouverte ici, avec ce stop et cette cible,
+  aurait-elle touché la cible avant le stop ? » — la décision réellement prise
+  par une stratégie.
+
+  ÉQUILIBRE DES CLASSES mesuré sur BTC/USDC 1h, 12 000 barres :
+
+      TP/SL/horizon        cible     stop    expiré
+      1.5 / 1.0 / 12      33.6 %   56.3 %   10.2 %     ← retenu
+      1.0 / 1.0 / 12      45.7 %   49.2 %    5.2 %
+      2.0 / 1.0 / 24      30.7 %   65.0 %    4.4 %
+      1.5 / 1.0 /  6      26.1 %   46.8 %   27.1 %
+
+  Le réglage retenu garde une expiration basse (10 %) sans rendre la cible
+  quasi inatteignable. À H=6 un quart des cas expirent — la cible mesurerait
+  surtout la lenteur du marché ; à TP=SL=1.0 elle se rapproche du pile ou face
+  que `dir` mesure déjà.
+
+  ⚠⚠ RÉSULTAT : L'HYPOTHÈSE EST INFIRMÉE. Mesuré dans le MÊME entraînement
+  (mêmes features, même fenêtre, même split — seule la question change) :
+
+      jeu             AUC dir   AUC tb     écart
+      BTC/USDC 1h      0.6055   0.5688   -0.0367
+      ETH/USDC 1h      0.5973   0.5515   -0.0458
+      BTC/USDC 30m     0.6118   0.5896   -0.0222
+      ETH/USDC 30m     0.5907   0.5704   -0.0203
+
+  `tb` est moins bien discriminée que `dir` sur les quatre jeux. La cible
+  triple-barrière est simplement PLUS DIFFICILE : il faut avoir raison sur le
+  sens, sur l'ampleur ET sur l'ordre d'arrivée des deux barrières. Une fois le
+  bloc SMC en place, `dir` n'est plus le maillon faible qu'elle était, et la
+  reformulation ne rachète pas ce surcroît de difficulté.
+
+  DEUX RÉSERVES, qui empêchent de clore le sujet :
+  - les AUC ne sont pas strictement comparables — `tb` a ~34 % de positifs
+    contre ~50 % pour `dir` ;
+  - l'AUC mesure le CLASSEMENT, pas la rentabilité. `tb` répond à la question
+    du trader ; un seuil sur `tb` pourrait sélectionner de meilleurs trades
+    malgré une AUC plus basse. Trancher demande un BACKTEST, pas une AUC.
+
+  ⚠ CETTE RECETTE N'EST PAS DESTINÉE À LA PRODUCTION EN L'ÉTAT.
+  `lgbm_amp_dir_bundle` n'écrit que `.amp.lgb` et `.dir.lgb` : la tête `tb` est
+  entraînée puis PERDUE à la sauvegarde. `TrainedRecipe._save_bundle` émet un
+  avertissement explicite à ce sujet plutôt que de la laisser disparaître en
+  silence. La servir demanderait un format de persistance multi-têtes — à ne
+  construire que si un backtest montre que `tb` sélectionne mieux.
+
+  Elle est conservée comme véhicule de mesure : elle rend l'expérience
+  rejouable (`scripts/measure_triple_barrier.py`) sans avoir à la réécrire.
+  Voir `docs/ML_ABLATION_SMC.md`.
+
+features:
+  catalog: v5_smc@1
+  params:
+    smc: true
+    regime: true
+
+labels:
+  scheme: triple_barrier
+
+  # `amp` et `dir` gardent exactement les réglages mesurés d'`omnibus_full`,
+  # pour rester comparables d'une recette à l'autre.
+  horizons: [1, 2, 3, 6]
+  amp_top_pct: 0.20
+
+  params:
+    # Barrières en multiples d'ATR et non en pourcentage : à ±1 %, un stop est
+    # hors de portée en régime calme et touché à chaque bougie en régime agité
+    # — la cible mesurerait la volatilité au lieu de la qualité de l'entrée.
+    tb_tp_atr: 1.5
+    tb_sl_atr: 1.0
+    tb_max_bars: 12
+    tb_atr_period: 14
+
+heads: [amp, dir, tb]
+
+hp:
+  n_estimators: 1200
+  learning_rate: 0.02
+  num_leaves: 31
+  prune_features: true
+  calibrate: true
+  importance_top_n: 40
+  log_training: true
+
+hp_by_tf:
+  1h:
+    calibrate: false
+
+window:
+  bars:
+    default: max
+  min_bars: 2000
+  cadence_bars: 800
+
+gate:
+  metric: auc_amp
+  holdout_bars: 1400
+  auc_floor: 0.55
+  epsilon: 0.01
+
+persistence: lgbm_amp_dir_bundle
