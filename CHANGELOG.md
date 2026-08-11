@@ -6,6 +6,56 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🎯 Stratégie `smc_ml_edge` — l'AUC ne suffit pas, et c'est mesuré
+
+Nouvelle stratégie consommant la recette `omnibus_smc`, et le backtest que
+`docs/ML_ABLATION_SMC.md` réclamait pour savoir si un edge directionnel de 0.60
+d'AUC se convertit en rentabilité nette de frais.
+
+**Réponse : pas en l'état.** Profitable sur BTC/USDC, perdante sur ETH/USDC.
+
+| | trades | win | PnL | buy & hold | Sharpe | PF |
+|---|---:|---:|---:|---:|---:|---:|
+| **BTC** top10 + filtre SMC | 22 | 59.1 % | **+5.98 %** | −22.08 % | 0.79 | 1.81 |
+| **ETH** top10 + filtre SMC | 30 | 43.3 % | −3.07 % | +8.13 % | −0.78 | 0.78 |
+
+Le résultat BTC n'est pas du bêta — le marché perd 22 % sur la fenêtre et la
+stratégie prend les deux sens. Mais **22 trades sur un seul symbole ne font pas
+un edge**, et ETH contredit, à AUC pourtant équivalente (0.596 contre 0.607).
+
+**Ce qui réplique, en revanche : les frais décident.** Sur les deux symboles, le
+PnL se dégrade monotonement avec le nombre de trades — à 262 trades, 9.1 % de
+frais transforment un brut positif en net négatif (profit factor 1.81 → 1.10 →
+0.98). L'edge, quand il existe, ne survit pas à un trade tous les 45 barres.
+
+**Une attente prise à revers :** le filtre de structure SMC devait être
+redondant avec ce que le modèle voit déjà. Mesuré, il divise les trades par 5
+et fait passer le win rate de 48.7 % à 59.1 %, le Sharpe de −0.11 à 0.79, le
+drawdown de −10.7 % à −3.2 %. Il retire les *mauvais* trades. Un classement
+n'est pas un veto : la règle dure exprime ce que la fonction de score ne peut
+pas exprimer.
+
+**Prochain levier identifié : pas plus de features, mais la géométrie de
+sortie.** Sur ETH, 40.8 % de trades gagnants pour un profit factor de 0.49
+signifie que les positions sortent avant leur cible — `sl_atr_mult`,
+`tp_atr_mult` et `max_hold_bars` n'ont jamais été optimisés.
+
+**Deux défauts trouvés en chemin :**
+
+- **des seuils absolus qui ne prenaient aucun trade.** `p_event > 0.55` et
+  `|p_up − 0.5| > 0.12` semblaient raisonnables ; la tête `amp` cible le top
+  20 % donc ses sorties tournent autour de 0.35, et `p_up` ne s'étale que de
+  0.398 à 0.599. Zéro trade, sans erreur ni avertissement. Les portes sont
+  désormais des **quantiles** recalibrés à chaque réentraînement ;
+- **un backtest quadratique** — le frame était tronqué puis 464 colonnes
+  sélectionnées à chaque barre. En découpant la ligne avant les colonnes, on
+  passe d'un backtest qui ne terminait pas à ~26 ms par barre.
+
+Mesures et suite : `docs/STRATEGY_SMC_ML_EDGE.md`. 11 tests ajoutés, dont la
+re-vérification que le cache de features ne lit pas le futur — sans quoi les
+chiffres ci-dessus ne vaudraient rien, et seraient d'autant plus tentants à
+croire qu'ils sont flatteurs sur BTC.
+
 ### 🏛️ Structure de marché dans le ML — la tête `dir` passe de 0.53 à 0.60
 
 Le dépôt contenait ~1 240 lignes de moteur Smart Money Concepts / ICT
