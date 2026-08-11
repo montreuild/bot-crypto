@@ -66,6 +66,18 @@ class Recipe:
     #: des têtes : deux recettes à tête unique peuvent viser des cibles
     #: différentes. Défaut = comportement historique (quantile d'amplitude).
     label_scheme: str = "amp_dir_quantile"
+    #: Paramètres LIBRES du schéma de labellisation, pendant exact de
+    #: ``features_params``. ``horizons`` et ``amp_top_pct`` sont nommés
+    #: explicitement au-dessus parce qu'ils préexistent et que tous les
+    #: consommateurs les lisent sous ce nom ; tout ce qu'un schéma demande en
+    #: plus (les barrières de ``triple_barrier``, par exemple) passe par ici.
+    #:
+    #: Sans ce champ, un bloc ``labels.params:`` écrit dans un YAML serait lu
+    #: par personne : la recette décrirait une cible et l'entraînement en
+    #: construirait une autre, sans que rien ne le signale. C'est le même
+    #: défaut de « réglage inerte » que ``hp_for_tf`` documente pour les
+    #: hyperparamètres par timeframe.
+    label_params: Dict[str, Any] = field(default_factory=dict)
     heads: List[str] = field(default_factory=lambda: ["amp", "dir"])
     hp: Dict[str, Any] = field(default_factory=dict)
     #: Surcharges d'hyperparamètres PAR TIMEFRAME, superposées à ``hp``
@@ -98,6 +110,12 @@ class Recipe:
             "label_horizons": sorted(int(h) for h in self.label_horizons),
             "amp_top_pct": round(float(self.amp_top_pct), 6),
             "label_scheme": self.label_scheme,
+            # Au même titre que ``features_params`` : ces valeurs définissent la
+            # CIBLE apprise. Deux jeux de barrières produisent deux modèles qui
+            # ne répondent pas à la même question ; les laisser hors du hash les
+            # ferait partager une lignée d'artefacts, donc comparer par le gate
+            # des candidats incomparables.
+            "label_params": self.label_params,
             "heads": sorted(self.heads),
             "hp": self.hp,
             # ``hp_by_tf`` entre EN ENTIER, pas seulement le bloc du TF courant :
@@ -139,6 +157,7 @@ class Recipe:
         p["label_horizons"] = list(self.label_horizons)
         p["amp_top_pct"] = float(self.amp_top_pct)
         p.update(self.features_params)
+        p.update(self.label_params)
         return p
 
     def hp_for_tf(self, tf: Optional[str]) -> Dict[str, Any]:
@@ -193,6 +212,7 @@ def _coerce(name: str, raw: Dict[str, Any]) -> Recipe:
         label_horizons=[int(h) for h in (labels.get("horizons") or [1, 3, 6])],
         amp_top_pct=float(labels.get("amp_top_pct", 0.30)),
         label_scheme=str(labels.get("scheme", "amp_dir_quantile")),
+        label_params=dict(labels.get("params") or {}),
         heads=list(raw.get("heads") or ["amp", "dir"]),
         hp=dict(raw.get("hp") or {}),
         hp_by_tf={str(tf): dict(block or {})

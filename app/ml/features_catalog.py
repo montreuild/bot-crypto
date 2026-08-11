@@ -177,9 +177,127 @@ def _build_dyn_threshold(df: pl.DataFrame, **_ignored) -> Optional[FeatureSet]:
     return FeatureSet(frame=frame, names=names)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  v5_smc@1 — v4_polars + structure de marché (SMC/ICT) + régime explicite
+# ─────────────────────────────────────────────────────────────────────────────
+#: Noms des colonnes de régime, dans l'ordre de construction.
+REGIME_FEATURE_NAMES: List[str] = [
+    "regime_code",
+    "regime_is_range",
+    "regime_is_trend_up",
+    "regime_is_trend_dn",
+    "regime_is_choppy",
+    "regime_age",
+]
+
+#: Plafond de `regime_age`. Au-delà, « le régime dure depuis longtemps » ne se
+#: précise plus, et une valeur non bornée croît avec l'indice de barre.
+_REGIME_AGE_MAX = 200.0
+
+
+def _build_regime_block(feats: pl.DataFrame, adx_threshold: float,
+                        di_rescue: float) -> Optional[pl.DataFrame]:
+    """Régime de marché en colonnes explicites.
+
+    ``classify_regime`` existait déjà et pilotait le routing des setups, mais
+    aucune de ses six entrées n'était présentée au modèle sous forme de
+    conclusion : ``ADX``, ``MM_bullish_align``, ``MM_bearish_align``,
+    ``DI_diff``, ``slope_SMA20`` et ``BB_width_rank100`` sont bien dans les 437
+    colonnes de v4, et le modèle devait donc RÉAPPRENDRE la règle à partir de
+    ses ingrédients. Lui donner la conclusion ne lui apprend rien de neuf sur le
+    marché ; cela lui économise des splits, ce qui compte quand l'arbre doit
+    aussi apprendre le reste.
+
+    L'encodage est one-hot et non ordinal : les codes 0/1/2/3 (range, hausse,
+    baisse, choppy) ne sont pas ordonnés, et un split ``regime_code <= 1``
+    grouperait « range + tendance haussière » — une catégorie qui n'a pas de
+    sens. ``regime_code`` est conservé en plus, sans coût, parce que LightGBM
+    peut y trouver une partition utile que le one-hot rendrait plus coûteuse à
+    exprimer.
+    """
+    from app.ml.backend.features import regime_history
+
+    try:
+        codes, _labels = regime_history(feats, len(feats), adx_threshold, di_rescue)
+    except Exception as e:  # pragma: no cover — défensif
+        logger.warning(f"[v5_smc] régime indisponible : {e}")
+        return None
+    if len(codes) != len(feats):
+        logger.warning(
+            f"[v5_smc] régime : {len(codes)} lignes pour {len(feats)} features — bloc ignoré"
+        )
+        return None
+
+    arr = np.asarray(codes, dtype=np.int16)
+    # Âge du régime courant : nombre de barres depuis le dernier changement.
+    age = np.zeros(len(arr), dtype=np.float64)
+    for i in range(1, len(arr)):
+        age[i] = 0.0 if arr[i] != arr[i - 1] else min(age[i - 1] + 1.0, _REGIME_AGE_MAX)
+
+    return pl.DataFrame({
+        "regime_code": arr.astype(np.float64),
+        "regime_is_range": (arr == 0).astype(np.float64),
+        "regime_is_trend_up": (arr == 1).astype(np.float64),
+        "regime_is_trend_dn": (arr == 2).astype(np.float64),
+        "regime_is_choppy": (arr == 3).astype(np.float64),
+        "regime_age": age,
+    })
+
+
+def _build_v5_smc(df: pl.DataFrame, adx_threshold: float = 20.0,
+                  di_rescue: float = 10.0, smc: bool = True,
+                  regime: bool = True, **_ignored) -> Optional[FeatureSet]:
+    """v4_polars augmenté de la structure de marché et du régime.
+
+    ``smc`` et ``regime`` sont des bascules d'ABLATION. Elles vivent dans
+    ``features.params`` d'une recette, donc entrent dans ``Recipe.hash()`` :
+    les quatre combinaisons produisent quatre lignées d'artefacts distinctes et
+    comparables, sans quoi mesurer l'apport d'un bloc demanderait de modifier
+    du code entre deux entraînements.
+
+    Un bloc qui ne se construit pas est OMIS, pas fatal : le catalogue dégrade
+    vers v4 plutôt que de faire échouer l'entraînement. Le décompte de colonnes
+    renvoyé dans ``names`` dit ce qui a réellement été inclus.
+    """
+    from app.ml.backend.features import build_features, select_feature_columns
+    from app.ml.features_smc import build_smc_features
+
+    feats = build_features(df)
+    if feats is None or len(feats) == 0:
+        return None
+    names = list(select_feature_columns(feats))
+    blocs: List[pl.DataFrame] = []
+
+    if regime:
+        bloc = _build_regime_block(feats, float(adx_threshold), float(di_rescue))
+        if bloc is not None:
+            blocs.append(bloc)
+            names += REGIME_FEATURE_NAMES
+
+    if smc:
+        bloc = build_smc_features(df)
+        if bloc is None:
+            logger.info("[v5_smc] bloc SMC non construit (historique trop court)")
+        elif len(bloc) != len(feats):
+            # `build_features` ne supprime aucune ligne aujourd'hui ; si cela
+            # changeait, un concat horizontal décalerait SILENCIEUSEMENT chaque
+            # feature SMC d'un cran. On refuse plutôt que de deviner.
+            logger.warning(
+                f"[v5_smc] SMC {len(bloc)} lignes contre {len(feats)} features — "
+                f"bloc ignoré pour ne pas décaler l'alignement"
+            )
+        else:
+            blocs.append(bloc)
+            names += list(bloc.columns)
+
+    frame = pl.concat([feats, *blocs], how="horizontal") if blocs else feats
+    return FeatureSet(frame=frame, names=names)
+
+
 register_catalog("v4_polars@1", _build_v4_polars)
 register_catalog("stat48@1", _build_stat48)
 register_catalog("dyn_threshold@1", _build_dyn_threshold)
+register_catalog("v5_smc@1", _build_v5_smc)
 
 
 def from_matrix(catalog: str, X, frame: pl.DataFrame) -> FeatureSet:

@@ -159,3 +159,7 @@ QODER.md
 trades.db
 trades.db-shm
 trades.db-wal
+
+# Sorties transitoires des scripts de mesure (le doc porte les chiffres)
+scripts/_*.log
+scripts/_*.json
