@@ -1,5 +1,11 @@
 # Structure de marché, régime et triple barrière — ce qui a été mesuré
 
+⚠ **Réserve ajoutée après coup** : BTC et ETH corrèlent à **0.835** sur les
+rendements horaires alignés. Les « quatre jeux indépendants » ci-dessous n'en
+sont pas — ce sont deux vues d'un même processus, à deux échelles de temps. Le
+SENS des effets tient ; leur généralité à d'autres marchés n'est pas établie.
+Cf. `docs/STRATEGY_SMC_ML_EDGE.md` §3 ter.
+
 Trois pistes ont été instrumentées puis mesurées par ablation, sur quatre jeux
 indépendants (BTC/USDC et ETH/USDC, en 1 h et 30 min, 47 000 à 54 000 barres
 chacun). Une seule paie. Les deux autres sont documentées ici avec leurs
@@ -9,7 +15,7 @@ chiffres, parce qu'un essai infirmé évite de le refaire.
 |---|---|
 | **Bloc SMC / ICT** (21 colonnes) | **Gain net et répliqué : +0.073 d'AUC sur la tête `dir`** |
 | Bloc régime explicite (6 colonnes) | Neutre — dans le bruit sur les deux têtes |
-| Tête triple-barrière `tb` | Moins bonne que `dir` sur les 4 jeux |
+| Tête triple-barrière `tb` | Moins bonne que `dir` sur les 4 jeux — **reconfirmé sur holdout disjoint** |
 
 Reproduire :
 
@@ -72,7 +78,10 @@ qui a été vérifié :
    barres, et dans le sens conservateur — voir §5.
 2. **Validation hors-temps.** Le split est chronologique (80 / 20) : la mesure
    porte sur des barres postérieures à tout l'entraînement.
-3. **Réplication** sur 4 jeux indépendants.
+3. **Réplication** sur 4 jeux — mais voir la réserve en tête de document :
+   BTC et ETH corrèlent à 0.835, ce ne sont pas 4 échantillons indépendants.
+   L'argument tient contre l'accident sur un symbole ou un timeframe, pas
+   comme preuve de généralité.
 4. **Mécanisme lisible.** Les deux colonnes qui dominent la tête `dir` sont les
    distances au FVG non comblé le plus proche, au-dessus et en dessous :
 

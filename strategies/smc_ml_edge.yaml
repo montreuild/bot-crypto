@@ -34,14 +34,51 @@ params:
   pd_short_min: 0.25
 
   # ── Gestion de position ───────────────────────────────────────────────────
-  # Aligné sur les barrières mesurées du schéma `triple_barrier` (TP 1.5 / SL
-  # 1.0 ATR donnait 33.6 % de cibles atteintes contre 56.3 % de stops) — mais
-  # avec un ratio TP/SL plus généreux, puisqu'on n'a pas à faire mieux qu'un
-  # pile ou face : il faut couvrir les frais.
-  sl_atr_mult: 1.5
+  # MESURÉ, et c'est le réglage qui a le plus compté. La valeur initiale de
+  # 1.5 ATR — choisie par analogie avec les barrières du schéma
+  # `triple_barrier` — coupait les positions avant leur cible sur LES DEUX
+  # symboles. C'était la vraie cause de l'écart BTC/ETH, pas un besoin de
+  # paramétrage par actif.
+  #
+  #   symbole   PnL 1.5 → 2.5      profit factor    taux de réussite
+  #   BTC       +5.98 % → +9.18 %    1.81 → 6.45      59.1 % → 78.9 %
+  #   ETH       −3.07 % → −0.05 %    0.78 → 0.99      43.3 % → 61.1 %
+  #
+  # ⚠ 18 à 30 trades par configuration, et BTC/ETH corrèlent à 0.835 sur les
+  # rendements horaires : ce n'est PAS une réplication indépendante. Le sens de
+  # l'effet est cohérent sur tous les axes ; son amplitude ne l'est pas.
+  sl_atr_mult: 2.5
   tp_atr_mult: 2.5
   max_hold_bars: 12
   min_size_factor: 0.4
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Paramétrage par symbole et par timeframe
+# ─────────────────────────────────────────────────────────────────────────────
+# Le mécanisme EXISTE déjà et n'a rien demandé de neuf : un bloc
+# `optimizer_results:` indexé par timeframe puis par symbole est superposé aux
+# `params:` ci-dessus par `app.core.param_resolution.resolve_strategy_params`,
+# empruntée à l'identique par le backtest et par le live. La forme est :
+#
+#   optimizer_results:
+#     1h:
+#       BTC/USDC: {run_date: "...", oos_score: ..., params: {sl_atr_mult: 3.0}}
+#       ETH/USDC: {run_date: "...", oos_score: ..., params: {max_hold_bars: 24}}
+#     30m:
+#       XRP/USDC: {run_date: "...", oos_score: ..., params: {...}}
+#
+# AUCUN bloc n'est écrit ici, DÉLIBÉRÉMENT. Le balayage a bien donné un
+# meilleur réglage par symbole (BTC préfère le stop large, ETH la détention
+# longue), mais deux mesures interdisent d'en faire des overrides :
+#
+#   - BTC et ETH corrèlent à 0.835 : ce sont deux vues d'un même processus,
+#     pas deux échantillons indépendants ;
+#   - les modèles se TRANSFÈRENT d'un symbole à l'autre presque sans perte
+#     (le modèle BTC obtient 0.6767 d'AUC amp sur ETH contre 0.6652 pour celui
+#     d'ETH), donc il n'y a pas d'effet « personnalité du symbole » à capter.
+#
+# Écrire des overrides sur ~20 trades reviendrait à figer du bruit dans un
+# fichier versionné. Le mécanisme est là quand une mesure le justifiera.
 
   # ── Modèle ────────────────────────────────────────────────────────────────
   # `warmup_bars` doit rester ≥ `min_bars` de la recette (2000) : en dessous,
