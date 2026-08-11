@@ -94,6 +94,87 @@ dont le modèle n'a jamais entendu parler.
 **L'AUC ignore les frais.** C'est le point le plus brutal, et le tableau
 ci-dessus le chiffre.
 
+## 3 bis. Le modèle n'est pas symbole-dépendant, le stop l'était
+
+Question posée après coup : l'écart BTC/ETH vient-il de ce qu'il faudrait un
+modèle par symbole, ou seulement des seuils de décision ? Deux mesures y
+répondent, et la réponse est « ni l'un ni l'autre ».
+
+**Les modèles se transfèrent presque sans perte.** Entraînement sur 12 000
+barres, évaluation sur un holdout de 4 000 barres jamais vues :
+
+| entraîné sur | testé sur | auc_amp | auc_dir |
+|---|---|---:|---:|
+| BTC | BTC | 0.6895 | 0.5746 |
+| BTC | **ETH** | 0.6767 | 0.5659 |
+| ETH | **BTC** | 0.6472 | **0.5794** |
+| ETH | ETH | 0.6652 | 0.5798 |
+
+Le modèle BTC fait mieux sur ETH (0.6767 d'AUC amplitude) que le modèle d'ETH
+sur son propre marché (0.6652), et le modèle ETH bat celui de BTC sur la
+direction de BTC. Il n'y a pas de « modèle BTC » et de « modèle ETH » : la
+séparation par symbole — qui a toujours été en place, aucune mesure de ce dépôt
+n'a jamais mutualisé — n'apporte rien.
+
+⚠ À noter : sur ce holdout franchement disjoint, `auc_dir` vaut **0.57–0.58**,
+contre 0.60 mesuré sur le split de validation d'entraînement. L'edge est réel
+mais un cran plus mince que ce qu'annonce `docs/ML_ABLATION_SMC.md`.
+
+**L'échelle des sorties, elle, diffère massivement — et c'est une propriété du
+MODÈLE, pas du marché :**
+
+| modèle | marché | seuil amp q90 | seuil écart dir q80 |
+|---|---|---:|---:|
+| BTC | BTC | 0.4723 | 0.0230 |
+| BTC | ETH | 0.5513 | 0.0229 |
+| ETH | BTC | 0.3929 | **0.1171** |
+| ETH | ETH | 0.4711 | **0.1119** |
+
+Le modèle entraîné sur ETH produit des probabilités directionnelles **5 fois
+plus étalées**, quel que soit le marché où on l'applique. C'est exactement ce
+que le mécanisme de quantiles absorbe — et la confirmation a posteriori que des
+seuils absolus ne pouvaient pas fonctionner (§5).
+
+**Le vrai coupable était un paramètre partagé, pas un besoin de
+personnalisation.** Balayage de la géométrie de sortie, même grille sur les
+deux symboles :
+
+| variante | ETH PnL | ETH PF | ETH win | BTC PnL | BTC PF | BTC win |
+|---|---:|---:|---:|---:|---:|---:|
+| référence `sl1.5 tp2.5 h12` | −3.07 % | 0.78 | 43.3 % | +5.98 % | 1.81 | 59.1 % |
+| cible serrée `tp1.5` | −2.52 % | 0.73 | 50.0 % | +4.47 % | 1.54 | 64.0 % |
+| **stop large `sl2.5`** | **−0.05 %** | **0.99** | **61.1 %** | **+9.18 %** | **6.45** | **78.9 %** |
+| hold long `h24` | +1.32 % | 1.17 | 52.6 % | +6.87 % | 1.80 | 55.0 % |
+| hold court `tp1.5 h6` | +0.81 % | 1.21 | 64.3 % | +3.38 % | 1.45 | 64.0 % |
+| très sélectif | +0.39 % | 1.38 | 80.0 % | +1.64 % | 2.56 | 75.0 % |
+
+Élargir le stop de 1.5 à 2.5 ATR améliore **les deux symboles sur tous les
+axes**. Le diagnostic du §4 est confirmé : le stop coupait les positions avant
+leur cible, et il le faisait sur les deux marchés. L'asymétrie BTC/ETH du §1
+était donc en partie l'effet d'un mauvais réglage COMMUN, pas d'une différence
+de nature entre les deux actifs.
+
+⚠ **Ce que ces chiffres ne prouvent pas.** 18 à 30 trades par configuration :
+un Sharpe de 2.88 sur 19 trades n'est pas une mesure fiable. Et la meilleure
+des 6 configurations a été choisie sur les données qui l'évaluent — de la
+sélection en échantillon. Ce qui rend le résultat crédible malgré tout, c'est
+que la MÊME configuration gagne sur les deux symboles et que deux leviers
+indépendants (stop plus large, détention plus longue) pointent dans le même
+sens. Cela reste deux symboles, une fenêtre, un timeframe.
+
+**Ce réglage n'a pas été appliqué par défaut** : `sl_atr_mult` est un paramètre
+de trading, pas un correctif. Le changer est une décision d'exploitation.
+
+**Enseignement de méthode.** `recipes/omnibus_full.yaml` écartait un bloc `1d`
+au motif qu'« un override qui aide un symbole et en abîme un autre n'est pas un
+réglage, c'est du bruit ». L'inférence est fautive : « aide l'un, abîme
+l'autre » est précisément ce qu'on observerait s'il fallait un réglage par
+symbole. Les deux hypothèses prédisent la même chose, et rien ne les avait
+séparées. La bonne justification, dans ce cas précis, était la TAILLE
+D'ÉCHANTILLON — le journalier n'offre ~2 600 barres pour des AUC de 0.42 à 0.55,
+autour du hasard. Même conclusion, meilleure raison ; la mauvaise raison aurait
+pu faire écarter un effet réel ailleurs.
+
 ## 4. Ce qui reste à faire, dans l'ordre
 
 Le prochain levier n'est **pas** plus de features. Le signal a été mesuré et

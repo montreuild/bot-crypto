@@ -152,7 +152,11 @@ conserve avec leurs chiffres :
   régularisation LightGBM qui l'encadre est **codée en dur** dans
   `app/ml/backend/trainer.py` et calibrée pour 31 ;
 - un bloc `hp_by_tf` pour le journalier aide ETH (+0.017) et dégrade BTC
-  (−0.036) : écarté, un réglage incohérent d'un symbole à l'autre est du bruit.
+  (−0.036) : écarté. ⚠ La justification d'origine (« un réglage incohérent d'un
+  symbole à l'autre est du bruit ») était une inférence FAUSSE, corrigée depuis :
+  « aide l'un, abîme l'autre » est aussi ce qu'on observerait s'il fallait un
+  réglage par symbole. La vraie raison est la taille d'échantillon (~2 600 barres,
+  AUC 0.42–0.55, autour du hasard). Cf. `docs/STRATEGY_SMC_ML_EDGE.md` §3 bis.
 
 **Limite documentée** : la tête `dir` plafonne à ~0.53 d'AUC contre ~0.72 pour
 `amp`. Le modèle reconnaît qu'un mouvement notable arrive, il ne dit presque pas

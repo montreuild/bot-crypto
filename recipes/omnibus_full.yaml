@@ -156,10 +156,25 @@ hp_by_tf:
 
   # Pas de bloc `1d`. Un réglage réduit (n_estimators 600 / lr 0.03) a été
   # essayé sur l'intuition qu'un modèle plus court conviendrait à une série
-  # plus courte : MESURÉ incohérent — BTC 0.4563 → 0.4205 (dégradé),
-  # ETH 0.5355 → 0.5524 (amélioré). Un override qui aide un symbole et en
-  # abîme un autre n'est pas un réglage, c'est du bruit ; il n'a pas sa place
-  # ici tant qu'il n'est pas mesuré sur un échantillon plus large.
+  # plus courte : BTC 0.4563 → 0.4205 (dégradé), ETH 0.5355 → 0.5524 (amélioré).
+  #
+  # ⚠ La justification d'origine était FAUSSE et a été corrigée. Elle disait :
+  # « un override qui aide un symbole et en abîme un autre n'est pas un réglage,
+  # c'est du bruit ». C'est une inférence invalide — « aide l'un, abîme l'autre »
+  # est exactement ce qu'on observerait s'il fallait un réglage PAR SYMBOLE. Les
+  # deux hypothèses prédisent la même observation, et rien ne les séparait.
+  #
+  # La vraie raison d'écarter ce bloc est la TAILLE D'ÉCHANTILLON : le
+  # journalier n'offre ici que ~2 600 barres, pour des AUC de 0.42 à 0.55,
+  # c'est-à-dire autour du hasard. À ce niveau, tout écart entre symboles est
+  # indistinguable du bruit — indépendamment de sa cohérence.
+  #
+  # Le test qui sépare les deux hypothèses a depuis été fait, en 1h et sur
+  # 47 000-52 000 barres : les modèles se TRANSFÈRENT d'un symbole à l'autre
+  # presque sans perte (le modèle BTC obtient 0.6767 d'AUC amp sur ETH contre
+  # 0.6652 pour le modèle d'ETH lui-même). Il n'y a donc pas d'effet
+  # « personnalité du symbole » à cette échelle. Détail :
+  # `docs/STRATEGY_SMC_ML_EDGE.md` §3 bis.
   #
   # ⚠ Limite connue : en 1d, NI cette recette NI `omnibus_v4_multi` n'atteignent
   # le plancher `auc_floor: 0.55` sur les données du dépôt (~2 600 barres).
