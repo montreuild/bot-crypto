@@ -175,6 +175,88 @@ D'ÉCHANTILLON — le journalier n'offre ~2 600 barres pour des AUC de 0.42 à 0
 autour du hasard. Même conclusion, meilleure raison ; la mauvaise raison aurait
 pu faire écarter un effet réel ailleurs.
 
+## 3 ter. Corrélation, pooling, `tb` : quatre réponses mesurées
+
+### La « réplication sur 4 jeux » n'en était pas une
+
+BTC et ETH corrèlent à **0.835** sur les rendements horaires alignés (47 105
+barres communes). Ce sont deux vues d'un même processus, pas deux échantillons
+indépendants. Toute affirmation de ce dossier reposant sur « répliqué sur les
+deux symboles » — l'ablation SMC comme le balayage de sorties — doit être lue
+avec cette réserve : le SENS des effets est confirmé, leur généralité ne l'est
+pas.
+
+Le dépôt ne permet pas de faire mieux aujourd'hui : seuls BTC et ETH ont un
+historique 1 h exploitable (51 984 et 47 266 barres). XRP n'en a que 550 et
+corrèle de toute façon à 0.73. Le test de généralité honnête serait des ÉPOQUES
+disjointes du même actif, ou une classe d'actifs non crypto.
+
+### Le pooling BTC+ETH améliore les deux têtes
+
+`train_multi` existait, testé, et n'avait jamais servi sur crypto. Mesuré sur
+le holdout de 4 000 barres jamais vues :
+
+| modèle | holdout | auc_amp | auc_dir |
+|---|---|---:|---:|
+| solo | BTC | 0.6968 | 0.5891 |
+| **poolé BTC+ETH** | BTC | **0.7085** | 0.5892 |
+| solo | ETH | 0.6685 | 0.5803 |
+| **poolé BTC+ETH** | ETH | **0.6824** | **0.5939** |
+
+Gain sur l'amplitude dans les deux cas (+0.012 et +0.014), sur la direction
+nettement sur ETH (+0.014) et neutre sur BTC. C'est cohérent avec la
+corrélation de 0.835 : le pooling n'apporte pas de la diversité, il apporte du
+VOLUME sur un processus quasi identique — et c'est précisément le régime où il
+aide. Le symbole qui gagne le plus est celui qui a le moins d'historique.
+
+**Non câblé dans la stratégie** : `smc_ml_edge` entraîne un modèle par symbole.
+Router son entraînement vers `train_multi` est le chantier suivant le plus
+rentable du dossier.
+
+### `tb` : confirmé sans valeur, sur mesure plus exigeante
+
+| modèle | holdout | auc_amp | auc_dir | **auc_tb** |
+|---|---|---:|---:|---:|
+| solo | BTC | 0.7018 | 0.5922 | **0.5586** |
+| poolé | BTC | 0.7085 | 0.5966 | **0.5499** |
+| solo | ETH | 0.6779 | 0.5774 | **0.5667** |
+| poolé | ETH | 0.6849 | 0.5957 | **0.5546** |
+
+`tb` est sous `dir` dans les **quatre** cas, et le pooling la DÉGRADE (−0.009,
+−0.012) là où il améliore `dir`. Le verdict de `docs/ML_ABLATION_SMC.md` §4
+tenait sur le split de validation d'entraînement ; il tient encore sur un
+holdout franchement disjoint, ce qui est une mesure plus dure.
+
+La réserve qui restait — « l'AUC mesure le classement, pas la rentabilité,
+seul un backtest tranchera » — est levée autrement : le backtest a montré que
+ce qui manquait n'était pas une meilleure cible mais un stop correct. `tb`
+encodait une géométrie de sortie ; il était plus simple, et plus efficace, de
+corriger directement celle de la stratégie.
+
+### Les deux leviers de sortie ne s'additionnent pas
+
+| | `h12` | `h24` |
+|---|---:|---:|
+| BTC `sl2.5` | **+9.18 %** (PF 6.45) | +5.39 % (PF 2.08) |
+| ETH `sl2.5` | **−0.05 %** (PF 0.99) | −0.65 % (PF 0.90) |
+
+Stop plus large et détention plus longue traitaient la MÊME cause : des
+positions coupées avant leur cible. Le stop corrigé, prolonger la détention
+n'ajoute que de l'exposition. `max_hold_bars` reste donc à 12, et les défauts
+retenus sont `sl_atr_mult: 2.5`, `tp_atr_mult: 2.5`, `max_hold_bars: 12`.
+
+### Paramétrage par symbole et timeframe : le mécanisme existe déjà
+
+Un bloc `optimizer_results:` du YAML de stratégie, indexé par timeframe puis
+par symbole, est superposé aux `params:` par
+`app.core.param_resolution.resolve_strategy_params` — empruntée à l'identique
+par le backtest et par le live. « Un paramétrage pour BTC 1 h, un pour ETH 1 h,
+un pour XRP 30 min » est donc déjà exprimable sans une ligne de code.
+
+**Aucun bloc n'a été écrit**, délibérément : sur ~20 trades et deux symboles
+corrélés à 0.835, des overrides par symbole figeraient du bruit dans un fichier
+versionné. Le mécanisme est là quand une mesure le justifiera.
+
 ## 4. Ce qui reste à faire, dans l'ordre
 
 Le prochain levier n'est **pas** plus de features. Le signal a été mesuré et

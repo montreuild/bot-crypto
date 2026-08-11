@@ -6,6 +6,47 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 📐 Stop élargi, pooling mesuré, `tb` définitivement écarté
+
+**Le stop par défaut passe de 1.5 à 2.5 ATR.** C'était le vrai coupable derrière
+l'écart BTC/ETH — un paramètre PARTAGÉ et faux, pas un besoin de réglage par
+symbole. Il coupait les positions avant leur cible sur les deux marchés :
+
+| symbole | PnL 1.5 → 2.5 | profit factor | taux de réussite |
+|---|---:|---:|---:|
+| BTC | +5.98 % → **+9.18 %** | 1.81 → 6.45 | 59.1 % → 78.9 % |
+| ETH | −3.07 % → **−0.05 %** | 0.78 → 0.99 | 43.3 % → 61.1 % |
+
+Les deux leviers de sortie **ne s'additionnent pas** : une fois le stop élargi,
+allonger la détention à 24 barres dégrade les deux symboles (BTC +9.18 % →
++5.39 %). Ils traitaient la même cause. `max_hold_bars` reste à 12.
+
+**Le pooling BTC+ETH améliore les deux têtes** (`train_multi` existait et n'avait
+jamais servi sur crypto). Holdout de 4 000 barres jamais vues : `auc_amp` +0.012
+sur BTC et +0.014 sur ETH, `auc_dir` +0.014 sur ETH. Cohérent avec une
+corrélation de 0.835 — le pooling apporte du volume sur un processus quasi
+identique, et c'est le symbole le moins doté en historique qui gagne le plus.
+Non câblé dans la stratégie : c'est le chantier suivant le plus rentable.
+
+**La tête `tb` est écartée pour de bon.** Sur holdout disjoint elle reste sous
+`dir` dans les quatre cas (0.550–0.567 contre 0.577–0.597), et le pooling la
+dégrade là où il améliore `dir`. La réserve « seul un backtest tranchera » est
+levée autrement : ce qui manquait n'était pas une meilleure cible mais un stop
+correct.
+
+⚠ **Réserve de portée, ajoutée rétroactivement à tout le dossier SMC** : BTC et
+ETH corrèlent à **0.835** sur les rendements horaires alignés. Les « 4 jeux
+indépendants » des mesures précédentes n'en sont pas. Le sens des effets tient,
+leur généralité à d'autres marchés n'est pas établie — seuls BTC et ETH ont un
+historique 1 h exploitable dans ce dépôt (XRP : 550 barres).
+
+**Paramétrage par symbole/timeframe : le mécanisme existait déjà.** Un bloc
+`optimizer_results:` indexé par timeframe puis par symbole est superposé aux
+`params:` par `resolve_strategy_params`, empruntée à l'identique par le backtest
+et le live. Aucun override n'a été écrit : sur ~20 trades et deux symboles
+corrélés, ce serait figer du bruit dans un fichier versionné.
+
+
 ### 🎯 Stratégie `smc_ml_edge` — l'AUC ne suffit pas, et c'est mesuré
 
 Nouvelle stratégie consommant la recette `omnibus_smc`, et le backtest que

@@ -83,7 +83,10 @@ class Strategy(BaseStrategyML):
         "amp_top_q": [0.05, 0.10, 0.20, 0.35],
         "dir_top_q": [0.10, 0.20, 0.35, 0.50],
         "use_smc_filter": [True, False],
-        "sl_atr_mult": [1.0, 1.5, 2.0],
+        # Recentré sur la zone mesurée utile : 1.0 et 1.5 ont été mesurés
+        # nuisibles (stops prématurés), la borne haute reste ouverte parce que
+        # rien ne dit que 2.5 soit un optimum plutôt qu'un plancher.
+        "sl_atr_mult": [2.0, 2.5, 3.0],
         "tp_atr_mult": [1.5, 2.5, 3.5],
         "max_hold_bars": [6, 12, 24],
     }
@@ -115,7 +118,19 @@ class Strategy(BaseStrategyML):
         "pd_long_max": 0.75,
         "pd_short_min": 0.25,
         # ── Gestion de position ──
-        "sl_atr_mult": 1.5,
+        # MESURÉ. 1.5 ATR coupait les positions avant leur cible, sur les DEUX
+        # symboles — c'était le vrai coupable derrière l'écart BTC/ETH, pas un
+        # besoin de réglage par symbole. Passage à 2.5 :
+        #
+        #   symbole   PnL 1.5 → 2.5     profit factor    taux de réussite
+        #   BTC       +5.98 % → +9.18 %   1.81 → 6.45      59.1 % → 78.9 %
+        #   ETH       −3.07 % → −0.05 %   0.78 → 0.99      43.3 % → 61.1 %
+        #
+        # ⚠ 18 à 30 trades par configuration, et BTC/ETH corrèlent à 0.835 :
+        # ce n'est pas une réplication indépendante. Le sens de l'effet est
+        # cohérent sur tous les axes, son amplitude ne doit pas être prise au
+        # pied de la lettre. Cf. `docs/STRATEGY_SMC_ML_EDGE.md` §3 bis.
+        "sl_atr_mult": 2.5,
         "tp_atr_mult": 2.5,
         "max_hold_bars": 12,
         "min_size_factor": 0.4,
