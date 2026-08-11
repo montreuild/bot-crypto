@@ -6,6 +6,47 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧬 Nouvelle recette ML `omnibus_full` — mesurée, pas supposée
+
+Recette de référence exploitant toute la surface réellement câblée de la couche
+ML : catalogue `v4_polars@1` (437 features), deux têtes (amplitude + direction),
+labellisation multi-horizon, calibration isotone là où elle est mesurée utile,
+élagage de features, fenêtre et cadence par timeframe, gate explicite.
+
+Elle bat `omnibus_v4_multi` sur **4 jeux indépendants, sur les deux têtes** :
+
+| Jeu | Δ AUC amp | Δ AUC dir |
+|---|---:|---:|
+| BTC/USDC 1h | +0.0196 | +0.0024 |
+| ETH/USDC 1h | +0.0099 | +0.0079 |
+| BTC/USDC 30m | +0.0109 | +0.0085 |
+| ETH/USDC 30m | +0.0094 | +0.0020 |
+
+Le gain tient à **deux réglages**, trouvés par ablation et non par intuition :
+l'ajout de l'horizon 2 et `amp_top_pct` abaissé de 0.30 à 0.20.
+
+Les hypothèses de départ ont été **infirmées par la mesure** et le fichier les
+conserve avec leurs chiffres :
+
+- élargir les horizons jusqu'à 12 dégrade (AUC amp 0.6921 contre 0.7006) — c'est
+  la densité aux horizons courts qui paie, pas l'étendue ;
+- `num_leaves: 63` n'apporte rien (0.6992 contre 0.6992), ce qui s'explique : la
+  régularisation LightGBM qui l'encadre est **codée en dur** dans
+  `app/ml/backend/trainer.py` et calibrée pour 31 ;
+- un bloc `hp_by_tf` pour le journalier aide ETH (+0.017) et dégrade BTC
+  (−0.036) : écarté, un réglage incohérent d'un symbole à l'autre est du bruit.
+
+**Limite documentée** : la tête `dir` plafonne à ~0.53 d'AUC contre ~0.72 pour
+`amp`. Le modèle reconnaît qu'un mouvement notable arrive, il ne dit presque pas
+dans quel sens — contrainte structurante pour toute stratégie qui le consommera.
+En 1d, ni cette recette ni `omnibus_v4_multi` n'atteignent le plancher
+`auc_floor: 0.55` sur l'historique disponible (~2 600 barres) : le gate rejette
+les candidats journaliers, ce qui est le comportement voulu.
+
+`tests/test_recipe_omnibus_full.py` (9 tests) verrouille le contrat, les deux
+réglages porteurs du gain, et entraîne réellement le modèle pour vérifier qu'il
+passe le plancher du gate.
+
 ### 🧪 Les deux dernières routes sans interface sont câblées
 
 **Fuite temporelle (`/api/ml/registry/overlaps`).** Nouvelle carte sur `/models` :

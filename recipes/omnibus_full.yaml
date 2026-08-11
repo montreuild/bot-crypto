@@ -1,0 +1,211 @@
+recipe: omnibus_full
+version: 1
+description: >
+  Recette de référence — exploite toute la surface réellement câblée de la
+  couche ML : le catalogue de features le plus riche (437 colonnes), les deux
+  têtes (amplitude + direction), une labellisation multi-horizon, la
+  calibration isotone là où elle est mesurée utile, l'élagage de features, une
+  fenêtre et une cadence par timeframe, et un gate de promotion explicite.
+
+  Chaque valeur ci-dessous porte sa mesure. Les réglages essayés puis écartés
+  sont documentés avec leur chiffre — savoir ce qui ne marche pas vaut autant
+  que savoir ce qui marche, et évite de réessayer.
+
+  MESURÉ contre `omnibus_v4_multi`, 4 jeux indépendants, gains sur les DEUX
+  têtes à chaque fois :
+
+      jeu             Δ AUC amp    Δ AUC dir
+      BTC/USDC 1h      +0.0196      +0.0024
+      ETH/USDC 1h      +0.0099      +0.0079
+      BTC/USDC 30m     +0.0109      +0.0085
+      ETH/USDC 30m     +0.0094      +0.0020
+
+  Le gain vient de deux réglages seulement — l'horizon 2 ajouté et
+  `amp_top_pct` abaissé à 0.20. Tout le reste est neutre et retenu pour
+  d'autres raisons, dites à chaque fois.
+
+  ⚠ La tête `dir` plafonne autour de 0.53 d'AUC, contre 0.72 pour `amp`. C'est
+  la contrainte structurante pour toute stratégie qui consommera ce modèle :
+  il sait reconnaître qu'un mouvement notable arrive, il ne sait presque pas
+  dire dans quel sens. Une stratégie qui parierait la direction sur ce signal
+  seul n'aurait pas d'edge.
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Features
+# ─────────────────────────────────────────────────────────────────────────────
+features:
+  # Les trois catalogues enregistrés ne se valent pas : mesuré sur BTC/USDC 1h,
+  # `v4_polars@1` produit 437 colonnes, `dyn_threshold@1` 38, et `stat48@1`
+  # ne construit rien sur ce jeu (retourne None). Pour une recette « la plus
+  # complète », il n'y a donc pas de choix : c'est v4_polars.
+  #
+  # 437 features pour quelques milliers de barres, c'est un régime où le modèle
+  # peut apprendre du bruit — d'où `prune_features: true` plus bas, qui n'est
+  # pas décoratif ici mais structurel.
+  catalog: v4_polars@1
+  params: {}                      # tout ce qui change les FEATURES vit ici
+                                  # (entre dans le hash de la recette)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Labels
+# ─────────────────────────────────────────────────────────────────────────────
+labels:
+  scheme: amp_dir_quantile        # seul schéma à DEUX têtes ; `vol_adaptive_dir`
+                                  # ne produit que `dir` et amputerait la recette
+                                  # de la moitié de son signal.
+
+  # MESURÉ. Rappel de la sémantique (cf. `multi_horizon_labels`) : l'amplitude
+  # prend le rendement absolu MAXIMUM sur les horizons, la direction leur
+  # moyenne pondérée en 1/h.
+  #
+  # Ajouter l'horizon 2 gagne sur les DEUX têtes et sur les DEUX symboles
+  # testés. Pousser jusqu'à 12 dégrade — l'amplitude sur 12 bougies est trop
+  # bruitée pour être apprise (AUC amp 0.6921 contre 0.7006 en [1,3,6]).
+  # L'intuition « plus d'horizons = plus complet » est donc fausse ici : c'est
+  # la densité aux horizons courts qui paie, pas l'étendue.
+  #
+  #   BTC/USDC 1h   AUC amp   AUC dir      ETH/USDC 1h   AUC amp   AUC dir
+  #   [1,3,6]        0.7120    0.5305                     0.6879    0.5187
+  #   [1,2,3,6]      0.7202    0.5316                     0.6925    0.5318
+  #   [1,3,6,12]     0.6921    0.5261            (mesuré sur BTC seulement)
+  horizons: [1, 2, 3, 6]
+
+  # MESURÉ : 0.20 bat 0.25 et 0.30 sur BTC (+0.015 d'AUC amp) et fait jeu égal
+  # sur ETH. Le gain a une lecture simple — à 20 % de positifs, la cible ne
+  # retient que les mouvements franchement au-dessus du lot, ceux dont la
+  # signature dans les features est nette. À 30 %, on force le modèle à
+  # étiqueter positifs des mouvements ordinaires, et la frontière se brouille.
+  #
+  # C'est aussi la cible la plus utile à trader : un mouvement du top 20 %
+  # couvre les frais, pas un mouvement médian.
+  #
+  # Le déséquilibre accru est absorbé — `scale_pos_weight` est calculé
+  # automatiquement par le trainer à partir du ratio réel de la fenêtre.
+  #
+  #   BTC/USDC 1h, horizons [1,2,3,6]   0.20 → 0.7202   0.25 → 0.7069   0.30 → 0.7052
+  #   ETH/USDC 1h, idem                 0.20 → 0.6925   0.25 → 0.6824   0.30 → 0.6939
+  amp_top_pct: 0.20
+
+heads: [amp, dir]
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Hyperparamètres
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# ⚠ Périmètre réel : `TrainConfig.from_params` ne lit qu'une liste FIXE de clés.
+# Les paramètres de régularisation LightGBM (`min_child_samples`, `subsample`,
+# `colsample_bytree`, `reg_alpha`, `reg_lambda`, `max_bin`) sont codés en dur
+# dans `app/ml/backend/trainer.py` et ne sont PAS réglables depuis une recette.
+# Écrire `reg_lambda: 2.0` ici n'aurait aucun effet — d'où leur absence.
+hp:
+  # `n_estimators` est un PLAFOND, pas un coût : `lgb.early_stopping(20)` est
+  # actif et arrête l'entraînement dès que l'AUC de validation stagne 20 rondes.
+  # Le monter est donc sûr — cela laisse au modèle la place de converger avec un
+  # pas plus petit, sans payer les arbres inutiles.
+  n_estimators: 1200
+
+  # Abaissé de 0.03 à 0.02 : plus de pas, plus petits. MESURÉ neutre sur
+  # l'amplitude (0.6998 contre 0.7006, dans le bruit) et très légèrement positif
+  # sur la direction. Retenu non pour le gain — il n'y en a pas — mais parce que
+  # le couple « pas plus petit + plafond relevé » laisse la marge de manœuvre à
+  # l'early stopping plutôt qu'au plafond.
+  learning_rate: 0.02
+
+  # Volontairement NON augmenté, et c'est MESURÉ : passer à 63 donne 0.6992
+  # contre 0.6992 — aucun gain, pour deux fois plus de capacité.
+  #
+  # L'explication est dans le code : la régularisation qui entoure ce paramètre
+  # (colsample 0.8, subsample 0.8, reg_alpha 0.1, reg_lambda 0.5,
+  # min_child_samples 20) est CODÉE EN DUR dans `app/ml/backend/trainer.py` et
+  # calibrée pour cet ordre de grandeur. Augmenter la capacité sans pouvoir
+  # ajuster ce qui l'encadre n'achète rien.
+  num_leaves: 31
+
+  # 437 colonnes brutes : l'élagage n'est pas une option de confort. Il retire
+  # les features d'importance nulle après un premier passage, ce qui réduit la
+  # surface d'apprentissage du bruit et rend le panneau de diagnostics lisible.
+  prune_features: true
+
+  # Calibration isotone : par défaut oui (mesurée bénéfique en 15m et 30m,
+  # cf. hp_by_tf pour l'exception 1h). Elle ne change pas l'AUC — une
+  # transformation monotone ne réordonne rien — mais rend la probabilité
+  # affichée exploitable par un seuil de décision.
+  calibrate: true
+
+  # 30 au lieu de 15 : la page Modèles affiche le top-N des features. Avec 437
+  # colonnes en entrée, 15 lignes ne montrent pas assez pour juger si le modèle
+  # s'appuie sur un bloc cohérent ou sur des colonnes éparses.
+  importance_top_n: 30
+
+  log_training: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Surcharges par timeframe (ML-11)
+# ─────────────────────────────────────────────────────────────────────────────
+hp_by_tf:
+  1h:
+    # Report d'une mesure existante (scripts/measure_calibration_and_pruning.py) :
+    # la calibration isotone dégrade l'ECE de +461 % en 1h, alors qu'elle
+    # l'améliore de −47 % en 15m et −67 % en 30m.
+    #
+    # Raison : le calibrateur est ajusté sur le set de VALIDATION, et en 1h ce
+    # set contient trop peu d'événements positifs pour que l'isotone y apprenne
+    # autre chose que sa propre partition. Elle ne rajoute pas du biais, elle
+    # recopie du bruit.
+    calibrate: false
+
+  # Pas de bloc `1d`. Un réglage réduit (n_estimators 600 / lr 0.03) a été
+  # essayé sur l'intuition qu'un modèle plus court conviendrait à une série
+  # plus courte : MESURÉ incohérent — BTC 0.4563 → 0.4205 (dégradé),
+  # ETH 0.5355 → 0.5524 (amélioré). Un override qui aide un symbole et en
+  # abîme un autre n'est pas un réglage, c'est du bruit ; il n'a pas sa place
+  # ici tant qu'il n'est pas mesuré sur un échantillon plus large.
+  #
+  # ⚠ Limite connue : en 1d, NI cette recette NI `omnibus_v4_multi` n'atteignent
+  # le plancher `auc_floor: 0.55` sur les données du dépôt (~2 600 barres).
+  # Le gate rejette donc les candidats journaliers — c'est le comportement
+  # voulu, pas une panne. Le journalier demande soit plus d'historique, soit un
+  # `auc_floor` propre au TF, que `GateConfig` ne sait pas encore exprimer.
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Fenêtre d'entraînement
+# ─────────────────────────────────────────────────────────────────────────────
+window:
+  bars:
+    # `max` = tout l'historique disponible. À MESURER par `window_sweep` : plus
+    # d'historique n'est pas toujours mieux, un marché change de régime et les
+    # barres anciennes peuvent décrire un monde disparu. Le sweep existe
+    # précisément pour trancher cette question par TF.
+    default: max
+
+  # Plancher de sécurité. Sous ce seuil, 437 features n'ont pas de quoi
+  # s'estimer : le modèle est produit mais ne vaut rien.
+  min_bars: 2000
+
+  # Réentraînement tous les 800 barres en backtest `simulated_live` et en live.
+  # Assez fréquent pour suivre un changement de régime, assez espacé pour que
+  # le cache d'entraînement inter-trials serve à quelque chose.
+  cadence_bars: 800
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Gate de promotion
+# ─────────────────────────────────────────────────────────────────────────────
+gate:
+  # Candidat et sortant sont scorés sur le MÊME holdout, et la promotion exige
+  # `AUC ≥ auc_floor` ET `AUC ≥ AUC(sortant) − epsilon`.
+  #
+  # `auc_amp` plutôt que `auc_dir` : c'est la convention du registre, et en
+  # changer rendrait cette recette incomparable aux lignées existantes. Noter
+  # que `auc_dir` est disponible et nettement plus exigeant — la direction est
+  # à ~50 % de positifs, une AUC de 0.55 y est un vrai edge directionnel.
+  metric: auc_amp
+
+  # 1400 barres réservées à l'évaluation. Aligné sur `omnibus_v4_multi` : le
+  # seuil d'éligibilité au pooling passe de 1750 à 1650 barres, ce qui fait
+  # entrer deux titres actions de plus en journalier.
+  holdout_bars: 1400
+
+  auc_floor: 0.55
+  epsilon: 0.01
+
+persistence: lgbm_amp_dir_bundle
