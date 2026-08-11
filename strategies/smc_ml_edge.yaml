@@ -1,0 +1,51 @@
+# SMC ML Edge — consomme la recette `omnibus_smc` (catalogue v5_smc@1).
+#
+# Les valeurs ci-dessous sont des POINTS DE DÉPART, pas des réglages mesurés.
+# Contrairement à la recette — dont chaque valeur porte son ablation — les
+# seuils de décision d'une stratégie ne se mesurent que par backtest, et le
+# backtest de référence est dans `docs/STRATEGY_SMC_ML_EDGE.md`.
+
+models:
+  # Rebrancher la stratégie sur une autre recette se fait ICI, sans toucher au
+  # code (cf. `app.ml.recipe.strategy_models`). `omnibus_smc_tb` est utilisable
+  # pour comparer, en gardant à l'esprit que sa 3ᵉ tête n'est pas persistée.
+  signal: omnibus_smc
+
+params:
+  # ── Porte 1 : amplitude ───────────────────────────────────────────────────
+  # Part des barres retenues, PAS un seuil de probabilité. Un seuil absolu ne
+  # marche pas ici : la tête `amp` cible le top 20 %, donc ses sorties tournent
+  # autour de 0.35 et non de 0.5 (mesuré sur BTC/USDC 1h : min 0.10, max 0.67).
+  # « Top 10 % » garde son sens quel que soit le symbole ou le réentraînement.
+  amp_top_q: 0.10
+
+  # ── Porte 2 : direction ───────────────────────────────────────────────────
+  # Idem : `p_up` ne s'étale que de 0.398 à 0.599. Un écart minimal de 0.12 à
+  # 0.5 — valeur d'apparence raisonnable — ne laissait passer AUCUNE barre.
+  # On prend les 20 % de barres où le modèle est le plus tranché.
+  dir_top_q: 0.20
+
+  # ── Porte 3 : structure ───────────────────────────────────────────────────
+  # À mesurer par ablation : le modèle voit DÉJÀ les colonnes SMC, donc rien ne
+  # garantit qu'un filtre dur par-dessus ajoute quoi que ce soit — il peut ne
+  # faire que retirer des trades.
+  use_smc_filter: true
+  pd_long_max: 0.75
+  pd_short_min: 0.25
+
+  # ── Gestion de position ───────────────────────────────────────────────────
+  # Aligné sur les barrières mesurées du schéma `triple_barrier` (TP 1.5 / SL
+  # 1.0 ATR donnait 33.6 % de cibles atteintes contre 56.3 % de stops) — mais
+  # avec un ratio TP/SL plus généreux, puisqu'on n'a pas à faire mieux qu'un
+  # pile ou face : il faut couvrir les frais.
+  sl_atr_mult: 1.5
+  tp_atr_mult: 2.5
+  max_hold_bars: 12
+  min_size_factor: 0.4
+
+  # ── Modèle ────────────────────────────────────────────────────────────────
+  # `warmup_bars` doit rester ≥ `min_bars` de la recette (2000) : en dessous,
+  # 464 features n'ont pas de quoi s'estimer.
+  warmup_bars: 3000
+  retrain_every: 800
+  train_window: 20000
