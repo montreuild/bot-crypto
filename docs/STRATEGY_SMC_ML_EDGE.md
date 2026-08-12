@@ -5,9 +5,12 @@ l'AUC, donc de la qualité de classement, et rien ne disait qu'un edge
 directionnel de 0.60 se convertirait en rentabilité nette de frais. Ce
 document répond à cette question.
 
-**La réponse est non, pas en l'état.** La stratégie est nettement profitable
-sur BTC/USDC et perdante sur ETH/USDC. Un résultat qui ne tient que sur un
-symbole, avec 22 trades, n'est pas un edge : c'est du bruit qui a bien tourné.
+**La réponse est non.** Et elle s'est durcie au fil des mesures : les premiers
+chiffres (profitable sur BTC, perdante sur ETH) venaient de backtests sur la
+fenêtre entière, donc in-sample. Sous une découpe IS/OOS honnête avec le même
+budget d'optimisation pour chaque stratégie et chaque timeframe, **aucune des
+huit configurations testées ne passe le garde-fou du dépôt** — voir §3
+quinquies, qui fait foi sur ce point.
 
 Reproduire :
 
@@ -299,6 +302,77 @@ résultat mesuré bat tout ce que la version ML a produit. En réécrire une
 dupliquerait 1 616 lignes de travail déjà fait. Le levier utile est ailleurs —
 `smc_ml_edge` n'a jamais été réglée pour le 4 h, et `smart_money` n'a jamais
 reçu de filtre ML sur ses setups.
+
+## 3 quinquies. La comparaison équitable — et ce qu'elle détruit
+
+Objection reçue, et fondée : opposer `smc_ml_edge` réglée à la main en 1 h à
+`smart_money` optimisée en 4 h ne compare pas deux stratégies, mais deux
+réglages. Les **quatre cases** ont donc été traitées à l'identique — même
+découpe IS/OOS (`split_is_oos`, 65/35), même métrique de sélection
+(`composite_score`), même budget (40 trials de recherche aléatoire sur le
+`param_space` déclaré), sélection sur l'IS **et jamais sur l'OOS**.
+
+| symbole | TF | stratégie | OOS trades | OOS PnL | OOS PF | OOS Sharpe | buy & hold | valide |
+|---|---|---|---:|---:|---:|---:|---:|:--:|
+| BTC | 1 h | `smart_money` | 8 | **+5.00 %** | 2.43 | 1.40 | −6.55 % | ❌ |
+| BTC | 1 h | `smc_ml_edge` | 1 | +0.52 % | — | — | −39.05 % | ❌ |
+| BTC | 4 h | `smart_money` | 1 | −2.32 % | — | — | +13.10 % | ❌ |
+| BTC | 4 h | `smc_ml_edge` | 140 | −8.99 % | 0.79 | −0.90 | +145.05 % | ❌ |
+| ETH | 1 h | `smart_money` | 2 | −1.83 % | — | −26.47 | −5.93 % | ❌ |
+| ETH | 1 h | `smc_ml_edge` | 0 | — | — | — | −52.26 % | ❌ |
+| ETH | 4 h | `smart_money` | 1 | −2.19 % | — | — | −19.98 % | ❌ |
+| ETH | 4 h | `smc_ml_edge` | 21 | −3.75 % | 0.61 | −0.63 | +13.31 % | ❌ |
+
+**Aucune des huit cases ne passe `beats_baseline`**, le garde-fou du dépôt
+(≥ 10 trades OOS, PnL OOS positif, meilleur que les paramètres par défaut, et
+amélioration d'au moins un critère de qualité).
+
+### Ce que cela retire aux chiffres précédents
+
+Les résultats des §1 et §3 quater — +9.18 % pour `smc_ml_edge` en BTC 1 h,
++42.87 % pour `smart_money` en BTC 4 h — étaient des backtests **sur la fenêtre
+entière, sans découpe**. Autrement dit in-sample. Sous une validation honnête,
+ils ne tiennent pas. Ils restent dans ce document parce qu'effacer un chiffre
+qu'on a publié est pire que le corriger, mais **c'est ce tableau-ci qui fait
+foi**.
+
+Deux signaux de surapprentissage confirment la lecture : le
+`overfitting_ratio` sature à son plafond (10.0) dans les deux cases ayant assez
+de trades, et le **Deflated Sharpe** — qui corrige le biais de 40 essais
+successifs (López de Prado 2014) — tombe à **0.0** partout. Après correction du
+test multiple, aucun Sharpe observé n'est significatif.
+
+### Un défaut du protocole, trouvé et corrigé en route
+
+La première version de cette mesure donnait **0 trade OOS partout** pour
+`smc_ml_edge`. La cause n'était pas la stratégie mais le découpage : la fenêtre
+OOS faisait 4 200 barres et le `warmup_bars` de 3 000 en mangeait la quasi-
+totalité. On mesurait le protocole.
+
+Corrigé en faisant **démarrer la passe OOS `warmup` barres avant la coupure** :
+le rodage se consomme sur des barres IS et le premier trade possible tombe
+exactement à la frontière. C'est ce que `_oos_trade_window_bars` fait déjà dans
+l'optimiseur du dépôt — que j'aurais dû lire d'abord.
+
+### Un biais de la métrique de sélection, à connaître
+
+`composite_score` ne refuse un jeu de paramètres qu'en dessous de
+`MIN_TRADES_DEGENERATE`, seuil bas. Sur 40 trials, l'optimum IS est donc
+souvent une configuration **hyper-sélective** (`amp_top_q: 0.05`,
+`dir_top_q: 0.10`) : peu de trades, tous excellents en IS — et plus rien à
+échantillonner en OOS. C'est ce qui produit les cases à 0, 1 et 2 trades du
+tableau, pour les deux stratégies. La sélection récompense une rareté qui ne
+survit pas au changement de période.
+
+### Ce que ce résultat ne dit pas
+
+40 trials sur un espace de 864 combinaisons, et des fenêtres OOS de ~4 200
+barres, ne permettent pas de conclure qu'aucun edge n'existe. Ce qui est
+établi est plus étroit, et suffisant pour la décision : **dans l'espace de
+paramètres actuel et sous une validation honnête, ni l'une ni l'autre de ces
+stratégies n'est prête à être promue.** Le signal SMC reste, lui, solidement
+mesuré (§2 bis du document d'ablation, 6 actions décorrélées) — c'est sa
+conversion en trades qui échoue.
 
 ## 4. Ce qui reste à faire, dans l'ordre
 

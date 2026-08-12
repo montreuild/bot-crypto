@@ -6,6 +6,54 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### ⚖️ Comparaison équitable : les deux stratégies échouent à la validation OOS
+
+Objection fondée : opposer `smc_ml_edge` réglée à la main en 1 h à
+`smart_money` optimisée en 4 h comparait deux réglages, pas deux stratégies.
+Les **quatre cases** ont donc reçu le même traitement — découpe IS/OOS 65/35,
+sélection par `composite_score` sur l'IS **jamais sur l'OOS**, 40 trials de
+recherche aléatoire chacune.
+
+| symbole | TF | stratégie | OOS trades | OOS PnL | OOS Sharpe | valide |
+|---|---|---|---:|---:|---:|:--:|
+| BTC | 1 h | `smart_money` | 8 | +5.00 % | 1.40 | ❌ |
+| BTC | 4 h | `smc_ml_edge` | 140 | −8.99 % | −0.90 | ❌ |
+| ETH | 4 h | `smc_ml_edge` | 21 | −3.75 % | −0.63 | ❌ |
+| *(4 autres cases)* | | | 0–2 | | | ❌ |
+
+**Aucune des 8 cases ne passe `beats_baseline`.** Le `overfitting_ratio` sature
+à son plafond dans les deux cases assez fournies, et le **Deflated Sharpe**
+tombe à 0.0 partout : après correction du biais de 40 essais, aucun Sharpe
+observé n'est significatif.
+
+⚠️ **Ce résultat retire leur valeur aux chiffres précédents** (+9.18 % BTC 1 h
+pour `smc_ml_edge`, +42.87 % BTC 4 h pour `smart_money`) : c'étaient des
+backtests sur la fenêtre entière, donc in-sample. Ils restent documentés —
+effacer un chiffre publié est pire que le corriger — mais le tableau ci-dessus
+fait foi.
+
+Deux défauts trouvés en route :
+
+- **le protocole se mesurait lui-même.** Première version : 0 trade OOS partout
+  pour `smc_ml_edge`, parce que la fenêtre OOS (4 200 barres) était mangée par
+  le `warmup_bars` de 3 000. Corrigé en faisant démarrer la passe OOS `warmup`
+  barres avant la coupure — ce que `_oos_trade_window_bars` fait déjà dans
+  l'optimiseur du dépôt ;
+- **la métrique de sélection favorise la rareté.** `composite_score` ne refuse
+  qu'en dessous d'un seuil bas de trades ; sur 40 trials l'optimum IS est donc
+  souvent hyper-sélectif (`amp_top_q: 0.05`), excellent en IS et sans
+  échantillon en OOS. C'est l'origine des cases à 0–2 trades, pour les DEUX
+  stratégies.
+
+**Performance :** `smc_ml_edge` prédit désormais par lot à chaque
+réentraînement au lieu de barre par barre — backtest de 12 000 barres de
+**190 s à 23 s**, résultats identiques au chiffre près (test dédié). C'est ce
+qui a rendu cette optimisation faisable.
+
+Le signal SMC lui-même reste solidement mesuré (6 actions décorrélées, gain
+6/6) : c'est sa **conversion en trades** qui échoue, pas sa valeur prédictive.
+
+
 ### 🌍 Le bloc SMC tient hors crypto — 6 actions décorrélées le confirment
 
 Tout le dossier SMC reposait sur BTC et ETH, **corrélés à 0.835** : deux vues
