@@ -1,10 +1,11 @@
 # Structure de marché, régime et triple barrière — ce qui a été mesuré
 
-⚠ **Réserve ajoutée après coup** : BTC et ETH corrèlent à **0.835** sur les
-rendements horaires alignés. Les « quatre jeux indépendants » ci-dessous n'en
-sont pas — ce sont deux vues d'un même processus, à deux échelles de temps. Le
-SENS des effets tient ; leur généralité à d'autres marchés n'est pas établie.
-Cf. `docs/STRATEGY_SMC_ML_EDGE.md` §3 ter.
+⚠ **Réserve, et sa levée.** BTC et ETH corrèlent à **0.835** sur les rendements
+horaires alignés : les « quatre jeux indépendants » ci-dessous n'en sont pas.
+La généralité a donc été retestée sur **six actions XPAR** — corrélées à 0.253
+entre elles et 0.07–0.30 avec la crypto, sur un marché à séances et gaps de
+nuit. **Le gain sur `dir` s'y retrouve 6 fois sur 6** (§2 bis). Le bloc SMC
+n'est pas un artefact crypto.
 
 Trois pistes ont été instrumentées puis mesurées par ablation, sur quatre jeux
 indépendants (BTC/USDC et ETH/USDC, en 1 h et 30 min, 47 000 à 54 000 barres
@@ -106,6 +107,45 @@ qui a été vérifié :
    l'ATR domine (l'amplitude est de la volatilité), mais `smc_killzone` monte
    au 6ᵉ rang : les killzones de Londres et New York sont bien les moments où
    les grands mouvements se produisent.
+
+## 2 bis. Le test de généralité : six actions décorrélées
+
+BTC et ETH ne sont pas deux échantillons — ils corrèlent à 0.835. Six actions
+XPAR (Airbus, LVMH, L'Oréal, TotalEnergies, Sanofi, BNP) corrèlent à **0.253**
+entre elles et **0.07 à 0.30** avec la crypto : marché à séances, gaps de nuit,
+microstructure et participants entièrement différents. C'est le test que le
+dossier n'avait jamais passé.
+
+Écarts contre `v4`, ~4 576 barres 1 h par titre (plafond Yahoo : 730 jours) :
+
+| titre | Δ AUC amp | Δ AUC dir |
+|---|---:|---:|
+| AIR.PA | −0.0278 | **+0.0744** |
+| MC.PA | +0.0061 | **+0.0477** |
+| OR.PA | −0.0016 | **+0.0600** |
+| TTE.PA | +0.0236 | **+0.0400** |
+| SAN.PA | −0.0251 | **+0.0211** |
+| BNP.PA | −0.0025 | **+0.0184** |
+| **poolé (6 titres, 27 456 barres)** | −0.0065 | **+0.0931** |
+
+**6 sur 6 positifs sur la direction**, moyenne +0.043, et +0.093 en poolant.
+Sur le pool, `auc_dir` passe de 0.5092 — le hasard — à 0.6023.
+
+Deux lectures importantes :
+
+- **le gain est spécifique à la direction.** Sur l'amplitude, l'effet est nul
+  et de signe variable (moyenne −0.005). C'est cohérent avec la crypto, où le
+  gain amp (+0.007) était marginal à côté du gain dir (+0.073) : la structure
+  de marché dit le SENS, pas l'ampleur — ce que l'ATR dit déjà ;
+- **l'effet est plus net là où la référence est faible.** Le pool part de 0.509
+  et gagne 0.093 ; BNP part de 0.540 et ne gagne que 0.018. Quand l'analyse
+  technique classique donne déjà un signal directionnel, SMC ajoute moins.
+
+Reproduire (nécessite `python scripts/backfill_equities.py --symbols … --tf 1h`) :
+
+```bash
+python scripts/measure_smc_on_equities.py
+```
 
 ## 3. Le bloc régime — mesuré neutre
 

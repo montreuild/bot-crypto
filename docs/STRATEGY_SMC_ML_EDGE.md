@@ -257,6 +257,49 @@ un pour XRP 30 min » est donc déjà exprimable sans une ligne de code.
 corrélés à 0.835, des overrides par symbole figeraient du bruit dans un fichier
 versionné. Le mécanisme est là quand une mesure le justifiera.
 
+## 3 quater. Règles contre modèle : chacun sur son timeframe
+
+Le dépôt contenait déjà une stratégie SMC **non-ML** : `smart_money`, 1 616
+lignes, 5 setups, confluence volume / FVG inversé / chandeliers, divergence SMT
+— et une ablation de setups déjà faite, consignée dans son YAML (breakers
+écartés : −163 USDC sur 220 trades en 4 h ; BPR : pas d'edge stable). Elle
+n'avait jamais été mesurée contre `smc_ml_edge`.
+
+| symbole / TF | stratégie | trades | win | PnL | buy & hold | Sharpe | PF | frais |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| BTC 1 h | `smc_ml_edge` | 19 | 78.9 % | **+9.18 %** | −22.1 % | 2.88 | 6.45 | 0.4 % |
+| BTC 1 h | `smart_money` | 14 | 28.6 % | −3.94 % | −24.5 % | −0.97 | 0.59 | 1.0 % |
+| **BTC 4 h** | `smc_ml_edge` | 11 | 36.4 % | −1.90 % | +461 % | −0.41 | 0.56 | 0.2 % |
+| **BTC 4 h** | **`smart_money`** | 64 | 46.9 % | **+42.87 %** | +443 % | 0.59 | **1.74** | 5.0 % |
+| ETH 1 h | `smc_ml_edge` | 18 | 61.1 % | −0.05 % | +8.1 % | −0.21 | 0.99 | 0.4 % |
+| ETH 1 h | `smart_money` | 110 | 30.9 % | −19.82 % | +26.9 % | −1.79 | 0.71 | 6.4 % |
+| ETH 4 h | `smc_ml_edge` | 29 | 44.8 % | −5.07 % | +400 % | −0.55 | 0.61 | 0.3 % |
+| ETH 4 h | `smart_money` | 126 | 34.1 % | −12.07 % | +409 % | −0.40 | 0.89 | 5.6 % |
+
+**Chacune gagne sur le timeframe pour lequel elle a été réglée, et perd
+ailleurs.** `smart_money` fait +42.87 % avec un profit factor de 1.74 en 4 h —
+son seul TF documenté comme tradable — et perd en 1 h ; `smc_ml_edge`, réglée
+en 1 h, y fait +9.18 % et perd en 4 h. Il n'y a pas de vainqueur général.
+
+**Une première version de cette mesure était fausse**, et la correction est
+instructive : elle passait `params={}` — donc les défauts de code, pas le YAML
+— et ne testait que le 1 h. `smart_money` y sortait à 127 trades pour −17.56 %.
+Avec ses vrais paramètres : 14 trades, −3.94 %. Comparer une stratégie sur des
+réglages que personne ne fait tourner ne mesure rien.
+
+⚠ **Le buy & hold écrase les deux sur la fenêtre 4 h** (+443 %, soit ~5,5 ans
+couvrant tout le cycle haussier). +42.87 % est un très mauvais résultat en
+valeur absolue. La comparaison n'est pas tout à fait équitable — une stratégie
+qui prend les deux sens n'est pas un investissement long — mais l'ordre de
+grandeur doit rester sous les yeux.
+
+**Conséquence pour la question « peut-on faire mieux en non-ML ? »** : la
+stratégie existe, elle est déjà ablatée setup par setup, et son meilleur
+résultat mesuré bat tout ce que la version ML a produit. En réécrire une
+dupliquerait 1 616 lignes de travail déjà fait. Le levier utile est ailleurs —
+`smc_ml_edge` n'a jamais été réglée pour le 4 h, et `smart_money` n'a jamais
+reçu de filtre ML sur ses setups.
+
 ## 4. Ce qui reste à faire, dans l'ordre
 
 Le prochain levier n'est **pas** plus de features. Le signal a été mesuré et

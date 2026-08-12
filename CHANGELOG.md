@@ -6,6 +6,59 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🌍 Le bloc SMC tient hors crypto — 6 actions décorrélées le confirment
+
+Tout le dossier SMC reposait sur BTC et ETH, **corrélés à 0.835** : deux vues
+d'un même processus, pas deux échantillons. Six actions XPAR (Airbus, LVMH,
+L'Oréal, TotalEnergies, Sanofi, BNP) corrèlent à **0.253** entre elles et
+**0.07–0.30** avec la crypto — marché à séances, gaps de nuit, microstructure
+et participants entièrement différents.
+
+Le gain du bloc SMC sur la tête `dir` s'y retrouve **6 fois sur 6** :
+
+| titre | Δ AUC dir | | titre | Δ AUC dir |
+|---|---:|---|---|---:|
+| AIR.PA | **+0.0744** | | SAN.PA | **+0.0211** |
+| MC.PA | **+0.0477** | | BNP.PA | **+0.0184** |
+| OR.PA | **+0.0600** | | **poolé (6 titres)** | **+0.0931** |
+| TTE.PA | **+0.0400** | | | |
+
+Sur le pool, `auc_dir` passe de 0.5092 — le hasard — à 0.6023. Le bloc SMC
+n'est pas un artefact crypto : c'est le résultat le plus solide du dossier.
+
+Deux lectures : le gain est **spécifique à la direction** (sur l'amplitude
+l'effet est nul et de signe variable, moyenne −0.005), et il est **plus net là
+où la référence est faible** — le pool part de 0.509 et gagne 0.093, BNP part
+de 0.540 et ne gagne que 0.018.
+
+### ⚖️ Règles contre modèle : chacun sur son timeframe
+
+Le dépôt contenait déjà une stratégie SMC **non-ML** — `smart_money`, 1 616
+lignes, 5 setups, ablation de setups déjà consignée dans son YAML. Jamais
+mesurée contre `smc_ml_edge` :
+
+| symbole / TF | stratégie | trades | win | PnL | buy & hold | Sharpe | PF |
+|---|---|---:|---:|---:|---:|---:|---:|
+| BTC 1 h | `smc_ml_edge` | 19 | 78.9 % | **+9.18 %** | −22.1 % | 2.88 | 6.45 |
+| BTC 1 h | `smart_money` | 14 | 28.6 % | −3.94 % | −24.5 % | −0.97 | 0.59 |
+| **BTC 4 h** | `smc_ml_edge` | 11 | 36.4 % | −1.90 % | +461 % | −0.41 | 0.56 |
+| **BTC 4 h** | **`smart_money`** | 64 | 46.9 % | **+42.87 %** | +443 % | 0.59 | **1.74** |
+
+**Chacune gagne sur le timeframe pour lequel elle a été réglée et perd
+ailleurs.** Pas de vainqueur général.
+
+Une première version de cette mesure était **fausse** : elle passait `params={}`
+— les défauts de code, pas le YAML — et ne testait que le 1 h, que le YAML de
+`smart_money` documente pourtant comme négatif. `smart_money` y sortait à 127
+trades pour −17.56 % ; avec ses vrais paramètres, 14 trades et −3.94 %.
+
+⚠ Le buy & hold écrase les deux sur la fenêtre 4 h (+443 % sur ~5,5 ans).
+
+Outillage : `scripts/backfill_equities.py` (existait, jamais utilisé ici) peuple
+le cache actions ; `scripts/measure_smc_on_equities.py` et
+`scripts/measure_smc_ml_vs_rules.py` rejouent les deux mesures.
+
+
 ### 📐 Stop élargi, pooling mesuré, `tb` définitivement écarté
 
 **Le stop par défaut passe de 1.5 à 2.5 ATR.** C'était le vrai coupable derrière
