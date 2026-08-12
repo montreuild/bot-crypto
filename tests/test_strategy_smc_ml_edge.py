@@ -188,6 +188,52 @@ def test_le_cache_ne_depasse_jamais_la_barre_courante(ohlcv):
 # ─────────────────────────────────────────────────────────────────────────────
 #  Gate
 # ─────────────────────────────────────────────────────────────────────────────
+def test_le_precalcul_donne_les_memes_predictions(entrainee, ohlcv):
+    """Le chemin rapide doit être un pur gain de temps, pas une autre stratégie.
+
+    `_precalcule_predictions` prédit une fois sur tout le frame en cache au lieu
+    de prédire barre par barre — 190 s → 23 s sur un backtest de 12 000 barres.
+    Ce n'est légitime que si la valeur lue à la barre `i` est EXACTEMENT celle
+    qu'un `predict` à la barre aurait donnée : sinon on optimiserait les
+    paramètres d'une stratégie qui n'est pas celle qui tournera.
+    """
+    s, params = entrainee
+    tf_key = "BTC_USDC"
+    out = s._trained.get(tf_key) or next(iter(s._trained.values()))
+    frame, _ = s._frame_for(ohlcv)
+    assert frame is not None
+
+    # Force le précalcul sur la clé effectivement consultée par `_predict_heads`.
+    cle = next(iter(s._trained))
+    s._precalcule_predictions(out, cle)
+    assert s._preds.get(cle) is not None, "précalcul non effectué"
+
+    lent = dict(s._preds)
+    s._preds = {}                                   # désactive le chemin rapide
+    try:
+        for idx in (4000, 5500, 7000, len(frame) - 1):
+            a_lent = s._predict_heads(frame, idx, cle)
+            s._preds = lent                          # réactive
+            a_rapide = s._predict_heads(frame, idx, cle)
+            s._preds = {}
+            assert a_lent[0] == pytest.approx(a_rapide[0], abs=1e-9), (
+                f"barre {idx} : p_event diverge ({a_lent[0]} vs {a_rapide[0]})")
+            assert a_lent[1] == pytest.approx(a_rapide[1], abs=1e-9), (
+                f"barre {idx} : p_up diverge ({a_lent[1]} vs {a_rapide[1]})")
+    finally:
+        s._preds = lent
+
+
+def test_le_precalcul_est_invalide_quand_le_frame_change(ohlcv):
+    """Un frame rechargé sans invalidation servirait des prédictions alignées
+    sur l'ANCIENNE série — décalage silencieux d'un bout à l'autre."""
+    s = Strategy()
+    s.prepare_for_backtest(ohlcv)
+    s._preds["bidon"] = {"amp": np.zeros(3), "dir": np.zeros(3)}
+    s.prepare_for_backtest(ohlcv.head(5000))
+    assert s._preds == {}, "le cache de prédictions a survécu au changement de frame"
+
+
 def test_score_holdout_est_surcharge():
     """L'implémentation par défaut reconstruit des features V4 (437 colonnes)
     alors que le modèle en attend 464 : sans surcharge, le gate arbitrerait la
