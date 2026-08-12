@@ -37,6 +37,7 @@ import os
 import threading
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 import polars as pl
 
 from app.ml.backend.features import (
@@ -66,6 +67,9 @@ from app.ml.backend.persistence import (
 )
 from app.ml.backend.predictor import (
     predict_amplitude as _predict_amp,
+)
+from app.ml.backend.predictor import (
+    predict_batch_raw as _predict_batch_raw,
 )
 from app.ml.backend.predictor import (
     predict_direction as _predict_dir,
@@ -159,6 +163,97 @@ class MLBackend:
         # `aligned_train_window`).
         self._bt_train_offset: Optional[int] = None
 
+        # ── Cache de prédictions PAR LOT (perf) ────────────────────────────
+        # ``(tf, target) -> ndarray`` aligné sur ``_bt_features``. Voir
+        # ``_batch_at`` : LightGBM paie un coût fixe par appel bien supérieur
+        # au calcul lui-même, donc prédire 12 000 fois une ligne coûte un ordre
+        # de grandeur de plus que prédire une fois 12 000 lignes.
+        self._batch_preds: Dict[tuple, Any] = {}
+        #: Colonnes témoins servant à PROUVER que le frame reçu est bien le
+        #: préfixe de ``_bt_features`` (cf. ``_batch_at``). Calculées une fois.
+        self._batch_sentinels: Optional[List[str]] = None
+
+    # ── Prédiction par lot ─────────────────────────────────────────────────
+    def _invalidate_batch(self) -> None:
+        """À appeler dès que le modèle ou le frame de features change."""
+        self._batch_preds.clear()
+        self._batch_sentinels = None
+
+    def _sentinel_cols(self, bt: pl.DataFrame) -> List[str]:
+        """Colonnes numériques servant de témoin d'identité du frame.
+
+        On en prend plusieurs et on privilégie des colonnes très variables :
+        deux frames différents qui coïncideraient sur toutes à la même ligne
+        est un événement qu'on peut négliger, là où une égalité de LONGUEUR
+        arrive tout le temps.
+        """
+        if self._batch_sentinels is not None:
+            return self._batch_sentinels
+        prefs = [c for c in ("close", "high", "low", "volume", "ATR_14")
+                 if c in bt.columns]
+        if len(prefs) < 2:
+            prefs += [c for c in bt.columns if c not in prefs][:3]
+        self._batch_sentinels = prefs[:4]
+        return self._batch_sentinels
+
+    def _batch_at(self, features_df: pl.DataFrame, tf: str,
+                  target: str) -> Optional[float]:
+        """Valeur de la barre courante depuis le lot, ou ``None``.
+
+        ``None`` signifie « je ne peux pas prouver que c'est correct » et
+        l'appelant retombe sur la prédiction ligne à ligne. Ce n'est jamais une
+        erreur : au pire on perd la vitesse, jamais la justesse.
+
+        LA CONDITION QUI COMPTE. En backtest, une stratégie passe
+        ``_bt_features.head(len(df))`` — un PRÉFIXE du cache, dont la dernière
+        ligne est donc la ligne ``len - 1`` du cache. Mais la branche de repli
+        (fenêtre glissante quand le cache est trop court) construit un frame
+        d'une longueur qui peut coïncider par accident. Tester la seule
+        longueur servirait alors la prédiction d'une AUTRE barre, sans que rien
+        ne le signale — le pire mode de défaillance possible ici.
+
+        D'où la vérification par témoins : on compare quelques colonnes très
+        variables à la dernière ligne. C'est O(1) et cela transforme une
+        supposition en preuve.
+        """
+        bt = self._bt_features
+        if bt is None or not len(self._batch_preds) and not self._state.trained_tfs:
+            return None
+        n = len(features_df)
+        if n == 0 or n > self._bt_features_len or n > len(bt):
+            return None
+        idx = n - 1
+
+        try:
+            for col in self._sentinel_cols(bt):
+                a, b = features_df[col][idx], bt[col][idx]
+                if a is None or b is None:
+                    if a is not b:
+                        return None
+                    continue
+                if not np.isclose(float(a), float(b), rtol=1e-12, atol=1e-12):
+                    return None
+        except Exception:
+            return None
+
+        cle = (tf, target)
+        arr = self._batch_preds.get(cle)
+        if arr is None:
+            with self._lock:
+                booster   = (self._state.amp_models if target == "amp"
+                             else self._state.dir_models).get(tf)
+                cal       = (self._state.amp_cal if target == "amp"
+                             else self._state.dir_cal).get(tf)
+                feat_cols = self._state.feature_cols.get(tf)
+                medians   = self._state.medians.get(tf, {})
+            if booster is None or not feat_cols:
+                return None
+            arr = _predict_batch_raw(booster, cal, feat_cols, medians, bt)
+            if arr is None or len(arr) < len(bt):
+                return None
+            self._batch_preds[cle] = arr
+        return float(arr[idx]) if idx < len(arr) else None
+
     # ── État ML (accès thread-safe) ─────────────────────────────────────────
     @property
     def state(self) -> TrainState:
@@ -210,6 +305,7 @@ class MLBackend:
         self._bt_features = None
         self._bt_features_len = 0
         self._bt_train_offset = None
+        self._invalidate_batch()
         gc.collect()
 
     # ── Backtest cache ──────────────────────────────────────────────────────
@@ -231,6 +327,7 @@ class MLBackend:
             )
             self._bt_features = feats
             self._bt_features_len = len(df) if feats is not None else 0
+            self._invalidate_batch()
             n_cols = len(feats.columns) if feats is not None else 0
             logger.info(
                 f"[MLBackend:{self.name}] backtest : features pré-calculées sur "
@@ -240,6 +337,7 @@ class MLBackend:
             logger.warning(f"[MLBackend:{self.name}] prepare_for_backtest KO : {e}")
             self._bt_features = None
             self._bt_features_len = 0
+            self._invalidate_batch()
 
     def get_bt_features(self, n: Optional[int] = None) -> Optional[pl.DataFrame]:
         """Retourne les features backtest (head(n) ou tout si n=None)."""
@@ -322,17 +420,26 @@ class MLBackend:
             logger.info(f"[MLBackend] {self.name}/{tf_key} : surcharges de recette "
                         f"pour ce TF — {tf_hp}")
             p.update(tf_hp)
-        return _train_impl(
+        ok = _train_impl(
             self._state, self._lock, df, tf_key, p,
             defaults=p,  # params contient déjà les valeurs résolues
             bt_features=self._bt_features,
             bt_features_len=self._bt_features_len,
             bt_train_offset=self._bt_train_offset,
         )
+        # Le modèle a changé : un lot calculé avec l'ancien servirait des
+        # prédictions périmées à toutes les barres suivantes.
+        self._invalidate_batch()
+        return ok
 
     # ── Predict ─────────────────────────────────────────────────────────────
     def predict_single(self, features_df: pl.DataFrame, tf: str,
                        target: str) -> Optional[float]:
+        # Chemin rapide prouvé équivalent (cf. `_batch_at`) ; `None` = pas
+        # démontrable, on retombe sur le calcul ligne à ligne.
+        v = self._batch_at(features_df, tf, target)
+        if v is not None:
+            return v
         return _predict_single(self._state, self._lock, features_df, tf, target)
 
     def predict_series(self, features_df: pl.DataFrame, tf: str,
@@ -340,10 +447,14 @@ class MLBackend:
         return _predict_series(self._state, self._lock, features_df, tf, target)
 
     def predict_amplitude(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
-        return _predict_amp(self._state, self._lock, features_df, tf)
+        v = self._batch_at(features_df, tf, "amp")
+        return v if v is not None else _predict_amp(self._state, self._lock,
+                                                    features_df, tf)
 
     def predict_direction(self, features_df: pl.DataFrame, tf: str) -> Optional[float]:
-        return _predict_dir(self._state, self._lock, features_df, tf)
+        v = self._batch_at(features_df, tf, "dir")
+        return v if v is not None else _predict_dir(self._state, self._lock,
+                                                    features_df, tf)
 
     # ── Persistance ─────────────────────────────────────────────────────────
     @staticmethod
