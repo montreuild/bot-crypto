@@ -6,6 +6,40 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### ⚡ Prédiction par lot pour toutes les stratégies ML
+
+`MLBackend` prédisait ligne à ligne : un appel LightGBM par barre et par tête.
+Le coût fixe d'un appel dépasse largement le calcul lui-même, donc prédire
+12 000 fois une ligne coûte un ordre de grandeur de plus que prédire une fois
+12 000 lignes. Le cœur vectorisé (`predict_batch_raw`) **existait déjà** — il
+n'était utilisé que par le scanner et le gate.
+
+`predict_single`, `predict_amplitude` et `predict_direction` consultent
+désormais un cache de lot aligné sur `_bt_features`, ce qui profite d'un coup à
+V11, V12, `opus_omnibus_v11_followsetup` et `opus_stat_retrained_v4`.
+
+**Le point délicat était la sûreté, pas la vitesse.** Servir `arr[i]` n'est
+correct que si le frame reçu est le PRÉFIXE de `_bt_features`. En backtest les
+stratégies passent bien `bt_feats.head(len(df))` — mais leur branche de repli
+construit une fenêtre glissante dont la longueur peut coïncider. Tester la
+seule longueur aurait servi la prédiction d'une AUTRE barre, sans exception ni
+log, avec un backtest tournant normalement.
+
+Le cache **prouve** donc l'alignement avant de servir : comparaison de quelques
+colonnes témoins très variables (`close`, `high`, `low`, `volume`) à la
+dernière ligne, en O(1). Quand la preuve échoue — frame étranger, modèle
+réentraîné, fenêtre changée — `_batch_at` rend `None` et le calcul exact
+reprend la main. On perd la vitesse, jamais la justesse.
+
+Vérifié : backtest V11 réel sur 9 000 barres **identique au chiffre près** avec
+et sans le lot (22 trades, 31.8182 %, −6.6623 %, PF 0.3470, Sharpe −2.7215).
+8 tests dédiés couvrent l'équivalence et les quatre cas de refus de servir.
+
+⚠ Le gain dépend de la part de la prédiction dans la boucle : ~25 % pour V11
+(le routing domine), contre 190 s → 23 s pour `smc_ml_edge` (qui garde son
+propre précalcul, n'utilisant pas `MLBackend`).
+
+
 ### ⚖️ Comparaison équitable : les deux stratégies échouent à la validation OOS
 
 Objection fondée : opposer `smc_ml_edge` réglée à la main en 1 h à
