@@ -54,17 +54,24 @@ MODULES_A_PATCHER = [f"app.strategies.{n}" for n in STRATEGIES] + [
 ]
 
 
-def _htf_trend_avant(df_htf, ema_period: int = 50, *, df_ltf=None,
-                     mult: int = 4) -> int:
-    """Comportement AVANT L5 : `df_ltf` ignoré, donc 0 en backtest."""
-    from app.core.indicators_market import htf_trend as _vrai
-    return _vrai(df_htf, ema_period)
-
-
 class _FiltreInerte:
-    """Rétablit le comportement d'avant L5, le temps d'une mesure."""
+    """Rétablit le comportement d'avant L5, le temps d'une mesure.
+
+    ⚠ La fonction de remplacement doit fermer sur l'ORIGINAL capturé avant le
+    patch. Une première version la ré-important depuis
+    `app.core.indicators_market` — lui-même patché — s'appelait elle-même :
+    récursion infinie, avalée par le `try/except` de l'Engine, et donc zéro
+    trade partout sans qu'aucune erreur ne remonte. La mesure aurait été
+    silencieusement fausse.
+    """
 
     def __enter__(self):
+        from app.core.indicators_market import htf_trend as original
+
+        def sans_repli(df_htf, ema_period: int = 50, *, df_ltf=None,
+                       mult: int = 4) -> int:
+            return original(df_htf, ema_period)   # `df_ltf` volontairement ignoré
+
         self._origine = {}
         for nom in MODULES_A_PATCHER:
             try:
@@ -73,7 +80,7 @@ class _FiltreInerte:
                 continue
             if hasattr(mod, "htf_trend"):
                 self._origine[nom] = mod.htf_trend
-                mod.htf_trend = _htf_trend_avant
+                mod.htf_trend = sans_repli
         return self
 
     def __exit__(self, *_):
@@ -123,6 +130,29 @@ def run(nom: str, params: dict, df: pl.DataFrame, symbole: str, tf: str,
             "sharpe": d["sharpe"], "wr": d["win_rate"]}
 
 
+def _verifier_le_patch(df: pl.DataFrame) -> None:
+    """Le patch fait-il vraiment ce qu'il prétend ?
+
+    Sans ce contrôle, une erreur dans le patch (récursion, module manqué) est
+    avalée par le `try/except` de l'Engine : la mesure sortirait des chiffres
+    plausibles et faux. On exige donc les deux comportements, explicitement.
+    """
+    from app.core.indicators import htf_trend as depuis_indicators
+
+    apres = depuis_indicators(None, df_ltf=df)
+    with _FiltreInerte():
+        from app.core.indicators import htf_trend as patche
+        avant = patche(None, df_ltf=df)
+    if avant != 0:
+        raise AssertionError(
+            f"le patch ne neutralise pas le repli (attendu 0, obtenu {avant})")
+    if apres == 0:
+        raise AssertionError(
+            "le repli ne produit aucune tendance sur la série de contrôle — "
+            "la comparaison avant/après ne mesurerait rien")
+    print(f"  contrôle du patch : avant={avant} après={apres} ✓")
+
+
 def etape_1(racine: pathlib.Path, barres: int) -> list:
     """Combien la correction déplace-t-elle les chiffres publiés ?"""
     lignes = []
@@ -158,7 +188,7 @@ def etape_1(racine: pathlib.Path, barres: int) -> list:
 
 
 def etape_2(racine: pathlib.Path, barres: int, trials: int,
-            impacts: list) -> list:
+            impacts: list, n_jobs: int = 1) -> list:
     """Recalibre les couples (stratégie, symbole, tf) que l'étape 1 a vus bouger."""
     from app.engine.optimizer_search import OptimizerSearchEngine
 
@@ -178,7 +208,7 @@ def etape_2(racine: pathlib.Path, barres: int, trials: int,
                 nom, cfg(nom, params, tf), df_is, df_oos,
                 symbol=symbole.replace("_", "/"), timeframe=tf,
                 df_full=df, split=split, ml_mode="inline")
-            res = moteur.random_search(n_trials=trials, n_jobs=1)
+            res = moteur.random_search(n_trials=trials, n_jobs=n_jobs)
         except Exception as e:
             print(f"  {nom:<22} {symbole} {tf}  ECHEC {type(e).__name__}: {e}")
             continue
@@ -206,10 +236,16 @@ def main() -> int:
     ap.add_argument("--barres", type=int, default=12000)
     ap.add_argument("--etape", type=int, default=1, choices=(1, 2))
     ap.add_argument("--trials", type=int, default=40)
+    ap.add_argument("--njobs", type=int, default=1)
     ap.add_argument("--sortie", default="scripts/_recalibrage_htf.json")
     args = ap.parse_args()
 
     racine = pathlib.Path(args.data)
+    for symbole in ("BTC_USDC", "ETH_USDC"):
+        ref = racine / symbole / "4h.parquet"
+        if ref.exists():
+            _verifier_le_patch(pl.read_parquet(ref).tail(2000))
+            break
     fichier = pathlib.Path(args.sortie)
     donnees = json.loads(fichier.read_text(encoding="utf-8")) \
         if fichier.exists() else {}
@@ -225,7 +261,7 @@ def main() -> int:
                   "y compris ce qui n'a pas bougé.")
             return 1
         donnees["recalibrage"] = etape_2(racine, args.barres, args.trials,
-                                         donnees["impacts"])
+                                         donnees["impacts"], args.njobs)
 
     fichier.write_text(json.dumps(donnees, indent=2, ensure_ascii=False),
                        encoding="utf-8")
