@@ -22,6 +22,24 @@ Documents à lire avant de commencer, dans cet ordre :
 
 ---
 
+> ## ⚑ Verdict du chantier (L0, L1, L3, L4, L5, L6, L8, L10 livrés)
+>
+> **Seize mécanismes passés au harnais d'ablation, zéro validé.** Le meilleur
+> score est 2 cas sur 4 — soit pile ou face. La condition posée en §6 de ce plan
+> a donc échoué, et sa contrepartie s'applique : *la stratégie SMC règles-seules
+> n'a pas d'edge exploitable dans cet espace de paramètres.* Ajouter un
+> dix-septième mécanisme n'a aucune raison de changer ça.
+>
+> **Ce qui a été gagné n'est pas de la performance :** un défaut de parité
+> backtest/live corrigé (neuf stratégies avaient un filtre HTF inerte en
+> simulation et actif en production — leurs `optimizer_results` reposaient sur
+> une simulation fausse), deux défauts de comptabilité, le verrou des sorties
+> partielles ouvert, une convention BOS/MSS/CHoCH unique, sept axes de mesure,
+> et la règle des deux fenêtres qui a intercepté deux faux positifs
+> spectaculaires.
+>
+> Suite recommandée : `docs/ABLATION_SMC_V3.md` §5.
+
 ## 0. Verdict en une page
 
 **Le bot couvre déjà la quasi-totalité de la couche *détection* de la spec.**

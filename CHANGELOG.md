@@ -6,6 +6,38 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧪 L8 / L10 — seize mécanismes au harnais d'ablation, zéro validé
+
+`scripts/measure_ablation_v3.py` généralise l'ablation manuelle du dépôt :
+chaque mécanisme introduit par L1–L6, plus les modules laissés en veille (§110),
+est activé **seul** par-dessus le YAML, sur BTC et ETH × {1 h, 4 h}, et mesuré
+sur les **deux** fenêtres de la découpe 65/35.
+
+**La règle est intégrée au harnais** : un mécanisme n'est validé que s'il gagne
+sur les deux fenêtres, dans une majorité de cas. Elle vient de deux faux
+positifs attrapés pendant ce chantier — `no_pullback` (L3) balayait 4/4 en OOS
+et ne répliquait pas en IS ; `expected_value` (L4) gagnait sur une fenêtre et
+perdait sur l'autre dans les quatre cas.
+
+**Résultat : 0 sur 16.** Le meilleur score est 2 cas sur 4, soit pile ou face.
+`SMT`, `Silver Bullet` et `AMD` sont **inertes** — leur drapeau seul ne suffit
+pas à les mettre en marche. `Breaker retest` et `Sweeps calendaires` dégradent
+nettement, ce qui confirme sur un protocole plus strict ce que le YAML de
+`smart_money` documentait déjà.
+
+La condition de réussite posée en §6 du plan a donc échoué, et sa contrepartie
+s'applique : **la stratégie SMC règles-seules n'a pas d'edge exploitable dans
+cet espace de paramètres.** Ajouter un dix-septième mécanisme n'a aucune raison
+de changer ça — c'est §111 de la spécification, vérifié sur seize essais.
+
+Ce qui reste plausible, dans l'ordre : recalibrer les neuf stratégies touchées
+par le correctif HTF de L5 (leurs paramètres ont été optimisés contre un filtre
+inerte), élargir l'échantillon, estimer les fréquences d'atteinte par classe de
+liquidité en walk-forward, puis L2 (R/R net et funding).
+
+Détail : `docs/ABLATION_SMC_V3.md`.
+
+
 ### 🔭 L5 — un filtre HTF inerte en backtest et actif en live
 
 **Le défaut trouvé ne vient pas de la spécification.** `htf_trend(None)`
