@@ -6,6 +6,64 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔭 L5 — un filtre HTF inerte en backtest et actif en live
+
+**Le défaut trouvé ne vient pas de la spécification.** `htf_trend(None)`
+renvoyait 0, et `df_htf` n'est fourni **que** par le live
+(`app/live/signal_pipeline.py`) : le backtest ne l'a jamais passé. Neuf
+stratégies — `breakout`, `breakout_filtreHor`, `fear_momentum`,
+`gemini_trend_follow`, `multi_tf_sr`, `pullback_trend`, `supertrend_macd`,
+`trend`, `tvr_trend` — avaient donc un filtre HTF **inerte en simulation et
+actif en production**. Aucun test ne le signalait, et le plan de ce chantier
+avait d'abord conclu, à tort, que le paramètre n'était utilisé par personne.
+
+Corrigé par un **repli de rééchantillonnage causal** plutôt que par le passage
+de `df_htf` au backtest : le HTF est reconstruit depuis le timeframe de base
+avec les mêmes buckets horloge que `smc_sessions._htf_buckets`, donc seuls les
+buckets entièrement clôturés sont visibles. L'invariant anti-fuite reste
+**structurel** au lieu de dépendre d'une jointure correcte à chaque site
+d'appel. Vérifié en mutant les barres postérieures : le résultat ne bouge pas.
+
+⚠️ Ce correctif **change le comportement du backtest** de ces neuf stratégies :
+leurs `optimizer_results` ont été mesurés avec un filtre inerte et sont à
+recalibrer. C'est un correctif de justesse, pas un réglage.
+
+Ajouté aussi : `atr_percentile` (§76) — un seuil d'ATR absolu ne dit pas la même
+chose sur BTC 2018 et sur une action du SBF 120 ; et `mtf_alignment` (§81 §82),
+moyenne pondérée de plusieurs niveaux HTF où le plus haut pèse le plus, de sorte
+qu'un timeframe bas contraire indique un pullback sans annuler le biais.
+
+1 828 tests, dont 17 nouveaux.
+
+
+### 🎯 L4 — qualité des zones, et la hiérarchie de §77 qui ne tient pas
+
+`app/core/smc_quality.py` classe et note ce qu'`analyze` produit déjà, sans
+toucher au moteur : classes de liquidité (§77), valeur attendue (§79), dealing
+range explicité par sa provenance (§67), IRL/ERL (§66), inducement (§65),
+qualité de balayage (§83) et de displacement (§84), taux de mitigation
+**continu** là où le moteur n'avait qu'un booléen daté (§15), rang de FVG (§85),
+qualité d'order block (§86), ouvertures calendaires (§91).
+
+**Le postulat central de la spécification est contredit.** `by_target_class`,
+fenêtre OOS : le seul compartiment à échantillon exploitable (`SWING`, 19 à 28
+trades) est le rang le **plus bas** de la hiérarchie — et c'est le meilleur. Sur
+BTC 4 h il bat `PREV_WEEK` d'un facteur 16. Les classes nobles comptent 1 à 7
+trades : elles ne permettent rien de conclure, ce qui est déjà une conclusion.
+
+`target_mode: expected_value` gagne sur une fenêtre et perd sur l'autre dans les
+quatre cas, et détruit le seul résultat IS franchement rentable (BTC 4 h :
++327 → −70). **Rejeté.** `max_stop_atr` (§23) ne mord pas — résultats identiques
+au bit près sur 3 cas sur 4.
+
+§3.5 du plan avait prévu le mécanisme (« poser une probabilité à la main puis
+maximiser dessus, c'est optimiser une croyance ») ; c'est maintenant mesuré.
+La voie ouverte reste l'estimation des fréquences en walk-forward — `proba` est
+déjà un paramètre de `meilleure_cible`.
+
+Détail : `docs/MESURE_HIERARCHIE_LIQUIDITE.md`. 1 811 tests, dont 32 nouveaux.
+
+
 ### 🧭 L3 — mémoire de structure (§60–§64, §73) et un filtre qui n'a pas répliqué
 
 `app/core/smc_state.py` : douze états de structure, niveaux protégés, et une

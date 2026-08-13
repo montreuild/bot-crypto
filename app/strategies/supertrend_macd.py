@@ -144,7 +144,7 @@ class Strategy(BaseStrategy):
         rsi_now = float(df["_pre_rsi14"][-1])
         vr      = float(df["_pre_volratio20"][-1])
         atr_val = float(df["_pre_atr14"][-1])
-        htf     = htf_trend(df_htf)
+        htf     = htf_trend(df_htf, df_ltf=df)
 
         if atr_val <= 0:
             return self._none()

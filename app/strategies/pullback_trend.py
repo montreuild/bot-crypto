@@ -110,7 +110,7 @@ class Strategy(BaseStrategy):
         vol_now  = float(df["volume"][-1])
         ms_window = int(p.get("market_struct_window", 5))
         struct   = market_structure(high, low, window=ms_window)
-        htf      = htf_trend(df_htf)
+        htf      = htf_trend(df_htf, df_ltf=df)
 
         # ── Cooldown par symbole ──────────────────────────────────────────────
         last = self._last_signal.get(sym, -999)

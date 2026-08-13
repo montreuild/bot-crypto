@@ -2,7 +2,7 @@
 (V4-L / ARCH-14). L'analyse HTF réutilise ``analyze`` (smc_structure) sur des
 buckets horloge causaux — aucune fuite du futur."""
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import polars as pl
@@ -223,6 +223,42 @@ def _htf_buckets(df: pl.DataFrame, htf_sec_map: Optional[Dict[int, int]] = None,
     close_times = epoch + ltf_sec
     idx = np.searchsorted(bucket_end, close_times, side="right") - 1
     return htf_df, idx, int(htf_sec), int(len(starts))
+
+
+def mtf_alignment(df: pl.DataFrame, params: Optional[dict] = None,
+                  mults: Optional[List[int]] = None,
+                  poids: Optional[List[float]] = None) -> np.ndarray:
+    """§81/§82 — alignement multi-timeframe, série continue dans [−1, +1].
+
+    Empile plusieurs niveaux HTF obtenus par le MÊME rééchantillonnage causal
+    que ``htf_trend_series`` : chaque barre LTF ne voit que des buckets HTF
+    entièrement clôturés, donc l'invariant anti-fuite est structurel et non
+    déclaratif (cf. docs/PLAN_SMC_ICT_V3.md L5).
+
+    §82 — un timeframe bas contraire n'annule pas le biais HTF : il pèse moins.
+    Les poids décroissent donc du plus haut au plus bas, et le résultat reste
+    du signe du niveau dominant tant que celui-ci n'est pas contredit par
+    l'ensemble des autres.
+
+    ⚠ Bornes de bucket UTC (``epoch // htf_sec``) : exact en crypto, FAUX sur
+    un instrument à séance (un « 4 h » Euronext coupé à 12:00 UTC fabrique une
+    bougie qu'aucune place n'a publiée). Sur actions, n'utiliser que le niveau
+    journalier — toute la séance de Paris tombe dans la même journée UTC.
+    """
+    n = len(df)
+    if n == 0:
+        return np.zeros(0, dtype=float)
+    mults = list(mults or [4, 16])
+    poids = list(poids or [])
+    if len(poids) != len(mults):
+        # Décroissance géométrique : le niveau le plus haut pèse le plus.
+        poids = [0.6 ** k for k in range(len(mults))][::-1]
+    total = sum(poids) or 1.0
+    out = np.zeros(n, dtype=float)
+    for m, w in zip(mults, poids):
+        trend, _ = htf_trend_series(df, params, mult=int(m))
+        out += w * trend.astype(float)
+    return out / total
 
 
 def htf_analysis(df: pl.DataFrame, params: Optional[dict] = None,

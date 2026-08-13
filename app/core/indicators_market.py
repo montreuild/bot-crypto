@@ -48,8 +48,28 @@ def market_structure(high: pl.Series, low: pl.Series,
     return 0
 
 
-def htf_trend(df_htf, ema_period: int = 50) -> int:
-    """Tendance du timeframe supérieur : +1 haussier, −1 baissier, 0 neutre."""
+def htf_trend(df_htf, ema_period: int = 50, *, df_ltf=None,
+              mult: int = 4) -> int:
+    """Tendance du timeframe supérieur : +1 haussier, −1 baissier, 0 neutre.
+
+    ⚠ **Parité backtest ↔ live (L5).** ``df_htf`` n'est fourni QUE par le live
+    (`app/live/signal_pipeline.py`) ; le backtest ne le passe jamais. Sans
+    repli, cette fonction renvoyait donc 0 en backtest et une vraie tendance en
+    live : le filtre HTF de neuf stratégies était **inerte en simulation et
+    actif en production**, ce qu'aucun test ne signalait.
+
+    ``df_ltf`` active le repli : le HTF est reconstruit par rééchantillonnage
+    causal du timeframe de base (mêmes buckets horloge que
+    ``smc_sessions._htf_buckets``, donc seuls les buckets ENTIÈREMENT clôturés
+    sont vus). Les appelants doivent le passer systématiquement.
+    """
+    if df_htf is None and df_ltf is not None:
+        from app.core.smc_sessions import _htf_buckets
+        htf_df, idx, _, _ = _htf_buckets(df_ltf, None, mult)
+        if htf_df is None or idx[-1] < 0:
+            return 0
+        # Seuls les buckets clos à la dernière barre LTF sont connaissables.
+        df_htf = htf_df.head(int(idx[-1]) + 1)
     if df_htf is None or len(df_htf) < ema_period + 3:
         return 0
     c        = df_htf["close"]

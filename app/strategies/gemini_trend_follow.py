@@ -75,7 +75,7 @@ class Strategy(BaseStrategy):
 
         c0 = float(df["close"][-1])
 
-        htf = htf_trend(df_htf)
+        htf = htf_trend(df_htf, df_ltf=df)
 
         # ── Cooldown par symbole ─────────────────────────────────────────────
         last = self._last_signal.get(sym, -999)

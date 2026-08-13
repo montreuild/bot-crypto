@@ -610,7 +610,24 @@ telle — comme l'ont été `BREAKER_RETEST` et `BPR_REVERSAL`.
 
 ---
 
-### L5 — Régime, volatilité et multi-timeframe
+### L5 — Régime, volatilité et multi-timeframe ✅ LIVRÉ (partiel)
+
+> **⚠ Correction de ce plan.** Le point 3 ci-dessous affirmait qu'« aucune
+> stratégie n'utilise `df_htf` ». **C'est faux** : neuf le font
+> (`breakout`, `breakout_filtreHor`, `fear_momentum`, `gemini_trend_follow`,
+> `multi_tf_sr`, `pullback_trend`, `supertrend_macd`, `trend`, `tvr_trend`).
+> La divergence n'était donc pas latente mais **active** : `htf_trend(None)`
+> renvoie 0, donc leur filtre HTF était inerte en backtest et actif en live.
+>
+> **Corrigé par le repli de rééchantillonnage** (option b), pas par le passage
+> de `df_htf` au backtest — deux édits au lieu de trente-quatre, et l'invariant
+> anti-fuite reste structurel. ⚠ Les `optimizer_results` de ces neuf stratégies
+> ont été mesurés avec un filtre inerte : **à recalibrer**.
+>
+> Livré aussi : `atr_percentile` (§76) et `mtf_alignment` (§81 §82).
+> **Non livré :** la comparaison des deux moteurs de régime (point 2) et
+> l'entry refinement 5 m (point 5), reportés — le régime est un axe de mesure
+> pour L8, pas un mécanisme à trancher avant.
 
 **Objectif** : §6, §75, §76, §80, §81.
 

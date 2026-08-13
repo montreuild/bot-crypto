@@ -125,7 +125,7 @@ class Strategy(BaseStrategy):
         macd_turning_bear = lh < ph and lh <  atr_val * 0.005
 
         # ── Tendance HTF ──────────────────────────────────────────────────────
-        htf = htf_trend(df_htf)
+        htf = htf_trend(df_htf, df_ltf=df)
 
         # ── S/R sur le TF courant ─────────────────────────────────────────────
         sr = support_resistance_levels(
