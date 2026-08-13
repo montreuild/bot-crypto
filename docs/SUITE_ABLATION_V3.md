@@ -122,12 +122,39 @@ portait sur l'instrument plutôt que sur le résultat.
 
 ---
 
-## 2. Élargir l'échantillon
+## 2. Élargir l'échantillon — la limite était de mon fait
 
-Non traité. C'est une campagne de collecte de données (symboles, timeframes),
-pas un travail de code, et elle ne change rien tant que le point 1 n'est pas
-soldé — recalibrer sur un échantillon plus large des paramètres qu'on sait faux
-ne ferait que déplacer le problème.
+J'ai écrit que les fenêtres OOS de ~2 000 barres étaient le verrou. **Elles
+l'étaient, mais parce que je tronquais les séries à 12 000 barres** (`--barres`,
+puis 6 000 pour la recalibration). Les données disponibles sont beaucoup plus
+larges :
+
+| série | barres | période |
+|---|---:|---|
+| BTC/USDC 1 h | **51 909** | 2020-03 → 2026-08 |
+| ETH/USDC 1 h | **47 191** | 2020-10 → 2026-08 |
+| BTC & ETH 4 h | 15 769 | 2018-12 → 2026-08 |
+| BTC & ETH 1 j | 2 630 | 2018-12 → 2026-08 |
+| **123 actions SBF 120, journalier** | **5 000 à 6 800 chacune** | **2000 → 2026** |
+
+Soit 4× plus de barres en crypto 1 h, et surtout **123 instruments actions dont
+l'historique remonte à 2000** — l'échantillon décorrélé que
+`docs/ML_ABLATION_SMC.md` §2 bis utilisait déjà pour valider le signal SMC.
+XRP existe mais ne remonte qu'à 2025 (2 891 barres en 1 h) ; SOL est vide.
+
+**L'effet est immédiat et mesuré.** Sur l'historique complet, `breakout`
+BTC 1 h produit **58 à 125 trades OOS** là où la recalibration tronquée en
+donnait 5. Les « optima dégénérés à moins de dix trades » que j'attribuais à la
+métrique de sélection sont, au moins en partie, un artefact de la fenêtre que
+j'avais choisie.
+
+⚠ **Cela affaiblit une conclusion du chantier.** Les campagnes L0–L8 ont toutes
+tourné sur 12 000 barres. Elles ne sont pas fausses — les comparaisons y étaient
+internes et à données égales — mais leurs échantillons OOS (40 à 130 trades)
+étaient inutilement petits, et les compartiments fins (`*_WARNING` à 3-5 trades,
+classes de liquidité nobles à 1-7) auraient probablement été mesurables sur
+l'historique complet. **Toute reprise doit partir de l'historique entier, pas de
+`--barres 12000`.**
 
 ---
 
@@ -221,6 +248,98 @@ identité, le chiffre ne servirait à rien.
 **Off par défaut** : les `optimizer_results` du YAML ont été mesurés sur le R/R
 brut. `net_rr` est journalisé quand même — c'est l'écart entre l'annoncé et
 l'encaissé qu'il faut mesurer avant de refermer la porte.
+
+---
+
+## 4 bis. Faut-il revoir `composite_score` ?
+
+**Oui, mais pas en premier — et le défaut n'est pas dans la formule.**
+
+Le diagnostic est précis. `composite_score` pénalise la rareté par un seul
+terme :
+
+```python
+trade_factor = min(n / 10, 1.0)      # pondéré 0.10 dans le bundle « qualité »
+```
+
+Une configuration à 2 trades perd donc **0,08 sur ~1,0**, pendant que ses
+`sharpe_norm` (0,22), `wr` (0,15) et `pf/6` (0,15) peuvent tous saturer à 1,0.
+Un Sharpe de 7,83 sur deux trades bat mécaniquement un Sharpe de 0,48 sur
+vingt-neuf. C'est ce qu'on observe : 14 recalibrations sur 20 sortent à moins de
+dix trades OOS.
+
+Mais la vraie anomalie est ailleurs, et elle est structurelle :
+
+| seuil | valeur | usage |
+|---|---:|---|
+| `MIN_TRADES_DEGENERATE` | **2** | plancher de la métrique de **sélection** |
+| `MIN_SIGNIFICANT_TRADES` | **10** | plancher de **décision** (`beats_baseline`) |
+
+**Le dépôt refuse de promouvoir sous dix trades, mais sélectionne avec un
+plancher de deux.** Ce n'est pas un arbitrage de modélisation, c'est un écart
+entre deux seuils qui devraient être le même — et c'est par cet écart que
+passent les optima hyper-sélectifs.
+
+*Livré* : le plancher est désormais lu dans `optimizer.min_trades`, **défaut
+inchangé** (`MIN_TRADES_DEGENERATE`), câblé identiquement dans le chemin
+séquentiel et dans les workers parallèles. Le poser à 10 aligne la sélection sur
+la décision, en une ligne de config et sans toucher à la formule.
+
+*Pourquoi « pas en premier »* : le point 2 vient de montrer que la moitié du
+problème vient de la fenêtre, pas de la métrique. Sur l'historique complet, les
+mêmes stratégies produisent 58 à 125 trades OOS au lieu de 5. **Durcir le
+plancher avant d'élargir la fenêtre reviendrait à refuser des configurations
+que la fenêtre elle-même rendait rares.** L'ordre est : historique complet
+d'abord, plancher ensuite, et mesurer les deux séparément.
+
+---
+
+## 4 ter. Faut-il supprimer les `optimizer_results` obsolètes ?
+
+**Non — pas tels quels, et pas pour la raison avancée.** Trois faits, dont deux
+que je n'avais pas vus en écrivant §5.
+
+**1. Ils sont indexés par TIMEFRAME seul, pas par symbole.** 37 entrées au
+total pour les neuf stratégies, couvrant `5m`, `15m`, `30m`, `1h`, `4h`, `1d`.
+La campagne précédente n'a mesuré que `1h` et `4h` sur deux symboles : **les
+deux tiers de ces entrées n'ont jamais été évaluées**, ni avant ni après le
+correctif. Les supprimer en bloc, ce serait jeter ce qu'on n'a pas mesuré au
+motif qu'on a mesuré autre chose.
+
+**2. Supprimer n'est pas revenir à un état neutre.** Sans `optimizer_results`,
+le bot retombe sur le bloc `params:` du YAML — des valeurs qui n'ont pas
+davantage été validées contre le comportement réel. Le choix n'est pas « garder
+du faux » contre « revenir au propre », mais **entre deux jeux non validés**.
+
+**3. Mesuré, l'écart n'est pas systématiquement en faveur des défauts.**
+`scripts/measure_optimizer_results_value.py` compare les deux sur l'OOS, à
+correctif appliqué et sur l'historique complet. Premiers résultats :
+
+| cas | optimisé | défauts | verdict |
+|---|---|---|---|
+| `breakout` BTC 1 h | 58 tr, −133,3 | 125 tr, −82,4 | défauts gagnent |
+| `breakout` BTC 4 h | 21 tr, **+46,4** | 37 tr, −37,9 | optimisé gagne |
+| `breakout` BTC 1 j | 3 tr, **+51,8** | 3 tr, −27,7 | optimisé gagne |
+| `breakout` BTC 15 m | 169 tr, −369,6 | 148 tr, −404,5 | optimisé gagne |
+| `breakout` ETH 1 h / 4 h / 1 j / 15 m / 5 m | — | — | **identiques** |
+
+Sur les neuf premiers cas : 3 « optimisé gagne », 1 « défauts gagnent », **5
+identiques**. Ce dernier chiffre est le plus parlant — pour cinq couples sur
+neuf, l'`optimizer_results` **ne change strictement rien** au comportement.
+
+*Ce qu'il faut faire à la place* : **invalider avec provenance, pas
+supprimer.** Marquer ces entrées comme mesurées contre un filtre inerte —
+l'information utile est « ce chiffre a été produit dans des conditions qui
+n'existaient pas en production », et elle disparaît avec la ligne si on
+l'efface. Le chemin normal du dépôt (`apply_best_params`, gardé par
+`beats_baseline`) les remplacera au fil des recalibrations qui passent la porte.
+
+La mesure complète tourne encore au moment où ces lignes sont écrites ; elle
+tranchera entrée par entrée :
+
+```bash
+python scripts/measure_optimizer_results_value.py --data data/ohlcv
+```
 
 ---
 
