@@ -6,6 +6,43 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### ✅ Quatre mécanismes validés — et trois de mes verdicts renversés
+
+Le harnais rejoué en 1 h sur l'**historique complet** (51 909 barres BTC,
+47 191 ETH — 199 à 338 trades par fenêtre contre 49 auparavant) valide
+**quatre mécanismes sur seize**, les premiers depuis le début du chantier :
+
+| mécanisme | BTC ΔIS/ΔOOS | ETH ΔIS/ΔOOS |
+|---|---|---|
+| **L3 porte `no_pullback`** | **+108 / +170** | **+170 / +146** |
+| **L6 sizing par tier** | +28 / +25 | +86 / +93 |
+| **L3 porte `direction`** | +0 / +65 | +101 / +61 |
+| **L6 porte tier D** | +1 / +13 | +56 / +29 |
+
+**Trois conclusions antérieures étaient fausses, toutes pour la même raison :**
+un plafond de 12 000 barres que j'avais choisi sans le mesurer. `no_pullback`
+avait été rejeté pour non-réplication, la porte `direction` déclarée « sans
+valeur », et l'ensemble résumé par un « 0 sur 16 ». Sur l'échantillon réel, les
+trois tombent. La règle des deux fenêtres n'avait pas tort — elle travaillait
+sur ce qu'on lui donnait.
+
+**Ce qui ne change pas** : aucun ne rend la stratégie rentable. `no_pullback`
+ramène la perte OOS de BTC 1 h de −500,6 à −330,6 — une réduction de 34 %, pas
+un edge. Ils restent **off par défaut** : les activer est une décision de
+trading, pas un correctif.
+
+En 4 h et 1 j, sur historique complet également, le verdict reste 0/16 — mais
+ces cas comptent 11 à 96 trades contre 122 à 154 en 1 h.
+
+**Confirmé sur 199 trades** : SMT, Silver Bullet et AMD sont **inertes**
+(+0,0 partout — l'échantillon ne peut plus servir d'excuse), et `Breaker retest`
+est nettement négatif (−226/−122 sur BTC, −134/−205 sur ETH).
+
+Documents corrigés en tête : `docs/ABLATION_SMC_V3.md`,
+`docs/MOTEUR_STRUCTURE_SEQUENTIEL.md`, `docs/PLAN_SMC_ICT_V3.md`.
+Détail : `docs/SUITE_ABLATION_V3.md` §4 quater.
+
+
 ### 📏 Un seul plancher de trades, et le harnais rejoué sur l'historique complet
 
 `MIN_TRADES_DEGENERATE` est supprimé. Le dépôt portait deux seuils — 2 pour la

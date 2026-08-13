@@ -390,13 +390,70 @@ fenêtre.**
 pour −26,6 en OOS** sur 89 trades. Ce n'est pas un mécanisme ajouté qui
 surapprend, c'est `smart_money` avec ses paramètres publiés.
 
-Le cas 1 h (51 909 barres BTC, 47 191 ETH) tourne à part, sa durée le rendant
-incompatible avec le reste du lot :
+### Le cas 1 h renverse le verdict — quatre mécanismes validés
 
 ```bash
 python scripts/measure_ablation_v3.py --data data/ohlcv \
     --cas "BTC_USDC:1h,ETH_USDC:1h" --sortie scripts/_ablation_1h.json
 ```
+
+51 909 barres pour BTC, 47 191 pour ETH — **le plus grand échantillon
+disponible**, et de loin : 199 à 338 trades par fenêtre contre 11 à 96 sur les
+autres timeframes.
+
+Références : BTC 1 h **−457,2 IS / −500,6 OOS** (338 / 199 trades),
+ETH 1 h **−650,8 / −386,2** (309 / 153).
+
+| mécanisme | BTC ΔIS/ΔOOS | ETH ΔIS/ΔOOS | n OOS méd. | verdict |
+|---|---|---|---:|:--:|
+| **L3 porte `no_pullback`** | **+108 / +170** | **+170 / +146** | 122 | **VALIDÉ** |
+| **L6 sizing par tier** | +28 / +25 | +86 / +93 | 154 | **VALIDÉ** |
+| **L3 porte `direction`** | +0 / +65 | +101 / +61 | 148 | **VALIDÉ** |
+| **L6 porte tier D** | +1 / +13 | +56 / +29 | 154 | **VALIDÉ** |
+| L10 Sweeps calendaires | +10 / +17 | +6 / −5 | 177 | 1 cas sur 2 |
+| L1 sorties partielles | −169 / −54 | −44 / −52 | 182 | – |
+| L10 Breaker retest | −226 / −122 | −134 / −205 | 327 | – |
+| L10 SMT / Silver Bullet / AMD | +0 / +0 | +0 / +0 | 176 | **inertes** |
+
+**Quatre mécanismes gagnent sur les deux fenêtres, sur les deux symboles.**
+C'est la première fois depuis le début du chantier qu'un mécanisme satisfait la
+règle, et c'est arrivé quand l'échantillon a été multiplié par quatre.
+
+### Deux de mes verdicts sont renversés
+
+**`no_pullback` (L3).** Je l'avais rejeté : il balayait 4 cas sur 4 en OOS sur
+la fenêtre tronquée et ne répliquait pas en IS (2/4). Sur l'historique complet
+en 1 h, il gagne **sur les deux fenêtres et sur les deux symboles**, avec des
+marges qui ne sont pas marginales : +170 sur l'OOS BTC, +146 sur l'OOS ETH.
+**Le rejet était un artefact de la fenêtre, pas une propriété du mécanisme.**
+La règle des deux fenêtres avait raison de le refuser à l'époque — elle
+travaillait sur 49 trades OOS ; elle en a 122 aujourd'hui.
+
+**La porte `direction` (L3).** Je l'avais déclarée sans valeur (« pire sur
+BTC 1 h, marginale ailleurs »). Elle valide aussi, quoique plus faiblement
+(ΔIS de +0,4 sur BTC — positif mais négligeable, contre +101 sur ETH).
+
+**Les tiers (L6)** n'avaient jamais rien validé : ils passent tous les deux.
+
+### Ce que ça ne dit pas
+
+**Aucun de ces mécanismes ne rend la stratégie rentable.** La référence 1 h perd
+−500,6 en OOS sur BTC ; `no_pullback` la ramène à −330,6. C'est une réduction de
+perte de 34 %, pas un edge. Les quatre validés **atténuent**, ils ne retournent
+rien.
+
+**Le verdict dépend du timeframe.** En 4 h et 1 j, sur historique complet
+également, aucun mécanisme ne valide — mais ces cas comptent 11 à 96 trades.
+Il est plus probable que le 1 h ait assez d'échantillon pour trancher que
+l'inverse ; ça reste une hypothèse, pas un fait.
+
+**Trois modules restent inertes à 199 trades** : SMT, Silver Bullet et AMD
+affichent +0,0 partout. Leur drapeau seul ne met rien en marche, et cette fois
+l'échantillon ne peut plus servir d'excuse.
+
+**`Breaker retest` est confirmé nettement négatif** sur le plus grand
+échantillon : −226/−122 sur BTC, −134/−205 sur ETH. Le YAML le documentait,
+c'est désormais établi sur 327 trades.
 
 ---
 
@@ -405,22 +462,40 @@ python scripts/measure_ablation_v3.py --data data/ohlcv \
 | piste | verdict |
 |---|---|
 | 1. Recalibrer les neuf stratégies | **20 couples sur 36 étaient faux** ; recalibrés, **4 seulement** donnent un candidat exploitable |
-| 2. Élargir l'échantillon | non traité — mais le point 1 vient de montrer que c'est le **verrou** |
+| 2. Élargir l'échantillon | **fait — et c'était bien le verrou** : ×4 de fenêtre fait passer l'ablation de 0 à 4 mécanismes validés |
 | 3. Fréquences mesurées (§79) | **close** — le mécanisme est inerte, les candidats sont mono-classe |
 | 4. R/R net et funding (L2) | **livré**, off par défaut, en attente de mesure |
 
-### Le point 2 change de statut
+### Le point 2 était bien le verrou — et il l'était deux fois
 
-Il était listé troisième par prudence. La recalibration le remonte en tête :
-**14 couples sur 20 dégénèrent en configurations à moins de dix trades OOS**.
-Ce n'est pas un défaut des stratégies, c'est la métrique de sélection qui
-récompense une rareté ne survivant pas au changement de période — le dépôt
-l'avait déjà écrit, ce chantier le mesure sur vingt cas d'un coup.
+Il était listé troisième par prudence. Il aurait dû être premier, pour deux
+raisons que le chantier a séparées :
 
-Tant que les fenêtres OOS restent à ~2 000 barres et l'univers à deux symboles,
-**aucune optimisation ne produira autre chose**. Plus de symboles et des
-fenêtres plus longues ne sont pas un confort : c'est la condition pour que le
-reste ait un sens.
+- **Sur la recalibration** : 14 couples sur 20 dégénéraient à moins de dix
+  trades OOS sur fenêtre tronquée. Sur historique complet, les mêmes
+  stratégies produisent 58 à 125 trades.
+- **Sur l'ablation** : 0 mécanisme validé sur fenêtre tronquée et sur les
+  timeframes hauts ; **4 sur 16 en 1 h sur historique complet**, dont deux que
+  j'avais explicitement rejetés.
+
+**Trois de mes conclusions ont été rendues fausses par une seule décision
+technique — le `--barres 12000` que j'avais choisi sans le mesurer.** C'est le
+défaut le plus coûteux de tout ce chantier, et il n'était ni dans la
+spécification, ni dans le code du dépôt.
+
+### Ce qu'il reste à faire
+
+1. **Décider de l'activation des quatre mécanismes validés.** C'est une décision
+   de trading : ils réduisent la perte de 25 à 34 % sans la retourner. Les
+   activer engage le bot sur un comportement mesuré mais toujours perdant.
+2. **Rejouer 4 h et 1 j avec plus de symboles** plutôt que plus de barres : leur
+   historique est déjà complet, c'est l'univers qui manque. Les 123 dailies
+   SBF 120 sont là pour ça.
+3. **Retirer les trois modules inertes** (SMT, Silver Bullet, AMD) ou réparer
+   leur activation : à 199 trades, +0,0 partout n'est plus imputable à
+   l'échantillon.
+4. **Refaire tourner la recalibration sur historique complet** — celle de §1 a
+   tourné sur 6 000 barres, et on sait maintenant ce que ça vaut.
 
 Deux constats transverses méritent d'être retenus :
 

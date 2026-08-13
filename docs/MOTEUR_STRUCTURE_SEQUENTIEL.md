@@ -1,5 +1,28 @@
 # L3 — la mémoire de structure, et le filtre qui n'a pas répliqué
 
+> ## ⚑ CORRIGÉ — les deux portes valident sur un échantillon quatre fois plus grand
+>
+> Les §2 et §3 de ce document concluent que la porte `direction` « ne vaut
+> rien » et que `no_pullback` « n'est pas validé ». **Les deux conclusions sont
+> fausses**, et pour la même raison : elles reposent sur des fenêtres tronquées à
+> 12 000 barres, soit 49 trades OOS.
+>
+> Rejoué sur l'historique complet en 1 h (51 909 barres BTC, 47 191 ETH,
+> 122 à 148 trades OOS), les deux portes **gagnent sur les deux fenêtres et sur
+> les deux symboles** :
+>
+> | mécanisme | BTC ΔIS/ΔOOS | ETH ΔIS/ΔOOS |
+> |---|---|---|
+> | `no_pullback` | **+108 / +170** | **+170 / +146** |
+> | `direction` | +0 / +65 | +101 / +61 |
+>
+> La règle des deux fenêtres n'avait pas tort de refuser à l'époque — elle
+> travaillait sur ce qu'on lui donnait. **C'est la fenêtre qui était le défaut,
+> pas le verdict.** Détail et nuances : `docs/SUITE_ABLATION_V3.md` §4 quater.
+>
+> Ce qui reste vrai : aucun des deux ne rend la stratégie rentable. `no_pullback`
+> ramène la perte OOS BTC de −500,6 à −330,6 — une réduction de 34 %, pas un edge.
+
 Le moteur SMC produit un biais ternaire — `res["_trend_arr"] ∈ {−1, 0, +1}` —
 qui bascule dès la première clôture au-delà du dernier swing. Rien n'y distingue
 un pullback d'un retournement, et une clôture marginale suffit à retourner le

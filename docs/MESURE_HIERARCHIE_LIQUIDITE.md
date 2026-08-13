@@ -104,6 +104,10 @@ qualification. C'est ce que L6 et L8 doivent trancher, séparément.
 3. La voie qui reste ouverte est celle que §3.5 décrivait : **estimer les
    fréquences d'atteinte par classe en walk-forward** (L8) et rebrancher
    `meilleure_cible` dessus. Le code l'accepte déjà — `proba` est un paramètre.
-4. Deux règles rejetées coup sur coup (L3 `no_pullback`, L4 `expected_value`)
+4. ⚠ **Corrigé depuis** : sur l'historique complet, `no_pullback` valide
+   (`docs/SUITE_ABLATION_V3.md` §4 quater) — son rejet venait de la fenêtre
+   tronquée, pas du mécanisme. `expected_value`, lui, reste rejeté, et sa
+   comparaison d'origine comportait en plus un confondant (§3 du même document).
+   Deux règles rejetées coup sur coup (L3 `no_pullback`, L4 `expected_value`)
    par le même mécanisme : **gagner sur une fenêtre et perdre sur l'autre**. La
    vérification croisée IS/OOS instaurée en L3 a payé deux fois.

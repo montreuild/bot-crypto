@@ -1,5 +1,22 @@
 # L8 / L10 — seize mécanismes passés au harnais, zéro validé
 
+> ## ⚑ CORRIGÉ — quatre validés sur un échantillon quatre fois plus grand
+>
+> **Ce document a mesuré sur des fenêtres tronquées à 12 000 barres**, un
+> plafond que j'avais choisi sans le mesurer. Rejoué sur l'historique complet
+> en 1 h (51 909 barres BTC, 47 191 ETH — 199 à 338 trades par fenêtre contre 49
+> auparavant), **quatre mécanismes sur seize valident** : les deux portes de
+> structure de L3 et les deux mécanismes de tier de L6.
+>
+> Le §3 ci-dessous — « la stratégie SMC règles-seules n'a pas d'edge exploitable
+> dans cet espace de paramètres » — **reste vrai** : les quatre validés réduisent
+> la perte de 25 à 34 % sans jamais la retourner. Mais la phrase « ajouter un
+> dix-septième mécanisme n'a aucune raison de changer ça » était appuyée sur un
+> 0/16 qui n'existe plus.
+>
+> En 4 h et 1 j, sur historique complet aussi, le verdict reste 0/16 — ces cas
+> comptent 11 à 96 trades. Détail : `docs/SUITE_ABLATION_V3.md` §4 quater.
+
 Le plan posait en §6 la condition de réussite, et sa contrepartie :
 
 > Si le point 1 échoue après L8, **la conclusion à publier est que la stratégie

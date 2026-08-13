@@ -22,23 +22,32 @@ Documents à lire avant de commencer, dans cet ordre :
 
 ---
 
-> ## ⚑ Verdict du chantier (L0, L1, L3, L4, L5, L6, L8, L10 livrés)
+> ## ⚑ Verdict du chantier (L0–L10 livrés, plus la suite de §5)
 >
-> **Seize mécanismes passés au harnais d'ablation, zéro validé.** Le meilleur
-> score est 2 cas sur 4 — soit pile ou face. La condition posée en §6 de ce plan
-> a donc échoué, et sa contrepartie s'applique : *la stratégie SMC règles-seules
-> n'a pas d'edge exploitable dans cet espace de paramètres.* Ajouter un
-> dix-septième mécanisme n'a aucune raison de changer ça.
+> **Quatre mécanismes sur seize valident, sur le plus grand échantillon
+> disponible.** Les deux portes de structure de L3 (`no_pullback`, `direction`)
+> et les deux mécanismes de tier de L6 gagnent sur les deux fenêtres et les deux
+> symboles en 1 h, historique complet — 122 à 154 trades OOS. En 4 h et 1 j,
+> aucun ne valide, mais ces cas comptent 11 à 96 trades.
 >
-> **Ce qui a été gagné n'est pas de la performance :** un défaut de parité
+> **Ils atténuent, ils ne retournent pas.** `no_pullback` ramène la perte OOS de
+> BTC 1 h de −500,6 à −330,6 : une réduction de 34 %, pas un edge. La condition
+> de réussite posée en §6 reste donc **non satisfaite** — aucune configuration ne
+> passe `beats_baseline` avec un PnL OOS positif.
+>
+> **Le défaut le plus coûteux du chantier était méthodologique et de mon fait :**
+> un plafond de 12 000 barres choisi sans le mesurer, alors que BTC 1 h en compte
+> 51 909. Il a rendu fausses trois conclusions — le rejet de `no_pullback`, celui
+> de la porte `direction`, et le « 0 sur 16 » d'ensemble — et a fait dégénérer 14
+> recalibrations sur 20.
+>
+> **Acquis techniques, indépendants de la performance :** un défaut de parité
 > backtest/live corrigé (neuf stratégies avaient un filtre HTF inerte en
-> simulation et actif en production — leurs `optimizer_results` reposaient sur
-> une simulation fausse), deux défauts de comptabilité, le verrou des sorties
-> partielles ouvert, une convention BOS/MSS/CHoCH unique, sept axes de mesure,
-> et la règle des deux fenêtres qui a intercepté deux faux positifs
-> spectaculaires.
+> simulation et actif en production), deux défauts de comptabilité, le verrou des
+> sorties partielles ouvert, une convention BOS/MSS/CHoCH unique, sept axes de
+> mesure, un plancher de trades unifié, et la règle des deux fenêtres.
 >
-> Suite recommandée : `docs/ABLATION_SMC_V3.md` §5.
+> Détail et suite : `docs/SUITE_ABLATION_V3.md`.
 
 ## 0. Verdict en une page
 
@@ -504,14 +513,14 @@ modification de comportement ne doit y être glissée.
 
 ### L3 — Structure Engine séquentiel (l'apport réel de la spec) ✅ LIVRÉ
 
-> **Résultat en trois temps.** (1) La convention BOS/MSS/CHoCH existe enfin, une
-> seule fois — c'est l'acquis durable, et L4/L6 s'y adossent. (2) La porte de la
-> spécification (mode `direction`) **ne vaut rien** : pire sur BTC 1 h, marginale
-> ailleurs. (3) Un mode `no_pullback`, suggéré par le découpage et **absent de la
-> spec**, balayait 4 cas sur 4 en OOS (−83 % de perte sur ETH 1 h, DD divisé par
-> 3,4) — mais **il ne réplique pas sur la fenêtre IS** (2/4, et il détruit le
-> seul résultat rentable de la campagne). Choisi après lecture des résultats
-> OOS : sélection sur le test. **Aucune porte n'est activée.**
+> **⚑ Verdict révisé.** Les deux portes **valident** sur l'historique complet en
+> 1 h (`no_pullback` : +108/+170 sur BTC, +170/+146 sur ETH ; `direction` :
+> +0/+65 et +101/+61). Le rejet initial reposait sur 12 000 barres et 49 trades
+> OOS. Elles restent **off par défaut** : leur activation est une décision de
+> trading, et elles réduisent la perte sans la retourner.
+>
+> **Acquis durable** : la convention BOS/MSS/CHoCH existe enfin, une seule fois,
+> et L4/L6 s'y adossent.
 >
 > Le postulat de §62 (« entrer en WARNING est pire ») n'est pas testable : 3 à 5
 > trades par compartiment. Reporté à L8, avec plus de symboles.
