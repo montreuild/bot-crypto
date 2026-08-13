@@ -71,6 +71,7 @@ from app.core.smc_sessions import (  # noqa: F401
     KILLZONES,
     SESSIONS,
     _htf_buckets,
+    asian_range_levels,
     calendar_liquidity_levels,
     htf_analysis,
     htf_trend_series,

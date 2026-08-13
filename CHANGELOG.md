@@ -6,6 +6,36 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🌏 Asian Range (§30) et Silver Bullet mesurable à part (§31)
+
+**`asian_range_levels()`** — nouveau dans `app/core/smc_sessions.py`. Pour
+chaque barre : high, low et mid de la dernière session asiatique **entièrement
+close**, plus deux drapeaux de balayage. Le cadre ICT lit cette session comme la
+phase d'accumulation : ses extrêmes concentrent les stops, et la manipulation de
+Londres ou New York vient les chercher.
+
+Causal par construction, sur le modèle de `calendar_liquidity_levels` : à 03:00
+UTC on publie la plage de la VEILLE, pas celle en cours de formation — sinon on
+connaîtrait son extrême avant qu'il existe. Les drapeaux de balayage s'allument
+à la barre du dépassement, jamais avant. Vérifié par test de préfixe.
+
+**Silver Bullet reclassé, pas réimplémenté.** Le module existait déjà
+(`app.core.ict.silver_bullet_flags`, paramètres `sb_bonus` / `sb_filter`) mais
+ses trades étaient comptés avec le SMC Core, donc son apport propre était
+invisible — ce que §31 interdit explicitement. Un trade pris dans une fenêtre
+Silver Bullet est désormais classé `ICT_SILVER_BULLET`.
+
+Le reclassement **ne décide rien** : mesuré sur BTC/USDC 4 h, 115 trades dans
+les deux cas, dont 11 reclassés quand le module est activé. Et les deux
+drapeaux valant `False` par défaut, aucune analyse existante ne change.
+
+⚠️ **Doublon évité de justesse** : j'avais commencé par écrire un second
+`silver_bullet_flags` dans `smc_sessions`, avant de constater qu'il existait
+depuis longtemps dans `app/core/ict.py`. Deux définitions des mêmes fenêtres
+horaires auraient fini par diverger. Les tests portent sur la fonction
+existante.
+
+
 ### 📊 Statistiques par setup et par module SMC (§65)
 
 Une stratégie SMC agrège plusieurs familles de setups dont rien ne garantit
