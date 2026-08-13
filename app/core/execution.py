@@ -52,11 +52,18 @@ def venue_borrow_rate(daily_rate: float, venue=None) -> float:
     """
     if venue is None:
         return float(daily_rate)
+    # L2 (§27) — un perpétuel ne s'EMPRUNTE pas, il paie (ou encaisse) un
+    # funding par périodes discrètes. Le facturer au taux d'emprunt margin
+    # donnait un coût de portage toujours positif et de la mauvaise magnitude.
+    # Le vrai coût est calculé par `trade_economics.funding_cost`, alimenté par
+    # la série `funding_rate` de `app/core/derivatives.py`.
+    if getattr(venue, "market_type", "spot") == "perp":
+        return 0.0
     fn = getattr(venue, "effective_borrow_rate", None)
     if callable(fn):
         return float(fn(daily_rate))
     # Venue « canard » (test double, dict-like) : on retombe sur le marché.
-    if getattr(venue, "market_type", "spot") in ("margin", "perp"):
+    if getattr(venue, "market_type", "spot") == "margin":
         return float(daily_rate)
     return 0.0
 

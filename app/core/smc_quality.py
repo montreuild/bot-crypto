@@ -313,6 +313,49 @@ def opens_calendaires(df: pl.DataFrame) -> Dict[str, np.ndarray]:
 
 # ── §78 §79 — sélection de cible ────────────────────────────────────────────
 
+def frequences_atteinte(trades: List[dict], min_trades: int = 8,
+                        defaut: Optional[Dict[str, float]] = None
+                        ) -> Dict[str, float]:
+    """§79 — fréquence MESURÉE d'atteinte de la cible, par classe de liquidité.
+
+    C'est la brique que `docs/MESURE_HIERARCHIE_LIQUIDITE.md` §5 réclame :
+    ``POIDS_CLASSE`` est un ordre postulé, et la mesure l'a contredit là où
+    l'échantillon était exploitable. Ici on ne postule plus — on compte, sur une
+    fenêtre d'ENTRAÎNEMENT, la proportion de trades dont l'excursion favorable a
+    effectivement atteint la cible visée.
+
+    Un trade compte comme « atteint » si son MFE, en multiples du risque
+    planifié, a dépassé la distance à la cible. Le MFE est utilisé plutôt que le
+    motif de sortie parce qu'un trailing peut couper un trade APRÈS qu'il a
+    touché sa cible : ce serait compter un succès comme un échec.
+
+    Les classes sous ``min_trades`` retombent sur ``defaut`` (les poids
+    postulés) : une fréquence estimée sur trois trades serait plus trompeuse
+    qu'un poids assumé comme arbitraire.
+    """
+    defaut = defaut or POIDS_CLASSE
+    compte: Dict[str, List[int]] = {}
+    for t in trades:
+        ind = t.get("indicators") or {}
+        classe = ind.get("tp_class")
+        entree = float(t.get("entry") or 0)
+        stop = t.get("planned_stop")
+        cible = ind.get("tp_target")
+        if not classe or not entree or stop is None or cible is None:
+            continue
+        risque = abs(entree - float(stop))
+        if risque <= 0:
+            continue
+        cible_r = abs(float(cible) - entree) / risque
+        mfe_r = abs(float(t.get("mfe") or 0.0)) / 100.0 * entree / risque
+        compte.setdefault(classe, []).append(1 if mfe_r >= cible_r else 0)
+    out = dict(defaut)
+    for classe, atteints in compte.items():
+        if len(atteints) >= min_trades:
+            out[classe] = round(sum(atteints) / len(atteints), 4)
+    return out
+
+
 def meilleure_cible(cibles: List[Tuple[float, str]], entree: float,
                     risque: float, side: str, rr_min: float,
                     gain_min_pct: float, front_run: float = 0.0,

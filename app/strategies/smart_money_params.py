@@ -49,6 +49,9 @@ PARAM_SPACE: Dict[str, List] = {
     # L6 (§71) — tiers de setup : porte et/ou modulation du risque.
     'tier_gate': [True, False],
     'tier_sizing': [True, False],
+    # L2 (§2 §4) — décision au NET. 0 = off (R/R brut, comportement historique).
+    'min_net_rr': [0, 1.5, 2.0, 2.5],
+    'cost_multiple': [0, 5.0, 8.0],
     # L1 (§29 §30) — sorties partielles et mode de trailing du runner.
     'use_partial_exits': [True, False],
     'tp1_r': [0.75, 1.0, 1.5],
@@ -138,6 +141,12 @@ FIXED_PARAMS: Dict[str, Any] = {
     'tier_gate': False,
     'tier_sizing': False,
     'tier_a_score': 0.85,
+    # L2 — off : les optimizer_results du YAML ont été mesurés sur le R/R BRUT.
+    # `net_rr` reste journalisé, pour mesurer l'écart avant de le refermer.
+    'min_net_rr': 0,
+    'cost_multiple': 0,
+    'taker_fee': 0.001,
+    'spread_pct': 0.0005,
     'break_body_atr': 0.5,
     'mss_sweep_lookback': 8,
     'warning_max_bars': 40,

@@ -31,6 +31,7 @@ from app.core.risk_envelope import with_reference_envelope
 from app.core.risk_sizer import _floor_to
 from app.core.timeframes import TF_MINUTES as _TF_MINUTES
 from app.core.timeframes import bars_per_year as _bars_per_year
+from app.core.trade_economics import funding_cost as _funding_cost
 from app.core.trailing import TrailingStopManager
 from app.engine.engine import Engine
 
@@ -712,6 +713,14 @@ class Backtester:
         if impact:
             pnl -= impact
             fees += impact
+        # L2 (§27) — funding des perpétuels. `venue_borrow_rate` rend 0 sur une
+        # venue perp depuis L2 : le portage y passe par le funding, qui change
+        # de signe (un funding négatif est ENCAISSÉ, pas payé).
+        funding = self._funding_cost(ctx, position, i, hours_held)
+        if funding:
+            pnl -= funding
+            position["funding_cost"] = round(
+                position.get("funding_cost", 0.0) + funding, 8)
         # L0 — coût de spread de la sortie, isolé (déjà dans le PnL via exec_price).
         slip_exit = (abs(exec_price - ref_price) * fill_size
                      if ref_price is not None else 0.0) + impact
@@ -1495,6 +1504,15 @@ class Backtester:
             # Initialisé plus bas (après know si realistic_risk=True).
             risk_gate=None,
         )
+        # L2 (§27) — série de funding pour les venues perp. Absente = pas de
+        # facturation (et non une estimation inventée) : mieux vaut un coût
+        # manquant et signalé qu'un coût faux et silencieux.
+        ctx.funding_arr = None
+        if getattr(self._venue, "market_type", "spot") == "perp" \
+                and "funding_rate" in df.columns:
+            ctx.funding_arr = df["funding_rate"].fill_null(0.0) \
+                .to_numpy().astype(float)
+
         # BT-10 : volume quote moyen (20 barres, causal) pour le modèle "size".
         if self.slippage_model == "size" and "volume" in df.columns:
             ctx.qvol_arr = (df["volume"] * df["close"]).rolling_mean(20) \
@@ -1734,6 +1752,28 @@ class Backtester:
             return self.envelope.slot_envelope
         from app.core.risk_gate import _default_venue_capital
         return _default_venue_capital(cfg) or 1000.0
+
+    def _funding_cost(self, ctx, position: dict, i: int,
+                      hours_held: float) -> float:
+        """L2 (§27) — funding d'un perpétuel sur la durée de détention.
+
+        0.0 hors venue perp, ou quand la série de funding n'est pas disponible
+        (``ctx.funding_arr``, alimentée par ``derivatives.align_to_ohlcv``).
+        Un long paie quand le funding est positif, un short encaisse — d'où le
+        signe porté par le sens de la position."""
+        arr = getattr(ctx, "funding_arr", None)
+        if arr is None or self._venue is None:
+            return 0.0
+        if getattr(self._venue, "market_type", "spot") != "perp":
+            return 0.0
+        debut = int(position.get("bar", i))
+        if not (0 <= debut <= i < len(arr)):
+            return 0.0
+        taux_moyen = float(np.nanmean(arr[debut:i + 1]))
+        if taux_moyen != taux_moyen:      # NaN
+            return 0.0
+        cout = _funding_cost(position["notional"], taux_moyen, hours_held)
+        return cout if position["side"] == "long" else -cout
 
     def _impact_cost(self, ctx, i: int, notional: float) -> float:
         """BT-10 : coût d'impact croissant avec la taille RELATIVE du trade

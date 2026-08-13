@@ -33,6 +33,7 @@ from app.core.smc_quality import (
     qualite_displacement,
 )
 from app.core.smc_state import sequence_label, state_label
+from app.core.trade_economics import economic_edge_ok, net_rr, round_trip_cost
 
 logger = logging.getLogger(__name__)
 
@@ -1060,8 +1061,13 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
     tp = None
     tp_src = ""
     if str(p.get("target_mode", "nearest")) == "expected_value":
+        # `target_proba` : fréquences d'atteinte MESURÉES sur une fenêtre
+        # d'entraînement (`smc_quality.frequences_atteinte`). Absent → poids
+        # postulés de §77, que la mesure a contredits — d'où l'intérêt de
+        # pouvoir injecter des chiffres plutôt qu'une croyance.
         best_t = meilleure_cible(list(targets), entry, risk, side, min_rr,
-                                 min_gain, front_run=front)
+                                 min_gain, front_run=front,
+                                 proba=p.get("target_proba"))
         if best_t:
             tp = best_t["price"]
             tp_src = f"{best_t['source']} {best_t['price'] + sens * front:.6g}"
@@ -1083,6 +1089,28 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
 
     gain_pct = abs(tp - entry) / entry * 100.0
     rr_final = abs(tp - entry) / risk
+
+    # ── L2 (§2 §4) — la décision passe au NET ────────────────────────────────
+    # Jusqu'ici on comparait un gain BRUT à un risque BRUT : le R/R annoncé
+    # n'était pas celui qu'on encaissait. L1 l'a chiffré — profit factor 1,147
+    # pour un PnL net de −0,33 %. Off par défaut (`min_net_rr` à 0) : les
+    # `optimizer_results` du YAML ont été mesurés sur le R/R brut.
+    min_net = float(p.get("min_net_rr", 0) or 0)
+    mult_cout = float(p.get("cost_multiple", 0) or 0)
+    rr_net = None
+    if min_net > 0 or mult_cout > 0:
+        # Taille unitaire : le R/R net et le multiple de coûts sont des RATIOS,
+        # invariants d'échelle tant que les frais sont proportionnels. Les
+        # coûts fixes (commission plancher, taxe) ne le sont pas — c'est une
+        # approximation, assumée ici et exacte en crypto.
+        couts = round_trip_cost(entry, 1.0, fee_rate=float(p.get("taker_fee", 0.001)),
+                                spread_pct=float(p.get("spread_pct", 0.0005)))
+        rr_net = net_rr(entry, sl, tp, 1.0, couts, side=side)
+        if min_net > 0 and rr_net < min_net:
+            return None
+        if mult_cout > 0 and not economic_edge_ok(abs(tp - entry), couts,
+                                                  mult_cout):
+            return None
 
     # ⚠ FILTRE : gain potentiel > min_gain_pct sinon position rejetée.
     if gain_pct <= min_gain or rr_final < min_rr:
@@ -1157,6 +1185,10 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
         "module": setup_module(setup),
         "stop_hint": round(sl, 8),
         "tp_hint":   tp_out,
+        # L2 — journalisés même quand la porte est désactivée : sans le chiffre,
+        # on ne peut pas mesurer l'écart entre le R/R annoncé et l'encaissé.
+        "gross_rr":  round(rr_final, 3),
+        "net_rr":    round(rr_net, 3) if rr_net is not None else None,
         "exit_after_bars": exit_after,
         "disable_trailing": disable_trailing,
         "trail_override": trail_override,
