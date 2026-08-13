@@ -76,6 +76,7 @@ from app.core.smc_sessions import (  # noqa: F401
     htf_analysis,
     htf_trend_series,
     killzone_flags,
+    mtf_alignment,
     session_label,
     smt_series,
 )

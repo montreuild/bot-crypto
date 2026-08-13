@@ -392,6 +392,38 @@ dominés par un choix existant (TP-liquidité > measured-move ; trailing > tout 
 fixe). On les garde disponibles mais désactivés — la discipline reste : n'activer
 que ce qu'une mesure justifie.
 
+### Chantier SMC/ICT V3 — ce que la stratégie a gagné (2026-08)
+
+Le chantier `docs/PLAN_SMC_ICT_V3.md` a ajouté onze mécanismes à `smart_money`.
+**Tous sont OFF par défaut** : les `optimizer_results` du YAML ont été mesurés
+sans eux, et les activer en silence les invaliderait.
+
+| Param | Lot | Mécanique | Verdict mesuré |
+|---|---|---|---|
+| `structure_gate` | L3 | porte sur l'état de structure séquentiel — `off` / `direction` / `no_pullback` / `both` (`app/core/smc_state.py`) | ✅ **`no_pullback` et `direction` validés en 1 h sur historique complet** (+170 et +65 d'OOS sur BTC) |
+| `tier_sizing`, `tier_gate` | L6 | tiers A/B/C/D dérivés de la séquence (§71), branchés sur le `size_factor` natif | ✅ **validés en 1 h** (+25 et +13 d'OOS sur BTC) |
+| `use_partial_exits`, `tp1_r`, `tp1_fraction`, `tp2_fraction` | L1 | TP1 en multiple de R + TP2 sur la poche + runner (§29) | ⚠️ bat le tout-ou-rien en 4 h, échoue en 1 h |
+| `trail_mode` | L1 | `structure` place le stop sous le dernier pivot confirmé (§30) | ⚠️ meilleur système en 4 h, non validé en 1 h |
+| `target_mode` | L4 | `expected_value` classe les cibles par `probabilité × gain` (§78/§79) | ❌ rejeté — les candidats sont mono-classe, le mécanisme est inerte |
+| `max_stop_atr` | L4 | plafond de distance entrée→stop (§23/§32) | ❌ ne mord pas |
+| `min_net_rr`, `cost_multiple` | L2 | décision au **net** de frais, spread et funding (§2/§4) | non mesuré — livré, journalisé |
+
+Journalisés systématiquement, même désactivés : `structure_state`,
+`sequence_type`, `sequence_id`, `market_event_id`, `tier`, `net_rr`,
+`score_breakdown`, et les coûts ventilés. Sept axes d'agrégation en découlent
+(`by_exit_reason`, `by_structure_state`, `by_sequence_type`, `by_tier`,
+`by_target_class`…), tous visibles dans le panneau de statistiques du backtest.
+
+⚠️ **Modules confirmés inertes sur 199 trades** : `smt_filter`, `sb_bonus`,
+`amd_bonus` — leur drapeau seul ne change aucun trade, il leur manque des
+paramètres compagnons. `use_breakers` est confirmé nettement négatif
+(−226 d'IS / −122 d'OOS sur BTC 1 h).
+
+⚠️ **Déduplication d'événement** (`trading.dedup_events`, ON par défaut) : un
+même balayage produisait sweep, retest d'OB et FVG comme trois signaux
+indépendants, ce qui multipliait le risque sur un seul événement de marché
+(§97). Les stratégies qui ne posent pas `market_event_id` ne sont pas affectées.
+
 ### Croisement indicateurs × SMC (2026-07-08)
 
 Batch d'indicateurs réutilisables ajouté à `indicators_core` (VWAP, CVD,

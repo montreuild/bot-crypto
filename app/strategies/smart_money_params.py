@@ -41,6 +41,23 @@ PARAM_SPACE: Dict[str, List] = {
     'time_stop_bars': [0, 12, 16, 24],
     'use_trailing': [True, False],
     'trail_mult': [2.0, 2.5, 3.5],
+    # L3 (§60) — porte de structure séquentielle.
+    'structure_gate': ['off', 'direction', 'no_pullback', 'both'],
+    # L4 (§78 §79) — choix de la cible, et plafond de distance au POI (§32 §23).
+    'target_mode': ['nearest', 'expected_value'],
+    'max_stop_atr': [0, 3.0, 4.0],
+    # L6 (§71) — tiers de setup : porte et/ou modulation du risque.
+    'tier_gate': [True, False],
+    'tier_sizing': [True, False],
+    # L2 (§2 §4) — décision au NET. 0 = off (R/R brut, comportement historique).
+    'min_net_rr': [0, 1.5, 2.0, 2.5],
+    'cost_multiple': [0, 5.0, 8.0],
+    # L1 (§29 §30) — sorties partielles et mode de trailing du runner.
+    'use_partial_exits': [True, False],
+    'tp1_r': [0.75, 1.0, 1.5],
+    'tp1_fraction': [0.25, 0.5],
+    'tp2_fraction': [0.0, 0.25],
+    'trail_mode': ['structure', 'dynamic', 'chandelier'],
     'size_by_confluence': [True, False],
     'size_conf_slope': [2.0, 3.0, 4.0],
     'choch_exit': [True, False],
@@ -112,6 +129,33 @@ FIXED_PARAMS: Dict[str, Any] = {
     'use_trailing': False,
     'trail_mult': 2.5,
     'ts_profit_r': 1.0,
+    # L3 — la porte filtre (off), le journal enregistre toujours l'état : sans
+    # le second on ne pourrait pas mesurer si le premier vaut quelque chose.
+    'structure_gate': 'off',
+    'structure_journal': True,
+    # L4 — `nearest` reproduit le ciblage historique ; 0 = plafond de stop off.
+    'target_mode': 'nearest',
+    'max_stop_atr': 0,
+    # L6 — tiers journalisés toujours, mais sans effet sur la décision : c'est
+    # la mesure `by_tier` qui doit dire s'ils valent quelque chose.
+    'tier_gate': False,
+    'tier_sizing': False,
+    'tier_a_score': 0.85,
+    # L2 — off : les optimizer_results du YAML ont été mesurés sur le R/R BRUT.
+    # `net_rr` reste journalisé, pour mesurer l'écart avant de le refermer.
+    'min_net_rr': 0,
+    'cost_multiple': 0,
+    'taker_fee': 0.001,
+    'spread_pct': 0.0005,
+    'break_body_atr': 0.5,
+    'mss_sweep_lookback': 8,
+    'warning_max_bars': 40,
+    # L1 — off : les optimizer_results du YAML ont été mesurés en tout-ou-rien.
+    'use_partial_exits': False,
+    'tp1_r': 1.0,
+    'tp1_fraction': 0.25,
+    'tp2_fraction': 0.25,
+    'trail_mode': 'structure',
     'size_by_confluence': False,
     'size_conf_slope': 3.0,
     'size_conf_center': 0.83,

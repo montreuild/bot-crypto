@@ -144,19 +144,97 @@ class ChandelierTrailingStop:
         return "chandelier"
 
 
+def _dernier_pivot(valeurs, k, bas):
+    """Dernier pivot fractal CONFIRMÉ de la fenêtre, ou None.
+
+    Confirmé = ``k`` barres de chaque côté, donc le candidat le plus récent est
+    à ``len − 1 − k``. C'est la même latence que les swings du moteur SMC : un
+    pivot qu'on daterait sans ses barres de droite n'existerait pas encore.
+    """
+    n = len(valeurs)
+    if n < 2 * k + 1:
+        return None
+    for j in range(n - 1 - k, k - 1, -1):
+        pivot = valeurs[j]
+        gauche = valeurs[j - k:j]
+        droite = valeurs[j + 1:j + 1 + k]
+        if bas:
+            if all(pivot <= x for x in gauche) and all(pivot <= x for x in droite):
+                return pivot
+        elif all(pivot >= x for x in gauche) and all(pivot >= x for x in droite):
+            return pivot
+    return None
+
+
+class StructureTrailingStop:
+    """§30 — stop derrière le dernier HL confirmé (long) / LH confirmé (short).
+
+    Le trailing ATR suit le PRIX ; celui-ci suit la STRUCTURE. La différence
+    compte quand le marché consolide : un pullback à 2 ATR déclenche le premier
+    et pas le second tant que le dernier point haut de la structure tient.
+
+    Repli sur ``mult × ATR`` tant qu'aucun pivot n'est confirmé dans la fenêtre
+    — sinon le stop resterait à son niveau initial sur toute une impulsion.
+    Ratchet strict comme les autres modes.
+    """
+
+    def __init__(self, mult=2.5, buffer_atr=0.25, pivot_k=2):
+        self.mult = max(float(mult), 0.1)
+        self.buffer_atr = max(float(buffer_atr), 0.0)
+        self.pivot_k = max(int(pivot_k), 1)
+        self._peak_price = 0.0
+
+    def init(self, entry, atr, side):
+        self._peak_price = entry
+        return entry - atr * self.mult if side == "long" else entry + atr * self.mult
+
+    def update(self, current_price, current_stop, atr, side, entry=None,
+               bars_held=0, recent_lows=None, recent_highs=None):
+        if atr <= 0:
+            return current_stop, 1, "structure"
+        bas = side == "long"
+        serie = (recent_lows if bas else recent_highs) or []
+        pivot = _dernier_pivot(list(serie), self.pivot_k, bas)
+        if bas:
+            self._peak_price = max(self._peak_price or current_price, current_price)
+            candidat = (pivot - atr * self.buffer_atr if pivot is not None
+                        else self._peak_price - atr * self.mult)
+            candidat = min(candidat, current_price - atr * 0.1)
+            return max(current_stop, candidat), 1, "structure"
+        self._peak_price = min(self._peak_price or current_price, current_price)
+        candidat = (pivot + atr * self.buffer_atr if pivot is not None
+                    else self._peak_price + atr * self.mult)
+        candidat = max(candidat, current_price + atr * 0.1)
+        return min(current_stop, candidat), 1, "structure"
+
+    def is_triggered(self, price, stop, side):
+        return price <= stop if side == "long" else price >= stop
+
+    @property
+    def phase(self):
+        return 1
+
+    @property
+    def phase_name(self):
+        return "structure"
+
+
 class TrailingStopManager:
     """Interface simplifiée vers DynamicTrailingStop (ou ChandelierTrailingStop).
 
     ``mode="chandelier"`` bascule sur le trailing Chandelier pur (ratchet
-    extrême ∓ mult × ATR, sans phases breakeven/lock/tight). Sélectionnable
-    par signal via ``trail_override={"mode": "chandelier", "trail_wide": k}``.
+    extrême ∓ mult × ATR, sans phases breakeven/lock/tight).
+    ``mode="structure"`` (§30) place le stop derrière le dernier pivot confirmé.
+    Sélectionnables par signal via ``trail_override={"mode": …, "trail_wide": k}``.
     """
 
     def __init__(self, mult=2.5, grace_bars=4, breakeven_r=1.2, trail_tight_mult=1.0,
                  lock_r=2.5, tight_r=4.0, lock_ratio=0.60, use_swing=True,
-                 mode="dynamic"):
+                 mode="dynamic", struct_buffer_atr=0.25, struct_pivot_k=2):
         self.mult = mult
         self.mode = str(mode or "dynamic").lower()
+        self.struct_buffer_atr = struct_buffer_atr
+        self.struct_pivot_k = struct_pivot_k
         self._dts = None
         self._kwargs = dict(
             trail_wide=mult, trail_normal=max(mult - 0.5, 1.5),
@@ -168,6 +246,10 @@ class TrailingStopManager:
     def _new_dts(self):
         if self.mode == "chandelier":
             return ChandelierTrailingStop(mult=self.mult)
+        if self.mode == "structure":
+            return StructureTrailingStop(mult=self.mult,
+                                         buffer_atr=self.struct_buffer_atr,
+                                         pivot_k=self.struct_pivot_k)
         return DynamicTrailingStop(**self._kwargs)
 
     def initial_stop(self, entry, atr, side):
@@ -177,7 +259,7 @@ class TrailingStopManager:
     def init_from_stop(self, entry: float, saved_stop: float, side: str):
         """Réinitialise depuis un stop sauvegardé en BDD (reprise après crash)."""
         self._dts = self._new_dts()
-        if self.mode == "chandelier":
+        if self.mode in ("chandelier", "structure"):
             self._dts._peak_price = entry
             return
         # Fallback si stop == entry : 1% du prix comme distance (évite peak_r infini)
@@ -194,7 +276,7 @@ class TrailingStopManager:
             return current_stop
         if self._dts is None:
             self._dts = self._new_dts()
-            if self.mode == "chandelier":
+            if self.mode in ("chandelier", "structure"):
                 self._dts._peak_price = current_price
             else:
                 dist = abs(entry - current_stop) if entry else atr * self.mult

@@ -52,11 +52,18 @@ def venue_borrow_rate(daily_rate: float, venue=None) -> float:
     """
     if venue is None:
         return float(daily_rate)
+    # L2 (§27) — un perpétuel ne s'EMPRUNTE pas, il paie (ou encaisse) un
+    # funding par périodes discrètes. Le facturer au taux d'emprunt margin
+    # donnait un coût de portage toujours positif et de la mauvaise magnitude.
+    # Le vrai coût est calculé par `trade_economics.funding_cost`, alimenté par
+    # la série `funding_rate` de `app/core/derivatives.py`.
+    if getattr(venue, "market_type", "spot") == "perp":
+        return 0.0
     fn = getattr(venue, "effective_borrow_rate", None)
     if callable(fn):
         return float(fn(daily_rate))
     # Venue « canard » (test double, dict-like) : on retombe sur le marché.
-    if getattr(venue, "market_type", "spot") in ("margin", "perp"):
+    if getattr(venue, "market_type", "spot") == "margin":
         return float(daily_rate)
     return 0.0
 
@@ -110,6 +117,45 @@ def close_pnl(side: str, entry: float, exit_price: float, size: float,
 # ici — donc partagées backtest ↔ live comme le reste du module — et **neutres
 # quand la venue est None ou crypto** (défauts : lot_size=0, tick_size=0,
 # fractional=True, fee_pct=None, fee_fixed=0, taxe=0).
+
+
+def plan_partial_targets(signal: dict, entry: float, stop: float) -> list:
+    """L1 (§29) — cibles de sortie partielle d'un signal, en prix absolus.
+
+    Contrat : ``signal["exits"] = [{"r": 1.0, "fraction": 0.25}, …]``, chaque
+    entrée portant soit ``r`` (multiple du risque entrée→stop), soit ``price``
+    (niveau absolu, typiquement une poche de liquidité). Le runner est le
+    reliquat : des fractions qui somment à moins de 1 le laissent courir.
+
+    Absent → liste vide → comportement tout-ou-rien strictement inchangé.
+
+    Ici et non dans le backtest : le live doit planifier EXACTEMENT les mêmes
+    niveaux, sinon les deux divergent dès le premier TP partiel.
+    """
+    spec = signal.get("exits") or []
+    if not spec:
+        return []
+    risque = abs(entry - stop)
+    sens = 1 if signal.get("side") == "long" else -1
+    out, cumul = [], 0.0
+    for n, e in enumerate(spec, 1):
+        frac = float(e.get("fraction", 0) or 0)
+        if frac <= 0 or cumul + frac > 1.0:
+            continue
+        if e.get("price") is not None:
+            px = float(e["price"])
+        elif e.get("r") is not None and risque > 0:
+            px = entry + sens * float(e["r"]) * risque
+        else:
+            continue
+        # Une cible du mauvais côté de l'entrée serait touchée dès la première
+        # barre : c'est une erreur de spécification, pas une sortie.
+        if (sens > 0 and px <= entry) or (sens < 0 and px >= entry):
+            continue
+        cumul += frac
+        out.append({"price": px, "fraction": frac,
+                    "reason": str(e.get("reason") or f"tp{n}")})
+    return out
 
 
 def quantize_size(size: float, venue=None) -> float:

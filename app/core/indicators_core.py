@@ -141,6 +141,25 @@ def atr_wilder(df: pl.DataFrame, n: int = 14) -> pl.Series:
     return _true_range(df).ewm_mean(alpha=1.0 / n, adjust=False)
 
 
+def atr_percentile(df: pl.DataFrame, n: int = 14,
+                   lookback: int = 200) -> pl.Series:
+    """§76 — rang de l'ATR courant dans sa propre distribution récente, [0, 1].
+
+    Un seuil d'ATR **absolu** (« ATR% > 3 → volatile ») ne veut pas dire la même
+    chose sur BTC en 2018 et sur une action du SBF 120 : c'est l'argument exact
+    de §76, et le dépôt en compte deux — `risk.volatility_threshold` (frein de
+    sizing) et `atr_volatile_threshold` (classification de régime).
+
+    Causal par construction : le rang à la barre i ne regarde que les
+    ``lookback`` barres qui la précèdent, elle comprise.
+    """
+    a = atr_wilder(df, n) / df["close"]
+    return (a.rolling_map(
+        lambda w: float((w <= w[-1]).sum()) / len(w),
+        window_size=min(lookback, max(len(df), 1)), min_samples=n)
+        .fill_null(0.5))
+
+
 def atr(df: pl.DataFrame, n: int = 14) -> pl.Series:
     """ATR(n) — retourne une Series complète (compatible build_features).
 

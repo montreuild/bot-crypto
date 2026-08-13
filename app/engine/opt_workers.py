@@ -264,6 +264,7 @@ def _eval_worker(args: tuple) -> dict:
             _os.environ.setdefault(_v, "1")
         from copy import deepcopy as _dp
 
+        from app.core.stats_thresholds import MIN_SIGNIFICANT_TRADES
         from app.engine.backtest import Backtester as _Backtester
         from app.engine.engine import Engine as _Engine
         from app.engine.opt_scoring import composite_score, overfitting_ratio
@@ -315,8 +316,13 @@ def _eval_worker(args: tuple) -> dict:
         _res_is  = _bt.run(_df_is,  symbol, timeframe=timeframe)
         _res_oos = _bt.run(_df_oos, symbol, timeframe=timeframe)
 
-        _is_score  = composite_score(_res_is)
-        _oos_score = composite_score(_res_oos)
+        # Même plancher de sélection que le chemin séquentiel : les workers
+        # redérivent la clé du YAML, aucun paramètre à faire traverser la
+        # frontière de process.
+        _min_tr = int((_cfg_copy.get("optimizer") or {}).get(
+            "min_trades", MIN_SIGNIFICANT_TRADES))
+        _is_score  = composite_score(_res_is,  min_trades=_min_tr)
+        _oos_score = composite_score(_res_oos, min_trades=_min_tr)
         _overfit   = overfitting_ratio(_is_score, _oos_score)
 
         return {

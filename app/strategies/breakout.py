@@ -128,7 +128,7 @@ class Strategy(BaseStrategy):
         macd_accel_bear = lh < ph
 
         # HTF
-        htf = htf_trend(df_htf)
+        htf = htf_trend(df_htf, df_ltf=df)
 
         # Confirmation 2 barres précédentes dans la même direction
         c1, c3 = float(close[-2]), float(close[-4])

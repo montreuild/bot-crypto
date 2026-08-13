@@ -21,11 +21,19 @@ donc de vraies méthodes).
 """
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from app.core import ict, smc
+from app.core.smc_quality import (
+    classe_liquidite,
+    meilleure_cible,
+    qualite_balayage,
+    qualite_displacement,
+)
+from app.core.smc_state import sequence_label, state_label
+from app.core.trade_economics import economic_edge_ok, net_rr, round_trip_cost
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +88,8 @@ class _SignalCtx:
     # Calendar liquidity (SMC-03)
     cal: Optional[dict]
     cal_mode: Any
-    cal_tp: List[float]
+    #: L4 — ``(niveau, clé)`` : la clé (pdh/pwl/…) porte la classe de liquidité.
+    cal_tp: List[Tuple[float, str]]
     # SD projections (SMC-05)
     sd_up: List[float]
     sd_dn: List[float]
@@ -96,6 +105,12 @@ class _SignalCtx:
     # Confirmation bougie
     pin_a: Optional[Any]
     eng_a: Optional[Any]
+    # L3 — état de structure séquentiel à la barre i (§60) et niveaux protégés
+    # (§64). `struct_state` vaut "UNKNOWN" quand le module est désactivé.
+    struct_state: str
+    struct_seq: str
+    protected_high: Optional[float]
+    protected_low: Optional[float]
 
 
 def _build_ctx(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
@@ -167,9 +182,12 @@ def _build_ctx(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     # mode "sweeps"  : déclencheur SWEEP_REVERSAL (cf. _check_calendar_sweep).
     cal_mode = p.get("use_calendar_liquidity", False)
     cal = aux.get("cal") if cal_mode else None
-    cal_tp: List[float] = []
+    # L4 (§77) — la CLÉ est conservée : « pdh » et « pwh » n'ont pas la même
+    # importance dans la hiérarchie de liquidité, et un simple niveau les
+    # rendait indiscernables.
+    cal_tp: List[Tuple[float, str]] = []
     if cal is not None and cal_mode in (True, "targets"):
-        cal_tp = [float(cal[k][i]) for k in ("pdh", "pdl", "pwh", "pwl")
+        cal_tp = [(float(cal[k][i]), k) for k in ("pdh", "pdl", "pwh", "pwl")
                   if not np.isnan(cal[k][i])]
 
     # ── SMC-05 — grille de TP en écarts-types ICT ────────────────────────
@@ -228,6 +246,17 @@ def _build_ctx(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     # ── Confirmation bougie (off par défaut) : +0.05 si pin bar/engulfing ─
     pin_a, eng_a = aux.get("pin"), aux.get("eng")
 
+    # L3 — état de structure séquentiel de la barre (§60/§64).
+    _st = aux.get("struct")
+    if _st is not None and i < len(_st["states"]):
+        st_lbl = state_label(int(_st["states"][i]))
+        st_seq = sequence_label(int(_st["sequences"][i]))
+        _ph, _pl = float(_st["protected_high"][i]), float(_st["protected_low"][i])
+        prot_h = None if _ph != _ph else _ph          # NaN → None
+        prot_l = None if _pl != _pl else _pl
+    else:
+        st_lbl, st_seq, prot_h, prot_l = "UNKNOWN", "NONE", None, None
+
     return _SignalCtx(
         res=res, i=i, open_=open_, high=high, low=low, close=close,
         aux=aux, p=p, atr=atr, trend=trend, c=c, zone=zone,
@@ -243,6 +272,8 @@ def _build_ctx(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
         smt_origin=smt_origin, req_inducement=req_inducement,
         ind_lb=ind_lb, max_ob_age=max_ob_age,
         pin_a=pin_a, eng_a=eng_a,
+        struct_state=st_lbl, struct_seq=st_seq,
+        protected_high=prot_h, protected_low=prot_l,
     )
 
 
@@ -838,7 +869,131 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
         candidates.extend(checker(self, ctx))
     if not candidates:
         return None
-    return _score_setup(candidates, aux.get("smt"), i, p, in_sb=ctx.in_sb)
+    best = _score_setup(candidates, aux.get("smt"), i, p, in_sb=ctx.in_sb)
+    if best is None:
+        return None
+    # L3 — la porte de structure filtre, l'état est TOUJOURS journalisé : sans
+    # le second, on ne pourrait pas mesurer si le premier vaut quelque chose.
+    if not _structure_autorise(ctx.struct_state, best["side"],
+                               p.get("structure_gate", False)):
+        return None
+    best["structure_state"] = ctx.struct_state
+    best["sequence_type"] = ctx.struct_seq
+    _stamp_l6(best, ctx, p)
+    if best.get("tier") == "D" and bool(p.get("tier_gate", False)):
+        return None
+    return best
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  L6 — décomposition du score, séquence, tier, identité d'événement
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: §71 — facteur de risque par tier. Se branche sur le `size_factor` NATIF
+#: (Backtester et live le bornent déjà à [0, 2]) : pas de second mécanisme.
+FACTEUR_TIER = {"A": 1.0, "B": 0.85, "C": 0.5, "D": 0.0}
+
+
+def _tier(sequence: str, score: float, p: Dict[str, Any]) -> str:
+    """§71 — A continuation ou retournement confirmé, B retournement en cours,
+    C retournement précoce (moitié du risque), D non confirmé.
+
+    Le tier vient d'ABORD de la séquence, ensuite du score : un score élevé sur
+    un retournement non confirmé reste un pari, et c'est précisément ce que la
+    hiérarchie de tiers sert à dire.
+    """
+    seuil_a = float(p.get("tier_a_score", 0.85))
+    if sequence in ("CONTINUATION", "REVERSAL"):
+        return "A" if score >= seuil_a else "B"
+    if sequence == "EARLY_REVERSAL":
+        return "C"
+    if sequence == "FAILED_REVERSAL":
+        return "B"      # l'échec du retournement EST la continuation (§73)
+    return "D"
+
+
+def _stamp_l6(sig: dict, ctx: _SignalCtx, p: Dict[str, Any]) -> None:
+    """Pose la décomposition du score, l'identité d'événement et le tier.
+
+    ``sequence_id`` et ``market_event_id`` sont **déterministes**, pas des
+    UUID comme le suggère §72 : dérivés de la barre d'origine, ils sont
+    reproductibles d'un run à l'autre, ce qu'un UUID interdit — et c'est la
+    reproductibilité qui rend une analyse par séquence exploitable.
+    """
+    i = ctx.i
+    # §20 — décomposition sur les axes de la spécification, calculée à partir
+    # des notes de qualité de L4. Elle N'EST PAS le score qui décide (celui-ci
+    # reste l'additif historique, mesuré) : les deux sont publiés côte à côte
+    # pour être comparés par ablation, comme §3.2 du plan l'exige.
+    atr = ctx.atr or 1e-9
+    disp = qualite_displacement(i, ctx.open_, ctx.high, ctx.low, ctx.close, atr,
+                                casse_structure=ctx.struct_seq != "NONE")
+    balayage = 0.0
+    barre_evenement = i
+    for ev in ctx.res.get("_all_sweeps") or ():
+        if ev.get("index") == i:
+            balayage = qualite_balayage(ev, ctx.high, ctx.low, ctx.close,
+                                        ctx.open_, atr)
+            barre_evenement = int(ev["index"])
+            break
+    zone_ok = 1.0 if ((sig["side"] == "long" and ctx.zone == "discount")
+                      or (sig["side"] == "short" and ctx.zone == "premium")) else 0.0
+    htf_ok = 1.0 if (ctx.long_htf_ok if sig["side"] == "long"
+                     else ctx.short_htf_ok) else 0.0
+    sig["score_breakdown"] = {
+        "htf": round(htf_ok, 3),
+        "sweep": round(balayage, 3),
+        "displacement": round(disp, 3),
+        "structure": 1.0 if ctx.struct_seq in ("CONTINUATION", "REVERSAL") else 0.0,
+        "premium_discount": zone_ok,
+        "timing": 1.0 if ctx.kz_add > 0 else 0.0,
+    }
+    sig["htf_bias"] = {1: "haussier", -1: "baissier", 0: "neutre"}[int(ctx.trend)]
+    sig["session"] = (sig.get("indicators") or {}).get("session")
+    sig["sequence_id"] = f"{ctx.struct_state}:{barre_evenement}"
+    # §97 — un balayage et son displacement forment UN événement : tous les
+    # setups qui en découlent le partagent, et un seul trade primaire en sort.
+    sig["market_event_id"] = f"{sig['side']}:{barre_evenement}"
+    sig["tier"] = _tier(ctx.struct_seq, float(sig.get("score", 0.0)), p)
+    if bool(p.get("tier_sizing", False)):
+        facteur = FACTEUR_TIER.get(sig["tier"], 1.0)
+        sig["size_factor"] = round(
+            float(sig.get("size_factor", 1.0)) * facteur, 4)
+
+
+#: États dans lesquels une entrée est autorisée, par sens. Un `*_WARNING` est
+#: un avertissement de retournement : y prendre le sens NAISSANT, c'est jouer
+#: un retournement non confirmé (tier C de §71) — autorisé, mais mesurable à
+#: part. Un `*_PULLBACK` reste dans le sens de la tendance mère (§82).
+_ETATS_LONG = frozenset({
+    "BULLISH", "BULLISH_PULLBACK", "BULLISH_CONFIRMED", "BULLISH_WARNING",
+    "REVERSAL_BULLISH_PENDING", "FAILED_BEARISH_REVERSAL",
+})
+_ETATS_SHORT = frozenset({
+    "BEARISH", "BEARISH_PULLBACK", "BEARISH_CONFIRMED", "BEARISH_WARNING",
+    "REVERSAL_BEARISH_PENDING", "FAILED_BULLISH_REVERSAL",
+})
+
+
+def _structure_autorise(etat: str, side: str, mode) -> bool:
+    """Trois modes, mesurés séparément (cf. docs/MOTEUR_STRUCTURE_SEQUENTIEL.md).
+
+    ``direction``    l'entrée doit aller dans le sens de l'état ;
+    ``no_pullback``  refuse les entrées prises en `*_PULLBACK` ;
+    ``both``         les deux.
+
+    ``no_pullback`` n'est pas dans la spécification : il vient de la mesure, qui
+    a montré que les états de pullback sont le pire compartiment — alors que la
+    spécification suppose que ce sont les avertissements.
+    """
+    if not mode or mode == "off" or etat in ("UNKNOWN", "RANGING"):
+        return True     # pas d'information ⇒ pas de veto
+    mode = "direction" if mode is True else str(mode)
+    if mode in ("no_pullback", "both") and etat.endswith("_PULLBACK"):
+        return False
+    if mode in ("direction", "both"):
+        return etat in (_ETATS_LONG if side == "long" else _ETATS_SHORT)
+    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -855,6 +1010,13 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
     risk = (entry - sl) if side == "long" else (sl - entry)
     if risk <= 0 or entry <= 0:
         return None
+    # ── L4 (§32 §23) — anti-FOMO ─────────────────────────────────────────────
+    # Le stop est posé sur le POI (zone, balayage) plus une marge : la distance
+    # entrée→stop EST donc la distance au POI. Au-delà du plafond, le prix a
+    # quitté sa zone et l'entrée court après le mouvement.
+    max_stop = float(p.get("max_stop_atr", 0) or 0)
+    if max_stop > 0 and atr > 0 and risk > max_stop * atr:
+        return None
     min_gain = float(p["min_gain_pct"])
     min_rr   = float(p["min_rr"])
     front    = float(p["tp_front_run_atr"]) * atr
@@ -868,48 +1030,54 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
     # en concurrence avec les cibles liquidité/void/volume.
     mm = (ict.measured_move_target(res["_all_swings"], i, side, entry)
           if bool(p.get("tp_measured_move", False)) else None)
-    tp = None
-    tp_src = ""
+    sens = 1 if side == "long" else -1
     if side == "long":
         liq = smc.liquidity_targets_above(res, i, entry, max_age=max_age)
         vds = smc.void_targets_above(res, i, entry, max_age=max_age) \
             if use_voids else []
-        vps = [lv for lv in (extra_targets or []) if lv > entry]
-        cals = [lv for lv in (cal_targets or []) if lv > entry]
-        sds = [lv for lv in (sd_targets or []) if lv > entry]
-        targets = sorted({(lv, "liquidité") for lv in liq} |
-                         {(lv, "void") for lv in vds} |
-                         {(lv, "volume") for lv in vps} |
-                         {(lv, "calendaire") for lv in cals} |
-                         {(lv, "std_dev") for lv in sds} |
-                         ({(mm, "measured")} if mm else set()))
-        for level, src in targets:
-            cand = level - front
-            gain_pct = (cand - entry) / entry * 100.0
-            if gain_pct <= 0:
-                continue
-            if gain_pct > min_gain and (cand - entry) / risk >= min_rr:
-                tp, tp_src = cand, f"{src} {level:.6g}"
-                break
     else:
         liq = smc.liquidity_targets_below(res, i, entry, max_age=max_age)
         vds = smc.void_targets_below(res, i, entry, max_age=max_age) \
             if use_voids else []
-        vps = [lv for lv in (extra_targets or []) if lv < entry]
-        cals = [lv for lv in (cal_targets or []) if lv < entry]
-        sds = [lv for lv in (sd_targets or []) if lv < entry]
-        targets = sorted({(lv, "liquidité") for lv in liq} |
-                         {(lv, "void") for lv in vds} |
-                         {(lv, "volume") for lv in vps} |
-                         {(lv, "calendaire") for lv in cals} |
-                         {(lv, "std_dev") for lv in sds} |
-                         ({(mm, "measured")} if mm else set()), reverse=True)
+
+    def au_dela(lv: float) -> bool:
+        return (lv > entry) if sens > 0 else (lv < entry)
+
+    targets = sorted(
+        {(lv, "pool") for lv in liq} |
+        {(lv, "void") for lv in vds} |
+        {(lv, "hvn") for lv in (extra_targets or []) if au_dela(lv)} |
+        {(lv, cle) for lv, cle in (cal_targets or []) if au_dela(lv)} |
+        {(lv, "std_dev") for lv in (sd_targets or []) if au_dela(lv)} |
+        ({(mm, "measured")} if mm else set()),
+        reverse=(sens < 0))
+
+    # ── L4 (§78 §79) — choix de la cible ─────────────────────────────────────
+    # Historiquement : la PREMIÈRE cible éligible, donc toujours la plus proche.
+    # L0 a mesuré ce que ça donne — cible atteinte 28 à 36 % du temps. Le mode
+    # `expected_value` classe par `poids de classe × gain`, ce qui privilégie
+    # une poche hebdomadaire un peu plus loin à un swing local tout proche.
+    # L'éligibilité (gain minimal, R/R) ne change pas : seul le CHOIX change.
+    tp = None
+    tp_src = ""
+    if str(p.get("target_mode", "nearest")) == "expected_value":
+        # `target_proba` : fréquences d'atteinte MESURÉES sur une fenêtre
+        # d'entraînement (`smc_quality.frequences_atteinte`). Absent → poids
+        # postulés de §77, que la mesure a contredits — d'où l'intérêt de
+        # pouvoir injecter des chiffres plutôt qu'une croyance.
+        best_t = meilleure_cible(list(targets), entry, risk, side, min_rr,
+                                 min_gain, front_run=front,
+                                 proba=p.get("target_proba"))
+        if best_t:
+            tp = best_t["price"]
+            tp_src = f"{best_t['source']} {best_t['price'] + sens * front:.6g}"
+    else:
         for level, src in targets:
-            cand = level + front
-            gain_pct = (entry - cand) / entry * 100.0
+            cand = level - sens * front
+            gain_pct = (cand - entry) / entry * 100.0 * sens
             if gain_pct <= 0:
                 continue
-            if gain_pct > min_gain and (entry - cand) / risk >= min_rr:
+            if gain_pct > min_gain and (cand - entry) * sens / risk >= min_rr:
                 tp, tp_src = cand, f"{src} {level:.6g}"
                 break
 
@@ -921,6 +1089,28 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
 
     gain_pct = abs(tp - entry) / entry * 100.0
     rr_final = abs(tp - entry) / risk
+
+    # ── L2 (§2 §4) — la décision passe au NET ────────────────────────────────
+    # Jusqu'ici on comparait un gain BRUT à un risque BRUT : le R/R annoncé
+    # n'était pas celui qu'on encaissait. L1 l'a chiffré — profit factor 1,147
+    # pour un PnL net de −0,33 %. Off par défaut (`min_net_rr` à 0) : les
+    # `optimizer_results` du YAML ont été mesurés sur le R/R brut.
+    min_net = float(p.get("min_net_rr", 0) or 0)
+    mult_cout = float(p.get("cost_multiple", 0) or 0)
+    rr_net = None
+    if min_net > 0 or mult_cout > 0:
+        # Taille unitaire : le R/R net et le multiple de coûts sont des RATIOS,
+        # invariants d'échelle tant que les frais sont proportionnels. Les
+        # coûts fixes (commission plancher, taxe) ne le sont pas — c'est une
+        # approximation, assumée ici et exacte en crypto.
+        couts = round_trip_cost(entry, 1.0, fee_rate=float(p.get("taker_fee", 0.001)),
+                                spread_pct=float(p.get("spread_pct", 0.0005)))
+        rr_net = net_rr(entry, sl, tp, 1.0, couts, side=side)
+        if min_net > 0 and rr_net < min_net:
+            return None
+        if mult_cout > 0 and not economic_edge_ok(abs(tp - entry), couts,
+                                                  mult_cout):
+            return None
 
     # ⚠ FILTRE : gain potentiel > min_gain_pct sinon position rejetée.
     if gain_pct <= min_gain or rr_final < min_rr:
@@ -950,6 +1140,34 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
         disable_trailing = True
         exit_txt = f"TP {tp_src}"
 
+    # ── L1 (§29 §30) — sorties partielles TP1 / TP2 / runner ─────────────────
+    # Off par défaut : les `optimizer_results` du YAML ont été mesurés en
+    # tout-ou-rien, les rendre partiels en silence invaliderait ces réglages.
+    # TP1 est un multiple de R (niveau mécanique), TP2 la poche de liquidité
+    # visée (niveau structurel), le runner suit la structure.
+    exits_spec = None
+    if bool(p.get("use_partial_exits", False)):
+        f1 = float(p.get("tp1_fraction", 0.25))
+        f2 = float(p.get("tp2_fraction", 0.25))
+        exits_spec = []
+        if f1 > 0:
+            exits_spec.append({"r": float(p.get("tp1_r", 1.0)),
+                               "fraction": f1, "reason": "tp1"})
+        if f2 > 0 and tp is not None:
+            exits_spec.append({"price": round(tp, 8), "fraction": f2,
+                               "reason": f"tp2_{tp_src.split()[0]}"})
+        # Le runner a besoin du trailing : sans lui il n'aurait plus de sortie
+        # une fois les jambes prises, et courrait jusqu'au stop initial.
+        tp_out = None
+        exit_after = None
+        disable_trailing = False
+        trail_override = {"trail_wide": float(p.get("trail_mult", 2.5)),
+                          "mode": str(p.get("trail_mode", "structure")),
+                          "struct_buffer_atr": float(p.get("sl_buffer_atr", 0.25))}
+        exit_txt = (f"TP1 {f1:.0%}@{p.get('tp1_r', 1.0):g}R + TP2 {f2:.0%}@"
+                    f"{tp_src} + runner {1 - f1 - f2:.0%} "
+                    f"({trail_override['mode']})")
+
     # Sizing pondéré par confluence : on alloue plus aux setups à forte
     # confluence via le hook natif size_factor (borné [0.4, 1.7] ; le
     # Backtester/live re-bornent à [0, 2]). Centré sur size_conf_center ⇒
@@ -967,9 +1185,14 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
         "module": setup_module(setup),
         "stop_hint": round(sl, 8),
         "tp_hint":   tp_out,
+        # L2 — journalisés même quand la porte est désactivée : sans le chiffre,
+        # on ne peut pas mesurer l'écart entre le R/R annoncé et l'encaissé.
+        "gross_rr":  round(rr_final, 3),
+        "net_rr":    round(rr_net, 3) if rr_net is not None else None,
         "exit_after_bars": exit_after,
         "disable_trailing": disable_trailing,
         "trail_override": trail_override,
+        "exits": exits_spec,
         "size_factor": size_factor,
         "indicators": {
             "bias":     bias_label,
@@ -977,6 +1200,8 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
             "gain_pct": round(gain_pct, 3),
             "rr":       round(rr_final, 2),
             "tp_source": tp_src,
+            # L4 (§77) — classe de la cible visée, pour `by_target_class`.
+            "tp_class": classe_liquidite(tp_src.split()[0] if tp_src else ""),
             "tp_target": round(tp, 8),      # cible affichée (info) même en trailing
             "_risk_pct": round(risk_pct, 6),  # pour le time-stop conditionnel
         },

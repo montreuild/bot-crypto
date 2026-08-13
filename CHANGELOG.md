@@ -6,6 +6,297 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### ✅ Quatre mécanismes validés — et trois de mes verdicts renversés
+
+Le harnais rejoué en 1 h sur l'**historique complet** (51 909 barres BTC,
+47 191 ETH — 199 à 338 trades par fenêtre contre 49 auparavant) valide
+**quatre mécanismes sur seize**, les premiers depuis le début du chantier :
+
+| mécanisme | BTC ΔIS/ΔOOS | ETH ΔIS/ΔOOS |
+|---|---|---|
+| **L3 porte `no_pullback`** | **+108 / +170** | **+170 / +146** |
+| **L6 sizing par tier** | +28 / +25 | +86 / +93 |
+| **L3 porte `direction`** | +0 / +65 | +101 / +61 |
+| **L6 porte tier D** | +1 / +13 | +56 / +29 |
+
+**Trois conclusions antérieures étaient fausses, toutes pour la même raison :**
+un plafond de 12 000 barres que j'avais choisi sans le mesurer. `no_pullback`
+avait été rejeté pour non-réplication, la porte `direction` déclarée « sans
+valeur », et l'ensemble résumé par un « 0 sur 16 ». Sur l'échantillon réel, les
+trois tombent. La règle des deux fenêtres n'avait pas tort — elle travaillait
+sur ce qu'on lui donnait.
+
+**Ce qui ne change pas** : aucun ne rend la stratégie rentable. `no_pullback`
+ramène la perte OOS de BTC 1 h de −500,6 à −330,6 — une réduction de 34 %, pas
+un edge. Ils restent **off par défaut** : les activer est une décision de
+trading, pas un correctif.
+
+En 4 h et 1 j, sur historique complet également, le verdict reste 0/16 — mais
+ces cas comptent 11 à 96 trades contre 122 à 154 en 1 h.
+
+**Confirmé sur 199 trades** : SMT, Silver Bullet et AMD sont **inertes**
+(+0,0 partout — l'échantillon ne peut plus servir d'excuse), et `Breaker retest`
+est nettement négatif (−226/−122 sur BTC, −134/−205 sur ETH).
+
+Documents corrigés en tête : `docs/ABLATION_SMC_V3.md`,
+`docs/MOTEUR_STRUCTURE_SEQUENTIEL.md`, `docs/PLAN_SMC_ICT_V3.md`.
+Détail : `docs/SUITE_ABLATION_V3.md` §4 quater.
+
+
+### 📏 Un seul plancher de trades, et le harnais rejoué sur l'historique complet
+
+`MIN_TRADES_DEGENERATE` est supprimé. Le dépôt portait deux seuils — 2 pour la
+**sélection**, 10 pour la **décision** — au motif que « classer n'est pas
+décider ». Deux faits ont tranché : le seuil de dégénérescence n'avait qu'**un
+seul point d'application** (le défaut de `composite_score`, la métrique qui
+désigne le jeu retenu — donc bien une décision), et il **n'atteignait pas son
+but** : à N=2 le calcul est possible mais dominé par des ratios saturés, d'où
+les Sharpe de 7,83 sur deux trades qui remportaient la sélection.
+
+⚠️ Conséquence assumée : une optimisation dont aucun essai n'atteint dix trades
+ne retourne plus de gagnant, plutôt qu'un gagnant fabriqué. Sortie de secours :
+`optimizer.min_trades`.
+
+**Le harnais d'ablation rejoué sur l'historique complet donne le même verdict :
+0 mécanisme validé sur 16**, meilleur score 2 cas sur 4. Les seize verdicts
+étaient donc robustes à la troncature à 12 000 barres — ce qui corrige une
+inquiétude exprimée dans `docs/SUITE_ABLATION_V3.md` §2. La troncature affectait
+en revanche bien la **recalibration** (5 trades contre 58 à 125) : les deux
+campagnes ne réagissaient pas de la même façon au plafond.
+
+Corollaire : le plancher unique ne mordra que rarement sur l'historique complet.
+Il reste un filet, mais **le levier était la fenêtre**, pas la métrique.
+
+Signature d'overfit sur la référence elle-même : `smart_money` BTC 4 h affiche
++914 en IS pour −26,6 en OOS sur 89 trades, avec ses paramètres publiés.
+
+1 863 tests, dont 8 nouveaux.
+
+
+### 🔧 Suite de §5 — 20 paramétrages publiés sur 36 étaient faux
+
+Le correctif HTF de L5 a des conséquences chiffrées :
+`scripts/recalibrate_htf_strategies.py` rejoue chaque couple (stratégie,
+symbole, timeframe) avec et sans le repli. **20 sur 36 changent de résultat**,
+sept stratégies sur neuf sont touchées. Le filtre actif réduit le nombre de
+trades dans **tous** les cas (−248 au total). Le plus grave : `supertrend_macd`
+BTC 4 h passe de 11 trades à 4 — un `optimizer_results` sélectionné sur onze
+trades dont sept n'existent pas en production.
+
+Recalibrés avec l'outillage du dépôt, **4 couples sur 20 seulement** donnent un
+candidat qui passe `beats_baseline`, et **14 sur 20 dégénèrent** en
+configurations à moins de dix trades OOS — exactement le biais de sélection que
+`docs/STRATEGY_SMC_ML_EDGE.md` §3 quinquies décrit, mesuré ici sur vingt cas.
+Les Sharpe de 7,83 sur deux trades en sont la signature.
+
+⚠️ **Les YAML ne sont pas modifiés** : appliquer un paramétrage est une décision
+de trading, pas un correctif. Les candidats sont dans
+`scripts/_recalibrage_htf.json`. Ce que la mesure autorise à dire : les
+`optimizer_results` de ces vingt couples sont **invalides**.
+
+**Le point 2 de §5 (élargir l'échantillon) passe en tête** : tant que les
+fenêtres OOS font ~2 000 barres sur deux symboles, aucune optimisation ne
+produira autre chose que ces optima dégénérés.
+
+Points 3 et 4 aussi : les fréquences d'atteinte mesurées en walk-forward
+contredisent §77 une troisième fois (`INTERNAL`, rang le plus bas, atteint 1,5 à
+2 fois plus souvent que postulé) mais **ne changent aucune décision** — à une
+décision donnée les candidats sont presque toujours mono-classe, donc §78/§79
+sont inertes. Piste close. Et L2 est livré (R/R net, funding perp).
+
+Trouvé en route : le protocole de L4 comparait `actuel` sans cibles calendaires
+à `expected_value` avec. Confondant retiré, sa conclusion tient toujours mais
+elle avait été tirée sur une comparaison biaisée.
+
+Détail : `docs/SUITE_ABLATION_V3.md`. 1 855 tests backend, 117 front.
+
+
+### 🧪 L8 / L10 — seize mécanismes au harnais d'ablation, zéro validé
+
+`scripts/measure_ablation_v3.py` généralise l'ablation manuelle du dépôt :
+chaque mécanisme introduit par L1–L6, plus les modules laissés en veille (§110),
+est activé **seul** par-dessus le YAML, sur BTC et ETH × {1 h, 4 h}, et mesuré
+sur les **deux** fenêtres de la découpe 65/35.
+
+**La règle est intégrée au harnais** : un mécanisme n'est validé que s'il gagne
+sur les deux fenêtres, dans une majorité de cas. Elle vient de deux faux
+positifs attrapés pendant ce chantier — `no_pullback` (L3) balayait 4/4 en OOS
+et ne répliquait pas en IS ; `expected_value` (L4) gagnait sur une fenêtre et
+perdait sur l'autre dans les quatre cas.
+
+**Résultat : 0 sur 16.** Le meilleur score est 2 cas sur 4, soit pile ou face.
+`SMT`, `Silver Bullet` et `AMD` sont **inertes** — leur drapeau seul ne suffit
+pas à les mettre en marche. `Breaker retest` et `Sweeps calendaires` dégradent
+nettement, ce qui confirme sur un protocole plus strict ce que le YAML de
+`smart_money` documentait déjà.
+
+La condition de réussite posée en §6 du plan a donc échoué, et sa contrepartie
+s'applique : **la stratégie SMC règles-seules n'a pas d'edge exploitable dans
+cet espace de paramètres.** Ajouter un dix-septième mécanisme n'a aucune raison
+de changer ça — c'est §111 de la spécification, vérifié sur seize essais.
+
+Ce qui reste plausible, dans l'ordre : recalibrer les neuf stratégies touchées
+par le correctif HTF de L5 (leurs paramètres ont été optimisés contre un filtre
+inerte), élargir l'échantillon, estimer les fréquences d'atteinte par classe de
+liquidité en walk-forward, puis L2 (R/R net et funding).
+
+Détail : `docs/ABLATION_SMC_V3.md`.
+
+
+### 🔭 L5 — un filtre HTF inerte en backtest et actif en live
+
+**Le défaut trouvé ne vient pas de la spécification.** `htf_trend(None)`
+renvoyait 0, et `df_htf` n'est fourni **que** par le live
+(`app/live/signal_pipeline.py`) : le backtest ne l'a jamais passé. Neuf
+stratégies — `breakout`, `breakout_filtreHor`, `fear_momentum`,
+`gemini_trend_follow`, `multi_tf_sr`, `pullback_trend`, `supertrend_macd`,
+`trend`, `tvr_trend` — avaient donc un filtre HTF **inerte en simulation et
+actif en production**. Aucun test ne le signalait, et le plan de ce chantier
+avait d'abord conclu, à tort, que le paramètre n'était utilisé par personne.
+
+Corrigé par un **repli de rééchantillonnage causal** plutôt que par le passage
+de `df_htf` au backtest : le HTF est reconstruit depuis le timeframe de base
+avec les mêmes buckets horloge que `smc_sessions._htf_buckets`, donc seuls les
+buckets entièrement clôturés sont visibles. L'invariant anti-fuite reste
+**structurel** au lieu de dépendre d'une jointure correcte à chaque site
+d'appel. Vérifié en mutant les barres postérieures : le résultat ne bouge pas.
+
+⚠️ Ce correctif **change le comportement du backtest** de ces neuf stratégies :
+leurs `optimizer_results` ont été mesurés avec un filtre inerte et sont à
+recalibrer. C'est un correctif de justesse, pas un réglage.
+
+Ajouté aussi : `atr_percentile` (§76) — un seuil d'ATR absolu ne dit pas la même
+chose sur BTC 2018 et sur une action du SBF 120 ; et `mtf_alignment` (§81 §82),
+moyenne pondérée de plusieurs niveaux HTF où le plus haut pèse le plus, de sorte
+qu'un timeframe bas contraire indique un pullback sans annuler le biais.
+
+1 828 tests, dont 17 nouveaux.
+
+
+### 🎯 L4 — qualité des zones, et la hiérarchie de §77 qui ne tient pas
+
+`app/core/smc_quality.py` classe et note ce qu'`analyze` produit déjà, sans
+toucher au moteur : classes de liquidité (§77), valeur attendue (§79), dealing
+range explicité par sa provenance (§67), IRL/ERL (§66), inducement (§65),
+qualité de balayage (§83) et de displacement (§84), taux de mitigation
+**continu** là où le moteur n'avait qu'un booléen daté (§15), rang de FVG (§85),
+qualité d'order block (§86), ouvertures calendaires (§91).
+
+**Le postulat central de la spécification est contredit.** `by_target_class`,
+fenêtre OOS : le seul compartiment à échantillon exploitable (`SWING`, 19 à 28
+trades) est le rang le **plus bas** de la hiérarchie — et c'est le meilleur. Sur
+BTC 4 h il bat `PREV_WEEK` d'un facteur 16. Les classes nobles comptent 1 à 7
+trades : elles ne permettent rien de conclure, ce qui est déjà une conclusion.
+
+`target_mode: expected_value` gagne sur une fenêtre et perd sur l'autre dans les
+quatre cas, et détruit le seul résultat IS franchement rentable (BTC 4 h :
++327 → −70). **Rejeté.** `max_stop_atr` (§23) ne mord pas — résultats identiques
+au bit près sur 3 cas sur 4.
+
+§3.5 du plan avait prévu le mécanisme (« poser une probabilité à la main puis
+maximiser dessus, c'est optimiser une croyance ») ; c'est maintenant mesuré.
+La voie ouverte reste l'estimation des fréquences en walk-forward — `proba` est
+déjà un paramètre de `meilleure_cible`.
+
+Détail : `docs/MESURE_HIERARCHIE_LIQUIDITE.md`. 1 811 tests, dont 32 nouveaux.
+
+
+### 🧭 L3 — mémoire de structure (§60–§64, §73) et un filtre qui n'a pas répliqué
+
+`app/core/smc_state.py` : douze états de structure, niveaux protégés, et une
+**convention interne unique BOS / MSS / CHoCH** — le dépôt n'en avait aucune.
+BOS = clôture au-delà du dernier swing dans le sens de la structure, avec
+displacement. MSS = balayage puis displacement puis cassure du dernier LH/HL,
+qui arme un **avertissement** et jamais une confirmation (§62). CHoCH = cassure
+contraire sans displacement, qui ne change rien (§60.3).
+
+Causalité prouvée par test de préfixe sur sept valeurs de `k` : un swing n'est
+utilisé qu'à partir de son `confirmed_at`, jamais de son `index`.
+
+**Mesuré.** La porte de la spécification (mode `direction`) ne vaut rien : pire
+sur BTC 1 h, marginale ailleurs. Un mode `no_pullback` — suggéré par le
+découpage `by_structure_state`, absent de la spec — balayait 4 cas sur 4 en OOS
+(−83 % de perte sur ETH 1 h, drawdown divisé par 3,4).
+
+**Il ne réplique pas.** Vérifié sur la fenêtre IS, qui n'avait pas servi à
+former l'hypothèse : 2 cas sur 4, et sur BTC 4 h il détruit le seul résultat
+franchement rentable de la campagne (+327 → +6). La règle avait été choisie
+après lecture des résultats OOS — sélection sur le jeu de test, exactement le
+mécanisme décrit dans `docs/STRATEGY_SMC_ML_EDGE.md` §3 quinquies.
+
+**Aucune porte n'est activée.** Le postulat de §62 reste non testable : 3 à 5
+trades par compartiment d'avertissement.
+
+Livré aussi : `by_structure_state`, `by_sequence_type`, `by_tier` dans
+`BacktestResult`, et `structure_journal` (on par défaut) — l'état est enregistré
+même quand il ne filtre rien, sinon on ne pourrait pas mesurer la porte.
+
+Détail : `docs/MOTEUR_STRUCTURE_SEQUENTIEL.md`. 1 779 tests, dont 19 nouveaux.
+
+
+### ✂️ L1 — sorties partielles (§29) et trailing structurel (§30)
+
+Le moteur ne savait fermer qu'en entier : `docs/SPECS_SMC_ICT_ET_ADAPTATIVE.md`
+§1 en faisait « le chantier prérequis n° 1 ». Levé.
+
+`_close_partial_at` est le symétrique de `check_scale_in` : il encaisse le PnL
+de la jambe, réduit taille et notionnel au prorata et trace la sortie. La
+position n'est journalisée qu'à sa clôture complète, et la courbe d'équité garde
+**un point par trade, pas par jambe** — en changer la cadence modifierait
+l'annualisation du Sharpe de tous les backtests existants.
+
+Contrat : `signal["exits"] = [{"r": 1.0, "fraction": 0.25}, …]`, le runner étant
+le reliquat. `execution.plan_partial_targets` est **partagé backtest ↔ live** —
+deux planificateurs auraient divergé dès le premier TP partiel. Côté live,
+`_partial_close_position` suit les mêmes priorités de sortie, sinon la parité
+tombe sur les barres où plusieurs sorties se déclenchent ensemble.
+
+`StructureTrailingStop` (§30) place le stop sous le dernier pivot confirmé, avec
+la même latence que les swings du moteur SMC, et se replie sur `mult × ATR` tant
+qu'aucun pivot n'est confirmé — sinon il resterait figé sur toute une impulsion.
+
+**Mesuré (§101), quatre systèmes à signaux identiques :** le tout-ou-rien actuel
+est **le pire des quatre, dans les quatre cas**. `partiel_struct` gagne 3 fois
+sur 4 et divise le drawdown par deux sur ETH 1 h (−16,4 % → −8,4 %). Mais aucun
+ne rend la stratégie rentable — le meilleur absolu vaut −0,33 % OOS. La
+géométrie de sortie valait 2 à 7 points de PnL, pas le signe.
+
+**Laissé off par défaut.** Améliorer un système perdant n'est pas une raison de
+le promouvoir, et les `optimizer_results` du YAML ont été mesurés en
+tout-ou-rien. Détail : `docs/MESURE_SYSTEMES_DE_SORTIE.md`.
+
+1 760 tests passent, dont 15 nouveaux.
+
+
+### 🔍 L0 — où meurent les positions, et où va l'argent
+
+`by_exit_reason` dans `BacktestResult`, ventilation des coûts par trade
+(`entry_fees`, `slippage_cost`, `funding_cost`, `gross_pnl`) et champs de
+journal §99 sur la position. `scripts/measure_exit_geometry.py` répond enfin par
+un chiffre à la question laissée ouverte par `docs/STRATEGY_SMC_ML_EDGE.md` §4.
+
+**Le verdict contredit l'hypothèse.** Sur 1 h et sur ETH 4 h, 66–71 % des trades
+meurent sur leur stop initial après un MFE médian de **0,34 à 0,49 R** : ils ne
+sont pas coupés trop tôt, ils ne décollent jamais. La cible n'est atteinte que
+**28 à 36 %** du temps. Seul BTC 4 h — le seul cas où `use_trailing` est actif —
+montre le défaut supposé : `trailing_stop` rend −1,02 R médian là où le MFE
+médian valait 0,95 R, tandis que le time-stop, lui, est le seul bucket rentable
+(69 % de gagnants). Deux défauts disjoints, pas un.
+
+**Deux défauts de comptabilité trouvés en instrumentant.** `close_pnl` ne rend
+que les frais de sortie : les écrire tels quels écrasait les frais d'entrée
+portés par la position, donc `total_fees` sous-déclarait un côté complet.
+Et `total_pnl` n'est pas la variation d'équité — l'écart vaut exactement la
+somme des frais d'entrée. Les deux agrégats sont maintenant publiés côte à côte
+(`net_profit` = `final_equity − initial_capital`) plutôt que réconciliés en
+silence : basculer `composite_score` sur `net_profit` déplacerait la sélection de
+tous les paramétrages déjà mesurés, et c'est une décision, pas un correctif.
+
+L'équité et le PnL étaient justes dans les deux cas — seul le report était faux.
+94 tests existants passent inchangés, 8 nouveaux dans `test_backtest_journal.py`.
+Détail : `docs/MESURE_GEOMETRIE_SORTIE.md`.
+
+
 ### 🌏 Asian Range (§30) et Silver Bullet mesurable à part (§31)
 
 **`asian_range_levels()`** — nouveau dans `app/core/smc_sessions.py`. Pour

@@ -175,7 +175,7 @@ class Strategy(BaseStrategy):
         macd_accel_bull = lh > ph
         macd_accel_bear = lh < ph
 
-        htf = htf_trend(df_htf)
+        htf = htf_trend(df_htf, df_ltf=df)
 
         c1, c3 = float(close[-2]), float(close[-4])
         prev2_bullish = c1 > c3

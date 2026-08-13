@@ -18,6 +18,7 @@ from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
 from app.core.execution import close_pnl as _close_pnl
 from app.core.execution import cost_model as _cost_model
 from app.core.execution import format_cost_model as _format_cost_model
+from app.core.execution import plan_partial_targets as _plan_partial_targets
 from app.core.execution import quantize_size as _quantize_size
 from app.core.execution import size_impact_cost as _size_impact_cost
 from app.core.execution import venue_trade_cost as _venue_trade_cost
@@ -30,6 +31,7 @@ from app.core.risk_envelope import with_reference_envelope
 from app.core.risk_sizer import _floor_to
 from app.core.timeframes import TF_MINUTES as _TF_MINUTES
 from app.core.timeframes import bars_per_year as _bars_per_year
+from app.core.trade_economics import funding_cost as _funding_cost
 from app.core.trailing import TrailingStopManager
 from app.engine.engine import Engine
 
@@ -278,6 +280,38 @@ class BacktestResult:
         self.by_setup: Dict[str, dict] = self._group_metrics(trades_by_setup)
         self.by_module: Dict[str, dict] = self._group_metrics(trades_by_module)
 
+        # ── L0 (§101) — statistiques par RAISON DE SORTIE ────────────────────
+        # La question « les positions meurent-elles sur stop, sur trailing ou sur
+        # expiration ? » n'avait aucune réponse chiffrée : c'est elle qui décide
+        # si le problème est le stop, la cible ou la durée de détention.
+        trades_by_exit: Dict[str, list] = _defaultdict(list)
+        for t in closed:
+            trades_by_exit[str(t.get("exit_reason") or "inconnu")].append(t)
+        self.by_exit_reason: Dict[str, dict] = self._group_metrics(trades_by_exit)
+
+        # ── L3 (§60) / L6 (§72) — par état de structure et par séquence ──────
+        # « Entrer en WARNING est-il pire qu'entrer en CONFIRMED ? » est la
+        # question que L3 doit trancher par un chiffre, pas par un principe.
+        for axe, cle in (("by_structure_state", "structure_state"),
+                         ("by_sequence_type", "sequence_type"),
+                         ("by_tier", "tier")):
+            groupes: Dict[str, list] = _defaultdict(list)
+            for t in closed:
+                if t.get(cle):
+                    groupes[str(t[cle])].append(t)
+            setattr(self, axe, self._group_metrics(groupes))
+
+        # L4 (§77 §78) — par CLASSE de liquidité visée. C'est la mesure qui dit
+        # si la hiérarchie de la spécification correspond à quelque chose : une
+        # cible hebdomadaire est-elle vraiment plus souvent atteinte qu'un
+        # swing local ?
+        par_classe: Dict[str, list] = _defaultdict(list)
+        for t in closed:
+            cl = (t.get("indicators") or {}).get("tp_class")
+            if cl:
+                par_classe[str(cl)].append(t)
+        self.by_target_class: Dict[str, dict] = self._group_metrics(par_classe)
+
         # ── QW-1 : métriques étendues (Sortino, Calmar, CAGR, alpha vs B&H) ──
         self._compute_extended_metrics()
 
@@ -285,20 +319,27 @@ class BacktestResult:
         # Exigence 4 (estimation frais/levier) : sans ces agrégats, l'utilisateur
         # ne peut pas savoir quelle part du PnL est mangée par le borrow margin
         # vs le slippage. On les calcule à partir des trades fermés.
+        # L0 (§49) — chaque poste de coût est désormais porté par le trade
+        # (_close_at), donc agrégeable au lieu d'être estimé ou laissé à 0.
+        def _sum(key: str) -> float:
+            return round(_sf(float(sum(t.get(key, 0) or 0 for t in closed)), 0.0), 4)
+
         try:
-            self.total_borrow_cost = round(_sf(float(sum(
-                t.get("borrow_cost", 0) for t in closed
-            )), 0.0), 4)
-            # Slippage estimé par trade = (spread_pct/2) × notional — déjà
-            # compté dans `fees` côté backtest (cf. _fees() qui inclut le spread),
-            # mais on l'isole pour l'analyse what-if.
-            # Note : `fees` agrège déjà taker/maker + spread, donc on expose
-            # séparément le `borrow_cost` (qui n'est PAS dans fees) pour permettre
-            # la comparaison spot vs margin.
-            self.total_slippage_cost = 0.0  # pas de champ isolé dans le trade — laissé à 0
+            self.total_borrow_cost   = _sum("borrow_cost")
+            self.total_slippage_cost = _sum("slippage_cost")
+            self.total_funding_cost  = _sum("funding_cost")
+            self.gross_profit        = _sum("gross_pnl")
+            # ⚠ `total_pnl` somme les `pnl` de clôture, qui ne retranchent PAS
+            # les frais d'entrée (prélevés sur le capital à l'ouverture) :
+            # `net_profit` est la variation d'équité réelle, et l'écart entre
+            # les deux vaut exactement la somme des frais d'entrée.
+            self.net_profit          = round(_sf(
+                self.final_equity - self.initial_capital, 0.0), 4)
+            self.total_entry_fees    = _sum("entry_fees")
         except Exception:
-            self.total_borrow_cost = 0.0
-            self.total_slippage_cost = 0.0
+            self.total_borrow_cost = self.total_slippage_cost = 0.0
+            self.total_funding_cost = self.gross_profit = 0.0
+            self.net_profit = self.total_entry_fees = 0.0
 
     def _compute_extended_metrics(self):
         """QW-1 — Sortino, Calmar, CAGR et alpha vs Buy & Hold (S3-07).
@@ -443,6 +484,11 @@ class BacktestResult:
             # QW-3 : agrégats de coûts pour analyse what-if frais/levier
             "total_borrow_cost":  round(_sf(getattr(self, "total_borrow_cost", 0.0), 0.0), 4),
             "total_slippage_cost": round(_sf(getattr(self, "total_slippage_cost", 0.0), 0.0), 4),
+            # L0 (§49) — décomposition brut → net
+            "total_funding_cost": round(_sf(getattr(self, "total_funding_cost", 0.0), 0.0), 4),
+            "total_entry_fees":   round(_sf(getattr(self, "total_entry_fees", 0.0), 0.0), 4),
+            "gross_profit":       round(_sf(getattr(self, "gross_profit", 0.0), 0.0), 4),
+            "net_profit":         round(_sf(getattr(self, "net_profit", 0.0), 0.0), 4),
             "total_trades":       self.total_trades,
             "win_rate":           round(_sf(self.win_rate, 0.0), 2),
             "max_drawdown":       round(_sf(self.max_drawdown, 0.0), 2),
@@ -466,6 +512,11 @@ class BacktestResult:
             "by_strategy":        self.by_strategy,
             "by_setup":           getattr(self, "by_setup", {}),
             "by_module":          getattr(self, "by_module", {}),
+            "by_exit_reason":     getattr(self, "by_exit_reason", {}),
+            "by_structure_state": getattr(self, "by_structure_state", {}),
+            "by_sequence_type":   getattr(self, "by_sequence_type", {}),
+            "by_tier":            getattr(self, "by_tier", {}),
+            "by_target_class":    getattr(self, "by_target_class", {}),
             "trades":             self.trades,
             "diagnostics":        getattr(self, "diagnostics", None),
             "ml_info":            getattr(self, "ml_info", None),
@@ -623,17 +674,25 @@ class Backtester:
             lock_ratio       = float(ov.get("lock_ratio",   self.lock_ratio)),
             use_swing        = bool(ov.get("use_swing",     self.use_swing)),
             mode             = str(ov.get("mode",           "dynamic")),
+            # §30 — trailing structurel : marge sous le pivot et demi-fenêtre
+            # de confirmation du pivot.
+            struct_buffer_atr = float(ov.get("struct_buffer_atr", 0.25)),
+            struct_pivot_k    = int(ov.get("struct_pivot_k", 2)),
         )
 
     # ── Cycle de vie d'une position (extrait de run() — V13) ──────────────────
 
     def _close_at(self, ctx, position: dict, i: int, exec_price: float,
                   exit_reason: str, *, maker: bool, status: str = "closed",
-                  append_ts: bool = True) -> float:
+                  append_ts: bool = True, ref_price: Optional[float] = None) -> float:
         """Clôture commune à toutes les sorties (early-exit, time-exit, TP,
         stop, fin de série) : frais, coût d'emprunt (formule composée partagée
         avec le live — app/core/execution.py), PnL net, enregistrement du
-        trade et de la courbe d'équité. Retourne le PnL net."""
+        trade et de la courbe d'équité. Retourne le PnL net.
+
+        L0 — ``ref_price`` : prix AVANT application du spread, quand l'appelant
+        l'a appliqué. Sert à isoler le coût de spread du reste des frais ; sans
+        lui le slippage de sortie compte pour 0 (aucun changement de PnL)."""
         df         = ctx.df
         side       = position["side"]
         entry      = position["entry"]
@@ -654,12 +713,32 @@ class Backtester:
         if impact:
             pnl -= impact
             fees += impact
+        # L2 (§27) — funding des perpétuels. `venue_borrow_rate` rend 0 sur une
+        # venue perp depuis L2 : le portage y passe par le funding, qui change
+        # de signe (un funding négatif est ENCAISSÉ, pas payé).
+        funding = self._funding_cost(ctx, position, i, hours_held)
+        if funding:
+            pnl -= funding
+            position["funding_cost"] = round(
+                position.get("funding_cost", 0.0) + funding, 8)
+        # L0 — coût de spread de la sortie, isolé (déjà dans le PnL via exec_price).
+        slip_exit = (abs(exec_price - ref_price) * fill_size
+                     if ref_price is not None else 0.0) + impact
+        # L0 — `close_pnl` ne rend que les frais de SORTIE ; les écrire tels quels
+        # écrasait les frais d'entrée déjà portés par la position (et payés par
+        # ctx.capital dans _try_enter). `total_fees` sous-déclarait donc un côté.
+        # Correction de report seule : ni l'équité ni aucune décision ne bougent.
+        fees = position.get("fees", 0.0) + fees
         ctx.capital += pnl
+        # L1 — les jambes déjà sorties ont encaissé leur PnL au fil de l'eau ;
+        # le trade journalisé porte le total, l'équité n'ajoute que le reliquat.
+        realized = position.pop("_realized_pnl", 0.0)
+        gross_realized = position.pop("_gross_realized", 0.0)
         # BT-09 : plus-haut d'équité pour la courbe de dé-risquage en drawdown.
         ctx.peak_capital = max(getattr(ctx, "peak_capital", ctx.capital), ctx.capital)
         ts = str(df["time"][i]) if "time" in df.columns else str(i)
         position.update({
-            "pnl":           round(pnl, 6),
+            "pnl":           round(pnl + realized, 6),
             "fees":          round(fees, 6),
             "borrow_cost":   round(borrow, 6),
             "exit":          round(exec_price, 6),
@@ -672,8 +751,22 @@ class Backtester:
             "duration_bars": bars_held,
             "fill_pct":      self.partial_fill,
             "stop_trail":    position.pop("_stop_trail", []),
+            # L0 (§99/§49) — coûts ventilés. `fees` agrège entrée+sortie+impact ;
+            # `gross_pnl` vient des PRIX, pas d'une somme de composantes : ⚠ `pnl`
+            # ne retranche pas les frais d'entrée (déjà prélevés sur ctx.capital
+            # à l'ouverture), donc `pnl + fees + borrow` ne les reconstituerait pas.
+            "slippage_cost": round(position.get("slippage_cost", 0.0) + slip_exit, 6),
+            "funding_cost":  round(position.get("funding_cost", 0.0), 6),
+            "gross_pnl":     round(gross_realized + (exec_price - entry) * fill_size *
+                                   (1 if side == "long" else -1), 6),
+            # L1 — jambes réalisées avant la clôture finale (§29). Liste vide
+            # pour toute stratégie qui ne demande pas de sorties partielles.
+            "exits":         position.pop("_exits", []),
+            "size_initial":  position.pop("size_initial", fill_size),
         })
         position.pop("_trailing", None)
+        position.pop("_targets", None)
+        position.pop("_be_done", None)
         ctx.trades.append(position)
         ctx.equity_curve.append(round(ctx.capital, 4))
         if append_ts:
@@ -693,8 +786,63 @@ class Backtester:
                 day_key = ""
             # capital_before = capital avant ce trade (approximation : capital - pnl)
             capital_before = ctx.capital - pnl
-            gate.record_trade_result(i, slot_key, pnl, day_key, capital_before)
+            gate.record_trade_result(i, slot_key, pnl + realized, day_key,
+                                     capital_before)
 
+        return pnl + realized
+
+    def _close_partial_at(self, ctx, position: dict, i: int, exec_price: float,
+                          fraction: float, reason: str, *, maker: bool,
+                          ref_price: Optional[float] = None) -> float:
+        """L1 (§29) — réalise ``fraction`` de la taille INITIALE de la position.
+
+        Le trade n'est journalisé qu'à sa clôture COMPLÈTE (``_close_at``) :
+        ici on encaisse le PnL de la jambe, on réduit taille et notionnel, et on
+        trace la sortie dans ``_exits``. La courbe d'équité ne reçoit pas de
+        point — elle en a un par trade, pas un par jambe, et changer sa cadence
+        modifierait l'annualisation du Sharpe de tous les backtests.
+
+        Retourne le PnL de la jambe (0.0 si elle n'est pas négociable)."""
+        size0 = position.get("size_initial", position["size"])
+        part = _quantize_size(min(_floor_to(size0 * fraction, 6),
+                                  position["size"]), self._venue)
+        if part <= 0 or position["size"] <= 0:
+            return 0.0
+        # Prorata du notionnel : le reliquat doit rester cohérent avec la taille.
+        notional_part = position["notional"] * (part / position["size"])
+        bars_held  = i - position["bar"]
+        hours_held = bars_held * _bar_to_days(ctx.timeframe) * 24.0
+        side = position["side"]
+        pnl, fees, borrow = _close_pnl(
+            side=side, entry=position["entry"], exit_price=exec_price, size=part,
+            notional=notional_part,
+            fee_rate=(self.maker_fee if maker else self.taker_fee),
+            daily_rate=self.borrow_rate, hours_held=hours_held,
+            periods_per_day=self.borrow_periods, venue=self._venue,
+        )
+        impact = self._impact_cost(ctx, i, notional_part)
+        if impact:
+            pnl -= impact
+            fees += impact
+        slip = (abs(exec_price - ref_price) * part
+                if ref_price is not None else 0.0) + impact
+
+        ctx.capital += pnl
+        ctx.peak_capital = max(getattr(ctx, "peak_capital", ctx.capital), ctx.capital)
+        position["size"]     = round(position["size"] - part, 8)
+        position["notional"] = round(position["notional"] - notional_part, 6)
+        position["fees"]     = round(position.get("fees", 0.0) + fees, 8)
+        position["borrow_cost"]   = round(position.get("borrow_cost", 0.0) + borrow, 8)
+        position["slippage_cost"] = round(position.get("slippage_cost", 0.0) + slip, 8)
+        position["_realized_pnl"] = position.get("_realized_pnl", 0.0) + pnl
+        position["_gross_realized"] = position.get("_gross_realized", 0.0) + \
+            (exec_price - position["entry"]) * part * (1 if side == "long" else -1)
+        position.setdefault("_exits", []).append({
+            "bar": i, "price": round(exec_price, 6), "size": round(part, 8),
+            "fraction": round(part / size0, 4) if size0 else 0.0,
+            "reason": str(reason), "pnl": round(pnl, 6),
+        })
+        ctx.diag["partial_exits"] = ctx.diag.get("partial_exits", 0) + 1
         return pnl
 
     def _manage_open_position(self, ctx, position: dict, i: int):
@@ -779,7 +927,8 @@ class Backtester:
             # TP fixe touché : sortie au prix TP (spread défavorable, côté maker)
             exec_price = tp_val * (1 - self.spread_pct) if side == "long" \
                          else tp_val * (1 + self.spread_pct)
-            self._close_at(ctx, position, i, exec_price, "take_profit", maker=True)
+            self._close_at(ctx, position, i, exec_price, "take_profit",
+                           maker=True, ref_price=tp_val)
             return None
 
         if stop_hit:
@@ -792,8 +941,41 @@ class Backtester:
                 position["trail_phase"] = "unknown"
             self._close_at(ctx, position, i, exec_price,
                            ("stop_loss" if position.get("disable_trailing")
-                            else "trailing_stop"), maker=False)
+                            else "trailing_stop"), maker=False, ref_price=stop)
             return None
+
+        # ── L1 (§29) — sorties partielles TP1 / TP2, runner ──────────────────
+        # Vérifiées seulement si le stop n'a pas été touché : même priorité
+        # conservative que le TP fixe en cas d'ambiguïté intrabar.
+        cibles = position.get("_targets")
+        if cibles:
+            atteintes = [c for c in cibles
+                         if (side == "long" and c_high >= c["price"])
+                         or (side == "short" and c_low <= c["price"])]
+            for cible in atteintes:
+                cibles.remove(cible)
+                px = cible["price"] * (1 - self.spread_pct) if side == "long" \
+                    else cible["price"] * (1 + self.spread_pct)
+                self._close_partial_at(ctx, position, i, px, cible["fraction"],
+                                       cible["reason"], maker=True,
+                                       ref_price=cible["price"])
+                # §30 — après la première jambe, le stop passe au point mort
+                # frais compris : le trade ne peut plus coûter d'argent.
+                if position.get("be_after_partial") and not position.get("_be_done"):
+                    cout = 2 * self.taker_fee + self.spread_pct
+                    be = entry * (1 + cout) if side == "long" else entry * (1 - cout)
+                    if (side == "long" and be > position["stop"]) or \
+                            (side == "short" and be < position["stop"]):
+                        position["stop"] = round(be, 6)
+                    position["_be_done"] = True
+            if atteintes:
+                # Reliquat non négociable (quantification venue) : on solde.
+                if position["size"] <= 0 or \
+                        position["size"] * c_close < self._min_notional():
+                    self._close_at(ctx, position, i, c_close, "partial_final",
+                                   maker=True)
+                    return None
+                stop = position["stop"]
 
         # ── Position conservée : trailing + pyramidage ───────────────────────
         atr_v         = float(ctx.atr_arr[i]) or 1e-8
@@ -906,6 +1088,22 @@ class Backtester:
                 logger.debug(f"[Backtest] bar {i} : trade rejeté (circuit_breaker) — {reason}")
                 return None
 
+        # ── L6 (§97 §98) — un événement de liquidité, un trade ───────────────
+        # Le même balayage produit plusieurs setups (sweep, retest d'OB, FVG…) ;
+        # les traiter comme des signaux indépendants revenait à multiplier le
+        # risque sur un seul événement de marché. Le cooldown devient donc
+        # ÉVÉNEMENTIEL et non plus temporel : trois bougies ne justifient pas
+        # une nouvelle entrée, un nouvel événement si.
+        event_id = signal.get("market_event_id")
+        if event_id and bool(self.cfg.get("trading", {}).get("dedup_events", True)):
+            vus = getattr(ctx, "events_traded", None)
+            if vus is None:
+                vus = ctx.events_traded = set()
+            if event_id in vus:
+                diag["rejected_dedup"] = diag.get("rejected_dedup", 0) + 1
+                self.rejections.record("evenement_deja_trade", symbol=ctx.symbol)
+                return None
+
         atr_v = float(ctx.atr_arr[i])
         if atr_v <= 0:
             diag["rejected_atr_zero"] += 1
@@ -919,7 +1117,8 @@ class Backtester:
             diag["rejected_venue"] = diag.get("rejected_venue", 0) + 1
             return None
 
-        exec_price = float(df["open"][i + 1])
+        raw_price  = float(df["open"][i + 1])           # L0 — avant spread
+        exec_price = raw_price
         if signal["side"] == "long":
             exec_price *= (1 + self.spread_pct)
         else:
@@ -1011,8 +1210,10 @@ class Backtester:
         notional    = size * exec_price
         entry_fees  = self._fees(exec_price, size, maker=False,
                                  side=signal["side"], is_entry=True)
-        entry_fees += self._impact_cost(ctx, i, notional)   # BT-10
+        _impact_in  = self._impact_cost(ctx, i, notional)   # BT-10
+        entry_fees += _impact_in
         ctx.capital -= entry_fees
+        slip_entry  = abs(exec_price - raw_price) * size + _impact_in   # L0
         ctx.trade_id += 1
         ts = str(df["time"][i]) if "time" in df.columns else str(i)
 
@@ -1056,10 +1257,37 @@ class Backtester:
             "mae":          0.0,
             "mfe":          0.0,
             "_stop_trail":  [{"bar": i + 1, "stop": round(stop, 6)}],
+            # ── L0 (§99) — journal de trade : contexte de décision ────────────
+            # Repris tels quels du signal : une stratégie qui ne les pose pas
+            # laisse des None, aucune n'est obligée de changer.
+            "entry_fees":      round(entry_fees, 6),
+            "slippage_cost":   round(slip_entry, 6),
+            "funding_cost":    0.0,
+            "session":         signal.get("session"),
+            "htf_bias":        signal.get("htf_bias"),
+            "structure_state": signal.get("structure_state"),
+            "sequence_type":   signal.get("sequence_type"),
+            "sequence_id":     signal.get("sequence_id"),
+            "market_event_id": signal.get("market_event_id"),
+            "tier":            signal.get("tier"),
+            "liquidity_swept": signal.get("liquidity_swept"),
+            "pd_zone":         (signal.get("indicators") or {}).get("pd_zone"),
+            "gross_rr":        signal.get("gross_rr"),
+            "net_rr":          signal.get("net_rr"),
+            "score_breakdown": signal.get("score_breakdown"),
+            "planned_stop":    round(stop, 6),
+            "planned_tp":      round(tp_init, 6) if tp_init is not None else None,
+            # ── L1 (§29) — sorties partielles ────────────────────────────────
+            "size_initial":    round(size, 6),
+            "_targets":        _plan_partial_targets(signal, exec_price, stop),
+            "be_after_partial": bool(signal.get("be_after_partial", True)),
         }
         diag["trades_opened"] += 1
         diag["last_trade_bar"] = i
         ctx.bars_current_position = 0
+        vus = getattr(ctx, "events_traded", None)
+        if event_id and vus is not None:
+            vus.add(event_id)
         return position
 
     # ── run ───────────────────────────────────────────────────────────────────
@@ -1216,6 +1444,7 @@ class Backtester:
             # été touchés (ambiguïté intrabar high/low, mesure seule — le stop
             # continue de toujours l'emporter, cf. _manage_open_position).
             "tp_sl_ambiguous_bars":  0,
+            "partial_exits":         0,   # L1 — jambes sorties avant la clôture
         }
         per_strategy_stats: Dict[str, Dict[str, int]] = {}
         _bars_since_signal     = 0
@@ -1275,6 +1504,15 @@ class Backtester:
             # Initialisé plus bas (après know si realistic_risk=True).
             risk_gate=None,
         )
+        # L2 (§27) — série de funding pour les venues perp. Absente = pas de
+        # facturation (et non une estimation inventée) : mieux vaut un coût
+        # manquant et signalé qu'un coût faux et silencieux.
+        ctx.funding_arr = None
+        if getattr(self._venue, "market_type", "spot") == "perp" \
+                and "funding_rate" in df.columns:
+            ctx.funding_arr = df["funding_rate"].fill_null(0.0) \
+                .to_numpy().astype(float)
+
         # BT-10 : volume quote moyen (20 barres, causal) pour le modèle "size".
         if self.slippage_model == "size" and "volume" in df.columns:
             ctx.qvol_arr = (df["volume"] * df["close"]).rolling_mean(20) \
@@ -1514,6 +1752,28 @@ class Backtester:
             return self.envelope.slot_envelope
         from app.core.risk_gate import _default_venue_capital
         return _default_venue_capital(cfg) or 1000.0
+
+    def _funding_cost(self, ctx, position: dict, i: int,
+                      hours_held: float) -> float:
+        """L2 (§27) — funding d'un perpétuel sur la durée de détention.
+
+        0.0 hors venue perp, ou quand la série de funding n'est pas disponible
+        (``ctx.funding_arr``, alimentée par ``derivatives.align_to_ohlcv``).
+        Un long paie quand le funding est positif, un short encaisse — d'où le
+        signe porté par le sens de la position."""
+        arr = getattr(ctx, "funding_arr", None)
+        if arr is None or self._venue is None:
+            return 0.0
+        if getattr(self._venue, "market_type", "spot") != "perp":
+            return 0.0
+        debut = int(position.get("bar", i))
+        if not (0 <= debut <= i < len(arr)):
+            return 0.0
+        taux_moyen = float(np.nanmean(arr[debut:i + 1]))
+        if taux_moyen != taux_moyen:      # NaN
+            return 0.0
+        cout = _funding_cost(position["notional"], taux_moyen, hours_held)
+        return cout if position["side"] == "long" else -cout
 
     def _impact_cost(self, ctx, i: int, notional: float) -> float:
         """BT-10 : coût d'impact croissant avec la taille RELATIVE du trade

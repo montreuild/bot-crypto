@@ -63,6 +63,27 @@ class Trade(Base):
     # auparavant (`reason` écrasé par le motif de sortie anticipée seulement).
     exit_reason = Column(String(30))
     tags        = Column(JSON)
+    # ── L1 (§29) — sorties partielles ───────────────────────────────────────
+    # `exits` : jambes sorties avant la clôture finale, chacune avec son prix,
+    # sa fraction et son PnL. `pnl` porte déjà leur total ; cette colonne dit
+    # COMMENT il a été fait, ce qu'un montant agrégé ne peut pas dire.
+    exits        = Column(JSON)
+    realized_pnl = Column(Float, default=0.0)
+    size_initial = Column(Float)
+    # ── L0 (§99) — journal : contexte de décision et coûts ventilés ─────────
+    gross_pnl     = Column(Float)
+    slippage_cost = Column(Float, default=0.0)
+    funding_cost  = Column(Float, default=0.0)
+    mfe           = Column(Float)
+    mae           = Column(Float)
+    setup         = Column(String(40))
+    module        = Column(String(40))
+    session_name  = Column(String(20))
+    htf_bias      = Column(String(20))
+    structure_state = Column(String(30))
+    sequence_type = Column(String(30))
+    tier          = Column(String(2))
+    net_rr        = Column(Float)
     __table_args__ = (
         Index("ix_trades_symbol", "symbol"),
         Index("ix_trades_strategy", "strategy"),
@@ -368,6 +389,20 @@ def save_trade(session: Session, t: dict):
         timeframe=t.get("timeframe"), reason=t.get("reason",""),
         exit_reason=t.get("exit_reason"), tags=t.get("tags"),
         entry_time=entry_time,  # S4-11 : désormais renseigné
+        # L1 / L0 — jambes partielles et contexte de décision. Toutes
+        # optionnelles : un trade qui ne les porte pas écrit des NULL.
+        exits=t.get("exits") or None,
+        realized_pnl=t.get("realized_pnl", 0) or 0,
+        size_initial=t.get("size_initial"),
+        gross_pnl=t.get("gross_pnl"),
+        slippage_cost=t.get("slippage_cost", 0) or 0,
+        funding_cost=t.get("funding_cost", 0) or 0,
+        mfe=t.get("mfe"), mae=t.get("mae"),
+        setup=t.get("setup"), module=t.get("module"),
+        session_name=t.get("session"), htf_bias=t.get("htf_bias"),
+        structure_state=t.get("structure_state"),
+        sequence_type=t.get("sequence_type"),
+        tier=t.get("tier"), net_rr=t.get("net_rr"),
     )
     try:
         session.add(rec)
