@@ -255,73 +255,28 @@ class BacktestResult:
         for t in closed:
             trades_by_strategy[t.get("strategy", "unknown")].append(t)
 
-        self.by_strategy: Dict[str, dict] = {}
-        for s, strat_trades in trades_by_strategy.items():
-            d = {"trades": 0, "wins": 0, "pnl": 0.0, "fees": 0.0}
-            for t in strat_trades:
-                d["trades"] += 1
-                d["pnl"]    += t["pnl"]
-                d["fees"]   += t.get("fees", 0)
-                if t["pnl"] > 0:
-                    d["wins"] += 1
-            self.by_strategy[s] = d
+        self.by_strategy = self._group_metrics(trades_by_strategy)
 
-        for s, d in self.by_strategy.items():
-            strat_trades = trades_by_strategy[s]
-            sd_pnls = [t["pnl"] for t in strat_trades]
-            wins_s  = [p for p in sd_pnls if p > 0]
-            loss_s  = [p for p in sd_pnls if p <= 0]
-
-            d["win_rate"]     = round(d["wins"] / d["trades"] * 100, 1) if d["trades"] else 0.0
-            d["pnl"]          = round(d["pnl"], 4)
-            d["fees"]         = round(d["fees"], 4)
-            d["avg_win"]      = round(_sf(float(np.mean(wins_s)), 0.0), 4) if wins_s else 0.0
-            d["avg_loss"]     = round(_sf(float(np.mean(loss_s)), 0.0), 4) if loss_s else 0.0
-            _loss_sum = abs(sum(loss_s))
-            d["profit_factor"] = round(sum(wins_s) / _loss_sum, 3) if _loss_sum > 0 else (999.0 if wins_s else 0.0)
-            d["expectancy"]   = round(
-                len(wins_s) / len(sd_pnls) * d["avg_win"] +
-                len(loss_s) / len(sd_pnls) * d["avg_loss"], 4
-            ) if sd_pnls else 0.0
-            d["total_trades"] = d["trades"]
-            d["total_pnl"]    = d["pnl"]
-            d["total_fees"]   = d["fees"]
-
-            eq_s  = [self.initial_capital]
-            cap   = self.initial_capital
-            for t in strat_trades:
-                cap += t["pnl"]
-                eq_s.append(round(cap, 4))
-            d["equity_curve"]    = eq_s
-            d["initial_capital"] = self.initial_capital
-            d["final_equity"]    = round(eq_s[-1], 4)
-
-            eq_arr = np.array(eq_s, dtype=float)
-            peak_s = np.maximum.accumulate(eq_arr)
-            if len(eq_arr) > 1:
-                dd_arr = (eq_arr - peak_s) / np.where(peak_s > 0, peak_s, 1.0) * 100
-                d["max_drawdown"] = round(_sf(float(dd_arr.min()), 0.0), 2)
-            else:
-                d["max_drawdown"] = 0.0
-
-            if len(eq_arr) > 1:
-                denom  = np.where(eq_arr[:-1] > 0, eq_arr[:-1], 1.0)
-                rets_s = np.diff(eq_arr) / denom
-            else:
-                rets_s = np.array([0.0])
-            # Même correction que le Sharpe global : `eq_s` est construite trade
-            # par trade juste au-dessus, sa cadence est celle des trades DE CETTE
-            # stratégie — qui peut différer de celle du portefeuille entier.
-            from app.core.performance_metrics import returns_per_year as _rpy
-            ann_s  = np.sqrt(_rpy(len(rets_s), self._years(),
-                                  _bars_per_year(self._timeframe)))
-            std_s  = float(rets_s.std())
-            if std_s > 0:
-                d["sharpe"] = round(_sf(float(rets_s.mean() / std_s * ann_s), 0.0), 3)
-            else:
-                d["sharpe"] = 0.0
-
-            d["trades"] = strat_trades
+        # ── §65 : statistiques par SETUP et par MODULE ────────────────────────
+        # Une stratégie SMC agrège plusieurs familles de setups dont rien ne dit
+        # qu'elles ont le même edge — la spécification demande des statistiques
+        # SÉPARÉES par module (SMC Core / ICT Session / ICT Advanced), et le
+        # YAML de `smart_money` documente déjà une ablation setup par setup
+        # faite à la main.
+        #
+        # Générique DÉLIBÉRÉMENT : toute stratégie qui pose `setup` et/ou
+        # `module` sur son signal obtient le découpage sans rien coder ici, et
+        # les dicts restent vides pour celles qui n'en posent pas — aucun
+        # appelant existant ne change de comportement.
+        trades_by_setup: Dict[str, list] = _defaultdict(list)
+        trades_by_module: Dict[str, list] = _defaultdict(list)
+        for t in closed:
+            if t.get("setup"):
+                trades_by_setup[str(t["setup"])].append(t)
+            if t.get("module"):
+                trades_by_module[str(t["module"])].append(t)
+        self.by_setup: Dict[str, dict] = self._group_metrics(trades_by_setup)
+        self.by_module: Dict[str, dict] = self._group_metrics(trades_by_module)
 
         # ── QW-1 : métriques étendues (Sortino, Calmar, CAGR, alpha vs B&H) ──
         self._compute_extended_metrics()
@@ -396,6 +351,86 @@ class BacktestResult:
             self.cagr = 0.0
             self.alpha_vs_bh = 0.0
 
+    def _group_metrics(self, trades_by_key: Dict[str, list]) -> Dict[str, dict]:
+        """Statistiques complètes par groupe de trades.
+
+        Extraite de la boucle `by_strategy` pour être réutilisée telle quelle
+        par les découpages par setup et par module : trois copies de ce calcul
+        auraient fini par diverger, et un profit factor calculé différemment
+        selon l'axe d'analyse ne serait comparable à rien.
+
+        Le groupement préserve l'ordre chronologique de `closed`, requis par la
+        courbe d'équité et le Sharpe.
+        """
+        out: Dict[str, dict] = {}
+        for s, strat_trades in trades_by_key.items():
+            d = {"trades": 0, "wins": 0, "pnl": 0.0, "fees": 0.0}
+            for t in strat_trades:
+                d["trades"] += 1
+                d["pnl"]    += t["pnl"]
+                d["fees"]   += t.get("fees", 0)
+                if t["pnl"] > 0:
+                    d["wins"] += 1
+            out[s] = d
+
+        for s, d in out.items():
+            strat_trades = trades_by_key[s]
+            sd_pnls = [t["pnl"] for t in strat_trades]
+            wins_s  = [p for p in sd_pnls if p > 0]
+            loss_s  = [p for p in sd_pnls if p <= 0]
+
+            d["win_rate"]     = round(d["wins"] / d["trades"] * 100, 1) if d["trades"] else 0.0
+            d["pnl"]          = round(d["pnl"], 4)
+            d["fees"]         = round(d["fees"], 4)
+            d["avg_win"]      = round(_sf(float(np.mean(wins_s)), 0.0), 4) if wins_s else 0.0
+            d["avg_loss"]     = round(_sf(float(np.mean(loss_s)), 0.0), 4) if loss_s else 0.0
+            _loss_sum = abs(sum(loss_s))
+            d["profit_factor"] = round(sum(wins_s) / _loss_sum, 3) if _loss_sum > 0 else (999.0 if wins_s else 0.0)
+            d["expectancy"]   = round(
+                len(wins_s) / len(sd_pnls) * d["avg_win"] +
+                len(loss_s) / len(sd_pnls) * d["avg_loss"], 4
+            ) if sd_pnls else 0.0
+            d["total_trades"] = d["trades"]
+            d["total_pnl"]    = d["pnl"]
+            d["total_fees"]   = d["fees"]
+
+            eq_s  = [self.initial_capital]
+            cap   = self.initial_capital
+            for t in strat_trades:
+                cap += t["pnl"]
+                eq_s.append(round(cap, 4))
+            d["equity_curve"]    = eq_s
+            d["initial_capital"] = self.initial_capital
+            d["final_equity"]    = round(eq_s[-1], 4)
+
+            eq_arr = np.array(eq_s, dtype=float)
+            peak_s = np.maximum.accumulate(eq_arr)
+            if len(eq_arr) > 1:
+                dd_arr = (eq_arr - peak_s) / np.where(peak_s > 0, peak_s, 1.0) * 100
+                d["max_drawdown"] = round(_sf(float(dd_arr.min()), 0.0), 2)
+            else:
+                d["max_drawdown"] = 0.0
+
+            if len(eq_arr) > 1:
+                denom  = np.where(eq_arr[:-1] > 0, eq_arr[:-1], 1.0)
+                rets_s = np.diff(eq_arr) / denom
+            else:
+                rets_s = np.array([0.0])
+            # Même correction que le Sharpe global : `eq_s` est construite trade
+            # par trade juste au-dessus, sa cadence est celle des trades DE CETTE
+            # stratégie — qui peut différer de celle du portefeuille entier.
+            from app.core.performance_metrics import returns_per_year as _rpy
+            ann_s  = np.sqrt(_rpy(len(rets_s), self._years(),
+                                  _bars_per_year(self._timeframe)))
+            std_s  = float(rets_s.std())
+            if std_s > 0:
+                d["sharpe"] = round(_sf(float(rets_s.mean() / std_s * ann_s), 0.0), 3)
+            else:
+                d["sharpe"] = 0.0
+
+            d["trades"] = strat_trades
+        return out
+
     def to_dict(self) -> dict:
         pf = self.profit_factor
         pf_safe = round(min(pf, 999.0), 3) if math.isfinite(pf) else 999.0
@@ -429,6 +464,8 @@ class BacktestResult:
             "equity_curve":       [round(_sf(e, 0.0), 4) for e in self.equity_curve],
             "timestamps":         self.timestamps,
             "by_strategy":        self.by_strategy,
+            "by_setup":           getattr(self, "by_setup", {}),
+            "by_module":          getattr(self, "by_module", {}),
             "trades":             self.trades,
             "diagnostics":        getattr(self, "diagnostics", None),
             "ml_info":            getattr(self, "ml_info", None),
@@ -1007,6 +1044,8 @@ class Backtester:
             # Champs V7 / V4 — utilisés pour les colonnes 'Sortie' et 'Setup'
             # du tableau de trades et pour les statistiques par exit_reason.
             "setup":           signal.get("setup"),
+            # §65 — module SMC/ICT du setup, pour des statistiques séparées.
+            "module":          signal.get("module"),
             "setup_priority":  signal.get("setup_priority"),
             "regime":          signal.get("regime"),
             "regime_lbl":      signal.get("regime_lbl"),

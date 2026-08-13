@@ -6,6 +6,38 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 📊 Statistiques par setup et par module SMC (§65)
+
+Une stratégie SMC agrège plusieurs familles de setups dont rien ne garantit
+qu'elles partagent le même edge : sans découpage, un module rentable et un
+module perdant se compensent dans un chiffre global qui ne dit rien. Le YAML de
+`smart_money` documentait déjà que `BREAKER_RETEST` coûtait −163 USDC sur 220
+trades — un constat obtenu par ablation manuelle, refaite à chaque fois.
+
+`BacktestResult` expose désormais **`by_setup`** et **`by_module`** à côté de
+`by_strategy`, avec exactement les mêmes métriques (win rate, profit factor,
+expectancy, drawdown, Sharpe, courbe d'équité).
+
+**Générique, pas spécifique à SMC** : le moteur ne connaît aucun nom de setup.
+Toute stratégie qui pose `setup` et/ou `module` sur son signal obtient le
+découpage sans une ligne de code ; celles qui n'en posent pas gardent des dicts
+vides et un comportement rigoureusement inchangé.
+
+Au passage, le calcul par groupe est extrait en `_group_metrics` et **partagé**
+par les trois axes — trois copies auraient fini par diverger, et un profit
+factor calculé différemment selon l'axe d'analyse ne serait comparable à rien.
+
+Découpe retenue pour `smart_money`, suivant la spec : `SWEEP_REVERSAL` et
+`OB_RETEST` en **SMC Core**, `CALENDAR_SWEEP` en **ICT Session**,
+`BREAKER_RETEST` et `BPR_REVERSAL` en **ICT Advanced**. Un test vérifie que
+tout setter déclaré a un module — sans quoi il tomberait dans « AUTRE » et
+fausserait la lecture sans rien casser.
+
+Premier usage, BTC/USDC 4 h : `OB_RETEST` sort à PF 2.72 sur 10 trades contre
+1.58 sur 54 pour `SWEEP_REVERSAL`. Échantillon trop mince pour conclure — mais
+c'est précisément ce que le découpage sert à voir.
+
+
 ### ⚡ Prédiction par lot pour toutes les stratégies ML
 
 `MLBackend` prédisait ligne à ligne : un appel LightGBM par barre et par tête.
