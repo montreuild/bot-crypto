@@ -6,6 +6,39 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🧭 L3 — mémoire de structure (§60–§64, §73) et un filtre qui n'a pas répliqué
+
+`app/core/smc_state.py` : douze états de structure, niveaux protégés, et une
+**convention interne unique BOS / MSS / CHoCH** — le dépôt n'en avait aucune.
+BOS = clôture au-delà du dernier swing dans le sens de la structure, avec
+displacement. MSS = balayage puis displacement puis cassure du dernier LH/HL,
+qui arme un **avertissement** et jamais une confirmation (§62). CHoCH = cassure
+contraire sans displacement, qui ne change rien (§60.3).
+
+Causalité prouvée par test de préfixe sur sept valeurs de `k` : un swing n'est
+utilisé qu'à partir de son `confirmed_at`, jamais de son `index`.
+
+**Mesuré.** La porte de la spécification (mode `direction`) ne vaut rien : pire
+sur BTC 1 h, marginale ailleurs. Un mode `no_pullback` — suggéré par le
+découpage `by_structure_state`, absent de la spec — balayait 4 cas sur 4 en OOS
+(−83 % de perte sur ETH 1 h, drawdown divisé par 3,4).
+
+**Il ne réplique pas.** Vérifié sur la fenêtre IS, qui n'avait pas servi à
+former l'hypothèse : 2 cas sur 4, et sur BTC 4 h il détruit le seul résultat
+franchement rentable de la campagne (+327 → +6). La règle avait été choisie
+après lecture des résultats OOS — sélection sur le jeu de test, exactement le
+mécanisme décrit dans `docs/STRATEGY_SMC_ML_EDGE.md` §3 quinquies.
+
+**Aucune porte n'est activée.** Le postulat de §62 reste non testable : 3 à 5
+trades par compartiment d'avertissement.
+
+Livré aussi : `by_structure_state`, `by_sequence_type`, `by_tier` dans
+`BacktestResult`, et `structure_journal` (on par défaut) — l'état est enregistré
+même quand il ne filtre rien, sinon on ne pourrait pas mesurer la porte.
+
+Détail : `docs/MOTEUR_STRUCTURE_SEQUENTIEL.md`. 1 779 tests, dont 19 nouveaux.
+
+
 ### ✂️ L1 — sorties partielles (§29) et trailing structurel (§30)
 
 Le moteur ne savait fermer qu'en entier : `docs/SPECS_SMC_ICT_ET_ADAPTATIVE.md`

@@ -41,6 +41,8 @@ PARAM_SPACE: Dict[str, List] = {
     'time_stop_bars': [0, 12, 16, 24],
     'use_trailing': [True, False],
     'trail_mult': [2.0, 2.5, 3.5],
+    # L3 (§60) — porte de structure séquentielle.
+    'structure_gate': [True, False],
     # L1 (§29 §30) — sorties partielles et mode de trailing du runner.
     'use_partial_exits': [True, False],
     'tp1_r': [0.75, 1.0, 1.5],
@@ -118,6 +120,13 @@ FIXED_PARAMS: Dict[str, Any] = {
     'use_trailing': False,
     'trail_mult': 2.5,
     'ts_profit_r': 1.0,
+    # L3 — la porte filtre (off), le journal enregistre toujours l'état : sans
+    # le second on ne pourrait pas mesurer si le premier vaut quelque chose.
+    'structure_gate': False,
+    'structure_journal': True,
+    'break_body_atr': 0.5,
+    'mss_sweep_lookback': 8,
+    'warning_max_bars': 40,
     # L1 — off : les optimizer_results du YAML ont été mesurés en tout-ou-rien.
     'use_partial_exits': False,
     'tp1_r': 1.0,

@@ -11,6 +11,7 @@ from app.core import ict, smc
 from app.core.indicators_core import choppiness as _choppiness
 from app.core.indicators_core import engulfing as _engulfing
 from app.core.indicators_core import pin_bar as _pin_bar
+from app.core.smc_state import structure_states
 from app.core.timeframes import HTF_SECONDS_MAP as _HTF_SEC_MAP
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,13 @@ class _AnalysisMixin:
             aux["ext_trend"] = smc.analyze(win, ext_sp)["_trend_arr"]
         else:
             aux["ext_trend"] = None
+        # L3 (§60–§64) — état de structure séquentiel. Calculé dès que le
+        # journal ou la porte en a besoin : c'est une passe O(n) sur des
+        # entités déjà produites, pas une seconde analyse.
+        if bool(p.get("structure_gate", False)) or bool(p.get("structure_journal", True)):
+            aux["struct"] = structure_states(win, res, p)
+        else:
+            aux["struct"] = None
         if float(p.get("chop_filter_max", 0.0)) > 0:
             aux["chop"] = _choppiness(win, int(p.get("chop_len", 14))) \
                 .fill_null(50.0).to_numpy().astype(float)

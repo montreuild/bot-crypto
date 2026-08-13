@@ -26,6 +26,7 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 
 from app.core import ict, smc
+from app.core.smc_state import sequence_label, state_label
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,12 @@ class _SignalCtx:
     # Confirmation bougie
     pin_a: Optional[Any]
     eng_a: Optional[Any]
+    # L3 — état de structure séquentiel à la barre i (§60) et niveaux protégés
+    # (§64). `struct_state` vaut "UNKNOWN" quand le module est désactivé.
+    struct_state: str
+    struct_seq: str
+    protected_high: Optional[float]
+    protected_low: Optional[float]
 
 
 def _build_ctx(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
@@ -228,6 +235,17 @@ def _build_ctx(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     # ── Confirmation bougie (off par défaut) : +0.05 si pin bar/engulfing ─
     pin_a, eng_a = aux.get("pin"), aux.get("eng")
 
+    # L3 — état de structure séquentiel de la barre (§60/§64).
+    _st = aux.get("struct")
+    if _st is not None and i < len(_st["states"]):
+        st_lbl = state_label(int(_st["states"][i]))
+        st_seq = sequence_label(int(_st["sequences"][i]))
+        _ph, _pl = float(_st["protected_high"][i]), float(_st["protected_low"][i])
+        prot_h = None if _ph != _ph else _ph          # NaN → None
+        prot_l = None if _pl != _pl else _pl
+    else:
+        st_lbl, st_seq, prot_h, prot_l = "UNKNOWN", "NONE", None, None
+
     return _SignalCtx(
         res=res, i=i, open_=open_, high=high, low=low, close=close,
         aux=aux, p=p, atr=atr, trend=trend, c=c, zone=zone,
@@ -243,6 +261,8 @@ def _build_ctx(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
         smt_origin=smt_origin, req_inducement=req_inducement,
         ind_lb=ind_lb, max_ob_age=max_ob_age,
         pin_a=pin_a, eng_a=eng_a,
+        struct_state=st_lbl, struct_seq=st_seq,
+        protected_high=prot_h, protected_low=prot_l,
     )
 
 
@@ -838,7 +858,52 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
         candidates.extend(checker(self, ctx))
     if not candidates:
         return None
-    return _score_setup(candidates, aux.get("smt"), i, p, in_sb=ctx.in_sb)
+    best = _score_setup(candidates, aux.get("smt"), i, p, in_sb=ctx.in_sb)
+    if best is None:
+        return None
+    # L3 — la porte de structure filtre, l'état est TOUJOURS journalisé : sans
+    # le second, on ne pourrait pas mesurer si le premier vaut quelque chose.
+    if not _structure_autorise(ctx.struct_state, best["side"],
+                               p.get("structure_gate", False)):
+        return None
+    best["structure_state"] = ctx.struct_state
+    best["sequence_type"] = ctx.struct_seq
+    return best
+
+
+#: États dans lesquels une entrée est autorisée, par sens. Un `*_WARNING` est
+#: un avertissement de retournement : y prendre le sens NAISSANT, c'est jouer
+#: un retournement non confirmé (tier C de §71) — autorisé, mais mesurable à
+#: part. Un `*_PULLBACK` reste dans le sens de la tendance mère (§82).
+_ETATS_LONG = frozenset({
+    "BULLISH", "BULLISH_PULLBACK", "BULLISH_CONFIRMED", "BULLISH_WARNING",
+    "REVERSAL_BULLISH_PENDING", "FAILED_BEARISH_REVERSAL",
+})
+_ETATS_SHORT = frozenset({
+    "BEARISH", "BEARISH_PULLBACK", "BEARISH_CONFIRMED", "BEARISH_WARNING",
+    "REVERSAL_BEARISH_PENDING", "FAILED_BULLISH_REVERSAL",
+})
+
+
+def _structure_autorise(etat: str, side: str, mode) -> bool:
+    """Trois modes, mesurés séparément (cf. docs/MOTEUR_STRUCTURE_SEQUENTIEL.md).
+
+    ``direction``    l'entrée doit aller dans le sens de l'état ;
+    ``no_pullback``  refuse les entrées prises en `*_PULLBACK` ;
+    ``both``         les deux.
+
+    ``no_pullback`` n'est pas dans la spécification : il vient de la mesure, qui
+    a montré que les états de pullback sont le pire compartiment — alors que la
+    spécification suppose que ce sont les avertissements.
+    """
+    if not mode or mode == "off" or etat in ("UNKNOWN", "RANGING"):
+        return True     # pas d'information ⇒ pas de veto
+    mode = "direction" if mode is True else str(mode)
+    if mode in ("no_pullback", "both") and etat.endswith("_PULLBACK"):
+        return False
+    if mode in ("direction", "both"):
+        return etat in (_ETATS_LONG if side == "long" else _ETATS_SHORT)
+    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -484,7 +484,23 @@ modification de comportement ne doit y être glissée.
 
 ---
 
-### L3 — Structure Engine séquentiel (l'apport réel de la spec)
+### L3 — Structure Engine séquentiel (l'apport réel de la spec) ✅ LIVRÉ
+
+> **Résultat en trois temps.** (1) La convention BOS/MSS/CHoCH existe enfin, une
+> seule fois — c'est l'acquis durable, et L4/L6 s'y adossent. (2) La porte de la
+> spécification (mode `direction`) **ne vaut rien** : pire sur BTC 1 h, marginale
+> ailleurs. (3) Un mode `no_pullback`, suggéré par le découpage et **absent de la
+> spec**, balayait 4 cas sur 4 en OOS (−83 % de perte sur ETH 1 h, DD divisé par
+> 3,4) — mais **il ne réplique pas sur la fenêtre IS** (2/4, et il détruit le
+> seul résultat rentable de la campagne). Choisi après lecture des résultats
+> OOS : sélection sur le test. **Aucune porte n'est activée.**
+>
+> Le postulat de §62 (« entrer en WARNING est pire ») n'est pas testable : 3 à 5
+> trades par compartiment. Reporté à L8, avec plus de symboles.
+>
+> **Règle nouvelle pour la suite du plan :** toute règle dérivée d'une lecture de
+> résultats doit être vérifiée sur la fenêtre qui n'a pas servi à la former.
+> Détail : `docs/MOTEUR_STRUCTURE_SEQUENTIEL.md`.
 
 **Objectif** : §60–§64, §73, §82, §108 — la mémoire de structure.
 

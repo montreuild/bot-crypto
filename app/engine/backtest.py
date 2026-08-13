@@ -288,6 +288,18 @@ class BacktestResult:
             trades_by_exit[str(t.get("exit_reason") or "inconnu")].append(t)
         self.by_exit_reason: Dict[str, dict] = self._group_metrics(trades_by_exit)
 
+        # ── L3 (§60) / L6 (§72) — par état de structure et par séquence ──────
+        # « Entrer en WARNING est-il pire qu'entrer en CONFIRMED ? » est la
+        # question que L3 doit trancher par un chiffre, pas par un principe.
+        for axe, cle in (("by_structure_state", "structure_state"),
+                         ("by_sequence_type", "sequence_type"),
+                         ("by_tier", "tier")):
+            groupes: Dict[str, list] = _defaultdict(list)
+            for t in closed:
+                if t.get(cle):
+                    groupes[str(t[cle])].append(t)
+            setattr(self, axe, self._group_metrics(groupes))
+
         # ── QW-1 : métriques étendues (Sortino, Calmar, CAGR, alpha vs B&H) ──
         self._compute_extended_metrics()
 
@@ -489,6 +501,9 @@ class BacktestResult:
             "by_setup":           getattr(self, "by_setup", {}),
             "by_module":          getattr(self, "by_module", {}),
             "by_exit_reason":     getattr(self, "by_exit_reason", {}),
+            "by_structure_state": getattr(self, "by_structure_state", {}),
+            "by_sequence_type":   getattr(self, "by_sequence_type", {}),
+            "by_tier":            getattr(self, "by_tier", {}),
             "trades":             self.trades,
             "diagnostics":        getattr(self, "diagnostics", None),
             "ml_info":            getattr(self, "ml_info", None),
