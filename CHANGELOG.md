@@ -6,6 +6,35 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔍 L0 — où meurent les positions, et où va l'argent
+
+`by_exit_reason` dans `BacktestResult`, ventilation des coûts par trade
+(`entry_fees`, `slippage_cost`, `funding_cost`, `gross_pnl`) et champs de
+journal §99 sur la position. `scripts/measure_exit_geometry.py` répond enfin par
+un chiffre à la question laissée ouverte par `docs/STRATEGY_SMC_ML_EDGE.md` §4.
+
+**Le verdict contredit l'hypothèse.** Sur 1 h et sur ETH 4 h, 66–71 % des trades
+meurent sur leur stop initial après un MFE médian de **0,34 à 0,49 R** : ils ne
+sont pas coupés trop tôt, ils ne décollent jamais. La cible n'est atteinte que
+**28 à 36 %** du temps. Seul BTC 4 h — le seul cas où `use_trailing` est actif —
+montre le défaut supposé : `trailing_stop` rend −1,02 R médian là où le MFE
+médian valait 0,95 R, tandis que le time-stop, lui, est le seul bucket rentable
+(69 % de gagnants). Deux défauts disjoints, pas un.
+
+**Deux défauts de comptabilité trouvés en instrumentant.** `close_pnl` ne rend
+que les frais de sortie : les écrire tels quels écrasait les frais d'entrée
+portés par la position, donc `total_fees` sous-déclarait un côté complet.
+Et `total_pnl` n'est pas la variation d'équité — l'écart vaut exactement la
+somme des frais d'entrée. Les deux agrégats sont maintenant publiés côte à côte
+(`net_profit` = `final_equity − initial_capital`) plutôt que réconciliés en
+silence : basculer `composite_score` sur `net_profit` déplacerait la sélection de
+tous les paramétrages déjà mesurés, et c'est une décision, pas un correctif.
+
+L'équité et le PnL étaient justes dans les deux cas — seul le report était faux.
+94 tests existants passent inchangés, 8 nouveaux dans `test_backtest_journal.py`.
+Détail : `docs/MESURE_GEOMETRIE_SORTIE.md`.
+
+
 ### 🌏 Asian Range (§30) et Silver Bullet mesurable à part (§31)
 
 **`asian_range_levels()`** — nouveau dans `app/core/smc_sessions.py`. Pour
