@@ -343,6 +343,63 @@ python scripts/measure_optimizer_results_value.py --data data/ohlcv
 
 ---
 
+## 4 quater. Le harnais rejoué sur l'historique complet
+
+Après la fusion des seuils et le retrait du plafond de 12 000 barres, le
+harnais a été rejoué. `--barres` vaut désormais 60 000 par défaut, et `--cas`
+prend une liste `symbole:tf`.
+
+```bash
+python scripts/measure_ablation_v3.py --data data/ohlcv \
+    --cas "BTC_USDC:4h,BTC_USDC:1d,ETH_USDC:4h,ETH_USDC:1d"
+```
+
+Références sur historique complet (15 769 barres en 4 h, 2 630 en 1 j) :
+
+| cas | IS | OOS |
+|---|---|---|
+| BTC 4 h | **+914,0** (89 trades) | −26,6 (57 trades) |
+| BTC 1 j | +40,0 (14) | −36,9 (15) |
+| ETH 4 h | −102,2 (96) | −168,8 (69) |
+| ETH 1 j | −177,3 (15) | −62,3 (11) |
+
+**Verdict : toujours 0 mécanisme validé sur 16.** Le meilleur reste 2 cas
+sur 4 (`L1 sorties partielles`), exactement comme sur la fenêtre tronquée.
+
+### Ce que ce rejeu établit, et ce qu'il corrige
+
+**L'ablation était robuste à la fenêtre.** Je craignais que la troncature à
+12 000 barres ait biaisé les seize verdicts ; elle ne l'a pas fait. Les mêmes
+mécanismes échouent, dans les mêmes proportions, avec des échantillons OOS deux
+à trois fois plus grands (médiane 36 trades contre 40–130 auparavant, mais sur
+des fenêtres bien plus longues).
+
+**En revanche, la troncature affectait bien la RECALIBRATION** — 5 trades contre
+58 à 125 sur l'historique complet (§1). Les deux campagnes ne réagissaient pas
+de la même façon au plafond, et il fallait les séparer : c'est l'optimisation
+qui souffrait de la fenêtre, pas l'ablation.
+
+**Conséquence sur la fusion des seuils** : le plancher unique à dix trades ne
+mordra que rarement sur l'historique complet, où les configurations produisent
+naturellement des dizaines de trades. Il reste un filet — il empêche qu'une
+étude sur fenêtre courte fabrique à nouveau un Sharpe de 7,83 sur deux trades —
+mais il n'est plus le levier que je décrivais en §4 bis. **Le levier était la
+fenêtre.**
+
+⚠ Signature d'overfit sur la référence elle-même : BTC 4 h affiche **+914 en IS
+pour −26,6 en OOS** sur 89 trades. Ce n'est pas un mécanisme ajouté qui
+surapprend, c'est `smart_money` avec ses paramètres publiés.
+
+Le cas 1 h (51 909 barres BTC, 47 191 ETH) tourne à part, sa durée le rendant
+incompatible avec le reste du lot :
+
+```bash
+python scripts/measure_ablation_v3.py --data data/ohlcv \
+    --cas "BTC_USDC:1h,ETH_USDC:1h" --sortie scripts/_ablation_1h.json
+```
+
+---
+
 ## 5. Bilan des quatre pistes
 
 | piste | verdict |

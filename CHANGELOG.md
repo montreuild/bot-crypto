@@ -6,6 +6,36 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 📏 Un seul plancher de trades, et le harnais rejoué sur l'historique complet
+
+`MIN_TRADES_DEGENERATE` est supprimé. Le dépôt portait deux seuils — 2 pour la
+**sélection**, 10 pour la **décision** — au motif que « classer n'est pas
+décider ». Deux faits ont tranché : le seuil de dégénérescence n'avait qu'**un
+seul point d'application** (le défaut de `composite_score`, la métrique qui
+désigne le jeu retenu — donc bien une décision), et il **n'atteignait pas son
+but** : à N=2 le calcul est possible mais dominé par des ratios saturés, d'où
+les Sharpe de 7,83 sur deux trades qui remportaient la sélection.
+
+⚠️ Conséquence assumée : une optimisation dont aucun essai n'atteint dix trades
+ne retourne plus de gagnant, plutôt qu'un gagnant fabriqué. Sortie de secours :
+`optimizer.min_trades`.
+
+**Le harnais d'ablation rejoué sur l'historique complet donne le même verdict :
+0 mécanisme validé sur 16**, meilleur score 2 cas sur 4. Les seize verdicts
+étaient donc robustes à la troncature à 12 000 barres — ce qui corrige une
+inquiétude exprimée dans `docs/SUITE_ABLATION_V3.md` §2. La troncature affectait
+en revanche bien la **recalibration** (5 trades contre 58 à 125) : les deux
+campagnes ne réagissaient pas de la même façon au plafond.
+
+Corollaire : le plancher unique ne mordra que rarement sur l'historique complet.
+Il reste un filet, mais **le levier était la fenêtre**, pas la métrique.
+
+Signature d'overfit sur la référence elle-même : `smart_money` BTC 4 h affiche
++914 en IS pour −26,6 en OOS sur 89 trades, avec ses paramètres publiés.
+
+1 863 tests, dont 8 nouveaux.
+
+
 ### 🔧 Suite de §5 — 20 paramétrages publiés sur 36 étaient faux
 
 Le correctif HTF de L5 a des conséquences chiffrées :
