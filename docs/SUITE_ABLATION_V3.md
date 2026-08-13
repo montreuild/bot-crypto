@@ -53,8 +53,59 @@ trades dont **sept n'existent pas en production**. `multi_tf_sr` ETH 4 h et
 donc faux dans l'autre sens, ce qui n'est pas mieux.
 
 **Aucun de ces vingt jeux de paramètres n'a été sélectionné contre le
-comportement réel du bot.** La recalibration est en cours avec l'outillage du
-dépôt (`split_is_oos`, `OptimizerSearchEngine`, sélection sur l'IS).
+comportement réel du bot.**
+
+### La recalibration — 4 candidats exploitables sur 20
+
+```bash
+python scripts/recalibrate_htf_strategies.py --data data/ohlcv --etape 2 \
+    --trials 30 --njobs 4
+```
+
+Outillage du dépôt : `split_is_oos`, `OptimizerSearchEngine`, sélection sur
+l'IS et jamais sur l'OOS, puis lecture au travers de `beats_baseline` contre
+les paramètres actuels **corrigés**.
+
+| stratégie | cas | trades OOS | PnL OOS | Sharpe | gate |
+|---|---|---:|---:|---:|:--:|
+| `fear_momentum` | BTC 4 h | 59 | +7,1 | −0,42 | **OK** |
+| `fear_momentum` | ETH 1 h | 49 | +52,1 | 0,17 | **OK** |
+| `fear_momentum` | ETH 4 h | 75 | +3,9 | −0,19 | **OK** |
+| `pullback_trend` | BTC 1 h | 29 | +47,8 | 0,48 | **OK** |
+| `breakout` | ETH 4 h | **4** | +128,5 | 2,47 | refusé |
+| `multi_tf_sr` | ETH 4 h | **4** | +121,8 | 1,83 | refusé |
+| `trend` | BTC 1 h | **7** | +90,0 | 2,87 | refusé |
+| `breakout_filtreHor` | BTC 1 h | **2** | +56,2 | 7,83 | refusé |
+| … | | | | | |
+
+**4 sur 20 passent. 14 sur 20 comptent moins de dix trades OOS.**
+
+C'est exactement le biais que `docs/STRATEGY_SMC_ML_EDGE.md` §3 quinquies
+documente : `composite_score` ne refuse un jeu de paramètres qu'en dessous d'un
+seuil de non-dégénérescence bas, donc l'optimum IS est souvent une configuration
+**hyper-sélective** — peu de trades, tous excellents en IS, et plus rien à
+échantillonner en OOS. Les Sharpe de 7,83 sur deux trades et de 5,44 sur quatre
+en sont la signature.
+
+Les quatre qui survivent sont précisément celles qui gardent un échantillon
+réel (29 à 75 trades) : `fear_momentum` et `pullback_trend`.
+
+⚠ **`beats_baseline` est un test RELATIF.** Il dit « mieux que les paramètres
+actuels », pas « rentable » : `fear_momentum` BTC 4 h le passe avec un Sharpe
+de −0,42. Ce qu'on établit ici est que ces quatre jeux valent mieux que ceux qui
+tournent, pas qu'ils vaillent la peine d'être promus.
+
+### Ce qui n'est PAS fait, délibérément
+
+**Les YAML n'ont pas été modifiés.** Choisir d'appliquer un paramétrage est une
+décision de trading, pas un correctif : elle change ce que le bot engage en
+production. Les vingt jeux candidats sont dans
+`scripts/_recalibrage_htf.json`, prêts à être appliqués via le chemin normal du
+dépôt (`apply_best_params`) — ou à être écartés.
+
+Ce que la mesure autorise à dire, en revanche : **les `optimizer_results`
+publiés pour ces vingt couples sont invalides** et devraient être marqués comme
+tels, qu'on les remplace ou non.
 
 ### Un faux positif attrapé dans le protocole lui-même
 
@@ -177,10 +228,23 @@ l'encaissé qu'il faut mesurer avant de refermer la porte.
 
 | piste | verdict |
 |---|---|
-| 1. Recalibrer les neuf stratégies | **20 couples sur 36 sont faux** — recalibration en cours |
-| 2. Élargir l'échantillon | non traité, dépend du point 1 |
+| 1. Recalibrer les neuf stratégies | **20 couples sur 36 étaient faux** ; recalibrés, **4 seulement** donnent un candidat exploitable |
+| 2. Élargir l'échantillon | non traité — mais le point 1 vient de montrer que c'est le **verrou** |
 | 3. Fréquences mesurées (§79) | **close** — le mécanisme est inerte, les candidats sont mono-classe |
 | 4. R/R net et funding (L2) | **livré**, off par défaut, en attente de mesure |
+
+### Le point 2 change de statut
+
+Il était listé troisième par prudence. La recalibration le remonte en tête :
+**14 couples sur 20 dégénèrent en configurations à moins de dix trades OOS**.
+Ce n'est pas un défaut des stratégies, c'est la métrique de sélection qui
+récompense une rareté ne survivant pas au changement de période — le dépôt
+l'avait déjà écrit, ce chantier le mesure sur vingt cas d'un coup.
+
+Tant que les fenêtres OOS restent à ~2 000 barres et l'univers à deux symboles,
+**aucune optimisation ne produira autre chose**. Plus de symboles et des
+fenêtres plus longues ne sont pas un confort : c'est la condition pour que le
+reste ait un sens.
 
 Deux constats transverses méritent d'être retenus :
 

@@ -6,6 +6,44 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔧 Suite de §5 — 20 paramétrages publiés sur 36 étaient faux
+
+Le correctif HTF de L5 a des conséquences chiffrées :
+`scripts/recalibrate_htf_strategies.py` rejoue chaque couple (stratégie,
+symbole, timeframe) avec et sans le repli. **20 sur 36 changent de résultat**,
+sept stratégies sur neuf sont touchées. Le filtre actif réduit le nombre de
+trades dans **tous** les cas (−248 au total). Le plus grave : `supertrend_macd`
+BTC 4 h passe de 11 trades à 4 — un `optimizer_results` sélectionné sur onze
+trades dont sept n'existent pas en production.
+
+Recalibrés avec l'outillage du dépôt, **4 couples sur 20 seulement** donnent un
+candidat qui passe `beats_baseline`, et **14 sur 20 dégénèrent** en
+configurations à moins de dix trades OOS — exactement le biais de sélection que
+`docs/STRATEGY_SMC_ML_EDGE.md` §3 quinquies décrit, mesuré ici sur vingt cas.
+Les Sharpe de 7,83 sur deux trades en sont la signature.
+
+⚠️ **Les YAML ne sont pas modifiés** : appliquer un paramétrage est une décision
+de trading, pas un correctif. Les candidats sont dans
+`scripts/_recalibrage_htf.json`. Ce que la mesure autorise à dire : les
+`optimizer_results` de ces vingt couples sont **invalides**.
+
+**Le point 2 de §5 (élargir l'échantillon) passe en tête** : tant que les
+fenêtres OOS font ~2 000 barres sur deux symboles, aucune optimisation ne
+produira autre chose que ces optima dégénérés.
+
+Points 3 et 4 aussi : les fréquences d'atteinte mesurées en walk-forward
+contredisent §77 une troisième fois (`INTERNAL`, rang le plus bas, atteint 1,5 à
+2 fois plus souvent que postulé) mais **ne changent aucune décision** — à une
+décision donnée les candidats sont presque toujours mono-classe, donc §78/§79
+sont inertes. Piste close. Et L2 est livré (R/R net, funding perp).
+
+Trouvé en route : le protocole de L4 comparait `actuel` sans cibles calendaires
+à `expected_value` avec. Confondant retiré, sa conclusion tient toujours mais
+elle avait été tirée sur une comparaison biaisée.
+
+Détail : `docs/SUITE_ABLATION_V3.md`. 1 855 tests backend, 117 front.
+
+
 ### 🧪 L8 / L10 — seize mécanismes au harnais d'ablation, zéro validé
 
 `scripts/measure_ablation_v3.py` généralise l'ablation manuelle du dépôt :
