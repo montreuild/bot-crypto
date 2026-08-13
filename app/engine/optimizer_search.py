@@ -34,7 +34,7 @@ from app.core.is_oos import OOS_FRACTION_DEFAULT as _OOS_FRACTION  # BT-08 : con
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 # ── Sous-modules (ré-exports compatibilité — noms historiques inclus) ────────
-from app.core.stats_thresholds import MIN_TRADES_DEGENERATE
+from app.core.stats_thresholds import MIN_SIGNIFICANT_TRADES
 from app.core.timeframes import TF_MINUTES as _TF_MINUTES  # V4-A : source unique
 from app.engine.backtest import Backtester
 from app.engine.engine import Engine
@@ -276,11 +276,10 @@ class OptimizerSearchEngine:
         res_is  = bt.run(self.df_is,  self.symbol, timeframe=self.timeframe)
         res_oos = bt.run(self.df_oos, self.symbol, timeframe=self.timeframe)
 
-        # Plancher de sélection : `optimizer.min_trades` quand il est fourni,
-        # sinon MIN_TRADES_DEGENERATE (défaut historique inchangé). Le dépôt
-        # refuse de PROMOUVOIR sous MIN_SIGNIFICANT_TRADES mais SÉLECTIONNE
-        # avec un plancher de 2 : cet écart est ce qui laisse passer les
-        # optima hyper-sélectifs (cf. docs/SUITE_ABLATION_V3.md §1).
+        # Plancher de sélection = plancher de décision (MIN_SIGNIFICANT_TRADES).
+        # Le dépôt portait deux seuils : il refusait de PROMOUVOIR sous 10 tout
+        # en SÉLECTIONNANT avec un plancher de 2, et c'est par cet écart que
+        # passaient les optima hyper-sélectifs (docs/SUITE_ABLATION_V3.md §1).
         _min_tr = self._min_trades()
         is_score  = _composite_score(res_is,  min_trades=_min_tr)
         oos_score = _composite_score(res_oos, min_trades=_min_tr)
@@ -388,13 +387,16 @@ class OptimizerSearchEngine:
     def _min_trades(self) -> int:
         """Plancher de non-dégénérescence de la métrique de sélection.
 
-        ``optimizer.min_trades`` dans la config, sinon ``MIN_TRADES_DEGENERATE``
-        (2, comportement historique). Le poser à ``MIN_SIGNIFICANT_TRADES`` (10)
-        aligne la SÉLECTION sur le seuil de DÉCISION que le dépôt applique déjà
-        dans ``beats_baseline`` — mesuré dans docs/SUITE_ABLATION_V3.md §2.
+        ``optimizer.min_trades`` dans la config, sinon
+        ``MIN_SIGNIFICANT_TRADES`` — le même seuil que ``beats_baseline`` et le
+        lifecycle, désormais unique dans le dépôt.
+
+        La clé de config reste la sortie de secours des études qui ont besoin de
+        l'ancien plancher (2) : classer des paramétrages à deux trades est
+        légitime pour explorer, jamais pour décider.
         """
         return int((self.cfg.get("optimizer") or {}).get(
-            "min_trades", MIN_TRADES_DEGENERATE))
+            "min_trades", MIN_SIGNIFICANT_TRADES))
 
     def _impact_scores(self, results: List[dict],
                        param_keys: List[str]) -> Tuple[Dict[str, float], Dict[str, Any]]:

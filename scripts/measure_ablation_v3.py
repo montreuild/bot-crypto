@@ -91,7 +91,13 @@ def run(params: dict, df: pl.DataFrame, symbole: str, tf: str) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data/ohlcv")
-    ap.add_argument("--barres", type=int, default=12000)
+    # Historique COMPLET par défaut. La campagne d'origine tronquait à 12 000
+    # barres : docs/SUITE_ABLATION_V3.md §2 a montré que ce plafond, et non la
+    # métrique de sélection, expliquait une bonne part des optima dégénérés.
+    ap.add_argument("--barres", type=int, default=60000)
+    ap.add_argument("--cas", default="BTC_USDC:1h,BTC_USDC:4h,BTC_USDC:1d,"
+                                     "ETH_USDC:1h,ETH_USDC:4h,ETH_USDC:1d",
+                    help="liste symbole:tf séparée par des virgules")
     ap.add_argument("--sortie", default="scripts/_ablation_v3.json")
     args = ap.parse_args()
 
@@ -99,12 +105,17 @@ def main() -> int:
     racine = pathlib.Path(args.data)
     cas, resultats = [], {m: [] for m in MECANISMES}
 
-    for symbole in ("BTC_USDC", "ETH_USDC"):
-        for tf in ("1h", "4h"):
-            chemin = racine / symbole / f"{tf}.parquet"
-            if not chemin.exists():
-                continue
-            df = pl.read_parquet(chemin).tail(args.barres)
+    for _spec in args.cas.split(","):
+        symbole, tf = _spec.strip().split(":")
+        chemin = racine / symbole / f"{tf}.parquet"
+        if not chemin.exists():
+            print(f"  (absent : {chemin})")
+            continue
+        df = pl.read_parquet(chemin).tail(args.barres)
+        if len(df) < 800:
+            print(f"  (trop court : {symbole} {tf}, {len(df)} barres)")
+            continue
+        if True:
             coupe = int(len(df) * 0.65)
             fenetres = {"IS": df.head(coupe), "OOS": df.tail(len(df) - coupe + 300)}
             ref = {f: run(base, d, symbole, tf) for f, d in fenetres.items()}

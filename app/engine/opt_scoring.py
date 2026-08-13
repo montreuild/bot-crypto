@@ -22,21 +22,23 @@ _FALLBACK_CAPITAL = 1000.0
 
 from app.core.stats_thresholds import (  # noqa: E402
     MIN_SIGNIFICANT_TRADES,
-    MIN_TRADES_DEGENERATE,
 )
 
 
-def composite_score(res, min_trades: int = MIN_TRADES_DEGENERATE) -> float:
+def composite_score(res, min_trades: int = MIN_SIGNIFICANT_TRADES) -> float:
     """Score composite d'un résultat de backtest (dict ou BacktestResult).
 
     Combine Sharpe (borné), win-rate, profit factor, expectancy, drawdown,
     nombre de trades, **rendement %** et alpha vs buy & hold. Retourne -999 si
     moins de ``min_trades`` trades.
 
-    ⚠ ``min_trades`` est le seuil de NON-DÉGÉNÉRESCENCE (rendre le calcul
-    possible), PAS un seuil de décision : appliquer un paramétrage ou
-    promouvoir un bot exige ``MIN_SIGNIFICANT_TRADES`` trades — voir
-    ``beats_baseline`` et app/core/stats_thresholds.py (BT-06).
+    ``min_trades`` vaut ``MIN_SIGNIFICANT_TRADES`` — le MÊME seuil que
+    ``beats_baseline`` et le lifecycle. Il valait 2 auparavant, au motif qu'un
+    classement n'est pas une décision : mais c'est ce classement qui désigne le
+    jeu retenu, et un plancher de 2 laissait gagner des Sharpe de 7,83 sur deux
+    trades (docs/SUITE_ABLATION_V3.md §1). Un seul seuil, désormais.
+
+    Surchargeable par ``optimizer.min_trades`` pour les études exploratoires.
 
     Indépendance au budget (Phase 0)
     --------------------------------
