@@ -12,6 +12,11 @@ class _PlansMixin:
     def score(self, df: pl.DataFrame, params: dict = None,
               df_htf=None, symbol: str = "") -> Dict[str, Any]:
         p = self._p(params)
+        # Le symbole sert au repli SMT (résolution de l'actif corrélé quand
+        # `smt_correlate_path` n'est pas donné). Mémorisé plutôt que passé :
+        # `_build_aux` est appelé depuis trois chemins qui n'ont pas tous le
+        # symbole sous la main.
+        self._symbole_courant = symbol or getattr(self, "_symbole_courant", "")
         if len(df) < self.min_bars_required(params):
             return self._none("historique insuffisant")
 

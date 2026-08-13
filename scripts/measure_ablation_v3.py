@@ -43,9 +43,19 @@ MECANISMES = {
     "L6 porte tier D":         {"tier_gate": True},
     "L6 sizing par tier":      {"tier_sizing": True},
     # ── L10 — modules en veille (§110), repassés au harnais ──────────────────
+    #
+    # ⚠ Les modules à BONUS (`*_bonus`) ne changent que le SCORE. Avec
+    # `min_score: 0` et `size_by_confluence: False` — les défauts du YAML —
+    # aucune décision ne consomme ce score : le drapeau seul mesurait +0,0
+    # parce qu'il n'y avait rien à mesurer, pas parce que le module est mauvais.
+    # On les teste donc avec un consommateur de score activé.
     "L10 SMT filtre":          {"smt_filter": True},
-    "L10 Silver Bullet":       {"sb_bonus": True},
-    "L10 AMD":                 {"amd_bonus": True},
+    "L10 Silver Bullet":       {"sb_bonus": True, "size_by_confluence": True},
+    "L10 AMD":                 {"amd_bonus": True, "size_by_confluence": True},
+    "L10 Killzones":           {"kz_bonus": True, "size_by_confluence": True},
+    #: Témoin — isole l'effet propre du consommateur de score, sans quoi on
+    #: attribuerait aux bonus ce que `size_by_confluence` fait tout seul.
+    "L10 (témoin sizing seul)": {"size_by_confluence": True},
     "L10 Breaker retest":      {"use_breakers": True},
     "L10 BPR reversal":        {"use_bpr": True},
     "L10 Rejection blocks":    {"use_rejection_blocks": True},

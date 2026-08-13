@@ -466,8 +466,28 @@ export interface BacktestResult {
   // ── QW-3 : agrégats de coûts pour analyse what-if frais/levier ────────────
   /** Coût total d'emprunt margin sur la période. */
   total_borrow_cost?: number;
-  /** Coût total de slippage estimé (si isolé). */
+  /** Coût total de slippage (spread + impact), isolé depuis L0. */
   total_slippage_cost?: number;
+  // ── L0/L2 : décomposition brut → net ──────────────────────────────────────
+  /** Funding payé (ou encaissé, si négatif) sur les venues perpétuelles. */
+  total_funding_cost?: number;
+  /** Frais d'entrée agrégés — l'écart exact entre `total_pnl` et `net_profit`. */
+  total_entry_fees?: number;
+  /** PnL directionnel avant tout coût. */
+  gross_profit?: number;
+  /**
+   * Variation d'équité réelle (`final_equity − initial_capital`).
+   * ⚠ Distinct de `total_pnl`, qui somme les PnL de clôture sans retrancher
+   * les frais d'entrée (prélevés à l'ouverture). L'écart vaut exactement
+   * `total_entry_fees` — cf. docs/MESURE_GEOMETRIE_SORTIE.md §3.
+   */
+  net_profit?: number;
+  // ── Axes d'analyse SMC (L0–L6) ────────────────────────────────────────────
+  by_exit_reason?: Record<string, StrategyStats>;
+  by_structure_state?: Record<string, StrategyStats>;
+  by_sequence_type?: Record<string, StrategyStats>;
+  by_tier?: Record<string, StrategyStats>;
+  by_target_class?: Record<string, StrategyStats>;
   // ── QW-5 : recommandations d'amélioration post-backtest ───────────────────
   /** Liste ordonnée de recommandations (sévérité critical > warning > info > positive). */
   recommendations?: BacktestRecommendation[];

@@ -16,6 +16,39 @@ from app.core.timeframes import HTF_SECONDS_MAP as _HTF_SEC_MAP
 
 logger = logging.getLogger(__name__)
 
+#: Actif corrélé par défaut pour la divergence SMT (§43). BTC se compare à ETH,
+#: tout le reste à BTC — la convention ICT usuelle. Sert uniquement de REPLI
+#: quand `smt_correlate_path` n'est pas renseigné.
+_CORRELE_DEFAUT = {"BTC": "ETH_USDC", "ETH": "BTC_USDC"}
+
+
+def _correle_par_defaut(symbole: str, win: pl.DataFrame) -> str:
+    """Chemin du Parquet de l'actif corrélé, ou "" si introuvable.
+
+    Le timeframe est DÉDUIT de la série (médiane des écarts) plutôt que passé :
+    il n'est pas dans les params de stratégie, et le déduire évite de le faire
+    traverser trois chemins d'appel pour un repli.
+
+    Convention de stockage : `data/ohlcv/<SYMBOLE>/<tf>.parquet` (CandleStore).
+    Absent → chaîne vide, et `smt_series` dégrade gracieusement.
+    """
+    import pathlib
+
+    base = (symbole or "").split("/")[0].split("_")[0].upper()
+    cible = _CORRELE_DEFAUT.get(base, "BTC_USDC")
+    if not base or cible.split("_")[0] == base or "time" not in win.columns:
+        return ""
+    ep = win["time"].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
+    if len(ep) < 3:
+        return ""
+    secs = int(np.median(np.diff(ep[-64:])))
+    tf = {60: "1m", 300: "5m", 900: "15m", 1800: "30m", 3600: "1h",
+          7200: "2h", 14400: "4h", 86400: "1d"}.get(secs)
+    if tf is None:
+        return ""
+    chemin = pathlib.Path("data/ohlcv") / cible / f"{tf}.parquet"
+    return str(chemin) if chemin.exists() else ""
+
 class _AnalysisMixin:
     def _build_aux(self, win: pl.DataFrame, p: Dict[str, Any],
                    res: dict) -> Dict[str, Any]:
@@ -95,10 +128,27 @@ class _AnalysisMixin:
             aux["eng"] = _engulfing(win).to_numpy().astype(np.int8)
         else:
             aux["pin"] = aux["eng"] = None
-        if (bool(p.get("smt_bonus", False)) or bool(p.get("smt_filter", False))) \
-                and str(p.get("smt_correlate_path", "")):
-            aux["smt"] = smc.smt_series(win, str(p["smt_correlate_path"]),
+        if bool(p.get("smt_bonus", False)) or bool(p.get("smt_filter", False)):
+            # Résolution automatique du corrélé quand le chemin n'est pas donné.
+            # Avant, un `smt_filter: true` sans `smt_correlate_path` produisait
+            # silencieusement `None`, donc AUCUN filtrage : le drapeau ne
+            # changeait pas un seul trade, et l'ablation le mesurait à +0,0
+            # sans que rien ne signale qu'elle ne mesurait rien.
+            # `_bt_symbol` est posé par le Backtester avant
+            # `prepare_for_backtest` (convention existante du dépôt) ;
+            # `_symbole_courant` couvre le chemin live/score.
+            symbole = (getattr(self, "_bt_symbol", "")
+                       or getattr(self, "_symbole_courant", ""))
+            chemin = str(p.get("smt_correlate_path", "")) or _correle_par_defaut(
+                symbole, win)
+            aux["smt"] = smc.smt_series(win, chemin,
                                         int(p.get("smt_lookback", 20)))
+            if aux["smt"] is None:
+                logger.warning(
+                    "[smart_money] SMT activé mais inopérant : aucun actif "
+                    "corrélé exploitable (`smt_correlate_path`=%r). Le drapeau "
+                    "ne filtre RIEN — voir docs/SMART_MONEY_CONCEPTS.md.",
+                    chemin or None)
         else:
             aux["smt"] = None
         if p.get("use_calendar_liquidity", False) and "time" in win.columns:
