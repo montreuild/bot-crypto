@@ -950,6 +950,34 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
         disable_trailing = True
         exit_txt = f"TP {tp_src}"
 
+    # ── L1 (§29 §30) — sorties partielles TP1 / TP2 / runner ─────────────────
+    # Off par défaut : les `optimizer_results` du YAML ont été mesurés en
+    # tout-ou-rien, les rendre partiels en silence invaliderait ces réglages.
+    # TP1 est un multiple de R (niveau mécanique), TP2 la poche de liquidité
+    # visée (niveau structurel), le runner suit la structure.
+    exits_spec = None
+    if bool(p.get("use_partial_exits", False)):
+        f1 = float(p.get("tp1_fraction", 0.25))
+        f2 = float(p.get("tp2_fraction", 0.25))
+        exits_spec = []
+        if f1 > 0:
+            exits_spec.append({"r": float(p.get("tp1_r", 1.0)),
+                               "fraction": f1, "reason": "tp1"})
+        if f2 > 0 and tp is not None:
+            exits_spec.append({"price": round(tp, 8), "fraction": f2,
+                               "reason": f"tp2_{tp_src.split()[0]}"})
+        # Le runner a besoin du trailing : sans lui il n'aurait plus de sortie
+        # une fois les jambes prises, et courrait jusqu'au stop initial.
+        tp_out = None
+        exit_after = None
+        disable_trailing = False
+        trail_override = {"trail_wide": float(p.get("trail_mult", 2.5)),
+                          "mode": str(p.get("trail_mode", "structure")),
+                          "struct_buffer_atr": float(p.get("sl_buffer_atr", 0.25))}
+        exit_txt = (f"TP1 {f1:.0%}@{p.get('tp1_r', 1.0):g}R + TP2 {f2:.0%}@"
+                    f"{tp_src} + runner {1 - f1 - f2:.0%} "
+                    f"({trail_override['mode']})")
+
     # Sizing pondéré par confluence : on alloue plus aux setups à forte
     # confluence via le hook natif size_factor (borné [0.4, 1.7] ; le
     # Backtester/live re-bornent à [0, 2]). Centré sur size_conf_center ⇒
@@ -970,6 +998,7 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
         "exit_after_bars": exit_after,
         "disable_trailing": disable_trailing,
         "trail_override": trail_override,
+        "exits": exits_spec,
         "size_factor": size_factor,
         "indicators": {
             "bias":     bias_label,

@@ -275,15 +275,25 @@ class PositionCloseMixin:
         _tf_s_pos  = _TF_SECS.get(pos.get("timeframe", "1h"), self.interval or 3600)
         bars_since = int((time.time() - pos["open_time"]) / max(_tf_s_pos, 1))
 
-        trade = {k: v for k, v in pos.items() if k != "_trailing"}
+        # L1 — les jambes sorties avant la clôture ont déjà encaissé leur PnL et
+        # crédité le capital : le TRADE porte le total, le capital n'a reçu que
+        # le reliquat ci-dessus.
+        realise = float(pos.get("realized_pnl", 0.0) or 0.0)
+        # L0 — `close_pnl` ne rend que les frais de SORTIE ; les écrire tels
+        # quels écrasait ceux d'entrée (et des jambes partielles) déjà portés par
+        # la position. Même correction de report qu'au backtest : le PnL et le
+        # capital, eux, étaient justes.
+        fees_total = float(pos.get("fees", 0.0) or 0.0) + fees
+        trade = {k: v for k, v in pos.items()
+                 if k not in ("_trailing", "partial_targets", "_be_done")}
         trade.update({
             "exit":          exec_price,
-            "pnl":           round(pnl, 6),
+            "pnl":           round(pnl + realise, 6),
             "pnl_pct":       pnl_pct,
-            "fees":          round(fees, 6),
+            "fees":          round(fees_total, 6),
             # FIN-06 : aucune distinction maker/taker à l'exécution live
             # aujourd'hui (cf. docstring ci-dessus) — 100% taker, honnête.
-            "fee_taker":     round(fees, 6),
+            "fee_taker":     round(fees_total, 6),
             "fee_maker":     0.0,
             "borrow_cost":   round(borrow_cost, 6),
             "status":        "closed",

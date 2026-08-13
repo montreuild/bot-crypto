@@ -6,6 +6,40 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### ✂️ L1 — sorties partielles (§29) et trailing structurel (§30)
+
+Le moteur ne savait fermer qu'en entier : `docs/SPECS_SMC_ICT_ET_ADAPTATIVE.md`
+§1 en faisait « le chantier prérequis n° 1 ». Levé.
+
+`_close_partial_at` est le symétrique de `check_scale_in` : il encaisse le PnL
+de la jambe, réduit taille et notionnel au prorata et trace la sortie. La
+position n'est journalisée qu'à sa clôture complète, et la courbe d'équité garde
+**un point par trade, pas par jambe** — en changer la cadence modifierait
+l'annualisation du Sharpe de tous les backtests existants.
+
+Contrat : `signal["exits"] = [{"r": 1.0, "fraction": 0.25}, …]`, le runner étant
+le reliquat. `execution.plan_partial_targets` est **partagé backtest ↔ live** —
+deux planificateurs auraient divergé dès le premier TP partiel. Côté live,
+`_partial_close_position` suit les mêmes priorités de sortie, sinon la parité
+tombe sur les barres où plusieurs sorties se déclenchent ensemble.
+
+`StructureTrailingStop` (§30) place le stop sous le dernier pivot confirmé, avec
+la même latence que les swings du moteur SMC, et se replie sur `mult × ATR` tant
+qu'aucun pivot n'est confirmé — sinon il resterait figé sur toute une impulsion.
+
+**Mesuré (§101), quatre systèmes à signaux identiques :** le tout-ou-rien actuel
+est **le pire des quatre, dans les quatre cas**. `partiel_struct` gagne 3 fois
+sur 4 et divise le drawdown par deux sur ETH 1 h (−16,4 % → −8,4 %). Mais aucun
+ne rend la stratégie rentable — le meilleur absolu vaut −0,33 % OOS. La
+géométrie de sortie valait 2 à 7 points de PnL, pas le signe.
+
+**Laissé off par défaut.** Améliorer un système perdant n'est pas une raison de
+le promouvoir, et les `optimizer_results` du YAML ont été mesurés en
+tout-ou-rien. Détail : `docs/MESURE_SYSTEMES_DE_SORTIE.md`.
+
+1 760 tests passent, dont 15 nouveaux.
+
+
 ### 🔍 L0 — où meurent les positions, et où va l'argent
 
 `by_exit_reason` dans `BacktestResult`, ventilation des coûts par trade

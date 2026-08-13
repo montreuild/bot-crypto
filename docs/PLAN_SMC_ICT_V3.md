@@ -387,7 +387,19 @@ existants doivent être **bit-identiques** (test de non-régression).
 
 ---
 
-### L1 — Sorties partielles + trailing structurel (verrou V1)
+### L1 — Sorties partielles + trailing structurel (verrou V1) ✅ LIVRÉ
+
+> **Résultat : le tout-ou-rien actuel est le pire des quatre systèmes, dans les
+> quatre cas testés.** `partiel_struct` (TP1 1 R + TP2 poche + runner derrière
+> le dernier pivot) gagne 3 fois sur 4 et divise le drawdown par deux sur
+> ETH 1 h. Mais **aucun système ne rend la stratégie rentable** : le meilleur
+> absolu vaut −0,33 % OOS. La géométrie de sortie valait 2 à 7 points de PnL,
+> pas le signe. Laissé **off par défaut** — améliorer un système perdant n'est
+> pas une raison de le promouvoir. Détail : `docs/MESURE_SYSTEMES_DE_SORTIE.md`.
+>
+> Effet de bord chiffré : BTC 4 h affiche PF 1,147 pour un PnL net de −0,33 % —
+> les frais des fills supplémentaires mangent l'edge brut. Argument direct
+> pour L2.
 
 *Le chantier architectural n° 1, déjà identifié par
 `docs/SPECS_SMC_ICT_ET_ADAPTATIVE.md` §1 et toujours ouvert.*

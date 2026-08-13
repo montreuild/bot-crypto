@@ -32,6 +32,7 @@ from app.core.bot_identity import build_pos_key, build_slot_key, resolve_venue
 from app.core.config import DEFAULT_TAKER_FEE
 from app.core.database import persist_open_position, session_scope
 from app.core.execution import (
+    plan_partial_targets,
     quantize_price,
     quantize_size,
     size_impact_cost,
@@ -366,6 +367,22 @@ class PositionOpenMixin:
             "setup":          signal.get("setup"),
             "venue":          venue.name,
             "_trailing":      trailing,
+            # ── L1 (§29) — sorties partielles, mêmes niveaux qu'en backtest ───
+            "size_initial":   size,
+            "partial_targets": plan_partial_targets(signal, exec_price, stop),
+            "be_after_partial": bool(signal.get("be_after_partial", True)),
+            "realized_pnl":   0.0,
+            "exits":          [],
+            # ── L0 (§99) — contexte de décision, pour le journal ──────────────
+            "module":         signal.get("module"),
+            "session":        signal.get("session"),
+            "htf_bias":       signal.get("htf_bias"),
+            "structure_state": signal.get("structure_state"),
+            "sequence_type":  signal.get("sequence_type"),
+            "sequence_id":    signal.get("sequence_id"),
+            "market_event_id": signal.get("market_event_id"),
+            "tier":           signal.get("tier"),
+            "net_rr":         signal.get("net_rr"),
         }
         with self._positions_lock:
             self.open_positions[pos_key] = pos

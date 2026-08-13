@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from app.core.bot_identity import build_slot_key
 from app.core.config import DEFAULT_TAKER_FEE
 from app.core.database import persist_open_position, session_scope
-from app.core.execution import quantize_size, venue_trade_cost
+from app.core.execution import close_pnl, quantize_size, venue_trade_cost
 from app.core.indicators import atr_val as _compute_atr
 from app.core.timeframes import TF_SECONDS as _TF_SECS
 from app.core.trailing import TrailingStopManager
@@ -100,6 +100,23 @@ class PositionManageMixin:
                 )
                 self._close_position(pos_id, tp_val, exit_reason="take_profit")
                 return
+
+        # ── L1 (§29) — sorties partielles TP1 / TP2, runner ───────────────────
+        # Après le gap et le TP plein, avant l'early-exit : mêmes priorités que
+        # `Backtester._manage_open_position`, sinon la parité tombe sur les
+        # barres où plusieurs sorties se déclenchent ensemble.
+        cibles = pos.get("partial_targets") or []
+        if cibles:
+            atteintes = [c for c in cibles
+                         if (pos["side"] == "long" and price >= c["price"])
+                         or (pos["side"] == "short" and price <= c["price"])]
+            for cible in atteintes:
+                cibles.remove(cible)
+                self._partial_close_position(pos_id, pos, cible, price)
+            if atteintes:
+                if pos_id not in self.open_positions:
+                    return                    # soldée par la dernière jambe
+                pos = self.open_positions[pos_id]
 
         # ── Sortie anticipée pilotée par la stratégie (check_early_exit) ───
         # Permet à la stratégie de clore une position sur changement de régime,
@@ -361,6 +378,108 @@ class PositionManageMixin:
         self._place_exchange_stop(pos)
 
     # ── Pyramidage (ajout d'unité) ─────────────────────────────────────────
+
+    def _partial_close_position(self, pos_id: str, pos: dict, cible: dict,
+                                price: float) -> None:
+        """L1 (§29) — solde une fraction de la position, symétrique de
+        ``_scale_in_position``.
+
+        La position reste ouverte tant qu'il reste du runner : seule la clôture
+        finale passe par ``_close_position`` et écrit le trade. Si le reliquat
+        n'est plus négociable après quantification par la venue, on solde tout
+        plutôt que de laisser une poussière impossible à sortir.
+        """
+        side   = pos["side"]
+        symbol = pos["symbol"]
+        size0  = float(pos.get("size_initial") or pos["size"])
+        venue  = self._venue_for(symbol, pos.get("strategy", ""),
+                                 pos.get("timeframe", self.tf))
+        part = quantize_size(min(size0 * float(cible["fraction"]), pos["size"]),
+                             venue)
+        if part <= 0:
+            return
+        sens_sortie = "sell" if side == "long" else "buy"
+
+        try:
+            order = self.exchange.create_order(symbol, "market", sens_sortie, part)
+        except Exception:
+            logger.exception(f"[PartialTP] {symbol} ordre KO")
+            return
+        if _order_failed(order):
+            logger.error(f"[PartialTP] {symbol} : ordre non exécuté — "
+                         f"{_order_fail_reason(order)}")
+            return
+        exec_price = order.get("price") or order.get("average") or price
+        if self.cfg["trading"].get("paper_mode"):
+            slip = self._paper_slippage_fraction(
+                symbol, pos.get("timeframe", self.tf), part * exec_price)
+            exec_price *= (1 - slip) if side == "long" else (1 + slip)
+
+        notional_part = pos.get("notional", 0.0) * (part / pos["size"]) \
+            if pos["size"] else 0.0
+        heures = max((time.time() - pos["open_time"]) / 3600.0, 0.0)
+        pnl, fees, borrow = close_pnl(
+            side=side, entry=pos["entry"], exit_price=exec_price, size=part,
+            notional=notional_part,
+            fee_rate=self.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE),
+            daily_rate=self.cfg["trading"].get("borrow_rate_daily", 0.0),
+            hours_held=heures,
+            periods_per_day=int(self.cfg["trading"].get("borrow_periods_per_day", 24)),
+            venue=venue,
+        )
+        with self._capital_lock:
+            if self.cfg["trading"].get("paper_mode") and hasattr(self, "_paper_base"):
+                self._paper_base += pnl
+            else:
+                self.capital_display += pnl
+
+        pos["size"]     = round(pos["size"] - part, 8)
+        pos["notional"] = round(pos.get("notional", 0.0) - notional_part, 6)
+        pos["fees"]     = round(pos.get("fees", 0.0) + fees, 8)
+        pos["borrow_cost"] = round(pos.get("borrow_cost", 0.0) + borrow, 8)
+        pos["realized_pnl"] = round(pos.get("realized_pnl", 0.0) + pnl, 6)
+        pos.setdefault("exits", []).append({
+            "time": datetime.now(timezone.utc).isoformat(),
+            "price": round(float(exec_price), 6), "size": round(part, 8),
+            "fraction": round(part / size0, 4) if size0 else 0.0,
+            "reason": str(cible.get("reason", "tp")), "pnl": round(pnl, 6),
+        })
+
+        # §30 — point mort frais compris après la première jambe.
+        if pos.get("be_after_partial") and not pos.get("_be_done"):
+            cout = 2 * float(self.cfg["trading"].get("taker_fee", DEFAULT_TAKER_FEE))
+            be = pos["entry"] * (1 + cout) if side == "long" \
+                else pos["entry"] * (1 - cout)
+            if (side == "long" and be > pos["stop"]) or \
+                    (side == "short" and be < pos["stop"]):
+                pos["stop"] = round(be, 6)
+            pos["_be_done"] = True
+
+        logger.info(
+            f"[PARTIAL-TP] {side.upper()} {symbol} -{part:.6f} @ {exec_price:.4f} "
+            f"({cible.get('reason', 'tp')}) | pnl={pnl:+.2f} "
+            f"| reliquat={pos['size']:.6f}"
+        )
+        self.notif.send(
+            f"🎯 *TP partiel* `{symbol}` {side} -{part:.6f} @ `{exec_price:.4f}` "
+            f"({cible.get('reason', 'tp')}, pnl {pnl:+.2f})", async_=True)
+
+        # Reliquat non négociable → on solde ; sinon on met à jour les réserves
+        # et le stop exchange, qui couvrait encore l'ancienne taille.
+        if pos["size"] <= 0 or quantize_size(pos["size"], venue) <= 0:
+            self._close_position(pos_id, exec_price, exit_reason="partial_final")
+            return
+        self.ledger.resize(pos_id,
+                           risk=self.risk.engaged_risk(pos["entry"], pos["stop"],
+                                                       pos["size"]),
+                           notional=pos["notional"])
+        with session_scope(self.SessionLocal) as _sess:
+            persist_open_position(_sess, pos)
+        filled_stop = self._update_exchange_stop(pos)
+        if filled_stop is not None:
+            pos["_closed_by_exchange_stop"] = filled_stop
+            self._close_position(pos_id, exec_price, exit_reason=(
+                "stop_loss" if pos.get("disable_trailing") else "trailing_stop"))
 
     def _scale_in_position(self, pos_id: str, pos: dict, price: float,
                            atr: float, scale: dict) -> None:

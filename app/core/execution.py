@@ -112,6 +112,45 @@ def close_pnl(side: str, entry: float, exit_price: float, size: float,
 # fractional=True, fee_pct=None, fee_fixed=0, taxe=0).
 
 
+def plan_partial_targets(signal: dict, entry: float, stop: float) -> list:
+    """L1 (§29) — cibles de sortie partielle d'un signal, en prix absolus.
+
+    Contrat : ``signal["exits"] = [{"r": 1.0, "fraction": 0.25}, …]``, chaque
+    entrée portant soit ``r`` (multiple du risque entrée→stop), soit ``price``
+    (niveau absolu, typiquement une poche de liquidité). Le runner est le
+    reliquat : des fractions qui somment à moins de 1 le laissent courir.
+
+    Absent → liste vide → comportement tout-ou-rien strictement inchangé.
+
+    Ici et non dans le backtest : le live doit planifier EXACTEMENT les mêmes
+    niveaux, sinon les deux divergent dès le premier TP partiel.
+    """
+    spec = signal.get("exits") or []
+    if not spec:
+        return []
+    risque = abs(entry - stop)
+    sens = 1 if signal.get("side") == "long" else -1
+    out, cumul = [], 0.0
+    for n, e in enumerate(spec, 1):
+        frac = float(e.get("fraction", 0) or 0)
+        if frac <= 0 or cumul + frac > 1.0:
+            continue
+        if e.get("price") is not None:
+            px = float(e["price"])
+        elif e.get("r") is not None and risque > 0:
+            px = entry + sens * float(e["r"]) * risque
+        else:
+            continue
+        # Une cible du mauvais côté de l'entrée serait touchée dès la première
+        # barre : c'est une erreur de spécification, pas une sortie.
+        if (sens > 0 and px <= entry) or (sens < 0 and px >= entry):
+            continue
+        cumul += frac
+        out.append({"price": px, "fraction": frac,
+                    "reason": str(e.get("reason") or f"tp{n}")})
+    return out
+
+
 def quantize_size(size: float, venue=None) -> float:
     """Arrondit une quantité aux contraintes de la venue (à la baisse).
 

@@ -18,6 +18,7 @@ from app.core.config import DEFAULT_MAKER_FEE, DEFAULT_TAKER_FEE
 from app.core.execution import close_pnl as _close_pnl
 from app.core.execution import cost_model as _cost_model
 from app.core.execution import format_cost_model as _format_cost_model
+from app.core.execution import plan_partial_targets as _plan_partial_targets
 from app.core.execution import quantize_size as _quantize_size
 from app.core.execution import size_impact_cost as _size_impact_cost
 from app.core.execution import venue_trade_cost as _venue_trade_cost
@@ -645,6 +646,10 @@ class Backtester:
             lock_ratio       = float(ov.get("lock_ratio",   self.lock_ratio)),
             use_swing        = bool(ov.get("use_swing",     self.use_swing)),
             mode             = str(ov.get("mode",           "dynamic")),
+            # §30 — trailing structurel : marge sous le pivot et demi-fenêtre
+            # de confirmation du pivot.
+            struct_buffer_atr = float(ov.get("struct_buffer_atr", 0.25)),
+            struct_pivot_k    = int(ov.get("struct_pivot_k", 2)),
         )
 
     # ── Cycle de vie d'une position (extrait de run() — V13) ──────────────────
@@ -689,11 +694,15 @@ class Backtester:
         # Correction de report seule : ni l'équité ni aucune décision ne bougent.
         fees = position.get("fees", 0.0) + fees
         ctx.capital += pnl
+        # L1 — les jambes déjà sorties ont encaissé leur PnL au fil de l'eau ;
+        # le trade journalisé porte le total, l'équité n'ajoute que le reliquat.
+        realized = position.pop("_realized_pnl", 0.0)
+        gross_realized = position.pop("_gross_realized", 0.0)
         # BT-09 : plus-haut d'équité pour la courbe de dé-risquage en drawdown.
         ctx.peak_capital = max(getattr(ctx, "peak_capital", ctx.capital), ctx.capital)
         ts = str(df["time"][i]) if "time" in df.columns else str(i)
         position.update({
-            "pnl":           round(pnl, 6),
+            "pnl":           round(pnl + realized, 6),
             "fees":          round(fees, 6),
             "borrow_cost":   round(borrow, 6),
             "exit":          round(exec_price, 6),
@@ -712,10 +721,16 @@ class Backtester:
             # à l'ouverture), donc `pnl + fees + borrow` ne les reconstituerait pas.
             "slippage_cost": round(position.get("slippage_cost", 0.0) + slip_exit, 6),
             "funding_cost":  round(position.get("funding_cost", 0.0), 6),
-            "gross_pnl":     round((exec_price - entry) * fill_size *
+            "gross_pnl":     round(gross_realized + (exec_price - entry) * fill_size *
                                    (1 if side == "long" else -1), 6),
+            # L1 — jambes réalisées avant la clôture finale (§29). Liste vide
+            # pour toute stratégie qui ne demande pas de sorties partielles.
+            "exits":         position.pop("_exits", []),
+            "size_initial":  position.pop("size_initial", fill_size),
         })
         position.pop("_trailing", None)
+        position.pop("_targets", None)
+        position.pop("_be_done", None)
         ctx.trades.append(position)
         ctx.equity_curve.append(round(ctx.capital, 4))
         if append_ts:
@@ -735,8 +750,63 @@ class Backtester:
                 day_key = ""
             # capital_before = capital avant ce trade (approximation : capital - pnl)
             capital_before = ctx.capital - pnl
-            gate.record_trade_result(i, slot_key, pnl, day_key, capital_before)
+            gate.record_trade_result(i, slot_key, pnl + realized, day_key,
+                                     capital_before)
 
+        return pnl + realized
+
+    def _close_partial_at(self, ctx, position: dict, i: int, exec_price: float,
+                          fraction: float, reason: str, *, maker: bool,
+                          ref_price: Optional[float] = None) -> float:
+        """L1 (§29) — réalise ``fraction`` de la taille INITIALE de la position.
+
+        Le trade n'est journalisé qu'à sa clôture COMPLÈTE (``_close_at``) :
+        ici on encaisse le PnL de la jambe, on réduit taille et notionnel, et on
+        trace la sortie dans ``_exits``. La courbe d'équité ne reçoit pas de
+        point — elle en a un par trade, pas un par jambe, et changer sa cadence
+        modifierait l'annualisation du Sharpe de tous les backtests.
+
+        Retourne le PnL de la jambe (0.0 si elle n'est pas négociable)."""
+        size0 = position.get("size_initial", position["size"])
+        part = _quantize_size(min(_floor_to(size0 * fraction, 6),
+                                  position["size"]), self._venue)
+        if part <= 0 or position["size"] <= 0:
+            return 0.0
+        # Prorata du notionnel : le reliquat doit rester cohérent avec la taille.
+        notional_part = position["notional"] * (part / position["size"])
+        bars_held  = i - position["bar"]
+        hours_held = bars_held * _bar_to_days(ctx.timeframe) * 24.0
+        side = position["side"]
+        pnl, fees, borrow = _close_pnl(
+            side=side, entry=position["entry"], exit_price=exec_price, size=part,
+            notional=notional_part,
+            fee_rate=(self.maker_fee if maker else self.taker_fee),
+            daily_rate=self.borrow_rate, hours_held=hours_held,
+            periods_per_day=self.borrow_periods, venue=self._venue,
+        )
+        impact = self._impact_cost(ctx, i, notional_part)
+        if impact:
+            pnl -= impact
+            fees += impact
+        slip = (abs(exec_price - ref_price) * part
+                if ref_price is not None else 0.0) + impact
+
+        ctx.capital += pnl
+        ctx.peak_capital = max(getattr(ctx, "peak_capital", ctx.capital), ctx.capital)
+        position["size"]     = round(position["size"] - part, 8)
+        position["notional"] = round(position["notional"] - notional_part, 6)
+        position["fees"]     = round(position.get("fees", 0.0) + fees, 8)
+        position["borrow_cost"]   = round(position.get("borrow_cost", 0.0) + borrow, 8)
+        position["slippage_cost"] = round(position.get("slippage_cost", 0.0) + slip, 8)
+        position["_realized_pnl"] = position.get("_realized_pnl", 0.0) + pnl
+        position["_gross_realized"] = position.get("_gross_realized", 0.0) + \
+            (exec_price - position["entry"]) * part * (1 if side == "long" else -1)
+        position.setdefault("_exits", []).append({
+            "bar": i, "price": round(exec_price, 6), "size": round(part, 8),
+            "fraction": round(part / size0, 4) if size0 else 0.0,
+            "reason": str(reason), "pnl": round(pnl, 6),
+        })
+        ctx.diag["partial_exits"] = ctx.diag.get("partial_exits", 0) + 1
         return pnl
 
     def _manage_open_position(self, ctx, position: dict, i: int):
@@ -837,6 +907,39 @@ class Backtester:
                            ("stop_loss" if position.get("disable_trailing")
                             else "trailing_stop"), maker=False, ref_price=stop)
             return None
+
+        # ── L1 (§29) — sorties partielles TP1 / TP2, runner ──────────────────
+        # Vérifiées seulement si le stop n'a pas été touché : même priorité
+        # conservative que le TP fixe en cas d'ambiguïté intrabar.
+        cibles = position.get("_targets")
+        if cibles:
+            atteintes = [c for c in cibles
+                         if (side == "long" and c_high >= c["price"])
+                         or (side == "short" and c_low <= c["price"])]
+            for cible in atteintes:
+                cibles.remove(cible)
+                px = cible["price"] * (1 - self.spread_pct) if side == "long" \
+                    else cible["price"] * (1 + self.spread_pct)
+                self._close_partial_at(ctx, position, i, px, cible["fraction"],
+                                       cible["reason"], maker=True,
+                                       ref_price=cible["price"])
+                # §30 — après la première jambe, le stop passe au point mort
+                # frais compris : le trade ne peut plus coûter d'argent.
+                if position.get("be_after_partial") and not position.get("_be_done"):
+                    cout = 2 * self.taker_fee + self.spread_pct
+                    be = entry * (1 + cout) if side == "long" else entry * (1 - cout)
+                    if (side == "long" and be > position["stop"]) or \
+                            (side == "short" and be < position["stop"]):
+                        position["stop"] = round(be, 6)
+                    position["_be_done"] = True
+            if atteintes:
+                # Reliquat non négociable (quantification venue) : on solde.
+                if position["size"] <= 0 or \
+                        position["size"] * c_close < self._min_notional():
+                    self._close_at(ctx, position, i, c_close, "partial_final",
+                                   maker=True)
+                    return None
+                stop = position["stop"]
 
         # ── Position conservée : trailing + pyramidage ───────────────────────
         atr_v         = float(ctx.atr_arr[i]) or 1e-8
@@ -1122,6 +1225,10 @@ class Backtester:
             "score_breakdown": signal.get("score_breakdown"),
             "planned_stop":    round(stop, 6),
             "planned_tp":      round(tp_init, 6) if tp_init is not None else None,
+            # ── L1 (§29) — sorties partielles ────────────────────────────────
+            "size_initial":    round(size, 6),
+            "_targets":        _plan_partial_targets(signal, exec_price, stop),
+            "be_after_partial": bool(signal.get("be_after_partial", True)),
         }
         diag["trades_opened"] += 1
         diag["last_trade_bar"] = i
@@ -1282,6 +1389,7 @@ class Backtester:
             # été touchés (ambiguïté intrabar high/low, mesure seule — le stop
             # continue de toujours l'emporter, cf. _manage_open_position).
             "tp_sl_ambiguous_bars":  0,
+            "partial_exits":         0,   # L1 — jambes sorties avant la clôture
         }
         per_strategy_stats: Dict[str, Dict[str, int]] = {}
         _bars_since_signal     = 0
