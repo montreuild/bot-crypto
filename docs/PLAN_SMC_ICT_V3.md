@@ -557,7 +557,20 @@ l'écart est nul, `structure_gate` reste off et on le dit.
 
 ---
 
-### L4 — Liquidité hiérarchisée et qualité des zones
+### L4 — Liquidité hiérarchisée et qualité des zones ✅ LIVRÉ
+
+> **Résultat : §77 est contredit.** Le seul compartiment à échantillon
+> exploitable (`SWING`, 19–28 trades) est le rang le PLUS BAS de la hiérarchie,
+> et c'est le meilleur — sur BTC 4 h il bat `PREV_WEEK` d'un facteur 16. Les
+> classes nobles comptent 1 à 7 trades. `target_mode: expected_value` gagne sur
+> une fenêtre et perd sur l'autre dans les quatre cas : **rejeté**.
+> `max_stop_atr` (§23) ne mord pas — résultats identiques au bit près sur 3/4.
+>
+> §3.5 de ce plan avait prévu le mécanisme ; c'est maintenant mesuré. La voie
+> ouverte reste l'estimation des fréquences en walk-forward (L8) : `proba` est
+> déjà un paramètre de `meilleure_cible`. Les onze fonctions de qualité restent
+> des entrées candidates du score de L6 — leur échec porte sur le CIBLAGE.
+> Détail : `docs/MESURE_HIERARCHIE_LIQUIDITE.md`.
 
 **Objectif** : §12, §15, §32, §65–§67, §77–§79, §83–§86, §91.
 

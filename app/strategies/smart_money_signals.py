@@ -21,11 +21,12 @@ donc de vraies méthodes).
 """
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from app.core import ict, smc
+from app.core.smc_quality import classe_liquidite, meilleure_cible
 from app.core.smc_state import sequence_label, state_label
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,8 @@ class _SignalCtx:
     # Calendar liquidity (SMC-03)
     cal: Optional[dict]
     cal_mode: Any
-    cal_tp: List[float]
+    #: L4 — ``(niveau, clé)`` : la clé (pdh/pwl/…) porte la classe de liquidité.
+    cal_tp: List[Tuple[float, str]]
     # SD projections (SMC-05)
     sd_up: List[float]
     sd_dn: List[float]
@@ -174,9 +176,12 @@ def _build_ctx(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     # mode "sweeps"  : déclencheur SWEEP_REVERSAL (cf. _check_calendar_sweep).
     cal_mode = p.get("use_calendar_liquidity", False)
     cal = aux.get("cal") if cal_mode else None
-    cal_tp: List[float] = []
+    # L4 (§77) — la CLÉ est conservée : « pdh » et « pwh » n'ont pas la même
+    # importance dans la hiérarchie de liquidité, et un simple niveau les
+    # rendait indiscernables.
+    cal_tp: List[Tuple[float, str]] = []
     if cal is not None and cal_mode in (True, "targets"):
-        cal_tp = [float(cal[k][i]) for k in ("pdh", "pdl", "pwh", "pwl")
+        cal_tp = [(float(cal[k][i]), k) for k in ("pdh", "pdl", "pwh", "pwl")
                   if not np.isnan(cal[k][i])]
 
     # ── SMC-05 — grille de TP en écarts-types ICT ────────────────────────
@@ -920,6 +925,13 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
     risk = (entry - sl) if side == "long" else (sl - entry)
     if risk <= 0 or entry <= 0:
         return None
+    # ── L4 (§32 §23) — anti-FOMO ─────────────────────────────────────────────
+    # Le stop est posé sur le POI (zone, balayage) plus une marge : la distance
+    # entrée→stop EST donc la distance au POI. Au-delà du plafond, le prix a
+    # quitté sa zone et l'entrée court après le mouvement.
+    max_stop = float(p.get("max_stop_atr", 0) or 0)
+    if max_stop > 0 and atr > 0 and risk > max_stop * atr:
+        return None
     min_gain = float(p["min_gain_pct"])
     min_rr   = float(p["min_rr"])
     front    = float(p["tp_front_run_atr"]) * atr
@@ -933,48 +945,49 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
     # en concurrence avec les cibles liquidité/void/volume.
     mm = (ict.measured_move_target(res["_all_swings"], i, side, entry)
           if bool(p.get("tp_measured_move", False)) else None)
-    tp = None
-    tp_src = ""
+    sens = 1 if side == "long" else -1
     if side == "long":
         liq = smc.liquidity_targets_above(res, i, entry, max_age=max_age)
         vds = smc.void_targets_above(res, i, entry, max_age=max_age) \
             if use_voids else []
-        vps = [lv for lv in (extra_targets or []) if lv > entry]
-        cals = [lv for lv in (cal_targets or []) if lv > entry]
-        sds = [lv for lv in (sd_targets or []) if lv > entry]
-        targets = sorted({(lv, "liquidité") for lv in liq} |
-                         {(lv, "void") for lv in vds} |
-                         {(lv, "volume") for lv in vps} |
-                         {(lv, "calendaire") for lv in cals} |
-                         {(lv, "std_dev") for lv in sds} |
-                         ({(mm, "measured")} if mm else set()))
-        for level, src in targets:
-            cand = level - front
-            gain_pct = (cand - entry) / entry * 100.0
-            if gain_pct <= 0:
-                continue
-            if gain_pct > min_gain and (cand - entry) / risk >= min_rr:
-                tp, tp_src = cand, f"{src} {level:.6g}"
-                break
     else:
         liq = smc.liquidity_targets_below(res, i, entry, max_age=max_age)
         vds = smc.void_targets_below(res, i, entry, max_age=max_age) \
             if use_voids else []
-        vps = [lv for lv in (extra_targets or []) if lv < entry]
-        cals = [lv for lv in (cal_targets or []) if lv < entry]
-        sds = [lv for lv in (sd_targets or []) if lv < entry]
-        targets = sorted({(lv, "liquidité") for lv in liq} |
-                         {(lv, "void") for lv in vds} |
-                         {(lv, "volume") for lv in vps} |
-                         {(lv, "calendaire") for lv in cals} |
-                         {(lv, "std_dev") for lv in sds} |
-                         ({(mm, "measured")} if mm else set()), reverse=True)
+
+    def au_dela(lv: float) -> bool:
+        return (lv > entry) if sens > 0 else (lv < entry)
+
+    targets = sorted(
+        {(lv, "pool") for lv in liq} |
+        {(lv, "void") for lv in vds} |
+        {(lv, "hvn") for lv in (extra_targets or []) if au_dela(lv)} |
+        {(lv, cle) for lv, cle in (cal_targets or []) if au_dela(lv)} |
+        {(lv, "std_dev") for lv in (sd_targets or []) if au_dela(lv)} |
+        ({(mm, "measured")} if mm else set()),
+        reverse=(sens < 0))
+
+    # ── L4 (§78 §79) — choix de la cible ─────────────────────────────────────
+    # Historiquement : la PREMIÈRE cible éligible, donc toujours la plus proche.
+    # L0 a mesuré ce que ça donne — cible atteinte 28 à 36 % du temps. Le mode
+    # `expected_value` classe par `poids de classe × gain`, ce qui privilégie
+    # une poche hebdomadaire un peu plus loin à un swing local tout proche.
+    # L'éligibilité (gain minimal, R/R) ne change pas : seul le CHOIX change.
+    tp = None
+    tp_src = ""
+    if str(p.get("target_mode", "nearest")) == "expected_value":
+        best_t = meilleure_cible(list(targets), entry, risk, side, min_rr,
+                                 min_gain, front_run=front)
+        if best_t:
+            tp = best_t["price"]
+            tp_src = f"{best_t['source']} {best_t['price'] + sens * front:.6g}"
+    else:
         for level, src in targets:
-            cand = level + front
-            gain_pct = (entry - cand) / entry * 100.0
+            cand = level - sens * front
+            gain_pct = (cand - entry) / entry * 100.0 * sens
             if gain_pct <= 0:
                 continue
-            if gain_pct > min_gain and (entry - cand) / risk >= min_rr:
+            if gain_pct > min_gain and (cand - entry) * sens / risk >= min_rr:
                 tp, tp_src = cand, f"{src} {level:.6g}"
                 break
 
@@ -1071,6 +1084,8 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
             "gain_pct": round(gain_pct, 3),
             "rr":       round(rr_final, 2),
             "tp_source": tp_src,
+            # L4 (§77) — classe de la cible visée, pour `by_target_class`.
+            "tp_class": classe_liquidite(tp_src.split()[0] if tp_src else ""),
             "tp_target": round(tp, 8),      # cible affichée (info) même en trailing
             "_risk_pct": round(risk_pct, 6),  # pour le time-stop conditionnel
         },

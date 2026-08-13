@@ -300,6 +300,17 @@ class BacktestResult:
                     groupes[str(t[cle])].append(t)
             setattr(self, axe, self._group_metrics(groupes))
 
+        # L4 (§77 §78) — par CLASSE de liquidité visée. C'est la mesure qui dit
+        # si la hiérarchie de la spécification correspond à quelque chose : une
+        # cible hebdomadaire est-elle vraiment plus souvent atteinte qu'un
+        # swing local ?
+        par_classe: Dict[str, list] = _defaultdict(list)
+        for t in closed:
+            cl = (t.get("indicators") or {}).get("tp_class")
+            if cl:
+                par_classe[str(cl)].append(t)
+        self.by_target_class: Dict[str, dict] = self._group_metrics(par_classe)
+
         # ── QW-1 : métriques étendues (Sortino, Calmar, CAGR, alpha vs B&H) ──
         self._compute_extended_metrics()
 
@@ -504,6 +515,7 @@ class BacktestResult:
             "by_structure_state": getattr(self, "by_structure_state", {}),
             "by_sequence_type":   getattr(self, "by_sequence_type", {}),
             "by_tier":            getattr(self, "by_tier", {}),
+            "by_target_class":    getattr(self, "by_target_class", {}),
             "trades":             self.trades,
             "diagnostics":        getattr(self, "diagnostics", None),
             "ml_info":            getattr(self, "ml_info", None),

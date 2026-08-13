@@ -42,7 +42,10 @@ PARAM_SPACE: Dict[str, List] = {
     'use_trailing': [True, False],
     'trail_mult': [2.0, 2.5, 3.5],
     # L3 (§60) — porte de structure séquentielle.
-    'structure_gate': [True, False],
+    'structure_gate': ['off', 'direction', 'no_pullback', 'both'],
+    # L4 (§78 §79) — choix de la cible, et plafond de distance au POI (§32 §23).
+    'target_mode': ['nearest', 'expected_value'],
+    'max_stop_atr': [0, 3.0, 4.0],
     # L1 (§29 §30) — sorties partielles et mode de trailing du runner.
     'use_partial_exits': [True, False],
     'tp1_r': [0.75, 1.0, 1.5],
@@ -122,8 +125,11 @@ FIXED_PARAMS: Dict[str, Any] = {
     'ts_profit_r': 1.0,
     # L3 — la porte filtre (off), le journal enregistre toujours l'état : sans
     # le second on ne pourrait pas mesurer si le premier vaut quelque chose.
-    'structure_gate': False,
+    'structure_gate': 'off',
     'structure_journal': True,
+    # L4 — `nearest` reproduit le ciblage historique ; 0 = plafond de stop off.
+    'target_mode': 'nearest',
+    'max_stop_atr': 0,
     'break_body_atr': 0.5,
     'mss_sweep_lookback': 8,
     'warning_max_bars': 40,
