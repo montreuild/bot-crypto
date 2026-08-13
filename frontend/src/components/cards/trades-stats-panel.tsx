@@ -3,16 +3,73 @@
  *
  * Extrait du template Jinja2 `backtest.html:861-926` (chips + tableaux
  * par setup et par raison de sortie).
+ *
+ * L0–L6 : les axes d'analyse ne sont plus codés un par un. Chaque champ que le
+ * moteur pose sur un trade — setup, module, état de structure, séquence, tier,
+ * classe de cible — devient un tableau dès qu'il est renseigné, et disparaît
+ * quand il ne l'est pas. Une stratégie qui n'en pose aucun retrouve exactement
+ * l'affichage d'avant.
  */
 
 import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { exitReasonBadge } from '@/lib/exit-reason-badges';
 import type { BacktestTrade } from '@/types';
 
 interface Props {
   trades: BacktestTrade[];
+}
+
+interface Agrege {
+  n: number;
+  wins: number;
+  pnl: number;
+}
+
+/** Axes d'analyse : libellé + extracteur. L'ordre est celui de l'affichage. */
+const AXES: Array<{
+  cle: string;
+  titre: string;
+  couleur: string;
+  valeur: (t: BacktestTrade) => string | undefined;
+}> = [
+  { cle: 'setup', titre: 'Par setup', couleur: 'text-purple-400', valeur: (t) => t.setup },
+  { cle: 'module', titre: 'Par module SMC/ICT (§65)', couleur: 'text-indigo-400', valeur: (t) => t.module },
+  {
+    cle: 'structure',
+    titre: 'Par état de structure (§60)',
+    couleur: 'text-sky-400',
+    valeur: (t) => t.structure_state,
+  },
+  {
+    cle: 'sequence',
+    titre: 'Par type de séquence (§72)',
+    couleur: 'text-teal-400',
+    valeur: (t) => t.sequence_type,
+  },
+  { cle: 'tier', titre: 'Par tier (§71)', couleur: 'text-amber-400', valeur: (t) => t.tier },
+  {
+    cle: 'cible',
+    titre: 'Par classe de cible (§77)',
+    couleur: 'text-lime-400',
+    valeur: (t) => (t.indicators as Record<string, unknown> | undefined)?.tp_class as string | undefined,
+  },
+];
+
+function agreger(
+  trades: BacktestTrade[],
+  cle: (t: BacktestTrade) => string | undefined,
+): Array<[string, Agrege]> {
+  const out: Record<string, Agrege> = {};
+  trades.forEach((t) => {
+    const k = cle(t);
+    if (!k) return;
+    if (!out[k]) out[k] = { n: 0, wins: 0, pnl: 0 };
+    out[k].n++;
+    if ((t.pnl ?? 0) > 0) out[k].wins++;
+    out[k].pnl += t.pnl ?? 0;
+  });
+  return Object.entries(out).sort((a, b) => b[1].pnl - a[1].pnl);
 }
 
 export function TradesStatsPanel({ trades }: Props) {
@@ -29,25 +86,12 @@ export function TradesStatsPanel({ trades }: Props) {
     const wrLong = longs.length ? (longWins.length / longs.length) * 100 : null;
     const wrShort = shorts.length ? (shortWins.length / shorts.length) * 100 : null;
 
-    const bySetup: Record<string, { n: number; wins: number; pnl: number }> = {};
-    if (closed.some((t) => t.setup)) {
-      closed.forEach((t) => {
-        const k = t.setup || '—';
-        if (!bySetup[k]) bySetup[k] = { n: 0, wins: 0, pnl: 0 };
-        bySetup[k].n++;
-        if ((t.pnl ?? 0) > 0) bySetup[k].wins++;
-        bySetup[k].pnl += t.pnl ?? 0;
-      });
-    }
+    // L1 — combien de trades ont réellement sorti une jambe avant la clôture ?
+    // Sans ce chiffre, on ne sait pas si `use_partial_exits` a mordu.
+    const avecJambes = closed.filter((t) => (t.exits?.length ?? 0) > 0).length;
+    const jambes = closed.reduce((s, t) => s + (t.exits?.length ?? 0), 0);
 
-    const byExit: Record<string, { n: number; wins: number; pnl: number }> = {};
-    closed.forEach((t) => {
-      const k = t.exit_reason ?? t.reason ?? '—';
-      if (!byExit[k]) byExit[k] = { n: 0, wins: 0, pnl: 0 };
-      byExit[k].n++;
-      if ((t.pnl ?? 0) > 0) byExit[k].wins++;
-      byExit[k].pnl += t.pnl ?? 0;
-    });
+    const byExit = agreger(closed, (t) => t.exit_reason ?? t.reason ?? '—');
 
     return {
       longs: longs.length,
@@ -56,9 +100,12 @@ export function TradesStatsPanel({ trades }: Props) {
       wrShort,
       avgWin,
       avgLoss,
-      bySetup: Object.entries(bySetup).sort((a, b) => b[1].pnl - a[1].pnl),
-      byExit: Object.entries(byExit).sort((a, b) => b[1].n - a[1].n),
-      hasSetup: closed.some((t) => t.setup),
+      avecJambes,
+      jambes,
+      byExit,
+      axes: AXES.map((a) => ({ ...a, lignes: agreger(closed, a.valeur) })).filter(
+        (a) => a.lignes.length > 0,
+      ),
     };
   }, [trades]);
 
@@ -68,6 +115,45 @@ export function TradesStatsPanel({ trades }: Props) {
         {label}
       </div>
       <div className={`font-mono text-sm font-bold ${color}`}>{val}</div>
+    </div>
+  );
+
+  const tableau = (
+    titre: string,
+    couleur: string,
+    lignes: Array<[string, Agrege]>,
+    rendu?: (k: string) => React.ReactNode,
+  ) => (
+    <div key={titre}>
+      <div className="text-xs text-muted-foreground mb-1">{titre}</div>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-border text-muted-foreground">
+            <th className="text-left py-1">Groupe</th>
+            <th className="text-right py-1 px-2">N</th>
+            <th className="text-right py-1 px-2">WR%</th>
+            <th className="text-right py-1 px-2">PnL total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lignes.map(([k, s]) => (
+            <tr key={k} className="border-b border-border/50">
+              <td className={`py-1 font-mono ${couleur}`}>{rendu ? rendu(k) : k}</td>
+              <td className="text-right py-1 px-2 font-mono">{s.n}</td>
+              <td className="text-right py-1 px-2 font-mono">
+                {((s.wins / s.n) * 100).toFixed(1)}%
+              </td>
+              <td
+                className={`text-right py-1 px-2 font-mono ${
+                  s.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                }`}
+              >
+                {s.pnl >= 0 ? '+' : ''}${s.pnl.toFixed(2)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 
@@ -84,77 +170,28 @@ export function TradesStatsPanel({ trades }: Props) {
           {chip('WR Short', stats.wrShort != null ? `${stats.wrShort.toFixed(1)}%` : '—')}
           {chip('Avg Win', stats.avgWin != null ? `$${stats.avgWin.toFixed(2)}` : '—', 'text-emerald-400')}
           {chip('Avg Loss', stats.avgLoss != null ? `$${stats.avgLoss.toFixed(2)}` : '—', 'text-rose-400')}
+          {stats.jambes > 0 &&
+            chip('Sorties partielles', `${stats.jambes} / ${stats.avecJambes} tr.`, 'text-amber-400')}
         </div>
 
-        {stats.hasSetup && stats.bySetup.length > 0 && (
-          <div>
-            <div className="text-xs text-muted-foreground mb-1">Par setup</div>
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border text-muted-foreground">
-                  <th className="text-left py-1">Setup</th>
-                  <th className="text-right py-1 px-2">N</th>
-                  <th className="text-right py-1 px-2">WR%</th>
-                  <th className="text-right py-1 px-2">PnL total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.bySetup.map(([setup, s]) => (
-                  <tr key={setup} className="border-b border-border/50">
-                    <td className="py-1 font-mono text-purple-400">{setup}</td>
-                    <td className="text-right py-1 px-2 font-mono">{s.n}</td>
-                    <td className="text-right py-1 px-2 font-mono">
-                      {((s.wins / s.n) * 100).toFixed(1)}%
-                    </td>
-                    <td className={`text-right py-1 px-2 font-mono ${s.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {s.pnl >= 0 ? '+' : ''}${s.pnl.toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {stats.axes.map((a) => tableau(a.titre, a.couleur, a.lignes))}
 
-        {stats.byExit.length > 0 && (
-          <div>
-            <div className="text-xs text-muted-foreground mb-1">Par raison de sortie</div>
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border text-muted-foreground">
-                  <th className="text-left py-1">Sortie</th>
-                  <th className="text-right py-1 px-2">N</th>
-                  <th className="text-right py-1 px-2">WR%</th>
-                  <th className="text-right py-1 px-2">PnL total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.byExit.map(([exit, s]) => {
-                  const badge = exitReasonBadge(exit);
-                  return (
-                    <tr key={exit} className="border-b border-border/50">
-                      <td className="py-1">
-                        <span
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.65rem] font-mono"
-                          style={{ color: badge.color, background: `${badge.color}15`, border: `1px solid ${badge.color}33` }}
-                        >
-                          {badge.emoji} {badge.abbr}
-                        </span>
-                      </td>
-                      <td className="text-right py-1 px-2 font-mono">{s.n}</td>
-                      <td className="text-right py-1 px-2 font-mono">
-                        {((s.wins / s.n) * 100).toFixed(1)}%
-                      </td>
-                      <td className={`text-right py-1 px-2 font-mono ${s.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {s.pnl >= 0 ? '+' : ''}${s.pnl.toFixed(2)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {stats.byExit.length > 0 &&
+          tableau('Par raison de sortie', '', stats.byExit, (k) => {
+            const badge = exitReasonBadge(k);
+            return (
+              <span
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.65rem] font-mono"
+                style={{
+                  color: badge.color,
+                  background: `${badge.color}15`,
+                  border: `1px solid ${badge.color}33`,
+                }}
+              >
+                {badge.emoji} {badge.abbr}
+              </span>
+            );
+          })}
       </CardContent>
     </Card>
   );

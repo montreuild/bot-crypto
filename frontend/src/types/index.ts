@@ -575,6 +575,42 @@ export interface BacktestTrade {
   status?: string;
   entry_time?: string;
   exit_time?: string;
+  /** §65 — module SMC/ICT du setup (SMC Core, ICT Session…). */
+  module?: string;
+  /** L3 (§60) — état de structure séquentiel à l'entrée. */
+  structure_state?: string;
+  /** L6 (§72) — CONTINUATION / REVERSAL / EARLY_REVERSAL / FAILED_REVERSAL. */
+  sequence_type?: string;
+  sequence_id?: string;
+  /** L6 (§97) — tous les signaux d'un même événement de liquidité le partagent. */
+  market_event_id?: string;
+  /** L6 (§71) — A / B / C / D. */
+  tier?: string;
+  /** L0 (§99) — contexte de décision. */
+  htf_bias?: string;
+  session?: string;
+  gross_rr?: number;
+  net_rr?: number;
+  score_breakdown?: Record<string, number>;
+  planned_stop?: number;
+  planned_tp?: number;
+  /** L0 — coûts ventilés. `fees` reste l'agrégat. */
+  entry_fees?: number;
+  slippage_cost?: number;
+  funding_cost?: number;
+  gross_pnl?: number;
+  /** L1 (§29) — jambes sorties avant la clôture finale. Vide en tout-ou-rien. */
+  exits?: Array<{
+    bar: number;
+    price: number;
+    size: number;
+    fraction: number;
+    reason: string;
+    pnl: number;
+  }>;
+  size_initial?: number;
+  mfe?: number;
+  mae?: number;
   /** Pour les backtests multi-stratégies — la stratégie du trade. */
   strategy_name?: string;
 }

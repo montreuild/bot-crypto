@@ -18,7 +18,6 @@ from app.engine.backtest import Backtester
 from app.engine.engine import BaseStrategy, Engine
 from app.strategies.smart_money_signals import FACTEUR_TIER, _tier
 
-
 # ── §71 tiers ───────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("sequence,score,attendu", [

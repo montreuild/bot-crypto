@@ -947,6 +947,8 @@ def _stamp_l6(sig: dict, ctx: _SignalCtx, p: Dict[str, Any]) -> None:
         "premium_discount": zone_ok,
         "timing": 1.0 if ctx.kz_add > 0 else 0.0,
     }
+    sig["htf_bias"] = {1: "haussier", -1: "baissier", 0: "neutre"}[int(ctx.trend)]
+    sig["session"] = (sig.get("indicators") or {}).get("session")
     sig["sequence_id"] = f"{ctx.struct_state}:{barre_evenement}"
     # §97 — un balayage et son displacement forment UN événement : tous les
     # setups qui en découlent le partagent, et un seul trade primaire en sort.
