@@ -42,6 +42,7 @@ import { StudyVsLiveCard } from '@/components/cards/study-vs-live-card';
 import { MonteCarloPanel } from '@/components/charts/monte-carlo-panel';
 import { TradesScatter } from '@/components/charts/trades-scatter';
 import { BacktestEquityChart } from '@/components/charts/backtest-equity-chart';
+import { CostBreakdownCard } from '@/components/cards/cost-breakdown-card';
 import { CostModelCard } from '@/components/cards/cost-model-card';
 import { useBacktestSettings, useRunBacktest, useCancelBacktest, useBacktestRange } from '@/hooks/use-api';
 import { useConfig, usePresets, useSetExpertMode } from '@/hooks/use-api';
@@ -1071,6 +1072,11 @@ function BacktestResults({ result, scoreThreshold }: { result: any; scoreThresho
           margin ? quel levier ? quels frais ?) et deux runs ne sont pas
           comparables. Cf. app/core/execution.py::cost_model. */}
       <CostModelCard model={r?.cost_model} />
+
+      {/* L0/L2 — où passe l'argent entre le brut et le net. Un profit factor
+          > 1 peut coexister avec un PnL net négatif : sans cette carte, l'écart
+          reste invisible (cf. docs/MESURE_SYSTEMES_DE_SORTIE.md §2). */}
+      <CostBreakdownCard result={r} />
 
       {/* QW-4 — Simulateur de coûts : compare 3 presets (spot, margin×3,
           margin×10) en relançant des backtests avec cost_override. */}

@@ -6,6 +6,44 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🔬 Bas timeframes et actions — et un témoin qui évite une fausse annonce
+
+**Modules « inertes » : trois causes distinctes, une seule était un bug.**
+`smt_filter` sans `smt_correlate_path` produisait `None`, donc aucun filtrage,
+et rien ne le signalait — corrigé par une résolution automatique du corrélé
+(BTC↔ETH, sinon BTC) **et un avertissement explicite**. Les modules à *bonus*
+(Silver Bullet, AMD, killzones) ne modifient que le score, que rien ne consomme
+avec `min_score: 0` : le harnais mesurait le vide. Et `amd_range_atr: 2.0` ne
+déclenche la compression qu'**une fois sur 8 000 barres** — seuil hors régime,
+désormais exposé en plage large.
+
+**15 m / 30 m sur BTC+ETH — le meilleur résultat du chantier.** 186 à 238 trades
+IS contre 89 en 4 h. **Cinq mécanismes valident 4 cas sur 4** : les deux portes
+de structure (L3), les deux mécanismes de tier (L6), et `size_by_confluence`.
+
+⚠️ **Le témoin a intercepté une fausse attribution.** Silver Bullet, AMD et
+killzones validaient aussi 4/4 — mais leur écart au témoin seul vaut ±0 à ±4,5
+sur des PnL de centaines, avec un nombre de trades **identique dans les douze
+cas** (AMD : exactement +0,00). Tout l'effet vient de `size_by_confluence`, pas
+des modules. Sans ce témoin, ajouté au harnais en même temps que le
+consommateur de score, j'aurais publié « Silver Bullet et AMD validés ».
+
+**Actions SBF 120** (6 tickers tirés au hasard, journalier depuis 2000) : régime
+différent — seul `L1 sorties partielles` valide (4/6), celui-là même qui
+échouait en 1 h. Aucune porte de structure ne passe. ⚠️ RMS.PA affiche +2 910 en
+IS pour +27 en OOS sur 22 trades : surapprentissage massif, à ne pas citer.
+
+**Bilan par régime** : L3 et L6 valident sur les trois timeframes crypto à
+échantillon suffisant (15 m, 30 m, 1 h) et échouent là où il est petit (4 h,
+1 j, actions). Aucun ne rend la stratégie rentable, nulle part.
+
+**UI** : `CostBreakdownCard` rend visible la décomposition brut → net — un
+profit factor > 1 peut coexister avec un PnL net négatif, et l'écart entre
+`total_pnl` et `net_profit` vaut exactement les frais d'entrée.
+
+Détail : `docs/ABLATION_BAS_TF_ET_ACTIONS.md`. 1 863 tests backend, 122 front.
+
+
 ### ✅ Quatre mécanismes validés — et trois de mes verdicts renversés
 
 Le harnais rejoué en 1 h sur l'**historique complet** (51 909 barres BTC,

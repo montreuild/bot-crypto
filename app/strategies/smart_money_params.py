@@ -79,6 +79,12 @@ PARAM_SPACE: Dict[str, List] = {
     'sb_bonus': [True, False],
     'sb_filter': [True, False],
     'amd_session_anchored': [True, False],
+    # ⚠ `amd_range_atr: 2.0` ne déclenche la compression qu'UNE fois sur 8 000
+    # barres en BTC 1 h (mesuré) : le module était donc inerte, non par défaut
+    # de conception mais parce que son seuil ne correspond à aucun régime de ce
+    # marché. Exposé en plage large pour que l'optimiseur puisse le calibrer.
+    'amd_range_atr': [2.0, 3.5, 5.0, 7.0],
+    'amd_bars': [8, 12, 20],
 }
 
 FIXED_PARAMS: Dict[str, Any] = {
