@@ -694,6 +694,39 @@ _SETUP_ENABLE_FLAGS: Dict[str, str] = {
 }
 
 
+#: Module SMC/ICT de chaque setup — §65 de la spécification, qui demande des
+#: statistiques SÉPARÉES par module plutôt qu'un chiffre global.
+#:
+#: La découpe suit la spec : SMC Core = le moteur nu (biais HTF, liquidité,
+#: sweep, displacement, MSS, FVG/OB, cible) ; ICT Session = ce qui dépend du
+#: CALENDRIER et des séances ; ICT Advanced = les raffinements (breaker, BPR,
+#: IFVG, SMT, OTE) dont la spec dit explicitement de ne pas mélanger les
+#: statistiques avec le cœur.
+#:
+#: Ce n'est pas cosmétique : le YAML de `smart_money` documente déjà que
+#: `BREAKER_RETEST` coûtait −163 USDC sur 220 trades en 4 h et que `BPR` n'a
+#: pas d'edge stable — deux setups d'ICT Advanced. Sans découpage, ce genre de
+#: constat demande une ablation manuelle à chaque fois.
+SETUP_MODULES: Dict[str, str] = {
+    "SWEEP_REVERSAL": "SMC_CORE",
+    "OB_RETEST":      "SMC_CORE",
+    "CALENDAR_SWEEP": "ICT_SESSION",
+    "BREAKER_RETEST": "ICT_ADVANCED",
+    "BPR_REVERSAL":   "ICT_ADVANCED",
+}
+
+#: Module servi quand un setup inconnu apparaît — préférable à `None`, qui le
+#: ferait disparaître des statistiques sans que rien ne le signale.
+MODULE_INCONNU = "AUTRE"
+
+
+def setup_module(setup: Optional[str]) -> Optional[str]:
+    """Module d'un setup, ou ``None`` si le signal n'en porte pas."""
+    if not setup:
+        return None
+    return SETUP_MODULES.get(str(setup), MODULE_INCONNU)
+
+
 def _setup_enabled(name: str, p: Dict[str, Any]) -> bool:
     """True si le setup est autorisé pour la stratégie (défaut = on pour le cœur)."""
     if name == "CALENDAR_SWEEP":
@@ -908,6 +941,8 @@ def _build_trade(self, res: dict, i: int, side: str, entry: float,
     return {
         "score": score, "side": side, "name": self.name, "atr": atr,
         "setup": setup,
+        # §65 — le moteur agrège `by_module` à partir de ce champ.
+        "module": setup_module(setup),
         "stop_hint": round(sl, 8),
         "tp_hint":   tp_out,
         "exit_after_bars": exit_after,
