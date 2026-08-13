@@ -60,6 +60,9 @@ class _SignalCtx:
     # Bonus cumulatifs transverses (kz_add contient déjà le bonus Silver Bullet)
     kz_add: float
     amd_add: float
+    #: Barre dans une fenêtre Silver Bullet — sert au découpage §65/§31, pas à
+    #: la décision (le bonus est déjà fondu dans `kz_add`).
+    in_sb: bool
     # Gates directionnels
     long_ema_ok: bool
     short_ema_ok: bool
@@ -228,7 +231,7 @@ def _build_ctx(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
     return _SignalCtx(
         res=res, i=i, open_=open_, high=high, low=low, close=close,
         aux=aux, p=p, atr=atr, trend=trend, c=c, zone=zone,
-        kz_add=kz_add, amd_add=amd_add,
+        kz_add=kz_add, amd_add=amd_add, in_sb=in_sb,
         long_ema_ok=long_ema_ok, short_ema_ok=short_ema_ok,
         long_htf_ok=long_htf_ok, short_htf_ok=short_htf_ok,
         vol_ok=vol_ok, tl_tap_long=tl_tap_long, tl_tap_short=tl_tap_short,
@@ -715,6 +718,11 @@ SETUP_MODULES: Dict[str, str] = {
     "BPR_REVERSAL":   "ICT_ADVANCED",
 }
 
+#: Module des trades pris dans une fenêtre Silver Bullet quand ce module est
+#: activé (§31). Reclasse le trade hors de SMC Core pour que les statistiques
+#: des deux ne se mélangent pas.
+MODULE_SILVER_BULLET = "ICT_SILVER_BULLET"
+
 #: Module servi quand un setup inconnu apparaît — préférable à `None`, qui le
 #: ferait disparaître des statistiques sans que rien ne le signale.
 MODULE_INCONNU = "AUTRE"
@@ -749,7 +757,8 @@ def _setup_enabled(name: str, p: Dict[str, Any]) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _score_setup(candidates: List[dict], smt_a: Optional[np.ndarray],
-                 i: int, p: Dict[str, Any]) -> Optional[dict]:
+                 i: int, p: Dict[str, Any],
+                 in_sb: bool = False) -> Optional[dict]:
     """Filtrage SMT (optionnel) puis max(score) arrondi à [0,1] et seuil
     interne ``min_score``. Retourne None si tous les candidats sont filtrés
     ou si le meilleur score reste sous le seuil.
@@ -784,6 +793,19 @@ def _score_setup(candidates: List[dict], smt_a: Optional[np.ndarray],
     # à score_threshold) : mêmes sémantiques que le seuil de l'engine.
     if best["score"] < float(p.get("min_score", 0.0)):
         return None
+
+    # §31 — Silver Bullet : ne JAMAIS mélanger ses statistiques avec le SMC
+    # Core. Le module existait déjà comme bonus/filtre transverse (`sb_bonus`,
+    # `sb_filter`), donc ses trades étaient comptés avec les autres et son
+    # apport propre restait invisible.
+    #
+    # Reclassement plutôt que duplication : un trade pris dans une fenêtre
+    # Silver Bullet EST un trade Silver Bullet, quel que soit le setup qui l'a
+    # déclenché. Et le reclassement n'a lieu que si l'opérateur a activé le
+    # module — les deux drapeaux valent False par défaut, donc aucune analyse
+    # existante ne change de découpage.
+    if in_sb and (p.get("sb_bonus") or p.get("sb_filter")):
+        best["module"] = MODULE_SILVER_BULLET
     return best
 
 
@@ -816,7 +838,7 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
         candidates.extend(checker(self, ctx))
     if not candidates:
         return None
-    return _score_setup(candidates, aux.get("smt"), i, p)
+    return _score_setup(candidates, aux.get("smt"), i, p, in_sb=ctx.in_sb)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

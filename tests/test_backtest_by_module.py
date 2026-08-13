@@ -182,3 +182,42 @@ def test_chaque_setup_de_smart_money_a_un_module():
     assert setup_module("CALENDAR_SWEEP") == "ICT_SESSION"
     assert setup_module(None) is None
     assert setup_module("INEXISTANT") == "AUTRE"
+
+
+def test_silver_bullet_reclasse_sans_changer_les_decisions():
+    """§31 — le Silver Bullet doit être mesurable à part, sans que l'activer
+    modifie les trades pris.
+
+    Il existait déjà comme bonus TRANSVERSE (`sb_bonus` / `sb_filter`) : ses
+    trades étaient comptés avec le SMC Core et son apport propre invisible. Le
+    reclassement les en sort — mais il ne doit rien décider. Un changement du
+    nombre de trades signalerait que la comptabilité s'est mise à influencer la
+    stratégie.
+    """
+    from app.strategies.smart_money_signals import (
+        MODULE_SILVER_BULLET,
+        _score_setup,
+    )
+
+    cands = [{"side": "long", "score": 0.9, "setup": "OB_RETEST",
+              "module": "SMC_CORE"}]
+    p = {"sb_bonus": True, "min_score": 0.0}
+
+    hors = _score_setup([dict(cands[0])], None, 0, p, in_sb=False)
+    dedans = _score_setup([dict(cands[0])], None, 0, p, in_sb=True)
+    assert hors["module"] == "SMC_CORE"
+    assert dedans["module"] == MODULE_SILVER_BULLET
+    # Le reclassement ne touche NI le score NI le sens.
+    assert hors["score"] == dedans["score"]
+    assert hors["side"] == dedans["side"]
+
+
+def test_silver_bullet_desactive_ne_reclasse_rien():
+    """Les deux drapeaux valent False par défaut : aucune analyse existante ne
+    doit changer de découpage."""
+    from app.strategies.smart_money_signals import _score_setup
+
+    cand = {"side": "long", "score": 0.9, "setup": "OB_RETEST",
+            "module": "SMC_CORE"}
+    out = _score_setup([dict(cand)], None, 0, {"min_score": 0.0}, in_sb=True)
+    assert out["module"] == "SMC_CORE"

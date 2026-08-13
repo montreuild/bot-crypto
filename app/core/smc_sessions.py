@@ -55,6 +55,84 @@ def calendar_liquidity_levels(df: pl.DataFrame) -> Optional[dict]:
     return out
 
 
+def asian_range_levels(df: pl.DataFrame,
+                       session: Optional[tuple] = None) -> Optional[dict]:
+    """Plage asiatique par barre, causale (§30 de la spécification SMC/ICT).
+
+    Pour chaque barre : ``high``, ``low`` et ``mid`` de la dernière session
+    asiatique **entièrement close**, plus deux drapeaux disant si l'un des deux
+    extrêmes a déjà été balayé depuis cette clôture.
+
+    Le cadre ICT lit la session asiatique comme la phase d'ACCUMULATION : ses
+    extrêmes concentrent les stops, et la manipulation de Londres ou New York
+    vient les chercher avant le vrai mouvement. C'est la base du schéma AMD.
+
+    CAUSALITÉ. Une barre ne voit que la dernière session asiatique dont l'heure
+    de fin est passée : à 03:00 UTC, on regarde la plage de la VEILLE, pas celle
+    en cours de formation — sinon on connaîtrait son extrême avant qu'il existe.
+    C'est le même parti pris que :func:`calendar_liquidity_levels`, qui n'expose
+    que des journées et des semaines closes.
+
+    Les drapeaux de balayage sont eux aussi causaux : ils passent à 1 à la barre
+    où le prix dépasse le niveau, jamais avant, et le restent jusqu'à la
+    prochaine session.
+
+    Retourne ``{"asia_high","asia_low","asia_mid","asia_swept_high",
+    "asia_swept_low"}`` (NaN / 0 tant qu'aucune session close n'est disponible),
+    ou ``None`` si ``df`` n'a pas de colonne ``time``.
+    """
+    n = len(df)
+    if n == 0 or "time" not in df.columns:
+        return None
+    debut, fin = session or SESSIONS["asia"]
+    epoch = df["time"].dt.epoch(time_unit="s").to_numpy().astype(np.int64)
+    h = df["high"].to_numpy().astype(float)
+    lo = df["low"].to_numpy().astype(float)
+    heures = (epoch // 3600) % 24
+    jours = epoch // 86400
+
+    out = {k: np.full(n, np.nan) for k in ("asia_high", "asia_low", "asia_mid")}
+    out["asia_swept_high"] = np.zeros(n, dtype=np.int8)
+    out["asia_swept_low"] = np.zeros(n, dtype=np.int8)
+
+    dans_asie = (heures >= debut) & (heures < fin)
+    # Extrêmes de la session EN COURS de formation, remis à zéro à chaque jour.
+    haut_courant = bas_courant = np.nan
+    jour_courant = -1
+    # Extrêmes de la dernière session CLOSE — les seuls que l'on publie.
+    haut_publie = bas_publie = np.nan
+    balaye_h = balaye_b = 0
+
+    for i in range(n):
+        j = int(jours[i])
+        if j != jour_courant:
+            # Nouveau jour : la session de la veille est close, elle devient
+            # publiable et ses drapeaux de balayage repartent à zéro.
+            if np.isfinite(haut_courant):
+                haut_publie, bas_publie = haut_courant, bas_courant
+                balaye_h = balaye_b = 0
+            jour_courant = j
+            haut_courant = bas_courant = np.nan
+
+        if np.isfinite(haut_publie):
+            out["asia_high"][i] = haut_publie
+            out["asia_low"][i] = bas_publie
+            out["asia_mid"][i] = (haut_publie + bas_publie) / 2.0
+            # Balayage constaté À CETTE BARRE, jamais anticipé.
+            if h[i] > haut_publie:
+                balaye_h = 1
+            if lo[i] < bas_publie:
+                balaye_b = 1
+            out["asia_swept_high"][i] = balaye_h
+            out["asia_swept_low"][i] = balaye_b
+
+        if dans_asie[i]:
+            haut_courant = h[i] if not np.isfinite(haut_courant) else max(haut_courant, h[i])
+            bas_courant = lo[i] if not np.isfinite(bas_courant) else min(bas_courant, lo[i])
+
+    return out
+
+
 def killzone_flags(times_epoch: np.ndarray) -> np.ndarray:
     """1 si l'heure UTC d'ouverture de la barre tombe dans une killzone
     (Londres 07-10 UTC, New York 12-15 UTC), 0 sinon."""
