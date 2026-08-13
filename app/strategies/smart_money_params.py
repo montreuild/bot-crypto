@@ -46,6 +46,9 @@ PARAM_SPACE: Dict[str, List] = {
     # L4 (§78 §79) — choix de la cible, et plafond de distance au POI (§32 §23).
     'target_mode': ['nearest', 'expected_value'],
     'max_stop_atr': [0, 3.0, 4.0],
+    # L6 (§71) — tiers de setup : porte et/ou modulation du risque.
+    'tier_gate': [True, False],
+    'tier_sizing': [True, False],
     # L1 (§29 §30) — sorties partielles et mode de trailing du runner.
     'use_partial_exits': [True, False],
     'tp1_r': [0.75, 1.0, 1.5],
@@ -130,6 +133,11 @@ FIXED_PARAMS: Dict[str, Any] = {
     # L4 — `nearest` reproduit le ciblage historique ; 0 = plafond de stop off.
     'target_mode': 'nearest',
     'max_stop_atr': 0,
+    # L6 — tiers journalisés toujours, mais sans effet sur la décision : c'est
+    # la mesure `by_tier` qui doit dire s'ils valent quelque chose.
+    'tier_gate': False,
+    'tier_sizing': False,
+    'tier_a_score': 0.85,
     'break_body_atr': 0.5,
     'mss_sweep_lookback': 8,
     'warning_max_bars': 40,

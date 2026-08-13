@@ -11,6 +11,8 @@ from typing import Dict
 REASONS = (
     "budget_symbole", "budget_venue", "enveloppe_slot", "notionnel_min",
     "levier", "venue", "risk", "slot_cb", "slot_disabled", "stop_invalide",
+    # L6 (§97) — un événement de liquidité a déjà produit son trade primaire.
+    "evenement_deja_trade",
 )
 
 

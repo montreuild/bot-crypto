@@ -26,7 +26,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 
 from app.core import ict, smc
-from app.core.smc_quality import classe_liquidite, meilleure_cible
+from app.core.smc_quality import (
+    classe_liquidite,
+    meilleure_cible,
+    qualite_balayage,
+    qualite_displacement,
+)
 from app.core.smc_state import sequence_label, state_label
 
 logger = logging.getLogger(__name__)
@@ -873,7 +878,84 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
         return None
     best["structure_state"] = ctx.struct_state
     best["sequence_type"] = ctx.struct_seq
+    _stamp_l6(best, ctx, p)
+    if best.get("tier") == "D" and bool(p.get("tier_gate", False)):
+        return None
     return best
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  L6 — décomposition du score, séquence, tier, identité d'événement
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: §71 — facteur de risque par tier. Se branche sur le `size_factor` NATIF
+#: (Backtester et live le bornent déjà à [0, 2]) : pas de second mécanisme.
+FACTEUR_TIER = {"A": 1.0, "B": 0.85, "C": 0.5, "D": 0.0}
+
+
+def _tier(sequence: str, score: float, p: Dict[str, Any]) -> str:
+    """§71 — A continuation ou retournement confirmé, B retournement en cours,
+    C retournement précoce (moitié du risque), D non confirmé.
+
+    Le tier vient d'ABORD de la séquence, ensuite du score : un score élevé sur
+    un retournement non confirmé reste un pari, et c'est précisément ce que la
+    hiérarchie de tiers sert à dire.
+    """
+    seuil_a = float(p.get("tier_a_score", 0.85))
+    if sequence in ("CONTINUATION", "REVERSAL"):
+        return "A" if score >= seuil_a else "B"
+    if sequence == "EARLY_REVERSAL":
+        return "C"
+    if sequence == "FAILED_REVERSAL":
+        return "B"      # l'échec du retournement EST la continuation (§73)
+    return "D"
+
+
+def _stamp_l6(sig: dict, ctx: _SignalCtx, p: Dict[str, Any]) -> None:
+    """Pose la décomposition du score, l'identité d'événement et le tier.
+
+    ``sequence_id`` et ``market_event_id`` sont **déterministes**, pas des
+    UUID comme le suggère §72 : dérivés de la barre d'origine, ils sont
+    reproductibles d'un run à l'autre, ce qu'un UUID interdit — et c'est la
+    reproductibilité qui rend une analyse par séquence exploitable.
+    """
+    i = ctx.i
+    # §20 — décomposition sur les axes de la spécification, calculée à partir
+    # des notes de qualité de L4. Elle N'EST PAS le score qui décide (celui-ci
+    # reste l'additif historique, mesuré) : les deux sont publiés côte à côte
+    # pour être comparés par ablation, comme §3.2 du plan l'exige.
+    atr = ctx.atr or 1e-9
+    disp = qualite_displacement(i, ctx.open_, ctx.high, ctx.low, ctx.close, atr,
+                                casse_structure=ctx.struct_seq != "NONE")
+    balayage = 0.0
+    barre_evenement = i
+    for ev in ctx.res.get("_all_sweeps") or ():
+        if ev.get("index") == i:
+            balayage = qualite_balayage(ev, ctx.high, ctx.low, ctx.close,
+                                        ctx.open_, atr)
+            barre_evenement = int(ev["index"])
+            break
+    zone_ok = 1.0 if ((sig["side"] == "long" and ctx.zone == "discount")
+                      or (sig["side"] == "short" and ctx.zone == "premium")) else 0.0
+    htf_ok = 1.0 if (ctx.long_htf_ok if sig["side"] == "long"
+                     else ctx.short_htf_ok) else 0.0
+    sig["score_breakdown"] = {
+        "htf": round(htf_ok, 3),
+        "sweep": round(balayage, 3),
+        "displacement": round(disp, 3),
+        "structure": 1.0 if ctx.struct_seq in ("CONTINUATION", "REVERSAL") else 0.0,
+        "premium_discount": zone_ok,
+        "timing": 1.0 if ctx.kz_add > 0 else 0.0,
+    }
+    sig["sequence_id"] = f"{ctx.struct_state}:{barre_evenement}"
+    # §97 — un balayage et son displacement forment UN événement : tous les
+    # setups qui en découlent le partagent, et un seul trade primaire en sort.
+    sig["market_event_id"] = f"{sig['side']}:{barre_evenement}"
+    sig["tier"] = _tier(ctx.struct_seq, float(sig.get("score", 0.0)), p)
+    if bool(p.get("tier_sizing", False)):
+        facteur = FACTEUR_TIER.get(sig["tier"], 1.0)
+        sig["size_factor"] = round(
+            float(sig.get("size_factor", 1.0)) * facteur, 4)
 
 
 #: États dans lesquels une entrée est autorisée, par sens. Un `*_WARNING` est

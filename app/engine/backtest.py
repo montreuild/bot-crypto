@@ -1079,6 +1079,22 @@ class Backtester:
                 logger.debug(f"[Backtest] bar {i} : trade rejeté (circuit_breaker) — {reason}")
                 return None
 
+        # ── L6 (§97 §98) — un événement de liquidité, un trade ───────────────
+        # Le même balayage produit plusieurs setups (sweep, retest d'OB, FVG…) ;
+        # les traiter comme des signaux indépendants revenait à multiplier le
+        # risque sur un seul événement de marché. Le cooldown devient donc
+        # ÉVÉNEMENTIEL et non plus temporel : trois bougies ne justifient pas
+        # une nouvelle entrée, un nouvel événement si.
+        event_id = signal.get("market_event_id")
+        if event_id and bool(self.cfg.get("trading", {}).get("dedup_events", True)):
+            vus = getattr(ctx, "events_traded", None)
+            if vus is None:
+                vus = ctx.events_traded = set()
+            if event_id in vus:
+                diag["rejected_dedup"] = diag.get("rejected_dedup", 0) + 1
+                self.rejections.record("evenement_deja_trade", symbol=ctx.symbol)
+                return None
+
         atr_v = float(ctx.atr_arr[i])
         if atr_v <= 0:
             diag["rejected_atr_zero"] += 1
@@ -1260,6 +1276,9 @@ class Backtester:
         diag["trades_opened"] += 1
         diag["last_trade_bar"] = i
         ctx.bars_current_position = 0
+        vus = getattr(ctx, "events_traded", None)
+        if event_id and vus is not None:
+            vus.add(event_id)
         return position
 
     # ── run ───────────────────────────────────────────────────────────────────
