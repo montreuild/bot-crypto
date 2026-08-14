@@ -235,9 +235,14 @@ habituellement dans ce type de projet.
 - **Défense contre le log forging** (`middleware._incoming_correlation_id`) :
   identifiant client tronqué à 64 caractères et filtré sur `[A-Za-z0-9._-]`.
   Rare et pertinent.
-- **Couverture d'authentification exhaustive** : les 20 routers déclarent
-  `dependencies=[Depends(verify_api_key)]` sur toutes leurs routes. Aucun
-  endpoint métier ouvert.
+- **Couverture d'authentification exhaustive** — vérifiée route par route :
+  sur les **100 routes** déclarées dans `app/api/routes/`, **99 portent
+  `dependencies=[Depends(verify_api_key)]`**. La centième est
+  `@router.websocket("/ws")`, qui ne peut pas utiliser une dépendance FastAPI
+  standard et applique son propre `_check_ws_auth` (même règle : cookie, repli
+  query, `compare_digest`, filtre localhost sans clé). **Aucun endpoint métier
+  n'est ouvert** — seuls `/health` et `/metrics`, montés hors router, le sont
+  délibérément.
 - **Clé API jamais dans le bundle client** : le proxy Next l'injecte côté
   serveur (`WEB_API_KEY`, sans préfixe `NEXT_PUBLIC_`), et le cookie posé est
   `HttpOnly`.

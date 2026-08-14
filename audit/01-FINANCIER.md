@@ -68,6 +68,26 @@ toute la chaîne de décision.
 | Alpha vs Buy & Hold | `backtest.py:1731` `alpha = total_pnl − bnh_pnl` | alpha surévalué |
 | `win_rate`, `expectancy`, `profit_factor` | `backtest.py:202-242` | un trade dont le gain brut < frais d'entrée est compté **gagnant** |
 | Forward-test / edge | `forward_test.py:186-188`, `oos_tracker._per_trade_returns_pct` (sur `pnl_pct`) | même biais sur l'expectancy qui pilote les poids d'enveloppe |
+| Historique persisté | `core/backtest_history.py:27` (`"total_pnl"` dans la liste des champs retenus) | `data/backtest_history.json` ne stocke que la valeur biaisée |
+| Routes API | `routes/backtest.py:137-138, 473`, `routes/replay.py:138, 191-192` | l'UI affiche `total_pnl` et en dérive `pnl_pct` |
+
+### La bonne valeur existe — et personne ne la lit
+
+`net_profit` (= `final_equity − initial_capital`) est calculé
+(`backtest.py:336`) et exposé (`backtest.py:491`). Recherche exhaustive de ses
+consommateurs dans `app/` :
+
+```
+app/engine/backtest.py:334   (commentaire)
+app/engine/backtest.py:336   (calcul)
+app/engine/backtest.py:342   (repli à 0)
+app/engine/backtest.py:491   (exposition dans to_dict)
+```
+
+**Aucun autre.** La grandeur juste est produite, sérialisée, envoyée au
+frontend — et lue par personne, ni côté backend, ni côté UI, ni par
+l'optimiseur, ni par l'historique persisté. Pendant ce temps `total_pnl` est
+consommé à 18 endroits.
 
 ### Ordre de grandeur
 
