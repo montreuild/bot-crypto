@@ -891,6 +891,16 @@ def _signal_at(self, res: dict, i: int, open_: np.ndarray, high: np.ndarray,
 
 #: §71 — facteur de risque par tier. Se branche sur le `size_factor` NATIF
 #: (Backtester et live le bornent déjà à [0, 2]) : pas de second mécanisme.
+#:
+#: ⚠ `D: 0.0` annule la taille, donc le trade est refusé au sizing —
+#: `tier_sizing` SUBSUME `tier_gate`. Mesuré sur BTC 30 m : les deux seuls
+#: donnent 178 trades IS / 86 OOS, et les activer ENSEMBLE donne exactement le
+#: résultat de `tier_sizing` seul. Ce ne sont pas deux mécanismes indépendants,
+#: et leurs deux validations à 4/4 dans l'ablation comptent pour UNE.
+#:
+#: `size_by_confluence` est en revanche orthogonal : il RÉÉCHELONNE sans
+#: supprimer (191 trades conservés), là où le tier SUPPRIME. Les composer bat
+#: chacun pris seul (−343,7 IS contre −366,0 et −398,1).
 FACTEUR_TIER = {"A": 1.0, "B": 0.85, "C": 0.5, "D": 0.0}
 
 
