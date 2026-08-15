@@ -49,7 +49,7 @@ def market_structure(high: pl.Series, low: pl.Series,
 
 
 def htf_trend(df_htf, ema_period: int = 50, *, df_ltf=None,
-              mult: int = 4) -> int:
+              mult: int = 4, full_df=None, cache: dict = None) -> int:
     """Tendance du timeframe supérieur : +1 haussier, −1 baissier, 0 neutre.
 
     ⚠ **Parité backtest ↔ live (L5).** ``df_htf`` n'est fourni QUE par le live
@@ -62,8 +62,38 @@ def htf_trend(df_htf, ema_period: int = 50, *, df_ltf=None,
     causal du timeframe de base (mêmes buckets horloge que
     ``smc_sessions._htf_buckets``, donc seuls les buckets ENTIÈREMENT clôturés
     sont vus). Les appelants doivent le passer systématiquement.
+
+    ``full_df``/``cache`` (PERF) : ce repli reconstruit TOUTE l'agrégation HTF
+    à chaque appel — O(n) par barre, donc O(n²) sur un backtest, et c'est ce
+    qui domine le profil des stratégies qui l'appellent (mesuré : 82 % du temps
+    de ``breakout``). Quand ``df_ltf`` est un préfixe causal de ``full_df``, la
+    série complète est calculée UNE fois (mémoïsée dans ``cache``, détenu par
+    l'instance stratégie) puis indexée en O(1) — même idiome que
+    :func:`app.core.indicators_causal.ema_window` / ``supertrend_last``.
+    Résultat strictement identique (cf. tests/test_htf_trend_causal.py) ; le
+    repli barre à barre reste le chemin par défaut, y compris en live.
     """
     if df_htf is None and df_ltf is not None:
+        if cache is not None and full_df is not None:
+            from app.core.indicators_causal import (
+                _causal_prefix_index,
+                htf_trend_ema_series,
+            )
+            pos = _causal_prefix_index(df_ltf, full_df)
+            if pos is not None:
+                key = (id(full_df), full_df.height, int(ema_period), int(mult))
+                if key in cache:
+                    arr = cache[key]
+                else:
+                    if len(cache) > 8:      # garde-fou mémoire
+                        cache.clear()
+                    # ``None`` mémoïsé aussi : sur une grille irrégulière la
+                    # série vectorisée n'est pas démontrable, inutile de
+                    # repayer la vérification à chaque barre.
+                    arr = htf_trend_ema_series(full_df, ema_period, mult)
+                    cache[key] = arr
+                if arr is not None:
+                    return int(arr[pos])
         from app.core.smc_sessions import _htf_buckets
         htf_df, idx, _, _ = _htf_buckets(df_ltf, None, mult)
         if htf_df is None or idx[-1] < 0:

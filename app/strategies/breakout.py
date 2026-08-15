@@ -35,6 +35,8 @@ class Strategy(BaseStrategy):
         # Réutilisation causale des EMA custom (hors colonnes _pre_ema*).
         self._bt_full_df = None
         self._ema_cache:  Dict[tuple, Any] = {}
+        # Série htf_trend pré-calculée une fois par df de backtest (O(n²)→O(n)).
+        self._htf_cache:  Dict[tuple, Any] = {}
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         """Mémorise le df complet pour réutiliser les EMA causales (O(n²)→O(n))."""
@@ -128,7 +130,8 @@ class Strategy(BaseStrategy):
         macd_accel_bear = lh < ph
 
         # HTF
-        htf = htf_trend(df_htf, df_ltf=df)
+        htf = htf_trend(df_htf, df_ltf=df,
+                        full_df=self._bt_full_df, cache=self._htf_cache)
 
         # Confirmation 2 barres précédentes dans la même direction
         c1, c3 = float(close[-2]), float(close[-4])

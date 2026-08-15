@@ -52,6 +52,8 @@ class Strategy(BaseStrategy):
         self._st_cache:   Dict[tuple, Any] = {}
         self._macd_cache: Dict[tuple, Any] = {}
         self._ema_cache:  Dict[tuple, Any] = {}
+        # Série htf_trend pré-calculée une fois par df de backtest (O(n²)→O(n)).
+        self._htf_cache:  Dict[tuple, Any] = {}
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         """Mémorise le df complet pour réutiliser les séries SuperTrend/MACD
@@ -144,7 +146,8 @@ class Strategy(BaseStrategy):
         rsi_now = float(df["_pre_rsi14"][-1])
         vr      = float(df["_pre_volratio20"][-1])
         atr_val = float(df["_pre_atr14"][-1])
-        htf     = htf_trend(df_htf, df_ltf=df)
+        htf     = htf_trend(df_htf, df_ltf=df,
+                            full_df=self._bt_full_df, cache=self._htf_cache)
 
         if atr_val <= 0:
             return self._none()

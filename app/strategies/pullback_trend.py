@@ -37,6 +37,8 @@ class Strategy(BaseStrategy):
         # Réutilisation causale des EMA custom (hors colonnes _pre_ema*).
         self._bt_full_df = None
         self._ema_cache:  Dict[tuple, Any] = {}
+        # Série htf_trend pré-calculée une fois par df de backtest (O(n²)→O(n)).
+        self._htf_cache:  Dict[tuple, Any] = {}
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         """Mémorise le df complet pour réutiliser les EMA causales (O(n²)→O(n))."""
@@ -110,7 +112,8 @@ class Strategy(BaseStrategy):
         vol_now  = float(df["volume"][-1])
         ms_window = int(p.get("market_struct_window", 5))
         struct   = market_structure(high, low, window=ms_window)
-        htf      = htf_trend(df_htf, df_ltf=df)
+        htf      = htf_trend(df_htf, df_ltf=df,
+                             full_df=self._bt_full_df, cache=self._htf_cache)
 
         # ── Cooldown par symbole ──────────────────────────────────────────────
         last = self._last_signal.get(sym, -999)
