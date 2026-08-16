@@ -249,6 +249,9 @@ class Strategy(BaseStrategyML):
         self._bt_features_cache: Dict[float, np.ndarray] = {}
         self._bt_features_len: int = 0
         self._bt_full_df: Optional[pl.DataFrame] = None  # df complet du backtest (FeatureStore)
+        # Prédictions pré-calculées sur la fenêtre complète, par (tf, adx_threshold).
+        # Réécrites à chaque entraînement — cf. _seed_bt_predictions.
+        self._bt_preds: Dict[tuple, Dict[str, np.ndarray]] = {}
         # Diagnostic : compteurs et accumulateurs pour comprendre pourquoi
         # 0 trade peut survenir en backtest (échec training silencieux vs
         # seuils trop stricts). Loggés périodiquement dans score().
@@ -270,6 +273,7 @@ class Strategy(BaseStrategyML):
         """
         try:
             self._bt_features_cache.clear()
+            self._bt_preds.clear()
             self._bt_features_len = len(df)
             self._bt_full_df = df  # conservé pour des (re)builds alignés sur la fenêtre complète
             # Pré-peuplement : couvre toutes les valeurs d'adx_threshold du
@@ -292,8 +296,61 @@ class Strategy(BaseStrategyML):
         except Exception as e:
             logger.warning(f"[OpusV4-Stat] prepare_for_backtest KO : {e}")
             self._bt_features_cache.clear()
+            self._bt_preds.clear()
             self._bt_features_len = 0
             self._bt_full_df = None
+
+    # ── Prédiction par lot (backtest) ───────────────────────────────────────
+    def _seed_bt_predictions(self, tf_key: str, adx_threshold: float) -> None:
+        """Prédit amplitude et direction sur TOUTE la fenêtre du backtest.
+
+        Appelé après chaque entraînement réussi : le tableau porte donc
+        toujours les prédictions du modèle courant, et une barre n'est jamais
+        servie par un modèle plus récent qu'elle (cf. app/ml/bt_predictions.py).
+        Sans cache de features complet (live, fenêtre glissante), on ne sème
+        rien et ``score()`` reste sur sa prédiction ligne à ligne.
+        """
+        from app.ml.bt_predictions import predict_full
+        key = (tf_key, round(float(adx_threshold), 6))
+        self._bt_preds.pop(key, None)
+        if not self._bt_features_len:
+            return
+        X = self._bt_features_cache.get(round(float(adx_threshold), 6))
+        if X is None or len(X) == 0:
+            return
+        with self._lock:
+            amp_m = self._amp_models.get(tf_key)
+            dir_m = self._dir_models.get(tf_key)
+        amp = predict_full(amp_m, X)
+        dir_ = predict_full(dir_m, X)
+        if amp is None or dir_ is None:
+            return
+        self._bt_preds[key] = {"amp": amp, "dir": dir_}
+        logger.debug("[OpusV4-Stat] %s : prédictions par lot semées sur %d barres",
+                     tf_key, len(X))
+
+    def _bt_predictions_at(self, tf_key: str, adx_threshold: float,
+                           n_df: int, n_x: int) -> Optional[tuple]:
+        """``(p_event, p_up)`` depuis le lot, ou ``None``.
+
+        ``None`` signifie « je ne peux pas prouver que c'est la bonne barre » et
+        l'appelant prédit ligne à ligne. Les deux conditions vérifiées sont
+        exactement celles sous lesquelles ``_get_or_build_features`` a servi le
+        cache complet : la fenêtre tient dans le cache, et la matrice rendue
+        fait bien ``len(df)`` lignes. Hors de là, ``X`` vient du repli sur
+        250 barres et son dernier indice ne désigne pas la même barre.
+        """
+        if not self._bt_features_len or n_df > self._bt_features_len or n_x != n_df:
+            return None
+        preds = self._bt_preds.get((tf_key, round(float(adx_threshold), 6)))
+        if preds is None:
+            return None
+        from app.ml.bt_predictions import value_at
+        p_event = value_at(preds["amp"], n_df - 1)
+        p_up = value_at(preds["dir"], n_df - 1)
+        if p_event is None or p_up is None:
+            return None
+        return p_event, p_up
 
     def _build_full_features(self, adx_threshold: float) -> Optional[np.ndarray]:
         """Construit X (n, 48) sur TOUTE la fenêtre de backtest via le catalogue
@@ -389,6 +446,7 @@ class Strategy(BaseStrategyML):
             self._managed_externally = False
             self._best_auc = 0.0
         self._bt_features_cache.clear()
+        self._bt_preds.clear()
         self._bt_features_len = 0
         self._bt_full_df = None
         self._diag_predictions.clear()
@@ -485,6 +543,7 @@ class Strategy(BaseStrategyML):
             self._train_meta[tf_key]      = dict(out.train_meta)
             self._trained_recipes[tf_key] = out          # ML-19
             self._best_auc = (auc_amp + auc_dir) / 2.0
+        self._seed_bt_predictions(tf_key, adx_threshold)
         logger.info(
             "[V4] %s entraîné : %s train / %s val | AUC amp=%.3f dir=%.3f"
             % (tf_key, out.train_meta.get("n_train"), out.train_meta.get("n_valid"),
@@ -655,8 +714,6 @@ class Strategy(BaseStrategyML):
             self._diag_record_reject("features_manquantes")
             self._diag_dump_if_due(cnt)
             return self._none("Features manquantes")
-        X_last = X_full[-1:]  # dernière ligne uniquement
-
         with self._lock:
             amp_m   = self._amp_models.get(tf_key)
             dir_m   = self._dir_models.get(tf_key)
@@ -666,16 +723,22 @@ class Strategy(BaseStrategyML):
             self._diag_dump_if_due(cnt)
             return self._none("Modèle indisponible")
 
-        try:
-            # phase6 : plus de StandardScaler — LightGBM est invariant aux
-            # transformations monotones des features.
-            p_event = float(amp_m.predict(X_last)[0])
-            p_up    = float(dir_m.predict(X_last)[0])
-        except Exception as e:
-            logger.warning(f"[V4] Prédiction : {e}")
-            self._diag_record_reject("erreur_predict")
-            self._diag_dump_if_due(cnt)
-            return self._none("Erreur prédiction")
+        # Lot pré-calculé si l'alignement est prouvé, sinon ligne à ligne.
+        pair = self._bt_predictions_at(tf_key, adx_threshold, len(df), len(X_full))
+        if pair is not None:
+            p_event, p_up = pair
+        else:
+            try:
+                # phase6 : plus de StandardScaler — LightGBM est invariant aux
+                # transformations monotones des features.
+                X_last = X_full[-1:]  # dernière ligne uniquement
+                p_event = float(amp_m.predict(X_last)[0])
+                p_up    = float(dir_m.predict(X_last)[0])
+            except Exception as e:
+                logger.warning(f"[V4] Prédiction : {e}")
+                self._diag_record_reject("erreur_predict")
+                self._diag_dump_if_due(cnt)
+                return self._none("Erreur prédiction")
 
         # Prédiction réussie : on l'enregistre pour la distribution.
         self._diag_predictions.append((p_event, p_up, regime))

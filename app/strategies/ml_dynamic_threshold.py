@@ -39,7 +39,7 @@ import numpy as np
 import polars as pl
 
 from app.core.indicators import adx as _adx
-from app.core.indicators import atr_series, rsi
+from app.core.indicators import atr_series, pre_val, rsi
 from app.engine.engine import BaseStrategyML
 
 logger = logging.getLogger(__name__)
@@ -579,6 +579,9 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
         self._bt_features: Optional[pl.DataFrame] = None
         self._bt_features_len: int = 0
         self._bt_train_offset: Optional[int] = None
+        # Prédictions pré-calculées sur la fenêtre complète, par tf.
+        # Réécrites à chaque entraînement — cf. _seed_bt_predictions.
+        self._bt_preds: Dict[str, Any] = {}
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         """Pré-calcule les ~30 features pour toute la fenêtre du backtest."""
@@ -592,6 +595,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             if feats is not None and len(feats) > 0:
                 self._bt_features = feats
                 self._bt_features_len = len(df)
+                self._bt_preds.clear()
                 logger.info(
                     f"[MLDynThr] backtest : features pré-calculées sur "
                     f"{self._bt_features_len} bougies ({len(feats.columns)} colonnes)"
@@ -600,6 +604,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             logger.warning(f"[MLDynThr] prepare_for_backtest KO : {e}")
             self._bt_features = None
             self._bt_features_len = 0
+            self._bt_preds.clear()
 
     def _get_or_build_features(self, df: pl.DataFrame, offset: int = None) -> pl.DataFrame:
         if self._bt_features is not None and len(df) <= self._bt_features_len:
@@ -607,6 +612,59 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 return self._bt_features.slice(offset, len(df))
             return self._bt_features.head(len(df))
         return compute_features(df)
+
+    # ── Prédiction par lot (backtest) ───────────────────────────────────
+    def _seed_bt_predictions(self, tf_key: str) -> None:
+        """Prédit sur TOUTE la fenêtre du backtest après chaque entraînement.
+
+        Le tableau porte donc toujours le modèle courant : une barre n'est
+        jamais servie par un modèle plus récent qu'elle (cf.
+        app/ml/bt_predictions.py). Sans cache de features complet — live,
+        fenêtre glissante — on ne sème rien et ``_predict`` reste ligne à
+        ligne.
+        """
+        from app.ml.bt_predictions import predict_full
+        self._bt_preds.pop(tf_key, None)
+        feats = self._bt_features
+        if feats is None or len(feats) == 0:
+            return
+        with self._model_lock:
+            booster = self._boosters.get(tf_key)
+        if booster is None:
+            return
+        X = np.nan_to_num(feats.to_numpy().astype(np.float64),
+                          nan=0.0, posinf=1.0, neginf=-1.0)
+        arr = predict_full(booster, X)
+        if arr is not None:
+            self._bt_preds[tf_key] = arr
+
+    def _bt_proba_at(self, tf_key: str, feats: pl.DataFrame,
+                     n_df: int) -> Optional[float]:
+        """Proba de la barre courante depuis le lot, ou ``None``.
+
+        Les conditions sont celles sous lesquelles ``_get_or_build_features``
+        a servi le préfixe du cache ; la dernière vérification compare une
+        VALEUR, pas seulement une longueur — deux frames de même taille
+        peuvent venir de fenêtres différentes, et servir la prédiction d'une
+        autre barre sans que rien ne le signale serait le pire mode de
+        défaillance possible ici.
+        """
+        arr = self._bt_preds.get(tf_key)
+        cache = self._bt_features
+        if arr is None or cache is None or n_df > self._bt_features_len:
+            return None
+        if len(feats) != n_df or n_df > len(cache):
+            return None
+        idx = n_df - 1
+        try:
+            col = feats.columns[0]
+            a, b = feats[col][idx], cache[col][idx]
+            if a is None or b is None or float(a) != float(b):
+                return None
+        except Exception:
+            return None
+        from app.ml.bt_predictions import value_at
+        return value_at(arr, idx)
 
     # ── Interface principale ───────────────────────────────────
     def score(self, df: pl.DataFrame, params: dict = None, df_htf=None, symbol: str = "") -> Dict[str, Any]:
@@ -743,6 +801,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 self._best_auc     = best_auc
                 self._best_params  = best_p
                 self._feature_cols = list(feats.columns)
+            self._seed_bt_predictions(tf_key)
 
             # Validation IS/OOS si random search a tourné.
             try:
@@ -776,7 +835,16 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             if len(feats) == 0:
                 return self._no_signal()
 
-            adx_val = float(_adx(df.tail(300), 14)[0][-1])
+            # Colonne pré-calculée (O(1)) plutôt qu'un ADX recalculé sur
+            # 300 barres à CHAQUE barre. Même convention de lissage (Wilder
+            # α=1/14 des deux côtés depuis §8ter) ; seul l'amorçage de la
+            # récurrence diffère, et il est éteint après 300 barres —
+            # mesuré sur 2 700 barres : écart max 1,2e-06, et le verdict
+            # `ADX < adx_min` ne bascule sur AUCUNE barre. Repli conservé
+            # si la colonne est absente (frame non pré-calculé).
+            _adx_pre = pre_val(df, "_pre_adx14")
+            adx_val = float(_adx_pre) if _adx_pre is not None \
+                else float(_adx(df.tail(300), 14)[0][-1])
             auc_tf  = self._best_auc_per_tf.get(tf, self._best_auc)
             if adx_val < self.adx_min:
                 return {
@@ -788,17 +856,20 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                     "indicators": {"adx": round(adx_val, 2), "auc": round(auc_tf, 4), "tf": tf},
                 }
 
-            X_last = np.nan_to_num(
-                feats[-1:].to_numpy().astype(np.float64),
-                nan=0.0, posinf=1.0, neginf=-1.0,
-            )
             with self._model_lock:
                 booster = self._boosters.get(tf)
             if booster is None:
                 return self._no_signal()
+            # Lot pré-calculé si l'alignement est prouvé, sinon ligne à ligne.
             # LightGBM natif : booster.predict retourne la proba directe (équivalent
             # de predict_proba()[:, 1] du wrapper sklearn).
-            proba  = float(booster.predict(X_last)[0])
+            proba = self._bt_proba_at(tf, feats, len(df))
+            if proba is None:
+                X_last = np.nan_to_num(
+                    feats[-1:].to_numpy().astype(np.float64),
+                    nan=0.0, posinf=1.0, neginf=-1.0,
+                )
+                proba = float(booster.predict(X_last)[0])
             close  = float(df["close"][-1])
 
             if proba >= self.proba_long:
@@ -966,6 +1037,7 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
             self._feature_cols = []
         self._bt_features = None
         self._bt_features_len = 0
+        self._bt_preds.clear()
 
     @property
     def is_trained(self) -> bool:
