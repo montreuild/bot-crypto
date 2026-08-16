@@ -252,6 +252,9 @@ class Strategy(BaseStrategyML):
         # Prédictions pré-calculées sur la fenêtre complète, par (tf, adx_threshold).
         # Réécrites à chaque entraînement — cf. _seed_bt_predictions.
         self._bt_preds: Dict[tuple, Dict[str, np.ndarray]] = {}
+        # Position de la fenêtre d'entraînement dans le cache complet —
+        # posée par score() avant _train, lue par _features_for_training.
+        self._bt_train_offset: int = 0
         # Diagnostic : compteurs et accumulateurs pour comprendre pourquoi
         # 0 trade peut survenir en backtest (échec training silencieux vs
         # seuils trop stricts). Loggés périodiquement dans score().
@@ -370,7 +373,8 @@ class Strategy(BaseStrategyML):
             in_kind="polars", out_kind="numpy")
 
     def _features_for_training(self, df: pl.DataFrame,
-                               adx_threshold: float) -> Optional[np.ndarray]:
+                               adx_threshold: float,
+                               offset: int = 0) -> Optional[np.ndarray]:
         """Features sur TOUTE la fenêtre reçue — chemin d'ENTRAÎNEMENT.
 
         ``_get_or_build_features`` retombe, hors backtest, sur un slice des
@@ -383,14 +387,24 @@ class Strategy(BaseStrategyML):
         message ne le signalait.
 
         Le cache de backtest reste utilisé quand il couvre la fenêtre : il est
-        semé par ``prepare_for_backtest`` sur le frame complet, et
-        ``X[:len(df)]`` l'aligne sur le préfixe courant.
+        semé par ``prepare_for_backtest`` sur le frame complet, et ``offset``
+        repère la position de la fenêtre d'entraînement dedans.
+
+        ⚠ ``offset`` n'est pas un confort. Cette méthode servait ``X[:len(df)]``
+        — les ``len(df)`` PREMIÈRES barres du backtest — quelle que soit la
+        fenêtre reçue. Or ``score()`` entraîne sur une fenêtre de QUEUE dès que
+        le backtest dépasse ``warmup_bars * 2 + 1`` barres (4 001 par défaut) :
+        au-delà, le modèle apprenait des features du DÉBUT de la série contre
+        des labels de la FIN. Mesuré sur 6 000 barres : écart max 187 entre les
+        deux matrices, et zéro message. C'est ce que ``MLBackend`` évite depuis
+        toujours avec ``bt_train_offset`` ; v4/v5 ne l'avaient jamais reçu.
         """
-        if self._bt_features_len and len(df) <= self._bt_features_len:
+        off = max(0, int(offset or 0))
+        if self._bt_features_len and off + len(df) <= self._bt_features_len:
             key = round(float(adx_threshold), 6)
             X = self._bt_features_cache.get(key)
-            if X is not None and len(X) >= len(df):
-                return X[: len(df)]
+            if X is not None and len(X) >= off + len(df):
+                return X[off: off + len(df)]
         return _build_features(df, adx_threshold)
 
 
@@ -492,10 +506,43 @@ class Strategy(BaseStrategyML):
 
     # ── Cœur ML : deux modèles séparés (amplitude + direction) ───────────────
 
+    #: État par TF que ``cached_train`` capture et restaure sur un hit.
+    _TRAIN_STATE_ATTRS = ("_amp_models", "_dir_models", "_best_auc_per_tf",
+                          "_train_meta", "_trained_recipes")
+    #: Params qui INVALIDENT le cache. ``adx_threshold`` en fait partie et ce
+    #: n'est pas optionnel : contrairement à la famille Opus — dont les
+    #: ``TrainState.PARAM_KEYS`` ne le mentionnent pas — il change ici le
+    #: CALCUL DES FEATURES (détection de régime), pas seulement un seuil de
+    #: décision. Reprendre la liste d'Opus telle quelle ferait partager un
+    #: modèle entre deux essais entraînés sur des matrices différentes : un
+    #: faux résultat, pas une simple perte de vitesse.
+    _TRAIN_PARAM_KEYS = ("adx_threshold", "amp_top_pct")
+
     def _train(self, df: pl.DataFrame, tf_key: str,
                adx_threshold: float = 20.0,
                amp_top_pct: float = 0.30) -> bool:
-        """Entraîne amplitude + direction — délègue à ``app.ml.recipe_trainer``.
+        """Entraînement avec cache process-wide (cf. app/core/train_cache.py).
+
+        Deux essais d'optimisation qui ne font varier que des seuils de
+        DÉCISION relancent le même entraînement à l'identique. Le cache le
+        sert au lieu de le recalculer ; ``aligned_train_window`` (côté
+        ``score()``) quantifie la fin de fenêtre pour que les essais tombent
+        sur la même clé.
+        """
+        from app.core.train_cache import cached_train
+        params = {"adx_threshold": adx_threshold, "amp_top_pct": amp_top_pct}
+        ok = cached_train(self, df, tf_key, params, self._train_impl,
+                          self._TRAIN_STATE_ATTRS, self._TRAIN_PARAM_KEYS)
+        # Semé même sur un HIT : le cache rend les modèles, pas les prédictions.
+        if ok:
+            self._seed_bt_predictions(tf_key, adx_threshold)
+        return ok
+
+    def _train_impl(self, df: pl.DataFrame, tf_key: str,
+                    params: dict) -> bool:
+        """Corps de l'entraînement — le cache est géré par ``_train``.
+
+        Entraîne amplitude + direction — délègue à ``app.ml.recipe_trainer``.
 
         Étape C : ~141 lignes de boucle LightGBM (Dataset, scale_pos_weight,
         early stopping, calibration) vivaient ici, dupliquées d'une stratégie à
@@ -511,10 +558,12 @@ class Strategy(BaseStrategyML):
         Équivalence vérifiée avant bascule : prédictions identiques à
         l'ancienne implémentation (``scripts/check_recipe_trainer_equivalence.py``).
         """
+        adx_threshold = float(params.get("adx_threshold", 20.0))
+        amp_top_pct = float(params.get("amp_top_pct", 0.30))
         from app.ml import features_catalog as _fc
         from app.ml import recipe_trainer as _rt
 
-        X = self._features_for_training(df, adx_threshold)
+        X = self._features_for_training(df, adx_threshold, self._bt_train_offset)
         if X is None:
             return False
         recipe = (self.models or {}).get("signal")
@@ -543,7 +592,6 @@ class Strategy(BaseStrategyML):
             self._train_meta[tf_key]      = dict(out.train_meta)
             self._trained_recipes[tf_key] = out          # ML-19
             self._best_auc = (auc_amp + auc_dir) / 2.0
-        self._seed_bt_predictions(tf_key, adx_threshold)
         logger.info(
             "[V4] %s entraîné : %s train / %s val | AUC amp=%.3f dir=%.3f"
             % (tf_key, out.train_meta.get("n_train"), out.train_meta.get("n_valid"),
@@ -670,9 +718,18 @@ class Strategy(BaseStrategyML):
         need_train = (tf_key not in self._trained_tfs) or (cnt - last >= retrain_every)
 
         if need_train and not self._managed_externally:
-            n_train  = min(len(df) - 1, warmup_bars * 2)
-            train_df = df.slice(len(df) - n_train - 1, n_train)
-            if self._train(train_df, tf_key, adx_threshold, amp_top_pct):
+            # Fenêtre alignée sur la grille ``retrain_every`` : sans cela, deux
+            # essais aux seuils différents retrainent à des barres décalées, les
+            # fenêtres diffèrent et le cache ne peut JAMAIS servir. La contrepartie
+            # est une staleness bornée à retrain_every barres — celle du
+            # déclenchement lui-même (cf. app/core/train_cache.py).
+            from app.core.train_cache import aligned_train_window
+            n_train = min(len(df) - 1, warmup_bars * 2)
+            train_df, self._bt_train_offset = aligned_train_window(
+                df, retrain_every, n_train)
+            ok = self._train(train_df, tf_key, adx_threshold, amp_top_pct)
+            self._bt_train_offset = 0
+            if ok:
                 self._last_retrain[tf_key] = cnt
 
         if tf_key not in self._trained_tfs:
