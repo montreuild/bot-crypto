@@ -5,10 +5,11 @@
 > optimisations déjà présentes dans le dépôt ne sont appliquées qu'à une partie
 > des stratégies.
 >
-> **Statut** : la première recommandation (§2.2) est **appliquée et mesurée** dans
-> la branche `claude/ml-optimizer-backtest-perf-0x32so`. Tout le reste est
-> **proposé**, chiffré quand la mesure était possible, explicitement estimé
-> sinon.
+> **Statut** : dix des douze recommandations sont **appliquées et mesurées** dans
+> la branche `claude/ml-optimizer-backtest-perf-0x32so` (cf. §6 pour l'état de
+> chacune, et §7 pour ce que l'application a fait apparaître). Restent proposés
+> les items 9, 11 et 12. Deux prédictions de cette analyse ont été **démenties
+> par la mesure** — c'est noté à l'endroit où elles figuraient.
 
 ---
 
@@ -501,18 +502,19 @@ un plancher, pas un chronomètre, donc stable en CI.
 | # | Action | § | Effort | Gain | Risque |
 |---|---|---|---|---|---|
 | ✅ | `htf_trend` causal mémoïsé (8 stratégies) | 2.2 | — | **×9 à ×120** mesuré | nul (équité identique, testé) |
-| 1 | `train_cache` + `aligned_train_window` sur v4/v5/smc_ml_edge | 3.2 | M | l'essentiel du coût d'un job ML | moyen — `PARAM_KEYS` à ne pas copier tel quel |
-| 2 | Prédiction par lot sur v4/v5/ml_dynamic_threshold | 4.4 | M | ×11 sur l'inférence | faible (précédent écrit dans le dépôt) |
-| 3 | `n_trials` fonction de l'espace ; élaguer `smart_money` | 3.3 | S/M | qualité + coût du parc | faible |
-| 4 | `n_jobs` LightGBM contextuel | 4.1 | S | ×3,1 en entraînement autonome | faible, mais reproductibilité à mesurer |
-| 5 | Tranche holdout jamais vue avant `beats_baseline` | 3.4 | M | **qualité de décision** | moyen — demande plus d'historique |
-| 6 | `bb_squeeze` causal mémoïsé | 2.3 | S | ×2,5–3 sur 3 stratégies | faible |
-| 7 | Embargo = max(horizons) aux trois splits | 4.2 | S | justesse de l'AUC du gate | faible |
-| 8 | `amp_thr` sur le train seul | 4.3 | S | justesse de l'AUC du gate | faible (AUC rapportées en baisse) |
+| ✅ 1 | `train_cache` + `aligned_train_window` sur v4/v5/smc_ml_edge | 3.2 | M | ×1,4 à ×2,0 mesuré, croît avec le nombre de retrains | **a révélé un bug** (features désalignées) |
+| ✅ 2 | Prédiction par lot sur v4/v5/ml_dynamic_threshold | 4.4 | M | ×14 à ×20 isolé ; invisible tant que l'entraînement domine | nul (bit-à-bit, testé) |
+| ✅ 3 | `n_trials` fonction de l'espace | 3.3 | S | 11 stratégies sous le seuil au lieu de 15 | coût du parc en hausse, assumé |
+| ✅ 4 | `n_jobs` LightGBM contextuel | 4.1 | S | ×3,1 en entraînement autonome | nul (modèle identique, mesuré) |
+| ✅ 5 | Tranche holdout jamais vue avant `beats_baseline` | 3.4 | M | **qualité de décision** | refus franc si l'historique ne suffit pas |
+| ✅ 6 | `bb_squeeze` causal mémoïsé | 2.3 | S | ×18 sur `breakout` (×80 cumulé) | nul (équité identique, testé) |
+| ✅ 7 | Embargo = max(horizons) aux trois splits | 4.2 | S | justesse par construction | nul à embargo 0, testé |
+| ✅ 8 | `amp_thr` sur le train seul | 4.3 | S | justesse de l'AUC du gate | nul (défaut inchangé) |
 | 9 | Test de garde « plancher barres/s » | 5 | S | non-régression | nul |
-| 10 | ADX pré-calculé dans `ml_dynamic_threshold` | 4.5 | S | marginal | faible (convention de lissage) |
+| ✅ 10 | ADX pré-calculé dans `ml_dynamic_threshold` | 4.5 | S | marginal | nul (0 bascule de verdict sur 2 700 barres) |
 | 11 | Soumission continue au pool ; payload IPC non renvoyé | 3.1 | S/M | 1–13 % ; 0,06 s/40 essais | faible |
 | 12 | `window_sweep` parallèle | 4.5 | M | ≈ nb de fenêtres | faible |
+| ✅ + | Cadence de réentraînement appliquée aussi aux échecs | 7 | S | 368 → 5 tentatives inutiles | nul si l'entraînement réussit |
 
 Les items 1, 2, 4, 6 sont des **gains de vitesse à comportement constant** — ils se
 valident par comparaison stricte (équité identique, mêmes `best_params`) et ne
@@ -523,13 +525,106 @@ pour une régression.
 
 ---
 
+## 7. Ce que l'application du plan a fait apparaître
+
+Cette section n'existait pas dans l'analyse initiale : elle rapporte ce que la
+mise en œuvre a appris, y compris contre l'analyse elle-même.
+
+### 7.1 Deux bugs, trouvés en portant des optimisations
+
+Aucun des deux ne se cherchait ; les deux sortent du fait qu'on est allé
+regarder le code de près pour y brancher autre chose.
+
+**Les features d'entraînement de v4/v5 ne correspondaient pas à leurs labels.**
+`_features_for_training` servait `X[:len(df)]` — les premières barres du
+backtest — quelle que soit la fenêtre reçue. Or `score()` entraîne sur une
+fenêtre de QUEUE dès que le backtest dépasse `warmup_bars × 2 + 1` barres
+(4 001 par défaut) : au-delà, chaque réentraînement apprenait des features du
+DÉBUT de la série contre des labels de la FIN. Écart mesuré entre la matrice
+servie et la bonne : 187 ; avec l'offset, 0. Tout job d'optimisation sur
+50 000 bougies était concerné à partir de la 4 001ᵉ barre. `MLBackend` évite
+cela depuis toujours avec `bt_train_offset` — c'est le même angle mort que le
+cache d'entraînement : ce que la famille Opus reçoit par sa base, ces deux-là
+ne l'avaient pas.
+
+**Un entraînement qui échoue était relancé à chaque barre.** Le test de besoin
+est `(tf non entraîné) OU (appels − dernier_succès ≥ retrain_every)` ; un échec
+ne met pas à jour `dernier_succès`, donc la première clause reste vraie et la
+boucle tourne sans délai. Mesuré : 368 échecs ré-essayés pour 7 succès à
+`retrain_every=800`, 1 168 pour 3 succès à 1 600.
+
+### 7.2 Trois prédictions démenties par la mesure
+
+| Ce que l'analyse annonçait | Ce que la mesure a dit |
+|---|---|
+| « attendre une légère baisse des AUC » après l'embargo (§4.2-4.3) | Sur 5 graines, le delta vaut +0,009 / +0,036 / +0,037 / −0,008 / +0,007 : **le signe n'est même pas constant**. Sur des prix aléatoires il n'y a aucun edge à faire fuir. La correction se justifie par construction, pas par ce chiffre. |
+| « ×11 sur l'inférence » pour la prédiction par lot (§4.4) | ×14 à ×20 **isolément**, mais ×0,99 à ×1,14 sur un backtest réel : l'entraînement domine tellement que le gain est invisible tant que le cache d'entraînement n'est pas branché. Les deux corrections se composent ; aucune ne se mesure seule. |
+| « reproductibilité à mesurer » avant de toucher `n_jobs` (§4.1) | Entre 1 et 4 threads, la sérialisation du booster diffère de **deux lignes sur 4 002** (`num_threads`), prédictions bit-à-bit identiques. La réserve ne tenait pas. |
+
+Une quatrième mesure a été **corrigée en cours de route** : un premier A/B
+donnait ×64 pour la prédiction par lot sur `ml_dynamic_threshold`. Le profil l'a
+démenti — les 100 s étaient de l'entraînement, et le second bras profitait du
+`train_cache` peuplé par le premier. Avec le cache vidé entre chaque bras et les
+deux ordres joués, il ne reste rien. Un banc A/B sur du code qui mémoïse doit
+vider ses caches entre les bras ; sinon il mesure l'ordre d'exécution.
+
+### 7.3 `retrain_every` : peut-on passer de 800 à 2 000 ?
+
+La question ne pouvait pas recevoir de réponse avant §7.1 : la première mesure
+donnait 375 entraînements à 800, 373 à 1 200, **1 171 à 1 600**, 3 à 2 000. Un
+paramètre de cadence qui triple le travail quand on le double ne mesure pas ce
+qu'il annonce. Une fois la boucle d'échecs bornée :
+
+| `retrain_every` | réussis | échecs | total | temps |
+|---|---|---|---|---|
+| 800 | 7 | 5 | 12 | 2,66 s |
+| 1 200 | 5 | 4 | 9 | 1,81 s |
+| 1 600 | 3 | 8 | 11 | 1,26 s |
+| 2 000 | 3 | 0 | 3 | 1,21 s |
+
+Trois choses à savoir avant de trancher :
+
+1. **Le compteur compte des appels à `score()`, pas des barres.** `score()`
+   n'est appelé que hors position : à 40 % de temps en position, 800 appels
+   valent ~1 300 barres. « 800 » n'est donc pas une durée, et deux stratégies
+   au même réglage ne se réentraînent pas au même rythme.
+2. **L'argument de coût a beaucoup faibli.** C'était le principal motif pour
+   augmenter la valeur ; avec le `train_cache` désormais branché sur v4/v5/
+   smc_ml_edge, les essais d'un même job se partagent leurs entraînements —
+   seul le premier paie. Ce qui reste à payer, c'est le live et le premier
+   essai.
+3. **Le coût de la staleness ne se mesure pas ici.** Sur une marche aléatoire,
+   un modèle vieux de 800 ou de 2 000 barres est également inutile : il n'y a
+   pas de régime à rater. Toute mesure de qualité sur ces données serait du
+   bruit présenté comme un résultat.
+
+**Recommandation.** Ne pas trancher à la main : `retrain_every` n'est dans
+AUCUN `param_space` du dépôt — il n'a donc jamais été mesuré, seulement choisi.
+Maintenant que le gate d'apply se prononce sur une tranche jamais vue (§3.4),
+c'est exactement le genre de paramètre qu'on peut confier à l'optimiseur sans
+craindre de sélectionner du bruit. Ajouter `retrain_every: [800, 1200, 1600,
+2000]` au `param_space` de v4/v5/smc_ml_edge, sur données réelles, répondra
+mieux que n'importe quel raisonnement — et la réponse sera probablement
+différente selon le timeframe, ce qu'une valeur unique en dur ne peut pas
+exprimer.
+
+En attendant cette mesure : **garder 800**. C'est la valeur sous laquelle tous
+les modèles publiés ont été produits, le coût qu'elle représente vient d'être
+divisé, et rien de mesuré ne justifie d'en changer.
+
+---
+
 ## Annexe — reproduire les mesures
 
 ```bash
 pip install polars numpy lightgbm pyyaml python-dotenv pytest
 export ALLOW_INSECURE_WEB=1          # config de dev, cf. app/core/config.py
 
-python -m pytest tests/test_htf_trend_causal.py -q     # équivalence htf_trend
+python -m pytest tests/test_htf_trend_causal.py tests/test_bb_squeeze_causal.py -q
+python -m pytest tests/test_bt_predictions.py tests/test_ml_splitting.py -q
+python -m pytest tests/test_train_cache_v4_v5.py tests/test_holdout_split.py -q
+python -m pytest tests/test_opt_budget.py tests/test_ml_threads.py -q
+python -m pytest tests/test_retrain_cadence.py -q
 python scripts/audit_param_space.py                    # couverture des espaces
 ```
 
