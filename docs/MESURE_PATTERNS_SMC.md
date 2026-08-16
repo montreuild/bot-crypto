@@ -169,6 +169,39 @@ et un index 1 h ne sont pas comparables.
 
 ---
 
+## 5 bis. Coût mesuré en multi-TF — à lire avant de lancer
+
+L'énumération des composés à trois maillons croît avec le carré du nombre
+d'événements par fenêtre, et le multi-TF empile les événements. Mesuré sur
+**26 947 événements** (15m/30m/1h/4h, ~125 jours), pour la seule énumération
+L3 :
+
+| `--fenetre-composes` | événements/fenêtre | séquences L3 distinctes | durée | mémoire |
+|---|---|---|---|---|
+| 2 barres | 6 | 78 000 | 2,6 s | 19 Mo |
+| 4 barres | 10 | 142 000 | 6,6 s | 39 Mo |
+| 6 barres | 15 | 178 000 | 11,5 s | 65 Mo |
+| 8 barres | 19 | 214 000 | 17,9 s | 85 Mo |
+| **12 barres (défaut)** | 28 | 252 000 | 35,4 s | 139 Mo |
+
+Ces durées sont celles d'UNE énumération ; `mine` en fait quatre (deux
+longueurs × deux tranches) et la mesure des composés une de plus. Sur quatre
+timeframes au défaut de 12 barres, l'étape composés n'a pas terminé en neuf
+minutes dans nos essais.
+
+**Recommandation pour un premier lancement multi-TF** : commencer à
+`--fenetre-composes 4`. La fenêtre est exprimée en barres du TF LE PLUS BAS —
+4 barres de 15 m font une heure, ce qui est déjà large pour un enchaînement
+SMC. Monter ensuite si le besoin s'en fait sentir, en sachant ce que ça coûte.
+
+Le garde-fou `MAX_EVENEMENTS_FENETRE` (60) ne mord pas ici : à 28 événements
+par fenêtre on est sous le seuil, et c'est le nombre de séquences DISTINCTES
+retenues qui pèse, pas la densité. Un élagage à la Apriori — ne former un
+triplet que si ses deux paires sont déjà fréquentes — réduirait cet espace
+d'un ordre de grandeur ; il n'est pas implémenté.
+
+---
+
 ## 6. Ce que l'outil ne fait pas
 
 - **Un seul symbole par exécution.** Le multi-symboles change la nature du
