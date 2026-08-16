@@ -188,8 +188,16 @@ def etape_1(racine: pathlib.Path, barres: int) -> list:
 
 
 def etape_2(racine: pathlib.Path, barres: int, trials: int,
-            impacts: list, n_jobs: int = 1) -> list:
-    """Recalibre les couples (stratégie, symbole, tf) que l'étape 1 a vus bouger."""
+            impacts: list, n_jobs: int = 1,
+            fichier: pathlib.Path = None, donnees: dict = None) -> list:
+    """Recalibre les couples (stratégie, symbole, tf) que l'étape 1 a vus bouger.
+
+    ⚠ Écrit APRÈS CHAQUE COUPLE, et reprend là où un run précédent s'est
+    arrêté. La première version n'écrivait qu'à la fin : un run de deux jours
+    interrompu n'a rien laissé. Une campagne qui se compte en heures doit
+    survivre à son interruption, sinon elle n'est pas relançable — et une
+    campagne non relançable finit par ne jamais être refaite.
+    """
     from app.engine.optimizer_search import OptimizerSearchEngine
 
     a_refaire = sorted({(x["strategie"], x["symbole"], x["tf"])
@@ -226,7 +234,13 @@ def etape_2(racine: pathlib.Path, barres: int, trials: int,
         print(f"  {nom:<22} {symbole} {tf}  OOS pnl={res['best_oos_pnl']:>9.2f} "
               f"trades={res['best_oos_trades']:>4} "
               f"sharpe={res['best_oos_sharpe']:>7.2f} "
-              f"overfit={res['overfit']:>5} ({time.time() - t0:.0f}s)")
+              f"overfit={res['overfit']:>5} ({time.time() - t0:.0f}s)", flush=True)
+        # Persistance incrémentale : le couple suivant peut échouer, celui-ci
+        # est acquis.
+        if fichier is not None and donnees is not None:
+            donnees["recalibrage"] = sorties
+            fichier.write_text(json.dumps(donnees, indent=2, ensure_ascii=False),
+                               encoding="utf-8")
     return sorties
 
 
@@ -261,7 +275,8 @@ def main() -> int:
                   "y compris ce qui n'a pas bougé.")
             return 1
         donnees["recalibrage"] = etape_2(racine, args.barres, args.trials,
-                                         donnees["impacts"], args.njobs)
+                                         donnees["impacts"], args.njobs,
+                                         fichier=fichier, donnees=donnees)
 
     fichier.write_text(json.dumps(donnees, indent=2, ensure_ascii=False),
                        encoding="utf-8")
