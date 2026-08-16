@@ -4,11 +4,16 @@ import logging
 import math
 import threading
 import time
+from copy import deepcopy
 from typing import Dict, List, Optional
 
 import polars as pl
 
-from app.core.is_oos import split_is_oos
+from app.core.is_oos import (
+    HOLDOUT_FRACTION_DEFAULT,
+    split_is_oos,
+    split_with_holdout,
+)
 from app.engine.backtest import Backtester
 from app.engine.engine import BaseStrategyML, Engine
 from app.engine.opt_workers import available_memory_bytes
@@ -255,6 +260,46 @@ def delete_job(job_id: str) -> bool:
 # ════════════════════════════════════════════════════════════════════════════
 #  Baseline (snapshot avant optimisation)
 # ════════════════════════════════════════════════════════════════════════════
+def _slices_for(df, strategy_name: str, timeframe: str, min_bars: int,
+                holdout_fraction: float):
+    """``(df_is, df_oos, split, df_recherche, df_holdout, df_gate)``.
+
+    Un seul endroit décide du découpage à trois tranches, pour que le chemin
+    asynchrone et le chemin séquentiel ne divergent pas — c'est exactement le
+    genre d'écart qui produit un gate mesuré sur le holdout d'un côté et sur la
+    sélection de l'autre, sans que rien ne le signale.
+    """
+    df_is, df_oos, split, df_recherche, df_holdout = split_with_holdout(
+        df, holdout_fraction=holdout_fraction, min_holdout_bars=min_bars)
+    if df_holdout is None and holdout_fraction > 0:
+        logger.info(
+            f"[AutoOpt] {strategy_name}/{timeframe} : pas de holdout — "
+            f"{len(df)} bougies ne permettent pas d'en réserver une tranche "
+            f"exploitable ({min_bars} barres min pour cette stratégie). "
+            f"Le gate d'apply reste mesuré sur la tranche de sélection.")
+    # Le baseline se mesure là où le candidat sera jugé, sinon la comparaison
+    # n'a pas de sens.
+    df_gate = df_holdout if df_holdout is not None else df_oos
+    return df_is, df_oos, split, df_recherche, df_holdout, df_gate
+
+
+def _cfg_avec_params(cfg: dict, strategy_name: str, params: dict) -> dict:
+    """Copie de ``cfg`` où ``strategy_name`` porte ``params``, sans overlay.
+
+    ``optimizer_results`` est vidé : c'est l'entrée qui, dans le YAML, gagne sur
+    ``strategy_params`` — la laisser reviendrait à mesurer le paramétrage
+    ACTUEL en croyant mesurer le candidat.
+    """
+    cfg2 = {k: v for k, v in cfg.items()}
+    sp = deepcopy(cfg.get("strategy_params") or {})
+    fusion = dict(sp.get(strategy_name, {}))
+    fusion.update(params or {})
+    sp[strategy_name] = fusion
+    cfg2["strategy_params"] = sp
+    cfg2["optimizer_results"] = {}
+    return cfg2
+
+
 def _run_baseline(strategy_name: str, cfg: dict,
                   df_oos: pl.DataFrame, symbol: str,
                   timeframe: str = None) -> dict:
@@ -350,14 +395,16 @@ class AutoOptimizer:
 
         # Mesure la RAM dispo pour ce lot → budget d'admission mémoire des jobs.
         _snapshot_mem_budget()
+        holdout_fraction = float((self.cfg.get("optimizer") or {}).get(
+            "holdout_fraction", HOLDOUT_FRACTION_DEFAULT))
 
         for tf in tfs:
             df = df_map.get(tf)
             n_available = len(df) if df is not None else 0
 
-            # Convention unique de split IS/OOS (BT-08) — cf. app/core/is_oos.py
-            df_is, df_oos, split = split_is_oos(df)
-
+            # Le découpage (IS / sélection / holdout) est décidé par stratégie
+            # dans `_slices_for` : la faisabilité du holdout dépend du
+            # `min_bars` de chacune, pas seulement de la longueur de la série.
             for name in strats:
                 # Pas d'espace de paramètres (ou espace vide) → rien à optimiser.
                 # On évite de lancer un job qui tournerait dans le vide (baseline +
@@ -389,6 +436,9 @@ class AutoOptimizer:
                 recommended_tfs = STRATEGY_TIMEFRAMES.get(name, list(RECOMMENDED_LIMIT.keys()))
                 is_recommended  = tf in recommended_tfs
 
+                s_is, s_oos, s_split, df_recherche, df_holdout, df_gate = \
+                    _slices_for(df, name, tf, min_bars, holdout_fraction)
+
                 jid = _job_id(name, tf, symbol)
                 cancel_event = threading.Event()
                 with _jobs_lock:
@@ -399,13 +449,15 @@ class AutoOptimizer:
                     progress=0, best_score=-999, trials=[],
                     result=None, error=None,
                     started_at=time.time(), finished_at=None,
-                    baseline=_run_baseline(name, self.cfg, df_oos, symbol, timeframe=tf),
+                    baseline=_run_baseline(name, self.cfg, df_gate, symbol, timeframe=tf),
+                    holdout_bars=(len(df_holdout) if df_holdout is not None else 0),
                     is_recommended=is_recommended,
                     recommended_tfs=recommended_tfs,
                 )
                 t = threading.Thread(
                     target=self._run_one_job,
-                    args=(jid, name, tf, df_is, df_oos, symbol, auto_apply, df, split),
+                    args=(jid, name, tf, s_is, s_oos, symbol, auto_apply,
+                          df_recherche, s_split, df_holdout),
                     daemon=True,
                 )
                 t.start()
@@ -419,7 +471,8 @@ class AutoOptimizer:
     def _run_one_job(self, job_id: str, strategy_name: str, timeframe: str,
                      df_is: pl.DataFrame, df_oos: pl.DataFrame,
                      symbol: str, auto_apply: bool,
-                     df_full: pl.DataFrame = None, split: int = None):
+                     df_full: pl.DataFrame = None, split: int = None,
+                     df_holdout: pl.DataFrame = None):
         trials_log = []
 
         cancel_event = _cancel_flags.get(job_id)
@@ -511,17 +564,47 @@ class AutoOptimizer:
                                            param_search_optim=self.param_search_optim)
 
             applied = False
-            oos_trades   = result.get("best_oos_trades", 0)
-            best_oos_pnl = result.get("best_oos_pnl", 0)
             best_oos_score = result.get("best_oos_score", 0.0)
 
-            # Récupérer le baseline pour comparer avant d'appliquer
+            # ── Mesure sur la tranche JAMAIS VUE (#5) ─────────────────────────
+            # La tranche de sélection a servi à classer les N essais : le score
+            # du gagnant y est un maximum d'ordre N, pas une estimation. Le
+            # gate d'apply se prononce donc sur le holdout, touché une seule
+            # fois, sur un seul paramétrage. Sans holdout exploitable, on reste
+            # sur l'ancien contrat — journalisé au découpage, pas dégradé en
+            # silence.
+            gate_source = "selection"
+            oos_trades = result.get("best_oos_trades", 0)
+            best_oos_pnl = result.get("best_oos_pnl", 0)
+            best_oos_wr = result.get("best_oos_wr", 0)
+            best_oos_sharpe = result.get("best_oos_sharpe", 0)
+            if df_holdout is not None and result.get("best_params"):
+                _h = _run_baseline(strategy_name, _cfg_avec_params(
+                    self.cfg, strategy_name, result["best_params"]),
+                    df_holdout, symbol, timeframe=timeframe)
+                if _h:
+                    gate_source = "holdout"
+                    oos_trades = _h.get("trades", 0)
+                    best_oos_pnl = _h.get("pnl", 0)
+                    best_oos_wr = _h.get("wr", 0)
+                    best_oos_sharpe = _h.get("sharpe", 0)
+                    _update_job(job_id, holdout=_h, gate_source="holdout")
+                    logger.info(
+                        f"[AutoOpt] {job_id} : holdout ({len(df_holdout)} barres) — "
+                        f"PnL={best_oos_pnl:+.2f} WR={best_oos_wr:.1f}% "
+                        f"Sharpe={best_oos_sharpe:.2f} sur {oos_trades} trades "
+                        f"(sélection : PnL={result.get('best_oos_pnl', 0):+.2f})")
+                else:
+                    logger.warning(
+                        f"[AutoOpt] {job_id} : backtest holdout KO — gate mesuré "
+                        f"sur la tranche de sélection")
+
+            # Récupérer le baseline pour comparer avant d'appliquer. Il a été
+            # mesuré sur la MÊME tranche que le candidat (cf. start_async).
             _baseline      = get_job(job_id).get("baseline", {})
             baseline_pnl   = _baseline.get("pnl", float("-inf"))
             baseline_wr    = _baseline.get("wr", 0)
             baseline_sharpe = _baseline.get("sharpe", 0)
-            best_oos_wr    = result.get("best_oos_wr", 0)
-            best_oos_sharpe = result.get("best_oos_sharpe", 0)
 
             # Garde-fou UNIQUE d'application (BT-04/BT-06) : fonction pure
             # partagée avec la route /api/optimize/apply — échantillon OOS
@@ -550,7 +633,8 @@ class AutoOptimizer:
                                  n_trials=_ds_n_trials,
                                  min_deflated_sharpe=_ds_min_arg)
                 if not ok:
-                    logger.info(f"[AutoOpt] {job_id} : gate d'apply refusé — {reason}")
+                    logger.info(f"[AutoOpt] {job_id} : gate d'apply refusé "
+                                f"[{gate_source}] — {reason}")
                 return ok
 
             def _wf_consistent() -> bool:
@@ -566,8 +650,6 @@ class AutoOptimizer:
                     return True
                 min_cons = float(opt_cfg.get("wf_min_consistency", 60.0))
                 try:
-                    from copy import deepcopy
-
                     from app.engine.backtest import WalkForwardAnalyzer
                     cfg2 = {k: v for k, v in self.cfg.items()}
                     sp = deepcopy(self.cfg.get("strategy_params") or {})
@@ -597,6 +679,7 @@ class AutoOptimizer:
                     logger.warning(f"[AutoOpt] {job_id} : walk-forward KO ({e}) — gate neutre")
                     return True
 
+            _update_job(job_id, gate_source=gate_source)
             gate_ok = bool(auto_apply and result.get("best_params")
                            and _beats_baseline() and _wf_consistent())
 
@@ -761,7 +844,15 @@ class AutoOptimizer:
                             logger.debug(f"[AutoOpt] on_job_done(skip) KO : {_cb}")
                     continue
 
-                df_is, df_oos, split = split_is_oos(df)   # convention unique (BT-08)
+                try:
+                    _mod = importlib.import_module(f"app.strategies.{name}")
+                    _min_bars = _mod.Strategy().min_bars_required()
+                except Exception:
+                    _min_bars = 220
+                df_is, df_oos, split, df_recherche, df_holdout, df_gate = _slices_for(
+                    df, name, tf, _min_bars,
+                    float((self.cfg.get("optimizer") or {}).get(
+                        "holdout_fraction", HOLDOUT_FRACTION_DEFAULT)))
 
                 recommended_tfs = STRATEGY_TIMEFRAMES.get(name, list(RECOMMENDED_LIMIT.keys()))
                 jid = _job_id(name, tf, symbol)
@@ -773,13 +864,14 @@ class AutoOptimizer:
                     method=self.method, n_trials=self.n_trials,
                     progress=0, best_score=-999, trials=[], result=None, error=None,
                     started_at=time.time(), finished_at=None,
-                    baseline=_run_baseline(name, self.cfg, df_oos, symbol, timeframe=tf),
+                    baseline=_run_baseline(name, self.cfg, df_gate, symbol, timeframe=tf),
+                    holdout_bars=(len(df_holdout) if df_holdout is not None else 0),
                     is_recommended=(tf in recommended_tfs),
                     recommended_tfs=recommended_tfs,
                 )
                 # Exécution synchrone du job (réutilise toute la logique async).
                 self._run_one_job(jid, name, tf, df_is, df_oos, symbol,
-                                  auto_apply, df, split)
+                                  auto_apply, df_recherche, split, df_holdout)
                 done_ids.append(jid)
                 if on_job_done:
                     try:
