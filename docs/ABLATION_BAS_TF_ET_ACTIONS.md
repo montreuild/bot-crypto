@@ -30,16 +30,19 @@ les 110 dont le journalier compte au moins 3 000 barres — pas choisis.
 
 Deux à trois fois plus de trades qu'en 4 h. L'hypothèse tient.
 
-**Cinq mécanismes valident 4 cas sur 4** — le meilleur résultat de tout le
-chantier :
+**Quatre mécanismes distincts valident 4 cas sur 4** — le meilleur résultat de
+tout le chantier :
 
 | mécanisme | 2/2 | n OOS méd. |
 |---|:--:|---:|
 | L3 porte `direction` | **4/4** | 100 |
 | L3 porte `no_pullback` | **4/4** | 80 |
-| L6 porte tier D | **4/4** | 104 |
-| L6 sizing par tier | **4/4** | 104 |
+| L6 tier *(`tier_sizing`, qui subsume `tier_gate` — cf. §3 bis)* | **4/4** | 104 |
 | **`size_by_confluence` (témoin)** | **4/4** | 116 |
+
+⚠ Le harnais liste `tier_gate` et `tier_sizing` comme deux entrées et les
+compte donc deux fois. **Ce sont deux vues du même mécanisme** : §3 bis le
+mesure.
 
 Les quatre premiers modifient le nombre de trades (80 à 104 contre 116 pour la
 référence) : ils agissent réellement sur la sélection.
@@ -93,6 +96,51 @@ d'un surapprentissage massif sur une action qui a monté sans discontinuer entre
 Les échantillons sont petits (12 à 26 trades OOS) : le journalier ne produit pas
 assez de trades sur 26 ans pour trancher. **Élargir aux 110 tickers disponibles
 plutôt qu'allonger l'historique** est la suite naturelle.
+
+---
+
+## 3 bis. ⚑ Correction : mes deux mécanismes L6 n'en font qu'un
+
+Question posée après coup — `size_by_confluence` fait-il doublon avec le sizing
+par tier ? La mesure répond non, **mais elle en découvre un autre, dans mon
+propre travail**.
+
+BTC 30 m, 30 000 barres, découpe 65/35 :
+
+| variante | n IS | PnL IS | n OOS | PnL OOS |
+|---|---:|---:|---:|---:|
+| référence | 191 | −413,4 | 98 | −185,7 |
+| `tier_gate` seul | 178 | −386,0 | 86 | −173,8 |
+| `tier_sizing` seul | 178 | **−366,0** | 86 | **−173,7** |
+| **`tier_gate` + `tier_sizing`** | **178** | **−366,0** | **86** | **−173,7** |
+| `size_by_confluence` seul | 191 | −398,1 | 98 | −187,0 |
+| **`conf` + `tier_sizing`** | 178 | **−343,7** | 86 | **−169,6** |
+
+**`tier_sizing` subsume `tier_gate`.** Le tier D reçoit un facteur de 0,0 : la
+taille tombe à zéro et le trade est refusé au sizing. Activer les deux donne
+donc **exactement** le résultat de `tier_sizing` seul — mêmes trades, même PnL,
+au centime.
+
+Conséquence directe : **leurs deux validations à 4 cas sur 4 ne sont pas deux
+preuves, c'en est une.** Le tableau du §1 les compte séparément ; il ne faut pas
+lire « cinq mécanismes validés » mais **quatre** — `no_pullback`, `direction`,
+le tier (une fois), et `size_by_confluence`.
+
+**`size_by_confluence` n'est pas un doublon.** Les deux leviers agissent sur le
+même hook (`size_factor`) et se multiplient, mais pas sur la même chose :
+
+- le **tier SUPPRIME** — 191 trades tombent à 178 ;
+- la **confluence RÉÉCHELONNE** — les 191 trades sont conservés, seule leur
+  taille change.
+
+Ils partagent une entrée (le score sert aux deux, `_tier` le consulte), sans se
+recouvrir pour autant. Et **les composer bat chacun pris seul** : −343,7 en IS
+contre −366,0 et −398,1. C'est la meilleure des six variantes testées.
+
+⚠ Sur cette fenêtre, `size_by_confluence` seul est légèrement **pire** que la
+référence en OOS (−187,0 contre −185,7), alors qu'il validait 4/4 dans la
+campagne §1 sur 40 000 barres. Deux fenêtres différentes : la sensibilité est
+réelle et doit tempérer l'enthousiasme du §4.
 
 ---
 

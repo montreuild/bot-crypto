@@ -40,8 +40,16 @@ MECANISMES = {
                                 "use_calendar_liquidity": "targets"},
     "L4 plafond stop 4 ATR":   {"max_stop_atr": 4.0},
     # ── L6 — tiers ───────────────────────────────────────────────────────────
-    "L6 porte tier D":         {"tier_gate": True},
-    "L6 sizing par tier":      {"tier_sizing": True},
+    # ⚠ `tier_sizing` SUBSUME `tier_gate` : le tier D reçoit un facteur 0,0,
+    # donc la taille tombe à zéro et le trade est refusé au sizing. Les activer
+    # ensemble donne exactement `tier_sizing` seul (mesuré). Les deux entrées
+    # sont conservées pour la traçabilité, mais elles ne comptent que pour UNE
+    # dans la synthèse — cf. docs/ABLATION_BAS_TF_ET_ACTIONS.md §3 bis.
+    "L6 tier (gate seul)":     {"tier_gate": True},
+    "L6 tier (sizing)":        {"tier_sizing": True},
+    # Orthogonal au tier : celui-ci SUPPRIME des trades, celui-là les
+    # RÉÉCHELONNE. Les composer bat chacun pris seul.
+    "L6 tier + confluence":    {"tier_sizing": True, "size_by_confluence": True},
     # ── L10 — modules en veille (§110), repassés au harnais ──────────────────
     #
     # ⚠ Les modules à BONUS (`*_bonus`) ne changent que le SCORE. Avec
