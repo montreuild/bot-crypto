@@ -17,6 +17,8 @@ La parité est verrouillée par ``tests/test_execution_parity.py``.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 
 def trade_fees(price: float, size: float, fee_rate: float) -> float:
     """Frais proportionnels d'un fill (entrée OU sortie)."""
@@ -117,6 +119,88 @@ def close_pnl(side: str, entry: float, exit_price: float, size: float,
 # ici — donc partagées backtest ↔ live comme le reste du module — et **neutres
 # quand la venue est None ou crypto** (défauts : lot_size=0, tick_size=0,
 # fractional=True, fee_pct=None, fee_fixed=0, taxe=0).
+
+
+#: Modes de sortie GÉNÉRIQUES, utilisables par n'importe quelle stratégie.
+#:
+#: Chaque stratégie déclarait jusqu'ici sa gestion de sortie à la main, par un
+#: assemblage de champs (`exits`, `disable_trailing`, `trail_override`,
+#: `be_after_partial`). Résultat : comparer deux stratégies revenait à comparer
+#: aussi deux gestions de position, et personne ne pouvait dire laquelle des
+#: deux expliquait l'écart. Le dossier `smc_ml_edge` a buté exactement là-dessus
+#: — le vrai coupable était un stop trop serré, pas le signal.
+#:
+#: Nommer les modes rend la question mesurable : on fixe le signal, on fait
+#: varier le mode, et l'écart est attribuable.
+EXIT_MODES = (
+    "as_declared",            # ne touche à rien — défaut, aucune régression
+    "sl_tp",                  # stop et cible fixes, aucun suivi
+    "trailing",               # suiveur actif dès l'entrée
+    "trailing_after_profit",  # suiveur armé seulement une fois en profit
+    "tp1_tp2_runner",         # partielles + point mort + suiveur sur le reliquat
+)
+
+#: Cibles partielles du mode `tp1_tp2_runner` — 25 % à 1R, 25 % à 2R, le
+#: reliquat (50 %) laissé courir sous suiveur. Valeurs des deux spécifications ;
+#: elles sont un POINT DE DÉPART à optimiser, pas une recommandation mesurée.
+TP1_TP2_RUNNER_EXITS = ({"r": 1.0, "fraction": 0.25, "reason": "tp1"},
+                        {"r": 2.0, "fraction": 0.25, "reason": "tp2"})
+
+#: Profit, en multiples du risque, à partir duquel `trailing_after_profit` arme
+#: le suiveur. En dessous, le stop initial tient : c'est tout l'objet du mode —
+#: ne pas resserrer un trade qui n'a pas encore fait ses preuves.
+TRAIL_ACTIVATE_R_DEFAUT = 1.0
+
+
+def apply_exit_mode(signal: dict, mode: str,
+                    params: Optional[dict] = None) -> dict:
+    """Applique un mode de sortie à ``signal`` et rend une COPIE.
+
+    Le signal reste la source de vérité pour tout le reste (sens, score,
+    stop) : un mode ne décide jamais d'entrer, il décide seulement comment on
+    sort. C'est ce qui permet de faire varier la sortie sans toucher au signal.
+
+    ``as_declared`` rend le signal inchangé — c'est le défaut, donc brancher ce
+    mécanisme ne modifie aucun backtest existant tant que personne ne demande
+    autre chose.
+
+    Un mode inconnu est refusé bruyamment plutôt que silencieusement ignoré :
+    une faute de frappe dans un YAML doit se voir, pas produire un backtest
+    dont on croit qu'il teste autre chose.
+    """
+    mode = str(mode or "as_declared").strip()
+    if mode not in EXIT_MODES:
+        raise ValueError(
+            f"mode de sortie inconnu : {mode!r} — attendus {list(EXIT_MODES)}")
+    if mode == "as_declared":
+        return signal
+
+    p = params or {}
+    out = dict(signal)
+
+    if mode == "sl_tp":
+        out["exits"] = []
+        out["disable_trailing"] = True
+        return out
+
+    if mode == "trailing":
+        out["exits"] = []
+        out["disable_trailing"] = False
+        out.pop("_trail_activate_r", None)
+        return out
+
+    if mode == "trailing_after_profit":
+        out["exits"] = []
+        out["disable_trailing"] = False
+        out["_trail_activate_r"] = float(
+            p.get("trail_activate_r", TRAIL_ACTIVATE_R_DEFAUT))
+        return out
+
+    # tp1_tp2_runner
+    out["exits"] = [dict(e) for e in (p.get("exits") or TP1_TP2_RUNNER_EXITS)]
+    out["disable_trailing"] = False
+    out["be_after_partial"] = bool(p.get("be_after_partial", True))
+    return out
 
 
 def plan_partial_targets(signal: dict, entry: float, stop: float) -> list:
