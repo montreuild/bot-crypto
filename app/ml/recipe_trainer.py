@@ -294,6 +294,12 @@ def _fit_heads(recipe_name: str, r, p: Dict[str, Any], tf: str,
 
     common = {**_LGB_DEFAULTS,
               **{k: p[k] for k in _LGB_KEYS if k in p and p[k] is not None}}
+    # Une recette qui fixe explicitement ``n_jobs`` garde le dernier mot (elle
+    # reproduit peut-être un modèle historique) ; sinon le nombre de threads
+    # dépend du contexte d'appel, pas d'un littéral (cf. app/ml/threads.py).
+    if p.get("n_jobs") is None:
+        from app.ml.threads import lgb_threads
+        common["n_jobs"] = lgb_threads()
     # ``force_col_wise: false`` doit pouvoir DÉSACTIVER le drapeau, pas
     # seulement l'omettre : LightGBM refuse force_col_wise et force_row_wise
     # simultanément, et une recette qui reproduit un modèle historique a besoin

@@ -389,12 +389,16 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
                       f"[MLBackend] {tf_key} : labels mono-classe, fit ignoré")
         return False
 
+    from app.ml.threads import lgb_threads
     common = dict(
         objective="binary", metric="auc",
         num_leaves=cfg.num_leaves, learning_rate=cfg.learning_rate,
         min_child_samples=20, subsample=0.8, subsample_freq=5,
         colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=0.5,
-        max_bin=63, force_col_wise=True, verbosity=-1, n_jobs=1,
+        max_bin=63, force_col_wise=True, verbosity=-1,
+        # 1 dans un worker d'optimisation, plusieurs cœurs en entraînement
+        # autonome — le modèle produit est le même (cf. app/ml/threads.py).
+        n_jobs=lgb_threads(),
     )
 
     boosters: Dict[str, Any] = {}

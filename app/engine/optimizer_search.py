@@ -273,8 +273,16 @@ class OptimizerSearchEngine:
             del cfg["optimizer_results"][self.strategy_name]
         bt  = Backtester(eng, cfg, cancel_event=self._cancel_event, ml_mode=self.ml_mode)
 
-        res_is  = bt.run(self.df_is,  self.symbol, timeframe=self.timeframe)
-        res_oos = bt.run(self.df_oos, self.symbol, timeframe=self.timeframe)
+        # Essai évalué DANS ce process (n_jobs<=1, tests, repli après
+        # BrokenProcessPool) : aucune variable d'environnement ne le signale à
+        # LightGBM, contrairement au worker spawné. Plusieurs jobs
+        # d'optimisation peuvent tourner de front (cf. _job_semaphore) — leur
+        # laisser prendre 4 threads chacun sur 4 cœurs ferait perdre plus en
+        # contention que gagner en parallélisme.
+        from app.ml.threads import single_thread
+        with single_thread():
+            res_is  = bt.run(self.df_is,  self.symbol, timeframe=self.timeframe)
+            res_oos = bt.run(self.df_oos, self.symbol, timeframe=self.timeframe)
 
         # Plancher de sélection = plancher de décision (MIN_SIGNIFICANT_TRADES).
         # Le dépôt portait deux seuils : il refusait de PROMOUVOIR sous 10 tout
