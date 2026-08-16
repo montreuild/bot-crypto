@@ -57,6 +57,8 @@ class Strategy(BaseStrategy):
         # Réutilisation causale de l'histogramme MACD si params non par défaut.
         self._bt_full_df = None
         self._macd_cache: Dict[tuple, Any] = {}
+        # Série htf_trend pré-calculée une fois par df de backtest (O(n²)→O(n)).
+        self._htf_cache:  Dict[tuple, Any] = {}
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         """Mémorise le df complet pour réutiliser l'histogramme MACD (causal)."""
@@ -125,7 +127,8 @@ class Strategy(BaseStrategy):
         macd_turning_bear = lh < ph and lh <  atr_val * 0.005
 
         # ── Tendance HTF ──────────────────────────────────────────────────────
-        htf = htf_trend(df_htf, df_ltf=df)
+        htf = htf_trend(df_htf, df_ltf=df,
+                        full_df=self._bt_full_df, cache=self._htf_cache)
 
         # ── S/R sur le TF courant ─────────────────────────────────────────────
         sr = support_resistance_levels(

@@ -89,18 +89,28 @@ def build(scheme: str, frame: pl.DataFrame,
 def _build_amp_dir_quantile(frame: pl.DataFrame,
                             label_horizons: Optional[List[int]] = None,
                             amp_top_pct: float = 0.30,
+                            thr_upto: Optional[int] = None,
                             **_ignored) -> Optional[Labels]:
     from app.ml.backend.features import multi_horizon_labels, single_horizon_labels
+    from app.ml.splitting import chrono_split, label_embargo
 
     close = frame["close"].to_numpy().astype(np.float64)
     horizons = [int(h) for h in (label_horizons or [1])]
+    # Le quantile qui DÉFINIT les labels ne doit voir que l'entraînement (#8).
+    # C'est au labelleur de s'en charger : lui seul connaît son ``n``, et le
+    # découpage vient du module partagé, pas d'un littéral recopié ici.
+    if thr_upto is None:
+        plan = chrono_split(len(close) - label_embargo(horizons), horizons)
+        thr_upto = plan.train if plan is not None else None
     if len(horizons) > 1:
         y_amp, y_dir, n, amp_thr, stats = multi_horizon_labels(
-            close, horizons, float(amp_top_pct))
+            close, horizons, float(amp_top_pct), thr_upto=thr_upto)
     else:
-        y_amp, y_dir, n, amp_thr = single_horizon_labels(close, float(amp_top_pct))
+        y_amp, y_dir, n, amp_thr = single_horizon_labels(
+            close, float(amp_top_pct), thr_upto=thr_upto)
         stats = {"horizons": horizons, "n_labels": int(n),
-                 "amp_thr_pct": round(amp_thr * 100, 4)}
+                 "amp_thr_pct": round(amp_thr * 100, 4),
+                 "amp_thr_fit_n": int(thr_upto or n)}
     if n <= 0:
         return None
     return Labels(y={"amp": y_amp, "dir": y_dir}, n=int(n), stats=dict(stats))

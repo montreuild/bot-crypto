@@ -50,6 +50,142 @@ def _causal_prefix_index(window: pl.DataFrame, full_df: pl.DataFrame):
     return None
 
 
+def close_prefix_index(close: pl.Series, full_df: pl.DataFrame):
+    """Variante de :func:`_causal_prefix_index` pour un appelant qui ne reçoit
+    que la série ``close`` (et non la fenêtre entière) — même vérification O(1)
+    par la dernière valeur."""
+    if full_df is None or close is None:
+        return None
+    n = len(close)
+    if n < 2 or n > full_df.height:
+        return None
+    try:
+        if float(close[-1]) == float(full_df["close"][n - 1]):
+            return n - 1
+    except Exception:
+        return None
+    return None
+
+
+def bb_squeeze_series(full_df: pl.DataFrame, lookback: int = 15,
+                      bb_period: int = 20, quantile: float = 0.30):
+    """Série de décisions ``bb_squeeze`` (bool) pour CHAQUE barre de ``full_df``.
+
+    ``out[i]`` reproduit exactement ``bb_squeeze(full_df["close"][:i+1],
+    lookback, bb_period, quantile)``. La largeur de bande est une fonction
+    rolling causale du close, et la comparaison au quantile ne porte que sur les
+    ``lookback`` largeurs qui PRÉCÈDENT la barre : le tout se ramène à un
+    ``rolling_quantile`` décalé d'un cran.
+
+    ``interpolation="nearest"`` est le défaut de ``Series.quantile`` — l'écrire
+    explicitement plutôt que d'en dépendre : les deux appels doivent
+    interpoler pareil, sinon la série diverge du calcul barre à barre sur les
+    seules barres où le quantile tombe entre deux échantillons.
+    """
+    import numpy as np
+
+    n = full_df.height
+    out = np.zeros(n, dtype=bool)
+    lookback = int(lookback)
+    bb_period = int(bb_period)
+    if n == 0 or lookback < 5:
+        # ``len(past) >= 5`` est infaisable sous 5 barres d'historique de
+        # largeur : la fonction d'origine retourne False partout.
+        return out
+    try:
+        close = full_df["close"]
+        sma = close.rolling_mean(bb_period)
+        std = close.rolling_std(bb_period)
+        width = 4 * std / sma.clip(lower_bound=1e-9)
+        seuil = width.rolling_quantile(
+            quantile=quantile, window_size=lookback, interpolation="nearest",
+        ).shift(1)
+        w = width.to_numpy()
+        s = seuil.to_numpy()
+    except Exception:
+        return None
+
+    valide = np.zeros(n, dtype=bool)
+    debut = bb_period + lookback - 1          # garde ``len(close) < bb_period + lookback``
+    if debut < n:
+        valide[debut:] = True
+    fini = np.isfinite(w) & np.isfinite(s)
+    out[valide & fini] = (w <= s)[valide & fini]
+    return out
+
+
+def htf_trend_ema_series(full_df: pl.DataFrame, ema_period: int = 50,
+                         mult: int = 4):
+    """Série ``htf_trend`` (+1/−1/0) pour CHAQUE barre de ``full_df``.
+
+    ``out[i]`` reproduit **exactement** ``htf_trend(None, df_ltf=full_df[:i+1],
+    ema_period=…, mult=…)``. L'égalité n'est pas une approximation, elle
+    découle de trois propriétés du repli barre à barre :
+
+    1. les buckets HTF sont des bornes d'horloge (``epoch // htf_sec``) : ceux
+       d'un préfixe sont ceux du df complet, tronqués ;
+    2. ``htf_trend`` ne lit que les buckets ENTIÈREMENT clôturés
+       (``htf_df.head(idx[-1] + 1)``), dont l'agrégation OHLC est donc
+       identique dans le préfixe et dans le df complet — le bucket partiel de
+       fin, seul à différer, est justement celui qu'il exclut ;
+    3. ``ewm_mean(adjust=False)`` est une récurrence : sa valeur à l'indice j
+       ne dépend que des indices ≤ j, donc l'EMA d'un préfixe est le préfixe
+       de l'EMA.
+
+    Retourne ``None`` — l'appelant retombe alors sur le calcul barre à barre —
+    quand l'exactitude n'est pas démontrable : ``ltf_sec`` est déduit de la
+    MÉDIANE des 64 derniers écarts temporels, qui peut varier d'une barre à
+    l'autre si la grille est irrégulière (bougies manquantes, séances
+    boursières). Sur une grille régulière — le cas des séries OHLCV crypto de
+    ``CandleStore`` — cette médiane est constante par construction.
+    """
+    import numpy as np
+
+    n = full_df.height
+    if n < 40 or "time" not in full_df.columns:
+        return None
+    try:
+        epoch = full_df["time"].dt.epoch(time_unit="s").to_numpy().astype("int64")
+    except Exception:
+        return None
+    d = np.diff(epoch)
+    if d.size == 0 or d[0] <= 0 or not bool(np.all(d == d[0])):
+        return None                     # grille irrégulière → repli exact
+
+    from app.core.smc_sessions import _htf_buckets
+    htf_df, idx, htf_sec, _ = _htf_buckets(full_df, None, mult)
+    out = np.zeros(n, dtype=np.int8)
+    if htf_df is None or htf_sec <= 0:
+        # Moins de 12 buckets sur TOUT le df ⇒ a fortiori sur chaque préfixe.
+        return out
+
+    hc = htf_df["close"]
+    ema_line = hc.ewm_mean(span=int(ema_period), adjust=False).to_numpy()
+    hcv = hc.to_numpy()
+    nb = len(hcv)
+    trend_b = np.zeros(nb, dtype=np.int8)
+    if nb >= 4:
+        above = hcv[3:] > ema_line[3:]
+        slope = ema_line[3:] > ema_line[:-3]
+        trend_b[3:] = np.where(above & slope, 1,
+                               np.where(~above & ~slope, -1, 0)).astype(np.int8)
+
+    # Index du bucket CONTENANT la barre i : c'est lui qui donne le nombre de
+    # buckets vus par le préfixe, donc la garde « moins de 12 buckets » de
+    # ``_htf_buckets`` (qui compte aussi le bucket en cours, pas seulement les
+    # clôturés).
+    bucket = epoch // int(htf_sec)
+    bidx = np.cumsum(np.diff(bucket, prepend=bucket[0] - 1) != 0) - 1
+
+    j = np.asarray(idx)
+    ok = ((np.arange(n) >= 39)              # _htf_buckets refuse n < 40
+          & (bidx + 1 >= 12)                # … et moins de 12 buckets
+          & (j >= 0)                        # aucun bucket encore clôturé
+          & (j + 1 >= int(ema_period) + 3))  # htf_trend : len(df_htf) trop court
+    out[ok] = trend_b[np.clip(j, 0, nb - 1)[ok]]
+    return out
+
+
 def supertrend_last(window: pl.DataFrame, period: int, mult: float,
                     full_df: pl.DataFrame = None, cache: dict = None):
     """``(last_dir, prev_dir, last_line)`` pour la dernière barre de ``window``.

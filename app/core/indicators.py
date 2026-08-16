@@ -15,6 +15,7 @@ Tous les noms historiques restent importables depuis ``app.core.indicators``.
 from app.core.indicators_causal import (  # noqa: F401
     _causal_prefix_index,
     ema_window,
+    htf_trend_ema_series,
     macd_hist_last3,
     supertrend_last,
 )

@@ -242,6 +242,7 @@ class Strategy(BaseStrategy):
         self._bt_full_df = None
         self._macd_cache: Dict[tuple, Any] = {}
         self._ema_cache:  Dict[tuple, Any] = {}
+        self._bb_cache:   Dict[tuple, Any] = {}
 
     def prepare_for_backtest(self, df: pl.DataFrame) -> None:
         """Mémorise le df complet pour réutiliser l'histogramme MACD (causal)."""
@@ -349,7 +350,8 @@ class Strategy(BaseStrategy):
         bb_upper  = float((bb_mid_s + bb_std_mult * bb_sigma)[-1])
         bb_lower  = float((bb_mid_s - bb_std_mult * bb_sigma)[-1])
         bb_mid_v  = float(bb_mid_s[-1]) if bb_mid_s[-1] is not None else 1.0
-        bb_sq_act = bb_squeeze(close, lookback=15, bb_period=bb_period)
+        bb_sq_act = bb_squeeze(close, lookback=15, bb_period=bb_period,
+                               full_df=self._bt_full_df, cache=self._bb_cache)
         bw        = (bb_upper - bb_lower) / bb_mid_v * 100 if bb_mid_v > 0 else 0.0
 
         # ── Stochastique(14, 3) ───────────────────────────────────────────────

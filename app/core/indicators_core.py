@@ -98,15 +98,45 @@ def bollinger(close: pl.Series, n: int = 20,
 
 
 def bb_squeeze(close: pl.Series, lookback: int = 15,
-               bb_period: int = 20, quantile: float = 0.30) -> bool:
-    """True si les bandes de Bollinger sont en squeeze (compression de volatilité)."""
+               bb_period: int = 20, quantile: float = 0.30,
+               full_df=None, cache: dict = None) -> bool:
+    """True si les bandes de Bollinger sont en squeeze (compression de volatilité).
+
+    ``full_df``/``cache`` (PERF) : quand ``close`` est le préfixe causal du
+    ``close`` de ``full_df``, la série de décisions est calculée UNE fois et
+    indexée en O(1) — même idiome que ``ema_window``/``supertrend_last``. Sans
+    ces arguments (live, fenêtre non préfixe), le calcul tronqué ci-dessous
+    reste le chemin normal.
+    """
+    if cache is not None and full_df is not None:
+        from app.core.indicators_causal import (
+            bb_squeeze_series,
+            close_prefix_index,
+        )
+        pos = close_prefix_index(close, full_df)
+        if pos is not None:
+            key = (id(full_df), full_df.height, int(lookback), int(bb_period),
+                   float(quantile))
+            if key in cache:
+                arr = cache[key]
+            else:
+                if len(cache) > 8:      # garde-fou mémoire
+                    cache.clear()
+                arr = bb_squeeze_series(full_df, lookback, bb_period, quantile)
+                cache[key] = arr
+            if arr is not None:
+                return bool(arr[pos])
+
     if len(close) < bb_period + lookback:
         return False
     # Seules les `lookback+1` dernières largeurs sont utilisées, et chacune ne
     # dépend que des `bb_period` closes précédents. On tronque à la queue → coût
     # O(bb_period+lookback) par appel au lieu de O(n) (rolling sur toute la série) :
     # transforme un backtest O(n²) en O(n) pour tous les appelants, à résultat
-    # strictement identique (fenêtres rolling causales).
+    # strictement identique (fenêtres rolling causales — vérifié par
+    # tests/test_bb_squeeze_causal.py, qui compare les deux formes barre à
+    # barre). La troncature reste donc la voie rapide de TOUT appelant qui ne
+    # passe pas ``full_df`` : le live, et toute stratégie non câblée.
     tail     = close[-(bb_period + lookback + 2):]
     _sma     = tail.rolling_mean(bb_period)
     _std     = tail.rolling_std(bb_period)

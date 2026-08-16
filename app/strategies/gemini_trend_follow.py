@@ -31,6 +31,13 @@ class Strategy(BaseStrategy):
     def __init__(self):
         self._last_signal: Dict[str, int] = {}
         self._call_count: Dict[str, int] = {}
+        # Série htf_trend pré-calculée une fois par df de backtest (O(n²)→O(n)).
+        self._bt_full_df = None
+        self._htf_cache: Dict[tuple, Any] = {}
+
+    def prepare_for_backtest(self, df: pl.DataFrame) -> None:
+        """Mémorise le df complet pour réutiliser la tendance HTF causale."""
+        self._bt_full_df = df
 
     def min_bars_required(self, params: dict = None) -> int:
         p = (params or {}).get("gemini_trend_follow", {})
@@ -75,7 +82,8 @@ class Strategy(BaseStrategy):
 
         c0 = float(df["close"][-1])
 
-        htf = htf_trend(df_htf, df_ltf=df)
+        htf = htf_trend(df_htf, df_ltf=df,
+                        full_df=self._bt_full_df, cache=self._htf_cache)
 
         # ── Cooldown par symbole ─────────────────────────────────────────────
         last = self._last_signal.get(sym, -999)

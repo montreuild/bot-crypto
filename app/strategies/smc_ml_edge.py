@@ -244,12 +244,45 @@ class Strategy(BaseStrategyML):
         return (frame, len(frame) - 1) if frame is not None else (None, -1)
 
     # ── Entraînement ────────────────────────────────────────────────────────
+    #: État par TF que ``cached_train`` capture et restaure sur un hit.
+    _TRAIN_STATE_ATTRS = ("_trained", "_echelle")
+    #: Aucun paramètre de DÉCISION n'entre dans l'entraînement ici : la recette
+    #: porte tout, et ``train_window`` est déjà décrit par l'empreinte de la
+    #: fenêtre. La clé de cache se réduit donc à (recette, tf, fenêtre).
+    _TRAIN_PARAM_KEYS = ()
+
     def _train(self, df: pl.DataFrame, tf_key: str, p: dict) -> bool:
+        """Entraînement avec cache process-wide (cf. app/core/train_cache.py).
+
+        La fenêtre est alignée sur la grille ``retrain_every`` : sans cela,
+        deux essais d'optimisation aux seuils différents retrainent à des
+        barres décalées, produisent des fenêtres distinctes et le cache ne peut
+        jamais servir. Staleness bornée à ``retrain_every`` barres — celle du
+        déclenchement lui-même.
+        """
+        from app.core.train_cache import aligned_train_window, cached_train
+
+        fenetre = int(p.get("train_window", self._DEFAULTS["train_window"]))
+        if fenetre and len(df) > fenetre:
+            train_df, _ = aligned_train_window(
+                df, int(p.get("retrain_every", self._DEFAULTS["retrain_every"])),
+                fenetre)
+        else:
+            train_df = df
+        ok = cached_train(self, train_df, tf_key, dict(p), self._train_impl,
+                          self._TRAIN_STATE_ATTRS, self._TRAIN_PARAM_KEYS)
+        # Semé même sur un HIT : le cache rend les modèles, pas les prédictions.
+        if ok:
+            out = self._trained.get(tf_key)
+            if out is not None:
+                self._precalcule_predictions(out, tf_key)
+        return ok
+
+    def _train_impl(self, train_df: pl.DataFrame, tf_key: str, p: dict) -> bool:
+        """Corps de l'entraînement — le cache est géré par ``_train``."""
         from app.ml import recipe_trainer as rt
 
         recette = self._recipe()
-        fenetre = int(p.get("train_window", self._DEFAULTS["train_window"]))
-        train_df = df.tail(fenetre) if fenetre and len(df) > fenetre else df
         try:
             out = rt.train(recette, train_df, tf_key)
         except Exception as e:
@@ -260,7 +293,6 @@ class Strategy(BaseStrategyML):
         with self._lock:
             self._trained[tf_key] = out
             self._echelle[tf_key] = self._mesure_echelle(out, train_df)
-        self._precalcule_predictions(out, tf_key)
         meta = out.train_meta or {}
         logger.info(
             f"[{self.name}] {tf_key} entraîné sur {len(train_df)} barres | "

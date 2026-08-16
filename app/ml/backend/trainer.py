@@ -351,50 +351,76 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
         logger.warning(f"[MLBackend] {tf_key} : aucune feature exploitable")
         return False
 
+    from app.ml.splitting import chrono_split, label_embargo
+
     close = feats["close"].to_numpy().astype(np.float64)
-    if cfg.label_horizons and len(cfg.label_horizons) > 1:
+    multi = bool(cfg.label_horizons and len(cfg.label_horizons) > 1)
+    horizons = list(cfg.label_horizons) if multi else [1]
+    # Le découpage est planifié AVANT la labellisation : le seuil d'amplitude
+    # ne doit voir que les lignes d'entraînement (#8), et il faut donc savoir
+    # où elles s'arrêtent. ``n`` est déterministe — len(close) moins l'horizon
+    # maximal — donc le plan peut être établi sans les labels.
+    n_prevu = len(close) - label_embargo(horizons)
+    plan = chrono_split(n_prevu, horizons)
+    if plan is None:
+        logger.warning(f"[MLBackend] {tf_key} : split impossible (n={n_prevu})")
+        return False
+
+    if multi:
         y_amp, y_dir, n, amp_thr, lbl_stats = multi_horizon_labels(
-            close, cfg.label_horizons, cfg.amp_top_pct,
+            close, cfg.label_horizons, cfg.amp_top_pct, thr_upto=plan.train,
         )
     else:
-        y_amp, y_dir, n, amp_thr = single_horizon_labels(close, cfg.amp_top_pct)
+        y_amp, y_dir, n, amp_thr = single_horizon_labels(
+            close, cfg.amp_top_pct, thr_upto=plan.train)
         lbl_stats = {"horizons": [1], "n_labels": int(n),
-                     "amp_thr_pct": round(amp_thr * 100, 4)}
+                     "amp_thr_pct": round(amp_thr * 100, 4),
+                     "amp_thr_fit_n": int(plan.train)}
     if n < 200:
         logger.warning(f"[MLBackend] {tf_key} : pas assez de barres labélisables (n={n})")
         return False
+    if n != plan.n:                       # défensif : la géométrie a bougé
+        plan = chrono_split(n, horizons)
+        if plan is None:
+            logger.warning(f"[MLBackend] {tf_key} : split impossible (n={n})")
+            return False
+    lbl_stats["embargo"] = int(plan.embargo)
 
     X_full = feats.head(n).select(feature_cols).to_numpy().astype(np.float32)
-    split = max(int(n * 0.8), 100)
-    split = min(split, n - 50)
-    if split < 100 or n - split < 50:
-        logger.warning(f"[MLBackend] {tf_key} : split impossible (n={n})")
-        return False
+    split, train_end = plan.split, plan.train
 
     medians: Dict[str, float] = {}
     for j, col in enumerate(feature_cols):
-        col_train = X_full[:split, j]
+        col_train = X_full[:train_end, j]
         mask = np.isfinite(col_train)
         medians[col] = float(np.median(col_train[mask])) if mask.any() else 0.0
 
-    X_train = X_full[:split].copy()
+    # Embargo : les ``plan.embargo`` dernières lignes d'entraînement portent un
+    # label construit sur des barres de la validation. Elles sont retirées de
+    # l'entraînement, pas de la validation — l'AUC reste mesurée sur le même
+    # échantillon qu'avant (cf. app/ml/splitting.py).
+    X_train = X_full[:train_end].copy()
     X_valid = X_full[split:n].copy()
     del X_full
     impute_inplace(X_train, feature_cols, medians)
     impute_inplace(X_valid, feature_cols, medians)
 
-    if len(np.unique(y_amp[:split])) < 2 or len(np.unique(y_dir[:split])) < 2:
+    if len(np.unique(y_amp[:train_end])) < 2 or len(np.unique(y_dir[:train_end])) < 2:
         from app.core.log_throttle import log_throttled
         log_throttled(logger, f"mlbackend:monoclass:{tf_key}",
                       f"[MLBackend] {tf_key} : labels mono-classe, fit ignoré")
         return False
 
+    from app.ml.threads import lgb_threads
     common = dict(
         objective="binary", metric="auc",
         num_leaves=cfg.num_leaves, learning_rate=cfg.learning_rate,
         min_child_samples=20, subsample=0.8, subsample_freq=5,
         colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=0.5,
-        max_bin=63, force_col_wise=True, verbosity=-1, n_jobs=1,
+        max_bin=63, force_col_wise=True, verbosity=-1,
+        # 1 dans un worker d'optimisation, plusieurs cœurs en entraînement
+        # autonome — le modèle produit est le même (cf. app/ml/threads.py).
+        n_jobs=lgb_threads(),
     )
 
     boosters: Dict[str, Any] = {}
@@ -405,8 +431,8 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
     raw_va_by_target: Dict[str, np.ndarray] = {}
 
     for target, y in (("amp", y_amp), ("dir", y_dir)):
-        spw = (y[:split] == 0).sum() / max((y[:split] == 1).sum(), 1)
-        ds_tr = lgb.Dataset(X_train, label=y[:split], feature_name=feature_cols,
+        spw = (y[:train_end] == 0).sum() / max((y[:train_end] == 1).sum(), 1)
+        ds_tr = lgb.Dataset(X_train, label=y[:train_end], feature_name=feature_cols,
                             free_raw_data=False)
         ds_va = lgb.Dataset(X_valid, label=y[split:n], reference=ds_tr,
                             feature_name=feature_cols, free_raw_data=False)
@@ -512,8 +538,9 @@ def train(state: TrainState, lock, df: pl.DataFrame, tf_key: str,
         for tgt in ("amp", "dir")
     }
     meta = {
-        "n_train":      int(split),
+        "n_train":      int(train_end),
         "n_valid":      int(n - split),
+        "embargo":      int(plan.embargo),
         "n_features":   len(feature_cols),
         "auc_amp":      round(aucs.get("amp", 0.0), 4),
         "auc_dir":      round(aucs.get("dir", 0.0), 4),
