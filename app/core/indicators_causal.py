@@ -50,6 +50,70 @@ def _causal_prefix_index(window: pl.DataFrame, full_df: pl.DataFrame):
     return None
 
 
+def close_prefix_index(close: pl.Series, full_df: pl.DataFrame):
+    """Variante de :func:`_causal_prefix_index` pour un appelant qui ne reçoit
+    que la série ``close`` (et non la fenêtre entière) — même vérification O(1)
+    par la dernière valeur."""
+    if full_df is None or close is None:
+        return None
+    n = len(close)
+    if n < 2 or n > full_df.height:
+        return None
+    try:
+        if float(close[-1]) == float(full_df["close"][n - 1]):
+            return n - 1
+    except Exception:
+        return None
+    return None
+
+
+def bb_squeeze_series(full_df: pl.DataFrame, lookback: int = 15,
+                      bb_period: int = 20, quantile: float = 0.30):
+    """Série de décisions ``bb_squeeze`` (bool) pour CHAQUE barre de ``full_df``.
+
+    ``out[i]`` reproduit exactement ``bb_squeeze(full_df["close"][:i+1],
+    lookback, bb_period, quantile)``. La largeur de bande est une fonction
+    rolling causale du close, et la comparaison au quantile ne porte que sur les
+    ``lookback`` largeurs qui PRÉCÈDENT la barre : le tout se ramène à un
+    ``rolling_quantile`` décalé d'un cran.
+
+    ``interpolation="nearest"`` est le défaut de ``Series.quantile`` — l'écrire
+    explicitement plutôt que d'en dépendre : les deux appels doivent
+    interpoler pareil, sinon la série diverge du calcul barre à barre sur les
+    seules barres où le quantile tombe entre deux échantillons.
+    """
+    import numpy as np
+
+    n = full_df.height
+    out = np.zeros(n, dtype=bool)
+    lookback = int(lookback)
+    bb_period = int(bb_period)
+    if n == 0 or lookback < 5:
+        # ``len(past) >= 5`` est infaisable sous 5 barres d'historique de
+        # largeur : la fonction d'origine retourne False partout.
+        return out
+    try:
+        close = full_df["close"]
+        sma = close.rolling_mean(bb_period)
+        std = close.rolling_std(bb_period)
+        width = 4 * std / sma.clip(lower_bound=1e-9)
+        seuil = width.rolling_quantile(
+            quantile=quantile, window_size=lookback, interpolation="nearest",
+        ).shift(1)
+        w = width.to_numpy()
+        s = seuil.to_numpy()
+    except Exception:
+        return None
+
+    valide = np.zeros(n, dtype=bool)
+    debut = bb_period + lookback - 1          # garde ``len(close) < bb_period + lookback``
+    if debut < n:
+        valide[debut:] = True
+    fini = np.isfinite(w) & np.isfinite(s)
+    out[valide & fini] = (w <= s)[valide & fini]
+    return out
+
+
 def htf_trend_ema_series(full_df: pl.DataFrame, ema_period: int = 50,
                          mult: int = 4):
     """Série ``htf_trend`` (+1/−1/0) pour CHAQUE barre de ``full_df``.
