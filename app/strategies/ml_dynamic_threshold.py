@@ -270,25 +270,21 @@ def _auc_score(y_true: np.ndarray, y_proba: np.ndarray) -> float:
     return (sum_pos - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
 
 
-def _time_series_split(n: int, n_splits: int) -> List[Tuple[np.ndarray, np.ndarray]]:
-    """TimeSeriesSplit manuel (sans sklearn).
+def _time_series_split(n: int, n_splits: int,
+                       embargo: int = 0) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """TimeSeriesSplit manuel (sans sklearn), avec embargo.
 
     Retourne une liste de (train_idx, test_idx) pour walk-forward CV.
     Chaque test fold a une taille fixe de n // (n_splits + 1).
+
+    ``embargo`` retire les dernières lignes de chaque fenêtre d'entraînement :
+    ``compute_labels`` regarde ``lookahead`` barres en avant, donc sans lui les
+    dernières lignes d'entraînement de chaque fold portent une information
+    tirée de son propre fold de test. Géométrie partagée avec les deux autres
+    entraîneurs (cf. app/ml/splitting.py).
     """
-    if n_splits < 2:
-        return []
-    test_size = n // (n_splits + 1)
-    if test_size < 1:
-        return []
-    splits = []
-    for i in range(n_splits):
-        train_end = n - (n_splits - i) * test_size
-        train_idx = np.arange(0, train_end)
-        test_idx  = np.arange(train_end, train_end + test_size)
-        if len(train_idx) > 0 and len(test_idx) > 0:
-            splits.append((train_idx, test_idx))
-    return splits
+    from app.ml.splitting import purged_time_series_splits
+    return list(purged_time_series_splits(n, n_splits, embargo))
 
 
 def _train_lgbm(X: np.ndarray, y: np.ndarray, params: Dict[str, Any]) -> Any:
@@ -325,6 +321,7 @@ def random_search_hyperparams(
     cv_folds: int = 5,
     seed: int = 42,
     cancel_event=None,
+    embargo: int = 0,
 ) -> Tuple[dict, float, List[dict]]:
     """Random Search avec TimeSeriesSplit manuel (sans sklearn).
 
@@ -340,7 +337,7 @@ def random_search_hyperparams(
     if actual_folds < 2:
         return {}, 0.0, []
 
-    splits = _time_series_split(len(y), actual_folds)
+    splits = _time_series_split(len(y), actual_folds, embargo=embargo)
     if not splits:
         return {}, 0.0, []
 
@@ -776,6 +773,8 @@ class MLDynamicThresholdStrategy(BaseStrategyML):
                 best_p, best_auc, _ = random_search_hyperparams(
                     X_hs, y_hs, self.n_trials,
                     cancel_event=self._cancel_event,
+                    # Les labels regardent ``lookahead`` barres en avant.
+                    embargo=int(self.lookahead),
                 )
 
             if self._cancel_event is not None and self._cancel_event.is_set():

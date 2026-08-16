@@ -255,21 +255,27 @@ def train(recipe_name: str, df: pl.DataFrame, tf: str, *,
             names = kept
 
     X_full = fs.frame.select(names).to_numpy().astype(np.float32)[:lab.n]
-    split = max(int(lab.n * 0.8), 100)
-    split = min(split, lab.n - 50)
-    if split < 100 or lab.n - split < 50:
+    # Embargo : le labelleur annonce ses horizons, le module de découpage en
+    # déduit combien de lignes d'entraînement portent une information tirée de
+    # la validation (cf. app/ml/splitting.py).
+    from app.ml.splitting import chrono_split
+    plan = chrono_split(lab.n, lab.stats.get("horizons"))
+    if plan is None:
         logger.warning(f"[RecipeTrainer] {recipe_name}/{tf} : split impossible (n={lab.n})")
         return None
 
+    stats = dict(lab.stats)
+    stats["embargo"] = int(plan.embargo)
     return _fit_heads(recipe_name, r, p, tf, names, X_full,
                       {h: lab.y[h][:lab.n] for h in heads},
-                      split, lab.n, heads, dict(lab.stats))
+                      plan.split, lab.n, heads, stats, train_end=plan.train)
 
 
 def _fit_heads(recipe_name: str, r, p: Dict[str, Any], tf: str,
                names: List[str], X_full, y_by_head: Dict[str, Any],
                split: int, n: int, heads: List[str],
-               lab_stats: Dict[str, Any]) -> Optional["TrainedRecipe"]:
+               lab_stats: Dict[str, Any],
+               train_end: Optional[int] = None) -> Optional["TrainedRecipe"]:
     """Cœur d'entraînement, partagé par ``train`` (un symbole) et
     ``train_multi`` (plusieurs). Reçoit une matrice et des cibles DÉJÀ
     alignées et découpées : la façon dont le découpage a été décidé —
@@ -282,13 +288,16 @@ def _fit_heads(recipe_name: str, r, p: Dict[str, Any], tf: str,
         return None
 
     from app.ml.backend.features import impute_inplace
+    # ``train_end`` < ``split`` quand un embargo s'applique ; l'entraînement
+    # s'arrête avant, la validation démarre au même endroit qu'avant.
+    train_end = int(split if train_end is None else train_end)
     medians: Dict[str, float] = {}
     for j, col in enumerate(names):
-        col_train = X_full[:split, j]
+        col_train = X_full[:train_end, j]
         mask = np.isfinite(col_train)
         medians[col] = float(np.median(col_train[mask])) if mask.any() else 0.0
 
-    X_train, X_valid = X_full[:split].copy(), X_full[split:n].copy()
+    X_train, X_valid = X_full[:train_end].copy(), X_full[split:n].copy()
     impute_inplace(X_train, names, medians)
     impute_inplace(X_valid, names, medians)
 
@@ -315,7 +324,8 @@ def _fit_heads(recipe_name: str, r, p: Dict[str, Any], tf: str,
     cal_err: Dict[str, float] = {}
     importances: Dict[str, List[tuple]] = {}
     meta: Dict[str, Any] = {
-        "n_train": int(split), "n_valid": int(n - split),
+        "n_train": int(train_end), "n_valid": int(n - split),
+        "embargo": int(split - train_end),
         "n_features": len(names), "horizons": lab_stats.get("horizons"),
         "label_stats": lab_stats, "recipe": recipe_name,
         "label_scheme": r.label_scheme, "features_catalog": r.features_catalog,
@@ -325,7 +335,7 @@ def _fit_heads(recipe_name: str, r, p: Dict[str, Any], tf: str,
 
     for head in heads:
         y = y_by_head[head][:n]
-        y_tr, y_va = y[:split], y[split:n]
+        y_tr, y_va = y[:train_end], y[split:n]
         if len(np.unique(y_tr)) < 2:
             logger.warning(f"[RecipeTrainer] {recipe_name}/{tf} : labels mono-classe "
                            f"pour la tête {head!r}, entraînement ignoré")
@@ -481,12 +491,20 @@ def train_multi(recipe_name: str, frames: Dict[str, pl.DataFrame], tf: str, *,
     tr_y: Dict[str, list] = {h: [] for h in heads}
     va_y: Dict[str, list] = {h: [] for h in heads}
     per_symbol: Dict[str, int] = {}
+    # Embargo appliqué PAR SYMBOLE, avant concaténation : les blocs
+    # d'entraînement se suivent dans ``X_tr``, donc « retirer les dernières
+    # lignes » après coup n'en retirerait qu'au dernier symbole, alors que
+    # chacun a sa propre frontière avec la validation.
+    from app.ml.splitting import label_embargo
+    embargo = label_embargo(r.label_horizons)
     for symbol, times, X, ys in parts:
         m_tr, m_va = times < cut_ts, times >= cut_ts
-        tr_X.append(X[m_tr])
+        n_tr = int(m_tr.sum())
+        garde = max(0, n_tr - embargo)
+        tr_X.append(X[m_tr][:garde])
         va_X.append(X[m_va])
         for h in heads:
-            tr_y[h].append(ys[h][m_tr])
+            tr_y[h].append(ys[h][m_tr][:garde])
             va_y[h].append(ys[h][m_va])
         per_symbol[symbol] = int(len(X))
 
@@ -504,7 +522,7 @@ def train_multi(recipe_name: str, frames: Dict[str, pl.DataFrame], tf: str, *,
     stats = {"horizons": r.label_horizons, "n_labels": n,
              "pooled_symbols": sorted(per_symbol), "bars_per_symbol": per_symbol,
              "split_at": str(np.array(cut_ts).astype("datetime64[s]")),
-             "skipped_symbols": skipped}
+             "embargo": int(embargo), "skipped_symbols": skipped}
 
     out = _fit_heads(recipe_name, r, p, tf, names, X_full, y_by_head,
                      split, n, heads, stats)

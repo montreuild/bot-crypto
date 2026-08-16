@@ -515,13 +515,24 @@ def impute_inplace(arr: np.ndarray, feature_cols: List[str],
 #  Labellisation multi-horizon
 # ─────────────────────────────────────────────────────────────────────────────
 def multi_horizon_labels(close: np.ndarray, horizons: List[int],
-                         amp_top_pct: float) -> Tuple[np.ndarray, np.ndarray, int, float, dict]:
+                         amp_top_pct: float,
+                         thr_upto: Optional[int] = None,
+                         ) -> Tuple[np.ndarray, np.ndarray, int, float, dict]:
     """Construit (y_amp, y_dir) agrégés sur plusieurs horizons.
 
     amplitude : 1 si le rendement absolu MAX sur les horizons dépasse le
                 quantile (1 - amp_top_pct) — capte les mouvements qui se
                 développent sur plusieurs bougies.
     direction : 1 si le rendement MOYEN (pondéré 1/h) sur les horizons est positif.
+
+    ``thr_upto`` borne le calcul du QUANTILE aux ``thr_upto`` premières lignes.
+    Sans lui, le seuil qui DÉFINIT les labels résume la période entière,
+    validation comprise : le taux de positifs de la validation est alors épinglé
+    à ``amp_top_pct`` par construction, au lieu d'être ce qu'un seuil appris sur
+    le passé y produirait. Ce n'est pas une fuite d'exécution — ``amp_thr`` ne
+    sert qu'à fabriquer des labels d'entraînement, jamais à décider en live —
+    mais c'est un biais sur l'AUC de validation, qui arbitre la promotion des
+    modèles. ``None`` = comportement historique.
 
     Retourne (y_amp, y_dir, n, amp_thr, stats).
     """
@@ -542,7 +553,8 @@ def multi_horizon_labels(close: np.ndarray, horizons: List[int],
     weights /= weights.sum()
 
     abs_max = np.max(np.abs(rets), axis=1)
-    amp_thr = float(np.quantile(abs_max, 1.0 - amp_top_pct))
+    ref = abs_max if thr_upto is None else abs_max[:max(1, int(thr_upto))]
+    amp_thr = float(np.quantile(ref, 1.0 - amp_top_pct))
     y_amp = (abs_max >= amp_thr).astype(np.int8)
 
     mean_ret = rets @ weights
@@ -552,17 +564,23 @@ def multi_horizon_labels(close: np.ndarray, horizons: List[int],
         "horizons":      hs,
         "n_labels":      int(n),
         "amp_thr_pct":   round(amp_thr * 100, 4),
+        "amp_thr_fit_n": int(len(ref)),
         "amp_pos_rate":  round(float(y_amp.mean()), 4),
         "dir_pos_rate":  round(float(y_dir.mean()), 4),
     }
     return y_amp, y_dir, n, amp_thr, stats
 
 
-def single_horizon_labels(close: np.ndarray, amp_top_pct: float) -> Tuple[np.ndarray, np.ndarray, int, float]:
+def single_horizon_labels(close: np.ndarray, amp_top_pct: float,
+                          thr_upto: Optional[int] = None,
+                          ) -> Tuple[np.ndarray, np.ndarray, int, float]:
     """Labellisation single-horizon (t+1) — pour les stratégies V4 retrained simples.
 
     amplitude : 1 si |ret_t+1| > quantile(1 - amp_top_pct).
     direction : 1 si ret_t+1 > 0.
+
+    ``thr_upto`` : cf. :func:`multi_horizon_labels` — quantile calculé sur les
+    seules lignes d'entraînement.
     """
     n = len(close) - 1
     if n <= 0:
@@ -571,7 +589,8 @@ def single_horizon_labels(close: np.ndarray, amp_top_pct: float) -> Tuple[np.nda
     base_safe = np.maximum(base, 1e-9)
     ret = (close[1:n + 1] - base) / base_safe
     abs_ret = np.abs(ret)
-    amp_thr = float(np.quantile(abs_ret, 1.0 - amp_top_pct))
+    ref = abs_ret if thr_upto is None else abs_ret[:max(1, int(thr_upto))]
+    amp_thr = float(np.quantile(ref, 1.0 - amp_top_pct))
     y_amp = (abs_ret >= amp_thr).astype(np.int8)
     y_dir = (ret > 0).astype(np.int8)
     return y_amp, y_dir, n, amp_thr
