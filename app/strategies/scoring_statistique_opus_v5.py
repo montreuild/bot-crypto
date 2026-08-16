@@ -228,6 +228,9 @@ class Strategy(BaseStrategyML):
         self._lock         = threading.Lock()
         self._call_cnt:    Dict[str, int] = {}
         self._last_retrain:Dict[str, int] = {}
+        # Tentatives (réussies OU NON) : sans ce compteur, un
+        # entraînement qui échoue est relancé à chaque barre.
+        self._last_attempt: Dict[str, int] = {}
         self._managed_externally          = False
         self._best_auc:        float            = 0.0
         self._best_auc_per_tf: Dict[str, float] = {}
@@ -428,6 +431,7 @@ class Strategy(BaseStrategyML):
             self._train_meta.clear()
             self._trained_recipes.clear()
             self._last_retrain.clear()
+            self._last_attempt.clear()
             self._managed_externally = False
             self._best_auc = 0.0
         self._bt_features_cache.clear()
@@ -676,8 +680,12 @@ class Strategy(BaseStrategyML):
         tf_key = sym
 
         # Walk-forward
-        last       = self._last_retrain.get(tf_key, 0)
-        need_train = (tf_key not in self._trained_tfs) or (cnt - last >= retrain_every)
+        from app.ml.retrain import due_for_training
+        need_train = due_for_training(
+            is_trained=tf_key in self._trained_tfs, calls=cnt,
+            last_success=self._last_retrain.get(tf_key, 0),
+            last_attempt=self._last_attempt.get(tf_key, 0),
+            cadence=retrain_every)
 
         if need_train and not self._managed_externally:
             # Fenêtre alignée sur la grille ``retrain_every`` : sans cela, deux
@@ -689,6 +697,7 @@ class Strategy(BaseStrategyML):
             n_train = min(len(df) - 1, warmup_bars * 2)
             train_df, self._bt_train_offset = aligned_train_window(
                 df, retrain_every, n_train)
+            self._last_attempt[tf_key] = cnt
             ok = self._train(train_df, tf_key, adx_threshold, amp_top_pct)
             self._bt_train_offset = 0
             if ok:
