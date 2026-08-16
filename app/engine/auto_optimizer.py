@@ -476,6 +476,16 @@ class AutoOptimizer:
                 cancel_event=cancel_event,
             )
 
+            # Budget proportionné à l'espace de CETTE stratégie (cf.
+            # app/engine/opt_budget.py) : un espace à 3 paramètres et un espace
+            # à 58 ne se couvrent pas avec le même nombre d'essais.
+            from app.engine.opt_budget import effective_n_trials, format_budget
+            n_trials_eff, budget = effective_n_trials(
+                opt.param_space, self.n_trials, self.cfg)
+            if n_trials_eff != self.n_trials:
+                logger.info(format_budget(strategy_name, budget))
+                _update_job(job_id, n_trials=n_trials_eff, n_trials_budget=budget)
+
             # #6 : two-phase pour les stratégies ML exposant des hyperparamètres
             # d'entraînement réglables (et si activé). Sinon phase unique.
             ml_hp_space = {}
@@ -485,18 +495,18 @@ class AutoOptimizer:
 
             if ml_hp_space:
                 result = opt.optimize_two_phase(
-                    self.method, self.n_trials, self.n_jobs, ml_hp_space,
+                    self.method, n_trials_eff, self.n_jobs, ml_hp_space,
                     early_stop_patience=self.early_stop_patience,
                     param_search_optim=self.param_search_optim)
             elif self.method == "bayesian":
-                result = opt.bayesian_search(self.n_trials, n_jobs=self.n_jobs,
+                result = opt.bayesian_search(n_trials_eff, n_jobs=self.n_jobs,
                                              early_stop_patience=self.early_stop_patience,
                                              param_search_optim=self.param_search_optim)
             elif self.method == "grid":
                 result = opt.grid_search(n_jobs=self.n_jobs,
                                          param_search_optim=self.param_search_optim)
             else:
-                result = opt.random_search(self.n_trials, n_jobs=self.n_jobs,
+                result = opt.random_search(n_trials_eff, n_jobs=self.n_jobs,
                                            early_stop_patience=self.early_stop_patience,
                                            param_search_optim=self.param_search_optim)
 
@@ -528,7 +538,10 @@ class AutoOptimizer:
             _opt_cfg = (self.cfg.get("optimizer") or {})
             _ds_gate_enabled = bool(_opt_cfg.get("deflated_sharpe_gate", True))
             _ds_min = float(_opt_cfg.get("deflated_sharpe_min", 0.5))
-            _ds_n_trials = int(self.n_trials) if _ds_gate_enabled else 1
+            # Le nombre d'essais RÉELLEMENT tirés, pas celui demandé : c'est
+            # lui qui mesure le biais de sélection multiple à corriger.
+            _ds_n_trials = int(result.get("n_trials") or n_trials_eff) \
+                if _ds_gate_enabled else 1
             _ds_min_arg = _ds_min if _ds_gate_enabled else None
 
             def _beats_baseline() -> bool:

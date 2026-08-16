@@ -38,17 +38,28 @@ def cardinality(param_space: dict) -> int:
 
 def audit(cfg: dict) -> list:
     """Retourne une liste de dicts {name, n_params, cardinality, n_trials,
-    coverage, warn} triée par couverture croissante (pire en premier)."""
-    n_trials = int(cfg.get("optimizer", {}).get("n_trials", 50))
+    coverage, warn} triée par couverture croissante (pire en premier).
+
+    ``n_trials`` est le budget EFFECTIF de chaque stratégie
+    (``app/engine/opt_budget.py``), pas la valeur brute de config : depuis que
+    le budget est proportionné à l'espace, afficher 40 partout décrirait une
+    optimisation qui n'a plus lieu.
+    """
+    from app.engine.opt_budget import effective_n_trials
+
+    base = int(cfg.get("optimizer", {}).get("n_trials", 50))
     rows = []
     for name, space in sorted(get_param_spaces().items()):
         card = cardinality(space)
+        n_trials, detail = effective_n_trials(space, base, cfg)
         coverage = (n_trials / card) if card > 0 else 1.0
         rows.append({
             "name": name,
             "n_params": len(space),
             "cardinality": card,
             "n_trials": n_trials,
+            "base": base,
+            "raison": detail.get("raison", ""),
             "coverage": coverage,
             "warn": coverage < COVERAGE_WARN_THRESHOLD,
         })
@@ -57,13 +68,15 @@ def audit(cfg: dict) -> list:
 
 
 def print_report(rows: list) -> None:
-    header = f"{'stratégie':<32} {'#params':>7} {'cardinalité':>14} {'n_trials':>9} {'couverture':>11}"
+    header = (f"{'stratégie':<32} {'#params':>7} {'cardinalité':>14} "
+              f"{'demandé':>8} {'effectif':>9} {'couverture':>11}")
     print(header)
     print("-" * len(header))
     for r in rows:
         flag = " ⚠" if r["warn"] else ""
         print(f"{r['name']:<32} {r['n_params']:>7} {r['cardinality']:>14,} "
-              f"{r['n_trials']:>9} {r['coverage']:>10.2%}{flag}")
+              f"{r.get('base', r['n_trials']):>8} {r['n_trials']:>9} "
+              f"{r['coverage']:>10.2%}{flag}")
     n_warn = sum(1 for r in rows if r["warn"])
     print("-" * len(header))
     print(f"{len(rows)} stratégies auditées, {n_warn} sous le seuil de couverture "

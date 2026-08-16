@@ -33,7 +33,16 @@ backtest:
 optimizer:
   enabled: false
   method: bayesian
+  # Budget DEMANDÉ. Le budget effectif est proportionné à l'espace de chaque
+  # stratégie (app/engine/opt_budget.py) : un espace à 3 paramètres et un
+  # espace à 58 ne se couvrent pas avec le même nombre d'essais.
   n_trials: 40
+  # Plancher par dimension : `trials_per_param × nombre de paramètres`.
+  # 0 désactive la mise à l'échelle et rend `n_trials` tel quel.
+  trials_per_param: 15
+  # Plafond dur. Au-delà, ce n'est plus le budget brut qui aide mais le gel des
+  # paramètres à faible impact (param_search_optim), déjà actif par défaut.
+  max_trials: 400
   out_of_sample_ratio: 0.35
 
 forward_test:
