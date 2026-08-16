@@ -238,9 +238,19 @@ def mouvement_apres_composes(resultat_mine: Dict[str, Any], journal: pl.DataFram
     rng = np.random.default_rng(graine)
     lignes: List[Dict[str, Any]] = []
 
+    # L'énumération est faite UNE fois par longueur, pas une fois par composé.
+    # Elle coûte O(n · fenêtre²) : la refaire dans la boucle multipliait ce coût
+    # par le nombre de confirmés — quelques centaines — et faisait passer un
+    # run 4 TF de quelques secondes à plus de dix minutes.
+    par_longueur = {
+        longueur: _sequences(ep_conf, mail_conf, longueur, fenetre_s)
+        for longueur in sorted({len(c["sequence"].split(" → "))
+                                for c in confirmes.iter_rows(named=True)})
+    }
+
     for ligne in confirmes.iter_rows(named=True):
         seq = tuple(ligne["sequence"].split(" → "))
-        occurrences = _sequences(ep_conf, mail_conf, len(seq), fenetre_s).get(seq, [])
+        occurrences = par_longueur.get(len(seq), {}).get(seq, [])
         if not occurrences:
             continue
         # Barre du TF de mesure à laquelle le composé est COMPLET : la dernière
