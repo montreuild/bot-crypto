@@ -1323,6 +1323,12 @@ class OptimizerSearchEngine:
             "best_is_trades": best["is_trades"],
             "best_oos_trades":best["oos_trades"],
             "best_oos_wr":    round(best.get("oos_wr", 0.0), 1),
+            # O-01 : alias honnêtes — cette tranche a servi à sélectionner.
+            "best_val_score": self._penalized_score(best),
+            "best_val_pnl":   best["oos_pnl"],
+            "best_val_sharpe":best["oos_sharpe"],
+            "best_val_trades":best["oos_trades"],
+            "best_val_wr":    round(best.get("oos_wr", 0.0), 1),
             "best_is_wr":     round(best.get("is_wr", 0.0), 1),
             "best_oos_dd":    round(best.get("oos_dd", 0.0), 2),
             "best_oos_alpha": round(best["oos_alpha"], 4) if best.get("oos_alpha") is not None else None,

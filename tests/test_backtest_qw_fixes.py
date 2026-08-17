@@ -14,13 +14,13 @@ l'API et dans l'UI, mais elle ne calcule rien.
   sa plage et backtestait tout l'historique.
 """
 import inspect
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import polars as pl
 import pytest
 from fastapi import HTTPException
 
-from app.api.routes.backtest import _filter_df_by_date_range
+from app.api.routes.backtest import _filter_df_by_date_range, _limit_for_date_range
 from app.engine.backtest import Backtester, BacktestResult
 
 # ── QW-2 : filtre par plage de dates ─────────────────────────────────────────
@@ -67,6 +67,21 @@ def test_filtre_dates_invalide_leve_une_400_plutot_que_de_tout_renvoyer():
     with pytest.raises(HTTPException) as exc:
         _filter_df_by_date_range(_df_naif(), "pas-une-date", "")
     assert exc.value.status_code == 400
+
+
+def test_limit_date_range_ne_demande_pas_50k_pour_trois_jours():
+    """A-03 : une plage courte ne charge plus le plafond de 50 000 bougies."""
+    end = datetime.now(timezone.utc).replace(tzinfo=None)
+    start = end - timedelta(days=10)
+    n = _limit_for_date_range("1h", start.isoformat(timespec="seconds"), "")
+    # 10 jours × 24 h + 3 de marge, plancher 100.
+    assert 240 <= n <= 250
+    assert n < 50000
+
+
+def test_limit_date_range_plafonne_1d_a_5000():
+    n = _limit_for_date_range("1d", "1990-01-01", "2026-08-01")
+    assert n == 5000
 
 
 # ── QW-1 : alpha vs Buy & Hold ───────────────────────────────────────────────

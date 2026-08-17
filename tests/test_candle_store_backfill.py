@@ -553,3 +553,30 @@ class TestInteriorGaps:
             store.fetch(ex, "FULL/EUR", "15m", total=500)
             cached = store.load_cached("FULL/EUR", "15m")
         assert len(cached) == ex.depth
+
+
+def test_load_range_ne_materialise_que_la_plage(tmp_path):
+    """A-03 : scan Parquet filtré — pas les 50k bougies du fichier."""
+    import polars as pl
+    from datetime import timedelta
+
+    n = 500
+    start0 = datetime(2024, 1, 1)
+    df = pl.DataFrame({
+        "time": [start0 + timedelta(hours=i) for i in range(n)],
+        "open":   [100.0] * n,
+        "high":   [101.0] * n,
+        "low":    [99.0] * n,
+        "close":  [100.5] * n,
+        "volume": [1.0] * n,
+    }).with_columns(pl.col("time").cast(pl.Datetime("ms")))
+    store = _store(str(tmp_path))
+    store._save(store._path("BTC/USDC", "1h"), df)
+    out = store.load_range(
+        "BTC/USDC", "1h",
+        start=datetime(2024, 1, 3),
+        end=datetime(2024, 1, 5),
+    )
+    assert 0 < len(out) < n
+    assert out["time"].min() >= datetime(2024, 1, 3)
+    assert out["time"].max() <= datetime(2024, 1, 5)

@@ -70,6 +70,15 @@ tort). Un long à levier L n'emprunte que `1 − 1/L` du notionnel.
 - **B-04** : le walk-forward s'annonce comme analyse de stabilité (`kind`,
   `reoptimizes: false`, `avg_fold_pnl`).
 - **S-01** : `/metrics` exige `METRICS_TOKEN` ou `web.api_key` s'ils sont posés.
+- **S-02 / A-06** : le rate-limit honore `TRUSTED_PROXIES` (même règle que
+  `_extract_client_ip`) — plus un seau global derrière nginx.
+- **S-03 / A-10** : `?api_key=` sur le WebSocket seulement si
+  `ALLOW_WS_QUERY_KEY=1` (WARNING à chaque usage).
+- **S-04** : cookie `api_key` `Secure` si `x-forwarded-proto: https`.
+- **A-03** : un backtest par dates scanne le Parquet filtré ; plus de chargement
+  de 50 000 bougies « au cas où » (plafond `1d` = 5 000 aussi sur cette branche).
+- **UI** : walk-forward annoncé comme analyse de stabilité ; l'optimiseur
+  affiche `val_*` et `gate_source` (holdout vs sélection).
 
 ### 🐛 Alignement d'exécution backtest / paper / live
 

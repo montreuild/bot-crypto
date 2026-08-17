@@ -3,7 +3,6 @@ import os
 import threading
 
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 # ── Runtime state ──────────────────────────────────────────────────────────
 cfg          = None   # dict config chargé depuis config.yaml
@@ -18,12 +17,21 @@ SessionLocal = None   # factory SQLAlchemy session
 # state`), donc `state.limiter` y est toujours disponible pour les décorateurs
 # `@state.limiter.limit(...)` par endpoint, en plus de `app.state.limiter`
 # (SlowAPIMiddleware) réglé sur le MÊME objet dans main.py.
-# Clé = IP du pair TCP (get_remote_address ne lit PAS X-Forwarded-For → non
-# spoofable, cohérent avec helpers._extract_client_ip). Limite globale
-# généreuse (surchargeable via RATE_LIMIT) ; les endpoints sensibles/coûteux
-# ont des limites `@state.limiter.limit(...)` plus strictes par route.
+# Clé = même règle que helpers._extract_client_ip (S-02 / A-06) : X-Forwarded-For
+# honoré seulement si le pair TCP figure dans TRUSTED_PROXIES (vide par défaut
+# → IP du pair, non spoofable). Derrière nginx, sans ça, les 300 req/min
+# formaient un seau global. Import paresseux : helpers importe state.
+# Limite globale généreuse (surchargeable via RATE_LIMIT) ; les endpoints
+# sensibles/coûteux ont des limites `@state.limiter.limit(...)` plus strictes.
 _RATE_LIMIT = os.environ.get("RATE_LIMIT", "300/minute")
-limiter = Limiter(key_func=get_remote_address, default_limits=[_RATE_LIMIT])
+
+
+def _rate_limit_key(request) -> str:
+    from app.api.helpers import _extract_client_ip
+    return _extract_client_ip(request) or "unknown"
+
+
+limiter = Limiter(key_func=_rate_limit_key, default_limits=[_RATE_LIMIT])
 
 # ── Sémaphores & verrous ───────────────────────────────────────────────────
 _bt_exchange       = None

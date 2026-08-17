@@ -6,12 +6,11 @@ Endpoint : /ws
 Protocole :
 - Connexion : ws://localhost:8000/ws
 - Auth (S1-04) : la connexion doit provenir de localhost OU présenter la clé
-  API. Le cookie HttpOnly ``api_key`` (posé par les pages web, cf.
-  ``app/api/main.py::_tpl``) est vérifié EN PREMIER — il n'apparaît jamais
-  dans l'URL, les logs serveur ou les devtools réseau. Le query param
-  ``?api_key=xxx`` reste un FALLBACK pour les clients non-navigateur qui ne
-  peuvent pas poser de cookie — à documenter comme moins sûr (visible dans
-  les logs d'accès et les proxies intermédiaires).
+  API. Le cookie HttpOnly ``api_key`` (posé par le proxy Next) est vérifié
+  EN PREMIER — il n'apparaît jamais dans l'URL, les logs serveur ou les
+  devtools réseau. Le query param ``?api_key=xxx`` n'est honoré que si
+  ``ALLOW_WS_QUERY_KEY=1`` (S-03) : sinon il fuit dans les journaux nginx
+  et l'historique du navigateur.
 
 Messages serveur → client (tous au format JSON) :
 
@@ -63,6 +62,13 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _allow_ws_query_key() -> bool:
+    """S-03 : le repli ``?api_key=`` est opt-in (fuit dans les logs d'accès)."""
+    return os.environ.get("ALLOW_WS_QUERY_KEY", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 # ── Auth WebSocket ───────────────────────────────────────────────────
 def _check_ws_auth(websocket: WebSocket, api_key_query: Optional[str]) -> bool:
     """Vérifie l'auth pour une connexion WebSocket.
@@ -70,8 +76,7 @@ def _check_ws_auth(websocket: WebSocket, api_key_query: Optional[str]) -> bool:
     Règle (alignée sur verify_api_key) :
     - Si aucune clé API n'est configurée → seulement localhost autorisé.
     - Sinon → cookie HttpOnly ``api_key`` vérifié en premier (jamais dans
-      l'URL/les logs), fallback sur ``?api_key=xxx`` pour les clients qui ne
-      peuvent pas poser de cookie (S1-04).
+      l'URL/les logs). ``?api_key=xxx`` seulement si ``ALLOW_WS_QUERY_KEY=1``.
     """
     cfg = (state.cfg or {}).get("web", {})
     configured_key = cfg.get("api_key", "")
@@ -84,7 +89,14 @@ def _check_ws_auth(websocket: WebSocket, api_key_query: Optional[str]) -> bool:
         logger.warning(f"[WS] Connexion refusée depuis {client_host} (no API key)")
         return False
 
-    token = websocket.cookies.get("api_key") or api_key_query or ""
+    token = websocket.cookies.get("api_key") or ""
+    if not token and api_key_query and _allow_ws_query_key():
+        token = api_key_query
+        logger.warning(
+            "[WS] Auth via ?api_key= (ALLOW_WS_QUERY_KEY=1) depuis %s — "
+            "la clé apparaît dans les journaux d'accès",
+            client_host or "unknown",
+        )
     if not token or len(token) > 256:
         return False
     return hmac.compare_digest(token, configured_key)
@@ -125,8 +137,8 @@ async def websocket_endpoint(
         };
 
     Le navigateur envoie automatiquement le cookie HttpOnly ``api_key`` (posé
-    par les pages web) — aucun paramètre à ajouter à l'URL. ``?api_key=`` ne
-    reste utile que pour un client non-navigateur sans cookie jar.
+    par le proxy Next) — aucun paramètre à ajouter à l'URL. ``?api_key=``
+    n'est honoré que si ``ALLOW_WS_QUERY_KEY=1``.
     """
     # Auth
     if not _check_ws_auth(websocket, api_key):

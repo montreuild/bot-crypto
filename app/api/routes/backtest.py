@@ -152,6 +152,47 @@ def _envelope_payload(env) -> dict | None:
             "min_notional": env.min_notional}
 
 
+def _parse_ohlcv_bound(raw: str, end_of_day: bool):
+    """Parse une date ISO en datetime NAÏF (UTC implicite).
+
+    La colonne ``time`` du CandleStore est un ``datetime[ms]`` sans
+    timezone (UTC implicite). Comparer une colonne naïve à un littéral
+    tz-aware lève un ``SchemaError`` polars — d'où le parsing naïf ici.
+    """
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        dt = datetime.fromisoformat(
+            raw + ("T23:59:59" if end_of_day else "T00:00:00")
+        )
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _limit_for_date_range(tf: str, start_date: str, end_date: str) -> int:
+    """A-03 : nombre de bougies à charger pour couvrir [start, now], pas 50k.
+
+    ``fetch`` renvoie la queue du cache : pour que la plage demandée y
+    figure, il faut assez de bougies depuis ``start`` jusqu'à maintenant
+    (pas seulement start→end). Plafond 50 000, 5 000 en ``1d``.
+    """
+    from app.core.timeframes import TF_SECONDS
+
+    tf_sec = TF_SECONDS.get(tf, 3600) or 3600
+    cap = 5000 if tf == "1d" else 50000
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    start_dt = _parse_ohlcv_bound(start_date, False) if start_date else None
+    end_dt = _parse_ohlcv_bound(end_date, True) if end_date else None
+    if start_dt is None:
+        return cap
+    span_end = now
+    if end_dt is not None and end_dt > span_end:
+        span_end = end_dt
+    bars = int(max(0.0, (span_end - start_dt).total_seconds()) / tf_sec) + 3
+    return max(100, min(bars, cap))
+
+
 def _filter_df_by_date_range(df, start_date: str = "", end_date: str = ""):
     """QW-2 : filtre le DataFrame par plage temporelle (ISO 8601).
 
@@ -178,39 +219,19 @@ def _filter_df_by_date_range(df, start_date: str = "", end_date: str = ""):
         return df, "", ""
     import polars as pl
 
-    def _parse(raw: str, end_of_day: bool):
-        """Parse une date ISO en datetime NAÏF (UTC implicite).
-
-        La colonne ``time`` du CandleStore est un ``datetime[ms]`` sans
-        timezone (UTC implicite). Comparer une colonne naïve à un littéral
-        tz-aware lève un ``SchemaError`` polars — d'où le parsing naïf ici.
-        """
-        try:
-            dt = datetime.fromisoformat(raw)
-        except ValueError:
-            # Date seule ("2024-01-01") → borne basse à 00:00, haute à 23:59:59
-            dt = datetime.fromisoformat(
-                raw + ("T23:59:59" if end_of_day else "T00:00:00")
-            )
-        # Une date fournie avec un offset ("2024-01-01T00:00+02:00") est
-        # ramenée en UTC puis dénaturalisée, pour rester comparable.
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-        return dt
-
     used_start = ""
     used_end = ""
     mask = pl.lit(True)
     if start_date:
         try:
-            start_dt = _parse(start_date, end_of_day=False)
+            start_dt = _parse_ohlcv_bound(start_date, end_of_day=False)
         except Exception as _e:
             raise HTTPException(400, f"start_date '{start_date}' invalide (ISO 8601 attendu) : {_e}")
         mask = mask & (pl.col("time") >= start_dt)
         used_start = start_dt.isoformat()[:16]
     if end_date:
         try:
-            end_dt = _parse(end_date, end_of_day=True)
+            end_dt = _parse_ohlcv_bound(end_date, end_of_day=True)
         except Exception as _e:
             raise HTTPException(400, f"end_date '{end_date}' invalide (ISO 8601 attendu) : {_e}")
         mask = mask & (pl.col("time") <= end_dt)
@@ -353,11 +374,18 @@ def run_backtest(
             logger.warning(f"[backtest] rechargement config KO : {e}")
 
         tf    = timeframe.strip() or state.cfg["trading"].get("timeframe", "1h")
-        # QW-2 : si start_date/end_date fournis, on prend un maximum de bougies
-        # (50k) puis on filtre par date. Sinon, comportement historique (limit).
+        # A-03 : une plage de dates ne charge plus 50 000 bougies « au cas où ».
+        # Scan Parquet filtré d'abord ; sinon fetch borné à la span start→now
+        # (plafond 50k, 5k en 1d). Sans dates : comportement historique.
         use_date_range = bool(start_date.strip() or end_date.strip())
         if use_date_range:
-            limit = 50000  # max possible
+            try:
+                limit = _limit_for_date_range(tf, start_date.strip(), end_date.strip())
+            except Exception as _e:
+                raise HTTPException(
+                    400,
+                    f"plage de dates invalide (ISO 8601 attendu) : {_e}",
+                )
         else:
             limit = max(100, min(limit, 50000))
             if tf == "1d":
@@ -383,8 +411,21 @@ def run_backtest(
 
         # QW-3 : refresh force prefer_cache=False
         exchange = _get_bt_exchange(effective_cfg)
-        df       = get_store().fetch(exchange, symbol, tf, total=limit,
-                                      prefer_cache=not refresh)
+        store = get_store()
+        df = None
+        if use_date_range and not refresh:
+            start_dt = (
+                _parse_ohlcv_bound(start_date.strip(), False) if start_date.strip() else None
+            )
+            end_dt = (
+                _parse_ohlcv_bound(end_date.strip(), True) if end_date.strip() else None
+            )
+            cached = store.load_range(symbol, tf, start=start_dt, end=end_dt)
+            if cached is not None and len(cached) > 0:
+                df = cached
+        if df is None or len(df) == 0:
+            df = store.fetch(exchange, symbol, tf, total=limit,
+                             prefer_cache=not refresh)
         if df is None or len(df) == 0:
             raise HTTPException(400, f"Aucune donnée disponible pour {symbol}/{tf}")
 

@@ -398,7 +398,10 @@ export const WalkForwardErrorSchema = z
 export const WalkForwardSuccessSchema = z
   .object({
     n_folds: z.number(),
+    kind: z.string().optional(),
+    reoptimizes: z.boolean().optional(),
     avg_oos_pnl: num,
+    avg_fold_pnl: num.optional(),
     avg_oos_sharpe: num,
     avg_oos_wr: num,
     consistency: num,
