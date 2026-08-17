@@ -8,9 +8,18 @@
 
 ## Tableau de bord
 
+> ⚠️ **Révisé le 17 août 2026.** **P-01 est fortement atténué** par les PR #222
+> et #227 : `htf_trend` passe de O(n²) à O(n) sur 8 stratégies (**jusqu'à ×120**),
+> `bb_squeeze` en série causale (**×80** sur `breakout`), prédiction par lot sur
+> v4/v5/`ml_dynamic_threshold`, threads LightGBM (**×3,1**), énumération des
+> composés SMC. Nouveau module `app/core/indicators_causal.py`. Le constat de
+> fond subsiste (36 stratégies sans `prepare_for_backtest`) mais les pires cas
+> sont traités. Détail dans
+> [`13-REVISION-2026-08-17.md`](13-REVISION-2026-08-17.md) §3.
+
 | # | Sévérité | Titre | Fichier |
 |---|----------|-------|---------|
-| P-01 | 🟠 Majeur | Boucle de backtest en Python pur : ~3 000 barres/s au mieux | `engine/backtest.py:1541-1635` |
+| P-01 | 🟠 Majeur → atténué | Boucle de backtest en Python pur : ~3 000 barres/s au mieux | `engine/backtest.py:1541-1635` |
 | P-02 | 🟠 Majeur | Un appel exchange par position et par cycle, multiplié par 5 chemins | `live/*`, `A-04` |
 | P-03 | 🟠 Majeur | `_find_strategy` en O(k) appelé 2× par barre | `engine/backtest.py:655-663` |
 | P-04 | 🟡 Moyen | `alpha_vs_buy_hold` en O(n²) | `core/performance_metrics.py:164-165` |

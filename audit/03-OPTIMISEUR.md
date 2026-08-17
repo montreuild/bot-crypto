@@ -9,15 +9,22 @@
 
 ## Tableau de bord
 
-| # | Sévérité | Titre | Fichier |
-|---|----------|-------|---------|
-| O-01 | 🔴 Critique | L'objectif d'optimisation **est** le score OOS : il n'y a pas d'out-of-sample | `optimizer_search.py:305-313` |
-| O-02 | 🔴 Critique | Le gate de promotion est évalué sur la fenêtre qui a servi à sélectionner | `auto_optimizer.py:534-541` |
-| O-03 | 🔴 Critique | Le gate walk-forward tourne sur les mêmes données que la sélection | `auto_optimizer.py:543-585` |
-| O-04 | 🟠 Majeur | L'optimiseur mesure sur 1 000 € quand le live dimensionne sur l'enveloppe du slot | `optimizer_search.py:274` |
-| O-05 | 🟠 Majeur | Gel de paramètres décidé sur un dépistage sous-dimensionné | `optimizer_search.py:401-529` |
-| O-06 | 🟠 Majeur | `seed=0` figé : deux campagnes explorent exactement le même chemin | `optimizer_search.py:650` |
-| O-07 | 🟠 Majeur | `n_trials` du Deflated Sharpe ≠ nombre d'essais réellement joués | `auto_optimizer.py:531` |
+> ⚠️ **Révisé le 17 août 2026.** La PR #222 a introduit une **troisième tranche
+> (holdout, 20 %)** qui résout O-02, O-03 et O-07, et requalifie O-01. Détail et
+> vérification dans [`13-REVISION-2026-08-17.md`](13-REVISION-2026-08-17.md).
+> Deux nouveaux constats portent sur ce correctif : **N-01** et **N-02**.
+> Les sections ci-dessous décrivent l'état au 14 août, conservé comme trace du
+> raisonnement ; la colonne « État » donne la situation courante.
+
+| # | Sévérité | Titre | Fichier | État au 17/08 |
+|---|----------|-------|---------|---------------|
+| O-01 | 🔴→🟡 | L'objectif d'optimisation **est** le score OOS : il n'y a pas d'out-of-sample | `optimizer_search.py:305-313` | **requalifié** — le découpage à 3 tranches est en place ; reste que la tranche de sélection s'appelle encore `oos_*` |
+| O-02 | 🔴 Critique | Le gate de promotion est évalué sur la fenêtre qui a servi à sélectionner | `auto_optimizer.py:534-541` | ✅ **résolu** — gate sur holdout, variables réaffectées (`auto_optimizer.py:587-590`) |
+| O-03 | 🔴 Critique | Le gate walk-forward tourne sur les mêmes données que la sélection | `auto_optimizer.py:543-585` | ✅ **résolu** — reçoit `df_recherche` (cf. N-03 sur le nom) |
+| O-04 | 🟠 Majeur | L'optimiseur mesure sur 1 000 € quand le live dimensionne sur l'enveloppe du slot | `optimizer_search.py:274` | ouvert |
+| O-05 | 🟠 Majeur | Gel de paramètres décidé sur un dépistage sous-dimensionné | `optimizer_search.py:401-529` | atténué — `opt_budget.py` porte `smart_money` de 40 à 400 essais |
+| O-06 | 🟠 Majeur | `seed=0` figé : deux campagnes explorent exactement le même chemin | `optimizer_search.py:650` | ouvert |
+| O-07 | 🟠 Majeur | `n_trials` du Deflated Sharpe ≠ nombre d'essais réellement joués | `auto_optimizer.py:531` | ✅ **résolu** — `result.get("n_trials")` (`auto_optimizer.py:626`) |
 | O-08 | 🟡 Moyen | Early stop sur le score OOS : arrêt d'autant plus précoce que le bruit est fort | `optimizer_search.py:786-805` |
 | O-09 | 🟡 Moyen | `overfitting_ratio` inopérant sur les scores négatifs | `opt_scoring.py:141-147` |
 | O-10 | 🟡 Moyen | Modèle ML final entraîné sur IS+OOS par défaut | `auto_optimizer.py:642-644` |
