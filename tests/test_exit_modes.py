@@ -65,6 +65,24 @@ def test_trailing_after_profit_pose_un_seuil_d_armement():
     assert perso["_trail_activate_r"] == pytest.approx(2.5)
 
 
+def test_les_modes_suiveurs_retirent_la_cible_fixe():
+    """Un mode qui laisse courir doit POSSÉDER la géométrie de sortie.
+
+    Mesuré : `smc_ml_edge` fixe `sl_atr_mult = tp_atr_mult = 2.5`, donc sa
+    cible tombe exactement à 1R. Le moteur testant la cible fixe AVANT les
+    cibles partielles, elle soldait toujours la position en entier et
+    `tp1_tp2_runner` rendait un backtest identique à `as_declared`, zéro jambe.
+    """
+    sig = _signal(tp_atr_mult=2.5, tp_hint=123.0)
+    for mode in ("trailing", "trailing_after_profit", "tp1_tp2_runner"):
+        out = apply_exit_mode(sig, mode)
+        assert out["tp_atr_mult"] is None, f"{mode} garde tp_atr_mult"
+        assert out["tp_hint"] is None, f"{mode} garde tp_hint"
+    # `sl_tp` la garde, évidemment : c'est tout son objet.
+    garde = apply_exit_mode(sig, "sl_tp")
+    assert garde["tp_atr_mult"] == 2.5
+
+
 def test_tp1_tp2_runner_laisse_un_reliquat():
     """Le runner EST le reliquat : des fractions qui somment à 1 ne laisseraient
     rien courir, ce qui viderait le mode de son sens."""
@@ -83,6 +101,44 @@ def test_les_cibles_du_mode_sont_planifiables():
     assert len(cibles) == len(TP1_TP2_RUNNER_EXITS)
     # 1R = 100 + 1×2 = 102 ; 2R = 104.
     assert [round(c["price"], 6) for c in cibles] == [102.0, 104.0]
+
+
+def test_les_cibles_sont_correctes_en_SHORT():
+    """Le sens doit être respecté : mes tests ne couvraient que le long.
+
+    Sur un short, les cibles partielles sont SOUS l'entrée et le stop AU-DESSUS.
+    Une cible du mauvais côté serait touchée dès la première barre — le mode
+    solderait la position immédiatement, et le backtest afficherait un taux de
+    réussite flatteur sans qu'aucune erreur ne soit levée.
+    """
+    court = {"name": "x", "side": "short", "score": 0.9}
+    sig = apply_exit_mode(court, "tp1_tp2_runner")
+    # Entrée 100, stop 102 → risque 2. 1R = 98, 2R = 96.
+    cibles = plan_partial_targets(sig, entry=100.0, stop=102.0)
+    assert [round(c["price"], 6) for c in cibles] == [98.0, 96.0]
+    for c in cibles:
+        assert c["price"] < 100.0, "cible short au-dessus de l'entrée"
+
+
+def test_le_seuil_d_armement_est_symetrique(resultats):
+    """`trailing_after_profit` doit armer sur le PROFIT, pas sur la hausse.
+
+    Un calcul non signé armerait le suiveur d'un short dès que le prix monte,
+    c'est-à-dire exactement quand la position perd.
+    """
+    res = resultats["trailing_after_profit"]
+    shorts = [t for t in res.trades if t.get("side") == "short"]
+    if not shorts:
+        pytest.skip("aucun short sur ce jeu")
+    # Aucun short ne doit sortir en perte SUPÉRIEURE à son risque initial : un
+    # armement inversé laisserait courir les pertes bien au-delà.
+    for t in shorts:
+        risque = abs(float(t["entry"]) - float(t.get("planned_stop") or t["entry"]))
+        if risque <= 0:
+            continue
+        perte = max(0.0, float(t["entry"]) - float(t["exit"])) * -1
+        assert perte <= risque * 3, (
+            f"short sorti à {perte:.2f} pour un risque de {risque:.2f}")
 
 
 def test_un_mode_inconnu_est_refuse_bruyamment():
@@ -227,3 +283,36 @@ def test_trailing_after_profit_garde_le_stop_initial_au_debut(resultats):
            (len(b.trades), round(b.total_pnl, 4)), (
         "trailing et trailing_after_profit donnent le même résultat — "
         "l'armement différé n'a aucun effet")
+
+
+def test_la_somme_des_postes_de_sortie_redonne_le_pnl_total(resultats):
+    """L'invariant qui manquait, et qui a laissé passer un tableau faux.
+
+    `by_exit_leg` n'agrégeait que les trades FRACTIONNÉS. Or une jambe
+    partielle ne se déclenche qu'en atteignant sa cible : ces trades sont
+    gagnants par construction. Mesuré sur ETH/USDC 4 h : 80 trades fractionnés
+    à +1 902 affichés, 89 trades non fractionnés à −1 629 **absents**, et un
+    tableau annonçant 695 % du PnL réel avec 100 % de réussite sur chaque
+    ligne. Un lecteur y voyait une stratégie qui ne perd jamais.
+
+    Exiger que la somme redonne le total est la seule assertion qui attrape ça.
+    """
+    for mode, res in resultats.items():
+        if not res.trades:
+            continue
+        postes = res.to_dict()["by_exit_leg"]
+        assert postes, f"{mode} : aucun poste de sortie"
+        somme = sum(v["pnl"] for v in postes.values())
+        assert somme == pytest.approx(res.total_pnl, abs=1e-2), (
+            f"{mode} : les postes somment à {somme:.2f} pour un PnL réel de "
+            f"{res.total_pnl:.2f} — des trades manquent au découpage")
+
+
+def test_les_pertes_apparaissent_dans_les_postes(resultats):
+    """Corollaire : un découpage où tout gagne est un découpage incomplet."""
+    res = resultats["sl_tp"]
+    if not res.trades or res.total_pnl >= 0:
+        pytest.skip("pas de perte sur ce jeu")
+    postes = res.to_dict()["by_exit_leg"]
+    assert any(v["pnl"] < 0 for v in postes.values()), (
+        f"aucun poste perdant alors que le PnL total est {res.total_pnl:.2f}")

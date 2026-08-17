@@ -484,6 +484,12 @@ export interface BacktestResult {
   net_profit?: number;
   // ── Axes d'analyse SMC (L0–L6) ────────────────────────────────────────────
   by_exit_reason?: Record<string, StrategyStats>;
+  /** §5 — PnL par JAMBE de sortie (tp1, tp2, runner). `by_exit_reason` compte
+   *  des trades ; ceci dit d'où vient l'argent dans un trade fractionné. */
+  by_exit_leg?: Record<string, { n: number; pnl: number; win_rate: number; part_pct: number }>;
+  /** Mode de sortie appliqué — deux runs qui ne sortent pas de la même façon
+   *  ne sont pas comparables de bonne foi. */
+  exit_mode?: string;
   by_structure_state?: Record<string, StrategyStats>;
   by_sequence_type?: Record<string, StrategyStats>;
   by_tier?: Record<string, StrategyStats>;
