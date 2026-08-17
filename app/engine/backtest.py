@@ -1148,6 +1148,25 @@ class Backtester:
                 )
                 scale = None
             if scale:
+                # B-06 : le pyramidage passe par le même gate que l'entrée.
+                gate = getattr(ctx, "risk_gate", None)
+                if gate is not None:
+                    from app.core.bot_identity import build_slot_key
+                    _sk = build_slot_key(position.get("strategy", ""),
+                                         ctx.timeframe, ctx.symbol)
+                    try:
+                        _ts = ctx.df["time"][i]
+                        _day = str(_ts)[:10] if _ts is not None else ""
+                    except Exception:
+                        _day = ""
+                    _ok, _why = gate.can_slot_trade(
+                        i, _sk, _day, ctx.capital,
+                        getattr(ctx, "peak_capital", ctx.capital),
+                    )
+                    if not _ok:
+                        logger.debug(f"[Backtest] bar {i} : scale-in refusé — {_why}")
+                        scale = None
+            if scale:
                 add_price = c_close * (1 + self.spread_pct) if side == "long" \
                             else c_close * (1 - self.spread_pct)
                 stop_dist = abs(add_price - position["stop"])
@@ -1569,7 +1588,7 @@ class Backtester:
         equity_curve = [capital]
         equity_mtm   = [capital]
         timestamps   = [str(df["time"][0]) if "time" in df.columns else "0"]
-        position     = None
+        positions: Dict[str, dict] = {}
         trade_id     = 0
 
         # ── Diagnostics ──────────────────────────────────────────────────────
@@ -1691,13 +1710,14 @@ class Backtester:
 
         def _mark_mtm(bar_i: int) -> None:
             # F-06 : équité mark-to-market à chaque barre — le drawdown
-            # ne voit plus seulement les clôtures.
+            # ne voit plus seulement les clôtures. B-02 : somme de toutes
+            # les positions ouvertes.
             u = 0.0
-            if position is not None:
-                _e = float(position.get("entry") or 0.0)
-                _sz = float(position.get("size") or 0.0)
-                _c = float(close_arr[bar_i])
-                u = ((_e - _c) if position.get("side") == "short" else (_c - _e)) * _sz
+            _c = float(close_arr[bar_i])
+            for _pos in positions.values():
+                _e = float(_pos.get("entry") or 0.0)
+                _sz = float(_pos.get("size") or 0.0)
+                u += ((_e - _c) if _pos.get("side") == "short" else (_c - _e)) * _sz
             equity_mtm.append(round(ctx.capital + u, 4))
 
         for i in range(warmup, len(df) - 1):
@@ -1709,7 +1729,7 @@ class Backtester:
                 _px = float(close_arr[i])
                 if _px > 0:
                     self._risk_gate.update_volatility(float(atr_arr[i]) / _px)
-            _had_position_at_start = position is not None
+            _had_position_at_start = bool(positions)
             # Transition close : la barre précédente avait une position, plus
             # maintenant. On ferme le compteur de durée et on met à jour le max.
             # (La gestion de position fait ``continue`` après une clôture, donc
@@ -1769,34 +1789,52 @@ class Backtester:
                 sle["entry"]["n_refreshes"] += 1
                 sle["entry"]["decisions"].append({"bar": i, **res})
 
-            # ── Gestion de la position ouverte ────────────────────────────────
-            if position is not None:
-                position = self._manage_open_position(ctx, position, i)
-                _mark_mtm(i)
-                continue
+            # ── Gestion des positions ouvertes (B-02 : plusieurs à la fois) ──
+            if positions:
+                _kept: Dict[str, dict] = {}
+                for _pk, _pos in list(positions.items()):
+                    _managed = self._manage_open_position(ctx, _pos, i)
+                    if _managed is not None:
+                        _kept[_pk] = _managed
+                positions = _kept
 
-            # ── Cherche un signal ─────────────────────────────────────────────
+            # ── Cherche des signaux même si d'autres slots sont ouverts (B-02)
             diag["bars_seeking_signal"] += 1
             diag["signal_calls"] += 1
-            signal = self.engine.best_signal(
+            _cands = self.engine.passing_signals(
                 ctx.window, strat_params, threshold=threshold,
                 stats=per_strategy_stats,
             )
-            if signal["side"] == "none":
+            if not _cands:
                 _bars_since_signal += 1
                 if _bars_since_signal > diag["max_bars_no_signal"]:
                     diag["max_bars_no_signal"] = _bars_since_signal
                 _mark_mtm(i)
                 continue
 
-            diag["signal_accepted"] += 1
-            diag["last_signal_bar"] = i
-            _bars_since_signal = 0
-            logger.debug(
-                f"[Backtest] bar {i} : signal accepté — {signal.get('name')} "
-                f"{signal.get('side')} score={signal.get('score', 0):.3f}"
-            )
-            position = self._try_enter(ctx, signal, i)
+            from app.core.bot_identity import build_pos_key as _bpk
+            _opened_any = False
+            for signal in _cands:
+                _new_key = _bpk(
+                    ctx.symbol,
+                    signal.get("name") or signal.get("strategy") or "",
+                    ctx.timeframe,
+                )
+                if _new_key in positions:
+                    continue
+                diag["signal_accepted"] += 1
+                diag["last_signal_bar"] = i
+                _bars_since_signal = 0
+                _opened_any = True
+                logger.debug(
+                    f"[Backtest] bar {i} : signal accepté — {signal.get('name')} "
+                    f"{signal.get('side')} score={signal.get('score', 0):.3f}"
+                )
+                _entered = self._try_enter(ctx, signal, i)
+                if _entered is not None:
+                    positions[_new_key] = _entered
+            if not _opened_any:
+                _bars_since_signal += 1
             _mark_mtm(i)
 
         capital                = ctx.capital
@@ -1804,17 +1842,18 @@ class Backtester:
         _bars_current_position = ctx.bars_current_position
 
         # ── Clôture forcée en fin de série ────────────────────────────────────
-        if position is not None:
+        if positions:
             # B-10 : une liquidation forcée est taker, avec spread — pas un
             # maker gratuit. ref_price isole le coût de spread (L0).
             _eod = float(df["close"][-1])
-            _side = position["side"]
-            _eod_exec = _eod * (1 - self.spread_pct) if _side == "long" \
-                else _eod * (1 + self.spread_pct)
-            self._close_at(ctx, position, len(df) - 1, _eod_exec,
-                           "end_of_data", maker=False, status="closed_eod",
-                           append_ts=False, ref_price=_eod)
-            position = None
+            for _pos in list(positions.values()):
+                _side = _pos["side"]
+                _eod_exec = _eod * (1 - self.spread_pct) if _side == "long" \
+                    else _eod * (1 + self.spread_pct)
+                self._close_at(ctx, _pos, len(df) - 1, _eod_exec,
+                               "end_of_data", maker=False, status="closed_eod",
+                               append_ts=False, ref_price=_eod)
+            positions.clear()
             capital  = ctx.capital
             equity_mtm.append(round(capital, 4))
 

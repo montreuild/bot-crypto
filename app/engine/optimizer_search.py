@@ -1229,10 +1229,14 @@ class OptimizerSearchEngine:
             options = self.param_space[k]
             if len(options) > 1:
                 curr_idx = options.index(params[k]) if params[k] in options else 0
-                offsets  = [-1, 1]  # O-12 : 0 ne perturbe rien
-                new_idx  = curr_idx + random.choice(offsets)
-                new_idx  = max(0, min(len(options) - 1, new_idx))
-                new_params[k] = options[new_idx]
+                # O-12 : jamais 0, et si le clamp ramène à curr, prendre l'autre bord.
+                candidates = []
+                if curr_idx > 0:
+                    candidates.append(curr_idx - 1)
+                if curr_idx < len(options) - 1:
+                    candidates.append(curr_idx + 1)
+                if candidates:
+                    new_params[k] = options[random.choice(candidates)]
         return new_params
 
     # Grid search est exhaustif — au-delà de ce nombre de combinaisons, une

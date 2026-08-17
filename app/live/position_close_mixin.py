@@ -332,7 +332,7 @@ class PositionCloseMixin:
             update_daily_stats(
                 session,
                 datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                pnl, pnl > 0, fees, self.capital_display,
+                pnl, pnl > 0, fees_total, self.capital_display,
                 commit=False,
             )
             try:
