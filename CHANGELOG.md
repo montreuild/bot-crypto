@@ -6,6 +6,49 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🎯 Conversion signal → trade : le mode de sortie est le levier dominant
+
+Mesure sur l'**historique complet** (15 769 barres en 4 h, 51 909 en 1 h), avec
+les modes de sortie comme dimension — ce qui rend enfin l'effet de la gestion de
+position attribuable.
+
+**Le résultat qui compte**, `smart_money` sur ETH/USDC 4 h, à signal identique :
+
+| mode | PnL | win |
+|---|---:|---:|
+| `as_declared` | −8.68 % | 35.98 % |
+| **`trailing`** | **+52.90 %** | 37.04 % |
+| `tp1_tp2_runner` | +27.36 % | **47.34 %** |
+
+Passer de `as_declared` à `trailing` fait basculer de −8.68 % à +52.90 % **sans
+toucher au signal**. Aucun ajout de feature du dossier SMC n'avait produit un
+écart comparable — cela confirme le diagnostic de
+`docs/STRATEGY_SMC_ML_EDGE.md` §4 : le problème n'était pas la détection.
+
+**Jugé hors-échantillon** (40 essais par mode, sélection sur l'IS) : sur BTC,
+`sl_tp` sort à **+472.5 de PnL OOS, Sharpe 1.10, surapprentissage 0.60** ; sur
+ETH, quatre modes sur cinq **saturent le ratio de surapprentissage à 10.0** et
+seul `tp1_tp2_runner` échappe au diagnostic (+7.3 OOS, ratio 0.87).
+
+**Un défaut de conception trouvé par la mesure.** La première passe donnait
+`jambes = 0` partout et `tp1_tp2_runner` rendait un backtest identique à
+`as_declared` : le moteur teste la cible fixe **avant** les cibles partielles, et
+`smc_ml_edge` place la sienne exactement à 1R. Les trois modes « laisser courir »
+retirent désormais la cible fixe — un mode qui promet un runner tout en gardant
+une cible à 1R se contredit lui-même.
+
+⚠️ **Trois réserves, qui pèsent autant que le résultat.** Buy & hold fait
++1 739 % sur BTC 4 h contre +472 au mieux hors-échantillon — aucune de ces
+stratégies ne justifie d'être préférée à l'achat-conservation sur ces fenêtres.
+`sl_tp` sur BTC a un profil de loterie (20 trades, 10 % de réussite, PF 9.53). Et
+le meilleur mode diffère selon le symbole, ce qui est exactement le motif qui
+s'était révélé être du bruit plus tôt dans ce dossier — BTC et ETH corrèlent à
+0.835.
+
+Détail et suite : `docs/CONVERSION_SIGNAL_TRADE.md`.
+
+
+
 ### 🎯 Recalibration HTF terminée — 15 candidats sur 27, zéro optimum dégénéré
 
 La campagne ouverte par le correctif HTF de L5 est close. **27 couples sur 36**
