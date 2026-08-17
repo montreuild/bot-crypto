@@ -139,12 +139,33 @@ def composite_score(res, min_trades: int = MIN_SIGNIFICANT_TRADES) -> float:
 
 
 def overfitting_ratio(is_score: float, oos_score: float) -> float:
-    """Ratio IS/OOS (>2.5 = surapprentissage probable). NaN si non significatif."""
+    """Ratio IS/OOS (> 2.5 = surapprentissage probable), NaN si INDÉFINI.
+
+    Un ratio n'a de sens que si les deux scores sont positifs. Les trois cas
+    dégénérés rendent donc ``NaN`` — pas une valeur numérique qui prendrait
+    rang dans un classement :
+
+    - score IS ou OOS non significatif (≤ −990, run dégénéré) ;
+    - **score IS ≤ 0** : la configuration échoue déjà en apprentissage. Il n'y a
+      pas de « sur-apprentissage » à mesurer, il n'y a pas d'apprentissage ;
+    - **score OOS ≤ 0** : la dégradation est totale. Le rapport tendrait vers
+      l'infini ; le saturer à 10 en ferait un nombre comparable à un vrai ratio.
+
+    ⚠ Correction. La version précédente rendait **0.0** quand le score IS était
+    négatif — c'est-à-dire *la meilleure valeur de l'échelle* pour une
+    configuration qui ne marche nulle part. Mesuré sur la campagne de
+    recalibration : `multi_tf_sr` ETH 4 h (PnL OOS **+371,7**, Sharpe 1,35) et
+    `fear_momentum` BTC 1 h (PnL OOS **−168,4**, Sharpe −2,48) recevaient tous
+    deux ``overfit = 0.0``. Et elle saturait à **10.0** dès que le score OOS
+    passait sous 0.01, par l'effet du garde ``max(oos_score, 0.01)`` — ce qui
+    faisait lire « surapprentissage extrême » là où le fait mesuré était
+    seulement « score OOS négatif ». Cf. docs/DEFAUT_METRIQUE_OVERFIT.md.
+    """
     if oos_score <= -990 or is_score <= -990:
         return float('nan')
-    if is_score <= 0:
-        return 0.0
-    return round(min(is_score / max(oos_score, 0.01), 10.0), 2)
+    if is_score <= 0 or oos_score <= 0:
+        return float('nan')
+    return round(min(is_score / oos_score, 10.0), 2)
 
 
 # Alias privés historiques (compat avec le code/les tests existants)

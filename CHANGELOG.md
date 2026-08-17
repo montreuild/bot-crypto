@@ -6,6 +6,38 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 L'overfit résiduel n'existait pas — c'était la métrique
+
+`docs/RECALIBRATION_HTF.md` signalait cinq couples « surappris malgré
+110 trades ». Vérifié : **`overfit = 10,0` ne mesure aucun degré de
+surapprentissage.** Le garde `max(oos_score, 0.01)` fait saturer le ratio dès
+que le score OOS est non positif — les cinq couples sont exactement ceux dont le
+score OOS est négatif, fait déjà lisible dans la colonne « PnL OOS ».
+
+En creusant, **deux vrais défauts** :
+
+**`0.0` était la meilleure valeur de l'échelle, et signalait un échec.** Quand
+le score IS était ≤ 0, la fonction rendait `0.0` — « aucun surapprentissage » —
+pour une configuration qui ne marche nulle part. `multi_tf_sr` ETH 4 h (PnL OOS
+**+371,7**, Sharpe 1,35) et `fear_momentum` BTC 1 h (**−168,4**, Sharpe −2,48)
+recevaient la même note.
+
+**La pénalité récompensait les scores négatifs.** `_penalized_score` appliquait
+`oos × (2.5 / overfit)` sans regarder le signe : sur un score négatif, multiplier
+par 0,25 le **rapproche de zéro**. `fear_momentum` BTC 4 h passait de −0,433 brut
+à −0,108 « pénalisé », donc **devant** `supertrend_macd` ETH 1 h (−0,099) qui est
+quatre fois meilleur. Sur les huit perdantes, l'ordre réel et l'ordre utilisé
+divergent dès le 4ᵉ rang.
+
+Corrigé : `overfitting_ratio` rend `NaN` sur les trois cas dégénérés (run non
+significatif, IS ≤ 0, OOS ≤ 0) au lieu de `0.0` et de la saturation ; la pénalité
+ne s'applique qu'à un score positif. Les deux consommateurs traitaient déjà
+`NaN` correctement — aucun avertissement n'apparaît ni ne disparaît à tort.
+
+**Aucun candidat retenu ne change** : `beats_baseline` exige un PnL OOS positif,
+donc aucun des quinze n'était concerné. Détail :
+`docs/DEFAUT_METRIQUE_OVERFIT.md`.
+
 ### 🎯 Recalibration HTF terminée — 15 candidats sur 27, zéro optimum dégénéré
 
 La campagne ouverte par le correctif HTF de L5 est close. **27 couples sur 36**

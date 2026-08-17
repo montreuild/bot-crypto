@@ -311,10 +311,22 @@ class OptimizerSearchEngine:
         }
 
     def _penalized_score(self, r: dict) -> float:
-        """Score final pénalisé si surapprentissage détecté."""
+        """Score final pénalisé si surapprentissage détecté.
+
+        ⚠ La pénalité ne s'applique qu'à un score **positif**. Multiplier par
+        ``2.5 / ovf`` (< 1) rapproche un score NÉGATIF de zéro : c'est une
+        récompense, pas une pénalité, et elle remontait les configurations
+        surapprises dans le classement des perdantes.
+
+        Mesuré sur la campagne de recalibration : `fear_momentum` BTC 4 h passait
+        d'un score brut de −0,433 à −0,108 « pénalisé », donc devant
+        `supertrend_macd` ETH 1 h (−0,099) qui, lui, n'était pas pénalisé — alors
+        qu'il est quatre fois meilleur en brut. Cf.
+        docs/DEFAUT_METRIQUE_OVERFIT.md.
+        """
         oos = r["oos_score"]
         ovf = r.get("overfit", 1.0)
-        if np.isnan(ovf):
+        if np.isnan(ovf) or oos <= 0:
             return oos
         if ovf > 2.5:
             return oos * (2.5 / ovf)
