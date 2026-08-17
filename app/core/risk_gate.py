@@ -260,15 +260,19 @@ class RiskGate(RiskSizer, RiskNotifier):
 
     # ── Volatility brake ───────────────────────────────────────────────────
     @_locked
-    def update_volatility(self, btc_atr_pct: float):
-        """Met à jour le volatility brake (ATR BTC en % du prix). Tailles ×0.5 si actif."""
+    def update_volatility(self, atr_pct: float):
+        """Volatility brake : ATR du symbole scanné / du cache, en % du prix.
+
+        L-12 : ce n'est plus « ATR BTC » — le live alimente le ratio ATR/prix
+        du marché effectivement observé.
+        """
         was_active = self.volatility_brake_active
-        self.volatility_brake_active = btc_atr_pct > self._volatility_threshold
+        self.volatility_brake_active = atr_pct > self._volatility_threshold
         self.volatility_brake_factor = 0.5 if self.volatility_brake_active else 1.0
 
         if self.volatility_brake_active and not was_active:
             logger.warning(
-                f"[Risk] Volatility brake ACTIF — ATR BTC {btc_atr_pct:.1%} > {self._volatility_threshold:.1%}"
+                f"[Risk] Volatility brake ACTIF — ATR {atr_pct:.1%} > {self._volatility_threshold:.1%}"
                 " → tailles ×0.5"
             )
         elif not self.volatility_brake_active and was_active:

@@ -119,6 +119,18 @@ class WalkForwardAnalyzer:
         oos_wr     = [r["win_rate"]   for r in out_sample_results]
 
         avg_pnl = round(_sf(float(np.mean(oos_pnl)), 0.0), 4)
+
+        def _fold_summary(r: dict) -> dict:
+            # B-14 / A-05 : pas les trades / equity_curve de chaque fold.
+            return {
+                "total_pnl":     r.get("total_pnl"),
+                "win_rate":      r.get("win_rate"),
+                "sharpe":        r.get("sharpe"),
+                "total_trades":  r.get("total_trades"),
+                "max_drawdown":  r.get("max_drawdown"),
+                "profit_factor": r.get("profit_factor"),
+            }
+
         return {
             "n_folds":        len(out_sample_results),
             "kind":           "stability",
@@ -129,6 +141,6 @@ class WalkForwardAnalyzer:
                                if oos_sharpe else None),
             "avg_oos_wr":     round(_sf(float(np.mean(oos_wr)),     0.0), 2),
             "consistency":    round(sum(1 for p in oos_pnl if p > 0) / len(oos_pnl) * 100, 1),
-            "in_sample":      in_sample_results,
-            "out_of_sample":  out_sample_results,
+            "in_sample":      [_fold_summary(r) for r in in_sample_results],
+            "out_of_sample":  [_fold_summary(r) for r in out_sample_results],
         }

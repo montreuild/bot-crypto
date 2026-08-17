@@ -6,6 +6,16 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 Hygiene audit
+
+- **A-05 / B-14** : OHLCV sous-échantillonné (~4k pts) ; folds WF sans trades ni equity.
+- **B-12** : rejets ventilés (`rejected_stop` / `size` / `venue` / `min_notional`).
+- **B-13** : Buy & Hold démarre à `open[warmup+1]`, comme le bot.
+- **S-05** : le log de crash caviardé aussi les montants (pnl/size/capital).
+- **L-12 / L-13** : volatility brake sans « ATR BTC » ; sérialisation sous verrou.
+
+
+
 ### 🐛 Suite audit (après merge #232)
 
 - **A-04 / P-02** : tickers en budget court (2 × 0,5 s), cache 3 s, prefetch

@@ -416,13 +416,26 @@ def run_backtest(
                     f"Vérifiez le cache (GET /api/backtest/range?symbol={symbol}&timeframe={tf})."
                 )
 
+        # A-05 : le graphique n'affiche pas 50k points — sous-échantillonner.
+        _n = len(df)
+        _step = max(1, _n // 4000)
+        _times = df["time"].dt.epoch(time_unit="s").to_list()
+        _open = df["open"].to_list()
+        _close = df["close"].to_list()
+        _high = df["high"].to_list()
+        _low = df["low"].to_list()
+        _vol = df["volume"].to_list()
+        _idx = list(range(0, _n, _step))
+        if _idx[-1] != _n - 1:
+            _idx.append(_n - 1)
         ohlcv_payload = {
-            "time":   df["time"].dt.epoch(time_unit="s").to_list(),
-            "open":   [round(float(v), 6) for v in df["open"].to_list()],
-            "close":  [round(float(v), 6) for v in df["close"].to_list()],
-            "high":   [round(float(v), 6) for v in df["high"].to_list()],
-            "low":    [round(float(v), 6) for v in df["low"].to_list()],
-            "volume": [round(float(v), 2) for v in df["volume"].to_list()],
+            "time":   [int(_times[i]) for i in _idx],
+            "open":   [round(float(_open[i]), 6) for i in _idx],
+            "close":  [round(float(_close[i]), 6) for i in _idx],
+            "high":   [round(float(_high[i]), 6) for i in _idx],
+            "low":    [round(float(_low[i]), 6) for i in _idx],
+            "volume": [round(float(_vol[i]), 2) for i in _idx],
+            "step":   _step,
         }
 
         _ALLOWED_STRATS = _discover_strategies()

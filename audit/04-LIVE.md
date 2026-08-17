@@ -22,8 +22,8 @@
 | L-09 | 🟡 Moyen | `notional` non recalculé après le slippage paper | `position_open_mixin.py:313-330` | ✅ résolu — `notional = size * exec_price` |
 | L-10 | 🟡 Moyen | Le log d'ouverture affiche un « Sizing = X % » qui n'agit sur rien | `position_open_mixin.py:414-422` | ✅ résolu — `ScoreFactor` |
 | L-11 | 🟡 Moyen | `update_daily_stats` reçoit les frais de sortie seuls | `position_close_mixin.py:328` | ✅ résolu — `fees_total` |
-| L-12 | 🟡 Moyen | Le frein de volatilité est nommé « ATR BTC » mais alimenté autrement | `risk_gate.py:263` | ouvert |
-| L-13 | 🟡 Moyen | Positions mutées hors verrou pendant que l'API les sérialise | `position_manage_mixin.py:53` | ouvert |
+| L-12 | 🟡 Moyen | Le frein de volatilité est nommé « ATR BTC » mais alimenté autrement | `risk_gate.py:263` | ✅ résolu — log « ATR » générique |
+| L-13 | 🟡 Moyen | Positions mutées hors verrou pendant que l'API les sérialise | `position_manage_mixin.py:53` | ✅ résolu — snapshot sous `_positions_lock` |
 | L-14 | 🔵 Mineur | `_pre_execution_check` échoue sans trace dans les compteurs | `position_open_mixin.py:559-561` | ✅ déjà en place — `_record_precheck_reject` |
 | L-15 | 🔵 Mineur | Seuil de gap à 2 % en dur | `position_manage_mixin.py:77,84` | ✅ résolu — `trading.gap_threshold` |
 | L-16 | 🔵 Mineur | `bars_held` live en horloge murale, backtest en index de bougie | `position_manage_mixin.py:153` | ouvert |
