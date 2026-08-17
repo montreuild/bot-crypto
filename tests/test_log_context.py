@@ -16,9 +16,11 @@ Ce qui est verrouillé ici, et pourquoi :
    les rotations archivées : ``_ColorFormatter`` mutait ``record.levelname``,
    donc les séquences ANSI finissaient dans ``bot.log``.
 """
+import asyncio
 import json
 import logging
 import threading
+import types
 
 import pytest
 
@@ -191,3 +193,19 @@ class TestMiddleware:
         got = r.headers[CORRELATION_HEADER]
         assert expected_absent not in got
         assert len(got) <= 64
+
+    def test_500_exposes_request_id_not_exception_class(self):
+        """A-12 : le client reçoit le correlation_id, pas KeyError/ComputeError."""
+        from app.api.middleware import _global_exception_handler
+        req = types.SimpleNamespace(
+            method="GET",
+            url=types.SimpleNamespace(path="/api/x"),
+            state=types.SimpleNamespace(correlation_id="cid-abc"),
+        )
+        resp = asyncio.run(_global_exception_handler(req, KeyError("secret")))
+        body = json.loads(resp.body)
+        assert resp.status_code == 500
+        assert "KeyError" not in body["detail"]
+        assert "secret" not in body["detail"]
+        assert body["request_id"] == "cid-abc"
+        assert "cid-abc" in body["detail"]

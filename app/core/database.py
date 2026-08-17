@@ -349,6 +349,52 @@ def load_open_positions(session: Session) -> List[dict]:
     return result
 
 
+def _as_utc_naive(dt: datetime) -> datetime:
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _resolve_entry_time(t: dict):
+    """A-08 : horodatage d'entrée mesuré, reconstruction seulement en dernier recours.
+
+    Priorité : ``entry_time`` (backtest ISO / datetime) → ``open_time`` unix
+    (live) → reconstruction ``close − duration_bars × TF`` (héritage).
+    Sur une venue à calendrier, la reconstruction traverse nuits et week-ends
+    et fausse ``by_session``.
+    """
+    raw = t.get("entry_time")
+    if isinstance(raw, datetime):
+        return _as_utc_naive(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            s = raw.strip().replace("Z", "+00:00")
+            return _as_utc_naive(datetime.fromisoformat(s))
+        except ValueError:
+            pass
+    if isinstance(raw, (int, float)) and raw > 1e9:
+        return datetime.fromtimestamp(float(raw), tz=timezone.utc).replace(tzinfo=None)
+
+    open_time = t.get("open_time")
+    if isinstance(open_time, (int, float)) and open_time > 0:
+        return datetime.fromtimestamp(float(open_time), tz=timezone.utc).replace(tzinfo=None)
+
+    if t.get("duration_bars") is not None and t.get("time") is not None:
+        try:
+            from app.core.timeframes import TF_MINUTES
+            tf = t.get("timeframe", "1h")
+            mins_per_bar = TF_MINUTES.get(tf, 60)
+            close_time = t["time"]
+            if isinstance(close_time, str):
+                close_time = datetime.fromisoformat(close_time.replace("Z", ""))
+            if isinstance(close_time, datetime):
+                close_time = _as_utc_naive(close_time)
+                return close_time - timedelta(minutes=int(t["duration_bars"]) * mins_per_bar)
+        except Exception:
+            return None
+    return None
+
+
 def save_trade(session: Session, t: dict, commit: bool = True):
     # FIN-06 : si l'appelant ne fournit pas déjà la répartition taker/maker,
     # replie tout l'agrégat `fees` sur `fee_taker` — c'est la réalité actuelle
@@ -359,27 +405,7 @@ def save_trade(session: Session, t: dict, commit: bool = True):
     fees = t.get("fees", 0) or 0
     fee_taker = t.get("fee_taker", fees)
     fee_maker = t.get("fee_maker", 0)
-    # S4-11 (audit V2) : entry_time était défini en colonne (database.py:56)
-    # mais JAMAIS renseigné → impossible d'analyser la durée des positions
-    # ouvertes vs fermées, ou de calculer des métriques de holding time.
-    # On le remplit depuis `t['entry_time']` si fourni (format ISO str ou
-    # datetime), sinon on dérive depuis `t['time']` (close) moins
-    # `t['duration_bars']` × TF (approximation).
-    entry_time = t.get("entry_time")
-    if entry_time is None and t.get("duration_bars") is not None and t.get("time") is not None:
-        try:
-            from datetime import datetime as _dt
-            from datetime import timedelta as _td
-
-            from app.core.timeframes import TF_MINUTES
-            tf = t.get("timeframe", "1h")
-            mins_per_bar = TF_MINUTES.get(tf, 60)
-            close_time = t["time"]
-            if isinstance(close_time, str):
-                close_time = _dt.fromisoformat(close_time.replace("Z", ""))
-            entry_time = close_time - _td(minutes=int(t["duration_bars"]) * mins_per_bar)
-        except Exception:
-            entry_time = None
+    entry_time = _resolve_entry_time(t)
     rec = Trade(
         symbol=t.get("symbol"), side=t.get("side"), strategy=t.get("strategy"),
         score=t.get("score"), entry=t.get("entry"), exit_price=t.get("exit"),

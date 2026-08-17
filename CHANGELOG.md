@@ -79,6 +79,10 @@ tort). Un long à levier L n'emprunte que `1 − 1/L` du notionnel.
   de 50 000 bougies « au cas où » (plafond `1d` = 5 000 aussi sur cette branche).
 - **UI** : walk-forward annoncé comme analyse de stabilité ; l'optimiseur
   affiche `val_*` et `gate_source` (holdout vs sélection).
+- **A-08** : `entry_time` vient de `open_time` (live) ou de l'ISO backtest,
+  plus d'une reconstruction `duration_bars` qui traverse les week-ends.
+- **A-12 / S-07** : le 500 global renvoie le `correlation_id`, plus le nom
+  de classe de l'exception.
 
 ### 🐛 Alignement d'exécution backtest / paper / live
 
