@@ -8,6 +8,10 @@ Historique des versions du Crypto Bot.
 
 Bilan d'audit de la branche : [`audit/14-REVISION-2026-08-18.md`](audit/14-REVISION-2026-08-18.md).
 
+`data/oos_tracker.json` et `data/backtest_history.json` sont vidés : les
+runs antérieurs à F-01 / F-04 / B-01 (Sharpe à 1 000, PnL hors frais
+d'entrée, stops au niveau) ne doivent plus être comparés aux nouveaux.
+
 ### 🐛 Audit sprint 1 — arrêter de mentir aux chiffres
 
 - **F-03** : `max_dd_p95` du Monte-Carlo prenait le 95ᵉ percentile de drawdowns
