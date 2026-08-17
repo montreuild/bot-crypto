@@ -290,6 +290,41 @@ class BacktestResult:
             trades_by_exit[str(t.get("exit_reason") or "inconnu")].append(t)
         self.by_exit_reason: Dict[str, dict] = self._group_metrics(trades_by_exit)
 
+        # ── §5 — répartition du PnL PAR JAMBE de sortie ──────────────────────
+        # `by_exit_reason` compte des TRADES ; il ne dit rien de la façon dont
+        # un trade fractionné a gagné son argent. Or c'est exactement la
+        # question que pose un mode TP1/TP2/runner : le reliquat paie-t-il les
+        # jambes prises tôt, ou les jambes sauvent-elles un reliquat perdant ?
+        #
+        # Le reliquat n'est pas journalisé comme une jambe (il part avec la
+        # clôture du trade) : on le reconstitue par différence, ce qui garantit
+        # que la somme des jambes redonne le PnL total.
+        jambes: Dict[str, dict] = {}
+
+        def _cumule(cle: str, pnl: float) -> None:
+            d = jambes.setdefault(cle, {"n": 0, "pnl": 0.0, "wins": 0})
+            d["n"] += 1
+            d["pnl"] += float(pnl)
+            if pnl > 0:
+                d["wins"] += 1
+
+        for t in closed:
+            legs = t.get("exits") or []
+            for leg in legs:
+                _cumule(str(leg.get("reason") or "jambe"), float(leg.get("pnl") or 0.0))
+            if legs:
+                reste = float(t.get("pnl", 0.0)) - sum(float(x.get("pnl") or 0.0)
+                                                       for x in legs)
+                _cumule("runner", reste)
+        total_abs = sum(abs(d["pnl"]) for d in jambes.values()) or 1.0
+        for d in jambes.values():
+            d["pnl"] = round(d["pnl"], 4)
+            d["win_rate"] = round(d["wins"] / d["n"] * 100, 1) if d["n"] else 0.0
+            # Part du mouvement TOTAL (en valeur absolue) portée par la jambe :
+            # dit d'un coup d'œil si le reliquat pèse ou s'il est décoratif.
+            d["part_pct"] = round(abs(d["pnl"]) / total_abs * 100, 1)
+        self.by_exit_leg: Dict[str, dict] = jambes
+
         # ── L3 (§60) / L6 (§72) — par état de structure et par séquence ──────
         # « Entrer en WARNING est-il pire qu'entrer en CONFIRMED ? » est la
         # question que L3 doit trancher par un chiffre, pas par un principe.
@@ -514,6 +549,10 @@ class BacktestResult:
             "by_setup":           getattr(self, "by_setup", {}),
             "by_module":          getattr(self, "by_module", {}),
             "by_exit_reason":     getattr(self, "by_exit_reason", {}),
+            "by_exit_leg":        getattr(self, "by_exit_leg", {}),
+            # Mode de sortie effectivement appliqué : sans lui, deux backtests
+            # aux résultats différents sont indistinguables dans l'interface.
+            "exit_mode":          getattr(self, "exit_mode", "as_declared"),
             "by_structure_state": getattr(self, "by_structure_state", {}),
             "by_sequence_type":   getattr(self, "by_sequence_type", {}),
             "by_tier":            getattr(self, "by_tier", {}),
@@ -1716,6 +1755,10 @@ class Backtester:
                                 n_bars=max(0, len(df) - warmup))
         result.diagnostics = diag
         result.ml_info = ml_info
+        # §5 — le mode de sortie appliqué fait partie du contexte qui produit le
+        # PnL, au même titre que la venue et le levier : deux runs qui ne
+        # sortent pas de la même façon ne sont pas comparables de bonne foi.
+        result.exit_mode = self.exit_mode
         # S11 : le résultat porte le contexte qui l'a produit — sans quoi un
         # PnL n'est pas interprétable (spot ou margin ? quel levier ? quels
         # frais ?), et deux runs ne sont pas comparables de bonne foi.

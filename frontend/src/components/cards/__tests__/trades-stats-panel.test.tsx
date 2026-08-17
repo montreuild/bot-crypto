@@ -76,3 +76,51 @@ describe('TradesStatsPanel — axes SMC', () => {
     expect(screen.getByText('Avg Win')).toBeInTheDocument();
   });
 });
+
+describe('Répartition du PnL par jambe de sortie (§5)', () => {
+  /* Un trade fractionné : 25 % à TP1 (+8), 25 % à TP2 (+12), et un reliquat
+     qui porte le solde. Le total du trade vaut 50, donc le runner vaut 30.
+     Les nombres sont choisis pour que la reconstitution par différence soit
+     vérifiable de tête. */
+  const FRACTIONNE: BacktestTrade[] = [
+    {
+      ...BASE, id: 10, pnl: 50, exit_reason: 'trailing_stop',
+      exits: [
+        { bar: 5, price: 108, size: 0.25, fraction: 0.25, reason: 'tp1', pnl: 8 },
+        { bar: 9, price: 116, size: 0.25, fraction: 0.25, reason: 'tp2', pnl: 12 },
+      ],
+    } as BacktestTrade,
+  ];
+
+  it('affiche une ligne par jambe, reliquat compris', () => {
+    render(<TradesStatsPanel trades={FRACTIONNE} />);
+    expect(screen.getByText(/Par jambe de sortie/i)).toBeInTheDocument();
+    expect(screen.getByText('tp1')).toBeInTheDocument();
+    expect(screen.getByText('tp2')).toBeInTheDocument();
+    expect(screen.getByText('runner')).toBeInTheDocument();
+  });
+
+  it('reconstitue le reliquat par différence', () => {
+    /* 50 − (8 + 12) = 30. Sans cette ligne, le PnL du reliquat serait
+       invisible : il part avec la clôture du trade et n'est jamais journalisé
+       comme une jambe. */
+    render(<TradesStatsPanel trades={FRACTIONNE} />);
+    expect(screen.getByText('+$30.00')).toBeInTheDocument();
+    expect(screen.getByText('+$8.00')).toBeInTheDocument();
+    expect(screen.getByText('+$12.00')).toBeInTheDocument();
+  });
+
+  it('ne montre rien quand aucun trade n\'est fractionné', () => {
+    /* Le tableau doit disparaître pour les stratégies tout-ou-rien, sinon on
+       affiche une section vide à la majorité des backtests.
+
+       La série `SMC` ne convient PAS ici : elle porte déjà des jambes
+       partielles (cf. en-tête du fichier). Il faut une série explicitement
+       sans `exits`, sinon le test passerait pour la mauvaise raison. */
+    const TOUT_OU_RIEN: BacktestTrade[] = [
+      { ...BASE, id: 20, setup: 'OB_RETEST', module: 'SMC_CORE' },
+    ];
+    render(<TradesStatsPanel trades={TOUT_OU_RIEN} />);
+    expect(screen.queryByText(/Par jambe de sortie/i)).not.toBeInTheDocument();
+  });
+});
