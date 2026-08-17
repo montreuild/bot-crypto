@@ -296,9 +296,11 @@ class BacktestResult:
         # question que pose un mode TP1/TP2/runner : le reliquat paie-t-il les
         # jambes prises tôt, ou les jambes sauvent-elles un reliquat perdant ?
         #
-        # Le reliquat n'est pas journalisé comme une jambe (il part avec la
-        # clôture du trade) : on le reconstitue par différence, ce qui garantit
-        # que la somme des jambes redonne le PnL total.
+        # INVARIANT : la somme des postes redonne EXACTEMENT `total_pnl`. Sans
+        # lui, le découpage est un piège — voir le commentaire du poste
+        # « complet » plus bas. Le reliquat n'est pas journalisé comme une
+        # jambe (il part avec la clôture du trade) : on le reconstitue par
+        # différence, ce qui est précisément ce qui rend l'invariant vrai.
         jambes: Dict[str, dict] = {}
 
         def _cumule(cle: str, pnl: float) -> None:
@@ -310,12 +312,23 @@ class BacktestResult:
 
         for t in closed:
             legs = t.get("exits") or []
-            for leg in legs:
-                _cumule(str(leg.get("reason") or "jambe"), float(leg.get("pnl") or 0.0))
             if legs:
+                for leg in legs:
+                    _cumule(str(leg.get("reason") or "jambe"),
+                            float(leg.get("pnl") or 0.0))
                 reste = float(t.get("pnl", 0.0)) - sum(float(x.get("pnl") or 0.0)
                                                        for x in legs)
                 _cumule("runner", reste)
+            else:
+                # Trade sorti EN UNE FOIS. L'inclure n'est pas un détail : sans
+                # lui, le découpage ne couvrait que les trades fractionnés —
+                # tous gagnants par construction, puisqu'une jambe partielle ne
+                # se déclenche qu'en atteignant sa cible. Mesuré sur ETH/USDC
+                # 4 h : 80 trades fractionnés à +1 902 affichés, 89 trades non
+                # fractionnés à −1 629 invisibles, et un tableau qui annonçait
+                # 695 % du PnL réel avec 100 % de réussite sur chaque ligne.
+                _cumule(f"complet · {t.get('exit_reason') or 'inconnu'}",
+                        float(t.get("pnl", 0.0)))
         total_abs = sum(abs(d["pnl"]) for d in jambes.values()) or 1.0
         for d in jambes.values():
             d["pnl"] = round(d["pnl"], 4)

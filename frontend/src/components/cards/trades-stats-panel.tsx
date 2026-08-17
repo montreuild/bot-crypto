@@ -111,14 +111,23 @@ export function TradesStatsPanel({ trades }: Props) {
     };
     for (const t of closed) {
       const legs = t.exits ?? [];
-      if (!legs.length) continue;
-      let cumulLegs = 0;
-      for (const leg of legs) {
-        const pnl = leg.pnl ?? 0;
-        cumulLegs += pnl;
-        cumule(leg.reason ?? 'jambe', pnl);
+      if (legs.length) {
+        let cumulLegs = 0;
+        for (const leg of legs) {
+          const pnl = leg.pnl ?? 0;
+          cumulLegs += pnl;
+          cumule(leg.reason ?? 'jambe', pnl);
+        }
+        cumule('runner', (t.pnl ?? 0) - cumulLegs);
+      } else {
+        // Trade sorti EN UNE FOIS. L'inclure n'est pas un détail : sans lui, le
+        // découpage ne couvrait que les trades fractionnés — tous gagnants par
+        // construction, puisqu'une jambe ne se déclenche qu'en atteignant sa
+        // cible. Mesuré sur ETH/USDC 4 h : 80 trades fractionnés à +1 902
+        // affichés, 89 non fractionnés à −1 629 invisibles, et un tableau qui
+        // annonçait 695 % du PnL réel avec 100 % de réussite partout.
+        cumule(`complet · ${t.exit_reason ?? t.reason ?? 'inconnu'}`, t.pnl ?? 0);
       }
-      cumule('runner', (t.pnl ?? 0) - cumulLegs);
     }
     const totalAbs =
       [...parJambe.values()].reduce((s2, d) => s2 + Math.abs(d.pnl), 0) || 1;
@@ -219,7 +228,7 @@ export function TradesStatsPanel({ trades }: Props) {
         {stats.byLeg.length > 0 && (
           <div>
             <div className="text-xs text-muted-foreground mb-1">
-              Par jambe de sortie (§5) — d&apos;où vient le PnL
+              Par poste de sortie (§5) — d&apos;où vient le PnL (somme = PnL total)
             </div>
             <table className="w-full text-xs">
               <thead>

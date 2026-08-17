@@ -141,6 +141,52 @@ prudence s'impose : BTC et ETH corrèlent à **0.835**, donc ce ne sont pas deux
    la partie B : les chiffres rapportés sont ceux de l'optimiseur, pas un feu
    vert de mise en production.
 
+## 5 bis. Répartition du PnL par poste de sortie
+
+`by_exit_reason` compte des TRADES ; il ne dit pas d'où vient l'argent dans un
+trade fractionné. `by_exit_leg` le dit — et son invariant est que **la somme des
+postes redonne exactement le PnL total**.
+
+ETH/USDC 4 h, mode `tp1_tp2_runner` :
+
+| poste | n | PnL | part | WR |
+|---|---:|---:|---:|---:|
+| `complet · trailing_stop` | 89 | **−1 629.28** | 46.1 % | **0 %** |
+| `runner` | 80 | +1 132.91 | 32.1 % | 100 % |
+| `tp2` | 47 | +418.13 | 11.8 % | 100 % |
+| `tp1` | 80 | +351.88 | 10.0 % | 100 % |
+| **total** | | **+273.64** | 100 % | |
+
+La lecture est nette : le reliquat rapporte plus que les deux jambes réunies,
+**mais les trades qui n'atteignent jamais TP1 coûtent davantage que ce que les
+trois postes gagnants rapportent**. Le net tient à peu de chose.
+
+### Le piège que cette table a d'abord tendu
+
+La première version n'agrégeait que les trades FRACTIONNÉS. Or une jambe
+partielle ne se déclenche qu'en atteignant sa cible : ces trades sont gagnants
+par construction. Le tableau affichait donc **+1 902.92 pour une stratégie qui
+gagne +273.64** — soit 695 % du PnL réel — avec **100 % de réussite sur chaque
+ligne**. Un lecteur y voyait une stratégie qui ne perd jamais.
+
+Les 89 trades sortis en une fois (−1 629.28) sont désormais un poste à part
+entière, et un test impose l'invariant de somme. C'est la seule assertion qui
+attrape ce genre d'erreur : aucune vérification de forme ne l'aurait vue.
+
+### Vérification du sens SHORT
+
+Les cibles partielles et le stop doivent être du bon côté de l'entrée, sinon une
+cible serait touchée dès la première barre et le backtest afficherait un taux de
+réussite flatteur sans lever d'erreur. Mesuré sur les 72 shorts d'ETH 4 h :
+
+- **0** stop mal placé (tous au-dessus de l'entrée) ;
+- **0** jambe au-dessus de l'entrée ;
+- pire short sorti à **−1.02 R** — le stop plafonne bien la perte.
+
+⚠ Aucun poste `stop_loss` n'apparaît : dès que le suiveur est actif, il remplace
+le stop initial et toute perte est étiquetée `trailing_stop`. C'est un choix
+d'étiquetage préexistant du moteur, pas une perte non plafonnée.
+
 ## 6. Suite
 
 1. **Trancher `sl_tp` contre `tp1_tp2_runner` sur des actifs décorrélés.** Les

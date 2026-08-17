@@ -94,7 +94,7 @@ describe('Répartition du PnL par jambe de sortie (§5)', () => {
 
   it('affiche une ligne par jambe, reliquat compris', () => {
     render(<TradesStatsPanel trades={FRACTIONNE} />);
-    expect(screen.getByText(/Par jambe de sortie/i)).toBeInTheDocument();
+    expect(screen.getByText(/Par poste de sortie/i)).toBeInTheDocument();
     expect(screen.getByText('tp1')).toBeInTheDocument();
     expect(screen.getByText('tp2')).toBeInTheDocument();
     expect(screen.getByText('runner')).toBeInTheDocument();
@@ -110,9 +110,9 @@ describe('Répartition du PnL par jambe de sortie (§5)', () => {
     expect(screen.getByText('+$12.00')).toBeInTheDocument();
   });
 
-  it('ne montre rien quand aucun trade n\'est fractionné', () => {
-    /* Le tableau doit disparaître pour les stratégies tout-ou-rien, sinon on
-       affiche une section vide à la majorité des backtests.
+  it('classe les trades non fractionnés dans un poste « complet »', () => {
+    /* Une stratégie tout-ou-rien doit apparaître, pas disparaître : son PnL
+       compte autant que celui des trades fractionnés.
 
        La série `SMC` ne convient PAS ici : elle porte déjà des jambes
        partielles (cf. en-tête du fichier). Il faut une série explicitement
@@ -121,6 +121,30 @@ describe('Répartition du PnL par jambe de sortie (§5)', () => {
       { ...BASE, id: 20, setup: 'OB_RETEST', module: 'SMC_CORE' },
     ];
     render(<TradesStatsPanel trades={TOUT_OU_RIEN} />);
-    expect(screen.queryByText(/Par jambe de sortie/i)).not.toBeInTheDocument();
+    // Le tableau existe toujours — mais avec un seul poste « complet », et non
+    // une ligne de jambe. Le faire disparaître masquerait le PnL de ces trades.
+    expect(screen.getByText(/complet ·/)).toBeInTheDocument();
+  });
+
+  it('couvre AUSSI les trades sortis en une fois', () => {
+    /* L'invariant qui manquait : la somme des postes doit redonner le PnL
+       total. Sans le poste « complet », le tableau n'affichait que les trades
+       fractionnés — tous gagnants par construction — et annonçait 695 % du PnL
+       réel avec 100 % de réussite sur chaque ligne. */
+    const MIXTE: BacktestTrade[] = [
+      ...FRACTIONNE,
+      { ...BASE, id: 30, pnl: -40, exit_reason: 'stop_loss' },
+      { ...BASE, id: 31, side: 'short', pnl: -10, exit_reason: 'stop_loss' },
+    ];
+    render(<TradesStatsPanel trades={MIXTE} />);
+    // 8 + 12 + 30 (reliquat) − 40 − 10 = 0 : les pertes DOIVENT apparaître.
+    // On ancre sur LA LIGNE : le montant existe aussi dans « Par raison de
+    // sortie », donc une recherche par texte global trouverait deux éléments
+    // et ne prouverait pas que c'est le bon tableau qui l'affiche.
+    const cellule = screen.getByText('complet · stop_loss');
+    const ligne = cellule.closest('tr');
+    expect(ligne).not.toBeNull();
+    expect(ligne).toHaveTextContent('$-50.00');
+    expect(ligne).toHaveTextContent('2');           // les deux trades stoppés
   });
 });
