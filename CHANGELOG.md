@@ -6,6 +6,41 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🎯 Recalibration HTF terminée — 15 candidats sur 27, zéro optimum dégénéré
+
+La campagne ouverte par le correctif HTF de L5 est close. **27 couples sur 36**
+changent de résultat une fois le filtre actif (contre 20/36 sur la fenêtre
+tronquée : le plafond **sous-estimait** le problème de sept couples). Le filtre
+retire des trades dans **tous** les cas, −1 386 au total.
+
+Recalibrés sur 20 000 barres avec le plancher de trades unifié :
+
+| | 6 000 barres, plancher 2 | 20 000 barres, plancher 10 |
+|---|---:|---:|
+| passent `beats_baseline` | 4 / 20 | **15 / 27** |
+| sous dix trades OOS | 14 / 20 | **0 / 27** |
+
+**Les optima dégénérés ont disparu**, et les deux corrections s'y cumulent : la
+fenêtre donne assez de matière pour *trouver* des configurations à dix trades ou
+plus, le plancher unifié **force** l'optimiseur à les préférer. Ni l'un ni
+l'autre n'aurait suffi.
+
+⚠️ **Trois réserves.** `beats_baseline` est RELATIF — il dit « mieux que
+l'existant », et l'existant a été mesuré contre un filtre inerte :
+`supertrend_macd` ETH 4 h passe avec +7,1 de PnL et un Sharpe de 0,01. Trois
+candidats sont **pile au plancher** (10-11 trades pour +371,7 sur `multi_tf_sr`
+ETH 4 h — la forme d'un tirage heureux). Et le surapprentissage n'est pas qu'un
+problème d'échantillon : cinq couples ont un `overfit` saturé à 10,0, dont un à
+**110 trades**.
+
+**Le résultat négatif le plus solide** : `fear_momentum` porte les plus gros
+échantillons du lot (130 à 256 trades OOS) et ses quatre couples sont **tous
+nettement perdants** (−165 à −216). Sur la fenêtre courte, trois d'entre eux
+passaient le gate — c'était un artefact de taille d'échantillon.
+
+Aucun `optimizer_results` n'est modifié : appliquer un paramétrage est une
+décision de trading. Détail : `docs/RECALIBRATION_HTF.md`.
+
 ### 🔬 Bas timeframes et actions — et un témoin qui évite une fausse annonce
 
 **Modules « inertes » : trois causes distinctes, une seule était un bug.**
