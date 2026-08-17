@@ -6,6 +6,16 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+### 🐛 Audit sprint 1 — arrêter de mentir aux chiffres
+
+- **F-03** : `max_dd_p95` du Monte-Carlo prenait le 95ᵉ percentile de drawdowns
+  *négatifs* — le meilleur cas, pas le pire. C'est désormais le percentile 5.
+- **F-02** : le Sharpe n'est plus calculé sous 10 observations (`None` au lieu
+  d'un ratio à ±1 000). `beats_baseline` n'accepte plus un Sharpe non mesurable
+  comme amélioration de qualité.
+- **L-05** : `RiskLedger.reserve` refuse une clé déjà réservée (`deja_reserve`)
+  au lieu d'écraser et de fuir du budget.
+
 ### 🐛 L'overfit résiduel n'existait pas — c'était la métrique
 
 `docs/RECALIBRATION_HTF.md` signalait cinq couples « surappris malgré

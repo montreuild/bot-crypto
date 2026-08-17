@@ -13,6 +13,8 @@ REASONS = (
     "levier", "venue", "risk", "slot_cb", "slot_disabled", "stop_invalide",
     # L6 (§97) — un événement de liquidité a déjà produit son trade primaire.
     "evenement_deja_trade",
+    # L-05 — 2ᵉ réserve sur une clé déjà engagée (fuite de budget sinon).
+    "deja_reserve",
 )
 
 

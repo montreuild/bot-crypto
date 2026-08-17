@@ -71,6 +71,11 @@ class RiskLedger:
                pos_key: str) -> Decision:
         """Règles dans l'ordre — le premier refus l'emporte (§4.2)."""
         with self._lock:
+            # L-05 : une 2ᵉ réserve sur la même clé écrasait la 1ʳᵉ sans
+            # décrémenter les agrégats — fuite permanente de budget.
+            if pos_key in self._positions:
+                return Decision(False, "deja_reserve",
+                                f"clé {pos_key} déjà réservée")
             sym_key = _symbol_key(env.venue, env.symbol)
             cur_symbol_notional = self._symbol_notional.get(sym_key, 0.0)
             cur_symbol_risk     = self._symbol_risk.get(sym_key, 0.0)
