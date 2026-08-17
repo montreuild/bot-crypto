@@ -63,6 +63,13 @@ tort). Un long à levier L n'emprunte que `1 − 1/L` du notionnel.
 - **O-01** : alias `val_*` à côté de `oos_*` (tranche de sélection).
 - **O-04** : l'optimiseur mesure sur l'enveloppe du slot, plus 1 000 € globaux.
 - **O-06** : seed Optuna configurable (`optimizer.seed`, défaut None).
+- **O-05** : gel seulement si assez d'essais par valeur et impact < bruit.
+- **O-08** : early-stop jamais avant la moitié du budget.
+- **O-10** : modèle ML final entraîné sur l'IS seul par défaut (`is_only`).
+- **O-11** : un trial en timeout est rejoué in-process, plus ignoré.
+- **B-04** : le walk-forward s'annonce comme analyse de stabilité (`kind`,
+  `reoptimizes: false`, `avg_fold_pnl`).
+- **S-01** : `/metrics` exige `METRICS_TOKEN` ou `web.api_key` s'ils sont posés.
 
 ### 🐛 Alignement d'exécution backtest / paper / live
 

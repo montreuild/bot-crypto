@@ -94,7 +94,7 @@ DEFAULTS = {
     "optimizer": {"enabled": False, "method": "bayesian", "n_trials": 50, "out_of_sample_ratio": 0.3,
                   # S4-03 : "full" (IS+OOS, historique) vs "is_only" — cf.
                   # docstring de _save_ml_model_post_opt (auto_optimizer.py).
-                  "ml_final_train_mode": "full"},
+                  "ml_final_train_mode": "is_only"},
     # OBS-02 : "format" pilote le seul handler FICHIER — "json" (défaut) ou
     # "text" pour revenir à l'ancien format ligne.
     "logging":   {"level": "INFO", "debug": False, "max_bytes": 10_485_760, "backup_count": 5,

@@ -47,8 +47,8 @@ def _save_ml_model_post_opt(strategy_name: str, best_params: dict,
     et le persiste en .pkl. Appelé dans un thread daemon — ne bloque pas le
     reporting du job.
 
-    S4-03 — Data leakage PAR DESIGN en mode ``train_mode="full"`` (défaut,
-    comportement historique inchangé) : le modèle est entraîné sur IS+OOS,
+    S4-03 / O-10 — ``train_mode="full"`` entraîne sur IS+OOS (le modèle
+    livré a vu la fenêtre de sélection). Défaut désormais ``is_only``.
     donc il a "vu" les données OOS que l'optimiseur a utilisées pour choisir
     les meilleurs params. Le score OOS rapporté par l'optimiseur reste
     honnête (calculé AVANT ce ré-entraînement final, sur un modèle qui
@@ -752,12 +752,13 @@ class AutoOptimizer:
                 )
 
             # Pour les stratégies ML : entraîner un modèle final avec les meilleurs params
-            # sur l'ensemble complet des données (par défaut) et le persister sur
-            # disque. S4-03 : optimizer.ml_final_train_mode contrôle full (IS+OOS,
-            # défaut, comportement inchangé) vs is_only (cohérent avec le score
-            # OOS rapporté, cf. docstring de _save_ml_model_post_opt).
+            # et le persister. O-10 : défaut is_only (le modèle livré est
+            # celui évalué). ``full`` (IS+OOS) reste un choix explicite.
             if result.get("best_params") and _is_ml_strategy(strategy_name) and df_recherche is not None:
-                _ml_train_mode = self.cfg.get("optimizer", {}).get("ml_final_train_mode", "full")
+                # O-10 : défaut is_only — le modèle livré est celui évalué
+                # (IS seul). "full" (IS+OOS) reste disponible explicitement.
+                _ml_train_mode = self.cfg.get("optimizer", {}).get(
+                    "ml_final_train_mode", "is_only")
                 _save_ml_model_post_opt(strategy_name, result["best_params"], df_recherche, timeframe,
                                         df_is=df_is, train_mode=_ml_train_mode)
 

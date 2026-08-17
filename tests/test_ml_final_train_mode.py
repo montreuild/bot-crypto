@@ -1,6 +1,5 @@
-"""S4-03 — optimizer.ml_final_train_mode : "full" (IS+OOS, défaut historique
-inchangé) vs "is_only" (cohérent avec le score OOS rapporté par l'optimiseur,
-entraîne uniquement sur l'IS)."""
+"""S4-03 / O-10 — optimizer.ml_final_train_mode : "is_only" (défaut,
+cohérent avec le score OOS) vs "full" (IS+OOS, choix explicite)."""
 import sys
 import types
 

@@ -131,18 +131,34 @@ def health_check():
     }
 
 
-# ── Métriques Prometheus (OBS-01, sans auth) ──────────────────────────────
+# ── Métriques Prometheus (OBS-01) ─────────────────────────────────────────
 @app.get("/metrics")
-def prometheus_metrics():
+def prometheus_metrics(request: Request):
     """Exposition Prometheus au format texte.
 
-    Sans authentification, comme ``/health`` : un scrapeur Prometheus ne sait
-    pas porter d'en-tête ``X-API-Key`` sans configuration supplémentaire, et
-    l'endpoint ne divulgue aucun secret. Il divulgue en revanche l'activité de
-    trading (capital, positions, PnL) — **à restreindre au réseau
-    d'administration côté nginx**, comme les autres endpoints d'exploitation.
+    S-01 : si ``METRICS_TOKEN`` ou ``web.api_key`` est défini, exige
+    ``Authorization: Bearer …`` ou ``X-API-Key``. Prometheus gère
+    ``authorization`` / ``bearer_token_file`` nativement. Sans jeton
+    (dev local, ``api_key`` vide) l'endpoint reste public.
     """
+    from fastapi import HTTPException
     from starlette.responses import Response
+
+    token = os.environ.get("METRICS_TOKEN") or ""
+    if not token:
+        token = ((state.cfg or {}).get("web") or {}).get("api_key", "") or ""
+    if token:
+        auth = request.headers.get("Authorization", "") or ""
+        supplied = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+        if not supplied:
+            supplied = request.headers.get("X-API-Key", "") or ""
+        ok = False
+        try:
+            ok = bool(supplied) and hmac.compare_digest(supplied, token)
+        except Exception:
+            ok = False
+        if not ok:
+            raise HTTPException(403, "metrics auth required")
 
     from app.core.metrics import render
     payload, content_type = render()

@@ -69,6 +69,9 @@ def test_auto_apply_has_walk_forward_gate():
     src = inspect.getsource(auto_optimizer.AutoOptimizer._run_one_job)
     assert "_wf_consistent" in src
     assert "WalkForwardAnalyzer" in src
+    from app.engine.walk_forward import WalkForwardAnalyzer
+    assert "reoptimizes" in inspect.getsource(WalkForwardAnalyzer.run)
+    assert "stability" in inspect.getsource(WalkForwardAnalyzer.run)
     assert "wf_min_consistency" in src
     assert "wf_gate" in src
     # Le gate s'applique bien à la décision d'apply

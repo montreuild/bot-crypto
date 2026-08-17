@@ -1,10 +1,8 @@
-"""Walk-Forward Analysis — validation OOS par folds glissants.
+"""Analyse de stabilité temporelle (souvent appelée walk-forward dans l'UI).
 
-Extrait de ``app/engine/backtest.py`` (ARCH-010) pour réduire la taille du
-module de backtest. La classe ``WalkForwardAnalyzer`` découpe la série
-historique en ``n_folds`` fenêtres IS/OOS contiguës, ré-instancie un
-``Backtester`` neuf (stratégies fraîchement rechargées) sur chaque fold et
-agrège les métriques out-of-sample (PnL, Sharpe, win-rate, consistency).
+B-04 : ce n'est PAS un walk-forward au sens de la littérature — aucune
+réoptimisation par fold. Chaque fold rejoue le MÊME paramétrage figé.
+Le résultat mesure la stabilité temporelle, pas la procédure d'optimisation.
 
 Ré-exportée depuis ``app.engine.backtest`` pour compatibilité ascendante.
 """
@@ -120,9 +118,13 @@ class WalkForwardAnalyzer:
         oos_sharpe = [r["sharpe"] for r in out_sample_results if r.get("sharpe") is not None]
         oos_wr     = [r["win_rate"]   for r in out_sample_results]
 
+        avg_pnl = round(_sf(float(np.mean(oos_pnl)), 0.0), 4)
         return {
             "n_folds":        len(out_sample_results),
-            "avg_oos_pnl":    round(_sf(float(np.mean(oos_pnl)),    0.0), 4),
+            "kind":           "stability",
+            "reoptimizes":    False,
+            "avg_oos_pnl":    avg_pnl,
+            "avg_fold_pnl":   avg_pnl,
             "avg_oos_sharpe": (round(_sf(float(np.mean(oos_sharpe)), 0.0), 3)
                                if oos_sharpe else None),
             "avg_oos_wr":     round(_sf(float(np.mean(oos_wr)),     0.0), 2),

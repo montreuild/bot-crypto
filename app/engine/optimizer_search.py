@@ -487,10 +487,38 @@ class OptimizerSearchEngine:
                 best_value_by_param[k] = opts[len(opts) // 2]
         return impacts, best_value_by_param
 
+    def _enough_to_freeze(self, results: List[dict], k: str) -> bool:
+        """O-05 : au moins 2 valeurs distinctes et ``_MIN_SCREEN_PER_PARAM``
+        observations par valeur — sinon l'impact n'est pas estimable."""
+        by_value: Dict[Any, int] = {}
+        for r in results:
+            v = r["params"].get(k)
+            by_value[v] = by_value.get(v, 0) + 1
+        if len(by_value) < 2:
+            return False
+        return min(by_value.values()) >= self._MIN_SCREEN_PER_PARAM
+
+    def _impact_below_noise(self, results: List[dict], k: str, impact: float) -> bool:
+        """O-05 : ne geler que si l'impact est inférieur au bruit intra-groupe."""
+        by_value: Dict[Any, List[float]] = {}
+        for r in results:
+            by_value.setdefault(r["params"].get(k), []).append(r["final_score"])
+        sq: List[float] = []
+        for scores in by_value.values():
+            if len(scores) < 2:
+                continue
+            m = statistics.mean(scores)
+            sq.extend((s - m) ** 2 for s in scores)
+        if not sq or not math.isfinite(impact):
+            return False
+        noise = math.sqrt(sum(sq) / len(sq))
+        return impact < noise
+
     def _freeze_params(self, impacts: Dict[str, float], best_value_by_param: Dict[str, Any],
                        param_keys: List[str], *,
                        max_cardinality: Optional[float] = None,
-                       min_impact_share: float = 0.10) -> Tuple[dict, list]:
+                       min_impact_share: float = 0.10,
+                       screen_results: Optional[List[dict]] = None) -> Tuple[dict, list]:
         """Décide quels paramètres geler à partir d'impacts déjà calculés.
         Toujours au moins 1 paramètre conservé (jamais un espace totalement
         gelé). Deux modes :
@@ -538,6 +566,11 @@ class OptimizerSearchEngine:
                         continue  # pas assez de données -> jamais gelé sur cette base
                     if v / total > min_impact_share:
                         break
+                    if screen_results:
+                        if not self._enough_to_freeze(screen_results, k):
+                            continue
+                        if not self._impact_below_noise(screen_results, k, v):
+                            continue
                     frozen_keys.append(k)
         frozen = {k: best_value_by_param[k] for k in frozen_keys}
         kept_keys = [k for k in param_keys if k not in frozen]
@@ -564,12 +597,16 @@ class OptimizerSearchEngine:
         ``_restore_param_space``). Retourne ``None`` si rien n'a été gelé."""
         if not screen_results:
             return None
-        if (max_cardinality is None
-                and len(screen_results) < self._MIN_SCREEN_PER_PARAM * len(param_keys)):
+        max_mod = max((len(self.param_space.get(k) or [None]) for k in param_keys),
+                      default=1)
+        # O-05 : au moins 2 essais par paramètre ET 2 × max(modalités).
+        need = self._MIN_SCREEN_PER_PARAM * max(len(param_keys), max_mod)
+        if max_cardinality is None and len(screen_results) < need:
             return None
         impacts, best_value_by_param = self._impact_scores(screen_results, param_keys)
-        frozen, kept_keys = self._freeze_params(impacts, best_value_by_param, param_keys,
-                                                max_cardinality=max_cardinality)
+        frozen, kept_keys = self._freeze_params(
+            impacts, best_value_by_param, param_keys,
+            max_cardinality=max_cardinality, screen_results=screen_results)
         if not frozen:
             return None
         card_before = math.prod(len(self.param_space[k]) for k in param_keys)
@@ -645,12 +682,14 @@ class OptimizerSearchEngine:
         results: List[Optional[dict]] = [None] * len(params_list)
         broken = False
         remaining: List[dict] = []
+        timed_out: List[Tuple[int, dict]] = []
         for fut in concurrent.futures.as_completed(futures_map):
             i = futures_map[fut]
             try:
                 r = fut.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
-                logger.warning("[Optimizer] worker timeout (>%ds), ignoré", timeout)
+                logger.warning("[Optimizer] worker timeout (>%ds) — retry in-process", timeout)
+                timed_out.append((i, params_list[i]))
                 continue
             except BrokenProcessPool as _bp:
                 logger.error("[Optimizer] BrokenProcessPool (worker tué, ex: OOM) : %s", _bp)
@@ -667,6 +706,13 @@ class OptimizerSearchEngine:
                 logger.warning("[Optimizer] worker erreur : %s", r["error"])
                 continue
             results[i] = r
+        # O-11 : un timeout n'est plus ignoré — un retry in-process.
+        for i, params in timed_out:
+            try:
+                results[i] = self._eval(params)
+                logger.info("[Optimizer] trial rejoué après timeout")
+            except Exception as _re:
+                logger.warning("[Optimizer] retry timeout KO : %s", _re)
         ok_results = [r for r in results if r is not None]
         return ok_results, broken, remaining
 
@@ -788,14 +834,18 @@ class OptimizerSearchEngine:
         l'écart marginal simple face à des paramètres corrélés), avec repli
         sur l'estimateur marginal partagé (``_impact_scores``) si fANOVA
         échoue ou ne rend aucun signal exploitable."""
-        if len(screen_results) < self._MIN_SCREEN_PER_PARAM * len(param_keys):
+        max_mod = max((len(self.param_space.get(k) or [None]) for k in param_keys),
+                      default=1)
+        if len(screen_results) < self._MIN_SCREEN_PER_PARAM * max(len(param_keys), max_mod):
             return None
         import optuna
         own_impacts, best_value_by_param = self._impact_scores(screen_results, param_keys)
         optuna_impacts = self._optuna_param_importances(study, param_keys)
         impacts = optuna_impacts if optuna_impacts is not None else own_impacts
 
-        frozen, kept_keys = self._freeze_params(impacts, best_value_by_param, param_keys)
+        frozen, kept_keys = self._freeze_params(
+            impacts, best_value_by_param, param_keys,
+            screen_results=screen_results)
         if not frozen:
             return None
         fixed_indices: Dict[str, int] = {}
@@ -864,7 +914,7 @@ class OptimizerSearchEngine:
             if freeze_at is not None and reduction is None and len(own_results) >= freeze_at:
                 reduction = self._optuna_apply_freeze(study, own_results, param_keys)
 
-            if early_stop_patience > 0 and no_improve >= early_stop_patience:
+            if self._should_early_stop(no_improve, early_stop_patience, i + 1, n_trials):
                 logger.info(f"[Bayesian/TPE] Early stop à trial {i+1}/{n_trials}")
                 break
         return reduction
@@ -937,7 +987,7 @@ class OptimizerSearchEngine:
                     done += k
                     if freeze_at is not None and reduction is None and len(own_results) >= freeze_at:
                         reduction = self._optuna_apply_freeze(study, own_results, param_keys)
-                    if early_stop_patience > 0 and no_improve >= early_stop_patience:
+                    if self._should_early_stop(no_improve, early_stop_patience, done, n_trials):
                         logger.info(f"[Bayesian/TPE] Early stop à {done}/{n_trials}")
                         break
         except BrokenProcessPool as _bp:
@@ -1007,7 +1057,7 @@ class OptimizerSearchEngine:
                         "final_score": score,
                         "overfit":     r.get("overfit", 1.0),
                     })
-                if early_stop_patience > 0 and no_improve >= early_stop_patience:
+                if self._should_early_stop(no_improve, early_stop_patience, i + 1, n_exploit):
                     logger.info(f"[Bayesian] Early stop exploit trial {i+1}/{n_exploit}")
                     break
 
@@ -1102,7 +1152,8 @@ class OptimizerSearchEngine:
             for _ in range(n):
                 attempted += 1
                 _record(self._eval(sampler()))
-                if early_stop_patience > 0 and no_improve >= early_stop_patience:
+                if self._should_early_stop(no_improve, early_stop_patience,
+                                           trial_offset + done, n_total):
                     logger.info(f"[Optimizer] Early stop à trial {trial_offset + done}/{n_total}")
                     break
             return attempted
@@ -1153,10 +1204,19 @@ class OptimizerSearchEngine:
                             logger.warning(f"[Optimizer] trial séquentiel KO : {_se}")
                             continue
                         _record(r)
-            if early_stop_patience > 0 and no_improve >= early_stop_patience:
+            if self._should_early_stop(no_improve, early_stop_patience,
+                                       trial_offset + done, n_total):
                 logger.info(f"[Optimizer] Early stop à {trial_offset + done}/{n_total}")
                 break
         return attempted
+
+    @staticmethod
+    def _should_early_stop(no_improve: int, patience: int,
+                           done: int, n_trials: int) -> bool:
+        """O-08 : jamais avant la moitié du budget (le bruit arrêterait trop tôt)."""
+        if patience <= 0:
+            return False
+        return done >= max(patience, n_trials // 2) and no_improve >= patience
 
     def _perturb(self, params: dict) -> dict:
         """Perturbation légère d'un jeu de params pour l'exploitation."""
