@@ -162,6 +162,35 @@ class TestBacktestResult:
 
 
 class TestBacktester:
+    def test_close_at_puts_entry_fees_in_trade_pnl(self):
+        """F-01 : le PnL du trade porte les frais d'entrée ; le capital, non."""
+        import types
+        from datetime import datetime, timedelta
+
+        bt = Backtester(Engine(), _cfg())
+        entry_fees = 0.50
+        position = {
+            "side": "long", "entry": 100.0, "size": 1.0, "notional": 100.0,
+            "bar": 0, "stop": 95.0, "fees": entry_fees,
+            "_stop_trail": [], "_trailing": None, "mae": 0.0, "mfe": 0.0,
+        }
+        t0 = datetime(2024, 1, 1)
+        ctx = types.SimpleNamespace(
+            df=pl.DataFrame({"time": [t0 + timedelta(hours=i) for i in range(5)],
+                             "close": [100.0] * 5}),
+            timeframe="1h", capital=1000.0 - entry_fees,
+            trades=[], equity_curve=[1000.0], timestamps=[],
+            peak_capital=1000.0,
+        )
+        returned = bt._close_at(ctx, position, 2, 110.0, "take_profit", maker=False)
+        trade = ctx.trades[-1]
+        assert trade["entry_fees"] == pytest.approx(entry_fees)
+        # Le capital n'est débité qu'une fois (à l'ouverture) : le retour
+        # de _close_at reste le PnL de clôture, sans re-déduire l'entrée.
+        assert returned == pytest.approx(trade["pnl"] + entry_fees)
+        assert trade["pnl"] == pytest.approx(returned - entry_fees)
+        assert ctx.capital == pytest.approx(1000.0 - entry_fees + returned)
+
     def test_run_returns_result(self):
         engine = Engine()
         engine.register(DummyLongStrategy())

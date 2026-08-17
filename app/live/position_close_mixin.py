@@ -285,12 +285,16 @@ class PositionCloseMixin:
         # quels écrasait ceux d'entrée (et des jambes partielles) déjà portés par
         # la position. Même correction de report qu'au backtest : le PnL et le
         # capital, eux, étaient justes.
-        fees_total = float(pos.get("fees", 0.0) or 0.0) + fees
+        entry_fees = float(pos.get("fees", 0.0) or 0.0)
+        fees_total = entry_fees + fees
         trade = {k: v for k, v in pos.items()
                  if k not in ("_trailing", "partial_targets", "_be_done")}
         trade.update({
             "exit":          exec_price,
-            "pnl":           round(pnl + realise, 6),
+            # F-01 : même convention que le backtest — le trade porte les
+            # frais d'entrée (déjà prélevés sur le capital à l'ouverture).
+            "pnl":           round(pnl + realise - entry_fees, 6),
+            "entry_fees":    round(entry_fees, 6),
             "pnl_pct":       pnl_pct,
             "fees":          round(fees_total, 6),
             # FIN-06 : aucune distinction maker/taker à l'exécution live

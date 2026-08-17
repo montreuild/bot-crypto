@@ -538,6 +538,11 @@ class BacktestResult:
             "rejections":         self.rejections,
             "final_equity":       round(_sf(self.final_equity, 0.0), 4),
             "total_pnl":          round(_sf(self.total_pnl, 0.0), 4),
+            # F-01 : alias explicite — depuis que le pnl de trade porte les
+            # frais d'entrée, total_pnl == net_profit. L'ancien montant
+            # (hors frais d'entrée) reste en diagnostic.
+            "total_pnl_hors_frais_entree": round(
+                _sf(self.total_pnl + getattr(self, "total_entry_fees", 0.0), 0.0), 4),
             "total_fees":         round(_sf(self.total_fees, 0.0), 4),
             # QW-3 : agrégats de coûts pour analyse what-if frais/levier
             "total_borrow_cost":  round(_sf(getattr(self, "total_borrow_cost", 0.0), 0.0), 4),
@@ -796,7 +801,8 @@ class Backtester:
         # écrasait les frais d'entrée déjà portés par la position (et payés par
         # ctx.capital dans _try_enter). `total_fees` sous-déclarait donc un côté.
         # Correction de report seule : ni l'équité ni aucune décision ne bougent.
-        fees = position.get("fees", 0.0) + fees
+        entry_fees = float(position.get("fees", 0.0) or 0.0)
+        fees = entry_fees + fees
         ctx.capital += pnl
         # L1 — les jambes déjà sorties ont encaissé leur PnL au fil de l'eau ;
         # le trade journalisé porte le total, l'équité n'ajoute que le reliquat.
@@ -806,7 +812,12 @@ class Backtester:
         ctx.peak_capital = max(getattr(ctx, "peak_capital", ctx.capital), ctx.capital)
         ts = str(df["time"][i]) if "time" in df.columns else str(i)
         position.update({
-            "pnl":           round(pnl + realized, 6),
+            # F-01 : le PnL du trade porte aussi les frais d'entrée (déjà
+            # prélevés sur ctx.capital à l'ouverture). Sans ça, un trade dont
+            # le gain brut < frais d'entrée était compté gagnant, et
+            # total_pnl ≠ final_equity − initial_capital.
+            "pnl":           round(pnl + realized - entry_fees, 6),
+            "entry_fees":    round(entry_fees, 6),
             "fees":          round(fees, 6),
             "borrow_cost":   round(borrow, 6),
             "exit":          round(exec_price, 6),

@@ -33,6 +33,13 @@ Historique des versions du Crypto Bot.
 - **N-03** : le paramètre `df_full` de `_run_one_job` s'appelle `df_recherche`.
 - **F-11** : le jeton anti-spam n'est consommé qu'après un fill réussi.
 
+### 🐛 F-01 — `total_pnl` porte enfin les frais d'entrée
+
+Le PnL de chaque trade retranche désormais les frais d'entrée (déjà prélevés
+sur le capital à l'ouverture). `Σ trade.pnl == final_equity − initial_capital`,
+et l'optimiseur / `composite_score` lisent `net_profit`. Les résultats
+persistés portent `schema_version` + `git_commit` (D-06).
+
 ### 🐛 L'overfit résiduel n'existait pas — c'était la métrique
 
 `docs/RECALIBRATION_HTF.md` signalait cinq couples « surappris malgré

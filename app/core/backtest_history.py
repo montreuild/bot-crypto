@@ -24,10 +24,26 @@ _lock = threading.Lock()
 
 # Champs conservés du résumé d'un backtest (métriques clés, pas les trades bruts).
 _SUMMARY_FIELDS = (
-    "total_trades", "win_rate", "total_pnl", "sharpe",
+    "total_trades", "win_rate", "total_pnl", "net_profit", "sharpe",
     "max_drawdown", "profit_factor", "final_equity",
     "buy_and_hold_pnl", "alpha",
 )
+# D-06 : un résumé sans ces champs a été produit par une version antérieure
+# du calcul (total_pnl hors frais d'entrée, Sharpe sans plancher, etc.).
+SCHEMA_VERSION = 2
+
+
+def _git_commit() -> str:
+    """Commit court, ou chaîne vide si git n'est pas disponible."""
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL, timeout=2,
+        )
+        return out.decode().strip()
+    except Exception:
+        return ""
 
 
 def _path() -> str:
@@ -67,6 +83,8 @@ def record_backtest(strategy: str, timeframe: str, symbol: str,
         "symbol":    symbol,
         "n_bars":    n_bars,
         "run_date":  datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "schema_version": SCHEMA_VERSION,
+        "git_commit": _git_commit(),
     })
     try:
         with _lock:
