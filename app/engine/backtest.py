@@ -167,9 +167,10 @@ class BacktestResult:
     def __init__(self, trades: List[dict], equity_curve: List[float],
                  initial_capital: float, timestamps: List[str] = None,
                  timeframe: str = "1d", rejections: dict = None,
-                 n_bars: int = 0):
+                 n_bars: int = 0, equity_mtm: List[float] = None):
         self.trades          = trades
         self.equity_curve    = equity_curve
+        self.equity_mtm      = equity_mtm or []
         self.initial_capital = initial_capital
         self.timestamps      = timestamps or []
         self._timeframe      = timeframe
@@ -210,10 +211,17 @@ class BacktestResult:
         self.final_equity = self.equity_curve[-1] if self.equity_curve else self.initial_capital
 
         eq = np.array(self.equity_curve, dtype=float)
-        if len(eq) > 1:
-            peak              = np.maximum.accumulate(eq)
-            drawdowns         = (eq - peak) / np.where(peak > 0, peak, 1.0) * 100
+        # F-06 : le drawdown se lit sur l'équité mark-to-market (un point
+        # par barre), pas sur la courbe par trade qui ignore les pertes
+        # latentes.
+        eq_dd = np.array(self.equity_mtm, dtype=float) if len(self.equity_mtm) > 1 else eq
+        if len(eq_dd) > 1:
+            peak              = np.maximum.accumulate(eq_dd)
+            drawdowns         = (eq_dd - peak) / np.where(peak > 0, peak, 1.0) * 100
             self.max_drawdown = _sf(float(drawdowns.min()), 0.0)
+        else:
+            self.max_drawdown = 0.0
+        if len(eq) > 1:
             returns           = np.diff(eq) / np.where(eq[:-1] > 0, eq[:-1], 1.0)
             std               = float(returns.std())
             # Annualisation à la cadence RÉELLE de la série. `equity_curve` a un
@@ -222,13 +230,18 @@ class BacktestResult:
             # produit 1,5, et gonflait le Sharpe de sqrt(bougies/trades) — ×15
             # sur un run de 8 trades en 5,5 ans (Sharpe affiché 9,5).
             from app.core.performance_metrics import returns_per_year
-            ann_factor        = np.sqrt(returns_per_year(
-                len(returns), self._years(), _bars_per_year(self._timeframe)))
-            raw_sharpe        = float(returns.mean() / std * ann_factor) if std > 0 else 0.0
-            self.sharpe       = _sf(raw_sharpe, 0.0)
+            from app.core.stats_thresholds import MIN_SIGNIFICANT_TRADES
+            # F-02 : un écart-type sur 1-3 points n'est pas estimable. None
+            # (non mesurable) ≠ 0.0 (ratio nul). Aligné sur MIN_SIGNIFICANT_TRADES.
+            if len(returns) < MIN_SIGNIFICANT_TRADES:
+                self.sharpe = None
+            else:
+                ann_factor        = np.sqrt(returns_per_year(
+                    len(returns), self._years(), _bars_per_year(self._timeframe)))
+                raw_sharpe        = float(returns.mean() / std * ann_factor) if std > 0 else 0.0
+                self.sharpe       = _sf(raw_sharpe, 0.0)
         else:
-            self.max_drawdown = 0.0
-            self.sharpe       = 0.0
+            self.sharpe       = None
 
         self.avg_win  = _sf(float(np.mean(wins)),   0.0) if wins   else 0.0
         self.avg_loss = _sf(float(np.mean(losses)), 0.0) if losses else 0.0
@@ -240,7 +253,9 @@ class BacktestResult:
 
         win_sum  = sum(wins)
         loss_sum = abs(sum(losses))
-        self.profit_factor = win_sum / loss_sum if loss_sum > 0 else (999.0 if win_sum > 0 else 0.0)
+        # F-10 : aucune perte → non mesurable (None), pas une sentinelle 999
+        # qui gagne tous les tris.
+        self.profit_factor = (win_sum / loss_sum) if loss_sum > 0 else (None if win_sum > 0 else 0.0)
 
         maes = [t.get("mae", 0) for t in closed if t.get("mae") is not None]
         mfes = [t.get("mfe", 0) for t in closed if t.get("mfe") is not None]
@@ -475,7 +490,8 @@ class BacktestResult:
             d["avg_win"]      = round(_sf(float(np.mean(wins_s)), 0.0), 4) if wins_s else 0.0
             d["avg_loss"]     = round(_sf(float(np.mean(loss_s)), 0.0), 4) if loss_s else 0.0
             _loss_sum = abs(sum(loss_s))
-            d["profit_factor"] = round(sum(wins_s) / _loss_sum, 3) if _loss_sum > 0 else (999.0 if wins_s else 0.0)
+            d["profit_factor"] = (round(sum(wins_s) / _loss_sum, 3) if _loss_sum > 0
+                                  else (None if wins_s else 0.0))
             d["expectancy"]   = round(
                 len(wins_s) / len(sd_pnls) * d["avg_win"] +
                 len(loss_s) / len(sd_pnls) * d["avg_loss"], 4
@@ -513,7 +529,10 @@ class BacktestResult:
             ann_s  = np.sqrt(_rpy(len(rets_s), self._years(),
                                   _bars_per_year(self._timeframe)))
             std_s  = float(rets_s.std())
-            if std_s > 0:
+            from app.core.stats_thresholds import MIN_SIGNIFICANT_TRADES as _MIN_SH
+            if len(rets_s) < _MIN_SH:
+                d["sharpe"] = None
+            elif std_s > 0:
                 d["sharpe"] = round(_sf(float(rets_s.mean() / std_s * ann_s), 0.0), 3)
             else:
                 d["sharpe"] = 0.0
@@ -523,12 +542,20 @@ class BacktestResult:
 
     def to_dict(self) -> dict:
         pf = self.profit_factor
-        pf_safe = round(min(pf, 999.0), 3) if math.isfinite(pf) else 999.0
+        if pf is None:
+            pf_safe = None
+        else:
+            pf_safe = round(float(pf), 3) if math.isfinite(float(pf)) else None
         return {
             "initial_capital":    self.initial_capital,
             "rejections":         self.rejections,
             "final_equity":       round(_sf(self.final_equity, 0.0), 4),
             "total_pnl":          round(_sf(self.total_pnl, 0.0), 4),
+            # F-01 : alias explicite — depuis que le pnl de trade porte les
+            # frais d'entrée, total_pnl == net_profit. L'ancien montant
+            # (hors frais d'entrée) reste en diagnostic.
+            "total_pnl_hors_frais_entree": round(
+                _sf(self.total_pnl + getattr(self, "total_entry_fees", 0.0), 0.0), 4),
             "total_fees":         round(_sf(self.total_fees, 0.0), 4),
             # QW-3 : agrégats de coûts pour analyse what-if frais/levier
             "total_borrow_cost":  round(_sf(getattr(self, "total_borrow_cost", 0.0), 0.0), 4),
@@ -541,10 +568,15 @@ class BacktestResult:
             "total_trades":       self.total_trades,
             "win_rate":           round(_sf(self.win_rate, 0.0), 2),
             "max_drawdown":       round(_sf(self.max_drawdown, 0.0), 2),
-            "sharpe":             round(_sf(self.sharpe, 0.0), 3),
+            "sharpe":             (None if self.sharpe is None
+                                   else round(_sf(self.sharpe, 0.0), 3)),
             # QW-1 : métriques étendues (S3-07 — branchement a posteriori)
-            "sortino":            round(_sf(getattr(self, "sortino", 0.0), 0.0), 3),
-            "calmar":             round(_sf(getattr(self, "calmar", 0.0), 0.0), 3),
+            "sortino":            (None if getattr(self, "sortino", None) is None
+                                   or not math.isfinite(float(self.sortino))
+                                   else round(float(self.sortino), 3)),
+            "calmar":             (None if getattr(self, "calmar", None) is None
+                                   or not math.isfinite(float(self.calmar))
+                                   else round(float(self.calmar), 3)),
             "cagr":               round(_sf(getattr(self, "cagr", 0.0), 0.0), 3),
             "alpha_vs_bh":        round(_sf(getattr(self, "alpha_vs_bh", 0.0), 0.0), 4),
             "expectancy":         round(_sf(self.expectancy, 0.0), 4),
@@ -786,7 +818,8 @@ class Backtester:
         # écrasait les frais d'entrée déjà portés par la position (et payés par
         # ctx.capital dans _try_enter). `total_fees` sous-déclarait donc un côté.
         # Correction de report seule : ni l'équité ni aucune décision ne bougent.
-        fees = position.get("fees", 0.0) + fees
+        entry_fees = float(position.get("fees", 0.0) or 0.0)
+        fees = entry_fees + fees
         ctx.capital += pnl
         # L1 — les jambes déjà sorties ont encaissé leur PnL au fil de l'eau ;
         # le trade journalisé porte le total, l'équité n'ajoute que le reliquat.
@@ -796,7 +829,12 @@ class Backtester:
         ctx.peak_capital = max(getattr(ctx, "peak_capital", ctx.capital), ctx.capital)
         ts = str(df["time"][i]) if "time" in df.columns else str(i)
         position.update({
-            "pnl":           round(pnl + realized, 6),
+            # F-01 : le PnL du trade porte aussi les frais d'entrée (déjà
+            # prélevés sur ctx.capital à l'ouverture). Sans ça, un trade dont
+            # le gain brut < frais d'entrée était compté gagnant, et
+            # total_pnl ≠ final_equity − initial_capital.
+            "pnl":           round(pnl + realized - entry_fees, 6),
+            "entry_fees":    round(entry_fees, 6),
             "fees":          round(fees, 6),
             "borrow_cost":   round(borrow, 6),
             "exit":          round(exec_price, 6),
@@ -842,8 +880,9 @@ class Backtester:
                 day_key = str(close_ts)[:10] if close_ts is not None else ""
             except Exception:
                 day_key = ""
-            # capital_before = capital avant ce trade (approximation : capital - pnl)
-            capital_before = ctx.capital - pnl
+            # B-11 : ctx.capital inclut déjà les jambes partielles (`realized`).
+            # Soustraire seulement `pnl` décalait le DD journalier du slot.
+            capital_before = ctx.capital - pnl - realized
             gate.record_trade_result(i, slot_key, pnl + realized, day_key,
                                      capital_before)
 
@@ -903,6 +942,25 @@ class Backtester:
         ctx.diag["partial_exits"] = ctx.diag.get("partial_exits", 0) + 1
         return pnl
 
+    def _fill_at_level(self, side: str, level: float, open_px: float,
+                       *, stop: bool) -> tuple:
+        """B-01 : fill au gap si la bougie ouvre au-delà du niveau.
+
+        Un stop-market réel se remplit à l'ouverture, pas au niveau, quand
+        celle-ci a déjà franchi le seuil. Symétrique pour un TP favorable.
+        Retourne ``(exec_price, ref_price, gapped)``.
+        """
+        if stop:
+            gapped = (side == "long" and open_px < level) or \
+                     (side == "short" and open_px > level)
+        else:
+            gapped = (side == "long" and open_px > level) or \
+                     (side == "short" and open_px < level)
+        ref = open_px if gapped else level
+        exec_price = ref * (1 - self.spread_pct) if side == "long" \
+            else ref * (1 + self.spread_pct)
+        return exec_price, ref, gapped
+
     def _manage_open_position(self, ctx, position: dict, i: int):
         """Gère la position ouverte sur la barre ``i`` : MAE/MFE, sorties
         (early-exit stratégie, time-exit, TP, stop intrabar), sinon mise à
@@ -916,6 +974,8 @@ class Backtester:
         c_high  = ctx.high_arr[i]
         c_low   = ctx.low_arr[i]
         c_close = ctx.close_arr[i]
+        c_open  = ctx.open_arr[i] if getattr(ctx, "open_arr", None) is not None \
+            else c_close
 
         if side == "long":
             mae_pts = c_low  - entry
@@ -982,24 +1042,26 @@ class Backtester:
             return None
 
         if tp_hit:
-            # TP fixe touché : sortie au prix TP (spread défavorable, côté maker)
-            exec_price = tp_val * (1 - self.spread_pct) if side == "long" \
-                         else tp_val * (1 + self.spread_pct)
-            self._close_at(ctx, position, i, exec_price, "take_profit",
-                           maker=True, ref_price=tp_val)
+            exec_price, ref, gapped = self._fill_at_level(
+                side, tp_val, c_open, stop=False)
+            self._close_at(ctx, position, i, exec_price,
+                           "gap" if gapped else "take_profit",
+                           maker=not gapped, ref_price=ref)
             return None
 
         if stop_hit:
-            exec_price = stop * (1 - self.spread_pct) if side == "long" \
-                         else stop * (1 + self.spread_pct)
+            exec_price, ref, gapped = self._fill_at_level(
+                side, stop, c_open, stop=True)
             _tr = position.get("_trailing")
             if _tr and hasattr(_tr, "_dts") and _tr._dts:
                 position["trail_phase"] = _tr._dts.phase_name
             else:
                 position["trail_phase"] = "unknown"
-            self._close_at(ctx, position, i, exec_price,
-                           ("stop_loss" if position.get("disable_trailing")
-                            else "trailing_stop"), maker=False, ref_price=stop)
+            reason = "gap" if gapped else (
+                "stop_loss" if position.get("disable_trailing")
+                else "trailing_stop")
+            self._close_at(ctx, position, i, exec_price, reason,
+                           maker=False, ref_price=ref)
             return None
 
         # ── L1 (§29) — sorties partielles TP1 / TP2, runner ──────────────────
@@ -1012,11 +1074,12 @@ class Backtester:
                          or (side == "short" and c_low <= c["price"])]
             for cible in atteintes:
                 cibles.remove(cible)
-                px = cible["price"] * (1 - self.spread_pct) if side == "long" \
-                    else cible["price"] * (1 + self.spread_pct)
-                self._close_partial_at(ctx, position, i, px, cible["fraction"],
-                                       cible["reason"], maker=True,
-                                       ref_price=cible["price"])
+                px, ref, gapped = self._fill_at_level(
+                    side, cible["price"], c_open, stop=False)
+                self._close_partial_at(ctx, position, i, px,
+                                       cible["fraction"],
+                                       "gap" if gapped else cible["reason"],
+                                       maker=not gapped, ref_price=ref)
                 # §30 — après la première jambe, le stop passe au point mort
                 # frais compris : le trade ne peut plus coûter d'argent.
                 if position.get("be_after_partial") and not position.get("_be_done"):
@@ -1255,14 +1318,9 @@ class Backtester:
             size = _floor_to(max_notional / exec_price, 6)
         notional = _floor_to(size * exec_price, 4)
 
-        min_notional = self._min_notional()
-        if size <= 0 or notional < min_notional:
+        if size <= 0:
             diag["rejected_notional"] += 1
             self.rejections.record("notionnel_min", symbol=ctx.symbol)
-            logger.debug(
-                f"[Backtest] bar {i} : trade rejeté (notional={notional:.4f} "
-                f"< min {min_notional:.2f}, size={size:.6f}, base={ctx.capital:.2f})"
-            )
             return None
 
         # Remplissage partiel : réalisme d'exécution propre au backtest (le
@@ -1282,6 +1340,17 @@ class Backtester:
             return None
         size        = q_size
         notional    = size * exec_price
+        # B-05 : min_notional se juge sur la taille FINALE (après partial_fill
+        # et quantification), comme RiskLedger.reserve côté live.
+        min_notional = self._min_notional()
+        if notional < min_notional:
+            diag["rejected_notional"] += 1
+            self.rejections.record("notionnel_min", symbol=ctx.symbol)
+            logger.debug(
+                f"[Backtest] bar {i} : trade rejeté (notional={notional:.4f} "
+                f"< min {min_notional:.2f}, size={size:.6f}, base={ctx.capital:.2f})"
+            )
+            return None
         entry_fees  = self._fees(exec_price, size, maker=False,
                                  side=signal["side"], is_entry=True)
         _impact_in  = self._impact_cost(ctx, i, notional)   # BT-10
@@ -1380,6 +1449,9 @@ class Backtester:
         # celle de BTC/USDC ; les autres symboles prennent leur config dédiée si
         # elle existe, sinon les params de base (séparation des configs).
         strat_params = resolve_strategy_params(self.cfg, timeframe, symbol)
+        # F-14 : un même Backtester sert IS puis OOS (optimiseur). Sans reset,
+        # les rejets de l'IS polluent le résultat OOS.
+        self.rejections = RejectionCounter()
 
         # G2 : la venue de l'instrument pilote la quantification des tailles et
         # le modèle de coûts. Résolue au niveau du SYMBOLE (une action porte sa
@@ -1495,6 +1567,7 @@ class Backtester:
         # live trader — garantit la cohérence backtest/live.
         trades       = []
         equity_curve = [capital]
+        equity_mtm   = [capital]
         timestamps   = [str(df["time"][0]) if "time" in df.columns else "0"]
         position     = None
         trade_id     = 0
@@ -1530,8 +1603,8 @@ class Backtester:
 
         # Warmup dynamique : prend le max parmi les stratégies actives.
         # Chaque stratégie peut déclarer `warmup_bars` (attribut de classe ou d'instance).
-        # Valeur minimale garantie : 210 barres (couvre EMA200 + ADX + ATR14).
-        _MIN_WARMUP = 210
+        # Valeur minimale garantie : WARMUP_BARS_DEFAULT (EMA200 + ADX + ATR14).
+        from app.core.is_oos import WARMUP_BARS_DEFAULT as _MIN_WARMUP
         warmup = _MIN_WARMUP
         for _s in self.engine.strategies:
             _wb = getattr(_s, "warmup_bars", None) or getattr(_s, "min_bars", None)
@@ -1552,6 +1625,7 @@ class Backtester:
         low_arr   = df["low"].to_numpy().astype(float)
         high_arr  = df["high"].to_numpy().astype(float)
         close_arr = df["close"].to_numpy().astype(float)
+        open_arr  = df["open"].to_numpy().astype(float)
 
         # Libellé des stratégies actives — chaque backtest de l'UI tourne une
         # stratégie par Backtester, donc ce libellé identifie la stratégie
@@ -1575,7 +1649,7 @@ class Backtester:
             trades=trades, equity_curve=equity_curve, timestamps=timestamps,
             diag=diag, strat_params=strat_params,
             atr_arr=atr_arr, low_arr=low_arr, high_arr=high_arr,
-            close_arr=close_arr,
+            close_arr=close_arr, open_arr=open_arr,
             bars_current_position=_bars_current_position,
             # QW-6 (étape 6) — risk gate pour le mode realistic_risk.
             # Initialisé plus bas (après know si realistic_risk=True).
@@ -1614,6 +1688,17 @@ class Backtester:
                 f"global_dd={self._risk_gate.global_dd_limit:.1%}, "
                 f"vol_brake={self._risk_gate.volatility_threshold:.1%})"
             )
+
+        def _mark_mtm(bar_i: int) -> None:
+            # F-06 : équité mark-to-market à chaque barre — le drawdown
+            # ne voit plus seulement les clôtures.
+            u = 0.0
+            if position is not None:
+                _e = float(position.get("entry") or 0.0)
+                _sz = float(position.get("size") or 0.0)
+                _c = float(close_arr[bar_i])
+                u = ((_e - _c) if position.get("side") == "short" else (_c - _e)) * _sz
+            equity_mtm.append(round(ctx.capital + u, 4))
 
         for i in range(warmup, len(df) - 1):
             diag["bars_total"] += 1
@@ -1687,6 +1772,7 @@ class Backtester:
             # ── Gestion de la position ouverte ────────────────────────────────
             if position is not None:
                 position = self._manage_open_position(ctx, position, i)
+                _mark_mtm(i)
                 continue
 
             # ── Cherche un signal ─────────────────────────────────────────────
@@ -1700,6 +1786,7 @@ class Backtester:
                 _bars_since_signal += 1
                 if _bars_since_signal > diag["max_bars_no_signal"]:
                     diag["max_bars_no_signal"] = _bars_since_signal
+                _mark_mtm(i)
                 continue
 
             diag["signal_accepted"] += 1
@@ -1710,6 +1797,7 @@ class Backtester:
                 f"{signal.get('side')} score={signal.get('score', 0):.3f}"
             )
             position = self._try_enter(ctx, signal, i)
+            _mark_mtm(i)
 
         capital                = ctx.capital
         trade_id               = ctx.trade_id
@@ -1717,11 +1805,18 @@ class Backtester:
 
         # ── Clôture forcée en fin de série ────────────────────────────────────
         if position is not None:
-            self._close_at(ctx, position, len(df) - 1, float(df["close"][-1]),
-                           "end_of_data", maker=True, status="closed_eod",
-                           append_ts=False)
+            # B-10 : une liquidation forcée est taker, avec spread — pas un
+            # maker gratuit. ref_price isole le coût de spread (L0).
+            _eod = float(df["close"][-1])
+            _side = position["side"]
+            _eod_exec = _eod * (1 - self.spread_pct) if _side == "long" \
+                else _eod * (1 + self.spread_pct)
+            self._close_at(ctx, position, len(df) - 1, _eod_exec,
+                           "end_of_data", maker=False, status="closed_eod",
+                           append_ts=False, ref_price=_eod)
             position = None
             capital  = ctx.capital
+            equity_mtm.append(round(capital, 4))
 
         # Finalise les compteurs de fin de boucle : si la dernière position
         # a été fermée à l'avant-dernière barre, la transition est déjà
@@ -1765,7 +1860,8 @@ class Backtester:
                                 # Durée réelle du run : les bougies parcourues,
                                 # hors warmup. Indispensable à toute
                                 # annualisation (cf. BacktestResult._years).
-                                n_bars=max(0, len(df) - warmup))
+                                n_bars=max(0, len(df) - warmup),
+                                equity_mtm=equity_mtm)
         result.diagnostics = diag
         result.ml_info = ml_info
         # §5 — le mode de sortie appliqué fait partie du contexte qui produit le

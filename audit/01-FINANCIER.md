@@ -13,22 +13,25 @@
 
 ## Tableau de bord
 
-| # | Sévérité | Titre | Fichier |
-|---|----------|-------|---------|
-| F-01 | 🔴 Critique | `total_pnl` exclut les frais d'entrée mais sert de PnL de référence partout | `engine/backtest.py:704-771` |
-| F-02 | 🔴 Critique | Le Sharpe est calculé sur 1 à 3 observations et sort à ±1000 | `engine/backtest.py:211-227` |
-| F-03 | 🔴 Critique | `max_dd_p95` du Monte-Carlo renvoie le MEILLEUR drawdown, pas le pire | `engine/monte_carlo.py:96` |
-| F-04 | 🟠 Majeur | Coût d'emprunt facturé sur le notionnel entier à levier 1 (≈30 %/an fictifs) | `core/execution.py:26-38` + `config/venues.yaml` |
-| F-05 | 🟠 Majeur | Aucun plafond de notionnel au niveau VENUE : le levier réel dépasse `max_leverage` | `core/risk_ledger.py:70-108` |
-| F-06 | 🟠 Majeur | Le drawdown ne voit jamais les pertes latentes (courbe d'équité par trade) | `engine/backtest.py:211-215` |
-| F-07 | 🟠 Majeur | Deux implémentations divergentes du Deflated Sharpe, la mauvaise est câblée | `core/deflated_sharpe.py` vs `engine/opt_scoring.py:249` |
-| F-08 | 🟡 Moyen | `by_strategy` : courbe d'équité, Sharpe et DD calculés hors frais d'entrée | `engine/backtest.py:438-470` |
-| F-09 | 🟡 Moyen | Sortino non standard (dénominateur sur les seules observations négatives) | `core/performance_metrics.py:75` |
-| F-10 | 🟡 Moyen | Valeurs sentinelles (999, 100.0) mélangées aux vraies mesures | `backtest.py:242`, `performance_metrics.py:74,100` |
-| F-11 | 🟡 Moyen | `_check_rate()` consomme un jeton même quand le trade est ensuite refusé | `core/risk_gate.py:297-303` |
-| F-12 | 🟡 Moyen | `_pre_execution_check` impose un plafond caché à 25 % du capital en live | `live/balance_sync.py:196` |
-| F-13 | 🔵 Mineur | `alpha_vs_buy_hold` en O(n²) | `core/performance_metrics.py:164-165` |
-| F-14 | 🔵 Mineur | `RejectionCounter` accumulé entre deux `run()` du même Backtester | `engine/backtest.py:573` |
+| # | Sévérité | Titre | Fichier | État au 18/08 |
+|---|----------|-------|---------|---------------|
+| F-01 | 🔴 Critique | `total_pnl` exclut les frais d'entrée mais sert de PnL de référence partout | `engine/backtest.py:704-771` | ✅ résolu — `trade.pnl` porte les frais d'entrée |
+| F-02 | 🔴 Critique | Le Sharpe est calculé sur 1 à 3 observations et sort à ±1000 | `engine/backtest.py:211-227` | ✅ résolu — `None` sous 10 obs. |
+| F-03 | 🔴 Critique | `max_dd_p95` du Monte-Carlo renvoie le MEILLEUR drawdown, pas le pire | `engine/monte_carlo.py:96` | ✅ résolu — percentile 5 |
+| F-04 | 🟠 Majeur | Coût d'emprunt facturé sur le notionnel entier à levier 1 (≈30 %/an fictifs) | `core/execution.py:26-38` + `config/venues.yaml` | ✅ résolu — `borrowed_notional` (short toujours emprunté) |
+| F-05 | 🟠 Majeur | Aucun plafond de notionnel au niveau VENUE : le levier réel dépasse `max_leverage` | `core/risk_ledger.py:70-108` | ✅ résolu — `enveloppe_venue` |
+| F-06 | 🟠 Majeur | Le drawdown ne voit jamais les pertes latentes (courbe d'équité par trade) | `engine/backtest.py:211-215` | ✅ résolu — DD MTM barre par barre |
+| F-07 | 🟠 Majeur | Deux implémentations divergentes du Deflated Sharpe, la mauvaise est câblée | `core/deflated_sharpe.py` vs `engine/opt_scoring.py:249` | ✅ résolu — Bailey & LdP dans `opt_scoring` |
+| F-08 | 🟡 Moyen | `by_strategy` : courbe d'équité, Sharpe et DD calculés hors frais d'entrée | `engine/backtest.py:438-470` | ✅ résolu (après F-01) |
+| F-09 | 🟡 Moyen | Sortino non standard (dénominateur sur les seules observations négatives) | `core/performance_metrics.py:75` | ✅ résolu — /N |
+| F-10 | 🟡 Moyen | Valeurs sentinelles (999, 100.0) mélangées aux vraies mesures | `backtest.py:242`, `performance_metrics.py:74,100` | ✅ résolu — `None` |
+| F-11 | 🟡 Moyen | `_check_rate()` consomme un jeton même quand le trade est ensuite refusé | `core/risk_gate.py:297-303` | ✅ résolu — après fill |
+| F-12 | 🟡 Moyen | `_pre_execution_check` impose un plafond caché à 25 % du capital en live | `live/balance_sync.py:196` | ✅ résolu |
+| F-13 | 🔵 Mineur | `alpha_vs_buy_hold` en O(n²) | `core/performance_metrics.py:164-165` | ✅ résolu |
+| F-14 | 🔵 Mineur | `RejectionCounter` accumulé entre deux `run()` du même Backtester | `engine/backtest.py:573` | ✅ résolu |
+
+> Détail des correctifs : [`14-REVISION-2026-08-18.md`](14-REVISION-2026-08-18.md).
+> Les sections ci-dessous décrivent l'état au 14 août (raisonnement d'origine).
 
 ---
 

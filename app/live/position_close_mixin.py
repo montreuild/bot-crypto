@@ -267,8 +267,10 @@ class PositionCloseMixin:
         # position ne consomme plus rien dès qu'elle est close.
         self.ledger.release(pos_id)
 
-        with session_scope(self.SessionLocal) as _sess:
-            delete_open_position(_sess, pos_id)
+        # A-01 : la suppression de la position ouverte est reportée dans
+        # la même transaction que save_trade + update_daily_stats, plus bas.
+        # Un crash entre les deux commits laissait un trade exécuté nulle
+        # part (ni open_positions, ni trades).
         self._loss_notified.discard(pos_id)
 
         pnl_pct    = round(pnl / pos["notional"] * 100, 4) if pos.get("notional", 0) > 0 else 0.0
@@ -283,12 +285,16 @@ class PositionCloseMixin:
         # quels écrasait ceux d'entrée (et des jambes partielles) déjà portés par
         # la position. Même correction de report qu'au backtest : le PnL et le
         # capital, eux, étaient justes.
-        fees_total = float(pos.get("fees", 0.0) or 0.0) + fees
+        entry_fees = float(pos.get("fees", 0.0) or 0.0)
+        fees_total = entry_fees + fees
         trade = {k: v for k, v in pos.items()
                  if k not in ("_trailing", "partial_targets", "_be_done")}
         trade.update({
             "exit":          exec_price,
-            "pnl":           round(pnl + realise, 6),
+            # F-01 : même convention que le backtest — le trade porte les
+            # frais d'entrée (déjà prélevés sur le capital à l'ouverture).
+            "pnl":           round(pnl + realise - entry_fees, 6),
+            "entry_fees":    round(entry_fees, 6),
             "pnl_pct":       pnl_pct,
             "fees":          round(fees_total, 6),
             # FIN-06 : aucune distinction maker/taker à l'exécution live
@@ -321,12 +327,19 @@ class PositionCloseMixin:
         })
 
         with session_scope(self.SessionLocal) as session:
-            save_trade(session, trade)
+            delete_open_position(session, pos_id, commit=False)
+            save_trade(session, trade, commit=False)
             update_daily_stats(
                 session,
                 datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                pnl, pnl > 0, fees, self.capital_display
+                pnl, pnl > 0, fees, self.capital_display,
+                commit=False,
             )
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
         if exit_reason in ("stop_loss", "trailing_stop", "gap") or pnl < 0:
             cooldown_secs = (

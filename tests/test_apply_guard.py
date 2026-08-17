@@ -35,6 +35,21 @@ def test_rejects_no_quality_improvement():
     assert not ok and "qualité" in reason
 
 
+def test_unmeasurable_sharpe_does_not_beat_baseline():
+    """F-02 : Sharpe None n'est pas une amélioration de qualité."""
+    ok, reason = beats_baseline(12, 80.0, 39.0, None, BASE)
+    assert not ok and "qualité" in reason
+
+
+def test_live_open_applique_le_mode_de_sortie():
+    """N-04 : le live appelle apply_exit_mode, comme le backtest."""
+    import inspect
+    from app.live.position_open_mixin import PositionOpenMixin
+    src = inspect.getsource(PositionOpenMixin._try_open_from_signal)
+    assert "apply_exit_mode" in src
+    assert "exit_mode" in src
+
+
 def test_route_guards_with_beats_baseline():
     """Garde-fou statique : la route apply appelle bien beats_baseline et
     expose force=... (BT-04)."""
@@ -54,7 +69,13 @@ def test_auto_apply_has_walk_forward_gate():
     src = inspect.getsource(auto_optimizer.AutoOptimizer._run_one_job)
     assert "_wf_consistent" in src
     assert "WalkForwardAnalyzer" in src
+    from app.engine.walk_forward import WalkForwardAnalyzer
+    assert "reoptimizes" in inspect.getsource(WalkForwardAnalyzer.run)
+    assert "stability" in inspect.getsource(WalkForwardAnalyzer.run)
     assert "wf_min_consistency" in src
     assert "wf_gate" in src
     # Le gate s'applique bien à la décision d'apply
     assert "_beats_baseline() and _wf_consistent()" in src
+    # N-03 / B-03 : le WF tourne sur la recherche, avec le TF du job.
+    assert "df_recherche" in src
+    assert "timeframe=timeframe" in src

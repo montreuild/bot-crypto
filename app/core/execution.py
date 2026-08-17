@@ -25,19 +25,48 @@ def trade_fees(price: float, size: float, fee_rate: float) -> float:
     return float(price) * float(size) * float(fee_rate)
 
 
+def borrowed_notional(notional: float, side: str, *,
+                      max_leverage: float = 1.0,
+                      own_funds: float | None = None) -> float:
+    """Montant réellement emprunté — F-04.
+
+    - **Short** : on emprunte l'actif entier, quel que soit le levier
+      (short spot financé / margin à 1×). C'est le cas que le garde
+      ``max_leverage ≤ 1 ⇒ taux 0`` avait effacé à tort.
+    - **Long** à levier L : on n'emprunte que ``notional × (1 − 1/L)``.
+      À L ≤ 1 la position est couverte par les fonds propres → 0.
+    - ``own_funds`` : si fourni, ``borrowed = max(0, notional − own_funds)``.
+    """
+    n = float(notional)
+    if n <= 0:
+        return 0.0
+    if own_funds is not None:
+        return max(0.0, n - float(own_funds))
+    if side == "short":
+        return n
+    lev = max(float(max_leverage or 1.0), 1.0)
+    return max(0.0, n * (1.0 - 1.0 / lev))
+
+
 def borrow_cost(notional: float, daily_rate: float, hours_held: float,
-                periods_per_day: int = 24) -> float:
+                periods_per_day: int = 24,
+                own_funds: float | None = None) -> float:
     """Coût d'emprunt margin à intérêts composés.
 
     ``periods_per_day`` périodes de facturation par jour (OKX = 24, horaire) ;
     chaque période capitalise au taux ``daily_rate / periods_per_day``.
+
+    ``own_funds`` : si fourni, seuls ``notional − own_funds`` sont facturés
+    (F-04). Sans ça, tout le notionnel est traité comme emprunté.
     """
-    if notional <= 0 or daily_rate <= 0 or hours_held <= 0:
+    borrowed = (notional if own_funds is None
+                else max(0.0, float(notional) - float(own_funds)))
+    if borrowed <= 0 or daily_rate <= 0 or hours_held <= 0:
         return 0.0
     periods_per_day = max(int(periods_per_day), 1)
     r_period  = float(daily_rate) / periods_per_day
     n_periods = float(hours_held) * periods_per_day / 24.0
-    return float(notional) * ((1 + r_period) ** n_periods - 1)
+    return float(borrowed) * ((1 + r_period) ** n_periods - 1)
 
 
 def venue_borrow_rate(daily_rate: float, venue=None) -> float:
@@ -105,8 +134,16 @@ def close_pnl(side: str, entry: float, exit_price: float, size: float,
     """
     fees   = venue_trade_cost(exit_price, size, fee_rate, side=side,
                               venue=venue, is_entry=False)
-    borrow = borrow_cost(notional, venue_borrow_rate(daily_rate, venue),
-                         hours_held, periods_per_day)
+    rate = venue_borrow_rate(daily_rate, venue)
+    # Sans venue : comportement historique (tout le notionnel). Avec venue :
+    # long à levier 1 → 0 ; short → notionnel entier ; long à levier L →
+    # la part non couverte par les fonds propres.
+    if venue is None:
+        borrowed = float(notional)
+    else:
+        lev = float(getattr(venue, "max_leverage", 1.0) or 1.0)
+        borrowed = borrowed_notional(notional, side, max_leverage=lev)
+    borrow = borrow_cost(borrowed, rate, hours_held, periods_per_day)
     return net_pnl(side, entry, exit_price, size, fees, borrow), fees, borrow
 
 

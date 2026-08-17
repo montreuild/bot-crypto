@@ -105,11 +105,35 @@ class TestBacktestResult:
         r = BacktestResult([], [1000.0], 1000.0)
         assert r.total_trades == 0
         assert r.win_rate == 0.0
-        assert r.sharpe == 0.0
+        assert r.sharpe is None
+
+    def test_sharpe_is_none_under_ten_observations(self):
+        """F-02 : un Sharpe sur 1-3 trades n'est pas une mesure."""
+        r = self._make_result([10, -5, 8])
+        assert r.total_trades == 3
+        assert r.sharpe is None
+        assert r.to_dict()["sharpe"] is None
+
+    def test_sharpe_is_numeric_from_ten_observations(self):
+        r = self._make_result([10, -5, 8, -3, 6, -2, 4, -1, 5, -4])
+        assert r.total_trades == 10
+        assert r.sharpe is not None
+        assert isinstance(r.sharpe, float)
 
     def test_max_drawdown_negative(self):
         r = self._make_result([100, -200, 50])
         assert r.max_drawdown < 0
+
+    def test_mtm_drawdown_sees_latent_loss(self):
+        """F-06 : une position qui descend puis remonte laisse une trace."""
+        capital = 1000.0
+        # Courbe par trade : seulement +10 à la clôture → DD nul.
+        trades = [{"status": "closed", "pnl": 10.0, "fees": 0.1}]
+        equity_curve = [1000.0, 1010.0]
+        # MTM : 1000 → 960 → 1010 (perte latente de 4 %).
+        equity_mtm = [1000.0, 960.0, 1010.0]
+        r = BacktestResult(trades, equity_curve, capital, equity_mtm=equity_mtm)
+        assert r.max_drawdown < -3.0
 
     def test_expectancy(self):
         r = self._make_result([10, 10, -5])
@@ -131,7 +155,23 @@ class TestBacktestResult:
     def test_all_winning(self):
         r = self._make_result([5, 3, 7])
         assert r.win_rate == 100.0
-        assert r.profit_factor == 999.0
+        assert r.profit_factor is None
+
+    def test_by_strategy_matches_global_when_single_strategy(self):
+        """F-08 : une seule stratégie → mêmes agrégats que le run global."""
+        r = self._make_result([10, -5, 8])
+        g = r.by_strategy["dummy"]
+        assert g["final_equity"] == pytest.approx(r.final_equity)
+        assert g["pnl"] == pytest.approx(r.total_pnl)
+
+    def test_end_of_data_is_taker_with_spread(self):
+        """B-10 : la clôture de fin de série n'est plus un maker gratuit."""
+        import inspect
+        from app.engine.backtest import Backtester
+        src = inspect.getsource(Backtester.run)
+        assert 'maker=False' in src
+        assert 'end_of_data' in src
+        assert 'ref_price=_eod' in src
 
     def test_by_strategy_populated(self):
         r = self._make_result([10, -3, 5])
@@ -140,6 +180,53 @@ class TestBacktestResult:
 
 
 class TestBacktester:
+    def test_close_at_puts_entry_fees_in_trade_pnl(self):
+        """F-01 : le PnL du trade porte les frais d'entrée ; le capital, non."""
+        import types
+        from datetime import datetime, timedelta
+
+        bt = Backtester(Engine(), _cfg())
+        entry_fees = 0.50
+        position = {
+            "side": "long", "entry": 100.0, "size": 1.0, "notional": 100.0,
+            "bar": 0, "stop": 95.0, "fees": entry_fees,
+            "_stop_trail": [], "_trailing": None, "mae": 0.0, "mfe": 0.0,
+        }
+        t0 = datetime(2024, 1, 1)
+        ctx = types.SimpleNamespace(
+            df=pl.DataFrame({"time": [t0 + timedelta(hours=i) for i in range(5)],
+                             "close": [100.0] * 5}),
+            timeframe="1h", capital=1000.0 - entry_fees,
+            trades=[], equity_curve=[1000.0], timestamps=[],
+            peak_capital=1000.0,
+        )
+        returned = bt._close_at(ctx, position, 2, 110.0, "take_profit", maker=False)
+        trade = ctx.trades[-1]
+        assert trade["entry_fees"] == pytest.approx(entry_fees)
+        # Le capital n'est débité qu'une fois (à l'ouverture) : le retour
+        # de _close_at reste le PnL de clôture, sans re-déduire l'entrée.
+        assert returned == pytest.approx(trade["pnl"] + entry_fees)
+        assert trade["pnl"] == pytest.approx(returned - entry_fees)
+        assert ctx.capital == pytest.approx(1000.0 - entry_fees + returned)
+
+    def test_fill_at_level_uses_open_on_gap(self):
+        """B-01 : un gap à travers le stop/TP se remplit à l'ouverture."""
+        bt = Backtester(Engine(), _cfg())
+        # Long, stop 95, ouverture à 90 (gap défavorable).
+        px, ref, gapped = bt._fill_at_level("long", 95.0, 90.0, stop=True)
+        assert gapped is True
+        assert ref == 90.0
+        assert px == pytest.approx(90.0 * (1 - bt.spread_pct))
+        # Sans gap : fill au niveau.
+        px, ref, gapped = bt._fill_at_level("long", 95.0, 96.0, stop=True)
+        assert gapped is False and ref == 95.0
+        # TP long : gap favorable (open au-dessus du TP).
+        px, ref, gapped = bt._fill_at_level("long", 110.0, 115.0, stop=False)
+        assert gapped is True and ref == 115.0
+        # Short stop : gap si open au-dessus du stop.
+        _, ref, gapped = bt._fill_at_level("short", 105.0, 108.0, stop=True)
+        assert gapped is True and ref == 108.0
+
     def test_run_returns_result(self):
         engine = Engine()
         engine.register(DummyLongStrategy())

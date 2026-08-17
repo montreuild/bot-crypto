@@ -339,9 +339,17 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
     # `optimizer` de façon défensive plutôt que de faire échouer l'apply sur un
     # réglage optionnel.
     _opt_cfg = (state.cfg or {}).get("optimizer", {}) or {}
+    # N-02 : le holdout est déjà dans la fiche de job (auto_optimizer le
+    # stocke). L'auto-apply décide dessus ; le bouton « Appliquer » doit
+    # faire de même, sinon le chemin manuel (le plus fréquent, auto_apply
+    # étant off par défaut) juge encore la tranche de sélection.
+    _h = job.get("holdout") or {}
+    _gate_source = job.get("gate_source") or ("holdout" if _h else "selection")
     ok_quality, reason = beats_baseline(
-        result.get("best_oos_trades", 0), result.get("best_oos_pnl", 0),
-        result.get("best_oos_wr", 0), result.get("best_oos_sharpe", 0),
+        _h.get("trades", result.get("best_oos_trades", 0)),
+        _h.get("pnl",    result.get("best_oos_pnl", 0)),
+        _h.get("wr",     result.get("best_oos_wr", 0)),
+        _h.get("sharpe", result.get("best_oos_sharpe", 0)),
         job.get("baseline", {}),
         # P0 — Deflated Sharpe gate (cf. auto_optimizer.py)
         n_trials=int(job.get("n_trials", 1)) or 1,
@@ -379,7 +387,8 @@ def optimizer_apply(request: Request, job_id: str, config_path: str = "config.ya
             logger.warning(f"[apply] propagation trader KO: {e}")
 
     return {"status": "applied", "strategy": strat, "timeframe": tf, "symbol": symbol,
-            "params": best, "trader_updated": trader_updated}
+            "params": best, "trader_updated": trader_updated,
+            "gate_source": _gate_source}
 
 
 @router.post("/api/optimize/cancel", dependencies=[Depends(verify_api_key)])

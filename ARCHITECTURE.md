@@ -247,11 +247,11 @@ section « Live Trading Loop » plus bas.
 ### Backtest (Backtester)
 
 ```
-Backtester(engine, cfg, realistic_risk=False)
-  ├─> CandleStore.fetch()        ← V12 : depuis le cache local si disponible
-  │     ├─> Lecture Parquet      (instantané si déjà fetché par le live trader)
-  │     └─> Fetch exchange       (uniquement si nouvelles bougies)
-  ├─> _filter_df_by_date_range() ← QW-2 : filtre par start_date/end_date
+Backtester(engine, cfg, realistic_risk=True)  # opt / WF / FT ; lab opt-in
+  ├─> CandleStore.fetch() / fetch_range()   ← A-03
+  │     ├─> fetch() : backfill jusqu'à `total` (50k / 5k en 1d), persisté
+  │     └─> fetch_range() : même backfill, puis scan Parquet [start, end]
+  ├─> _filter_df_by_date_range() ← QW-2 : bornes ISO renvoyées à l'UI
   ├─> _apply_cost_override()     ← QW-4 : surcharge ponctuelle du cost_model
   ├─> Polars DataFrame processing
   ├─> For each candle:
@@ -466,6 +466,8 @@ class CandleStore:
         ├─> _fetch_incremental()     # ou _fetch_full() si vide
         ├─> merge + unique + sort + filter
         └─> _save(path)              # zstd compression
+    def fetch_range(..., start, end, total)  # A-03 : backfill + lecture filtrée
+    def load_range(symbol, tf, start, end)   # scan Parquet, pas d'exchange
 
 get_store() -> CandleStore           # Singleton thread-safe
 ```
@@ -594,13 +596,14 @@ web:
 ```
 
 Transport de la clé (`verify_api_key`, `app/api/helpers.py`) : header
-`X-API-Key` OU cookie **HttpOnly** `api_key` (posé par les pages web,
-`app/api/main.py::_tpl`). Le frontend Next.js n'embarque plus de clé dans le
-bundle (S1-05 : `NEXT_PUBLIC_API_KEY` supprimée) — il envoie le cookie via
-`credentials: 'include'` / `EventSource(..., {withCredentials: true})`. Le
-WebSocket `/ws` vérifie le cookie en premier, `?api_key=` reste un fallback
-pour les clients non-navigateur (S1-04). En live (`paper_mode: false`), une
-variable d'environnement `${...}` référencée mais absente **bloque le
+`X-API-Key` OU cookie **HttpOnly** `api_key` (posé par le proxy Next,
+`frontend/src/app/api/[...path]/route.ts`). Le cookie est `Secure` si
+`x-forwarded-proto: https` (S-04). Le frontend n'embarque plus de clé dans
+le bundle. `X-Forwarded-For` et le rate-limit n'honorent le header que si
+le pair figure dans `TRUSTED_PROXIES` (S-02). Le WebSocket `/ws` vérifie le
+cookie en premier ; `?api_key=` seulement si `ALLOW_WS_QUERY_KEY=1` (S-03).
+`/metrics` exige `METRICS_TOKEN` ou `web.api_key` s'ils sont posés (S-01).
+En live (`paper_mode: false`), une variable `${...}` absente **bloque le
 démarrage** (`config.strict_env`, S0-04).
 
 **Endpoints non-autentifiés** :

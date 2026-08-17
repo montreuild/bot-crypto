@@ -23,6 +23,12 @@
 | U-11 | 🔵 Mineur | `lang="fr"` figé sur `<html>` | `app/layout.tsx` |
 | U-12 | 🔵 Mineur | Le nom des onglets vit dans l'URL sans être validé | `app/lab/page.tsx`, `app/market/page.tsx` |
 
+> **18/08** — libellés honnêtes, pas une refonte UI : walk-forward annoncé
+> comme **stabilité** (`kind`, `avg_fold_pnl`) ; optimiseur affiche `val_*`
+> et `gate_source` (holdout vs sélection). U-02 atténué côté backend
+> (F-02 / F-10 : plus de Sharpe ±1000 ni sentinelles 999).
+> Voir [`14-REVISION-2026-08-18.md`](14-REVISION-2026-08-18.md).
+
 ---
 
 ## U-01 🟠 L'internationalisation est du code mort

@@ -152,7 +152,7 @@ def _run_backtest_one_tf(cfg, args, exchange, symbol: str, tf: str,
         if args.walk_forward and actual_bars >= 200:
             print(f"\n  Walk-Forward ({cfg.get('backtest',{}).get('walk_forward_folds', 5)} folds)...")
             wf  = WalkForwardAnalyzer(eng, cfg)
-            wfr = wf.run(df, symbol)
+            wfr = wf.run(df, symbol, timeframe=tf)
             print(f"  OOS PnL moy   : {wfr['avg_oos_pnl']:+.4f}")
             print(f"  OOS Sharpe    : {wfr['avg_oos_sharpe']:.3f}")
             print(f"  OOS Win Rate  : {wfr['avg_oos_wr']:.1f}%")

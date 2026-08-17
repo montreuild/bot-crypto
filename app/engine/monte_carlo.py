@@ -77,7 +77,12 @@ class MonteCarlo:
             "final_equity_mean":  round(_sf(float(np.mean(finals)),  0.0), 2),
             "final_equity_p5":    round(_sf(float(np.percentile(finals,  5)),  0.0), 2),
             "final_equity_p95":   round(_sf(float(np.percentile(finals, 95)),  0.0), 2),
-            "max_dd_p95":         round(_sf(abs(float(np.percentile(max_dds, 95))), 0.0), 2),
+            # max_dds sont des drawdowns NÉGATIFS (dd.min()). Le 95ᵉ
+            # percentile d'une série négative est le *meilleur* cas (le moins
+            # négatif). Le quantile de risque à 95 % est la queue basse :
+            # percentile 5, puis valeur absolue pour l'affichage.
+            "max_dd_p95":         round(_sf(abs(float(np.percentile(max_dds, 5))), 0.0), 2),
             "prob_profit":        round(sum(1 for f in finals if f > initial_capital) / self.n_runs * 100, 1),
             "prob_ruin_10pct":    round(sum(1 for d in max_dds if d < -10) / self.n_runs * 100, 1),
+            "mc_version":         2,
         }

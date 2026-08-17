@@ -37,17 +37,19 @@ logger = logging.getLogger(__name__)
 # se transforme en ``ExceptionGroup: unhandled errors in a TaskGroup``
 # moche dans les logs serveur, sans message HTTP propre côté client.
 async def _global_exception_handler(request: Request, exc: Exception):
-    """Loggue l'exception puis retourne un JSON 500 propre (sans stacktrace)."""
+    """Loggue l'exception puis retourne un JSON 500 sans type interne (A-12)."""
+    cid = getattr(getattr(request, "state", None), "correlation_id", "") or ""
     logger.error(
-        f"[API] Exception non gérée {request.method} {request.url.path} : "
-        f"{type(exc).__name__}: {exc}",
+        f"[API] Exception non gérée {request.method} {request.url.path} "
+        f"[{cid or '-'}]: {type(exc).__name__}: {exc}",
         exc_info=True,
     )
     return JSONResponse(
         status_code=500,
         content={
-            "detail": f"Erreur interne : {type(exc).__name__}",
-            "path":   request.url.path,
+            "detail": f"Erreur interne ({cid})" if cid else "Erreur interne",
+            "path": request.url.path,
+            "request_id": cid or None,
         },
     )
 

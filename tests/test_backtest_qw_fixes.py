@@ -163,16 +163,22 @@ def test_sharpe_annualise_a_la_cadence_des_trades_et_non_des_bougies():
     365 observations annuelles là où le bot en produit 1,5, et affichait un
     Sharpe de 9,5 — du même ordre d'invraisemblance que le Calmar de 3 961.
     """
-    trades = [{"status": "closed", "pnl": p, "fees": 0.1}
-              for p in (10, -5, 35, -10, 30, -10, 30, 14.6)]
-    equity = [1000.0, 1010, 1005, 1040, 1030, 1060, 1050, 1080, 1094.6]
+    # F-02 : le Sharpe n'est plus calculé sous 10 observations.
+    pnls = (10, -5, 35, -10, 30, -10, 30, 14.6, 8, -4)
+    trades = [{"status": "closed", "pnl": p, "fees": 0.1} for p in pnls]
+    equity = [1000.0]
+    cap = 1000.0
+    for p in pnls:
+        cap += p
+        equity.append(round(cap, 4))
 
-    # 2 000 bougies journalières ≈ 5,48 ans → ~1,5 trade/an.
+    # 2 000 bougies journalières ≈ 5,48 ans → ~1,8 trade/an.
     res = BacktestResult(trades, equity, 1000.0, timeframe="1d", n_bars=2000)
-    # Même série, mais annualisée comme avant (365 obs/an) : le rapport des
-    # deux Sharpe vaut sqrt(365 / 1,46) ≈ 15.
-    gonfle = BacktestResult(trades, equity, 1000.0, timeframe="1d", n_bars=8)
+    # Même série, mais annualisée comme avant (365 obs/an).
+    gonfle = BacktestResult(trades, equity, 1000.0, timeframe="1d", n_bars=10)
 
+    assert res.sharpe is not None and gonfle.sharpe is not None
     assert abs(res.sharpe) < abs(gonfle.sharpe)
-    assert abs(gonfle.sharpe / res.sharpe) == pytest.approx(15.0, abs=1.0)
+    assert abs(gonfle.sharpe / res.sharpe) == pytest.approx(
+        (365 / (10 / (2000 / 365))) ** 0.5, abs=2.0)
     assert abs(res.sharpe) < 3.0, f"Sharpe encore implausible : {res.sharpe}"

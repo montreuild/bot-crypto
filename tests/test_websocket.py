@@ -317,13 +317,28 @@ def test_ws_cookie_auth_accepted(monkeypatch):
 
 
 def test_ws_query_param_fallback_when_no_cookie(monkeypatch):
-    """?api_key= reste un fallback pour les clients sans cookie jar."""
+    """?api_key= n'est honoré que si ALLOW_WS_QUERY_KEY=1 (S-03)."""
     _setup_hub_loop()
     monkeypatch.setattr(state, "cfg", {"web": {"api_key": "secret123"}})
+    monkeypatch.setenv("ALLOW_WS_QUERY_KEY", "1")
     with TestClient(app) as client:
         with client.websocket_connect("/ws?api_key=secret123") as ws:
             msg = ws.receive_json()
             assert msg["type"] == "connected"
+
+
+def test_ws_query_param_rejected_without_allow_flag(monkeypatch):
+    """Sans ALLOW_WS_QUERY_KEY, ?api_key= est ignoré (S-03)."""
+    _setup_hub_loop()
+    monkeypatch.setattr(state, "cfg", {"web": {"api_key": "secret123"}})
+    monkeypatch.delenv("ALLOW_WS_QUERY_KEY", raising=False)
+    with TestClient(app) as client:
+        try:
+            with client.websocket_connect("/ws?api_key=secret123") as ws:
+                ws.receive_json()
+            assert False, "connexion aurait dû être refusée"
+        except Exception:
+            pass
 
 
 def test_ws_wrong_key_rejected(monkeypatch):

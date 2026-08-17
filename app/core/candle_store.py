@@ -295,6 +295,49 @@ class CandleStore:
         """DataFrame OHLCV en cache (sans aucun appel exchange). Vide si absent."""
         return self._load(self._path(symbol, tf))
 
+    def fetch_range(self, exchange, symbol: str, tf: str,
+                    start=None, end=None, *,
+                    total: int, prefer_cache: bool = False) -> Optional[pl.DataFrame]:
+        """A-03 : backfill jusqu'à ``total`` (persisté une fois), puis lit [start, end].
+
+        Le coût exchange n'est payé que si le Parquet est plus mince que
+        ``total``. La profondeur reste dans le store pour les prochains runs.
+        Seule la fenêtre demandée est renvoyée au backtest.
+        """
+        filled = self.fetch(exchange, symbol, tf, total=total, prefer_cache=prefer_cache)
+        if start is None and end is None:
+            return filled
+        out = self.load_range(symbol, tf, start=start, end=end)
+        return out if len(out) else None
+
+    def load_range(self, symbol: str, tf: str,
+                   start=None, end=None) -> pl.DataFrame:
+        """Lit le Parquet filtré par plage (predicate pushdown, A-03).
+
+        Ne touche pas l'exchange. DataFrame vide si le fichier n'existe pas
+        ou si le scan échoue. ``start`` / ``end`` sont des ``datetime`` naïfs
+        UTC, comme la colonne ``time`` du store.
+        """
+        path = self._path(symbol, tf)
+        if not path.exists():
+            return pl.DataFrame(schema=_OHLCV_SCHEMA)
+        try:
+            lf = pl.scan_parquet(path)
+            if start is not None:
+                lf = lf.filter(pl.col("time") >= start)
+            if end is not None:
+                lf = lf.filter(pl.col("time") <= end)
+            df = lf.collect()
+            cols = list(_OHLCV_SCHEMA.keys())
+            if set(cols).issubset(df.columns):
+                df = df.select(cols)
+            if df.height and df["time"].dtype != pl.Datetime("ms"):
+                df = df.with_columns(pl.col("time").cast(pl.Datetime("ms")))
+            return df
+        except Exception as e:
+            logger.warning(f"[CandleStore] load_range {symbol}/{tf} KO : {e}")
+            return pl.DataFrame(schema=_OHLCV_SCHEMA)
+
     def count_bars(self, symbol: str, tf: str) -> int:
         """Nombre de bougies en cache sans charger le DataFrame complet.
 

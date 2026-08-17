@@ -6,6 +6,100 @@ Historique des versions du Crypto Bot.
 
 ## [Non publié]
 
+Bilan d'audit de la branche : [`audit/14-REVISION-2026-08-18.md`](audit/14-REVISION-2026-08-18.md).
+
+`data/oos_tracker.json` et `data/backtest_history.json` sont vidés : les
+runs antérieurs à F-01 / F-04 / B-01 (Sharpe à 1 000, PnL hors frais
+d'entrée, stops au niveau) ne doivent plus être comparés aux nouveaux.
+
+### 🐛 Audit sprint 1 — arrêter de mentir aux chiffres
+
+- **F-03** : `max_dd_p95` du Monte-Carlo prenait le 95ᵉ percentile de drawdowns
+  *négatifs* — le meilleur cas, pas le pire. C'est désormais le percentile 5.
+- **F-02** : le Sharpe n'est plus calculé sous 10 observations (`None` au lieu
+  d'un ratio à ±1 000). `beats_baseline` n'accepte plus un Sharpe non mesurable
+  comme amélioration de qualité.
+- **L-05** : `RiskLedger.reserve` refuse une clé déjà réservée (`deja_reserve`)
+  au lieu d'écraser et de fuir du budget.
+- **N-02** : le bouton « Appliquer » de l'UI juge le holdout, plus la tranche
+  de sélection. `gate_source` est renvoyé dans la réponse.
+- **N-01** : `required_total_bars` réserve aussi les 20 % de holdout ; un
+  holdout refusé se journalise en WARNING.
+- **F-12 / L-06** : suppression du plafond caché à 25 % du capital en live.
+  Un refus de pré-check laisse désormais une trace (`capital_insuffisant`).
+- **A-01** : clôture en une seule transaction (delete + save_trade +
+  daily_stats). Un crash ne peut plus perdre un trade exécuté.
+- **F-13** : `alpha_vs_buy_hold` n'est plus en O(n²).
+- **F-14** : `RejectionCounter` réinitialisé à chaque `run()`.
+- **B-03** : le walk-forward transmet le `timeframe` au `Backtester`.
+- **B-05** : `min_notional` jugé après `partial_fill` et quantification.
+- **B-09** : warmup unique (`WARMUP_BARS_DEFAULT`) pour backtest, WF, forward-test.
+- **B-10** : clôture de fin de série en taker, avec spread.
+- **B-11** : `capital_before` du gate tient compte des sorties partielles.
+- **N-03** : le paramètre `df_full` de `_run_one_job` s'appelle `df_recherche`.
+- **F-11** : le jeton anti-spam n'est consommé qu'après un fill réussi.
+
+### 🐛 F-01 — `total_pnl` porte enfin les frais d'entrée
+
+Le PnL de chaque trade retranche désormais les frais d'entrée (déjà prélevés
+sur le capital à l'ouverture). `Σ trade.pnl == final_equity − initial_capital`,
+et l'optimiseur / `composite_score` lisent `net_profit`. Les résultats
+persistés portent `schema_version` + `git_commit` (D-06).
+
+### 🐛 F-04 — emprunt sur le notionnel réellement emprunté
+
+Un **long** à levier 1 n'emprunte rien. Un **short** à levier 1 emprunte
+l'actif entier (le garde « taux = 0 si levier ≤ 1 » l'avait effacé à
+tort). Un long à levier L n'emprunte que `1 − 1/L` du notionnel.
+
+### 🐛 Suite du plan d'audit
+
+- **F-05** : plafond notionnel au niveau venue (`enveloppe_venue`).
+- **F-06** : drawdown calculé sur l'équité mark-to-market barre par barre.
+- **F-07** : gate Deflated Sharpe câblé sur la formule Bailey & LdP
+  (probabilité ∈ [0,1]), plus l'heuristique maison.
+- **B-07** : `realistic_risk=True` sur optimiseur, walk-forward, forward-test.
+- **B-08** : `purge_bars` / `embargo_bars` sur `split_is_oos` (défaut 0).
+- **L-03 / L-04** : reprise live — `fetch_positions` seulement en perp ;
+  un désaccord marque orphelin, ne supprime plus.
+- **F-08** : `by_strategy` cohérent avec le run (après F-01).
+- **F-09** : Sortino = √(moyenne des carrés downside sur N), plus n−1.
+- **F-10** : profit factor / Sortino / Calmar non mesurables → `None`, plus 999/100.
+- **B-08** : embargo 1 % (+ lookahead ML) branché sur le split d'optimisation.
+- **O-01** : alias `val_*` à côté de `oos_*` (tranche de sélection).
+- **O-04** : l'optimiseur mesure sur l'enveloppe du slot, plus 1 000 € globaux.
+- **O-06** : seed Optuna configurable (`optimizer.seed`, défaut None).
+- **O-05** : gel seulement si assez d'essais par valeur et impact < bruit.
+- **O-08** : early-stop jamais avant la moitié du budget.
+- **O-10** : modèle ML final entraîné sur l'IS seul par défaut (`is_only`).
+- **O-11** : un trial en timeout est rejoué in-process, plus ignoré.
+- **B-04** : le walk-forward s'annonce comme analyse de stabilité (`kind`,
+  `reoptimizes: false`, `avg_fold_pnl`).
+- **S-01** : `/metrics` exige `METRICS_TOKEN` ou `web.api_key` s'ils sont posés.
+- **S-02 / A-06** : le rate-limit honore `TRUSTED_PROXIES` (même règle que
+  `_extract_client_ip`) — plus un seau global derrière nginx.
+- **S-03 / A-10** : `?api_key=` sur le WebSocket seulement si
+  `ALLOW_WS_QUERY_KEY=1` (WARNING à chaque usage).
+- **S-04** : cookie `api_key` `Secure` si `x-forwarded-proto: https`.
+- **A-03** : une plage de dates passe par `CandleStore.fetch_range` — backfill
+  jusqu'à la profondeur habituelle (50k / 5k en `1d`, persisté une fois),
+  puis lecture Parquet filtrée. Le backtest ne matérialise que la fenêtre.
+- **UI** : walk-forward annoncé comme analyse de stabilité ; l'optimiseur
+  affiche `val_*` et `gate_source` (holdout vs sélection).
+- **A-08** : `entry_time` vient de `open_time` (live) ou de l'ISO backtest,
+  plus d'une reconstruction `duration_bars` qui traverse les week-ends.
+- **A-12 / S-07** : le 500 global renvoie le `correlation_id`, plus le nom
+  de classe de l'exception.
+
+### 🐛 Alignement d'exécution backtest / paper / live
+
+- **B-01** : un stop/TP gappé se remplit à l'ouverture, plus au niveau
+  exact. Motif `gap` exposé dans `by_exit_reason`.
+- **L-01 / L-02** : le stop live se juge sur le high/low de la bougie en
+  formation ; en paper, fill au niveau du stop (plus slippage).
+- **N-04** : `apply_exit_mode` est appelé à l'ouverture live, même
+  résolution que le backtest.
+
 ### 🐛 L'overfit résiduel n'existait pas — c'était la métrique
 
 `docs/RECALIBRATION_HTF.md` signalait cinq couples « surappris malgré

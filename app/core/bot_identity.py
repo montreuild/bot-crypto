@@ -104,6 +104,9 @@ class Venue:
         """
         if not self.borrows:
             return 0.0
+        # Le TAUX reste celui de la venue même à levier 1 : un SHORT emprunte
+        # l'actif (F-04). C'est ``borrowed_notional`` / ``close_pnl`` qui
+        # annulent le montant sur un LONG couvert par les fonds propres.
         return float(self.borrow_rate_daily if self.borrow_rate_daily is not None
                      else default_rate)
 

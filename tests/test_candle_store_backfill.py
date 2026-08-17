@@ -553,3 +553,55 @@ class TestInteriorGaps:
             store.fetch(ex, "FULL/EUR", "15m", total=500)
             cached = store.load_cached("FULL/EUR", "15m")
         assert len(cached) == ex.depth
+
+
+def test_fetch_range_approfondit_le_store_et_ne_rend_que_la_plage(tmp_path):
+    """A-03 : le backfill vise la profondeur du store ; le backtest n'en voit
+    que la fenêtre. Une plage de 3 jours ne doit pas empêcher d'aller chercher
+    l'historique manquant — c'est persisté une fois."""
+    from datetime import timedelta
+
+    ex = _FakeExchange(depth=400, tf_ms=3_600_000)
+    store = _store(str(tmp_path))
+    # `_fetch_full(limit=200)` sans `since` ramène les 200 plus anciennes
+    # barres de la source. La fenêtre doit recouvrir ce bloc, pas la queue.
+    first = datetime.fromtimestamp(
+        (ex._now - ex.depth * ex.tf_ms) / 1000, tz=timezone.utc
+    ).replace(tzinfo=None)
+    start, end = first, first + timedelta(hours=10)
+    out = store.fetch_range(
+        ex, "BTC/USDC", "1h", start=start, end=end,
+        total=200, prefer_cache=False,
+    )
+    cached = store.load_cached("BTC/USDC", "1h")
+    assert len(cached) >= 200, "le Parquet doit avoir été approfondi vers `total`"
+    assert out is not None and 0 < len(out) < len(cached)
+    assert out["time"].min() >= start
+    assert out["time"].max() <= end
+
+
+def test_load_range_ne_materialise_que_la_plage(tmp_path):
+    """A-03 : scan Parquet filtré — pas les 50k bougies du fichier."""
+    import polars as pl
+    from datetime import timedelta
+
+    n = 500
+    start0 = datetime(2024, 1, 1)
+    df = pl.DataFrame({
+        "time": [start0 + timedelta(hours=i) for i in range(n)],
+        "open":   [100.0] * n,
+        "high":   [101.0] * n,
+        "low":    [99.0] * n,
+        "close":  [100.5] * n,
+        "volume": [1.0] * n,
+    }).with_columns(pl.col("time").cast(pl.Datetime("ms")))
+    store = _store(str(tmp_path))
+    store._save(store._path("BTC/USDC", "1h"), df)
+    out = store.load_range(
+        "BTC/USDC", "1h",
+        start=datetime(2024, 1, 3),
+        end=datetime(2024, 1, 5),
+    )
+    assert 0 < len(out) < n
+    assert out["time"].min() >= datetime(2024, 1, 3)
+    assert out["time"].max() <= datetime(2024, 1, 5)

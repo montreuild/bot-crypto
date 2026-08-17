@@ -154,6 +154,22 @@ class OHLCVCache:
             logger.debug(f"[OHLCVCache] élagage bougie en cours {tf} KO : {e}")
         return df
 
+    def get_forming_range(self, symbol: str, tf: str):
+        """``(low, high)`` de la bougie en formation, ou ``None``.
+
+        L-01 : le stop live doit se juger sur le plus-bas/plus-haut de
+        l'intervalle, pas sur ``ticker.last``. La bougie en formation est
+        retirée du cache de scoring ; on la relit ici, brute.
+        """
+        try:
+            df = get_store().fetch(self._exchange, symbol, tf, total=2)
+            if df is None or df.height == 0:
+                return None
+            return float(df["low"][-1]), float(df["high"][-1])
+        except Exception as e:
+            logger.debug(f"[OHLCVCache] forming range {symbol}/{tf} KO : {e}")
+            return None
+
     # ── Accès principal ──────────────────────────────────────────────────
 
     def get(self, symbol: str, tf: str,

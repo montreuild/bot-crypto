@@ -229,8 +229,15 @@ function JobCard({
 
   const handleApply = async () => {
     try {
-      await apply.mutateAsync({ jobId: job.job_id });
-      toast.success('Paramètres appliqués au slot');
+      const applied = await apply.mutateAsync({ jobId: job.job_id });
+      const src = applied?.gate_source;
+      toast.success(
+        src === 'holdout'
+          ? 'Paramètres appliqués (gate holdout)'
+          : src === 'selection'
+            ? 'Paramètres appliqués (gate sur la tranche de sélection)'
+            : 'Paramètres appliqués au slot',
+      );
       // ML-004 — en mode ML, l'apply déclenche aussi l'entraînement du modèle
       // côté backend. On invalide les queries consommées par le tab ML pour
       // que la StrategyTable (statut Entraîné/Non entraîné, AUC) se
@@ -345,14 +352,17 @@ function JobCard({
               <div className="rounded-lg bg-card-hover border border-border p-3 space-y-2">
                 <div className="flex items-center gap-2 text-xs text-emerald-400 font-semibold">
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  Résultat OOS
+                  Résultat validation
+                  <span className="font-normal text-dim">
+                    (tranche de sélection — pas un holdout)
+                  </span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                  <Metric label="Score" value={(result.best_oos_score ?? 0).toFixed(4)} />
-                  <Metric label="PnL" value={formatUSD(result.best_oos_pnl ?? 0)} />
-                  <Metric label="Trades" value={String(result.best_oos_trades ?? 0)} />
-                  <Metric label="Win rate" value={`${((result.best_oos_wr ?? 0) * 100).toFixed(1)}%`} />
-                  <Metric label="Sharpe" value={(result.best_oos_sharpe ?? 0).toFixed(2)} />
+                  <Metric label="Score val." value={(result.best_val_score ?? result.best_oos_score ?? 0).toFixed(4)} />
+                  <Metric label="PnL val." value={formatUSD(result.best_val_pnl ?? result.best_oos_pnl ?? 0)} />
+                  <Metric label="Trades val." value={String(result.best_val_trades ?? result.best_oos_trades ?? 0)} />
+                  <Metric label="Win rate val." value={`${((result.best_val_wr ?? result.best_oos_wr ?? 0) * 100).toFixed(1)}%`} />
+                  <Metric label="Sharpe val." value={(result.best_val_sharpe ?? result.best_oos_sharpe ?? 0).toFixed(2)} />
                   {/* P0-2 : Deflated Sharpe (probabilité que le Sharpe soit réel,
                       corrigée du biais de sélection multiple). */}
                   <Metric
@@ -370,6 +380,12 @@ function JobCard({
                       : '—'}
                   />
                   <Metric label="Apply" value={job.applied ? 'Oui' : 'Non'} />
+                  {job.gate_source && (
+                    <Metric
+                      label="Gate"
+                      value={job.gate_source === 'holdout' ? 'holdout' : 'sélection'}
+                    />
+                  )}
                 </div>
                 {/* P0-2 : warning si Deflated Sharpe < 50% (edge probablement nul) */}
                 {job.deflated_sharpe != null && job.deflated_sharpe < 0.5 && (

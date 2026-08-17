@@ -39,8 +39,8 @@ from app.core.timeframes import TF_MINUTES as _TF_MINUTES
 
 logger = logging.getLogger(__name__)
 
-# Bougies de chauffe pour les indicateurs (EMA/ADX longues) avant la fenêtre utile.
-_WARMUP_BARS = 250
+# Bougies de chauffe : même constante que le split IS/OOS et le backtest.
+from app.core.is_oos import WARMUP_BARS_DEFAULT as _WARMUP_BARS
 # Garde-fou : on ne demande jamais plus que ça de bougies pour un forward-test.
 _MAX_BARS = 4000
 # Plafond plus large pour le backtest d'edge (fenêtre longue, ex. 365 j :
@@ -99,7 +99,7 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
     mod = importlib.import_module(f"app.strategies.{strategy}")
     eng = Engine()
     eng.register(mod.Strategy(), silent=True)
-    bt = Backtester(eng, cfg, envelope=envelope)
+    bt = Backtester(eng, cfg, envelope=envelope, realistic_risk=True)
     res = bt.run(df, symbol, timeframe=timeframe)
     d = res.to_dict()
 
@@ -162,7 +162,8 @@ def _forward_test_slot(strategy: str, timeframe: str, symbol: str,
             if edge_df is not None and len(edge_df) >= _WARMUP_BARS + 30:
                 e_eng = Engine()
                 e_eng.register(mod.Strategy(), silent=True)
-                e_res = Backtester(e_eng, cfg, envelope=envelope).run(
+                e_res = Backtester(e_eng, cfg, envelope=envelope,
+                                   realistic_risk=True).run(
                     edge_df, symbol, timeframe=timeframe)
                 e_trades = _per_trade_returns_pct(_closed_trades(e_res.to_dict().get("trades", [])))
                 if e_trades:

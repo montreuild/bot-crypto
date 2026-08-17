@@ -49,6 +49,25 @@ def _cfg(capital=1000, paper=True, dd_daily=0.05, dd_global=0.20, risk=0.01):
     }
 
 
+class TestRateTokenIsNotConsumedOnReject:
+    def test_failed_can_trade_does_not_eat_a_token(self):
+        """F-11 : un refus plus loin (ici on ne consomme plus dans can_trade)
+        ne doit pas épuiser le budget anti-spam."""
+        cfg = _cfg()
+        cfg["trading"]["max_trades_per_minute"] = 3
+        rm = RiskManager(cfg)
+        for _ in range(10):
+            ok, _reason = rm.can_trade("long")
+            assert ok
+        assert len(rm._trade_times) == 0
+        rm.consume_rate_token()
+        rm.consume_rate_token()
+        rm.consume_rate_token()
+        ok, reason = rm.can_trade("long")
+        assert not ok
+        assert "anti-spam" in reason.lower() or "minute" in reason.lower()
+
+
 class TestRiskManager:
     def test_initial_state(self):
         rm = RiskManager(_cfg())

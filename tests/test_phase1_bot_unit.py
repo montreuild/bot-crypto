@@ -96,7 +96,8 @@ def test_veto_shadow_relaxes_anti_spam_but_keeps_killswitch():
     cfg = _base_cfg(trading={"max_trades_per_minute": 1},
                     risk={"veto_mode": "shadow"})
     rm = RiskManager(cfg)
-    assert rm.can_trade("long")[0] is True      # consomme le quota de la minute
+    assert rm.can_trade("long")[0] is True
+    rm.consume_rate_token()                      # F-11 : can_trade ne consomme plus
     ok, _ = rm.can_trade("long")
     assert ok is True                            # shadow : n'empêche plus
     assert rm.veto_shadow_blocks.get("anti_spam", 0) >= 1
@@ -113,6 +114,7 @@ def test_veto_shadow_ignored_when_live():
                     risk={"veto_mode": "shadow"})
     rm = RiskManager(cfg)
     assert rm.can_trade("long")[0] is True
+    rm.consume_rate_token()                      # F-11 : can_trade ne consomme plus
     ok, reason = rm.can_trade("long")
     assert ok is False and "anti-spam" in reason
     assert rm.veto_shadow is False

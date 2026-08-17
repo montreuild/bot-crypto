@@ -156,7 +156,7 @@ def run_replay(
                             eng, state.cfg,
                             n_folds=state.cfg.get("backtest", {}).get("walk_forward_folds", 5)
                         )
-                        entry["walk_forward"] = wf.run(_df, symbol)
+                        entry["walk_forward"] = wf.run(_df, symbol, timeframe=_tf)
 
                     if mc_runner and all_trades:
                         entry["monte_carlo"] = mc_runner.run(

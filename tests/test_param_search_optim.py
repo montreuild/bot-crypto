@@ -279,6 +279,15 @@ class TestFreezeFromResults:
         assert opt.param_space == original
 
 
+class TestEarlyStopFloor:
+    def test_does_not_stop_before_half_budget(self):
+        """O-08 : patience 3, 20 essais → pas d'arrêt avant le 10ᵉ."""
+        from app.engine.optimizer_search import StrategyOptimizer
+        assert StrategyOptimizer._should_early_stop(3, 3, 5, 20) is False
+        assert StrategyOptimizer._should_early_stop(3, 3, 10, 20) is True
+        assert StrategyOptimizer._should_early_stop(2, 3, 20, 20) is False
+
+
 class TestRandomSearchIntegration:
     def test_no_param_space_returns_error(self):
         opt = _make_opt({"x": [1]})

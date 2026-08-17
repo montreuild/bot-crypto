@@ -67,11 +67,41 @@ class TestReserveOrderOfChecks:
         assert d.allowed is False
         assert d.reason_code == "notionnel_min"
 
+    def test_venue_notional_cap_rejects_second_symbol(self):
+        """F-05 : le notionnel agrégé de la venue est plafonné."""
+        ledger = RiskLedger()
+        env_a = _env(slot_key="a::1h::BTC/USDC", slot_envelope=400.0,
+                     symbol_envelope=400.0, venue_envelope=500.0,
+                     symbol_risk_budget=100.0, venue_risk_budget=100.0,
+                     max_leverage=1.0)
+        env_b = _env(slot_key="b::1h::ETH/USDC", symbol="ETH/USDC",
+                     slot_envelope=400.0, symbol_envelope=400.0,
+                     venue_envelope=500.0,
+                     symbol_risk_budget=100.0, venue_risk_budget=100.0,
+                     max_leverage=1.0)
+        assert ledger.reserve(env_a, risk=2.0, notional=400.0, pos_key="pa").allowed
+        d = ledger.reserve(env_b, risk=2.0, notional=400.0, pos_key="pb")
+        assert d.allowed is False
+        assert d.reason_code == "enveloppe_venue"
+
     def test_valid_reservation_is_allowed(self):
         ledger = RiskLedger()
         env = _env()
         d = ledger.reserve(env, risk=2.0, notional=90.0, pos_key="p1")
         assert d == Decision(True)
+
+    def test_duplicate_pos_key_is_rejected_without_leaking_budget(self):
+        """L-05 : une 2ᵉ réserve sur la même clé n'additionne pas le budget."""
+        ledger = RiskLedger()
+        env = _env(slot_envelope=1000.0, symbol_envelope=1000.0,
+                   symbol_risk_budget=100.0, venue_risk_budget=100.0)
+        assert ledger.reserve(env, risk=2.0, notional=90.0, pos_key="p1").allowed
+        d = ledger.reserve(env, risk=2.0, notional=90.0, pos_key="p1")
+        assert d.allowed is False
+        assert d.reason_code == "deja_reserve"
+        eng = ledger.engaged()
+        assert eng["slot"]["a::1h::BTC/USDC"]["notional"] == pytest.approx(90.0)
+        assert eng["slot"]["a::1h::BTC/USDC"]["risk"] == pytest.approx(2.0)
 
     def test_no_tolerance_overshoot_unlike_the_old_allocator(self):
         """L'ancien CapitalAllocator tolerait +5% (source du bug mesure : 200

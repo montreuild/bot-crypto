@@ -714,6 +714,12 @@ export interface OptimizeJob {
     best_oos_trades?: number;
     best_oos_wr?: number;
     best_oos_sharpe?: number;
+    /** O-01 : alias de best_oos_* — tranche de sélection, pas un holdout. */
+    best_val_score?: number;
+    best_val_pnl?: number;
+    best_val_trades?: number;
+    best_val_wr?: number;
+    best_val_sharpe?: number;
     best_oos_dd?: number;
     best_oos_alpha?: number;
     overfit?: number;
@@ -739,6 +745,8 @@ export interface OptimizeJob {
     cost_model?: CostModel;
   };
   applied?: boolean;
+  /** N-02 : 'holdout' si le gate a jugé le holdout, sinon 'selection'. */
+  gate_source?: 'holdout' | 'selection' | string;
   error?: string;
   /** P2-8 : true si le TF utilisé n'est pas dans les TFs recommandés par la stratégie. */
   is_recommended?: boolean;

@@ -289,17 +289,29 @@ class RiskGate(RiskSizer, RiskNotifier):
         # Kill-switch global : TOUJOURS appliqué, même en mode shadow.
         if self.halted:
             return False, self.halt_reason
-        if not self._check_rate():
+        if not self._is_rate_ok():
             if not (self._veto_shadow_active() and self._shadow_allow("anti_spam")):
                 return False, "Trop de trades/minute (anti-spam)"
         return True, ""
 
-    def _check_rate(self) -> bool:
+    def _is_rate_ok(self) -> bool:
+        """Lecture pure : un signal refusé plus loin ne consomme plus de jeton (F-11)."""
         now = time.time()
         self._trade_times = deque(t for t in self._trade_times if now - t < 60)
-        if len(self._trade_times) >= self.max_trades_per_min:
-            return False
+        return len(self._trade_times) < self.max_trades_per_min
+
+    @_locked
+    def consume_rate_token(self) -> None:
+        """À appeler seulement après une ouverture (ou un scale-in) réussie."""
+        now = time.time()
+        self._trade_times = deque(t for t in self._trade_times if now - t < 60)
         self._trade_times.append(now)
+
+    def _check_rate(self) -> bool:
+        """Compat : lecture + consommation. Préférer ``_is_rate_ok`` + ``consume_rate_token``."""
+        if not self._is_rate_ok():
+            return False
+        self.consume_rate_token()
         return True
 
     # ── Stats pour l'API (properties) ──────────────────────────────────────

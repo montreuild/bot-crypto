@@ -214,6 +214,28 @@ class TestPreExecutionCheck:
         trader._margin_level = 1.2  # < margin_level_critical
         assert trader._pre_execution_check("BTC/USDC", "long", 1.0, 100.0, 200.0) is False
 
+    def test_live_allows_notional_above_hidden_25pct_cap(self, tmp_path):
+        """F-12 : plus de plafond caché à 25 % — l'enveloppe décide."""
+        cfg = _make_cfg(str(tmp_path / "live.db"), paper=False)
+        cfg["exchange"]["margin"] = True
+        exchange = MockExchange()
+        trader = LiveTrader(cfg, exchange)
+        trader.capital_display = 1000.0
+        trader._margin_level = 4.0
+        # 400 € = 40 % du capital affiché : l'ancien garde-fou refusait.
+        assert trader._pre_execution_check("BTC/USDC", "long", 4.0, 100.0, 400.0) is True
+
+    def test_live_precheck_records_a_rejection_reason(self, tmp_path):
+        """L-14 : un refus de pré-check n'est plus silencieux."""
+        cfg = _make_cfg(str(tmp_path / "live.db"), paper=False)
+        cfg["exchange"]["margin"] = False
+        exchange = MockExchange()
+        trader = LiveTrader(cfg, exchange)
+        trader.capital_display = 1000.0
+        trader._balance_detail = {"free": 50.0, "used": 950.0, "total": 1000.0, "borrowed": 0.0}
+        assert trader._pre_execution_check("BTC/USDC", "long", 1.0, 100.0, 200.0) is False
+        assert trader.rejections.as_dict()["par_motif"].get("capital_insuffisant", 0) == 1
+
     def test_live_margin_passes_when_margin_level_safe(self, tmp_path):
         cfg = _make_cfg(str(tmp_path / "live.db"), paper=False)
         cfg["exchange"]["margin"] = True

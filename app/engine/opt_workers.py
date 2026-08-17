@@ -311,7 +311,18 @@ def _eval_worker(args: tuple) -> dict:
         if _w is not None:
             from app.core.indicators_precompute import set_wilder_atr_adx as _swaa
             _swaa(bool(_w))
-        _bt = _Backtester(_eng, _cfg_copy, ml_mode=_ml_mode)
+        _env = None
+        try:
+            from app.core.bot_identity import build_slot_key as _bsk
+            from app.core.bot_identity import resolve_venue as _rv
+            from app.core.risk_envelope import resolve_envelope as _re
+            _sk = _bsk(strategy_name, timeframe or "1h", symbol)
+            _env = _re(_cfg_copy, _rv(_cfg_copy, strategy_name, timeframe, symbol),
+                       symbol, _sk, peers=[_sk], edges={_sk: None})
+        except Exception:
+            _env = None
+        _bt = _Backtester(_eng, _cfg_copy, ml_mode=_ml_mode, realistic_risk=True,
+                          envelope=_env)
 
         _res_is  = _bt.run(_df_is,  symbol, timeframe=timeframe)
         _res_oos = _bt.run(_df_oos, symbol, timeframe=timeframe)
@@ -330,8 +341,8 @@ def _eval_worker(args: tuple) -> dict:
             "is_score":   _is_score,
             "oos_score":  _oos_score,
             "overfit":    _overfit,
-            "is_pnl":     _res_is.total_pnl,
-            "oos_pnl":    _res_oos.total_pnl,
+            "is_pnl":     getattr(_res_is, "net_profit", _res_is.total_pnl),
+            "oos_pnl":    getattr(_res_oos, "net_profit", _res_oos.total_pnl),
             "is_sharpe":  _res_is.sharpe,
             "oos_sharpe": _res_oos.sharpe,
             "is_trades":  _res_is.total_trades,
@@ -340,6 +351,11 @@ def _eval_worker(args: tuple) -> dict:
             "oos_wr":     _res_oos.win_rate,
             "oos_dd":     _res_oos.max_drawdown,
             "oos_alpha":  getattr(_res_oos, "alpha", None),
+            "val_pnl":    getattr(_res_oos, "net_profit", _res_oos.total_pnl),
+            "val_sharpe": _res_oos.sharpe,
+            "val_trades": _res_oos.total_trades,
+            "val_wr":     _res_oos.win_rate,
+            "val_score":  _oos_score,
         }
     except Exception as _exc:
         # Retourner une erreur sérialisable plutôt que de laisser le process crasher,

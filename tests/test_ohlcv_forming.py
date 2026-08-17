@@ -42,6 +42,20 @@ def test_keeps_closed_last_candle():
     assert out.height == 2
 
 
+def test_get_forming_range_returns_last_bar_high_low(monkeypatch):
+    from app.live import ohlcv_cache as oc
+
+    class _Store:
+        def fetch(self, *a, **k):
+            return _df([1, 2])
+
+    monkeypatch.setattr(oc, "get_store", lambda: _Store())
+    cache = _cache()
+    cache._exchange = None
+    lo, hi = cache.get_forming_range("BTC/USDC", "1h")
+    assert (lo, hi) == (99.0, 101.0)
+
+
 def test_unknown_tf_is_noop():
     now = int(time.time() * 1000)
     df = _df([now - 1000, now])

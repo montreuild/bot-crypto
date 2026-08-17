@@ -47,8 +47,8 @@ def _save_ml_model_post_opt(strategy_name: str, best_params: dict,
     et le persiste en .pkl. Appelé dans un thread daemon — ne bloque pas le
     reporting du job.
 
-    S4-03 — Data leakage PAR DESIGN en mode ``train_mode="full"`` (défaut,
-    comportement historique inchangé) : le modèle est entraîné sur IS+OOS,
+    S4-03 / O-10 — ``train_mode="full"`` entraîne sur IS+OOS (le modèle
+    livré a vu la fenêtre de sélection). Défaut désormais ``is_only``.
     donc il a "vu" les données OOS que l'optimiseur a utilisées pour choisir
     les meilleurs params. Le score OOS rapporté par l'optimiseur reste
     honnête (calculé AVANT ce ré-entraînement final, sur un modèle qui
@@ -269,10 +269,28 @@ def _slices_for(df, strategy_name: str, timeframe: str, min_bars: int,
     genre d'écart qui produit un gate mesuré sur le holdout d'un côté et sur la
     sélection de l'autre, sans que rien ne le signale.
     """
+    from app.core.is_oos import default_purge_embargo
+    n = len(df) if df is not None else 0
+    lookahead = 0
+    try:
+        mod = importlib.import_module(f"app.strategies.{strategy_name}")
+        cls = getattr(mod, "Strategy", None)
+        raw = (getattr(cls, "label_horizons", None)
+               or getattr(cls, "lookahead", None)
+               or getattr(cls, "horizon", None))
+        if raw is not None:
+            from app.ml.splitting import label_embargo
+            lookahead = label_embargo(raw if hasattr(raw, "__iter__")
+                                      and not isinstance(raw, (str, bytes))
+                                      else [raw])
+    except Exception:
+        lookahead = 0
+    purge, embargo = default_purge_embargo(n, lookahead)
     df_is, df_oos, split, df_recherche, df_holdout = split_with_holdout(
-        df, holdout_fraction=holdout_fraction, min_holdout_bars=min_bars)
+        df, holdout_fraction=holdout_fraction, min_holdout_bars=min_bars,
+        purge_bars=purge, embargo_bars=embargo)
     if df_holdout is None and holdout_fraction > 0:
-        logger.info(
+        logger.warning(
             f"[AutoOpt] {strategy_name}/{timeframe} : pas de holdout — "
             f"{len(df)} bougies ne permettent pas d'en réserver une tranche "
             f"exploitable ({min_bars} barres min pour cette stratégie). "
@@ -307,7 +325,7 @@ def _run_baseline(strategy_name: str, cfg: dict,
         mod = importlib.import_module(f"app.strategies.{strategy_name}")
         eng = Engine()
         eng.register(mod.Strategy())
-        bt  = Backtester(eng, cfg)
+        bt  = Backtester(eng, cfg, realistic_risk=True)
         # timeframe transmis pour que resolve_strategy_params superpose
         # optimizer_results[tf] : le baseline reflète ainsi le paramétrage
         # RÉELLEMENT actif (params: + optimizer_results), comme le live/comparatif,
@@ -316,7 +334,8 @@ def _run_baseline(strategy_name: str, cfg: dict,
         return {
             "trades": res.get("total_trades", 0),
             "pnl":    round(res.get("total_pnl", 0), 4),
-            "sharpe": round(res.get("sharpe", 0), 3),
+            "sharpe": (None if res.get("sharpe") is None
+                       else round(res.get("sharpe", 0), 3)),
             "wr":     round(res.get("win_rate", 0), 1),
             "dd":     round(res.get("max_drawdown", 0), 2),
             "alpha":  round(res["alpha"], 4) if res.get("alpha") is not None else None,
@@ -471,7 +490,7 @@ class AutoOptimizer:
     def _run_one_job(self, job_id: str, strategy_name: str, timeframe: str,
                      df_is: pl.DataFrame, df_oos: pl.DataFrame,
                      symbol: str, auto_apply: bool,
-                     df_full: pl.DataFrame = None, split: int = None,
+                     df_recherche: pl.DataFrame = None, split: int = None,
                      df_holdout: pl.DataFrame = None):
         trials_log = []
 
@@ -523,7 +542,7 @@ class AutoOptimizer:
                 df_oos=df_oos,
                 symbol=symbol,
                 progress_callback=on_progress,
-                df_full=df_full,
+                df_full=df_recherche,
                 split=split,
                 timeframe=timeframe,
                 cancel_event=cancel_event,
@@ -589,10 +608,12 @@ class AutoOptimizer:
                     best_oos_wr = _h.get("wr", 0)
                     best_oos_sharpe = _h.get("sharpe", 0)
                     _update_job(job_id, holdout=_h, gate_source="holdout")
+                    _sh = ("—" if best_oos_sharpe is None
+                           else f"{best_oos_sharpe:.2f}")
                     logger.info(
                         f"[AutoOpt] {job_id} : holdout ({len(df_holdout)} barres) — "
                         f"PnL={best_oos_pnl:+.2f} WR={best_oos_wr:.1f}% "
-                        f"Sharpe={best_oos_sharpe:.2f} sur {oos_trades} trades "
+                        f"Sharpe={_sh} sur {oos_trades} trades "
                         f"(sélection : PnL={result.get('best_oos_pnl', 0):+.2f})")
                 else:
                     logger.warning(
@@ -643,10 +664,10 @@ class AutoOptimizer:
                 majorité de fenêtres OOS glissantes avant l'auto-apply — un
                 unique split IS/OOS ne suffit pas. Neutre (True) si le gate
                 est désactivé (optimizer.wf_gate: false), si les données
-                complètes manquent, ou si le walk-forward est indisponible
+                de recherche manquent, ou si le walk-forward est indisponible
                 (historique trop court) : on ne durcit pas à l'aveugle."""
                 opt_cfg = (self.cfg.get("optimizer") or {})
-                if not bool(opt_cfg.get("wf_gate", True)) or df_full is None:
+                if not bool(opt_cfg.get("wf_gate", True)) or df_recherche is None:
                     return True
                 min_cons = float(opt_cfg.get("wf_min_consistency", 60.0))
                 try:
@@ -663,7 +684,7 @@ class AutoOptimizer:
                     eng.register(mod.Strategy(), silent=True)
                     wf = WalkForwardAnalyzer(eng, cfg2,
                                              n_folds=int(opt_cfg.get("wf_folds", 5)))
-                    res_wf = wf.run(df_full, symbol)
+                    res_wf = wf.run(df_recherche, symbol, timeframe=timeframe)
                     if "error" in res_wf:
                         logger.info(f"[AutoOpt] {job_id} : walk-forward indisponible "
                                     f"({res_wf['error']}) — gate neutre")
@@ -731,13 +752,14 @@ class AutoOptimizer:
                 )
 
             # Pour les stratégies ML : entraîner un modèle final avec les meilleurs params
-            # sur l'ensemble complet des données (par défaut) et le persister sur
-            # disque. S4-03 : optimizer.ml_final_train_mode contrôle full (IS+OOS,
-            # défaut, comportement inchangé) vs is_only (cohérent avec le score
-            # OOS rapporté, cf. docstring de _save_ml_model_post_opt).
-            if result.get("best_params") and _is_ml_strategy(strategy_name) and df_full is not None:
-                _ml_train_mode = self.cfg.get("optimizer", {}).get("ml_final_train_mode", "full")
-                _save_ml_model_post_opt(strategy_name, result["best_params"], df_full, timeframe,
+            # et le persister. O-10 : défaut is_only (le modèle livré est
+            # celui évalué). ``full`` (IS+OOS) reste un choix explicite.
+            if result.get("best_params") and _is_ml_strategy(strategy_name) and df_recherche is not None:
+                # O-10 : défaut is_only — le modèle livré est celui évalué
+                # (IS seul). "full" (IS+OOS) reste disponible explicitement.
+                _ml_train_mode = self.cfg.get("optimizer", {}).get(
+                    "ml_final_train_mode", "is_only")
+                _save_ml_model_post_opt(strategy_name, result["best_params"], df_recherche, timeframe,
                                         df_is=df_is, train_mode=_ml_train_mode)
 
             # Si l'optimiseur signale un échec global (ex: tous les workers
@@ -896,7 +918,9 @@ class AutoOptimizer:
             df = df_map.get(tf)
             if df is None or len(df) < 300:
                 continue
-            df_is, df_oos, split = split_is_oos(df)   # convention unique (BT-08)
+            from app.core.is_oos import default_purge_embargo
+            _p, _e = default_purge_embargo(len(df))
+            df_is, df_oos, split = split_is_oos(df, purge_bars=_p, embargo_bars=_e)
 
             for name in strats:
                 if name not in PARAM_SPACES:

@@ -30,7 +30,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 import polars as pl
 
-from app.core.is_oos import OOS_FRACTION_DEFAULT as _OOS_FRACTION  # BT-08 : constante partagée
+from app.core.is_oos import (  # BT-08 : constantes partagées
+    HOLDOUT_FRACTION_DEFAULT as _HOLDOUT,
+    OOS_FRACTION_DEFAULT as _OOS_FRACTION,
+)
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 
 # ── Sous-modules (ré-exports compatibilité — noms historiques inclus) ────────
@@ -140,7 +143,10 @@ def required_total_bars(strategy_name: str, timeframe: str = None,
     except Exception:
         min_bars = 220
     oos_needed = min_bars + _oos_trade_window_bars(timeframe)
-    return math.ceil(oos_needed / _OOS_FRACTION)
+    # N-01 : split_with_holdout prélève 20 % en amont. Sans ce facteur, le
+    # fetch sous-provisionne d'1,25× et le holdout est trop souvent refusé
+    # (repli silencieux sur l'ancien contrat à 2 tranches).
+    return math.ceil(oos_needed / (_OOS_FRACTION * (1.0 - _HOLDOUT)))
 
 
 def auto_fetch_limit(timeframe: str, strategies: List[str],
@@ -256,6 +262,27 @@ class OptimizerSearchEngine:
             return params
         return {**params, **self._fixed_ml_hp}
 
+    def _slot_envelope(self):
+        """O-04 : enveloppe du slot, pour mesurer à la même échelle que le live."""
+        cached = getattr(self, "_envelope", None)
+        if cached is not None:
+            return cached
+        try:
+            from app.core.bot_identity import build_slot_key, resolve_venue
+            from app.core.risk_envelope import resolve_envelope
+            slot_key = build_slot_key(
+                self.strategy_name, self.timeframe or "1h", self.symbol)
+            venue = resolve_venue(
+                self.cfg, self.strategy_name, self.timeframe, self.symbol)
+            env = resolve_envelope(
+                self.cfg, venue, self.symbol, slot_key,
+                peers=[slot_key], edges={slot_key: None})
+            self._envelope = env
+            return env
+        except Exception as e:
+            logger.debug(f"[Optimizer] enveloppe slot KO : {e}")
+            return None
+
     def _load_strategy(self):
         mod = importlib.import_module(f"app.strategies.{self.strategy_name}")
         eng = Engine()
@@ -271,7 +298,9 @@ class OptimizerSearchEngine:
         # priorité supérieure et avalerait silencieusement les params du trial.
         if self.strategy_name in cfg.get("optimizer_results", {}):
             del cfg["optimizer_results"][self.strategy_name]
-        bt  = Backtester(eng, cfg, cancel_event=self._cancel_event, ml_mode=self.ml_mode)
+        bt  = Backtester(eng, cfg, cancel_event=self._cancel_event,
+                         ml_mode=self.ml_mode, realistic_risk=True,
+                         envelope=self._slot_envelope())
 
         # Essai évalué DANS ce process (n_jobs<=1, tests, repli après
         # BrokenProcessPool) : aucune variable d'environnement ne le signale à
@@ -293,13 +322,13 @@ class OptimizerSearchEngine:
         oos_score = _composite_score(res_oos, min_trades=_min_tr)
         overfit   = _overfitting_ratio(is_score, oos_score)
 
-        return {
+        out = {
             "params":      params,
             "is_score":    is_score,
             "oos_score":   oos_score,
             "overfit":     overfit,
-            "is_pnl":      res_is.total_pnl,
-            "oos_pnl":     res_oos.total_pnl,
+            "is_pnl":      getattr(res_is, "net_profit", res_is.total_pnl),
+            "oos_pnl":     getattr(res_oos, "net_profit", res_oos.total_pnl),
             "is_sharpe":   res_is.sharpe,
             "oos_sharpe":  res_oos.sharpe,
             "is_trades":   res_is.total_trades,
@@ -308,7 +337,19 @@ class OptimizerSearchEngine:
             "oos_wr":      res_oos.win_rate,
             "oos_dd":      res_oos.max_drawdown,
             "oos_alpha":   getattr(res_oos, "alpha", None),
+            # O-01 : la tranche de sélection n'est plus hors-échantillon
+            # (holdout = vrai OOS). Alias val_* pour le nommer honnêtement.
+            "val_pnl":     getattr(res_oos, "net_profit", res_oos.total_pnl),
+            "val_sharpe":  res_oos.sharpe,
+            "val_trades":  res_oos.total_trades,
+            "val_wr":      res_oos.win_rate,
+            "val_score":   oos_score,
         }
+        env = self._slot_envelope()
+        if env is not None:
+            from app.core.risk_envelope import envelope_base
+            out["envelope_base"] = envelope_base(env)
+        return out
 
     def _penalized_score(self, r: dict) -> float:
         """Score final pénalisé si surapprentissage détecté.
@@ -446,10 +487,38 @@ class OptimizerSearchEngine:
                 best_value_by_param[k] = opts[len(opts) // 2]
         return impacts, best_value_by_param
 
+    def _enough_to_freeze(self, results: List[dict], k: str) -> bool:
+        """O-05 : au moins 2 valeurs distinctes et ``_MIN_SCREEN_PER_PARAM``
+        observations par valeur — sinon l'impact n'est pas estimable."""
+        by_value: Dict[Any, int] = {}
+        for r in results:
+            v = r["params"].get(k)
+            by_value[v] = by_value.get(v, 0) + 1
+        if len(by_value) < 2:
+            return False
+        return min(by_value.values()) >= self._MIN_SCREEN_PER_PARAM
+
+    def _impact_below_noise(self, results: List[dict], k: str, impact: float) -> bool:
+        """O-05 : ne geler que si l'impact est inférieur au bruit intra-groupe."""
+        by_value: Dict[Any, List[float]] = {}
+        for r in results:
+            by_value.setdefault(r["params"].get(k), []).append(r["final_score"])
+        sq: List[float] = []
+        for scores in by_value.values():
+            if len(scores) < 2:
+                continue
+            m = statistics.mean(scores)
+            sq.extend((s - m) ** 2 for s in scores)
+        if not sq or not math.isfinite(impact):
+            return False
+        noise = math.sqrt(sum(sq) / len(sq))
+        return impact < noise
+
     def _freeze_params(self, impacts: Dict[str, float], best_value_by_param: Dict[str, Any],
                        param_keys: List[str], *,
                        max_cardinality: Optional[float] = None,
-                       min_impact_share: float = 0.10) -> Tuple[dict, list]:
+                       min_impact_share: float = 0.10,
+                       screen_results: Optional[List[dict]] = None) -> Tuple[dict, list]:
         """Décide quels paramètres geler à partir d'impacts déjà calculés.
         Toujours au moins 1 paramètre conservé (jamais un espace totalement
         gelé). Deux modes :
@@ -497,6 +566,11 @@ class OptimizerSearchEngine:
                         continue  # pas assez de données -> jamais gelé sur cette base
                     if v / total > min_impact_share:
                         break
+                    if screen_results:
+                        if not self._enough_to_freeze(screen_results, k):
+                            continue
+                        if not self._impact_below_noise(screen_results, k, v):
+                            continue
                     frozen_keys.append(k)
         frozen = {k: best_value_by_param[k] for k in frozen_keys}
         kept_keys = [k for k in param_keys if k not in frozen]
@@ -523,12 +597,16 @@ class OptimizerSearchEngine:
         ``_restore_param_space``). Retourne ``None`` si rien n'a été gelé."""
         if not screen_results:
             return None
-        if (max_cardinality is None
-                and len(screen_results) < self._MIN_SCREEN_PER_PARAM * len(param_keys)):
+        max_mod = max((len(self.param_space.get(k) or [None]) for k in param_keys),
+                      default=1)
+        # O-05 : au moins 2 essais par paramètre ET 2 × max(modalités).
+        need = self._MIN_SCREEN_PER_PARAM * max(len(param_keys), max_mod)
+        if max_cardinality is None and len(screen_results) < need:
             return None
         impacts, best_value_by_param = self._impact_scores(screen_results, param_keys)
-        frozen, kept_keys = self._freeze_params(impacts, best_value_by_param, param_keys,
-                                                max_cardinality=max_cardinality)
+        frozen, kept_keys = self._freeze_params(
+            impacts, best_value_by_param, param_keys,
+            max_cardinality=max_cardinality, screen_results=screen_results)
         if not frozen:
             return None
         card_before = math.prod(len(self.param_space[k]) for k in param_keys)
@@ -604,12 +682,14 @@ class OptimizerSearchEngine:
         results: List[Optional[dict]] = [None] * len(params_list)
         broken = False
         remaining: List[dict] = []
+        timed_out: List[Tuple[int, dict]] = []
         for fut in concurrent.futures.as_completed(futures_map):
             i = futures_map[fut]
             try:
                 r = fut.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
-                logger.warning("[Optimizer] worker timeout (>%ds), ignoré", timeout)
+                logger.warning("[Optimizer] worker timeout (>%ds) — retry in-process", timeout)
+                timed_out.append((i, params_list[i]))
                 continue
             except BrokenProcessPool as _bp:
                 logger.error("[Optimizer] BrokenProcessPool (worker tué, ex: OOM) : %s", _bp)
@@ -626,6 +706,13 @@ class OptimizerSearchEngine:
                 logger.warning("[Optimizer] worker erreur : %s", r["error"])
                 continue
             results[i] = r
+        # O-11 : un timeout n'est plus ignoré — un retry in-process.
+        for i, params in timed_out:
+            try:
+                results[i] = self._eval(params)
+                logger.info("[Optimizer] trial rejoué après timeout")
+            except Exception as _re:
+                logger.warning("[Optimizer] retry timeout KO : %s", _re)
         ok_results = [r for r in results if r is not None]
         return ok_results, broken, remaining
 
@@ -667,7 +754,10 @@ class OptimizerSearchEngine:
         import optuna
         optuna.logging.set_verbosity(optuna.logging.WARNING)
         n_startup = max(8, n_trials // 3)
-        sampler = optuna.samplers.TPESampler(n_startup_trials=n_startup, seed=0)
+        # O-06 : seed configurable. None (défaut) = chaque campagne explore
+        # un chemin différent. Les tests passent optimizer.seed: 0.
+        _seed = (self.cfg.get("optimizer") or {}).get("seed")
+        sampler = optuna.samplers.TPESampler(n_startup_trials=n_startup, seed=_seed)
         study = optuna.create_study(direction="maximize", sampler=sampler)
 
         param_keys = list(self.param_space.keys())
@@ -744,14 +834,18 @@ class OptimizerSearchEngine:
         l'écart marginal simple face à des paramètres corrélés), avec repli
         sur l'estimateur marginal partagé (``_impact_scores``) si fANOVA
         échoue ou ne rend aucun signal exploitable."""
-        if len(screen_results) < self._MIN_SCREEN_PER_PARAM * len(param_keys):
+        max_mod = max((len(self.param_space.get(k) or [None]) for k in param_keys),
+                      default=1)
+        if len(screen_results) < self._MIN_SCREEN_PER_PARAM * max(len(param_keys), max_mod):
             return None
         import optuna
         own_impacts, best_value_by_param = self._impact_scores(screen_results, param_keys)
         optuna_impacts = self._optuna_param_importances(study, param_keys)
         impacts = optuna_impacts if optuna_impacts is not None else own_impacts
 
-        frozen, kept_keys = self._freeze_params(impacts, best_value_by_param, param_keys)
+        frozen, kept_keys = self._freeze_params(
+            impacts, best_value_by_param, param_keys,
+            screen_results=screen_results)
         if not frozen:
             return None
         fixed_indices: Dict[str, int] = {}
@@ -820,7 +914,7 @@ class OptimizerSearchEngine:
             if freeze_at is not None and reduction is None and len(own_results) >= freeze_at:
                 reduction = self._optuna_apply_freeze(study, own_results, param_keys)
 
-            if early_stop_patience > 0 and no_improve >= early_stop_patience:
+            if self._should_early_stop(no_improve, early_stop_patience, i + 1, n_trials):
                 logger.info(f"[Bayesian/TPE] Early stop à trial {i+1}/{n_trials}")
                 break
         return reduction
@@ -893,7 +987,7 @@ class OptimizerSearchEngine:
                     done += k
                     if freeze_at is not None and reduction is None and len(own_results) >= freeze_at:
                         reduction = self._optuna_apply_freeze(study, own_results, param_keys)
-                    if early_stop_patience > 0 and no_improve >= early_stop_patience:
+                    if self._should_early_stop(no_improve, early_stop_patience, done, n_trials):
                         logger.info(f"[Bayesian/TPE] Early stop à {done}/{n_trials}")
                         break
         except BrokenProcessPool as _bp:
@@ -963,7 +1057,7 @@ class OptimizerSearchEngine:
                         "final_score": score,
                         "overfit":     r.get("overfit", 1.0),
                     })
-                if early_stop_patience > 0 and no_improve >= early_stop_patience:
+                if self._should_early_stop(no_improve, early_stop_patience, i + 1, n_exploit):
                     logger.info(f"[Bayesian] Early stop exploit trial {i+1}/{n_exploit}")
                     break
 
@@ -1058,7 +1152,8 @@ class OptimizerSearchEngine:
             for _ in range(n):
                 attempted += 1
                 _record(self._eval(sampler()))
-                if early_stop_patience > 0 and no_improve >= early_stop_patience:
+                if self._should_early_stop(no_improve, early_stop_patience,
+                                           trial_offset + done, n_total):
                     logger.info(f"[Optimizer] Early stop à trial {trial_offset + done}/{n_total}")
                     break
             return attempted
@@ -1109,10 +1204,19 @@ class OptimizerSearchEngine:
                             logger.warning(f"[Optimizer] trial séquentiel KO : {_se}")
                             continue
                         _record(r)
-            if early_stop_patience > 0 and no_improve >= early_stop_patience:
+            if self._should_early_stop(no_improve, early_stop_patience,
+                                       trial_offset + done, n_total):
                 logger.info(f"[Optimizer] Early stop à {trial_offset + done}/{n_total}")
                 break
         return attempted
+
+    @staticmethod
+    def _should_early_stop(no_improve: int, patience: int,
+                           done: int, n_trials: int) -> bool:
+        """O-08 : jamais avant la moitié du budget (le bruit arrêterait trop tôt)."""
+        if patience <= 0:
+            return False
+        return done >= max(patience, n_trials // 2) and no_improve >= patience
 
     def _perturb(self, params: dict) -> dict:
         """Perturbation légère d'un jeu de params pour l'exploitation."""
@@ -1125,7 +1229,7 @@ class OptimizerSearchEngine:
             options = self.param_space[k]
             if len(options) > 1:
                 curr_idx = options.index(params[k]) if params[k] in options else 0
-                offsets  = [-1, 0, 1]
+                offsets  = [-1, 1]  # O-12 : 0 ne perturbe rien
                 new_idx  = curr_idx + random.choice(offsets)
                 new_idx  = max(0, min(len(options) - 1, new_idx))
                 new_params[k] = options[new_idx]
@@ -1219,6 +1323,12 @@ class OptimizerSearchEngine:
             "best_is_trades": best["is_trades"],
             "best_oos_trades":best["oos_trades"],
             "best_oos_wr":    round(best.get("oos_wr", 0.0), 1),
+            # O-01 : alias honnêtes — cette tranche a servi à sélectionner.
+            "best_val_score": self._penalized_score(best),
+            "best_val_pnl":   best["oos_pnl"],
+            "best_val_sharpe":best["oos_sharpe"],
+            "best_val_trades":best["oos_trades"],
+            "best_val_wr":    round(best.get("oos_wr", 0.0), 1),
             "best_is_wr":     round(best.get("is_wr", 0.0), 1),
             "best_oos_dd":    round(best.get("oos_dd", 0.0), 2),
             "best_oos_alpha": round(best["oos_alpha"], 4) if best.get("oos_alpha") is not None else None,

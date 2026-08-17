@@ -152,6 +152,24 @@ def _envelope_payload(env) -> dict | None:
             "min_notional": env.min_notional}
 
 
+def _parse_ohlcv_bound(raw: str, end_of_day: bool):
+    """Parse une date ISO en datetime NAÏF (UTC implicite).
+
+    La colonne ``time`` du CandleStore est un ``datetime[ms]`` sans
+    timezone (UTC implicite). Comparer une colonne naïve à un littéral
+    tz-aware lève un ``SchemaError`` polars — d'où le parsing naïf ici.
+    """
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        dt = datetime.fromisoformat(
+            raw + ("T23:59:59" if end_of_day else "T00:00:00")
+        )
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def _filter_df_by_date_range(df, start_date: str = "", end_date: str = ""):
     """QW-2 : filtre le DataFrame par plage temporelle (ISO 8601).
 
@@ -178,39 +196,19 @@ def _filter_df_by_date_range(df, start_date: str = "", end_date: str = ""):
         return df, "", ""
     import polars as pl
 
-    def _parse(raw: str, end_of_day: bool):
-        """Parse une date ISO en datetime NAÏF (UTC implicite).
-
-        La colonne ``time`` du CandleStore est un ``datetime[ms]`` sans
-        timezone (UTC implicite). Comparer une colonne naïve à un littéral
-        tz-aware lève un ``SchemaError`` polars — d'où le parsing naïf ici.
-        """
-        try:
-            dt = datetime.fromisoformat(raw)
-        except ValueError:
-            # Date seule ("2024-01-01") → borne basse à 00:00, haute à 23:59:59
-            dt = datetime.fromisoformat(
-                raw + ("T23:59:59" if end_of_day else "T00:00:00")
-            )
-        # Une date fournie avec un offset ("2024-01-01T00:00+02:00") est
-        # ramenée en UTC puis dénaturalisée, pour rester comparable.
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-        return dt
-
     used_start = ""
     used_end = ""
     mask = pl.lit(True)
     if start_date:
         try:
-            start_dt = _parse(start_date, end_of_day=False)
+            start_dt = _parse_ohlcv_bound(start_date, end_of_day=False)
         except Exception as _e:
             raise HTTPException(400, f"start_date '{start_date}' invalide (ISO 8601 attendu) : {_e}")
         mask = mask & (pl.col("time") >= start_dt)
         used_start = start_dt.isoformat()[:16]
     if end_date:
         try:
-            end_dt = _parse(end_date, end_of_day=True)
+            end_dt = _parse_ohlcv_bound(end_date, end_of_day=True)
         except Exception as _e:
             raise HTTPException(400, f"end_date '{end_date}' invalide (ISO 8601 attendu) : {_e}")
         mask = mask & (pl.col("time") <= end_dt)
@@ -353,11 +351,14 @@ def run_backtest(
             logger.warning(f"[backtest] rechargement config KO : {e}")
 
         tf    = timeframe.strip() or state.cfg["trading"].get("timeframe", "1h")
-        # QW-2 : si start_date/end_date fournis, on prend un maximum de bougies
-        # (50k) puis on filtre par date. Sinon, comportement historique (limit).
+        # A-03 : le backfill reste celui du CandleStore (50k, 5k en 1d) —
+        # persisté une fois, ça approfondit l'historique. La plage de dates
+        # ne change que ce qui est renvoyé au backtest (scan Parquet filtré).
         use_date_range = bool(start_date.strip() or end_date.strip())
         if use_date_range:
-            limit = 50000  # max possible
+            limit = 50000
+            if tf == "1d":
+                limit = 5000
         else:
             limit = max(100, min(limit, 50000))
             if tf == "1d":
@@ -383,8 +384,24 @@ def run_backtest(
 
         # QW-3 : refresh force prefer_cache=False
         exchange = _get_bt_exchange(effective_cfg)
-        df       = get_store().fetch(exchange, symbol, tf, total=limit,
-                                      prefer_cache=not refresh)
+        store = get_store()
+        if use_date_range:
+            try:
+                start_dt = (
+                    _parse_ohlcv_bound(start_date.strip(), False) if start_date.strip() else None
+                )
+                end_dt = (
+                    _parse_ohlcv_bound(end_date.strip(), True) if end_date.strip() else None
+                )
+            except Exception as _e:
+                raise HTTPException(400, f"plage de dates invalide (ISO 8601 attendu) : {_e}")
+            df = store.fetch_range(
+                exchange, symbol, tf, start=start_dt, end=end_dt,
+                total=limit, prefer_cache=not refresh,
+            )
+        else:
+            df = store.fetch(exchange, symbol, tf, total=limit,
+                             prefer_cache=not refresh)
         if df is None or len(df) == 0:
             raise HTTPException(400, f"Aucune donnée disponible pour {symbol}/{tf}")
 
@@ -512,7 +529,7 @@ def run_backtest(
                         eng, effective_cfg,
                         n_folds=effective_cfg.get("backtest", {}).get("walk_forward_folds", 5)
                     )
-                    entry["walk_forward"] = wf.run(df, symbol)
+                    entry["walk_forward"] = wf.run(df, symbol, timeframe=timeframe)
                 if monte_carlo and all_trades:
                     mc = MonteCarlo(
                         n_runs=effective_cfg.get("backtest", {}).get("monte_carlo_runs", 200)

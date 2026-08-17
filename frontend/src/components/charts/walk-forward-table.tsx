@@ -40,7 +40,11 @@ export interface WalkForwardData {
   fold_n?: number;
   min_required?: number;
   n_folds?: number;
+  /** B-04 : analyse de stabilité, pas une re-optimisation par fold. */
+  kind?: string;
+  reoptimizes?: boolean;
   avg_oos_pnl?: number;
+  avg_fold_pnl?: number;
   avg_oos_sharpe?: number;
   avg_oos_wr?: number;
   consistency?: number;
@@ -74,6 +78,8 @@ export function WalkForwardTable({ data }: { data: WalkForwardData }) {
   const inSample = Array.isArray(data?.in_sample) ? data.in_sample : [];
   if (folds.length === 0) return null;
 
+  const avgPnl = Number(data.avg_fold_pnl ?? data.avg_oos_pnl ?? 0);
+  const isStability = data.kind === 'stability' || data.reoptimizes === false;
   const consistency = Number(data.consistency ?? 0);
   // « Consistency » = % de folds OOS profitables. En dessous de 50 %, la
   // stratégie perd de l'argent sur la majorité des fenêtres hors-échantillon.
@@ -87,19 +93,26 @@ export function WalkForwardTable({ data }: { data: WalkForwardData }) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-sm">
           <Layers className="w-3.5 h-3.5" />
-          Walk-Forward — {data.n_folds ?? folds.length} folds OOS
+          Walk-Forward — {data.n_folds ?? folds.length} folds
         </CardTitle>
-        <Badge variant={consistency >= 50 ? 'success' : 'danger'}>
-          {consistency.toFixed(0)}% de folds gagnants
-        </Badge>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {isStability && (
+            <Badge variant="muted" title="Mêmes paramètres sur chaque fold — pas de re-optimisation">
+              stabilité (params figés)
+            </Badge>
+          )}
+          <Badge variant={consistency >= 50 ? 'success' : 'danger'}>
+            {consistency.toFixed(0)}% de folds gagnants
+          </Badge>
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {/* Moyennes OOS */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
           <div>
-            <div className="text-dim">PnL OOS moyen</div>
-            <div className={cn('font-mono font-semibold', Number(data.avg_oos_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400')}>
-              {formatUSD(Number(data.avg_oos_pnl ?? 0))}
+            <div className="text-dim">{isStability ? 'PnL fold moyen' : 'PnL OOS moyen'}</div>
+            <div className={cn('font-mono font-semibold', avgPnl >= 0 ? 'text-emerald-400' : 'text-red-400')}>
+              {formatUSD(avgPnl)}
             </div>
           </div>
           <div>

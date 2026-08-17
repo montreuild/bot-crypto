@@ -99,3 +99,37 @@ class TestSaveTradeFeeSplit:
             })
             assert rec.fee_taker == pytest.approx(0.10)
             assert rec.fee_maker == pytest.approx(0.32)
+
+
+class TestSaveTradeEntryTime:
+    def test_open_time_unix_prime_sur_la_reconstruction(self, tmp_path):
+        """A-08 : un short tenu pendant le week-end ne doit pas reculer
+        l'entrée de 48 h fantômes via duration_bars × TF."""
+        from app.core.database import _resolve_entry_time
+        opened = datetime(2026, 8, 14, 16, 0, 0, tzinfo=timezone.utc)  # vendredi
+        closed = datetime(2026, 8, 17, 10, 0, 0, tzinfo=timezone.utc)  # lundi
+        weekend_hours = (closed - opened).total_seconds() / 3600
+        got = _resolve_entry_time({
+            "open_time": opened.timestamp(),
+            "time": closed,
+            "duration_bars": int(weekend_hours),
+            "timeframe": "1h",
+        })
+        assert got == opened.replace(tzinfo=None)
+
+    def test_entry_time_iso_backtest_reste_prioritaire(self, tmp_path):
+        from app.core.database import _resolve_entry_time
+        got = _resolve_entry_time({
+            "entry_time": "2024-02-01T12:00:00",
+            "open_time": 1_700_000_000,
+        })
+        assert got == datetime(2024, 2, 1, 12, 0, 0)
+
+    def test_repli_duration_si_aucune_horloge(self):
+        from app.core.database import _resolve_entry_time
+        got = _resolve_entry_time({
+            "time": datetime(2024, 2, 2, 0, 0, 0),
+            "duration_bars": 24,
+            "timeframe": "1h",
+        })
+        assert got == datetime(2024, 2, 1, 0, 0, 0)

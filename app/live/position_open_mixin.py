@@ -474,6 +474,15 @@ class PositionOpenMixin:
         backtest : c'est ce qui permet d'expliquer une divergence entre les
         deux plutôt que de la constater.
         """
+        # N-04 : même résolution de mode de sortie que le backtest, sinon un
+        # paramétrage validé sous `trailing` serait tradé en `as_declared`.
+        from app.core.execution import apply_exit_mode
+        _bcfg = (self.cfg.get("backtest") or {})
+        _mode = str(signal_dict.get("exit_mode") or _bcfg.get("exit_mode", "as_declared"))
+        if _mode != "as_declared":
+            signal_dict = apply_exit_mode(
+                signal_dict, _mode, dict(_bcfg.get("exit_mode_params") or {}))
+
         now_iso = datetime.now(timezone.utc).isoformat()
 
         def _reject(tag: str, reason: str) -> bool:
@@ -575,6 +584,8 @@ class PositionOpenMixin:
                 self.open_positions.pop(pos_key, None)
             self.ledger.release(pos_key)
             raise
+        # F-11 : le jeton anti-spam n'est consommé qu'après un fill réussi.
+        self.risk.consume_rate_token()
         # Le fill réel peut différer de la taille demandée (remplissage partiel,
         # slippage) : réaligner le risque engagé sur la position effective.
         opened = self.open_positions.get(pos_key) or {}

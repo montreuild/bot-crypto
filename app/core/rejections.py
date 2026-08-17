@@ -9,10 +9,15 @@ from collections import Counter
 from typing import Dict
 
 REASONS = (
-    "budget_symbole", "budget_venue", "enveloppe_slot", "notionnel_min",
+    "budget_symbole", "budget_venue", "enveloppe_slot", "enveloppe_venue",
+    "notionnel_min",
     "levier", "venue", "risk", "slot_cb", "slot_disabled", "stop_invalide",
     # L6 (§97) — un événement de liquidité a déjà produit son trade primaire.
     "evenement_deja_trade",
+    # L-05 — 2ᵉ réserve sur une clé déjà engagée (fuite de budget sinon).
+    "deja_reserve",
+    # F-12 / L-14 — pré-check live (cash/marge) : plus de refus silencieux.
+    "capital_insuffisant",
 )
 
 
