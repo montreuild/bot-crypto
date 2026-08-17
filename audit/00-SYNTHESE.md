@@ -1,10 +1,18 @@
 # Audit complet — Synthèse
 
+> ⚠️ **RÉVISÉ le 17 août 2026** — voir
+> [`13-REVISION-2026-08-17.md`](13-REVISION-2026-08-17.md).
+> Cinq constats ont été résolus depuis (O-01 requalifié, **O-02**, **O-03**,
+> O-07, M-02), quatre nouveaux sont apparus (N-01 à N-04). **Les 8 autres
+> constats critiques sont intacts**, revérifiés ligne par ligne sur `32d6c90`.
+> Le tableau des dix corrections du §3 reste valide : aucune n'a été traitée.
+
 **Dépôt** : `bot-crypto` — bot de trading algorithmique multi-stratégies
 (Python 3.14 / FastAPI / polars / LightGBM + Next.js 15 / React 19)
 **Périmètre** : ~131 000 lignes (58 k Python applicatif, 46 k frontend,
 26 k tests) + 827 Mo de données persistées
-**Date** : 14 août 2026
+**Base auditée** : `d62c487` (PR #221) — révisée sur `32d6c90` (PR #228)
+**Date** : 14 août 2026, révisé le 17 août 2026
 **Méthode** : lecture du code source seul. Conformément à la demande, ni la
 documentation (`docs/`, 35 k lignes), ni le `CHANGELOG.md`, ni les scripts
 indépendants (`scripts/`, `research/`) n'ont été utilisés comme source de
@@ -124,25 +132,33 @@ calcul.
 
 | Sévérité | Nombre | Signification |
 |---|---|---|
-| 🔴 Critique | **10** | Fausse une décision de trading ou peut faire perdre de l'argent / des données |
-| 🟠 Majeur | **39** | Fausse une mesure, casse la parité, ou expose à un incident |
-| 🟡 Moyen | **57** | Incohérence réelle, effet borné ou conditionnel |
-| 🔵 Mineur | **25** | Hygiène, lisibilité, angle mort d'observabilité |
+| Sévérité | 14 août | **17 août** | Signification |
+|---|---|---|---|
+| 🔴 Critique | 10 | **8** | Fausse une décision de trading ou peut faire perdre de l'argent / des données |
+| 🟠 Majeur | 39 | **40** | Fausse une mesure, casse la parité, ou expose à un incident |
+| 🟡 Moyen | 57 | **57** | Incohérence réelle, effet borné ou conditionnel |
+| 🔵 Mineur | 25 | **25** | Hygiène, lisibilité, angle mort d'observabilité |
 
 ### Les dix constats critiques
 
-| Réf | Titre | Rapport |
-|---|---|---|
-| F-01 | `total_pnl` exclut les frais d'entrée mais pilote score, sélection et promotion | [Financier](01-FINANCIER.md) |
-| F-02 | Sharpe calculé sur 1 à 3 observations — 104/158 runs à \|Sharpe\| > 10 | [Financier](01-FINANCIER.md) |
-| F-03 | `max_dd_p95` renvoie le meilleur drawdown, pas le pire | [Financier](01-FINANCIER.md) |
-| B-01 | Stops et TP remplis au niveau, jamais au gap | [Backtest](02-BACKTEST.md) |
-| B-02 | Backtest mono-position : `RiskLedger` et concurrence jamais exercés | [Backtest](02-BACKTEST.md) |
-| O-01 | L'objectif d'optimisation **est** le score OOS | [Optimiseur](03-OPTIMISEUR.md) |
-| O-02 | `beats_baseline` évalué sur la fenêtre de sélection | [Optimiseur](03-OPTIMISEUR.md) |
-| O-03 | Le gate walk-forward tourne sur les données de sélection | [Optimiseur](03-OPTIMISEUR.md) |
-| L-01 | Le stop live n'est évalué qu'une fois par cycle, sur le dernier prix | [Live](04-LIVE.md) |
-| L-02 | En paper (défaut), aucun stop exchange et aucun stop intrabar | [Live](04-LIVE.md) |
+| Réf | Titre | Rapport | État au 17/08 |
+|---|---|---|---|
+| F-01 | `total_pnl` exclut les frais d'entrée mais pilote score, sélection et promotion | [Financier](01-FINANCIER.md) | 🔴 ouvert |
+| F-02 | Sharpe calculé sur 1 à 3 observations — 104/158 runs à \|Sharpe\| > 10 | [Financier](01-FINANCIER.md) | 🔴 ouvert |
+| F-03 | `max_dd_p95` renvoie le meilleur drawdown, pas le pire | [Financier](01-FINANCIER.md) | 🔴 ouvert |
+| B-01 | Stops et TP remplis au niveau, jamais au gap | [Backtest](02-BACKTEST.md) | 🔴 ouvert |
+| B-02 | Backtest mono-position : `RiskLedger` et concurrence jamais exercés | [Backtest](02-BACKTEST.md) | 🔴 ouvert |
+| O-01 | L'objectif d'optimisation **est** le score OOS | [Optimiseur](03-OPTIMISEUR.md) | 🟡 requalifié — reste un défaut de nommage |
+| O-02 | `beats_baseline` évalué sur la fenêtre de sélection | [Optimiseur](03-OPTIMISEUR.md) | ✅ **résolu** (PR #222) |
+| O-03 | Le gate walk-forward tourne sur les données de sélection | [Optimiseur](03-OPTIMISEUR.md) | ✅ **résolu** (PR #222) |
+| L-01 | Le stop live n'est évalué qu'une fois par cycle, sur le dernier prix | [Live](04-LIVE.md) | 🔴 ouvert |
+| L-02 | En paper (défaut), aucun stop exchange et aucun stop intrabar | [Live](04-LIVE.md) | 🔴 ouvert |
+
+Deux nouveaux constats majeurs sont entrés le 17 août, tous deux sur le
+correctif de holdout lui-même : **N-01** (`required_total_bars` ignore les 20 %
+du holdout, donc le repli sans holdout se déclenche trop souvent) et **N-02**
+(le bouton « Appliquer » de l'UI décide encore sur la tranche de sélection).
+Détail dans [la révision](13-REVISION-2026-08-17.md).
 
 ---
 
@@ -259,6 +275,7 @@ chaque grandeur financière, l'assertion qui exprime sa **définition** :
 | [10 — Tests & qualité](10-TESTS-QUALITE.md) | 7 | 0 | Couverture, nature des assertions, CI |
 | [11 — Données](11-DONNEES.md) | 7 | 0 | Cache OHLCV, features, intégrité, cycle de vie |
 | [12 — Architecture & dette](12-ARCHITECTURE-DETTE.md) | 7 | 0 | Couplage, duplication, code mort, conventions |
+| [**13 — Révision 17/08**](13-REVISION-2026-08-17.md) | +4 | 0 | Delta des PR #222 à #228 : 5 résolus, 4 nouveaux, 8 critiques revérifiés |
 
 ---
 
@@ -268,6 +285,15 @@ chaque grandeur financière, l'assertion qui exprime sa **définition** :
 Corrections 1, 2, 4, 5 et 9 du tableau §3. Chacune est locale, à faible risque,
 et rend immédiatement les tableaux de bord lisibles. Ajouter en parallèle les
 six assertions de définition listées en §6c.
+
+**Ajout du 17 août — à faire avant le sprint 3** *(≈ 1/2 journée)*
+**N-01** et **N-02** : le holdout livré par la PR #222 est du bon travail qui
+ne protège pas encore le chemin que l'utilisateur emprunte. `required_total_bars`
+ignore les 20 % réservés, donc le repli sans holdout se déclenche trop souvent ;
+et le bouton « Appliquer » de l'UI décide toujours sur la tranche de sélection
+alors que la donnée du holdout est déjà dans la fiche de job. Une dizaine de
+lignes chacun pour que le bénéfice du sprint 3 soit réellement acquis. Voir
+[la révision](13-REVISION-2026-08-17.md) §5.
 
 **Sprint 2 — rétablir la comptabilité** *(≈ 1 semaine)*
 Correction 3 (`net_profit` comme référence) puis 8 (emprunt à levier 1). Livrer
