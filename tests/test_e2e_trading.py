@@ -158,14 +158,17 @@ class TestE2ETradingCycle:
             assert isinstance(trade["stop_trail"], list)
 
     def test_sharpe_is_float(self):
-        """Sharpe ratio must be a valid float."""
+        """Sharpe : float fini, ou None s'il n'y a pas assez d'observations (F-02)."""
         engine = Engine()
         engine.register(AlwaysLongStrategy())
         bt = Backtester(engine, _cfg())
         df = _make_trending_df(500, trend_up=True)
         result = bt.run(df, "BTC/USDC", timeframe="1h")
-        assert isinstance(result.sharpe, float)
-        assert np.isfinite(result.sharpe)
+        if result.sharpe is None:
+            assert result.total_trades < 10
+        else:
+            assert isinstance(result.sharpe, float)
+            assert np.isfinite(result.sharpe)
 
     def test_multiple_strategies_together(self):
         """Two strategies can run together without conflicts."""

@@ -575,6 +575,8 @@ class PositionOpenMixin:
                 self.open_positions.pop(pos_key, None)
             self.ledger.release(pos_key)
             raise
+        # F-11 : le jeton anti-spam n'est consommé qu'après un fill réussi.
+        self.risk.consume_rate_token()
         # Le fill réel peut différer de la taille demandée (remplissage partiel,
         # slippage) : réaligner le risque engagé sur la position effective.
         opened = self.open_positions.get(pos_key) or {}

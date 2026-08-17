@@ -40,3 +40,10 @@ def test_none_df():
 def test_optimizer_imports_shared_fraction():
     from app.engine.optimizer_search import _OOS_FRACTION
     assert _OOS_FRACTION == OOS_FRACTION_DEFAULT
+
+
+def test_warmup_est_partage_par_walk_forward_et_forward_test():
+    """B-09 : plus de 210 / 220 / 250 indépendants."""
+    from app.engine import forward_test, walk_forward
+    assert walk_forward.WARMUP_BARS_DEFAULT == WARMUP_BARS_DEFAULT
+    assert forward_test._WARMUP_BARS == WARMUP_BARS_DEFAULT

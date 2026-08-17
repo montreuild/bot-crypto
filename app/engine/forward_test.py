@@ -39,8 +39,8 @@ from app.core.timeframes import TF_MINUTES as _TF_MINUTES
 
 logger = logging.getLogger(__name__)
 
-# Bougies de chauffe pour les indicateurs (EMA/ADX longues) avant la fenêtre utile.
-_WARMUP_BARS = 250
+# Bougies de chauffe : même constante que le split IS/OOS et le backtest.
+from app.core.is_oos import WARMUP_BARS_DEFAULT as _WARMUP_BARS
 # Garde-fou : on ne demande jamais plus que ça de bougies pour un forward-test.
 _MAX_BARS = 4000
 # Plafond plus large pour le backtest d'edge (fenêtre longue, ex. 365 j :

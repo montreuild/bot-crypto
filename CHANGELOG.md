@@ -23,6 +23,15 @@ Historique des versions du Crypto Bot.
   Un refus de pré-check laisse désormais une trace (`capital_insuffisant`).
 - **A-01** : clôture en une seule transaction (delete + save_trade +
   daily_stats). Un crash ne peut plus perdre un trade exécuté.
+- **F-13** : `alpha_vs_buy_hold` n'est plus en O(n²).
+- **F-14** : `RejectionCounter` réinitialisé à chaque `run()`.
+- **B-03** : le walk-forward transmet le `timeframe` au `Backtester`.
+- **B-05** : `min_notional` jugé après `partial_fill` et quantification.
+- **B-09** : warmup unique (`WARMUP_BARS_DEFAULT`) pour backtest, WF, forward-test.
+- **B-10** : clôture de fin de série en taker, avec spread.
+- **B-11** : `capital_before` du gate tient compte des sorties partielles.
+- **N-03** : le paramètre `df_full` de `_run_one_job` s'appelle `df_recherche`.
+- **F-11** : le jeton anti-spam n'est consommé qu'après un fill réussi.
 
 ### 🐛 L'overfit résiduel n'existait pas — c'était la métrique
 

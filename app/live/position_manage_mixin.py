@@ -581,6 +581,7 @@ class PositionManageMixin:
                            risk=self.risk.engaged_risk(pos["entry"], pos["stop"], pos["size"]),
                            notional=pos["notional"])
         self.ledger.release(add_key)
+        self.risk.consume_rate_token()
         with session_scope(self.SessionLocal) as _sess:
             persist_open_position(_sess, pos)
         # Le stop exchange couvre l'ancienne taille → replacement avec la nouvelle

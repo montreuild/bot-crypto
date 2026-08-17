@@ -472,7 +472,7 @@ class AutoOptimizer:
     def _run_one_job(self, job_id: str, strategy_name: str, timeframe: str,
                      df_is: pl.DataFrame, df_oos: pl.DataFrame,
                      symbol: str, auto_apply: bool,
-                     df_full: pl.DataFrame = None, split: int = None,
+                     df_recherche: pl.DataFrame = None, split: int = None,
                      df_holdout: pl.DataFrame = None):
         trials_log = []
 
@@ -524,7 +524,7 @@ class AutoOptimizer:
                 df_oos=df_oos,
                 symbol=symbol,
                 progress_callback=on_progress,
-                df_full=df_full,
+                df_full=df_recherche,
                 split=split,
                 timeframe=timeframe,
                 cancel_event=cancel_event,
@@ -646,10 +646,10 @@ class AutoOptimizer:
                 majorité de fenêtres OOS glissantes avant l'auto-apply — un
                 unique split IS/OOS ne suffit pas. Neutre (True) si le gate
                 est désactivé (optimizer.wf_gate: false), si les données
-                complètes manquent, ou si le walk-forward est indisponible
+                de recherche manquent, ou si le walk-forward est indisponible
                 (historique trop court) : on ne durcit pas à l'aveugle."""
                 opt_cfg = (self.cfg.get("optimizer") or {})
-                if not bool(opt_cfg.get("wf_gate", True)) or df_full is None:
+                if not bool(opt_cfg.get("wf_gate", True)) or df_recherche is None:
                     return True
                 min_cons = float(opt_cfg.get("wf_min_consistency", 60.0))
                 try:
@@ -666,7 +666,7 @@ class AutoOptimizer:
                     eng.register(mod.Strategy(), silent=True)
                     wf = WalkForwardAnalyzer(eng, cfg2,
                                              n_folds=int(opt_cfg.get("wf_folds", 5)))
-                    res_wf = wf.run(df_full, symbol)
+                    res_wf = wf.run(df_recherche, symbol, timeframe=timeframe)
                     if "error" in res_wf:
                         logger.info(f"[AutoOpt] {job_id} : walk-forward indisponible "
                                     f"({res_wf['error']}) — gate neutre")
@@ -738,9 +738,9 @@ class AutoOptimizer:
             # disque. S4-03 : optimizer.ml_final_train_mode contrôle full (IS+OOS,
             # défaut, comportement inchangé) vs is_only (cohérent avec le score
             # OOS rapporté, cf. docstring de _save_ml_model_post_opt).
-            if result.get("best_params") and _is_ml_strategy(strategy_name) and df_full is not None:
+            if result.get("best_params") and _is_ml_strategy(strategy_name) and df_recherche is not None:
                 _ml_train_mode = self.cfg.get("optimizer", {}).get("ml_final_train_mode", "full")
-                _save_ml_model_post_opt(strategy_name, result["best_params"], df_full, timeframe,
+                _save_ml_model_post_opt(strategy_name, result["best_params"], df_recherche, timeframe,
                                         df_is=df_is, train_mode=_ml_train_mode)
 
             # Si l'optimiseur signale un échec global (ex: tous les workers

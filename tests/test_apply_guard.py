@@ -64,3 +64,6 @@ def test_auto_apply_has_walk_forward_gate():
     assert "wf_gate" in src
     # Le gate s'applique bien à la décision d'apply
     assert "_beats_baseline() and _wf_consistent()" in src
+    # N-03 / B-03 : le WF tourne sur la recherche, avec le TF du job.
+    assert "df_recherche" in src
+    assert "timeframe=timeframe" in src

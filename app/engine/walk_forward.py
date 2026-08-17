@@ -14,6 +14,7 @@ import logging
 import numpy as np
 import polars as pl
 
+from app.core.is_oos import WARMUP_BARS_DEFAULT
 from app.core.param_resolution import DEFAULT_CONFIG_SYMBOL
 from app.engine.engine import Engine
 
@@ -52,14 +53,15 @@ class WalkForwardAnalyzer:
         self.n_folds = n_folds
         self.ml_mode = ml_mode
 
-    def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL) -> dict:
+    def run(self, df: pl.DataFrame, symbol: str = DEFAULT_CONFIG_SYMBOL,
+            timeframe: str = None) -> dict:
         # Import lazy : ``Backtester`` vit dans ``app.engine.backtest`` qui
         # ré-exporte ``WalkForwardAnalyzer`` (cycle sinon).
         from app.engine.backtest import Backtester
 
         n      = len(df)
         fold_n = n // (self.n_folds + 1)
-        WARMUP = 220
+        WARMUP = WARMUP_BARS_DEFAULT
         MIN_IS = WARMUP + 50
         MIN_OOS = 40
         if fold_n < MIN_OOS:
@@ -102,8 +104,8 @@ class WalkForwardAnalyzer:
 
                 bt_is  = Backtester(eng_is,  self.cfg, ml_mode=self.ml_mode)
                 bt_oos = Backtester(eng_oos, self.cfg, ml_mode=self.ml_mode)
-                r_is   = bt_is.run(df_is,  symbol).to_dict()
-                r_oos  = bt_oos.run(df_oos, symbol).to_dict()
+                r_is   = bt_is.run(df_is,  symbol, timeframe=timeframe).to_dict()
+                r_oos  = bt_oos.run(df_oos, symbol, timeframe=timeframe).to_dict()
                 in_sample_results.append(r_is)
                 out_sample_results.append(r_oos)
             except Exception as e:
@@ -113,13 +115,14 @@ class WalkForwardAnalyzer:
             return {"error": "Aucun fold OOS valide"}
 
         oos_pnl    = [r["total_pnl"]  for r in out_sample_results]
-        oos_sharpe = [r["sharpe"]     for r in out_sample_results]
+        oos_sharpe = [r["sharpe"] for r in out_sample_results if r.get("sharpe") is not None]
         oos_wr     = [r["win_rate"]   for r in out_sample_results]
 
         return {
             "n_folds":        len(out_sample_results),
             "avg_oos_pnl":    round(_sf(float(np.mean(oos_pnl)),    0.0), 4),
-            "avg_oos_sharpe": round(_sf(float(np.mean(oos_sharpe)), 0.0), 3),
+            "avg_oos_sharpe": (round(_sf(float(np.mean(oos_sharpe)), 0.0), 3)
+                               if oos_sharpe else None),
             "avg_oos_wr":     round(_sf(float(np.mean(oos_wr)),     0.0), 2),
             "consistency":    round(sum(1 for p in oos_pnl if p > 0) / len(oos_pnl) * 100, 1),
             "in_sample":      in_sample_results,

@@ -512,7 +512,7 @@ def run_backtest(
                         eng, effective_cfg,
                         n_folds=effective_cfg.get("backtest", {}).get("walk_forward_folds", 5)
                     )
-                    entry["walk_forward"] = wf.run(df, symbol)
+                    entry["walk_forward"] = wf.run(df, symbol, timeframe=timeframe)
                 if monte_carlo and all_trades:
                     mc = MonteCarlo(
                         n_runs=effective_cfg.get("backtest", {}).get("monte_carlo_runs", 200)

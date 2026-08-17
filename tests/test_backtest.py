@@ -146,6 +146,15 @@ class TestBacktestResult:
         assert r.win_rate == 100.0
         assert r.profit_factor == 999.0
 
+    def test_end_of_data_is_taker_with_spread(self):
+        """B-10 : la clôture de fin de série n'est plus un maker gratuit."""
+        import inspect
+        from app.engine.backtest import Backtester
+        src = inspect.getsource(Backtester.run)
+        assert 'maker=False' in src
+        assert 'end_of_data' in src
+        assert 'ref_price=_eod' in src
+
     def test_by_strategy_populated(self):
         r = self._make_result([10, -3, 5])
         assert "dummy" in r.by_strategy

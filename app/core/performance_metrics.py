@@ -160,9 +160,12 @@ def alpha_vs_buy_hold(strategy_returns: list,
     avg_strat = mean(strat) * periods_per_year
     avg_bench = mean(bench) * periods_per_year
 
+    # F-13 : mean() hors des compréhensions — sinon O(n²).
+    m_s = mean(strat)
+    m_b = mean(bench)
     # β = Cov(Strat, Bench) / Var(Bench)
-    cov_sb = sum((s - mean(strat)) * (b - mean(bench)) for s, b in zip(strat, bench)) / (n - 1)
-    var_b = sum((b - mean(bench)) ** 2 for b in bench) / (n - 1)
+    cov_sb = sum((s - m_s) * (b - m_b) for s, b in zip(strat, bench)) / (n - 1)
+    var_b = sum((b - m_b) ** 2 for b in bench) / (n - 1)
     if var_b == 0:
         beta = 0.0
     else:

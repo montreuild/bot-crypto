@@ -852,8 +852,9 @@ class Backtester:
                 day_key = str(close_ts)[:10] if close_ts is not None else ""
             except Exception:
                 day_key = ""
-            # capital_before = capital avant ce trade (approximation : capital - pnl)
-            capital_before = ctx.capital - pnl
+            # B-11 : ctx.capital inclut déjà les jambes partielles (`realized`).
+            # Soustraire seulement `pnl` décalait le DD journalier du slot.
+            capital_before = ctx.capital - pnl - realized
             gate.record_trade_result(i, slot_key, pnl + realized, day_key,
                                      capital_before)
 
@@ -1265,14 +1266,9 @@ class Backtester:
             size = _floor_to(max_notional / exec_price, 6)
         notional = _floor_to(size * exec_price, 4)
 
-        min_notional = self._min_notional()
-        if size <= 0 or notional < min_notional:
+        if size <= 0:
             diag["rejected_notional"] += 1
             self.rejections.record("notionnel_min", symbol=ctx.symbol)
-            logger.debug(
-                f"[Backtest] bar {i} : trade rejeté (notional={notional:.4f} "
-                f"< min {min_notional:.2f}, size={size:.6f}, base={ctx.capital:.2f})"
-            )
             return None
 
         # Remplissage partiel : réalisme d'exécution propre au backtest (le
@@ -1292,6 +1288,17 @@ class Backtester:
             return None
         size        = q_size
         notional    = size * exec_price
+        # B-05 : min_notional se juge sur la taille FINALE (après partial_fill
+        # et quantification), comme RiskLedger.reserve côté live.
+        min_notional = self._min_notional()
+        if notional < min_notional:
+            diag["rejected_notional"] += 1
+            self.rejections.record("notionnel_min", symbol=ctx.symbol)
+            logger.debug(
+                f"[Backtest] bar {i} : trade rejeté (notional={notional:.4f} "
+                f"< min {min_notional:.2f}, size={size:.6f}, base={ctx.capital:.2f})"
+            )
+            return None
         entry_fees  = self._fees(exec_price, size, maker=False,
                                  side=signal["side"], is_entry=True)
         _impact_in  = self._impact_cost(ctx, i, notional)   # BT-10
@@ -1390,6 +1397,9 @@ class Backtester:
         # celle de BTC/USDC ; les autres symboles prennent leur config dédiée si
         # elle existe, sinon les params de base (séparation des configs).
         strat_params = resolve_strategy_params(self.cfg, timeframe, symbol)
+        # F-14 : un même Backtester sert IS puis OOS (optimiseur). Sans reset,
+        # les rejets de l'IS polluent le résultat OOS.
+        self.rejections = RejectionCounter()
 
         # G2 : la venue de l'instrument pilote la quantification des tailles et
         # le modèle de coûts. Résolue au niveau du SYMBOLE (une action porte sa
@@ -1540,8 +1550,8 @@ class Backtester:
 
         # Warmup dynamique : prend le max parmi les stratégies actives.
         # Chaque stratégie peut déclarer `warmup_bars` (attribut de classe ou d'instance).
-        # Valeur minimale garantie : 210 barres (couvre EMA200 + ADX + ATR14).
-        _MIN_WARMUP = 210
+        # Valeur minimale garantie : WARMUP_BARS_DEFAULT (EMA200 + ADX + ATR14).
+        from app.core.is_oos import WARMUP_BARS_DEFAULT as _MIN_WARMUP
         warmup = _MIN_WARMUP
         for _s in self.engine.strategies:
             _wb = getattr(_s, "warmup_bars", None) or getattr(_s, "min_bars", None)
@@ -1727,9 +1737,15 @@ class Backtester:
 
         # ── Clôture forcée en fin de série ────────────────────────────────────
         if position is not None:
-            self._close_at(ctx, position, len(df) - 1, float(df["close"][-1]),
-                           "end_of_data", maker=True, status="closed_eod",
-                           append_ts=False)
+            # B-10 : une liquidation forcée est taker, avec spread — pas un
+            # maker gratuit. ref_price isole le coût de spread (L0).
+            _eod = float(df["close"][-1])
+            _side = position["side"]
+            _eod_exec = _eod * (1 - self.spread_pct) if _side == "long" \
+                else _eod * (1 + self.spread_pct)
+            self._close_at(ctx, position, len(df) - 1, _eod_exec,
+                           "end_of_data", maker=False, status="closed_eod",
+                           append_ts=False, ref_price=_eod)
             position = None
             capital  = ctx.capital
 

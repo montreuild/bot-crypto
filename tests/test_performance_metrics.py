@@ -14,6 +14,7 @@ import math
 import pytest
 
 from app.core.performance_metrics import (
+    alpha_vs_buy_hold,
     annualized_excess_vs_buy_hold,
     compute_cagr,
     compute_extended_metrics,
@@ -24,6 +25,14 @@ BARS_PER_YEAR_1D = 365.0
 # Run réel observé : 8 trades sur 2 000 bougies journalières, 1000 → 1094,6.
 EQUITY_8_TRADES = [1000.0, 1010, 1005, 1040, 1030, 1060, 1050, 1080, 1094.6]
 ANNEES_REELLES = 2000 / BARS_PER_YEAR_1D  # ≈ 5,48 ans
+
+
+def test_alpha_vs_buy_hold_n_est_pas_on2():
+    """F-13 : mean() hors des boucles — le résultat reste défini."""
+    strat = [0.01, -0.005, 0.02, 0.0, 0.015]
+    bench = [0.008, 0.002, 0.01, -0.001, 0.012]
+    a = alpha_vs_buy_hold(strat, bench, periods_per_year=365)
+    assert isinstance(a, float)
 
 
 def test_cagr_utilise_la_duree_reelle_et_non_le_nombre_de_trades():
